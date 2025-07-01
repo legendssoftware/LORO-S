@@ -1,4 +1,1 @@
-import { PartialType } from '@nestjs/swagger';
-import { CreatePayslipDto } from './create-payslip.dto';
-
-export class UpdatePayslipDto extends PartialType(CreatePayslipDto) {}
+// No update DTO needed for payslips since they are read-only documents

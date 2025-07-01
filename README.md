@@ -38,6 +38,23 @@ A powerful NestJS backend service powering location tracking, geofencing, busine
         -   Punctuality analysis and insights
         -   Performance metrics and recommendations
 
+-   **Payslips Management** 💰
+
+    -   Employee payslip document management
+    -   Google Cloud Storage integration
+    -   External bucket support with fallback data
+    -   Automatic file metadata extraction
+    -   User-based payslip filtering with date ranges
+    -   **Smart File Handling**:
+        -   Direct GCS file access for internal documents
+        -   Sample data population for external/inaccessible files
+        -   Maintains consistent creator links and audit trails
+        -   Auto-detection of file types and metadata
+    -   **API Features**:
+        -   GET `/payslips` - Retrieve user payslips with date filtering
+        -   GET `/payslips/:id` - Get specific payslip details
+        -   POST `/payslips/fetch-from-gcs` - Fetch from GCS or external buckets
+
 -   **Task Management**
 
     -   Task assignment and tracking
@@ -123,6 +140,7 @@ src/
 ├── reports/        # Reporting & analytics
 ├── claims/         # Claims processing
 ├── docs/           # Document management
+├── payslips/       # Employee payslip management
 ├── shop/           # E-commerce functionality
 └── config/         # Application configuration
 ```
@@ -184,6 +202,7 @@ Key endpoints:
    - GET/POST `/clients` - Client management
    - GET/POST `/attendance` - Attendance tracking
    - GET/POST `/reports` - Report generation
+   - GET/POST `/payslips` - Payslip management and GCS file fetching
    - **Automated Attendance Reports** - Daily email reports (morning/evening)
 
 ## 🧪 Testing
