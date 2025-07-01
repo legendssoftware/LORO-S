@@ -44,25 +44,71 @@ export class ClientAuthService {
 				relations: ['client', 'client.organisation', 'client.branch'],
 			});
 
-			if (!clientAuth) {
-				return {
-					message: 'Invalid credentials provided',
-					accessToken: null,
-					refreshToken: null,
-					profileData: null,
-				};
+					if (!clientAuth) {
+			// Send failed login email for unknown client email
+			try {
+				this.eventEmitter.emit('send.email', EmailType.CLIENT_FAILED_LOGIN_ATTEMPT, [email], {
+					name: email.split('@')[0],
+					loginTime: new Date().toLocaleString(),
+					ipAddress: requestData?.ipAddress || 'Unknown',
+					location: requestData?.location || 'Unknown',
+					country: requestData?.country || 'Unknown',
+					deviceType: requestData?.deviceType || 'Unknown',
+					browser: requestData?.browser || 'Unknown',
+					operatingSystem: requestData?.operatingSystem || 'Unknown',
+					userAgent: requestData?.userAgent || 'Unknown',
+					suspicious: true,
+					securityTips: [
+						'Contact us immediately if you suspect unauthorized access',
+						'Ensure you are using the correct client portal URL',
+						'Use strong, unique passwords for your client portal',
+					],
+				});
+			} catch (error) {
+				console.error('Failed to send client failed login notification email:', error);
 			}
 
-			const isPasswordValid = await bcrypt.compare(password, clientAuth.password);
+			return {
+				message: 'Invalid credentials provided',
+				accessToken: null,
+				refreshToken: null,
+				profileData: null,
+			};
+		}
 
-			if (!isPasswordValid) {
-				return {
-					message: 'Invalid credentials provided',
-					accessToken: null,
-					refreshToken: null,
-					profileData: null,
-				};
+		const isPasswordValid = await bcrypt.compare(password, clientAuth.password);
+
+		if (!isPasswordValid) {
+			// Send failed login email for incorrect password
+			try {
+				this.eventEmitter.emit('send.email', EmailType.CLIENT_FAILED_LOGIN_ATTEMPT, [clientAuth.email], {
+					name: clientAuth.email.split('@')[0],
+					loginTime: new Date().toLocaleString(),
+					ipAddress: requestData?.ipAddress || 'Unknown',
+					location: requestData?.location || 'Unknown',
+					country: requestData?.country || 'Unknown',
+					deviceType: requestData?.deviceType || 'Unknown',
+					browser: requestData?.browser || 'Unknown',
+					operatingSystem: requestData?.operatingSystem || 'Unknown',
+					userAgent: requestData?.userAgent || 'Unknown',
+					suspicious: true,
+					securityTips: [
+						'Contact us immediately if you suspect unauthorized access',
+						'Change your password if you are concerned about security',
+						'Use strong, unique passwords for your client portal',
+					],
+				});
+			} catch (error) {
+				console.error('Failed to send client failed login notification email:', error);
 			}
+
+			return {
+				message: 'Invalid credentials provided',
+				accessToken: null,
+				refreshToken: null,
+				profileData: null,
+			};
+		}
 
 			// Update last login timestamp
 			clientAuth.lastLogin = new Date();

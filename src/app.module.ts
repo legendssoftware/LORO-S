@@ -90,7 +90,6 @@ import { LeaveModule } from './leave/leave.module';
 import { Leave } from './leave/entities/leave.entity';
 import { UserTarget } from './user/entities/user-target.entity';
 import { WarningsModule } from './warnings/warnings.module';
-import { TimetableModule } from './timetable/timetable.module';
 import { Warning } from './warnings/entities/warning.entity';
 import { RoleGuard } from './guards/role.guard';
 import { ClientCommunicationSchedule } from './clients/entities/client-communication-schedule.entity';
@@ -223,7 +222,6 @@ import { ClientCommunicationSchedule } from './clients/entities/client-communica
 		PdfGenerationModule,
 		LeaveModule,
 		WarningsModule,
-		TimetableModule,
 	],
 	controllers: [],
 	providers: [

@@ -1,0 +1,126 @@
+{{#base headerTitle="Security Alert: Failed Login Attempt on Your Client Portal" headerSubtitle="Unauthorized access attempt detected"}}
+
+<div class="greeting">
+    Hello {{name}}! 🚨
+</div>
+
+<div class="message">
+    <p><strong>We detected a failed login attempt on your client portal.</strong> If this wasn't you, someone may be trying to access your account. Please review the details below and contact us if you have concerns.</p>
+</div>
+
+<!-- Failed Login Details -->
+<div class="warning-notice">
+    <h3 style="color: #dc2626;">🔍 Failed Login Attempt Details</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Attempt Time</span>
+            <span class="detail-value" style="font-weight: 700;">{{loginTime}}</span>
+        </div>
+        {{#if ipAddress}}
+        <div class="detail-item">
+            <span class="detail-label">IP Address</span>
+            <span class="detail-value" style="font-family: monospace; background: #fee2e2; padding: 2px 6px; border-radius: 4px; color: #dc2626;">{{ipAddress}}</span>
+        </div>
+        {{/if}}
+        {{#if location}}
+        <div class="detail-item">
+            <span class="detail-label">Location</span>
+            <span class="detail-value">{{location}}{{#if country}}, {{country}}{{/if}}</span>
+        </div>
+        {{/if}}
+        {{#if deviceType}}
+        <div class="detail-item">
+            <span class="detail-label">Device Type</span>
+            <span class="detail-value">{{deviceType}}</span>
+        </div>
+        {{/if}}
+        {{#if operatingSystem}}
+        <div class="detail-item">
+            <span class="detail-label">Operating System</span>
+            <span class="detail-value">{{operatingSystem}}</span>
+        </div>
+        {{/if}}
+        {{#if browser}}
+        <div class="detail-item">
+            <span class="detail-label">Browser</span>
+            <span class="detail-value">{{browser}}</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+
+<!-- Security Warning -->
+<div style="background: rgba(153, 27, 27, 0.1); border: 2px solid #dc2626; border-radius: 12px; padding: 20px; margin: 20px 0;">
+    <h4 style="color: #dc2626; margin-bottom: 16px;">🚨 UNAUTHORIZED ACCESS ATTEMPT</h4>
+    <p style="color: #7f1d1d; font-size: 16px; font-weight: 600; margin-bottom: 16px;">Someone attempted to access your client portal with incorrect credentials.</p>
+    <p style="color: #7f1d1d; font-size: 15px;">If this wasn't you, your account may be targeted. Please contact us immediately to secure your portal access.</p>
+</div>
+
+<!-- Recommended Actions -->
+<div style="background: rgba(153, 27, 27, 0.1); border: 2px solid #dc2626; border-radius: 12px; padding: 20px; margin: 20px 0;">
+    <p style="font-size: 16px; font-weight: 700; color: #dc2626;">🛡️ RECOMMENDED ACTIONS</p>
+    <ul style="margin-left: 20px; margin-top: 16px; line-height: 1.8; font-size: 15px; color: #7f1d1d;">
+        <li><strong>Contact us immediately</strong> if you suspect unauthorized access</li>
+        <li>Change your password if you're concerned about security</li>
+        <li>Ensure you're accessing the portal from secure networks only</li>
+        <li>Review your recent portal activity for any unusual behavior</li>
+        <li>Keep your login credentials confidential and secure</li>
+    </ul>
+</div>
+
+<!-- What If This Was You -->
+<div class="info-card">
+    <h4 style="color: #7c2d92; margin-bottom: 16px;">✅ If This Was You</h4>
+    <p style="color: #4b5563; font-size: 15px; line-height: 1.6;">
+        If you attempted to log in but forgot your password or made a typo, no action is needed. You can reset your password using the "Forgot Password" option on the login page, or contact our support team for assistance.
+    </p>
+</div>
+
+<!-- Security Reminders -->
+{{#if securityTips}}
+<div class="success-notice">
+    <h4 style="color: #15803d; margin-bottom: 16px;">💡 Security Best Practices</h4>
+    <ul style="margin-left: 20px; line-height: 1.8; font-size: 15px;">
+        {{#each securityTips}}
+        <li>{{this}}</li>
+        {{/each}}
+    </ul>
+</div>
+{{else}}
+<div class="success-notice">
+    <h4 style="color: #15803d; margin-bottom: 16px;">💡 Security Best Practices</h4>
+    <ul style="margin-left: 20px; line-height: 1.8; font-size: 15px;">
+        <li>Use strong, unique passwords for your client portal</li>
+        <li>Always log out when using shared or public devices</li>
+        <li>Access the portal only from trusted networks</li>
+        <li>Never share your login credentials with others</li>
+        <li>Contact support immediately if you notice suspicious activity</li>
+        <li>Keep your contact information updated for security notifications</li>
+    </ul>
+</div>
+{{/if}}
+
+<!-- Contact Information -->
+<div class="success-notice">
+    <h4 style="color: #15803d; margin-bottom: 16px;">📞 Need Immediate Help?</h4>
+    <p style="font-size: 15px; line-height: 1.6;">
+        If you have any security concerns about this failed login attempt or need assistance accessing your account, please contact our support team immediately. We're available to help protect your business information and resolve any access issues.
+    </p>
+</div>
+
+<!-- Action Buttons -->
+<div class="cta-section">
+    <a href="#" class="cta-button" style="background-color: #dc2626;">Contact Support Now</a>
+    <a href="#" class="cta-button" style="background-color: #7c2d92; margin-left: 12px;">Reset Password</a>
+</div>
+
+<!-- Footer -->
+<div class="message">
+    <p style="font-size: 14px; color: #6b7280; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+        <strong>Security Notice:</strong><br>
+        This automated notification helps protect your client portal access. We monitor all login attempts to ensure the security of your business information and communications. Multiple failed attempts may result in temporary account lockout for security purposes.<br><br>
+        <strong>Unrecognized attempt?</strong> Contact our support team immediately - we're here to help secure your account.
+    </p>
+</div>
+
+{{/base}} 

@@ -125,6 +125,8 @@ import {
 	AssetDeletedAdmin,
 	LoginNotification,
 	ClientLoginNotification,
+	FailedLoginAttempt,
+	ClientFailedLoginAttempt,
 	EmailVerified,
 	ClaimCreated,
 	ClaimStatusUpdate,
@@ -178,9 +180,15 @@ export class CommunicationService {
 			console.log(`📧 [EmailService] Template generated successfully for: ${emailType}`);
 			console.log(`📧 [EmailService] Subject: "${template.subject}"`);
 
+			// Construct the from field with display name and email
+			const emailFrom = this.configService.get<string>('SMTP_FROM');
+			const emailFromName = this.configService.get<string>('EMAIL_FROM_NAME');
+			const fromField = emailFromName ? `"${emailFromName}" <${emailFrom}>` : emailFrom;
+
 			console.log(`📧 [EmailService] Sending email via SMTP...`);
+			console.log(`📧 [EmailService] From: ${fromField}`);
 			const result = await this.emailService.sendMail({
-				from: this.configService.get<string>('SMTP_FROM'),
+				from: fromField,
 				to: recipientsEmails,
 				subject: template.subject,
 				html: template.body,
@@ -213,10 +221,12 @@ export class CommunicationService {
 			const smtpHost = this.configService.get<string>('SMTP_HOST');
 			const smtpUser = this.configService.get<string>('SMTP_USER');
 			const smtpFrom = this.configService.get<string>('SMTP_FROM');
+			const emailFromName = this.configService.get<string>('EMAIL_FROM_NAME');
 			console.error('❌ [EmailService] SMTP Configuration:', {
 				SMTP_HOST: smtpHost,
 				SMTP_USER: smtpUser,
 				SMTP_FROM: smtpFrom,
+				EMAIL_FROM_NAME: emailFromName,
 			});
 			
 			// Log failed email attempt
@@ -598,6 +608,16 @@ export class CommunicationService {
 				return {
 					subject: 'Security Alert: New Login to Your Client Portal',
 					body: ClientLoginNotification(data as LoginNotificationEmailData),
+				};
+			case EmailType.FAILED_LOGIN_ATTEMPT:
+				return {
+					subject: 'Security Alert: Failed Login Attempt on Your Account',
+					body: FailedLoginAttempt(data as LoginNotificationEmailData),
+				};
+			case EmailType.CLIENT_FAILED_LOGIN_ATTEMPT:
+				return {
+					subject: 'Security Alert: Failed Login Attempt on Your Client Portal',
+					body: ClientFailedLoginAttempt(data as LoginNotificationEmailData),
 				};
 			case EmailType.EMAIL_VERIFIED:
 				return {

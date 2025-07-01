@@ -1069,52 +1069,71 @@ export class AttendanceReportsService {
 		// Special handling for no employees scenario
 		if (totalEmployees === 0) {
 			insights.push('No employees are registered in the system for this organization.');
+			insights.push('System setup is required to begin tracking attendance and performance metrics.');
 			return insights;
 		}
 
 		// Special handling for no present employees
 		if (presentCount === 0) {
-			insights.push('No employees have checked in yet today. Consider following up with your team.');
-			insights.push('This could indicate a system issue, public holiday, or scheduling changes.');
+			insights.push('CRITICAL: No employees have checked in yet today. This requires immediate attention and follow-up.');
+			insights.push('Potential causes: system issues, holiday schedules, communication gaps, or emergency situations.');
+			insights.push('Immediate action required: Contact all team members to ensure safety and clarify work arrangements.');
+			insights.push('Consider checking attendance system functionality and recent organizational communications.');
 			return insights;
 		}
 
 		// Enhanced attendance rate insights
 		if (attendanceRate >= 90) {
-			insights.push('Excellent attendance rate - team showing strong commitment!');
+			insights.push(`Excellent attendance rate of ${attendanceRate}% - team showing strong commitment and engagement!`);
 		} else if (attendanceRate >= 75) {
-			insights.push('Good attendance rate - room for slight improvement.');
+			insights.push(`Good attendance rate of ${attendanceRate}% with opportunity for improvement through enhanced team support.`);
+		} else if (attendanceRate >= 50) {
+			insights.push(`Moderate attendance rate of ${attendanceRate}% - investigate potential barriers preventing team attendance.`);
 		} else {
-			insights.push('Attendance rate needs attention - consider checking in with absent team members.');
+			insights.push(`Low attendance rate of ${attendanceRate}% requires immediate intervention and comprehensive support strategy.`);
 		}
 
-		// Enhanced late arrival insights with comprehensive data
+		// Enhanced punctuality insights with comprehensive data
 		const totalLatePercentage = punctuality.latePercentage + punctuality.veryLatePercentage;
-		if (totalLatePercentage > 0) {
-			if (punctuality.veryLatePercentage > 0) {
-				insights.push(
-					`${totalLatePercentage}% of employees arrived late today (${punctuality.latePercentage}% moderately late, ${punctuality.veryLatePercentage}% very late). Average delay: ${punctuality.averageLateMinutes} minutes.`,
-				);
-			} else {
-				insights.push(
-					`${punctuality.latePercentage}% of employees arrived late today with an average delay of ${punctuality.averageLateMinutes} minutes.`,
-				);
-			}
-		}
+		const totalOnTimePercentage = punctuality.earlyPercentage + punctuality.onTimePercentage;
 
-		// Specific insights for severe lateness
-		if (punctuality.veryLatePercentage > 10) {
+		if (totalLatePercentage === 0 && presentCount > 0) {
+			insights.push(`Perfect punctuality: All ${presentCount} employees arrived on time or early - exceptional team discipline!`);
+		} else if (punctuality.veryLateArrivals.length > 0) {
 			insights.push(
-				`Critical: ${punctuality.veryLatePercentage}% of employees were very late (30+ minutes) - immediate intervention needed.`,
+				`URGENT: ${punctuality.veryLateArrivals.length} employees arrived very late (30+ minutes). Total tardiness: ${totalLatePercentage}% with average delay of ${punctuality.averageLateMinutes} minutes.`,
+			);
+		} else if (punctuality.lateArrivals.length > 0) {
+			insights.push(
+				`${punctuality.lateArrivals.length} employees arrived late today with an average delay of ${punctuality.averageLateMinutes} minutes. Focus on identifying and addressing barriers.`,
 			);
 		}
 
-		if (punctuality.earlyPercentage > 50) {
-			insights.push(`${punctuality.earlyPercentage}% of team members arrived early - showing great enthusiasm!`);
+		// Early arrival recognition
+		if (punctuality.earlyArrivals.length > 0) {
+			insights.push(`Outstanding dedication: ${punctuality.earlyArrivals.length} employees arrived early, demonstrating exceptional commitment.`);
 		}
 
+		// Specific insights for severe lateness requiring immediate action
+		if (punctuality.veryLatePercentage > 10) {
+			insights.push(
+				`CRITICAL ALERT: ${punctuality.veryLatePercentage}% of employees were extremely late - immediate management intervention needed.`,
+			);
+		}
+
+		// Present employee count insight
 		if (presentCount > 0) {
-			insights.push(`${presentCount} team members have checked in so far today.`);
+			const presentPercentage = Math.round((presentCount / totalEmployees) * 100);
+			insights.push(`${presentCount} out of ${totalEmployees} team members (${presentPercentage}%) have successfully checked in so far today.`);
+		}
+
+		// Performance comparison insight
+		if (totalOnTimePercentage >= 80) {
+			insights.push(`Strong punctuality performance: ${totalOnTimePercentage}% of attendees arrived on time or early.`);
+		} else if (totalOnTimePercentage >= 60) {
+			insights.push(`Moderate punctuality performance: ${totalOnTimePercentage}% of attendees arrived on time or early - room for improvement.`);
+		} else if (totalOnTimePercentage > 0) {
+			insights.push(`Punctuality challenges: Only ${totalOnTimePercentage}% of attendees arrived on time or early - requires focused attention.`);
 		}
 
 		return insights;
@@ -1123,34 +1142,65 @@ export class AttendanceReportsService {
 	private generateMorningRecommendations(punctuality: PunctualityBreakdown, attendanceRate: number): string[] {
 		const recommendations: string[] = [];
 
-		// Special handling for zero attendance
+		// Special handling for zero attendance - immediate crisis response
 		if (attendanceRate === 0) {
-			recommendations.push('Investigate why no employees have checked in today.');
-			recommendations.push('Consider reaching out to team leaders to confirm work schedule.');
-			recommendations.push('Check if there are any system issues preventing check-ins.');
+			recommendations.push('IMMEDIATE ACTION: Contact all team members within 30 minutes to verify safety and work status.');
+			recommendations.push('Check attendance system functionality and verify no technical issues are preventing check-ins.');
+			recommendations.push('Review today\'s schedule, holiday calendar, and recent organizational communications.');
+			recommendations.push('Prepare contingency plans for business operations if attendance issues persist.');
+			recommendations.push('Document incident for analysis and implement preventive measures for future occurrences.');
 			return recommendations;
 		}
 
-		if (punctuality.latePercentage > 20) {
-			recommendations.push('Consider sending reminders about punctuality expectations.');
-			recommendations.push('Review if start times are clearly communicated to all team members.');
+		// Critical lateness recommendations
+		if (punctuality.veryLateArrivals.length > 0) {
+			recommendations.push(`URGENT: Schedule immediate meetings with ${punctuality.veryLateArrivals.length} employees who were very late to identify critical barriers.`);
+			recommendations.push('Implement emergency support measures for employees facing significant attendance challenges.');
 		}
 
+		// Standard lateness recommendations
+		if (punctuality.lateArrivals.length > 0) {
+			recommendations.push('Schedule one-on-one conversations with late employees to understand barriers and provide targeted support.');
+			recommendations.push('Review if start times and expectations are clearly communicated and realistic for all team members.');
+			recommendations.push('Consider flexible start time options for employees facing consistent transportation or personal challenges.');
+		}
+
+		// Attendance improvement recommendations
 		if (attendanceRate < 80) {
-			recommendations.push('Follow up with absent team members to ensure they are okay.');
-			recommendations.push('Consider implementing an absence notification system.');
+			recommendations.push('Implement proactive wellness check system to identify and address attendance barriers early.');
+			recommendations.push('Review organizational policies and support systems to ensure they meet current team needs.');
 		}
 
-		if (punctuality.onTimePercentage > 80) {
-			recommendations.push('Recognize punctual team members for their consistency.');
+		if (attendanceRate < 60) {
+			recommendations.push('Conduct urgent team meeting to address systemic attendance challenges and gather feedback.');
+			recommendations.push('Consider implementing attendance incentive programs or enhanced support services.');
 		}
 
-		if (punctuality.earlyPercentage > 30) {
-			recommendations.push('Consider if early arrivals indicate scheduling issues or exceptional dedication.');
+		// Severe punctuality recommendations
+		if (punctuality.latePercentage > 25) {
+			recommendations.push('Evaluate and adjust start time expectations based on realistic commute and preparation needs.');
+			recommendations.push('Implement attendance coaching program for employees struggling with punctuality.');
 		}
 
+		// Recognition and positive reinforcement
+		if (punctuality.earlyArrivals.length > 0) {
+			recommendations.push(`Recognize and appreciate the ${punctuality.earlyArrivals.length} employees who demonstrated exceptional commitment by arriving early.`);
+		}
+
+		if (punctuality.onTimeArrivals.length > 0) {
+			recommendations.push(`Acknowledge the ${punctuality.onTimeArrivals.length} punctual team members for their consistent reliability and professionalism.`);
+		}
+
+		// Excellence maintenance recommendations
+		if (punctuality.onTimePercentage > 80 && attendanceRate > 85) {
+			recommendations.push('Continue current successful practices and consider documenting what\'s working well for future reference.');
+			recommendations.push('Use today\'s positive performance as a benchmark for maintaining excellence.');
+		}
+
+		// Default positive reinforcement
 		if (recommendations.length === 0) {
-			recommendations.push('Great start to the day - keep up the excellent attendance habits!');
+			recommendations.push('Maintain current excellent attendance practices and continue supporting team success.');
+			recommendations.push('Consider sharing today\'s positive results with the team to reinforce good habits.');
 		}
 
 		return recommendations;

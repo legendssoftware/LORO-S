@@ -93,6 +93,23 @@ Handlebars.registerHelper('ne', function(a: any, b: any) {
     return a !== b;
 });
 
+// Logical helpers
+Handlebars.registerHelper('and', function(...args: any[]) {
+    // Remove the options hash from the arguments
+    const values = args.slice(0, -1);
+    return values.every(Boolean);
+});
+
+Handlebars.registerHelper('or', function(...args: any[]) {
+    // Remove the options hash from the arguments
+    const values = args.slice(0, -1);
+    return values.some(Boolean);
+});
+
+Handlebars.registerHelper('not', function(value: any) {
+    return !value;
+});
+
 // String manipulation helpers
 Handlebars.registerHelper('substring', function(str: string, start: number, end?: number) {
     if (!str) return '';

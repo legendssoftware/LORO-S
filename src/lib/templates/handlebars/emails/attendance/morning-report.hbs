@@ -66,13 +66,13 @@
     <h4 style="color: #15803d; margin-bottom: 16px;">🌅 Early Arrivals - Outstanding Dedication ({{punctuality.earlyArrivals.length}})</h4>
     <div style="display: grid; gap: 12px;">
         {{#each punctuality.earlyArrivals}}
-        <div style="display: flex; align-items: center; padding: 16px; background: rgba(34, 197, 94, 0.1); border-radius: 12px; border-left: 4px solid #22c55e;">
-            <div style="flex: 1;">
-                <div style="font-weight: 700; color: #15803d; font-size: 15px;">{{name}} {{surname}}</div>
+        <div style="display: flex; align-items: center; padding: 16px; background: rgba(34, 197, 94, 0.1); border-radius: 12px; border-left: 4px solid #22c55e; margin-bottom: 8px;">
+            <div style="flex: 1; margin-right: 16px;">
+                <div style="font-weight: 700; color: #15803d; font-size: 15px; margin-bottom: 4px;">{{name}} {{surname}}</div>
                 <div style="font-size: 14px; color: #16a34a; margin-top: 2px;">{{role}}{{#if branch.name}} • {{branch.name}}{{/if}}</div>
             </div>
-            <div style="text-align: right;">
-                <div style="font-weight: 700; color: #15803d; font-size: 16px;">{{checkInTime}}</div>
+            <div style="text-align: right; min-width: 120px; margin-left: 16px;">
+                <div style="font-weight: 700; color: #15803d; font-size: 16px; margin-bottom: 2px;">{{checkInTime}}</div>
                 <div style="font-size: 12px; color: #16a34a; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;">{{#if earlyMinutes}}{{earlyMinutes}} min early{{else}}Perfect Timing{{/if}}</div>
             </div>
         </div>
@@ -87,13 +87,13 @@
     <h4 style="color: #166534;">✅ On Time Arrivals - Excellent Punctuality ({{punctuality.onTimeArrivals.length}})</h4>
     <div style="display: grid; gap: 12px; margin-top: 16px;">
         {{#each punctuality.onTimeArrivals}}
-        <div style="display: flex; align-items: center; padding: 16px; background: rgba(34, 197, 94, 0.05); border-radius: 12px; border-left: 3px solid #22c55e;">
-            <div style="flex: 1;">
-                <div style="font-weight: 700; color: #166534; font-size: 15px;">{{name}} {{surname}}</div>
+        <div style="display: flex; align-items: center; padding: 16px; background: rgba(34, 197, 94, 0.05); border-radius: 12px; border-left: 3px solid #22c55e; margin-bottom: 8px;">
+            <div style="flex: 1; margin-right: 16px;">
+                <div style="font-weight: 700; color: #166534; font-size: 15px; margin-bottom: 4px;">{{name}} {{surname}}</div>
                 <div style="font-size: 14px; color: #16a34a; margin-top: 2px;">{{role}}{{#if branch.name}} • {{branch.name}}{{/if}}</div>
             </div>
-            <div style="text-align: right;">
-                <div style="font-weight: 700; color: #166534; font-size: 16px;">{{checkInTime}}</div>
+            <div style="text-align: right; min-width: 120px; margin-left: 16px;">
+                <div style="font-weight: 700; color: #166534; font-size: 16px; margin-bottom: 2px;">{{checkInTime}}</div>
                 <div style="font-size: 12px; color: #16a34a; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;">Perfect Timing</div>
             </div>
         </div>
@@ -108,13 +108,13 @@
     <h4 style="color: #991b1b;">⚠️ Late Arrivals - Requires Attention ({{punctuality.lateArrivals.length}})</h4>
     <div style="display: grid; gap: 12px; margin-top: 16px;">
         {{#each punctuality.lateArrivals}}
-        <div style="display: flex; align-items: center; padding: 16px; background: rgba(239, 68, 68, 0.05); border-radius: 12px; border-left: 3px solid #ef4444;">
-            <div style="flex: 1;">
-                <div style="font-weight: 700; color: #991b1b; font-size: 15px;">{{name}} {{surname}}</div>
+        <div style="display: flex; align-items: center; padding: 16px; background: rgba(239, 68, 68, 0.05); border-radius: 12px; border-left: 3px solid #ef4444; margin-bottom: 8px;">
+            <div style="flex: 1; margin-right: 16px;">
+                <div style="font-weight: 700; color: #991b1b; font-size: 15px; margin-bottom: 4px;">{{name}} {{surname}}</div>
                 <div style="font-size: 14px; color: #dc2626; margin-top: 2px;">{{role}}{{#if branch.name}} • {{branch.name}}{{/if}}</div>
             </div>
-            <div style="text-align: right;">
-                <div style="font-weight: 700; color: #991b1b; font-size: 16px;">{{checkInTime}}</div>
+            <div style="text-align: right; min-width: 120px; margin-left: 16px;">
+                <div style="font-weight: 700; color: #991b1b; font-size: 16px; margin-bottom: 2px;">{{checkInTime}}</div>
                 <div style="font-size: 12px; color: #dc2626; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;">
                     {{#if lateMinutes}}{{lateMinutes}}min Delay{{else}}Late Arrival{{/if}}
                 </div>
@@ -132,13 +132,13 @@
     <p style="color: #7f1d1d; font-size: 14px; margin-bottom: 16px;">These employees arrived 30+ minutes late and require immediate attention.</p>
     <div style="display: grid; gap: 12px;">
         {{#each punctuality.veryLateArrivals}}
-        <div style="display: flex; align-items: center; padding: 16px; background: rgba(153, 27, 27, 0.15); border-radius: 8px; border-left: 4px solid #991b1b;">
-            <div style="flex: 1;">
-                <div style="font-weight: 700; color: #991b1b; font-size: 15px;">{{name}} {{surname}}</div>
+        <div style="display: flex; align-items: center; padding: 16px; background: rgba(153, 27, 27, 0.15); border-radius: 8px; border-left: 4px solid #991b1b; margin-bottom: 8px;">
+            <div style="flex: 1; margin-right: 16px;">
+                <div style="font-weight: 700; color: #991b1b; font-size: 15px; margin-bottom: 4px;">{{name}} {{surname}}</div>
                 <div style="font-size: 14px; color: #7f1d1d; margin-top: 2px;">{{role}}{{#if branch.name}} • {{branch.name}}{{/if}}</div>
             </div>
-            <div style="text-align: right;">
-                <div style="font-weight: 700; color: #991b1b; font-size: 16px;">{{checkInTime}}</div>
+            <div style="text-align: right; min-width: 120px; margin-left: 16px;">
+                <div style="font-weight: 700; color: #991b1b; font-size: 16px; margin-bottom: 2px;">{{checkInTime}}</div>
                 <div style="font-size: 12px; color: #7f1d1d; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;">{{lateMinutes}} MINUTES LATE</div>
             </div>
         </div>
@@ -153,12 +153,12 @@
     <h4 style="color: #52525b;">❌ Absent Employees - Follow-up Needed ({{absentEmployees.length}})</h4>
     <div style="display: grid; gap: 12px; margin-top: 16px;">
         {{#each absentEmployees}}
-        <div style="display: flex; align-items: center; padding: 16px; background: rgba(113, 113, 122, 0.05); border-radius: 12px; border-left: 3px solid #71717a;">
-            <div style="flex: 1;">
-                <div style="font-weight: 700; color: #52525b; font-size: 15px;">{{name}} {{surname}}</div>
+        <div style="display: flex; align-items: center; padding: 16px; background: rgba(113, 113, 122, 0.05); border-radius: 12px; border-left: 3px solid #71717a; margin-bottom: 8px;">
+            <div style="flex: 1; margin-right: 16px;">
+                <div style="font-weight: 700; color: #52525b; font-size: 15px; margin-bottom: 4px;">{{name}} {{surname}}</div>
                 <div style="font-size: 14px; color: #71717a; margin-top: 2px;">{{role}}{{#if branch.name}} • {{branch.name}}{{/if}}</div>
             </div>
-            <div style="text-align: right;">
+            <div style="text-align: right; min-width: 120px; margin-left: 16px;">
                 <div style="font-size: 14px; color: #71717a; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;">No Check-in</div>
                 <div style="font-size: 12px; color: #71717a; font-weight: 500;">Requires Contact</div>
             </div>
@@ -198,31 +198,70 @@
 <!-- Key Insights -->
 <div class="info-card">
     <h4 style="color: #7c2d92; margin-bottom: 16px;">💡 Key Insights & Performance Highlights</h4>
+    
+    {{#if (eq summary.totalEmployees 0)}}
+    <!-- No employees scenario -->
+    <ul style="margin-left: 20px; color: #4b5563; line-height: 1.8; font-size: 15px;">
+        <li style="margin-bottom: 8px;">
+            <strong style="color: #374151;">System Status:</strong> 
+            No employees are registered in the system for this organization. Consider adding team members to track attendance. 📋
+        </li>
+        <li style="margin-bottom: 8px;">
+            <strong style="color: #374151;">Next Steps:</strong> 
+            Set up employee accounts and configure attendance tracking to start monitoring team performance. 🚀
+        </li>
+    </ul>
+    
+    {{else if (eq summary.presentCount 0)}}
+    <!-- No one present scenario -->
+    <ul style="margin-left: 20px; color: #4b5563; line-height: 1.8; font-size: 15px;">
+        <li style="margin-bottom: 8px;">
+            <strong style="color: #374151;">Attendance Alert:</strong> 
+            No employees have checked in yet today. This requires immediate attention and follow-up with your team. 🚨
+        </li>
+        <li style="margin-bottom: 8px;">
+            <strong style="color: #374151;">Potential Causes:</strong> 
+            Consider checking for system issues, holiday schedules, or communication gaps that may be preventing check-ins. 📞
+        </li>
+        <li style="margin-bottom: 8px;">
+            <strong style="color: #374151;">Immediate Action:</strong> 
+            Contact team members directly to ensure their safety and clarify today's work arrangements. ⚡
+        </li>
+    </ul>
+    
+    {{else}}
+    <!-- Normal attendance scenario with present employees -->
     <ul style="margin-left: 20px; color: #4b5563; line-height: 1.8; font-size: 15px;">
         <li style="margin-bottom: 8px;">
             <strong style="color: #374151;">Outstanding Performance:</strong> 
             {{#if (gt punctuality.earlyArrivals.length 0)}}
                 {{punctuality.earlyArrivals.length}} employees arrived early, demonstrating excellent dedication and commitment 🌟
+            {{else if (gt punctuality.onTimeArrivals.length 0)}}
+                {{punctuality.onTimeArrivals.length}} employees arrived on time, showing strong punctuality and reliability ⭐
             {{else}}
-                All present employees showed great punctuality arriving on time or close to schedule ⭐
+                All present employees are working hard despite some punctuality challenges - focus on support and guidance 💪
             {{/if}}
         </li>
         <li style="margin-bottom: 8px;">
             <strong style="color: #374151;">Attendance Health:</strong> 
             {{#if (gte summary.attendanceRate 90)}}
-                Outstanding attendance rate of {{summary.attendanceRate}}% - your team is highly engaged! 🎯
+                Outstanding attendance rate of {{summary.attendanceRate}}% - your team is highly engaged and committed! 🎯
             {{else if (gte summary.attendanceRate 75)}}
-                Solid attendance rate of {{summary.attendanceRate}}% with opportunity for improvement 📈
+                Good attendance rate of {{summary.attendanceRate}}% with room for improvement through team engagement 📈
+            {{else if (gte summary.attendanceRate 50)}}
+                Moderate attendance rate of {{summary.attendanceRate}}% - consider investigating barriers to attendance 🤔
             {{else}}
-                Attendance rate of {{summary.attendanceRate}}% requires immediate attention and intervention 🚨
+                Low attendance rate of {{summary.attendanceRate}}% requires immediate attention and intervention 🚨
             {{/if}}
         </li>
         <li style="margin-bottom: 8px;">
             <strong style="color: #374151;">Punctuality Status:</strong> 
-            {{#if (gt punctuality.lateArrivals.length 0)}}
+            {{#if (and (gt summary.presentCount 0) (eq punctuality.lateArrivals.length 0) (eq punctuality.veryLateArrivals.length 0))}}
+                Perfect punctuality across all {{summary.presentCount}} attendees - exceptional team discipline! 🎉
+            {{else if (gt punctuality.lateArrivals.length 0)}}
                 {{punctuality.lateArrivals.length}} late arrivals today - recommend personal check-ins to address potential barriers 🕐
             {{else}}
-                Perfect punctuality across all attendees - exceptional team discipline! 🎉
+                Mixed punctuality results - focus on supporting consistent team habits ⏰
             {{/if}}
         </li>
         {{#if (gt summary.absentCount 0)}}
@@ -232,16 +271,63 @@
         </li>
         {{/if}}
     </ul>
+    {{/if}}
 </div>
 
 <!-- Action Items -->
-{{#if (or (gt punctuality.lateArrivals.length 0) (gt summary.absentCount 0))}}
+{{#if (eq summary.totalEmployees 0)}}
+<!-- No employees in system -->
+<div class="info-card" style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border-left-color: #0ea5e9;">
+    <p style="font-size: 16px; font-weight: 700; color: #0369a1;">📋 Setup Required</p>
+    <ul style="margin-left: 20px; margin-top: 16px; line-height: 1.8; font-size: 15px; color: #0f172a;">
+        <li style="margin-bottom: 8px;">
+            <strong>Employee Registration:</strong> Add team members to the system to begin tracking attendance and performance
+        </li>
+        <li style="margin-bottom: 8px;">
+            <strong>System Configuration:</strong> Set up organization working hours, break policies, and attendance rules
+        </li>
+        <li style="margin-bottom: 8px;">
+            <strong>Training & Onboarding:</strong> Provide team members with access credentials and attendance system training
+        </li>
+    </ul>
+</div>
+
+{{else if (eq summary.presentCount 0)}}
+<!-- Everyone is absent -->
+<div style="background: rgba(220, 38, 38, 0.1); border: 2px solid #dc2626; border-radius: 12px; padding: 20px; margin: 20px 0;">
+    <p style="font-size: 16px; font-weight: 700; color: #991b1b;">🚨 URGENT: Zero Attendance Action Plan</p>
+    <ul style="margin-left: 20px; margin-top: 16px; line-height: 1.8; font-size: 15px;">
+        <li style="margin-bottom: 8px;">
+            <strong style="color: #991b1b;">Immediate Response:</strong> Contact all {{summary.totalEmployees}} team members within the next 30 minutes to ensure safety and clarify work status
+        </li>
+        <li style="margin-bottom: 8px;">
+            <strong style="color: #991b1b;">System Check:</strong> Verify attendance system functionality and check for technical issues preventing check-ins
+        </li>
+        <li style="margin-bottom: 8px;">
+            <strong style="color: #991b1b;">Schedule Review:</strong> Confirm today's work schedule, holiday calendar, and any planned organizational changes
+        </li>
+        <li style="margin-bottom: 8px;">
+            <strong style="color: #991b1b;">Communication Audit:</strong> Review recent communications to identify potential misunderstandings about work arrangements
+        </li>
+        <li style="margin-bottom: 8px;">
+            <strong style="color: #991b1b;">Escalation Protocol:</strong> Notify senior management if team members cannot be reached within 2 hours
+        </li>
+    </ul>
+</div>
+
+{{else if (or (gt punctuality.lateArrivals.length 0) (gt punctuality.veryLateArrivals.length 0) (gt summary.absentCount 0))}}
+<!-- Some attendance issues -->
 <div class="warning-notice">
     <p style="font-size: 16px; font-weight: 700; color: #7c2d92;">📋 Strategic Action Plan</p>
     <ul style="margin-left: 20px; margin-top: 16px; line-height: 1.8; font-size: 15px;">
+        {{#if (gt punctuality.veryLateArrivals.length 0)}}
+        <li style="margin-bottom: 8px;">
+            <strong>Critical Priority:</strong> Immediate one-on-one meetings with {{punctuality.veryLateArrivals.length}} employees who were very late (30+ minutes) to identify urgent barriers
+        </li>
+        {{/if}}
         {{#if (gt punctuality.lateArrivals.length 0)}}
         <li style="margin-bottom: 8px;">
-            <strong>Punctuality Support:</strong> Schedule individual conversations with late arrivals to identify barriers and provide flexible solutions
+            <strong>Punctuality Support:</strong> Schedule individual conversations with {{punctuality.lateArrivals.length}} late arrivals to identify barriers and provide flexible solutions
         </li>
         <li style="margin-bottom: 8px;">
             <strong>Pattern Analysis:</strong> Monitor tardiness trends over the next week to identify systemic issues vs. individual challenges
@@ -249,23 +335,38 @@
         {{/if}}
         {{#if (gt summary.absentCount 0)}}
         <li style="margin-bottom: 8px;">
-            <strong>Wellness Outreach:</strong> Contact absent employees within 2 hours to ensure safety and offer assistance if needed
+            <strong>Wellness Outreach:</strong> Contact {{summary.absentCount}} absent employees within 2 hours to ensure safety and offer assistance if needed
         </li>
         <li style="margin-bottom: 8px;">
             <strong>Policy Review:</strong> Evaluate current attendance expectations and support systems for realistic adjustments
         </li>
         {{/if}}
+        {{#if (gt punctuality.earlyArrivals.length 0)}}
         <li style="margin-bottom: 8px;">
-            <strong>Recognition Program:</strong> Acknowledge early arrivals and consistent performers with personalized appreciation or team shout-outs 🏆
+            <strong>Recognition Program:</strong> Acknowledge {{punctuality.earlyArrivals.length}} early arrivals and {{punctuality.onTimeArrivals.length}} punctual employees with personalized appreciation 🏆
         </li>
+        {{/if}}
     </ul>
 </div>
+
 {{else}}
+<!-- Perfect attendance day -->
 <div class="success-notice">
     <p style="font-size: 16px; font-weight: 700; color: #15803d;">🎉 Exceptional Performance Today!</p>
     <p style="margin-top: 12px; font-size: 15px; line-height: 1.6;">
-        Perfect attendance and punctuality across your team. Consider celebrating this achievement and using it as momentum for continued excellence.
+        Perfect attendance and punctuality across your {{summary.presentCount}}-person team. Consider celebrating this achievement and using it as momentum for continued excellence.
     </p>
+    <ul style="margin-left: 20px; margin-top: 16px; line-height: 1.8; font-size: 15px;">
+        <li style="margin-bottom: 8px;">
+            <strong>Team Recognition:</strong> Send congratulatory message to all team members acknowledging their commitment
+        </li>
+        <li style="margin-bottom: 8px;">
+            <strong>Success Documentation:</strong> Record today's practices and conditions that contributed to perfect attendance
+        </li>
+        <li style="margin-bottom: 8px;">
+            <strong>Momentum Building:</strong> Use this positive energy to reinforce excellent attendance habits going forward
+        </li>
+    </ul>
 </div>
 {{/if}}
 

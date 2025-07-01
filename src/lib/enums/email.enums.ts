@@ -87,6 +87,8 @@ export enum EmailType {
 	// Additional auth emails
 	LOGIN_NOTIFICATION = 'login_notification',
 	CLIENT_LOGIN_NOTIFICATION = 'client_login_notification',
+	FAILED_LOGIN_ATTEMPT = 'failed_login_attempt',
+	CLIENT_FAILED_LOGIN_ATTEMPT = 'client_failed_login_attempt',
 	EMAIL_VERIFIED = 'email_verified',
 	// Claims related emails
 	CLAIM_CREATED = 'claim_created',

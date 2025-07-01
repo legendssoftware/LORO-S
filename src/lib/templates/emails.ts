@@ -312,6 +312,14 @@ export const ClientLoginNotification = (data: LoginNotificationEmailData): strin
 	return emailTemplateService.clientLoginNotification(data);
 };
 
+export const FailedLoginAttempt = (data: LoginNotificationEmailData): string => {
+	return emailTemplateService.failedLoginAttempt(data);
+};
+
+export const ClientFailedLoginAttempt = (data: LoginNotificationEmailData): string => {
+	return emailTemplateService.clientFailedLoginAttempt(data);
+};
+
 export const EmailVerified = (data: EmailVerifiedEmailData): string => {
 	return emailTemplateService.emailVerified(data);
 };

@@ -1322,6 +1322,8 @@ export interface EmailDataMap {
 	// Additional auth email mappings
 	[EmailType.LOGIN_NOTIFICATION]: LoginNotificationEmailData;
 	[EmailType.CLIENT_LOGIN_NOTIFICATION]: LoginNotificationEmailData;
+	[EmailType.FAILED_LOGIN_ATTEMPT]: LoginNotificationEmailData;
+	[EmailType.CLIENT_FAILED_LOGIN_ATTEMPT]: LoginNotificationEmailData;
 	[EmailType.EMAIL_VERIFIED]: EmailVerifiedEmailData;
 	// Claims email mappings
 	[EmailType.CLAIM_CREATED]: ClaimEmailData;

@@ -248,6 +248,9 @@ class EmailTemplateService {
 				companyReg: process.env.COMPANY_REG || '2023/123456/07',
 				vatNumber: process.env.VAT_NUMBER || '4567890123',
 				headerTagline: process.env.HEADER_TAGLINE || 'Empowering African Business',
+				// Email sender information
+				emailFromName: process.env.EMAIL_FROM_NAME || process.env.COMPANY_NAME || 'LORO',
+				emailFromAddress: process.env.SMTP_FROM || process.env.SUPPORT_EMAIL || 'support@loro.africa',
 				currentYear: new Date().getFullYear(),
 				// Social media links from environment
 				socialLinks: {
@@ -541,6 +544,14 @@ class EmailTemplateService {
 		return this.renderTemplate('client/login-notification.hbs', data);
 	}
 
+	failedLoginAttempt(data: LoginNotificationEmailData): string {
+		return this.renderTemplate('auth/failed-login-attempt.hbs', data);
+	}
+
+	clientFailedLoginAttempt(data: LoginNotificationEmailData): string {
+		return this.renderTemplate('client/failed-login-attempt.hbs', data);
+	}
+
 	emailVerified(data: EmailVerifiedEmailData): string {
 		return this.renderTemplate('auth/email-verified.hbs', data);
 	}
@@ -668,6 +679,13 @@ class EmailTemplateService {
 			'journals/created.hbs',
 			'journals/updated.hbs',
 			'journals/deleted.hbs',
+			// Additional auth templates
+			'auth/login-notification.hbs',
+			'auth/failed-login-attempt.hbs',
+			'auth/email-verified.hbs',
+			// Client templates
+			'client/login-notification.hbs',
+			'client/failed-login-attempt.hbs',
 		];
 
 		templates.forEach((template) => {

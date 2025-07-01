@@ -52,6 +52,32 @@ export class AuthService {
 			const authProfile = await this.userService.findOneForAuth(username);
 
 			if (!authProfile?.user) {
+				// Send failed login email for unknown user
+				try {
+					// Try to find user by email for failed login notification
+					const userByEmail = await this.userService.findOneByEmail(username);
+					if (userByEmail?.user) {
+						this.eventEmitter.emit('send.email', EmailType.FAILED_LOGIN_ATTEMPT, [userByEmail.user.email], {
+							name: userByEmail.user.name || username,
+							loginTime: new Date().toLocaleString(),
+							ipAddress: requestData?.ipAddress || 'Unknown',
+							location: requestData?.location || 'Unknown',
+							country: requestData?.country || 'Unknown',
+							deviceType: requestData?.deviceType || 'Unknown',
+							browser: requestData?.browser || 'Unknown',
+							operatingSystem: requestData?.operatingSystem || 'Unknown',
+							userAgent: requestData?.userAgent || 'Unknown',
+							suspicious: true,
+							securityTips: [
+								'Change your password immediately if you suspect unauthorized access',
+								'Enable two-factor authentication for additional security',
+								'Contact support if you notice any unusual activity',
+							],
+						});
+					}
+				} catch (error) {
+					console.error('Failed to send failed login notification email:', error);
+				}
 				throw new BadRequestException('Invalid credentials provided');
 			}
 
@@ -60,6 +86,29 @@ export class AuthService {
 			const isPasswordValid = await bcrypt.compare(password, userPassword);
 
 			if (!isPasswordValid) {
+				// Send failed login email for incorrect password
+				try {
+					this.eventEmitter.emit('send.email', EmailType.FAILED_LOGIN_ATTEMPT, [authProfile.user.email], {
+						name: authProfile.user.name || authProfile.user.email,
+						loginTime: new Date().toLocaleString(),
+						ipAddress: requestData?.ipAddress || 'Unknown',
+						location: requestData?.location || 'Unknown',
+						country: requestData?.country || 'Unknown',
+						deviceType: requestData?.deviceType || 'Unknown',
+						browser: requestData?.browser || 'Unknown',
+						operatingSystem: requestData?.operatingSystem || 'Unknown',
+						userAgent: requestData?.userAgent || 'Unknown',
+						suspicious: true,
+						securityTips: [
+							'Change your password immediately if you suspect unauthorized access',
+							'Enable two-factor authentication for additional security',
+							'Contact support if you notice any unusual activity',
+						],
+					});
+				} catch (error) {
+					console.error('Failed to send failed login notification email:', error);
+				}
+
 				return {
 					message: 'Invalid credentials provided',
 					accessToken: null,
@@ -133,38 +182,38 @@ export class AuthService {
 					},
 				};
 
-							await this.rewardsService.awardXP(gainedXP);
+				await this.rewardsService.awardXP(gainedXP);
 
-			// Send login notification email
-			try {
-				this.eventEmitter.emit('send.email', EmailType.LOGIN_NOTIFICATION, [authProfile.user.email], {
-					name: profileData.name,
-					loginTime: new Date().toLocaleString(),
-					ipAddress: requestData?.ipAddress || 'Unknown',
-					location: requestData?.location || 'Unknown',
-					country: requestData?.country || 'Unknown',
-					deviceType: requestData?.deviceType || 'Unknown',
-					browser: requestData?.browser || 'Unknown',
-					operatingSystem: requestData?.operatingSystem || 'Unknown',
-					userAgent: requestData?.userAgent || 'Unknown',
-					suspicious: false, // You can implement logic to detect suspicious logins
-					securityTips: [
-						'Always log out from shared devices',
-						'Use strong, unique passwords',
-						'Enable two-factor authentication when available',
-					],
-				});
-			} catch (error) {
-				// Don't fail login if email fails
-				console.error('Failed to send login notification email:', error);
-			}
+				// Send login notification email
+				try {
+					this.eventEmitter.emit('send.email', EmailType.LOGIN_NOTIFICATION, [authProfile.user.email], {
+						name: profileData.name,
+						loginTime: new Date().toLocaleString(),
+						ipAddress: requestData?.ipAddress || 'Unknown',
+						location: requestData?.location || 'Unknown',
+						country: requestData?.country || 'Unknown',
+						deviceType: requestData?.deviceType || 'Unknown',
+						browser: requestData?.browser || 'Unknown',
+						operatingSystem: requestData?.operatingSystem || 'Unknown',
+						userAgent: requestData?.userAgent || 'Unknown',
+						suspicious: false, // You can implement logic to detect suspicious logins
+						securityTips: [
+							'Always log out from shared devices',
+							'Use strong, unique passwords',
+							'Enable two-factor authentication when available',
+						],
+					});
+				} catch (error) {
+					// Don't fail login if email fails
+					console.error('Failed to send login notification email:', error);
+				}
 
-			return {
-				profileData,
-				accessToken,
-				refreshToken,
-				message: `Welcome ${profileData.name}!`,
-			};
+				return {
+					profileData,
+					accessToken,
+					refreshToken,
+					message: `Welcome ${profileData.name}!`,
+				};
 			}
 
 			// For users without organization (like system admins)
@@ -271,32 +320,32 @@ export class AuthService {
 				throw new BadRequestException('Email already verified. Please proceed to set your password.');
 			}
 
-					await this.pendingSignupService.markAsVerified(pendingSignup.uid);
+			await this.pendingSignupService.markAsVerified(pendingSignup.uid);
 
-		// Send email verification success notification
-		try {
-			this.eventEmitter.emit('send.email', EmailType.EMAIL_VERIFIED, [pendingSignup.email], {
-				name: pendingSignup.email.split('@')[0],
-				verificationDate: new Date().toISOString(),
-				ipAddress: requestData?.ipAddress || 'Unknown',
-				location: requestData?.location || 'Unknown',
-				deviceType: requestData?.deviceType || 'Unknown',
-				browser: requestData?.browser || 'Unknown',
-				nextSteps: [
-					'Set up your account password',
-					'Complete your profile information',
-					'Explore the platform features',
-				],
-				loginUrl: `${process.env.WEBSITE_DOMAIN}/sign-in` || '/sign-in',
-			});
-		} catch (error) {
-			console.error('Failed to send email verification success notification:', error);
-		}
+			// Send email verification success notification
+			try {
+				this.eventEmitter.emit('send.email', EmailType.EMAIL_VERIFIED, [pendingSignup.email], {
+					name: pendingSignup.email.split('@')[0],
+					verificationDate: new Date().toISOString(),
+					ipAddress: requestData?.ipAddress || 'Unknown',
+					location: requestData?.location || 'Unknown',
+					deviceType: requestData?.deviceType || 'Unknown',
+					browser: requestData?.browser || 'Unknown',
+					nextSteps: [
+						'Set up your account password',
+						'Complete your profile information',
+						'Explore the platform features',
+					],
+					loginUrl: `${process.env.WEBSITE_DOMAIN}/sign-in` || '/sign-in',
+				});
+			} catch (error) {
+				console.error('Failed to send email verification success notification:', error);
+			}
 
-		return {
-			message: 'Email verified successfully. You can now set your password.',
-			email: pendingSignup.email,
-		};
+			return {
+				message: 'Email verified successfully. You can now set your password.',
+				email: pendingSignup.email,
+			};
 		} catch (error) {
 			throw new HttpException(
 				error.message || 'Email verification failed',
@@ -510,7 +559,7 @@ export class AuthService {
 				}
 
 				const platform = this.platformService.getPrimaryPlatform(activeLicense?.features || {});
-				
+
 				const newPayload = {
 					uid: payload?.uid,
 					role: authProfile?.user?.accessLevel?.toLowerCase(),

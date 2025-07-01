@@ -1,0 +1,125 @@
+{{#base headerTitle="Security Alert: Failed Login Attempt" headerSubtitle="Unauthorized access attempt detected"}}
+
+<div class="greeting">
+    Hello {{name}}! 🚨
+</div>
+
+<div class="message">
+    <p><strong>We detected a failed login attempt on your account.</strong> If this wasn't you, your account may be under attack. Please review the details below and take appropriate action.</p>
+</div>
+
+<!-- Failed Login Details -->
+<div class="warning-notice">
+    <h3 style="color: #dc2626;">🔍 Failed Login Attempt Details</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Attempt Time</span>
+            <span class="detail-value" style="font-weight: 700;">{{loginTime}}</span>
+        </div>
+        {{#if ipAddress}}
+        <div class="detail-item">
+            <span class="detail-label">IP Address</span>
+            <span class="detail-value" style="font-family: monospace; background: #fee2e2; padding: 2px 6px; border-radius: 4px; color: #dc2626;">{{ipAddress}}</span>
+        </div>
+        {{/if}}
+        {{#if location}}
+        <div class="detail-item">
+            <span class="detail-label">Location</span>
+            <span class="detail-value">{{location}}{{#if country}}, {{country}}{{/if}}</span>
+        </div>
+        {{/if}}
+        {{#if deviceType}}
+        <div class="detail-item">
+            <span class="detail-label">Device Type</span>
+            <span class="detail-value">{{deviceType}}</span>
+        </div>
+        {{/if}}
+        {{#if operatingSystem}}
+        <div class="detail-item">
+            <span class="detail-label">Operating System</span>
+            <span class="detail-value">{{operatingSystem}}</span>
+        </div>
+        {{/if}}
+        {{#if browser}}
+        <div class="detail-item">
+            <span class="detail-label">Browser</span>
+            <span class="detail-value">{{browser}}</span>
+        </div>
+        {{/if}}
+        {{#if userAgent}}
+        <div class="detail-item">
+            <span class="detail-label">User Agent</span>
+            <span class="detail-value" style="font-size: 12px; font-family: monospace; background: #fee2e2; padding: 4px 8px; border-radius: 4px; word-break: break-all; color: #7f1d1d;">{{userAgent}}</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+
+<!-- Security Warning -->
+<div style="background: rgba(153, 27, 27, 0.1); border: 2px solid #dc2626; border-radius: 12px; padding: 20px; margin: 20px 0;">
+    <h4 style="color: #dc2626; margin-bottom: 16px;">🚨 UNAUTHORIZED ACCESS ATTEMPT</h4>
+    <p style="color: #7f1d1d; font-size: 16px; font-weight: 600; margin-bottom: 16px;">Someone tried to access your account with incorrect credentials.</p>
+    <p style="color: #7f1d1d; font-size: 15px;">If this wasn't you, your account may be targeted by attackers. Take immediate action to secure your account.</p>
+</div>
+
+<!-- Immediate Actions -->
+<div style="background: rgba(153, 27, 27, 0.1); border: 2px solid #dc2626; border-radius: 12px; padding: 20px; margin: 20px 0;">
+    <p style="font-size: 16px; font-weight: 700; color: #dc2626;">🛡️ RECOMMENDED SECURITY ACTIONS</p>
+    <ul style="margin-left: 20px; margin-top: 16px; line-height: 1.8; font-size: 15px; color: #7f1d1d;">
+        <li><strong>Change your password immediately</strong> if you suspect unauthorized access</li>
+        <li>Enable two-factor authentication for additional security</li>
+        <li>Review recent account activity for any suspicious behavior</li>
+        <li>Ensure you're using a strong, unique password</li>
+        <li>Log out of all devices and sessions if you're concerned</li>
+        <li>Contact support if you notice any unusual activity</li>
+    </ul>
+</div>
+
+<!-- What If This Was You -->
+<div class="info-card">
+    <h4 style="color: #7c2d92; margin-bottom: 16px;">✅ If This Was You</h4>
+    <p style="color: #4b5563; font-size: 15px; line-height: 1.6;">
+        If you attempted to log in but couldn't remember your password or made a typo, no action is needed. However, if you're having trouble accessing your account, you can reset your password using the "Forgot Password" option on the login page.
+    </p>
+</div>
+
+<!-- Security Tips -->
+{{#if securityTips}}
+<div class="success-notice">
+    <h4 style="color: #15803d; margin-bottom: 16px;">💡 Security Best Practices</h4>
+    <ul style="margin-left: 20px; line-height: 1.8; font-size: 15px;">
+        {{#each securityTips}}
+        <li>{{this}}</li>
+        {{/each}}
+    </ul>
+</div>
+{{else}}
+<div class="success-notice">
+    <h4 style="color: #15803d; margin-bottom: 16px;">💡 Security Best Practices</h4>
+    <ul style="margin-left: 20px; line-height: 1.8; font-size: 15px;">
+        <li>Use strong, unique passwords for all accounts</li>
+        <li>Enable two-factor authentication when available</li>
+        <li>Never share your login credentials with others</li>
+        <li>Be cautious of phishing attempts and suspicious emails</li>
+        <li>Keep your devices and browsers updated</li>
+        <li>Monitor your account regularly for unusual activity</li>
+    </ul>
+</div>
+{{/if}}
+
+<!-- Action Buttons -->
+<div class="cta-section">
+    <a href="#" class="cta-button" style="background-color: #dc2626;">Secure My Account</a>
+    <a href="#" class="cta-button" style="background-color: #7c2d92; margin-left: 12px;">Reset Password</a>
+</div>
+
+<!-- Footer -->
+<div class="message">
+    <p style="font-size: 14px; color: #6b7280; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+        <strong>Security Notice:</strong><br>
+        This is an automated security alert. We monitor login attempts to help protect your account from unauthorized access. Multiple failed login attempts may result in temporary account lockout for security purposes.<br><br>
+        <strong>Need help?</strong> If you're having trouble accessing your account or have security concerns, please contact our support team immediately.
+    </p>
+</div>
+
+{{/base}} 
