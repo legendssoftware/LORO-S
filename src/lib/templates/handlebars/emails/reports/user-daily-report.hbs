@@ -51,6 +51,77 @@
     </div>
 </div>
 
+<!-- Performance Analytics -->
+{{#if metrics.performance}}
+<div class="info-card" style="background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%); border-left-color: #22c55e;">
+    <h4 style="color: #15803d;">🎯 Performance Analytics</h4>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Overall Performance Score</span>
+            <span class="detail-value" style="font-weight: 700; color: {{#if (gte metrics.performance.overallScore 85)}}#22c55e{{else if (gte metrics.performance.overallScore 70)}}#f59e0b{{else}}#ef4444{{/if}}; font-size: 17px;">{{metrics.performance.overallScore}}/100</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Task Efficiency</span>
+            <span class="detail-value" style="font-weight: 600; color: {{#if (gte metrics.performance.taskEfficiency 0.8)}}#22c55e{{else if (gte metrics.performance.taskEfficiency 0.6)}}#f59e0b{{else}}#ef4444{{/if}};">{{metrics.performance.taskEfficiency}}%</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Lead Conversion Rate</span>
+            <span class="detail-value" style="font-weight: 600; color: {{#if (gte metrics.performance.leadConversionRate 0.3)}}#22c55e{{else if (gte metrics.performance.leadConversionRate 0.2)}}#f59e0b{{else}}#ef4444{{/if}};">{{metrics.performance.leadConversionRate}}%</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Revenue per Hour</span>
+            <span class="detail-value" style="font-weight: 700; color: #7c2d92; font-size: 16px;">{{metrics.performance.revenuePerHour}}</span>
+        </div>
+    </div>
+    {{#if metrics.performance.strengths}}
+    <div style="margin-top: 16px; padding: 12px; background: rgba(34, 197, 94, 0.05); border-radius: 8px; border-left: 3px solid #22c55e;">
+        <div style="font-size: 14px; color: #15803d;">
+            <strong>💪 Key Strengths:</strong> {{#each metrics.performance.strengths}}{{this}}{{#unless @last}}, {{/unless}}{{/each}}
+        </div>
+    </div>
+    {{/if}}
+    {{#if metrics.performance.improvementAreas}}
+    <div style="margin-top: 8px; padding: 12px; background: rgba(245, 158, 11, 0.05); border-radius: 8px; border-left: 3px solid #f59e0b;">
+        <div style="font-size: 14px; color: #92400e;">
+            <strong>🎯 Growth Areas:</strong> {{#each metrics.performance.improvementAreas}}{{this}}{{#unless @last}}, {{/unless}}{{/each}}
+        </div>
+    </div>
+    {{/if}}
+</div>
+{{/if}}
+
+<!-- Productivity Insights -->
+{{#if metrics.productivity}}
+<div class="info-card" style="background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border-left-color: #3b82f6;">
+    <h4 style="color: #1d4ed8;">⚡ Productivity Insights</h4>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Productivity Score</span>
+            <span class="detail-value" style="font-weight: 700; color: {{#if (gte metrics.productivity.score 85)}}#22c55e{{else if (gte metrics.productivity.score 70)}}#f59e0b{{else}}#ef4444{{/if}}; font-size: 17px;">{{metrics.productivity.score}}/100</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Peak Performance Hour</span>
+            <span class="detail-value" style="font-weight: 600; color: #1d4ed8;">{{metrics.productivity.peakHour}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Average Focus Time</span>
+            <span class="detail-value" style="font-weight: 600; color: #7c2d92;">{{metrics.productivity.focusTime}} min</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Work Pattern Consistency</span>
+            <span class="detail-value" style="font-weight: 600; color: {{#if (eq metrics.productivity.workPatterns 'Highly Consistent')}}#22c55e{{else if (eq metrics.productivity.workPatterns 'Consistent')}}#f59e0b{{else}}#ef4444{{/if}};">{{metrics.productivity.workPatterns}}</span>
+        </div>
+    </div>
+    {{#if metrics.productivity.recommendations}}
+    <div style="margin-top: 16px; padding: 12px; background: rgba(59, 130, 246, 0.05); border-radius: 8px; border-left: 3px solid #3b82f6;">
+        <div style="font-size: 14px; color: #1d4ed8;">
+            <strong>💡 Productivity Tips:</strong> {{#each metrics.productivity.recommendations}}{{this}}{{#unless @last}}; {{/unless}}{{/each}}
+        </div>
+    </div>
+    {{/if}}
+</div>
+{{/if}}
+
 <!-- Experience & Gamification -->
 {{#if metrics.userSpecific.xpEarned}}
 <div class="info-card" style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-left-color: #f59e0b;">
@@ -126,6 +197,90 @@
 </div>
 {{/if}}
 
+<!-- Weekly Performance Comparison -->
+{{#if metrics.weeklyComparison}}
+<div class="info-card" style="background: linear-gradient(135deg, #fdf4ff 0%, #fae8ff 100%); border-left-color: #a855f7;">
+    <h4 style="color: #7c2d92;">📊 Weekly Performance Comparison</h4>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Performance Trend</span>
+            <span class="detail-value" style="font-weight: 700; color: {{#if (eq metrics.weeklyComparison.trend 'improving')}}#22c55e{{else if (eq metrics.weeklyComparison.trend 'stable')}}#f59e0b{{else}}#ef4444{{/if}}; font-size: 16px;">
+                {{#if (eq metrics.weeklyComparison.trend 'improving')}}📈 Improving{{else if (eq metrics.weeklyComparison.trend 'stable')}}➡️ Stable{{else}}📉 Declining{{/if}}
+            </span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Hours Growth</span>
+            <span class="detail-value" style="font-weight: 600; color: {{#if (startsWith metrics.weeklyComparison.changes.hours "+")}}#22c55e{{else if (eq metrics.weeklyComparison.changes.hours "0%")}}#6b7280{{else}}#ef4444{{/if}};">{{metrics.weeklyComparison.changes.hours}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Tasks Growth</span>
+            <span class="detail-value" style="font-weight: 600; color: {{#if (startsWith metrics.weeklyComparison.changes.tasks "+")}}#22c55e{{else if (eq metrics.weeklyComparison.changes.tasks "0%")}}#6b7280{{else}}#ef4444{{/if}};">{{metrics.weeklyComparison.changes.tasks}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Revenue Growth</span>
+            <span class="detail-value" style="font-weight: 600; color: {{#if (startsWith metrics.weeklyComparison.changes.revenue "+")}}#22c55e{{else if (eq metrics.weeklyComparison.changes.revenue "0%")}}#6b7280{{else}}#ef4444{{/if}};">{{metrics.weeklyComparison.changes.revenue}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Leads Growth</span>
+            <span class="detail-value" style="font-weight: 600; color: {{#if (startsWith metrics.weeklyComparison.changes.leads "+")}}#22c55e{{else if (eq metrics.weeklyComparison.changes.leads "0%")}}#6b7280{{else}}#ef4444{{/if}};">{{metrics.weeklyComparison.changes.leads}}</span>
+        </div>
+    </div>
+    <div style="margin-top: 16px; padding: 12px; background: rgba(168, 85, 247, 0.05); border-radius: 8px; border-left: 3px solid #a855f7;">
+        <div style="font-size: 14px; color: #7c2d92;">
+            <strong>📈 This Week:</strong> {{metrics.weeklyComparison.current.hours}}h worked, {{metrics.weeklyComparison.current.tasks}} tasks, {{metrics.weeklyComparison.current.revenue}} revenue, {{metrics.weeklyComparison.current.leads}} leads
+        </div>
+        <div style="font-size: 14px; color: #6b7280; margin-top: 4px;">
+            <strong>📋 Last Week:</strong> {{metrics.weeklyComparison.previous.hours}}h worked, {{metrics.weeklyComparison.previous.tasks}} tasks, {{metrics.weeklyComparison.previous.revenue}} revenue, {{metrics.weeklyComparison.previous.leads}} leads
+        </div>
+    </div>
+</div>
+{{/if}}
+
+<!-- Predictive Analytics & Forecasting -->
+{{#if metrics.predictions}}
+<div class="info-card" style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border-left-color: #0ea5e9;">
+    <h4 style="color: #0369a1;">🔮 Predictive Analytics & Forecasting</h4>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Target Achievement Probability</span>
+            <span class="detail-value" style="font-weight: 700; color: {{#if (gte metrics.predictions.targetAchievementProbability 80)}}#22c55e{{else if (gte metrics.predictions.targetAchievementProbability 60)}}#f59e0b{{else}}#ef4444{{/if}}; font-size: 17px;">{{metrics.predictions.targetAchievementProbability}}%</span>
+        </div>
+        {{#if metrics.predictions.projectedCompletion.sales}}
+        <div class="detail-item">
+            <span class="detail-label">Projected Sales Target</span>
+            <span class="detail-value" style="font-weight: 600; color: #0369a1;">{{metrics.predictions.projectedCompletion.sales.date}}</span>
+        </div>
+        {{/if}}
+        {{#if metrics.predictions.projectedCompletion.hours}}
+        <div class="detail-item">
+            <span class="detail-label">Projected Hours Target</span>
+            <span class="detail-value" style="font-weight: 600; color: #0369a1;">{{metrics.predictions.projectedCompletion.hours.date}}</span>
+        </div>
+        {{/if}}
+        {{#if metrics.predictions.projectedCompletion.leads}}
+        <div class="detail-item">
+            <span class="detail-label">Projected Leads Target</span>
+            <span class="detail-value" style="font-weight: 600; color: #0369a1;">{{metrics.predictions.projectedCompletion.leads.date}}</span>
+        </div>
+        {{/if}}
+    </div>
+    {{#if metrics.predictions.recommendations}}
+    <div style="margin-top: 16px; padding: 12px; background: rgba(14, 165, 233, 0.05); border-radius: 8px; border-left: 3px solid #0ea5e9;">
+        <div style="font-size: 14px; color: #0369a1;">
+            <strong>🎯 Strategic Recommendations:</strong> {{#each metrics.predictions.recommendations}}{{this}}{{#unless @last}}; {{/unless}}{{/each}}
+        </div>
+    </div>
+    {{/if}}
+    {{#if metrics.predictions.riskFactors}}
+    <div style="margin-top: 8px; padding: 12px; background: rgba(239, 68, 68, 0.05); border-radius: 8px; border-left: 3px solid #ef4444;">
+        <div style="font-size: 14px; color: #b91c1c;">
+            <strong>⚠️ Risk Factors:</strong> {{#each metrics.predictions.riskFactors}}{{this}}{{#unless @last}}; {{/unless}}{{/each}}
+        </div>
+    </div>
+    {{/if}}
+</div>
+{{/if}}
+
 <!-- Attendance & Time Management -->
 {{#if metrics.attendance.startTime}}
 <div class="info-card">
@@ -190,6 +345,47 @@
     </div>
 </div>
 
+<!-- Wellness & Work-Life Balance -->
+{{#if metrics.wellness}}
+<div class="info-card" style="background: linear-gradient(135deg, #fefce8 0%, #fef3c7 100%); border-left-color: #eab308;">
+    <h4 style="color: #a16207;">🌱 Wellness & Work-Life Balance</h4>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Overall Wellness Score</span>
+            <span class="detail-value" style="font-weight: 700; color: {{#if (gte metrics.wellness.score 85)}}#22c55e{{else if (gte metrics.wellness.score 70)}}#f59e0b{{else}}#ef4444{{/if}}; font-size: 17px;">{{metrics.wellness.score}}/100</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Work-Life Balance</span>
+            <span class="detail-value" style="font-weight: 600; color: {{#if (gte metrics.wellness.workLifeBalance.score 80)}}#22c55e{{else if (gte metrics.wellness.workLifeBalance.score 60)}}#f59e0b{{else}}#ef4444{{/if}};">{{metrics.wellness.workLifeBalance.score}}/100</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Daily Average Hours</span>
+            <span class="detail-value" style="font-weight: 600; color: {{#if (lte metrics.wellness.workLifeBalance.averageHoursPerDay 9)}}#22c55e{{else if (lte metrics.wellness.workLifeBalance.averageHoursPerDay 10)}}#f59e0b{{else}}#ef4444{{/if}};">{{metrics.wellness.workLifeBalance.averageHoursPerDay}}h</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Stress Level</span>
+            <span class="detail-value" style="font-weight: 600; color: {{#if (eq metrics.wellness.stressLevel 'Low')}}#22c55e{{else if (eq metrics.wellness.stressLevel 'Moderate')}}#f59e0b{{else}}#ef4444{{/if}};">{{metrics.wellness.stressLevel}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Overtime Days This Week</span>
+            <span class="detail-value" style="font-weight: 600; color: {{#if (eq metrics.wellness.workLifeBalance.overtimeDays 0)}}#22c55e{{else if (lte metrics.wellness.workLifeBalance.overtimeDays 2)}}#f59e0b{{else}}#ef4444{{/if}};">{{metrics.wellness.workLifeBalance.overtimeDays}} days</span>
+        </div>
+    </div>
+    {{#if metrics.wellness.recommendations}}
+    <div style="margin-top: 16px; padding: 12px; background: rgba(234, 179, 8, 0.05); border-radius: 8px; border-left: 3px solid #eab308;">
+        <div style="font-size: 14px; color: #a16207;">
+            <strong>💚 Wellness Recommendations:</strong> {{#each metrics.wellness.recommendations}}{{this}}{{#unless @last}}; {{/unless}}{{/each}}
+        </div>
+    </div>
+    {{/if}}
+    <div style="margin-top: 12px; padding: 12px; background: rgba(34, 197, 94, 0.05); border-radius: 8px; border-left: 3px solid #22c55e;">
+        <div style="font-size: 14px; color: #15803d;">
+            <strong>🧘 Daily Wellness Tip:</strong> {{#if (lte metrics.wellness.workLifeBalance.averageHoursPerDay 8)}}Great work-life balance today! Remember to maintain consistent boundaries for sustained performance.{{else if (lte metrics.wellness.workLifeBalance.averageHoursPerDay 10)}}Consider incorporating more breaks and ensuring adequate rest to maintain peak performance.{{else}}Your wellness matters - focus on rest and recovery to sustain long-term success and prevent burnout.{{/if}}
+        </div>
+    </div>
+</div>
+{{/if}}
+
 <!-- Location & Travel Summary -->
 {{#if tracking.totalDistance}}
 <div class="info-card">
@@ -231,25 +427,33 @@
     <a href="{{dashboardUrl}}" class="cta-button">View Full Personal Dashboard</a>
 </div>
 
-<!-- Performance Insights & Tips -->
+<!-- Enhanced Performance Insights & Growth Tips -->
 <div class="info-card">
     <h4>💡 Performance Insights & Growth Tips</h4>
     <div class="feature-list" style="list-style: none; padding: 0; margin: 16px 0;">
         <li style="padding: 12px 0; color: #4b5563; padding-left: 35px; position: relative; font-size: 15px; line-height: 1.6; border-bottom: 1px solid rgba(168, 85, 247, 0.1);">
             <span style="position: absolute; left: 0; top: 12px; color: #22c55e; font-weight: bold; font-size: 14px; width: 20px; height: 20px; background: #dcfce7; border-radius: 50%; display: flex; align-items: center; justify-content: center;">💪</span>
-            <strong>Productivity:</strong> {{#if (gte metrics.userSpecific.hoursWorked 8)}}Excellent work commitment today! Keep maintaining this strong momentum.{{else if (gte metrics.userSpecific.hoursWorked 6)}}Good work balance. Consider extending focus time for even better results.{{else}}Focus on increasing dedicated work time to boost your productivity metrics.{{/if}}
+            <strong>Performance Analysis:</strong> {{#if metrics.performance}}Your overall performance score is {{metrics.performance.overallScore}}/100. {{#if (gte metrics.performance.overallScore 85)}}Exceptional performance! You're operating at peak efficiency.{{else if (gte metrics.performance.overallScore 70)}}Strong performance with room for optimization. Focus on your improvement areas for breakthrough results.{{else}}Significant growth opportunity exists. Concentrate on developing your core strengths while addressing key improvement areas.{{/if}}{{else}}{{#if (gte metrics.userSpecific.hoursWorked 8)}}Excellent work commitment today! Keep maintaining this strong momentum.{{else if (gte metrics.userSpecific.hoursWorked 6)}}Good work balance. Consider extending focus time for even better results.{{else}}Focus on increasing dedicated work time to boost your productivity metrics.{{/if}}{{/if}}
         </li>
         <li style="padding: 12px 0; color: #4b5563; padding-left: 35px; position: relative; font-size: 15px; line-height: 1.6; border-bottom: 1px solid rgba(168, 85, 247, 0.1);">
-            <span style="position: absolute; left: 0; top: 12px; color: #22c55e; font-weight: bold; font-size: 14px; width: 20px; height: 20px; background: #dcfce7; border-radius: 50%; display: flex; align-items: center; justify-content: center;">🎯</span>
-            <strong>Goal Achievement:</strong> {{#if metrics.targets.hasTargets}}{{#if (gte metrics.targets.targetProgress.sales.progress 80)}}Outstanding progress toward your targets! You're on track for exceptional results.{{else if (gte metrics.targets.targetProgress.sales.progress 60)}}Good progress on targets. Focus on key activities to reach excellence.{{else}}Accelerate efforts toward your targets. Consistency is key to breakthrough results.{{/if}}{{else}}Set clear daily targets to track and improve your performance systematically.{{/if}}
+            <span style="position: absolute; left: 0; top: 12px; color: #3b82f6; font-weight: bold; font-size: 14px; width: 20px; height: 20px; background: #dbeafe; border-radius: 50%; display: flex; align-items: center; justify-content: center;">⚡</span>
+            <strong>Productivity Optimization:</strong> {{#if metrics.productivity}}Your productivity score is {{metrics.productivity.score}}/100. {{#if metrics.productivity.peakHour}}Your peak performance hour is {{metrics.productivity.peakHour}} - schedule your most important tasks during this time.{{/if}} {{#if (gte metrics.productivity.score 85)}}Outstanding productivity! You're maximizing your time effectively.{{else if (gte metrics.productivity.score 70)}}Good productivity levels. Fine-tune your focus periods for even better results.{{else}}Enhance productivity by implementing time-blocking and minimizing distractions.{{/if}}{{else}}Optimize your work schedule by identifying and leveraging your peak performance hours for critical tasks.{{/if}}
         </li>
         <li style="padding: 12px 0; color: #4b5563; padding-left: 35px; position: relative; font-size: 15px; line-height: 1.6; border-bottom: 1px solid rgba(168, 85, 247, 0.1);">
-            <span style="position: absolute; left: 0; top: 12px; color: #22c55e; font-weight: bold; font-size: 14px; width: 20px; height: 20px; background: #dcfce7; border-radius: 50%; display: flex; align-items: center; justify-content: center;">📈</span>
-            <strong>Growth Trend:</strong> {{#if (startsWith metrics.revenueGrowth "+")}}Your revenue growth shows positive momentum! Continue leveraging successful strategies.{{else}}Focus on revenue-generating activities and client relationship building to improve growth trajectory.{{/if}}
+            <span style="position: absolute; left: 0; top: 12px; color: #7c2d92; font-weight: bold; font-size: 14px; width: 20px; height: 20px; background: #fae8ff; border-radius: 50%; display: flex; align-items: center; justify-content: center;">📊</span>
+            <strong>Weekly Trend Analysis:</strong> {{#if metrics.weeklyComparison}}{{#if (eq metrics.weeklyComparison.trend 'improving')}}📈 You're on an upward trajectory! Your weekly performance shows consistent improvement across key metrics.{{else if (eq metrics.weeklyComparison.trend 'stable')}}➡️ Maintaining steady performance. Focus on breakthrough activities to accelerate growth.{{else}}📉 Temporary dip detected. Refocus on core activities and leverage your proven strengths to regain momentum.{{/if}}{{else}}{{#if (startsWith metrics.revenueGrowth "+")}}Your revenue growth shows positive momentum! Continue leveraging successful strategies.{{else}}Focus on revenue-generating activities and client relationship building to improve growth trajectory.{{/if}}{{/if}}
+        </li>
+        <li style="padding: 12px 0; color: #4b5563; padding-left: 35px; position: relative; font-size: 15px; line-height: 1.6; border-bottom: 1px solid rgba(168, 85, 247, 0.1);">
+            <span style="position: absolute; left: 0; top: 12px; color: #0369a1; font-weight: bold; font-size: 14px; width: 20px; height: 20px; background: #e0f2fe; border-radius: 50%; display: flex; align-items: center; justify-content: center;">🔮</span>
+            <strong>Predictive Insights:</strong> {{#if metrics.predictions}}Based on current velocity, you have a {{metrics.predictions.targetAchievementProbability}}% probability of achieving your targets. {{#if (gte metrics.predictions.targetAchievementProbability 80)}}You're on track for exceptional results!{{else if (gte metrics.predictions.targetAchievementProbability 60)}}Accelerate key activities to ensure target achievement.{{else}}Implement strategic adjustments to improve your target achievement probability.{{/if}}{{else}}{{#if metrics.targets.hasTargets}}{{#if (gte metrics.targets.targetProgress.sales.progress 80)}}Outstanding progress toward your targets! You're on track for exceptional results.{{else if (gte metrics.targets.targetProgress.sales.progress 60)}}Good progress on targets. Focus on key activities to reach excellence.{{else}}Accelerate efforts toward your targets. Consistency is key to breakthrough results.{{/if}}{{else}}Set clear daily targets to track and improve your performance systematically.{{/if}}{{/if}}
+        </li>
+        <li style="padding: 12px 0; color: #4b5563; padding-left: 35px; position: relative; font-size: 15px; line-height: 1.6; border-bottom: 1px solid rgba(168, 85, 247, 0.1);">
+            <span style="position: absolute; left: 0; top: 12px; color: #a16207; font-weight: bold; font-size: 14px; width: 20px; height: 20px; background: #fef3c7; border-radius: 50%; display: flex; align-items: center; justify-content: center;">🌱</span>
+            <strong>Wellness Balance:</strong> {{#if metrics.wellness}}Your wellness score is {{metrics.wellness.score}}/100. {{#if (gte metrics.wellness.score 85)}}Excellent work-life balance! You're maintaining sustainable performance.{{else if (gte metrics.wellness.score 70)}}Good balance with minor adjustments needed. Prioritize recovery time.{{else}}Focus on work-life balance to prevent burnout and maintain long-term performance.{{/if}}{{else}}Maintain healthy work boundaries and prioritize recovery to sustain peak performance long-term.{{/if}}
         </li>
         <li style="padding: 12px 0; color: #4b5563; padding-left: 35px; position: relative; font-size: 15px; line-height: 1.6;">
             <span style="position: absolute; left: 0; top: 12px; color: #22c55e; font-weight: bold; font-size: 14px; width: 20px; height: 20px; background: #dcfce7; border-radius: 50%; display: flex; align-items: center; justify-content: center;">🚀</span>
-            <strong>Tomorrow's Opportunity:</strong> Build on today's achievements by focusing on high-impact activities and maintaining consistent performance standards.
+            <strong>Tomorrow's Strategic Focus:</strong> {{#if metrics.performance.improvementAreas}}Prioritize {{#each metrics.performance.improvementAreas}}{{this}}{{#unless @last}} and {{/unless}}{{/each}} to unlock your next performance level.{{else}}Build on today's achievements by focusing on high-impact activities and maintaining consistent performance standards.{{/if}}
         </li>
     </div>
 </div>

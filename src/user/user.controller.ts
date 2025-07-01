@@ -372,59 +372,229 @@ export class UserController {
 	}
 
 	@Get(':ref/target')
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER, AccessLevel.OWNER)
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.SUPPORT,
+		AccessLevel.DEVELOPER,
+		AccessLevel.USER,
+		AccessLevel.OWNER,
+		AccessLevel.TECHNICIAN,
+	)
 	@ApiOperation({
-		summary: 'Get user targets',
-		description: 'Get performance targets for a specific user',
+		summary: 'Get user performance targets',
+		description: `
+		**Retrieve comprehensive performance targets for a specific user**
+		
+		This endpoint provides detailed performance target information including:
+		- Sales targets with currency formatting
+		- Work hours and productivity targets
+		- Lead generation and client acquisition targets
+		- Activity-based targets (check-ins, calls)
+		- Progress tracking with achievement percentages
+		- Target period information and deadlines
+		
+		**Target Categories Supported:**
+		- Sales Revenue: Monthly/quarterly sales targets with current progress
+		- Work Hours: Expected vs actual hours worked
+		- New Leads: Lead generation targets and conversion tracking
+		- New Clients: Client acquisition goals and achievement
+		- Check-ins: Customer interaction frequency targets
+		- Calls: Communication activity targets
+		
+		**Access Control:**
+		- Users can view their own targets
+		- Managers/Admins can view targets for their team members
+		- Supports organizational hierarchy and branch-level permissions
+		`,
+		operationId: 'getUserTargets',
 	})
-	@ApiParam({ name: 'ref', description: 'User ID', type: Number })
+	@ApiParam({ 
+		name: 'ref', 
+		description: 'User ID - Must be a valid user identifier',
+		type: Number,
+		example: 123
+	})
 	@ApiOkResponse({
-		description: 'User target data retrieved successfully',
+		description: '✅ User performance targets retrieved successfully',
 		schema: {
 			type: 'object',
 			properties: {
 				userTarget: {
 					type: 'object',
 					properties: {
-						id: { type: 'number', example: 1 },
-						targetSalesAmount: { type: 'number', example: 50000 },
-						targetCurrency: { type: 'string', example: 'USD' },
-						targetHoursWorked: { type: 'number', example: 160 },
-						targetNewClients: { type: 'number', example: 5 },
-						targetNewLeads: { type: 'number', example: 20 },
-						targetCheckIns: { type: 'number', example: 15 },
-						targetCalls: { type: 'number', example: 50 },
-						targetPeriod: { type: 'string', example: 'monthly' },
-						periodStartDate: { type: 'string', format: 'date-time' },
-						periodEndDate: { type: 'string', format: 'date-time' },
-						createdAt: { type: 'string', format: 'date-time' },
-						updatedAt: { type: 'string', format: 'date-time' },
+						uid: { type: 'number', example: 1, description: 'Unique target record identifier' },
+						targetSalesAmount: { type: 'number', example: 50000, description: 'Sales revenue target amount' },
+						currentSalesAmount: { type: 'number', example: 32500, description: 'Current achieved sales amount' },
+						targetCurrency: { type: 'string', example: 'ZAR', description: 'Currency code for sales targets' },
+						targetHoursWorked: { type: 'number', example: 160, description: 'Expected hours to work in target period' },
+						currentHoursWorked: { type: 'number', example: 142, description: 'Current hours worked in period' },
+						targetNewClients: { type: 'number', example: 5, description: 'Number of new clients to acquire' },
+						currentNewClients: { type: 'number', example: 3, description: 'Current new clients acquired' },
+						targetNewLeads: { type: 'number', example: 20, description: 'Number of new leads to generate' },
+						currentNewLeads: { type: 'number', example: 18, description: 'Current leads generated' },
+						targetCheckIns: { type: 'number', example: 15, description: 'Client check-in frequency target' },
+						currentCheckIns: { type: 'number', example: 12, description: 'Current check-ins completed' },
+						targetCalls: { type: 'number', example: 50, description: 'Communication calls target' },
+						currentCalls: { type: 'number', example: 45, description: 'Current calls completed' },
+						targetPeriod: { type: 'string', example: 'Monthly', enum: ['Weekly', 'Monthly', 'Quarterly', 'Yearly'], description: 'Target achievement period' },
+						periodStartDate: { type: 'string', format: 'date-time', example: '2024-01-01T00:00:00Z', description: 'Target period start date' },
+						periodEndDate: { type: 'string', format: 'date-time', example: '2024-01-31T23:59:59Z', description: 'Target period end date' },
+						createdAt: { type: 'string', format: 'date-time', description: 'Target creation timestamp' },
+						updatedAt: { type: 'string', format: 'date-time', description: 'Last update timestamp' },
+						progressMetrics: {
+							type: 'object',
+							properties: {
+								salesProgress: { type: 'number', example: 65, description: 'Sales achievement percentage' },
+								hoursProgress: { type: 'number', example: 88.75, description: 'Hours worked percentage' },
+								leadsProgress: { type: 'number', example: 90, description: 'Leads generation percentage' },
+								clientsProgress: { type: 'number', example: 60, description: 'Client acquisition percentage' },
+								overallProgress: { type: 'number', example: 75.9, description: 'Overall target achievement percentage' },
+							},
+						},
 					},
 				},
-				message: { type: 'string', example: 'Success' },
+				message: { type: 'string', example: 'User targets retrieved successfully' },
+				meta: {
+					type: 'object',
+					properties: {
+						daysRemaining: { type: 'number', example: 12, description: 'Days remaining in target period' },
+						achievementTrend: { type: 'string', example: 'On Track', enum: ['Ahead', 'On Track', 'Behind', 'At Risk'] },
+						nextMilestone: { type: 'string', example: '75% target achievement', description: 'Next achievement milestone' },
+					},
+				},
 			},
 		},
 	})
-	@ApiNotFoundResponse({ description: 'User not found' })
-	@Post(':ref/target')
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER)
-	@ApiOperation({
-		summary: 'Set user targets',
-		description: 'Set performance targets for a specific user',
-	})
-	@ApiParam({ name: 'ref', description: 'User ID', type: Number })
-	@ApiBody({ type: CreateUserTargetDto })
-	@ApiCreatedResponse({
-		description: 'User targets set successfully',
+	@ApiNotFoundResponse({ 
+		description: '❌ User not found or no targets configured',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'User targets set successfully' },
+				message: { type: 'string', example: 'User not found or no performance targets have been set' },
+				errorCode: { type: 'string', example: 'USER_TARGETS_NOT_FOUND' },
 			},
 		},
 	})
-	@ApiBadRequestResponse({ description: 'Invalid input data provided' })
-	@ApiNotFoundResponse({ description: 'User not found' })
+	getUserTarget(@Param('ref') ref: number) {
+		return this.userService.getUserTarget(ref);
+	}
+
+	@Post(':ref/target')
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER)
+	@ApiOperation({
+		summary: 'Create user performance targets',
+		description: `
+		**Create comprehensive performance targets for a specific user**
+		
+		This endpoint allows managers and administrators to set performance targets:
+		- Configure multi-category targets (sales, hours, leads, clients, activities)
+		- Set target periods (weekly, monthly, quarterly, yearly)
+		- Define currency preferences for sales targets
+		- Establish baseline metrics for performance tracking
+		- Automatic progress tracking initialization
+		
+		**Target Configuration Features:**
+		- Flexible target periods with automatic date calculation
+		- Multi-currency support for international operations
+		- Hierarchical target inheritance from team/branch level
+		- Integration with existing performance systems
+		- Automatic notifications and milestone tracking
+		
+		**Validation Rules:**
+		- All target values must be positive numbers
+		- Target period dates must be logical (start < end)
+		- Currency codes must be valid ISO 4217 codes
+		- User must exist and be active in the organization
+		`,
+		operationId: 'createUserTargets',
+	})
+	@ApiParam({ 
+		name: 'ref', 
+		description: 'User ID for target assignment',
+		type: Number,
+		example: 123
+	})
+	@ApiBody({ 
+		type: CreateUserTargetDto,
+		description: 'Comprehensive target configuration data',
+		examples: {
+			monthlyTargets: {
+				summary: 'Monthly sales rep targets',
+				value: {
+					targetSalesAmount: 50000,
+					targetCurrency: 'ZAR',
+					targetHoursWorked: 160,
+					targetNewLeads: 20,
+					targetNewClients: 5,
+					targetCheckIns: 15,
+					targetCalls: 50,
+					targetPeriod: 'Monthly',
+					periodStartDate: '2024-01-01',
+					periodEndDate: '2024-01-31',
+				},
+			},
+			quarterlyTargets: {
+				summary: 'Quarterly manager targets',
+				value: {
+					targetSalesAmount: 150000,
+					targetCurrency: 'USD',
+					targetHoursWorked: 480,
+					targetNewLeads: 60,
+					targetNewClients: 15,
+					targetCheckIns: 45,
+					targetCalls: 150,
+					targetPeriod: 'Quarterly',
+					periodStartDate: '2024-01-01',
+					periodEndDate: '2024-03-31',
+				},
+			},
+		},
+	})
+	@ApiCreatedResponse({
+		description: '✅ User performance targets created successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'User performance targets created successfully' },
+				targetId: { type: 'number', example: 42, description: 'Created target record ID' },
+				data: {
+					type: 'object',
+					properties: {
+						initialized: { type: 'boolean', example: true, description: 'Target tracking initialized' },
+						progressMetrics: {
+							type: 'object',
+							properties: {
+								salesProgress: { type: 'number', example: 0, description: 'Initial sales progress' },
+								hoursProgress: { type: 'number', example: 0, description: 'Initial hours progress' },
+								overallProgress: { type: 'number', example: 0, description: 'Initial overall progress' },
+							},
+						},
+						nextReview: { type: 'string', format: 'date', example: '2024-01-15', description: 'Next target review date' },
+					},
+				},
+			},
+		},
+	})
+	@ApiBadRequestResponse({ 
+		description: '❌ Invalid target configuration provided',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Validation failed for target configuration' },
+				errors: {
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'targetSalesAmount must be a positive number',
+						'targetPeriod must be one of: Weekly, Monthly, Quarterly, Yearly',
+						'periodEndDate must be after periodStartDate',
+					],
+				},
+			},
+		},
+	})
+	@ApiNotFoundResponse({ description: '❌ User not found or not accessible' })
 	setUserTarget(@Param('ref') ref: number, @Body() createUserTargetDto: CreateUserTargetDto) {
 		return this.userService.setUserTarget(ref, createUserTargetDto);
 	}
@@ -432,22 +602,107 @@ export class UserController {
 	@Patch(':ref/target')
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER)
 	@ApiOperation({
-		summary: 'Update user targets',
-		description: 'Update performance targets for a specific user',
+		summary: 'Update user performance targets',
+		description: `
+		**Update existing performance targets for a specific user**
+		
+		This endpoint provides comprehensive target management capabilities:
+		- Partial or complete target updates using PATCH semantics
+		- Progress preservation during target modifications
+		- Historical tracking of target changes
+		- Automatic recalculation of achievement percentages
+		- Support for mid-period target adjustments
+		
+		**Update Scenarios:**
+		- Target value adjustments (increase/decrease targets)
+		- Period extensions or modifications
+		- Currency changes for international transfers
+		- Category additions or removals
+		- Emergency target resets or corrections
+		
+		**Business Rules:**
+		- Updates preserve existing progress unless explicitly reset
+		- Target increases maintain current achievement percentages
+		- Period changes recalculate progress metrics
+		- Audit trail maintained for all modifications
+		`,
+		operationId: 'updateUserTargets',
 	})
-	@ApiParam({ name: 'ref', description: 'User ID', type: Number })
-	@ApiBody({ type: UpdateUserTargetDto })
-	@ApiOkResponse({
-		description: 'User targets updated successfully',
-		schema: {
-			type: 'object',
-			properties: {
-				message: { type: 'string', example: 'User targets updated successfully' },
+	@ApiParam({ 
+		name: 'ref', 
+		description: 'User ID for target updates',
+		type: Number,
+		example: 123
+	})
+	@ApiBody({ 
+		type: UpdateUserTargetDto,
+		description: 'Target update configuration (partial updates supported)',
+		examples: {
+			targetAdjustment: {
+				summary: 'Adjust sales target mid-period',
+				value: {
+					targetSalesAmount: 60000,
+					reason: 'Market opportunity adjustment',
+				},
+			},
+			progressUpdate: {
+				summary: 'Update current progress values',
+				value: {
+					currentSalesAmount: 45000,
+					currentHoursWorked: 120,
+					currentNewLeads: 15,
+				},
 			},
 		},
 	})
-	@ApiBadRequestResponse({ description: 'Invalid input data provided' })
-	@ApiNotFoundResponse({ description: 'User not found or no targets set' })
+	@ApiOkResponse({
+		description: '✅ User performance targets updated successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'User performance targets updated successfully' },
+				data: {
+					type: 'object',
+					properties: {
+						updatedFields: {
+							type: 'array',
+							items: { type: 'string' },
+							example: ['targetSalesAmount', 'currentHoursWorked'],
+							description: 'List of fields that were updated',
+						},
+						progressImpact: {
+							type: 'object',
+							properties: {
+								previousOverallProgress: { type: 'number', example: 65.2, description: 'Progress before update' },
+								newOverallProgress: { type: 'number', example: 72.8, description: 'Progress after update' },
+								impactDescription: { type: 'string', example: 'Target adjustment improved overall progress by 7.6%' },
+							},
+						},
+						nextMilestone: { type: 'string', example: '75% target achievement', description: 'Next achievement milestone' },
+					},
+				},
+			},
+		},
+	})
+	@ApiBadRequestResponse({ 
+		description: '❌ Invalid update data provided',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Invalid target update configuration' },
+				errors: {
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'Cannot decrease target below current achievement',
+						'Invalid currency code provided',
+						'Period dates must be within current fiscal year',
+					],
+				},
+			},
+		},
+	})
+	@ApiNotFoundResponse({ description: '❌ User not found or no targets configured to update' })
 	updateUserTarget(@Param('ref') ref: number, @Body() updateUserTargetDto: UpdateUserTargetDto) {
 		return this.userService.updateUserTarget(ref, updateUserTargetDto);
 	}
@@ -455,20 +710,73 @@ export class UserController {
 	@Delete(':ref/target')
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER)
 	@ApiOperation({
-		summary: 'Delete user targets',
-		description: 'Delete performance targets for a specific user',
+		summary: 'Delete user performance targets',
+		description: `
+		**Remove performance targets for a specific user**
+		
+		This endpoint provides safe target deletion with proper cleanup:
+		- Soft deletion with historical preservation
+		- Progress data archival for reporting
+		- Notification to affected stakeholders
+		- Audit trail maintenance
+		- Option for complete removal or archival
+		
+		**Deletion Impact:**
+		- User dashboard updated to reflect no active targets
+		- Historical performance data preserved for analytics
+		- Related notifications and reminders disabled
+		- Team/branch metrics recalculated excluding deleted targets
+		
+		**Use Cases:**
+		- Employee role changes requiring different target structure
+		- Temporary target suspension during leave/transitions
+		- Target structure redesign requiring fresh start
+		- Performance period completion and reset
+		`,
+		operationId: 'deleteUserTargets',
 	})
-	@ApiParam({ name: 'ref', description: 'User ID', type: Number })
+	@ApiParam({ 
+		name: 'ref', 
+		description: 'User ID for target deletion',
+		type: Number,
+		example: 123
+	})
 	@ApiOkResponse({
-		description: 'User targets deleted successfully',
+		description: '✅ User performance targets deleted successfully',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'User targets deleted successfully' },
+				message: { type: 'string', example: 'User performance targets deleted successfully' },
+				data: {
+					type: 'object',
+					properties: {
+						deletedTargetId: { type: 'number', example: 42, description: 'ID of deleted target record' },
+						finalProgress: {
+							type: 'object',
+							properties: {
+								salesProgress: { type: 'number', example: 78.5, description: 'Final sales achievement percentage' },
+								hoursProgress: { type: 'number', example: 92.3, description: 'Final hours worked percentage' },
+								overallProgress: { type: 'number', example: 83.7, description: 'Final overall achievement percentage' },
+							},
+							description: 'Final progress snapshot before deletion',
+						},
+						archivalReference: { type: 'string', example: 'ARCH_USER123_2024Q1', description: 'Reference for archived data' },
+						impactSummary: { type: 'string', example: 'Targets achieved 83.7% overall completion before deletion' },
+					},
+				},
 			},
 		},
 	})
-	@ApiNotFoundResponse({ description: 'User not found' })
+	@ApiNotFoundResponse({ 
+		description: '❌ User or targets not found',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'User not found or no targets exist to delete' },
+				errorCode: { type: 'string', example: 'TARGETS_NOT_FOUND' },
+			},
+		},
+	})
 	deleteUserTarget(@Param('ref') ref: number) {
 		return this.userService.deleteUserTarget(ref);
 	}
@@ -647,54 +955,6 @@ export class UserController {
 		} catch (error) {
 			throw error;
 		}
-	}
-
-	@Get(':ref/target')
-	@Roles(
-		AccessLevel.ADMIN,
-		AccessLevel.MANAGER,
-		AccessLevel.SUPPORT,
-		AccessLevel.DEVELOPER,
-		AccessLevel.USER,
-		AccessLevel.OWNER,
-		AccessLevel.TECHNICIAN,
-	)
-	@ApiOperation({
-		summary: 'Get user target by reference code',
-		description: 'Retrieves the target configuration for a specific user.',
-	})
-	@ApiParam({
-		name: 'ref',
-		description: 'User reference code',
-		type: 'number',
-		example: 1,
-	})
-	@ApiOkResponse({
-		description: 'User target retrieved successfully',
-		schema: {
-			type: 'object',
-			properties: {
-				message: { type: 'string', example: 'Success' },
-				data: {
-					type: 'object',
-					properties: {
-						uid: { type: 'number', example: 1 },
-						targetSalesAmount: { type: 'number', example: 50000 },
-						targetHoursWorked: { type: 'number', example: 160 },
-						targetNewClients: { type: 'number', example: 5 },
-						targetNewLeads: { type: 'number', example: 20 },
-						targetCheckIns: { type: 'number', example: 22 },
-						targetCalls: { type: 'number', example: 100 },
-						createdAt: { type: 'string', format: 'date-time' },
-						updatedAt: { type: 'string', format: 'date-time' },
-					},
-				},
-			},
-		},
-	})
-	@ApiNotFoundResponse({ description: 'User target not found' })
-	getUserTarget(@Param('ref') ref: number) {
-		return this.userService.getUserTarget(ref);
 	}
 
 	@Put(':userId/targets/external-update')

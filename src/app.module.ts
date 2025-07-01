@@ -93,6 +93,7 @@ import { WarningsModule } from './warnings/warnings.module';
 import { Warning } from './warnings/entities/warning.entity';
 import { RoleGuard } from './guards/role.guard';
 import { ClientCommunicationSchedule } from './clients/entities/client-communication-schedule.entity';
+import { PayslipsModule } from './payslips/payslips.module';
 
 @Module({
 	imports: [
@@ -100,8 +101,8 @@ import { ClientCommunicationSchedule } from './clients/entities/client-communica
 			isGlobal: true,
 		}),
 		CacheModule.register({
-			ttl: parseInt(process.env.CACHE_EXPIRATION_TIME || '300', 10) * 1000,
-			max: parseInt(process.env.CACHE_MAX_ITEMS || '200', 10) || 200, // Ensure valid positive integer
+			ttl: parseInt(process.env.CACHE_EXPIRATION_TIME || '600', 10) * 1000, // 10 minutes default
+			max: parseInt(process.env.CACHE_MAX_ITEMS || '500000', 10) || 500000, // 500K items for high load
 			isGlobal: true,
 		}),
 		EventEmitterModule.forRoot(),
@@ -175,14 +176,21 @@ import { ClientCommunicationSchedule } from './clients/entities/client-communica
 				synchronize: true,
 				logging: false,
 				extra: {
-					connectionLimit: 50,
-					acquireTimeout: 15000,
-					timeout: 30000,
+					connectionLimit: parseInt(configService.get<string>('DB_CONNECTION_LIMIT') || '200000', 10), // High concurrency support
+					acquireTimeout: parseInt(configService.get<string>('DB_ACQUIRE_TIMEOUT') || '500000', 10), // 500 seconds
+					timeout: parseInt(configService.get<string>('DB_QUERY_TIMEOUT') || '60000', 10), // 1 minute
 					reconnect: true,
-					idleTimeout: 300000,
-					maxReconnects: 3,
+					idleTimeout: parseInt(configService.get<string>('DB_IDLE_TIMEOUT') || '60000', 10), // 1 minute
+					maxReconnects: parseInt(configService.get<string>('DB_MAX_RECONNECTS') || '5', 10),
 					dateStrings: false,
 					ssl: configService.get<string>('NODE_ENV') === 'production' ? { rejectUnauthorized: false } : false,
+					// Additional MySQL optimizations for high load
+					supportBigNumbers: true,
+					bigNumberStrings: false,
+					charset: 'utf8mb4',
+					timezone: 'Z',
+					multipleStatements: false,
+					typeCast: true,
 				},
 				retryAttempts: 3,
 				retryDelay: 3000,
@@ -222,6 +230,7 @@ import { ClientCommunicationSchedule } from './clients/entities/client-communica
 		PdfGenerationModule,
 		LeaveModule,
 		WarningsModule,
+		PayslipsModule,
 	],
 	controllers: [],
 	providers: [

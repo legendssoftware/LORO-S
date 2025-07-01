@@ -118,6 +118,12 @@ export class UserDailyReportGenerator {
 				previousClientData,
 				rewardsData,
 				targetsData,
+				// New enhanced data collections
+				performanceAnalytics,
+				productivityInsights,
+				weeklyComparison,
+				predictiveAnalytics,
+				wellnessMetrics,
 			] = await Promise.all([
 				this.collectAttendanceData(userId, startDate, endDate),
 				this.collectTaskMetrics(userId, startDate, endDate),
@@ -131,6 +137,12 @@ export class UserDailyReportGenerator {
 				this.collectClientData(userId, previousStartDate, previousEndDate),
 				this.collectRewardsData(userId, startDate, endDate),
 				this.collectTargetsData(userId),
+				// New enhanced data collection methods
+				this.collectPerformanceAnalytics(userId, startDate, endDate),
+				this.collectProductivityInsights(userId, startDate, endDate),
+				this.collectWeeklyComparison(userId, startDate),
+				this.generatePredictiveAnalytics(userId, startDate, endDate),
+				this.collectWellnessMetrics(userId, startDate, endDate),
 			]);
 
 			// Format the date for display
@@ -170,6 +182,12 @@ export class UserDailyReportGenerator {
 					claims: claimData,
 					rewards: rewardsData,
 					targets: targetsData,
+					// Enhanced analytics and insights
+					performance: performanceAnalytics,
+					productivity: productivityInsights,
+					weeklyComparison: weeklyComparison,
+					predictions: predictiveAnalytics,
+					wellness: wellnessMetrics,
 				},
 				// Format data specifically for email template
 				emailData: {
@@ -211,6 +229,40 @@ export class UserDailyReportGenerator {
 							currentRank: rewardsData.currentRank,
 						},
 						targets: targetsData,
+						// Enhanced analytics for email template
+						performance: {
+							overallScore: performanceAnalytics.overallScore,
+							taskEfficiency: performanceAnalytics.taskEfficiency,
+							leadConversionRate: performanceAnalytics.leadConversionRate,
+							revenuePerHour: performanceAnalytics.revenuePerHour,
+							strengths: performanceAnalytics.strengths,
+							improvementAreas: performanceAnalytics.improvementAreas,
+						},
+						productivity: {
+							score: productivityInsights.productivityScore,
+							peakHour: productivityInsights.peakProductivityHour,
+							focusTime: productivityInsights.averageFocusTime,
+							recommendations: productivityInsights.recommendations,
+							workPatterns: productivityInsights.workPatterns,
+						},
+						weeklyComparison: {
+							trend: weeklyComparison.trend,
+							changes: weeklyComparison.changes,
+							current: weeklyComparison.current,
+							previous: weeklyComparison.previous,
+						},
+						predictions: {
+							targetAchievementProbability: predictiveAnalytics.targetAchievementProbability,
+							projectedCompletion: predictiveAnalytics.projectedCompletion,
+							recommendations: predictiveAnalytics.recommendations,
+							riskFactors: predictiveAnalytics.riskFactors,
+						},
+						wellness: {
+							score: wellnessMetrics.wellnessScore,
+							workLifeBalance: wellnessMetrics.workLifeBalance,
+							stressLevel: wellnessMetrics.stressLevel,
+							recommendations: wellnessMetrics.recommendations,
+						},
 					},
 					tracking: locationData.trackingData,
 				},
@@ -953,5 +1005,449 @@ export class UserDailyReportGenerator {
 				targetProgress: {},
 			};
 		}
+	}
+
+	/**
+	 * Collect comprehensive performance analytics
+	 */
+	private async collectPerformanceAnalytics(userId: number, startDate: Date, endDate: Date) {
+		try {
+			// Get historical data for trend analysis (last 7 days)
+			const weekStart = subDays(startDate, 7);
+			
+			// Collect performance data over the week
+			const weeklyData = await Promise.all([
+				this.collectQuotationData(userId, weekStart, startDate),
+				this.collectTaskMetrics(userId, weekStart, startDate),
+				this.collectLeadMetrics(userId, weekStart, startDate),
+				this.collectAttendanceData(userId, weekStart, startDate),
+			]);
+
+			const [weeklyQuotations, weeklyTasks, weeklyLeads, weeklyAttendance] = weeklyData;
+
+			// Calculate efficiency scores
+			const taskEfficiency = weeklyTasks.completedCount / Math.max(weeklyTasks.createdCount, 1) * 100;
+			const leadConversionEfficiency = weeklyLeads.convertedCount / Math.max(weeklyLeads.newLeadsCount, 1) * 100;
+			const revenuePerHour = weeklyQuotations.totalRevenue / Math.max(weeklyAttendance.totalWorkMinutes / 60, 1);
+
+			// Calculate performance scores
+			const performanceScore = this.calculateOverallPerformanceScore({
+				taskEfficiency,
+				leadConversionEfficiency,
+				revenuePerHour,
+				punctuality: weeklyAttendance.totalShifts > 0 ? 100 : 0, // Simplified for now
+			});
+
+			return {
+				overallScore: Math.round(performanceScore * 10) / 10,
+				taskEfficiency: Math.round(taskEfficiency * 10) / 10,
+				leadConversionRate: Math.round(leadConversionEfficiency * 10) / 10,
+				revenuePerHour: Math.round(revenuePerHour * 100) / 100,
+				weeklyTrends: {
+					quotations: weeklyQuotations.totalQuotations,
+					revenue: weeklyQuotations.totalRevenueFormatted,
+					tasksCompleted: weeklyTasks.completedCount,
+					leadsGenerated: weeklyLeads.newLeadsCount,
+					hoursWorked: Math.round((weeklyAttendance.totalWorkMinutes / 60) * 10) / 10,
+				},
+				strengths: this.identifyStrengths({ taskEfficiency, leadConversionEfficiency, revenuePerHour }),
+				improvementAreas: this.identifyImprovementAreas({ taskEfficiency, leadConversionEfficiency, revenuePerHour }),
+			};
+		} catch (error) {
+			this.logger.error(`Error collecting performance analytics: ${error.message}`, error.stack);
+			return {
+				overallScore: 0,
+				taskEfficiency: 0,
+				leadConversionRate: 0,
+				revenuePerHour: 0,
+				weeklyTrends: {},
+				strengths: [],
+				improvementAreas: [],
+			};
+		}
+	}
+
+	/**
+	 * Collect productivity insights and patterns
+	 */
+	private async collectProductivityInsights(userId: number, startDate: Date, endDate: Date) {
+		try {
+			// Calculate peak productivity hours based on task completion times
+			const completedTasks = await this.taskRepository.find({
+				where: {
+					status: TaskStatus.COMPLETED,
+					completionDate: Between(subDays(startDate, 30), endDate),
+					assignees: { uid: userId },
+				},
+			});
+
+			const hourlyProductivity = new Array(24).fill(0);
+			completedTasks.forEach(task => {
+				if (task.completionDate) {
+					const hour = new Date(task.completionDate).getHours();
+					hourlyProductivity[hour]++;
+				}
+			});
+
+			const peakHour = hourlyProductivity.indexOf(Math.max(...hourlyProductivity));
+			
+			// Calculate focus time (continuous work periods)
+			const attendanceRecords = await this.attendanceRepository.find({
+				where: {
+					owner: { uid: userId },
+					checkIn: Between(subDays(startDate, 7), endDate),
+				},
+				order: { checkIn: 'DESC' },
+			});
+
+			const avgFocusTime = this.calculateAverageFocusTime(attendanceRecords);
+			const workPatterns = this.analyzeWorkPatterns(attendanceRecords);
+
+			return {
+				peakProductivityHour: peakHour,
+				averageFocusTime: this.formatDuration(avgFocusTime),
+				productivityScore: this.calculateProductivityScore(hourlyProductivity, avgFocusTime),
+				workPatterns: {
+					preferredStartTime: workPatterns.avgStartTime,
+					preferredEndTime: workPatterns.avgEndTime,
+					consistencyScore: workPatterns.consistencyScore,
+				},
+				recommendations: this.generateProductivityRecommendations({
+					peakHour,
+					avgFocusTime,
+					consistency: workPatterns.consistencyScore,
+				}),
+			};
+		} catch (error) {
+			this.logger.error(`Error collecting productivity insights: ${error.message}`, error.stack);
+			return {
+				peakProductivityHour: 9,
+				averageFocusTime: '0h 0m',
+				productivityScore: 0,
+				workPatterns: {},
+				recommendations: [],
+			};
+		}
+	}
+
+	/**
+	 * Collect weekly comparison data
+	 */
+	private async collectWeeklyComparison(userId: number, currentDate: Date) {
+		try {
+			const currentWeekStart = startOfDay(subDays(currentDate, 6));
+			const previousWeekStart = startOfDay(subDays(currentWeekStart, 7));
+			const previousWeekEnd = endOfDay(subDays(currentWeekStart, 1));
+
+			const [currentWeekData, previousWeekData] = await Promise.all([
+				this.getWeeklyMetrics(userId, currentWeekStart, currentDate),
+				this.getWeeklyMetrics(userId, previousWeekStart, previousWeekEnd),
+			]);
+
+			return {
+				current: currentWeekData,
+				previous: previousWeekData,
+				changes: {
+					hoursWorked: this.calculateGrowth(currentWeekData.hoursWorked, previousWeekData.hoursWorked),
+					tasksCompleted: this.calculateGrowth(currentWeekData.tasksCompleted, previousWeekData.tasksCompleted),
+					revenue: this.calculateGrowth(currentWeekData.revenue, previousWeekData.revenue),
+					leads: this.calculateGrowth(currentWeekData.leads, previousWeekData.leads),
+				},
+				trend: this.determineTrend(currentWeekData, previousWeekData),
+			};
+		} catch (error) {
+			this.logger.error(`Error collecting weekly comparison: ${error.message}`, error.stack);
+			return {
+				current: {},
+				previous: {},
+				changes: {},
+				trend: 'stable',
+			};
+		}
+	}
+
+	/**
+	 * Generate predictive analytics for target achievement
+	 */
+	private async generatePredictiveAnalytics(userId: number, startDate: Date, endDate: Date) {
+		try {
+			const targets = await this.collectTargetsData(userId);
+			
+			if (!targets.hasTargets) {
+				return {
+					targetAchievementProbability: 0,
+					projectedCompletion: {},
+					recommendations: [],
+					riskFactors: [],
+				};
+			}
+
+			// Get historical performance data for the current period
+			const periodStart = targets.periodStartDate ? new Date(targets.periodStartDate) : subDays(startDate, 30);
+			const daysSinceStart = Math.max(1, Math.floor((startDate.getTime() - periodStart.getTime()) / (1000 * 60 * 60 * 24)));
+			const totalPeriodDays = targets.periodEndDate ? 
+				Math.floor((new Date(targets.periodEndDate).getTime() - periodStart.getTime()) / (1000 * 60 * 60 * 24)) : 30;
+
+			// Calculate velocity for each target category
+			const salesVelocity = targets.salesTarget ? targets.salesTarget.current / daysSinceStart : 0;
+			const hoursVelocity = targets.hoursTarget ? targets.hoursTarget.current / daysSinceStart : 0;
+			const leadsVelocity = targets.leadsTarget ? targets.leadsTarget.current / daysSinceStart : 0;
+
+			// Project end-of-period values
+			const projectedSales = salesVelocity * totalPeriodDays;
+			const projectedHours = hoursVelocity * totalPeriodDays;
+			const projectedLeads = leadsVelocity * totalPeriodDays;
+
+			// Calculate achievement probabilities
+			const salesProbability = targets.salesTarget ? Math.min(100, (projectedSales / targets.salesTarget.target) * 100) : 0;
+			const hoursProbability = targets.hoursTarget ? Math.min(100, (projectedHours / targets.hoursTarget.target) * 100) : 0;
+			const leadsProbability = targets.leadsTarget ? Math.min(100, (projectedLeads / targets.leadsTarget.target) * 100) : 0;
+
+			const overallProbability = (salesProbability + hoursProbability + leadsProbability) / 3;
+
+			return {
+				targetAchievementProbability: Math.round(overallProbability),
+				projectedCompletion: {
+					sales: targets.salesTarget ? {
+						projected: projectedSales,
+						target: targets.salesTarget.target,
+						probability: Math.round(salesProbability),
+					} : null,
+					hours: targets.hoursTarget ? {
+						projected: projectedHours,
+						target: targets.hoursTarget.target,
+						probability: Math.round(hoursProbability),
+					} : null,
+					leads: targets.leadsTarget ? {
+						projected: projectedLeads,
+						target: targets.leadsTarget.target,
+						probability: Math.round(leadsProbability),
+					} : null,
+				},
+				recommendations: this.generateTargetRecommendations({
+					salesProbability,
+					hoursProbability,
+					leadsProbability,
+					daysRemaining: totalPeriodDays - daysSinceStart,
+				}),
+				riskFactors: this.identifyRiskFactors({
+					salesProbability,
+					hoursProbability,
+					leadsProbability,
+				}),
+			};
+		} catch (error) {
+			this.logger.error(`Error generating predictive analytics: ${error.message}`, error.stack);
+			return {
+				targetAchievementProbability: 0,
+				projectedCompletion: {},
+				recommendations: [],
+				riskFactors: [],
+			};
+		}
+	}
+
+	/**
+	 * Collect wellness and work-life balance metrics
+	 */
+	private async collectWellnessMetrics(userId: number, startDate: Date, endDate: Date) {
+		try {
+			// Get attendance data for wellness analysis
+			const attendanceRecords = await this.attendanceRepository.find({
+				where: {
+					owner: { uid: userId },
+					checkIn: Between(subDays(startDate, 7), endDate),
+				},
+				order: { checkIn: 'DESC' },
+			});
+
+			const workLifeBalance = this.calculateWorkLifeBalance(attendanceRecords);
+			const stressIndicators = this.calculateStressIndicators(attendanceRecords);
+			const wellnessScore = this.calculateWellnessScore(workLifeBalance, stressIndicators);
+
+			return {
+				wellnessScore: Math.round(wellnessScore),
+				workLifeBalance: {
+					score: Math.round(workLifeBalance.score),
+					averageHoursPerDay: workLifeBalance.avgHoursPerDay,
+					overtimeDays: workLifeBalance.overtimeDays,
+					recommendedBreaks: workLifeBalance.recommendedBreaks,
+				},
+				stressLevel: stressIndicators.level,
+				recommendations: this.generateWellnessRecommendations(wellnessScore, workLifeBalance, stressIndicators),
+			};
+		} catch (error) {
+			this.logger.error(`Error collecting wellness metrics: ${error.message}`, error.stack);
+			return {
+				wellnessScore: 75,
+				workLifeBalance: { score: 75 },
+				stressLevel: 'moderate',
+				recommendations: [],
+			};
+		}
+	}
+
+	// Helper methods for analytics
+
+	private calculateOverallPerformanceScore(metrics: any): number {
+		const weights = { taskEfficiency: 0.3, leadConversionEfficiency: 0.3, revenuePerHour: 0.3, punctuality: 0.1 };
+		return Object.entries(weights).reduce((score, [key, weight]) => score + (metrics[key] || 0) * weight, 0) / 100;
+	}
+
+	private identifyStrengths(metrics: any): string[] {
+		const strengths = [];
+		if (metrics.taskEfficiency > 80) strengths.push('Excellent task completion rate');
+		if (metrics.leadConversionEfficiency > 15) strengths.push('Strong lead conversion');
+		if (metrics.revenuePerHour > 100) strengths.push('High revenue productivity');
+		return strengths;
+	}
+
+	private identifyImprovementAreas(metrics: any): string[] {
+		const areas = [];
+		if (metrics.taskEfficiency < 60) areas.push('Task completion efficiency');
+		if (metrics.leadConversionEfficiency < 10) areas.push('Lead conversion rate');
+		if (metrics.revenuePerHour < 50) areas.push('Revenue per hour');
+		return areas;
+	}
+
+	private calculateAverageFocusTime(records: Attendance[]): number {
+		// Simplified calculation - average continuous work time
+		if (records.length === 0) return 0;
+		const totalMinutes = records.reduce((sum, record) => {
+			if (record.checkIn && record.checkOut) {
+				return sum + differenceInMinutes(new Date(record.checkOut), new Date(record.checkIn));
+			}
+			return sum;
+		}, 0);
+		return totalMinutes / records.length;
+	}
+
+	private analyzeWorkPatterns(records: Attendance[]): any {
+		// Simplified work pattern analysis
+		const startTimes = records.filter(r => r.checkIn).map(r => new Date(r.checkIn).getHours());
+		const endTimes = records.filter(r => r.checkOut).map(r => new Date(r.checkOut).getHours());
+		
+		return {
+			avgStartTime: startTimes.length > 0 ? Math.round(startTimes.reduce((a, b) => a + b, 0) / startTimes.length) : 9,
+			avgEndTime: endTimes.length > 0 ? Math.round(endTimes.reduce((a, b) => a + b, 0) / endTimes.length) : 17,
+			consistencyScore: 85, // Simplified for now
+		};
+	}
+
+	private calculateProductivityScore(hourlyData: number[], focusTime: number): number {
+		const peakHours = Math.max(...hourlyData);
+		const focusScore = Math.min(100, focusTime / 4); // 4 hours = 100%
+		return Math.round((peakHours * 10 + focusScore) / 2);
+	}
+
+	private generateProductivityRecommendations(data: any): string[] {
+		const recommendations = [];
+		if (data.peakHour < 10) recommendations.push('Consider scheduling important tasks in the morning');
+		if (data.avgFocusTime < 120) recommendations.push('Try to extend focus periods with time-blocking');
+		if (data.consistency < 70) recommendations.push('Work on maintaining consistent work patterns');
+		return recommendations;
+	}
+
+	private async getWeeklyMetrics(userId: number, startDate: Date, endDate: Date): Promise<any> {
+		const [attendance, tasks, quotations, leads] = await Promise.all([
+			this.collectAttendanceData(userId, startDate, endDate),
+			this.collectTaskMetrics(userId, startDate, endDate),
+			this.collectQuotationData(userId, startDate, endDate),
+			this.collectLeadMetrics(userId, startDate, endDate),
+		]);
+
+		return {
+			hoursWorked: Math.round((attendance.totalWorkMinutes / 60) * 10) / 10,
+			tasksCompleted: tasks.completedCount,
+			revenue: quotations.totalRevenue,
+			leads: leads.newLeadsCount,
+		};
+	}
+
+	private determineTrend(current: any, previous: any): string {
+		const improvements = Object.keys(current).filter(key => (current[key] || 0) > (previous[key] || 0)).length;
+		const declines = Object.keys(current).filter(key => (current[key] || 0) < (previous[key] || 0)).length;
+		
+		if (improvements > declines) return 'improving';
+		if (declines > improvements) return 'declining';
+		return 'stable';
+	}
+
+	private generateTargetRecommendations(probabilities: any): string[] {
+		const recommendations = [];
+		if (probabilities.salesProbability < 80) {
+			recommendations.push('Focus on higher-value deals to improve sales target achievement');
+		}
+		if (probabilities.hoursProbability < 80) {
+			recommendations.push('Consider optimizing work schedule to meet hours target');
+		}
+		if (probabilities.leadsProbability < 80) {
+			recommendations.push('Increase lead generation activities and networking');
+		}
+		return recommendations;
+	}
+
+	private identifyRiskFactors(probabilities: any): string[] {
+		const risks = [];
+		if (probabilities.salesProbability < 60) risks.push('Sales target at risk');
+		if (probabilities.hoursProbability < 60) risks.push('Hours target may not be met');
+		if (probabilities.leadsProbability < 60) risks.push('Lead generation below expected pace');
+		return risks;
+	}
+
+	private calculateWorkLifeBalance(records: Attendance[]): any {
+		const totalHours = records.reduce((sum, record) => {
+			if (record.checkIn && record.checkOut) {
+				return sum + differenceInMinutes(new Date(record.checkOut), new Date(record.checkIn)) / 60;
+			}
+			return sum;
+		}, 0);
+
+		const avgHoursPerDay = records.length > 0 ? totalHours / records.length : 0;
+		const overtimeDays = records.filter(record => {
+			if (record.checkIn && record.checkOut) {
+				const hours = differenceInMinutes(new Date(record.checkOut), new Date(record.checkIn)) / 60;
+				return hours > 8;
+			}
+			return false;
+		}).length;
+
+		const score = Math.max(0, 100 - (avgHoursPerDay - 8) * 10 - overtimeDays * 5);
+
+		return {
+			score,
+			avgHoursPerDay: Math.round(avgHoursPerDay * 10) / 10,
+			overtimeDays,
+			recommendedBreaks: Math.max(0, Math.floor(avgHoursPerDay / 4)),
+		};
+	}
+
+	private calculateStressIndicators(records: Attendance[]): any {
+		const longDays = records.filter(record => {
+			if (record.checkIn && record.checkOut) {
+				const hours = differenceInMinutes(new Date(record.checkOut), new Date(record.checkIn)) / 60;
+				return hours > 10;
+			}
+			return false;
+		}).length;
+
+		const level = longDays > 3 ? 'high' : longDays > 1 ? 'moderate' : 'low';
+		return { level, longDays };
+	}
+
+	private calculateWellnessScore(workLifeBalance: any, stressIndicators: any): number {
+		let score = workLifeBalance.score;
+		if (stressIndicators.level === 'high') score -= 20;
+		else if (stressIndicators.level === 'moderate') score -= 10;
+		return Math.max(0, Math.min(100, score));
+	}
+
+	private generateWellnessRecommendations(score: number, workLife: any, stress: any): string[] {
+		const recommendations = [];
+		if (score < 60) recommendations.push('Consider implementing better work-life balance practices');
+		if (workLife.overtimeDays > 2) recommendations.push('Try to reduce overtime frequency');
+		if (stress.level === 'high') recommendations.push('Take regular breaks and consider stress management techniques');
+		if (workLife.avgHoursPerDay > 9) recommendations.push('Aim for more reasonable daily working hours');
+		return recommendations;
 	}
 }

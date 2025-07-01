@@ -80,6 +80,149 @@ export interface DailyReportData extends BaseEmailData {
 			todayTasks: number;
 			todayQuotations: number;
 			hoursWorked: number;
+			xpEarned: number;
+			currentLevel: number;
+			currentRank: string;
+		};
+		targets?: {
+			hasTargets: boolean;
+			targetPeriod?: string;
+			periodStartDate?: string;
+			periodEndDate?: string;
+			salesTarget?: {
+				current: number;
+				target: number;
+				currency: string;
+				formatted: string;
+				targetFormatted: string;
+			};
+			hoursTarget?: {
+				current: number;
+				target: number;
+			};
+			leadsTarget?: {
+				current: number;
+				target: number;
+			};
+			clientsTarget?: {
+				current: number;
+				target: number;
+			};
+			checkInsTarget?: {
+				current: number;
+				target: number;
+			};
+			callsTarget?: {
+				current: number;
+				target: number;
+			};
+			targetProgress?: {
+				sales?: {
+					current: number;
+					target: number;
+					progress: number;
+					currency: string;
+				};
+				hours?: {
+					current: number;
+					target: number;
+					progress: number;
+				};
+				leads?: {
+					current: number;
+					target: number;
+					progress: number;
+				};
+				clients?: {
+					current: number;
+					target: number;
+					progress: number;
+				};
+				checkIns?: {
+					current: number;
+					target: number;
+					progress: number;
+				};
+				calls?: {
+					current: number;
+					target: number;
+					progress: number;
+				};
+			};
+		};
+		// Enhanced analytics and insights
+		performance?: {
+			overallScore: number;
+			taskEfficiency: number;
+			leadConversionRate: number;
+			revenuePerHour: number;
+			strengths: string[];
+			improvementAreas: string[];
+		};
+		productivity?: {
+			score: number;
+			peakHour: number;
+			focusTime: string;
+			recommendations: string[];
+			workPatterns: {
+				preferredStartTime: number;
+				preferredEndTime: number;
+				consistencyScore: number;
+			};
+		};
+		weeklyComparison?: {
+			trend: string;
+			changes: {
+				hoursWorked: string;
+				tasksCompleted: string;
+				revenue: string;
+				leads: string;
+			};
+			current: {
+				hoursWorked: number;
+				tasksCompleted: number;
+				revenue: number;
+				leads: number;
+			};
+			previous: {
+				hoursWorked: number;
+				tasksCompleted: number;
+				revenue: number;
+				leads: number;
+			};
+		};
+		predictions?: {
+			targetAchievementProbability: number;
+			projectedCompletion: {
+				sales?: {
+					projected: number;
+					target: number;
+					probability: number;
+				};
+				hours?: {
+					projected: number;
+					target: number;
+					probability: number;
+				};
+				leads?: {
+					projected: number;
+					target: number;
+					probability: number;
+				};
+			};
+			recommendations: string[];
+			riskFactors: string[];
+		};
+		wellness?: {
+			score: number;
+			workLifeBalance: {
+				score: number;
+				averageHoursPerDay: number;
+				overtimeDays: number;
+				recommendedBreaks: number;
+			};
+			stressLevel: string;
+			recommendations: string[];
 		};
 	};
 	tracking?: {
@@ -343,6 +486,22 @@ export interface OvertimeReminderData extends BaseEmailData {
 		totalBreakTime: string;
 		breakCount: number;
 	};
+}
+
+export interface OrganizationHoursReminderData extends BaseEmailData {
+	organizationName: string;
+	organizationId: number;
+	impactedFeatures: string[];
+	defaultSettings: {
+		startTime: string;
+		endTime: string;
+		workingDays: string[];
+	};
+	settingsUrl: string;
+	dashboardUrl: string;
+	benefits: string[];
+	urgencyLevel: 'low' | 'medium' | 'high';
+	generatedAt: string;
 }
 
 export interface QuotationData extends BaseEmailData {
@@ -1249,6 +1408,8 @@ export interface EmailDataMap {
 	[EmailType.DAILY_REPORT]: DailyReportData;
 	[EmailType.ATTENDANCE_MORNING_REPORT]: MorningReportData;
 	[EmailType.ATTENDANCE_EVENING_REPORT]: EveningReportData;
+	// Organization Settings Reminders
+	[EmailType.ORGANIZATION_HOURS_REMINDER]: OrganizationHoursReminderData;
 	// Overtime email mappings
 	[EmailType.OVERTIME_REMINDER]: OvertimeReminderData;
 	// Quotation email mappings

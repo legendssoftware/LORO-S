@@ -1,0 +1,167 @@
+{{#base headerTitle="Organization Working Hours Setup Required" headerSubtitle="Action needed to improve attendance tracking accuracy"}}
+
+<div class="greeting">
+    Hello {{name}}! ⚙️
+</div>
+
+<div class="message">
+    <p>We noticed that <strong>{{organizationName}}</strong> hasn't configured custom working hours yet. We're currently using default settings for attendance tracking and report scheduling, but setting up your actual working hours will significantly improve accuracy and timing.</p>
+</div>
+
+<!-- Current Default Settings -->
+<div class="info-card" style="background: linear-gradient(135deg, #fef3c7 0%, #fbbf24 30%); border-left-color: #f59e0b;">
+    <h3 style="color: #92400e;">📋 Current Default Settings</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Default Start Time</span>
+            <span class="detail-value" style="font-weight: 700; color: #92400e;">{{defaultSettings.startTime}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Default End Time</span>
+            <span class="detail-value" style="font-weight: 700; color: #92400e;">{{defaultSettings.endTime}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Working Days</span>
+            <span class="detail-value" style="font-weight: 700; color: #92400e;">{{#each defaultSettings.workingDays}}{{this}}{{#unless @last}}, {{/unless}}{{/each}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Status</span>
+            <span class="detail-value" style="font-weight: 700; color: #dc2626;">⚠️ Using Defaults</span>
+        </div>
+    </div>
+</div>
+
+<!-- Impact on Features -->
+<div class="info-card">
+    <h3 style="color: #7c2d92;">📊 Features Affected by Missing Working Hours</h3>
+    <div style="margin-top: 16px;">
+        {{#each impactedFeatures}}
+        <div style="display: flex; align-items: center; padding: 12px 16px; background: rgba(124, 45, 146, 0.05); border-radius: 8px; margin-bottom: 8px; border-left: 3px solid #7c2d92;">
+            <div style="margin-right: 12px; font-size: 16px;">📈</div>
+            <div style="color: #7c2d92; font-weight: 600;">{{this}}</div>
+        </div>
+        {{/each}}
+    </div>
+</div>
+
+<!-- Urgency Level Indicator -->
+{{#if (eq urgencyLevel 'high')}}
+<div style="background: rgba(239, 68, 68, 0.1); border: 2px solid #ef4444; border-radius: 12px; padding: 20px; margin: 20px 0;">
+    <h4 style="color: #dc2626; margin-bottom: 16px; display: flex; align-items: center;">🚨 HIGH PRIORITY: Immediate Action Required</h4>
+    <p style="color: #991b1b; font-size: 14px; margin-bottom: 12px;">Your attendance reports and system timing are significantly impacted. Setting up working hours should be completed today.</p>
+</div>
+{{else if (eq urgencyLevel 'medium')}}
+<div style="background: rgba(245, 158, 11, 0.1); border: 2px solid #f59e0b; border-radius: 12px; padding: 20px; margin: 20px 0;">
+    <h4 style="color: #d97706; margin-bottom: 16px; display: flex; align-items: center;">⚠️ MEDIUM PRIORITY: Action Recommended</h4>
+    <p style="color: #92400e; font-size: 14px; margin-bottom: 12px;">Setting up working hours will improve the accuracy of your attendance tracking and reports.</p>
+</div>
+{{else}}
+<div style="background: rgba(59, 130, 246, 0.1); border: 2px solid #3b82f6; border-radius: 12px; padding: 20px; margin: 20px 0;">
+    <h4 style="color: #2563eb; margin-bottom: 16px; display: flex; align-items: center;">📋 SUGGESTED: Optimize Your Setup</h4>
+    <p style="color: #1d4ed8; font-size: 14px; margin-bottom: 12px;">Configure working hours to get the most accurate attendance insights for your organization.</p>
+</div>
+{{/if}}
+
+<!-- Benefits of Setting Up Working Hours -->
+<div class="success-notice">
+    <h4 style="color: #15803d; margin-bottom: 16px;">✨ Benefits of Configuring Working Hours</h4>
+    <div style="margin-top: 16px;">
+        {{#each benefits}}
+        <div style="display: flex; align-items: center; padding: 12px 16px; background: rgba(34, 197, 94, 0.05); border-radius: 8px; margin-bottom: 8px; border-left: 3px solid #22c55e;">
+            <div style="margin-right: 12px; font-size: 16px;">✅</div>
+            <div style="color: #15803d; font-weight: 600;">{{this}}</div>
+        </div>
+        {{/each}}
+    </div>
+</div>
+
+<!-- What You Can Configure -->
+<div class="info-card" style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-left-color: #22c55e;">
+    <h4 style="color: #166534;">🔧 What You Can Configure</h4>
+    <div style="margin-top: 16px;">
+        <div style="display: grid; gap: 16px;">
+            <div style="display: flex; align-items: start; padding: 16px; background: rgba(34, 197, 94, 0.05); border-radius: 8px;">
+                <div style="margin-right: 16px; font-size: 20px; margin-top: 2px;">🕐</div>
+                <div>
+                    <div style="font-weight: 700; color: #166534; margin-bottom: 4px;">Daily Working Hours</div>
+                    <div style="color: #16a34a; font-size: 14px;">Set your organization's start and end times for each day of the week</div>
+                </div>
+            </div>
+            <div style="display: flex; align-items: start; padding: 16px; background: rgba(34, 197, 94, 0.05); border-radius: 8px;">
+                <div style="margin-right: 16px; font-size: 20px; margin-top: 2px;">📅</div>
+                <div>
+                    <div style="font-weight: 700; color: #166534; margin-bottom: 4px;">Working Days</div>
+                    <div style="color: #16a34a; font-size: 14px;">Choose which days of the week your organization operates</div>
+                </div>
+            </div>
+            <div style="display: flex; align-items: start; padding: 16px; background: rgba(34, 197, 94, 0.05); border-radius: 8px;">
+                <div style="margin-right: 16px; font-size: 20px; margin-top: 2px;">🎉</div>
+                <div>
+                    <div style="font-weight: 700; color: #166534; margin-bottom: 4px;">Special Hours & Holidays</div>
+                    <div style="color: #16a34a; font-size: 14px;">Set different hours for special days or mark holidays when the office is closed</div>
+                </div>
+            </div>
+            <div style="display: flex; align-items: start; padding: 16px; background: rgba(34, 197, 94, 0.05); border-radius: 8px;">
+                <div style="margin-right: 16px; font-size: 20px; margin-top: 2px;">📧</div>
+                <div>
+                    <div style="font-weight: 700; color: #166534; margin-bottom: 4px;">Report Timing</div>
+                    <div style="color: #16a34a; font-size: 14px;">Automatically schedule attendance reports based on your actual working hours</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Action Required -->
+<div class="action-section" style="background: linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%); border-radius: 12px; padding: 24px; margin: 24px 0;">
+    <h4 style="color: #3730a3; margin-bottom: 16px; text-align: center;">🎯 Take Action Now</h4>
+    <p style="color: #4338ca; text-align: center; margin-bottom: 20px; font-size: 16px;">Set up your organization's working hours in just a few clicks!</p>
+    
+    <div style="text-align: center; margin: 20px 0;">
+        <a href="{{settingsUrl}}" 
+           style="display: inline-block; background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%); color: white; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 700; font-size: 16px; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);">
+            Configure Working Hours
+        </a>
+    </div>
+    
+    <div style="text-align: center; margin-top: 16px;">
+        <a href="{{dashboardUrl}}" style="color: #4338ca; text-decoration: none; font-size: 14px;">
+            Go to Dashboard →
+        </a>
+    </div>
+</div>
+
+<!-- Quick Setup Guide -->
+<div class="info-card" style="background: rgba(249, 250, 251, 1); border-left-color: #6b7280;">
+    <h4 style="color: #374151;">📖 Quick Setup Guide</h4>
+    <div style="margin-top: 16px;">
+        <div style="display: grid; gap: 12px;">
+            <div style="display: flex; align-items: start;">
+                <div style="margin-right: 12px; background: #6366f1; color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; margin-top: 2px;">1</div>
+                <div style="color: #374151;">Navigate to <strong>Settings → Business Hours</strong> from your dashboard</div>
+            </div>
+            <div style="display: flex; align-items: start;">
+                <div style="margin-right: 12px; background: #6366f1; color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; margin-top: 2px;">2</div>
+                <div style="color: #374151;">Set your <strong>start and end times</strong> for each working day</div>
+            </div>
+            <div style="display: flex; align-items: start;">
+                <div style="margin-right: 12px; background: #6366f1; color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; margin-top: 2px;">3</div>
+                <div style="color: #374151;">Choose which <strong>days of the week</strong> your organization operates</div>
+            </div>
+            <div style="display: flex; align-items: start;">
+                <div style="margin-right: 12px; background: #22c55e; color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; margin-top: 2px;">✓</div>
+                <div style="color: #374151;"><strong>Save</strong> and enjoy improved attendance tracking!</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Footer Information -->
+<div style="margin-top: 24px; padding: 16px; background: rgba(243, 244, 246, 1); border-radius: 8px; border-left: 4px solid #9ca3af;">
+    <p style="color: #6b7280; font-size: 13px; margin: 0;">
+        <strong>Note:</strong> This reminder was generated automatically on {{generatedAt}} because no custom working hours were found for {{organizationName}}. 
+        Once you configure your working hours, these reminders will stop and all attendance features will use your custom settings.
+    </p>
+</div>
+
+{{/base}} 
