@@ -67,6 +67,22 @@ interface AttendanceSummary {
 	hoursDeficit: number;
 }
 
+interface BranchPunctuality {
+	branchId: number;
+	branchName: string;
+	earlyArrivals: AttendanceReportUser[];
+	onTimeArrivals: AttendanceReportUser[];
+	lateArrivals: AttendanceReportUser[];
+	veryLateArrivals: AttendanceReportUser[];
+	earlyPercentage: number;
+	onTimePercentage: number;
+	latePercentage: number;
+	veryLatePercentage: number;
+	averageLateMinutes: number;
+	totalLateMinutes: number;
+	totalEmployees: number;
+}
+
 interface PunctualityBreakdown {
 	earlyArrivals: AttendanceReportUser[];
 	onTimeArrivals: AttendanceReportUser[];
@@ -78,6 +94,7 @@ interface PunctualityBreakdown {
 	veryLatePercentage: number;
 	averageLateMinutes: number;
 	totalLateMinutes: number;
+	byBranch: BranchPunctuality[];
 }
 
 interface EmployeeAttendanceMetric {
@@ -92,6 +109,19 @@ interface EmployeeAttendanceMetric {
 	timingDifference: string;
 }
 
+interface BranchSummary {
+	branchId: number;
+	branchName: string;
+	presentEmployees: AttendanceReportUser[];
+	absentEmployees: AttendanceReportUser[];
+	currentlyWorkingEmployees: AttendanceReportUser[];
+	completedShiftEmployees: AttendanceReportUser[];
+	attendanceRate: number;
+	totalEmployees: number;
+	totalHoursWorked: number;
+	averageHoursWorked: number;
+}
+
 interface MorningReportData {
 	organizationName: string;
 	reportDate: string;
@@ -102,6 +132,7 @@ interface MorningReportData {
 	absentEmployees: AttendanceReportUser[];
 	currentlyWorkingEmployees: AttendanceReportUser[];
 	completedShiftEmployees: AttendanceReportUser[];
+	branchBreakdown: BranchSummary[];
 	targetPerformance: {
 		expectedDailyHours: number;
 		actualHoursToDate: number;
@@ -160,6 +191,7 @@ interface EveningReportData {
 	currentlyWorkingEmployees: AttendanceReportUser[];
 	completedShiftEmployees: AttendanceReportUser[];
 	overtimeEmployees: AttendanceReportUser[];
+	branchBreakdown: BranchSummary[];
 	targetPerformance: {
 		expectedDailyHours: number;
 		actualTotalHours: number;
@@ -422,8 +454,8 @@ export class AttendanceReportsService {
 		// Get working day info for organization hours with fallback
 		const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(organizationId, today);
 
-		// Ensure we have valid start time with fallback
-		const organizationStartTime = workingDayInfo.startTime || '09:00';
+			// Ensure we have valid start time with fallback
+	const organizationStartTime = workingDayInfo.startTime || '07:30';
 
 		// Get all users in the organization with better error handling
 		let allUsers = [];
@@ -463,6 +495,9 @@ export class AttendanceReportsService {
 
 		// Generate punctuality breakdown
 		const punctuality = await this.generatePunctualityBreakdown(organizationId, todayAttendance);
+
+		// Generate branch breakdown
+		const branchBreakdown = this.generateBranchBreakdown(allUsers, todayAttendance, today);
 
 		// Calculate comprehensive lateness summary
 		const allLateEmployees = [...punctuality.lateArrivals, ...punctuality.veryLateArrivals];
@@ -541,6 +576,7 @@ export class AttendanceReportsService {
 			absentEmployees: employeeCategories.absentEmployees,
 			currentlyWorkingEmployees: employeeCategories.currentlyWorkingEmployees,
 			completedShiftEmployees: employeeCategories.completedShiftEmployees,
+			branchBreakdown,
 			targetPerformance,
 			insights,
 			recommendations,
@@ -563,7 +599,7 @@ export class AttendanceReportsService {
 
 		// Get working day info for organization hours with fallback
 		const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(organizationId, today);
-		const organizationStartTime = workingDayInfo.startTime || '09:00';
+		const organizationStartTime = workingDayInfo.startTime || '07:30';
 		const organizationCloseTime = workingDayInfo.endTime || '17:00';
 
 		// Get all users in the organization with better error handling
@@ -662,6 +698,9 @@ export class AttendanceReportsService {
 
 		// Enhanced employee categorization with real-time hours
 		const employeeCategories = this.categorizeEmployeesByStatus(allUsers, todayAttendance, today);
+
+		// Generate branch breakdown
+		const branchBreakdown = this.generateBranchBreakdown(allUsers, todayAttendance, today);
 
 		// Calculate real-time total hours worked (including people still working)
 		const totalActualHours = todayAttendance.reduce((sum, attendance) => {
@@ -886,6 +925,7 @@ export class AttendanceReportsService {
 			currentlyWorkingEmployees: employeeCategories.currentlyWorkingEmployees,
 			completedShiftEmployees: employeeCategories.completedShiftEmployees,
 			overtimeEmployees: employeeCategories.overtimeEmployees,
+			branchBreakdown,
 			targetPerformance,
 			summary: {
 				totalEmployees: allUsers.length,
@@ -1039,6 +1079,63 @@ export class AttendanceReportsService {
 		const averageLateMinutes =
 			allLateArrivals.length > 0 ? Math.round((totalLateMinutes / allLateArrivals.length) * 100) / 100 : 0;
 
+		// Calculate branch-wise breakdown
+		const branchMap = new Map<number, BranchPunctuality>();
+		const allEmployees = [...earlyArrivals, ...onTimeArrivals, ...lateArrivals, ...veryLateArrivals];
+
+		// Initialize branch data
+		allEmployees.forEach(employee => {
+			if (employee.branch) {
+				const branchId = employee.branch.uid;
+				if (!branchMap.has(branchId)) {
+					branchMap.set(branchId, {
+						branchId,
+						branchName: employee.branch.name,
+						earlyArrivals: [],
+						onTimeArrivals: [],
+						lateArrivals: [],
+						veryLateArrivals: [],
+						earlyPercentage: 0,
+						onTimePercentage: 0,
+						latePercentage: 0,
+						veryLatePercentage: 0,
+						averageLateMinutes: 0,
+						totalLateMinutes: 0,
+						totalEmployees: 0,
+					});
+				}
+			}
+		});
+
+		// Group employees by branch and category
+		earlyArrivals.forEach(emp => emp.branch && branchMap.get(emp.branch.uid)?.earlyArrivals.push(emp));
+		onTimeArrivals.forEach(emp => emp.branch && branchMap.get(emp.branch.uid)?.onTimeArrivals.push(emp));
+		lateArrivals.forEach(emp => emp.branch && branchMap.get(emp.branch.uid)?.lateArrivals.push(emp));
+		veryLateArrivals.forEach(emp => emp.branch && branchMap.get(emp.branch.uid)?.veryLateArrivals.push(emp));
+
+		// Calculate percentages and metrics for each branch
+		const byBranch: BranchPunctuality[] = Array.from(branchMap.values()).map(branch => {
+			const branchTotal = branch.earlyArrivals.length + branch.onTimeArrivals.length + 
+				branch.lateArrivals.length + branch.veryLateArrivals.length;
+			
+			const branchLateEmployees = [...branch.lateArrivals, ...branch.veryLateArrivals];
+			const branchTotalLateMinutes = branchLateEmployees.reduce((sum, emp) => sum + (emp.lateMinutes || 0), 0);
+			const branchAverageLateMinutes = branchLateEmployees.length > 0 
+				? Math.round((branchTotalLateMinutes / branchLateEmployees.length) * 100) / 100 
+				: 0;
+
+			return {
+				...branch,
+				totalEmployees: branchTotal,
+				earlyPercentage: branchTotal > 0 ? Math.round((branch.earlyArrivals.length / branchTotal) * 100) : 0,
+				onTimePercentage: branchTotal > 0 ? Math.round((branch.onTimeArrivals.length / branchTotal) * 100) : 0,
+				latePercentage: branchTotal > 0 ? Math.round((branch.lateArrivals.length / branchTotal) * 100) : 0,
+				veryLatePercentage: branchTotal > 0 ? Math.round((branch.veryLateArrivals.length / branchTotal) * 100) : 0,
+				averageLateMinutes: branchAverageLateMinutes,
+				totalLateMinutes: branchTotalLateMinutes,
+			};
+		});
+
 		return {
 			earlyArrivals,
 			onTimeArrivals,
@@ -1050,6 +1147,7 @@ export class AttendanceReportsService {
 			veryLatePercentage: total > 0 ? Math.round((veryLateArrivals.length / total) * 100) : 0,
 			averageLateMinutes,
 			totalLateMinutes,
+			byBranch: byBranch.sort((a, b) => a.branchName.localeCompare(b.branchName)),
 		};
 	}
 
@@ -1681,8 +1779,8 @@ export class AttendanceReportsService {
 			const currentMinutes = TimeCalculatorUtil.timeToMinutes(currentTime.toTimeString().substring(0, 5));
 			const startMinutes = TimeCalculatorUtil.timeToMinutes(startTime);
 			
-			// Assume 8-hour work day (480 minutes)
-			const standardWorkDayMinutes = 480;
+			// Assume 8-hour work day (480 minutes) minus 1 hour lunch = 7 hours (420 minutes)
+			const standardWorkDayMinutes = 420;
 			const minutesIntoWorkDay = Math.max(0, currentMinutes - startMinutes);
 			
 			return Math.min(1, minutesIntoWorkDay / standardWorkDayMinutes);
@@ -1690,6 +1788,111 @@ export class AttendanceReportsService {
 			this.logger.warn('Error calculating work day progress:', error);
 			return 0.5; // Default to 50% if calculation fails
 		}
+	}
+
+	/**
+	 * Generate branch breakdown for attendance reports
+	 */
+	private generateBranchBreakdown(
+		allUsers: Omit<User, 'password'>[],
+		todayAttendance: Attendance[],
+		currentTime: Date = new Date()
+	): BranchSummary[] {
+		const branchMap = new Map<number, BranchSummary>();
+		
+		// Initialize branch data
+		allUsers.forEach(user => {
+			if (user.branch) {
+				const branchId = user.branch.uid;
+				if (!branchMap.has(branchId)) {
+					branchMap.set(branchId, {
+						branchId,
+						branchName: user.branch.name,
+						presentEmployees: [],
+						absentEmployees: [],
+						currentlyWorkingEmployees: [],
+						completedShiftEmployees: [],
+						attendanceRate: 0,
+						totalEmployees: 0,
+						totalHoursWorked: 0,
+						averageHoursWorked: 0,
+					});
+				}
+			}
+		});
+
+		// Categorize employees by branch
+		const presentUserIds = new Set(todayAttendance.map(att => att.owner?.uid));
+		
+		// Process all users and categorize them by branch
+		allUsers.forEach(user => {
+			if (!user.branch) return;
+			
+			const branch = branchMap.get(user.branch.uid);
+			if (!branch) return;
+
+			const fullName = `${user.name || ''} ${user.surname || ''}`.trim();
+			const employeeData: AttendanceReportUser = {
+				uid: user.uid,
+				name: user.name || 'Unknown',
+				surname: user.surname || 'User',
+				fullName: fullName || 'Unknown User',
+				email: user.email || 'no-email@company.com',
+				phone: user.phone || undefined,
+				role: user.accessLevel || AccessLevel.USER,
+				userProfile: {
+					avatar: user.photoURL || null,
+				},
+				branch: {
+					uid: user.branch.uid,
+					name: user.branch.name || 'Unknown Branch',
+				},
+			};
+
+			branch.totalEmployees++;
+
+			const attendance = todayAttendance.find(att => att.owner?.uid === user.uid);
+			
+			if (attendance) {
+				// Present employee
+				employeeData.checkInTime = attendance.checkIn ? format(attendance.checkIn, 'HH:mm') : undefined;
+				branch.presentEmployees.push(employeeData);
+				
+				// Calculate hours worked
+				const hoursWorked = this.calculateRealTimeHours(attendance, currentTime);
+				branch.totalHoursWorked += hoursWorked;
+
+				// Categorize by status
+				if (attendance.checkIn && !attendance.checkOut) {
+					branch.currentlyWorkingEmployees.push(employeeData);
+				} else if (attendance.checkOut) {
+					branch.completedShiftEmployees.push(employeeData);
+				}
+			} else {
+				// Absent employee
+				branch.absentEmployees.push(employeeData);
+			}
+		});
+
+		// Calculate final metrics for each branch
+		const branchSummaries: BranchSummary[] = Array.from(branchMap.values()).map(branch => {
+			const attendanceRate = branch.totalEmployees > 0 
+				? Math.round((branch.presentEmployees.length / branch.totalEmployees) * 100) 
+				: 0;
+			
+			const averageHoursWorked = branch.presentEmployees.length > 0 
+				? Math.round((branch.totalHoursWorked / branch.presentEmployees.length) * 100) / 100 
+				: 0;
+
+			return {
+				...branch,
+				attendanceRate,
+				totalHoursWorked: Math.round(branch.totalHoursWorked * 100) / 100,
+				averageHoursWorked,
+			};
+		});
+
+		return branchSummaries.sort((a, b) => a.branchName.localeCompare(b.branchName));
 	}
 
 	/**

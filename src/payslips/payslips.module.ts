@@ -5,9 +5,13 @@ import { PayslipsController } from './payslips.controller';
 import { Doc } from '../docs/entities/doc.entity';
 import { StorageService } from '../lib/services/storage.service';
 import { User } from '../user/entities/user.entity';
+import { LicensingModule } from '../licensing/licensing.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Doc, User])],
+  imports: [
+    LicensingModule,
+    TypeOrmModule.forFeature([Doc, User])
+  ],
   controllers: [PayslipsController],
   providers: [PayslipsService, StorageService],
   exports: [PayslipsService],
