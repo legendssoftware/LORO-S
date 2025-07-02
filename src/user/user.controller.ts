@@ -67,6 +67,7 @@ export class UserController {
 						accessLevel: { type: 'string', enum: Object.values(AccessLevel), example: AccessLevel.USER },
 						status: { type: 'string', enum: Object.values(AccountStatus), example: AccountStatus.ACTIVE },
 						userref: { type: 'string', example: 'USR123456' },
+						hrID: { type: 'number', example: 12345, description: 'HR system ID for backward compatibility' },
 						createdAt: { type: 'string', format: 'date-time' },
 						updatedAt: { type: 'string', format: 'date-time' },
 					},
@@ -130,6 +131,7 @@ export class UserController {
 								example: AccountStatus.ACTIVE,
 							},
 							userref: { type: 'string', example: 'USR123456' },
+							hrID: { type: 'number', example: 12345, description: 'HR system ID for backward compatibility' },
 							createdAt: { type: 'string', format: 'date-time' },
 							updatedAt: { type: 'string', format: 'date-time' },
 							profile: {
@@ -231,6 +233,7 @@ export class UserController {
 						accessLevel: { type: 'string', enum: Object.values(AccessLevel), example: AccessLevel.USER },
 						status: { type: 'string', enum: Object.values(AccountStatus), example: AccountStatus.ACTIVE },
 						userref: { type: 'string', example: 'USR123456' },
+						hrID: { type: 'number', example: 12345, description: 'HR system ID for backward compatibility' },
 						createdAt: { type: 'string', format: 'date-time' },
 						updatedAt: { type: 'string', format: 'date-time' },
 						profile: {

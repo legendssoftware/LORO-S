@@ -87,6 +87,32 @@ export class OrganisationHoursService {
         return hours;
     }
 
+    async findDefault(orgRef: string): Promise<OrganisationHours | null> {
+        // Try to get from cache first
+        const cacheKey = `${this.CACHE_PREFIX}:default:${orgRef}`;
+        const cachedHours = await this.cacheManager.get<OrganisationHours>(cacheKey);
+        
+        if (cachedHours) {
+            return cachedHours;
+        }
+
+        // If not in cache, fetch from database - get the first/default hours for the organization
+        const hours = await this.hoursRepository.findOne({
+            where: { organisation: { ref: orgRef }, isDeleted: false },
+            relations: ['organisation'],
+            order: { createdAt: 'ASC' }, // Get the first created (default) hours
+        });
+
+        if (hours) {
+            // Store in cache
+            await this.cacheManager.set(cacheKey, hours, {
+                ttl: this.DEFAULT_CACHE_TTL
+            });
+        }
+
+        return hours;
+    }
+
     async findOne(orgRef: string, hoursRef: string): Promise<OrganisationHours> {
         // Try to get from cache first
         const cacheKey = this.getHoursOneCacheKey(orgRef, hoursRef);
@@ -124,6 +150,47 @@ export class OrganisationHoursService {
         await this.clearHoursCache(orgRef, hoursRef);
         
         return savedHours;
+    }
+
+    async updateDefault(orgRef: string, dto: UpdateOrganisationHoursDto): Promise<OrganisationHours> {
+        const organisation = await this.organisationRepository.findOne({
+            where: { ref: orgRef, isDeleted: false },
+        });
+
+        if (!organisation) {
+            throw new NotFoundException('Organisation not found');
+        }
+
+        // Check if default hours already exist for this organization
+        let existingHours = await this.hoursRepository.findOne({
+            where: { organisation: { ref: orgRef }, isDeleted: false },
+            relations: ['organisation'],
+        });
+
+        if (existingHours) {
+            // Update existing hours
+            const updatedHours = this.hoursRepository.merge(existingHours, dto);
+            const savedHours = await this.hoursRepository.save(updatedHours);
+            
+            // Clear cache after updating
+            await this.clearHoursCache(orgRef, existingHours.ref);
+            
+            return savedHours;
+        } else {
+            // Create new default hours if none exist
+            const hours = this.hoursRepository.create({
+                ...dto,
+                ref: uuidv4(),
+                organisation,
+            });
+
+            const savedHours = await this.hoursRepository.save(hours);
+            
+            // Clear cache after creating
+            await this.clearHoursCache(orgRef);
+            
+            return savedHours;
+        }
     }
 
     async remove(orgRef: string, hoursRef: string): Promise<void> {

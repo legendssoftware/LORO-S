@@ -3,7 +3,7 @@ import { AccessLevel } from "../../lib/enums/user.enums";
 import { AccountStatus } from "../../lib/enums/status.enums";
 import { CreateUserProfileDto } from './create-user-profile.dto';
 import { CreateUserEmploymentProfileDto } from './create-user-employment-profile.dto';
-import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString, IsBoolean } from "class-validator";
+import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString, IsBoolean, IsNumber } from "class-validator";
 
 export class CreateUserDto {
     @IsNotEmpty()
@@ -89,6 +89,15 @@ export class CreateUserDto {
         example: 'USR123456',
     })
     userref: string;
+
+    @IsOptional()
+    @IsNumber()
+    @ApiProperty({
+        description: 'HR system ID for backward compatibility with legacy HR system',
+        example: 12345,
+        required: false,
+    })
+    hrID?: number;
 
     @IsOptional()
     @ApiProperty({

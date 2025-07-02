@@ -1,8 +1,63 @@
-import { IsString, IsOptional, IsArray, ValidateNested, Matches } from 'class-validator';
-import { Type } from 'class-transformer';
+import { IsString, IsOptional, IsArray, ValidateNested, Matches, IsBoolean, IsDateString } from 'class-validator';
+import { Type, Transform } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
 import { WeeklyScheduleDto } from './weekly-schedule.dto';
 import { SpecialHoursDto } from './special-hours.dto';
+
+// DTO for individual day schedule
+export class DayScheduleDto {
+	@ApiProperty({ description: 'Start time for the day (HH:mm)', example: '09:00' })
+	@IsString()
+	@Matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/)
+	start: string;
+
+	@ApiProperty({ description: 'End time for the day (HH:mm)', example: '17:00' })
+	@IsString()
+	@Matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/)
+	end: string;
+
+	@ApiProperty({ description: 'Whether the business is closed on this day', example: false })
+	@IsBoolean()
+	closed: boolean;
+}
+
+// DTO for complete schedule
+export class ScheduleDto {
+	@ApiProperty({ type: DayScheduleDto })
+	@ValidateNested()
+	@Type(() => DayScheduleDto)
+	monday: DayScheduleDto;
+
+	@ApiProperty({ type: DayScheduleDto })
+	@ValidateNested()
+	@Type(() => DayScheduleDto)
+	tuesday: DayScheduleDto;
+
+	@ApiProperty({ type: DayScheduleDto })
+	@ValidateNested()
+	@Type(() => DayScheduleDto)
+	wednesday: DayScheduleDto;
+
+	@ApiProperty({ type: DayScheduleDto })
+	@ValidateNested()
+	@Type(() => DayScheduleDto)
+	thursday: DayScheduleDto;
+
+	@ApiProperty({ type: DayScheduleDto })
+	@ValidateNested()
+	@Type(() => DayScheduleDto)
+	friday: DayScheduleDto;
+
+	@ApiProperty({ type: DayScheduleDto })
+	@ValidateNested()
+	@Type(() => DayScheduleDto)
+	saturday: DayScheduleDto;
+
+	@ApiProperty({ type: DayScheduleDto })
+	@ValidateNested()
+	@Type(() => DayScheduleDto)
+	sunday: DayScheduleDto;
+}
 
 export class CreateOrganisationHoursDto {
 	@ApiProperty({ 
@@ -26,41 +81,49 @@ export class CreateOrganisationHoursDto {
 	@ApiProperty({
 		type: WeeklyScheduleDto,
 		required: false,
-		description: 'Detailed business hours for each day of the week, allowing for different schedules by day',
-		example: {
-			monday: {
-				openTime: '08:30',
-				closeTime: '17:30',
-			},
-			tuesday: {
-				openTime: '08:30',
-				closeTime: '17:30',
-			},
-			wednesday: {
-				openTime: '08:30',
-				closeTime: '17:30',
-			},
-			thursday: {
-				openTime: '08:30',
-				closeTime: '19:00', // Extended hours
-			},
-			friday: {
-				openTime: '08:30',
-				closeTime: '17:00', // Early close
-			},
-			saturday: {
-				openTime: '10:00',
-				closeTime: '15:00', // Weekend hours
-			},
-			sunday: {
-				openTime: '00:00',
-				closeTime: '00:00', // Closed
-			},
-		},
+		description: 'Simple boolean flags for which days are working days',
 	})
 	@ValidateNested()
 	@Type(() => WeeklyScheduleDto)
-	weeklySchedule: WeeklyScheduleDto;
+	@IsOptional()
+	weeklySchedule?: WeeklyScheduleDto;
+
+	@ApiProperty({
+		type: ScheduleDto,
+		required: false,
+		description: 'Detailed schedule with specific times for each day',
+	})
+	@ValidateNested()
+	@Type(() => ScheduleDto)
+	@IsOptional()
+	schedule?: ScheduleDto;
+
+	@ApiProperty({
+		description: 'Organization timezone',
+		example: 'America/New_York',
+		required: false
+	})
+	@IsString()
+	@IsOptional()
+	timezone?: string;
+
+	@ApiProperty({
+		description: 'Whether holiday mode is enabled',
+		example: false,
+		required: false
+	})
+	@IsBoolean()
+	@IsOptional()
+	holidayMode?: boolean;
+
+	@ApiProperty({
+		description: 'Holiday end date (ISO string)',
+		example: '2024-01-02T00:00:00.000Z',
+		required: false
+	})
+	@IsOptional()
+	@Transform(({ value }) => value ? new Date(value) : undefined)
+	holidayUntil?: Date;
 
 	@ApiProperty({
 		type: [SpecialHoursDto],

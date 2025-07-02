@@ -99,6 +99,9 @@ export class User {
 	@Column({ nullable: true })
 	organisationRef: string;
 
+	@Column({ type: 'int', nullable: true })
+	hrID: number;
+
 	@Column({ nullable: true })
 	verificationToken: string;
 

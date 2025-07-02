@@ -65,6 +65,60 @@ export class OrganisationHoursController {
 		AccessLevel.TECHNICIAN,
 	)
     @ApiOperation({ 
+        summary: 'Get organization default hours',
+        description: 'Retrieves the default operating hours for a specific organization. If multiple hours exist, returns the first one. Accessible by all authenticated users.'
+    })
+    @ApiParam({
+        name: 'orgRef',
+        description: 'Organization reference code',
+        type: 'string',
+        example: 'ORG123456'
+    })
+    @ApiOkResponse({ 
+        description: 'Hours retrieved successfully',
+        schema: {
+            type: 'object',
+            properties: {
+                uid: { type: 'number', example: 1 },
+                openTime: { type: 'string', example: '09:00' },
+                closeTime: { type: 'string', example: '17:00' },
+                timezone: { type: 'string', example: 'America/New_York' },
+                holidayMode: { type: 'boolean', example: false },
+                schedule: {
+                    type: 'object',
+                    properties: {
+                        monday: {
+                            type: 'object',
+                            properties: {
+                                start: { type: 'string', example: '09:00' },
+                                end: { type: 'string', example: '17:00' },
+                                closed: { type: 'boolean', example: false }
+                            }
+                        }
+                    }
+                },
+                createdAt: { type: 'string', format: 'date-time' },
+                updatedAt: { type: 'string', format: 'date-time' },
+                ref: { type: 'string', example: 'HRS123456' }
+            }
+        }
+    })
+    @ApiNotFoundResponse({ description: 'Organization or hours not found' })
+    findDefault(@Param('orgRef') orgRef: string): Promise<OrganisationHours | null> {
+        return this.hoursService.findDefault(orgRef);
+    }
+
+    @Get(':orgRef/hours/all')
+   @Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.SUPPORT,
+		AccessLevel.DEVELOPER,
+		AccessLevel.USER,
+		AccessLevel.OWNER,
+		AccessLevel.TECHNICIAN,
+	)
+    @ApiOperation({ 
         summary: 'Get all organization hours',
         description: 'Retrieves all operating hours for a specific organization. Accessible by all authenticated users.'
     })
@@ -204,6 +258,43 @@ export class OrganisationHoursController {
         @Body() updateHoursDto: UpdateOrganisationHoursDto,
     ): Promise<OrganisationHours> {
         return this.hoursService.update(orgRef, hoursRef, updateHoursDto);
+    }
+
+    @Patch(':orgRef/hours')
+    @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER)
+    @ApiOperation({ 
+        summary: 'Update organization default hours',
+        description: 'Updates or creates the default operating hours for an organization. Requires ADMIN or MANAGER role.'
+    })
+    @ApiParam({
+        name: 'orgRef',
+        description: 'Organization reference code',
+        type: 'string',
+        example: 'ORG123456'
+    })
+    @ApiBody({ type: UpdateOrganisationHoursDto })
+    @ApiOkResponse({ 
+        description: 'Hours updated successfully',
+        schema: {
+            type: 'object',
+            properties: {
+                uid: { type: 'number', example: 1 },
+                openTime: { type: 'string', example: '08:00' },
+                closeTime: { type: 'string', example: '18:00' },
+                timezone: { type: 'string', example: 'America/New_York' },
+                holidayMode: { type: 'boolean', example: false },
+                updatedAt: { type: 'string', format: 'date-time' },
+                ref: { type: 'string', example: 'HRS123456' }
+            }
+        }
+    })
+    @ApiNotFoundResponse({ description: 'Organization not found' })
+    @ApiBadRequestResponse({ description: 'Invalid input data provided' })
+    updateDefault(
+        @Param('orgRef') orgRef: string,
+        @Body() updateHoursDto: UpdateOrganisationHoursDto,
+    ): Promise<OrganisationHours> {
+        return this.hoursService.updateDefault(orgRef, updateHoursDto);
     }
 
     @Delete(':orgRef/hours/:hoursRef')

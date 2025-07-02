@@ -1,4 +1,4 @@
-import { PartialType } from '@nestjs/swagger';
+import { PartialType, ApiProperty } from '@nestjs/swagger';
 import { CreateUserDto } from './create-user.dto';
 import { Gender } from '../../lib/enums/gender.enums';
 import { AccessLevel } from '../../lib/enums/user.enums';
@@ -6,7 +6,7 @@ import { Department } from '../../lib/enums/user.enums';
 import { AccountStatus } from '../../lib/enums/status.enums';
 import { CreateUserProfileDto } from './create-user-profile.dto';
 import { CreateUserEmploymentProfileDto } from './create-user-employment-profile.dto';
-import { IsBoolean, IsDate, IsEmail, IsEnum, IsObject, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsDate, IsEmail, IsEnum, IsObject, IsOptional, IsString, IsNumber } from 'class-validator';
 
 export class UpdateUserProfileDto extends CreateUserProfileDto {
 	@IsOptional()
@@ -124,6 +124,15 @@ export class UpdateUserDto extends PartialType(CreateUserDto) {
 	@IsOptional()
 	@IsString()
 	password?: string;
+
+	@IsOptional()
+	@IsNumber()
+	@ApiProperty({
+		description: 'HR system ID for backward compatibility with legacy HR system',
+		example: 12345,
+		required: false,
+	})
+	hrID?: number;
 
 	@IsOptional()
 	profile?: UpdateUserProfileDto;

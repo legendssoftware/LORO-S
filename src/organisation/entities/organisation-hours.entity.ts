@@ -1,6 +1,15 @@
 import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn } from 'typeorm';
 import { Organisation } from './organisation.entity';
 
+// Migration SQL (run this to update existing database):
+/*
+ALTER TABLE organisation_hours 
+ADD COLUMN schedule JSON NULL,
+ADD COLUMN timezone VARCHAR(50) NULL,
+ADD COLUMN holidayMode BOOLEAN DEFAULT FALSE,
+ADD COLUMN holidayUntil TIMESTAMP NULL;
+*/
+
 @Entity()
 export class OrganisationHours {
 	@PrimaryGeneratedColumn()
@@ -27,7 +36,27 @@ export class OrganisationHours {
 	};
 
 	@Column({ type: 'json', nullable: true })
-	specialHours: {
+	schedule?: {
+		monday: { start: string; end: string; closed: boolean };
+		tuesday: { start: string; end: string; closed: boolean };
+		wednesday: { start: string; end: string; closed: boolean };
+		thursday: { start: string; end: string; closed: boolean };
+		friday: { start: string; end: string; closed: boolean };
+		saturday: { start: string; end: string; closed: boolean };
+		sunday: { start: string; end: string; closed: boolean };
+	};
+
+	@Column({ type: 'varchar', length: 50, nullable: true })
+	timezone?: string;
+
+	@Column({ type: 'boolean', default: false })
+	holidayMode: boolean;
+
+	@Column({ type: 'timestamp', nullable: true })
+	holidayUntil?: Date;
+
+	@Column({ type: 'json', nullable: true })
+	specialHours?: {
 		date: string;
 		openTime: string;
 		closeTime: string;

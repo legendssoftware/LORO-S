@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Req } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiParam, ApiBody, ApiOkResponse, ApiCreatedResponse, ApiBadRequestResponse, ApiNotFoundResponse, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import { OrganisationSettingsService } from '../services/organisation-settings.service';
 import { CreateOrganisationSettingsDto } from '../dto/create-organisation-settings.dto';
@@ -8,6 +8,7 @@ import { AuthGuard } from '../../guards/auth.guard';
 import { RoleGuard } from '../../guards/role.guard';
 import { Roles } from '../../decorators/role.decorator';
 import { AccessLevel } from '../../lib/enums/user.enums';
+import { AuthenticatedRequest } from '../../lib/interfaces/authenticated-request.interface';
 
 @ApiTags('org settings')
 @Controller('organisations')
@@ -56,6 +57,7 @@ export class OrganisationSettingsController {
     async create(
         @Param('orgRef') orgRef: string,
         @Body() createSettingsDto: CreateOrganisationSettingsDto,
+        @Req() req: AuthenticatedRequest,
     ): Promise<{ settings: OrganisationSettings | null; message: string }> {
         return this.settingsService.create(orgRef, createSettingsDto);
     }
