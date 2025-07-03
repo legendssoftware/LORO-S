@@ -3,6 +3,7 @@ import {
 	SignupEmailData,
 	VerificationEmailData,
 	PasswordResetData,
+	PasswordResetRequestData,
 	PasswordChangedData,
 	InvoiceData,
 	DailyReportData,
@@ -65,6 +66,10 @@ export const Verification = (data: VerificationEmailData): string => {
 
 export const PasswordReset = (data: PasswordResetData): string => {
 	return emailTemplateService.passwordReset(data);
+};
+
+export const PasswordResetRequest = (data: PasswordResetRequestData): string => {
+	return emailTemplateService.passwordResetRequest(data);
 };
 
 export const PasswordChanged = (data: PasswordChangedData): string => {

@@ -27,6 +27,13 @@ export enum AccessLevel {
 	MARKETING = 'marketing',
 	HR = 'hr',
 	CLIENT = 'client',
+	FINANCE = 'finance',
+	ACCOUNTING = 'accounting',
+	LEGAL = 'legal',
+	OPERATIONS = 'operations',
+	IT = 'it',
+	DEVELOPMENT = 'development',
+	DESIGN = 'design',
 }
 
 export enum Department {

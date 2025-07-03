@@ -13,6 +13,7 @@ import {
 	Signup,
 	Verification,
 	PasswordReset,
+	PasswordResetRequest,
 	PasswordChanged,
 	DailyReport,
 	NewTask,
@@ -108,6 +109,7 @@ import {
 	JournalEmailData,
 	JournalUpdatedEmailData,
 	JournalDeletedEmailData,
+	PasswordResetRequestData,
 } from '../lib/types/email-templates.types';
 import {
 	TaskFlagCreated,
@@ -268,6 +270,11 @@ export class CommunicationService {
 				return {
 					subject: 'Password Reset Request',
 					body: PasswordReset(data as PasswordResetData),
+				};
+			case EmailType.PASSWORD_RESET_REQUEST:
+				return {
+					subject: 'Security Alert: Password Reset Requested',
+					body: PasswordResetRequest(data as PasswordResetRequestData), 
 				};
 			case EmailType.NEW_QUOTATION_CLIENT:
 				return {

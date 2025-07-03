@@ -265,6 +265,7 @@ export class UserDailyReportGenerator {
 						},
 					},
 					tracking: locationData.trackingData,
+					dashboardUrl: process.env.WEBSITE_DOMAIN || process.env.SIGNUP_DOMAIN || 'https://dashboard.loro.co.za',
 				},
 			};
 

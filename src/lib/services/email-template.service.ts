@@ -6,6 +6,7 @@ import {
 	SignupEmailData,
 	VerificationEmailData,
 	PasswordResetData,
+	PasswordResetRequestData,
 	PasswordChangedData,
 	InvoiceData,
 	DailyReportData,
@@ -295,6 +296,10 @@ class EmailTemplateService {
 
 	passwordReset(data: PasswordResetData): string {
 		return this.renderTemplate('auth/password-reset.hbs', data);
+	}
+
+	passwordResetRequest(data: PasswordResetRequestData): string {
+		return this.renderTemplate('auth/password-reset-request.hbs', data);
 	}
 
 	passwordChanged(data: PasswordChangedData): string {
@@ -618,6 +623,7 @@ class EmailTemplateService {
 			'auth/signup.hbs',
 			'auth/verification.hbs',
 			'auth/password-reset.hbs',
+			'auth/password-reset-request.hbs',
 			'auth/password-changed.hbs',
 			'quotations/client-new.hbs',
 			'quotations/internal-new.hbs',

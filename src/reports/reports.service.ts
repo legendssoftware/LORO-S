@@ -231,14 +231,7 @@ export class ReportsService implements OnModuleInit {
 			// Save the report
 			const savedReport = await this.reportRepository.save(newReport);
 
-			// Send email directly to ensure delivery
-			await this.sendUserDailyReportEmail(user.uid, reportData.emailData).catch((error) => {
-				// Update report with error info
-				newReport.notes = `Email delivery attempted directly: ${error.message}`;
-				this.reportRepository.save(newReport);
-			});
-
-			// Also emit event as a backup mechanism
+			// Emit event to send email (single email delivery)
 			this.eventEmitter.emit('report.generated', {
 				reportType: ReportType.USER_DAILY,
 				reportId: savedReport.uid,

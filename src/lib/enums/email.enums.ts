@@ -2,6 +2,7 @@ export enum EmailType {
 	SIGNUP = 'signup',
 	VERIFICATION = 'verification',
 	PASSWORD_RESET = 'password_reset',
+	PASSWORD_RESET_REQUEST = 'password_reset_request',
 	PASSWORD_CHANGED = 'password_changed',
 	INVOICE = 'invoice',
 	DAILY_REPORT = 'daily_report',

@@ -447,32 +447,36 @@ export class AuthService {
 				};
 			}
 
-			// Check for existing reset token
-			const existingReset = await this.passwordResetService.findByEmail(email);
-			if (existingReset && existingReset.tokenExpires > new Date()) {
-				// If token still valid, don't send new email
-				return {
-					message: 'Password reset instructions have already been sent. Please check your email.',
-				};
-			}
-
 			// Generate reset token and URL
 			const resetToken = await this.generateSecureToken();
-			const resetUrl = `${process.env.SIGNUP_DOMAIN}/reset-password/${resetToken}`;
+			const resetUrl = `${process.env.WEBSITE_DOMAIN || process.env.SIGNUP_DOMAIN}/reset-password/${resetToken}`;
 
-			// Create password reset record
+			// Create password reset record (this will handle rate limiting and duplicates)
 			await this.passwordResetService.create(email, resetToken);
 
-			// Send reset email
-			this.eventEmitter.emit('send.email', EmailType.PASSWORD_RESET, [email], {
+			// Send single password reset email with security alert and reset link
+			this.eventEmitter.emit('send.email', EmailType.PASSWORD_RESET_REQUEST, [email], {
 				name: existingUser.user.name || email.split('@')[0],
+				userEmail: email,
+				requestTime: new Date().toLocaleString(),
 				resetLink: resetUrl,
+				expiryHours: 24,
+				supportEmail: process.env.SUPPORT_EMAIL || 'support@loro.africa',
+				dashboardUrl: `${process.env.WEBSITE_DOMAIN || process.env.SIGNUP_DOMAIN || 'https://dashboard.loro.co.za'}/dashboard`,
 			});
 
 			return {
-				message: 'Password reset instructions have been sent to your email.',
+				message: 'Password reset instructions have been sent to your email. Please check your inbox.',
 			};
 		} catch (error) {
+			// Handle specific BadRequestException from rate limiting
+			if (error instanceof BadRequestException) {
+				return {
+					message: error.message,
+				};
+			}
+			
+			// Handle other errors
 			throw new HttpException(
 				error.message || 'Failed to process password reset request',
 				error.status || HttpStatus.INTERNAL_SERVER_ERROR,

@@ -21,6 +21,15 @@ export interface VerificationEmailData extends BaseEmailData {
 
 export interface PasswordResetData extends BaseEmailData {
 	resetLink: string;
+	expiryHours?: number;
+}
+
+export interface PasswordResetRequestData extends BaseEmailData {
+	userEmail: string;
+	requestTime: string;
+	resetLink: string;
+	expiryHours: number;
+	supportEmail: string;
 }
 
 export interface PasswordChangedData extends BaseEmailData {
@@ -1403,6 +1412,7 @@ export interface EmailDataMap {
 	[EmailType.SIGNUP]: SignupEmailData;
 	[EmailType.VERIFICATION]: VerificationEmailData;
 	[EmailType.PASSWORD_RESET]: PasswordResetData;
+	[EmailType.PASSWORD_RESET_REQUEST]: PasswordResetRequestData;
 	[EmailType.PASSWORD_CHANGED]: PasswordChangedData;
 	[EmailType.INVOICE]: InvoiceData;
 	[EmailType.DAILY_REPORT]: DailyReportData;

@@ -987,35 +987,7 @@ export class UserService {
 		}
 	}
 
-	/**
-	 * Find user by password reset token
-	 * @param token - Reset token to search for
-	 * @returns User entity or null
-	 */
-	async findByResetToken(token: string): Promise<User | null> {
-		const startTime = Date.now();
-		this.logger.log(`Finding user by reset token`);
 
-		try {
-			this.logger.debug(`Querying database for user with reset token`);
-			const user = await this.userRepository.findOne({
-				where: { resetToken: token, isDeleted: false },
-			});
-
-			const executionTime = Date.now() - startTime;
-			if (user) {
-				this.logger.log(`User found by reset token: ${user.email} (${user.uid}) in ${executionTime}ms`);
-			} else {
-				this.logger.warn(`No user found with reset token in ${executionTime}ms`);
-			}
-
-			return user;
-		} catch (error) {
-			const executionTime = Date.now() - startTime;
-			this.logger.error(`Failed to find user by reset token after ${executionTime}ms. Error: ${error.message}`);
-			return null;
-		}
-	}
 
 	/**
 	 * Mark user email as verified and activate account
@@ -1106,93 +1078,9 @@ export class UserService {
 		}
 	}
 
-	/**
-	 * Set password reset token for user
-	 * @param uid - User ID
-	 * @param token - Reset token to set
-	 */
-	async setResetToken(uid: number, token: string): Promise<void> {
-		const startTime = Date.now();
-		this.logger.log(`Setting reset token for user: ${uid}`);
 
-		try {
-			const user = await this.userRepository.findOne({
-				where: { uid },
-				relations: ['organisation', 'branch'],
-			});
 
-			if (user) {
-				this.logger.debug(`Setting reset token for user: ${user.email} (${uid})`);
-				await this.userRepository.update(
-					{ uid },
-					{
-						resetToken: token,
-						tokenExpires: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
-					},
-				);
 
-				// Invalidate cache after setting reset token
-				await this.invalidateUserCache(user);
-
-				const executionTime = Date.now() - startTime;
-				this.logger.log(`Reset token set for user: ${user.email} in ${executionTime}ms`);
-			} else {
-				this.logger.warn(`User ${uid} not found for reset token setting`);
-			}
-		} catch (error) {
-			const executionTime = Date.now() - startTime;
-			this.logger.error(
-				`Failed to set reset token for user ${uid} after ${executionTime}ms. Error: ${error.message}`,
-			);
-			throw error;
-		}
-	}
-
-	/**
-	 * Reset user password using new password
-	 * @param uid - User ID
-	 * @param password - New password to set
-	 */
-	async resetPassword(uid: number, password: string): Promise<void> {
-		const startTime = Date.now();
-		this.logger.log(`Resetting password for user: ${uid}`);
-
-		try {
-			const user = await this.userRepository.findOne({
-				where: { uid },
-				relations: ['organisation', 'branch'],
-			});
-
-			if (user) {
-				this.logger.debug(`Hashing new password for user: ${user.email} (${uid})`);
-				const hashedPassword = await bcrypt.hash(password, 10);
-
-				this.logger.debug(`Updating password in database for user: ${user.email} (${uid})`);
-				await this.userRepository.update(
-					{ uid },
-					{
-						password: hashedPassword,
-						resetToken: null,
-						tokenExpires: null,
-					},
-				);
-
-				// Invalidate cache after password reset
-				await this.invalidateUserCache(user);
-
-				const executionTime = Date.now() - startTime;
-				this.logger.log(`Password reset completed for user: ${user.email} in ${executionTime}ms`);
-			} else {
-				this.logger.warn(`User ${uid} not found for password reset`);
-			}
-		} catch (error) {
-			const executionTime = Date.now() - startTime;
-			this.logger.error(
-				`Failed to reset password for user ${uid} after ${executionTime}ms. Error: ${error.message}`,
-			);
-			throw error;
-		}
-	}
 
 	/**
 	 * Update user password (for existing users)
