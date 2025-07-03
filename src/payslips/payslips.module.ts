@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 import { PayslipsService } from './payslips.service';
 import { PayslipsController } from './payslips.controller';
 import { Doc } from '../docs/entities/doc.entity';
@@ -10,6 +11,7 @@ import { LicensingModule } from '../licensing/licensing.module';
 @Module({
   imports: [
     LicensingModule,
+    EventEmitterModule,
     TypeOrmModule.forFeature([Doc, User])
   ],
   controllers: [PayslipsController],

@@ -56,6 +56,8 @@ import {
 	JournalUpdatedEmailData,
 	JournalDeletedEmailData,
 	OvertimeReminderData,
+	PayslipAvailableEmailData,
+	PayslipUploadedAdminEmailData,
 } from '../types/email-templates.types';
 
 class EmailTemplateService {
@@ -604,6 +606,15 @@ class EmailTemplateService {
 		return this.renderTemplate('journals/deleted.hbs', data);
 	}
 
+	// Payslip Templates
+	payslipAvailable(data: PayslipAvailableEmailData): string {
+		return this.renderTemplate('payslips/available.hbs', data);
+	}
+
+	payslipUploadedAdmin(data: PayslipUploadedAdminEmailData): string {
+		return this.renderTemplate('payslips/uploaded-admin.hbs', data);
+	}
+
 	/**
 	 * Clear the compiled template cache and reinitialize Handlebars
 	 * Useful for development or when templates are updated
@@ -692,6 +703,9 @@ class EmailTemplateService {
 			// Client templates
 			'client/login-notification.hbs',
 			'client/failed-login-attempt.hbs',
+			// Payslip templates
+			'payslips/available.hbs',
+			'payslips/uploaded-admin.hbs',
 		];
 
 		templates.forEach((template) => {

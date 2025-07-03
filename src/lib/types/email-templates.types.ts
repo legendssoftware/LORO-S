@@ -1408,6 +1408,33 @@ export interface UserTargetPeriodSummaryEmailData extends BaseEmailData {
 	recognitionMessage?: string;
 }
 
+// Payslip related email data types
+export interface PayslipAvailableEmailData extends BaseEmailData {
+	employeeName: string;
+	payslipTitle: string;
+	payslipDescription: string;
+	payPeriod: string;
+	uploadedBy: string;
+	uploadedAt: string;
+	organisationName: string;
+	branchName: string;
+	payslipId: number;
+	downloadLink: string;
+}
+
+export interface PayslipUploadedAdminEmailData extends BaseEmailData {
+	hrName: string;
+	employeeName: string;
+	employeeEmail: string;
+	payslipTitle: string;
+	payPeriod: string;
+	uploadedAt: string;
+	organisationName: string;
+	branchName: string;
+	payslipId: number;
+	emailSent: boolean;
+}
+
 export interface EmailDataMap {
 	[EmailType.SIGNUP]: SignupEmailData;
 	[EmailType.VERIFICATION]: VerificationEmailData;
@@ -1516,6 +1543,9 @@ export interface EmailDataMap {
 	[EmailType.USER_TARGET_PERFORMANCE_ALERT]: UserTargetPerformanceAlertEmailData;
 	[EmailType.USER_TARGET_ERP_UPDATE_CONFIRMATION]: UserTargetERPUpdateConfirmationEmailData;
 	[EmailType.USER_TARGET_PERIOD_SUMMARY]: UserTargetPeriodSummaryEmailData;
+	// Payslip email mappings
+	[EmailType.PAYSLIP_AVAILABLE]: PayslipAvailableEmailData;
+	[EmailType.PAYSLIP_UPLOADED_ADMIN]: PayslipUploadedAdminEmailData;
 }
 
 export type EmailTemplateData<T extends EmailType> = T extends keyof EmailDataMap ? EmailDataMap[T] : never;

@@ -1,0 +1,108 @@
+{{#base headerTitle="💰 Your Payslip is Ready!" headerSubtitle="Your payslip for {{payPeriod}} is now available for download"}}
+
+<div class="greeting">
+    💰 Hello {{employeeName}}!
+</div>
+
+<div class="message">
+    <p><strong>Great news!</strong> Your payslip for <strong>{{payPeriod}}</strong> has been processed and is now available for download.</p>
+    
+    <p>You can securely access and download your payslip using the link below. Please keep your payslip safe as it contains important financial information.</p>
+</div>
+
+<div class="success-notice">
+    <p>✅ <strong>Payslip Ready!</strong> Your payslip has been successfully processed and is available for immediate download.</p>
+</div>
+
+<div class="cta-section">
+    <a href="{{downloadLink}}" class="cta-button">📥 Download Your Payslip</a>
+</div>
+
+<div class="info-card">
+    <h3>📋 Payslip Details</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Document Title</span>
+            <span class="detail-value">{{payslipTitle}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Pay Period</span>
+            <span class="detail-value">{{payPeriod}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Employee Name</span>
+            <span class="detail-value">{{employeeName}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Payslip ID</span>
+            <span class="detail-value">#{{payslipId}}</span>
+        </div>
+    </div>
+</div>
+
+<div class="info-card">
+    <h4>📤 Upload Information</h4>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Uploaded By</span>
+            <span class="detail-value">{{uploadedBy}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Upload Date</span>
+            <span class="detail-value">{{formatDate uploadedAt}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Organization</span>
+            <span class="detail-value">{{organisationName}}</span>
+        </div>
+        {{#if branchName}}
+        <div class="detail-item">
+            <span class="detail-label">Branch</span>
+            <span class="detail-value">{{branchName}}</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+
+<div class="message">
+    <p><strong>Description:</strong> {{payslipDescription}}</p>
+</div>
+
+<div class="info-card">
+    <h4>🔒 Security & Privacy</h4>
+    <ul class="feature-list">
+        <li><strong>Confidential Document:</strong> This payslip contains sensitive financial information</li>
+        <li><strong>Secure Download:</strong> Use the secure link above to download your payslip</li>
+        <li><strong>Keep Safe:</strong> Store your payslip in a secure location</li>
+        <li><strong>Do Not Share:</strong> Never share your payslip with unauthorized persons</li>
+        <li><strong>Data Protection:</strong> All payslip data is encrypted and protected</li>
+    </ul>
+</div>
+
+<div class="info-card">
+    <h4>📞 Need Help?</h4>
+    <p>If you have any questions about your payslip or need assistance accessing it:</p>
+    <ul class="feature-list">
+        <li><strong>Contact HR:</strong> Reach out to your HR department</li>
+        <li><strong>Technical Support:</strong> Contact IT support for download issues</li>
+        <li><strong>Payroll Questions:</strong> Contact payroll department for salary inquiries</li>
+        <li><strong>Access Issues:</strong> If you can't download, contact your system administrator</li>
+    </ul>
+</div>
+
+<div class="cta-section">
+    <p style="margin-bottom: 15px; font-weight: 600;">Ready to download your payslip?</p>
+    <a href="{{downloadLink}}" class="cta-button">📥 Download Now</a>
+</div>
+
+<div class="message">
+    <p><strong>Important:</strong> Please download and save your payslip for your records. This document serves as proof of your earnings and deductions for the specified period.</p>
+    
+    <p>Thank you for being part of {{organisationName}}!</p>
+    
+    <p><em>Best regards,<br>
+    {{uploadedBy}}<br>
+    {{organisationName}} HR Team 💼</em></p>
+</div>
+
+{{/base}} 

@@ -3,7 +3,7 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam, ApiQuery, 
 import { AuthGuard } from '../guards/auth.guard';
 import { RoleGuard } from '../guards/role.guard';
 import { PayslipsService } from './payslips.service';
-import { GetPayslipsDto, FetchPayslipDto } from './dto/create-payslip.dto';
+import { GetPayslipsDto, FetchPayslipDto, HrPayslipUploadDto } from './dto/create-payslip.dto';
 
 @ApiTags('Payslips')
 @ApiBearerAuth()
@@ -38,8 +38,8 @@ export class PayslipsController {
       }
     }
   })
-  @ApiQuery({ name: 'startDate', required: false, type: String, description: 'Start date filter (YYYY-MM-DD)' })
-  @ApiQuery({ name: 'endDate', required: false, type: String, description: 'End date filter (YYYY-MM-DD)' })
+  @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Limit number of payslips to return' })
+  @ApiQuery({ name: 'offset', required: false, type: Number, description: 'Skip number of payslips for pagination' })
   async getUserPayslips(@Req() req: any, @Query() filters: GetPayslipsDto) {
     const userId = req.user.uid;
     return this.payslipsService.getUserPayslips(userId, filters);
@@ -130,5 +130,50 @@ export class PayslipsController {
   @ApiResponse({ status: 404, description: 'User not found' })
   async fetchPayslipFromGcs(@Body() fetchPayslipDto: FetchPayslipDto) {
     return this.payslipsService.fetchAndPopulatePayslip(fetchPayslipDto);
+  }
+
+  @Post('hr-upload')
+  @ApiOperation({ 
+    summary: 'HR payslip upload and notification',
+    description: 'Process a payslip file from GCS, save it to doc entity, and notify the employee via email about payslip availability'
+  })
+  @ApiBody({ type: HrPayslipUploadDto })
+  @ApiResponse({ 
+    status: 201, 
+    description: 'Payslip processed and employee notified successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        uid: { type: 'number', example: 1 },
+        title: { type: 'string', example: 'Payslip - January 2024' },
+        description: { type: 'string', example: 'Monthly payslip for January 2024' },
+        url: { type: 'string', example: 'https://storage.example.com/payslips/payslip-jan-2024.pdf' },
+        fileSize: { type: 'number', example: 256789 },
+        mimeType: { type: 'string', example: 'application/pdf' },
+        extension: { type: 'string', example: 'pdf' },
+        createdAt: { type: 'string', format: 'date-time' },
+        updatedAt: { type: 'string', format: 'date-time' },
+        message: { 
+          type: 'string', 
+          example: 'Payslip uploaded successfully and employee notified',
+          description: 'Success message indicating upload and notification status'
+        },
+        emailSent: { 
+          type: 'boolean', 
+          example: true,
+          description: 'Whether email notification was sent to employee'
+        },
+        employeeEmail: { 
+          type: 'string', 
+          example: 'employee@company.com',
+          description: 'Email address where notification was sent'
+        }
+      }
+    }
+  })
+  @ApiResponse({ status: 400, description: 'Bad request - Invalid input, file not found, or processing failed' })
+  @ApiResponse({ status: 404, description: 'Employee not found or HR user not found' })
+  async uploadPayslipFromHr(@Body() hrPayslipUploadDto: HrPayslipUploadDto) {
+    return this.payslipsService.processHrPayslipUpload(hrPayslipUploadDto);
   }
 }

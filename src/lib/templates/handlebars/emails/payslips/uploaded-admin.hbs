@@ -1,0 +1,162 @@
+{{#base headerTitle="✅ Payslip Upload Successful!" headerSubtitle="Payslip processed and employee notification sent"}}
+
+<div class="greeting">
+    🎉 Hello {{hrName}}!
+</div>
+
+<div class="message">
+    <p><strong>Great news!</strong> The payslip has been successfully uploaded and processed for {{employeeName}}.</p>
+    
+    <p>The employee has been notified about the new payslip availability, and all systems have been updated accordingly.</p>
+</div>
+
+<div class="success-notice">
+    <p>✅ <strong>Upload Complete!</strong> Payslip has been successfully processed and saved to the system.</p>
+</div>
+
+<div class="info-card">
+    <h3>👤 Employee Information</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Employee Name</span>
+            <span class="detail-value">{{employeeName}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Employee Email</span>
+            <span class="detail-value">{{employeeEmail}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Organization</span>
+            <span class="detail-value">{{organisationName}}</span>
+        </div>
+        {{#if branchName}}
+        <div class="detail-item">
+            <span class="detail-label">Branch</span>
+            <span class="detail-value">{{branchName}}</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+
+<div class="info-card">
+    <h3>📋 Payslip Details</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Document Title</span>
+            <span class="detail-value">{{payslipTitle}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Pay Period</span>
+            <span class="detail-value">{{payPeriod}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Payslip ID</span>
+            <span class="detail-value">#{{payslipId}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Upload Date</span>
+            <span class="detail-value">{{formatDate uploadedAt}}</span>
+        </div>
+    </div>
+</div>
+
+<div class="info-card">
+    <h4>📧 Employee Notification Status</h4>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Email Notification</span>
+            <span class="detail-value">{{#if emailSent}}✅ Successfully Sent{{else}}❌ Failed to Send{{/if}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Notification Status</span>
+            <span class="detail-value">{{#if emailSent}}Employee has been notified{{else}}Manual notification required{{/if}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Sent To</span>
+            <span class="detail-value">{{employeeEmail}}</span>
+        </div>
+    </div>
+</div>
+
+{{#if emailSent}}
+<div class="info-card">
+    <h4>✅ Notification Sent Successfully</h4>
+    <ul class="feature-list">
+        <li><strong>Email Delivered:</strong> Employee has been notified via email</li>
+        <li><strong>Download Link:</strong> Employee received secure download instructions</li>
+        <li><strong>Access Ready:</strong> Payslip is available in employee dashboard</li>
+        <li><strong>Secure Storage:</strong> Document is safely stored in the system</li>
+    </ul>
+</div>
+{{else}}
+<div class="info-card">
+    <h4>⚠️ Notification Not Sent</h4>
+    <p><strong>Action Required:</strong> Please manually notify the employee about their new payslip.</p>
+    <ul class="feature-list">
+        <li><strong>Manual Notification:</strong> Contact the employee directly</li>
+        <li><strong>Access Available:</strong> Payslip is ready in their dashboard</li>
+        <li><strong>System Updated:</strong> All records have been updated</li>
+        <li><strong>Troubleshooting:</strong> Check email settings or contact IT support</li>
+    </ul>
+</div>
+{{/if}}
+
+<div class="info-card">
+    <h4>📊 Next Steps & Actions</h4>
+    <ul class="feature-list">
+        <li><strong>Employee Access:</strong> The payslip is now accessible through the employee dashboard</li>
+        <li><strong>Download Tracking:</strong> You can monitor payslip access in the admin dashboard</li>
+        <li><strong>Record Keeping:</strong> All upload details are logged for audit purposes</li>
+        {{#if emailSent}}
+        <li><strong>Follow-up:</strong> Monitor for any employee questions or support requests</li>
+        {{else}}
+        <li><strong>Manual Notification:</strong> Please contact {{employeeName}} directly about the payslip</li>
+        {{/if}}
+        <li><strong>Support Reference:</strong> Use Payslip ID #{{payslipId}} for any support queries</li>
+    </ul>
+</div>
+
+<div class="info-card">
+    <h4>📈 Upload Summary</h4>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Processing Status</span>
+            <span class="detail-value">✅ Completed Successfully</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">System Update</span>
+            <span class="detail-value">✅ All Records Updated</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Employee Dashboard</span>
+            <span class="detail-value">✅ Payslip Available</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Audit Trail</span>
+            <span class="detail-value">✅ Upload Logged</span>
+        </div>
+    </div>
+</div>
+
+<div class="info-card">
+    <h4>🔧 Admin Tools & Resources</h4>
+    <ul class="feature-list">
+        <li><strong>Admin Dashboard:</strong> View all payslip uploads and status</li>
+        <li><strong>Employee Management:</strong> Track employee payslip access</li>
+        <li><strong>Bulk Operations:</strong> Upload multiple payslips efficiently</li>
+        <li><strong>Reporting:</strong> Generate payslip distribution reports</li>
+        <li><strong>Support Tools:</strong> Access employee support tickets</li>
+    </ul>
+</div>
+
+<div class="message">
+    <p><strong>Processing Complete:</strong> The payslip upload process has been completed successfully. The employee now has access to their payslip and can download it securely.</p>
+    
+    <p>Thank you for using the {{organisationName}} payslip management system!</p>
+    
+    <p><em>Best regards,<br>
+    {{organisationName}} HR System<br>
+    Automated Payslip Management 💼</em></p>
+</div>
+
+{{/base}} 

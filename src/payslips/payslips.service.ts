@@ -5,8 +5,10 @@ import { Doc } from '../docs/entities/doc.entity';
 import { User } from '../user/entities/user.entity';
 import { DocType } from '../lib/enums/doc.enums';
 import { StorageService } from '../lib/services/storage.service';
-import { GetPayslipsDto, FetchPayslipDto } from './dto/create-payslip.dto';
+import { GetPayslipsDto, FetchPayslipDto, HrPayslipUploadDto } from './dto/create-payslip.dto';
 import { extname } from 'path';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { EmailType } from '../lib/enums/email.enums';
 
 @Injectable()
 export class PayslipsService {
@@ -16,6 +18,7 @@ export class PayslipsService {
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
     private readonly storageService: StorageService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   async getUserPayslips(userId: number, filters?: GetPayslipsDto) {
@@ -26,20 +29,12 @@ export class PayslipsService {
       .andWhere('doc.isActive = :isActive', { isActive: true })
       .orderBy('doc.createdAt', 'DESC');
 
-    // Apply date filters if provided
-    if (filters?.startDate && filters?.endDate) {
-      queryBuilder.andWhere('doc.createdAt BETWEEN :startDate AND :endDate', {
-        startDate: filters.startDate,
-        endDate: filters.endDate,
-      });
-    } else if (filters?.startDate) {
-      queryBuilder.andWhere('doc.createdAt >= :startDate', {
-        startDate: filters.startDate,
-      });
-    } else if (filters?.endDate) {
-      queryBuilder.andWhere('doc.createdAt <= :endDate', {
-        endDate: filters.endDate,
-      });
+    // Apply pagination if provided
+    if (filters?.limit) {
+      queryBuilder.limit(filters.limit);
+    }
+    if (filters?.offset) {
+      queryBuilder.offset(filters.offset);
     }
 
     const payslips = await queryBuilder.getMany();
@@ -288,6 +283,218 @@ export class PayslipsService {
         throw error;
       }
       throw new BadRequestException(`Failed to fetch and populate payslip: ${error.message}`);
+    }
+  }
+
+  /**
+   * Process HR payslip upload: fetch from GCS, save to docs, and notify employee
+   * @param hrPayslipUploadDto - Contains hrID, employeeID, and fileReference
+   * @returns Created Doc entity with notification status
+   */
+  async processHrPayslipUpload(hrPayslipUploadDto: HrPayslipUploadDto) {
+    const { 
+      hrID, 
+      employeeID, 
+      fileReference, 
+      title, 
+      description, 
+      payPeriod, 
+      bucketName 
+    } = hrPayslipUploadDto;
+
+    // Validate HR user exists
+    const hrUser = await this.userRepository.findOne({
+      where: { hrID },
+      relations: ['organisation', 'branch'],
+    });
+
+    if (!hrUser) {
+      throw new NotFoundException(`HR user with ID ${hrID} not found`);
+    }
+
+    // Validate employee exists
+    const employee = await this.userRepository.findOne({
+      where: { uid: employeeID },
+      relations: ['organisation', 'branch'],
+    });
+
+    if (!employee) {
+      throw new NotFoundException(`Employee with ID ${employeeID} not found`);
+    }
+
+    if (!employee.email) {
+      throw new BadRequestException(`Employee ${employeeID} has no email address for notifications`);
+    }
+
+    let fileMetadata: any = {};
+    let publicUrl: string = '';
+    let extension: string = extname(fileReference);
+    let mimeType: string = 'application/octet-stream';
+    let fileSize: number = 0;
+    let fileType: string = 'application';
+    let isAccessible: boolean = false;
+
+         try {
+       // Try to fetch file from GCS
+       fileMetadata = await this.storageService.getMetadata(fileReference);
+       publicUrl = await this.storageService.getSignedUrl(fileReference);
+       
+       // Extract file information
+       mimeType = fileMetadata.contentType || 'application/octet-stream';
+       fileSize = parseInt(fileMetadata.size) || 0;
+       fileType = mimeType.split('/')[0];
+       isAccessible = true;
+       
+     } catch (error) {
+       throw new BadRequestException(`Failed to fetch file from GCS: ${error.message}`);
+     }
+
+    try {
+      // Create payslip title
+      const payslipTitle = title || `Payslip${payPeriod ? ` - ${payPeriod}` : ''} - ${employee.name || 'Employee'}`;
+      const payslipDescription = description || `Payslip for ${employee.name || 'employee'}${payPeriod ? ` for period ${payPeriod}` : ''}`;
+
+      // Check if a payslip with similar details already exists
+      const existingPayslip = await this.docRepository.findOne({
+        where: {
+          owner: { uid: employeeID },
+          docType: DocType.PAYSLIP,
+          title: payslipTitle,
+          isActive: true,
+        },
+      });
+
+      let doc: Doc;
+
+      if (existingPayslip) {
+        // Update existing payslip
+        await this.docRepository.update(existingPayslip.uid, {
+          content: fileType,
+          fileType,
+          fileSize,
+          url: publicUrl,
+          mimeType,
+          extension,
+          metadata: {
+            ...existingPayslip.metadata,
+            ...fileMetadata,
+            uploadedAt: new Date().toISOString(),
+            uploadedByHR: hrID,
+            hrUser: hrUser.name || hrUser.email,
+            payPeriod,
+            source: 'hr_upload',
+            bucketName: bucketName || 'default',
+          },
+          lastAccessedAt: new Date(),
+          updatedAt: new Date(),
+          description: payslipDescription,
+        });
+
+        doc = await this.docRepository.findOne({
+          where: { uid: existingPayslip.uid },
+        });
+      } else {
+        // Create new payslip record
+        const newDoc = this.docRepository.create({
+          title: payslipTitle,
+          content: fileType,
+          description: payslipDescription,
+          fileType,
+          docType: DocType.PAYSLIP,
+          fileSize,
+          url: publicUrl,
+          mimeType,
+          extension,
+          metadata: {
+            ...fileMetadata,
+            uploadedAt: new Date().toISOString(),
+            uploadedByHR: hrID,
+            hrUser: hrUser.name || hrUser.email,
+            payPeriod,
+            source: 'hr_upload',
+            bucketName: bucketName || 'default',
+          },
+          isActive: true,
+          isPublic: false,
+          owner: employee,
+          branch: employee.branch || null,
+          organisation: employee.organisation || null,
+          lastAccessedAt: new Date(),
+        });
+
+        doc = await this.docRepository.save(newDoc);
+      }
+
+      // Send email notification to employee
+      let emailSent = false;
+      try {
+        const emailData = {
+          name: employee.name || employee.email,
+          employeeName: employee.name || employee.email,
+          payslipTitle: doc.title,
+          payslipDescription: doc.description,
+          payPeriod: payPeriod || 'N/A',
+          uploadedBy: hrUser.name || hrUser.email,
+          uploadedAt: new Date().toISOString(),
+          organisationName: employee.organisation?.name || 'Company',
+          branchName: employee.branch?.name || 'Main Branch',
+          payslipId: doc.uid,
+          downloadLink: publicUrl,
+        };
+
+        this.eventEmitter.emit('send.email', EmailType.PAYSLIP_AVAILABLE, [employee.email], emailData);
+        emailSent = true;
+      } catch (emailError) {
+        console.error('Failed to send payslip notification email:', emailError.message);
+        // Don't throw error - payslip was created successfully
+      }
+
+      // Send confirmation email to HR user
+      try {
+        const hrEmailData = {
+          name: hrUser.name || hrUser.email,
+          hrName: hrUser.name || hrUser.email,
+          employeeName: employee.name || employee.email,
+          employeeEmail: employee.email,
+          payslipTitle: doc.title,
+          payPeriod: payPeriod || 'N/A',
+          uploadedAt: new Date().toISOString(),
+          organisationName: employee.organisation?.name || 'Company',
+          branchName: employee.branch?.name || 'Main Branch',
+          payslipId: doc.uid,
+          emailSent,
+        };
+
+        this.eventEmitter.emit('send.email', EmailType.PAYSLIP_UPLOADED_ADMIN, [hrUser.email], hrEmailData);
+      } catch (hrEmailError) {
+        console.error('Failed to send HR confirmation email:', hrEmailError.message);
+        // Don't throw error - this is just a confirmation
+      }
+
+      return {
+        uid: doc.uid,
+        title: doc.title,
+        description: doc.description,
+        url: doc.url,
+        fileSize: doc.fileSize,
+        mimeType: doc.mimeType,
+        extension: doc.extension,
+        createdAt: doc.createdAt,
+        updatedAt: doc.updatedAt,
+        message: existingPayslip 
+          ? 'Payslip updated successfully and employee notified' 
+          : 'Payslip uploaded successfully and employee notified',
+        emailSent,
+        employeeEmail: employee.email,
+        payPeriod: payPeriod || null,
+        uploadedBy: hrUser.name || hrUser.email,
+      };
+
+    } catch (error) {
+      if (error instanceof NotFoundException || error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new BadRequestException(`Failed to process HR payslip upload: ${error.message}`);
     }
   }
 }

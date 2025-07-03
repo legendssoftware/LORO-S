@@ -113,4 +113,7 @@ export enum EmailType {
 	USER_TARGET_PERFORMANCE_ALERT = 'user_target_performance_alert',
 	USER_TARGET_ERP_UPDATE_CONFIRMATION = 'user_target_erp_update_confirmation',
 	USER_TARGET_PERIOD_SUMMARY = 'user_target_period_summary',
+	// Payslip related emails
+	PAYSLIP_AVAILABLE = 'payslip_available',
+	PAYSLIP_UPLOADED_ADMIN = 'payslip_uploaded_admin',
 }

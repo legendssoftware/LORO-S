@@ -1,24 +1,24 @@
-import { IsOptional, IsDateString, IsString, IsNotEmpty, IsNumber, IsUrl } from 'class-validator';
+import { IsOptional, IsString, IsNotEmpty, IsNumber, IsUrl } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class GetPayslipsDto {
     @ApiProperty({ 
-        description: 'Start date for filtering payslips', 
+        description: 'Limit number of payslips to return', 
         required: false,
-        example: '2024-01-01'
+        example: 10
     })
     @IsOptional()
-    @IsDateString()
-    startDate?: string;
+    @IsNumber()
+    limit?: number;
 
     @ApiProperty({ 
-        description: 'End date for filtering payslips', 
+        description: 'Skip number of payslips for pagination', 
         required: false,
-        example: '2024-12-31'
+        example: 0
     })
     @IsOptional()
-    @IsDateString()
-    endDate?: string;
+    @IsNumber()
+    offset?: number;
 }
 
 export class FetchPayslipDto {
@@ -86,6 +86,68 @@ export class FetchPayslipDto {
         description: 'Optional bucket name if file is in different bucket', 
         required: false,
         example: 'external-payslips-bucket'
+    })
+    @IsOptional()
+    @IsString()
+    bucketName?: string;
+}
+
+export class HrPayslipUploadDto {
+    @ApiProperty({ 
+        description: 'HR system ID of the HR user processing the payslip', 
+        example: 12345
+    })
+    @IsNotEmpty()
+    @IsNumber()
+    hrID: number;
+
+    @ApiProperty({ 
+        description: 'Employee ID (user uid) who owns the payslip', 
+        example: 123
+    })
+    @IsNotEmpty()
+    @IsNumber()
+    employeeID: number;
+
+    @ApiProperty({ 
+        description: 'File reference/path in Google Cloud Storage', 
+        example: 'payslips/2024/01/employee-123-january-2024.pdf'
+    })
+    @IsNotEmpty()
+    @IsString()
+    fileReference: string;
+
+    @ApiProperty({ 
+        description: 'Optional title for the payslip', 
+        required: false,
+        example: 'January 2024 Payslip'
+    })
+    @IsOptional()
+    @IsString()
+    title?: string;
+
+    @ApiProperty({ 
+        description: 'Optional description for the payslip', 
+        required: false,
+        example: 'Monthly payslip for January 2024'
+    })
+    @IsOptional()
+    @IsString()
+    description?: string;
+
+    @ApiProperty({ 
+        description: 'Optional period covered by the payslip', 
+        required: false,
+        example: '2024-01'
+    })
+    @IsOptional()
+    @IsString()
+    payPeriod?: string;
+
+    @ApiProperty({ 
+        description: 'Optional bucket name if file is in different bucket', 
+        required: false,
+        example: 'hr-payslips-bucket'
     })
     @IsOptional()
     @IsString()

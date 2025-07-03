@@ -53,6 +53,8 @@ import {
 	JournalUpdatedEmailData,
 	JournalDeletedEmailData,
 	OvertimeReminderData,
+	PayslipAvailableEmailData,
+	PayslipUploadedAdminEmailData,
 } from '../types/email-templates.types';
 
 // Auth Templates
@@ -370,4 +372,13 @@ export const JournalUpdated = (data: JournalUpdatedEmailData): string => {
 
 export const JournalDeleted = (data: JournalDeletedEmailData): string => {
 	return emailTemplateService.journalDeleted(data);
+};
+
+// Payslip Templates
+export const PayslipAvailable = (data: PayslipAvailableEmailData): string => {
+	return emailTemplateService.payslipAvailable(data);
+};
+
+export const PayslipUploadedAdmin = (data: PayslipUploadedAdminEmailData): string => {
+	return emailTemplateService.payslipUploadedAdmin(data);
 };
