@@ -9,7 +9,7 @@ import { AccessLevel } from '../lib/enums/user.enums';
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { FeedbackType, FeedbackStatus } from '../lib/enums/feedback.enums';
 
-@ApiTags('Feedback')
+@ApiTags('📝 Feedback')
 @Controller('feedback')
 export class FeedbackController {
 	constructor(private readonly feedbackService: FeedbackService) {}

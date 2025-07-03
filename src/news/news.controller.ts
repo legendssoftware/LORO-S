@@ -19,7 +19,7 @@ import { AccessLevel } from '../lib/enums/user.enums';
 import { Roles } from '../decorators/role.decorator';
 import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
 
-@ApiTags('news')
+@ApiTags('📰 News')
 @Controller('news')
 @UseGuards(AuthGuard, RoleGuard)
 @EnterpriseOnly('news')

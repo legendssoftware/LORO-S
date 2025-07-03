@@ -16,8 +16,8 @@ import {
 import { AuthGuard } from '../guards/auth.guard';
 import { RoleGuard } from '../guards/role.guard';
 
-@ApiTags('check-ins')
-@Controller('check-ins')
+@ApiTags('🔐 Check Ins & Check Outs')
+@Controller('check-ins')	
 @UseGuards(AuthGuard, RoleGuard)
 @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid credentials or missing token' })
 export class CheckInsController {

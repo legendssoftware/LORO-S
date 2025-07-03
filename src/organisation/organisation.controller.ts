@@ -19,7 +19,7 @@ import { AuthGuard } from '../guards/auth.guard';
 import { RoleGuard } from '../guards/role.guard';
 import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
 
-@ApiTags('org')
+@ApiTags('🏢 Organisation')
 @Controller('org')
 @UseGuards(AuthGuard, RoleGuard)
 @ApiUnauthorizedResponse({ description: 'Unauthorized access due to invalid credentials or missing token' })

@@ -19,7 +19,7 @@ import { AccessLevel } from '../lib/enums/user.enums';
 import { Roles } from '../decorators/role.decorator';
 
 @ApiBearerAuth('JWT-auth')
-@ApiTags('reports')
+@ApiTags('📊 Reports')
 @Controller('reports')
 @UseGuards(AuthGuard, RoleGuard)
 @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid credentials or missing token' })

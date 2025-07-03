@@ -24,7 +24,7 @@ import { Controller, Get, Post, Body, Patch, Param, Delete, Query, Req } from '@
 import { ProductAnalyticsDto } from './dto/product-analytics.dto';
 import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
 
-@ApiTags('products')
+@ApiTags('🛍️ Products') 
 @Controller('products')
 @UseGuards(AuthGuard, RoleGuard)
 @EnterpriseOnly('products')

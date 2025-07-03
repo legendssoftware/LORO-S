@@ -29,7 +29,7 @@ import { UpdateTaskFlagItemDto } from './dto/update-task-flag-item.dto';
 import { AddCommentDto } from './dto/add-comment.dto';
 import { TaskFlagStatus } from '../lib/enums/task.enums';
 
-@ApiTags('tasks')
+@ApiTags('🔧 Tasks')
 @Controller('tasks')
 @UseGuards(AuthGuard, RoleGuard)
 @EnterpriseOnly('tasks')

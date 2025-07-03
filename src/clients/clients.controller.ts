@@ -24,7 +24,7 @@ import { Client } from './entities/client.entity';
 import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
 import { GeneralStatus } from '../lib/enums/status.enums';
 
-@ApiTags('clients')
+@ApiTags('👥 Clients')
 @Controller('clients')
 @UseGuards(AuthGuard, RoleGuard)
 @EnterpriseOnly('clients')

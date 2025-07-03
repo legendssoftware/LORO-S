@@ -15,7 +15,7 @@ interface AuthenticatedRequest extends Request {
 	user: User;
 }
 
-@ApiTags('notifications')
+@ApiTags('🔔 Notifications')
 @Controller('notifications')
 @UseGuards(AuthGuard, RoleGuard)
 export class NotificationsController {

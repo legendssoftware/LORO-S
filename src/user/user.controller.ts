@@ -26,7 +26,7 @@ import { CreateUserTargetDto } from './dto/create-user-target.dto';
 import { UpdateUserTargetDto } from './dto/update-user-target.dto';
 import { ExternalTargetUpdateDto } from './dto/external-target-update.dto';
 
-@ApiTags('user')
+@ApiTags('👥 Users')
 @Controller('user')
 @UseGuards(AuthGuard, RoleGuard)
 @ApiUnauthorizedResponse({ description: 'Unauthorized access due to invalid credentials or missing token' })

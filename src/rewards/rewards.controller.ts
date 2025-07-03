@@ -18,7 +18,7 @@ import {
 } from '@nestjs/swagger';
 import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
 
-@ApiTags('rewards')
+@ApiTags('🏆 Rewards')
 @Controller('rewards')
 @UseGuards(AuthGuard, RoleGuard)
 @EnterpriseOnly('rewards')

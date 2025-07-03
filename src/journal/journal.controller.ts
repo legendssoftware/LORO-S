@@ -10,7 +10,7 @@ import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
 import { Controller, Get, Post, Body, Param, UseGuards, Patch, Delete, Req } from '@nestjs/common';
 import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
 
-@ApiTags('journal')
+@ApiTags('📝 Journal')
 @Controller('journal')
 @UseGuards(AuthGuard, RoleGuard)
 @EnterpriseOnly('journal')

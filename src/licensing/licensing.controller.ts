@@ -6,15 +6,12 @@ import { CreateLicenseDto } from './dto/create-license.dto';
 import { UpdateLicenseDto } from './dto/update-license.dto';
 import { License } from './entities/license.entity';
 import { ConsolidatedLicenseUsageDto } from './dto/consolidated-license-usage.dto';
-import { AuthGuard } from '../guards/auth.guard';
-import { RoleGuard } from '../guards/role.guard';
-import { LicenseRateLimitGuard } from './lib/guards/license-rate-limit.guard';
 import { LicenseExceptionFilter } from './lib/filters/license-exception.filter';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { Roles } from '../decorators/role.decorator';
 import { isPublic } from '../decorators/public.decorator';
 
-@ApiTags('licensing')
+@ApiTags('📋 Licensing')
 @Controller('licensing')
 // @UseGuards(AuthGuard, RoleGuard, LicenseRateLimitGuard)
 @UseFilters(LicenseExceptionFilter)

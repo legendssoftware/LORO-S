@@ -20,7 +20,7 @@ import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
 
-@ApiTags('warnings')
+@ApiTags('⚠️ Warnings')
 @Controller('warnings')
 @UseGuards(AuthGuard, RoleGuard)
 @EnterpriseOnly('warnings')

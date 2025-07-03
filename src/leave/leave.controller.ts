@@ -21,7 +21,7 @@ import { AccessLevel } from '../lib/enums/user.enums';
 import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
 import { LeaveStatus, LeaveType } from '../lib/enums/leave.enums';
 
-@ApiTags('leave')
+@ApiTags('🌴 Leave')
 @Controller('leave')
 @UseGuards(AuthGuard, RoleGuard)
 @EnterpriseOnly('leave')

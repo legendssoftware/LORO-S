@@ -25,7 +25,7 @@ interface AuthenticatedRequest extends Request {
 	user: User;
 }
 
-@ApiTags('gps')
+@ApiTags('🗺️ GPS Tracking')
 @Controller('gps')
 @ApiUnauthorizedResponse({ description: 'Unauthorized access due to invalid credentials or missing token' })
 export class TrackingController {

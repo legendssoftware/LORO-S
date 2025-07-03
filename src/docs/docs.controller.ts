@@ -11,7 +11,7 @@ import { RoleGuard } from '../guards/role.guard';
 import { AuthGuard } from '../guards/auth.guard';
 import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
 
-@ApiTags('docs')
+@ApiTags('📄 Documents & Media')
 @Controller('docs')
 @UseGuards(AuthGuard, RoleGuard)
 @EnterpriseOnly('claims')

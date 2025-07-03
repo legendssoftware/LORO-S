@@ -5,7 +5,7 @@ import { RoleGuard } from '../guards/role.guard';
 import { PayslipsService } from './payslips.service';
 import { GetPayslipsDto, FetchPayslipDto, HrPayslipUploadDto } from './dto/create-payslip.dto';
 
-@ApiTags('Payslips')
+@ApiTags('📄 Payslips')
 @ApiBearerAuth()
 @UseGuards(AuthGuard, RoleGuard)
 @Controller('payslips')

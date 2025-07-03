@@ -25,7 +25,7 @@ import { OrderStatus } from '../lib/enums/status.enums';
 import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
 import { isPublic } from '../decorators/public.decorator';
 
-@ApiTags('shop')
+@ApiTags('🛒 Shop')
 @Controller('shop')
 @UseGuards(AuthGuard, RoleGuard)
 @EnterpriseOnly('shop')
