@@ -9,7 +9,7 @@ import { RoleGuard } from '../../guards/role.guard';
 import { Roles } from '../../decorators/role.decorator';
 import { AccessLevel } from '../../lib/enums/user.enums';
 
-@ApiTags('org appearance')
+@ApiTags('🎨 Organisation Appearance')
 @Controller('organisations')
 @UseGuards(AuthGuard, RoleGuard)
 @ApiUnauthorizedResponse({ description: 'Unauthorized access due to invalid credentials or missing token' })

@@ -46,18 +46,31 @@ LORO combines **GPS tracking**, **AI-powered analytics**, **real-time communicat
 `,
 		)
 		// === AUTHENTICATION & USER MANAGEMENT ===
-		.addTag('🔐 Authentication & Authorization', 'JWT-based authentication system with multi-factor support')
 		.addTag('👥 Users', 'User Management - User accounts, profiles, roles, and permissions management')
 		.addTag('📋 Licensing', 'License Management - Subscription tiers, usage tracking, and license validation')
+		.addTag('🔐 Authentication', 'Authentication Management - Secure authentication and authorization services')
 
 		// === ORGANIZATION & STRUCTURE ===
 		.addTag('🏢 Organisation', 'Organization Management - Core organization configuration and settings')
+		.addTag(
+			'🎨 Organisation Appearance',
+			'Organization Appearance Management - Core organization appearance configuration and settings',
+		)
+		.addTag(
+			'🕒 Organisation Hours',
+			'Organization Hours Management - Core organization hours configuration and settings',
+		)
+		.addTag(
+			'🔧 Organisation Settings',
+			'Organization Settings Management - Core organization settings configuration and settings',
+		)
 		.addTag('🏪 Branches', 'Branch Management - Location-based branch operations and territory mapping')
 		.addTag('📦 Assets', 'Asset Management - Digital and physical asset tracking with location support')
 
 		// === LOCATION & TRACKING SERVICES ===
 		.addTag('🗺️ GPS Tracking', 'GPS Tracking - Advanced location services with real-time position updates')
-		.addTag('📍 Check-in', 'GPS-based employee check-in with location validation')
+		.addTag('🔲 Geofence Settings', 'Geofence Settings - Geofence settings and management')
+		.addTag('📍 Check Ins & Check Outs', 'GPS-based employee check-in with location validation')
 		.addTag('⏰ Attendance', 'Employee time tracking with location verification')
 
 		// === TASK & WORKFLOW MANAGEMENT ===
@@ -67,15 +80,18 @@ LORO combines **GPS tracking**, **AI-powered analytics**, **real-time communicat
 		.addTag('⚠️ Warnings', 'Employee Warnings - Disciplinary actions and warning management')
 
 		// === CLIENT & LEAD MANAGEMENT ===
-		.addTag('👥 Clients', 'Client Management - Customer relationship management with location services')
-		.addTag('👥 Leads', 'Lead Management - Sales lead tracking with territory management')
-		.addTag('🤝 Interactions', 'Interaction Management - Customer interaction tracking and history')
-		.addTag('📄 Claims', 'Claims Processing - Insurance claims with document management')
+		.addTag('💎 Clients', 'Client Management - Customer relationship management with location services')
+		.addTag('🎯 Leads', 'Lead Management - Sales lead tracking with territory management')
+		.addTag('💭 Interactions', 'Interaction Management - Customer interaction tracking and history')
+		.addTag('🪙 Claims', 'Claims Processing - Insurance claims with document management')
+		.addTag('💎💰 Client Authentication', 'Authentication Management - Authentication and authorization')
+
+		// === COMPETITOR MANAGEMENT ===
+		.addTag('⚡ Competitors', 'Competitor Analysis - Market analysis and competitor tracking')
 
 		// === BUSINESS OPERATIONS ===
 		.addTag('🛍️ Products', 'Product Catalog - Product management with inventory and analytics')
 		.addTag('🛒 Shop', 'E-commerce Platform - Online store with location-based delivery')
-		.addTag('💰 Quotations', 'Quote generation and management system')
 
 		// === COMMUNICATION & NOTIFICATIONS ===
 		.addTag('📱 Communication', 'Communication System - Real-time messaging with WebSocket support')
@@ -86,14 +102,19 @@ LORO combines **GPS tracking**, **AI-powered analytics**, **real-time communicat
 		// === ANALYTICS & REPORTING ===
 		.addTag('📊 Reports', 'Business Reports - Analytics dashboard with location insights')
 		.addTag('🏆 Rewards', 'Rewards System - Employee recognition and performance tracking')
-		.addTag('📝 Feedback', 'Feedback Management - Customer and employee feedback collection')
+		.addTag('💬 Feedback', 'Feedback Management - Customer and employee feedback collection')
 
 		// === EXTERNAL INTEGRATIONS ===
-		.addTag('🤝 Resellers', 'Reseller Network - Partner management with territory mapping')
+		.addTag('↗️ Resellers', 'Reseller Network - Partner management with territory mapping')
 
 		// === UTILITIES & SERVICES ===
-		.addTag('📁 Document Management', 'File storage and document handling')
-		.addTag('📄 PDF Generation', 'Dynamic PDF creation for business documents')
+		.addTag('⚙️ PDF Generation', 'Dynamic PDF creation for business documents')
+		.addTag('💾 Documents & Files', 'Document and file management with cloud storage')
+		.addTag('💼 Payslips', 'Payslip management with cloud storage')
+
+		// === WEBSOCKETS ===
+		.addTag('🔄 Quotation Conversion', 'Quotation Conversion - Quotation conversion to order')
+		.addTag('🌐 WebSockets', 'WebSocket Services - Real-time bi-directional communication')
 
 		.addBearerAuth()
 		.addServer('https://api.loro.co.za', 'Production')

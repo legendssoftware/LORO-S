@@ -22,14 +22,12 @@ import {
     ApiUnauthorizedResponse,
     ApiInternalServerErrorResponse,
     ApiServiceUnavailableResponse,
-    ApiConflictResponse,
-    ApiCreatedResponse,
     ApiConsumes,
     ApiProduces
 } from '@nestjs/swagger';
 import { isPublic } from '../decorators/public.decorator';
 
-@ApiTags('🏢 Client Authentication')
+@ApiTags('💎💰 Client Authentication') 
 @Controller('client-auth')
 @ApiConsumes('application/json')
 @ApiProduces('application/json')

@@ -29,7 +29,7 @@ import { QuotationConversionDto } from '../dto/quotation-conversion.dto';
 import { AuthenticatedRequest } from '../../lib/interfaces/authenticated-request.interface';
 import { UserService } from '../../user/user.service';
 
-@ApiTags('quotation-conversion')
+@ApiTags('🔄 Quotation Conversion')
 @Controller('quotations')
 @UseGuards(AuthGuard, RoleGuard)
 export class QuotationConversionController {

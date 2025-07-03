@@ -34,7 +34,7 @@ import {
 } from '@nestjs/swagger';
 
 @ApiBearerAuth('JWT-auth')
-@ApiTags('💬 Interactions')
+@ApiTags('💭 Interactions')
 @Controller('interactions')
 @UseGuards(AuthGuard, RoleGuard)
 @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid credentials or missing token' })

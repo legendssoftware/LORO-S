@@ -39,7 +39,7 @@ import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
 import { PaginatedResponse } from '../lib/interfaces/paginated-response.interface';
 import { CompetitorStatus } from '../lib/enums/competitor.enums';
 
-@ApiTags('🤝 Competitors')
+@ApiTags('⚡ Competitors')
 @ApiBearerAuth()
 @UseGuards(AuthGuard, RoleGuard)
 @Controller('competitors')

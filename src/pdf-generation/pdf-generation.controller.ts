@@ -3,7 +3,7 @@ import { PdfGenerationService } from './pdf-generation.service';
 import { CreatePdfGenerationDto } from './dto/create-pdf-generation.dto';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
 
-@ApiTags('📄 PDF Generation')
+@ApiTags('⚙️ PDF Generation')
 @Controller('pdf-generation')
 export class PdfGenerationController {
   constructor(private readonly pdfGenerationService: PdfGenerationService) {}

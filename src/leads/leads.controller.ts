@@ -24,7 +24,7 @@ import { AuthGuard } from '../guards/auth.guard';
 import { RoleGuard } from '../guards/role.guard';
 import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
 
-@ApiTags('👥 Leads')
+@ApiTags('🎯 Leads')
 @Controller('leads')
 @UseGuards(AuthGuard, RoleGuard)
 @EnterpriseOnly('leads')

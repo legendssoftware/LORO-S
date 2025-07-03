@@ -10,8 +10,8 @@ import { AuthGuard } from '../guards/auth.guard';
 import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
 import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
 
-@ApiTags('💰 Claims')
-@Controller('claims')
+@ApiTags('🪙 Claims')
+@Controller('claims') 
 @UseGuards(AuthGuard, RoleGuard)
 @EnterpriseOnly('claims')
 @ApiBearerAuth('JWT-auth')
