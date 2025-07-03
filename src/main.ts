@@ -94,7 +94,6 @@ LORO combines **GPS tracking**, **AI-powered analytics**, **real-time communicat
 		// === UTILITIES & SERVICES ===
 		.addTag('📁 Document Management', 'File storage and document handling')
 		.addTag('📄 PDF Generation', 'Dynamic PDF creation for business documents')
-		.addTag('🛠️ Library Services', 'Common utilities and shared services')
 
 		.addBearerAuth()
 		.addServer('https://api.loro.co.za', 'Production')
