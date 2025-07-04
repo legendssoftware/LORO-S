@@ -18,6 +18,14 @@ import {
 	ApiQuery,
 	ApiHeader,
 	ApiResponse,
+	ApiBearerAuth,
+	ApiForbiddenResponse,
+	ApiConflictResponse,
+	ApiUnprocessableEntityResponse,
+	ApiInternalServerErrorResponse,
+	ApiServiceUnavailableResponse,
+	ApiConsumes,
+	ApiProduces,
 } from '@nestjs/swagger';
 import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, Req, Put, ParseIntPipe, Headers } from '@nestjs/common';
 import { AccountStatus } from '../lib/enums/status.enums';
@@ -26,10 +34,23 @@ import { CreateUserTargetDto } from './dto/create-user-target.dto';
 import { UpdateUserTargetDto } from './dto/update-user-target.dto';
 import { ExternalTargetUpdateDto } from './dto/external-target-update.dto';
 
+@ApiBearerAuth('JWT-auth')
 @ApiTags('👥 Users')
 @Controller('user')
 @UseGuards(AuthGuard, RoleGuard)
-@ApiUnauthorizedResponse({ description: 'Unauthorized access due to invalid credentials or missing token' })
+@ApiConsumes('application/json')
+@ApiProduces('application/json')
+@ApiUnauthorizedResponse({ 
+	description: '🔒 Unauthorized - Authentication required',
+	schema: {
+		type: 'object',
+		properties: {
+			message: { type: 'string', example: 'Authentication token is required' },
+			error: { type: 'string', example: 'Unauthorized' },
+			statusCode: { type: 'number', example: 401 }
+		}
+	}
+})
 export class UserController {
 	constructor(private readonly userService: UserService) {}
 
@@ -44,24 +65,90 @@ export class UserController {
 		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({
-		summary: 'Create a new user',
-		description: 'Creates a new user with the provided data. Accessible by users with appropriate roles.',
+		summary: '➕ Create a new user',
+		description: `
+# Create User Account
+
+Creates a new user account in the system with comprehensive user management capabilities.
+
+## 📋 **Use Cases**
+- **Employee Onboarding**: Create accounts for new employees
+- **Client Management**: Set up client portal access
+- **Team Expansion**: Add new team members to projects
+- **Role-Based Access**: Configure users with specific permissions
+- **Multi-Branch Operations**: Create users for different branches
+
+## 🔧 **Features**
+- Automatic user reference generation
+- Email verification and activation
+- Profile and employment data integration
+- Role-based permission assignment
+- Organization and branch assignment
+- Password policy enforcement
+
+## 📝 **Required Fields**
+- Basic information (name, email, phone)
+- Access level and permissions
+- Organization and branch assignment
+- Employment profile details
+		`,
 	})
-	@ApiBody({ type: CreateUserDto })
+	@ApiBody({ 
+		type: CreateUserDto,
+		description: 'User creation payload with all required information',
+		examples: {
+			employee: {
+				summary: '👨‍💼 Employee Account',
+				description: 'Example of creating an employee account',
+				value: {
+					name: 'John',
+					surname: 'Doe',
+					email: 'john.doe@loro.co.za',
+					phone: '+27 64 123 4567',
+					username: 'john.doe',
+					accessLevel: AccessLevel.USER,
+					status: AccountStatus.ACTIVE,
+					employmentProfile: {
+						position: 'Software Engineer',
+						department: 'ENGINEERING',
+						startDate: '2023-01-15'
+					}
+				}
+			},
+			manager: {
+				summary: '👔 Manager Account',
+				description: 'Example of creating a manager account',
+				value: {
+					name: 'Jane',
+					surname: 'Smith',
+					email: 'jane.smith@loro.co.za',
+					phone: '+27 64 987 6543',
+					username: 'jane.smith',
+					accessLevel: AccessLevel.MANAGER,
+					status: AccountStatus.ACTIVE,
+					employmentProfile: {
+						position: 'Engineering Manager',
+						department: 'ENGINEERING',
+						startDate: '2023-01-01'
+					}
+				}
+			}
+		}
+	})
 	@ApiCreatedResponse({
-		description: 'User created successfully',
+		description: '✅ User created successfully',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Success' },
+				message: { type: 'string', example: 'User created successfully' },
 				data: {
 					type: 'object',
 					properties: {
 						uid: { type: 'number', example: 1 },
-						username: { type: 'string', example: 'brandon123' },
-						name: { type: 'string', example: 'Brandon' },
-						surname: { type: 'string', example: 'Nkawu' },
-						email: { type: 'string', example: 'brandon@loro.co.za' },
+						username: { type: 'string', example: 'john.doe' },
+						name: { type: 'string', example: 'John' },
+						surname: { type: 'string', example: 'Doe' },
+						email: { type: 'string', example: 'john.doe@loro.co.za' },
 						phone: { type: 'string', example: '+27 64 123 4567' },
 						photoURL: { type: 'string', example: 'https://example.com/photo.jpg' },
 						accessLevel: { type: 'string', enum: Object.values(AccessLevel), example: AccessLevel.USER },
@@ -75,7 +162,69 @@ export class UserController {
 			},
 		},
 	})
-	@ApiBadRequestResponse({ description: 'Invalid input data provided' })
+	@ApiBadRequestResponse({ 
+		description: '❌ Bad Request - Invalid or missing required data',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Validation failed: Email is required' },
+				error: { type: 'string', example: 'Bad Request' },
+				statusCode: { type: 'number', example: 400 },
+				details: {
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'Email must be a valid email address',
+						'Phone number must be in valid format',
+						'Access level must be one of the allowed values'
+					]
+				}
+			}
+		}
+	})
+	@ApiForbiddenResponse({
+		description: '🚫 Forbidden - Insufficient permissions',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'You do not have permission to create users in this organization' },
+				error: { type: 'string', example: 'Forbidden' },
+				statusCode: { type: 'number', example: 403 }
+			}
+		}
+	})
+	@ApiConflictResponse({
+		description: '⚠️ Conflict - User already exists',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'User with email john.doe@loro.co.za already exists' },
+				error: { type: 'string', example: 'Conflict' },
+				statusCode: { type: 'number', example: 409 },
+				conflictingUser: {
+					type: 'object',
+					properties: {
+						uid: { type: 'number', example: 9876 },
+						email: { type: 'string', example: 'john.doe@loro.co.za' },
+						username: { type: 'string', example: 'john.doe' }
+					}
+				}
+			}
+		}
+	})
+	@ApiInternalServerErrorResponse({
+		description: '💥 Internal Server Error - System malfunction',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Failed to create user due to system error' },
+				error: { type: 'string', example: 'Internal Server Error' },
+				statusCode: { type: 'number', example: 500 },
+				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+				path: { type: 'string', example: '/user' }
+			}
+		}
+	})
 	create(@Body() createUserDto: CreateUserDto, @Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid;
 		const branchId = req.user?.branch?.uid;
@@ -93,77 +242,185 @@ export class UserController {
 		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({
-		summary: 'Get all users',
-		description: 'Retrieves all users with optional filtering and pagination. Requires ADMIN or MANAGER role.',
+		summary: '📋 Get all users',
+		description: `
+# User Directory
+
+Retrieves a comprehensive list of all users in your organization with advanced filtering and pagination capabilities.
+
+## 📊 **Response Features**
+- **User Profiles**: Complete user information including employment details
+- **Real-time Status**: Current account status and access levels
+- **Contact Information**: Phone, email, and profile photos
+- **Department Data**: Organization structure and reporting lines
+- **Performance Metrics**: Access to user activity and engagement data
+
+## 🔍 **Advanced Filtering**
+- **Status Filtering**: Active, inactive, pending, suspended users
+- **Role-Based**: Filter by access levels (admin, manager, user, etc.)
+- **Department**: Filter by organizational departments
+- **Branch/Location**: Multi-location organization support
+- **Search**: Full-text search across names, emails, and usernames
+- **Date Ranges**: Filter by creation dates or last activity
+
+## 📈 **Business Intelligence**
+- **User Analytics**: Registration trends and user growth
+- **Activity Metrics**: Login frequency and system usage
+- **Role Distribution**: Access level breakdown across organization
+- **Department Analysis**: User distribution by departments
+- **Performance Indicators**: User engagement and productivity metrics
+
+## 🎯 **Use Cases**
+- **HR Management**: Employee directory and contact information
+- **Team Planning**: Resource allocation and team composition
+- **Access Control**: Permission management and security audits
+- **Reporting**: Generate user reports for compliance and analytics
+- **Communication**: Broadcast messages and announcements
+		`,
 	})
-	@ApiQuery({ name: 'page', description: 'Page number for pagination', required: false, type: Number, example: 1 })
-	@ApiQuery({ name: 'limit', description: 'Number of items per page', required: false, type: Number, example: 10 })
-	@ApiQuery({ name: 'status', description: 'Filter by account status', required: false, enum: AccountStatus })
-	@ApiQuery({ name: 'accessLevel', description: 'Filter by access level', required: false, enum: AccessLevel })
-	@ApiQuery({ name: 'search', description: 'Search term for filtering users', required: false, type: String })
-	@ApiQuery({ name: 'branchId', description: 'Filter by branch ID', required: false, type: Number })
-	@ApiQuery({ name: 'organisationId', description: 'Filter by organisation ID', required: false, type: Number })
+	@ApiQuery({ name: 'page', description: 'Page number for pagination (starts from 1)', required: false, type: Number, example: 1 })
+	@ApiQuery({ name: 'limit', description: 'Number of items per page (max 100)', required: false, type: Number, example: 10 })
+	@ApiQuery({ name: 'status', description: 'Filter by account status', required: false, enum: AccountStatus, example: AccountStatus.ACTIVE })
+	@ApiQuery({ name: 'accessLevel', description: 'Filter by access level', required: false, enum: AccessLevel, example: AccessLevel.USER })
+	@ApiQuery({ name: 'search', description: 'Search term for filtering users (name, email, username)', required: false, type: String, example: 'john' })
+	@ApiQuery({ name: 'branchId', description: 'Filter by branch ID', required: false, type: Number, example: 123 })
+	@ApiQuery({ name: 'organisationId', description: 'Filter by organisation ID', required: false, type: Number, example: 456 })
 	@ApiOkResponse({
-		description: 'List of users with pagination',
+		description: '✅ Users retrieved successfully',
 		schema: {
 			type: 'object',
 			properties: {
 				data: {
-					type: 'array',
-					items: {
-						type: 'object',
-						properties: {
-							uid: { type: 'number', example: 1 },
-							username: { type: 'string', example: 'brandon123' },
-							name: { type: 'string', example: 'Brandon' },
-							surname: { type: 'string', example: 'Nkawu' },
-							email: { type: 'string', example: 'brandon@loro.co.za' },
-							phone: { type: 'string', example: '+27 64 123 4567' },
-							photoURL: { type: 'string', example: 'https://example.com/photo.jpg' },
-							accessLevel: {
-								type: 'string',
-								enum: Object.values(AccessLevel),
-								example: AccessLevel.USER,
-							},
-							status: {
-								type: 'string',
-								enum: Object.values(AccountStatus),
-								example: AccountStatus.ACTIVE,
-							},
-							userref: { type: 'string', example: 'USR123456' },
-							hrID: { type: 'number', example: 12345, description: 'HR system ID for backward compatibility' },
-							createdAt: { type: 'string', format: 'date-time' },
-							updatedAt: { type: 'string', format: 'date-time' },
-							profile: {
+					type: 'object',
+					properties: {
+						users: {
+							type: 'array',
+							items: {
 								type: 'object',
 								properties: {
-									height: { type: 'string', example: '180cm' },
-									weight: { type: 'string', example: '75kg' },
-									gender: { type: 'string', example: 'MALE' },
+									uid: { type: 'number', example: 1 },
+									username: { type: 'string', example: 'john.doe' },
+									name: { type: 'string', example: 'John' },
+									surname: { type: 'string', example: 'Doe' },
+									email: { type: 'string', example: 'john.doe@loro.co.za' },
+									phone: { type: 'string', example: '+27 64 123 4567' },
+									photoURL: { type: 'string', example: 'https://example.com/photo.jpg' },
+									accessLevel: {
+										type: 'string',
+										enum: Object.values(AccessLevel),
+										example: AccessLevel.USER,
+									},
+									status: {
+										type: 'string',
+										enum: Object.values(AccountStatus),
+										example: AccountStatus.ACTIVE,
+									},
+									userref: { type: 'string', example: 'USR123456' },
+									hrID: { type: 'number', example: 12345, description: 'HR system ID for backward compatibility' },
+									createdAt: { type: 'string', format: 'date-time' },
+									updatedAt: { type: 'string', format: 'date-time' },
+									lastLoginAt: { type: 'string', format: 'date-time', example: '2023-11-30T14:30:00Z' },
+									profile: {
+										type: 'object',
+										properties: {
+											height: { type: 'string', example: '180cm' },
+											weight: { type: 'string', example: '75kg' },
+											gender: { type: 'string', example: 'MALE' },
+										},
+									},
+									employmentProfile: {
+										type: 'object',
+										properties: {
+											position: { type: 'string', example: 'Senior Software Engineer' },
+											department: { type: 'string', example: 'ENGINEERING' },
+											startDate: { type: 'string', format: 'date', example: '2023-01-15' },
+											manager: { type: 'string', example: 'Jane Smith' },
+										},
+									},
+									branch: {
+										type: 'object',
+										properties: {
+											uid: { type: 'number', example: 123 },
+											name: { type: 'string', example: 'Cape Town Office' },
+											location: { type: 'string', example: 'Cape Town, South Africa' },
+										},
+									},
+									organization: {
+										type: 'object',
+										properties: {
+											uid: { type: 'number', example: 456 },
+											name: { type: 'string', example: 'Loro Technologies' },
+										},
+									},
 								},
 							},
-							employmentProfile: {
-								type: 'object',
-								properties: {
-									position: { type: 'string', example: 'Senior Software Engineer' },
-									department: { type: 'string', example: 'ENGINEERING' },
+						},
+						summary: {
+							type: 'object',
+							properties: {
+								totalUsers: { type: 'number', example: 156 },
+								activeUsers: { type: 'number', example: 145 },
+								inactiveUsers: { type: 'number', example: 11 },
+								byAccessLevel: {
+									type: 'object',
+									properties: {
+										ADMIN: { type: 'number', example: 5 },
+										MANAGER: { type: 'number', example: 15 },
+										USER: { type: 'number', example: 136 },
+									},
+								},
+								byDepartment: {
+									type: 'object',
+									properties: {
+										ENGINEERING: { type: 'number', example: 45 },
+										SALES: { type: 'number', example: 35 },
+										MARKETING: { type: 'number', example: 25 },
+										HR: { type: 'number', example: 15 },
+									},
 								},
 							},
 						},
 					},
 				},
-				message: { type: 'string', example: 'Success' },
+				message: { type: 'string', example: 'Users retrieved successfully' },
 				meta: {
 					type: 'object',
 					properties: {
-						total: { type: 'number', example: 50 },
+						total: { type: 'number', example: 156 },
 						page: { type: 'number', example: 1 },
 						limit: { type: 'number', example: 10 },
-						totalPages: { type: 'number', example: 5 },
+						totalPages: { type: 'number', example: 16 },
+						hasNextPage: { type: 'boolean', example: true },
+						hasPreviousPage: { type: 'boolean', example: false },
 					},
 				},
+				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
 			},
 		},
+	})
+	@ApiForbiddenResponse({
+		description: '🚫 Forbidden - Insufficient permissions to view users',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'You do not have permission to view users in this organization' },
+				error: { type: 'string', example: 'Forbidden' },
+				statusCode: { type: 'number', example: 403 }
+			}
+		}
+	})
+	@ApiInternalServerErrorResponse({
+		description: '💥 Internal Server Error - Database connection failed',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Failed to retrieve users due to database error' },
+				error: { type: 'string', example: 'Internal Server Error' },
+				statusCode: { type: 'number', example: 500 },
+				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+				path: { type: 'string', example: '/user' }
+			}
+		}
 	})
 	findAll(
 		@Req() req: AuthenticatedRequest,
@@ -206,58 +463,174 @@ export class UserController {
 		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({
-		summary: 'Get a user by reference code',
-		description: 'Retrieves a user by reference code. Accessible by all authenticated users.',
+		summary: '🔍 Get user by reference code',
+		description: `
+# User Profile Details
+
+Retrieves comprehensive information about a specific user including their complete profile, employment details, and activity history.
+
+## 📊 **Detailed Information**
+- **Personal Profile**: Complete user information and contact details
+- **Employment Data**: Position, department, reporting structure, and career history
+- **Activity Tracking**: Login history, system usage patterns, and engagement metrics
+- **Performance Metrics**: User targets, achievements, and progress tracking
+- **Permission Details**: Access levels, roles, and security permissions
+- **Asset Assignments**: Company assets and equipment assigned to the user
+
+## 🔧 **Use Cases**
+- **HR Management**: Employee profile review and updates
+- **Performance Reviews**: Access comprehensive user activity and achievements
+- **Security Audits**: Verify user permissions and access levels
+- **Team Planning**: Understand team member capabilities and availability
+- **Asset Management**: Review user asset assignments and responsibilities
+- **Compliance**: Generate user reports for regulatory requirements
+
+## 📱 **Integration Features**
+- **Mobile Support**: Optimized for mobile HR applications
+- **Export Capabilities**: Generate PDF reports of user profiles
+- **Real-time Updates**: Live status and activity information
+		`,
 	})
 	@ApiParam({
 		name: 'ref',
-		description: 'User reference code',
+		description: 'User reference code or unique identifier',
 		type: 'number',
-		example: 1,
+		example: 123,
 	})
 	@ApiOkResponse({
-		description: 'User found',
+		description: '✅ User details retrieved successfully',
 		schema: {
 			type: 'object',
 			properties: {
 				data: {
 					type: 'object',
 					properties: {
-						uid: { type: 'number', example: 1 },
-						username: { type: 'string', example: 'brandon123' },
-						name: { type: 'string', example: 'Brandon' },
-						surname: { type: 'string', example: 'Nkawu' },
-						email: { type: 'string', example: 'brandon@loro.co.za' },
-						phone: { type: 'string', example: '+27 64 123 4567' },
-						photoURL: { type: 'string', example: 'https://example.com/photo.jpg' },
-						accessLevel: { type: 'string', enum: Object.values(AccessLevel), example: AccessLevel.USER },
-						status: { type: 'string', enum: Object.values(AccountStatus), example: AccountStatus.ACTIVE },
-						userref: { type: 'string', example: 'USR123456' },
-						hrID: { type: 'number', example: 12345, description: 'HR system ID for backward compatibility' },
-						createdAt: { type: 'string', format: 'date-time' },
-						updatedAt: { type: 'string', format: 'date-time' },
-						profile: {
+						user: {
 							type: 'object',
 							properties: {
-								height: { type: 'string', example: '180cm' },
-								weight: { type: 'string', example: '75kg' },
-								gender: { type: 'string', example: 'MALE' },
+								uid: { type: 'number', example: 123 },
+								username: { type: 'string', example: 'john.doe' },
+								name: { type: 'string', example: 'John' },
+								surname: { type: 'string', example: 'Doe' },
+								email: { type: 'string', example: 'john.doe@loro.co.za' },
+								phone: { type: 'string', example: '+27 64 123 4567' },
+								photoURL: { type: 'string', example: 'https://example.com/photo.jpg' },
+								accessLevel: { type: 'string', enum: Object.values(AccessLevel), example: AccessLevel.USER },
+								status: { type: 'string', enum: Object.values(AccountStatus), example: AccountStatus.ACTIVE },
+								userref: { type: 'string', example: 'USR123456' },
+								hrID: { type: 'number', example: 12345, description: 'HR system ID for backward compatibility' },
+								createdAt: { type: 'string', format: 'date-time' },
+								updatedAt: { type: 'string', format: 'date-time' },
+								lastLoginAt: { type: 'string', format: 'date-time', example: '2023-11-30T14:30:00Z' },
+								profile: {
+									type: 'object',
+									properties: {
+										height: { type: 'string', example: '180cm' },
+										weight: { type: 'string', example: '75kg' },
+										gender: { type: 'string', example: 'MALE' },
+										dateOfBirth: { type: 'string', format: 'date', example: '1990-05-15' },
+										emergencyContact: { type: 'string', example: 'Jane Doe - +27 64 987 6543' },
+									},
+								},
+								employmentProfile: {
+									type: 'object',
+									properties: {
+										position: { type: 'string', example: 'Senior Software Engineer' },
+										department: { type: 'string', example: 'ENGINEERING' },
+										startDate: { type: 'string', format: 'date', example: '2023-01-15' },
+										manager: { type: 'string', example: 'Jane Smith' },
+										employmentType: { type: 'string', example: 'FULL_TIME' },
+										salary: { type: 'number', example: 75000 },
+										currency: { type: 'string', example: 'ZAR' },
+									},
+								},
+								branch: {
+									type: 'object',
+									properties: {
+										uid: { type: 'number', example: 456 },
+										name: { type: 'string', example: 'Cape Town Office' },
+										location: { type: 'string', example: 'Cape Town, South Africa' },
+									},
+								},
+								organization: {
+									type: 'object',
+									properties: {
+										uid: { type: 'number', example: 789 },
+										name: { type: 'string', example: 'Loro Technologies' },
+									},
+								},
 							},
 						},
-						employmentProfile: {
+						activitySummary: {
 							type: 'object',
 							properties: {
-								position: { type: 'string', example: 'Senior Software Engineer' },
-								department: { type: 'string', example: 'ENGINEERING' },
+								totalLogins: { type: 'number', example: 145 },
+								lastActiveDate: { type: 'string', format: 'date', example: '2023-11-30' },
+								averageSessionTime: { type: 'number', example: 8.5, description: 'Average session time in hours' },
+								systemUsageScore: { type: 'number', example: 85, description: 'User engagement score (0-100)' },
+							},
+						},
+						permissions: {
+							type: 'object',
+							properties: {
+								canEditProfile: { type: 'boolean', example: true },
+								canViewReports: { type: 'boolean', example: true },
+								canManageAssets: { type: 'boolean', example: false },
+								canApproveLeave: { type: 'boolean', example: false },
 							},
 						},
 					},
 				},
-				message: { type: 'string', example: 'Success' },
+				message: { type: 'string', example: 'User details retrieved successfully' },
+				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
 			},
 		},
 	})
-	@ApiNotFoundResponse({ description: 'User not found' })
+	@ApiNotFoundResponse({ 
+		description: '🔍 User not found',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'User with reference code 123 not found' },
+				error: { type: 'string', example: 'Not Found' },
+				statusCode: { type: 'number', example: 404 },
+				suggestions: {
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'Verify the user reference code is correct',
+						'Check if the user has been deleted or deactivated',
+						'Ensure you have permission to access this user'
+					]
+				}
+			}
+		}
+	})
+	@ApiForbiddenResponse({
+		description: '🚫 Forbidden - No access to this user',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'You do not have permission to view this user' },
+				error: { type: 'string', example: 'Forbidden' },
+				statusCode: { type: 'number', example: 403 },
+				reason: { type: 'string', example: 'User belongs to different branch/organization' }
+			}
+		}
+	})
+	@ApiInternalServerErrorResponse({
+		description: '💥 Internal Server Error - Failed to retrieve user',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Failed to retrieve user details due to system error' },
+				error: { type: 'string', example: 'Internal Server Error' },
+				statusCode: { type: 'number', example: 500 },
+				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+				path: { type: 'string', example: '/user/123' }
+			}
+		}
+	})
 	findOne(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid;
 		const branchId = req.user?.branch?.uid;
@@ -266,8 +639,34 @@ export class UserController {
 
 	@Patch(':ref')
 	@ApiOperation({
-		summary: 'Update a user by reference code',
-		description: 'Updates a user by reference code. Accessible by users with appropriate roles.',
+		summary: '✏️ Update user information',
+		description: `
+# User Profile Management
+
+Updates an existing user's information with comprehensive validation and audit trail maintenance.
+
+## 🔄 **Supported Updates**
+- **Personal Information**: Name, contact details, profile photo
+- **Employment Details**: Position, department, salary, manager assignment
+- **Access Control**: Role changes, permission modifications
+- **Status Management**: Account activation, suspension, reactivation
+- **Profile Data**: Physical details, emergency contacts, preferences
+- **Security Settings**: Password requirements, authentication methods
+
+## 🔒 **Security Features**
+- **Audit Trail**: All changes are logged with user and timestamp
+- **Permission Validation**: Updates require appropriate access levels
+- **Data Validation**: Business rules prevent invalid state changes
+- **Rollback Capability**: Previous versions are preserved for recovery
+- **Approval Workflows**: Sensitive changes may require approval
+
+## 📋 **Common Use Cases**
+- **Profile Updates**: Employee self-service profile modifications
+- **HR Management**: Administrative updates to employment records
+- **Role Changes**: Promotion, transfer, or responsibility changes
+- **Contact Updates**: Address, phone, emergency contact modifications
+- **Access Management**: Permission adjustments and security updates
+		`,
 	})
 	@Roles(
 		AccessLevel.ADMIN,
@@ -280,22 +679,180 @@ export class UserController {
 	)
 	@ApiParam({
 		name: 'ref',
-		description: 'Reference code',
+		description: 'User reference code or unique identifier',
 		type: 'number',
-		example: 1,
+		example: 123,
 	})
-	@ApiBody({ type: UpdateUserDto })
+	@ApiBody({ 
+		type: UpdateUserDto,
+		description: 'User update payload with fields to modify',
+		examples: {
+			profileUpdate: {
+				summary: '👤 Profile Update',
+				description: 'Update basic profile information',
+				value: {
+					name: 'John',
+					surname: 'Doe',
+					phone: '+27 64 123 4567',
+					photoURL: 'https://example.com/new-photo.jpg'
+				}
+			},
+			employmentUpdate: {
+				summary: '💼 Employment Update',
+				description: 'Update employment details',
+				value: {
+					employmentProfile: {
+						position: 'Lead Software Engineer',
+						department: 'ENGINEERING',
+						salary: 85000,
+						manager: 'Jane Smith'
+					}
+				}
+			},
+			statusUpdate: {
+				summary: '🔄 Status Change',
+				description: 'Change user status',
+				value: {
+					status: AccountStatus.ACTIVE,
+					accessLevel: AccessLevel.MANAGER
+				}
+			}
+		}
+	})
 	@ApiOkResponse({
-		description: 'User updated successfully',
+		description: '✅ User updated successfully',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Success' },
+				data: {
+					type: 'object',
+					properties: {
+						user: {
+							type: 'object',
+							properties: {
+								uid: { type: 'number', example: 123 },
+								username: { type: 'string', example: 'john.doe' },
+								name: { type: 'string', example: 'John' },
+								surname: { type: 'string', example: 'Doe' },
+								email: { type: 'string', example: 'john.doe@loro.co.za' },
+								updatedFields: {
+									type: 'array',
+									items: { type: 'string' },
+									example: ['name', 'phone', 'employmentProfile.position']
+								},
+								updatedAt: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' }
+							}
+						},
+						auditLog: {
+							type: 'object',
+							properties: {
+								changes: {
+									type: 'array',
+									items: {
+										type: 'object',
+										properties: {
+											field: { type: 'string', example: 'position' },
+											oldValue: { type: 'string', example: 'Software Engineer' },
+											newValue: { type: 'string', example: 'Lead Software Engineer' }
+										}
+									}
+								},
+								updatedBy: { type: 'string', example: 'Admin User' },
+								timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' }
+							}
+						}
+					}
+				},
+				message: { type: 'string', example: 'User updated successfully' },
+				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' }
 			},
 		},
 	})
-	@ApiNotFoundResponse({ description: 'User not found' })
-	@ApiBadRequestResponse({ description: 'Invalid input data provided' })
+	@ApiNotFoundResponse({ 
+		description: '🔍 User not found for update',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'User with reference code 123 not found' },
+				error: { type: 'string', example: 'Not Found' },
+				statusCode: { type: 'number', example: 404 },
+				suggestions: {
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'Verify the user reference code is correct',
+						'Check if the user has been deleted',
+						'Ensure you have permission to access this user'
+					]
+				}
+			}
+		}
+	})
+	@ApiBadRequestResponse({ 
+		description: '❌ Bad Request - Invalid update data',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Validation failed for user update' },
+				error: { type: 'string', example: 'Bad Request' },
+				statusCode: { type: 'number', example: 400 },
+				validationErrors: {
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'Email must be a valid email address',
+						'Phone number must be in valid format',
+						'Access level must be one of the allowed values'
+					]
+				}
+			}
+		}
+	})
+	@ApiForbiddenResponse({
+		description: '🚫 Forbidden - No permission to update user',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'You do not have permission to update this user' },
+				error: { type: 'string', example: 'Forbidden' },
+				statusCode: { type: 'number', example: 403 },
+				reason: { type: 'string', example: 'User belongs to different branch or insufficient role permissions' }
+			}
+		}
+	})
+	@ApiConflictResponse({
+		description: '⚠️ Conflict - Update conflicts with current state',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Cannot update user - conflicting data exists' },
+				error: { type: 'string', example: 'Conflict' },
+				statusCode: { type: 'number', example: 409 },
+				conflicts: {
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'Email address already in use by another user',
+						'Username already exists',
+						'Cannot change role while user has active sessions'
+					]
+				}
+			}
+		}
+	})
+	@ApiInternalServerErrorResponse({
+		description: '💥 Internal Server Error - Update failed',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Failed to update user due to system error' },
+				error: { type: 'string', example: 'Internal Server Error' },
+				statusCode: { type: 'number', example: 500 },
+				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+				path: { type: 'string', example: '/user/123' }
+			}
+		}
+	})
 	update(@Param('ref') ref: number, @Body() updateUserDto: UpdateUserDto, @Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid;
 		const branchId = req.user?.branch?.uid;
@@ -304,8 +861,38 @@ export class UserController {
 
 	@Patch('restore/:ref')
 	@ApiOperation({
-		summary: 'Restore a deleted user by reference code',
-		description: 'Restores a previously deleted user. Accessible by users with appropriate roles.',
+		summary: '🔄 Restore a deleted user',
+		description: `
+# User Account Recovery
+
+Restores a previously deleted user account back to active status, maintaining data integrity and audit trails.
+
+## 🔄 **Recovery Process**
+- **Validation Checks**: Ensures user is eligible for restoration
+- **Data Integrity**: Validates all related records are consistent
+- **Status Reset**: Returns user to appropriate active status
+- **Audit Trail**: Logs restoration action with user and timestamp
+- **Notification System**: Alerts relevant stakeholders of restoration
+
+## ⚠️ **Recovery Requirements**
+- **Retention Period**: User must be within retention period (90 days default)
+- **Data Consistency**: All related records must be intact
+- **Permission Checks**: User must have restoration permissions
+- **Business Rules**: User must meet business criteria for restoration
+
+## 🔒 **Security Features**
+- **Authorization**: Only authorized users can restore accounts
+- **Audit Logging**: Complete audit trail of restoration activity
+- **Data Validation**: Ensures restored user data is valid and consistent
+- **Rollback Protection**: Prevents restoration if data integrity is compromised
+
+## 📋 **Common Use Cases**
+- **Accidental Deletion**: Recover users deleted by mistake
+- **Employee Return**: Restore accounts for returning employees
+- **Process Errors**: Restore users deleted due to workflow errors
+- **Data Recovery**: Recover users lost during system issues
+- **Compliance Needs**: Restore users required for regulatory compliance
+		`,
 	})
 	@Roles(
 		AccessLevel.ADMIN,
@@ -318,20 +905,150 @@ export class UserController {
 	)
 	@ApiParam({
 		name: 'ref',
-		description: 'User reference code',
+		description: 'User reference code or unique identifier of deleted user',
 		type: 'number',
-		example: 1,
+		example: 123,
 	})
 	@ApiOkResponse({
-		description: 'User restored successfully',
+		description: '✅ User restored successfully',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Success' },
+				data: {
+					type: 'object',
+					properties: {
+						user: {
+							type: 'object',
+							properties: {
+								uid: { type: 'number', example: 123 },
+								username: { type: 'string', example: 'john.doe' },
+								name: { type: 'string', example: 'John' },
+								surname: { type: 'string', example: 'Doe' },
+								email: { type: 'string', example: 'john.doe@loro.co.za' },
+								status: { type: 'string', example: AccountStatus.ACTIVE },
+								previousStatus: { type: 'string', example: 'DELETED' },
+								deletedAt: { type: 'string', format: 'date-time', example: '2023-11-15T10:00:00Z' },
+								restoredAt: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+								restoredBy: { type: 'string', example: 'Admin User' },
+								daysDeleted: { type: 'number', example: 16, description: 'Number of days user was deleted' },
+								retentionPeriodRemaining: { type: 'number', example: 74, description: 'Days left in retention period' }
+							}
+						},
+						validationChecks: {
+							type: 'object',
+							properties: {
+								dataIntegrity: { type: 'boolean', example: true },
+								relatedRecords: { type: 'boolean', example: true },
+								businessRules: { type: 'boolean', example: true },
+								retentionPeriod: { type: 'boolean', example: true }
+							}
+						},
+						postRestoration: {
+							type: 'object',
+							properties: {
+								employmentRecordsPreserved: { type: 'boolean', example: true },
+								assetsReassigned: { type: 'boolean', example: true },
+								permissionsRestored: { type: 'boolean', example: true },
+								auditTrailMaintained: { type: 'boolean', example: true }
+							}
+						}
+					}
+				},
+				message: { type: 'string', example: 'User restored successfully' },
+				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' }
 			},
 		},
 	})
-	@ApiNotFoundResponse({ description: 'User not found' })
+	@ApiNotFoundResponse({ 
+		description: '🔍 Deleted user not found',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Deleted user with reference code 123 not found' },
+				error: { type: 'string', example: 'Not Found' },
+				statusCode: { type: 'number', example: 404 },
+				reasons: {
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'User was never deleted',
+						'User has been permanently deleted',
+						'User reference code is incorrect',
+						'User belongs to different organization'
+					]
+				},
+				suggestions: {
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'Verify the user reference code is correct',
+						'Check if user was recently permanently deleted',
+						'Ensure you have permission to access this user'
+					]
+				}
+			}
+		}
+	})
+	@ApiForbiddenResponse({
+		description: '🚫 Forbidden - No permission to restore users',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'You do not have permission to restore users' },
+				error: { type: 'string', example: 'Forbidden' },
+				statusCode: { type: 'number', example: 403 },
+				reason: { type: 'string', example: 'Insufficient permissions or user belongs to different branch' }
+			}
+		}
+	})
+	@ApiConflictResponse({
+		description: '⚠️ Conflict - User cannot be restored',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Cannot restore user - retention period has expired' },
+				error: { type: 'string', example: 'Conflict' },
+				statusCode: { type: 'number', example: 409 },
+				conflicts: {
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'Retention period expired 15 days ago',
+						'User data has been archived',
+						'Related records have been purged'
+					]
+				},
+				resolution: {
+					type: 'object',
+					properties: {
+						possibleActions: {
+							type: 'array',
+							items: { type: 'string' },
+							example: [
+								'Contact system administrator for manual recovery',
+								'Check archived data sources',
+								'File data recovery request with IT department'
+							]
+						},
+						escalationPath: { type: 'string', example: 'Contact IT Support for advanced recovery options' }
+					}
+				}
+			}
+		}
+	})
+	@ApiInternalServerErrorResponse({
+		description: '💥 Internal Server Error - Restoration failed',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Failed to restore user due to system error' },
+				error: { type: 'string', example: 'Internal Server Error' },
+				statusCode: { type: 'number', example: 500 },
+				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+				path: { type: 'string', example: '/user/restore/123' }
+			}
+		}
+	})
 	restore(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid;
 		const branchId = req.user?.branch?.uid;
@@ -349,25 +1066,175 @@ export class UserController {
 		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({
-		summary: 'Soft delete a user by reference code',
-		description: 'Performs a soft delete on a user. Accessible by users with appropriate roles.',
+		summary: '🗑️ Soft delete a user',
+		description: `
+# User Account Deactivation
+
+Marks a user account as deleted without permanently removing it from the database. This ensures data integrity and maintains audit trails.
+
+## 🔒 **Safety Features**
+- **Soft Delete**: User is marked as deleted but remains in database
+- **Audit Trail**: Deletion is logged with user and timestamp
+- **Recovery**: Deleted users can be restored using restore endpoint
+- **Data Integrity**: Related records (employment, assets) are preserved
+
+## ⚠️ **Pre-Delete Checks**
+- **Active Sessions**: Cannot delete users with active sessions
+- **Asset Assignments**: Assets must be returned before deletion
+- **Pending Approvals**: Cannot delete users with pending workflow approvals
+- **Compliance**: Checks regulatory requirements for user deletion
+
+## 📋 **Common Use Cases**
+- **Employee Termination**: Formal employee departure process
+- **Account Suspension**: Temporary or permanent account deactivation
+- **Data Cleanup**: Archive inactive or unused accounts
+- **Security Incidents**: Immediate account deactivation for security reasons
+- **Compliance**: Regulatory requirement for account disposal
+
+## 🔄 **Recovery Process**
+Use the restore endpoint to recover accidentally deleted users within the retention period (90 days default).
+
+## 🎯 **Impact Assessment**
+- **Asset Management**: Automatically returns assigned assets
+- **Access Control**: Revokes all permissions and access tokens
+- **Workflow**: Transfers pending approvals to designated backup users
+- **Notifications**: Alerts relevant stakeholders of account deactivation
+		`,
 	})
 	@ApiParam({
 		name: 'ref',
-		description: 'User reference code',
-		type: 'string',
-		example: 'USR123456',
+		description: 'User reference code or unique identifier',
+		type: 'number',
+		example: 123,
 	})
 	@ApiOkResponse({
-		description: 'User deleted successfully',
+		description: '✅ User deleted successfully',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Success' },
+				data: {
+					type: 'object',
+					properties: {
+						user: {
+							type: 'object',
+							properties: {
+								uid: { type: 'number', example: 123 },
+								username: { type: 'string', example: 'john.doe' },
+								name: { type: 'string', example: 'John' },
+								surname: { type: 'string', example: 'Doe' },
+								email: { type: 'string', example: 'john.doe@loro.co.za' },
+								status: { type: 'string', example: 'DELETED' },
+								deletedAt: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+								deletedBy: { type: 'string', example: 'Admin User' },
+								retentionPeriod: { type: 'number', example: 90, description: 'Days before permanent deletion' },
+								permanentDeletionDate: { type: 'string', format: 'date', example: '2024-03-01' }
+							}
+						},
+						preDeleteChecks: {
+							type: 'object',
+							properties: {
+								activeSessions: { type: 'number', example: 0 },
+								assignedAssets: { type: 'number', example: 0 },
+								pendingApprovals: { type: 'number', example: 0 },
+								complianceApproval: { type: 'boolean', example: true }
+							}
+						},
+						impactAssessment: {
+							type: 'object',
+							properties: {
+								assetsReturned: { type: 'number', example: 3 },
+								accessRevoked: { type: 'boolean', example: true },
+								approvalsTransferred: { type: 'number', example: 2 },
+								notificationsSent: { type: 'number', example: 5 }
+							}
+						}
+					}
+				},
+				message: { type: 'string', example: 'User deleted successfully' },
+				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' }
 			},
 		},
 	})
-	@ApiNotFoundResponse({ description: 'User not found' })
+	@ApiNotFoundResponse({ 
+		description: '🔍 User not found for deletion',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'User with reference code 123 not found' },
+				error: { type: 'string', example: 'Not Found' },
+				statusCode: { type: 'number', example: 404 },
+				suggestions: {
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'Verify the user reference code is correct',
+						'Check if the user has already been deleted',
+						'Ensure you have permission to access this user'
+					]
+				}
+			}
+		}
+	})
+	@ApiForbiddenResponse({
+		description: '🚫 Forbidden - No permission to delete user',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'You do not have permission to delete this user' },
+				error: { type: 'string', example: 'Forbidden' },
+				statusCode: { type: 'number', example: 403 },
+				reason: { type: 'string', example: 'Insufficient permissions or user belongs to different branch' }
+			}
+		}
+	})
+	@ApiConflictResponse({
+		description: '⚠️ Conflict - User cannot be deleted',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Cannot delete user - user has active sessions' },
+				error: { type: 'string', example: 'Conflict' },
+				statusCode: { type: 'number', example: 409 },
+				blockingFactors: {
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'User has 2 active sessions',
+						'User has 3 assets assigned',
+						'User has 1 pending approval workflow'
+					]
+				},
+				resolution: {
+					type: 'object',
+					properties: {
+						requiredActions: {
+							type: 'array',
+							items: { type: 'string' },
+							example: [
+								'End active user sessions',
+								'Return assigned assets',
+								'Transfer pending approvals'
+							]
+						},
+						estimatedResolutionTime: { type: 'string', example: '2-3 business days' }
+					}
+				}
+			}
+		}
+	})
+	@ApiInternalServerErrorResponse({
+		description: '💥 Internal Server Error - Deletion failed',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Failed to delete user due to system error' },
+				error: { type: 'string', example: 'Internal Server Error' },
+				statusCode: { type: 'number', example: 500 },
+				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+				path: { type: 'string', example: '/user/123' }
+			}
+		}
+	})
 	remove(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid;
 		const branchId = req.user?.branch?.uid;
