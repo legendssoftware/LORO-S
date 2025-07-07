@@ -58,6 +58,7 @@ import {
 	OvertimeReminderData,
 	PayslipAvailableEmailData,
 	PayslipUploadedAdminEmailData,
+	MonthlyUnattendedLeadsReportData,
 } from '../types/email-templates.types';
 
 class EmailTemplateService {
@@ -396,6 +397,10 @@ class EmailTemplateService {
 		return this.renderTemplate('leads/assigned-to-user.hbs', data);
 	}
 
+	monthlyUnattendedLeadsReport(data: MonthlyUnattendedLeadsReportData): string {
+		return this.renderTemplate('leads/monthly-unattended-leads-report.hbs', data);
+	}
+
 	// License Templates
 	licenseCreated(data: LicenseEmailData): string {
 		return this.renderTemplate('licenses/created.hbs', data);
@@ -657,6 +662,7 @@ class EmailTemplateService {
 			'leads/converted-client.hbs',
 			'leads/converted-creator.hbs',
 			'leads/assigned-to-user.hbs',
+			'leads/monthly-unattended-leads-report.hbs',
 			'licenses/created.hbs',
 			'licenses/updated.hbs',
 			'licenses/renewed.hbs',

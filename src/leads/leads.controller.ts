@@ -17,7 +17,7 @@ import {
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
-import { LeadStatus } from '../lib/enums/lead.enums';
+import { LeadStatus, LeadTemperature, LeadPriority, LeadSource } from '../lib/enums/lead.enums';
 import { PaginatedResponse } from '../lib/interfaces/paginated-response';
 import { Lead } from './entities/lead.entity';
 import { AuthGuard } from '../guards/auth.guard';
@@ -59,10 +59,16 @@ export class LeadsController {
 						name: { type: 'string' },
 						email: { type: 'string' },
 						phone: { type: 'string' },
-						company: { type: 'string' },
+						companyName: { type: 'string' },
 						status: { type: 'string', enum: Object.values(LeadStatus) },
 						source: { type: 'string' },
 						notes: { type: 'string' },
+						leadScore: { type: 'number', description: 'Calculated lead score (0-100)' },
+						temperature: { type: 'string', description: 'Lead temperature (HOT, WARM, COLD, FROZEN)' },
+						priority: { type: 'string', description: 'Lead priority level' },
+						estimatedValue: { type: 'number', description: 'Estimated value in currency' },
+						nextFollowUpDate: { type: 'string', format: 'date-time', description: 'Next scheduled follow-up date' },
+						attachments: { type: 'array', items: { type: 'string' }, description: 'Array of attachment URLs' },
 						createdAt: { type: 'string', format: 'date-time' },
 					},
 				},
@@ -116,6 +122,11 @@ export class LeadsController {
 	})
 	@ApiQuery({ name: 'startDate', type: Date, required: false, description: 'Filter by start date (ISO format)' })
 	@ApiQuery({ name: 'endDate', type: Date, required: false, description: 'Filter by end date (ISO format)' })
+	@ApiQuery({ name: 'temperature', type: String, required: false, description: 'Filter by lead temperature (HOT, WARM, COLD, FROZEN)' })
+	@ApiQuery({ name: 'minScore', type: Number, required: false, description: 'Filter by minimum lead score (0-100)' })
+	@ApiQuery({ name: 'maxScore', type: Number, required: false, description: 'Filter by maximum lead score (0-100)' })
+	@ApiQuery({ name: 'priority', type: String, required: false, description: 'Filter by lead priority level' })
+	@ApiQuery({ name: 'source', type: String, required: false, description: 'Filter by lead source' })
 	@ApiOkResponse({
 		description: 'Leads retrieved successfully',
 		schema: {
@@ -130,10 +141,19 @@ export class LeadsController {
 							name: { type: 'string' },
 							email: { type: 'string' },
 							phone: { type: 'string' },
-							company: { type: 'string' },
+							companyName: { type: 'string' },
 							status: { type: 'string', enum: Object.values(LeadStatus) },
 							source: { type: 'string' },
 							notes: { type: 'string' },
+							leadScore: { type: 'number', description: 'Calculated lead score (0-100)' },
+							temperature: { type: 'string', description: 'Lead temperature (HOT, WARM, COLD, FROZEN)' },
+							priority: { type: 'string', description: 'Lead priority level' },
+							estimatedValue: { type: 'number', description: 'Estimated value in currency' },
+							nextFollowUpDate: { type: 'string', format: 'date-time', description: 'Next scheduled follow-up date' },
+							lastContactDate: { type: 'string', format: 'date-time', description: 'Last contact date' },
+							totalInteractions: { type: 'number', description: 'Total number of interactions' },
+							averageResponseTime: { type: 'number', description: 'Average response time in hours' },
+							attachments: { type: 'array', items: { type: 'string' }, description: 'Array of attachment URLs' },
 							createdAt: { type: 'string', format: 'date-time' },
 							updatedAt: { type: 'string', format: 'date-time' },
 						},
@@ -160,6 +180,11 @@ export class LeadsController {
 		@Query('search') search?: string,
 		@Query('startDate') startDate?: Date,
 		@Query('endDate') endDate?: Date,
+		@Query('temperature') temperature?: LeadTemperature,
+		@Query('minScore') minScore?: number,
+		@Query('maxScore') maxScore?: number,
+		@Query('priority') priority?: LeadPriority,
+		@Query('source') source?: LeadSource,
 	): Promise<PaginatedResponse<Lead>> {
 		const orgId = req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
@@ -172,6 +197,11 @@ export class LeadsController {
 					startDate: new Date(startDate),
 					endDate: new Date(endDate),
 				}),
+			...(temperature && { temperature }),
+			...(minScore && { minScore }),
+			...(maxScore && { maxScore }),
+			...(priority && { priority }),
+			...(source && { source }),
 		};
 
 		return this.leadsService.findAll(
@@ -210,10 +240,42 @@ export class LeadsController {
 						name: { type: 'string' },
 						email: { type: 'string' },
 						phone: { type: 'string' },
-						company: { type: 'string' },
+						companyName: { type: 'string' },
 						status: { type: 'string', enum: Object.values(LeadStatus) },
 						source: { type: 'string' },
 						notes: { type: 'string' },
+						leadScore: { type: 'number', description: 'Calculated lead score (0-100)' },
+						temperature: { type: 'string', description: 'Lead temperature (HOT, WARM, COLD, FROZEN)' },
+						priority: { type: 'string', description: 'Lead priority level' },
+						estimatedValue: { type: 'number', description: 'Estimated value in currency' },
+						nextFollowUpDate: { type: 'string', format: 'date-time', description: 'Next scheduled follow-up date' },
+						lastContactDate: { type: 'string', format: 'date-time', description: 'Last contact date' },
+						totalInteractions: { type: 'number', description: 'Total number of interactions' },
+						averageResponseTime: { type: 'number', description: 'Average response time in hours' },
+						attachments: { type: 'array', items: { type: 'string' }, description: 'Array of attachment URLs' },
+						scoringData: {
+							type: 'object',
+							description: 'Detailed lead scoring breakdown',
+							properties: {
+								totalScore: { type: 'number' },
+								engagementScore: { type: 'number' },
+								demographicScore: { type: 'number' },
+								behavioralScore: { type: 'number' },
+								fitScore: { type: 'number' },
+								lastCalculated: { type: 'string', format: 'date-time' },
+							},
+						},
+						activityData: {
+							type: 'object',
+							description: 'Lead activity tracking data',
+							properties: {
+								lastContactDate: { type: 'string', format: 'date-time' },
+								nextFollowUpDate: { type: 'string', format: 'date-time' },
+								totalInteractions: { type: 'number' },
+								engagementLevel: { type: 'string', enum: ['HIGH', 'MEDIUM', 'LOW'] },
+								unresponsiveStreak: { type: 'number', description: 'Days without response' },
+							},
+						},
 						createdAt: { type: 'string', format: 'date-time' },
 						updatedAt: { type: 'string', format: 'date-time' },
 						assignedTo: {

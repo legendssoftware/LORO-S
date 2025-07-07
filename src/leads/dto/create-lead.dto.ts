@@ -65,6 +65,16 @@ export class CreateLeadDto {
 	image?: string;
 
 	@IsOptional()
+	@IsArray()
+	@IsString({ each: true })
+	@ApiProperty({
+		description: 'Array of attachment URLs (supports PDFs, images, documents)',
+		example: ['https://storage.googleapis.com/bucket/document.pdf', 'https://storage.googleapis.com/bucket/proposal.docx'],
+		required: false,
+	})
+	attachments?: string[];
+
+	@IsOptional()
 	@IsNumber()
 	@ApiProperty({
 		description: 'Latitude coordinate of the lead',

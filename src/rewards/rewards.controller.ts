@@ -1,10 +1,11 @@
-import { Controller, Get, Post, Body, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, UseGuards, Req } from '@nestjs/common';
 import { RewardsService } from './rewards.service';
 import { CreateRewardDto } from './dto/create-reward.dto';
 import { AuthGuard } from '../guards/auth.guard';
 import { RoleGuard } from '../guards/role.guard';
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
+import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
 import {
 	ApiOperation,
 	ApiTags,
@@ -68,8 +69,10 @@ export class RewardsController {
 	})
 	@ApiBadRequestResponse({ description: 'Invalid input data provided' })
 	@ApiNotFoundResponse({ description: 'User not found' })
-	awardXP(@Body() createRewardDto: CreateRewardDto) {
-		return this.rewardsService.awardXP(createRewardDto);
+	awardXP(@Body() createRewardDto: CreateRewardDto, @Req() req: AuthenticatedRequest) {
+		const orgId = req.user?.organisationRef;
+		const branchId = req.user?.branch?.uid;
+		return this.rewardsService.awardXP(createRewardDto, orgId, branchId);
 	}
 
 	@Get('user-stats/:reference')
@@ -135,8 +138,11 @@ export class RewardsController {
 		},
 	})
 	@ApiNotFoundResponse({ description: 'User not found' })
-	getUserRewards(@Param('reference') reference: number) {
-		return this.rewardsService.getUserRewards(reference);
+	getUserRewards(@Param('reference') reference: number, @Req() req: AuthenticatedRequest) {
+		const orgId = req.user?.organisationRef;
+		const branchId = req.user?.branch?.uid;
+		const requestingUserId = req.user?.uid;
+		return this.rewardsService.getUserRewards(reference, orgId, branchId, requestingUserId);
 	}
 
 	@Get('leaderboard')
@@ -193,7 +199,9 @@ export class RewardsController {
 			},
 		},
 	})
-	getLeaderboard() {
-		return this.rewardsService.getLeaderboard();
+	getLeaderboard(@Req() req: AuthenticatedRequest) {
+		const orgId = req.user?.organisationRef;
+		const branchId = req.user?.branch?.uid;
+		return this.rewardsService.getLeaderboard(orgId, branchId);
 	}
 }

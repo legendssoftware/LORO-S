@@ -94,6 +94,11 @@ export class QuotationConversionService {
 			// Send notifications
 			this.sendNotifications(quotation, order);
 
+			// Trigger user target recalculation after successful conversion
+			this.eventEmitter.emit('user.target.update.required', {
+				userId: quotation.placedBy.uid,
+			});
+
 			await queryRunner.commitTransaction();
 
 			return {

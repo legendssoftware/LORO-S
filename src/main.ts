@@ -76,7 +76,7 @@ LORO combines **GPS tracking**, **AI-powered analytics**, **real-time communicat
 		// === TASK & WORKFLOW MANAGEMENT ===
 		.addTag('🔧 Tasks', 'Task Management - Task assignment, tracking, and route optimization')
 		.addTag('📝 Journal', 'Activity Journal - Daily activity logging and management audit trails')
-		.addTag('🌴 Leave', 'Leave Management - Employee leave requests and approval workflows')
+		.addTag('🌴 Leave Management', 'Leave Management - Employee leave requests and approval workflows')
 		.addTag('⚠️ Warnings', 'Employee Warnings - Disciplinary actions and warning management')
 
 		// === CLIENT & LEAD MANAGEMENT ===

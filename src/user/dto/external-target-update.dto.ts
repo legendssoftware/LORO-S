@@ -51,12 +51,28 @@ export class SaleDetailDto {
 
 export class TargetUpdateValuesDto {
 	@ApiPropertyOptional({
-		description: 'Current sales amount to update',
+		description: 'Current sales amount to update (total of quotations + orders)',
 		example: 15000.5,
 	})
 	@IsOptional()
 	@IsNumber()
 	currentSalesAmount?: number;
+
+	@ApiPropertyOptional({
+		description: 'Current quotations amount to update (quotes made but not paid)',
+		example: 8000.5,
+	})
+	@IsOptional()
+	@IsNumber()
+	currentQuotationsAmount?: number;
+
+	@ApiPropertyOptional({
+		description: 'Current orders amount to update (converted and paid)',
+		example: 7000.0,
+	})
+	@IsOptional()
+	@IsNumber()
+	currentOrdersAmount?: number;
 
 	@ApiPropertyOptional({
 		description: 'Current new leads count to update',

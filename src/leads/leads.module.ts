@@ -11,14 +11,17 @@ import { User } from '../user/entities/user.entity';
 import { Interaction } from '../interactions/entities/interaction.entity';
 import { CommunicationModule } from '../communication/communication.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { TasksModule } from '../tasks/tasks.module';
+import { Task } from '../tasks/entities/task.entity';
 
 @Module({
   imports: [
     LicensingModule,
-    TypeOrmModule.forFeature([Lead, User, Interaction]),
+    TypeOrmModule.forFeature([Lead, User, Interaction, Task]),
     RewardsModule,
     CommunicationModule,
-    NotificationsModule
+    NotificationsModule,
+    TasksModule
   ],
   controllers: [LeadsController],
   providers: [LeadsService, LeadsReminderService, LeadScoringService],

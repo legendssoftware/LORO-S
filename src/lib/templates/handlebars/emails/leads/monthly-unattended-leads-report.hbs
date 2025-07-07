@@ -1,0 +1,151 @@
+{{#base headerTitle="Monthly Unattended Leads Report" headerSubtitle="Review and re-engage your prospects"}}
+
+<div class="greeting">
+    Hello {{name}}! 📊
+</div>
+
+<div class="info-notice">
+    <p>📅 <strong>{{month}} Report:</strong> Here's your monthly summary of leads that need attention. Act quickly to re-engage these valuable prospects!</p>
+</div>
+
+<div class="message">
+    <p>This report includes leads that haven't been contacted recently or require follow-up. Each unattended lead represents a potential opportunity - don't let them go cold!</p>
+</div>
+
+<div class="info-card">
+    <h3>📈 Summary Statistics</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Total Unattended Leads</span>
+            <span class="detail-value"><strong>{{totalCount}}</strong></span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Total Estimated Value</span>
+            <span class="detail-value"><strong>R{{formatNumber totalEstimatedValue}}</strong></span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Average Value per Lead</span>
+            <span class="detail-value"><strong>R{{formatNumber (divide totalEstimatedValue totalCount)}}</strong></span>
+        </div>
+    </div>
+</div>
+
+{{#if unattendedLeads}}
+<div class="info-card">
+    <h3>🎯 Unattended Leads Requiring Action</h3>
+    
+    {{#each unattendedLeads}}
+    <div class="lead-item" style="border: 1px solid #e1e5e9; border-radius: 8px; padding: 16px; margin-bottom: 16px; background-color: #fafbfc;">
+        <div class="lead-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <h4 style="margin: 0; color: #172b4d; font-size: 16px;">{{name}}</h4>
+            <span class="priority-badge {{priority}}" style="padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; 
+                {{#eq priority 'HIGH'}}background-color: #ffebe6; color: #de350b;{{/eq}}
+                {{#eq priority 'MEDIUM'}}background-color: #fff4e6; color: #ff8b00;{{/eq}}
+                {{#eq priority 'LOW'}}background-color: #e3fcef; color: #006644;{{/eq}}">
+                {{priority}} PRIORITY
+            </span>
+        </div>
+        
+        <div class="lead-details" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 12px;">
+            <div>
+                <span style="font-weight: 600; color: #5e6c84;">Company:</span>
+                <span style="color: #172b4d;">{{companyName}}</span>
+            </div>
+            <div>
+                <span style="font-weight: 600; color: #5e6c84;">Email:</span>
+                <span style="color: #172b4d;">{{email}}</span>
+            </div>
+            <div>
+                <span style="font-weight: 600; color: #5e6c84;">Phone:</span>
+                <span style="color: #172b4d;">{{phone}}</span>
+            </div>
+            <div>
+                <span style="font-weight: 600; color: #5e6c84;">Status:</span>
+                <span class="status-badge {{status}}" style="padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: bold;
+                    {{#eq status 'PENDING'}}background-color: #fff4e6; color: #ff8b00;{{/eq}}
+                    {{#eq status 'REVIEW'}}background-color: #e6fcff; color: #0065ff;{{/eq}}">
+                    {{status}}
+                </span>
+            </div>
+            <div>
+                <span style="font-weight: 600; color: #5e6c84;">Temperature:</span>
+                <span class="temp-badge {{temperature}}" style="padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: bold;
+                    {{#eq temperature 'HOT'}}background-color: #ffebe6; color: #de350b;{{/eq}}
+                    {{#eq temperature 'WARM'}}background-color: #fff4e6; color: #ff8b00;{{/eq}}
+                    {{#eq temperature 'COLD'}}background-color: #e6fcff; color: #0065ff;{{/eq}}
+                    {{#eq temperature 'FROZEN'}}background-color: #f4f5f7; color: #6b778c;{{/eq}}">
+                    {{temperature}}
+                </span>
+            </div>
+            <div>
+                <span style="font-weight: 600; color: #5e6c84;">Est. Value:</span>
+                <span style="color: #006644; font-weight: 600;">R{{formatNumber estimatedValue}}</span>
+            </div>
+        </div>
+        
+        <div class="lead-timing" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 12px; padding: 8px; background-color: #f4f5f7; border-radius: 4px;">
+            <div>
+                <span style="font-weight: 600; color: #5e6c84; font-size: 12px;">Days Since Created:</span>
+                <span style="color: #172b4d; font-weight: 600; font-size: 12px;">{{daysSinceCreated}} days</span>
+            </div>
+            <div>
+                <span style="font-weight: 600; color: #5e6c84; font-size: 12px;">Last Contact:</span>
+                <span style="color: {{#eq daysSinceLastContact 'Never contacted'}}#de350b{{else}}#172b4d{{/eq}}; font-weight: 600; font-size: 12px;">
+                    {{#eq daysSinceLastContact 'Never contacted'}}Never contacted{{else}}{{daysSinceLastContact}} days ago{{/eq}}
+                </span>
+            </div>
+        </div>
+        
+        {{#if notes}}
+        <div class="lead-notes" style="margin-bottom: 12px;">
+            <span style="font-weight: 600; color: #5e6c84; font-size: 12px;">Notes:</span>
+            <p style="margin: 4px 0 0 0; color: #172b4d; font-size: 12px; font-style: italic;">"{{notes}}"</p>
+        </div>
+        {{/if}}
+        
+        <div class="lead-actions" style="text-align: right;">
+            <a href="{{leadUrl}}" style="display: inline-block; background-color: #0052cc; color: white; padding: 8px 16px; text-decoration: none; border-radius: 4px; font-size: 14px; font-weight: 600;">
+                Follow Up Now
+            </a>
+        </div>
+    </div>
+    {{/each}}
+</div>
+
+<div class="cta-section">
+    <a href="{{dashboardUrl}}/leads" class="cta-button">View All Leads in Dashboard</a>
+</div>
+
+<div class="info-card">
+    <h4>💡 Re-engagement Strategies</h4>
+    <ul class="feature-list">
+        <li><strong>Never Contacted Leads:</strong> Start with a warm introduction and value proposition</li>
+        <li><strong>Stalled Leads:</strong> Send a "checking in" message with new relevant information</li>
+        <li><strong>High-Value Leads:</strong> Prioritize personal phone calls or meetings</li>
+        <li><strong>Cold Leads:</strong> Try a different approach - social media, email, or referral</li>
+        <li><strong>Recent Leads:</strong> Strike while the iron is hot - contact within 24 hours</li>
+    </ul>
+</div>
+
+<div class="info-card">
+    <h4>🏆 Action Plan</h4>
+    <ol class="feature-list">
+        <li><strong>Priority Focus:</strong> Start with HIGH priority leads and those with highest estimated value</li>
+        <li><strong>Quick Wins:</strong> Contact recently created leads that haven't been touched</li>
+        <li><strong>Re-engagement:</strong> Develop specific outreach for leads that have gone cold</li>
+        <li><strong>Follow-up Schedule:</strong> Set reminders for regular contact with all active leads</li>
+        <li><strong>Track Progress:</strong> Monitor response rates and adjust your approach</li>
+    </ol>
+</div>
+
+{{else}}
+<div class="success-notice">
+    <p>🎉 <strong>Excellent Work!</strong> You have no unattended leads this month. Keep up the great follow-up discipline!</p>
+</div>
+{{/if}}
+
+<div class="warning-notice">
+    <p>⚠️ <strong>Reminder:</strong> Leads that remain unattended for extended periods become significantly harder to convert. Act quickly to maximize your success rate!</p>
+</div>
+
+{{/base}} 

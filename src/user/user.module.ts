@@ -12,6 +12,7 @@ import { LicensingModule } from '../licensing/licensing.module';
 import { RewardsModule } from '../rewards/rewards.module';
 import { CheckIn } from 'src/check-ins/entities/check-in.entity';
 import { Quotation } from '../shop/entities/quotation.entity';
+import { Order } from '../shop/entities/order.entity';
 import { Client } from 'src/clients/entities/client.entity';
 import { Lead } from 'src/leads/entities/lead.entity';
 
@@ -22,6 +23,7 @@ import { Lead } from 'src/leads/entities/lead.entity';
 			UserProfile,
 			UserEmployeementProfile,
 			Quotation,
+			Order,
 			Lead,
 			Client,
 			CheckIn,

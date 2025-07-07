@@ -260,7 +260,7 @@ export class ShopController {
 	)
 	@ApiOperation({
 		summary: 'Create a new quotation',
-		description: 'Creates a new quotation request or order from a shopping cart',
+		description: 'Creates a new quotation request from a shopping cart. Quotations are preliminary sales documents that track potential sales but are not yet converted to paid orders. This contributes to quotation targets tracking.',
 	})
 	@ApiBody({ type: CheckoutDto })
 	@ApiCreatedResponse({
@@ -294,7 +294,7 @@ export class ShopController {
 	)
 	@ApiOperation({
 		summary: 'Get all quotations',
-		description: 'Retrieves a list of all quotations or orders',
+		description: 'Retrieves a list of all quotations. Quotations are preliminary sales documents that have not yet been converted to paid orders. Use the quotation conversion endpoint to convert quotations to orders.',
 	})
 	@ApiOkResponse({
 		description: 'Quotations retrieved successfully',
@@ -348,7 +348,7 @@ export class ShopController {
 	)
 	@ApiOperation({
 		summary: 'Get a quotation by reference code',
-		description: 'Retrieves detailed information about a specific quotation or order',
+		description: 'Retrieves detailed information about a specific quotation. Quotations are preliminary sales documents that can be converted to orders through the quotation conversion process.',
 	})
 	@ApiParam({ name: 'ref', description: 'Quotation reference code or ID', type: 'number' })
 	@ApiOkResponse({
@@ -412,7 +412,7 @@ export class ShopController {
 	)
 	@ApiOperation({
 		summary: 'Get quotations by user',
-		description: 'Retrieves all quotations or orders placed by a specific user',
+		description: 'Retrieves all quotations placed by a specific user. This endpoint helps track user quotation performance and contributes to user quotation targets tracking.',
 	})
 	@ApiParam({ name: 'ref', description: 'User reference code or ID', type: 'number' })
 	@ApiOkResponse({

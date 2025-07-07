@@ -48,7 +48,7 @@ import { TaskReminderAssignee, TaskReminderCreator, TaskOverdueMissed } from '..
 // User related templates
 import { NewUserAdminNotification, NewUserWelcome, UserReInvitation } from '../lib/templates/emails';
 // Lead related templates
-import { LeadConvertedClient, LeadConvertedCreator, LeadReminder, LeadAssignedToUser } from '../lib/templates/emails';
+import { LeadConvertedClient, LeadConvertedCreator, LeadReminder, LeadAssignedToUser, MonthlyUnattendedLeadsReport } from '../lib/templates/emails';
 // Client auth templates
 import { ClientPasswordReset, ClientPasswordChanged } from '../lib/templates/emails';
 // Warning templates
@@ -141,6 +141,9 @@ import {
 	JournalUpdated,
 	JournalDeleted,
 } from '../lib/templates/emails';
+
+// Import the new type
+import { MonthlyUnattendedLeadsReportData } from '../lib/types/email-templates.types';
 
 @Injectable()
 export class CommunicationService {
@@ -480,6 +483,11 @@ export class CommunicationService {
 				return {
 					subject: 'You have been assigned a new lead',
 					body: LeadAssignedToUser(data as LeadAssignedToUserData),
+				};
+			case EmailType.MONTHLY_UNATTENDED_LEADS_REPORT:
+				return {
+					subject: 'Monthly Unattended Leads Report',
+					body: MonthlyUnattendedLeadsReport(data as MonthlyUnattendedLeadsReportData),
 				};
 			case EmailType.TASK_FLAG_CREATED:
 				return {

@@ -55,6 +55,7 @@ import {
 	OvertimeReminderData,
 	PayslipAvailableEmailData,
 	PayslipUploadedAdminEmailData,
+	MonthlyUnattendedLeadsReportData,
 } from '../types/email-templates.types';
 
 // Auth Templates
@@ -164,6 +165,10 @@ export const LeadConvertedCreator = (data: LeadConvertedCreatorData): string => 
 
 export const LeadAssignedToUser = (data: LeadAssignedToUserData): string => {
 	return emailTemplateService.leadAssignedToUser(data);
+};
+
+export const MonthlyUnattendedLeadsReport = (data: MonthlyUnattendedLeadsReportData): string => {
+	return emailTemplateService.monthlyUnattendedLeadsReport(data);
 };
 
 // License Templates

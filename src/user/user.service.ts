@@ -43,6 +43,7 @@ import { CreateUserTargetDto } from './dto/create-user-target.dto';
 import { UpdateUserTargetDto } from './dto/update-user-target.dto';
 import { UserTarget } from './entities/user-target.entity';
 import { Quotation } from '../shop/entities/quotation.entity';
+import { Order } from '../shop/entities/order.entity';
 import { OrderStatus } from '../lib/enums/status.enums';
 import { Lead } from '../leads/entities/lead.entity';
 import { Client } from '../clients/entities/client.entity';
@@ -57,12 +58,15 @@ export class UserService {
 	private readonly logger = new Logger(UserService.name);
 	private readonly CACHE_PREFIX = 'users:';
 	private readonly CACHE_TTL: number;
+	private readonly activeCalculations = new Set<number>();
 
 	constructor(
 		@InjectRepository(User)
 		private userRepository: Repository<User>,
 		@InjectRepository(Quotation)
 		private quotationRepository: Repository<Quotation>,
+		@InjectRepository(Order)
+		private orderRepository: Repository<Order>,
 		@InjectRepository(Lead)
 		private leadRepository: Repository<Lead>,
 		@InjectRepository(Client)
@@ -85,6 +89,101 @@ export class UserService {
 	 */
 	private getCacheKey(key: string | number): string {
 		return `${this.CACHE_PREFIX}${key}`;
+	}
+
+	/**
+	 * Safely parses a number from various input types (string, number, decimal)
+	 * @param value - The value to parse
+	 * @returns Parsed number or 0 if invalid
+	 */
+	private safeParseNumber(value: any): number {
+		if (value === null || value === undefined) {
+			return 0;
+		}
+
+		if (typeof value === 'number') {
+			return isNaN(value) ? 0 : value;
+		}
+
+		if (typeof value === 'string') {
+			const parsed = parseFloat(value);
+			return isNaN(parsed) ? 0 : parsed;
+		}
+
+		// Handle decimal/numeric types from database
+		const numericValue = Number(value);
+		return isNaN(numericValue) ? 0 : numericValue;
+	}
+
+	/**
+	 * Validates calculated target values to ensure they are within reasonable bounds
+	 * @param userTarget - The user target object to validate
+	 * @returns True if values are valid, false otherwise
+	 */
+	private validateCalculatedValues(userTarget: UserTarget): boolean {
+		try {
+			// Check for invalid numeric values
+			if (userTarget.currentSalesAmount !== null && userTarget.currentSalesAmount !== undefined) {
+				if (isNaN(userTarget.currentSalesAmount) || userTarget.currentSalesAmount < 0) {
+					this.logger.warn(`Invalid currentSalesAmount: ${userTarget.currentSalesAmount}`);
+					return false;
+				}
+				// Check for unreasonably large values (e.g., over 10 million)
+				if (userTarget.currentSalesAmount > 10000000) {
+					this.logger.warn(`Unreasonably large currentSalesAmount: ${userTarget.currentSalesAmount}`);
+					return false;
+				}
+			}
+
+			if (userTarget.currentQuotationsAmount !== null && userTarget.currentQuotationsAmount !== undefined) {
+				if (isNaN(userTarget.currentQuotationsAmount) || userTarget.currentQuotationsAmount < 0) {
+					this.logger.warn(`Invalid currentQuotationsAmount: ${userTarget.currentQuotationsAmount}`);
+					return false;
+				}
+				if (userTarget.currentQuotationsAmount > 10000000) {
+					this.logger.warn(`Unreasonably large currentQuotationsAmount: ${userTarget.currentQuotationsAmount}`);
+					return false;
+				}
+			}
+
+			if (userTarget.currentOrdersAmount !== null && userTarget.currentOrdersAmount !== undefined) {
+				if (isNaN(userTarget.currentOrdersAmount) || userTarget.currentOrdersAmount < 0) {
+					this.logger.warn(`Invalid currentOrdersAmount: ${userTarget.currentOrdersAmount}`);
+					return false;
+				}
+				if (userTarget.currentOrdersAmount > 10000000) {
+					this.logger.warn(`Unreasonably large currentOrdersAmount: ${userTarget.currentOrdersAmount}`);
+					return false;
+				}
+			}
+
+			// Check for negative counts
+			if (userTarget.currentNewLeads !== null && userTarget.currentNewLeads !== undefined) {
+				if (userTarget.currentNewLeads < 0) {
+					this.logger.warn(`Invalid currentNewLeads: ${userTarget.currentNewLeads}`);
+					return false;
+				}
+			}
+
+			if (userTarget.currentNewClients !== null && userTarget.currentNewClients !== undefined) {
+				if (userTarget.currentNewClients < 0) {
+					this.logger.warn(`Invalid currentNewClients: ${userTarget.currentNewClients}`);
+					return false;
+				}
+			}
+
+			if (userTarget.currentCheckIns !== null && userTarget.currentCheckIns !== undefined) {
+				if (userTarget.currentCheckIns < 0) {
+					this.logger.warn(`Invalid currentCheckIns: ${userTarget.currentCheckIns}`);
+					return false;
+				}
+			}
+
+			return true;
+		} catch (error) {
+			this.logger.error(`Error validating calculated values: ${error.message}`);
+			return false;
+		}
 	}
 
 	/**
@@ -1217,8 +1316,12 @@ export class UserService {
 			// Create a new user target
 			const userTarget = new UserTarget();
 
-			// Map DTO properties to entity
-			Object.assign(userTarget, createUserTargetDto);
+			// Map DTO properties to entity with proper date conversion
+			Object.assign(userTarget, {
+				...createUserTargetDto,
+				periodStartDate: createUserTargetDto.periodStartDate ? new Date(createUserTargetDto.periodStartDate) : undefined,
+				periodEndDate: createUserTargetDto.periodEndDate ? new Date(createUserTargetDto.periodEndDate) : undefined,
+			});
 
 			// Save the user target and update the user
 			user.userTarget = userTarget;
@@ -1375,6 +1478,15 @@ export class UserService {
 	@OnEvent('user.target.update.required')
 	async calculateUserTargets(payload: { userId: number }): Promise<void> {
 		const { userId } = payload;
+		
+		// Check if calculation is already in progress for this user
+		if (this.activeCalculations.has(userId)) {
+			this.logger.debug(`Target calculation already in progress for user: ${userId}, skipping duplicate`);
+			return;
+		}
+
+		// Mark calculation as active
+		this.activeCalculations.add(userId);
 		const startTime = Date.now();
 		this.logger.log(`Calculating user targets for user: ${userId}`);
 
@@ -1406,17 +1518,58 @@ export class UserService {
 				`Calculating targets for user ${userId} from ${userTarget.periodStartDate} to ${userTarget.periodEndDate}`,
 			);
 
-			// --- Calculate currentSalesAmount ---
-			this.logger.debug(`Calculating sales amount for user: ${userId}`);
+			// --- Calculate currentQuotationsAmount (quotes made but not paid) ---
+			this.logger.debug(`Calculating quotations amount for user: ${userId}`);
+			const quotationStatuses = [
+				OrderStatus.DRAFT,
+				OrderStatus.PENDING_INTERNAL,
+				OrderStatus.PENDING_CLIENT,
+				OrderStatus.NEGOTIATION,
+				OrderStatus.APPROVED,
+				OrderStatus.REJECTED,
+				OrderStatus.SOURCING,
+				OrderStatus.PACKING,
+			];
 			const quotations = await this.quotationRepository.find({
+				where: {
+					placedBy: { uid: userId },
+					status: In(quotationStatuses),
+					createdAt: Between(userTarget.periodStartDate, userTarget.periodEndDate),
+				},
+			});
+			
+			// Safely calculate quotations amount with proper number conversion
+			userTarget.currentQuotationsAmount = quotations.reduce((sum, q) => {
+				const amount = this.safeParseNumber(q.totalAmount);
+				return sum + amount;
+			}, 0);
+			
+			this.logger.debug(`Quotations amount calculated: ${userTarget.currentQuotationsAmount} for user ${userId}`);
+
+			// --- Calculate currentOrdersAmount (quotations that have been converted to completed orders) ---
+			this.logger.debug(`Calculating orders amount for user: ${userId}`);
+			const completedQuotations = await this.quotationRepository.find({
 				where: {
 					placedBy: { uid: userId },
 					status: OrderStatus.COMPLETED,
 					createdAt: Between(userTarget.periodStartDate, userTarget.periodEndDate),
 				},
 			});
-			userTarget.currentSalesAmount = quotations.reduce((sum, q) => sum + (q.totalAmount || 0), 0);
-			this.logger.debug(`Sales amount calculated: ${userTarget.currentSalesAmount} for user ${userId}`);
+			
+			// Safely calculate orders amount with proper number conversion
+			userTarget.currentOrdersAmount = completedQuotations.reduce((sum, q) => {
+				const amount = this.safeParseNumber(q.totalAmount);
+				return sum + amount;
+			}, 0);
+			
+			this.logger.debug(`Orders amount calculated: ${userTarget.currentOrdersAmount} for user ${userId}`);
+
+			// --- Calculate currentSalesAmount (total for backward compatibility) ---
+			const quotationsAmount = this.safeParseNumber(userTarget.currentQuotationsAmount);
+			const ordersAmount = this.safeParseNumber(userTarget.currentOrdersAmount);
+			userTarget.currentSalesAmount = quotationsAmount + ordersAmount;
+			
+			this.logger.debug(`Total sales amount calculated: ${userTarget.currentSalesAmount} for user ${userId}`);
 
 			// --- Calculate currentNewLeads ---
 			this.logger.debug(`Calculating leads count for user: ${userId}`);
@@ -1453,6 +1606,12 @@ export class UserService {
 
 			// --- TODO: Add calculations for currentHoursWorked, currentCalls ---
 
+			// Validate the calculated values before saving
+			if (!this.validateCalculatedValues(userTarget)) {
+				this.logger.error(`Invalid calculated values for user ${userId}, skipping save`);
+				return;
+			}
+
 			// Save the updated target (via user cascade)
 			this.logger.debug(`Saving updated targets for user: ${userId}`);
 			await this.userRepository.save(user);
@@ -1467,7 +1626,10 @@ export class UserService {
 			this.logger.error(
 				`Failed to calculate user targets for user ${userId} after ${executionTime}ms. Error: ${error.message}`,
 			);
-			return null;
+			// Don't return null, just return void
+		} finally {
+			// Always remove user from active calculations
+			this.activeCalculations.delete(userId);
 		}
 	}
 
@@ -1893,6 +2055,14 @@ export class UserService {
 				updates.currentSalesAmount =
 					(currentTarget.currentSalesAmount || 0) + externalUpdate.updates.currentSalesAmount;
 			}
+			if (externalUpdate.updates.currentQuotationsAmount !== undefined) {
+				updates.currentQuotationsAmount =
+					(currentTarget.currentQuotationsAmount || 0) + externalUpdate.updates.currentQuotationsAmount;
+			}
+			if (externalUpdate.updates.currentOrdersAmount !== undefined) {
+				updates.currentOrdersAmount =
+					(currentTarget.currentOrdersAmount || 0) + externalUpdate.updates.currentOrdersAmount;
+			}
 			if (externalUpdate.updates.currentNewLeads !== undefined) {
 				updates.currentNewLeads = (currentTarget.currentNewLeads || 0) + externalUpdate.updates.currentNewLeads;
 			}
@@ -1953,6 +2123,14 @@ export class UserService {
 				errors.push('Sales amount cannot be negative');
 			}
 
+			if (externalUpdate.updates.currentQuotationsAmount !== undefined && externalUpdate.updates.currentQuotationsAmount < 0) {
+				errors.push('Quotations amount cannot be negative');
+			}
+
+			if (externalUpdate.updates.currentOrdersAmount !== undefined && externalUpdate.updates.currentOrdersAmount < 0) {
+				errors.push('Orders amount cannot be negative');
+			}
+
 			if (externalUpdate.updates.currentNewLeads !== undefined && externalUpdate.updates.currentNewLeads < 0) {
 				errors.push('New leads count cannot be negative');
 			}
@@ -2007,6 +2185,8 @@ export class UserService {
 				`Target update audit - User: ${userId}, Source: ${source}, Transaction: ${transactionId}, Before: ${JSON.stringify(
 					{
 						currentSalesAmount: beforeValues.currentSalesAmount,
+						currentQuotationsAmount: beforeValues.currentQuotationsAmount,
+						currentOrdersAmount: beforeValues.currentOrdersAmount,
 						currentNewLeads: beforeValues.currentNewLeads,
 						currentNewClients: beforeValues.currentNewClients,
 					},

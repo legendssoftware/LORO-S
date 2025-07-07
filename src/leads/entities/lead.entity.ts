@@ -172,6 +172,9 @@ export class Lead {
 	@Column({ nullable: true })
 	image: string;
 
+	@Column({ type: 'json', nullable: true })
+	attachments: string[]; // Array of file URLs/paths for documents, PDFs, images, etc.
+
 	@Column({ type: 'decimal', precision: 10, scale: 7, nullable: true })
 	latitude: number;
 

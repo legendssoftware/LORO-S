@@ -182,7 +182,7 @@ export class AuthService {
 					},
 				};
 
-				await this.rewardsService.awardXP(gainedXP);
+				await this.rewardsService.awardXP(gainedXP, organisationRef, restOfUser?.branch?.uid);
 
 				// Send login notification email
 				try {

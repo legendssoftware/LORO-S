@@ -5,11 +5,40 @@ export class CreateUserTargetDto {
   @IsOptional()
   @IsNumber({ allowNaN: false, allowInfinity: false })
   @ApiProperty({
-    description: 'Target sales amount for the user',
+    description: 'Target sales amount for the user (total of quotations + orders)',
     example: 50000,
     required: false
   })
   targetSalesAmount?: number;
+
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @ApiProperty({
+    description: 'Target quotations amount for the user (quotes made but not paid)',
+    example: 30000,
+    required: false
+  })
+  targetQuotationsAmount?: number;
+
+
+
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @ApiProperty({
+    description: 'Current quotations amount for the user (quotes made but not paid)',
+    example: 18000,
+    required: false
+  })
+  currentQuotationsAmount?: number;
+
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @ApiProperty({
+    description: 'Current orders amount for the user (converted and paid)',
+    example: 15000,
+    required: false
+  })
+  currentOrdersAmount?: number;
 
   @IsOptional()
   @IsString()

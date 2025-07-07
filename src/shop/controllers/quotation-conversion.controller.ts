@@ -40,7 +40,10 @@ export class QuotationConversionController {
 
 	@Post(':id/convert')
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER)
-	@ApiOperation({ summary: 'Convert quotation to order' })
+	@ApiOperation({ 
+		summary: 'Convert quotation to order',
+		description: 'Converts a quotation to a paid order, updating user targets for both quotations and orders tracking. This process moves the sales amount from quotation targets to order targets, contributing to separate performance metrics.'
+	})
 	@ApiParam({ name: 'id', description: 'Quotation ID' })
 	@ApiBody({ type: QuotationConversionDto })
 	@ApiResponse({ status: 200, description: 'Quotation successfully converted to order' })

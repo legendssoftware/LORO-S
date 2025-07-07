@@ -1290,32 +1290,38 @@ Use the restore endpoint to recover accidentally deleted users within the retent
 		schema: {
 			type: 'object',
 			properties: {
-				userTarget: {
-					type: 'object',
-					properties: {
-						uid: { type: 'number', example: 1, description: 'Unique target record identifier' },
-						targetSalesAmount: { type: 'number', example: 50000, description: 'Sales revenue target amount' },
-						currentSalesAmount: { type: 'number', example: 32500, description: 'Current achieved sales amount' },
-						targetCurrency: { type: 'string', example: 'ZAR', description: 'Currency code for sales targets' },
-						targetHoursWorked: { type: 'number', example: 160, description: 'Expected hours to work in target period' },
-						currentHoursWorked: { type: 'number', example: 142, description: 'Current hours worked in period' },
-						targetNewClients: { type: 'number', example: 5, description: 'Number of new clients to acquire' },
-						currentNewClients: { type: 'number', example: 3, description: 'Current new clients acquired' },
-						targetNewLeads: { type: 'number', example: 20, description: 'Number of new leads to generate' },
-						currentNewLeads: { type: 'number', example: 18, description: 'Current leads generated' },
-						targetCheckIns: { type: 'number', example: 15, description: 'Client check-in frequency target' },
-						currentCheckIns: { type: 'number', example: 12, description: 'Current check-ins completed' },
-						targetCalls: { type: 'number', example: 50, description: 'Communication calls target' },
-						currentCalls: { type: 'number', example: 45, description: 'Current calls completed' },
-						targetPeriod: { type: 'string', example: 'Monthly', enum: ['Weekly', 'Monthly', 'Quarterly', 'Yearly'], description: 'Target achievement period' },
-						periodStartDate: { type: 'string', format: 'date-time', example: '2024-01-01T00:00:00Z', description: 'Target period start date' },
-						periodEndDate: { type: 'string', format: 'date-time', example: '2024-01-31T23:59:59Z', description: 'Target period end date' },
-						createdAt: { type: 'string', format: 'date-time', description: 'Target creation timestamp' },
-						updatedAt: { type: 'string', format: 'date-time', description: 'Last update timestamp' },
+									userTarget: {
+						type: 'object',
+						properties: {
+							uid: { type: 'number', example: 1, description: 'Unique target record identifier' },
+							targetSalesAmount: { type: 'number', example: 50000, description: 'Sales revenue target amount (total of quotations + orders)' },
+							currentSalesAmount: { type: 'number', example: 32500, description: 'Current achieved sales amount (total of quotations + orders)' },
+							targetQuotationsAmount: { type: 'number', example: 30000, description: 'Target quotations amount (quotes made but not paid)' },
+							currentQuotationsAmount: { type: 'number', example: 18000, description: 'Current quotations amount (quotes made but not paid)' },
+
+							currentOrdersAmount: { type: 'number', example: 14500, description: 'Current orders amount (converted and paid)' },
+							targetCurrency: { type: 'string', example: 'ZAR', description: 'Currency code for sales targets' },
+							targetHoursWorked: { type: 'number', example: 160, description: 'Expected hours to work in target period' },
+							currentHoursWorked: { type: 'number', example: 142, description: 'Current hours worked in period' },
+							targetNewClients: { type: 'number', example: 5, description: 'Number of new clients to acquire' },
+							currentNewClients: { type: 'number', example: 3, description: 'Current new clients acquired' },
+							targetNewLeads: { type: 'number', example: 20, description: 'Number of new leads to generate' },
+							currentNewLeads: { type: 'number', example: 18, description: 'Current leads generated' },
+							targetCheckIns: { type: 'number', example: 15, description: 'Client check-in frequency target' },
+							currentCheckIns: { type: 'number', example: 12, description: 'Current check-ins completed' },
+							targetCalls: { type: 'number', example: 50, description: 'Communication calls target' },
+							currentCalls: { type: 'number', example: 45, description: 'Current calls completed' },
+							targetPeriod: { type: 'string', example: 'Monthly', enum: ['Weekly', 'Monthly', 'Quarterly', 'Yearly'], description: 'Target achievement period' },
+							periodStartDate: { type: 'string', format: 'date-time', example: '2024-01-01T00:00:00Z', description: 'Target period start date' },
+							periodEndDate: { type: 'string', format: 'date-time', example: '2024-01-31T23:59:59Z', description: 'Target period end date' },
+							createdAt: { type: 'string', format: 'date-time', description: 'Target creation timestamp' },
+							updatedAt: { type: 'string', format: 'date-time', description: 'Last update timestamp' },
 						progressMetrics: {
 							type: 'object',
 							properties: {
-								salesProgress: { type: 'number', example: 65, description: 'Sales achievement percentage' },
+								salesProgress: { type: 'number', example: 65, description: 'Sales achievement percentage (total of quotations + orders)' },
+								quotationsProgress: { type: 'number', example: 60, description: 'Quotations achievement percentage' },
+								ordersProgress: { type: 'number', example: 72.5, description: 'Orders achievement percentage' },
 								hoursProgress: { type: 'number', example: 88.75, description: 'Hours worked percentage' },
 								leadsProgress: { type: 'number', example: 90, description: 'Leads generation percentage' },
 								clientsProgress: { type: 'number', example: 60, description: 'Client acquisition percentage' },
@@ -1393,6 +1399,8 @@ Use the restore endpoint to recover accidentally deleted users within the retent
 				summary: 'Monthly sales rep targets',
 				value: {
 					targetSalesAmount: 50000,
+					targetQuotationsAmount: 30000,
+
 					targetCurrency: 'ZAR',
 					targetHoursWorked: 160,
 					targetNewLeads: 20,
@@ -1408,6 +1416,8 @@ Use the restore endpoint to recover accidentally deleted users within the retent
 				summary: 'Quarterly manager targets',
 				value: {
 					targetSalesAmount: 150000,
+					targetQuotationsAmount: 90000,
+
 					targetCurrency: 'USD',
 					targetHoursWorked: 480,
 					targetNewLeads: 60,
@@ -1519,6 +1529,8 @@ Use the restore endpoint to recover accidentally deleted users within the retent
 				summary: 'Update current progress values',
 				value: {
 					currentSalesAmount: 45000,
+					currentQuotationsAmount: 28000,
+					currentOrdersAmount: 17000,
 					currentHoursWorked: 120,
 					currentNewLeads: 15,
 				},
@@ -1885,6 +1897,8 @@ Use the restore endpoint to recover accidentally deleted users within the retent
 					type: 'object',
 					properties: {
 						currentSalesAmount: { type: 'number', example: 15000.50 },
+						currentQuotationsAmount: { type: 'number', example: 8500.25 },
+						currentOrdersAmount: { type: 'number', example: 6500.25 },
 						currentNewLeads: { type: 'number', example: 12 },
 						currentNewClients: { type: 'number', example: 8 },
 						currentCheckIns: { type: 'number', example: 25 },

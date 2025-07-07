@@ -9,11 +9,36 @@ export class UserTarget {
 	@PrimaryGeneratedColumn()
 	uid: number;
 
-	@Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
+	@Column({ type: 'decimal', precision: 15, scale: 2, nullable: true, transformer: {
+		to: (value: number) => value,
+		from: (value: string) => value ? parseFloat(value) : null
+	} })
 	targetSalesAmount: number;
 
-	@Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
+	@Column({ type: 'decimal', precision: 15, scale: 2, nullable: true, transformer: {
+		to: (value: number) => value,
+		from: (value: string) => value ? parseFloat(value) : null
+	} })
 	currentSalesAmount: number;
+
+	// Separate tracking for quotations (quotes made but not paid)
+	@Column({ type: 'decimal', precision: 15, scale: 2, nullable: true, transformer: {
+		to: (value: number) => value,
+		from: (value: string) => value ? parseFloat(value) : null
+	} })
+	targetQuotationsAmount: number;
+
+	@Column({ type: 'decimal', precision: 15, scale: 2, nullable: true, transformer: {
+		to: (value: number) => value,
+		from: (value: string) => value ? parseFloat(value) : null
+	} })
+	currentQuotationsAmount: number;
+
+	@Column({ type: 'decimal', precision: 15, scale: 2, nullable: true, transformer: {
+		to: (value: number) => value,
+		from: (value: string) => value ? parseFloat(value) : null
+	} })
+	currentOrdersAmount: number;
 
 	@Column({ nullable: true })
 	targetCurrency: string;

@@ -890,6 +890,28 @@ export interface LeadAssignedToUserData extends BaseEmailData {
 	leadLink: string;
 }
 
+export interface MonthlyUnattendedLeadsReportData extends BaseEmailData {
+	month: string;
+	unattendedLeads: Array<{
+		id: number;
+		name: string;
+		companyName: string;
+		email: string;
+		phone: string;
+		status: string;
+		temperature: string;
+		daysSinceCreated: number;
+		daysSinceLastContact: number | string;
+		estimatedValue: number;
+		priority: string;
+		notes: string;
+		leadUrl: string;
+	}>;
+	totalCount: number;
+	totalEstimatedValue: number;
+	dashboardUrl: string;
+}
+
 export interface OrderReceivedClientData extends BaseEmailData {
 	quotationId: string;
 	message: string;
@@ -1491,6 +1513,7 @@ export interface EmailDataMap {
 	[EmailType.LEAD_CONVERTED_CREATOR]: LeadConvertedCreatorData;
 	[EmailType.LEAD_REMINDER]: LeadReminderData;
 	[EmailType.LEAD_ASSIGNED_TO_USER]: LeadAssignedToUserData;
+	[EmailType.MONTHLY_UNATTENDED_LEADS_REPORT]: MonthlyUnattendedLeadsReportData;
 	// Task flag email mappings
 	[EmailType.TASK_FLAG_CREATED]: TaskFlagEmailData;
 	[EmailType.TASK_FLAG_UPDATED]: TaskFlagEmailData;

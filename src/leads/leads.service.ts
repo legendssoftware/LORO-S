@@ -20,7 +20,6 @@ import { User } from '../user/entities/user.entity';
 import { CommunicationService } from '../communication/communication.service';
 import { ConfigService } from '@nestjs/config';
 import { EmailType } from '../lib/enums/email.enums';
-import { LeadAssignedToUserData } from '../lib/types/email-templates.types';
 import { LeadStatusHistoryEntry } from './entities/lead.entity';
 import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
 import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
@@ -28,6 +27,9 @@ import { LeadScoringService } from './lead-scoring.service';
 import { Cron } from '@nestjs/schedule';
 import { Interaction } from '../interactions/entities/interaction.entity';
 import { AccountStatus } from '../lib/enums/status.enums';
+import { Task } from '../tasks/entities/task.entity';
+import { TasksService } from '../tasks/tasks.service';
+import { TaskType, TaskPriority } from '../lib/enums/task.enums';
 
 @Injectable()
 export class LeadsService {
@@ -48,12 +50,15 @@ export class LeadsService {
 		private userRepository: Repository<User>,
 		@InjectRepository(Interaction)
 		private interactionRepository: Repository<Interaction>,
+		@InjectRepository(Task)
+		private taskRepository: Repository<Task>,
 		private readonly eventEmitter: EventEmitter2,
 		private readonly rewardsService: RewardsService,
 		private readonly communicationService: CommunicationService,
 		private readonly configService: ConfigService,
 		private readonly unifiedNotificationService: UnifiedNotificationService,
 		private readonly leadScoringService: LeadScoringService,
+		private readonly tasksService: TasksService,
 	) {}
 
 	async create(
@@ -741,6 +746,192 @@ export class LeadsService {
 			this.logger.log(`Processed ${overdueLeads.length} overdue follow-ups`);
 		} catch (error) {
 			this.logger.error(`Follow-up check failed: ${error.message}`, error.stack);
+		}
+	}
+
+	/**
+	 * AUTOMATED TASK CREATION: Create tasks for idle leads (2+ days) daily at 8 AM
+	 */
+	@Cron('0 0 8 * * *') // Daily at 8 AM
+	async createTasksForIdleLeads(): Promise<void> {
+		this.logger.log('Creating tasks for idle leads...');
+
+		try {
+			const twoDaysAgo = new Date();
+			twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+
+			// Find leads that haven't been contacted for 2+ days
+			const idleLeads = await this.leadsRepository.find({
+				where: {
+					isDeleted: false,
+					status: In([LeadStatus.PENDING, LeadStatus.REVIEW]),
+					lastContactDate: Between(new Date('2020-01-01'), twoDaysAgo), // Last contacted 2+ days ago
+				},
+				relations: ['owner', 'organisation', 'branch'],
+			});
+
+			this.logger.log(`Found ${idleLeads.length} idle leads to create tasks for`);
+
+			for (const lead of idleLeads) {
+				try {
+					// Check if a task already exists for this lead in the last 24 hours
+					const existingTask = await this.taskRepository.findOne({
+						where: {
+							title: `Follow up on idle lead: ${lead.name || `Lead #${lead.uid}`}`,
+							creator: { uid: lead.owner?.uid },
+							createdAt: MoreThan(new Date(Date.now() - 24 * 60 * 60 * 1000)), // Last 24 hours
+						},
+					});
+
+					if (existingTask) {
+						this.logger.debug(`Task already exists for lead ${lead.uid}, skipping`);
+						continue;
+					}
+
+					// Create deadline for today at 10 AM
+					const taskDeadline = new Date();
+					taskDeadline.setHours(10, 0, 0, 0);
+
+					// If current time is already past 10 AM, set for tomorrow
+					if (new Date().getHours() >= 10) {
+						taskDeadline.setDate(taskDeadline.getDate() + 1);
+					}
+
+					// Create the task
+					const taskData = {
+						title: `Follow up on idle lead: ${lead.name || `Lead #${lead.uid}`}`,
+						description: `This lead has been idle for ${Math.floor(
+							(new Date().getTime() - lead.lastContactDate.getTime()) / (24 * 60 * 60 * 1000),
+						)} days. Please follow up immediately.\n\nLead Details:\n- Name: ${lead.name || 'N/A'}\n- Company: ${
+							lead.companyName || 'N/A'
+						}\n- Email: ${lead.email || 'N/A'}\n- Phone: ${lead.phone || 'N/A'}\n- Status: ${
+							lead.status
+						}\n- Temperature: ${lead.temperature}\n- Notes: ${lead.notes || 'No notes available'}`,
+						taskType: TaskType.FOLLOW_UP,
+						priority: TaskPriority.HIGH,
+						deadline: taskDeadline,
+						creators: [{ uid: lead.owner?.uid }],
+						assignees: [{ uid: lead.owner?.uid }],
+						clients: [], // No specific client assignment
+					};
+
+					const result = await this.tasksService.create(
+						taskData,
+						lead.organisation?.uid,
+						lead.branch?.uid,
+					);
+
+					if (result.message === process.env.SUCCESS_MESSAGE) {
+						this.logger.log(`Created task for idle lead ${lead.uid} assigned to user ${lead.owner?.uid}`);
+					} else {
+						this.logger.error(`Failed to create task for idle lead ${lead.uid}: ${result.message}`);
+					}
+				} catch (error) {
+					this.logger.error(`Failed to create task for idle lead ${lead.uid}: ${error.message}`);
+				}
+			}
+
+			this.logger.log(`Completed creating tasks for ${idleLeads.length} idle leads`);
+		} catch (error) {
+			this.logger.error(`Idle lead task creation failed: ${error.message}`, error.stack);
+		}
+	}
+
+	/**
+	 * MONTHLY UNATTENDED LEADS EMAIL: Send monthly report on 28th
+	 */
+	@Cron('0 0 9 28 * *') // 28th of every month at 9 AM
+	async sendMonthlyUnattendedLeadsEmail(): Promise<void> {
+		this.logger.log('Sending monthly unattended leads email...');
+
+		try {
+			const now = new Date();
+			const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+			const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+			// Get all users with leads
+			const usersWithLeads = await this.userRepository.find({
+				where: {
+					status: In([AccountStatus.ACTIVE, AccountStatus.PENDING]),
+				},
+				relations: ['leads'],
+			});
+
+			for (const user of usersWithLeads) {
+				try {
+					// Find unattended leads for this user this month
+					const unattendedLeads = await this.leadsRepository.find({
+						where: {
+							owner: { uid: user.uid },
+							isDeleted: false,
+							status: In([LeadStatus.PENDING, LeadStatus.REVIEW]),
+							createdAt: Between(startOfMonth, endOfMonth),
+							lastContactDate: null, // Never contacted
+						},
+						relations: ['owner', 'organisation', 'branch'],
+					});
+
+					// Also include leads that haven't been contacted for more than 7 days
+					const stalledLeads = await this.leadsRepository.find({
+						where: {
+							owner: { uid: user.uid },
+							isDeleted: false,
+							status: In([LeadStatus.PENDING, LeadStatus.REVIEW]),
+							createdAt: Between(startOfMonth, endOfMonth),
+							lastContactDate: Between(new Date('2020-01-01'), new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)), // 7+ days ago
+						},
+						relations: ['owner', 'organisation', 'branch'],
+					});
+
+					const allUnattendedLeads = [...unattendedLeads, ...stalledLeads];
+
+					if (allUnattendedLeads.length > 0) {
+						// Send email to user
+						await this.communicationService.sendEmail(
+							EmailType.MONTHLY_UNATTENDED_LEADS_REPORT,
+							[user.email],
+							{
+								name: user.name || user.username,
+								month: now.toLocaleString('default', { month: 'long', year: 'numeric' }),
+								unattendedLeads: allUnattendedLeads.map((lead) => ({
+									id: lead.uid,
+									name: lead.name || `Lead #${lead.uid}`,
+									companyName: lead.companyName || 'N/A',
+									email: lead.email || 'N/A',
+									phone: lead.phone || 'N/A',
+									status: lead.status,
+									temperature: lead.temperature,
+									daysSinceCreated: Math.floor(
+										(now.getTime() - lead.createdAt.getTime()) / (24 * 60 * 60 * 1000),
+									),
+									daysSinceLastContact: lead.lastContactDate
+										? Math.floor(
+												(now.getTime() - lead.lastContactDate.getTime()) / (24 * 60 * 60 * 1000),
+										  )
+										: 'Never contacted',
+									estimatedValue: lead.estimatedValue || 0,
+									priority: lead.priority,
+									notes: lead.notes || 'No notes',
+									leadUrl: `${this.configService.get<string>('DASHBOARD_URL')}/leads/${lead.uid}`,
+								})),
+								totalCount: allUnattendedLeads.length,
+								totalEstimatedValue: allUnattendedLeads.reduce((sum, lead) => sum + (lead.estimatedValue || 0), 0),
+								dashboardUrl: this.configService.get<string>('DASHBOARD_URL'),
+							},
+						);
+
+						this.logger.log(`Sent monthly unattended leads email to ${user.email} (${allUnattendedLeads.length} leads)`);
+					} else {
+						this.logger.debug(`No unattended leads found for user ${user.uid} this month`);
+					}
+				} catch (error) {
+					this.logger.error(`Failed to send monthly email to user ${user.uid}: ${error.message}`);
+				}
+			}
+
+			this.logger.log(`Completed monthly unattended leads email process`);
+		} catch (error) {
+			this.logger.error(`Monthly unattended leads email failed: ${error.message}`, error.stack);
 		}
 	}
 

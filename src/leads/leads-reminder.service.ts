@@ -60,6 +60,59 @@ export class LeadsReminderService {
   }
 
   /**
+   * Cron job that runs weekly on Mondays at 8:00 AM to check for stale leads
+   * and send reminder emails to lead creators
+   */
+  @Cron('0 8 * * 1') // Every Monday at 8:00 AM
+  async handleWeeklyStaleLeadsReminders() {
+    this.logger.log('Starting weekly stale leads reminder check...');
+
+    try {
+      const now = new Date();
+      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+      // Get all leads that are stale (haven't been contacted in 7+ days or never contacted)
+      const staleLeads = await this.leadRepository.find({
+        where: [
+          {
+            // Never contacted leads that are older than 7 days
+            lastContactDate: null,
+            isDeleted: false,
+            status: LeadStatus.PENDING,
+            createdAt: sevenDaysAgo,
+          },
+          {
+            // Leads that haven't been contacted in 7+ days
+            lastContactDate: sevenDaysAgo,
+            isDeleted: false,
+            status: LeadStatus.PENDING,
+          },
+        ],
+        relations: ['owner'],
+      });
+
+      if (staleLeads.length === 0) {
+        this.logger.log('No stale leads found for weekly reminder.');
+        return;
+      }
+
+      this.logger.log(`Found ${staleLeads.length} stale leads for weekly reminder.`);
+
+      // Group leads by their creator/owner
+      const leadsByCreator = this.groupLeadsByOwner(staleLeads);
+
+      // Process each creator's leads and send reminders
+      for (const [creatorUid, leads] of Object.entries(leadsByCreator)) {
+        await this.sendWeeklyStaleLeadsEmail(parseInt(creatorUid), leads);
+      }
+
+      this.logger.log('Weekly stale leads reminder process completed successfully.');
+    } catch (error) {
+      this.logger.error('Failed to process weekly stale leads reminders', error.stack);
+    }
+  }
+
+  /**
    * Groups leads by their owner
    */
   private groupLeadsByOwner(leads: Lead[]): Record<number, Lead[]> {
@@ -125,6 +178,89 @@ export class LeadsReminderService {
       this.logger.log(`Reminder email sent to ${owner.email} for ${leads.length} pending leads.`);
     } catch (error) {
       this.logger.error(`Failed to send reminder email to owner ${ownerUid}:`, error.stack);
+    }
+  }
+
+  /**
+   * Sends a weekly stale leads reminder email to a lead creator
+   */
+  private async sendWeeklyStaleLeadsEmail(creatorUid: number, leads: Lead[]) {
+    try {
+      const creator = await this.userRepository.findOne({ where: { uid: creatorUid } });
+      
+      if (!creator || !creator.email) {
+        this.logger.warn(`Creator not found or has no email: ${creatorUid}`);
+        return;
+      }
+
+      const now = new Date();
+
+      // Format leads with additional stale lead information
+      const formattedLeads = leads.map(lead => {
+        const daysSinceCreated = Math.floor((now.getTime() - lead.createdAt.getTime()) / (24 * 60 * 60 * 1000));
+        const daysSinceLastContact = lead.lastContactDate 
+          ? Math.floor((now.getTime() - lead.lastContactDate.getTime()) / (24 * 60 * 60 * 1000))
+          : 'Never contacted';
+
+        return {
+          uid: lead.uid,
+          name: lead.name || 'Unnamed Lead',
+          email: lead.email,
+          phone: lead.phone,
+          companyName: lead.companyName,
+          temperature: lead.temperature,
+          priority: lead.priority,
+          estimatedValue: lead.estimatedValue || 0,
+          daysSinceCreated,
+          daysSinceLastContact,
+          createdAt: lead.createdAt.toLocaleDateString('en-US', {
+            year: 'numeric', 
+            month: 'short', 
+            day: 'numeric'
+          }),
+          lastContactDate: lead.lastContactDate?.toLocaleDateString('en-US', {
+            year: 'numeric', 
+            month: 'short', 
+            day: 'numeric'
+          }) || 'Never',
+          image: lead.image,
+          latitude: lead.latitude ? Number(lead.latitude) : undefined,
+          longitude: lead.longitude ? Number(lead.longitude) : undefined,
+          notes: lead.notes,
+        };
+      });
+
+      // Calculate summary statistics
+      const totalEstimatedValue = leads.reduce((sum, lead) => sum + (lead.estimatedValue || 0), 0);
+      const neverContactedCount = leads.filter(lead => !lead.lastContactDate).length;
+      const highPriorityCount = leads.filter(lead => lead.priority === 'HIGH' || lead.priority === 'CRITICAL').length;
+
+      // Prepare email data
+      const emailData = {
+        name: creator.name || 'Team Member',
+        weekOf: now.toLocaleDateString('en-US', { 
+          year: 'numeric', 
+          month: 'long', 
+          day: 'numeric' 
+        }),
+        staleLeads: formattedLeads,
+        totalCount: leads.length,
+        totalEstimatedValue,
+        neverContactedCount,
+        highPriorityCount,
+        dashboardUrl: `${process.env.DASHBOARD_URL}/leads`,
+      };
+
+      // Send email using the communication service
+      await this.communicationService.sendEmail(
+        EmailType.LEAD_REMINDER,
+        [creator.email],
+        emailData as any
+      );
+
+      this.logger.log(`Weekly stale leads reminder sent to ${creator.email} for ${leads.length} stale leads.`);
+    } catch (error) {
+      this.logger.error(`Failed to send weekly stale leads reminder to creator ${creatorUid}:`, error.stack);
     }
   }
 } 
