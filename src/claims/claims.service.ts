@@ -140,7 +140,7 @@ export class ClaimsService {
 					type: XP_VALUES_TYPES.CLAIM,
 					details: 'Claim reward',
 				},
-			});
+			}, orgId, branchId);
 
 			return response;
 		} catch (error) {
@@ -470,7 +470,7 @@ export class ClaimsService {
 					type: XP_VALUES_TYPES.CLAIM,
 					details: 'Claim reward',
 				},
-			});
+			}, orgId, branchId);
 
 			return response;
 		} catch (error) {

@@ -1514,7 +1514,7 @@ export class LeadsService {
 						type: XP_VALUES_TYPES.LEAD,
 						details: 'Lead created',
 					},
-				});
+				}, lead.organisation?.uid, lead.branch?.uid);
 			}
 
 			// 4. Send system notification
@@ -1619,7 +1619,7 @@ export class LeadsService {
 						type: 'lead_conversion',
 						details: 'Lead converted to customer',
 					},
-				});
+				}, lead.organisation?.uid, lead.branch?.uid);
 			}
 		}
 	}
