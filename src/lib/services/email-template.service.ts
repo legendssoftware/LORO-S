@@ -59,6 +59,14 @@ import {
 	PayslipAvailableEmailData,
 	PayslipUploadedAdminEmailData,
 	MonthlyUnattendedLeadsReportData,
+	UserTargetAchievementAdminData,
+	LeadTargetAchievementAdminData,
+	UserTargetAchievementEmailData,
+	UserTargetMilestoneEmailData,
+	UserTargetDeadlineReminderEmailData,
+	UserTargetPerformanceAlertEmailData,
+	UserTargetERPUpdateConfirmationEmailData,
+	UserTargetPeriodSummaryEmailData,
 } from '../types/email-templates.types';
 
 class EmailTemplateService {
@@ -620,6 +628,40 @@ class EmailTemplateService {
 		return this.renderTemplate('payslips/uploaded-admin.hbs', data);
 	}
 
+	// Target Achievement Admin Notification Templates
+	userTargetAchievementAdmin(data: UserTargetAchievementAdminData): string {
+		return this.renderTemplate('targets/user-target-achievement-admin.hbs', data);
+	}
+
+	leadTargetAchievementAdmin(data: LeadTargetAchievementAdminData): string {
+		return this.renderTemplate('targets/lead-target-achievement-admin.hbs', data);
+	}
+
+	// Target Achievement Templates (User-facing)
+	userTargetAchievement(data: UserTargetAchievementEmailData): string {
+		return this.renderTemplate('targets/achievement.hbs', data);
+	}
+
+	userTargetMilestone(data: UserTargetMilestoneEmailData): string {
+		return this.renderTemplate('targets/milestone.hbs', data);
+	}
+
+	userTargetDeadlineReminder(data: UserTargetDeadlineReminderEmailData): string {
+		return this.renderTemplate('targets/deadline-reminder.hbs', data);
+	}
+
+	userTargetPerformanceAlert(data: UserTargetPerformanceAlertEmailData): string {
+		return this.renderTemplate('targets/performance-alert.hbs', data);
+	}
+
+	userTargetERPUpdateConfirmation(data: UserTargetERPUpdateConfirmationEmailData): string {
+		return this.renderTemplate('targets/erp-update-confirmation.hbs', data);
+	}
+
+	userTargetPeriodSummary(data: UserTargetPeriodSummaryEmailData): string {
+		return this.renderTemplate('targets/period-summary.hbs', data);
+	}
+
 	/**
 	 * Clear the compiled template cache and reinitialize Handlebars
 	 * Useful for development or when templates are updated
@@ -712,6 +754,16 @@ class EmailTemplateService {
 			// Payslip templates
 			'payslips/available.hbs',
 			'payslips/uploaded-admin.hbs',
+			// Target Achievement Admin Notification templates
+			'targets/user-target-achievement-admin.hbs',
+			'targets/lead-target-achievement-admin.hbs',
+			// Target Achievement Templates (User-facing)
+			'targets/achievement.hbs',
+			'targets/milestone.hbs',
+			'targets/deadline-reminder.hbs',
+			'targets/performance-alert.hbs',
+			'targets/erp-update-confirmation.hbs',
+			'targets/period-summary.hbs',
 		];
 
 		templates.forEach((template) => {

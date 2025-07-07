@@ -1,0 +1,191 @@
+{{#base headerTitle="🎯 Lead Target Achievement Alert" headerSubtitle="Team member has achieved their lead generation target!"}}
+
+<div class="greeting">
+    Hello {{adminName}}! 📊
+</div>
+
+<div class="message">
+    <p><strong>Great news!</strong> We're excited to inform you that <strong>{{employeeName}}</strong> has successfully achieved their {{targetType}} target with an outstanding {{achievementPercentage}}% completion rate.</p>
+    
+    <p>This achievement demonstrates exceptional performance in lead generation and contributes significantly to our organization's growth objectives.</p>
+</div>
+
+<!-- Achievement Summary -->
+<div class="success-notice">2
+    <h3 style="color: #059669; margin-bottom: 16px;">🏆 LEAD TARGET ACHIEVED</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Employee</span>
+            <span class="detail-value" style="font-weight: 700; color: #059669;">{{employeeName}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Email</span>
+            <span class="detail-value">{{employeeEmail}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Target Type</span>
+            <span class="detail-value">{{targetType}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Achievement Rate</span>
+            <span class="detail-value" style="font-weight: 700; color: #059669; font-size: 18px;">{{achievementPercentage}}%</span>
+        </div>
+    </div>
+</div>
+
+<!-- Performance Metrics -->
+<div class="info-card">
+    <h4 style="color: #7c2d92; margin-bottom: 16px;">📈 Performance Metrics</h4>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Current Value</span>
+            <span class="detail-value" style="font-weight: 600;">{{currentValue}} leads</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Target Value</span>
+            <span class="detail-value">{{targetValue}} leads</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Achievement Date</span>
+            <span class="detail-value">{{formatDate achievementDate}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Target Period</span>
+            <span class="detail-value">{{formatDate periodStartDate}} - {{formatDate periodEndDate}}</span>
+        </div>
+    </div>
+</div>
+
+{{#if leadQualityScore}}
+<!-- Lead Quality Analysis -->
+<div class="info-card">
+    <h4 style="color: #7c2d92; margin-bottom: 16px;">⭐ Lead Quality Assessment</h4>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Quality Score</span>
+            <span class="detail-value" style="font-weight: 600; color: #059669;">{{leadQualityScore}}/100</span>
+        </div>
+        {{#if conversionRate}}
+        <div class="detail-item">
+            <span class="detail-label">Conversion Rate</span>
+            <span class="detail-value" style="font-weight: 600;">{{conversionRate}}%</span>
+        </div>
+        {{/if}}
+        {{#if salesPipelineContribution}}
+        <div class="detail-item">
+            <span class="detail-label">Pipeline Value</span>
+            <span class="detail-value">ZAR {{formatNumber salesPipelineContribution}}</span>
+        </div>
+        {{/if}}
+        {{#if teamLeadGenerationRanking}}
+        <div class="detail-item">
+            <span class="detail-label">Team Ranking</span>
+            <span class="detail-value" style="font-weight: 600; color: #059669;">#{{teamLeadGenerationRanking}}</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+{{/if}}
+
+<!-- Organizational Context -->
+<div class="info-card">
+    <h4 style="color: #7c2d92; margin-bottom: 16px;">🏢 Organizational Impact</h4>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Organization</span>
+            <span class="detail-value">{{organizationName}}</span>
+        </div>
+        {{#if branchName}}
+        <div class="detail-item">
+            <span class="detail-label">Branch</span>
+            <span class="detail-value">{{branchName}}</span>
+        </div>
+        {{/if}}
+        {{#if employeeRole}}
+        <div class="detail-item">
+            <span class="detail-label">Role</span>
+            <span class="detail-value">{{employeeRole}}</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+
+<!-- Recognition Suggestions -->
+{{#if recognitionSuggestions}}
+<div class="success-notice">
+    <h4 style="color: #059669; margin-bottom: 16px;">🎁 Recognition Suggestions</h4>
+    <ul style="margin-left: 20px; line-height: 1.8; font-size: 15px;">
+        {{#each recognitionSuggestions}}
+        <li>{{this}}</li>
+        {{/each}}
+    </ul>
+</div>
+{{/if}}
+
+<!-- Business Impact -->
+<div class="info-card">
+    <h4 style="color: #7c2d92; margin-bottom: 16px;">💼 Business Impact</h4>
+    <ul style="margin-left: 20px; color: #4b5563; line-height: 1.8; font-size: 15px;">
+        <li><strong>Lead Generation Excellence:</strong> Demonstrates exceptional ability to identify and nurture potential clients</li>
+        <li><strong>Sales Pipeline Growth:</strong> Contributes directly to our sales funnel and revenue generation</li>
+        <li><strong>Team Performance:</strong> Sets a positive example for other team members</li>
+        <li><strong>Customer Acquisition:</strong> Supports our growth objectives through quality lead generation</li>
+        <li><strong>Market Expansion:</strong> Helps identify new market opportunities and client segments</li>
+    </ul>
+</div>
+
+<!-- Recommended Actions -->
+<div class="info-card">
+    <h4 style="color: #7c2d92; margin-bottom: 16px;">📋 Recommended Actions</h4>
+    <ol style="margin-left: 20px; color: #4b5563; line-height: 1.8; font-size: 15px;">
+        <li><strong>Acknowledge Achievement:</strong> Send personal congratulations to {{employeeName}}</li>
+        <li><strong>Performance Review:</strong> Document this achievement for upcoming performance evaluations</li>
+        <li><strong>Team Recognition:</strong> Consider sharing this success with the broader team</li>
+        <li><strong>Best Practice Sharing:</strong> Encourage {{employeeName}} to share successful lead generation strategies</li>
+        <li><strong>Goal Setting:</strong> Discuss new challenging yet achievable targets for the next period</li>
+        <li><strong>Reward Consideration:</strong> Evaluate appropriate recognition or incentive opportunities</li>
+    </ol>
+</div>
+
+<!-- CTA Section -->
+<div class="cta-section">
+    <a href="{{dashboardUrl}}" class="cta-button">View Team Performance Dashboard</a>
+</div>
+
+<!-- Motivational Message -->
+{{#if motivationalMessage}}
+<div class="info-card">
+    <h4 style="color: #7c2d92; margin-bottom: 16px;">💪 Leadership Note</h4>
+    <p style="font-style: italic; color: #4f46e5; font-size: 15px; line-height: 1.6;">{{motivationalMessage}}</p>
+</div>
+{{/if}}
+
+<!-- Footer Message -->
+<div class="message">
+    <p style="font-size: 15px; color: #374151; line-height: 1.6; margin-top: 30px;">
+        <strong>This achievement reflects exceptional performance in lead generation.</strong> Consider recognizing {{employeeName}}'s contribution and using this success as a model for team development.
+    </p>
+    
+    <p style="font-size: 14px; color: #6b7280; line-height: 1.6; margin-top: 20px;">
+        Consistent lead generation performance like this drives our organizational growth and customer acquisition success.
+    </p>
+</div>
+
+<!-- Administrative Details -->
+<div class="contact-info">
+    <p style="font-size: 14px; color: #6b7280; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+        <strong>Achievement Summary:</strong><br>
+        Employee: {{employeeName}} ({{employeeEmail}})<br>
+        Target: {{targetType}} - {{achievementPercentage}}% completion<br>
+        Period: {{formatDate periodStartDate}} to {{formatDate periodEndDate}}<br>
+        Organization: {{organizationName}}{{#if branchName}} - {{branchName}}{{/if}}<br><br>
+        
+        <strong>Dashboard Access:</strong><br>
+        <a href="{{dashboardUrl}}">{{dashboardUrl}}</a><br><br>
+        
+        <strong>Congratulations to the team!</strong><br>
+        The {{organizationName}} Leadership Team 🎯
+    </p>
+</div>
+
+{{/base}} 

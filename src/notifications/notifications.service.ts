@@ -135,7 +135,7 @@ export class NotificationsService {
 		}
 	}
 
-	async update(ref: number, updateNotificationDto: UpdateNotificationDto): Promise<{ message: string }> {
+	async update(ref: number, updateNotificationDto: UpdateNotificationDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
 		try {
 			const notification = await this.notificationRepository.update(ref, updateNotificationDto);
 
@@ -152,7 +152,7 @@ export class NotificationsService {
 					type: XP_VALUES_TYPES.NOTIFICATION,
 					details: 'Notification reward',
 				},
-			});
+			}, orgId, branchId);
 
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,

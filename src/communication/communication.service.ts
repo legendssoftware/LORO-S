@@ -110,6 +110,14 @@ import {
 	JournalUpdatedEmailData,
 	JournalDeletedEmailData,
 	PasswordResetRequestData,
+	UserTargetAchievementAdminData,
+	LeadTargetAchievementAdminData,
+	UserTargetAchievementEmailData,
+	UserTargetMilestoneEmailData,
+	UserTargetDeadlineReminderEmailData,
+	UserTargetPerformanceAlertEmailData,
+	UserTargetERPUpdateConfirmationEmailData,
+	UserTargetPeriodSummaryEmailData,
 } from '../lib/types/email-templates.types';
 import {
 	TaskFlagCreated,
@@ -140,6 +148,14 @@ import {
 	JournalCreated,
 	JournalUpdated,
 	JournalDeleted,
+	UserTargetAchievementAdmin,
+	LeadTargetAchievementAdmin,
+	UserTargetAchievement,
+	UserTargetMilestone,
+	UserTargetDeadlineReminder,
+	UserTargetPerformanceAlert,
+	UserTargetERPUpdateConfirmation,
+	UserTargetPeriodSummary,
 } from '../lib/templates/emails';
 
 // Import the new type
@@ -688,6 +704,46 @@ export class CommunicationService {
 				return {
 					subject: 'Journal Entry Deleted',
 					body: JournalDeleted(data as JournalDeletedEmailData),
+				};
+			case EmailType.USER_TARGET_ACHIEVEMENT_ADMIN:
+				return {
+					subject: 'Team Member Target Achievement - Admin Notification',
+					body: UserTargetAchievementAdmin(data as UserTargetAchievementAdminData), 
+				};
+			case EmailType.LEAD_TARGET_ACHIEVEMENT_ADMIN:
+				return {
+					subject: 'Lead Target Achievement - Admin Notification',
+					body: LeadTargetAchievementAdmin(data as LeadTargetAchievementAdminData),
+				};
+			case EmailType.USER_TARGET_ACHIEVEMENT:
+				return {
+					subject: 'Your Target Achievement',
+					body: UserTargetAchievement(data as UserTargetAchievementEmailData),
+				};
+			case EmailType.USER_TARGET_MILESTONE:
+				return {
+					subject: 'You\'ve Reached a Milestone!',
+					body: UserTargetMilestone(data as UserTargetMilestoneEmailData),
+				};
+			case EmailType.USER_TARGET_DEADLINE_REMINDER:
+				return {
+					subject: 'Your Target Deadline Approaching',
+					body: UserTargetDeadlineReminder(data as UserTargetDeadlineReminderEmailData),
+				};
+			case EmailType.USER_TARGET_PERFORMANCE_ALERT:
+				return {
+					subject: 'Your Performance Needs Attention',
+					body: UserTargetPerformanceAlert(data as UserTargetPerformanceAlertEmailData),
+				};
+			case EmailType.USER_TARGET_ERP_UPDATE_CONFIRMATION:
+				return {
+					subject: 'Your ERP System Update is Ready',
+					body: UserTargetERPUpdateConfirmation(data as UserTargetERPUpdateConfirmationEmailData),
+				};
+			case EmailType.USER_TARGET_PERIOD_SUMMARY:
+				return {
+					subject: 'Your Target Period Summary',
+					body: UserTargetPeriodSummary(data as UserTargetPeriodSummaryEmailData),
 				};
 			default:
 				throw new NotFoundException(`Unknown email template type: ${type}`);

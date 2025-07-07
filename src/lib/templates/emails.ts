@@ -56,6 +56,14 @@ import {
 	PayslipAvailableEmailData,
 	PayslipUploadedAdminEmailData,
 	MonthlyUnattendedLeadsReportData,
+	UserTargetAchievementAdminData,
+	LeadTargetAchievementAdminData,
+	UserTargetAchievementEmailData,
+	UserTargetMilestoneEmailData,
+	UserTargetDeadlineReminderEmailData,
+	UserTargetPerformanceAlertEmailData,
+	UserTargetERPUpdateConfirmationEmailData,
+	UserTargetPeriodSummaryEmailData,
 } from '../types/email-templates.types';
 
 // Auth Templates
@@ -386,4 +394,38 @@ export const PayslipAvailable = (data: PayslipAvailableEmailData): string => {
 
 export const PayslipUploadedAdmin = (data: PayslipUploadedAdminEmailData): string => {
 	return emailTemplateService.payslipUploadedAdmin(data);
+};
+
+// Target Achievement Admin Notification Templates
+export const UserTargetAchievementAdmin = (data: UserTargetAchievementAdminData): string => {
+	return emailTemplateService.userTargetAchievementAdmin(data);
+};
+
+export const LeadTargetAchievementAdmin = (data: LeadTargetAchievementAdminData): string => {
+	return emailTemplateService.leadTargetAchievementAdmin(data);
+};
+
+// Target Achievement Templates (User-facing)
+export const UserTargetAchievement = (data: UserTargetAchievementEmailData): string => {
+	return emailTemplateService.userTargetAchievement(data);
+};
+
+export const UserTargetMilestone = (data: UserTargetMilestoneEmailData): string => {
+	return emailTemplateService.userTargetMilestone(data);
+};
+
+export const UserTargetDeadlineReminder = (data: UserTargetDeadlineReminderEmailData): string => {
+	return emailTemplateService.userTargetDeadlineReminder(data);
+};
+
+export const UserTargetPerformanceAlert = (data: UserTargetPerformanceAlertEmailData): string => {
+	return emailTemplateService.userTargetPerformanceAlert(data);
+};
+
+export const UserTargetERPUpdateConfirmation = (data: UserTargetERPUpdateConfirmationEmailData): string => {
+	return emailTemplateService.userTargetERPUpdateConfirmation(data);
+};
+
+export const UserTargetPeriodSummary = (data: UserTargetPeriodSummaryEmailData): string => {
+	return emailTemplateService.userTargetPeriodSummary(data);
 };

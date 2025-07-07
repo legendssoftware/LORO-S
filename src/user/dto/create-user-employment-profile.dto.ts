@@ -4,18 +4,18 @@ import { Department } from "../../lib/enums/user.enums";
 
 export class CreateUserEmploymentProfileDto {
     @IsOptional()
-    @IsObject()
+    @IsString()
     @ApiProperty({
-        description: 'Branch reference code',
-        example: { uid: 1 },
+        description: 'Branch reference ID',
+        example: 'BRANCH123',
         required: false
     })
-    branchref?: { uid: number };
+    branchref?: string;
 
     @IsOptional()
     @IsObject()
     @ApiProperty({
-        description: 'User reference code',
+        description: 'User reference object',
         example: { uid: 1 },
         required: false
     })
@@ -31,19 +31,19 @@ export class CreateUserEmploymentProfileDto {
     position?: string;
 
     @IsOptional()
-    @IsEnum(Department)
+    @IsString()
     @ApiProperty({
-        description: 'Department',
-        example: Department.ENGINEERING,
+        description: 'Department name',
+        example: 'Engineering',
         required: false
     })
-    department?: Department;
+    department?: string;
 
     @IsOptional()
     @IsDate()
     @ApiProperty({
         description: 'Employment start date',
-        example: `${new Date()}`,
+        example: '2024-01-01',
         required: false
     })
     startDate?: Date;
@@ -52,7 +52,7 @@ export class CreateUserEmploymentProfileDto {
     @IsDate()
     @ApiProperty({
         description: 'Employment end date',
-        example: `${new Date()}`,
+        example: '2024-12-31',
         required: false
     })
     endDate?: Date;
@@ -62,7 +62,8 @@ export class CreateUserEmploymentProfileDto {
     @ApiProperty({
         description: 'Whether currently employed',
         example: true,
-        default: true
+        default: true,
+        required: false
     })
     isCurrentlyEmployed?: boolean;
 

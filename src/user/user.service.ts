@@ -1612,9 +1612,22 @@ export class UserService {
 				return;
 			}
 
+			// Store previous values to check for achievements
+			const previousTargetValues = {
+				currentQuotationsAmount: userTarget.currentQuotationsAmount,
+				currentOrdersAmount: userTarget.currentOrdersAmount,
+				currentSalesAmount: userTarget.currentSalesAmount,
+				currentNewLeads: userTarget.currentNewLeads,
+				currentNewClients: userTarget.currentNewClients,
+				currentCheckIns: userTarget.currentCheckIns,
+			};
+
 			// Save the updated target (via user cascade)
 			this.logger.debug(`Saving updated targets for user: ${userId}`);
 			await this.userRepository.save(user);
+
+			// Check for target achievements after saving
+			await this.checkAndNotifyTargetAchievements(user, userTarget, previousTargetValues);
 
 			// Invalidate the specific target cache
 			await this.cacheManager.del(this.getCacheKey(`target_${userId}`));
@@ -1631,6 +1644,225 @@ export class UserService {
 			// Always remove user from active calculations
 			this.activeCalculations.delete(userId);
 		}
+	}
+
+	/**
+	 * Check for target achievements and send notifications to user and admins
+	 */
+	private async checkAndNotifyTargetAchievements(
+		user: User,
+		userTarget: UserTarget,
+		previousValues: any,
+	): Promise<void> {
+		try {
+			this.logger.debug(`Checking target achievements for user: ${user.uid}`);
+
+			const achievedTargets = [];
+			const currentDate = new Date().toISOString().split('T')[0];
+
+			// Check each target type for achievement
+			const targetChecks = [
+				{
+					type: 'Sales Amount',
+					current: userTarget.currentSalesAmount,
+					target: userTarget.targetSalesAmount,
+					previous: previousValues.currentSalesAmount,
+				},
+				{
+					type: 'Quotations Amount',
+					current: userTarget.currentQuotationsAmount,
+					target: userTarget.targetQuotationsAmount,
+					previous: previousValues.currentQuotationsAmount,
+				},
+				{
+					type: 'New Leads',
+					current: userTarget.currentNewLeads,
+					target: userTarget.targetNewLeads,
+					previous: previousValues.currentNewLeads,
+				},
+				{
+					type: 'New Clients',
+					current: userTarget.currentNewClients,
+					target: userTarget.targetNewClients,
+					previous: previousValues.currentNewClients,
+				},
+				{
+					type: 'Check-ins',
+					current: userTarget.currentCheckIns,
+					target: userTarget.targetCheckIns,
+					previous: previousValues.currentCheckIns,
+				},
+			];
+
+			// Check for newly achieved targets
+			for (const check of targetChecks) {
+				if (check.target && check.target > 0) {
+					const currentProgress = ((check.current || 0) / check.target) * 100;
+					const previousProgress = ((check.previous || 0) / check.target) * 100;
+
+					// Target achieved (100% or more) and wasn't achieved before
+					if (currentProgress >= 100 && previousProgress < 100) {
+						achievedTargets.push({
+							type: check.type,
+							currentValue: check.current || 0,
+							targetValue: check.target,
+							achievementPercentage: Math.round(currentProgress),
+						});
+					}
+				}
+			}
+
+			// Send notifications if any targets were achieved
+			if (achievedTargets.length > 0) {
+				await this.sendTargetAchievementNotifications(user, achievedTargets, userTarget);
+			}
+
+			this.logger.debug(`Target achievement check completed for user: ${user.uid}, ${achievedTargets.length} targets achieved`);
+		} catch (error) {
+			this.logger.error(`Error checking target achievements for user ${user.uid}: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Send target achievement notifications to user and admins
+	 */
+	private async sendTargetAchievementNotifications(
+		user: User,
+		achievedTargets: any[],
+		userTarget: UserTarget,
+	): Promise<void> {
+		try {
+			this.logger.log(`Sending target achievement notifications for user: ${user.uid}`);
+
+			const achievementData = {
+				achievementPercentage: 100,
+				currentValue: achievedTargets.reduce((sum, target) => sum + target.currentValue, 0),
+				targetValue: achievedTargets.reduce((sum, target) => sum + target.targetValue, 0),
+				achievementDate: new Date().toLocaleDateString(),
+				periodStartDate: userTarget.periodStartDate?.toLocaleDateString() || 'N/A',
+				periodEndDate: userTarget.periodEndDate?.toLocaleDateString() || 'N/A',
+				motivationalMessage: this.generateMotivationalMessage(achievedTargets),
+			};
+
+			// Send congratulations email to user
+			for (const target of achievedTargets) {
+				await this.sendTargetAchievementEmail(user.uid, target.type, {
+					...achievementData,
+					currentValue: target.currentValue,
+					targetValue: target.targetValue,
+					achievementPercentage: target.achievementPercentage,
+				});
+			}
+
+			// Send notification to organization admins
+			await this.sendTargetAchievementAdminNotifications(user, achievedTargets, userTarget);
+
+			this.logger.log(`Target achievement notifications sent for user: ${user.uid}`);
+		} catch (error) {
+			this.logger.error(`Error sending target achievement notifications for user ${user.uid}: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Send target achievement notifications to organization admins
+	 */
+	private async sendTargetAchievementAdminNotifications(
+		user: User,
+		achievedTargets: any[],
+		userTarget: UserTarget,
+	): Promise<void> {
+		try {
+			// Get organization admins
+			const admins = await this.getOrganizationAdmins(user.organisation?.uid);
+
+			if (admins.length === 0) {
+				this.logger.warn(`No admins found for organization: ${user.organisation?.uid}`);
+				return;
+			}
+
+			const adminEmailData = {
+				userName: `${user.name} ${user.surname}`.trim(),
+				userEmail: user.email,
+				organizationName: user.organisation?.name || 'Organization',
+				branchName: user.branch?.name || 'N/A',
+				achievedTargets: achievedTargets.map(target => ({
+					type: target.type,
+					currentValue: target.currentValue,
+					targetValue: target.targetValue,
+					achievementPercentage: target.achievementPercentage,
+				})),
+				totalTargetsAchieved: achievedTargets.length,
+				periodStartDate: userTarget.periodStartDate?.toLocaleDateString() || 'N/A',
+				periodEndDate: userTarget.periodEndDate?.toLocaleDateString() || 'N/A',
+				dashboardUrl: `${this.configService.get('FRONTEND_URL')}/dashboard`,
+				recognitionMessage: this.generateRecognitionMessage(user, achievedTargets),
+			};
+
+			// Send admin notification emails
+			const adminEmails = admins.map(admin => admin.email);
+			
+			this.eventEmitter.emit('email.send', {
+				to: adminEmails,
+				type: EmailType.USER_TARGET_ACHIEVEMENT_ADMIN,
+				data: adminEmailData,
+			});
+
+			this.logger.log(`Target achievement admin notifications sent to ${adminEmails.length} admins for user: ${user.uid}`);
+		} catch (error) {
+			this.logger.error(`Error sending admin notifications for user ${user.uid}: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Get organization admins for notifications
+	 */
+	private async getOrganizationAdmins(orgId?: number): Promise<User[]> {
+		if (!orgId) {
+			return [];
+		}
+
+		try {
+			const admins = await this.userRepository.find({
+				where: {
+					organisation: { uid: orgId },
+					accessLevel: In([AccessLevel.ADMIN, AccessLevel.OWNER]),
+					isDeleted: false,
+					status: AccountStatus.ACTIVE,
+				},
+				select: ['uid', 'name', 'surname', 'email', 'accessLevel'],
+			});
+
+			return admins;
+		} catch (error) {
+			this.logger.error(`Error fetching organization admins for org ${orgId}: ${error.message}`);
+			return [];
+		}
+	}
+
+	/**
+	 * Generate motivational message for target achievement
+	 */
+	private generateMotivationalMessage(achievedTargets: any[]): string {
+		const messages = [
+			'Congratulations! Your dedication and hard work have paid off!',
+			'Outstanding performance! You\'ve exceeded expectations!',
+			'Incredible achievement! Keep up the excellent work!',
+			'Well done! Your commitment to excellence shows!',
+			'Fantastic results! You\'re setting a great example!',
+		];
+
+		const randomIndex = Math.floor(Math.random() * messages.length);
+		return messages[randomIndex];
+	}
+
+	/**
+	 * Generate recognition message for admins
+	 */
+	private generateRecognitionMessage(user: User, achievedTargets: any[]): string {
+		const userName = `${user.name} ${user.surname}`.trim();
+		const targetTypes = achievedTargets.map(t => t.type).join(', ');
+		
+		return `${userName} has demonstrated exceptional performance by achieving their targets in: ${targetTypes}. Consider recognizing their outstanding contribution to the team.`;
 	}
 
 	/**

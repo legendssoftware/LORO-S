@@ -17,7 +17,6 @@ import { XP_VALUES_TYPES } from '../lib/constants/constants';
 import { XP_VALUES } from '../lib/constants/constants';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { BreakDetail } from './interfaces/break-detail.interface';
-import { AccessLevel } from '../lib/enums/user.enums';
 import { User } from '../user/entities/user.entity';
 
 // Import our enhanced calculation services
@@ -73,7 +72,7 @@ export class AttendanceService {
 					type: XP_VALUES_TYPES.ATTENDANCE,
 					details: 'Check-in reward',
 				},
-			});
+			}, orgId, branchId);
 
 			return response;
 		} catch (error) {
@@ -149,7 +148,7 @@ export class AttendanceService {
 						type: XP_VALUES_TYPES.ATTENDANCE,
 						details: 'Check-out reward',
 					},
-				});
+				}, orgId, branchId);
 
 				// Emit the daily-report event with the user ID
 				this.eventEmitter.emit('daily-report', {

@@ -52,7 +52,7 @@ export class RewardsService {
         
         // Verify user exists in the organization before creating rewards
         const userExists = await this.userRewardsRepository.manager.query(
-          `SELECT u.uid FROM users u WHERE u.uid = ? AND u.organisationRef = ? ${branchId ? 'AND u.branchId = ?' : ''}`,
+          `SELECT u.uid FROM users u WHERE u.uid = ? AND u.organisationRef = ? ${branchId ? 'AND u.branchUid = ?' : ''}`,
           branchId ? [createRewardDto.owner, orgId, branchId] : [createRewardDto.owner, orgId]
         );
 
@@ -72,6 +72,7 @@ export class RewardsService {
             sales: 0,
             attendance: 0,
             collaboration: 0,
+            login: 0,
             other: 0
           }
         });
@@ -100,6 +101,14 @@ export class RewardsService {
       // Update XP breakdown
       const category = this.mapSourceTypeToCategory(createRewardDto.source.type);
       this.logger.log(`${logPrefix} - Mapping source type '${createRewardDto.source.type}' to category '${category}'`);
+      
+      // Ensure xpBreakdown has all required fields (for backwards compatibility)
+      const requiredFields = ['tasks', 'leads', 'sales', 'attendance', 'collaboration', 'login', 'other'];
+      requiredFields.forEach(field => {
+        if (!userRewards.xpBreakdown[field] && userRewards.xpBreakdown[field] !== 0) {
+          userRewards.xpBreakdown[field] = 0;
+        }
+      });
       
       const oldValues = {
         currentXP: userRewards.currentXP,
@@ -166,6 +175,11 @@ export class RewardsService {
       journal: 'journal',
       notification: 'notification'
     };
+
+    // Handle login-related actions
+    if (sourceType?.toLowerCase().includes('login')) {
+      return 'login';
+    }
 
     return mapping[sourceType] || 'other';
   }
@@ -238,6 +252,14 @@ export class RewardsService {
         totalXP: userRewards.totalXP,
         level: userRewards.level,
         rank: userRewards.rank
+      });
+
+      // Ensure xpBreakdown has all required fields (for backwards compatibility)
+      const requiredFields = ['tasks', 'leads', 'sales', 'attendance', 'collaboration', 'login', 'other'];
+      requiredFields.forEach(field => {
+        if (!userRewards.xpBreakdown[field] && userRewards.xpBreakdown[field] !== 0) {
+          userRewards.xpBreakdown[field] = 0;
+        }
       });
 
       // Additional security: users can only see their own rewards unless they're admin

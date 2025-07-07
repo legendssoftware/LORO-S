@@ -76,7 +76,7 @@ export class JournalService {
 					type: 'journal',
 					details: 'Journal reward',
 				},
-			});
+			}, orgId, branchId);
 
 			return response;
 		} catch (error) {
@@ -383,7 +383,7 @@ export class JournalService {
 					type: XP_VALUES_TYPES.JOURNAL,
 					details: 'Journal reward',
 				},
-			});
+			}, orgId, branchId);
 
 			return response;
 		} catch (error) {

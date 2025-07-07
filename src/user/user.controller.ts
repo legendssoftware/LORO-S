@@ -67,70 +67,162 @@ export class UserController {
 	@ApiOperation({
 		summary: '➕ Create a new user',
 		description: `
-# Create User Account
+# Create Comprehensive User Account
 
-Creates a new user account in the system with comprehensive user management capabilities.
+Creates a new user account in the system with full profile management and employment tracking capabilities.
 
-## 📋 **Use Cases**
-- **Employee Onboarding**: Create accounts for new employees
-- **Client Management**: Set up client portal access
-- **Team Expansion**: Add new team members to projects
-- **Role-Based Access**: Configure users with specific permissions
-- **Multi-Branch Operations**: Create users for different branches
+## 📋 **Core Features**
+- **Complete User Profile**: Personal details, physical characteristics, preferences
+- **Employment Management**: Position, department, contact details, employment history
+- **Multi-Organization Support**: Organization and branch assignment with role-based access
+- **Device Integration**: Push notification tokens, device tracking, platform support
+- **Security Management**: Verification tokens, password reset capabilities, audit trails
 
-## 🔧 **Features**
-- Automatic user reference generation
-- Email verification and activation
-- Profile and employment data integration
-- Role-based permission assignment
-- Organization and branch assignment
-- Password policy enforcement
+## 🎯 **Use Cases**
+- **Employee Onboarding**: Comprehensive employee account creation with full profile
+- **Client Management**: Set up client portal access with contact preferences
+- **Team Expansion**: Add new team members with complete organizational context
+- **Role-Based Access**: Configure users with specific permissions and department assignments
+- **Multi-Branch Operations**: Create users for different branches with location-specific settings
+- **Mobile Integration**: Set up users with device tracking and push notification capabilities
 
-## 📝 **Required Fields**
-- Basic information (name, email, phone)
-- Access level and permissions
-- Organization and branch assignment
-- Employment profile details
+## 🔧 **Advanced Features**
+- **Profile Completeness**: Personal details including physical characteristics, preferences, and lifestyle information
+- **Employment Tracking**: Complete employment history with position, department, and contact details
+- **Device Management**: Push notification setup, device tracking, and platform-specific configurations
+- **Organization Structure**: Multi-level organization and branch assignment with hierarchical permissions
+- **Security Integration**: Email verification, password reset tokens, and comprehensive audit trails
+- **HR Integration**: Legacy HR system compatibility with hrID mapping
+
+## 📝 **Field Categories**
+
+### Required Fields
+- **Basic Identity**: name, surname, email, username, password
+- **Access Control**: accessLevel (defaults to USER if not specified)
+
+### Optional Core Fields
+- **Contact**: phone, photoURL, businesscardURL
+- **Organization**: organisationRef, departmentId, role, status
+- **System**: userref, hrID, isDeleted
+
+### Profile Information (Optional)
+- **Physical**: height, weight, hairColor, eyeColor, gender, ethnicity, bodyType
+- **Personal**: dateOfBirth, currentAge, maritalStatus, numberDependents
+- **Location**: address, city, country, zipCode
+- **Lifestyle**: smokingHabits, drinkingHabits, aboutMe, socialMedia
+- **Clothing**: shoeSize, shirtSize, pantsSize, dressSize, coatSize
+
+### Employment Profile (Optional)
+- **Position**: position, department, branchref
+- **Timeline**: startDate, endDate, isCurrentlyEmployed
+- **Contact**: email (work), contactNumber
+
+### Device Integration (Optional)
+- **Notifications**: expoPushToken, deviceId, platform
+- **Tracking**: pushTokenUpdatedAt
+
+### Security Features (Optional)
+- **Verification**: verificationToken, resetToken, tokenExpires
+
+## 🔒 **Security & Validation**
+- Password strength validation and encryption
+- Email format validation and uniqueness checks
+- Organization and branch permission validation
+- Device token format validation
+- Date validation for employment periods and birth dates
+- Comprehensive input sanitization and validation
 		`,
 	})
 	@ApiBody({ 
 		type: CreateUserDto,
-		description: 'User creation payload with all required information',
+		description: 'User creation payload with comprehensive user information including personal profile and employment details',
 		examples: {
 			employee: {
 				summary: '👨‍💼 Employee Account',
-				description: 'Example of creating an employee account',
+				description: 'Example of creating a comprehensive employee account',
 				value: {
 					name: 'John',
 					surname: 'Doe',
 					email: 'john.doe@loro.co.za',
 					phone: '+27 64 123 4567',
 					username: 'john.doe',
+					password: 'SecurePass123!',
 					accessLevel: AccessLevel.USER,
-					status: AccountStatus.ACTIVE,
+					role: 'employee',
+					status: 'active',
+					organisationRef: 'ORG123',
+					departmentId: 1,
+					profile: {
+						gender: 'MALE',
+						dateOfBirth: '1990-01-15',
+						address: '123 Main Street',
+						city: 'Cape Town',
+						country: 'South Africa',
+						zipCode: '7700',
+						height: '180cm',
+						weight: '75kg',
+						maritalStatus: 'Single',
+						aboutMe: 'Passionate software developer with 5+ years of experience'
+					},
 					employmentProfile: {
 						position: 'Software Engineer',
-						department: 'ENGINEERING',
-						startDate: '2023-01-15'
+						department: 'Engineering',
+						startDate: '2023-01-15',
+						isCurrentlyEmployed: true,
+						email: 'john.doe@company.com',
+						contactNumber: '+27 64 123 4567'
 					}
 				}
 			},
 			manager: {
 				summary: '👔 Manager Account',
-				description: 'Example of creating a manager account',
+				description: 'Example of creating a comprehensive manager account',
 				value: {
 					name: 'Jane',
 					surname: 'Smith',
 					email: 'jane.smith@loro.co.za',
 					phone: '+27 64 987 6543',
 					username: 'jane.smith',
+					password: 'ManagerPass456!',
 					accessLevel: AccessLevel.MANAGER,
-					status: AccountStatus.ACTIVE,
+					role: 'manager',
+					status: 'active',
+					organisationRef: 'ORG123',
+					departmentId: 2,
+					businesscardURL: 'https://example.com/jane-businesscard.jpg',
+					profile: {
+						gender: 'FEMALE',
+						dateOfBirth: '1985-05-20',
+						address: '456 Executive Avenue',
+						city: 'Johannesburg',
+						country: 'South Africa',
+						zipCode: '2000',
+						height: '165cm',
+						weight: '60kg',
+						maritalStatus: 'Married',
+						numberDependents: 2,
+						aboutMe: 'Experienced engineering manager with leadership expertise'
+					},
 					employmentProfile: {
 						position: 'Engineering Manager',
-						department: 'ENGINEERING',
-						startDate: '2023-01-01'
+						department: 'Engineering',
+						startDate: '2023-01-01',
+						isCurrentlyEmployed: true,
+						email: 'jane.smith@company.com',
+						contactNumber: '+27 64 987 6543'
 					}
+				}
+			},
+			basicUser: {
+				summary: '👤 Basic User Account',
+				description: 'Example of creating a basic user account with minimal required fields',
+				value: {
+					name: 'Alex',
+					surname: 'Johnson',
+					email: 'alex.johnson@loro.co.za',
+					username: 'alex.johnson',
+					password: 'BasicPass789!',
+					accessLevel: AccessLevel.USER
 				}
 			}
 		}
@@ -151,10 +243,48 @@ Creates a new user account in the system with comprehensive user management capa
 						email: { type: 'string', example: 'john.doe@loro.co.za' },
 						phone: { type: 'string', example: '+27 64 123 4567' },
 						photoURL: { type: 'string', example: 'https://example.com/photo.jpg' },
+						businesscardURL: { type: 'string', example: 'https://example.com/businesscard.jpg' },
+						role: { type: 'string', example: 'employee' },
+						status: { type: 'string', example: 'active' },
+						departmentId: { type: 'number', example: 1 },
 						accessLevel: { type: 'string', enum: Object.values(AccessLevel), example: AccessLevel.USER },
-						status: { type: 'string', enum: Object.values(AccountStatus), example: AccountStatus.ACTIVE },
+						organisationRef: { type: 'string', example: 'ORG123' },
 						userref: { type: 'string', example: 'USR123456' },
 						hrID: { type: 'number', example: 12345, description: 'HR system ID for backward compatibility' },
+						expoPushToken: { type: 'string', example: 'ExponentPushToken[abc123]' },
+						deviceId: { type: 'string', example: 'device123' },
+						platform: { type: 'string', example: 'ios' },
+						isDeleted: { type: 'boolean', example: false },
+						profile: {
+							type: 'object',
+							properties: {
+								uid: { type: 'number', example: 1 },
+								height: { type: 'string', example: '180cm' },
+								weight: { type: 'string', example: '75kg' },
+								gender: { type: 'string', example: 'MALE' },
+								dateOfBirth: { type: 'string', format: 'date', example: '1990-01-15' },
+								address: { type: 'string', example: '123 Main Street' },
+								city: { type: 'string', example: 'Cape Town' },
+								country: { type: 'string', example: 'South Africa' },
+								zipCode: { type: 'string', example: '7700' },
+								maritalStatus: { type: 'string', example: 'Single' },
+								aboutMe: { type: 'string', example: 'Passionate software developer' },
+								currentAge: { type: 'number', example: 30 },
+								numberDependents: { type: 'number', example: 0 }
+							}
+						},
+						employmentProfile: {
+							type: 'object',
+							properties: {
+								uid: { type: 'string', example: '1' },
+								position: { type: 'string', example: 'Software Engineer' },
+								department: { type: 'string', example: 'Engineering' },
+								startDate: { type: 'string', format: 'date', example: '2023-01-15' },
+								isCurrentlyEmployed: { type: 'boolean', example: true },
+								email: { type: 'string', example: 'john.doe@company.com' },
+								contactNumber: { type: 'string', example: '+27 64 123 4567' }
+							}
+						},
 						createdAt: { type: 'string', format: 'date-time' },
 						updatedAt: { type: 'string', format: 'date-time' },
 					},
@@ -305,36 +435,69 @@ Retrieves a comprehensive list of all users in your organization with advanced f
 									email: { type: 'string', example: 'john.doe@loro.co.za' },
 									phone: { type: 'string', example: '+27 64 123 4567' },
 									photoURL: { type: 'string', example: 'https://example.com/photo.jpg' },
+									businesscardURL: { type: 'string', example: 'https://example.com/businesscard.jpg' },
+									role: { type: 'string', example: 'employee' },
+									status: { type: 'string', example: 'active' },
+									departmentId: { type: 'number', example: 1 },
 									accessLevel: {
 										type: 'string',
 										enum: Object.values(AccessLevel),
 										example: AccessLevel.USER,
 									},
-									status: {
-										type: 'string',
-										enum: Object.values(AccountStatus),
-										example: AccountStatus.ACTIVE,
-									},
+									organisationRef: { type: 'string', example: 'ORG123' },
 									userref: { type: 'string', example: 'USR123456' },
 									hrID: { type: 'number', example: 12345, description: 'HR system ID for backward compatibility' },
+									expoPushToken: { type: 'string', example: 'ExponentPushToken[abc123]' },
+									deviceId: { type: 'string', example: 'device123' },
+									platform: { type: 'string', example: 'ios' },
+									isDeleted: { type: 'boolean', example: false },
 									createdAt: { type: 'string', format: 'date-time' },
 									updatedAt: { type: 'string', format: 'date-time' },
 									lastLoginAt: { type: 'string', format: 'date-time', example: '2023-11-30T14:30:00Z' },
 									profile: {
 										type: 'object',
 										properties: {
+											uid: { type: 'number', example: 1 },
 											height: { type: 'string', example: '180cm' },
 											weight: { type: 'string', example: '75kg' },
+											hairColor: { type: 'string', example: 'Brown' },
+											eyeColor: { type: 'string', example: 'Blue' },
 											gender: { type: 'string', example: 'MALE' },
+											ethnicity: { type: 'string', example: 'African' },
+											bodyType: { type: 'string', example: 'Athletic' },
+											smokingHabits: { type: 'string', example: 'Non-smoker' },
+											drinkingHabits: { type: 'string', example: 'Occasional' },
+											dateOfBirth: { type: 'string', format: 'date', example: '1990-01-15' },
+											address: { type: 'string', example: '123 Main Street' },
+											city: { type: 'string', example: 'Cape Town' },
+											country: { type: 'string', example: 'South Africa' },
+											zipCode: { type: 'string', example: '7700' },
+											aboutMe: { type: 'string', example: 'Passionate software developer' },
+											socialMedia: { type: 'string', example: 'twitter.com/johndoe' },
+											currentAge: { type: 'number', example: 30 },
+											maritalStatus: { type: 'string', example: 'Single' },
+											numberDependents: { type: 'number', example: 0 },
+											shoeSize: { type: 'string', example: '10' },
+											shirtSize: { type: 'string', example: 'L' },
+											pantsSize: { type: 'string', example: '32' },
+											dressSize: { type: 'string', example: 'M' },
+											coatSize: { type: 'string', example: 'L' }
 										},
 									},
 									employmentProfile: {
 										type: 'object',
 										properties: {
+											uid: { type: 'string', example: '1' },
 											position: { type: 'string', example: 'Senior Software Engineer' },
-											department: { type: 'string', example: 'ENGINEERING' },
+											department: { type: 'string', example: 'Engineering' },
 											startDate: { type: 'string', format: 'date', example: '2023-01-15' },
-											manager: { type: 'string', example: 'Jane Smith' },
+											endDate: { type: 'string', format: 'date', example: '2024-01-15' },
+											isCurrentlyEmployed: { type: 'boolean', example: true },
+											email: { type: 'string', example: 'john.doe@company.com' },
+											contactNumber: { type: 'string', example: '+27 64 123 4567' },
+											branchref: { type: 'string', example: 'BRANCH123' },
+											createdAt: { type: 'string', format: 'date-time' },
+											updatedAt: { type: 'string', format: 'date-time' }
 										},
 									},
 									branch: {
@@ -515,33 +678,69 @@ Retrieves comprehensive information about a specific user including their comple
 								email: { type: 'string', example: 'john.doe@loro.co.za' },
 								phone: { type: 'string', example: '+27 64 123 4567' },
 								photoURL: { type: 'string', example: 'https://example.com/photo.jpg' },
+								businesscardURL: { type: 'string', example: 'https://example.com/businesscard.jpg' },
+								role: { type: 'string', example: 'employee' },
+								status: { type: 'string', example: 'active' },
+								departmentId: { type: 'number', example: 1 },
 								accessLevel: { type: 'string', enum: Object.values(AccessLevel), example: AccessLevel.USER },
-								status: { type: 'string', enum: Object.values(AccountStatus), example: AccountStatus.ACTIVE },
+								organisationRef: { type: 'string', example: 'ORG123' },
 								userref: { type: 'string', example: 'USR123456' },
 								hrID: { type: 'number', example: 12345, description: 'HR system ID for backward compatibility' },
+								verificationToken: { type: 'string', example: 'abc123def456' },
+								resetToken: { type: 'string', example: 'xyz789uvw012' },
+								tokenExpires: { type: 'string', format: 'date-time', example: '2024-12-31T23:59:59Z' },
+								expoPushToken: { type: 'string', example: 'ExponentPushToken[abc123]' },
+								deviceId: { type: 'string', example: 'device123' },
+								platform: { type: 'string', example: 'ios' },
+								pushTokenUpdatedAt: { type: 'string', format: 'date-time', example: '2024-01-01T00:00:00Z' },
+								isDeleted: { type: 'boolean', example: false },
 								createdAt: { type: 'string', format: 'date-time' },
 								updatedAt: { type: 'string', format: 'date-time' },
 								lastLoginAt: { type: 'string', format: 'date-time', example: '2023-11-30T14:30:00Z' },
 								profile: {
 									type: 'object',
 									properties: {
+										uid: { type: 'number', example: 1 },
 										height: { type: 'string', example: '180cm' },
 										weight: { type: 'string', example: '75kg' },
+										hairColor: { type: 'string', example: 'Brown' },
+										eyeColor: { type: 'string', example: 'Blue' },
 										gender: { type: 'string', example: 'MALE' },
+										ethnicity: { type: 'string', example: 'African' },
+										bodyType: { type: 'string', example: 'Athletic' },
+										smokingHabits: { type: 'string', example: 'Non-smoker' },
+										drinkingHabits: { type: 'string', example: 'Occasional' },
 										dateOfBirth: { type: 'string', format: 'date', example: '1990-05-15' },
-										emergencyContact: { type: 'string', example: 'Jane Doe - +27 64 987 6543' },
+										address: { type: 'string', example: '123 Main Street' },
+										city: { type: 'string', example: 'Cape Town' },
+										country: { type: 'string', example: 'South Africa' },
+										zipCode: { type: 'string', example: '7700' },
+										aboutMe: { type: 'string', example: 'Passionate software developer with 5+ years experience' },
+										socialMedia: { type: 'string', example: 'twitter.com/johndoe' },
+										currentAge: { type: 'number', example: 30 },
+										maritalStatus: { type: 'string', example: 'Single' },
+										numberDependents: { type: 'number', example: 0 },
+										shoeSize: { type: 'string', example: '10' },
+										shirtSize: { type: 'string', example: 'L' },
+										pantsSize: { type: 'string', example: '32' },
+										dressSize: { type: 'string', example: 'M' },
+										coatSize: { type: 'string', example: 'L' }
 									},
 								},
 								employmentProfile: {
 									type: 'object',
 									properties: {
+										uid: { type: 'string', example: '1' },
 										position: { type: 'string', example: 'Senior Software Engineer' },
-										department: { type: 'string', example: 'ENGINEERING' },
+										department: { type: 'string', example: 'Engineering' },
 										startDate: { type: 'string', format: 'date', example: '2023-01-15' },
-										manager: { type: 'string', example: 'Jane Smith' },
-										employmentType: { type: 'string', example: 'FULL_TIME' },
-										salary: { type: 'number', example: 75000 },
-										currency: { type: 'string', example: 'ZAR' },
+										endDate: { type: 'string', format: 'date', example: '2024-01-15' },
+										isCurrentlyEmployed: { type: 'boolean', example: true },
+										email: { type: 'string', example: 'john.doe@company.com' },
+										contactNumber: { type: 'string', example: '+27 64 123 4567' },
+										branchref: { type: 'string', example: 'BRANCH123' },
+										createdAt: { type: 'string', format: 'date-time' },
+										updatedAt: { type: 'string', format: 'date-time' }
 									},
 								},
 								branch: {
@@ -685,7 +884,7 @@ Updates an existing user's information with comprehensive validation and audit t
 	})
 	@ApiBody({ 
 		type: UpdateUserDto,
-		description: 'User update payload with fields to modify',
+		description: 'User update payload with fields to modify - supports partial updates',
 		examples: {
 			profileUpdate: {
 				summary: '👤 Profile Update',
@@ -694,27 +893,89 @@ Updates an existing user's information with comprehensive validation and audit t
 					name: 'John',
 					surname: 'Doe',
 					phone: '+27 64 123 4567',
-					photoURL: 'https://example.com/new-photo.jpg'
+					photoURL: 'https://example.com/new-photo.jpg',
+					businesscardURL: 'https://example.com/new-businesscard.jpg',
+					profile: {
+						height: '185cm',
+						weight: '80kg',
+						address: '456 New Street',
+						city: 'Johannesburg',
+						country: 'South Africa',
+						zipCode: '2000',
+						maritalStatus: 'Married',
+						aboutMe: 'Updated profile description with new experiences',
+						socialMedia: 'linkedin.com/in/johndoe'
+					}
 				}
 			},
 			employmentUpdate: {
 				summary: '💼 Employment Update',
 				description: 'Update employment details',
 				value: {
+					departmentId: 2,
 					employmentProfile: {
 						position: 'Lead Software Engineer',
-						department: 'ENGINEERING',
-						salary: 85000,
-						manager: 'Jane Smith'
+						department: 'Engineering',
+						startDate: '2023-01-15',
+						isCurrentlyEmployed: true,
+						email: 'john.doe@newcompany.com',
+						contactNumber: '+27 64 999 8888',
+						branchref: 'BRANCH456'
 					}
 				}
 			},
 			statusUpdate: {
 				summary: '🔄 Status Change',
-				description: 'Change user status',
+				description: 'Change user status and access level',
 				value: {
-					status: AccountStatus.ACTIVE,
-					accessLevel: AccessLevel.MANAGER
+					status: 'active',
+					role: 'manager',
+					accessLevel: AccessLevel.MANAGER,
+					organisationRef: 'ORG456'
+				}
+			},
+			deviceUpdate: {
+				summary: '📱 Device Information Update',
+				description: 'Update device and notification settings',
+				value: {
+					expoPushToken: 'ExponentPushToken[updated-token]',
+					deviceId: 'device789xyz',
+					platform: 'android',
+					pushTokenUpdatedAt: '2024-02-01T00:00:00Z'
+				}
+			},
+			comprehensiveUpdate: {
+				summary: '🔄 Comprehensive Update',
+				description: 'Update multiple aspects of user profile',
+				value: {
+					name: 'John',
+					surname: 'Doe-Smith',
+					email: 'john.doesmith@loro.co.za',
+					phone: '+27 64 111 2222',
+					role: 'senior-engineer',
+					departmentId: 3,
+					profile: {
+						gender: 'MALE',
+						dateOfBirth: '1990-01-15',
+						address: '789 Executive Drive',
+						city: 'Durban',
+						country: 'South Africa',
+						zipCode: '4000',
+						height: '182cm',
+						weight: '78kg',
+						maritalStatus: 'Married',
+						numberDependents: 1,
+						aboutMe: 'Senior software engineer with team leadership experience',
+						currentAge: 34
+					},
+					employmentProfile: {
+						position: 'Senior Software Engineer',
+						department: 'Engineering',
+						startDate: '2023-01-15',
+						isCurrentlyEmployed: true,
+						email: 'john.doesmith@company.com',
+						contactNumber: '+27 64 111 2222'
+					}
 				}
 			}
 		}
@@ -735,10 +996,50 @@ Updates an existing user's information with comprehensive validation and audit t
 								name: { type: 'string', example: 'John' },
 								surname: { type: 'string', example: 'Doe' },
 								email: { type: 'string', example: 'john.doe@loro.co.za' },
+								phone: { type: 'string', example: '+27 64 123 4567' },
+								photoURL: { type: 'string', example: 'https://example.com/photo.jpg' },
+								businesscardURL: { type: 'string', example: 'https://example.com/businesscard.jpg' },
+								role: { type: 'string', example: 'manager' },
+								status: { type: 'string', example: 'active' },
+								departmentId: { type: 'number', example: 2 },
+								accessLevel: { type: 'string', enum: Object.values(AccessLevel), example: AccessLevel.MANAGER },
+								organisationRef: { type: 'string', example: 'ORG456' },
+								userref: { type: 'string', example: 'USR789012' },
+								hrID: { type: 'number', example: 54321 },
+								expoPushToken: { type: 'string', example: 'ExponentPushToken[updated-token]' },
+								deviceId: { type: 'string', example: 'device456def' },
+								platform: { type: 'string', example: 'android' },
+								pushTokenUpdatedAt: { type: 'string', format: 'date-time', example: '2024-02-01T00:00:00Z' },
+								isDeleted: { type: 'boolean', example: false },
+								profile: {
+									type: 'object',
+									properties: {
+										uid: { type: 'number', example: 1 },
+										height: { type: 'string', example: '185cm' },
+										weight: { type: 'string', example: '80kg' },
+										gender: { type: 'string', example: 'MALE' },
+										address: { type: 'string', example: '456 New Street' },
+										city: { type: 'string', example: 'Johannesburg' },
+										country: { type: 'string', example: 'South Africa' },
+										maritalStatus: { type: 'string', example: 'Married' },
+										aboutMe: { type: 'string', example: 'Updated profile description with new experiences' }
+									}
+								},
+								employmentProfile: {
+									type: 'object',
+									properties: {
+										uid: { type: 'string', example: '1' },
+										position: { type: 'string', example: 'Lead Software Engineer' },
+										department: { type: 'string', example: 'Engineering' },
+										isCurrentlyEmployed: { type: 'boolean', example: true },
+										email: { type: 'string', example: 'john.doe@newcompany.com' },
+										contactNumber: { type: 'string', example: '+27 64 999 8888' }
+									}
+								},
 								updatedFields: {
 									type: 'array',
 									items: { type: 'string' },
-									example: ['name', 'phone', 'employmentProfile.position']
+									example: ['name', 'phone', 'role', 'profile.address', 'employmentProfile.position']
 								},
 								updatedAt: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' }
 							}
@@ -753,12 +1054,39 @@ Updates an existing user's information with comprehensive validation and audit t
 										properties: {
 											field: { type: 'string', example: 'position' },
 											oldValue: { type: 'string', example: 'Software Engineer' },
-											newValue: { type: 'string', example: 'Lead Software Engineer' }
+											newValue: { type: 'string', example: 'Lead Software Engineer' },
+											category: { type: 'string', example: 'employment' }
 										}
-									}
+									},
+									example: [
+										{
+											field: 'position',
+											oldValue: 'Software Engineer',
+											newValue: 'Lead Software Engineer',
+											category: 'employment'
+										},
+										{
+											field: 'address',
+											oldValue: '123 Main Street',
+											newValue: '456 New Street',
+											category: 'profile'
+										},
+										{
+											field: 'role',
+											oldValue: 'employee',
+											newValue: 'manager',
+											category: 'system'
+										}
+									]
 								},
 								updatedBy: { type: 'string', example: 'Admin User' },
-								timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' }
+								timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+								totalChanges: { type: 'number', example: 3 },
+								affectedCategories: {
+									type: 'array',
+									items: { type: 'string' },
+									example: ['employment', 'profile', 'system']
+								}
 							}
 						}
 					}

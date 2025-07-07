@@ -8,7 +8,7 @@ export class RewardsSubscriber {
     constructor(private readonly rewardsService: RewardsService) { }
 
     @OnEvent('task.created')
-    handleTaskCreated(payload: { taskId: string; userId: number }) {
+    handleTaskCreated(payload: { taskId: string; userId: number; orgId?: number; branchId?: number }) {
         this.rewardsService.awardXP({
             owner: payload.userId,
             action: 'CREATE_TASK',
@@ -17,11 +17,11 @@ export class RewardsSubscriber {
                 id: payload.taskId,
                 type: 'task'
             }
-        });
+        }, payload.orgId, payload.branchId);
     }
 
     @OnEvent('task.completed')
-    handleTaskCompleted(payload: { taskId: string; userId: number; completedEarly: boolean }) {
+    handleTaskCompleted(payload: { taskId: string; userId: number; completedEarly: boolean; orgId?: number; branchId?: number }) {
         this.rewardsService.awardXP({
             owner: payload.userId,
             action: payload.completedEarly ? 'COMPLETE_TASK_EARLY' : 'COMPLETE_TASK',
@@ -31,11 +31,11 @@ export class RewardsSubscriber {
                 type: 'task',
                 details: { completedEarly: payload.completedEarly }
             }
-        });
+        }, payload.orgId, payload.branchId);
     }
 
     @OnEvent('lead.created')
-    handleLeadCreated(payload: { leadId: string; userId: number }) {
+    handleLeadCreated(payload: { leadId: string; userId: number; orgId?: number; branchId?: number }) {
         this.rewardsService.awardXP({
             owner: payload.userId,
             action: 'CREATE_LEAD',
@@ -44,6 +44,6 @@ export class RewardsSubscriber {
                 id: payload.leadId,
                 type: 'lead'
             }
-        });
+        }, payload.orgId, payload.branchId);
     }
 } 

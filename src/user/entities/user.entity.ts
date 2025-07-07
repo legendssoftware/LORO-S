@@ -38,7 +38,7 @@ import { ClientCommunicationSchedule } from '../../clients/entities/client-commu
 
 @Entity('users')
 @Index(['email']) // Login & unique lookups
-@Index(['username']) // Login & unique lookups  
+@Index(['username']) // Login & unique lookups
 @Index(['status', 'isDeleted']) // Active user filtering
 @Index(['role', 'status']) // Role-based access queries
 @Index(['organisationRef', 'status']) // Organization filtering
@@ -53,13 +53,13 @@ export class User {
 	@Column({ unique: true, nullable: false })
 	username: string;
 
-	@Column()
+	@Column({ nullable: false })
 	password: string;
 
-	@Column()
+	@Column({ nullable: false })
 	name: string;
 
-	@Column()
+	@Column({ nullable: false })
 	surname: string;
 
 	@Column({ unique: true, nullable: false })

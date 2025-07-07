@@ -118,4 +118,7 @@ export enum EmailType {
 	// Payslip related emails
 	PAYSLIP_AVAILABLE = 'payslip_available',
 	PAYSLIP_UPLOADED_ADMIN = 'payslip_uploaded_admin',
+	// Target achievement admin notifications
+	USER_TARGET_ACHIEVEMENT_ADMIN = 'user_target_achievement_admin',
+	LEAD_TARGET_ACHIEVEMENT_ADMIN = 'lead_target_achievement_admin',
 }

@@ -1457,6 +1457,52 @@ export interface PayslipUploadedAdminEmailData extends BaseEmailData {
 	emailSent: boolean;
 }
 
+// Target Achievement Admin Notification Data Types
+export interface UserTargetAchievementAdminData extends BaseEmailData {
+	adminName: string;
+	employeeName: string;
+	employeeEmail: string;
+	employeeRole?: string;
+	targetType: string;
+	achievementPercentage: number;
+	currentValue: number;
+	targetValue: number;
+	achievementDate: string;
+	organizationName: string;
+	branchName?: string;
+	periodStartDate: string;
+	periodEndDate: string;
+	dashboardUrl: string;
+	motivationalMessage?: string;
+	employeeStartDate?: string;
+	employeePerformanceHistory?: string;
+	teamImpact?: string;
+	recognitionSuggestions?: string[];
+}
+
+export interface LeadTargetAchievementAdminData extends BaseEmailData {
+	adminName: string;
+	employeeName: string;
+	employeeEmail: string;
+	employeeRole?: string;
+	targetType: string;
+	achievementPercentage: number;
+	currentValue: number;
+	targetValue: number;
+	achievementDate: string;
+	organizationName: string;
+	branchName?: string;
+	periodStartDate: string;
+	periodEndDate: string;
+	dashboardUrl: string;
+	motivationalMessage?: string;
+	leadQualityScore?: number;
+	conversionRate?: number;
+	salesPipelineContribution?: number;
+	teamLeadGenerationRanking?: number;
+	recognitionSuggestions?: string[];
+}
+
 export interface EmailDataMap {
 	[EmailType.SIGNUP]: SignupEmailData;
 	[EmailType.VERIFICATION]: VerificationEmailData;
@@ -1569,6 +1615,9 @@ export interface EmailDataMap {
 	// Payslip email mappings
 	[EmailType.PAYSLIP_AVAILABLE]: PayslipAvailableEmailData;
 	[EmailType.PAYSLIP_UPLOADED_ADMIN]: PayslipUploadedAdminEmailData;
+	// Target Achievement Admin Notification email mappings
+	[EmailType.USER_TARGET_ACHIEVEMENT_ADMIN]: UserTargetAchievementAdminData;
+	[EmailType.LEAD_TARGET_ACHIEVEMENT_ADMIN]: LeadTargetAchievementAdminData;
 }
 
 export type EmailTemplateData<T extends EmailType> = T extends keyof EmailDataMap ? EmailDataMap[T] : never;

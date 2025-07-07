@@ -1,0 +1,134 @@
+{{#base headerTitle="🎉 Congratulations on Your Outstanding Achievement!" headerSubtitle="You've successfully reached your target - exceptional performance!"}}
+
+<div class="greeting">
+    Hello {{employeeName}}! 🌟
+</div>
+
+<div class="message">
+    <p><strong>Outstanding achievement!</strong> We're thrilled to inform you that you've successfully reached your {{targetType}} target with an impressive {{achievementPercentage}}% completion rate.</p>
+    
+    <p>Your dedication, hard work, and commitment have paid off! This achievement reflects your exceptional performance and contribution to our organization's success.</p>
+</div>
+
+<!-- Achievement Banner -->
+<div class="success-notice">
+    <h3 style="color: #15803d; margin-bottom: 16px;">🏆 TARGET ACHIEVED!</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Target Type</span>
+            <span class="detail-value" style="font-weight: 700; color: #15803d;">{{targetType}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Achievement Rate</span>
+            <span class="detail-value" style="font-weight: 700; color: #15803d; font-size: 18px;">{{achievementPercentage}}%</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Current Value</span>
+            <span class="detail-value" style="font-weight: 700; color: #15803d;">{{currentValue}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Target Value</span>
+            <span class="detail-value" style="font-weight: 700; color: #15803d;">{{targetValue}}</span>
+        </div>
+    </div>
+</div>
+
+<!-- Performance Summary -->
+<div class="info-card">
+    <h4 style="color: #7c2d92; margin-bottom: 16px;">📊 Performance Summary</h4>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Achievement Date</span>
+            <span class="detail-value">{{formatDate achievementDate}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Target Period</span>
+            <span class="detail-value">{{targetPeriod}}</span>
+        </div>
+        {{#if remainingDays}}
+        <div class="detail-item">
+            <span class="detail-label">Days Ahead</span>
+            <span class="detail-value" style="color: #15803d; font-weight: 600;">{{remainingDays}} days early!</span>
+        </div>
+        {{/if}}
+        {{#if organizationName}}
+        <div class="detail-item">
+            <span class="detail-label">Organization</span>
+            <span class="detail-value">{{organizationName}}</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+
+<!-- Achievement Recognition -->
+<div class="success-notice">
+    <h4 style="color: #15803d; margin-bottom: 16px;">🌟 What This Achievement Means</h4>
+    <ul style="margin-left: 20px; line-height: 1.8; font-size: 15px;">
+        <li><strong>Exceptional Performance:</strong> You've demonstrated outstanding commitment and skill in achieving your {{targetType}} target</li>
+        <li><strong>Team Contribution:</strong> Your success directly contributes to our organization's overall growth and success</li>
+        <li><strong>Professional Growth:</strong> This achievement showcases your capabilities and dedication to excellence</li>
+        <li><strong>Inspiration:</strong> Your success serves as motivation for your colleagues and team members</li>
+    </ul>
+</div>
+
+<!-- Next Steps -->
+<div class="info-card">
+    <h4 style="color: #7c2d92; margin-bottom: 16px;">🚀 What's Next?</h4>
+    <ul style="margin-left: 20px; color: #4b5563; line-height: 1.8; font-size: 15px;">
+        <li><strong>Celebrate Your Success:</strong> Take a moment to acknowledge your hard work and dedication</li>
+        <li><strong>Maintain Momentum:</strong> Continue building on this success for the remainder of the period</li>
+        <li><strong>Share Your Experience:</strong> Consider mentoring colleagues who might benefit from your approach</li>
+        <li><strong>Set New Goals:</strong> Work with your manager to set ambitious yet achievable targets for the next period</li>
+        <li><strong>Recognition:</strong> Your achievement will be recognized in our performance reviews and team meetings</li>
+    </ul>
+</div>
+
+<!-- Management Recognition -->
+{{#if managerName}}
+<div class="info-card" style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-left-color: #f59e0b;">
+    <h4 style="color: #92400e; margin-bottom: 16px;">👥 Management Recognition</h4>
+    <p style="color: #92400e; font-size: 15px; line-height: 1.6;">
+        Your manager, <strong>{{managerName}}</strong>, has been notified of your exceptional achievement and will be in touch to discuss your performance and any potential rewards or recognition opportunities.
+    </p>
+</div>
+{{/if}}
+
+<!-- Reward Information -->
+{{#if rewardEligible}}
+<div class="success-notice">
+    <h4 style="color: #15803d; margin-bottom: 16px;">🎁 Reward & Recognition</h4>
+    <p style="font-size: 15px; line-height: 1.6;">
+        Congratulations! Your outstanding achievement makes you eligible for our performance reward program. You'll receive more details about your reward and recognition ceremony soon.
+    </p>
+</div>
+{{/if}}
+
+<!-- CTA Section -->
+<div class="cta-section">
+    <a href="{{dashboardUrl}}" class="cta-button">View Your Performance Dashboard</a>
+</div>
+
+<!-- Personal Message -->
+<div class="message">
+    <p style="font-size: 16px; color: #374151; line-height: 1.6; margin-top: 30px;">
+        <strong>Once again, congratulations on this fantastic achievement!</strong> Your hard work, dedication, and commitment to excellence have not gone unnoticed. We're proud to have you as part of our team and look forward to your continued success.
+    </p>
+    
+    <p style="font-size: 15px; color: #6b7280; line-height: 1.6; margin-top: 20px;">
+        Keep up the exceptional work, and remember that your success inspires everyone around you. We're excited to see what you'll achieve next!
+    </p>
+</div>
+
+<!-- Footer -->
+<div class="message">
+    <p style="font-size: 14px; color: #6b7280; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+        <strong>Achievement Details:</strong><br>
+        Employee: {{employeeName}}<br>
+        Target Type: {{targetType}}<br>
+        Achievement Date: {{formatDate achievementDate}}<br>
+        Performance Rate: {{achievementPercentage}}%<br><br>
+        <strong>Keep up the excellent work!</strong>
+    </p>
+</div>
+
+{{/base}} 

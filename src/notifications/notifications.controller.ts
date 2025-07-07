@@ -158,8 +158,9 @@ export class NotificationsController {
 		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({ summary: 'update a notification by reference code' })
-	update(@Param('ref') ref: number, @Body() updateNotificationDto: UpdateNotificationDto) {
-		return this.notificationsService.update(ref, updateNotificationDto);
+	update(@Param('ref') ref: number, @Body() updateNotificationDto: UpdateNotificationDto, @Req() req: AuthenticatedRequest) {
+		const { orgId, branchId } = req.user as any;
+		return this.notificationsService.update(ref, updateNotificationDto, orgId, branchId);
 	}
 
 	@Delete(':ref')

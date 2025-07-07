@@ -1,7 +1,13 @@
-import { Controller, Post, Body, Patch, Param, UseGuards, Get, Query } from '@nestjs/common';
+import { Controller, Post, Body, Patch, Param, UseGuards, Get, Query, Req } from '@nestjs/common';
 import { CheckInsService } from './check-ins.service';
 import { CreateCheckInDto } from './dto/create-check-in.dto';
 import { CreateCheckOutDto } from './dto/create-check-out.dto';
+import { Request } from 'express';
+
+interface AuthenticatedRequest extends Request {
+	user: any;
+}
+
 import {
 	ApiOperation,
 	ApiTags,
@@ -145,8 +151,9 @@ export class CheckInsController {
 			},
 		},
 	})
-	checkIn(@Body() createCheckInDto: CreateCheckInDto) {
-		return this.checkInsService.checkIn(createCheckInDto);
+	checkIn(@Body() createCheckInDto: CreateCheckInDto, @Req() req: AuthenticatedRequest) {
+		const { orgId, branchId } = req.user;
+		return this.checkInsService.checkIn(createCheckInDto, orgId, branchId);
 	}
 
 	@Get('status/:reference')
@@ -230,8 +237,9 @@ export class CheckInsController {
 			},
 		},
 	})
-	checkOut(@Body() createCheckOutDto: CreateCheckOutDto) {
-		return this.checkInsService.checkOut(createCheckOutDto);
+	checkOut(@Body() createCheckOutDto: CreateCheckOutDto, @Req() req: AuthenticatedRequest) {
+		const { orgId, branchId } = req.user;
+		return this.checkInsService.checkOut(createCheckOutDto, orgId, branchId);
 	}
 
 	@Post('client/:clientId')
@@ -259,12 +267,14 @@ export class CheckInsController {
 	checkInAtClient(
 		@Param('clientId') clientId: number,
 		@Body() createCheckInDto: CreateCheckInDto,
+		@Req() req: AuthenticatedRequest,
 	) {
+		const { orgId, branchId } = req.user;
 		// Add client to the DTO
 		const checkInWithClient = {
 			...createCheckInDto,
 			client: { uid: clientId }
 		};
-		return this.checkInsService.checkIn(checkInWithClient);
+		return this.checkInsService.checkIn(checkInWithClient, orgId, branchId);
 	}
 }

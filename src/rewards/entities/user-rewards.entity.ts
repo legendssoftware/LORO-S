@@ -44,6 +44,7 @@ export class UserRewards {
         sales: number;
         attendance: number;
         collaboration: number;
+        login: number;
         other: number;
     };
 

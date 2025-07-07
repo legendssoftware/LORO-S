@@ -23,7 +23,7 @@ export class CheckInsService {
 		private clientRepository: Repository<Client>,
 	) {}
 
-	async checkIn(createCheckInDto: CreateCheckInDto): Promise<{ message: string }> {
+	async checkIn(createCheckInDto: CreateCheckInDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
 		try {
 			if (!createCheckInDto?.owner) {
 				throw new BadRequestException(process.env.NOT_FOUND_MESSAGE);
@@ -71,7 +71,7 @@ export class CheckInsService {
 					type: XP_VALUES_TYPES.CHECK_IN_CLIENT,
 					details: 'Check-in reward',
 				},
-			});
+			}, orgId, branchId);
 
 			return response;
 		} catch (error) {
@@ -83,7 +83,7 @@ export class CheckInsService {
 		}
 	}
 
-	async checkOut(createCheckOutDto: CreateCheckOutDto): Promise<{ message: string; duration?: string }> {
+	async checkOut(createCheckOutDto: CreateCheckOutDto, orgId?: number, branchId?: number): Promise<{ message: string; duration?: string }> {
 		try {
 			if (!createCheckOutDto?.owner) {
 				throw new BadRequestException(process.env.NOT_FOUND_MESSAGE);
@@ -137,7 +137,7 @@ export class CheckInsService {
 					type: 'check-in',
 					details: 'Check-out reward',
 				},
-			});
+			}, orgId, branchId);
 
 			return response;
 		} catch (error) {

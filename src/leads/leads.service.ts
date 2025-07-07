@@ -434,6 +434,219 @@ export class LeadsService {
 		}
 	}
 
+	/**
+	 * Check for lead target achievements and send notifications
+	 */
+	async checkLeadTargetAchievements(userId: number, orgId?: number, branchId?: number): Promise<void> {
+		try {
+			this.logger.debug(`Checking lead target achievements for user: ${userId}`);
+
+			// Get user with target information
+			const user = await this.userRepository.findOne({
+				where: { uid: userId, isDeleted: false },
+				relations: ['userTarget', 'organisation', 'branch'],
+			});
+
+			if (!user || !user.userTarget) {
+				this.logger.debug(`No user target found for user: ${userId}`);
+				return;
+			}
+
+			const { userTarget } = user;
+
+			if (!userTarget.periodStartDate || !userTarget.periodEndDate) {
+				this.logger.warn(`User ${userId} has incomplete target period dates`);
+				return;
+			}
+
+			// Count leads created by user in the target period
+			const whereClause: any = {
+				owner: { uid: userId },
+				isDeleted: false,
+				createdAt: Between(userTarget.periodStartDate, userTarget.periodEndDate),
+				organisation: { uid: orgId },
+			};
+
+			if (branchId) {
+				whereClause.branch = { uid: branchId };
+			}
+
+			const currentLeadCount = await this.leadsRepository.count({ where: whereClause });
+			const targetLeadCount = userTarget.targetNewLeads;
+
+			if (!targetLeadCount || targetLeadCount <= 0) {
+				this.logger.debug(`No lead target set for user: ${userId}`);
+				return;
+			}
+
+			const achievementPercentage = (currentLeadCount / targetLeadCount) * 100;
+
+			// Check if target is achieved (100% or more)
+			if (achievementPercentage >= 100) {
+				await this.sendLeadTargetAchievementNotifications(user, {
+					currentValue: currentLeadCount,
+					targetValue: targetLeadCount,
+					achievementPercentage: Math.round(achievementPercentage),
+				});
+			}
+
+			this.logger.debug(`Lead target check completed for user: ${userId}, achievement: ${achievementPercentage.toFixed(1)}%`);
+		} catch (error) {
+			this.logger.error(`Error checking lead target achievements for user ${userId}: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Send lead target achievement notifications to user and admins
+	 */
+	private async sendLeadTargetAchievementNotifications(
+		user: User,
+		achievementData: {
+			currentValue: number;
+			targetValue: number;
+			achievementPercentage: number;
+		},
+	): Promise<void> {
+		try {
+			this.logger.log(`Sending lead target achievement notifications for user: ${user.uid}`);
+
+			const userTarget = user.userTarget;
+			const achievementEmailData = {
+				achievementPercentage: achievementData.achievementPercentage,
+				currentValue: achievementData.currentValue,
+				targetValue: achievementData.targetValue,
+				achievementDate: new Date().toLocaleDateString(),
+				periodStartDate: userTarget.periodStartDate?.toLocaleDateString() || 'N/A',
+				periodEndDate: userTarget.periodEndDate?.toLocaleDateString() || 'N/A',
+				motivationalMessage: this.generateLeadMotivationalMessage(achievementData),
+			};
+
+			// Send congratulations email to user
+			this.eventEmitter.emit('email.send', {
+				to: [user.email],
+				type: EmailType.USER_TARGET_ACHIEVEMENT,
+				data: {
+					name: `${user.name} ${user.surname}`.trim(),
+					userName: `${user.name} ${user.surname}`.trim(),
+					userEmail: user.email,
+					targetType: 'New Leads',
+					...achievementEmailData,
+					organizationName: user.organisation?.name || 'Organization',
+					branchName: user.branch?.name,
+					dashboardUrl: `${this.configService.get('DASHBOARD_URL')}/dashboard`,
+				}
+			});
+
+			// Send notification to organization admins
+			await this.sendLeadTargetAdminNotifications(user, achievementData);
+
+			this.logger.log(`Lead target achievement notifications sent for user: ${user.uid}`);
+		} catch (error) {
+			this.logger.error(`Error sending lead target achievement notifications for user ${user.uid}: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Send lead target achievement notifications to organization admins
+	 */
+	private async sendLeadTargetAdminNotifications(
+		user: User,
+		achievementData: {
+			currentValue: number;
+			targetValue: number;
+			achievementPercentage: number;
+		},
+	): Promise<void> {
+		try {
+			// Get organization admins
+			const admins = await this.getOrganizationAdmins(user.organisation?.uid);
+
+			if (admins.length === 0) {
+				this.logger.warn(`No admins found for organization: ${user.organisation?.uid}`);
+				return;
+			}
+
+			const adminEmailData = {
+				userName: `${user.name} ${user.surname}`.trim(),
+				userEmail: user.email,
+				organizationName: user.organisation?.name || 'Organization',
+				branchName: user.branch?.name || 'N/A',
+				targetType: 'New Leads',
+				currentValue: achievementData.currentValue,
+				targetValue: achievementData.targetValue,
+				achievementPercentage: achievementData.achievementPercentage,
+				periodStartDate: user.userTarget?.periodStartDate?.toLocaleDateString() || 'N/A',
+				periodEndDate: user.userTarget?.periodEndDate?.toLocaleDateString() || 'N/A',
+				dashboardUrl: `${this.configService.get('DASHBOARD_URL')}/dashboard`,
+				recognitionMessage: this.generateLeadRecognitionMessage(user, achievementData),
+			};
+
+			// Send admin notification emails
+			const adminEmails = admins.map(admin => admin.email);
+			
+			this.eventEmitter.emit('email.send', {
+				to: adminEmails,
+				type: EmailType.LEAD_TARGET_ACHIEVEMENT_ADMIN,
+				data: adminEmailData,
+			});
+
+			this.logger.log(`Lead target achievement admin notifications sent to ${adminEmails.length} admins for user: ${user.uid}`);
+		} catch (error) {
+			this.logger.error(`Error sending lead admin notifications for user ${user.uid}: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Get organization admins for notifications
+	 */
+	private async getOrganizationAdmins(orgId?: number): Promise<User[]> {
+		if (!orgId) {
+			return [];
+		}
+
+		try {
+			const admins = await this.userRepository.find({
+				where: {
+					organisation: { uid: orgId },
+					accessLevel: In([AccessLevel.ADMIN, AccessLevel.OWNER]),
+					isDeleted: false,
+					status: In([AccountStatus.ACTIVE]),
+				},
+				select: ['uid', 'name', 'surname', 'email', 'accessLevel'],
+			});
+
+			return admins;
+		} catch (error) {
+			this.logger.error(`Error fetching organization admins for org ${orgId}: ${error.message}`);
+			return [];
+		}
+	}
+
+	/**
+	 * Generate motivational message for lead target achievement
+	 */
+	private generateLeadMotivationalMessage(achievementData: any): string {
+		const messages = [
+			'Outstanding lead generation! Your prospecting efforts are paying off!',
+			'Excellent work on reaching your lead targets! Keep building that pipeline!',
+			'Fantastic lead achievement! Your dedication to finding new opportunities shows!',
+			'Well done on your lead generation success! You\'re driving business growth!',
+			'Impressive lead results! Your networking and outreach efforts are exceptional!',
+		];
+
+		const randomIndex = Math.floor(Math.random() * messages.length);
+		return messages[randomIndex];
+	}
+
+	/**
+	 * Generate recognition message for admins about lead achievements
+	 */
+	private generateLeadRecognitionMessage(user: User, achievementData: any): string {
+		const userName = `${user.name} ${user.surname}`.trim();
+		
+		return `${userName} has achieved their lead generation target by securing ${achievementData.currentValue} new leads (${achievementData.achievementPercentage}% of target). Their consistent prospecting efforts are contributing significantly to our sales pipeline.`;
+	}
+
 	async remove(ref: number, orgId?: number, branchId?: number): Promise<{ message: string }> {
 		try {
 			if (!orgId) {
@@ -1529,6 +1742,15 @@ export class LeadsService {
 			const recipients = [AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.SUPERVISOR];
 
 			this.eventEmitter.emit('send.notification', notification, recipients);
+
+			// 5. Check for lead target achievements
+			if (lead.owner?.uid) {
+				await this.checkLeadTargetAchievements(
+					lead.owner.uid,
+					lead.organisation?.uid,
+					lead.branch?.uid
+				);
+			}
 
 			this.logger.log(`Lead creation events completed for lead ${lead.uid}`);
 		} catch (error) {
