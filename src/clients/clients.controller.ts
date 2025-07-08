@@ -24,7 +24,7 @@ import { Client } from './entities/client.entity';
 import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
 import { GeneralStatus } from '../lib/enums/status.enums';
 
-@ApiTags('💎 Clients') 
+@ApiTags('💎 Clients')
 @Controller('clients')
 @UseGuards(AuthGuard, RoleGuard)
 @EnterpriseOnly('clients')
@@ -69,6 +69,82 @@ export class ClientsController {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.clientsService.create(createClientDto, orgId, branchId);
+	}
+
+	@Get('admin/all')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.SUPPORT,
+		AccessLevel.DEVELOPER,
+		AccessLevel.OWNER,
+		AccessLevel.SUPERVISOR,
+	)
+	@ApiOperation({
+		summary: 'Get all clients for admin purposes',
+		description: 'Retrieves all clients without user-specific filtering for admin tasks like user assignment',
+	})
+	@ApiQuery({ name: 'page', type: Number, required: false, description: 'Page number, defaults to 1' })
+	@ApiQuery({
+		name: 'limit',
+		type: Number,
+		required: false,
+		description: 'Number of records per page, defaults to 500 for admin purposes',
+	})
+	@ApiQuery({
+		name: 'status',
+		enum: GeneralStatus,
+		required: false,
+		description: 'Filter by client status',
+	})
+	@ApiQuery({
+		name: 'search',
+		type: String,
+		required: false,
+		description: 'Search term for client name, email, or phone',
+	})
+	@ApiOkResponse({
+		description: 'List of all clients retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				data: {
+					type: 'array',
+					items: { type: 'object' },
+				},
+				meta: {
+					type: 'object',
+					properties: {
+						total: { type: 'number', example: 100 },
+						page: { type: 'number', example: 1 },
+						limit: { type: 'number', example: 500 },
+						totalPages: { type: 'number', example: 1 },
+					},
+				},
+				message: { type: 'string', example: 'Success' },
+			},
+		},
+	})
+	findAllForAdmin(
+		@Req() req: AuthenticatedRequest,
+		@Query('page') page?: number,
+		@Query('limit') limit?: number,
+		@Query('status') status?: GeneralStatus,
+		@Query('search') search?: string,
+	) {
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
+		const branchId = req.user?.branch?.uid;
+		const filters = { status, search };
+
+		// For admin purposes, we don't pass userId to bypass user-specific filtering
+		return this.clientsService.findAll(
+			page ? Number(page) : 1,
+			limit ? Number(limit) : 500, // Higher default limit for admin purposes
+			orgId,
+			branchId,
+			filters,
+			undefined, // No userId = no user-specific filtering
+		);
 	}
 
 	@Get()
@@ -214,7 +290,8 @@ export class ClientsController {
 	)
 	@ApiOperation({
 		summary: 'Update a client',
-		description: 'Updates an existing client with the provided information. Can be used to convert leads to clients by setting status to "converted".',
+		description:
+			'Updates an existing client with the provided information. Can be used to convert leads to clients by setting status to "converted".',
 	})
 	@ApiParam({ name: 'ref', description: 'Client reference code or ID', type: 'number' })
 	@ApiBody({ type: UpdateClientDto })
@@ -399,10 +476,7 @@ export class ClientsController {
 	@ApiNotFoundResponse({
 		description: 'Client not found',
 	})
-	getClientCheckIns(
-		@Param('clientId') clientId: number,
-		@Req() req: AuthenticatedRequest,
-	) {
+	getClientCheckIns(@Param('clientId') clientId: number, @Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.clientsService.getClientCheckIns(clientId, orgId, branchId);
@@ -412,7 +486,8 @@ export class ClientsController {
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.DEVELOPER, AccessLevel.OWNER)
 	@ApiOperation({
 		summary: 'Test communication task generation',
-		description: 'Manually trigger the communication task generation cron job for testing purposes. Admin/Manager access only.',
+		description:
+			'Manually trigger the communication task generation cron job for testing purposes. Admin/Manager access only.',
 	})
 	@ApiCreatedResponse({
 		description: 'Task generation completed successfully',
