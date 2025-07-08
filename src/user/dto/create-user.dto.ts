@@ -256,4 +256,14 @@ export class CreateUserDto {
         required: false,
     })
     employmentProfile?: CreateUserEmploymentProfileDto;
+
+    @IsOptional()
+    @IsNumber({}, { each: true })
+    @ApiProperty({
+        description: 'Array of client UIDs that this user has access to',
+        example: [1, 2, 3],
+        type: [Number],
+        required: false,
+    })
+    assignedClientIds?: number[];
 }

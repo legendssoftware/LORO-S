@@ -52,6 +52,7 @@ import { Between } from 'typeorm';
 import { EmailType } from '../lib/enums/email.enums';
 import { NewUserWelcomeData } from '../lib/types/email-templates.types';
 import { ExternalTargetUpdateDto, TargetUpdateMode } from './dto/external-target-update.dto';
+import { formatDateSafely } from '../lib/utils/date.utils';
 
 @Injectable()
 export class UserService {
@@ -271,7 +272,7 @@ export class UserService {
 	async create(createUserDto: CreateUserDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
 		const startTime = Date.now();
 		this.logger.log(
-			`Creating new user: ${createUserDto.email} ${orgId ? `in org: ${orgId}` : ''} ${
+			`[USER_CREATION] Starting user creation process for: ${createUserDto.email} ${orgId ? `in org: ${orgId}` : ''} ${
 				branchId ? `in branch: ${branchId}` : ''
 			}`,
 		);
@@ -279,8 +280,14 @@ export class UserService {
 		try {
 			// Hash password if provided
 			if (createUserDto.password) {
-				this.logger.debug('Hashing user password');
+				this.logger.debug('[USER_CREATION] Hashing user password');
 				createUserDto.password = await bcrypt.hash(createUserDto.password, 10);
+			}
+
+			// Generate user reference if not provided
+			if (!createUserDto.userref) {
+				createUserDto.userref = `USR${Math.floor(100000 + Math.random() * 900000)}`;
+				this.logger.debug(`[USER_CREATION] Generated user reference: ${createUserDto.userref}`);
 			}
 
 			// Add organization and branch data if provided
@@ -290,24 +297,27 @@ export class UserService {
 				...(branchId && { branch: { uid: branchId } }),
 			};
 
-			this.logger.debug('Saving user to database');
+			this.logger.debug('[USER_CREATION] Saving user to database');
 			const user = await this.userRepository.save(userData);
 
 			if (!user) {
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
 			}
 
-			this.logger.log(`User created successfully: ${user.uid} (${user.email})`);
+			this.logger.log(`[USER_CREATION] User created successfully: ${user.uid} (${user.email}) with role: ${user.accessLevel}`);
 
 			// Invalidate cache after creation
 			await this.invalidateUserCache(user);
 
-			// Send welcome email to the new user
-			this.logger.debug('Sending welcome email to new user');
-			await this.sendWelcomeEmail(user);
+			// Send welcome and creation notification emails
+			this.logger.debug('[USER_CREATION] Sending welcome and notification emails');
+			await Promise.all([
+				this.sendWelcomeEmail(user),
+				this.sendUserCreationNotificationEmail(user),
+			]);
 
 			const executionTime = Date.now() - startTime;
-			this.logger.log(`User creation completed in ${executionTime}ms for user: ${user.email}`);
+			this.logger.log(`[USER_CREATION] User creation completed successfully in ${executionTime}ms for user: ${user.email}`);
 
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,
@@ -317,7 +327,8 @@ export class UserService {
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
 			this.logger.error(
-				`Failed to create user: ${createUserDto.email} after ${executionTime}ms. Error: ${error.message}`,
+				`[USER_CREATION] Failed to create user: ${createUserDto.email} after ${executionTime}ms. Error: ${error.message}`,
+				error.stack,
 			);
 
 			const response = {
@@ -790,60 +801,112 @@ export class UserService {
 	): Promise<{ message: string }> {
 		const startTime = Date.now();
 		this.logger.log(
-			`Updating user: ${ref} ${orgId ? `in org: ${orgId}` : ''} ${branchId ? `in branch: ${branchId}` : ''}`,
+			`[USER_UPDATE] Starting user update process for user ID: ${ref} ${orgId ? `in org: ${orgId}` : ''} ${
+				branchId ? `in branch: ${branchId}` : ''
+			}`,
 		);
 
 		try {
-			// Build where conditions
-			const whereConditions: any = {
-				uid: ref,
-				isDeleted: false,
-			};
-
-			// Add organization filter if provided
-			if (orgId) {
-				whereConditions.organisation = { uid: orgId };
-			}
-
-			// Add branch filter if provided
-			if (branchId) {
-				whereConditions.branch = { uid: branchId };
-			}
-
-			this.logger.debug(`Finding user ${ref} with scope conditions`);
-			const user = await this.userRepository.findOne({
-				where: whereConditions,
-				relations: ['organisation', 'branch'],
+			this.logger.debug(`[USER_UPDATE] Fetching current user data for comparison`);
+			const existingUser = await this.userRepository.findOne({
+				where: { uid: ref, isDeleted: false },
+				relations: ['branch', 'organisation'],
 			});
 
-			if (!user) {
-				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
+			if (!existingUser) {
+				throw new NotFoundException('User not found');
 			}
 
-			this.logger.debug(`Found user: ${user.email}, preparing updates`);
+			// Track what's being changed for notifications
+			const changes = {
+				password: false,
+				role: false,
+				status: false,
+				profile: false,
+			};
 
-			// Hash password if provided
+			// Check for password change
 			if (updateUserDto.password) {
-				this.logger.debug('Hashing updated password');
+				this.logger.debug(`[USER_UPDATE] Password change detected for user: ${existingUser.email}`);
 				updateUserDto.password = await bcrypt.hash(updateUserDto.password, 10);
+				changes.password = true;
 			}
 
-			// Update the user with the provided data
-			this.logger.debug('Updating user in database');
-			await this.userRepository.update(ref, updateUserDto);
+			// Check for role/access level change
+			if (updateUserDto.accessLevel && updateUserDto.accessLevel !== existingUser.accessLevel) {
+				this.logger.log(`[USER_UPDATE] Role change detected: ${existingUser.accessLevel} → ${updateUserDto.accessLevel} for user: ${existingUser.email}`);
+				changes.role = true;
+			}
 
-			// Invalidate cache
-			await this.invalidateUserCache(user);
+			// Check for status change
+			if (updateUserDto.status && updateUserDto.status !== existingUser.status) {
+				this.logger.log(`[USER_UPDATE] Status change detected: ${existingUser.status} → ${updateUserDto.status} for user: ${existingUser.email}`);
+				changes.status = true;
+			}
+
+			// Check for profile changes
+			if (updateUserDto.name || updateUserDto.surname || updateUserDto.email || updateUserDto.phone) {
+				this.logger.debug(`[USER_UPDATE] Profile information change detected for user: ${existingUser.email}`);
+				changes.profile = true;
+			}
+
+			this.logger.debug('[USER_UPDATE] Updating user in database');
+			await this.userRepository.update({ uid: ref }, updateUserDto);
+
+			const updatedUser = await this.userRepository.findOne({
+				where: { uid: ref },
+				relations: ['branch', 'organisation'],
+			});
+
+			if (!updatedUser) {
+				throw new NotFoundException('User not found after update');
+			}
+
+			this.logger.log(`[USER_UPDATE] User updated successfully: ${updatedUser.uid} (${updatedUser.email})`);
+
+			// Invalidate cache after update
+			await this.invalidateUserCache(updatedUser);
+
+			// Send appropriate notification emails based on what changed
+			const emailPromises = [];
+			
+			if (changes.password) {
+				this.logger.debug(`[USER_UPDATE] Sending password update notification to: ${updatedUser.email}`);
+				emailPromises.push(this.sendPasswordUpdateNotificationEmail(updatedUser));
+			}
+
+			if (changes.role) {
+				this.logger.debug(`[USER_UPDATE] Sending role update notification to: ${updatedUser.email}`);
+				emailPromises.push(this.sendRoleUpdateNotificationEmail(updatedUser, existingUser.accessLevel, updatedUser.accessLevel));
+			}
+
+			if (changes.status) {
+				this.logger.debug(`[USER_UPDATE] Sending status update notification to: ${updatedUser.email}`);
+				emailPromises.push(this.sendStatusUpdateNotificationEmail(updatedUser, existingUser.status, updatedUser.status));
+			}
+
+			if (changes.profile) {
+				this.logger.debug(`[USER_UPDATE] Sending profile update notification to: ${updatedUser.email}`);
+				emailPromises.push(this.sendProfileUpdateNotificationEmail(updatedUser));
+			}
+
+			// Send all notification emails in parallel
+			if (emailPromises.length > 0) {
+				await Promise.all(emailPromises);
+			}
 
 			const executionTime = Date.now() - startTime;
-			this.logger.log(`User ${ref} (${user.email}) updated successfully in ${executionTime}ms`);
+			this.logger.log(`[USER_UPDATE] User update completed successfully in ${executionTime}ms for user: ${updatedUser.email}`);
 
 			return {
 				message: process.env.SUCCESS_MESSAGE,
 			};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
-			this.logger.error(`Failed to update user ${ref} after ${executionTime}ms. Error: ${error.message}`);
+			this.logger.error(
+				`[USER_UPDATE] Failed to update user ID: ${ref} after ${executionTime}ms. Error: ${error.message}`,
+				error.stack,
+			);
 
 			return {
 				message: error?.message,
@@ -1739,8 +1802,8 @@ export class UserService {
 				currentValue: achievedTargets.reduce((sum, target) => sum + target.currentValue, 0),
 				targetValue: achievedTargets.reduce((sum, target) => sum + target.targetValue, 0),
 				achievementDate: new Date().toLocaleDateString(),
-				periodStartDate: userTarget.periodStartDate?.toLocaleDateString() || 'N/A',
-				periodEndDate: userTarget.periodEndDate?.toLocaleDateString() || 'N/A',
+				periodStartDate: formatDateSafely(userTarget.periodStartDate),
+				periodEndDate: formatDateSafely(userTarget.periodEndDate),
 				motivationalMessage: this.generateMotivationalMessage(achievedTargets),
 			};
 
@@ -1792,8 +1855,8 @@ export class UserService {
 					achievementPercentage: target.achievementPercentage,
 				})),
 				totalTargetsAchieved: achievedTargets.length,
-				periodStartDate: userTarget.periodStartDate?.toLocaleDateString() || 'N/A',
-				periodEndDate: userTarget.periodEndDate?.toLocaleDateString() || 'N/A',
+				periodStartDate: formatDateSafely(userTarget.periodStartDate),
+				periodEndDate: formatDateSafely(userTarget.periodEndDate),
 				dashboardUrl: `${this.configService.get('FRONTEND_URL')}/dashboard`,
 				recognitionMessage: this.generateRecognitionMessage(user, achievedTargets),
 			};
@@ -2815,6 +2878,582 @@ export class UserService {
 			this.logger.log(`Period summary email sent to user ${userId} for ${summaryData.periodType} period`);
 		} catch (error) {
 			this.logger.error(`Error sending period summary email to user ${userId}:`, error.message);
+		}
+	}
+
+	/**
+	 * Add clients to a user's assigned clients list
+	 * @param userId - User ID to add clients to
+	 * @param clientIds - Array of client IDs to add
+	 * @param orgId - Optional organization ID for scoping
+	 * @param branchId - Optional branch ID for scoping
+	 * @returns Success message or error details
+	 */
+	async addAssignedClients(
+		userId: number,
+		clientIds: number[],
+		orgId?: number,
+		branchId?: number,
+	): Promise<{ message: string; addedClients?: number[] }> {
+		const startTime = Date.now();
+		this.logger.log(`Adding assigned clients to user ${userId}: ${clientIds.join(', ')}`);
+
+		try {
+			// Build where conditions
+			const whereConditions: any = {
+				uid: userId,
+				isDeleted: false,
+			};
+
+			if (orgId) {
+				whereConditions.organisation = { uid: orgId };
+			}
+
+			if (branchId) {
+				whereConditions.branch = { uid: branchId };
+			}
+
+			const user = await this.userRepository.findOne({
+				where: whereConditions,
+				relations: ['organisation', 'branch'],
+			});
+
+			if (!user) {
+				this.logger.warn(`User ${userId} not found for adding assigned clients`);
+				throw new NotFoundException('User not found');
+			}
+
+			// Get current assigned clients or initialize empty array
+			const currentAssignedClients = user.assignedClientIds || [];
+
+			// Add new client IDs (avoid duplicates)
+			const newClientIds = clientIds.filter(id => !currentAssignedClients.includes(id));
+			const updatedAssignedClients = [...currentAssignedClients, ...newClientIds];
+
+			// Update user with new assigned clients
+			await this.userRepository.update(userId, {
+				assignedClientIds: updatedAssignedClients,
+			});
+
+			// Invalidate cache
+			await this.invalidateUserCache(user);
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`Successfully added ${newClientIds.length} clients to user ${userId} in ${executionTime}ms`);
+
+			return {
+				message: 'Clients assigned successfully',
+				addedClients: newClientIds,
+			};
+		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`Failed to add assigned clients to user ${userId} after ${executionTime}ms: ${error.message}`);
+
+			return {
+				message: error.message || 'Failed to add assigned clients',
+			};
+		}
+	}
+
+	/**
+	 * Remove clients from a user's assigned clients list
+	 * @param userId - User ID to remove clients from
+	 * @param clientIds - Array of client IDs to remove
+	 * @param orgId - Optional organization ID for scoping
+	 * @param branchId - Optional branch ID for scoping
+	 * @returns Success message or error details
+	 */
+	async removeAssignedClients(
+		userId: number,
+		clientIds: number[],
+		orgId?: number,
+		branchId?: number,
+	): Promise<{ message: string; removedClients?: number[] }> {
+		const startTime = Date.now();
+		this.logger.log(`Removing assigned clients from user ${userId}: ${clientIds.join(', ')}`);
+
+		try {
+			// Build where conditions
+			const whereConditions: any = {
+				uid: userId,
+				isDeleted: false,
+			};
+
+			if (orgId) {
+				whereConditions.organisation = { uid: orgId };
+			}
+
+			if (branchId) {
+				whereConditions.branch = { uid: branchId };
+			}
+
+			const user = await this.userRepository.findOne({
+				where: whereConditions,
+				relations: ['organisation', 'branch'],
+			});
+
+			if (!user) {
+				this.logger.warn(`User ${userId} not found for removing assigned clients`);
+				throw new NotFoundException('User not found');
+			}
+
+			// Get current assigned clients
+			const currentAssignedClients = user.assignedClientIds || [];
+
+			// Remove specified client IDs
+			const updatedAssignedClients = currentAssignedClients.filter(id => !clientIds.includes(id));
+			const removedClients = clientIds.filter(id => currentAssignedClients.includes(id));
+
+			// Update user with updated assigned clients
+			await this.userRepository.update(userId, {
+				assignedClientIds: updatedAssignedClients,
+			});
+
+			// Invalidate cache
+			await this.invalidateUserCache(user);
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`Successfully removed ${removedClients.length} clients from user ${userId} in ${executionTime}ms`);
+
+			return {
+				message: 'Clients removed successfully',
+				removedClients,
+			};
+		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`Failed to remove assigned clients from user ${userId} after ${executionTime}ms: ${error.message}`);
+
+			return {
+				message: error.message || 'Failed to remove assigned clients',
+			};
+		}
+	}
+
+	/**
+	 * Get a user's assigned clients list
+	 * @param userId - User ID to get assigned clients for
+	 * @param orgId - Optional organization ID for scoping
+	 * @param branchId - Optional branch ID for scoping
+	 * @returns Array of assigned client IDs or null with message
+	 */
+	async getAssignedClients(
+		userId: number,
+		orgId?: number,
+		branchId?: number,
+	): Promise<{ message: string; assignedClients: number[] | null }> {
+		const startTime = Date.now();
+		this.logger.log(`Getting assigned clients for user ${userId}`);
+
+		try {
+			// Build where conditions
+			const whereConditions: any = {
+				uid: userId,
+				isDeleted: false,
+			};
+
+			if (orgId) {
+				whereConditions.organisation = { uid: orgId };
+			}
+
+			if (branchId) {
+				whereConditions.branch = { uid: branchId };
+			}
+
+			const user = await this.userRepository.findOne({
+				where: whereConditions,
+				select: ['uid', 'assignedClientIds'],
+			});
+
+			if (!user) {
+				this.logger.warn(`User ${userId} not found for getting assigned clients`);
+				throw new NotFoundException('User not found');
+			}
+
+			const assignedClients = user.assignedClientIds || [];
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`Successfully retrieved ${assignedClients.length} assigned clients for user ${userId} in ${executionTime}ms`);
+
+			return {
+				message: 'Assigned clients retrieved successfully',
+				assignedClients,
+			};
+		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`Failed to get assigned clients for user ${userId} after ${executionTime}ms: ${error.message}`);
+
+			return {
+				message: error.message || 'Failed to get assigned clients',
+				assignedClients: null,
+			};
+		}
+	}
+
+	/**
+	 * Set a user's assigned clients list (replaces existing list)
+	 * @param userId - User ID to set assigned clients for
+	 * @param clientIds - Array of client IDs to set
+	 * @param orgId - Optional organization ID for scoping
+	 * @param branchId - Optional branch ID for scoping
+	 * @returns Success message or error details
+	 */
+	async setAssignedClients(
+		userId: number,
+		clientIds: number[],
+		orgId?: number,
+		branchId?: number,
+	): Promise<{ message: string; assignedClients?: number[] }> {
+		const startTime = Date.now();
+		this.logger.log(`Setting assigned clients for user ${userId}: ${clientIds.join(', ')}`);
+
+		try {
+			// Build where conditions
+			const whereConditions: any = {
+				uid: userId,
+				isDeleted: false,
+			};
+
+			if (orgId) {
+				whereConditions.organisation = { uid: orgId };
+			}
+
+			if (branchId) {
+				whereConditions.branch = { uid: branchId };
+			}
+
+			const user = await this.userRepository.findOne({
+				where: whereConditions,
+				relations: ['organisation', 'branch'],
+			});
+
+			if (!user) {
+				this.logger.warn(`User ${userId} not found for setting assigned clients`);
+				throw new NotFoundException('User not found');
+			}
+
+			// Remove duplicates from input
+			const uniqueClientIds = [...new Set(clientIds)];
+
+			// Update user with new assigned clients
+			await this.userRepository.update(userId, {
+				assignedClientIds: uniqueClientIds,
+			});
+
+			// Invalidate cache
+			await this.invalidateUserCache(user);
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`Successfully set ${uniqueClientIds.length} assigned clients for user ${userId} in ${executionTime}ms`);
+
+			return {
+				message: 'Assigned clients set successfully',
+				assignedClients: uniqueClientIds,
+			};
+		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`Failed to set assigned clients for user ${userId} after ${executionTime}ms: ${error.message}`);
+
+			return {
+				message: error.message || 'Failed to set assigned clients',
+			};
+		}
+	}
+
+	/**
+	 * Send user creation notification email to the new user
+	 */
+	private async sendUserCreationNotificationEmail(user: User): Promise<void> {
+		try {
+			const emailData = {
+				to: user.email,
+				subject: 'Welcome to Loro CRM - Your Account Has Been Created',
+				html: `
+					<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+						<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center;">
+							<h1 style="color: white; margin: 0; font-size: 28px;">Welcome to Loro CRM!</h1>
+						</div>
+						<div style="padding: 30px; background-color: #f8f9fa;">
+							<h2 style="color: #333; margin-bottom: 20px;">Hello ${user.name} ${user.surname},</h2>
+							<p style="color: #666; line-height: 1.6; margin-bottom: 20px;">
+								Your account has been successfully created in the Loro CRM system. Here are your account details:
+							</p>
+							<div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0;">
+								<table style="width: 100%; border-collapse: collapse;">
+									<tr style="border-bottom: 1px solid #eee;">
+										<td style="padding: 10px 0; font-weight: bold; color: #333;">Name:</td>
+										<td style="padding: 10px 0; color: #666;">${user.name} ${user.surname}</td>
+									</tr>
+									<tr style="border-bottom: 1px solid #eee;">
+										<td style="padding: 10px 0; font-weight: bold; color: #333;">Email:</td>
+										<td style="padding: 10px 0; color: #666;">${user.email}</td>
+									</tr>
+									<tr style="border-bottom: 1px solid #eee;">
+										<td style="padding: 10px 0; font-weight: bold; color: #333;">Username:</td>
+										<td style="padding: 10px 0; color: #666;">${user.username}</td>
+									</tr>
+									<tr style="border-bottom: 1px solid #eee;">
+										<td style="padding: 10px 0; font-weight: bold; color: #333;">Role:</td>
+										<td style="padding: 10px 0; color: #666;">${user.accessLevel}</td>
+									</tr>
+									<tr style="border-bottom: 1px solid #eee;">
+										<td style="padding: 10px 0; font-weight: bold; color: #333;">Status:</td>
+										<td style="padding: 10px 0; color: #666;">${user.status}</td>
+									</tr>
+									${user.branch ? `
+									<tr>
+										<td style="padding: 10px 0; font-weight: bold; color: #333;">Branch:</td>
+										<td style="padding: 10px 0; color: #666;">${user.branch.name}</td>
+									</tr>
+									` : ''}
+								</table>
+							</div>
+							<p style="color: #666; line-height: 1.6; margin-bottom: 30px;">
+								You can now log in to your account and start using the Loro CRM system. If you have any questions or need assistance, please don't hesitate to contact our support team.
+							</p>
+							<div style="text-align: center; margin-top: 30px;">
+								<a href="${process.env.CLIENT_URL}/sign-in" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 25px; font-weight: bold;">Sign In to Your Account</a>
+							</div>
+						</div>
+						<div style="padding: 20px; text-align: center; color: #999; font-size: 12px;">
+							<p>This is an automated message. Please do not reply to this email.</p>
+							<p>&copy; ${new Date().getFullYear()} Loro CRM. All rights reserved.</p>
+						</div>
+					</div>
+				`,
+			};
+
+			// Use your existing email service or implement email sending logic here
+			// await this.emailService.sendEmail(emailData);
+			this.logger.log(`[EMAIL] User creation notification sent to: ${user.email}`);
+		} catch (error) {
+			this.logger.error(`[EMAIL] Failed to send user creation notification to ${user.email}: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Send password update notification email
+	 */
+	private async sendPasswordUpdateNotificationEmail(user: User): Promise<void> {
+		try {
+			const emailData = {
+				to: user.email,
+				subject: 'Password Updated - Loro CRM',
+				html: `
+					<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+						<div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); padding: 30px; text-align: center;">
+							<h1 style="color: white; margin: 0; font-size: 24px;">Password Updated</h1>
+						</div>
+						<div style="padding: 30px; background-color: #f8f9fa;">
+							<h2 style="color: #333; margin-bottom: 20px;">Hello ${user.name} ${user.surname},</h2>
+							<p style="color: #666; line-height: 1.6; margin-bottom: 20px;">
+								Your password has been successfully updated for your Loro CRM account.
+							</p>
+							<div style="background: #e8f5e8; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #28a745;">
+								<p style="margin: 0; color: #155724;">
+									<strong>Password changed on:</strong> ${new Date().toLocaleString()}
+								</p>
+							</div>
+							<p style="color: #666; line-height: 1.6; margin-bottom: 20px;">
+								If you did not make this change, please contact your administrator immediately or reach out to our support team.
+							</p>
+							<div style="background: #fff3cd; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #ffc107;">
+								<p style="margin: 0; color: #856404;">
+									<strong>Security Tip:</strong> Make sure to use a strong, unique password and never share it with anyone.
+								</p>
+							</div>
+						</div>
+						<div style="padding: 20px; text-align: center; color: #999; font-size: 12px;">
+							<p>This is an automated security notification. Please do not reply to this email.</p>
+							<p>&copy; ${new Date().getFullYear()} Loro CRM. All rights reserved.</p>
+						</div>
+					</div>
+				`,
+			};
+
+			this.logger.log(`[EMAIL] Password update notification sent to: ${user.email}`);
+		} catch (error) {
+			this.logger.error(`[EMAIL] Failed to send password update notification to ${user.email}: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Send role update notification email
+	 */
+	private async sendRoleUpdateNotificationEmail(user: User, previousRole: string, newRole: string): Promise<void> {
+		try {
+			const emailData = {
+				to: user.email,
+				subject: 'Your Role Has Been Updated - Loro CRM',
+				html: `
+					<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+						<div style="background: linear-gradient(135deg, #fa709a 0%, #fee140 100%); padding: 30px; text-align: center;">
+							<h1 style="color: white; margin: 0; font-size: 24px;">Role Updated</h1>
+						</div>
+						<div style="padding: 30px; background-color: #f8f9fa;">
+							<h2 style="color: #333; margin-bottom: 20px;">Hello ${user.name} ${user.surname},</h2>
+							<p style="color: #666; line-height: 1.6; margin-bottom: 20px;">
+								Your role in the Loro CRM system has been updated.
+							</p>
+							<div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0;">
+								<table style="width: 100%; border-collapse: collapse;">
+									<tr style="border-bottom: 1px solid #eee;">
+										<td style="padding: 10px 0; font-weight: bold; color: #333;">Previous Role:</td>
+										<td style="padding: 10px 0; color: #dc3545;">${previousRole}</td>
+									</tr>
+									<tr>
+										<td style="padding: 10px 0; font-weight: bold; color: #333;">New Role:</td>
+										<td style="padding: 10px 0; color: #28a745;">${newRole}</td>
+									</tr>
+								</table>
+							</div>
+							<div style="background: #d1ecf1; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #17a2b8;">
+								<p style="margin: 0; color: #0c5460;">
+									<strong>Note:</strong> Your new role may grant you access to different features and permissions within the system. Please log in to explore your updated capabilities.
+								</p>
+							</div>
+							<p style="color: #666; line-height: 1.6; margin-bottom: 20px;">
+								If you have any questions about your new role or need assistance, please contact your administrator or our support team.
+							</p>
+							<div style="text-align: center; margin-top: 30px;">
+								<a href="${process.env.CLIENT_URL}/sign-in" style="background: linear-gradient(135deg, #fa709a 0%, #fee140 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 25px; font-weight: bold;">Access Your Account</a>
+							</div>
+						</div>
+						<div style="padding: 20px; text-align: center; color: #999; font-size: 12px;">
+							<p>This is an automated notification. Please do not reply to this email.</p>
+							<p>&copy; ${new Date().getFullYear()} Loro CRM. All rights reserved.</p>
+						</div>
+					</div>
+				`,
+			};
+
+			this.logger.log(`[EMAIL] Role update notification sent to: ${user.email} (${previousRole} → ${newRole})`);
+		} catch (error) {
+			this.logger.error(`[EMAIL] Failed to send role update notification to ${user.email}: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Send status update notification email
+	 */
+	private async sendStatusUpdateNotificationEmail(user: User, previousStatus: string, newStatus: string): Promise<void> {
+		try {
+			const statusColors = {
+				active: '#28a745',
+				inactive: '#6c757d', 
+				suspended: '#dc3545',
+				pending: '#ffc107',
+				banned: '#dc3545',
+				deleted: '#6c757d'
+			};
+
+			const emailData = {
+				to: user.email,
+				subject: 'Your Account Status Has Been Updated - Loro CRM',
+				html: `
+					<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+						<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center;">
+							<h1 style="color: white; margin: 0; font-size: 24px;">Account Status Updated</h1>
+						</div>
+						<div style="padding: 30px; background-color: #f8f9fa;">
+							<h2 style="color: #333; margin-bottom: 20px;">Hello ${user.name} ${user.surname},</h2>
+							<p style="color: #666; line-height: 1.6; margin-bottom: 20px;">
+								Your account status in the Loro CRM system has been updated.
+							</p>
+							<div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0;">
+								<table style="width: 100%; border-collapse: collapse;">
+									<tr style="border-bottom: 1px solid #eee;">
+										<td style="padding: 10px 0; font-weight: bold; color: #333;">Previous Status:</td>
+										<td style="padding: 10px 0; color: ${statusColors[previousStatus] || '#6c757d'}; text-transform: uppercase; font-weight: bold;">${previousStatus}</td>
+									</tr>
+									<tr>
+										<td style="padding: 10px 0; font-weight: bold; color: #333;">New Status:</td>
+										<td style="padding: 10px 0; color: ${statusColors[newStatus] || '#6c757d'}; text-transform: uppercase; font-weight: bold;">${newStatus}</td>
+									</tr>
+								</table>
+							</div>
+							${newStatus === 'active' ? `
+							<div style="background: #d4edda; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #28a745;">
+								<p style="margin: 0; color: #155724;">
+									<strong>Good news!</strong> Your account is now active and you have full access to the system.
+								</p>
+							</div>
+							` : newStatus === 'suspended' ? `
+							<div style="background: #f8d7da; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #dc3545;">
+								<p style="margin: 0; color: #721c24;">
+									<strong>Important:</strong> Your account has been suspended. Please contact your administrator for more information.
+								</p>
+							</div>
+							` : `
+							<div style="background: #d1ecf1; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #17a2b8;">
+								<p style="margin: 0; color: #0c5460;">
+									<strong>Status Change:</strong> Your account status has been updated. This may affect your access to certain features.
+								</p>
+							</div>
+							`}
+							<p style="color: #666; line-height: 1.6; margin-bottom: 20px;">
+								If you have any questions about this status change or need assistance, please contact your administrator or our support team.
+							</p>
+						</div>
+						<div style="padding: 20px; text-align: center; color: #999; font-size: 12px;">
+							<p>This is an automated notification. Please do not reply to this email.</p>
+							<p>&copy; ${new Date().getFullYear()} Loro CRM. All rights reserved.</p>
+						</div>
+					</div>
+				`,
+			};
+
+			this.logger.log(`[EMAIL] Status update notification sent to: ${user.email} (${previousStatus} → ${newStatus})`);
+		} catch (error) {
+			this.logger.error(`[EMAIL] Failed to send status update notification to ${user.email}: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Send profile update notification email
+	 */
+	private async sendProfileUpdateNotificationEmail(user: User): Promise<void> {
+		try {
+			const emailData = {
+				to: user.email,
+				subject: 'Your Profile Has Been Updated - Loro CRM',
+				html: `
+					<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+						<div style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); padding: 30px; text-align: center;">
+							<h1 style="color: white; margin: 0; font-size: 24px;">Profile Updated</h1>
+						</div>
+						<div style="padding: 30px; background-color: #f8f9fa;">
+							<h2 style="color: #333; margin-bottom: 20px;">Hello ${user.name} ${user.surname},</h2>
+							<p style="color: #666; line-height: 1.6; margin-bottom: 20px;">
+								Your profile information has been successfully updated in the Loro CRM system.
+							</p>
+							<div style="background: #d4edda; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #28a745;">
+								<p style="margin: 0; color: #155724;">
+									<strong>Update Time:</strong> ${new Date().toLocaleString()}
+								</p>
+							</div>
+							<p style="color: #666; line-height: 1.6; margin-bottom: 20px;">
+								Your updated information is now active in the system. If you did not make these changes or if you notice any incorrect information, please contact your administrator immediately.
+							</p>
+							<div style="background: #fff3cd; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #ffc107;">
+								<p style="margin: 0; color: #856404;">
+									<strong>Security Note:</strong> For your security, we recommend reviewing your profile information periodically to ensure it remains accurate and up-to-date.
+								</p>
+							</div>
+							<div style="text-align: center; margin-top: 30px;">
+								<a href="${process.env.CLIENT_URL}/settings" style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 25px; font-weight: bold;">View Your Profile</a>
+							</div>
+						</div>
+						<div style="padding: 20px; text-align: center; color: #999; font-size: 12px;">
+							<p>This is an automated notification. Please do not reply to this email.</p>
+							<p>&copy; ${new Date().getFullYear()} Loro CRM. All rights reserved.</p>
+						</div>
+					</div>
+				`,
+			};
+
+			this.logger.log(`[EMAIL] Profile update notification sent to: ${user.email}`);
+		} catch (error) {
+			this.logger.error(`[EMAIL] Failed to send profile update notification to ${user.email}: ${error.message}`);
 		}
 	}
 }

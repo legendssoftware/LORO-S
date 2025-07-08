@@ -160,6 +160,10 @@ export class User {
 	@OneToMany(() => Client, (client) => client?.assignedSalesRep, { nullable: true })
 	clients: Client[];
 
+	// Array of client UIDs that this user has access to
+	@Column({ type: 'json', nullable: true })
+	assignedClientIds: number[];
+
 	@OneToMany(() => CheckIn, (checkIn) => checkIn?.owner, { nullable: true })
 	checkIns: CheckIn[];
 

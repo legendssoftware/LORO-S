@@ -437,4 +437,14 @@ export class UpdateUserDto extends PartialType(CreateUserDto) {
 		required: false
 	})
 	employmentProfile?: UpdateUserEmploymentProfileDto;
+
+	@IsOptional()
+	@IsNumber({}, { each: true })
+	@ApiProperty({
+		description: 'Array of client UIDs that this user has access to',
+		example: [1, 2, 3, 4],
+		type: [Number],
+		required: false
+	})
+	assignedClientIds?: number[];
 }

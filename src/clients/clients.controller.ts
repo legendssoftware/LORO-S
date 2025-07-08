@@ -141,6 +141,7 @@ export class ClientsController {
 	) {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
+		const userId = req.user?.uid;
 		const filters = { status, category, search };
 
 		return this.clientsService.findAll(
@@ -149,6 +150,7 @@ export class ClientsController {
 			orgId,
 			branchId,
 			filters,
+			userId,
 		);
 	}
 

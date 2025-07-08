@@ -3,7 +3,7 @@ import { CreateClientDto } from './dto/create-client.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Client } from './entities/client.entity';
-import { Repository, DeepPartial, FindOptionsWhere, ILike, MoreThanOrEqual, LessThanOrEqual, In } from 'typeorm';
+import { Repository, DeepPartial, FindOptionsWhere, ILike, In } from 'typeorm';
 import { GeneralStatus } from '../lib/enums/status.enums';
 import { PaginatedResponse } from '../lib/interfaces/product.interfaces';
 import { Cache } from 'cache-manager';
@@ -23,7 +23,7 @@ import { ClientCommunicationSchedule } from './entities/client-communication-sch
 import { Task } from '../tasks/entities/task.entity';
 import { TasksService } from '../tasks/tasks.service';
 import { CommunicationFrequency, CommunicationType } from '../lib/enums/client.enums';
-import { TaskType, TaskPriority, RepetitionType, TaskStatus } from '../lib/enums/task.enums';
+import { TaskType, TaskPriority, RepetitionType } from '../lib/enums/task.enums';
 import { addDays, addWeeks, addMonths, addYears, format, startOfDay, setHours, setMinutes, isWeekend } from 'date-fns';
 
 @Injectable()
@@ -144,7 +144,11 @@ export class ClientsService {
 	}
 
 	async create(createClientDto: CreateClientDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
+		const startTime = Date.now();
+		this.logger.log(`[CLIENT_CREATE] Starting client creation for: ${createClientDto.email} ${orgId ? `in org: ${orgId}` : ''} ${branchId ? `in branch: ${branchId}` : ''}`);
+
 		try {
+			this.logger.debug(`[CLIENT_CREATE] Checking for existing client with email: ${createClientDto.email}`);
 			// First, check for existing client with the same email
 			const existingClient = await this.clientsRepository.findOne({
 				where: {
@@ -155,6 +159,7 @@ export class ClientsService {
 			});
 
 			if (existingClient) {
+				this.logger.warn(`[CLIENT_CREATE] Client with email ${createClientDto.email} already exists`);
 				throw new BadRequestException('A client with this email already exists');
 			}
 
@@ -222,19 +227,26 @@ export class ClientsService {
 				}
 			}
 
+			this.logger.debug(`[CLIENT_CREATE] Saving client to database`);
 			const client = await this.clientsRepository.save(clientData);
 
 			if (!client) {
+				this.logger.error(`[CLIENT_CREATE] Failed to save client to database`);
 				throw new NotFoundException(process.env.CREATE_ERROR_MESSAGE);
 			}
 
 			// Invalidate cache after creation
 			await this.invalidateClientCache(client);
 
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`[CLIENT_CREATE] Client created successfully: ${client.uid} (${client.email}) in ${executionTime}ms`);
+
 			return {
 				message: process.env.SUCCESS_MESSAGE,
 			};
 		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`[CLIENT_CREATE] Failed to create client: ${createClientDto.email} after ${executionTime}ms. Error: ${error.message}`);
 			return {
 				message: error?.message,
 			};
@@ -253,15 +265,55 @@ export class ClientsService {
 			riskLevel?: ClientRiskLevel;
 			search?: string;
 		},
+		userId?: number,
 	): Promise<PaginatedResponse<Client>> {
+		const startTime = Date.now();
+		this.logger.log(`[CLIENT_FIND_ALL] Finding clients - page: ${page}, limit: ${limit}, orgId: ${orgId}, branchId: ${branchId}, userId: ${userId}, filters: ${JSON.stringify(filters)}`);
+
 		try {
 			const cacheKey = `${
 				this.CACHE_PREFIX
-			}page${page}_limit${limit}_org${orgId}_branch${branchId}_${JSON.stringify(filters)}`;
+			}page${page}_limit${limit}_org${orgId}_branch${branchId}_user${userId}_${JSON.stringify(filters)}`;
 			const cachedClients = await this.cacheManager.get<PaginatedResponse<Client>>(cacheKey);
 
 			if (cachedClients) {
+				const executionTime = Date.now() - startTime;
+				this.logger.debug(`[CLIENT_FIND_ALL] Cache hit - returned ${cachedClients.data.length} clients in ${executionTime}ms`);
 				return cachedClients;
+			}
+
+			// Get user's assigned clients if user is provided
+			let userAssignedClients: number[] | null = null;
+			if (userId) {
+				this.logger.debug(`[CLIENT_FIND_ALL] Fetching assigned clients for user ${userId}`);
+				const user = await this.userRepository.findOne({
+					where: { uid: userId, isDeleted: false },
+					select: ['uid', 'assignedClientIds', 'accessLevel'],
+				});
+
+				if (user) {
+					userAssignedClients = user.assignedClientIds || [];
+					this.logger.debug(`[CLIENT_FIND_ALL] User ${userId} has access to ${userAssignedClients.length} assigned clients`);
+					
+					// If user has no assigned clients and is not admin/owner, return empty result
+					if (userAssignedClients.length === 0 && !['admin', 'owner', 'manager'].includes(user.accessLevel)) {
+						this.logger.warn(`[CLIENT_FIND_ALL] User ${userId} has no assigned clients and insufficient privileges`);
+						const emptyResponse = {
+							data: [],
+							meta: {
+								total: 0,
+								page,
+								limit,
+								totalPages: 0,
+							},
+							message: 'No clients assigned to user',
+						};
+						return emptyResponse;
+					}
+				} else {
+					this.logger.warn(`[CLIENT_FIND_ALL] User ${userId} not found`);
+					throw new NotFoundException('User not found');
+				}
 			}
 
 			// Create find options with relationships
@@ -292,11 +344,19 @@ export class ClientsService {
 				where.riskLevel = filters.riskLevel;
 			}
 
-			if (filters?.search) {
-				// Handle search across multiple fields
-				return this.clientsBySearchTerm(filters.search, page, limit, orgId, branchId);
+			// Filter by assigned clients if user has limited access
+			if (userAssignedClients && userAssignedClients.length > 0) {
+				this.logger.debug(`[CLIENT_FIND_ALL] Filtering by assigned clients: ${userAssignedClients.join(', ')}`);
+				where.uid = In(userAssignedClients);
 			}
 
+			if (filters?.search) {
+				// Handle search across multiple fields
+				this.logger.debug(`[CLIENT_FIND_ALL] Performing search for term: ${filters.search}`);
+				return this.clientsBySearchTerm(filters.search, page, limit, orgId, branchId, userId);
+			}
+
+			this.logger.debug(`[CLIENT_FIND_ALL] Executing database query with pagination`);
 			// Find clients with pagination
 			const [clients, total] = await this.clientsRepository.findAndCount({
 				where,
@@ -306,6 +366,7 @@ export class ClientsService {
 			});
 
 			if (!clients) {
+				this.logger.warn(`[CLIENT_FIND_ALL] No clients found with current filters`);
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
 			}
 
@@ -322,8 +383,13 @@ export class ClientsService {
 
 			await this.cacheManager.set(cacheKey, response, this.CACHE_TTL);
 
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`[CLIENT_FIND_ALL] Successfully retrieved ${clients.length} clients out of ${total} total in ${executionTime}ms`);
+
 			return response;
 		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`[CLIENT_FIND_ALL] Failed to retrieve clients after ${executionTime}ms. Error: ${error.message}`);
 			return {
 				data: [],
 				meta: {
@@ -681,15 +747,55 @@ export class ClientsService {
 		limit: number = 10,
 		orgId?: number,
 		branchId?: number,
+		userId?: number,
 	): Promise<PaginatedResponse<Client>> {
+		const startTime = Date.now();
+		this.logger.log(`[CLIENT_SEARCH] Searching clients for term: "${searchTerm}", page: ${page}, limit: ${limit}, orgId: ${orgId}, branchId: ${branchId}, userId: ${userId}`);
+
 		try {
 			const cacheKey = `${
 				this.CACHE_PREFIX
-			}search_${searchTerm?.toLowerCase()}_page${page}_limit${limit}_org${orgId}_branch${branchId}`;
+			}search_${searchTerm?.toLowerCase()}_page${page}_limit${limit}_org${orgId}_branch${branchId}_user${userId}`;
 			const cachedResults = await this.cacheManager.get<PaginatedResponse<Client>>(cacheKey);
 
 			if (cachedResults) {
+				const executionTime = Date.now() - startTime;
+				this.logger.debug(`[CLIENT_SEARCH] Cache hit - returned ${cachedResults.data.length} clients in ${executionTime}ms`);
 				return cachedResults;
+			}
+
+			// Get user's assigned clients if user is provided
+			let userAssignedClients: number[] | null = null;
+			if (userId) {
+				this.logger.debug(`[CLIENT_SEARCH] Fetching assigned clients for user ${userId}`);
+				const user = await this.userRepository.findOne({
+					where: { uid: userId, isDeleted: false },
+					select: ['uid', 'assignedClientIds', 'accessLevel'],
+				});
+
+				if (user) {
+					userAssignedClients = user.assignedClientIds || [];
+					this.logger.debug(`[CLIENT_SEARCH] User ${userId} has access to ${userAssignedClients.length} assigned clients`);
+					
+					// If user has no assigned clients and is not admin/owner, return empty result
+					if (userAssignedClients.length === 0 && !['admin', 'owner', 'manager'].includes(user.accessLevel)) {
+						this.logger.warn(`[CLIENT_SEARCH] User ${userId} has no assigned clients and insufficient privileges`);
+						const emptyResponse = {
+							data: [],
+							meta: {
+								total: 0,
+								page,
+								limit,
+								totalPages: 0,
+							},
+							message: 'No clients assigned to user',
+						};
+						return emptyResponse;
+					}
+				} else {
+					this.logger.warn(`[CLIENT_SEARCH] User ${userId} not found`);
+					throw new NotFoundException('User not found');
+				}
 			}
 
 			// Build where conditions for search
@@ -704,6 +810,13 @@ export class ClientsService {
 				where.branch = { uid: branchId };
 			}
 
+			// Filter by assigned clients if user has limited access
+			if (userAssignedClients && userAssignedClients.length > 0) {
+				this.logger.debug(`[CLIENT_SEARCH] Filtering search by assigned clients: ${userAssignedClients.join(', ')}`);
+				where.uid = In(userAssignedClients);
+			}
+
+			this.logger.debug(`[CLIENT_SEARCH] Executing search query for term: "${searchTerm}"`);
 			// Find clients with search criteria across multiple fields
 			const [clients, total] = await this.clientsRepository.findAndCount({
 				where: [
@@ -718,6 +831,7 @@ export class ClientsService {
 			});
 
 			if (!clients) {
+				this.logger.warn(`[CLIENT_SEARCH] No clients found for search term: "${searchTerm}"`);
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
 			}
 
@@ -734,8 +848,13 @@ export class ClientsService {
 
 			await this.cacheManager.set(cacheKey, response, this.CACHE_TTL);
 
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`[CLIENT_SEARCH] Successfully found ${clients.length} clients out of ${total} total for term "${searchTerm}" in ${executionTime}ms`);
+
 			return response;
 		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`[CLIENT_SEARCH] Failed to search clients for term "${searchTerm}" after ${executionTime}ms. Error: ${error.message}`);
 			return {
 				data: [],
 				meta: {

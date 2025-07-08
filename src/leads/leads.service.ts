@@ -30,6 +30,7 @@ import { AccountStatus } from '../lib/enums/status.enums';
 import { Task } from '../tasks/entities/task.entity';
 import { TasksService } from '../tasks/tasks.service';
 import { TaskType, TaskPriority } from '../lib/enums/task.enums';
+import { formatDateSafely } from '../lib/utils/date.utils';
 
 @Injectable()
 export class LeadsService {
@@ -516,8 +517,8 @@ export class LeadsService {
 				currentValue: achievementData.currentValue,
 				targetValue: achievementData.targetValue,
 				achievementDate: new Date().toLocaleDateString(),
-				periodStartDate: userTarget.periodStartDate?.toLocaleDateString() || 'N/A',
-				periodEndDate: userTarget.periodEndDate?.toLocaleDateString() || 'N/A',
+				periodStartDate: formatDateSafely(userTarget.periodStartDate),
+				periodEndDate: formatDateSafely(userTarget.periodEndDate),
 				motivationalMessage: this.generateLeadMotivationalMessage(achievementData),
 			};
 
@@ -575,8 +576,8 @@ export class LeadsService {
 				currentValue: achievementData.currentValue,
 				targetValue: achievementData.targetValue,
 				achievementPercentage: achievementData.achievementPercentage,
-				periodStartDate: user.userTarget?.periodStartDate?.toLocaleDateString() || 'N/A',
-				periodEndDate: user.userTarget?.periodEndDate?.toLocaleDateString() || 'N/A',
+				periodStartDate: formatDateSafely(user.userTarget?.periodStartDate),
+				periodEndDate: formatDateSafely(user.userTarget?.periodEndDate),
 				dashboardUrl: `${this.configService.get('DASHBOARD_URL')}/dashboard`,
 				recognitionMessage: this.generateLeadRecognitionMessage(user, achievementData),
 			};
