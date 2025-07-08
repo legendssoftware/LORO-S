@@ -56,6 +56,9 @@ export class UserProfileSchema {
 	@ApiProperty({ type: 'string', example: 'https://example.com/photo.jpg', nullable: true })
 	photoURL: string;
 
+	@ApiProperty({ type: 'string', example: 'https://example.com/avatar.jpg', nullable: true })
+	avatar: string;
+
 	@ApiProperty({ type: 'string', example: 'employee' })
 	role: string;
 

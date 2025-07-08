@@ -63,7 +63,8 @@ export class ClaimsController {
               type: 'object',
               properties: {
                 uid: { type: 'number', example: 1 },
-                name: { type: 'string', example: 'John Doe' }
+                name: { type: 'string', example: 'John Doe' },
+                avatar: { type: 'string', example: 'https://example.com/avatar.jpg', nullable: true }
               }
             }
           }
@@ -186,7 +187,8 @@ export class ClaimsController {
               properties: {
                 uid: { type: 'number', example: 1 },
                 name: { type: 'string', example: 'John Doe' },
-                email: { type: 'string', example: 'john.doe@example.com' }
+                email: { type: 'string', example: 'john.doe@example.com' },
+                photoURL: { type: 'string', example: 'https://example.com/photo.jpg', nullable: true }
               }
             }
           }

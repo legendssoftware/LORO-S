@@ -736,10 +736,10 @@ export class AttendanceReportsService {
 				}
 			}
 
-			// Create yesterday comparison object
+			// Create yesterday comparison object with enhanced logic
 			const yesterdayComparison = {
 				hoursChange: Math.round((realTimeHours - metric.yesterdayHours) * 100) / 100,
-				punctualityChange: metric.isLate ? 'worse' : metric.yesterdayHours === 0 ? 'new' : 'same',
+				punctualityChange: this.calculatePunctualityChange(metric, comparisonAttendance),
 			};
 
 			return {
@@ -869,13 +869,14 @@ export class AttendanceReportsService {
 				? Math.round(((comparisonLateCount - todayLateCount) / comparisonAttendance.length) * 100)
 				: 0;
 
-		// Determine performance trend
-		let performanceTrend = 'stable';
-		if (attendanceChange > 5 && hoursChange > 0) {
-			performanceTrend = 'improving';
-		} else if (attendanceChange < -5 || hoursChange < -2) {
-			performanceTrend = 'declining';
-		}
+		// Determine performance trend using enhanced calculation
+		const performanceTrend = this.calculateEnhancedPerformanceTrend(
+			employeeMetrics,
+			comparisonAttendance,
+			attendanceChange,
+			hoursChange,
+			punctualityChange
+		);
 
 		// Generate enhanced insights with target analysis
 		const insights = this.generateEnhancedEveningInsights(
@@ -2185,5 +2186,122 @@ export class AttendanceReportsService {
 		}
 
 		return insights;
+	}
+
+	/**
+	 * Calculate intelligent punctuality change comparing today vs yesterday
+	 */
+	private calculatePunctualityChange(
+		todayMetric: EmployeeAttendanceMetric, 
+		comparisonAttendance: Attendance[]
+	): string {
+		const userId = todayMetric.user.uid;
+		const comparisonRecord = comparisonAttendance.find(a => a.owner?.uid === userId);
+		
+		// No comparison data available
+		if (!comparisonRecord || !comparisonRecord.checkIn) {
+			if (todayMetric.todayCheckIn) {
+				return 'new'; // First time checking in or no yesterday data
+			} else {
+				return 'absent'; // Absent both days or just today
+			}
+		}
+		
+		// Today is absent but had attendance yesterday
+		if (!todayMetric.todayCheckIn) {
+			return 'absent_today'; // Present yesterday, absent today
+		}
+		
+		// Both days have attendance - check punctuality
+		const todayIsLate = todayMetric.isLate;
+		
+		// Simple late check for yesterday (could be enhanced with organization hours)
+		const yesterdayCheckIn = new Date(comparisonRecord.checkIn);
+		const yesterdayIsLate = yesterdayCheckIn.getHours() >= 9; // Simplified - should use org hours
+		
+		if (!todayIsLate && !yesterdayIsLate) {
+			return 'consistently_punctual'; // On time both days
+		} else if (!todayIsLate && yesterdayIsLate) {
+			return 'improved'; // Was late yesterday, on time today
+		} else if (todayIsLate && !yesterdayIsLate) {
+			return 'worsened'; // Was on time yesterday, late today
+		} else {
+			// Both days late - compare lateness severity
+			const todayLateMinutes = todayMetric.lateMinutes;
+			const yesterdayLateMinutes = Math.max(0, (yesterdayCheckIn.getHours() - 8) * 60 + yesterdayCheckIn.getMinutes());
+			
+			if (todayLateMinutes < yesterdayLateMinutes - 10) {
+				return 'less_late'; // Less late than yesterday
+			} else if (todayLateMinutes > yesterdayLateMinutes + 10) {
+				return 'more_late'; // More late than yesterday
+			} else {
+				return 'consistently_late'; // Similar lateness
+			}
+		}
+	}
+
+	/**
+	 * Enhanced performance trend calculation
+	 */
+	private calculateEnhancedPerformanceTrend(
+		todayMetrics: EmployeeAttendanceMetric[],
+		comparisonAttendance: Attendance[],
+		attendanceChange: number,
+		hoursChange: number,
+		punctualityChange: number
+	): string {
+		const todayActiveCount = todayMetrics.filter(m => m.todayCheckIn).length;
+		const yesterdayActiveCount = comparisonAttendance.length;
+		
+		// Calculate punctuality improvement score
+		const punctualityImprovements = todayMetrics.filter(metric => {
+			const change = this.calculatePunctualityChange(metric, comparisonAttendance);
+			return change === 'improved' || change === 'less_late';
+		}).length;
+		
+		const punctualityDeclines = todayMetrics.filter(metric => {
+			const change = this.calculatePunctualityChange(metric, comparisonAttendance);
+			return change === 'worsened' || change === 'more_late';
+		}).length;
+		
+		// Enhanced trend calculation
+		let trendScore = 0;
+		
+		// Attendance trend (40% weight)
+		if (attendanceChange > 10) trendScore += 4;
+		else if (attendanceChange > 5) trendScore += 2;
+		else if (attendanceChange < -10) trendScore -= 4;
+		else if (attendanceChange < -5) trendScore -= 2;
+		
+		// Hours trend (40% weight)
+		if (hoursChange > 2) trendScore += 4;
+		else if (hoursChange > 0.5) trendScore += 2;
+		else if (hoursChange < -2) trendScore -= 4;
+		else if (hoursChange < -0.5) trendScore -= 2;
+		
+		// Punctuality trend (20% weight)
+		const netPunctualityChange = punctualityImprovements - punctualityDeclines;
+		if (netPunctualityChange > 2) trendScore += 2;
+		else if (netPunctualityChange > 0) trendScore += 1;
+		else if (netPunctualityChange < -2) trendScore -= 2;
+		else if (netPunctualityChange < 0) trendScore -= 1;
+		
+		// Determine trend based on score
+		if (trendScore >= 6) {
+			return 'significantly_improving';
+		} else if (trendScore >= 3) {
+			return 'improving';
+		} else if (trendScore <= -6) {
+			return 'significantly_declining';
+		} else if (trendScore <= -3) {
+			return 'declining';
+		} else {
+			// Additional stability checks
+			if (Math.abs(attendanceChange) <= 2 && Math.abs(hoursChange) <= 0.5 && Math.abs(netPunctualityChange) <= 1) {
+				return 'stable';
+			} else {
+				return 'mixed'; // Some improvements, some declines
+			}
+		}
 	}
 }

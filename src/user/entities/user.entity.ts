@@ -71,6 +71,9 @@ export class User {
 	@Column({ nullable: true })
 	photoURL: string;
 
+	@Column({ nullable: true })
+	avatar: string;
+
 	@Column({ default: 'user' })
 	role: string;
 

@@ -76,6 +76,15 @@ export class CreateUserDto {
     @IsOptional()
     @IsString()
     @ApiProperty({
+        description: 'The avatar URL of the user for enhanced profile display',
+        example: 'https://example.com/avatar.jpg',
+        required: false,
+    })
+    avatar?: string;
+
+    @IsOptional()
+    @IsString()
+    @ApiProperty({
         description: 'The role of the user',
         example: 'user',
         default: 'user',

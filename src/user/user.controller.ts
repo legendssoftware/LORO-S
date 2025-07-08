@@ -244,6 +244,7 @@ Creates a new user account in the system with full profile management and employ
 						phone: { type: 'string', example: '+27 64 123 4567' },
 						photoURL: { type: 'string', example: 'https://example.com/photo.jpg' },
 						businesscardURL: { type: 'string', example: 'https://example.com/businesscard.jpg' },
+						avatar: { type: 'string', example: 'https://example.com/avatar.jpg', nullable: true },
 						role: { type: 'string', example: 'employee' },
 						status: { type: 'string', example: 'active' },
 						departmentId: { type: 'number', example: 1 },

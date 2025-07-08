@@ -10,12 +10,14 @@ import { startOfDay } from 'date-fns';
 import { ClaimCategory, ClaimStatus } from '../lib/enums/finance.enums';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { NotificationStatus, NotificationType } from '../lib/enums/notification.enums';
+import { EmailType } from '../lib/enums/email.enums';
 import { ConfigService } from '@nestjs/config';
 import { RewardsService } from '../rewards/rewards.service';
 import { XP_VALUES_TYPES } from '../lib/constants/constants';
 import { XP_VALUES } from '../lib/constants/constants';
 import { PaginatedResponse } from '../lib/interfaces/product.interfaces';
 import { User } from '../user/entities/user.entity';
+import { ClaimEmailData, ClaimStatusUpdateEmailData } from '../lib/types/email-templates.types';
 
 @Injectable()
 export class ClaimsService {
@@ -106,30 +108,61 @@ export class ClaimsService {
 				throw new NotFoundException(process.env.CREATE_ERROR_MESSAGE);
 			}
 
-			// Invalidate cache after creation
-			this.invalidateClaimsCache(claim);
+					// Invalidate cache after creation
+		this.invalidateClaimsCache(claim);
 
-			const response = {
-				message: process.env.SUCCESS_MESSAGE,
-			};
+		const response = {
+			message: process.env.SUCCESS_MESSAGE,
+		};
 
-			const notification = {
-				type: NotificationType.USER,
-				title: 'New Claim',
-				message: `A new claim has been created`,
-				status: NotificationStatus.UNREAD,
-				owner: claim?.owner,
-			};
+		// Send email notification for claim creation
+		try {
+			if (user.email) {
+				const emailData: ClaimEmailData = {
+					name: user.name || user.email,
+					claimId: claim.uid,
+					amount: this.formatCurrency(Number(claim.amount) || 0),
+					category: claim.category || 'General',
+					status: claim.status || ClaimStatus.PENDING,
+					comments: claim.comments || '',
+					submittedDate: claim.createdAt.toISOString().split('T')[0],
+					submittedBy: {
+						name: user.name || user.email,
+						email: user.email,
+					},
+					branch: user.branch ? {
+						name: user.branch.name,
+					} : undefined,
+					organization: {
+						name: user.organisation?.name || 'Organization',
+					},
+					dashboardLink: `${process.env.APP_URL || 'https://loro.co.za'}/claims`,
+				};
 
-			const recipients = [
-				AccessLevel.ADMIN,
-				AccessLevel.MANAGER,
-				AccessLevel.OWNER,
-				AccessLevel.SUPERVISOR,
-				AccessLevel.USER,
-			];
+				// Send email to the user who created the claim
+				this.eventEmitter.emit('send.email', EmailType.CLAIM_CREATED, [user.email], emailData);
+			}
+		} catch (emailError) {
+			console.error('Error sending claim creation email:', emailError);
+		}
 
-			this.eventEmitter.emit('send.notification', notification, recipients);
+		// Send internal notification for admins/managers
+		const notification = {
+			type: NotificationType.USER,
+			title: 'New Claim',
+			message: `A new claim has been created by ${user.name || user.email}`,
+			status: NotificationStatus.UNREAD,
+			owner: claim?.owner,
+		};
+
+		const recipients = [
+			AccessLevel.ADMIN,
+			AccessLevel.MANAGER,
+			AccessLevel.OWNER,
+			AccessLevel.SUPERVISOR,
+		];
+
+		this.eventEmitter.emit('send.notification', notification, recipients);
 
 			await this.rewardsService.awardXP({
 				owner: createClaimDto.owner,
@@ -436,30 +469,94 @@ export class ClaimsService {
 				throw new NotFoundException(process.env.UPDATE_ERROR_MESSAGE);
 			}
 
-			// Invalidate cache after update
-			this.invalidateClaimsCache(claim);
+					// Invalidate cache after update
+		this.invalidateClaimsCache(claim);
 
-			const response = {
-				message: process.env.SUCCESS_MESSAGE,
-			};
+		// Get the updated claim with all relations
+		const updatedClaim = await this.claimsRepository.findOne({
+			where: { uid: ref },
+			relations: ['owner', 'owner.organisation', 'owner.branch', 'organisation', 'branch'],
+		});
 
-			const notification = {
-				type: NotificationType.USER,
-				title: 'Claim Updated',
-				message: `A claim has been updated`,
-				status: NotificationStatus.UNREAD,
-				owner: claim.owner,
-			};
+		const response = {
+			message: process.env.SUCCESS_MESSAGE,
+		};
 
-			const recipients = [
-				AccessLevel.ADMIN,
-				AccessLevel.MANAGER,
-				AccessLevel.OWNER,
-				AccessLevel.SUPERVISOR,
-				AccessLevel.USER,
-			];
+		// Send appropriate email notification based on status change
+		try {
+			if (updatedClaim && updatedClaim.owner?.email) {
+				const baseEmailData: ClaimStatusUpdateEmailData = {
+					name: updatedClaim.owner.name || updatedClaim.owner.email,
+					claimId: updatedClaim.uid,
+					amount: this.formatCurrency(Number(updatedClaim.amount) || 0),
+					category: updatedClaim.category || 'General',
+					status: updatedClaim.status,
+					comments: updatedClaim.comments || '',
+					submittedDate: updatedClaim.createdAt.toISOString().split('T')[0],
+					submittedBy: {
+						name: updatedClaim.owner.name || updatedClaim.owner.email,
+						email: updatedClaim.owner.email,
+					},
+					branch: updatedClaim.branch ? {
+						name: updatedClaim.branch.name,
+					} : undefined,
+					organization: {
+						name: updatedClaim.organisation?.name || 'Organization',
+					},
+					dashboardLink: `${process.env.APP_URL || 'https://loro.co.za'}/claims`,
+					previousStatus: claim.status, // Original status before update
+					processedAt: new Date().toISOString(),
+				};
 
-			this.eventEmitter.emit('send.notification', notification, recipients);
+				// Add rejection reason or approval notes if available
+				if (updateClaimDto.status === ClaimStatus.DECLINED && updateClaimDto.comment) {
+					baseEmailData.rejectionReason = updateClaimDto.comment;
+				} else if (updateClaimDto.status === ClaimStatus.APPROVED && updateClaimDto.comment) {
+					baseEmailData.approvalNotes = updateClaimDto.comment;
+				}
+
+				let emailType: EmailType = EmailType.CLAIM_STATUS_UPDATE;
+
+				// Determine specific email type based on new status
+				switch (updateClaimDto.status) {
+					case ClaimStatus.APPROVED:
+						emailType = EmailType.CLAIM_APPROVED;
+						break;
+					case ClaimStatus.DECLINED:
+						emailType = EmailType.CLAIM_REJECTED;
+						break;
+					case ClaimStatus.PAID:
+						emailType = EmailType.CLAIM_PAID;
+						break;
+					default:
+						emailType = EmailType.CLAIM_STATUS_UPDATE;
+						break;
+				}
+
+				// Send email to the claim owner
+				this.eventEmitter.emit('send.email', emailType, [updatedClaim.owner.email], baseEmailData);
+			}
+		} catch (emailError) {
+			console.error('Error sending claim status update email:', emailError);
+		}
+
+		// Send internal notification for status changes
+		const notification = {
+			type: NotificationType.USER,
+			title: 'Claim Updated',
+			message: `Claim #${updatedClaim?.uid} status changed to ${updateClaimDto.status || 'updated'}`,
+			status: NotificationStatus.UNREAD,
+			owner: claim.owner,
+		};
+
+		const recipients = [
+			AccessLevel.ADMIN,
+			AccessLevel.MANAGER,
+			AccessLevel.OWNER,
+			AccessLevel.SUPERVISOR,
+		];
+
+		this.eventEmitter.emit('send.notification', notification, recipients);
 
 			await this.rewardsService.awardXP({
 				owner: claim.owner.uid,

@@ -243,6 +243,15 @@ export class UpdateUserDto extends PartialType(CreateUserDto) {
 	@IsOptional()
 	@IsString()
 	@ApiProperty({
+		description: 'Avatar URL of the user for enhanced profile display',
+		example: 'https://example.com/updated-avatar.jpg',
+		required: false
+	})
+	avatar?: string;
+
+	@IsOptional()
+	@IsString()
+	@ApiProperty({
 		description: 'Role of the user',
 		example: 'manager',
 		required: false
