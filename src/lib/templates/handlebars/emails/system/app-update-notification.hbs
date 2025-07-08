@@ -1,0 +1,165 @@
+{{#base headerTitle="{{appName}} Update Available" headerSubtitle="New Version {{appVersion}} is Now Available"}}
+
+<div class="greeting">
+    Hello {{name}}! 🎉
+</div>
+
+{{#if criticalUpdate}}
+<div class="critical-notice">
+    <p>🚨 <strong>Critical Update Required!</strong> This update includes important security fixes and performance improvements.</p>
+</div>
+{{/if}}
+
+<div class="success-notice">
+    <p>🚀 <strong>{{updateTitle}}</strong> We're excited to announce that {{appName}} version {{appVersion}} is now available with amazing new features!</p>
+</div>
+
+<div class="message">
+    <p>{{updateDescription}}</p>
+    {{#if forceUpdate}}
+    <p><strong>⚠️ This is a mandatory update.</strong> Please update your app to continue using all features.</p>
+    {{/if}}
+</div>
+
+{{#if newFeatures}}
+<div class="info-card">
+    <h3>✨ New Features</h3>
+    <ul class="feature-list">
+        {{#each newFeatures}}
+        <li>{{#if icon}}{{icon}}{{else}}🆕{{/if}} <strong>{{title}}</strong> - {{description}}</li>
+        {{/each}}
+    </ul>
+</div>
+{{/if}}
+
+{{#if improvements}}
+<div class="info-card">
+    <h3>🔧 Improvements</h3>
+    <ul class="feature-list">
+        {{#each improvements}}
+        <li>⚡ <strong>{{title}}</strong> - {{description}}</li>
+        {{/each}}
+    </ul>
+</div>
+{{/if}}
+
+{{#if bugFixes}}
+<div class="info-card">
+    <h3>🐛 Bug Fixes</h3>
+    <ul class="feature-list">
+        {{#each bugFixes}}
+        <li>🔧 <strong>{{title}}</strong> - {{description}}</li>
+        {{/each}}
+    </ul>
+</div>
+{{/if}}
+
+<div class="cta-section">
+    <h3>📱 Download Now</h3>
+    <div class="download-buttons">
+        {{#if downloadUrls.playStore}}
+        <a href="{{downloadUrls.playStore}}" class="cta-button">
+            🤖 Download for Android
+        </a>
+        {{/if}}
+        {{#if downloadUrls.appStore}}
+        <a href="{{downloadUrls.appStore}}" class="cta-button">
+            🍎 Download for iOS
+        </a>
+        {{/if}}
+        {{#if downloadUrls.directDownload}}
+        <a href="{{downloadUrls.directDownload}}" class="cta-button">
+            📥 Direct Download
+        </a>
+        {{/if}}
+    </div>
+</div>
+
+{{#if updateDeadline}}
+<div class="warning-notice">
+    <p>⏰ <strong>Update Deadline:</strong> Please update your app by {{updateDeadline}} to ensure continued access to all features.</p>
+</div>
+{{/if}}
+
+<div class="info-card">
+    <h4>📋 Release Notes</h4>
+    <p>{{releaseNotes}}</p>
+</div>
+
+{{#if compatibilityInfo}}
+<div class="info-card">
+    <h4>📱 Compatibility Information</h4>
+    <p>{{compatibilityInfo}}</p>
+</div>
+{{/if}}
+
+{{#if backupReminder}}
+<div class="info-card">
+    <h4>💾 Backup Reminder</h4>
+    <p>{{backupReminder}}</p>
+</div>
+{{/if}}
+
+{{#if trainingResources}}
+<div class="info-card">
+    <h4>📚 Training Resources</h4>
+    <p>We've prepared some resources to help you get the most out of the new features:</p>
+    <ul class="feature-list">
+        {{#each trainingResources}}
+        <li>
+            {{#if (eq type 'video')}}📹{{/if}}
+            {{#if (eq type 'pdf')}}📄{{/if}}
+            {{#if (eq type 'link')}}🔗{{/if}}
+            <a href="{{url}}" target="_blank">{{title}}</a>
+        </li>
+        {{/each}}
+    </ul>
+</div>
+{{/if}}
+
+<div class="info-card">
+    <h4>🎯 What's Next?</h4>
+    <ol class="numbered-list">
+        <li><strong>Download the Update:</strong> Use the download buttons above to get the latest version</li>
+        <li><strong>Install & Restart:</strong> Follow the installation prompts and restart the app</li>
+        <li><strong>Explore New Features:</strong> Check out the new leads management, PDF upload capabilities, and more!</li>
+        <li><strong>Need Help?:</strong> Our support team is here to assist you with any questions</li>
+        {{#if trainingResources}}
+        <li><strong>Learn More:</strong> Check out our training resources above to master the new features</li>
+        {{/if}}
+    </ol>
+</div>
+
+{{#if forceUpdate}}
+<div class="critical-notice">
+    <p>⚠️ <strong>Important:</strong> This is a mandatory update. Your current version will stop working after {{updateDeadline}}.</p>
+</div>
+{{/if}}
+
+<div class="info-card">
+    <h4>📞 Need Support?</h4>
+    <p>If you have any questions about this update or need assistance, please don't hesitate to reach out:</p>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Support Email</span>
+            <span class="detail-value">{{supportEmail}}</span>
+        </div>
+        {{#if supportPhone}}
+        <div class="detail-item">
+            <span class="detail-label">Support Phone</span>
+            <span class="detail-value">{{supportPhone}}</span>
+        </div>
+        {{/if}}
+        <div class="detail-item">
+            <span class="detail-label">Dashboard</span>
+            <span class="detail-value"><a href="{{dashboardUrl}}">Access Dashboard</a></span>
+        </div>
+    </div>
+</div>
+
+<div class="footer-message">
+    <p>Thank you for being part of the {{organizationName}} team! We're committed to providing you with the best tools to help you succeed.</p>
+    <p><strong>The {{appName}} Team</strong></p>
+</div>
+
+{{/base}} 

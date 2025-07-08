@@ -66,6 +66,7 @@ import {
 	UserTargetPeriodSummaryEmailData,
 	BlankQuotationData,
 	BlankQuotationInternalData,
+	AppUpdateNotificationData,
 } from '../types/email-templates.types';
 
 // Auth Templates
@@ -439,4 +440,9 @@ export const UserTargetERPUpdateConfirmation = (data: UserTargetERPUpdateConfirm
 
 export const UserTargetPeriodSummary = (data: UserTargetPeriodSummaryEmailData): string => {
 	return emailTemplateService.userTargetPeriodSummary(data);
+};
+
+// App/System Templates
+export const AppUpdateNotification = (data: AppUpdateNotificationData): string => {
+	return emailTemplateService.appUpdateNotification(data);
 };

@@ -69,6 +69,7 @@ import {
 	UserTargetPerformanceAlertEmailData,
 	UserTargetERPUpdateConfirmationEmailData,
 	UserTargetPeriodSummaryEmailData,
+	AppUpdateNotificationData,
 } from '../types/email-templates.types';
 
 class EmailTemplateService {
@@ -673,6 +674,11 @@ class EmailTemplateService {
 		return this.renderTemplate('targets/period-summary.hbs', data);
 	}
 
+	// App/System Templates
+	appUpdateNotification(data: AppUpdateNotificationData): string {
+		return this.renderTemplate('system/app-update-notification.hbs', data);
+	}
+
 	/**
 	 * Clear the compiled template cache and reinitialize Handlebars
 	 * Useful for development or when templates are updated
@@ -775,6 +781,8 @@ class EmailTemplateService {
 			'targets/performance-alert.hbs',
 			'targets/erp-update-confirmation.hbs',
 			'targets/period-summary.hbs',
+			// App/System templates
+			'system/app-update-notification.hbs',
 		];
 
 		templates.forEach((template) => {

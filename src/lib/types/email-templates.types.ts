@@ -1538,6 +1538,47 @@ export interface LeadTargetAchievementAdminData extends BaseEmailData {
 	recognitionSuggestions?: string[];
 }
 
+export interface AppUpdateNotificationData extends BaseEmailData {
+	appVersion: string;
+	appName: string;
+	organizationName: string;
+	updateDate: string;
+	updateTitle: string;
+	updateDescription: string;
+	newFeatures: Array<{
+		title: string;
+		description: string;
+		icon?: string;
+	}>;
+	improvements: Array<{
+		title: string;
+		description: string;
+	}>;
+	bugFixes: Array<{
+		title: string;
+		description: string;
+	}>;
+	criticalUpdate: boolean;
+	forceUpdate: boolean;
+	downloadUrls: {
+		playStore?: string;
+		appStore?: string;
+		directDownload?: string;
+	};
+	releaseNotes: string;
+	supportEmail: string;
+	supportPhone?: string;
+	dashboardUrl: string;
+	updateDeadline?: string;
+	compatibilityInfo?: string;
+	backupReminder?: string;
+	trainingResources?: Array<{
+		title: string;
+		url: string;
+		type: 'video' | 'pdf' | 'link';
+	}>;
+}
+
 export interface EmailDataMap {
 	[EmailType.SIGNUP]: SignupEmailData;
 	[EmailType.VERIFICATION]: VerificationEmailData;
@@ -1656,6 +1697,8 @@ export interface EmailDataMap {
 	// Target Achievement Admin Notification email mappings
 	[EmailType.USER_TARGET_ACHIEVEMENT_ADMIN]: UserTargetAchievementAdminData;
 	[EmailType.LEAD_TARGET_ACHIEVEMENT_ADMIN]: LeadTargetAchievementAdminData;
+	// App/System notification email mappings
+	[EmailType.APP_UPDATE_NOTIFICATION]: AppUpdateNotificationData;
 }
 
 export type EmailTemplateData<T extends EmailType> = T extends keyof EmailDataMap ? EmailDataMap[T] : never;

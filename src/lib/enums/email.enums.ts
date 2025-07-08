@@ -124,4 +124,6 @@ export enum EmailType {
 	// Target achievement admin notifications
 	USER_TARGET_ACHIEVEMENT_ADMIN = 'user_target_achievement_admin',
 	LEAD_TARGET_ACHIEVEMENT_ADMIN = 'lead_target_achievement_admin',
+	// App/System notifications
+	APP_UPDATE_NOTIFICATION = 'app_update_notification',
 }

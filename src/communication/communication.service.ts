@@ -118,6 +118,7 @@ import {
 	UserTargetPerformanceAlertEmailData,
 	UserTargetERPUpdateConfirmationEmailData,
 	UserTargetPeriodSummaryEmailData,
+	AppUpdateNotificationData,
 } from '../lib/types/email-templates.types';
 import {
 	TaskFlagCreated,
@@ -156,6 +157,7 @@ import {
 	UserTargetPerformanceAlert,
 	UserTargetERPUpdateConfirmation,
 	UserTargetPeriodSummary,
+	AppUpdateNotification,
 } from '../lib/templates/emails';
 
 // Import the new type
@@ -271,6 +273,25 @@ export class CommunicationService {
 			
 			throw error;
 		}
+	}
+
+	async sendAppUpdateNotification(userEmails: string[], appUpdateData: AppUpdateNotificationData) {
+		console.log('📱 [EmailService] Sending app update notification to users');
+		
+		// Send email to all users
+		const emailPromises = userEmails.map(async (email) => {
+			try {
+				await this.sendEmail(EmailType.APP_UPDATE_NOTIFICATION, [email], appUpdateData);
+				console.log(`✅ [EmailService] App update notification sent to: ${email}`);
+			} catch (error) {
+				console.error(`❌ [EmailService] Failed to send app update notification to ${email}:`, error);
+			}
+		});
+
+		await Promise.all(emailPromises);
+		
+		console.log(`📱 [EmailService] App update notification process completed for ${userEmails.length} users`);
+		return { success: true, message: `App update notification sent to ${userEmails.length} users` };
 	}
 
 	private getEmailTemplate<T extends EmailType>(type: T, data: EmailTemplateData<T>): EmailTemplate {
@@ -754,6 +775,11 @@ export class CommunicationService {
 				return {
 					subject: 'Your Target Period Summary',
 					body: UserTargetPeriodSummary(data as UserTargetPeriodSummaryEmailData),
+				};
+			case EmailType.APP_UPDATE_NOTIFICATION:
+				return {
+					subject: 'App Update Available - New Features Include Leads & PDF Uploads!',
+					body: AppUpdateNotification(data as AppUpdateNotificationData),
 				};
 			default:
 				throw new NotFoundException(`Unknown email template type: ${type}`);
