@@ -6,14 +6,12 @@ import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { UpdateJournalDto } from './dto/update-journal.dto';
 import { AuthGuard } from '../guards/auth.guard';
-import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
 import { Controller, Get, Post, Body, Param, UseGuards, Patch, Delete, Req } from '@nestjs/common';
 import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
 
 @ApiTags('📝 Journal')
 @Controller('journal')
 @UseGuards(AuthGuard, RoleGuard)
-@EnterpriseOnly('journal')
 @ApiBearerAuth('JWT-auth')
 @ApiUnauthorizedResponse({ description: 'Unauthorized access due to invalid credentials or missing token' })
 export class JournalController {

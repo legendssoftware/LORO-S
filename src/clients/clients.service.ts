@@ -24,6 +24,7 @@ import { Task } from '../tasks/entities/task.entity';
 import { TasksService } from '../tasks/tasks.service';
 import { CommunicationFrequency, CommunicationType } from '../lib/enums/client.enums';
 import { TaskType, TaskPriority, RepetitionType } from '../lib/enums/task.enums';
+import { AccessLevel } from '../lib/enums/user.enums';
 import { addDays, addWeeks, addMonths, addYears, format, startOfDay, setHours, setMinutes, isWeekend } from 'date-fns';
 
 @Injectable()
@@ -282,21 +283,38 @@ export class ClientsService {
 				return cachedClients;
 			}
 
-			// Get user's assigned clients if user is provided
-			let userAssignedClients: number[] | null = null;
-			if (userId) {
-				this.logger.debug(`[CLIENT_FIND_ALL] Fetching assigned clients for user ${userId}`);
-				const user = await this.userRepository.findOne({
-					where: { uid: userId, isDeleted: false },
-					select: ['uid', 'assignedClientIds', 'accessLevel'],
-				});
+					// Get user's assigned clients if user is provided
+		let userAssignedClients: number[] | null = null;
+		let hasElevatedAccess = false;
+		if (userId) {
+			this.logger.debug(`[CLIENT_FIND_ALL] Fetching assigned clients for user ${userId}`);
+			const user = await this.userRepository.findOne({
+				where: { uid: userId, isDeleted: false },
+				select: ['uid', 'assignedClientIds', 'accessLevel'],
+			});
 
-				if (user) {
+			if (user) {
+				// Check if user has elevated access (admin, owner, developer, manager, support)
+				const elevatedRoles = [
+					AccessLevel.OWNER,
+					AccessLevel.ADMIN,
+					AccessLevel.DEVELOPER,
+					AccessLevel.MANAGER,
+					AccessLevel.SUPPORT,
+					AccessLevel.SUPERVISOR
+				];
+				
+				hasElevatedAccess = elevatedRoles.includes(user.accessLevel);
+				
+				if (hasElevatedAccess) {
+					this.logger.debug(`[CLIENT_FIND_ALL] User ${userId} has elevated access (${user.accessLevel}), returning all clients`);
+					userAssignedClients = null; // Don't filter by assigned clients
+				} else {
 					userAssignedClients = user.assignedClientIds || [];
 					this.logger.debug(`[CLIENT_FIND_ALL] User ${userId} has access to ${userAssignedClients.length} assigned clients`);
 					
-					// If user has no assigned clients and is not admin/owner, return empty result
-					if (userAssignedClients.length === 0 && !['admin', 'owner', 'manager'].includes(user.accessLevel)) {
+					// If user has no assigned clients and is not elevated, return empty result
+					if (userAssignedClients.length === 0) {
 						this.logger.warn(`[CLIENT_FIND_ALL] User ${userId} has no assigned clients and insufficient privileges`);
 						const emptyResponse = {
 							data: [],
@@ -310,11 +328,12 @@ export class ClientsService {
 						};
 						return emptyResponse;
 					}
-				} else {
-					this.logger.warn(`[CLIENT_FIND_ALL] User ${userId} not found`);
-					throw new NotFoundException('User not found');
 				}
+			} else {
+				this.logger.warn(`[CLIENT_FIND_ALL] User ${userId} not found`);
+				throw new NotFoundException('User not found');
 			}
+		}
 
 			// Create find options with relationships
 			const where: FindOptionsWhere<Client> = { isDeleted: false };
@@ -344,8 +363,8 @@ export class ClientsService {
 				where.riskLevel = filters.riskLevel;
 			}
 
-			// Filter by assigned clients if user has limited access
-			if (userAssignedClients && userAssignedClients.length > 0) {
+			// Filter by assigned clients if user has limited access (not elevated)
+			if (userAssignedClients && userAssignedClients.length > 0 && !hasElevatedAccess) {
 				this.logger.debug(`[CLIENT_FIND_ALL] Filtering by assigned clients: ${userAssignedClients.join(', ')}`);
 				where.uid = In(userAssignedClients);
 			}
@@ -764,21 +783,38 @@ export class ClientsService {
 				return cachedResults;
 			}
 
-			// Get user's assigned clients if user is provided
-			let userAssignedClients: number[] | null = null;
-			if (userId) {
-				this.logger.debug(`[CLIENT_SEARCH] Fetching assigned clients for user ${userId}`);
-				const user = await this.userRepository.findOne({
-					where: { uid: userId, isDeleted: false },
-					select: ['uid', 'assignedClientIds', 'accessLevel'],
-				});
+					// Get user's assigned clients if user is provided
+		let userAssignedClients: number[] | null = null;
+		let hasElevatedAccess = false;
+		if (userId) {
+			this.logger.debug(`[CLIENT_SEARCH] Fetching assigned clients for user ${userId}`);
+			const user = await this.userRepository.findOne({
+				where: { uid: userId, isDeleted: false },
+				select: ['uid', 'assignedClientIds', 'accessLevel'],
+			});
 
-				if (user) {
+			if (user) {
+				// Check if user has elevated access (admin, owner, developer, manager, support)
+				const elevatedRoles = [
+					AccessLevel.OWNER,
+					AccessLevel.ADMIN,
+					AccessLevel.DEVELOPER,
+					AccessLevel.MANAGER,
+					AccessLevel.SUPPORT,
+					AccessLevel.SUPERVISOR
+				];
+				
+				hasElevatedAccess = elevatedRoles.includes(user.accessLevel);
+				
+				if (hasElevatedAccess) {
+					this.logger.debug(`[CLIENT_SEARCH] User ${userId} has elevated access (${user.accessLevel}), searching all clients`);
+					userAssignedClients = null; // Don't filter by assigned clients
+				} else {
 					userAssignedClients = user.assignedClientIds || [];
 					this.logger.debug(`[CLIENT_SEARCH] User ${userId} has access to ${userAssignedClients.length} assigned clients`);
 					
-					// If user has no assigned clients and is not admin/owner, return empty result
-					if (userAssignedClients.length === 0 && !['admin', 'owner', 'manager'].includes(user.accessLevel)) {
+					// If user has no assigned clients and is not elevated, return empty result
+					if (userAssignedClients.length === 0) {
 						this.logger.warn(`[CLIENT_SEARCH] User ${userId} has no assigned clients and insufficient privileges`);
 						const emptyResponse = {
 							data: [],
@@ -792,11 +828,12 @@ export class ClientsService {
 						};
 						return emptyResponse;
 					}
-				} else {
-					this.logger.warn(`[CLIENT_SEARCH] User ${userId} not found`);
-					throw new NotFoundException('User not found');
 				}
+			} else {
+				this.logger.warn(`[CLIENT_SEARCH] User ${userId} not found`);
+				throw new NotFoundException('User not found');
 			}
+		}
 
 			// Build where conditions for search
 			const where: FindOptionsWhere<Client> = { isDeleted: false };
@@ -810,11 +847,11 @@ export class ClientsService {
 				where.branch = { uid: branchId };
 			}
 
-			// Filter by assigned clients if user has limited access
-			if (userAssignedClients && userAssignedClients.length > 0) {
-				this.logger.debug(`[CLIENT_SEARCH] Filtering search by assigned clients: ${userAssignedClients.join(', ')}`);
-				where.uid = In(userAssignedClients);
-			}
+					// Filter by assigned clients if user has limited access (not elevated)
+		if (userAssignedClients && userAssignedClients.length > 0 && !hasElevatedAccess) {
+			this.logger.debug(`[CLIENT_SEARCH] Filtering search by assigned clients: ${userAssignedClients.join(', ')}`);
+			where.uid = In(userAssignedClients);
+		}
 
 			this.logger.debug(`[CLIENT_SEARCH] Executing search query for term: "${searchTerm}"`);
 			// Find clients with search criteria across multiple fields

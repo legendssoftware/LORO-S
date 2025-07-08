@@ -252,9 +252,46 @@ export class UserService {
 	}
 
 	/**
-	 * Remove password from user object for safe return to client
-	 * @param user - User entity with password
-	 * @returns User entity without password field
+	 * Populate assigned clients with full client data
+	 * @param user - User with assignedClientIds
+	 * @returns User with populated assignedClients
+	 */
+	private async populateAssignedClients(user: User): Promise<User & { assignedClients?: Client[] }> {
+		if (!user.assignedClientIds || user.assignedClientIds.length === 0) {
+			return { ...user, assignedClients: [] };
+		}
+
+		try {
+			const clients = await this.clientRepository.find({
+				where: {
+					uid: In(user.assignedClientIds),
+					isDeleted: false,
+				},
+				select: ['uid', 'name', 'contactPerson', 'email', 'phone', 'status', 'createdAt'],
+			});
+
+			return { ...user, assignedClients: clients };
+		} catch (error) {
+			this.logger.warn(`Failed to populate assigned clients for user ${user.uid}: ${error.message}`);
+			return { ...user, assignedClients: [] };
+		}
+	}
+
+	/**
+	 * Exclude password from user data and include populated assigned clients
+	 * @param user - User entity
+	 * @returns User data without password but with assigned clients
+	 */
+	private async excludePasswordAndPopulateClients(user: User): Promise<Omit<User, 'password'> & { assignedClients?: Client[] }> {
+		const userWithClients = await this.populateAssignedClients(user);
+		const { password, ...userWithoutPassword } = userWithClients;
+		return userWithoutPassword;
+	}
+
+	/**
+	 * Exclude password from user data (legacy method for backward compatibility)
+	 * @param user - User entity
+	 * @returns User data without password
 	 */
 	private excludePassword(user: User): Omit<User, 'password'> {
 		const { password, ...userWithoutPassword } = user;
@@ -428,16 +465,16 @@ export class UserService {
 			const executionTime = Date.now() - startTime;
 			this.logger.log(`Successfully fetched ${users.length} users out of ${total} total in ${executionTime}ms`);
 
-			return {
-				data: users.map((user) => this.excludePassword(user)),
-				meta: {
-					total,
-					page,
-					limit,
-					totalPages: Math.ceil(total / limit),
-				},
-				message: process.env.SUCCESS_MESSAGE,
-			};
+					return {
+			data: await Promise.all(users.map(user => this.excludePasswordAndPopulateClients(user))),
+			meta: {
+				total,
+				page,
+				limit,
+				totalPages: Math.ceil(total / limit),
+			},
+			message: process.env.SUCCESS_MESSAGE,
+		};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
 			this.logger.error(`Failed to fetch users after ${executionTime}ms. Error: ${error.message}`);
@@ -496,10 +533,10 @@ export class UserService {
 				const executionTime = Date.now() - startTime;
 				this.logger.log(`User ${searchParameter} retrieved from cache in ${executionTime}ms`);
 
-				return {
-					user: this.excludePassword(cachedUser),
-					message: process.env.SUCCESS_MESSAGE,
-				};
+							return {
+				user: await this.excludePasswordAndPopulateClients(cachedUser),
+				message: process.env.SUCCESS_MESSAGE,
+			};
 			}
 
 			this.logger.debug(`Cache miss for user: ${searchParameter}, querying database`);
@@ -534,13 +571,13 @@ export class UserService {
 			// Cache the user data
 			await this.cacheManager.set(cacheKey, user, this.CACHE_TTL);
 
-			const executionTime = Date.now() - startTime;
-			this.logger.log(`User ${searchParameter} (${user.email}) retrieved from database in ${executionTime}ms`);
+					const executionTime = Date.now() - startTime;
+		this.logger.log(`User ${searchParameter} (${user.email}) retrieved from database in ${executionTime}ms`);
 
-			return {
-				user: this.excludePassword(user),
-				message: process.env.SUCCESS_MESSAGE,
-			};
+		return {
+			user: await this.excludePasswordAndPopulateClients(user),
+			message: process.env.SUCCESS_MESSAGE,
+		};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
 			this.logger.error(
@@ -677,13 +714,13 @@ export class UserService {
 				};
 			}
 
-			const executionTime = Date.now() - startTime;
-			this.logger.log(`User found by UID: ${searchParameter} (${user.email}) in ${executionTime}ms`);
+					const executionTime = Date.now() - startTime;
+		this.logger.log(`User found by UID: ${searchParameter} (${user.email}) in ${executionTime}ms`);
 
-			return {
-				user: this.excludePassword(user),
-				message: process.env.SUCCESS_MESSAGE,
-			};
+		return {
+			user: await this.excludePasswordAndPopulateClients(user),
+			message: process.env.SUCCESS_MESSAGE,
+		};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
 			this.logger.error(

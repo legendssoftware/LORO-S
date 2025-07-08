@@ -17,13 +17,12 @@ import { User } from '../user/entities/user.entity';
 import { CommunicationService } from '../communication/communication.service';
 import { EmailType } from '../lib/enums/email.enums';
 import { Cron } from '@nestjs/schedule';
-import { LiveOverviewReportGenerator } from './generators/live-overview-report.generator';
+
 import { MapDataReportGenerator } from './generators/map-data-report.generator';
 
 @Injectable()
 export class ReportsService implements OnModuleInit {
 	private readonly CACHE_PREFIX = 'reports:';
-	private readonly LIVE_OVERVIEW_CACHE_TTL = 120; // 2 minutes
 	private readonly CACHE_TTL: number;
 	private reportCache = new Map<string, any>();
 
@@ -40,7 +39,6 @@ export class ReportsService implements OnModuleInit {
 		private readonly configService: ConfigService,
 		private eventEmitter: EventEmitter2,
 		private communicationService: CommunicationService,
-		private readonly liveOverviewReportGenerator: LiveOverviewReportGenerator,
 		private readonly mapDataReportGenerator: MapDataReportGenerator,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 300;
@@ -127,14 +125,11 @@ export class ReportsService implements OnModuleInit {
 		// For quotation reports, include clientId in the cache key
 		const clientIdStr = type === ReportType.QUOTATION && filters?.clientId ? `_client${filters.clientId}` : '';
 
-		// For live overview reports, include force refresh flag in key if present
-		const forceRefreshStr = type === ReportType.LIVE_OVERVIEW && filters?.forceFresh ? '_fresh' : '';
-
 		const dateStr = dateRange ? `_${dateRange.start.toISOString()}_${dateRange.end.toISOString()}` : '';
 
 		return `${this.CACHE_PREFIX}${type}_org${organisationId}${
 			branchId ? `_branch${branchId}` : ''
-		}${clientIdStr}${forceRefreshStr}${dateStr}`;
+		}${clientIdStr}${dateStr}`;
 	}
 
 	async create(createReportDto: CreateReportDto) {
@@ -246,26 +241,17 @@ export class ReportsService implements OnModuleInit {
 	}
 
 	async generateReport(params: ReportParamsDto, currentUser: any): Promise<Record<string, any>> {
-		// Determine appropriate cache TTL based on report type
-		const cacheTtl = params.type === ReportType.LIVE_OVERVIEW ? this.LIVE_OVERVIEW_CACHE_TTL : this.CACHE_TTL;
-
-		// Check if this is a forced fresh request (for live overview)
-		const forceFresh = params.type === ReportType.LIVE_OVERVIEW && params.filters?.forceFresh === true;
-
-		// Check cache first (skip if forceFresh is true)
+		// Check cache first
 		const cacheKey = this.getCacheKey(params);
+		const cachedReport = await this.cacheManager.get<Record<string, any>>(cacheKey);
 
-		if (!forceFresh) {
-			const cachedReport = await this.cacheManager.get<Record<string, any>>(cacheKey);
-
-			if (cachedReport) {
-				return {
-					...cachedReport,
-					fromCache: true,
-					cachedAt: cachedReport.generatedAt,
-					currentTime: new Date().toISOString(),
-				};
-			}
+		if (cachedReport) {
+			return {
+				...cachedReport,
+				fromCache: true,
+				cachedAt: cachedReport.generatedAt,
+				currentTime: new Date().toISOString(),
+			};
 		}
 
 		// Generate report data based on type
@@ -280,9 +266,6 @@ export class ReportsService implements OnModuleInit {
 				break;
 			case ReportType.USER_DAILY:
 				reportData = await this.userDailyReportGenerator.generate(params);
-				break;
-			case ReportType.LIVE_OVERVIEW:
-				reportData = await this.liveOverviewReportGenerator.generate(params);
 				break;
 			case ReportType.USER:
 				// Will be implemented later
@@ -311,8 +294,8 @@ export class ReportsService implements OnModuleInit {
 			...reportData,
 		};
 
-		// Cache the report with appropriate TTL
-		await this.cacheManager.set(cacheKey, report, cacheTtl);
+		// Cache the report
+		await this.cacheManager.set(cacheKey, report, this.CACHE_TTL);
 
 		// Return the report data directly without saving to database
 		return report;
@@ -412,21 +395,7 @@ export class ReportsService implements OnModuleInit {
 			// For redis-based cache this would use a scan/delete pattern
 			// For the built-in cache we can only delete specific keys
 			// Since we don't know what cache implementation is being used, we'll log this
-
-			// For now, we'll specifically clear the live overview cache
-			if (!reportType || reportType === ReportType.LIVE_OVERVIEW) {
-				const liveOverviewKey = `${this.CACHE_PREFIX}${ReportType.LIVE_OVERVIEW}_org${organisationId}`;
-				await this.cacheManager.del(liveOverviewKey);
-
-				// If branch ID was specified, clear those too
-				const branchIds = await this.getBranchIdsForOrganization(organisationId);
-				for (const branchId of branchIds) {
-					const branchKey = `${this.CACHE_PREFIX}${ReportType.LIVE_OVERVIEW}_org${organisationId}_branch${branchId}`;
-					await this.cacheManager.del(branchKey);
-				}
-
-				return 1 + branchIds.length;
-			}
+			// This method would need to be enhanced to properly clear cache based on pattern
 
 			return 0;
 		} catch (error) {
@@ -461,7 +430,7 @@ export class ReportsService implements OnModuleInit {
 	@OnEvent('task.deleted')
 	async handleTaskChange(payload: { organisationId: number; branchId?: number }) {
 		if (!payload || !payload.organisationId) return;
-		await this.clearOrganizationReportCache(payload.organisationId, ReportType.LIVE_OVERVIEW);
+		await this.clearOrganizationReportCache(payload.organisationId);
 	}
 
 	@OnEvent('lead.created')
@@ -469,7 +438,7 @@ export class ReportsService implements OnModuleInit {
 	@OnEvent('lead.deleted')
 	async handleLeadChange(payload: { organisationId: number; branchId?: number }) {
 		if (!payload || !payload.organisationId) return;
-		await this.clearOrganizationReportCache(payload.organisationId, ReportType.LIVE_OVERVIEW);
+		await this.clearOrganizationReportCache(payload.organisationId);
 	}
 
 	@OnEvent('quotation.created')
@@ -477,7 +446,7 @@ export class ReportsService implements OnModuleInit {
 	@OnEvent('quotation.deleted')
 	async handleQuotationChange(payload: { organisationId: number; branchId?: number }) {
 		if (!payload || !payload.organisationId) return;
-		await this.clearOrganizationReportCache(payload.organisationId, ReportType.LIVE_OVERVIEW);
+		await this.clearOrganizationReportCache(payload.organisationId);
 	}
 
 	/* ---------------------------------------------------------

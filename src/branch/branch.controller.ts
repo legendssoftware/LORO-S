@@ -297,7 +297,11 @@ Establishes a new branch location within your organization with comprehensive se
 		}
 	})
 	create(@Body() createBranchDto: CreateBranchDto, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid;
+		// Try to get orgId from multiple sources
+		const orgId = req.user?.org?.uid || 
+					  (req.query?.organisationRef ? parseInt(req.query.organisationRef as string, 10) : null) ||
+					  req.user?.organisationRef;
+		
 		const branchId = req.user?.branch?.uid;
 		return this.branchService.create(createBranchDto, orgId, branchId);
 	}
@@ -351,6 +355,12 @@ Retrieves a comprehensive directory of all active branches within your organizat
 - Role-based information visibility and data protection
 		`
 	})
+	@ApiQuery({ 
+		name: 'organisationRef', 
+		required: false, 
+		description: 'Organization reference ID to filter branches',
+		type: 'string'
+	})
 	@ApiOkResponse({
 		description: '📊 Branches retrieved successfully',
 		schema: {
@@ -393,7 +403,11 @@ Retrieves a comprehensive directory of all active branches within your organizat
 		}
 	})
 	findAll(@Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid;
+		// Try to get orgId from multiple sources
+		const orgId = req.user?.org?.uid || 
+					  (req.query?.organisationRef ? parseInt(req.query.organisationRef as string, 10) : null) ||
+					  req.user?.organisationRef;
+		
 		const branchId = req.user?.branch?.uid;
 		return this.branchService.findAll(orgId, branchId);
 	}
@@ -526,7 +540,11 @@ Retrieves comprehensive information about a specific branch including detailed a
 		}
 	})
 	findOne(@Param('ref') ref: string, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid;
+		// Try to get orgId from multiple sources
+		const orgId = req.user?.org?.uid || 
+					  (req.query?.organisationRef ? parseInt(req.query.organisationRef as string, 10) : null) ||
+					  req.user?.organisationRef;
+		
 		const branchId = req.user?.branch?.uid;
 		return this.branchService.findOne(ref, orgId, branchId);
 	}
@@ -717,7 +735,11 @@ Updates existing branch information with comprehensive validation and audit trai
 		}
 	})
 	update(@Param('ref') ref: string, @Body() updateBranchDto: UpdateBranchDto, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid;
+		// Try to get orgId from multiple sources
+		const orgId = req.user?.org?.uid || 
+					  (req.query?.organisationRef ? parseInt(req.query.organisationRef as string, 10) : null) ||
+					  req.user?.organisationRef;
+		
 		const branchId = req.user?.branch?.uid;
 		return this.branchService.update(ref, updateBranchDto, orgId, branchId);
 	}
@@ -848,7 +870,11 @@ Safely deactivates a branch while preserving all historical data and maintaining
 		}
 	})
 	remove(@Param('ref') ref: string, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid;
+		// Try to get orgId from multiple sources
+		const orgId = req.user?.org?.uid || 
+					  (req.query?.organisationRef ? parseInt(req.query.organisationRef as string, 10) : null) ||
+					  req.user?.organisationRef;
+		
 		const branchId = req.user?.branch?.uid;
 		return this.branchService.remove(ref, orgId, branchId);
 	}
