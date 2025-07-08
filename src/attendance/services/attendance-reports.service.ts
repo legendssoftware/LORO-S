@@ -1182,19 +1182,57 @@ export class AttendanceReportsService {
 			let comparisonText = `Same as ${comparisonLabel}`;
 			let timingDifference = '→';
 
-			// Handle zero comparison hours with intelligent messaging
-			if (comparisonHours === 0 && todayHours > 0) {
-				comparisonText = `${Math.round(todayHours * 100) / 100}h worked (no data for ${comparisonLabel})`;
-				timingDifference = '📊';
-			} else if (comparisonHours === 0 && todayHours === 0) {
-				comparisonText = `No work recorded for today or ${comparisonLabel}`;
+			// Enhanced comparison logic to handle edge cases and provide meaningful insights
+			if (comparisonHours === 0 && todayHours === 0) {
+				// Both days have zero hours - not really "same as yesterday"
+				comparisonText = `No work recorded today or ${comparisonLabel}`;
 				timingDifference = '⭕';
+			} else if (comparisonHours === 0 && todayHours > 0) {
+				// Today has work but yesterday didn't - this is new activity, not improvement
+				if (todayHours >= 6) {
+					comparisonText = `New activity: ${Math.round(todayHours * 100) / 100}h worked (no ${comparisonLabel} data)`;
+					timingDifference = '🆕';
+				} else {
+					comparisonText = `${Math.round(todayHours * 100) / 100}h worked (no ${comparisonLabel} data)`;
+					timingDifference = '📊';
+				}
+			} else if (todayHours === 0 && comparisonHours > 0) {
+				// Today has no work but yesterday did - this is absence, not decline
+				comparisonText = `No work today (worked ${Math.round(comparisonHours * 100) / 100}h ${comparisonLabel})`;
+				timingDifference = '❌';
+			} else if (Math.abs(hoursDifference) < 0.1) {
+				// Very small difference (less than 6 minutes) - consider it the same
+				comparisonText = `Consistent: ${Math.round(todayHours * 100) / 100}h (similar to ${comparisonLabel})`;
+				timingDifference = '📍';
 			} else if (hoursDifference > 0.5) {
-				comparisonText = `${Math.round(hoursDifference * 100) / 100}h more than ${comparisonLabel}`;
-				timingDifference = '↗️';
+				// Meaningful increase
+				const increasePercent = Math.round(((hoursDifference) / comparisonHours) * 100);
+				if (increasePercent >= 50) {
+					comparisonText = `Strong increase: +${Math.round(hoursDifference * 100) / 100}h (+${increasePercent}% vs ${comparisonLabel})`;
+					timingDifference = '📈';
+				} else {
+					comparisonText = `+${Math.round(hoursDifference * 100) / 100}h more than ${comparisonLabel}`;
+					timingDifference = '↗️';
+				}
 			} else if (hoursDifference < -0.5) {
-				comparisonText = `${Math.round(Math.abs(hoursDifference) * 100) / 100}h less than ${comparisonLabel}`;
-				timingDifference = '↘️';
+				// Meaningful decrease
+				const decreasePercent = Math.round((Math.abs(hoursDifference) / comparisonHours) * 100);
+				if (decreasePercent >= 50) {
+					comparisonText = `Significant decrease: ${Math.round(Math.abs(hoursDifference) * 100) / 100}h less (-${decreasePercent}% vs ${comparisonLabel})`;
+					timingDifference = '📉';
+				} else {
+					comparisonText = `${Math.round(Math.abs(hoursDifference) * 100) / 100}h less than ${comparisonLabel}`;
+					timingDifference = '↘️';
+				}
+			} else {
+				// Small difference (0.1 to 0.5 hours) - acknowledge but don't overstate
+				if (hoursDifference > 0) {
+					comparisonText = `Slightly more: +${Math.round(hoursDifference * 100) / 100}h vs ${comparisonLabel}`;
+					timingDifference = '↗️';
+				} else {
+					comparisonText = `Slightly less: ${Math.round(Math.abs(hoursDifference) * 100) / 100}h vs ${comparisonLabel}`;
+					timingDifference = '↘️';
+				}
 			}
 
 			// Defensive user profile creation to prevent data mix-ups
@@ -1235,8 +1273,17 @@ export class AttendanceReportsService {
 			});
 		}
 
-		// Sort by hours worked (descending)
-		return metrics.sort((a, b) => b.hoursWorked - a.hoursWorked);
+		// Sort by hours worked (descending), then by punctuality (on-time first)
+		return metrics.sort((a, b) => {
+			if (b.hoursWorked !== a.hoursWorked) {
+				return b.hoursWorked - a.hoursWorked;
+			}
+			// If hours are equal, prioritize punctual employees
+			if (a.isLate !== b.isLate) {
+				return a.isLate ? 1 : -1;
+			}
+			return 0;
+		});
 	}
 
 	private generateMorningInsights(
@@ -1263,58 +1310,76 @@ export class AttendanceReportsService {
 			return insights;
 		}
 
-		// Enhanced attendance rate insights
-		if (attendanceRate >= 90) {
-			insights.push(`Excellent attendance rate of ${attendanceRate}% - team showing strong commitment and engagement!`);
-		} else if (attendanceRate >= 75) {
-			insights.push(`Good attendance rate of ${attendanceRate}% with opportunity for improvement through enhanced team support.`);
+		// Enhanced attendance rate insights with proper context
+		const attendanceContext = totalEmployees > 1 ? 'team' : 'employee';
+		if (attendanceRate >= 95) {
+			insights.push(`Exceptional attendance: ${presentCount}/${totalEmployees} ${attendanceContext} present (${attendanceRate}%) - outstanding commitment!`);
+		} else if (attendanceRate >= 85) {
+			insights.push(`Strong attendance: ${presentCount}/${totalEmployees} ${attendanceContext} present (${attendanceRate}%) - excellent performance with minor room for improvement.`);
+		} else if (attendanceRate >= 70) {
+			insights.push(`Good attendance: ${presentCount}/${totalEmployees} ${attendanceContext} present (${attendanceRate}%) - solid foundation with opportunities to enhance team engagement.`);
 		} else if (attendanceRate >= 50) {
-			insights.push(`Moderate attendance rate of ${attendanceRate}% - investigate potential barriers preventing team attendance.`);
-		} else {
-			insights.push(`Low attendance rate of ${attendanceRate}% requires immediate intervention and comprehensive support strategy.`);
+			insights.push(`Moderate attendance: ${presentCount}/${totalEmployees} ${attendanceContext} present (${attendanceRate}%) - significant opportunity for improvement through targeted support.`);
+		} else if (attendanceRate > 0) {
+			insights.push(`Low attendance: Only ${presentCount}/${totalEmployees} ${attendanceContext} present (${attendanceRate}%) - requires immediate intervention and comprehensive strategy.`);
 		}
 
-		// Enhanced punctuality insights with comprehensive data
-		const totalLatePercentage = punctuality.latePercentage + punctuality.veryLatePercentage;
-		const totalOnTimePercentage = punctuality.earlyPercentage + punctuality.onTimePercentage;
-
-		if (totalLatePercentage === 0 && presentCount > 0) {
-			insights.push(`Perfect punctuality: All ${presentCount} employees arrived on time or early - exceptional team discipline!`);
+		// Enhanced punctuality insights with meaningful context
+		const totalLateEmployees = punctuality.lateArrivals.length + punctuality.veryLateArrivals.length;
+		const totalOnTimeEmployees = punctuality.earlyArrivals.length + punctuality.onTimeArrivals.length;
+		
+		if (totalLateEmployees === 0 && presentCount > 0) {
+			insights.push(`Perfect punctuality: All ${presentCount} present employees arrived on time or early - exceptional team discipline!`);
 		} else if (punctuality.veryLateArrivals.length > 0) {
-			insights.push(
-				`URGENT: ${punctuality.veryLateArrivals.length} employees arrived very late (30+ minutes). Total tardiness: ${totalLatePercentage}% with average delay of ${punctuality.averageLateMinutes} minutes.`,
-			);
+			const criticalCount = punctuality.veryLateArrivals.length;
+			const regularLateCount = punctuality.lateArrivals.length;
+			if (regularLateCount > 0) {
+				insights.push(`URGENT: ${criticalCount} employees arrived very late (30+ minutes) and ${regularLateCount} others were late. Total late: ${totalLateEmployees}/${presentCount} present employees.`);
+			} else {
+				insights.push(`URGENT: ${criticalCount} employees arrived very late (30+ minutes). This represents ${Math.round((criticalCount/presentCount)*100)}% of present employees requiring immediate attention.`);
+			}
 		} else if (punctuality.lateArrivals.length > 0) {
-			insights.push(
-				`${punctuality.lateArrivals.length} employees arrived late today with an average delay of ${punctuality.averageLateMinutes} minutes. Focus on identifying and addressing barriers.`,
-			);
+			const lateRatio = `${punctuality.lateArrivals.length}/${presentCount}`;
+			insights.push(`${punctuality.lateArrivals.length} employees arrived late today (${lateRatio} present employees) with an average delay of ${punctuality.averageLateMinutes} minutes.`);
 		}
 
-		// Early arrival recognition
+		// Early arrival recognition with context
 		if (punctuality.earlyArrivals.length > 0) {
-			insights.push(`Outstanding dedication: ${punctuality.earlyArrivals.length} employees arrived early, demonstrating exceptional commitment.`);
+			const earlyRatio = `${punctuality.earlyArrivals.length}/${presentCount}`;
+			insights.push(`Outstanding dedication: ${punctuality.earlyArrivals.length} employees arrived early (${earlyRatio} present employees) - demonstrating exceptional commitment.`);
 		}
 
-		// Specific insights for severe lateness requiring immediate action
-		if (punctuality.veryLatePercentage > 10) {
-			insights.push(
-				`CRITICAL ALERT: ${punctuality.veryLatePercentage}% of employees were extremely late - immediate management intervention needed.`,
-			);
+		// Specific insights for severe lateness with proper context
+		if (punctuality.veryLatePercentage > 20 && presentCount >= 3) {
+			insights.push(`CRITICAL ALERT: ${punctuality.veryLatePercentage}% of present employees were extremely late - indicates systemic issues requiring immediate management intervention.`);
+		} else if (punctuality.veryLatePercentage > 10 && presentCount >= 5) {
+			insights.push(`ATTENTION: ${punctuality.veryLatePercentage}% of present employees were extremely late - monitor for emerging patterns.`);
 		}
 
-		// Present employee count insight
-		if (presentCount > 0) {
-			const presentPercentage = Math.round((presentCount / totalEmployees) * 100);
-			insights.push(`${presentCount} out of ${totalEmployees} team members (${presentPercentage}%) have successfully checked in so far today.`);
-		}
-
-		// Performance comparison insight
-		if (totalOnTimePercentage >= 80) {
-			insights.push(`Strong punctuality performance: ${totalOnTimePercentage}% of attendees arrived on time or early.`);
-		} else if (totalOnTimePercentage >= 60) {
-			insights.push(`Moderate punctuality performance: ${totalOnTimePercentage}% of attendees arrived on time or early - room for improvement.`);
-		} else if (totalOnTimePercentage > 0) {
-			insights.push(`Punctuality challenges: Only ${totalOnTimePercentage}% of attendees arrived on time or early - requires focused attention.`);
+		// Contextual performance insights based on team size
+		if (totalOnTimeEmployees > 0) {
+			const onTimePercentage = Math.round((totalOnTimeEmployees / presentCount) * 100);
+			if (presentCount >= 10) {
+				if (onTimePercentage >= 90) {
+					insights.push(`Excellent punctuality: ${onTimePercentage}% (${totalOnTimeEmployees}/${presentCount}) of present employees arrived on time or early - strong team culture.`);
+				} else if (onTimePercentage >= 75) {
+					insights.push(`Good punctuality: ${onTimePercentage}% (${totalOnTimeEmployees}/${presentCount}) of present employees arrived on time or early - opportunity for improvement.`);
+				} else if (onTimePercentage >= 50) {
+					insights.push(`Moderate punctuality: ${onTimePercentage}% (${totalOnTimeEmployees}/${presentCount}) of present employees arrived on time or early - requires attention.`);
+				} else {
+					insights.push(`Low punctuality: Only ${onTimePercentage}% (${totalOnTimeEmployees}/${presentCount}) of present employees arrived on time or early - critical issue.`);
+				}
+			} else if (presentCount >= 3) {
+				// Small team context
+				if (onTimePercentage >= 80) {
+					insights.push(`Small team punctuality: ${totalOnTimeEmployees} out of ${presentCount} present employees arrived on time or early (${onTimePercentage}%) - good performance.`);
+				} else {
+					insights.push(`Small team punctuality: ${totalOnTimeEmployees} out of ${presentCount} present employees arrived on time or early (${onTimePercentage}%) - room for improvement.`);
+				}
+			} else {
+				// Very small team or individual
+				insights.push(`${totalOnTimeEmployees} out of ${presentCount} present ${presentCount === 1 ? 'employee' : 'employees'} arrived on time or early.`);
+			}
 		}
 
 		return insights;
@@ -1397,42 +1462,114 @@ export class AttendanceReportsService {
 		// Special handling for no employees
 		if (employeeMetrics.length === 0) {
 			insights.push('No employee data available for this organization.');
+			insights.push('System setup may be required to begin tracking employee performance metrics.');
 			return insights;
 		}
 
+		const totalEmployees = employeeMetrics.length;
+		const employeesWithCheckIn = employeeMetrics.filter((m) => m.todayCheckIn).length;
 		const lateEmployees = employeeMetrics.filter((m) => m.isLate).length;
-		const highPerformers = employeeMetrics.filter((m) => m.hoursWorked > avgHours + 1).length;
+		const highPerformers = employeeMetrics.filter((m) => m.hoursWorked > Math.max(avgHours + 1, 6)).length;
 		const noCheckOut = employeeMetrics.filter((m) => m.todayCheckIn && !m.todayCheckOut).length;
+		const noWorkToday = employeeMetrics.filter((m) => !m.todayCheckIn && m.hoursWorked === 0).length;
 
-		// Special handling for no attendance
-		if (completedShifts === 0 && employeeMetrics.every((m) => !m.todayCheckIn)) {
-			insights.push('No employees checked in today. Consider following up with your team.');
-			insights.push('This could indicate a system issue, public holiday, or scheduling changes.');
+		// Special handling for complete absence
+		if (employeesWithCheckIn === 0) {
+			insights.push(`CRITICAL: No employees checked in today out of ${totalEmployees} registered employees.`);
+			insights.push('This requires immediate investigation - potential system issues, holiday schedules, or emergency situations.');
+			insights.push('Immediate action: Verify employee safety and check attendance system functionality.');
 			return insights;
 		}
 
-		if (completedShifts > 0) {
-			insights.push(`${completedShifts} employees completed their shifts today.`);
+		// Enhanced completion insights with context
+		if (completedShifts === 0 && employeesWithCheckIn > 0) {
+			insights.push(`${employeesWithCheckIn}/${totalEmployees} employees checked in today, but none have completed their shifts yet.`);
+			insights.push('All checked-in employees are still working or haven\'t checked out properly.');
+		} else if (completedShifts > 0) {
+			const completionRate = Math.round((completedShifts / employeesWithCheckIn) * 100);
+			if (completionRate === 100) {
+				insights.push(`Excellent completion: All ${completedShifts} employees who checked in today completed their shifts.`);
+			} else {
+				insights.push(`${completedShifts}/${employeesWithCheckIn} employees completed their shifts (${completionRate}% completion rate).`);
+			}
 		}
 
+		// Enhanced hours analysis with meaningful context
 		if (avgHours > 0) {
-			insights.push(`Average working hours: ${Math.round(avgHours * 100) / 100} hours.`);
+			if (completedShifts >= 3) {
+				if (avgHours >= 8) {
+					insights.push(`Strong productivity: Average working time of ${Math.round(avgHours * 100) / 100} hours indicates full engagement across ${completedShifts} completed shifts.`);
+				} else if (avgHours >= 6) {
+					insights.push(`Moderate productivity: Average working time of ${Math.round(avgHours * 100) / 100} hours shows good effort across ${completedShifts} completed shifts.`);
+				} else if (avgHours >= 4) {
+					insights.push(`Limited productivity: Average working time of ${Math.round(avgHours * 100) / 100} hours indicates potential challenges across ${completedShifts} completed shifts.`);
+				} else {
+					insights.push(`Low productivity: Average working time of only ${Math.round(avgHours * 100) / 100} hours requires investigation across ${completedShifts} completed shifts.`);
+				}
+			} else if (completedShifts > 0) {
+				insights.push(`Limited data: ${completedShifts} completed shift${completedShifts === 1 ? '' : 's'} with average working time of ${Math.round(avgHours * 100) / 100} hours.`);
+			}
+		} else if (completedShifts === 0 && employeesWithCheckIn > 0) {
+			insights.push('No completed shifts yet - all employees are either still working or haven\'t properly checked out.');
 		}
 
+		// Enhanced lateness analysis with proper context
 		if (lateEmployees > 0) {
+			const lateRate = Math.round((lateEmployees / employeesWithCheckIn) * 100);
 			const totalLateMinutes = employeeMetrics.filter((m) => m.isLate).reduce((sum, m) => sum + m.lateMinutes, 0);
-			const avgLateMinutes = totalLateMinutes / lateEmployees;
-			insights.push(
-				`${lateEmployees} employees arrived late today, averaging ${Math.round(avgLateMinutes)} minutes late.`,
-			);
+			const avgLateMinutes = Math.round(totalLateMinutes / lateEmployees);
+			
+			if (lateRate >= 50) {
+				insights.push(`ATTENTION: ${lateEmployees}/${employeesWithCheckIn} employees arrived late (${lateRate}%) with average delay of ${avgLateMinutes} minutes - significant punctuality issue.`);
+			} else if (lateRate >= 25) {
+				insights.push(`Moderate concern: ${lateEmployees}/${employeesWithCheckIn} employees arrived late (${lateRate}%) with average delay of ${avgLateMinutes} minutes.`);
+			} else {
+				insights.push(`Minor lateness: ${lateEmployees}/${employeesWithCheckIn} employees arrived late (${lateRate}%) with average delay of ${avgLateMinutes} minutes.`);
+			}
+		} else if (employeesWithCheckIn > 0) {
+			insights.push(`Excellent punctuality: All ${employeesWithCheckIn} employees who checked in arrived on time or early.`);
 		}
 
+		// High performer recognition with context
 		if (highPerformers > 0) {
-			insights.push(`${highPerformers} employees worked above average hours.`);
+			const highPerformerRate = Math.round((highPerformers / Math.max(completedShifts, employeesWithCheckIn)) * 100);
+			if (highPerformerRate >= 50) {
+				insights.push(`Outstanding dedication: ${highPerformers} employees worked significantly above average hours (${highPerformerRate}% of active employees).`);
+			} else {
+				insights.push(`Strong performers: ${highPerformers} employees worked above average hours, showing exceptional commitment.`);
+			}
 		}
 
+		// Still working insights with context
 		if (noCheckOut > 0) {
-			insights.push(`${noCheckOut} employees haven't checked out yet.`);
+			const stillWorkingRate = Math.round((noCheckOut / employeesWithCheckIn) * 100);
+			if (stillWorkingRate >= 75) {
+				insights.push(`High engagement: ${noCheckOut}/${employeesWithCheckIn} employees are still actively working (${stillWorkingRate}%).`);
+			} else if (stillWorkingRate >= 25) {
+				insights.push(`Continued activity: ${noCheckOut}/${employeesWithCheckIn} employees haven't checked out yet (${stillWorkingRate}%).`);
+			} else {
+				insights.push(`${noCheckOut} employees haven't checked out yet - may be working late or forgot to check out.`);
+			}
+		}
+
+		// Absent employee insights
+		if (noWorkToday > 0) {
+			const absenceRate = Math.round((noWorkToday / totalEmployees) * 100);
+			if (absenceRate >= 50) {
+				insights.push(`High absence: ${noWorkToday}/${totalEmployees} employees had no activity today (${absenceRate}%) - requires investigation.`);
+			} else if (absenceRate >= 25) {
+				insights.push(`Notable absence: ${noWorkToday}/${totalEmployees} employees had no activity today (${absenceRate}%).`);
+			} else if (noWorkToday === 1) {
+				insights.push(`One employee had no activity today - may need follow-up.`);
+			} else {
+				insights.push(`${noWorkToday} employees had no activity today.`);
+			}
+		}
+
+		// Zero hours worked insights (preventing "0 improvement" messages)
+		const zeroHoursWorked = employeeMetrics.filter((m) => m.hoursWorked === 0).length;
+		if (zeroHoursWorked > 0 && zeroHoursWorked < totalEmployees) {
+			insights.push(`${zeroHoursWorked} employees recorded no working hours today - may need attention or system check.`);
 		}
 
 		return insights;

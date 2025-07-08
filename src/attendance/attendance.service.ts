@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException, Logger, BadRequestException, Inject } from '@nestjs/common';
-import { IsNull, MoreThanOrEqual, Not, Repository, LessThanOrEqual, Between, In } from 'typeorm';
+import { IsNull, MoreThanOrEqual, Not, Repository, LessThanOrEqual, Between, In, LessThan } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
@@ -230,7 +230,8 @@ export class AttendanceService {
 				whereConditions.branch = { uid: branchId };
 			}
 
-			const checkIns = await this.attendanceRepository.find({
+			// Get check-ins that started on this date
+			const checkInsToday = await this.attendanceRepository.find({
 				where: whereConditions,
 				relations: ['owner', 'owner.branch', 'owner.organisation', 'owner.userProfile', 'verifiedBy', 'organisation', 'branch'],
 				order: {
@@ -238,13 +239,55 @@ export class AttendanceService {
 				},
 			});
 
-			if (!checkIns) {
-				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
+			// Also get shifts that started on previous days but are still ongoing on this date
+			const ongoingShiftsConditions: any = {
+				checkIn: LessThan(startOfDay), // Started before today
+				checkOut: IsNull(), // Not checked out yet
+				status: In([AttendanceStatus.PRESENT, AttendanceStatus.ON_BREAK]), // Still active
+			};
+
+			// Apply same organization and branch filtering for ongoing shifts
+			if (orgId) {
+				ongoingShiftsConditions.organisation = { uid: orgId };
+			}
+
+			if (branchId) {
+				ongoingShiftsConditions.branch = { uid: branchId };
+			}
+
+			const ongoingShifts = await this.attendanceRepository.find({
+				where: ongoingShiftsConditions,
+				relations: ['owner', 'owner.branch', 'owner.organisation', 'owner.userProfile', 'verifiedBy', 'organisation', 'branch'],
+				order: {
+					checkIn: 'DESC',
+				},
+			});
+
+			// Combine both sets of check-ins and mark multi-day shifts
+			const allCheckIns = [...checkInsToday, ...ongoingShifts].map(checkIn => {
+				const checkInDate = new Date(checkIn.checkIn);
+				const isMultiDay = checkInDate < startOfDay;
+				
+				return {
+					...checkIn,
+					isMultiDayShift: isMultiDay,
+					shiftDaySpan: isMultiDay ? this.calculateShiftDaySpan(checkInDate, endOfDay) : 1,
+				};
+			});
+
+			// Sort by check-in time descending
+			allCheckIns.sort((a, b) => new Date(b.checkIn).getTime() - new Date(a.checkIn).getTime());
+
+			if (!allCheckIns || allCheckIns.length === 0) {
+				return {
+					message: 'No attendance records found for this date',
+					checkIns: [],
+				};
 			}
 
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,
-				checkIns,
+				checkIns: allCheckIns,
 			};
 
 			return response;
@@ -255,6 +298,123 @@ export class AttendanceService {
 			};
 
 			return response;
+		}
+	}
+
+	/**
+	 * Calculate how many days a shift spans
+	 */
+	private calculateShiftDaySpan(checkInDate: Date, currentDate: Date): number {
+		const diffTime = Math.abs(currentDate.getTime() - checkInDate.getTime());
+		const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+		return Math.max(diffDays, 1); // At least 1 day
+	}
+
+	/**
+	 * Enhanced method to get attendance records that properly handles multi-day shifts
+	 */
+	public async getAttendanceForDateRange(
+		startDate: Date, 
+		endDate: Date, 
+		orgId?: number, 
+		branchId?: number
+	): Promise<{ 
+		message: string; 
+		checkIns: Attendance[]; 
+		multiDayShifts: Attendance[];
+		ongoingShifts: Attendance[];
+	}> {
+		try {
+			const startOfPeriod = new Date(startDate);
+			startOfPeriod.setHours(0, 0, 0, 0);
+			const endOfPeriod = new Date(endDate);
+			endOfPeriod.setHours(23, 59, 59, 999);
+
+			const whereConditions: any = {};
+
+			// Apply organization and branch filtering
+			if (orgId) {
+				whereConditions.organisation = { uid: orgId };
+			}
+
+			if (branchId) {
+				whereConditions.branch = { uid: branchId };
+			}
+
+			// Get all check-ins within the date range
+			const checkInsInRange = await this.attendanceRepository.find({
+				where: {
+					...whereConditions,
+					checkIn: Between(startOfPeriod, endOfPeriod),
+				},
+				relations: ['owner', 'owner.branch', 'owner.organisation', 'owner.userProfile', 'verifiedBy', 'organisation', 'branch'],
+				order: {
+					checkIn: 'DESC',
+				},
+			});
+
+			// Get shifts that started before the range but are still ongoing
+			const ongoingShifts = await this.attendanceRepository.find({
+				where: {
+					...whereConditions,
+					checkIn: LessThan(startOfPeriod),
+					status: In([AttendanceStatus.PRESENT, AttendanceStatus.ON_BREAK]),
+					checkOut: IsNull(),
+				},
+				relations: ['owner', 'owner.branch', 'owner.organisation', 'owner.userProfile', 'verifiedBy', 'organisation', 'branch'],
+				order: {
+					checkIn: 'DESC',
+				},
+			});
+
+			// Identify multi-day shifts (shifts that span more than 24 hours)
+			const multiDayShifts = checkInsInRange.filter(shift => {
+				if (!shift.checkOut) {
+					// Still ongoing - check if it's been more than 24 hours
+					const shiftDuration = new Date().getTime() - new Date(shift.checkIn).getTime();
+					return shiftDuration > (24 * 60 * 60 * 1000); // More than 24 hours
+				} else {
+					// Completed shift - check if it spanned multiple days
+					const shiftDuration = new Date(shift.checkOut).getTime() - new Date(shift.checkIn).getTime();
+					return shiftDuration > (24 * 60 * 60 * 1000); // More than 24 hours
+				}
+			});
+
+			// Mark all shifts with their day span information
+			const allCheckIns = [...checkInsInRange, ...ongoingShifts].map(checkIn => {
+				const checkInDate = new Date(checkIn.checkIn);
+				const endTime = checkIn.checkOut ? new Date(checkIn.checkOut) : new Date();
+				const daySpan = this.calculateShiftDaySpan(checkInDate, endTime);
+				
+				return {
+					...checkIn,
+					isMultiDayShift: daySpan > 1,
+					shiftDaySpan: daySpan,
+					isOngoingShift: !checkIn.checkOut && checkIn.status !== AttendanceStatus.COMPLETED,
+				};
+			});
+
+			const response = {
+				message: process.env.SUCCESS_MESSAGE,
+				checkIns: allCheckIns,
+				multiDayShifts: multiDayShifts.map(shift => ({
+					...shift,
+					shiftDaySpan: this.calculateShiftDaySpan(new Date(shift.checkIn), shift.checkOut ? new Date(shift.checkOut) : new Date()),
+				})),
+				ongoingShifts: ongoingShifts.map(shift => ({
+					...shift,
+					shiftDaySpan: this.calculateShiftDaySpan(new Date(shift.checkIn), new Date()),
+				})),
+			};
+
+			return response;
+		} catch (error) {
+			return {
+				message: `Error retrieving attendance records: ${error.message}`,
+				checkIns: [],
+				multiDayShifts: [],
+				ongoingShifts: [],
+			};
 		}
 	}
 
