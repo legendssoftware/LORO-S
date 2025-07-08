@@ -37,7 +37,7 @@ export class JournalController {
   })
   @ApiBadRequestResponse({ description: 'Invalid input data provided' })
   create(@Body() createJournalDto: CreateJournalDto, @Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid;
+    const orgId = req.user?.org?.uid || req.user?.organisationRef;
     const branchId = req.user?.branch?.uid;
     return this.journalService.create(createJournalDto, orgId, branchId);
   }
@@ -92,7 +92,7 @@ export class JournalController {
     }
   })
   findAll(@Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid;
+    const orgId = req.user?.org?.uid || req.user?.organisationRef;
     const branchId = req.user?.branch?.uid;
     return this.journalService.findAll({}, 1, 25, orgId, branchId);
   }
@@ -145,7 +145,7 @@ export class JournalController {
   })
   @ApiNotFoundResponse({ description: 'Journal entry not found' })
   findOne(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid;
+    const orgId = req.user?.org?.uid || req.user?.organisationRef;
     const branchId = req.user?.branch?.uid;
     return this.journalService.findOne(ref, orgId, branchId);
   }
@@ -216,7 +216,7 @@ export class JournalController {
   })
   @ApiNotFoundResponse({ description: 'User not found or has no journal entries' })
   journalsByUser(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid;
+    const orgId = req.user?.org?.uid || req.user?.organisationRef;
     const branchId = req.user?.branch?.uid;
     return this.journalService.journalsByUser(ref, orgId, branchId);
   }
@@ -246,7 +246,7 @@ export class JournalController {
   @ApiNotFoundResponse({ description: 'Journal entry not found' })
   @ApiBadRequestResponse({ description: 'Invalid input data provided' })
   update(@Param('ref') ref: number, @Body() updateJournalDto: UpdateJournalDto, @Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid;
+    const orgId = req.user?.org?.uid || req.user?.organisationRef;
     const branchId = req.user?.branch?.uid;
     return this.journalService.update(ref, updateJournalDto, orgId, branchId);
   }
@@ -274,7 +274,7 @@ export class JournalController {
   })
   @ApiNotFoundResponse({ description: 'Journal entry not found' })
   restore(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid;
+    const orgId = req.user?.org?.uid || req.user?.organisationRef;
     const branchId = req.user?.branch?.uid;
     return this.journalService.restore(ref, orgId, branchId);
   }
@@ -302,7 +302,7 @@ export class JournalController {
   })
   @ApiNotFoundResponse({ description: 'Journal entry not found' })
   remove(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid;
+    const orgId = req.user?.org?.uid || req.user?.organisationRef;
     const branchId = req.user?.branch?.uid;
     return this.journalService.remove(ref, orgId, branchId);
   }

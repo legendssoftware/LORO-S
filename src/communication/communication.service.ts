@@ -630,6 +630,16 @@ export class CommunicationService {
 					subject: 'Asset Deleted - Admin Notification',
 					body: AssetDeletedAdmin(data as AssetAdminNotificationEmailData),
 				};
+			case EmailType.BLANK_QUOTATION_CLIENT:
+				return {
+					subject: 'Your Blank Quotation is Ready',
+					body: NewQuotationClient(data as QuotationInternalData), // Reuse existing template for now
+				};
+			case EmailType.BLANK_QUOTATION_INTERNAL:
+				return {
+					subject: 'New Blank Quotation Created',
+					body: NewQuotationInternal(data as QuotationInternalData), // Reuse existing template for now
+				};
 			case EmailType.LOGIN_NOTIFICATION:
 				return {
 					subject: 'Security Alert: New Login to Your Account',

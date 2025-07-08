@@ -64,6 +64,8 @@ import {
 	UserTargetPerformanceAlertEmailData,
 	UserTargetERPUpdateConfirmationEmailData,
 	UserTargetPeriodSummaryEmailData,
+	BlankQuotationData,
+	BlankQuotationInternalData,
 } from '../types/email-templates.types';
 
 // Auth Templates
@@ -106,6 +108,15 @@ export const QuotationStatusUpdate = (data: QuotationData): string => {
 
 export const NewQuotationWarehouseFulfillment = (data: QuotationWarehouseData): string => {
 	return emailTemplateService.newQuotationWarehouseFulfillment(data);
+};
+
+// Blank Quotation Templates
+export const BlankQuotationClient = (data: BlankQuotationData): string => {
+	return emailTemplateService.blankQuotationClient(data);
+};
+
+export const BlankQuotationInternal = (data: BlankQuotationInternalData): string => {
+	return emailTemplateService.blankQuotationInternal(data);
 };
 
 // Business Templates

@@ -25,6 +25,10 @@ export class UpdateJournalDto extends PartialType(CreateJournalDto) {
     branch?: { uid: number };
 
     @IsOptional()
+    @IsObject()
+    organisation?: { uid: number };
+
+    @IsOptional()
     @IsEnum(JournalStatus)
     status?: JournalStatus;
 }

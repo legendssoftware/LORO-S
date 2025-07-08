@@ -29,6 +29,8 @@ import {
 	LeadAssignedToUserData,
 	OrderReceivedClientData,
 	QuotationWarehouseData,
+	BlankQuotationData,
+	BlankQuotationInternalData,
 	LicenseTransferEmailData,
 	WarningIssuedEmailData,
 	WarningUpdatedEmailData,
@@ -336,6 +338,15 @@ class EmailTemplateService {
 
 	newQuotationWarehouseFulfillment(data: QuotationWarehouseData): string {
 		return this.renderTemplate('quotations/warehouse-fulfillment.hbs', data);
+	}
+
+	// Blank quotation templates
+	blankQuotationClient(data: BlankQuotationData): string {
+		return this.renderTemplate('emails/quotations/blank-quotation-client.hbs', data);
+	}
+
+	blankQuotationInternal(data: BlankQuotationInternalData): string {
+		return this.renderTemplate('emails/quotations/blank-quotation-internal.hbs', data);
 	}
 
 	// Business Templates

@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsArray, IsNotEmpty, ValidateNested, IsNumber, IsString, IsEnum, IsOptional } from 'class-validator';
+import { IsArray, IsNotEmpty, ValidateNested, IsNumber, IsString, IsEnum, IsOptional, IsEmail } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export enum PurchaseMode {
@@ -117,4 +117,13 @@ export class CheckoutDto {
 		required: false,
 	})
 	promoCode?: string;
+
+	@IsEmail()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Optional email address to send the quotation to',
+		example: 'customer@example.com',
+		required: false,
+	})
+	recipientEmail?: string;
 }

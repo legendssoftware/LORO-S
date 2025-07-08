@@ -1,0 +1,165 @@
+{{#base headerTitle="Blank Quotation - Price List Ready" headerSubtitle="Your custom pricing quotation is ready for review"}}
+
+<div class="greeting">
+    Hello {{name}}! 💰
+</div>
+
+<div class="message">
+    <p>We've prepared a custom quotation based on your specified requirements using our {{priceListType}} pricing structure. This blank quotation provides you with detailed pricing information for the products you're interested in.</p>
+</div>
+
+<div class="success-notice">
+    <p>✅ <strong>Quotation Ready!</strong> Quote #{{quotationId}} has been prepared using {{priceListType}} pricing and is ready for your review.</p>
+</div>
+
+<div class="info-card">
+    <h3>📋 Quotation Details</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Quote Number</span>
+            <span class="detail-value" style="font-weight: 700; color: #7c2d92;">{{quotationId}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Price List Type</span>
+            <span class="detail-value" style="text-transform: uppercase; color: #059669; font-weight: 600;">{{priceListType}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Valid Until</span>
+            <span class="detail-value">{{formatDate validUntil}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Total Amount</span>
+            <span class="detail-value" style="font-weight: 700; color: #dc2626; font-size: 18px;">{{currency}} {{total}}</span>
+        </div>
+        {{#if title}}
+        <div class="detail-item">
+            <span class="detail-label">Title</span>
+            <span class="detail-value">{{title}}</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+
+{{#if description}}
+<div class="info-card" style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-left-color: #22c55e;">
+    <h4 style="color: #166534;">📄 Description</h4>
+    <p style="margin-top: 12px; font-size: 15px; line-height: 1.6; color: #15803d;">
+        {{description}}
+    </p>
+</div>
+{{/if}}
+
+<!-- Products List -->
+<div class="info-card">
+    <h4>📦 Products & Pricing ({{priceListType}} Rates)</h4>
+    {{#each quotationItems}}
+    <div class="detail-item" style="border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-bottom: 8px;">
+        <div style="display: flex; justify-content: between; align-items: flex-start;">
+            <div style="flex: 1;">
+                <span class="detail-label" style="font-weight: 600; color: #374151;">{{product.name}}</span>
+                {{#if product.code}}
+                <div style="font-size: 12px; color: #6b7280; margin-top: 2px;">Code: {{product.code}}</div>
+                {{/if}}
+                {{#if notes}}
+                <div style="font-size: 12px; color: #7c2d92; margin-top: 4px; font-style: italic;">{{notes}}</div>
+                {{/if}}
+            </div>
+            <div style="text-align: right;">
+                <div style="color: #6b7280; font-size: 14px;">Qty: {{quantity}}</div>
+                <div style="font-weight: 600; color: #dc2626;">{{../currency}} {{totalPrice}}</div>
+            </div>
+        </div>
+    </div>
+    {{/each}}
+    
+    <div style="border-top: 2px solid #7c2d92; margin-top: 15px; padding-top: 15px;">
+        <div class="detail-item">
+            <span class="detail-label" style="font-weight: 700; font-size: 16px;">Total Amount</span>
+            <span class="detail-value" style="font-weight: 700; font-size: 18px; color: #dc2626;">{{currency}} {{total}}</span>
+        </div>
+    </div>
+</div>
+
+<!-- Pricing Information -->
+<div class="warning-notice">
+    <h4 style="color: #d97706; margin-bottom: 12px;">💡 About {{priceListType}} Pricing</h4>
+    <p style="margin-bottom: 0;">
+        {{#switch priceListType}}
+            {{#case "premium"}}
+                This quotation uses our Premium pricing structure, which includes enhanced service levels and priority support.
+            {{/case}}
+            {{#case "wholesale"}}
+                This quotation uses our Wholesale pricing structure, offering discounted rates for bulk purchases.
+            {{/case}}
+            {{#case "local"}}
+                This quotation uses our Local pricing structure, optimized for regional customers with competitive rates.
+            {{/case}}
+            {{#case "foreign"}}
+                This quotation uses our Foreign pricing structure, which includes additional handling and shipping considerations.
+            {{/case}}
+            {{#case "bulk"}}
+                This quotation uses our Bulk pricing structure, providing significant discounts for large quantity orders.
+            {{/case}}
+            {{#case "retail"}}
+                This quotation uses our Retail pricing structure, designed for individual customers and small orders.
+            {{/case}}
+            {{#default}}
+                This quotation uses our Standard pricing structure, providing our regular competitive rates.
+            {{/default}}
+        {{/switch}}
+    </p>
+</div>
+
+<!-- Review Options -->
+{{#if reviewUrl}}
+<div class="cta-section">
+    <a href="{{reviewUrl}}" class="cta-button">Review & Respond to Quotation</a>
+</div>
+{{/if}}
+
+<!-- PDF Download -->
+{{#if pdfURL}}
+<div class="info-card" style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-left-color: #f59e0b;">
+    <h4 style="color: #92400e;">📄 Download PDF</h4>
+    <p style="margin-top: 12px; margin-bottom: 16px;">
+        For your records, you can download a PDF copy of this quotation.
+    </p>
+    <a href="{{pdfURL}}" style="display: inline-block; background: #f59e0b; color: white; padding: 8px 16px; text-decoration: none; border-radius: 6px; font-weight: 600;">Download PDF</a>
+</div>
+{{/if}}
+
+<!-- Validity Notice -->
+<div style="background: rgba(124, 45, 146, 0.1); border: 2px solid #7c2d92; border-radius: 12px; padding: 20px; margin: 20px 0;">
+    <p style="font-size: 16px; font-weight: 700; color: #7c2d92; margin-bottom: 12px;">⏰ Important Notice</p>
+    <ul style="margin-left: 20px; line-height: 1.8; font-size: 15px; color: #581c87;">
+        <li>This quotation is valid until {{formatDate validUntil}}</li>
+        <li>Prices are based on current {{priceListType}} rates and may be subject to change</li>
+        <li>Final pricing may vary based on specific requirements and customizations</li>
+        <li>This is a preliminary quotation for planning purposes</li>
+    </ul>
+</div>
+
+<!-- Next Steps -->
+<div class="info-card">
+    <h4>📞 Next Steps</h4>
+    <p>Interested in proceeding? Here's how to move forward:</p>
+    <ul class="feature-list">
+        <li><strong>Review:</strong> Carefully review all products and pricing details</li>
+        <li><strong>Questions:</strong> Contact us with any questions or modifications needed</li>
+        <li><strong>Customize:</strong> Request adjustments to quantities or specifications</li>
+        <li><strong>Approve:</strong> Accept the quotation to begin the ordering process</li>
+    </ul>
+</div>
+
+<div class="message">
+    <p style="font-size: 14px; color: #6b7280; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+        <strong>Questions about this quotation?</strong><br>
+        Contact our sales team for assistance with your {{priceListType}} pricing quotation. Quote reference: {{quotationId}}
+    </p>
+</div>
+
+<div class="success-notice">
+    <p>🌟 <strong>Thank you for your interest!</strong> We appreciate the opportunity to provide you with this customized pricing information.</p>
+</div>
+
+{{/base}} 

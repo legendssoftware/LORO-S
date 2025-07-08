@@ -553,6 +553,41 @@ export interface QuotationWarehouseData extends QuotationData {
 	}>;
 }
 
+export interface BlankQuotationData extends QuotationData {
+	priceListType: 'premium' | 'new' | 'local' | 'foreign' | 'wholesale' | 'retail' | 'bulk' | 'standard';
+	title: string;
+	description: string;
+	priceListExplanation: string;
+	isBlankQuotation: true;
+	recipientEmail?: string;
+	promoCode?: string;
+	clientDetails: {
+		name: string;
+		email: string;
+		phone?: string;
+		address?: string;
+	};
+	ownerDetails: {
+		name: string;
+		email: string;
+	};
+}
+
+export interface BlankQuotationInternalData extends BlankQuotationData {
+	systemInfo: {
+		createdAt: string;
+		organizationName: string;
+		branchName?: string;
+		pricingStrategy: string;
+		internalNotes?: string;
+	};
+	adminDetails: {
+		name: string;
+		email: string;
+		dashboardUrl: string;
+	};
+}
+
 export interface LicenseEmailData extends BaseEmailData {
 	licenseKey: string;
 	organisationName: string;
@@ -1535,6 +1570,9 @@ export interface EmailDataMap {
 	[EmailType.QUOTATION_DELIVERED]: QuotationData;
 	[EmailType.QUOTATION_RETURNED]: QuotationData;
 	[EmailType.QUOTATION_COMPLETED]: QuotationData;
+	// Blank quotation email mappings
+	[EmailType.BLANK_QUOTATION_CLIENT]: BlankQuotationData;
+	[EmailType.BLANK_QUOTATION_INTERNAL]: BlankQuotationInternalData;
 	// License email mappings
 	[EmailType.LICENSE_CREATED]: LicenseEmailData;
 	[EmailType.LICENSE_UPDATED]: LicenseEmailData;

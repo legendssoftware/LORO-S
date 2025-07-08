@@ -17,6 +17,7 @@ import {
 import { Roles } from '../decorators/role.decorator';
 import { Product } from '../products/entities/product.entity';
 import { CheckoutDto } from './dto/checkout.dto';
+import { CreateBlankQuotationDto } from './dto/create-blank-quotation.dto';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { CreateBannerDto } from './dto/create-banner.dto';
 import { UpdateBannerDto } from './dto/update-banner.dto';
@@ -281,6 +282,57 @@ export class ShopController {
 		return this.shopService.createQuotation(quotationData, orgId, branchId);
 	}
 
+	@Post('blank-quotation')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.SUPPORT,
+		AccessLevel.DEVELOPER,
+		AccessLevel.USER,
+		AccessLevel.OWNER,
+		AccessLevel.TECHNICIAN,
+	)
+	@ApiOperation({
+		summary: 'Create a blank quotation with specific price list',
+		description: 'Creates a blank quotation using selected products with pricing based on the specified price list type (premium, new, local, foreign, etc.). This allows for pre-defined pricing structures and can be sent to any email address.',
+	})
+	@ApiBody({ type: CreateBlankQuotationDto })
+	@ApiCreatedResponse({
+		description: 'Blank quotation created successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Success' },
+				quotationId: { type: 'string', example: 'BLQ-1704067200000' },
+			},
+		},
+	})
+	@ApiBadRequestResponse({
+		description: 'Bad Request - Invalid data provided',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Blank quotation items are required' },
+			},
+		},
+	})
+	createBlankQuotation(@Body() blankQuotationData: CreateBlankQuotationDto, @Req() req: AuthenticatedRequest) {
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
+		const branchId = req.user?.branch?.uid;
+		const userId = req.user?.uid;
+		
+		console.log(`[ShopController] Blank quotation request from user ${userId} (org: ${orgId}, branch: ${branchId}):`, {
+			itemCount: blankQuotationData?.items?.length,
+			priceListType: blankQuotationData?.priceListType,
+			title: blankQuotationData?.title,
+			owner: blankQuotationData?.owner?.uid,
+			client: blankQuotationData?.client?.uid,
+			recipientEmail: blankQuotationData?.recipientEmail,
+		});
+		
+		return this.shopService.createBlankQuotation(blankQuotationData, orgId, branchId);
+	}
+
 	@Get('quotations')
 	@Roles(
 		AccessLevel.ADMIN,
@@ -332,7 +384,9 @@ export class ShopController {
 	getQuotations(@Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
-		return this.shopService.getAllQuotations(orgId, branchId);
+		const userId = req.user?.uid;
+		const userRole = req.user?.accessLevel;
+		return this.shopService.getAllQuotations(orgId, branchId, userId, userRole);
 	}
 
 	@Get('quotation/:ref')

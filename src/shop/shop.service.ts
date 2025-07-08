@@ -2,6 +2,8 @@ import { Repository } from 'typeorm';
 import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CheckoutDto } from './dto/checkout.dto';
+import { CreateBlankQuotationDto } from './dto/create-blank-quotation.dto';
+import { PriceListType } from '../lib/enums/product.enums';
 import { Quotation } from './entities/quotation.entity';
 import { Banners } from './entities/banners.entity';
 import { CreateBannerDto } from './dto/create-banner.dto';
@@ -10,6 +12,7 @@ import { ProductStatus } from '../lib/enums/product.enums';
 import { Product } from '../products/entities/product.entity';
 import { startOfDay, endOfDay } from 'date-fns';
 import { OrderStatus } from '../lib/enums/status.enums';
+import { AccessLevel } from '../lib/enums/user.enums';
 import { ConfigService } from '@nestjs/config';
 import { EmailType } from '../lib/enums/email.enums';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -685,14 +688,318 @@ export class ShopService {
 				message: 'We have received your order request and will prepare a quotation for you shortly.',
 			});
 
+					return {
+			message: process.env.SUCCESS_MESSAGE,
+		};
+	} catch (error) {
+		this.logger.error(`Error creating quotation: ${error.message}`, error.stack);
+		return {
+			message: error?.message,
+		};
+	}
+}
+
+	async createBlankQuotation(
+		blankQuotationData: CreateBlankQuotationDto,
+		orgId?: number,
+		branchId?: number,
+	): Promise<{ message: string; quotationId?: string }> {
+		try {
+			this.logger.log(`[createBlankQuotation] Starting blank quotation creation for orgId: ${orgId}, branchId: ${branchId}`);
+
+			if (!blankQuotationData?.items?.length) {
+				this.logger.error('[createBlankQuotation] No items provided');
+				throw new Error('Blank quotation items are required');
+			}
+
+			if (!blankQuotationData?.owner?.uid) {
+				this.logger.error('[createBlankQuotation] No owner provided');
+				throw new Error('Owner is required');
+			}
+
+			if (!blankQuotationData?.client?.uid) {
+				this.logger.error('[createBlankQuotation] No client provided');
+				throw new Error('Client is required');
+			}
+
+			this.logger.log(`[createBlankQuotation] Validating request - Items: ${blankQuotationData.items.length}, Owner: ${blankQuotationData.owner.uid}, Client: ${blankQuotationData.client.uid}`);
+
+			// Get organization-specific currency settings
+			const orgCurrency = await this.getOrgCurrency(orgId);
+			this.logger.log(`[createBlankQuotation] Organization currency: ${orgCurrency.code}`);
+
+			const clientData = await this.clientsService?.findOne(Number(blankQuotationData?.client?.uid));
+
+			if (!clientData) {
+				this.logger.error(`[createBlankQuotation] Client not found: ${blankQuotationData?.client?.uid}`);
+				throw new NotFoundException(process.env.CLIENT_NOT_FOUND_MESSAGE);
+			}
+
+			const { name: clientName, email: clientEmail } = clientData?.client;
+			const internalEmail = this.configService.get<string>('INTERNAL_BROADCAST_EMAIL');
+			this.logger.log(`[createBlankQuotation] Client found: ${clientName} (${clientEmail})`);
+
+			// Get products with their pricing information
+			this.logger.log(`[createBlankQuotation] Fetching product details for ${blankQuotationData.items.length} items`);
+			const productPromises = blankQuotationData?.items?.map((item) =>
+				this.productRepository.find({ where: { uid: item?.uid }, relations: ['reseller'] }),
+			);
+
+			const products = await Promise.all(productPromises);
+
+			// Get reseller emails for notifications (same as regular quotation)
+			const resellerEmails = products
+				.flat()
+				.map((product) => ({
+					email: product?.reseller?.email,
+					retailerName: product?.reseller?.name,
+				}))
+				.filter((email) => email?.email)
+				.reduce((unique, item) => {
+					return unique?.some((u) => u?.email === item?.email) ? unique : [...unique, item];
+				}, []);
+
+			this.logger.log(`[createBlankQuotation] Found ${resellerEmails.length} resellers to notify`);
+
+			// Create a map of product UIDs to their details
+			const productMap = new Map(products.flat().map((product) => [product.uid, product]));
+
+			// Validate that all products were found
+			const missingProducts = blankQuotationData?.items?.filter((item) => !productMap.has(item.uid));
+
+			if (missingProducts?.length > 0) {
+				this.logger.error(`[createBlankQuotation] Missing products: ${missingProducts.map((item) => item.uid).join(', ')}`);
+				throw new Error(`Products not found for items: ${missingProducts.map((item) => item.uid).join(', ')}`);
+			}
+
+			this.logger.log(`[createBlankQuotation] All ${blankQuotationData.items.length} products found`);
+
+			// Generate a unique review token for the quotation
+			const timestamp = Date.now();
+			const reviewToken = Buffer.from(
+				`${blankQuotationData?.client?.uid}-${timestamp}-${Math.random().toString(36).substring(2, 15)}`,
+			).toString('base64');
+			const frontendUrl = this.configService.get<string>('FRONTEND_URL') || 'http://loro.co.za/review-quotation';
+			const reviewUrl = `${frontendUrl}?token=${reviewToken}`;
+
+			// Calculate pricing based on price list type
+			let totalAmount = 0;
+			let totalItems = 0;
+
+			this.logger.log(`[createBlankQuotation] Calculating pricing using price list type: ${blankQuotationData.priceListType}`);
+
+			const quotationItems = blankQuotationData?.items
+				?.filter((item) => item.included !== false) // Only include items that are not explicitly excluded
+				?.map((item) => {
+					const product = productMap.get(item.uid);
+					const quantity = Number(item?.quantity);
+					
+					// Calculate price based on price list type
+					let unitPrice = this.calculatePriceByType(product, blankQuotationData.priceListType);
+					let itemTotalPrice = unitPrice * quantity;
+
+					totalAmount += itemTotalPrice;
+					totalItems += quantity;
+
+					this.logger.log(`[createBlankQuotation] Item ${product?.name}: ${quantity} x ${unitPrice} = ${itemTotalPrice}`);
+
+					return {
+						quantity: quantity,
+						product: {
+							uid: item?.uid,
+							name: product?.name,
+							sku: product?.sku,
+							productRef: product?.productRef,
+							price: product?.price,
+						},
+						unitPrice: unitPrice,
+						totalPrice: itemTotalPrice,
+						purchaseMode: 'item',
+						itemsPerUnit: 1,
+						notes: item?.notes,
+						priceListType: blankQuotationData.priceListType,
+						createdAt: new Date(),
+						updatedAt: new Date(),
+					};
+				});
+
+			const quotationNumber = `BLQ-${Date.now()}`; // BLQ for Blank Quotation
+			this.logger.log(`[createBlankQuotation] Generated quotation number: ${quotationNumber}`);
+			this.logger.log(`[createBlankQuotation] Total amount: ${totalAmount}, Total items: ${totalItems}`);
+
+			const newQuotation = {
+				quotationNumber: quotationNumber,
+				totalItems: totalItems,
+				totalAmount: totalAmount,
+				placedBy: { uid: blankQuotationData?.owner?.uid },
+				client: { uid: blankQuotationData?.client?.uid },
+				status: OrderStatus.DRAFT,
+				quotationDate: new Date(),
+				createdAt: new Date(),
+				updatedAt: new Date(),
+				reviewToken: reviewToken,
+				reviewUrl: reviewUrl,
+				promoCode: blankQuotationData?.promoCode,
+				currency: orgCurrency.code,
+				title: blankQuotationData?.title || 'Blank Quotation',
+				description: blankQuotationData?.description || 'Price list quotation for your review',
+				priceListType: blankQuotationData.priceListType,
+				isBlankQuotation: true,
+				quotationItems: quotationItems,
+				// Store org and branch associations
+				...(orgId && { organisationUid: orgId }),
+				...(branchId && { branchUid: branchId }),
+			};
+
+			this.logger.log(`[createBlankQuotation] Saving quotation to database`);
+			const savedQuotation = await this.quotationRepository.save(newQuotation);
+			this.logger.log(`[createBlankQuotation] Quotation saved with ID: ${savedQuotation.uid}`);
+
+			// Trigger recalculation of user targets for the owner (same as regular quotation)
+			if (blankQuotationData?.owner?.uid && this.eventEmitter) {
+				this.logger.log(`[createBlankQuotation] Triggering target update for user: ${blankQuotationData.owner.uid}`);
+				this.eventEmitter.emit('user.target.update.required', { userId: blankQuotationData.owner.uid });
+			}
+
+			// Generate PDF for the quotation
+			this.logger.log(`[createBlankQuotation] Generating PDF for quotation`);
+			const fullQuotation = await this.quotationRepository.findOne({
+				where: { uid: savedQuotation.uid },
+				relations: ['client', 'quotationItems', 'quotationItems.product', 'organisation', 'branch'],
+			});
+
+			if (fullQuotation) {
+				const pdfUrl = await this.generateQuotationPDF(fullQuotation);
+				if (pdfUrl) {
+					this.logger.log(`[createBlankQuotation] PDF generated successfully: ${pdfUrl}`);
+					await this.quotationRepository.update(savedQuotation.uid, { pdfURL: pdfUrl });
+				} else {
+					this.logger.warn(`[createBlankQuotation] Failed to generate PDF`);
+				}
+			}
+
+			// Update analytics for each product (same as regular quotation)
+			this.logger.log(`[createBlankQuotation] Updating product analytics for ${blankQuotationData.items.length} items`);
+			for (const item of blankQuotationData.items) {
+				const product = productMap.get(item.uid);
+				if (product) {
+					try {
+						// Record view and cart add
+						await this.productsService.recordView(product.uid);
+						await this.productsService.recordCartAdd(product.uid);
+
+						// Update stock history
+						await this.productsService.updateStockHistory(product.uid, item.quantity, 'out');
+
+						// Calculate updated performance metrics
+						await this.productsService.calculateProductPerformance(product.uid);
+
+						this.logger.log(`[createBlankQuotation] Analytics updated for product: ${product.name} (${product.uid})`);
+					} catch (analyticsError) {
+						this.logger.warn(`[createBlankQuotation] Failed to update analytics for product ${product.uid}: ${analyticsError.message}`);
+					}
+				}
+			}
+
+			// Emit WebSocket event for new blank quotation
+			this.logger.log(`[createBlankQuotation] Emitting WebSocket event`);
+			this.shopGateway.emitNewQuotation(savedQuotation?.quotationNumber);
+
+			// Prepare email data for blank quotation
+			const emailData = {
+				name: clientName,
+				quotationId: savedQuotation?.quotationNumber,
+				validUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days validity
+				total: Number(savedQuotation?.totalAmount),
+				currency: orgCurrency.code,
+				reviewUrl: savedQuotation.reviewUrl,
+				priceListType: blankQuotationData.priceListType,
+				title: blankQuotationData?.title || 'Blank Quotation',
+				description: blankQuotationData?.description || 'Price list quotation for your review',
+				customerType: clientData?.client?.type || 'standard', // Add customer type like regular quotation
+				priority: 'medium', // Add priority for blank quotations
+				quotationItems: quotationItems.map((item) => ({
+					quantity: item.quantity,
+					product: {
+						uid: item.product.uid,
+						name: item.product.name,
+						code: item.product.productRef || item.product.sku,
+					},
+					unitPrice: item.unitPrice,
+					totalPrice: item.totalPrice,
+					notes: item.notes,
+					purchaseMode: item.purchaseMode,
+					itemsPerUnit: item.itemsPerUnit,
+					actualItems: item.quantity * item.itemsPerUnit,
+				})),
+				pdfURL: fullQuotation?.pdfURL,
+			};
+
+			// Send email to recipient if provided, otherwise to client
+			const recipientEmail = blankQuotationData?.recipientEmail || clientEmail;
+			if (recipientEmail) {
+				this.logger.log(`[createBlankQuotation] Sending client email to: ${recipientEmail}`);
+				this.eventEmitter.emit('send.email', EmailType.BLANK_QUOTATION_CLIENT, [recipientEmail], emailData);
+			}
+
+			// Notify internal team about new blank quotation
+			this.logger.log(`[createBlankQuotation] Sending internal notification to: ${internalEmail}`);
+			this.eventEmitter.emit('send.email', EmailType.BLANK_QUOTATION_INTERNAL, [internalEmail], emailData);
+
+			// Notify resellers about products in the blank quotation (same as regular quotation)
+			if (resellerEmails?.length > 0) {
+				this.logger.log(`[createBlankQuotation] Notifying ${resellerEmails.length} resellers`);
+				resellerEmails?.forEach((email) => {
+					this.eventEmitter.emit('send.email', EmailType.NEW_QUOTATION_RESELLER, [email?.email], {
+						...emailData,
+						name: email?.retailerName,
+						email: email?.email,
+					});
+				});
+			}
+
+			this.logger.log(`[createBlankQuotation] Blank quotation creation completed successfully: ${quotationNumber}`);
+
 			return {
 				message: process.env.SUCCESS_MESSAGE,
+				quotationId: savedQuotation?.quotationNumber,
 			};
 		} catch (error) {
-			this.logger.error(`Error creating quotation: ${error.message}`, error.stack);
+			this.logger.error(`[createBlankQuotation] Error creating blank quotation: ${error.message}`, error.stack);
 			return {
 				message: error?.message,
 			};
+		}
+	}
+
+	/**
+	 * Calculate price based on price list type
+	 * @param product The product to calculate price for
+	 * @param priceListType The price list type to use
+	 * @returns The calculated price
+	 */
+	private calculatePriceByType(product: Product, priceListType: PriceListType): number {
+		const basePrice = Number(product?.price || 0);
+		const salePrice = Number(product?.salePrice || 0);
+
+		switch (priceListType) {
+			case PriceListType.PREMIUM:
+				return basePrice * 1.2; // 20% markup
+			case PriceListType.NEW:
+				return salePrice > 0 ? salePrice : basePrice;
+			case PriceListType.LOCAL:
+				return basePrice * 0.95; // 5% discount
+			case PriceListType.FOREIGN:
+				return basePrice * 1.15; // 15% markup for foreign
+			case PriceListType.WHOLESALE:
+				return basePrice * 0.85; // 15% discount for wholesale
+			case PriceListType.BULK:
+				return basePrice * 0.8; // 20% discount for bulk
+			case PriceListType.RETAIL:
+				return basePrice * 1.1; // 10% markup for retail
+			case PriceListType.STANDARD:
+			default:
+				return basePrice;
 		}
 	}
 
@@ -832,7 +1139,7 @@ export class ShopService {
 		}
 	}
 
-	async getAllQuotations(orgId?: number, branchId?: number): Promise<{ quotations: Quotation[]; message: string }> {
+	async getAllQuotations(orgId?: number, branchId?: number, userId?: number, userRole?: AccessLevel): Promise<{ quotations: Quotation[]; message: string }> {
 		try {
 			const query = this.quotationRepository
 				.createQueryBuilder('quotation')
@@ -851,7 +1158,22 @@ export class ShopService {
 				query.andWhere('quotation.branchUid = :branchId', { branchId });
 			}
 
+			// Role-based filtering: Only ADMIN, OWNER, DEVELOPER, MANAGER can see all quotations
+			// Other users can only see their own quotations
+			const privilegedRoles = [AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.DEVELOPER, AccessLevel.MANAGER];
+			const isPrivilegedUser = privilegedRoles.includes(userRole);
+			
+			if (!isPrivilegedUser && userId) {
+				query.andWhere('placedBy.uid = :userId', { userId });
+			}
+
 			const quotations = await query.getMany();
+
+			console.log('=== QUOTATIONS DEBUG ===');
+			console.log('User Role:', userRole, 'Is Privileged:', isPrivilegedUser);
+			console.log('Quotations count:', quotations?.length);
+			console.log('Raw data structure:', JSON.stringify(quotations?.[0], null, 2));
+			console.log('Sample quotation:', quotations?.[0]);
 
 			return {
 				quotations,
@@ -894,6 +1216,11 @@ export class ShopService {
 				throw new NotFoundException(process.env.QUOTATION_NOT_FOUND_MESSAGE);
 			}
 
+			console.log('=== QUOTATIONS DEBUG ===');
+			console.log('Quotations count:', quotations?.length);
+			console.log('Raw data structure:', JSON.stringify(quotations?.[0], null, 2));
+			console.log('Sample quotation:', quotations?.[0]);
+
 			return {
 				quotations,
 				message: process.env.SUCCESS_MESSAGE,
@@ -934,6 +1261,7 @@ export class ShopService {
 			if (!quotation) {
 				throw new NotFoundException(process.env.QUOTATION_NOT_FOUND_MESSAGE);
 			}
+			
 
 			return {
 				quotation,

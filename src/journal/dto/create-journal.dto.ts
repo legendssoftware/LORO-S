@@ -36,6 +36,14 @@ export class CreateJournalDto {
     branch: { uid: number };
 
     @IsNotEmpty()
+    @IsObject()
+    @ApiProperty({
+        example: { uid: 1 },
+        description: 'The organisation reference code of the journal'
+    })
+    organisation: { uid: number };
+
+    @IsNotEmpty()
     @IsString()
     @ApiProperty({
         description: 'The comments of the journal',

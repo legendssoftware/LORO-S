@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Journal } from './entities/journal.entity';
@@ -15,6 +15,8 @@ import { PaginatedResponse } from '../lib/interfaces/product.interfaces';
 
 @Injectable()
 export class JournalService {
+	private readonly logger = new Logger(JournalService.name);
+
 	constructor(
 		@InjectRepository(Journal)
 		private journalRepository: Repository<Journal>,
@@ -31,6 +33,9 @@ export class JournalService {
 	}
 
 	async create(createJournalDto: CreateJournalDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
+		this.logger.log(`Creating journal for orgId: ${orgId}, branchId: ${branchId}`);
+		this.logger.debug(`Create journal DTO: ${JSON.stringify(createJournalDto)}`);
+
 		try {
 			// Add organization and branch information
 			const journalData = {
@@ -39,11 +44,16 @@ export class JournalService {
 				branch: branchId ? { uid: branchId } : undefined,
 			};
 
+			this.logger.debug(`Journal data to save: ${JSON.stringify(journalData)}`);
+
 			const journal = await this.journalRepository.save(journalData);
 
 			if (!journal) {
+				this.logger.error('Failed to save journal - repository returned null');
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
 			}
+
+			this.logger.log(`Journal created successfully with ID: ${journal.uid}`);
 
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,
@@ -67,19 +77,25 @@ export class JournalService {
 
 			this.eventEmitter.emit('send.notification', notification, recipients);
 
-			await this.rewardsService.awardXP({
-				owner: createJournalDto.owner.uid,
-				amount: 10,
-				action: 'JOURNAL',
-				source: {
-					id: createJournalDto.owner.uid.toString(),
-					type: 'journal',
-					details: 'Journal reward',
-				},
-			}, orgId, branchId);
+			try {
+				await this.rewardsService.awardXP({
+					owner: createJournalDto.owner.uid,
+					amount: 10,
+					action: 'JOURNAL',
+					source: {
+						id: createJournalDto.owner.uid.toString(),
+						type: 'journal',
+						details: 'Journal reward',
+					},
+				}, orgId, branchId);
+				this.logger.log(`XP awarded for journal creation: ${createJournalDto.owner.uid}`);
+			} catch (xpError) {
+				this.logger.warn(`Failed to award XP for journal creation: ${xpError.message}`);
+			}
 
 			return response;
 		} catch (error) {
+			this.logger.error(`Error creating journal: ${error.message}`, error.stack);
 			const response = {
 				message: error?.message,
 			};
@@ -338,19 +354,31 @@ export class JournalService {
 	}
 
 	async update(ref: number, updateJournalDto: UpdateJournalDto, orgId?: number, branchId?: number) {
+		this.logger.log(`Updating journal ${ref} for orgId: ${orgId}, branchId: ${branchId}`);
+		this.logger.debug(`Update journal DTO: ${JSON.stringify(updateJournalDto)}`);
+
 		try {
 			// First verify the journal belongs to the org/branch
 			const journalResult = await this.findOne(ref, orgId, branchId);
 
 			if (!journalResult || !journalResult.journal) {
+				this.logger.warn(`Journal ${ref} not found for orgId: ${orgId}, branchId: ${branchId}`);
 				return {
 					message: process.env.NOT_FOUND_MESSAGE,
 				};
 			}
 
 			const journal = journalResult.journal;
+			this.logger.debug(`Found journal to update: ${JSON.stringify(journal)}`);
 
-			await this.journalRepository.update(ref, updateJournalDto);
+			const updateResult = await this.journalRepository.update(ref, updateJournalDto);
+			this.logger.debug(`Update result: ${JSON.stringify(updateResult)}`);
+
+			if (updateResult.affected === 0) {
+				this.logger.warn(`No rows affected when updating journal ${ref}`);
+			} else {
+				this.logger.log(`Successfully updated journal ${ref}, affected rows: ${updateResult.affected}`);
+			}
 
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,
@@ -358,8 +386,8 @@ export class JournalService {
 
 			const notification = {
 				type: NotificationType.USER,
-				title: 'Journal Created',
-				message: `A journal has been created`,
+				title: 'Journal Updated',
+				message: `A journal has been updated`,
 				status: NotificationStatus.UNREAD,
 				owner: journal?.owner,
 			};
@@ -374,19 +402,27 @@ export class JournalService {
 
 			this.eventEmitter.emit('send.notification', notification, recipients);
 
-			await this.rewardsService.awardXP({
-				owner: updateJournalDto.owner.uid,
-				amount: XP_VALUES.JOURNAL,
-				action: XP_VALUES_TYPES.JOURNAL,
-				source: {
-					id: updateJournalDto.owner.uid.toString(),
-					type: XP_VALUES_TYPES.JOURNAL,
-					details: 'Journal reward',
-				},
-			}, orgId, branchId);
+			try {
+				// Use the owner from the existing journal since update might not include owner
+				const ownerUid = updateJournalDto.owner?.uid || journal.owner.uid;
+				await this.rewardsService.awardXP({
+					owner: ownerUid,
+					amount: XP_VALUES.JOURNAL,
+					action: XP_VALUES_TYPES.JOURNAL,
+					source: {
+						id: ownerUid.toString(),
+						type: XP_VALUES_TYPES.JOURNAL,
+						details: 'Journal reward',
+					},
+				}, orgId, branchId);
+				this.logger.log(`XP awarded for journal update: ${ownerUid}`);
+			} catch (xpError) {
+				this.logger.warn(`Failed to award XP for journal update: ${xpError.message}`);
+			}
 
 			return response;
 		} catch (error) {
+			this.logger.error(`Error updating journal ${ref}: ${error.message}`, error.stack);
 			const response = {
 				message: error?.message,
 			};

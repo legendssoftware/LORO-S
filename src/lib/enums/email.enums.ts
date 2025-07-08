@@ -33,6 +33,9 @@ export enum EmailType {
 	QUOTATION_DELIVERED = 'quotation_delivered',
 	QUOTATION_RETURNED = 'quotation_returned',
 	QUOTATION_COMPLETED = 'quotation_completed',
+	// Blank quotation related emails
+	BLANK_QUOTATION_CLIENT = 'blank_quotation_client',
+	BLANK_QUOTATION_INTERNAL = 'blank_quotation_internal',
 	// License related emails
 	LICENSE_CREATED = 'license_created',
 	LICENSE_UPDATED = 'license_updated',

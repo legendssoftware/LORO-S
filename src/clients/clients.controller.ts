@@ -66,7 +66,7 @@ export class ClientsController {
 		},
 	})
 	create(@Body() createClientDto: CreateClientDto, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid;
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.clientsService.create(createClientDto, orgId, branchId);
 	}
@@ -139,7 +139,7 @@ export class ClientsController {
 		@Query('category') category?: string,
 		@Query('search') search?: string,
 	) {
-		const orgId = req.user?.org?.uid;
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		const filters = { status, category, search };
 
@@ -196,7 +196,7 @@ export class ClientsController {
 		},
 	})
 	findOne(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid;
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.clientsService.findOne(ref, orgId, branchId);
 	}
@@ -244,7 +244,7 @@ export class ClientsController {
 		},
 	})
 	update(@Param('ref') ref: number, @Body() updateClientDto: UpdateClientDto, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid;
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.clientsService.update(ref, updateClientDto, orgId, branchId);
 	}
@@ -282,7 +282,7 @@ export class ClientsController {
 		},
 	})
 	restore(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid;
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.clientsService.restore(ref, orgId, branchId);
 	}
@@ -321,7 +321,7 @@ export class ClientsController {
 		},
 	})
 	remove(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid;
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.clientsService.remove(ref, orgId, branchId);
 	}
@@ -401,7 +401,7 @@ export class ClientsController {
 		@Param('clientId') clientId: number,
 		@Req() req: AuthenticatedRequest,
 	) {
-		const orgId = req.user?.org?.uid;
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.clientsService.getClientCheckIns(clientId, orgId, branchId);
 	}
