@@ -283,7 +283,7 @@ export class ClientsService {
 				return cachedClients;
 			}
 
-					// Get user's assigned clients if user is provided
+		// Get user's assigned clients if user is provided
 		let userAssignedClients: number[] | null = null;
 		let hasElevatedAccess = false;
 		if (userId) {
@@ -307,7 +307,7 @@ export class ClientsService {
 				hasElevatedAccess = elevatedRoles.includes(user.accessLevel);
 				
 				if (hasElevatedAccess) {
-					this.logger.debug(`[CLIENT_FIND_ALL] User ${userId} has elevated access (${user.accessLevel}), returning all clients`);
+					this.logger.debug(`[CLIENT_FIND_ALL] User ${userId} has elevated access (${user.accessLevel}), returning all clients in organization`);
 					userAssignedClients = null; // Don't filter by assigned clients
 				} else {
 					userAssignedClients = user.assignedClientIds || [];
@@ -335,39 +335,44 @@ export class ClientsService {
 			}
 		}
 
-			// Create find options with relationships
-			const where: FindOptionsWhere<Client> = { isDeleted: false };
+		// Create find options with relationships
+		const where: FindOptionsWhere<Client> = { isDeleted: false };
 
-			// Filter by organization and branch
-			if (orgId) {
-				where.organisation = { uid: orgId };
-			}
+		// Filter by organization - always apply this filter
+		if (orgId) {
+			where.organisation = { uid: orgId };
+		}
 
-			if (branchId) {
-				where.branch = { uid: branchId };
-			}
+		// Filter by branch - only apply for non-elevated users or when no userId is provided
+		// Elevated users can see clients across all branches in their organization
+		if (branchId && (!userId || !hasElevatedAccess)) {
+			this.logger.debug(`[CLIENT_FIND_ALL] Applying branch filter: ${branchId} (elevated access: ${hasElevatedAccess})`);
+			where.branch = { uid: branchId };
+		} else if (hasElevatedAccess) {
+			this.logger.debug(`[CLIENT_FIND_ALL] Skipping branch filter for elevated user - can see all branches in organization`);
+		}
 
-			if (filters?.status) {
-				where.status = filters.status;
-			}
+		if (filters?.status) {
+			where.status = filters.status;
+		}
 
-			if (filters?.category) {
-				where.category = filters.category;
-			}
+		if (filters?.category) {
+			where.category = filters.category;
+		}
 
-			if (filters?.industry) {
-				where.industry = filters.industry;
-			}
+		if (filters?.industry) {
+			where.industry = filters.industry;
+		}
 
-			if (filters?.riskLevel) {
-				where.riskLevel = filters.riskLevel;
-			}
+		if (filters?.riskLevel) {
+			where.riskLevel = filters.riskLevel;
+		}
 
-			// Filter by assigned clients if user has limited access (not elevated)
-			if (userAssignedClients && userAssignedClients.length > 0 && !hasElevatedAccess) {
-				this.logger.debug(`[CLIENT_FIND_ALL] Filtering by assigned clients: ${userAssignedClients.join(', ')}`);
-				where.uid = In(userAssignedClients);
-			}
+		// Filter by assigned clients if user has limited access (not elevated)
+		if (userAssignedClients && userAssignedClients.length > 0 && !hasElevatedAccess) {
+			this.logger.debug(`[CLIENT_FIND_ALL] Filtering by assigned clients: ${userAssignedClients.join(', ')}`);
+			where.uid = In(userAssignedClients);
+		}
 
 			if (filters?.search) {
 				// Handle search across multiple fields
@@ -783,7 +788,7 @@ export class ClientsService {
 				return cachedResults;
 			}
 
-					// Get user's assigned clients if user is provided
+							// Get user's assigned clients if user is provided
 		let userAssignedClients: number[] | null = null;
 		let hasElevatedAccess = false;
 		if (userId) {
@@ -807,7 +812,7 @@ export class ClientsService {
 				hasElevatedAccess = elevatedRoles.includes(user.accessLevel);
 				
 				if (hasElevatedAccess) {
-					this.logger.debug(`[CLIENT_SEARCH] User ${userId} has elevated access (${user.accessLevel}), searching all clients`);
+					this.logger.debug(`[CLIENT_SEARCH] User ${userId} has elevated access (${user.accessLevel}), searching all clients in organization`);
 					userAssignedClients = null; // Don't filter by assigned clients
 				} else {
 					userAssignedClients = user.assignedClientIds || [];
@@ -835,19 +840,24 @@ export class ClientsService {
 			}
 		}
 
-			// Build where conditions for search
-			const where: FindOptionsWhere<Client> = { isDeleted: false };
+		// Build where conditions for search
+		const where: FindOptionsWhere<Client> = { isDeleted: false };
 
-			// Filter by organization and branch
-			if (orgId) {
-				where.organisation = { uid: orgId };
-			}
+		// Filter by organization - always apply this filter
+		if (orgId) {
+			where.organisation = { uid: orgId };
+		}
 
-			if (branchId) {
-				where.branch = { uid: branchId };
-			}
+		// Filter by branch - only apply for non-elevated users or when no userId is provided
+		// Elevated users can search clients across all branches in their organization
+		if (branchId && (!userId || !hasElevatedAccess)) {
+			this.logger.debug(`[CLIENT_SEARCH] Applying branch filter: ${branchId} (elevated access: ${hasElevatedAccess})`);
+			where.branch = { uid: branchId };
+		} else if (hasElevatedAccess) {
+			this.logger.debug(`[CLIENT_SEARCH] Skipping branch filter for elevated user - can search all branches in organization`);
+		}
 
-					// Filter by assigned clients if user has limited access (not elevated)
+		// Filter by assigned clients if user has limited access (not elevated)
 		if (userAssignedClients && userAssignedClients.length > 0 && !hasElevatedAccess) {
 			this.logger.debug(`[CLIENT_SEARCH] Filtering search by assigned clients: ${userAssignedClients.join(', ')}`);
 			where.uid = In(userAssignedClients);
