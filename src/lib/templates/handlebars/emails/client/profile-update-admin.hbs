@@ -1,0 +1,189 @@
+{{#base headerTitle="Client Profile Updated" headerSubtitle="A client account has been updated in the system"}}
+
+<div class="greeting">
+    Hello {{adminName}}! 👋
+</div>
+
+<div class="info-notice">
+    <p>📊 <strong>Client Profile Update Notification</strong> - A client account has been updated in the system and requires your attention.</p>
+</div>
+
+<div class="message">
+    <p>This is an automated notification to inform you that client profile information has been updated in the system. Please review the changes and take any necessary action.</p>
+</div>
+
+<!-- Client Information -->
+<div class="info-card">
+    <h3>👤 Client Information</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Client Name</span>
+            <span class="detail-value">{{clientName}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Client Email</span>
+            <span class="detail-value">{{clientEmail}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Client ID</span>
+            <span class="detail-value">#{{clientId}}</span>
+        </div>
+        {{#if clientPortalAccess}}
+        <div class="detail-item">
+            <span class="detail-label">Portal Access</span>
+            <span class="detail-value" style="color: #10b981;">✅ Active</span>
+        </div>
+        {{else}}
+        <div class="detail-item">
+            <span class="detail-label">Portal Access</span>
+            <span class="detail-value" style="color: #f59e0b;">❌ Inactive</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+
+<!-- Update Details -->
+<div class="info-card">
+    <h3>📋 Update Details</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Updated On</span>
+            <span class="detail-value">{{updateDate}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Updated By</span>
+            <span class="detail-value">{{updatedBy.name}} ({{updatedBy.email}})</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Organization</span>
+            <span class="detail-value">{{organization.name}}</span>
+        </div>
+        {{#if branch}}
+        <div class="detail-item">
+            <span class="detail-label">Branch</span>
+            <span class="detail-value">{{branch.name}}</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+
+<!-- Updated Fields -->
+<div class="info-card" style="background: linear-gradient(135deg, #fef3c7 0%, #fbbf24 100%); border-left-color: #f59e0b;">
+    <h4 style="color: #92400e; margin-bottom: 16px;">🔄 Updated Fields</h4>
+    <ul style="margin-left: 20px; color: #92400e; line-height: 1.8; font-size: 15px; font-weight: 500;">
+        {{#each updatedFields}}
+        <li>{{this}}</li>
+        {{/each}}
+    </ul>
+</div>
+
+{{#if updateReason}}
+<div class="info-card">
+    <h4 style="color: #7c2d92; margin-bottom: 16px;">📝 Update Reason</h4>
+    <p style="background: #f9fafb; padding: 16px; border-radius: 8px; border-left: 4px solid #7c2d92; margin-top: 12px;">
+        {{updateReason}}
+    </p>
+</div>
+{{/if}}
+
+<!-- Previous vs New Values -->
+{{#if previousValues}}
+<div class="info-card">
+    <h4 style="color: #dc2626; margin-bottom: 16px;">🔄 Change Summary</h4>
+    <div style="background: #f9fafb; padding: 16px; border-radius: 8px; border-left: 4px solid #dc2626; margin-top: 12px;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+            <div>
+                <h5 style="color: #dc2626; margin-bottom: 8px;">Previous Values</h5>
+                <div style="background: #fee2e2; padding: 12px; border-radius: 6px; font-size: 14px;">
+                    {{#each previousValues}}
+                    <div style="margin-bottom: 8px;"><strong>{{@key}}:</strong> {{this}}</div>
+                    {{/each}}
+                </div>
+            </div>
+            <div>
+                <h5 style="color: #059669; margin-bottom: 8px;">New Values</h5>
+                <div style="background: #d1fae5; padding: 12px; border-radius: 6px; font-size: 14px;">
+                    {{#each newValues}}
+                    <div style="margin-bottom: 8px;"><strong>{{@key}}:</strong> {{this}}</div>
+                    {{/each}}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{{/if}}
+
+<!-- Account Manager Information -->
+{{#if accountManager}}
+<div class="info-card">
+    <h4 style="color: #7c2d92; margin-bottom: 16px;">👤 Account Manager</h4>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Name</span>
+            <span class="detail-value">{{accountManager.name}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Email</span>
+            <span class="detail-value">{{accountManager.email}}</span>
+        </div>
+    </div>
+</div>
+{{/if}}
+
+<!-- System Information -->
+<div class="info-card">
+    <h4 style="color: #7c2d92; margin-bottom: 16px;">⚙️ System Information</h4>
+    <ul style="margin-left: 20px; color: #4b5563; line-height: 1.8; font-size: 15px;">
+        <li>Client account status remains active following the update</li>
+        <li>Email confirmation has been sent to the client automatically</li>
+        <li>All changes are logged in the system for audit purposes</li>
+        <li>Client portal access status is maintained according to current settings</li>
+    </ul>
+</div>
+
+<!-- Recommended Actions -->
+<div class="info-card" style="background: linear-gradient(135deg, #dbeafe 0%, #3b82f6 100%); border-left-color: #3b82f6;">
+    <h4 style="color: #1e40af; margin-bottom: 16px;">🎯 Recommended Actions</h4>
+    <ul style="margin-left: 20px; color: #1e40af; line-height: 1.8; font-size: 15px; font-weight: 500;">
+        <li>Review the updated client information for accuracy</li>
+        <li>Verify that all business rules are being followed</li>
+        <li>Check if any additional client communications are needed</li>
+        <li>Update any related records or systems as necessary</li>
+        <li>Follow up with the client if significant changes were made</li>
+    </ul>
+</div>
+
+<!-- Security Notice -->
+<div class="info-card">
+    <h4 style="color: #dc2626; margin-bottom: 16px;">🔒 Security & Compliance</h4>
+    <ul style="margin-left: 20px; color: #4b5563; line-height: 1.8; font-size: 15px;">
+        <li>All profile updates are secured with industry-standard encryption</li>
+        <li>Changes are tracked with full audit trail including user and timestamp</li>
+        <li>Client data privacy regulations are maintained during updates</li>
+        <li>System access controls have been verified for this action</li>
+        <li>Backup copies of previous data are maintained for recovery purposes</li>
+    </ul>
+</div>
+
+<!-- CTA Section -->
+<div class="cta-section">
+    <a href="{{dashboardLink}}" class="cta-button">Review Client Profile</a>
+</div>
+
+<!-- Important Notice -->
+<div class="warning-notice">
+    <p>⚠️ <strong>Action Required:</strong> Please review these changes within 24 hours and take any necessary follow-up actions. Contact the system administrator if you notice any irregularities.</p>
+</div>
+
+<!-- Footer -->
+<div class="message">
+    <p>This notification is sent to keep you informed of important client profile changes. Regular monitoring helps maintain data accuracy and client satisfaction.</p>
+    
+    <p style="font-size: 14px; color: #6b7280; margin-top: 20px;">
+        <strong>Need help?</strong> Contact our support team at <a href="mailto:{{supportEmail}}" style="color: #7c2d92;">{{supportEmail}}</a><br>
+        <strong>Organization:</strong> {{organization.name}}<br>
+        <strong>Updated By:</strong> {{updatedBy.name}} ({{updatedBy.email}})
+    </p>
+</div>
+
+{{/base}} 

@@ -31,6 +31,6 @@ export class ClientAuth {
 	@Column({ nullable: false, default: false })
 	isDeleted: boolean;
 
-	@ManyToOne(() => Client, (client) => client.portalCredentials)
+	@ManyToOne(() => Client, (client) => client?.portalCredentials, { nullable: false })
 	client: Client;
 }

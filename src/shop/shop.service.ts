@@ -1169,12 +1169,6 @@ export class ShopService {
 
 			const quotations = await query.getMany();
 
-			console.log('=== QUOTATIONS DEBUG ===');
-			console.log('User Role:', userRole, 'Is Privileged:', isPrivilegedUser);
-			console.log('Quotations count:', quotations?.length);
-			console.log('Raw data structure:', JSON.stringify(quotations?.[0], null, 2));
-			console.log('Sample quotation:', quotations?.[0]);
-
 			return {
 				quotations,
 				message: process.env.SUCCESS_MESSAGE,
@@ -1215,11 +1209,6 @@ export class ShopService {
 			if (!quotations?.length) {
 				throw new NotFoundException(process.env.QUOTATION_NOT_FOUND_MESSAGE);
 			}
-
-			console.log('=== QUOTATIONS DEBUG ===');
-			console.log('Quotations count:', quotations?.length);
-			console.log('Raw data structure:', JSON.stringify(quotations?.[0], null, 2));
-			console.log('Sample quotation:', quotations?.[0]);
 
 			return {
 				quotations,

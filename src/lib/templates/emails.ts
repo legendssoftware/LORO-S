@@ -67,6 +67,8 @@ import {
 	BlankQuotationData,
 	BlankQuotationInternalData,
 	AppUpdateNotificationData,
+	ClientProfileUpdateConfirmationData,
+	ClientProfileUpdateAdminData,
 } from '../types/email-templates.types';
 
 // Auth Templates
@@ -445,4 +447,13 @@ export const UserTargetPeriodSummary = (data: UserTargetPeriodSummaryEmailData):
 // App/System Templates
 export const AppUpdateNotification = (data: AppUpdateNotificationData): string => {
 	return emailTemplateService.appUpdateNotification(data);
+};
+
+// Client Profile Update Templates
+export const ClientProfileUpdateConfirmation = (data: ClientProfileUpdateConfirmationData): string => {
+	return emailTemplateService.clientProfileUpdateConfirmation(data);
+};
+
+export const ClientProfileUpdateAdmin = (data: ClientProfileUpdateAdminData): string => {
+	return emailTemplateService.clientProfileUpdateAdmin(data);
 };

@@ -187,6 +187,62 @@ export class ClientAuthService {
 					profileData: {
 						uid: clientAuth.client.uid,
 						email: clientAuth.email,
+						accessLevel: 'client',
+						// Client basic information
+						name: clientAuth.client.name,
+						contactPerson: clientAuth.client.contactPerson,
+						phone: clientAuth.client.phone,
+						alternativePhone: clientAuth.client.alternativePhone,
+						website: clientAuth.client.website,
+						logo: clientAuth.client.logo,
+						description: clientAuth.client.description,
+						address: clientAuth.client.address,
+						category: clientAuth.client.category,
+						status: clientAuth.client.status,
+						
+						// CRM related fields
+						priceTier: clientAuth.client.priceTier,
+						preferredContactMethod: clientAuth.client.preferredContactMethod,
+						tags: clientAuth.client.tags,
+						industry: clientAuth.client.industry,
+						companySize: clientAuth.client.companySize,
+						preferredLanguage: clientAuth.client.preferredLanguage,
+						acquisitionChannel: clientAuth.client.acquisitionChannel,
+						acquisitionDate: clientAuth.client.acquisitionDate,
+						creditLimit: clientAuth.client.creditLimit,
+						outstandingBalance: clientAuth.client.outstandingBalance,
+						lifetimeValue: clientAuth.client.lifetimeValue,
+						discountPercentage: clientAuth.client.discountPercentage,
+						paymentTerms: clientAuth.client.paymentTerms,
+						type: clientAuth.client.type,
+						
+						// Social profiles and custom fields
+						socialProfiles: clientAuth.client.socialProfiles,
+						customFields: clientAuth.client.customFields,
+						
+						// Branch and organization information
+						branch: clientAuth.client.branch ? {
+							uid: clientAuth.client.branch.uid,
+							name: clientAuth.client.branch.name,
+							address: clientAuth.client.branch.address,
+							phone: clientAuth.client.branch.phone,
+							email: clientAuth.client.branch.email,
+						} : null,
+						
+						organisation: clientAuth.client.organisation ? {
+							uid: clientAuth.client.organisation.uid,
+							name: clientAuth.client.organisation.name,
+							address: clientAuth.client.organisation.address,
+							phone: clientAuth.client.organisation.phone,
+							email: clientAuth.client.organisation.email,
+						} : null,
+						
+						// Authentication specific info
+						lastLogin: clientAuth.lastLogin,
+						createdAt: clientAuth.client.createdAt,
+						updatedAt: clientAuth.client.updatedAt,
+						
+						// License and permission information
 						licenseInfo: {
 							licenseId: String(activeLicense?.uid),
 							plan: activeLicense?.plan,
@@ -197,6 +253,29 @@ export class ClientAuthService {
 					},
 					message: 'Authentication successful',
 				};
+
+				// Send successful login email notification
+				try {
+					this.eventEmitter.emit('send.email', EmailType.CLIENT_LOGIN_NOTIFICATION, [clientAuth.email], {
+						name: clientAuth.client.name || clientAuth.email.split('@')[0],
+						loginTime: new Date().toLocaleString(),
+						ipAddress: requestData?.ipAddress || 'Unknown',
+						location: requestData?.location || 'Unknown',
+						country: requestData?.country || 'Unknown',
+						deviceType: requestData?.deviceType || 'Unknown',
+						browser: requestData?.browser || 'Unknown',
+						operatingSystem: requestData?.operatingSystem || 'Unknown',
+						userAgent: requestData?.userAgent || 'Unknown',
+						suspicious: false,
+						securityTips: [
+							'Always log out when using shared devices',
+							'Use strong, unique passwords for your client portal',
+							'Contact us if you notice any suspicious activity',
+						],
+					});
+				} catch (error) {
+					console.error('Failed to send client login notification email:', error);
+				}
 
 				return response;
 			}
@@ -230,10 +309,89 @@ export class ClientAuthService {
 				profileData: {
 					uid: clientAuth.client.uid,
 					email: clientAuth.email,
+					accessLevel: 'client',
+					// Client basic information
+					name: clientAuth.client.name,
+					contactPerson: clientAuth.client.contactPerson,
+					phone: clientAuth.client.phone,
+					alternativePhone: clientAuth.client.alternativePhone,
+					website: clientAuth.client.website,
+					logo: clientAuth.client.logo,
+					description: clientAuth.client.description,
+					address: clientAuth.client.address,
+					category: clientAuth.client.category,
+					status: clientAuth.client.status,
+					
+					// CRM related fields
+					priceTier: clientAuth.client.priceTier,
+					preferredContactMethod: clientAuth.client.preferredContactMethod,
+					tags: clientAuth.client.tags,
+					industry: clientAuth.client.industry,
+					companySize: clientAuth.client.companySize,
+					preferredLanguage: clientAuth.client.preferredLanguage,
+					acquisitionChannel: clientAuth.client.acquisitionChannel,
+					acquisitionDate: clientAuth.client.acquisitionDate,
+					creditLimit: clientAuth.client.creditLimit,
+					outstandingBalance: clientAuth.client.outstandingBalance,
+					lifetimeValue: clientAuth.client.lifetimeValue,
+					discountPercentage: clientAuth.client.discountPercentage,
+					paymentTerms: clientAuth.client.paymentTerms,
+					type: clientAuth.client.type,
+					
+					// Social profiles and custom fields
+					socialProfiles: clientAuth.client.socialProfiles,
+					customFields: clientAuth.client.customFields,
+					
+					// Branch and organization information
+					branch: clientAuth.client.branch ? {
+						uid: clientAuth.client.branch.uid,
+						name: clientAuth.client.branch.name,
+						address: clientAuth.client.branch.address,
+						phone: clientAuth.client.branch.phone,
+						email: clientAuth.client.branch.email,
+					} : null,
+					
+					organisation: clientAuth.client.organisation ? {
+						uid: clientAuth.client.organisation.uid,
+						name: clientAuth.client.organisation.name,
+						address: clientAuth.client.organisation.address,
+						phone: clientAuth.client.organisation.phone,
+						email: clientAuth.client.organisation.email,
+					} : null,
+					
+					// Authentication specific info
+					lastLogin: clientAuth.lastLogin,
+					createdAt: clientAuth.client.createdAt,
+					updatedAt: clientAuth.client.updatedAt,
+					
+					// Permission information
 					features: clientPermissions,
 				},
 				message: 'Authentication successful',
 			};
+
+			// Send successful login email notification
+			try {
+				this.eventEmitter.emit('send.email', EmailType.CLIENT_LOGIN_NOTIFICATION, [clientAuth.email], {
+					name: clientAuth.client.name || clientAuth.email.split('@')[0],
+					loginTime: new Date().toLocaleString(),
+					ipAddress: requestData?.ipAddress || 'Unknown',
+					location: requestData?.location || 'Unknown',
+					country: requestData?.country || 'Unknown',
+					deviceType: requestData?.deviceType || 'Unknown',
+					browser: requestData?.browser || 'Unknown',
+					operatingSystem: requestData?.operatingSystem || 'Unknown',
+					userAgent: requestData?.userAgent || 'Unknown',
+					suspicious: false,
+					securityTips: [
+						'Always log out when using shared devices',
+						'Use strong, unique passwords for your client portal',
+						'Contact us if you notice any suspicious activity',
+					],
+				});
+			} catch (error) {
+				console.error('Failed to send client login notification email:', error);
+			}
 
 			return response;
 		} catch (error) {
@@ -446,7 +604,62 @@ export class ClientAuthService {
 					profileData: {
 						uid: clientAuth.client.uid,
 						email: clientAuth.email,
-						// Add other client properties as needed
+						accessLevel: 'client',
+						// Client basic information
+						name: clientAuth.client.name,
+						contactPerson: clientAuth.client.contactPerson,
+						phone: clientAuth.client.phone,
+						alternativePhone: clientAuth.client.alternativePhone,
+						website: clientAuth.client.website,
+						logo: clientAuth.client.logo,
+						description: clientAuth.client.description,
+						address: clientAuth.client.address,
+						category: clientAuth.client.category,
+						status: clientAuth.client.status,
+						
+						// CRM related fields
+						priceTier: clientAuth.client.priceTier,
+						preferredContactMethod: clientAuth.client.preferredContactMethod,
+						tags: clientAuth.client.tags,
+						industry: clientAuth.client.industry,
+						companySize: clientAuth.client.companySize,
+						preferredLanguage: clientAuth.client.preferredLanguage,
+						acquisitionChannel: clientAuth.client.acquisitionChannel,
+						acquisitionDate: clientAuth.client.acquisitionDate,
+						creditLimit: clientAuth.client.creditLimit,
+						outstandingBalance: clientAuth.client.outstandingBalance,
+						lifetimeValue: clientAuth.client.lifetimeValue,
+						discountPercentage: clientAuth.client.discountPercentage,
+						paymentTerms: clientAuth.client.paymentTerms,
+						type: clientAuth.client.type,
+						
+						// Social profiles and custom fields
+						socialProfiles: clientAuth.client.socialProfiles,
+						customFields: clientAuth.client.customFields,
+						
+						// Branch and organization information
+						branch: clientAuth.client.branch ? {
+							uid: clientAuth.client.branch.uid,
+							name: clientAuth.client.branch.name,
+							address: clientAuth.client.branch.address,
+							phone: clientAuth.client.branch.phone,
+							email: clientAuth.client.branch.email,
+						} : null,
+						
+						organisation: clientAuth.client.organisation ? {
+							uid: clientAuth.client.organisation.uid,
+							name: clientAuth.client.organisation.name,
+							address: clientAuth.client.organisation.address,
+							phone: clientAuth.client.organisation.phone,
+							email: clientAuth.client.organisation.email,
+						} : null,
+						
+						// Authentication specific info
+						lastLogin: clientAuth.lastLogin,
+						createdAt: clientAuth.client.createdAt,
+						updatedAt: clientAuth.client.updatedAt,
+						
+						// License and permission information
 						licenseInfo: {
 							licenseId: String(activeLicense?.uid),
 							plan: activeLicense?.plan,
@@ -488,7 +701,62 @@ export class ClientAuthService {
 				profileData: {
 					uid: clientAuth.client.uid,
 					email: clientAuth.email,
-					// Add other client properties as needed
+					accessLevel: 'client',
+					// Client basic information
+					name: clientAuth.client.name,
+					contactPerson: clientAuth.client.contactPerson,
+					phone: clientAuth.client.phone,
+					alternativePhone: clientAuth.client.alternativePhone,
+					website: clientAuth.client.website,
+					logo: clientAuth.client.logo,
+					description: clientAuth.client.description,
+					address: clientAuth.client.address,
+					category: clientAuth.client.category,
+					status: clientAuth.client.status,
+					
+					// CRM related fields
+					priceTier: clientAuth.client.priceTier,
+					preferredContactMethod: clientAuth.client.preferredContactMethod,
+					tags: clientAuth.client.tags,
+					industry: clientAuth.client.industry,
+					companySize: clientAuth.client.companySize,
+					preferredLanguage: clientAuth.client.preferredLanguage,
+					acquisitionChannel: clientAuth.client.acquisitionChannel,
+					acquisitionDate: clientAuth.client.acquisitionDate,
+					creditLimit: clientAuth.client.creditLimit,
+					outstandingBalance: clientAuth.client.outstandingBalance,
+					lifetimeValue: clientAuth.client.lifetimeValue,
+					discountPercentage: clientAuth.client.discountPercentage,
+					paymentTerms: clientAuth.client.paymentTerms,
+					type: clientAuth.client.type,
+					
+					// Social profiles and custom fields
+					socialProfiles: clientAuth.client.socialProfiles,
+					customFields: clientAuth.client.customFields,
+					
+					// Branch and organization information
+					branch: clientAuth.client.branch ? {
+						uid: clientAuth.client.branch.uid,
+						name: clientAuth.client.branch.name,
+						address: clientAuth.client.branch.address,
+						phone: clientAuth.client.branch.phone,
+						email: clientAuth.client.branch.email,
+					} : null,
+					
+					organisation: clientAuth.client.organisation ? {
+						uid: clientAuth.client.organisation.uid,
+						name: clientAuth.client.organisation.name,
+						address: clientAuth.client.organisation.address,
+						phone: clientAuth.client.organisation.phone,
+						email: clientAuth.client.organisation.email,
+					} : null,
+					
+					// Authentication specific info
+					lastLogin: clientAuth.lastLogin,
+					createdAt: clientAuth.client.createdAt,
+					updatedAt: clientAuth.client.updatedAt,
+					
+					// Permission information
 					features: clientPermissions,
 				},
 				message: 'Tokens refreshed successfully',

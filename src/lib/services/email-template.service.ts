@@ -70,6 +70,8 @@ import {
 	UserTargetERPUpdateConfirmationEmailData,
 	UserTargetPeriodSummaryEmailData,
 	AppUpdateNotificationData,
+	ClientProfileUpdateConfirmationData,
+	ClientProfileUpdateAdminData,
 } from '../types/email-templates.types';
 
 class EmailTemplateService {
@@ -679,6 +681,15 @@ class EmailTemplateService {
 		return this.renderTemplate('system/app-update-notification.hbs', data);
 	}
 
+	// Client Profile Update Templates
+	clientProfileUpdateConfirmation(data: ClientProfileUpdateConfirmationData): string {
+		return this.renderTemplate('client/profile-update-confirmation.hbs', data);
+	}
+
+	clientProfileUpdateAdmin(data: ClientProfileUpdateAdminData): string {
+		return this.renderTemplate('client/profile-update-admin.hbs', data);
+	}
+
 	/**
 	 * Clear the compiled template cache and reinitialize Handlebars
 	 * Useful for development or when templates are updated
@@ -768,6 +779,8 @@ class EmailTemplateService {
 			// Client templates
 			'client/login-notification.hbs',
 			'client/failed-login-attempt.hbs',
+			'client/profile-update-confirmation.hbs',
+			'client/profile-update-admin.hbs',
 			// Payslip templates
 			'payslips/available.hbs',
 			'payslips/uploaded-admin.hbs',

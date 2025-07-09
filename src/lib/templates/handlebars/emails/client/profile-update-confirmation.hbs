@@ -1,0 +1,103 @@
+{{#base headerTitle="Profile Updated Successfully" headerSubtitle="Your client account information has been updated"}}
+
+<div class="greeting">
+    Hello {{clientName}}! ✅
+</div>
+
+<div class="success-notice">
+    <p>🎉 <strong>Profile Updated Successfully!</strong> Your {{appName}} client account information has been updated and the changes are now active.</p>
+</div>
+
+<div class="message">
+    <p>We wanted to confirm that your profile information has been successfully updated. Please review the changes below and ensure all information is correct.</p>
+</div>
+
+<!-- Update Details -->
+<div class="info-card">
+    <h3>📋 Update Details</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Updated On</span>
+            <span class="detail-value">{{updateDate}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Client Account</span>
+            <span class="detail-value">{{clientEmail}}</span>
+        </div>
+        {{#if organization}}
+        <div class="detail-item">
+            <span class="detail-label">Organization</span>
+            <span class="detail-value">{{organization.name}}</span>
+        </div>
+        {{/if}}
+        {{#if branch}}
+        <div class="detail-item">
+            <span class="detail-label">Branch</span>
+            <span class="detail-value">{{branch.name}}</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+
+<!-- Updated Fields -->
+<div class="info-card" style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-left-color: #22c55e;">
+    <h4 style="color: #166534; margin-bottom: 16px;">🔄 Updated Information</h4>
+    <ul style="margin-left: 20px; color: #166534; line-height: 1.8; font-size: 15px; font-weight: 500;">
+        {{#each updatedFields}}
+        <li>{{this}}</li>
+        {{/each}}
+    </ul>
+</div>
+
+{{#if updateReason}}
+<div class="info-card">
+    <h4 style="color: #7c2d92; margin-bottom: 16px;">📝 Update Reason</h4>
+    <p style="background: #f9fafb; padding: 16px; border-radius: 8px; border-left: 4px solid #7c2d92; margin-top: 12px;">
+        {{updateReason}}
+    </p>
+</div>
+{{/if}}
+
+<!-- Security Notice -->
+<div class="info-card">
+    <h4 style="color: #7c2d92; margin-bottom: 16px;">🔒 Security & Privacy</h4>
+    <ul style="margin-left: 20px; color: #4b5563; line-height: 1.8; font-size: 15px;">
+        <li>Your updated information is secured with industry-standard encryption</li>
+        <li>Only authorized personnel can access your account details</li>
+        <li>All changes are logged for audit and security purposes</li>
+        <li>Your privacy is our priority and we protect your data accordingly</li>
+    </ul>
+</div>
+
+<!-- Next Steps -->
+<div class="success-notice">
+    <p style="font-size: 16px; font-weight: 700; color: #15803d;">📋 What's Next?</p>
+    <ul style="margin-left: 20px; margin-top: 16px; line-height: 1.8; font-size: 15px;">
+        <li>Your updated information is now active in our system</li>
+        <li>You can access your client portal to view all current details</li>
+        <li>Contact us if you notice any discrepancies in your information</li>
+        <li>Future communications will reflect your updated details</li>
+    </ul>
+</div>
+
+<!-- CTA Section -->
+<div class="cta-section">
+    <a href="{{dashboardLink}}" class="cta-button">Access Client Portal</a>
+</div>
+
+<!-- Important Notice -->
+<div class="warning-notice">
+    <p>⚠️ <strong>Didn't Request This Update?</strong> If you did not request these changes to your profile, please contact us immediately at <a href="mailto:{{supportEmail}}" style="color: #d97706; font-weight: 600;">{{supportEmail}}</a></p>
+</div>
+
+<!-- Footer -->
+<div class="message">
+    <p>Thank you for keeping your client account information current. If you have any questions about these changes or need assistance, our support team is here to help.</p>
+    
+    <p style="font-size: 14px; color: #6b7280; margin-top: 20px;">
+        <strong>Need help?</strong> Contact our support team at <a href="mailto:{{supportEmail}}" style="color: #7c2d92;">{{supportEmail}}</a><br>
+        <strong>Organization:</strong> {{organization.name}}
+    </p>
+</div>
+
+{{/base}} 

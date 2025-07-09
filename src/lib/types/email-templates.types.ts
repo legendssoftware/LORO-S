@@ -1538,6 +1538,61 @@ export interface LeadTargetAchievementAdminData extends BaseEmailData {
 	recognitionSuggestions?: string[];
 }
 
+export interface ClientProfileUpdateConfirmationData extends BaseEmailData {
+	clientName: string;
+	clientEmail: string;
+	updatedFields: string[];
+	updatedBy: {
+		name: string;
+		email: string;
+	};
+	updateDate: string;
+	updateReason?: string;
+	previousValues?: Record<string, any>;
+	newValues?: Record<string, any>;
+	organization: {
+		name: string;
+		uid: number;
+	};
+	branch?: {
+		name: string;
+		uid: number;
+	};
+	dashboardLink: string;
+	supportEmail: string;
+}
+
+export interface ClientProfileUpdateAdminData extends BaseEmailData {
+	adminName: string;
+	clientName: string;
+	clientEmail: string;
+	clientId: number;
+	updatedFields: string[];
+	updatedBy: {
+		name: string;
+		email: string;
+	};
+	updateDate: string;
+	updateReason?: string;
+	previousValues?: Record<string, any>;
+	newValues?: Record<string, any>;
+	organization: {
+		name: string;
+		uid: number;
+	};
+	branch?: {
+		name: string;
+		uid: number;
+	};
+	dashboardLink: string;
+	supportEmail: string;
+	clientPortalAccess?: boolean;
+	accountManager?: {
+		name: string;
+		email: string;
+	};
+}
+
 export interface AppUpdateNotificationData extends BaseEmailData {
 	appVersion: string;
 	appName: string;
@@ -1671,6 +1726,9 @@ export interface EmailDataMap {
 	[EmailType.FAILED_LOGIN_ATTEMPT]: LoginNotificationEmailData;
 	[EmailType.CLIENT_FAILED_LOGIN_ATTEMPT]: LoginNotificationEmailData;
 	[EmailType.EMAIL_VERIFIED]: EmailVerifiedEmailData;
+	// Client profile update mappings
+	[EmailType.CLIENT_PROFILE_UPDATED_CONFIRMATION]: ClientProfileUpdateConfirmationData;
+	[EmailType.CLIENT_PROFILE_UPDATED_ADMIN]: ClientProfileUpdateAdminData;
 	// Claims email mappings
 	[EmailType.CLAIM_CREATED]: ClaimEmailData;
 	[EmailType.CLAIM_STATUS_UPDATE]: ClaimStatusUpdateEmailData;

@@ -3,6 +3,7 @@ import { CreateClientDto } from './dto/create-client.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Client } from './entities/client.entity';
+import { ClientAuth } from './entities/client.auth.entity';
 import { Repository, DeepPartial, FindOptionsWhere, ILike, In } from 'typeorm';
 import { GeneralStatus } from '../lib/enums/status.enums';
 import { PaginatedResponse } from '../lib/interfaces/product.interfaces';
@@ -15,7 +16,7 @@ import { GeofenceType, ClientRiskLevel, ClientStatus } from '../lib/enums/client
 import { Organisation } from '../organisation/entities/organisation.entity';
 import { OrganisationSettings } from '../organisation/entities/organisation-settings.entity';
 import { EmailType } from '../lib/enums/email.enums';
-import { LeadConvertedClientData, LeadConvertedCreatorData } from '../lib/types/email-templates.types';
+import { LeadConvertedClientData, LeadConvertedCreatorData, ClientProfileUpdateAdminData, ClientProfileUpdateConfirmationData } from '../lib/types/email-templates.types';
 import { ClientCommunicationScheduleService } from './services/client-communication-schedule.service';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { User } from '../user/entities/user.entity';
@@ -36,6 +37,8 @@ export class ClientsService {
 	constructor(
 		@InjectRepository(Client)
 		private clientsRepository: Repository<Client>,
+		@InjectRepository(ClientAuth)
+		private clientAuthRepository: Repository<ClientAuth>,
 		@InjectRepository(Organisation)
 		private organisationRepository: Repository<Organisation>,
 		@InjectRepository(OrganisationSettings)
@@ -234,6 +237,25 @@ export class ClientsService {
 			if (!client) {
 				this.logger.error(`[CLIENT_CREATE] Failed to save client to database`);
 				throw new NotFoundException(process.env.CREATE_ERROR_MESSAGE);
+			}
+
+			// Handle communication schedules if provided
+			if (createClientDto.communicationSchedules && createClientDto.communicationSchedules.length > 0) {
+				this.logger.debug(`[CLIENT_CREATE] Creating ${createClientDto.communicationSchedules.length} communication schedules for client ${client.uid}`);
+				
+				for (const scheduleDto of createClientDto.communicationSchedules) {
+					try {
+						await this.communicationScheduleService.createSchedule(
+							client.uid,
+							scheduleDto,
+							orgId,
+							branchId
+						);
+					} catch (scheduleError) {
+						this.logger.error(`[CLIENT_CREATE] Failed to create communication schedule for client ${client.uid}: ${scheduleError.message}`);
+						// Continue with other schedules even if one fails
+					}
+				}
 			}
 
 			// Invalidate cache after creation
@@ -590,6 +612,53 @@ export class ClientsService {
 
 			if (updateResult.affected === 0) {
 				throw new NotFoundException('Client not found or you do not have permission to update this client');
+			}
+
+			// Handle communication schedules if provided
+			if (updateClientDto.communicationSchedules && updateClientDto.communicationSchedules.length > 0) {
+				this.logger.debug(`[CLIENT_UPDATE] Updating communication schedules for client ${ref}`);
+				
+				// For updates, we could either:
+				// 1. Replace all existing schedules with new ones (current approach)
+				// 2. Update existing schedules and add new ones
+				// For now, let's use approach 1 - replace all schedules
+				
+				// First, deactivate existing schedules
+				try {
+					const existingSchedules = await this.communicationScheduleService.getClientSchedules(
+						ref,
+						{ page: 1, limit: 100 },
+						orgId,
+						branchId
+					);
+					
+					// Deactivate existing schedules
+					for (const schedule of existingSchedules.data) {
+						await this.communicationScheduleService.updateSchedule(
+							schedule.uid,
+							{ isActive: false },
+							orgId,
+							branchId
+						);
+					}
+				} catch (error) {
+					this.logger.error(`[CLIENT_UPDATE] Failed to deactivate existing schedules for client ${ref}: ${error.message}`);
+				}
+				
+				// Create new schedules
+				for (const scheduleDto of updateClientDto.communicationSchedules) {
+					try {
+						await this.communicationScheduleService.createSchedule(
+							ref,
+							scheduleDto,
+							orgId,
+							branchId
+						);
+					} catch (scheduleError) {
+						this.logger.error(`[CLIENT_UPDATE] Failed to create communication schedule for client ${ref}: ${scheduleError.message}`);
+						// Continue with other schedules even if one fails
+					}
+				}
 			}
 
 			// Send conversion emails if the status was changed to converted
@@ -1457,5 +1526,458 @@ export class ClientsService {
 		});
 
 		return Array.from(summary.values()).sort((a, b) => b.taskCount - a.taskCount);
+	}
+
+	/**
+	 * Updates a client's profile through the client portal.
+	 * This method is specifically for clients updating their own profile information.
+	 * It includes permission validation and email notifications.
+	 *
+	 * @param clientAuthId - The ClientAuth.uid from the JWT token
+	 * @param updateClientDto - The data to update the client with
+	 * @param organisationRef - The organization reference from JWT token
+	 * @returns A response object with success/error message and updated data
+	 */
+	async updateClientProfile(
+		clientAuthId: number,
+		updateClientDto: UpdateClientDto,
+		organisationRef?: number,
+	): Promise<{ message: string; data?: any }> {
+		const startTime = Date.now();
+		this.logger.log(`[CLIENT_PROFILE_UPDATE] Starting profile update for clientAuthId: ${clientAuthId} in org: ${organisationRef}`);
+
+		try {
+			// 1. Find the ClientAuth record and related Client
+			const clientAuth = await this.clientAuthRepository.findOne({
+				where: { uid: clientAuthId, isDeleted: false },
+				relations: ['client', 'client.organisation', 'client.branch'],
+			});
+
+			if (!clientAuth || !clientAuth.client) {
+				this.logger.warn(`[CLIENT_PROFILE_UPDATE] ClientAuth or Client not found for ID: ${clientAuthId}`);
+				throw new NotFoundException('Client profile not found');
+			}
+
+			const client = clientAuth.client;
+
+			// 2. Validate organization membership
+			if (organisationRef && client.organisation?.uid !== organisationRef) {
+				this.logger.warn(`[CLIENT_PROFILE_UPDATE] Organization mismatch for client ${client.uid}. Expected: ${organisationRef}, Found: ${client.organisation?.uid}`);
+				throw new BadRequestException('Client does not belong to the specified organization');
+			}
+
+			// 3. Filter out restricted fields that clients cannot update
+			const restrictedFields = [
+				'uid','organisation', 'branch', 'assignedSalesRep',
+				'creditLimit', 'outstandingBalance', 'lifetimeValue', 'discountPercentage',
+				'priceTier', 'acquisitionChannel', 'acquisitionDate', 'riskLevel',
+				'paymentTerms', 'type', 'status', 'isDeleted', 'createdAt', 'updatedAt',
+				'hasPortalAccess', 'portalCredentials', 'quotations', 'checkIns', 'tasks',
+				'leads', 'interactions', 'gpsCoordinates'
+			];
+
+			// Create a sanitized update object with only allowed fields
+			const allowedUpdateData: Partial<UpdateClientDto> = {};
+			const updatedFields: string[] = [];
+			
+			// List of fields clients are allowed to update
+			const allowedFields = [
+				'contactPerson', 'phone', 'alternativePhone', 'website', 'description',
+				'address', 'category', 'preferredContactMethod', 'tags', 'industry',
+				'companySize', 'preferredLanguage', 'socialProfiles', 'customFields', 'communicationSchedules', 'email', 'name'
+			];
+
+			for (const [key, value] of Object.entries(updateClientDto)) {
+				if (allowedFields.includes(key) && value !== undefined) {
+					allowedUpdateData[key] = value;
+					updatedFields.push(key);
+				} else if (restrictedFields.includes(key)) {
+					this.logger.warn(`[CLIENT_PROFILE_UPDATE] Attempt to update restricted field: ${key}`);
+					// Don't throw an error, just skip restricted fields
+				}
+			}
+
+			if (Object.keys(allowedUpdateData).length === 0) {
+				this.logger.warn(`[CLIENT_PROFILE_UPDATE] No valid fields to update for client ${client.uid}`);
+				throw new BadRequestException('No valid fields provided for update');
+			}
+
+			this.logger.debug(`[CLIENT_PROFILE_UPDATE] Updating fields: ${updatedFields.join(', ')} for client ${client.uid}`);
+
+			// 4. Update the client profile
+			const updateResult = await this.clientsRepository.update(
+				{ uid: client.uid },
+				allowedUpdateData as unknown as DeepPartial<Client>
+			);
+
+			if (updateResult.affected === 0) {
+				throw new BadRequestException('Failed to update client profile');
+			}
+
+			// 4.1 Handle communication schedules if provided
+			if (updateClientDto.communicationSchedules && updateClientDto.communicationSchedules.length > 0) {
+				this.logger.debug(`[CLIENT_PROFILE_UPDATE] Updating communication schedules for client ${client.uid}`);
+				
+				try {
+					// Get existing schedules
+					const existingSchedules = await this.communicationScheduleService.getClientSchedules(
+						client.uid,
+						{ page: 1, limit: 100 },
+						organisationRef,
+						client.branch?.uid
+					);
+					
+					// Deactivate existing schedules
+					for (const schedule of existingSchedules.data) {
+						await this.communicationScheduleService.updateSchedule(
+							schedule.uid,
+							{ isActive: false },
+							organisationRef,
+							client.branch?.uid
+						);
+					}
+					
+					// Create new schedules
+					for (const scheduleDto of updateClientDto.communicationSchedules) {
+						try {
+							await this.communicationScheduleService.createSchedule(
+								client.uid,
+								scheduleDto,
+								organisationRef,
+								client.branch?.uid
+							);
+						} catch (scheduleError) {
+							this.logger.error(`[CLIENT_PROFILE_UPDATE] Failed to create communication schedule for client ${client.uid}: ${scheduleError.message}`);
+							// Continue with other schedules even if one fails
+						}
+					}
+					
+					// Add to updated fields for notification
+					if (!updatedFields.includes('communicationSchedules')) {
+						updatedFields.push('communicationSchedules');
+					}
+				} catch (error) {
+					this.logger.error(`[CLIENT_PROFILE_UPDATE] Failed to update communication schedules for client ${client.uid}: ${error.message}`);
+					// Don't throw error - other profile updates were successful
+				}
+			}
+
+			// 5. Invalidate cache
+			await this.invalidateClientCache(client);
+
+			// 6. Get updated client data for emails
+			const updatedClient = await this.clientsRepository.findOne({
+				where: { uid: client.uid },
+				relations: ['organisation', 'branch'],
+			});
+
+			if (!updatedClient) {
+				throw new NotFoundException('Updated client not found');
+			}
+
+			// 7. Send email notifications
+			await this.sendClientProfileUpdateNotifications(updatedClient, updatedFields, clientAuth.email);
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`[CLIENT_PROFILE_UPDATE] Successfully updated client profile ${client.uid} in ${executionTime}ms`);
+
+			return {
+				message: 'Client profile updated successfully',
+				data: {
+					clientId: client.uid,
+					updatedFields,
+					lastUpdated: new Date().toISOString(),
+				},
+			};
+		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`[CLIENT_PROFILE_UPDATE] Failed to update client profile for clientAuthId ${clientAuthId} after ${executionTime}ms. Error: ${error.message}`);
+			return {
+				message: error?.message || 'Failed to update client profile',
+			};
+		}
+	}
+
+	/**
+	 * Get all communication schedules for a client
+	 * This method is used by clients to view their own communication schedules
+	 * 
+	 * @param clientAuthId - The ClientAuth.uid from the JWT token
+	 * @param organisationRef - The organization reference from JWT token
+	 * @returns A response object with the client's communication schedules
+	 */
+	async getClientCommunicationSchedules(
+		clientAuthId: number,
+		organisationRef?: number,
+	): Promise<{ message: string; schedules?: any[] }> {
+		try {
+			// Find the ClientAuth record and related Client
+			const clientAuth = await this.clientAuthRepository.findOne({
+				where: { uid: clientAuthId, isDeleted: false },
+				relations: ['client', 'client.organisation', 'client.branch'],
+			});
+
+			if (!clientAuth || !clientAuth.client) {
+				throw new NotFoundException('Client profile not found');
+			}
+
+			const client = clientAuth.client;
+
+			// Validate organization membership
+			if (organisationRef && client.organisation?.uid !== organisationRef) {
+				throw new BadRequestException('Client does not belong to the specified organization');
+			}
+
+			// Get communication schedules
+			const schedules = await this.communicationScheduleService.getClientSchedules(
+				client.uid,
+				{ page: 1, limit: 100, isActive: true },
+				organisationRef,
+				client.branch?.uid
+			);
+
+			return {
+				message: 'Communication schedules retrieved successfully',
+				schedules: schedules.data,
+			};
+		} catch (error) {
+			return {
+				message: error?.message || 'Failed to retrieve communication schedules',
+			};
+		}
+	}
+
+	/**
+	 * Update a specific communication schedule for a client
+	 * This method is used by clients to update their own communication schedules
+	 * 
+	 * @param clientAuthId - The ClientAuth.uid from the JWT token
+	 * @param scheduleId - The ID of the schedule to update
+	 * @param updateDto - The data to update the schedule with
+	 * @param organisationRef - The organization reference from JWT token
+	 * @returns A response object with success/error message
+	 */
+	async updateClientCommunicationSchedule(
+		clientAuthId: number,
+		scheduleId: number,
+		updateDto: any,
+		organisationRef?: number,
+	): Promise<{ message: string }> {
+		try {
+			// Find the ClientAuth record and related Client
+			const clientAuth = await this.clientAuthRepository.findOne({
+				where: { uid: clientAuthId, isDeleted: false },
+				relations: ['client', 'client.organisation', 'client.branch'],
+			});
+
+			if (!clientAuth || !clientAuth.client) {
+				throw new NotFoundException('Client profile not found');
+			}
+
+			const client = clientAuth.client;
+
+			// Validate organization membership
+			if (organisationRef && client.organisation?.uid !== organisationRef) {
+				throw new BadRequestException('Client does not belong to the specified organization');
+			}
+
+			// First, verify the schedule belongs to this client
+			const existingSchedules = await this.communicationScheduleService.getClientSchedules(
+				client.uid,
+				{ page: 1, limit: 100 },
+				organisationRef,
+				client.branch?.uid
+			);
+
+			const scheduleExists = existingSchedules.data.some(schedule => schedule.uid === scheduleId);
+			if (!scheduleExists) {
+				throw new NotFoundException('Communication schedule not found or does not belong to this client');
+			}
+
+			// Update the schedule
+			const result = await this.communicationScheduleService.updateSchedule(
+				scheduleId,
+				updateDto,
+				organisationRef,
+				client.branch?.uid
+			);
+
+			return {
+				message: result.message || 'Communication schedule updated successfully',
+			};
+		} catch (error) {
+			return {
+				message: error?.message || 'Failed to update communication schedule',
+			};
+		}
+	}
+
+	/**
+	 * Delete a communication schedule for a client
+	 * This method is used by clients to delete their own communication schedules
+	 * 
+	 * @param clientAuthId - The ClientAuth.uid from the JWT token
+	 * @param scheduleId - The ID of the schedule to delete
+	 * @param organisationRef - The organization reference from JWT token
+	 * @returns A response object with success/error message
+	 */
+	async deleteClientCommunicationSchedule(
+		clientAuthId: number,
+		scheduleId: number,
+		organisationRef?: number,
+	): Promise<{ message: string }> {
+		try {
+			// Find the ClientAuth record and related Client
+			const clientAuth = await this.clientAuthRepository.findOne({
+				where: { uid: clientAuthId, isDeleted: false },
+				relations: ['client', 'client.organisation', 'client.branch'],
+			});
+
+			if (!clientAuth || !clientAuth.client) {
+				throw new NotFoundException('Client profile not found');
+			}
+
+			const client = clientAuth.client;
+
+			// Validate organization membership
+			if (organisationRef && client.organisation?.uid !== organisationRef) {
+				throw new BadRequestException('Client does not belong to the specified organization');
+			}
+
+			// First, verify the schedule belongs to this client
+			const existingSchedules = await this.communicationScheduleService.getClientSchedules(
+				client.uid,
+				{ page: 1, limit: 100 },
+				organisationRef,
+				client.branch?.uid
+			);
+
+			const scheduleExists = existingSchedules.data.some(schedule => schedule.uid === scheduleId);
+			if (!scheduleExists) {
+				throw new NotFoundException('Communication schedule not found or does not belong to this client');
+			}
+
+			// Delete the schedule
+			const result = await this.communicationScheduleService.deleteSchedule(scheduleId);
+
+			return {
+				message: result.message || 'Communication schedule deleted successfully',
+			};
+		} catch (error) {
+			return {
+				message: error?.message || 'Failed to delete communication schedule',
+			};
+		}
+	}
+
+	/**
+	 * Sends email notifications after a client profile update
+	 * 
+	 * @param client - The updated client data
+	 * @param updatedFields - Array of fields that were updated
+	 * @param clientEmail - The client's email address
+	 */
+	private async sendClientProfileUpdateNotifications(
+		client: Client,
+		updatedFields: string[],
+		clientEmail: string,
+	): Promise<void> {
+		try {
+			const updateDate = new Date().toLocaleDateString('en-US', {
+				year: 'numeric',
+				month: 'long',
+				day: 'numeric',
+			});
+
+			// Get dashboard links
+			const dashboardBaseUrl = this.configService.get<string>('DASHBOARD_URL') || 'https://dashboard.loro.co.za';
+			const dashboardLink = `${dashboardBaseUrl}/clients/${client.uid}`;
+			const supportEmail = this.configService.get<string>('SUPPORT_EMAIL') || 'support@loro.co.za';
+
+			// 1. Send notification to organization admins
+			if (client.organisation?.uid) {
+				// Find admin users in the organization
+				const adminUsers = await this.userRepository.find({
+					where: {
+						organisationRef: String(client.organisation.uid),
+						accessLevel: In([AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER]),
+						isDeleted: false,
+					},
+					select: ['email', 'name', 'surname'],
+				});
+
+				if (adminUsers.length > 0) {
+					const adminEmails = adminUsers.filter(user => user.email).map(user => user.email);
+					
+					if (adminEmails.length > 0) {
+						// Send admin notification emails - one for each admin with personalized name
+						for (const adminUser of adminUsers.filter(user => user.email)) {
+							const adminEmailData: ClientProfileUpdateAdminData = {
+								name: `${adminUser.name} ${adminUser.surname}`.trim(),
+								adminName: `${adminUser.name} ${adminUser.surname}`.trim(),
+								clientName: client.name,
+								clientEmail: clientEmail,
+								clientId: client.uid,
+								updatedFields: updatedFields,
+								updatedBy: {
+									name: client.name,
+									email: clientEmail,
+								},
+								updateDate: updateDate,
+								organization: {
+									name: client.organisation?.name || 'Your Organization',
+									uid: client.organisation?.uid || 0,
+								},
+								...(client.branch && {
+									branch: {
+										name: client.branch.name,
+										uid: client.branch.uid,
+									},
+								}),
+								dashboardLink: dashboardLink,
+								supportEmail: supportEmail,
+								clientPortalAccess: true, // Assuming client has portal access since they're updating profile
+							};
+
+							this.eventEmitter.emit('send.email', EmailType.CLIENT_PROFILE_UPDATED_ADMIN, [adminUser.email], adminEmailData);
+						}
+
+						this.logger.debug(`[CLIENT_PROFILE_UPDATE] Admin notification sent to ${adminEmails.length} administrators`);
+					}
+				}
+			}
+
+			// 2. Send confirmation email to the client
+			const clientEmailData: ClientProfileUpdateConfirmationData = {
+				name: client.name,
+				clientName: client.name,
+				clientEmail: clientEmail,
+				updatedFields: updatedFields,
+				updatedBy: {
+					name: client.name,
+					email: clientEmail,
+				},
+				updateDate: updateDate,
+				organization: {
+					name: client.organisation?.name || 'Your Organization',
+					uid: client.organisation?.uid || 0,
+				},
+				...(client.branch && {
+					branch: {
+						name: client.branch.name,
+						uid: client.branch.uid,
+					},
+				}),
+				dashboardLink: `${this.configService.get<string>('CLIENT_PORTAL_DOMAIN') || 'https://portal.loro.co.za'}/settings`,
+				supportEmail: supportEmail,
+			};
+
+			this.eventEmitter.emit('send.email', EmailType.CLIENT_PROFILE_UPDATED_CONFIRMATION, [clientEmail], clientEmailData);
+
+			this.logger.debug(`[CLIENT_PROFILE_UPDATE] Confirmation email sent to client: ${clientEmail}`);
+		} catch (error) {
+			this.logger.error(`[CLIENT_PROFILE_UPDATE] Failed to send email notifications: ${error.message}`);
+			// Don't throw error as profile update was successful
+		}
 	}
 }

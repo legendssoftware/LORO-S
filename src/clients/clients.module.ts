@@ -4,6 +4,7 @@ import { ClientsController } from './clients.controller';
 import { ClientCommunicationScheduleService } from './services/client-communication-schedule.service';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Client } from './entities/client.entity';
+import { ClientAuth } from './entities/client.auth.entity';
 import { ClientCommunicationSchedule } from './entities/client-communication-schedule.entity';
 import { LicensingModule } from '../licensing/licensing.module';
 import { ConfigModule } from '@nestjs/config';
@@ -18,7 +19,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 @Module({
   imports: [
     LicensingModule,
-    TypeOrmModule.forFeature([Client, ClientCommunicationSchedule, Organisation, OrganisationSettings, User, Task]),
+    TypeOrmModule.forFeature([Client, ClientAuth, ClientCommunicationSchedule, Organisation, OrganisationSettings, User, Task]),
     ConfigModule,
     LibModule,
     TasksModule,
