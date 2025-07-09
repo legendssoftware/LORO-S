@@ -1,0 +1,164 @@
+{{#base headerTitle="Client Communication Reminder" headerSubtitle="Time to connect with your client"}}
+
+<div class="greeting">
+    Hello {{salesRepName}}! 📞
+</div>
+
+<div class="message">
+    <p>This is a friendly reminder that you have a scheduled {{communication.type}} with <strong>{{client.name}}</strong> {{#if schedule.isOverdue}}that is now overdue{{else}}scheduled for today{{/if}}.</p>
+</div>
+
+{{#if schedule.isOverdue}}
+<div class="error-notice">
+    <p>🚨 <strong>Overdue Communication:</strong> This {{communication.type}} was scheduled for {{communication.scheduledDate}} and is now {{schedule.daysOverdue}} day{{#if (gt schedule.daysOverdue 1)}}s{{/if}} overdue.</p>
+</div>
+{{else}}
+<div class="{{#if (eq schedule.urgencyLevel 'urgent')}}warning-notice{{else if (eq schedule.urgencyLevel 'critical')}}error-notice{{else}}info-notice{{/if}}">
+    <p>📅 <strong>Scheduled Communication:</strong> {{communication.type}} with {{client.name}} is scheduled for {{communication.scheduledDate}}{{#if communication.scheduledTime}} at {{communication.scheduledTime}}{{/if}}.</p>
+</div>
+{{/if}}
+
+<div class="info-card">
+    <h3>👤 Client Information</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Client Name</span>
+            <span class="detail-value">{{client.name}}</span>
+        </div>
+        {{#if client.company}}
+        <div class="detail-item">
+            <span class="detail-label">Company</span>
+            <span class="detail-value">{{client.company}}</span>
+        </div>
+        {{/if}}
+        {{#if client.contactPerson}}
+        <div class="detail-item">
+            <span class="detail-label">Contact Person</span>
+            <span class="detail-value">{{client.contactPerson}}</span>
+        </div>
+        {{/if}}
+        {{#if client.email}}
+        <div class="detail-item">
+            <span class="detail-label">Email</span>
+            <span class="detail-value">{{client.email}}</span>
+        </div>
+        {{/if}}
+        {{#if client.phone}}
+        <div class="detail-item">
+            <span class="detail-label">Phone</span>
+            <span class="detail-value">{{client.phone}}</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+
+<div class="info-card">
+    <h3>📋 Communication Details</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Communication Type</span>
+            <span class="detail-value">{{communication.type}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Scheduled Date</span>
+            <span class="detail-value">{{communication.scheduledDate}}</span>
+        </div>
+        {{#if communication.scheduledTime}}
+        <div class="detail-item">
+            <span class="detail-label">Scheduled Time</span>
+            <span class="detail-value">{{communication.scheduledTime}}</span>
+        </div>
+        {{/if}}
+        <div class="detail-item">
+            <span class="detail-label">Frequency</span>
+            <span class="detail-value">{{communication.frequency}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Priority</span>
+            <span class="detail-value" style="color: {{#eq schedule.priority 'high'}}#dc2626{{else if (eq schedule.priority 'medium')}}#f59e0b{{else}}#22c55e{{/eq}}; font-weight: 600; text-transform: uppercase;">{{schedule.priority}}</span>
+        </div>
+        {{#if communication.lastCompletedDate}}
+        <div class="detail-item">
+            <span class="detail-label">Last Contact</span>
+            <span class="detail-value">{{communication.lastCompletedDate}}</span>
+        </div>
+        {{/if}}
+        {{#if communication.daysSinceLastContact}}
+        <div class="detail-item">
+            <span class="detail-label">Days Since Last Contact</span>
+            <span class="detail-value">{{communication.daysSinceLastContact}}</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+
+{{#if communication.notes}}
+<div class="info-card">
+    <h4>📝 Communication Notes</h4>
+    <p>{{communication.notes}}</p>
+</div>
+{{/if}}
+
+<div class="cta-section">
+    <a href="{{clientDetailsLink}}" class="cta-button">{{#if schedule.isOverdue}}Contact Client Now{{else}}View Client Details{{/if}}</a>
+</div>
+
+{{#if communicationTips}}
+<div class="info-card">
+    <h4>💡 Communication Tips</h4>
+    <ul class="feature-list">
+        {{#each communicationTips}}
+        <li>{{this}}</li>
+        {{/each}}
+    </ul>
+</div>
+{{/if}}
+
+{{#if nextSteps}}
+<div class="info-card">
+    <h4>🎯 Recommended Next Steps</h4>
+    <ul class="feature-list">
+        {{#each nextSteps}}
+        <li>{{this}}</li>
+        {{/each}}
+    </ul>
+</div>
+{{/if}}
+
+{{#if schedule.isOverdue}}
+<div class="error-notice">
+    <p>⚠️ <strong>Action Required:</strong> This communication is overdue. Please contact the client as soon as possible to maintain the relationship and avoid potential issues.</p>
+</div>
+{{else}}
+<div class="success-notice">
+    <p>🎯 <strong>Great Timing!</strong> Consistent communication is key to building strong client relationships. Your proactive approach makes a difference!</p>
+</div>
+{{/if}}
+
+<div class="message">
+    <p><strong>Need assistance with this client?</strong> Contact:</p>
+    <ul style="margin-left: 20px; color: #4b5563;">
+        <li>Dashboard: <a href="{{dashboardLink}}" style="color: #7c2d92;">View Full Dashboard</a></li>
+        <li>Support Team: {{supportEmail}}</li>
+        {{#if branch}}
+        <li>Branch: {{branch.name}}</li>
+        {{/if}}
+    </ul>
+</div>
+
+<div class="info-card">
+    <h4>📊 Quick Actions</h4>
+    <p>After completing this communication, remember to:</p>
+    <ul style="margin-left: 20px; color: #4b5563;">
+        <li>Update the client's communication history in the system</li>
+        <li>Schedule the next follow-up if needed</li>
+        <li>Add any important notes from your conversation</li>
+        <li>Update client status or opportunities if applicable</li>
+    </ul>
+</div>
+
+<div class="message">
+    <p><em>This reminder was generated automatically on {{reminderDate}} to help you stay on top of your client communications.</em></p>
+</div>
+
+{{/base}} 

@@ -50,7 +50,7 @@ import { NewUserAdminNotification, NewUserWelcome, UserReInvitation } from '../l
 // Lead related templates
 import { LeadConvertedClient, LeadConvertedCreator, LeadReminder, LeadAssignedToUser, MonthlyUnattendedLeadsReport } from '../lib/templates/emails';
 // Client auth templates
-import { ClientPasswordReset, ClientPasswordChanged } from '../lib/templates/emails';
+import { ClientPasswordReset, ClientPasswordChanged, ClientCommunicationReminder } from '../lib/templates/emails';
 // Warning templates
 import { WarningIssued, WarningUpdated, WarningExpired } from '../lib/templates/emails';
 // Leave templates
@@ -119,6 +119,7 @@ import {
 	UserTargetERPUpdateConfirmationEmailData,
 	UserTargetPeriodSummaryEmailData,
 	AppUpdateNotificationData,
+	ClientCommunicationReminderData,
 } from '../lib/types/email-templates.types';
 import {
 	TaskFlagCreated,
@@ -780,6 +781,11 @@ export class CommunicationService {
 				return {
 					subject: 'App Update Available - New Features Include Leads & PDF Uploads!',
 					body: AppUpdateNotification(data as AppUpdateNotificationData),
+				};
+			case EmailType.CLIENT_COMMUNICATION_REMINDER:
+				return {
+					subject: 'Client Communication Reminder - Action Required',
+					body: ClientCommunicationReminder(data as ClientCommunicationReminderData),
 				};
 			default:
 				throw new NotFoundException(`Unknown email template type: ${type}`);

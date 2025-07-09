@@ -1593,6 +1593,49 @@ export interface ClientProfileUpdateAdminData extends BaseEmailData {
 	};
 }
 
+export interface ClientCommunicationReminderData extends BaseEmailData {
+	salesRepName: string;
+	salesRepEmail: string;
+	client: {
+		uid: number;
+		name: string;
+		email?: string;
+		phone?: string;
+		company?: string;
+		contactPerson?: string;
+	};
+	communication: {
+		type: string;
+		scheduledDate: string;
+		scheduledTime?: string;
+		frequency: string;
+		notes?: string;
+		lastCompletedDate?: string;
+		daysSinceLastContact?: number;
+	};
+	schedule: {
+		uid: number;
+		isOverdue?: boolean;
+		daysOverdue?: number;
+		priority: 'low' | 'medium' | 'high';
+		urgencyLevel: 'normal' | 'urgent' | 'critical';
+	};
+	organization: {
+		name: string;
+		uid: number;
+	};
+	branch?: {
+		name: string;
+		uid: number;
+	};
+	dashboardLink: string;
+	clientDetailsLink: string;
+	supportEmail: string;
+	reminderDate: string;
+	communicationTips?: string[];
+	nextSteps?: string[];
+}
+
 export interface AppUpdateNotificationData extends BaseEmailData {
 	appVersion: string;
 	appName: string;
@@ -1729,6 +1772,8 @@ export interface EmailDataMap {
 	// Client profile update mappings
 	[EmailType.CLIENT_PROFILE_UPDATED_CONFIRMATION]: ClientProfileUpdateConfirmationData;
 	[EmailType.CLIENT_PROFILE_UPDATED_ADMIN]: ClientProfileUpdateAdminData;
+	// Client communication mappings
+	[EmailType.CLIENT_COMMUNICATION_REMINDER]: ClientCommunicationReminderData;
 	// Claims email mappings
 	[EmailType.CLAIM_CREATED]: ClaimEmailData;
 	[EmailType.CLAIM_STATUS_UPDATE]: ClaimStatusUpdateEmailData;

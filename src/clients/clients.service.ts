@@ -12,11 +12,11 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { CheckIn } from '../check-ins/entities/check-in.entity';
-import { GeofenceType, ClientRiskLevel, ClientStatus } from '../lib/enums/client.enums';
+import { GeofenceType, ClientRiskLevel } from '../lib/enums/client.enums';
 import { Organisation } from '../organisation/entities/organisation.entity';
 import { OrganisationSettings } from '../organisation/entities/organisation-settings.entity';
 import { EmailType } from '../lib/enums/email.enums';
-import { LeadConvertedClientData, LeadConvertedCreatorData, ClientProfileUpdateAdminData, ClientProfileUpdateConfirmationData } from '../lib/types/email-templates.types';
+import { LeadConvertedClientData, LeadConvertedCreatorData, ClientProfileUpdateAdminData, ClientProfileUpdateConfirmationData, ClientCommunicationReminderData } from '../lib/types/email-templates.types';
 import { ClientCommunicationScheduleService } from './services/client-communication-schedule.service';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { User } from '../user/entities/user.entity';
@@ -1526,6 +1526,264 @@ export class ClientsService {
 		});
 
 		return Array.from(summary.values()).sort((a, b) => b.taskCount - a.taskCount);
+	}
+
+	/**
+	 * Cron job that runs daily at 5:00 AM to send communication reminders
+	 * to sales representatives about client communications due for the day.
+	 */
+	@Cron('0 5 * * *') // Daily at 5:00 AM
+	async sendCommunicationReminders(): Promise<void> {
+		this.logger.log('📧 Starting automated client communication reminders...');
+
+		try {
+			const startTime = Date.now();
+			const today = startOfDay(new Date());
+			const endOfDay = new Date(today);
+			endOfDay.setHours(23, 59, 59, 999);
+
+			this.logger.log(`📅 Checking for communications due on ${format(today, 'yyyy-MM-dd')}`);
+
+			// Get communication schedules due for today
+			const dueSchedules = await this.getSchedulesDueForDay(today, endOfDay);
+			this.logger.log(`📋 Found ${dueSchedules.length} communication schedules due today`);
+
+			if (dueSchedules.length === 0) {
+				this.logger.log('✅ No communication reminders to send today');
+				return;
+			}
+
+			// Group schedules by assigned user to avoid sending multiple emails to the same person
+			const remindersByUser = new Map<number, ClientCommunicationSchedule[]>();
+			for (const schedule of dueSchedules) {
+				if (schedule.assignedTo?.uid) {
+					if (!remindersByUser.has(schedule.assignedTo.uid)) {
+						remindersByUser.set(schedule.assignedTo.uid, []);
+					}
+					remindersByUser.get(schedule.assignedTo.uid).push(schedule);
+				}
+			}
+
+			let remindersSent = 0;
+			for (const [userId, userSchedules] of remindersByUser) {
+				try {
+					await this.sendUserCommunicationReminders(userId, userSchedules);
+					remindersSent += userSchedules.length;
+				} catch (error) {
+					this.logger.error(`❌ Failed to send reminders to user ${userId}: ${error.message}`);
+				}
+			}
+
+			const duration = Date.now() - startTime;
+			this.logger.log(`✅ Communication reminders completed in ${duration}ms`);
+			this.logger.log(`📊 Summary: ${remindersSent} reminders sent to ${remindersByUser.size} users`);
+		} catch (error) {
+			this.logger.error(`💥 Fatal error in communication reminders: ${error.message}`, error.stack);
+		}
+	}
+
+	/**
+	 * Get communication schedules due for a specific day
+	 */
+	private async getSchedulesDueForDay(startOfDay: Date, endOfDay: Date): Promise<ClientCommunicationSchedule[]> {
+		return await this.scheduleRepository
+			.createQueryBuilder('schedule')
+			.leftJoinAndSelect('schedule.client', 'client')
+			.leftJoinAndSelect('schedule.assignedTo', 'assignedTo')
+			.leftJoinAndSelect('schedule.organisation', 'organisation')
+			.leftJoinAndSelect('schedule.branch', 'branch')
+			.where('schedule.isActive = :isActive', { isActive: true })
+			.andWhere('schedule.isDeleted = :isDeleted', { isDeleted: false })
+			.andWhere('assignedTo.isDeleted = :userDeleted', { userDeleted: false })
+			.andWhere('schedule.nextScheduledDate >= :startOfDay', { startOfDay })
+			.andWhere('schedule.nextScheduledDate <= :endOfDay', { endOfDay })
+			.orderBy('schedule.nextScheduledDate', 'ASC')
+			.getMany();
+	}
+
+	/**
+	 * Send communication reminders to a specific user for their scheduled communications
+	 */
+	private async sendUserCommunicationReminders(userId: number, schedules: ClientCommunicationSchedule[]): Promise<void> {
+		if (schedules.length === 0) return;
+
+		const user = await this.userRepository.findOne({
+			where: { uid: userId },
+			select: ['uid', 'name', 'surname', 'email'],
+		});
+
+		if (!user || !user.email) {
+			this.logger.warn(`⚠️ User ${userId} not found or has no email for communication reminder`);
+			return;
+		}
+
+		const dashboardBaseUrl = this.configService.get<string>('DASHBOARD_URL') || 'https://dashboard.loro.co.za';
+		const supportEmail = this.configService.get<string>('SUPPORT_EMAIL') || 'support@loro.co.za';
+
+		// Send individual reminders for each communication (to maintain context and urgency)
+		for (const schedule of schedules) {
+			try {
+				await this.sendSingleCommunicationReminder(user, schedule, dashboardBaseUrl, supportEmail);
+				this.logger.debug(`📧 Reminder sent to ${user.email} for client ${schedule.client.name}`);
+			} catch (error) {
+				this.logger.error(`❌ Failed to send reminder for schedule ${schedule.uid}: ${error.message}`);
+			}
+		}
+	}
+
+	/**
+	 * Send a single communication reminder email
+	 */
+	private async sendSingleCommunicationReminder(
+		user: User,
+		schedule: ClientCommunicationSchedule,
+		dashboardBaseUrl: string,
+		supportEmail: string,
+	): Promise<void> {
+		const now = new Date();
+		const isOverdue = schedule.nextScheduledDate < now;
+		const daysOverdue = isOverdue ? Math.floor((now.getTime() - schedule.nextScheduledDate.getTime()) / (1000 * 60 * 60 * 24)) : 0;
+
+		// Calculate urgency level
+		let urgencyLevel: 'normal' | 'urgent' | 'critical' = 'normal';
+		let priority: 'low' | 'medium' | 'high' = 'medium';
+
+		if (isOverdue) {
+			if (daysOverdue >= 3) {
+				urgencyLevel = 'critical';
+				priority = 'high';
+			} else if (daysOverdue >= 1) {
+				urgencyLevel = 'urgent';
+				priority = 'high';
+			}
+		}
+
+		// Calculate days since last contact if available
+		let daysSinceLastContact: number | undefined;
+		if (schedule.lastCompletedDate) {
+			daysSinceLastContact = Math.floor((now.getTime() - schedule.lastCompletedDate.getTime()) / (1000 * 60 * 60 * 24));
+		}
+
+		// Prepare email data
+		const emailData: ClientCommunicationReminderData = {
+			name: `${user.name} ${user.surname}`.trim() || user.email,
+			salesRepName: `${user.name} ${user.surname}`.trim() || user.email,
+			salesRepEmail: user.email,
+			client: {
+				uid: schedule.client.uid,
+				name: schedule.client.name,
+				email: schedule.client.email,
+				phone: schedule.client.phone,
+				company: schedule.client.name, // Assuming client name is company name
+				contactPerson: schedule.client.contactPerson,
+			},
+			communication: {
+				type: schedule.communicationType.replace(/_/g, ' ').toUpperCase(),
+				scheduledDate: format(schedule.nextScheduledDate, 'MMMM dd, yyyy'),
+				scheduledTime: schedule.preferredTime,
+				frequency: schedule.frequency.replace(/_/g, ' ').toLowerCase(),
+				notes: schedule.notes,
+				lastCompletedDate: schedule.lastCompletedDate ? format(schedule.lastCompletedDate, 'MMMM dd, yyyy') : undefined,
+				daysSinceLastContact,
+			},
+			schedule: {
+				uid: schedule.uid,
+				isOverdue,
+				daysOverdue,
+				priority,
+				urgencyLevel,
+			},
+			organization: {
+				name: schedule.organisation?.name || 'Your Organization',
+				uid: schedule.organisation?.uid || 0,
+			},
+			branch: schedule.branch ? {
+				name: schedule.branch.name,
+				uid: schedule.branch.uid,
+			} : undefined,
+			dashboardLink: dashboardBaseUrl,
+			clientDetailsLink: `${dashboardBaseUrl}/clients/${schedule.client.uid}`,
+			supportEmail,
+			reminderDate: format(now, 'MMMM dd, yyyy'),
+			communicationTips: this.getCommunicationTips(schedule.communicationType),
+			nextSteps: this.getNextSteps(schedule.communicationType, isOverdue),
+		};
+
+		// Send the email
+		this.eventEmitter.emit('send.email', EmailType.CLIENT_COMMUNICATION_REMINDER, [user.email], emailData);
+	}
+
+	/**
+	 * Get communication tips based on communication type
+	 */
+	private getCommunicationTips(communicationType: CommunicationType): string[] {
+		const tips = {
+			[CommunicationType.PHONE_CALL]: [
+				'Prepare talking points and questions beforehand',
+				'Choose a quiet environment for the call',
+				'Have the client\'s file ready for reference',
+				'Follow up with a summary email after the call',
+			],
+			[CommunicationType.EMAIL]: [
+				'Keep your message concise and professional',
+				'Include a clear subject line',
+				'Personalize the content to the client\'s needs',
+				'Include a clear call-to-action',
+			],
+			[CommunicationType.IN_PERSON_VISIT]: [
+				'Confirm the meeting location and time',
+				'Prepare presentation materials if needed',
+				'Arrive 10 minutes early',
+				'Bring business cards and relevant documentation',
+			],
+			[CommunicationType.VIDEO_CALL]: [
+				'Test your technology beforehand',
+				'Ensure good lighting and audio quality',
+				'Have a professional background',
+				'Share your screen if presenting materials',
+			],
+			[CommunicationType.WHATSAPP]: [
+				'Keep messages professional yet friendly',
+				'Respond during business hours when possible',
+				'Use voice messages for complex explanations',
+				'Respect the client\'s communication preferences',
+			],
+			[CommunicationType.SMS]: [
+				'Keep messages brief and to the point',
+				'Include your name and company',
+				'Avoid sending messages outside business hours',
+				'Use SMS for appointment confirmations and reminders',
+			],
+		};
+
+		return tips[communicationType] || [
+			'Maintain professional communication standards',
+			'Listen actively to client needs',
+			'Follow up on previous conversations',
+			'Document important points discussed',
+		];
+	}
+
+	/**
+	 * Get next steps based on communication type and urgency
+	 */
+	private getNextSteps(communicationType: CommunicationType, isOverdue: boolean): string[] {
+		const baseSteps = [
+			`Complete the ${communicationType.replace(/_/g, ' ').toLowerCase()}`,
+			'Update the client\'s communication history',
+			'Schedule the next follow-up if needed',
+			'Add notes about the conversation outcome',
+		];
+
+		if (isOverdue) {
+			return [
+				'Contact the client immediately to apologize for the delay',
+				...baseSteps,
+				'Review your schedule to prevent future delays',
+			];
+		}
+
+		return baseSteps;
 	}
 
 	/**

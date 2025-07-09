@@ -74,6 +74,8 @@ export enum EmailType {
 	// Client profile update related emails
 	CLIENT_PROFILE_UPDATED_ADMIN = 'client_profile_updated_admin',
 	CLIENT_PROFILE_UPDATED_CONFIRMATION = 'client_profile_updated_confirmation',
+	// Client communication related emails
+	CLIENT_COMMUNICATION_REMINDER = 'client_communication_reminder',
 	// Warning related emails
 	WARNING_ISSUED = 'warning_issued',
 	WARNING_UPDATED = 'warning_updated',

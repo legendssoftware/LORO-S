@@ -72,6 +72,7 @@ import {
 	AppUpdateNotificationData,
 	ClientProfileUpdateConfirmationData,
 	ClientProfileUpdateAdminData,
+	ClientCommunicationReminderData,
 } from '../types/email-templates.types';
 
 class EmailTemplateService {
@@ -690,6 +691,10 @@ class EmailTemplateService {
 		return this.renderTemplate('client/profile-update-admin.hbs', data);
 	}
 
+	clientCommunicationReminder(data: ClientCommunicationReminderData): string {
+		return this.renderTemplate('client/communication-reminder.hbs', data);
+	}
+
 	/**
 	 * Clear the compiled template cache and reinitialize Handlebars
 	 * Useful for development or when templates are updated
@@ -781,6 +786,7 @@ class EmailTemplateService {
 			'client/failed-login-attempt.hbs',
 			'client/profile-update-confirmation.hbs',
 			'client/profile-update-admin.hbs',
+			'client/communication-reminder.hbs',
 			// Payslip templates
 			'payslips/available.hbs',
 			'payslips/uploaded-admin.hbs',

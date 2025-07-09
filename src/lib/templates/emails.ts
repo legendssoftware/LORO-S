@@ -69,6 +69,7 @@ import {
 	AppUpdateNotificationData,
 	ClientProfileUpdateConfirmationData,
 	ClientProfileUpdateAdminData,
+	ClientCommunicationReminderData,
 } from '../types/email-templates.types';
 
 // Auth Templates
@@ -456,4 +457,9 @@ export const ClientProfileUpdateConfirmation = (data: ClientProfileUpdateConfirm
 
 export const ClientProfileUpdateAdmin = (data: ClientProfileUpdateAdminData): string => {
 	return emailTemplateService.clientProfileUpdateAdmin(data);
+};
+
+// Client Communication Templates
+export const ClientCommunicationReminder = (data: ClientCommunicationReminderData): string => {
+	return emailTemplateService.clientCommunicationReminder(data);
 };
