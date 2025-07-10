@@ -30,7 +30,7 @@ import { User } from './entities/user.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { Injectable, NotFoundException, Inject, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Inject, Logger } from '@nestjs/common';
 import { NewSignUp } from '../lib/types/user';
 import { AccountStatus } from '../lib/enums/status.enums';
 import { PaginatedResponse } from '../lib/interfaces/product.interfaces';
@@ -262,17 +262,26 @@ export class UserService {
 		}
 
 		try {
-			const clients = await this.clientRepository.find({
-				where: {
-					uid: In(user.assignedClientIds),
-					isDeleted: false,
-				},
-				select: ['uid', 'name', 'contactPerson', 'email', 'phone', 'status', 'createdAt'],
-			});
+			// Add timeout and better error handling for client population
+			const queryTimeout = 5000; // 5 seconds timeout
+			const clients = await Promise.race([
+				this.clientRepository.find({
+					where: {
+						uid: In(user.assignedClientIds),
+						isDeleted: false,
+					},
+					select: ['uid', 'name', 'contactPerson', 'email', 'phone', 'status', 'createdAt'],
+	
+				}),
+				new Promise<never>((_, reject) => 
+					setTimeout(() => reject(new Error('Client query timeout')), queryTimeout)
+				)
+			]);
 
 			return { ...user, assignedClients: clients };
 		} catch (error) {
 			this.logger.warn(`Failed to populate assigned clients for user ${user.uid}: ${error.message}`);
+			// Return user with empty clients array instead of failing the entire operation
 			return { ...user, assignedClients: [] };
 		}
 	}
@@ -315,6 +324,15 @@ export class UserService {
 		);
 
 		try {
+			// Organization and branch validation is handled by TypeORM relationship integrity
+			// This follows the same pattern as the assets service
+			if (orgId) {
+				this.logger.debug(`[USER_CREATION] Organization ID provided: ${orgId}`);
+			}
+			if (branchId) {
+				this.logger.debug(`[USER_CREATION] Branch ID provided: ${branchId}`);
+			}
+
 			// Hash password if provided
 			if (createUserDto.password) {
 				this.logger.debug('[USER_CREATION] Hashing user password');
@@ -327,34 +345,49 @@ export class UserService {
 				this.logger.debug(`[USER_CREATION] Generated user reference: ${createUserDto.userref}`);
 			}
 
-			// Add organization and branch data if provided
-			const userData = {
+			// Create the user entity with proper relationship setting
+			const user = this.userRepository.create({
 				...createUserDto,
-				...(orgId && { organisation: { uid: orgId } }),
-				...(branchId && { branch: { uid: branchId } }),
-			};
+				...(orgId && { 
+					organisation: { uid: orgId },
+					organisationRef: orgId.toString() 
+				}),
+				...(branchId && { 
+					branch: { uid: branchId } 
+				}),
+			});
 
 			this.logger.debug('[USER_CREATION] Saving user to database');
-			const user = await this.userRepository.save(userData);
+			const savedUser = await this.userRepository.save(user);
 
-			if (!user) {
+			if (!savedUser) {
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
 			}
 
-			this.logger.log(`[USER_CREATION] User created successfully: ${user.uid} (${user.email}) with role: ${user.accessLevel}`);
+			this.logger.log(`[USER_CREATION] User created successfully: ${savedUser.uid} (${savedUser.email}) with role: ${savedUser.accessLevel}`);
 
 			// Invalidate cache after creation
-			await this.invalidateUserCache(user);
+			await this.invalidateUserCache(savedUser);
 
 			// Send welcome and creation notification emails
 			this.logger.debug('[USER_CREATION] Sending welcome and notification emails');
-			await Promise.all([
-				this.sendWelcomeEmail(user),
-				this.sendUserCreationNotificationEmail(user),
-			]);
+			const emailPromises = [
+				this.sendWelcomeEmail(savedUser),
+			];
+
+			// Check if user has assigned clients for client assignment notification
+			if (createUserDto.assignedClientIds && createUserDto.assignedClientIds.length > 0) {
+				this.logger.debug(`[USER_CREATION] User has ${createUserDto.assignedClientIds.length} assigned clients, sending comprehensive notification`);
+				emailPromises.push(this.sendUserCreationWithClientsNotificationEmail(savedUser, createUserDto.assignedClientIds));
+			} else {
+				this.logger.debug('[USER_CREATION] User has no assigned clients, sending standard notification');
+				emailPromises.push(this.sendUserCreationNotificationEmail(savedUser));
+			}
+
+			await Promise.all(emailPromises);
 
 			const executionTime = Date.now() - startTime;
-			this.logger.log(`[USER_CREATION] User creation completed successfully in ${executionTime}ms for user: ${user.email}`);
+			this.logger.log(`[USER_CREATION] User creation completed successfully in ${executionTime}ms for user: ${savedUser.email}`);
 
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,
@@ -860,7 +893,12 @@ export class UserService {
 				role: false,
 				status: false,
 				profile: false,
+				assignedClients: false,
 			};
+
+			// Store original assigned clients for comparison
+			const originalAssignedClients = existingUser.assignedClientIds || [];
+			let updatedAssignedClients: number[] = [];
 
 			// Check for password change
 			if (updateUserDto.password) {
@@ -887,6 +925,23 @@ export class UserService {
 				changes.profile = true;
 			}
 
+			// Check for assigned clients changes
+			if (updateUserDto.assignedClientIds !== undefined) {
+				updatedAssignedClients = updateUserDto.assignedClientIds;
+				const originalSet = new Set(originalAssignedClients);
+				const updatedSet = new Set(updatedAssignedClients);
+				
+				// Check if there are any differences
+				const hasChanges = originalSet.size !== updatedSet.size || 
+					[...originalSet].some(id => !updatedSet.has(id)) ||
+					[...updatedSet].some(id => !originalSet.has(id));
+
+				if (hasChanges) {
+					this.logger.log(`[USER_UPDATE] Assigned clients change detected for user: ${existingUser.email}. Original: [${originalAssignedClients.join(', ')}], Updated: [${updatedAssignedClients.join(', ')}]`);
+					changes.assignedClients = true;
+				}
+			}
+
 			this.logger.debug('[USER_UPDATE] Updating user in database');
 			await this.userRepository.update({ uid: ref }, updateUserDto);
 
@@ -907,24 +962,31 @@ export class UserService {
 			// Send appropriate notification emails based on what changed
 			const emailPromises = [];
 			
-			if (changes.password) {
-				this.logger.debug(`[USER_UPDATE] Sending password update notification to: ${updatedUser.email}`);
-				emailPromises.push(this.sendPasswordUpdateNotificationEmail(updatedUser));
-			}
+			// Determine if we should send a comprehensive update email or individual emails
+			const hasMultipleChanges = Object.values(changes).filter(Boolean).length > 1;
+			const hasSignificantChanges = changes.assignedClients || changes.role || changes.status;
 
-			if (changes.role) {
-				this.logger.debug(`[USER_UPDATE] Sending role update notification to: ${updatedUser.email}`);
-				emailPromises.push(this.sendRoleUpdateNotificationEmail(updatedUser, existingUser.accessLevel, updatedUser.accessLevel));
-			}
+			if (hasSignificantChanges || hasMultipleChanges) {
+				// Send comprehensive user update email
+				this.logger.debug(`[USER_UPDATE] Sending comprehensive update notification to: ${updatedUser.email}`);
+				emailPromises.push(this.sendComprehensiveUserUpdateEmail(
+					updatedUser, 
+					existingUser, 
+					changes, 
+					originalAssignedClients, 
+					updatedAssignedClients
+				));
+			} else {
+				// Send individual emails for single changes
+				if (changes.password) {
+					this.logger.debug(`[USER_UPDATE] Sending password update notification to: ${updatedUser.email}`);
+					emailPromises.push(this.sendPasswordUpdateNotificationEmail(updatedUser));
+				}
 
-			if (changes.status) {
-				this.logger.debug(`[USER_UPDATE] Sending status update notification to: ${updatedUser.email}`);
-				emailPromises.push(this.sendStatusUpdateNotificationEmail(updatedUser, existingUser.status, updatedUser.status));
-			}
-
-			if (changes.profile) {
-				this.logger.debug(`[USER_UPDATE] Sending profile update notification to: ${updatedUser.email}`);
-				emailPromises.push(this.sendProfileUpdateNotificationEmail(updatedUser));
+				if (changes.profile) {
+					this.logger.debug(`[USER_UPDATE] Sending profile update notification to: ${updatedUser.email}`);
+					emailPromises.push(this.sendProfileUpdateNotificationEmail(updatedUser));
+				}
 			}
 
 			// Send all notification emails in parallel
@@ -3197,75 +3259,230 @@ export class UserService {
 	}
 
 	/**
-	 * Send user creation notification email to the new user
+	 * Send comprehensive user creation notification email with client assignments
+	 * @param user - User that was created
+	 * @param assignedClientIds - Array of assigned client IDs
 	 */
-	private async sendUserCreationNotificationEmail(user: User): Promise<void> {
+	private async sendUserCreationWithClientsNotificationEmail(user: User, assignedClientIds: number[]): Promise<void> {
+		const startTime = Date.now();
+		this.logger.debug(`Preparing comprehensive user creation email with client assignments for: ${user.email} (${user.uid})`);
+
 		try {
+			// Get assigned clients information
+			let assignedClientsInfo = [];
+			if (assignedClientIds && assignedClientIds.length > 0) {
+				try {
+					const clients = await Promise.race([
+						this.clientRepository.find({
+							where: {
+								uid: In(assignedClientIds),
+								isDeleted: false,
+							},
+							select: ['uid', 'name', 'contactPerson', 'email', 'phone', 'status'],
+						}),
+						new Promise<never>((_, reject) => 
+							setTimeout(() => reject(new Error('Client query timeout')), 3000)
+						)
+					]);
+					assignedClientsInfo = clients;
+				} catch (error) {
+					this.logger.warn(`Failed to fetch client details for user creation email: ${error.message}`);
+					// Continue with basic client IDs
+					assignedClientsInfo = assignedClientIds.map(id => ({ uid: id, name: `Client ${id}` }));
+				}
+			}
+
 			const emailData = {
-				to: user.email,
-				subject: 'Welcome to Loro CRM - Your Account Has Been Created',
-				html: `
-					<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-						<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center;">
-							<h1 style="color: white; margin: 0; font-size: 28px;">Welcome to Loro CRM!</h1>
-						</div>
-						<div style="padding: 30px; background-color: #f8f9fa;">
-							<h2 style="color: #333; margin-bottom: 20px;">Hello ${user.name} ${user.surname},</h2>
-							<p style="color: #666; line-height: 1.6; margin-bottom: 20px;">
-								Your account has been successfully created in the Loro CRM system. Here are your account details:
-							</p>
-							<div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0;">
-								<table style="width: 100%; border-collapse: collapse;">
-									<tr style="border-bottom: 1px solid #eee;">
-										<td style="padding: 10px 0; font-weight: bold; color: #333;">Name:</td>
-										<td style="padding: 10px 0; color: #666;">${user.name} ${user.surname}</td>
-									</tr>
-									<tr style="border-bottom: 1px solid #eee;">
-										<td style="padding: 10px 0; font-weight: bold; color: #333;">Email:</td>
-										<td style="padding: 10px 0; color: #666;">${user.email}</td>
-									</tr>
-									<tr style="border-bottom: 1px solid #eee;">
-										<td style="padding: 10px 0; font-weight: bold; color: #333;">Username:</td>
-										<td style="padding: 10px 0; color: #666;">${user.username}</td>
-									</tr>
-									<tr style="border-bottom: 1px solid #eee;">
-										<td style="padding: 10px 0; font-weight: bold; color: #333;">Role:</td>
-										<td style="padding: 10px 0; color: #666;">${user.accessLevel}</td>
-									</tr>
-									<tr style="border-bottom: 1px solid #eee;">
-										<td style="padding: 10px 0; font-weight: bold; color: #333;">Status:</td>
-										<td style="padding: 10px 0; color: #666;">${user.status}</td>
-									</tr>
-									${user.branch ? `
-									<tr>
-										<td style="padding: 10px 0; font-weight: bold; color: #333;">Branch:</td>
-										<td style="padding: 10px 0; color: #666;">${user.branch.name}</td>
-									</tr>
-									` : ''}
-								</table>
-							</div>
-							<p style="color: #666; line-height: 1.6; margin-bottom: 30px;">
-								You can now log in to your account and start using the Loro CRM system. If you have any questions or need assistance, please don't hesitate to contact our support team.
-							</p>
-							<div style="text-align: center; margin-top: 30px;">
-								<a href="${process.env.CLIENT_URL}/sign-in" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 25px; font-weight: bold;">Sign In to Your Account</a>
-							</div>
-						</div>
-						<div style="padding: 20px; text-align: center; color: #999; font-size: 12px;">
-							<p>This is an automated message. Please do not reply to this email.</p>
-							<p>&copy; ${new Date().getFullYear()} Loro CRM. All rights reserved.</p>
-						</div>
-					</div>
-				`,
+				userEmail: user.email,
+				userName: `${user.name} ${user.surname}`,
+				userFirstName: user.name,
+				platformName: 'Loro CRM',
+				loginUrl: process.env.CLIENT_URL || 'https://dashboard.loro.co.za/sign-in',
+				supportEmail: process.env.SUPPORT_EMAIL || 'support@loro.africa',
+				organizationName: user.organisation?.name || 'Your Organization',
+				branchName: user.branch?.name || 'Main Branch',
+				dashboardUrl: process.env.CLIENT_URL || 'https://dashboard.loro.co.za',
+				assignedClientsCount: assignedClientsInfo.length,
+				assignedClients: assignedClientsInfo,
+				accountDetails: {
+					name: `${user.name} ${user.surname}`,
+					email: user.email,
+					username: user.username,
+					role: user.accessLevel,
+					branch: user.branch?.name
+				}
 			};
 
-			// Use your existing email service or implement email sending logic here
-			// await this.emailService.sendEmail(emailData);
-			this.logger.log(`[EMAIL] User creation notification sent to: ${user.email}`);
+			// Send email through event emitter
+			this.eventEmitter.emit('send.email', EmailType.NEW_USER_WELCOME, [user.email], emailData);
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`[EMAIL] User creation with clients notification sent to: ${user.email} in ${executionTime}ms`);
 		} catch (error) {
-			this.logger.error(`[EMAIL] Failed to send user creation notification to ${user.email}: ${error.message}`);
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`[EMAIL] Failed to send user creation with clients notification to ${user.email} after ${executionTime}ms: ${error.message}`);
 		}
 	}
+
+	/**
+	 * Send comprehensive user update notification email
+	 * @param updatedUser - Updated user data
+	 * @param originalUser - Original user data before update
+	 * @param changes - Object tracking what changed
+	 * @param originalAssignedClients - Original assigned client IDs
+	 * @param updatedAssignedClients - Updated assigned client IDs
+	 */
+	private async sendComprehensiveUserUpdateEmail(
+		updatedUser: User,
+		originalUser: User,
+		changes: {
+			password: boolean;
+			role: boolean;
+			status: boolean;
+			profile: boolean;
+			assignedClients: boolean;
+		},
+		originalAssignedClients: number[],
+		updatedAssignedClients: number[]
+	): Promise<void> {
+		const startTime = Date.now();
+		this.logger.debug(`Preparing comprehensive user update email for: ${updatedUser.email} (${updatedUser.uid})`);
+
+		try {
+			// Get client assignment changes
+			let clientChanges = null;
+			if (changes.assignedClients) {
+				const addedClients = updatedAssignedClients.filter(id => !originalAssignedClients.includes(id));
+				const removedClients = originalAssignedClients.filter(id => !updatedAssignedClients.includes(id));
+				
+				// Get client details for added clients
+				let addedClientsInfo = [];
+				let removedClientsInfo = [];
+				
+				if (addedClients.length > 0 || removedClients.length > 0) {
+					try {
+						const allRelevantClientIds = [...addedClients, ...removedClients];
+						const clients = await Promise.race([
+							this.clientRepository.find({
+								where: {
+									uid: In(allRelevantClientIds),
+									isDeleted: false,
+								},
+								select: ['uid', 'name', 'contactPerson', 'email'],
+							}),
+							new Promise<never>((_, reject) => 
+								setTimeout(() => reject(new Error('Client query timeout')), 3000)
+							)
+						]);
+
+						addedClientsInfo = clients.filter(c => addedClients.includes(c.uid));
+						removedClientsInfo = clients.filter(c => removedClients.includes(c.uid));
+					} catch (error) {
+						this.logger.warn(`Failed to fetch client details for update email: ${error.message}`);
+						addedClientsInfo = addedClients.map(id => ({ uid: id, name: `Client ${id}` }));
+						removedClientsInfo = removedClients.map(id => ({ uid: id, name: `Client ${id}` }));
+					}
+				}
+
+				clientChanges = {
+					added: addedClientsInfo,
+					removed: removedClientsInfo,
+					totalAssigned: updatedAssignedClients.length
+				};
+			}
+
+			const changesList = [];
+			if (changes.password) changesList.push('Password');
+			if (changes.role) changesList.push('Role/Access Level');
+			if (changes.status) changesList.push('Account Status');
+			if (changes.profile) changesList.push('Profile Information');
+			if (changes.assignedClients) changesList.push('Client Assignments');
+
+			const emailData = {
+				userEmail: updatedUser.email,
+				userName: `${updatedUser.name} ${updatedUser.surname}`,
+				userFirstName: updatedUser.name,
+				platformName: 'Loro CRM',
+				loginUrl: process.env.CLIENT_URL || 'https://dashboard.loro.co.za/sign-in',
+				supportEmail: process.env.SUPPORT_EMAIL || 'support@loro.africa',
+				organizationName: updatedUser.organisation?.name || 'Your Organization',
+				branchName: updatedUser.branch?.name || 'Main Branch',
+				dashboardUrl: process.env.CLIENT_URL || 'https://dashboard.loro.co.za',
+				changes: {
+					password: changes.password,
+					role: changes.role,
+					status: changes.status,
+					profile: changes.profile,
+					assignedClients: changes.assignedClients
+				},
+				changesList,
+				updateTime: new Date().toLocaleString(),
+				roleChange: changes.role ? {
+					previousRole: originalUser.accessLevel,
+					newRole: updatedUser.accessLevel
+				} : null,
+				statusChange: changes.status ? {
+					previousStatus: originalUser.status,
+					newStatus: updatedUser.status
+				} : null,
+				clientChanges
+			};
+
+			// Send email through event emitter
+			this.eventEmitter.emit('send.email', EmailType.NEW_USER_ADMIN_NOTIFICATION, [updatedUser.email], emailData);
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`[EMAIL] Comprehensive update notification sent to: ${updatedUser.email} in ${executionTime}ms`);
+		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`[EMAIL] Failed to send comprehensive update notification to ${updatedUser.email} after ${executionTime}ms: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Send user creation notification email to the new user (fallback template)
+	 */
+	private async sendUserCreationNotificationEmail(user: User): Promise<void> {
+		const startTime = Date.now();
+		this.logger.debug(`Preparing standard user creation email for: ${user.email} (${user.uid})`);
+
+		try {
+			const emailData = {
+				userEmail: user.email,
+				userName: `${user.name} ${user.surname}`,
+				userFirstName: user.name,
+				platformName: 'Loro CRM',
+				loginUrl: process.env.CLIENT_URL || 'https://dashboard.loro.co.za/sign-in',
+				supportEmail: process.env.SUPPORT_EMAIL || 'support@loro.africa',
+				organizationName: user.organisation?.name || 'Your Organization',
+				branchName: user.branch?.name || 'Main Branch',
+				dashboardUrl: process.env.CLIENT_URL || 'https://dashboard.loro.co.za',
+				accountDetails: {
+					name: `${user.name} ${user.surname}`,
+					email: user.email,
+					username: user.username,
+					role: user.accessLevel,
+					branch: user.branch?.name
+				}
+			};
+
+			// Send email through event emitter
+			this.eventEmitter.emit('send.email', EmailType.NEW_USER_WELCOME, [user.email], emailData);
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`[EMAIL] Standard user creation notification sent to: ${user.email} in ${executionTime}ms`);
+		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`[EMAIL] Failed to send standard user creation notification to ${user.email} after ${executionTime}ms: ${error.message}`);
+		}
+	}
+
+
+
+	/**
+	 * Send user creation notification email to the new user
+	 */
+
 
 	/**
 	 * Send password update notification email

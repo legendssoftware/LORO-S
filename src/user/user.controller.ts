@@ -355,7 +355,8 @@ Creates a new user account in the system with full profile management and employ
 		}
 	})
 	create(@Body() createUserDto: CreateUserDto, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid;
+		console.log(req, 'full request body')
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.userService.create(createUserDto, orgId, branchId);
 	}
@@ -594,7 +595,7 @@ Retrieves a comprehensive list of all users in your organization with advanced f
 		@Query('branchId') branchId?: number,
 		@Query('organisationId') organisationId?: number,
 	) {
-		const orgId = req.user?.org?.uid;
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const userBranchId = req.user?.branch?.uid;
 
 		const filters = {
@@ -812,7 +813,7 @@ Retrieves detailed information about a specific user by their unique reference i
 		}
 	})
 	findOne(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid;
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.userService.findOne(ref, orgId, branchId);
 	}
@@ -1163,7 +1164,7 @@ Updates an existing user's information with comprehensive validation and audit t
 		}
 	})
 	update(@Param('ref') ref: number, @Body() updateUserDto: UpdateUserDto, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid;
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.userService.update(ref, updateUserDto, orgId, branchId);
 	}
@@ -1359,7 +1360,7 @@ Restores a previously deleted user account back to active status, maintaining da
 		}
 	})
 	restore(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid;
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.userService.restore(ref, orgId, branchId);
 	}
@@ -1545,7 +1546,7 @@ Use the restore endpoint to recover accidentally deleted users within the retent
 		}
 	})
 	remove(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid;
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.userService.remove(ref, orgId, branchId);
 	}
@@ -2510,7 +2511,7 @@ Safely removes performance targets for a specific user with comprehensive cleanu
 	})
 	async reInviteAllUsers(@Req() req: AuthenticatedRequest) {
 		try {
-			const orgId = req.user?.org?.uid;
+			const orgId = req.user?.org?.uid || req.user?.organisationRef;
 			const branchId = req.user?.branch?.uid;
 
 			const scope = {
@@ -2746,7 +2747,7 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 	})
 	async reInviteUser(@Param('userId') userId: string, @Req() req: AuthenticatedRequest) {
 		try {
-			const orgId = req.user?.org?.uid;
+			const orgId = req.user?.org?.uid || req.user?.organisationRef;
 			const branchId = req.user?.branch?.uid;
 
 			const scope = {
@@ -2889,7 +2890,7 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 			throw new Error('X-ERP-API-Key header is required');
 		}
 
-		const orgId = req.user?.org?.uid;
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 
 		const result = await this.userService.updateUserTargetsFromERP(userId, externalUpdateDto, orgId, branchId);
