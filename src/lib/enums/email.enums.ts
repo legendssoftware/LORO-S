@@ -69,6 +69,7 @@ export enum EmailType {
 	// Task Feedback related emails
 	TASK_FEEDBACK_ADDED = 'task_feedback_added',
 	// Client authentication related emails
+	CLIENT_ACCOUNT_CREATED = 'client_account_created',
 	CLIENT_PASSWORD_RESET = 'client_password_reset',
 	CLIENT_PASSWORD_CHANGED = 'client_password_changed',
 	// Client profile update related emails

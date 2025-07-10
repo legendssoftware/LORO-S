@@ -8,6 +8,7 @@ import {
 	PasswordResetData,
 	PasswordResetRequestData,
 	PasswordChangedData,
+	ClientAccountCreatedData,
 	InvoiceData,
 	DailyReportData,
 	LicenseEmailData,
@@ -488,6 +489,10 @@ class EmailTemplateService {
 
 	clientPasswordChanged(data: PasswordChangedData): string {
 		return this.renderTemplate('client/password-changed.hbs', data);
+	}
+
+	clientAccountCreated(data: ClientAccountCreatedData): string {
+		return this.renderTemplate('client/account-created.hbs', data);
 	}
 
 	// Warning Templates

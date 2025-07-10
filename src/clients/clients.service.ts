@@ -261,6 +261,31 @@ export class ClientsService {
 			// Invalidate cache after creation
 			await this.invalidateClientCache(client);
 
+			// Send email notification to the client about their new account
+			try {
+				const frontendUrl = this.configService.get<string>('FRONTEND_URL') || 'http://loro.co.za';
+				const supportEmail = this.configService.get<string>('SUPPORT_EMAIL') || 'support@loro.co.za';
+				
+				const emailData = {
+					name: client.name,
+					email: client.email,
+					clientId: client.uid,
+					loginUrl: `${frontendUrl}/sign-in`,
+					supportEmail: supportEmail,
+					organizationName: client.organisation?.name || 'Loro',
+					contactPerson: client.contactPerson || 'N/A',
+					phone: client.phone || 'N/A',
+					address: client.address ? `${client.address.street || ''}, ${client.address.city || ''}`.trim() : 'N/A',
+					createdAt: new Date(),
+				};
+
+				this.eventEmitter.emit('send.email', EmailType.CLIENT_ACCOUNT_CREATED, [client.email], emailData);
+				this.logger.log(`[CLIENT_CREATE] Account creation email sent to: ${client.email}`);
+			} catch (emailError) {
+				this.logger.error(`[CLIENT_CREATE] Failed to send account creation email to ${client.email}: ${emailError.message}`);
+				// Don't fail the client creation if email sending fails
+			}
+
 			const executionTime = Date.now() - startTime;
 			this.logger.log(`[CLIENT_CREATE] Client created successfully: ${client.uid} (${client.email}) in ${executionTime}ms`);
 

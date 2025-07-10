@@ -87,12 +87,23 @@ export class ProductsService {
 		}
 	}
 
+	/**
+	 * 📦 Create a new product in the system
+	 * @param createProductDto - Product data transfer object
+	 * @param orgId - Organization ID (optional)
+	 * @param branchId - Branch ID (optional)
+	 * @returns Promise with created product or error message
+	 */
 	async createProduct(
 		createProductDto: CreateProductDto,
 		orgId?: number,
 		branchId?: number,
 	): Promise<{ product: Product | null; message: string }> {
+		this.logger.log(`🚀 [createProduct] Creating new product: ${createProductDto.name} for orgId: ${orgId}, branchId: ${branchId}`);
+		
 		try {
+			this.logger.debug(`📋 [createProduct] Product data: ${JSON.stringify(createProductDto)}`);
+			
 			// Create product with org and branch
 			const product = this.productRepository.create({
 				...createProductDto,
@@ -100,10 +111,16 @@ export class ProductsService {
 				...(branchId && { branch: { uid: branchId } }),
 			});
 
+			this.logger.debug(`💾 [createProduct] Saving product to database`);
 			const savedProduct = await this.productRepository.save(product);
 
+			this.logger.log(`✅ [createProduct] Product created successfully with ID: ${savedProduct.uid}`);
+
 			// Clear cache
+			this.logger.debug(`🗑️ [createProduct] Clearing product cache`);
 			await this.cacheManager.del(`${this.CACHE_PREFIX}all`);
+
+			this.logger.log(`🎉 [createProduct] Product creation completed: ${savedProduct.name} (ID: ${savedProduct.uid})`);
 
 			// Return the saved product
 			return {
@@ -111,6 +128,7 @@ export class ProductsService {
 				message: process.env.SUCCESS_MESSAGE || 'Product created successfully',
 			};
 		} catch (error) {
+			this.logger.error(`❌ [createProduct] Error creating product: ${error.message}`, error.stack);
 			return {
 				product: null,
 				message: error.message || 'Error creating product',
@@ -118,17 +136,32 @@ export class ProductsService {
 		}
 	}
 
+	/**
+	 * 📝 Update an existing product
+	 * @param ref - Product reference ID
+	 * @param updateProductDto - Updated product data
+	 * @returns Promise with success message or error
+	 */
 	async updateProduct(ref: number, updateProductDto: UpdateProductDto): Promise<{ message: string }> {
+		this.logger.log(`🔄 [updateProduct] Updating product ID: ${ref}`);
+		
 		try {
+			this.logger.debug(`📋 [updateProduct] Update data: ${JSON.stringify(updateProductDto)}`);
+			
 			// First find the product to ensure it exists
+			this.logger.debug(`🔍 [updateProduct] Finding product with ID: ${ref}`);
 			const product = await this.getProductByref(ref);
 
 			if (!product.product) {
+				this.logger.warn(`⚠️ [updateProduct] Product not found with ID: ${ref}`);
 				throw new NotFoundException('Product not found');
 			}
 
+			this.logger.log(`✅ [updateProduct] Product found: ${product.product.name} (ID: ${ref})`);
+
 			// Check if price is being updated to update price history
 			if (updateProductDto.price && updateProductDto.price !== product.product.price) {
+				this.logger.log(`💰 [updateProduct] Price change detected: ${product.product.price} → ${updateProductDto.price}`);
 				await this.updatePriceHistory(ref, updateProductDto.price, 'update');
 			}
 
@@ -138,56 +171,86 @@ export class ProductsService {
 				updateProductDto.stockQuantity !== product.product.stockQuantity
 			) {
 				const stockChange = updateProductDto.stockQuantity - (product.product.stockQuantity || 0);
+				this.logger.log(`📦 [updateProduct] Stock change detected: ${product.product.stockQuantity} → ${updateProductDto.stockQuantity} (${stockChange > 0 ? '+' : ''}${stockChange})`);
 				await this.updateStockHistory(ref, Math.abs(stockChange), stockChange > 0 ? 'in' : 'out');
 			}
 
 			// Update the product
+			this.logger.debug(`💾 [updateProduct] Applying updates to database`);
 			await this.productRepository.update(ref, updateProductDto);
 
 			// Invalidate cache
+			this.logger.debug(`🗑️ [updateProduct] Invalidating product cache`);
 			await this.invalidateProductCache(product.product);
+
+			this.logger.log(`🎉 [updateProduct] Product updated successfully: ${product.product.name} (ID: ${ref})`);
 
 			return {
 				message: process.env.SUCCESS_MESSAGE,
 			};
 		} catch (error) {
+			this.logger.error(`❌ [updateProduct] Error updating product ID ${ref}: ${error.message}`, error.stack);
 			return {
 				message: error.message || 'Error updating product',
 			};
 		}
 	}
 
+	/**
+	 * 🗑️ Soft delete a product (marks as deleted)
+	 * @param ref - Product reference ID
+	 * @returns Promise with success message or error
+	 */
 	async deleteProduct(ref: number): Promise<{ message: string }> {
+		this.logger.log(`🗑️ [deleteProduct] Soft deleting product ID: ${ref}`);
+		
 		try {
 			// First find the product to ensure it exists
+			this.logger.debug(`🔍 [deleteProduct] Finding product with ID: ${ref}`);
 			const product = await this.getProductByref(ref);
 
 			if (!product.product) {
+				this.logger.warn(`⚠️ [deleteProduct] Product not found with ID: ${ref}`);
 				throw new NotFoundException('Product not found');
 			}
 
+			this.logger.log(`✅ [deleteProduct] Product found: ${product.product.name} (ID: ${ref})`);
+
 			// Soft delete
+			this.logger.debug(`🔄 [deleteProduct] Marking product as deleted and inactive`);
 			await this.productRepository.update(ref, {
 				isDeleted: true,
 				status: ProductStatus.INACTIVE,
 			});
 
 			// Invalidate cache
+			this.logger.debug(`🗑️ [deleteProduct] Invalidating product cache`);
 			await this.invalidateProductCache(product.product);
+
+			this.logger.log(`🎉 [deleteProduct] Product successfully deleted: ${product.product.name} (ID: ${ref})`);
 
 			return {
 				message: process.env.SUCCESS_MESSAGE,
 			};
 		} catch (error) {
+			this.logger.error(`❌ [deleteProduct] Error deleting product ID ${ref}: ${error.message}`, error.stack);
 			return {
 				message: error.message || 'Error deleting product',
 			};
 		}
 	}
 
+	/**
+	 * 🔄 Restore a soft-deleted product (marks as active)
+	 * @param ref - Product reference ID
+	 * @returns Promise with success message or error
+	 */
 	async restoreProduct(ref: number): Promise<{ message: string }> {
+		this.logger.log(`🔄 [restoreProduct] Restoring deleted product ID: ${ref}`);
+		
 		try {
 			// Find the deleted product using queryBuilder to avoid column errors
+			this.logger.debug(`🔍 [restoreProduct] Searching for deleted product with ID: ${ref}`);
 			const product = await this.productRepository
 				.createQueryBuilder('product')
 				.select([
@@ -226,36 +289,55 @@ export class ProductsService {
 				.getOne();
 
 			if (!product) {
+				this.logger.warn(`⚠️ [restoreProduct] Deleted product not found with ID: ${ref}`);
 				throw new NotFoundException('Product not found');
 			}
 
+			this.logger.log(`✅ [restoreProduct] Deleted product found: ${product.name} (ID: ${ref})`);
+
 			// Restore the product
+			this.logger.debug(`🔄 [restoreProduct] Marking product as active and not deleted`);
 			await this.productRepository.update(ref, {
 				isDeleted: false,
 				status: ProductStatus.ACTIVE,
 			});
 
 			// Invalidate cache
+			this.logger.debug(`🗑️ [restoreProduct] Invalidating product cache`);
 			await this.invalidateProductCache(product);
+
+			this.logger.log(`🎉 [restoreProduct] Product successfully restored: ${product.name} (ID: ${ref})`);
 
 			return {
 				message: process.env.SUCCESS_MESSAGE,
 			};
 		} catch (error) {
+			this.logger.error(`❌ [restoreProduct] Error restoring product ID ${ref}: ${error.message}`, error.stack);
 			return {
 				message: error.message || 'Error restoring product',
 			};
 		}
 	}
 
+	/**
+	 * 📃 Get paginated list of products
+	 * @param page - Page number (default: 1)
+	 * @param limit - Items per page (default: env.DEFAULT_PAGE_LIMIT)
+	 * @param orgId - Organization ID filter (optional)
+	 * @param branchId - Branch ID filter (optional)
+	 * @returns Promise with paginated product data
+	 */
 	async products(
 		page: number = 1,
 		limit: number = Number(process.env.DEFAULT_PAGE_LIMIT),
 		orgId?: number,
 		branchId?: number,
 	): Promise<PaginatedResponse<Product>> {
+		this.logger.log(`📃 [products] Fetching products - page: ${page}, limit: ${limit}, orgId: ${orgId}, branchId: ${branchId}`);
+		
 		try {
 			// Only select fields that exist in the database to avoid column errors
+			this.logger.debug(`🔍 [products] Building query with filters`);
 			const queryBuilder = this.productRepository
 				.createQueryBuilder('product')
 				.select([
@@ -294,23 +376,28 @@ export class ProductsService {
 
 			// Filter by organization if provided
 			if (orgId) {
+				this.logger.debug(`🏢 [products] Filtering by organization ID: ${orgId}`);
 				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
 			}
 
 			// Filter by branch if provided
 			if (branchId) {
+				this.logger.debug(`🏪 [products] Filtering by branch ID: ${branchId}`);
 				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
 			}
 
 			// Add pagination
+			this.logger.debug(`📄 [products] Applying pagination - skip: ${(page - 1) * limit}, take: ${limit}`);
 			queryBuilder
 				.skip((page - 1) * limit)
 				.take(limit)
 				.orderBy('product.createdAt', 'DESC');
 
+			this.logger.debug(`🔍 [products] Executing query to get products and count`);
 			const [products, total] = await queryBuilder.getManyAndCount();
 
 			if (!products || products.length === 0) {
+				this.logger.warn(`⚠️ [products] No products found for current filters`);
 				return {
 					data: [],
 					meta: {
@@ -323,6 +410,8 @@ export class ProductsService {
 				};
 			}
 
+			this.logger.log(`✅ [products] Successfully fetched ${products.length} products out of ${total} total`);
+
 			return {
 				data: products,
 				meta: {
@@ -334,6 +423,7 @@ export class ProductsService {
 				message: process.env.SUCCESS_MESSAGE,
 			};
 		} catch (error) {
+			this.logger.error(`❌ [products] Error fetching products: ${error.message}`, error.stack);
 			return {
 				data: [],
 				meta: {
@@ -347,13 +437,23 @@ export class ProductsService {
 		}
 	}
 
+	/**
+	 * 🔍 Get a specific product by reference ID
+	 * @param ref - Product reference ID
+	 * @param orgId - Organization ID filter (optional)
+	 * @param branchId - Branch ID filter (optional)
+	 * @returns Promise with product data or null
+	 */
 	async getProductByref(
 		ref: number,
 		orgId?: number,
 		branchId?: number,
 	): Promise<{ product: Product | null; message: string }> {
+		this.logger.log(`🔍 [getProductByref] Fetching product ID: ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
+		
 		try {
 			// Use queryBuilder to only select existing columns
+			this.logger.debug(`🔍 [getProductByref] Building query for product ID: ${ref}`);
 			const queryBuilder = this.productRepository
 				.createQueryBuilder('product')
 				.select([
@@ -394,25 +494,32 @@ export class ProductsService {
 
 			// Add org filter if provided
 			if (orgId) {
+				this.logger.debug(`🏢 [getProductByref] Adding organization filter: ${orgId}`);
 				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
 			}
 
 			// Add branch filter if provided
 			if (branchId) {
+				this.logger.debug(`🏪 [getProductByref] Adding branch filter: ${branchId}`);
 				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
 			}
 
+			this.logger.debug(`🔍 [getProductByref] Executing query for product ID: ${ref}`);
 			const product = await queryBuilder.getOne();
 
 			if (!product) {
+				this.logger.warn(`⚠️ [getProductByref] Product not found with ID: ${ref}`);
 				throw new NotFoundException('Product not found');
 			}
+
+			this.logger.log(`✅ [getProductByref] Product found: ${product.name} (ID: ${ref})`);
 
 			return {
 				product,
 				message: process.env.SUCCESS_MESSAGE,
 			};
 		} catch (error) {
+			this.logger.error(`❌ [getProductByref] Error fetching product ID ${ref}: ${error.message}`, error.stack);
 			return {
 				product: null,
 				message: error.message || 'Error fetching product',
@@ -420,6 +527,15 @@ export class ProductsService {
 		}
 	}
 
+	/**
+	 * 🔍 Search products by term across multiple fields
+	 * @param searchTerm - Search term to match against product fields
+	 * @param page - Page number (default: 1)
+	 * @param limit - Items per page (default: 10)
+	 * @param orgId - Organization ID filter (optional)
+	 * @param branchId - Branch ID filter (optional)
+	 * @returns Promise with paginated search results
+	 */
 	async productsBySearchTerm(
 		searchTerm: string,
 		page: number = 1,
@@ -427,8 +543,11 @@ export class ProductsService {
 		orgId?: number,
 		branchId?: number,
 	): Promise<PaginatedResponse<Product>> {
+		this.logger.log(`🔍 [productsBySearchTerm] Searching products with term: "${searchTerm}", page: ${page}, limit: ${limit}, orgId: ${orgId}, branchId: ${branchId}`);
+		
 		try {
 			// Only select fields that exist in the database to avoid column errors
+			this.logger.debug(`🔍 [productsBySearchTerm] Building search query for term: "${searchTerm}"`);
 			const queryBuilder = this.productRepository
 				.createQueryBuilder('product')
 				.select([
@@ -466,29 +585,35 @@ export class ProductsService {
 
 			// Filter by organization if provided
 			if (orgId) {
+				this.logger.debug(`🏢 [productsBySearchTerm] Adding organization filter: ${orgId}`);
 				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
 			}
 
 			// Filter by branch if provided
 			if (branchId) {
+				this.logger.debug(`🏪 [productsBySearchTerm] Adding branch filter: ${branchId}`);
 				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
 			}
 
 			// Apply search term - could be category, name, or description
+			this.logger.debug(`🔎 [productsBySearchTerm] Applying search filters for: name, description, category, sku, barcode`);
 			queryBuilder.andWhere(
 				'(LOWER(product.category) LIKE LOWER(:searchTerm) OR LOWER(product.name) LIKE LOWER(:searchTerm) OR LOWER(product.description) LIKE LOWER(:searchTerm) OR LOWER(product.sku) LIKE LOWER(:searchTerm) OR LOWER(product.barcode) LIKE LOWER(:searchTerm))',
 				{ searchTerm: `%${searchTerm}%` },
 			);
 
 			// Add pagination
+			this.logger.debug(`📄 [productsBySearchTerm] Applying pagination - skip: ${(page - 1) * limit}, take: ${limit}`);
 			queryBuilder
 				.skip((page - 1) * limit)
 				.take(limit)
 				.orderBy('product.createdAt', 'DESC');
 
+			this.logger.debug(`🔍 [productsBySearchTerm] Executing search query`);
 			const [products, total] = await queryBuilder.getManyAndCount();
 
 			if (!products || products.length === 0) {
+				this.logger.warn(`⚠️ [productsBySearchTerm] No products found matching search term: "${searchTerm}"`);
 				return {
 					data: [],
 					meta: {
@@ -501,6 +626,8 @@ export class ProductsService {
 				};
 			}
 
+			this.logger.log(`✅ [productsBySearchTerm] Found ${products.length} products out of ${total} total matching "${searchTerm}"`);
+
 			return {
 				data: products,
 				meta: {
@@ -512,6 +639,7 @@ export class ProductsService {
 				message: process.env.SUCCESS_MESSAGE,
 			};
 		} catch (error) {
+			this.logger.error(`❌ [productsBySearchTerm] Error searching products with term "${searchTerm}": ${error.message}`, error.stack);
 			return {
 				data: [],
 				meta: {
@@ -525,6 +653,16 @@ export class ProductsService {
 		}
 	}
 
+	/**
+	 * 📂 Get products by category with advanced filtering and sorting
+	 * @param category - Product category to filter by
+	 * @param page - Page number (default: 1)
+	 * @param limit - Items per page (default: 20)
+	 * @param search - Additional search term (optional)
+	 * @param orgId - Organization ID filter (optional)
+	 * @param branchId - Branch ID filter (optional)
+	 * @returns Promise with paginated category products
+	 */
 	async productsByCategory(
 		category: string,
 		page: number = 1,
@@ -533,8 +671,11 @@ export class ProductsService {
 		orgId?: number,
 		branchId?: number,
 	): Promise<PaginatedResponse<Product>> {
+		this.logger.log(`📂 [productsByCategory] Fetching products by category: "${category}", page: ${page}, limit: ${limit}, search: "${search}", orgId: ${orgId}, branchId: ${branchId}`);
+		
 		try {
 			// Only select fields that exist in the database to avoid column errors
+			this.logger.debug(`🔍 [productsByCategory] Building category query for: "${category}"`);
 			const queryBuilder = this.productRepository
 				.createQueryBuilder('product')
 				.select([
@@ -573,21 +714,25 @@ export class ProductsService {
 
 			// Filter by organization if provided
 			if (orgId) {
+				this.logger.debug(`🏢 [productsByCategory] Adding organization filter: ${orgId}`);
 				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
 			}
 
 			// Filter by branch if provided
 			if (branchId) {
+				this.logger.debug(`🏪 [productsByCategory] Adding branch filter: ${branchId}`);
 				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
 			}
 
 			// Filter by category (exact match or partial match)
+			this.logger.debug(`📂 [productsByCategory] Adding category filter: "${category}"`);
 			queryBuilder.andWhere('LOWER(product.category) LIKE LOWER(:category)', {
 				category: `%${category}%`,
 			});
 
 			// Apply additional search term if provided
 			if (search && search.trim()) {
+				this.logger.debug(`🔎 [productsByCategory] Adding additional search term: "${search}"`);
 				queryBuilder.andWhere(
 					'(LOWER(product.name) LIKE LOWER(:search) OR LOWER(product.description) LIKE LOWER(:search) OR LOWER(product.sku) LIKE LOWER(:search) OR LOWER(product.barcode) LIKE LOWER(:search) OR LOWER(product.brand) LIKE LOWER(:search))',
 					{ search: `%${search.trim()}%` },
@@ -595,6 +740,7 @@ export class ProductsService {
 			}
 
 			// Add pagination and ordering
+			this.logger.debug(`📄 [productsByCategory] Applying pagination and sorting - skip: ${(page - 1) * limit}, take: ${limit}`);
 			queryBuilder
 				.skip((page - 1) * limit)
 				.take(limit)
@@ -602,7 +748,14 @@ export class ProductsService {
 				.addOrderBy('product.stockQuantity', 'DESC') // Show in-stock products first
 				.addOrderBy('product.createdAt', 'DESC'); // Then by newest
 
+			this.logger.debug(`🔍 [productsByCategory] Executing category query`);
 			const [products, total] = await queryBuilder.getManyAndCount();
+
+			if (!products || products.length === 0) {
+				this.logger.warn(`⚠️ [productsByCategory] No products found in category: "${category}"`);
+			} else {
+				this.logger.log(`✅ [productsByCategory] Found ${products.length} products out of ${total} total in category: "${category}"`);
+			}
 
 			return {
 				data: products,
@@ -615,7 +768,7 @@ export class ProductsService {
 				message: products.length > 0 ? process.env.SUCCESS_MESSAGE : 'No products found in this category',
 			};
 		} catch (error) {
-			this.logger.error(`Error fetching products by category: ${error.message}`);
+			this.logger.error(`❌ [productsByCategory] Error fetching products by category "${category}": ${error.message}`, error.stack);
 			return {
 				data: [],
 				meta: {
@@ -632,40 +785,80 @@ export class ProductsService {
 	// Analytics methods don't need org/branch filtering since they operate on products
 	// that have already been filtered by the getProductByref method
 
+	/**
+	 * 📊 Update product analytics data
+	 * @param productId - Product ID
+	 * @param updateData - Partial analytics data to update
+	 * @returns Promise with success message or error
+	 */
 	async updateProductAnalytics(productId: number, updateData: Partial<ProductAnalyticsDto>) {
+		this.logger.log(`📊 [updateProductAnalytics] Updating analytics for product ID: ${productId}`);
+		
 		try {
+			this.logger.debug(`🔍 [updateProductAnalytics] Finding analytics for product ID: ${productId}`);
 			const analytics = await this.analyticsRepository.findOne({ where: { productId } });
+			
 			if (!analytics) {
+				this.logger.warn(`⚠️ [updateProductAnalytics] Product analytics not found for ID: ${productId}`);
 				throw new NotFoundException('Product analytics not found');
 			}
 
+			this.logger.debug(`📝 [updateProductAnalytics] Updating analytics data: ${JSON.stringify(updateData)}`);
 			await this.analyticsRepository.update({ productId }, updateData);
+			
+			this.logger.log(`✅ [updateProductAnalytics] Analytics updated successfully for product ID: ${productId}`);
 			return { message: 'Analytics updated successfully' };
 		} catch (error) {
-			this.logger.error(`Error updating product analytics: ${error.message}`);
+			this.logger.error(`❌ [updateProductAnalytics] Error updating analytics for product ID ${productId}: ${error.message}`, error.stack);
 			return { message: error.message || 'Error updating analytics' };
 		}
 	}
 
+	/**
+	 * 📈 Get product analytics data
+	 * @param productId - Product ID
+	 * @returns Promise with analytics data or null
+	 */
 	async getProductAnalytics(productId: number) {
+		this.logger.log(`📈 [getProductAnalytics] Fetching analytics for product ID: ${productId}`);
+		
 		try {
+			this.logger.debug(`🔍 [getProductAnalytics] Searching for analytics for product ID: ${productId}`);
 			const analytics = await this.analyticsRepository.findOne({ where: { productId } });
+			
 			if (!analytics) {
+				this.logger.warn(`⚠️ [getProductAnalytics] Analytics not found for product ID: ${productId}`);
 				return { message: 'Analytics not found', analytics: null };
 			}
+			
+			this.logger.log(`✅ [getProductAnalytics] Analytics found for product ID: ${productId}`);
 			return { message: 'Success', analytics };
 		} catch (error) {
+			this.logger.error(`❌ [getProductAnalytics] Error fetching analytics for product ID ${productId}: ${error.message}`, error.stack);
 			return { message: error.message || 'Error fetching analytics', analytics: null };
 		}
 	}
 
+	/**
+	 * 💰 Update product price history
+	 * @param productId - Product ID
+	 * @param newPrice - New price to record
+	 * @param type - Type of price change (e.g., 'update', 'promotion', 'discount')
+	 * @returns Promise with success message or error
+	 */
 	async updatePriceHistory(productId: number, newPrice: number, type: string) {
+		this.logger.log(`💰 [updatePriceHistory] Updating price history for product ID: ${productId}, newPrice: ${newPrice}, type: ${type}`);
+		
 		try {
+			this.logger.debug(`🔍 [updatePriceHistory] Finding analytics for product ID: ${productId}`);
 			const analytics = await this.analyticsRepository.findOne({ where: { productId } });
+			
 			if (!analytics) {
+				this.logger.warn(`⚠️ [updatePriceHistory] Product analytics not found for ID: ${productId}`);
 				throw new NotFoundException('Product analytics not found');
 			}
 
+			this.logger.debug(`📝 [updatePriceHistory] Adding price entry to history: ${newPrice} (${type})`);
 			const priceHistory = analytics.priceHistory || [];
 			priceHistory.push({
 				date: new Date(),
@@ -673,24 +866,43 @@ export class ProductsService {
 				type,
 			});
 
+			this.logger.debug(`💾 [updatePriceHistory] Updating price history in database`);
 			await this.analyticsRepository.update({ productId }, { priceHistory });
+			
+			this.logger.log(`✅ [updatePriceHistory] Price history updated successfully for product ID: ${productId}`);
 			return { message: 'Price history updated successfully' };
 		} catch (error) {
+			this.logger.error(`❌ [updatePriceHistory] Error updating price history for product ID ${productId}: ${error.message}`, error.stack);
 			return { message: error.message || 'Error updating price history' };
 		}
 	}
 
+	/**
+	 * 🛒 Record a product sale and update analytics
+	 * @param productId - Product ID
+	 * @param quantity - Quantity sold
+	 * @param salePrice - Sale price per unit
+	 * @returns Promise with success message or error
+	 */
 	async recordSale(productId: number, quantity: number, salePrice: number) {
+		this.logger.log(`🛒 [recordSale] Recording sale for product ID: ${productId}, quantity: ${quantity}, salePrice: ${salePrice}`);
+		
 		try {
+			this.logger.debug(`🔍 [recordSale] Finding analytics for product ID: ${productId}`);
 			const analytics = await this.analyticsRepository.findOne({ where: { productId } });
+			
 			if (!analytics) {
+				this.logger.warn(`⚠️ [recordSale] Product analytics not found for ID: ${productId}`);
 				throw new NotFoundException('Product analytics not found');
 			}
 
 			// Update sales metrics
+			const totalSaleValue = quantity * salePrice;
+			this.logger.debug(`📊 [recordSale] Calculating sales metrics - total sale value: ${totalSaleValue}`);
+			
 			const updatedAnalytics = {
 				totalUnitsSold: (analytics.totalUnitsSold || 0) + quantity,
-				totalRevenue: (analytics.totalRevenue || 0) + quantity * salePrice,
+				totalRevenue: (analytics.totalRevenue || 0) + totalSaleValue,
 				salesCount: (analytics.salesCount || 0) + 1,
 				salesHistory: [
 					...(analytics.salesHistory || []),
@@ -698,91 +910,180 @@ export class ProductsService {
 						date: new Date(),
 						quantity,
 						price: salePrice,
-						total: quantity * salePrice,
+						total: totalSaleValue,
 					},
 				],
 			};
 
+			this.logger.debug(`📝 [recordSale] Updating analytics with new sales data`);
 			await this.analyticsRepository.update({ productId }, updatedAnalytics);
 
 			// Update stock history
+			this.logger.debug(`📦 [recordSale] Updating stock history for outgoing stock: ${quantity} units`);
 			await this.updateStockHistory(productId, quantity, 'out');
 
+			this.logger.log(`✅ [recordSale] Sale recorded successfully for product ID: ${productId} - ${quantity} units at ${salePrice} each`);
 			return { message: 'Sale recorded successfully' };
 		} catch (error) {
+			this.logger.error(`❌ [recordSale] Error recording sale for product ID ${productId}: ${error.message}`, error.stack);
 			return { message: error.message || 'Error recording sale' };
 		}
 	}
 
+	/**
+	 * 📦 Record a product purchase and update analytics
+	 * @param productId - Product ID
+	 * @param quantity - Quantity purchased
+	 * @param purchasePrice - Purchase price per unit
+	 * @returns Promise with success message or error
+	 */
 	async recordPurchase(productId: number, quantity: number, purchasePrice: number) {
+		this.logger.log(`📦 [recordPurchase] Recording purchase for product ID: ${productId}, quantity: ${quantity}, purchasePrice: ${purchasePrice}`);
+		
 		try {
+			this.logger.debug(`🔍 [recordPurchase] Finding analytics for product ID: ${productId}`);
 			const analytics = await this.analyticsRepository.findOne({ where: { productId } });
+			
 			if (!analytics) {
+				this.logger.warn(`⚠️ [recordPurchase] Product analytics not found for ID: ${productId}`);
 				throw new NotFoundException('Product analytics not found');
 			}
 
 			// Calculate total purchase cost
 			const totalCost = quantity * purchasePrice;
+			this.logger.debug(`📊 [recordPurchase] Calculating purchase metrics - total cost: ${totalCost}`);
+			
+			const newUnitsPurchased = (analytics.unitsPurchased || 0) + quantity;
+			const newTotalPurchaseCost = (analytics.totalPurchaseCost || 0) + totalCost;
+			const newAveragePurchasePrice = newTotalPurchaseCost / newUnitsPurchased;
+			
+			this.logger.debug(`📈 [recordPurchase] New metrics - units: ${newUnitsPurchased}, total cost: ${newTotalPurchaseCost}, avg price: ${newAveragePurchasePrice}`);
 
 			// Update purchase metrics
+			this.logger.debug(`📝 [recordPurchase] Updating analytics with purchase data`);
 			await this.analyticsRepository.update(
 				{ productId },
 				{
-					unitsPurchased: (analytics.unitsPurchased || 0) + quantity,
-					totalPurchaseCost: (analytics.totalPurchaseCost || 0) + totalCost,
+					unitsPurchased: newUnitsPurchased,
+					totalPurchaseCost: newTotalPurchaseCost,
 					lastPurchaseDate: new Date(),
-					averagePurchasePrice: analytics.unitsPurchased
-						? ((analytics.totalPurchaseCost || 0) + totalCost) /
-						  ((analytics.unitsPurchased || 0) + quantity)
-						: purchasePrice,
+					averagePurchasePrice: newAveragePurchasePrice,
 				},
 			);
 
 			// Update stock history
+			this.logger.debug(`📦 [recordPurchase] Updating stock history for incoming stock: ${quantity} units`);
 			await this.updateStockHistory(productId, quantity, 'in');
 
+			this.logger.log(`✅ [recordPurchase] Purchase recorded successfully for product ID: ${productId} - ${quantity} units at ${purchasePrice} each`);
 			return { message: 'Purchase recorded successfully' };
 		} catch (error) {
+			this.logger.error(`❌ [recordPurchase] Error recording purchase for product ID ${productId}: ${error.message}`, error.stack);
 			return { message: error.message || 'Error recording purchase' };
 		}
 	}
 
+	/**
+	 * 👀 Record a product view event
+	 * @param productId - Product ID
+	 * @returns Promise with success message
+	 */
 	async recordView(productId: number) {
+		this.logger.log(`👀 [recordView] Recording view for product ID: ${productId}`);
+		
+		try {
 		const analytics = await this.analyticsRepository.findOne({ where: { productId } });
 		if (analytics) {
-			await this.analyticsRepository.update({ productId }, { viewCount: (analytics.viewCount || 0) + 1 });
+				const newViewCount = (analytics.viewCount || 0) + 1;
+				this.logger.debug(`📊 [recordView] Updating view count from ${analytics.viewCount || 0} to ${newViewCount}`);
+				await this.analyticsRepository.update({ productId }, { viewCount: newViewCount });
+				this.logger.log(`✅ [recordView] View recorded successfully for product ID: ${productId}`);
+			} else {
+				this.logger.warn(`⚠️ [recordView] Analytics not found for product ID: ${productId}`);
 		}
 		return { message: 'View recorded' };
+		} catch (error) {
+			this.logger.error(`❌ [recordView] Error recording view for product ID ${productId}: ${error.message}`, error.stack);
+			return { message: error.message || 'Error recording view' };
+		}
 	}
 
+	/**
+	 * 🛒 Record a cart add event
+	 * @param productId - Product ID
+	 * @returns Promise with success message
+	 */
 	async recordCartAdd(productId: number) {
+		this.logger.log(`🛒 [recordCartAdd] Recording cart add for product ID: ${productId}`);
+		
+		try {
 		const analytics = await this.analyticsRepository.findOne({ where: { productId } });
 		if (analytics) {
-			await this.analyticsRepository.update({ productId }, { cartAddCount: (analytics.cartAddCount || 0) + 1 });
+				const newCartAddCount = (analytics.cartAddCount || 0) + 1;
+				this.logger.debug(`📊 [recordCartAdd] Updating cart add count from ${analytics.cartAddCount || 0} to ${newCartAddCount}`);
+				await this.analyticsRepository.update({ productId }, { cartAddCount: newCartAddCount });
+				this.logger.log(`✅ [recordCartAdd] Cart add recorded successfully for product ID: ${productId}`);
+			} else {
+				this.logger.warn(`⚠️ [recordCartAdd] Analytics not found for product ID: ${productId}`);
 		}
 		return { message: 'Cart add recorded' };
+		} catch (error) {
+			this.logger.error(`❌ [recordCartAdd] Error recording cart add for product ID ${productId}: ${error.message}`, error.stack);
+			return { message: error.message || 'Error recording cart add' };
+		}
 	}
 
+	/**
+	 * ⭐ Record a wishlist add event
+	 * @param productId - Product ID
+	 * @returns Promise with success message
+	 */
 	async recordWishlist(productId: number) {
+		this.logger.log(`⭐ [recordWishlist] Recording wishlist add for product ID: ${productId}`);
+		
+		try {
 		const analytics = await this.analyticsRepository.findOne({ where: { productId } });
 		if (analytics) {
-			await this.analyticsRepository.update({ productId }, { wishlistCount: (analytics.wishlistCount || 0) + 1 });
+				const newWishlistCount = (analytics.wishlistCount || 0) + 1;
+				this.logger.debug(`📊 [recordWishlist] Updating wishlist count from ${analytics.wishlistCount || 0} to ${newWishlistCount}`);
+				await this.analyticsRepository.update({ productId }, { wishlistCount: newWishlistCount });
+				this.logger.log(`✅ [recordWishlist] Wishlist add recorded successfully for product ID: ${productId}`);
+			} else {
+				this.logger.warn(`⚠️ [recordWishlist] Analytics not found for product ID: ${productId}`);
 		}
 		return { message: 'Wishlist add recorded' };
+		} catch (error) {
+			this.logger.error(`❌ [recordWishlist] Error recording wishlist add for product ID ${productId}: ${error.message}`, error.stack);
+			return { message: error.message || 'Error recording wishlist add' };
+		}
 	}
 
+	/**
+	 * 📦 Update stock history for a product
+	 * @param productId - Product ID
+	 * @param quantity - Quantity moved
+	 * @param type - Type of stock movement ('in' or 'out')
+	 * @returns Promise with success message or error
+	 */
 	async updateStockHistory(productId: number, quantity: number, type: 'in' | 'out') {
+		this.logger.log(`📦 [updateStockHistory] Updating stock history for product ID: ${productId}, quantity: ${quantity}, type: ${type}`);
+		
 		try {
+			this.logger.debug(`🔍 [updateStockHistory] Finding analytics for product ID: ${productId}`);
 			const analytics = await this.analyticsRepository.findOne({ where: { productId } });
 			if (!analytics) {
+				this.logger.warn(`⚠️ [updateStockHistory] Product analytics not found for ID: ${productId}`);
 				throw new NotFoundException('Product analytics not found');
 			}
 
+			this.logger.debug(`🔍 [updateStockHistory] Finding product for stock balance check`);
 			const product = await this.productRepository.findOne({ where: { uid: productId } });
 			if (!product) {
+				this.logger.warn(`⚠️ [updateStockHistory] Product not found for ID: ${productId}`);
 				throw new NotFoundException('Product not found');
 			}
 
+			this.logger.debug(`📝 [updateStockHistory] Adding stock history entry - quantity: ${quantity}, type: ${type}, balance: ${product.stockQuantity}`);
 			const stockHistory = analytics.stockHistory || [];
 			stockHistory.push({
 				date: new Date(),
@@ -791,42 +1092,64 @@ export class ProductsService {
 				balance: product.stockQuantity,
 			});
 
+			this.logger.debug(`💾 [updateStockHistory] Updating stock history in database`);
 			await this.analyticsRepository.update({ productId }, { stockHistory });
+			
+			this.logger.log(`✅ [updateStockHistory] Stock history updated successfully for product ID: ${productId}`);
 			return { message: 'Stock history updated successfully' };
 		} catch (error) {
+			this.logger.error(`❌ [updateStockHistory] Error updating stock history for product ID ${productId}: ${error.message}`, error.stack);
 			return { message: error.message || 'Error updating stock history' };
 		}
 	}
 
+	/**
+	 * 📊 Calculate comprehensive product performance metrics
+	 * @param productId - Product ID
+	 * @returns Promise with performance metrics or error
+	 */
 	async calculateProductPerformance(productId: number) {
+		this.logger.log(`📊 [calculateProductPerformance] Calculating performance metrics for product ID: ${productId}`);
+		
 		try {
+			this.logger.debug(`🔍 [calculateProductPerformance] Finding analytics for product ID: ${productId}`);
 			const analytics = await this.analyticsRepository.findOne({ where: { productId } });
 			if (!analytics) {
+				this.logger.warn(`⚠️ [calculateProductPerformance] Product analytics not found for ID: ${productId}`);
 				throw new NotFoundException('Product analytics not found');
 			}
 
 			// Calculate conversion rates
+			this.logger.debug(`📈 [calculateProductPerformance] Calculating conversion rates`);
 			const viewToCartRate = analytics.viewCount ? (analytics.cartAddCount / analytics.viewCount) * 100 : 0;
 			const cartToSaleRate = analytics.cartAddCount ? (analytics.salesCount / analytics.cartAddCount) * 100 : 0;
 			const viewToSaleRate = analytics.viewCount ? (analytics.salesCount / analytics.viewCount) * 100 : 0;
 
 			// Calculate average sale value
 			const avgSaleValue = analytics.salesCount ? analytics.totalRevenue / analytics.salesCount : 0;
+			this.logger.debug(`💰 [calculateProductPerformance] Average sale value: ${avgSaleValue}`);
 
 			// Calculate profit margin if cost data is available
 			const profitMargin =
 				analytics.totalPurchaseCost && analytics.totalRevenue
 					? ((analytics.totalRevenue - analytics.totalPurchaseCost) / analytics.totalRevenue) * 100
 					: null;
+			
+			this.logger.debug(`📊 [calculateProductPerformance] Profit margin: ${profitMargin ? profitMargin.toFixed(2) + '%' : 'N/A'}`);
+
+			// Calculate stock turnover rate
+			const stockTurnoverRate = parseFloat(
+				(analytics.totalUnitsSold / (analytics.unitsPurchased || 1)).toFixed(2),
+			);
+			this.logger.debug(`🔄 [calculateProductPerformance] Stock turnover rate: ${stockTurnoverRate}`);
 
 			// Update the performance metrics
+			this.logger.debug(`💾 [calculateProductPerformance] Updating performance metrics in database`);
 			await this.analyticsRepository.update(
 				{ productId },
 				{
 					profitMargin: profitMargin ? parseFloat(profitMargin.toFixed(2)) : null,
-					stockTurnoverRate: parseFloat(
-						(analytics.totalUnitsSold / (analytics.unitsPurchased || 1)).toFixed(2),
-					),
+					stockTurnoverRate: stockTurnoverRate,
 				},
 			);
 
@@ -844,11 +1167,15 @@ export class ProductsService {
 				profitMargin: profitMargin ? parseFloat(profitMargin.toFixed(2)) : null,
 			};
 
+			this.logger.log(`✅ [calculateProductPerformance] Performance calculated successfully for product ID: ${productId}`);
+			this.logger.debug(`📊 [calculateProductPerformance] Performance metrics: ${JSON.stringify(performance)}`);
+
 			return {
 				message: 'Performance calculated successfully',
 				performance,
 			};
 		} catch (error) {
+			this.logger.error(`❌ [calculateProductPerformance] Error calculating performance for product ID ${productId}: ${error.message}`, error.stack);
 			return {
 				message: error.message || 'Error calculating performance',
 				performance: null,
@@ -856,47 +1183,93 @@ export class ProductsService {
 		}
 	}
 
+	/**
+	 * 📋 Check if sufficient stock is available for a product
+	 * @param productId - Product ID
+	 * @param quantity - Required quantity
+	 * @returns Promise<boolean> - True if stock is available
+	 */
 	async isStockAvailable(productId: number, quantity: number): Promise<boolean> {
+		this.logger.log(`📋 [isStockAvailable] Checking stock availability for product ID: ${productId}, required quantity: ${quantity}`);
+		
 		try {
+			this.logger.debug(`🔍 [isStockAvailable] Getting product details for stock check`);
 			const product = await this.getProductByref(productId);
-			return product && product.product.stockQuantity >= quantity;
+			
+			const isAvailable = product && product.product && product.product.stockQuantity >= quantity;
+			const currentStock = product?.product?.stockQuantity || 0;
+			
+			this.logger.log(`${isAvailable ? '✅' : '❌'} [isStockAvailable] Stock check result for product ID ${productId}: ${isAvailable ? 'Available' : 'Insufficient'} (current: ${currentStock}, required: ${quantity})`);
+			
+			return isAvailable;
 		} catch (error) {
-			this.logger.error(`Error checking stock availability: ${error.message}`);
+			this.logger.error(`❌ [isStockAvailable] Error checking stock availability for product ID ${productId}: ${error.message}`, error.stack);
 			return false;
 		}
 	}
 
+	/**
+	 * 📦 Update product stock quantity
+	 * @param productId - Product ID
+	 * @param quantityChange - Change in quantity (positive for increase, negative for decrease)
+	 * @returns Promise<void>
+	 */
 	async updateStock(productId: number, quantityChange: number): Promise<void> {
+		this.logger.log(`📦 [updateStock] Updating stock for product ID: ${productId}, quantity change: ${quantityChange}`);
+		
 		try {
+			this.logger.debug(`🔍 [updateStock] Getting current product details`);
 			const product = await this.getProductByref(productId);
 			if (!product.product) {
+				this.logger.warn(`⚠️ [updateStock] Product not found with ID: ${productId}`);
 				throw new NotFoundException(`Product with ID ${productId} not found`);
 			}
 
-			const newStock = Math.max(0, product.product.stockQuantity + quantityChange);
+			const currentStock = product.product.stockQuantity;
+			const newStock = Math.max(0, currentStock + quantityChange);
+			
+			this.logger.debug(`📊 [updateStock] Stock update - current: ${currentStock}, change: ${quantityChange}, new: ${newStock}`);
+			
 			await this.productRepository.update(productId, { stockQuantity: newStock });
 
 			// Update stock history
+			this.logger.debug(`📝 [updateStock] Recording stock history for the change`);
 			await this.updateStockHistory(productId, Math.abs(quantityChange), quantityChange > 0 ? 'in' : 'out');
+			
+			this.logger.log(`✅ [updateStock] Stock updated successfully for product ID: ${productId} (${currentStock} → ${newStock})`);
 		} catch (error) {
-			this.logger.error(`Error updating stock: ${error.message}`);
+			this.logger.error(`❌ [updateStock] Error updating stock for product ID ${productId}: ${error.message}`, error.stack);
 			throw error;
 		}
 	}
 
+	/**
+	 * 📋 Record quotation creation for analytics
+	 * @param productId - Product ID
+	 * @returns Promise<void>
+	 */
 	async recordQuotationCreation(productId: number): Promise<void> {
+		this.logger.log(`📋 [recordQuotationCreation] Recording quotation creation for product ID: ${productId}`);
+		
 		try {
+			this.logger.debug(`🔍 [recordQuotationCreation] Finding analytics for product ID: ${productId}`);
 			const analytics = await this.analyticsRepository.findOne({ where: { productId } });
 			if (!analytics) {
+				this.logger.warn(`⚠️ [recordQuotationCreation] Product analytics not found for ID: ${productId}`);
 				throw new NotFoundException('Product analytics not found');
 			}
 
+			const newQuotationCount = (analytics.quotationCount || 0) + 1;
+			this.logger.debug(`📊 [recordQuotationCreation] Updating quotation count from ${analytics.quotationCount || 0} to ${newQuotationCount}`);
+
 			await this.analyticsRepository.update(
 				{ productId },
-				{ quotationCount: (analytics.quotationCount || 0) + 1 },
+				{ quotationCount: newQuotationCount },
 			);
+			
+			this.logger.log(`✅ [recordQuotationCreation] Quotation creation recorded successfully for product ID: ${productId}`);
 		} catch (error) {
-			this.logger.error(`Error recording quotation creation: ${error.message}`);
+			this.logger.error(`❌ [recordQuotationCreation] Error recording quotation creation for product ID ${productId}: ${error.message}`, error.stack);
 			// Don't throw, just log the error
 		}
 	}

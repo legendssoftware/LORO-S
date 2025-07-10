@@ -633,8 +633,16 @@ export class ShopService {
 				}
 			}
 
-			// Emit WebSocket event for new quotation
-			this.shopGateway.emitNewQuotation(savedQuotation?.quotationNumber);
+			// Emit WebSocket event for new quotation with full data
+			// Get the full quotation with all relations for WebSocket
+			const fullQuotationForSocket = await this.quotationRepository.findOne({
+				where: { uid: savedQuotation.uid },
+				relations: ['client', 'placedBy', 'quotationItems', 'quotationItems.product', 'organisation', 'branch'],
+			});
+			
+			if (fullQuotationForSocket) {
+				this.shopGateway.emitNewQuotation(fullQuotationForSocket);
+			}
 
 			const baseConfig: QuotationInternalData = {
 				name: clientName,
@@ -901,9 +909,17 @@ export class ShopService {
 				}
 			}
 
-			// Emit WebSocket event for new blank quotation
+			// Emit WebSocket event for new blank quotation with full data
 			this.logger.log(`[createBlankQuotation] Emitting WebSocket event`);
-			this.shopGateway.emitNewQuotation(savedQuotation?.quotationNumber);
+			// Get the full quotation with all relations for WebSocket
+			const fullBlankQuotationForSocket = await this.quotationRepository.findOne({
+				where: { uid: savedQuotation.uid },
+				relations: ['client', 'placedBy', 'quotationItems', 'quotationItems.product', 'organisation', 'branch'],
+			});
+			
+			if (fullBlankQuotationForSocket) {
+				this.shopGateway.emitNewQuotation(fullBlankQuotationForSocket);
+			}
 
 			// Prepare email data for blank quotation
 			const emailData = {
@@ -1428,7 +1444,9 @@ export class ShopService {
 		if (status === OrderStatus.APPROVED) {
 			// Update product analytics when quotation is approved
 			for (const item of quotation?.quotationItems) {
-				await this.productsService?.recordSale(item?.product?.uid, item?.quantity, Number(item?.totalPrice));
+				// Calculate unit price from total price and quantity
+				const unitPrice = item?.quantity > 0 ? Number(item?.totalPrice) / item?.quantity : Number(item?.totalPrice);
+				await this.productsService?.recordSale(item?.product?.uid, item?.quantity, unitPrice);
 				await this.productsService?.calculateProductPerformance(item?.product?.uid);
 			}
 		}
@@ -1567,7 +1585,15 @@ export class ShopService {
 				}
 
 				// Also notify internal team about the status change via WebSocket
-				this.shopGateway.notifyQuotationStatusChanged(quotationId, status);
+				// Get updated quotation with full data for WebSocket
+				const updatedQuotationForSocket = await this.quotationRepository.findOne({
+					where: { uid: quotationId },
+					relations: ['client', 'placedBy', 'quotationItems', 'quotationItems.product', 'organisation', 'branch'],
+				});
+				
+				if (updatedQuotationForSocket) {
+					this.shopGateway.notifyQuotationStatusChanged(updatedQuotationForSocket);
+				}
 			} catch (error) {
 				this.logger.error('Failed to send quotation status update email:', error);
 				// Continue with the process even if email sending fails
@@ -2155,10 +2181,12 @@ export class ShopService {
 					if (status === OrderStatus.APPROVED) {
 						for (const item of updatedQuotation.quotationItems) {
 							if (item.product && item.product.uid) {
+								// Calculate unit price from total price and quantity
+								const unitPrice = item.quantity > 0 ? Number(item.totalPrice) / item.quantity : Number(item.totalPrice);
 								await this.productsService.recordSale(
 									item.product.uid,
 									item.quantity,
-									Number(item.totalPrice),
+									unitPrice,
 								);
 								await this.productsService.calculateProductPerformance(item.product.uid);
 							}
@@ -2200,7 +2228,7 @@ export class ShopService {
 					this.eventEmitter.emit('send.email', emailType, [updatedQuotation.client.email], emailData);
 
 					// Also notify internal team about the status change
-					this.shopGateway.notifyQuotationStatusChanged(quotation.uid, status);
+					this.shopGateway.notifyQuotationStatusChanged(updatedQuotation);
 				}
 			} catch (error) {
 				// Log but don't fail if emails fail
@@ -2342,7 +2370,7 @@ export class ShopService {
 			});
 
 			// Emit WebSocket event
-			this.shopGateway.notifyQuotationStatusChanged(quotationId, OrderStatus.PENDING_CLIENT);
+			this.shopGateway.notifyQuotationStatusChanged(updatedQuotation);
 
 			return {
 				success: true,

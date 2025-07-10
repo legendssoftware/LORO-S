@@ -36,6 +36,18 @@ export interface PasswordChangedData extends BaseEmailData {
 	changeTime: string;
 }
 
+export interface ClientAccountCreatedData extends BaseEmailData {
+	email: string;
+	clientId: number;
+	loginUrl: string;
+	supportEmail: string;
+	organizationName: string;
+	contactPerson: string;
+	phone: string;
+	address: string;
+	createdAt: Date;
+}
+
 export interface InvoiceData extends BaseEmailData {
 	invoiceId: string;
 	date: Date;
@@ -1768,6 +1780,7 @@ export interface EmailDataMap {
 	[EmailType.CLIENT_LOGIN_NOTIFICATION]: LoginNotificationEmailData;
 	[EmailType.FAILED_LOGIN_ATTEMPT]: LoginNotificationEmailData;
 	[EmailType.CLIENT_FAILED_LOGIN_ATTEMPT]: LoginNotificationEmailData;
+	[EmailType.CLIENT_ACCOUNT_CREATED]: ClientAccountCreatedData;
 	[EmailType.EMAIL_VERIFIED]: EmailVerifiedEmailData;
 	// Client profile update mappings
 	[EmailType.CLIENT_PROFILE_UPDATED_CONFIRMATION]: ClientProfileUpdateConfirmationData;

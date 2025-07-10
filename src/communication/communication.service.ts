@@ -50,7 +50,7 @@ import { NewUserAdminNotification, NewUserWelcome, UserReInvitation } from '../l
 // Lead related templates
 import { LeadConvertedClient, LeadConvertedCreator, LeadReminder, LeadAssignedToUser, MonthlyUnattendedLeadsReport } from '../lib/templates/emails';
 // Client auth templates
-import { ClientPasswordReset, ClientPasswordChanged, ClientCommunicationReminder } from '../lib/templates/emails';
+import { ClientPasswordReset, ClientPasswordChanged, ClientAccountCreated, ClientCommunicationReminder } from '../lib/templates/emails';
 // Warning templates
 import { WarningIssued, WarningUpdated, WarningExpired } from '../lib/templates/emails';
 // Leave templates
@@ -63,6 +63,7 @@ import {
 	PasswordResetData,
 	VerificationEmailData,
 	SignupEmailData,
+	ClientAccountCreatedData,
 	EmailTemplateData,
 	LicenseEmailData,
 	LicenseLimitData,
@@ -561,6 +562,11 @@ export class CommunicationService {
 				return {
 					subject: 'Password Successfully Changed',
 					body: ClientPasswordChanged(data as PasswordChangedData),
+				};
+			case EmailType.CLIENT_ACCOUNT_CREATED:
+				return {
+					subject: 'Welcome to Loro - Your Account Has Been Created',
+					body: ClientAccountCreated(data as ClientAccountCreatedData),
 				};
 			case EmailType.WARNING_ISSUED:
 				return {

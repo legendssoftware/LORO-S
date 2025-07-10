@@ -5,6 +5,7 @@ import {
 	PasswordResetData,
 	PasswordResetRequestData,
 	PasswordChangedData,
+	ClientAccountCreatedData,
 	InvoiceData,
 	DailyReportData,
 	LicenseEmailData,
@@ -256,6 +257,10 @@ export const ClientPasswordReset = (data: PasswordResetData): string => {
 
 export const ClientPasswordChanged = (data: PasswordChangedData): string => {
 	return emailTemplateService.clientPasswordChanged(data);
+};
+
+export const ClientAccountCreated = (data: ClientAccountCreatedData): string => {
+	return emailTemplateService.clientAccountCreated(data);
 };
 
 // Warning Templates
