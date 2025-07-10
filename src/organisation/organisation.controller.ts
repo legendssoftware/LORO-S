@@ -45,7 +45,7 @@ export class OrganisationController {
 					properties: {
 						uid: { type: 'number', example: 1 },
 						name: { type: 'string', example: 'Acme Inc.' },
-						email: { type: 'string', example: 'brandon@loro.co.za' },
+						email: { type: 'string', example: 'email/username.co.za' },
 						phone: { type: 'string', example: '123-456-7890' },
 						contactPerson: { type: 'string', example: 'Brandon Nkawu' },
 						website: { type: 'string', example: 'https://www.acme.com' },
@@ -97,7 +97,7 @@ export class OrganisationController {
 						properties: {
 							uid: { type: 'number', example: 1 },
 							name: { type: 'string', example: 'Acme Inc.' },
-							email: { type: 'string', example: 'brandon@loro.co.za' },
+							email: { type: 'string', example: 'email/username.co.za' },
 							phone: { type: 'string', example: '123-456-7890' },
 							contactPerson: { type: 'string', example: 'Brandon Nkawu' },
 							website: { type: 'string', example: 'https://www.acme.com' },
@@ -148,7 +148,7 @@ export class OrganisationController {
 					properties: {
 						uid: { type: 'number', example: 1 },
 						name: { type: 'string', example: 'Acme Inc.' },
-						email: { type: 'string', example: 'brandon@loro.co.za' },
+						email: { type: 'string', example: 'email/username.co.za' },
 						phone: { type: 'string', example: '123-456-7890' },
 						contactPerson: { type: 'string', example: 'Brandon Nkawu' },
 						website: { type: 'string', example: 'https://www.acme.com' },

@@ -1,0 +1,32 @@
+{{#> base}}
+<div class="card">
+  <div class="card-header">
+    <h2>🗑️ Target Removed</h2>
+    <p>A target has been removed for {{userName}}</p>
+  </div>
+  
+  <div class="card-content">
+    <div class="info-section">
+      <h3>Removed Target Details</h3>
+      <ul>
+        <li><strong>Employee:</strong> {{userName}}</li>
+        <li><strong>Email:</strong> {{userEmail}}</li>
+        <li><strong>Target Type:</strong> {{targetType || 'User Performance Target'}}</li>
+        {{#if reason}}
+        <li><strong>Reason:</strong> {{reason}}</li>
+        {{/if}}
+      </ul>
+    </div>
+    
+    <div class="actions">
+      <a href="{{dashboardUrl}}/targets" class="button button-primary">View All Targets</a>
+      <a href="{{dashboardUrl}}/users/{{userId}}" class="button button-secondary">View User Profile</a>
+    </div>
+  </div>
+  
+  <div class="card-footer">
+    <p>This target was removed on {{formatDate deletedAt}}.</p>
+    <p>The employee will be notified of the removal and can view any remaining targets in the dashboard.</p>
+  </div>
+</div>
+{{/base}} 

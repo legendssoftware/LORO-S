@@ -12,7 +12,7 @@ export class CreateBranchDto {
     name: string;
 
     @ApiProperty({
-        example: 'brandon@loro.co.za',
+        example: 'email/username.co.za',
         description: 'The email of the branch'
     })
     email: string;

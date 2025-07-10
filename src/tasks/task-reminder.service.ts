@@ -45,8 +45,8 @@ export class TaskReminderService {
 		}
 	}
 
-	// Run every day at 8:00 AM
-	@Cron(CronExpression.EVERY_DAY_AT_8AM)
+	// Run every day at 5:00 AM
+	@Cron(CronExpression.EVERY_DAY_AT_5AM)
 	async checkOverdueAndMissedTasks() {
 		this.logger.log('Starting overdue and missed tasks check...');
 

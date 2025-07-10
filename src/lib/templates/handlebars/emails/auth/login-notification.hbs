@@ -1,27 +1,20 @@
-{{#base headerTitle="Security Alert: New Login to Your Account" headerSubtitle="Login activity notification"}}
+{{#base headerTitle="Login Security Alert" headerSubtitle="New sign-in detected"}}
 
 <div class="greeting">
     Hello {{name}}! 🔐
 </div>
 
 <div class="message">
-    <p>We detected a new login to your account. If this was you, no action is needed. If you don't recognize this activity, please secure your account immediately.</p>
+    <p>We detected a new sign-in to your account. If this was you, no action is needed. If you don't recognize this activity, please secure your account immediately.</p>
 </div>
 
-<!-- Login Details -->
-<div class="{{#if suspicious}}warning-notice{{else}}info-card{{/if}}">
-    <h3 style="color: {{#if suspicious}}#d97706{{else}}#7c2d92{{/if}};">🔍 Login Information</h3>
+<div class="info-card">
+    <h3>📍 Login Details</h3>
     <div class="detail-grid">
         <div class="detail-item">
-            <span class="detail-label">Login Time</span>
-            <span class="detail-value" style="font-weight: 700;">{{loginTime}}</span>
+            <span class="detail-label">Time</span>
+            <span class="detail-value">{{loginTime}}</span>
         </div>
-        {{#if ipAddress}}
-        <div class="detail-item">
-            <span class="detail-label">IP Address</span>
-            <span class="detail-value" style="font-family: monospace; background: #f3f4f6; padding: 2px 6px; border-radius: 4px;">{{ipAddress}}</span>
-        </div>
-        {{/if}}
         {{#if location}}
         <div class="detail-item">
             <span class="detail-label">Location</span>
@@ -30,14 +23,8 @@
         {{/if}}
         {{#if deviceType}}
         <div class="detail-item">
-            <span class="detail-label">Device Type</span>
+            <span class="detail-label">Device</span>
             <span class="detail-value">{{deviceType}}</span>
-        </div>
-        {{/if}}
-        {{#if operatingSystem}}
-        <div class="detail-item">
-            <span class="detail-label">Operating System</span>
-            <span class="detail-value">{{operatingSystem}}</span>
         </div>
         {{/if}}
         {{#if browser}}
@@ -46,79 +33,27 @@
             <span class="detail-value">{{browser}}</span>
         </div>
         {{/if}}
-        {{#if userAgent}}
-        <div class="detail-item">
-            <span class="detail-label">User Agent</span>
-            <span class="detail-value" style="font-size: 12px; font-family: monospace; background: #f3f4f6; padding: 4px 8px; border-radius: 4px; word-break: break-all;">{{userAgent}}</span>
-        </div>
-        {{/if}}
     </div>
 </div>
 
-<!-- Suspicious Activity Warning -->
 {{#if suspicious}}
-<div style="background: rgba(153, 27, 27, 0.1); border: 2px solid #991b1b; border-radius: 12px; padding: 20px; margin: 20px 0;">
-    <h4 style="color: #991b1b; margin-bottom: 16px;">🚨 SUSPICIOUS ACTIVITY DETECTED</h4>
-    <p style="color: #7f1d1d; font-size: 16px; font-weight: 600; margin-bottom: 16px;">This login appears unusual based on your typical activity patterns.</p>
-    <p style="color: #7f1d1d; font-size: 15px;">If this wasn't you, your account may be compromised. Take immediate action to secure your account.</p>
+<div class="error-notice">
+    <h4>🚨 Suspicious Activity Detected</h4>
+    <p>This login appears unusual for your account. If this wasn't you, please secure your account immediately.</p>
 </div>
-{{/if}}
 
-<!-- Security Actions -->
-{{#if suspicious}}
-<div style="background: rgba(153, 27, 27, 0.1); border: 2px solid #991b1b; border-radius: 12px; padding: 20px; margin: 20px 0;">
-    <p style="font-size: 16px; font-weight: 700; color: #991b1b;">🚨 IMMEDIATE ACTIONS REQUIRED</p>
-    <ul style="margin-left: 20px; margin-top: 16px; line-height: 1.8; font-size: 15px; color: #7f1d1d;">
-        <li>Change your password immediately</li>
-        <li>Log out of all devices and sessions</li>
-        <li>Enable two-factor authentication if not already active</li>
-        <li>Review recent account activity</li>
-        <li>Contact support if you need assistance</li>
-    </ul>
+<div class="cta-section">
+    <a href="{{secureAccountUrl}}" class="cta-button">Secure My Account</a>
 </div>
 {{else}}
-<div class="info-card">
-    <h4 style="color: #7c2d92; margin-bottom: 16px;">🔒 Security Best Practices</h4>
-    <ul style="margin-left: 20px; color: #4b5563; line-height: 1.8; font-size: 15px;">
-        <li>Always log out when using shared devices</li>
-        <li>Use strong, unique passwords</li>
-        <li>Enable two-factor authentication</li>
-        <li>Keep your browser and devices updated</li>
-        <li>Be cautious of phishing attempts</li>
-    </ul>
-</div>
-{{/if}}
-
-<!-- Security Tips -->
-{{#if securityTips}}
 <div class="success-notice">
-    <h4 style="color: #15803d; margin-bottom: 16px;">💡 Security Tips</h4>
-    <ul style="margin-left: 20px; line-height: 1.8; font-size: 15px;">
-        {{#each securityTips}}
-        <li>{{this}}</li>
-        {{/each}}
-    </ul>
+    <h4>✅ Login Successful</h4>
+    <p>Your account is secure. Remember to always log out from shared devices.</p>
 </div>
 {{/if}}
 
-<!-- Action Buttons -->
-{{#if suspicious}}
-<div class="cta-section">
-    <a href="#" class="cta-button" style="background-color: #dc2626;">Secure My Account Now</a>
-</div>
-{{else}}
-<div class="cta-section">
-    <a href="#" class="cta-button">Review Account Activity</a>
-</div>
-{{/if}}
-
-<!-- Footer -->
 <div class="message">
-    <p style="font-size: 14px; color: #6b7280; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
-        <strong>Security Notice:</strong><br>
-        This is an automated security notification. We send these alerts to help protect your account from unauthorized access. If you have any concerns about your account security, please contact our support team immediately.<br><br>
-        <strong>Didn't request this login?</strong> Change your password immediately and contact support.
-    </p>
+    <p><strong>Wasn't you?</strong> Please change your password immediately and contact our support team.</p>
 </div>
 
 {{/base}} 

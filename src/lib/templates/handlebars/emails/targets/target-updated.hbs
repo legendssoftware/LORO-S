@@ -1,0 +1,37 @@
+{{#> base}}
+<div class="card">
+  <div class="card-header">
+    <h2>📊 Target Updated</h2>
+    <p>A target has been updated for {{userName}}</p>
+  </div>
+  
+  <div class="card-content">
+    <div class="info-section">
+      <h3>Updated Target Details</h3>
+      <ul>
+        <li><strong>Employee:</strong> {{userName}}</li>
+        <li><strong>Email:</strong> {{userEmail}}</li>
+        {{#if targetDetails.dailyHours}}
+        <li><strong>Daily Hours Target:</strong> {{targetDetails.dailyHours}} hours</li>
+        {{/if}}
+        {{#if targetDetails.monthlyHours}}
+        <li><strong>Monthly Hours Target:</strong> {{targetDetails.monthlyHours}} hours</li>
+        {{/if}}
+        {{#if targetDetails.description}}
+        <li><strong>Description:</strong> {{targetDetails.description}}</li>
+        {{/if}}
+      </ul>
+    </div>
+    
+    <div class="actions">
+      <a href="{{dashboardUrl}}/targets" class="button button-primary">View All Targets</a>
+      <a href="{{dashboardUrl}}/users/{{userId}}" class="button button-secondary">View User Profile</a>
+    </div>
+  </div>
+  
+  <div class="card-footer">
+    <p>This target was updated on {{formatDate updatedAt}}.</p>
+    <p>The employee will be notified of the changes and can track their progress in the dashboard.</p>
+  </div>
+</div>
+{{/base}} 

@@ -176,12 +176,12 @@ import { PayslipsModule } from './payslips/payslips.module';
 				synchronize: true,
 				logging: false,
 				extra: {
-					connectionLimit: parseInt(configService.get<string>('DB_CONNECTION_LIMIT') || '200000', 10), // High concurrency support
-					acquireTimeout: parseInt(configService.get<string>('DB_ACQUIRE_TIMEOUT') || '500000', 10), // 500 seconds
-					timeout: parseInt(configService.get<string>('DB_QUERY_TIMEOUT') || '60000', 10), // 1 minute
+					connectionLimit: parseInt(configService.get<string>('DB_CONNECTION_LIMIT') || '10', 10), // Reasonable connection limit
+					acquireTimeout: parseInt(configService.get<string>('DB_ACQUIRE_TIMEOUT') || '30000', 10), // 30 seconds
+					timeout: parseInt(configService.get<string>('DB_QUERY_TIMEOUT') || '30000', 10), // 30 seconds
 					reconnect: true,
-					idleTimeout: parseInt(configService.get<string>('DB_IDLE_TIMEOUT') || '60000', 10), // 1 minute
-					maxReconnects: parseInt(configService.get<string>('DB_MAX_RECONNECTS') || '5', 10),
+					idleTimeout: parseInt(configService.get<string>('DB_IDLE_TIMEOUT') || '300000', 10), // 5 minutes
+					maxReconnects: parseInt(configService.get<string>('DB_MAX_RECONNECTS') || '10', 10),
 					dateStrings: false,
 					ssl: configService.get<string>('NODE_ENV') === 'production' ? { rejectUnauthorized: false } : false,
 					// Additional MySQL optimizations for high load

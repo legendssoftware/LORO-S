@@ -59,7 +59,7 @@ export class SignUpInput {
   @IsNotEmpty()
   @IsEmail()
   @ApiProperty({
-    example: 'brandon@loro.co.za',
+    example: 'email/username.co.za',
     description: 'The email of the user',
   })
   email: string;
@@ -100,7 +100,7 @@ export class ForgotPasswordInput {
   @IsNotEmpty()
   @IsEmail()
   @ApiProperty({
-    example: 'brandon@loro.co.za',
+    example: 'email/username.co.za',
     description: 'The email of the user',
   })
   email: string;

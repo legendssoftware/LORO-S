@@ -60,10 +60,10 @@ export class LeadsReminderService {
   }
 
   /**
-   * Cron job that runs weekly on Mondays at 8:00 AM to check for stale leads
+   * Cron job that runs daily at 5:00 AM to check for stale leads
    * and send reminder emails to lead creators
    */
-  @Cron('0 8 * * 1') // Every Monday at 8:00 AM
+  @Cron(CronExpression.EVERY_DAY_AT_5AM) // Daily at 5:00 AM
   async handleWeeklyStaleLeadsReminders() {
     this.logger.log('Starting weekly stale leads reminder check...');
 

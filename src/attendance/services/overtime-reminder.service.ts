@@ -46,10 +46,9 @@ export class OvertimeReminderService {
 	}
 
 	/**
-	 * Runs every 5 minutes to check for employees working overtime
-	 * Smart logic: Only sends reminder 10+ minutes after organization close time
+	 * Runs daily at 5am to check for employees working overtime
 	 */
-	@Cron('*/5 * * * *', {
+	@Cron('0 0 5 * * *', {
 		name: 'overtime-reminder-check',
 		timeZone: 'Africa/Johannesburg',
 	})

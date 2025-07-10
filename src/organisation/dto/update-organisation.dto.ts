@@ -26,7 +26,7 @@ export class UpdateOrganisationDto extends PartialType(CreateOrganisationDto) {
 	@IsOptional()
 	@IsEmail()
 	@ApiProperty({
-		example: 'brandon@loro.co.za',
+		example: 'email/username.co.za',
 		description: 'The email of the organisation',
 	})
 	email: string;

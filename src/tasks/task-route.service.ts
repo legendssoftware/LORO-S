@@ -278,7 +278,7 @@ export class TaskRouteService {
 	/**
 	 * Plan routes for all tasks on a given date
 	 */
-	@Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+	@Cron(CronExpression.EVERY_DAY_AT_5AM)
 	async planRoutes(date: Date = new Date(), organisationRef?: string, branchId?: number): Promise<Route[]> {
 		const startOfDay = new Date(date);
 		startOfDay.setHours(0, 0, 0, 0);

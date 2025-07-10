@@ -22,6 +22,7 @@ import { CreateCheckInDto } from './dto/create-attendance-check-in.dto';
 import { CreateCheckOutDto } from './dto/create-attendance-check-out.dto';
 import { CreateBreakDto } from './dto/create-attendance-break.dto';
 import { OrganizationReportQueryDto } from './dto/organization-report-query.dto';
+import { RequestReportDto } from './dto/request-report.dto';
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { AuthGuard } from '../guards/auth.guard';
@@ -32,6 +33,7 @@ import { Attendance } from './entities/attendance.entity';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { User } from '../user/entities/user.entity';
 import { OvertimeReminderService } from './services/overtime-reminder.service';
+import { UserService } from '../user/user.service';
 
 // Reusable Schema Definitions for Swagger Documentation
 export class UserProfileSchema {
@@ -187,6 +189,7 @@ export class AttendanceController {
 		private readonly attendanceService: AttendanceService,
 		private readonly attendanceReportsService: AttendanceReportsService,
 		private readonly overtimeReminderService: OvertimeReminderService,
+		private readonly userService: UserService,
 	) {}
 
 	@Post('in')
@@ -3445,6 +3448,224 @@ Triggers the generation and distribution of comprehensive evening attendance rep
 		} catch (error) {
 			return {
 				message: `Error sending evening report: ${error.message}`,
+				timestamp: new Date().toISOString(),
+			};
+		}
+	}
+
+	@Post('reports/request')
+	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.HR, AccessLevel.MANAGER)
+	@ApiOperation({
+		summary: '📊 Request attendance report for personal viewing',
+		description: `
+# Personal Attendance Report Request
+
+Generates and sends a comprehensive attendance report of the specified type (morning or evening) directly to the requesting user. This provides on-demand access to attendance analytics and insights without affecting the automated report distribution system.
+
+## 🎯 **Request Features**
+- **On-Demand Generation**: Instant report generation based on current data
+- **Personal Delivery**: Report sent only to the requesting user's email
+- **Real-Time Data**: Uses the most current attendance and performance data
+- **Full Report Content**: Identical data to automated reports with complete analytics
+- **Custom Timing**: Available at any time, not restricted to scheduled report times
+
+## 📊 **Report Types Available**
+- **Morning Report**: Start-of-day attendance overview with punctuality analysis
+- **Evening Report**: End-of-day comprehensive performance and completion metrics
+- **Current Data**: Both reports use real-time data regardless of request time
+- **Historical Context**: Includes yesterday comparisons and trend analysis
+- **Branch Breakdown**: Detailed analytics by branch and department
+
+## 🔄 **Use Cases**
+- **Ad-Hoc Analysis**: Quick access to attendance insights for immediate decision-making
+- **Presentation Preparation**: Generate reports for meetings and presentations
+- **Performance Review**: Detailed data for employee performance evaluations
+- **Operational Planning**: Current metrics for scheduling and resource allocation
+- **Compliance Verification**: On-demand compliance checks and documentation
+
+## 📧 **Delivery & Data**
+- **Email Delivery**: Professional email report sent to requesting user only
+- **Data Response**: Complete report data returned in API response for integration
+- **Immediate Access**: No waiting for scheduled report times
+- **Privacy Focused**: Report sent only to authenticated requesting user
+- **Audit Trail**: Request logging for compliance and tracking purposes
+
+## 🔒 **Security & Access**
+- **Role-Based Access**: Limited to management and HR roles for data protection
+- **Organization Scope**: Reports limited to user's organization data only
+- **Secure Delivery**: Encrypted email transmission and secure API responses
+- **Access Logging**: Complete audit trail of report requests and deliveries
+- **Data Protection**: Full compliance with privacy and data protection regulations
+		`
+	})
+	@ApiBody({
+		type: RequestReportDto,
+		description: 'Request payload for generating attendance reports',
+		examples: {
+			morningReport: {
+				summary: '🌅 Morning Report Request',
+				description: 'Request morning attendance report with punctuality analysis',
+				value: {
+					reportType: 'morning'
+				}
+			},
+			eveningReport: {
+				summary: '🌆 Evening Report Request',
+				description: 'Request evening attendance report with completion metrics',
+				value: {
+					reportType: 'evening'
+				}
+			}
+		}
+	})
+	@ApiCreatedResponse({
+		description: '✅ Attendance report generated and sent successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Morning attendance report generated and sent successfully' },
+				reportType: { type: 'string', example: 'morning', description: 'Type of report that was generated' },
+				sentTo: { type: 'string', example: 'manager@company.com', description: 'Email address where report was sent' },
+				generatedAt: { type: 'string', format: 'date-time', example: '2024-03-15T10:30:00Z', description: 'Report generation timestamp' },
+				organizationId: { type: 'number', example: 123, description: 'Organization ID for the report' },
+				reportData: {
+					type: 'object',
+					description: 'Complete report data (structure varies by report type)',
+					properties: {
+						organizationName: { type: 'string', example: 'ABC Corporation' },
+						reportDate: { type: 'string', example: 'Friday, March 15th, 2024' },
+						summary: {
+							type: 'object',
+							properties: {
+								totalEmployees: { type: 'number', example: 125 },
+								presentCount: { type: 'number', example: 118 },
+								attendanceRate: { type: 'number', example: 94.4 },
+								totalActualHours: { type: 'number', example: 987.5 }
+							}
+						},
+						insights: {
+							type: 'array',
+							items: { type: 'string' },
+							example: ['Excellent attendance: 118/125 team present (94.4%)', 'Perfect punctuality: All present employees arrived on time']
+						},
+						recommendations: {
+							type: 'array',
+							items: { type: 'string' },
+							example: ['Continue current successful practices', 'Recognize punctual team members for their reliability']
+						}
+					}
+				}
+			},
+		},
+	})
+	@ApiBadRequestResponse({
+		description: '❌ Bad Request - Invalid report request',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Invalid report type specified' },
+				error: { type: 'string', example: 'Bad Request' },
+				statusCode: { type: 'number', example: 400 },
+				validTypes: {
+					type: 'array',
+					items: { type: 'string' },
+					example: ['morning', 'evening']
+				}
+			},
+		},
+	})
+	@ApiUnauthorizedResponse({
+		description: '🔒 Unauthorized - Insufficient permissions to request reports',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Insufficient permissions to request attendance reports' },
+				error: { type: 'string', example: 'Unauthorized' },
+				statusCode: { type: 'number', example: 401 },
+				requiredRoles: {
+					type: 'array',
+					items: { type: 'string' },
+					example: ['ADMIN', 'OWNER', 'HR', 'MANAGER']
+				}
+			},
+		},
+	})
+	@ApiForbiddenResponse({
+		description: '⛔ Forbidden - Access denied to attendance reports',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Access denied to attendance reporting features' },
+				error: { type: 'string', example: 'Forbidden' },
+				statusCode: { type: 'number', example: 403 }
+			},
+		},
+	})
+	@ApiInternalServerErrorResponse({
+		description: '💥 Internal Server Error - Report generation failed',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Report generation failed due to system error' },
+				error: { type: 'string', example: 'Internal Server Error' },
+				statusCode: { type: 'number', example: 500 }
+			},
+		},
+	})
+	async requestAttendanceReport(
+		@Body() requestDto: RequestReportDto,
+		@Req() req: AuthenticatedRequest,
+	) {
+		try {
+			const orgId = req.user?.org?.uid || req.user?.organisationRef;
+			const userId = req.user?.uid;
+
+			if (!orgId) {
+				return { message: 'Organization not found', statusCode: 400 };
+			}
+
+			if (!userId) {
+				return { message: 'User ID not found', statusCode: 400 };
+			}
+
+			// Get user details including email
+			const userResult = await this.userService.findOneByUid(userId);
+			
+			if (!userResult.user || !userResult.user.email) {
+				return { message: 'User email not found', statusCode: 400 };
+			}
+
+			const userEmail = userResult.user.email;
+			const { reportType } = requestDto;
+
+			if (!['morning', 'evening'].includes(reportType)) {
+				return { 
+					message: 'Invalid report type specified', 
+					statusCode: 400,
+					validTypes: ['morning', 'evening']
+				};
+			}
+
+			let reportData;
+			
+			if (reportType === 'morning') {
+				reportData = await this.attendanceReportsService.generateAndSendMorningReportToUser(orgId, userEmail);
+			} else {
+				reportData = await this.attendanceReportsService.generateAndSendEveningReportToUser(orgId, userEmail);
+			}
+
+			return {
+				message: `${reportType.charAt(0).toUpperCase() + reportType.slice(1)} attendance report generated and sent successfully`,
+				reportType,
+				sentTo: userEmail,
+				generatedAt: new Date().toISOString(),
+				organizationId: orgId,
+				reportData,
+			};
+		} catch (error) {
+			return {
+				message: `Error generating ${requestDto.reportType} report: ${error.message}`,
+				statusCode: 500,
 				timestamp: new Date().toISOString(),
 			};
 		}

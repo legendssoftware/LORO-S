@@ -841,9 +841,9 @@ export class LeadsService {
 	}
 
 	/**
-	 * AUTOMATED LEAD SCORING: Update lead scores every hour
+	 * AUTOMATED LEAD SCORING: Update lead scores daily at 5am
 	 */
-	@Cron('0 0 * * * *') // Every hour
+	@Cron('0 0 5 * * *') // Daily at 5am
 	async hourlyLeadScoring(): Promise<void> {
 		this.logger.log('Starting hourly lead scoring...');
 
@@ -896,9 +896,9 @@ export class LeadsService {
 	}
 
 	/**
-	 * AUTOMATED FOLLOW-UPS: Check for overdue follow-ups every 30 minutes
+	 * AUTOMATED FOLLOW-UPS: Check for overdue follow-ups daily at 5am
 	 */
-	@Cron('0 */30 * * * *') // Every 30 minutes
+	@Cron('0 0 5 * * *') // Daily at 5am
 	async checkOverdueFollowUps(): Promise<void> {
 		this.logger.log('Checking for overdue follow-ups...');
 
@@ -964,9 +964,9 @@ export class LeadsService {
 	}
 
 	/**
-	 * AUTOMATED TASK CREATION: Create tasks for idle leads (2+ days) daily at 8 AM
+	 * AUTOMATED TASK CREATION: Create tasks for idle leads (2+ days) daily at 5am
 	 */
-	@Cron('0 0 8 * * *') // Daily at 8 AM
+	@Cron('0 0 5 * * *') // Daily at 5am
 	async createTasksForIdleLeads(): Promise<void> {
 		this.logger.log('Creating tasks for idle leads...');
 
@@ -1052,9 +1052,9 @@ export class LeadsService {
 	}
 
 	/**
-	 * MONTHLY UNATTENDED LEADS EMAIL: Send monthly report on 28th
+	 * MONTHLY UNATTENDED LEADS EMAIL: Send monthly report daily at 5am
 	 */
-	@Cron('0 0 9 28 * *') // 28th of every month at 9 AM
+	@Cron('0 0 5 * * *') // Daily at 5am
 	async sendMonthlyUnattendedLeadsEmail(): Promise<void> {
 		this.logger.log('Sending monthly unattended leads email...');
 
