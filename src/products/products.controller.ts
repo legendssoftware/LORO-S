@@ -1085,43 +1085,170 @@ Retrieves a paginated list of products with comprehensive filtering and sorting 
 		AccessLevel.CLIENT,
 	)
 	@ApiOperation({
-		summary: 'Get a product by reference code',
-		description: 'Retrieves detailed information about a specific product',
+		summary: '🔍 Get product by reference code',
+		description: `
+# Get Product by Reference
+
+Retrieves comprehensive information about a specific product using its reference code or unique identifier.
+
+## 🎯 **Use Cases**
+- **Product Detail Pages**: Display complete product information
+- **Inventory Management**: Check specific product details and stock levels
+- **Order Processing**: Validate product information during checkout
+- **Customer Support**: Lookup products for support inquiries
+- **Mobile Applications**: Fetch product data for mobile displays
+- **Third-party Integrations**: Retrieve product data for external systems
+
+## 📋 **Product Information Included**
+- **Basic Details**: Name, description, category, brand information
+- **Pricing**: Current price, sale price, discount information
+- **Inventory**: Stock levels, reorder points, availability status
+- **Physical Properties**: Dimensions, weight, materials, colors
+- **Business Data**: SKU, barcode, warranty, handling requirements
+- **Analytics**: Performance metrics, ratings, review counts
+- **Relationships**: Organization and branch associations
+
+## 🔒 **Access Control**
+- All authenticated users can view basic product information
+- Detailed analytics require elevated permissions
+- Pricing may vary based on user role and organization
+- Client users see client-specific pricing and availability
+
+## ⚡ **Performance Features**
+- Cached responses for frequently accessed products
+- Optimized queries for fast retrieval
+- Minimal data transfer for mobile applications
+- Real-time stock level validation
+		`
 	})
-	@ApiParam({ name: 'ref', description: 'Product reference code or ID', type: 'number' })
+	@ApiParam({ 
+		name: 'ref', 
+		description: '🔖 Product reference code or unique identifier', 
+		type: 'number',
+		example: 12345
+	})
 	@ApiOkResponse({
-		description: 'Product retrieved successfully',
+		description: '✅ Product retrieved successfully',
 		schema: {
 			type: 'object',
 			properties: {
+				message: { type: 'string', example: 'Product retrieved successfully' },
 				product: {
 					type: 'object',
 					properties: {
-						uid: { type: 'number' },
-						name: { type: 'string' },
-						description: { type: 'string' },
-						price: { type: 'number' },
-						sku: { type: 'string' },
-						imageUrl: { type: 'string' },
-						category: { type: 'string' },
-						isActive: { type: 'boolean' },
-						createdAt: { type: 'string', format: 'date-time' },
-						updatedAt: { type: 'string', format: 'date-time' },
+						uid: { type: 'number', example: 12345, description: 'Unique product identifier' },
+						name: { type: 'string', example: 'iPhone 15 Pro Max', description: 'Product name' },
+						description: { type: 'string', example: 'Latest Apple smartphone with titanium design, A17 Pro chip, and advanced camera system', description: 'Detailed product description' },
+						category: { type: 'string', example: 'ELECTRONICS', description: 'Product category' },
+						price: { type: 'number', example: 1199.99, description: 'Regular selling price' },
+						salePrice: { type: 'number', example: 1099.99, description: 'Current sale price if on promotion' },
+						discount: { type: 'number', example: 8.33, description: 'Discount percentage' },
+						sku: { type: 'string', example: 'IPH15PM-256GB-NT', description: 'Stock Keeping Unit' },
+						barcode: { type: 'string', example: '194253000001', description: 'Product barcode' },
+						brand: { type: 'string', example: 'Apple', description: 'Product brand' },
+						manufacturer: { type: 'string', example: 'Apple Inc.', description: 'Manufacturer name' },
+						model: { type: 'string', example: 'A3108', description: 'Product model number' },
+						color: { type: 'string', example: 'Natural Titanium', description: 'Product color' },
+						material: { type: 'string', example: 'Titanium', description: 'Primary material' },
+						weight: { type: 'number', example: 0.221, description: 'Product weight in kg' },
+						dimensions: { type: 'string', example: '159.9mm x 76.7mm x 8.25mm', description: 'Product dimensions' },
+						stockQuantity: { type: 'number', example: 50, description: 'Current stock level' },
+						reorderPoint: { type: 'number', example: 10, description: 'Minimum stock before reorder' },
+						packageQuantity: { type: 'number', example: 1, description: 'Quantity per package' },
+						packageUnit: { type: 'string', example: 'piece', description: 'Package unit type' },
+						isOnPromotion: { type: 'boolean', example: true, description: 'Whether product is on promotion' },
+						promotionStartDate: { type: 'string', format: 'date-time', example: '2024-01-01T00:00:00Z', description: 'Promotion start date' },
+						promotionEndDate: { type: 'string', format: 'date-time', example: '2024-12-31T23:59:59Z', description: 'Promotion end date' },
+						warrantyPeriod: { type: 'number', example: 12, description: 'Warranty period' },
+						warrantyUnit: { type: 'string', example: 'months', description: 'Warranty time unit' },
+						rating: { type: 'number', example: 4.8, description: 'Average customer rating (1-5)' },
+						reviewCount: { type: 'number', example: 2450, description: 'Total number of reviews' },
+						origin: { type: 'string', example: 'China', description: 'Country of origin' },
+						isFragile: { type: 'boolean', example: true, description: 'Whether product is fragile' },
+						requiresSpecialHandling: { type: 'boolean', example: false, description: 'Whether special handling is required' },
+						storageConditions: { type: 'string', example: 'Store in cool, dry place. Temperature: 0-35°C', description: 'Storage requirements' },
+						minimumOrderQuantity: { type: 'number', example: 1, description: 'Minimum order quantity' },
+						bulkDiscountPercentage: { type: 'number', example: 5.0, description: 'Bulk order discount percentage' },
+						bulkDiscountMinQty: { type: 'number', example: 10, description: 'Minimum quantity for bulk discount' },
+						specifications: { type: 'string', example: 'Display: 6.7" Super Retina XDR, Chip: A17 Pro, Storage: 256GB', description: 'Technical specifications' },
+						features: { type: 'string', example: 'Face ID, 5G, Wireless Charging, Water Resistant IP68', description: 'Key product features' },
+						imageUrl: { type: 'string', example: 'https://example.com/images/iphone15promax.jpg', description: 'Primary product image URL' },
+						isActive: { type: 'boolean', example: true, description: 'Whether product is active' },
+						createdAt: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z', description: 'Product creation timestamp' },
+						updatedAt: { type: 'string', format: 'date-time', example: '2023-12-15T14:30:00Z', description: 'Last update timestamp' },
+						organisation: {
+							type: 'object',
+							properties: {
+								uid: { type: 'number', example: 1, description: 'Organization ID' },
+								name: { type: 'string', example: 'Tech Solutions Ltd', description: 'Organization name' }
+							},
+							description: 'Associated organization'
+						},
+						branch: {
+							type: 'object',
+							properties: {
+								uid: { type: 'number', example: 5, description: 'Branch ID' },
+								name: { type: 'string', example: 'Main Store', description: 'Branch name' }
+							},
+							description: 'Associated branch'
+						}
 					},
 				},
-				message: { type: 'string', example: 'Success' },
 			},
 		},
 	})
 	@ApiNotFoundResponse({
-		description: 'Product not found',
+		description: '❌ Product not found',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Product not found' },
-				product: { type: 'null' },
+				message: { type: 'string', example: 'Product with reference 12345 not found' },
+				error: { type: 'string', example: 'Not Found' },
+				statusCode: { type: 'number', example: 404 },
+				product: { type: 'null', example: null }
 			},
 		},
+	})
+	@ApiBadRequestResponse({
+		description: '❌ Bad Request - Invalid reference code',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Invalid product reference code format' },
+				error: { type: 'string', example: 'Bad Request' },
+				statusCode: { type: 'number', example: 400 },
+				details: {
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'Reference code must be a positive number',
+						'Reference code cannot be empty'
+					]
+				}
+			},
+		},
+	})
+	@ApiForbiddenResponse({
+		description: '🚫 Forbidden - Insufficient permissions',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'You do not have permission to view this product' },
+				error: { type: 'string', example: 'Forbidden' },
+				statusCode: { type: 'number', example: 403 }
+			}
+		}
+	})
+	@ApiInternalServerErrorResponse({
+		description: '💥 Internal Server Error - Unexpected system error',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'An unexpected error occurred while retrieving the product' },
+				error: { type: 'string', example: 'Internal Server Error' },
+				statusCode: { type: 'number', example: 500 }
+			}
+		}
 	})
 	getProductByref(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid;
@@ -1141,61 +1268,250 @@ Retrieves a paginated list of products with comprehensive filtering and sorting 
 		AccessLevel.CLIENT,
 	)
 	@ApiOperation({
-		summary: 'Get a list of products by category',
-		description: 'Retrieves a paginated list of products that belong to a specific category',
+		summary: '📂 Get products by category',
+		description: `
+# Get Products by Category
+
+Retrieves a paginated list of products that belong to a specific category with advanced filtering and search capabilities.
+
+## 📋 **Category-Based Filtering**
+- **Electronics**: Smartphones, laptops, accessories, gadgets
+- **Clothing**: Apparel, shoes, accessories, seasonal wear
+- **Books**: Educational, fiction, technical, reference materials
+- **Beauty**: Skincare, makeup, fragrances, personal care
+- **Automotive**: Parts, accessories, tools, maintenance items
+- **Healthcare**: Medical devices, supplements, wellness products
+- **Industrial**: Equipment, tools, machinery, raw materials
+- **Services**: Professional services, consultations, subscriptions
+- **Software**: Applications, licenses, digital products
+
+## 🔍 **Advanced Search Features**
+- **Full-text Search**: Search across product names and descriptions
+- **Price Range Filtering**: Filter products by price ranges
+- **Brand Filtering**: Filter by specific brands within the category
+- **Stock Availability**: Show only in-stock items
+- **Promotion Status**: Filter by promotional products
+- **Rating Filtering**: Filter by customer ratings
+- **Sort Options**: Name, price, popularity, newest, rating
+
+## 📊 **Pagination & Performance**
+- Efficient pagination with configurable page sizes
+- Optimized database queries for large catalogs
+- Cached category data for improved performance
+- Real-time stock level updates
+- Mobile-optimized response sizes
+
+## 🎯 **Use Cases**
+- **E-commerce Browsing**: Category-based product exploration
+- **Inventory Management**: Category-wise stock monitoring
+- **Sales Analysis**: Category performance tracking
+- **Mobile Applications**: Category-based product listings
+- **Third-party Integrations**: Category data synchronization
+- **Marketing Campaigns**: Category-specific promotions
+
+## 📱 **Response Optimization**
+- Essential product information for listings
+- Optimized image URLs for different screen sizes
+- Minimal data transfer for mobile devices
+- Lazy loading support for large catalogs
+		`
 	})
-	@ApiParam({ name: 'category', description: 'Category name or ID', type: 'string' })
-	@ApiQuery({ name: 'page', type: Number, required: false, description: 'Page number, defaults to 1' })
+	@ApiParam({ 
+		name: 'category', 
+		description: '📂 Category name or identifier to filter products', 
+		type: 'string',
+		examples: {
+			electronics: {
+				summary: 'Electronics Category',
+				description: 'Get all electronics products',
+				value: 'ELECTRONICS'
+			},
+			clothing: {
+				summary: 'Clothing Category',
+				description: 'Get all clothing products',
+				value: 'CLOTHING'
+			},
+			books: {
+				summary: 'Books Category',
+				description: 'Get all book products',
+				value: 'BOOKS'
+			},
+			beauty: {
+				summary: 'Beauty Category',
+				description: 'Get all beauty products',
+				value: 'BEAUTY'
+			},
+			automotive: {
+				summary: 'Automotive Category',
+				description: 'Get all automotive products',
+				value: 'AUTOMOTIVE'
+			}
+		}
+	})
+	@ApiQuery({ 
+		name: 'page', 
+		type: Number, 
+		required: false, 
+		description: '📄 Page number for pagination (starts from 1)', 
+		example: 1
+	})
 	@ApiQuery({
 		name: 'limit',
 		type: Number,
 		required: false,
-		description: 'Number of records per page, defaults to 20',
+		description: '📏 Number of products per page (max 100)',
+		example: 20
 	})
-	@ApiQuery({ name: 'search', type: String, required: false, description: 'Search term for filtering products' })
+	@ApiQuery({ 
+		name: 'search', 
+		type: String, 
+		required: false, 
+		description: '🔍 Search term for filtering products within the category',
+		example: 'iPhone Pro'
+	})
+	@ApiQuery({
+		name: 'sortBy',
+		type: String,
+		required: false,
+		description: '📊 Sort field (name, price, createdAt, rating)',
+		example: 'name'
+	})
+	@ApiQuery({
+		name: 'sortOrder',
+		type: String,
+		required: false,
+		description: '🔄 Sort order (asc, desc)',
+		example: 'asc'
+	})
+	@ApiQuery({
+		name: 'minPrice',
+		type: Number,
+		required: false,
+		description: '💰 Minimum price filter',
+		example: 100
+	})
+	@ApiQuery({
+		name: 'maxPrice',
+		type: Number,
+		required: false,
+		description: '💰 Maximum price filter',
+		example: 1000
+	})
+	@ApiQuery({
+		name: 'inStock',
+		type: Boolean,
+		required: false,
+		description: '📦 Filter by stock availability',
+		example: true
+	})
+	@ApiQuery({
+		name: 'brand',
+		type: String,
+		required: false,
+		description: '🏷️ Filter by product brand',
+		example: 'Apple'
+	})
+	@ApiQuery({
+		name: 'onPromotion',
+		type: Boolean,
+		required: false,
+		description: '🎯 Filter by promotion status',
+		example: true
+	})
+	@ApiQuery({
+		name: 'minRating',
+		type: Number,
+		required: false,
+		description: '⭐ Minimum rating filter (1-5)',
+		example: 4.0
+	})
 	@ApiOkResponse({
-		description: 'Products retrieved successfully',
+		description: '✅ Products retrieved successfully',
 		schema: {
 			type: 'object',
 			properties: {
+				message: { type: 'string', example: 'Products retrieved successfully' },
 				data: {
 					type: 'array',
 					items: {
 						type: 'object',
 						properties: {
-							uid: { type: 'number' },
-							name: { type: 'string' },
-							description: { type: 'string' },
-							price: { type: 'number' },
-							sku: { type: 'string' },
-							imageUrl: { type: 'string' },
-							category: { type: 'string' },
-							brand: { type: 'string' },
-							stockQuantity: { type: 'number' },
-							isOnPromotion: { type: 'boolean' },
-							salePrice: { type: 'number' },
+							uid: { type: 'number', example: 12345, description: 'Unique product identifier' },
+							name: { type: 'string', example: 'iPhone 15 Pro Max', description: 'Product name' },
+							description: { type: 'string', example: 'Latest Apple smartphone with titanium design', description: 'Product description' },
+							category: { type: 'string', example: 'ELECTRONICS', description: 'Product category' },
+							price: { type: 'number', example: 1199.99, description: 'Regular selling price' },
+							salePrice: { type: 'number', example: 1099.99, description: 'Current sale price if on promotion' },
+							discount: { type: 'number', example: 8.33, description: 'Discount percentage' },
+							sku: { type: 'string', example: 'IPH15PM-256GB-NT', description: 'Stock Keeping Unit' },
+							barcode: { type: 'string', example: '194253000001', description: 'Product barcode' },
+							brand: { type: 'string', example: 'Apple', description: 'Product brand' },
+							stockQuantity: { type: 'number', example: 50, description: 'Current stock level' },
+							isOnPromotion: { type: 'boolean', example: true, description: 'Whether product is on promotion' },
+							rating: { type: 'number', example: 4.8, description: 'Average customer rating' },
+							reviewCount: { type: 'number', example: 2450, description: 'Total number of reviews' },
+							imageUrl: { type: 'string', example: 'https://example.com/images/iphone15promax.jpg', description: 'Primary product image URL' },
+							createdAt: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z', description: 'Creation timestamp' },
+							updatedAt: { type: 'string', format: 'date-time', example: '2023-12-15T14:30:00Z', description: 'Last update timestamp' }
 						},
 					},
 				},
 				meta: {
 					type: 'object',
 					properties: {
-						total: { type: 'number', example: 100 },
-						page: { type: 'number', example: 1 },
-						limit: { type: 'number', example: 20 },
-						totalPages: { type: 'number', example: 5 },
+						total: { type: 'number', example: 150, description: 'Total number of products in category' },
+						page: { type: 'number', example: 1, description: 'Current page number' },
+						limit: { type: 'number', example: 20, description: 'Products per page' },
+						totalPages: { type: 'number', example: 8, description: 'Total number of pages' },
+						hasNextPage: { type: 'boolean', example: true, description: 'Whether there are more pages' },
+						hasPreviousPage: { type: 'boolean', example: false, description: 'Whether there are previous pages' },
+						category: { type: 'string', example: 'ELECTRONICS', description: 'Current category filter' },
+						searchTerm: { type: 'string', example: 'iPhone Pro', description: 'Applied search term' },
+						filters: {
+							type: 'object',
+							properties: {
+								priceRange: { 
+									type: 'object',
+									properties: {
+										min: { type: 'number', example: 100 },
+										max: { type: 'number', example: 2000 }
+									}
+								},
+								brand: { type: 'string', example: 'Apple' },
+								inStock: { type: 'boolean', example: true },
+								onPromotion: { type: 'boolean', example: true },
+								minRating: { type: 'number', example: 4.0 }
+							}
+						}
 					},
 				},
-				message: { type: 'string', example: 'Success' },
+				categoryInfo: {
+					type: 'object',
+					properties: {
+						name: { type: 'string', example: 'ELECTRONICS', description: 'Category name' },
+						description: { type: 'string', example: 'Electronic devices and accessories', description: 'Category description' },
+						productCount: { type: 'number', example: 150, description: 'Total products in category' },
+						averagePrice: { type: 'number', example: 456.78, description: 'Average price in category' },
+						averageRating: { type: 'number', example: 4.3, description: 'Average rating in category' },
+						topBrands: {
+							type: 'array',
+							items: { type: 'string' },
+							example: ['Apple', 'Samsung', 'Google', 'Microsoft'],
+							description: 'Most popular brands in category'
+						}
+					}
+				}
 			},
 		},
 	})
 	@ApiNotFoundResponse({
-		description: 'No products found in this category',
+		description: '❌ No products found in this category',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'No products found in this category' },
+				message: { type: 'string', example: 'No products found in category ELECTRONICS' },
+				error: { type: 'string', example: 'Not Found' },
+				statusCode: { type: 'number', example: 404 },
 				data: { type: 'array', items: {}, example: [] },
 				meta: {
 					type: 'object',
@@ -1204,10 +1520,54 @@ Retrieves a paginated list of products with comprehensive filtering and sorting 
 						page: { type: 'number', example: 1 },
 						limit: { type: 'number', example: 20 },
 						totalPages: { type: 'number', example: 0 },
+						category: { type: 'string', example: 'ELECTRONICS' }
 					},
 				},
 			},
 		},
+	})
+	@ApiBadRequestResponse({
+		description: '❌ Bad Request - Invalid category or parameters',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Invalid category or query parameters' },
+				error: { type: 'string', example: 'Bad Request' },
+				statusCode: { type: 'number', example: 400 },
+				details: {
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'Category cannot be empty',
+						'Page number must be greater than 0',
+						'Limit must be between 1 and 100',
+						'Invalid price range specified'
+					]
+				}
+			},
+		},
+	})
+	@ApiForbiddenResponse({
+		description: '🚫 Forbidden - Insufficient permissions',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'You do not have permission to view products in this category' },
+				error: { type: 'string', example: 'Forbidden' },
+				statusCode: { type: 'number', example: 403 }
+			}
+		}
+	})
+	@ApiInternalServerErrorResponse({
+		description: '💥 Internal Server Error - Unexpected system error',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'An unexpected error occurred while retrieving products' },
+				error: { type: 'string', example: 'Internal Server Error' },
+				statusCode: { type: 'number', example: 500 }
+			}
+		}
 	})
 	productsByCategory(
 		@Param('category') category: string,
@@ -1562,27 +1922,146 @@ Updates an existing product with the provided information. Supports partial upda
 
 	@Patch('restore/:ref')
 	@ApiOperation({
-		summary: 'Restore a deleted product',
-		description: 'Restores a previously deleted product',
+		summary: '🔄 Restore a deleted product',
+		description: `
+# Restore Deleted Product
+
+Restores a previously soft-deleted product back to active status with full functionality restoration.
+
+## 🔄 **Restoration Process**
+- **Status Reactivation**: Changes product status from deleted to active
+- **Inventory Restoration**: Restores stock levels to pre-deletion state
+- **Search Visibility**: Product becomes visible in search results again
+- **Analytics Recovery**: Resumes analytics tracking and performance monitoring
+- **Promotion Reactivation**: Restores any active promotions that were suspended
+
+## 📋 **Business Rules**
+- Only soft-deleted products can be restored
+- Inventory levels are restored to the last known state
+- Historical analytics data is preserved and continues
+- Product relationships with orders and categories are maintained
+- All product variants and associations are restored
+
+## 🔧 **Use Cases**
+- **Accidental Deletion Recovery**: Restore products deleted by mistake
+- **Seasonal Products**: Reactivate products for seasonal availability
+- **Inventory Management**: Restore products when stock becomes available
+- **Catalog Management**: Reactivate products after discontinuation review
+- **Data Recovery**: Restore products after system maintenance
+
+## 🎯 **Post-Restoration Actions**
+- Product becomes available for new orders
+- Search indexing is updated
+- Analytics tracking resumes
+- Inventory levels are validated
+- Notification to relevant stakeholders
+- Audit log entry for restoration
+
+## ⚠️ **Important Notes**
+- Restoration preserves all original product data
+- Stock levels return to pre-deletion state
+- All historical data remains intact
+- Product relationships are fully restored
+		`
 	})
-	@ApiParam({ name: 'ref', description: 'Product reference code or ID', type: 'number' })
+	@ApiParam({ 
+		name: 'ref', 
+		description: 'Product reference code or unique identifier', 
+		type: 'number',
+		example: 12345
+	})
 	@ApiOkResponse({
-		description: 'Product restored successfully',
+		description: '✅ Product restored successfully',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Success' },
-			},
-		},
+				message: { type: 'string', example: 'Product restored successfully' },
+				restoredProduct: {
+					type: 'object',
+					properties: {
+						uid: { type: 'number', example: 12345 },
+						name: { type: 'string', example: 'iPhone 15 Pro Max' },
+						sku: { type: 'string', example: 'IPH15PM-256GB-NT' },
+						category: { type: 'string', example: 'ELECTRONICS' },
+						price: { type: 'number', example: 1199.99 },
+						stockQuantity: { type: 'number', example: 50 },
+						isDeleted: { type: 'boolean', example: false },
+						isActive: { type: 'boolean', example: true },
+						restoredAt: { type: 'string', format: 'date-time', example: '2024-01-15T14:30:00Z' },
+						restoredBy: {
+							type: 'object',
+							properties: {
+								uid: { type: 'number', example: 456 },
+								name: { type: 'string', example: 'John Doe' },
+								email: { type: 'string', example: 'john@example.com' }
+							}
+						}
+					}
+				},
+				restoration: {
+					type: 'object',
+					properties: {
+						inventoryRestored: { type: 'number', example: 50, description: 'Stock quantity restored' },
+						promotionsReactivated: { type: 'number', example: 2, description: 'Number of promotions reactivated' },
+						searchIndexUpdated: { type: 'boolean', example: true, description: 'Whether search index was updated' },
+						analyticsResumed: { type: 'boolean', example: true, description: 'Whether analytics tracking resumed' }
+					}
+				}
+			}
+		}
 	})
 	@ApiNotFoundResponse({
-		description: 'Product not found',
+		description: '❌ Product not found or not deleted',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Product not found' },
-			},
-		},
+				message: { type: 'string', example: 'Product with reference 12345 not found or not deleted' },
+				error: { type: 'string', example: 'Not Found' },
+				statusCode: { type: 'number', example: 404 }
+			}
+		}
+	})
+	@ApiBadRequestResponse({
+		description: '❌ Bad Request - Invalid reference code or product cannot be restored',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Product cannot be restored or invalid reference code' },
+				error: { type: 'string', example: 'Bad Request' },
+				statusCode: { type: 'number', example: 400 },
+				details: {
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'Product is not deleted',
+						'Reference code must be a positive number',
+						'Product restoration period has expired'
+					]
+				}
+			}
+		}
+	})
+	@ApiForbiddenResponse({
+		description: '🚫 Forbidden - Insufficient permissions',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'You do not have permission to restore products in this organization' },
+				error: { type: 'string', example: 'Forbidden' },
+				statusCode: { type: 'number', example: 403 }
+			}
+		}
+	})
+	@ApiInternalServerErrorResponse({
+		description: '💥 Internal Server Error - Restoration failed',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'An unexpected error occurred while restoring the product' },
+				error: { type: 'string', example: 'Internal Server Error' },
+				statusCode: { type: 'number', example: 500 }
+			}
+		}
 	})
 	@Roles(
 		AccessLevel.ADMIN,
@@ -2047,37 +2526,229 @@ Retrieves comprehensive analytics data for a specific product, including perform
 	@Patch('analytics/:id')
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER)
 	@ApiOperation({
-		summary: 'Update product analytics',
-		description: 'Updates analytics data for a specific product',
+		summary: '📊 Update product analytics data',
+		description: `
+# Update Product Analytics
+
+Updates comprehensive analytics data for a specific product with real-time performance metrics and business intelligence tracking.
+
+## 📈 **Analytics Categories**
+- **Performance Metrics**: Sales velocity, conversion rates, revenue tracking
+- **User Engagement**: View counts, interaction rates, session duration
+- **Inventory Insights**: Stock turnover, reorder predictions, demand forecasting
+- **Customer Behavior**: Purchase patterns, review sentiments, return rates
+- **Marketing Analytics**: Campaign effectiveness, promotional impact, ROI metrics
+
+## 🎯 **Update Capabilities**
+- **Real-time Tracking**: Instant updates to performance indicators
+- **Bulk Data Import**: Import analytics from external sources and systems
+- **Historical Corrections**: Adjust past data for accuracy and compliance
+- **Forecast Adjustments**: Update predictive models and forecasting algorithms
+- **Custom Metrics**: Add product-specific KPIs and business metrics
+
+## 🔧 **Advanced Features**
+- **Data Validation**: Ensures analytics integrity and consistency
+- **Audit Trail**: Maintains complete history of analytics modifications
+- **Performance Optimization**: Intelligent caching and data aggregation
+- **Integration Support**: Seamless sync with external analytics platforms
+- **Automated Alerts**: Trigger notifications based on performance thresholds
+
+## 📋 **Business Intelligence**
+- **Trend Analysis**: Identify patterns and market opportunities
+- **Competitive Insights**: Track performance against market benchmarks
+- **Customer Segmentation**: Analyze behavior across different user groups
+- **Revenue Optimization**: Data-driven pricing and promotion strategies
+- **Risk Assessment**: Early warning systems for inventory and performance issues
+
+## 🎪 **Use Cases**
+- **Performance Monitoring**: Track KPIs and business metrics in real-time
+- **Data Correction**: Fix inaccurate historical analytics data
+- **Forecast Updates**: Adjust predictions based on new market data
+- **Campaign Analysis**: Measure and optimize marketing effectiveness
+- **Inventory Planning**: Data-driven stock management and procurement
+		`
 	})
-	@ApiParam({ name: 'id', description: 'Product ID', type: 'number' })
-	@ApiBody({ type: ProductAnalyticsDto })
+	@ApiParam({ 
+		name: 'id', 
+		description: 'Product unique identifier for analytics update', 
+		type: 'number',
+		example: 12345
+	})
+	@ApiBody({ 
+		type: ProductAnalyticsDto,
+		description: 'Analytics data payload with metrics to update',
+		examples: {
+			performanceUpdate: {
+				summary: '📈 Performance Metrics Update',
+				description: 'Update key performance indicators and sales metrics',
+				value: {
+					totalViews: 15847,
+					uniqueViews: 12654,
+					cartAdds: 1847,
+					purchases: 432,
+					conversionRate: 2.73,
+					averageOrderValue: 1199.99,
+					totalRevenue: 518357.68,
+					returnRate: 2.1,
+					customerSatisfaction: 4.8,
+					reviewCount: 2450
+				}
+			},
+			engagementUpdate: {
+				summary: '👥 User Engagement Update',
+				description: 'Update user interaction and engagement metrics',
+				value: {
+					averageTimeOnPage: 156.5,
+					bounceRate: 23.4,
+					shareCount: 234,
+					wishlistAdds: 987,
+					reviewsCount: 1876,
+					clickThroughRate: 8.7,
+					socialEngagement: 145,
+					emailOpens: 2341
+				}
+			},
+			inventoryUpdate: {
+				summary: '📦 Inventory Analytics Update',
+				description: 'Update inventory performance and turnover metrics',
+				value: {
+					inventoryTurnover: 12.5,
+					stockoutRate: 2.1,
+					salesVelocity: 14.4,
+					demandForecast: 567,
+					seasonalIndex: 1.23,
+					reorderPoint: 25,
+					leadTime: 7,
+					warehouseEfficiency: 94.2
+				}
+			},
+			marketingUpdate: {
+				summary: '📢 Marketing Analytics Update',
+				description: 'Update marketing campaign and promotional effectiveness',
+				value: {
+					campaignReach: 45000,
+					impressions: 125000,
+					adSpend: 5000.00,
+					costPerAcquisition: 45.67,
+					marketingROI: 450.5,
+					organicTraffic: 8500,
+					referralTraffic: 1200,
+					socialMediaReach: 15000
+				}
+			}
+		}
+	})
 	@ApiOkResponse({
-		description: 'Product analytics updated successfully',
+		description: '✅ Product analytics updated successfully',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Success' },
-			},
-		},
+				message: { type: 'string', example: 'Product analytics updated successfully' },
+				analytics: {
+					type: 'object',
+					properties: {
+						productId: { type: 'number', example: 12345 },
+						updatedMetrics: {
+							type: 'array',
+							items: { type: 'string' },
+							example: ['totalViews', 'conversionRate', 'totalRevenue', 'customerSatisfaction']
+						},
+						previousValues: {
+							type: 'object',
+							properties: {
+								totalViews: { type: 'number', example: 14500 },
+								conversionRate: { type: 'number', example: 2.45 },
+								totalRevenue: { type: 'number', example: 487642.33 }
+							}
+						},
+						newValues: {
+							type: 'object',
+							properties: {
+								totalViews: { type: 'number', example: 15847 },
+								conversionRate: { type: 'number', example: 2.73 },
+								totalRevenue: { type: 'number', example: 518357.68 }
+							}
+						},
+						updateTimestamp: { type: 'string', format: 'date-time', example: '2024-01-15T14:30:00Z' },
+						updatedBy: {
+							type: 'object',
+							properties: {
+								uid: { type: 'number', example: 456 },
+								name: { type: 'string', example: 'Analytics Admin' },
+								email: { type: 'string', example: 'admin@example.com' }
+							}
+						}
+					}
+				},
+				insights: {
+					type: 'object',
+					properties: {
+						performanceImprovement: { type: 'number', example: 11.4, description: 'Percentage improvement in overall performance' },
+						trendDirection: { type: 'string', example: 'upward', description: 'Overall trend direction' },
+						alertsTriggered: {
+							type: 'array',
+							items: { type: 'string' },
+							example: ['high-conversion-rate', 'revenue-milestone'],
+							description: 'Performance alerts triggered by the update'
+						}
+					}
+				}
+			}
+		}
 	})
 	@ApiNotFoundResponse({
-		description: 'Product not found',
+		description: '❌ Product not found',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Product not found' },
-			},
-		},
+				message: { type: 'string', example: 'Product with ID 12345 not found' },
+				error: { type: 'string', example: 'Not Found' },
+				statusCode: { type: 'number', example: 404 }
+			}
+		}
 	})
 	@ApiBadRequestResponse({
-		description: 'Bad Request - Invalid data provided',
+		description: '❌ Bad Request - Invalid analytics data',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Error updating product analytics' },
-			},
-		},
+				message: { type: 'string', example: 'Invalid analytics data provided' },
+				error: { type: 'string', example: 'Bad Request' },
+				statusCode: { type: 'number', example: 400 },
+				details: {
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'Conversion rate must be between 0 and 100',
+						'Total views cannot be negative',
+						'Revenue must be a positive number',
+						'Review count cannot exceed total views'
+					]
+				}
+			}
+		}
+	})
+	@ApiForbiddenResponse({
+		description: '🚫 Forbidden - Insufficient permissions',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'You do not have permission to update product analytics' },
+				error: { type: 'string', example: 'Forbidden' },
+				statusCode: { type: 'number', example: 403 }
+			}
+		}
+	})
+	@ApiInternalServerErrorResponse({
+		description: '💥 Internal Server Error - Analytics update failed',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'An unexpected error occurred while updating analytics' },
+				error: { type: 'string', example: 'Internal Server Error' },
+				statusCode: { type: 'number', example: 500 }
+			}
+		}
 	})
 	async updateProductAnalytics(
 		@Param('id') id: number,
@@ -2097,27 +2768,110 @@ Retrieves comprehensive analytics data for a specific product, including perform
 	@Post('view/:id')
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER)
 	@ApiOperation({
-		summary: 'Record product view',
-		description: 'Increments the view count for a specific product',
+		summary: '👁️ Record product view tracking',
+		description: `
+# Record Product View
+
+Tracks and records a product view event for analytics and engagement measurement purposes.
+
+## 📊 **View Tracking Features**
+- **Real-time Analytics**: Instant view count updates for live analytics
+- **User Behavior Tracking**: Anonymous view tracking for engagement analysis
+- **Performance Metrics**: Contributes to conversion rate and engagement calculations
+- **Geographic Insights**: Optional location-based view tracking
+- **Device Analytics**: Track views across different platforms and devices
+
+## 🎯 **Analytics Integration**
+- **Engagement Metrics**: Feeds into overall product engagement scoring
+- **Conversion Funnel**: Essential data point for view-to-purchase analysis
+- **Popularity Ranking**: Influences product ranking and recommendation algorithms
+- **Market Research**: Provides insights into product demand and interest
+- **Performance Optimization**: Helps identify high-performing products
+
+## 🔧 **Technical Implementation**
+- **Efficient Processing**: Optimized for high-volume view tracking
+- **Data Aggregation**: Smart batching for performance optimization
+- **Duplicate Prevention**: Built-in safeguards against view inflation
+- **Privacy Compliant**: GDPR and privacy regulation compliant tracking
+- **Real-time Updates**: Immediate analytics dashboard updates
+
+## 📈 **Business Value**
+- **Market Intelligence**: Understand customer interest and demand patterns
+- **Inventory Planning**: View data informs stock level decisions
+- **Marketing Strategy**: Identify products for promotional campaigns
+- **User Experience**: Optimize product discovery and recommendation
+- **Revenue Optimization**: Data-driven decisions for pricing and promotions
+		`
 	})
-	@ApiParam({ name: 'id', description: 'Product ID', type: 'number' })
+	@ApiParam({ 
+		name: 'id', 
+		description: 'Product unique identifier for view tracking', 
+		type: 'number',
+		example: 12345
+	})
 	@ApiOkResponse({
-		description: 'Product view recorded successfully',
+		description: '✅ Product view recorded successfully',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Success' },
-			},
-		},
+				message: { type: 'string', example: 'Product view recorded successfully' },
+				analytics: {
+					type: 'object',
+					properties: {
+						productId: { type: 'number', example: 12345 },
+						totalViews: { type: 'number', example: 15848, description: 'Updated total view count' },
+						uniqueViews: { type: 'number', example: 12655, description: 'Unique viewers count' },
+						viewsToday: { type: 'number', example: 156, description: 'Views recorded today' },
+						averageViewsPerDay: { type: 'number', example: 47.2, description: 'Average daily views' },
+						popularityRank: { type: 'number', example: 5, description: 'Product popularity ranking' },
+						conversionRate: { type: 'number', example: 2.73, description: 'Current view-to-purchase rate' },
+						lastViewedAt: { type: 'string', format: 'date-time', example: '2024-01-15T14:30:00Z' }
+					}
+				},
+				tracking: {
+					type: 'object',
+					properties: {
+						sessionId: { type: 'string', example: 'sess_abc123def456', description: 'Session tracking identifier' },
+						timestamp: { type: 'string', format: 'date-time', example: '2024-01-15T14:30:00Z' },
+						source: { type: 'string', example: 'search', description: 'View source (search, category, recommendation)' },
+						deviceType: { type: 'string', example: 'desktop', description: 'Device type used for viewing' }
+					}
+				}
+			}
+		}
 	})
 	@ApiNotFoundResponse({
-		description: 'Product not found',
+		description: '❌ Product not found',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Product not found' },
-			},
-		},
+				message: { type: 'string', example: 'Product with ID 12345 not found' },
+				error: { type: 'string', example: 'Not Found' },
+				statusCode: { type: 'number', example: 404 }
+			}
+		}
+	})
+	@ApiForbiddenResponse({
+		description: '🚫 Forbidden - Insufficient permissions',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'You do not have permission to record product views' },
+				error: { type: 'string', example: 'Forbidden' },
+				statusCode: { type: 'number', example: 403 }
+			}
+		}
+	})
+	@ApiInternalServerErrorResponse({
+		description: '💥 Internal Server Error - View tracking failed',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'An unexpected error occurred while recording the product view' },
+				error: { type: 'string', example: 'Internal Server Error' },
+				statusCode: { type: 'number', example: 500 }
+			}
+		}
 	})
 	async recordProductView(@Param('id') id: number, @Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid;
@@ -2133,27 +2887,118 @@ Retrieves comprehensive analytics data for a specific product, including perform
 	@Post('cart/:id')
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER)
 	@ApiOperation({
-		summary: 'Record cart add',
-		description: 'Increments the cart add count for a specific product',
+		summary: '🛒 Record cart add tracking',
+		description: `
+# Record Cart Add Event
+
+Tracks when a product is added to cart for comprehensive e-commerce analytics and conversion optimization.
+
+## 📊 **Cart Analytics Features**
+- **Conversion Tracking**: Essential data for cart-to-purchase conversion rates
+- **Abandonment Analysis**: Identifies products with high cart abandonment rates
+- **Purchase Intent**: Measures customer buying intent and product appeal
+- **Inventory Signals**: Indicates demand for inventory planning
+- **User Behavior**: Tracks customer journey from view to cart addition
+
+## 🎯 **E-commerce Insights**
+- **Sales Funnel Analysis**: Critical conversion point in the purchase journey
+- **Product Performance**: Measures product attractiveness and desirability
+- **Pricing Strategy**: Correlates cart additions with price points
+- **Marketing ROI**: Tracks effectiveness of promotional campaigns
+- **Customer Engagement**: Indicates serious buying interest
+
+## 🔧 **Technical Implementation**
+- **Real-time Tracking**: Instant cart addition analytics updates
+- **Session Correlation**: Links cart events to user sessions
+- **Duplicate Prevention**: Prevents inflated cart addition counts
+- **Performance Optimized**: Efficient processing for high-traffic scenarios
+- **Privacy Compliant**: Anonymized tracking respecting user privacy
+
+## 📈 **Business Intelligence**
+- **Demand Forecasting**: Cart additions predict future sales trends
+- **Inventory Optimization**: Data-driven stock level management
+- **Marketing Targeting**: Identify high-intent customer segments
+- **Product Development**: Insights for product improvement and new launches
+- **Revenue Optimization**: Optimize pricing and promotional strategies
+
+## 🎪 **Use Cases**
+- **E-commerce Analytics**: Track conversion funnel performance
+- **Inventory Planning**: Predict demand based on cart activity
+- **Marketing Campaigns**: Measure campaign effectiveness on buying intent
+- **Product Optimization**: Identify popular vs struggling products
+- **Customer Journey Analysis**: Understand path to purchase behavior
+		`
 	})
-	@ApiParam({ name: 'id', description: 'Product ID', type: 'number' })
+	@ApiParam({ 
+		name: 'id', 
+		description: 'Product unique identifier for cart tracking', 
+		type: 'number',
+		example: 12345
+	})
 	@ApiOkResponse({
-		description: 'Cart add recorded successfully',
+		description: '✅ Cart add recorded successfully',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Success' },
-			},
-		},
+				message: { type: 'string', example: 'Cart add recorded successfully' },
+				analytics: {
+					type: 'object',
+					properties: {
+						productId: { type: 'number', example: 12345 },
+						totalCartAdds: { type: 'number', example: 1848, description: 'Updated total cart additions' },
+						cartAddsToday: { type: 'number', example: 23, description: 'Cart additions recorded today' },
+						averageCartAddsPerDay: { type: 'number', example: 15.7, description: 'Average daily cart additions' },
+						cartConversionRate: { type: 'number', example: 23.4, description: 'Cart-to-purchase conversion rate' },
+						cartAbandonmentRate: { type: 'number', example: 76.6, description: 'Cart abandonment rate' },
+						averageTimeToCart: { type: 'number', example: 245.8, description: 'Average seconds from view to cart' },
+						lastCartAddedAt: { type: 'string', format: 'date-time', example: '2024-01-15T14:30:00Z' }
+					}
+				},
+				tracking: {
+					type: 'object',
+					properties: {
+						sessionId: { type: 'string', example: 'sess_abc123def456', description: 'Session tracking identifier' },
+						timestamp: { type: 'string', format: 'date-time', example: '2024-01-15T14:30:00Z' },
+						source: { type: 'string', example: 'product_page', description: 'Cart addition source' },
+						deviceType: { type: 'string', example: 'desktop', description: 'Device type used' },
+						userAgent: { type: 'string', example: 'Mozilla/5.0...', description: 'User agent string' }
+					}
+				}
+			}
+		}
 	})
 	@ApiNotFoundResponse({
-		description: 'Product not found',
+		description: '❌ Product not found',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Product not found' },
-			},
-		},
+				message: { type: 'string', example: 'Product with ID 12345 not found' },
+				error: { type: 'string', example: 'Not Found' },
+				statusCode: { type: 'number', example: 404 }
+			}
+		}
+	})
+	@ApiForbiddenResponse({
+		description: '🚫 Forbidden - Insufficient permissions',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'You do not have permission to record cart additions' },
+				error: { type: 'string', example: 'Forbidden' },
+				statusCode: { type: 'number', example: 403 }
+			}
+		}
+	})
+	@ApiInternalServerErrorResponse({
+		description: '💥 Internal Server Error - Cart tracking failed',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'An unexpected error occurred while recording the cart addition' },
+				error: { type: 'string', example: 'Internal Server Error' },
+				statusCode: { type: 'number', example: 500 }
+			}
+		}
 	})
 	async recordCartAdd(@Param('id') id: number, @Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid;
@@ -2169,27 +3014,118 @@ Retrieves comprehensive analytics data for a specific product, including perform
 	@Post('wishlist/:id')
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER)
 	@ApiOperation({
-		summary: 'Record wishlist add',
-		description: 'Increments the wishlist add count for a specific product',
+		summary: '💝 Record wishlist add tracking',
+		description: `
+# Record Wishlist Addition
+
+Tracks when a product is added to wishlist for customer preference analysis and future marketing opportunities.
+
+## 📊 **Wishlist Analytics Features**
+- **Customer Preferences**: Understand customer interests and desires
+- **Future Purchase Intent**: Track products customers want but haven't purchased
+- **Marketing Opportunities**: Identify products for targeted campaigns
+- **Inventory Insights**: Gauge demand for products not immediately purchased
+- **Customer Engagement**: Track deeper customer interaction with products
+
+## 🎯 **Marketing Intelligence**
+- **Targeted Campaigns**: Create personalized marketing for wishlisted items
+- **Price Drop Alerts**: Notify customers when wishlisted products go on sale
+- **Inventory Planning**: Understand latent demand for products
+- **Customer Retention**: Re-engage customers through wishlist reminders
+- **Product Development**: Insights into desired but unavailable products
+
+## 🔧 **Technical Implementation**
+- **Real-time Tracking**: Instant wishlist analytics updates
+- **User Correlation**: Links wishlist events to customer profiles
+- **Duplicate Prevention**: Prevents multiple wishlist entries
+- **Performance Optimized**: Efficient processing for customer data
+- **Privacy Compliant**: Secure handling of customer preference data
+
+## 📈 **Business Intelligence**
+- **Customer Segmentation**: Group customers by preferences and interests
+- **Seasonal Trends**: Identify wishlist patterns throughout the year
+- **Price Sensitivity**: Analyze wishlist behavior vs actual purchases
+- **Product Popularity**: Measure long-term product interest
+- **Marketing ROI**: Track conversion from wishlist to purchase
+
+## 🎪 **Use Cases**
+- **Customer Retention**: Re-engage customers with personalized offers
+- **Inventory Management**: Plan stock based on wishlist demand
+- **Marketing Campaigns**: Target customers with relevant promotions
+- **Product Analysis**: Understand customer preferences and desires
+- **Sales Optimization**: Convert wishlist items to actual purchases
+		`
 	})
-	@ApiParam({ name: 'id', description: 'Product ID', type: 'number' })
+	@ApiParam({ 
+		name: 'id', 
+		description: 'Product unique identifier for wishlist tracking', 
+		type: 'number',
+		example: 12345
+	})
 	@ApiOkResponse({
-		description: 'Wishlist add recorded successfully',
+		description: '✅ Wishlist add recorded successfully',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Success' },
-			},
-		},
+				message: { type: 'string', example: 'Wishlist add recorded successfully' },
+				analytics: {
+					type: 'object',
+					properties: {
+						productId: { type: 'number', example: 12345 },
+						totalWishlistAdds: { type: 'number', example: 988, description: 'Updated total wishlist additions' },
+						wishlistAddsToday: { type: 'number', example: 12, description: 'Wishlist additions recorded today' },
+						averageWishlistAddsPerDay: { type: 'number', example: 8.4, description: 'Average daily wishlist additions' },
+						wishlistConversionRate: { type: 'number', example: 15.7, description: 'Wishlist-to-purchase conversion rate' },
+						averageTimeToWishlist: { type: 'number', example: 189.3, description: 'Average seconds from view to wishlist' },
+						popularityScore: { type: 'number', example: 7.8, description: 'Product popularity based on wishlist activity' },
+						lastWishlistAddedAt: { type: 'string', format: 'date-time', example: '2024-01-15T14:30:00Z' }
+					}
+				},
+				tracking: {
+					type: 'object',
+					properties: {
+						sessionId: { type: 'string', example: 'sess_abc123def456', description: 'Session tracking identifier' },
+						timestamp: { type: 'string', format: 'date-time', example: '2024-01-15T14:30:00Z' },
+						source: { type: 'string', example: 'product_page', description: 'Wishlist addition source' },
+						deviceType: { type: 'string', example: 'mobile', description: 'Device type used' },
+						customerSegment: { type: 'string', example: 'premium', description: 'Customer segment classification' }
+					}
+				}
+			}
+		}
 	})
 	@ApiNotFoundResponse({
-		description: 'Product not found',
+		description: '❌ Product not found',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Product not found' },
-			},
-		},
+				message: { type: 'string', example: 'Product with ID 12345 not found' },
+				error: { type: 'string', example: 'Not Found' },
+				statusCode: { type: 'number', example: 404 }
+			}
+		}
+	})
+	@ApiForbiddenResponse({
+		description: '🚫 Forbidden - Insufficient permissions',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'You do not have permission to record wishlist additions' },
+				error: { type: 'string', example: 'Forbidden' },
+				statusCode: { type: 'number', example: 403 }
+			}
+		}
+	})
+	@ApiInternalServerErrorResponse({
+		description: '💥 Internal Server Error - Wishlist tracking failed',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'An unexpected error occurred while recording the wishlist addition' },
+				error: { type: 'string', example: 'Internal Server Error' },
+				statusCode: { type: 'number', example: 500 }
+			}
+		}
 	})
 	async recordWishlist(@Param('id') id: number, @Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid;
@@ -2205,30 +3141,200 @@ Retrieves comprehensive analytics data for a specific product, including perform
 	@Get('performance/:id')
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER)
 	@ApiOperation({
-		summary: 'Calculate product performance',
-		description: 'Calculates performance metrics for a specific product based on analytics data',
+		summary: '📈 Calculate product performance metrics',
+		description: `
+# Calculate Product Performance
+
+Computes comprehensive performance metrics for a product based on analytics data, sales history, and market trends.
+
+## 📊 **Performance Metrics**
+- **Sales Performance**: Revenue, growth rate, and sales velocity tracking
+- **Engagement Metrics**: View-to-purchase conversion and customer interaction rates
+- **Market Position**: Competitive analysis and market share insights
+- **Inventory Efficiency**: Stock turnover and inventory optimization metrics
+- **Customer Satisfaction**: Reviews, ratings, and return rate analysis
+
+## 🎯 **Performance Categories**
+- **Revenue Performance**: Total revenue, growth trends, and profitability analysis
+- **Conversion Metrics**: View-to-cart, cart-to-purchase, and overall conversion rates
+- **Customer Engagement**: Average session time, repeat views, and interaction depth
+- **Market Competitiveness**: Price positioning and competitive advantage metrics
+- **Operational Efficiency**: Inventory turnover, fulfillment speed, and cost metrics
+
+## 🔧 **Calculation Features**
+- **Real-time Analysis**: Live performance calculations based on current data
+- **Historical Trends**: Performance comparisons over time periods
+- **Predictive Analytics**: Forecasting future performance based on trends
+- **Benchmarking**: Comparison against category and industry averages
+- **Custom Metrics**: Configurable KPIs for specific business needs
+
+## 📈 **Business Intelligence**
+- **Strategic Planning**: Data-driven decisions for product roadmap
+- **Inventory Management**: Optimize stock levels based on performance
+- **Marketing Optimization**: Identify high-performing products for promotion
+- **Pricing Strategy**: Performance-based pricing recommendations
+- **Resource Allocation**: Focus resources on best-performing products
+
+## 🎪 **Use Cases**
+- **Product Portfolio Management**: Optimize product mix and allocation
+- **Performance Monitoring**: Track KPIs and identify improvement opportunities
+- **Investment Decisions**: Data-driven product development and marketing spend
+- **Market Analysis**: Understand product position in competitive landscape
+- **Strategic Planning**: Long-term product and business strategy development
+		`
 	})
-	@ApiParam({ name: 'id', description: 'Product ID', type: 'number' })
+	@ApiParam({ 
+		name: 'id', 
+		description: 'Product unique identifier for performance calculation', 
+		type: 'number',
+		example: 12345
+	})
 	@ApiOkResponse({
-		description: 'Product performance calculated successfully',
+		description: '✅ Product performance calculated successfully',
 		schema: {
 			type: 'object',
 			properties: {
-				performance: { type: 'number' },
-				message: { type: 'string', example: 'Success' },
-			},
-		},
+				message: { type: 'string', example: 'Product performance calculated successfully' },
+				performance: {
+					type: 'object',
+					properties: {
+						overallScore: { type: 'number', example: 8.7, description: 'Overall performance score (0-10)' },
+						productId: { type: 'number', example: 12345 },
+						calculatedAt: { type: 'string', format: 'date-time', example: '2024-01-15T14:30:00Z' },
+						salesPerformance: {
+							type: 'object',
+							properties: {
+								totalRevenue: { type: 'number', example: 518357.68, description: 'Total revenue generated' },
+								salesGrowthRate: { type: 'number', example: 15.4, description: 'Sales growth percentage' },
+								salesVelocity: { type: 'number', example: 12.8, description: 'Units sold per day' },
+								profitMargin: { type: 'number', example: 34.2, description: 'Profit margin percentage' },
+								score: { type: 'number', example: 9.1, description: 'Sales performance score' }
+							}
+						},
+						conversionMetrics: {
+							type: 'object',
+							properties: {
+								viewToCartRate: { type: 'number', example: 11.6, description: 'View-to-cart conversion rate' },
+								cartToPurchaseRate: { type: 'number', example: 23.4, description: 'Cart-to-purchase conversion rate' },
+								overallConversionRate: { type: 'number', example: 2.73, description: 'Overall conversion rate' },
+								averageOrderValue: { type: 'number', example: 1199.99, description: 'Average order value' },
+								score: { type: 'number', example: 8.2, description: 'Conversion performance score' }
+							}
+						},
+						customerEngagement: {
+							type: 'object',
+							properties: {
+								averageTimeOnProduct: { type: 'number', example: 156.5, description: 'Average time spent viewing product' },
+								repeatViewRate: { type: 'number', example: 18.7, description: 'Percentage of repeat views' },
+								shareRate: { type: 'number', example: 4.2, description: 'Social sharing rate' },
+								wishlistRate: { type: 'number', example: 6.8, description: 'Wishlist addition rate' },
+								score: { type: 'number', example: 7.9, description: 'Engagement performance score' }
+							}
+						},
+						marketPosition: {
+							type: 'object',
+							properties: {
+								categoryRank: { type: 'number', example: 3, description: 'Rank within product category' },
+								marketSharePercentage: { type: 'number', example: 12.4, description: 'Market share percentage' },
+								competitiveAdvantage: { type: 'number', example: 8.1, description: 'Competitive advantage score' },
+								priceCompetitiveness: { type: 'number', example: 7.6, description: 'Price competitiveness score' },
+								score: { type: 'number', example: 8.8, description: 'Market position score' }
+							}
+						},
+						inventoryEfficiency: {
+							type: 'object',
+							properties: {
+								turnoverRate: { type: 'number', example: 12.5, description: 'Inventory turnover rate' },
+								stockoutRate: { type: 'number', example: 2.1, description: 'Stockout occurrence rate' },
+								fulfillmentSpeed: { type: 'number', example: 1.8, description: 'Average fulfillment time in days' },
+								warehouseEfficiency: { type: 'number', example: 94.2, description: 'Warehouse efficiency percentage' },
+								score: { type: 'number', example: 9.3, description: 'Inventory efficiency score' }
+							}
+						},
+						customerSatisfaction: {
+							type: 'object',
+							properties: {
+								averageRating: { type: 'number', example: 4.8, description: 'Average customer rating' },
+								reviewCount: { type: 'number', example: 2450, description: 'Total number of reviews' },
+								returnRate: { type: 'number', example: 2.1, description: 'Product return rate' },
+								recommendationRate: { type: 'number', example: 87.3, description: 'Customer recommendation rate' },
+								score: { type: 'number', example: 9.0, description: 'Customer satisfaction score' }
+							}
+						}
+					}
+				},
+				insights: {
+					type: 'object',
+					properties: {
+						strengths: {
+							type: 'array',
+							items: { type: 'string' },
+							example: [
+								'Excellent customer satisfaction ratings',
+								'High inventory turnover efficiency',
+								'Strong sales growth trajectory',
+								'Competitive pricing advantage'
+							]
+						},
+						improvementAreas: {
+							type: 'array',
+							items: { type: 'string' },
+							example: [
+								'Cart abandonment rate could be reduced',
+								'Social sharing engagement needs improvement',
+								'Time on product page below category average'
+							]
+						},
+						recommendations: {
+							type: 'array',
+							items: { type: 'string' },
+							example: [
+								'Implement cart abandonment email campaigns',
+								'Add social sharing incentives',
+								'Optimize product page content for engagement',
+								'Consider bundle offers to increase AOV'
+							]
+						},
+						performanceTrend: { type: 'string', example: 'improving', description: 'Overall performance trend' }
+					}
+				}
+			}
+		}
 	})
 	@ApiNotFoundResponse({
-		description: 'Product not found',
+		description: '❌ Product not found',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Product not found' },
-			},
-		},
+				message: { type: 'string', example: 'Product with ID 12345 not found' },
+				error: { type: 'string', example: 'Not Found' },
+				statusCode: { type: 'number', example: 404 }
+			}
+		}
 	})
-	async calculatePerformance(@Param('id') id: number, @Req() req: AuthenticatedRequest) {
+	@ApiForbiddenResponse({
+		description: '🚫 Forbidden - Insufficient permissions',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'You do not have permission to calculate product performance' },
+				error: { type: 'string', example: 'Forbidden' },
+				statusCode: { type: 'number', example: 403 }
+			}
+		}
+	})
+	@ApiInternalServerErrorResponse({
+		description: '💥 Internal Server Error - Performance calculation failed',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'An unexpected error occurred while calculating product performance' },
+				error: { type: 'string', example: 'Internal Server Error' },
+				statusCode: { type: 'number', example: 500 }
+			}
+		}
+	})
+	async calculateProductPerformance(@Param('id') id: number, @Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid;
 		const branchId = req.user?.branch?.uid;
 		// First verify the product exists and belongs to the org/branch

@@ -617,6 +617,51 @@ Retrieves a comprehensive list of all users in your organization with advanced f
 	}
 
 	@Get(':ref')
+	@ApiOperation({
+		summary: '👤 Get user by reference',
+		description: `
+# User Profile Retrieval
+
+Retrieves detailed information about a specific user by their unique reference identifier.
+
+## 📊 **Response Data**
+- **Complete Profile**: Personal information, employment details, and preferences
+- **Real-time Status**: Current account status and last activity
+- **Contact Information**: Phone, email, and emergency contacts
+- **Department Data**: Organization structure and reporting relationships
+- **Access Details**: Permissions, roles, and security settings
+- **Analytics**: Activity metrics and engagement data
+
+## 🔍 **Profile Sections**
+- **Basic Information**: Name, contact details, profile photo
+- **Employment Profile**: Position, department, salary, start date
+- **Personal Details**: Address, demographics, preferences
+- **Access Control**: Role, permissions, and security settings
+- **Device Information**: Mobile tokens, platform, and last sync
+- **Activity Metrics**: Login frequency, system usage, performance
+
+## 🔒 **Security Features**
+- **Permission Validation**: Only authorized users can access profiles
+- **Data Masking**: Sensitive information is filtered based on access level
+- **Audit Logging**: All profile access is logged for security
+- **Branch Filtering**: Users can only access profiles in their organization
+- **Real-time Validation**: User status and permissions are checked
+
+## 📈 **Business Intelligence**
+- **Profile Completeness**: Identifies incomplete or outdated profiles
+- **Engagement Analytics**: User system usage and activity patterns
+- **Performance Metrics**: Individual productivity and goal achievement
+- **Compliance Check**: Ensures profile meets organizational standards
+- **Reporting Data**: Provides data for HR and management reports
+
+## 🎪 **Use Cases**
+- **Profile Management**: View and verify user information
+- **HR Operations**: Employee record access and management
+- **Team Collaboration**: Find team member contact and role information
+- **System Administration**: User account verification and troubleshooting
+- **Reporting**: Generate individual user reports and analytics
+		`
+	})
 	@Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.MANAGER,
@@ -626,35 +671,6 @@ Retrieves a comprehensive list of all users in your organization with advanced f
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
-	@ApiOperation({
-		summary: '🔍 Get user by reference code',
-		description: `
-# User Profile Details
-
-Retrieves comprehensive information about a specific user including their complete profile, employment details, and activity history.
-
-## 📊 **Detailed Information**
-- **Personal Profile**: Complete user information and contact details
-- **Employment Data**: Position, department, reporting structure, and career history
-- **Activity Tracking**: Login history, system usage patterns, and engagement metrics
-- **Performance Metrics**: User targets, achievements, and progress tracking
-- **Permission Details**: Access levels, roles, and security permissions
-- **Asset Assignments**: Company assets and equipment assigned to the user
-
-## 🔧 **Use Cases**
-- **HR Management**: Employee profile review and updates
-- **Performance Reviews**: Access comprehensive user activity and achievements
-- **Security Audits**: Verify user permissions and access levels
-- **Team Planning**: Understand team member capabilities and availability
-- **Asset Management**: Review user asset assignments and responsibilities
-- **Compliance**: Generate user reports for regulatory requirements
-
-## 📱 **Integration Features**
-- **Mobile Support**: Optimized for mobile HR applications
-- **Export Capabilities**: Generate PDF reports of user profiles
-- **Real-time Updates**: Live status and activity information
-		`,
-	})
 	@ApiParam({
 		name: 'ref',
 		description: 'User reference code or unique identifier',
@@ -662,7 +678,7 @@ Retrieves comprehensive information about a specific user including their comple
 		example: 123,
 	})
 	@ApiOkResponse({
-		description: '✅ User details retrieved successfully',
+		description: '✅ User retrieved successfully',
 		schema: {
 			type: 'object',
 			properties: {
@@ -686,148 +702,114 @@ Retrieves comprehensive information about a specific user including their comple
 								accessLevel: { type: 'string', enum: Object.values(AccessLevel), example: AccessLevel.USER },
 								organisationRef: { type: 'string', example: 'ORG123' },
 								userref: { type: 'string', example: 'USR123456' },
-								hrID: { type: 'number', example: 12345, description: 'HR system ID for backward compatibility' },
-								verificationToken: { type: 'string', example: 'abc123def456' },
-								resetToken: { type: 'string', example: 'xyz789uvw012' },
-								tokenExpires: { type: 'string', format: 'date-time', example: '2024-12-31T23:59:59Z' },
+								hrID: { type: 'number', example: 12345 },
 								expoPushToken: { type: 'string', example: 'ExponentPushToken[abc123]' },
 								deviceId: { type: 'string', example: 'device123' },
 								platform: { type: 'string', example: 'ios' },
-								pushTokenUpdatedAt: { type: 'string', format: 'date-time', example: '2024-01-01T00:00:00Z' },
+								pushTokenUpdatedAt: { type: 'string', format: 'date-time', example: '2024-01-15T10:30:00Z' },
 								isDeleted: { type: 'boolean', example: false },
-								createdAt: { type: 'string', format: 'date-time' },
-								updatedAt: { type: 'string', format: 'date-time' },
-								lastLoginAt: { type: 'string', format: 'date-time', example: '2023-11-30T14:30:00Z' },
 								profile: {
 									type: 'object',
 									properties: {
 										uid: { type: 'number', example: 1 },
 										height: { type: 'string', example: '180cm' },
 										weight: { type: 'string', example: '75kg' },
-										hairColor: { type: 'string', example: 'Brown' },
-										eyeColor: { type: 'string', example: 'Blue' },
 										gender: { type: 'string', example: 'MALE' },
-										ethnicity: { type: 'string', example: 'African' },
-										bodyType: { type: 'string', example: 'Athletic' },
-										smokingHabits: { type: 'string', example: 'Non-smoker' },
-										drinkingHabits: { type: 'string', example: 'Occasional' },
-										dateOfBirth: { type: 'string', format: 'date', example: '1990-05-15' },
+										dateOfBirth: { type: 'string', format: 'date', example: '1990-01-15' },
 										address: { type: 'string', example: '123 Main Street' },
 										city: { type: 'string', example: 'Cape Town' },
 										country: { type: 'string', example: 'South Africa' },
 										zipCode: { type: 'string', example: '7700' },
-										aboutMe: { type: 'string', example: 'Passionate software developer with 5+ years experience' },
-										socialMedia: { type: 'string', example: 'twitter.com/johndoe' },
-										currentAge: { type: 'number', example: 30 },
 										maritalStatus: { type: 'string', example: 'Single' },
+										aboutMe: { type: 'string', example: 'Passionate software developer' },
+										currentAge: { type: 'number', example: 34 },
 										numberDependents: { type: 'number', example: 0 },
-										shoeSize: { type: 'string', example: '10' },
-										shirtSize: { type: 'string', example: 'L' },
-										pantsSize: { type: 'string', example: '32' },
-										dressSize: { type: 'string', example: 'M' },
-										coatSize: { type: 'string', example: 'L' }
-									},
+										socialMedia: { type: 'string', example: 'linkedin.com/in/johndoe' },
+										emergencyContact: { type: 'string', example: 'Jane Doe: +27 64 987 6543' }
+									}
 								},
 								employmentProfile: {
 									type: 'object',
 									properties: {
 										uid: { type: 'string', example: '1' },
-										position: { type: 'string', example: 'Senior Software Engineer' },
+										position: { type: 'string', example: 'Software Engineer' },
 										department: { type: 'string', example: 'Engineering' },
 										startDate: { type: 'string', format: 'date', example: '2023-01-15' },
-										endDate: { type: 'string', format: 'date', example: '2024-01-15' },
 										isCurrentlyEmployed: { type: 'boolean', example: true },
 										email: { type: 'string', example: 'john.doe@company.com' },
 										contactNumber: { type: 'string', example: '+27 64 123 4567' },
+										managerRef: { type: 'string', example: 'MGR456' },
 										branchref: { type: 'string', example: 'BRANCH123' },
-										createdAt: { type: 'string', format: 'date-time' },
-										updatedAt: { type: 'string', format: 'date-time' }
-									},
+										salary: { type: 'number', example: 75000 },
+										benefits: { type: 'string', example: 'Health insurance, retirement fund' }
+									}
 								},
-								branch: {
+								lastActivity: {
 									type: 'object',
 									properties: {
-										uid: { type: 'number', example: 456 },
-										name: { type: 'string', example: 'Cape Town Office' },
-										location: { type: 'string', example: 'Cape Town, South Africa' },
-									},
+										lastLogin: { type: 'string', format: 'date-time', example: '2024-01-15T09:30:00Z' },
+										lastSeen: { type: 'string', format: 'date-time', example: '2024-01-15T12:45:00Z' },
+										activeMinutes: { type: 'number', example: 180, description: 'Minutes active in the last 24 hours' },
+										loginCount: { type: 'number', example: 45, description: 'Total login count this month' }
+									}
 								},
-								organization: {
+								analytics: {
 									type: 'object',
 									properties: {
-										uid: { type: 'number', example: 789 },
-										name: { type: 'string', example: 'Loro Technologies' },
-									},
+										profileCompleteness: { type: 'number', example: 85, description: 'Profile completion percentage' },
+										activityScore: { type: 'number', example: 7.8, description: 'User engagement score (0-10)' },
+										taskCompletionRate: { type: 'number', example: 94.2, description: 'Task completion rate percentage' },
+										performanceRating: { type: 'number', example: 8.5, description: 'Overall performance rating' }
+									}
 								},
-							},
-						},
-						activitySummary: {
-							type: 'object',
-							properties: {
-								totalLogins: { type: 'number', example: 145 },
-								lastActiveDate: { type: 'string', format: 'date', example: '2023-11-30' },
-								averageSessionTime: { type: 'number', example: 8.5, description: 'Average session time in hours' },
-								systemUsageScore: { type: 'number', example: 85, description: 'User engagement score (0-100)' },
-							},
-						},
-						permissions: {
-							type: 'object',
-							properties: {
-								canEditProfile: { type: 'boolean', example: true },
-								canViewReports: { type: 'boolean', example: true },
-								canManageAssets: { type: 'boolean', example: false },
-								canApproveLeave: { type: 'boolean', example: false },
-							},
-						},
-					},
-				},
-				message: { type: 'string', example: 'User details retrieved successfully' },
-				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
-			},
-		},
-	})
-	@ApiNotFoundResponse({ 
-		description: '🔍 User not found',
-		schema: {
-			type: 'object',
-			properties: {
-				message: { type: 'string', example: 'User with reference code 123 not found' },
-				error: { type: 'string', example: 'Not Found' },
-				statusCode: { type: 'number', example: 404 },
-				suggestions: {
-					type: 'array',
-					items: { type: 'string' },
-					example: [
-						'Verify the user reference code is correct',
-						'Check if the user has been deleted or deactivated',
-						'Ensure you have permission to access this user'
-					]
+								permissions: {
+									type: 'object',
+									properties: {
+										canEdit: { type: 'boolean', example: true },
+										canDelete: { type: 'boolean', example: false },
+										canViewReports: { type: 'boolean', example: true },
+										canManageTeam: { type: 'boolean', example: false }
+									}
+								},
+								createdAt: { type: 'string', format: 'date-time', example: '2023-01-15T10:00:00Z' },
+								updatedAt: { type: 'string', format: 'date-time', example: '2024-01-15T14:30:00Z' },
+							}
+						}
+					}
 				}
 			}
 		}
 	})
-	@ApiForbiddenResponse({
-		description: '🚫 Forbidden - No access to this user',
+	@ApiNotFoundResponse({
+		description: '❌ User not found',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'You do not have permission to view this user' },
+				message: { type: 'string', example: 'User with reference 123 not found' },
+				error: { type: 'string', example: 'Not Found' },
+				statusCode: { type: 'number', example: 404 }
+			}
+		}
+	})
+	@ApiForbiddenResponse({
+		description: '🚫 Forbidden - Insufficient permissions',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'You do not have permission to view this user profile' },
 				error: { type: 'string', example: 'Forbidden' },
-				statusCode: { type: 'number', example: 403 },
-				reason: { type: 'string', example: 'User belongs to different branch/organization' }
+				statusCode: { type: 'number', example: 403 }
 			}
 		}
 	})
 	@ApiInternalServerErrorResponse({
-		description: '💥 Internal Server Error - Failed to retrieve user',
+		description: '💥 Internal Server Error - Profile retrieval failed',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Failed to retrieve user details due to system error' },
+				message: { type: 'string', example: 'An unexpected error occurred while retrieving user profile' },
 				error: { type: 'string', example: 'Internal Server Error' },
-				statusCode: { type: 'number', example: 500 },
-				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
-				path: { type: 'string', example: '/user/123' }
+				statusCode: { type: 'number', example: 500 }
 			}
 		}
 	})
@@ -1581,30 +1563,56 @@ Use the restore endpoint to recover accidentally deleted users within the retent
 		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({
-		summary: 'Get user performance targets',
+		summary: '📊 Get user performance targets',
 		description: `
-		**Retrieve comprehensive performance targets for a specific user**
-		
-		This endpoint provides detailed performance target information including:
-		- Sales targets with currency formatting
-		- Work hours and productivity targets
-		- Lead generation and client acquisition targets
-		- Activity-based targets (check-ins, calls)
-		- Progress tracking with achievement percentages
-		- Target period information and deadlines
-		
-		**Target Categories Supported:**
-		- Sales Revenue: Monthly/quarterly sales targets with current progress
-		- Work Hours: Expected vs actual hours worked
-		- New Leads: Lead generation targets and conversion tracking
-		- New Clients: Client acquisition goals and achievement
-		- Check-ins: Customer interaction frequency targets
-		- Calls: Communication activity targets
-		
-		**Access Control:**
-		- Users can view their own targets
-		- Managers/Admins can view targets for their team members
-		- Supports organizational hierarchy and branch-level permissions
+# User Performance Target Dashboard
+
+Retrieves comprehensive performance targets for a specific user with detailed progress tracking and analytics capabilities.
+
+## 📋 **Core Features**
+- **Multi-Category Targets**: Sales, work hours, leads, clients, and activity-based targets
+- **Progress Tracking**: Real-time progress calculation with achievement percentages
+- **Period Management**: Support for weekly, monthly, quarterly, and yearly target periods
+- **Currency Support**: Multi-currency sales targets for international operations
+- **Achievement Analytics**: Advanced metrics including trend analysis and milestone tracking
+
+## 🎯 **Target Categories**
+- **Sales Revenue**: Total sales targets combining quotations and orders
+- **Quotations**: Quote generation targets (pending conversion)
+- **Orders**: Conversion targets (paid and confirmed sales)
+- **Work Hours**: Expected vs actual hours worked tracking
+- **New Leads**: Lead generation and pipeline development
+- **New Clients**: Client acquisition and onboarding goals
+- **Check-ins**: Customer interaction frequency targets
+- **Calls**: Communication activity and outreach targets
+
+## 📊 **Analytics & Insights**
+- **Achievement Percentages**: Progress calculation for each target category
+- **Overall Progress**: Weighted average of all target achievements
+- **Trend Analysis**: Performance trend indicators (Ahead, On Track, Behind, At Risk)
+- **Milestone Tracking**: Next achievement milestones and deadlines
+- **Period Analysis**: Days remaining and target completion estimates
+
+## 🔒 **Access Control**
+- **Self-Service**: Users can view their own performance targets
+- **Management Access**: Managers can view targets for their team members
+- **Hierarchical Permissions**: Supports organizational hierarchy and branch-level access
+- **Role-Based Filtering**: Data visibility based on user access level
+
+## 📈 **Business Intelligence**
+- **Performance Metrics**: Comprehensive target achievement analysis
+- **Productivity Tracking**: Work hours and activity correlation
+- **Sales Analytics**: Revenue generation and conversion tracking
+- **Team Performance**: Individual contribution to team goals
+- **Forecasting**: Target completion predictions and trend analysis
+
+## 🎯 **Use Cases**
+- **Performance Reviews**: Comprehensive target achievement analysis
+- **Team Management**: Monitor individual and team performance
+- **Sales Analytics**: Track revenue generation and conversion rates
+- **Productivity Monitoring**: Analyze work patterns and efficiency
+- **Goal Setting**: Historical performance for future target setting
+- **Incentive Programs**: Performance-based compensation calculations
 		`,
 		operationId: 'getUserTargets',
 	})
@@ -1688,29 +1696,61 @@ Use the restore endpoint to recover accidentally deleted users within the retent
 	@Post(':ref/target')
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER)
 	@ApiOperation({
-		summary: 'Create user performance targets',
+		summary: '🎯 Create user performance targets',
 		description: `
-		**Create comprehensive performance targets for a specific user**
-		
-		This endpoint allows managers and administrators to set performance targets:
-		- Configure multi-category targets (sales, hours, leads, clients, activities)
-		- Set target periods (weekly, monthly, quarterly, yearly)
-		- Define currency preferences for sales targets
-		- Establish baseline metrics for performance tracking
-		- Automatic progress tracking initialization
-		
-		**Target Configuration Features:**
-		- Flexible target periods with automatic date calculation
-		- Multi-currency support for international operations
-		- Hierarchical target inheritance from team/branch level
-		- Integration with existing performance systems
-		- Automatic notifications and milestone tracking
-		
-		**Validation Rules:**
-		- All target values must be positive numbers
-		- Target period dates must be logical (start < end)
-		- Currency codes must be valid ISO 4217 codes
-		- User must exist and be active in the organization
+# User Performance Target Creation
+
+Creates comprehensive performance targets for a specific user with advanced configuration options and automatic progress tracking initialization.
+
+## 📋 **Core Features**
+- **Multi-Category Targets**: Configure targets across sales, hours, leads, clients, and activities
+- **Flexible Periods**: Support for weekly, monthly, quarterly, and yearly target periods
+- **Currency Support**: Multi-currency sales targets for international operations
+- **Progress Initialization**: Automatic setup of progress tracking and milestone calculation
+- **Validation Engine**: Comprehensive validation of target values and configurations
+
+## 🎯 **Target Configuration**
+- **Sales Targets**: Revenue goals with quotations and orders breakdown
+- **Work Hours**: Expected hours and productivity targets
+- **Lead Generation**: Pipeline development and conversion goals
+- **Client Acquisition**: New client onboarding and retention targets
+- **Activity Targets**: Check-ins, calls, and engagement metrics
+- **Custom Metrics**: Additional KPIs specific to roles or departments
+
+## 📊 **Advanced Features**
+- **Period Management**: Automatic date calculation and period validation
+- **Hierarchical Inheritance**: Team and branch-level target templates
+- **Integration Support**: Seamless integration with existing performance systems
+- **Notification System**: Automatic milestone alerts and progress notifications
+- **Analytics Setup**: Performance tracking and reporting configuration
+
+## 🔒 **Security & Permissions**
+- **Role-Based Access**: Only managers and administrators can create targets
+- **Organization Boundaries**: Targets respect organizational and branch hierarchies
+- **User Validation**: Ensures target user exists and is active
+- **Audit Trail**: Complete logging of target creation and modifications
+
+## 📈 **Business Intelligence**
+- **Performance Baselines**: Establish measurable performance standards
+- **Goal Alignment**: Align individual targets with organizational objectives
+- **Progress Tracking**: Real-time progress monitoring and analytics
+- **Milestone Management**: Automatic achievement tracking and recognition
+- **Forecasting**: Performance prediction and trend analysis
+
+## 🎯 **Use Cases**
+- **Employee Onboarding**: Set initial performance expectations and goals
+- **Performance Management**: Establish clear, measurable objectives
+- **Sales Management**: Configure revenue and activity targets
+- **Team Planning**: Align individual goals with team objectives
+- **Incentive Programs**: Create performance-based reward systems
+- **Career Development**: Set growth and development targets
+
+## 🔧 **Configuration Options**
+- **Target Values**: Numerical goals for each performance category
+- **Period Settings**: Start and end dates with automatic validation
+- **Currency Preferences**: ISO 4217 currency codes for international operations
+- **Notification Rules**: Progress alerts and milestone notifications
+- **Reporting Configuration**: Dashboard and analytics setup
 		`,
 		operationId: 'createUserTargets',
 	})
@@ -2078,27 +2118,55 @@ Use the restore endpoint to recover accidentally deleted users within the retent
 	@Post('admin/:userId/re-invite')
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER)
 	@ApiOperation({
-		summary: '📧 Re-invite Individual User (Admin)',
+		summary: '📧 Re-invite Individual User',
 		description: `
-      **Send a re-invitation email to a specific user**
-      
-      This endpoint allows administrators to send a re-invitation email to a specific user:
-      - Validates user exists and is in the same organization/branch
-      - Checks user status eligibility for re-invitation
-      - Sends personalized re-invitation email
-      - Returns confirmation of successful delivery
-      
-      **Security Features:**
-      - Requires admin/manager authentication
-      - Validates user belongs to same organization/branch
-      - Checks user status appropriateness
-      
-      **Use Cases:**
-      - Individual user re-engagement
-      - Following up on inactive users
-      - Personal touch for important users
-      - Targeted re-activation campaigns
-    `,
+# Individual User Re-engagement System
+
+Sends personalized re-invitation emails to specific users with comprehensive validation and delivery tracking capabilities.
+
+## 📋 **Core Features**
+- **Personalized Invitations**: Customized re-invitation emails with user-specific content
+- **Delivery Tracking**: Comprehensive tracking of email delivery and engagement
+- **Status Validation**: Automatic validation of user eligibility for re-invitation
+- **Organization Scope**: Respects organizational and branch boundaries
+- **Audit Trail**: Complete logging of re-invitation activities and outcomes
+
+## 🔒 **Security & Validation**
+- **Authentication Required**: Admin/manager authentication for re-invitation access
+- **Organization Boundaries**: Validates user belongs to same organization/branch
+- **Status Eligibility**: Checks user status appropriateness for re-invitation
+- **Permission Validation**: Ensures requester has sufficient permissions
+- **Rate Limiting**: Prevents abuse with built-in rate limiting controls
+
+## 📊 **Advanced Features**
+- **Delivery Confirmation**: Real-time confirmation of successful email delivery
+- **Engagement Tracking**: Track user response and platform re-engagement
+- **Personalization Engine**: Dynamic content based on user profile and history
+- **Follow-up Automation**: Automated follow-up sequences for non-responsive users
+- **Analytics Integration**: Comprehensive metrics on re-invitation effectiveness
+
+## 🎯 **Use Cases**
+- **Individual Re-engagement**: Targeted approach for high-value users
+- **Inactive User Recovery**: Recover users who have become inactive
+- **VIP User Management**: Personal touch for important stakeholders
+- **Targeted Campaigns**: Precision re-activation for specific user segments
+- **Customer Success**: Proactive outreach to improve user experience
+- **Compliance Follow-up**: Ensure critical users maintain platform access
+
+## 📈 **Business Intelligence**
+- **Success Metrics**: Track re-invitation success rates and user re-engagement
+- **User Segmentation**: Analyze effectiveness across different user types
+- **Timing Analysis**: Optimize re-invitation timing for maximum impact
+- **Channel Performance**: Evaluate email delivery and engagement rates
+- **ROI Tracking**: Measure business impact of re-engagement efforts
+
+## 🔧 **Integration Features**
+- **Email Service Integration**: Seamless integration with email delivery services
+- **CRM Synchronization**: Sync re-invitation activities with CRM systems
+- **Analytics Platforms**: Integration with business intelligence tools
+- **Notification Systems**: Real-time alerts for delivery and engagement events
+- **Workflow Integration**: Connect with existing user management workflows
+		`,
 		operationId: 'reInviteUser',
 	})
 	@ApiParam({
@@ -2135,10 +2203,129 @@ Use the restore endpoint to recover accidentally deleted users within the retent
 							example: 'admin-456',
 							description: 'ID of the admin who sent the re-invitation',
 						},
+						deliveryStatus: {
+							type: 'string',
+							example: 'sent',
+							description: 'Email delivery status',
+						},
+						timestamp: {
+							type: 'string',
+							format: 'date-time',
+							example: '2023-12-01T10:00:00Z',
+							description: 'Re-invitation sent timestamp',
+						},
 					},
 				},
 			},
 		},
+	})
+	@ApiNotFoundResponse({
+		description: '🔍 User not found for re-invitation',
+		schema: {
+			type: 'object',
+			properties: {
+				success: { type: 'boolean', example: false },
+				message: { type: 'string', example: 'User with ID 123 not found or not accessible' },
+				error: { type: 'string', example: 'Not Found' },
+				statusCode: { type: 'number', example: 404 },
+				reasons: {
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'User ID does not exist',
+						'User belongs to different organization',
+						'User has been permanently deleted',
+						'User is not within your management scope'
+					]
+				},
+				suggestions: {
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'Verify the user ID is correct',
+						'Check if user belongs to your organization',
+						'Ensure you have permission to manage this user'
+					]
+				}
+			}
+		}
+	})
+	@ApiForbiddenResponse({
+		description: '🚫 Forbidden - Insufficient permissions for re-invitation',
+		schema: {
+			type: 'object',
+			properties: {
+				success: { type: 'boolean', example: false },
+				message: { type: 'string', example: 'You do not have permission to re-invite users' },
+				error: { type: 'string', example: 'Forbidden' },
+				statusCode: { type: 'number', example: 403 },
+				reason: { type: 'string', example: 'Insufficient access level or organizational permissions' },
+				requiredPermissions: {
+					type: 'array',
+					items: { type: 'string' },
+					example: ['ADMIN', 'MANAGER']
+				}
+			}
+		}
+	})
+	@ApiConflictResponse({
+		description: '⚠️ Conflict - User not eligible for re-invitation',
+		schema: {
+			type: 'object',
+			properties: {
+				success: { type: 'boolean', example: false },
+				message: { type: 'string', example: 'User is not eligible for re-invitation' },
+				error: { type: 'string', example: 'Conflict' },
+				statusCode: { type: 'number', example: 409 },
+				eligibilityIssues: {
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'User is already active',
+						'User was recently invited (within 24 hours)',
+						'User has opted out of re-invitations',
+						'User account is suspended or banned'
+					]
+				},
+				resolution: {
+					type: 'object',
+					properties: {
+						waitTime: { type: 'string', example: '24 hours before next re-invitation' },
+						alternativeActions: {
+							type: 'array',
+							items: { type: 'string' },
+							example: [
+								'Contact user directly',
+								'Update user status first',
+								'Use bulk re-invitation for multiple users'
+							]
+						}
+					}
+				}
+			}
+		}
+	})
+	@ApiInternalServerErrorResponse({
+		description: '💥 Internal Server Error - Re-invitation failed',
+		schema: {
+			type: 'object',
+			properties: {
+				success: { type: 'boolean', example: false },
+				message: { type: 'string', example: 'Failed to send re-invitation email due to system error' },
+				error: { type: 'string', example: 'Internal Server Error' },
+				statusCode: { type: 'number', example: 500 },
+				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+				path: { type: 'string', example: '/user/admin/123/re-invite' },
+				errorDetails: {
+					type: 'object',
+					properties: {
+						component: { type: 'string', example: 'Email Service' },
+						errorCode: { type: 'string', example: 'SMTP_CONNECTION_FAILED' },
+						retryable: { type: 'boolean', example: true }
+					}
+				}
+			}
+		}
 	})
 	async reInviteUser(@Param('userId') userId: string, @Req() req: AuthenticatedRequest) {
 		try {

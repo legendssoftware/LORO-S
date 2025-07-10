@@ -2389,107 +2389,233 @@ export class ShopService {
 	 * Generate a PDF for the quotation and store the URL
 	 */
 	private async generateQuotationPDF(quotation: Quotation): Promise<string | null> {
+		const startTime = Date.now();
+		this.logger.log(`[generateQuotationPDF] Starting PDF generation for quotation ${quotation?.quotationNumber || 'UNKNOWN'}`);
+
 		try {
-			if (!quotation || !quotation.quotationItems || !quotation.client) {
-				throw new Error('Invalid quotation data for PDF generation');
+			// Comprehensive validation with detailed logging
+			if (!quotation) {
+				this.logger.error('[generateQuotationPDF] Quotation object is null or undefined');
+				throw new Error('Quotation object is required for PDF generation');
 			}
 
-			// Get org currency
-			const orgCurrency = quotation.organisation?.uid
-				? await this.getOrgCurrency(quotation.organisation.uid)
-				: { code: this.currencyCode || 'ZAR' };
+			if (!quotation.quotationItems || !Array.isArray(quotation.quotationItems) || quotation.quotationItems.length === 0) {
+				this.logger.error(`[generateQuotationPDF] Invalid quotation items for quotation ${quotation.quotationNumber}: items=${quotation.quotationItems?.length || 0}`);
+				throw new Error('Quotation must have at least one item for PDF generation');
+			}
 
-			// Format client billing address as a string
+			if (!quotation.client) {
+				this.logger.error(`[generateQuotationPDF] No client data for quotation ${quotation.quotationNumber}`);
+				throw new Error('Client information is required for PDF generation');
+			}
+
+			this.logger.log(`[generateQuotationPDF] Quotation validation passed - Items: ${quotation.quotationItems.length}, Client: ${quotation.client.name || 'UNKNOWN'}`);
+
+			// Get org currency with enhanced fallback and logging
+			let orgCurrency;
+			try {
+				orgCurrency = quotation.organisation?.uid
+					? await this.getOrgCurrency(quotation.organisation.uid)
+					: { 
+						code: this.currencyCode || 'ZAR', 
+						symbol: this.currencySymbol || 'R', 
+						locale: this.currencyLocale || 'en-ZA' 
+					};
+				
+				this.logger.log(`[generateQuotationPDF] Currency settings - Code: ${orgCurrency.code}, Symbol: ${orgCurrency.symbol}`);
+			} catch (currencyError) {
+				this.logger.warn(`[generateQuotationPDF] Failed to get org currency, using defaults: ${currencyError.message}`);
+				orgCurrency = { 
+					code: this.currencyCode || 'ZAR', 
+					symbol: this.currencySymbol || 'R', 
+					locale: this.currencyLocale || 'en-ZA' 
+				};
+			}
+
+			// Format client billing address with enhanced validation and logging
 			let clientBillingAddress = '';
-			if (quotation.client.address) {
-				const addressObj = quotation.client.address as any;
-				if (typeof addressObj === 'object') {
-					const parts = [
-						addressObj.street,
-						addressObj.suburb,
-						addressObj.city,
-						addressObj.state,
-						addressObj.country,
-						addressObj.postalCode,
-					].filter(Boolean);
-					clientBillingAddress = parts.join(', ');
-				} else if (typeof addressObj === 'string') {
-					clientBillingAddress = addressObj;
+			try {
+				if (quotation.client?.address) {
+					const addressObj = quotation.client.address as any;
+					if (typeof addressObj === 'object' && addressObj !== null) {
+						const parts = [
+							addressObj?.street,
+							addressObj?.suburb,
+							addressObj?.city,
+							addressObj?.state,
+							addressObj?.country,
+							addressObj?.postalCode,
+						].filter(part => part && typeof part === 'string' && part.trim() !== '');
+						clientBillingAddress = parts.join(', ');
+						this.logger.log(`[generateQuotationPDF] Client address formatted: ${clientBillingAddress.length} characters`);
+					} else if (typeof addressObj === 'string' && addressObj.trim() !== '') {
+						clientBillingAddress = addressObj.trim();
+						this.logger.log(`[generateQuotationPDF] Client address (string): ${clientBillingAddress.length} characters`);
+					}
+				}
+				
+				if (!clientBillingAddress) {
+					this.logger.warn(`[generateQuotationPDF] No valid client address found for quotation ${quotation.quotationNumber}`);
+					clientBillingAddress = 'Address not provided';
+				}
+			} catch (addressError) {
+				this.logger.warn(`[generateQuotationPDF] Error processing client address: ${addressError.message}`);
+				clientBillingAddress = 'Address not available';
+			}
+
+			// Enhanced company address processing with fallbacks and logging
+			let companyAddressLines: string[] = [];
+			try {
+				if (quotation.organisation?.address) {
+					const orgAddr = quotation.organisation.address as any;
+					if (typeof orgAddr === 'object' && orgAddr !== null) {
+						const addressParts = [
+							orgAddr?.street,
+							orgAddr?.suburb,
+							orgAddr?.city && orgAddr?.postalCode ? `${orgAddr.city}, ${orgAddr.postalCode}`.trim() : orgAddr?.city,
+							orgAddr?.state,
+							orgAddr?.country,
+						].filter(part => part && typeof part === 'string' && part.trim() !== '');
+						companyAddressLines = addressParts;
+						this.logger.log(`[generateQuotationPDF] Company address processed: ${companyAddressLines.length} lines`);
+					}
+				}
+				
+				if (companyAddressLines.length === 0) {
+					this.logger.warn(`[generateQuotationPDF] No company address found, using default`);
+					companyAddressLines = ['Address not provided'];
+				}
+			} catch (companyAddressError) {
+				this.logger.warn(`[generateQuotationPDF] Error processing company address: ${companyAddressError.message}`);
+				companyAddressLines = ['Address not available'];
+			}
+
+			// Enhanced quotation items processing with comprehensive validation
+			const validatedItems = [];
+			let invalidItemsCount = 0;
+
+			for (let i = 0; i < quotation.quotationItems.length; i++) {
+				const item = quotation.quotationItems[i];
+				
+				try {
+					// Use item?.property pattern for safe access
+					if (!item?.product) {
+						this.logger.warn(`[generateQuotationPDF] Item ${i} has no product data, skipping`);
+						invalidItemsCount++;
+						continue;
+					}
+
+					const quantity = Number(item?.quantity) || 1;
+					const totalPrice = Number(item?.totalPrice) || 0;
+					const unitPrice = quantity > 0 ? totalPrice / quantity : totalPrice;
+
+					// Comprehensive item validation
+					const validatedItem = {
+						itemCode: item?.product?.productRef || item?.product?.sku || `ITEM-${item?.product?.uid || i + 1}`,
+						description: item?.product?.name || 'Product name not available',
+						quantity: quantity,
+						unitPrice: unitPrice,
+					};
+
+					// Additional validation
+					if (quantity <= 0) {
+						this.logger.warn(`[generateQuotationPDF] Item ${i} has invalid quantity (${quantity}), using fallback`);
+						validatedItem.quantity = 1;
+					}
+
+					if (unitPrice < 0) {
+						this.logger.warn(`[generateQuotationPDF] Item ${i} has negative unit price (${unitPrice}), using 0`);
+						validatedItem.unitPrice = 0;
+					}
+
+					validatedItems.push(validatedItem);
+					this.logger.debug(`[generateQuotationPDF] Item ${i} validated: ${validatedItem.description} (${validatedItem.quantity} x ${validatedItem.unitPrice})`);
+
+				} catch (itemError) {
+					this.logger.error(`[generateQuotationPDF] Error processing item ${i}: ${itemError.message}`);
+					invalidItemsCount++;
+					
+					// Add fallback item to prevent empty PDF
+					validatedItems.push({
+						itemCode: `ITEM-${i + 1}`,
+						description: 'Product information unavailable',
+						quantity: 1,
+						unitPrice: 0,
+					});
 				}
 			}
 
-			// Placeholder for client delivery address - to be confirmed if Client entity supports it
-			const clientDeliveryAddress: string | undefined = undefined;
-			// TODO: If Client entity has a separate deliveryAddress field,
-			// process it here similarly to clientBillingAddress and assign to clientDeliveryAddress.
-			// For example:
-			// if (quotation.client.actualDeliveryAddressFieldName) {
-			//   const daObj = quotation.client.actualDeliveryAddressFieldName as any;
-			//   ...
-			//   clientDeliveryAddress = formatted_delivery_address_string;
-			// }
-
-			// Prepare company address lines
-			let companyAddressLines: string[] = [];
-			if (quotation.organisation?.address) {
-				const orgAddr = quotation.organisation.address;
-				companyAddressLines = [
-					orgAddr.street,
-					orgAddr.suburb,
-					`${orgAddr.city}, ${orgAddr.postalCode}`.trim(),
-					orgAddr.state,
-					orgAddr.country,
-				].filter(Boolean); // Filter out any null or empty strings
+			if (invalidItemsCount > 0) {
+				this.logger.warn(`[generateQuotationPDF] ${invalidItemsCount} items had issues and were processed with fallbacks`);
 			}
 
-			// Prepare the data for the PDF template
+			if (validatedItems.length === 0) {
+				this.logger.error(`[generateQuotationPDF] No valid items found for quotation ${quotation.quotationNumber}`);
+				throw new Error('No valid items found for PDF generation');
+			}
+
+			// Enhanced financial calculations with validation
+			const totalAmount = Number(quotation.totalAmount) || 0;
+			const subtotal = totalAmount * 0.85; // Assuming 15% tax rate
+			const tax = totalAmount * 0.15;
+
+			this.logger.log(`[generateQuotationPDF] Financial calculations - Total: ${totalAmount}, Subtotal: ${subtotal}, Tax: ${tax}`);
+
+			// Prepare comprehensive PDF data with all fallbacks
 			const pdfData: QuotationTemplateData = {
 				companyDetails: {
 					name: quotation.organisation?.name || 'Loro',
 					addressLines: companyAddressLines,
-					phone: quotation.organisation?.phone,
-					email: quotation.organisation?.email,
-					website: quotation.organisation?.website,
-					logoPath: quotation.organisation?.logo,
-					// vatNumber: quotation.organisation?.vatNumber, // Add if vatNumber exists on organisation entity
+					phone: quotation.organisation?.phone || '',
+					email: quotation.organisation?.email || '',
+					website: quotation.organisation?.website || '',
+					logoPath: quotation.organisation?.logo || '',
 				},
-				quotationId: quotation.quotationNumber,
-				date: quotation.quotationDate,
+				quotationId: quotation.quotationNumber || `QUO-${Date.now()}`,
+				date: quotation.quotationDate || new Date(),
 				validUntil: quotation.validUntil || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
 				client: {
-					name: quotation.client.name,
-					email: quotation.client.email,
-					phone: quotation.client.phone,
-					address: clientBillingAddress, // Use the formatted billing address
-					deliveryAddress: clientDeliveryAddress, // Pass the (currently undefined) delivery address
+					name: quotation.client?.name || 'Client name not provided',
+					email: quotation.client?.email || '',
+					phone: quotation.client?.phone || '',
+					address: clientBillingAddress,
+					deliveryAddress: undefined, // TODO: Add when delivery address is available on client entity
 				},
-				items: quotation.quotationItems.map((item) => ({
-					itemCode: item.product?.productRef || item.product?.sku || undefined, // Use productRef, fallback to SKU
-					description: item.product.name,
-					quantity: item.quantity,
-					unitPrice: Number(item.totalPrice) / item.quantity, // Calculate unit price from total and quantity
-				})),
-				subtotal: Number(quotation.totalAmount) * 0.85, // Assuming 15% tax rate
-				tax: Number(quotation.totalAmount) * 0.15,
-				total: Number(quotation.totalAmount),
+				items: validatedItems,
+				subtotal: subtotal,
+				tax: tax,
+				total: totalAmount,
 				currency: orgCurrency.code,
 				terms: 'Payment due within 30 days. Please contact us for any questions or concerns.',
 			};
 
-			// Generate the PDF
-			const result = await this.pdfGenerationService.create({
-				template: 'quotation',
-				data: pdfData,
-			});
+			this.logger.log(`[generateQuotationPDF] PDF data prepared successfully - Items: ${validatedItems.length}, Currency: ${orgCurrency.code}`);
 
-			if (!result.success) {
-				throw new Error('Failed to generate PDF');
+			// Generate the PDF with enhanced error handling
+			let result;
+			try {
+				result = await this.pdfGenerationService.create({
+					template: 'quotation',
+					data: pdfData,
+				});
+			} catch (pdfError) {
+				this.logger.error(`[generateQuotationPDF] PDF generation failed: ${pdfError.message}`, pdfError.stack);
+				throw new Error(`PDF generation failed: ${pdfError.message}`);
 			}
 
-			// Return the URL
+			if (!result?.success) {
+				this.logger.error(`[generateQuotationPDF] PDF generation returned unsuccessful result: ${result?.message || 'Unknown error'}`);
+				throw new Error(`PDF generation failed: ${result?.message || 'Unknown error'}`);
+			}
+
+			const generationTime = Date.now() - startTime;
+			this.logger.log(`[generateQuotationPDF] PDF generated successfully in ${generationTime}ms - URL: ${result.url}`);
+
 			return result.url;
+
 		} catch (error) {
-			this.logger.error(`Error generating quotation PDF: ${error.message}`, error.stack);
+			const generationTime = Date.now() - startTime;
+			this.logger.error(`[generateQuotationPDF] PDF generation failed after ${generationTime}ms for quotation ${quotation?.quotationNumber || 'UNKNOWN'}: ${error.message}`, error.stack);
 			return null;
 		}
 	}

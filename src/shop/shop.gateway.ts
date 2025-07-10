@@ -287,55 +287,55 @@ export class ShopGateway implements OnGatewayConnection, OnGatewayDisconnect {
     async emitQuotationMetrics(quotationData: Quotation) {
         try {
             const metricsPayload = {
-                uid: quotationData.uid,
-                quotationNumber: quotationData.quotationNumber,
-                totalAmount: quotationData.totalAmount,
-                totalItems: quotationData.totalItems,
-                status: quotationData.status,
-                quotationDate: quotationData.quotationDate,
-                validUntil: quotationData.validUntil,
-                isConverted: quotationData.isConverted,
-                convertedAt: quotationData.convertedAt,
-                currency: quotationData.currency,
-                resellerCommission: quotationData.resellerCommission,
-                client: quotationData.client ? {
-                    uid: quotationData.client.uid,
-                    name: quotationData.client.name,
-                    email: quotationData.client.email,
-                    phone: quotationData.client.phone,
+                uid: quotationData?.uid,
+                quotationNumber: quotationData?.quotationNumber,
+                totalAmount: quotationData?.totalAmount,
+                totalItems: quotationData?.totalItems,
+                status: quotationData?.status,
+                quotationDate: quotationData?.quotationDate,
+                validUntil: quotationData?.validUntil,
+                isConverted: quotationData?.isConverted,
+                convertedAt: quotationData?.convertedAt,
+                currency: quotationData?.currency,
+                resellerCommission: quotationData?.resellerCommission,
+                client: quotationData?.client ? {
+                    uid: quotationData?.client?.uid,
+                    name: quotationData?.client?.name,
+                    email: quotationData?.client?.email,
+                    phone: quotationData?.client?.phone,
                 } : null,
-                placedBy: quotationData.placedBy ? {
-                    uid: quotationData.placedBy.uid,
-                    name: quotationData.placedBy.name,
-                    email: quotationData.placedBy.email,
-                    phone: quotationData.placedBy.phone,
+                placedBy: quotationData?.placedBy ? {
+                    uid: quotationData?.placedBy?.uid,
+                    name: quotationData?.placedBy?.name,
+                    email: quotationData?.placedBy?.email,
+                    phone: quotationData?.placedBy?.phone,
                 } : null,
-                branch: quotationData.branch ? {
-                    uid: quotationData.branch.uid,
-                    name: quotationData.branch.name,
-                    ref: quotationData.branch.ref,
+                branch: quotationData?.branch ? {
+                    uid: quotationData?.branch?.uid,
+                    name: quotationData?.branch?.name,
+                    ref: quotationData?.branch?.ref,
                 } : null,
-                organisation: quotationData.organisation ? {
-                    uid: quotationData.organisation.uid,
-                    name: quotationData.organisation.name,
+                organisation: quotationData?.organisation ? {
+                    uid: quotationData?.organisation?.uid,
+                    name: quotationData?.organisation?.name,
                 } : null,
-                quotationItems: quotationData.quotationItems?.map(item => ({
-                    uid: item.uid,
-                    quantity: item.quantity,
-                    totalPrice: item.totalPrice,
-                    unitPrice: item.quantity > 0 ? item.totalPrice / item.quantity : 0,
-                    product: item.product ? {
-                        uid: item.product.uid,
-                        name: item.product.name,
-                        category: item.product.category,
-                        price: item.product.price,
-                        productRef: item.product.productRef,
+                quotationItems: quotationData?.quotationItems?.map(item => ({
+                    uid: item?.uid,
+                    quantity: item?.quantity,
+                    totalPrice: item?.totalPrice,
+                    unitPrice: item?.quantity > 0 ? item?.totalPrice / item?.quantity : 0,
+                    product: item?.product ? {
+                        uid: item?.product?.uid,
+                        name: item?.product?.name,
+                        category: item?.product?.category,
+                        price: item?.product?.price,
+                        productRef: item?.product?.productRef,
                     } : null,
                 })) || [],
             };
 
             this.server.emit('quotation:metrics', metricsPayload);
-            this.logger.log(`📊 Quotation metrics emitted: ${quotationData.quotationNumber}`);
+            this.logger.log(`📊 Quotation metrics emitted: ${quotationData?.quotationNumber}`);
         } catch (error) {
             this.logger.error('❌ Error emitting quotation metrics:', error.stack);
         }
