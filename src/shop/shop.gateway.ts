@@ -374,4 +374,27 @@ export class ShopGateway implements OnGatewayConnection, OnGatewayDisconnect {
         this.logger.log(`📢 Client ${client.id} unsubscribed from quotation updates`);
         client.emit('quotation:unsubscribed', { status: 'unsubscribed' });
     }
+
+    /**
+     * 📊 Broadcast analytics updates for real-time dashboard
+     * @param update - Analytics update data with type and payload
+     */
+    async broadcastAnalyticsUpdate(update: {
+        type: string;
+        data: any;
+        timestamp: Date;
+    }) {
+        try {
+            const payload = {
+                type: update.type,
+                data: update.data,
+                timestamp: update.timestamp,
+            };
+
+            this.server.emit('analytics:update', payload);
+            this.logger.debug(`📊 Analytics update broadcasted: ${update.type}`);
+        } catch (error) {
+            this.logger.error('❌ Error broadcasting analytics update:', error.stack);
+        }
+    }
 } 

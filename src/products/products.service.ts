@@ -442,12 +442,14 @@ export class ProductsService {
 	 * @param ref - Product reference ID
 	 * @param orgId - Organization ID filter (optional)
 	 * @param branchId - Branch ID filter (optional)
+	 * @param userId - User ID for analytics tracking (optional)
 	 * @returns Promise with product data or null
 	 */
 	async getProductByref(
 		ref: number,
 		orgId?: number,
 		branchId?: number,
+		userId?: number,
 	): Promise<{ product: Product | null; message: string }> {
 		this.logger.log(`🔍 [getProductByref] Fetching product ID: ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
 		
@@ -513,6 +515,19 @@ export class ProductsService {
 			}
 
 			this.logger.log(`✅ [getProductByref] Product found: ${product.name} (ID: ${ref})`);
+
+			// Emit product view event for analytics tracking
+			if (userId) {
+				this.eventEmitter.emit('product.viewed', {
+					productId: ref,
+					userId,
+					orgId,
+					branchId,
+					productName: product.name,
+					category: product.category,
+					timestamp: new Date(),
+				});
+			}
 
 			return {
 				product,
@@ -882,9 +897,19 @@ export class ProductsService {
 	 * @param productId - Product ID
 	 * @param quantity - Quantity sold
 	 * @param salePrice - Sale price per unit
+	 * @param orderId - Order/Quotation ID for tracking (optional)
+	 * @param orgId - Organization ID (optional)
+	 * @param branchId - Branch ID (optional)
 	 * @returns Promise with success message or error
 	 */
-	async recordSale(productId: number, quantity: number, salePrice: number) {
+	async recordSale(
+		productId: number, 
+		quantity: number, 
+		salePrice: number,
+		orderId?: string,
+		orgId?: number,
+		branchId?: number
+	) {
 		this.logger.log(`🛒 [recordSale] Recording sale for product ID: ${productId}, quantity: ${quantity}, salePrice: ${salePrice}`);
 		
 		try {
@@ -896,6 +921,10 @@ export class ProductsService {
 				throw new NotFoundException('Product analytics not found');
 			}
 
+			// Get product details for event emission
+			const productResult = await this.getProductByref(productId, orgId, branchId);
+			const product = productResult.product;
+
 			// Update sales metrics
 			const totalSaleValue = quantity * salePrice;
 			this.logger.debug(`📊 [recordSale] Calculating sales metrics - total sale value: ${totalSaleValue}`);
@@ -904,6 +933,7 @@ export class ProductsService {
 				totalUnitsSold: (analytics.totalUnitsSold || 0) + quantity,
 				totalRevenue: (analytics.totalRevenue || 0) + totalSaleValue,
 				salesCount: (analytics.salesCount || 0) + 1,
+				lastSaleDate: new Date(),
 				salesHistory: [
 					...(analytics.salesHistory || []),
 					{
@@ -911,6 +941,7 @@ export class ProductsService {
 						quantity,
 						price: salePrice,
 						total: totalSaleValue,
+						orderId: orderId || `SALE-${Date.now()}`,
 					},
 				],
 			};
@@ -921,6 +952,33 @@ export class ProductsService {
 			// Update stock history
 			this.logger.debug(`📦 [recordSale] Updating stock history for outgoing stock: ${quantity} units`);
 			await this.updateStockHistory(productId, quantity, 'out');
+
+			// Emit real-time sale event for analytics
+			this.eventEmitter.emit('product.sold', {
+				productId,
+				productName: product?.name || 'Unknown Product',
+				category: product?.category || 'Unknown',
+				quantity,
+				amount: totalSaleValue,
+				unitPrice: salePrice,
+				orderId: orderId || `SALE-${Date.now()}`,
+				orgId,
+				branchId,
+				timestamp: new Date(),
+			});
+
+			// Check for stock alerts after sale
+			if (product && product.stockQuantity <= (product.reorderPoint || 10)) {
+				this.eventEmitter.emit('inventory.low.stock', {
+					productId,
+					productName: product.name,
+					currentStock: product.stockQuantity,
+					reorderPoint: product.reorderPoint || 10,
+					orgId,
+					branchId,
+					severity: product.stockQuantity <= 0 ? 'critical' : 'warning',
+				});
+			}
 
 			this.logger.log(`✅ [recordSale] Sale recorded successfully for product ID: ${productId} - ${quantity} units at ${salePrice} each`);
 			return { message: 'Sale recorded successfully' };
@@ -986,22 +1044,43 @@ export class ProductsService {
 	/**
 	 * 👀 Record a product view event
 	 * @param productId - Product ID
+	 * @param userId - User ID (optional)
+	 * @param orgId - Organization ID (optional)
+	 * @param branchId - Branch ID (optional)
 	 * @returns Promise with success message
 	 */
-	async recordView(productId: number) {
-		this.logger.log(`👀 [recordView] Recording view for product ID: ${productId}`);
+	async recordView(productId: number, userId?: number, orgId?: number, branchId?: number) {
+		this.logger.log(`👀 [recordView] Recording view for product ID: ${productId}, user: ${userId}`);
 		
 		try {
-		const analytics = await this.analyticsRepository.findOne({ where: { productId } });
-		if (analytics) {
+			const analytics = await this.analyticsRepository.findOne({ where: { productId } });
+			if (analytics) {
 				const newViewCount = (analytics.viewCount || 0) + 1;
 				this.logger.debug(`📊 [recordView] Updating view count from ${analytics.viewCount || 0} to ${newViewCount}`);
-				await this.analyticsRepository.update({ productId }, { viewCount: newViewCount });
+				await this.analyticsRepository.update({ productId }, { 
+					viewCount: newViewCount,
+				});
+
+				// Get product details for event
+				const productResult = await this.getProductByref(productId, orgId, branchId);
+				const product = productResult.product;
+
+				// Emit view event for real-time analytics
+				this.eventEmitter.emit('product.viewed', {
+					productId,
+					productName: product?.name || 'Unknown Product',
+					category: product?.category || 'Unknown',
+					userId,
+					orgId,
+					branchId,
+					timestamp: new Date(),
+				});
+
 				this.logger.log(`✅ [recordView] View recorded successfully for product ID: ${productId}`);
 			} else {
 				this.logger.warn(`⚠️ [recordView] Analytics not found for product ID: ${productId}`);
-		}
-		return { message: 'View recorded' };
+			}
+			return { message: 'View recorded' };
 		} catch (error) {
 			this.logger.error(`❌ [recordView] Error recording view for product ID ${productId}: ${error.message}`, error.stack);
 			return { message: error.message || 'Error recording view' };
@@ -1011,22 +1090,49 @@ export class ProductsService {
 	/**
 	 * 🛒 Record a cart add event
 	 * @param productId - Product ID
+	 * @param quantity - Quantity added to cart (optional, defaults to 1)
+	 * @param userId - User ID (optional)
+	 * @param orgId - Organization ID (optional)
+	 * @param branchId - Branch ID (optional)
 	 * @returns Promise with success message
 	 */
-	async recordCartAdd(productId: number) {
-		this.logger.log(`🛒 [recordCartAdd] Recording cart add for product ID: ${productId}`);
+	async recordCartAdd(
+		productId: number, 
+		quantity: number = 1,
+		userId?: number, 
+		orgId?: number, 
+		branchId?: number
+	) {
+		this.logger.log(`🛒 [recordCartAdd] Recording cart add for product ID: ${productId}, quantity: ${quantity}, user: ${userId}`);
 		
 		try {
-		const analytics = await this.analyticsRepository.findOne({ where: { productId } });
-		if (analytics) {
+			const analytics = await this.analyticsRepository.findOne({ where: { productId } });
+			if (analytics) {
 				const newCartAddCount = (analytics.cartAddCount || 0) + 1;
 				this.logger.debug(`📊 [recordCartAdd] Updating cart add count from ${analytics.cartAddCount || 0} to ${newCartAddCount}`);
 				await this.analyticsRepository.update({ productId }, { cartAddCount: newCartAddCount });
+
+				// Get product details for event
+				const productResult = await this.getProductByref(productId, orgId, branchId);
+				const product = productResult.product;
+
+				// Emit cart add event for real-time analytics
+				this.eventEmitter.emit('product.cart.added', {
+					productId,
+					productName: product?.name || 'Unknown Product',
+					category: product?.category || 'Unknown',
+					quantity,
+					userId,
+					orgId,
+					branchId,
+					timestamp: new Date(),
+				});
+
 				this.logger.log(`✅ [recordCartAdd] Cart add recorded successfully for product ID: ${productId}`);
 			} else {
 				this.logger.warn(`⚠️ [recordCartAdd] Analytics not found for product ID: ${productId}`);
-		}
-		return { message: 'Cart add recorded' };
+			}
+			return { message: 'Cart add recorded' };
 		} catch (error) {
 			this.logger.error(`❌ [recordCartAdd] Error recording cart add for product ID ${productId}: ${error.message}`, error.stack);
 			return { message: error.message || 'Error recording cart add' };

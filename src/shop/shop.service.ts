@@ -621,9 +621,20 @@ export class ShopService {
 			for (const item of quotationData.items) {
 				const product = products.flat().find((p) => p.uid === item.uid);
 				if (product) {
-					// Record view and cart add
-					await this.productsService.recordView(product.uid);
-					await this.productsService.recordCartAdd(product.uid);
+					// Record view and cart add with enhanced tracking
+					await this.productsService.recordView(
+						product.uid, 
+						quotationData.owner?.uid, 
+						orgId, 
+						branchId
+					);
+					await this.productsService.recordCartAdd(
+						product.uid, 
+						item.quantity,
+						quotationData.owner?.uid, 
+						orgId, 
+						branchId
+					);
 
 					// Update stock history
 					await this.productsService.updateStockHistory(product.uid, item.quantity, 'out');
@@ -632,6 +643,24 @@ export class ShopService {
 					await this.productsService.calculateProductPerformance(product.uid);
 				}
 			}
+
+			// Emit quotation creation event for real-time analytics
+			this.eventEmitter.emit('quotation.created', {
+				quotationId: savedQuotation.quotationNumber,
+				amount: savedQuotation.totalAmount,
+				itemCount: savedQuotation.totalItems,
+				clientId: quotationData.client.uid,
+				ownerId: quotationData.owner.uid,
+				orgId,
+				branchId,
+				timestamp: new Date(),
+				items: quotationData.items.map(item => ({
+					productId: item.uid,
+					quantity: item.quantity,
+					unitPrice: item.unitPrice,
+					totalPrice: item.totalPrice,
+				})),
+			});
 
 			// Emit WebSocket event for new quotation with full data
 			// Get the full quotation with all relations for WebSocket
@@ -892,9 +921,20 @@ export class ShopService {
 				const product = productMap.get(item.uid);
 				if (product) {
 					try {
-						// Record view and cart add
-						await this.productsService.recordView(product.uid);
-						await this.productsService.recordCartAdd(product.uid);
+						// Record view and cart add with enhanced tracking
+						await this.productsService.recordView(
+							product.uid,
+							blankQuotationData.owner?.uid,
+							orgId,
+							branchId
+						);
+						await this.productsService.recordCartAdd(
+							product.uid,
+							item.quantity,
+							blankQuotationData.owner?.uid,
+							orgId,
+							branchId
+						);
 
 						// Update stock history
 						await this.productsService.updateStockHistory(product.uid, item.quantity, 'out');
@@ -908,6 +948,26 @@ export class ShopService {
 					}
 				}
 			}
+
+			// Emit blank quotation creation event for real-time analytics
+			this.eventEmitter.emit('quotation.created', {
+				quotationId: savedQuotation.quotationNumber,
+				amount: savedQuotation.totalAmount,
+				itemCount: savedQuotation.totalItems,
+				clientId: blankQuotationData.client.uid,
+				ownerId: blankQuotationData.owner.uid,
+				isBlankQuotation: true,
+				priceListType: blankQuotationData.priceListType,
+				orgId,
+				branchId,
+				timestamp: new Date(),
+				items: quotationItems.map(item => ({
+					productId: item.product.uid,
+					quantity: item.quantity,
+					unitPrice: item.unitPrice,
+					totalPrice: item.totalPrice,
+				})),
+			});
 
 			// Emit WebSocket event for new blank quotation with full data
 			this.logger.log(`[createBlankQuotation] Emitting WebSocket event`);
@@ -1446,7 +1506,14 @@ export class ShopService {
 			for (const item of quotation?.quotationItems) {
 				// Calculate unit price from total price and quantity
 				const unitPrice = item?.quantity > 0 ? Number(item?.totalPrice) / item?.quantity : Number(item?.totalPrice);
-				await this.productsService?.recordSale(item?.product?.uid, item?.quantity, unitPrice);
+				await this.productsService?.recordSale(
+					item?.product?.uid, 
+					item?.quantity, 
+					unitPrice,
+					quotation.quotationNumber,
+					orgId,
+					branchId
+				);
 				await this.productsService?.calculateProductPerformance(item?.product?.uid);
 			}
 		}

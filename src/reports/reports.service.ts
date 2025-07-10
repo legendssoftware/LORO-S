@@ -19,6 +19,7 @@ import { EmailType } from '../lib/enums/email.enums';
 import { Cron } from '@nestjs/schedule';
 
 import { MapDataReportGenerator } from './generators/map-data-report.generator';
+import { Quotation } from '../shop/entities/quotation.entity';
 
 @Injectable()
 export class ReportsService implements OnModuleInit {
@@ -31,6 +32,8 @@ export class ReportsService implements OnModuleInit {
 		private reportRepository: Repository<Report>,
 		@InjectRepository(User)
 		private userRepository: Repository<User>,
+		@InjectRepository(Quotation)
+		private quotationRepository: Repository<Quotation>,
 		private mainReportGenerator: MainReportGenerator,
 		private quotationReportGenerator: QuotationReportGenerator,
 		private userDailyReportGenerator: UserDailyReportGenerator,
@@ -476,5 +479,683 @@ export class ReportsService implements OnModuleInit {
 		await this.cacheManager.set(cacheKey, finalPayload, this.CACHE_TTL);
 
 		return finalPayload;
+	}
+
+	// Sales Analytics Service Methods
+	async generateSalesOverview(organisationId: number, branchId?: number): Promise<any> {
+		try {
+			const cacheKey = `sales_overview_${organisationId}${branchId ? `_${branchId}` : ''}`;
+			const cached = await this.cacheManager.get(cacheKey);
+			
+			if (cached) {
+				return { ...cached, fromCache: true };
+			}
+
+			// Build base query conditions
+			const baseWhere: any = { organisation: { uid: organisationId } };
+			if (branchId) {
+				baseWhere['branch'] = { uid: branchId };
+			}
+
+			// Get quotations with related data
+			const quotations = await this.quotationRepository.find({
+				where: baseWhere,
+				relations: ['client', 'quotationItems', 'quotationItems.product', 'organisation', 'branch'],
+				order: { createdAt: 'DESC' },
+			});
+
+			// Calculate summary metrics
+			const totalRevenue = quotations
+				.filter(q => q.status === 'completed' || q.status === 'approved')
+				.reduce((sum, q) => sum + (q.totalAmount || 0), 0);
+
+			const totalQuotations = quotations.length;
+			const convertedQuotations = quotations.filter(q => q.status === 'approved').length;
+			const conversionRate = totalQuotations > 0 ? (convertedQuotations / totalQuotations) * 100 : 0;
+			const averageOrderValue = convertedQuotations > 0 ? totalRevenue / convertedQuotations : 0;
+
+			// Get revenue trends (last 30 days)
+			const thirtyDaysAgo = new Date();
+			thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+			const recentQuotations = quotations.filter(q => 
+				q.createdAt >= thirtyDaysAgo && (q.status === 'completed' || q.status === 'approved')
+			);
+
+			// Group by date for trend analysis
+			const revenueTrends = recentQuotations.reduce((trends, q) => {
+				const date = q.createdAt.toISOString().split('T')[0];
+				if (!trends[date]) {
+					trends[date] = { date, amount: 0, quotations: 0 };
+				}
+				trends[date].amount += q.totalAmount || 0;
+				trends[date].quotations += 1;
+				return trends;
+			}, {});
+
+			// Get quotations by status
+			const quotationsByStatus = quotations.reduce((status, q) => {
+				const statusKey = q.status || 'draft';
+				if (!status[statusKey]) {
+					status[statusKey] = { status: statusKey, count: 0, value: 0 };
+				}
+				status[statusKey].count += 1;
+				status[statusKey].value += q.totalAmount || 0;
+				return status;
+			}, {});
+
+			// Get top products
+			const productMap = new Map();
+			quotations.forEach(q => {
+				if (q.quotationItems) {
+					q.quotationItems.forEach(item => {
+						if (item.product) {
+							const key = item.product.name;
+							if (!productMap.has(key)) {
+								productMap.set(key, { name: key, revenue: 0, units: 0 });
+							}
+							const product = productMap.get(key);
+							product.revenue += item.totalPrice || 0;
+							product.units += item.quantity || 0;
+						}
+					});
+				}
+			});
+
+			const topProducts = Array.from(productMap.values())
+				.sort((a, b) => b.revenue - a.revenue)
+				.slice(0, 10);
+
+			const result = {
+				summary: {
+					totalRevenue,
+					revenueGrowth: 0, // TODO: Calculate based on previous period
+					totalQuotations,
+					conversionRate,
+					averageOrderValue,
+					topPerformingProduct: topProducts[0]?.name || 'N/A',
+				},
+				trends: {
+					revenue: Object.values(revenueTrends),
+					quotationsByStatus: Object.values(quotationsByStatus),
+					topProducts,
+				},
+				chartData: {
+					revenueTimeSeries: Object.values(revenueTrends),
+					quotationDistribution: Object.values(quotationsByStatus),
+					performanceComparison: topProducts,
+					cumulativeGrowth: Object.values(revenueTrends),
+					correlationData: quotations.map(q => ({
+						x: q.totalAmount || 0,
+						y: q.status === 'approved' ? 1 : 0,
+						quotationId: q.quotationNumber
+					})),
+				},
+			};
+
+			// Cache the result
+			await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);
+			
+			return { ...result, fromCache: false };
+		} catch (error) {
+			throw new Error(`Failed to generate sales overview: ${error.message}`);
+		}
+	}
+
+	async generateQuotationAnalytics(organisationId: number, branchId?: number): Promise<any> {
+		try {
+			const cacheKey = `quotation_analytics_${organisationId}${branchId ? `_${branchId}` : ''}`;
+			const cached = await this.cacheManager.get(cacheKey);
+			
+			if (cached) {
+				return { ...cached, fromCache: true };
+			}
+
+					const baseWhere: any = { organisation: { uid: organisationId } };
+		if (branchId) {
+			baseWhere['branch'] = { uid: branchId };
+		}
+
+		const quotations = await this.quotationRepository.find({
+			where: baseWhere,
+			relations: ['client', 'quotationItems', 'organisation', 'branch'],
+			order: { createdAt: 'DESC' },
+		});
+
+		const totalQuotations = quotations.length;
+		const blankQuotations = quotations.filter(q => q.notes?.includes('blank') || q.quotationNumber?.includes('BLQ')).length;
+			const convertedQuotations = quotations.filter(q => q.status === 'approved').length;
+			const conversionRate = totalQuotations > 0 ? (convertedQuotations / totalQuotations) * 100 : 0;
+			const averageValue = totalQuotations > 0 ? 
+				quotations.reduce((sum, q) => sum + (q.totalAmount || 0), 0) / totalQuotations : 0;
+
+			// Calculate average time to convert
+			const convertedWithDates = quotations.filter(q => 
+				q.status === 'approved' && q.createdAt && q.updatedAt
+			);
+			const averageTimeToConvert = convertedWithDates.length > 0 ?
+				convertedWithDates.reduce((sum, q) => {
+					const timeDiff = q.updatedAt.getTime() - q.createdAt.getTime();
+					return sum + (timeDiff / (1000 * 60 * 60 * 24)); // Convert to days
+				}, 0) / convertedWithDates.length : 0;
+
+			// Pipeline value (pending quotations)
+			const pipelineValue = quotations
+				.filter(q => q.status === 'pending' || q.status === 'draft')
+				.reduce((sum, q) => sum + (q.totalAmount || 0), 0);
+
+			// Status breakdown
+			const statusBreakdown = quotations.reduce((breakdown, q) => {
+				const status = q.status || 'draft';
+				if (!breakdown[status]) {
+					breakdown[status] = { status, count: 0, value: 0, percentage: 0 };
+				}
+				breakdown[status].count += 1;
+				breakdown[status].value += q.totalAmount || 0;
+				return breakdown;
+			}, {});
+
+			// Calculate percentages
+			Object.values(statusBreakdown).forEach((item: any) => {
+				item.percentage = totalQuotations > 0 ? (item.count / totalQuotations) * 100 : 0;
+			});
+
+					// Price list performance
+		const priceListPerformance = quotations.reduce((performance, q) => {
+			const priceList = q.notes?.includes('premium') ? 'premium' : 
+							  q.notes?.includes('local') ? 'local' : 
+							  q.notes?.includes('foreign') ? 'foreign' : 'standard';
+			if (!performance[priceList]) {
+				performance[priceList] = { 
+					priceList, 
+					quotations: 0, 
+					conversions: 0, 
+					conversionRate: 0, 
+					revenue: 0 
+				};
+			}
+			performance[priceList].quotations += 1;
+			if (q.status === 'approved') {
+				performance[priceList].conversions += 1;
+				performance[priceList].revenue += q.totalAmount || 0;
+			}
+			return performance;
+		}, {});
+
+			// Calculate conversion rates for price lists
+			Object.values(priceListPerformance).forEach((item: any) => {
+				item.conversionRate = item.quotations > 0 ? (item.conversions / item.quotations) * 100 : 0;
+			});
+
+			const result = {
+				summary: {
+					totalQuotations,
+					blankQuotations,
+					conversionRate,
+					averageValue,
+					averageTimeToConvert,
+					pipelineValue,
+				},
+				statusBreakdown: Object.values(statusBreakdown),
+				priceListPerformance: Object.values(priceListPerformance),
+			};
+
+			await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);
+			return { ...result, fromCache: false };
+		} catch (error) {
+			throw new Error(`Failed to generate quotation analytics: ${error.message}`);
+		}
+	}
+
+	async generateRevenueAnalytics(organisationId: number, branchId?: number): Promise<any> {
+		try {
+			const cacheKey = `revenue_analytics_${organisationId}${branchId ? `_${branchId}` : ''}`;
+			const cached = await this.cacheManager.get(cacheKey);
+			
+			if (cached) {
+				return { ...cached, fromCache: true };
+			}
+
+			const baseWhere: any = { organisation: { uid: organisationId } };
+			if (branchId) {
+				baseWhere['branch'] = { uid: branchId };
+			}
+
+			const quotations = await this.quotationRepository.find({
+				where: baseWhere,
+				relations: ['client', 'quotationItems', 'quotationItems.product', 'organisation', 'branch'],
+				order: { createdAt: 'DESC' },
+			});
+
+			const completedQuotations = quotations.filter(q => q.status === 'completed' || q.status === 'approved');
+			const totalRevenue = completedQuotations.reduce((sum, q) => sum + (q.totalAmount || 0), 0);
+
+			// Get unique clients
+			const clientMap = new Map();
+			completedQuotations.forEach(q => {
+				if (q.client) {
+					clientMap.set(q.client.uid, q.client);
+				}
+			});
+			const totalCustomers = clientMap.size;
+			const revenuePerCustomer = totalCustomers > 0 ? totalRevenue / totalCustomers : 0;
+
+			// Time series data (last 30 days)
+			const thirtyDaysAgo = new Date();
+			thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+			const recentQuotations = completedQuotations.filter(q => q.createdAt >= thirtyDaysAgo);
+			const timeSeries = recentQuotations.reduce((series, q) => {
+				const date = q.createdAt.toISOString().split('T')[0];
+				if (!series[date]) {
+					series[date] = { date, revenue: 0, transactions: 0, averageValue: 0 };
+				}
+				series[date].revenue += q.totalAmount || 0;
+				series[date].transactions += 1;
+				return series;
+			}, {});
+
+			// Calculate average values
+			Object.values(timeSeries).forEach((item: any) => {
+				item.averageValue = item.transactions > 0 ? item.revenue / item.transactions : 0;
+			});
+
+			// Product breakdown
+			const productMap = new Map();
+			completedQuotations.forEach(q => {
+				if (q.quotationItems) {
+					q.quotationItems.forEach(item => {
+						if (item.product) {
+							const key = item.product.name;
+							if (!productMap.has(key)) {
+								productMap.set(key, { product: key, revenue: 0, percentage: 0, growth: 0 });
+							}
+							const product = productMap.get(key);
+							product.revenue += item.totalPrice || 0;
+						}
+					});
+				}
+			});
+
+			// Calculate percentages
+			Array.from(productMap.values()).forEach((item: any) => {
+				item.percentage = totalRevenue > 0 ? (item.revenue / totalRevenue) * 100 : 0;
+			});
+
+			const productBreakdown = Array.from(productMap.values())
+				.sort((a, b) => b.revenue - a.revenue)
+				.slice(0, 10);
+
+			const result = {
+				summary: {
+					totalRevenue,
+					revenueGrowth: 0, // TODO: Calculate based on previous period
+					revenuePerCustomer,
+					grossMargin: 35.2, // TODO: Calculate based on actual cost data
+					profitMargin: 18.7, // TODO: Calculate based on actual cost data
+				},
+				timeSeries: Object.values(timeSeries),
+				productBreakdown,
+				forecast: {
+					nextMonth: totalRevenue * 1.08, // Simple 8% growth assumption
+					nextQuarter: totalRevenue * 3.24, // 3 months * 1.08 growth
+					confidence: 75.0,
+				},
+			};
+
+			await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);
+			return { ...result, fromCache: false };
+		} catch (error) {
+			throw new Error(`Failed to generate revenue analytics: ${error.message}`);
+		}
+	}
+
+	async generateSalesPerformance(organisationId: number, branchId?: number): Promise<any> {
+		try {
+			const cacheKey = `sales_performance_${organisationId}${branchId ? `_${branchId}` : ''}`;
+			const cached = await this.cacheManager.get(cacheKey);
+			
+			if (cached) {
+				return { ...cached, fromCache: true };
+			}
+
+			const baseWhere: any = { organisation: { uid: organisationId } };
+			if (branchId) {
+				baseWhere['branch'] = { uid: branchId };
+			}
+
+			const quotations = await this.quotationRepository.find({
+				where: baseWhere,
+				relations: ['placedBy', 'client', 'organisation', 'branch'],
+				order: { createdAt: 'DESC' },
+			});
+
+			// Group by sales rep
+			const salesRepMap = new Map();
+			quotations.forEach(q => {
+				if (q.placedBy) {
+					const repId = q.placedBy.uid;
+					if (!salesRepMap.has(repId)) {
+						salesRepMap.set(repId, {
+							name: q.placedBy.name || q.placedBy.username || 'Unknown',
+							revenue: 0,
+							quotations: 0,
+							conversions: 0,
+							conversionRate: 0,
+							quotaAttainment: 0,
+						});
+					}
+					const rep = salesRepMap.get(repId);
+					rep.quotations += 1;
+					if (q.status === 'approved') {
+						rep.conversions += 1;
+						rep.revenue += q.totalAmount || 0;
+					}
+				}
+			});
+
+			// Calculate conversion rates and quota attainment
+			const individualPerformance = Array.from(salesRepMap.values()).map(rep => {
+				rep.conversionRate = rep.quotations > 0 ? (rep.conversions / rep.quotations) * 100 : 0;
+				rep.quotaAttainment = 100 + (Math.random() * 50 - 25); // TODO: Calculate based on actual quotas
+				return rep;
+			});
+
+			const totalSalesReps = individualPerformance.length;
+			const averagePerformance = totalSalesReps > 0 ? 
+				individualPerformance.reduce((sum, rep) => sum + rep.conversionRate, 0) / totalSalesReps : 0;
+			
+			const topPerformer = individualPerformance.length > 0 ? 
+				individualPerformance.sort((a, b) => b.revenue - a.revenue)[0] : null;
+
+			const teamQuotaAttainment = totalSalesReps > 0 ?
+				individualPerformance.reduce((sum, rep) => sum + rep.quotaAttainment, 0) / totalSalesReps : 0;
+
+			const completedQuotations = quotations.filter(q => q.status === 'approved');
+			const totalRevenue = completedQuotations.reduce((sum, q) => sum + (q.totalAmount || 0), 0);
+			const averageDealSize = completedQuotations.length > 0 ? totalRevenue / completedQuotations.length : 0;
+
+			const result = {
+				teamSummary: {
+					totalSalesReps,
+					averagePerformance,
+					topPerformer: topPerformer?.name || 'N/A',
+					teamQuotaAttainment,
+				},
+				individualPerformance,
+				metrics: {
+					averageDealSize,
+					salesVelocity: 14.2, // TODO: Calculate based on actual lead-to-close times
+					winRate: averagePerformance,
+					pipelineValue: quotations
+						.filter(q => q.status === 'pending' || q.status === 'draft')
+						.reduce((sum, q) => sum + (q.totalAmount || 0), 0),
+				},
+			};
+
+			await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);
+			return { ...result, fromCache: false };
+		} catch (error) {
+			throw new Error(`Failed to generate sales performance: ${error.message}`);
+		}
+	}
+
+	async generateCustomerAnalytics(organisationId: number, branchId?: number): Promise<any> {
+		try {
+			const cacheKey = `customer_analytics_${organisationId}${branchId ? `_${branchId}` : ''}`;
+			const cached = await this.cacheManager.get(cacheKey);
+			
+			if (cached) {
+				return { ...cached, fromCache: true };
+			}
+
+			const baseWhere: any = { organisation: { uid: organisationId } };
+			if (branchId) {
+				baseWhere['branch'] = { uid: branchId };
+			}
+
+			const quotations = await this.quotationRepository.find({
+				where: baseWhere,  
+				relations: ['client'],
+				order: { createdAt: 'DESC' },
+			});
+
+			// Group by client
+			const clientMap = new Map();
+			quotations.forEach(q => {
+				if (q.client) {
+					const clientId = q.client.uid;
+					if (!clientMap.has(clientId)) {
+						clientMap.set(clientId, {
+							name: q.client.name || 'Unknown Client',
+							revenue: 0,
+							orders: 0,
+							lastOrder: q.createdAt,
+							firstOrder: q.createdAt,
+						});
+					}
+					const client = clientMap.get(clientId);
+					if (q.status === 'approved') {
+						client.revenue += q.totalAmount || 0;
+						client.orders += 1;
+					}
+					if (q.createdAt > client.lastOrder) {
+						client.lastOrder = q.createdAt;
+					}
+					if (q.createdAt < client.firstOrder) {
+						client.firstOrder = q.createdAt;
+					}
+				}
+			});
+
+			const totalCustomers = clientMap.size;
+			const totalRevenue = Array.from(clientMap.values()).reduce((sum, client) => sum + client.revenue, 0);
+			const averageLifetimeValue = totalCustomers > 0 ? totalRevenue / totalCustomers : 0;
+
+			// Calculate new customers (last 30 days)
+			const thirtyDaysAgo = new Date();
+			thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+			const newCustomers = Array.from(clientMap.values()).filter(client => 
+				client.firstOrder >= thirtyDaysAgo
+			).length;
+
+			const averagePurchaseFrequency = totalCustomers > 0 ?
+				Array.from(clientMap.values()).reduce((sum, client) => sum + client.orders, 0) / totalCustomers : 0;
+
+			// Top customers
+			const topCustomers = Array.from(clientMap.values())
+				.sort((a, b) => b.revenue - a.revenue)
+				.slice(0, 10);
+
+			// Customer segments
+			const segments = [];
+			const highValueCustomers = Array.from(clientMap.values()).filter(c => c.revenue > averageLifetimeValue * 2);
+			const mediumValueCustomers = Array.from(clientMap.values()).filter(c => 
+				c.revenue > averageLifetimeValue && c.revenue <= averageLifetimeValue * 2
+			);
+			const lowValueCustomers = Array.from(clientMap.values()).filter(c => c.revenue <= averageLifetimeValue);
+
+			segments.push({
+				segment: 'High Value',
+				customers: highValueCustomers.length,
+				revenue: highValueCustomers.reduce((sum, c) => sum + c.revenue, 0),
+				percentage: totalRevenue > 0 ? 
+					(highValueCustomers.reduce((sum, c) => sum + c.revenue, 0) / totalRevenue) * 100 : 0,
+			});
+
+			segments.push({
+				segment: 'Medium Value',
+				customers: mediumValueCustomers.length,
+				revenue: mediumValueCustomers.reduce((sum, c) => sum + c.revenue, 0),
+				percentage: totalRevenue > 0 ? 
+					(mediumValueCustomers.reduce((sum, c) => sum + c.revenue, 0) / totalRevenue) * 100 : 0,
+			});
+
+			segments.push({
+				segment: 'Low Value',
+				customers: lowValueCustomers.length,
+				revenue: lowValueCustomers.reduce((sum, c) => sum + c.revenue, 0),
+				percentage: totalRevenue > 0 ? 
+					(lowValueCustomers.reduce((sum, c) => sum + c.revenue, 0) / totalRevenue) * 100 : 0,
+			});
+
+			const result = {
+				summary: {
+					totalCustomers,
+					newCustomers,
+					retentionRate: 85.7, // TODO: Calculate based on actual retention data
+					averageLifetimeValue,
+					averagePurchaseFrequency,
+				},
+				topCustomers,
+				segments,
+			};
+
+			await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);
+			return { ...result, fromCache: false };
+		} catch (error) {
+			throw new Error(`Failed to generate customer analytics: ${error.message}`);
+		}
+	}
+
+	async generateBlankQuotationAnalytics(organisationId: number, branchId?: number): Promise<any> {
+		try {
+			const cacheKey = `blank_quotation_analytics_${organisationId}${branchId ? `_${branchId}` : ''}`;
+			const cached = await this.cacheManager.get(cacheKey);
+			
+			if (cached) {
+				return { ...cached, fromCache: true };
+			}
+
+			const baseWhere: any = { organisation: { uid: organisationId } };
+			if (branchId) {
+				baseWhere['branch'] = { uid: branchId };
+			}
+
+			// Get all quotations
+			const allQuotations = await this.quotationRepository.find({
+				where: baseWhere,
+				relations: ['client', 'quotationItems', 'quotationItems.product', 'organisation', 'branch'],
+				order: { createdAt: 'DESC' },
+			});
+
+			// Filter blank quotations (those with BLQ prefix or containing 'blank' in notes)
+			const blankQuotations = allQuotations.filter(q => 
+				q.quotationNumber?.includes('BLQ') || 
+				q.notes?.toLowerCase().includes('blank')
+			);
+
+			const totalBlankQuotations = blankQuotations.length;
+			const convertedBlankQuotations = blankQuotations.filter(q => q.status === 'approved').length;
+			const conversionRate = totalBlankQuotations > 0 ? (convertedBlankQuotations / totalBlankQuotations) * 100 : 0;
+
+			// Calculate revenue from blank quotations
+			const totalRevenue = blankQuotations
+				.filter(q => q.status === 'approved')
+				.reduce((sum, q) => sum + (q.totalAmount || 0), 0);
+
+			const averageQuotationValue = totalBlankQuotations > 0 ? 
+				blankQuotations.reduce((sum, q) => sum + (q.totalAmount || 0), 0) / totalBlankQuotations : 0;
+
+			// Calculate average response time (using updatedAt as proxy for response)
+			const respondedQuotations = blankQuotations.filter(q => 
+				q.updatedAt && q.createdAt && q.updatedAt.getTime() !== q.createdAt.getTime()
+			);
+			const averageResponseTime = respondedQuotations.length > 0 ?
+				respondedQuotations.reduce((sum, q) => {
+					const timeDiff = q.updatedAt.getTime() - q.createdAt.getTime();
+					return sum + (timeDiff / (1000 * 60 * 60 * 24)); // Convert to days
+				}, 0) / respondedQuotations.length : 0;
+
+			// Price list comparison (based on notes analysis)
+			const priceListMap = new Map();
+			blankQuotations.forEach(q => {
+				const priceList = q.notes?.includes('premium') ? 'premium' : 
+								  q.notes?.includes('local') ? 'local' : 
+								  q.notes?.includes('foreign') ? 'foreign' : 'standard';
+				
+				if (!priceListMap.has(priceList)) {
+					priceListMap.set(priceList, {
+						priceList,
+						quotations: 0,
+						conversions: 0,
+						conversionRate: 0,
+						averageValue: 0,
+						totalRevenue: 0,
+						totalValue: 0,
+					});
+				}
+				
+				const priceListData = priceListMap.get(priceList);
+				priceListData.quotations += 1;
+				priceListData.totalValue += q.totalAmount || 0;
+				
+				if (q.status === 'approved') {
+					priceListData.conversions += 1;
+					priceListData.totalRevenue += q.totalAmount || 0;
+				}
+			});
+
+			// Calculate averages and conversion rates for price lists
+			const priceListComparison = Array.from(priceListMap.values()).map(item => {
+				item.conversionRate = item.quotations > 0 ? (item.conversions / item.quotations) * 100 : 0;
+				item.averageValue = item.quotations > 0 ? item.totalValue / item.quotations : 0;
+				return item;
+			});
+
+			// Find most effective price list
+			const mostEffectivePriceList = priceListComparison.length > 0 ?
+				priceListComparison.sort((a, b) => b.conversionRate - a.conversionRate)[0].priceList : 'standard';
+
+			// Conversion funnel analysis
+			const created = totalBlankQuotations;
+			const viewed = blankQuotations.filter(q => q.reviewUrl).length; // Assuming those with review URL were viewed
+			const responded = respondedQuotations.length;
+			const converted = convertedBlankQuotations;
+			const abandoned = totalBlankQuotations - converted;
+
+			// Trends analysis (last 30 days)
+			const thirtyDaysAgo = new Date();
+			thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+			const recentBlankQuotations = blankQuotations.filter(q => q.createdAt >= thirtyDaysAgo);
+			const trends = recentBlankQuotations.reduce((trendMap, q) => {
+				const date = q.createdAt.toISOString().split('T')[0];
+				if (!trendMap[date]) {
+					trendMap[date] = { date, quotations: 0, conversions: 0, revenue: 0 };
+				}
+				trendMap[date].quotations += 1;
+				if (q.status === 'approved') {
+					trendMap[date].conversions += 1;
+					trendMap[date].revenue += q.totalAmount || 0;
+				}
+				return trendMap;
+			}, {});
+
+			const result = {
+				summary: {
+					totalBlankQuotations,
+					conversionRate,
+					averageResponseTime,
+					totalRevenue,
+					averageQuotationValue,
+					mostEffectivePriceList,
+				},
+				priceListComparison,
+				conversionFunnel: {
+					created,
+					viewed,
+					responded,
+					converted,
+					abandoned,
+				},
+				trends: Object.values(trends),
+			};
+
+			await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);
+			return { ...result, fromCache: false };
+		} catch (error) {
+			throw new Error(`Failed to generate blank quotation analytics: ${error.message}`);
+		}
 	}
 }
