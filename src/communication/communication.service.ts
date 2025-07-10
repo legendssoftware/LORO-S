@@ -119,6 +119,9 @@ import {
 	UserTargetPerformanceAlertEmailData,
 	UserTargetERPUpdateConfirmationEmailData,
 	UserTargetPeriodSummaryEmailData,
+	UserTargetSetEmailData,
+	UserTargetDeletedEmailData,
+	UserTargetUpdatedEmailData,
 	AppUpdateNotificationData,
 	ClientCommunicationReminderData,
 } from '../lib/types/email-templates.types';
@@ -159,6 +162,9 @@ import {
 	UserTargetPerformanceAlert,
 	UserTargetERPUpdateConfirmation,
 	UserTargetPeriodSummary,
+	UserTargetSet,
+	UserTargetDeleted,
+	UserTargetUpdated,
 	AppUpdateNotification,
 } from '../lib/templates/emails';
 
@@ -782,6 +788,21 @@ export class CommunicationService {
 				return {
 					subject: 'Your Target Period Summary',
 					body: UserTargetPeriodSummary(data as UserTargetPeriodSummaryEmailData),
+				};
+			case EmailType.USER_TARGET_SET:
+				return {
+					subject: 'New Target Set for You',
+					body: UserTargetSet(data as UserTargetSetEmailData),
+				};
+			case EmailType.USER_TARGET_UPDATED:
+				return {
+					subject: 'Your Targets Have Been Updated',
+					body: UserTargetUpdated(data as UserTargetUpdatedEmailData),
+				};
+			case EmailType.USER_TARGET_DELETED:
+				return {
+					subject: 'Target Removed',
+					body: UserTargetDeleted(data as UserTargetDeletedEmailData),
 				};
 			case EmailType.APP_UPDATE_NOTIFICATION:
 				return {

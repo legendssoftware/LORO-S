@@ -70,6 +70,9 @@ import {
 	UserTargetPerformanceAlertEmailData,
 	UserTargetERPUpdateConfirmationEmailData,
 	UserTargetPeriodSummaryEmailData,
+	UserTargetSetEmailData,
+	UserTargetDeletedEmailData,
+	UserTargetUpdatedEmailData,
 	AppUpdateNotificationData,
 	ClientProfileUpdateConfirmationData,
 	ClientProfileUpdateAdminData,
@@ -682,6 +685,18 @@ class EmailTemplateService {
 		return this.renderTemplate('targets/period-summary.hbs', data);
 	}
 
+	userTargetSet(data: UserTargetSetEmailData): string {
+		return this.renderTemplate('targets/target-set.hbs', data);
+	}
+
+	userTargetUpdated(data: UserTargetUpdatedEmailData): string {
+		return this.renderTemplate('targets/target-updated.hbs', data);
+	}
+
+	userTargetDeleted(data: UserTargetDeletedEmailData): string {
+		return this.renderTemplate('targets/target-deleted.hbs', data);
+	}
+
 	// App/System Templates
 	appUpdateNotification(data: AppUpdateNotificationData): string {
 		return this.renderTemplate('system/app-update-notification.hbs', data);
@@ -799,6 +814,9 @@ class EmailTemplateService {
 			'targets/user-target-achievement-admin.hbs',
 			'targets/lead-target-achievement-admin.hbs',
 			// Target Achievement Templates (User-facing)
+			'targets/target-set.hbs',
+			'targets/target-updated.hbs',
+			'targets/target-deleted.hbs',
 			'targets/achievement.hbs',
 			'targets/milestone.hbs',
 			'targets/deadline-reminder.hbs',

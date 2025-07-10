@@ -1,32 +1,51 @@
-{{#> base}}
-<div class="card">
-  <div class="card-header">
-    <h2>🗑️ Target Removed</h2>
-    <p>A target has been removed for {{userName}}</p>
-  </div>
-  
-  <div class="card-content">
-    <div class="info-section">
-      <h3>Removed Target Details</h3>
-      <ul>
-        <li><strong>Employee:</strong> {{userName}}</li>
-        <li><strong>Email:</strong> {{userEmail}}</li>
-        <li><strong>Target Type:</strong> {{targetType || 'User Performance Target'}}</li>
-        {{#if reason}}
-        <li><strong>Reason:</strong> {{reason}}</li>
-        {{/if}}
-      </ul>
-    </div>
-    
-    <div class="actions">
-      <a href="{{dashboardUrl}}/targets" class="button button-primary">View All Targets</a>
-      <a href="{{dashboardUrl}}/users/{{userId}}" class="button button-secondary">View User Profile</a>
-    </div>
-  </div>
-  
-  <div class="card-footer">
-    <p>This target was removed on {{formatDate deletedAt}}.</p>
-    <p>The employee will be notified of the removal and can view any remaining targets in the dashboard.</p>
-  </div>
+{{#base headerTitle="🗑️ Target Removed" headerSubtitle="A target has been removed for {{userName}}"}}
+
+<div class="greeting">
+    Hello {{userName}}! 🗑️
 </div>
+
+<div class="message">
+    <p>We're writing to inform you that one of your targets at {{organizationName}} has been removed. This change is now active in your performance tracking system.</p>
+</div>
+
+<div class="info-notice">
+    <p>📝 <strong>Target Removed!</strong> The specified target has been successfully removed from your profile.</p>
+</div>
+
+<div class="info-card">
+    <h3>🗑️ Removed Target Details</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Employee</span>
+            <span class="detail-value">{{userName}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Email</span>
+            <span class="detail-value">{{userEmail}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Target Type</span>
+            <span class="detail-value">{{targetType}}</span>
+        </div>
+        {{#if reason}}
+        <div class="detail-item">
+            <span class="detail-label">Reason</span>
+            <span class="detail-value">{{reason}}</span>
+        </div>
+        {{/if}}
+        <div class="detail-item">
+            <span class="detail-label">Date Removed</span>
+            <span class="detail-value">{{formatDate deletedAt}}</span>
+        </div>
+    </div>
+</div>
+
+<div class="cta-section">
+    <a href="{{dashboardUrl}}/targets" class="cta-button">View Remaining Targets</a>
+</div>
+
+<div class="message">
+    <p>You can view any remaining targets in your dashboard. If you have questions about this removal, please contact your manager or our support team.</p>
+</div>
+
 {{/base}} 

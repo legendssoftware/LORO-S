@@ -71,6 +71,9 @@ import {
 	ClientProfileUpdateConfirmationData,
 	ClientProfileUpdateAdminData,
 	ClientCommunicationReminderData,
+	UserTargetSetEmailData,
+	UserTargetDeletedEmailData,
+	UserTargetUpdatedEmailData,
 } from '../types/email-templates.types';
 
 // Auth Templates
@@ -448,6 +451,18 @@ export const UserTargetERPUpdateConfirmation = (data: UserTargetERPUpdateConfirm
 
 export const UserTargetPeriodSummary = (data: UserTargetPeriodSummaryEmailData): string => {
 	return emailTemplateService.userTargetPeriodSummary(data);
+};
+
+export const UserTargetSet = (data: UserTargetSetEmailData): string => {
+	return emailTemplateService.userTargetSet(data);
+};
+
+export const UserTargetUpdated = (data: UserTargetUpdatedEmailData): string => {
+	return emailTemplateService.userTargetUpdated(data);
+};
+
+export const UserTargetDeleted = (data: UserTargetDeletedEmailData): string => {
+	return emailTemplateService.userTargetDeleted(data);
 };
 
 // App/System Templates

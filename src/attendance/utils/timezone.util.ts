@@ -198,27 +198,41 @@ export class TimezoneUtil {
     const safeTimezone = this.getSafeTimezone(organizationTimezone);
     
     try {
-      // Extract hours and minutes from time string (HH:mm format)
-      const timeMatch = timeString.match(/^(\d{1,2}):(\d{2})$/);
+      // Extract hours, minutes, and optional seconds from time string
+      // Support both HH:mm and HH:mm:ss formats
+      const timeMatch = timeString.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
       if (!timeMatch) {
         throw new Error(`Invalid time format: ${timeString}`);
       }
       
       const hours = parseInt(timeMatch[1], 10);
       const minutes = parseInt(timeMatch[2], 10);
+      const seconds = timeMatch[3] ? parseInt(timeMatch[3], 10) : 0;
+      
+      // Validate time components
+      if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59 || seconds < 0 || seconds > 59) {
+        throw new Error(`Invalid time values: ${timeString}`);
+      }
       
       // Create date in organization timezone
       const orgDate = this.toOrganizationTime(baseDate, organizationTimezone);
-      orgDate.setHours(hours, minutes, 0, 0);
+      orgDate.setHours(hours, minutes, seconds, 0);
       
       return orgDate;
     } catch (error) {
       console.warn(`Error parsing time ${timeString} in timezone ${safeTimezone}:`, error);
       // Fallback: parse in server timezone
       const fallbackDate = new Date(baseDate);
-      const timeMatch = timeString.match(/^(\d{1,2}):(\d{2})$/);
+      const timeMatch = timeString.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
       if (timeMatch) {
-        fallbackDate.setHours(parseInt(timeMatch[1], 10), parseInt(timeMatch[2], 10), 0, 0);
+        const hours = parseInt(timeMatch[1], 10);
+        const minutes = parseInt(timeMatch[2], 10);
+        const seconds = timeMatch[3] ? parseInt(timeMatch[3], 10) : 0;
+        
+        // Only set if values are valid
+        if (hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59 && seconds >= 0 && seconds <= 59) {
+          fallbackDate.setHours(hours, minutes, seconds, 0);
+        }
       }
       return fallbackDate;
     }

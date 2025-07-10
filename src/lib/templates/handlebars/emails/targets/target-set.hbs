@@ -1,37 +1,59 @@
-{{#> base}}
-<div class="card">
-  <div class="card-header">
-    <h2>🎯 New Target Set</h2>
-    <p>A new target has been set for {{userName}}</p>
-  </div>
-  
-  <div class="card-content">
-    <div class="info-section">
-      <h3>Target Details</h3>
-      <ul>
-        <li><strong>Employee:</strong> {{userName}}</li>
-        <li><strong>Email:</strong> {{userEmail}}</li>
+{{#base headerTitle="🎯 New Target Set" headerSubtitle="A new target has been assigned to {{userName}}"}}
+
+<div class="greeting">
+    Hello {{userName}}! 🎯
+</div>
+
+<div class="message">
+    <p>A new target has been set for you at {{organizationName}}. This target is designed to help you track your progress and achieve your professional goals.</p>
+</div>
+
+<div class="success-notice">
+    <p>✅ <strong>New Target Assigned!</strong> Your target has been successfully configured and is now active.</p>
+</div>
+
+<div class="info-card">
+    <h3>🎯 Target Details</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Employee</span>
+            <span class="detail-value">{{userName}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Email</span>
+            <span class="detail-value">{{userEmail}}</span>
+        </div>
         {{#if targetDetails.dailyHours}}
-        <li><strong>Daily Hours Target:</strong> {{targetDetails.dailyHours}} hours</li>
+        <div class="detail-item">
+            <span class="detail-label">Daily Hours Target</span>
+            <span class="detail-value">{{targetDetails.dailyHours}} hours</span>
+        </div>
         {{/if}}
         {{#if targetDetails.monthlyHours}}
-        <li><strong>Monthly Hours Target:</strong> {{targetDetails.monthlyHours}} hours</li>
+        <div class="detail-item">
+            <span class="detail-label">Monthly Hours Target</span>
+            <span class="detail-value">{{targetDetails.monthlyHours}} hours</span>
+        </div>
         {{/if}}
         {{#if targetDetails.description}}
-        <li><strong>Description:</strong> {{targetDetails.description}}</li>
+        <div class="detail-item">
+            <span class="detail-label">Description</span>
+            <span class="detail-value">{{targetDetails.description}}</span>
+        </div>
         {{/if}}
-      </ul>
+        <div class="detail-item">
+            <span class="detail-label">Date Set</span>
+            <span class="detail-value">{{formatDate createdAt}}</span>
+        </div>
     </div>
-    
-    <div class="actions">
-      <a href="{{dashboardUrl}}/targets" class="button button-primary">View All Targets</a>
-      <a href="{{dashboardUrl}}/users/{{userId}}" class="button button-secondary">View User Profile</a>
-    </div>
-  </div>
-  
-  <div class="card-footer">
-    <p>This target was set on {{formatDate createdAt}}.</p>
-    <p>The employee will be notified and can track their progress in the dashboard.</p>
-  </div>
 </div>
+
+<div class="cta-section">
+    <a href="{{dashboardUrl}}/targets" class="cta-button">View All Targets</a>
+</div>
+
+<div class="message">
+    <p>You can track your progress and view all your targets in the dashboard. If you have any questions about your targets, please contact your manager or our support team.</p>
+</div>
+
 {{/base}} 

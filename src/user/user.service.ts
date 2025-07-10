@@ -1489,16 +1489,48 @@ export class UserService {
 			user.userTarget = userTarget;
 			await this.userRepository.save(user);
 
-			// Invalidate the cache
-			await this.invalidateUserCache(user);
-			await this.cacheManager.del(this.getCacheKey(`target_${userId}`));
+					// Invalidate the cache
+		await this.invalidateUserCache(user);
+		await this.cacheManager.del(this.getCacheKey(`target_${userId}`));
 
-			const executionTime = Date.now() - startTime;
-			this.logger.log(`User targets set successfully for user: ${userId} in ${executionTime}ms`);
-
-			return {
-				message: 'User targets set successfully',
+		// Send target set email notification
+		this.logger.log(`📧 [UserService] Sending target set email notification for user: ${userId}`);
+		try {
+			const emailData = {
+				name: `${user.name} ${user.surname}`.trim(),
+				userName: `${user.name} ${user.surname}`.trim(),
+				userEmail: user.email,
+				userId: user.uid,
+				targetDetails: {
+					targetSalesAmount: createUserTargetDto.targetSalesAmount,
+					targetQuotationsAmount: createUserTargetDto.targetQuotationsAmount,
+					targetNewLeads: createUserTargetDto.targetNewLeads,
+					targetNewClients: createUserTargetDto.targetNewClients,
+					targetCheckIns: createUserTargetDto.targetCheckIns,
+					targetCalls: createUserTargetDto.targetCalls,
+					periodStartDate: createUserTargetDto.periodStartDate ? new Date(createUserTargetDto.periodStartDate).toISOString().split('T')[0] : undefined,
+					periodEndDate: createUserTargetDto.periodEndDate ? new Date(createUserTargetDto.periodEndDate).toISOString().split('T')[0] : undefined,
+					description: 'Performance targets have been set for your role',
+				},
+				organizationName: user.organisation?.name || user.branch?.organisation?.name || 'Your Organization',
+				branchName: user.branch?.name,
+				createdAt: new Date().toISOString(),
+				dashboardUrl: `${this.configService.get('FRONTEND_URL')}/dashboard`,
+				supportEmail: this.configService.get('SUPPORT_EMAIL') || 'support@loro.africa',
 			};
+
+			this.eventEmitter.emit('send.email', EmailType.USER_TARGET_SET, [user.email], emailData);
+			this.logger.log(`✅ [UserService] Target set email notification queued for user: ${userId}`);
+		} catch (emailError) {
+			this.logger.error(`❌ [UserService] Failed to queue target set email for user ${userId}:`, emailError.message);
+		}
+
+		const executionTime = Date.now() - startTime;
+		this.logger.log(`User targets set successfully for user: ${userId} in ${executionTime}ms`);
+
+		return {
+			message: 'User targets set successfully',
+		};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
 			this.logger.error(
@@ -1553,16 +1585,48 @@ export class UserService {
 			this.logger.debug(`Saving updated target for user: ${userId}`);
 			await this.userRepository.save(user);
 
-			// Invalidate the cache
-			await this.invalidateUserCache(user);
-			await this.cacheManager.del(this.getCacheKey(`target_${userId}`));
+					// Invalidate the cache
+		await this.invalidateUserCache(user);
+		await this.cacheManager.del(this.getCacheKey(`target_${userId}`));
 
-			const executionTime = Date.now() - startTime;
-			this.logger.log(`User targets updated successfully for user: ${userId} in ${executionTime}ms`);
-
-			return {
-				message: 'User targets updated successfully',
+		// Send target updated email notification
+		this.logger.log(`📧 [UserService] Sending target updated email notification for user: ${userId}`);
+		try {
+			const emailData = {
+				name: `${user.name} ${user.surname}`.trim(),
+				userName: `${user.name} ${user.surname}`.trim(),
+				userEmail: user.email,
+				userId: user.uid,
+				targetDetails: {
+					targetSalesAmount: updatedUserTarget.targetSalesAmount,
+					targetQuotationsAmount: updatedUserTarget.targetQuotationsAmount,
+					targetNewLeads: updatedUserTarget.targetNewLeads,
+					targetNewClients: updatedUserTarget.targetNewClients,
+					targetCheckIns: updatedUserTarget.targetCheckIns,
+					targetCalls: updatedUserTarget.targetCalls,
+					periodStartDate: updatedUserTarget.periodStartDate?.toISOString().split('T')[0],
+					periodEndDate: updatedUserTarget.periodEndDate?.toISOString().split('T')[0],
+					description: 'Your performance targets have been updated',
+				},
+				organizationName: user.organisation?.name || user.branch?.organisation?.name || 'Your Organization',
+				branchName: user.branch?.name,
+				updatedAt: new Date().toISOString(),
+				dashboardUrl: `${this.configService.get('FRONTEND_URL')}/dashboard`,
+				supportEmail: this.configService.get('SUPPORT_EMAIL') || 'support@loro.africa',
 			};
+
+			this.eventEmitter.emit('send.email', EmailType.USER_TARGET_UPDATED, [user.email], emailData);
+			this.logger.log(`✅ [UserService] Target updated email notification queued for user: ${userId}`);
+		} catch (emailError) {
+			this.logger.error(`❌ [UserService] Failed to queue target updated email for user ${userId}:`, emailError.message);
+		}
+
+		const executionTime = Date.now() - startTime;
+		this.logger.log(`User targets updated successfully for user: ${userId} in ${executionTime}ms`);
+
+		return {
+			message: 'User targets updated successfully',
+		};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
 			this.logger.error(
@@ -1612,6 +1676,29 @@ export class UserService {
 			// Invalidate the cache
 			await this.invalidateUserCache(user);
 			await this.cacheManager.del(this.getCacheKey(`target_${userId}`));
+
+			// Send target deleted email notification
+			this.logger.log(`📧 [UserService] Sending target deleted email notification for user: ${userId}`);
+			try {
+				const emailData = {
+					name: `${user.name} ${user.surname}`.trim(),
+					userName: `${user.name} ${user.surname}`.trim(),
+					userEmail: user.email,
+					userId: user.uid,
+					targetType: 'User Performance Target',
+					reason: 'Target period ended or administrative decision',
+					organizationName: user.organisation?.name || user.branch?.organisation?.name || 'Your Organization',
+					branchName: user.branch?.name,
+					deletedAt: new Date().toISOString(),
+					dashboardUrl: `${this.configService.get('FRONTEND_URL')}/dashboard`,
+					supportEmail: this.configService.get('SUPPORT_EMAIL') || 'support@loro.africa',
+				};
+
+				this.eventEmitter.emit('send.email', EmailType.USER_TARGET_DELETED, [user.email], emailData);
+				this.logger.log(`✅ [UserService] Target deleted email notification queued for user: ${userId}`);
+			} catch (emailError) {
+				this.logger.error(`❌ [UserService] Failed to queue target deleted email for user ${userId}:`, emailError.message);
+			}
 
 			const executionTime = Date.now() - startTime;
 			this.logger.log(`User targets deleted successfully for user: ${userId} in ${executionTime}ms`);
@@ -1963,11 +2050,7 @@ export class UserService {
 			// Send admin notification emails
 			const adminEmails = admins.map(admin => admin.email);
 			
-			this.eventEmitter.emit('email.send', {
-				to: adminEmails,
-				type: EmailType.USER_TARGET_ACHIEVEMENT_ADMIN,
-				data: adminEmailData,
-			});
+			this.eventEmitter.emit('send.email', EmailType.USER_TARGET_ACHIEVEMENT_ADMIN, adminEmails, adminEmailData);
 
 			this.logger.log(`Target achievement admin notifications sent to ${adminEmails.length} admins for user: ${user.uid}`);
 		} catch (error) {
@@ -2639,11 +2722,7 @@ export class UserService {
 				motivationalMessage: achievementData.motivationalMessage,
 			};
 
-			this.eventEmitter.emit('email.send', {
-				to: user.email,
-				type: EmailType.USER_TARGET_ACHIEVEMENT,
-				data: emailData,
-			});
+			this.eventEmitter.emit('send.email', EmailType.USER_TARGET_ACHIEVEMENT, [user.email], emailData);
 
 			this.logger.log(`Target achievement email sent to user ${userId} for ${targetType} target`);
 		} catch (error) {
@@ -2702,11 +2781,7 @@ export class UserService {
 				encouragementMessage: milestoneData.encouragementMessage,
 			};
 
-			this.eventEmitter.emit('email.send', {
-				to: user.email,
-				type: EmailType.USER_TARGET_MILESTONE,
-				data: emailData,
-			});
+			this.eventEmitter.emit('send.email', EmailType.USER_TARGET_MILESTONE, [user.email], emailData);
 
 			this.logger.log(`Target milestone email sent to user ${userId} for ${targetType} milestone`);
 		} catch (error) {
@@ -2760,11 +2835,7 @@ export class UserService {
 				recommendedActions: reminderData.recommendedActions,
 			};
 
-			this.eventEmitter.emit('email.send', {
-				to: user.email,
-				type: EmailType.USER_TARGET_DEADLINE_REMINDER,
-				data: emailData,
-			});
+			this.eventEmitter.emit('send.email', EmailType.USER_TARGET_DEADLINE_REMINDER, [user.email], emailData);
 
 			this.logger.log(`Target deadline reminder email sent to user ${userId} with urgency: ${reminderData.urgencyLevel}`);
 		} catch (error) {
@@ -2833,11 +2904,7 @@ export class UserService {
 				dashboardUrl: `${this.configService.get('FRONTEND_URL')}/dashboard`,
 			};
 
-			this.eventEmitter.emit('email.send', {
-				to: user.email,
-				type: EmailType.USER_TARGET_PERFORMANCE_ALERT,
-				data: emailData,
-			});
+			this.eventEmitter.emit('send.email', EmailType.USER_TARGET_PERFORMANCE_ALERT, [user.email], emailData);
 
 			this.logger.log(`Performance alert email sent to user ${userId} with alert type: ${alertData.alertType}`);
 		} catch (error) {
@@ -2892,11 +2959,7 @@ export class UserService {
 				supportEmail: updateData.supportEmail,
 			};
 
-			this.eventEmitter.emit('email.send', {
-				to: user.email,
-				type: EmailType.USER_TARGET_ERP_UPDATE_CONFIRMATION,
-				data: emailData,
-			});
+			this.eventEmitter.emit('send.email', EmailType.USER_TARGET_ERP_UPDATE_CONFIRMATION, [user.email], emailData);
 
 			this.logger.log(`ERP update confirmation email sent to user ${userId} for transaction: ${updateData.transactionId}`);
 		} catch (error) {
@@ -2968,17 +3031,22 @@ export class UserService {
 				recognitionMessage: summaryData.recognitionMessage,
 			};
 
-			this.eventEmitter.emit('email.send', {
-				to: user.email,
-				type: EmailType.USER_TARGET_PERIOD_SUMMARY,
-				data: emailData,
-			});
+			this.eventEmitter.emit('send.email', EmailType.USER_TARGET_PERIOD_SUMMARY, [user.email], emailData);
 
 			this.logger.log(`Period summary email sent to user ${userId} for ${summaryData.periodType} period`);
 		} catch (error) {
 			this.logger.error(`Error sending period summary email to user ${userId}:`, error.message);
 		}
 	}
+
+	/**
+	 * Send target updated notification email
+	 * @param userId - User ID whose targets were updated
+	 * @param targetDetails - Details of the updated targets
+	 * @param updatedBy - Information about who updated the targets
+	 * @param changes - Array of changes made to the targets
+	 */
+
 
 	/**
 	 * Add clients to a user's assigned clients list

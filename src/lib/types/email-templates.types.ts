@@ -1477,6 +1477,86 @@ export interface UserTargetPeriodSummaryEmailData extends BaseEmailData {
 	recognitionMessage?: string;
 }
 
+export interface UserTargetSetEmailData extends BaseEmailData {
+	userName: string;
+	userEmail: string;
+	userId: string;
+	targetDetails: {
+		dailyHours?: number;
+		monthlyHours?: number;
+		targetSalesAmount?: number;
+		targetQuotationsAmount?: number;
+		targetOrdersAmount?: number;
+		targetNewLeads?: number;
+		targetNewClients?: number;
+		targetCheckIns?: number;
+		targetCalls?: number;
+		description?: string;
+		periodStartDate?: string;
+		periodEndDate?: string;
+	};
+	organizationName: string;
+	branchName?: string;
+	createdAt: string;
+	setBy?: {
+		name: string;
+		email: string;
+	};
+	dashboardUrl: string;
+	supportEmail: string;
+}
+
+export interface UserTargetDeletedEmailData extends BaseEmailData {
+	userName: string;
+	userEmail: string;
+	userId: string;
+	targetType?: string;
+	reason?: string;
+	organizationName: string;
+	branchName?: string;
+	deletedAt: string;
+	deletedBy?: {
+		name: string;
+		email: string;
+	};
+	dashboardUrl: string;
+	supportEmail: string;
+}
+
+export interface UserTargetUpdatedEmailData extends BaseEmailData {
+	userName: string;
+	userEmail: string;
+	userId: string;
+	targetDetails: {
+		dailyHours?: number;
+		monthlyHours?: number;
+		targetSalesAmount?: number;
+		targetQuotationsAmount?: number;
+		targetOrdersAmount?: number;
+		targetNewLeads?: number;
+		targetNewClients?: number;
+		targetCheckIns?: number;
+		targetCalls?: number;
+		description?: string;
+		periodStartDate?: string;
+		periodEndDate?: string;
+	};
+	organizationName: string;
+	branchName?: string;
+	updatedAt: string;
+	updatedBy?: {
+		name: string;
+		email: string;
+	};
+	changes?: Array<{
+		field: string;
+		oldValue: any;
+		newValue: any;
+	}>;
+	dashboardUrl: string;
+	supportEmail: string;
+}
+
 // Payslip related email data types
 export interface PayslipAvailableEmailData extends BaseEmailData {
 	employeeName: string;
@@ -1801,6 +1881,9 @@ export interface EmailDataMap {
 	[EmailType.JOURNAL_UPDATED]: JournalUpdatedEmailData;
 	[EmailType.JOURNAL_DELETED]: JournalDeletedEmailData;
 	// User Target related email mappings
+	[EmailType.USER_TARGET_SET]: UserTargetSetEmailData;
+	[EmailType.USER_TARGET_UPDATED]: UserTargetUpdatedEmailData;
+	[EmailType.USER_TARGET_DELETED]: UserTargetDeletedEmailData;
 	[EmailType.USER_TARGET_ACHIEVEMENT]: UserTargetAchievementEmailData;
 	[EmailType.USER_TARGET_MILESTONE]: UserTargetMilestoneEmailData;
 	[EmailType.USER_TARGET_DEADLINE_REMINDER]: UserTargetDeadlineReminderEmailData;
