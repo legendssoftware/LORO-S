@@ -21,9 +21,7 @@ import {
 	ApiBearerAuth,
 	ApiForbiddenResponse,
 	ApiConflictResponse,
-	ApiUnprocessableEntityResponse,
 	ApiInternalServerErrorResponse,
-	ApiServiceUnavailableResponse,
 	ApiConsumes,
 	ApiProduces,
 } from '@nestjs/swagger';
@@ -1851,60 +1849,147 @@ Creates comprehensive performance targets for a specific user with advanced conf
 	@Patch(':ref/target')
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER)
 	@ApiOperation({
-		summary: 'Update user performance targets',
+		summary: '📊 Update user performance targets',
 		description: `
-		**Update existing performance targets for a specific user**
-		
-		This endpoint provides comprehensive target management capabilities:
-		- Partial or complete target updates using PATCH semantics
-		- Progress preservation during target modifications
-		- Historical tracking of target changes
-		- Automatic recalculation of achievement percentages
-		- Support for mid-period target adjustments
-		
-		**Update Scenarios:**
-		- Target value adjustments (increase/decrease targets)
-		- Period extensions or modifications
-		- Currency changes for international transfers
-		- Category additions or removals
-		- Emergency target resets or corrections
-		
-		**Business Rules:**
-		- Updates preserve existing progress unless explicitly reset
-		- Target increases maintain current achievement percentages
-		- Period changes recalculate progress metrics
-		- Audit trail maintained for all modifications
+# Performance Target Management System
+
+Updates existing performance targets for a specific user with comprehensive validation, progress preservation, and advanced analytics capabilities.
+
+## 🎯 **Core Features**
+- **PATCH Semantics**: Partial or complete target updates with field-level precision
+- **Progress Preservation**: Maintains existing progress during target modifications
+- **Historical Tracking**: Complete audit trail of all target changes and modifications
+- **Dynamic Recalculation**: Automatic recalculation of achievement percentages
+- **Mid-Period Adjustments**: Support for target changes during active periods
+
+## 📊 **Update Scenarios**
+- **Target Adjustments**: Increase or decrease targets based on market conditions
+- **Period Extensions**: Modify start and end dates for target periods
+- **Currency Changes**: Update currency for international operations
+- **Category Additions**: Add new target categories or remove existing ones
+- **Emergency Resets**: Correct errors or reset targets due to exceptional circumstances
+
+## 🔧 **Business Rules & Validation**
+- **Progress Preservation**: Updates preserve existing progress unless explicitly reset
+- **Achievement Percentages**: Target increases maintain current achievement percentages
+- **Period Recalculation**: Date changes automatically recalculate progress metrics
+- **Audit Trail**: All modifications are logged with user, timestamp, and reason
+- **Validation Engine**: Comprehensive validation prevents invalid state transitions
+
+## 📈 **Advanced Analytics**
+- **Progress Impact Analysis**: Calculate impact of target changes on overall progress
+- **Achievement Forecasting**: Predict target completion based on current trajectory
+- **Performance Metrics**: Track target modification patterns and success rates
+- **Milestone Tracking**: Automatic recalculation of next achievement milestones
+- **Trend Analysis**: Historical analysis of target adjustments and outcomes
+
+## 🔒 **Security & Permissions**
+- **Role-Based Access**: Only managers and administrators can update targets
+- **Organization Boundaries**: Target updates respect organizational hierarchies
+- **User Validation**: Ensures target user exists and is accessible
+- **Change Authorization**: Validates permission to modify specific target categories
+- **Data Integrity**: Maintains consistency across all related target data
+
+## 📋 **Use Cases**
+- **Performance Reviews**: Adjust targets based on review outcomes
+- **Market Changes**: Respond to market conditions with target modifications
+- **Team Restructuring**: Update targets following organizational changes
+- **Seasonal Adjustments**: Modify targets for seasonal business patterns
+- **Goal Recalibration**: Adjust targets based on actual performance data
+- **Emergency Corrections**: Fix errors or handle exceptional circumstances
+
+## 🎪 **Integration Features**
+- **ERP Synchronization**: Seamless integration with external systems
+- **Notification System**: Automatic alerts for target changes and milestones
+- **Reporting Integration**: Updated targets reflect in all performance reports
+- **Dashboard Updates**: Real-time dashboard updates with new target information
+- **Workflow Integration**: Connect with existing performance management workflows
 		`,
 		operationId: 'updateUserTargets',
 	})
 	@ApiParam({ 
 		name: 'ref', 
-		description: 'User ID for target updates',
+		description: 'User reference identifier - Must be a valid user ID within your organization',
 		type: Number,
 		example: 123
 	})
 	@ApiBody({ 
 		type: UpdateUserTargetDto,
-		description: 'Target update configuration (partial updates supported)',
+		description: 'Target update configuration with comprehensive validation and support for partial updates',
 		examples: {
 			targetAdjustment: {
-				summary: 'Adjust sales target mid-period',
+				summary: '📈 Sales Target Adjustment',
+				description: 'Adjust sales targets mid-period due to market opportunities',
 				value: {
 					targetSalesAmount: 60000,
-					reason: 'Market opportunity adjustment',
-				},
+					targetQuotationsAmount: 35000,
+					targetOrdersAmount: 25000,
+					reason: 'Market opportunity adjustment - new client acquisition',
+					adjustmentType: 'INCREASE',
+					effectiveDate: '2024-01-15'
+				}
 			},
 			progressUpdate: {
-				summary: 'Update current progress values',
+				summary: '📊 Progress Values Update',
+				description: 'Update current progress values with latest achievements',
 				value: {
 					currentSalesAmount: 45000,
 					currentQuotationsAmount: 28000,
 					currentOrdersAmount: 17000,
 					currentHoursWorked: 120,
 					currentNewLeads: 15,
-				},
+					currentNewClients: 8,
+					currentCheckIns: 25,
+					currentCalls: 68,
+					lastUpdated: '2024-01-15T10:30:00Z'
+				}
 			},
-		},
+			periodModification: {
+				summary: '📅 Period Extension',
+				description: 'Extend target period due to business requirements',
+				value: {
+					periodEndDate: '2024-03-31',
+					extensionReason: 'Project timeline extension requires target period adjustment',
+					recalculateProgress: true
+				}
+			},
+			currencyChange: {
+				summary: '💱 Currency Update',
+				description: 'Update currency for international operations',
+				value: {
+					targetCurrency: 'EUR',
+					exchangeRate: 0.85,
+					conversionDate: '2024-01-15',
+					currencyChangeReason: 'Regional expansion to European market'
+				}
+			},
+			comprehensiveUpdate: {
+				summary: '🔄 Comprehensive Target Update',
+				description: 'Update multiple target categories and progress values',
+				value: {
+					targetSalesAmount: 75000,
+					targetQuotationsAmount: 45000,
+					targetOrdersAmount: 30000,
+					targetHoursWorked: 180,
+					targetNewLeads: 30,
+					targetNewClients: 12,
+					targetCheckIns: 40,
+					targetCalls: 100,
+					currentSalesAmount: 52000,
+					currentQuotationsAmount: 31000,
+					currentOrdersAmount: 21000,
+					currentHoursWorked: 145,
+					currentNewLeads: 22,
+					currentNewClients: 9,
+					currentCheckIns: 28,
+					currentCalls: 75,
+					targetCurrency: 'USD',
+					updateReason: 'Q2 target recalibration based on Q1 performance',
+					approvedBy: 'manager-456',
+					effectiveDate: '2024-04-01'
+				}
+			}
+		}
 	})
 	@ApiOkResponse({
 		description: '✅ User performance targets updated successfully',
@@ -1915,25 +2000,83 @@ Creates comprehensive performance targets for a specific user with advanced conf
 				data: {
 					type: 'object',
 					properties: {
+						updatedTarget: {
+							type: 'object',
+							properties: {
+								uid: { type: 'number', example: 42, description: 'Target record ID' },
+								targetSalesAmount: { type: 'number', example: 60000, description: 'Updated sales target' },
+								targetQuotationsAmount: { type: 'number', example: 35000, description: 'Updated quotations target' },
+								targetOrdersAmount: { type: 'number', example: 25000, description: 'Updated orders target' },
+								targetHoursWorked: { type: 'number', example: 180, description: 'Updated hours target' },
+								targetNewLeads: { type: 'number', example: 30, description: 'Updated leads target' },
+								targetNewClients: { type: 'number', example: 12, description: 'Updated clients target' },
+								targetCheckIns: { type: 'number', example: 40, description: 'Updated check-ins target' },
+								targetCalls: { type: 'number', example: 100, description: 'Updated calls target' },
+								targetCurrency: { type: 'string', example: 'USD', description: 'Target currency' },
+								targetPeriod: { type: 'string', example: 'Monthly', description: 'Target period type' },
+								periodStartDate: { type: 'string', format: 'date-time', example: '2024-01-01T00:00:00Z' },
+								periodEndDate: { type: 'string', format: 'date-time', example: '2024-01-31T23:59:59Z' },
+								updatedAt: { type: 'string', format: 'date-time', example: '2024-01-15T10:30:00Z' }
+							}
+						},
 						updatedFields: {
 							type: 'array',
 							items: { type: 'string' },
-							example: ['targetSalesAmount', 'currentHoursWorked'],
-							description: 'List of fields that were updated',
+							example: ['targetSalesAmount', 'targetQuotationsAmount', 'currentHoursWorked', 'targetCurrency'],
+							description: 'List of fields that were updated in this operation'
 						},
 						progressImpact: {
 							type: 'object',
 							properties: {
-								previousOverallProgress: { type: 'number', example: 65.2, description: 'Progress before update' },
-								newOverallProgress: { type: 'number', example: 72.8, description: 'Progress after update' },
+								previousOverallProgress: { type: 'number', example: 65.2, description: 'Overall progress before update' },
+								newOverallProgress: { type: 'number', example: 72.8, description: 'Overall progress after update' },
 								impactDescription: { type: 'string', example: 'Target adjustment improved overall progress by 7.6%' },
-							},
+								categoryImpacts: {
+									type: 'object',
+									properties: {
+										sales: { type: 'number', example: 5.2, description: 'Sales category progress change' },
+										quotations: { type: 'number', example: 3.1, description: 'Quotations category progress change' },
+										hours: { type: 'number', example: -1.5, description: 'Hours category progress change' }
+									}
+								}
+							}
 						},
 						nextMilestone: { type: 'string', example: '75% target achievement', description: 'Next achievement milestone' },
-					},
+						forecasting: {
+							type: 'object',
+							properties: {
+								projectedCompletion: { type: 'string', format: 'date', example: '2024-01-28', description: 'Projected completion date' },
+								completionProbability: { type: 'number', example: 78.5, description: 'Probability of target completion (%)' },
+								recommendedActions: {
+									type: 'array',
+									items: { type: 'string' },
+									example: ['Increase sales activities', 'Focus on lead conversion', 'Optimize time allocation']
+								}
+							}
+						},
+						auditInfo: {
+							type: 'object',
+							properties: {
+								updatedBy: { type: 'string', example: 'admin-789', description: 'ID of user who made the update' },
+								updateReason: { type: 'string', example: 'Market opportunity adjustment', description: 'Reason for the update' },
+								approvalRequired: { type: 'boolean', example: false, description: 'Whether update requires approval' },
+								approvedBy: { type: 'string', example: 'manager-456', description: 'ID of approving user' },
+								changeType: { type: 'string', example: 'ADJUSTMENT', description: 'Type of change made' }
+							}
+						}
+					}
 				},
-			},
-		},
+				meta: {
+					type: 'object',
+					properties: {
+						updateType: { type: 'string', example: 'PARTIAL_UPDATE', description: 'Type of update performed' },
+						fieldsUpdated: { type: 'number', example: 4, description: 'Number of fields updated' },
+						validationsPassed: { type: 'number', example: 8, description: 'Number of validation checks passed' },
+						progressRecalculated: { type: 'boolean', example: true, description: 'Whether progress was recalculated' }
+					}
+				}
+			}
+		}
 	})
 	@ApiBadRequestResponse({ 
 		description: '❌ Invalid update data provided',
@@ -1941,19 +2084,100 @@ Creates comprehensive performance targets for a specific user with advanced conf
 			type: 'object',
 			properties: {
 				message: { type: 'string', example: 'Invalid target update configuration' },
-				errors: {
+				error: { type: 'string', example: 'Bad Request' },
+				statusCode: { type: 'number', example: 400 },
+				validationErrors: {
 					type: 'array',
 					items: { type: 'string' },
 					example: [
 						'Cannot decrease target below current achievement',
 						'Invalid currency code provided',
 						'Period dates must be within current fiscal year',
-					],
+						'Target values must be positive numbers',
+						'End date must be after start date'
+					]
 				},
-			},
-		},
+				fieldErrors: {
+					type: 'object',
+					properties: {
+						targetSalesAmount: { type: 'string', example: 'Value must be greater than current achievement of 45000' },
+						targetCurrency: { type: 'string', example: 'Invalid currency code. Must be valid ISO 4217 currency' },
+						periodEndDate: { type: 'string', example: 'End date must be after start date' }
+					}
+				}
+			}
+		}
 	})
-	@ApiNotFoundResponse({ description: '❌ User not found or no targets configured to update' })
+	@ApiNotFoundResponse({ 
+		description: '❌ User not found or no targets configured to update',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'User not found or no targets exist to update' },
+				error: { type: 'string', example: 'Not Found' },
+				statusCode: { type: 'number', example: 404 },
+				details: {
+					type: 'object',
+					properties: {
+						userId: { type: 'number', example: 123 },
+						organizationId: { type: 'number', example: 456 },
+						branchId: { type: 'number', example: 789 },
+						reason: { type: 'string', example: 'User exists but no performance targets have been configured' }
+					}
+				}
+			}
+		}
+	})
+	@ApiForbiddenResponse({
+		description: '🚫 Forbidden - Insufficient permissions to update targets',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'You do not have permission to update targets for this user' },
+				error: { type: 'string', example: 'Forbidden' },
+				statusCode: { type: 'number', example: 403 },
+				reason: { type: 'string', example: 'Insufficient access level or user belongs to different organization' },
+				requiredPermissions: {
+					type: 'array',
+					items: { type: 'string' },
+					example: ['ADMIN', 'MANAGER', 'OWNER']
+				}
+			}
+		}
+	})
+	@ApiConflictResponse({
+		description: '⚠️ Conflict - Target update conflicts with current state',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Cannot update targets - conflicts with current state' },
+				error: { type: 'string', example: 'Conflict' },
+				statusCode: { type: 'number', example: 409 },
+				conflicts: {
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'Target period has already ended',
+						'Another user is currently updating these targets',
+						'Target values conflict with organizational policies'
+					]
+				}
+			}
+		}
+	})
+	@ApiInternalServerErrorResponse({
+		description: '💥 Internal Server Error - Target update failed',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Failed to update targets due to system error' },
+				error: { type: 'string', example: 'Internal Server Error' },
+				statusCode: { type: 'number', example: 500 },
+				timestamp: { type: 'string', format: 'date-time', example: '2024-01-15T10:30:00Z' },
+				path: { type: 'string', example: '/user/123/target' }
+			}
+		}
+	})
 	updateUserTarget(@Param('ref') ref: number, @Body() updateUserTargetDto: UpdateUserTargetDto) {
 		return this.userService.updateUserTarget(ref, updateUserTargetDto);
 	}
@@ -1961,34 +2185,67 @@ Creates comprehensive performance targets for a specific user with advanced conf
 	@Delete(':ref/target')
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER)
 	@ApiOperation({
-		summary: 'Delete user performance targets',
+		summary: '🗑️ Delete user performance targets',
 		description: `
-		**Remove performance targets for a specific user**
-		
-		This endpoint provides safe target deletion with proper cleanup:
-		- Soft deletion with historical preservation
-		- Progress data archival for reporting
-		- Notification to affected stakeholders
-		- Audit trail maintenance
-		- Option for complete removal or archival
-		
-		**Deletion Impact:**
-		- User dashboard updated to reflect no active targets
-		- Historical performance data preserved for analytics
-		- Related notifications and reminders disabled
-		- Team/branch metrics recalculated excluding deleted targets
-		
-		**Use Cases:**
-		- Employee role changes requiring different target structure
-		- Temporary target suspension during leave/transitions
-		- Target structure redesign requiring fresh start
-		- Performance period completion and reset
+# Performance Target Deletion System
+
+Safely removes performance targets for a specific user with comprehensive cleanup, data preservation, and impact analysis capabilities.
+
+## 🔒 **Safety & Security Features**
+- **Soft Deletion**: Targets are marked as deleted but preserved for historical analysis
+- **Progress Preservation**: All progress data is archived for reporting and compliance
+- **Impact Analysis**: Comprehensive assessment of deletion impact on team metrics
+- **Audit Trail**: Complete logging of deletion actions with user identification
+- **Rollback Capability**: Ability to restore deleted targets within retention period
+
+## 📊 **Data Management**
+- **Historical Preservation**: All performance data is archived for future reference
+- **Reporting Continuity**: Historical reports remain accessible after deletion
+- **Compliance Support**: Maintains data required for regulatory compliance
+- **Analytics Integration**: Archived data remains available for analytical purposes
+- **Backup Creation**: Automatic backup of target data before deletion
+
+## 🔧 **System Impact**
+- **Dashboard Updates**: User dashboard reflects removal of active targets
+- **Team Metrics**: Team and branch metrics are recalculated excluding deleted targets
+- **Notification System**: Stakeholders are automatically notified of target removal
+- **Workflow Integration**: Related workflows are updated to reflect target deletion
+- **Performance Reports**: Active reports are updated to exclude deleted targets
+
+## 📋 **Use Cases**
+- **Employee Transitions**: Remove targets during role changes or departures
+- **Performance Restructuring**: Clear targets for new performance framework
+- **Temporary Suspension**: Suspend targets during leave or special circumstances
+- **System Maintenance**: Clean up obsolete or incorrect targets
+- **Compliance Requirements**: Remove targets for legal or regulatory reasons
+- **Performance Reset**: Clear targets for fresh start or new period
+
+## 🎯 **Business Process Integration**
+- **HR Workflow**: Integration with employee lifecycle management
+- **Performance Management**: Seamless integration with performance review cycles
+- **Reporting Systems**: Automatic updates to all performance reporting
+- **Analytics Platforms**: Historical data preservation for trend analysis
+- **Notification Systems**: Automatic stakeholder communication
+
+## ⚠️ **Impact Assessment**
+- **Team Performance**: Analysis of impact on team and branch metrics
+- **Individual Progress**: Final progress snapshot and achievement summary
+- **Organizational Metrics**: Impact on overall organizational performance
+- **Forecasting**: Adjustment of performance forecasts and projections
+- **Resource Planning**: Updates to capacity and resource allocation
+
+## 🔄 **Recovery Options**
+- **Restoration Period**: Targets can be restored within configurable retention period
+- **Data Recovery**: Complete recovery of all target data and progress
+- **Audit Recovery**: Full audit trail recovery for compliance purposes
+- **Selective Recovery**: Option to recover specific target categories
+- **Batch Recovery**: Ability to recover multiple targets simultaneously
 		`,
 		operationId: 'deleteUserTargets',
 	})
 	@ApiParam({ 
 		name: 'ref', 
-		description: 'User ID for target deletion',
+		description: 'User reference identifier - Must be a valid user ID within your organization',
 		type: Number,
 		example: 123
 	})
@@ -2001,22 +2258,84 @@ Creates comprehensive performance targets for a specific user with advanced conf
 				data: {
 					type: 'object',
 					properties: {
-						deletedTargetId: { type: 'number', example: 42, description: 'ID of deleted target record' },
+						deletedTarget: {
+							type: 'object',
+							properties: {
+								uid: { type: 'number', example: 42, description: 'ID of deleted target record' },
+								userId: { type: 'number', example: 123, description: 'User ID associated with deleted targets' },
+								targetPeriod: { type: 'string', example: 'Monthly', description: 'Period of deleted targets' },
+								periodStartDate: { type: 'string', format: 'date-time', example: '2024-01-01T00:00:00Z' },
+								periodEndDate: { type: 'string', format: 'date-time', example: '2024-01-31T23:59:59Z' },
+								deletedAt: { type: 'string', format: 'date-time', example: '2024-01-15T10:30:00Z' },
+								deletedBy: { type: 'string', example: 'admin-789', description: 'ID of user who deleted the targets' },
+								deletionReason: { type: 'string', example: 'Employee role change', description: 'Reason for target deletion' }
+							}
+						},
 						finalProgress: {
 							type: 'object',
 							properties: {
 								salesProgress: { type: 'number', example: 78.5, description: 'Final sales achievement percentage' },
+								quotationsProgress: { type: 'number', example: 85.2, description: 'Final quotations achievement percentage' },
+								ordersProgress: { type: 'number', example: 72.1, description: 'Final orders achievement percentage' },
 								hoursProgress: { type: 'number', example: 92.3, description: 'Final hours worked percentage' },
-								overallProgress: { type: 'number', example: 83.7, description: 'Final overall achievement percentage' },
+								leadsProgress: { type: 'number', example: 88.7, description: 'Final leads generation percentage' },
+								clientsProgress: { type: 'number', example: 75.0, description: 'Final clients acquisition percentage' },
+								checkInsProgress: { type: 'number', example: 80.4, description: 'Final check-ins completion percentage' },
+								callsProgress: { type: 'number', example: 95.6, description: 'Final calls completion percentage' },
+								overallProgress: { type: 'number', example: 83.7, description: 'Final overall achievement percentage' }
 							},
-							description: 'Final progress snapshot before deletion',
+							description: 'Final progress snapshot before deletion'
 						},
-						archivalReference: { type: 'string', example: 'ARCH_USER123_2024Q1', description: 'Reference for archived data' },
-						impactSummary: { type: 'string', example: 'Targets achieved 83.7% overall completion before deletion' },
-					},
+						archivalInfo: {
+							type: 'object',
+							properties: {
+								archivalReference: { type: 'string', example: 'ARCH_USER123_2024Q1', description: 'Reference for archived data' },
+								archivalDate: { type: 'string', format: 'date-time', example: '2024-01-15T10:30:00Z' },
+								retentionPeriod: { type: 'number', example: 90, description: 'Days data will be retained for recovery' },
+								recoveryDeadline: { type: 'string', format: 'date', example: '2024-04-15', description: 'Last date for target recovery' },
+								backupLocation: { type: 'string', example: '/archives/targets/2024/Q1/user123', description: 'Location of archived data' }
+							}
+						},
+						impactAnalysis: {
+							type: 'object',
+							properties: {
+								impactSummary: { type: 'string', example: 'Targets achieved 83.7% overall completion before deletion' },
+								teamImpact: { type: 'string', example: 'Team average performance adjusted by -2.3%' },
+								branchImpact: { type: 'string', example: 'Branch metrics recalculated excluding deleted targets' },
+								organizationalImpact: { type: 'string', example: 'Minimal impact on overall organizational performance' },
+								affectedReports: {
+									type: 'array',
+									items: { type: 'string' },
+									example: ['Monthly Performance Report', 'Team Analytics Dashboard', 'Individual Performance Tracker']
+								}
+							}
+						},
+						notification: {
+							type: 'object',
+							properties: {
+								stakeholdersNotified: { type: 'number', example: 5, description: 'Number of stakeholders notified' },
+								notificationsSent: {
+									type: 'array',
+									items: { type: 'string' },
+									example: ['Direct Manager', 'HR Department', 'Performance Team', 'Department Head', 'Analytics Team']
+								},
+								notificationDate: { type: 'string', format: 'date-time', example: '2024-01-15T10:30:00Z' }
+							}
+						}
+					}
 				},
-			},
-		},
+				meta: {
+					type: 'object',
+					properties: {
+						deletionType: { type: 'string', example: 'SOFT_DELETE', description: 'Type of deletion performed' },
+						dataPreserved: { type: 'boolean', example: true, description: 'Whether data was preserved' },
+						recoveryPossible: { type: 'boolean', example: true, description: 'Whether recovery is possible' },
+						complianceRequirements: { type: 'boolean', example: true, description: 'Whether compliance requirements are met' },
+						auditTrailMaintained: { type: 'boolean', example: true, description: 'Whether audit trail is maintained' }
+					}
+				}
+			}
+		}
 	})
 	@ApiNotFoundResponse({ 
 		description: '❌ User or targets not found',
@@ -2024,9 +2343,107 @@ Creates comprehensive performance targets for a specific user with advanced conf
 			type: 'object',
 			properties: {
 				message: { type: 'string', example: 'User not found or no targets exist to delete' },
-				errorCode: { type: 'string', example: 'TARGETS_NOT_FOUND' },
-			},
-		},
+				error: { type: 'string', example: 'Not Found' },
+				statusCode: { type: 'number', example: 404 },
+				details: {
+					type: 'object',
+					properties: {
+						userId: { type: 'number', example: 123 },
+						organizationId: { type: 'number', example: 456 },
+						branchId: { type: 'number', example: 789 },
+						reason: { type: 'string', example: 'User exists but no performance targets have been configured' },
+						suggestions: {
+							type: 'array',
+							items: { type: 'string' },
+							example: [
+								'Verify the user ID is correct',
+								'Check if targets have already been deleted',
+								'Ensure user belongs to your organization'
+							]
+						}
+					}
+				}
+			}
+		}
+	})
+	@ApiForbiddenResponse({
+		description: '🚫 Forbidden - Insufficient permissions to delete targets',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'You do not have permission to delete targets for this user' },
+				error: { type: 'string', example: 'Forbidden' },
+				statusCode: { type: 'number', example: 403 },
+				reason: { type: 'string', example: 'Insufficient access level or user belongs to different organization' },
+				requiredPermissions: {
+					type: 'array',
+					items: { type: 'string' },
+					example: ['ADMIN', 'MANAGER', 'OWNER']
+				},
+				currentPermissions: {
+					type: 'array',
+					items: { type: 'string' },
+					example: ['USER']
+				}
+			}
+		}
+	})
+	@ApiConflictResponse({
+		description: '⚠️ Conflict - Target deletion conflicts with current state',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Cannot delete targets - conflicts with current system state' },
+				error: { type: 'string', example: 'Conflict' },
+				statusCode: { type: 'number', example: 409 },
+				conflicts: {
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'User has active performance review in progress',
+						'Targets are locked for end-of-period calculations',
+						'Another user is currently updating these targets'
+					]
+				},
+				resolution: {
+					type: 'object',
+					properties: {
+						waitTime: { type: 'string', example: '24 hours until targets can be deleted' },
+						alternativeActions: {
+							type: 'array',
+							items: { type: 'string' },
+							example: [
+								'Wait for active processes to complete',
+								'Contact system administrator for override',
+								'Schedule deletion for later time'
+							]
+						}
+					}
+				}
+			}
+		}
+	})
+	@ApiInternalServerErrorResponse({
+		description: '💥 Internal Server Error - Target deletion failed',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Failed to delete targets due to system error' },
+				error: { type: 'string', example: 'Internal Server Error' },
+				statusCode: { type: 'number', example: 500 },
+				timestamp: { type: 'string', format: 'date-time', example: '2024-01-15T10:30:00Z' },
+				path: { type: 'string', example: '/user/123/target' },
+				errorDetails: {
+					type: 'object',
+					properties: {
+						component: { type: 'string', example: 'Target Management Service' },
+						operation: { type: 'string', example: 'DELETE_TARGET' },
+						errorCode: { type: 'string', example: 'TMS_DELETE_FAILURE' },
+						retryable: { type: 'boolean', example: true }
+					}
+				}
+			}
+		}
 	})
 	deleteUserTarget(@Param('ref') ref: number) {
 		return this.userService.deleteUserTarget(ref);
