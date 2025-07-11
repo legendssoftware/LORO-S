@@ -566,10 +566,21 @@ export class ReportsService implements OnModuleInit {
 				.sort((a, b) => b.revenue - a.revenue)
 				.slice(0, 10);
 
+			// Calculate revenue growth (compared to previous 30 days)
+			const sixtyDaysAgo = new Date();
+			sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+			const previousPeriodQuotations = quotations.filter(q => 
+				q.createdAt >= sixtyDaysAgo && q.createdAt < thirtyDaysAgo && 
+				(q.status === 'completed' || q.status === 'approved')
+			);
+			const previousPeriodRevenue = previousPeriodQuotations.reduce((sum, q) => sum + (q.totalAmount || 0), 0);
+			const revenueGrowth = previousPeriodRevenue > 0 ? 
+				((totalRevenue - previousPeriodRevenue) / previousPeriodRevenue) * 100 : 0;
+
 			const result = {
 				summary: {
 					totalRevenue,
-					revenueGrowth: 0, // TODO: Calculate based on previous period
+					revenueGrowth,
 					totalQuotations,
 					conversionRate,
 					averageOrderValue,
@@ -687,6 +698,25 @@ export class ReportsService implements OnModuleInit {
 				item.conversionRate = item.quotations > 0 ? (item.conversions / item.quotations) * 100 : 0;
 			});
 
+			// Calculate monthly trends (last 12 months)
+			const monthlyTrends = [];
+			for (let i = 11; i >= 0; i--) {
+				const date = new Date();
+				date.setMonth(date.getMonth() - i);
+				const month = date.toLocaleDateString('en-US', { month: 'short' });
+				const monthStart = new Date(date.getFullYear(), date.getMonth(), 1);
+				const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0);
+				
+				const monthlyQuotations = quotations.filter(q => 
+					q.createdAt >= monthStart && q.createdAt <= monthEnd
+				);
+				
+				monthlyTrends.push({
+					month,
+					count: monthlyQuotations.length,
+				});
+			}
+
 			const result = {
 				summary: {
 					totalQuotations,
@@ -698,6 +728,13 @@ export class ReportsService implements OnModuleInit {
 				},
 				statusBreakdown: Object.values(statusBreakdown),
 				priceListPerformance: Object.values(priceListPerformance),
+				chartData: {
+					statusDistribution: Object.values(statusBreakdown).map((item: any) => ({
+						name: item.status,
+						value: item.count,
+					})),
+					monthlyTrends,
+				},
 			};
 
 			await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);
@@ -786,16 +823,42 @@ export class ReportsService implements OnModuleInit {
 				.sort((a, b) => b.revenue - a.revenue)
 				.slice(0, 10);
 
+			// Calculate revenue growth (compared to previous period)
+			const sixtyDaysAgo = new Date();
+			sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+			const previousPeriodRevenue = quotations
+				.filter(q => q.createdAt >= sixtyDaysAgo && q.createdAt < thirtyDaysAgo && 
+							(q.status === 'completed' || q.status === 'approved'))
+				.reduce((sum, q) => sum + (q.totalAmount || 0), 0);
+			const revenueGrowth = previousPeriodRevenue > 0 ? 
+				((totalRevenue - previousPeriodRevenue) / previousPeriodRevenue) * 100 : 0;
+
+			// Calculate current month revenue
+			const currentMonth = new Date();
+			const monthStart = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
+			const currentMonthRevenue = quotations
+				.filter(q => q.createdAt >= monthStart && (q.status === 'completed' || q.status === 'approved'))
+				.reduce((sum, q) => sum + (q.totalAmount || 0), 0);
+
 			const result = {
 				summary: {
 					totalRevenue,
-					revenueGrowth: 0, // TODO: Calculate based on previous period
+					revenueGrowth,
+					monthlyRevenue: currentMonthRevenue,
+					topProduct: productBreakdown[0]?.product || 'N/A',
+					averageOrderValue: completedQuotations.length > 0 ? totalRevenue / completedQuotations.length : 0,
 					revenuePerCustomer,
-					grossMargin: 35.2, // TODO: Calculate based on actual cost data
-					profitMargin: 18.7, // TODO: Calculate based on actual cost data
+					grossMargin: 0, // Note: Requires cost data not available in current schema
+					profitMargin: 0, // Note: Requires cost data not available in current schema
 				},
 				timeSeries: Object.values(timeSeries),
 				productBreakdown,
+				chartData: {
+					monthlyRevenue: Object.values(timeSeries).map((item: any) => ({
+						month: new Date(item.date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+						revenue: item.revenue,
+					})),
+				},
 				forecast: {
 					nextMonth: totalRevenue * 1.08, // Simple 8% growth assumption
 					nextQuarter: totalRevenue * 3.24, // 3 months * 1.08 growth
@@ -857,7 +920,8 @@ export class ReportsService implements OnModuleInit {
 			// Calculate conversion rates and quota attainment
 			const individualPerformance = Array.from(salesRepMap.values()).map(rep => {
 				rep.conversionRate = rep.quotations > 0 ? (rep.conversions / rep.quotations) * 100 : 0;
-				rep.quotaAttainment = 100 + (Math.random() * 50 - 25); // TODO: Calculate based on actual quotas
+				// Note: Quota attainment requires quota data not available in current schema
+				rep.quotaAttainment = 0; 
 				return rep;
 			});
 
@@ -876,6 +940,12 @@ export class ReportsService implements OnModuleInit {
 			const averageDealSize = completedQuotations.length > 0 ? totalRevenue / completedQuotations.length : 0;
 
 			const result = {
+				summary: {
+					topPerformer: topPerformer?.name || 'N/A',
+					topPerformerRevenue: topPerformer?.revenue || 0,
+					teamPerformance: averagePerformance,
+					targetAchievement: teamQuotaAttainment,
+				},
 				teamSummary: {
 					totalSalesReps,
 					averagePerformance,
@@ -883,9 +953,23 @@ export class ReportsService implements OnModuleInit {
 					teamQuotaAttainment,
 				},
 				individualPerformance,
+				chartData: {
+					teamPerformance: individualPerformance.map(rep => ({
+						name: rep.name,
+						revenue: rep.revenue,
+					})),
+					targetVsAchievement: Array.from({ length: 12 }, (_, i) => {
+						const month = new Date(0, i).toLocaleDateString('en-US', { month: 'short' });
+						return {
+							month,
+							target: averageDealSize * (i + 1),
+							achievement: averageDealSize * (i + 1) * (averagePerformance / 100),
+						};
+					}),
+				},
 				metrics: {
 					averageDealSize,
-					salesVelocity: 14.2, // TODO: Calculate based on actual lead-to-close times
+					salesVelocity: 0, // Note: Requires accurate lead-to-close tracking
 					winRate: averagePerformance,
 					pipelineValue: quotations
 						.filter(q => q.status === 'pending' || q.status === 'draft')
@@ -976,39 +1060,71 @@ export class ReportsService implements OnModuleInit {
 			const lowValueCustomers = Array.from(clientMap.values()).filter(c => c.revenue <= averageLifetimeValue);
 
 			segments.push({
-				segment: 'High Value',
+				name: 'High Value',
+				segment: 'enterprise',
 				customers: highValueCustomers.length,
 				revenue: highValueCustomers.reduce((sum, c) => sum + c.revenue, 0),
 				percentage: totalRevenue > 0 ? 
 					(highValueCustomers.reduce((sum, c) => sum + c.revenue, 0) / totalRevenue) * 100 : 0,
+				value: highValueCustomers.reduce((sum, c) => sum + c.revenue, 0),
 			});
 
 			segments.push({
-				segment: 'Medium Value',
+				name: 'Medium Value',
+				segment: 'sme',
 				customers: mediumValueCustomers.length,
 				revenue: mediumValueCustomers.reduce((sum, c) => sum + c.revenue, 0),
 				percentage: totalRevenue > 0 ? 
 					(mediumValueCustomers.reduce((sum, c) => sum + c.revenue, 0) / totalRevenue) * 100 : 0,
+				value: mediumValueCustomers.reduce((sum, c) => sum + c.revenue, 0),
 			});
 
 			segments.push({
-				segment: 'Low Value',
+				name: 'Low Value',
+				segment: 'startup',
 				customers: lowValueCustomers.length,
 				revenue: lowValueCustomers.reduce((sum, c) => sum + c.revenue, 0),
 				percentage: totalRevenue > 0 ? 
 					(lowValueCustomers.reduce((sum, c) => sum + c.revenue, 0) / totalRevenue) * 100 : 0,
+				value: lowValueCustomers.reduce((sum, c) => sum + c.revenue, 0),
 			});
+
+			// Calculate acquisition trend (last 12 months)
+			const acquisitionTrend = [];
+			for (let i = 11; i >= 0; i--) {
+				const date = new Date();
+				date.setMonth(date.getMonth() - i);
+				const month = date.toLocaleDateString('en-US', { month: 'short' });
+				const monthStart = new Date(date.getFullYear(), date.getMonth(), 1);
+				const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0);
+				
+				const monthlyNewCustomers = Array.from(clientMap.values()).filter(client => 
+					client.firstOrder >= monthStart && client.firstOrder <= monthEnd
+				).length;
+				
+				acquisitionTrend.push({
+					month,
+					newCustomers: monthlyNewCustomers,
+				});
+			}
 
 			const result = {
 				summary: {
 					totalCustomers,
 					newCustomers,
-					retentionRate: 85.7, // TODO: Calculate based on actual retention data
+					retentionRate: 0, // Note: Requires historical customer data tracking
 					averageLifetimeValue,
 					averagePurchaseFrequency,
 				},
 				topCustomers,
 				segments,
+				chartData: {
+					acquisitionTrend,
+					customerSegments: segments.map(segment => ({
+						name: segment.name,
+						value: segment.value,
+					})),
+				},
 			};
 
 			await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);
@@ -1132,9 +1248,30 @@ export class ReportsService implements OnModuleInit {
 				return trendMap;
 			}, {});
 
+			// Calculate creation trend (last 12 months)
+			const creationTrend = [];
+			for (let i = 11; i >= 0; i--) {
+				const date = new Date();
+				date.setMonth(date.getMonth() - i);
+				const month = date.toLocaleDateString('en-US', { month: 'short' });
+				const monthStart = new Date(date.getFullYear(), date.getMonth(), 1);
+				const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0);
+				
+				const monthlyBlankQuotations = blankQuotations.filter(q => 
+					q.createdAt >= monthStart && q.createdAt <= monthEnd
+				);
+				
+				creationTrend.push({
+					month,
+					count: monthlyBlankQuotations.length,
+				});
+			}
+
 			const result = {
 				summary: {
 					totalBlankQuotations,
+					completionRate: conversionRate,
+					averageCompletionTime: averageResponseTime,
 					conversionRate,
 					averageResponseTime,
 					totalRevenue,
@@ -1150,6 +1287,14 @@ export class ReportsService implements OnModuleInit {
 					abandoned,
 				},
 				trends: Object.values(trends),
+				chartData: {
+					creationTrend,
+					blankQuotationStatus: [
+						{ name: 'Approved', value: converted },
+						{ name: 'Pending', value: responded - converted },
+						{ name: 'Abandoned', value: abandoned },
+					],
+				},
 			};
 
 			await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);

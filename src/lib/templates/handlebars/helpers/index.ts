@@ -59,13 +59,22 @@ Handlebars.registerHelper('formatCurrency', function(amount: number, currency: s
 });
 
 // Number formatting helper
-Handlebars.registerHelper('formatNumber', function(number: number, decimals: number = 0) {
-    if (typeof number !== 'number') return number;
+Handlebars.registerHelper('formatNumber', function(number: number | string, decimals: number = 0) {
+    // Convert string to number if needed
+    const numValue = typeof number === 'string' ? parseFloat(number) : number;
+    
+    // Return original value if not a valid number
+    if (typeof numValue !== 'number' || isNaN(numValue)) {
+        return number;
+    }
+    
+    // Ensure decimals is a valid number between 0 and 20 (NumberFormat limit)
+    const validDecimals = Math.max(0, Math.min(20, Math.floor(decimals)));
     
     return new Intl.NumberFormat('en-US', {
-        minimumFractionDigits: decimals,
-        maximumFractionDigits: decimals,
-    }).format(number);
+        minimumFractionDigits: validDecimals,
+        maximumFractionDigits: validDecimals,
+    }).format(numValue);
 });
 
 // Comparison helpers for conditional rendering

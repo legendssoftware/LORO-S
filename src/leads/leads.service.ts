@@ -790,6 +790,7 @@ export class LeadsService {
 				changeHistory: changeHistoryArray,
 				temperature: LeadTemperature.COLD, // Reset temperature to cold for reactivated leads
 				priority: LeadPriority.MEDIUM, // Reset priority to medium
+				nextFollowUpDate: this.calculateNextFollowUpDate(LeadTemperature.COLD, LeadPriority.MEDIUM), // Set proper follow-up date
 			});
 
 			// Recalculate lead score
@@ -1002,14 +1003,8 @@ export class LeadsService {
 						continue;
 					}
 
-					// Create deadline for today at 10 AM
-					const taskDeadline = new Date();
-					taskDeadline.setHours(10, 0, 0, 0);
-
-					// If current time is already past 10 AM, set for tomorrow
-					if (new Date().getHours() >= 10) {
-						taskDeadline.setDate(taskDeadline.getDate() + 1);
-					}
+					// Create deadline for next business day at appropriate time
+					const taskDeadline = this.calculateNextBusinessDayDeadline();
 
 					// Create the task
 					const taskData = {
@@ -1123,13 +1118,13 @@ export class LeadsService {
 												(now.getTime() - lead.lastContactDate.getTime()) / (24 * 60 * 60 * 1000),
 										  )
 										: 'Never contacted',
-									estimatedValue: lead.estimatedValue || 0,
+									estimatedValue: Number(lead.estimatedValue) || 0,
 									priority: lead.priority,
 									notes: lead.notes || 'No notes',
 									leadUrl: `${this.configService.get<string>('DASHBOARD_URL')}/leads/${lead.uid}`,
 								})),
 								totalCount: allUnattendedLeads.length,
-								totalEstimatedValue: allUnattendedLeads.reduce((sum, lead) => sum + (lead.estimatedValue || 0), 0),
+								totalEstimatedValue: Number(allUnattendedLeads.reduce((sum, lead) => sum + (Number(lead.estimatedValue) || 0), 0)),
 								dashboardUrl: this.configService.get<string>('DASHBOARD_URL'),
 							},
 						);
@@ -1647,11 +1642,9 @@ export class LeadsService {
 			}
 		}
 
-		// Set initial next follow-up date
+		// Set initial next follow-up date based on temperature and priority
 		if (!lead.nextFollowUpDate) {
-			const nextFollowUp = new Date();
-			nextFollowUp.setDate(nextFollowUp.getDate() + 1); // Follow up tomorrow for new leads
-			lead.nextFollowUpDate = nextFollowUp;
+			lead.nextFollowUpDate = this.calculateNextFollowUpDate(lead.temperature, lead.priority);
 		}
 
 		// Initialize scoring data
@@ -1682,12 +1675,12 @@ export class LeadsService {
 			}
 		}
 
-		// Auto-set next follow-up date based on temperature
+		// Auto-set next follow-up date based on temperature and priority
 		if (updates.temperature && updates.temperature !== lead.temperature) {
-			const followUpDays = this.getFollowUpDaysForTemperature(updates.temperature);
-			const nextFollowUp = new Date();
-			nextFollowUp.setDate(nextFollowUp.getDate() + followUpDays);
-			updates.nextFollowUpDate = nextFollowUp;
+			updates.nextFollowUpDate = this.calculateNextFollowUpDate(
+				updates.temperature,
+				updates.priority || lead.priority
+			);
 		}
 
 		// Update lifecycle stage based on status
@@ -1972,6 +1965,121 @@ export class LeadsService {
 			default:
 				return 7;
 		}
+	}
+
+	/**
+	 * Calculate next follow-up date based on temperature, priority, and business days
+	 * Ensures proper timing and avoids weekends
+	 */
+	private calculateNextFollowUpDate(temperature: LeadTemperature, priority?: LeadPriority): Date {
+		const now = new Date();
+		let followUpDays = this.getFollowUpDaysForTemperature(temperature);
+
+		// Adjust follow-up timing based on priority
+		if (priority === LeadPriority.HIGH || priority === LeadPriority.CRITICAL) {
+			followUpDays = Math.max(1, Math.floor(followUpDays / 2)); // Accelerate high-priority leads
+		}
+
+		// Calculate the target date
+		const targetDate = new Date(now);
+		targetDate.setDate(targetDate.getDate() + followUpDays);
+
+		// Ensure we land on a business day (Monday-Friday)
+		const nextBusinessDay = this.getNextBusinessDay(targetDate);
+
+		// Set appropriate follow-up time based on temperature and priority
+		const followUpTime = this.calculateFollowUpTime(temperature, priority);
+		nextBusinessDay.setHours(followUpTime.hours, followUpTime.minutes, 0, 0);
+
+		this.logger.debug(
+			`Next follow-up calculated: ${nextBusinessDay.toISOString()} ` +
+			`(Temperature: ${temperature}, Priority: ${priority}, Days: ${followUpDays})`
+		);
+
+		return nextBusinessDay;
+	}
+
+	/**
+	 * Get the next business day (Monday-Friday)
+	 */
+	private getNextBusinessDay(date: Date): Date {
+		const result = new Date(date);
+		const dayOfWeek = result.getDay();
+
+		// If it's Saturday (6) or Sunday (0), move to Monday
+		if (dayOfWeek === 6) { // Saturday
+			result.setDate(result.getDate() + 2); // Move to Monday
+		} else if (dayOfWeek === 0) { // Sunday
+			result.setDate(result.getDate() + 1); // Move to Monday
+		}
+
+		return result;
+	}
+
+	/**
+	 * Calculate appropriate follow-up time based on temperature and priority
+	 */
+	private calculateFollowUpTime(temperature: LeadTemperature, priority?: LeadPriority): { hours: number; minutes: number } {
+		const now = new Date();
+		const currentHour = now.getHours();
+
+		// High priority leads get earlier follow-up times
+		if (priority === LeadPriority.HIGH || priority === LeadPriority.CRITICAL) {
+			if (temperature === LeadTemperature.HOT) {
+				return { hours: 8, minutes: 0 }; // 8:00 AM - urgent hot leads
+			} else {
+				return { hours: 9, minutes: 0 }; // 9:00 AM - high priority
+			}
+		}
+
+		// Temperature-based timing
+		switch (temperature) {
+			case LeadTemperature.HOT:
+				return { hours: 9, minutes: 30 }; // 9:30 AM - hot leads get morning attention
+
+			case LeadTemperature.WARM:
+				// For warm leads, schedule based on current time to spread workload
+				if (currentHour < 10) {
+					return { hours: 10, minutes: 0 }; // 10:00 AM
+				} else if (currentHour < 14) {
+					return { hours: 14, minutes: 0 }; // 2:00 PM
+				} else {
+					return { hours: 10, minutes: 0 }; // Next day 10:00 AM
+				}
+
+			case LeadTemperature.COLD:
+				return { hours: 11, minutes: 0 }; // 11:00 AM - cold leads mid-morning
+
+			case LeadTemperature.FROZEN:
+				return { hours: 15, minutes: 0 }; // 3:00 PM - frozen leads afternoon
+
+			default:
+				return { hours: 10, minutes: 0 }; // Default 10:00 AM
+		}
+	}
+
+	/**
+	 * Calculate deadline for tasks on next business day
+	 */
+	private calculateNextBusinessDayDeadline(): Date {
+		const now = new Date();
+		const currentHour = now.getHours();
+		
+		// Determine the target date
+		let targetDate = new Date(now);
+		
+		// If it's already past 10 AM, set for next day
+		if (currentHour >= 10) {
+			targetDate.setDate(targetDate.getDate() + 1);
+		}
+		
+		// Ensure we land on a business day
+		const nextBusinessDay = this.getNextBusinessDay(targetDate);
+		
+		// Set deadline for 10 AM on the business day
+		nextBusinessDay.setHours(10, 0, 0, 0);
+		
+		return nextBusinessDay;
 	}
 
 	/**
