@@ -1,4 +1,4 @@
-import { Injectable, Inject, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException, OnModuleInit, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CreateReportDto } from './dto/create-report.dto';
 import { UpdateReportDto } from './dto/update-report.dto';
@@ -23,6 +23,7 @@ import { Quotation } from '../shop/entities/quotation.entity';
 
 @Injectable()
 export class ReportsService implements OnModuleInit {
+	private readonly logger = new Logger(ReportsService.name);
 	private readonly CACHE_PREFIX = 'reports:';
 	private readonly CACHE_TTL: number;
 	private reportCache = new Map<string, any>();
@@ -45,13 +46,18 @@ export class ReportsService implements OnModuleInit {
 		private readonly mapDataReportGenerator: MapDataReportGenerator,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 300;
+		this.logger.log(`Reports service initialized with cache TTL: ${this.CACHE_TTL}s`);
 	}
 
-	onModuleInit() {}
+	onModuleInit() {
+		this.logger.log('Reports service module initialized successfully');
+	}
 
 	// Run every day at 18:00 (6:00 PM)
 	@Cron('0 0 18 * * *')
 	async generateEndOfDayReports() {
+		this.logger.log('Starting end-of-day reports generation');
+		
 		try {
 			// Find users with active attendance records (who haven't checked out yet)
 			const queryBuilder = this.userRepository
@@ -66,8 +72,10 @@ export class ReportsService implements OnModuleInit {
 				.where('user.email IS NOT NULL');
 
 			const usersWithActiveShifts = await queryBuilder.getMany();
+			this.logger.log(`Found ${usersWithActiveShifts.length} users with active shifts for end-of-day reports`);
 
 			if (usersWithActiveShifts.length === 0) {
+				this.logger.log('No users with active shifts found, skipping end-of-day report generation');
 				return;
 			}
 
@@ -75,7 +83,10 @@ export class ReportsService implements OnModuleInit {
 			const results = await Promise.allSettled(
 				usersWithActiveShifts.map(async (user) => {
 					try {
+						this.logger.debug(`Processing end-of-day report for user ${user.uid} (${user.email})`);
+						
 						if (!user.organisation) {
+							this.logger.warn(`User ${user.uid} has no organisation, skipping report`);
 							return { userId: user.uid, success: false, reason: 'No organisation found' };
 						}
 
@@ -92,6 +103,7 @@ export class ReportsService implements OnModuleInit {
 						});
 
 						if (existingReport) {
+							this.logger.debug(`Report already generated today for user ${user.uid}`);
 							return {
 								userId: user.uid,
 								success: false,
@@ -106,9 +118,11 @@ export class ReportsService implements OnModuleInit {
 						};
 
 						await this.generateUserDailyReport(params);
+						this.logger.log(`Successfully generated end-of-day report for user ${user.uid}`);
 
 						return { userId: user.uid, success: true };
 					} catch (error) {
+						this.logger.error(`Failed to generate end-of-day report for user ${user.uid}: ${error.message}`, error.stack);
 						return {
 							userId: user.uid,
 							success: false,
@@ -117,7 +131,13 @@ export class ReportsService implements OnModuleInit {
 					}
 				}),
 			);
+
+			const successful = results.filter(r => r.status === 'fulfilled' && r.value.success).length;
+			const failed = results.filter(r => r.status === 'rejected' || (r.status === 'fulfilled' && !r.value.success)).length;
+			
+			this.logger.log(`End-of-day reports completed: ${successful} successful, ${failed} failed`);
 		} catch (error) {
+			this.logger.error(`Critical error in generateEndOfDayReports: ${error.message}`, error.stack);
 			return null;
 		}
 	}
@@ -130,38 +150,78 @@ export class ReportsService implements OnModuleInit {
 
 		const dateStr = dateRange ? `_${dateRange.start.toISOString()}_${dateRange.end.toISOString()}` : '';
 
-		return `${this.CACHE_PREFIX}${type}_org${organisationId}${
+		const cacheKey = `${this.CACHE_PREFIX}${type}_org${organisationId}${
 			branchId ? `_branch${branchId}` : ''
 		}${clientIdStr}${dateStr}`;
+
+		this.logger.debug(`Generated cache key: ${cacheKey}`);
+		return cacheKey;
 	}
 
 	async create(createReportDto: CreateReportDto) {
+		this.logger.log('Creating new report');
+		this.logger.debug(`Create report DTO: ${JSON.stringify(createReportDto)}`);
 		return 'This action adds a new report';
 	}
 
 	async findAll() {
-		return this.reportRepository.find();
+		this.logger.log('Fetching all reports');
+		try {
+			const reports = await this.reportRepository.find();
+			this.logger.log(`Found ${reports.length} reports`);
+			return reports;
+		} catch (error) {
+			this.logger.error(`Error fetching all reports: ${error.message}`, error.stack);
+			throw error;
+		}
 	}
 
 	async findOne(id: number) {
-		return this.reportRepository.findOne({
-			where: { uid: id },
-			relations: ['organisation', 'branch', 'owner'],
-		});
+		this.logger.log(`Fetching report with ID: ${id}`);
+		try {
+			const report = await this.reportRepository.findOne({
+				where: { uid: id },
+				relations: ['organisation', 'branch', 'owner'],
+			});
+			
+			if (!report) {
+				this.logger.warn(`Report with ID ${id} not found`);
+			} else {
+				this.logger.log(`Successfully fetched report ${id}`);
+			}
+			
+			return report;
+		} catch (error) {
+			this.logger.error(`Error fetching report ${id}: ${error.message}`, error.stack);
+			throw error;
+		}
 	}
 
 	async update(id: number, updateReportDto: UpdateReportDto) {
+		this.logger.log(`Updating report with ID: ${id}`);
+		this.logger.debug(`Update report DTO: ${JSON.stringify(updateReportDto)}`);
 		return `This action updates a #${id} report`;
 	}
 
 	async remove(id: number) {
-		return this.reportRepository.delete(id);
+		this.logger.log(`Removing report with ID: ${id}`);
+		try {
+			const result = await this.reportRepository.delete(id);
+			this.logger.log(`Successfully removed report ${id}`);
+			return result;
+		} catch (error) {
+			this.logger.error(`Error removing report ${id}: ${error.message}`, error.stack);
+			throw error;
+		}
 	}
 
 	@OnEvent('daily-report')
 	async handleDailyReport(payload: { userId: number }) {
+		this.logger.log(`Handling daily report event for user ${payload?.userId}`);
+		
 		try {
 			if (!payload || !payload.userId) {
+				this.logger.error('Invalid payload for daily report event');
 				return;
 			}
 
@@ -174,8 +234,11 @@ export class ReportsService implements OnModuleInit {
 			});
 
 			if (!user || !user.organisation) {
+				this.logger.warn(`User ${userId} or organisation not found for daily report`);
 				return;
 			}
+
+			this.logger.log(`Processing daily report for user ${userId} in organisation ${user.organisation.uid}`);
 
 			// Create report parameters
 			const params: ReportParamsDto = {
@@ -189,16 +252,21 @@ export class ReportsService implements OnModuleInit {
 
 			// Generate and save the report
 			await this.generateUserDailyReport(params);
+			this.logger.log(`Successfully processed daily report for user ${userId}`);
 		} catch (error) {
+			this.logger.error(`Error handling daily report for user ${payload?.userId}: ${error.message}`, error.stack);
 			return null;
 		}
 	}
 
 	async generateUserDailyReport(params: ReportParamsDto): Promise<Report> {
+		this.logger.log(`Generating user daily report with params: ${JSON.stringify(params)}`);
+		
 		try {
 			const { userId } = params.filters || {};
 
 			if (!userId) {
+				this.logger.error('User ID is required for generating a daily user report');
 				throw new Error('User ID is required for generating a daily user report');
 			}
 
@@ -209,11 +277,15 @@ export class ReportsService implements OnModuleInit {
 			});
 
 			if (!user) {
+				this.logger.error(`User with ID ${userId} not found`);
 				throw new NotFoundException(`User with ID ${userId} not found`);
 			}
 
+			this.logger.log(`Generating daily report for user ${user.name} (${user.email})`);
+
 			// Generate report data
 			const reportData = await this.userDailyReportGenerator.generate(params);
+			this.logger.log(`Report data generated successfully for user ${userId}`);
 
 			// Create a new report record
 			const newReport = new Report();
@@ -228,6 +300,7 @@ export class ReportsService implements OnModuleInit {
 
 			// Save the report
 			const savedReport = await this.reportRepository.save(newReport);
+			this.logger.log(`Daily report saved with ID: ${savedReport.uid} for user ${userId}`);
 
 			// Emit event to send email (single email delivery)
 			this.eventEmitter.emit('report.generated', {
@@ -237,18 +310,24 @@ export class ReportsService implements OnModuleInit {
 				emailData: reportData.emailData,
 			});
 
+			this.logger.log(`Daily report generation completed for user ${userId}`);
 			return savedReport;
 		} catch (error) {
+			this.logger.error(`Error generating user daily report: ${error.message}`, error.stack);
 			return null;
 		}
 	}
 
 	async generateReport(params: ReportParamsDto, currentUser: any): Promise<Record<string, any>> {
+		this.logger.log(`Generating report of type: ${params.type} for organisation: ${params.organisationId}`);
+		this.logger.debug(`Report parameters: ${JSON.stringify(params)}`);
+		
 		// Check cache first
 		const cacheKey = this.getCacheKey(params);
 		const cachedReport = await this.cacheManager.get<Record<string, any>>(cacheKey);
 
 		if (cachedReport) {
+			this.logger.log(`Report found in cache: ${cacheKey}`);
 			return {
 				...cachedReport,
 				fromCache: true,
@@ -257,27 +336,40 @@ export class ReportsService implements OnModuleInit {
 			};
 		}
 
+		this.logger.log(`Generating fresh report for type: ${params.type}`);
+
 		// Generate report data based on type
 		let reportData: Record<string, any>;
 
-		switch (params.type) {
-			case ReportType.MAIN:
-				reportData = await this.mainReportGenerator.generate(params);
-				break;
-			case ReportType.QUOTATION:
-				reportData = await this.quotationReportGenerator.generate(params);
-				break;
-			case ReportType.USER_DAILY:
-				reportData = await this.userDailyReportGenerator.generate(params);
-				break;
-			case ReportType.USER:
-				// Will be implemented later
-				throw new Error('User report type not implemented yet');
-			case ReportType.SHIFT:
-				// Will be implemented later
-				throw new Error('Shift report type not implemented yet');
-			default:
-				throw new Error(`Unknown report type: ${params.type}`);
+		try {
+			switch (params.type) {
+				case ReportType.MAIN:
+					this.logger.log('Generating main report');
+					reportData = await this.mainReportGenerator.generate(params);
+					break;
+				case ReportType.QUOTATION:
+					this.logger.log('Generating quotation report');
+					reportData = await this.quotationReportGenerator.generate(params);
+					break;
+				case ReportType.USER_DAILY:
+					this.logger.log('Generating user daily report');
+					reportData = await this.userDailyReportGenerator.generate(params);
+					break;
+				case ReportType.USER:
+					this.logger.error('User report type not implemented yet');
+					throw new Error('User report type not implemented yet');
+				case ReportType.SHIFT:
+					this.logger.error('Shift report type not implemented yet');
+					throw new Error('Shift report type not implemented yet');
+				default:
+					this.logger.error(`Unknown report type: ${params.type}`);
+					throw new Error(`Unknown report type: ${params.type}`);
+			}
+
+			this.logger.log(`Report data generated successfully for type: ${params.type}`);
+		} catch (error) {
+			this.logger.error(`Error generating report data: ${error.message}`, error.stack);
+			throw error;
 		}
 
 		// Prepare the report response with metadata
@@ -298,24 +390,36 @@ export class ReportsService implements OnModuleInit {
 		};
 
 		// Cache the report
-		await this.cacheManager.set(cacheKey, report, this.CACHE_TTL);
+		try {
+			await this.cacheManager.set(cacheKey, report, this.CACHE_TTL);
+			this.logger.log(`Report cached successfully: ${cacheKey}`);
+		} catch (error) {
+			this.logger.error(`Error caching report: ${error.message}`, error.stack);
+		}
 
+		this.logger.log(`Report generation completed for type: ${params.type}`);
+		
 		// Return the report data directly without saving to database
 		return report;
 	}
 
 	@OnEvent('report.generated')
 	async handleReportGenerated(payload: { reportType: ReportType; reportId: number; userId: number; emailData: any }) {
+		this.logger.log(`Handling report generated event - Type: ${payload.reportType}, ID: ${payload.reportId}, User: ${payload.userId}`);
+		
 		try {
 			if (payload.reportType === ReportType.USER_DAILY) {
 				await this.sendUserDailyReportEmail(payload.userId, payload.emailData);
 			}
 		} catch (error) {
+			this.logger.error(`Error handling report generated event: ${error.message}`, error.stack);
 			return null;
 		}
 	}
 
 	private async sendUserDailyReportEmail(userId: number, emailData: any) {
+		this.logger.log(`Sending daily report email to user ${userId}`);
+		
 		try {
 			// Get user with full profile
 			const user = await this.userRepository.findOne({
@@ -324,16 +428,19 @@ export class ReportsService implements OnModuleInit {
 			});
 
 			if (!user || !user.email) {
+				this.logger.warn(`User ${userId} not found or has no email address`);
 				return;
 			}
 
 			// Ensure emailData has the correct format
 			if (!emailData || !emailData.name || !emailData.date || !emailData.metrics) {
+				this.logger.error(`Invalid email data format for user ${userId}`);
 				throw new Error('Invalid email data format');
 			}
 
 			// Validate required fields for the email template
 			if (!emailData.metrics.attendance) {
+				this.logger.warn(`No attendance data for user ${userId}, using defaults`);
 				emailData.metrics.attendance = {
 					status: 'NOT_PRESENT',
 					totalHours: 0,
@@ -362,10 +469,14 @@ export class ReportsService implements OnModuleInit {
 			const emailService = this.communicationService as any;
 			try {
 				await emailService.sendEmail(EmailType.USER_DAILY_REPORT, [user.email], emailData);
+				this.logger.log(`Daily report email sent successfully to ${user.email}`);
 			} catch (emailError) {
+				this.logger.error(`Failed to send daily report email to ${user.email}: ${emailError.message}`, emailError.stack);
 				return null;
 			}
 		} catch (error) {
+			this.logger.error(`Error sending daily report email to user ${userId}: ${error.message}`, error.stack);
+			
 			// Record the error in the report record
 			try {
 				const report = await this.reportRepository.findOne({
@@ -376,8 +487,10 @@ export class ReportsService implements OnModuleInit {
 				if (report) {
 					report.notes = `Email delivery failed: ${error.message}`;
 					await this.reportRepository.save(report);
+					this.logger.log(`Error logged to report ${report.uid}`);
 				}
 			} catch (dbError) {
+				this.logger.error(`Failed to log email error to database: ${dbError.message}`, dbError.stack);
 				return null;
 			}
 		}
@@ -390,18 +503,24 @@ export class ReportsService implements OnModuleInit {
 	 * @returns Number of cache keys cleared
 	 */
 	async clearOrganizationReportCache(organisationId: number, reportType?: ReportType): Promise<number> {
+		this.logger.log(`Clearing organization report cache for org ${organisationId}${reportType ? ` and type ${reportType}` : ''}`);
+		
 		try {
 			const cacheKeyPattern = reportType
 				? `${this.CACHE_PREFIX}${reportType}_org${organisationId}*`
 				: `${this.CACHE_PREFIX}*_org${organisationId}*`;
+
+			this.logger.debug(`Cache key pattern: ${cacheKeyPattern}`);
 
 			// For redis-based cache this would use a scan/delete pattern
 			// For the built-in cache we can only delete specific keys
 			// Since we don't know what cache implementation is being used, we'll log this
 			// This method would need to be enhanced to properly clear cache based on pattern
 
+			this.logger.log(`Cache clearing completed for organization ${organisationId}`);
 			return 0;
 		} catch (error) {
+			this.logger.error(`Error clearing organization report cache: ${error.message}`, error.stack);
 			return 0;
 		}
 	}
@@ -412,6 +531,8 @@ export class ReportsService implements OnModuleInit {
 	 * @returns Array of branch IDs
 	 */
 	private async getBranchIdsForOrganization(organisationId: number): Promise<number[]> {
+		this.logger.debug(`Getting branch IDs for organization ${organisationId}`);
+		
 		try {
 			// This assumes there's a branch repository with a findByOrganisation method
 			const branches = await this.reportRepository
@@ -421,8 +542,10 @@ export class ReportsService implements OnModuleInit {
 				.andWhere('r.branchUid IS NOT NULL')
 				.getRawMany();
 
+			this.logger.debug(`Found ${branches.length} branches for organization ${organisationId}`);
 			return branches.map((b) => b.branchId);
 		} catch (error) {
+			this.logger.error(`Error getting branch IDs for organization ${organisationId}: ${error.message}`, error.stack);
 			return [];
 		}
 	}
@@ -432,6 +555,7 @@ export class ReportsService implements OnModuleInit {
 	@OnEvent('task.updated')
 	@OnEvent('task.deleted')
 	async handleTaskChange(payload: { organisationId: number; branchId?: number }) {
+		this.logger.log(`Handling task change event for organization ${payload?.organisationId}`);
 		if (!payload || !payload.organisationId) return;
 		await this.clearOrganizationReportCache(payload.organisationId);
 	}
@@ -440,6 +564,7 @@ export class ReportsService implements OnModuleInit {
 	@OnEvent('lead.updated')
 	@OnEvent('lead.deleted')
 	async handleLeadChange(payload: { organisationId: number; branchId?: number }) {
+		this.logger.log(`Handling lead change event for organization ${payload?.organisationId}`);
 		if (!payload || !payload.organisationId) return;
 		await this.clearOrganizationReportCache(payload.organisationId);
 	}
@@ -448,6 +573,7 @@ export class ReportsService implements OnModuleInit {
 	@OnEvent('quotation.updated')
 	@OnEvent('quotation.deleted')
 	async handleQuotationChange(payload: { organisationId: number; branchId?: number }) {
+		this.logger.log(`Handling quotation change event for organization ${payload?.organisationId}`);
 		if (!payload || !payload.organisationId) return;
 		await this.clearOrganizationReportCache(payload.organisationId);
 	}
@@ -456,40 +582,55 @@ export class ReportsService implements OnModuleInit {
 	 * MAP-DATA helper (live map screen)
 	 * -------------------------------------------------------*/
 	async generateMapData(params: { organisationId: number; branchId?: number }): Promise<any> {
+		this.logger.log(`Generating map data for organization ${params.organisationId}${params.branchId ? ` and branch ${params.branchId}` : ''}`);
+		
 		const cacheKey = `${this.CACHE_PREFIX}mapdata_org${params.organisationId}_${params.branchId || 'all'}`;
 
 		// Try cache first
 		const cached = await this.cacheManager.get(cacheKey);
 		if (cached) {
+			this.logger.log(`Map data found in cache: ${cacheKey}`);
 			return cached;
 		}
 
-		const data = await this.mapDataReportGenerator.generate(params);
+		try {
+			const data = await this.mapDataReportGenerator.generate(params);
+			this.logger.log(`Map data generated successfully for organization ${params.organisationId}`);
 
-		// Basic summary counts to match previous response structure
-		const summary = {
-			totalWorkers: data.workers.length,
-			totalClients: data.clients.length,
-			totalCompetitors: data.competitors.length,
-			totalQuotations: data.quotations.length,
-		};
+			// Basic summary counts to match previous response structure
+			const summary = {
+				totalWorkers: data.workers.length,
+				totalClients: data.clients.length,
+				totalCompetitors: data.competitors.length,
+				totalQuotations: data.quotations.length,
+			};
 
-		const finalPayload = { data, summary };
+			const finalPayload = { data, summary };
 
-		await this.cacheManager.set(cacheKey, finalPayload, this.CACHE_TTL);
+			await this.cacheManager.set(cacheKey, finalPayload, this.CACHE_TTL);
+			this.logger.log(`Map data cached successfully: ${cacheKey}`);
 
-		return finalPayload;
+			return finalPayload;
+		} catch (error) {
+			this.logger.error(`Error generating map data: ${error.message}`, error.stack);
+			throw error;
+		}
 	}
 
 	// Sales Analytics Service Methods
 	async generateSalesOverview(organisationId: number, branchId?: number): Promise<any> {
+		this.logger.log(`Generating sales overview for organization ${organisationId}${branchId ? ` and branch ${branchId}` : ''}`);
+		
 		try {
 			const cacheKey = `sales_overview_${organisationId}${branchId ? `_${branchId}` : ''}`;
 			const cached = await this.cacheManager.get(cacheKey);
 			
 			if (cached) {
+				this.logger.log(`Sales overview found in cache: ${cacheKey}`);
 				return { ...cached, fromCache: true };
 			}
+
+			this.logger.log(`Generating fresh sales overview for organization ${organisationId}`);
 
 			// Build base query conditions
 			const baseWhere: any = { organisation: { uid: organisationId } };
@@ -504,6 +645,8 @@ export class ReportsService implements OnModuleInit {
 				order: { createdAt: 'DESC' },
 			});
 
+			this.logger.log(`Found ${quotations.length} quotations for sales overview`);
+
 			// Calculate summary metrics
 			const totalRevenue = quotations
 				.filter(q => q.status === 'completed' || q.status === 'approved')
@@ -513,6 +656,8 @@ export class ReportsService implements OnModuleInit {
 			const convertedQuotations = quotations.filter(q => q.status === 'approved').length;
 			const conversionRate = totalQuotations > 0 ? (convertedQuotations / totalQuotations) * 100 : 0;
 			const averageOrderValue = convertedQuotations > 0 ? totalRevenue / convertedQuotations : 0;
+
+			this.logger.log(`Sales overview metrics - Revenue: ${totalRevenue}, Quotations: ${totalQuotations}, Conversion: ${conversionRate}%`);
 
 			// Get revenue trends (last 30 days)
 			const thirtyDaysAgo = new Date();
@@ -606,39 +751,50 @@ export class ReportsService implements OnModuleInit {
 
 			// Cache the result
 			await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);
+			this.logger.log(`Sales overview cached successfully: ${cacheKey}`);
 			
 			return { ...result, fromCache: false };
 		} catch (error) {
+			this.logger.error(`Error generating sales overview: ${error.message}`, error.stack);
 			throw new Error(`Failed to generate sales overview: ${error.message}`);
 		}
 	}
 
 	async generateQuotationAnalytics(organisationId: number, branchId?: number): Promise<any> {
+		this.logger.log(`Generating quotation analytics for organization ${organisationId}${branchId ? ` and branch ${branchId}` : ''}`);
+		
 		try {
 			const cacheKey = `quotation_analytics_${organisationId}${branchId ? `_${branchId}` : ''}`;
 			const cached = await this.cacheManager.get(cacheKey);
 			
 			if (cached) {
+				this.logger.log(`Quotation analytics found in cache: ${cacheKey}`);
 				return { ...cached, fromCache: true };
 			}
 
-					const baseWhere: any = { organisation: { uid: organisationId } };
-		if (branchId) {
-			baseWhere['branch'] = { uid: branchId };
-		}
+			this.logger.log(`Generating fresh quotation analytics for organization ${organisationId}`);
 
-		const quotations = await this.quotationRepository.find({
-			where: baseWhere,
-			relations: ['client', 'quotationItems', 'organisation', 'branch'],
-			order: { createdAt: 'DESC' },
-		});
+			const baseWhere: any = { organisation: { uid: organisationId } };
+			if (branchId) {
+				baseWhere['branch'] = { uid: branchId };
+			}
 
-		const totalQuotations = quotations.length;
-		const blankQuotations = quotations.filter(q => q.notes?.includes('blank') || q.quotationNumber?.includes('BLQ')).length;
+			const quotations = await this.quotationRepository.find({
+				where: baseWhere,
+				relations: ['client', 'quotationItems', 'organisation', 'branch'],
+				order: { createdAt: 'DESC' },
+			});
+
+			this.logger.log(`Found ${quotations.length} quotations for analytics`);
+
+			const totalQuotations = quotations.length;
+			const blankQuotations = quotations.filter(q => q.notes?.includes('blank') || q.quotationNumber?.includes('BLQ')).length;
 			const convertedQuotations = quotations.filter(q => q.status === 'approved').length;
 			const conversionRate = totalQuotations > 0 ? (convertedQuotations / totalQuotations) * 100 : 0;
 			const averageValue = totalQuotations > 0 ? 
 				quotations.reduce((sum, q) => sum + (q.totalAmount || 0), 0) / totalQuotations : 0;
+
+			this.logger.log(`Quotation analytics metrics - Total: ${totalQuotations}, Blank: ${blankQuotations}, Converted: ${convertedQuotations}`);
 
 			// Calculate average time to convert
 			const convertedWithDates = quotations.filter(q => 
@@ -671,27 +827,27 @@ export class ReportsService implements OnModuleInit {
 				item.percentage = totalQuotations > 0 ? (item.count / totalQuotations) * 100 : 0;
 			});
 
-					// Price list performance
-		const priceListPerformance = quotations.reduce((performance, q) => {
-			const priceList = q.notes?.includes('premium') ? 'premium' : 
-							  q.notes?.includes('local') ? 'local' : 
-							  q.notes?.includes('foreign') ? 'foreign' : 'standard';
-			if (!performance[priceList]) {
-				performance[priceList] = { 
-					priceList, 
-					quotations: 0, 
-					conversions: 0, 
-					conversionRate: 0, 
-					revenue: 0 
-				};
-			}
-			performance[priceList].quotations += 1;
-			if (q.status === 'approved') {
-				performance[priceList].conversions += 1;
-				performance[priceList].revenue += q.totalAmount || 0;
-			}
-			return performance;
-		}, {});
+			// Price list performance
+			const priceListPerformance = quotations.reduce((performance, q) => {
+				const priceList = q.notes?.includes('premium') ? 'premium' : 
+								  q.notes?.includes('local') ? 'local' : 
+								  q.notes?.includes('foreign') ? 'foreign' : 'standard';
+				if (!performance[priceList]) {
+					performance[priceList] = { 
+						priceList, 
+						quotations: 0, 
+						conversions: 0, 
+						conversionRate: 0, 
+						revenue: 0 
+					};
+				}
+				performance[priceList].quotations += 1;
+				if (q.status === 'approved') {
+					performance[priceList].conversions += 1;
+					performance[priceList].revenue += q.totalAmount || 0;
+				}
+				return performance;
+			}, {});
 
 			// Calculate conversion rates for price lists
 			Object.values(priceListPerformance).forEach((item: any) => {
@@ -738,20 +894,28 @@ export class ReportsService implements OnModuleInit {
 			};
 
 			await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);
+			this.logger.log(`Quotation analytics cached successfully: ${cacheKey}`);
+			
 			return { ...result, fromCache: false };
 		} catch (error) {
+			this.logger.error(`Error generating quotation analytics: ${error.message}`, error.stack);
 			throw new Error(`Failed to generate quotation analytics: ${error.message}`);
 		}
 	}
 
 	async generateRevenueAnalytics(organisationId: number, branchId?: number): Promise<any> {
+		this.logger.log(`Generating revenue analytics for organization ${organisationId}${branchId ? ` and branch ${branchId}` : ''}`);
+		
 		try {
 			const cacheKey = `revenue_analytics_${organisationId}${branchId ? `_${branchId}` : ''}`;
 			const cached = await this.cacheManager.get(cacheKey);
 			
 			if (cached) {
+				this.logger.log(`Revenue analytics found in cache: ${cacheKey}`);
 				return { ...cached, fromCache: true };
 			}
+
+			this.logger.log(`Generating fresh revenue analytics for organization ${organisationId}`);
 
 			const baseWhere: any = { organisation: { uid: organisationId } };
 			if (branchId) {
@@ -763,6 +927,8 @@ export class ReportsService implements OnModuleInit {
 				relations: ['client', 'quotationItems', 'quotationItems.product', 'organisation', 'branch'],
 				order: { createdAt: 'DESC' },
 			});
+
+			this.logger.log(`Found ${quotations.length} quotations for revenue analytics`);
 
 			const completedQuotations = quotations.filter(q => q.status === 'completed' || q.status === 'approved');
 			const totalRevenue = completedQuotations.reduce((sum, q) => sum + (q.totalAmount || 0), 0);
@@ -776,6 +942,8 @@ export class ReportsService implements OnModuleInit {
 			});
 			const totalCustomers = clientMap.size;
 			const revenuePerCustomer = totalCustomers > 0 ? totalRevenue / totalCustomers : 0;
+
+			this.logger.log(`Revenue analytics metrics - Total revenue: ${totalRevenue}, Customers: ${totalCustomers}`);
 
 			// Time series data (last 30 days)
 			const thirtyDaysAgo = new Date();
@@ -867,20 +1035,28 @@ export class ReportsService implements OnModuleInit {
 			};
 
 			await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);
+			this.logger.log(`Revenue analytics cached successfully: ${cacheKey}`);
+			
 			return { ...result, fromCache: false };
 		} catch (error) {
+			this.logger.error(`Error generating revenue analytics: ${error.message}`, error.stack);
 			throw new Error(`Failed to generate revenue analytics: ${error.message}`);
 		}
 	}
 
 	async generateSalesPerformance(organisationId: number, branchId?: number): Promise<any> {
+		this.logger.log(`Generating sales performance for organization ${organisationId}${branchId ? ` and branch ${branchId}` : ''}`);
+		
 		try {
 			const cacheKey = `sales_performance_${organisationId}${branchId ? `_${branchId}` : ''}`;
 			const cached = await this.cacheManager.get(cacheKey);
 			
 			if (cached) {
+				this.logger.log(`Sales performance found in cache: ${cacheKey}`);
 				return { ...cached, fromCache: true };
 			}
+
+			this.logger.log(`Generating fresh sales performance for organization ${organisationId}`);
 
 			const baseWhere: any = { organisation: { uid: organisationId } };
 			if (branchId) {
@@ -892,6 +1068,8 @@ export class ReportsService implements OnModuleInit {
 				relations: ['placedBy', 'client', 'organisation', 'branch'],
 				order: { createdAt: 'DESC' },
 			});
+
+			this.logger.log(`Found ${quotations.length} quotations for sales performance`);
 
 			// Group by sales rep
 			const salesRepMap = new Map();
@@ -939,6 +1117,8 @@ export class ReportsService implements OnModuleInit {
 			const totalRevenue = completedQuotations.reduce((sum, q) => sum + (q.totalAmount || 0), 0);
 			const averageDealSize = completedQuotations.length > 0 ? totalRevenue / completedQuotations.length : 0;
 
+			this.logger.log(`Sales performance metrics - Reps: ${totalSalesReps}, Avg performance: ${averagePerformance}%, Top performer: ${topPerformer?.name || 'None'}`);
+
 			const result = {
 				summary: {
 					topPerformer: topPerformer?.name || 'N/A',
@@ -978,20 +1158,28 @@ export class ReportsService implements OnModuleInit {
 			};
 
 			await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);
+			this.logger.log(`Sales performance cached successfully: ${cacheKey}`);
+			
 			return { ...result, fromCache: false };
 		} catch (error) {
+			this.logger.error(`Error generating sales performance: ${error.message}`, error.stack);
 			throw new Error(`Failed to generate sales performance: ${error.message}`);
 		}
 	}
 
 	async generateCustomerAnalytics(organisationId: number, branchId?: number): Promise<any> {
+		this.logger.log(`Generating customer analytics for organization ${organisationId}${branchId ? ` and branch ${branchId}` : ''}`);
+		
 		try {
 			const cacheKey = `customer_analytics_${organisationId}${branchId ? `_${branchId}` : ''}`;
 			const cached = await this.cacheManager.get(cacheKey);
 			
 			if (cached) {
+				this.logger.log(`Customer analytics found in cache: ${cacheKey}`);
 				return { ...cached, fromCache: true };
 			}
+
+			this.logger.log(`Generating fresh customer analytics for organization ${organisationId}`);
 
 			const baseWhere: any = { organisation: { uid: organisationId } };
 			if (branchId) {
@@ -1003,6 +1191,8 @@ export class ReportsService implements OnModuleInit {
 				relations: ['client'],
 				order: { createdAt: 'DESC' },
 			});
+
+			this.logger.log(`Found ${quotations.length} quotations for customer analytics`);
 
 			// Group by client
 			const clientMap = new Map();
@@ -1035,6 +1225,8 @@ export class ReportsService implements OnModuleInit {
 			const totalCustomers = clientMap.size;
 			const totalRevenue = Array.from(clientMap.values()).reduce((sum, client) => sum + client.revenue, 0);
 			const averageLifetimeValue = totalCustomers > 0 ? totalRevenue / totalCustomers : 0;
+
+			this.logger.log(`Customer analytics metrics - Total customers: ${totalCustomers}, Total revenue: ${totalRevenue}, Avg LTV: ${averageLifetimeValue}`);
 
 			// Calculate new customers (last 30 days)
 			const thirtyDaysAgo = new Date();
@@ -1128,20 +1320,28 @@ export class ReportsService implements OnModuleInit {
 			};
 
 			await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);
+			this.logger.log(`Customer analytics cached successfully: ${cacheKey}`);
+			
 			return { ...result, fromCache: false };
 		} catch (error) {
+			this.logger.error(`Error generating customer analytics: ${error.message}`, error.stack);
 			throw new Error(`Failed to generate customer analytics: ${error.message}`);
 		}
 	}
 
 	async generateBlankQuotationAnalytics(organisationId: number, branchId?: number): Promise<any> {
+		this.logger.log(`Generating blank quotation analytics for organization ${organisationId}${branchId ? ` and branch ${branchId}` : ''}`);
+		
 		try {
 			const cacheKey = `blank_quotation_analytics_${organisationId}${branchId ? `_${branchId}` : ''}`;
 			const cached = await this.cacheManager.get(cacheKey);
 			
 			if (cached) {
+				this.logger.log(`Blank quotation analytics found in cache: ${cacheKey}`);
 				return { ...cached, fromCache: true };
 			}
+
+			this.logger.log(`Generating fresh blank quotation analytics for organization ${organisationId}`);
 
 			const baseWhere: any = { organisation: { uid: organisationId } };
 			if (branchId) {
@@ -1161,6 +1361,8 @@ export class ReportsService implements OnModuleInit {
 				q.notes?.toLowerCase().includes('blank')
 			);
 
+			this.logger.log(`Found ${blankQuotations.length} blank quotations out of ${allQuotations.length} total quotations`);
+
 			const totalBlankQuotations = blankQuotations.length;
 			const convertedBlankQuotations = blankQuotations.filter(q => q.status === 'approved').length;
 			const conversionRate = totalBlankQuotations > 0 ? (convertedBlankQuotations / totalBlankQuotations) * 100 : 0;
@@ -1172,6 +1374,8 @@ export class ReportsService implements OnModuleInit {
 
 			const averageQuotationValue = totalBlankQuotations > 0 ? 
 				blankQuotations.reduce((sum, q) => sum + (q.totalAmount || 0), 0) / totalBlankQuotations : 0;
+
+			this.logger.log(`Blank quotation analytics metrics - Total: ${totalBlankQuotations}, Converted: ${convertedBlankQuotations}, Revenue: ${totalRevenue}`);
 
 			// Calculate average response time (using updatedAt as proxy for response)
 			const respondedQuotations = blankQuotations.filter(q => 
@@ -1298,9 +1502,198 @@ export class ReportsService implements OnModuleInit {
 			};
 
 			await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);
+			this.logger.log(`Blank quotation analytics cached successfully: ${cacheKey}`);
+			
 			return { ...result, fromCache: false };
 		} catch (error) {
+			this.logger.error(`Error generating blank quotation analytics: ${error.message}`, error.stack);
 			throw new Error(`Failed to generate blank quotation analytics: ${error.message}`);
+		}
+	}
+
+	// HR Analytics Methods
+	async generateAttendanceAnalytics(organisationId: number, branchId?: number): Promise<any> {
+		this.logger.log(`Generating attendance analytics for organization ${organisationId}${branchId ? ` and branch ${branchId}` : ''}`);
+		
+		try {
+			const cacheKey = `attendance_analytics_${organisationId}${branchId ? `_${branchId}` : ''}`;
+			const cached = await this.cacheManager.get(cacheKey);
+			
+			if (cached) {
+				this.logger.log(`Attendance analytics found in cache: ${cacheKey}`);
+				return { ...cached, fromCache: true };
+			}
+
+			this.logger.log(`Generating fresh attendance analytics for organization ${organisationId}`);
+
+			// This would integrate with the attendance service
+			// For now, return a placeholder structure
+			const result = {
+				summary: {
+					totalEmployees: 0,
+					presentToday: 0,
+					attendanceRate: 0,
+					averageHoursWorked: 0,
+					lateArrivals: 0,
+					earlyDepartures: 0,
+				},
+				trends: {
+					dailyAttendance: [],
+					monthlyAttendance: [],
+					punctualityTrends: [],
+				},
+				chartData: {
+					attendanceOverTime: [],
+					punctualityDistribution: [],
+					departmentBreakdown: [],
+				},
+			};
+
+			await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);
+			this.logger.log(`Attendance analytics cached successfully: ${cacheKey}`);
+			
+			return { ...result, fromCache: false };
+		} catch (error) {
+			this.logger.error(`Error generating attendance analytics: ${error.message}`, error.stack);
+			throw new Error(`Failed to generate attendance analytics: ${error.message}`);
+		}
+	}
+
+	async generateEmployeePerformanceAnalytics(organisationId: number, branchId?: number): Promise<any> {
+		this.logger.log(`Generating employee performance analytics for organization ${organisationId}${branchId ? ` and branch ${branchId}` : ''}`);
+		
+		try {
+			const cacheKey = `employee_performance_analytics_${organisationId}${branchId ? `_${branchId}` : ''}`;
+			const cached = await this.cacheManager.get(cacheKey);
+			
+			if (cached) {
+				this.logger.log(`Employee performance analytics found in cache: ${cacheKey}`);
+				return { ...cached, fromCache: true };
+			}
+
+			this.logger.log(`Generating fresh employee performance analytics for organization ${organisationId}`);
+
+			// This would integrate with the user/task services
+			// For now, return a placeholder structure
+			const result = {
+				summary: {
+					totalEmployees: 0,
+					averagePerformanceScore: 0,
+					topPerformers: [],
+					improvementNeeded: [],
+					targetAchievementRate: 0,
+				},
+				metrics: {
+					productivityScores: [],
+					goalAchievements: [],
+					skillAssessments: [],
+				},
+				chartData: {
+					performanceDistribution: [],
+					skillsMatrix: [],
+					performanceTrends: [],
+				},
+			};
+
+			await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);
+			this.logger.log(`Employee performance analytics cached successfully: ${cacheKey}`);
+			
+			return { ...result, fromCache: false };
+		} catch (error) {
+			this.logger.error(`Error generating employee performance analytics: ${error.message}`, error.stack);
+			throw new Error(`Failed to generate employee performance analytics: ${error.message}`);
+		}
+	}
+
+	async generatePayrollAnalytics(organisationId: number, branchId?: number): Promise<any> {
+		this.logger.log(`Generating payroll analytics for organization ${organisationId}${branchId ? ` and branch ${branchId}` : ''}`);
+		
+		try {
+			const cacheKey = `payroll_analytics_${organisationId}${branchId ? `_${branchId}` : ''}`;
+			const cached = await this.cacheManager.get(cacheKey);
+			
+			if (cached) {
+				this.logger.log(`Payroll analytics found in cache: ${cacheKey}`);
+				return { ...cached, fromCache: true };
+			}
+
+			this.logger.log(`Generating fresh payroll analytics for organization ${organisationId}`);
+
+			// This would integrate with the payroll service
+			// For now, return a placeholder structure
+			const result = {
+				summary: {
+					averageSalary: 0,
+					totalBenefitsCost: 0,
+					payrollGrowth: 0,
+					costPerEmployee: 0,
+				},
+				breakdown: {
+					salaryDistribution: [],
+					benefitsUtilization: [],
+					departmentCosts: [],
+				},
+				chartData: {
+					payrollTrends: [],
+					salaryBands: [],
+					benefitsCosts: [],
+				},
+			};
+
+			await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);
+			this.logger.log(`Payroll analytics cached successfully: ${cacheKey}`);
+			
+			return { ...result, fromCache: false };
+		} catch (error) {
+			this.logger.error(`Error generating payroll analytics: ${error.message}`, error.stack);
+			throw new Error(`Failed to generate payroll analytics: ${error.message}`);
+		}
+	}
+
+	async generateRecruitmentAnalytics(organisationId: number, branchId?: number): Promise<any> {
+		this.logger.log(`Generating recruitment analytics for organization ${organisationId}${branchId ? ` and branch ${branchId}` : ''}`);
+		
+		try {
+			const cacheKey = `recruitment_analytics_${organisationId}${branchId ? `_${branchId}` : ''}`;
+			const cached = await this.cacheManager.get(cacheKey);
+			
+			if (cached) {
+				this.logger.log(`Recruitment analytics found in cache: ${cacheKey}`);
+				return { ...cached, fromCache: true };
+			}
+
+			this.logger.log(`Generating fresh recruitment analytics for organization ${organisationId}`);
+
+			// This would integrate with the recruitment service
+			// For now, return a placeholder structure
+			const result = {
+				summary: {
+					totalApplications: 0,
+					activePositions: 0,
+					averageTimeToHire: 0,
+					offerAcceptanceRate: 0,
+					recruitmentCost: 0,
+				},
+				pipeline: {
+					candidatesByStage: [],
+					interviewScheduled: 0,
+					offersSent: 0,
+					positionsToFill: 0,
+				},
+				chartData: {
+					hiringTrends: [],
+					sourcingChannels: [],
+					candidatePipeline: [],
+				},
+			};
+
+			await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);
+			this.logger.log(`Recruitment analytics cached successfully: ${cacheKey}`);
+			
+			return { ...result, fromCache: false };
+		} catch (error) {
+			this.logger.error(`Error generating recruitment analytics: ${error.message}`, error.stack);
+			throw new Error(`Failed to generate recruitment analytics: ${error.message}`);
 		}
 	}
 }

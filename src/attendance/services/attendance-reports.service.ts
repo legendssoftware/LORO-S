@@ -265,7 +265,9 @@ export class AttendanceReportsService {
 		private readonly organizationHoursService: OrganizationHoursService,
 		private readonly userService: UserService,
 		private readonly eventEmitter: EventEmitter2,
-	) {}
+	) {
+		this.logger.log('AttendanceReportsService initialized');
+	}
 
 	/**
 	 * Schedule reports to run every 10 minutes during business hours (6 AM - 10 PM globally)
@@ -273,6 +275,8 @@ export class AttendanceReportsService {
 	 */
 	@Cron('*/10 * * * *') // Run every 10 minutes
 	async checkAndSendReports() {
+		this.logger.log('Starting scheduled report check');
+		
 		try {
 			const now = new Date();
 			
@@ -280,6 +284,7 @@ export class AttendanceReportsService {
 			// This covers business hours across all major timezones
 			const currentUTCHour = now.getUTCHours();
 			if (currentUTCHour < 4 || currentUTCHour > 22) {
+				this.logger.debug(`Skipping reports during quiet hours (UTC ${currentUTCHour}:00)`);
 				return; // Skip during quiet hours to save resources
 			}
 
@@ -287,9 +292,12 @@ export class AttendanceReportsService {
 				where: { isDeleted: false },
 			});
 
+			this.logger.log(`Found ${organizations.length} organizations to process`);
+
 			// Process both morning and evening reports in parallel for efficiency
 			const reportPromises = organizations.map(async (org) => {
 				try {
+					this.logger.debug(`Processing reports for organization ${org.uid} (${org.name})`);
 					await Promise.all([
 						this.processMorningReportForOrganization(org, now),
 						this.processEveningReportForOrganization(org, now),
@@ -300,12 +308,15 @@ export class AttendanceReportsService {
 			});
 
 			await Promise.all(reportPromises);
+			this.logger.log('Scheduled report check completed');
 		} catch (error) {
 			this.logger.error('Error in checkAndSendReports:', error);
 		}
 	}
 
 	private async processMorningReportForOrganization(organization: Organisation, currentTime: Date) {
+		this.logger.debug(`Processing morning report for organization ${organization.uid} (${organization.name})`);
+		
 		try {
 			// Get organization timezone from organization hours service
 			const organizationHours = await this.organizationHoursService.getOrganizationHours(organization.uid);
@@ -318,6 +329,7 @@ export class AttendanceReportsService {
 			const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(organization.uid, orgCurrentTime);
 
 			if (!workingDayInfo.isWorkingDay || !workingDayInfo.startTime) {
+				this.logger.debug(`Skipping morning report for org ${organization.uid} - not a working day or no start time`);
 				return; // Skip non-working days
 			}
 
@@ -332,6 +344,7 @@ export class AttendanceReportsService {
 			);
 
 			if (!reportWindow.isTimeForMorningReport) {
+				this.logger.debug(`Not time for morning report for org ${organization.uid} yet`);
 				return; // Not time for morning report yet
 			}
 
@@ -340,9 +353,11 @@ export class AttendanceReportsService {
 			const cacheKey = `morning_report_${organization.uid}_${format(orgToday, 'yyyy-MM-dd')}`;
 
 			if (this.hasReportBeenSent(cacheKey)) {
+				this.logger.debug(`Morning report already sent today for org ${organization.uid}`);
 				return;
 			}
 
+			this.logger.log(`Generating morning report for organization ${organization.uid} (${organization.name})`);
 			await this.generateAndSendMorningReport(organization.uid);
 			this.markReportAsSent(cacheKey);
 
@@ -362,6 +377,8 @@ export class AttendanceReportsService {
 	}
 
 	private async processEveningReportForOrganization(organization: Organisation, currentTime: Date) {
+		this.logger.debug(`Processing evening report for organization ${organization.uid} (${organization.name})`);
+		
 		try {
 			// Get organization timezone from organization hours service
 			const organizationHours = await this.organizationHoursService.getOrganizationHours(organization.uid);
@@ -374,6 +391,7 @@ export class AttendanceReportsService {
 			const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(organization.uid, orgCurrentTime);
 
 			if (!workingDayInfo.isWorkingDay || !workingDayInfo.endTime) {
+				this.logger.debug(`Skipping evening report for org ${organization.uid} - not a working day or no end time`);
 				return; // Skip non-working days
 			}
 
@@ -388,6 +406,7 @@ export class AttendanceReportsService {
 			);
 
 			if (!reportWindow.isTimeForEveningReport) {
+				this.logger.debug(`Not time for evening report for org ${organization.uid} yet`);
 				return; // Not time for evening report yet
 			}
 
@@ -396,9 +415,11 @@ export class AttendanceReportsService {
 			const cacheKey = `evening_report_${organization.uid}_${format(orgToday, 'yyyy-MM-dd')}`;
 
 			if (this.hasReportBeenSent(cacheKey)) {
+				this.logger.debug(`Evening report already sent today for org ${organization.uid}`);
 				return;
 			}
 
+			this.logger.log(`Generating evening report for organization ${organization.uid} (${organization.name})`);
 			await this.generateAndSendEveningReport(organization.uid);
 			this.markReportAsSent(cacheKey);
 
@@ -426,15 +447,22 @@ export class AttendanceReportsService {
 	private markReportAsSent(cacheKey: string): void {
 		this.reportCache.add(cacheKey);
 		// Clean up after 24 hours
-		setTimeout(() => this.reportCache.delete(cacheKey), 24 * 60 * 60 * 1000);
+		setTimeout(() => {
+			this.reportCache.delete(cacheKey);
+			this.logger.debug(`Cleaned up cache key: ${cacheKey}`);
+		}, 24 * 60 * 60 * 1000);
 	}
 
 	/**
 	 * Generate and send morning attendance report
 	 */
 	async generateAndSendMorningReport(organizationId: number): Promise<void> {
+		this.logger.log(`Generating and sending morning report for organization ${organizationId}`);
+		
 		try {
 			const reportData = await this.generateMorningReportData(organizationId);
+			this.logger.log(`Morning report data generated for organization ${organizationId}`);
+			
 			const recipients = await this.getReportRecipients(organizationId);
 
 			if (recipients.length === 0) {
@@ -442,6 +470,7 @@ export class AttendanceReportsService {
 				return;
 			}
 
+			this.logger.log(`Sending morning report to ${recipients.length} recipients for organization ${organizationId}`);
 			this.eventEmitter.emit('send.email', EmailType.ATTENDANCE_MORNING_REPORT, recipients, reportData);
 
 			this.logger.log(
@@ -457,8 +486,12 @@ export class AttendanceReportsService {
 	 * Generate and send evening attendance report
 	 */
 	async generateAndSendEveningReport(organizationId: number): Promise<void> {
+		this.logger.log(`Generating and sending evening report for organization ${organizationId}`);
+		
 		try {
 			const reportData = await this.generateEveningReportData(organizationId);
+			this.logger.log(`Evening report data generated for organization ${organizationId}`);
+			
 			const recipients = await this.getReportRecipients(organizationId);
 
 			if (recipients.length === 0) {
@@ -466,6 +499,7 @@ export class AttendanceReportsService {
 				return;
 			}
 
+			this.logger.log(`Sending evening report to ${recipients.length} recipients for organization ${organizationId}`);
 			this.eventEmitter.emit('send.email', EmailType.ATTENDANCE_EVENING_REPORT, recipients, reportData);
 
 			this.logger.log(
@@ -481,6 +515,8 @@ export class AttendanceReportsService {
 	 * Generate and send morning attendance report to specific recipients
 	 */
 	async generateAndSendMorningReportToUser(organizationId: number, userEmail: string): Promise<MorningReportData> {
+		this.logger.log(`Generating and sending morning report to user ${userEmail} for organization ${organizationId}`);
+		
 		try {
 			const reportData = await this.generateMorningReportData(organizationId);
 			const recipients = [userEmail];
@@ -490,6 +526,7 @@ export class AttendanceReportsService {
 				return reportData;
 			}
 
+			this.logger.log(`Sending morning report to ${userEmail} for organization ${organizationId}`);
 			this.eventEmitter.emit('send.email', EmailType.ATTENDANCE_MORNING_REPORT, recipients, reportData);
 
 			this.logger.log(
@@ -507,6 +544,8 @@ export class AttendanceReportsService {
 	 * Generate and send evening attendance report to specific recipients
 	 */
 	async generateAndSendEveningReportToUser(organizationId: number, userEmail: string): Promise<EveningReportData> {
+		this.logger.log(`Generating and sending evening report to user ${userEmail} for organization ${organizationId}`);
+		
 		try {
 			const reportData = await this.generateEveningReportData(organizationId);
 			const recipients = [userEmail];
@@ -516,6 +555,7 @@ export class AttendanceReportsService {
 				return reportData;
 			}
 
+			this.logger.log(`Sending evening report to ${userEmail} for organization ${organizationId}`);
 			this.eventEmitter.emit('send.email', EmailType.ATTENDANCE_EVENING_REPORT, recipients, reportData);
 
 			this.logger.log(
@@ -530,6 +570,8 @@ export class AttendanceReportsService {
 	}
 
 	private async generateMorningReportData(organizationId: number): Promise<MorningReportData> {
+		this.logger.log(`Generating morning report data for organization ${organizationId}`);
+		
 		// Get organization timezone
 		const organizationHours = await this.organizationHoursService.getOrganizationHours(organizationId);
 		const organizationTimezone = organizationHours?.timezone;
@@ -539,16 +581,26 @@ export class AttendanceReportsService {
 		const startOfToday = startOfDay(today);
 		const endOfToday = endOfDay(today);
 
+		this.logger.debug(`Processing data for date range: ${startOfToday.toISOString()} to ${endOfToday.toISOString()}`);
+
 		// Get organization info
 		const organization = await this.organisationRepository.findOne({
 			where: { uid: organizationId },
 		});
+
+		if (!organization) {
+			this.logger.error(`Organization ${organizationId} not found`);
+			throw new Error(`Organization ${organizationId} not found`);
+		}
+
+		this.logger.debug(`Organization found: ${organization.name}`);
 
 		// Get working day info for organization hours with fallback
 		const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(organizationId, today);
 
 		// Ensure we have valid start time with fallback
 		const organizationStartTime = workingDayInfo.startTime || '07:30';
+		this.logger.debug(`Organization start time: ${organizationStartTime}`);
 
 		// Get all users in the organization with better error handling - only count those who should work today
 		let allUsers = [];
@@ -557,8 +609,11 @@ export class AttendanceReportsService {
 		try {
 			const usersResponse = await this.userService.findAll({ organisationId: organizationId }, 1, 1000);
 			allUsers = usersResponse.data || [];
+			this.logger.debug(`Found ${allUsers.length} users in organization`);
+			
 			// Only count active users who should work today (based on organization schedule)
 			totalEmployees = await this.getExpectedEmployeesForToday(allUsers, organizationId, today);
+			this.logger.log(`Expected employees for today: ${totalEmployees}`);
 		} catch (error) {
 			this.logger.warn(`Failed to fetch users for organization ${organizationId}:`, error);
 		}
@@ -572,19 +627,26 @@ export class AttendanceReportsService {
 			relations: ['owner', 'owner.userProfile', 'owner.branch'],
 		});
 
+		this.logger.log(`Found ${todayAttendance.length} attendance records for today`);
+
 		// Consolidate attendance records by user to handle multiple check-ins
 		const consolidatedAttendance = await this.consolidateAttendanceByUser(organizationId, todayAttendance);
+		this.logger.log(`Consolidated to ${consolidatedAttendance.size} unique user attendance records`);
 
 		// Get user targets for productivity analysis
 		const userTargets = await this.getUserTargetsForOrganization(organizationId);
+		this.logger.debug(`Retrieved user targets for ${userTargets.usersWithTargets} users`);
 
 		// Calculate real-time total hours worked (including people still working) using organization hours
 		const totalActualHours = await this.calculateTotalActualHoursWithOrgHours(todayAttendance, organizationId, today);
+		this.logger.log(`Total actual hours worked: ${totalActualHours}`);
 
 		// Use consolidated attendance for correct present count
 		const presentCount = consolidatedAttendance.size;
 		const absentCount = totalEmployees - presentCount;
 		const attendanceRate = totalEmployees > 0 ? (presentCount / totalEmployees) * 100 : 0;
+
+		this.logger.log(`Attendance summary: ${presentCount} present, ${absentCount} absent, ${attendanceRate.toFixed(1)}% rate`);
 
 		// Create present employees list from consolidated data
 		const presentEmployees: AttendanceReportUser[] = [];
@@ -638,11 +700,15 @@ export class AttendanceReportsService {
 			today
 		);
 
+		this.logger.log(`Employee categories: ${employeeCategories.currentlyWorkingEmployees.length} working, ${employeeCategories.completedShiftEmployees.length} completed`);
+
 		// Generate punctuality breakdown using organization hours
 		const punctuality = await this.generatePunctualityBreakdown(organizationId, todayAttendance);
+		this.logger.log(`Punctuality breakdown: ${punctuality.onTimeArrivals.length} on time, ${punctuality.lateArrivals.length} late`);
 
 		// Generate branch breakdown using organization hours
 		const branchBreakdown = await this.generateBranchBreakdownWithOrgHours(allUsers, todayAttendance, organizationId, today);
+		this.logger.log(`Generated branch breakdown for ${branchBreakdown.length} branches`);
 
 		// Calculate comprehensive lateness summary
 		const allLateEmployees = [...punctuality.lateArrivals, ...punctuality.veryLateArrivals];
@@ -686,6 +752,8 @@ export class AttendanceReportsService {
 				: 'On track or ahead of target'
 		};
 
+		this.logger.log(`Target performance: ${targetPerformance.targetAchievementRate}% achievement rate`);
+
 		// Generate enhanced insights and recommendations
 		const insights = this.generateEnhancedMorningInsights(
 			attendanceRate, 
@@ -702,7 +770,9 @@ export class AttendanceReportsService {
 			employeeCategories
 		);
 
-		return {
+		this.logger.log(`Generated ${insights.length} insights and ${recommendations.length} recommendations`);
+
+		const morningReportData = {
 			organizationName: organization?.name || 'Organization',
 			reportDate: format(today, 'EEEE, MMMM do, yyyy'),
 			organizationStartTime,
@@ -730,9 +800,14 @@ export class AttendanceReportsService {
 			hasEmployees: totalEmployees > 0,
 			latenessSummary,
 		};
+
+		this.logger.log(`Morning report data generated successfully for organization ${organizationId}`);
+		return morningReportData;
 	}
 
 	private async generateEveningReportData(organizationId: number): Promise<EveningReportData> {
+		this.logger.log(`Generating evening report data for organization ${organizationId}`);
+		
 		// Get organization timezone
 		const organizationHours = await this.organizationHoursService.getOrganizationHours(organizationId);
 		const organizationTimezone = organizationHours?.timezone;
@@ -742,15 +817,26 @@ export class AttendanceReportsService {
 		const startOfToday = startOfDay(today);
 		const endOfToday = endOfDay(today);
 
+		this.logger.debug(`Processing data for date range: ${startOfToday.toISOString()} to ${endOfToday.toISOString()}`);
+
 		// Get organization info
 		const organization = await this.organisationRepository.findOne({
 			where: { uid: organizationId },
 		});
 
+		if (!organization) {
+			this.logger.error(`Organization ${organizationId} not found`);
+			throw new Error(`Organization ${organizationId} not found`);
+		}
+
+		this.logger.debug(`Organization found: ${organization.name}`);
+
 		// Get working day info for organization hours with fallback
 		const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(organizationId, today);
 		const organizationStartTime = workingDayInfo.startTime || '07:30';
 		const organizationCloseTime = workingDayInfo.endTime || '17:00';
+
+		this.logger.debug(`Organization hours: ${organizationStartTime} to ${organizationCloseTime}`);
 
 		// Get all users in the organization with better error handling - only count those who should work today
 		let allUsers = [];
@@ -758,6 +844,7 @@ export class AttendanceReportsService {
 		try {
 			const usersResponse = await this.userService.findAll({ organisationId: organizationId }, 1, 1000);
 			allUsers = usersResponse.data || [];
+			this.logger.debug(`Found ${allUsers.length} users in organization`);
 		} catch (error) {
 			this.logger.warn(`Failed to fetch users for organization ${organizationId}:`, error);
 		}
@@ -766,6 +853,8 @@ export class AttendanceReportsService {
 		const { comparisonDate, comparisonLabel } = await this.findLastWorkingDay(organizationId, today);
 		const startOfComparison = startOfDay(comparisonDate);
 		const endOfComparison = endOfDay(comparisonDate);
+
+		this.logger.debug(`Comparison date (${comparisonLabel}): ${comparisonDate.toISOString()}`);
 
 		// Get today's and comparison day's attendance records
 		const [todayAttendance, comparisonAttendance] = await Promise.all([
@@ -784,6 +873,8 @@ export class AttendanceReportsService {
 				relations: ['owner'],
 			}),
 		]);
+
+		this.logger.log(`Found ${todayAttendance.length} attendance records for today, ${comparisonAttendance.length} for ${comparisonLabel}`);
 
 		// Create present employees list using organization hours for lateness calculation
 		const presentEmployees: AttendanceReportUser[] = [];
@@ -862,17 +953,22 @@ export class AttendanceReportsService {
 			}
 		}
 
+		this.logger.log(`Present employees: ${presentEmployees.length}, Absent employees: ${absentEmployees.length}`);
+
 		// Get user targets for productivity analysis
 		const userTargets = await this.getUserTargetsForOrganization(organizationId);
+		this.logger.debug(`Retrieved user targets for ${userTargets.usersWithTargets} users`);
 
 		// Enhanced employee categorization with organization hours
 		const employeeCategories = await this.categorizeEmployeesByStatusWithOrgHours(allUsers, todayAttendance, organizationId, today);
 
 		// Generate branch breakdown using organization hours
 		const branchBreakdown = await this.generateBranchBreakdownWithOrgHours(allUsers, todayAttendance, organizationId, today);
+		this.logger.log(`Generated branch breakdown for ${branchBreakdown.length} branches`);
 
 		// Calculate real-time total hours worked using organization hours
 		const totalActualHours = await this.calculateTotalActualHoursWithOrgHours(todayAttendance, organizationId, today);
+		this.logger.log(`Total actual hours worked: ${totalActualHours}`);
 
 		// Generate employee metrics with improved comparison logic using organization hours
 		const employeeMetrics = await this.generateEmployeeMetricsWithOrgHours(
@@ -882,6 +978,8 @@ export class AttendanceReportsService {
 			comparisonAttendance,
 			comparisonLabel,
 		);
+
+		this.logger.log(`Generated metrics for ${employeeMetrics.length} employees`);
 
 		// Map employee metrics to template format with enhanced real-time hours
 		const templateEmployeeMetrics = [];
@@ -975,6 +1073,8 @@ export class AttendanceReportsService {
 			individualTargetsMissed,
 		};
 
+		this.logger.log(`Target performance: ${targetPerformance.targetAchievementRate}% achievement rate (${teamEfficiencyRating})`);
+
 		// Calculate comprehensive lateness summary for evening report using organization hours
 		const lateEmployeesToday = employeeMetrics.filter((metric) => metric.isLate);
 		const totalLateMinutesToday = lateEmployeesToday.reduce((sum, metric) => sum + metric.lateMinutes, 0);
@@ -1039,6 +1139,8 @@ export class AttendanceReportsService {
 			punctualityChange
 		);
 
+		this.logger.log(`Performance trend: ${performanceTrend} (attendance: ${attendanceChange}%, hours: ${hoursChange}h, punctuality: ${punctualityChange}%)`);
+
 		// Generate enhanced insights with target analysis using organization hours
 		const insights = this.generateEnhancedEveningInsights(
 			employeeMetrics, 
@@ -1079,7 +1181,9 @@ export class AttendanceReportsService {
 		// Get total employees expected to work today using organization hours
 		const totalEmployeesExpected = await this.getExpectedEmployeesForToday(allUsers, organizationId, today);
 
-		return {
+		this.logger.log(`Generated ${insights.length} insights and ${tomorrowActions.length} tomorrow actions`);
+
+		const eveningReportData = {
 			organizationName: organization?.name || 'Organization',
 			reportDate: format(today, 'EEEE, MMMM do, yyyy'),
 			organizationStartTime,
@@ -1142,6 +1246,125 @@ export class AttendanceReportsService {
 			generatedAt: TimezoneUtil.formatInOrganizationTime(today, 'PPpp', organizationTimezone),
 			dashboardUrl: process.env.DASHBOARD_URL || 'https://dashboard.loro.com',
 		};
+
+		this.logger.log(`Evening report data generated successfully for organization ${organizationId}`);
+		return eveningReportData;
+	}
+
+	private async getReportRecipients(organizationId: number): Promise<string[]> {
+		this.logger.log(`Getting report recipients for organization ${organizationId}`);
+		
+		try {
+			// Get users with OWNER, ADMIN, or HR access levels for the organization
+			const ownerResult = await this.userService.findAll({
+				organisationId: organizationId,
+				accessLevel: AccessLevel.OWNER,
+				status: AccountStatus.ACTIVE,
+			});
+
+			const adminResult = await this.userService.findAll({
+				organisationId: organizationId,
+				accessLevel: AccessLevel.ADMIN,
+				status: AccountStatus.ACTIVE,
+			});
+
+			const hrResult = await this.userService.findAll({
+				organisationId: organizationId,
+				accessLevel: AccessLevel.HR,
+				status: AccountStatus.ACTIVE,
+			});
+
+			// Combine all recipients
+			const allRecipients = [...(ownerResult.data || []), ...(adminResult.data || []), ...(hrResult.data || [])];
+
+			// Remove duplicates and filter for valid emails
+			const uniqueRecipients = allRecipients.filter(
+				(user, index, self) => user.email && self.findIndex((u) => u.uid === user.uid) === index,
+			);
+
+			const emails = uniqueRecipients.map((user) => user.email);
+			this.logger.log(`Found ${emails.length} report recipients for organization ${organizationId}`);
+			
+			return emails;
+		} catch (error) {
+			this.logger.error(`Error getting report recipients for organization ${organizationId}:`, error);
+			return [];
+		}
+	}
+
+	/**
+	 * Enhanced duration parser with multiple format support and validation
+	 */
+	private parseDurationToMinutes(duration: string): number {
+		if (!duration || typeof duration !== 'string') {
+			this.logger.warn(`Invalid duration format: ${duration}`);
+			return 0;
+		}
+
+		const trimmed = duration.trim();
+		if (trimmed === '0' || trimmed === '') return 0;
+
+		try {
+			// Handle format like "8h 30m", "8 hours 30 minutes", "8:30", etc.
+
+			// Format: "HH:MM:SS" or "HH:MM"
+			const timeMatch = trimmed.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+			if (timeMatch) {
+				const hours = parseInt(timeMatch[1], 10) || 0;
+				const minutes = parseInt(timeMatch[2], 10) || 0;
+				const seconds = timeMatch[3] ? parseInt(timeMatch[3], 10) || 0 : 0;
+				return hours * 60 + minutes + Math.round(seconds / 60);
+			}
+
+			// Format: "8h 30m" or "8 hours 30 minutes" (flexible)
+			const hourMinuteMatch = trimmed.match(
+				/(\d+(?:\.\d+)?)\s*h(?:ours?)?\s*(\d+(?:\.\d+)?)\s*m(?:in(?:utes?)?)?/i,
+			);
+			if (hourMinuteMatch) {
+				const hours = parseFloat(hourMinuteMatch[1]) || 0;
+				const minutes = parseFloat(hourMinuteMatch[2]) || 0;
+				return Math.round(hours * 60 + minutes);
+			}
+
+			// Format: just hours "8h" or "8 hours"
+			const hourOnlyMatch = trimmed.match(/(\d+(?:\.\d+)?)\s*h(?:ours?)?$/i);
+			if (hourOnlyMatch) {
+				const hours = parseFloat(hourOnlyMatch[1]) || 0;
+				return Math.round(hours * 60);
+			}
+
+			// Format: just minutes "45m" or "45 minutes"
+			const minuteOnlyMatch = trimmed.match(/(\d+(?:\.\d+)?)\s*m(?:in(?:utes?)?)?$/i);
+			if (minuteOnlyMatch) {
+				const minutes = parseFloat(minuteOnlyMatch[1]) || 0;
+				return Math.round(minutes);
+			}
+
+			// Format: decimal hours "8.5"
+			const decimalMatch = trimmed.match(/^(\d+(?:\.\d+)?)$/);
+			if (decimalMatch) {
+				const hours = parseFloat(decimalMatch[1]) || 0;
+				return Math.round(hours * 60);
+			}
+
+			// Fallback: try to extract any numbers and assume they're hours
+			const numbers = trimmed.match(/\d+(?:\.\d+)?/g);
+			if (numbers && numbers.length > 0) {
+				const firstNumber = parseFloat(numbers[0]) || 0;
+				// If it's a reasonable hour value (0-24), treat as hours
+				if (firstNumber <= 24) {
+					return Math.round(firstNumber * 60);
+				}
+				// Otherwise, treat as minutes
+				return Math.round(firstNumber);
+			}
+
+			this.logger.warn(`Unable to parse duration string: "${duration}"`);
+			return 0;
+		} catch (error) {
+			this.logger.error(`Error parsing duration "${duration}":`, error);
+			return 0;
+		}
 	}
 
 	/**
@@ -1872,139 +2095,6 @@ export class AttendanceReportsService {
 		}
 	}
 
-	private async getReportRecipients(organizationId: number): Promise<string[]> {
-		try {
-			// Get users with OWNER, ADMIN, or HR access levels for the organization
-			const ownerResult = await this.userService.findAll({
-				organisationId: organizationId,
-				accessLevel: AccessLevel.OWNER,
-				status: AccountStatus.ACTIVE,
-			});
-
-			const adminResult = await this.userService.findAll({
-				organisationId: organizationId,
-				accessLevel: AccessLevel.ADMIN,
-				status: AccountStatus.ACTIVE,
-			});
-
-			const hrResult = await this.userService.findAll({
-				organisationId: organizationId,
-				accessLevel: AccessLevel.HR,
-				status: AccountStatus.ACTIVE,
-			});
-
-			// Combine all recipients
-			const allRecipients = [...(ownerResult.data || []), ...(adminResult.data || []), ...(hrResult.data || [])];
-
-			// Remove duplicates and filter for valid emails
-			const uniqueRecipients = allRecipients.filter(
-				(user, index, self) => user.email && self.findIndex((u) => u.uid === user.uid) === index,
-			);
-
-			return uniqueRecipients.map((user) => user.email);
-		} catch (error) {
-			this.logger.error(`Error getting report recipients for organization ${organizationId}:`, error);
-			return [];
-		}
-	}
-
-	/**
-	 * Enhanced duration parser with multiple format support and validation
-	 */
-	private parseDurationToMinutes(duration: string): number {
-		if (!duration || typeof duration !== 'string') return 0;
-
-		const trimmed = duration.trim();
-		if (trimmed === '0' || trimmed === '') return 0;
-
-		try {
-			// Handle format like "8h 30m", "8 hours 30 minutes", "8:30", etc.
-
-			// Format: "HH:MM:SS" or "HH:MM"
-			const timeMatch = trimmed.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
-			if (timeMatch) {
-				const hours = parseInt(timeMatch[1], 10) || 0;
-				const minutes = parseInt(timeMatch[2], 10) || 0;
-				const seconds = timeMatch[3] ? parseInt(timeMatch[3], 10) || 0 : 0;
-				return hours * 60 + minutes + Math.round(seconds / 60);
-			}
-
-			// Format: "8h 30m" or "8 hours 30 minutes" (flexible)
-			const hourMinuteMatch = trimmed.match(
-				/(\d+(?:\.\d+)?)\s*h(?:ours?)?\s*(\d+(?:\.\d+)?)\s*m(?:in(?:utes?)?)?/i,
-			);
-			if (hourMinuteMatch) {
-				const hours = parseFloat(hourMinuteMatch[1]) || 0;
-				const minutes = parseFloat(hourMinuteMatch[2]) || 0;
-				return Math.round(hours * 60 + minutes);
-			}
-
-			// Format: just hours "8h" or "8 hours"
-			const hourOnlyMatch = trimmed.match(/(\d+(?:\.\d+)?)\s*h(?:ours?)?$/i);
-			if (hourOnlyMatch) {
-				const hours = parseFloat(hourOnlyMatch[1]) || 0;
-				return Math.round(hours * 60);
-			}
-
-			// Format: just minutes "45m" or "45 minutes"
-			const minuteOnlyMatch = trimmed.match(/(\d+(?:\.\d+)?)\s*m(?:in(?:utes?)?)?$/i);
-			if (minuteOnlyMatch) {
-				const minutes = parseFloat(minuteOnlyMatch[1]) || 0;
-				return Math.round(minutes);
-			}
-
-			// Format: decimal hours "8.5"
-			const decimalMatch = trimmed.match(/^(\d+(?:\.\d+)?)$/);
-			if (decimalMatch) {
-				const hours = parseFloat(decimalMatch[1]) || 0;
-				return Math.round(hours * 60);
-			}
-
-			// Fallback: try to extract any numbers and assume they're hours
-			const numbers = trimmed.match(/\d+(?:\.\d+)?/g);
-			if (numbers && numbers.length > 0) {
-				const firstNumber = parseFloat(numbers[0]) || 0;
-				// If it's a reasonable hour value (0-24), treat as hours
-				if (firstNumber <= 24) {
-					return Math.round(firstNumber * 60);
-				}
-				// Otherwise, treat as minutes
-				return Math.round(firstNumber);
-			}
-
-			this.logger.warn(`Unable to parse duration string: "${duration}"`);
-			return 0;
-		} catch (error) {
-			this.logger.error(`Error parsing duration "${duration}":`, error);
-			return 0;
-		}
-	}
-
-	/**
-	 * Calculate real-time hours worked including people still working
-	 * This fixes the issue where people still working show 0 hours
-	 */
-	private calculateRealTimeHours(attendance: Attendance, currentTime: Date = new Date()): number {
-		if (!attendance.checkIn) return 0;
-
-		// If there's a duration and check out, use that (completed shift)
-		if (attendance.duration && attendance.checkOut) {
-			return this.parseDurationToMinutes(attendance.duration) / 60;
-		}
-
-		// If only check-in exists, calculate hours from check-in to now (still working)
-		if (attendance.checkIn && !attendance.checkOut) {
-			const checkInTime = new Date(attendance.checkIn);
-			const diffInMs = currentTime.getTime() - checkInTime.getTime();
-			const diffInHours = diffInMs / (1000 * 60 * 60);
-			
-			// Cap at reasonable working hours (24 hours max to handle edge cases)
-			return Math.min(Math.max(0, diffInHours), 24);
-		}
-
-		return 0;
-	}
-
 	/**
 	 * Get user targets for organization employees
 	 * This enables target vs actual hours comparison
@@ -2565,6 +2655,8 @@ export class AttendanceReportsService {
 		organizationId: number,
 		currentTime: Date = new Date()
 	): Promise<number> {
+		this.logger.debug(`Calculating total actual hours for ${todayAttendance.length} attendance records`);
+		
 		let totalHours = 0;
 
 		for (const attendance of todayAttendance) {
@@ -2580,16 +2672,12 @@ export class AttendanceReportsService {
 				const diffInMs = currentTime.getTime() - checkInTime.getTime();
 				const diffInHours = diffInMs / (1000 * 60 * 60);
 				
-				// Cap at reasonable working hours and validate against organization hours
-				const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(organizationId, checkInTime);
-				const maxDailyHours = workingDayInfo.expectedWorkMinutes > 0 
-					? (workingDayInfo.expectedWorkMinutes / 60) * 1.5 // Allow 50% overtime max
-					: 12; // Fallback to 12 hours max
-				
-				totalHours += Math.min(Math.max(0, diffInHours), maxDailyHours);
+				// Cap at reasonable working hours (24 hours max to handle edge cases)
+				return Math.min(Math.max(0, diffInHours), 24);
 			}
 		}
 
+		this.logger.debug(`Total actual hours calculated: ${totalHours}`);
 		return totalHours;
 	}
 
@@ -3246,5 +3334,30 @@ export class AttendanceReportsService {
 			completedShiftEmployees,
 			overtimeEmployees
 		};
+	}
+
+	/**
+	 * Calculate real-time hours worked including people still working
+	 * This fixes the issue where people still working show 0 hours
+	 */
+	private calculateRealTimeHours(attendance: Attendance, currentTime: Date = new Date()): number {
+		if (!attendance.checkIn) return 0;
+
+		// If there's a duration and check out, use that (completed shift)
+		if (attendance.duration && attendance.checkOut) {
+			return this.parseDurationToMinutes(attendance.duration) / 60;
+		}
+
+		// If only check-in exists, calculate hours from check-in to now (still working)
+		if (attendance.checkIn && !attendance.checkOut) {
+			const checkInTime = new Date(attendance.checkIn);
+			const diffInMs = currentTime.getTime() - checkInTime.getTime();
+			const diffInHours = diffInMs / (1000 * 60 * 60);
+			
+			// Cap at reasonable working hours (24 hours max to handle edge cases)
+			return Math.min(Math.max(0, diffInHours), 24);
+		}
+
+		return 0;
 	}
 }

@@ -296,12 +296,395 @@ export class ReportsController {
 		return this.reportsService.generateReport(params, request.user);
 	}
 
-	// Dedicated endpoint for map data
+	// HR Analytics Endpoints
+	@Get('hr/attendance')
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.HR, AccessLevel.OWNER)
+	@ApiOperation({
+		summary: '👥 Get comprehensive attendance analytics',
+		description: `
+# Attendance Analytics Dashboard
+
+Comprehensive attendance tracking and analysis with real-time metrics, trend analysis, and performance insights.
+
+## 📊 **Attendance Metrics**
+- **Daily Attendance**: Current day attendance rate with real-time updates
+- **Weekly Patterns**: Weekly attendance trends and patterns
+- **Monthly Overview**: Monthly attendance statistics and comparisons
+- **Punctuality Analysis**: On-time arrival rates and lateness patterns
+- **Overtime Tracking**: Overtime hours and patterns analysis
+- **Absence Tracking**: Absence frequency and patterns
+
+## 🎯 **Performance Indicators**
+- **Attendance Rate**: Overall attendance percentage
+- **Punctuality Score**: On-time arrival percentage
+- **Average Hours**: Average working hours per employee
+- **Overtime Hours**: Total and average overtime hours
+- **Late Arrivals**: Number and percentage of late arrivals
+- **Early Departures**: Early departure tracking and analysis
+
+## 📈 **Trend Analysis**
+- **Attendance Trends**: Daily, weekly, monthly attendance trends
+- **Seasonal Patterns**: Seasonal attendance variations
+- **Department Comparison**: Inter-department attendance comparison
+- **Branch Analysis**: Multi-branch attendance analysis
+- **Employee Patterns**: Individual employee attendance patterns
+- **Productivity Correlation**: Attendance vs productivity correlation
+
+## 🏢 **Organizational Insights**
+- **Department Breakdown**: Attendance by department
+- **Branch Performance**: Branch-wise attendance metrics
+- **Team Analysis**: Team attendance performance
+- **Shift Patterns**: Shift-wise attendance analysis
+		`,
+	})
+	@ApiOkResponse({
+		description: 'Attendance analytics data retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				summary: {
+					type: 'object',
+					properties: {
+						totalEmployees: { type: 'number' },
+						presentToday: { type: 'number' },
+						attendanceRate: { type: 'number' },
+						averageHoursWorked: { type: 'number' },
+						lateArrivals: { type: 'number' },
+						earlyDepartures: { type: 'number' },
+					},
+				},
+				trends: {
+					type: 'object',
+					properties: {
+						dailyAttendance: { type: 'array' },
+						monthlyAttendance: { type: 'array' },
+						punctualityTrends: { type: 'array' },
+					},
+				},
+				chartData: {
+					type: 'object',
+					properties: {
+						attendanceOverTime: { type: 'array' },
+						punctualityDistribution: { type: 'array' },
+						departmentBreakdown: { type: 'array' },
+					},
+				},
+			},
+		},
+	})
+	@ApiBadRequestResponse({
+		description: 'Bad Request - Invalid parameters',
+	})
+	async getAttendanceAnalytics(@Req() request: AuthenticatedRequest) {
+		this.logger.log('Getting attendance analytics');
+		
+		const orgId = request.user.org?.uid || request.user.organisationRef;
+		const branchId = request.user.branch?.uid;
+
+		if (!orgId) {
+			throw new BadRequestException('Organization ID is required');
+		}
+
+		return this.reportsService.generateAttendanceAnalytics(orgId, branchId);
+	}
+
+	@Get('hr/employee-performance')
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.HR, AccessLevel.OWNER)
+	@ApiOperation({
+		summary: '🏆 Get employee performance analytics',
+		description: `
+# Employee Performance Analytics Dashboard
+
+Comprehensive employee performance tracking with KPIs, goal achievement, and development insights.
+
+## 📊 **Performance Metrics**
+- **Overall Performance**: Company-wide performance scores
+- **Individual Metrics**: Employee-specific performance data
+- **Goal Achievement**: Target vs actual performance tracking
+- **Skill Assessments**: Skills evaluation and development needs
+- **Productivity Scores**: Work output and efficiency metrics
+- **Quality Metrics**: Work quality and error rate analysis
+
+## 🎯 **Key Performance Indicators**
+- **Performance Score**: Overall performance rating
+- **Goal Completion Rate**: Percentage of goals achieved
+- **Skill Development**: Skills improvement over time
+- **Productivity Index**: Work output efficiency
+- **Quality Score**: Work quality assessment
+- **Team Collaboration**: Team collaboration effectiveness
+
+## 📈 **Performance Trends**
+- **Monthly Performance**: Month-over-month performance trends
+- **Quarterly Reviews**: Quarterly performance summaries
+- **Annual Assessments**: Yearly performance evaluations
+- **Skill Progression**: Skills development over time
+- **Career Growth**: Career progression tracking
+- **Training Effectiveness**: Training impact on performance
+
+## 🏢 **Organizational Analysis**
+- **Department Performance**: Performance by department
+- **Team Effectiveness**: Team performance metrics
+- **Manager Effectiveness**: Management performance impact
+- **Training ROI**: Training return on investment
+		`,
+	})
+	@ApiOkResponse({
+		description: 'Employee performance analytics data retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				summary: {
+					type: 'object',
+					properties: {
+						totalEmployees: { type: 'number' },
+						averagePerformanceScore: { type: 'number' },
+						topPerformers: { type: 'array' },
+						improvementNeeded: { type: 'array' },
+						targetAchievementRate: { type: 'number' },
+					},
+				},
+				metrics: {
+					type: 'object',
+					properties: {
+						productivityScores: { type: 'array' },
+						goalAchievements: { type: 'array' },
+						skillAssessments: { type: 'array' },
+					},
+				},
+				chartData: {
+					type: 'object',
+					properties: {
+						performanceDistribution: { type: 'array' },
+						skillsMatrix: { type: 'array' },
+						performanceTrends: { type: 'array' },
+					},
+				},
+			},
+		},
+	})
+	@ApiBadRequestResponse({
+		description: 'Bad Request - Invalid parameters',
+	})
+	async getEmployeePerformanceAnalytics(@Req() request: AuthenticatedRequest) {
+		this.logger.log('Getting employee performance analytics');
+		
+		const orgId = request.user.org?.uid || request.user.organisationRef;
+		const branchId = request.user.branch?.uid;
+
+		if (!orgId) {
+			throw new BadRequestException('Organization ID is required');
+		}
+
+		return this.reportsService.generateEmployeePerformanceAnalytics(orgId, branchId);
+	}
+
+	@Get('hr/payroll')
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.HR, AccessLevel.OWNER)
+	@ApiOperation({
+		summary: '💰 Get payroll analytics',
+		description: `
+# Payroll Analytics Dashboard
+
+Comprehensive payroll analysis with cost tracking, benefits utilization, and compensation insights.
+
+## 💵 **Payroll Metrics**
+- **Total Payroll Cost**: Overall payroll expenses
+- **Average Salary**: Mean salary across organization
+- **Benefits Cost**: Total benefits and utilization
+- **Overtime Costs**: Overtime expenses and trends
+- **Cost per Employee**: Average cost per employee
+- **Payroll Growth**: Payroll cost growth analysis
+
+## 📊 **Cost Analysis**
+- **Salary Distribution**: Salary ranges and distribution
+- **Benefits Breakdown**: Benefits cost by type
+- **Department Costs**: Payroll costs by department
+- **Position Analysis**: Compensation by position/role
+- **Geographic Variations**: Location-based compensation
+- **Cost Efficiency**: Cost per productivity unit
+
+## 📈 **Trends and Forecasting**
+- **Monthly Payroll**: Monthly payroll trends
+- **Quarterly Analysis**: Quarterly payroll summaries
+- **Annual Projections**: Yearly payroll forecasts
+- **Budget Variance**: Budget vs actual analysis
+- **Cost Optimization**: Cost optimization opportunities
+- **Market Benchmarking**: Salary market comparison
+
+## 🏢 **Organizational Insights**
+- **Department Breakdown**: Payroll by department
+- **Role Analysis**: Compensation by role
+- **Experience Levels**: Pay by experience level
+- **Performance Correlation**: Pay vs performance analysis
+		`,
+	})
+	@ApiOkResponse({
+		description: 'Payroll analytics data retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				summary: {
+					type: 'object',
+					properties: {
+						totalPayrollCost: { type: 'number' },
+						averageSalary: { type: 'number' },
+						totalBenefitsCost: { type: 'number' },
+						payrollGrowth: { type: 'number' },
+						costPerEmployee: { type: 'number' },
+					},
+				},
+				breakdown: {
+					type: 'object',
+					properties: {
+						salaryDistribution: { type: 'array' },
+						benefitsUtilization: { type: 'array' },
+						departmentCosts: { type: 'array' },
+					},
+				},
+				chartData: {
+					type: 'object',
+					properties: {
+						payrollTrends: { type: 'array' },
+						salaryBands: { type: 'array' },
+						benefitsCosts: { type: 'array' },
+					},
+				},
+			},
+		},
+	})
+	@ApiBadRequestResponse({
+		description: 'Bad Request - Invalid parameters',
+	})
+	async getPayrollAnalytics(@Req() request: AuthenticatedRequest) {
+		this.logger.log('Getting payroll analytics');
+		
+		const orgId = request.user.org?.uid || request.user.organisationRef;
+		const branchId = request.user.branch?.uid;
+
+		if (!orgId) {
+			throw new BadRequestException('Organization ID is required');
+		}
+
+		return this.reportsService.generatePayrollAnalytics(orgId, branchId);
+	}
+
+	@Get('hr/recruitment')
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.HR, AccessLevel.OWNER)
+	@ApiOperation({
+		summary: '🎯 Get recruitment analytics',
+		description: `
+# Recruitment Analytics Dashboard
+
+Comprehensive recruitment tracking with pipeline analysis, sourcing effectiveness, and hiring metrics.
+
+## 📊 **Recruitment Metrics**
+- **Total Applications**: Number of applications received
+- **Active Positions**: Currently open positions
+- **Time to Hire**: Average time from application to hire
+- **Offer Acceptance Rate**: Percentage of offers accepted
+- **Sourcing Effectiveness**: Best performing sourcing channels
+- **Recruitment Cost**: Cost per hire and total costs
+
+## 🎯 **Pipeline Analysis**
+- **Candidate Pipeline**: Candidates by stage
+- **Interview Scheduled**: Upcoming interviews
+- **Offers Sent**: Pending offers and responses
+- **Positions to Fill**: Open positions and urgency
+- **Conversion Rates**: Stage-to-stage conversion rates
+- **Drop-off Analysis**: Where candidates drop off
+
+## 📈 **Hiring Trends**
+- **Monthly Hiring**: Monthly hiring volume
+- **Seasonal Patterns**: Seasonal hiring trends
+- **Department Needs**: Hiring needs by department
+- **Role Difficulty**: Hard-to-fill positions
+- **Market Conditions**: Hiring market analysis
+- **Forecast Planning**: Future hiring needs
+
+## 🏢 **Organizational Insights**
+- **Department Hiring**: Hiring by department
+- **Role Analysis**: Hiring by role type
+- **Experience Levels**: Hiring by experience
+- **Diversity Metrics**: Diversity in hiring
+		`,
+	})
+	@ApiOkResponse({
+		description: 'Recruitment analytics data retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				summary: {
+					type: 'object',
+					properties: {
+						totalApplications: { type: 'number' },
+						activePositions: { type: 'number' },
+						averageTimeToHire: { type: 'number' },
+						offerAcceptanceRate: { type: 'number' },
+						recruitmentCost: { type: 'number' },
+					},
+				},
+				pipeline: {
+					type: 'object',
+					properties: {
+						candidatesByStage: { type: 'array' },
+						interviewScheduled: { type: 'number' },
+						offersSent: { type: 'number' },
+						positionsToFill: { type: 'number' },
+					},
+				},
+				chartData: {
+					type: 'object',
+					properties: {
+						hiringTrends: { type: 'array' },
+						sourcingChannels: { type: 'array' },
+						candidatePipeline: { type: 'array' },
+					},
+				},
+			},
+		},
+	})
+	@ApiBadRequestResponse({
+		description: 'Bad Request - Invalid parameters',
+	})
+	async getRecruitmentAnalytics(@Req() request: AuthenticatedRequest) {
+		this.logger.log('Getting recruitment analytics');
+		
+		const orgId = request.user.org?.uid || request.user.organisationRef;
+		const branchId = request.user.branch?.uid;
+
+		if (!orgId) {
+			throw new BadRequestException('Organization ID is required');
+		}
+
+		return this.reportsService.generateRecruitmentAnalytics(orgId, branchId);
+	}
+
+	// Get Map Data endpoint
 	@Get('map-data')
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.USER, AccessLevel.OWNER)
 	@ApiOperation({
-		summary: 'Get map data',
-		description: 'Retrieves all location data for map visualization',
+		summary: '🗺️ Get map data for visualization',
+		description: `
+# Map Data Dashboard
+
+Real-time map visualization data including employee locations, client locations, and business metrics.
+
+## 🗺️ **Map Visualization Data**
+- **Employee Locations**: Real-time employee locations
+- **Client Locations**: Active client locations
+- **Competitor Locations**: Competitor mapping
+- **Quotation Locations**: Quotation and order locations
+- **Territory Mapping**: Sales territory visualization
+- **Performance Mapping**: Performance metrics by location
+
+## 📊 **Location Analytics**
+- **Geographic Distribution**: Entity distribution by location
+- **Density Analysis**: Concentration of activities
+- **Route Optimization**: Optimal route planning
+- **Territory Performance**: Performance by territory
+- **Market Coverage**: Market coverage analysis
+- **Travel Patterns**: Employee travel patterns
+		`,
 	})
 	@ApiOkResponse({
 		description: 'Map data retrieved successfully',
@@ -311,23 +694,20 @@ export class ReportsController {
 				data: {
 					type: 'object',
 					properties: {
-						workers: { type: 'array', items: { type: 'object' } },
-						clients: { type: 'array', items: { type: 'object' } },
-						competitors: { type: 'array', items: { type: 'object' } },
-						quotations: { type: 'array', items: { type: 'object' } },
-						events: { type: 'array', items: { type: 'object' } },
-						mapConfig: {
-							type: 'object',
-							properties: {
-								defaultCenter: { type: 'object' },
-								orgRegions: { type: 'array', items: { type: 'object' } },
-							},
-						},
+						workers: { type: 'array' },
+						clients: { type: 'array' },
+						competitors: { type: 'array' },
+						quotations: { type: 'array' },
 					},
 				},
 				summary: {
 					type: 'object',
-					description: 'Summary statistics of the map data',
+					properties: {
+						totalWorkers: { type: 'number' },
+						totalClients: { type: 'number' },
+						totalCompetitors: { type: 'number' },
+						totalQuotations: { type: 'number' },
+					},
 				},
 			},
 		},
@@ -336,20 +716,16 @@ export class ReportsController {
 		description: 'Bad Request - Invalid parameters',
 	})
 	async getMapData(@Req() request: AuthenticatedRequest) {
-		// Use organization ID from authenticated request if not provided
+		this.logger.log('Getting map data');
+		
 		const orgId = request.user.org?.uid || request.user.organisationRef;
+		const branchId = request.user.branch?.uid;
 
 		if (!orgId) {
-			throw new BadRequestException(
-				'Organisation ID is required. Either specify it in the request query or it must be available in the authentication context.',
-			);
+			throw new BadRequestException('Organization ID is required');
 		}
 
-		const branchId = request.query?.branchId ? Number(request.query.branchId) : undefined;
-
-		const response = await this.reportsService.generateMapData({ organisationId: orgId, branchId });
-
-		return response;
+		return this.reportsService.generateMapData({ organisationId: orgId, branchId });
 	}
 
 	@Post('daily-report/:userId')
