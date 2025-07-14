@@ -50,12 +50,20 @@ Handlebars.registerHelper('formatDate', function(date: string | Date, format?: s
 
 // Currency formatting helper
 Handlebars.registerHelper('formatCurrency', function(amount: number, currency: string = 'USD') {
-    if (typeof amount !== 'number') return amount;
+    const numAmount = typeof amount === 'string' ? parseFloat(amount) : amount;
+    
+    // Return 0 if not a valid number
+    if (typeof numAmount !== 'number' || isNaN(numAmount) || !isFinite(numAmount)) {
+        return new Intl.NumberFormat('en-US', {
+            style: 'currency',
+            currency: currency,
+        }).format(0);
+    }
     
     return new Intl.NumberFormat('en-US', {
         style: 'currency',
         currency: currency,
-    }).format(amount);
+    }).format(numAmount);
 });
 
 // Number formatting helper
@@ -64,12 +72,15 @@ Handlebars.registerHelper('formatNumber', function(number: number | string, deci
     const numValue = typeof number === 'string' ? parseFloat(number) : number;
     
     // Return original value if not a valid number
-    if (typeof numValue !== 'number' || isNaN(numValue)) {
-        return number;
+    if (typeof numValue !== 'number' || isNaN(numValue) || !isFinite(numValue)) {
+        return '0';
     }
     
     // Ensure decimals is a valid number between 0 and 20 (NumberFormat limit)
-    const validDecimals = Math.max(0, Math.min(20, Math.floor(decimals)));
+    let validDecimals = 0;
+    if (typeof decimals === 'number' && !isNaN(decimals) && isFinite(decimals)) {
+        validDecimals = Math.max(0, Math.min(20, Math.floor(decimals)));
+    }
     
     return new Intl.NumberFormat('en-US', {
         minimumFractionDigits: validDecimals,
@@ -199,19 +210,79 @@ Handlebars.registerHelper('statusColor', function(status: string) {
 
 // Math helpers
 Handlebars.registerHelper('add', function(a: number, b: number) {
-    return Number(a) + Number(b);
+    const numA = Number(a);
+    const numB = Number(b);
+    
+    // Handle invalid numbers
+    if (isNaN(numA) || isNaN(numB)) {
+        return 0;
+    }
+    
+    const result = numA + numB;
+    
+    // Handle infinity or NaN results
+    if (!isFinite(result)) {
+        return 0;
+    }
+    
+    return result;
 });
 
 Handlebars.registerHelper('subtract', function(a: number, b: number) {
-    return Number(a) - Number(b);
+    const numA = Number(a);
+    const numB = Number(b);
+    
+    // Handle invalid numbers
+    if (isNaN(numA) || isNaN(numB)) {
+        return 0;
+    }
+    
+    const result = numA - numB;
+    
+    // Handle infinity or NaN results
+    if (!isFinite(result)) {
+        return 0;
+    }
+    
+    return result;
 });
 
 Handlebars.registerHelper('multiply', function(a: number, b: number) {
-    return Number(a) * Number(b);
+    const numA = Number(a);
+    const numB = Number(b);
+    
+    // Handle invalid numbers
+    if (isNaN(numA) || isNaN(numB)) {
+        return 0;
+    }
+    
+    const result = numA * numB;
+    
+    // Handle infinity or NaN results
+    if (!isFinite(result)) {
+        return 0;
+    }
+    
+    return result;
 });
 
 Handlebars.registerHelper('divide', function(a: number, b: number) {
-    return Number(a) / Number(b);
+    const numA = Number(a);
+    const numB = Number(b);
+    
+    // Handle division by zero or invalid numbers
+    if (isNaN(numA) || isNaN(numB) || numB === 0) {
+        return 0;
+    }
+    
+    const result = numA / numB;
+    
+    // Handle infinity or NaN results
+    if (!isFinite(result)) {
+        return 0;
+    }
+    
+    return result;
 });
 
 Handlebars.registerHelper('percentage', function(value: number, total: number) {
