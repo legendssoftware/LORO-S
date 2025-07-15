@@ -1729,44 +1729,87 @@ export interface ClientCommunicationReminderData extends BaseEmailData {
 }
 
 export interface AppUpdateNotificationData extends BaseEmailData {
-	appVersion: string;
 	appName: string;
-	organizationName: string;
-	updateDate: string;
-	updateTitle: string;
-	updateDescription: string;
-	newFeatures: Array<{
-		title: string;
-		description: string;
-		icon?: string;
-	}>;
-	improvements: Array<{
-		title: string;
-		description: string;
-	}>;
-	bugFixes: Array<{
-		title: string;
-		description: string;
-	}>;
-	criticalUpdate: boolean;
-	forceUpdate: boolean;
-	downloadUrls: {
-		playStore?: string;
-		appStore?: string;
-		directDownload?: string;
+	version: string;
+	updateType: 'FEATURE' | 'BUG_FIX' | 'SECURITY' | 'CRITICAL';
+	releaseDate: string;
+	features?: string[];
+	bugFixes?: string[];
+	securityUpdates?: string[];
+	downloadUrl?: string;
+	updateUrl?: string;
+	releaseNotes?: string;
+	isForced?: boolean;
+	supportEmail?: string;
+	rolloutPercentage?: number;
+	targetPlatforms?: string[];
+	minimumVersion?: string;
+	compatibility?: {
+		os: string[];
+		devices?: string[];
+		browsers?: string[];
 	};
-	releaseNotes: string;
-	supportEmail: string;
-	supportPhone?: string;
+	updateInstructions?: string[];
+	troubleshootingLink?: string;
+	systemRequirements?: {
+		ram?: string;
+		storage?: string;
+		processor?: string;
+		other?: string[];
+	};
+	backupRecommendation?: boolean;
+	maintenanceWindow?: {
+		start: string;
+		end: string;
+		timezone: string;
+	};
+	contactInfo?: {
+		supportEmail?: string;
+		supportPhone?: string;
+		documentationUrl?: string;
+	};
+}
+
+// Approval Templates
+export interface ApprovalEmailData extends BaseEmailData {
+	approvalReference: string;
+	title: string;
+	description?: string;
+	type: string;
+	priority: string;
+	status: string;
+	requesterName: string;
+	requesterEmail: string;
+	approverName?: string;
+	approverEmail?: string;
+	submittedAt: Date;
+	deadline?: Date;
+	approvedAt?: Date;
+	rejectedAt?: Date;
+	escalatedAt?: Date;
+	escalationLevel?: number;
+	escalationReason?: string;
+	originalApproverName?: string;
+	originalApproverEmail?: string;
+	escalatedToName?: string;
+	approverComments?: string;
+	rejectionReason?: string;
+	supportingDocuments?: string[];
+	entityType?: string;
+	entityId?: number;
+	isSigned?: boolean;
+	signatureType?: string;
+	signatureMetadata?: any;
+	isOverdue?: boolean;
+	isUrgent?: boolean;
+	canResubmit?: boolean;
+	implementationNotes?: string;
+	previousComments?: string;
+	organizationName: string;
+	branchName?: string;
+	approvalUrl: string;
 	dashboardUrl: string;
-	updateDeadline?: string;
-	compatibilityInfo?: string;
-	backupReminder?: string;
-	trainingResources?: Array<{
-		title: string;
-		url: string;
-		type: 'video' | 'pdf' | 'link';
-	}>;
+	resubmitUrl?: string;
 }
 
 export interface EmailDataMap {
@@ -1898,6 +1941,16 @@ export interface EmailDataMap {
 	[EmailType.LEAD_TARGET_ACHIEVEMENT_ADMIN]: LeadTargetAchievementAdminData;
 	// App/System notification email mappings
 	[EmailType.APP_UPDATE_NOTIFICATION]: AppUpdateNotificationData;
+	// Approval email mappings
+	    [EmailType.APPROVAL_CREATED]: ApprovalEmailData;
+    [EmailType.APPROVAL_SUBMITTED]: ApprovalEmailData;
+    [EmailType.APPROVAL_APPROVED]: ApprovalEmailData;
+    [EmailType.APPROVAL_REJECTED]: ApprovalEmailData;
+    [EmailType.APPROVAL_ESCALATED]: ApprovalEmailData;
+    [EmailType.APPROVAL_UPDATED]: ApprovalEmailData;
+    [EmailType.APPROVAL_WITHDRAWN]: ApprovalEmailData;
+    [EmailType.APPROVAL_ARCHIVED]: ApprovalEmailData;
+    [EmailType.APPROVAL_DELETED]: ApprovalEmailData;
 }
 
 export type EmailTemplateData<T extends EmailType> = T extends keyof EmailDataMap ? EmailDataMap[T] : never;

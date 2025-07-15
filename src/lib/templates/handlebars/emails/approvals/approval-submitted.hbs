@@ -1,0 +1,130 @@
+{{#base headerTitle="New Approval Request Submitted" headerSubtitle="A new approval request requires your review"}}
+
+<div class="greeting">
+    Hello {{approverName}}! 📋
+</div>
+
+<div class="message">
+    <p>A new approval request has been submitted and requires your review. Please review the details below and take appropriate action.</p>
+</div>
+
+<!-- Approval Details -->
+<div class="info-card">
+    <h3>📋 Approval Request Details</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Reference Number</span>
+            <span class="detail-value" style="font-weight: 700; color: #7c2d92;">{{approvalReference}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Title</span>
+            <span class="detail-value">{{title}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Type</span>
+            <span class="detail-value">{{type}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Priority</span>
+            <span class="detail-value" style="color: {{#if (eq priority 'HIGH')}}#dc2626{{else if (eq priority 'URGENT')}}#991b1b{{else if (eq priority 'MEDIUM')}}#f59e0b{{else}}#22c55e{{/if}}; font-weight: 600;">{{priority}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Submitted By</span>
+            <span class="detail-value">{{requesterName}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Submitted Date</span>
+            <span class="detail-value">{{formatDate submittedAt}}</span>
+        </div>
+        {{#if deadline}}
+        <div class="detail-item">
+            <span class="detail-label">Deadline</span>
+            <span class="detail-value" style="color: {{#if isOverdue}}#dc2626{{else if isUrgent}}#f59e0b{{else}}#374151{{/if}}; font-weight: 600;">{{formatDate deadline}}</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+
+<!-- Description -->
+{{#if description}}
+<div class="info-card">
+    <h4 style="color: #7c2d92; margin-bottom: 16px;">📝 Description</h4>
+    <p style="font-size: 15px; line-height: 1.6; color: #374151;">{{description}}</p>
+</div>
+{{/if}}
+
+<!-- Priority Notice -->
+{{#if (eq priority 'URGENT')}}
+<div style="background: rgba(153, 27, 27, 0.1); border: 2px solid #991b1b; border-radius: 12px; padding: 20px; margin: 20px 0;">
+    <h4 style="color: #991b1b; margin-bottom: 16px;">🚨 URGENT APPROVAL REQUIRED</h4>
+    <p style="color: #7f1d1d; font-size: 16px; font-weight: 600;">This approval request has been marked as urgent and requires immediate attention.</p>
+</div>
+{{else if (eq priority 'HIGH')}}
+<div class="warning-notice">
+    <h4 style="color: #dc2626; margin-bottom: 16px;">⚠️ HIGH PRIORITY</h4>
+    <p>This approval request has high priority and should be reviewed promptly.</p>
+</div>
+{{/if}}
+
+<!-- Supporting Documents -->
+{{#if supportingDocuments}}
+<div class="info-card">
+    <h4 style="color: #7c2d92; margin-bottom: 16px;">📎 Supporting Documents</h4>
+    <ul style="margin-left: 20px; color: #4b5563; line-height: 1.8; font-size: 15px;">
+        {{#each supportingDocuments}}
+        <li><a href="{{this}}" style="color: #7c2d92; text-decoration: none;">{{this}}</a></li>
+        {{/each}}
+    </ul>
+</div>
+{{/if}}
+
+<!-- Entity Information -->
+{{#if entityType}}
+<div class="info-card" style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-left-color: #22c55e;">
+    <h4 style="color: #166534;">🔗 Related Information</h4>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Entity Type</span>
+            <span class="detail-value">{{entityType}}</span>
+        </div>
+        {{#if entityId}}
+        <div class="detail-item">
+            <span class="detail-label">Entity ID</span>
+            <span class="detail-value">{{entityId}}</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+{{/if}}
+
+<!-- Action Required -->
+<div class="warning-notice">
+    <p style="font-size: 16px; font-weight: 700; color: #d97706;">📝 Action Required</p>
+    <ul style="margin-left: 20px; margin-top: 16px; line-height: 1.8; font-size: 15px;">
+        <li>Review the approval request details carefully</li>
+        <li>Check any supporting documents if provided</li>
+        <li>Make your decision to approve or reject</li>
+        <li>Provide comments if rejecting or if additional information is needed</li>
+        {{#if deadline}}
+        <li>Complete your review before the deadline: <strong>{{formatDate deadline}}</strong></li>
+        {{/if}}
+    </ul>
+</div>
+
+<!-- CTA Section -->
+<div class="cta-section">
+    <a href="{{approvalUrl}}" class="cta-button">Review Approval Request</a>
+    <a href="{{dashboardUrl}}" class="cta-button" style="background-color: #7c2d92; margin-left: 12px;">Go to Dashboard</a>
+</div>
+
+<!-- Organization Information -->
+<div class="message">
+    <p style="font-size: 14px; color: #6b7280; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+        <strong>Organization:</strong> {{organizationName}}<br>
+        {{#if branchName}}<strong>Branch:</strong> {{branchName}}<br>{{/if}}
+        <strong>Approval Reference:</strong> {{approvalReference}}<br>
+        <strong>Requester Contact:</strong> {{requesterEmail}}
+    </p>
+</div>
+
+{{/base}} 

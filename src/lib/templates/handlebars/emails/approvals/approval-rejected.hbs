@@ -1,0 +1,145 @@
+{{#base headerTitle="Approval Request Rejected" headerSubtitle="Your approval request has been rejected"}}
+
+<div class="greeting">
+    Hello {{requesterName}}! ❌
+</div>
+
+<div class="message">
+    <p>We regret to inform you that your approval request has been rejected. Please review the details and feedback below.</p>
+</div>
+
+<!-- Rejection Notice -->
+<div class="warning-notice">
+    <h3 style="color: #dc2626;">❌ Request Rejected</h3>
+    <p style="font-size: 16px; font-weight: 600;">Your approval request has been reviewed and rejected by the approver.</p>
+</div>
+
+<!-- Approval Details -->
+<div class="info-card">
+    <h3>📋 Approval Details</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Reference Number</span>
+            <span class="detail-value" style="font-weight: 700; color: #7c2d92;">{{approvalReference}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Title</span>
+            <span class="detail-value">{{title}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Type</span>
+            <span class="detail-value">{{type}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Rejected By</span>
+            <span class="detail-value">{{approverName}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Rejected Date</span>
+            <span class="detail-value">{{formatDate rejectedAt}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Status</span>
+            <span class="detail-value" style="color: #dc2626; font-weight: 700;">REJECTED</span>
+        </div>
+    </div>
+</div>
+
+<!-- Rejection Reason -->
+{{#if rejectionReason}}
+<div style="background: rgba(220, 38, 38, 0.1); border: 2px solid #dc2626; border-radius: 12px; padding: 20px; margin: 20px 0;">
+    <h4 style="color: #dc2626; margin-bottom: 16px;">📝 Rejection Reason</h4>
+    <p style="color: #7f1d1d; font-size: 15px; line-height: 1.6;">{{rejectionReason}}</p>
+</div>
+{{/if}}
+
+<!-- Approver Comments -->
+{{#if approverComments}}
+<div class="info-card" style="background: linear-gradient(135deg, #fef2f2 0%, #fecaca 100%); border-left-color: #ef4444;">
+    <h4 style="color: #991b1b; margin-bottom: 16px;">💬 Approver Feedback</h4>
+    <p style="font-size: 15px; line-height: 1.6; color: #991b1b;">{{approverComments}}</p>
+</div>
+{{/if}}
+
+<!-- Description -->
+{{#if description}}
+<div class="info-card">
+    <h4 style="color: #7c2d92; margin-bottom: 16px;">📝 Original Request</h4>
+    <p style="font-size: 15px; line-height: 1.6; color: #374151;">{{description}}</p>
+</div>
+{{/if}}
+
+<!-- Next Steps -->
+<div class="info-card">
+    <p style="font-size: 16px; font-weight: 700; color: #7c2d92;">🔄 What You Can Do Next</p>
+    <ul style="margin-left: 20px; margin-top: 16px; line-height: 1.8; font-size: 15px; color: #4b5563;">
+        <li>Review the rejection reason and feedback carefully</li>
+        <li>Address any concerns or issues mentioned by the approver</li>
+        <li>Contact the approver for clarification if needed</li>
+        <li>Consider revising and resubmitting your request if appropriate</li>
+        <li>Explore alternative approaches that might be more acceptable</li>
+    </ul>
+</div>
+
+<!-- Resubmission Information -->
+{{#if canResubmit}}
+<div class="info-card" style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-left-color: #22c55e;">
+    <h4 style="color: #166534;">🔄 Resubmission Available</h4>
+    <p style="color: #166534; font-size: 15px; line-height: 1.6;">
+        You can revise and resubmit this approval request after addressing the feedback provided. 
+        Please ensure all concerns are addressed before resubmitting.
+    </p>
+</div>
+{{/if}}
+
+<!-- Entity Information -->
+{{#if entityType}}
+<div class="info-card">
+    <h4 style="color: #7c2d92;">🔗 Related Information</h4>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Entity Type</span>
+            <span class="detail-value">{{entityType}}</span>
+        </div>
+        {{#if entityId}}
+        <div class="detail-item">
+            <span class="detail-label">Entity ID</span>
+            <span class="detail-value">{{entityId}}</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+{{/if}}
+
+<!-- Support Information -->
+<div class="warning-notice">
+    <h4 style="color: #d97706;">📞 Need Help?</h4>
+    <p>If you need clarification about the rejection or help with resubmitting your request, don't hesitate to reach out:</p>
+    <ul style="margin-left: 20px; margin-top: 12px; line-height: 1.8; font-size: 15px;">
+        <li>Contact the approver directly: {{approverName}} ({{approverEmail}})</li>
+        <li>Reach out to your manager for guidance</li>
+        <li>Contact the HR or administration team for policy clarification</li>
+    </ul>
+</div>
+
+<!-- CTA Section -->
+<div class="cta-section">
+    <a href="{{approvalUrl}}" class="cta-button">View Full Details</a>
+    {{#if canResubmit}}
+    <a href="{{resubmitUrl}}" class="cta-button" style="background-color: #22c55e; margin-left: 12px;">Revise & Resubmit</a>
+    {{/if}}
+    <a href="{{dashboardUrl}}" class="cta-button" style="background-color: #7c2d92; margin-left: 12px;">Go to Dashboard</a>
+</div>
+
+<!-- Contact Information -->
+<div class="message">
+    <p style="font-size: 14px; color: #6b7280; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+        <strong>Approver Contact:</strong> {{approverName}} ({{approverEmail}})<br><br>
+        <strong>Organization:</strong> {{organizationName}}<br>
+        {{#if branchName}}<strong>Branch:</strong> {{branchName}}<br>{{/if}}
+        <strong>Approval Reference:</strong> {{approvalReference}}<br>
+        <strong>Rejection Date:</strong> {{formatDate rejectedAt}}
+    </p>
+</div>
+
+{{/base}} 

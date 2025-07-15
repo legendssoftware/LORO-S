@@ -1,0 +1,181 @@
+{{#base headerTitle="Approval Request Escalated" headerSubtitle="An approval request has been escalated to you"}}
+
+<div class="greeting">
+    Hello {{escalatedToName}}! ⬆️
+</div>
+
+<div class="message">
+    <p>An approval request has been escalated to you for review. This typically happens when the original approver is unavailable or when additional authority is required.</p>
+</div>
+
+<!-- Escalation Notice -->
+<div class="warning-notice">
+    <h3 style="color: #f59e0b;">⚠️ Escalated Approval</h3>
+    <p style="font-size: 16px; font-weight: 600;">This approval request requires your immediate attention due to escalation.</p>
+</div>
+
+<!-- Escalation Details -->
+<div class="info-card" style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-left-color: #f59e0b;">
+    <h3 style="color: #92400e;">📈 Escalation Information</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Escalated Date</span>
+            <span class="detail-value" style="font-weight: 700;">{{formatDate escalatedAt}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Escalation Level</span>
+            <span class="detail-value" style="font-weight: 700; color: #f59e0b;">Level {{escalationLevel}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Original Approver</span>
+            <span class="detail-value">{{originalApproverName}}</span>
+        </div>
+        {{#if escalationReason}}
+        <div class="detail-item">
+            <span class="detail-label">Escalation Reason</span>
+            <span class="detail-value">{{escalationReason}}</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+
+<!-- Approval Details -->
+<div class="info-card">
+    <h3>📋 Approval Request Details</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Reference Number</span>
+            <span class="detail-value" style="font-weight: 700; color: #7c2d92;">{{approvalReference}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Title</span>
+            <span class="detail-value">{{title}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Type</span>
+            <span class="detail-value">{{type}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Priority</span>
+            <span class="detail-value" style="color: {{#if (eq priority 'HIGH')}}#dc2626{{else if (eq priority 'URGENT')}}#991b1b{{else if (eq priority 'MEDIUM')}}#f59e0b{{else}}#22c55e{{/if}}; font-weight: 600;">{{priority}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Requested By</span>
+            <span class="detail-value">{{requesterName}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Originally Submitted</span>
+            <span class="detail-value">{{formatDate submittedAt}}</span>
+        </div>
+        {{#if deadline}}
+        <div class="detail-item">
+            <span class="detail-label">Deadline</span>
+            <span class="detail-value" style="color: {{#if isOverdue}}#dc2626{{else if isUrgent}}#f59e0b{{else}}#374151{{/if}}; font-weight: 600;">{{formatDate deadline}}</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+
+<!-- Priority Notice -->
+{{#if (eq priority 'URGENT')}}
+<div style="background: rgba(153, 27, 27, 0.1); border: 2px solid #991b1b; border-radius: 12px; padding: 20px; margin: 20px 0;">
+    <h4 style="color: #991b1b; margin-bottom: 16px;">🚨 URGENT - IMMEDIATE ACTION REQUIRED</h4>
+    <p style="color: #7f1d1d; font-size: 16px; font-weight: 600;">This escalated approval request is marked as urgent and requires your immediate review and decision.</p>
+</div>
+{{else if (eq priority 'HIGH')}}
+<div class="warning-notice">
+    <h4 style="color: #dc2626; margin-bottom: 16px;">⚠️ HIGH PRIORITY ESCALATION</h4>
+    <p>This escalated approval request has high priority and should be reviewed promptly.</p>
+</div>
+{{/if}}
+
+<!-- Description -->
+{{#if description}}
+<div class="info-card">
+    <h4 style="color: #7c2d92; margin-bottom: 16px;">📝 Request Description</h4>
+    <p style="font-size: 15px; line-height: 1.6; color: #374151;">{{description}}</p>
+</div>
+{{/if}}
+
+<!-- Previous Comments -->
+{{#if previousComments}}
+<div class="info-card" style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border-left-color: #0ea5e9;">
+    <h4 style="color: #0369a1; margin-bottom: 16px;">💬 Previous Comments</h4>
+    <p style="font-size: 15px; line-height: 1.6; color: #0369a1;">{{previousComments}}</p>
+</div>
+{{/if}}
+
+<!-- Supporting Documents -->
+{{#if supportingDocuments}}
+<div class="info-card">
+    <h4 style="color: #7c2d92; margin-bottom: 16px;">📎 Supporting Documents</h4>
+    <ul style="margin-left: 20px; color: #4b5563; line-height: 1.8; font-size: 15px;">
+        {{#each supportingDocuments}}
+        <li><a href="{{this}}" style="color: #7c2d92; text-decoration: none;">{{this}}</a></li>
+        {{/each}}
+    </ul>
+</div>
+{{/if}}
+
+<!-- Escalation Context -->
+<div class="info-card" style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-left-color: #f59e0b;">
+    <h4 style="color: #92400e;">📋 Why This Was Escalated</h4>
+    <p style="color: #92400e; font-size: 15px; line-height: 1.6;">
+        This approval was escalated to you because {{#if escalationReason}}{{escalationReason}}{{else}}it requires higher-level authority or the original approver is unavailable{{/if}}. 
+        As an escalated approval, this request may have additional urgency or complexity that requires your expertise and authority.
+    </p>
+</div>
+
+<!-- Action Required -->
+<div style="background: rgba(245, 158, 11, 0.1); border: 2px solid #f59e0b; border-radius: 12px; padding: 20px; margin: 20px 0;">
+    <p style="font-size: 16px; font-weight: 700; color: #f59e0b;">🎯 ESCALATED APPROVAL - ACTION REQUIRED</p>
+    <ul style="margin-left: 20px; margin-top: 16px; line-height: 1.8; font-size: 15px; color: #92400e;">
+        <li>Review the escalated approval request thoroughly</li>
+        <li>Consider the escalation reason and context</li>
+        <li>Review any previous comments or feedback</li>
+        <li>Make your decision to approve, reject, or escalate further</li>
+        <li>Provide clear feedback, especially if rejecting</li>
+        {{#if deadline}}
+        <li><strong>DEADLINE:</strong> Complete your review before {{formatDate deadline}}</li>
+        {{/if}}
+    </ul>
+</div>
+
+<!-- Entity Information -->
+{{#if entityType}}
+<div class="info-card">
+    <h4 style="color: #7c2d92;">🔗 Related Information</h4>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Entity Type</span>
+            <span class="detail-value">{{entityType}}</span>
+        </div>
+        {{#if entityId}}
+        <div class="detail-item">
+            <span class="detail-label">Entity ID</span>
+            <span class="detail-value">{{entityId}}</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+{{/if}}
+
+<!-- CTA Section -->
+<div class="cta-section">
+    <a href="{{approvalUrl}}" class="cta-button">Review Escalated Request</a>
+    <a href="{{dashboardUrl}}" class="cta-button" style="background-color: #7c2d92; margin-left: 12px;">Go to Dashboard</a>
+</div>
+
+<!-- Contact Information -->
+<div class="message">
+    <p style="font-size: 14px; color: #6b7280; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+        <strong>Original Approver:</strong> {{originalApproverName}} ({{originalApproverEmail}})<br>
+        <strong>Requester Contact:</strong> {{requesterName}} ({{requesterEmail}})<br><br>
+        <strong>Organization:</strong> {{organizationName}}<br>
+        {{#if branchName}}<strong>Branch:</strong> {{branchName}}<br>{{/if}}
+        <strong>Approval Reference:</strong> {{approvalReference}}<br>
+        <strong>Escalation Level:</strong> {{escalationLevel}}
+    </p>
+</div>
+
+{{/base}} 

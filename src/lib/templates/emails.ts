@@ -74,6 +74,7 @@ import {
 	UserTargetSetEmailData,
 	UserTargetDeletedEmailData,
 	UserTargetUpdatedEmailData,
+	ApprovalEmailData,
 } from '../types/email-templates.types';
 
 // Auth Templates
@@ -482,4 +483,41 @@ export const ClientProfileUpdateAdmin = (data: ClientProfileUpdateAdminData): st
 // Client Communication Templates
 export const ClientCommunicationReminder = (data: ClientCommunicationReminderData): string => {
 	return emailTemplateService.clientCommunicationReminder(data);
+};
+
+// Approval Templates
+export const ApprovalCreated = (data: ApprovalEmailData): string => {
+	return emailTemplateService.approvalCreated(data);
+};
+
+export const ApprovalSubmitted = (data: ApprovalEmailData): string => {
+	return emailTemplateService.approvalSubmitted(data);
+};
+
+export const ApprovalApproved = (data: ApprovalEmailData): string => {
+	return emailTemplateService.approvalApproved(data);
+};
+
+export const ApprovalRejected = (data: ApprovalEmailData): string => {
+	return emailTemplateService.approvalRejected(data);
+};
+
+export const ApprovalEscalated = (data: ApprovalEmailData): string => {
+	return emailTemplateService.approvalEscalated(data);
+};
+
+export const ApprovalUpdated = (data: ApprovalEmailData): string => {
+	return emailTemplateService.approvalUpdated(data);
+};
+
+export const ApprovalWithdrawn = (data: ApprovalEmailData): string => {
+	return emailTemplateService.approvalWithdrawn(data);
+};
+
+export const ApprovalArchived = (data: ApprovalEmailData): string => {
+	return emailTemplateService.approvalArchived(data);
+};
+
+export const ApprovalDeleted = (data: ApprovalEmailData): string => {
+	return emailTemplateService.approvalDeleted(data);
 };

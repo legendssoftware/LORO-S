@@ -135,4 +135,14 @@ export enum EmailType {
 	LEAD_TARGET_ACHIEVEMENT_ADMIN = 'lead_target_achievement_admin',
 	// App/System notifications
 	APP_UPDATE_NOTIFICATION = 'app_update_notification',
+	// Approval related emails
+	APPROVAL_CREATED = 'approval_created',
+	APPROVAL_SUBMITTED = 'approval_submitted',
+	APPROVAL_APPROVED = 'approval_approved',
+	APPROVAL_REJECTED = 'approval_rejected',
+	APPROVAL_ESCALATED = 'approval_escalated',
+	APPROVAL_UPDATED = 'approval_updated',
+	APPROVAL_WITHDRAWN = 'approval_withdrawn',
+	APPROVAL_ARCHIVED = 'approval_archived',
+	APPROVAL_DELETED = 'approval_deleted',
 }

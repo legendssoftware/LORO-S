@@ -14,98 +14,62 @@ export class CommunicationController {
 		// Example app update notification data
 		const appUpdateData = {
 			name: 'Team Member',
-			appVersion: '2.1.0',
 			appName: 'Loro Business Suite',
-			organizationName: 'Your Organization',
-			updateDate: new Date().toISOString(),
-			updateTitle: 'Major Update with Exciting New Features!',
-			updateDescription: 'We\'ve packed this update with incredible new features that will revolutionize how you work. From enhanced leads management to seamless PDF uploads, this update is designed to boost your productivity.',
-			newFeatures: [
-				{
-					title: 'Advanced Leads Management',
-					description: 'Comprehensive lead tracking, conversion analytics, and automated follow-ups to never miss an opportunity.',
-					icon: '🎯'
-				},
-				{
-					title: 'PDF File Uploads',
-					description: 'Upload, organize, and share PDF documents directly within the app with advanced search capabilities.',
-					icon: '📄'
-				},
-				{
-					title: 'Real-time Collaboration',
-					description: 'Work together with your team in real-time with live updates and instant notifications.',
-					icon: '🤝'
-				},
-				{
-					title: 'Enhanced Analytics Dashboard',
-					description: 'Get deeper insights into your business performance with our new analytics engine.',
-					icon: '📊'
-				},
-				{
-					title: 'Mobile App Optimization',
-					description: 'Faster performance, better battery life, and improved user experience on mobile devices.',
-					icon: '📱'
-				}
-			],
-			improvements: [
-				{
-					title: 'Faster Load Times',
-					description: 'App now loads 60% faster with our new optimization algorithms.'
-				},
-				{
-					title: 'Better User Interface',
-					description: 'Cleaner, more intuitive design based on user feedback.'
-				},
-				{
-					title: 'Enhanced Security',
-					description: 'Additional security layers to protect your sensitive business data.'
-				}
+			version: '2.1.0',
+			updateType: 'FEATURE' as const,
+			releaseDate: new Date().toISOString(),
+			features: [
+				'Advanced Leads Management - Comprehensive lead tracking, conversion analytics, and automated follow-ups to never miss an opportunity.',
+				'PDF File Uploads - Upload, organize, and share PDF documents directly within the app with advanced search capabilities.',
+				'Real-time Collaboration - Work together with your team in real-time with live updates and instant notifications.',
+				'Enhanced Analytics Dashboard - Get deeper insights into your business performance with our new analytics engine.',
+				'Mobile App Optimization - Faster performance, better battery life, and improved user experience on mobile devices.'
 			],
 			bugFixes: [
-				{
-					title: 'Login Issues Fixed',
-					description: 'Resolved intermittent login problems reported by users.'
-				},
-				{
-					title: 'Sync Improvements',
-					description: 'Fixed data synchronization issues between mobile and web versions.'
-				},
-				{
-					title: 'Performance Optimizations',
-					description: 'Eliminated memory leaks and improved overall app stability.'
-				}
+				'Login Issues Fixed - Resolved intermittent login problems reported by users.',
+				'Sync Improvements - Fixed data synchronization issues between mobile and web versions.',
+				'Performance Optimizations - Eliminated memory leaks and improved overall app stability.'
 			],
-			criticalUpdate: true,
-			forceUpdate: false,
-			downloadUrls: {
-				playStore: 'https://play.google.com/store/apps/details?id=com.loro.business',
-				appStore: 'https://apps.apple.com/us/app/loro-business-suite/id123456789',
-				directDownload: 'https://loro.com/download'
-			},
+			securityUpdates: [
+				'Enhanced Security - Additional security layers to protect your sensitive business data.'
+			],
+			downloadUrl: 'https://loro.com/download',
+			updateUrl: 'https://app.loro.com/update',
 			releaseNotes: 'This major update focuses on enhancing your business management capabilities with advanced leads tracking, seamless document management, and improved collaboration tools. We\'ve also addressed several user-reported issues and significantly improved app performance.',
+			isForced: false,
 			supportEmail: 'support@loro.com',
-			supportPhone: '+1-800-LORO-HELP',
-			dashboardUrl: 'https://app.loro.com/dashboard',
-			updateDeadline: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString(), // 30 days from now
-			compatibilityInfo: 'This update is compatible with iOS 13.0+ and Android 8.0+. Please ensure your device meets these requirements.',
-			backupReminder: 'We recommend backing up your important data before updating the app.',
-			trainingResources: [
-				{
-					title: 'Getting Started with New Features',
-					url: 'https://loro.com/training/new-features',
-					type: 'video' as const
-				},
-				{
-					title: 'Leads Management Guide',
-					url: 'https://loro.com/guides/leads-management.pdf',
-					type: 'pdf' as const
-				},
-				{
-					title: 'PDF Upload Tutorial',
-					url: 'https://loro.com/tutorials/pdf-uploads',
-					type: 'link' as const
-				}
-			]
+			rolloutPercentage: 100,
+			targetPlatforms: ['iOS', 'Android', 'Web'],
+			minimumVersion: '2.0.0',
+			compatibility: {
+				os: ['iOS 13.0+', 'Android 8.0+'],
+				devices: ['iPhone', 'iPad', 'Android Phone', 'Android Tablet'],
+				browsers: ['Chrome', 'Safari', 'Firefox', 'Edge']
+			},
+			updateInstructions: [
+				'Close the app completely before updating',
+				'Ensure you have sufficient storage space (minimum 500MB)',
+				'Connect to a stable internet connection',
+				'Backup your data before proceeding'
+			],
+			troubleshootingLink: 'https://loro.com/support/troubleshooting',
+			systemRequirements: {
+				ram: '4GB minimum, 8GB recommended',
+				storage: '500MB free space required',
+				processor: 'Dual-core 1.8GHz or faster',
+				other: ['GPS capability for location features', 'Camera access for document scanning']
+			},
+			backupRecommendation: true,
+			maintenanceWindow: {
+				start: '2024-12-10T02:00:00Z',
+				end: '2024-12-10T04:00:00Z',
+				timezone: 'UTC'
+			},
+			contactInfo: {
+				supportEmail: 'support@loro.com',
+				supportPhone: '+1-800-LORO-HELP',
+				documentationUrl: 'https://docs.loro.com'
+			}
 		};
 
 		// Send the app update notification

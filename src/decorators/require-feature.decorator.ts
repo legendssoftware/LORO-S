@@ -3,6 +3,7 @@ import { SetMetadata } from '@nestjs/common';
 export const FEATURE_KEY = 'features';
 
 type ModuleFeature =
+    | `approvals.${string}`
     | `assets.${string}`
     | `claims.${string}`
     | `clients.${string}`

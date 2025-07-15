@@ -77,6 +77,7 @@ import {
 	ClientProfileUpdateConfirmationData,
 	ClientProfileUpdateAdminData,
 	ClientCommunicationReminderData,
+	ApprovalEmailData,
 } from '../types/email-templates.types';
 
 class EmailTemplateService {
@@ -713,6 +714,43 @@ class EmailTemplateService {
 
 	clientCommunicationReminder(data: ClientCommunicationReminderData): string {
 		return this.renderTemplate('client/communication-reminder.hbs', data);
+	}
+
+	// Approval Templates
+	approvalCreated(data: ApprovalEmailData): string {
+		return this.renderTemplate('approvals/approval-created.hbs', data);
+	}
+
+	approvalSubmitted(data: ApprovalEmailData): string {
+		return this.renderTemplate('approvals/approval-submitted.hbs', data);
+	}
+
+	approvalApproved(data: ApprovalEmailData): string {
+		return this.renderTemplate('approvals/approval-approved.hbs', data);
+	}
+
+	approvalRejected(data: ApprovalEmailData): string {
+		return this.renderTemplate('approvals/approval-rejected.hbs', data);
+	}
+
+	approvalEscalated(data: ApprovalEmailData): string {
+		return this.renderTemplate('approvals/approval-escalated.hbs', data);
+	}
+
+	approvalUpdated(data: ApprovalEmailData): string {
+		return this.renderTemplate('approvals/approval-updated.hbs', data);
+	}
+
+	approvalWithdrawn(data: ApprovalEmailData): string {
+		return this.renderTemplate('approvals/approval-withdrawn.hbs', data);
+	}
+
+	approvalArchived(data: ApprovalEmailData): string {
+		return this.renderTemplate('approvals/approval-archived.hbs', data);
+	}
+
+	approvalDeleted(data: ApprovalEmailData): string {
+		return this.renderTemplate('approvals/approval-deleted.hbs', data);
 	}
 
 	/**

@@ -1,0 +1,205 @@
+{{#> layouts/base }}
+
+{{#*inline "content"}}
+<div class="header-section">
+    <h1 style="color: #2563eb; margin: 0; font-size: 28px; font-weight: 700;">
+        📝 New Approval Request Created
+    </h1>
+    <div class="priority-badge priority-{{toLowerCase priority}}" style="margin-top: 12px;">
+        {{#eq priority 'URGENT'}}🔴{{/eq}}
+        {{#eq priority 'HIGH'}}🟠{{/eq}}
+        {{#eq priority 'MEDIUM'}}🟡{{/eq}}
+        {{#eq priority 'LOW'}}🟢{{/eq}}
+        Priority: {{priority}}
+    </div>
+</div>
+
+<div class="content-section">
+    <p style="font-size: 16px; color: #374151; margin-bottom: 24px;">
+        Hello <strong>{{name}}</strong>,
+    </p>
+
+    <p style="font-size: 16px; color: #374151; line-height: 1.6; margin-bottom: 24px;">
+        A new approval request has been created in the system and requires your attention.
+    </p>
+
+    {{> card title="Approval Details" }}
+        <div class="detail-row">
+            <span class="detail-label">Reference:</span>
+            <span class="detail-value"><strong>{{approvalReference}}</strong></span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Title:</span>
+            <span class="detail-value">{{title}}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Type:</span>
+            <span class="detail-value">{{humanizeApprovalType type}}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Status:</span>
+            <span class="status-badge status-{{toLowerCase status}}">{{status}}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Priority:</span>
+            <span class="priority-badge priority-{{toLowerCase priority}}">{{priority}}</span>
+        </div>
+        {{#if requestedAmount}}
+        <div class="detail-row">
+            <span class="detail-label">Amount:</span>
+            <span class="detail-value">{{currency}} {{formatCurrency requestedAmount}}</span>
+        </div>
+        {{/if}}
+        {{#if deadline}}
+        <div class="detail-row">
+            <span class="detail-label">Deadline:</span>
+            <span class="detail-value">{{formatDate deadline}}</span>
+        </div>
+        {{/if}}
+    {{/card}}
+
+    {{#if description}}
+    {{> card title="Description" }}
+        <p style="margin: 0; white-space: pre-wrap;">{{description}}</p>
+    {{/card}}
+    {{/if}}
+
+    {{> card title="Requester Information" }}
+        <div class="detail-row">
+            <span class="detail-label">Name:</span>
+            <span class="detail-value">{{requesterName}}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Email:</span>
+            <span class="detail-value">{{requesterEmail}}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Organization:</span>
+            <span class="detail-value">{{organizationName}}</span>
+        </div>
+        {{#if branchName}}
+        <div class="detail-row">
+            <span class="detail-label">Branch:</span>
+            <span class="detail-value">{{branchName}}</span>
+        </div>
+        {{/if}}
+    {{/card}}
+
+    {{#if supportingDocuments}}
+    {{> card title="Supporting Documents" }}
+        <ul style="margin: 0; padding-left: 20px;">
+            {{#each supportingDocuments}}
+            <li style="margin-bottom: 8px;">
+                <a href="{{this}}" target="_blank" style="color: #2563eb; text-decoration: none;">
+                    📎 {{getFileName this}}
+                </a>
+            </li>
+            {{/each}}
+        </ul>
+    {{/card}}
+    {{/if}}
+
+    {{#if entityType}}
+    {{> card title="Related Information" }}
+        <div class="detail-row">
+            <span class="detail-label">Entity Type:</span>
+            <span class="detail-value">{{humanizeEntityType entityType}}</span>
+        </div>
+        {{#if entityId}}
+        <div class="detail-row">
+            <span class="detail-label">Entity ID:</span>
+            <span class="detail-value">{{entityId}}</span>
+        </div>
+        {{/if}}
+    {{/card}}
+    {{/if}}
+
+    <div class="action-section" style="margin: 32px 0; text-align: center;">
+        {{> button 
+            href=approvalUrl 
+            text="View Approval Request" 
+            style="primary"
+        }}
+        
+        <div style="margin-top: 16px;">
+            <a href="{{dashboardUrl}}" style="color: #6b7280; text-decoration: none; font-size: 14px;">
+                Go to Dashboard
+            </a>
+        </div>
+    </div>
+
+    {{> alert type="info" }}
+        <p style="margin: 0;">
+            <strong>Next Steps:</strong> This approval request is currently in <strong>{{status}}</strong> status. 
+            {{#eq status 'DRAFT'}}
+            The requester can still make changes before submitting for review.
+            {{else}}
+            It will be processed according to your organization's approval workflow.
+            {{/eq}}
+        </p>
+    {{/alert}}
+</div>
+
+<style>
+.priority-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.priority-urgent { background: #fee2e2; color: #dc2626; }
+.priority-high { background: #fed7aa; color: #ea580c; }
+.priority-medium { background: #fef3c7; color: #d97706; }
+.priority-low { background: #dcfce7; color: #16a34a; }
+
+.status-badge {
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 500;
+    text-transform: uppercase;
+}
+
+.status-draft { background: #f3f4f6; color: #6b7280; }
+.status-pending { background: #fef3c7; color: #d97706; }
+
+.detail-row {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #f3f4f6;
+}
+
+.detail-row:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+}
+
+.detail-label {
+    font-weight: 600;
+    color: #6b7280;
+    min-width: 120px;
+}
+
+.detail-value {
+    color: #374151;
+    text-align: right;
+    flex: 1;
+}
+
+.action-section {
+    background: #f9fafb;
+    padding: 24px;
+    border-radius: 8px;
+    border: 1px solid #e5e7eb;
+}
+</style>
+
+{{/inline}}
+
+{{/layouts/base}} 

@@ -1,0 +1,90 @@
+import {
+    Entity,
+    Column,
+    PrimaryGeneratedColumn,
+    CreateDateColumn,
+    ManyToOne,
+    JoinColumn,
+    Index
+} from 'typeorm';
+import { Approval } from './approval.entity';
+import { User } from '../../user/entities/user.entity';
+import { ApprovalAction, ApprovalStatus } from '../../lib/enums/approval.enums';
+
+@Entity('approval_history')
+@Index(['approvalUid', 'createdAt']) // Approval history queries
+@Index(['actionBy', 'action']) // User action tracking
+@Index(['toStatus', 'createdAt']) // Status change analytics
+@Index(['createdAt']) // Timeline queries
+export class ApprovalHistory {
+    @PrimaryGeneratedColumn()
+    uid: number;
+
+    @ManyToOne(() => Approval, (approval) => approval.history, { onDelete: 'CASCADE' })
+    @JoinColumn({ name: 'approvalUid' })
+    approval: Approval;
+
+    @Column({ type: 'int', nullable: false })
+    approvalUid: number;
+
+    @Column({ type: 'enum', enum: ApprovalAction })
+    action: ApprovalAction;
+
+    @Column({ type: 'enum', enum: ApprovalStatus, nullable: true })
+    fromStatus: ApprovalStatus;
+
+    @Column({ type: 'enum', enum: ApprovalStatus })
+    toStatus: ApprovalStatus;
+
+    @ManyToOne(() => User, { nullable: false })
+    @JoinColumn({ name: 'actionBy' })
+    actionByUser: User;
+
+    @Column({ type: 'int', nullable: false })
+    actionBy: number;
+
+    @Column({ type: 'text', nullable: true })
+    comments: string;
+
+    @Column({ type: 'text', nullable: true })
+    reason: string;
+
+    @CreateDateColumn()
+    createdAt: Date;
+
+    // Audit information
+    @Column({ type: 'varchar', length: 45, nullable: true })
+    ipAddress: string;
+
+    @Column({ type: 'varchar', length: 255, nullable: true })
+    userAgent: string;
+
+    @Column({ type: 'json', nullable: true })
+    geolocation: { latitude: number; longitude: number; accuracy?: number };
+
+    @Column({ type: 'varchar', length: 50, nullable: true })
+    source: string; // 'web', 'mobile', 'api', 'system'
+
+    @Column({ type: 'json', nullable: true })
+    metadata: Record<string, any>; // Additional action metadata
+
+    @Column({ type: 'json', nullable: true })
+    attachments: Array<{
+        filename: string;
+        url: string;
+        fileSize: number;
+        mimeType: string;
+    }>; // Files attached to this action
+
+    @Column({ type: 'boolean', default: false })
+    isSystemAction: boolean; // True for automated actions
+
+    @Column({ type: 'int', nullable: true })
+    escalationLevel: number; // If this was an escalation action
+
+    @Column({ type: 'timestamp', nullable: true })
+    scheduledFor: Date; // If this was a scheduled action
+
+    @Column({ type: 'int', nullable: true })
+    delegatedFrom: number; // If action was taken by delegate
+} 

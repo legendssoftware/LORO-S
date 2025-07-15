@@ -94,6 +94,10 @@ import { Warning } from './warnings/entities/warning.entity';
 import { RoleGuard } from './guards/role.guard';
 import { ClientCommunicationSchedule } from './clients/entities/client-communication-schedule.entity';
 import { PayslipsModule } from './payslips/payslips.module';
+import { ApprovalsModule } from './approvals/approvals.module';
+import { Approval } from './approvals/entities/approval.entity';
+import { ApprovalHistory } from './approvals/entities/approval-history.entity';
+import { ApprovalSignature } from './approvals/entities/approval-signature.entity';
 
 @Module({
 	imports: [
@@ -172,6 +176,9 @@ import { PayslipsModule } from './payslips/payslips.module';
 					Leave,
 					Warning,
 					ClientCommunicationSchedule,
+					Approval,
+					ApprovalHistory,
+					ApprovalSignature,
 				],
 				synchronize: true,
 				logging: false,
@@ -231,6 +238,7 @@ import { PayslipsModule } from './payslips/payslips.module';
 		LeaveModule,
 		WarningsModule,
 		PayslipsModule,
+		ApprovalsModule,
 	],
 	controllers: [],
 	providers: [

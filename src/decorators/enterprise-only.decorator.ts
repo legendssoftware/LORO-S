@@ -4,6 +4,7 @@ import { FeatureGuard } from '../guards/feature.guard';
 import { RequireFeature } from './require-feature.decorator';
 
 type ModuleName =
+	| 'approvals'
 	| 'assets'
 	| 'claims'
 	| 'clients'

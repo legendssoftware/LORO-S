@@ -124,6 +124,7 @@ import {
 	UserTargetUpdatedEmailData,
 	AppUpdateNotificationData,
 	ClientCommunicationReminderData,
+	ApprovalEmailData,
 } from '../lib/types/email-templates.types';
 import {
 	TaskFlagCreated,
@@ -166,6 +167,15 @@ import {
 	UserTargetDeleted,
 	UserTargetUpdated,
 	AppUpdateNotification,
+	ApprovalCreated,
+	ApprovalSubmitted,
+	ApprovalApproved,
+	ApprovalRejected,
+	ApprovalEscalated,
+	ApprovalUpdated,
+	ApprovalWithdrawn,
+	ApprovalArchived,
+	ApprovalDeleted,
 } from '../lib/templates/emails';
 
 // Import the new type
@@ -813,6 +823,51 @@ export class CommunicationService {
 				return {
 					subject: 'Client Communication Reminder - Action Required',
 					body: ClientCommunicationReminder(data as ClientCommunicationReminderData),
+				};
+			case EmailType.APPROVAL_CREATED:
+				return {
+					subject: 'Approval Request Created',
+					body: ApprovalCreated(data as ApprovalEmailData), 
+				};
+			case EmailType.APPROVAL_SUBMITTED:
+				return {
+					subject: 'Approval Request Submitted',
+					body: ApprovalSubmitted(data as ApprovalEmailData),
+				};
+			case EmailType.APPROVAL_APPROVED:
+				return {
+					subject: 'Approval Approved',
+					body: ApprovalApproved(data as ApprovalEmailData),
+				};
+			case EmailType.APPROVAL_REJECTED:
+				return {
+					subject: 'Approval Rejected',
+					body: ApprovalRejected(data as ApprovalEmailData),
+				};
+			case EmailType.APPROVAL_ESCALATED:
+				return {
+					subject: 'Approval Escalated',
+					body: ApprovalEscalated(data as ApprovalEmailData),
+				};
+			case EmailType.APPROVAL_UPDATED:
+				return {
+					subject: 'Approval Updated',
+					body: ApprovalUpdated(data as ApprovalEmailData),
+				};
+			case EmailType.APPROVAL_WITHDRAWN:
+				return {
+					subject: 'Approval Withdrawn',
+					body: ApprovalWithdrawn(data as ApprovalEmailData),
+				};
+			case EmailType.APPROVAL_ARCHIVED:
+				return {
+					subject: 'Approval Archived',
+					body: ApprovalArchived(data as ApprovalEmailData),
+				};
+			case EmailType.APPROVAL_DELETED:
+				return {
+					subject: 'Approval Deleted',
+					body: ApprovalDeleted(data as ApprovalEmailData),
 				};
 			default:
 				throw new NotFoundException(`Unknown email template type: ${type}`);
