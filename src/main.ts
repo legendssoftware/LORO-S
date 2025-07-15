@@ -124,7 +124,12 @@ LORO combines **GPS tracking**, **AI-powered analytics**, **real-time communicat
 
 	const document = SwaggerModule.createDocument(app, config, {
 		deepScanRoutes: true,
-		operationIdFactory: (methodKey: string) => methodKey,
+		operationIdFactory: (controllerKey: string, methodKey: string) => {
+			// Create unique operation IDs by combining controller and method names
+			// This prevents Swagger UI from opening all routes with the same method name
+			const controllerName = controllerKey.replace('Controller', '').toLowerCase();
+			return `${controllerName}_${methodKey}`;
+		},
 	});
 
 	// Add WebSocket documentation
