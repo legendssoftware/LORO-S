@@ -266,12 +266,12 @@ export class AttendanceReportsService {
 		private readonly userService: UserService,
 		private readonly eventEmitter: EventEmitter2,
 	) {
-		this.logger.log('AttendanceReportsService initialized');
+		this.logger.log('🌍 AttendanceReportsService initialized with timezone-aware scheduling');
 	}
 
 	/**
-	 * Schedule reports to run every 10 minutes during business hours (6 AM - 10 PM globally)
-	 * This covers all major timezones efficiently without excessive checking
+	 * Schedule reports to run every 10 minutes with timezone-aware processing
+	 * Each organization is processed based on its local timezone
 	 */
 	@Cron('*/10 * * * *') // Run every 10 minutes
 	async checkAndSendReports() {
@@ -280,24 +280,45 @@ export class AttendanceReportsService {
 		try {
 			const now = new Date();
 			
-			// Only run during reasonable business hours globally (6 AM - 10 PM UTC range)
-			// This covers business hours across all major timezones
-			const currentUTCHour = now.getUTCHours();
-			if (currentUTCHour < 4 || currentUTCHour > 22) {
-				this.logger.debug(`Skipping reports during quiet hours (UTC ${currentUTCHour}:00)`);
-				return; // Skip during quiet hours to save resources
-			}
-
 			const organizations = await this.organisationRepository.find({
 				where: { isDeleted: false },
 			});
 
 			this.logger.log(`Found ${organizations.length} organizations to process`);
 
-			// Process both morning and evening reports in parallel for efficiency
+			// Process organizations with timezone-aware filtering
+			const processedOrgs = [];
+			const skippedOrgs = [];
+
 			const reportPromises = organizations.map(async (org) => {
 				try {
-					this.logger.debug(`Processing reports for organization ${org.uid} (${org.name})`);
+					// Get organization timezone for logging and filtering
+					const organizationHours = await this.organizationHoursService.getOrganizationHours(org.uid);
+					const organizationTimezone = organizationHours?.timezone;
+					const orgCurrentTime = TimezoneUtil.toOrganizationTime(now, organizationTimezone);
+					const orgCurrentHour = orgCurrentTime.getHours();
+					
+					// Only process organizations during reasonable business hours in their timezone (5 AM - 11 PM)
+					if (orgCurrentHour < 5 || orgCurrentHour > 23) {
+						this.logger.debug(`Skipping organization ${org.uid} (${org.name}) - quiet hours in ${TimezoneUtil.getSafeTimezone(organizationTimezone)} (${orgCurrentHour}:00)`);
+						skippedOrgs.push({
+							id: org.uid,
+							name: org.name,
+							timezone: TimezoneUtil.getSafeTimezone(organizationTimezone),
+							localTime: TimezoneUtil.formatInOrganizationTime(orgCurrentTime, 'HH:mm', organizationTimezone)
+						});
+						return;
+					}
+
+					this.logger.debug(`Processing reports for organization ${org.uid} (${org.name}) - Local time: ${TimezoneUtil.formatInOrganizationTime(orgCurrentTime, 'HH:mm zzz', organizationTimezone)}`);
+					
+					processedOrgs.push({
+						id: org.uid,
+						name: org.name,
+						timezone: TimezoneUtil.getSafeTimezone(organizationTimezone),
+						localTime: TimezoneUtil.formatInOrganizationTime(orgCurrentTime, 'HH:mm', organizationTimezone)
+					});
+					
 					await Promise.all([
 						this.processMorningReportForOrganization(org, now),
 						this.processEveningReportForOrganization(org, now),
@@ -308,7 +329,17 @@ export class AttendanceReportsService {
 			});
 
 			await Promise.all(reportPromises);
-			this.logger.log('Scheduled report check completed');
+			
+			// Log summary
+			this.logger.log(`📊 Scheduled report check completed - Processed: ${processedOrgs.length}, Skipped: ${skippedOrgs.length}`);
+			
+			if (processedOrgs.length > 0) {
+				this.logger.debug(`✅ Processed organizations: ${processedOrgs.map(org => `${org.name} (${org.timezone} ${org.localTime})`).join(', ')}`);
+			}
+			
+			if (skippedOrgs.length > 0) {
+				this.logger.debug(`⏭️  Skipped organizations: ${skippedOrgs.map(org => `${org.name} (${org.timezone} ${org.localTime})`).join(', ')}`);
+			}
 		} catch (error) {
 			this.logger.error('Error in checkAndSendReports:', error);
 		}
@@ -329,7 +360,7 @@ export class AttendanceReportsService {
 			const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(organization.uid, orgCurrentTime);
 
 			if (!workingDayInfo.isWorkingDay || !workingDayInfo.startTime) {
-				this.logger.debug(`Skipping morning report for org ${organization.uid} - not a working day or no start time`);
+				this.logger.debug(`⏭️  Skipping morning report for org ${organization.uid} (${organization.name}) - not a working day or no start time in ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`);
 				return; // Skip non-working days
 			}
 
@@ -344,7 +375,7 @@ export class AttendanceReportsService {
 			);
 
 			if (!reportWindow.isTimeForMorningReport) {
-				this.logger.debug(`Not time for morning report for org ${organization.uid} yet`);
+				this.logger.debug(`⏰ Not time for morning report for org ${organization.uid} (${organization.name}) yet - Current: ${TimezoneUtil.formatInOrganizationTime(orgCurrentTime, 'HH:mm', organizationTimezone)}, Report time: ${reportWindow.morningReportTime.toTimeString().substring(0, 5)} in ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`);
 				return; // Not time for morning report yet
 			}
 
@@ -353,11 +384,11 @@ export class AttendanceReportsService {
 			const cacheKey = `morning_report_${organization.uid}_${format(orgToday, 'yyyy-MM-dd')}`;
 
 			if (this.hasReportBeenSent(cacheKey)) {
-				this.logger.debug(`Morning report already sent today for org ${organization.uid}`);
+				this.logger.debug(`✅ Morning report already sent today for org ${organization.uid} (${organization.name}) on ${format(orgToday, 'yyyy-MM-dd')} in ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`);
 				return;
 			}
 
-			this.logger.log(`Generating morning report for organization ${organization.uid} (${organization.name})`);
+			this.logger.log(`📅 Generating morning report for organization ${organization.uid} (${organization.name})`);
 			await this.generateAndSendMorningReport(organization.uid);
 			this.markReportAsSent(cacheKey);
 
@@ -366,11 +397,12 @@ export class AttendanceReportsService {
 			const orgTimeFormatted = TimezoneUtil.formatInOrganizationTime(orgCurrentTime, 'HH:mm zzz', organizationTimezone);
 			const workTimeFormatted = `${workingDayInfo.startTime} (30min after: ${reportWindow.morningReportTime.toTimeString().substring(0, 5)})`;
 			
-			this.logger.log(`Morning report sent for organization ${organization.name} (ID: ${organization.uid})`);
-			this.logger.log(`  Server time: ${serverTime}`);
-			this.logger.log(`  Organization time: ${orgTimeFormatted}`);
-			this.logger.log(`  Work start time: ${workTimeFormatted}`);
-			this.logger.log(`  Timezone: ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`);
+			this.logger.log(`✅ Morning report sent for organization ${organization.name} (ID: ${organization.uid})`);
+			this.logger.log(`  🕐 Server time: ${serverTime}`);
+			this.logger.log(`  🌍 Organization time: ${orgTimeFormatted}`);
+			this.logger.log(`  ⏰ Work start time: ${workTimeFormatted}`);
+			this.logger.log(`  🗺️  Timezone: ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`);
+			this.logger.log(`  📊 Report window: ${reportWindow.morningReportTime.toTimeString().substring(0, 5)} (10min window)`);
 		} catch (error) {
 			this.logger.error(`Error processing morning report for organization ${organization.uid}:`, error);
 		}
@@ -391,7 +423,7 @@ export class AttendanceReportsService {
 			const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(organization.uid, orgCurrentTime);
 
 			if (!workingDayInfo.isWorkingDay || !workingDayInfo.endTime) {
-				this.logger.debug(`Skipping evening report for org ${organization.uid} - not a working day or no end time`);
+				this.logger.debug(`⏭️  Skipping evening report for org ${organization.uid} (${organization.name}) - not a working day or no end time in ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`);
 				return; // Skip non-working days
 			}
 
@@ -406,7 +438,7 @@ export class AttendanceReportsService {
 			);
 
 			if (!reportWindow.isTimeForEveningReport) {
-				this.logger.debug(`Not time for evening report for org ${organization.uid} yet`);
+				this.logger.debug(`⏰ Not time for evening report for org ${organization.uid} (${organization.name}) yet - Current: ${TimezoneUtil.formatInOrganizationTime(orgCurrentTime, 'HH:mm', organizationTimezone)}, Report time: ${reportWindow.eveningReportTime.toTimeString().substring(0, 5)} in ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`);
 				return; // Not time for evening report yet
 			}
 
@@ -415,11 +447,11 @@ export class AttendanceReportsService {
 			const cacheKey = `evening_report_${organization.uid}_${format(orgToday, 'yyyy-MM-dd')}`;
 
 			if (this.hasReportBeenSent(cacheKey)) {
-				this.logger.debug(`Evening report already sent today for org ${organization.uid}`);
+				this.logger.debug(`✅ Evening report already sent today for org ${organization.uid} (${organization.name}) on ${format(orgToday, 'yyyy-MM-dd')} in ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`);
 				return;
 			}
 
-			this.logger.log(`Generating evening report for organization ${organization.uid} (${organization.name})`);
+			this.logger.log(`🌅 Generating evening report for organization ${organization.uid} (${organization.name})`);
 			await this.generateAndSendEveningReport(organization.uid);
 			this.markReportAsSent(cacheKey);
 
@@ -428,11 +460,12 @@ export class AttendanceReportsService {
 			const orgTimeFormatted = TimezoneUtil.formatInOrganizationTime(orgCurrentTime, 'HH:mm zzz', organizationTimezone);
 			const workTimeFormatted = `${workingDayInfo.endTime} (30min after: ${reportWindow.eveningReportTime.toTimeString().substring(0, 5)})`;
 			
-			this.logger.log(`Evening report sent for organization ${organization.name} (ID: ${organization.uid})`);
-			this.logger.log(`  Server time: ${serverTime}`);
-			this.logger.log(`  Organization time: ${orgTimeFormatted}`);
-			this.logger.log(`  Work end time: ${workTimeFormatted}`);
-			this.logger.log(`  Timezone: ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`);
+			this.logger.log(`✅ Evening report sent for organization ${organization.name} (ID: ${organization.uid})`);
+			this.logger.log(`  🕐 Server time: ${serverTime}`);
+			this.logger.log(`  🌍 Organization time: ${orgTimeFormatted}`);
+			this.logger.log(`  ⏰ Work end time: ${workTimeFormatted}`);
+			this.logger.log(`  🗺️  Timezone: ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`);
+			this.logger.log(`  📊 Report window: ${reportWindow.eveningReportTime.toTimeString().substring(0, 5)} (10min window)`);
 		} catch (error) {
 			this.logger.error(`Error processing evening report for organization ${organization.uid}:`, error);
 		}
