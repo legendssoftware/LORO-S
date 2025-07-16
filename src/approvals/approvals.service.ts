@@ -1,7 +1,10 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, In, Between, SelectQueryBuilder } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
+import { ConfigService } from '@nestjs/config';
 import { CreateApprovalDto } from './dto/create-approval.dto';
 import { UpdateApprovalDto } from './dto/update-approval.dto';
 import { ApprovalActionDto, SignApprovalDto, BulkApprovalActionDto } from './dto/approval-action.dto';
@@ -30,8 +33,8 @@ type RequestUser = AuthenticatedRequest['user'];
 @Injectable()
 export class ApprovalsService {
     private readonly logger = new Logger(ApprovalsService.name);
-    private readonly cache = new Map<string, { data: any; timestamp: number; ttl: number }>();
-    private readonly DEFAULT_CACHE_TTL = 300000; // 5 minutes in milliseconds
+    private readonly CACHE_PREFIX = 'approvals:';
+    private readonly CACHE_TTL: number;
 
     constructor(
         @InjectRepository(Approval)
@@ -46,16 +49,397 @@ export class ApprovalsService {
         private readonly organisationRepository: Repository<Organisation>,
         @InjectRepository(Branch)
         private readonly branchRepository: Repository<Branch>,
-        private readonly eventEmitter: EventEmitter2
-    ) {}
+        @Inject(CACHE_MANAGER)
+        private readonly cacheManager: Cache,
+        private readonly eventEmitter: EventEmitter2,
+        private readonly configService: ConfigService
+    ) {
+        this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 300000; // 5 minutes default
+        this.logger.log(`🚀 [ApprovalsService] Initialized with cache TTL: ${this.CACHE_TTL}ms`);
+    }
+
+    /**
+     * 🔑 Generate cache key with consistent prefix
+     * @param key - The key identifier
+     * @returns Formatted cache key with prefix
+     */
+    private getCacheKey(key: string | number): string {
+        return `${this.CACHE_PREFIX}${key}`;
+    }
+
+    /**
+     * 🗑️ Comprehensive cache invalidation for approval-related data
+     * Clears all relevant cache entries when approval data changes
+     * @param approval - Approval entity to invalidate cache for
+     */
+    private async invalidateApprovalCache(approval: Approval): Promise<void> {
+        try {
+            this.logger.debug(`🗑️ [invalidateApprovalCache] Invalidating cache for approval: ${approval.uid}`);
+
+            // Get all cache keys
+            const keys = await this.cacheManager.store.keys();
+
+            // Keys to clear
+            const keysToDelete = [];
+
+            // Add approval-specific keys
+            keysToDelete.push(
+                this.getCacheKey(approval.uid),
+                this.getCacheKey(`ref_${approval.approvalReference}`),
+                `${this.CACHE_PREFIX}all`,
+                `${this.CACHE_PREFIX}stats`,
+                `${this.CACHE_PREFIX}pending`,
+            );
+
+            // Add requester-specific keys
+            if (approval.requesterUid) {
+                keysToDelete.push(
+                    this.getCacheKey(`user_${approval.requesterUid}_requests`),
+                    this.getCacheKey(`user_${approval.requesterUid}_pending`),
+                );
+            }
+
+            // Add approver-specific keys
+            if (approval.approverUid) {
+                keysToDelete.push(
+                    this.getCacheKey(`user_${approval.approverUid}_pending`),
+                    this.getCacheKey(`user_${approval.approverUid}_approvals`),
+                );
+            }
+
+            // Add organization-specific keys
+            if (approval.organisationRef) {
+                keysToDelete.push(
+                    this.getCacheKey(`org_${approval.organisationRef}`),
+                    this.getCacheKey(`org_${approval.organisationRef}_stats`),
+                );
+            }
+
+            // Add branch-specific keys
+            if (approval.branchUid) {
+                keysToDelete.push(
+                    this.getCacheKey(`branch_${approval.branchUid}`),
+                    this.getCacheKey(`branch_${approval.branchUid}_stats`),
+                );
+            }
+
+            // Add type and status-specific keys
+            keysToDelete.push(
+                this.getCacheKey(`type_${approval.type}`),
+                this.getCacheKey(`status_${approval.status}`),
+                this.getCacheKey(`priority_${approval.priority}`),
+            );
+
+            // Clear all pagination and filtered approval list caches
+            const approvalListCaches = keys.filter(
+                (key) =>
+                    key.startsWith(`${this.CACHE_PREFIX}page`) ||
+                    key.startsWith(`${this.CACHE_PREFIX}search`) ||
+                    key.includes('_limit') ||
+                    key.includes('_filter'),
+            );
+            keysToDelete.push(...approvalListCaches);
+
+            // Clear all caches
+            await Promise.all(keysToDelete.map((key) => this.cacheManager.del(key)));
+
+            this.logger.debug(`✅ [invalidateApprovalCache] Cache invalidated for approval ${approval.uid}. Cleared ${keysToDelete.length} cache keys`);
+
+            // Emit event for other services that might be caching approval data
+            this.eventEmitter.emit('approvals.cache.invalidate', {
+                approvalId: approval.uid,
+                keys: keysToDelete,
+            });
+        } catch (error) {
+            this.logger.error(`❌ [invalidateApprovalCache] Error invalidating approval cache for approval ${approval.uid}:`, error.message);
+        }
+    }
+
+    /**
+     * 🎯 Smart approval routing based on type, amount, and organizational hierarchy
+     * @param approvalType - Type of approval request
+     * @param amount - Monetary amount (if applicable)
+     * @param requester - User requesting approval
+     * @returns Array of potential approvers with their priority order
+     */
+    private async getApprovalRouting(
+        approvalType: ApprovalType,
+        amount: number | null,
+        requester: User,
+    ): Promise<{ approver: User; priority: number; reason: string }[]> {
+        this.logger.log(`🎯 [getApprovalRouting] Determining approval routing for type: ${approvalType}, amount: ${amount}, requester: ${requester.uid}`);
+
+        try {
+            const approvers: { approver: User; priority: number; reason: string }[] = [];
+
+            // HR-specific routing for leave and HR-related requests
+            if ([
+                ApprovalType.LEAVE_REQUEST, 
+                ApprovalType.OVERTIME, 
+                ApprovalType.EXPENSE_CLAIM, 
+                ApprovalType.REIMBURSEMENT, 
+                ApprovalType.TRAVEL_REQUEST,
+                ApprovalType.ROLE_CHANGE,
+                ApprovalType.DEPARTMENT_TRANSFER
+            ].includes(approvalType)) {
+                this.logger.debug(`👥 [getApprovalRouting] HR routing for type: ${approvalType}`);
+                const hrUsers = await this.getHRUsers(requester.organisationRef);
+                hrUsers.forEach((hrUser, index) => {
+                    approvers.push({
+                        approver: hrUser,
+                        priority: index + 1,
+                        reason: `HR approval required for ${approvalType}`,
+                    });
+                });
+            }
+
+            // Amount-based routing for financial approvals
+            if (amount && amount > 0) {
+                this.logger.debug(`💰 [getApprovalRouting] Amount-based routing for: ${amount}`);
+                const financialApprovers = await this.getFinancialApprovers(amount, requester);
+                financialApprovers.forEach((approver, index) => {
+                    approvers.push({
+                        approver: approver.user,
+                        priority: approver.priority,
+                        reason: approver.reason,
+                    });
+                });
+            }
+
+            // Hierarchical routing based on organizational structure
+            const hierarchicalApprovers = await this.getHierarchicalApprovers(requester);
+            hierarchicalApprovers.forEach((approver) => {
+                // Avoid duplicates
+                if (!approvers.find(a => a.approver.uid === approver.approver.uid)) {
+                    approvers.push(approver);
+                }
+            });
+
+            // Sort by priority and remove duplicates
+            const uniqueApprovers = approvers
+                .filter((approver, index, self) => 
+                    index === self.findIndex(a => a.approver.uid === approver.approver.uid)
+                )
+                .sort((a, b) => a.priority - b.priority);
+
+            this.logger.log(`✅ [getApprovalRouting] Found ${uniqueApprovers.length} potential approvers for ${approvalType}`);
+            return uniqueApprovers;
+        } catch (error) {
+            this.logger.error(`❌ [getApprovalRouting] Error determining approval routing:`, error.message);
+            return [];
+        }
+    }
+
+    /**
+     * 👥 Get HR users for HR-related approvals
+     * @param organisationRef - Organization reference
+     * @returns Array of HR users
+     */
+    private async getHRUsers(organisationRef: string): Promise<User[]> {
+        try {
+            this.logger.debug(`👥 [getHRUsers] Finding HR users for organization: ${organisationRef}`);
+            
+            const hrUsers = await this.userRepository.find({
+                where: {
+                    organisationRef,
+                    accessLevel: In([AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER]),
+                    isDeleted: false,
+                    status: 'active',
+                },
+                order: {
+                    accessLevel: 'DESC', // Prioritize by access level
+                },
+            });
+
+            this.logger.debug(`✅ [getHRUsers] Found ${hrUsers.length} HR users`);
+            return hrUsers;
+        } catch (error) {
+            this.logger.error(`❌ [getHRUsers] Error finding HR users:`, error.message);
+            return [];
+        }
+    }
+
+    /**
+     * 💰 Get financial approvers based on amount thresholds
+     * @param amount - Approval amount
+     * @param requester - User requesting approval
+     * @returns Array of financial approvers with priority
+     */
+    private async getFinancialApprovers(
+        amount: number,
+        requester: User,
+    ): Promise<{ user: User; priority: number; reason: string }[]> {
+        try {
+            this.logger.debug(`💰 [getFinancialApprovers] Finding approvers for amount: ${amount}`);
+            
+            const approvers: { user: User; priority: number; reason: string }[] = [];
+
+            // Define amount thresholds and required approval levels
+            const thresholds = [
+                { max: 1000, level: AccessLevel.MANAGER, reason: 'Manager approval for amounts up to R1,000' },
+                { max: 10000, level: AccessLevel.ADMIN, reason: 'Admin approval for amounts up to R10,000' },
+                { max: Infinity, level: AccessLevel.OWNER, reason: 'Owner approval for amounts over R10,000' },
+            ];
+
+            // Find appropriate threshold
+            const threshold = thresholds.find(t => amount <= t.max);
+            if (!threshold) return approvers;
+
+            // Get users with required access level or higher
+            const requiredLevels = [threshold.level];
+            if (threshold.level === AccessLevel.MANAGER) {
+                requiredLevels.push(AccessLevel.ADMIN, AccessLevel.OWNER);
+            } else if (threshold.level === AccessLevel.ADMIN) {
+                requiredLevels.push(AccessLevel.OWNER);
+            }
+
+            const financialApprovers = await this.userRepository.find({
+                where: {
+                    organisationRef: requester.organisationRef,
+                    accessLevel: In(requiredLevels),
+                    isDeleted: false,
+                    status: 'active',
+                },
+                order: {
+                    accessLevel: 'DESC',
+                },
+            });
+
+            financialApprovers.forEach((user, index) => {
+                approvers.push({
+                    user,
+                    priority: index + 1,
+                    reason: threshold.reason,
+                });
+            });
+
+            this.logger.debug(`✅ [getFinancialApprovers] Found ${approvers.length} financial approvers`);
+            return approvers;
+        } catch (error) {
+            this.logger.error(`❌ [getFinancialApprovers] Error finding financial approvers:`, error.message);
+            return [];
+        }
+    }
+
+    /**
+     * 🏢 Get hierarchical approvers based on organizational structure
+     * @param requester - User requesting approval
+     * @returns Array of hierarchical approvers
+     */
+    private async getHierarchicalApprovers(
+        requester: User,
+    ): Promise<{ approver: User; priority: number; reason: string }[]> {
+        try {
+            this.logger.debug(`🏢 [getHierarchicalApprovers] Finding hierarchical approvers for user: ${requester.uid}`);
+            
+            const approvers: { approver: User; priority: number; reason: string }[] = [];
+
+            // Get branch managers first
+            if (requester.branch?.uid) {
+                const branchManagers = await this.userRepository.find({
+                    where: {
+                        branch: { uid: requester.branch.uid },
+                        accessLevel: In([AccessLevel.MANAGER, AccessLevel.ADMIN, AccessLevel.OWNER]),
+                        isDeleted: false,
+                        status: 'active',
+                    },
+                    order: {
+                        accessLevel: 'DESC',
+                    },
+                });
+
+                branchManagers.forEach((manager, index) => {
+                    if (manager.uid !== requester.uid) { // Don't include self
+                        approvers.push({
+                            approver: manager,
+                            priority: index + 10, // Lower priority than specific routing
+                            reason: 'Branch hierarchy approval',
+                        });
+                    }
+                });
+            }
+
+            // Get organization admins and owners
+            const orgAdmins = await this.userRepository.find({
+                where: {
+                    organisationRef: requester.organisationRef,
+                    accessLevel: In([AccessLevel.ADMIN, AccessLevel.OWNER]),
+                    isDeleted: false,
+                    status: 'active',
+                },
+                order: {
+                    accessLevel: 'DESC',
+                },
+            });
+
+            orgAdmins.forEach((admin, index) => {
+                if (admin.uid !== requester.uid) { // Don't include self
+                    approvers.push({
+                        approver: admin,
+                        priority: index + 20, // Even lower priority
+                        reason: 'Organization hierarchy approval',
+                    });
+                }
+            });
+
+            this.logger.debug(`✅ [getHierarchicalApprovers] Found ${approvers.length} hierarchical approvers`);
+            return approvers;
+        } catch (error) {
+            this.logger.error(`❌ [getHierarchicalApprovers] Error finding hierarchical approvers:`, error.message);
+            return [];
+        }
+    }
+
+    /**
+     * 🔍 Compare two approval objects and return changes
+     * @param original - Original approval data
+     * @param updated - Updated approval data
+     * @returns Object containing the changes
+     */
+    private getChanges(original: any, updated: any): Record<string, { from: any; to: any }> {
+        const changes: Record<string, { from: any; to: any }> = {};
+        
+        // Fields to track for changes
+        const trackableFields = [
+            'title', 'description', 'type', 'priority', 'amount', 'currency',
+            'deadline', 'approverUid', 'status', 'isUrgent', 'entityType', 'entityId'
+        ];
+
+        trackableFields.forEach(field => {
+            if (original[field] !== updated[field]) {
+                changes[field] = {
+                    from: original[field],
+                    to: updated[field]
+                };
+            }
+        });
+
+        return changes;
+    }
 
     // Create new approval request
     async create(createApprovalDto: CreateApprovalDto, user: RequestUser) {
+        const startTime = Date.now();
+        this.logger.log(`🚀 [create] Creating new approval request by user ${user.uid}`);
+        
         try {
-            this.logger.log(`Creating new approval request by user ${user.uid}`);
+            this.logger.debug(`📋 [create] Approval data: ${JSON.stringify({ ...createApprovalDto, supportingDocuments: createApprovalDto.supportingDocuments?.length || 0 })}`);
 
             // Validate requester has permission to create this type of approval
             await this.validateCreatePermissions(createApprovalDto, user);
+
+            // Get full user data for approval routing
+            const fullUser = await this.userRepository.findOne({
+                where: { uid: user.uid },
+                relations: ['organisation', 'branch'],
+            });
+
+            if (!fullUser) {
+                throw new NotFoundException('User not found');
+            }
+
+            this.logger.log(`📋 [create] Creating approval for user: ${fullUser.email}`);
+        
 
             // Create approval entity
             const { supportingDocuments, ...approvalData } = createApprovalDto;
@@ -69,14 +453,30 @@ export class ApprovalsService {
                 supportingDocuments: supportingDocuments?.map(doc => doc.url) || []
             });
 
-            // Auto-assign approver if not specified
+            // Smart approval routing - determine best approver if not specified
             if (!approval.approverUid) {
-                const approver = await this.getDefaultApprover(approval.type, user);
-                if (approver) {
-                    approval.approverUid = approver.uid;
+                this.logger.debug(`🎯 [create] No approver specified, using smart routing for type: ${approval.type}`);
+                const approvalRouting = await this.getApprovalRouting(
+                    approval.type, 
+                    approval.amount, 
+                    fullUser
+                );
+
+                if (approvalRouting.length > 0) {
+                    const primaryApprover = approvalRouting[0];
+                    approval.approverUid = primaryApprover.approver.uid;
+                    this.logger.log(`✅ [create] Auto-assigned approver: ${primaryApprover.approver.email} (reason: ${primaryApprover.reason})`);
+                } else {
+                    // Fallback to default approver
+                    const fallbackApprover = await this.getDefaultApprover(approval.type, user);
+                    if (fallbackApprover) {
+                        approval.approverUid = fallbackApprover.uid;
+                        this.logger.log(`🔄 [create] Using fallback approver: ${fallbackApprover.email}`);
+                    }
                 }
             }
 
+            this.logger.debug(`💾 [create] Saving approval to database`);
             const savedApproval = await this.approvalRepository.save(approval);
 
             // Create initial history entry
@@ -89,10 +489,57 @@ export class ApprovalsService {
                 'Approval request created'
             );
 
+            // Clear relevant caches
+            await this.invalidateApprovalCache(savedApproval);
+
             // Send creation notification email
+            this.logger.debug(`📧 [create] Sending creation notification emails`);
             await this.sendApprovalNotification(savedApproval, 'created');
 
-            this.logger.log(`Approval request created successfully: ${savedApproval.approvalReference}`);
+            // Emit WebSocket event for real-time updates
+            this.eventEmitter.emit('approval.created', {
+                approvalId: savedApproval.uid,
+                approvalReference: savedApproval.approvalReference,
+                type: savedApproval.type,
+                status: savedApproval.status,
+                priority: savedApproval.priority,
+                requesterUid: savedApproval.requesterUid,
+                approverUid: savedApproval.approverUid,
+                title: savedApproval.title,
+                amount: savedApproval.amount,
+                currency: savedApproval.currency,
+                organisationRef: savedApproval.organisationRef,
+                branchUid: savedApproval.branchUid,
+                timestamp: new Date(),
+            });
+
+            // Emit real-time notification to mobile/POS/ERP systems
+            this.eventEmitter.emit('websocket.broadcast', {
+                event: 'approval_created',
+                data: {
+                    approvalId: savedApproval.uid,
+                    approvalReference: savedApproval.approvalReference,
+                    type: savedApproval.type,
+                    priority: savedApproval.priority,
+                    requester: {
+                        uid: fullUser.uid,
+                        name: fullUser.name,
+                        email: fullUser.email,
+                    },
+                    approver: approval.approverUid ? {
+                        uid: approval.approverUid,
+                    } : null,
+                    title: savedApproval.title,
+                    amount: savedApproval.amount,
+                    currency: savedApproval.currency,
+                },
+                targetRoles: ['admin', 'manager', 'approver'],
+                organisationRef: savedApproval.organisationRef,
+                branchUid: savedApproval.branchUid,
+            });
+
+            const executionTime = Date.now() - startTime;
+            this.logger.log(`🎉 [create] Approval request created successfully: ${savedApproval.approvalReference} in ${executionTime}ms`);
 
             return {
                 uid: savedApproval.uid,
@@ -100,19 +547,38 @@ export class ApprovalsService {
                 type: savedApproval.type,
                 status: savedApproval.status,
                 approvalReference: savedApproval.approvalReference,
+                approverUid: savedApproval.approverUid,
+                amount: savedApproval.amount,
+                currency: savedApproval.currency,
                 message: 'Approval request created successfully'
             };
 
         } catch (error) {
-            this.logger.error(`Failed to create approval request: ${error.message}`, error.stack);
+            const executionTime = Date.now() - startTime;
+            this.logger.error(`❌ [create] Failed to create approval request after ${executionTime}ms: ${error.message}`, error.stack);
             throw error;
         }
     }
 
     // Get all approvals with filtering and pagination
     async findAll(query: ApprovalQueryDto, user: RequestUser) {
+        const startTime = Date.now();
+        this.logger.log(`📋 [findAll] Fetching approvals for user ${user.uid} with filters`);
+        
         try {
-            this.logger.log(`Fetching approvals for user ${user.uid} with filters`);
+            this.logger.debug(`🔍 [findAll] Query parameters: ${JSON.stringify(query)}`);
+
+            // Generate cache key based on query parameters and user
+            const cacheKey = this.getCacheKey(`findAll_${user.organisationRef}_${user.uid}_${JSON.stringify(query)}`);
+            
+            // Check cache first (only for non-real-time queries)
+            if (!query.includeHistory && !query.includeSignatures) {
+                const cachedResults = await this.cacheManager.get(cacheKey);
+                if (cachedResults) {
+                    this.logger.debug(`📊 [findAll] Returning cached results for user ${user.uid}`);
+                    return cachedResults;
+                }
+            }
 
             const queryBuilder = this.approvalRepository
                 .createQueryBuilder('approval')
@@ -142,32 +608,57 @@ export class ApprovalsService {
 
             // Include additional relations if requested
             if (query.includeHistory) {
+                this.logger.debug(`📜 [findAll] Including approval history`);
                 queryBuilder.leftJoinAndSelect('approval.history', 'history');
             }
             if (query.includeSignatures) {
+                this.logger.debug(`✍️ [findAll] Including approval signatures`);
                 queryBuilder.leftJoinAndSelect('approval.signatures', 'signatures');
             }
 
+            this.logger.debug(`🔍 [findAll] Executing database query`);
             const [approvals, total] = await queryBuilder.getManyAndCount();
 
             const totalPages = Math.ceil(total / limit);
 
-            this.logger.log(`Retrieved ${approvals.length} approvals for user ${user.uid}`);
+            // Calculate some basic metrics
+            const pendingCount = approvals.filter(a => a.status === ApprovalStatus.PENDING).length;
+            const overdueCount = approvals.filter(a => a.isOverdue).length;
+            const urgentCount = approvals.filter(a => a.isUrgent || a.priority === ApprovalPriority.URGENT).length;
 
-            return {
+            const result = {
                 data: approvals,
                 pagination: {
                     page,
                     limit,
                     total,
-                    totalPages
+                    totalPages,
+                    hasNext: page < totalPages,
+                    hasPrev: page > 1
+                },
+                metrics: {
+                    pendingCount,
+                    overdueCount,
+                    urgentCount,
+                    totalValue: approvals.reduce((sum, approval) => sum + (approval.amount || 0), 0)
                 },
                 filters: query,
                 message: 'Approvals retrieved successfully'
             };
 
+            // Cache results for 2 minutes (but only if not including dynamic data)
+            if (!query.includeHistory && !query.includeSignatures) {
+                await this.cacheManager.set(cacheKey, result, 120000);
+            }
+
+            const executionTime = Date.now() - startTime;
+            this.logger.log(`✅ [findAll] Retrieved ${approvals.length} approvals for user ${user.uid} in ${executionTime}ms`);
+
+            return result;
+
         } catch (error) {
-            this.logger.error(`Failed to fetch approvals: ${error.message}`, error.stack);
+            const executionTime = Date.now() - startTime;
+            this.logger.error(`❌ [findAll] Failed to fetch approvals after ${executionTime}ms: ${error.message}`, error.stack);
             throw error;
         }
     }
@@ -280,10 +771,10 @@ export class ApprovalsService {
             this.logger.log(`Generating approval statistics for user ${user.uid}`);
 
             // Check cache first
-            const cacheKey = this.getCacheKey('stats', user);
-            const cachedStats = this.getFromCache(cacheKey);
+            const cacheKey = this.getCacheKey(`stats_${user.organisationRef}_${user.uid}`);
+            const cachedStats = await this.cacheManager.get(cacheKey);
             if (cachedStats) {
-                this.logger.log(`Returning cached statistics for user ${user.uid}`);
+                this.logger.log(`📊 [getStats] Returning cached statistics for user ${user.uid}`);
                 return cachedStats;
             }
 
@@ -359,7 +850,7 @@ export class ApprovalsService {
             };
 
             // Cache the results for 2 minutes
-            this.setCache(cacheKey, stats, 120000);
+            await this.cacheManager.set(cacheKey, stats, 120000);
 
             this.logger.log(`Generated statistics for user ${user.uid}: ${total} total approvals`);
             return stats;
@@ -372,8 +863,23 @@ export class ApprovalsService {
 
     // Get specific approval by ID
     async findOne(id: number, user: RequestUser) {
+        const startTime = Date.now();
+        this.logger.log(`🔍 [findOne] Fetching approval ${id} for user ${user.uid}`);
+        
         try {
-            this.logger.log(`Fetching approval ${id} for user ${user.uid}`);
+            // Check cache first
+            const cacheKey = this.getCacheKey(`findOne_${id}_${user.uid}`);
+            const cachedApproval = await this.cacheManager.get(cacheKey);
+            
+            if (cachedApproval) {
+                this.logger.debug(`📊 [findOne] Returning cached approval ${id} for user ${user.uid}`);
+                
+                // Still need to validate access for cached results
+                await this.validateApprovalAccess(cachedApproval, user);
+                return cachedApproval;
+            }
+
+            this.logger.debug(`🔍 [findOne] Cache miss, querying database for approval ${id}`);
 
             const queryBuilder = this.approvalRepository
                 .createQueryBuilder('approval')
@@ -394,44 +900,63 @@ export class ApprovalsService {
             const approval = await queryBuilder.getOne();
 
             if (!approval) {
+                this.logger.warn(`⚠️ [findOne] Approval ${id} not found or access denied for user ${user.uid}`);
                 throw new NotFoundException(`Approval with ID ${id} not found or access denied`);
             }
 
             // Additional access validation
             await this.validateApprovalAccess(approval, user);
 
-            this.logger.log(`Successfully fetched approval ${id} for user ${user.uid}`);
+            // Cache the result for 5 minutes
+            await this.cacheManager.set(cacheKey, approval, 300000);
+
+            const executionTime = Date.now() - startTime;
+            this.logger.log(`✅ [findOne] Successfully fetched approval ${id} for user ${user.uid} in ${executionTime}ms`);
+            
             return approval;
 
         } catch (error) {
+            const executionTime = Date.now() - startTime;
+            
             if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+                this.logger.warn(`⚠️ [findOne] Access denied to approval ${id} for user ${user.uid} after ${executionTime}ms: ${error.message}`);
                 throw error;
             }
-            this.logger.error(`Failed to fetch approval ${id} for user ${user.uid}: ${error.message}`, error.stack);
+            
+            this.logger.error(`❌ [findOne] Failed to fetch approval ${id} for user ${user.uid} after ${executionTime}ms: ${error.message}`, error.stack);
             throw new BadRequestException('Failed to fetch approval');
         }
     }
 
     // Update approval (draft only)
     async update(id: number, updateApprovalDto: UpdateApprovalDto, user: RequestUser) {
+        const startTime = Date.now();
+        this.logger.log(`🔄 [update] Updating approval ${id} by user ${user.uid}`);
+        
         try {
-            this.logger.log(`Updating approval ${id} by user ${user.uid}`);
+            this.logger.debug(`📋 [update] Update data: ${JSON.stringify(updateApprovalDto)}`);
 
             const approval = await this.findOne(id, user);
 
             // Only allow updates to draft approvals by the requester
             if (approval.status !== ApprovalStatus.DRAFT) {
+                this.logger.warn(`⚠️ [update] Cannot modify approval ${id} in status: ${approval.status}`);
                 throw new BadRequestException('Cannot modify approval in current status');
             }
 
             if (approval.requesterUid !== user.uid) {
+                this.logger.warn(`⚠️ [update] User ${user.uid} not authorized to modify approval ${id} (requester: ${approval.requesterUid})`);
                 throw new ForbiddenException('Only the requester can modify this approval');
             }
+
+            // Store original data for comparison
+            const originalData = { ...approval };
 
             // Update approval
             Object.assign(approval, updateApprovalDto);
             approval.version += 1;
 
+            this.logger.debug(`💾 [update] Saving updated approval to database`);
             const updatedApproval = await this.approvalRepository.save(approval);
 
             // Create history entry
@@ -444,15 +969,60 @@ export class ApprovalsService {
                 'Approval request updated'
             );
 
+            // Clear relevant caches
+            await this.invalidateApprovalCache(updatedApproval);
+
             // Send update notification email
+            this.logger.debug(`📧 [update] Sending update notification emails`);
             await this.sendApprovalNotification(updatedApproval, 'updated');
 
-            this.logger.log(`Approval ${id} updated successfully`);
+            // Emit WebSocket event for real-time updates
+            this.eventEmitter.emit('approval.updated', {
+                approvalId: updatedApproval.uid,
+                approvalReference: updatedApproval.approvalReference,
+                type: updatedApproval.type,
+                status: updatedApproval.status,
+                priority: updatedApproval.priority,
+                requesterUid: updatedApproval.requesterUid,
+                approverUid: updatedApproval.approverUid,
+                title: updatedApproval.title,
+                amount: updatedApproval.amount,
+                currency: updatedApproval.currency,
+                version: updatedApproval.version,
+                changes: this.getChanges(originalData, updatedApproval),
+                organisationRef: updatedApproval.organisationRef,
+                branchUid: updatedApproval.branchUid,
+                timestamp: new Date(),
+            });
+
+            // Emit real-time notification to mobile/POS/ERP systems
+            this.eventEmitter.emit('websocket.broadcast', {
+                event: 'approval_updated',
+                data: {
+                    approvalId: updatedApproval.uid,
+                    approvalReference: updatedApproval.approvalReference,
+                    type: updatedApproval.type,
+                    status: updatedApproval.status,
+                    priority: updatedApproval.priority,
+                    title: updatedApproval.title,
+                    amount: updatedApproval.amount,
+                    currency: updatedApproval.currency,
+                    version: updatedApproval.version,
+                },
+                targetRoles: ['admin', 'manager', 'approver'],
+                targetUsers: [updatedApproval.requesterUid, updatedApproval.approverUid].filter(Boolean),
+                organisationRef: updatedApproval.organisationRef,
+                branchUid: updatedApproval.branchUid,
+            });
+
+            const executionTime = Date.now() - startTime;
+            this.logger.log(`🎉 [update] Approval ${id} updated successfully in ${executionTime}ms`);
 
             return updatedApproval;
 
         } catch (error) {
-            this.logger.error(`Failed to update approval ${id}: ${error.message}`, error.stack);
+            const executionTime = Date.now() - startTime;
+            this.logger.error(`❌ [update] Failed to update approval ${id} after ${executionTime}ms: ${error.message}`, error.stack);
             throw error;
         }
     }
@@ -508,8 +1078,11 @@ export class ApprovalsService {
 
     // Perform action on approval
     async performAction(id: number, actionDto: ApprovalActionDto, user: RequestUser) {
+        const startTime = Date.now();
+        this.logger.log(`⚡ [performAction] Performing action ${actionDto.action} on approval ${id} by user ${user.uid}`);
+        
         try {
-            this.logger.log(`Performing action ${actionDto.action} on approval ${id} by user ${user.uid}`);
+            this.logger.debug(`📋 [performAction] Action details: ${JSON.stringify(actionDto)}`);
 
             const approval = await this.findOne(id, user);
 
@@ -518,6 +1091,7 @@ export class ApprovalsService {
 
             const fromStatus = approval.status;
             let toStatus = fromStatus;
+            let actionDescription = '';
 
             // Process the action
             switch (actionDto.action) {
@@ -527,6 +1101,8 @@ export class ApprovalsService {
                     approval.approvedAt = new Date();
                     approval.approvalComments = actionDto.comments;
                     approval.approvedCount += 1;
+                    actionDescription = `Approval approved by user ${user.uid}`;
+                    this.logger.log(`✅ [performAction] Approval ${id} approved by user ${user.uid}`);
                     break;
 
                 case ApprovalAction.REJECT:
@@ -535,11 +1111,15 @@ export class ApprovalsService {
                     approval.rejectedAt = new Date();
                     approval.rejectionReason = actionDto.reason;
                     approval.rejectedCount += 1;
+                    actionDescription = `Approval rejected by user ${user.uid}: ${actionDto.reason}`;
+                    this.logger.log(`❌ [performAction] Approval ${id} rejected by user ${user.uid}: ${actionDto.reason}`);
                     break;
 
                 case ApprovalAction.REQUEST_INFO:
                     toStatus = ApprovalStatus.ADDITIONAL_INFO_REQUIRED;
                     approval.status = toStatus;
+                    actionDescription = `Additional information requested by user ${user.uid}`;
+                    this.logger.log(`📝 [performAction] Additional info requested for approval ${id} by user ${user.uid}`);
                     break;
 
                 case ApprovalAction.DELEGATE:
@@ -548,6 +1128,8 @@ export class ApprovalsService {
                     }
                     approval.delegatedFromUid = user.uid;
                     approval.delegatedToUid = actionDto.delegateToUid;
+                    actionDescription = `Approval delegated from user ${user.uid} to user ${actionDto.delegateToUid}`;
+                    this.logger.log(`🔄 [performAction] Approval ${id} delegated from user ${user.uid} to user ${actionDto.delegateToUid}`);
                     break;
 
                 case ApprovalAction.ESCALATE:
@@ -560,12 +1142,15 @@ export class ApprovalsService {
                     approval.escalatedAt = new Date();
                     approval.escalatedToUid = actionDto.escalateToUid;
                     approval.escalationReason = actionDto.reason;
+                    actionDescription = `Approval escalated from user ${user.uid} to user ${actionDto.escalateToUid}: ${actionDto.reason}`;
+                    this.logger.log(`⬆️ [performAction] Approval ${id} escalated from user ${user.uid} to user ${actionDto.escalateToUid}`);
                     break;
 
                 default:
                     throw new BadRequestException(`Unsupported action: ${actionDto.action}`);
             }
 
+            this.logger.debug(`💾 [performAction] Saving approval with new status: ${fromStatus} → ${toStatus}`);
             const updatedApproval = await this.approvalRepository.save(approval);
 
             // Create history entry
@@ -575,13 +1160,18 @@ export class ApprovalsService {
                 fromStatus,
                 toStatus,
                 user.uid,
-                actionDto.comments || actionDto.reason
+                actionDto.comments || actionDto.reason || actionDescription
             );
+
+            // Clear relevant caches
+            await this.invalidateApprovalCache(updatedApproval);
 
             // Send notifications
             if (actionDto.sendNotification !== false) {
+                this.logger.debug(`📧 [performAction] Sending notification emails for action: ${actionDto.action}`);
+                
                 // Map approval actions to notification types
-                let notificationType: 'created' | 'submitted' | 'approved' | 'rejected' | 'escalated';
+                let notificationType: 'created' | 'submitted' | 'approved' | 'rejected' | 'escalated' | null = null;
                 switch (actionDto.action) {
                     case ApprovalAction.APPROVE:
                         notificationType = 'approved';
@@ -603,7 +1193,71 @@ export class ApprovalsService {
                 }
             }
 
-            this.logger.log(`Action ${actionDto.action} performed successfully on approval ${id}`);
+            // Emit WebSocket event for real-time updates
+            this.eventEmitter.emit('approval.action.performed', {
+                approvalId: updatedApproval.uid,
+                approvalReference: updatedApproval.approvalReference,
+                action: actionDto.action,
+                fromStatus,
+                toStatus,
+                actionBy: user.uid,
+                actionAt: new Date(),
+                comments: actionDto.comments,
+                reason: actionDto.reason,
+                type: updatedApproval.type,
+                priority: updatedApproval.priority,
+                organisationRef: updatedApproval.organisationRef,
+                branchUid: updatedApproval.branchUid,
+                timestamp: new Date(),
+            });
+
+            // Emit real-time notification to mobile/POS/ERP systems
+            this.eventEmitter.emit('websocket.broadcast', {
+                event: `approval_${actionDto.action}`,
+                data: {
+                    approvalId: updatedApproval.uid,
+                    approvalReference: updatedApproval.approvalReference,
+                    action: actionDto.action,
+                    fromStatus,
+                    toStatus,
+                    actionBy: user.uid,
+                    type: updatedApproval.type,
+                    priority: updatedApproval.priority,
+                    title: updatedApproval.title,
+                    amount: updatedApproval.amount,
+                    currency: updatedApproval.currency,
+                    requesterUid: updatedApproval.requesterUid,
+                    approverUid: updatedApproval.approverUid,
+                },
+                targetRoles: ['admin', 'manager', 'approver'],
+                targetUsers: [
+                    updatedApproval.requesterUid, 
+                    updatedApproval.approverUid,
+                    actionDto.delegateToUid,
+                    actionDto.escalateToUid
+                ].filter(Boolean),
+                organisationRef: updatedApproval.organisationRef,
+                branchUid: updatedApproval.branchUid,
+            });
+
+            // Special handling for high-priority or high-value approvals
+            if (updatedApproval.priority === ApprovalPriority.URGENT || 
+                updatedApproval.priority === ApprovalPriority.CRITICAL ||
+                (updatedApproval.amount && updatedApproval.amount > 50000)) {
+                
+                this.eventEmitter.emit('approval.high.priority.action', {
+                    approvalId: updatedApproval.uid,
+                    action: actionDto.action,
+                    priority: updatedApproval.priority,
+                    amount: updatedApproval.amount,
+                    currency: updatedApproval.currency,
+                    actionBy: user.uid,
+                    organisationRef: updatedApproval.organisationRef,
+                });
+            }
+
+            const executionTime = Date.now() - startTime;
+            this.logger.log(`🎉 [performAction] Action ${actionDto.action} performed successfully on approval ${id} in ${executionTime}ms`);
 
             return {
                 uid: updatedApproval.uid,
@@ -611,11 +1265,15 @@ export class ApprovalsService {
                 action: actionDto.action,
                 actionBy: user.uid,
                 actionAt: new Date(),
+                approvalReference: updatedApproval.approvalReference,
+                fromStatus,
+                toStatus,
                 message: 'Approval action completed successfully'
             };
 
         } catch (error) {
-            this.logger.error(`Failed to perform action on approval ${id}: ${error.message}`, error.stack);
+            const executionTime = Date.now() - startTime;
+            this.logger.error(`❌ [performAction] Failed to perform action on approval ${id} after ${executionTime}ms: ${error.message}`, error.stack);
             throw error;
         }
     }
@@ -916,7 +1574,6 @@ export class ApprovalsService {
     private isValidDocumentUrl(url: string): boolean {
         try {
             const urlObj = new URL(url);
-            
             // Allow http, https, and file protocols
             const allowedProtocols = ['http:', 'https:', 'file:'];
             if (!allowedProtocols.includes(urlObj.protocol)) {
@@ -1325,47 +1982,5 @@ export class ApprovalsService {
         });
 
         await this.historyRepository.save(history);
-    }
-
-    // Cache helper methods
-    private getCacheKey(prefix: string, user: RequestUser, ...params: any[]): string {
-        return `${prefix}:${user.organisationRef}:${user.uid}:${params.join(':')}`;
-    }
-
-    private getFromCache<T>(key: string): T | null {
-        const cached = this.cache.get(key);
-        if (!cached) return null;
-        
-        if (Date.now() - cached.timestamp > cached.ttl) {
-            this.cache.delete(key);
-            return null;
-        }
-        
-        return cached.data as T;
-    }
-
-    private setCache<T>(key: string, data: T, ttl: number = this.DEFAULT_CACHE_TTL): void {
-        this.cache.set(key, {
-            data,
-            timestamp: Date.now(),
-            ttl
-        });
-    }
-
-    private invalidateUserCache(user: RequestUser): void {
-        const userPrefix = `${user.organisationRef}:${user.uid}`;
-        for (const [key] of this.cache) {
-            if (key.includes(userPrefix)) {
-                this.cache.delete(key);
-            }
-        }
-    }
-
-    private invalidateOrgCache(organisationRef: string): void {
-        for (const [key] of this.cache) {
-            if (key.includes(organisationRef)) {
-                this.cache.delete(key);
-            }
-        }
     }
 }

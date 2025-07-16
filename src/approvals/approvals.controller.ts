@@ -11,7 +11,7 @@ import {
     Query,
     HttpCode,
     HttpStatus,
-    ParseIntPipe
+    ParseIntPipe,
 } from '@nestjs/common';
 import { ApprovalsService } from './approvals.service';
 import { CreateApprovalDto } from './dto/create-approval.dto';

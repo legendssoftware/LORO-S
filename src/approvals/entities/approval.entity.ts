@@ -103,6 +103,11 @@ export class Approval {
     @Column({ type: 'int', nullable: true })
     delegatedToUid: number;
 
+    // Escalation support
+    @ManyToOne(() => User, { nullable: true })
+    @JoinColumn({ name: 'escalatedToUid' })
+    escalatedTo: User;
+
     // Organization & Branch Relations
     @ManyToOne(() => Organisation, { nullable: false })
     @JoinColumn({ name: 'organisationRef' })

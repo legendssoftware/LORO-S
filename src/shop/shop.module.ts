@@ -31,6 +31,6 @@ import { PdfGenerationModule } from '../pdf-generation/pdf-generation.module';
 	],
 	controllers: [ShopController, QuotationConversionController],
 	providers: [ShopService, ShopGateway, BannersService, QuotationConversionService],
-	exports: [ShopService],
+	exports: [ShopService, ShopGateway],
 })
 export class ShopModule {}

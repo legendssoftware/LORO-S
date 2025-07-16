@@ -397,4 +397,135 @@ export class ShopGateway implements OnGatewayConnection, OnGatewayDisconnect {
             this.logger.error('❌ Error broadcasting analytics update:', error.stack);
         }
     }
+
+    // ===== APPROVAL WEBSOCKET METHODS =====
+
+    /**
+     * 📋 Emit approval created event with comprehensive data
+     * @param approvalData - Full approval data with all relations
+     */
+    async emitApprovalCreated(approvalData: any) {
+        try {
+            this.server.emit('approval:created', {
+                event: 'approval_created',
+                timestamp: new Date(),
+                data: approvalData,
+            });
+            this.logger.log(`📋 Approval created event emitted: ${approvalData.approvalReference}`);
+        } catch (error) {
+            this.logger.error('❌ Error emitting approval created event:', error.stack);
+        }
+    }
+
+    /**
+     * 🔄 Emit approval updated event
+     * @param approvalData - Updated approval data with all relations
+     */
+    async emitApprovalUpdated(approvalData: any) {
+        try {
+            this.server.emit('approval:updated', {
+                event: 'approval_updated',
+                timestamp: new Date(),
+                data: approvalData,
+            });
+            this.logger.log(`🔄 Approval updated event emitted: ${approvalData.approvalReference}`);
+        } catch (error) {
+            this.logger.error('❌ Error emitting approval updated event:', error.stack);
+        }
+    }
+
+    /**
+     * ⚡ Emit approval action performed event
+     * @param approvalData - Approval data with action details
+     */
+    async emitApprovalAction(approvalData: any) {
+        try {
+            this.server.emit('approval:action', {
+                event: 'approval_action',
+                timestamp: new Date(),
+                data: approvalData,
+            });
+            this.logger.log(`⚡ Approval action event emitted: ${approvalData.approvalReference} - ${approvalData.action}`);
+        } catch (error) {
+            this.logger.error('❌ Error emitting approval action event:', error.stack);
+        }
+    }
+
+    /**
+     * 🚨 Emit high priority approval event
+     * @param approvalData - High priority approval data
+     */
+    async emitHighPriorityApproval(approvalData: any) {
+        try {
+            this.server.emit('approval:high-priority', {
+                event: 'approval_high_priority',
+                timestamp: new Date(),
+                data: approvalData,
+            });
+            this.logger.log(`🚨 High priority approval event emitted: ${approvalData.approvalReference}`);
+        } catch (error) {
+            this.logger.error('❌ Error emitting high priority approval event:', error.stack);
+        }
+    }
+
+    /**
+     * 📊 Emit approval metrics for dashboard updates
+     * @param metricsData - Approval metrics data
+     */
+    async emitApprovalMetrics(metricsData: any) {
+        try {
+            this.server.emit('approval:metrics', {
+                event: 'approval_metrics',
+                timestamp: new Date(),
+                data: metricsData,
+            });
+            this.logger.debug(`📊 Approval metrics emitted`);
+        } catch (error) {
+            this.logger.error('❌ Error emitting approval metrics:', error.stack);
+        }
+    }
+
+    // ===== APPROVAL SUBSCRIPTION HANDLERS =====
+
+    @SubscribeMessage('approval:subscribe')
+    handleSubscribeToApprovals(client: Socket, payload: any) {
+        this.logger.log(`📢 Client ${client.id} subscribed to approval updates`);
+        client.emit('approval:subscribed', { 
+            status: 'subscribed',
+            timestamp: new Date()
+        });
+    }
+
+    @SubscribeMessage('approval:unsubscribe')
+    handleUnsubscribeFromApprovals(client: Socket, payload: any) {
+        this.logger.log(`📢 Client ${client.id} unsubscribed from approval updates`);
+        client.emit('approval:unsubscribed', { 
+            status: 'unsubscribed',
+            timestamp: new Date()
+        });
+    }
+
+    @SubscribeMessage('approval:subscribe-user')
+    handleSubscribeToUserApprovals(client: Socket, payload: { userId: number }) {
+        const room = `user-approvals-${payload.userId}`;
+        client.join(room);
+        this.logger.log(`📢 Client ${client.id} subscribed to user ${payload.userId} approval updates`);
+        client.emit('approval:user-subscribed', { 
+            status: 'subscribed',
+            userId: payload.userId,
+            timestamp: new Date()
+        });
+    }
+
+    @SubscribeMessage('approval:subscribe-org')
+    handleSubscribeToOrgApprovals(client: Socket, payload: { organisationId: number }) {
+        const room = `org-approvals-${payload.organisationId}`;
+        client.join(room);
+        this.logger.log(`📢 Client ${client.id} subscribed to organization ${payload.organisationId} approval updates`);
+        client.emit('approval:org-subscribed', { 
+            status: 'subscribed',
+            organisationId: payload.organisationId,
+            timestamp: new Date()
+        });
+    }
 } 
