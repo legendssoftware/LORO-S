@@ -1,6 +1,8 @@
 import { Between, Repository, In, MoreThan } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger, Inject } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
 import { Lead } from './entities/lead.entity';
 import { CreateLeadDto } from './dto/create-lead.dto';
 import { UpdateLeadDto } from './dto/update-lead.dto';
@@ -35,6 +37,8 @@ import { formatDateSafely } from '../lib/utils/date.utils';
 @Injectable()
 export class LeadsService {
 	private readonly logger = new Logger(LeadsService.name);
+	private readonly CACHE_TTL: number;
+	private readonly CACHE_PREFIX = 'lead:';
 
 	// Define inactive user statuses that should not receive notifications
 	private readonly INACTIVE_USER_STATUSES = [
@@ -53,6 +57,8 @@ export class LeadsService {
 		private interactionRepository: Repository<Interaction>,
 		@InjectRepository(Task)
 		private taskRepository: Repository<Task>,
+		@Inject(CACHE_MANAGER)
+		private cacheManager: Cache,
 		private readonly eventEmitter: EventEmitter2,
 		private readonly rewardsService: RewardsService,
 		private readonly communicationService: CommunicationService,
@@ -60,7 +66,62 @@ export class LeadsService {
 		private readonly unifiedNotificationService: UnifiedNotificationService,
 		private readonly leadScoringService: LeadScoringService,
 		private readonly tasksService: TasksService,
-	) {}
+	) {
+		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
+	}
+
+	/**
+	 * Generate cache key for leads
+	 */
+	private getCacheKey(key: string | number): string {
+		return `${this.CACHE_PREFIX}${key}`;
+	}
+
+	/**
+	 * Generate cache key for user leads
+	 */
+	private getUserLeadsCacheKey(userUid: number): string {
+		return `${this.CACHE_PREFIX}user:${userUid}`;
+	}
+
+	/**
+	 * Clear lead-related caches
+	 */
+	private async clearLeadCache(leadId?: number, userUid?: number): Promise<void> {
+		try {
+			const keys = await this.cacheManager.store.keys();
+			const keysToDelete = [];
+
+			// Clear specific lead cache if provided
+			if (leadId) {
+				keysToDelete.push(this.getCacheKey(leadId));
+			}
+
+			// Clear user-related lead caches
+			if (userUid) {
+				keysToDelete.push(this.getUserLeadsCacheKey(userUid));
+			}
+
+			// Clear all pagination and filtered lead list caches
+			const leadListCaches = keys.filter(
+				(key) =>
+					key.startsWith('leads_page') || // Pagination caches
+					key.startsWith('lead:all') || // All leads cache
+					key.startsWith('leads:list:') || // List caches
+					key.startsWith('leads:stats:') || // Stats caches
+					key.includes('_limit'), // Filtered caches
+			);
+			keysToDelete.push(...leadListCaches);
+
+			// Clear all caches
+			if (keysToDelete.length > 0) {
+				await Promise.all(keysToDelete.map((key) => this.cacheManager.del(key)));
+				this.logger.log(`Cleared ${keysToDelete.length} lead cache keys`);
+			}
+		} catch (error) {
+			this.logger.error('Failed to clear lead cache', error.stack);
+		}
+	}
 
 	async create(
 		createLeadDto: CreateLeadDto,
@@ -101,6 +162,9 @@ export class LeadsService {
 
 			// Populate the lead with full relation data
 			const populatedLead = await this.populateLeadRelations(savedLead);
+
+			// Clear caches after successful lead creation
+			await this.clearLeadCache(savedLead.uid, savedLead.ownerUid);
 
 			// EVENT-DRIVEN AUTOMATION: Post-creation actions
 			await this.handleLeadCreatedEvents(populatedLead);
@@ -418,6 +482,9 @@ export class LeadsService {
 			});
 
 			if (updatedLead) {
+				// Clear caches after successful lead update
+				await this.clearLeadCache(updatedLead.uid, updatedLead.ownerUid);
+
 				await this.handleLeadUpdatedEvents(updatedLead, {
 					statusChanged: oldStatus !== updateLeadDto.status,
 					temperatureChanged: oldTemperature !== updateLeadDto.temperature,
@@ -676,6 +743,9 @@ export class LeadsService {
 
 			// Use soft delete by updating isDeleted flag
 			await this.leadsRepository.update(ref, { isDeleted: true });
+
+			// Clear caches after successful lead deletion
+			await this.clearLeadCache(lead.uid, lead.ownerUid);
 
 			return {
 				message: process.env.SUCCESS_MESSAGE,

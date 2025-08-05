@@ -1,6 +1,8 @@
 import { Repository } from 'typeorm';
-import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
 import { CheckoutDto } from './dto/checkout.dto';
 import { CreateBlankQuotationDto } from './dto/create-blank-quotation.dto';
 import { PriceListType } from '../lib/enums/product.enums';
@@ -33,6 +35,8 @@ export class ShopService {
 	private currencySymbol: string;
 	private readonly logger = new Logger(ShopService.name);
 	private currencyByOrg: Map<number, { code: string; symbol: string; locale: string }> = new Map();
+	private readonly CACHE_TTL: number;
+	private readonly CACHE_PREFIX = 'shop:';
 
 	constructor(
 		@InjectRepository(Product)
@@ -41,6 +45,8 @@ export class ShopService {
 		private quotationRepository: Repository<Quotation>,
 		@InjectRepository(Banners)
 		private bannersRepository: Repository<Banners>,
+		@Inject(CACHE_MANAGER)
+		private cacheManager: Cache,
 		private readonly configService: ConfigService,
 		private readonly clientsService: ClientsService,
 		private readonly eventEmitter: EventEmitter2,
@@ -52,6 +58,69 @@ export class ShopService {
 		this.currencyLocale = this.configService.get<string>('CURRENCY_LOCALE') || 'en-ZA';
 		this.currencyCode = this.configService.get<string>('CURRENCY_CODE') || 'ZAR';
 		this.currencySymbol = this.configService.get<string>('CURRENCY_SYMBOL') || 'R';
+		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
+	}
+
+	/**
+	 * Generate cache key for shop items
+	 */
+	private getCacheKey(key: string | number): string {
+		return `${this.CACHE_PREFIX}${key}`;
+	}
+
+	/**
+	 * Generate cache key for quotations
+	 */
+	private getQuotationCacheKey(quotationId: number): string {
+		return `${this.CACHE_PREFIX}quotation:${quotationId}`;
+	}
+
+	/**
+	 * Generate cache key for quotations by client
+	 */
+	private getClientQuotationsCacheKey(clientId: number): string {
+		return `${this.CACHE_PREFIX}client:quotations:${clientId}`;
+	}
+
+	/**
+	 * Clear shop-related caches
+	 */
+	private async clearShopCache(quotationId?: number, clientId?: number): Promise<void> {
+		try {
+			const keys = await this.cacheManager.store.keys();
+			const keysToDelete = [];
+
+			// Clear specific quotation cache if provided
+			if (quotationId) {
+				keysToDelete.push(this.getQuotationCacheKey(quotationId));
+			}
+
+			// Clear client-related quotation caches
+			if (clientId) {
+				keysToDelete.push(this.getClientQuotationsCacheKey(clientId));
+			}
+
+			// Clear all pagination and filtered quotation list caches
+			const quotationListCaches = keys.filter(
+				(key) =>
+					key.startsWith('quotations_page') || // Pagination caches
+					key.startsWith('shop:all') || // All quotations cache
+					key.startsWith('quotations:list:') || // List caches
+					key.startsWith('quotations:stats:') || // Stats caches
+					key.startsWith('products_page') || // Product pagination caches
+					key.startsWith('banners_page') || // Banner caches
+					key.includes('_limit'), // Filtered caches
+			);
+			keysToDelete.push(...quotationListCaches);
+
+			// Clear all caches
+			if (keysToDelete.length > 0) {
+				await Promise.all(keysToDelete.map((key) => this.cacheManager.del(key)));
+				this.logger.log(`Cleared ${keysToDelete.length} shop cache keys`);
+			}
+		} catch (error) {
+			this.logger.error('Failed to clear shop cache', error.stack);
+		}
 	}
 
 	/**
@@ -726,6 +795,9 @@ export class ShopService {
 				// Don't include detailed information yet
 				message: 'We have received your order request and will prepare a quotation for you shortly.',
 			});
+
+			// Clear caches after successful quotation creation
+			await this.clearShopCache(savedQuotation.uid, quotationData.client?.uid);
 
 					return {
 			message: process.env.SUCCESS_MESSAGE,
@@ -1528,6 +1600,9 @@ export class ShopService {
 			status,
 			updatedAt: new Date(),
 		});
+
+		// Clear caches after successful quotation status update
+		await this.clearShopCache(quotationId, quotation.client?.uid);
 
 		// Only send notification if the status has changed
 		if (previousStatus !== status) {

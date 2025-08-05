@@ -1,6 +1,8 @@
 import { Injectable, NotFoundException, BadRequestException, Inject, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
 import { Interaction } from './entities/interaction.entity';
 import { CreateInteractionDto } from './dto/create-interaction.dto';
 import { UpdateInteractionDto } from './dto/update-interaction.dto';
@@ -16,6 +18,8 @@ import { Quotation } from '../shop/entities/quotation.entity';
 @Injectable()
 export class InteractionsService {
 	private readonly logger = new Logger(InteractionsService.name);
+	private readonly CACHE_TTL: number;
+	private readonly CACHE_PREFIX = 'interaction:';
 
 	constructor(
 		@InjectRepository(Interaction)
@@ -24,8 +28,152 @@ export class InteractionsService {
 		private leadRepository: Repository<Lead>,
 		@InjectRepository(Client)
 		private clientRepository: Repository<Client>,
+		@Inject(CACHE_MANAGER)
+		private cacheManager: Cache,
 		private readonly configService: ConfigService,
-	) {}
+	) {
+		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
+	}
+
+	/**
+	 * Generate cache key for interactions
+	 */
+	private getCacheKey(key: string | number): string {
+		return `${this.CACHE_PREFIX}${key}`;
+	}
+
+	/**
+	 * Generate cache key for lead interactions
+	 */
+	private getLeadInteractionsCacheKey(leadUid: number): string {
+		return `${this.CACHE_PREFIX}lead:${leadUid}`;
+	}
+
+	/**
+	 * Generate cache key for client interactions
+	 */
+	private getClientInteractionsCacheKey(clientUid: number): string {
+		return `${this.CACHE_PREFIX}client:${clientUid}`;
+	}
+
+	/**
+	 * Generate cache key for quotation interactions
+	 */
+	private getQuotationInteractionsCacheKey(quotationUid: number): string {
+		return `${this.CACHE_PREFIX}quotation:${quotationUid}`;
+	}
+
+	/**
+	 * Clear interaction-related caches
+	 */
+	private async clearInteractionCache(interactionId?: number, leadUid?: number, clientUid?: number, quotationUid?: number): Promise<void> {
+		try {
+			const keys = await this.cacheManager.store.keys();
+			const keysToDelete = [];
+
+			// Clear specific interaction cache if provided
+			if (interactionId) {
+				keysToDelete.push(this.getCacheKey(interactionId));
+			}
+
+			// Clear lead-related interaction caches
+			if (leadUid) {
+				keysToDelete.push(this.getLeadInteractionsCacheKey(leadUid));
+			}
+
+			// Clear client-related interaction caches
+			if (clientUid) {
+				keysToDelete.push(this.getClientInteractionsCacheKey(clientUid));
+			}
+
+			// Clear quotation-related interaction caches
+			if (quotationUid) {
+				keysToDelete.push(this.getQuotationInteractionsCacheKey(quotationUid));
+			}
+
+			// Clear all pagination and filtered interaction list caches
+			const interactionListCaches = keys.filter(
+				(key) =>
+					key.startsWith('interactions_page') || // Pagination caches
+					key.startsWith('interaction:all') || // All interactions cache
+					key.includes('_limit'), // Filtered caches
+			);
+			keysToDelete.push(...interactionListCaches);
+
+			// Clear all caches
+			if (keysToDelete.length > 0) {
+				await Promise.all(keysToDelete.map((key) => this.cacheManager.del(key)));
+				this.logger.log(`Cleared ${keysToDelete.length} interaction cache keys`);
+			}
+		} catch (error) {
+			this.logger.error('Failed to clear interaction cache', error.stack);
+		}
+	}
+
+	/**
+	 * Clear related entity caches when interactions are created/updated
+	 */
+	private async clearRelatedEntityCaches(leadUid?: number, clientUid?: number, quotationUid?: number): Promise<void> {
+		try {
+			const keys = await this.cacheManager.store.keys();
+			const keysToDelete = [];
+
+			// Clear lead-related caches from other services
+			if (leadUid) {
+				const leadCaches = keys.filter(
+					(key) =>
+						key.startsWith('lead:') ||
+						key.startsWith('leads_page') ||
+						key.includes(`lead_${leadUid}`) ||
+						key.includes(`leadUid_${leadUid}`)
+				);
+				keysToDelete.push(...leadCaches);
+			}
+
+			// Clear client-related caches
+			if (clientUid) {
+				const clientCaches = keys.filter(
+					(key) =>
+						key.startsWith('client:') ||
+						key.startsWith('clients_page') ||
+						key.includes(`client_${clientUid}`) ||
+						key.includes(`clientUid_${clientUid}`)
+				);
+				keysToDelete.push(...clientCaches);
+			}
+
+			// Clear quotation-related caches from shop service
+			if (quotationUid) {
+				const quotationCaches = keys.filter(
+					(key) =>
+						key.startsWith('quotation:') ||
+						key.startsWith('quotations_page') ||
+						key.includes(`quotation_${quotationUid}`) ||
+						key.includes(`quotationUid_${quotationUid}`)
+				);
+				keysToDelete.push(...quotationCaches);
+			}
+
+			// Clear task-related caches if client or lead is involved
+			if (leadUid || clientUid) {
+				const taskCaches = keys.filter(
+					(key) =>
+						key.startsWith('task:') ||
+						key.startsWith('tasks_page') ||
+						key.includes('task_')
+				);
+				keysToDelete.push(...taskCaches);
+			}
+
+			// Clear all caches
+			if (keysToDelete.length > 0) {
+				await Promise.all(keysToDelete.map((key) => this.cacheManager.del(key)));
+				this.logger.log(`Cleared ${keysToDelete.length} related entity cache keys after interaction update`);
+			}
+		} catch (error) {
+			this.logger.error('Failed to clear related entity caches', error.stack);
+		}
+	}
 
 	async create(
 		createInteractionDto: CreateInteractionDto,
@@ -108,6 +256,21 @@ export class InteractionsService {
 			}
 
 			const savedInteraction = await this.interactionRepository.save(interaction);
+
+			// Clear caches after successful creation
+			await this.clearInteractionCache(
+				savedInteraction.uid,
+				createInteractionDto.leadUid,
+				createInteractionDto.clientUid,
+				createInteractionDto.quotationUid
+			);
+
+			// Clear related entity caches to ensure data consistency
+			await this.clearRelatedEntityCaches(
+				createInteractionDto.leadUid,
+				createInteractionDto.clientUid,
+				createInteractionDto.quotationUid
+			);
 
 			const response = {
 				message: this.configService.get<string>('SUCCESS_MESSAGE') || 'Interaction created successfully',
@@ -466,6 +629,21 @@ export class InteractionsService {
 			const updatedInteraction = { ...interaction, ...updateInteractionDto };
 			await this.interactionRepository.save(updatedInteraction);
 
+			// Clear caches after successful update
+			await this.clearInteractionCache(
+				interaction.uid,
+				interaction.lead?.uid,
+				interaction.client?.uid,
+				interaction.quotation?.uid
+			);
+
+			// Clear related entity caches to ensure data consistency
+			await this.clearRelatedEntityCaches(
+				interaction.lead?.uid,
+				interaction.client?.uid,
+				interaction.quotation?.uid
+			);
+
 			return {
 				message: this.configService.get<string>('SUCCESS_MESSAGE') || 'Interaction updated successfully',
 			};
@@ -506,6 +684,21 @@ export class InteractionsService {
 			// Soft delete by updating isDeleted flag
 			interaction.isDeleted = true;
 			await this.interactionRepository.save(interaction);
+
+			// Clear caches after successful deletion
+			await this.clearInteractionCache(
+				interaction.uid,
+				interaction.lead?.uid,
+				interaction.client?.uid,
+				interaction.quotation?.uid
+			);
+
+			// Clear related entity caches to ensure data consistency
+			await this.clearRelatedEntityCaches(
+				interaction.lead?.uid,
+				interaction.client?.uid,
+				interaction.quotation?.uid
+			);
 
 			return {
 				message: this.configService.get<string>('SUCCESS_MESSAGE') || 'Interaction deleted successfully',
