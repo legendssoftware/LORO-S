@@ -141,7 +141,7 @@ export class LeaveEmailService {
 
 			const delegatedUser = await this.getDelegatedUser(leave.delegatedToUid);
 
-			for (const approver of approvers) {
+			for (const approver of admins) {
 				const emailData: LeaveNewApplicationAdminData = {
 					name: approver.name || approver.email,
 					adminName: approver.name || approver.email,
@@ -249,7 +249,7 @@ export class LeaveEmailService {
 			const monthlyApprovals = 0; // TODO: Implement actual count
 			const adequateCoverage = true; // TODO: Implement actual logic
 
-			for (const approver of approvers) {
+			for (const approver of admins) {
 				const emailData: LeaveStatusUpdateAdminData = {
 					name: approver.name || approver.email,
 					adminName: approver.name || approver.email,
@@ -325,7 +325,7 @@ export class LeaveEmailService {
 			this.eventEmitter.emit('send.email', EmailType.LEAVE_DELETED_NOTIFICATION, [applicant.email], applicantEmailData);
 
 			// Send to approvers
-			for (const approver of approvers) {
+			for (const approver of admins) {
 				const approverEmailData: LeaveDeletedNotificationData = {
 					name: approver.name || approver.email,
 					recipientName: approver.name || approver.email,

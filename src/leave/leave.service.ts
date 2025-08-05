@@ -747,7 +747,7 @@ export class LeaveService {
 				emailNotificationsEnabled: true,
 				pushNotificationsEnabled: true,
 				organisationRef: requester.organisationRef,
-				branchUid: requester.branchUid,
+				branchUid: requester.branch?.uid,
 				metadata: {
 					leaveId: leave.uid,
 					leaveType: leave.leaveType,
@@ -770,7 +770,7 @@ export class LeaveService {
 			const approval = await this.approvalsService.create(approvalDto, {
 				user: requester,
 				organisationRef: requester.organisationRef,
-				branchUid: requester.branchUid,
+				branchUid: requester.branch?.uid,
 			} as any);
 
 			console.log(`✅ [LeaveService] Approval workflow initialized: approval ${approval.uid} for leave ${leave.uid}`);
@@ -961,8 +961,18 @@ export class LeaveService {
 				return; // Not a leave request, ignore
 			}
 
+			// Get the user who performed the action for approval lookup
+			const actionUser = await this.userRepository.findOne({
+				where: { uid: payload.actionBy },
+			});
+
+			if (!actionUser) {
+				console.error(`❌ [LeaveService] Action user ${payload.actionBy} not found for approval ${payload.approvalId}`);
+				return;
+			}
+
 			// Find the approval to get the entity information
-			const approval = await this.approvalsService.findOne(payload.approvalId);
+			const approval = await this.approvalsService.findOne(payload.approvalId, actionUser as any);
 			if (!approval || approval.entityType !== 'leave') {
 				console.log(`⚠️ [LeaveService] Approval ${payload.approvalId} is not for a leave request`);
 				return;
@@ -979,10 +989,7 @@ export class LeaveService {
 				return;
 			}
 
-			// Get the user who performed the action
-			const actionUser = await this.userRepository.findOne({
-				where: { uid: payload.actionBy },
-			});
+			// actionUser already retrieved above for approval lookup
 
 			const previousStatus = leave.status;
 			let newStatus: LeaveStatus;
