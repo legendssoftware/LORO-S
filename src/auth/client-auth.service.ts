@@ -6,7 +6,7 @@ import { Repository } from 'typeorm';
 import { ClientAuth } from '../clients/entities/client.auth.entity';
 import { ClientPasswordReset } from './entities/client-password-reset.entity';
 import { ClientSignInInput, ClientForgotPasswordInput, ClientResetPasswordInput } from './dto/client-auth.dto';
-import { BadRequestException, HttpException, HttpStatus, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, HttpException, HttpStatus, Injectable, UnauthorizedException, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { EmailType } from '../lib/enums/email.enums';
 import { LicensingService } from '../licensing/licensing.service';
@@ -15,6 +15,8 @@ import { PlatformService } from '../lib/services/platform.service';
 
 @Injectable()
 export class ClientAuthService {
+	private readonly logger = new Logger(ClientAuthService.name);
+
 	constructor(
 		private jwtService: JwtService,
 		@InjectRepository(ClientAuth)
@@ -28,94 +30,112 @@ export class ClientAuthService {
 
 	// Reuse the same secure token generation method as in AuthService
 	private async generateSecureToken(): Promise<string> {
-		return crypto.randomBytes(32).toString('hex');
+		this.logger.debug('Generating secure token for client authentication');
+		const token = crypto.randomBytes(32).toString('hex');
+		this.logger.debug('Secure token generated successfully');
+		return token;
 	}
 
 	private getOrganisationRef(organisation: any): string {
-		return String(typeof organisation === 'object' ? organisation.uid : organisation);
+		this.logger.debug(`Getting organisation reference from: ${typeof organisation}`);
+		const orgRef = String(typeof organisation === 'object' ? organisation.uid : organisation);
+		this.logger.debug(`Organisation reference extracted: ${orgRef}`);
+		return orgRef;
 	}
 
 	async clientSignIn(signInInput: ClientSignInInput, requestData?: any) {
+		this.logger.log(`Client sign in attempt for email: ${signInInput.email}`);
+		this.logger.debug(`Request data provided: ${JSON.stringify(requestData || {})}`);
+
 		try {
 			const { email, password } = signInInput;
 
+			this.logger.debug(`Finding client auth record for email: ${email}`);
 			const clientAuth = await this.clientAuthRepository.findOne({
 				where: { email, isDeleted: false },
 				relations: ['client', 'client.organisation', 'client.branch'],
 			});
 
-					if (!clientAuth) {
-			// Send failed login email for unknown client email
-			try {
-				this.eventEmitter.emit('send.email', EmailType.CLIENT_FAILED_LOGIN_ATTEMPT, [email], {
-					name: email.split('@')[0],
-					loginTime: new Date().toLocaleString(),
-					ipAddress: requestData?.ipAddress || 'Unknown',
-					location: requestData?.location || 'Unknown',
-					country: requestData?.country || 'Unknown',
-					deviceType: requestData?.deviceType || 'Unknown',
-					browser: requestData?.browser || 'Unknown',
-					operatingSystem: requestData?.operatingSystem || 'Unknown',
-					userAgent: requestData?.userAgent || 'Unknown',
-					suspicious: true,
-					securityTips: [
-						'Contact us immediately if you suspect unauthorized access',
-						'Ensure you are using the correct client portal URL',
-						'Use strong, unique passwords for your client portal',
-					],
-				});
-			} catch (error) {
-				console.error('Failed to send client failed login notification email:', error);
+			if (!clientAuth) {
+				this.logger.warn(`Client not found for authentication: ${email}`);
+				// Send failed login email for unknown client email
+				try {
+					this.logger.debug(`Sending failed login notification email for unknown client: ${email}`);
+					this.eventEmitter.emit('send.email', EmailType.CLIENT_FAILED_LOGIN_ATTEMPT, [email], {
+						name: email.split('@')[0],
+						loginTime: new Date().toLocaleString(),
+						ipAddress: requestData?.ipAddress || 'Unknown',
+						location: requestData?.location || 'Unknown',
+						country: requestData?.country || 'Unknown',
+						deviceType: requestData?.deviceType || 'Unknown',
+						browser: requestData?.browser || 'Unknown',
+						operatingSystem: requestData?.operatingSystem || 'Unknown',
+						userAgent: requestData?.userAgent || 'Unknown',
+						suspicious: true,
+						securityTips: [
+							'Contact us immediately if you suspect unauthorized access',
+							'Ensure you are using the correct client portal URL',
+							'Use strong, unique passwords for your client portal',
+						],
+					});
+				} catch (error) {
+					this.logger.error('Failed to send client failed login notification email:', error.stack);
+				}
+
+							return {
+					message: 'Invalid credentials provided',
+					accessToken: null,
+					refreshToken: null,
+					profileData: null,
+				};
 			}
 
-			return {
-				message: 'Invalid credentials provided',
-				accessToken: null,
-				refreshToken: null,
-				profileData: null,
-			};
-		}
+			this.logger.debug(`Validating password for client: ${email}`);
+			const isPasswordValid = await bcrypt.compare(password, clientAuth.password);
 
-		const isPasswordValid = await bcrypt.compare(password, clientAuth.password);
+			if (!isPasswordValid) {
+				this.logger.warn(`Invalid password attempt for client: ${email}`);
+				// Send failed login email for incorrect password
+				try {
+					this.logger.debug(`Sending failed login notification email for invalid password: ${email}`);
+					this.eventEmitter.emit('send.email', EmailType.CLIENT_FAILED_LOGIN_ATTEMPT, [clientAuth.email], {
+						name: clientAuth.email.split('@')[0],
+						loginTime: new Date().toLocaleString(),
+						ipAddress: requestData?.ipAddress || 'Unknown',
+						location: requestData?.location || 'Unknown',
+						country: requestData?.country || 'Unknown',
+						deviceType: requestData?.deviceType || 'Unknown',
+						browser: requestData?.browser || 'Unknown',
+						operatingSystem: requestData?.operatingSystem || 'Unknown',
+						userAgent: requestData?.userAgent || 'Unknown',
+						suspicious: true,
+						securityTips: [
+							'Contact us immediately if you suspect unauthorized access',
+							'Change your password if you are concerned about security',
+							'Use strong, unique passwords for your client portal',
+						],
+					});
+				} catch (error) {
+					this.logger.error('Failed to send client failed login notification email:', error.stack);
+				}
 
-		if (!isPasswordValid) {
-			// Send failed login email for incorrect password
-			try {
-				this.eventEmitter.emit('send.email', EmailType.CLIENT_FAILED_LOGIN_ATTEMPT, [clientAuth.email], {
-					name: clientAuth.email.split('@')[0],
-					loginTime: new Date().toLocaleString(),
-					ipAddress: requestData?.ipAddress || 'Unknown',
-					location: requestData?.location || 'Unknown',
-					country: requestData?.country || 'Unknown',
-					deviceType: requestData?.deviceType || 'Unknown',
-					browser: requestData?.browser || 'Unknown',
-					operatingSystem: requestData?.operatingSystem || 'Unknown',
-					userAgent: requestData?.userAgent || 'Unknown',
-					suspicious: true,
-					securityTips: [
-						'Contact us immediately if you suspect unauthorized access',
-						'Change your password if you are concerned about security',
-						'Use strong, unique passwords for your client portal',
-					],
-				});
-			} catch (error) {
-				console.error('Failed to send client failed login notification email:', error);
+							return {
+					message: 'Invalid credentials provided',
+					accessToken: null,
+					refreshToken: null,
+					profileData: null,
+				};
 			}
-
-			return {
-				message: 'Invalid credentials provided',
-				accessToken: null,
-				refreshToken: null,
-				profileData: null,
-			};
-		}
 
 			// Update last login timestamp
+			this.logger.debug(`Updating last login timestamp for client: ${email}`);
 			clientAuth.lastLogin = new Date();
 			await this.clientAuthRepository.save(clientAuth);
+			this.logger.debug(`Last login timestamp updated successfully for client: ${email}`);
 
 			// Send client login notification email
 			try {
+				this.logger.debug(`Sending successful login notification email to client: ${email}`);
 				this.eventEmitter.emit('send.email', EmailType.CLIENT_LOGIN_NOTIFICATION, [clientAuth.email], {
 					name: clientAuth.client?.name || clientAuth.email.split('@')[0],
 					loginTime: new Date().toLocaleString(),
@@ -135,31 +155,29 @@ export class ClientAuthService {
 				});
 			} catch (error) {
 				// Don't fail login if email fails
-				console.error('Failed to send client login notification email:', error);
+				this.logger.error('Failed to send client login notification email:', error.stack);
 			}
 
-			// Check organization license if client belongs to an organization
+						// Check organization license if client belongs to an organization
 			if (clientAuth.client?.organisation) {
+				this.logger.debug(`Checking organization license for client: ${email}`);
 				const organisationRef = this.getOrganisationRef(clientAuth.client.organisation);
 
+				this.logger.debug(`Finding licenses for organization: ${organisationRef}`);
 				const licenses = await this.licensingService.findByOrganisation(organisationRef);
 				const activeLicense = licenses.find((license) =>
 					this.licensingService.validateLicense(String(license?.uid)),
 				);
 
 				if (!activeLicense) {
+					this.logger.warn(`No active license found for organization: ${organisationRef}`);
 					throw new UnauthorizedException(
 						"Your organization's license has expired. Please contact your administrator.",
 					);
 				}
+				this.logger.debug(`Active license found for organization: ${organisationRef}`);
 
-				// Generate JWT tokens with client-specific fields and license information
-				// Restrict client permissions to quotations only
-				const clientPermissions = {
-					'quotations.view': true,
-					'quotations.access': true,
-				};
-
+				this.logger.debug(`Generating JWT tokens for client with organization license`);
 				const platform = this.platformService.getPrimaryPlatform(activeLicense?.features || {});
 				const payload = {
 					uid: clientAuth.uid,
@@ -169,10 +187,14 @@ export class ClientAuthService {
 					licenseId: String(activeLicense?.uid),
 					licensePlan: activeLicense?.plan,
 					// Override with quotations-only permissions
-					features: clientPermissions,
+					features: {
+						'quotations.view': true,
+						'quotations.access': true,
+					},
 					branch: clientAuth.client?.branch?.uid ? { uid: clientAuth.client.branch.uid } : null,
 				};
 
+				this.logger.debug(`Signing access and refresh tokens for client: ${email}`);
 				const accessToken = await this.jwtService.signAsync(payload, {
 					expiresIn: process.env.JWT_ACCESS_EXPIRES_IN || '8h',
 				});
@@ -181,7 +203,8 @@ export class ClientAuthService {
 					expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
 				});
 
-				const response = {
+				this.logger.log(`Client sign in successful for: ${email}`);
+				return {
 					accessToken,
 					refreshToken,
 					profileData: {
@@ -248,39 +271,18 @@ export class ClientAuthService {
 							plan: activeLicense?.plan,
 							status: activeLicense?.status,
 							// Return the restricted permissions
-							features: clientPermissions,
+							features: {
+								'quotations.view': true,
+								'quotations.access': true,
+							},
 						},
 					},
 					message: 'Authentication successful',
 				};
+						}
 
-				// Send successful login email notification
-				try {
-					this.eventEmitter.emit('send.email', EmailType.CLIENT_LOGIN_NOTIFICATION, [clientAuth.email], {
-						name: clientAuth.client.name || clientAuth.email.split('@')[0],
-						loginTime: new Date().toLocaleString(),
-						ipAddress: requestData?.ipAddress || 'Unknown',
-						location: requestData?.location || 'Unknown',
-						country: requestData?.country || 'Unknown',
-						deviceType: requestData?.deviceType || 'Unknown',
-						browser: requestData?.browser || 'Unknown',
-						operatingSystem: requestData?.operatingSystem || 'Unknown',
-						userAgent: requestData?.userAgent || 'Unknown',
-						suspicious: false,
-						securityTips: [
-							'Always log out when using shared devices',
-							'Use strong, unique passwords for your client portal',
-							'Contact us if you notice any suspicious activity',
-						],
-					});
-				} catch (error) {
-					console.error('Failed to send client login notification email:', error);
-				}
-
-				return response;
-			}
-
-			// For clients without an organization (should be rare)
+						// For clients without an organization (should be rare)
+			this.logger.debug(`Processing sign in for client without organization: ${email}`);
 			// Still restrict to quotations-only access
 			const clientPermissions = {
 				'quotations.view': true,
@@ -295,6 +297,7 @@ export class ClientAuthService {
 				branch: clientAuth.client?.branch?.uid ? { uid: clientAuth.client.branch.uid } : null,
 			};
 
+			this.logger.debug(`Generating tokens for client without organization: ${email}`);
 			const accessToken = await this.jwtService.signAsync(payload, {
 				expiresIn: process.env.JWT_ACCESS_EXPIRES_IN || '8h',
 			});
@@ -370,31 +373,10 @@ export class ClientAuthService {
 				message: 'Authentication successful',
 			};
 
-			// Send successful login email notification
-			try {
-				this.eventEmitter.emit('send.email', EmailType.CLIENT_LOGIN_NOTIFICATION, [clientAuth.email], {
-					name: clientAuth.client.name || clientAuth.email.split('@')[0],
-					loginTime: new Date().toLocaleString(),
-					ipAddress: requestData?.ipAddress || 'Unknown',
-					location: requestData?.location || 'Unknown',
-					country: requestData?.country || 'Unknown',
-					deviceType: requestData?.deviceType || 'Unknown',
-					browser: requestData?.browser || 'Unknown',
-					operatingSystem: requestData?.operatingSystem || 'Unknown',
-					userAgent: requestData?.userAgent || 'Unknown',
-					suspicious: false,
-					securityTips: [
-						'Always log out when using shared devices',
-						'Use strong, unique passwords for your client portal',
-						'Contact us if you notice any suspicious activity',
-					],
-				});
-			} catch (error) {
-				console.error('Failed to send client login notification email:', error);
-			}
-
+						this.logger.log(`Client sign in successful (no org): ${email}`);
 			return response;
 		} catch (error) {
+			this.logger.error(`Client sign in failed for: ${signInInput.email}`, error.stack);
 			return {
 				message: error?.message || 'Authentication failed',
 				accessToken: null,
@@ -405,16 +387,20 @@ export class ClientAuthService {
 	}
 
 	async clientForgotPassword(forgotPasswordInput: ClientForgotPasswordInput) {
+		this.logger.log(`Client forgot password request for email: ${forgotPasswordInput.email}`);
+		
 		try {
 			const { email } = forgotPasswordInput;
 
 			// Find client by email
+			this.logger.debug(`Finding client auth record for password reset: ${email}`);
 			const clientAuth = await this.clientAuthRepository.findOne({
 				where: { email, isDeleted: false },
 				relations: ['client'],
 			});
 
 			if (!clientAuth) {
+				this.logger.warn(`Client password reset requested for non-existent email: ${email}`);
 				// Return success even if client not found for security
 				return {
 					message: 'If an account exists with this email, you will receive password reset instructions.',
@@ -422,11 +408,13 @@ export class ClientAuthService {
 			}
 
 			// Check for existing reset token
+			this.logger.debug(`Checking for existing reset token for client: ${email}`);
 			const existingReset = await this.clientPasswordResetRepository.findOne({
 				where: { email },
 			});
 
 			if (existingReset && existingReset.tokenExpires > new Date()) {
+				this.logger.debug(`Valid reset token already exists for client: ${email}`);
 				// If token still valid, don't send new email
 				return {
 					message: 'Password reset instructions have already been sent. Please check your email.',
@@ -434,6 +422,7 @@ export class ClientAuthService {
 			}
 
 			// Generate reset token and URL
+			this.logger.debug(`Generating reset token for client: ${email}`);
 			const resetToken = await this.generateSecureToken();
 			const resetUrl = `${process.env.CLIENT_PORTAL_DOMAIN}/reset-password/${resetToken}`;
 
@@ -442,11 +431,13 @@ export class ClientAuthService {
 			tokenExpires.setHours(tokenExpires.getHours() + 24); // Token valid for 24 hours
 
 			if (existingReset) {
+				this.logger.debug(`Updating existing reset record for client: ${email}`);
 				existingReset.resetToken = resetToken;
 				existingReset.tokenExpires = tokenExpires;
 				existingReset.isUsed = false;
 				await this.clientPasswordResetRepository.save(existingReset);
 			} else {
+				this.logger.debug(`Creating new reset record for client: ${email}`);
 				const passwordReset = this.clientPasswordResetRepository.create({
 					email,
 					resetToken,
@@ -457,15 +448,18 @@ export class ClientAuthService {
 			}
 
 			// Send reset email
+			this.logger.debug(`Sending password reset email to client: ${email}`);
 			this.eventEmitter.emit('send.email', EmailType.CLIENT_PASSWORD_RESET, [email], {
 				name: clientAuth.client.name || email.split('@')[0],
 				resetLink: resetUrl,
 			});
 
+			this.logger.log(`Client password reset request processed successfully for: ${email}`);
 			return {
 				message: 'Password reset instructions have been sent to your email.',
 			};
 		} catch (error) {
+			this.logger.error(`Client forgot password failed for email: ${forgotPasswordInput.email}`, error.stack);
 			throw new HttpException(
 				error.message || 'Failed to process password reset request',
 				error.status || HttpStatus.INTERNAL_SERVER_ERROR,
@@ -474,49 +468,61 @@ export class ClientAuthService {
 	}
 
 	async clientResetPassword(resetPasswordInput: ClientResetPasswordInput) {
+		this.logger.log(`Client reset password attempt with token: ${resetPasswordInput.token.substring(0, 10)}...`);
+		
 		try {
 			const { token, password } = resetPasswordInput;
 
 			// Find reset record
+			this.logger.debug(`Finding reset record by token`);
 			const resetRecord = await this.clientPasswordResetRepository.findOne({
 				where: { resetToken: token },
 				relations: ['clientAuth'],
 			});
 
 			if (!resetRecord) {
+				this.logger.warn(`Invalid or expired reset token provided`);
 				throw new BadRequestException('Invalid or expired reset token.');
 			}
 
 			if (resetRecord.tokenExpires < new Date()) {
+				this.logger.warn(`Reset token expired for email: ${resetRecord.email}`);
 				await this.clientPasswordResetRepository.remove(resetRecord);
 				throw new BadRequestException('Reset token has expired. Please request a new one.');
 			}
 
 			if (resetRecord.isUsed) {
+				this.logger.warn(`Reset token already used for email: ${resetRecord.email}`);
 				throw new BadRequestException('This reset token has already been used.');
 			}
 
 			// Hash new password
+			this.logger.debug(`Hashing new password for client: ${resetRecord.email}`);
 			const hashedPassword = await bcrypt.hash(password, 10);
 
 			// Update client password
+			this.logger.debug(`Updating password for client: ${resetRecord.email}`);
 			resetRecord.clientAuth.password = hashedPassword;
 			await this.clientAuthRepository.save(resetRecord.clientAuth);
 
 			// Mark reset token as used
+			this.logger.debug(`Marking reset token as used for: ${resetRecord.email}`);
 			resetRecord.isUsed = true;
 			await this.clientPasswordResetRepository.save(resetRecord);
 
 			// Send confirmation email
+			this.logger.debug(`Sending password changed confirmation email to: ${resetRecord.email}`);
 			this.eventEmitter.emit('send.email', EmailType.CLIENT_PASSWORD_CHANGED, [resetRecord.email], {
 				name: resetRecord.clientAuth.client.name || resetRecord.email.split('@')[0],
 				changeTime: new Date().toLocaleString(),
 			});
 
+			this.logger.log(`Client password reset successful for: ${resetRecord.email}`);
 			return {
 				message: 'Password has been reset successfully. You can now log in with your new password.',
 			};
 		} catch (error) {
+			this.logger.error(`Client password reset failed`, error.stack);
 			throw new HttpException(
 				error.message || 'Failed to reset password',
 				error.status || HttpStatus.INTERNAL_SERVER_ERROR,
@@ -525,10 +531,14 @@ export class ClientAuthService {
 	}
 
 	async clientRefreshToken(token: string) {
+		this.logger.log(`Client refresh token attempt`);
+		
 		try {
+			this.logger.debug(`Verifying client refresh token`);
 			const payload = await this.jwtService.verifyAsync(token);
 
 			if (!payload) {
+				this.logger.warn(`Invalid client refresh token payload`);
 				return {
 					message: 'Invalid refresh token',
 					accessToken: null,
@@ -538,12 +548,14 @@ export class ClientAuthService {
 			}
 
 			// Find client auth by uid
+			this.logger.debug(`Finding client auth by UID: ${payload?.uid}`);
 			const clientAuth = await this.clientAuthRepository.findOne({
 				where: { uid: Number(payload.uid), isDeleted: false },
 				relations: ['client', 'client.organisation', 'client.branch'],
 			});
 
 			if (!clientAuth) {
+				this.logger.warn(`Client not found for refresh token, UID: ${payload?.uid}`);
 				return {
 					message: 'Client not found',
 					accessToken: null,
@@ -554,6 +566,7 @@ export class ClientAuthService {
 
 			// Check organization license if client belongs to an organization
 			if (clientAuth.client?.organisation) {
+				this.logger.debug(`Checking organization license for client refresh token, orgRef: ${clientAuth.client.organisation}`);
 				const organisationRef = this.getOrganisationRef(clientAuth.client.organisation);
 
 				const licenses = await this.licensingService.findByOrganisation(organisationRef);
@@ -562,6 +575,7 @@ export class ClientAuthService {
 				);
 
 				if (!activeLicense) {
+					this.logger.warn(`No active license found for organization during client refresh: ${organisationRef}`);
 					return {
 						message: "Your organization's license has expired. Please contact your administrator.",
 						accessToken: null,
@@ -570,6 +584,9 @@ export class ClientAuthService {
 					};
 				}
 
+				this.logger.debug(`Active license found for organization during client refresh: ${organisationRef}`);
+				const platform = this.platformService.getPrimaryPlatform(activeLicense?.features || {});
+
 				// Generate new JWT tokens with client-specific fields and license information
 				// Maintain the restricted quotations-only permissions
 				const clientPermissions = {
@@ -577,7 +594,6 @@ export class ClientAuthService {
 					'quotations.access': true,
 				};
 
-				const platform = this.platformService.getPrimaryPlatform(activeLicense?.features || {});
 				const newPayload = {
 					uid: clientAuth.uid,
 					role: AccessLevel.CLIENT,
@@ -589,6 +605,7 @@ export class ClientAuthService {
 					branch: clientAuth.client?.branch?.uid ? { uid: clientAuth.client.branch.uid } : null,
 				};
 
+				this.logger.debug(`Generating new access token for client: ${clientAuth.email}`);
 				const accessToken = await this.jwtService.signAsync(newPayload, {
 					expiresIn: process.env.JWT_ACCESS_EXPIRES_IN || '8h',
 				});
@@ -598,6 +615,7 @@ export class ClientAuthService {
 					expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
 				});
 
+				this.logger.log(`Client access token refreshed successfully for: ${clientAuth.email}`);
 				return {
 					accessToken,
 					refreshToken,
@@ -669,9 +687,10 @@ export class ClientAuthService {
 					},
 					message: 'Tokens refreshed successfully',
 				};
-			}
+						}
 
 			// For clients without an organization (should be rare)
+			this.logger.debug(`Processing refresh token for client without organization: ${clientAuth.email}`);
 			// Maintain the restricted quotations-only permissions
 			const clientPermissions = {
 				'quotations.view': true,
@@ -686,6 +705,7 @@ export class ClientAuthService {
 				branch: clientAuth.client?.branch?.uid ? { uid: clientAuth.client.branch.uid } : null,
 			};
 
+			this.logger.debug(`Generating new access token for client without organization: ${clientAuth.email}`);
 			const accessToken = await this.jwtService.signAsync(newPayload, {
 				expiresIn: process.env.JWT_ACCESS_EXPIRES_IN || '8h',
 			});
@@ -695,6 +715,7 @@ export class ClientAuthService {
 				expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
 			});
 
+			this.logger.log(`Client access token refreshed successfully (no org): ${clientAuth.email}`);
 			return {
 				accessToken,
 				refreshToken,
@@ -762,7 +783,9 @@ export class ClientAuthService {
 				message: 'Tokens refreshed successfully',
 			};
 		} catch (error) {
+			this.logger.error(`Client refresh token failed`, error.stack);
 			if (error?.name === 'TokenExpiredError') {
+				this.logger.warn(`Client refresh token has expired`);
 				return {
 					message: 'Refresh token has expired',
 					accessToken: null,

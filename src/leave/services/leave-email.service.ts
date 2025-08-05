@@ -5,7 +5,6 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { User } from '../../user/entities/user.entity';
 import { Leave } from '../entities/leave.entity';
 import { AccessLevel } from '../../lib/enums/user.enums';
-import { LeaveStatus } from '../../lib/enums/leave.enums';
 import { EmailType } from '../../lib/enums/email.enums';
 import {
 	LeaveApplicationConfirmationData,

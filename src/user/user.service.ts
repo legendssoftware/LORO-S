@@ -30,7 +30,7 @@ import { User } from './entities/user.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { Injectable, NotFoundException, BadRequestException, Inject, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject, Logger } from '@nestjs/common';
 import { NewSignUp } from '../lib/types/user';
 import { AccountStatus } from '../lib/enums/status.enums';
 import { PaginatedResponse } from '../lib/interfaces/product.interfaces';
@@ -142,7 +142,9 @@ export class UserService {
 					return false;
 				}
 				if (userTarget.currentQuotationsAmount > 10000000) {
-					this.logger.warn(`Unreasonably large currentQuotationsAmount: ${userTarget.currentQuotationsAmount}`);
+					this.logger.warn(
+						`Unreasonably large currentQuotationsAmount: ${userTarget.currentQuotationsAmount}`,
+					);
 					return false;
 				}
 			}
@@ -271,11 +273,10 @@ export class UserService {
 						isDeleted: false,
 					},
 					select: ['uid', 'name', 'contactPerson', 'email', 'phone', 'status', 'createdAt'],
-	
 				}),
-				new Promise<never>((_, reject) => 
-					setTimeout(() => reject(new Error('Client query timeout')), queryTimeout)
-				)
+				new Promise<never>((_, reject) =>
+					setTimeout(() => reject(new Error('Client query timeout')), queryTimeout),
+				),
 			]);
 
 			return { ...user, assignedClients: clients };
@@ -291,7 +292,9 @@ export class UserService {
 	 * @param user - User entity
 	 * @returns User data without password but with assigned clients
 	 */
-	private async excludePasswordAndPopulateClients(user: User): Promise<Omit<User, 'password'> & { assignedClients?: Client[] }> {
+	private async excludePasswordAndPopulateClients(
+		user: User,
+	): Promise<Omit<User, 'password'> & { assignedClients?: Client[] }> {
 		const userWithClients = await this.populateAssignedClients(user);
 		const { password, ...userWithoutPassword } = userWithClients;
 		return userWithoutPassword;
@@ -318,9 +321,9 @@ export class UserService {
 	async create(createUserDto: CreateUserDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
 		const startTime = Date.now();
 		this.logger.log(
-			`[USER_CREATION] Starting user creation process for: ${createUserDto.email} ${orgId ? `in org: ${orgId}` : ''} ${
-				branchId ? `in branch: ${branchId}` : ''
-			}`,
+			`[USER_CREATION] Starting user creation process for: ${createUserDto.email} ${
+				orgId ? `in org: ${orgId}` : ''
+			} ${branchId ? `in branch: ${branchId}` : ''}`,
 		);
 
 		try {
@@ -348,12 +351,12 @@ export class UserService {
 			// Create the user entity with proper relationship setting
 			const user = this.userRepository.create({
 				...createUserDto,
-				...(orgId && { 
+				...(orgId && {
 					organisation: { uid: orgId },
-					organisationRef: orgId.toString() 
+					organisationRef: orgId.toString(),
 				}),
-				...(branchId && { 
-					branch: { uid: branchId } 
+				...(branchId && {
+					branch: { uid: branchId },
 				}),
 			});
 
@@ -364,21 +367,25 @@ export class UserService {
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
 			}
 
-			this.logger.log(`[USER_CREATION] User created successfully: ${savedUser.uid} (${savedUser.email}) with role: ${savedUser.accessLevel}`);
+			this.logger.log(
+				`[USER_CREATION] User created successfully: ${savedUser.uid} (${savedUser.email}) with role: ${savedUser.accessLevel}`,
+			);
 
 			// Invalidate cache after creation
 			await this.invalidateUserCache(savedUser);
 
 			// Send welcome and creation notification emails
 			this.logger.debug('[USER_CREATION] Sending welcome and notification emails');
-			const emailPromises = [
-				this.sendWelcomeEmail(savedUser),
-			];
+			const emailPromises = [this.sendWelcomeEmail(savedUser)];
 
 			// Check if user has assigned clients for client assignment notification
 			if (createUserDto.assignedClientIds && createUserDto.assignedClientIds.length > 0) {
-				this.logger.debug(`[USER_CREATION] User has ${createUserDto.assignedClientIds.length} assigned clients, sending comprehensive notification`);
-				emailPromises.push(this.sendUserCreationWithClientsNotificationEmail(savedUser, createUserDto.assignedClientIds));
+				this.logger.debug(
+					`[USER_CREATION] User has ${createUserDto.assignedClientIds.length} assigned clients, sending comprehensive notification`,
+				);
+				emailPromises.push(
+					this.sendUserCreationWithClientsNotificationEmail(savedUser, createUserDto.assignedClientIds),
+				);
 			} else {
 				this.logger.debug('[USER_CREATION] User has no assigned clients, sending standard notification');
 				emailPromises.push(this.sendUserCreationNotificationEmail(savedUser));
@@ -387,7 +394,9 @@ export class UserService {
 			await Promise.all(emailPromises);
 
 			const executionTime = Date.now() - startTime;
-			this.logger.log(`[USER_CREATION] User creation completed successfully in ${executionTime}ms for user: ${savedUser.email}`);
+			this.logger.log(
+				`[USER_CREATION] User creation completed successfully in ${executionTime}ms for user: ${savedUser.email}`,
+			);
 
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,
@@ -498,16 +507,16 @@ export class UserService {
 			const executionTime = Date.now() - startTime;
 			this.logger.log(`Successfully fetched ${users.length} users out of ${total} total in ${executionTime}ms`);
 
-					return {
-			data: await Promise.all(users.map(user => this.excludePasswordAndPopulateClients(user))),
-			meta: {
-				total,
-				page,
-				limit,
-				totalPages: Math.ceil(total / limit),
-			},
-			message: process.env.SUCCESS_MESSAGE,
-		};
+			return {
+				data: await Promise.all(users.map((user) => this.excludePasswordAndPopulateClients(user))),
+				meta: {
+					total,
+					page,
+					limit,
+					totalPages: Math.ceil(total / limit),
+				},
+				message: process.env.SUCCESS_MESSAGE,
+			};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
 			this.logger.error(`Failed to fetch users after ${executionTime}ms. Error: ${error.message}`);
@@ -566,10 +575,10 @@ export class UserService {
 				const executionTime = Date.now() - startTime;
 				this.logger.log(`User ${searchParameter} retrieved from cache in ${executionTime}ms`);
 
-							return {
-				user: await this.excludePasswordAndPopulateClients(cachedUser),
-				message: process.env.SUCCESS_MESSAGE,
-			};
+				return {
+					user: await this.excludePasswordAndPopulateClients(cachedUser),
+					message: process.env.SUCCESS_MESSAGE,
+				};
 			}
 
 			this.logger.debug(`Cache miss for user: ${searchParameter}, querying database`);
@@ -604,13 +613,13 @@ export class UserService {
 			// Cache the user data
 			await this.cacheManager.set(cacheKey, user, this.CACHE_TTL);
 
-					const executionTime = Date.now() - startTime;
-		this.logger.log(`User ${searchParameter} (${user.email}) retrieved from database in ${executionTime}ms`);
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`User ${searchParameter} (${user.email}) retrieved from database in ${executionTime}ms`);
 
-		return {
-			user: await this.excludePasswordAndPopulateClients(user),
-			message: process.env.SUCCESS_MESSAGE,
-		};
+			return {
+				user: await this.excludePasswordAndPopulateClients(user),
+				message: process.env.SUCCESS_MESSAGE,
+			};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
 			this.logger.error(
@@ -747,13 +756,13 @@ export class UserService {
 				};
 			}
 
-					const executionTime = Date.now() - startTime;
-		this.logger.log(`User found by UID: ${searchParameter} (${user.email}) in ${executionTime}ms`);
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`User found by UID: ${searchParameter} (${user.email}) in ${executionTime}ms`);
 
-		return {
-			user: await this.excludePasswordAndPopulateClients(user),
-			message: process.env.SUCCESS_MESSAGE,
-		};
+			return {
+				user: await this.excludePasswordAndPopulateClients(user),
+				message: process.env.SUCCESS_MESSAGE,
+			};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
 			this.logger.error(
@@ -909,13 +918,17 @@ export class UserService {
 
 			// Check for role/access level change
 			if (updateUserDto.accessLevel && updateUserDto.accessLevel !== existingUser.accessLevel) {
-				this.logger.log(`[USER_UPDATE] Role change detected: ${existingUser.accessLevel} → ${updateUserDto.accessLevel} for user: ${existingUser.email}`);
+				this.logger.log(
+					`[USER_UPDATE] Role change detected: ${existingUser.accessLevel} → ${updateUserDto.accessLevel} for user: ${existingUser.email}`,
+				);
 				changes.role = true;
 			}
 
 			// Check for status change
 			if (updateUserDto.status && updateUserDto.status !== existingUser.status) {
-				this.logger.log(`[USER_UPDATE] Status change detected: ${existingUser.status} → ${updateUserDto.status} for user: ${existingUser.email}`);
+				this.logger.log(
+					`[USER_UPDATE] Status change detected: ${existingUser.status} → ${updateUserDto.status} for user: ${existingUser.email}`,
+				);
 				changes.status = true;
 			}
 
@@ -930,14 +943,21 @@ export class UserService {
 				updatedAssignedClients = updateUserDto.assignedClientIds;
 				const originalSet = new Set(originalAssignedClients);
 				const updatedSet = new Set(updatedAssignedClients);
-				
+
 				// Check if there are any differences
-				const hasChanges = originalSet.size !== updatedSet.size || 
-					[...originalSet].some(id => !updatedSet.has(id)) ||
-					[...updatedSet].some(id => !originalSet.has(id));
+				const hasChanges =
+					originalSet.size !== updatedSet.size ||
+					[...originalSet].some((id) => !updatedSet.has(id)) ||
+					[...updatedSet].some((id) => !originalSet.has(id));
 
 				if (hasChanges) {
-					this.logger.log(`[USER_UPDATE] Assigned clients change detected for user: ${existingUser.email}. Original: [${originalAssignedClients.join(', ')}], Updated: [${updatedAssignedClients.join(', ')}]`);
+					this.logger.log(
+						`[USER_UPDATE] Assigned clients change detected for user: ${
+							existingUser.email
+						}. Original: [${originalAssignedClients.join(', ')}], Updated: [${updatedAssignedClients.join(
+							', ',
+						)}]`,
+					);
 					changes.assignedClients = true;
 				}
 			}
@@ -961,7 +981,7 @@ export class UserService {
 
 			// Send appropriate notification emails based on what changed
 			const emailPromises = [];
-			
+
 			// Determine if we should send a comprehensive update email or individual emails
 			const hasMultipleChanges = Object.values(changes).filter(Boolean).length > 1;
 			const hasSignificantChanges = changes.assignedClients || changes.role || changes.status;
@@ -969,13 +989,15 @@ export class UserService {
 			if (hasSignificantChanges || hasMultipleChanges) {
 				// Send comprehensive user update email
 				this.logger.debug(`[USER_UPDATE] Sending comprehensive update notification to: ${updatedUser.email}`);
-				emailPromises.push(this.sendComprehensiveUserUpdateEmail(
-					updatedUser, 
-					existingUser, 
-					changes, 
-					originalAssignedClients, 
-					updatedAssignedClients
-				));
+				emailPromises.push(
+					this.sendComprehensiveUserUpdateEmail(
+						updatedUser,
+						existingUser,
+						changes,
+						originalAssignedClients,
+						updatedAssignedClients,
+					),
+				);
 			} else {
 				// Send individual emails for single changes
 				if (changes.password) {
@@ -995,7 +1017,9 @@ export class UserService {
 			}
 
 			const executionTime = Date.now() - startTime;
-			this.logger.log(`[USER_UPDATE] User update completed successfully in ${executionTime}ms for user: ${updatedUser.email}`);
+			this.logger.log(
+				`[USER_UPDATE] User update completed successfully in ${executionTime}ms for user: ${updatedUser.email}`,
+			);
 
 			return {
 				message: process.env.SUCCESS_MESSAGE,
@@ -1248,8 +1272,6 @@ export class UserService {
 		}
 	}
 
-
-
 	/**
 	 * Mark user email as verified and activate account
 	 * @param uid - User ID to verify
@@ -1338,10 +1360,6 @@ export class UserService {
 			throw error;
 		}
 	}
-
-
-
-
 
 	/**
 	 * Update user password (for existing users)
@@ -1481,56 +1499,67 @@ export class UserService {
 			// Map DTO properties to entity with proper date conversion
 			Object.assign(userTarget, {
 				...createUserTargetDto,
-				periodStartDate: createUserTargetDto.periodStartDate ? new Date(createUserTargetDto.periodStartDate) : undefined,
-				periodEndDate: createUserTargetDto.periodEndDate ? new Date(createUserTargetDto.periodEndDate) : undefined,
+				periodStartDate: createUserTargetDto.periodStartDate
+					? new Date(createUserTargetDto.periodStartDate)
+					: undefined,
+				periodEndDate: createUserTargetDto.periodEndDate
+					? new Date(createUserTargetDto.periodEndDate)
+					: undefined,
 			});
 
 			// Save the user target and update the user
 			user.userTarget = userTarget;
 			await this.userRepository.save(user);
 
-					// Invalidate the cache
-		await this.invalidateUserCache(user);
-		await this.cacheManager.del(this.getCacheKey(`target_${userId}`));
+			// Invalidate the cache
+			await this.invalidateUserCache(user);
+			await this.cacheManager.del(this.getCacheKey(`target_${userId}`));
 
-		// Send target set email notification
-		this.logger.log(`📧 [UserService] Sending target set email notification for user: ${userId}`);
-		try {
-			const emailData = {
-				name: `${user.name} ${user.surname}`.trim(),
-				userName: `${user.name} ${user.surname}`.trim(),
-				userEmail: user.email,
-				userId: user.uid,
-				targetDetails: {
-					targetSalesAmount: createUserTargetDto.targetSalesAmount,
-					targetQuotationsAmount: createUserTargetDto.targetQuotationsAmount,
-					targetNewLeads: createUserTargetDto.targetNewLeads,
-					targetNewClients: createUserTargetDto.targetNewClients,
-					targetCheckIns: createUserTargetDto.targetCheckIns,
-					targetCalls: createUserTargetDto.targetCalls,
-					periodStartDate: createUserTargetDto.periodStartDate ? new Date(createUserTargetDto.periodStartDate).toISOString().split('T')[0] : undefined,
-					periodEndDate: createUserTargetDto.periodEndDate ? new Date(createUserTargetDto.periodEndDate).toISOString().split('T')[0] : undefined,
-					description: 'Performance targets have been set for your role',
-				},
-				organizationName: user.organisation?.name || user.branch?.organisation?.name || 'Your Organization',
-				branchName: user.branch?.name,
-				createdAt: new Date().toISOString(),
-				dashboardUrl: `${this.configService.get('FRONTEND_URL')}/dashboard`,
-				supportEmail: this.configService.get('SUPPORT_EMAIL') || 'support@loro.africa',
+			// Send target set email notification
+			this.logger.log(`📧 [UserService] Sending target set email notification for user: ${userId}`);
+			try {
+				const emailData = {
+					name: `${user.name} ${user.surname}`.trim(),
+					userName: `${user.name} ${user.surname}`.trim(),
+					userEmail: user.email,
+					userId: user.uid,
+					targetDetails: {
+						targetSalesAmount: createUserTargetDto.targetSalesAmount,
+						targetQuotationsAmount: createUserTargetDto.targetQuotationsAmount,
+						targetNewLeads: createUserTargetDto.targetNewLeads,
+						targetNewClients: createUserTargetDto.targetNewClients,
+						targetCheckIns: createUserTargetDto.targetCheckIns,
+						targetCalls: createUserTargetDto.targetCalls,
+						periodStartDate: createUserTargetDto.periodStartDate
+							? new Date(createUserTargetDto.periodStartDate).toISOString().split('T')[0]
+							: undefined,
+						periodEndDate: createUserTargetDto.periodEndDate
+							? new Date(createUserTargetDto.periodEndDate).toISOString().split('T')[0]
+							: undefined,
+						description: 'Performance targets have been set for your role',
+					},
+					organizationName: user.organisation?.name || user.branch?.organisation?.name || 'Your Organization',
+					branchName: user.branch?.name,
+					createdAt: new Date().toISOString(),
+					dashboardUrl: `${this.configService.get('FRONTEND_URL')}/dashboard`,
+					supportEmail: this.configService.get('SUPPORT_EMAIL') || 'support@loro.africa',
+				};
+
+				this.eventEmitter.emit('send.email', EmailType.USER_TARGET_SET, [user.email], emailData);
+				this.logger.log(`✅ [UserService] Target set email notification queued for user: ${userId}`);
+			} catch (emailError) {
+				this.logger.error(
+					`❌ [UserService] Failed to queue target set email for user ${userId}:`,
+					emailError.message,
+				);
+			}
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`User targets set successfully for user: ${userId} in ${executionTime}ms`);
+
+			return {
+				message: 'User targets set successfully',
 			};
-
-			this.eventEmitter.emit('send.email', EmailType.USER_TARGET_SET, [user.email], emailData);
-			this.logger.log(`✅ [UserService] Target set email notification queued for user: ${userId}`);
-		} catch (emailError) {
-			this.logger.error(`❌ [UserService] Failed to queue target set email for user ${userId}:`, emailError.message);
-		}
-
-		const executionTime = Date.now() - startTime;
-		this.logger.log(`User targets set successfully for user: ${userId} in ${executionTime}ms`);
-
-		return {
-			message: 'User targets set successfully',
-		};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
 			this.logger.error(
@@ -1585,48 +1614,51 @@ export class UserService {
 			this.logger.debug(`Saving updated target for user: ${userId}`);
 			await this.userRepository.save(user);
 
-					// Invalidate the cache
-		await this.invalidateUserCache(user);
-		await this.cacheManager.del(this.getCacheKey(`target_${userId}`));
+			// Invalidate the cache
+			await this.invalidateUserCache(user);
+			await this.cacheManager.del(this.getCacheKey(`target_${userId}`));
 
-		// Send target updated email notification
-		this.logger.log(`📧 [UserService] Sending target updated email notification for user: ${userId}`);
-		try {
-			const emailData = {
-				name: `${user.name} ${user.surname}`.trim(),
-				userName: `${user.name} ${user.surname}`.trim(),
-				userEmail: user.email,
-				userId: user.uid,
-				targetDetails: {
-					targetSalesAmount: updatedUserTarget.targetSalesAmount,
-					targetQuotationsAmount: updatedUserTarget.targetQuotationsAmount,
-					targetNewLeads: updatedUserTarget.targetNewLeads,
-					targetNewClients: updatedUserTarget.targetNewClients,
-					targetCheckIns: updatedUserTarget.targetCheckIns,
-					targetCalls: updatedUserTarget.targetCalls,
-					periodStartDate: updatedUserTarget.periodStartDate?.toISOString().split('T')[0],
-					periodEndDate: updatedUserTarget.periodEndDate?.toISOString().split('T')[0],
-					description: 'Your performance targets have been updated',
-				},
-				organizationName: user.organisation?.name || user.branch?.organisation?.name || 'Your Organization',
-				branchName: user.branch?.name,
-				updatedAt: new Date().toISOString(),
-				dashboardUrl: `${this.configService.get('FRONTEND_URL')}/dashboard`,
-				supportEmail: this.configService.get('SUPPORT_EMAIL') || 'support@loro.africa',
+			// Send target updated email notification
+			this.logger.log(`📧 [UserService] Sending target updated email notification for user: ${userId}`);
+			try {
+				const emailData = {
+					name: `${user.name} ${user.surname}`.trim(),
+					userName: `${user.name} ${user.surname}`.trim(),
+					userEmail: user.email,
+					userId: user.uid,
+					targetDetails: {
+						targetSalesAmount: updatedUserTarget.targetSalesAmount,
+						targetQuotationsAmount: updatedUserTarget.targetQuotationsAmount,
+						targetNewLeads: updatedUserTarget.targetNewLeads,
+						targetNewClients: updatedUserTarget.targetNewClients,
+						targetCheckIns: updatedUserTarget.targetCheckIns,
+						targetCalls: updatedUserTarget.targetCalls,
+						periodStartDate: updatedUserTarget.periodStartDate?.toISOString().split('T')[0],
+						periodEndDate: updatedUserTarget.periodEndDate?.toISOString().split('T')[0],
+						description: 'Your performance targets have been updated',
+					},
+					organizationName: user.organisation?.name || user.branch?.organisation?.name || 'Your Organization',
+					branchName: user.branch?.name,
+					updatedAt: new Date().toISOString(),
+					dashboardUrl: `${this.configService.get('FRONTEND_URL')}/dashboard`,
+					supportEmail: this.configService.get('SUPPORT_EMAIL') || 'support@loro.africa',
+				};
+
+				this.eventEmitter.emit('send.email', EmailType.USER_TARGET_UPDATED, [user.email], emailData);
+				this.logger.log(`✅ [UserService] Target updated email notification queued for user: ${userId}`);
+			} catch (emailError) {
+				this.logger.error(
+					`❌ [UserService] Failed to queue target updated email for user ${userId}:`,
+					emailError.message,
+				);
+			}
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`User targets updated successfully for user: ${userId} in ${executionTime}ms`);
+
+			return {
+				message: 'User targets updated successfully',
 			};
-
-			this.eventEmitter.emit('send.email', EmailType.USER_TARGET_UPDATED, [user.email], emailData);
-			this.logger.log(`✅ [UserService] Target updated email notification queued for user: ${userId}`);
-		} catch (emailError) {
-			this.logger.error(`❌ [UserService] Failed to queue target updated email for user ${userId}:`, emailError.message);
-		}
-
-		const executionTime = Date.now() - startTime;
-		this.logger.log(`User targets updated successfully for user: ${userId} in ${executionTime}ms`);
-
-		return {
-			message: 'User targets updated successfully',
-		};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
 			this.logger.error(
@@ -1697,7 +1729,10 @@ export class UserService {
 				this.eventEmitter.emit('send.email', EmailType.USER_TARGET_DELETED, [user.email], emailData);
 				this.logger.log(`✅ [UserService] Target deleted email notification queued for user: ${userId}`);
 			} catch (emailError) {
-				this.logger.error(`❌ [UserService] Failed to queue target deleted email for user ${userId}:`, emailError.message);
+				this.logger.error(
+					`❌ [UserService] Failed to queue target deleted email for user ${userId}:`,
+					emailError.message,
+				);
 			}
 
 			const executionTime = Date.now() - startTime;
@@ -1727,7 +1762,7 @@ export class UserService {
 	@OnEvent('user.target.update.required')
 	async calculateUserTargets(payload: { userId: number }): Promise<void> {
 		const { userId } = payload;
-		
+
 		// Check if calculation is already in progress for this user
 		if (this.activeCalculations.has(userId)) {
 			this.logger.debug(`Target calculation already in progress for user: ${userId}, skipping duplicate`);
@@ -1786,13 +1821,13 @@ export class UserService {
 					createdAt: Between(userTarget.periodStartDate, userTarget.periodEndDate),
 				},
 			});
-			
+
 			// Safely calculate quotations amount with proper number conversion
 			userTarget.currentQuotationsAmount = quotations.reduce((sum, q) => {
 				const amount = this.safeParseNumber(q.totalAmount);
 				return sum + amount;
 			}, 0);
-			
+
 			this.logger.debug(`Quotations amount calculated: ${userTarget.currentQuotationsAmount} for user ${userId}`);
 
 			// --- Calculate currentOrdersAmount (quotations that have been converted to completed orders) ---
@@ -1804,20 +1839,20 @@ export class UserService {
 					createdAt: Between(userTarget.periodStartDate, userTarget.periodEndDate),
 				},
 			});
-			
+
 			// Safely calculate orders amount with proper number conversion
 			userTarget.currentOrdersAmount = completedQuotations.reduce((sum, q) => {
 				const amount = this.safeParseNumber(q.totalAmount);
 				return sum + amount;
 			}, 0);
-			
+
 			this.logger.debug(`Orders amount calculated: ${userTarget.currentOrdersAmount} for user ${userId}`);
 
 			// --- Calculate currentSalesAmount (total for backward compatibility) ---
 			const quotationsAmount = this.safeParseNumber(userTarget.currentQuotationsAmount);
 			const ordersAmount = this.safeParseNumber(userTarget.currentOrdersAmount);
 			userTarget.currentSalesAmount = quotationsAmount + ordersAmount;
-			
+
 			this.logger.debug(`Total sales amount calculated: ${userTarget.currentSalesAmount} for user ${userId}`);
 
 			// --- Calculate currentNewLeads ---
@@ -1966,7 +2001,9 @@ export class UserService {
 				await this.sendTargetAchievementNotifications(user, achievedTargets, userTarget);
 			}
 
-			this.logger.debug(`Target achievement check completed for user: ${user.uid}, ${achievedTargets.length} targets achieved`);
+			this.logger.debug(
+				`Target achievement check completed for user: ${user.uid}, ${achievedTargets.length} targets achieved`,
+			);
 		} catch (error) {
 			this.logger.error(`Error checking target achievements for user ${user.uid}: ${error.message}`);
 		}
@@ -2034,7 +2071,7 @@ export class UserService {
 				userEmail: user.email,
 				organizationName: user.organisation?.name || 'Organization',
 				branchName: user.branch?.name || 'N/A',
-				achievedTargets: achievedTargets.map(target => ({
+				achievedTargets: achievedTargets.map((target) => ({
 					type: target.type,
 					currentValue: target.currentValue,
 					targetValue: target.targetValue,
@@ -2048,11 +2085,13 @@ export class UserService {
 			};
 
 			// Send admin notification emails
-			const adminEmails = admins.map(admin => admin.email);
-			
+			const adminEmails = admins.map((admin) => admin.email);
+
 			this.eventEmitter.emit('send.email', EmailType.USER_TARGET_ACHIEVEMENT_ADMIN, adminEmails, adminEmailData);
 
-			this.logger.log(`Target achievement admin notifications sent to ${adminEmails.length} admins for user: ${user.uid}`);
+			this.logger.log(
+				`Target achievement admin notifications sent to ${adminEmails.length} admins for user: ${user.uid}`,
+			);
 		} catch (error) {
 			this.logger.error(`Error sending admin notifications for user ${user.uid}: ${error.message}`);
 		}
@@ -2090,10 +2129,10 @@ export class UserService {
 	private generateMotivationalMessage(achievedTargets: any[]): string {
 		const messages = [
 			'Congratulations! Your dedication and hard work have paid off!',
-			'Outstanding performance! You\'ve exceeded expectations!',
+			"Outstanding performance! You've exceeded expectations!",
 			'Incredible achievement! Keep up the excellent work!',
 			'Well done! Your commitment to excellence shows!',
-			'Fantastic results! You\'re setting a great example!',
+			"Fantastic results! You're setting a great example!",
 		];
 
 		const randomIndex = Math.floor(Math.random() * messages.length);
@@ -2105,8 +2144,8 @@ export class UserService {
 	 */
 	private generateRecognitionMessage(user: User, achievedTargets: any[]): string {
 		const userName = `${user.name} ${user.surname}`.trim();
-		const targetTypes = achievedTargets.map(t => t.type).join(', ');
-		
+		const targetTypes = achievedTargets.map((t) => t.type).join(', ');
+
 		return `${userName} has demonstrated exceptional performance by achieving their targets in: ${targetTypes}. Consider recognizing their outstanding contribution to the team.`;
 	}
 
@@ -2450,7 +2489,9 @@ export class UserService {
 
 					const executionTime = Date.now() - startTime;
 					this.logger.log(
-						`ERP target update completed for user ${userId} in ${executionTime}ms (attempt ${retryCount + 1})`,
+						`ERP target update completed for user ${userId} in ${executionTime}ms (attempt ${
+							retryCount + 1
+						})`,
 					);
 
 					return {
@@ -2462,7 +2503,9 @@ export class UserService {
 					retryCount++;
 
 					if (error.code === 'ER_LOCK_WAIT_TIMEOUT' || error.message.includes('concurrent')) {
-						this.logger.warn(`Concurrent update conflict for user ${userId}, retry ${retryCount}/${maxRetries}`);
+						this.logger.warn(
+							`Concurrent update conflict for user ${userId}, retry ${retryCount}/${maxRetries}`,
+						);
 
 						if (retryCount < maxRetries) {
 							// Exponential backoff
@@ -2596,15 +2639,24 @@ export class UserService {
 			}
 
 			// Validate update values are reasonable
-			if (externalUpdate.updates.currentSalesAmount !== undefined && externalUpdate.updates.currentSalesAmount < 0) {
+			if (
+				externalUpdate.updates.currentSalesAmount !== undefined &&
+				externalUpdate.updates.currentSalesAmount < 0
+			) {
 				errors.push('Sales amount cannot be negative');
 			}
 
-			if (externalUpdate.updates.currentQuotationsAmount !== undefined && externalUpdate.updates.currentQuotationsAmount < 0) {
+			if (
+				externalUpdate.updates.currentQuotationsAmount !== undefined &&
+				externalUpdate.updates.currentQuotationsAmount < 0
+			) {
 				errors.push('Quotations amount cannot be negative');
 			}
 
-			if (externalUpdate.updates.currentOrdersAmount !== undefined && externalUpdate.updates.currentOrdersAmount < 0) {
+			if (
+				externalUpdate.updates.currentOrdersAmount !== undefined &&
+				externalUpdate.updates.currentOrdersAmount < 0
+			) {
 				errors.push('Orders amount cannot be negative');
 			}
 
@@ -2837,7 +2889,9 @@ export class UserService {
 
 			this.eventEmitter.emit('send.email', EmailType.USER_TARGET_DEADLINE_REMINDER, [user.email], emailData);
 
-			this.logger.log(`Target deadline reminder email sent to user ${userId} with urgency: ${reminderData.urgencyLevel}`);
+			this.logger.log(
+				`Target deadline reminder email sent to user ${userId} with urgency: ${reminderData.urgencyLevel}`,
+			);
 		} catch (error) {
 			this.logger.error(`Error sending target deadline reminder email to user ${userId}:`, error.message);
 		}
@@ -2959,9 +3013,16 @@ export class UserService {
 				supportEmail: updateData.supportEmail,
 			};
 
-			this.eventEmitter.emit('send.email', EmailType.USER_TARGET_ERP_UPDATE_CONFIRMATION, [user.email], emailData);
+			this.eventEmitter.emit(
+				'send.email',
+				EmailType.USER_TARGET_ERP_UPDATE_CONFIRMATION,
+				[user.email],
+				emailData,
+			);
 
-			this.logger.log(`ERP update confirmation email sent to user ${userId} for transaction: ${updateData.transactionId}`);
+			this.logger.log(
+				`ERP update confirmation email sent to user ${userId} for transaction: ${updateData.transactionId}`,
+			);
 		} catch (error) {
 			this.logger.error(`Error sending ERP update confirmation email to user ${userId}:`, error.message);
 		}
@@ -3047,7 +3108,6 @@ export class UserService {
 	 * @param changes - Array of changes made to the targets
 	 */
 
-
 	/**
 	 * Add clients to a user's assigned clients list
 	 * @param userId - User ID to add clients to
@@ -3094,7 +3154,7 @@ export class UserService {
 			const currentAssignedClients = user.assignedClientIds || [];
 
 			// Add new client IDs (avoid duplicates)
-			const newClientIds = clientIds.filter(id => !currentAssignedClients.includes(id));
+			const newClientIds = clientIds.filter((id) => !currentAssignedClients.includes(id));
 			const updatedAssignedClients = [...currentAssignedClients, ...newClientIds];
 
 			// Update user with new assigned clients
@@ -3106,7 +3166,9 @@ export class UserService {
 			await this.invalidateUserCache(user);
 
 			const executionTime = Date.now() - startTime;
-			this.logger.log(`Successfully added ${newClientIds.length} clients to user ${userId} in ${executionTime}ms`);
+			this.logger.log(
+				`Successfully added ${newClientIds.length} clients to user ${userId} in ${executionTime}ms`,
+			);
 
 			return {
 				message: 'Clients assigned successfully',
@@ -3114,7 +3176,9 @@ export class UserService {
 			};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
-			this.logger.error(`Failed to add assigned clients to user ${userId} after ${executionTime}ms: ${error.message}`);
+			this.logger.error(
+				`Failed to add assigned clients to user ${userId} after ${executionTime}ms: ${error.message}`,
+			);
 
 			return {
 				message: error.message || 'Failed to add assigned clients',
@@ -3168,8 +3232,8 @@ export class UserService {
 			const currentAssignedClients = user.assignedClientIds || [];
 
 			// Remove specified client IDs
-			const updatedAssignedClients = currentAssignedClients.filter(id => !clientIds.includes(id));
-			const removedClients = clientIds.filter(id => currentAssignedClients.includes(id));
+			const updatedAssignedClients = currentAssignedClients.filter((id) => !clientIds.includes(id));
+			const removedClients = clientIds.filter((id) => currentAssignedClients.includes(id));
 
 			// Update user with updated assigned clients
 			await this.userRepository.update(userId, {
@@ -3180,7 +3244,9 @@ export class UserService {
 			await this.invalidateUserCache(user);
 
 			const executionTime = Date.now() - startTime;
-			this.logger.log(`Successfully removed ${removedClients.length} clients from user ${userId} in ${executionTime}ms`);
+			this.logger.log(
+				`Successfully removed ${removedClients.length} clients from user ${userId} in ${executionTime}ms`,
+			);
 
 			return {
 				message: 'Clients removed successfully',
@@ -3188,7 +3254,9 @@ export class UserService {
 			};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
-			this.logger.error(`Failed to remove assigned clients from user ${userId} after ${executionTime}ms: ${error.message}`);
+			this.logger.error(
+				`Failed to remove assigned clients from user ${userId} after ${executionTime}ms: ${error.message}`,
+			);
 
 			return {
 				message: error.message || 'Failed to remove assigned clients',
@@ -3239,7 +3307,9 @@ export class UserService {
 			const assignedClients = user.assignedClientIds || [];
 
 			const executionTime = Date.now() - startTime;
-			this.logger.log(`Successfully retrieved ${assignedClients.length} assigned clients for user ${userId} in ${executionTime}ms`);
+			this.logger.log(
+				`Successfully retrieved ${assignedClients.length} assigned clients for user ${userId} in ${executionTime}ms`,
+			);
 
 			return {
 				message: 'Assigned clients retrieved successfully',
@@ -3247,7 +3317,9 @@ export class UserService {
 			};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
-			this.logger.error(`Failed to get assigned clients for user ${userId} after ${executionTime}ms: ${error.message}`);
+			this.logger.error(
+				`Failed to get assigned clients for user ${userId} after ${executionTime}ms: ${error.message}`,
+			);
 
 			return {
 				message: error.message || 'Failed to get assigned clients',
@@ -3310,7 +3382,9 @@ export class UserService {
 			await this.invalidateUserCache(user);
 
 			const executionTime = Date.now() - startTime;
-			this.logger.log(`Successfully set ${uniqueClientIds.length} assigned clients for user ${userId} in ${executionTime}ms`);
+			this.logger.log(
+				`Successfully set ${uniqueClientIds.length} assigned clients for user ${userId} in ${executionTime}ms`,
+			);
 
 			return {
 				message: 'Assigned clients set successfully',
@@ -3318,7 +3392,9 @@ export class UserService {
 			};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
-			this.logger.error(`Failed to set assigned clients for user ${userId} after ${executionTime}ms: ${error.message}`);
+			this.logger.error(
+				`Failed to set assigned clients for user ${userId} after ${executionTime}ms: ${error.message}`,
+			);
 
 			return {
 				message: error.message || 'Failed to set assigned clients',
@@ -3333,7 +3409,9 @@ export class UserService {
 	 */
 	private async sendUserCreationWithClientsNotificationEmail(user: User, assignedClientIds: number[]): Promise<void> {
 		const startTime = Date.now();
-		this.logger.debug(`Preparing comprehensive user creation email with client assignments for: ${user.email} (${user.uid})`);
+		this.logger.debug(
+			`Preparing comprehensive user creation email with client assignments for: ${user.email} (${user.uid})`,
+		);
 
 		try {
 			// Get assigned clients information
@@ -3348,15 +3426,15 @@ export class UserService {
 							},
 							select: ['uid', 'name', 'contactPerson', 'email', 'phone', 'status'],
 						}),
-						new Promise<never>((_, reject) => 
-							setTimeout(() => reject(new Error('Client query timeout')), 3000)
-						)
+						new Promise<never>((_, reject) =>
+							setTimeout(() => reject(new Error('Client query timeout')), 3000),
+						),
 					]);
 					assignedClientsInfo = clients;
 				} catch (error) {
 					this.logger.warn(`Failed to fetch client details for user creation email: ${error.message}`);
 					// Continue with basic client IDs
-					assignedClientsInfo = assignedClientIds.map(id => ({ uid: id, name: `Client ${id}` }));
+					assignedClientsInfo = assignedClientIds.map((id) => ({ uid: id, name: `Client ${id}` }));
 				}
 			}
 
@@ -3377,18 +3455,22 @@ export class UserService {
 					email: user.email,
 					username: user.username,
 					role: user.accessLevel,
-					branch: user.branch?.name
-				}
+					branch: user.branch?.name,
+				},
 			};
 
 			// Send email through event emitter
 			this.eventEmitter.emit('send.email', EmailType.NEW_USER_WELCOME, [user.email], emailData);
 
 			const executionTime = Date.now() - startTime;
-			this.logger.log(`[EMAIL] User creation with clients notification sent to: ${user.email} in ${executionTime}ms`);
+			this.logger.log(
+				`[EMAIL] User creation with clients notification sent to: ${user.email} in ${executionTime}ms`,
+			);
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
-			this.logger.error(`[EMAIL] Failed to send user creation with clients notification to ${user.email} after ${executionTime}ms: ${error.message}`);
+			this.logger.error(
+				`[EMAIL] Failed to send user creation with clients notification to ${user.email} after ${executionTime}ms: ${error.message}`,
+			);
 		}
 	}
 
@@ -3411,7 +3493,7 @@ export class UserService {
 			assignedClients: boolean;
 		},
 		originalAssignedClients: number[],
-		updatedAssignedClients: number[]
+		updatedAssignedClients: number[],
 	): Promise<void> {
 		const startTime = Date.now();
 		this.logger.debug(`Preparing comprehensive user update email for: ${updatedUser.email} (${updatedUser.uid})`);
@@ -3420,13 +3502,13 @@ export class UserService {
 			// Get client assignment changes
 			let clientChanges = null;
 			if (changes.assignedClients) {
-				const addedClients = updatedAssignedClients.filter(id => !originalAssignedClients.includes(id));
-				const removedClients = originalAssignedClients.filter(id => !updatedAssignedClients.includes(id));
-				
+				const addedClients = updatedAssignedClients.filter((id) => !originalAssignedClients.includes(id));
+				const removedClients = originalAssignedClients.filter((id) => !updatedAssignedClients.includes(id));
+
 				// Get client details for added clients
 				let addedClientsInfo = [];
 				let removedClientsInfo = [];
-				
+
 				if (addedClients.length > 0 || removedClients.length > 0) {
 					try {
 						const allRelevantClientIds = [...addedClients, ...removedClients];
@@ -3438,24 +3520,24 @@ export class UserService {
 								},
 								select: ['uid', 'name', 'contactPerson', 'email'],
 							}),
-							new Promise<never>((_, reject) => 
-								setTimeout(() => reject(new Error('Client query timeout')), 3000)
-							)
+							new Promise<never>((_, reject) =>
+								setTimeout(() => reject(new Error('Client query timeout')), 3000),
+							),
 						]);
 
-						addedClientsInfo = clients.filter(c => addedClients.includes(c.uid));
-						removedClientsInfo = clients.filter(c => removedClients.includes(c.uid));
+						addedClientsInfo = clients.filter((c) => addedClients.includes(c.uid));
+						removedClientsInfo = clients.filter((c) => removedClients.includes(c.uid));
 					} catch (error) {
 						this.logger.warn(`Failed to fetch client details for update email: ${error.message}`);
-						addedClientsInfo = addedClients.map(id => ({ uid: id, name: `Client ${id}` }));
-						removedClientsInfo = removedClients.map(id => ({ uid: id, name: `Client ${id}` }));
+						addedClientsInfo = addedClients.map((id) => ({ uid: id, name: `Client ${id}` }));
+						removedClientsInfo = removedClients.map((id) => ({ uid: id, name: `Client ${id}` }));
 					}
 				}
 
 				clientChanges = {
 					added: addedClientsInfo,
 					removed: removedClientsInfo,
-					totalAssigned: updatedAssignedClients.length
+					totalAssigned: updatedAssignedClients.length,
 				};
 			}
 
@@ -3481,29 +3563,37 @@ export class UserService {
 					role: changes.role,
 					status: changes.status,
 					profile: changes.profile,
-					assignedClients: changes.assignedClients
+					assignedClients: changes.assignedClients,
 				},
 				changesList,
 				updateTime: new Date().toLocaleString(),
-				roleChange: changes.role ? {
-					previousRole: originalUser.accessLevel,
-					newRole: updatedUser.accessLevel
-				} : null,
-				statusChange: changes.status ? {
-					previousStatus: originalUser.status,
-					newStatus: updatedUser.status
-				} : null,
-				clientChanges
+				roleChange: changes.role
+					? {
+							previousRole: originalUser.accessLevel,
+							newRole: updatedUser.accessLevel,
+					  }
+					: null,
+				statusChange: changes.status
+					? {
+							previousStatus: originalUser.status,
+							newStatus: updatedUser.status,
+					  }
+					: null,
+				clientChanges,
 			};
 
 			// Send email through event emitter
 			this.eventEmitter.emit('send.email', EmailType.NEW_USER_ADMIN_NOTIFICATION, [updatedUser.email], emailData);
 
 			const executionTime = Date.now() - startTime;
-			this.logger.log(`[EMAIL] Comprehensive update notification sent to: ${updatedUser.email} in ${executionTime}ms`);
+			this.logger.log(
+				`[EMAIL] Comprehensive update notification sent to: ${updatedUser.email} in ${executionTime}ms`,
+			);
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
-			this.logger.error(`[EMAIL] Failed to send comprehensive update notification to ${updatedUser.email} after ${executionTime}ms: ${error.message}`);
+			this.logger.error(
+				`[EMAIL] Failed to send comprehensive update notification to ${updatedUser.email} after ${executionTime}ms: ${error.message}`,
+			);
 		}
 	}
 
@@ -3530,8 +3620,8 @@ export class UserService {
 					email: user.email,
 					username: user.username,
 					role: user.accessLevel,
-					branch: user.branch?.name
-				}
+					branch: user.branch?.name,
+				},
 			};
 
 			// Send email through event emitter
@@ -3541,16 +3631,15 @@ export class UserService {
 			this.logger.log(`[EMAIL] Standard user creation notification sent to: ${user.email} in ${executionTime}ms`);
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
-			this.logger.error(`[EMAIL] Failed to send standard user creation notification to ${user.email} after ${executionTime}ms: ${error.message}`);
+			this.logger.error(
+				`[EMAIL] Failed to send standard user creation notification to ${user.email} after ${executionTime}ms: ${error.message}`,
+			);
 		}
 	}
-
-
 
 	/**
 	 * Send user creation notification email to the new user
 	 */
-
 
 	/**
 	 * Send password update notification email
@@ -3637,7 +3726,9 @@ export class UserService {
 								If you have any questions about your new role or need assistance, please contact your administrator or our support team.
 							</p>
 							<div style="text-align: center; margin-top: 30px;">
-								<a href="${process.env.CLIENT_URL}/sign-in" style="background: linear-gradient(135deg, #fa709a 0%, #fee140 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 25px; font-weight: bold;">Access Your Account</a>
+								<a href="${
+									process.env.CLIENT_URL
+								}/sign-in" style="background: linear-gradient(135deg, #fa709a 0%, #fee140 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 25px; font-weight: bold;">Access Your Account</a>
 							</div>
 						</div>
 						<div style="padding: 20px; text-align: center; color: #999; font-size: 12px;">
@@ -3657,15 +3748,19 @@ export class UserService {
 	/**
 	 * Send status update notification email
 	 */
-	private async sendStatusUpdateNotificationEmail(user: User, previousStatus: string, newStatus: string): Promise<void> {
+	private async sendStatusUpdateNotificationEmail(
+		user: User,
+		previousStatus: string,
+		newStatus: string,
+	): Promise<void> {
 		try {
 			const statusColors = {
 				active: '#28a745',
-				inactive: '#6c757d', 
+				inactive: '#6c757d',
 				suspended: '#dc3545',
 				pending: '#ffc107',
 				banned: '#dc3545',
-				deleted: '#6c757d'
+				deleted: '#6c757d',
 			};
 
 			const emailData = {
@@ -3685,33 +3780,43 @@ export class UserService {
 								<table style="width: 100%; border-collapse: collapse;">
 									<tr style="border-bottom: 1px solid #eee;">
 										<td style="padding: 10px 0; font-weight: bold; color: #333;">Previous Status:</td>
-										<td style="padding: 10px 0; color: ${statusColors[previousStatus] || '#6c757d'}; text-transform: uppercase; font-weight: bold;">${previousStatus}</td>
+										<td style="padding: 10px 0; color: ${
+											statusColors[previousStatus] || '#6c757d'
+										}; text-transform: uppercase; font-weight: bold;">${previousStatus}</td>
 									</tr>
 									<tr>
 										<td style="padding: 10px 0; font-weight: bold; color: #333;">New Status:</td>
-										<td style="padding: 10px 0; color: ${statusColors[newStatus] || '#6c757d'}; text-transform: uppercase; font-weight: bold;">${newStatus}</td>
+										<td style="padding: 10px 0; color: ${
+											statusColors[newStatus] || '#6c757d'
+										}; text-transform: uppercase; font-weight: bold;">${newStatus}</td>
 									</tr>
 								</table>
 							</div>
-							${newStatus === 'active' ? `
+							${
+								newStatus === 'active'
+									? `
 							<div style="background: #d4edda; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #28a745;">
 								<p style="margin: 0; color: #155724;">
 									<strong>Good news!</strong> Your account is now active and you have full access to the system.
 								</p>
 							</div>
-							` : newStatus === 'suspended' ? `
+							`
+									: newStatus === 'suspended'
+									? `
 							<div style="background: #f8d7da; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #dc3545;">
 								<p style="margin: 0; color: #721c24;">
 									<strong>Important:</strong> Your account has been suspended. Please contact your administrator for more information.
 								</p>
 							</div>
-							` : `
+							`
+									: `
 							<div style="background: #d1ecf1; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #17a2b8;">
 								<p style="margin: 0; color: #0c5460;">
 									<strong>Status Change:</strong> Your account status has been updated. This may affect your access to certain features.
 								</p>
 							</div>
-							`}
+							`
+							}
 							<p style="color: #666; line-height: 1.6; margin-bottom: 20px;">
 								If you have any questions about this status change or need assistance, please contact your administrator or our support team.
 							</p>
@@ -3724,7 +3829,9 @@ export class UserService {
 				`,
 			};
 
-			this.logger.log(`[EMAIL] Status update notification sent to: ${user.email} (${previousStatus} → ${newStatus})`);
+			this.logger.log(
+				`[EMAIL] Status update notification sent to: ${user.email} (${previousStatus} → ${newStatus})`,
+			);
 		} catch (error) {
 			this.logger.error(`[EMAIL] Failed to send status update notification to ${user.email}: ${error.message}`);
 		}
@@ -3762,7 +3869,9 @@ export class UserService {
 								</p>
 							</div>
 							<div style="text-align: center; margin-top: 30px;">
-								<a href="${process.env.CLIENT_URL}/settings" style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 25px; font-weight: bold;">View Your Profile</a>
+								<a href="${
+									process.env.CLIENT_URL
+								}/settings" style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 25px; font-weight: bold;">View Your Profile</a>
 							</div>
 						</div>
 						<div style="padding: 20px; text-align: center; color: #999; font-size: 12px;">

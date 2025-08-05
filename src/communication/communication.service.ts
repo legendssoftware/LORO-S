@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import * as nodemailer from 'nodemailer';
 import { ConfigService } from '@nestjs/config';
@@ -183,6 +183,7 @@ import { MonthlyUnattendedLeadsReportData } from '../lib/types/email-templates.t
 
 @Injectable()
 export class CommunicationService {
+	private readonly logger = new Logger(CommunicationService.name);
 	private readonly emailService: nodemailer.Transporter;
 
 	constructor(
@@ -207,27 +208,26 @@ export class CommunicationService {
 
 	@OnEvent('send.email')
 	async sendEmail<T extends EmailType>(emailType: T, recipientsEmails: string[], data: EmailTemplateData<T>) {
+		this.logger.log(`Email event received for type: ${emailType}`);
+		this.logger.debug(`Recipients (${recipientsEmails?.length || 0}): ${recipientsEmails?.join(', ')}`);
+		
 		try {
-			console.log(`📧 [EmailService] Email event received: ${emailType}`);
-			console.log(`📧 [EmailService] Recipients (${recipientsEmails?.length || 0}): ${recipientsEmails?.join(', ')}`);
-			
+			// Validate recipients
 			if (!recipientsEmails || recipientsEmails.length === 0) {
-				console.log('❌ [EmailService] ERROR: No recipients provided for email');
+				this.logger.error('No recipients provided for email');
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
 			}
 
-			console.log(`📧 [EmailService] Generating template for: ${emailType}`);
+			this.logger.debug(`Generating email template for type: ${emailType}`);
 			const template = this.getEmailTemplate(emailType, data);
-			console.log(`📧 [EmailService] Template generated successfully for: ${emailType}`);
-			console.log(`📧 [EmailService] Subject: "${template.subject}"`);
+			this.logger.debug(`Template generated successfully. Subject: "${template.subject}"`);
 
 			// Construct the from field with display name and email
 			const emailFrom = this.configService.get<string>('SMTP_FROM');
 			const emailFromName = this.configService.get<string>('EMAIL_FROM_NAME');
 			const fromField = emailFromName ? `"${emailFromName}" <${emailFrom}>` : emailFrom;
 
-			console.log(`📧 [EmailService] Sending email via SMTP...`);
-			console.log(`📧 [EmailService] From: ${fromField}`);
+			this.logger.debug(`Sending email via SMTP from: ${fromField}`);
 			const result = await this.emailService.sendMail({
 				from: fromField,
 				to: recipientsEmails,
@@ -235,11 +235,11 @@ export class CommunicationService {
 				html: template.body,
 			});
 
-			console.log(`✅ [EmailService] Email sent successfully!`);
-			console.log(`📧 [EmailService] MessageId: ${result.messageId}`);
-			console.log(`📧 [EmailService] Accepted: ${result.accepted?.length || 0}, Rejected: ${result.rejected?.length || 0}`);
+			this.logger.log(`Email sent successfully for type: ${emailType}`);
+			this.logger.debug(`MessageId: ${result.messageId}, Accepted: ${result.accepted?.length || 0}, Rejected: ${result.rejected?.length || 0}`);
 
 			// Log the communication to database
+			this.logger.debug('Saving communication log to database');
 			await this.communicationLogRepository.save({
 				emailType,
 				recipientEmails: recipientsEmails,
@@ -253,17 +253,16 @@ export class CommunicationService {
 				envelope: result.envelope,
 			});
 
-			console.log(`📧 Email log saved for ${emailType}`);
+			this.logger.debug(`Communication log saved successfully for ${emailType}`);
 			return result;
 		} catch (error) {
-			console.error(`❌ [EmailService] ERROR sending ${emailType} email:`, error.message);
-			console.error(`❌ [EmailService] Failed recipients: ${recipientsEmails?.join(', ')}`);
+			this.logger.error(`Failed to send ${emailType} email to recipients: ${recipientsEmails?.join(', ')}`, error.stack);
 			
 			const smtpHost = this.configService.get<string>('SMTP_HOST');
 			const smtpUser = this.configService.get<string>('SMTP_USER');
 			const smtpFrom = this.configService.get<string>('SMTP_FROM');
 			const emailFromName = this.configService.get<string>('EMAIL_FROM_NAME');
-			console.error('❌ [EmailService] SMTP Configuration:', {
+			this.logger.error('SMTP Configuration details:', {
 				SMTP_HOST: smtpHost,
 				SMTP_USER: smtpUser,
 				SMTP_FROM: smtpFrom,
@@ -272,6 +271,7 @@ export class CommunicationService {
 			
 			// Log failed email attempt
 			try {
+				this.logger.debug('Logging failed email attempt to database');
 				await this.communicationLogRepository.save({
 					emailType,
 					recipientEmails: recipientsEmails,
@@ -284,9 +284,9 @@ export class CommunicationService {
 					response: `Error: ${error.message}`,
 					createdAt: new Date(),
 				});
-				console.log(`📊 [EmailService] Error logged to database for ${emailType}`);
+				this.logger.debug(`Failed email attempt logged to database for ${emailType}`);
 			} catch (logError) {
-				console.error(`❌ [EmailService] Failed to log error:`, logError.message);
+				this.logger.error('Failed to log email error to database:', logError.stack);
 			}
 			
 			throw error;
@@ -294,26 +294,36 @@ export class CommunicationService {
 	}
 
 	async sendAppUpdateNotification(userEmails: string[], appUpdateData: AppUpdateNotificationData) {
-		console.log('📱 [EmailService] Sending app update notification to users');
+		this.logger.log(`Sending app update notification to ${userEmails.length} users`);
+		this.logger.debug(`Target user emails: ${userEmails.join(', ')}`);
 		
-		// Send email to all users
-		const emailPromises = userEmails.map(async (email) => {
-			try {
-				await this.sendEmail(EmailType.APP_UPDATE_NOTIFICATION, [email], appUpdateData);
-				console.log(`✅ [EmailService] App update notification sent to: ${email}`);
-			} catch (error) {
-				console.error(`❌ [EmailService] Failed to send app update notification to ${email}:`, error);
-			}
-		});
+		try {
+			// Send email to all users
+			const emailPromises = userEmails.map(async (email) => {
+				try {
+					this.logger.debug(`Sending app update notification to: ${email}`);
+					await this.sendEmail(EmailType.APP_UPDATE_NOTIFICATION, [email], appUpdateData);
+					this.logger.debug(`App update notification sent successfully to: ${email}`);
+				} catch (error) {
+					this.logger.error(`Failed to send app update notification to ${email}:`, error.stack);
+				}
+			});
 
-		await Promise.all(emailPromises);
-		
-		console.log(`📱 [EmailService] App update notification process completed for ${userEmails.length} users`);
-		return { success: true, message: `App update notification sent to ${userEmails.length} users` };
+			await Promise.all(emailPromises);
+			
+			this.logger.log(`App update notification process completed for ${userEmails.length} users`);
+			return { success: true, message: `App update notification sent to ${userEmails.length} users` };
+		} catch (error) {
+			this.logger.error(`Failed to send app update notifications`, error.stack);
+			throw error;
+		}
 	}
 
 	private getEmailTemplate<T extends EmailType>(type: T, data: EmailTemplateData<T>): EmailTemplate {
-		switch (type) {
+		this.logger.debug(`Generating email template for type: ${type}`);
+		
+		try {
+			switch (type) {
 			case EmailType.SIGNUP:
 				return {
 					subject: 'Welcome to Our Platform',
@@ -870,7 +880,12 @@ export class CommunicationService {
 					body: ApprovalDeleted(data as ApprovalEmailData),
 				};
 			default:
+				this.logger.error(`Unknown email template type: ${type}`);
 				throw new NotFoundException(`Unknown email template type: ${type}`);
+			}
+		} catch (error) {
+			this.logger.error(`Failed to generate email template for type: ${type}`, error.stack);
+			throw error;
 		}
 	}
 }

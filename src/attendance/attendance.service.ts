@@ -41,14 +41,20 @@ export class AttendanceService {
 		// Inject our enhanced services
 		private readonly organizationHoursService: OrganizationHoursService,
 		private readonly attendanceCalculatorService: AttendanceCalculatorService,
-	) {}
+	) {
+		this.logger.debug('AttendanceService initialized with all dependencies and enhanced calculation services');
+	}
 
 	// ======================================================
 	// ATTENDANCE METRICS FUNCTIONALITY
 	// ======================================================
 
 	public async checkIn(checkInDto: CreateCheckInDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
+		this.logger.log(`Check-in attempt for user: ${checkInDto.owner?.uid}, orgId: ${orgId}, branchId: ${branchId}`);
+		this.logger.debug(`Check-in data: ${JSON.stringify({ ...checkInDto, owner: checkInDto.owner?.uid })}`);
+
 		try {
+			this.logger.debug('Saving check-in record to database');
 			const checkIn = await this.attendanceRepository.save({
 				...checkInDto,
 				organisation: orgId ? { uid: orgId } : undefined,
@@ -56,13 +62,17 @@ export class AttendanceService {
 			});
 
 			if (!checkIn) {
+				this.logger.error('Failed to create check-in record');
 				throw new NotFoundException(process.env.CREATE_ERROR_MESSAGE);
 			}
+
+			this.logger.debug(`Check-in record created successfully with ID: ${checkIn.uid}`);
 
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,
 			};
 
+			this.logger.debug(`Awarding XP for check-in to user: ${checkInDto.owner.uid}, amount: ${XP_VALUES.CHECK_IN}`);
 			await this.rewardsService.awardXP({
 				owner: checkInDto.owner.uid,
 				amount: XP_VALUES.CHECK_IN,
@@ -73,9 +83,12 @@ export class AttendanceService {
 					details: 'Check-in reward',
 				},
 			}, orgId, branchId);
+			this.logger.debug(`XP awarded successfully for check-in to user: ${checkInDto.owner.uid}`);
 
+			this.logger.log(`Check-in successful for user: ${checkInDto.owner.uid}`);
 			return response;
 		} catch (error) {
+			this.logger.error(`Check-in failed for user: ${checkInDto.owner?.uid}`, error.stack);
 			const response = {
 				message: error?.message,
 			};
@@ -85,7 +98,11 @@ export class AttendanceService {
 	}
 
 	public async checkOut(checkOutDto: CreateCheckOutDto, orgId?: number, branchId?: number): Promise<{ message: string; duration?: string }> {
+		this.logger.log(`Check-out attempt for user: ${checkOutDto.owner?.uid}, orgId: ${orgId}, branchId: ${branchId}`);
+		this.logger.debug(`Check-out data: ${JSON.stringify({ ...checkOutDto, owner: checkOutDto.owner?.uid })}`);
+
 		try {
+			this.logger.debug('Finding active shift for check-out');
 			const activeShift = await this.attendanceRepository.findOne({
 				where: {
 					status: AttendanceStatus.PRESENT,
@@ -102,15 +119,20 @@ export class AttendanceService {
 			});
 
 			if (activeShift) {
+				this.logger.debug(`Active shift found for user: ${checkOutDto.owner?.uid}, shift ID: ${activeShift.uid}`);
 				const checkOutTime = new Date();
 				const checkInTime = new Date(activeShift.checkIn);
+				this.logger.debug(`Calculating work duration: check-in at ${checkInTime.toISOString()}, check-out at ${checkOutTime.toISOString()}`);
 
 				// Enhanced calculation using our new utilities
 				const organizationId = activeShift.owner?.organisation?.uid;
+				this.logger.debug(`Processing time calculations for organization: ${organizationId}`);
+				
 				const breakMinutes = TimeCalculatorUtil.calculateTotalBreakMinutes(
 					activeShift.breakDetails,
 					activeShift.totalBreakTime
 				);
+				this.logger.debug(`Total break minutes calculated: ${breakMinutes}`);
 
 				// Calculate precise work session
 				const workSession = TimeCalculatorUtil.calculateWorkSession(
@@ -123,6 +145,7 @@ export class AttendanceService {
 
 				// Format duration (maintains original format)
 				const duration = TimeCalculatorUtil.formatDuration(workSession.netWorkMinutes);
+				this.logger.debug(`Work session calculated - net work minutes: ${workSession.netWorkMinutes}, formatted duration: ${duration}`);
 
 				const updatedShift = {
 					...activeShift,
@@ -132,13 +155,16 @@ export class AttendanceService {
 					status: AttendanceStatus.COMPLETED,
 				};
 
+				this.logger.debug('Saving updated shift with check-out data');
 				await this.attendanceRepository.save(updatedShift);
+				this.logger.debug(`Shift updated successfully for user: ${checkOutDto.owner?.uid}`);
 
 				const response = {
 					message: process.env.SUCCESS_MESSAGE,
 					duration,
 				};
 
+				this.logger.debug(`Awarding XP for check-out to user: ${checkOutDto.owner.uid}, amount: ${XP_VALUES.CHECK_OUT}`);
 				await this.rewardsService.awardXP({
 					owner: checkOutDto.owner.uid,
 					amount: XP_VALUES.CHECK_OUT,
@@ -149,18 +175,25 @@ export class AttendanceService {
 						details: 'Check-out reward',
 					},
 				}, orgId, branchId);
+				this.logger.debug(`XP awarded successfully for check-out to user: ${checkOutDto.owner.uid}`);
 
 				// Emit the daily-report event with the user ID
+				this.logger.debug(`Emitting events for user: ${checkOutDto?.owner?.uid}`);
 				this.eventEmitter.emit('daily-report', {
 					userId: checkOutDto?.owner?.uid,
 				});
 
 				this.eventEmitter.emit('user.target.update.required', { userId: checkOutDto?.owner?.uid });
 				this.eventEmitter.emit('user.metrics.update.required', checkOutDto?.owner?.uid);
+				this.logger.debug(`Events emitted successfully for user: ${checkOutDto?.owner?.uid}`);
 
+				this.logger.log(`Check-out successful for user: ${checkOutDto.owner?.uid}, duration: ${duration}`);
 				return response;
+			} else {
+				this.logger.warn(`No active shift found for check-out for user: ${checkOutDto.owner?.uid}`);
 			}
 		} catch (error) {
+			this.logger.error(`Check-out failed for user: ${checkOutDto.owner?.uid}`, error.stack);
 			const response = {
 				message: error?.message,
 				duration: null,
@@ -171,28 +204,35 @@ export class AttendanceService {
 	}
 
 	public async allCheckIns(orgId?: number, branchId?: number): Promise<{ message: string; checkIns: Attendance[] }> {
+		this.logger.log(`Retrieving all check-ins for orgId: ${orgId}, branchId: ${branchId}`);
+		
 		try {
 			const whereConditions: any = {};
 
 			// Apply organization filtering
 			if (orgId) {
 				whereConditions.organisation = { uid: orgId };
+				this.logger.debug(`Added organization filter: ${orgId}`);
 			}
 
 			// Apply branch filtering if provided
 			if (branchId) {
 				whereConditions.branch = { uid: branchId };
+				this.logger.debug(`Added branch filter: ${branchId}`);
 			}
 
+			this.logger.debug(`Querying attendance records with conditions: ${JSON.stringify(whereConditions)}`);
 			const checkIns = await this.attendanceRepository.find({
 				where: Object.keys(whereConditions).length > 0 ? whereConditions : undefined,
 				relations: ['owner', 'owner.branch', 'owner.organisation', 'owner.userProfile', 'verifiedBy', 'organisation', 'branch'],
 			});
 
 			if (!checkIns) {
+				this.logger.error('No check-ins found in database');
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
 			}
 
+			this.logger.log(`Successfully retrieved ${checkIns.length} check-in records`);
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,
 				checkIns,
@@ -200,6 +240,7 @@ export class AttendanceService {
 
 			return response;
 		} catch (error) {
+			this.logger.error(`Failed to retrieve all check-ins`, error.stack);
 			const response = {
 				message: `could not get all check ins - ${error.message}`,
 				checkIns: null,

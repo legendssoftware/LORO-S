@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Inject, Logger } from '@nestjs/common';
 import { CreateLeaveDto } from './dto/create-leave.dto';
 import { UpdateLeaveDto } from './dto/update-leave.dto';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -17,6 +17,7 @@ import { ApprovalType, ApprovalPriority, ApprovalFlow, NotificationFrequency, Ap
 
 @Injectable()
 export class LeaveService {
+	private readonly logger = new Logger(LeaveService.name);
 	private readonly CACHE_TTL: number;
 	private readonly CACHE_PREFIX = 'leave:';
 
@@ -33,13 +34,18 @@ export class LeaveService {
 		private readonly approvalsService: ApprovalsService,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
+		this.logger.debug(`LeaveService initialized with cache TTL: ${this.CACHE_TTL} minutes`);
 	}
 
 	private getCacheKey(key: string | number): string {
-		return `${this.CACHE_PREFIX}${key}`;
+		const cacheKey = `${this.CACHE_PREFIX}${key}`;
+		this.logger.debug(`Generated cache key: ${cacheKey}`);
+		return cacheKey;
 	}
 
 	private async clearLeaveCache(leaveId?: number): Promise<void> {
+		this.logger.debug(`Clearing leave cache${leaveId ? ` for leave ID: ${leaveId}` : ' (all leaves)'}`);
+		
 		try {
 			// Get all cache keys
 			const keys = await this.cacheManager.store.keys();
@@ -74,16 +80,26 @@ export class LeaveService {
 		branchId?: number,
 		userId?: number,
 	): Promise<{ message: string }> {
+		this.logger.log(`Creating leave request for user: ${userId}, orgId: ${orgId}, branchId: ${branchId}`);
+		this.logger.debug(`Leave request data: ${JSON.stringify({ ...createLeaveDto, startDate: createLeaveDto.startDate, endDate: createLeaveDto.endDate })}`);
+
 		try {
 			// Find the owner user
 			if (!userId) {
+				this.logger.error('User ID is required but not provided for leave request creation');
 				throw new BadRequestException('User ID is required to create a leave request');
 			}
+			
+			this.logger.debug(`Finding user with ID: ${userId}`);
 			const owner = await this.userRepository.findOne({ where: { uid: userId } });
 
 			if (!owner) {
+				this.logger.error(`User not found with ID: ${userId}`);
 				throw new NotFoundException(`User with ID ${userId} not found`);
 			}
+			this.logger.debug(`User found: ${owner.email} (${owner.name})`);
+
+			this.logger.debug('Calculating leave duration and processing dates');
 
 			// Format dates to YYYY-MM-DD string
 			const formatDate = (date: Date | string): string | undefined => {
@@ -107,6 +123,7 @@ export class LeaveService {
 
 			// Calculate duration from start and end dates if not provided
 			if (!createLeaveDto.duration) {
+				this.logger.debug('Duration not provided, calculating from start and end dates');
 				const startDate = new Date(createLeaveDto.startDate);
 				const endDate = new Date(createLeaveDto.endDate);
 
@@ -126,12 +143,17 @@ export class LeaveService {
 
 				if (createLeaveDto.isHalfDay) {
 					duration -= 0.5;
+					this.logger.debug('Half-day leave detected, adjusting duration');
 				}
 
 				createLeaveDto.duration = duration;
+				this.logger.debug(`Calculated leave duration: ${duration} days`);
+			} else {
+				this.logger.debug(`Using provided duration: ${createLeaveDto.duration} days`);
 			}
 
 			// Create new leave entity
+			this.logger.debug('Creating leave entity with formatted dates and organization/branch associations');
 			const leave = this.leaveRepository.create({
 				...createLeaveDto,
 				startDate: formattedStartDate as any, // TypeORM expects Date, but we provide string for 'date' type
@@ -144,12 +166,15 @@ export class LeaveService {
 			});
 
 			// Save the leave request
+			this.logger.debug('Saving leave request to database');
 			const savedLeave = await this.leaveRepository.save(leave);
+			this.logger.debug(`Leave request saved with ID: ${savedLeave.uid}`);
 
 			// Check for leave conflicts and auto-reject if necessary
+			this.logger.debug(`Checking for leave conflicts for leave ID: ${savedLeave.uid}`);
 			const conflictCheck = await this.validateLeaveConflicts(savedLeave);
 			if (conflictCheck.hasConflict) {
-				console.log(`❌ [LeaveService] Auto-rejecting leave ${savedLeave.uid} due to conflicts`);
+				this.logger.warn(`Auto-rejecting leave ${savedLeave.uid} due to conflicts with leaves: ${conflictCheck.conflictingLeaves.map(l => `#${l.uid}`).join(', ')}`);
 				
 				// Auto-reject the leave
 				await this.leaveRepository.update(savedLeave.uid, {
@@ -158,6 +183,7 @@ export class LeaveService {
 					rejectionReason: `Automatically rejected due to conflicting leave requests on the same dates. Conflicting leaves: ${conflictCheck.conflictingLeaves.map(l => `#${l.uid}`).join(', ')}`,
 				});
 
+				this.logger.debug(`Sending rejection notification for auto-rejected leave: ${savedLeave.uid}`);
 				// Send rejection notification
 				const rejectedLeave = await this.leaveRepository.findOne({
 					where: { uid: savedLeave.uid },
@@ -171,23 +197,30 @@ export class LeaveService {
 						LeaveStatus.PENDING,
 						null, // No specific user performed the rejection - system auto-rejection
 					);
+					this.logger.debug(`Rejection notification sent successfully for leave: ${savedLeave.uid}`);
 				}
 
 				// Clear cache and return
 				await this.clearLeaveCache();
+				this.logger.log(`Leave request ${savedLeave.uid} created but automatically rejected due to conflicts`);
 				return { message: 'Leave request created but automatically rejected due to conflicting dates' };
 			}
+			this.logger.debug(`No conflicts found for leave ID: ${savedLeave.uid}`);
 
 			// Initialize approval workflow chain for the leave request
+			this.logger.debug(`Initializing approval workflow for leave: ${savedLeave.uid}`);
 			await this.initializeLeaveApprovalWorkflow(savedLeave, owner);
 
 			// Send confirmation email to applicant
+			this.logger.debug(`Sending confirmation email to applicant: ${owner.email}`);
 			await this.leaveEmailService.sendApplicationConfirmation(savedLeave, owner);
 
 			// Send notification email to admins
+			this.logger.debug('Sending admin notification emails');
 			await this.leaveEmailService.sendNewApplicationAdminNotification(savedLeave, owner);
 
 			// Emit leave created event for notifications
+			this.logger.debug(`Emitting leave.created event for leave: ${savedLeave.uid}`);
 			this.eventEmitter.emit('leave.created', {
 				leave: savedLeave,
 				owner,
@@ -196,9 +229,10 @@ export class LeaveService {
 			// Clear cache
 			await this.clearLeaveCache();
 
+			this.logger.log(`Leave request created successfully for user: ${userId}, leave ID: ${savedLeave.uid}`);
 			return { message: 'Leave request created successfully' };
 		} catch (error) {
-			console.log(error);
+			this.logger.error(`Failed to create leave request for user: ${userId}`, error.stack);
 			if (error instanceof NotFoundException) {
 				throw error;
 			}

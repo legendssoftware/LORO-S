@@ -36,19 +36,21 @@ export class AuthService {
 		private passwordResetService: PasswordResetService,
 		private licensingService: LicensingService,
 		private platformService: PlatformService,
-	) {}
+	) {
+		this.logger.debug('AuthService initialized with all dependencies');
+	}
 
 	private excludePassword(user: any): Omit<typeof user, 'password'> {
-		this.logger.debug('Excluding password from user object');
+		this.logger.debug(`Excluding password from user object for user: ${user?.email || user?.username || 'unknown'}`);
 		const { password, ...userWithoutPassword } = user;
-		this.logger.debug('Password successfully excluded from user object');
+		this.logger.debug(`Password successfully excluded from user object for: ${user?.email || user?.username || 'unknown'}`);
 		return userWithoutPassword;
 	}
 
 	private async generateSecureToken(): Promise<string> {
-		this.logger.debug('Generating secure token');
+		this.logger.debug('Generating secure token using crypto.randomBytes');
 		const token = crypto.randomBytes(32).toString('hex');
-		this.logger.debug('Secure token generated successfully');
+		this.logger.debug(`Secure token generated successfully with length: ${token.length}`);
 		return token;
 	}
 
@@ -138,17 +140,19 @@ export class AuthService {
 			if (organisationRef) {
 				this.logger.debug(`Checking organization license for user: ${username}, orgRef: ${organisationRef}`);
 				const licenses = await this.licensingService.findByOrganisation(organisationRef);
+				this.logger.debug(`Found ${licenses.length} licenses for organization: ${organisationRef}`);
+				
 				const activeLicense = licenses.find((license) =>
 					this.licensingService.validateLicense(String(license?.uid)),
 				);
 
 				if (!activeLicense) {
-					this.logger.warn(`No active license found for organization: ${organisationRef}`);
+					this.logger.warn(`No active license found for organization: ${organisationRef}, licenses checked: ${licenses.length}`);
 					throw new UnauthorizedException(
 						"Your organization's license has expired. Please contact your administrator.",
 					);
 				}
-				this.logger.debug(`Active license found for organization: ${organisationRef}`);
+				this.logger.debug(`Active license found for organization: ${organisationRef}, licenseId: ${activeLicense.uid}`);
 
 				// Add license info to profile data
 				const platform = this.platformService.getPrimaryPlatform(activeLicense?.features || {});
@@ -186,8 +190,10 @@ export class AuthService {
 				};
 
 				this.logger.debug(`Generating access and refresh tokens for user: ${username}`);
+				this.logger.debug(`Token payload prepared with platform: ${platform}, role: ${tokenRole}`);
 				const accessToken = await this.jwtService.signAsync(payload, { expiresIn: `8h` });
 				const refreshToken = await this.jwtService.signAsync(payload, { expiresIn: `7d` });
+				this.logger.debug(`JWT tokens generated successfully for user: ${username}`);
 
 				const gainedXP = {
 					owner: Number(uid),
@@ -200,8 +206,9 @@ export class AuthService {
 					},
 				};
 
-				this.logger.debug(`Awarding XP for daily login to user: ${username}`);
+				this.logger.debug(`Awarding XP for daily login to user: ${username}, amount: ${XP_VALUES.DAILY_LOGIN}`);
 				await this.rewardsService.awardXP(gainedXP, organisationRef, restOfUser?.branch?.uid);
+				this.logger.debug(`XP awarded successfully for daily login to user: ${username}`);
 
 				// Send login notification email
 				try {
@@ -510,10 +517,12 @@ export class AuthService {
 			this.logger.debug(`Generating reset token for user: ${email}`);
 			const resetToken = await this.generateSecureToken();
 			const resetUrl = `${process.env.WEBSITE_DOMAIN || process.env.SIGNUP_DOMAIN}/reset-password/${resetToken}`;
+			this.logger.debug(`Reset URL generated: ${resetUrl.substring(0, resetUrl.lastIndexOf('/') + 1)}[TOKEN]`);
 
 			// Create password reset record (this will handle rate limiting and duplicates)
 			this.logger.debug(`Creating password reset record for: ${email}`);
 			await this.passwordResetService.create(email, resetToken);
+			this.logger.debug(`Password reset record created successfully for: ${email}`);
 
 			// Send single password reset email with security alert and reset link
 			this.logger.debug(`Sending password reset email to: ${email}`);
@@ -635,18 +644,20 @@ export class AuthService {
 			if (authProfile.user.organisationRef) {
 				this.logger.debug(`Checking organization license for refresh token, orgRef: ${authProfile.user.organisationRef}`);
 				const licenses = await this.licensingService.findByOrganisation(authProfile.user.organisationRef);
+				this.logger.debug(`Found ${licenses.length} licenses for organization during refresh: ${authProfile.user.organisationRef}`);
+				
 				const activeLicense = licenses.find((license) =>
 					this.licensingService.validateLicense(String(license?.uid)),
 				);
 
 				if (!activeLicense) {
-					this.logger.warn(`No active license found for organization during refresh: ${authProfile.user.organisationRef}`);
+					this.logger.warn(`No active license found for organization during refresh: ${authProfile.user.organisationRef}, licenses checked: ${licenses.length}`);
 					throw new UnauthorizedException(
 						"Your organization's license has expired. Please contact your administrator.",
 					);
 				}
 
-				this.logger.debug(`Active license found for organization during refresh: ${authProfile.user.organisationRef}`);
+				this.logger.debug(`Active license found for organization during refresh: ${authProfile.user.organisationRef}, licenseId: ${activeLicense.uid}`);
 				const platform = this.platformService.getPrimaryPlatform(activeLicense?.features || {});
 
 				const newPayload = {
