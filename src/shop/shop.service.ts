@@ -581,6 +581,8 @@ export class ShopService {
 				// Assign organisation and branch as relation objects if IDs exist
 				...(orgId && { organisation: { uid: orgId } }), // Assumes relation name is 'organisation' and expects { uid: ... }
 				...(branchId && { branch: { uid: branchId } }),
+				// Assign project if provided
+				...(quotationData?.project?.uid && { project: { uid: quotationData.project.uid } }),
 			};
 
 			// Add organization and branch if available - DIRECT COLUMN VALUES
@@ -605,7 +607,7 @@ export class ShopService {
 			// First get the full quotation with all relations for PDF generation
 			const fullQuotation = await this.quotationRepository.findOne({
 				where: { uid: savedQuotation.uid },
-				relations: ['client', 'quotationItems', 'quotationItems.product', 'organisation', 'branch'],
+				relations: ['client', 'quotationItems', 'quotationItems.product', 'organisation', 'branch', 'project'],
 			});
 
 			if (fullQuotation) {
@@ -666,7 +668,7 @@ export class ShopService {
 			// Get the full quotation with all relations for WebSocket
 			const fullQuotationForSocket = await this.quotationRepository.findOne({
 				where: { uid: savedQuotation.uid },
-				relations: ['client', 'placedBy', 'quotationItems', 'quotationItems.product', 'organisation', 'branch'],
+				relations: ['client', 'placedBy', 'quotationItems', 'quotationItems.product', 'organisation', 'branch', 'project'],
 			});
 			
 			if (fullQuotationForSocket) {
@@ -902,7 +904,7 @@ export class ShopService {
 			this.logger.log(`[createBlankQuotation] Generating PDF for quotation`);
 			const fullQuotation = await this.quotationRepository.findOne({
 				where: { uid: savedQuotation.uid },
-				relations: ['client', 'quotationItems', 'quotationItems.product', 'organisation', 'branch'],
+				relations: ['client', 'quotationItems', 'quotationItems.product', 'organisation', 'branch', 'project'],
 			});
 
 			if (fullQuotation) {
@@ -974,7 +976,7 @@ export class ShopService {
 			// Get the full quotation with all relations for WebSocket
 			const fullBlankQuotationForSocket = await this.quotationRepository.findOne({
 				where: { uid: savedQuotation.uid },
-				relations: ['client', 'placedBy', 'quotationItems', 'quotationItems.product', 'organisation', 'branch'],
+				relations: ['client', 'placedBy', 'quotationItems', 'quotationItems.product', 'organisation', 'branch', 'project'],
 			});
 			
 			if (fullBlankQuotationForSocket) {
@@ -1217,13 +1219,14 @@ export class ShopService {
 
 	async getAllQuotations(orgId?: number, branchId?: number, userId?: number, userRole?: AccessLevel): Promise<{ quotations: Quotation[]; message: string }> {
 		try {
-			const query = this.quotationRepository
-				.createQueryBuilder('quotation')
-				.leftJoinAndSelect('quotation.client', 'client')
-				.leftJoinAndSelect('quotation.placedBy', 'placedBy')
-				.leftJoinAndSelect('quotation.quotationItems', 'quotationItems')
-				.leftJoinAndSelect('quotationItems.product', 'product')
-				.orderBy('quotation.createdAt', 'DESC');
+					const query = this.quotationRepository
+			.createQueryBuilder('quotation')
+			.leftJoinAndSelect('quotation.client', 'client')
+			.leftJoinAndSelect('quotation.placedBy', 'placedBy')
+			.leftJoinAndSelect('quotation.quotationItems', 'quotationItems')
+			.leftJoinAndSelect('quotationItems.product', 'product')
+			.leftJoinAndSelect('quotation.project', 'project')
+			.orderBy('quotation.createdAt', 'DESC');
 
 			// Add filtering by org and branch
 			if (orgId) {
@@ -1263,13 +1266,14 @@ export class ShopService {
 		branchId?: number,
 	): Promise<{ quotations: Quotation[]; message: string }> {
 		try {
-			const query = this.quotationRepository
-				.createQueryBuilder('quotation')
-				.leftJoinAndSelect('quotation.client', 'client')
-				.leftJoinAndSelect('quotation.placedBy', 'placedBy')
-				.leftJoinAndSelect('quotation.quotationItems', 'quotationItems')
-				.leftJoinAndSelect('quotationItems.product', 'product')
-				.where('placedBy.uid = :ref', { ref });
+					const query = this.quotationRepository
+			.createQueryBuilder('quotation')
+			.leftJoinAndSelect('quotation.client', 'client')
+			.leftJoinAndSelect('quotation.placedBy', 'placedBy')
+			.leftJoinAndSelect('quotation.quotationItems', 'quotationItems')
+			.leftJoinAndSelect('quotationItems.product', 'product')
+			.leftJoinAndSelect('quotation.project', 'project')
+			.where('placedBy.uid = :ref', { ref });
 
 			// Add filtering by org and branch
 			if (orgId) {
@@ -1304,13 +1308,14 @@ export class ShopService {
 		branchId?: number,
 	): Promise<{ quotation: Quotation; message: string }> {
 		try {
-			const query = this.quotationRepository
-				.createQueryBuilder('quotation')
-				.leftJoinAndSelect('quotation.client', 'client')
-				.leftJoinAndSelect('quotation.placedBy', 'placedBy')
-				.leftJoinAndSelect('quotation.quotationItems', 'quotationItems')
-				.leftJoinAndSelect('quotationItems.product', 'product')
-				.where('quotation.uid = :ref', { ref });
+					const query = this.quotationRepository
+			.createQueryBuilder('quotation')
+			.leftJoinAndSelect('quotation.client', 'client')
+			.leftJoinAndSelect('quotation.placedBy', 'placedBy')
+			.leftJoinAndSelect('quotation.quotationItems', 'quotationItems')
+			.leftJoinAndSelect('quotationItems.product', 'product')
+			.leftJoinAndSelect('quotation.project', 'project')
+			.where('quotation.uid = :ref', { ref });
 
 			// Add filtering by org and branch
 			if (orgId) {
@@ -1655,7 +1660,7 @@ export class ShopService {
 				// Get updated quotation with full data for WebSocket
 				const updatedQuotationForSocket = await this.quotationRepository.findOne({
 					where: { uid: quotationId },
-					relations: ['client', 'placedBy', 'quotationItems', 'quotationItems.product', 'organisation', 'branch'],
+					relations: ['client', 'placedBy', 'quotationItems', 'quotationItems.product', 'organisation', 'branch', 'project'],
 				});
 				
 				if (updatedQuotationForSocket) {
@@ -1839,10 +1844,10 @@ export class ShopService {
 				filter = { ...filter, 'branch.uid': branchId };
 			}
 
-			const quotations = await this.quotationRepository.find({
-				where: filter,
-				relations: ['placedBy', 'client', 'quotationItems', 'quotationItems.product', 'organisation', 'branch'],
-			});
+					const quotations = await this.quotationRepository.find({
+			where: filter,
+			relations: ['placedBy', 'client', 'quotationItems', 'quotationItems.product', 'organisation', 'branch', 'project'],
+		});
 
 			if (!quotations) {
 				throw new NotFoundException('No quotations found for the specified period');
@@ -2059,7 +2064,8 @@ export class ShopService {
 			.leftJoinAndSelect('quotation.placedBy', 'placedBy')
 			.leftJoinAndSelect('quotation.client', 'client')
 			.leftJoinAndSelect('quotation.quotationItems', 'quotationItems')
-			.leftJoinAndSelect('quotationItems.product', 'product');
+			.leftJoinAndSelect('quotationItems.product', 'product')
+			.leftJoinAndSelect('quotation.project', 'project');
 
 		// Apply filters
 		if (filters?.status) {
@@ -2127,7 +2133,7 @@ export class ShopService {
 			// Find quotation by token
 			const quotation = await this.quotationRepository.findOne({
 				where: { reviewToken: token },
-				relations: ['client', 'quotationItems', 'quotationItems.product', 'organisation', 'branch'],
+				relations: ['client', 'quotationItems', 'quotationItems.product', 'organisation', 'branch', 'project'],
 			});
 
 			if (!quotation) {
@@ -2240,7 +2246,7 @@ export class ShopService {
 				// Get the updated quotation with all relations
 				const updatedQuotation = await this.quotationRepository.findOne({
 					where: { uid: quotation.uid },
-					relations: ['client', 'quotationItems', 'quotationItems.product'],
+					relations: ['client', 'quotationItems', 'quotationItems.product', 'project'],
 				});
 
 				if (updatedQuotation && updatedQuotation.client?.email) {

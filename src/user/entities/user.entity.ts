@@ -8,6 +8,7 @@ import { News } from '../../news/entities/news.entity';
 import { Task } from '../../tasks/entities/task.entity';
 import { Client } from '../../clients/entities/client.entity';
 import { Quotation } from '../../shop/entities/quotation.entity';
+import { Project } from '../../shop/entities/project.entity';
 import { CheckIn } from '../../check-ins/entities/check-in.entity';
 import { Tracking } from '../../tracking/entities/tracking.entity';
 import { Asset } from '../../assets/entities/asset.entity';
@@ -209,4 +210,7 @@ export class User {
 
 	@OneToMany(() => ClientCommunicationSchedule, (schedule) => schedule.assignedTo, { nullable: true })
 	clientCommunicationSchedules: ClientCommunicationSchedule[];
+
+	@OneToMany(() => Project, (project) => project.assignedUser, { nullable: true })
+	projects: Project[];
 }

@@ -1,5 +1,6 @@
-import { IsString, IsOptional, IsObject, IsBoolean, IsNumber, IsEnum } from 'class-validator';
+import { IsString, IsOptional, IsObject, IsBoolean, IsNumber, IsEnum, IsArray, IsEmail, IsUrl, ValidateNested } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 
 export class ContactDto {
 	@ApiProperty({ 
@@ -287,6 +288,105 @@ export class PreferencesDto {
 	menuCollapsed?: boolean;
 }
 
+export class CustomSocialLinkDto {
+	@ApiProperty({
+		description: 'Name of the custom social platform',
+		example: 'TikTok',
+	})
+	@IsString()
+	name: string;
+
+	@ApiProperty({
+		description: 'URL of the social media profile',
+		example: 'https://tiktok.com/@company',
+	})
+	@IsUrl()
+	url: string;
+
+	@ApiProperty({
+		description: 'Optional icon for the social platform',
+		required: false,
+		example: 'tiktok-icon',
+	})
+	@IsString()
+	@IsOptional()
+	icon?: string;
+}
+
+export class SocialLinksDto {
+	@ApiProperty({
+		description: 'Facebook page URL',
+		required: false,
+		example: 'https://facebook.com/company',
+	})
+	@IsUrl()
+	@IsOptional()
+	facebook?: string;
+
+	@ApiProperty({
+		description: 'Twitter profile URL',
+		required: false,
+		example: 'https://twitter.com/company',
+	})
+	@IsUrl()
+	@IsOptional()
+	twitter?: string;
+
+	@ApiProperty({
+		description: 'Instagram profile URL',
+		required: false,
+		example: 'https://instagram.com/company',
+	})
+	@IsUrl()
+	@IsOptional()
+	instagram?: string;
+
+	@ApiProperty({
+		description: 'LinkedIn company page URL',
+		required: false,
+		example: 'https://linkedin.com/company/company-name',
+	})
+	@IsUrl()
+	@IsOptional()
+	linkedin?: string;
+
+	@ApiProperty({
+		description: 'YouTube channel URL',
+		required: false,
+		example: 'https://youtube.com/c/company',
+	})
+	@IsUrl()
+	@IsOptional()
+	youtube?: string;
+
+	@ApiProperty({
+		description: 'Company website URL',
+		required: false,
+		example: 'https://company.com',
+	})
+	@IsUrl()
+	@IsOptional()
+	website?: string;
+
+	@ApiProperty({
+		type: [CustomSocialLinkDto],
+		description: 'Custom social media links',
+		required: false,
+		example: [
+			{
+				name: 'TikTok',
+				url: 'https://tiktok.com/@company',
+				icon: 'tiktok',
+			},
+		],
+	})
+	@IsArray()
+	@ValidateNested({ each: true })
+	@Type(() => CustomSocialLinkDto)
+	@IsOptional()
+	custom?: CustomSocialLinkDto[];
+}
+
 export class CreateOrganisationSettingsDto {
 	@ApiProperty({
 		type: ContactDto,
@@ -411,4 +511,28 @@ export class CreateOrganisationSettingsDto {
 	@IsNumber()
 	@IsOptional()
 	feedbackTokenExpiryDays?: number;
+
+	@ApiProperty({
+		type: SocialLinksDto,
+		required: false,
+		description: 'Social media links for the organization',
+		example: {
+			facebook: 'https://facebook.com/company',
+			twitter: 'https://twitter.com/company',
+			linkedin: 'https://linkedin.com/company/company-name',
+			website: 'https://company.com',
+			custom: [
+				{
+					name: 'TikTok',
+					url: 'https://tiktok.com/@company',
+					icon: 'tiktok',
+				},
+			],
+		},
+	})
+	@IsObject()
+	@ValidateNested()
+	@Type(() => SocialLinksDto)
+	@IsOptional()
+	socialLinks?: SocialLinksDto;
 }

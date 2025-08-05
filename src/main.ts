@@ -26,7 +26,7 @@ async function bootstrap() {
 	});
 
 	const config = new DocumentBuilder()
-		.setTitle('LORO API Documentation')
+		.setTitle('LORO API')
 		.setDescription(
 			`
 **LORO** is a comprehensive enterprise management platform that revolutionizes how businesses manage their workforce, operations, and client relationships through cutting-edge technology and intelligent automation.
@@ -77,7 +77,8 @@ LORO combines **GPS tracking**, **AI-powered analytics**, **real-time communicat
 		.addTag('🔧 Tasks', 'Task Management - Task assignment, tracking, and route optimization')
 		.addTag('📝 Journal', 'Activity Journal - Daily activity logging and management audit trails')
 		.addTag('🌴 Leave Management', 'Leave Management - Employee leave requests and approval workflows')
-		.addTag('⚠️ Warnings', 'Employee Warnings - Disciplinary actions and warning management')
+		.addTag('✅ Approvals', 'Advanced approval system with multi-step workflows, digital signatures, and comprehensive tracking for leave requests, expenses, purchases, and business processes')
+		.addTag('⚠️ Warnings & Disciplinary Management', 'Employee Warnings - Disciplinary actions and warning management')
 
 		// === CLIENT & LEAD MANAGEMENT ===
 		.addTag('💎 Clients', 'Client Management - Customer relationship management with location services')
@@ -108,7 +109,7 @@ LORO combines **GPS tracking**, **AI-powered analytics**, **real-time communicat
 		.addTag('↗️ Resellers', 'Reseller Network - Partner management with territory mapping')
 
 		// === UTILITIES & SERVICES ===
-		.addTag('⚙️ PDF Generation', 'Dynamic PDF creation for business documents')
+		.addTag('⚙️ PDF Generation', 'Dynamic PDF creation for business documents with advanced templating and cloud storage integration')
 		.addTag('💾 Documents & Files', 'Document and file management with cloud storage')
 		.addTag('💼 Payslips', 'Payslip management with cloud storage')
 
@@ -118,7 +119,6 @@ LORO combines **GPS tracking**, **AI-powered analytics**, **real-time communicat
 
 		.addBearerAuth()
 		.addServer('https://api.loro.co.za', 'Production')
-		.addServer('https://api.dev.loro.co.za', 'Development')
 		.addServer('wss://api.loro.co.za', 'WebSocket')
 		.build();
 
@@ -205,8 +205,12 @@ LORO combines **GPS tracking**, **AI-powered analytics**, **real-time communicat
 					properties: {
 						event: {
 							type: 'string',
-							enum: ['approval_created', 'approval_updated', 'approval_action', 'approval_high_priority', 'approval_metrics'],
-							description: 'Approval WebSocket event name',
+							enum: [
+								'approval_created', 'approval_updated', 'approval_action', 'approval_high_priority', 'approval_metrics',
+								'approval_delegated', 'approval_escalated', 'approval_deadline_warning', 'approval_signed',
+								'approval_bulk_action', 'approval_workflow_completed', 'approval_reminders'
+							],
+							description: 'Approval WebSocket event name with comprehensive workflow support',
 						},
 						timestamp: {
 							type: 'string',
@@ -223,14 +227,48 @@ LORO combines **GPS tracking**, **AI-powered analytics**, **real-time communicat
 										approvalReference: { type: 'string', description: 'Approval reference number' },
 										title: { type: 'string', description: 'Approval title' },
 										description: { type: 'string', description: 'Approval description' },
-										type: { type: 'string', description: 'Approval type' },
-										status: { type: 'string', description: 'Current approval status' },
-										priority: { type: 'string', description: 'Approval priority level' },
+										type: { 
+											type: 'string', 
+											enum: ['LEAVE_REQUEST', 'EXPENSE_CLAIM', 'PURCHASE_ORDER', 'BUDGET_APPROVAL', 'HR_PROCESS', 'IT_CHANGE', 'PROJECT_APPROVAL', 'COMPLIANCE'],
+											description: 'Approval type category' 
+										},
+										status: { 
+											type: 'string', 
+											enum: ['DRAFT', 'PENDING', 'APPROVED', 'REJECTED', 'WITHDRAWN', 'ESCALATED', 'DELEGATED', 'COMPLETED', 'SIGNED'],
+											description: 'Current approval status' 
+										},
+										priority: { 
+											type: 'string', 
+											enum: ['URGENT', 'HIGH', 'MEDIUM', 'LOW'],
+											description: 'Approval priority level' 
+										},
 										amount: { type: 'number', description: 'Approval amount' },
 										currency: { type: 'string', description: 'Currency code' },
 										isUrgent: { type: 'boolean', description: 'Whether approval is urgent' },
 										isOverdue: { type: 'boolean', description: 'Whether approval is overdue' },
 										deadline: { type: 'string', format: 'date-time', description: 'Approval deadline' },
+										flowType: { 
+											type: 'string', 
+											enum: ['SINGLE_APPROVER', 'SEQUENTIAL', 'PARALLEL', 'UNANIMOUS', 'MAJORITY_VOTE'],
+											description: 'Approval workflow type' 
+										},
+										currentStep: { type: 'number', description: 'Current workflow step' },
+										totalSteps: { type: 'number', description: 'Total workflow steps' },
+										approvedCount: { type: 'number', description: 'Number of approvals received' },
+										requiredApprovers: { type: 'number', description: 'Required number of approvers' },
+										submittedAt: { type: 'string', format: 'date-time', description: 'Submission timestamp' },
+										completedAt: { type: 'string', format: 'date-time', description: 'Completion timestamp' },
+										signedAt: { type: 'string', format: 'date-time', description: 'Digital signature timestamp' },
+										supportingDocuments: {
+											type: 'array',
+											items: { type: 'string' },
+											description: 'Supporting document URLs'
+										},
+										conditions: {
+											type: 'array',
+											items: { type: 'string' },
+											description: 'Conditional approval requirements'
+										},
 									},
 								},
 								requester: {
@@ -241,6 +279,8 @@ LORO combines **GPS tracking**, **AI-powered analytics**, **real-time communicat
 										surname: { type: 'string' },
 										email: { type: 'string' },
 										accessLevel: { type: 'string' },
+										department: { type: 'string' },
+										position: { type: 'string' },
 									},
 								},
 								approver: {
@@ -251,9 +291,35 @@ LORO combines **GPS tracking**, **AI-powered analytics**, **real-time communicat
 										surname: { type: 'string' },
 										email: { type: 'string' },
 										accessLevel: { type: 'string' },
+										department: { type: 'string' },
+										position: { type: 'string' },
 									},
 								},
-								action: { type: 'string', description: 'Action performed (for action events)' },
+								delegatedTo: {
+									type: 'object',
+									properties: {
+										uid: { type: 'number' },
+										name: { type: 'string' },
+										surname: { type: 'string' },
+										email: { type: 'string' },
+									},
+									description: 'User to whom approval was delegated'
+								},
+								escalatedTo: {
+									type: 'object',
+									properties: {
+										uid: { type: 'number' },
+										name: { type: 'string' },
+										surname: { type: 'string' },
+										email: { type: 'string' },
+									},
+									description: 'User to whom approval was escalated'
+								},
+								action: { 
+									type: 'string', 
+									enum: ['APPROVE', 'REJECT', 'DELEGATE', 'ESCALATE', 'REQUEST_INFO', 'WITHDRAW', 'SIGN'],
+									description: 'Action performed (for action events)' 
+								},
 								actionBy: {
 									type: 'object',
 									properties: {
@@ -267,6 +333,25 @@ LORO combines **GPS tracking**, **AI-powered analytics**, **real-time communicat
 								toStatus: { type: 'string', description: 'New status' },
 								comments: { type: 'string', description: 'Action comments' },
 								reason: { type: 'string', description: 'Action reason' },
+								signature: {
+									type: 'object',
+									properties: {
+										type: { type: 'string', enum: ['DIGITAL', 'ELECTRONIC', 'WET_SIGNATURE'] },
+										signedAt: { type: 'string', format: 'date-time' },
+										ipAddress: { type: 'string' },
+										deviceInfo: { type: 'string' },
+									},
+									description: 'Digital signature details'
+								},
+								metrics: {
+									type: 'object',
+									properties: {
+										processingTime: { type: 'number', description: 'Processing time in minutes' },
+										daysToDeadline: { type: 'number', description: 'Days remaining to deadline' },
+										escalationLevel: { type: 'number', description: 'Current escalation level' },
+									},
+									description: 'Approval processing metrics'
+								},
 							},
 						},
 					},
@@ -332,9 +417,16 @@ wss://api.loro.co.za?token=your_jwt_token
 ### 📋 Approval Events  
 - **approval:created**: New approval request created
 - **approval:updated**: Approval request updated
-- **approval:action**: Approval action performed (approve/reject/etc)
+- **approval:action**: Approval action performed (approve/reject/delegate/escalate)
 - **approval:high-priority**: High priority approval alert
 - **approval:metrics**: Approval metrics dashboard update
+- **approval:delegated**: Approval delegated to another user
+- **approval:escalated**: Approval escalated to higher authority
+- **approval:deadline-warning**: Approval deadline approaching
+- **approval:signed**: Digital signature applied to approval
+- **approval:bulk-action**: Bulk approval operations performed
+- **approval:workflow-completed**: Multi-step workflow completed
+- **approval:reminders**: Automated reminder notifications
 
 ### 📊 Analytics Events
 - **analytics:update**: Real-time analytics updates
@@ -365,6 +457,15 @@ socket.emit('approval:subscribe-user', { userId: 123 });
 
 // Subscribe to organization approvals
 socket.emit('approval:subscribe-org', { organisationId: 456 });
+
+// Subscribe to department approvals
+socket.emit('approval:subscribe-department', { department: 'HR' });
+
+// Subscribe to specific approval types
+socket.emit('approval:subscribe-type', { type: 'EXPENSE_CLAIM' });
+
+// Subscribe to high-priority approvals only
+socket.emit('approval:subscribe-priority', { priority: 'URGENT' });
 ` +
 						'```' +
 						`
@@ -457,6 +558,60 @@ socket.on("approval:high-priority", (data) => {
 	
 	showUrgentNotification(\`URGENT: \${approval.title} requires immediate attention\`);
 	highlightUrgentApproval(approval);
+});
+
+// Approval delegation event
+socket.on("approval:delegated", (data) => {
+	console.log("🔄 Approval delegated:", data);
+	const { approval, delegatedTo, actionBy } = data.data;
+	
+	showNotification(\`Approval \${approval.approvalReference} delegated to \${delegatedTo.name}\`);
+	updateApprovalAssignment(approval.uid, delegatedTo);
+});
+
+// Approval escalation event
+socket.on("approval:escalated", (data) => {
+	console.log("⬆️ Approval escalated:", data);
+	const { approval, escalatedTo, reason } = data.data;
+	
+	showNotification(\`Approval \${approval.approvalReference} escalated: \${reason}\`);
+	updateApprovalPriority(approval.uid, 'HIGH');
+});
+
+// Approval deadline warning
+socket.on("approval:deadline-warning", (data) => {
+	console.log("⏰ Approval deadline warning:", data);
+	const { approval, daysRemaining } = data.data;
+	
+	showWarningNotification(\`\${approval.title} is due in \${daysRemaining} days\`);
+	highlightApproachingDeadline(approval.uid);
+});
+
+// Digital signature applied
+socket.on("approval:signed", (data) => {
+	console.log("✍️ Approval signed:", data);
+	const { approval, signature } = data.data;
+	
+	showSuccessNotification(\`\${approval.title} has been digitally signed\`);
+	markApprovalSigned(approval.uid, signature);
+});
+
+// Bulk approval operations
+socket.on("approval:bulk-action", (data) => {
+	console.log("📦 Bulk approval action:", data);
+	const { action, approvals, actionBy } = data.data;
+	
+	showNotification(\`\${approvals.length} approvals \${action} by \${actionBy.name}\`);
+	refreshApprovalsList();
+});
+
+// Workflow completion
+socket.on("approval:workflow-completed", (data) => {
+	console.log("✅ Workflow completed:", data);
+	const { approval, finalStatus, processingTime } = data.data;
+	
+	showSuccessNotification(\`Workflow for \${approval.title} completed in \${processingTime} minutes\`);
+	updateWorkflowStatus(approval.uid, finalStatus);
 });
 
 // Approval metrics update
@@ -613,29 +768,48 @@ const Dashboard = () => {
       "uid": 789,
       "approvalReference": "APR-1701423600000",
       "title": "Equipment Purchase Request",
-      "description": "Request for new laptop equipment",
-      "type": "EXPENSE_CLAIM",
+      "description": "Request for new laptop equipment for development team",
+      "type": "PURCHASE_ORDER",
       "status": "APPROVED",
       "priority": "MEDIUM",
       "amount": 25000.00,
       "currency": "ZAR",
       "isUrgent": false,
       "isOverdue": false,
-      "deadline": "2023-12-05T17:00:00Z"
+      "deadline": "2023-12-05T17:00:00Z",
+      "flowType": "SEQUENTIAL",
+      "currentStep": 2,
+      "totalSteps": 2,
+      "approvedCount": 2,
+      "requiredApprovers": 2,
+      "submittedAt": "2023-11-28T09:00:00Z",
+      "completedAt": "2023-12-01T10:00:00Z",
+      "supportingDocuments": [
+        "https://storage.loro.co.za/documents/quote_laptop_2023.pdf",
+        "https://storage.loro.co.za/documents/budget_justification.pdf"
+      ],
+      "conditions": [
+        "Must source from approved vendors only",
+        "Equipment to be registered in IT asset management"
+      ]
     },
     "requester": {
       "uid": 123,
       "name": "Jane",
       "surname": "Doe",
       "email": "jane@company.com",
-      "accessLevel": "USER"
+      "accessLevel": "USER",
+      "department": "Development",
+      "position": "Senior Developer"
     },
     "approver": {
       "uid": 456,
       "name": "Mike",
       "surname": "Manager",
       "email": "mike@company.com",
-      "accessLevel": "MANAGER"
+      "accessLevel": "MANAGER",
+      "department": "IT",
+      "position": "IT Director"
     },
     "action": "APPROVE",
     "actionBy": {
@@ -646,7 +820,88 @@ const Dashboard = () => {
     },
     "fromStatus": "PENDING",
     "toStatus": "APPROVED",
-    "comments": "Approved for Q4 budget allocation"
+    "comments": "Approved for Q4 budget allocation. Please proceed with procurement.",
+    "metrics": {
+      "processingTime": 72,
+      "daysToDeadline": 4,
+      "escalationLevel": 0
+    }
+  }
+}
+` +
+						'```' +
+						`
+
+### Approval Delegation Event Data
+` +
+						'```json' +
+						`
+{
+  "event": "approval_delegated",
+  "timestamp": "2023-12-01T10:00:00Z",
+  "data": {
+    "approval": {
+      "uid": 789,
+      "approvalReference": "APR-1701423600000",
+      "title": "Annual Leave Request",
+      "type": "LEAVE_REQUEST",
+      "status": "DELEGATED",
+      "priority": "MEDIUM"
+    },
+    "requester": {
+      "uid": 123,
+      "name": "Jane",
+      "surname": "Doe",
+      "email": "jane@company.com"
+    },
+    "delegatedTo": {
+      "uid": 789,
+      "name": "Sarah",
+      "surname": "Smith",
+      "email": "sarah@company.com"
+    },
+    "actionBy": {
+      "uid": 456,
+      "name": "Mike",
+      "surname": "Manager",
+      "email": "mike@company.com"
+    },
+    "reason": "Original approver on annual leave",
+    "comments": "Delegating to acting manager while I'm away"
+  }
+}
+` +
+						'```' +
+						`
+
+### Digital Signature Event Data
+` +
+						'```json' +
+						`
+{
+  "event": "approval_signed",
+  "timestamp": "2023-12-01T10:00:00Z",
+  "data": {
+    "approval": {
+      "uid": 789,
+      "approvalReference": "APR-1701423600000",
+      "title": "Contract Amendment",
+      "type": "COMPLIANCE",
+      "status": "SIGNED",
+      "signedAt": "2023-12-01T10:00:00Z"
+    },
+    "signature": {
+      "type": "DIGITAL",
+      "signedAt": "2023-12-01T10:00:00Z",
+      "ipAddress": "192.168.1.100",
+      "deviceInfo": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    },
+    "actionBy": {
+      "uid": 456,
+      "name": "Mike",
+      "surname": "Manager",
+      "email": "mike@company.com"
+    }
   }
 }
 ` +

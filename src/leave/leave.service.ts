@@ -2,16 +2,18 @@ import { Injectable, NotFoundException, BadRequestException, Inject } from '@nes
 import { CreateLeaveDto } from './dto/create-leave.dto';
 import { UpdateLeaveDto } from './dto/update-leave.dto';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between, LessThanOrEqual, MoreThanOrEqual } from 'typeorm';
+import { Repository, Between, LessThanOrEqual, MoreThanOrEqual, In, Not } from 'typeorm';
 import { Leave } from './entities/leave.entity';
 import { User } from '../user/entities/user.entity';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { ConfigService } from '@nestjs/config';
 import { LeaveStatus } from '../lib/enums/leave.enums';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { PaginatedResponse } from '../lib/interfaces/product.interfaces';
 import { LeaveEmailService } from './services/leave-email.service';
+import { ApprovalsService } from '../approvals/approvals.service';
+import { ApprovalType, ApprovalPriority, ApprovalFlow, NotificationFrequency, ApprovalAction, ApprovalStatus } from '../lib/enums/approval.enums';
 
 @Injectable()
 export class LeaveService {
@@ -28,6 +30,7 @@ export class LeaveService {
 		private readonly configService: ConfigService,
 		private readonly eventEmitter: EventEmitter2,
 		private readonly leaveEmailService: LeaveEmailService,
+		private readonly approvalsService: ApprovalsService,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
 	}
@@ -142,6 +145,41 @@ export class LeaveService {
 
 			// Save the leave request
 			const savedLeave = await this.leaveRepository.save(leave);
+
+			// Check for leave conflicts and auto-reject if necessary
+			const conflictCheck = await this.validateLeaveConflicts(savedLeave);
+			if (conflictCheck.hasConflict) {
+				console.log(`❌ [LeaveService] Auto-rejecting leave ${savedLeave.uid} due to conflicts`);
+				
+				// Auto-reject the leave
+				await this.leaveRepository.update(savedLeave.uid, {
+					status: LeaveStatus.REJECTED,
+					rejectedAt: new Date(),
+					rejectionReason: `Automatically rejected due to conflicting leave requests on the same dates. Conflicting leaves: ${conflictCheck.conflictingLeaves.map(l => `#${l.uid}`).join(', ')}`,
+				});
+
+				// Send rejection notification
+				const rejectedLeave = await this.leaveRepository.findOne({
+					where: { uid: savedLeave.uid },
+					relations: ['owner', 'organisation', 'branch'],
+				});
+
+				if (rejectedLeave) {
+					await this.leaveEmailService.sendStatusUpdateToUser(
+						rejectedLeave,
+						owner,
+						LeaveStatus.PENDING,
+						null, // No specific user performed the rejection - system auto-rejection
+					);
+				}
+
+				// Clear cache and return
+				await this.clearLeaveCache();
+				return { message: 'Leave request created but automatically rejected due to conflicting dates' };
+			}
+
+			// Initialize approval workflow chain for the leave request
+			await this.initializeLeaveApprovalWorkflow(savedLeave, owner);
 
 			// Send confirmation email to applicant
 			await this.leaveEmailService.sendApplicationConfirmation(savedLeave, owner);
@@ -393,10 +431,31 @@ export class LeaveService {
 				updateLeaveDto.duration = duration;
 			}
 
+			// Handle modifications during approval process
+			await this.handleLeaveModificationDuringApproval(leave, updateLeaveDto);
+
 			// Update the leave
 			await this.leaveRepository.update(ref, {
 				...updateLeaveDto,
 			});
+
+			// Get updated leave for further processing
+			const updatedLeave = await this.leaveRepository.findOne({
+				where: { uid: ref },
+				relations: ['owner', 'organisation', 'branch'],
+			});
+
+			// If critical fields were modified and leave is back to pending, reinitialize approval workflow
+			const criticalFieldsModified = 
+				(updateLeaveDto.startDate && updateLeaveDto.startDate !== leave.startDate) ||
+				(updateLeaveDto.endDate && updateLeaveDto.endDate !== leave.endDate) ||
+				(updateLeaveDto.leaveType && updateLeaveDto.leaveType !== leave.leaveType) ||
+				(updateLeaveDto.duration && updateLeaveDto.duration !== leave.duration);
+
+			if (criticalFieldsModified && updatedLeave && updatedLeave.status === LeaveStatus.PENDING) {
+				console.log(`🔄 [LeaveService] Reinitializing approval workflow for modified leave ${ref}`);
+				await this.initializeLeaveApprovalWorkflow(updatedLeave, updatedLeave.owner);
+			}
 
 			// Clear cache
 			await this.clearLeaveCache(ref);
@@ -599,6 +658,9 @@ export class LeaveService {
 			// Determine which cancellation status to use
 			const cancellationStatus = isOwner ? LeaveStatus.CANCELLED_BY_USER : LeaveStatus.CANCELLED_BY_ADMIN;
 
+			// Handle approval workflow cancellation before updating leave status
+			await this.handleLeaveRevocation(leave, userId, cancellationReason);
+
 			// Update the leave
 			await this.leaveRepository.update(ref, {
 				status: cancellationStatus,
@@ -646,6 +708,374 @@ export class LeaveService {
 				throw error;
 			}
 			throw new BadRequestException(error.message || 'Error deleting leave request');
+		}
+	}
+
+	/**
+	 * Initialize approval workflow chain for leave requests
+	 * Creates an approval request that integrates with the approval system
+	 */
+	private async initializeLeaveApprovalWorkflow(leave: Leave, requester: User): Promise<void> {
+		try {
+			console.log(`🔄 [LeaveService] Initializing approval workflow for leave ${leave.uid}`);
+
+			// Determine approval priority based on leave type and duration
+			let priority = ApprovalPriority.MEDIUM;
+			if (leave.duration > 14) { // Extended leave (> 2 weeks)
+				priority = ApprovalPriority.HIGH;
+			} else if (leave.leaveType === 'SICK' && leave.duration > 3) { // Extended sick leave
+				priority = ApprovalPriority.HIGH;
+			} else if (leave.duration <= 1) { // Single day leave
+				priority = ApprovalPriority.LOW;
+			}
+
+			// Create approval request
+			const approvalDto = {
+				title: `Leave Request - ${leave.leaveType} (${leave.duration} day${leave.duration > 1 ? 's' : ''})`,
+				description: `${requester.name || requester.email} has requested ${leave.leaveType} leave from ${leave.startDate} to ${leave.endDate}. ${leave.motivation ? 'Reason: ' + leave.motivation : ''}`,
+				type: ApprovalType.LEAVE_REQUEST,
+				priority: priority,
+				flowType: ApprovalFlow.SEQUENTIAL, // Sequential approval for leave requests
+				entityId: leave.uid, // Should be number, not string
+				entityType: 'leave',
+				amount: undefined, // No monetary amount for leave requests
+				currency: undefined,
+				deadline: this.calculateApprovalDeadline(leave.startDate).toISOString(), // ISO string format
+				requiresSignature: false, // Most leave requests don't require digital signature
+				isUrgent: leave.startDate <= this.addDaysToDate(new Date(), 2), // Urgent if starting within 2 days
+				notificationFrequency: NotificationFrequency.IMMEDIATE,
+				emailNotificationsEnabled: true,
+				pushNotificationsEnabled: true,
+				organisationRef: requester.organisationRef,
+				branchUid: requester.branchUid,
+				metadata: {
+					leaveId: leave.uid,
+					leaveType: leave.leaveType,
+					startDate: leave.startDate,
+					endDate: leave.endDate,
+					duration: leave.duration,
+					isHalfDay: leave.isHalfDay,
+					halfDayPeriod: leave.halfDayPeriod,
+					requesterName: requester.name,
+					requesterEmail: requester.email,
+					branchName: leave.branch?.name,
+					departmentId: requester.departmentId,
+				},
+				customFields: {
+					tags: ['leave-request', leave.leaveType.toLowerCase(), ...(leave.tags || [])],
+				},
+			};
+
+			// Create the approval using the approvals service
+			const approval = await this.approvalsService.create(approvalDto, {
+				user: requester,
+				organisationRef: requester.organisationRef,
+				branchUid: requester.branchUid,
+			} as any);
+
+			console.log(`✅ [LeaveService] Approval workflow initialized: approval ${approval.uid} for leave ${leave.uid}`);
+
+		} catch (error) {
+			console.error(`❌ [LeaveService] Error initializing approval workflow for leave ${leave.uid}:`, error.message);
+			// Don't throw error - leave creation should succeed even if approval workflow fails
+			// This ensures backwards compatibility and system resilience
+		}
+	}
+
+	/**
+	 * Calculate appropriate deadline for approval based on leave start date
+	 * Ensures sufficient time for approval process
+	 */
+	private calculateApprovalDeadline(leaveStartDate: Date): Date {
+		const startDate = new Date(leaveStartDate);
+		const now = new Date();
+		
+		// Calculate days between now and leave start
+		const daysDifference = Math.ceil((startDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+		
+		if (daysDifference <= 1) {
+			// Same day or next day - urgent approval needed within 4 hours
+			return new Date(now.getTime() + (4 * 60 * 60 * 1000));
+		} else if (daysDifference <= 3) {
+			// Within 3 days - approve by end of next business day
+			const deadline = new Date(now);
+			deadline.setDate(deadline.getDate() + 1);
+			deadline.setHours(17, 0, 0, 0); // 5 PM next day
+			return deadline;
+		} else {
+			// More than 3 days - approve at least 2 days before leave starts
+			const deadline = new Date(startDate);
+			deadline.setDate(deadline.getDate() - 2);
+			deadline.setHours(17, 0, 0, 0); // 5 PM, 2 days before
+			return deadline;
+		}
+	}
+
+	/**
+	 * Utility method to add days to a date
+	 */
+	private addDaysToDate(date: Date, days: number): Date {
+		const result = new Date(date);
+		result.setDate(result.getDate() + days);
+		return result;
+	}
+
+	/**
+	 * Handle leave revocation by canceling associated approval workflows
+	 * Notifies all approvers that the leave request has been withdrawn
+	 */
+	private async handleLeaveRevocation(leave: Leave, userId: number, cancellationReason: string): Promise<void> {
+		try {
+			console.log(`🔄 [LeaveService] Handling leave revocation for leave ${leave.uid}`);
+
+			// Find any active approval workflows for this leave
+			const activeApprovals = await this.approvalsService.findAll({
+				entityType: 'leave',
+				entityId: leave.uid,
+				status: [ApprovalStatus.PENDING, ApprovalStatus.SUBMITTED, ApprovalStatus.UNDER_REVIEW],
+			} as any, { uid: userId } as any);
+
+			if (activeApprovals && activeApprovals.data && activeApprovals.data.length > 0) {
+				console.log(`📋 [LeaveService] Found ${activeApprovals.data.length} active approval(s) for leave ${leave.uid}`);
+				
+				for (const approval of activeApprovals.data) {
+					try {
+						// Withdraw the approval workflow
+						await this.approvalsService.performAction(approval.uid, {
+							action: ApprovalAction.WITHDRAW,
+							reason: `Leave request cancelled by user. Reason: ${cancellationReason}`,
+							comments: `The associated leave request has been cancelled by ${userId === leave.owner?.uid ? 'the requester' : 'an administrator'}.`,
+						}, { uid: userId } as any);
+
+						console.log(`✅ [LeaveService] Approval ${approval.uid} withdrawn for cancelled leave ${leave.uid}`);
+					} catch (error) {
+						console.error(`❌ [LeaveService] Error withdrawing approval ${approval.uid}:`, error.message);
+						// Continue with other approvals even if one fails
+					}
+				}
+			} else {
+				console.log(`ℹ️ [LeaveService] No active approvals found for leave ${leave.uid}`);
+			}
+
+		} catch (error) {
+			console.error(`❌ [LeaveService] Error handling leave revocation for leave ${leave.uid}:`, error.message);
+			// Don't throw error - leave cancellation should succeed even if approval withdrawal fails
+		}
+	}
+
+	/**
+	 * Validate leave conflicts and auto-reject if necessary
+	 * Checks for overlapping leave requests for the same user
+	 */
+	private async validateLeaveConflicts(leave: Leave): Promise<{ hasConflict: boolean; conflictingLeaves: Leave[] }> {
+		try {
+			console.log(`🔍 [LeaveService] Checking for leave conflicts for user ${leave.owner?.uid}`);
+
+			const conflictingLeaves = await this.leaveRepository.find({
+				where: {
+					owner: { uid: leave.owner?.uid },
+					status: In([LeaveStatus.APPROVED, LeaveStatus.TAKEN, LeaveStatus.PARTIALLY_TAKEN]),
+					uid: Not(leave.uid), // Exclude the current leave
+				},
+				relations: ['owner'],
+			});
+
+			const hasConflict = conflictingLeaves.some(existingLeave => {
+				const newStart = new Date(leave.startDate);
+				const newEnd = new Date(leave.endDate);
+				const existingStart = new Date(existingLeave.startDate);
+				const existingEnd = new Date(existingLeave.endDate);
+
+				// Check for date overlap
+				return (newStart <= existingEnd) && (newEnd >= existingStart);
+			});
+
+			console.log(`${hasConflict ? '⚠️' : '✅'} [LeaveService] Leave conflict check complete: ${hasConflict ? 'CONFLICT FOUND' : 'NO CONFLICTS'}`);
+
+			return {
+				hasConflict,
+				conflictingLeaves: hasConflict ? conflictingLeaves.filter(existingLeave => {
+					const newStart = new Date(leave.startDate);
+					const newEnd = new Date(leave.endDate);
+					const existingStart = new Date(existingLeave.startDate);
+					const existingEnd = new Date(existingLeave.endDate);
+					return (newStart <= existingEnd) && (newEnd >= existingStart);
+				}) : [],
+			};
+
+		} catch (error) {
+			console.error(`❌ [LeaveService] Error checking leave conflicts:`, error.message);
+			return { hasConflict: false, conflictingLeaves: [] };
+		}
+	}
+
+	/**
+	 * Handle leave modification during approval process
+	 * Cancels existing approval and creates new one if leave is modified while pending approval
+	 */
+	private async handleLeaveModificationDuringApproval(leave: Leave, updateData: Partial<Leave>): Promise<void> {
+		try {
+			// Check if critical leave details are being modified
+			const criticalFieldsModified = 
+				(updateData.startDate && updateData.startDate !== leave.startDate) ||
+				(updateData.endDate && updateData.endDate !== leave.endDate) ||
+				(updateData.leaveType && updateData.leaveType !== leave.leaveType) ||
+				(updateData.duration && updateData.duration !== leave.duration);
+
+			if (!criticalFieldsModified) {
+				return; // No critical changes, no need to restart approval
+			}
+
+			console.log(`🔄 [LeaveService] Critical fields modified for leave ${leave.uid}, restarting approval process`);
+
+			// Cancel existing approval workflows
+			await this.handleLeaveRevocation(leave, leave.owner?.uid || 0, 'Leave details modified, restarting approval process');
+
+			// Set leave back to pending status
+			await this.leaveRepository.update(leave.uid, { 
+				status: LeaveStatus.PENDING,
+				approvedBy: null,
+				approvedAt: null,
+				rejectedAt: null,
+				rejectionReason: null,
+			});
+
+			// The approval workflow will be restarted by the update method calling initializeLeaveApprovalWorkflow
+
+		} catch (error) {
+			console.error(`❌ [LeaveService] Error handling leave modification during approval:`, error.message);
+		}
+	}
+
+	/**
+	 * Event listener for approval workflow actions
+	 * Updates leave status based on approval decisions
+	 */
+	@OnEvent('approval.action.performed')
+	async handleApprovalAction(payload: any): Promise<void> {
+		try {
+			console.log(`🔄 [LeaveService] Handling approval action: ${payload.action} for approval ${payload.approvalId}`);
+
+			// Check if this approval is for a leave request
+			if (payload.type !== ApprovalType.LEAVE_REQUEST) {
+				return; // Not a leave request, ignore
+			}
+
+			// Find the approval to get the entity information
+			const approval = await this.approvalsService.findOne(payload.approvalId);
+			if (!approval || approval.entityType !== 'leave') {
+				console.log(`⚠️ [LeaveService] Approval ${payload.approvalId} is not for a leave request`);
+				return;
+			}
+
+			// Find the corresponding leave request
+			const leave = await this.leaveRepository.findOne({
+				where: { uid: approval.entityId },
+				relations: ['owner', 'organisation', 'branch'],
+			});
+
+			if (!leave) {
+				console.error(`❌ [LeaveService] Leave request ${approval.entityId} not found for approval ${payload.approvalId}`);
+				return;
+			}
+
+			// Get the user who performed the action
+			const actionUser = await this.userRepository.findOne({
+				where: { uid: payload.actionBy },
+			});
+
+			const previousStatus = leave.status;
+			let newStatus: LeaveStatus;
+			let updateFields: Partial<Leave> = {};
+
+			// Handle different approval actions
+			switch (payload.action) {
+				case ApprovalAction.APPROVE:
+					if (payload.toStatus === ApprovalStatus.APPROVED) {
+						newStatus = LeaveStatus.APPROVED;
+						updateFields = {
+							status: newStatus,
+							approvedBy: actionUser,
+							approvedAt: new Date(),
+							comments: payload.comments || 'Approved via approval workflow',
+						};
+						console.log(`✅ [LeaveService] Leave ${leave.uid} approved by ${actionUser?.email || payload.actionBy}`);
+					}
+					break;
+
+				case ApprovalAction.REJECT:
+					newStatus = LeaveStatus.REJECTED;
+					updateFields = {
+						status: newStatus,
+						rejectedAt: new Date(),
+						rejectionReason: payload.reason || payload.comments || 'Rejected via approval workflow',
+					};
+					console.log(`❌ [LeaveService] Leave ${leave.uid} rejected by ${actionUser?.email || payload.actionBy}`);
+					break;
+
+				case ApprovalAction.CANCEL:
+				case ApprovalAction.WITHDRAW:
+					newStatus = LeaveStatus.CANCELLED_BY_USER;
+					updateFields = {
+						status: newStatus,
+						cancelledAt: new Date(),
+						cancellationReason: payload.reason || payload.comments || 'Cancelled via approval workflow',
+					};
+					console.log(`🚫 [LeaveService] Leave ${leave.uid} cancelled/withdrawn`);
+					break;
+
+				default:
+					// For other actions like REQUEST_INFO, DELEGATE, ESCALATE, don't change leave status
+					console.log(`ℹ️ [LeaveService] No leave status change needed for action: ${payload.action}`);
+					return;
+			}
+
+			// Update the leave request if status should change
+			if (newStatus && newStatus !== previousStatus) {
+				await this.leaveRepository.update(leave.uid, updateFields);
+				
+				// Reload the leave with updated data
+				const updatedLeave = await this.leaveRepository.findOne({
+					where: { uid: leave.uid },
+					relations: ['owner', 'organisation', 'branch', 'approvedBy'],
+				});
+
+				if (updatedLeave) {
+					// Send status update emails
+					await this.leaveEmailService.sendStatusUpdateToUser(
+						updatedLeave,
+						leave.owner,
+						previousStatus,
+						actionUser,
+					);
+
+					await this.leaveEmailService.sendStatusUpdateToAdmins(
+						updatedLeave,
+						leave.owner,
+						previousStatus,
+						actionUser,
+					);
+
+					// Emit leave status updated event
+					this.eventEmitter.emit('leave.status.updated', {
+						leave: updatedLeave,
+						previousStatus,
+						newStatus,
+						updatedBy: actionUser,
+						approvalId: payload.approvalId,
+						approvalAction: payload.action,
+					});
+
+					// Clear cache
+					await this.clearLeaveCache(leave.uid);
+
+					console.log(`✅ [LeaveService] Leave ${leave.uid} status updated from ${previousStatus} to ${newStatus}`);
+				}
+			}
+
+		} catch (error) {
+			console.error(`❌ [LeaveService] Error handling approval action:`, error.message);
+			// Don't throw error - this is an event listener and should not break the approval workflow
 		}
 	}
 }

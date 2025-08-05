@@ -12,6 +12,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { Organisation } from '../organisation/entities/organisation.entity';
 import { Branch } from '../branch/entities/branch.entity';
 import { LicensingModule } from '../licensing/licensing.module';
+import { ApprovalsModule } from '../approvals/approvals.module';
 import { emailTemplateService } from '../lib/services/email-template.service';
 
 @Module({
@@ -22,6 +23,7 @@ import { emailTemplateService } from '../lib/services/email-template.service';
 		ConfigModule,
 		JwtModule,
 		LicensingModule,
+		ApprovalsModule,
 	],
 	controllers: [LeaveController],
 	providers: [

@@ -14,6 +14,46 @@
     </div>
 {{/if}}
 
+{{#if socialLinks}}
+    <div style="display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; margin: 16px 0;">
+        {{#if socialLinks.facebook}}
+            <a href="{{socialLinks.facebook}}" style="color: #1877F2; text-decoration: none; font-size: 20px; transition: opacity 0.2s;" title="Facebook">
+                📘
+            </a>
+        {{/if}}
+        {{#if socialLinks.twitter}}
+            <a href="{{socialLinks.twitter}}" style="color: #1DA1F2; text-decoration: none; font-size: 20px; transition: opacity 0.2s;" title="Twitter">
+                🐦
+            </a>
+        {{/if}}
+        {{#if socialLinks.instagram}}
+            <a href="{{socialLinks.instagram}}" style="color: #E4405F; text-decoration: none; font-size: 20px; transition: opacity 0.2s;" title="Instagram">
+                📷
+            </a>
+        {{/if}}
+        {{#if socialLinks.linkedin}}
+            <a href="{{socialLinks.linkedin}}" style="color: #0A66C2; text-decoration: none; font-size: 20px; transition: opacity 0.2s;" title="LinkedIn">
+                💼
+            </a>
+        {{/if}}
+        {{#if socialLinks.youtube}}
+            <a href="{{socialLinks.youtube}}" style="color: #FF0000; text-decoration: none; font-size: 20px; transition: opacity 0.2s;" title="YouTube">
+                📺
+            </a>
+        {{/if}}
+        {{#if socialLinks.website}}
+            <a href="{{socialLinks.website}}" style="color: #6B7280; text-decoration: none; font-size: 20px; transition: opacity 0.2s;" title="Website">
+                🌐
+            </a>
+        {{/if}}
+        {{#each socialLinks.custom}}
+            <a href="{{url}}" style="color: #6B7280; text-decoration: none; font-size: 20px; transition: opacity 0.2s;" title="{{name}}">
+                {{#if icon}}{{icon}}{{else}}🔗{{/if}}
+            </a>
+        {{/each}}
+    </div>
+{{/if}}
+
 {{#unless hideDefaultFooter}}
     <p style="margin: 16px 0 0; font-size: 14px; color: #6c757d; font-family: 'Urbanist', sans-serif;">
         This email was sent by LORO Platform. 

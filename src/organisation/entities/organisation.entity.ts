@@ -22,6 +22,7 @@ import { OrganisationSettings } from './organisation-settings.entity';
 import { OrganisationAppearance } from './organisation-appearance.entity';
 import { OrganisationHours } from './organisation-hours.entity';
 import { Order } from 'src/shop/entities/order.entity';
+import { Project } from 'src/shop/entities/project.entity';
 import { Leave } from 'src/leave/entities/leave.entity';
 
 @Entity('organisation')
@@ -145,4 +146,7 @@ export class Organisation {
 
 	@OneToMany(() => Leave, (leave) => leave?.organisation, { nullable: true })
 	leaves: Leave[];
+
+	@OneToMany(() => Project, (project) => project?.organisation, { nullable: true })
+	projects: Project[];
 }

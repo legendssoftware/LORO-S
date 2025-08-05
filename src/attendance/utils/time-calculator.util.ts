@@ -19,6 +19,23 @@ export interface PunctualityInfo {
   graceMinutes: number;
 }
 
+export interface ShiftSegment {
+  date: string; // YYYY-MM-DD format
+  startTime: Date;
+  endTime: Date;
+  workMinutes: number;
+  breakMinutes: number;
+  netWorkMinutes: number;
+}
+
+export interface SplitShiftResult {
+  segments: ShiftSegment[];
+  totalDays: number;
+  totalWorkMinutes: number;
+  totalBreakMinutes: number;
+  isMultiDay: boolean;
+}
+
 export class TimeCalculatorUtil {
   // Precision constants for different use cases
   static readonly PRECISION = {
@@ -293,5 +310,130 @@ export class TimeCalculatorUtil {
   static calculatePercentage(part: number, total: number, precision: number = this.PRECISION.PERCENTAGE): number {
     if (total === 0) return 0;
     return this.roundToHours((part / total) * 100, precision);
+  }
+
+  /**
+   * Split a multi-day shift at midnight boundaries
+   * This ensures proper attribution of hours to their respective calendar days
+   */
+  static splitMultiDayShift(
+    checkIn: Date,
+    checkOut: Date | null,
+    breakDetails?: BreakDetail[],
+    totalBreakTime?: string
+  ): SplitShiftResult {
+    const startTime = new Date(checkIn);
+    const endTime = checkOut ? new Date(checkOut) : new Date();
+    
+    // Check if it's actually a multi-day shift
+    const startDate = this.formatDate(startTime, 'YYYY-MM-DD');
+    const endDate = this.formatDate(endTime, 'YYYY-MM-DD');
+    const isMultiDay = startDate !== endDate;
+    
+    if (!isMultiDay) {
+      // Single day shift - return as single segment
+      const totalMinutes = differenceInMinutes(endTime, startTime);
+      const breakMinutes = this.calculateTotalBreakMinutes(breakDetails, totalBreakTime);
+      const netWorkMinutes = Math.max(0, totalMinutes - breakMinutes);
+      
+      return {
+        segments: [{
+          date: startDate,
+          startTime,
+          endTime,
+          workMinutes: totalMinutes,
+          breakMinutes,
+          netWorkMinutes
+        }],
+        totalDays: 1,
+        totalWorkMinutes: totalMinutes,
+        totalBreakMinutes: breakMinutes,
+        isMultiDay: false
+      };
+    }
+    
+    // Multi-day shift - split at midnight boundaries
+    const segments: ShiftSegment[] = [];
+    let currentDate = new Date(startTime);
+    let remainingBreakMinutes = this.calculateTotalBreakMinutes(breakDetails, totalBreakTime);
+    let totalWorkMinutes = 0;
+    let totalBreakMinutes = 0;
+    
+    while (this.formatDate(currentDate, 'YYYY-MM-DD') <= endDate) {
+      const dayStart = currentDate;
+      const dayEnd = this.formatDate(currentDate, 'YYYY-MM-DD') === endDate 
+        ? endTime 
+        : this.endOfDay(currentDate);
+      
+      const dayMinutes = differenceInMinutes(dayEnd, dayStart);
+      
+      // Proportionally distribute breaks across days based on work time
+      const totalShiftMinutes = differenceInMinutes(endTime, startTime);
+      const dayBreakMinutes = totalShiftMinutes > 0 
+        ? Math.round((dayMinutes / totalShiftMinutes) * remainingBreakMinutes)
+        : 0;
+      
+      const netWorkMinutes = Math.max(0, dayMinutes - dayBreakMinutes);
+      
+      segments.push({
+        date: this.formatDate(currentDate, 'YYYY-MM-DD'),
+        startTime: dayStart,
+        endTime: dayEnd,
+        workMinutes: dayMinutes,
+        breakMinutes: dayBreakMinutes,
+        netWorkMinutes
+      });
+      
+      totalWorkMinutes += dayMinutes;
+      totalBreakMinutes += dayBreakMinutes;
+      
+      // Move to next day at midnight
+      currentDate = this.addDays(this.startOfDay(currentDate), 1);
+    }
+    
+    return {
+      segments,
+      totalDays: segments.length,
+      totalWorkMinutes,
+      totalBreakMinutes,
+      isMultiDay: true
+    };
+  }
+
+  /**
+   * Get start of day (midnight)
+   */
+  private static startOfDay(date: Date): Date {
+    const start = new Date(date);
+    start.setHours(0, 0, 0, 0);
+    return start;
+  }
+
+  /**
+   * Get end of day (23:59:59.999)
+   */
+  private static endOfDay(date: Date): Date {
+    const end = new Date(date);
+    end.setHours(23, 59, 59, 999);
+    return end;
+  }
+
+  /**
+   * Add days to a date
+   */
+  private static addDays(date: Date, days: number): Date {
+    const result = new Date(date);
+    result.setDate(result.getDate() + days);
+    return result;
+  }
+
+  /**
+   * Format date to string
+   */
+  private static formatDate(date: Date, format: string): string {
+    if (format === 'YYYY-MM-DD') {
+      return date.toISOString().split('T')[0];
+    }
+    return date.toISOString();
   }
 } 

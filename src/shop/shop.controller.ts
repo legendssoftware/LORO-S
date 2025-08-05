@@ -1,5 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards, Req, Query } from '@nestjs/common';
 import { ShopService } from './shop.service';
+import { ProjectsService } from './projects.service';
 import { AuthGuard } from '../guards/auth.guard';
 import { RoleGuard } from '../guards/role.guard';
 import {
@@ -22,10 +23,14 @@ import { CreateBlankQuotationDto } from './dto/create-blank-quotation.dto';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { CreateBannerDto } from './dto/create-banner.dto';
 import { UpdateBannerDto } from './dto/update-banner.dto';
+import { CreateProjectDto } from './dto/create-project.dto';
+import { UpdateProjectDto } from './dto/update-project.dto';
+import { AssignQuotationToProjectDto, UnassignQuotationFromProjectDto } from './dto/assign-quotation-to-project.dto';
+import { ProjectStatus, ProjectPriority, ProjectType } from '../lib/enums/project.enums';
 import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
 import { OrderStatus } from '../lib/enums/status.enums';
-import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
 import { isPublic } from '../decorators/public.decorator';
+import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
 
 @ApiTags('🛒 Shop')
 @Controller('shop')
@@ -33,7 +38,10 @@ import { isPublic } from '../decorators/public.decorator';
 @EnterpriseOnly('shop')
 @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid credentials or missing token' })
 export class ShopController {
-	constructor(private readonly shopService: ShopService) {}
+	constructor(
+		private readonly shopService: ShopService,
+		private readonly projectsService: ProjectsService,
+	) {}
 
 	//shopping
 	@Get('best-sellers')
@@ -3024,5 +3032,1270 @@ Initiates the client review process by sending professional quotations with secu
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.shopService.sendQuotationToClient(ref, orgId, branchId);
+	}
+
+	// ==================== PROJECT ENDPOINTS ====================
+
+	@Post('projects')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.DEVELOPER,
+		AccessLevel.OWNER,
+		AccessLevel.SUPPORT,
+		AccessLevel.SUPERVISOR,
+	)
+	@ApiOperation({
+		summary: '🚀 Create a new project',
+		description: `
+Create a new project for tracking quotations, budget, and progress.
+
+**Key Features:**
+- Comprehensive project management with budget tracking
+- Client and user assignment
+- Location tracking with GPS coordinates
+- Progress percentage monitoring
+- Customizable requirements and tags
+- Automatic cache invalidation
+
+**Business Rules:**
+- Project must be assigned to a valid client
+- Assigned user must exist in the system
+- Current spent cannot exceed budget
+- All monetary values are in the specified currency (default: ZAR)
+
+**Examples:**
+- Commercial building projects
+- Residential construction
+- Infrastructure development
+- Renovation projects
+
+**Role Permissions:**
+- ADMIN, MANAGER, DEVELOPER, OWNER: Can create projects for any client
+- SUPPORT, SUPERVISOR: Can create projects within their scope
+		`,
+	})
+	@ApiBody({
+		type: CreateProjectDto,
+		description: 'Project creation data with client and user assignments',
+		examples: {
+			commercialBuilding: {
+				summary: 'Commercial Building Project',
+				description: 'Large office complex with retail spaces',
+				value: {
+					name: 'Sandton Business Center Phase 1',
+					description: 'A modern 15-story office complex with retail spaces on ground floor and underground parking for 500 vehicles.',
+					type: 'commercial_building',
+					status: 'planning',
+					priority: 'high',
+					budget: 25000000.00,
+					currentSpent: 0,
+					contactPerson: 'John Smith',
+					contactEmail: 'john.smith@construction.co.za',
+					contactPhone: '+27 11 123 4567',
+					startDate: '2024-03-01T00:00:00Z',
+					endDate: '2025-12-31T00:00:00Z',
+					expectedCompletionDate: '2025-11-30T00:00:00Z',
+					address: {
+						street: '123 Main Street',
+						suburb: 'Sandton',
+						city: 'Johannesburg',
+						state: 'Gauteng',
+						country: 'South Africa',
+						postalCode: '2196'
+					},
+					latitude: -26.1043,
+					longitude: 28.0473,
+					requirements: ['HVAC system', 'Smart building controls', 'Solar panels', 'Rainwater harvesting'],
+					tags: ['commercial', 'green-building', 'high-priority', 'phase-1'],
+					notes: 'Client requires LEED Gold certification. Phased construction to minimize disruption.',
+					currency: 'ZAR',
+					progressPercentage: 0,
+					client: { uid: 123 },
+					assignedUser: { uid: 456 }
+				}
+			},
+			residentialProject: {
+				summary: 'Residential House Project',
+				description: 'Luxury residential home construction',
+				value: {
+					name: 'Constantia Luxury Villa',
+					description: 'Custom designed 4-bedroom villa with pool and landscaped gardens.',
+					type: 'residential_house',
+					status: 'design',
+					priority: 'medium',
+					budget: 8500000.00,
+					currentSpent: 850000.00,
+					contactPerson: 'Sarah Johnson',
+					contactEmail: 'sarah@email.com',
+					contactPhone: '+27 21 555 0123',
+					startDate: '2024-02-15T00:00:00Z',
+					endDate: '2024-10-30T00:00:00Z',
+					address: {
+						street: '45 Vineyard Road',
+						suburb: 'Constantia',
+						city: 'Cape Town',
+						state: 'Western Cape',
+						country: 'South Africa',
+						postalCode: '7806'
+					},
+					requirements: ['Pool installation', 'Landscaping', 'Security system'],
+					tags: ['residential', 'luxury', 'custom-design'],
+					notes: 'High-end finishes throughout. Pool must be completed before landscaping.',
+					client: { uid: 789 },
+					assignedUser: { uid: 321 }
+				}
+			}
+		}
+	})
+	@ApiCreatedResponse({
+		description: '✅ Project created successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Project created successfully' },
+				project: {
+					type: 'object',
+					properties: {
+						uid: { type: 'number', example: 1001, description: 'Project unique identifier' },
+						name: { type: 'string', example: 'Sandton Business Center Phase 1', description: 'Project name' },
+						description: { type: 'string', example: 'A modern office complex...', description: 'Project description' },
+						type: { type: 'string', example: 'commercial_building', description: 'Project type' },
+						status: { type: 'string', example: 'planning', description: 'Current project status' },
+						priority: { type: 'string', example: 'high', description: 'Project priority level' },
+						budget: { type: 'number', example: 25000000.00, description: 'Total project budget' },
+						currentSpent: { type: 'number', example: 0, description: 'Amount spent so far' },
+						progressPercentage: { type: 'number', example: 0, description: 'Completion percentage' },
+						contactPerson: { type: 'string', example: 'John Smith', description: 'Project contact person' },
+						contactEmail: { type: 'string', example: 'john.smith@construction.co.za', description: 'Contact email' },
+						contactPhone: { type: 'string', example: '+27 11 123 4567', description: 'Contact phone' },
+						startDate: { type: 'string', format: 'date-time', example: '2024-03-01T00:00:00Z', description: 'Project start date' },
+						endDate: { type: 'string', format: 'date-time', example: '2025-12-31T00:00:00Z', description: 'Project end date' },
+						client: {
+							type: 'object',
+							properties: {
+								uid: { type: 'number', example: 123, description: 'Client ID' },
+								name: { type: 'string', example: 'ABC Construction Ltd', description: 'Client name' },
+								email: { type: 'string', example: 'info@abc.co.za', description: 'Client email' }
+							},
+							description: 'Associated client information'
+						},
+						assignedUser: {
+							type: 'object',
+							properties: {
+								uid: { type: 'number', example: 456, description: 'User ID' },
+								name: { type: 'string', example: 'Jane Doe', description: 'User name' },
+								email: { type: 'string', example: 'jane@company.com', description: 'User email' }
+							},
+							description: 'Assigned project manager'
+						},
+						createdAt: { type: 'string', format: 'date-time', example: '2024-01-15T10:30:00Z', description: 'Creation timestamp' },
+						updatedAt: { type: 'string', format: 'date-time', example: '2024-01-15T10:30:00Z', description: 'Last update timestamp' }
+					}
+				}
+			},
+		},
+	})
+	@ApiBadRequestResponse({
+		description: '❌ Bad Request - Invalid project data',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Current spent amount cannot exceed the budget' },
+				errors: {
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'Client not found',
+						'Assigned user not found', 
+						'Budget must be greater than 0',
+						'Contact person is required'
+					]
+				}
+			},
+		},
+	})
+	@ApiNotFoundResponse({
+		description: '❌ Not Found - Client or user not found',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Client not found' }
+			},
+		},
+	})
+	async createProject(@Body() createProjectDto: CreateProjectDto, @Req() req: AuthenticatedRequest) {
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
+		const branchId = req.user?.branch?.uid;
+		const createdById = req.user?.uid;
+		return this.projectsService.createProject(createProjectDto, orgId, branchId, createdById);
+	}
+
+	@Get('projects')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.DEVELOPER,
+		AccessLevel.OWNER,
+		AccessLevel.SUPPORT,
+		AccessLevel.SUPERVISOR,
+		AccessLevel.USER,
+		AccessLevel.TECHNICIAN,
+	)
+	@ApiOperation({
+		summary: '📋 Get all projects with filtering and pagination',
+		description: `
+Retrieve projects with comprehensive filtering, pagination, and role-based access control.
+
+**Filtering Capabilities:**
+- Status: Filter by project status (planning, in_progress, completed, etc.)
+- Priority: Filter by priority level (low, medium, high, urgent, critical)
+- Type: Filter by project type (residential, commercial, industrial, etc.)
+- Client: Filter by specific client
+- User: Filter by assigned user
+- Date Range: Filter by start/end dates
+- Budget Range: Filter by budget amounts
+- Progress Range: Filter by completion percentage
+- Search: Text search across project name, description, client name
+
+**Role-Based Access:**
+- ADMIN/OWNER/DEVELOPER/MANAGER: Can see all projects
+- SUPPORT/SUPERVISOR/USER/TECHNICIAN: Can only see assigned projects
+
+**Performance Features:**
+- Results are cached for 5 minutes
+- Comprehensive database indexing
+- Optimized queries with selective loading
+
+**Pagination:**
+- Default: 20 items per page
+- Maximum: 100 items per page
+- Returns total count and page information
+		`,
+	})
+	@ApiQuery({ name: 'page', required: false, type: Number, description: 'Page number (default: 1)', example: 1 })
+	@ApiQuery({ name: 'limit', required: false, type: Number, description: 'Items per page (default: 20, max: 100)', example: 20 })
+	@ApiQuery({ name: 'status', required: false, enum: ProjectStatus, description: 'Filter by project status' })
+	@ApiQuery({ name: 'priority', required: false, enum: ProjectPriority, description: 'Filter by project priority' })
+	@ApiQuery({ name: 'type', required: false, enum: ProjectType, description: 'Filter by project type' })
+	@ApiQuery({ name: 'clientId', required: false, type: Number, description: 'Filter by client ID' })
+	@ApiQuery({ name: 'assignedUserId', required: false, type: Number, description: 'Filter by assigned user ID' })
+	@ApiQuery({ name: 'startDate', required: false, type: String, description: 'Filter by start date (ISO format)' })
+	@ApiQuery({ name: 'endDate', required: false, type: String, description: 'Filter by end date (ISO format)' })
+	@ApiQuery({ name: 'budgetMin', required: false, type: Number, description: 'Minimum budget amount' })
+	@ApiQuery({ name: 'budgetMax', required: false, type: Number, description: 'Maximum budget amount' })
+	@ApiQuery({ name: 'progressMin', required: false, type: Number, description: 'Minimum progress percentage' })
+	@ApiQuery({ name: 'progressMax', required: false, type: Number, description: 'Maximum progress percentage' })
+	@ApiQuery({ name: 'search', required: false, type: String, description: 'Search in project name, description, client name' })
+	@ApiOkResponse({
+		description: '✅ Projects retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				data: {
+					type: 'array',
+					items: {
+						type: 'object',
+						properties: {
+							uid: { type: 'number', example: 1001, description: 'Project unique identifier' },
+							name: { type: 'string', example: 'Office Complex Phase 1', description: 'Project name' },
+							description: { type: 'string', example: 'Modern office building...', description: 'Project description' },
+							type: { type: 'string', example: 'commercial_building', description: 'Project type' },
+							status: { type: 'string', example: 'in_progress', description: 'Current status' },
+							priority: { type: 'string', example: 'high', description: 'Priority level' },
+							budget: { type: 'number', example: 25000000.00, description: 'Total budget' },
+							currentSpent: { type: 'number', example: 5000000.00, description: 'Amount spent' },
+							progressPercentage: { type: 'number', example: 35.5, description: 'Completion percentage' },
+							client: {
+								type: 'object',
+								properties: {
+									uid: { type: 'number', example: 123, description: 'Client ID' },
+									name: { type: 'string', example: 'ABC Construction', description: 'Client name' }
+								}
+							},
+							assignedUser: {
+								type: 'object',
+								properties: {
+									uid: { type: 'number', example: 456, description: 'User ID' },
+									name: { type: 'string', example: 'Project Manager', description: 'User name' }
+								}
+							},
+							quotations: {
+								type: 'array',
+								items: {
+									type: 'object',
+									properties: {
+										uid: { type: 'number', example: 789, description: 'Quotation ID' },
+										quotationNumber: { type: 'string', example: 'QUO-2024-001', description: 'Quotation number' },
+										totalAmount: { type: 'number', example: 150000.00, description: 'Quotation amount' },
+										status: { type: 'string', example: 'approved', description: 'Quotation status' }
+									}
+								},
+								description: 'Associated quotations'
+							},
+							createdAt: { type: 'string', format: 'date-time', description: 'Creation date' },
+							updatedAt: { type: 'string', format: 'date-time', description: 'Last update date' }
+						}
+					},
+					description: 'Array of projects'
+				},
+				total: { type: 'number', example: 156, description: 'Total number of projects' },
+				page: { type: 'number', example: 1, description: 'Current page number' },
+				limit: { type: 'number', example: 20, description: 'Items per page' },
+				totalPages: { type: 'number', example: 8, description: 'Total number of pages' }
+			},
+		},
+	})
+	async getAllProjects(
+		@Req() req: AuthenticatedRequest,
+		@Query('page') page?: number,
+		@Query('limit') limit?: number,
+		@Query('status') status?: ProjectStatus,
+		@Query('priority') priority?: ProjectPriority,
+		@Query('type') type?: ProjectType,
+		@Query('clientId') clientId?: number,
+		@Query('assignedUserId') assignedUserId?: number,
+		@Query('startDate') startDate?: string,
+		@Query('endDate') endDate?: string,
+		@Query('budgetMin') budgetMin?: number,
+		@Query('budgetMax') budgetMax?: number,
+		@Query('progressMin') progressMin?: number,
+		@Query('progressMax') progressMax?: number,
+		@Query('search') search?: string,
+	) {
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
+		const branchId = req.user?.branch?.uid;
+		const userRole = req.user?.accessLevel;
+		const userId = req.user?.uid;
+
+		const filters = {
+			...(status && { status }),
+			...(priority && { priority }),
+			...(type && { type }),
+			...(clientId && { clientId }),
+			...(assignedUserId && { assignedUserId }),
+			...(startDate && { startDate: new Date(startDate) }),
+			...(endDate && { endDate: new Date(endDate) }),
+			...(budgetMin && { budgetMin }),
+			...(budgetMax && { budgetMax }),
+			...(progressMin && { progressMin }),
+			...(progressMax && { progressMax }),
+			...(search && { search }),
+			...(orgId && { orgId }),
+			...(branchId && { branchId }),
+		};
+
+		const pageNum = Math.max(1, page || 1);
+		const limitNum = Math.min(100, Math.max(1, limit || 20));
+
+		return this.projectsService.findAll(filters, pageNum, limitNum, userRole, userId);
+	}
+
+	@Get('projects/:id')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.DEVELOPER,
+		AccessLevel.OWNER,
+		AccessLevel.SUPPORT,
+		AccessLevel.SUPERVISOR,
+		AccessLevel.USER,
+		AccessLevel.TECHNICIAN,
+	)
+	@ApiOperation({
+		summary: '🔍 Get project by ID',
+		description: `
+Retrieve a specific project with complete details including all relationships.
+
+**Included Data:**
+- Complete project information
+- Client details
+- Assigned user information
+- Associated quotations with items and products
+- Organisation and branch information
+- Location and timeline data
+- Budget and progress tracking
+
+**Security:**
+- Role-based access control
+- Organisation and branch filtering
+- Soft-delete awareness
+
+**Performance:**
+- Results cached for 5 minutes
+- Optimized with selective relation loading
+		`,
+	})
+	@ApiParam({ 
+		name: 'id', 
+		type: 'number', 
+		description: 'Project unique identifier',
+		example: 1001
+	})
+	@ApiOkResponse({
+		description: '✅ Project retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Project retrieved successfully' },
+				project: {
+					type: 'object',
+					properties: {
+						uid: { type: 'number', example: 1001, description: 'Project unique identifier' },
+						name: { type: 'string', example: 'Sandton Business Center', description: 'Project name' },
+						description: { type: 'string', example: 'Modern office complex...', description: 'Detailed description' },
+						type: { type: 'string', example: 'commercial_building', description: 'Project type' },
+						status: { type: 'string', example: 'in_progress', description: 'Current status' },
+						priority: { type: 'string', example: 'high', description: 'Priority level' },
+						budget: { type: 'number', example: 25000000.00, description: 'Total budget in ZAR' },
+						currentSpent: { type: 'number', example: 8500000.00, description: 'Amount spent so far' },
+						progressPercentage: { type: 'number', example: 45.8, description: 'Completion percentage' },
+						contactPerson: { type: 'string', example: 'John Smith', description: 'Project contact' },
+						contactEmail: { type: 'string', example: 'john@email.com', description: 'Contact email' },
+						contactPhone: { type: 'string', example: '+27 11 123 4567', description: 'Contact phone' },
+						startDate: { type: 'string', format: 'date-time', example: '2024-03-01T00:00:00Z', description: 'Start date' },
+						endDate: { type: 'string', format: 'date-time', example: '2025-12-31T00:00:00Z', description: 'End date' },
+						expectedCompletionDate: { type: 'string', format: 'date-time', example: '2025-11-30T00:00:00Z', description: 'Expected completion' },
+						address: {
+							type: 'object',
+							properties: {
+								street: { type: 'string', example: '123 Main Street' },
+								suburb: { type: 'string', example: 'Sandton' },
+								city: { type: 'string', example: 'Johannesburg' },
+								state: { type: 'string', example: 'Gauteng' },
+								country: { type: 'string', example: 'South Africa' },
+								postalCode: { type: 'string', example: '2196' }
+							},
+							description: 'Project location address'
+						},
+						latitude: { type: 'number', example: -26.1043, description: 'GPS latitude' },
+						longitude: { type: 'number', example: 28.0473, description: 'GPS longitude' },
+						requirements: {
+							type: 'array',
+							items: { type: 'string' },
+							example: ['HVAC system', 'Smart controls', 'Solar panels'],
+							description: 'Project requirements'
+						},
+						tags: {
+							type: 'array',
+							items: { type: 'string' },
+							example: ['commercial', 'green-building', 'high-priority'],
+							description: 'Project tags'
+						},
+						notes: { type: 'string', example: 'LEED Gold certification required...', description: 'Additional notes' },
+						currency: { type: 'string', example: 'ZAR', description: 'Budget currency' },
+						client: {
+							type: 'object',
+							properties: {
+								uid: { type: 'number', example: 123, description: 'Client ID' },
+								name: { type: 'string', example: 'ABC Construction Ltd', description: 'Client name' },
+								email: { type: 'string', example: 'info@abc.co.za', description: 'Client email' },
+								contactPerson: { type: 'string', example: 'David Wilson', description: 'Client contact' }
+							},
+							description: 'Client information'
+						},
+						assignedUser: {
+							type: 'object',
+							properties: {
+								uid: { type: 'number', example: 456, description: 'User ID' },
+								name: { type: 'string', example: 'Jane Doe', description: 'User name' },
+								email: { type: 'string', example: 'jane@company.com', description: 'User email' },
+								role: { type: 'string', example: 'Project Manager', description: 'User role' }
+							},
+							description: 'Assigned project manager'
+						},
+						quotations: {
+							type: 'array',
+							items: {
+								type: 'object',
+								properties: {
+									uid: { type: 'number', example: 789, description: 'Quotation ID' },
+									quotationNumber: { type: 'string', example: 'QUO-2024-001234', description: 'Quotation number' },
+									totalAmount: { type: 'number', example: 850000.00, description: 'Total amount' },
+									status: { type: 'string', example: 'approved', description: 'Quotation status' },
+									quotationDate: { type: 'string', format: 'date-time', description: 'Creation date' },
+									quotationItems: {
+										type: 'array',
+										items: {
+											type: 'object',
+											properties: {
+												uid: { type: 'number', example: 101, description: 'Item ID' },
+												quantity: { type: 'number', example: 50, description: 'Quantity' },
+												totalPrice: { type: 'number', example: 25000.00, description: 'Total price' },
+												product: {
+													type: 'object',
+													properties: {
+														uid: { type: 'number', example: 202, description: 'Product ID' },
+														name: { type: 'string', example: 'Steel Beams', description: 'Product name' },
+														sku: { type: 'string', example: 'SB-2024-001', description: 'Product SKU' }
+													}
+												}
+											}
+										},
+										description: 'Quotation items with products'
+									}
+								}
+							},
+							description: 'Associated quotations with complete details'
+						},
+						createdAt: { type: 'string', format: 'date-time', example: '2024-01-15T10:30:00Z', description: 'Creation timestamp' },
+						updatedAt: { type: 'string', format: 'date-time', example: '2024-01-20T14:45:00Z', description: 'Last update timestamp' }
+					}
+				}
+			},
+		},
+	})
+	@ApiNotFoundResponse({
+		description: '❌ Project not found',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Project not found' }
+			},
+		},
+	})
+	async getProject(@Param('id') id: number, @Req() req: AuthenticatedRequest) {
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
+		const branchId = req.user?.branch?.uid;
+		return this.projectsService.findOne(id, orgId, branchId);
+	}
+
+	@Patch('projects/:id')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.DEVELOPER,
+		AccessLevel.OWNER,
+		AccessLevel.SUPPORT,
+		AccessLevel.SUPERVISOR,
+	)
+	@ApiOperation({
+		summary: '✏️ Update project',
+		description: `
+Update project information with comprehensive validation and business rule enforcement.
+
+**Updateable Fields:**
+- Basic information (name, description, type, status, priority)
+- Budget and financial tracking
+- Timeline dates (start, end, expected completion)
+- Contact information
+- Location and address
+- Requirements and tags
+- Progress percentage
+- Client and user assignments
+
+**Business Rules:**
+- Current spent cannot exceed budget
+- Client and user must exist if being updated
+- Status transitions are tracked for analytics
+- Progress percentage must be between 0-100
+
+**Security:**
+- Role-based access control
+- Organisation and branch validation
+- Audit trail for all changes
+
+**Performance:**
+- Automatic cache invalidation
+- Optimized update queries
+- Event emission for real-time updates
+		`,
+	})
+	@ApiParam({ 
+		name: 'id', 
+		type: 'number', 
+		description: 'Project unique identifier to update',
+		example: 1001
+	})
+	@ApiBody({
+		type: UpdateProjectDto,
+		description: 'Project update data (all fields optional)',
+		examples: {
+			statusUpdate: {
+				summary: 'Update Project Status',
+				description: 'Change project status and progress',
+				value: {
+					status: 'in_progress',
+					progressPercentage: 25.5,
+					notes: 'Foundation work completed. Moving to structural phase.'
+				}
+			},
+			budgetUpdate: {
+				summary: 'Update Project Budget',
+				description: 'Adjust budget and spending',
+				value: {
+					budget: 28000000.00,
+					currentSpent: 3500000.00,
+					notes: 'Budget increased due to additional requirements from client.'
+				}
+			},
+			timelineUpdate: {
+				summary: 'Update Project Timeline',
+				description: 'Adjust project dates',
+				value: {
+					startDate: '2024-04-01T00:00:00Z',
+					endDate: '2026-02-28T00:00:00Z',
+					expectedCompletionDate: '2026-01-31T00:00:00Z',
+					notes: 'Timeline extended due to permit delays.'
+				}
+			},
+			contactUpdate: {
+				summary: 'Update Contact Information',
+				description: 'Change project contact details',
+				value: {
+					contactPerson: 'Michael Brown',
+					contactEmail: 'michael.brown@newcompany.co.za',
+					contactPhone: '+27 11 987 6543'
+				}
+			}
+		}
+	})
+	@ApiOkResponse({
+		description: '✅ Project updated successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Project updated successfully' },
+				project: {
+					type: 'object',
+					properties: {
+						uid: { type: 'number', example: 1001, description: 'Project unique identifier' },
+						name: { type: 'string', example: 'Updated Project Name', description: 'Updated project name' },
+						status: { type: 'string', example: 'in_progress', description: 'Updated status' },
+						progressPercentage: { type: 'number', example: 35.8, description: 'Updated progress' },
+						budget: { type: 'number', example: 28000000.00, description: 'Updated budget' },
+						currentSpent: { type: 'number', example: 5500000.00, description: 'Updated spending' },
+						updatedAt: { type: 'string', format: 'date-time', example: '2024-01-20T15:30:00Z', description: 'Last update timestamp' }
+					},
+					description: 'Complete updated project object with all relations'
+				}
+			},
+		},
+	})
+	@ApiBadRequestResponse({
+		description: '❌ Bad Request - Invalid update data',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Current spent amount cannot exceed the budget' },
+				errors: {
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'Budget must be greater than current spent amount',
+						'Progress percentage must be between 0 and 100',
+						'End date must be after start date'
+					]
+				}
+			},
+		},
+	})
+	@ApiNotFoundResponse({
+		description: '❌ Not Found - Project, client, or user not found',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Project not found' }
+			},
+		},
+	})
+	async updateProject(
+		@Param('id') id: number,
+		@Body() updateProjectDto: UpdateProjectDto,
+		@Req() req: AuthenticatedRequest,
+	) {
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
+		const branchId = req.user?.branch?.uid;
+		const updatedById = req.user?.uid;
+		return this.projectsService.updateProject(id, updateProjectDto, orgId, branchId, updatedById);
+	}
+
+	@Delete('projects/:id')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.DEVELOPER,
+		AccessLevel.OWNER,
+	)
+	@ApiOperation({
+		summary: '🗑️ Delete project (soft delete)',
+		description: `
+Safely delete a project with comprehensive validation and business rule enforcement.
+
+**Safety Features:**
+- Soft delete only (data preserved for audit trail)
+- Validation for active quotations
+- Automatic cache cleanup
+- Event emission for analytics
+
+**Business Rules:**
+- Cannot delete projects with active quotations
+- Must cancel or complete all quotations first
+- Audit trail maintained for compliance
+- Related data remains intact
+
+**Security:**
+- High-level role access only (ADMIN, MANAGER, DEVELOPER, OWNER)
+- Organisation and branch validation
+- Complete activity logging
+
+**Best Practices:**
+- Always check for dependencies before deletion
+- Consider archiving instead of deletion
+- Maintain data integrity across relationships
+		`,
+	})
+	@ApiParam({ 
+		name: 'id', 
+		type: 'number', 
+		description: 'Project unique identifier to delete',
+		example: 1001
+	})
+	@ApiOkResponse({
+		description: '✅ Project deleted successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Project deleted successfully' }
+			},
+		},
+	})
+	@ApiBadRequestResponse({
+		description: '❌ Bad Request - Cannot delete project with active quotations',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Cannot delete project with active quotations. Please cancel or complete all quotations first.' }
+			},
+		},
+	})
+	@ApiNotFoundResponse({
+		description: '❌ Project not found',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Project not found' }
+			},
+		},
+	})
+	async deleteProject(@Param('id') id: number, @Req() req: AuthenticatedRequest) {
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
+		const branchId = req.user?.branch?.uid;
+		const deletedById = req.user?.uid;
+		return this.projectsService.deleteProject(id, orgId, branchId, deletedById);
+	}
+
+	@Post('projects/assign-quotations')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.DEVELOPER,
+		AccessLevel.OWNER,
+		AccessLevel.SUPPORT,
+		AccessLevel.SUPERVISOR,
+	)
+	@ApiOperation({
+		summary: '🔗 Assign quotations to project',
+		description: `
+Assign multiple quotations to a specific project for comprehensive tracking and management.
+
+**Key Features:**
+- Bulk quotation assignment
+- Client validation (quotations must belong to same client as project)
+- Duplicate assignment prevention
+- Comprehensive validation and error handling
+
+**Business Rules:**
+- Quotations must belong to the same client as the project
+- Quotations cannot be assigned to multiple projects simultaneously
+- All quotation IDs must exist and be accessible
+- Automatic project value calculation updates
+
+**Use Cases:**
+- Organizing quotations by project phase
+- Budget tracking per project
+- Progress monitoring with financial data
+- Client-specific project management
+
+**Analytics Benefits:**
+- Project-wise quotation tracking
+- Budget vs actual analysis
+- Progress reporting with financial context
+- Client project performance metrics
+		`,
+	})
+	@ApiBody({
+		type: AssignQuotationToProjectDto,
+		description: 'Quotation assignment data',
+		examples: {
+			singleAssignment: {
+				summary: 'Assign Single Quotation',
+				description: 'Assign one quotation to a project',
+				value: {
+					projectId: 1001,
+					quotationIds: [789],
+					notes: 'Main structural quotation for foundation work'
+				}
+			},
+			bulkAssignment: {
+				summary: 'Bulk Quotation Assignment',
+				description: 'Assign multiple quotations to a project',
+				value: {
+					projectId: 1001,
+					quotationIds: [789, 790, 791, 792],
+					notes: 'Phase 1 quotations: foundation, electrical, plumbing, and HVAC'
+				}
+			},
+			phaseAssignment: {
+				summary: 'Project Phase Assignment',
+				description: 'Assign quotations for specific project phase',
+				value: {
+					projectId: 1001,
+					quotationIds: [793, 794, 795],
+					notes: 'Phase 2 quotations: structural steel, roofing, and exterior work'
+				}
+			}
+		}
+	})
+	@ApiOkResponse({
+		description: '✅ Quotations assigned to project successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Quotations assigned to project successfully' },
+				assignedCount: { type: 'number', example: 4, description: 'Number of quotations assigned' },
+				project: {
+					type: 'object',
+					properties: {
+						uid: { type: 'number', example: 1001, description: 'Project ID' },
+						name: { type: 'string', example: 'Office Complex Phase 1', description: 'Project name' },
+						quotations: {
+							type: 'array',
+							items: {
+								type: 'object',
+								properties: {
+									uid: { type: 'number', example: 789, description: 'Quotation ID' },
+									quotationNumber: { type: 'string', example: 'QUO-2024-001', description: 'Quotation number' },
+									totalAmount: { type: 'number', example: 150000.00, description: 'Quotation amount' },
+									status: { type: 'string', example: 'approved', description: 'Quotation status' },
+									quotationDate: { type: 'string', format: 'date-time', description: 'Quotation date' }
+								}
+							},
+							description: 'All project quotations including newly assigned ones'
+						},
+						totalQuotationValue: { type: 'number', example: 850000.00, description: 'Total value of all assigned quotations' }
+					},
+					description: 'Updated project with assigned quotations'
+				}
+			},
+		},
+	})
+	@ApiBadRequestResponse({
+		description: '❌ Bad Request - Invalid assignment data',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Quotations 456, 789 do not belong to the same client as the project' },
+				errors: {
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'Quotations already assigned to other projects: 456 (assigned to project 1002)',
+						'Quotations do not belong to the same client as the project'
+					]
+				}
+			},
+		},
+	})
+	@ApiNotFoundResponse({
+		description: '❌ Not Found - Project or quotations not found',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Quotations not found: 456, 789' }
+			},
+		},
+	})
+	async assignQuotationsToProject(
+		@Body() assignDto: AssignQuotationToProjectDto,
+		@Req() req: AuthenticatedRequest,
+	) {
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
+		const branchId = req.user?.branch?.uid;
+		const assignedById = req.user?.uid;
+		return this.projectsService.assignQuotationsToProject(assignDto, orgId, branchId, assignedById);
+	}
+
+	@Post('projects/unassign-quotations')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.DEVELOPER,
+		AccessLevel.OWNER,
+		AccessLevel.SUPPORT,
+		AccessLevel.SUPERVISOR,
+	)
+	@ApiOperation({
+		summary: '🔓 Unassign quotations from projects',
+		description: `
+Remove quotations from their current project assignments.
+
+**Use Cases:**
+- Reassigning quotations to different projects
+- Removing incorrect assignments
+- Project restructuring
+- Quotation management cleanup
+
+**Features:**
+- Bulk unassignment support
+- Comprehensive validation
+- Audit trail maintenance
+- Automatic cache cleanup
+
+**Safety:**
+- Validates quotation existence
+- Tracks affected projects
+- Maintains data integrity
+- Logs all changes for audit
+		`,
+	})
+	@ApiBody({
+		type: UnassignQuotationFromProjectDto,
+		description: 'Quotation unassignment data',
+		examples: {
+			simpleUnassignment: {
+				summary: 'Unassign Quotations',
+				description: 'Remove quotations from their projects',
+				value: {
+					quotationIds: [789, 790],
+					reason: 'Moving quotations to different project phase'
+				}
+			},
+			cleanupUnassignment: {
+				summary: 'Cleanup Unassignment',
+				description: 'Remove incorrectly assigned quotations',
+				value: {
+					quotationIds: [791, 792, 793],
+					reason: 'Quotations were assigned to wrong project - correcting assignment'
+				}
+			}
+		}
+	})
+	@ApiOkResponse({
+		description: '✅ Quotations unassigned from projects successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Quotations unassigned from projects successfully' },
+				unassignedCount: { type: 'number', example: 3, description: 'Number of quotations unassigned' }
+			},
+		},
+	})
+	@ApiNotFoundResponse({
+		description: '❌ Quotations not found',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Quotations not found: 456, 789' }
+			},
+		},
+	})
+	async unassignQuotationsFromProject(
+		@Body() unassignDto: UnassignQuotationFromProjectDto,
+		@Req() req: AuthenticatedRequest,
+	) {
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
+		const branchId = req.user?.branch?.uid;
+		const unassignedById = req.user?.uid;
+		return this.projectsService.unassignQuotationsFromProject(unassignDto, orgId, branchId, unassignedById);
+	}
+
+	@Get('projects/client/:clientId')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.DEVELOPER,
+		AccessLevel.OWNER,
+		AccessLevel.SUPPORT,
+		AccessLevel.SUPERVISOR,
+		AccessLevel.USER,
+		AccessLevel.TECHNICIAN,
+	)
+	@ApiOperation({
+		summary: '👥 Get projects by client',
+		description: `
+Retrieve all projects for a specific client with complete project details.
+
+**Included Data:**
+- All client projects (active only)
+- Project details and timelines
+- Associated quotations
+- Assigned users
+- Progress and budget information
+
+**Performance:**
+- Results cached for optimal speed
+- Optimized database queries
+- Role-based access control
+
+**Use Cases:**
+- Client portfolio management
+- Project overview for client meetings
+- Progress reporting to clients
+- Budget analysis per client
+		`,
+	})
+	@ApiParam({ 
+		name: 'clientId', 
+		type: 'number', 
+		description: 'Client unique identifier',
+		example: 123
+	})
+	@ApiOkResponse({
+		description: '✅ Client projects retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Client projects retrieved successfully' },
+				projects: {
+					type: 'array',
+					items: {
+						type: 'object',
+						properties: {
+							uid: { type: 'number', example: 1001, description: 'Project ID' },
+							name: { type: 'string', example: 'Office Complex', description: 'Project name' },
+							status: { type: 'string', example: 'in_progress', description: 'Current status' },
+							budget: { type: 'number', example: 25000000.00, description: 'Project budget' },
+							progressPercentage: { type: 'number', example: 45.5, description: 'Completion percentage' },
+							assignedUser: {
+								type: 'object',
+								properties: {
+									uid: { type: 'number', example: 456, description: 'User ID' },
+									name: { type: 'string', example: 'Project Manager', description: 'User name' }
+								}
+							},
+							quotations: {
+								type: 'array',
+								items: {
+									type: 'object',
+									properties: {
+										uid: { type: 'number', example: 789, description: 'Quotation ID' },
+										quotationNumber: { type: 'string', example: 'QUO-2024-001', description: 'Quotation number' },
+										totalAmount: { type: 'number', example: 150000.00, description: 'Amount' }
+									}
+								}
+							}
+						}
+					},
+					description: 'Array of client projects'
+				}
+			},
+		},
+	})
+	async getProjectsByClient(@Param('clientId') clientId: number, @Req() req: AuthenticatedRequest) {
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
+		const branchId = req.user?.branch?.uid;
+		return this.projectsService.getProjectsByClient(clientId, orgId, branchId);
+	}
+
+	@Get('projects/user/:userId')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.DEVELOPER,
+		AccessLevel.OWNER,
+		AccessLevel.SUPPORT,
+		AccessLevel.SUPERVISOR,
+		AccessLevel.USER,
+		AccessLevel.TECHNICIAN,
+	)
+	@ApiOperation({
+		summary: '👤 Get projects by assigned user',
+		description: `
+Retrieve all projects assigned to a specific user.
+
+**Use Cases:**
+- Personal project dashboard
+- Workload management
+- Performance tracking
+- Task assignment overview
+
+**Features:**
+- Complete project details
+- Associated quotations
+- Client information
+- Progress tracking
+		`,
+	})
+	@ApiParam({ 
+		name: 'userId', 
+		type: 'number', 
+		description: 'User unique identifier',
+		example: 456
+	})
+	@ApiOkResponse({
+		description: '✅ User projects retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'User projects retrieved successfully' },
+				projects: {
+					type: 'array',
+					items: {
+						type: 'object',
+						properties: {
+							uid: { type: 'number', example: 1001, description: 'Project ID' },
+							name: { type: 'string', example: 'Office Complex', description: 'Project name' },
+							status: { type: 'string', example: 'in_progress', description: 'Current status' },
+							priority: { type: 'string', example: 'high', description: 'Priority level' },
+							progressPercentage: { type: 'number', example: 45.5, description: 'Completion percentage' },
+							endDate: { type: 'string', format: 'date-time', description: 'Project deadline' },
+							client: {
+								type: 'object',
+								properties: {
+									uid: { type: 'number', example: 123, description: 'Client ID' },
+									name: { type: 'string', example: 'ABC Construction', description: 'Client name' }
+								}
+							}
+						}
+					},
+					description: 'Array of assigned projects'
+				}
+			},
+		},
+	})
+	async getProjectsByUser(@Param('userId') userId: number, @Req() req: AuthenticatedRequest) {
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
+		const branchId = req.user?.branch?.uid;
+		return this.projectsService.getProjectsByUser(userId, orgId, branchId);
+	}
+
+	@Get('projects-stats')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.DEVELOPER,
+		AccessLevel.OWNER,
+		AccessLevel.SUPPORT,
+		AccessLevel.SUPERVISOR,
+	)
+	@ApiOperation({
+		summary: '📊 Get project statistics and analytics',
+		description: `
+Comprehensive project analytics and statistics for management dashboards.
+
+**Included Metrics:**
+- Total project count
+- Distribution by status, priority, and type
+- Financial analytics (total budget, spent, averages)
+- Progress analytics
+- Upcoming deadlines and overdue projects
+
+**Performance:**
+- Cached results for fast dashboard loading
+- Optimized aggregation queries
+- Real-time data with 5-minute cache TTL
+
+**Use Cases:**
+- Executive dashboards
+- Project portfolio management
+- Resource planning
+- Performance monitoring
+- Risk assessment (overdue projects)
+		`,
+	})
+	@ApiOkResponse({
+		description: '✅ Project statistics retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Project statistics retrieved successfully' },
+				stats: {
+					type: 'object',
+					properties: {
+						totalProjects: { type: 'number', example: 156, description: 'Total number of active projects' },
+						projectsByStatus: {
+							type: 'object',
+							properties: {
+								planning: { type: 'number', example: 25, description: 'Projects in planning phase' },
+								in_progress: { type: 'number', example: 78, description: 'Projects currently in progress' },
+								completed: { type: 'number', example: 45, description: 'Completed projects' },
+								on_hold: { type: 'number', example: 8, description: 'Projects on hold' }
+							},
+							description: 'Project count by status'
+						},
+						projectsByPriority: {
+							type: 'object',
+							properties: {
+								low: { type: 'number', example: 35, description: 'Low priority projects' },
+								medium: { type: 'number', example: 67, description: 'Medium priority projects' },
+								high: { type: 'number', example: 42, description: 'High priority projects' },
+								urgent: { type: 'number', example: 12, description: 'Urgent projects' }
+							},
+							description: 'Project count by priority'
+						},
+						projectsByType: {
+							type: 'object',
+							properties: {
+								commercial_building: { type: 'number', example: 45, description: 'Commercial projects' },
+								residential_house: { type: 'number', example: 38, description: 'Residential projects' },
+								industrial_facility: { type: 'number', example: 23, description: 'Industrial projects' },
+								infrastructure: { type: 'number', example: 15, description: 'Infrastructure projects' }
+							},
+							description: 'Project count by type'
+						},
+						totalBudget: { type: 'number', example: 2500000000.00, description: 'Total budget across all projects' },
+						totalSpent: { type: 'number', example: 1850000000.00, description: 'Total amount spent across all projects' },
+						averageBudget: { type: 'number', example: 16025641.03, description: 'Average project budget' },
+						averageProgress: { type: 'number', example: 42.8, description: 'Average completion percentage' },
+						upcomingDeadlines: {
+							type: 'array',
+							items: {
+								type: 'object',
+								properties: {
+									uid: { type: 'number', example: 1001, description: 'Project ID' },
+									name: { type: 'string', example: 'Office Complex Phase 1', description: 'Project name' },
+									endDate: { type: 'string', format: 'date-time', example: '2024-02-15T00:00:00Z', description: 'Project deadline' },
+									daysRemaining: { type: 'number', example: 12, description: 'Days until deadline' },
+									progressPercentage: { type: 'number', example: 78.5, description: 'Current progress' },
+									client: {
+										type: 'object',
+										properties: {
+											name: { type: 'string', example: 'ABC Construction', description: 'Client name' }
+										}
+									}
+								}
+							},
+							description: 'Projects with deadlines in next 30 days'
+						},
+						overdueProjects: {
+							type: 'array',
+							items: {
+								type: 'object',
+								properties: {
+									uid: { type: 'number', example: 1002, description: 'Project ID' },
+									name: { type: 'string', example: 'Warehouse Renovation', description: 'Project name' },
+									endDate: { type: 'string', format: 'date-time', example: '2024-01-01T00:00:00Z', description: 'Original deadline' },
+									daysOverdue: { type: 'number', example: 15, description: 'Days overdue' },
+									progressPercentage: { type: 'number', example: 65.2, description: 'Current progress' },
+									assignedUser: {
+										type: 'object',
+										properties: {
+											name: { type: 'string', example: 'Project Manager', description: 'Assigned user' }
+										}
+									}
+								}
+							},
+							description: 'Projects past their deadline'
+						}
+					}
+				}
+			},
+		},
+	})
+	async getProjectStats(@Req() req: AuthenticatedRequest) {
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
+		const branchId = req.user?.branch?.uid;
+		return this.projectsService.getProjectStats(orgId, branchId);
 	}
 }

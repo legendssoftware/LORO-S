@@ -23,6 +23,7 @@ import { CommunicationLog } from 'src/communication/entities/communication-log.e
 import { Route } from 'src/tasks/entities/route.entity';
 import { Order } from 'src/shop/entities/order.entity';
 import { Leave } from 'src/leave/entities/leave.entity';
+import { Project } from 'src/shop/entities/project.entity';
 
 @Entity('branch')
 @Index(['organisation', 'status']) // Organisation branch queries
@@ -145,4 +146,7 @@ export class Branch {
 
 	@OneToMany(() => Leave, (leave) => leave?.branch, { nullable: true })
 	leaves: Leave[];
+
+	@OneToMany(() => Project, (project) => project?.branch, { nullable: true })
+	projects: Project[];
 }

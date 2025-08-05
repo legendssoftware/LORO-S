@@ -92,6 +92,21 @@ export class OrganisationSettings {
 	@Column({ default: 30 })
 	feedbackTokenExpiryDays: number;
 
+	@Column({ type: 'json', nullable: true })
+	socialLinks: {
+		facebook?: string;
+		twitter?: string;
+		instagram?: string;
+		linkedin?: string;
+		youtube?: string;
+		website?: string;
+		custom?: Array<{
+			name: string;
+			url: string;
+			icon?: string;
+		}>;
+	};
+
 	@Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
 	createdAt: Date;
 

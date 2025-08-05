@@ -16,11 +16,12 @@ import { OrganizationHoursService } from './services/organization-hours.service'
 import { AttendanceCalculatorService } from './services/attendance-calculator.service';
 import { AttendanceReportsService } from './services/attendance-reports.service';
 import { OvertimeReminderService } from './services/overtime-reminder.service';
+import { OrganisationSettings } from '../organisation/entities/organisation-settings.entity';
 
 @Module({
 	imports: [
 		LicensingModule,
-		TypeOrmModule.forFeature([Attendance, CheckIn, User, Organisation, OrganisationHours]),
+		TypeOrmModule.forFeature([Attendance, CheckIn, User, Organisation, OrganisationHours, OrganisationSettings]),
 		UserModule,
 		RewardsModule,
 		CacheModule.registerAsync({
@@ -38,16 +39,16 @@ import { OvertimeReminderService } from './services/overtime-reminder.service';
 	],
 	controllers: [AttendanceController],
 	providers: [
-		AttendanceService, 
-		OrganizationHoursService, 
-		AttendanceCalculatorService, 
+		AttendanceService,
+		OrganizationHoursService,
+		AttendanceCalculatorService,
 		AttendanceReportsService,
 		OvertimeReminderService,
 	],
 	exports: [
-		AttendanceService, 
-		OrganizationHoursService, 
-		AttendanceCalculatorService, 
+		AttendanceService,
+		OrganizationHoursService,
+		AttendanceCalculatorService,
 		AttendanceReportsService,
 		OvertimeReminderService,
 	],

@@ -8,13 +8,14 @@ import { startOfDay, endOfDay, format, subDays, subBusinessDays, isValid } from 
 import { Attendance } from '../entities/attendance.entity';
 import { User } from '../../user/entities/user.entity';
 import { Organisation } from '../../organisation/entities/organisation.entity';
+import { OrganisationSettings } from '../../organisation/entities/organisation-settings.entity';
 import { OrganizationHoursService } from './organization-hours.service';
 import { UserService } from '../../user/user.service';
 import { AttendanceStatus } from '../../lib/enums/attendance.enums';
 import { AccessLevel } from '../../lib/enums/user.enums';
 import { EmailType } from '../../lib/enums/email.enums';
 import { AccountStatus } from '../../lib/enums/status.enums';
-import { TimeCalculatorUtil } from '../utils/time-calculator.util';
+import { TimeCalculatorUtil, SplitShiftResult } from '../utils/time-calculator.util';
 import { TimezoneUtil } from '../utils/timezone.util';
 
 /**
@@ -262,6 +263,8 @@ export class AttendanceReportsService {
 		private userRepository: Repository<User>,
 		@InjectRepository(Organisation)
 		private organisationRepository: Repository<Organisation>,
+		@InjectRepository(OrganisationSettings)
+		private organisationSettingsRepository: Repository<OrganisationSettings>,
 		private readonly organizationHoursService: OrganizationHoursService,
 		private readonly userService: UserService,
 		private readonly eventEmitter: EventEmitter2,
@@ -626,6 +629,11 @@ export class AttendanceReportsService {
 			throw new Error(`Organization ${organizationId} not found`);
 		}
 
+		// Get organization settings including social links
+		const organizationSettings = await this.organisationSettingsRepository.findOne({
+			where: { organisationUid: organizationId },
+		});
+
 		this.logger.debug(`Organization found: ${organization.name}`);
 
 		// Get working day info for organization hours with fallback
@@ -832,6 +840,7 @@ export class AttendanceReportsService {
 			dashboardUrl: process.env.APP_URL || 'https://loro.co.za',
 			hasEmployees: totalEmployees > 0,
 			latenessSummary,
+			socialLinks: organizationSettings?.socialLinks || null,
 		};
 
 		this.logger.log(`Morning report data generated successfully for organization ${organizationId}`);
@@ -863,6 +872,11 @@ export class AttendanceReportsService {
 		}
 
 		this.logger.debug(`Organization found: ${organization.name}`);
+
+		// Get organization settings including social links
+		const organizationSettings = await this.organisationSettingsRepository.findOne({
+			where: { organisationUid: organizationId },
+		});
 
 		// Get working day info for organization hours with fallback
 		const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(organizationId, today);
@@ -1278,6 +1292,7 @@ export class AttendanceReportsService {
 			tomorrowActions,
 			generatedAt: TimezoneUtil.formatInOrganizationTime(today, 'PPpp', organizationTimezone),
 			dashboardUrl: process.env.DASHBOARD_URL || 'https://dashboard.loro.com',
+			socialLinks: organizationSettings?.socialLinks || null,
 		};
 
 		this.logger.log(`Evening report data generated successfully for organization ${organizationId}`);
@@ -1445,10 +1460,16 @@ export class AttendanceReportsService {
 			const lastAttendance = sortedAttendances[sortedAttendances.length - 1];
 			const user = firstAttendance.owner!;
 
-			// Calculate total hours across all sessions
+			// Calculate total hours across all sessions for today only
 			let totalHours = 0;
+			const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
 			for (const attendance of sortedAttendances) {
-				const hours = await this.calculateRealTimeHoursWithOrgHours(attendance, organizationId, new Date());
+				const hours = await this.calculateRealTimeHoursWithOrgHours(
+					attendance, 
+					organizationId, 
+					new Date(),
+					today // Only count hours for today from multi-day shifts
+				);
 				totalHours += hours;
 			}
 
@@ -2681,7 +2702,7 @@ export class AttendanceReportsService {
 	}
 
 	/**
-	 * Calculate real-time hours worked using organization hours for overtime calculation
+	 * Calculate real-time hours worked using organization hours for overtime calculation with multi-day shift support
 	 */
 	private async calculateTotalActualHoursWithOrgHours(
 		todayAttendance: Attendance[],
@@ -2691,23 +2712,19 @@ export class AttendanceReportsService {
 		this.logger.debug(`Calculating total actual hours for ${todayAttendance.length} attendance records`);
 		
 		let totalHours = 0;
+		const today = currentTime.toISOString().split('T')[0]; // YYYY-MM-DD format
 
 		for (const attendance of todayAttendance) {
 			if (!attendance.checkIn) continue;
 
-			// If there's a duration and check out, use that (completed shift)
-			if (attendance.duration && attendance.checkOut) {
-				const durationMinutes = this.parseDurationToMinutes(attendance.duration);
-				totalHours += durationMinutes / 60;
-			} else if (attendance.checkIn && !attendance.checkOut) {
-				// If only check-in exists, calculate hours from check-in to now (still working)
-				const checkInTime = new Date(attendance.checkIn);
-				const diffInMs = currentTime.getTime() - checkInTime.getTime();
-				const diffInHours = diffInMs / (1000 * 60 * 60);
-				
-				// Cap at reasonable working hours (24 hours max to handle edge cases)
-				return Math.min(Math.max(0, diffInHours), 24);
-			}
+			// Use the new multi-day shift calculation to get hours for today only
+			const hours = await this.calculateRealTimeHoursWithOrgHours(
+				attendance, 
+				organizationId, 
+				currentTime,
+				today // Only count hours for today from multi-day shifts
+			);
+			totalHours += hours;
 		}
 
 		this.logger.debug(`Total actual hours calculated: ${totalHours}`);
@@ -2891,41 +2908,41 @@ export class AttendanceReportsService {
 	}
 
 	/**
-	 * Calculate real-time hours with organization hours context
+	 * Calculate real-time hours with organization hours context and multi-day shift support
 	 */
 	private async calculateRealTimeHoursWithOrgHours(
 		attendance: Attendance, 
 		organizationId: number,
-		currentTime: Date = new Date()
+		currentTime: Date = new Date(),
+		targetDate?: string // YYYY-MM-DD format - if provided, only return hours for this specific date
 	): Promise<number> {
 		if (!attendance.checkIn) return 0;
 
-		// If there's a duration and check out, use that (completed shift)
-		if (attendance.duration && attendance.checkOut) {
-			return this.parseDurationToMinutes(attendance.duration) / 60;
+		const checkInTime = new Date(attendance.checkIn);
+		const checkOutTime = attendance.checkOut ? new Date(attendance.checkOut) : currentTime;
+
+		// Use the new multi-day shift splitting functionality
+		const splitResult = TimeCalculatorUtil.splitMultiDayShift(
+			checkInTime,
+			attendance.checkOut ? checkOutTime : null,
+			attendance.breakDetails,
+			attendance.totalBreakTime
+		);
+
+		// If a target date is specified, return only hours for that date
+		if (targetDate) {
+			const targetSegment = splitResult.segments.find(segment => segment.date === targetDate);
+			return targetSegment ? targetSegment.netWorkMinutes / 60 : 0;
 		}
 
-		// If only check-in exists, calculate hours from check-in to now (still working)
-		if (attendance.checkIn && !attendance.checkOut) {
-			const checkInTime = new Date(attendance.checkIn);
-			const diffInMs = currentTime.getTime() - checkInTime.getTime();
-			const diffInHours = diffInMs / (1000 * 60 * 60);
-			
-			// Get organization hours to cap the calculation appropriately
-			try {
-				const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(organizationId, checkInTime);
-				const maxDailyHours = workingDayInfo.expectedWorkMinutes > 0 
-					? (workingDayInfo.expectedWorkMinutes / 60) * 2 // Allow up to double expected hours
-					: 24; // Fallback to 24 hours max
-				
-				return Math.min(Math.max(0, diffInHours), maxDailyHours);
-			} catch (error) {
-				this.logger.warn('Error getting org hours for real-time calculation:', error);
-				return Math.min(Math.max(0, diffInHours), 24); // Fallback
-			}
+		// If it's a single day shift or no target date specified, return total hours
+		if (!splitResult.isMultiDay) {
+			return splitResult.segments[0]?.netWorkMinutes / 60 || 0;
 		}
 
-		return 0;
+		// For multi-day shifts without target date, return total across all days
+		// This maintains backward compatibility for existing usage
+		return splitResult.segments.reduce((total, segment) => total + segment.netWorkMinutes, 0) / 60;
 	}
 
 	/**

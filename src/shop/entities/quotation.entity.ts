@@ -16,6 +16,7 @@ import {
 } from 'typeorm';
 import { Order } from './order.entity';
 import { Interaction } from '../../interactions/entities/interaction.entity';
+import { Project } from './project.entity';
 
 @Entity('quotation')
 @Index(['quotationNumber']) // Unique quotation lookups
@@ -118,4 +119,7 @@ export class Quotation {
 
 	@OneToMany(() => Interaction, (interaction) => interaction.quotation)
 	interactions: Interaction[];
+
+	@ManyToOne(() => Project, (project) => project.quotations, { nullable: true })
+	project: Project;
 }

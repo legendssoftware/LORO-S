@@ -126,4 +126,12 @@ export class CheckoutDto {
 		required: false,
 	})
 	recipientEmail?: string;
+
+	@IsOptional()
+	@ApiProperty({
+		description: 'Optional project to associate with this quotation',
+		example: { uid: 42 },
+		required: false,
+	})
+	project?: { uid: number };
 }

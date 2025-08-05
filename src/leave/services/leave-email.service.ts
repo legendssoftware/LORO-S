@@ -1,6 +1,6 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { User } from '../../user/entities/user.entity';
 import { Leave } from '../entities/leave.entity';
@@ -26,11 +26,19 @@ export class LeaveEmailService {
 	) {}
 
 	/**
-	 * Find all admin users in the same organization as the applicant
+	 * Find all HR, Manager, and Admin users in the same organization as the applicant
+	 * Implements enhanced role targeting for leave request approval workflows
 	 */
-	private async findAdminUsers(orgId: number, branchId?: number): Promise<User[]> {
+	private async findApprovalUsers(orgId: number, branchId?: number): Promise<User[]> {
 		const whereClause: any = {
-			accessLevel: AccessLevel.ADMIN,
+			accessLevel: In([
+				AccessLevel.HR,
+				AccessLevel.MANAGER, 
+				AccessLevel.ADMIN,
+				AccessLevel.OWNER
+			]),
+			status: 'active',
+			isDeleted: false,
 		};
 
 		// Add organization filter
@@ -43,10 +51,28 @@ export class LeaveEmailService {
 			whereClause.branch = { uid: branchId };
 		}
 
-		return this.userRepository.find({
+		const users = await this.userRepository.find({
 			where: whereClause,
 			relations: ['organisation', 'branch'],
+			order: {
+				accessLevel: 'DESC', // Prioritize by access level (OWNER > ADMIN > MANAGER > HR)
+			},
 		});
+
+		// Remove duplicates if a user has multiple qualifying roles
+		const uniqueUsers = users.filter((user, index, self) => 
+			index === self.findIndex(u => u.uid === user.uid)
+		);
+
+		return uniqueUsers;
+	}
+
+	/**
+	 * @deprecated Use findApprovalUsers instead for enhanced role targeting
+	 * Find all admin users in the same organization as the applicant
+	 */
+	private async findAdminUsers(orgId: number, branchId?: number): Promise<User[]> {
+		return this.findApprovalUsers(orgId, branchId);
 	}
 
 	/**
@@ -115,10 +141,10 @@ export class LeaveEmailService {
 
 			const delegatedUser = await this.getDelegatedUser(leave.delegatedToUid);
 
-			for (const admin of admins) {
+			for (const approver of approvers) {
 				const emailData: LeaveNewApplicationAdminData = {
-					name: admin.name || admin.email,
-					adminName: admin.name || admin.email,
+					name: approver.name || approver.email,
+					adminName: approver.name || approver.email,
 					applicantName: applicant.name || applicant.email,
 					applicantEmail: applicant.email,
 					applicantDepartment: applicant.departmentId?.toString() || 'Not specified',
@@ -142,7 +168,7 @@ export class LeaveEmailService {
 				};
 
 				// Emit email event
-				this.eventEmitter.emit('send.email', EmailType.LEAVE_NEW_APPLICATION_ADMIN, [admin.email], emailData);
+				this.eventEmitter.emit('send.email', EmailType.LEAVE_NEW_APPLICATION_ADMIN, [approver.email], emailData);
 			}
 		} catch (error) {
 			console.error('Error sending new leave application admin notification:', error);
@@ -223,10 +249,10 @@ export class LeaveEmailService {
 			const monthlyApprovals = 0; // TODO: Implement actual count
 			const adequateCoverage = true; // TODO: Implement actual logic
 
-			for (const admin of admins) {
+			for (const approver of approvers) {
 				const emailData: LeaveStatusUpdateAdminData = {
-					name: admin.name || admin.email,
-					adminName: admin.name || admin.email,
+					name: approver.name || approver.email,
+					adminName: approver.name || approver.email,
 					applicantName: applicant.name || applicant.email,
 					applicantEmail: applicant.email,
 					applicantDepartment: applicant.departmentId?.toString() || 'Not specified',
@@ -253,7 +279,7 @@ export class LeaveEmailService {
 				};
 
 				// Emit email event
-				this.eventEmitter.emit('send.email', EmailType.LEAVE_STATUS_UPDATE_ADMIN, [admin.email], emailData);
+				this.eventEmitter.emit('send.email', EmailType.LEAVE_STATUS_UPDATE_ADMIN, [approver.email], emailData);
 			}
 		} catch (error) {
 			console.error('Error sending leave status update to admins:', error);
@@ -298,11 +324,11 @@ export class LeaveEmailService {
 			// Emit email event for applicant
 			this.eventEmitter.emit('send.email', EmailType.LEAVE_DELETED_NOTIFICATION, [applicant.email], applicantEmailData);
 
-			// Send to admins
-			for (const admin of admins) {
-				const adminEmailData: LeaveDeletedNotificationData = {
-					name: admin.name || admin.email,
-					recipientName: admin.name || admin.email,
+			// Send to approvers
+			for (const approver of approvers) {
+				const approverEmailData: LeaveDeletedNotificationData = {
+					name: approver.name || approver.email,
+					recipientName: approver.name || approver.email,
 					isApplicant: false,
 					applicantName: applicant.name || applicant.email,
 					applicantEmail: applicant.email,
@@ -321,8 +347,8 @@ export class LeaveEmailService {
 					adequateCoverage: true, // TODO: Implement actual logic
 				};
 
-				// Emit email event for admin
-				this.eventEmitter.emit('send.email', EmailType.LEAVE_DELETED_NOTIFICATION, [admin.email], adminEmailData);
+				// Emit email event for approver
+				this.eventEmitter.emit('send.email', EmailType.LEAVE_DELETED_NOTIFICATION, [approver.email], approverEmailData);
 			}
 		} catch (error) {
 			console.error('Error sending leave deletion notification:', error);

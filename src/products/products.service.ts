@@ -1053,33 +1053,57 @@ export class ProductsService {
 		this.logger.log(`👀 [recordView] Recording view for product ID: ${productId}, user: ${userId}`);
 		
 		try {
-			const analytics = await this.analyticsRepository.findOne({ where: { productId } });
-			if (analytics) {
-				const newViewCount = (analytics.viewCount || 0) + 1;
-				this.logger.debug(`📊 [recordView] Updating view count from ${analytics.viewCount || 0} to ${newViewCount}`);
-				await this.analyticsRepository.update({ productId }, { 
-					viewCount: newViewCount,
-				});
-
-				// Get product details for event
-				const productResult = await this.getProductByref(productId, orgId, branchId);
-				const product = productResult.product;
-
-				// Emit view event for real-time analytics
-				this.eventEmitter.emit('product.viewed', {
-					productId,
-					productName: product?.name || 'Unknown Product',
-					category: product?.category || 'Unknown',
-					userId,
-					orgId,
-					branchId,
-					timestamp: new Date(),
-				});
-
-				this.logger.log(`✅ [recordView] View recorded successfully for product ID: ${productId}`);
-			} else {
-				this.logger.warn(`⚠️ [recordView] Analytics not found for product ID: ${productId}`);
+			let analytics = await this.analyticsRepository.findOne({ where: { productId } });
+			if (!analytics) {
+				this.logger.warn(`⚠️ [recordView] Analytics not found for product ID: ${productId}. Creating new analytics record.`);
+				
+				// Auto-create analytics for this product
+				try {
+					analytics = this.analyticsRepository.create({
+						productId,
+						totalUnitsSold: 0,
+						totalRevenue: 0,
+						salesCount: 0,
+						viewCount: 0,
+						cartAddCount: 0,
+						wishlistCount: 0,
+						quotationCount: 0,
+						quotationToOrderCount: 0,
+						conversionRate: 0,
+						stockHistory: [],
+						salesHistory: [],
+						priceHistory: []
+					});
+					analytics = await this.analyticsRepository.save(analytics);
+					this.logger.log(`✅ [recordView] Created new analytics record for product ID: ${productId}`);
+				} catch (createError) {
+					this.logger.error(`❌ [recordView] Failed to create analytics for product ID ${productId}: ${createError.message}`);
+					return { message: 'Failed to create product analytics but view attempt recorded' };
+				}
 			}
+
+			const newViewCount = (analytics.viewCount || 0) + 1;
+			this.logger.debug(`📊 [recordView] Updating view count from ${analytics.viewCount || 0} to ${newViewCount}`);
+			await this.analyticsRepository.update({ productId }, { 
+				viewCount: newViewCount,
+			});
+
+			// Get product details for event
+			const productResult = await this.getProductByref(productId, orgId, branchId);
+			const product = productResult.product;
+
+			// Emit view event for real-time analytics
+			this.eventEmitter.emit('product.viewed', {
+				productId,
+				productName: product?.name || 'Unknown Product',
+				category: product?.category || 'Unknown',
+				userId,
+				orgId,
+				branchId,
+				timestamp: new Date(),
+			});
+
+			this.logger.log(`✅ [recordView] View recorded successfully for product ID: ${productId}`);
 			return { message: 'View recorded' };
 		} catch (error) {
 			this.logger.error(`❌ [recordView] Error recording view for product ID ${productId}: ${error.message}`, error.stack);
@@ -1106,32 +1130,56 @@ export class ProductsService {
 		this.logger.log(`🛒 [recordCartAdd] Recording cart add for product ID: ${productId}, quantity: ${quantity}, user: ${userId}`);
 		
 		try {
-			const analytics = await this.analyticsRepository.findOne({ where: { productId } });
-			if (analytics) {
-				const newCartAddCount = (analytics.cartAddCount || 0) + 1;
-				this.logger.debug(`📊 [recordCartAdd] Updating cart add count from ${analytics.cartAddCount || 0} to ${newCartAddCount}`);
-				await this.analyticsRepository.update({ productId }, { cartAddCount: newCartAddCount });
-
-				// Get product details for event
-				const productResult = await this.getProductByref(productId, orgId, branchId);
-				const product = productResult.product;
-
-				// Emit cart add event for real-time analytics
-				this.eventEmitter.emit('product.cart.added', {
-					productId,
-					productName: product?.name || 'Unknown Product',
-					category: product?.category || 'Unknown',
-					quantity,
-					userId,
-					orgId,
-					branchId,
-					timestamp: new Date(),
-				});
-
-				this.logger.log(`✅ [recordCartAdd] Cart add recorded successfully for product ID: ${productId}`);
-			} else {
-				this.logger.warn(`⚠️ [recordCartAdd] Analytics not found for product ID: ${productId}`);
+			let analytics = await this.analyticsRepository.findOne({ where: { productId } });
+			if (!analytics) {
+				this.logger.warn(`⚠️ [recordCartAdd] Analytics not found for product ID: ${productId}. Creating new analytics record.`);
+				
+				// Auto-create analytics for this product
+				try {
+					analytics = this.analyticsRepository.create({
+						productId,
+						totalUnitsSold: 0,
+						totalRevenue: 0,
+						salesCount: 0,
+						viewCount: 0,
+						cartAddCount: 0,
+						wishlistCount: 0,
+						quotationCount: 0,
+						quotationToOrderCount: 0,
+						conversionRate: 0,
+						stockHistory: [],
+						salesHistory: [],
+						priceHistory: []
+					});
+					analytics = await this.analyticsRepository.save(analytics);
+					this.logger.log(`✅ [recordCartAdd] Created new analytics record for product ID: ${productId}`);
+				} catch (createError) {
+					this.logger.error(`❌ [recordCartAdd] Failed to create analytics for product ID ${productId}: ${createError.message}`);
+					return { message: 'Failed to create product analytics but cart add attempt recorded' };
+				}
 			}
+
+			const newCartAddCount = (analytics.cartAddCount || 0) + 1;
+			this.logger.debug(`📊 [recordCartAdd] Updating cart add count from ${analytics.cartAddCount || 0} to ${newCartAddCount}`);
+			await this.analyticsRepository.update({ productId }, { cartAddCount: newCartAddCount });
+
+			// Get product details for event
+			const productResult = await this.getProductByref(productId, orgId, branchId);
+			const product = productResult.product;
+
+			// Emit cart add event for real-time analytics
+			this.eventEmitter.emit('product.cart.added', {
+				productId,
+				productName: product?.name || 'Unknown Product',
+				category: product?.category || 'Unknown',
+				quantity,
+				userId,
+				orgId,
+				branchId,
+				timestamp: new Date(),
+			});
+
+			this.logger.log(`✅ [recordCartAdd] Cart add recorded successfully for product ID: ${productId}`);
 			return { message: 'Cart add recorded' };
 		} catch (error) {
 			this.logger.error(`❌ [recordCartAdd] Error recording cart add for product ID ${productId}: ${error.message}`, error.stack);
@@ -1176,10 +1224,33 @@ export class ProductsService {
 		
 		try {
 			this.logger.debug(`🔍 [updateStockHistory] Finding analytics for product ID: ${productId}`);
-			const analytics = await this.analyticsRepository.findOne({ where: { productId } });
+			let analytics = await this.analyticsRepository.findOne({ where: { productId } });
 			if (!analytics) {
-				this.logger.warn(`⚠️ [updateStockHistory] Product analytics not found for ID: ${productId}`);
-				throw new NotFoundException('Product analytics not found');
+				this.logger.warn(`⚠️ [updateStockHistory] Product analytics not found for ID: ${productId}. Creating new analytics record.`);
+				
+				// Auto-create analytics for this product
+				try {
+					analytics = this.analyticsRepository.create({
+						productId,
+						totalUnitsSold: 0,
+						totalRevenue: 0,
+						salesCount: 0,
+						viewCount: 0,
+						cartAddCount: 0,
+						wishlistCount: 0,
+						quotationCount: 0,
+						quotationToOrderCount: 0,
+						conversionRate: 0,
+						stockHistory: [],
+						salesHistory: [],
+						priceHistory: []
+					});
+					analytics = await this.analyticsRepository.save(analytics);
+					this.logger.log(`✅ [updateStockHistory] Created new analytics record for product ID: ${productId}`);
+				} catch (createError) {
+					this.logger.error(`❌ [updateStockHistory] Failed to create analytics for product ID ${productId}: ${createError.message}`);
+					return { message: 'Failed to create product analytics' };
+				}
 			}
 
 			this.logger.debug(`🔍 [updateStockHistory] Finding product for stock balance check`);
@@ -1219,10 +1290,45 @@ export class ProductsService {
 		
 		try {
 			this.logger.debug(`🔍 [calculateProductPerformance] Finding analytics for product ID: ${productId}`);
-			const analytics = await this.analyticsRepository.findOne({ where: { productId } });
+			let analytics = await this.analyticsRepository.findOne({ where: { productId } });
 			if (!analytics) {
-				this.logger.warn(`⚠️ [calculateProductPerformance] Product analytics not found for ID: ${productId}`);
-				throw new NotFoundException('Product analytics not found');
+				this.logger.warn(`⚠️ [calculateProductPerformance] Product analytics not found for ID: ${productId}. Creating new analytics record.`);
+				
+				// Auto-create analytics for this product
+				try {
+					analytics = this.analyticsRepository.create({
+						productId,
+						totalUnitsSold: 0,
+						totalRevenue: 0,
+						salesCount: 0,
+						viewCount: 0,
+						cartAddCount: 0,
+						wishlistCount: 0,
+						quotationCount: 0,
+						quotationToOrderCount: 0,
+						conversionRate: 0,
+						stockHistory: [],
+						salesHistory: [],
+						priceHistory: []
+					});
+					analytics = await this.analyticsRepository.save(analytics);
+					this.logger.log(`✅ [calculateProductPerformance] Created new analytics record for product ID: ${productId}`);
+				} catch (createError) {
+					this.logger.error(`❌ [calculateProductPerformance] Failed to create analytics for product ID ${productId}: ${createError.message}`);
+					return { 
+						message: 'Failed to create product analytics',
+						performance: {
+							viewToCartRate: 0,
+							cartToSaleRate: 0,
+							viewToSaleRate: 0,
+							avgSaleValue: 0,
+							profitMargin: null,
+							stockTurnoverRate: 0,
+							performanceScore: 0,
+							rank: 'unranked'
+						}
+					};
+				}
 			}
 
 			// Calculate conversion rates

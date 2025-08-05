@@ -19,6 +19,7 @@ import {
 } from 'src/lib/enums/client.enums';
 import { ClientAuth } from './client.auth.entity';
 import { ClientCommunicationSchedule } from './client-communication-schedule.entity';
+import { Project } from '../../shop/entities/project.entity';
 
 @Entity('client')
 @Index(['email']) // Unique customer lookups
@@ -247,4 +248,8 @@ export class Client {
 	// Communication schedules relationship
 	@OneToMany(() => ClientCommunicationSchedule, (schedule) => schedule.client)
 	communicationSchedules: ClientCommunicationSchedule[];
+
+	// Projects relationship
+	@OneToMany(() => Project, (project) => project.client)
+	projects: Project[];
 }

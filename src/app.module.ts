@@ -98,6 +98,8 @@ import { ApprovalsModule } from './approvals/approvals.module';
 import { Approval } from './approvals/entities/approval.entity';
 import { ApprovalHistory } from './approvals/entities/approval-history.entity';
 import { ApprovalSignature } from './approvals/entities/approval-signature.entity';
+import { Project } from './shop/entities/project.entity';
+
 
 @Module({
 	imports: [
@@ -179,6 +181,7 @@ import { ApprovalSignature } from './approvals/entities/approval-signature.entit
 					Approval,
 					ApprovalHistory,
 					ApprovalSignature,
+					Project,
 				],
 				synchronize: true,
 				logging: false,
