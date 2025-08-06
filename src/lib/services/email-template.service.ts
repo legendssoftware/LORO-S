@@ -2,6 +2,7 @@ import * as Handlebars from 'handlebars';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import * as juice from 'juice';
+import { Logger } from '@nestjs/common';
 import {
 	SignupEmailData,
 	VerificationEmailData,
@@ -81,68 +82,90 @@ import {
 } from '../types/email-templates.types';
 
 class EmailTemplateService {
+	private readonly logger = new Logger(EmailTemplateService.name);
 	private templatesPath: string;
 	private compiledTemplates: Map<string, HandlebarsTemplateDelegate> = new Map();
 
 	constructor() {
-		console.log('Initializing Email Template Service...');
+		const startTime = Date.now();
+		const opId = `INIT_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
 		
-		// Try multiple potential template paths for maximum deployment compatibility
-		const potentialPaths = [
-			// Primary: Relative to project root (works for most deployments)
-			join(process.cwd(), 'dist', 'lib', 'templates', 'handlebars'),
-			// Fallback: Relative to current service file location
-			join(__dirname, '../templates/handlebars'),
-			// Alternative: Direct relative to source in case dist structure differs
-			join(process.cwd(), 'src', 'lib', 'templates', 'handlebars')
-		];
+		this.logger.log(`[${opId}] Initializing Email Template Service...`);
+		
+		try {
+			// Try multiple potential template paths for maximum deployment compatibility
+			const potentialPaths = [
+				// Primary: Relative to project root (works for most deployments)
+				join(process.cwd(), 'dist', 'lib', 'templates', 'handlebars'),
+				// Fallback: Relative to current service file location
+				join(__dirname, '../templates/handlebars'),
+				// Alternative: Direct relative to source in case dist structure differs
+				join(process.cwd(), 'src', 'lib', 'templates', 'handlebars')
+			];
 
-		this.templatesPath = this.findValidTemplatesPath(potentialPaths);
-		this.initializeHandlebars();
-		
-		console.log('Email Template Service initialization completed successfully');
+			this.templatesPath = this.findValidTemplatesPath(potentialPaths, opId);
+			this.initializeHandlebars(opId);
+			
+			const initTime = Date.now() - startTime;
+			this.logger.log(`[${opId}] Email Template Service initialized successfully in ${initTime}ms`);
+		} catch (error) {
+			const initTime = Date.now() - startTime;
+			this.logger.error(`[${opId}] Failed to initialize Email Template Service after ${initTime}ms`, error.stack);
+			throw error;
+		}
 	}
 
-	private findValidTemplatesPath(paths: string[]): string {
+	private findValidTemplatesPath(paths: string[], opId: string): string {
 		const { existsSync } = require('fs');
 		
 		for (const path of paths) {
 			if (existsSync(path)) {
-				console.log(`Using templates path: ${path}`);
+				this.logger.debug(`[${opId}] Using templates path: ${path}`);
 				return path;
 			}
 		}
 		
 		// If no valid path found, log all attempted paths and use the first one
-		console.warn('No valid templates path found. Attempted paths:', paths);
-		console.warn('Using first path as fallback:', paths[0]);
+		this.logger.warn(`[${opId}] No valid templates path found. Using fallback: ${paths[0]}`);
 		return paths[0];
 	}
 
-	private initializeHandlebars() {
-		// Clear any existing compiled templates to ensure fresh compilation
-		this.compiledTemplates.clear();
+	private initializeHandlebars(opId: string) {
+		const startTime = Date.now();
+		this.logger.debug(`[${opId}] Initializing Handlebars...`);
 		
-		// Register partials
-		this.registerPartials();
+		try {
+			// Clear any existing compiled templates to ensure fresh compilation
+			this.compiledTemplates.clear();
+			
+			// Register partials
+			this.registerPartials(opId);
 
-		// Register helpers
-		this.registerHelpers();
-		
-		// Preload all email templates
-		this.preloadAllTemplates();
+			// Register helpers
+			this.registerHelpers(opId);
+			
+			// Preload all email templates
+			this.preloadAllTemplates(opId);
+			
+			const initTime = Date.now() - startTime;
+			this.logger.debug(`[${opId}] Handlebars initialization completed in ${initTime}ms`);
+		} catch (error) {
+			const initTime = Date.now() - startTime;
+			this.logger.error(`[${opId}] Handlebars initialization failed after ${initTime}ms`, error.stack);
+			throw error;
+		}
 	}
 
-	private registerPartials() {
+	private registerPartials(opId: string) {
+		const startTime = Date.now();
 		const partialsPath = join(this.templatesPath, 'partials');
 		const layoutsPath = join(this.templatesPath, 'layouts');
 
 		try {
 			// Register base layout with proper layout functionality
 			const baseLayoutPath = join(layoutsPath, 'base.hbs');
-			console.log(`Attempting to load base layout from: ${baseLayoutPath}`);
-			
 			const { existsSync } = require('fs');
+			
 			if (existsSync(baseLayoutPath)) {
 				const baseLayout = readFileSync(baseLayoutPath, 'utf8');
 				
@@ -152,52 +175,54 @@ class EmailTemplateService {
 				// Register a custom block helper for layout support
 				Handlebars.registerHelper('base', function(options: any) {
 					try {
-						// The content between {{#base}} and {{/base}} is available in options.fn(this)
 						const content = options.fn(this);
 						const layoutData = { ...this, body: content };
 						const template = Handlebars.compile(baseLayout);
-						const result = template(layoutData);
-						console.log('Layout helper successfully rendered content');
-						return new Handlebars.SafeString(result);
+						return new Handlebars.SafeString(template(layoutData));
 					} catch (error) {
-						console.error('Error in base layout helper:', error);
 						// Return the content without layout as fallback
 						return new Handlebars.SafeString(options.fn(this));
 					}
 				});
-				
-				console.log('Successfully registered base layout and helper');
 			} else {
-				console.error(`Base layout not found at: ${baseLayoutPath}`);
 				throw new Error(`Base layout file not found: ${baseLayoutPath}`);
 			}
 
 			// Register additional partials if they exist
 			const partials = ['header', 'footer', 'button', 'card', 'alert'];
+			let registered = 0;
 			partials.forEach((partial) => {
 				try {
 					const partialPath = join(partialsPath, `${partial}.hbs`);
 					if (existsSync(partialPath)) {
 						const content = readFileSync(partialPath, 'utf8');
 						Handlebars.registerPartial(partial, content);
-						console.log(`Registered partial: ${partial}`);
+						registered++;
 					}
 				} catch (error) {
-					console.warn(`Could not load partial: ${partial}`, error.message);
+					this.logger.warn(`[${opId}] Could not load partial: ${partial}`);
 				}
 			});
+			
+			const partialTime = Date.now() - startTime;
+			this.logger.debug(`[${opId}] Registered base layout + ${registered}/${partials.length} partials in ${partialTime}ms`);
 		} catch (error) {
-			console.error('Critical error in registerPartials:', error.message);
+			const partialTime = Date.now() - startTime;
+			this.logger.error(`[${opId}] Failed to register partials after ${partialTime}ms`, error.message);
 			throw error; // Re-throw since base layout is critical for email templates
 		}
 	}
 
-	private registerHelpers() {
+	private registerHelpers(opId: string) {
+		const startTime = Date.now();
+		
 		// Import and register all helpers
 		try {
 			require('../templates/handlebars/helpers/index');
+			const helperTime = Date.now() - startTime;
+			this.logger.debug(`[${opId}] Loaded Handlebars helpers in ${helperTime}ms`);
 		} catch (error) {
-			console.warn('Could not load Handlebars helpers:', error.message);
+			this.logger.warn(`[${opId}] Could not load helpers, using fallback`);
 
 			// Register essential helpers as fallback
 			Handlebars.registerHelper('formatDate', function (date: string | Date) {
@@ -225,6 +250,9 @@ class EmailTemplateService {
 				args.pop();
 				return args.join('');
 			});
+			
+			const helperTime = Date.now() - startTime;
+			this.logger.debug(`[${opId}] Registered fallback helpers in ${helperTime}ms`);
 		}
 	}
 
@@ -233,29 +261,31 @@ class EmailTemplateService {
 			return this.compiledTemplates.get(templatePath)!;
 		}
 
+		const startTime = Date.now();
 		try {
 			const fullPath = join(this.templatesPath, 'emails', templatePath);
-			console.log(`Attempting to load template from: ${fullPath}`);
-			
 			const { existsSync } = require('fs');
+			
 			if (!existsSync(fullPath)) {
-				console.error(`Template file does not exist: ${fullPath}`);
-				console.error(`Templates base path: ${this.templatesPath}`);
-				console.error(`Requested template path: ${templatePath}`);
 				throw new Error(`Template file not found: ${fullPath}`);
 			}
 			
 			const templateContent = readFileSync(fullPath, 'utf8');
 			const compiled = Handlebars.compile(templateContent);
 			this.compiledTemplates.set(templatePath, compiled);
+			
+			const loadTime = Date.now() - startTime;
+			this.logger.debug(`Loaded template: ${templatePath} (${loadTime}ms)`);
 			return compiled;
 		} catch (error) {
-			console.error(`Error loading template ${templatePath}:`, error);
+			const loadTime = Date.now() - startTime;
+			this.logger.error(`Failed to load template: ${templatePath} after ${loadTime}ms`, error.message);
 			throw new Error(`Template not found: ${templatePath} - ${error.message}`);
 		}
 	}
 
 	private renderTemplate(templatePath: string, data: any): string {
+		const startTime = Date.now();
 		try {
 			const template = this.getTemplate(templatePath);
 
@@ -291,18 +321,17 @@ class EmailTemplateService {
 					`${process.env.APP_URL || 'https://loro.co.za/landing-page'}/unsubscribe`,
 			};
 
-			console.log(`Rendering template: ${templatePath}`);
 			const renderedTemplate = template(enrichedData);
 			
 			// Inline CSS for email client compatibility
-			console.log(`Inlining CSS for template: ${templatePath}`);
 			const inlinedTemplate = juice(renderedTemplate);
 			
-			console.log(`Successfully rendered and inlined template: ${templatePath}`);
+			const renderTime = Date.now() - startTime;
+			this.logger.debug(`Rendered template: ${templatePath} (${renderTime}ms)`);
 			return inlinedTemplate;
 		} catch (error) {
-			console.error(`Error rendering template ${templatePath}:`, error);
-			console.error('Template data:', JSON.stringify(data, null, 2));
+			const renderTime = Date.now() - startTime;
+			this.logger.error(`Failed to render template: ${templatePath} after ${renderTime}ms`, error.message);
 			throw new Error(`Template rendering failed: ${templatePath} - ${error.message}`);
 		}
 	}
@@ -758,121 +787,62 @@ class EmailTemplateService {
 	 * Useful for development or when templates are updated
 	 */
 	public clearCache(): void {
-		console.log('Clearing email template cache and reinitializing...');
+		const startTime = Date.now();
+		const opId = `CLEAR_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+		
+		this.logger.log(`[${opId}] Clearing email template cache and reinitializing...`);
 		this.compiledTemplates.clear();
-		this.initializeHandlebars();
-		console.log('Email template service refreshed');
+		this.initializeHandlebars(opId);
+		
+		const clearTime = Date.now() - startTime;
+		this.logger.log(`[${opId}] Email template service refreshed in ${clearTime}ms`);
 	}
 
-	private preloadAllTemplates(): void {
-		console.log('Preloading all email templates...');
+	private preloadAllTemplates(opId: string): void {
+		const startTime = Date.now();
 		
 		// List of all email templates
 		const templates = [
-			'auth/signup.hbs',
-			'auth/verification.hbs',
-			'auth/password-reset.hbs',
-			'auth/password-reset-request.hbs',
-			'auth/password-changed.hbs',
-			'quotations/client-new.hbs',
-			'quotations/internal-new.hbs',
-			'quotations/reseller-new.hbs',
-			'quotations/status-update.hbs',
-			'quotations/warehouse-fulfillment.hbs',
-			'business/invoice.hbs',
-			'business/order-received-client.hbs',
-			'tasks/new-task.hbs',
-			'tasks/updated.hbs',
-			'tasks/completed.hbs',
-			'tasks/reminder-assignee.hbs',
-			'tasks/reminder-creator.hbs',
-			'tasks/flag-created.hbs',
-			'tasks/flag-updated.hbs',
-			'tasks/flag-resolved.hbs',
-			'tasks/feedback-added.hbs',
-			'tasks/overdue-missed.hbs',
-			'leads/reminder.hbs',
-			'leads/converted-client.hbs',
-			'leads/converted-creator.hbs',
-			'leads/assigned-to-user.hbs',
-			'leads/monthly-unattended-leads-report.hbs',
-			'licenses/created.hbs',
-			'licenses/updated.hbs',
-			'licenses/renewed.hbs',
-			'licenses/activated.hbs',
-			'licenses/suspended.hbs',
-			'licenses/limit-reached.hbs',
-			'licenses/transferred-from.hbs',
-			'licenses/transferred-to.hbs',
-			'reports/daily-report.hbs',
-			'reports/user-daily-report.hbs',
-			'system/new-user-admin-notification.hbs',
-			'auth/new-user-welcome.hbs',
-			'auth/user-re-invitation.hbs',
-			'client/password-reset.hbs',
-			'client/password-changed.hbs',
-			'warnings/issued.hbs',
-			'warnings/updated.hbs',
-			'warnings/expired.hbs',
-			'leave/application-confirmation.hbs',
-			'leave/new-application-admin.hbs',
-			'leave/status-update-user.hbs',
-			'leave/status-update-admin.hbs',
-			'leave/deleted-notification.hbs',
-			'attendance/morning-report.hbs',
-			'attendance/evening-report.hbs',
-			'attendance/overtime-reminder.hbs',
-			// Claims templates
-			'claims/created.hbs',
-			'claims/status-update.hbs',
-			'claims/approved.hbs',
-			'claims/rejected.hbs',
-			'claims/paid.hbs',
-			// Additional lead templates
-			'leads/created.hbs',
-			'leads/status-update.hbs',
-			// Journal templates
-			'journals/created.hbs',
-			'journals/updated.hbs',
-			'journals/deleted.hbs',
-			// Additional auth templates
-			'auth/login-notification.hbs',
-			'auth/failed-login-attempt.hbs',
-			'auth/email-verified.hbs',
-			// Client templates
-			'client/login-notification.hbs',
-			'client/failed-login-attempt.hbs',
-			'client/profile-update-confirmation.hbs',
-			'client/profile-update-admin.hbs',
-			'client/communication-reminder.hbs',
-			// Payslip templates
-			'payslips/available.hbs',
-			'payslips/uploaded-admin.hbs',
-			// Target Achievement Admin Notification templates
-			'targets/user-target-achievement-admin.hbs',
-			'targets/lead-target-achievement-admin.hbs',
-			// Target Achievement Templates (User-facing)
-			'targets/target-set.hbs',
-			'targets/target-updated.hbs',
-			'targets/target-deleted.hbs',
-			'targets/achievement.hbs',
-			'targets/milestone.hbs',
-			'targets/deadline-reminder.hbs',
-			'targets/performance-alert.hbs',
-			'targets/erp-update-confirmation.hbs',
-			'targets/period-summary.hbs',
-			// App/System templates
-			'system/app-update-notification.hbs',
+			'auth/signup.hbs', 'auth/verification.hbs', 'auth/password-reset.hbs', 'auth/password-reset-request.hbs', 'auth/password-changed.hbs',
+			'quotations/client-new.hbs', 'quotations/internal-new.hbs', 'quotations/reseller-new.hbs', 'quotations/status-update.hbs', 'quotations/warehouse-fulfillment.hbs',
+			'business/invoice.hbs', 'business/order-received-client.hbs',
+			'tasks/new-task.hbs', 'tasks/updated.hbs', 'tasks/completed.hbs', 'tasks/reminder-assignee.hbs', 'tasks/reminder-creator.hbs',
+			'tasks/flag-created.hbs', 'tasks/flag-updated.hbs', 'tasks/flag-resolved.hbs', 'tasks/feedback-added.hbs', 'tasks/overdue-missed.hbs',
+			'leads/reminder.hbs', 'leads/converted-client.hbs', 'leads/converted-creator.hbs', 'leads/assigned-to-user.hbs', 'leads/monthly-unattended-leads-report.hbs',
+			'leads/created.hbs', 'leads/status-update.hbs',
+			'licenses/created.hbs', 'licenses/updated.hbs', 'licenses/renewed.hbs', 'licenses/activated.hbs', 'licenses/suspended.hbs', 'licenses/limit-reached.hbs',
+			'licenses/transferred-from.hbs', 'licenses/transferred-to.hbs',
+			'reports/daily-report.hbs', 'reports/user-daily-report.hbs',
+			'system/new-user-admin-notification.hbs', 'system/app-update-notification.hbs',
+			'auth/new-user-welcome.hbs', 'auth/user-re-invitation.hbs', 'auth/login-notification.hbs', 'auth/failed-login-attempt.hbs', 'auth/email-verified.hbs',
+			'client/password-reset.hbs', 'client/password-changed.hbs', 'client/login-notification.hbs', 'client/failed-login-attempt.hbs',
+			'client/profile-update-confirmation.hbs', 'client/profile-update-admin.hbs', 'client/communication-reminder.hbs',
+			'warnings/issued.hbs', 'warnings/updated.hbs', 'warnings/expired.hbs',
+			'leave/application-confirmation.hbs', 'leave/new-application-admin.hbs', 'leave/status-update-user.hbs', 'leave/status-update-admin.hbs', 'leave/deleted-notification.hbs',
+			'attendance/morning-report.hbs', 'attendance/evening-report.hbs', 'attendance/overtime-reminder.hbs',
+			'claims/created.hbs', 'claims/status-update.hbs', 'claims/approved.hbs', 'claims/rejected.hbs', 'claims/paid.hbs',
+			'journals/created.hbs', 'journals/updated.hbs', 'journals/deleted.hbs',
+			'payslips/available.hbs', 'payslips/uploaded-admin.hbs',
+			'targets/user-target-achievement-admin.hbs', 'targets/lead-target-achievement-admin.hbs',
+			'targets/target-set.hbs', 'targets/target-updated.hbs', 'targets/target-deleted.hbs', 'targets/achievement.hbs', 'targets/milestone.hbs',
+			'targets/deadline-reminder.hbs', 'targets/performance-alert.hbs', 'targets/erp-update-confirmation.hbs', 'targets/period-summary.hbs'
 		];
 
+		let loaded = 0;
+		let failed = 0;
+		
 		templates.forEach((template) => {
 			try {
 				this.getTemplate(template);
-				console.log(`Successfully preloaded template: ${template}`);
+				loaded++;
 			} catch (error) {
-				console.error(`Failed to preload template: ${template}`, error);
+				failed++;
+				this.logger.warn(`[${opId}] Failed to preload: ${template}`);
 			}
 		});
+		
+		const preloadTime = Date.now() - startTime;
+		this.logger.log(`[${opId}] Preloaded ${loaded}/${templates.length} templates in ${preloadTime}ms (${failed} failed)`);
 	}
 }
 

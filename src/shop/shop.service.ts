@@ -27,6 +27,8 @@ import { OrganisationService } from '../organisation/organisation.service';
 import { QuotationInternalData } from '../lib/types/email-templates.types';
 import { PdfGenerationService } from '../pdf-generation/pdf-generation.service';
 import { QuotationTemplateData } from '../pdf-generation/interfaces/pdf-templates.interface';
+import { Project } from './entities/project.entity';
+import { ProjectsService } from './projects.service';
 
 @Injectable()
 export class ShopService {
@@ -45,6 +47,8 @@ export class ShopService {
 		private quotationRepository: Repository<Quotation>,
 		@InjectRepository(Banners)
 		private bannersRepository: Repository<Banners>,
+		@InjectRepository(Project)
+		private projectRepository: Repository<Project>,
 		@Inject(CACHE_MANAGER)
 		private cacheManager: Cache,
 		private readonly configService: ConfigService,
@@ -54,6 +58,7 @@ export class ShopService {
 		private readonly productsService: ProductsService,
 		private readonly organisationService: OrganisationService,
 		private readonly pdfGenerationService: PdfGenerationService,
+		private readonly projectsService: ProjectsService,
 	) {
 		this.currencyLocale = this.configService.get<string>('CURRENCY_LOCALE') || 'en-ZA';
 		this.currencyCode = this.configService.get<string>('CURRENCY_CODE') || 'ZAR';
@@ -214,6 +219,172 @@ export class ShopService {
 		})
 			.format(amount)
 			.replace(this.currencyCode, this.currencySymbol);
+	}
+
+	/**
+	 * Calculate total cost for a project based on associated quotations with specific statuses
+	 * @param projectId - Project ID to calculate costs for
+	 * @param includeStatuses - Array of quotation statuses to include in cost calculation
+	 * @returns Total cost amount
+	 */
+	private async calculateProjectCost(
+		projectId: number, 
+		includeStatuses: OrderStatus[] = [OrderStatus.APPROVED, OrderStatus.PAID, OrderStatus.COMPLETED, OrderStatus.IN_FULFILLMENT]
+	): Promise<number> {
+		const startTime = Date.now();
+		this.logger.log(`Calculating project cost for project ${projectId}, including statuses: ${includeStatuses.join(', ')}`);
+
+		try {
+			const quotations = await this.quotationRepository
+				.createQueryBuilder('quotation')
+				.where('quotation.project.uid = :projectId', { projectId })
+				.andWhere('quotation.status IN (:...statuses)', { statuses: includeStatuses })
+				.getMany();
+
+			const totalCost = quotations.reduce((sum, quotation) => sum + Number(quotation.totalAmount || 0), 0);
+			const calculationTime = Date.now() - startTime;
+
+			this.logger.log(`Project ${projectId} cost calculated: ${totalCost} from ${quotations.length} quotations in ${calculationTime}ms`);
+			return totalCost;
+		} catch (error) {
+			const calculationTime = Date.now() - startTime;
+			this.logger.error(`Failed to calculate project cost for project ${projectId} after ${calculationTime}ms:`, error.stack);
+			throw error;
+		}
+	}
+
+	/**
+	 * Update project currentSpent based on associated quotations
+	 * @param projectId - Project ID to update
+	 * @param orgId - Optional organization ID for scoping
+	 * @param branchId - Optional branch ID for scoping
+	 * @returns Success status and updated cost amount
+	 */
+	async updateProjectCost(
+		projectId: number,
+		orgId?: number,
+		branchId?: number
+	): Promise<{ success: boolean; message: string; previousCost?: number; newCost?: number }> {
+		const startTime = Date.now();
+		const operationId = `UPDATE_PROJECT_COST_${projectId}_${Date.now()}`;
+		
+		this.logger.log(`[${operationId}] Updating project cost for project ${projectId}`);
+		
+		try {
+			// Find project with optional org/branch scoping
+			const queryBuilder = this.projectRepository
+				.createQueryBuilder('project')
+				.where('project.uid = :projectId', { projectId });
+
+			if (orgId) {
+				queryBuilder.andWhere('project.organisation.uid = :orgId', { orgId });
+			}
+
+			if (branchId) {
+				queryBuilder.andWhere('project.branch.uid = :branchId', { branchId });
+			}
+
+			const project = await queryBuilder.getOne();
+
+			if (!project) {
+				this.logger.warn(`[${operationId}] Project ${projectId} not found`);
+				return {
+					success: false,
+					message: 'Project not found'
+				};
+			}
+
+			const previousCost = Number(project.currentSpent || 0);
+			const newCost = await this.calculateProjectCost(projectId);
+
+			// Update project cost if it has changed
+			if (previousCost !== newCost) {
+				this.logger.log(`[${operationId}] Project cost changed from ${previousCost} to ${newCost}`);
+				
+				await this.projectRepository.update(projectId, {
+					currentSpent: newCost,
+					updatedAt: new Date()
+				});
+
+				// Emit event for project cost update
+				this.eventEmitter.emit('project.cost.updated', {
+					projectId,
+					previousCost,
+					newCost,
+					difference: newCost - previousCost,
+					orgId,
+					branchId
+				});
+
+				const executionTime = Date.now() - startTime;
+				this.logger.log(`[${operationId}] Project cost updated successfully in ${executionTime}ms: ${previousCost} → ${newCost}`);
+
+				return {
+					success: true,
+					message: 'Project cost updated successfully',
+					previousCost,
+					newCost
+				};
+			} else {
+				const executionTime = Date.now() - startTime;
+				this.logger.log(`[${operationId}] Project cost unchanged (${newCost}) in ${executionTime}ms`);
+				
+				return {
+					success: true,
+					message: 'Project cost is up to date',
+					previousCost,
+					newCost
+				};
+			}
+		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`[${operationId}] Failed to update project cost after ${executionTime}ms:`, error.stack);
+			throw error;
+		}
+	}
+
+	/**
+	 * Update project costs for all projects associated with a quotation
+	 * @param quotationId - Quotation ID that may affect project costs
+	 * @param orgId - Optional organization ID for scoping
+	 * @param branchId - Optional branch ID for scoping
+	 */
+	private async updateProjectCostsFromQuotation(
+		quotationId: number,
+		orgId?: number,
+		branchId?: number
+	): Promise<void> {
+		const startTime = Date.now();
+		const operationId = `UPDATE_PROJECT_COSTS_FROM_QUOTATION_${quotationId}_${Date.now()}`;
+		
+		this.logger.log(`[${operationId}] Updating project costs from quotation ${quotationId}`);
+
+		try {
+			// Find quotation with project relation
+			const quotation = await this.quotationRepository.findOne({
+				where: { uid: quotationId },
+				relations: ['project']
+			});
+
+			if (!quotation) {
+				this.logger.warn(`[${operationId}] Quotation ${quotationId} not found`);
+				return;
+			}
+
+			if (!quotation.project) {
+				this.logger.log(`[${operationId}] Quotation ${quotationId} is not associated with any project`);
+				return;
+			}
+
+			// Update the associated project's cost
+			await this.updateProjectCost(quotation.project.uid, orgId, branchId);
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`[${operationId}] Project costs updated for quotation ${quotationId} in ${executionTime}ms`);
+		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`[${operationId}] Failed to update project costs from quotation ${quotationId} after ${executionTime}ms:`, error.stack);
+		}
 	}
 
 	async categories(orgId?: number, branchId?: number): Promise<{ categories: string[] | null; message: string }> {
@@ -2677,7 +2848,7 @@ export class ShopService {
 					}
 
 					validatedItems.push(validatedItem);
-					this.logger.debug(`[generateQuotationPDF] Item ${i} validated: ${validatedItem.description} (${validatedItem.quantity} x ${validatedItem.unitPrice})`);
+					this.logger.log(`[generateQuotationPDF] Item ${i} validated: ${validatedItem.description} (${validatedItem.quantity} x ${validatedItem.unitPrice})`);
 
 				} catch (itemError) {
 					this.logger.error(`[generateQuotationPDF] Error processing item ${i}: ${itemError.message}`);

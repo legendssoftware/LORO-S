@@ -563,23 +563,29 @@ export class ApprovalsService {
     // Get all approvals with filtering and pagination
     async findAll(query: ApprovalQueryDto, user: RequestUser) {
         const startTime = Date.now();
-        this.logger.log(`📋 [findAll] Fetching approvals for user ${user.uid} with filters`);
+        this.logger.log(`📋 [findAll] ============ APPROVALS FINDALL START ============`);
+        this.logger.log(`📋 [findAll] 🎯 Target: Fetching approvals for user ${user.uid}`);
+        this.logger.log(`📋 [findAll] 👤 User Details: uid=${user.uid}, role=${user.accessLevel}, org=${user.organisationRef}, branch=${user.branch?.uid || 'N/A'}`);
+        this.logger.log(`📋 [findAll] 🔍 Query filters: ${JSON.stringify(query, null, 2)}`);
         
         try {
-            this.logger.debug(`🔍 [findAll] Query parameters: ${JSON.stringify(query)}`);
 
             // Generate cache key based on query parameters and user
             const cacheKey = this.getCacheKey(`findAll_${user.organisationRef}_${user.uid}_${JSON.stringify(query)}`);
             
             // Check cache first (only for non-real-time queries)
             if (!query.includeHistory && !query.includeSignatures) {
+                this.logger.log(`🗄️ [findAll] Checking cache with key: ${cacheKey}`);
                 const cachedResults = await this.cacheManager.get(cacheKey);
                 if (cachedResults) {
-                    this.logger.debug(`📊 [findAll] Returning cached results for user ${user.uid}`);
+                    this.logger.log(`✅ [findAll] 📊 CACHE HIT! Returning cached results for user ${user.uid}`);
+                    this.logger.log(`✅ [findAll] 📊 Cached data contains ${cachedResults.data?.length || 0} approvals`);
                     return cachedResults;
                 }
+                this.logger.log(`❌ [findAll] 📊 CACHE MISS - fetching from database`);
             }
 
+            this.logger.log(`🏗️ [findAll] Building database query...`);
             const queryBuilder = this.approvalRepository
                 .createQueryBuilder('approval')
                 .leftJoinAndSelect('approval.requester', 'requester')
@@ -589,35 +595,45 @@ export class ApprovalsService {
                 .leftJoinAndSelect('approval.branch', 'branch');
 
             // Apply comprehensive scoping (org, branch, user access)
+            this.logger.log(`🔒 [findAll] Applying security scoping filters for user ${user.uid}`);
             this.applyScopingFilters(queryBuilder, user);
 
             // Apply search filters
+            this.logger.log(`🔍 [findAll] Applying search and filter constraints`);
             this.applySearchFilters(queryBuilder, query);
 
             // Apply sorting
             const sortBy = query.sortBy || 'createdAt';
             const sortOrder = query.sortOrder || 'DESC';
+            this.logger.log(`📊 [findAll] Sorting by: ${sortBy} ${sortOrder}`);
             queryBuilder.orderBy(`approval.${sortBy}`, sortOrder);
 
             // Apply pagination
             const page = query.page || 1;
             const limit = Math.min(query.limit || 20, 100);
             const skip = (page - 1) * limit;
+            this.logger.log(`📖 [findAll] Pagination: page=${page}, limit=${limit}, skip=${skip}`);
 
             queryBuilder.skip(skip).take(limit);
 
             // Include additional relations if requested
             if (query.includeHistory) {
-                this.logger.debug(`📜 [findAll] Including approval history`);
+                this.logger.log(`📜 [findAll] Including approval history in query`);
                 queryBuilder.leftJoinAndSelect('approval.history', 'history');
             }
             if (query.includeSignatures) {
-                this.logger.debug(`✍️ [findAll] Including approval signatures`);
+                this.logger.log(`✍️ [findAll] Including approval signatures in query`);
                 queryBuilder.leftJoinAndSelect('approval.signatures', 'signatures');
             }
 
-            this.logger.debug(`🔍 [findAll] Executing database query`);
+            this.logger.log(`🚀 [findAll] Executing database query...`);
             const [approvals, total] = await queryBuilder.getManyAndCount();
+            this.logger.log(`📊 [findAll] Database query completed: found ${approvals.length} approvals out of ${total} total`);
+            
+            // Log detailed results for debugging
+            approvals.forEach((approval, index) => {
+                this.logger.debug(`📋 [findAll] Approval ${index + 1}: ${approval.approvalReference} - ${approval.title} (${approval.status}) by ${approval.requester?.email || 'unknown'}`);
+            });
 
             const totalPages = Math.ceil(total / limit);
 
@@ -652,7 +668,13 @@ export class ApprovalsService {
             }
 
             const executionTime = Date.now() - startTime;
-            this.logger.log(`✅ [findAll] Retrieved ${approvals.length} approvals for user ${user.uid} in ${executionTime}ms`);
+            this.logger.log(`🎉 [findAll] ============ APPROVALS FINDALL SUCCESS ============`);
+            this.logger.log(`✅ [findAll] 📊 Results: ${approvals.length} approvals retrieved out of ${total} total`);
+            this.logger.log(`✅ [findAll] 📈 Metrics: ${pendingCount} pending, ${overdueCount} overdue, ${urgentCount} urgent`);
+            this.logger.log(`✅ [findAll] 💰 Total value: ${result.metrics.totalValue} (currency varies)`);
+            this.logger.log(`✅ [findAll] 📖 Pagination: page ${page}/${totalPages} (${result.pagination.hasNext ? 'has next' : 'last page'})`);
+            this.logger.log(`✅ [findAll] ⏱️ Execution time: ${executionTime}ms`);
+            this.logger.log(`🎉 [findAll] ============ APPROVALS FINDALL END ============`);
 
             return result;
 
@@ -665,9 +687,14 @@ export class ApprovalsService {
 
     // Get pending approvals for current user
     async getPendingApprovals(user: RequestUser) {
+        const startTime = Date.now();
         try {
-            this.logger.log(`Fetching pending approvals for user ${user.uid}`);
+            this.logger.log(`⏳ [getPendingApprovals] ============ PENDING APPROVALS START ============`);
+            this.logger.log(`⏳ [getPendingApprovals] 🎯 Target: Fetching pending approvals for user ${user.uid}`);
+            this.logger.log(`⏳ [getPendingApprovals] 👤 User Details: uid=${user.uid}, role=${user.accessLevel}, org=${user.organisationRef}, branch=${user.branch?.uid || 'N/A'}`);
+            this.logger.log(`⏳ [getPendingApprovals] 🔍 Looking for statuses: [PENDING, ADDITIONAL_INFO_REQUIRED, ESCALATED]`);
 
+            this.logger.log(`🏗️ [getPendingApprovals] Building pending approvals query...`);
             const queryBuilder = this.approvalRepository
                 .createQueryBuilder('approval')
                 .leftJoinAndSelect('approval.requester', 'requester')
@@ -681,14 +708,28 @@ export class ApprovalsService {
                 .andWhere('(approval.approverUid = :uid OR approval.delegatedToUid = :uid)', { uid: user.uid });
 
             // Apply comprehensive scoping (org, branch, user access)
+            this.logger.log(`🔒 [getPendingApprovals] Applying security scoping filters`);
             this.applyScopingFilters(queryBuilder, user);
 
+            this.logger.log(`📊 [getPendingApprovals] Setting sort order: priority DESC, submittedAt ASC`);
+            this.logger.log(`🚀 [getPendingApprovals] Executing database query...`);
             const approvals = await queryBuilder
                 .orderBy('approval.priority', 'DESC')
                 .addOrderBy('approval.submittedAt', 'ASC')
                 .getMany();
 
-            this.logger.log(`Found ${approvals.length} pending approvals for user ${user.uid}`);
+            const executionTime = Date.now() - startTime;
+            this.logger.log(`📊 [getPendingApprovals] Database query completed: found ${approvals.length} pending approvals`);
+            
+            // Log detailed results for debugging
+            approvals.forEach((approval, index) => {
+                this.logger.debug(`⏳ [getPendingApprovals] Pending ${index + 1}: ${approval.approvalReference} - ${approval.title} (${approval.status}) - Priority: ${approval.priority} by ${approval.requester?.email || 'unknown'}`);
+            });
+
+            this.logger.log(`🎉 [getPendingApprovals] ============ PENDING APPROVALS SUCCESS ============`);
+            this.logger.log(`✅ [getPendingApprovals] 📊 Found ${approvals.length} pending approvals for user ${user.uid}`);
+            this.logger.log(`✅ [getPendingApprovals] ⏱️ Execution time: ${executionTime}ms`);
+            this.logger.log(`🎉 [getPendingApprovals] ============ PENDING APPROVALS END ============`);
 
             return {
                 data: approvals,
@@ -704,9 +745,14 @@ export class ApprovalsService {
 
     // Get approval requests submitted by current user
     async getMyRequests(query: ApprovalQueryDto, user: RequestUser) {
+        const startTime = Date.now();
         try {
-            this.logger.log(`Fetching approval requests for user ${user.uid}`);
+            this.logger.log(`📝 [getMyRequests] ============ MY REQUESTS START ============`);
+            this.logger.log(`📝 [getMyRequests] 🎯 Target: Fetching approval requests submitted by user ${user.uid}`);
+            this.logger.log(`📝 [getMyRequests] 👤 User Details: uid=${user.uid}, role=${user.accessLevel}, org=${user.organisationRef}, branch=${user.branch?.uid || 'N/A'}`);
+            this.logger.log(`📝 [getMyRequests] 🔍 Query filters: ${JSON.stringify(query, null, 2)}`);
 
+            this.logger.log(`🏗️ [getMyRequests] Building my requests query...`);
             const queryBuilder = this.approvalRepository
                 .createQueryBuilder('approval')
                 .leftJoinAndSelect('approval.requester', 'requester')
@@ -717,10 +763,12 @@ export class ApprovalsService {
                 .where('approval.requesterUid = :uid', { uid: user.uid });
 
             // Apply comprehensive scoping (org, branch, user access)  
+            this.logger.log(`🔒 [getMyRequests] Applying security scoping filters`);
             this.applyScopingFilters(queryBuilder, user);
 
             // Apply search filters if provided
             if (query.search) {
+                this.logger.log(`🔍 [getMyRequests] Applying search filter: "${query.search}"`);
                 queryBuilder.andWhere(
                     '(approval.title LIKE :search OR approval.description LIKE :search OR approval.type LIKE :search)',
                     { search: `%${query.search}%` }
@@ -728,30 +776,47 @@ export class ApprovalsService {
             }
 
             if (query.status) {
+                this.logger.log(`🔍 [getMyRequests] Filtering by status: ${query.status}`);
                 queryBuilder.andWhere('approval.status = :status', { status: query.status });
             }
 
             if (query.type) {
+                this.logger.log(`🔍 [getMyRequests] Filtering by type: ${query.type}`);
                 queryBuilder.andWhere('approval.type = :type', { type: query.type });
             }
 
             // Apply sorting
             const sortBy = query.sortBy || 'createdAt';
             const sortOrder = query.sortOrder || 'DESC';
+            this.logger.log(`📊 [getMyRequests] Sorting by: ${sortBy} ${sortOrder}`);
             queryBuilder.orderBy(`approval.${sortBy}`, sortOrder);
 
             // Apply pagination
             const page = query.page || 1;
             const limit = Math.min(query.limit || 20, 100);
             const skip = (page - 1) * limit;
+            this.logger.log(`📖 [getMyRequests] Pagination: page=${page}, limit=${limit}, skip=${skip}`);
 
+            this.logger.log(`🚀 [getMyRequests] Executing database query...`);
             const [approvals, total] = await queryBuilder
                 .skip(skip)
                 .take(limit)
                 .getManyAndCount();
             const totalPages = Math.ceil(total / limit);
 
-            this.logger.log(`Retrieved ${approvals.length} approval requests for user ${user.uid}`);
+            const executionTime = Date.now() - startTime;
+            this.logger.log(`📊 [getMyRequests] Database query completed: found ${approvals.length} requests out of ${total} total`);
+            
+            // Log detailed results for debugging
+            approvals.forEach((approval, index) => {
+                this.logger.debug(`📝 [getMyRequests] Request ${index + 1}: ${approval.approvalReference} - ${approval.title} (${approval.status}) - Type: ${approval.type}`);
+            });
+
+            this.logger.log(`🎉 [getMyRequests] ============ MY REQUESTS SUCCESS ============`);
+            this.logger.log(`✅ [getMyRequests] 📊 Results: ${approvals.length} requests retrieved out of ${total} total`);
+            this.logger.log(`✅ [getMyRequests] 📖 Pagination: page ${page}/${totalPages}`);
+            this.logger.log(`✅ [getMyRequests] ⏱️ Execution time: ${executionTime}ms`);
+            this.logger.log(`🎉 [getMyRequests] ============ MY REQUESTS END ============`);
 
             return {
                 data: approvals,
@@ -767,29 +832,41 @@ export class ApprovalsService {
 
     // Get approval statistics
     async getStats(user: RequestUser) {
+        const startTime = Date.now();
         try {
-            this.logger.log(`Generating approval statistics for user ${user.uid}`);
+            this.logger.log(`📊 [getStats] ============ APPROVAL STATS START ============`);
+            this.logger.log(`📊 [getStats] 🎯 Target: Generating approval statistics for user ${user.uid}`);
+            this.logger.log(`📊 [getStats] 👤 User Details: uid=${user.uid}, role=${user.accessLevel}, org=${user.organisationRef}, branch=${user.branch?.uid || 'N/A'}`);
 
             // Check cache first
             const cacheKey = this.getCacheKey(`stats_${user.organisationRef}_${user.uid}`);
+            this.logger.log(`🗄️ [getStats] Checking cache with key: ${cacheKey}`);
             const cachedStats = await this.cacheManager.get(cacheKey);
             if (cachedStats) {
-                this.logger.log(`📊 [getStats] Returning cached statistics for user ${user.uid}`);
+                this.logger.log(`✅ [getStats] 📊 CACHE HIT! Returning cached statistics for user ${user.uid}`);
+                this.logger.log(`✅ [getStats] 📊 Cached stats: ${JSON.stringify(cachedStats.summary)}`);
                 return cachedStats;
             }
+            this.logger.log(`❌ [getStats] 📊 CACHE MISS - generating fresh statistics`);
+        
 
+            this.logger.log(`🏗️ [getStats] Building statistics queries...`);
             const baseQuery = this.approvalRepository
                 .createQueryBuilder('approval');
 
             // Apply comprehensive scoping for base statistics
+            this.logger.log(`🔒 [getStats] Applying security scoping filters for statistics`);
             this.applyScopingFilters(baseQuery, user);
 
             // Get total counts by status
+            this.logger.log(`📊 [getStats] Fetching status counts...`);
             const statusCounts = await baseQuery
                 .select('approval.status', 'status')
                 .addSelect('COUNT(*)', 'count')
                 .groupBy('approval.status')
                 .getRawMany();
+
+            this.logger.log(`📊 [getStats] Raw status counts: ${JSON.stringify(statusCounts)}`);
 
             // Process status counts
             const statusMap = statusCounts.reduce((acc, item) => {
@@ -802,14 +879,20 @@ export class ApprovalsService {
             const approved = statusMap[ApprovalStatus.APPROVED] || 0;
             const rejected = statusMap[ApprovalStatus.REJECTED] || 0;
 
+            this.logger.log(`📊 [getStats] Processed counts: total=${total}, pending=${pending}, approved=${approved}, rejected=${rejected}`);
+
             // Get overdue count separately
+            this.logger.log(`⏰ [getStats] Fetching overdue count...`);
             const overdueQuery = this.approvalRepository.createQueryBuilder('approval');
             this.applyScopingFilters(overdueQuery, user);
             const overdue = await overdueQuery
                 .andWhere('approval.isOverdue = :overdue', { overdue: true })
                 .getCount();
 
+            this.logger.log(`⏰ [getStats] Overdue count: ${overdue}`);
+
             // Get statistics by type
+            this.logger.log(`📋 [getStats] Fetching type breakdown...`);
             const typeQuery = this.approvalRepository.createQueryBuilder('approval');
             this.applyScopingFilters(typeQuery, user);
             const typeStats = await typeQuery
@@ -818,15 +901,20 @@ export class ApprovalsService {
                 .groupBy('approval.type')
                 .getRawMany();
 
+            this.logger.log(`📋 [getStats] Type breakdown: ${JSON.stringify(typeStats)}`);
+
             // Get recent activity (last 30 days)
             const thirtyDaysAgo = new Date();
             thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+            this.logger.log(`📅 [getStats] Fetching recent activity since: ${thirtyDaysAgo.toISOString()}`);
             
             const recentQuery = this.approvalRepository.createQueryBuilder('approval');
             this.applyScopingFilters(recentQuery, user);
             const recentActivity = await recentQuery
                 .where('approval.createdAt >= :date', { date: thirtyDaysAgo })
                 .getCount();
+
+            this.logger.log(`📅 [getStats] Recent activity count: ${recentActivity}`);
 
             const stats = {
                 summary: {
@@ -850,9 +938,18 @@ export class ApprovalsService {
             };
 
             // Cache the results for 2 minutes
+            this.logger.log(`🗄️ [getStats] Caching statistics for 2 minutes`);
             await this.cacheManager.set(cacheKey, stats, 120000);
 
-            this.logger.log(`Generated statistics for user ${user.uid}: ${total} total approvals`);
+            const executionTime = Date.now() - startTime;
+            this.logger.log(`🎉 [getStats] ============ APPROVAL STATS SUCCESS ============`);
+            this.logger.log(`✅ [getStats] 📊 Generated statistics for user ${user.uid}: ${total} total approvals`);
+            this.logger.log(`✅ [getStats] 📈 Summary: ${pending} pending, ${approved} approved, ${rejected} rejected, ${overdue} overdue`);
+            this.logger.log(`✅ [getStats] 🔍 User can approve: ${stats.userInfo.canApprove}`);
+            this.logger.log(`✅ [getStats] 📅 Recent activity (30 days): ${recentActivity} approvals`);
+            this.logger.log(`✅ [getStats] ⏱️ Execution time: ${executionTime}ms`);
+            this.logger.log(`🎉 [getStats] ============ APPROVAL STATS END ============`);
+            
             return stats;
 
         } catch (error) {

@@ -192,55 +192,228 @@ export class CommunicationService {
 		@InjectRepository(CommunicationLog)
 		private communicationLogRepository: Repository<CommunicationLog>,
 	) {
+		const initStartTime = Date.now();
+		const operationId = `INIT_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+		
+		this.logger.log(`[${operationId}] Initializing CommunicationService...`);
+		
+		try {
+			// Load and validate SMTP configuration
+			this.logger.debug(`[${operationId}] Loading SMTP configuration from environment...`);
+			const configStartTime = Date.now();
+			
+		const smtpHost = this.configService.get<string>('SMTP_HOST');
+		const smtpPort = this.configService.get<number>('SMTP_PORT');
+		const smtpUser = this.configService.get<string>('SMTP_USER');
+			const smtpPass = this.configService.get<string>('SMTP_PASS');
+			const smtpFrom = this.configService.get<string>('SMTP_FROM');
+			const emailFromName = this.configService.get<string>('EMAIL_FROM_NAME');
+			
+			const configTime = Date.now() - configStartTime;
+			this.logger.debug(`[${operationId}] SMTP configuration loaded in ${configTime}ms`);
+			
+			// Validate required configuration
+			this.logger.debug(`[${operationId}] Validating SMTP configuration...`);
+			const validationStartTime = Date.now();
+			
+			if (!smtpHost) {
+				this.logger.error(`[${operationId}] SMTP_HOST is not configured`);
+				throw new Error('SMTP_HOST environment variable is required');
+			}
+			
+			if (!smtpPort || isNaN(smtpPort)) {
+				this.logger.error(`[${operationId}] SMTP_PORT is not configured or invalid: ${smtpPort}`);
+				throw new Error('SMTP_PORT environment variable must be a valid number');
+			}
+			
+			if (!smtpUser) {
+				this.logger.error(`[${operationId}] SMTP_USER is not configured`);
+				throw new Error('SMTP_USER environment variable is required');
+			}
+			
+			if (!smtpPass) {
+				this.logger.error(`[${operationId}] SMTP_PASS is not configured`);
+				throw new Error('SMTP_PASS environment variable is required');
+			}
+			
+			if (!smtpFrom) {
+				this.logger.warn(`[${operationId}] SMTP_FROM is not configured - emails may have missing sender`);
+			}
+			
+			const validationTime = Date.now() - validationStartTime;
+			this.logger.debug(`[${operationId}] SMTP configuration validation completed in ${validationTime}ms`);
+			
+			// Log configuration details (without sensitive data)
+			this.logger.debug(`[${operationId}] SMTP Configuration - Host: ${smtpHost}, Port: ${smtpPort}, User: ${smtpUser}, From: ${smtpFrom}, FromName: ${emailFromName || 'Not set'}`);
+			this.logger.debug(`[${operationId}] SMTP Security - Secure: ${smtpPort === 465}, TLS rejection: disabled`);
+			
+			// Create email transporter
+			this.logger.debug(`[${operationId}] Creating email transporter...`);
+			const transporterStartTime = Date.now();
+		
 		this.emailService = nodemailer.createTransport({
-			host: this.configService.get<string>('SMTP_HOST'),
-			port: this.configService.get<number>('SMTP_PORT'),
-			secure: this.configService.get<number>('SMTP_PORT') === 465,
+			host: smtpHost,
+			port: smtpPort,
+			secure: smtpPort === 465,
 			auth: {
-				user: this.configService.get<string>('SMTP_USER'),
-				pass: this.configService.get<string>('SMTP_PASS'),
+				user: smtpUser,
+					pass: smtpPass,
 			},
 			tls: {
 				rejectUnauthorized: false,
 			},
 		});
+		
+			const transporterTime = Date.now() - transporterStartTime;
+			this.logger.debug(`[${operationId}] Email transporter created in ${transporterTime}ms`);
+			
+			// Test transporter connection (optional - can be commented out in production)
+			this.logger.debug(`[${operationId}] Testing SMTP connection...`);
+			const connectionTestStartTime = Date.now();
+			
+			// Note: We don't await this to avoid blocking initialization
+			this.emailService.verify().then(() => {
+				const connectionTestTime = Date.now() - connectionTestStartTime;
+				this.logger.log(`[${operationId}] SMTP connection verified successfully in ${connectionTestTime}ms`);
+			}).catch((error) => {
+				const connectionTestTime = Date.now() - connectionTestStartTime;
+				this.logger.warn(`[${operationId}] SMTP connection verification failed after ${connectionTestTime}ms: ${error.message}`);
+			});
+			
+			const totalInitTime = Date.now() - initStartTime;
+			this.logger.log(`[${operationId}] CommunicationService initialized successfully in ${totalInitTime}ms (Config: ${configTime}ms, Validation: ${validationTime}ms, Transporter: ${transporterTime}ms)`);
+			
+		} catch (error) {
+			const initTime = Date.now() - initStartTime;
+			this.logger.error(`[${operationId}] Failed to initialize CommunicationService after ${initTime}ms`, error.stack);
+			throw error;
+		}
 	}
 
+	/**
+	 * Validate email address format
+	 * @param email - Email address to validate
+	 * @returns True if email format is valid
+	 */
+	private isValidEmail(email: string): boolean {
+		const startTime = Date.now();
+		this.logger.debug(`Validating email format for: ${email ? email.substring(0, 3) + '***' + email.substring(email.lastIndexOf('@')) : 'null'}`);
+		
+		try {
+		const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+			const isValid = emailRegex.test(email);
+			const validationTime = Date.now() - startTime;
+			
+			this.logger.debug(`Email validation completed in ${validationTime}ms. Result: ${isValid ? 'Valid' : 'Invalid'}`);
+			return isValid;
+		} catch (error) {
+			const validationTime = Date.now() - startTime;
+			this.logger.error(`Email validation failed after ${validationTime}ms for email: ${email}`, error.stack);
+			return false;
+		}
+	}
+
+	/**
+	 * Create and log email template generation
+	 * @param type - Email type for logging
+	 * @param subject - Email subject
+	 * @param body - Email body content
+	 * @param startTime - Template generation start time
+	 * @returns Email template with logging
+	 */
+	private createTemplateWithLogging(type: EmailType, subject: string, body: string, startTime: number): EmailTemplate {
+		const templateStartTime = Date.now();
+		this.logger.debug(`Creating template wrapper for ${type}. Subject: "${subject}", Body length: ${body?.length || 0} chars`);
+		
+		try {
+		const template = { subject, body };
+		const generationTime = Date.now() - startTime;
+			const wrapperTime = Date.now() - templateStartTime;
+			
+			this.logger.debug(`Template created successfully for ${type} in ${wrapperTime}ms (total generation: ${generationTime}ms). Subject: "${subject}", Body length: ${body?.length || 0} chars`);
+			
+			// Validate template content
+			if (!subject || subject.trim().length === 0) {
+				this.logger.warn(`Empty or invalid subject generated for ${type}`);
+			}
+			if (!body || body.trim().length === 0) {
+				this.logger.warn(`Empty or invalid body generated for ${type}`);
+			}
+			
+		return template;
+		} catch (error) {
+			const wrapperTime = Date.now() - templateStartTime;
+			this.logger.error(`Failed to create template wrapper for ${type} after ${wrapperTime}ms`, error.stack);
+			throw error;
+		}
+	}
+
+	/**
+	 * Send email based on event trigger with comprehensive logging and error handling
+	 * @param emailType - Type of email to send
+	 * @param recipientsEmails - Array of recipient email addresses
+	 * @param data - Email template data specific to the email type
+	 * @returns Email sending result with message ID and delivery details
+	 */
 	@OnEvent('send.email')
 	async sendEmail<T extends EmailType>(emailType: T, recipientsEmails: string[], data: EmailTemplateData<T>) {
-		this.logger.log(`Email event received for type: ${emailType}`);
-		this.logger.debug(`Recipients (${recipientsEmails?.length || 0}): ${recipientsEmails?.join(', ')}`);
+		const startTime = Date.now();
+		const operationId = `${emailType}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+		
+		this.logger.log(`[${operationId}] Email event received for type: ${emailType}`);
+		this.logger.debug(`[${operationId}] Recipients (${recipientsEmails?.length || 0}): ${recipientsEmails?.join(', ')}`);
+		this.logger.debug(`[${operationId}] Email data keys: ${data ? Object.keys(data).join(', ') : 'No data provided'}`);
 		
 		try {
 			// Validate recipients
+			this.logger.debug(`[${operationId}] Validating recipients...`);
 			if (!recipientsEmails || recipientsEmails.length === 0) {
-				this.logger.error('No recipients provided for email');
+				this.logger.error(`[${operationId}] Validation failed: No recipients provided for email`);
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
 			}
 
-			this.logger.debug(`Generating email template for type: ${emailType}`);
+			// Validate email addresses format
+			const invalidEmails = recipientsEmails.filter(email => !this.isValidEmail(email));
+			if (invalidEmails.length > 0) {
+				this.logger.warn(`[${operationId}] Invalid email addresses detected: ${invalidEmails.join(', ')}`);
+			}
+
+			this.logger.debug(`[${operationId}] Generating email template for type: ${emailType}`);
+			const templateStartTime = Date.now();
 			const template = this.getEmailTemplate(emailType, data);
-			this.logger.debug(`Template generated successfully. Subject: "${template.subject}"`);
+			const templateGenerationTime = Date.now() - templateStartTime;
+			this.logger.debug(`[${operationId}] Template generated successfully in ${templateGenerationTime}ms. Subject: "${template.subject}", Body length: ${template.body?.length || 0} chars`);
 
 			// Construct the from field with display name and email
 			const emailFrom = this.configService.get<string>('SMTP_FROM');
 			const emailFromName = this.configService.get<string>('EMAIL_FROM_NAME');
 			const fromField = emailFromName ? `"${emailFromName}" <${emailFrom}>` : emailFrom;
 
-			this.logger.debug(`Sending email via SMTP from: ${fromField}`);
+			this.logger.debug(`[${operationId}] Preparing email transport from: ${fromField}`);
+			this.logger.debug(`[${operationId}] Email size estimate: ${(template.body?.length || 0 + template.subject?.length || 0)} chars`);
+
+			const sendStartTime = Date.now();
+			this.logger.debug(`[${operationId}] Sending email via SMTP...`);
 			const result = await this.emailService.sendMail({
 				from: fromField,
 				to: recipientsEmails,
 				subject: template.subject,
 				html: template.body,
 			});
+			const sendTime = Date.now() - sendStartTime;
 
-			this.logger.log(`Email sent successfully for type: ${emailType}`);
-			this.logger.debug(`MessageId: ${result.messageId}, Accepted: ${result.accepted?.length || 0}, Rejected: ${result.rejected?.length || 0}`);
+			this.logger.log(`[${operationId}] Email sent successfully for type: ${emailType} in ${sendTime}ms`);
+			this.logger.debug(`[${operationId}] SMTP Result - MessageId: ${result.messageId}, Accepted: ${result.accepted?.length || 0}, Rejected: ${result.rejected?.length || 0}`);
+			this.logger.debug(`[${operationId}] Message details - Size: ${result.messageSize || 'Unknown'}, Envelope time: ${result.envelopeTime || 'Unknown'}ms, Message time: ${result.messageTime || 'Unknown'}ms`);
+
+			if (result.rejected && result.rejected.length > 0) {
+				this.logger.warn(`[${operationId}] Some recipients were rejected: ${result.rejected.join(', ')}`);
+			}
 
 			// Log the communication to database
-			this.logger.debug('Saving communication log to database');
-			await this.communicationLogRepository.save({
+			this.logger.debug(`[${operationId}] Saving communication log to database...`);
+			const dbSaveStartTime = Date.now();
+			const communicationLog = await this.communicationLogRepository.save({
 				emailType,
 				recipientEmails: recipientsEmails,
 				accepted: result.accepted,
@@ -252,27 +425,38 @@ export class CommunicationService {
 				response: result.response,
 				envelope: result.envelope,
 			});
+			const dbSaveTime = Date.now() - dbSaveStartTime;
 
-			this.logger.debug(`Communication log saved successfully for ${emailType}`);
+			const totalExecutionTime = Date.now() - startTime;
+			this.logger.debug(`[${operationId}] Communication log saved successfully in ${dbSaveTime}ms (Log ID: ${communicationLog.uid || 'Unknown'})`);
+			this.logger.log(`[${operationId}] Email operation completed successfully in ${totalExecutionTime}ms (Template: ${templateGenerationTime}ms, Send: ${sendTime}ms, DB: ${dbSaveTime}ms)`);
+			
 			return result;
 		} catch (error) {
-			this.logger.error(`Failed to send ${emailType} email to recipients: ${recipientsEmails?.join(', ')}`, error.stack);
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`[${operationId}] Failed to send ${emailType} email to recipients: ${recipientsEmails?.join(', ')} after ${executionTime}ms`, error.stack);
 			
+			// Log SMTP configuration for debugging (without sensitive data)
 			const smtpHost = this.configService.get<string>('SMTP_HOST');
 			const smtpUser = this.configService.get<string>('SMTP_USER');
+			const smtpPort = this.configService.get<number>('SMTP_PORT');
 			const smtpFrom = this.configService.get<string>('SMTP_FROM');
 			const emailFromName = this.configService.get<string>('EMAIL_FROM_NAME');
-			this.logger.error('SMTP Configuration details:', {
+			
+			this.logger.error(`[${operationId}] SMTP Configuration details:`, {
 				SMTP_HOST: smtpHost,
+				SMTP_PORT: smtpPort,
 				SMTP_USER: smtpUser,
 				SMTP_FROM: smtpFrom,
 				EMAIL_FROM_NAME: emailFromName,
+				hasPassword: !!this.configService.get<string>('SMTP_PASS'),
 			});
 			
 			// Log failed email attempt
 			try {
-				this.logger.debug('Logging failed email attempt to database');
-				await this.communicationLogRepository.save({
+				this.logger.debug(`[${operationId}] Logging failed email attempt to database...`);
+				const failedLogStartTime = Date.now();
+				const failedLog = await this.communicationLogRepository.save({
 					emailType,
 					recipientEmails: recipientsEmails,
 					accepted: [],
@@ -284,56 +468,215 @@ export class CommunicationService {
 					response: `Error: ${error.message}`,
 					createdAt: new Date(),
 				});
-				this.logger.debug(`Failed email attempt logged to database for ${emailType}`);
+				const failedLogTime = Date.now() - failedLogStartTime;
+				this.logger.debug(`[${operationId}] Failed email attempt logged to database in ${failedLogTime}ms (Log ID: ${failedLog.uid || 'Unknown'})`);
 			} catch (logError) {
-				this.logger.error('Failed to log email error to database:', logError.stack);
+				this.logger.error(`[${operationId}] Failed to log email error to database:`, logError.stack);
 			}
 			
 			throw error;
 		}
 	}
 
+	/**
+	 * Send app update notifications to multiple users with detailed logging and error tracking
+	 * @param userEmails - Array of user email addresses to notify
+	 * @param appUpdateData - App update notification data
+	 * @returns Success status and message
+	 */
 	async sendAppUpdateNotification(userEmails: string[], appUpdateData: AppUpdateNotificationData) {
-		this.logger.log(`Sending app update notification to ${userEmails.length} users`);
-		this.logger.debug(`Target user emails: ${userEmails.join(', ')}`);
+		const startTime = Date.now();
+		const operationId = `APP_UPDATE_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+		
+		this.logger.log(`[${operationId}] Starting app update notification process`);
+		this.logger.debug(`[${operationId}] Input validation - User emails count: ${userEmails?.length || 0}`);
+		this.logger.debug(`[${operationId}] Target user emails: ${userEmails?.join(', ') || 'None provided'}`);
+		this.logger.debug(`[${operationId}] Update data provided: ${appUpdateData ? 'Yes' : 'No'}`);
+		this.logger.debug(`[${operationId}] Update data keys: ${appUpdateData ? Object.keys(appUpdateData).join(', ') : 'No data provided'}`);
+		this.logger.debug(`[${operationId}] Update data size: ${appUpdateData ? JSON.stringify(appUpdateData).length : 0} chars`);
+		
+		let successCount = 0;
+		let failureCount = 0;
+		const failures: string[] = [];
+		const validationStartTime = Date.now();
 		
 		try {
-			// Send email to all users
-			const emailPromises = userEmails.map(async (email) => {
+			// Enhanced input validation
+			this.logger.debug(`[${operationId}] Validating input parameters...`);
+			if (!userEmails || userEmails.length === 0) {
+				const validationTime = Date.now() - validationStartTime;
+				this.logger.warn(`[${operationId}] Validation failed: No user emails provided after ${validationTime}ms`);
+				return { 
+					success: false, 
+					message: 'No user emails provided',
+					successCount: 0,
+					failureCount: 0
+				};
+			}
+			
+			if (!appUpdateData) {
+				const validationTime = Date.now() - validationStartTime;
+				this.logger.warn(`[${operationId}] Validation failed: No app update data provided after ${validationTime}ms`);
+				return { 
+					success: false, 
+					message: 'No app update data provided',
+					successCount: 0,
+					failureCount: 0
+				};
+			}
+			
+			// Validate email addresses
+			const invalidEmails = userEmails.filter(email => !this.isValidEmail(email));
+			if (invalidEmails.length > 0) {
+				this.logger.warn(`[${operationId}] Invalid email addresses detected: ${invalidEmails.join(', ')}`);
+			}
+			
+			const validationTime = Date.now() - validationStartTime;
+			this.logger.debug(`[${operationId}] Input validation completed in ${validationTime}ms. Valid emails: ${userEmails.length - invalidEmails.length}/${userEmails.length}`);
+			
+			// Proceed with valid emails only
+			const validEmails = userEmails.filter(email => this.isValidEmail(email));
+			if (validEmails.length === 0) {
+				this.logger.warn(`[${operationId}] No valid email addresses found`);
+				return { 
+					success: false, 
+					message: 'No valid email addresses provided',
+					successCount: 0,
+					failureCount: userEmails.length,
+					failures: userEmails
+				};
+			}
+
+			// Send email to all valid users
+			this.logger.log(`[${operationId}] Starting email dispatch to ${validEmails.length} valid recipients`);
+			const emailSendStartTime = Date.now();
+			
+			const emailPromises = validEmails.map(async (email, index) => {
+				const emailStartTime = Date.now();
+				const emailOperationId = `${operationId}_EMAIL_${index + 1}`;
+				
 				try {
-					this.logger.debug(`Sending app update notification to: ${email}`);
-					await this.sendEmail(EmailType.APP_UPDATE_NOTIFICATION, [email], appUpdateData);
-					this.logger.debug(`App update notification sent successfully to: ${email}`);
+					this.logger.debug(`[${emailOperationId}] Sending app update notification to: ${email} (${index + 1}/${validEmails.length})`);
+					
+					const emailResult = await this.sendEmail(EmailType.APP_UPDATE_NOTIFICATION, [email], appUpdateData);
+					const emailTime = Date.now() - emailStartTime;
+					
+					this.logger.debug(`[${emailOperationId}] App update notification sent successfully to: ${email} in ${emailTime}ms. MessageId: ${emailResult?.messageId || 'Unknown'}`);
+					successCount++;
+					
+					return { email, success: true, messageId: emailResult?.messageId, time: emailTime };
 				} catch (error) {
-					this.logger.error(`Failed to send app update notification to ${email}:`, error.stack);
+					const emailTime = Date.now() - emailStartTime;
+					this.logger.error(`[${emailOperationId}] Failed to send app update notification to ${email} after ${emailTime}ms:`, error.stack);
+					failureCount++;
+					failures.push(email);
+					
+					return { email, success: false, error: error.message, time: emailTime };
 				}
 			});
 
-			await Promise.all(emailPromises);
+			this.logger.debug(`[${operationId}] Awaiting completion of ${emailPromises.length} email promises...`);
+			const emailResults = await Promise.all(emailPromises);
+			const emailSendTime = Date.now() - emailSendStartTime;
 			
-			this.logger.log(`App update notification process completed for ${userEmails.length} users`);
-			return { success: true, message: `App update notification sent to ${userEmails.length} users` };
+			this.logger.debug(`[${operationId}] Email dispatch completed in ${emailSendTime}ms`);
+			
+			// Log detailed results
+			const successfulEmails = emailResults.filter(result => result.success);
+			const failedEmails = emailResults.filter(result => !result.success);
+			
+			if (successfulEmails.length > 0) {
+				const avgSuccessTime = successfulEmails.reduce((sum, result) => sum + result.time, 0) / successfulEmails.length;
+				this.logger.debug(`[${operationId}] Successful emails: ${successfulEmails.length}, Average time: ${avgSuccessTime.toFixed(2)}ms`);
+			}
+			
+			if (failedEmails.length > 0) {
+				const avgFailureTime = failedEmails.reduce((sum, result) => sum + result.time, 0) / failedEmails.length;
+				this.logger.debug(`[${operationId}] Failed emails: ${failedEmails.length}, Average time: ${avgFailureTime.toFixed(2)}ms`);
+			}
+			
+			const totalExecutionTime = Date.now() - startTime;
+			const avgExecutionTimePerEmail = validEmails.length > 0 ? totalExecutionTime / validEmails.length : 0;
+			
+			// Calculate success rate
+			const totalAttempted = validEmails.length;
+			const successRate = totalAttempted > 0 ? (successCount / totalAttempted * 100).toFixed(2) : '0.00';
+			
+			this.logger.log(`[${operationId}] App update notification process completed in ${totalExecutionTime}ms`);
+			this.logger.log(`[${operationId}] Results Summary - Success: ${successCount}/${totalAttempted} (${successRate}%), Failures: ${failureCount}, Invalid emails: ${userEmails.length - validEmails.length}`);
+			this.logger.debug(`[${operationId}] Performance - Avg time per email: ${avgExecutionTimePerEmail.toFixed(2)}ms, Validation: ${validationTime}ms, Email dispatch: ${emailSendTime}ms`);
+			
+			if (failures.length > 0) {
+				this.logger.warn(`[${operationId}] Failed to send notifications to: ${failures.join(', ')}`);
+			}
+
+			// Include invalid emails in the failure count for total accountability
+			const totalFailureCount = failureCount + (userEmails.length - validEmails.length);
+			const allFailures = [...failures, ...userEmails.filter(email => !this.isValidEmail(email))];
+
+			const result = { 
+				success: successCount > 0, 
+				message: `App update notification sent to ${successCount}/${userEmails.length} users (${successRate}% success rate)`,
+				successCount,
+				failureCount: totalFailureCount,
+				validEmailsProcessed: validEmails.length,
+				invalidEmailsSkipped: userEmails.length - validEmails.length,
+				totalExecutionTime,
+				averageTimePerEmail: parseFloat(avgExecutionTimePerEmail.toFixed(2)),
+				successRate: parseFloat(successRate),
+				failures: allFailures.length > 0 ? allFailures : undefined
+			};
+			
+			this.logger.debug(`[${operationId}] Returning result with ${Object.keys(result).length} properties`);
+			return result;
+			
 		} catch (error) {
-			this.logger.error(`Failed to send app update notifications`, error.stack);
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`[${operationId}] Failed to send app update notifications after ${executionTime}ms`, error.stack);
+			
+			// Log additional context for debugging
+			this.logger.error(`[${operationId}] Failure context:`, {
+				originalEmailCount: userEmails?.length || 0,
+				appUpdateDataProvided: !!appUpdateData,
+				successCount,
+				failureCount,
+				failures: failures.length > 0 ? failures : 'None',
+				errorType: error.constructor.name,
+				errorMessage: error.message,
+			});
+			
 			throw error;
 		}
 	}
 
+	/**
+	 * Generate email template based on email type with comprehensive logging
+	 * @param type - Email type from EmailType enum
+	 * @param data - Template data specific to the email type
+	 * @returns Email template with subject and body
+	 */
 	private getEmailTemplate<T extends EmailType>(type: T, data: EmailTemplateData<T>): EmailTemplate {
-		this.logger.debug(`Generating email template for type: ${type}`);
+		const startTime = Date.now();
+		const operationId = `TEMPLATE_${type}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+		
+		this.logger.debug(`[${operationId}] Starting email template generation for type: ${type}`);
+		this.logger.debug(`[${operationId}] Template data provided: ${data ? 'Yes' : 'No'}, Keys: ${data ? Object.keys(data).join(', ') : 'None'}`);
+		this.logger.debug(`[${operationId}] Data size estimate: ${data ? JSON.stringify(data).length : 0} chars`);
 		
 		try {
+			// Validate input parameters
+			if (!type) {
+				this.logger.error(`[${operationId}] Email type is null or undefined`);
+				throw new Error('Email type is required');
+			}
+			
+			this.logger.debug(`[${operationId}] Processing email template for: ${type}`);
+			const caseStartTime = Date.now();
 			switch (type) {
 			case EmailType.SIGNUP:
-				return {
-					subject: 'Welcome to Our Platform',
-					body: Signup(data as SignupEmailData),
-				};
+				return this.createTemplateWithLogging(type, 'Welcome to Our Platform', Signup(data as SignupEmailData), startTime);
 			case EmailType.VERIFICATION:
-				return {
-					subject: 'Verify Your Email',
-					body: Verification(data as VerificationEmailData),
-				};
+				return this.createTemplateWithLogging(type, 'Verify Your Email', Verification(data as VerificationEmailData), startTime);
 			case EmailType.PASSWORD_RESET:
 				return {
 					subject: 'Password Reset Request',
@@ -880,11 +1223,24 @@ export class CommunicationService {
 					body: ApprovalDeleted(data as ApprovalEmailData),
 				};
 			default:
-				this.logger.error(`Unknown email template type: ${type}`);
+				const caseTime = Date.now() - caseStartTime;
+				const generationTime = Date.now() - startTime;
+				this.logger.error(`[${operationId}] Unknown email template type: ${type} after ${generationTime}ms (case processing: ${caseTime}ms)`);
 				throw new NotFoundException(`Unknown email template type: ${type}`);
 			}
 		} catch (error) {
-			this.logger.error(`Failed to generate email template for type: ${type}`, error.stack);
+			const generationTime = Date.now() - startTime;
+			this.logger.error(`[${operationId}] Failed to generate email template for type: ${type} after ${generationTime}ms`, error.stack);
+			
+			// Log additional context for debugging
+			this.logger.error(`[${operationId}] Template generation context:`, {
+				emailType: type,
+				hasData: !!data,
+				dataKeys: data ? Object.keys(data) : [],
+				errorType: error.constructor.name,
+				errorMessage: error.message,
+			});
+			
 			throw error;
 		}
 	}
