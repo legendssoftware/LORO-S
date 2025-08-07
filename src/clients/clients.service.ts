@@ -475,16 +475,25 @@ export class ClientsService {
 	}
 
 	async findOne(ref: number, orgId?: number, branchId?: number): Promise<{ message: string; client: Client | null }> {
+		const startTime = Date.now();
+		this.logger.log(`[CLIENT_FIND_ONE] Finding client with ID: ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
+		
 		try {
 			const cacheKey = `${this.getCacheKey(ref)}_org${orgId}_branch${branchId}`;
+			this.logger.debug(`[CLIENT_FIND_ONE] Checking cache with key: ${cacheKey}`);
+			
 			const cachedClient = await this.cacheManager.get<Client>(cacheKey);
 
 			if (cachedClient) {
+				const executionTime = Date.now() - startTime;
+				this.logger.debug(`[CLIENT_FIND_ONE] Cache hit for client ${ref} in ${executionTime}ms`);
 				return {
 					client: cachedClient,
 					message: process.env.SUCCESS_MESSAGE,
 				};
 			}
+
+			this.logger.debug(`[CLIENT_FIND_ONE] Cache miss, querying database for client ${ref}`);
 
 			// Create where conditions
 			const where: FindOptionsWhere<Client> = {
@@ -495,30 +504,38 @@ export class ClientsService {
 			// Filter by organization and branch
 			if (orgId) {
 				where.organisation = { uid: orgId };
+				this.logger.debug(`[CLIENT_FIND_ONE] Filtering by organization: ${orgId}`);
 			}
 
 			if (branchId) {
 				where.branch = { uid: branchId };
+				this.logger.debug(`[CLIENT_FIND_ONE] Filtering by branch: ${branchId}`);
 			}
 
-			//also fetch tasks and leads
-
+			this.logger.debug(`[CLIENT_FIND_ONE] Executing database query with relations`);
 			const client = await this.clientsRepository.findOne({
 				where,
 				relations: ['branch', 'organisation', 'assignedSalesRep', 'quotations', 'checkIns'],
 			});
 
 			if (!client) {
+				this.logger.warn(`[CLIENT_FIND_ONE] Client not found: ${ref} in org: ${orgId}, branch: ${branchId}`);
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
 			}
 
+			this.logger.debug(`[CLIENT_FIND_ONE] Caching client ${ref} with key: ${cacheKey}`);
 			await this.cacheManager.set(cacheKey, client, this.CACHE_TTL);
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`[CLIENT_FIND_ONE] Successfully retrieved client ${ref} (${client.name}) in ${executionTime}ms`);
 
 			return {
 				client,
 				message: process.env.SUCCESS_MESSAGE,
 			};
 		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`[CLIENT_FIND_ONE] Failed to retrieve client ${ref} after ${executionTime}ms. Error: ${error.message}`, error.stack);
 			return {
 				message: error?.message,
 				client: null,
@@ -543,11 +560,17 @@ export class ClientsService {
 		orgId?: number,
 		branchId?: number,
 	): Promise<{ message: string }> {
+		const startTime = Date.now();
+		this.logger.log(`[CLIENT_UPDATE] Starting update for client ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
+		this.logger.debug(`[CLIENT_UPDATE] Update data: ${JSON.stringify(updateClientDto, null, 2)}`);
+		
 		try {
 			// Find the existing client with current org/branch context
+			this.logger.debug(`[CLIENT_UPDATE] Finding existing client ${ref}`);
 			const existingClient = await this.findOne(ref, orgId, branchId);
 
 			if (!existingClient.client) {
+				this.logger.warn(`[CLIENT_UPDATE] Client ${ref} not found for update`);
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
 			}
 
@@ -555,6 +578,10 @@ export class ClientsService {
 			const isBeingConverted =
 				updateClientDto.status === GeneralStatus.CONVERTED &&
 				existingClient.client.status !== GeneralStatus.CONVERTED;
+			
+			if (isBeingConverted) {
+				this.logger.log(`[CLIENT_UPDATE] Client ${ref} being converted from ${existingClient.client.status} to CONVERTED`);
+			}
 
 			// Transform the DTO data to match the entity structure
 			const clientDataToUpdate = {
@@ -769,10 +796,19 @@ export class ClientsService {
 			// Invalidate cache
 			await this.invalidateClientCache(client);
 
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`[CLIENT_UPDATE] Successfully updated client ${ref} (${client.name}) in ${executionTime}ms`);
+			
+			if (isBeingConverted) {
+				this.logger.log(`[CLIENT_UPDATE] Conversion notifications sent for client ${ref}`);
+			}
+
 			return {
 				message: process.env.SUCCESS_MESSAGE,
 			};
 		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`[CLIENT_UPDATE] Failed to update client ${ref} after ${executionTime}ms. Error: ${error.message}`, error.stack);
 			return {
 				message: error?.message,
 			};
@@ -780,11 +816,19 @@ export class ClientsService {
 	}
 
 	async remove(ref: number, orgId?: number, branchId?: number): Promise<{ message: string }> {
+		const startTime = Date.now();
+		this.logger.log(`[CLIENT_REMOVE] Starting soft delete for client ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
+		
 		try {
+			this.logger.debug(`[CLIENT_REMOVE] Finding client ${ref} for deletion`);
 			const existingClient = await this.findOne(ref, orgId, branchId);
 			if (!existingClient.client) {
+				this.logger.warn(`[CLIENT_REMOVE] Client ${ref} not found for deletion`);
 				throw new NotFoundException(process.env.DELETE_ERROR_MESSAGE);
 			}
+
+			const clientName = existingClient.client.name;
+			this.logger.debug(`[CLIENT_REMOVE] Found client ${ref} (${clientName}) for deletion`);
 
 			// Create where conditions including organization and branch
 			const whereConditions: FindOptionsWhere<Client> = { uid: ref };
@@ -792,29 +836,41 @@ export class ClientsService {
 			// Add organization filter if provided
 			if (orgId) {
 				whereConditions.organisation = { uid: orgId };
+				this.logger.debug(`[CLIENT_REMOVE] Adding organization filter: ${orgId}`);
 			}
 
 			// Add branch filter if provided
 			if (branchId) {
 				whereConditions.branch = { uid: branchId };
+				this.logger.debug(`[CLIENT_REMOVE] Adding branch filter: ${branchId}`);
 			}
 
+			this.logger.debug(`[CLIENT_REMOVE] Executing soft delete (isDeleted=true) for client ${ref}`);
 			// Update with proper filtering
 			await this.clientsRepository.update(whereConditions, { isDeleted: true });
 
 			// Invalidate cache after deletion
+			this.logger.debug(`[CLIENT_REMOVE] Invalidating cache for deleted client ${ref}`);
 			await this.invalidateClientCache(existingClient.client);
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`[CLIENT_REMOVE] Successfully soft deleted client ${ref} (${clientName}) in ${executionTime}ms`);
 
 			return {
 				message: process.env.SUCCESS_MESSAGE,
 			};
 		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`[CLIENT_REMOVE] Failed to delete client ${ref} after ${executionTime}ms. Error: ${error.message}`, error.stack);
 			return {
 				message: error?.message,
 			};
 		}
 	}
 	async restore(ref: number, orgId?: number, branchId?: number): Promise<{ message: string }> {
+		const startTime = Date.now();
+		this.logger.log(`[CLIENT_RESTORE] Starting restore for client ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
+		
 		try {
 			// Find the deleted client specifically
 			const where: FindOptionsWhere<Client> = {
@@ -825,34 +881,48 @@ export class ClientsService {
 			// Filter by organization and branch
 			if (orgId) {
 				where.organisation = { uid: orgId };
+				this.logger.debug(`[CLIENT_RESTORE] Adding organization filter: ${orgId}`);
 			}
 
 			if (branchId) {
 				where.branch = { uid: branchId };
+				this.logger.debug(`[CLIENT_RESTORE] Adding branch filter: ${branchId}`);
 			}
 
+			this.logger.debug(`[CLIENT_RESTORE] Finding deleted client ${ref} for restoration`);
 			const existingClient = await this.clientsRepository.findOne({
 				where,
 				relations: ['branch', 'organisation'],
 			});
 
 			if (!existingClient) {
+				this.logger.warn(`[CLIENT_RESTORE] Deleted client ${ref} not found for restoration`);
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
 			}
 
+			const clientName = existingClient.name;
+			this.logger.debug(`[CLIENT_RESTORE] Found deleted client ${ref} (${clientName}) for restoration`);
+
 			// Use the same where conditions for the update
+			this.logger.debug(`[CLIENT_RESTORE] Restoring client ${ref} to ACTIVE status`);
 			await this.clientsRepository.update(where, {
 				isDeleted: false,
 				status: GeneralStatus.ACTIVE,
 			});
 
 			// Invalidate cache after restoration
+			this.logger.debug(`[CLIENT_RESTORE] Invalidating cache for restored client ${ref}`);
 			await this.invalidateClientCache(existingClient);
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`[CLIENT_RESTORE] Successfully restored client ${ref} (${clientName}) in ${executionTime}ms`);
 
 			return {
 				message: process.env.SUCCESS_MESSAGE,
 			};
 		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`[CLIENT_RESTORE] Failed to restore client ${ref} after ${executionTime}ms. Error: ${error.message}`, error.stack);
 			return {
 				message: error?.message,
 			};
@@ -1038,8 +1108,12 @@ export class ClientsService {
 		orgId?: number,
 		branchId?: number,
 	): Promise<{ message: string; clients: Array<Client & { distance: number }> }> {
+		const startTime = Date.now();
+		this.logger.log(`[CLIENT_NEARBY] Finding clients near coordinates (${latitude}, ${longitude}) within ${radius}km, orgId: ${orgId}, branchId: ${branchId}`);
+		
 		try {
 			if (isNaN(latitude) || isNaN(longitude) || isNaN(radius)) {
+				this.logger.error(`[CLIENT_NEARBY] Invalid parameters - lat: ${latitude}, lng: ${longitude}, radius: ${radius}`);
 				throw new BadRequestException('Invalid coordinates or radius');
 			}
 
@@ -1056,12 +1130,14 @@ export class ClientsService {
 				whereConditions.branch = { uid: branchId };
 			}
 
+			this.logger.debug(`[CLIENT_NEARBY] Fetching all clients with filters`);
 			// Get all clients
 			const clients = await this.clientsRepository.find({
 				where: whereConditions,
 				relations: ['organisation', 'branch'],
 			});
 
+			this.logger.debug(`[CLIENT_NEARBY] Processing ${clients.length} clients for distance calculation`);
 			// Filter clients with valid coordinates and calculate distances
 			const nearbyClients = clients
 				.map((client) => {
@@ -1074,11 +1150,16 @@ export class ClientsService {
 				.filter((client) => client !== null && client.distance <= radius)
 				.sort((a, b) => a.distance - b.distance);
 
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`[CLIENT_NEARBY] Found ${nearbyClients.length} clients within ${radius}km of (${latitude}, ${longitude}) in ${executionTime}ms`);
+
 			return {
 				message: process.env.SUCCESS_MESSAGE || 'Success',
 				clients: nearbyClients,
 			};
 		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`[CLIENT_NEARBY] Failed to find nearby clients after ${executionTime}ms. Error: ${error.message}`, error.stack);
 			throw new BadRequestException(error?.message || 'Error finding nearby clients');
 		}
 	}
@@ -1088,12 +1169,20 @@ export class ClientsService {
 		orgId?: number,
 		branchId?: number,
 	): Promise<{ message: string; checkIns: CheckIn[] }> {
+		const startTime = Date.now();
+		this.logger.log(`[CLIENT_CHECKINS] Fetching check-ins for client ${clientId}, orgId: ${orgId}, branchId: ${branchId}`);
+		
 		try {
 			// Find the client first to confirm it exists and belongs to the right org/branch
+			this.logger.debug(`[CLIENT_CHECKINS] Verifying client ${clientId} exists and has access`);
 			const clientResult = await this.findOne(clientId, orgId, branchId);
 			if (!clientResult.client) {
+				this.logger.warn(`[CLIENT_CHECKINS] Client ${clientId} not found or access denied`);
 				throw new NotFoundException('Client not found');
 			}
+
+			const clientName = clientResult.client.name;
+			this.logger.debug(`[CLIENT_CHECKINS] Found client ${clientId} (${clientName}), fetching check-ins`);
 
 			// Get check-ins for this client
 			const client = await this.clientsRepository.findOne({
@@ -1102,6 +1191,7 @@ export class ClientsService {
 			});
 
 			if (!client || !client.checkIns) {
+				this.logger.debug(`[CLIENT_CHECKINS] No check-ins found for client ${clientId}`);
 				return {
 					message: process.env.SUCCESS_MESSAGE || 'Success',
 					checkIns: [],
@@ -1113,11 +1203,16 @@ export class ClientsService {
 				(a, b) => new Date(b.checkInTime).getTime() - new Date(a.checkInTime).getTime(),
 			);
 
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`[CLIENT_CHECKINS] Successfully retrieved ${sortedCheckIns.length} check-ins for client ${clientId} (${clientName}) in ${executionTime}ms`);
+
 			return {
 				message: process.env.SUCCESS_MESSAGE || 'Success',
 				checkIns: sortedCheckIns,
 			};
 		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`[CLIENT_CHECKINS] Failed to fetch check-ins for client ${clientId} after ${executionTime}ms. Error: ${error.message}`, error.stack);
 			throw new BadRequestException(error?.message || 'Error fetching client check-ins');
 		}
 	}

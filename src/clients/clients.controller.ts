@@ -39,16 +39,16 @@ import { GeneralStatus } from '../lib/enums/status.enums';
 @EnterpriseOnly('clients')
 @ApiConsumes('application/json')
 @ApiProduces('application/json')
-@ApiUnauthorizedResponse({ 
+@ApiUnauthorizedResponse({
 	description: '🔒 Unauthorized - Authentication required',
 	schema: {
 		type: 'object',
 		properties: {
 			message: { type: 'string', example: 'Authentication token is required' },
 			error: { type: 'string', example: 'Unauthorized' },
-			statusCode: { type: 'number', example: 401 }
-		}
-	}
+			statusCode: { type: 'number', example: 401 },
+		},
+	},
 })
 export class ClientsController {
 	constructor(private readonly clientsService: ClientsService) {}
@@ -62,7 +62,7 @@ export class ClientsController {
 		AccessLevel.USER,
 		AccessLevel.OWNER,
 	)
-	@ApiOperation({ 
+	@ApiOperation({
 		summary: '➕ Create a new client',
 		description: `
 # Create Client
@@ -100,158 +100,158 @@ Creates a new client record in the system with comprehensive tracking capabiliti
 - **Lifetime Value Calculation**: Track and predict client lifetime value
 - **Social Media Integration**: Connect client social media profiles
 - **Custom Fields**: Store industry-specific client information
-	`
-})
-@ApiBody({ 
-	type: CreateClientDto,
-	description: 'Client creation payload with all required and optional information',
-	examples: {
-		basicClient: {
-			summary: '🏢 Basic Business Client',
-			description: 'Standard business client with essential information',
-			value: {
-				name: 'ACME Corporation',
-				contactPerson: 'John Smith',
-				email: 'john.smith@acme.co.za',
-				phone: '+27 11 123 4567',
-				address: {
-					street: '123 Business Park Drive',
-					suburb: 'Sandton',
-					city: 'Johannesburg',
-					state: 'Gauteng',
-					country: 'South Africa',
-					postalCode: '2196'
+	`,
+	})
+	@ApiBody({
+		type: CreateClientDto,
+		description: 'Client creation payload with all required and optional information',
+		examples: {
+			basicClient: {
+				summary: '🏢 Basic Business Client',
+				description: 'Standard business client with essential information',
+				value: {
+					name: 'Orrbit Technologies',
+					contactPerson: 'The Guy',
+					email: 'theguy@orrbit.co.za',
+					phone: '+27 11 123 4567',
+					address: {
+						street: '123 Business Park Drive',
+						suburb: 'Pretoria South Africa',
+						city: 'Pretoria',
+						state: 'Gauteng',
+						country: 'South Africa',
+						postalCode: '0002',
+					},
+					category: 'enterprise',
+					assignedSalesRep: { uid: 42 },
+					priceTier: 'PREMIUM',
+					preferredContactMethod: 'EMAIL',
+					industry: 'Technology',
+					companySize: 250,
 				},
-				category: 'enterprise',
-				assignedSalesRep: { uid: 42 },
-				priceTier: 'PREMIUM',
-				preferredContactMethod: 'EMAIL',
-				industry: 'Technology',
-				companySize: 250
-			}
+			},
+			premiumClient: {
+				summary: '⭐ Premium Client with CRM Features',
+				description: 'High-value client with comprehensive CRM data',
+				value: {
+					name: 'Orrbit Technologies Premium',
+					contactPerson: 'The Guy',
+					email: 'theguy@orrbit.co.za',
+					phone: '+27 12 555 0123',
+					alternativePhone: '+27 82 555 0123',
+					website: 'https://www.orrbit.co.za',
+					description: 'Leading provider of innovative business technology solutions in South Africa',
+					address: {
+						street: '456 Innovation Avenue',
+						suburb: 'Pretoria South Africa',
+						city: 'Pretoria',
+						state: 'Gauteng',
+						country: 'South Africa',
+						postalCode: '0002',
+					},
+					category: 'premium',
+					assignedSalesRep: { uid: 15 },
+					creditLimit: 500000,
+					priceTier: 'ENTERPRISE',
+					preferredContactMethod: 'EMAIL',
+					industry: 'Software Development',
+					companySize: 150,
+					annualRevenue: 25000000,
+					acquisitionChannel: 'REFERRAL',
+					acquisitionDate: '2023-01-15',
+					tags: ['High Value', 'Tech Partner', 'Strategic Account'],
+					socialProfiles: {
+						linkedin: 'https://linkedin.com/company/orrbit-technologies',
+						twitter: 'https://twitter.com/orrbit_tech',
+					},
+				},
+			},
 		},
-		premiumClient: {
-			summary: '⭐ Premium Client with CRM Features',
-			description: 'High-value client with comprehensive CRM data',
-			value: {
-				name: 'Tech Solutions Ltd',
-				contactPerson: 'Sarah Johnson',
-				email: 'sarah.johnson@techsolutions.co.za',
-				phone: '+27 21 555 0123',
-				alternativePhone: '+27 82 555 0123',
-				website: 'https://www.techsolutions.co.za',
-				description: 'Leading provider of enterprise software solutions',
-				address: {
-					street: '456 Innovation Avenue',
-					suburb: 'Cape Town City Centre',
-					city: 'Cape Town',
-					state: 'Western Cape',
-					country: 'South Africa',
-					postalCode: '8001'
-				},
-				category: 'premium',
-				assignedSalesRep: { uid: 15 },
-				creditLimit: 500000,
-				priceTier: 'ENTERPRISE',
-				preferredContactMethod: 'EMAIL',
-				industry: 'Software Development',
-				companySize: 150,
-				annualRevenue: 25000000,
-				acquisitionChannel: 'REFERRAL',
-				acquisitionDate: '2023-01-15',
-				tags: ['High Value', 'Tech Partner', 'Strategic Account'],
-				socialProfiles: {
-					linkedin: 'https://linkedin.com/company/techsolutions',
-					twitter: 'https://twitter.com/techsolutions_za'
-				}
-			}
-		}
-	}
-})
-@ApiCreatedResponse({ 
-	description: '✅ Client created successfully',
-	schema: {
-		type: 'object',
-		properties: {
-			message: { type: 'string', example: 'Client created successfully' },
-			data: {
-				type: 'object',
-				properties: {
+	})
+	@ApiCreatedResponse({
+		description: '✅ Client created successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Client created successfully' },
+				data: {
+					type: 'object',
+									properties: {
 					uid: { type: 'number', example: 12345 },
-					name: { type: 'string', example: 'ACME Corporation' },
-					email: { type: 'string', example: 'john.smith@acme.co.za' },
+					name: { type: 'string', example: 'Orrbit Technologies' },
+					email: { type: 'string', example: 'theguy@orrbit.co.za' },
 					phone: { type: 'string', example: '+27 11 123 4567' },
 					status: { type: 'string', example: 'ACTIVE' },
-					createdAt: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' }
-				}
-			}
-		}
-	}
-})
-@ApiBadRequestResponse({ 
-	description: '❌ Bad Request - Invalid or missing required data',
-	schema: {
-		type: 'object',
-		properties: {
-			message: { type: 'string', example: 'Validation failed: Email is required' },
-			error: { type: 'string', example: 'Bad Request' },
-			statusCode: { type: 'number', example: 400 },
-			details: {
-				type: 'array',
-				items: { type: 'string' },
-				example: [
-					'Email must be a valid email address',
-					'Phone number must include country code',
-					'Address street field is required',
-					'Assigned sales rep must be a valid user ID'
-				]
-			}
-		}
-	}
-})
-@ApiForbiddenResponse({
-	description: '🚫 Forbidden - Insufficient permissions',
-	schema: {
-		type: 'object',
-		properties: {
-			message: { type: 'string', example: 'You do not have permission to create clients in this branch' },
-			error: { type: 'string', example: 'Forbidden' },
-			statusCode: { type: 'number', example: 403 }
-		}
-	}
-})
-@ApiConflictResponse({
-	description: '⚠️ Conflict - Client already exists',
-	schema: {
-		type: 'object',
-		properties: {
-			message: { type: 'string', example: 'A client with this email already exists' },
-			error: { type: 'string', example: 'Conflict' },
-			statusCode: { type: 'number', example: 409 },
-			existingClient: {
-				type: 'object',
-				properties: {
-					uid: { type: 'number', example: 9876 },
-					name: { type: 'string', example: 'ACME Corporation' },
-					email: { type: 'string', example: 'john.smith@acme.co.za' }
-				}
-			}
-		}
-	}
-})
-@ApiInternalServerErrorResponse({
-	description: '💥 Internal Server Error - System malfunction',
-	schema: {
-		type: 'object',
-		properties: {
-			message: { type: 'string', example: 'Failed to create client due to system error' },
-			error: { type: 'string', example: 'Internal Server Error' },
-			statusCode: { type: 'number', example: 500 },
-			timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
-			path: { type: 'string', example: '/clients' }
-		}
-	}
-})
+					createdAt: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+				},
+				},
+			},
+		},
+	})
+	@ApiBadRequestResponse({
+		description: '❌ Bad Request - Invalid or missing required data',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Validation failed: Email is required' },
+				error: { type: 'string', example: 'Bad Request' },
+				statusCode: { type: 'number', example: 400 },
+				details: {
+					type: 'array',
+					items: { type: 'string' },
+											example: [
+							'Please provide a valid email address',
+							'Please provide a valid South African phone number with country code (+27)',
+							'Street address is required',
+							'Assigned sales representative must be an object with uid property',
+						],
+				},
+			},
+		},
+	})
+	@ApiForbiddenResponse({
+		description: '🚫 Forbidden - Insufficient permissions',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'You do not have permission to create clients in this branch' },
+				error: { type: 'string', example: 'Forbidden' },
+				statusCode: { type: 'number', example: 403 },
+			},
+		},
+	})
+	@ApiConflictResponse({
+		description: '⚠️ Conflict - Client already exists',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'A client with this email already exists' },
+				error: { type: 'string', example: 'Conflict' },
+				statusCode: { type: 'number', example: 409 },
+				existingClient: {
+					type: 'object',
+					properties: {
+						uid: { type: 'number', example: 9876 },
+						name: { type: 'string', example: 'Orrbit Technologies' },
+						email: { type: 'string', example: 'theguy@orrbit.co.za' },
+					},
+				},
+			},
+		},
+	})
+	@ApiInternalServerErrorResponse({
+		description: '💥 Internal Server Error - System malfunction',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Failed to create client due to system error' },
+				error: { type: 'string', example: 'Internal Server Error' },
+				statusCode: { type: 'number', example: 500 },
+				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+				path: { type: 'string', example: '/clients' },
+			},
+		},
+	})
 	create(@Body() createClientDto: CreateClientDto, @Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
@@ -307,7 +307,7 @@ Retrieves a comprehensive list of all clients without user-specific filtering fo
 - **Assignment Management**: Easy client-to-user assignment workflows
 - **Data Integrity**: Comprehensive view for data validation and cleanup
 - **Reporting Foundation**: Base data for administrative reports and analytics
-		`
+		`,
 	})
 	@ApiQuery({ name: 'page', type: Number, required: false, description: 'Page number, defaults to 1' })
 	@ApiQuery({
@@ -349,34 +349,38 @@ Retrieves a comprehensive list of all clients without user-specific filtering fo
 								properties: {
 									uid: { type: 'number', example: 42 },
 									name: { type: 'string', example: 'John Smith' },
-									email: { type: 'string', example: 'john.smith@company.co.za' }
-								}
+									email: { type: 'string', example: 'john.smith@company.co.za' },
+								},
 							},
 							organisation: {
 								type: 'object',
 								properties: {
 									uid: { type: 'number', example: 1 },
-									name: { type: 'string', example: 'Your Organization' }
-								}
+									name: { type: 'string', example: 'Your Organization' },
+								},
 							},
 							branch: {
 								type: 'object',
 								properties: {
 									uid: { type: 'number', example: 5 },
-									name: { type: 'string', example: 'Main Branch' }
-								}
+									name: { type: 'string', example: 'Main Branch' },
+								},
 							},
 							createdAt: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
 							industry: { type: 'string', example: 'Technology' },
 							companySize: { type: 'number', example: 250 },
-							lifetimeValue: { type: 'number', example: 500000 }
-						}
-					}
+							lifetimeValue: { type: 'number', example: 500000 },
+						},
+					},
 				},
 				meta: {
 					type: 'object',
 					properties: {
-						total: { type: 'number', example: 1250, description: 'Total number of clients in organization' },
+						total: {
+							type: 'number',
+							example: 1250,
+							description: 'Total number of clients in organization',
+						},
 						page: { type: 'number', example: 1, description: 'Current page number' },
 						limit: { type: 'number', example: 500, description: 'Records per page (admin default: 500)' },
 						totalPages: { type: 'number', example: 3, description: 'Total number of pages available' },
@@ -464,7 +468,7 @@ Retrieves a paginated list of clients with user-specific filtering and role-base
 - **Optimized Queries**: Efficient database queries with proper indexing
 - **Lazy Loading**: Load additional data as needed
 - **Result Limiting**: Reasonable default page sizes for optimal performance
-		`
+		`,
 	})
 	@ApiQuery({ name: 'page', type: Number, required: false, description: 'Page number, defaults to 1' })
 	@ApiQuery({
@@ -514,8 +518,8 @@ Retrieves a paginated list of clients with user-specific filtering and role-base
 								properties: {
 									uid: { type: 'number', example: 25 },
 									name: { type: 'string', example: 'Mike Wilson' },
-									email: { type: 'string', example: 'mike.wilson@company.co.za' }
-								}
+									email: { type: 'string', example: 'mike.wilson@company.co.za' },
+								},
 							},
 							address: {
 								type: 'object',
@@ -523,16 +527,20 @@ Retrieves a paginated list of clients with user-specific filtering and role-base
 									street: { type: 'string', example: '456 Innovation Drive' },
 									city: { type: 'string', example: 'Cape Town' },
 									state: { type: 'string', example: 'Western Cape' },
-									country: { type: 'string', example: 'South Africa' }
-								}
+									country: { type: 'string', example: 'South Africa' },
+								},
 							},
 							lastVisitDate: { type: 'string', format: 'date-time', example: '2023-11-15T14:30:00Z' },
 							nextContactDate: { type: 'string', format: 'date-time', example: '2023-12-20T09:00:00Z' },
 							createdAt: { type: 'string', format: 'date-time', example: '2023-01-15T10:00:00Z' },
 							lifetimeValue: { type: 'number', example: 250000 },
-							tags: { type: 'array', items: { type: 'string' }, example: ['High Priority', 'Tech Partner'] }
-						}
-					}
+							tags: {
+								type: 'array',
+								items: { type: 'string' },
+								example: ['High Priority', 'Tech Partner'],
+							},
+						},
+					},
 				},
 				meta: {
 					type: 'object',
@@ -628,7 +636,7 @@ Retrieves comprehensive information about a specific client including all relate
 - **Geolocation**: Map integration for location-based services
 - **Communication History**: Complete interaction timeline
 - **Performance Metrics**: Client engagement and value analytics
-		`
+		`,
 	})
 	@ApiParam({ name: 'ref', description: 'Client reference code or ID', type: 'number' })
 	@ApiOkResponse({
@@ -646,7 +654,10 @@ Retrieves comprehensive information about a specific client including all relate
 						phone: { type: 'string', example: '+27 21 555 0199' },
 						alternativePhone: { type: 'string', example: '+27 82 555 0199' },
 						website: { type: 'string', example: 'https://www.techinnovators.co.za' },
-						description: { type: 'string', example: 'Leading provider of innovative tech solutions for enterprises' },
+						description: {
+							type: 'string',
+							example: 'Leading provider of innovative tech solutions for enterprises',
+						},
 						status: { type: 'string', example: 'ACTIVE' },
 						category: { type: 'string', example: 'enterprise' },
 						industry: { type: 'string', example: 'Technology' },
@@ -659,8 +670,8 @@ Retrieves comprehensive information about a specific client including all relate
 								city: { type: 'string', example: 'Cape Town' },
 								state: { type: 'string', example: 'Western Cape' },
 								country: { type: 'string', example: 'South Africa' },
-								postalCode: { type: 'string', example: '7600' }
-							}
+								postalCode: { type: 'string', example: '7600' },
+							},
 						},
 						assignedSalesRep: {
 							type: 'object',
@@ -668,22 +679,22 @@ Retrieves comprehensive information about a specific client including all relate
 								uid: { type: 'number', example: 33 },
 								name: { type: 'string', example: 'David Thompson' },
 								email: { type: 'string', example: 'david.thompson@company.co.za' },
-								phone: { type: 'string', example: '+27 82 123 4567' }
-							}
+								phone: { type: 'string', example: '+27 82 123 4567' },
+							},
 						},
 						organisation: {
 							type: 'object',
 							properties: {
 								uid: { type: 'number', example: 1 },
-								name: { type: 'string', example: 'Your Organization' }
-							}
+								name: { type: 'string', example: 'Your Organization' },
+							},
 						},
 						branch: {
 							type: 'object',
 							properties: {
 								uid: { type: 'number', example: 3 },
-								name: { type: 'string', example: 'Cape Town Branch' }
-							}
+								name: { type: 'string', example: 'Cape Town Branch' },
+							},
 						},
 						quotations: {
 							type: 'array',
@@ -694,9 +705,9 @@ Retrieves comprehensive information about a specific client including all relate
 									title: { type: 'string', example: 'Q2024-001 - Enterprise Software License' },
 									amount: { type: 'number', example: 125000 },
 									status: { type: 'string', example: 'PENDING' },
-									createdAt: { type: 'string', format: 'date-time' }
-								}
-							}
+									createdAt: { type: 'string', format: 'date-time' },
+								},
+							},
 						},
 						checkIns: {
 							type: 'array',
@@ -706,9 +717,9 @@ Retrieves comprehensive information about a specific client including all relate
 									uid: { type: 'number', example: 456 },
 									checkInTime: { type: 'string', format: 'date-time' },
 									checkInLocation: { type: 'string', example: 'Client Office - Stellenbosch' },
-									duration: { type: 'string', example: '2h 30m' }
-								}
-							}
+									duration: { type: 'string', example: '2h 30m' },
+								},
+							},
 						},
 						creditLimit: { type: 'number', example: 500000 },
 						outstandingBalance: { type: 'number', example: 75000 },
@@ -716,30 +727,34 @@ Retrieves comprehensive information about a specific client including all relate
 						priceTier: { type: 'string', example: 'ENTERPRISE' },
 						preferredContactMethod: { type: 'string', example: 'EMAIL' },
 						preferredLanguage: { type: 'string', example: 'English' },
-						tags: { type: 'array', items: { type: 'string' }, example: ['Strategic Account', 'High Value', 'Tech Partner'] },
+						tags: {
+							type: 'array',
+							items: { type: 'string' },
+							example: ['Strategic Account', 'High Value', 'Tech Partner'],
+						},
 						socialProfiles: {
 							type: 'object',
 							properties: {
 								linkedin: { type: 'string', example: 'https://linkedin.com/company/techinnovators' },
-								twitter: { type: 'string', example: 'https://twitter.com/techinnovators_za' }
-							}
+								twitter: { type: 'string', example: 'https://twitter.com/techinnovators_za' },
+							},
 						},
 						customFields: {
 							type: 'object',
 							properties: {
 								primaryTechnology: { type: 'string', example: 'Cloud Computing' },
-								complianceLevel: { type: 'string', example: 'Enterprise Grade' }
-							}
+								complianceLevel: { type: 'string', example: 'Enterprise Grade' },
+							},
 						},
 						createdAt: { type: 'string', format: 'date-time', example: '2023-01-15T10:00:00Z' },
 						updatedAt: { type: 'string', format: 'date-time', example: '2023-11-20T14:30:00Z' },
 						lastVisitDate: { type: 'string', format: 'date-time', example: '2023-11-15T09:00:00Z' },
-						nextContactDate: { type: 'string', format: 'date-time', example: '2023-12-15T10:00:00Z' }
-					}
+						nextContactDate: { type: 'string', format: 'date-time', example: '2023-12-15T10:00:00Z' },
+					},
 				},
-				message: { type: 'string', example: 'Client details retrieved successfully' }
-			}
-		}
+				message: { type: 'string', example: 'Client details retrieved successfully' },
+			},
+		},
 	})
 	@ApiNotFoundResponse({
 		description: 'Client not found',
@@ -822,10 +837,10 @@ When converting a lead to client (status = 'CONVERTED'):
 - **Validation**: All updates subject to business rule validation
 - **Audit Trail**: All changes logged for compliance and tracking
 - **Cache Invalidation**: Updated data immediately available across system
-		`
+		`,
 	})
 	@ApiParam({ name: 'ref', description: 'Client unique identifier or reference number', type: 'number' })
-	@ApiBody({ 
+	@ApiBody({
 		type: UpdateClientDto,
 		description: 'Client update payload with fields to be modified',
 		examples: {
@@ -837,8 +852,8 @@ When converting a lead to client (status = 'CONVERTED'):
 					alternativePhone: '+27 82 999 8888',
 					website: 'https://www.updatedclient.co.za',
 					contactPerson: 'Updated Contact Person',
-					preferredContactMethod: 'WHATSAPP'
-				}
+					preferredContactMethod: 'WHATSAPP',
+				},
 			},
 			leadConversion: {
 				summary: '🎯 Lead to Client Conversion',
@@ -849,8 +864,8 @@ When converting a lead to client (status = 'CONVERTED'):
 					priceTier: 'STANDARD',
 					creditLimit: 100000,
 					preferredContactMethod: 'EMAIL',
-					tags: ['Converted Lead', 'New Client']
-				}
+					tags: ['Converted Lead', 'New Client'],
+				},
 			},
 			businessUpdate: {
 				summary: '🏢 Business Profile Update',
@@ -866,9 +881,9 @@ When converting a lead to client (status = 'CONVERTED'):
 						city: 'Johannesburg',
 						state: 'Gauteng',
 						country: 'South Africa',
-						postalCode: '2196'
-					}
-				}
+						postalCode: '2196',
+					},
+				},
 			},
 			communicationSchedules: {
 				summary: '📅 Communication Schedule Update',
@@ -881,10 +896,10 @@ When converting a lead to client (status = 'CONVERTED'):
 							preferredTime: '10:00',
 							preferredDays: [1, 3, 5],
 							isActive: true,
-							notes: 'Monthly business review calls'
-						}
-					]
-				}
+							notes: 'Monthly business review calls',
+						},
+					],
+				},
 			},
 			financialUpdate: {
 				summary: '💰 Financial Information Update',
@@ -894,10 +909,10 @@ When converting a lead to client (status = 'CONVERTED'):
 					priceTier: 'ENTERPRISE',
 					paymentTerms: 'Net 45',
 					discountPercentage: 15,
-					lifetimeValue: 1200000
-				}
-			}
-		}
+					lifetimeValue: 1200000,
+				},
+			},
+		},
 	})
 	@ApiOkResponse({
 		description: '✅ Client updated successfully with optional conversion notifications',
@@ -909,31 +924,38 @@ When converting a lead to client (status = 'CONVERTED'):
 					type: 'object',
 					properties: {
 						clientId: { type: 'number', example: 12345 },
-						updatedFields: { 
-							type: 'array', 
+						updatedFields: {
+							type: 'array',
 							items: { type: 'string' },
-							example: ['phone', 'status', 'assignedSalesRep', 'communicationSchedules']
+							example: ['phone', 'status', 'assignedSalesRep', 'communicationSchedules'],
 						},
-						conversionTriggered: { type: 'boolean', example: true, description: 'True if lead was converted to client' },
+						conversionTriggered: {
+							type: 'boolean',
+							example: true,
+							description: 'True if lead was converted to client',
+						},
 						emailsSent: {
 							type: 'object',
 							properties: {
 								clientWelcome: { type: 'boolean', example: true },
-								salesRepNotification: { type: 'boolean', example: true }
-							}
+								salesRepNotification: { type: 'boolean', example: true },
+							},
 						},
-						lastUpdated: { type: 'string', format: 'date-time', example: '2023-12-01T15:30:00Z' }
-					}
-				}
-			}
-		}
+						lastUpdated: { type: 'string', format: 'date-time', example: '2023-12-01T15:30:00Z' },
+					},
+				},
+			},
+		},
 	})
 	@ApiNotFoundResponse({
 		description: '❌ Client not found or access denied',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Client not found or you do not have permission to update this client' },
+				message: {
+					type: 'string',
+					example: 'Client not found or you do not have permission to update this client',
+				},
 				error: { type: 'string', example: 'Not Found' },
 				statusCode: { type: 'number', example: 404 },
 				context: {
@@ -941,11 +963,11 @@ When converting a lead to client (status = 'CONVERTED'):
 					properties: {
 						clientId: { type: 'number', example: 12345 },
 						organizationId: { type: 'number', example: 1 },
-						branchId: { type: 'number', example: 3 }
-					}
-				}
-			}
-		}
+						branchId: { type: 'number', example: 3 },
+					},
+				},
+			},
+		},
 	})
 	@ApiBadRequestResponse({
 		description: '❌ Bad Request - Invalid data or validation errors',
@@ -962,32 +984,35 @@ When converting a lead to client (status = 'CONVERTED'):
 						'Email must be a valid email address',
 						'Credit limit cannot be negative',
 						'Assigned sales rep does not exist',
-						'Communication schedule frequency is invalid'
-					]
+						'Communication schedule frequency is invalid',
+					],
 				},
 				rejectedFields: {
 					type: 'array',
 					items: { type: 'string' },
-					example: ['invalidEmailFormat', 'negativeCredit']
-				}
-			}
-		}
+					example: ['invalidEmailFormat', 'negativeCredit'],
+				},
+			},
+		},
 	})
 	@ApiForbiddenResponse({
 		description: '🚫 Forbidden - Insufficient permissions for client update',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'You do not have permission to update clients in this organization' },
+				message: {
+					type: 'string',
+					example: 'You do not have permission to update clients in this organization',
+				},
 				error: { type: 'string', example: 'Forbidden' },
 				statusCode: { type: 'number', example: 403 },
 				requiredPermissions: {
 					type: 'array',
 					items: { type: 'string' },
-					example: ['CLIENT_UPDATE', 'ORGANIZATION_ACCESS']
-				}
-			}
-		}
+					example: ['CLIENT_UPDATE', 'ORGANIZATION_ACCESS'],
+				},
+			},
+		},
 	})
 	update(@Param('ref') ref: number, @Body() updateClientDto: UpdateClientDto, @Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
@@ -1053,7 +1078,7 @@ Restores a previously soft-deleted client back to active status, recovering all 
 - **Data Validation**: Restored data validated against current business rules
 - **Relationship Verification**: Associated users and assignments verified for validity
 - **Backup Consideration**: Consider creating backup before restoration if needed
-		`
+		`,
 	})
 	@ApiParam({ name: 'ref', description: 'Client reference code or ID', type: 'number' })
 	@ApiOkResponse({
@@ -1076,21 +1101,21 @@ Restores a previously soft-deleted client back to active status, recovering all 
 								quotationsRestored: { type: 'number', example: 5 },
 								checkInsRestored: { type: 'number', example: 12 },
 								tasksRestored: { type: 'number', example: 8 },
-								communicationSchedulesRestored: { type: 'number', example: 3 }
-							}
+								communicationSchedulesRestored: { type: 'number', example: 3 },
+							},
 						},
 						accessPermissions: {
 							type: 'object',
 							properties: {
 								searchable: { type: 'boolean', example: true },
 								reportingIncluded: { type: 'boolean', example: true },
-								workflowEnabled: { type: 'boolean', example: true }
-							}
-						}
-					}
-				}
-			}
-		}
+								workflowEnabled: { type: 'boolean', example: true },
+							},
+						},
+					},
+				},
+			},
+		},
 	})
 	@ApiNotFoundResponse({
 		description: '❌ Client not found or not in deleted state',
@@ -1105,11 +1130,11 @@ Restores a previously soft-deleted client back to active status, recovering all 
 					properties: {
 						clientId: { type: 'number', example: 12345 },
 						currentStatus: { type: 'string', example: 'ACTIVE' },
-						reason: { type: 'string', example: 'Client is not deleted and cannot be restored' }
-					}
-				}
-			}
-		}
+						reason: { type: 'string', example: 'Client is not deleted and cannot be restored' },
+					},
+				},
+			},
+		},
 	})
 	restore(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
@@ -1180,7 +1205,7 @@ Marks a client as deleted without permanently removing data from the database, a
 - **Restore Endpoint**: Use PATCH /clients/restore/:ref to restore deleted client
 - **Admin Recovery**: Administrators can restore deleted clients at any time
 - **Data Integrity**: All data relationships preserved during soft delete period
-		`
+		`,
 	})
 	@ApiParam({ name: 'ref', description: 'Client reference code or ID', type: 'number' })
 	@ApiOkResponse({
@@ -1204,21 +1229,21 @@ Marks a client as deleted without permanently removing data from the database, a
 								quotationsPreserved: { type: 'number', example: 5 },
 								checkInsPreserved: { type: 'number', example: 12 },
 								tasksPreserved: { type: 'number', example: 8 },
-								communicationSchedulesPreserved: { type: 'number', example: 3 }
-							}
+								communicationSchedulesPreserved: { type: 'number', example: 3 },
+							},
 						},
 						restorationInfo: {
 							type: 'object',
 							properties: {
 								canBeRestored: { type: 'boolean', example: true },
 								restoreEndpoint: { type: 'string', example: 'PATCH /clients/restore/12345' },
-								retentionPeriod: { type: 'string', example: 'Indefinite (until manually removed)' }
-							}
-						}
-					}
-				}
-			}
-		}
+								retentionPeriod: { type: 'string', example: 'Indefinite (until manually removed)' },
+							},
+						},
+					},
+				},
+			},
+		},
 	})
 	@ApiNotFoundResponse({
 		description: '❌ Client not found or already deleted',
@@ -1233,11 +1258,11 @@ Marks a client as deleted without permanently removing data from the database, a
 					properties: {
 						clientId: { type: 'number', example: 12345 },
 						currentStatus: { type: 'string', example: 'DELETED' },
-						reason: { type: 'string', example: 'Client is already in deleted state' }
-					}
-				}
-			}
-		}
+						reason: { type: 'string', example: 'Client is already in deleted state' },
+					},
+				},
+			},
+		},
 	})
 	remove(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
@@ -1301,7 +1326,7 @@ Discovers clients within a specified radius of given GPS coordinates, enabling l
 - **Accuracy**: Distance calculations approximate - actual travel distance may vary
 - **Data Quality**: Results depend on accuracy of client GPS coordinates
 - **Performance**: Large radius searches may impact performance
-		`
+		`,
 	})
 	@ApiOkResponse({
 		description: '✅ Nearby clients found and sorted by distance',
@@ -1319,7 +1344,11 @@ Discovers clients within a specified radius of given GPS coordinates, enabling l
 							contactPerson: { type: 'string', example: 'Jane Doe' },
 							email: { type: 'string', example: 'jane.doe@nearbyclient.co.za' },
 							phone: { type: 'string', example: '+27 11 555 0123' },
-							distance: { type: 'number', example: 2.34, description: 'Distance in kilometers from search point' },
+							distance: {
+								type: 'number',
+								example: 2.34,
+								description: 'Distance in kilometers from search point',
+							},
 							latitude: { type: 'number', example: -26.195246 },
 							longitude: { type: 'number', example: 28.034088 },
 							address: {
@@ -1329,8 +1358,8 @@ Discovers clients within a specified radius of given GPS coordinates, enabling l
 									suburb: { type: 'string', example: 'Sandton' },
 									city: { type: 'string', example: 'Johannesburg' },
 									state: { type: 'string', example: 'Gauteng' },
-									postalCode: { type: 'string', example: '2196' }
-								}
+									postalCode: { type: 'string', example: '2196' },
+								},
 							},
 							status: { type: 'string', example: 'ACTIVE' },
 							category: { type: 'string', example: 'enterprise' },
@@ -1339,16 +1368,28 @@ Discovers clients within a specified radius of given GPS coordinates, enabling l
 								properties: {
 									uid: { type: 'number', example: 25 },
 									name: { type: 'string', example: 'Sales Rep' },
-									phone: { type: 'string', example: '+27 82 555 0123' }
-								}
+									phone: { type: 'string', example: '+27 82 555 0123' },
+								},
 							},
 							lastVisitDate: { type: 'string', format: 'date-time', example: '2023-11-15T10:00:00Z' },
-							nextScheduledVisit: { type: 'string', format: 'date-time', example: '2023-12-20T14:00:00Z' },
-							tags: { type: 'array', items: { type: 'string' }, example: ['Priority', 'Regular Service'] },
+							nextScheduledVisit: {
+								type: 'string',
+								format: 'date-time',
+								example: '2023-12-20T14:00:00Z',
+							},
+							tags: {
+								type: 'array',
+								items: { type: 'string' },
+								example: ['Priority', 'Regular Service'],
+							},
 							geofenceEnabled: { type: 'boolean', example: true },
-							geofenceRadius: { type: 'number', example: 200, description: 'Client geofence radius in meters' }
-						}
-					}
+							geofenceRadius: {
+								type: 'number',
+								example: 200,
+								description: 'Client geofence radius in meters',
+							},
+						},
+					},
 				},
 				searchInfo: {
 					type: 'object',
@@ -1357,17 +1398,25 @@ Discovers clients within a specified radius of given GPS coordinates, enabling l
 							type: 'object',
 							properties: {
 								latitude: { type: 'number', example: -26.195246 },
-								longitude: { type: 'number', example: 28.034088 }
-							}
+								longitude: { type: 'number', example: 28.034088 },
+							},
 						},
 						searchRadius: { type: 'number', example: 5, description: 'Search radius in kilometers' },
 						resultsCount: { type: 'number', example: 3 },
-						maxDistance: { type: 'number', example: 4.87, description: 'Distance to furthest client in results' },
-						averageDistance: { type: 'number', example: 2.45, description: 'Average distance of all results' }
-					}
-				}
-			}
-		}
+						maxDistance: {
+							type: 'number',
+							example: 4.87,
+							description: 'Distance to furthest client in results',
+						},
+						averageDistance: {
+							type: 'number',
+							example: 2.45,
+							description: 'Average distance of all results',
+						},
+					},
+				},
+			},
+		},
 	})
 	@ApiBadRequestResponse({
 		description: '❌ Bad Request - Invalid coordinates or search parameters',
@@ -1384,19 +1433,19 @@ Discovers clients within a specified radius of given GPS coordinates, enabling l
 						'Latitude must be between -90 and 90',
 						'Longitude must be between -180 and 180',
 						'Radius must be between 0.1 and 50 kilometers',
-						'Coordinates must be valid decimal numbers'
-					]
+						'Coordinates must be valid decimal numbers',
+					],
 				},
 				providedValues: {
 					type: 'object',
 					properties: {
 						latitude: { type: 'number', example: 91.5 },
 						longitude: { type: 'number', example: 200.1 },
-						radius: { type: 'number', example: 100 }
-					}
-				}
-			}
-		}
+						radius: { type: 'number', example: 100 },
+					},
+				},
+			},
+		},
 	})
 	findNearbyClients(
 		@Query('latitude') latitude: number,
@@ -1469,7 +1518,7 @@ Retrieves comprehensive check-in history with location data, visit duration, and
 - **Mobile Integration**: Optimized for mobile check-in applications
 - **Offline Capability**: Support for offline check-in synchronization
 - **Photo Documentation**: Visual documentation of visits and services
-		`
+		`,
 	})
 	@ApiParam({ name: 'clientId', description: 'Client ID', type: 'number' })
 	@ApiOkResponse({
@@ -1485,16 +1534,28 @@ Retrieves comprehensive check-in history with location data, visit duration, and
 						properties: {
 							uid: { type: 'number', example: 789 },
 							checkInTime: { type: 'string', format: 'date-time', example: '2023-11-20T09:00:00Z' },
-							checkInLocation: { type: 'string', example: 'Client Office - 123 Business Street, Sandton' },
+							checkInLocation: {
+								type: 'string',
+								example: 'Client Office - 123 Business Street, Sandton',
+							},
 							checkInCoordinates: {
 								type: 'object',
 								properties: {
 									latitude: { type: 'number', example: -26.195246 },
-									longitude: { type: 'number', example: 28.034088 }
-								}
+									longitude: { type: 'number', example: 28.034088 },
+								},
 							},
-							checkOutTime: { type: 'string', format: 'date-time', example: '2023-11-20T11:30:00Z', nullable: true },
-							checkOutLocation: { type: 'string', example: 'Client Office - 123 Business Street, Sandton', nullable: true },
+							checkOutTime: {
+								type: 'string',
+								format: 'date-time',
+								example: '2023-11-20T11:30:00Z',
+								nullable: true,
+							},
+							checkOutLocation: {
+								type: 'string',
+								example: 'Client Office - 123 Business Street, Sandton',
+								nullable: true,
+							},
 							duration: { type: 'string', example: '2h 30m', nullable: true },
 							visitPurpose: { type: 'string', example: 'Monthly business review and service check' },
 							visitType: { type: 'string', example: 'SCHEDULED_VISIT' },
@@ -1505,10 +1566,13 @@ Retrieves comprehensive check-in history with location data, visit duration, and
 									uid: { type: 'number', example: 25 },
 									name: { type: 'string', example: 'John Smith' },
 									email: { type: 'string', example: 'john.smith@company.co.za' },
-									phone: { type: 'string', example: '+27 82 555 0123' }
-								}
+									phone: { type: 'string', example: '+27 82 555 0123' },
+								},
 							},
-							notes: { type: 'string', example: 'Client satisfied with service. Discussed upcoming project requirements.' },
+							notes: {
+								type: 'string',
+								example: 'Client satisfied with service. Discussed upcoming project requirements.',
+							},
 							attachments: {
 								type: 'array',
 								items: {
@@ -1517,9 +1581,12 @@ Retrieves comprehensive check-in history with location data, visit duration, and
 										uid: { type: 'number', example: 456 },
 										filename: { type: 'string', example: 'client_meeting_photo.jpg' },
 										fileType: { type: 'string', example: 'image/jpeg' },
-										url: { type: 'string', example: 'https://storage.company.com/attachments/456.jpg' }
-									}
-								}
+										url: {
+											type: 'string',
+											example: 'https://storage.company.com/attachments/456.jpg',
+										},
+									},
+								},
 							},
 							activities: {
 								type: 'array',
@@ -1528,29 +1595,33 @@ Retrieves comprehensive check-in history with location data, visit duration, and
 									properties: {
 										activity: { type: 'string', example: 'Equipment maintenance' },
 										duration: { type: 'string', example: '45 minutes' },
-										completed: { type: 'boolean', example: true }
-									}
-								}
+										completed: { type: 'boolean', example: true },
+									},
+								},
 							},
 							geofenceValidation: {
 								type: 'object',
 								properties: {
 									withinGeofence: { type: 'boolean', example: true },
-									distance: { type: 'number', example: 45, description: 'Distance from client location in meters' },
-									accuracy: { type: 'number', example: 5, description: 'GPS accuracy in meters' }
-								}
+									distance: {
+										type: 'number',
+										example: 45,
+										description: 'Distance from client location in meters',
+									},
+									accuracy: { type: 'number', example: 5, description: 'GPS accuracy in meters' },
+								},
 							},
 							weather: {
 								type: 'object',
 								properties: {
 									temperature: { type: 'number', example: 22 },
-									conditions: { type: 'string', example: 'Partly cloudy' }
-								}
+									conditions: { type: 'string', example: 'Partly cloudy' },
+								},
 							},
 							createdAt: { type: 'string', format: 'date-time', example: '2023-11-20T09:00:00Z' },
-							updatedAt: { type: 'string', format: 'date-time', example: '2023-11-20T11:30:00Z' }
-						}
-					}
+							updatedAt: { type: 'string', format: 'date-time', example: '2023-11-20T11:30:00Z' },
+						},
+					},
 				},
 				analytics: {
 					type: 'object',
@@ -1564,28 +1635,35 @@ Retrieves comprehensive check-in history with location data, visit duration, and
 							type: 'object',
 							properties: {
 								name: { type: 'string', example: 'John Smith' },
-								visits: { type: 'number', example: 18 }
-							}
+								visits: { type: 'number', example: 18 },
+							},
 						},
-						engagementScore: { type: 'number', example: 8.5, description: 'Client engagement score out of 10' },
+						engagementScore: {
+							type: 'number',
+							example: 8.5,
+							description: 'Client engagement score out of 10',
+						},
 						lastMonth: {
 							type: 'object',
 							properties: {
 								visits: { type: 'number', example: 4 },
-								totalTime: { type: 'string', example: '8h 15m' }
-							}
-						}
-					}
-				}
-			}
-		}
+								totalTime: { type: 'string', example: '8h 15m' },
+							},
+						},
+					},
+				},
+			},
+		},
 	})
 	@ApiNotFoundResponse({
 		description: '❌ Client not found or access denied',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Client not found or you do not have permission to access this client' },
+				message: {
+					type: 'string',
+					example: 'Client not found or you do not have permission to access this client',
+				},
 				error: { type: 'string', example: 'Not Found' },
 				statusCode: { type: 'number', example: 404 },
 				context: {
@@ -1593,11 +1671,11 @@ Retrieves comprehensive check-in history with location data, visit duration, and
 					properties: {
 						clientId: { type: 'number', example: 12345 },
 						userId: { type: 'number', example: 25 },
-						organizationId: { type: 'number', example: 1 }
-					}
-				}
-			}
-		}
+						organizationId: { type: 'number', example: 1 },
+					},
+				},
+			},
+		},
 	})
 	getClientCheckIns(@Param('clientId') clientId: number, @Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
@@ -1607,7 +1685,7 @@ Retrieves comprehensive check-in history with location data, visit duration, and
 
 	@Patch('profile')
 	@Roles(AccessLevel.CLIENT)
-	@ApiOperation({ 
+	@ApiOperation({
 		summary: '✏️ Update client profile (Client Portal)',
 		description: `
 # Update Client Profile
@@ -1645,141 +1723,142 @@ Clients can update the following information:
 4. Send admin notification email
 5. Send client confirmation email
 6. Return success response
-	`
-})
-@ApiBody({ 
-	type: UpdateClientDto,
-	description: 'Client profile update payload with allowed fields only',
-	examples: {
-		basicUpdate: {
-			summary: '📞 Contact Information Update',
-			description: 'Update contact details and communication preferences',
-			value: {
-				phone: '+27 11 987 6543',
-				alternativePhone: '+27 82 987 6543',
-				website: 'https://www.updatedcompany.co.za',
-				preferredContactMethod: 'WHATSAPP',
-				preferredLanguage: 'English'
-			}
-		},
-		companyUpdate: {
-			summary: '🏢 Company Information Update',
-			description: 'Update company description and business details',
-			value: {
-				description: 'Leading provider of innovative business solutions with 15 years of industry experience',
-				industry: 'Business Consulting',
-				companySize: 75,
-				address: {
-					street: '789 Updated Business Avenue',
-					suburb: 'Rosebank',
-					city: 'Johannesburg',
-					state: 'Gauteng',
-					country: 'South Africa',
-					postalCode: '2196'
-				}
-			}
-		},
-		socialUpdate: {
-			summary: '🌐 Social Media & Online Presence',
-			description: 'Update digital presence and social media profiles',
-			value: {
-				website: 'https://www.newcompanysite.co.za',
-				socialProfiles: {
-					linkedin: 'https://linkedin.com/company/newcompany',
-					twitter: 'https://twitter.com/newcompany_za',
-					facebook: 'https://facebook.com/newcompany'
-				}
-			}
-		}
-	}
-})
-@ApiOkResponse({ 
-	description: '✅ Client profile updated successfully',
-	schema: {
-		type: 'object',
-		properties: {
-			message: { type: 'string', example: 'Client profile updated successfully' },
-			data: {
-				type: 'object',
-				properties: {
-					clientId: { type: 'number', example: 12345 },
-					updatedFields: { 
-						type: 'array', 
-						items: { type: 'string' },
-						example: ['phone', 'website', 'description', 'address']
+	`,
+	})
+	@ApiBody({
+		type: UpdateClientDto,
+		description: 'Client profile update payload with allowed fields only',
+		examples: {
+			basicUpdate: {
+				summary: '📞 Contact Information Update',
+				description: 'Update contact details and communication preferences',
+				value: {
+					phone: '+27 11 987 6543',
+					alternativePhone: '+27 82 987 6543',
+					website: 'https://www.updatedcompany.co.za',
+					preferredContactMethod: 'WHATSAPP',
+					preferredLanguage: 'English',
+				},
+			},
+			companyUpdate: {
+				summary: '🏢 Company Information Update',
+				description: 'Update company description and business details',
+				value: {
+					description:
+						'Leading provider of innovative business solutions with 15 years of industry experience',
+					industry: 'Business Consulting',
+					companySize: 75,
+					address: {
+						street: '789 Updated Business Avenue',
+						suburb: 'Rosebank',
+						city: 'Johannesburg',
+						state: 'Gauteng',
+						country: 'South Africa',
+						postalCode: '2196',
 					},
-					lastUpdated: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' }
-				}
-			}
-		}
-	}
-})
-@ApiBadRequestResponse({ 
-	description: '❌ Bad Request - Invalid data or unauthorized field update',
-	schema: {
-		type: 'object',
-		properties: {
-			message: { type: 'string', example: 'Cannot update restricted fields: email, organization' },
-			error: { type: 'string', example: 'Bad Request' },
-			statusCode: { type: 'number', example: 400 },
-			restrictedFields: {
-				type: 'array',
-				items: { type: 'string' },
-				example: ['email', 'name', 'organisation', 'branch', 'creditLimit', 'priceTier']
-			}
-		}
-	}
-})
-@ApiUnauthorizedResponse({ 
-	description: '🔒 Unauthorized - Invalid client authentication',
-	schema: {
-		type: 'object',
-		properties: {
-			message: { type: 'string', example: 'Invalid client credentials or expired session' },
-			error: { type: 'string', example: 'Unauthorized' },
-			statusCode: { type: 'number', example: 401 }
-		}
-	}
-})
-@ApiForbiddenResponse({
-	description: '🚫 Forbidden - Not a client or insufficient permissions',
-	schema: {
-		type: 'object',
-		properties: {
-			message: { type: 'string', example: 'Access denied. This endpoint is for client portal users only.' },
-			error: { type: 'string', example: 'Forbidden' },
-			statusCode: { type: 'number', example: 403 }
-		}
-	}
-})
-@ApiNotFoundResponse({
-	description: '📭 Not Found - Client profile not found',
-	schema: {
-		type: 'object',
-		properties: {
-			message: { type: 'string', example: 'Client profile not found or organization mismatch' },
-			error: { type: 'string', example: 'Not Found' },
-			statusCode: { type: 'number', example: 404 }
-		}
-	}
-})
-@ApiInternalServerErrorResponse({
-	description: '💥 Internal Server Error - System malfunction',
-	schema: {
-		type: 'object',
-		properties: {
-			message: { type: 'string', example: 'Failed to update client profile due to system error' },
-			error: { type: 'string', example: 'Internal Server Error' },
-			statusCode: { type: 'number', example: 500 },
-			timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' }
-		}
-	}
-})
+				},
+			},
+			socialUpdate: {
+				summary: '🌐 Social Media & Online Presence',
+				description: 'Update digital presence and social media profiles',
+				value: {
+					website: 'https://www.newcompanysite.co.za',
+					socialProfiles: {
+						linkedin: 'https://linkedin.com/company/newcompany',
+						twitter: 'https://twitter.com/newcompany_za',
+						facebook: 'https://facebook.com/newcompany',
+					},
+				},
+			},
+		},
+	})
+	@ApiOkResponse({
+		description: '✅ Client profile updated successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Client profile updated successfully' },
+				data: {
+					type: 'object',
+					properties: {
+						clientId: { type: 'number', example: 12345 },
+						updatedFields: {
+							type: 'array',
+							items: { type: 'string' },
+							example: ['phone', 'website', 'description', 'address'],
+						},
+						lastUpdated: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+					},
+				},
+			},
+		},
+	})
+	@ApiBadRequestResponse({
+		description: '❌ Bad Request - Invalid data or unauthorized field update',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Cannot update restricted fields: email, organization' },
+				error: { type: 'string', example: 'Bad Request' },
+				statusCode: { type: 'number', example: 400 },
+				restrictedFields: {
+					type: 'array',
+					items: { type: 'string' },
+					example: ['email', 'name', 'organisation', 'branch', 'creditLimit', 'priceTier'],
+				},
+			},
+		},
+	})
+	@ApiUnauthorizedResponse({
+		description: '🔒 Unauthorized - Invalid client authentication',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Invalid client credentials or expired session' },
+				error: { type: 'string', example: 'Unauthorized' },
+				statusCode: { type: 'number', example: 401 },
+			},
+		},
+	})
+	@ApiForbiddenResponse({
+		description: '🚫 Forbidden - Not a client or insufficient permissions',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Access denied. This endpoint is for client portal users only.' },
+				error: { type: 'string', example: 'Forbidden' },
+				statusCode: { type: 'number', example: 403 },
+			},
+		},
+	})
+	@ApiNotFoundResponse({
+		description: '📭 Not Found - Client profile not found',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Client profile not found or organization mismatch' },
+				error: { type: 'string', example: 'Not Found' },
+				statusCode: { type: 'number', example: 404 },
+			},
+		},
+	})
+	@ApiInternalServerErrorResponse({
+		description: '💥 Internal Server Error - System malfunction',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Failed to update client profile due to system error' },
+				error: { type: 'string', example: 'Internal Server Error' },
+				statusCode: { type: 'number', example: 500 },
+				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+			},
+		},
+	})
 	updateClientProfile(@Body() updateClientDto: UpdateClientDto, @Req() req: AuthenticatedRequest) {
 		// Extract client auth ID from JWT token (this is the ClientAuth.uid, not Client.uid)
 		const clientAuthId = req.user?.uid;
 		const organisationRef = req.user?.organisationRef;
-		
+
 		if (!clientAuthId) {
 			throw new Error('Client authentication ID not found in token');
 		}
@@ -1853,7 +1932,7 @@ Manually triggers the automated communication task generation cron job for testi
 - **Email Notifications**: Users receive task creation notifications
 - **Schedule Updates**: Communication schedules updated with next dates
 - **System Integration**: Tasks integrated with existing workflows
-		`
+		`,
 	})
 	@ApiCreatedResponse({
 		description: '✅ Communication task generation completed successfully with detailed results',
@@ -1864,28 +1943,48 @@ Manually triggers the automated communication task generation cron job for testi
 				data: {
 					type: 'object',
 					properties: {
-						executionTime: { type: 'number', example: 2847, description: 'Total execution time in milliseconds' },
-						processedSchedules: { type: 'number', example: 45, description: 'Number of communication schedules processed' },
+						executionTime: {
+							type: 'number',
+							example: 2847,
+							description: 'Total execution time in milliseconds',
+						},
+						processedSchedules: {
+							type: 'number',
+							example: 45,
+							description: 'Number of communication schedules processed',
+						},
 						tasksCreated: { type: 'number', example: 127, description: 'Total number of tasks created' },
-						usersNotified: { type: 'number', example: 12, description: 'Number of users who received email notifications' },
+						usersNotified: {
+							type: 'number',
+							example: 12,
+							description: 'Number of users who received email notifications',
+						},
 						scheduleBreakdown: {
 							type: 'object',
 							properties: {
 								phoneCall: { type: 'number', example: 35, description: 'Phone call tasks created' },
 								email: { type: 'number', example: 28, description: 'Email tasks created' },
-								inPersonVisit: { type: 'number', example: 22, description: 'In-person visit tasks created' },
+								inPersonVisit: {
+									type: 'number',
+									example: 22,
+									description: 'In-person visit tasks created',
+								},
 								videoCall: { type: 'number', example: 18, description: 'Video call tasks created' },
 								whatsapp: { type: 'number', example: 15, description: 'WhatsApp tasks created' },
-								sms: { type: 'number', example: 9, description: 'SMS tasks created' }
-							}
+								sms: { type: 'number', example: 9, description: 'SMS tasks created' },
+							},
 						},
 						timeWindow: {
 							type: 'object',
 							properties: {
 								startDate: { type: 'string', format: 'date', example: '2023-12-01' },
 								endDate: { type: 'string', format: 'date', example: '2024-03-01' },
-								windowDays: { type: 'number', example: 91, description: 'Number of days in generation window' }
-							}
+								windowDays: {
+									type: 'number',
+									example: 91,
+									description: 'Number of days in generation window',
+								},
+							},
 						},
 						userTaskDistribution: {
 							type: 'array',
@@ -1895,9 +1994,9 @@ Manually triggers the automated communication task generation cron job for testi
 									userId: { type: 'number', example: 25 },
 									userName: { type: 'string', example: 'John Smith' },
 									tasksAssigned: { type: 'number', example: 18 },
-									emailSent: { type: 'boolean', example: true }
-								}
-							}
+									emailSent: { type: 'boolean', example: true },
+								},
+							},
 						},
 						errors: {
 							type: 'array',
@@ -1907,18 +2006,30 @@ Manually triggers the automated communication task generation cron job for testi
 									scheduleId: { type: 'number', example: 123 },
 									clientName: { type: 'string', example: 'Failed Client Ltd' },
 									error: { type: 'string', example: 'Invalid communication type specified' },
-									timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:30:00Z' }
-								}
-							}
+									timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:30:00Z' },
+								},
+							},
 						},
 						performanceMetrics: {
 							type: 'object',
 							properties: {
 								averageTasksPerSchedule: { type: 'number', example: 2.82 },
-								processingRate: { type: 'number', example: 15.8, description: 'Schedules processed per second' },
-								successRate: { type: 'number', example: 97.2, description: 'Percentage of successful task creations' },
-								duplicatesSkipped: { type: 'number', example: 23, description: 'Number of duplicate tasks skipped' }
-							}
+								processingRate: {
+									type: 'number',
+									example: 15.8,
+									description: 'Schedules processed per second',
+								},
+								successRate: {
+									type: 'number',
+									example: 97.2,
+									description: 'Percentage of successful task creations',
+								},
+								duplicatesSkipped: {
+									type: 'number',
+									example: 23,
+									description: 'Number of duplicate tasks skipped',
+								},
+							},
 						},
 						nextScheduledRun: { type: 'string', format: 'date-time', example: '2023-12-02T06:00:00Z' },
 						triggeredBy: {
@@ -1926,13 +2037,13 @@ Manually triggers the automated communication task generation cron job for testi
 							properties: {
 								userId: { type: 'number', example: 1 },
 								userName: { type: 'string', example: 'Admin User' },
-								timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T14:30:00Z' }
-							}
-						}
-					}
-				}
-			}
-		}
+								timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T14:30:00Z' },
+							},
+						},
+					},
+				},
+			},
+		},
 	})
 	async testTaskGeneration(@Req() req: AuthenticatedRequest) {
 		try {
@@ -1949,7 +2060,7 @@ Manually triggers the automated communication task generation cron job for testi
 
 	@Get('profile/communication-schedules')
 	@Roles(AccessLevel.CLIENT)
-	@ApiOperation({ 
+	@ApiOperation({
 		summary: '📅 Get Client Communication Schedules (Client Portal)',
 		description: `
 # Get Client Communication Schedules
@@ -1970,7 +2081,7 @@ Each schedule includes:
 - **Next Scheduled Date**: When the next communication is scheduled
 - **Status**: Whether the schedule is active or inactive
 - **Notes**: Additional information about the communication schedule
-		`
+		`,
 	})
 	@ApiOkResponse({
 		description: '✅ Communication schedules retrieved successfully',
@@ -1990,21 +2101,21 @@ Each schedule includes:
 							preferredDays: { type: 'array', items: { type: 'number' }, example: [1, 2, 3, 4, 5] },
 							nextScheduledDate: { type: 'string', format: 'date-time', example: '2024-03-15T09:00:00Z' },
 							isActive: { type: 'boolean', example: true },
-							notes: { type: 'string', example: 'Weekly check-in calls' }
-						}
-					}
-				}
-			}
-		}
+							notes: { type: 'string', example: 'Weekly check-in calls' },
+						},
+					},
+				},
+			},
+		},
 	})
 	@ApiNotFoundResponse({
 		description: '❌ Client profile not found',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Client profile not found' }
-			}
-		}
+				message: { type: 'string', example: 'Client profile not found' },
+			},
+		},
 	})
 	getClientCommunicationSchedules(@Req() req: AuthenticatedRequest) {
 		const clientAuthId = req.user?.uid;
@@ -2014,7 +2125,7 @@ Each schedule includes:
 
 	@Patch('profile/communication-schedules/:scheduleId')
 	@Roles(AccessLevel.CLIENT)
-	@ApiOperation({ 
+	@ApiOperation({
 		summary: '✏️ Update Client Communication Schedule (Client Portal)',
 		description: `
 # Update Client Communication Schedule
@@ -2035,7 +2146,7 @@ Clients can update the following schedule information:
 - **Preferred Days**: Choose specific days of the week
 - **Status**: Activate or deactivate the schedule
 - **Notes**: Add or update notes about the communication schedule
-		`
+		`,
 	})
 	@ApiParam({ name: 'scheduleId', description: 'Communication schedule ID', type: 'number' })
 	@ApiOkResponse({
@@ -2043,32 +2154,40 @@ Clients can update the following schedule information:
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Communication schedule updated successfully' }
-			}
-		}
+				message: { type: 'string', example: 'Communication schedule updated successfully' },
+			},
+		},
 	})
 	@ApiNotFoundResponse({
 		description: '❌ Communication schedule not found',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Communication schedule not found or does not belong to this client' }
-			}
-		}
+				message: {
+					type: 'string',
+					example: 'Communication schedule not found or does not belong to this client',
+				},
+			},
+		},
 	})
 	updateClientCommunicationSchedule(
 		@Param('scheduleId') scheduleId: number,
 		@Body() updateDto: UpdateCommunicationScheduleDto,
-		@Req() req: AuthenticatedRequest
+		@Req() req: AuthenticatedRequest,
 	) {
 		const clientAuthId = req.user?.uid;
 		const organisationRef = req.user?.organisationRef;
-		return this.clientsService.updateClientCommunicationSchedule(clientAuthId, scheduleId, updateDto, organisationRef);
+		return this.clientsService.updateClientCommunicationSchedule(
+			clientAuthId,
+			scheduleId,
+			updateDto,
+			organisationRef,
+		);
 	}
 
 	@Delete('profile/communication-schedules/:scheduleId')
 	@Roles(AccessLevel.CLIENT)
-	@ApiOperation({ 
+	@ApiOperation({
 		summary: '🗑️ Delete Client Communication Schedule (Client Portal)',
 		description: `
 # Delete Client Communication Schedule
@@ -2085,7 +2204,7 @@ Allows authenticated clients to delete their communication schedules through the
 - **Permanent Action**: Deleting a schedule cannot be undone
 - **Task Impact**: Existing tasks generated from this schedule will remain
 - **Alternative**: Consider deactivating the schedule instead of deleting it
-		`
+		`,
 	})
 	@ApiParam({ name: 'scheduleId', description: 'Communication schedule ID', type: 'number' })
 	@ApiOkResponse({
@@ -2093,23 +2212,23 @@ Allows authenticated clients to delete their communication schedules through the
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Communication schedule deleted successfully' }
-			}
-		}
+				message: { type: 'string', example: 'Communication schedule deleted successfully' },
+			},
+		},
 	})
 	@ApiNotFoundResponse({
 		description: '❌ Communication schedule not found',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Communication schedule not found or does not belong to this client' }
-			}
-		}
+				message: {
+					type: 'string',
+					example: 'Communication schedule not found or does not belong to this client',
+				},
+			},
+		},
 	})
-	deleteClientCommunicationSchedule(
-		@Param('scheduleId') scheduleId: number,
-		@Req() req: AuthenticatedRequest
-	) {
+	deleteClientCommunicationSchedule(@Param('scheduleId') scheduleId: number, @Req() req: AuthenticatedRequest) {
 		const clientAuthId = req.user?.uid;
 		const organisationRef = req.user?.organisationRef;
 		return this.clientsService.deleteClientCommunicationSchedule(clientAuthId, scheduleId, organisationRef);

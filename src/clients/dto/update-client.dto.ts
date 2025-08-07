@@ -14,9 +14,15 @@ import {
 	Min,
 	Max,
 	IsInt,
+	IsUrl,
+	Length,
+	Matches,
+	IsPositive,
+	IsLatitude,
+	IsLongitude,
 } from 'class-validator';
 import { AddressDto, CreateClientDto, SocialProfilesDto } from './create-client.dto';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import {
 	ClientContactPreference,
 	PriceTier,
@@ -56,43 +62,53 @@ export class UpdateClientDto extends PartialType(CreateClientDto) {
 	})
 	contactPerson?: string;
 
-	@IsEmail()
+	@IsEmail({}, { message: 'Please provide a valid email address' })
 	@IsOptional()
+	@Transform(({ value }) => value?.toLowerCase().trim())
 	@ApiProperty({
-		example: 'john.doe@loro.co.za',
-		description: 'The email of the client',
+		example: 'theguy@orrbit.co.za',
+		description: 'The primary email address for the client - must be a valid email format',
+		format: 'email'
 	})
 	email?: string;
 
-	@IsPhoneNumber()
+	@IsPhoneNumber('ZA', { message: 'Please provide a valid South African phone number with country code (+27)' })
 	@IsOptional()
+	@Transform(({ value }) => value?.trim())
 	@ApiProperty({
-		example: '+27 64 123 4567',
-		description: 'The phone number of the client',
+		example: '+27 11 123 4567',
+		description: 'The primary phone number with South African country code (+27)',
+		pattern: '^\\+27\\s?\\d{2}\\s?\\d{3}\\s?\\d{4}$'
 	})
 	phone?: string;
 
-	@IsPhoneNumber()
+	@IsPhoneNumber('ZA', { message: 'Alternative phone number must be a valid South African phone number with country code (+27)' })
 	@IsOptional()
+	@Transform(({ value }) => value?.trim())
 	@ApiProperty({
-		example: '+27 64 123 4567',
-		description: 'The alternative phone number of the client',
+		example: '+27 82 987 6543',
+		description: 'Alternative phone number with South African country code (+27)',
+		pattern: '^\\+27\\s?\\d{2}\\s?\\d{3}\\s?\\d{4}$'
 	})
 	alternativePhone?: string;
 
-	@IsString()
+	@IsUrl({ require_protocol: true }, { message: 'Website must be a valid URL with protocol (http/https)' })
 	@IsOptional()
+	@Transform(({ value }) => value?.trim())
 	@ApiProperty({
-		example: 'https://www.loro.co.za',
-		description: 'The website of the client',
+		example: 'https://www.orrbit.co.za',
+		description: 'The official website URL of the client - must include protocol (http/https)',
+		format: 'uri'
 	})
 	website?: string;
 
-	@IsString()
+	@IsUrl({ require_protocol: true }, { message: 'Logo URL must be a valid URL with protocol (http/https)' })
 	@IsOptional()
+	@Transform(({ value }) => value?.trim())
 	@ApiProperty({
-		example: 'https://www.loro.co.za/logo.png',
-		description: 'The logo of the client',
+		example: 'https://www.orrbit.co.za/logo.png',
+		description: 'The URL to the client logo image - must be a valid URL with protocol',
+		format: 'uri'
 	})
 	logo?: string;
 
@@ -381,19 +397,25 @@ export class UpdateClientDto extends PartialType(CreateClientDto) {
 	})
 	socialProfiles?: SocialProfilesDto;
 
-	@IsNumber()
+	@IsLatitude({ message: 'Latitude must be a valid coordinate between -90 and 90' })
 	@IsOptional()
+	@Transform(({ value }) => value ? Number(value) : undefined)
 	@ApiProperty({
-		example: 51.5074,
-		description: 'Latitude coordinate',
+		example: -26.195246,
+		description: 'Latitude coordinate for South African location (between -90 and 90)',
+		minimum: -90,
+		maximum: 90
 	})
 	latitude?: number;
 
-	@IsNumber()
+	@IsLongitude({ message: 'Longitude must be a valid coordinate between -180 and 180' })
 	@IsOptional()
+	@Transform(({ value }) => value ? Number(value) : undefined)
 	@ApiProperty({
-		example: -0.1278,
-		description: 'Longitude coordinate',
+		example: 28.034088,
+		description: 'Longitude coordinate for South African location (between -180 and 180)',
+		minimum: -180,
+		maximum: 180
 	})
 	longitude?: number;
 
