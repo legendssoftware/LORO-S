@@ -169,24 +169,26 @@ Creates a new client record in the system with comprehensive tracking capabiliti
 		},
 	})
 	@ApiCreatedResponse({
-		description: '✅ Client created successfully',
+		description: '✅ Client created successfully with automated onboarding email',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Client created successfully' },
-				data: {
-					type: 'object',
-									properties: {
-					uid: { type: 'number', example: 12345 },
-					name: { type: 'string', example: 'Orrbit Technologies' },
-					email: { type: 'string', example: 'theguy@orrbit.co.za' },
-					phone: { type: 'string', example: '+27 11 123 4567' },
-					status: { type: 'string', example: 'ACTIVE' },
-					createdAt: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+				message: { 
+					type: 'string', 
+					example: 'Success',
+					description: 'Success message indicating client was created and onboarding email was sent'
 				},
 				},
 			},
-		},
+		examples: {
+			success: {
+				summary: '✅ Successful Client Creation',
+				description: 'Client created successfully with all features enabled',
+				value: {
+					message: 'Success'
+				}
+			}
+		}
 	})
 	@ApiBadRequestResponse({
 		description: '❌ Bad Request - Invalid or missing required data',
@@ -329,66 +331,212 @@ Retrieves a comprehensive list of all clients without user-specific filtering fo
 		description: 'Search term for client name, email, or phone',
 	})
 	@ApiOkResponse({
-		description: '✅ All clients retrieved successfully for admin view',
+		description: '✅ All clients retrieved successfully for admin view with comprehensive data',
 		schema: {
 			type: 'object',
 			properties: {
 				data: {
 					type: 'array',
+					description: 'Array of client objects with complete information',
 					items: {
 						type: 'object',
 						properties: {
-							uid: { type: 'number', example: 12345 },
-							name: { type: 'string', example: 'ACME Corporation' },
-							email: { type: 'string', example: 'contact@acme.co.za' },
-							phone: { type: 'string', example: '+27 11 123 4567' },
-							status: { type: 'string', example: 'ACTIVE' },
-							category: { type: 'string', example: 'enterprise' },
+							uid: { type: 'number', example: 12345, description: 'Unique client identifier' },
+							name: { type: 'string', example: 'Orrbit Technologies', description: 'Client company name' },
+							contactPerson: { type: 'string', example: 'The Guy', description: 'Primary contact person' },
+							email: { type: 'string', example: 'theguy@orrbit.co.za', description: 'Primary email address' },
+							phone: { type: 'string', example: '+27 11 123 4567', description: 'Primary phone number' },
+							alternativePhone: { type: 'string', example: '+27 82 123 4567', description: 'Secondary phone number' },
+							website: { type: 'string', example: 'https://www.orrbit.co.za', description: 'Company website' },
+							description: { type: 'string', example: 'Leading technology company in South Africa', description: 'Company description' },
+							status: { type: 'string', example: 'ACTIVE', enum: ['ACTIVE', 'INACTIVE', 'CONVERTED', 'PROSPECT', 'LEAD'], description: 'Client status' },
+							category: { type: 'string', example: 'enterprise', description: 'Client category' },
+							industry: { type: 'string', example: 'Technology', description: 'Industry sector' },
+							companySize: { type: 'number', example: 250, description: 'Number of employees' },
+							annualRevenue: { type: 'number', example: 25000000, description: 'Annual revenue in ZAR' },
+							creditLimit: { type: 'number', example: 500000, description: 'Credit limit in ZAR' },
+							outstandingBalance: { type: 'number', example: 75000, description: 'Current outstanding balance' },
+							lifetimeValue: { type: 'number', example: 850000, description: 'Total lifetime value' },
+							priceTier: { type: 'string', example: 'ENTERPRISE', enum: ['STANDARD', 'PREMIUM', 'ENTERPRISE'], description: 'Pricing tier' },
+							preferredContactMethod: { type: 'string', example: 'EMAIL', enum: ['EMAIL', 'PHONE', 'WHATSAPP', 'SMS'], description: 'Preferred contact method' },
+							preferredLanguage: { type: 'string', example: 'English', description: 'Preferred communication language' },
+							riskLevel: { type: 'string', example: 'LOW', enum: ['LOW', 'MEDIUM', 'HIGH'], description: 'Credit risk assessment' },
+							acquisitionChannel: { type: 'string', example: 'REFERRAL', description: 'How client was acquired' },
+							acquisitionDate: { type: 'string', format: 'date', example: '2023-01-15', description: 'Date client was acquired' },
 							assignedSalesRep: {
 								type: 'object',
+								nullable: true,
+								description: 'Assigned sales representative information',
 								properties: {
 									uid: { type: 'number', example: 42 },
 									name: { type: 'string', example: 'John Smith' },
-									email: { type: 'string', example: 'john.smith@company.co.za' },
+									surname: { type: 'string', example: 'Smith' },
+									email: { type: 'string', example: 'john.smith@orrbit.co.za' },
+									phone: { type: 'string', example: '+27 82 555 0123' },
 								},
 							},
 							organisation: {
 								type: 'object',
+								nullable: true,
+								description: 'Organization the client belongs to',
 								properties: {
 									uid: { type: 'number', example: 1 },
-									name: { type: 'string', example: 'Your Organization' },
+									name: { type: 'string', example: 'Orrbit Technologies' },
+									description: { type: 'string', example: 'Leading CRM provider' },
 								},
 							},
 							branch: {
 								type: 'object',
+								nullable: true,
+								description: 'Branch the client belongs to',
 								properties: {
 									uid: { type: 'number', example: 5 },
-									name: { type: 'string', example: 'Main Branch' },
+									name: { type: 'string', example: 'Pretoria South Africa' },
+									address: { type: 'string', example: 'Pretoria, South Africa' },
 								},
 							},
-							createdAt: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
-							industry: { type: 'string', example: 'Technology' },
-							companySize: { type: 'number', example: 250 },
-							lifetimeValue: { type: 'number', example: 500000 },
+							address: {
+								type: 'object',
+								nullable: true,
+								description: 'Client physical address',
+								properties: {
+									street: { type: 'string', example: '123 Business Park Drive' },
+									suburb: { type: 'string', example: 'Pretoria South Africa' },
+									city: { type: 'string', example: 'Pretoria' },
+									state: { type: 'string', example: 'Gauteng' },
+									country: { type: 'string', example: 'South Africa' },
+									postalCode: { type: 'string', example: '0002' },
+								},
+							},
+							latitude: { type: 'number', example: -25.7479, description: 'GPS latitude coordinate' },
+							longitude: { type: 'number', example: 28.2293, description: 'GPS longitude coordinate' },
+							tags: {
+								type: 'array',
+								items: { type: 'string' },
+								example: ['High Value', 'Tech Partner', 'Strategic Account'],
+								description: 'Client tags for categorization'
+							},
+							socialProfiles: {
+								type: 'object',
+								nullable: true,
+								description: 'Social media profiles',
+								properties: {
+									linkedin: { type: 'string', example: 'https://linkedin.com/company/orrbit-technologies' },
+									twitter: { type: 'string', example: 'https://twitter.com/orrbit_tech' },
+									facebook: { type: 'string', example: 'https://facebook.com/orrbit' },
+								},
+							},
+							customFields: {
+								type: 'object',
+								nullable: true,
+								description: 'Custom fields for additional data',
+								additionalProperties: true,
+								example: {
+									primaryTechnology: 'Cloud Computing',
+									complianceLevel: 'Enterprise Grade',
+									contractType: 'Annual'
+								}
+							},
+							enableGeofence: { type: 'boolean', example: true, description: 'Whether geofencing is enabled' },
+							geofenceRadius: { type: 'number', example: 500, description: 'Geofence radius in meters' },
+							lastVisitDate: { type: 'string', format: 'date-time', example: '2023-11-15T14:30:00Z', description: 'Last visit date' },
+							nextContactDate: { type: 'string', format: 'date-time', example: '2023-12-20T09:00:00Z', description: 'Next scheduled contact' },
+							createdAt: { type: 'string', format: 'date-time', example: '2023-01-15T10:00:00Z', description: 'Client creation timestamp' },
+							updatedAt: { type: 'string', format: 'date-time', example: '2023-11-20T14:30:00Z', description: 'Last update timestamp' },
+							isDeleted: { type: 'boolean', example: false, description: 'Soft delete flag' },
 						},
 					},
 				},
 				meta: {
 					type: 'object',
+					description: 'Pagination metadata',
 					properties: {
 						total: {
 							type: 'number',
 							example: 1250,
-							description: 'Total number of clients in organization',
+							description: 'Total number of clients matching criteria across all pages',
 						},
-						page: { type: 'number', example: 1, description: 'Current page number' },
-						limit: { type: 'number', example: 500, description: 'Records per page (admin default: 500)' },
-						totalPages: { type: 'number', example: 3, description: 'Total number of pages available' },
+						page: { 
+							type: 'number', 
+							example: 1, 
+							description: 'Current page number (1-based indexing)' 
+						},
+						limit: { 
+							type: 'number', 
+							example: 500, 
+							description: 'Number of records per page (admin default: 500, max: 1000)' 
+						},
+						totalPages: { 
+							type: 'number', 
+							example: 3, 
+							description: 'Total number of pages available based on limit' 
+						},
 					},
 				},
-				message: { type: 'string', example: 'All clients retrieved successfully for admin view' },
+				message: { 
+					type: 'string', 
+					example: 'Success',
+					description: 'Operation result message'
+				},
 			},
 		},
+		examples: {
+			successWithData: {
+				summary: '✅ Successful Admin Client Retrieval',
+				description: 'Admin successfully retrieved clients with full access',
+				value: {
+					data: [
+						{
+							uid: 12345,
+							name: 'Orrbit Technologies',
+							contactPerson: 'The Guy',
+							email: 'theguy@orrbit.co.za',
+							phone: '+27 11 123 4567',
+							status: 'ACTIVE',
+							category: 'enterprise',
+							industry: 'Technology',
+							companySize: 250,
+							lifetimeValue: 850000,
+							assignedSalesRep: {
+								uid: 42,
+								name: 'John Smith',
+								email: 'john.smith@orrbit.co.za'
+							},
+							organisation: {
+								uid: 1,
+								name: 'Orrbit Technologies'
+							},
+							branch: {
+								uid: 5,
+								name: 'Pretoria South Africa'
+							},
+							createdAt: '2023-01-15T10:00:00Z'
+						}
+					],
+					meta: {
+						total: 1250,
+						page: 1,
+						limit: 500,
+						totalPages: 3
+					},
+					message: 'Success'
+				}
+			},
+			emptyResult: {
+				summary: '📭 No Clients Found',
+				description: 'No clients match the specified criteria',
+				value: {
+					data: [],
+					meta: {
+						total: 0,
+						page: 1,
+						limit: 500,
+						totalPages: 0
+					},
+					message: 'Success'
+				}
+			}
+		}
 	})
 	findAllForAdmin(
 		@Req() req: AuthenticatedRequest,
@@ -496,64 +644,175 @@ Retrieves a paginated list of clients with user-specific filtering and role-base
 		description: 'Search term for client name, email, or phone',
 	})
 	@ApiOkResponse({
-		description: '✅ Clients retrieved successfully with user-specific filtering',
+		description: '✅ Clients retrieved successfully with user-specific filtering and role-based access control',
 		schema: {
 			type: 'object',
 			properties: {
 				data: {
 					type: 'array',
+					description: 'Array of client objects filtered based on user permissions and access level',
 					items: {
-						type: 'object',
-						properties: {
-							uid: { type: 'number', example: 12345 },
-							name: { type: 'string', example: 'Tech Solutions Ltd' },
-							email: { type: 'string', example: 'info@techsolutions.co.za' },
-							phone: { type: 'string', example: '+27 11 456 7890' },
-							contactPerson: { type: 'string', example: 'Sarah Johnson' },
-							status: { type: 'string', example: 'ACTIVE' },
-							category: { type: 'string', example: 'enterprise' },
-							industry: { type: 'string', example: 'Software Development' },
-							assignedSalesRep: {
-								type: 'object',
-								properties: {
-									uid: { type: 'number', example: 25 },
-									name: { type: 'string', example: 'Mike Wilson' },
-									email: { type: 'string', example: 'mike.wilson@company.co.za' },
-								},
-							},
-							address: {
-								type: 'object',
-								properties: {
-									street: { type: 'string', example: '456 Innovation Drive' },
-									city: { type: 'string', example: 'Cape Town' },
-									state: { type: 'string', example: 'Western Cape' },
-									country: { type: 'string', example: 'South Africa' },
-								},
-							},
-							lastVisitDate: { type: 'string', format: 'date-time', example: '2023-11-15T14:30:00Z' },
-							nextContactDate: { type: 'string', format: 'date-time', example: '2023-12-20T09:00:00Z' },
-							createdAt: { type: 'string', format: 'date-time', example: '2023-01-15T10:00:00Z' },
-							lifetimeValue: { type: 'number', example: 250000 },
-							tags: {
-								type: 'array',
-								items: { type: 'string' },
-								example: ['High Priority', 'Tech Partner'],
-							},
-						},
+						$ref: '#/components/schemas/Client'
 					},
 				},
 				meta: {
-					type: 'object',
-					properties: {
-						total: { type: 'number', example: 47, description: 'Total clients accessible to current user' },
-						page: { type: 'number', example: 1, description: 'Current page number' },
-						limit: { type: 'number', example: 20, description: 'Records per page' },
-						totalPages: { type: 'number', example: 3, description: 'Total pages available' },
+								type: 'object',
+					description: 'Pagination metadata and filtering information',
+								properties: {
+						total: { 
+							type: 'number', 
+							example: 47, 
+							description: 'Total clients accessible to current user based on role and assignments' 
+						},
+						page: { 
+							type: 'number', 
+							example: 1, 
+							description: 'Current page number (1-based indexing)' 
+						},
+						limit: { 
+							type: 'number', 
+							example: 20, 
+							description: 'Number of records per page (user default: 20, admin default: 500)' 
+						},
+						totalPages: { 
+							type: 'number', 
+							example: 3, 
+							description: 'Total pages available based on user access and limit' 
+						},
 					},
 				},
-				message: { type: 'string', example: 'Clients retrieved successfully' },
+				message: { 
+					type: 'string', 
+					example: 'Success',
+					description: 'Operation result message' 
+				},
 			},
 		},
+		examples: {
+			regularUserAccess: {
+				summary: '👤 Regular User Access',
+				description: 'Regular user sees only assigned clients',
+				value: {
+					data: [
+						{
+							uid: 12345,
+							name: 'Orrbit Technologies',
+							contactPerson: 'The Guy',
+							email: 'theguy@orrbit.co.za',
+							phone: '+27 11 456 7890',
+							status: 'ACTIVE',
+							category: 'enterprise',
+							industry: 'Technology',
+							assignedSalesRep: {
+								uid: 25,
+								name: 'Mike Wilson',
+								email: 'mike.wilson@orrbit.co.za'
+							},
+							address: {
+								street: '456 Innovation Drive',
+								suburb: 'Pretoria South Africa',
+								city: 'Pretoria',
+								state: 'Gauteng',
+								country: 'South Africa'
+							},
+							lastVisitDate: '2023-11-15T14:30:00Z',
+							nextContactDate: '2023-12-20T09:00:00Z',
+							createdAt: '2023-01-15T10:00:00Z',
+							lifetimeValue: 250000,
+							tags: ['High Priority', 'Tech Partner']
+						}
+					],
+				meta: {
+						total: 47,
+						page: 1,
+						limit: 20,
+						totalPages: 3
+					},
+					message: 'Success'
+				}
+			},
+			elevatedUserAccess: {
+				summary: '👑 Admin/Manager Access',
+				description: 'Admin users see all clients in organization',
+				value: {
+					data: [
+						{
+							uid: 12345,
+							name: 'Orrbit Technologies',
+							contactPerson: 'The Guy',
+							email: 'theguy@orrbit.co.za',
+							phone: '+27 11 456 7890',
+							status: 'ACTIVE',
+							category: 'enterprise',
+							assignedSalesRep: {
+								uid: 25,
+								name: 'Mike Wilson',
+								email: 'mike.wilson@orrbit.co.za'
+							}
+						},
+						{
+							uid: 12346,
+							name: 'Another Client Ltd',
+							contactPerson: 'Jane Smith',
+							email: 'jane@anotherclient.co.za',
+							phone: '+27 21 555 0199',
+							status: 'PROSPECT',
+							category: 'sme',
+							assignedSalesRep: {
+								uid: 42,
+								name: 'John Doe',
+								email: 'john.doe@orrbit.co.za'
+							}
+						}
+					],
+					meta: {
+						total: 1250,
+						page: 1,
+						limit: 20,
+						totalPages: 63
+					},
+					message: 'Success'
+				}
+			},
+			filteredResults: {
+				summary: '🔍 Filtered Search Results',
+				description: 'Results filtered by status and search terms',
+				value: {
+					data: [
+						{
+							uid: 12345,
+							name: 'Orrbit Technologies',
+							contactPerson: 'The Guy',
+							email: 'theguy@orrbit.co.za',
+							phone: '+27 11 456 7890',
+							status: 'ACTIVE',
+							category: 'enterprise'
+						}
+					],
+					meta: {
+						total: 1,
+						page: 1,
+						limit: 20,
+						totalPages: 1
+					},
+					message: 'Success'
+				}
+			},
+			noAssignedClients: {
+				summary: '📭 No Assigned Clients',
+				description: 'User has no assigned clients',
+				value: {
+					data: [],
+					meta: {
+						total: 0,
+						page: 1,
+						limit: 20,
+						totalPages: 0
+					},
+					message: 'No clients assigned to user'
+				}
+			}
+		}
 	})
 	findAll(
 		@Req() req: AuthenticatedRequest,
@@ -915,37 +1174,47 @@ When converting a lead to client (status = 'CONVERTED'):
 		},
 	})
 	@ApiOkResponse({
-		description: '✅ Client updated successfully with optional conversion notifications',
+		description: '✅ Client updated successfully with optional lead conversion notifications and communication schedule management',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Client updated successfully' },
-				data: {
-					type: 'object',
-					properties: {
-						clientId: { type: 'number', example: 12345 },
-						updatedFields: {
-							type: 'array',
-							items: { type: 'string' },
-							example: ['phone', 'status', 'assignedSalesRep', 'communicationSchedules'],
-						},
-						conversionTriggered: {
-							type: 'boolean',
-							example: true,
-							description: 'True if lead was converted to client',
-						},
-						emailsSent: {
-							type: 'object',
-							properties: {
-								clientWelcome: { type: 'boolean', example: true },
-								salesRepNotification: { type: 'boolean', example: true },
-							},
-						},
-						lastUpdated: { type: 'string', format: 'date-time', example: '2023-12-01T15:30:00Z' },
-					},
+				message: { 
+					type: 'string', 
+					example: 'Success',
+					description: 'Update success message. Automated emails are sent if lead was converted to client status.'
 				},
 			},
 		},
+		examples: {
+			standardUpdate: {
+				summary: '✅ Standard Client Update',
+				description: 'Client information updated successfully',
+				value: {
+					message: 'Success'
+				}
+			},
+			leadConversion: {
+				summary: '🎯 Lead Conversion Success',
+				description: 'Lead successfully converted to client with automated email notifications',
+				value: {
+					message: 'Success'
+				}
+			},
+			communicationScheduleUpdate: {
+				summary: '📅 Communication Schedules Updated',
+				description: 'Client updated with new communication schedules',
+				value: {
+					message: 'Success'
+				}
+			},
+			geofenceUpdate: {
+				summary: '🗺️ Geofencing Configuration Updated',
+				description: 'Client geofencing settings successfully updated',
+				value: {
+					message: 'Success'
+				}
+			}
+		}
 	})
 	@ApiNotFoundResponse({
 		description: '❌ Client not found or access denied',
@@ -1082,40 +1351,26 @@ Restores a previously soft-deleted client back to active status, recovering all 
 	})
 	@ApiParam({ name: 'ref', description: 'Client reference code or ID', type: 'number' })
 	@ApiOkResponse({
-		description: '✅ Client restored successfully with all associated data',
+		description: '✅ Client restored successfully with all associated data and relationships preserved',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Client restored successfully' },
-				data: {
-					type: 'object',
-					properties: {
-						clientId: { type: 'number', example: 12345 },
-						clientName: { type: 'string', example: 'Restored Client Ltd' },
-						restoredAt: { type: 'string', format: 'date-time', example: '2023-12-01T16:00:00Z' },
-						previousStatus: { type: 'string', example: 'DELETED' },
-						newStatus: { type: 'string', example: 'ACTIVE' },
-						dataIntegrity: {
-							type: 'object',
-							properties: {
-								quotationsRestored: { type: 'number', example: 5 },
-								checkInsRestored: { type: 'number', example: 12 },
-								tasksRestored: { type: 'number', example: 8 },
-								communicationSchedulesRestored: { type: 'number', example: 3 },
-							},
-						},
-						accessPermissions: {
-							type: 'object',
-							properties: {
-								searchable: { type: 'boolean', example: true },
-								reportingIncluded: { type: 'boolean', example: true },
-								workflowEnabled: { type: 'boolean', example: true },
-							},
-						},
-					},
+				message: { 
+					type: 'string', 
+					example: 'Success',
+					description: 'Confirmation that client has been restored to ACTIVE status with all data intact'
 				},
 			},
 		},
+		examples: {
+			successfulRestore: {
+				summary: '✅ Successful Client Restoration',
+				description: 'Deleted client successfully restored to active status',
+				value: {
+					message: 'Success'
+				}
+			}
+		}
 	})
 	@ApiNotFoundResponse({
 		description: '❌ Client not found or not in deleted state',
@@ -1209,41 +1464,26 @@ Marks a client as deleted without permanently removing data from the database, a
 	})
 	@ApiParam({ name: 'ref', description: 'Client reference code or ID', type: 'number' })
 	@ApiOkResponse({
-		description: '✅ Client soft-deleted successfully with data preservation',
+		description: '✅ Client soft-deleted successfully with complete data preservation for future restoration',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Client deleted successfully' },
-				data: {
-					type: 'object',
-					properties: {
-						clientId: { type: 'number', example: 12345 },
-						clientName: { type: 'string', example: 'Deleted Client Ltd' },
-						deletedAt: { type: 'string', format: 'date-time', example: '2023-12-01T17:00:00Z' },
-						deletedBy: { type: 'string', example: 'John Smith' },
-						previousStatus: { type: 'string', example: 'ACTIVE' },
-						newStatus: { type: 'string', example: 'DELETED' },
-						dataPreservation: {
-							type: 'object',
-							properties: {
-								quotationsPreserved: { type: 'number', example: 5 },
-								checkInsPreserved: { type: 'number', example: 12 },
-								tasksPreserved: { type: 'number', example: 8 },
-								communicationSchedulesPreserved: { type: 'number', example: 3 },
-							},
-						},
-						restorationInfo: {
-							type: 'object',
-							properties: {
-								canBeRestored: { type: 'boolean', example: true },
-								restoreEndpoint: { type: 'string', example: 'PATCH /clients/restore/12345' },
-								retentionPeriod: { type: 'string', example: 'Indefinite (until manually removed)' },
-							},
-						},
-					},
+				message: { 
+					type: 'string', 
+					example: 'Success',
+					description: 'Confirmation that client has been soft-deleted with all data preserved for restoration'
 				},
 			},
 		},
+		examples: {
+			successfulDeletion: {
+				summary: '✅ Successful Soft Deletion',
+				description: 'Client successfully marked as deleted with all data preserved',
+				value: {
+					message: 'Success'
+				}
+			}
+		}
 	})
 	@ApiNotFoundResponse({
 		description: '❌ Client not found or already deleted',
@@ -1271,6 +1511,21 @@ Marks a client as deleted without permanently removing data from the database, a
 	}
 
 	@Get('nearby')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.SUPPORT,
+		AccessLevel.DEVELOPER,
+		AccessLevel.USER,
+		AccessLevel.OWNER,
+		AccessLevel.SUPERVISOR,
+		AccessLevel.TECHNICIAN,
+	)
+	@ApiQuery({ name: 'latitude', type: Number, required: true, description: 'GPS latitude coordinate (-90 to 90)', example: -26.195246 })
+	@ApiQuery({ name: 'longitude', type: Number, required: true, description: 'GPS longitude coordinate (-180 to 180)', example: 28.034088 })
+	@ApiQuery({ name: 'radius', type: Number, required: false, description: 'Search radius in kilometers (default: 5, max: 50)', example: 5 })
+	@ApiQuery({ name: 'orgId', type: Number, required: false, description: 'Organization ID filter' })
+	@ApiQuery({ name: 'branchId', type: Number, required: false, description: 'Branch ID filter' })
 	@ApiOperation({
 		summary: '🗺️ Find Nearby Clients',
 		description: `
@@ -1329,94 +1584,126 @@ Discovers clients within a specified radius of given GPS coordinates, enabling l
 		`,
 	})
 	@ApiOkResponse({
-		description: '✅ Nearby clients found and sorted by distance',
+		description: '✅ Nearby clients found and sorted by distance with precise geolocation data',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Nearby clients retrieved successfully' },
+				message: { 
+					type: 'string', 
+					example: 'Success',
+					description: 'Operation success confirmation'
+				},
 				clients: {
 					type: 'array',
+					description: 'Array of clients within specified radius, sorted by distance (closest first)',
 					items: {
+						allOf: [
+							{ $ref: '#/components/schemas/Client' },
+							{
 						type: 'object',
 						properties: {
-							uid: { type: 'number', example: 12345 },
-							name: { type: 'string', example: 'Nearby Client Ltd' },
-							contactPerson: { type: 'string', example: 'Jane Doe' },
-							email: { type: 'string', example: 'jane.doe@nearbyclient.co.za' },
-							phone: { type: 'string', example: '+27 11 555 0123' },
 							distance: {
 								type: 'number',
-								example: 2.34,
-								description: 'Distance in kilometers from search point',
-							},
-							latitude: { type: 'number', example: -26.195246 },
-							longitude: { type: 'number', example: 28.034088 },
-							address: {
-								type: 'object',
-								properties: {
-									street: { type: 'string', example: '123 Nearby Street' },
-									suburb: { type: 'string', example: 'Sandton' },
-									city: { type: 'string', example: 'Johannesburg' },
-									state: { type: 'string', example: 'Gauteng' },
-									postalCode: { type: 'string', example: '2196' },
+										example: 2.345,
+										description: 'Calculated distance in kilometers from search point (using Haversine formula)',
+									}
 								},
-							},
-							status: { type: 'string', example: 'ACTIVE' },
-							category: { type: 'string', example: 'enterprise' },
-							assignedSalesRep: {
-								type: 'object',
-								properties: {
-									uid: { type: 'number', example: 25 },
-									name: { type: 'string', example: 'Sales Rep' },
-									phone: { type: 'string', example: '+27 82 555 0123' },
-								},
-							},
-							lastVisitDate: { type: 'string', format: 'date-time', example: '2023-11-15T10:00:00Z' },
-							nextScheduledVisit: {
-								type: 'string',
-								format: 'date-time',
-								example: '2023-12-20T14:00:00Z',
-							},
-							tags: {
-								type: 'array',
-								items: { type: 'string' },
-								example: ['Priority', 'Regular Service'],
-							},
-							geofenceEnabled: { type: 'boolean', example: true },
-							geofenceRadius: {
-								type: 'number',
-								example: 200,
-								description: 'Client geofence radius in meters',
-							},
-						},
-					},
-				},
-				searchInfo: {
-					type: 'object',
-					properties: {
-						searchCenter: {
-							type: 'object',
-							properties: {
-								latitude: { type: 'number', example: -26.195246 },
-								longitude: { type: 'number', example: 28.034088 },
-							},
-						},
-						searchRadius: { type: 'number', example: 5, description: 'Search radius in kilometers' },
-						resultsCount: { type: 'number', example: 3 },
-						maxDistance: {
-							type: 'number',
-							example: 4.87,
-							description: 'Distance to furthest client in results',
-						},
-						averageDistance: {
-							type: 'number',
-							example: 2.45,
-							description: 'Average distance of all results',
-						},
+								required: ['distance']
+							}
+						]
 					},
 				},
 			},
 		},
+		examples: {
+			nearbyClientsFound: {
+				summary: '✅ Clients Found Within Radius',
+				description: 'Multiple clients found within search radius',
+				value: {
+					message: 'Success',
+					clients: [
+						{
+							uid: 12345,
+							name: 'Orrbit Technologies',
+							contactPerson: 'The Guy',
+							email: 'theguy@orrbit.co.za',
+							phone: '+27 11 555 0123',
+							distance: 1.234,
+							latitude: -26.195246,
+							longitude: 28.034088,
+							address: {
+								street: '123 Business Park Drive',
+								suburb: 'Pretoria South Africa',
+								city: 'Pretoria',
+								state: 'Gauteng',
+								country: 'South Africa',
+								postalCode: '0002'
+							},
+							status: 'ACTIVE',
+							category: 'enterprise',
+							assignedSalesRep: {
+								uid: 25,
+								name: 'John Smith',
+								email: 'john.smith@orrbit.co.za',
+								phone: '+27 82 555 0123'
+							},
+							lastVisitDate: '2023-11-15T10:00:00Z',
+							tags: ['High Priority', 'Tech Partner'],
+							enableGeofence: true,
+							geofenceRadius: 500
+						},
+						{
+							uid: 12346,
+							name: 'Another Client Ltd',
+							contactPerson: 'Jane Smith',
+							email: 'jane@anotherclient.co.za',
+							phone: '+27 21 555 0199',
+							distance: 3.876,
+							latitude: -26.189123,
+							longitude: 28.041567,
+							address: {
+								street: '456 Innovation Drive',
+								suburb: 'Pretoria South Africa',
+								city: 'Pretoria',
+								state: 'Gauteng',
+								country: 'South Africa'
+							},
+							status: 'ACTIVE',
+							category: 'sme'
+						}
+					]
+				}
+			},
+			noClientsInRadius: {
+				summary: '📭 No Clients Found',
+				description: 'No clients found within specified radius',
+				value: {
+					message: 'Success',
+					clients: []
+				}
+			},
+			singleClientNearby: {
+				summary: '📍 Single Client Found',
+				description: 'One client found within radius',
+				value: {
+					message: 'Success',
+					clients: [
+						{
+							uid: 12345,
+							name: 'Nearby Client Ltd',
+							contactPerson: 'Close Contact',
+							email: 'contact@nearbyclient.co.za',
+							phone: '+27 11 555 0123',
+							distance: 0.567,
+							latitude: -26.195246,
+							longitude: 28.034088,
+							status: 'ACTIVE',
+							category: 'enterprise'
+						}
+					]
+				}
+			}
+		}
 	})
 	@ApiBadRequestResponse({
 		description: '❌ Bad Request - Invalid coordinates or search parameters',
@@ -1458,6 +1745,16 @@ Discovers clients within a specified radius of given GPS coordinates, enabling l
 	}
 
 	@Get(':clientId/check-ins')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.SUPPORT,
+		AccessLevel.DEVELOPER,
+		AccessLevel.USER,
+		AccessLevel.OWNER,
+		AccessLevel.SUPERVISOR,
+		AccessLevel.TECHNICIAN,
+	)
 	@ApiOperation({
 		summary: '🕐 Get Client Check-in History',
 		description: `
@@ -1522,138 +1819,115 @@ Retrieves comprehensive check-in history with location data, visit duration, and
 	})
 	@ApiParam({ name: 'clientId', description: 'Client ID', type: 'number' })
 	@ApiOkResponse({
-		description: '✅ Client check-in history retrieved successfully with comprehensive data',
+		description: '✅ Client check-in history retrieved successfully with comprehensive visit data and analytics',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Client check-in history retrieved successfully' },
+				message: { 
+					type: 'string', 
+					example: 'Success',
+					description: 'Success message for check-in history retrieval'
+				},
 				checkIns: {
 					type: 'array',
+					description: 'Array of check-in records sorted by date (most recent first)',
 					items: {
-						type: 'object',
-						properties: {
-							uid: { type: 'number', example: 789 },
-							checkInTime: { type: 'string', format: 'date-time', example: '2023-11-20T09:00:00Z' },
-							checkInLocation: {
-								type: 'string',
-								example: 'Client Office - 123 Business Street, Sandton',
-							},
-							checkInCoordinates: {
-								type: 'object',
-								properties: {
-									latitude: { type: 'number', example: -26.195246 },
-									longitude: { type: 'number', example: 28.034088 },
-								},
-							},
-							checkOutTime: {
-								type: 'string',
-								format: 'date-time',
-								example: '2023-11-20T11:30:00Z',
-								nullable: true,
-							},
-							checkOutLocation: {
-								type: 'string',
-								example: 'Client Office - 123 Business Street, Sandton',
-								nullable: true,
-							},
-							duration: { type: 'string', example: '2h 30m', nullable: true },
-							visitPurpose: { type: 'string', example: 'Monthly business review and service check' },
-							visitType: { type: 'string', example: 'SCHEDULED_VISIT' },
-							status: { type: 'string', example: 'COMPLETED' },
-							owner: {
-								type: 'object',
-								properties: {
-									uid: { type: 'number', example: 25 },
-									name: { type: 'string', example: 'John Smith' },
-									email: { type: 'string', example: 'john.smith@company.co.za' },
-									phone: { type: 'string', example: '+27 82 555 0123' },
-								},
-							},
-							notes: {
-								type: 'string',
-								example: 'Client satisfied with service. Discussed upcoming project requirements.',
-							},
-							attachments: {
-								type: 'array',
-								items: {
-									type: 'object',
-									properties: {
-										uid: { type: 'number', example: 456 },
-										filename: { type: 'string', example: 'client_meeting_photo.jpg' },
-										fileType: { type: 'string', example: 'image/jpeg' },
-										url: {
-											type: 'string',
-											example: 'https://storage.company.com/attachments/456.jpg',
-										},
-									},
-								},
-							},
-							activities: {
-								type: 'array',
-								items: {
-									type: 'object',
-									properties: {
-										activity: { type: 'string', example: 'Equipment maintenance' },
-										duration: { type: 'string', example: '45 minutes' },
-										completed: { type: 'boolean', example: true },
-									},
-								},
-							},
-							geofenceValidation: {
-								type: 'object',
-								properties: {
-									withinGeofence: { type: 'boolean', example: true },
-									distance: {
-										type: 'number',
-										example: 45,
-										description: 'Distance from client location in meters',
-									},
-									accuracy: { type: 'number', example: 5, description: 'GPS accuracy in meters' },
-								},
-							},
-							weather: {
-								type: 'object',
-								properties: {
-									temperature: { type: 'number', example: 22 },
-									conditions: { type: 'string', example: 'Partly cloudy' },
-								},
-							},
-							createdAt: { type: 'string', format: 'date-time', example: '2023-11-20T09:00:00Z' },
-							updatedAt: { type: 'string', format: 'date-time', example: '2023-11-20T11:30:00Z' },
-						},
-					},
-				},
-				analytics: {
-					type: 'object',
-					properties: {
-						totalCheckIns: { type: 'number', example: 24 },
-						totalVisitTime: { type: 'string', example: '48h 30m' },
-						averageVisitDuration: { type: 'string', example: '2h 1m' },
-						lastVisit: { type: 'string', format: 'date-time', example: '2023-11-20T09:00:00Z' },
-						visitFrequency: { type: 'string', example: 'Bi-weekly' },
-						mostActiveUser: {
-							type: 'object',
-							properties: {
-								name: { type: 'string', example: 'John Smith' },
-								visits: { type: 'number', example: 18 },
-							},
-						},
-						engagementScore: {
-							type: 'number',
-							example: 8.5,
-							description: 'Client engagement score out of 10',
-						},
-						lastMonth: {
-							type: 'object',
-							properties: {
-								visits: { type: 'number', example: 4 },
-								totalTime: { type: 'string', example: '8h 15m' },
-							},
-						},
+						$ref: '#/components/schemas/CheckIn'
 					},
 				},
 			},
 		},
+		examples: {
+			checkInsWithHistory: {
+				summary: '✅ Check-ins Retrieved',
+				description: 'Client has check-in history with detailed visit data',
+				value: {
+					message: 'Success',
+					checkIns: [
+						{
+							uid: 789,
+							checkInTime: '2023-11-20T09:00:00Z',
+							checkInLocation: 'Orrbit Technologies Office - 123 Business Park Drive, Pretoria',
+							checkInCoordinates: {
+								latitude: -25.7479,
+								longitude: 28.2293
+							},
+							checkOutTime: '2023-11-20T11:30:00Z',
+							checkOutLocation: 'Orrbit Technologies Office - 123 Business Park Drive, Pretoria',
+							duration: '2h 30m',
+							visitPurpose: 'Monthly business review and system maintenance',
+							visitType: 'SCHEDULED_VISIT',
+							status: 'COMPLETED',
+							owner: {
+								uid: 25,
+								name: 'John Smith',
+								email: 'john.smith@orrbit.co.za',
+								phone: '+27 82 555 0123'
+							},
+							notes: 'Client satisfied with service. Discussed upcoming project requirements and system upgrades.',
+							geofenceValidation: {
+								withinGeofence: true,
+								distance: 45,
+								accuracy: 5
+							},
+							createdAt: '2023-11-20T09:00:00Z',
+							updatedAt: '2023-11-20T11:30:00Z'
+						},
+						{
+							uid: 788,
+							checkInTime: '2023-11-13T14:00:00Z',
+							checkInLocation: 'Orrbit Technologies Office - 123 Business Park Drive, Pretoria',
+							checkOutTime: '2023-11-13T15:45:00Z',
+							duration: '1h 45m',
+							visitPurpose: 'Support ticket resolution',
+							visitType: 'SUPPORT_VISIT',
+							status: 'COMPLETED',
+							owner: {
+								uid: 25,
+								name: 'John Smith',
+								email: 'john.smith@orrbit.co.za'
+							},
+							notes: 'Resolved network connectivity issues. System running smoothly.',
+							createdAt: '2023-11-13T14:00:00Z'
+						}
+					]
+				}
+			},
+			noCheckIns: {
+				summary: '📭 No Check-ins Found',
+				description: 'Client has no recorded check-ins',
+				value: {
+					message: 'Success',
+					checkIns: []
+				}
+			},
+			ongoingCheckIn: {
+				summary: '🔄 Ongoing Check-in',
+				description: 'Client has an active check-in without check-out',
+				value: {
+					message: 'Success',
+					checkIns: [
+						{
+							uid: 790,
+							checkInTime: '2023-11-21T10:00:00Z',
+							checkInLocation: 'Orrbit Technologies Office - 123 Business Park Drive, Pretoria',
+							checkOutTime: null,
+							duration: null,
+							visitPurpose: 'Quarterly business review',
+							visitType: 'SCHEDULED_VISIT',
+							status: 'IN_PROGRESS',
+							owner: {
+								uid: 25,
+								name: 'John Smith',
+								email: 'john.smith@orrbit.co.za'
+							},
+							notes: 'Meeting in progress with leadership team.',
+							createdAt: '2023-11-21T10:00:00Z'
+						}
+					]
+				}
+			}
+		}
 	})
 	@ApiNotFoundResponse({
 		description: '❌ Client not found or access denied',
@@ -1773,25 +2047,90 @@ Clients can update the following information:
 		},
 	})
 	@ApiOkResponse({
-		description: '✅ Client profile updated successfully',
+		description: '✅ Client profile updated successfully through client portal with email notifications sent',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Client profile updated successfully' },
+				message: { 
+					type: 'string', 
+					example: 'Client profile updated successfully',
+					description: 'Confirmation that profile update was successful with email notifications sent'
+				},
 				data: {
 					type: 'object',
+					description: 'Additional information about the update',
 					properties: {
-						clientId: { type: 'number', example: 12345 },
+						clientId: { 
+							type: 'number', 
+							example: 12345,
+							description: 'Unique identifier of the updated client'
+						},
 						updatedFields: {
 							type: 'array',
 							items: { type: 'string' },
-							example: ['phone', 'website', 'description', 'address'],
+							example: ['phone', 'website', 'description', 'address', 'communicationSchedules'],
+							description: 'List of fields that were successfully updated'
 						},
-						lastUpdated: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+						lastUpdated: { 
+							type: 'string', 
+							format: 'date-time', 
+							example: '2023-12-01T10:00:00Z',
+							description: 'Timestamp of the profile update'
 					},
 				},
 			},
 		},
+		},
+		examples: {
+			contactInfoUpdate: {
+				summary: '✅ Contact Information Updated',
+				description: 'Client successfully updated contact details',
+				value: {
+					message: 'Client profile updated successfully',
+					data: {
+						clientId: 12345,
+						updatedFields: ['phone', 'alternativePhone', 'website'],
+						lastUpdated: '2023-12-01T10:00:00Z'
+					}
+				}
+			},
+			companyDetailsUpdate: {
+				summary: '🏢 Company Details Updated',
+				description: 'Client updated business information and address',
+				value: {
+					message: 'Client profile updated successfully',
+					data: {
+						clientId: 12345,
+						updatedFields: ['description', 'industry', 'companySize', 'address'],
+						lastUpdated: '2023-12-01T10:15:00Z'
+					}
+				}
+			},
+			communicationSchedulesUpdate: {
+				summary: '📅 Communication Preferences Updated',
+				description: 'Client updated communication schedules and preferences',
+				value: {
+					message: 'Client profile updated successfully',
+					data: {
+						clientId: 12345,
+						updatedFields: ['preferredContactMethod', 'communicationSchedules'],
+						lastUpdated: '2023-12-01T10:30:00Z'
+					}
+				}
+			},
+			socialProfilesUpdate: {
+				summary: '🌐 Social Profiles Updated',
+				description: 'Client updated social media and online presence',
+				value: {
+					message: 'Client profile updated successfully',
+					data: {
+						clientId: 12345,
+						updatedFields: ['website', 'socialProfiles'],
+						lastUpdated: '2023-12-01T10:45:00Z'
+					}
+				}
+			}
+		}
 	})
 	@ApiBadRequestResponse({
 		description: '❌ Bad Request - Invalid data or unauthorized field update',
@@ -1935,115 +2274,40 @@ Manually triggers the automated communication task generation cron job for testi
 		`,
 	})
 	@ApiCreatedResponse({
-		description: '✅ Communication task generation completed successfully with detailed results',
+		description: '✅ Communication task generation triggered successfully with automated 3-month scheduling',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Communication task generation completed successfully' },
-				data: {
-					type: 'object',
-					properties: {
-						executionTime: {
-							type: 'number',
-							example: 2847,
-							description: 'Total execution time in milliseconds',
-						},
-						processedSchedules: {
-							type: 'number',
-							example: 45,
-							description: 'Number of communication schedules processed',
-						},
-						tasksCreated: { type: 'number', example: 127, description: 'Total number of tasks created' },
-						usersNotified: {
-							type: 'number',
-							example: 12,
-							description: 'Number of users who received email notifications',
-						},
-						scheduleBreakdown: {
-							type: 'object',
-							properties: {
-								phoneCall: { type: 'number', example: 35, description: 'Phone call tasks created' },
-								email: { type: 'number', example: 28, description: 'Email tasks created' },
-								inPersonVisit: {
-									type: 'number',
-									example: 22,
-									description: 'In-person visit tasks created',
-								},
-								videoCall: { type: 'number', example: 18, description: 'Video call tasks created' },
-								whatsapp: { type: 'number', example: 15, description: 'WhatsApp tasks created' },
-								sms: { type: 'number', example: 9, description: 'SMS tasks created' },
-							},
-						},
-						timeWindow: {
-							type: 'object',
-							properties: {
-								startDate: { type: 'string', format: 'date', example: '2023-12-01' },
-								endDate: { type: 'string', format: 'date', example: '2024-03-01' },
-								windowDays: {
-									type: 'number',
-									example: 91,
-									description: 'Number of days in generation window',
-								},
-							},
-						},
-						userTaskDistribution: {
-							type: 'array',
-							items: {
-								type: 'object',
-								properties: {
-									userId: { type: 'number', example: 25 },
-									userName: { type: 'string', example: 'John Smith' },
-									tasksAssigned: { type: 'number', example: 18 },
-									emailSent: { type: 'boolean', example: true },
-								},
-							},
-						},
-						errors: {
-							type: 'array',
-							items: {
-								type: 'object',
-								properties: {
-									scheduleId: { type: 'number', example: 123 },
-									clientName: { type: 'string', example: 'Failed Client Ltd' },
-									error: { type: 'string', example: 'Invalid communication type specified' },
-									timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:30:00Z' },
-								},
-							},
-						},
-						performanceMetrics: {
-							type: 'object',
-							properties: {
-								averageTasksPerSchedule: { type: 'number', example: 2.82 },
-								processingRate: {
-									type: 'number',
-									example: 15.8,
-									description: 'Schedules processed per second',
-								},
-								successRate: {
-									type: 'number',
-									example: 97.2,
-									description: 'Percentage of successful task creations',
-								},
-								duplicatesSkipped: {
-									type: 'number',
-									example: 23,
-									description: 'Number of duplicate tasks skipped',
-								},
-							},
-						},
-						nextScheduledRun: { type: 'string', format: 'date-time', example: '2023-12-02T06:00:00Z' },
-						triggeredBy: {
-							type: 'object',
-							properties: {
-								userId: { type: 'number', example: 1 },
-								userName: { type: 'string', example: 'Admin User' },
-								timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T14:30:00Z' },
-							},
-						},
-					},
+				message: { 
+					type: 'string', 
+					example: 'Communication task generation completed successfully',
+					description: 'Confirmation that task generation process was triggered and completed'
 				},
 			},
 		},
+		examples: {
+			successfulGeneration: {
+				summary: '✅ Tasks Generated Successfully',
+				description: 'Communication tasks successfully generated for 3-month window',
+				value: {
+					message: 'Communication task generation completed successfully'
+				}
+			},
+			generationFailed: {
+				summary: '❌ Generation Failed',
+				description: 'Task generation encountered errors',
+				value: {
+					message: 'Task generation failed: Database connection timeout'
+				}
+			},
+			noActiveSchedules: {
+				summary: '📭 No Active Schedules',
+				description: 'No active communication schedules found for processing',
+				value: {
+					message: 'Communication task generation completed successfully'
+				}
+			}
+		}
 	})
 	async testTaskGeneration(@Req() req: AuthenticatedRequest) {
 		try {
@@ -2150,13 +2414,26 @@ Clients can update the following schedule information:
 	})
 	@ApiParam({ name: 'scheduleId', description: 'Communication schedule ID', type: 'number' })
 	@ApiOkResponse({
-		description: '✅ Communication schedule updated successfully',
+		description: '✅ Communication schedule updated successfully with automatic task regeneration',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Communication schedule updated successfully' },
+				message: { 
+					type: 'string', 
+					example: 'Communication schedule updated successfully',
+					description: 'Confirmation that the communication schedule has been updated'
+				},
 			},
 		},
+		examples: {
+			scheduleUpdated: {
+				summary: '✅ Schedule Updated',
+				description: 'Communication schedule successfully updated',
+				value: {
+					message: 'Communication schedule updated successfully'
+				}
+			}
+		}
 	})
 	@ApiNotFoundResponse({
 		description: '❌ Communication schedule not found',
@@ -2208,13 +2485,26 @@ Allows authenticated clients to delete their communication schedules through the
 	})
 	@ApiParam({ name: 'scheduleId', description: 'Communication schedule ID', type: 'number' })
 	@ApiOkResponse({
-		description: '✅ Communication schedule deleted successfully',
+		description: '✅ Communication schedule deleted successfully with existing tasks preserved',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Communication schedule deleted successfully' },
+				message: { 
+					type: 'string', 
+					example: 'Communication schedule deleted successfully',
+					description: 'Confirmation that the communication schedule has been permanently deleted'
+				},
 			},
 		},
+		examples: {
+			scheduleDeleted: {
+				summary: '✅ Schedule Deleted',
+				description: 'Communication schedule successfully deleted',
+				value: {
+					message: 'Communication schedule deleted successfully'
+				}
+			}
+		}
 	})
 	@ApiNotFoundResponse({
 		description: '❌ Communication schedule not found',
