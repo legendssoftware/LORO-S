@@ -66,7 +66,7 @@ export class UpdateClientDto extends PartialType(CreateClientDto) {
 	@IsOptional()
 	@Transform(({ value }) => value?.toLowerCase().trim())
 	@ApiProperty({
-		example: 'theguy@orrbit.co.za',
+		example: 'theguy@example.co.za',
 		description: 'The primary email address for the client - must be a valid email format',
 		format: 'email'
 	})
@@ -96,7 +96,7 @@ export class UpdateClientDto extends PartialType(CreateClientDto) {
 	@IsOptional()
 	@Transform(({ value }) => value?.trim())
 	@ApiProperty({
-		example: 'https://www.orrbit.co.za',
+		example: 'https://www.example.co.za',
 		description: 'The official website URL of the client - must include protocol (http/https)',
 		format: 'uri'
 	})
@@ -106,7 +106,7 @@ export class UpdateClientDto extends PartialType(CreateClientDto) {
 	@IsOptional()
 	@Transform(({ value }) => value?.trim())
 	@ApiProperty({
-		example: 'https://www.orrbit.co.za/logo.png',
+		example: 'https://www.example.co.za/logo.png',
 		description: 'The URL to the client logo image - must be a valid URL with protocol',
 		format: 'uri'
 	})

@@ -112,7 +112,7 @@ export class SocialProfilesDto {
 	@IsUrl({ require_protocol: true }, { message: 'LinkedIn URL must be a valid URL with protocol (http/https)' })
 	@IsOptional()
 	@ApiProperty({
-		example: 'https://www.linkedin.com/company/orrbit-technologies',
+		example: 'https://www.linkedin.com/company/loro-corp',
 		description: 'LinkedIn profile URL - must be a valid URL with protocol',
 	})
 	linkedin?: string;
@@ -120,7 +120,7 @@ export class SocialProfilesDto {
 	@IsUrl({ require_protocol: true }, { message: 'Twitter URL must be a valid URL with protocol (http/https)' })
 	@IsOptional()
 	@ApiProperty({
-		example: 'https://twitter.com/orrbit_tech',
+		example: 'https://twitter.com/loro-corp',
 		description: 'Twitter/X profile URL - must be a valid URL with protocol',
 	})
 	twitter?: string;
@@ -128,7 +128,7 @@ export class SocialProfilesDto {
 	@IsUrl({ require_protocol: true }, { message: 'Facebook URL must be a valid URL with protocol (http/https)' })
 	@IsOptional()
 	@ApiProperty({
-		example: 'https://www.facebook.com/orrbit.technologies',
+		example: 'https://www.facebook.com/loro.technologies',
 		description: 'Facebook page URL - must be a valid URL with protocol',
 	})
 	facebook?: string;
@@ -136,7 +136,7 @@ export class SocialProfilesDto {
 	@IsUrl({ require_protocol: true }, { message: 'Instagram URL must be a valid URL with protocol (http/https)' })
 	@IsOptional()
 	@ApiProperty({
-		example: 'https://www.instagram.com/orrbit_technologies',
+		example: 'https://www.instagram.com/loro-corpnologies',
 		description: 'Instagram profile URL - must be a valid URL with protocol',
 	})
 	instagram?: string;
@@ -148,7 +148,7 @@ export class CreateClientDto {
 	@Length(2, 100, { message: 'Client name must be between 2 and 100 characters' })
 	@Transform(({ value }) => value?.trim())
 	@ApiProperty({
-		example: 'Orrbit Technologies',
+		example: 'LORO CORP',
 		description: 'The name of the client company or organization',
 		minLength: 2,
 		maxLength: 100,
@@ -171,7 +171,7 @@ export class CreateClientDto {
 	@IsNotEmpty({ message: 'Email address is required' })
 	@Transform(({ value }) => value?.toLowerCase().trim())
 	@ApiProperty({
-		example: 'theguy@orrbit.co.za',
+		example: 'theguy@example.co.za',
 		description: 'The primary email address for the client - must be a valid email format',
 		format: 'email',
 	})
@@ -204,7 +204,7 @@ export class CreateClientDto {
 	@IsOptional()
 	@Transform(({ value }) => value?.trim())
 	@ApiProperty({
-		example: 'https://www.orrbit.co.za',
+		example: 'https://www.example.co.za',
 		description: 'The official website URL of the client - must include protocol (http/https)',
 		required: false,
 		format: 'uri',
@@ -215,7 +215,7 @@ export class CreateClientDto {
 	@IsOptional()
 	@Transform(({ value }) => value?.trim())
 	@ApiProperty({
-		example: 'https://www.orrbit.co.za/logo.png',
+		example: 'https://www.loro.co.za/logo.png',
 		description: 'The URL to the client logo image - must be a valid URL with protocol',
 		required: false,
 		format: 'uri',
@@ -227,7 +227,7 @@ export class CreateClientDto {
 	@Length(0, 1000, { message: 'Description must not exceed 1000 characters' })
 	@Transform(({ value }) => value?.trim())
 	@ApiProperty({
-		example: 'Orrbit Technologies is a leading provider of innovative business solutions in South Africa.',
+		example: 'LORO CORP is a leading provider of innovative business solutions in South Africa.',
 		description: 'A brief description of the client company and their business activities',
 		required: false,
 		maxLength: 1000,
