@@ -585,4 +585,14 @@ export class CreateClientDto {
 		required: false,
 	})
 	communicationSchedules?: CreateCommunicationScheduleDto[];
+
+	@IsBoolean()
+	@IsOptional()
+	@ApiProperty({
+		example: true,
+		description: 'Whether to send email notification to the client upon account creation. Default is true for automatic notifications.',
+		required: false,
+		default: true,
+	})
+	notifyClient?: boolean;
 }

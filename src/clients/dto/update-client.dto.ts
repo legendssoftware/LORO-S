@@ -468,4 +468,14 @@ export class UpdateClientDto extends PartialType(CreateClientDto) {
 		required: false,
 	})
 	communicationSchedules?: CreateCommunicationScheduleDto[];
+
+	@IsBoolean()
+	@IsOptional()
+	@ApiProperty({
+		example: true,
+		description: 'Whether to send email notification to the client upon profile update. Default is true for automatic notifications.',
+		required: false,
+		default: true,
+	})
+	notifyClient?: boolean;
 }

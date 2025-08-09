@@ -9,6 +9,7 @@ import { ConfigModule } from '@nestjs/config';
 import { RewardsModule } from '../rewards/rewards.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { LicensingModule } from '../licensing/licensing.module';
+import { ApprovalsModule } from '../approvals/approvals.module';
 import { User } from '../user/entities/user.entity';
 
 @Module({
@@ -18,6 +19,7 @@ import { User } from '../user/entities/user.entity';
 		RewardsModule,
 		LicensingModule,
 		EventEmitterModule,
+		ApprovalsModule,
 	],
 	controllers: [ClaimsController],
 	providers: [ClaimsService, CurrencyService, ClaimStatsService],

@@ -31,6 +31,9 @@ import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.in
 import { CreateUserTargetDto } from './dto/create-user-target.dto';
 import { UpdateUserTargetDto } from './dto/update-user-target.dto';
 import { ExternalTargetUpdateDto } from './dto/external-target-update.dto';
+import { User } from './entities/user.entity';
+import { UserTarget } from './entities/user-target.entity';
+import { PaginatedResponse } from '../lib/interfaces/product.interfaces';
 
 @ApiBearerAuth('JWT-auth')
 @ApiTags('👥 Users')
@@ -354,7 +357,7 @@ Creates a new user account in the system with full profile management and employ
 			}
 		}
 	})
-	create(@Body() createUserDto: CreateUserDto, @Req() req: AuthenticatedRequest) {
+	create(@Body() createUserDto: CreateUserDto, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
 		console.log(req, 'full request body')
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
@@ -594,7 +597,7 @@ Retrieves a comprehensive list of all users in your organization with advanced f
 		@Query('search') search?: string,
 		@Query('branchId') branchId?: number,
 		@Query('organisationId') organisationId?: number,
-	) {
+	): Promise<PaginatedResponse<Omit<User, 'password'>>> {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const userBranchId = req.user?.branch?.uid;
 
@@ -812,7 +815,7 @@ Retrieves detailed information about a specific user by their unique reference i
 			}
 		}
 	})
-	findOne(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
+	findOne(@Param('ref') ref: number, @Req() req: AuthenticatedRequest): Promise<{ user: Omit<User, 'password'> | null; message: string }> {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.userService.findOne(ref, orgId, branchId);
@@ -1163,7 +1166,7 @@ Updates an existing user's information with comprehensive validation and audit t
 			}
 		}
 	})
-	update(@Param('ref') ref: number, @Body() updateUserDto: UpdateUserDto, @Req() req: AuthenticatedRequest) {
+	update(@Param('ref') ref: number, @Body() updateUserDto: UpdateUserDto, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.userService.update(ref, updateUserDto, orgId, branchId);
@@ -1359,7 +1362,7 @@ Restores a previously deleted user account back to active status, maintaining da
 			}
 		}
 	})
-	restore(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
+	restore(@Param('ref') ref: number, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.userService.restore(ref, orgId, branchId);
@@ -1545,7 +1548,7 @@ Use the restore endpoint to recover accidentally deleted users within the retent
 			}
 		}
 	})
-	remove(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
+	remove(@Param('ref') ref: number, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.userService.remove(ref, orgId, branchId);
@@ -1688,7 +1691,7 @@ Retrieves comprehensive performance targets for a specific user with detailed pr
 			},
 		},
 	})
-	getUserTarget(@Param('ref') ref: number) {
+	getUserTarget(@Param('ref') ref: number): Promise<{ userTarget: UserTarget | null; message: string }> {
 		return this.userService.getUserTarget(ref);
 	}
 
@@ -1843,7 +1846,7 @@ Creates comprehensive performance targets for a specific user with advanced conf
 		},
 	})
 	@ApiNotFoundResponse({ description: '❌ User not found or not accessible' })
-	setUserTarget(@Param('ref') ref: number, @Body() createUserTargetDto: CreateUserTargetDto) {
+	setUserTarget(@Param('ref') ref: number, @Body() createUserTargetDto: CreateUserTargetDto): Promise<{ message: string }> {
 		return this.userService.setUserTarget(ref, createUserTargetDto);
 	}
 
@@ -2179,7 +2182,7 @@ Updates existing performance targets for a specific user with comprehensive vali
 			}
 		}
 	})
-	updateUserTarget(@Param('ref') ref: number, @Body() updateUserTargetDto: UpdateUserTargetDto) {
+	updateUserTarget(@Param('ref') ref: number, @Body() updateUserTargetDto: UpdateUserTargetDto): Promise<{ message: string }> {
 		return this.userService.updateUserTarget(ref, updateUserTargetDto);
 	}
 
@@ -2446,7 +2449,7 @@ Safely removes performance targets for a specific user with comprehensive cleanu
 			}
 		}
 	})
-	deleteUserTarget(@Param('ref') ref: number) {
+	deleteUserTarget(@Param('ref') ref: number): Promise<{ message: string }> {
 		return this.userService.deleteUserTarget(ref);
 	}
 

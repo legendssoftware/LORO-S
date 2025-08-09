@@ -487,7 +487,7 @@ export class LeaveService {
 				(updateLeaveDto.duration && updateLeaveDto.duration !== leave.duration);
 
 			if (criticalFieldsModified && updatedLeave && updatedLeave.status === LeaveStatus.PENDING) {
-				console.log(`🔄 [LeaveService] Reinitializing approval workflow for modified leave ${ref}`);
+				this.logger.log(`🔄 [LeaveService] Reinitializing approval workflow for modified leave ${ref}`);
 				await this.initializeLeaveApprovalWorkflow(updatedLeave, updatedLeave.owner);
 			}
 
@@ -751,7 +751,7 @@ export class LeaveService {
 	 */
 	private async initializeLeaveApprovalWorkflow(leave: Leave, requester: User): Promise<void> {
 		try {
-			console.log(`🔄 [LeaveService] Initializing approval workflow for leave ${leave.uid}`);
+			this.logger.log(`🔄 [LeaveService] Initializing approval workflow for leave ${leave.uid}`);
 
 			// Determine approval priority based on leave type and duration
 			let priority = ApprovalPriority.MEDIUM;
@@ -807,10 +807,10 @@ export class LeaveService {
 				branchUid: requester.branch?.uid,
 			} as any);
 
-			console.log(`✅ [LeaveService] Approval workflow initialized: approval ${approval.uid} for leave ${leave.uid}`);
+			this.logger.log(`✅ [LeaveService] Approval workflow initialized: approval ${approval.uid} for leave ${leave.uid}`);
 
 		} catch (error) {
-			console.error(`❌ [LeaveService] Error initializing approval workflow for leave ${leave.uid}:`, error.message);
+			this.logger.error(`❌ [LeaveService] Error initializing approval workflow for leave ${leave.uid}:`, error.message);
 			// Don't throw error - leave creation should succeed even if approval workflow fails
 			// This ensures backwards compatibility and system resilience
 		}
@@ -860,7 +860,7 @@ export class LeaveService {
 	 */
 	private async handleLeaveRevocation(leave: Leave, userId: number, cancellationReason: string): Promise<void> {
 		try {
-			console.log(`🔄 [LeaveService] Handling leave revocation for leave ${leave.uid}`);
+			this.logger.log(`🔄 [LeaveService] Handling leave revocation for leave ${leave.uid}`);
 
 			// Find any active approval workflows for this leave
 			const activeApprovals = await this.approvalsService.findAll({
@@ -870,7 +870,7 @@ export class LeaveService {
 			} as any, { uid: userId } as any);
 
 			if (activeApprovals && activeApprovals.data && activeApprovals.data.length > 0) {
-				console.log(`📋 [LeaveService] Found ${activeApprovals.data.length} active approval(s) for leave ${leave.uid}`);
+				this.logger.log(`📋 [LeaveService] Found ${activeApprovals.data.length} active approval(s) for leave ${leave.uid}`);
 				
 				for (const approval of activeApprovals.data) {
 					try {
@@ -881,18 +881,18 @@ export class LeaveService {
 							comments: `The associated leave request has been cancelled by ${userId === leave.owner?.uid ? 'the requester' : 'an administrator'}.`,
 						}, { uid: userId } as any);
 
-						console.log(`✅ [LeaveService] Approval ${approval.uid} withdrawn for cancelled leave ${leave.uid}`);
+						this.logger.log(`✅ [LeaveService] Approval ${approval.uid} withdrawn for cancelled leave ${leave.uid}`);
 					} catch (error) {
-						console.error(`❌ [LeaveService] Error withdrawing approval ${approval.uid}:`, error.message);
+						this.logger.error(`❌ [LeaveService] Error withdrawing approval ${approval.uid}:`, error.message);
 						// Continue with other approvals even if one fails
 					}
 				}
 			} else {
-				console.log(`ℹ️ [LeaveService] No active approvals found for leave ${leave.uid}`);
+				this.logger.log(`ℹ️ [LeaveService] No active approvals found for leave ${leave.uid}`);
 			}
 
 		} catch (error) {
-			console.error(`❌ [LeaveService] Error handling leave revocation for leave ${leave.uid}:`, error.message);
+			this.logger.error(`❌ [LeaveService] Error handling leave revocation for leave ${leave.uid}:`, error.message);
 			// Don't throw error - leave cancellation should succeed even if approval withdrawal fails
 		}
 	}
@@ -903,7 +903,7 @@ export class LeaveService {
 	 */
 	private async validateLeaveConflicts(leave: Leave): Promise<{ hasConflict: boolean; conflictingLeaves: Leave[] }> {
 		try {
-			console.log(`🔍 [LeaveService] Checking for leave conflicts for user ${leave.owner?.uid}`);
+			this.logger.log(`🔍 [LeaveService] Checking for leave conflicts for user ${leave.owner?.uid}`);
 
 			const conflictingLeaves = await this.leaveRepository.find({
 				where: {
@@ -924,7 +924,7 @@ export class LeaveService {
 				return (newStart <= existingEnd) && (newEnd >= existingStart);
 			});
 
-			console.log(`${hasConflict ? '⚠️' : '✅'} [LeaveService] Leave conflict check complete: ${hasConflict ? 'CONFLICT FOUND' : 'NO CONFLICTS'}`);
+			this.logger.log(`${hasConflict ? '⚠️' : '✅'} [LeaveService] Leave conflict check complete: ${hasConflict ? 'CONFLICT FOUND' : 'NO CONFLICTS'}`);
 
 			return {
 				hasConflict,
@@ -938,7 +938,7 @@ export class LeaveService {
 			};
 
 		} catch (error) {
-			console.error(`❌ [LeaveService] Error checking leave conflicts:`, error.message);
+			this.logger.error(`❌ [LeaveService] Error checking leave conflicts:`, error.message);
 			return { hasConflict: false, conflictingLeaves: [] };
 		}
 	}
@@ -960,7 +960,7 @@ export class LeaveService {
 				return; // No critical changes, no need to restart approval
 			}
 
-			console.log(`🔄 [LeaveService] Critical fields modified for leave ${leave.uid}, restarting approval process`);
+			this.logger.log(`🔄 [LeaveService] Critical fields modified for leave ${leave.uid}, restarting approval process`);
 
 			// Cancel existing approval workflows
 			await this.handleLeaveRevocation(leave, leave.owner?.uid || 0, 'Leave details modified, restarting approval process');
@@ -977,7 +977,7 @@ export class LeaveService {
 			// The approval workflow will be restarted by the update method calling initializeLeaveApprovalWorkflow
 
 		} catch (error) {
-			console.error(`❌ [LeaveService] Error handling leave modification during approval:`, error.message);
+			this.logger.error(`❌ [LeaveService] Error handling leave modification during approval:`, error.message);
 		}
 	}
 
@@ -988,7 +988,7 @@ export class LeaveService {
 	@OnEvent('approval.action.performed')
 	async handleApprovalAction(payload: any): Promise<void> {
 		try {
-			console.log(`🔄 [LeaveService] Handling approval action: ${payload.action} for approval ${payload.approvalId}`);
+			this.logger.log(`🔄 [LeaveService] Handling approval action: ${payload.action} for approval ${payload.approvalId}`);
 
 			// Check if this approval is for a leave request
 			if (payload.type !== ApprovalType.LEAVE_REQUEST) {
@@ -1001,14 +1001,14 @@ export class LeaveService {
 			});
 
 			if (!actionUser) {
-				console.error(`❌ [LeaveService] Action user ${payload.actionBy} not found for approval ${payload.approvalId}`);
+				this.logger.error(`❌ [LeaveService] Action user ${payload.actionBy} not found for approval ${payload.approvalId}`);
 				return;
 			}
 
 			// Find the approval to get the entity information
 			const approval = await this.approvalsService.findOne(payload.approvalId, actionUser as any);
 			if (!approval || approval.entityType !== 'leave') {
-				console.log(`⚠️ [LeaveService] Approval ${payload.approvalId} is not for a leave request`);
+				this.logger.log(`⚠️ [LeaveService] Approval ${payload.approvalId} is not for a leave request`);
 				return;
 			}
 
@@ -1019,7 +1019,7 @@ export class LeaveService {
 			});
 
 			if (!leave) {
-				console.error(`❌ [LeaveService] Leave request ${approval.entityId} not found for approval ${payload.approvalId}`);
+				this.logger.error(`❌ [LeaveService] Leave request ${approval.entityId} not found for approval ${payload.approvalId}`);
 				return;
 			}
 
@@ -1040,7 +1040,7 @@ export class LeaveService {
 							approvedAt: new Date(),
 							comments: payload.comments || 'Approved via approval workflow',
 						};
-						console.log(`✅ [LeaveService] Leave ${leave.uid} approved by ${actionUser?.email || payload.actionBy}`);
+						this.logger.log(`✅ [LeaveService] Leave ${leave.uid} approved by ${actionUser?.email || payload.actionBy}`);
 					}
 					break;
 
@@ -1051,7 +1051,7 @@ export class LeaveService {
 						rejectedAt: new Date(),
 						rejectionReason: payload.reason || payload.comments || 'Rejected via approval workflow',
 					};
-					console.log(`❌ [LeaveService] Leave ${leave.uid} rejected by ${actionUser?.email || payload.actionBy}`);
+					this.logger.log(`❌ [LeaveService] Leave ${leave.uid} rejected by ${actionUser?.email || payload.actionBy}`);
 					break;
 
 				case ApprovalAction.CANCEL:
@@ -1062,12 +1062,12 @@ export class LeaveService {
 						cancelledAt: new Date(),
 						cancellationReason: payload.reason || payload.comments || 'Cancelled via approval workflow',
 					};
-					console.log(`🚫 [LeaveService] Leave ${leave.uid} cancelled/withdrawn`);
+					this.logger.log(`🚫 [LeaveService] Leave ${leave.uid} cancelled/withdrawn`);
 					break;
 
 				default:
 					// For other actions like REQUEST_INFO, DELEGATE, ESCALATE, don't change leave status
-					console.log(`ℹ️ [LeaveService] No leave status change needed for action: ${payload.action}`);
+					this.logger.log(`ℹ️ [LeaveService] No leave status change needed for action: ${payload.action}`);
 					return;
 			}
 
@@ -1110,12 +1110,12 @@ export class LeaveService {
 					// Clear cache
 					await this.clearLeaveCache(leave.uid);
 
-					console.log(`✅ [LeaveService] Leave ${leave.uid} status updated from ${previousStatus} to ${newStatus}`);
+					this.logger.log(`✅ [LeaveService] Leave ${leave.uid} status updated from ${previousStatus} to ${newStatus}`);
 				}
 			}
 
 		} catch (error) {
-			console.error(`❌ [LeaveService] Error handling approval action:`, error.message);
+			this.logger.error(`❌ [LeaveService] Error handling approval action:`, error.message);
 			// Don't throw error - this is an event listener and should not break the approval workflow
 		}
 	}

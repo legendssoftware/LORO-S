@@ -59,49 +59,236 @@ export class ClientsService {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
 	}
 
-	private getCacheKey(key: string | number): string {
-		return `${this.CACHE_PREFIX}${key}`;
+	/**
+	 * Generates a standardized cache key for client-related data.
+	 * 
+	 * @param key - The unique identifier (string or number)
+	 * @param suffix - Optional suffix for key categorization
+	 * @returns Formatted cache key with consistent prefix
+	 */
+	private getCacheKey(key: string | number, suffix?: string): string {
+		const baseKey = `${this.CACHE_PREFIX}${key}`;
+		return suffix ? `${baseKey}_${suffix}` : baseKey;
 	}
 
 	/**
-	 * Invalidates all cache entries related to a specific client.
-	 * This ensures that any changes to a client are immediately reflected in API responses.
+	 * Generates cache keys for complex queries with multiple parameters.
+	 * 
+	 * @param params - Object containing query parameters
+	 * @returns Formatted cache key for complex queries
+	 */
+	private getComplexCacheKey(params: {
+		type: string;
+		page?: number;
+		limit?: number;
+		orgId?: number;
+		branchId?: number;
+		userId?: number;
+		filters?: Record<string, any>;
+	}): string {
+		const keyParts = [
+			this.CACHE_PREFIX,
+			params.type,
+			params.page && `page${params.page}`,
+			params.limit && `limit${params.limit}`,
+			params.orgId && `org${params.orgId}`,
+			params.branchId && `branch${params.branchId}`,
+			params.userId && `user${params.userId}`,
+			params.filters && Object.keys(params.filters).length > 0 && JSON.stringify(params.filters)
+		].filter(Boolean);
+
+		return keyParts.join('_');
+	}
+
+	/**
+	 * Sets cache with enhanced error handling and performance monitoring.
+	 * 
+	 * @param key - Cache key
+	 * @param data - Data to cache
+	 * @param ttl - Time to live (optional, uses service default)
+	 * @returns Promise<boolean> - Success status
+	 */
+	private async setCacheWithErrorHandling<T>(key: string, data: T, ttl?: number): Promise<boolean> {
+		try {
+			const cacheStart = Date.now();
+			await this.cacheManager.set(key, data, ttl || this.CACHE_TTL);
+			const cacheTime = Date.now() - cacheStart;
+			
+			this.logger.debug(`[CACHE_SET] Successfully cached data with key: ${key} in ${cacheTime}ms`);
+			return true;
+		} catch (error) {
+			this.logger.error(`[CACHE_SET] Failed to cache data with key ${key}: ${error.message}`);
+			return false;
+		}
+	}
+
+	/**
+	 * Gets cache with enhanced error handling and performance monitoring.
+	 * 
+	 * @param key - Cache key
+	 * @returns Promise<T | null> - Cached data or null
+	 */
+	private async getCacheWithErrorHandling<T>(key: string): Promise<T | null> {
+		try {
+			const cacheStart = Date.now();
+			const data = await this.cacheManager.get<T>(key);
+			const cacheTime = Date.now() - cacheStart;
+			
+			if (data) {
+				this.logger.debug(`[CACHE_GET] Cache hit for key: ${key} in ${cacheTime}ms`);
+			} else {
+				this.logger.debug(`[CACHE_GET] Cache miss for key: ${key} in ${cacheTime}ms`);
+			}
+			
+			return data || null;
+		} catch (error) {
+			this.logger.error(`[CACHE_GET] Failed to retrieve cache with key ${key}: ${error.message}`);
+			return null;
+		}
+	}
+
+	/**
+	 * Generates a fallback logo URL using UI Avatars service based on client name initials.
+	 * This method creates a professional-looking avatar with the client's initials when
+	 * no logo is provided or when the provided logo URL is invalid.
+	 *
+	 * @param clientName - The name of the client to extract initials from
+	 * @param size - The size of the generated avatar (default: 200px)
+	 * @param backgroundColor - Optional background color (default: random)
+	 * @param textColor - Optional text color (default: ffffff - white)
+	 * @returns A URL to the generated avatar image
+	 * 
+	 * @example
+	 * ```typescript
+	 * const logoUrl = this.generateFallbackLogo('John Doe Industries');
+	 * // Returns: https://ui-avatars.com/api/?name=John%20Doe%20Industries&size=200&background=random&color=ffffff&format=png
+	 * ```
+	 */
+	private generateFallbackLogo(
+		clientName: string, 
+		size: number = 200, 
+		backgroundColor: string = 'random',
+		textColor: string = 'ffffff'
+	): string {
+		if (!clientName || typeof clientName !== 'string') {
+			this.logger.warn('[LOGO_FALLBACK] Invalid client name provided, using default');
+			clientName = 'Client';
+		}
+
+		// Clean and encode the client name for URL
+		const encodedName = encodeURIComponent(clientName.trim());
+		
+		// UI Avatars API URL with professional styling
+		const avatarUrl = `https://ui-avatars.com/api/` +
+			`?name=${encodedName}` +
+			`&size=${size}` +
+			`&background=${backgroundColor}` +
+			`&color=${textColor}` +
+			`&format=png` +
+			`&bold=true` +
+			`&font-size=0.6`;
+
+		this.logger.debug(`[LOGO_FALLBACK] Generated fallback logo for "${clientName}": ${avatarUrl}`);
+		
+		return avatarUrl;
+	}
+
+	/**
+	 * Validates and processes the logo URL for a client.
+	 * If no logo is provided or if the provided URL is invalid, generates a fallback logo.
+	 *
+	 * @param logoUrl - The provided logo URL (optional)
+	 * @param clientName - The client name for fallback generation
+	 * @returns A valid logo URL (either the provided one or a generated fallback)
+	 */
+	private async processClientLogo(logoUrl?: string, clientName?: string): Promise<string> {
+		// If a logo URL is provided, validate it
+		if (logoUrl && logoUrl.trim()) {
+			try {
+				new URL(logoUrl); // This will throw if URL is invalid
+				this.logger.debug(`[LOGO_PROCESSING] Using provided logo URL: ${logoUrl}`);
+				return logoUrl.trim();
+			} catch (error) {
+				this.logger.warn(`[LOGO_PROCESSING] Invalid logo URL provided: ${logoUrl}, generating fallback`);
+			}
+		}
+
+		// Generate fallback logo using client name
+		const fallbackLogo = this.generateFallbackLogo(clientName || 'Client');
+		this.logger.debug(`[LOGO_PROCESSING] Generated fallback logo: ${fallbackLogo}`);
+		
+		return fallbackLogo;
+	}
+
+	/**
+	 * Invalidates all cache entries related to a specific client with comprehensive scope and error handling.
+	 * 
+	 * This method ensures immediate cache consistency by clearing:
+	 * - Direct client cache entries (by uid, email, name)
+	 * - Organization and branch related caches
+	 * - Status and category filtered caches
+	 * - All pagination and search result caches
+	 * - Cross-service cached references
+	 * 
+	 * The method uses a fail-safe approach where cache invalidation errors don't interrupt
+	 * the main operation, but are properly logged for monitoring and debugging.
 	 *
 	 * @param client - The client object whose cache needs to be invalidated
+	 * @returns Promise<void> - Completes cache invalidation or logs errors gracefully
 	 */
-	private async invalidateClientCache(client: Client) {
+	private async invalidateClientCache(client: Client): Promise<void> {
+		const startTime = Date.now();
+		this.logger.debug(`[CACHE_INVALIDATION] Starting cache invalidation for client ${client.uid} (${client.name})`);
+
 		try {
-			// Get all cache keys
-			const keys = await this.cacheManager.store.keys();
+			// Get all cache keys with error handling
+			let keys: string[] = [];
+			try {
+				keys = await this.cacheManager.store.keys();
+				this.logger.debug(`[CACHE_INVALIDATION] Retrieved ${keys.length} cache keys for evaluation`);
+			} catch (keyRetrievalError) {
+				this.logger.error(`[CACHE_INVALIDATION] Failed to retrieve cache keys: ${keyRetrievalError.message}`);
+				// Continue with manual key construction as fallback
+			}
 
 			// Keys to clear
-			const keysToDelete = [];
+			const keysToDelete: string[] = [];
 
 			// Add client-specific keys
-			keysToDelete.push(
+			const clientSpecificKeys = [
 				this.getCacheKey(client.uid),
 				this.getCacheKey(client.email),
 				this.getCacheKey(client.name),
 				`${this.CACHE_PREFIX}all`,
 				`${this.CACHE_PREFIX}stats`,
-			);
+			];
+			keysToDelete.push(...clientSpecificKeys);
+			this.logger.debug(`[CACHE_INVALIDATION] Added ${clientSpecificKeys.length} client-specific cache keys`);
 
 			// Add organization and branch specific keys
 			if (client.organisation?.uid) {
-				keysToDelete.push(`${this.CACHE_PREFIX}org_${client.organisation.uid}`);
+				const orgKey = `${this.CACHE_PREFIX}org_${client.organisation.uid}`;
+				keysToDelete.push(orgKey);
+				this.logger.debug(`[CACHE_INVALIDATION] Added organization cache key: ${orgKey}`);
 			}
 			if (client.branch?.uid) {
-				keysToDelete.push(`${this.CACHE_PREFIX}branch_${client.branch.uid}`);
+				const branchKey = `${this.CACHE_PREFIX}branch_${client.branch.uid}`;
+				keysToDelete.push(branchKey);
+				this.logger.debug(`[CACHE_INVALIDATION] Added branch cache key: ${branchKey}`);
 			}
 
 			// Add status specific keys
 			if (client.status) {
-				keysToDelete.push(`${this.CACHE_PREFIX}status_${client.status}`);
+				const statusKey = `${this.CACHE_PREFIX}status_${client.status}`;
+				keysToDelete.push(statusKey);
+				this.logger.debug(`[CACHE_INVALIDATION] Added status cache key: ${statusKey}`);
 			}
 
 			// Add category specific keys
 			if (client.category) {
-				keysToDelete.push(`${this.CACHE_PREFIX}category_${client.category}`);
+				const categoryKey = `${this.CACHE_PREFIX}category_${client.category}`;
+				keysToDelete.push(categoryKey);
+				this.logger.debug(`[CACHE_INVALIDATION] Added category cache key: ${categoryKey}`);
 			}
 
 			// Clear all pagination and filtered client list caches
@@ -113,47 +300,145 @@ export class ClientsService {
 					key.includes('search_'),
 			);
 			keysToDelete.push(...clientListCaches);
+			this.logger.debug(`[CACHE_INVALIDATION] Added ${clientListCaches.length} pagination/filter cache keys`);
 
-			// Clear all caches
-			await Promise.all(keysToDelete.map((key) => this.cacheManager.del(key)));
+			// Remove duplicates to optimize deletion
+			const uniqueKeysToDelete = [...new Set(keysToDelete)];
+			this.logger.debug(`[CACHE_INVALIDATION] Prepared ${uniqueKeysToDelete.length} unique cache keys for deletion`);
+
+			// Clear all caches with individual error handling
+			const deletionResults = await Promise.allSettled(
+				uniqueKeysToDelete.map(async (key) => {
+					try {
+						await this.cacheManager.del(key);
+						return { key, success: true };
+					} catch (error) {
+						this.logger.warn(`[CACHE_INVALIDATION] Failed to delete cache key ${key}: ${error.message}`);
+						return { key, success: false, error: error.message };
+					}
+				})
+			);
+
+			// Log deletion results
+			const successful = deletionResults.filter(result => result.status === 'fulfilled' && result.value.success).length;
+			const failed = deletionResults.length - successful;
+			this.logger.debug(`[CACHE_INVALIDATION] Cache deletion completed: ${successful} successful, ${failed} failed`);
 
 			// Emit event for other services that might be caching client data
+			try {
 			this.eventEmitter.emit('clients.cache.invalidate', {
 				clientId: client.uid,
-				keys: keysToDelete,
-			});
+					clientName: client.name,
+					organizationId: client.organisation?.uid,
+					branchId: client.branch?.uid,
+					keysDeleted: uniqueKeysToDelete,
+					deletionSummary: { successful, failed },
+					timestamp: new Date().toISOString(),
+				});
+				this.logger.debug(`[CACHE_INVALIDATION] Cache invalidation event emitted successfully`);
+			} catch (eventError) {
+				this.logger.error(`[CACHE_INVALIDATION] Failed to emit cache invalidation event: ${eventError.message}`);
+			}
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`[CACHE_INVALIDATION] Cache invalidation completed for client ${client.uid} in ${executionTime}ms`);
+
 		} catch (error) {
-			console.error('Error invalidating client cache:', error);
+			const executionTime = Date.now() - startTime;
+			this.logger.error(
+				`[CACHE_INVALIDATION] Fatal error during cache invalidation for client ${client.uid} after ${executionTime}ms: ${error.message}`,
+				error.stack
+			);
+			// Don't throw the error to avoid interrupting the main operation
 		}
 	}
 
 	/**
-	 * Retrieves the organization settings for a given organization ID.
-	 * Used to get default values for client-related settings like geofence radius.
+	 * Retrieves the organization settings for a given organization ID with comprehensive error handling.
+	 * 
+	 * Used to get default values for client-related settings such as:
+	 * - Default geofence radius for new clients
+	 * - Preferred communication methods
+	 * - Regional formatting preferences
+	 * - Business hour configurations
+	 * - Custom field templates
 	 *
 	 * @param orgId - The organization ID to get settings for
-	 * @returns The organization settings object or null if not found
+	 * @returns Promise<OrganisationSettings | null> - The organization settings object or null if not found
 	 */
 	private async getOrganisationSettings(orgId: number): Promise<OrganisationSettings | null> {
-		if (!orgId) return null;
+		const startTime = Date.now();
+		
+		if (!orgId || isNaN(orgId) || orgId <= 0) {
+			this.logger.debug(`[ORG_SETTINGS] Invalid organization ID provided: ${orgId}`);
+			return null;
+		}
+
+		this.logger.debug(`[ORG_SETTINGS] Fetching settings for organization ${orgId}`);
 
 		try {
-			return await this.organisationSettingsRepository.findOne({
+			const settings = await this.organisationSettingsRepository.findOne({
 				where: { organisationUid: orgId },
 			});
+
+			const executionTime = Date.now() - startTime;
+
+			if (settings) {
+				this.logger.debug(`[ORG_SETTINGS] Successfully retrieved settings for organization ${orgId} in ${executionTime}ms`);
+				return settings;
+			} else {
+				this.logger.debug(`[ORG_SETTINGS] No settings found for organization ${orgId} in ${executionTime}ms`);
+				return null;
+			}
 		} catch (error) {
-			console.error('Error fetching organisation settings:', error);
+			const executionTime = Date.now() - startTime;
+			this.logger.error(
+				`[ORG_SETTINGS] Error fetching organisation settings for org ${orgId} after ${executionTime}ms: ${error.message}`,
+				error.stack
+			);
 			return null;
 		}
 	}
 
+	/**
+	 * Creates a new client record in the system with comprehensive validation and processing.
+	 * 
+	 * This method handles the complete client creation workflow including:
+	 * - Email uniqueness validation within organization scope
+	 * - Logo processing (fallback generation if none provided)
+	 * - Geofencing setup with organization defaults
+	 * - Communication schedule creation
+	 * - Conditional email notifications based on notifyClient flag
+	 * - Cache invalidation for immediate data consistency
+	 * 
+	 * @param createClientDto - The client data transfer object containing all client information
+	 * @param orgId - Optional organization ID to associate the client with
+	 * @param branchId - Optional branch ID for further client categorization
+	 * @returns Promise<{ message: string }> - Success or error message
+	 * 
+	 * @throws BadRequestException - When validation fails or duplicate email found
+	 * @throws NotFoundException - When referenced organization/branch doesn't exist
+	 * 
+	 * @example
+	 * ```typescript
+	 * const result = await clientsService.create({
+	 *   name: 'Orrbit Technologies',
+	 *   contactPerson: 'The Guy',
+	 *   email: 'theguy@orrbit.co.za',
+	 *   phone: '+27 11 123 4567',
+	 *   address: { street: 'Business Park', city: 'Pretoria', ... },
+	 *   notifyClient: true
+	 * }, 1, 2);
+	 * ```
+	 */
 	async create(createClientDto: CreateClientDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
 		const startTime = Date.now();
 		this.logger.log(`[CLIENT_CREATE] Starting client creation for: ${createClientDto.email} ${orgId ? `in org: ${orgId}` : ''} ${branchId ? `in branch: ${branchId}` : ''}`);
+		this.logger.debug(`[CLIENT_CREATE] Request payload: ${JSON.stringify({ ...createClientDto, notifyClient: createClientDto.notifyClient ?? true }, null, 2)}`);
 
 		try {
 			this.logger.debug(`[CLIENT_CREATE] Checking for existing client with email: ${createClientDto.email}`);
-			// First, check for existing client with the same email
+			// First, check for existing client with the same email within organization scope
 			const existingClient = await this.clientsRepository.findOne({
 				where: {
 					email: createClientDto.email,
@@ -163,22 +448,32 @@ export class ClientsService {
 			});
 
 			if (existingClient) {
-				this.logger.warn(`[CLIENT_CREATE] Client with email ${createClientDto.email} already exists`);
-				throw new BadRequestException('A client with this email already exists');
+				this.logger.warn(`[CLIENT_CREATE] Client with email ${createClientDto.email} already exists in organization ${orgId || 'global'}`);
+				throw new BadRequestException(`A client with email ${createClientDto.email} already exists in this organization`);
 			}
 
-			// First, validate the orgId and branchId if provided
+			// Validate the orgId and branchId if provided
 			if (orgId) {
+				this.logger.debug(`[CLIENT_CREATE] Validating organization ${orgId}`);
 				const organisation = await this.organisationRepository.findOne({ where: { uid: orgId } });
 				if (!organisation) {
+					this.logger.error(`[CLIENT_CREATE] Organization ${orgId} not found`);
 					throw new BadRequestException(`Organisation with ID ${orgId} not found`);
 				}
+				this.logger.debug(`[CLIENT_CREATE] Organization ${orgId} validated successfully: ${organisation.name}`);
 			}
+
+			// Process and validate logo URL (generate fallback if needed)
+			this.logger.debug(`[CLIENT_CREATE] Processing logo for client: ${createClientDto.name}`);
+			const processedLogo = await this.processClientLogo(createClientDto.logo, createClientDto.name);
+			this.logger.debug(`[CLIENT_CREATE] Logo processed successfully: ${processedLogo}`);
 
 			// Transform the DTO data to match the entity structure
 			// This helps ensure TypeORM gets the correct data structure
 			const clientData = {
 				...createClientDto,
+				// Set the processed logo URL
+				logo: processedLogo,
 				// Only transform status if it exists in the DTO
 				...(createClientDto['status'] && { status: createClientDto['status'] as GeneralStatus }),
 				// Handle address separately to ensure it matches the entity structure
@@ -193,6 +488,8 @@ export class ClientsService {
 							...createClientDto.socialProfiles,
 					  }
 					: undefined,
+				// Remove notifyClient from client data as it's not part of the entity
+				notifyClient: undefined,
 			} as DeepPartial<Client>;
 
 			// Only set organization if orgId is provided and valid
@@ -261,10 +558,16 @@ export class ClientsService {
 			// Invalidate cache after creation
 			await this.invalidateClientCache(client);
 
-			// Send email notification to the client about their new account
-			try {
-				const frontendUrl = this.configService.get<string>('FRONTEND_URL') || 'http://loro.co.za';
-				const supportEmail = this.configService.get<string>('SUPPORT_EMAIL') || 'support@loro.co.za';
+			// Send email notification to the client about their new account (based on notifyClient flag)
+			const shouldNotifyClient = createClientDto.notifyClient !== false; // Default to true if not specified
+			this.logger.debug(`[CLIENT_CREATE] Email notification setting - notifyClient: ${shouldNotifyClient}`);
+
+			if (shouldNotifyClient) {
+				try {
+					this.logger.debug(`[CLIENT_CREATE] Preparing to send account creation email to: ${client.email}`);
+					
+					const frontendUrl = this.configService.get<string>('FRONTEND_URL') || 'http://orrbit.co.za';
+					const supportEmail = this.configService.get<string>('SUPPORT_EMAIL') || 'support@orrbit.co.za';
 				
 				const emailData = {
 					name: client.name,
@@ -272,18 +575,22 @@ export class ClientsService {
 					clientId: client.uid,
 					loginUrl: `${frontendUrl}/sign-in`,
 					supportEmail: supportEmail,
-					organizationName: client.organisation?.name || 'Loro',
+						organizationName: client.organisation?.name || 'Orrbit Technologies',
 					contactPerson: client.contactPerson || 'N/A',
 					phone: client.phone || 'N/A',
 					address: client.address ? `${client.address.street || ''}, ${client.address.city || ''}`.trim() : 'N/A',
 					createdAt: new Date(),
+						logoUrl: client.logo, // Include the processed logo URL
 				};
 
 				this.eventEmitter.emit('send.email', EmailType.CLIENT_ACCOUNT_CREATED, [client.email], emailData);
-				this.logger.log(`[CLIENT_CREATE] Account creation email sent to: ${client.email}`);
+					this.logger.log(`[CLIENT_CREATE] Account creation email sent successfully to: ${client.email}`);
 			} catch (emailError) {
-				this.logger.error(`[CLIENT_CREATE] Failed to send account creation email to ${client.email}: ${emailError.message}`);
-				// Don't fail the client creation if email sending fails
+					this.logger.error(`[CLIENT_CREATE] Failed to send account creation email to ${client.email}: ${emailError.message}`, emailError.stack);
+					// Don't fail the client creation if email sending fails - log the error and continue
+				}
+			} else {
+				this.logger.log(`[CLIENT_CREATE] Email notification skipped for client ${client.email} due to notifyClient=false`);
 			}
 
 			const executionTime = Date.now() - startTime;
@@ -301,6 +608,57 @@ export class ClientsService {
 		}
 	}
 
+	/**
+	 * Retrieves a paginated list of clients with advanced filtering and role-based access control.
+	 * 
+	 * This method implements comprehensive client retrieval with:
+	 * - Pagination support for large datasets
+	 * - Multi-field filtering (status, category, industry, risk level, search)
+	 * - Role-based access control (elevated users see all clients, regular users see assigned only)
+	 * - Organization and branch scoping
+	 * - Intelligent caching for improved performance
+	 * - Search across name, email, and phone fields
+	 * 
+	 * @param page - Page number for pagination (default: 1)
+	 * @param limit - Number of items per page (default: from environment)
+	 * @param orgId - Optional organization ID to filter clients
+	 * @param branchId - Optional branch ID for further filtering
+	 * @param filters - Optional filters object containing various filter criteria
+	 * @param filters.status - Filter by client status (ACTIVE, INACTIVE, CONVERTED, etc.)
+	 * @param filters.category - Filter by client category (enterprise, SME, individual, etc.)
+	 * @param filters.industry - Filter by industry sector
+	 * @param filters.riskLevel - Filter by risk assessment level
+	 * @param filters.search - Search term to match against name, email, or phone
+	 * @param userId - Optional user ID for role-based access control
+	 * @returns Promise<PaginatedResponse<Client>> - Paginated client data with metadata
+	 * 
+	 * @throws NotFoundException - When no clients found or user lacks access
+	 * 
+	 * @example
+	 * ```typescript
+	 * // Get all clients with pagination
+	 * const result = await clientsService.findAll(1, 20);
+	 * 
+	 * // Get clients with filters
+	 * const filteredResult = await clientsService.findAll(1, 10, 123, 456, {
+	 *   status: GeneralStatus.ACTIVE,
+	 *   category: 'enterprise',
+	 *   search: 'orrbit'
+	 * }, 789);
+	 * 
+	 * // Response structure:
+	 * // {
+	 * //   data: Client[],
+	 * //   meta: {
+	 * //     total: 150,
+	 * //     page: 1,
+	 * //     limit: 20,
+	 * //     totalPages: 8
+	 * //   },
+	 * //   message: "Success"
+	 * // }
+	 * ```
+	 */
 	async findAll(
 		page: number = 1,
 		limit: number = Number(process.env.DEFAULT_PAGE_LIMIT),
@@ -319,10 +677,18 @@ export class ClientsService {
 		this.logger.log(`[CLIENT_FIND_ALL] Finding clients - page: ${page}, limit: ${limit}, orgId: ${orgId}, branchId: ${branchId}, userId: ${userId}, filters: ${JSON.stringify(filters)}`);
 
 		try {
-			const cacheKey = `${
-				this.CACHE_PREFIX
-			}page${page}_limit${limit}_org${orgId}_branch${branchId}_user${userId}_${JSON.stringify(filters)}`;
-			const cachedClients = await this.cacheManager.get<PaginatedResponse<Client>>(cacheKey);
+			// Generate optimized cache key
+			const cacheKey = this.getComplexCacheKey({
+				type: 'findAll',
+				page,
+				limit,
+				orgId,
+				branchId,
+				userId,
+				filters
+			});
+
+			const cachedClients = await this.getCacheWithErrorHandling<PaginatedResponse<Client>>(cacheKey);
 
 			if (cachedClients) {
 				const executionTime = Date.now() - startTime;
@@ -452,7 +818,7 @@ export class ClientsService {
 				message: process.env.SUCCESS_MESSAGE,
 			};
 
-			await this.cacheManager.set(cacheKey, response, this.CACHE_TTL);
+			await this.setCacheWithErrorHandling(cacheKey, response);
 
 			const executionTime = Date.now() - startTime;
 			this.logger.log(`[CLIENT_FIND_ALL] Successfully retrieved ${clients.length} clients out of ${total} total in ${executionTime}ms`);
@@ -474,6 +840,47 @@ export class ClientsService {
 		}
 	}
 
+	/**
+	 * Retrieves a single client by ID with organization and branch scoping.
+	 * 
+	 * This method provides secure single client retrieval with:
+	 * - Organization and branch access control
+	 * - Comprehensive client data including relationships
+	 * - Intelligent caching for performance optimization
+	 * - Detailed logging for audit trails
+	 * 
+	 * @param ref - The unique identifier (uid) of the client to retrieve
+	 * @param orgId - Optional organization ID to ensure client belongs to organization
+	 * @param branchId - Optional branch ID to ensure client belongs to branch
+	 * @returns Promise<{ message: string; client: Client | null }> - Response with client data or null
+	 * 
+	 * @throws NotFoundException - When client is not found or access is denied
+	 * 
+	 * @example
+	 * ```typescript
+	 * // Get client by ID
+	 * const result = await clientsService.findOne(123);
+	 * 
+	 * // Get client with organization/branch scoping
+	 * const scopedResult = await clientsService.findOne(123, 456, 789);
+	 * 
+	 * // Response structure:
+	 * // {
+	 * //   message: "Success",
+	 * //   client: {
+	 * //     uid: 123,
+	 * //     name: "Orrbit Technologies",
+	 * //     email: "theguy@orrbit.co.za",
+	 * //     phone: "+27 11 123 4567",
+	 * //     branch: { uid: 789, name: "Pretoria South Africa" },
+	 * //     organisation: { uid: 456, name: "Orrbit Technologies" },
+	 * //     assignedSalesRep: { uid: 101, name: "Sales Rep" },
+	 * //     quotations: [...],
+	 * //     checkIns: [...]
+	 * //   }
+	 * // }
+	 * ```
+	 */
 	async findOne(ref: number, orgId?: number, branchId?: number): Promise<{ message: string; client: Client | null }> {
 		const startTime = Date.now();
 		this.logger.log(`[CLIENT_FIND_ONE] Finding client with ID: ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
@@ -544,15 +951,54 @@ export class ClientsService {
 	}
 
 	/**
-	 * Updates a client with the provided data.
-	 * If the client status is changed to CONVERTED, sends notification emails to both the client and
-	 * the assigned sales representative.
-	 *
-	 * @param ref - The unique identifier of the client to update
-	 * @param updateClientDto - The data to update the client with
-	 * @param orgId - Optional organization ID to filter clients by organization
-	 * @param branchId - Optional branch ID to filter clients by branch
-	 * @returns A response object with a success/error message
+	 * Updates a client with comprehensive validation, processing, and automation.
+	 * 
+	 * This method provides complete client update functionality including:
+	 * - Data validation and transformation
+	 * - Logo processing with fallback generation
+	 * - Geofencing configuration updates
+	 * - Communication schedule management
+	 * - Lead conversion automation (email notifications)
+	 * - Cache invalidation for data consistency
+	 * - Organization and branch access control
+	 * 
+	 * Special behavior for status changes:
+	 * - When status changes to CONVERTED, automatic email notifications are sent to both
+	 *   the client and their assigned sales representative with onboarding information
+	 * 
+	 * @param ref - The unique identifier (uid) of the client to update
+	 * @param updateClientDto - The client data to update including notifyClient flag
+	 * @param orgId - Optional organization ID to ensure client belongs to organization
+	 * @param branchId - Optional branch ID to ensure client belongs to branch
+	 * @returns Promise<{ message: string }> - Success or error message
+	 * 
+	 * @throws NotFoundException - When client is not found or access is denied
+	 * @throws BadRequestException - When validation fails or invalid geofencing data
+	 * 
+	 * @example
+	 * ```typescript
+	 * // Basic client update
+	 * const result = await clientsService.update(123, {
+	 *   name: "Updated Company Name",
+	 *   phone: "+27 11 987 6543",
+	 *   description: "Updated company description"
+	 * });
+	 * 
+	 * // Update with status conversion (triggers automation)
+	 * const conversionResult = await clientsService.update(123, {
+	 *   status: GeneralStatus.CONVERTED,
+	 *   creditLimit: 100000
+	 * }, 456, 789);
+	 * 
+	 * // Update with geofencing
+	 * const geoResult = await clientsService.update(123, {
+	 *   enableGeofence: true,
+	 *   latitude: -26.195246,
+	 *   longitude: 28.034088,
+	 *   geofenceRadius: 750,
+	 *   geofenceType: GeofenceType.RESTRICT
+	 * });
+	 * ```
 	 */
 	async update(
 		ref: number,
@@ -815,6 +1261,37 @@ export class ClientsService {
 		}
 	}
 
+	/**
+	 * Performs a soft delete on a client record with proper access control and cache management.
+	 * 
+	 * This method implements secure client deletion with:
+	 * - Soft delete (sets isDeleted flag instead of permanent removal)
+	 * - Organization and branch access control
+	 * - Cache invalidation for immediate consistency
+	 * - Comprehensive audit logging
+	 * - Data preservation for audit trails and potential restoration
+	 * 
+	 * Note: This is a soft delete operation. The client record remains in the database
+	 * but is marked as deleted and will not appear in normal queries.
+	 * 
+	 * @param ref - The unique identifier (uid) of the client to delete
+	 * @param orgId - Optional organization ID to ensure client belongs to organization
+	 * @param branchId - Optional branch ID to ensure client belongs to branch
+	 * @returns Promise<{ message: string }> - Success or error message
+	 * 
+	 * @throws NotFoundException - When client is not found or access is denied
+	 * 
+	 * @example
+	 * ```typescript
+	 * // Delete client by ID
+	 * const result = await clientsService.remove(123);
+	 * 
+	 * // Delete with organization/branch scoping
+	 * const scopedResult = await clientsService.remove(123, 456, 789);
+	 * 
+	 * // Response: { message: "Success" }
+	 * ```
+	 */
 	async remove(ref: number, orgId?: number, branchId?: number): Promise<{ message: string }> {
 		const startTime = Date.now();
 		this.logger.log(`[CLIENT_REMOVE] Starting soft delete for client ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
@@ -1101,6 +1578,62 @@ export class ClientsService {
 		return distance;
 	}
 
+	/**
+	 * Finds clients within a specified radius of given GPS coordinates using geolocation calculation.
+	 * 
+	 * This method provides advanced geospatial client discovery with:
+	 * - Haversine formula for accurate distance calculation
+	 * - Configurable search radius (default: 5km)
+	 * - Organization and branch filtering
+	 * - Distance-sorted results (closest first)
+	 * - Input validation for coordinates and radius
+	 * - Support for both metric and imperial measurements
+	 * 
+	 * Use cases:
+	 * - Field sales route optimization
+	 * - Territory management
+	 * - Proximity-based client services
+	 * - Emergency contact scenarios
+	 * - Regional analysis and reporting
+	 * 
+	 * @param latitude - GPS latitude coordinate (-90 to 90)
+	 * @param longitude - GPS longitude coordinate (-180 to 180)
+	 * @param radius - Search radius in kilometers (default: 5km)
+	 * @param orgId - Optional organization ID to filter results
+	 * @param branchId - Optional branch ID to filter results
+	 * @returns Promise<{ message: string; clients: Array<Client & { distance: number }> }> - Clients with calculated distances
+	 * 
+	 * @throws BadRequestException - When coordinates or radius are invalid
+	 * 
+	 * @example
+	 * ```typescript
+	 * // Find clients within 5km of Pretoria coordinates
+	 * const nearbyClients = await clientsService.findNearbyClients(
+	 *   -25.7479, 28.2293, 5
+	 * );
+	 * 
+	 * // Find clients within 10km for specific organization
+	 * const orgClients = await clientsService.findNearbyClients(
+	 *   -26.195246, 28.034088, 10, 123
+	 * );
+	 * 
+	 * // Response structure:
+	 * // {
+	 * //   message: "Success",
+	 * //   clients: [
+	 * //     {
+	 * //       uid: 456,
+	 * //       name: "Orrbit Technologies",
+	 * //       email: "theguy@orrbit.co.za",
+	 * //       latitude: -26.195246,
+	 * //       longitude: 28.034088,
+	 * //       distance: 2.3 // kilometers
+	 * //     },
+	 * //     // ... more clients sorted by distance
+	 * //   ]
+	 * // }
+	 * ```
+	 */
 	async findNearbyClients(
 		latitude: number,
 		longitude: number,
@@ -1907,14 +2440,33 @@ export class ClientsService {
 	}
 
 	/**
-	 * Updates a client's profile through the client portal.
-	 * This method is specifically for clients updating their own profile information.
-	 * It includes permission validation and email notifications.
+	 * Updates a client's profile through the client portal with comprehensive validation and processing.
+	 * 
+	 * This method is specifically for clients updating their own profile information and includes:
+	 * - Permission validation to ensure clients can only update allowed fields
+	 * - Logo processing with fallback generation
+	 * - Communication schedule management
+	 * - Conditional email notifications based on notifyClient flag
+	 * - Admin notifications for profile changes
+	 * - Cache invalidation for data consistency
 	 *
 	 * @param clientAuthId - The ClientAuth.uid from the JWT token
-	 * @param updateClientDto - The data to update the client with
+	 * @param updateClientDto - The data to update the client with including notifyClient flag
 	 * @param organisationRef - The organization reference from JWT token
-	 * @returns A response object with success/error message and updated data
+	 * @returns Promise<{ message: string; data?: any }> - Success/error message with updated data
+	 * 
+	 * @throws NotFoundException - When client profile is not found
+	 * @throws BadRequestException - When organization mismatch or invalid fields provided
+	 * 
+	 * @example
+	 * ```typescript
+	 * const result = await clientsService.updateClientProfile(123, {
+	 *   name: 'Updated Company Name',
+	 *   phone: '+27 11 987 6543',
+	 *   description: 'Updated company description',
+	 *   notifyClient: false // Skip email notifications
+	 * }, 1);
+	 * ```
 	 */
 	async updateClientProfile(
 		clientAuthId: number,
@@ -1923,6 +2475,7 @@ export class ClientsService {
 	): Promise<{ message: string; data?: any }> {
 		const startTime = Date.now();
 		this.logger.log(`[CLIENT_PROFILE_UPDATE] Starting profile update for clientAuthId: ${clientAuthId} in org: ${organisationRef}`);
+		this.logger.debug(`[CLIENT_PROFILE_UPDATE] Update payload: ${JSON.stringify({ ...updateClientDto, notifyClient: updateClientDto.notifyClient ?? true }, null, 2)}`);
 
 		try {
 			// 1. Find the ClientAuth record and related Client
@@ -1954,6 +2507,14 @@ export class ClientsService {
 				'leads', 'interactions', 'gpsCoordinates'
 			];
 
+			// Process logo if provided (generate fallback if needed)
+			let processedLogo: string | undefined;
+			if (updateClientDto.logo !== undefined) {
+				this.logger.debug(`[CLIENT_PROFILE_UPDATE] Processing logo update for client: ${client.name}`);
+				processedLogo = await this.processClientLogo(updateClientDto.logo, updateClientDto.name || client.name);
+				this.logger.debug(`[CLIENT_PROFILE_UPDATE] Logo processed successfully: ${processedLogo}`);
+			}
+
 			// Create a sanitized update object with only allowed fields
 			const allowedUpdateData: Partial<UpdateClientDto> = {};
 			const updatedFields: string[] = [];
@@ -1962,11 +2523,18 @@ export class ClientsService {
 			const allowedFields = [
 				'contactPerson', 'phone', 'alternativePhone', 'website', 'description',
 				'address', 'category', 'preferredContactMethod', 'tags', 'industry',
-				'companySize', 'preferredLanguage', 'socialProfiles', 'customFields', 'communicationSchedules', 'email', 'name'
+				'companySize', 'preferredLanguage', 'socialProfiles', 'customFields', 'communicationSchedules', 'email', 'name', 'logo'
 			];
 
 			for (const [key, value] of Object.entries(updateClientDto)) {
-				if (allowedFields.includes(key) && value !== undefined) {
+				if (key === 'notifyClient') {
+					// Skip notifyClient as it's not part of the entity
+					continue;
+				} else if (key === 'logo' && processedLogo) {
+					// Use the processed logo
+					allowedUpdateData[key] = processedLogo;
+					updatedFields.push(key);
+				} else if (allowedFields.includes(key) && value !== undefined) {
 					allowedUpdateData[key] = value;
 					updatedFields.push(key);
 				} else if (restrictedFields.includes(key)) {
@@ -2053,8 +2621,16 @@ export class ClientsService {
 				throw new NotFoundException('Updated client not found');
 			}
 
-			// 7. Send email notifications
+			// 7. Send email notifications (based on notifyClient flag)
+			const shouldNotifyClient = updateClientDto.notifyClient !== false; // Default to true if not specified
+			this.logger.debug(`[CLIENT_PROFILE_UPDATE] Email notification setting - notifyClient: ${shouldNotifyClient}`);
+
+			if (shouldNotifyClient) {
+				this.logger.debug(`[CLIENT_PROFILE_UPDATE] Sending profile update notifications for client ${client.uid}`);
 			await this.sendClientProfileUpdateNotifications(updatedClient, updatedFields, clientAuth.email);
+			} else {
+				this.logger.log(`[CLIENT_PROFILE_UPDATE] Email notifications skipped for client ${client.uid} due to notifyClient=false`);
+			}
 
 			const executionTime = Date.now() - startTime;
 			this.logger.log(`[CLIENT_PROFILE_UPDATE] Successfully updated client profile ${client.uid} in ${executionTime}ms`);

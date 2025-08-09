@@ -29,6 +29,8 @@ import { AccessLevel } from '../lib/enums/user.enums';
 import { Roles } from '../decorators/role.decorator';
 import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
 import { Client } from './entities/client.entity';
+import { CheckIn } from '../check-ins/entities/check-in.entity';
+import { PaginatedResponse } from '../lib/interfaces/product.interfaces';
 import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
 import { GeneralStatus } from '../lib/enums/status.enums';
 
@@ -492,7 +494,7 @@ Creates a new client record in the system with comprehensive business relationsh
 			},
 		},
 	})
-	create(@Body() createClientDto: CreateClientDto, @Req() req: AuthenticatedRequest) {
+	create(@Body() createClientDto: CreateClientDto, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.clientsService.create(createClientDto, orgId, branchId);
@@ -824,7 +826,7 @@ Retrieves a comprehensive list of all clients without user-specific filtering fo
 		@Query('limit') limit?: number,
 		@Query('status') status?: GeneralStatus,
 		@Query('search') search?: string,
-	) {
+	): Promise<PaginatedResponse<Client>> {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		const filters = { status, search };
@@ -1141,7 +1143,7 @@ Retrieves a paginated list of clients with user-specific filtering and role-base
 		@Query('status') status?: GeneralStatus,
 		@Query('category') category?: string,
 		@Query('search') search?: string,
-	) {
+	): Promise<PaginatedResponse<Client>> {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		const userId = req.user?.uid;
@@ -1391,7 +1393,7 @@ Retrieves comprehensive information about a specific client including all relate
 			}
 		}
 	})
-	findOne(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
+	findOne(@Param('ref') ref: number, @Req() req: AuthenticatedRequest): Promise<{ message: string; client: Client | null }> {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.clientsService.findOne(ref, orgId, branchId);
@@ -1645,7 +1647,7 @@ When converting a lead to client (status = 'CONVERTED'):
 			},
 		},
 	})
-	update(@Param('ref') ref: number, @Body() updateClientDto: UpdateClientDto, @Req() req: AuthenticatedRequest) {
+	update(@Param('ref') ref: number, @Body() updateClientDto: UpdateClientDto, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.clientsService.update(ref, updateClientDto, orgId, branchId);
@@ -1752,7 +1754,7 @@ Restores a previously soft-deleted client back to active status, recovering all 
 			},
 		},
 	})
-	restore(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
+	restore(@Param('ref') ref: number, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.clientsService.restore(ref, orgId, branchId);
@@ -1864,7 +1866,7 @@ Marks a client as deleted without permanently removing data from the database, a
 			},
 		},
 	})
-	remove(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
+	remove(@Param('ref') ref: number, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.clientsService.remove(ref, orgId, branchId);
@@ -2097,7 +2099,7 @@ Discovers clients within a specified radius of given GPS coordinates, enabling l
 		@Query('radius') radius: number = 5,
 		@Query('orgId') orgId?: number,
 		@Query('branchId') branchId?: number,
-	) {
+	): Promise<{ message: string; clients: Array<Client & { distance: number }> }> {
 		return this.clientsService.findNearbyClients(latitude, longitude, radius, orgId, branchId);
 	}
 
@@ -2305,7 +2307,7 @@ Retrieves comprehensive check-in history with location data, visit duration, and
 			},
 		},
 	})
-	getClientCheckIns(@Param('clientId') clientId: number, @Req() req: AuthenticatedRequest) {
+	getClientCheckIns(@Param('clientId') clientId: number, @Req() req: AuthenticatedRequest): Promise<{ message: string; checkIns: CheckIn[] }> {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.clientsService.getClientCheckIns(clientId, orgId, branchId);
@@ -2543,7 +2545,7 @@ Clients can update the following information:
 			},
 		},
 	})
-	updateClientProfile(@Body() updateClientDto: UpdateClientDto, @Req() req: AuthenticatedRequest) {
+	updateClientProfile(@Body() updateClientDto: UpdateClientDto, @Req() req: AuthenticatedRequest): Promise<{ message: string; data?: any }> {
 		// Extract client auth ID from JWT token (this is the ClientAuth.uid, not Client.uid)
 		const clientAuthId = req.user?.uid;
 		const organisationRef = req.user?.organisationRef;
@@ -2728,7 +2730,7 @@ Each schedule includes:
 			},
 		},
 	})
-	getClientCommunicationSchedules(@Req() req: AuthenticatedRequest) {
+	getClientCommunicationSchedules(@Req() req: AuthenticatedRequest): Promise<{ message: string; schedules?: any[] }> {
 		const clientAuthId = req.user?.uid;
 		const organisationRef = req.user?.organisationRef;
 		return this.clientsService.getClientCommunicationSchedules(clientAuthId, organisationRef);
@@ -2797,7 +2799,7 @@ Clients can update the following schedule information:
 		@Param('scheduleId') scheduleId: number,
 		@Body() updateDto: UpdateCommunicationScheduleDto,
 		@Req() req: AuthenticatedRequest,
-	) {
+	): Promise<{ message: string }> {
 		const clientAuthId = req.user?.uid;
 		const organisationRef = req.user?.organisationRef;
 		return this.clientsService.updateClientCommunicationSchedule(
@@ -2863,7 +2865,7 @@ Allows authenticated clients to delete their communication schedules through the
 			},
 		},
 	})
-	deleteClientCommunicationSchedule(@Param('scheduleId') scheduleId: number, @Req() req: AuthenticatedRequest) {
+	deleteClientCommunicationSchedule(@Param('scheduleId') scheduleId: number, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
 		const clientAuthId = req.user?.uid;
 		const organisationRef = req.user?.organisationRef;
 		return this.clientsService.deleteClientCommunicationSchedule(clientAuthId, scheduleId, organisationRef);

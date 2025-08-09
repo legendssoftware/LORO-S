@@ -1,10 +1,10 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { CreateClaimDto } from './dto/create-claim.dto';
 import { UpdateClaimDto } from './dto/update-claim.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Claim } from './entities/claim.entity';
 import { IsNull, Repository, DeepPartial, Not, Between } from 'typeorm';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { endOfDay } from 'date-fns';
 import { startOfDay } from 'date-fns';
 import { ClaimCategory, ClaimStatus } from '../lib/enums/finance.enums';
@@ -17,10 +17,13 @@ import { XP_VALUES_TYPES } from '../lib/constants/constants';
 import { XP_VALUES } from '../lib/constants/constants';
 import { PaginatedResponse } from '../lib/interfaces/product.interfaces';
 import { User } from '../user/entities/user.entity';
+import { ApprovalsService } from '../approvals/approvals.service';
+import { ApprovalType, ApprovalPriority, ApprovalFlow, NotificationFrequency, ApprovalAction, ApprovalStatus } from '../lib/enums/approval.enums';
 import { ClaimEmailData, ClaimStatusUpdateEmailData } from '../lib/types/email-templates.types';
 
 @Injectable()
 export class ClaimsService {
+	private readonly logger = new Logger(ClaimsService.name);
 	private readonly currencyLocale: string;
 	private readonly currencyCode: string;
 	private readonly currencySymbol: string;
@@ -33,6 +36,7 @@ export class ClaimsService {
 		private readonly configService: ConfigService,
 		@InjectRepository(User)
 		private userRepository: Repository<User>,
+		private readonly approvalsService: ApprovalsService,
 	) {
 		this.currencyLocale = this.configService.get<string>('CURRENCY_LOCALE') || 'en-ZA';
 		this.currencyCode = this.configService.get<string>('CURRENCY_CODE') || 'ZAR';
@@ -108,8 +112,12 @@ export class ClaimsService {
 				throw new NotFoundException(process.env.CREATE_ERROR_MESSAGE);
 			}
 
-					// Invalidate cache after creation
-		this.invalidateClaimsCache(claim);
+			// Initialize approval workflow for the claim
+			this.logger.log(`🔄 [ClaimsService] Initializing approval workflow for claim ${claim.uid}`);
+			await this.initializeClaimApprovalWorkflow(claim, user);
+
+			// Invalidate cache after creation
+			this.invalidateClaimsCache(claim);
 
 		const response = {
 			message: process.env.SUCCESS_MESSAGE,
@@ -1007,5 +1015,256 @@ export class ClaimsService {
 				approvalRate: `${((stats.approved / stats.claims) * 100).toFixed(1)}%`,
 			}))
 			.sort((a, b) => b.totalClaims - a.totalClaims);
+	}
+
+	/**
+	 * Initialize approval workflow for claim requests
+	 * Creates an approval request that integrates with the approval system
+	 */
+	private async initializeClaimApprovalWorkflow(claim: Claim, requester: User): Promise<void> {
+		try {
+			this.logger.log(`🔄 [ClaimsService] Initializing approval workflow for claim ${claim.uid}`);
+
+			// Determine approval priority based on claim amount and category
+			let priority = ApprovalPriority.MEDIUM;
+			const amount = parseFloat(claim.amount) || 0;
+			
+			if (amount > 50000) { // High value claims
+				priority = ApprovalPriority.HIGH;
+			} else if (amount > 100000) { // Very high value claims
+				priority = ApprovalPriority.CRITICAL;
+			} else if (amount < 1000) { // Small claims
+				priority = ApprovalPriority.LOW;
+			}
+
+			// Special priority for certain categories
+			if (claim.category === ClaimCategory.ANNOUNCEMENT) {
+				priority = ApprovalPriority.HIGH;
+			}
+
+			// Calculate approval deadline based on amount and priority
+			const deadline = this.calculateClaimApprovalDeadline(amount, priority);
+
+			// Create approval request
+			const approvalDto = {
+				title: `${claim.category || 'General'} Claim - ${this.formatCurrency(amount)}`,
+				description: `${requester.name || requester.email} has submitted a ${claim.category || 'general'} claim for ${this.formatCurrency(amount)}. ${claim.comments ? 'Details: ' + claim.comments : ''}`,
+				type: ApprovalType.EXPENSE_CLAIM,
+				priority: priority,
+				flowType: ApprovalFlow.SEQUENTIAL, // Sequential approval for claims
+				entityId: claim.uid,
+				entityType: 'claim',
+				amount: amount,
+				currency: this.currencyCode,
+				deadline: deadline.toISOString(),
+				requiresSignature: amount > 10000, // Require signature for high-value claims
+				isUrgent: priority === ApprovalPriority.CRITICAL || priority === ApprovalPriority.HIGH,
+				notificationFrequency: NotificationFrequency.IMMEDIATE,
+				emailNotificationsEnabled: true,
+				pushNotificationsEnabled: true,
+				organisationRef: requester.organisationRef,
+				branchUid: requester.branch?.uid,
+				metadata: {
+					claimId: claim.uid,
+					claimCategory: claim.category,
+					claimAmount: amount,
+					currency: this.currencyCode,
+					documentUrl: claim.documentUrl,
+					requesterName: requester.name,
+					requesterEmail: requester.email,
+					branchName: claim.branch?.name,
+					submittedAt: claim.createdAt,
+				},
+				customFields: {
+					tags: ['expense-claim', claim.category?.toLowerCase() || 'general'],
+				},
+			};
+
+			// Create the approval using the approvals service
+			const approval = await this.approvalsService.create(approvalDto, {
+				user: requester,
+				organisationRef: requester.organisationRef,
+				branchUid: requester.branch?.uid,
+			} as any);
+
+			this.logger.log(`✅ [ClaimsService] Approval workflow initialized: approval ${approval.uid} for claim ${claim.uid}`);
+
+		} catch (error) {
+			this.logger.error(`❌ [ClaimsService] Error initializing approval workflow for claim ${claim.uid}:`, error.message);
+			// Don't throw error - claim creation should succeed even if approval workflow fails
+			// This ensures backwards compatibility and system resilience
+		}
+	}
+
+	/**
+	 * Calculate appropriate deadline for claim approval based on amount and priority
+	 */
+	private calculateClaimApprovalDeadline(amount: number, priority: ApprovalPriority): Date {
+		const now = new Date();
+		
+		if (priority === ApprovalPriority.CRITICAL) {
+			// Critical claims - 4 hours
+			return new Date(now.getTime() + (4 * 60 * 60 * 1000));
+		} else if (priority === ApprovalPriority.HIGH || amount > 50000) {
+			// High priority or high value - 1 business day
+			const deadline = new Date(now);
+			deadline.setDate(deadline.getDate() + 1);
+			deadline.setHours(17, 0, 0, 0); // 5 PM next day
+			return deadline;
+		} else if (priority === ApprovalPriority.MEDIUM) {
+			// Medium priority - 3 business days
+			const deadline = new Date(now);
+			deadline.setDate(deadline.getDate() + 3);
+			deadline.setHours(17, 0, 0, 0); // 5 PM in 3 days
+			return deadline;
+		} else {
+			// Low priority - 5 business days
+			const deadline = new Date(now);
+			deadline.setDate(deadline.getDate() + 5);
+			deadline.setHours(17, 0, 0, 0); // 5 PM in 5 days
+			return deadline;
+		}
+	}
+
+	/**
+	 * Event listener for approval workflow actions
+	 * Updates claim status based on approval decisions
+	 */
+	@OnEvent('approval.action.performed')
+	async handleApprovalAction(payload: any): Promise<void> {
+		try {
+			this.logger.log(`🔄 [ClaimsService] Handling approval action: ${payload.action} for approval ${payload.approvalId}`);
+
+			// Check if this approval is for a claim request
+			if (payload.type !== ApprovalType.EXPENSE_CLAIM) {
+				return; // Not a claim request, ignore
+			}
+
+			// Get the user who performed the action for approval lookup
+			const actionUser = await this.userRepository.findOne({
+				where: { uid: payload.actionBy },
+			});
+
+			if (!actionUser) {
+				this.logger.error(`❌ [ClaimsService] Action user ${payload.actionBy} not found for approval ${payload.approvalId}`);
+				return;
+			}
+
+			// Find the approval to get the entity information
+			const approval = await this.approvalsService.findOne(payload.approvalId, actionUser as any);
+			if (!approval || approval.entityType !== 'claim') {
+				this.logger.log(`⚠️ [ClaimsService] Approval ${payload.approvalId} is not for a claim request`);
+				return;
+			}
+
+			// Find the corresponding claim request
+			const claim = await this.claimsRepository.findOne({
+				where: { uid: approval.entityId },
+				relations: ['owner', 'organisation', 'branch'],
+			});
+
+			if (!claim) {
+				this.logger.error(`❌ [ClaimsService] Claim request ${approval.entityId} not found for approval ${payload.approvalId}`);
+				return;
+			}
+
+			const previousStatus = claim.status;
+			let newStatus: ClaimStatus;
+			let updateFields: Partial<Claim> = {};
+
+			// Handle different approval actions
+			switch (payload.action) {
+				case ApprovalAction.APPROVE:
+					newStatus = ClaimStatus.APPROVED;
+					updateFields = {
+						status: newStatus,
+						verifiedAt: new Date(),
+						verifiedBy: actionUser,
+						comments: payload.comments || claim.comments,
+					};
+					this.logger.log(`✅ [ClaimsService] Claim ${claim.uid} approved by user ${actionUser.uid}`);
+					break;
+
+				case ApprovalAction.REJECT:
+					newStatus = ClaimStatus.DECLINED;
+					updateFields = {
+						status: newStatus,
+						comments: payload.reason || payload.comments || 'Claim rejected',
+					};
+					this.logger.log(`❌ [ClaimsService] Claim ${claim.uid} rejected by user ${actionUser.uid}: ${payload.reason}`);
+					break;
+
+				case ApprovalAction.REQUEST_INFO:
+					newStatus = ClaimStatus.PENDING; // Keep as pending but add comments
+					updateFields = {
+						comments: `Additional information requested: ${payload.comments || payload.reason || ''}`,
+					};
+					this.logger.log(`📝 [ClaimsService] Additional info requested for claim ${claim.uid} by user ${actionUser.uid}`);
+					break;
+
+				default:
+					this.logger.log(`⚠️ [ClaimsService] Unhandled approval action: ${payload.action} for claim ${claim.uid}`);
+					return;
+			}
+
+			// Update the claim
+			await this.claimsRepository.update(claim.uid, updateFields);
+
+			// Invalidate cache
+			this.invalidateClaimsCache(claim);
+
+			// Log the status change
+			this.logger.log(`🔄 [ClaimsService] Claim ${claim.uid} status updated: ${previousStatus} → ${newStatus}`);
+
+			// Send notification email to claim owner if status changed
+			if (previousStatus !== newStatus && claim.owner?.email) {
+				const emailData: ClaimStatusUpdateEmailData = {
+					name: claim.owner.name || claim.owner.email,
+					claimId: claim.uid,
+					amount: this.formatCurrency(Number(claim.amount) || 0),
+					category: claim.category || 'General',
+					status: newStatus,
+					comments: updateFields.comments || '',
+					submittedDate: claim.createdAt.toISOString().split('T')[0],
+					submittedBy: {
+						name: claim.owner.name || claim.owner.email,
+						email: claim.owner.email,
+					},
+					branch: claim.branch ? {
+						name: claim.branch.name,
+					} : undefined,
+					organization: {
+						name: claim.organisation?.name || 'Organization',
+					},
+					dashboardLink: `${process.env.APP_URL || 'https://loro.co.za'}/claims`,
+					previousStatus: previousStatus,
+					processedAt: new Date().toISOString(),
+					approvalNotes: payload.comments,
+					rejectionReason: payload.reason,
+				};
+
+				// Determine email type based on new status
+				let emailType: EmailType;
+				switch (newStatus) {
+					case ClaimStatus.APPROVED:
+						emailType = EmailType.CLAIM_APPROVED;
+						break;
+					case ClaimStatus.DECLINED:
+						emailType = EmailType.CLAIM_REJECTED;
+						break;
+					default:
+						emailType = EmailType.CLAIM_STATUS_UPDATE;
+						break;
+				}
+
+				// Send email notification
+				this.eventEmitter.emit('send.email', emailType, [claim.owner.email], emailData);
+			}
+
+			this.logger.log(`✅ [ClaimsService] Successfully handled approval action for claim ${claim.uid}`);
+
+		} catch (error) {
+			this.logger.error(`❌ [ClaimsService] Error handling approval action:`, error.message);
+		}
 	}
 }
