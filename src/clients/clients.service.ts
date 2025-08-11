@@ -1090,14 +1090,10 @@ export class ClientsService {
 			});
 
 			if (user) {
-				// Check if user has elevated access (admin, owner, developer, manager, support)
+				// Check if user has elevated access (only admin and owner can see all org clients)
 				const elevatedRoles = [
 					AccessLevel.OWNER,
-					AccessLevel.ADMIN,
-					AccessLevel.DEVELOPER,
-					AccessLevel.MANAGER,
-					AccessLevel.SUPPORT,
-					AccessLevel.SUPERVISOR
+					AccessLevel.ADMIN
 				];
 				
 				hasElevatedAccess = elevatedRoles.includes(user.accessLevel);
@@ -1823,14 +1819,10 @@ export class ClientsService {
 			});
 
 			if (user) {
-				// Check if user has elevated access (admin, owner, developer, manager, support)
+				// Check if user has elevated access (only admin and owner can see all org clients)
 				const elevatedRoles = [
 					AccessLevel.OWNER,
-					AccessLevel.ADMIN,
-					AccessLevel.DEVELOPER,
-					AccessLevel.MANAGER,
-					AccessLevel.SUPPORT,
-					AccessLevel.SUPERVISOR
+					AccessLevel.ADMIN
 				];
 				
 				hasElevatedAccess = elevatedRoles.includes(user.accessLevel);
