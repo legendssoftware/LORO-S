@@ -306,7 +306,7 @@ Submit a new approval request for organizational workflow processing with compre
 
     // Get all approvals with filtering and pagination
     @Get()
-    @Roles(AccessLevel.USER)
+    @Roles(AccessLevel.MANAGER)
     @ApiOperation({ 
         summary: '📋 Get all approvals with advanced filtering',
         description: `

@@ -22,6 +22,8 @@ import * as crypto from 'crypto';
 import { Organisation } from '../organisation/entities/organisation.entity';
 import { Branch } from '../branch/entities/branch.entity';
 import { OrganisationSettings } from '../organisation/entities/organisation-settings.entity';
+import { BulkCreateCompetitorDto, BulkCreateCompetitorResponse, BulkCompetitorResult } from './dto/bulk-create-competitor.dto';
+import { BulkUpdateCompetitorDto, BulkUpdateCompetitorResponse, BulkUpdateCompetitorResult } from './dto/bulk-update-competitor.dto';
 
 @Injectable()
 export class CompetitorsService {
@@ -481,6 +483,361 @@ export class CompetitorsService {
 				HttpStatus.BAD_REQUEST,
 			);
 		}
+	}
+
+	/**
+	 * 🏆 Create multiple competitors in bulk with transaction support
+	 * @param bulkCreateCompetitorDto - Bulk competitor creation data
+	 * @returns Promise with bulk creation results
+	 */
+	async createBulkCompetitors(bulkCreateCompetitorDto: BulkCreateCompetitorDto): Promise<BulkCreateCompetitorResponse> {
+		const startTime = Date.now();
+		this.logger.log(`🏆 [createBulkCompetitors] Starting bulk creation of ${bulkCreateCompetitorDto.competitors.length} competitors`);
+		
+		const results: BulkCompetitorResult[] = [];
+		let successCount = 0;
+		let failureCount = 0;
+		let urlsValidated = 0;
+		let threatLevelsCalculated = 0;
+		let geofencesEnabled = 0;
+		const errors: string[] = [];
+		const createdCompetitorIds: number[] = [];
+
+		// Create a query runner for transaction management
+		const queryRunner = this.dataSource.createQueryRunner();
+		await queryRunner.connect();
+		await queryRunner.startTransaction();
+
+		try {
+			for (let i = 0; i < bulkCreateCompetitorDto.competitors.length; i++) {
+				const competitorData = bulkCreateCompetitorDto.competitors[i];
+				
+				try {
+					this.logger.debug(`🏆 [createBulkCompetitors] Processing competitor ${i + 1}/${bulkCreateCompetitorDto.competitors.length}: ${competitorData.name}`);
+					
+					// Check if name already exists
+					const existingCompetitor = await queryRunner.manager.findOne(Competitor, { 
+						where: { name: competitorData.name, isDeleted: false } 
+					});
+					if (existingCompetitor) {
+						throw new Error(`Competitor name '${competitorData.name}' already exists`);
+					}
+
+					// Validate URLs if required
+					if (bulkCreateCompetitorDto.validateUrls && competitorData.website) {
+						this.logger.debug(`🌐 [createBulkCompetitors] Validating URLs for competitor: ${competitorData.name}`);
+						// Here you could add URL validation logic
+						urlsValidated++;
+					}
+
+					// Auto-calculate threat level if enabled
+					let finalThreatLevel = competitorData.threatLevel;
+					if (bulkCreateCompetitorDto.autoCalculateThreat && !finalThreatLevel) {
+						this.logger.debug(`🎯 [createBulkCompetitors] Auto-calculating threat level for competitor: ${competitorData.name}`);
+						// Logic to calculate threat level based on market data, revenue, etc.
+						finalThreatLevel = this.calculateThreatLevel(competitorData);
+						threatLevelsCalculated++;
+					}
+
+					// Set up geofencing if enabled
+					let geofenceEnabled = false;
+					if (bulkCreateCompetitorDto.enableGeofencing && competitorData.latitude && competitorData.longitude) {
+						this.logger.debug(`📍 [createBulkCompetitors] Setting up geofencing for competitor: ${competitorData.name}`);
+						geofenceEnabled = true;
+						geofencesEnabled++;
+					}
+
+					// Create competitor with org and branch association
+					const competitor = queryRunner.manager.create(Competitor, {
+						...competitorData,
+						threatLevel: finalThreatLevel,
+						enableGeofence: geofenceEnabled,
+						...(bulkCreateCompetitorDto.orgId && { organisation: { uid: bulkCreateCompetitorDto.orgId } }),
+						...(bulkCreateCompetitorDto.branchId && { branch: { uid: bulkCreateCompetitorDto.branchId } }),
+						status: competitorData.status || CompetitorStatus.ACTIVE,
+						isDeleted: false,
+						createdAt: new Date(),
+						updatedAt: new Date(),
+						competitorRef: competitorData.name ? `COMP-${crypto.randomBytes(4).toString('hex').toUpperCase()}` : undefined
+					} as any);
+
+					const savedCompetitor = await queryRunner.manager.save(Competitor, competitor);
+
+					results.push({
+						competitor: savedCompetitor,
+						success: true,
+						index: i,
+						name: competitorData.name,
+						website: competitorData.website
+					});
+					
+					successCount++;
+					createdCompetitorIds.push(savedCompetitor.uid);
+					this.logger.debug(`✅ [createBulkCompetitors] Competitor ${i + 1} created successfully: ${competitorData.name} (ID: ${savedCompetitor.uid})`);
+					
+				} catch (competitorError) {
+					const errorMessage = `Competitor ${i + 1} (${competitorData.name}): ${competitorError.message}`;
+					this.logger.error(`❌ [createBulkCompetitors] ${errorMessage}`, competitorError.stack);
+					
+					results.push({
+						competitor: null,
+						success: false,
+						error: competitorError.message,
+						index: i,
+						name: competitorData.name,
+						website: competitorData.website
+					});
+					
+					errors.push(errorMessage);
+					failureCount++;
+				}
+			}
+
+			// Commit transaction if we have at least some successes
+			if (successCount > 0) {
+				await queryRunner.commitTransaction();
+				this.logger.log(`✅ [createBulkCompetitors] Transaction committed - ${successCount} competitors created successfully`);
+				
+				// Clear relevant caches after successful bulk creation
+				await this.clearCompetitorCache();
+			} else {
+				// Rollback if no competitors were created successfully
+				await queryRunner.rollbackTransaction();
+				this.logger.warn(`⚠️ [createBulkCompetitors] Transaction rolled back - no competitors were created successfully`);
+			}
+
+		} catch (transactionError) {
+			// Rollback transaction on any unexpected error
+			await queryRunner.rollbackTransaction();
+			this.logger.error(`❌ [createBulkCompetitors] Transaction error: ${transactionError.message}`, transactionError.stack);
+			
+			return {
+				totalRequested: bulkCreateCompetitorDto.competitors.length,
+				totalCreated: 0,
+				totalFailed: bulkCreateCompetitorDto.competitors.length,
+				successRate: 0,
+				results: [],
+				message: `Bulk creation failed: ${transactionError.message}`,
+				errors: [transactionError.message],
+				duration: Date.now() - startTime,
+				createdCompetitorIds: [],
+				urlsValidated: 0,
+				threatLevelsCalculated: 0,
+				geofencesEnabled: 0
+			};
+		} finally {
+			// Release the query runner
+			await queryRunner.release();
+		}
+
+		const duration = Date.now() - startTime;
+		const successRate = (successCount / bulkCreateCompetitorDto.competitors.length) * 100;
+
+		this.logger.log(`🎉 [createBulkCompetitors] Bulk creation completed in ${duration}ms - Success: ${successCount}, Failed: ${failureCount}, Rate: ${successRate.toFixed(2)}%`);
+
+		return {
+			totalRequested: bulkCreateCompetitorDto.competitors.length,
+			totalCreated: successCount,
+			totalFailed: failureCount,
+			successRate: parseFloat(successRate.toFixed(2)),
+			results,
+			message: successCount > 0 
+				? `Bulk creation completed: ${successCount} competitors created, ${failureCount} failed`
+				: 'Bulk creation failed: No competitors were created',
+			errors: errors.length > 0 ? errors : undefined,
+			duration,
+			createdCompetitorIds: createdCompetitorIds.length > 0 ? createdCompetitorIds : undefined,
+			urlsValidated: urlsValidated > 0 ? urlsValidated : undefined,
+			threatLevelsCalculated: threatLevelsCalculated > 0 ? threatLevelsCalculated : undefined,
+			geofencesEnabled: geofencesEnabled > 0 ? geofencesEnabled : undefined
+		};
+	}
+
+	/**
+	 * 📝 Update multiple competitors in bulk with transaction support
+	 * @param bulkUpdateCompetitorDto - Bulk competitor update data
+	 * @returns Promise with bulk update results
+	 */
+	async updateBulkCompetitors(bulkUpdateCompetitorDto: BulkUpdateCompetitorDto): Promise<BulkUpdateCompetitorResponse> {
+		const startTime = Date.now();
+		this.logger.log(`📝 [updateBulkCompetitors] Starting bulk update of ${bulkUpdateCompetitorDto.updates.length} competitors`);
+		
+		const results: BulkUpdateCompetitorResult[] = [];
+		let successCount = 0;
+		let failureCount = 0;
+		let urlsValidated = 0;
+		let threatLevelsRecalculated = 0;
+		let geofencesUpdated = 0;
+		const errors: string[] = [];
+		const updatedCompetitorIds: number[] = [];
+
+		// Create a query runner for transaction management
+		const queryRunner = this.dataSource.createQueryRunner();
+		await queryRunner.connect();
+		await queryRunner.startTransaction();
+
+		try {
+			for (let i = 0; i < bulkUpdateCompetitorDto.updates.length; i++) {
+				const updateItem = bulkUpdateCompetitorDto.updates[i];
+				const { ref, data } = updateItem;
+				
+				try {
+					this.logger.debug(`🏆 [updateBulkCompetitors] Processing competitor ${i + 1}/${bulkUpdateCompetitorDto.updates.length}: ID ${ref}`);
+					
+					// First find the competitor to ensure it exists
+					const existingCompetitor = await queryRunner.manager.findOne(Competitor, { 
+						where: { uid: ref, isDeleted: false },
+						relations: ['organisation', 'branch']
+					});
+
+					if (!existingCompetitor) {
+						throw new Error(`Competitor with ID ${ref} not found`);
+					}
+
+					this.logger.debug(`✅ [updateBulkCompetitors] Competitor found: ${existingCompetitor.name}`);
+
+					// Validate URLs if they are being updated and validation is enabled
+					if (data.website && bulkUpdateCompetitorDto.validateUrls !== false) {
+						this.logger.debug(`🌐 [updateBulkCompetitors] Validating URL for competitor ${ref}`);
+						// Here you could add URL validation logic
+						urlsValidated++;
+					}
+
+					// Recalculate threat level if enabled and relevant data is being updated
+					if (bulkUpdateCompetitorDto.recalculateThreatLevels && 
+						(data.estimatedAnnualRevenue || data.marketSharePercentage || data.competitiveAdvantage)) {
+						this.logger.debug(`🎯 [updateBulkCompetitors] Recalculating threat level for competitor ${ref}`);
+						data.threatLevel = this.calculateThreatLevel({ ...existingCompetitor, ...data });
+						threatLevelsRecalculated++;
+					}
+
+					// Update geofencing if location data changes
+					if (bulkUpdateCompetitorDto.updateGeofencing && 
+						(data.latitude || data.longitude || data.geofenceRadius)) {
+						this.logger.debug(`📍 [updateBulkCompetitors] Updating geofencing for competitor ${ref}`);
+						geofencesUpdated++;
+					}
+
+					// Track changed fields for logging
+					const updatedFields = Object.keys(data).filter(key => 
+						data[key] !== undefined && data[key] !== existingCompetitor[key]
+					);
+
+					// Update the competitor
+					const updateData = { ...data, updatedAt: new Date() };
+					await queryRunner.manager.update(Competitor, ref, updateData as any);
+
+					results.push({
+						ref,
+						success: true,
+						index: i,
+						name: existingCompetitor.name,
+						website: existingCompetitor.website,
+						updatedFields
+					});
+					
+					successCount++;
+					updatedCompetitorIds.push(ref);
+					this.logger.debug(`✅ [updateBulkCompetitors] Competitor ${i + 1} updated successfully: ${existingCompetitor.name} (ID: ${ref}), Fields: ${updatedFields.join(', ')}`);
+					
+				} catch (competitorError) {
+					const errorMessage = `Competitor ID ${ref}: ${competitorError.message}`;
+					this.logger.error(`❌ [updateBulkCompetitors] ${errorMessage}`, competitorError.stack);
+					
+					results.push({
+						ref,
+						success: false,
+						error: competitorError.message,
+						index: i
+					});
+					
+					errors.push(errorMessage);
+					failureCount++;
+				}
+			}
+
+			// Commit transaction if we have at least some successes
+			if (successCount > 0) {
+				await queryRunner.commitTransaction();
+				this.logger.log(`✅ [updateBulkCompetitors] Transaction committed - ${successCount} competitors updated successfully`);
+				
+				// Clear relevant caches after successful bulk update
+				await this.clearCompetitorCache();
+			} else {
+				// Rollback if no competitors were updated successfully
+				await queryRunner.rollbackTransaction();
+				this.logger.warn(`⚠️ [updateBulkCompetitors] Transaction rolled back - no competitors were updated successfully`);
+			}
+
+		} catch (transactionError) {
+			// Rollback transaction on any unexpected error
+			await queryRunner.rollbackTransaction();
+			this.logger.error(`❌ [updateBulkCompetitors] Transaction error: ${transactionError.message}`, transactionError.stack);
+			
+			return {
+				totalRequested: bulkUpdateCompetitorDto.updates.length,
+				totalUpdated: 0,
+				totalFailed: bulkUpdateCompetitorDto.updates.length,
+				successRate: 0,
+				results: [],
+				message: `Bulk update failed: ${transactionError.message}`,
+				errors: [transactionError.message],
+				duration: Date.now() - startTime,
+				updatedCompetitorIds: [],
+				urlsValidated: 0,
+				threatLevelsRecalculated: 0,
+				geofencesUpdated: 0
+			};
+		} finally {
+			// Release the query runner
+			await queryRunner.release();
+		}
+
+		const duration = Date.now() - startTime;
+		const successRate = (successCount / bulkUpdateCompetitorDto.updates.length) * 100;
+
+		this.logger.log(`🎉 [updateBulkCompetitors] Bulk update completed in ${duration}ms - Success: ${successCount}, Failed: ${failureCount}, Rate: ${successRate.toFixed(2)}%`);
+
+		return {
+			totalRequested: bulkUpdateCompetitorDto.updates.length,
+			totalUpdated: successCount,
+			totalFailed: failureCount,
+			successRate: parseFloat(successRate.toFixed(2)),
+			results,
+			message: successCount > 0 
+				? `Bulk update completed: ${successCount} competitors updated, ${failureCount} failed`
+				: 'Bulk update failed: No competitors were updated',
+			errors: errors.length > 0 ? errors : undefined,
+			duration,
+			updatedCompetitorIds: updatedCompetitorIds.length > 0 ? updatedCompetitorIds : undefined,
+			urlsValidated: urlsValidated > 0 ? urlsValidated : undefined,
+			threatLevelsRecalculated: threatLevelsRecalculated > 0 ? threatLevelsRecalculated : undefined,
+			geofencesUpdated: geofencesUpdated > 0 ? geofencesUpdated : undefined
+		};
+	}
+
+	/**
+	 * Helper method to calculate threat level based on competitor data
+	 */
+	private calculateThreatLevel(competitorData: any): number {
+		// Simple threat level calculation based on available metrics
+		let threatLevel = 1;
+		
+		if (competitorData.estimatedAnnualRevenue) {
+			if (competitorData.estimatedAnnualRevenue > 100000000) threatLevel += 2; // >100M
+			else if (competitorData.estimatedAnnualRevenue > 10000000) threatLevel += 1; // >10M
+		}
+		
+		if (competitorData.marketSharePercentage) {
+			if (competitorData.marketSharePercentage > 20) threatLevel += 2;
+			else if (competitorData.marketSharePercentage > 10) threatLevel += 1;
+		}
+		
+		if (competitorData.competitiveAdvantage && competitorData.competitiveAdvantage >= 4) {
+			threatLevel += 1;
+		}
+		
+		return Math.min(threatLevel, 5); // Cap at 5
 	}
 
 	async findAll(

@@ -2,6 +2,8 @@ import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, Re
 import { ClientsService } from './clients.service';
 import { CreateClientDto } from './dto/create-client.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
+import { BulkCreateClientDto, BulkCreateClientResponse } from './dto/bulk-create-client.dto';
+import { BulkUpdateClientDto, BulkUpdateClientResponse } from './dto/bulk-update-client.dto';
 import { UpdateCommunicationScheduleDto } from './dto/communication-schedule.dto';
 import {
 	ApiOperation,
@@ -498,6 +500,403 @@ Creates a new client record in the system with comprehensive business relationsh
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.clientsService.create(createClientDto, orgId, branchId);
+	}
+
+	@Post('bulk')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.SUPPORT,
+		AccessLevel.DEVELOPER,
+		AccessLevel.OWNER,
+	)
+	@ApiOperation({
+		summary: '🏢 Create multiple clients in bulk',
+		description: `
+# Bulk Client Creation
+
+Create multiple clients simultaneously with transaction support and advanced features.
+
+## Features
+- **Transaction Safety**: All-or-nothing creation with rollback on failures
+- **Detailed Results**: Individual success/failure tracking for each client
+- **Email Notifications**: Optional welcome emails for new clients
+- **Auto-Assignment**: Automatic sales rep assignment based on territory
+- **Address Validation**: Optional geocoding and validation
+- **Organization Scoping**: Automatic association with user's organization/branch
+
+## Usage
+- Submit up to 50 clients per request
+- Each client follows the standard CreateClientDto schema
+- Failed clients don't affect successful ones (when possible)
+- Duplicate email addresses are automatically detected and rejected
+
+## Response
+Returns detailed results including:
+- Total requested/created/failed counts
+- Success rate percentage
+- Individual client results with error details
+- Performance metrics and execution time
+- Optional email and validation counts
+
+## Limits
+- Maximum 50 clients per request
+- Email addresses must be unique within the system
+- All required fields must be provided for each client
+		`,
+	})
+	@ApiBody({
+		type: BulkCreateClientDto,
+		description: 'Array of clients to create with optional settings',
+		examples: {
+			'Enterprise Onboarding': {
+				summary: 'Create multiple enterprise clients with full details',
+				value: {
+					orgId: 1,
+					branchId: 1,
+					sendWelcomeEmails: true,
+					autoAssignSalesReps: true,
+					validateAddresses: true,
+					clients: [
+						{
+							name: 'LORO Corp',
+							contactPerson: 'The Guy',
+							email: 'theguy@example.co.za',
+							phone: '+27 11 123 4567',
+							alternativePhone: '+27 82 987 6543',
+							website: 'https://www.example.co.za',
+							description: 'Leading technology solutions provider in South Africa',
+							address: {
+								street: '123 Innovation Drive',
+								suburb: 'Pretoria South Africa',
+								city: 'Pretoria',
+								state: 'Gauteng',
+								country: 'South Africa',
+								postalCode: '0002'
+							},
+							category: 'enterprise',
+							industry: 'Technology',
+							companySize: 250,
+							annualRevenue: 50000000,
+							creditLimit: 1000000,
+							priceTier: 'ENTERPRISE',
+							preferredContactMethod: 'EMAIL',
+							preferredLanguage: 'English',
+							riskLevel: 'LOW',
+							acquisitionChannel: 'REFERRAL',
+							latitude: -25.7479,
+							longitude: 28.2293,
+							assignedSalesRep: { uid: 1 },
+							tags: ['Enterprise', 'Technology', 'High Value'],
+							visibleCategories: ['Software', 'Hardware', 'Services']
+						},
+						{
+							name: 'Digital Solutions SA',
+							contactPerson: 'Business Manager',
+							email: 'manager@digitalsolutions.co.za',
+							phone: '+27 21 555 0123',
+							website: 'https://www.digitalsolutions.co.za',
+							description: 'Digital transformation specialists for SMEs',
+							address: {
+								street: '456 Tech Park Avenue',
+								suburb: 'Cape Town',
+								city: 'Cape Town',
+								state: 'Western Cape',
+								country: 'South Africa',
+								postalCode: '8001'
+							},
+							category: 'enterprise',
+							industry: 'Digital Services',
+							companySize: 150,
+							annualRevenue: 25000000,
+							creditLimit: 500000,
+							priceTier: 'PREMIUM',
+							preferredContactMethod: 'PHONE',
+							riskLevel: 'LOW',
+							acquisitionChannel: 'MARKETING',
+							latitude: -33.9249,
+							longitude: 18.4241,
+							assignedSalesRep: { uid: 2 },
+							tags: ['SME', 'Digital', 'Growth']
+						}
+					]
+				}
+			},
+			'SME Client Batch': {
+				summary: 'Create multiple SME clients with essential information',
+				value: {
+					sendWelcomeEmails: true,
+					autoAssignSalesReps: false,
+					clients: [
+						{
+							name: 'Johannesburg Retailers',
+							contactPerson: 'Store Manager',
+							email: 'manager@jhbretailers.co.za',
+							phone: '+27 11 444 5555',
+							address: {
+								street: '789 Retail Street',
+								suburb: 'Johannesburg',
+								city: 'Johannesburg',
+								state: 'Gauteng',
+								country: 'South Africa',
+								postalCode: '2000'
+							},
+							category: 'SME',
+							industry: 'Retail',
+							companySize: 50,
+							creditLimit: 200000,
+							priceTier: 'STANDARD',
+							preferredContactMethod: 'WHATSAPP',
+							riskLevel: 'MEDIUM'
+						},
+						{
+							name: 'Durban Manufacturing',
+							contactPerson: 'Operations Director',
+							email: 'ops@durbanmanufacturing.co.za',
+							phone: '+27 31 777 8888',
+							address: {
+								street: '321 Industrial Road',
+								suburb: 'Durban',
+								city: 'Durban',
+								state: 'KwaZulu-Natal',
+								country: 'South Africa',
+								postalCode: '4000'
+							},
+							category: 'SME',
+							industry: 'Manufacturing',
+							companySize: 75,
+							creditLimit: 300000,
+							priceTier: 'STANDARD',
+							preferredContactMethod: 'EMAIL',
+							riskLevel: 'LOW'
+						}
+					]
+				}
+			}
+		}
+	})
+	@ApiCreatedResponse({
+		description: '✅ Bulk creation completed successfully',
+		type: BulkCreateClientResponse,
+		schema: {
+			type: 'object',
+			properties: {
+				totalRequested: { type: 'number', example: 10, description: 'Total clients requested for creation' },
+				totalCreated: { type: 'number', example: 8, description: 'Total clients successfully created' },
+				totalFailed: { type: 'number', example: 2, description: 'Total clients that failed creation' },
+				successRate: { type: 'number', example: 80.0, description: 'Success rate percentage' },
+				message: { type: 'string', example: 'Bulk creation completed: 8 clients created, 2 failed' },
+				duration: { type: 'number', example: 1250, description: 'Operation duration in milliseconds' },
+				results: {
+					type: 'array',
+					description: 'Detailed results for each client',
+					items: {
+						type: 'object',
+						properties: {
+							client: { type: 'object', description: 'Created client data or null if failed' },
+							success: { type: 'boolean', example: true },
+							error: { type: 'string', example: 'Email already exists', description: 'Error message if failed' },
+							index: { type: 'number', example: 0, description: 'Index in original array' },
+							name: { type: 'string', example: 'LORO Corp' },
+							email: { type: 'string', example: 'theguy@example.co.za' }
+						}
+					}
+				}
+			}
+		}
+	})
+	@ApiBadRequestResponse({
+		description: '❌ Invalid request data or validation errors',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Validation failed for bulk client creation' },
+				error: { type: 'string', example: 'Bad Request' },
+				statusCode: { type: 'number', example: 400 }
+			}
+		}
+	})
+	@ApiInternalServerErrorResponse({
+		description: '🔥 Server error during bulk creation',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Internal server error during bulk client creation' },
+				error: { type: 'string', example: 'Internal Server Error' },
+				statusCode: { type: 'number', example: 500 }
+			}
+		}
+	})
+	async createBulkClients(@Body() bulkCreateClientDto: BulkCreateClientDto, @Req() req: AuthenticatedRequest): Promise<BulkCreateClientResponse> {
+		// Automatically set orgId and branchId from authenticated user if not provided
+		if (!bulkCreateClientDto.orgId) {
+			bulkCreateClientDto.orgId = req.user?.org?.uid || req.user?.organisationRef;
+		}
+		if (!bulkCreateClientDto.branchId) {
+			bulkCreateClientDto.branchId = req.user?.branch?.uid;
+		}
+		
+		return this.clientsService.createBulkClients(bulkCreateClientDto);
+	}
+
+	@Patch('bulk')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.SUPPORT,
+		AccessLevel.DEVELOPER,
+		AccessLevel.OWNER,
+	)
+	@ApiOperation({
+		summary: '📝 Update multiple clients in bulk',
+		description: `
+# Bulk Client Update
+
+Update multiple clients simultaneously with transaction support and validation.
+
+## Features
+- **Transaction Safety**: All-or-nothing updates with rollback on failures
+- **Field Tracking**: Tracks which fields were updated for each client
+- **Notification Emails**: Optional emails for significant changes
+- **Sales Rep Validation**: Optional validation of assigned sales representatives
+- **Address Geocoding**: Optional coordinate updates for address changes
+- **Cache Management**: Intelligent cache invalidation for updated clients
+
+## Usage
+- Submit up to 50 client updates per request
+- Each update specifies client ID (ref) and fields to update
+- Only provided fields are updated (partial updates supported)
+- Failed updates don't affect successful ones
+
+## Response
+Returns detailed results including:
+- Total requested/updated/failed counts
+- Success rate percentage
+- Individual update results with field tracking
+- Performance metrics and execution time
+- Optional validation and notification counts
+
+## Limits
+- Maximum 50 client updates per request
+- Client IDs must exist and not be soft-deleted
+- Sales rep IDs must be valid (when validation enabled)
+		`,
+	})
+	@ApiBody({
+		type: BulkUpdateClientDto,
+		description: 'Array of client updates with options',
+		examples: {
+			'Business Updates': {
+				summary: 'Update client business information and assignments',
+				value: {
+					sendNotificationEmails: true,
+					validateSalesReps: true,
+					updateCoordinates: false,
+					updates: [
+						{
+							ref: 123,
+							data: {
+								contactPerson: 'New Contact Manager',
+								phone: '+27 11 999 8888',
+								creditLimit: 750000,
+								priceTier: 'PREMIUM',
+								assignedSalesRep: { uid: 3 },
+								tags: ['VIP', 'Premium Customer', 'High Value'],
+								description: 'Updated business description with new focus areas'
+							}
+						},
+						{
+							ref: 124,
+							data: {
+								status: 'ACTIVE',
+								category: 'enterprise',
+								companySize: 300,
+								annualRevenue: 75000000,
+								industry: 'Financial Services',
+								preferredContactMethod: 'EMAIL'
+							}
+						}
+					]
+				}
+			},
+			'Contact Information Update': {
+				summary: 'Update client contact details and preferences',
+				value: {
+					sendNotificationEmails: false,
+					validateSalesReps: false,
+					updates: [
+						{
+							ref: 125,
+							data: {
+								email: 'new.email@example.co.za',
+								alternativePhone: '+27 82 555 9999',
+								preferredContactMethod: 'WHATSAPP',
+								preferredLanguage: 'Afrikaans',
+								nextContactDate: '2024-03-15T10:00:00Z'
+							}
+						},
+						{
+							ref: 126,
+							data: {
+								address: {
+									street: '456 New Business Park',
+									suburb: 'Sandton',
+									city: 'Johannesburg',
+									state: 'Gauteng',
+									country: 'South Africa',
+									postalCode: '2196'
+								},
+								website: 'https://www.newdomain.co.za',
+								description: 'Relocated to new headquarters in Sandton'
+							}
+						}
+					]
+				}
+			}
+		}
+	})
+	@ApiOkResponse({
+		description: '✅ Bulk update completed successfully',
+		type: BulkUpdateClientResponse,
+		schema: {
+			type: 'object',
+			properties: {
+				totalRequested: { type: 'number', example: 10, description: 'Total clients requested for update' },
+				totalUpdated: { type: 'number', example: 9, description: 'Total clients successfully updated' },
+				totalFailed: { type: 'number', example: 1, description: 'Total clients that failed update' },
+				successRate: { type: 'number', example: 90.0, description: 'Success rate percentage' },
+				message: { type: 'string', example: 'Bulk update completed: 9 clients updated, 1 failed' },
+				duration: { type: 'number', example: 850, description: 'Operation duration in milliseconds' },
+				results: {
+					type: 'array',
+					description: 'Detailed results for each client update',
+					items: {
+						type: 'object',
+						properties: {
+							ref: { type: 'number', example: 123, description: 'Client reference ID' },
+							success: { type: 'boolean', example: true },
+							error: { type: 'string', example: 'Client not found', description: 'Error message if failed' },
+							index: { type: 'number', example: 0, description: 'Index in original array' },
+							name: { type: 'string', example: 'LORO Corp' },
+							email: { type: 'string', example: 'theguy@example.co.za' },
+							updatedFields: { type: 'array', items: { type: 'string' }, example: ['contactPerson', 'phone', 'creditLimit'] }
+						}
+					}
+				}
+			}
+		}
+	})
+	@ApiBadRequestResponse({
+		description: '❌ Invalid request data or validation errors'
+	})
+	@ApiNotFoundResponse({
+		description: '🔍 One or more client IDs not found'
+	})
+	@ApiInternalServerErrorResponse({
+		description: '🔥 Server error during bulk update'
+	})
+	async updateBulkClients(@Body() bulkUpdateClientDto: BulkUpdateClientDto, @Req() req: AuthenticatedRequest): Promise<BulkUpdateClientResponse> {
+		return this.clientsService.updateBulkClients(bulkUpdateClientDto);
 	}
 
 	@Get('admin/all')

@@ -53,6 +53,9 @@ import { EmailType } from '../lib/enums/email.enums';
 import { NewUserWelcomeData } from '../lib/types/email-templates.types';
 import { ExternalTargetUpdateDto, TargetUpdateMode } from './dto/external-target-update.dto';
 import { formatDateSafely } from '../lib/utils/date.utils';
+import { BulkCreateUserDto, BulkCreateUserResponse, BulkUserResult } from './dto/bulk-create-user.dto';
+import { BulkUpdateUserDto, BulkUpdateUserResponse, BulkUpdateUserResult } from './dto/bulk-update-user.dto';
+import { DataSource } from 'typeorm';
 
 @Injectable()
 export class UserService {
@@ -78,6 +81,7 @@ export class UserService {
 		private cacheManager: Cache,
 		private readonly eventEmitter: EventEmitter2,
 		private readonly configService: ConfigService,
+		private readonly dataSource: DataSource,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
 		this.logger.log('UserService initialized with cache TTL: ' + this.CACHE_TTL + 'ms');
@@ -416,6 +420,436 @@ export class UserService {
 
 			return response;
 		}
+	}
+
+	/**
+	 * 👥 Create multiple users in bulk with transaction support
+	 * @param bulkCreateUserDto - Bulk user creation data
+	 * @returns Promise with bulk creation results
+	 */
+	async createBulkUsers(bulkCreateUserDto: BulkCreateUserDto): Promise<BulkCreateUserResponse> {
+		const startTime = Date.now();
+		this.logger.log(`👥 [createBulkUsers] Starting bulk creation of ${bulkCreateUserDto.users.length} users`);
+		
+		const results: BulkUserResult[] = [];
+		let successCount = 0;
+		let failureCount = 0;
+		let welcomeEmailsSent = 0;
+		const errors: string[] = [];
+		const createdUserIds: number[] = [];
+
+		// Create a query runner for transaction management
+		const queryRunner = this.dataSource.createQueryRunner();
+		await queryRunner.connect();
+		await queryRunner.startTransaction();
+
+		try {
+			for (let i = 0; i < bulkCreateUserDto.users.length; i++) {
+				const userData = bulkCreateUserDto.users[i];
+				
+				try {
+					this.logger.debug(`👤 [createBulkUsers] Processing user ${i + 1}/${bulkCreateUserDto.users.length}: ${userData.username} (${userData.email})`);
+					
+					// Check if username already exists
+					const existingUsername = await queryRunner.manager.findOne(User, { 
+						where: { username: userData.username } 
+					});
+					if (existingUsername) {
+						throw new Error(`Username '${userData.username}' already exists`);
+					}
+
+					// Check if email already exists
+					const existingEmail = await queryRunner.manager.findOne(User, { 
+						where: { email: userData.email } 
+					});
+					if (existingEmail) {
+						throw new Error(`Email '${userData.email}' already exists`);
+					}
+
+					// Auto-generate password if requested and no password provided
+					let finalPassword = userData.password;
+					if (!finalPassword && bulkCreateUserDto.autoGeneratePasswords) {
+						finalPassword = this.generateRandomPassword();
+						this.logger.debug(`🔐 [createBulkUsers] Auto-generated password for user: ${userData.username}`);
+					}
+
+					if (!finalPassword) {
+						throw new Error('Password is required or enable autoGeneratePasswords');
+					}
+
+					// Hash the password
+					const hashedPassword = await bcrypt.hash(finalPassword, 10);
+
+					// Generate user reference if not provided
+					const userref = userData.userref || `USR${Math.floor(100000 + Math.random() * 900000)}`;
+
+					// Create user with org and branch association
+					const user = queryRunner.manager.create(User, {
+						...userData,
+						password: hashedPassword,
+						userref,
+						...(bulkCreateUserDto.orgId && { organisation: { uid: bulkCreateUserDto.orgId } }),
+						...(bulkCreateUserDto.branchId && { branch: { uid: bulkCreateUserDto.branchId } }),
+						status: userData.status || 'active',
+						accessLevel: userData.accessLevel || AccessLevel.USER,
+						role: userData.role || 'user',
+						isDeleted: false,
+						createdAt: new Date(),
+						updatedAt: new Date()
+					});
+
+					const savedUser = await queryRunner.manager.save(User, user);
+					
+					// Exclude password from result
+					const { password: _, ...userWithoutPassword } = savedUser;
+
+					results.push({
+						user: userWithoutPassword,
+						success: true,
+						index: i,
+						username: userData.username,
+						email: userData.email
+					});
+					
+					successCount++;
+					createdUserIds.push(savedUser.uid);
+					this.logger.debug(`✅ [createBulkUsers] User ${i + 1} created successfully: ${userData.username} (ID: ${savedUser.uid})`);
+					
+				} catch (userError) {
+					const errorMessage = `User ${i + 1} (${userData.username || userData.email}): ${userError.message}`;
+					this.logger.error(`❌ [createBulkUsers] ${errorMessage}`, userError.stack);
+					
+					results.push({
+						user: null,
+						success: false,
+						error: userError.message,
+						index: i,
+						username: userData.username,
+						email: userData.email
+					});
+					
+					errors.push(errorMessage);
+					failureCount++;
+				}
+			}
+
+			// Commit transaction if we have at least some successes
+			if (successCount > 0) {
+				await queryRunner.commitTransaction();
+				this.logger.log(`✅ [createBulkUsers] Transaction committed - ${successCount} users created successfully`);
+				
+				// Clear relevant caches after successful bulk creation
+				await this.cacheManager.del(`${this.CACHE_PREFIX}all`);
+				
+				// Send welcome emails if requested
+				if (bulkCreateUserDto.sendWelcomeEmails !== false && successCount > 0) {
+					this.logger.debug(`📧 [createBulkUsers] Sending welcome emails to ${successCount} created users`);
+					
+					for (const result of results) {
+						if (result.success && result.user) {
+							try {
+								await this.sendUserCreationNotificationEmail(result.user);
+								welcomeEmailsSent++;
+							} catch (emailError) {
+								this.logger.warn(`⚠️ [createBulkUsers] Failed to send welcome email to ${result.user.email}: ${emailError.message}`);
+							}
+						}
+					}
+					
+					this.logger.log(`📧 [createBulkUsers] Sent ${welcomeEmailsSent} welcome emails`);
+				}
+				
+				// Emit bulk creation event
+				this.eventEmitter.emit('users.bulk.created', {
+					totalRequested: bulkCreateUserDto.users.length,
+					totalCreated: successCount,
+					totalFailed: failureCount,
+					createdUserIds,
+					orgId: bulkCreateUserDto.orgId,
+					branchId: bulkCreateUserDto.branchId,
+					timestamp: new Date(),
+				});
+			} else {
+				// Rollback if no users were created successfully
+				await queryRunner.rollbackTransaction();
+				this.logger.warn(`⚠️ [createBulkUsers] Transaction rolled back - no users were created successfully`);
+			}
+
+		} catch (transactionError) {
+			// Rollback transaction on any unexpected error
+			await queryRunner.rollbackTransaction();
+			this.logger.error(`❌ [createBulkUsers] Transaction error: ${transactionError.message}`, transactionError.stack);
+			
+			return {
+				totalRequested: bulkCreateUserDto.users.length,
+				totalCreated: 0,
+				totalFailed: bulkCreateUserDto.users.length,
+				successRate: 0,
+				results: [],
+				message: `Bulk creation failed: ${transactionError.message}`,
+				errors: [transactionError.message],
+				duration: Date.now() - startTime,
+				createdUserIds: [],
+				welcomeEmailsSent: 0
+			};
+		} finally {
+			// Release the query runner
+			await queryRunner.release();
+		}
+
+		const duration = Date.now() - startTime;
+		const successRate = (successCount / bulkCreateUserDto.users.length) * 100;
+
+		this.logger.log(`🎉 [createBulkUsers] Bulk creation completed in ${duration}ms - Success: ${successCount}, Failed: ${failureCount}, Rate: ${successRate.toFixed(2)}%, Emails: ${welcomeEmailsSent}`);
+
+		return {
+			totalRequested: bulkCreateUserDto.users.length,
+			totalCreated: successCount,
+			totalFailed: failureCount,
+			successRate: parseFloat(successRate.toFixed(2)),
+			results,
+			message: successCount > 0 
+				? `Bulk creation completed: ${successCount} users created, ${failureCount} failed`
+				: 'Bulk creation failed: No users were created',
+			errors: errors.length > 0 ? errors : undefined,
+			duration,
+			createdUserIds: createdUserIds.length > 0 ? createdUserIds : undefined,
+			welcomeEmailsSent: welcomeEmailsSent > 0 ? welcomeEmailsSent : undefined
+		};
+	}
+
+	/**
+	 * 📝 Update multiple users in bulk with transaction support
+	 * @param bulkUpdateUserDto - Bulk user update data
+	 * @returns Promise with bulk update results
+	 */
+	async updateBulkUsers(bulkUpdateUserDto: BulkUpdateUserDto): Promise<BulkUpdateUserResponse> {
+		const startTime = Date.now();
+		this.logger.log(`📝 [updateBulkUsers] Starting bulk update of ${bulkUpdateUserDto.updates.length} users`);
+		
+		const results: BulkUpdateUserResult[] = [];
+		let successCount = 0;
+		let failureCount = 0;
+		let notificationEmailsSent = 0;
+		const errors: string[] = [];
+		const updatedUserIds: number[] = [];
+
+		// Create a query runner for transaction management
+		const queryRunner = this.dataSource.createQueryRunner();
+		await queryRunner.connect();
+		await queryRunner.startTransaction();
+
+		try {
+			for (let i = 0; i < bulkUpdateUserDto.updates.length; i++) {
+				const updateItem = bulkUpdateUserDto.updates[i];
+				const { ref, data } = updateItem;
+				
+				try {
+					this.logger.debug(`👤 [updateBulkUsers] Processing user ${i + 1}/${bulkUpdateUserDto.updates.length}: ID ${ref}`);
+					
+					// First find the user to ensure it exists
+					const existingUser = await queryRunner.manager.findOne(User, { 
+						where: { uid: ref, isDeleted: false },
+						relations: ['organisation', 'branch']
+					});
+
+					if (!existingUser) {
+						throw new Error(`User with ID ${ref} not found`);
+					}
+
+					this.logger.debug(`✅ [updateBulkUsers] User found: ${existingUser.username} (${existingUser.email})`);
+
+					// Track original values for change detection
+					const originalValues = {
+						password: existingUser.password,
+						role: existingUser.role,
+						status: existingUser.status,
+						accessLevel: existingUser.accessLevel,
+						assignedClientIds: existingUser.assignedClientIds
+					};
+
+					// Validate assigned client IDs if provided and validation is enabled
+					if (data.assignedClientIds && bulkUpdateUserDto.validateClientIds !== false) {
+						this.logger.debug(`🔍 [updateBulkUsers] Validating ${data.assignedClientIds.length} assigned client IDs for user ${ref}`);
+						
+						const existingClients = await queryRunner.manager.find(Client, {
+							where: { uid: In(data.assignedClientIds), isDeleted: false },
+							select: ['uid']
+						});
+
+						if (existingClients.length !== data.assignedClientIds.length) {
+							const foundIds = existingClients.map(c => c.uid);
+							const invalidIds = data.assignedClientIds.filter(id => !foundIds.includes(id));
+							throw new Error(`Invalid client IDs: ${invalidIds.join(', ')}`);
+						}
+					}
+
+					// Hash password if being updated
+					let updateData = { ...data };
+					if (data.password) {
+						this.logger.debug(`🔐 [updateBulkUsers] Hashing new password for user ${ref}`);
+						updateData.password = await bcrypt.hash(data.password, 10);
+					}
+
+					// Track changed fields for logging and notifications
+					const updatedFields = Object.keys(data).filter(key => 
+						data[key] !== undefined && data[key] !== existingUser[key]
+					);
+
+					// Update the user
+					updateData.updatedAt = new Date();
+					await queryRunner.manager.update(User, ref, updateData);
+
+					// Check for significant changes that require notifications
+					const hasSignificantChanges = 
+						(data.password && data.password !== originalValues.password) ||
+						(data.role && data.role !== originalValues.role) ||
+						(data.status && data.status !== originalValues.status) ||
+						(data.accessLevel && data.accessLevel !== originalValues.accessLevel);
+
+					results.push({
+						ref,
+						success: true,
+						index: i,
+						username: existingUser.username,
+						email: existingUser.email,
+						updatedFields
+					});
+					
+					successCount++;
+					updatedUserIds.push(ref);
+					this.logger.debug(`✅ [updateBulkUsers] User ${i + 1} updated successfully: ${existingUser.username} (ID: ${ref}), Fields: ${updatedFields.join(', ')}`);
+
+					// Send notification email for significant changes if enabled
+					if (hasSignificantChanges && bulkUpdateUserDto.sendNotificationEmails !== false) {
+						try {
+							// Get updated user for email
+							const updatedUser = await queryRunner.manager.findOne(User, { 
+								where: { uid: ref },
+								relations: ['organisation', 'branch']
+							});
+
+							if (updatedUser) {
+								await this.sendComprehensiveUserUpdateEmail(
+									updatedUser,
+									existingUser,
+									{
+										password: !!data.password,
+										role: data.role !== originalValues.role,
+										status: data.status !== originalValues.status,
+										profile: updatedFields.some(field => ['name', 'surname', 'phone', 'photoURL'].includes(field)),
+										assignedClients: JSON.stringify(data.assignedClientIds) !== JSON.stringify(originalValues.assignedClientIds)
+									},
+									originalValues.assignedClientIds || [],
+									data.assignedClientIds || updatedUser.assignedClientIds || []
+								);
+								notificationEmailsSent++;
+							}
+						} catch (emailError) {
+							this.logger.warn(`⚠️ [updateBulkUsers] Failed to send notification email to ${existingUser.email}: ${emailError.message}`);
+						}
+					}
+					
+				} catch (userError) {
+					const errorMessage = `User ID ${ref}: ${userError.message}`;
+					this.logger.error(`❌ [updateBulkUsers] ${errorMessage}`, userError.stack);
+					
+					results.push({
+						ref,
+						success: false,
+						error: userError.message,
+						index: i
+					});
+					
+					errors.push(errorMessage);
+					failureCount++;
+				}
+			}
+
+			// Commit transaction if we have at least some successes
+			if (successCount > 0) {
+				await queryRunner.commitTransaction();
+				this.logger.log(`✅ [updateBulkUsers] Transaction committed - ${successCount} users updated successfully`);
+				
+				// Invalidate relevant caches after successful bulk update
+				await this.cacheManager.del(`${this.CACHE_PREFIX}all`);
+				
+				// Clear specific user caches for updated users
+				await Promise.all(
+					updatedUserIds.map(userId => 
+						this.cacheManager.del(this.getCacheKey(userId))
+					)
+				);
+				
+				// Emit bulk update event
+				this.eventEmitter.emit('users.bulk.updated', {
+					totalRequested: bulkUpdateUserDto.updates.length,
+					totalUpdated: successCount,
+					totalFailed: failureCount,
+					updatedUserIds,
+					notificationEmailsSent,
+					timestamp: new Date(),
+				});
+			} else {
+				// Rollback if no users were updated successfully
+				await queryRunner.rollbackTransaction();
+				this.logger.warn(`⚠️ [updateBulkUsers] Transaction rolled back - no users were updated successfully`);
+			}
+
+		} catch (transactionError) {
+			// Rollback transaction on any unexpected error
+			await queryRunner.rollbackTransaction();
+			this.logger.error(`❌ [updateBulkUsers] Transaction error: ${transactionError.message}`, transactionError.stack);
+			
+			return {
+				totalRequested: bulkUpdateUserDto.updates.length,
+				totalUpdated: 0,
+				totalFailed: bulkUpdateUserDto.updates.length,
+				successRate: 0,
+				results: [],
+				message: `Bulk update failed: ${transactionError.message}`,
+				errors: [transactionError.message],
+				duration: Date.now() - startTime,
+				updatedUserIds: [],
+				notificationEmailsSent: 0
+			};
+		} finally {
+			// Release the query runner
+			await queryRunner.release();
+		}
+
+		const duration = Date.now() - startTime;
+		const successRate = (successCount / bulkUpdateUserDto.updates.length) * 100;
+
+		this.logger.log(`🎉 [updateBulkUsers] Bulk update completed in ${duration}ms - Success: ${successCount}, Failed: ${failureCount}, Rate: ${successRate.toFixed(2)}%, Emails: ${notificationEmailsSent}`);
+
+		return {
+			totalRequested: bulkUpdateUserDto.updates.length,
+			totalUpdated: successCount,
+			totalFailed: failureCount,
+			successRate: parseFloat(successRate.toFixed(2)),
+			results,
+			message: successCount > 0 
+				? `Bulk update completed: ${successCount} users updated, ${failureCount} failed`
+				: 'Bulk update failed: No users were updated',
+			errors: errors.length > 0 ? errors : undefined,
+			duration,
+			updatedUserIds: updatedUserIds.length > 0 ? updatedUserIds : undefined,
+			notificationEmailsSent: notificationEmailsSent > 0 ? notificationEmailsSent : undefined
+		};
+	}
+
+	/**
+	 * 🔐 Generate a random password for auto-generation
+	 * @returns Random secure password
+	 */
+	private generateRandomPassword(): string {
+		const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*';
+		let password = '';
+		for (let i = 0; i < 12; i++) {
+			password += chars.charAt(Math.floor(Math.random() * chars.length));
+		}
+		return password;
 	}
 
 	/**

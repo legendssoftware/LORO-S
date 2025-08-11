@@ -15,7 +15,6 @@ import {
 	ApiConflictResponse,
 	ApiUnprocessableEntityResponse,
 	ApiInternalServerErrorResponse,
-	ApiServiceUnavailableResponse,
 	ApiConsumes,
 	ApiProduces,
 } from '@nestjs/swagger';
@@ -26,6 +25,8 @@ import { ProductsService } from './products.service';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
+import { BulkCreateProductDto } from './dto/bulk-create-product.dto';
+import { BulkUpdateProductDto } from './dto/bulk-update-product.dto';
 import { PaginationQuery } from '../lib/interfaces/product.interfaces';
 import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
 import { Controller, Get, Post, Body, Patch, Param, Delete, Query, Req } from '@nestjs/common';
@@ -606,6 +607,610 @@ Creates a new product in the system with comprehensive tracking and analytics ca
 		const orgId = req.user?.org?.uid;
 		const branchId = req.user?.branch?.uid;
 		return this.productsService.createProduct(createProductDto, orgId, branchId);
+	}
+
+	@Post('bulk')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.SUPPORT,
+		AccessLevel.DEVELOPER,
+		AccessLevel.OWNER,
+	)
+	@ApiOperation({
+		summary: '📦 Create multiple products in bulk',
+		description: `
+# Bulk Create Products
+
+Create multiple products at once with transaction support to ensure data consistency.
+
+## Features
+- ✅ **Transaction Support**: All products are created within a single transaction
+- ✅ **Individual Error Tracking**: Failed products don't affect successful ones
+- ✅ **Batch Limit**: Maximum 100 products per request for performance
+- ✅ **Analytics Creation**: Automatically creates analytics records for each product
+- ✅ **Cache Management**: Invalidates relevant caches after successful creation
+- ✅ **Event Emission**: Triggers bulk creation events for real-time updates
+
+## Usage
+Send an array of product objects in the request body. Each product must contain all required fields.
+
+## Response
+Returns detailed results including:
+- Total requested vs created counts
+- Success rate percentage
+- Individual product results with error details
+- Processing duration
+
+## Limits
+- Minimum: 1 product
+- Maximum: 100 products per request
+- Products with validation errors will be skipped
+- Successful products will still be created if some fail
+
+## Organization & Branch
+Products will be automatically associated with the authenticated user's organization and branch.
+		`,
+	})
+	@ApiBody({
+		type: BulkCreateProductDto,
+		description: 'Array of products to create with optional organization and branch IDs',
+		examples: {
+			'Electronics Store': {
+				summary: 'Create electronics products with detailed specifications',
+				value: {
+					orgId: 1,
+					branchId: 1,
+					products: [
+						{
+							name: 'iPhone 15 Pro Max 256GB Natural Titanium',
+							description: 'Latest flagship iPhone with A17 Pro chip, titanium design, advanced camera system with 5x telephoto zoom, and USB-C. Perfect for professionals and tech enthusiasts.',
+							category: 'ELECTRONICS',
+							price: 23999.00,
+							salePrice: 21999.00,
+							discount: 8.3,
+							barcode: '194253000001',
+							sku: 'IPH15PM-256GB-NT',
+							productReferenceCode: 'APPLE-IPH15PM-256-NT-001',
+							brand: 'Apple',
+							weight: 0.221,
+							packageQuantity: 1,
+							packageUnit: 'unit',
+							stockQuantity: 25,
+							reorderPoint: 5,
+							warehouseLocation: 'A1-B2-S3',
+							isOnPromotion: true,
+							promotionStartDate: '2024-01-15T00:00:00Z',
+							promotionEndDate: '2024-02-14T23:59:59Z',
+							packageDetails: 'Includes iPhone, USB-C to Lightning cable, documentation'
+						},
+						{
+							name: 'Samsung Galaxy S24 Ultra 512GB Titanium Black',
+							description: 'Premium Android flagship with S Pen, 200MP camera, AI features, and titanium frame. Built-in S Pen for productivity and creativity.',
+							category: 'ELECTRONICS',
+							price: 24999.00,
+							salePrice: 22499.00,
+							discount: 10.0,
+							barcode: '887276798001',
+							sku: 'SGS24U-512GB-TB',
+							productReferenceCode: 'SAMSUNG-SGS24U-512-TB-001',
+							brand: 'Samsung',
+							weight: 0.233,
+							packageQuantity: 1,
+							packageUnit: 'unit',
+							stockQuantity: 18,
+							reorderPoint: 3,
+							warehouseLocation: 'A1-B3-S1',
+							isOnPromotion: true,
+							promotionStartDate: '2024-01-10T00:00:00Z',
+							promotionEndDate: '2024-02-29T23:59:59Z',
+							packageDetails: 'Includes phone, S Pen, USB-C cable, SIM ejector, documentation'
+						},
+						{
+							name: 'MacBook Pro 16" M3 Pro 18GB/512GB Space Black',
+							description: 'Professional laptop with M3 Pro chip, 16-inch Liquid Retina XDR display, 18GB unified memory, and 512GB SSD. Perfect for content creators and developers.',
+							category: 'ELECTRONICS',
+							price: 49999.00,
+							salePrice: 47499.00,
+							discount: 5.0,
+							barcode: '195949593001',
+							sku: 'MBP16-M3P-18-512-SB',
+							productReferenceCode: 'APPLE-MBP16-M3P-18-512-SB-001',
+							brand: 'Apple',
+							weight: 2.14,
+							packageQuantity: 1,
+							packageUnit: 'unit',
+							stockQuantity: 8,
+							reorderPoint: 2,
+							warehouseLocation: 'B2-C1-S2',
+							isOnPromotion: true,
+							promotionStartDate: '2024-01-20T00:00:00Z',
+							promotionEndDate: '2024-03-15T23:59:59Z',
+							packageDetails: 'Includes MacBook Pro, 140W USB-C Power Adapter, USB-C to MagSafe 3 Cable'
+						}
+					]
+				}
+			},
+			'Grocery Store': {
+				summary: 'Create grocery and food products with nutritional info',
+				value: {
+					orgId: 2,
+					branchId: 3,
+					products: [
+						{
+							name: 'Premium Grade A Beef Ribeye Steak 400g',
+							description: 'Premium grass-fed beef ribeye steak, aged for 21 days for optimal tenderness and flavor. Perfect marbling for grilling or pan-searing.',
+							category: 'MEAT_POULTRY',
+							price: 189.99,
+							salePrice: 169.99,
+							discount: 10.5,
+							barcode: '612345678901',
+							sku: 'BEEF-RIBEYE-400G',
+							productReferenceCode: 'MEAT-BEEF-RIBEYE-400-001',
+							brand: 'LORO CORP Premium Meats',
+							weight: 0.4,
+							packageQuantity: 1,
+							packageUnit: 'pack',
+							stockQuantity: 45,
+							reorderPoint: 10,
+							warehouseLocation: 'COLD-A1-S1',
+							isOnPromotion: true,
+							promotionStartDate: '2024-01-01T00:00:00Z',
+							promotionEndDate: '2024-01-31T23:59:59Z',
+							packageDetails: 'Vacuum sealed, best before date printed on package'
+						},
+						{
+							name: 'Organic Full Cream Milk 2L Fresh Daily',
+							description: 'Fresh organic full cream milk from free-range cows. Rich in calcium, protein, and vitamins. No artificial additives or preservatives.',
+							category: 'DAIRY',
+							price: 34.99,
+							barcode: '612345678902',
+							sku: 'MILK-ORGANIC-2L',
+							productReferenceCode: 'DAIRY-MILK-ORG-2L-001',
+							brand: 'LORO CORP Organic Dairy',
+							weight: 2.1,
+							packageQuantity: 6,
+							packageUnit: 'carton',
+							stockQuantity: 120,
+							reorderPoint: 25,
+							warehouseLocation: 'COLD-B2-S3',
+							packageDetails: 'Recyclable carton packaging, refrigerate after opening'
+						},
+						{
+							name: 'Artisan Sourdough Bread 800g Freshly Baked',
+							description: 'Traditional sourdough bread made with organic flour and natural starter. Slow-fermented for 24 hours for complex flavor and easier digestion.',
+							category: 'BAKERY',
+							price: 24.99,
+							salePrice: 19.99,
+							discount: 20.0,
+							barcode: '612345678903',
+							sku: 'BREAD-SOURDOUGH-800G',
+							productReferenceCode: 'BAKERY-BREAD-SOUR-800-001',
+							brand: 'LORO CORP Artisan Bakery',
+							weight: 0.8,
+							packageQuantity: 12,
+							packageUnit: 'loaf',
+							stockQuantity: 30,
+							reorderPoint: 8,
+							warehouseLocation: 'DRY-C1-S2',
+							isOnPromotion: true,
+							promotionStartDate: '2024-01-15T00:00:00Z',
+							promotionEndDate: '2024-01-21T23:59:59Z',
+							packageDetails: 'Paper bag packaging, best consumed within 3 days'
+						}
+					]
+				}
+			},
+			'Fashion & Accessories': {
+				summary: 'Create fashion products with detailed specifications',
+				value: {
+					products: [
+						{
+							name: 'Premium Cotton Business Shirt - Slim Fit White XL',
+							description: 'Professional slim-fit business shirt made from 100% premium Egyptian cotton. Wrinkle-resistant with mother-of-pearl buttons and French seams.',
+							category: 'FASHION',
+							price: 299.99,
+							salePrice: 249.99,
+							discount: 16.7,
+							barcode: '987654321001',
+							sku: 'SHIRT-COTTON-SF-WH-XL',
+							productReferenceCode: 'FASHION-SHIRT-COTTON-SF-WH-XL-001',
+							brand: 'LORO CORP Executive Wear',
+							weight: 0.25,
+							packageQuantity: 20,
+							packageUnit: 'piece',
+							stockQuantity: 35,
+							reorderPoint: 8,
+							warehouseLocation: 'F1-A2-S4',
+							isOnPromotion: true,
+							promotionStartDate: '2024-01-10T00:00:00Z',
+							promotionEndDate: '2024-02-10T23:59:59Z',
+							packageDetails: 'Includes collar stays, care instructions, size chart'
+						},
+						{
+							name: 'Genuine Leather Executive Briefcase Brown',
+							description: 'Handcrafted executive briefcase made from full-grain Italian leather. Features multiple compartments, padded laptop section, and brass hardware.',
+							category: 'ACCESSORIES',
+							price: 1299.99,
+							salePrice: 999.99,
+							discount: 23.1,
+							barcode: '987654321002',
+							sku: 'BRIEFCASE-LEATHER-BR',
+							productReferenceCode: 'ACC-BRIEFCASE-LEATHER-BR-001',
+							brand: 'LORO CORP Luxury Goods',
+							weight: 1.8,
+							packageQuantity: 5,
+							packageUnit: 'piece',
+							stockQuantity: 12,
+							reorderPoint: 3,
+							warehouseLocation: 'F2-B1-S1',
+							isOnPromotion: true,
+							promotionStartDate: '2024-01-05T00:00:00Z',
+							promotionEndDate: '2024-02-28T23:59:59Z',
+							packageDetails: 'Includes dust bag, care instructions, warranty card'
+						}
+					]
+				}
+			}
+		}
+	})
+	@ApiCreatedResponse({
+		description: '✅ Bulk creation completed successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				totalRequested: { type: 'number', example: 5 },
+				totalCreated: { type: 'number', example: 4 },
+				totalFailed: { type: 'number', example: 1 },
+				successRate: { type: 'number', example: 80.0 },
+				results: {
+					type: 'array',
+					items: {
+						type: 'object',
+						properties: {
+							product: { type: 'object', description: 'Created product data or null if failed' },
+							success: { type: 'boolean', example: true },
+							error: { type: 'string', example: 'Validation error message' },
+							index: { type: 'number', example: 0 },
+							sku: { type: 'string', example: 'SKU001' },
+							name: { type: 'string', example: 'Product Name' }
+						}
+					}
+				},
+				message: { type: 'string', example: 'Bulk creation completed: 4 products created, 1 failed' },
+				errors: { 
+					type: 'array', 
+					items: { type: 'string' },
+					example: ['Product 3 (Invalid SKU): SKU already exists']
+				},
+				duration: { type: 'number', example: 1250 }
+			}
+		}
+	})
+	@ApiBadRequestResponse({
+		description: '❌ Invalid bulk creation data',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { 
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'products must contain at least 1 element',
+						'products must contain no more than 100 elements'
+					]
+				},
+				error: { type: 'string', example: 'Bad Request' },
+				statusCode: { type: 'number', example: 400 }
+			}
+		}
+	})
+	@ApiUnprocessableEntityResponse({
+		description: '⚠️ Some validation errors occurred',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Some products failed validation' },
+				statusCode: { type: 'number', example: 422 }
+			}
+		}
+	})
+	@ApiInternalServerErrorResponse({
+		description: '🔥 Internal server error during bulk creation',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Database transaction failed' },
+				error: { type: 'string', example: 'Internal Server Error' },
+				statusCode: { type: 'number', example: 500 }
+			}
+		}
+	})
+	async createBulkProducts(@Body() bulkCreateProductDto: BulkCreateProductDto, @Req() req: AuthenticatedRequest) {
+		// Automatically set orgId and branchId from authenticated user if not provided
+		if (!bulkCreateProductDto.orgId) {
+			bulkCreateProductDto.orgId = req.user?.org?.uid;
+		}
+		if (!bulkCreateProductDto.branchId) {
+			bulkCreateProductDto.branchId = req.user?.branch?.uid;
+		}
+		
+		return this.productsService.createBulkProducts(bulkCreateProductDto);
+	}
+
+	@Patch('bulk')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.SUPPORT,
+		AccessLevel.DEVELOPER,
+		AccessLevel.OWNER,
+	)
+	@ApiOperation({
+		summary: '📝 Update multiple products in bulk',
+		description: `
+# Bulk Update Products
+
+Update multiple products at once with transaction support to ensure data consistency.
+
+## Features
+- ✅ **Transaction Support**: All updates are processed within a single transaction
+- ✅ **Individual Error Tracking**: Failed updates don't affect successful ones
+- ✅ **Batch Limit**: Maximum 100 products per request for performance
+- ✅ **History Tracking**: Automatically tracks price and stock changes
+- ✅ **Cache Management**: Invalidates relevant caches after successful updates
+- ✅ **Event Emission**: Triggers bulk update events for real-time updates
+
+## Usage
+Send an array of update objects, each containing a product reference ID and the data to update.
+
+## Response
+Returns detailed results including:
+- Total requested vs updated counts
+- Success rate percentage
+- Individual update results with error details
+- List of updated fields for each product
+- Processing duration
+
+## Limits
+- Minimum: 1 product update
+- Maximum: 100 product updates per request
+- Only existing, non-deleted products can be updated
+- Invalid product IDs will be skipped with error details
+
+## Field Updates
+Any fields from the UpdateProductDto can be updated:
+- Basic info (name, description, category)
+- Pricing (price, salePrice, discount)
+- Inventory (stockQuantity, reorderPoint)
+- Product details (brand, weight, dimensions, etc.)
+		`,
+	})
+	@ApiBody({
+		type: BulkUpdateProductDto,
+		description: 'Array of product updates with reference IDs and update data',
+		examples: {
+			'Seasonal Pricing Update': {
+				summary: 'Update multiple product prices for seasonal sale',
+				value: {
+					updates: [
+						{
+							ref: 123,
+							data: {
+								name: 'iPhone 15 Pro Max 256GB Natural Titanium - Winter Sale',
+								price: 23999.00,
+								salePrice: 19999.00,
+								discount: 16.7,
+								stockQuantity: 35,
+								isOnPromotion: true,
+								promotionStartDate: '2024-12-01T00:00:00Z',
+								promotionEndDate: '2024-12-31T23:59:59Z'
+							}
+						},
+						{
+							ref: 124,
+							data: {
+								name: 'Samsung Galaxy S24 Ultra 512GB - Holiday Special',
+								price: 24999.00,
+								salePrice: 21999.00,
+								discount: 12.0,
+								stockQuantity: 22,
+								reorderPoint: 5,
+								isOnPromotion: true,
+								promotionStartDate: '2024-12-01T00:00:00Z',
+								promotionEndDate: '2024-12-31T23:59:59Z'
+							}
+						},
+						{
+							ref: 125,
+							data: {
+								name: 'MacBook Pro 16" M3 Pro - Black Friday Deal',
+								price: 49999.00,
+								salePrice: 44999.00,
+								discount: 10.0,
+								stockQuantity: 15,
+								isOnPromotion: true,
+								promotionStartDate: '2024-11-24T00:00:00Z',
+								promotionEndDate: '2024-11-30T23:59:59Z'
+							}
+						}
+					]
+				}
+			},
+			'Inventory Restocking': {
+				summary: 'Update stock levels and warehouse locations',
+				value: {
+					updates: [
+						{
+							ref: 201,
+							data: {
+								stockQuantity: 150,
+								reorderPoint: 30,
+								warehouseLocation: 'COLD-A1-S2',
+								packageQuantity: 24
+							}
+						},
+						{
+							ref: 202,
+							data: {
+								stockQuantity: 85,
+								reorderPoint: 15,
+								warehouseLocation: 'DRY-B3-S1',
+								weight: 0.85
+							}
+						},
+						{
+							ref: 203,
+							data: {
+								stockQuantity: 200,
+								reorderPoint: 40,
+								warehouseLocation: 'COLD-B2-S4',
+								packageDetails: 'New vacuum-sealed packaging with extended shelf life'
+							}
+						}
+					]
+				}
+			},
+			'Product Information Update': {
+				summary: 'Update product descriptions and specifications',
+				value: {
+					updates: [
+						{
+							ref: 301,
+							data: {
+								name: 'Premium Grade A+ Beef Ribeye Steak 450g - Grass Fed',
+								description: 'Premium grass-fed beef ribeye steak, aged for 28 days for exceptional tenderness and flavor. Now with improved marbling and certified organic feed.',
+								weight: 0.45,
+								brand: 'LORO CORP Premium Organic Meats',
+								packageDetails: 'Vacuum sealed with freshness indicator, grass-fed certification included'
+							}
+						},
+						{
+							ref: 302,
+							data: {
+								name: 'Artisan Sourdough Bread 900g - Whole Grain',
+								description: 'Traditional whole grain sourdough bread made with organic spelt flour and ancient grains. Slow-fermented for 36 hours for enhanced digestibility and complex flavor profile.',
+								weight: 0.9,
+								category: 'BAKERY',
+								brand: 'LORO CORP Artisan Whole Foods',
+								packageDetails: 'Compostable packaging, contains nuts and seeds, best consumed within 5 days'
+							}
+						}
+					]
+				}
+			},
+			'End of Season Clearance': {
+				summary: 'Update products for clearance sale',
+				value: {
+					updates: [
+						{
+							ref: 401,
+							data: {
+								name: 'Premium Cotton Business Shirt - Clearance Sale',
+								salePrice: 199.99,
+								discount: 33.3,
+								isOnPromotion: true,
+								promotionStartDate: '2024-08-01T00:00:00Z',
+								promotionEndDate: '2024-08-31T23:59:59Z',
+								stockQuantity: 15
+							}
+						},
+						{
+							ref: 402,
+							data: {
+								name: 'Leather Executive Briefcase - Final Clearance',
+								salePrice: 699.99,
+								discount: 46.2,
+								isOnPromotion: true,
+								promotionStartDate: '2024-08-01T00:00:00Z',
+								promotionEndDate: '2024-08-31T23:59:59Z',
+								stockQuantity: 5,
+								reorderPoint: 0
+							}
+						}
+					]
+				}
+			}
+		}
+	})
+	@ApiOkResponse({
+		description: '✅ Bulk update completed successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				totalRequested: { type: 'number', example: 5 },
+				totalUpdated: { type: 'number', example: 4 },
+				totalFailed: { type: 'number', example: 1 },
+				successRate: { type: 'number', example: 80.0 },
+				results: {
+					type: 'array',
+					items: {
+						type: 'object',
+						properties: {
+							ref: { type: 'number', example: 123 },
+							success: { type: 'boolean', example: true },
+							error: { type: 'string', example: 'Product not found' },
+							index: { type: 'number', example: 0 },
+							name: { type: 'string', example: 'Product Name' },
+							updatedFields: { 
+								type: 'array',
+								items: { type: 'string' },
+								example: ['price', 'stockQuantity']
+							}
+						}
+					}
+				},
+				message: { type: 'string', example: 'Bulk update completed: 4 products updated, 1 failed' },
+				errors: { 
+					type: 'array', 
+					items: { type: 'string' },
+					example: ['Product ID 999: Product not found']
+				},
+				duration: { type: 'number', example: 850 }
+			}
+		}
+	})
+	@ApiBadRequestResponse({
+		description: '❌ Invalid bulk update data',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { 
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'updates must contain at least 1 element',
+						'updates must contain no more than 100 elements'
+					]
+				},
+				error: { type: 'string', example: 'Bad Request' },
+				statusCode: { type: 'number', example: 400 }
+			}
+		}
+	})
+	@ApiNotFoundResponse({
+		description: '🔍 Some products not found',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Some products could not be found' },
+				statusCode: { type: 'number', example: 404 }
+			}
+		}
+	})
+	@ApiInternalServerErrorResponse({
+		description: '🔥 Internal server error during bulk update',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Database transaction failed' },
+				error: { type: 'string', example: 'Internal Server Error' },
+				statusCode: { type: 'number', example: 500 }
+			}
+		}
+	})
+	async updateBulkProducts(@Body() bulkUpdateProductDto: BulkUpdateProductDto, @Req() req: AuthenticatedRequest) {
+		return this.productsService.updateBulkProducts(bulkUpdateProductDto);
 	}
 
 	@Get()

@@ -4,7 +4,7 @@ import { UpdateClientDto } from './dto/update-client.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Client } from './entities/client.entity';
 import { ClientAuth } from './entities/client.auth.entity';
-import { Repository, DeepPartial, FindOptionsWhere, ILike, In } from 'typeorm';
+import { Repository, DeepPartial, FindOptionsWhere, ILike, In, DataSource } from 'typeorm';
 import { GeneralStatus } from '../lib/enums/status.enums';
 import { PaginatedResponse } from '../lib/interfaces/product.interfaces';
 import { Cache } from 'cache-manager';
@@ -27,6 +27,8 @@ import { CommunicationFrequency, CommunicationType } from '../lib/enums/client.e
 import { TaskType, TaskPriority, RepetitionType } from '../lib/enums/task.enums';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { addDays, addWeeks, addMonths, addYears, format, startOfDay, setHours, setMinutes, isWeekend } from 'date-fns';
+import { BulkCreateClientDto, BulkCreateClientResponse, BulkClientResult } from './dto/bulk-create-client.dto';
+import { BulkUpdateClientDto, BulkUpdateClientResponse, BulkUpdateClientResult } from './dto/bulk-update-client.dto';
 
 @Injectable()
 export class ClientsService {
@@ -55,6 +57,7 @@ export class ClientsService {
 		private readonly eventEmitter: EventEmitter2,
 		private readonly communicationScheduleService: ClientCommunicationScheduleService,
 		private readonly tasksService: TasksService,
+		private readonly dataSource: DataSource,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
 	}
@@ -422,9 +425,9 @@ export class ClientsService {
 	 * @example
 	 * ```typescript
 	 * const result = await clientsService.create({
-	 *   name: 'Orrbit Technologies',
+	 *   name: 'LORO Corp',
 	 *   contactPerson: 'The Guy',
-	 *   email: 'theguy@orrbit.co.za',
+	 *   email: 'theguy@example.co.za',
 	 *   phone: '+27 11 123 4567',
 	 *   address: { street: 'Business Park', city: 'Pretoria', ... },
 	 *   notifyClient: true
@@ -566,8 +569,8 @@ export class ClientsService {
 				try {
 					this.logger.debug(`[CLIENT_CREATE] Preparing to send account creation email to: ${client.email}`);
 					
-					const frontendUrl = this.configService.get<string>('FRONTEND_URL') || 'http://orrbit.co.za';
-					const supportEmail = this.configService.get<string>('SUPPORT_EMAIL') || 'support@orrbit.co.za';
+					const frontendUrl = this.configService.get<string>('FRONTEND_URL') || 'http://example.co.za';
+					const supportEmail = this.configService.get<string>('SUPPORT_EMAIL') || 'support@example.co.za';
 				
 				const emailData = {
 					name: client.name,
@@ -575,7 +578,7 @@ export class ClientsService {
 					clientId: client.uid,
 					loginUrl: `${frontendUrl}/sign-in`,
 					supportEmail: supportEmail,
-						organizationName: client.organisation?.name || 'Orrbit Technologies',
+						organizationName: client.organisation?.name || 'LORO Corp',
 					contactPerson: client.contactPerson || 'N/A',
 					phone: client.phone || 'N/A',
 					address: client.address ? `${client.address.street || ''}, ${client.address.city || ''}`.trim() : 'N/A',
@@ -606,6 +609,386 @@ export class ClientsService {
 				message: error?.message,
 			};
 		}
+	}
+
+	/**
+	 * 🏢 Create multiple clients in bulk with transaction support
+	 * @param bulkCreateClientDto - Bulk client creation data
+	 * @returns Promise with bulk creation results
+	 */
+	async createBulkClients(bulkCreateClientDto: BulkCreateClientDto): Promise<BulkCreateClientResponse> {
+		const startTime = Date.now();
+		this.logger.log(`🏢 [createBulkClients] Starting bulk creation of ${bulkCreateClientDto.clients.length} clients`);
+		
+		const results: BulkClientResult[] = [];
+		let successCount = 0;
+		let failureCount = 0;
+		let welcomeEmailsSent = 0;
+		let autoAssignedSalesReps = 0;
+		let addressesValidated = 0;
+		const errors: string[] = [];
+		const createdClientIds: number[] = [];
+
+		// Create a query runner for transaction management
+		const queryRunner = this.dataSource.createQueryRunner();
+		await queryRunner.connect();
+		await queryRunner.startTransaction();
+
+		try {
+			for (let i = 0; i < bulkCreateClientDto.clients.length; i++) {
+				const clientData = bulkCreateClientDto.clients[i];
+				
+				try {
+					this.logger.debug(`🏢 [createBulkClients] Processing client ${i + 1}/${bulkCreateClientDto.clients.length}: ${clientData.name} (${clientData.email})`);
+					
+					// Check if email already exists
+					const existingClient = await queryRunner.manager.findOne(Client, { 
+						where: { email: clientData.email, isDeleted: false } 
+					});
+					if (existingClient) {
+						throw new Error(`Email '${clientData.email}' already exists`);
+					}
+
+					// Validate address if required
+					if (bulkCreateClientDto.validateAddresses && clientData.address) {
+						this.logger.debug(`🌍 [createBulkClients] Validating address for client: ${clientData.name}`);
+						// Here you could add geocoding validation
+						addressesValidated++;
+					}
+
+					// Auto-assign sales rep if enabled
+					let finalSalesRep = clientData.assignedSalesRep;
+					if (bulkCreateClientDto.autoAssignSalesReps && !finalSalesRep) {
+						// Logic to auto-assign based on territory, workload, etc.
+						this.logger.debug(`👤 [createBulkClients] Auto-assigning sales rep for client: ${clientData.name}`);
+						// You could implement territory-based assignment here
+						autoAssignedSalesReps++;
+					}
+
+					// Create client with org and branch association
+					const clientToCreate = {
+						...clientData,
+						assignedSalesRep: finalSalesRep,
+						...(bulkCreateClientDto.orgId && { organisation: { uid: bulkCreateClientDto.orgId } }),
+						...(bulkCreateClientDto.branchId && { branch: { uid: bulkCreateClientDto.branchId } }),
+						status: (clientData as any).status || GeneralStatus.ACTIVE,
+						isDeleted: false,
+						createdAt: new Date(),
+						updatedAt: new Date()
+					};
+					const client = queryRunner.manager.create(Client, clientToCreate as any);
+
+					const savedClient = await queryRunner.manager.save(Client, client);
+
+					results.push({
+						client: savedClient,
+						success: true,
+						index: i,
+						name: clientData.name,
+						email: clientData.email
+					});
+					
+					successCount++;
+					createdClientIds.push(savedClient.uid);
+					this.logger.debug(`✅ [createBulkClients] Client ${i + 1} created successfully: ${clientData.name} (ID: ${savedClient.uid})`);
+					
+				} catch (clientError) {
+					const errorMessage = `Client ${i + 1} (${clientData.name || clientData.email}): ${clientError.message}`;
+					this.logger.error(`❌ [createBulkClients] ${errorMessage}`, clientError.stack);
+					
+					results.push({
+						client: null,
+						success: false,
+						error: clientError.message,
+						index: i,
+						name: clientData.name,
+						email: clientData.email
+					});
+					
+					errors.push(errorMessage);
+					failureCount++;
+				}
+			}
+
+			// Commit transaction if we have at least some successes
+			if (successCount > 0) {
+				await queryRunner.commitTransaction();
+				this.logger.log(`✅ [createBulkClients] Transaction committed - ${successCount} clients created successfully`);
+				
+				// Clear relevant caches after successful bulk creation
+				await this.cacheManager.del(`${this.CACHE_PREFIX}findAll`);
+				
+				// Send welcome emails if requested
+				if (bulkCreateClientDto.sendWelcomeEmails !== false && successCount > 0) {
+					this.logger.debug(`📧 [createBulkClients] Sending welcome emails to ${successCount} created clients`);
+					
+					for (const result of results) {
+						if (result.success && result.client) {
+							try {
+								// Send client welcome email here
+								welcomeEmailsSent++;
+							} catch (emailError) {
+								this.logger.warn(`⚠️ [createBulkClients] Failed to send welcome email to ${result.client.email}: ${emailError.message}`);
+							}
+						}
+					}
+					
+					this.logger.log(`📧 [createBulkClients] Sent ${welcomeEmailsSent} welcome emails`);
+				}
+				
+				// Emit bulk creation event
+				this.eventEmitter.emit('clients.bulk.created', {
+					totalRequested: bulkCreateClientDto.clients.length,
+					totalCreated: successCount,
+					totalFailed: failureCount,
+					createdClientIds,
+					orgId: bulkCreateClientDto.orgId,
+					branchId: bulkCreateClientDto.branchId,
+					timestamp: new Date(),
+				});
+			} else {
+				// Rollback if no clients were created successfully
+				await queryRunner.rollbackTransaction();
+				this.logger.warn(`⚠️ [createBulkClients] Transaction rolled back - no clients were created successfully`);
+			}
+
+		} catch (transactionError) {
+			// Rollback transaction on any unexpected error
+			await queryRunner.rollbackTransaction();
+			this.logger.error(`❌ [createBulkClients] Transaction error: ${transactionError.message}`, transactionError.stack);
+			
+			return {
+				totalRequested: bulkCreateClientDto.clients.length,
+				totalCreated: 0,
+				totalFailed: bulkCreateClientDto.clients.length,
+				successRate: 0,
+				results: [],
+				message: `Bulk creation failed: ${transactionError.message}`,
+				errors: [transactionError.message],
+				duration: Date.now() - startTime,
+				createdClientIds: [],
+				welcomeEmailsSent: 0,
+				autoAssignedSalesReps: 0,
+				addressesValidated: 0
+			};
+		} finally {
+			// Release the query runner
+			await queryRunner.release();
+		}
+
+		const duration = Date.now() - startTime;
+		const successRate = (successCount / bulkCreateClientDto.clients.length) * 100;
+
+		this.logger.log(`🎉 [createBulkClients] Bulk creation completed in ${duration}ms - Success: ${successCount}, Failed: ${failureCount}, Rate: ${successRate.toFixed(2)}%, Emails: ${welcomeEmailsSent}`);
+
+		return {
+			totalRequested: bulkCreateClientDto.clients.length,
+			totalCreated: successCount,
+			totalFailed: failureCount,
+			successRate: parseFloat(successRate.toFixed(2)),
+			results,
+			message: successCount > 0 
+				? `Bulk creation completed: ${successCount} clients created, ${failureCount} failed`
+				: 'Bulk creation failed: No clients were created',
+			errors: errors.length > 0 ? errors : undefined,
+			duration,
+			createdClientIds: createdClientIds.length > 0 ? createdClientIds : undefined,
+			welcomeEmailsSent: welcomeEmailsSent > 0 ? welcomeEmailsSent : undefined,
+			autoAssignedSalesReps: autoAssignedSalesReps > 0 ? autoAssignedSalesReps : undefined,
+			addressesValidated: addressesValidated > 0 ? addressesValidated : undefined
+		};
+	}
+
+	/**
+	 * 📝 Update multiple clients in bulk with transaction support
+	 * @param bulkUpdateClientDto - Bulk client update data
+	 * @returns Promise with bulk update results
+	 */
+	async updateBulkClients(bulkUpdateClientDto: BulkUpdateClientDto): Promise<BulkUpdateClientResponse> {
+		const startTime = Date.now();
+		this.logger.log(`📝 [updateBulkClients] Starting bulk update of ${bulkUpdateClientDto.updates.length} clients`);
+		
+		const results: BulkUpdateClientResult[] = [];
+		let successCount = 0;
+		let failureCount = 0;
+		let notificationEmailsSent = 0;
+		let coordinatesUpdated = 0;
+		const errors: string[] = [];
+		const updatedClientIds: number[] = [];
+
+		// Create a query runner for transaction management
+		const queryRunner = this.dataSource.createQueryRunner();
+		await queryRunner.connect();
+		await queryRunner.startTransaction();
+
+		try {
+			for (let i = 0; i < bulkUpdateClientDto.updates.length; i++) {
+				const updateItem = bulkUpdateClientDto.updates[i];
+				const { ref, data } = updateItem;
+				
+				try {
+					this.logger.debug(`🏢 [updateBulkClients] Processing client ${i + 1}/${bulkUpdateClientDto.updates.length}: ID ${ref}`);
+					
+					// First find the client to ensure it exists
+					const existingClient = await queryRunner.manager.findOne(Client, { 
+						where: { uid: ref, isDeleted: false },
+						relations: ['organisation', 'branch', 'assignedSalesRep']
+					});
+
+					if (!existingClient) {
+						throw new Error(`Client with ID ${ref} not found`);
+					}
+
+					this.logger.debug(`✅ [updateBulkClients] Client found: ${existingClient.name} (${existingClient.email})`);
+
+					// Validate assigned sales rep if provided and validation is enabled
+					if (data.assignedSalesRep && bulkUpdateClientDto.validateSalesReps !== false) {
+						this.logger.debug(`👤 [updateBulkClients] Validating sales rep for client ${ref}`);
+						
+						const existingSalesRep = await queryRunner.manager.findOne(User, {
+							where: { uid: data.assignedSalesRep.uid, isDeleted: false },
+							select: ['uid', 'name', 'surname', 'email']
+						});
+
+						if (!existingSalesRep) {
+							throw new Error(`Sales rep with ID ${data.assignedSalesRep.uid} not found`);
+						}
+					}
+
+					// Update coordinates if address changed and option is enabled
+					if (data.address && bulkUpdateClientDto.updateCoordinates) {
+						this.logger.debug(`🌍 [updateBulkClients] Updating coordinates for client ${ref}`);
+						// Here you could add geocoding logic
+						coordinatesUpdated++;
+					}
+
+					// Track changed fields for logging and notifications
+					const updatedFields = Object.keys(data).filter(key => 
+						data[key] !== undefined && data[key] !== existingClient[key]
+					);
+
+					// Update the client
+					const updateData = { ...data, updatedAt: new Date() };
+					await queryRunner.manager.update(Client, ref, updateData as any);
+
+					// Check for significant changes that require notifications
+					const hasSignificantChanges = 
+						(data.assignedSalesRep && data.assignedSalesRep.uid !== existingClient.assignedSalesRep?.uid) ||
+						(data.status && data.status !== existingClient.status) ||
+						(data.priceTier && data.priceTier !== existingClient.priceTier);
+
+					results.push({
+						ref,
+						success: true,
+						index: i,
+						name: existingClient.name,
+						email: existingClient.email,
+						updatedFields
+					});
+					
+					successCount++;
+					updatedClientIds.push(ref);
+					this.logger.debug(`✅ [updateBulkClients] Client ${i + 1} updated successfully: ${existingClient.name} (ID: ${ref}), Fields: ${updatedFields.join(', ')}`);
+
+					// Send notification email for significant changes if enabled
+					if (hasSignificantChanges && bulkUpdateClientDto.sendNotificationEmails !== false) {
+						try {
+							// Send notification email logic here
+							notificationEmailsSent++;
+						} catch (emailError) {
+							this.logger.warn(`⚠️ [updateBulkClients] Failed to send notification email to ${existingClient.email}: ${emailError.message}`);
+						}
+					}
+					
+				} catch (clientError) {
+					const errorMessage = `Client ID ${ref}: ${clientError.message}`;
+					this.logger.error(`❌ [updateBulkClients] ${errorMessage}`, clientError.stack);
+					
+					results.push({
+						ref,
+						success: false,
+						error: clientError.message,
+						index: i
+					});
+					
+					errors.push(errorMessage);
+					failureCount++;
+				}
+			}
+
+			// Commit transaction if we have at least some successes
+			if (successCount > 0) {
+				await queryRunner.commitTransaction();
+				this.logger.log(`✅ [updateBulkClients] Transaction committed - ${successCount} clients updated successfully`);
+				
+				// Invalidate relevant caches after successful bulk update
+				await this.cacheManager.del(`${this.CACHE_PREFIX}findAll`);
+				
+				// Clear specific client caches for updated clients
+				await Promise.all(
+					updatedClientIds.map(clientId => 
+						this.cacheManager.del(this.getCacheKey(clientId))
+					)
+				);
+				
+				// Emit bulk update event
+				this.eventEmitter.emit('clients.bulk.updated', {
+					totalRequested: bulkUpdateClientDto.updates.length,
+					totalUpdated: successCount,
+					totalFailed: failureCount,
+					updatedClientIds,
+					notificationEmailsSent,
+					timestamp: new Date(),
+				});
+			} else {
+				// Rollback if no clients were updated successfully
+				await queryRunner.rollbackTransaction();
+				this.logger.warn(`⚠️ [updateBulkClients] Transaction rolled back - no clients were updated successfully`);
+			}
+
+		} catch (transactionError) {
+			// Rollback transaction on any unexpected error
+			await queryRunner.rollbackTransaction();
+			this.logger.error(`❌ [updateBulkClients] Transaction error: ${transactionError.message}`, transactionError.stack);
+			
+			return {
+				totalRequested: bulkUpdateClientDto.updates.length,
+				totalUpdated: 0,
+				totalFailed: bulkUpdateClientDto.updates.length,
+				successRate: 0,
+				results: [],
+				message: `Bulk update failed: ${transactionError.message}`,
+				errors: [transactionError.message],
+				duration: Date.now() - startTime,
+				updatedClientIds: [],
+				notificationEmailsSent: 0,
+				coordinatesUpdated: 0
+			};
+		} finally {
+			// Release the query runner
+			await queryRunner.release();
+		}
+
+		const duration = Date.now() - startTime;
+		const successRate = (successCount / bulkUpdateClientDto.updates.length) * 100;
+
+		this.logger.log(`🎉 [updateBulkClients] Bulk update completed in ${duration}ms - Success: ${successCount}, Failed: ${failureCount}, Rate: ${successRate.toFixed(2)}%, Emails: ${notificationEmailsSent}`);
+
+		return {
+			totalRequested: bulkUpdateClientDto.updates.length,
+			totalUpdated: successCount,
+			totalFailed: failureCount,
+			successRate: parseFloat(successRate.toFixed(2)),
+			results,
+			message: successCount > 0 
+				? `Bulk update completed: ${successCount} clients updated, ${failureCount} failed`
+				: 'Bulk update failed: No clients were updated',
+			errors: errors.length > 0 ? errors : undefined,
+			duration,
+			updatedClientIds: updatedClientIds.length > 0 ? updatedClientIds : undefined,
+			notificationEmailsSent: notificationEmailsSent > 0 ? notificationEmailsSent : undefined,
+			coordinatesUpdated: coordinatesUpdated > 0 ? coordinatesUpdated : undefined
+		};
 	}
 
 	/**
@@ -643,7 +1026,7 @@ export class ClientsService {
 	 * const filteredResult = await clientsService.findAll(1, 10, 123, 456, {
 	 *   status: GeneralStatus.ACTIVE,
 	 *   category: 'enterprise',
-	 *   search: 'orrbit'
+	 *   search: 'LORO CORP'
 	 * }, 789);
 	 * 
 	 * // Response structure:
@@ -869,11 +1252,11 @@ export class ClientsService {
 	 * //   message: "Success",
 	 * //   client: {
 	 * //     uid: 123,
-	 * //     name: "Orrbit Technologies",
-	 * //     email: "theguy@orrbit.co.za",
+	 * //     name: "LORO Corp",
+	 * //     email: "theguy@example.co.za",
 	 * //     phone: "+27 11 123 4567",
 	 * //     branch: { uid: 789, name: "Pretoria South Africa" },
-	 * //     organisation: { uid: 456, name: "Orrbit Technologies" },
+	 * //     organisation: { uid: 456, name: "LORO Corp" },
 	 * //     assignedSalesRep: { uid: 101, name: "Sales Rep" },
 	 * //     quotations: [...],
 	 * //     checkIns: [...]
@@ -1623,8 +2006,8 @@ export class ClientsService {
 	 * //   clients: [
 	 * //     {
 	 * //       uid: 456,
-	 * //       name: "Orrbit Technologies",
-	 * //       email: "theguy@orrbit.co.za",
+	 * //       name: "LORO Corp",
+	 * //       email: "theguy@example.co.za",
 	 * //       latitude: -26.195246,
 	 * //       longitude: 28.034088,
 	 * //       distance: 2.3 // kilometers

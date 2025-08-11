@@ -5,6 +5,8 @@ import { AuthGuard } from '../guards/auth.guard';
 import { Roles } from '../decorators/role.decorator';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { BulkCreateUserDto, BulkCreateUserResponse } from './dto/bulk-create-user.dto';
+import { BulkUpdateUserDto, BulkUpdateUserResponse } from './dto/bulk-update-user.dto';
 import {
 	ApiOperation,
 	ApiTags,
@@ -24,6 +26,7 @@ import {
 	ApiInternalServerErrorResponse,
 	ApiConsumes,
 	ApiProduces,
+	ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
 import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, Req, Put, ParseIntPipe, Headers } from '@nestjs/common';
 import { AccountStatus } from '../lib/enums/status.enums';
@@ -362,6 +365,623 @@ Creates a new user account in the system with full profile management and employ
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.userService.create(createUserDto, orgId, branchId);
+	}
+
+	@Post('bulk')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.SUPPORT,
+		AccessLevel.DEVELOPER,
+		AccessLevel.OWNER,
+	)
+	@ApiOperation({
+		summary: '👥 Create multiple users in bulk',
+		description: `
+# Bulk User Creation
+
+Create multiple user accounts at once with transaction support to ensure data consistency.
+
+## 🎯 **Features**
+- ✅ **Transaction Support**: All users are created within a single transaction
+- ✅ **Individual Error Tracking**: Failed users don't affect successful ones
+- ✅ **Batch Limit**: Maximum 50 users per request for performance
+- ✅ **Auto-Password Generation**: Optionally generate secure passwords automatically
+- ✅ **Welcome Emails**: Automatically send welcome emails to created users
+- ✅ **Validation**: Comprehensive validation for usernames, emails, and client assignments
+- ✅ **Cache Management**: Invalidates relevant caches after successful creation
+- ✅ **Event Emission**: Triggers bulk creation events for real-time updates
+
+## 🔧 **Usage**
+Send an array of user objects in the request body. Each user must contain all required fields (username, password*, name, surname, email).
+
+## 📧 **Email Features**
+- Welcome emails are sent by default (can be disabled)
+- Auto-generated passwords can be sent securely via email
+- Notification emails for account creation confirmations
+
+## 🎛️ **Response**
+Returns detailed results including:
+- Total requested vs created counts
+- Success rate percentage
+- Individual user results with error details
+- List of created user IDs
+- Number of welcome emails sent
+- Processing duration
+
+## 📏 **Limits**
+- Minimum: 1 user
+- Maximum: 50 users per request
+- Users with validation errors will be skipped
+- Successful users will still be created if some fail
+
+## 🏢 **Organization & Branch**
+Users will be automatically associated with the authenticated user's organization and branch unless specified otherwise.
+		`,
+	})
+	@ApiBody({
+		type: BulkCreateUserDto,
+		description: 'Array of users to create with optional settings',
+		examples: {
+			'IT Department Onboarding': {
+				summary: 'Create multiple IT department users with detailed profiles',
+				value: {
+					orgId: 1,
+					branchId: 1,
+					sendWelcomeEmails: true,
+					autoGeneratePasswords: false,
+					users: [
+						{
+							username: 'theguy',
+							password: 'SecurePass123!',
+							name: 'The Guy',
+							surname: 'Developer',
+							email: 'theguy@example.co.za',
+							phone: '+27 64 123 4567',
+							role: 'Senior Developer',
+							accessLevel: 'DEVELOPER',
+							departmentId: 1,
+							organisationRef: 'ORG001',
+							assignedClientIds: [1, 2, 3],
+							photoURL: 'https://example.co.za/photos/theguy.jpg',
+							profile: {
+								dateOfBirth: '1990-05-15',
+								address: '123 Tech Street, Pretoria South Africa',
+								city: 'Pretoria',
+								country: 'South Africa'
+							},
+							employmentProfile: {
+								position: 'Senior Software Developer',
+								department: 'Information Technology',
+								startDate: '2024-01-15',
+								email: 'theguy.work@example.co.za',
+								contactNumber: '+27 64 123 4567'
+							}
+						},
+						{
+							username: 'devmanager',
+							password: 'SecurePass456!',
+							name: 'Dev',
+							surname: 'Manager',
+							email: 'dev.manager@example.co.za',
+							phone: '+27 64 765 4321',
+							role: 'Development Manager',
+							accessLevel: 'MANAGER',
+							departmentId: 1,
+							organisationRef: 'ORG001',
+							assignedClientIds: [1, 2, 3, 4, 5, 6],
+							profile: {
+								dateOfBirth: '1985-03-20',
+								address: '456 Management Ave, Pretoria South Africa',
+								city: 'Pretoria',
+								country: 'South Africa'
+							},
+							employmentProfile: {
+								position: 'Development Team Manager',
+								department: 'Information Technology',
+								startDate: '2024-01-01',
+								email: 'dev.manager.work@example.co.za',
+								contactNumber: '+27 64 765 4321'
+							}
+						},
+						{
+							username: 'juniordev',
+							password: 'SecurePass789!',
+							name: 'Junior',
+							surname: 'Developer',
+							email: 'junior.dev@example.co.za',
+							phone: '+27 64 555 1234',
+							role: 'Junior Developer',
+							accessLevel: 'USER',
+							departmentId: 1,
+							organisationRef: 'ORG001',
+							assignedClientIds: [1, 2],
+							profile: {
+								dateOfBirth: '1995-08-10',
+								address: '789 Starter Road, Pretoria South Africa',
+								city: 'Pretoria',
+								country: 'South Africa'
+							},
+							employmentProfile: {
+								position: 'Junior Software Developer',
+								department: 'Information Technology',
+								startDate: '2024-02-01',
+								email: 'junior.work@example.co.za',
+								contactNumber: '+27 64 555 1234'
+							}
+						}
+					]
+				}
+			},
+			'Sales Team Expansion': {
+				summary: 'Create sales team members with client assignments',
+				value: {
+					sendWelcomeEmails: true,
+					autoGeneratePasswords: true,
+					users: [
+						{
+							username: 'salesmanager',
+							name: 'Sales',
+							surname: 'Manager',
+							email: 'sales.manager@example.co.za',
+							phone: '+27 64 100 2000',
+							role: 'Sales Manager',
+							accessLevel: 'MANAGER',
+							departmentId: 2,
+							assignedClientIds: [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+							employmentProfile: {
+								position: 'Regional Sales Manager',
+								department: 'Sales',
+								startDate: '2024-01-01'
+							}
+						},
+						{
+							username: 'salesrep1',
+							name: 'Sales Rep',
+							surname: 'One',
+							email: 'salesrep1@example.co.za',
+							phone: '+27 64 100 2001',
+							role: 'Sales Representative',
+							accessLevel: 'USER',
+							departmentId: 2,
+							assignedClientIds: [10, 11, 12, 13, 14],
+							employmentProfile: {
+								position: 'Sales Representative',
+								department: 'Sales',
+								startDate: '2024-02-01'
+							}
+						},
+						{
+							username: 'salesrep2',
+							name: 'Sales Rep',
+							surname: 'Two',
+							email: 'salesrep2@example.co.za',
+							phone: '+27 64 100 2002',
+							role: 'Sales Representative',
+							accessLevel: 'USER',
+							departmentId: 2,
+							assignedClientIds: [15, 16, 17, 18, 19, 20],
+							employmentProfile: {
+								position: 'Sales Representative',
+								department: 'Sales',
+								startDate: '2024-02-15'
+							}
+						}
+					]
+				}
+			},
+			'Support Team Setup': {
+				summary: 'Create customer support team with access levels',
+				value: {
+					sendWelcomeEmails: true,
+					autoGeneratePasswords: false,
+					users: [
+						{
+							username: 'supportlead',
+							password: 'Support123!',
+							name: 'Support',
+							surname: 'Lead',
+							email: 'support.lead@example.co.za',
+							phone: '+27 64 300 4000',
+							role: 'Support Team Lead',
+							accessLevel: 'SUPPORT',
+							departmentId: 3,
+							assignedClientIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+							employmentProfile: {
+								position: 'Customer Support Team Lead',
+								department: 'Customer Support',
+								startDate: '2024-01-05'
+							}
+						},
+						{
+							username: 'supportagent1',
+							password: 'Support456!',
+							name: 'Support',
+							surname: 'Agent One',
+							email: 'support1@example.co.za',
+							phone: '+27 64 300 4001',
+							role: 'Support Agent',
+							accessLevel: 'USER',
+							departmentId: 3,
+							assignedClientIds: [1, 2, 3, 4, 5],
+							employmentProfile: {
+								position: 'Customer Support Agent',
+								department: 'Customer Support',
+								startDate: '2024-01-10'
+							}
+						}
+					]
+				}
+			}
+		}
+	})
+	@ApiCreatedResponse({
+		description: '✅ Bulk creation completed successfully',
+		type: BulkCreateUserResponse,
+		schema: {
+			type: 'object',
+			properties: {
+				totalRequested: { type: 'number', example: 10 },
+				totalCreated: { type: 'number', example: 9 },
+				totalFailed: { type: 'number', example: 1 },
+				successRate: { type: 'number', example: 90.0 },
+				results: {
+					type: 'array',
+					items: {
+						type: 'object',
+						properties: {
+							user: { type: 'object', description: 'Created user data or null if failed' },
+							success: { type: 'boolean', example: true },
+							error: { type: 'string', example: 'Username already exists' },
+							index: { type: 'number', example: 0 },
+							username: { type: 'string', example: 'theguy' },
+							email: { type: 'string', example: 'theguy@example.co.za' }
+						}
+					}
+				},
+				message: { type: 'string', example: 'Bulk creation completed: 9 users created, 1 failed' },
+				errors: { 
+					type: 'array', 
+					items: { type: 'string' },
+					example: ['User 3 (duplicate@email.com): Email already exists']
+				},
+				duration: { type: 'number', example: 2150 },
+				createdUserIds: { 
+					type: 'array',
+					items: { type: 'number' },
+					example: [101, 102, 103, 104, 105, 106, 107, 108, 109]
+				},
+				welcomeEmailsSent: { type: 'number', example: 9 }
+			}
+		}
+	})
+	@ApiBadRequestResponse({
+		description: '❌ Invalid bulk creation data',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { 
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'users must contain at least 1 element',
+						'users must contain no more than 50 elements'
+					]
+				},
+				error: { type: 'string', example: 'Bad Request' },
+				statusCode: { type: 'number', example: 400 }
+			}
+		}
+	})
+	@ApiUnprocessableEntityResponse({
+		description: '⚠️ Some validation errors occurred',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Some users failed validation' },
+				statusCode: { type: 'number', example: 422 }
+			}
+		}
+	})
+	@ApiInternalServerErrorResponse({
+		description: '🔥 Internal server error during bulk creation',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Database transaction failed' },
+				error: { type: 'string', example: 'Internal Server Error' },
+				statusCode: { type: 'number', example: 500 }
+			}
+		}
+	})
+	async createBulkUsers(@Body() bulkCreateUserDto: BulkCreateUserDto, @Req() req: AuthenticatedRequest): Promise<BulkCreateUserResponse> {
+		// Automatically set orgId and branchId from authenticated user if not provided
+		if (!bulkCreateUserDto.orgId) {
+			bulkCreateUserDto.orgId = req.user?.org?.uid || req.user?.organisationRef;
+		}
+		if (!bulkCreateUserDto.branchId) {
+			bulkCreateUserDto.branchId = req.user?.branch?.uid;
+		}
+		
+		return this.userService.createBulkUsers(bulkCreateUserDto);
+	}
+
+	@Patch('bulk')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.SUPPORT,
+		AccessLevel.DEVELOPER,
+		AccessLevel.OWNER,
+	)
+	@ApiOperation({
+		summary: '📝 Update multiple users in bulk',
+		description: `
+# Bulk User Updates
+
+Update multiple user accounts at once with transaction support to ensure data consistency.
+
+## 🎯 **Features**
+- ✅ **Transaction Support**: All updates are processed within a single transaction
+- ✅ **Individual Error Tracking**: Failed updates don't affect successful ones
+- ✅ **Batch Limit**: Maximum 50 users per request for performance
+- ✅ **Client Validation**: Optionally validate assigned client IDs exist
+- ✅ **Change Tracking**: Tracks which fields were updated for each user
+- ✅ **Notification Emails**: Sends emails for significant changes (role, status, password)
+- ✅ **Cache Management**: Invalidates relevant caches after successful updates
+- ✅ **Event Emission**: Triggers bulk update events for real-time updates
+
+## 🔧 **Usage**
+Send an array of update objects, each containing a user reference ID and the data to update.
+
+## 📧 **Notification Features**
+- Automatic emails for password changes, role updates, status changes
+- Comprehensive change summaries in notification emails
+- Admin notifications for role elevations
+- Configurable notification settings
+
+## 🎛️ **Response**
+Returns detailed results including:
+- Total requested vs updated counts
+- Success rate percentage
+- Individual update results with error details
+- List of updated fields for each user
+- Number of notification emails sent
+- Processing duration
+
+## 📏 **Limits**
+- Minimum: 1 user update
+- Maximum: 50 user updates per request
+- Only existing, non-deleted users can be updated
+- Invalid user IDs will be skipped with error details
+
+## 🔧 **Field Updates**
+Any fields from the UpdateUserDto can be updated:
+- Basic info (name, surname, email, phone)
+- Access control (role, accessLevel, status)
+- Organization (departmentId, assignedClientIds)
+- Profile and employment details
+		`,
+	})
+	@ApiBody({
+		type: BulkUpdateUserDto,
+		description: 'Array of user updates with reference IDs and update data',
+		examples: {
+			'Role and Access Updates': {
+				summary: 'Update user roles and access levels for promotion',
+				value: {
+					sendNotificationEmails: true,
+					validateClientIds: true,
+					updates: [
+						{
+							ref: 123,
+							data: {
+								role: 'Senior Developer',
+								accessLevel: 'DEVELOPER',
+								assignedClientIds: [1, 2, 3, 4, 5, 6],
+								departmentId: 1,
+								phone: '+27 64 999 8888'
+							}
+						},
+						{
+							ref: 124,
+							data: {
+								role: 'Team Lead',
+								accessLevel: 'MANAGER',
+								assignedClientIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+								departmentId: 1
+							}
+						},
+						{
+							ref: 125,
+							data: {
+								role: 'Development Manager',
+								accessLevel: 'ADMIN',
+								assignedClientIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+								departmentId: 1
+							}
+						}
+					]
+				}
+			},
+			'Contact Information Update': {
+				summary: 'Update contact details and profile information',
+				value: {
+					sendNotificationEmails: false,
+					validateClientIds: false,
+					updates: [
+						{
+							ref: 201,
+							data: {
+								name: 'Updated Name',
+								phone: '+27 64 123 9999',
+								email: 'updated.email@example.co.za',
+								photoURL: 'https://example.co.za/photos/updated.jpg'
+							}
+						},
+						{
+							ref: 202,
+							data: {
+								phone: '+27 64 456 7890',
+								businesscardURL: 'https://example.co.za/cards/new-card.jpg'
+							}
+						}
+					]
+				}
+			},
+			'Status and Security Updates': {
+				summary: 'Update user status, passwords and security settings',
+				value: {
+					sendNotificationEmails: true,
+					validateClientIds: true,
+					updates: [
+						{
+							ref: 301,
+							data: {
+								status: 'active',
+								password: 'NewSecurePassword123!',
+								accessLevel: 'USER'
+							}
+						},
+						{
+							ref: 302,
+							data: {
+								status: 'suspended',
+								assignedClientIds: []
+							}
+						},
+						{
+							ref: 303,
+							data: {
+								status: 'active',
+								role: 'Rehabilitated User',
+								assignedClientIds: [1, 2, 3]
+							}
+						}
+					]
+				}
+			},
+			'Client Assignment Batch': {
+				summary: 'Update client assignments for multiple users',
+				value: {
+					sendNotificationEmails: false,
+					validateClientIds: true,
+					updates: [
+						{
+							ref: 401,
+							data: {
+								assignedClientIds: [10, 11, 12, 13, 14, 15]
+							}
+						},
+						{
+							ref: 402,
+							data: {
+								assignedClientIds: [16, 17, 18, 19, 20, 21]
+							}
+						},
+						{
+							ref: 403,
+							data: {
+								assignedClientIds: [22, 23, 24, 25, 26, 27]
+							}
+						},
+						{
+							ref: 404,
+							data: {
+								assignedClientIds: [28, 29, 30, 31, 32, 33]
+							}
+						}
+					]
+				}
+			}
+		}
+	})
+	@ApiOkResponse({
+		description: '✅ Bulk update completed successfully',
+		type: BulkUpdateUserResponse,
+		schema: {
+			type: 'object',
+			properties: {
+				totalRequested: { type: 'number', example: 10 },
+				totalUpdated: { type: 'number', example: 9 },
+				totalFailed: { type: 'number', example: 1 },
+				successRate: { type: 'number', example: 90.0 },
+				results: {
+					type: 'array',
+					items: {
+						type: 'object',
+						properties: {
+							ref: { type: 'number', example: 123 },
+							success: { type: 'boolean', example: true },
+							error: { type: 'string', example: 'User not found' },
+							index: { type: 'number', example: 0 },
+							username: { type: 'string', example: 'theguy' },
+							email: { type: 'string', example: 'theguy@example.co.za' },
+							updatedFields: { 
+								type: 'array',
+								items: { type: 'string' },
+								example: ['role', 'accessLevel', 'assignedClientIds']
+							}
+						}
+					}
+				},
+				message: { type: 'string', example: 'Bulk update completed: 9 users updated, 1 failed' },
+				errors: { 
+					type: 'array', 
+					items: { type: 'string' },
+					example: ['User ID 999: User not found']
+				},
+				duration: { type: 'number', example: 1850 },
+				updatedUserIds: { 
+					type: 'array',
+					items: { type: 'number' },
+					example: [123, 124, 125, 126, 127, 128, 129, 130, 131]
+				},
+				notificationEmailsSent: { type: 'number', example: 5 }
+			}
+		}
+	})
+	@ApiBadRequestResponse({
+		description: '❌ Invalid bulk update data',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { 
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'updates must contain at least 1 element',
+						'updates must contain no more than 50 elements'
+					]
+				},
+				error: { type: 'string', example: 'Bad Request' },
+				statusCode: { type: 'number', example: 400 }
+			}
+		}
+	})
+	@ApiNotFoundResponse({
+		description: '🔍 Some users not found',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Some users could not be found' },
+				statusCode: { type: 'number', example: 404 }
+			}
+		}
+	})
+	@ApiInternalServerErrorResponse({
+		description: '🔥 Internal server error during bulk update',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Database transaction failed' },
+				error: { type: 'string', example: 'Internal Server Error' },
+				statusCode: { type: 'number', example: 500 }
+			}
+		}
+	})
+	async updateBulkUsers(@Body() bulkUpdateUserDto: BulkUpdateUserDto, @Req() req: AuthenticatedRequest): Promise<BulkUpdateUserResponse> {
+		return this.userService.updateBulkUsers(bulkUpdateUserDto);
 	}
 
 	@Get()

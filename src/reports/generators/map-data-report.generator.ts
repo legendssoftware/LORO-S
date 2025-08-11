@@ -9,10 +9,12 @@ import { Competitor } from '../../competitors/entities/competitor.entity';
 import { Quotation } from '../../shop/entities/quotation.entity';
 import { Branch } from '../../branch/entities/branch.entity';
 import { Organisation } from '../../organisation/entities/organisation.entity';
+import { GeneralStatus } from '../../lib/enums/status.enums';
 
 interface MapDataRequestParams {
 	organisationId: number;
 	branchId?: number;
+	userId?: number; // Add user context for authorization
 }
 
 @Injectable()
@@ -36,7 +38,46 @@ export class MapDataReportGenerator {
 
 	async generate(params: MapDataRequestParams): Promise<Record<string, any>> {
 		try {
-			const { organisationId, branchId } = params;
+			const { organisationId, branchId, userId } = params;
+			
+			// Input validation
+			if (!organisationId || organisationId <= 0) {
+				throw new Error('Invalid organisation ID provided');
+			}
+			
+			if (branchId && branchId <= 0) {
+				throw new Error('Invalid branch ID provided');
+			}
+
+			// Verify organization exists and user has access
+			const organisation = await this.organisationRepository.findOne({ 
+				where: { uid: organisationId },
+				select: ['uid', 'name', 'status']
+			});
+			
+			if (!organisation) {
+				throw new Error('Organisation not found or access denied');
+			}
+
+			if (organisation.status !== GeneralStatus.ACTIVE) {
+				throw new Error('Organisation is not active');
+			}
+
+			// If branchId is provided, verify it belongs to the organization
+			if (branchId) {
+				const branch = await this.branchRepository.findOne({
+					where: { 
+						uid: branchId, 
+						organisation: { uid: organisationId } 
+					},
+					select: ['uid', 'name']
+				});
+				
+				if (!branch) {
+					throw new Error('Branch not found or does not belong to the specified organisation');
+				}
+			}
+
 			const todayStart = startOfDay(new Date());
 
 			// ---------- WORKERS (Employees currently checked-in) ----------
@@ -146,6 +187,7 @@ export class MapDataReportGenerator {
 			const competitors = await this.competitorRepository.find({
 				where: {
 					organisation: { uid: organisationId },
+					...(branchId ? { branch: { uid: branchId } } : {}),
 					latitude: Not(IsNull()),
 					longitude: Not(IsNull()),
 				},
@@ -210,9 +252,10 @@ export class MapDataReportGenerator {
 			const quotationsRaw = await this.quotationRepository.find({
 				where: {
 					organisation: { uid: organisationId },
+					...(branchId ? { branch: { uid: branchId } } : {}),
 					createdAt: MoreThanOrEqual(todayStart),
 				},
-				relations: ['client'],
+				relations: ['client', 'branch'],
 				select: ['uid', 'totalAmount', 'status', 'client', 'quotationNumber', 'createdAt'],
 			});
 			const quotations = quotationsRaw
@@ -233,15 +276,24 @@ export class MapDataReportGenerator {
 
 			// ---------- Map Config ----------
 			let defaultCenter = { lat: 0, lng: 0 };
-			const organisation = await this.organisationRepository.findOne({ where: { uid: organisationId } });
-			if (organisation && (organisation as any).latitude && (organisation as any).longitude) {
-				defaultCenter = { lat: (organisation as any).latitude, lng: (organisation as any).longitude };
-			} else if (workers.length > 0) {
+			
+			// Set default center based on available data
+			if (workers.length > 0) {
 				defaultCenter = { lat: workers[0].latitude, lng: workers[0].longitude };
+			} else if (clientMarkers.length > 0) {
+				defaultCenter = { lat: clientMarkers[0].latitude, lng: clientMarkers[0].longitude };
+			} else if (competitorMarkers.length > 0) {
+				defaultCenter = { lat: competitorMarkers[0].latitude, lng: competitorMarkers[0].longitude };
+			} else {
+				// Default to South Africa coordinates if no data available
+				defaultCenter = { lat: -26.2041, lng: 28.0473 }; // Johannesburg, South Africa
 			}
 
 			const branches = await this.branchRepository.find({
-				where: { organisation: { uid: organisationId } },
+				where: { 
+					organisation: { uid: organisationId },
+					...(branchId ? { uid: branchId } : {})
+				},
 				select: ['uid', 'name', 'address'],
 			});
 
@@ -258,8 +310,23 @@ export class MapDataReportGenerator {
 				},
 			};
 		} catch (error) {
-			this.logger.error(`Error generating map data: ${error.message}`, error.stack);
-			throw error;
+			// Log the error with context
+			this.logger.error(
+				`Error generating map data for organisation ${params.organisationId}${params.branchId ? ` and branch ${params.branchId}` : ''}: ${error.message}`, 
+				error.stack
+			);
+			
+			// Re-throw with appropriate error type
+			if (error.message.includes('not found') || error.message.includes('access denied') || error.message.includes('does not belong')) {
+				throw new Error(`Access denied: ${error.message}`);
+			}
+			
+			if (error.message.includes('Invalid') || error.message.includes('not active')) {
+				throw new Error(`Bad request: ${error.message}`);
+			}
+			
+			// Generic error for other cases
+			throw new Error('Failed to generate map data. Please try again later.');
 		}
 	}
 }

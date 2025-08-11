@@ -36,6 +36,8 @@ import {
 import { CompetitorsService } from './competitors.service';
 import { CreateCompetitorDto } from './dto/create-competitor.dto';
 import { UpdateCompetitorDto } from './dto/update-competitor.dto';
+import { BulkCreateCompetitorDto, BulkCreateCompetitorResponse } from './dto/bulk-create-competitor.dto';
+import { BulkUpdateCompetitorDto, BulkUpdateCompetitorResponse } from './dto/bulk-update-competitor.dto';
 import { FilterCompetitorDto } from './dto/filter-competitor.dto';
 import { Competitor } from './entities/competitor.entity';
 import { AuthGuard } from '../guards/auth.guard';
@@ -535,6 +537,348 @@ Creates multiple competitor profiles simultaneously with transaction safety and 
 
 		const { orgId, branchId } = this.extractOrgAndBranchIds(req);
 		return this.competitorsService.createBatch(createCompetitorDtos, req.user, orgId, branchId);
+	}
+
+	@Post('bulk')
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.DEVELOPER, AccessLevel.OWNER)
+	@ApiOperation({
+		summary: '🏆 Create multiple competitors in bulk',
+		description: `
+# Bulk Competitor Creation
+
+Create multiple competitors simultaneously with advanced features and transaction support.
+
+## Features
+- **Transaction Safety**: All-or-nothing creation with automatic rollback on failures
+- **Detailed Results**: Individual success/failure tracking for each competitor
+- **URL Validation**: Optional validation of websites and social media links
+- **Threat Analysis**: Automatic threat level calculation based on market data
+- **Geofencing**: Optional location-based tracking and alerts
+- **Organization Scoping**: Automatic association with user's organization/branch
+
+## Usage
+- Submit up to 50 competitors per request
+- Each competitor follows the standard CreateCompetitorDto schema
+- Failed competitors don't affect successful ones (when possible)
+- Duplicate names are automatically detected and rejected
+
+## Response
+Returns comprehensive results including:
+- Total requested/created/failed counts
+- Success rate percentage
+- Individual competitor results with error details
+- Performance metrics and execution time
+- Optional validation and feature counts
+
+## Limits
+- Maximum 50 competitors per request
+- Competitor names must be unique within the system
+- All required fields must be provided for each competitor
+		`,
+	})
+	@ApiBody({
+		type: BulkCreateCompetitorDto,
+		description: 'Array of competitors to create with optional settings',
+		examples: {
+			'Market Analysis Setup': {
+				summary: 'Create multiple competitors for comprehensive market analysis',
+				value: {
+					orgId: 1,
+					branchId: 1,
+					validateUrls: true,
+					autoCalculateThreat: true,
+					enableGeofencing: true,
+					competitors: [
+						{
+							name: 'Tech Innovations SA',
+							description: 'Leading technology solutions provider in South Africa',
+							website: 'https://techinnovations.co.za',
+							contactEmail: 'info@techinnovations.co.za',
+							contactPhone: '+27 11 555 1234',
+							address: {
+								street: '789 Innovation Boulevard',
+								suburb: 'Sandton',
+								city: 'Johannesburg',
+								state: 'Gauteng',
+								country: 'South Africa',
+								postalCode: '2196'
+							},
+							industry: 'Technology',
+							threatLevel: 4,
+							competitiveAdvantage: 3,
+							estimatedAnnualRevenue: 50000000,
+							estimatedEmployeeCount: 300,
+							marketSharePercentage: 15.5,
+							keyProducts: ['CRM Software', 'Business Intelligence', 'Cloud Solutions'],
+							keyStrengths: ['Strong local presence', 'Competitive pricing', 'Good customer support'],
+							keyWeaknesses: ['Limited international reach', 'Smaller R&D budget'],
+							competitorType: 'DIRECT',
+							isDirect: true,
+							latitude: -26.1076,
+							longitude: 28.0567,
+							businessStrategy: 'Focus on enterprise clients with value pricing strategy',
+							marketingStrategy: 'Heavy investment in digital marketing and industry events',
+							pricingData: {
+								lowEndPricing: 50000,
+								midRangePricing: 150000,
+								highEndPricing: 500000,
+								pricingModel: 'subscription'
+							},
+							socialMedia: {
+								linkedin: 'https://linkedin.com/company/tech-innovations-sa',
+								twitter: 'https://twitter.com/techinnovationssa',
+								facebook: 'https://facebook.com/techinnovations'
+							}
+						},
+						{
+							name: 'Digital Solutions Africa',
+							description: 'African digital transformation specialists',
+							website: 'https://digitalsolutions.africa',
+							contactEmail: 'contact@digitalsolutions.africa',
+							contactPhone: '+27 21 888 9999',
+							address: {
+								street: '456 Tech Park Drive',
+								suburb: 'Century City',
+								city: 'Cape Town',
+								state: 'Western Cape',
+								country: 'South Africa',
+								postalCode: '7441'
+							},
+							industry: 'Digital Services',
+							threatLevel: 3,
+							competitiveAdvantage: 4,
+							estimatedAnnualRevenue: 25000000,
+							estimatedEmployeeCount: 150,
+							marketSharePercentage: 8.2,
+							keyProducts: ['Mobile Apps', 'Web Development', 'Digital Marketing'],
+							keyStrengths: ['Innovative solutions', 'Fast delivery', 'Creative team'],
+							keyWeaknesses: ['Higher pricing', 'Limited enterprise experience'],
+							competitorType: 'INDIRECT',
+							isDirect: false,
+							latitude: -33.8915,
+							longitude: 18.5142,
+							businessStrategy: 'Focused on SME market with rapid deployment approach',
+							marketingStrategy: 'Social media and content marketing focus'
+						}
+					]
+				}
+			},
+			'Regional Competitor Mapping': {
+				summary: 'Map regional competitors with location intelligence',
+				value: {
+					validateUrls: false,
+					enableGeofencing: true,
+					competitors: [
+						{
+							name: 'Durban Tech Solutions',
+							description: 'KwaZulu-Natal technology provider',
+							website: 'https://durbantech.co.za',
+							contactEmail: 'info@durbantech.co.za',
+							contactPhone: '+27 31 456 7890',
+							address: {
+								street: '123 Marine Parade',
+								suburb: 'Durban Central',
+								city: 'Durban',
+								state: 'KwaZulu-Natal',
+								country: 'South Africa',
+								postalCode: '4001'
+							},
+							industry: 'Technology',
+							threatLevel: 2,
+							competitiveAdvantage: 2,
+							estimatedAnnualRevenue: 15000000,
+							estimatedEmployeeCount: 80,
+							keyProducts: ['Local Software', 'IT Support'],
+							competitorType: 'INDIRECT',
+							isDirect: false,
+							latitude: -29.8587,
+							longitude: 31.0218
+						}
+					]
+				}
+			}
+		}
+	})
+	@ApiCreatedResponse({
+		description: '✅ Bulk creation completed successfully',
+		type: BulkCreateCompetitorResponse,
+		schema: {
+			type: 'object',
+			properties: {
+				totalRequested: { type: 'number', example: 10, description: 'Total competitors requested for creation' },
+				totalCreated: { type: 'number', example: 8, description: 'Total competitors successfully created' },
+				totalFailed: { type: 'number', example: 2, description: 'Total competitors that failed creation' },
+				successRate: { type: 'number', example: 80.0, description: 'Success rate percentage' },
+				message: { type: 'string', example: 'Bulk creation completed: 8 competitors created, 2 failed' },
+				duration: { type: 'number', example: 1250, description: 'Operation duration in milliseconds' },
+				results: {
+					type: 'array',
+					description: 'Detailed results for each competitor',
+					items: {
+						type: 'object',
+						properties: {
+							competitor: { type: 'object', description: 'Created competitor data or null if failed' },
+							success: { type: 'boolean', example: true },
+							error: { type: 'string', example: 'Name already exists', description: 'Error message if failed' },
+							index: { type: 'number', example: 0, description: 'Index in original array' },
+							name: { type: 'string', example: 'Tech Innovations SA' },
+							website: { type: 'string', example: 'https://techinnovations.co.za' }
+						}
+					}
+				}
+			}
+		}
+	})
+	@ApiBadRequestResponse({
+		description: '❌ Invalid request data or validation errors'
+	})
+	@ApiInternalServerErrorResponse({
+		description: '🔥 Server error during bulk creation'
+	})
+	async createBulkCompetitors(@Body() bulkCreateCompetitorDto: BulkCreateCompetitorDto, @Request() req): Promise<BulkCreateCompetitorResponse> {
+		// Extract org and branch IDs from request
+		const { orgId, branchId } = this.extractOrgAndBranchIds(req);
+		
+		// Set orgId and branchId if not provided in DTO
+		if (!bulkCreateCompetitorDto.orgId) {
+			bulkCreateCompetitorDto.orgId = orgId;
+		}
+		if (!bulkCreateCompetitorDto.branchId) {
+			bulkCreateCompetitorDto.branchId = branchId;
+		}
+		
+		return this.competitorsService.createBulkCompetitors(bulkCreateCompetitorDto);
+	}
+
+	@Patch('bulk')
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.DEVELOPER, AccessLevel.OWNER)
+	@ApiOperation({
+		summary: '📝 Update multiple competitors in bulk',
+		description: `
+# Bulk Competitor Update
+
+Update multiple competitors simultaneously with comprehensive validation and analysis.
+
+## Features
+- **Transaction Safety**: All-or-nothing updates with automatic rollback on failures
+- **Field Tracking**: Tracks which fields were updated for each competitor
+- **URL Validation**: Optional validation of updated websites and social links
+- **Threat Recalculation**: Automatic threat level updates based on new market data
+- **Geofencing Updates**: Location-based tracking updates for coordinate changes
+- **Cache Management**: Intelligent cache invalidation for updated competitors
+
+## Usage
+- Submit up to 50 competitor updates per request
+- Each update specifies competitor ID (ref) and fields to update
+- Only provided fields are updated (partial updates supported)
+- Failed updates don't affect successful ones
+
+## Response
+Returns comprehensive results including:
+- Total requested/updated/failed counts
+- Success rate percentage
+- Individual update results with field tracking
+- Performance metrics and execution time
+- Optional validation and recalculation counts
+
+## Limits
+- Maximum 50 competitor updates per request
+- Competitor IDs must exist and not be soft-deleted
+- URL validation applies to website and social media fields
+		`,
+	})
+	@ApiBody({
+		type: BulkUpdateCompetitorDto,
+		description: 'Array of competitor updates with options',
+		examples: {
+			'Market Intelligence Update': {
+				summary: 'Update competitor intelligence and threat assessments',
+				value: {
+					validateUrls: true,
+					recalculateThreatLevels: true,
+					updateGeofencing: false,
+					updates: [
+						{
+							ref: 123,
+							data: {
+								threatLevel: 5,
+								estimatedAnnualRevenue: 75000000,
+								marketSharePercentage: 22.5,
+								keyStrengths: ['Market leader', 'Innovation hub', 'Strong partnerships', 'Premium brand'],
+								competitiveAdvantage: 4,
+								status: 'ACTIVE',
+								businessStrategy: 'Aggressive expansion with premium positioning',
+								marketingStrategy: 'Thought leadership and enterprise events',
+								pricingData: {
+									lowEndPricing: 100000,
+									midRangePricing: 300000,
+									highEndPricing: 1000000,
+									pricingModel: 'enterprise'
+								}
+							}
+						},
+						{
+							ref: 124,
+							data: {
+								threatLevel: 2,
+								competitiveAdvantage: 2,
+								estimatedEmployeeCount: 50,
+								keyWeaknesses: ['Limited resources', 'Poor customer service', 'Outdated technology', 'Weak market presence'],
+								status: 'INACTIVE',
+								businessStrategy: 'Cost-cutting and survival mode'
+							}
+						}
+					]
+				}
+			},
+			'Contact and Location Updates': {
+				summary: 'Update competitor contact information and locations',
+				value: {
+					validateUrls: true,
+					updateGeofencing: true,
+					updates: [
+						{
+							ref: 125,
+							data: {
+								contactEmail: 'newcontact@competitor.co.za',
+								contactPhone: '+27 11 999 8888',
+								website: 'https://newdomain.co.za',
+								address: {
+									street: '456 New Corporate Park',
+									suburb: 'Rosebank',
+									city: 'Johannesburg',
+									state: 'Gauteng',
+									country: 'South Africa',
+									postalCode: '2196'
+								},
+								latitude: -26.1450,
+								longitude: 28.0434,
+								socialMedia: {
+									linkedin: 'https://linkedin.com/company/new-competitor',
+									twitter: 'https://twitter.com/newcomp_sa'
+								}
+							}
+						}
+					]
+				}
+			}
+		}
+	})
+	@ApiOkResponse({
+		description: '✅ Bulk update completed successfully',
+		type: BulkUpdateCompetitorResponse
+	})
+	@ApiBadRequestResponse({
+		description: '❌ Invalid request data or validation errors'
+	})
+	@ApiNotFoundResponse({
+		description: '🔍 One or more competitor IDs not found'
+	})
+	@ApiInternalServerErrorResponse({
+		description: '🔥 Server error during bulk update'
+	})
+	async updateBulkCompetitors(@Body() bulkUpdateCompetitorDto: BulkUpdateCompetitorDto, @Request() req): Promise<BulkUpdateCompetitorResponse> {
+		return this.competitorsService.updateBulkCompetitors(bulkUpdateCompetitorDto);
 	}
 
 	@Get()

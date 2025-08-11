@@ -11,6 +11,9 @@ import { PaginatedResponse } from '../lib/interfaces/product.interfaces';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ProductAnalytics } from './entities/product-analytics.entity';
 import { ProductAnalyticsDto } from './dto/product-analytics.dto';
+import { BulkCreateProductDto, BulkCreateProductResponse, BulkProductResult } from './dto/bulk-create-product.dto';
+import { BulkUpdateProductDto, BulkUpdateProductResponse, BulkUpdateProductResult } from './dto/bulk-update-product.dto';
+import { DataSource } from 'typeorm';
 
 @Injectable()
 export class ProductsService {
@@ -26,6 +29,7 @@ export class ProductsService {
 		@Inject(CACHE_MANAGER)
 		private cacheManager: Cache,
 		private readonly eventEmitter: EventEmitter2,
+		private readonly dataSource: DataSource,
 	) {
 		this.CACHE_TTL = Number(process.env.CACHE_EXPIRATION_TIME) || 30;
 	}
@@ -83,7 +87,88 @@ export class ProductsService {
 				keys: keysToDelete,
 			});
 		} catch (error) {
-			console.error('Error invalidating product cache:', error);
+			this.logger.error(`❌ [invalidateProductCache] Error invalidating product cache: ${error.message}`, error.stack);
+		}
+	}
+
+	/**
+	 * 🗑️ Invalidate caches for multiple products efficiently
+	 * @param products - Array of products to invalidate caches for
+	 */
+	private async invalidateBulkProductCaches(products: Product[]): Promise<void> {
+		try {
+			if (!products || products.length === 0) return;
+
+			this.logger.debug(`🗑️ [invalidateBulkProductCaches] Invalidating caches for ${products.length} products`);
+
+			// Get all cache keys
+			const keys = await this.cacheManager.store.keys();
+			const keysToDelete = new Set<string>();
+
+			// Add general cache keys
+			keysToDelete.add(`${this.CACHE_PREFIX}all`);
+			keysToDelete.add(`${this.CACHE_PREFIX}stats`);
+
+			// Collect all unique categories, statuses, orgs, and branches
+			const categories = new Set<string>();
+			const statuses = new Set<string>();
+			const orgIds = new Set<number>();
+			const branchIds = new Set<number>();
+
+			products.forEach(product => {
+				// Add product-specific keys
+				keysToDelete.add(this.getCacheKey(product.uid));
+
+				// Collect unique values for batch invalidation
+				if (product.category) categories.add(product.category);
+				if (product.status) statuses.add(product.status);
+				if (product.organisation?.uid) orgIds.add(product.organisation.uid);
+				if (product.branch?.uid) branchIds.add(product.branch.uid);
+			});
+
+			// Add category-specific keys
+			categories.forEach(category => {
+				keysToDelete.add(`${this.CACHE_PREFIX}category_${category}`);
+			});
+
+			// Add status-specific keys
+			statuses.forEach(status => {
+				keysToDelete.add(`${this.CACHE_PREFIX}status_${status}`);
+			});
+
+			// Add organization-specific keys
+			orgIds.forEach(orgId => {
+				keysToDelete.add(`${this.CACHE_PREFIX}org_${orgId}`);
+			});
+
+			// Add branch-specific keys
+			branchIds.forEach(branchId => {
+				keysToDelete.add(`${this.CACHE_PREFIX}branch_${branchId}`);
+			});
+
+			// Clear all pagination and search caches
+			const productListCaches = keys.filter(
+				(key) =>
+					key.startsWith(`${this.CACHE_PREFIX}page`) ||
+					key.startsWith(`${this.CACHE_PREFIX}search`) ||
+					key.includes('_limit'),
+			);
+			productListCaches.forEach(key => keysToDelete.add(key));
+
+			// Clear all caches in parallel
+			const keysArray = Array.from(keysToDelete);
+			await Promise.all(keysArray.map((key) => this.cacheManager.del(key)));
+
+			this.logger.debug(`🗑️ [invalidateBulkProductCaches] Cleared ${keysArray.length} cache keys`);
+
+			// Emit event for other services that might be caching product data
+			this.eventEmitter.emit('products.cache.bulk.invalidate', {
+				productIds: products.map(p => p.uid),
+				keys: keysArray,
+				timestamp: new Date(),
+			});
+		} catch (error) {
+			this.logger.error(`❌ [invalidateBulkProductCaches] Error invalidating bulk product caches: ${error.message}`, error.stack);
 		}
 	}
 
@@ -134,6 +219,152 @@ export class ProductsService {
 				message: error.message || 'Error creating product',
 			};
 		}
+	}
+
+	/**
+	 * 📦 Create multiple products in bulk with transaction support
+	 * @param bulkCreateProductDto - Bulk product creation data
+	 * @returns Promise with bulk creation results
+	 */
+	async createBulkProducts(bulkCreateProductDto: BulkCreateProductDto): Promise<BulkCreateProductResponse> {
+		const startTime = Date.now();
+		this.logger.log(`📦 [createBulkProducts] Starting bulk creation of ${bulkCreateProductDto.products.length} products`);
+		
+		const results: BulkProductResult[] = [];
+		let successCount = 0;
+		let failureCount = 0;
+		const errors: string[] = [];
+
+		// Create a query runner for transaction management
+		const queryRunner = this.dataSource.createQueryRunner();
+		await queryRunner.connect();
+		await queryRunner.startTransaction();
+
+		try {
+			for (let i = 0; i < bulkCreateProductDto.products.length; i++) {
+				const productData = bulkCreateProductDto.products[i];
+				
+				try {
+					this.logger.debug(`📝 [createBulkProducts] Processing product ${i + 1}/${bulkCreateProductDto.products.length}: ${productData.name}`);
+					
+					// Create product with org and branch association
+					const product = queryRunner.manager.create(Product, {
+						...productData,
+						...(bulkCreateProductDto.orgId && { organisation: { uid: bulkCreateProductDto.orgId } }),
+						...(bulkCreateProductDto.branchId && { branch: { uid: bulkCreateProductDto.branchId } }),
+					});
+
+					const savedProduct = await queryRunner.manager.save(Product, product);
+					
+					// Create analytics record for the product
+					const analytics = queryRunner.manager.create(ProductAnalytics, {
+						productId: savedProduct.uid,
+						totalUnitsSold: 0,
+						totalRevenue: 0,
+						salesCount: 0,
+						viewCount: 0,
+						cartAddCount: 0,
+						wishlistCount: 0,
+						quotationCount: 0,
+						quotationToOrderCount: 0,
+						conversionRate: 0,
+						stockHistory: [],
+						salesHistory: [],
+						priceHistory: []
+					});
+					
+					await queryRunner.manager.save(ProductAnalytics, analytics);
+
+					results.push({
+						product: savedProduct,
+						success: true,
+						index: i,
+						sku: productData.sku,
+						name: productData.name
+					});
+					
+					successCount++;
+					this.logger.debug(`✅ [createBulkProducts] Product ${i + 1} created successfully: ${productData.name} (ID: ${savedProduct.uid})`);
+					
+				} catch (productError) {
+					const errorMessage = `Product ${i + 1} (${productData.name || productData.sku}): ${productError.message}`;
+					this.logger.error(`❌ [createBulkProducts] ${errorMessage}`, productError.stack);
+					
+					results.push({
+						product: null,
+						success: false,
+						error: productError.message,
+						index: i,
+						sku: productData.sku,
+						name: productData.name
+					});
+					
+					errors.push(errorMessage);
+					failureCount++;
+				}
+			}
+
+			// Commit transaction if we have at least some successes
+			if (successCount > 0) {
+				await queryRunner.commitTransaction();
+				this.logger.log(`✅ [createBulkProducts] Transaction committed - ${successCount} products created successfully`);
+				
+				// Comprehensive cache invalidation after successful bulk creation
+				this.logger.debug(`🗑️ [createBulkProducts] Invalidating comprehensive product caches`);
+				await this.invalidateBulkProductCaches(results.filter(r => r.success).map(r => r.product));
+				
+				// Emit bulk creation event
+				this.eventEmitter.emit('products.bulk.created', {
+					totalRequested: bulkCreateProductDto.products.length,
+					totalCreated: successCount,
+					totalFailed: failureCount,
+					orgId: bulkCreateProductDto.orgId,
+					branchId: bulkCreateProductDto.branchId,
+					timestamp: new Date(),
+				});
+			} else {
+				// Rollback if no products were created successfully
+				await queryRunner.rollbackTransaction();
+				this.logger.warn(`⚠️ [createBulkProducts] Transaction rolled back - no products were created successfully`);
+			}
+
+		} catch (transactionError) {
+			// Rollback transaction on any unexpected error
+			await queryRunner.rollbackTransaction();
+			this.logger.error(`❌ [createBulkProducts] Transaction error: ${transactionError.message}`, transactionError.stack);
+			
+			return {
+				totalRequested: bulkCreateProductDto.products.length,
+				totalCreated: 0,
+				totalFailed: bulkCreateProductDto.products.length,
+				successRate: 0,
+				results: [],
+				message: `Bulk creation failed: ${transactionError.message}`,
+				errors: [transactionError.message],
+				duration: Date.now() - startTime
+			};
+		} finally {
+			// Release the query runner
+			await queryRunner.release();
+		}
+
+		const duration = Date.now() - startTime;
+		const successRate = (successCount / bulkCreateProductDto.products.length) * 100;
+
+		this.logger.log(`🎉 [createBulkProducts] Bulk creation completed in ${duration}ms - Success: ${successCount}, Failed: ${failureCount}, Rate: ${successRate.toFixed(2)}%`);
+
+		return {
+			totalRequested: bulkCreateProductDto.products.length,
+			totalCreated: successCount,
+			totalFailed: failureCount,
+			successRate: parseFloat(successRate.toFixed(2)),
+			results,
+			message: successCount > 0 
+				? `Bulk creation completed: ${successCount} products created, ${failureCount} failed`
+				: 'Bulk creation failed: No products were created',
+			errors: errors.length > 0 ? errors : undefined,
+			duration
+		};
 	}
 
 	/**
@@ -194,6 +425,199 @@ export class ProductsService {
 				message: error.message || 'Error updating product',
 			};
 		}
+	}
+
+	/**
+	 * 📝 Update multiple products in bulk with transaction support
+	 * @param bulkUpdateProductDto - Bulk product update data
+	 * @returns Promise with bulk update results
+	 */
+	async updateBulkProducts(bulkUpdateProductDto: BulkUpdateProductDto): Promise<BulkUpdateProductResponse> {
+		const startTime = Date.now();
+		this.logger.log(`📝 [updateBulkProducts] Starting bulk update of ${bulkUpdateProductDto.updates.length} products`);
+		
+		const results: BulkUpdateProductResult[] = [];
+		let successCount = 0;
+		let failureCount = 0;
+		const errors: string[] = [];
+
+		// Create a query runner for transaction management
+		const queryRunner = this.dataSource.createQueryRunner();
+		await queryRunner.connect();
+		await queryRunner.startTransaction();
+
+		try {
+			for (let i = 0; i < bulkUpdateProductDto.updates.length; i++) {
+				const updateItem = bulkUpdateProductDto.updates[i];
+				const { ref, data } = updateItem;
+				
+				try {
+					this.logger.debug(`📝 [updateBulkProducts] Processing product ${i + 1}/${bulkUpdateProductDto.updates.length}: ID ${ref}`);
+					
+					// First find the product to ensure it exists
+					const existingProduct = await queryRunner.manager.findOne(Product, { 
+						where: { uid: ref, isDeleted: false } 
+					});
+
+					if (!existingProduct) {
+						throw new NotFoundException(`Product with ID ${ref} not found`);
+					}
+
+					this.logger.debug(`✅ [updateBulkProducts] Product found: ${existingProduct.name} (ID: ${ref})`);
+
+					// Track changed fields for logging
+					const updatedFields = Object.keys(data).filter(key => 
+						data[key] !== undefined && data[key] !== existingProduct[key]
+					);
+
+					// Check if price is being updated to update price history
+					if (data.price && data.price !== existingProduct.price) {
+						this.logger.debug(`💰 [updateBulkProducts] Price change detected for product ${ref}: ${existingProduct.price} → ${data.price}`);
+						
+						// Find analytics and update price history
+						const analytics = await queryRunner.manager.findOne(ProductAnalytics, { 
+							where: { productId: ref } 
+						});
+						
+						if (analytics) {
+							const priceHistory = analytics.priceHistory || [];
+							priceHistory.push({
+								date: new Date(),
+								price: data.price,
+								type: 'bulk_update',
+							});
+							
+							await queryRunner.manager.update(ProductAnalytics, 
+								{ productId: ref }, 
+								{ priceHistory }
+							);
+						}
+					}
+
+					// Check if stock quantity is being updated to update stock history
+					if (data.stockQuantity !== undefined && data.stockQuantity !== existingProduct.stockQuantity) {
+						const stockChange = data.stockQuantity - (existingProduct.stockQuantity || 0);
+						this.logger.debug(`📦 [updateBulkProducts] Stock change detected for product ${ref}: ${existingProduct.stockQuantity} → ${data.stockQuantity} (${stockChange > 0 ? '+' : ''}${stockChange})`);
+						
+						// Find analytics and update stock history
+						const analytics = await queryRunner.manager.findOne(ProductAnalytics, { 
+							where: { productId: ref } 
+						});
+						
+						if (analytics) {
+							const stockHistory = analytics.stockHistory || [];
+							stockHistory.push({
+								date: new Date(),
+								quantity: Math.abs(stockChange),
+								type: stockChange > 0 ? 'in' : 'out',
+								balance: data.stockQuantity,
+							});
+							
+							await queryRunner.manager.update(ProductAnalytics, 
+								{ productId: ref }, 
+								{ stockHistory }
+							);
+						}
+					}
+
+					// Update the product
+					await queryRunner.manager.update(Product, ref, data);
+
+					results.push({
+						ref,
+						success: true,
+						index: i,
+						name: existingProduct.name,
+						updatedFields
+					});
+					
+					successCount++;
+					this.logger.debug(`✅ [updateBulkProducts] Product ${i + 1} updated successfully: ${existingProduct.name} (ID: ${ref})`);
+					
+				} catch (productError) {
+					const errorMessage = `Product ID ${ref}: ${productError.message}`;
+					this.logger.error(`❌ [updateBulkProducts] ${errorMessage}`, productError.stack);
+					
+					results.push({
+						ref,
+						success: false,
+						error: productError.message,
+						index: i
+					});
+					
+					errors.push(errorMessage);
+					failureCount++;
+				}
+			}
+
+			// Commit transaction if we have at least some successes
+			if (successCount > 0) {
+				await queryRunner.commitTransaction();
+				this.logger.log(`✅ [updateBulkProducts] Transaction committed - ${successCount} products updated successfully`);
+				
+				// Comprehensive cache invalidation after successful bulk update
+				this.logger.debug(`🗑️ [updateBulkProducts] Invalidating comprehensive product caches`);
+				const successfulUpdates = results.filter(r => r.success);
+				
+				// Get the updated products for comprehensive cache invalidation
+				const updatedProducts = await Promise.all(
+					successfulUpdates.map(result => 
+						this.productRepository.findOne({ where: { uid: result.ref }, relations: ['organisation', 'branch'] })
+					)
+				);
+				await this.invalidateBulkProductCaches(updatedProducts.filter(p => p !== null));
+				
+				// Emit bulk update event
+				this.eventEmitter.emit('products.bulk.updated', {
+					totalRequested: bulkUpdateProductDto.updates.length,
+					totalUpdated: successCount,
+					totalFailed: failureCount,
+					updatedProductIds: successfulUpdates.map(r => r.ref),
+					timestamp: new Date(),
+				});
+			} else {
+				// Rollback if no products were updated successfully
+				await queryRunner.rollbackTransaction();
+				this.logger.warn(`⚠️ [updateBulkProducts] Transaction rolled back - no products were updated successfully`);
+			}
+
+		} catch (transactionError) {
+			// Rollback transaction on any unexpected error
+			await queryRunner.rollbackTransaction();
+			this.logger.error(`❌ [updateBulkProducts] Transaction error: ${transactionError.message}`, transactionError.stack);
+			
+			return {
+				totalRequested: bulkUpdateProductDto.updates.length,
+				totalUpdated: 0,
+				totalFailed: bulkUpdateProductDto.updates.length,
+				successRate: 0,
+				results: [],
+				message: `Bulk update failed: ${transactionError.message}`,
+				errors: [transactionError.message],
+				duration: Date.now() - startTime
+			};
+		} finally {
+			// Release the query runner
+			await queryRunner.release();
+		}
+
+		const duration = Date.now() - startTime;
+		const successRate = (successCount / bulkUpdateProductDto.updates.length) * 100;
+
+		this.logger.log(`🎉 [updateBulkProducts] Bulk update completed in ${duration}ms - Success: ${successCount}, Failed: ${failureCount}, Rate: ${successRate.toFixed(2)}%`);
+
+		return {
+			totalRequested: bulkUpdateProductDto.updates.length,
+			totalUpdated: successCount,
+			totalFailed: failureCount,
+			successRate: parseFloat(successRate.toFixed(2)),
+			results,
+			message: successCount > 0 
+				? `Bulk update completed: ${successCount} products updated, ${failureCount} failed`
+				: 'Bulk update failed: No products were updated',
+			errors: errors.length > 0 ? errors : undefined,
+			duration
+		};
 	}
 
 	/**
