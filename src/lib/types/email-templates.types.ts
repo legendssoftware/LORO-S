@@ -1912,6 +1912,7 @@ export interface EmailDataMap {
 	[EmailType.CLIENT_COMMUNICATION_REMINDER]: ClientCommunicationReminderData;
 	// Claims email mappings
 	[EmailType.CLAIM_CREATED]: ClaimEmailData;
+	[EmailType.CLAIM_CREATED_ADMIN]: ClaimEmailData;
 	[EmailType.CLAIM_STATUS_UPDATE]: ClaimStatusUpdateEmailData;
 	[EmailType.CLAIM_APPROVED]: ClaimStatusUpdateEmailData;
 	[EmailType.CLAIM_REJECTED]: ClaimStatusUpdateEmailData;

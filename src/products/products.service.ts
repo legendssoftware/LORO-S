@@ -406,6 +406,12 @@ export class ProductsService {
 				await this.updateStockHistory(ref, Math.abs(stockChange), stockChange > 0 ? 'in' : 'out');
 			}
 
+			// Ensure productRef exists for existing products
+			if (!product.product.productRef) {
+				this.logger.debug(`🏷️ [updateProduct] Generating missing productRef for product ID: ${ref}`);
+				updateProductDto.productRef = `PRD${Math.floor(100000 + Math.random() * 900000)}`;
+			}
+
 			// Update the product
 			this.logger.debug(`💾 [updateProduct] Applying updates to database`);
 			await this.productRepository.update(ref, updateProductDto);
@@ -518,6 +524,12 @@ export class ProductsService {
 								{ stockHistory }
 							);
 						}
+					}
+
+					// Ensure productRef exists for existing products
+					if (!existingProduct.productRef && !data.productRef) {
+						this.logger.debug(`🏷️ [updateBulkProducts] Generating missing productRef for product ID: ${ref}`);
+						data.productRef = `PRD${Math.floor(100000 + Math.random() * 900000)}`;
 					}
 
 					// Update the product

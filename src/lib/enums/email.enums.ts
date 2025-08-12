@@ -106,6 +106,7 @@ export enum EmailType {
 	EMAIL_VERIFIED = 'email_verified',
 	// Claims related emails
 	CLAIM_CREATED = 'claim_created',
+	CLAIM_CREATED_ADMIN = 'claim_created_admin',
 	CLAIM_STATUS_UPDATE = 'claim_status_update',
 	CLAIM_APPROVED = 'claim_approved',
 	CLAIM_REJECTED = 'claim_rejected',

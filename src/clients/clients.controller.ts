@@ -902,11 +902,7 @@ Returns detailed results including:
 	@Get('admin/all')
 	@Roles(
 		AccessLevel.ADMIN,
-		AccessLevel.MANAGER,
-		AccessLevel.SUPPORT,
-		AccessLevel.DEVELOPER,
 		AccessLevel.OWNER,
-		AccessLevel.SUPERVISOR,
 	)
 	@ApiOperation({
 		summary: '👑 Get All Clients (Admin Access)',
@@ -1230,14 +1226,15 @@ Retrieves a comprehensive list of all clients without user-specific filtering fo
 		const branchId = req.user?.branch?.uid;
 		const filters = { status, search };
 
-		// For admin purposes, we don't pass userId to bypass user-specific filtering
+		// For admin purposes, pass userId to enforce role-based filtering (only ADMIN/OWNER can bypass client filtering)
+		const userId = req.user?.uid;
 		return this.clientsService.findAll(
 			page ? Number(page) : 1,
 			limit ? Number(limit) : 500, // Higher default limit for admin purposes
 			orgId,
 			branchId,
 			filters,
-			undefined, // No userId = no user-specific filtering
+			userId
 		);
 	}
 
@@ -1795,7 +1792,8 @@ Retrieves comprehensive information about a specific client including all relate
 	findOne(@Param('ref') ref: number, @Req() req: AuthenticatedRequest): Promise<{ message: string; client: Client | null }> {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
-		return this.clientsService.findOne(ref, orgId, branchId);
+		const userId = req.user?.uid;
+		return this.clientsService.findOne(ref, orgId, branchId, userId);
 	}
 
 	@Patch(':ref')
@@ -2498,8 +2496,10 @@ Discovers clients within a specified radius of given GPS coordinates, enabling l
 		@Query('radius') radius: number = 5,
 		@Query('orgId') orgId?: number,
 		@Query('branchId') branchId?: number,
+		@Req() req?: AuthenticatedRequest,
 	): Promise<{ message: string; clients: Array<Client & { distance: number }> }> {
-		return this.clientsService.findNearbyClients(latitude, longitude, radius, orgId, branchId);
+		const userId = req?.user?.uid;
+		return this.clientsService.findNearbyClients(latitude, longitude, radius, orgId, branchId, userId);
 	}
 
 	@Get(':clientId/check-ins')
@@ -2709,7 +2709,8 @@ Retrieves comprehensive check-in history with location data, visit duration, and
 	getClientCheckIns(@Param('clientId') clientId: number, @Req() req: AuthenticatedRequest): Promise<{ message: string; checkIns: CheckIn[] }> {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
-		return this.clientsService.getClientCheckIns(clientId, orgId, branchId);
+		const userId = req.user?.uid;
+		return this.clientsService.getClientCheckIns(clientId, orgId, branchId, userId);
 	}
 
 	@Patch('profile')

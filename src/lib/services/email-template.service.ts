@@ -634,6 +634,10 @@ class EmailTemplateService {
 		return this.renderTemplate('claims/created.hbs', data);
 	}
 
+	claimCreatedAdmin(data: ClaimEmailData): string {
+		return this.renderTemplate('claims/new-claim-admin.hbs', data);
+	}
+
 	claimStatusUpdate(data: ClaimStatusUpdateEmailData): string {
 		return this.renderTemplate('claims/status-update.hbs', data);
 	}

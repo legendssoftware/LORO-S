@@ -373,6 +373,10 @@ export const ClaimCreated = (data: ClaimEmailData): string => {
 	return emailTemplateService.claimCreated(data);
 };
 
+export const ClaimCreatedAdmin = (data: ClaimEmailData): string => {
+	return emailTemplateService.claimCreatedAdmin(data);
+};
+
 export const ClaimStatusUpdate = (data: ClaimStatusUpdateEmailData): string => {
 	return emailTemplateService.claimStatusUpdate(data);
 };

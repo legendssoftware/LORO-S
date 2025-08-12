@@ -291,6 +291,11 @@ export class Product {
 
     @BeforeInsert()
     async generateSKUBeforeInsert() {
+        // Generate productRef if not provided
+        if (!this.productRef) {
+            this.productRef = `PRD${Math.floor(100000 + Math.random() * 900000)}`;
+        }
+        
         if (!this.sku && this.category && this.name) {
             this.sku = Product.generateSKU(this.category, this.name, 0, this.reseller);
         }
@@ -299,22 +304,6 @@ export class Product {
         if (this.palletAvailable && !this.palletSku && this.sku) {
             this.palletSku = Product.generatePalletSKU(this.sku);
         }
-    }
-
-    @AfterInsert()
-    async updateSKUWithCorrectUid() {
-        const repository = getRepository(Product);
-        const newSku = Product.generateSKU(this.category, this.name, this.uid, this.reseller);
-        const newPalletSku = this.palletAvailable ? Product.generatePalletSKU(newSku) : this.palletSku;
-        
-        // Update both SKU and pallet SKU
-        await repository.update(this.uid, { 
-            sku: newSku,
-            palletSku: newPalletSku
-        });
-        
-        this.sku = newSku;
-        this.palletSku = newPalletSku;
     }
 }
 

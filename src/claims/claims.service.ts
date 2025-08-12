@@ -149,6 +149,9 @@ export class ClaimsService {
 
 				// Send email to the user who created the claim
 				this.eventEmitter.emit('send.email', EmailType.CLAIM_CREATED, [user.email], emailData);
+
+				// Send admin notification email
+				this.eventEmitter.emit('send.email', EmailType.CLAIM_CREATED_ADMIN, [], emailData);
 			}
 		} catch (emailError) {
 			console.error('Error sending claim creation email:', emailError);
@@ -1064,6 +1067,7 @@ export class ClaimsService {
 				pushNotificationsEnabled: true,
 				organisationRef: requester.organisationRef,
 				branchUid: requester.branch?.uid,
+				requesterUid: requester.uid, // Add the missing requesterUid field
 				metadata: {
 					claimId: claim.uid,
 					claimCategory: claim.category,

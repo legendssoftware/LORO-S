@@ -239,6 +239,48 @@ export class ClientsService {
 	 * @param client - The client object whose cache needs to be invalidated
 	 * @returns Promise<void> - Completes cache invalidation or logs errors gracefully
 	 */
+	/**
+	 * Helper method to check user access permissions for client operations
+	 * @param userId - User ID to check access for
+	 * @returns Object containing access information
+	 */
+	private async checkUserAccess(userId?: number): Promise<{
+		hasElevatedAccess: boolean;
+		userAssignedClients: number[] | null;
+		user?: any;
+	}> {
+		if (!userId) {
+			return {
+				hasElevatedAccess: false,
+				userAssignedClients: null,
+			};
+		}
+
+		const user = await this.userRepository.findOne({
+			where: { uid: userId, isDeleted: false },
+			select: ['uid', 'assignedClientIds', 'accessLevel'],
+		});
+
+		if (!user) {
+			throw new NotFoundException('User not found');
+		}
+
+		// Check if user has elevated access (only admin and owner can see all org clients)
+		const elevatedRoles = [
+			AccessLevel.OWNER,
+			AccessLevel.ADMIN
+		];
+		
+		const hasElevatedAccess = elevatedRoles.includes(user.accessLevel);
+		const userAssignedClients = hasElevatedAccess ? null : (user.assignedClientIds || []);
+
+		return {
+			hasElevatedAccess,
+			userAssignedClients,
+			user,
+		};
+	}
+
 	private async invalidateClientCache(client: Client): Promise<void> {
 		const startTime = Date.now();
 		this.logger.debug(`[CACHE_INVALIDATION] Starting cache invalidation for client ${client.uid} (${client.name})`);
@@ -1079,34 +1121,18 @@ export class ClientsService {
 				return cachedClients;
 			}
 
-		// Get user's assigned clients if user is provided
-		let userAssignedClients: number[] | null = null;
-		let hasElevatedAccess = false;
+		// Check user access permissions
+		this.logger.debug(`[CLIENT_FIND_ALL] Checking user access for user ${userId}`);
+		const { hasElevatedAccess, userAssignedClients, user } = await this.checkUserAccess(userId);
+		
 		if (userId) {
-			this.logger.debug(`[CLIENT_FIND_ALL] Fetching assigned clients for user ${userId}`);
-			const user = await this.userRepository.findOne({
-				where: { uid: userId, isDeleted: false },
-				select: ['uid', 'assignedClientIds', 'accessLevel'],
-			});
-
-			if (user) {
-				// Check if user has elevated access (only admin and owner can see all org clients)
-				const elevatedRoles = [
-					AccessLevel.OWNER,
-					AccessLevel.ADMIN
-				];
-				
-				hasElevatedAccess = elevatedRoles.includes(user.accessLevel);
-				
 				if (hasElevatedAccess) {
 					this.logger.debug(`[CLIENT_FIND_ALL] User ${userId} has elevated access (${user.accessLevel}), returning all clients in organization`);
-					userAssignedClients = null; // Don't filter by assigned clients
 				} else {
-					userAssignedClients = user.assignedClientIds || [];
-					this.logger.debug(`[CLIENT_FIND_ALL] User ${userId} has access to ${userAssignedClients.length} assigned clients`);
+				this.logger.debug(`[CLIENT_FIND_ALL] User ${userId} has access to ${userAssignedClients?.length || 0} assigned clients`);
 					
 					// If user has no assigned clients and is not elevated, return empty result
-					if (userAssignedClients.length === 0) {
+				if (!userAssignedClients || userAssignedClients.length === 0) {
 						this.logger.warn(`[CLIENT_FIND_ALL] User ${userId} has no assigned clients and insufficient privileges`);
 						const emptyResponse = {
 							data: [],
@@ -1120,10 +1146,6 @@ export class ClientsService {
 						};
 						return emptyResponse;
 					}
-				}
-			} else {
-				this.logger.warn(`[CLIENT_FIND_ALL] User ${userId} not found`);
-				throw new NotFoundException('User not found');
 			}
 		}
 
@@ -1135,13 +1157,27 @@ export class ClientsService {
 			where.organisation = { uid: orgId };
 		}
 
-		// Filter by branch - only apply for non-elevated users or when no userId is provided
-		// Elevated users can see clients across all branches in their organization
-		if (branchId && (!userId || !hasElevatedAccess)) {
-			this.logger.debug(`[CLIENT_FIND_ALL] Applying branch filter: ${branchId} (elevated access: ${hasElevatedAccess})`);
+		// Filter by branch - apply branch filter for all users
+		// Elevated users can see clients across branches only if they explicitly access with no branchId
+		if (branchId) {
+			this.logger.debug(`[CLIENT_FIND_ALL] Applying branch filter: ${branchId}`);
 			where.branch = { uid: branchId };
 		} else if (hasElevatedAccess) {
-			this.logger.debug(`[CLIENT_FIND_ALL] Skipping branch filter for elevated user - can see all branches in organization`);
+			this.logger.debug(`[CLIENT_FIND_ALL] No branch filter applied - elevated user can see all branches in organization`);
+		} else if (!hasElevatedAccess && !branchId) {
+			// Non-elevated users must specify a branch
+			this.logger.warn(`[CLIENT_FIND_ALL] Non-elevated users must specify a branch`);
+			const emptyResponse = {
+				data: [],
+				meta: {
+					total: 0,
+					page,
+					limit,
+					totalPages: 0,
+				},
+				message: 'Branch must be specified for non-elevated users',
+			};
+			return emptyResponse;
 		}
 
 		if (filters?.status) {
@@ -1260,12 +1296,28 @@ export class ClientsService {
 	 * // }
 	 * ```
 	 */
-	async findOne(ref: number, orgId?: number, branchId?: number): Promise<{ message: string; client: Client | null }> {
+	async findOne(ref: number, orgId?: number, branchId?: number, userId?: number): Promise<{ message: string; client: Client | null }> {
 		const startTime = Date.now();
-		this.logger.log(`[CLIENT_FIND_ONE] Finding client with ID: ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
+		this.logger.log(`[CLIENT_FIND_ONE] Finding client with ID: ${ref}, orgId: ${orgId}, branchId: ${branchId}, userId: ${userId}`);
 		
 		try {
-			const cacheKey = `${this.getCacheKey(ref)}_org${orgId}_branch${branchId}`;
+			// Check user access permissions
+			this.logger.debug(`[CLIENT_FIND_ONE] Checking user access for user ${userId}`);
+			const { hasElevatedAccess, userAssignedClients, user } = await this.checkUserAccess(userId);
+			
+			if (userId && !hasElevatedAccess) {
+				this.logger.debug(`[CLIENT_FIND_ONE] User ${userId} has access to ${userAssignedClients?.length || 0} assigned clients`);
+				
+				// Check if user has access to this specific client
+				if (!userAssignedClients || !userAssignedClients.includes(ref)) {
+					this.logger.warn(`[CLIENT_FIND_ONE] User ${userId} does not have access to client ${ref}`);
+					throw new NotFoundException('Client not found or access denied');
+				}
+			} else if (userId && hasElevatedAccess) {
+				this.logger.debug(`[CLIENT_FIND_ONE] User ${userId} has elevated access (${user.accessLevel})`);
+			}
+
+			const cacheKey = `${this.getCacheKey(ref)}_org${orgId}_branch${branchId}_user${userId}`;
 			this.logger.debug(`[CLIENT_FIND_ONE] Checking cache with key: ${cacheKey}`);
 			
 			const cachedClient = await this.cacheManager.get<Client>(cacheKey);
@@ -1808,51 +1860,31 @@ export class ClientsService {
 				return cachedResults;
 			}
 
-							// Get user's assigned clients if user is provided
-		let userAssignedClients: number[] | null = null;
-		let hasElevatedAccess = false;
+		// Check user access permissions
+		this.logger.debug(`[CLIENT_SEARCH] Checking user access for user ${userId}`);
+		const { hasElevatedAccess, userAssignedClients, user } = await this.checkUserAccess(userId);
+		
 		if (userId) {
-			this.logger.debug(`[CLIENT_SEARCH] Fetching assigned clients for user ${userId}`);
-			const user = await this.userRepository.findOne({
-				where: { uid: userId, isDeleted: false },
-				select: ['uid', 'assignedClientIds', 'accessLevel'],
-			});
-
-			if (user) {
-				// Check if user has elevated access (only admin and owner can see all org clients)
-				const elevatedRoles = [
-					AccessLevel.OWNER,
-					AccessLevel.ADMIN
-				];
-				
-				hasElevatedAccess = elevatedRoles.includes(user.accessLevel);
-				
-				if (hasElevatedAccess) {
-					this.logger.debug(`[CLIENT_SEARCH] User ${userId} has elevated access (${user.accessLevel}), searching all clients in organization`);
-					userAssignedClients = null; // Don't filter by assigned clients
-				} else {
-					userAssignedClients = user.assignedClientIds || [];
-					this.logger.debug(`[CLIENT_SEARCH] User ${userId} has access to ${userAssignedClients.length} assigned clients`);
-					
-					// If user has no assigned clients and is not elevated, return empty result
-					if (userAssignedClients.length === 0) {
-						this.logger.warn(`[CLIENT_SEARCH] User ${userId} has no assigned clients and insufficient privileges`);
-						const emptyResponse = {
-							data: [],
-							meta: {
-								total: 0,
-								page,
-								limit,
-								totalPages: 0,
-							},
-							message: 'No clients assigned to user',
-						};
-						return emptyResponse;
-					}
-				}
+			if (hasElevatedAccess) {
+				this.logger.debug(`[CLIENT_SEARCH] User ${userId} has elevated access (${user.accessLevel}), searching all clients in organization`);
 			} else {
-				this.logger.warn(`[CLIENT_SEARCH] User ${userId} not found`);
-				throw new NotFoundException('User not found');
+				this.logger.debug(`[CLIENT_SEARCH] User ${userId} has access to ${userAssignedClients?.length || 0} assigned clients`);
+				
+				// If user has no assigned clients and is not elevated, return empty result
+				if (!userAssignedClients || userAssignedClients.length === 0) {
+					this.logger.warn(`[CLIENT_SEARCH] User ${userId} has no assigned clients and insufficient privileges`);
+					const emptyResponse = {
+						data: [],
+						meta: {
+							total: 0,
+							page,
+							limit,
+							totalPages: 0,
+						},
+						message: 'No clients assigned to user',
+					};
+					return emptyResponse;
+				}
 			}
 		}
 
@@ -1864,13 +1896,27 @@ export class ClientsService {
 			where.organisation = { uid: orgId };
 		}
 
-		// Filter by branch - only apply for non-elevated users or when no userId is provided
-		// Elevated users can search clients across all branches in their organization
-		if (branchId && (!userId || !hasElevatedAccess)) {
-			this.logger.debug(`[CLIENT_SEARCH] Applying branch filter: ${branchId} (elevated access: ${hasElevatedAccess})`);
+		// Filter by branch - apply branch filter for all users
+		// Elevated users can search across branches only if they explicitly access with no branchId
+		if (branchId) {
+			this.logger.debug(`[CLIENT_SEARCH] Applying branch filter: ${branchId}`);
 			where.branch = { uid: branchId };
 		} else if (hasElevatedAccess) {
-			this.logger.debug(`[CLIENT_SEARCH] Skipping branch filter for elevated user - can search all branches in organization`);
+			this.logger.debug(`[CLIENT_SEARCH] No branch filter applied - elevated user can search all branches in organization`);
+		} else if (!hasElevatedAccess && !branchId) {
+			// Non-elevated users must specify a branch
+			this.logger.warn(`[CLIENT_SEARCH] Non-elevated users must specify a branch`);
+			const emptyResponse = {
+				data: [],
+				meta: {
+					total: 0,
+					page,
+					limit,
+					totalPages: 0,
+				},
+				message: 'Branch must be specified for non-elevated users',
+			};
+			return emptyResponse;
 		}
 
 		// Filter by assigned clients if user has limited access (not elevated)
@@ -2015,14 +2061,36 @@ export class ClientsService {
 		radius: number = 5,
 		orgId?: number,
 		branchId?: number,
+		userId?: number,
 	): Promise<{ message: string; clients: Array<Client & { distance: number }> }> {
 		const startTime = Date.now();
-		this.logger.log(`[CLIENT_NEARBY] Finding clients near coordinates (${latitude}, ${longitude}) within ${radius}km, orgId: ${orgId}, branchId: ${branchId}`);
+		this.logger.log(`[CLIENT_NEARBY] Finding clients near coordinates (${latitude}, ${longitude}) within ${radius}km, orgId: ${orgId}, branchId: ${branchId}, userId: ${userId}`);
 		
 		try {
 			if (isNaN(latitude) || isNaN(longitude) || isNaN(radius)) {
 				this.logger.error(`[CLIENT_NEARBY] Invalid parameters - lat: ${latitude}, lng: ${longitude}, radius: ${radius}`);
 				throw new BadRequestException('Invalid coordinates or radius');
+			}
+
+			// Check user access permissions
+			this.logger.debug(`[CLIENT_NEARBY] Checking user access for user ${userId}`);
+			const { hasElevatedAccess, userAssignedClients, user } = await this.checkUserAccess(userId);
+			
+			if (userId) {
+				if (hasElevatedAccess) {
+					this.logger.debug(`[CLIENT_NEARBY] User ${userId} has elevated access (${user.accessLevel})`);
+				} else {
+					this.logger.debug(`[CLIENT_NEARBY] User ${userId} has access to ${userAssignedClients?.length || 0} assigned clients`);
+					
+					// If user has no assigned clients and is not elevated, return empty result
+					if (!userAssignedClients || userAssignedClients.length === 0) {
+						this.logger.warn(`[CLIENT_NEARBY] User ${userId} has no assigned clients and insufficient privileges`);
+						return {
+							message: 'No clients assigned to user',
+							clients: [],
+						};
+					}
+				}
 			}
 
 			// Build query filters
@@ -2036,6 +2104,12 @@ export class ClientsService {
 
 			if (branchId) {
 				whereConditions.branch = { uid: branchId };
+			}
+
+			// Filter by assigned clients if user has limited access (not elevated)
+			if (userAssignedClients && userAssignedClients.length > 0 && !hasElevatedAccess) {
+				this.logger.debug(`[CLIENT_NEARBY] Filtering by assigned clients: ${userAssignedClients.join(', ')}`);
+				whereConditions.uid = In(userAssignedClients);
 			}
 
 			this.logger.debug(`[CLIENT_NEARBY] Fetching all clients with filters`);
@@ -2076,14 +2150,15 @@ export class ClientsService {
 		clientId: number,
 		orgId?: number,
 		branchId?: number,
+		userId?: number,
 	): Promise<{ message: string; checkIns: CheckIn[] }> {
 		const startTime = Date.now();
-		this.logger.log(`[CLIENT_CHECKINS] Fetching check-ins for client ${clientId}, orgId: ${orgId}, branchId: ${branchId}`);
+		this.logger.log(`[CLIENT_CHECKINS] Fetching check-ins for client ${clientId}, orgId: ${orgId}, branchId: ${branchId}, userId: ${userId}`);
 		
 		try {
 			// Find the client first to confirm it exists and belongs to the right org/branch
 			this.logger.debug(`[CLIENT_CHECKINS] Verifying client ${clientId} exists and has access`);
-			const clientResult = await this.findOne(clientId, orgId, branchId);
+			const clientResult = await this.findOne(clientId, orgId, branchId, userId);
 			if (!clientResult.client) {
 				this.logger.warn(`[CLIENT_CHECKINS] Client ${clientId} not found or access denied`);
 				throw new NotFoundException('Client not found');
