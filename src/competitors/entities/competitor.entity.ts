@@ -20,6 +20,9 @@ export class Competitor {
 	website: string;
 
 	@Column({ type: 'varchar', length: 255, nullable: true })
+	landingPage: string;
+
+	@Column({ type: 'varchar', length: 255, nullable: true })
 	contactEmail: string;
 
 	@Column({ type: 'varchar', length: 50, nullable: true })
@@ -33,6 +36,7 @@ export class Competitor {
 		state: string;
 		country: string;
 		postalCode: string;
+		googleMapsUrl?: string;
 	};
 
 	@Column({ type: 'decimal', precision: 10, scale: 6, nullable: true })
@@ -104,6 +108,20 @@ export class Competitor {
 		twitter?: string;
 		facebook?: string;
 		instagram?: string;
+		tiktok?: string;
+		youtube?: string;
+		snapchat?: string;
+		reddit?: string;
+		telegram?: string;
+		discord?: string;
+		twitch?: string;
+		pinterest?: string;
+		medium?: string;
+		github?: string;
+		stackoverflow?: string;
+		gitlab?: string;
+		bitbucket?: string;
+		devto?: string;
 	};
 
 	@Column({ default: false })
@@ -140,4 +158,111 @@ export class Competitor {
 
 	@ManyToOne(() => User, { nullable: true })
 	createdBy: User;
+
+	//update fields
+	@Column({ type: 'varchar', nullable: true })
+	accountName: string;
+
+	@Column({ type: 'varchar', nullable: true })
+	BDM: string;
+
+	@Column({ type: 'varchar', nullable: true })
+	LegalEntity: string;
+
+	@Column({ type: 'varchar', nullable: true })
+	TradingName: string;
+
+	@Column({ type: 'varchar', nullable: true })
+	MemberLevel: string;
+
+	@Column({ type: 'varchar', nullable: true })
+	MemberShips: string;
+
+	@Column({ type: 'varchar', nullable: true })
+	brandStatus: string;
+
+	@Column({ type: 'varchar', nullable: true })
+	bank: string;
+
+	@Column({ type: 'simple-json', nullable: true })
+	owners: {
+		fullName: string;
+		email: string;
+		phone: string;
+	};
+
+	@Column({ type: 'simple-json', nullable: true })
+	managers: {
+		fullName: string;
+		email: string;
+		phone: string;
+	};
+
+	@Column({ type: 'simple-json', nullable: true })
+	purchaseManagers: {
+		fullName: string;
+		email: string;
+		phone: string;
+	};
+
+	@Column({ type: 'simple-json', nullable: true })
+	accountManagers: {
+		fullName: string;
+		email: string;
+		phone: string;
+	};
+
+	@Column({ type: 'varchar', nullable: true })
+	companyRegNumber: string;
+
+	@Column({ type: 'varchar', nullable: true })
+	vatNumber: string;
+
+	@Column({ type: 'varchar', nullable: true })
+	CRO: string;
+
+	@Column({ type: 'varchar', nullable: true })
+	franchiseEmail: string;
+
+	@Column({ type: 'varchar', nullable: true })
+	franchisePhone: string;
+
+	@Column({ type: 'varchar', nullable: true })
+	franchiseHoneyPot: {
+		firstName: string;
+		username: string;
+		email: string;
+		phone: string;
+		password: string;
+		url: string;
+		pvtFolderLinked: boolean;
+		pvtFolderName?: string;
+		pvtFolderPassword?: string;
+		pvtFolderUsername?: string;
+		pvtFolderUrl?: string;
+		activity?: {
+			lastLogin?: Date;
+			lastActivity?: Date;
+			lastActivityType?: string;
+			lastActivityDetails?: string;
+		};
+	};
+
+	@Column({ type: 'int', default: 0 })
+	onlineVisibilityMKTG: number;
+
+	@Column({ type: 'int', default: 0 })
+	onlineVisibilitySEO: number;
+
+	@Column({ type: 'int', default: 0 })
+	onlineVisibilitySocial: number;
+
+	@Column({ type: 'boolean', default: false })
+	hasLoyaltyProgram: boolean;
+
+	@Column({ type: 'boolean', default: false })
+	hasRewardsProgram: boolean;
+
+	@Column({ type: 'boolean', default: false })
+	hasReferralProgram: boolean;
 }

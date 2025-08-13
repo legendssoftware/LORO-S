@@ -5,11 +5,15 @@
 </div>
 
 <div class="success-notice">
-    <p>👤 <strong>New User Alert!</strong> A new user has successfully registered for {{ENV.APP_NAME}} and requires admin review.</p>
+    <p>👤 <strong>New User Alert!</strong> A new user has successfully registered for {{ENV.APP_NAME}} and their account has been created.</p>
+</div>
+
+<div class="success-notice">
+    <p>✅ <strong>Account Status:</strong> The user account has been created and a welcome email with login credentials has been sent to the user.</p>
 </div>
 
 <div class="message">
-    <p>This notification informs you that a new user has completed the registration process. Please review their information and approve their access as appropriate for your organization's policies.</p>
+    <p>This notification confirms that a new user has completed the registration process and their account is now active. The user has been provided with their login credentials and can start using the platform immediately.</p>
 </div>
 
 <div class="info-card">
@@ -40,6 +44,25 @@
             <span class="detail-value">{{newUser.status}}</span>
         </div>
     </div>
+</div>
+
+<div class="info-card">
+    <h4>🔐 Login Credentials Provided</h4>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Username</span>
+            <span class="detail-value">{{newUser.email}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Temporary Password</span>
+            <span class="detail-value"><strong>securePass@2025</strong></span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Password Change Required</span>
+            <span class="detail-value">✅ Yes - User must change on first login</span>
+        </div>
+    </div>
+    <p><strong>Note:</strong> The user has been instructed to change their password immediately after first login for security.</p>
 </div>
 
 {{#if newUser.company}}
@@ -162,16 +185,25 @@
 {{/if}}
 
 <div class="info-card">
-    <h4>⚡ Required Admin Actions</h4>
+    <h4>⚡ Completed Actions</h4>
+    <ul class="feature-list">
+        <li>✅ <strong>Account Created:</strong> User account has been successfully created and activated</li>
+        <li>✅ <strong>Credentials Sent:</strong> Welcome email with login credentials sent to user</li>
+        <li>✅ <strong>Access Granted:</strong> User can immediately start using the platform</li>
+        <li>✅ <strong>Security Setup:</strong> Temporary password provided with mandatory change requirement</li>
+    </ul>
+</div>
+
+<div class="info-card">
+    <h4>📋 Optional Admin Actions</h4>
     <ol class="numbered-list">
         <li><strong>Review User Information:</strong> Verify the provided details are accurate and legitimate</li>
-        <li><strong>Security Assessment:</strong> Check any security flags or concerns</li>
-        <li><strong>Permission Assignment:</strong> Assign appropriate roles and permissions</li>
-        <li><strong>Approval Decision:</strong> Approve or reject the user registration</li>
-        <li><strong>Guide User Setup:</strong> Ensure user receives instructions to download mobile app, get credentials, and complete organization verification</li>
-        <li><strong>Access Verification:</strong> Confirm user's organization name and email match your records for proper service access</li>
+        <li><strong>Security Assessment:</strong> Check any security flags or concerns if needed</li>
+        <li><strong>Permission Assignment:</strong> Assign additional roles and permissions as required</li>
+        <li><strong>Organization Verification:</strong> Confirm user's organization and access levels</li>
+        <li><strong>Welcome Follow-up:</strong> Consider reaching out to welcome the new user personally</li>
         {{#if newUser.trialRequest}}
-        <li><strong>Trial Setup:</strong> Configure trial access and limitations</li>
+        <li><strong>Trial Setup:</strong> Configure trial access and limitations if applicable</li>
         {{/if}}
     </ol>
 </div>

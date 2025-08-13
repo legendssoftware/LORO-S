@@ -123,7 +123,7 @@ export class MapDataReportGenerator {
 					'preferredPaymentMethod', 'paymentTerms', 'discountPercentage',
 					'lastVisitDate', 'nextContactDate', 'acquisitionChannel', 'acquisitionDate',
 					'birthday', 'anniversaryDate', 'tags', 'visibleCategories',
-					'socialProfiles', 'customFields', 'geofenceType', 'geofenceRadius',
+					'socialMedia', 'customFields', 'geofenceType', 'geofenceRadius',
 					'enableGeofence', 'createdAt', 'updatedAt'
 				],
 			});
@@ -168,7 +168,7 @@ export class MapDataReportGenerator {
 				anniversaryDate: c.anniversaryDate,
 				tags: c.tags,
 				visibleCategories: c.visibleCategories,
-				socialProfiles: c.socialProfiles,
+				socialMedia: c.socialMedia,
 				customFields: c.customFields,
 				assignedSalesRep: c.assignedSalesRep ? {
 					uid: c.assignedSalesRep.uid,

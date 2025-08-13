@@ -527,10 +527,10 @@ export class ClientsService {
 							...createClientDto.address,
 					  }
 					: undefined,
-				// Handle social profiles separately if needed
-				socialProfiles: createClientDto.socialProfiles
+				// Handle social media separately if needed
+				socialMedia: createClientDto.socialMedia
 					? {
-							...createClientDto.socialProfiles,
+							...createClientDto.socialMedia,
 					  }
 					: undefined,
 				// Remove notifyClient from client data as it's not part of the entity
@@ -1472,9 +1472,9 @@ export class ClientsService {
 					  }
 					: undefined,
 				// Handle social profiles specially if provided
-				socialProfiles: updateClientDto.socialProfiles
+				socialMedia: updateClientDto.socialMedia
 					? {
-							...updateClientDto.socialProfiles,
+							...updateClientDto.socialMedia,
 					  }
 					: undefined,
 			} as DeepPartial<Client>;
@@ -2973,7 +2973,7 @@ export class ClientsService {
 			const allowedFields = [
 				'contactPerson', 'phone', 'alternativePhone', 'website', 'description',
 				'address', 'category', 'preferredContactMethod', 'tags', 'industry',
-				'companySize', 'preferredLanguage', 'socialProfiles', 'customFields', 'communicationSchedules', 'email', 'name', 'logo'
+				'companySize', 'preferredLanguage', 'socialMedia', 'customFields', 'communicationSchedules', 'email', 'name', 'logo'
 			];
 
 			for (const [key, value] of Object.entries(updateClientDto)) {

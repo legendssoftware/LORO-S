@@ -22,6 +22,12 @@ export enum NotificationEvent {
 	LEAD_REMINDER = 'lead_reminder',
 	LEAD_FOLLOW_UP_OVERDUE = 'lead_follow_up_overdue',
 
+	// Attendance Events
+	ATTENDANCE_SHIFT_STARTED = 'attendance_shift_started',
+	ATTENDANCE_SHIFT_ENDED = 'attendance_shift_ended',
+	ATTENDANCE_BREAK_STARTED = 'attendance_break_started',
+	ATTENDANCE_BREAK_ENDED = 'attendance_break_ended',
+
 	// General Events
 	GENERAL_NOTIFICATION = 'general_notification',
 }

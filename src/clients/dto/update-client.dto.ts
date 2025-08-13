@@ -21,7 +21,7 @@ import {
 	IsLatitude,
 	IsLongitude,
 } from 'class-validator';
-import { AddressDto, CreateClientDto, SocialProfilesDto } from './create-client.dto';
+import { AddressDto, CreateClientDto, SocialMediaDto, ContactPersonDto, FranchiseHoneyPotDto } from './create-client.dto';
 import { Type, Transform } from 'class-transformer';
 import {
 	ClientContactPreference,
@@ -389,13 +389,13 @@ export class UpdateClientDto extends PartialType(CreateClientDto) {
 	customFields?: Record<string, any>;
 
 	@ValidateNested()
-	@Type(() => SocialProfilesDto)
+	@Type(() => SocialMediaDto)
 	@IsOptional()
 	@ApiProperty({
-		type: SocialProfilesDto,
+		type: SocialMediaDto,
 		description: 'Social media profiles of the client',
 	})
-	socialProfiles?: SocialProfilesDto;
+	socialMedia?: SocialMediaDto;
 
 	@IsLatitude({ message: 'Latitude must be a valid coordinate between -90 and 90' })
 	@IsOptional()

@@ -17,13 +17,16 @@ import { AttendanceCalculatorService } from './services/attendance-calculator.se
 import { AttendanceReportsService } from './services/attendance-reports.service';
 import { OvertimeReminderService } from './services/overtime-reminder.service';
 import { OrganisationSettings } from '../organisation/entities/organisation-settings.entity';
-
+import { Notification } from '../notifications/entities/notification.entity';
+import { NotificationsModule } from '../notifications/notifications.module';
+	
 @Module({
 	imports: [
 		LicensingModule,
-		TypeOrmModule.forFeature([Attendance, CheckIn, User, Organisation, OrganisationHours, OrganisationSettings]),
+		TypeOrmModule.forFeature([Attendance, CheckIn, User, Organisation, OrganisationHours, OrganisationSettings, Notification]),
 		UserModule,
 		RewardsModule,
+		NotificationsModule,
 		CacheModule.registerAsync({
 			imports: [ConfigModule],
 			useFactory: async (configService: ConfigService) => {

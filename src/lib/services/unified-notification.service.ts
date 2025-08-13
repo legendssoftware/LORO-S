@@ -250,6 +250,56 @@ export class UnifiedNotificationService {
 				pushSettings: { sound: 'critical', badge: 1 },
 			},
 		],
+
+		// Attendance Templates
+		[
+			NotificationEvent.ATTENDANCE_SHIFT_STARTED,
+			{
+				event: NotificationEvent.ATTENDANCE_SHIFT_STARTED,
+				title: '🟢 Shift Started',
+				messageTemplate: 'Welcome back! Your shift has started at {checkInTime}',
+				priority: NotificationPriority.NORMAL,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/', action: 'view_attendance' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.ATTENDANCE_SHIFT_ENDED,
+			{
+				event: NotificationEvent.ATTENDANCE_SHIFT_ENDED,
+				title: '🔴 Shift Ended',
+				messageTemplate: 'Great work! Your shift ended at {checkOutTime}. Total duration: {duration}',
+				priority: NotificationPriority.NORMAL,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/', action: 'view_attendance' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.ATTENDANCE_BREAK_STARTED,
+			{
+				event: NotificationEvent.ATTENDANCE_BREAK_STARTED,
+				title: '☕ Break Started',
+				messageTemplate: 'Enjoy your break! Started at {breakStartTime}',
+				priority: NotificationPriority.LOW,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/', action: 'view_attendance' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.ATTENDANCE_BREAK_ENDED,
+			{
+				event: NotificationEvent.ATTENDANCE_BREAK_ENDED,
+				title: '🏃 Break Ended',
+				messageTemplate: 'Welcome back from your break! Duration: {breakDuration}',
+				priority: NotificationPriority.LOW,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/', action: 'view_attendance' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
 	]);
 
 	constructor(

@@ -18,6 +18,8 @@ import { XP_VALUES } from '../lib/constants/constants';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { BreakDetail } from './interfaces/break-detail.interface';
 import { User } from '../user/entities/user.entity';
+import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
+import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
 
 // Import our enhanced calculation services
 import { TimeCalculatorUtil } from './utils/time-calculator.util';
@@ -41,6 +43,7 @@ export class AttendanceService {
 		// Inject our enhanced services
 		private readonly organizationHoursService: OrganizationHoursService,
 		private readonly attendanceCalculatorService: AttendanceCalculatorService,
+		private readonly unifiedNotificationService: UnifiedNotificationService,
 	) {
 		this.logger.debug('AttendanceService initialized with all dependencies and enhanced calculation services');
 	}
@@ -84,6 +87,34 @@ export class AttendanceService {
 				},
 			}, orgId, branchId);
 			this.logger.debug(`XP awarded successfully for check-in to user: ${checkInDto.owner.uid}`);
+
+			// Send shift start notification
+			try {
+				const checkInTime = new Date().toLocaleTimeString('en-US', { 
+					hour: '2-digit', 
+					minute: '2-digit',
+					hour12: true
+				});
+				
+				this.logger.debug(`Sending shift start notification to user: ${checkInDto.owner.uid}`);
+				await this.unifiedNotificationService.sendTemplatedNotification(
+					NotificationEvent.ATTENDANCE_SHIFT_STARTED,
+					[checkInDto.owner.uid],
+					{
+						checkInTime,
+						userId: checkInDto.owner.uid,
+						organisationId: orgId,
+						branchId: branchId,
+					},
+					{
+						priority: NotificationPriority.NORMAL,
+					},
+				);
+				this.logger.debug(`Shift start notification sent successfully to user: ${checkInDto.owner.uid}`);
+			} catch (notificationError) {
+				this.logger.warn(`Failed to send shift start notification to user: ${checkInDto.owner.uid}`, notificationError.message);
+				// Don't fail the check-in if notification fails
+			}
 
 			this.logger.log(`Check-in successful for user: ${checkInDto.owner.uid}`);
 			return response;
@@ -176,6 +207,35 @@ export class AttendanceService {
 					},
 				}, orgId, branchId);
 				this.logger.debug(`XP awarded successfully for check-out to user: ${checkOutDto.owner.uid}`);
+
+				// Send shift end notification
+				try {
+					const checkOutTimeString = checkOutTime.toLocaleTimeString('en-US', { 
+						hour: '2-digit', 
+						minute: '2-digit',
+						hour12: true
+					});
+					
+					this.logger.debug(`Sending shift end notification to user: ${checkOutDto.owner.uid}`);
+					await this.unifiedNotificationService.sendTemplatedNotification(
+						NotificationEvent.ATTENDANCE_SHIFT_ENDED,
+						[checkOutDto.owner.uid],
+						{
+							checkOutTime: checkOutTimeString,
+							duration,
+							userId: checkOutDto.owner.uid,
+							organisationId: orgId,
+							branchId: branchId,
+						},
+						{
+							priority: NotificationPriority.NORMAL,
+						},
+					);
+					this.logger.debug(`Shift end notification sent successfully to user: ${checkOutDto.owner.uid}`);
+				} catch (notificationError) {
+					this.logger.warn(`Failed to send shift end notification to user: ${checkOutDto.owner.uid}`, notificationError.message);
+					// Don't fail the check-out if notification fails
+				}
 
 				// Emit the daily-report event with the user ID
 				this.logger.debug(`Emitting events for user: ${checkOutDto?.owner?.uid}`);
@@ -927,6 +987,32 @@ export class AttendanceService {
 
 			await this.attendanceRepository.save(updatedShift);
 
+			// Send break start notification
+			try {
+				const breakStartTimeString = breakStartTime.toLocaleTimeString('en-US', { 
+					hour: '2-digit', 
+					minute: '2-digit',
+					hour12: true
+				});
+				
+				this.logger.debug(`Sending break start notification to user: ${breakDto.owner.uid}`);
+				await this.unifiedNotificationService.sendTemplatedNotification(
+					NotificationEvent.ATTENDANCE_BREAK_STARTED,
+					[breakDto.owner.uid],
+					{
+						breakStartTime: breakStartTimeString,
+						userId: breakDto.owner.uid,
+					},
+					{
+						priority: NotificationPriority.LOW,
+					},
+				);
+				this.logger.debug(`Break start notification sent successfully to user: ${breakDto.owner.uid}`);
+			} catch (notificationError) {
+				this.logger.warn(`Failed to send break start notification to user: ${breakDto.owner.uid}`, notificationError.message);
+				// Don't fail the break start if notification fails
+			}
+
 			return {
 				message: 'Break started successfully',
 			};
@@ -1012,6 +1098,26 @@ export class AttendanceService {
 			};
 
 			await this.attendanceRepository.save(updatedShift);
+
+			// Send break end notification
+			try {
+				this.logger.debug(`Sending break end notification to user: ${breakDto.owner.uid}`);
+				await this.unifiedNotificationService.sendTemplatedNotification(
+					NotificationEvent.ATTENDANCE_BREAK_ENDED,
+					[breakDto.owner.uid],
+					{
+						breakDuration: currentBreakDuration,
+						userId: breakDto.owner.uid,
+					},
+					{
+						priority: NotificationPriority.LOW,
+					},
+				);
+				this.logger.debug(`Break end notification sent successfully to user: ${breakDto.owner.uid}`);
+			} catch (notificationError) {
+				this.logger.warn(`Failed to send break end notification to user: ${breakDto.owner.uid}`, notificationError.message);
+				// Don't fail the break end if notification fails
+			}
 
 			return {
 				message: 'Break ended successfully',

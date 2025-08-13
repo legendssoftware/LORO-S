@@ -57,6 +57,299 @@ class SocialMediaDto {
 		required: false,
 	})
 	instagram?: string;
+
+	@IsString()
+	@IsOptional()
+	@IsUrl()
+	@ApiProperty({
+		description: 'TikTok profile URL',
+		example: 'https://tiktok.com/@competitor_name',
+		required: false,
+	})
+	tiktok?: string;
+
+	@IsString()
+	@IsOptional()
+	@IsUrl()
+	@ApiProperty({
+		description: 'YouTube channel URL',
+		example: 'https://youtube.com/c/competitor_name',
+		required: false,
+	})
+	youtube?: string;
+
+	@IsString()
+	@IsOptional()
+	@IsUrl()
+	@ApiProperty({
+		description: 'Snapchat profile URL',
+		example: 'https://snapchat.com/add/competitor_name',
+		required: false,
+	})
+	snapchat?: string;
+
+	@IsString()
+	@IsOptional()
+	@IsUrl()
+	@ApiProperty({
+		description: 'Reddit profile URL',
+		example: 'https://reddit.com/u/competitor_name',
+		required: false,
+	})
+	reddit?: string;
+
+	@IsString()
+	@IsOptional()
+	@IsUrl()
+	@ApiProperty({
+		description: 'Telegram profile URL',
+		example: 'https://t.me/competitor_name',
+		required: false,
+	})
+	telegram?: string;
+
+	@IsString()
+	@IsOptional()
+	@IsUrl()
+	@ApiProperty({
+		description: 'Discord server URL',
+		example: 'https://discord.gg/competitor_name',
+		required: false,
+	})
+	discord?: string;
+
+	@IsString()
+	@IsOptional()
+	@IsUrl()
+	@ApiProperty({
+		description: 'Twitch channel URL',
+		example: 'https://twitch.tv/competitor_name',
+		required: false,
+	})
+	twitch?: string;
+
+	@IsString()
+	@IsOptional()
+	@IsUrl()
+	@ApiProperty({
+		description: 'Pinterest profile URL',
+		example: 'https://pinterest.com/competitor_name',
+		required: false,
+	})
+	pinterest?: string;
+
+	@IsString()
+	@IsOptional()
+	@IsUrl()
+	@ApiProperty({
+		description: 'Medium profile URL',
+		example: 'https://medium.com/@competitor_name',
+		required: false,
+	})
+	medium?: string;
+
+	@IsString()
+	@IsOptional()
+	@IsUrl()
+	@ApiProperty({
+		description: 'GitHub profile URL',
+		example: 'https://github.com/competitor_name',
+		required: false,
+	})
+	github?: string;
+
+	@IsString()
+	@IsOptional()
+	@IsUrl()
+	@ApiProperty({
+		description: 'Stack Overflow profile URL',
+		example: 'https://stackoverflow.com/users/competitor_name',
+		required: false,
+	})
+	stackoverflow?: string;
+
+	@IsString()
+	@IsOptional()
+	@IsUrl()
+	@ApiProperty({
+		description: 'GitLab profile URL',
+		example: 'https://gitlab.com/competitor_name',
+		required: false,
+	})
+	gitlab?: string;
+
+	@IsString()
+	@IsOptional()
+	@IsUrl()
+	@ApiProperty({
+		description: 'Bitbucket profile URL',
+		example: 'https://bitbucket.org/competitor_name',
+		required: false,
+	})
+	bitbucket?: string;
+
+	@IsString()
+	@IsOptional()
+	@IsUrl()
+	@ApiProperty({
+		description: 'Dev.to profile URL',
+		example: 'https://dev.to/competitor_name',
+		required: false,
+	})
+	devto?: string;
+}
+
+class ContactPersonDto {
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Full name of the contact person',
+		example: 'John Doe',
+		required: false,
+	})
+	fullName?: string;
+
+	@IsString()
+	@IsOptional()
+	@IsEmail()
+	@ApiProperty({
+		description: 'Email address of the contact person',
+		example: 'john.doe@competitor.com',
+		required: false,
+	})
+	email?: string;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Phone number of the contact person',
+		example: '+1-123-456-7890',
+		required: false,
+	})
+	phone?: string;
+}
+
+class FranchiseHoneyPotDto {
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'First name for franchise honey pot',
+		example: 'John',
+		required: false,
+	})
+	firstName?: string;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Username for franchise honey pot',
+		example: 'johndoe',
+		required: false,
+	})
+	username?: string;
+
+	@IsString()
+	@IsOptional()
+	@IsEmail()
+	@ApiProperty({
+		description: 'Email for franchise honey pot',
+		example: 'john@competitor.com',
+		required: false,
+	})
+	email?: string;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Phone number for franchise honey pot',
+		example: '+1-123-456-7890',
+		required: false,
+	})
+	phone?: string;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Password for franchise honey pot',
+		example: 'secretPassword123',
+		required: false,
+	})
+	password?: string;
+
+	@IsString()
+	@IsOptional()
+	@IsUrl()
+	@ApiProperty({
+		description: 'URL for franchise honey pot',
+		example: 'https://franchise.competitor.com',
+		required: false,
+	})
+	url?: string;
+
+	@IsBoolean()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Whether private folder is linked',
+		example: true,
+		required: false,
+	})
+	pvtFolderLinked?: boolean;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Private folder name',
+		example: 'Private Documents',
+		required: false,
+	})
+	pvtFolderName?: string;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Private folder password',
+		example: 'folderPassword123',
+		required: false,
+	})
+	pvtFolderPassword?: string;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Private folder username',
+		example: 'pvtuser',
+		required: false,
+	})
+	pvtFolderUsername?: string;
+
+	@IsString()
+	@IsOptional()
+	@IsUrl()
+	@ApiProperty({
+		description: 'Private folder URL',
+		example: 'https://private.competitor.com',
+		required: false,
+	})
+	pvtFolderUrl?: string;
+
+	@IsObject()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Activity tracking information',
+		example: {
+			lastLogin: '2024-01-15T10:30:00Z',
+			lastActivity: '2024-01-15T11:45:00Z',
+			lastActivityType: 'document_access',
+			lastActivityDetails: 'Accessed pricing documents'
+		},
+		required: false,
+	})
+	activity?: {
+		lastLogin?: Date;
+		lastActivity?: Date;
+		lastActivityType?: string;
+		lastActivityDetails?: string;
+	};
 }
 
 class PricingDataDto {
@@ -124,6 +417,16 @@ export class CreateCompetitorDto {
 		required: false,
 	})
 	website?: string;
+
+	@IsString()
+	@IsOptional()
+	@IsUrl()
+	@ApiProperty({
+		description: 'Competitor landing page URL',
+		example: 'https://competitor.com/landing',
+		required: false,
+	})
+	landingPage?: string;
 
 	@IsString()
 	@IsOptional()
@@ -397,4 +700,238 @@ export class CreateCompetitorDto {
 		default: false,
 	})
 	enableGeofence?: boolean;
+
+	// New update fields
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Account name for the competitor',
+		example: 'Competitor Account',
+		required: false,
+	})
+	accountName?: string;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Business Development Manager',
+		example: 'John Smith',
+		required: false,
+	})
+	BDM?: string;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Legal entity name',
+		example: 'Competitor Inc.',
+		required: false,
+	})
+	LegalEntity?: string;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Trading name',
+		example: 'Competitor Trading',
+		required: false,
+	})
+	TradingName?: string;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Member level',
+		example: 'Gold',
+		required: false,
+	})
+	MemberLevel?: string;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Memberships',
+		example: 'Industry Association',
+		required: false,
+	})
+	MemberShips?: string;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Brand status',
+		example: 'Active',
+		required: false,
+	})
+	brandStatus?: string;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Primary bank',
+		example: 'Standard Bank',
+		required: false,
+	})
+	bank?: string;
+
+	@IsObject()
+	@ValidateNested()
+	@Type(() => ContactPersonDto)
+	@IsOptional()
+	@ApiProperty({
+		description: 'Owner contact information',
+		type: ContactPersonDto,
+		required: false,
+	})
+	owners?: ContactPersonDto;
+
+	@IsObject()
+	@ValidateNested()
+	@Type(() => ContactPersonDto)
+	@IsOptional()
+	@ApiProperty({
+		description: 'Manager contact information',
+		type: ContactPersonDto,
+		required: false,
+	})
+	managers?: ContactPersonDto;
+
+	@IsObject()
+	@ValidateNested()
+	@Type(() => ContactPersonDto)
+	@IsOptional()
+	@ApiProperty({
+		description: 'Purchase manager contact information',
+		type: ContactPersonDto,
+		required: false,
+	})
+	purchaseManagers?: ContactPersonDto;
+
+	@IsObject()
+	@ValidateNested()
+	@Type(() => ContactPersonDto)
+	@IsOptional()
+	@ApiProperty({
+		description: 'Account manager contact information',
+		type: ContactPersonDto,
+		required: false,
+	})
+	accountManagers?: ContactPersonDto;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Company registration number',
+		example: '2021/123456/07',
+		required: false,
+	})
+	companyRegNumber?: string;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'VAT number',
+		example: '4123456789',
+		required: false,
+	})
+	vatNumber?: string;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Chief Revenue Officer',
+		example: 'Jane Doe',
+		required: false,
+	})
+	CRO?: string;
+
+	@IsString()
+	@IsOptional()
+	@IsEmail()
+	@ApiProperty({
+		description: 'Franchise contact email',
+		example: 'franchise@competitor.com',
+		required: false,
+	})
+	franchiseEmail?: string;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Franchise contact phone',
+		example: '+27-11-123-4567',
+		required: false,
+	})
+	franchisePhone?: string;
+
+	@IsObject()
+	@ValidateNested()
+	@Type(() => FranchiseHoneyPotDto)
+	@IsOptional()
+	@ApiProperty({
+		description: 'Franchise honey pot information',
+		type: FranchiseHoneyPotDto,
+		required: false,
+	})
+	franchiseHoneyPot?: FranchiseHoneyPotDto;
+
+	@IsNumber()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Online visibility marketing score (0-100)',
+		example: 75,
+		required: false,
+		minimum: 0,
+		maximum: 100,
+	})
+	onlineVisibilityMKTG?: number;
+
+	@IsNumber()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Online visibility SEO score (0-100)',
+		example: 80,
+		required: false,
+		minimum: 0,
+		maximum: 100,
+	})
+	onlineVisibilitySEO?: number;
+
+	@IsNumber()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Online visibility social media score (0-100)',
+		example: 65,
+		required: false,
+		minimum: 0,
+		maximum: 100,
+	})
+	onlineVisibilitySocial?: number;
+
+	@IsBoolean()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Whether competitor has a loyalty program',
+		example: true,
+		required: false,
+	})
+	hasLoyaltyProgram?: boolean;
+
+	@IsBoolean()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Whether competitor has a rewards program',
+		example: false,
+		required: false,
+	})
+	hasRewardsProgram?: boolean;
+
+	@IsBoolean()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Whether competitor has a referral program',
+		example: true,
+		required: false,
+	})
+	hasReferralProgram?: boolean;
 }

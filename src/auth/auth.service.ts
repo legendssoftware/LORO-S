@@ -516,7 +516,7 @@ export class AuthService {
 			// Generate reset token and URL
 			this.logger.debug(`Generating reset token for user: ${email}`);
 			const resetToken = await this.generateSecureToken();
-			const resetUrl = `${process.env.WEBSITE_DOMAIN || process.env.SIGNUP_DOMAIN}/reset-password/${resetToken}`;
+			const resetUrl = `${process.env.WEBSITE_DOMAIN || process.env.SIGNUP_DOMAIN}/new-password?token=${resetToken}`;
 			this.logger.debug(`Reset URL generated: ${resetUrl.substring(0, resetUrl.lastIndexOf('/') + 1)}[TOKEN]`);
 
 			// Create password reset record (this will handle rate limiting and duplicates)

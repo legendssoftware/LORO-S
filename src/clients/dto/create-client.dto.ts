@@ -108,7 +108,7 @@ export class AddressDto {
 	postalCode: string;
 }
 
-export class SocialProfilesDto {
+export class SocialMediaDto {
 	@IsUrl({ require_protocol: true }, { message: 'LinkedIn URL must be a valid URL with protocol (http/https)' })
 	@IsOptional()
 	@ApiProperty({
@@ -140,6 +140,271 @@ export class SocialProfilesDto {
 		description: 'Instagram profile URL - must be a valid URL with protocol',
 	})
 	instagram?: string;
+
+	@IsUrl({ require_protocol: true }, { message: 'TikTok URL must be a valid URL with protocol (http/https)' })
+	@IsOptional()
+	@ApiProperty({
+		example: 'https://tiktok.com/@loro_corp',
+		description: 'TikTok profile URL - must be a valid URL with protocol',
+	})
+	tiktok?: string;
+
+	@IsUrl({ require_protocol: true }, { message: 'YouTube URL must be a valid URL with protocol (http/https)' })
+	@IsOptional()
+	@ApiProperty({
+		example: 'https://youtube.com/c/loro_corp',
+		description: 'YouTube channel URL - must be a valid URL with protocol',
+	})
+	youtube?: string;
+
+	@IsUrl({ require_protocol: true }, { message: 'Snapchat URL must be a valid URL with protocol (http/https)' })
+	@IsOptional()
+	@ApiProperty({
+		example: 'https://snapchat.com/add/loro_corp',
+		description: 'Snapchat profile URL - must be a valid URL with protocol',
+	})
+	snapchat?: string;
+
+	@IsUrl({ require_protocol: true }, { message: 'Reddit URL must be a valid URL with protocol (http/https)' })
+	@IsOptional()
+	@ApiProperty({
+		example: 'https://reddit.com/u/loro_corp',
+		description: 'Reddit profile URL - must be a valid URL with protocol',
+	})
+	reddit?: string;
+
+	@IsUrl({ require_protocol: true }, { message: 'Telegram URL must be a valid URL with protocol (http/https)' })
+	@IsOptional()
+	@ApiProperty({
+		example: 'https://t.me/loro_corp',
+		description: 'Telegram profile URL - must be a valid URL with protocol',
+	})
+	telegram?: string;
+
+	@IsUrl({ require_protocol: true }, { message: 'Discord URL must be a valid URL with protocol (http/https)' })
+	@IsOptional()
+	@ApiProperty({
+		example: 'https://discord.gg/loro_corp',
+		description: 'Discord server URL - must be a valid URL with protocol',
+	})
+	discord?: string;
+
+	@IsUrl({ require_protocol: true }, { message: 'Twitch URL must be a valid URL with protocol (http/https)' })
+	@IsOptional()
+	@ApiProperty({
+		example: 'https://twitch.tv/loro_corp',
+		description: 'Twitch channel URL - must be a valid URL with protocol',
+	})
+	twitch?: string;
+
+	@IsUrl({ require_protocol: true }, { message: 'Pinterest URL must be a valid URL with protocol (http/https)' })
+	@IsOptional()
+	@ApiProperty({
+		example: 'https://pinterest.com/loro_corp',
+		description: 'Pinterest profile URL - must be a valid URL with protocol',
+	})
+	pinterest?: string;
+
+	@IsUrl({ require_protocol: true }, { message: 'Medium URL must be a valid URL with protocol (http/https)' })
+	@IsOptional()
+	@ApiProperty({
+		example: 'https://medium.com/@loro_corp',
+		description: 'Medium profile URL - must be a valid URL with protocol',
+	})
+	medium?: string;
+
+	@IsUrl({ require_protocol: true }, { message: 'GitHub URL must be a valid URL with protocol (http/https)' })
+	@IsOptional()
+	@ApiProperty({
+		example: 'https://github.com/loro_corp',
+		description: 'GitHub profile URL - must be a valid URL with protocol',
+	})
+	github?: string;
+
+	@IsUrl({ require_protocol: true }, { message: 'Stack Overflow URL must be a valid URL with protocol (http/https)' })
+	@IsOptional()
+	@ApiProperty({
+		example: 'https://stackoverflow.com/users/loro_corp',
+		description: 'Stack Overflow profile URL - must be a valid URL with protocol',
+	})
+	stackoverflow?: string;
+
+	@IsUrl({ require_protocol: true }, { message: 'GitLab URL must be a valid URL with protocol (http/https)' })
+	@IsOptional()
+	@ApiProperty({
+		example: 'https://gitlab.com/loro_corp',
+		description: 'GitLab profile URL - must be a valid URL with protocol',
+	})
+	gitlab?: string;
+
+	@IsUrl({ require_protocol: true }, { message: 'Bitbucket URL must be a valid URL with protocol (http/https)' })
+	@IsOptional()
+	@ApiProperty({
+		example: 'https://bitbucket.org/loro_corp',
+		description: 'Bitbucket profile URL - must be a valid URL with protocol',
+	})
+	bitbucket?: string;
+
+	@IsUrl({ require_protocol: true }, { message: 'Dev.to URL must be a valid URL with protocol (http/https)' })
+	@IsOptional()
+	@ApiProperty({
+		example: 'https://dev.to/loro_corp',
+		description: 'Dev.to profile URL - must be a valid URL with protocol',
+	})
+	devto?: string;
+}
+
+export class ContactPersonDto {
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Full name of the contact person',
+		example: 'John Doe',
+		required: false,
+	})
+	fullName?: string;
+
+	@IsString()
+	@IsOptional()
+	@IsEmail()
+	@ApiProperty({
+		description: 'Email address of the contact person',
+		example: 'john.doe@client.co.za',
+		required: false,
+	})
+	email?: string;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Phone number of the contact person',
+		example: '+27-11-123-4567',
+		required: false,
+	})
+	phone?: string;
+}
+
+export class FranchiseHoneyPotDto {
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'First name for franchise honey pot',
+		example: 'John',
+		required: false,
+	})
+	firstName?: string;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Username for franchise honey pot',
+		example: 'johndoe',
+		required: false,
+	})
+	username?: string;
+
+	@IsString()
+	@IsOptional()
+	@IsEmail()
+	@ApiProperty({
+		description: 'Email for franchise honey pot',
+		example: 'john@client.co.za',
+		required: false,
+	})
+	email?: string;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Phone number for franchise honey pot',
+		example: '+27-11-123-4567',
+		required: false,
+	})
+	phone?: string;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Password for franchise honey pot',
+		example: 'secretPassword123',
+		required: false,
+	})
+	password?: string;
+
+	@IsString()
+	@IsOptional()
+	@IsUrl()
+	@ApiProperty({
+		description: 'URL for franchise honey pot',
+		example: 'https://franchise.client.co.za',
+		required: false,
+	})
+	url?: string;
+
+	@IsBoolean()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Whether private folder is linked',
+		example: true,
+		required: false,
+	})
+	pvtFolderLinked?: boolean;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Private folder name',
+		example: 'Private Documents',
+		required: false,
+	})
+	pvtFolderName?: string;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Private folder password',
+		example: 'folderPassword123',
+		required: false,
+	})
+	pvtFolderPassword?: string;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Private folder username',
+		example: 'pvtuser',
+		required: false,
+	})
+	pvtFolderUsername?: string;
+
+	@IsString()
+	@IsOptional()
+	@IsUrl()
+	@ApiProperty({
+		description: 'Private folder URL',
+		example: 'https://private.client.co.za',
+		required: false,
+	})
+	pvtFolderUrl?: string;
+
+	@IsObject()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Activity tracking information',
+		example: {
+			lastLogin: '2024-01-15T10:30:00Z',
+			lastActivity: '2024-01-15T11:45:00Z',
+			lastActivityType: 'document_access',
+			lastActivityDetails: 'Accessed pricing documents'
+		},
+		required: false,
+	})
+	activity?: {
+		lastLogin?: Date;
+		lastActivity?: Date;
+		lastActivityType?: string;
+		lastActivityDetails?: string;
+	};
 }
 
 export class CreateClientDto {
@@ -210,6 +475,17 @@ export class CreateClientDto {
 		format: 'uri',
 	})
 	website?: string;
+
+	@IsUrl({ require_protocol: true }, { message: 'Landing page must be a valid URL with protocol (http/https)' })
+	@IsOptional()
+	@Transform(({ value }) => value?.trim())
+	@ApiProperty({
+		example: 'https://www.example.co.za/landing',
+		description: 'The landing page URL of the client - must include protocol (http/https)',
+		required: false,
+		format: 'uri',
+	})
+	landingPage?: string;
 
 	@IsUrl({ require_protocol: true }, { message: 'Logo URL must be a valid URL with protocol (http/https)' })
 	@IsOptional()
@@ -509,14 +785,14 @@ export class CreateClientDto {
 	customFields?: Record<string, any>;
 
 	@ValidateNested()
-	@Type(() => SocialProfilesDto)
+	@Type(() => SocialMediaDto)
 	@IsOptional()
 	@ApiProperty({
-		type: SocialProfilesDto,
+		type: SocialMediaDto,
 		description: 'Social media profiles of the client',
 		required: false,
 	})
-	socialProfiles?: SocialProfilesDto;
+	socialMedia?: SocialMediaDto;
 
 	@IsLatitude({ message: 'Latitude must be a valid coordinate between -90 and 90' })
 	@IsOptional()
@@ -595,4 +871,175 @@ export class CreateClientDto {
 		default: true,
 	})
 	notifyClient?: boolean;
+
+	// New update fields
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Legal entity name',
+		example: 'Client Inc.',
+		required: false,
+	})
+	LegalEntity?: string;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Trading name',
+		example: 'Client Trading',
+		required: false,
+	})
+	TradingName?: string;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Member level',
+		example: 'Gold',
+		required: false,
+	})
+	MemberLevel?: string;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Memberships',
+		example: 'Industry Association',
+		required: false,
+	})
+	MemberShips?: string;
+
+	@IsObject()
+	@ValidateNested()
+	@Type(() => ContactPersonDto)
+	@IsOptional()
+	@ApiProperty({
+		description: 'Owner contact information',
+		type: ContactPersonDto,
+		required: false,
+	})
+	owners?: ContactPersonDto;
+
+	@IsObject()
+	@ValidateNested()
+	@Type(() => ContactPersonDto)
+	@IsOptional()
+	@ApiProperty({
+		description: 'Manager contact information',
+		type: ContactPersonDto,
+		required: false,
+	})
+	managers?: ContactPersonDto;
+
+	@IsObject()
+	@ValidateNested()
+	@Type(() => ContactPersonDto)
+	@IsOptional()
+	@ApiProperty({
+		description: 'Purchase manager contact information',
+		type: ContactPersonDto,
+		required: false,
+	})
+	purchaseManagers?: ContactPersonDto;
+
+	@IsObject()
+	@ValidateNested()
+	@Type(() => ContactPersonDto)
+	@IsOptional()
+	@ApiProperty({
+		description: 'Account manager contact information',
+		type: ContactPersonDto,
+		required: false,
+	})
+	accountManagers?: ContactPersonDto;
+
+	@IsString()
+	@IsOptional()
+	@IsEmail()
+	@ApiProperty({
+		description: 'Franchise contact email',
+		example: 'franchise@client.co.za',
+		required: false,
+	})
+	franchiseEmail?: string;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Franchise contact phone',
+		example: '+27-11-123-4567',
+		required: false,
+	})
+	franchisePhone?: string;
+
+	@IsObject()
+	@ValidateNested()
+	@Type(() => FranchiseHoneyPotDto)
+	@IsOptional()
+	@ApiProperty({
+		description: 'Franchise honey pot information',
+		type: FranchiseHoneyPotDto,
+		required: false,
+	})
+	franchiseHoneyPot?: FranchiseHoneyPotDto;
+
+	@IsNumber()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Online visibility marketing score (0-100)',
+		example: 75,
+		required: false,
+		minimum: 0,
+		maximum: 100,
+	})
+	onlineVisibilityMKTG?: number;
+
+	@IsNumber()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Online visibility SEO score (0-100)',
+		example: 80,
+		required: false,
+		minimum: 0,
+		maximum: 100,
+	})
+	onlineVisibilitySEO?: number;
+
+	@IsNumber()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Online visibility social media score (0-100)',
+		example: 65,
+		required: false,
+		minimum: 0,
+		maximum: 100,
+	})
+	onlineVisibilitySocial?: number;
+
+	@IsBoolean()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Whether client has a loyalty program',
+		example: true,
+		required: false,
+	})
+	hasLoyaltyProgram?: boolean;
+
+	@IsBoolean()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Whether client has a rewards program',
+		example: false,
+		required: false,
+	})
+	hasRewardsProgram?: boolean;
+
+	@IsBoolean()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Whether client has a referral program',
+		example: true,
+		required: false,
+	})
+	hasReferralProgram?: boolean;
 }

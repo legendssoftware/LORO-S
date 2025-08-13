@@ -240,7 +240,7 @@ export class ClientAuthService {
 						type: clientAuth.client.type,
 						
 						// Social profiles and custom fields
-						socialProfiles: clientAuth.client.socialProfiles,
+						socialMedia: clientAuth.client.socialMedia,
 						customFields: clientAuth.client.customFields,
 						
 						// Branch and organization information
@@ -342,7 +342,7 @@ export class ClientAuthService {
 					type: clientAuth.client.type,
 					
 					// Social profiles and custom fields
-					socialProfiles: clientAuth.client.socialProfiles,
+					socialMedia: clientAuth.client.socialMedia,
 					customFields: clientAuth.client.customFields,
 					
 					// Branch and organization information
@@ -424,7 +424,7 @@ export class ClientAuthService {
 			// Generate reset token and URL
 			this.logger.debug(`Generating reset token for client: ${email}`);
 			const resetToken = await this.generateSecureToken();
-			const resetUrl = `${process.env.CLIENT_PORTAL_DOMAIN}/reset-password/${resetToken}`;
+			const resetUrl = `${process.env.CLIENT_PORTAL_DOMAIN}/new-password?token=${resetToken}`;
 
 			// Create or update password reset record
 			const tokenExpires = new Date();
@@ -652,7 +652,7 @@ export class ClientAuthService {
 						type: clientAuth.client.type,
 						
 						// Social profiles and custom fields
-						socialProfiles: clientAuth.client.socialProfiles,
+						socialMedia: clientAuth.client.socialMedia,
 						customFields: clientAuth.client.customFields,
 						
 						// Branch and organization information
@@ -752,7 +752,7 @@ export class ClientAuthService {
 					type: clientAuth.client.type,
 					
 					// Social profiles and custom fields
-					socialProfiles: clientAuth.client.socialProfiles,
+					socialMedia: clientAuth.client.socialMedia,
 					customFields: clientAuth.client.customFields,
 					
 					// Branch and organization information
