@@ -101,6 +101,9 @@ export class Client {
 	@Column({ type: 'decimal', precision: 12, scale: 2, nullable: true, default: 0 })
 	outstandingBalance: number;
 
+	@Column({ type: 'varchar', nullable: true })
+	alias: string;
+
 	// CRM Enhancement: Price tier - determines pricing structure for this client
 	@Column({ type: 'enum', enum: PriceTier, default: PriceTier.STANDARD })
 	priceTier: PriceTier;

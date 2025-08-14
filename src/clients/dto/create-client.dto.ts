@@ -58,6 +58,15 @@ export class AddressDto {
 	})
 	suburb: string;
 
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Alias for the competitor',
+		example: 'acme',
+		required: false,
+	})
+	alias?: string;
+
 	@IsString({ message: 'City must be a string' })
 	@IsNotEmpty({ message: 'City is required' })
 	@Length(2, 100, { message: 'City must be between 2 and 100 characters' })

@@ -77,6 +77,9 @@ export class Branch {
 	@Column({ nullable: false, default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
 	updatedAt: Date;
 
+	@Column({ type: 'varchar', nullable: true })
+	alias: string;
+
 	// Relations
 	@ManyToOne(() => Organisation, (organisation) => organisation?.branches, { nullable: true })
 	organisation: Organisation;

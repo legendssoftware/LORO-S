@@ -21,7 +21,13 @@ import {
 	IsLatitude,
 	IsLongitude,
 } from 'class-validator';
-import { AddressDto, CreateClientDto, SocialMediaDto, ContactPersonDto, FranchiseHoneyPotDto } from './create-client.dto';
+import {
+	AddressDto,
+	CreateClientDto,
+	SocialMediaDto,
+	ContactPersonDto,
+	FranchiseHoneyPotDto,
+} from './create-client.dto';
 import { Type, Transform } from 'class-transformer';
 import {
 	ClientContactPreference,
@@ -62,13 +68,22 @@ export class UpdateClientDto extends PartialType(CreateClientDto) {
 	})
 	contactPerson?: string;
 
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Alias for the competitor',
+		example: 'acme',
+		required: false,
+	})
+	alias?: string;
+
 	@IsEmail({}, { message: 'Please provide a valid email address' })
 	@IsOptional()
 	@Transform(({ value }) => value?.toLowerCase().trim())
 	@ApiProperty({
 		example: 'theguy@example.co.za',
 		description: 'The primary email address for the client - must be a valid email format',
-		format: 'email'
+		format: 'email',
 	})
 	email?: string;
 
@@ -78,17 +93,19 @@ export class UpdateClientDto extends PartialType(CreateClientDto) {
 	@ApiProperty({
 		example: '+27 11 123 4567',
 		description: 'The primary phone number with South African country code (+27)',
-		pattern: '^\\+27\\s?\\d{2}\\s?\\d{3}\\s?\\d{4}$'
+		pattern: '^\\+27\\s?\\d{2}\\s?\\d{3}\\s?\\d{4}$',
 	})
 	phone?: string;
 
-	@IsPhoneNumber('ZA', { message: 'Alternative phone number must be a valid South African phone number with country code (+27)' })
+	@IsPhoneNumber('ZA', {
+		message: 'Alternative phone number must be a valid South African phone number with country code (+27)',
+	})
 	@IsOptional()
 	@Transform(({ value }) => value?.trim())
 	@ApiProperty({
 		example: '+27 82 987 6543',
 		description: 'Alternative phone number with South African country code (+27)',
-		pattern: '^\\+27\\s?\\d{2}\\s?\\d{3}\\s?\\d{4}$'
+		pattern: '^\\+27\\s?\\d{2}\\s?\\d{3}\\s?\\d{4}$',
 	})
 	alternativePhone?: string;
 
@@ -98,7 +115,7 @@ export class UpdateClientDto extends PartialType(CreateClientDto) {
 	@ApiProperty({
 		example: 'https://www.example.co.za',
 		description: 'The official website URL of the client - must include protocol (http/https)',
-		format: 'uri'
+		format: 'uri',
 	})
 	website?: string;
 
@@ -108,7 +125,7 @@ export class UpdateClientDto extends PartialType(CreateClientDto) {
 	@ApiProperty({
 		example: 'https://www.example.co.za/logo.png',
 		description: 'The URL to the client logo image - must be a valid URL with protocol',
-		format: 'uri'
+		format: 'uri',
 	})
 	logo?: string;
 
@@ -399,23 +416,23 @@ export class UpdateClientDto extends PartialType(CreateClientDto) {
 
 	@IsLatitude({ message: 'Latitude must be a valid coordinate between -90 and 90' })
 	@IsOptional()
-	@Transform(({ value }) => value ? Number(value) : undefined)
+	@Transform(({ value }) => (value ? Number(value) : undefined))
 	@ApiProperty({
 		example: -26.195246,
 		description: 'Latitude coordinate for South African location (between -90 and 90)',
 		minimum: -90,
-		maximum: 90
+		maximum: 90,
 	})
 	latitude?: number;
 
 	@IsLongitude({ message: 'Longitude must be a valid coordinate between -180 and 180' })
 	@IsOptional()
-	@Transform(({ value }) => value ? Number(value) : undefined)
+	@Transform(({ value }) => (value ? Number(value) : undefined))
 	@ApiProperty({
 		example: 28.034088,
 		description: 'Longitude coordinate for South African location (between -180 and 180)',
 		minimum: -180,
-		maximum: 180
+		maximum: 180,
 	})
 	longitude?: number;
 
@@ -473,7 +490,8 @@ export class UpdateClientDto extends PartialType(CreateClientDto) {
 	@IsOptional()
 	@ApiProperty({
 		example: true,
-		description: 'Whether to send email notification to the client upon profile update. Default is true for automatic notifications.',
+		description:
+			'Whether to send email notification to the client upon profile update. Default is true for automatic notifications.',
 		required: false,
 		default: true,
 	})

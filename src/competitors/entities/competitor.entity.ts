@@ -39,6 +39,9 @@ export class Competitor {
 		googleMapsUrl?: string;
 	};
 
+	@Column({ type: 'varchar', nullable: true })
+	alias: string;
+
 	@Column({ type: 'decimal', precision: 10, scale: 6, nullable: true })
 	latitude: number;
 

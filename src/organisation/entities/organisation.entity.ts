@@ -86,6 +86,9 @@ export class Organisation {
 	@OneToMany(() => OrganisationHours, (hours) => hours.organisation)
 	hours: OrganisationHours[];
 
+	@Column({ type: 'varchar', nullable: true })
+	alias: string;
+
 	// Other Relations
 	@OneToMany(() => Branch, (branch) => branch?.organisation, { nullable: true })
 	branches: Branch[];

@@ -21,6 +21,14 @@ export class CreateOrganisationDto {
 	})
 	address: AddressDto;
 
+	@IsOptional()
+	@IsString()
+	@ApiProperty({
+		example: 'acme',
+		description: 'Alias for the organisation',
+	})
+	alias?: string;
+
 	@IsNotEmpty()
 	@IsEmail()
 	@ApiProperty({

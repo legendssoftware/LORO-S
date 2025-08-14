@@ -30,6 +30,15 @@ class SocialMediaDto {
 
 	@IsString()
 	@IsOptional()
+	@ApiProperty({
+		description: 'Alias for the competitor',
+		example: 'acme',
+		required: false,
+	})
+	alias?: string;
+
+	@IsString()
+	@IsOptional()
 	@IsUrl()
 	@ApiProperty({
 		description: 'Twitter profile URL',
