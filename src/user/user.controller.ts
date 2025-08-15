@@ -55,6 +55,44 @@ import { PaginatedResponse } from '../lib/interfaces/product.interfaces';
 		}
 	}
 })
+/**
+ * ## 🎯 Performance Target Management Endpoints
+ * 
+ * This controller provides multiple endpoints for managing user performance targets:
+ * 
+ * ### **Target CRUD Operations**
+ * - **GET /:ref/target** - Retrieve user's current targets and progress
+ * - **POST /:ref/target** - Create new targets for a user
+ * - **PATCH /:ref/target** - Update targets with ABSOLUTE values (set exact amounts)
+ * - **DELETE /:ref/target** - Delete user's targets (soft delete with recovery option)
+ * 
+ * ### **External System Integration**
+ * - **PUT /:userId/targets/external-update** - INCREMENTAL updates from CRM/ERP systems
+ * 
+ * ### **Which Endpoint Should I Use?**
+ * 
+ * #### **For Setting/Updating Targets & Progress Totals:**
+ * Use **PATCH /:ref/target** when:
+ * - Setting new target goals (e.g., monthly sales target = R50,000)
+ * - Updating cumulative progress totals (e.g., month-to-date sales = R35,000)
+ * - Making corrections with absolute values
+ * - All values are **absolute amounts**, not increments
+ * 
+ * #### **For Recording Individual Transactions:**
+ * Use **PUT /:userId/targets/external-update** when:
+ * - Recording individual sales (e.g., +R5,000 for one sale)
+ * - Processing credit notes (e.g., -R2,000 for return)
+ * - Adding leads, calls, check-ins one by one
+ * - All values are **incremental amounts** that get added/subtracted
+ * 
+ * ### **Key Differences:**
+ * - **PATCH**: "Set the total to exactly R35,000"
+ * - **PUT external-update**: "Add R5,000 to the current total"
+ * 
+ * ### **Negative Values:**
+ * - **PATCH**: Use negative values for corrections (will set negative totals)
+ * - **PUT external-update**: Use negative increments to reduce totals (e.g., credit notes)
+ */
 export class UserController {
 	constructor(private readonly userService: UserService) {}
 
@@ -2185,21 +2223,39 @@ Use the restore endpoint to recover accidentally deleted users within the retent
 		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({
-		summary: '📊 Get user performance targets',
+		summary: '📊 Get user performance targets and current progress',
 		description: `
 # User Performance Target Dashboard
 
 Retrieves comprehensive performance targets for a specific user with detailed progress tracking and analytics capabilities.
 
-## 📋 **Core Features**
-- **Multi-Category Targets**: Sales, work hours, leads, clients, and activity-based targets
-- **Progress Tracking**: Real-time progress calculation with achievement percentages
-- **Period Management**: Support for weekly, monthly, quarterly, and yearly target periods
-- **Currency Support**: Multi-currency sales targets for international operations
-- **Achievement Analytics**: Advanced metrics including trend analysis and milestone tracking
+## 📋 **What This Endpoint Returns**
+- **Target Goals**: All configured target amounts (sales, leads, hours, etc.)
+- **Current Progress**: Real-time achievement totals for each target category
+- **Achievement Percentages**: Calculated progress percentages for each target
+- **Period Information**: Target period dates and remaining time
+- **Progress Metrics**: Overall completion and trend analysis
 
-## 🎯 **Target Categories**
-- **Sales Revenue**: Total sales targets combining quotations and orders
+## 🧮 **How Progress is Calculated**
+- **Achievement Percentage**: (currentValue ÷ targetValue) × 100
+- **Overall Progress**: Weighted average across all target categories
+- **Example**: Target R50,000 | Current R35,000 = 70% achievement
+
+## 📊 **Response Structure**
+\`\`\`json
+{
+  "userTarget": {
+    "targetSalesAmount": 50000,     // Goal to achieve
+    "currentSalesAmount": 35000,    // What's been achieved
+    "progressMetrics": {
+      "salesProgress": 70.0         // 35000/50000 = 70%
+    }
+  }
+}
+\`\`\`
+
+## 🎯 **Target Categories Included**
+- **Sales Revenue**: Total sales targets (quotations + orders combined)
 - **Quotations**: Quote generation targets (pending conversion)
 - **Orders**: Conversion targets (paid and confirmed sales)
 - **Work Hours**: Expected vs actual hours worked tracking
@@ -2486,19 +2542,64 @@ Updates existing performance targets for a specific user with comprehensive vali
 - **Dynamic Recalculation**: Automatic recalculation of achievement percentages
 - **Mid-Period Adjustments**: Support for target changes during active periods
 
+## 🧮 **How Target Calculations Work**
+
+### **Target Values vs Progress Values**
+- **Target Values**: The goals you want to achieve (e.g., targetSalesAmount: 50000)
+- **Current/Progress Values**: What has been achieved so far (e.g., currentSalesAmount: 30000)
+- **Achievement Percentage**: (currentValue / targetValue) × 100
+
+### **Direct Value Updates**
+When updating targets or progress, you set **absolute values**, not increments:
+- **targetSalesAmount: 60000** → Sets the target to exactly R60,000
+- **currentSalesAmount: 35000** → Sets current progress to exactly R35,000
+
+### **Important**: This endpoint does NOT support incremental updates
+For incremental updates (adding/subtracting individual sales), use the **external-update** endpoint instead.
+
 ## 📊 **Update Scenarios**
 - **Target Adjustments**: Increase or decrease targets based on market conditions
+- **Progress Updates**: Update current achievement values with latest data
 - **Period Extensions**: Modify start and end dates for target periods
 - **Currency Changes**: Update currency for international operations
 - **Category Additions**: Add new target categories or remove existing ones
 - **Emergency Resets**: Correct errors or reset targets due to exceptional circumstances
 
+## 💡 **Update Calculation Examples**
+
+### **Scenario 1: Adjust Monthly Sales Target**
+Current state: Target R50,000 | Current R30,000 | Achievement: 60%
+Update: \`{ "targetSalesAmount": 70000 }\`
+Result: Target R70,000 | Current R30,000 | Achievement: 42.86%
+
+### **Scenario 2: Update Progress with Latest Sales Data**
+Current state: Target R50,000 | Current R30,000 | Achievement: 60%
+Update: \`{ "currentSalesAmount": 45000 }\`
+Result: Target R50,000 | Current R45,000 | Achievement: 90%
+
+### **Scenario 3: Comprehensive Mid-Period Update**
+Update both targets and progress:
+\`\`\`json
+{
+  "targetSalesAmount": 60000,
+  "currentSalesAmount": 42000,
+  "targetNewLeads": 25,
+  "currentNewLeads": 18
+}
+\`\`\`
+
 ## 🔧 **Business Rules & Validation**
 - **Progress Preservation**: Updates preserve existing progress unless explicitly reset
-- **Achievement Percentages**: Target increases maintain current achievement percentages
+- **Achievement Percentages**: Automatically recalculated after any update
 - **Period Recalculation**: Date changes automatically recalculate progress metrics
 - **Audit Trail**: All modifications are logged with user, timestamp, and reason
 - **Validation Engine**: Comprehensive validation prevents invalid state transitions
+
+## ⚠️ **Important Notes**
+- Use this endpoint for **absolute value updates** (setting exact amounts)
+- For **incremental updates** (adding individual sales/credits), use the **external-update** endpoint
+- Progress values should represent **cumulative totals** for the target period
+- Negative values are allowed for correction purposes but will trigger validation warnings
 
 ## 📈 **Advanced Analytics**
 - **Progress Impact Analysis**: Calculate impact of target changes on overall progress
@@ -2542,20 +2643,20 @@ Updates existing performance targets for a specific user with comprehensive vali
 		description: 'Target update configuration with comprehensive validation and support for partial updates',
 		examples: {
 			targetAdjustment: {
-				summary: '📈 Sales Target Adjustment',
-				description: 'Adjust sales targets mid-period due to market opportunities',
+				summary: '📈 Absolute Target Adjustment',
+				description: 'Set new absolute target values (not incremental). Current: R50k target → New: R60k target',
 				value: {
 					targetSalesAmount: 60000,
 					targetQuotationsAmount: 35000,
 					targetOrdersAmount: 25000,
-					reason: 'Market opportunity adjustment - new client acquisition',
-					adjustmentType: 'INCREASE',
+					reason: 'Market opportunity adjustment - setting new absolute targets',
+					adjustmentType: 'ABSOLUTE_INCREASE',
 					effectiveDate: '2024-01-15'
 				}
 			},
 			progressUpdate: {
-				summary: '📊 Progress Values Update',
-				description: 'Update current progress values with latest achievements',
+				summary: '📊 Absolute Progress Update',
+				description: 'Set current cumulative progress values. Example: Total month-to-date sales = R45,000',
 				value: {
 					currentSalesAmount: 45000,
 					currentQuotationsAmount: 28000,
@@ -2566,6 +2667,29 @@ Updates existing performance targets for a specific user with comprehensive vali
 					currentCheckIns: 25,
 					currentCalls: 68,
 					lastUpdated: '2024-01-15T10:30:00Z'
+				}
+			},
+			correctionUpdate: {
+				summary: '🔧 Correction with Negative Values',
+				description: 'Correct errors in progress values. Negative values allowed for corrections (credit notes, reversals)',
+				value: {
+					currentSalesAmount: 42000,
+					currentOrdersAmount: 15000,
+					reason: 'Correcting for R3,000 credit note and cancelled order',
+					correctionType: 'ERROR_CORRECTION',
+					correctionDetails: 'Removed cancelled order (R3k) and applied credit note'
+				}
+			},
+			monthlyRecalibration: {
+				summary: '📅 Monthly Target Recalibration',
+				description: 'Adjust targets and update cumulative progress based on month-to-date performance',
+				value: {
+					targetSalesAmount: 70000,
+					currentSalesAmount: 38000,
+					targetNewLeads: 25,
+					currentNewLeads: 16,
+					updateReason: 'Mid-month recalibration based on performance trend',
+					effectiveDate: '2024-01-15'
 				}
 			},
 			periodModification: {
@@ -2588,8 +2712,8 @@ Updates existing performance targets for a specific user with comprehensive vali
 				}
 			},
 			comprehensiveUpdate: {
-				summary: '🔄 Comprehensive Target Update',
-				description: 'Update multiple target categories and progress values',
+				summary: '🔄 Comprehensive Absolute Update',
+				description: 'Update multiple categories with absolute values. All values represent new absolute targets/totals',
 				value: {
 					targetSalesAmount: 75000,
 					targetQuotationsAmount: 45000,
@@ -2608,7 +2732,7 @@ Updates existing performance targets for a specific user with comprehensive vali
 					currentCheckIns: 28,
 					currentCalls: 75,
 					targetCurrency: 'USD',
-					updateReason: 'Q2 target recalibration based on Q1 performance',
+					updateReason: 'Q2 target recalibration - all values are new absolute totals',
 					approvedBy: 'manager-456',
 					effectiveDate: '2024-04-01'
 				}
@@ -3399,31 +3523,111 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 	@Put(':userId/targets/external-update')
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT)
 	@ApiOperation({
-		summary: 'Update user targets from external ERP system',
+		summary: '📈 Incremental Target Updates from External Systems',
 		description: `
-		**Update user sales targets and current values from external ERP system**
-		
-		This endpoint allows external ERP systems to update user targets with concurrency control:
-		- Supports both INCREMENT and REPLACE update modes
-		- Handles concurrent updates with retry mechanism
-		- Validates update data and user permissions
-		- Creates audit trail for all updates
-		- Returns detailed success/conflict information
-		
-		**Update Modes:**
-		- INCREMENT: Adds values to current targets (for sales, leads, etc.)
-		- REPLACE: Sets absolute values (for complete recalculation)
-		
-		**Concurrency Control:**
-		- Uses pessimistic locking during updates
-		- Automatic retry with exponential backoff
-		- Returns conflict details if updates fail
-		
-		**Security Features:**
-		- Requires ERP system API key authentication
-		- Validates user belongs to same organization/branch
-		- Transaction ID for idempotency
-		- Comprehensive audit logging
+# Incremental Target Update System
+
+**This endpoint is designed for INCREMENTAL updates from external systems (CRM, ERP, etc.)**
+
+## 🎯 **Key Features**
+- **Incremental Updates**: Add/subtract individual transactions (sales, credit notes, leads)
+- **Negative Value Support**: Yes! Negative values will reduce the current totals
+- **Transaction-Based**: Send individual sale amounts, not cumulative totals
+- **Concurrency Safe**: Handles multiple simultaneous updates with locking
+- **Audit Trail**: Complete transaction history and change tracking
+
+## 🧮 **How Incremental Calculations Work**
+
+### **INCREMENT Mode (Default)**
+- **Positive Values**: Add to current totals
+  - Current R30,000 + Increment R5,000 = New R35,000
+- **Negative Values**: Subtract from current totals (for credit notes, reversals)
+  - Current R30,000 + Increment -R2,000 = New R28,000
+
+### **REPLACE Mode**
+- **Absolute Values**: Set exact totals (like the PATCH endpoint)
+  - Replace with R35,000 = New R35,000 (regardless of current value)
+
+## 💡 **Common Usage Scenarios**
+
+### **Scenario 1: New Sale Made**
+\`\`\`json
+{
+  "updateMode": "INCREMENT",
+  "salesAmountIncrement": 5000,
+  "ordersAmountIncrement": 5000,
+  "transactionId": "SALE_INV_12345"
+}
+\`\`\`
+**Result**: Adds R5,000 to both sales and orders totals
+
+### **Scenario 2: Credit Note Applied**
+\`\`\`json
+{
+  "updateMode": "INCREMENT",
+  "salesAmountIncrement": -2000,
+  "ordersAmountIncrement": -2000,
+  "transactionId": "CREDIT_NOTE_456"
+}
+\`\`\`
+**Result**: Subtracts R2,000 from both sales and orders totals
+
+### **Scenario 3: Quotation Generated**
+\`\`\`json
+{
+  "updateMode": "INCREMENT",
+  "salesAmountIncrement": 8000,
+  "quotationsAmountIncrement": 8000,
+  "transactionId": "QUOTE_789"
+}
+\`\`\`
+**Result**: Adds R8,000 to both sales and quotations totals
+
+## ❓ **FAQ - User Questions Answered**
+
+### **Q: If I increment with a negative value, will it reduce the amount?**
+**A: YES!** Negative increments will reduce the current totals.
+- Example: Current R50,000 + Increment -R5,000 = New R45,000
+
+### **Q: Do I send the individual sale amount or cumulative monthly total?**
+**A: Send the INDIVIDUAL SALE AMOUNT**, not the cumulative total.
+- ✅ Correct: Send R5,000 for a single sale
+- ❌ Wrong: Send R35,000 cumulative month-to-date total
+
+### **Q: Can I use this for both increases and decreases?**
+**A: YES!** Use positive values for sales/additions, negative values for credit notes/reversals.
+
+## 🔧 **Update Modes Explained**
+
+### **INCREMENT Mode (Recommended for CRM Integration)**
+- **Purpose**: Add/subtract individual transactions
+- **Use Cases**: New sales, credit notes, quotations, leads, calls
+- **Calculation**: currentValue + incrementValue = newValue
+- **Example**: R30,000 + R5,000 = R35,000
+
+### **REPLACE Mode (For System Recalculation)**
+- **Purpose**: Set absolute values (like monthly recalculation)
+- **Use Cases**: System corrections, bulk recalculations
+- **Calculation**: newValue = replaceValue (ignores current value)
+- **Example**: Replace with R35,000 = R35,000
+
+## 🔒 **Concurrency & Safety**
+- **Pessimistic Locking**: Prevents data corruption during concurrent updates
+- **Automatic Retry**: Built-in retry mechanism with exponential backoff
+- **Transaction IDs**: Prevent duplicate processing of same transaction
+- **Conflict Resolution**: Detailed conflict information if updates fail
+
+## 📊 **Integration Best Practices**
+- **Transaction IDs**: Always include unique transaction IDs for idempotency
+- **Error Handling**: Handle conflicts and retry as needed
+- **Audit Trail**: All changes are logged with transaction details
+- **Validation**: System validates user permissions and data integrity
+
+## 🔐 **Security Features**
+- **API Key Authentication**: Requires valid ERP system API key
+- **Organization Validation**: Ensures user belongs to correct organization
+- **Permission Checks**: Validates updating user has appropriate permissions
+- **Audit Logging**: Complete audit trail of all external updates
 		`,
 		operationId: 'updateTargetsFromERP',
 	})
@@ -3435,7 +3639,145 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 	})
 	@ApiBody({
 		type: ExternalTargetUpdateDto,
-		description: 'External target update data from ERP system',
+		description: 'External target update data from ERP system with incremental transaction support',
+		examples: {
+			newSale: {
+				summary: '💰 New Sale Transaction',
+				description: 'Add a new sale to user targets. Send individual sale amount, not cumulative total.',
+				value: {
+					updateMode: 'INCREMENT',
+					salesAmountIncrement: 5000,
+					ordersAmountIncrement: 5000,
+					transactionId: 'SALE_INV_12345',
+					transactionType: 'SALE',
+					description: 'New sale - Invoice #12345 for R5,000',
+					timestamp: '2024-01-15T10:30:00Z'
+				}
+			},
+			creditNote: {
+				summary: '📄 Credit Note Application',
+				description: 'Apply credit note using negative increment. This will reduce current totals.',
+				value: {
+					updateMode: 'INCREMENT',
+					salesAmountIncrement: -2000,
+					ordersAmountIncrement: -2000,
+					transactionId: 'CREDIT_NOTE_456',
+					transactionType: 'CREDIT_NOTE',
+					description: 'Credit note for returned goods - R2,000',
+					timestamp: '2024-01-15T11:00:00Z'
+				}
+			},
+			newQuotation: {
+				summary: '📋 Quotation Generated',
+				description: 'Record new quotation. Adds to both sales and quotations totals.',
+				value: {
+					updateMode: 'INCREMENT',
+					salesAmountIncrement: 8000,
+					quotationsAmountIncrement: 8000,
+					transactionId: 'QUOTE_789',
+					transactionType: 'QUOTATION',
+					description: 'New quotation #789 for R8,000',
+					timestamp: '2024-01-15T12:00:00Z'
+				}
+			},
+			quotationConverted: {
+				summary: '✅ Quotation to Order Conversion',
+				description: 'Convert quotation to paid order. Moves amount from quotations to orders.',
+				value: {
+					updateMode: 'INCREMENT',
+					quotationsAmountIncrement: -8000,
+					ordersAmountIncrement: 8000,
+					transactionId: 'CONVERT_QUOTE_789',
+					transactionType: 'CONVERSION',
+					description: 'Quotation #789 converted to paid order',
+					timestamp: '2024-01-15T14:00:00Z'
+				}
+			},
+			newLead: {
+				summary: '🎯 New Lead Added',
+				description: 'Record new lead generation. Increments lead count.',
+				value: {
+					updateMode: 'INCREMENT',
+					newLeadsIncrement: 1,
+					transactionId: 'LEAD_2024_001',
+					transactionType: 'LEAD',
+					description: 'New lead from marketing campaign',
+					timestamp: '2024-01-15T09:00:00Z'
+				}
+			},
+			clientCheckIn: {
+				summary: '📞 Client Check-in',
+				description: 'Record client interaction. Increments check-in and calls count.',
+				value: {
+					updateMode: 'INCREMENT',
+					checkInsIncrement: 1,
+					callsIncrement: 1,
+					transactionId: 'CHECKIN_CLIENT_123',
+					transactionType: 'CHECK_IN',
+					description: 'Monthly check-in call with Client ABC',
+					timestamp: '2024-01-15T15:30:00Z'
+				}
+			},
+			hoursWorked: {
+				summary: '⏰ Work Hours Logged',
+				description: 'Add work hours to user total. Can be positive (work) or negative (corrections).',
+				value: {
+					updateMode: 'INCREMENT',
+					hoursWorkedIncrement: 8,
+					transactionId: 'TIMESHEET_150124',
+					transactionType: 'HOURS',
+					description: 'Daily timesheet - 8 hours logged',
+					timestamp: '2024-01-15T17:00:00Z'
+				}
+			},
+			hourCorrection: {
+				summary: '🔧 Hours Correction',
+				description: 'Correct previously logged hours using negative increment.',
+				value: {
+					updateMode: 'INCREMENT',
+					hoursWorkedIncrement: -2,
+					transactionId: 'CORRECTION_150124',
+					transactionType: 'CORRECTION',
+					description: 'Correction: Remove 2 hours from timesheet',
+					timestamp: '2024-01-15T18:00:00Z'
+				}
+			},
+			multipleUpdates: {
+				summary: '🔄 Multiple Transactions',
+				description: 'Update multiple metrics in single transaction (sale + new lead + call).',
+				value: {
+					updateMode: 'INCREMENT',
+					salesAmountIncrement: 12000,
+					ordersAmountIncrement: 12000,
+					newLeadsIncrement: 1,
+					callsIncrement: 3,
+					checkInsIncrement: 1,
+					transactionId: 'MULTI_TRANS_001',
+					transactionType: 'MULTI_UPDATE',
+					description: 'Sale R12k + new lead + 3 calls + client check-in',
+					timestamp: '2024-01-15T16:00:00Z'
+				}
+			},
+			systemRecalculation: {
+				summary: '🖥️ System Recalculation',
+				description: 'REPLACE mode: Set absolute values (like monthly system recalculation).',
+				value: {
+					updateMode: 'REPLACE',
+					currentSalesAmount: 45000,
+					currentQuotationsAmount: 28000,
+					currentOrdersAmount: 17000,
+					currentNewLeads: 15,
+					currentNewClients: 8,
+					currentCheckIns: 25,
+					currentCalls: 68,
+					currentHoursWorked: 120,
+					transactionId: 'SYS_RECALC_0124',
+					transactionType: 'SYSTEM_RECALC',
+					description: 'Monthly system recalculation from CRM data',
+					timestamp: '2024-01-15T20:00:00Z'
+				}
+			}
+		}
 	})
 	@ApiHeader({
 		name: 'X-ERP-API-Key',
@@ -3445,24 +3787,60 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 	})
 	@ApiResponse({
 		status: 200,
-		description: '✅ Target updated successfully',
+		description: '✅ Incremental target update successful',
 		schema: {
 			type: 'object',
 			properties: {
+				success: { type: 'boolean', example: true },
 				message: { type: 'string', example: 'User targets updated successfully from ERP' },
+				updateType: { type: 'string', example: 'INCREMENT', description: 'Type of update performed' },
+				transactionId: { type: 'string', example: 'SALE_INV_12345', description: 'Transaction ID for audit trail' },
+				calculations: {
+					type: 'object',
+					description: 'Detailed calculation breakdown',
+					properties: {
+						salesAmount: {
+							type: 'object',
+							properties: {
+								previousValue: { type: 'number', example: 30000, description: 'Value before update' },
+								increment: { type: 'number', example: 5000, description: 'Amount added/subtracted' },
+								newValue: { type: 'number', example: 35000, description: 'Value after update' }
+							}
+						},
+						ordersAmount: {
+							type: 'object',
+							properties: {
+								previousValue: { type: 'number', example: 20000, description: 'Value before update' },
+								increment: { type: 'number', example: 5000, description: 'Amount added/subtracted' },
+								newValue: { type: 'number', example: 25000, description: 'Value after update' }
+							}
+						}
+					}
+				},
 				updatedValues: {
 					type: 'object',
+					description: 'Final values after update',
 					properties: {
-						currentSalesAmount: { type: 'number', example: 15000.50 },
-						currentQuotationsAmount: { type: 'number', example: 8500.25 },
-						currentOrdersAmount: { type: 'number', example: 6500.25 },
-						currentNewLeads: { type: 'number', example: 12 },
-						currentNewClients: { type: 'number', example: 8 },
-						currentCheckIns: { type: 'number', example: 25 },
-						currentHoursWorked: { type: 'number', example: 160.5 },
-						currentCalls: { type: 'number', example: 45 },
+						currentSalesAmount: { type: 'number', example: 35000, description: 'Total sales amount' },
+						currentQuotationsAmount: { type: 'number', example: 15000, description: 'Total quotations amount' },
+						currentOrdersAmount: { type: 'number', example: 25000, description: 'Total orders amount' },
+						currentNewLeads: { type: 'number', example: 12, description: 'Total leads generated' },
+						currentNewClients: { type: 'number', example: 8, description: 'Total new clients' },
+						currentCheckIns: { type: 'number', example: 25, description: 'Total check-ins completed' },
+						currentHoursWorked: { type: 'number', example: 160.5, description: 'Total hours worked' },
+						currentCalls: { type: 'number', example: 45, description: 'Total calls made' },
 					},
 				},
+				progressImpact: {
+					type: 'object',
+					description: 'Impact on achievement percentages',
+					properties: {
+						salesProgress: { type: 'number', example: 70.0, description: 'Sales achievement percentage' },
+						ordersProgress: { type: 'number', example: 83.3, description: 'Orders achievement percentage' },
+						overallProgress: { type: 'number', example: 76.2, description: 'Overall progress percentage' }
+					}
+				},
+				timestamp: { type: 'string', format: 'date-time', example: '2024-01-15T10:30:00Z' }
 			},
 		},
 	})
@@ -3486,16 +3864,39 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 	})
 	@ApiResponse({
 		status: 400,
-		description: '❌ Validation error',
+		description: '❌ Validation error - Invalid increment values or missing data',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'Validation failed' },
+				success: { type: 'boolean', example: false },
+				message: { type: 'string', example: 'Validation failed for target update' },
 				validationErrors: {
 					type: 'array',
 					items: { type: 'string' },
-					example: ['Sales amount cannot be negative', 'Transaction ID is required for idempotency'],
+					example: [
+						'Transaction ID is required for audit trail',
+						'At least one increment value must be provided',
+						'Update mode must be either INCREMENT or REPLACE',
+						'Negative increments are allowed but will reduce totals',
+						'REPLACE mode requires absolute values, not increments'
+					],
 				},
+				fieldErrors: {
+					type: 'object',
+					properties: {
+						transactionId: { type: 'string', example: 'Transaction ID is required for idempotency' },
+						updateMode: { type: 'string', example: 'Must be INCREMENT or REPLACE' },
+						salesAmountIncrement: { type: 'string', example: 'Must be a number (negative values allowed for reductions)' }
+					}
+				},
+				hints: {
+					type: 'object',
+					properties: {
+						incrementMode: { type: 'string', example: 'Use positive values to add, negative values to subtract' },
+						replaceMode: { type: 'string', example: 'Use REPLACE mode to set absolute values instead of increments' },
+						transactionIds: { type: 'string', example: 'Use unique transaction IDs to prevent duplicate processing' }
+					}
+				}
 			},
 		},
 	})
@@ -3542,3 +3943,4 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 		};
 	}
 }
+
