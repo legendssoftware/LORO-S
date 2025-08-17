@@ -14,6 +14,8 @@ import { PaginatedResponse } from '../lib/interfaces/product.interfaces';
 import { LeaveEmailService } from './services/leave-email.service';
 import { ApprovalsService } from '../approvals/approvals.service';
 import { ApprovalType, ApprovalPriority, ApprovalFlow, NotificationFrequency, ApprovalAction, ApprovalStatus } from '../lib/enums/approval.enums';
+import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
+import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
 
 @Injectable()
 export class LeaveService {
@@ -32,6 +34,7 @@ export class LeaveService {
 		private readonly eventEmitter: EventEmitter2,
 		private readonly leaveEmailService: LeaveEmailService,
 		private readonly approvalsService: ApprovalsService,
+		private readonly unifiedNotificationService: UnifiedNotificationService,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
 		this.logger.debug(`LeaveService initialized with cache TTL: ${this.CACHE_TTL} minutes`);
@@ -218,6 +221,27 @@ export class LeaveService {
 			// Send notification email to admins
 			this.logger.debug('Sending admin notification emails');
 			await this.leaveEmailService.sendNewApplicationAdminNotification(savedLeave, owner);
+
+			// Send push notification to applicant
+			try {
+				await this.unifiedNotificationService.sendTemplatedNotification(
+					NotificationEvent.LEAVE_CREATED,
+					[owner.uid],
+					{
+						userName: `${owner.name} ${owner.surname || ''}`.trim(),
+						leaveType: savedLeave.leaveType,
+						startDate: savedLeave.startDate.toLocaleDateString(),
+						endDate: savedLeave.endDate.toLocaleDateString(),
+						duration: savedLeave.duration.toString(),
+					},
+					{
+						priority: NotificationPriority.NORMAL,
+					},
+				);
+				this.logger.debug(`Leave creation push notification sent to user: ${owner.uid}`);
+			} catch (notificationError) {
+				this.logger.warn(`Failed to send leave creation push notification to user ${owner.uid}:`, notificationError.message);
+			}
 
 			// Emit leave created event for notifications
 			this.logger.debug(`Emitting leave.created event for leave: ${savedLeave.uid}`);
@@ -562,6 +586,27 @@ export class LeaveService {
 					previousStatus,
 					approver
 				);
+
+				// Send push notification for leave approval
+				try {
+					await this.unifiedNotificationService.sendTemplatedNotification(
+						NotificationEvent.LEAVE_APPROVED,
+						[updatedLeave.owner.uid],
+						{
+							userName: `${updatedLeave.owner.name} ${updatedLeave.owner.surname || ''}`.trim(),
+							leaveType: updatedLeave.leaveType,
+							approvedBy: `${approver.name} ${approver.surname || ''}`.trim(),
+							startDate: updatedLeave.startDate.toLocaleDateString(),
+							endDate: updatedLeave.endDate.toLocaleDateString(),
+						},
+						{
+							priority: NotificationPriority.HIGH,
+						},
+					);
+					this.logger.debug(`Leave approval push notification sent to user: ${updatedLeave.owner.uid}`);
+				} catch (notificationError) {
+					this.logger.warn(`Failed to send leave approval push notification to user ${updatedLeave.owner.uid}:`, notificationError.message);
+				}
 			}
 
 			// Emit leave approved event for notifications
@@ -637,6 +682,27 @@ export class LeaveService {
 					updatedLeave.owner,
 					previousStatus
 				);
+
+				// Send push notification for leave rejection
+				try {
+					await this.unifiedNotificationService.sendTemplatedNotification(
+						NotificationEvent.LEAVE_REJECTED,
+						[updatedLeave.owner.uid],
+						{
+							userName: `${updatedLeave.owner.name} ${updatedLeave.owner.surname || ''}`.trim(),
+							leaveType: updatedLeave.leaveType,
+							rejectionReason: rejectionReason,
+							startDate: updatedLeave.startDate.toLocaleDateString(),
+							endDate: updatedLeave.endDate.toLocaleDateString(),
+						},
+						{
+							priority: NotificationPriority.HIGH,
+						},
+					);
+					this.logger.debug(`Leave rejection push notification sent to user: ${updatedLeave.owner.uid}`);
+				} catch (notificationError) {
+					this.logger.warn(`Failed to send leave rejection push notification to user ${updatedLeave.owner.uid}:`, notificationError.message);
+				}
 			}
 
 			// Emit leave rejected event for notifications

@@ -24,6 +24,7 @@ import { LicensingModule } from '../licensing/licensing.module';
 import { UserModule } from '../user/user.module';
 import { OrganisationModule } from '../organisation/organisation.module';
 import { PdfGenerationModule } from '../pdf-generation/pdf-generation.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
 	imports: [
@@ -46,6 +47,7 @@ import { PdfGenerationModule } from '../pdf-generation/pdf-generation.module';
 		UserModule,
 		OrganisationModule,
 		PdfGenerationModule,
+		NotificationsModule,
 	],
 	controllers: [ShopController, QuotationConversionController],
 	providers: [ShopService, ProjectsService, ShopGateway, BannersService, QuotationConversionService],

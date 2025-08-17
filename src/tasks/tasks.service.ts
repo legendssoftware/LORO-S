@@ -505,7 +505,30 @@ export class TasksService {
 						}
 					}
 
-					console.log(`✅ Task assignment emails sent to ${activeAssignees.length} assignees`);
+					// Send push notifications to assignees
+					try {
+						const activeAssigneeIds = activeAssignees.map(assignee => assignee.uid);
+						const creatorName = savedTask.creator?.name || 'Team Member';
+						
+						await this.unifiedNotificationService.sendTemplatedNotification(
+							NotificationEvent.TASK_ASSIGNED,
+							activeAssigneeIds,
+							{
+								taskTitle: savedTask.title,
+								taskId: savedTask.uid,
+								assignedBy: creatorName,
+								deadline: savedTask.deadline?.toLocaleDateString() || 'No deadline',
+								priority: savedTask.priority,
+							},
+							{
+								priority: NotificationPriority.HIGH,
+							},
+						);
+						console.log(`✅ Task assignment emails & push notifications sent to ${activeAssignees.length} assignees`);
+					} catch (notificationError) {
+						console.error('Failed to send task assignment push notifications:', notificationError.message);
+						console.log(`✅ Task assignment emails sent to ${activeAssignees.length} assignees`);
+					}
 				} catch (notificationError) {
 					// Log error but don't fail task creation
 					console.error('Failed to send task assignment emails:', notificationError.message);
@@ -892,6 +915,27 @@ export class TasksService {
 										emailData,
 									);
 								}
+							}
+
+							// Send push notifications for task updates
+							try {
+								const activeAssigneeIds = activeExistingAssignees.map(assignee => assignee.uid);
+								await this.unifiedNotificationService.sendTemplatedNotification(
+									NotificationEvent.TASK_UPDATED,
+									activeAssigneeIds,
+									{
+										taskTitle: task.title,
+										taskId: task.uid,
+										updatedBy: 'Task Manager',
+										changes: changes.join(', '),
+									},
+									{
+										priority: NotificationPriority.NORMAL,
+									},
+								);
+								console.log(`✅ Task update emails & push notifications sent to ${activeExistingAssignees.length} assignees`);
+							} catch (notificationError) {
+								console.error('Failed to send task update push notifications:', notificationError.message);
 							}
 						}
 					}
@@ -1952,6 +1996,28 @@ export class TasksService {
 				const emailData = TaskEmailDataMapper.mapTaskFlagData(savedFlag, task, user, 'Team Member');
 
 				this.eventEmitter.emit('send.email', EmailType.TASK_FLAG_CREATED, emailRecipients, emailData);
+
+				// Send push notification for task flag creation
+				try {
+					await this.unifiedNotificationService.sendTemplatedNotification(
+						NotificationEvent.TASK_FLAG_CREATED,
+						activeUserIds,
+						{
+							taskTitle: task.title,
+							taskId: task.uid,
+							flagTitle: savedFlag.title,
+							flagCreatedBy: `${user.name} ${user.surname || ''}`.trim(),
+							flagDescription: savedFlag.description,
+						},
+						{
+							priority: NotificationPriority.HIGH,
+						},
+					);
+					console.log(`✅ Task flag emails & push notifications sent to ${emailRecipients.length} recipients`);
+				} catch (notificationError) {
+					console.error('Failed to send task flag push notifications:', notificationError.message);
+					console.log(`✅ Task flag emails sent to ${emailRecipients.length} recipients`);
+				}
 			}
 		} catch (error) {
 			console.error('Error sending task flag email notification:', error.message);

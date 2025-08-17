@@ -27,6 +27,41 @@ export enum NotificationEvent {
 	ATTENDANCE_SHIFT_ENDED = 'attendance_shift_ended',
 	ATTENDANCE_BREAK_STARTED = 'attendance_break_started',
 	ATTENDANCE_BREAK_ENDED = 'attendance_break_ended',
+	ATTENDANCE_OVERTIME_REMINDER = 'attendance_overtime_reminder',
+	ATTENDANCE_SHIFT_START_REMINDER = 'attendance_shift_start_reminder',
+	ATTENDANCE_SHIFT_END_REMINDER = 'attendance_shift_end_reminder',
+
+	// User Events
+	USER_CREATED = 'user_created',
+	USER_UPDATED = 'user_updated',
+	USER_PASSWORD_RESET = 'user_password_reset',
+	USER_TARGET_ACHIEVEMENT = 'user_target_achievement',
+	USER_ROLE_CHANGED = 'user_role_changed',
+	USER_STATUS_CHANGED = 'user_status_changed',
+
+	// Leave Events
+	LEAVE_CREATED = 'leave_created',
+	LEAVE_APPROVED = 'leave_approved',
+	LEAVE_REJECTED = 'leave_rejected',
+	LEAVE_CANCELLED = 'leave_cancelled',
+	LEAVE_STATUS_CHANGED = 'leave_status_changed',
+
+	// Claims Events
+	CLAIM_CREATED = 'claim_created',
+	CLAIM_APPROVED = 'claim_approved',
+	CLAIM_REJECTED = 'claim_rejected',
+	CLAIM_STATUS_CHANGED = 'claim_status_changed',
+
+	// Shop/Quotation Events
+	QUOTATION_CREATED = 'quotation_created',
+	QUOTATION_STATUS_UPDATED = 'quotation_status_updated',
+	QUOTATION_APPROVED = 'quotation_approved',
+	QUOTATION_REJECTED = 'quotation_rejected',
+	QUOTATION_READY_FOR_REVIEW = 'quotation_ready_for_review',
+
+	// Check-in Events
+	CHECKIN_CREATED = 'checkin_created',
+	CHECKIN_UPDATED = 'checkin_updated',
 
 	// General Events
 	GENERAL_NOTIFICATION = 'general_notification',

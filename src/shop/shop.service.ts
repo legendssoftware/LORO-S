@@ -29,6 +29,8 @@ import { PdfGenerationService } from '../pdf-generation/pdf-generation.service';
 import { QuotationTemplateData } from '../pdf-generation/interfaces/pdf-templates.interface';
 import { Project } from './entities/project.entity';
 import { ProjectsService } from './projects.service';
+import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
+import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
 
 @Injectable()
 export class ShopService {
@@ -59,6 +61,7 @@ export class ShopService {
 		private readonly organisationService: OrganisationService,
 		private readonly pdfGenerationService: PdfGenerationService,
 		private readonly projectsService: ProjectsService,
+		private readonly unifiedNotificationService: UnifiedNotificationService,
 	) {
 		this.currencyLocale = this.configService.get<string>('CURRENCY_LOCALE') || 'en-ZA';
 		this.currencyCode = this.configService.get<string>('CURRENCY_CODE') || 'ZAR';
@@ -1900,6 +1903,9 @@ export class ShopService {
 						// Standard notification for other statuses
 						this.eventEmitter.emit('send.email', emailType, [quotation.client.email], emailData);
 					}
+
+					// Log push notification limitation for external clients
+					this.logger.debug(`Quotation ${quotation.quotationNumber} status update sent to client ${quotation.client.email} - push notifications not available for external clients`);
 				}
 
 				// Also notify internal team about the status change via WebSocket
@@ -2687,6 +2693,11 @@ export class ShopService {
 				...emailData,
 				message: `Quotation ${updatedQuotation.quotationNumber} has been sent to the client for review.`,
 			});
+
+			// Send push notification for quotation sent (if we have client user UID)
+			// Note: This would require the client to be a User entity with notifications enabled
+			// For now, we'll log this limitation
+			this.logger.debug(`Quotation ${updatedQuotation.quotationNumber} sent to client ${updatedQuotation.client.email} - push notifications not available for external clients`);
 
 			// Emit WebSocket event
 			this.shopGateway.notifyQuotationStatusChanged(updatedQuotation);

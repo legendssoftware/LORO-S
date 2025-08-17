@@ -20,6 +20,8 @@ import { User } from '../user/entities/user.entity';
 import { ApprovalsService } from '../approvals/approvals.service';
 import { ApprovalType, ApprovalPriority, ApprovalFlow, NotificationFrequency, ApprovalAction, ApprovalStatus } from '../lib/enums/approval.enums';
 import { ClaimEmailData, ClaimStatusUpdateEmailData } from '../lib/types/email-templates.types';
+import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
+import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
 
 @Injectable()
 export class ClaimsService {
@@ -37,6 +39,7 @@ export class ClaimsService {
 		@InjectRepository(User)
 		private userRepository: Repository<User>,
 		private readonly approvalsService: ApprovalsService,
+		private readonly unifiedNotificationService: UnifiedNotificationService,
 	) {
 		this.currencyLocale = this.configService.get<string>('CURRENCY_LOCALE') || 'en-ZA';
 		this.currencyCode = this.configService.get<string>('CURRENCY_CODE') || 'ZAR';
@@ -152,6 +155,27 @@ export class ClaimsService {
 
 				// Send admin notification email
 				this.eventEmitter.emit('send.email', EmailType.CLAIM_CREATED_ADMIN, [], emailData);
+
+				// Send push notification to the user who created the claim
+				try {
+					await this.unifiedNotificationService.sendTemplatedNotification(
+						NotificationEvent.CLAIM_CREATED,
+						[user.uid],
+						{
+							userName: user.name || user.email,
+							claimCategory: claim.category || 'General',
+							claimAmount: this.formatCurrency(Number(claim.amount) || 0),
+							claimId: claim.uid,
+							status: claim.status || ClaimStatus.PENDING,
+						},
+						{
+							priority: NotificationPriority.NORMAL,
+						},
+					);
+					console.log(`✅ Claim creation email & push notification sent to user: ${user.email}`);
+				} catch (notificationError) {
+					console.error('Failed to send claim creation push notification:', notificationError.message);
+				}
 			}
 		} catch (emailError) {
 			console.error('Error sending claim creation email:', emailError);
@@ -1263,6 +1287,42 @@ export class ClaimsService {
 
 				// Send email notification
 				this.eventEmitter.emit('send.email', emailType, [claim.owner.email], emailData);
+
+				// Send push notification for claim status update
+				try {
+					let notificationEvent: NotificationEvent;
+					switch (newStatus) {
+						case ClaimStatus.APPROVED:
+							notificationEvent = NotificationEvent.CLAIM_APPROVED;
+							break;
+						case ClaimStatus.DECLINED:
+							notificationEvent = NotificationEvent.CLAIM_REJECTED;
+							break;
+						default:
+							notificationEvent = NotificationEvent.CLAIM_STATUS_CHANGED;
+							break;
+					}
+
+					await this.unifiedNotificationService.sendTemplatedNotification(
+						notificationEvent,
+						[claim.owner.uid],
+						{
+							userName: claim.owner.name || claim.owner.email,
+							claimCategory: claim.category || 'General',
+							claimAmount: this.formatCurrency(Number(claim.amount) || 0),
+							claimId: claim.uid,
+							newStatus: newStatus,
+							previousStatus: previousStatus,
+							rejectionReason: payload.reason,
+						},
+						{
+							priority: NotificationPriority.HIGH,
+						},
+					);
+					console.log(`✅ Claim status update email & push notification sent to user: ${claim.owner.email}`);
+				} catch (notificationError) {
+					console.error('Failed to send claim status update push notification:', notificationError.message);
+				}
 			}
 
 			this.logger.log(`✅ [ClaimsService] Successfully handled approval action for claim ${claim.uid}`);

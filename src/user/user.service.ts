@@ -56,6 +56,8 @@ import { formatDateSafely } from '../lib/utils/date.utils';
 import { BulkCreateUserDto, BulkCreateUserResponse, BulkUserResult } from './dto/bulk-create-user.dto';
 import { BulkUpdateUserDto, BulkUpdateUserResponse, BulkUpdateUserResult } from './dto/bulk-update-user.dto';
 import { DataSource } from 'typeorm';
+import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
+import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
 
 @Injectable()
 export class UserService {
@@ -82,6 +84,7 @@ export class UserService {
 		private readonly eventEmitter: EventEmitter2,
 		private readonly configService: ConfigService,
 		private readonly dataSource: DataSource,
+		private readonly unifiedNotificationService: UnifiedNotificationService,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
 		this.logger.log('UserService initialized with cache TTL: ' + this.CACHE_TTL + 'ms');
@@ -393,6 +396,26 @@ export class UserService {
 			} else {
 				this.logger.debug('[USER_CREATION] User has no assigned clients, sending standard notification');
 				emailPromises.push(this.sendUserCreationNotificationEmail(savedUser));
+			}
+
+			// Send push notification for user creation
+			try {
+				await this.unifiedNotificationService.sendTemplatedNotification(
+					NotificationEvent.USER_CREATED,
+					[savedUser.uid],
+					{
+						userName: `${savedUser.name} ${savedUser.surname || ''}`.trim(),
+						userRole: savedUser.accessLevel,
+						organizationName: savedUser.organisation?.name || 'Your Organization',
+						branchName: savedUser.branch?.name || 'Main Branch',
+					},
+					{
+						priority: NotificationPriority.HIGH,
+					},
+				);
+				this.logger.debug('[USER_CREATION] User creation push notification sent successfully');
+			} catch (notificationError) {
+				this.logger.warn(`Failed to send user creation push notification to ${savedUser.uid}:`, notificationError.message);
 			}
 
 			await Promise.all(emailPromises);
@@ -1443,6 +1466,72 @@ export class UserService {
 					this.logger.debug(`[USER_UPDATE] Sending profile update notification to: ${updatedUser.email}`);
 					emailPromises.push(this.sendProfileUpdateNotificationEmail(updatedUser));
 				}
+			}
+
+			// Send push notifications for significant changes
+			try {
+				if (changes.password) {
+					await this.unifiedNotificationService.sendTemplatedNotification(
+						NotificationEvent.USER_PASSWORD_RESET,
+						[updatedUser.uid],
+						{
+							userName: `${updatedUser.name} ${updatedUser.surname || ''}`.trim(),
+						},
+						{
+							priority: NotificationPriority.HIGH,
+						},
+					);
+					this.logger.debug('[USER_UPDATE] Password reset push notification sent');
+				}
+
+				if (changes.role) {
+					await this.unifiedNotificationService.sendTemplatedNotification(
+						NotificationEvent.USER_ROLE_CHANGED,
+						[updatedUser.uid],
+						{
+							userName: `${updatedUser.name} ${updatedUser.surname || ''}`.trim(),
+							newRole: updatedUser.accessLevel,
+							previousRole: existingUser.accessLevel,
+						},
+						{
+							priority: NotificationPriority.HIGH,
+						},
+					);
+					this.logger.debug('[USER_UPDATE] Role change push notification sent');
+				}
+
+				if (changes.status) {
+					await this.unifiedNotificationService.sendTemplatedNotification(
+						NotificationEvent.USER_STATUS_CHANGED,
+						[updatedUser.uid],
+						{
+							userName: `${updatedUser.name} ${updatedUser.surname || ''}`.trim(),
+							newStatus: updatedUser.status,
+							previousStatus: existingUser.status,
+						},
+						{
+							priority: NotificationPriority.HIGH,
+						},
+					);
+					this.logger.debug('[USER_UPDATE] Status change push notification sent');
+				}
+
+				if (changes.profile || (hasMultipleChanges && !changes.password && !changes.role && !changes.status)) {
+					await this.unifiedNotificationService.sendTemplatedNotification(
+						NotificationEvent.USER_UPDATED,
+						[updatedUser.uid],
+						{
+							userName: `${updatedUser.name} ${updatedUser.surname || ''}`.trim(),
+							updatedBy: 'System Administrator',
+						},
+						{
+							priority: NotificationPriority.NORMAL,
+						},
+					);
+					this.logger.debug('[USER_UPDATE] General update push notification sent');
+				}
+			} catch (notificationError) {
+				this.logger.warn(`Failed to send user update push notification to ${updatedUser.uid}:`, notificationError.message);
 			}
 
 			// Send all notification emails in parallel
@@ -3210,7 +3299,28 @@ export class UserService {
 
 			this.eventEmitter.emit('send.email', EmailType.USER_TARGET_ACHIEVEMENT, [user.email], emailData);
 
-			this.logger.log(`Target achievement email sent to user ${userId} for ${targetType} target`);
+			// Send push notification for target achievement
+			try {
+				await this.unifiedNotificationService.sendTemplatedNotification(
+					NotificationEvent.USER_TARGET_ACHIEVEMENT,
+					[userId],
+					{
+						userName: emailData.userName,
+						targetType,
+						achievementPercentage: achievementData.achievementPercentage,
+						currentValue: achievementData.currentValue,
+						targetValue: achievementData.targetValue,
+						organizationName: emailData.organizationName,
+					},
+					{
+						priority: NotificationPriority.HIGH,
+					},
+				);
+				this.logger.log(`Target achievement email & push notification sent to user ${userId} for ${targetType} target`);
+			} catch (notificationError) {
+				this.logger.warn(`Failed to send target achievement push notification to user ${userId}:`, notificationError.message);
+				this.logger.log(`Target achievement email sent to user ${userId} for ${targetType} target`);
+			}
 		} catch (error) {
 			this.logger.error(`Error sending target achievement email to user ${userId}:`, error.message);
 		}

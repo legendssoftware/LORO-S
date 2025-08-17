@@ -6,6 +6,8 @@ import { Task } from './entities/task.entity';
 import { User } from '../user/entities/user.entity';
 import { CommunicationService } from '../communication/communication.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
+import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
 import { EmailType } from '../lib/enums/email.enums';
 import { TaskStatus } from '../lib/enums/task.enums';
 import { NotificationType } from '../lib/enums/notification.enums';
@@ -22,6 +24,7 @@ export class TaskReminderService {
 		private readonly userRepository: Repository<User>,
 		private readonly communicationService: CommunicationService,
 		private readonly notificationsService: NotificationsService,
+		private readonly unifiedNotificationService: UnifiedNotificationService,
 	) {}
 
 	@Cron('*/5 * * * *') // Run every 5 minutes
@@ -211,14 +214,6 @@ export class TaskReminderService {
 		const creatorEmailData = TaskEmailDataMapper.mapTaskReminderCreatorData(task, creator, assignees);
 		await this.communicationService.sendEmail(EmailType.TASK_REMINDER_CREATOR, [creator.email], creatorEmailData);
 
-		// Create notification for creator
-		await this.notificationsService.create({
-			title: 'Task Deadline Alert',
-			message: `Your created task "${task.title}" is due in 30 minutes`,
-			type: NotificationType.TASK_REMINDER,
-			owner: creator,
-		});
-
 		// Send to each assignee with proper data mapping
 		for (const assignee of assignees) {
 			const assigneeEmailData = TaskEmailDataMapper.mapTaskReminderAssigneeData(task, assignee);
@@ -227,14 +222,28 @@ export class TaskReminderService {
 				[assignee.email],
 				assigneeEmailData,
 			);
+		}
 
-			// Create notification for assignee
-			await this.notificationsService.create({
-				title: 'Task Due Soon',
-				message: `Task "${task.title}" requires your attention and is due in 30 minutes`,
-				type: NotificationType.TASK_REMINDER,
-				owner: assignee,
-			});
+		// Send push notifications to all recipients (creator and assignees)
+		try {
+			const allRecipientIds = [creator.uid, ...assignees.map(a => a.uid)];
+			await this.unifiedNotificationService.sendTemplatedNotification(
+				NotificationEvent.TASK_REMINDER,
+				allRecipientIds,
+				{
+					taskTitle: task.title,
+					taskId: task.uid,
+					deadline: task.deadline?.toLocaleDateString() || 'No deadline',
+					priority: task.priority,
+					timeRemaining: '30 minutes',
+				},
+				{
+					priority: NotificationPriority.HIGH,
+				},
+			);
+			console.log(`✅ Task reminder emails & push notifications sent for task: ${task.title}`);
+		} catch (notificationError) {
+			console.error('Failed to send task reminder push notifications:', notificationError.message);
 		}
 	}
 }

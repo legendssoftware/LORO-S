@@ -300,6 +300,316 @@ export class UnifiedNotificationService {
 				pushSettings: { sound: 'default', badge: 1 },
 			},
 		],
+		[
+			NotificationEvent.ATTENDANCE_OVERTIME_REMINDER,
+			{
+				event: NotificationEvent.ATTENDANCE_OVERTIME_REMINDER,
+				title: '⏰ Overtime Alert',
+				messageTemplate: 'You are now working overtime. Duration: {overtimeDuration}',
+				priority: NotificationPriority.HIGH,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/', action: 'view_attendance' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.ATTENDANCE_SHIFT_START_REMINDER,
+			{
+				event: NotificationEvent.ATTENDANCE_SHIFT_START_REMINDER,
+				title: '🌅 Time to Start Work',
+				messageTemplate: 'Your shift starts in {timeRemaining}. Remember to check in!',
+				priority: NotificationPriority.NORMAL,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/', action: 'check_in' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER,
+			{
+				event: NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER,
+				title: '🌆 End of Shift Reminder',
+				messageTemplate: 'Your shift ends in {timeRemaining}. Remember to check out!',
+				priority: NotificationPriority.NORMAL,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/', action: 'check_out' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+
+		// User Templates
+		[
+			NotificationEvent.USER_CREATED,
+			{
+				event: NotificationEvent.USER_CREATED,
+				title: '👤 Welcome to the Team!',
+				messageTemplate: 'Your account has been created. Welcome aboard, {userName}!',
+				priority: NotificationPriority.HIGH,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/profile', action: 'view_profile' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.USER_UPDATED,
+			{
+				event: NotificationEvent.USER_UPDATED,
+				title: '👤 Profile Updated',
+				messageTemplate: 'Your profile has been updated by {updatedBy}',
+				priority: NotificationPriority.NORMAL,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/profile', action: 'view_profile' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.USER_PASSWORD_RESET,
+			{
+				event: NotificationEvent.USER_PASSWORD_RESET,
+				title: '🔐 Password Reset',
+				messageTemplate: 'Your password has been reset successfully',
+				priority: NotificationPriority.HIGH,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/auth/login', action: 'login' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.USER_TARGET_ACHIEVEMENT,
+			{
+				event: NotificationEvent.USER_TARGET_ACHIEVEMENT,
+				title: '🎯 Target Achievement!',
+				messageTemplate: 'Congratulations! You achieved {achievementPercentage}% of your {targetType} target',
+				priority: NotificationPriority.HIGH,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/targets', action: 'view_targets' },
+				pushSettings: { sound: 'celebration', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.USER_ROLE_CHANGED,
+			{
+				event: NotificationEvent.USER_ROLE_CHANGED,
+				title: '👑 Role Updated',
+				messageTemplate: 'Your role has been changed to {newRole}',
+				priority: NotificationPriority.HIGH,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/profile', action: 'view_profile' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.USER_STATUS_CHANGED,
+			{
+				event: NotificationEvent.USER_STATUS_CHANGED,
+				title: '📊 Account Status Updated',
+				messageTemplate: 'Your account status has been changed to {newStatus}',
+				priority: NotificationPriority.HIGH,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/profile', action: 'view_profile' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+
+		// Leave Templates
+		[
+			NotificationEvent.LEAVE_CREATED,
+			{
+				event: NotificationEvent.LEAVE_CREATED,
+				title: '🏝️ Leave Request Submitted',
+				messageTemplate: 'Your {leaveType} leave request from {startDate} to {endDate} has been submitted',
+				priority: NotificationPriority.NORMAL,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/leave', action: 'view_leave' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.LEAVE_APPROVED,
+			{
+				event: NotificationEvent.LEAVE_APPROVED,
+				title: '✅ Leave Request Approved',
+				messageTemplate: 'Your {leaveType} leave request has been approved by {approvedBy}',
+				priority: NotificationPriority.HIGH,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/leave', action: 'view_leave' },
+				pushSettings: { sound: 'success', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.LEAVE_REJECTED,
+			{
+				event: NotificationEvent.LEAVE_REJECTED,
+				title: '❌ Leave Request Rejected',
+				messageTemplate: 'Your {leaveType} leave request has been rejected. Reason: {rejectionReason}',
+				priority: NotificationPriority.HIGH,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/leave', action: 'view_leave' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.LEAVE_CANCELLED,
+			{
+				event: NotificationEvent.LEAVE_CANCELLED,
+				title: '🚫 Leave Request Cancelled',
+				messageTemplate: 'Your {leaveType} leave request has been cancelled',
+				priority: NotificationPriority.NORMAL,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/leave', action: 'view_leave' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.LEAVE_STATUS_CHANGED,
+			{
+				event: NotificationEvent.LEAVE_STATUS_CHANGED,
+				title: '📋 Leave Status Updated',
+				messageTemplate: 'Your leave request status changed to {newStatus}',
+				priority: NotificationPriority.NORMAL,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/leave', action: 'view_leave' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+
+		// Claims Templates
+		[
+			NotificationEvent.CLAIM_CREATED,
+			{
+				event: NotificationEvent.CLAIM_CREATED,
+				title: '💰 Claim Submitted',
+				messageTemplate: 'Your {claimCategory} claim for {claimAmount} has been submitted',
+				priority: NotificationPriority.NORMAL,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/claims', action: 'view_claim' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.CLAIM_APPROVED,
+			{
+				event: NotificationEvent.CLAIM_APPROVED,
+				title: '✅ Claim Approved',
+				messageTemplate: 'Your {claimCategory} claim for {claimAmount} has been approved',
+				priority: NotificationPriority.HIGH,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/claims', action: 'view_claim' },
+				pushSettings: { sound: 'success', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.CLAIM_REJECTED,
+			{
+				event: NotificationEvent.CLAIM_REJECTED,
+				title: '❌ Claim Rejected',
+				messageTemplate: 'Your {claimCategory} claim for {claimAmount} has been rejected',
+				priority: NotificationPriority.HIGH,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/claims', action: 'view_claim' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.CLAIM_STATUS_CHANGED,
+			{
+				event: NotificationEvent.CLAIM_STATUS_CHANGED,
+				title: '📋 Claim Status Updated',
+				messageTemplate: 'Your claim status changed to {newStatus}',
+				priority: NotificationPriority.NORMAL,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/claims', action: 'view_claim' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+
+		// Shop/Quotation Templates
+		[
+			NotificationEvent.QUOTATION_CREATED,
+			{
+				event: NotificationEvent.QUOTATION_CREATED,
+				title: '🛒 New Order Received',
+				messageTemplate: 'New order #{quotationRef} received from {clientName}',
+				priority: NotificationPriority.HIGH,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/orders', action: 'view_order' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.QUOTATION_STATUS_UPDATED,
+			{
+				event: NotificationEvent.QUOTATION_STATUS_UPDATED,
+				title: '📦 Order Status Updated',
+				messageTemplate: 'Order #{quotationRef} status changed to {newStatus}',
+				priority: NotificationPriority.NORMAL,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/orders', action: 'view_order' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.QUOTATION_APPROVED,
+			{
+				event: NotificationEvent.QUOTATION_APPROVED,
+				title: '✅ Order Approved',
+				messageTemplate: 'Order #{quotationRef} has been approved',
+				priority: NotificationPriority.HIGH,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/orders', action: 'view_order' },
+				pushSettings: { sound: 'success', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.QUOTATION_REJECTED,
+			{
+				event: NotificationEvent.QUOTATION_REJECTED,
+				title: '❌ Order Rejected',
+				messageTemplate: 'Order #{quotationRef} has been rejected',
+				priority: NotificationPriority.HIGH,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/orders', action: 'view_order' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.QUOTATION_READY_FOR_REVIEW,
+			{
+				event: NotificationEvent.QUOTATION_READY_FOR_REVIEW,
+				title: '👁️ Order Ready for Review',
+				messageTemplate: 'Order #{quotationRef} is ready for your review',
+				priority: NotificationPriority.NORMAL,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/orders', action: 'review_order' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+
+		// Check-in Templates
+		[
+			NotificationEvent.CHECKIN_CREATED,
+			{
+				event: NotificationEvent.CHECKIN_CREATED,
+				title: '📍 Check-in Recorded',
+				messageTemplate: 'You have successfully checked in at {clientName}',
+				priority: NotificationPriority.NORMAL,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/checkins', action: 'view_checkin' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.CHECKIN_UPDATED,
+			{
+				event: NotificationEvent.CHECKIN_UPDATED,
+				title: '📍 Check-in Updated',
+				messageTemplate: 'Your check-in at {clientName} has been updated',
+				priority: NotificationPriority.NORMAL,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/checkins', action: 'view_checkin' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
 	]);
 
 	constructor(

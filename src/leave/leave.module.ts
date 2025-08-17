@@ -13,6 +13,7 @@ import { Organisation } from '../organisation/entities/organisation.entity';
 import { Branch } from '../branch/entities/branch.entity';
 import { LicensingModule } from '../licensing/licensing.module';
 import { ApprovalsModule } from '../approvals/approvals.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { emailTemplateService } from '../lib/services/email-template.service';
 
 @Module({
@@ -24,6 +25,7 @@ import { emailTemplateService } from '../lib/services/email-template.service';
 		JwtModule,
 		LicensingModule,
 		ApprovalsModule,
+		NotificationsModule,
 	],
 	controllers: [LeaveController],
 	providers: [

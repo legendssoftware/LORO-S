@@ -8,6 +8,8 @@ import { User } from '../../user/entities/user.entity';
 import { OrganisationHours } from '../../organisation/entities/organisation-hours.entity';
 import { EmailType } from '../../lib/enums/email.enums';
 import { OvertimeReminderData } from '../../lib/types/email-templates.types';
+import { UnifiedNotificationService } from '../../lib/services/unified-notification.service';
+import { NotificationEvent, NotificationPriority } from '../../lib/types/unified-notification.types';
 
 @Injectable()
 export class OvertimeReminderService {
@@ -24,6 +26,7 @@ export class OvertimeReminderService {
 		private organisationHoursRepository: Repository<OrganisationHours>,
 		private eventEmitter: EventEmitter2,
 		private dataSource: DataSource,
+		private readonly unifiedNotificationService: UnifiedNotificationService,
 	) {}
 
 	/**
@@ -326,9 +329,33 @@ export class OvertimeReminderService {
 				data: emailData,
 			});
 
-			this.logger.log(
-				`📧 Overtime reminder sent to ${user.name} (${overtimeMinutes} minutes overtime)`,
-			);
+			// Send push notification
+			try {
+				await this.unifiedNotificationService.sendTemplatedNotification(
+					NotificationEvent.ATTENDANCE_OVERTIME_REMINDER,
+					[user.uid],
+					{
+						employeeName: emailData.employeeName,
+						overtimeDuration,
+						minutesOvertime: overtimeMinutes,
+						organizationName: emailData.organizationName,
+						clockOutUrl: emailData.clockOutUrl,
+					},
+					{
+						priority: NotificationPriority.HIGH,
+					},
+				);
+				
+				this.logger.log(
+					`📧📱 Overtime reminder sent to ${user.name} (${overtimeMinutes} minutes overtime) - Email & Push notification`,
+				);
+			} catch (notificationError) {
+				this.logger.warn(`Failed to send overtime push notification to ${user.name}:`, notificationError.message);
+				// Still log success for email if that succeeded
+				this.logger.log(
+					`📧 Overtime reminder email sent to ${user.name} (${overtimeMinutes} minutes overtime) - Push notification failed`,
+				);
+			}
 
 			return true;
 		} catch (error) {

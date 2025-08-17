@@ -304,6 +304,9 @@ export class QuotationConversionService {
 					totalPrice: item.totalPrice,
 				})),
 			});
+
+			// Log push notification limitation for external clients
+			console.log(`Order fulfillment email sent to client ${quotation.client.email} - push notifications not available for external clients`);
 		}
 	}
 

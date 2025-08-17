@@ -10,6 +10,7 @@ import { BranchModule } from '../branch/branch.module';
 import { UserTarget } from './entities/user-target.entity';
 import { LicensingModule } from '../licensing/licensing.module';
 import { RewardsModule } from '../rewards/rewards.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { CheckIn } from 'src/check-ins/entities/check-in.entity';
 import { Quotation } from '../shop/entities/quotation.entity';
 import { Order } from '../shop/entities/order.entity';
@@ -33,6 +34,7 @@ import { Lead } from 'src/leads/entities/lead.entity';
 		BranchModule,
 		LicensingModule,
 		RewardsModule,
+		NotificationsModule,
 	],
 	controllers: [UserController],
 	providers: [UserService],
