@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
 import { CommunicationService } from './communication.service';
 import { CommunicationController } from './communication.controller';
@@ -8,7 +8,7 @@ import { CommunicationLog } from './entities/communication-log.entity';
 
 @Module({
   imports: [
-    UserModule,
+    forwardRef(() => UserModule),
     ScheduleModule.forRoot(), // Enable cron jobs and scheduling
     TypeOrmModule.forFeature([CommunicationLog])
   ],

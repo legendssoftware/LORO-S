@@ -3,7 +3,6 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { User } from '../../user/entities/user.entity';
 import { ExpoPushService, ExpoPushMessage } from './expo-push.service';
-import { CommunicationService } from '../../communication/communication.service';
 import {
 	NotificationData,
 	NotificationResult,
@@ -616,8 +615,11 @@ export class UnifiedNotificationService {
 		@InjectRepository(User)
 		private readonly userRepository: Repository<User>,
 		private readonly expoPushService: ExpoPushService,
-		@Inject(forwardRef(() => CommunicationService))
-		private readonly communicationService: CommunicationService,
+		@Inject(forwardRef(() => {
+			const { CommunicationService } = require('../../communication/communication.service');
+			return CommunicationService;
+		}))
+		private readonly communicationService: any,
 	) {}
 
 	/**
