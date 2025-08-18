@@ -3531,22 +3531,29 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 
 ## 🎯 **Key Features**
 - **Incremental Updates**: Add/subtract individual transactions (sales, credit notes, leads)
-- **Negative Value Support**: Yes! Negative values will reduce the current totals
+- **Three Update Modes**: INCREMENT (add), DECREMENT (subtract), REPLACE (set absolute)
 - **Transaction-Based**: Send individual sale amounts, not cumulative totals
 - **Concurrency Safe**: Handles multiple simultaneous updates with locking
 - **Audit Trail**: Complete transaction history and change tracking
 
 ## 🧮 **How Incremental Calculations Work**
 
-### **INCREMENT Mode (Default)**
-- **Positive Values**: Add to current totals
-  - Current R30,000 + Increment R5,000 = New R35,000
-- **Negative Values**: Subtract from current totals (for credit notes, reversals)
-  - Current R30,000 + Increment -R2,000 = New R28,000
+### **INCREMENT Mode**
+- **Purpose**: Add positive values to current amounts
+- **Only Positive Values Allowed**: Use positive numbers to increase totals
+- **Example**: Current R30,000 + Increment R5,000 = New R35,000
+- **For Decreases**: Use DECREMENT mode instead
+
+### **DECREMENT Mode**
+- **Purpose**: Subtract positive values from current amounts
+- **Only Positive Values Allowed**: Use positive numbers to decrease totals
+- **Example**: Current R30,000 - Decrement R2,000 = New R28,000
+- **Use Cases**: Credit notes, reversals, corrections
 
 ### **REPLACE Mode**
-- **Absolute Values**: Set exact totals (like the PATCH endpoint)
-  - Replace with R35,000 = New R35,000 (regardless of current value)
+- **Purpose**: Set exact absolute values
+- **Example**: Replace with R35,000 = New R35,000 (regardless of current value)
+- **Use Cases**: System recalculations, bulk corrections
 
 ## 💡 **Common Usage Scenarios**
 
@@ -3554,8 +3561,10 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 \`\`\`json
 {
   "updateMode": "INCREMENT",
-  "salesAmountIncrement": 5000,
-  "ordersAmountIncrement": 5000,
+  "updates": {
+    "currentSalesAmount": 5000,
+    "currentOrdersAmount": 5000
+  },
   "transactionId": "SALE_INV_12345"
 }
 \`\`\`
@@ -3564,9 +3573,11 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 ### **Scenario 2: Credit Note Applied**
 \`\`\`json
 {
-  "updateMode": "INCREMENT",
-  "salesAmountIncrement": -2000,
-  "ordersAmountIncrement": -2000,
+  "updateMode": "DECREMENT",
+  "updates": {
+    "currentSalesAmount": 2000,
+    "currentOrdersAmount": 2000
+  },
   "transactionId": "CREDIT_NOTE_456"
 }
 \`\`\`
@@ -3576,8 +3587,10 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 \`\`\`json
 {
   "updateMode": "INCREMENT",
-  "salesAmountIncrement": 8000,
-  "quotationsAmountIncrement": 8000,
+  "updates": {
+    "currentSalesAmount": 8000,
+    "currentQuotationsAmount": 8000
+  },
   "transactionId": "QUOTE_789"
 }
 \`\`\`
@@ -3585,29 +3598,43 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 
 ## ❓ **FAQ - User Questions Answered**
 
-### **Q: If I increment with a negative value, will it reduce the amount?**
-**A: YES!** Negative increments will reduce the current totals.
-- Example: Current R50,000 + Increment -R5,000 = New R45,000
+### **Q: How do I decrease amounts for credit notes or reversals?**
+**A: Use DECREMENT mode with positive values!**
+- ✅ Correct: \`"updateMode": "DECREMENT"\` with \`"currentSalesAmount": 5000\`
+- ❌ Wrong: \`"updateMode": "INCREMENT"\` with \`"currentSalesAmount": -5000\`
+- Result: Current R50,000 - Decrement R5,000 = New R45,000
 
 ### **Q: Do I send the individual sale amount or cumulative monthly total?**
 **A: Send the INDIVIDUAL SALE AMOUNT**, not the cumulative total.
-- ✅ Correct: Send R5,000 for a single sale
+- ✅ Correct: Send R5,000 for a single sale using INCREMENT mode
 - ❌ Wrong: Send R35,000 cumulative month-to-date total
 
 ### **Q: Can I use this for both increases and decreases?**
-**A: YES!** Use positive values for sales/additions, negative values for credit notes/reversals.
+**A: YES!** Use INCREMENT mode for additions, DECREMENT mode for subtractions, REPLACE mode for absolute values.
+- **Increases**: INCREMENT mode with positive values
+- **Decreases**: DECREMENT mode with positive values  
+- **Set Totals**: REPLACE mode with absolute values
 
 ## 🔧 **Update Modes Explained**
 
-### **INCREMENT Mode (Recommended for CRM Integration)**
-- **Purpose**: Add/subtract individual transactions
-- **Use Cases**: New sales, credit notes, quotations, leads, calls
+### **INCREMENT Mode (For Adding Values)**
+- **Purpose**: Add positive values to current amounts
+- **Use Cases**: New sales, quotations, leads, calls, hours worked
+- **Validation**: Only positive values allowed
 - **Calculation**: currentValue + incrementValue = newValue
 - **Example**: R30,000 + R5,000 = R35,000
 
-### **REPLACE Mode (For System Recalculation)**
-- **Purpose**: Set absolute values (like monthly recalculation)
-- **Use Cases**: System corrections, bulk recalculations
+### **DECREMENT Mode (For Subtracting Values)**
+- **Purpose**: Subtract positive values from current amounts
+- **Use Cases**: Credit notes, reversals, corrections, cancellations
+- **Validation**: Only positive values allowed
+- **Calculation**: currentValue - decrementValue = newValue
+- **Example**: R30,000 - R2,000 = R28,000
+
+### **REPLACE Mode (For Absolute Values)**
+- **Purpose**: Set exact absolute values (system recalculations)
+- **Use Cases**: Monthly recalculations, bulk corrections, system synchronization
+- **Validation**: Any value allowed (can be zero or negative for corrections)
 - **Calculation**: newValue = replaceValue (ignores current value)
 - **Example**: Replace with R35,000 = R35,000
 
@@ -3646,8 +3673,10 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 				description: 'Add a new sale to user targets. Send individual sale amount, not cumulative total.',
 				value: {
 					updateMode: 'INCREMENT',
-					salesAmountIncrement: 5000,
-					ordersAmountIncrement: 5000,
+					updates: {
+						currentSalesAmount: 5000,
+						currentOrdersAmount: 5000
+					},
 					transactionId: 'SALE_INV_12345',
 					transactionType: 'SALE',
 					description: 'New sale - Invoice #12345 for R5,000',
@@ -3656,11 +3685,13 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 			},
 			creditNote: {
 				summary: '📄 Credit Note Application',
-				description: 'Apply credit note using negative increment. This will reduce current totals.',
+				description: 'Apply credit note using DECREMENT mode. Uses positive values to subtract from totals.',
 				value: {
-					updateMode: 'INCREMENT',
-					salesAmountIncrement: -2000,
-					ordersAmountIncrement: -2000,
+					updateMode: 'DECREMENT',
+					updates: {
+						currentSalesAmount: 2000,
+						currentOrdersAmount: 2000
+					},
 					transactionId: 'CREDIT_NOTE_456',
 					transactionType: 'CREDIT_NOTE',
 					description: 'Credit note for returned goods - R2,000',
@@ -3672,8 +3703,10 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 				description: 'Record new quotation. Adds to both sales and quotations totals.',
 				value: {
 					updateMode: 'INCREMENT',
-					salesAmountIncrement: 8000,
-					quotationsAmountIncrement: 8000,
+					updates: {
+						currentSalesAmount: 8000,
+						currentQuotationsAmount: 8000
+					},
 					transactionId: 'QUOTE_789',
 					transactionType: 'QUOTATION',
 					description: 'New quotation #789 for R8,000',
@@ -3682,15 +3715,30 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 			},
 			quotationConverted: {
 				summary: '✅ Quotation to Order Conversion',
-				description: 'Convert quotation to paid order. Moves amount from quotations to orders.',
+				description: 'Convert quotation to paid order. First decrement quotations, then increment orders.',
+				value: {
+					updateMode: 'DECREMENT',
+					updates: {
+						currentQuotationsAmount: 8000
+					},
+					transactionId: 'CONVERT_QUOTE_789_STEP1',
+					transactionType: 'CONVERSION_STEP1',
+					description: 'Step 1: Remove R8,000 from quotations (converted to order)',
+					timestamp: '2024-01-15T14:00:00Z'
+				}
+			},
+			quotationConvertedStep2: {
+				summary: '✅ Quotation Conversion - Step 2',
+				description: 'Second step: Add converted amount to orders. Use separate transaction.',
 				value: {
 					updateMode: 'INCREMENT',
-					quotationsAmountIncrement: -8000,
-					ordersAmountIncrement: 8000,
-					transactionId: 'CONVERT_QUOTE_789',
-					transactionType: 'CONVERSION',
-					description: 'Quotation #789 converted to paid order',
-					timestamp: '2024-01-15T14:00:00Z'
+					updates: {
+						currentOrdersAmount: 8000
+					},
+					transactionId: 'CONVERT_QUOTE_789_STEP2',
+					transactionType: 'CONVERSION_STEP2',
+					description: 'Step 2: Add R8,000 to orders (from converted quotation)',
+					timestamp: '2024-01-15T14:01:00Z'
 				}
 			},
 			newLead: {
@@ -3698,7 +3746,9 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 				description: 'Record new lead generation. Increments lead count.',
 				value: {
 					updateMode: 'INCREMENT',
-					newLeadsIncrement: 1,
+					updates: {
+						currentNewLeads: 1
+					},
 					transactionId: 'LEAD_2024_001',
 					transactionType: 'LEAD',
 					description: 'New lead from marketing campaign',
@@ -3710,8 +3760,10 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 				description: 'Record client interaction. Increments check-in and calls count.',
 				value: {
 					updateMode: 'INCREMENT',
-					checkInsIncrement: 1,
-					callsIncrement: 1,
+					updates: {
+						currentCheckIns: 1,
+						currentCalls: 1
+					},
 					transactionId: 'CHECKIN_CLIENT_123',
 					transactionType: 'CHECK_IN',
 					description: 'Monthly check-in call with Client ABC',
@@ -3720,10 +3772,12 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 			},
 			hoursWorked: {
 				summary: '⏰ Work Hours Logged',
-				description: 'Add work hours to user total. Can be positive (work) or negative (corrections).',
+				description: 'Add work hours to user total using INCREMENT mode.',
 				value: {
 					updateMode: 'INCREMENT',
-					hoursWorkedIncrement: 8,
+					updates: {
+						currentHoursWorked: 8
+					},
 					transactionId: 'TIMESHEET_150124',
 					transactionType: 'HOURS',
 					description: 'Daily timesheet - 8 hours logged',
@@ -3732,10 +3786,12 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 			},
 			hourCorrection: {
 				summary: '🔧 Hours Correction',
-				description: 'Correct previously logged hours using negative increment.',
+				description: 'Correct previously logged hours using DECREMENT mode with positive values.',
 				value: {
-					updateMode: 'INCREMENT',
-					hoursWorkedIncrement: -2,
+					updateMode: 'DECREMENT',
+					updates: {
+						currentHoursWorked: 2
+					},
 					transactionId: 'CORRECTION_150124',
 					transactionType: 'CORRECTION',
 					description: 'Correction: Remove 2 hours from timesheet',
@@ -3747,11 +3803,13 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 				description: 'Update multiple metrics in single transaction (sale + new lead + call).',
 				value: {
 					updateMode: 'INCREMENT',
-					salesAmountIncrement: 12000,
-					ordersAmountIncrement: 12000,
-					newLeadsIncrement: 1,
-					callsIncrement: 3,
-					checkInsIncrement: 1,
+					updates: {
+						currentSalesAmount: 12000,
+						currentOrdersAmount: 12000,
+						currentNewLeads: 1,
+						currentCalls: 3,
+						currentCheckIns: 1
+					},
 					transactionId: 'MULTI_TRANS_001',
 					transactionType: 'MULTI_UPDATE',
 					description: 'Sale R12k + new lead + 3 calls + client check-in',
@@ -3763,14 +3821,16 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 				description: 'REPLACE mode: Set absolute values (like monthly system recalculation).',
 				value: {
 					updateMode: 'REPLACE',
-					currentSalesAmount: 45000,
-					currentQuotationsAmount: 28000,
-					currentOrdersAmount: 17000,
-					currentNewLeads: 15,
-					currentNewClients: 8,
-					currentCheckIns: 25,
-					currentCalls: 68,
-					currentHoursWorked: 120,
+					updates: {
+						currentSalesAmount: 45000,
+						currentQuotationsAmount: 28000,
+						currentOrdersAmount: 17000,
+						currentNewLeads: 15,
+						currentNewClients: 8,
+						currentCheckIns: 25,
+						currentCalls: 68,
+						currentHoursWorked: 120
+					},
 					transactionId: 'SYS_RECALC_0124',
 					transactionType: 'SYSTEM_RECALC',
 					description: 'Monthly system recalculation from CRM data',
