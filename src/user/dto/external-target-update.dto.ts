@@ -13,8 +13,9 @@ import {
 import { Type } from 'class-transformer';
 
 export enum TargetUpdateMode {
-	INCREMENT = 'INCREMENT', // Add to current values
-	REPLACE = 'REPLACE', // Replace current values
+	INCREMENT = 'INCREMENT', // Add positive values to current amounts (e.g., 10k + 1.5k = 11.5k)
+	DECREMENT = 'DECREMENT', // Subtract positive values from current amounts (e.g., 10k - 1.5k = 8.5k)
+	REPLACE = 'REPLACE', // Replace current values with absolute amounts (e.g., 10k → 18k = 18k)
 }
 
 export class SaleDetailDto {
@@ -51,64 +52,80 @@ export class SaleDetailDto {
 
 export class TargetUpdateValuesDto {
 	@ApiPropertyOptional({
-		description: 'Current sales amount to update (total of quotations + orders)',
-		example: 15000.5,
+		description: 'Sales amount value for target update. Must be positive for INCREMENT/DECREMENT modes, any non-negative value for REPLACE mode.',
+		examples: {
+			increment: {
+				summary: 'INCREMENT mode example',
+				description: 'Add 1500 to current sales amount (e.g., 10000 + 1500 = 11500)',
+				value: 1500
+			},
+			decrement: {
+				summary: 'DECREMENT mode example', 
+				description: 'Subtract 1500 from current sales amount (e.g., 10000 - 1500 = 8500)',
+				value: 1500
+			},
+			replace: {
+				summary: 'REPLACE mode example',
+				description: 'Set sales amount to absolute value (e.g., 10000 → 18000)',
+				value: 18000
+			}
+		}
 	})
 	@IsOptional()
 	@IsNumber()
 	currentSalesAmount?: number;
 
 	@ApiPropertyOptional({
-		description: 'Current quotations amount to update (quotes made but not paid)',
-		example: 8000.5,
+		description: 'Quotations amount value for target update. Must be positive for INCREMENT/DECREMENT modes, any non-negative value for REPLACE mode.',
+		example: 1000.5,
 	})
 	@IsOptional()
 	@IsNumber()
 	currentQuotationsAmount?: number;
 
 	@ApiPropertyOptional({
-		description: 'Current orders amount to update (converted and paid)',
-		example: 7000.0,
+		description: 'Orders amount value for target update. Must be positive for INCREMENT/DECREMENT modes, any non-negative value for REPLACE mode.',
+		example: 2000.0,
 	})
 	@IsOptional()
 	@IsNumber()
 	currentOrdersAmount?: number;
 
 	@ApiPropertyOptional({
-		description: 'Current new leads count to update',
-		example: 12,
+		description: 'New leads count value for target update. Must be positive for INCREMENT/DECREMENT modes, any non-negative value for REPLACE mode.',
+		example: 5,
 	})
 	@IsOptional()
 	@IsNumber()
 	currentNewLeads?: number;
 
 	@ApiPropertyOptional({
-		description: 'Current new clients count to update',
-		example: 8,
+		description: 'New clients count value for target update. Must be positive for INCREMENT/DECREMENT modes, any non-negative value for REPLACE mode.',
+		example: 3,
 	})
 	@IsOptional()
 	@IsNumber()
 	currentNewClients?: number;
 
 	@ApiPropertyOptional({
-		description: 'Current check-ins count to update',
-		example: 25,
+		description: 'Check-ins count value for target update. Must be positive for INCREMENT/DECREMENT modes, any non-negative value for REPLACE mode.',
+		example: 10,
 	})
 	@IsOptional()
 	@IsNumber()
 	currentCheckIns?: number;
 
 	@ApiPropertyOptional({
-		description: 'Current hours worked to update',
-		example: 160.5,
+		description: 'Hours worked value for target update. Must be positive for INCREMENT/DECREMENT modes, any non-negative value for REPLACE mode.',
+		example: 8.5,
 	})
 	@IsOptional()
 	@IsNumber()
 	currentHoursWorked?: number;
 
 	@ApiPropertyOptional({
-		description: 'Current calls made to update',
-		example: 45,
+		description: 'Calls made value for target update. Must be positive for INCREMENT/DECREMENT modes, any non-negative value for REPLACE mode.',
+		example: 15,
 	})
 	@IsOptional()
 	@IsNumber()
@@ -133,9 +150,25 @@ export class ExternalTargetUpdateDto {
 	transactionId: string;
 
 	@ApiProperty({
-		description: 'Update mode - INCREMENT adds to current values, REPLACE sets absolute values',
+		description: 'Update mode determines how target values are modified',
 		enum: TargetUpdateMode,
-		example: TargetUpdateMode.INCREMENT,
+		examples: {
+			increment: {
+				summary: 'INCREMENT mode',
+				description: 'Adds positive values to current amounts (10k + 1.5k = 11.5k)',
+				value: TargetUpdateMode.INCREMENT
+			},
+			decrement: {
+				summary: 'DECREMENT mode',
+				description: 'Subtracts positive values from current amounts (10k - 1.5k = 8.5k)',
+				value: TargetUpdateMode.DECREMENT
+			},
+			replace: {
+				summary: 'REPLACE mode',
+				description: 'Replaces current values with absolute amounts (10k → 18k = 18k)',
+				value: TargetUpdateMode.REPLACE
+			}
+		}
 	})
 	@IsEnum(TargetUpdateMode)
 	updateMode: TargetUpdateMode;

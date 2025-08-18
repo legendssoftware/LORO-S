@@ -3123,6 +3123,37 @@ export class UserService {
 			if (externalUpdate.updates.currentCalls !== undefined) {
 				updates.currentCalls = (currentTarget.currentCalls || 0) + externalUpdate.updates.currentCalls;
 			}
+		} else if (externalUpdate.updateMode === TargetUpdateMode.DECREMENT) {
+			// Subtract from current values (more explicit than using negative increments)
+			if (externalUpdate.updates.currentSalesAmount !== undefined) {
+				updates.currentSalesAmount =
+					(currentTarget.currentSalesAmount || 0) - externalUpdate.updates.currentSalesAmount;
+			}
+			if (externalUpdate.updates.currentQuotationsAmount !== undefined) {
+				updates.currentQuotationsAmount =
+					(currentTarget.currentQuotationsAmount || 0) - externalUpdate.updates.currentQuotationsAmount;
+			}
+			if (externalUpdate.updates.currentOrdersAmount !== undefined) {
+				updates.currentOrdersAmount =
+					(currentTarget.currentOrdersAmount || 0) - externalUpdate.updates.currentOrdersAmount;
+			}
+			if (externalUpdate.updates.currentNewLeads !== undefined) {
+				updates.currentNewLeads = (currentTarget.currentNewLeads || 0) - externalUpdate.updates.currentNewLeads;
+			}
+			if (externalUpdate.updates.currentNewClients !== undefined) {
+				updates.currentNewClients =
+					(currentTarget.currentNewClients || 0) - externalUpdate.updates.currentNewClients;
+			}
+			if (externalUpdate.updates.currentCheckIns !== undefined) {
+				updates.currentCheckIns = (currentTarget.currentCheckIns || 0) - externalUpdate.updates.currentCheckIns;
+			}
+			if (externalUpdate.updates.currentHoursWorked !== undefined) {
+				updates.currentHoursWorked =
+					(currentTarget.currentHoursWorked || 0) - externalUpdate.updates.currentHoursWorked;
+			}
+			if (externalUpdate.updates.currentCalls !== undefined) {
+				updates.currentCalls = (currentTarget.currentCalls || 0) - externalUpdate.updates.currentCalls;
+			}
 		} else {
 			// REPLACE mode - set absolute values
 			Object.assign(updates, externalUpdate.updates);
@@ -3157,41 +3188,150 @@ export class UserService {
 
 			if (!user) {
 				errors.push(`User ${userId} not found or access denied`);
-			} else if (!user.userTarget) {
+				return { isValid: false, errors };
+			} 
+			
+			if (!user.userTarget) {
 				errors.push(`No targets found for user ${userId}`);
+				return { isValid: false, errors };
 			}
 
-			// Validate update values are reasonable
-			if (
-				externalUpdate.updates.currentSalesAmount !== undefined &&
-				externalUpdate.updates.currentSalesAmount < 0
-			) {
-				errors.push('Sales amount cannot be negative');
-			}
+			// Validate update modes and values
+			if (externalUpdate.updateMode === TargetUpdateMode.INCREMENT) {
+				// INCREMENT mode: Only accept positive values to add to current amounts
+				if (externalUpdate.updates.currentSalesAmount !== undefined && externalUpdate.updates.currentSalesAmount <= 0) {
+					errors.push('INCREMENT mode requires positive values (sales amount)');
+				}
+				if (externalUpdate.updates.currentQuotationsAmount !== undefined && externalUpdate.updates.currentQuotationsAmount <= 0) {
+					errors.push('INCREMENT mode requires positive values (quotations amount)');
+				}
+				if (externalUpdate.updates.currentOrdersAmount !== undefined && externalUpdate.updates.currentOrdersAmount <= 0) {
+					errors.push('INCREMENT mode requires positive values (orders amount)');
+				}
+				if (externalUpdate.updates.currentNewLeads !== undefined && externalUpdate.updates.currentNewLeads <= 0) {
+					errors.push('INCREMENT mode requires positive values (new leads)');
+				}
+				if (externalUpdate.updates.currentNewClients !== undefined && externalUpdate.updates.currentNewClients <= 0) {
+					errors.push('INCREMENT mode requires positive values (new clients)');
+				}
+				if (externalUpdate.updates.currentCheckIns !== undefined && externalUpdate.updates.currentCheckIns <= 0) {
+					errors.push('INCREMENT mode requires positive values (check-ins)');
+				}
+				if (externalUpdate.updates.currentHoursWorked !== undefined && externalUpdate.updates.currentHoursWorked <= 0) {
+					errors.push('INCREMENT mode requires positive values (hours worked)');
+				}
+				if (externalUpdate.updates.currentCalls !== undefined && externalUpdate.updates.currentCalls <= 0) {
+					errors.push('INCREMENT mode requires positive values (calls)');
+				}
+			} else if (externalUpdate.updateMode === TargetUpdateMode.DECREMENT) {
+				// DECREMENT mode: Only accept positive values to subtract from current amounts
+				if (externalUpdate.updates.currentSalesAmount !== undefined && externalUpdate.updates.currentSalesAmount <= 0) {
+					errors.push('DECREMENT mode requires positive values (sales amount)');
+				}
+				if (externalUpdate.updates.currentQuotationsAmount !== undefined && externalUpdate.updates.currentQuotationsAmount <= 0) {
+					errors.push('DECREMENT mode requires positive values (quotations amount)');
+				}
+				if (externalUpdate.updates.currentOrdersAmount !== undefined && externalUpdate.updates.currentOrdersAmount <= 0) {
+					errors.push('DECREMENT mode requires positive values (orders amount)');
+				}
+				if (externalUpdate.updates.currentNewLeads !== undefined && externalUpdate.updates.currentNewLeads <= 0) {
+					errors.push('DECREMENT mode requires positive values (new leads)');
+				}
+				if (externalUpdate.updates.currentNewClients !== undefined && externalUpdate.updates.currentNewClients <= 0) {
+					errors.push('DECREMENT mode requires positive values (new clients)');
+				}
+				if (externalUpdate.updates.currentCheckIns !== undefined && externalUpdate.updates.currentCheckIns <= 0) {
+					errors.push('DECREMENT mode requires positive values (check-ins)');
+				}
+				if (externalUpdate.updates.currentHoursWorked !== undefined && externalUpdate.updates.currentHoursWorked <= 0) {
+					errors.push('DECREMENT mode requires positive values (hours worked)');
+				}
+				if (externalUpdate.updates.currentCalls !== undefined && externalUpdate.updates.currentCalls <= 0) {
+					errors.push('DECREMENT mode requires positive values (calls)');
+				}
 
-			if (
-				externalUpdate.updates.currentQuotationsAmount !== undefined &&
-				externalUpdate.updates.currentQuotationsAmount < 0
-			) {
-				errors.push('Quotations amount cannot be negative');
-			}
+				// Validate that decrementing won't result in negative values
+				if (externalUpdate.updates.currentSalesAmount !== undefined) {
+					const finalAmount = (user.userTarget.currentSalesAmount || 0) - externalUpdate.updates.currentSalesAmount;
+					if (finalAmount < 0) {
+						errors.push(`Sales amount would become negative (current: ${user.userTarget.currentSalesAmount || 0} - ${externalUpdate.updates.currentSalesAmount} = ${finalAmount})`);
+					}
+				}
+				if (externalUpdate.updates.currentQuotationsAmount !== undefined) {
+					const finalAmount = (user.userTarget.currentQuotationsAmount || 0) - externalUpdate.updates.currentQuotationsAmount;
+					if (finalAmount < 0) {
+						errors.push(`Quotations amount would become negative (current: ${user.userTarget.currentQuotationsAmount || 0} - ${externalUpdate.updates.currentQuotationsAmount} = ${finalAmount})`);
+					}
+				}
+				if (externalUpdate.updates.currentOrdersAmount !== undefined) {
+					const finalAmount = (user.userTarget.currentOrdersAmount || 0) - externalUpdate.updates.currentOrdersAmount;
+					if (finalAmount < 0) {
+						errors.push(`Orders amount would become negative (current: ${user.userTarget.currentOrdersAmount || 0} - ${externalUpdate.updates.currentOrdersAmount} = ${finalAmount})`);
+					}
+				}
+				if (externalUpdate.updates.currentNewLeads !== undefined) {
+					const finalCount = (user.userTarget.currentNewLeads || 0) - externalUpdate.updates.currentNewLeads;
+					if (finalCount < 0) {
+						errors.push(`New leads count would become negative (current: ${user.userTarget.currentNewLeads || 0} - ${externalUpdate.updates.currentNewLeads} = ${finalCount})`);
+					}
+				}
+				if (externalUpdate.updates.currentNewClients !== undefined) {
+					const finalCount = (user.userTarget.currentNewClients || 0) - externalUpdate.updates.currentNewClients;
+					if (finalCount < 0) {
+						errors.push(`New clients count would become negative (current: ${user.userTarget.currentNewClients || 0} - ${externalUpdate.updates.currentNewClients} = ${finalCount})`);
+					}
+				}
+				if (externalUpdate.updates.currentCheckIns !== undefined) {
+					const finalCount = (user.userTarget.currentCheckIns || 0) - externalUpdate.updates.currentCheckIns;
+					if (finalCount < 0) {
+						errors.push(`Check-ins count would become negative (current: ${user.userTarget.currentCheckIns || 0} - ${externalUpdate.updates.currentCheckIns} = ${finalCount})`);
+					}
+				}
+				if (externalUpdate.updates.currentHoursWorked !== undefined) {
+					const finalHours = (user.userTarget.currentHoursWorked || 0) - externalUpdate.updates.currentHoursWorked;
+					if (finalHours < 0) {
+						errors.push(`Hours worked would become negative (current: ${user.userTarget.currentHoursWorked || 0} - ${externalUpdate.updates.currentHoursWorked} = ${finalHours})`);
+					}
+				}
+				if (externalUpdate.updates.currentCalls !== undefined) {
+					const finalCalls = (user.userTarget.currentCalls || 0) - externalUpdate.updates.currentCalls;
+					if (finalCalls < 0) {
+						errors.push(`Calls count would become negative (current: ${user.userTarget.currentCalls || 0} - ${externalUpdate.updates.currentCalls} = ${finalCalls})`);
+					}
+				}
+			} else {
+				// For REPLACE mode, validate the absolute values are not negative
+				if (externalUpdate.updates.currentSalesAmount !== undefined && externalUpdate.updates.currentSalesAmount < 0) {
+					errors.push('Sales amount cannot be negative in REPLACE mode');
+				}
 
-			if (
-				externalUpdate.updates.currentOrdersAmount !== undefined &&
-				externalUpdate.updates.currentOrdersAmount < 0
-			) {
-				errors.push('Orders amount cannot be negative');
-			}
+				if (externalUpdate.updates.currentQuotationsAmount !== undefined && externalUpdate.updates.currentQuotationsAmount < 0) {
+					errors.push('Quotations amount cannot be negative in REPLACE mode');
+				}
 
-			if (externalUpdate.updates.currentNewLeads !== undefined && externalUpdate.updates.currentNewLeads < 0) {
-				errors.push('New leads count cannot be negative');
-			}
+				if (externalUpdate.updates.currentOrdersAmount !== undefined && externalUpdate.updates.currentOrdersAmount < 0) {
+					errors.push('Orders amount cannot be negative in REPLACE mode');
+				}
 
-			if (
-				externalUpdate.updates.currentNewClients !== undefined &&
-				externalUpdate.updates.currentNewClients < 0
-			) {
-				errors.push('New clients count cannot be negative');
+				if (externalUpdate.updates.currentNewLeads !== undefined && externalUpdate.updates.currentNewLeads < 0) {
+					errors.push('New leads count cannot be negative in REPLACE mode');
+				}
+
+				if (externalUpdate.updates.currentNewClients !== undefined && externalUpdate.updates.currentNewClients < 0) {
+					errors.push('New clients count cannot be negative in REPLACE mode');
+				}
+
+				if (externalUpdate.updates.currentCheckIns !== undefined && externalUpdate.updates.currentCheckIns < 0) {
+					errors.push('Check-ins count cannot be negative in REPLACE mode');
+				}
+
+				if (externalUpdate.updates.currentHoursWorked !== undefined && externalUpdate.updates.currentHoursWorked < 0) {
+					errors.push('Hours worked cannot be negative in REPLACE mode');
+				}
+
+				if (externalUpdate.updates.currentCalls !== undefined && externalUpdate.updates.currentCalls < 0) {
+					errors.push('Calls count cannot be negative in REPLACE mode');
+				}
 			}
 
 			// Validate transaction ID for idempotency
