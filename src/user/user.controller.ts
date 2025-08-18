@@ -3612,7 +3612,7 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 ### **Q: Can I use this for both increases and decreases?**
 **A: YES!** Use INCREMENT mode for additions, DECREMENT mode for subtractions, REPLACE mode for absolute values.
 - **Increases**: INCREMENT mode with positive values
-- **Decreases**: DECREMENT mode with positive values  
+- **Decreases**: DECREMENT mode with positive values
 - **Set Totals**: REPLACE mode with absolute values
 
 ## 🔧 **Update Modes Explained**
