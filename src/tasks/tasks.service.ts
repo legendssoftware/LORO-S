@@ -546,7 +546,7 @@ export class TasksService {
 			// Clear cache
 			await this.clearTaskCache();
 
-			return { message: 'Task created successfully' };
+			return { message: 'success' };
 		} catch (error) {
 			return { message: error?.message };
 		}
