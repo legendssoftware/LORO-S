@@ -22,6 +22,7 @@ import { CreateCheckInDto } from './dto/create-attendance-check-in.dto';
 import { CreateCheckOutDto } from './dto/create-attendance-check-out.dto';
 import { CreateBreakDto } from './dto/create-attendance-break.dto';
 import { OrganizationReportQueryDto } from './dto/organization-report-query.dto';
+import { UserMetricsResponseDto } from './dto/user-metrics-response.dto';
 import { RequestReportDto } from './dto/request-report.dto';
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
@@ -150,16 +151,16 @@ export class AttendanceWithUserProfileSchema {
 @Controller('att')
 @UseGuards(AuthGuard, RoleGuard)
 @EnterpriseOnly('reports')
-@ApiUnauthorizedResponse({ 
+@ApiUnauthorizedResponse({
 	description: '🔒 Unauthorized - Authentication required',
 	schema: {
 		type: 'object',
 		properties: {
 			message: { type: 'string', example: 'Authentication token is required for attendance operations' },
 			error: { type: 'string', example: 'Unauthorized' },
-			statusCode: { type: 'number', example: 401 }
-		}
-	}
+			statusCode: { type: 'number', example: 401 },
+		},
+	},
 })
 @ApiForbiddenResponse({
 	description: '🚫 Forbidden - Insufficient permissions',
@@ -168,9 +169,9 @@ export class AttendanceWithUserProfileSchema {
 		properties: {
 			message: { type: 'string', example: 'You do not have permission to access attendance data' },
 			error: { type: 'string', example: 'Forbidden' },
-			statusCode: { type: 'number', example: 403 }
-		}
-	}
+			statusCode: { type: 'number', example: 403 },
+		},
+	},
 })
 @ApiInternalServerErrorResponse({
 	description: '💥 Internal Server Error - Attendance system failure',
@@ -179,9 +180,9 @@ export class AttendanceWithUserProfileSchema {
 		properties: {
 			message: { type: 'string', example: 'Attendance service temporarily unavailable' },
 			error: { type: 'string', example: 'Internal Server Error' },
-			statusCode: { type: 'number', example: 500 }
-		}
-	}
+			statusCode: { type: 'number', example: 500 },
+		},
+	},
 })
 @ApiExtraModels(UserProfileSchema, BranchSchema, OrganisationSchema, AttendanceWithUserProfileSchema)
 export class AttendanceController {
@@ -250,9 +251,9 @@ Advanced employee check-in system with location verification, biometric support,
 - **Audit Trail**: Comprehensive logging for compliance and auditing
 - **Privacy Protection**: GDPR and POPIA compliant data handling
 - **Real-time Reporting**: Live attendance dashboards and alerts
-		`
+		`,
 	})
-	@ApiBody({ 
+	@ApiBody({
 		type: CreateCheckInDto,
 		description: 'Check-in payload with location, timing, and verification information',
 		examples: {
@@ -264,16 +265,16 @@ Advanced employee check-in system with location verification, biometric support,
 					location: {
 						latitude: -26.2041,
 						longitude: 28.0473,
-						accuracy: 10
+						accuracy: 10,
 					},
 					timestamp: '2023-12-01T08:30:00Z',
 					notes: 'Starting work day',
 					deviceInfo: {
 						deviceId: 'mobile-12345',
 						platform: 'iOS',
-						appVersion: '2.1.0'
-					}
-				}
+						appVersion: '2.1.0',
+					},
+				},
 			},
 			qrCodeCheckIn: {
 				summary: '📱 QR Code Check-In',
@@ -286,9 +287,9 @@ Advanced employee check-in system with location verification, biometric support,
 					location: {
 						latitude: -26.2041,
 						longitude: 28.0473,
-						accuracy: 5
-					}
-				}
+						accuracy: 5,
+					},
+				},
 			},
 			biometricCheckIn: {
 				summary: '👆 Biometric Check-In',
@@ -298,16 +299,16 @@ Advanced employee check-in system with location verification, biometric support,
 					biometricData: {
 						type: 'FINGERPRINT',
 						templateHash: 'bio_hash_abc123',
-						confidence: 0.98
+						confidence: 0.98,
 					},
 					location: {
 						latitude: -26.2041,
 						longitude: 28.0473,
-						accuracy: 8
+						accuracy: 8,
 					},
 					timestamp: '2023-12-01T08:45:00Z',
-					notes: 'Biometric verification successful'
-				}
+					notes: 'Biometric verification successful',
+				},
 			},
 			remoteCheckIn: {
 				summary: '🏠 Remote Work Check-In',
@@ -320,14 +321,14 @@ Advanced employee check-in system with location verification, biometric support,
 						latitude: -26.1234,
 						longitude: 28.5678,
 						accuracy: 15,
-						address: 'Home Office - Cape Town'
+						address: 'Home Office - Cape Town',
 					},
 					timestamp: '2023-12-01T08:00:00Z',
 					notes: 'Working from home - pre-approved',
-					remoteWorkReason: 'Scheduled remote work day'
-				}
-			}
-		}
+					remoteWorkReason: 'Scheduled remote work day',
+				},
+			},
+		},
 	})
 	@ApiCreatedResponse({
 		description: 'Check-in recorded successfully',
@@ -347,10 +348,7 @@ Advanced employee check-in system with location verification, biometric support,
 			},
 		},
 	})
-	checkIn(
-		@Body() createAttendanceDto: CreateCheckInDto,
-		@Req() req: AuthenticatedRequest,
-	) {
+	checkIn(@Body() createAttendanceDto: CreateCheckInDto, @Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 
@@ -415,9 +413,9 @@ Advanced employee check-out system with location verification, work summary calc
 - **Audit Trail**: Comprehensive logging for compliance and auditing
 - **Privacy Protection**: GDPR and POPIA compliant data handling
 - **Real-time Reporting**: Live attendance dashboards and alerts
-		`
+		`,
 	})
-	@ApiBody({ 
+	@ApiBody({
 		type: CreateCheckOutDto,
 		description: 'Check-out payload with location, timing, and work summary information',
 		examples: {
@@ -429,16 +427,16 @@ Advanced employee check-out system with location verification, work summary calc
 					location: {
 						latitude: -26.2041,
 						longitude: 28.0473,
-						accuracy: 10
+						accuracy: 10,
 					},
 					timestamp: '2023-12-01T17:30:00Z',
 					notes: 'Completed all daily tasks',
 					workSummary: {
 						tasksCompleted: 8,
 						projectsWorked: ['PROJECT-A', 'PROJECT-B'],
-						productivity: 'HIGH'
-					}
-				}
+						productivity: 'HIGH',
+					},
+				},
 			},
 			fieldWorkCheckOut: {
 				summary: '🚗 Field Work Check-Out',
@@ -449,16 +447,16 @@ Advanced employee check-out system with location verification, work summary calc
 						latitude: -26.1234,
 						longitude: 28.5678,
 						accuracy: 15,
-						address: 'Client Site - Sandton'
+						address: 'Client Site - Sandton',
 					},
 					timestamp: '2023-12-01T16:45:00Z',
 					notes: 'Site inspection completed',
 					workSummary: {
 						clientVisits: 3,
 						reportsGenerated: 2,
-						kmTraveled: 45
-					}
-				}
+						kmTraveled: 45,
+					},
+				},
 			},
 			overtimeCheckOut: {
 				summary: '⏰ Overtime Check-Out',
@@ -468,7 +466,7 @@ Advanced employee check-out system with location verification, work summary calc
 					location: {
 						latitude: -26.2041,
 						longitude: 28.0473,
-						accuracy: 8
+						accuracy: 8,
 					},
 					timestamp: '2023-12-01T19:30:00Z',
 					notes: 'Overtime work for project deadline',
@@ -477,11 +475,11 @@ Advanced employee check-out system with location verification, work summary calc
 					workSummary: {
 						extraHours: 2.5,
 						urgentTasks: 3,
-						projectProgress: '95%'
-					}
-				}
-			}
-		}
+						projectProgress: '95%',
+					},
+				},
+			},
+		},
 	})
 	@ApiCreatedResponse({
 		description: '✅ Check-out recorded successfully',
@@ -504,14 +502,14 @@ Advanced employee check-out system with location verification, work summary calc
 							properties: {
 								productivity: { type: 'string', example: 'HIGH' },
 								tasksCompleted: { type: 'number', example: 8 },
-								efficiency: { type: 'number', example: 95 }
-							}
-						}
-					}
+								efficiency: { type: 'number', example: 95 },
+							},
+						},
+					},
 				},
-				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T17:30:00Z' }
-			}
-		}
+				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T17:30:00Z' },
+			},
+		},
 	})
 	@ApiBadRequestResponse({
 		description: '❌ Bad Request - Invalid data provided',
@@ -528,16 +526,13 @@ Advanced employee check-out system with location verification, work summary calc
 						'User ID is required',
 						'Check-out location is required',
 						'Invalid timestamp format',
-						'User is not currently checked in'
-					]
-				}
-			}
-		}
+						'User is not currently checked in',
+					],
+				},
+			},
+		},
 	})
-	checkOut(
-		@Body() createAttendanceDto: CreateCheckOutDto,
-		@Req() req: AuthenticatedRequest,
-	) {
+	checkOut(@Body() createAttendanceDto: CreateCheckOutDto, @Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.attendanceService.checkOut(createAttendanceDto, orgId, branchId);
@@ -601,9 +596,9 @@ Comprehensive break tracking system with intelligent timing, policy enforcement,
 - **Audit Trail**: Complete break activity logging
 - **Privacy Protection**: Secure handling of break and wellness data
 - **Real-time Monitoring**: Live break status and team coverage dashboards
-		`
+		`,
 	})
-	@ApiBody({ 
+	@ApiBody({
 		type: CreateBreakDto,
 		description: 'Break management payload with timing, type, and policy information',
 		examples: {
@@ -618,11 +613,11 @@ Comprehensive break tracking system with intelligent timing, policy enforcement,
 					location: {
 						latitude: -26.2041,
 						longitude: 28.0473,
-						accuracy: 10
+						accuracy: 10,
 					},
 					timestamp: '2023-12-01T12:30:00Z',
-					notes: 'Lunch break at cafeteria'
-				}
+					notes: 'Lunch break at cafeteria',
+				},
 			},
 			endCoffeeBreak: {
 				summary: '☕ End Coffee Break',
@@ -635,11 +630,11 @@ Comprehensive break tracking system with intelligent timing, policy enforcement,
 					location: {
 						latitude: -26.2041,
 						longitude: 28.0473,
-						accuracy: 8
+						accuracy: 8,
 					},
 					timestamp: '2023-12-01T10:15:00Z',
-					notes: 'Quick coffee break completed'
-				}
+					notes: 'Quick coffee break completed',
+				},
 			},
 			emergencyBreak: {
 				summary: '🚨 Emergency Break',
@@ -651,8 +646,8 @@ Comprehensive break tracking system with intelligent timing, policy enforcement,
 					reason: 'Personal urgent matter',
 					supervisorNotified: true,
 					timestamp: '2023-12-01T14:45:00Z',
-					notes: 'Emergency personal call required'
-				}
+					notes: 'Emergency personal call required',
+				},
 			},
 			wellnessBreak: {
 				summary: '🧘 Wellness Break',
@@ -664,10 +659,10 @@ Comprehensive break tracking system with intelligent timing, policy enforcement,
 					expectedDuration: 20,
 					wellnessActivity: 'MEDITATION',
 					timestamp: '2023-12-01T15:30:00Z',
-					notes: 'Mindfulness break for stress relief'
-				}
-			}
-		}
+					notes: 'Mindfulness break for stress relief',
+				},
+			},
+		},
 	})
 	@ApiCreatedResponse({
 		description: '✅ Break action processed successfully',
@@ -694,14 +689,14 @@ Comprehensive break tracking system with intelligent timing, policy enforcement,
 							properties: {
 								available: { type: 'number', example: 8 },
 								onBreak: { type: 'number', example: 2 },
-								coverage: { type: 'string', example: 'ADEQUATE' }
-							}
-						}
-					}
+								coverage: { type: 'string', example: 'ADEQUATE' },
+							},
+						},
+					},
 				},
-				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T12:30:00Z' }
-			}
-		}
+				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T12:30:00Z' },
+			},
+		},
 	})
 	@ApiBadRequestResponse({
 		description: '❌ Bad Request - Invalid data provided',
@@ -719,8 +714,8 @@ Comprehensive break tracking system with intelligent timing, policy enforcement,
 						'Break action must be START or END',
 						'Break type is required',
 						'User is not currently checked in',
-						'Maximum break duration exceeded'
-					]
+						'Maximum break duration exceeded',
+					],
 				},
 				policyViolations: {
 					type: 'array',
@@ -728,11 +723,11 @@ Comprehensive break tracking system with intelligent timing, policy enforcement,
 					example: [
 						'Maximum daily break time exceeded',
 						'Break frequency limit reached',
-						'Insufficient time since last break'
-					]
-				}
-			}
-		}
+						'Insufficient time since last break',
+					],
+				},
+			},
+		},
 	})
 	manageBreak(@Body() breakDto: CreateBreakDto) {
 		return this.attendanceService.manageBreak(breakDto);
@@ -795,7 +790,7 @@ Retrieves complete attendance records with advanced filtering, analytics, and co
 - **API Integration**: Seamless integration with HR and payroll systems
 - **Real-time Updates**: Live data with real-time synchronization
 - **Custom Reports**: Generate custom reports based on specific criteria
-		`
+		`,
 	})
 	@ApiOkResponse({
 		description: 'Attendance records retrieved successfully',
@@ -997,35 +992,36 @@ Retrieves comprehensive attendance records for a specific date with advanced fil
 - **Privacy Compliance**: GDPR and POPIA compliant data handling and retention
 - **Audit Trail**: Complete access logging for security and compliance requirements
 - **Data Encryption**: Secure transmission and storage of sensitive attendance data
-		`
+		`,
 	})
 	@ApiParam({
 		name: 'date',
-		description: 'Date in YYYY-MM-DD format to filter attendance records. Supports both current and historical dates for trend analysis.',
+		description:
+			'Date in YYYY-MM-DD format to filter attendance records. Supports both current and historical dates for trend analysis.',
 		type: 'string',
 		example: '2024-03-01',
 		examples: {
 			today: {
-				summary: '📅 Today\'s Records',
+				summary: "📅 Today's Records",
 				description: 'Get attendance records for today',
-				value: '2024-03-01'
+				value: '2024-03-01',
 			},
 			yesterday: {
-				summary: '📅 Yesterday\'s Records',
+				summary: "📅 Yesterday's Records",
 				description: 'Get attendance records for yesterday',
-				value: '2024-02-29'
+				value: '2024-02-29',
 			},
 			monthStart: {
 				summary: '📅 Month Start',
 				description: 'Get attendance records for the first day of the month',
-				value: '2024-03-01'
+				value: '2024-03-01',
 			},
 			weekend: {
 				summary: '📅 Weekend Records',
 				description: 'Get attendance records for weekend work',
-				value: '2024-03-02'
-			}
-		}
+				value: '2024-03-02',
+			},
+		},
 	})
 	@ApiOkResponse({
 		description: '✅ Date-filtered attendance records retrieved successfully',
@@ -1035,7 +1031,8 @@ Retrieves comprehensive attendance records for a specific date with advanced fil
 				message: { type: 'string', example: 'Success' },
 				checkIns: {
 					type: 'array',
-					description: 'Array of attendance records for the specified date, ordered by check-in time (newest first)',
+					description:
+						'Array of attendance records for the specified date, ordered by check-in time (newest first)',
 					items: {
 						$ref: '#/components/schemas/AttendanceWithUserProfileSchema',
 					},
@@ -1044,17 +1041,41 @@ Retrieves comprehensive attendance records for a specific date with advanced fil
 					type: 'object',
 					description: 'Daily attendance analytics and insights',
 					properties: {
-						totalEmployees: { type: 'number', example: 25, description: 'Total employees with attendance records' },
-						presentEmployees: { type: 'number', example: 23, description: 'Number of employees currently present' },
+						totalEmployees: {
+							type: 'number',
+							example: 25,
+							description: 'Total employees with attendance records',
+						},
+						presentEmployees: {
+							type: 'number',
+							example: 23,
+							description: 'Number of employees currently present',
+						},
 						completedShifts: { type: 'number', example: 20, description: 'Number of completed shifts' },
-						averageCheckInTime: { type: 'string', example: '08:47:00', description: 'Average check-in time' },
-						averageCheckOutTime: { type: 'string', example: '17:23:00', description: 'Average check-out time' },
-						punctualityRate: { type: 'number', example: 87.5, description: 'Percentage of on-time arrivals' },
+						averageCheckInTime: {
+							type: 'string',
+							example: '08:47:00',
+							description: 'Average check-in time',
+						},
+						averageCheckOutTime: {
+							type: 'string',
+							example: '17:23:00',
+							description: 'Average check-out time',
+						},
+						punctualityRate: {
+							type: 'number',
+							example: 87.5,
+							description: 'Percentage of on-time arrivals',
+						},
 						overtimeShifts: { type: 'number', example: 5, description: 'Number of shifts with overtime' },
 						totalWorkHours: { type: 'number', example: 184.5, description: 'Total work hours for the day' },
 						totalBreakTime: { type: 'number', example: 23.5, description: 'Total break time in hours' },
-						attendanceRate: { type: 'number', example: 92.0, description: 'Daily attendance rate percentage' }
-					}
+						attendanceRate: {
+							type: 'number',
+							example: 92.0,
+							description: 'Daily attendance rate percentage',
+						},
+					},
 				},
 				dateInfo: {
 					type: 'object',
@@ -1063,11 +1084,24 @@ Retrieves comprehensive attendance records for a specific date with advanced fil
 						date: { type: 'string', example: '2024-03-01', description: 'Selected date' },
 						dayOfWeek: { type: 'string', example: 'Friday', description: 'Day of the week' },
 						isWeekend: { type: 'boolean', example: false, description: 'Whether the date is a weekend' },
-						isHoliday: { type: 'boolean', example: false, description: 'Whether the date is a company holiday' },
-						totalRecords: { type: 'number', example: 25, description: 'Total number of attendance records' }
-					}
+						isHoliday: {
+							type: 'boolean',
+							example: false,
+							description: 'Whether the date is a company holiday',
+						},
+						totalRecords: {
+							type: 'number',
+							example: 25,
+							description: 'Total number of attendance records',
+						},
+					},
 				},
-				timestamp: { type: 'string', format: 'date-time', example: '2024-03-01T18:00:00Z', description: 'Report generation timestamp' }
+				timestamp: {
+					type: 'string',
+					format: 'date-time',
+					example: '2024-03-01T18:00:00Z',
+					description: 'Report generation timestamp',
+				},
 			},
 		},
 	})
@@ -1086,8 +1120,8 @@ Retrieves comprehensive attendance records for a specific date with advanced fil
 						dayOfWeek: { type: 'string', example: 'Friday' },
 						isWeekend: { type: 'boolean', example: false },
 						isHoliday: { type: 'boolean', example: false },
-						totalRecords: { type: 'number', example: 0 }
-					}
+						totalRecords: { type: 'number', example: 0 },
+					},
 				},
 				suggestions: {
 					type: 'array',
@@ -1096,10 +1130,10 @@ Retrieves comprehensive attendance records for a specific date with advanced fil
 						'Check if the date is a weekend or holiday',
 						'Verify employees were scheduled to work on this date',
 						'Try a different date range',
-						'Contact system administrator if this seems incorrect'
-					]
+						'Contact system administrator if this seems incorrect',
+					],
 				},
-				timestamp: { type: 'string', format: 'date-time', example: '2024-03-01T18:00:00Z' }
+				timestamp: { type: 'string', format: 'date-time', example: '2024-03-01T18:00:00Z' },
 			},
 		},
 	})
@@ -1119,15 +1153,15 @@ Retrieves comprehensive attendance records for a specific date with advanced fil
 						'Date must be in YYYY-MM-DD format',
 						'Date cannot be in the future',
 						'Date cannot be before system implementation date',
-						'Invalid date value provided'
-					]
+						'Invalid date value provided',
+					],
 				},
 				supportedFormats: {
 					type: 'array',
 					items: { type: 'string' },
-					example: ['YYYY-MM-DD', '2024-03-01', '2024-12-31']
+					example: ['YYYY-MM-DD', '2024-03-01', '2024-12-31'],
 				},
-				timestamp: { type: 'string', format: 'date-time', example: '2024-03-01T18:00:00Z' }
+				timestamp: { type: 'string', format: 'date-time', example: '2024-03-01T18:00:00Z' },
 			},
 		},
 	})
@@ -1203,35 +1237,36 @@ Retrieves comprehensive attendance records for a specific user with detailed ana
 - **Audit Trail**: Complete logging of data access and modifications
 - **Consent Management**: Employee consent tracking for data processing
 - **Anonymization**: Options for anonymized reporting and analytics
-		`
+		`,
 	})
 	@ApiParam({
 		name: 'ref',
-		description: 'User ID to retrieve attendance records for. Supports both numeric user IDs and username references for flexible querying.',
+		description:
+			'User ID to retrieve attendance records for. Supports both numeric user IDs and username references for flexible querying.',
 		type: 'number',
 		example: 45,
 		examples: {
 			numericId: {
 				summary: '🔢 Numeric User ID',
 				description: 'Get attendance records using numeric user ID',
-				value: 45
+				value: 45,
 			},
 			managerId: {
 				summary: '👨‍💼 Manager ID',
 				description: 'Get attendance records for a manager',
-				value: 123
+				value: 123,
 			},
 			newEmployeeId: {
 				summary: '🆕 New Employee ID',
 				description: 'Get attendance records for a recently hired employee',
-				value: 789
+				value: 789,
 			},
 			seniorEmployeeId: {
 				summary: '👴 Senior Employee ID',
 				description: 'Get attendance records for a long-term employee',
-				value: 12
-			}
-		}
+				value: 12,
+			},
+		},
 	})
 	@ApiOkResponse({
 		description: '✅ User attendance records retrieved successfully',
@@ -1241,7 +1276,8 @@ Retrieves comprehensive attendance records for a specific user with detailed ana
 				message: { type: 'string', example: 'Success' },
 				checkIns: {
 					type: 'array',
-					description: 'Array of attendance records for the specified user, ordered by check-in time (newest first)',
+					description:
+						'Array of attendance records for the specified user, ordered by check-in time (newest first)',
 					items: {
 						$ref: '#/components/schemas/AttendanceWithUserProfileSchema',
 					},
@@ -1305,20 +1341,69 @@ Retrieves comprehensive attendance records for a specific user with detailed ana
 					type: 'object',
 					description: 'Individual user attendance analytics and performance metrics',
 					properties: {
-						totalRecords: { type: 'number', example: 45, description: 'Total attendance records for this user' },
-						attendanceRate: { type: 'number', example: 95.5, description: 'Overall attendance rate percentage' },
-						averageHoursPerDay: { type: 'number', example: 8.2, description: 'Average hours worked per day' },
-						punctualityScore: { type: 'number', example: 87.5, description: 'Punctuality score percentage' },
-						overtimeFrequency: { type: 'number', example: 15.5, description: 'Percentage of shifts with overtime' },
-						averageCheckInTime: { type: 'string', example: '08:47:00', description: 'Average check-in time' },
-						averageCheckOutTime: { type: 'string', example: '17:23:00', description: 'Average check-out time' },
-						totalWorkHours: { type: 'number', example: 368.5, description: 'Total work hours across all records' },
+						totalRecords: {
+							type: 'number',
+							example: 45,
+							description: 'Total attendance records for this user',
+						},
+						attendanceRate: {
+							type: 'number',
+							example: 95.5,
+							description: 'Overall attendance rate percentage',
+						},
+						averageHoursPerDay: {
+							type: 'number',
+							example: 8.2,
+							description: 'Average hours worked per day',
+						},
+						punctualityScore: {
+							type: 'number',
+							example: 87.5,
+							description: 'Punctuality score percentage',
+						},
+						overtimeFrequency: {
+							type: 'number',
+							example: 15.5,
+							description: 'Percentage of shifts with overtime',
+						},
+						averageCheckInTime: {
+							type: 'string',
+							example: '08:47:00',
+							description: 'Average check-in time',
+						},
+						averageCheckOutTime: {
+							type: 'string',
+							example: '17:23:00',
+							description: 'Average check-out time',
+						},
+						totalWorkHours: {
+							type: 'number',
+							example: 368.5,
+							description: 'Total work hours across all records',
+						},
 						totalBreakTime: { type: 'number', example: 42.5, description: 'Total break time in hours' },
-						longestShift: { type: 'string', example: '11h 30m', description: 'Longest single shift duration' },
-						shortestShift: { type: 'string', example: '6h 15m', description: 'Shortest single shift duration' },
-						attendanceStreak: { type: 'number', example: 12, description: 'Current consecutive attendance streak' },
-						lastAttendance: { type: 'string', format: 'date-time', example: '2024-03-01T17:30:00Z', description: 'Last attendance record timestamp' }
-					}
+						longestShift: {
+							type: 'string',
+							example: '11h 30m',
+							description: 'Longest single shift duration',
+						},
+						shortestShift: {
+							type: 'string',
+							example: '6h 15m',
+							description: 'Shortest single shift duration',
+						},
+						attendanceStreak: {
+							type: 'number',
+							example: 12,
+							description: 'Current consecutive attendance streak',
+						},
+						lastAttendance: {
+							type: 'string',
+							format: 'date-time',
+							example: '2024-03-01T17:30:00Z',
+							description: 'Last attendance record timestamp',
+						},
+					},
 				},
 				performanceInsights: {
 					type: 'object',
@@ -1328,25 +1413,41 @@ Retrieves comprehensive attendance records for a specific user with detailed ana
 							type: 'array',
 							items: { type: 'string' },
 							example: ['Excellent punctuality', 'Consistent attendance', 'Good work-life balance'],
-							description: 'Identified performance strengths'
+							description: 'Identified performance strengths',
 						},
 						improvements: {
 							type: 'array',
 							items: { type: 'string' },
 							example: ['Consider reducing overtime hours', 'Optimize break timing'],
-							description: 'Suggested areas for improvement'
+							description: 'Suggested areas for improvement',
 						},
 						trendAnalysis: {
 							type: 'object',
 							properties: {
-								trend: { type: 'string', example: 'IMPROVING', enum: ['IMPROVING', 'STABLE', 'DECLINING'] },
-								confidence: { type: 'number', example: 85.5, description: 'Confidence level of trend analysis' },
-								details: { type: 'string', example: 'Punctuality has improved by 12% over the last 3 months' }
-							}
-						}
-					}
+								trend: {
+									type: 'string',
+									example: 'IMPROVING',
+									enum: ['IMPROVING', 'STABLE', 'DECLINING'],
+								},
+								confidence: {
+									type: 'number',
+									example: 85.5,
+									description: 'Confidence level of trend analysis',
+								},
+								details: {
+									type: 'string',
+									example: 'Punctuality has improved by 12% over the last 3 months',
+								},
+							},
+						},
+					},
 				},
-				timestamp: { type: 'string', format: 'date-time', example: '2024-03-01T18:00:00Z', description: 'Report generation timestamp' }
+				timestamp: {
+					type: 'string',
+					format: 'date-time',
+					example: '2024-03-01T18:00:00Z',
+					description: 'Report generation timestamp',
+				},
 			},
 		},
 	})
@@ -1363,7 +1464,11 @@ Retrieves comprehensive attendance records for a specific user with detailed ana
 				errorDetails: {
 					type: 'object',
 					properties: {
-						errorType: { type: 'string', example: 'USER_NOT_FOUND', enum: ['USER_NOT_FOUND', 'NO_RECORDS_FOUND', 'ACCESS_DENIED'] },
+						errorType: {
+							type: 'string',
+							example: 'USER_NOT_FOUND',
+							enum: ['USER_NOT_FOUND', 'NO_RECORDS_FOUND', 'ACCESS_DENIED'],
+						},
 						userId: { type: 'number', example: 45, description: 'The user ID that was queried' },
 						possibleCauses: {
 							type: 'array',
@@ -1373,10 +1478,10 @@ Retrieves comprehensive attendance records for a specific user with detailed ana
 								'User has been deactivated or deleted',
 								'User has not yet recorded any attendance',
 								'User belongs to a different organization',
-								'Access permissions do not allow viewing this user'
-							]
-						}
-					}
+								'Access permissions do not allow viewing this user',
+							],
+						},
+					},
 				},
 				suggestions: {
 					type: 'array',
@@ -1384,12 +1489,12 @@ Retrieves comprehensive attendance records for a specific user with detailed ana
 					example: [
 						'Verify the user ID is correct',
 						'Check if the user is active in the system',
-						'Ensure you have permission to view this user\'s data',
+						"Ensure you have permission to view this user's data",
 						'Contact system administrator if the user should exist',
-						'Try searching by username or email instead'
-					]
+						'Try searching by username or email instead',
+					],
 				},
-				timestamp: { type: 'string', format: 'date-time', example: '2024-03-01T18:00:00Z' }
+				timestamp: { type: 'string', format: 'date-time', example: '2024-03-01T18:00:00Z' },
 			},
 		},
 	})
@@ -1465,35 +1570,36 @@ Retrieves the current attendance status for a specific user with live updates, s
 - **Access Logging**: Complete audit trail of status access and modifications
 - **Compliance Assurance**: GDPR and POPIA compliant status data handling
 - **Role-Based Visibility**: Status information visibility based on user roles and permissions
-		`
+		`,
 	})
 	@ApiParam({
 		name: 'ref',
-		description: 'User ID to retrieve attendance status for. Returns comprehensive status information including current shift details and next action recommendations.',
+		description:
+			'User ID to retrieve attendance status for. Returns comprehensive status information including current shift details and next action recommendations.',
 		type: 'number',
 		example: 45,
 		examples: {
 			activeEmployee: {
 				summary: '🟢 Active Employee',
 				description: 'Get status for currently active employee',
-				value: 45
+				value: 45,
 			},
 			managerStatus: {
 				summary: '👨‍💼 Manager Status',
 				description: 'Get attendance status for a manager',
-				value: 123
+				value: 123,
 			},
 			onBreakEmployee: {
 				summary: '☕ Employee on Break',
 				description: 'Get status for employee currently on break',
-				value: 78
+				value: 78,
 			},
 			overtimeEmployee: {
 				summary: '⏰ Overtime Employee',
 				description: 'Get status for employee working overtime',
-				value: 156
-			}
-		}
+				value: 156,
+			},
+		},
 	})
 	@ApiOkResponse({
 		description: '✅ User attendance status retrieved successfully',
@@ -1590,30 +1696,68 @@ Retrieves the current attendance status for a specific user with live updates, s
 					type: 'object',
 					description: 'Real-time status analytics and insights',
 					properties: {
-						currentShiftDuration: { type: 'string', example: '7h 45m', description: 'Current shift duration' },
-						expectedEndTime: { type: 'string', format: 'date-time', example: '2024-03-01T17:00:00Z', description: 'Expected shift end time' },
+						currentShiftDuration: {
+							type: 'string',
+							example: '7h 45m',
+							description: 'Current shift duration',
+						},
+						expectedEndTime: {
+							type: 'string',
+							format: 'date-time',
+							example: '2024-03-01T17:00:00Z',
+							description: 'Expected shift end time',
+						},
 						overtime: { type: 'boolean', example: false, description: 'Whether currently in overtime' },
-						breakTimeRemaining: { type: 'string', example: '45m', description: 'Remaining break time allowance' },
-						productivityScore: { type: 'number', example: 85.5, description: 'Current shift productivity score' },
-						complianceStatus: { type: 'string', example: 'COMPLIANT', enum: ['COMPLIANT', 'WARNING', 'VIOLATION'] },
-						riskLevel: { type: 'string', example: 'LOW', enum: ['LOW', 'MEDIUM', 'HIGH'] }
-					}
+						breakTimeRemaining: {
+							type: 'string',
+							example: '45m',
+							description: 'Remaining break time allowance',
+						},
+						productivityScore: {
+							type: 'number',
+							example: 85.5,
+							description: 'Current shift productivity score',
+						},
+						complianceStatus: {
+							type: 'string',
+							example: 'COMPLIANT',
+							enum: ['COMPLIANT', 'WARNING', 'VIOLATION'],
+						},
+						riskLevel: { type: 'string', example: 'LOW', enum: ['LOW', 'MEDIUM', 'HIGH'] },
+					},
 				},
 				recommendations: {
 					type: 'object',
 					description: 'Intelligent recommendations for optimal performance',
 					properties: {
-						nextBreakSuggestion: { type: 'string', format: 'date-time', example: '2024-03-01T14:30:00Z', nullable: true },
+						nextBreakSuggestion: {
+							type: 'string',
+							format: 'date-time',
+							example: '2024-03-01T14:30:00Z',
+							nullable: true,
+						},
 						optimalCheckoutTime: { type: 'string', format: 'date-time', example: '2024-03-01T17:00:00Z' },
-						wellnessAlert: { type: 'string', example: 'Consider taking a break for optimal performance', nullable: true },
+						wellnessAlert: {
+							type: 'string',
+							example: 'Consider taking a break for optimal performance',
+							nullable: true,
+						},
 						efficiencyTips: {
 							type: 'array',
 							items: { type: 'string' },
-							example: ['Take regular breaks to maintain productivity', 'Stay hydrated throughout the shift']
-						}
-					}
+							example: [
+								'Take regular breaks to maintain productivity',
+								'Stay hydrated throughout the shift',
+							],
+						},
+					},
 				},
-				timestamp: { type: 'string', format: 'date-time', example: '2024-03-01T18:00:00Z', description: 'Status check timestamp' }
+				timestamp: {
+					type: 'string',
+					format: 'date-time',
+					example: '2024-03-01T18:00:00Z',
+					description: 'Status check timestamp',
+				},
 			},
 		},
 	})
@@ -1635,11 +1779,20 @@ Retrieves the current attendance status for a specific user with live updates, s
 				errorDetails: {
 					type: 'object',
 					properties: {
-						errorType: { type: 'string', example: 'NO_STATUS_FOUND', enum: ['NO_STATUS_FOUND', 'USER_NOT_FOUND', 'INACTIVE_USER'] },
+						errorType: {
+							type: 'string',
+							example: 'NO_STATUS_FOUND',
+							enum: ['NO_STATUS_FOUND', 'USER_NOT_FOUND', 'INACTIVE_USER'],
+						},
 						userId: { type: 'number', example: 45 },
 						lastKnownStatus: { type: 'string', example: 'COMPLETED', nullable: true },
-						lastActivity: { type: 'string', format: 'date-time', example: '2024-02-28T17:30:00Z', nullable: true }
-					}
+						lastActivity: {
+							type: 'string',
+							format: 'date-time',
+							example: '2024-02-28T17:30:00Z',
+							nullable: true,
+						},
+					},
 				},
 				suggestions: {
 					type: 'array',
@@ -1648,10 +1801,10 @@ Retrieves the current attendance status for a specific user with live updates, s
 						'Check if user has checked in today',
 						'Verify user is active and has attendance permissions',
 						'User may need to check in to start tracking',
-						'Contact system administrator if user should have status'
-					]
+						'Contact system administrator if user should have status',
+					],
 				},
-				timestamp: { type: 'string', format: 'date-time', example: '2024-03-01T18:00:00Z' }
+				timestamp: { type: 'string', format: 'date-time', example: '2024-03-01T18:00:00Z' },
 			},
 		},
 	})
@@ -1727,35 +1880,36 @@ Retrieves comprehensive attendance records for a specific branch with advanced a
 - **Audit Trail**: Complete audit trail for all branch data access
 - **Compliance Reporting**: Automated compliance reporting and monitoring
 - **Security Monitoring**: Enhanced security monitoring for branch-specific data
-		`
+		`,
 	})
 	@ApiParam({
 		name: 'ref',
-		description: 'Branch reference code to filter attendance records. Supports both branch codes and names for flexible querying.',
+		description:
+			'Branch reference code to filter attendance records. Supports both branch codes and names for flexible querying.',
 		type: 'string',
 		example: 'MB001',
 		examples: {
 			mainBranch: {
 				summary: '🏢 Main Branch',
 				description: 'Get attendance records for the main branch',
-				value: 'MB001'
+				value: 'MB001',
 			},
 			salesBranch: {
 				summary: '💼 Sales Branch',
 				description: 'Get attendance records for sales branch',
-				value: 'SB001'
+				value: 'SB001',
 			},
 			techBranch: {
 				summary: '💻 Technology Branch',
 				description: 'Get attendance records for technology branch',
-				value: 'TB001'
+				value: 'TB001',
 			},
 			regionalBranch: {
 				summary: '🌍 Regional Branch',
 				description: 'Get attendance records for regional branch',
-				value: 'RB001'
-			}
-		}
+				value: 'RB001',
+			},
+		},
 	})
 	@ApiOkResponse({
 		description: '✅ Branch attendance records retrieved successfully',
@@ -1765,7 +1919,8 @@ Retrieves comprehensive attendance records for a specific branch with advanced a
 				message: { type: 'string', example: 'Success' },
 				checkIns: {
 					type: 'array',
-					description: 'Array of attendance records for the specified branch, ordered by check-in time (newest first)',
+					description:
+						'Array of attendance records for the specified branch, ordered by check-in time (newest first)',
 					items: {
 						$ref: '#/components/schemas/AttendanceWithUserProfileSchema',
 					},
@@ -1794,22 +1949,62 @@ Retrieves comprehensive attendance records for a specific branch with advanced a
 					example: 15,
 				},
 				branchAnalytics: {
-							type: 'object',
+					type: 'object',
 					description: 'Comprehensive branch analytics and performance metrics',
-							properties: {
-						totalRecords: { type: 'number', example: 85, description: 'Total attendance records for this branch' },
-						averageAttendanceRate: { type: 'number', example: 92.5, description: 'Average attendance rate percentage' },
-						averageHoursPerEmployee: { type: 'number', example: 8.1, description: 'Average hours worked per employee' },
-						punctualityRate: { type: 'number', example: 89.2, description: 'Branch punctuality rate percentage' },
-						overtimeFrequency: { type: 'number', example: 18.5, description: 'Percentage of shifts with overtime' },
-						averageCheckInTime: { type: 'string', example: '08:52:00', description: 'Average check-in time for the branch' },
-						averageCheckOutTime: { type: 'string', example: '17:18:00', description: 'Average check-out time for the branch' },
-						totalWorkHours: { type: 'number', example: 682.5, description: 'Total work hours for all employees' },
+					properties: {
+						totalRecords: {
+							type: 'number',
+							example: 85,
+							description: 'Total attendance records for this branch',
+						},
+						averageAttendanceRate: {
+							type: 'number',
+							example: 92.5,
+							description: 'Average attendance rate percentage',
+						},
+						averageHoursPerEmployee: {
+							type: 'number',
+							example: 8.1,
+							description: 'Average hours worked per employee',
+						},
+						punctualityRate: {
+							type: 'number',
+							example: 89.2,
+							description: 'Branch punctuality rate percentage',
+						},
+						overtimeFrequency: {
+							type: 'number',
+							example: 18.5,
+							description: 'Percentage of shifts with overtime',
+						},
+						averageCheckInTime: {
+							type: 'string',
+							example: '08:52:00',
+							description: 'Average check-in time for the branch',
+						},
+						averageCheckOutTime: {
+							type: 'string',
+							example: '17:18:00',
+							description: 'Average check-out time for the branch',
+						},
+						totalWorkHours: {
+							type: 'number',
+							example: 682.5,
+							description: 'Total work hours for all employees',
+						},
 						totalBreakTime: { type: 'number', example: 78.5, description: 'Total break time in hours' },
-						activeEmployees: { type: 'number', example: 12, description: 'Number of currently active employees' },
+						activeEmployees: {
+							type: 'number',
+							example: 12,
+							description: 'Number of currently active employees',
+						},
 						completedShifts: { type: 'number', example: 73, description: 'Number of completed shifts' },
-						peakActivity: { type: 'string', example: '09:00-10:00', description: 'Peak activity time period' }
-					}
+						peakActivity: {
+							type: 'string',
+							example: '09:00-10:00',
+							description: 'Peak activity time period',
+						},
+					},
 				},
 				performanceMetrics: {
 					type: 'object',
@@ -1817,40 +2012,65 @@ Retrieves comprehensive attendance records for a specific branch with advanced a
 					properties: {
 						efficiencyScore: { type: 'number', example: 87.5, description: 'Branch efficiency score' },
 						productivityIndex: { type: 'number', example: 91.2, description: 'Branch productivity index' },
-						complianceRate: { type: 'number', example: 95.8, description: 'Policy compliance rate percentage' },
+						complianceRate: {
+							type: 'number',
+							example: 95.8,
+							description: 'Policy compliance rate percentage',
+						},
 						costEfficiency: { type: 'number', example: 82.3, description: 'Cost efficiency score' },
 						teamCollaboration: { type: 'number', example: 88.7, description: 'Team collaboration score' },
 						benchmarkComparison: {
 							type: 'object',
 							properties: {
-								organizationAverage: { type: 'number', example: 85.2, description: 'Organization average score' },
-								industryBenchmark: { type: 'number', example: 83.4, description: 'Industry benchmark score' },
-								ranking: { type: 'number', example: 2, description: 'Ranking among all branches' }
-							}
-						}
-					}
+								organizationAverage: {
+									type: 'number',
+									example: 85.2,
+									description: 'Organization average score',
+								},
+								industryBenchmark: {
+									type: 'number',
+									example: 83.4,
+									description: 'Industry benchmark score',
+								},
+								ranking: { type: 'number', example: 2, description: 'Ranking among all branches' },
+							},
+						},
+					},
 				},
 				operationalInsights: {
-							type: 'object',
+					type: 'object',
 					description: 'Operational insights and recommendations',
-							properties: {
-						capacityUtilization: { type: 'number', example: 78.5, description: 'Workspace capacity utilization percentage' },
-						optimalStaffing: { type: 'number', example: 16, description: 'Recommended optimal staffing level' },
+					properties: {
+						capacityUtilization: {
+							type: 'number',
+							example: 78.5,
+							description: 'Workspace capacity utilization percentage',
+						},
+						optimalStaffing: {
+							type: 'number',
+							example: 16,
+							description: 'Recommended optimal staffing level',
+						},
 						peakHours: {
 							type: 'array',
 							items: { type: 'string' },
 							example: ['09:00-11:00', '14:00-16:00'],
-							description: 'Peak activity hours'
+							description: 'Peak activity hours',
 						},
 						improvements: {
 							type: 'array',
 							items: { type: 'string' },
 							example: ['Optimize break scheduling', 'Implement flexible work hours'],
-							description: 'Recommended improvements'
-						}
-					}
+							description: 'Recommended improvements',
+						},
+					},
 				},
-				timestamp: { type: 'string', format: 'date-time', example: '2024-03-01T18:00:00Z', description: 'Report generation timestamp' }
+				timestamp: {
+					type: 'string',
+					format: 'date-time',
+					example: '2024-03-01T18:00:00Z',
+					description: 'Report generation timestamp',
+				},
 			},
 		},
 	})
@@ -1869,8 +2089,16 @@ Retrieves comprehensive attendance records for a specific branch with advanced a
 				errorDetails: {
 					type: 'object',
 					properties: {
-						errorType: { type: 'string', example: 'BRANCH_NOT_FOUND', enum: ['BRANCH_NOT_FOUND', 'NO_RECORDS_FOUND', 'INACTIVE_BRANCH'] },
-						branchRef: { type: 'string', example: 'MB001', description: 'The branch reference that was queried' },
+						errorType: {
+							type: 'string',
+							example: 'BRANCH_NOT_FOUND',
+							enum: ['BRANCH_NOT_FOUND', 'NO_RECORDS_FOUND', 'INACTIVE_BRANCH'],
+						},
+						branchRef: {
+							type: 'string',
+							example: 'MB001',
+							description: 'The branch reference that was queried',
+						},
 						possibleCauses: {
 							type: 'array',
 							items: { type: 'string' },
@@ -1879,10 +2107,10 @@ Retrieves comprehensive attendance records for a specific branch with advanced a
 								'Branch has been deactivated or closed',
 								'No employees assigned to this branch',
 								'Branch belongs to a different organization',
-								'Access permissions do not allow viewing this branch'
-							]
-						}
-					}
+								'Access permissions do not allow viewing this branch',
+							],
+						},
+					},
 				},
 				suggestions: {
 					type: 'array',
@@ -1892,16 +2120,16 @@ Retrieves comprehensive attendance records for a specific branch with advanced a
 						'Check if the branch is active in the system',
 						'Ensure employees are assigned to this branch',
 						'Verify you have permission to view this branch data',
-						'Contact system administrator if the branch should exist'
-					]
+						'Contact system administrator if the branch should exist',
+					],
 				},
 				alternativeBranches: {
 					type: 'array',
 					items: { type: 'string' },
 					example: ['MB002', 'SB001', 'TB001'],
-					description: 'Available branch references that might be relevant'
+					description: 'Available branch references that might be relevant',
 				},
-				timestamp: { type: 'string', format: 'date-time', example: '2024-03-01T18:00:00Z' }
+				timestamp: { type: 'string', format: 'date-time', example: '2024-03-01T18:00:00Z' },
 			},
 		},
 	})
@@ -1976,70 +2204,72 @@ Retrieves comprehensive daily attendance statistics for a specific user with det
 - **Audit Trail**: Complete audit trail of all daily statistics access and modifications
 - **Data Retention**: Configurable data retention policies for daily statistics
 - **Confidentiality**: Ensure confidentiality of individual performance data
-		`
+		`,
 	})
 	@ApiParam({
 		name: 'uid',
-		description: 'User ID to retrieve daily statistics for. Supports both numeric user IDs and flexible user identification.',
+		description:
+			'User ID to retrieve daily statistics for. Supports both numeric user IDs and flexible user identification.',
 		type: 'number',
 		example: 45,
 		examples: {
 			employeeStats: {
 				summary: '👤 Employee Statistics',
 				description: 'Get daily statistics for regular employee',
-				value: 45
+				value: 45,
 			},
 			managerStats: {
 				summary: '👨‍💼 Manager Statistics',
 				description: 'Get daily statistics for manager role',
-				value: 123
+				value: 123,
 			},
 			teamLeadStats: {
 				summary: '👥 Team Lead Statistics',
 				description: 'Get daily statistics for team lead',
-				value: 78
+				value: 78,
 			},
 			seniorStaffStats: {
 				summary: '⭐ Senior Staff Statistics',
 				description: 'Get daily statistics for senior staff member',
-				value: 156
-			}
-		}
+				value: 156,
+			},
+		},
 	})
 	@ApiQuery({
 		name: 'date',
 		required: false,
-		description: 'Date in YYYY-MM-DD format (defaults to today). Supports both current and historical dates for trend analysis.',
+		description:
+			'Date in YYYY-MM-DD format (defaults to today). Supports both current and historical dates for trend analysis.',
 		type: 'string',
 		example: '2024-03-01',
 		examples: {
 			today: {
-				summary: '📅 Today\'s Statistics',
+				summary: "📅 Today's Statistics",
 				description: 'Get statistics for today (default)',
-				value: '2024-03-01'
+				value: '2024-03-01',
 			},
 			yesterday: {
-				summary: '📅 Yesterday\'s Statistics',
+				summary: "📅 Yesterday's Statistics",
 				description: 'Get statistics for yesterday',
-				value: '2024-02-29'
+				value: '2024-02-29',
 			},
 			weekStart: {
 				summary: '📅 Week Start',
 				description: 'Get statistics for the start of the week',
-				value: '2024-02-26'
+				value: '2024-02-26',
 			},
 			monthStart: {
 				summary: '📅 Month Start',
 				description: 'Get statistics for the first day of the month',
-				value: '2024-03-01'
-			}
-		}
+				value: '2024-03-01',
+			},
+		},
 	})
 	@ApiOkResponse({
 		description: '✅ Daily attendance statistics retrieved successfully',
 		schema: {
-					type: 'object',
-					properties: {
+			type: 'object',
+			properties: {
 				message: { type: 'string', example: 'Success' },
 				dailyWorkTime: {
 					type: 'number',
@@ -2052,30 +2282,81 @@ Retrieves comprehensive daily attendance statistics for a specific user with det
 					description: 'Total break time for the day in milliseconds',
 				},
 				detailedStatistics: {
-							type: 'object',
+					type: 'object',
 					description: 'Comprehensive daily statistics and analytics',
-							properties: {
-						totalActiveTime: { type: 'number', example: 32400000, description: 'Total active time including breaks (ms)' },
-						effectiveWorkTime: { type: 'number', example: 28800000, description: 'Effective work time excluding all breaks (ms)' },
+					properties: {
+						totalActiveTime: {
+							type: 'number',
+							example: 32400000,
+							description: 'Total active time including breaks (ms)',
+						},
+						effectiveWorkTime: {
+							type: 'number',
+							example: 28800000,
+							description: 'Effective work time excluding all breaks (ms)',
+						},
 						overtimeMinutes: { type: 'number', example: 30, description: 'Overtime minutes worked' },
-						productiveHours: { type: 'number', example: 7.5, description: 'Productive hours based on activity metrics' },
+						productiveHours: {
+							type: 'number',
+							example: 7.5,
+							description: 'Productive hours based on activity metrics',
+						},
 						idleTime: { type: 'number', example: 900000, description: 'Total idle time in milliseconds' },
-						checkInTime: { type: 'string', format: 'time', example: '08:30:00', description: 'Check-in time for the day' },
-						checkOutTime: { type: 'string', format: 'time', example: '17:30:00', nullable: true, description: 'Check-out time for the day' },
-						totalShiftDuration: { type: 'string', example: '9h 0m', description: 'Total shift duration including breaks' },
-						netWorkDuration: { type: 'string', example: '8h 0m', description: 'Net work duration excluding breaks' }
-					}
+						checkInTime: {
+							type: 'string',
+							format: 'time',
+							example: '08:30:00',
+							description: 'Check-in time for the day',
+						},
+						checkOutTime: {
+							type: 'string',
+							format: 'time',
+							example: '17:30:00',
+							nullable: true,
+							description: 'Check-out time for the day',
+						},
+						totalShiftDuration: {
+							type: 'string',
+							example: '9h 0m',
+							description: 'Total shift duration including breaks',
+						},
+						netWorkDuration: {
+							type: 'string',
+							example: '8h 0m',
+							description: 'Net work duration excluding breaks',
+						},
+					},
 				},
 				breakAnalysis: {
 					type: 'object',
 					description: 'Detailed break time analysis and patterns',
 					properties: {
 						totalBreaks: { type: 'number', example: 3, description: 'Number of breaks taken' },
-						averageBreakDuration: { type: 'number', example: 1200000, description: 'Average break duration in milliseconds' },
-						longestBreak: { type: 'number', example: 1800000, description: 'Longest break duration in milliseconds' },
-						shortestBreak: { type: 'number', example: 600000, description: 'Shortest break duration in milliseconds' },
-						lunchBreakDuration: { type: 'number', example: 1800000, description: 'Lunch break duration in milliseconds' },
-						coffeeBreakTotal: { type: 'number', example: 1800000, description: 'Total coffee break time in milliseconds' },
+						averageBreakDuration: {
+							type: 'number',
+							example: 1200000,
+							description: 'Average break duration in milliseconds',
+						},
+						longestBreak: {
+							type: 'number',
+							example: 1800000,
+							description: 'Longest break duration in milliseconds',
+						},
+						shortestBreak: {
+							type: 'number',
+							example: 600000,
+							description: 'Shortest break duration in milliseconds',
+						},
+						lunchBreakDuration: {
+							type: 'number',
+							example: 1800000,
+							description: 'Lunch break duration in milliseconds',
+						},
+						coffeeBreakTotal: {
+							type: 'number',
+							example: 1800000,
+							description: 'Total coffee break time in milliseconds',
+						},
 						breakDistribution: {
 							type: 'array',
 							items: {
@@ -2084,26 +2365,54 @@ Retrieves comprehensive daily attendance statistics for a specific user with det
 									startTime: { type: 'string', format: 'time', example: '10:15:00' },
 									endTime: { type: 'string', format: 'time', example: '10:30:00' },
 									duration: { type: 'number', example: 900000 },
-									type: { type: 'string', example: 'COFFEE' }
-								}
+									type: { type: 'string', example: 'COFFEE' },
+								},
 							},
-							description: 'Detailed breakdown of all breaks taken'
-						}
-					}
+							description: 'Detailed breakdown of all breaks taken',
+						},
+					},
 				},
 				productivityMetrics: {
-							type: 'object',
+					type: 'object',
 					description: 'Productivity and performance metrics for the day',
-							properties: {
-						productivityScore: { type: 'number', example: 87.5, description: 'Overall productivity score (0-100)' },
-						efficiencyRating: { type: 'number', example: 92.3, description: 'Work efficiency rating based on output' },
-						focusTime: { type: 'number', example: 25200000, description: 'Time spent in focused work (ms)' },
+					properties: {
+						productivityScore: {
+							type: 'number',
+							example: 87.5,
+							description: 'Overall productivity score (0-100)',
+						},
+						efficiencyRating: {
+							type: 'number',
+							example: 92.3,
+							description: 'Work efficiency rating based on output',
+						},
+						focusTime: {
+							type: 'number',
+							example: 25200000,
+							description: 'Time spent in focused work (ms)',
+						},
 						interruptionCount: { type: 'number', example: 8, description: 'Number of work interruptions' },
-						taskCompletionRate: { type: 'number', example: 85.7, description: 'Percentage of planned tasks completed' },
-						goalAchievement: { type: 'number', example: 95.2, description: 'Percentage of daily goals achieved' },
-						qualityScore: { type: 'number', example: 88.9, description: 'Work quality score based on output' },
-						collaborationTime: { type: 'number', example: 7200000, description: 'Time spent in collaborative activities (ms)' }
-					}
+						taskCompletionRate: {
+							type: 'number',
+							example: 85.7,
+							description: 'Percentage of planned tasks completed',
+						},
+						goalAchievement: {
+							type: 'number',
+							example: 95.2,
+							description: 'Percentage of daily goals achieved',
+						},
+						qualityScore: {
+							type: 'number',
+							example: 88.9,
+							description: 'Work quality score based on output',
+						},
+						collaborationTime: {
+							type: 'number',
+							example: 7200000,
+							description: 'Time spent in collaborative activities (ms)',
+						},
+					},
 				},
 				comparativeAnalysis: {
 					type: 'object',
@@ -2112,42 +2421,96 @@ Retrieves comprehensive daily attendance statistics for a specific user with det
 						vsYesterday: {
 							type: 'object',
 							properties: {
-								workTimeChange: { type: 'number', example: 5.2, description: 'Percentage change in work time' },
-								productivityChange: { type: 'number', example: -2.1, description: 'Percentage change in productivity' },
-								breakTimeChange: { type: 'number', example: 15.8, description: 'Percentage change in break time' }
-							}
+								workTimeChange: {
+									type: 'number',
+									example: 5.2,
+									description: 'Percentage change in work time',
+								},
+								productivityChange: {
+									type: 'number',
+									example: -2.1,
+									description: 'Percentage change in productivity',
+								},
+								breakTimeChange: {
+									type: 'number',
+									example: 15.8,
+									description: 'Percentage change in break time',
+								},
+							},
 						},
 						vsWeekAverage: {
 							type: 'object',
 							properties: {
-								workTimeVariance: { type: 'number', example: -3.5, description: 'Variance from weekly average work time' },
-								productivityVariance: { type: 'number', example: 8.2, description: 'Variance from weekly average productivity' },
-								efficiencyRank: { type: 'number', example: 2, description: 'Rank within the week (1-7)' }
-							}
+								workTimeVariance: {
+									type: 'number',
+									example: -3.5,
+									description: 'Variance from weekly average work time',
+								},
+								productivityVariance: {
+									type: 'number',
+									example: 8.2,
+									description: 'Variance from weekly average productivity',
+								},
+								efficiencyRank: {
+									type: 'number',
+									example: 2,
+									description: 'Rank within the week (1-7)',
+								},
+							},
 						},
 						vsTeamAverage: {
 							type: 'object',
 							properties: {
-								performanceRank: { type: 'number', example: 3, description: 'Rank within team performance' },
+								performanceRank: {
+									type: 'number',
+									example: 3,
+									description: 'Rank within team performance',
+								},
 								teamSize: { type: 'number', example: 12, description: 'Size of comparison team' },
-								percentile: { type: 'number', example: 75.8, description: 'Performance percentile within team' }
-							}
-						}
-					}
+								percentile: {
+									type: 'number',
+									example: 75.8,
+									description: 'Performance percentile within team',
+								},
+							},
+						},
+					},
 				},
 				wellness: {
 					type: 'object',
 					description: 'Employee wellness and work-life balance indicators',
 					properties: {
-						workLifeBalance: { type: 'number', example: 82.4, description: 'Work-life balance score (0-100)' },
-						stressLevel: { type: 'string', example: 'LOW', enum: ['LOW', 'MODERATE', 'HIGH'], description: 'Estimated stress level' },
+						workLifeBalance: {
+							type: 'number',
+							example: 82.4,
+							description: 'Work-life balance score (0-100)',
+						},
+						stressLevel: {
+							type: 'string',
+							example: 'LOW',
+							enum: ['LOW', 'MODERATE', 'HIGH'],
+							description: 'Estimated stress level',
+						},
 						burnoutRisk: { type: 'number', example: 15.2, description: 'Burnout risk percentage' },
 						wellnessScore: { type: 'number', example: 88.7, description: 'Overall wellness score' },
-						recommendedBreaks: { type: 'number', example: 1, description: 'Number of additional breaks recommended' },
-						hydrationReminders: { type: 'number', example: 3, description: 'Number of hydration reminders sent' }
-					}
+						recommendedBreaks: {
+							type: 'number',
+							example: 1,
+							description: 'Number of additional breaks recommended',
+						},
+						hydrationReminders: {
+							type: 'number',
+							example: 3,
+							description: 'Number of hydration reminders sent',
+						},
+					},
 				},
-				timestamp: { type: 'string', format: 'date-time', example: '2024-03-01T18:00:00Z', description: 'Statistics generation timestamp' }
+				timestamp: {
+					type: 'string',
+					format: 'date-time',
+					example: '2024-03-01T18:00:00Z',
+					description: 'Statistics generation timestamp',
+				},
 			},
 		},
 	})
@@ -2167,7 +2530,11 @@ Retrieves comprehensive daily attendance statistics for a specific user with det
 				errorDetails: {
 					type: 'object',
 					properties: {
-						errorType: { type: 'string', example: 'NO_DATA_FOUND', enum: ['NO_DATA_FOUND', 'USER_NOT_FOUND', 'FUTURE_DATE', 'INVALID_DATE'] },
+						errorType: {
+							type: 'string',
+							example: 'NO_DATA_FOUND',
+							enum: ['NO_DATA_FOUND', 'USER_NOT_FOUND', 'FUTURE_DATE', 'INVALID_DATE'],
+						},
 						userId: { type: 'number', example: 45 },
 						date: { type: 'string', example: '2024-03-01' },
 						possibleReasons: {
@@ -2178,10 +2545,10 @@ Retrieves comprehensive daily attendance statistics for a specific user with det
 								'Date is a weekend or holiday',
 								'User was on leave or vacation',
 								'System was not operational on this date',
-								'Data has not been processed yet'
-							]
-						}
-					}
+								'Data has not been processed yet',
+							],
+						},
+					},
 				},
 				suggestions: {
 					type: 'array',
@@ -2191,24 +2558,24 @@ Retrieves comprehensive daily attendance statistics for a specific user with det
 						'Verify the date is not a weekend or holiday',
 						'Try a different date when the user was active',
 						'Check if the user has any attendance records',
-						'Contact system administrator if data should exist'
-					]
+						'Contact system administrator if data should exist',
+					],
 				},
 				alternativeDates: {
 					type: 'array',
 					items: { type: 'string' },
 					example: ['2024-02-29', '2024-03-02', '2024-03-03'],
-					description: 'Recent dates with available data for this user'
+					description: 'Recent dates with available data for this user',
 				},
-				timestamp: { type: 'string', format: 'date-time', example: '2024-03-01T18:00:00Z' }
+				timestamp: { type: 'string', format: 'date-time', example: '2024-03-01T18:00:00Z' },
 			},
 		},
 	})
 	@ApiBadRequestResponse({
 		description: '❌ Bad Request - Invalid date format or user ID',
 		schema: {
-								type: 'object',
-								properties: {
+			type: 'object',
+			properties: {
 				message: { type: 'string', example: 'Invalid date format. Please use YYYY-MM-DD format' },
 				error: { type: 'string', example: 'Bad Request' },
 				statusCode: { type: 'number', example: 400 },
@@ -2221,28 +2588,28 @@ Retrieves comprehensive daily attendance statistics for a specific user with det
 						'Date must be in YYYY-MM-DD format',
 						'User ID must be a positive integer',
 						'Date cannot be in the future',
-						'Date must be a valid calendar date'
-					]
+						'Date must be a valid calendar date',
+					],
 				},
 				supportedFormats: {
-										type: 'object',
-										properties: {
+					type: 'object',
+					properties: {
 						dateFormats: {
 							type: 'array',
 							items: { type: 'string' },
-							example: ['YYYY-MM-DD', '2024-03-01', '2024-12-31']
+							example: ['YYYY-MM-DD', '2024-03-01', '2024-12-31'],
 						},
 						userIdFormat: { type: 'string', example: 'Positive integer (e.g., 45, 123, 789)' },
 						examples: {
 							type: 'object',
 							properties: {
 								validDate: { type: 'string', example: '2024-03-01' },
-								validUserId: { type: 'number', example: 45 }
-							}
-						}
-					}
+								validUserId: { type: 'number', example: 45 },
+							},
+						},
+					},
 				},
-				timestamp: { type: 'string', format: 'date-time', example: '2024-03-01T18:00:00Z' }
+				timestamp: { type: 'string', format: 'date-time', example: '2024-03-01T18:00:00Z' },
 			},
 		},
 	})
@@ -2328,41 +2695,42 @@ Retrieves detailed attendance analytics for a specific user including historical
 - **Audit Trail**: Complete logging of metric access and usage
 - **Consent Management**: Employee consent tracking for performance data usage
 - **Confidentiality**: Secure handling of individual performance insights
-		`
+		`,
 	})
 	@ApiParam({
 		name: 'uid',
-		description: 'User ID to retrieve comprehensive attendance metrics for. Returns detailed analytics across multiple time periods and performance dimensions.',
+		description:
+			'User ID to retrieve comprehensive attendance metrics for. Returns detailed analytics across multiple time periods and performance dimensions.',
 		type: 'number',
 		example: 45,
 		examples: {
 			regularEmployee: {
 				summary: '👤 Regular Employee',
 				description: 'Get comprehensive metrics for regular employee',
-				value: 45
+				value: 45,
 			},
 			seniorManager: {
 				summary: '👨‍💼 Senior Manager',
 				description: 'Get comprehensive metrics for senior manager',
-				value: 123
+				value: 123,
 			},
 			newHire: {
 				summary: '🆕 New Hire',
 				description: 'Get comprehensive metrics for recently hired employee',
-				value: 789
+				value: 789,
 			},
 			topPerformer: {
 				summary: '⭐ Top Performer',
 				description: 'Get comprehensive metrics for high-performing employee',
-				value: 156
-			}
-		}
+				value: 156,
+			},
+		},
 	})
 	@ApiOkResponse({
 		description: '✅ Attendance metrics retrieved successfully',
 		schema: {
-										type: 'object',
-										properties: {
+			type: 'object',
+			properties: {
 				message: { type: 'string', example: 'Success' },
 				metrics: {
 					type: 'object',
@@ -2622,119 +2990,121 @@ Generates comprehensive attendance reports with advanced analytics, multi-dimens
 - **Audit Trail**: Complete logging of report generation and access activities
 - **Secure Distribution**: Encrypted report delivery and secure sharing capabilities
 - **Retention Policies**: Automated data retention and archival according to compliance requirements
-		`
+		`,
 	})
-	@ApiQuery({ 
-		name: 'dateFrom', 
-		required: false, 
-		description: 'Start date for report period (YYYY-MM-DD format). Defaults to beginning of current month if not specified.',
+	@ApiQuery({
+		name: 'dateFrom',
+		required: false,
+		description:
+			'Start date for report period (YYYY-MM-DD format). Defaults to beginning of current month if not specified.',
 		example: '2024-01-01',
 		examples: {
 			currentMonth: {
 				summary: '📅 Current Month',
 				description: 'Generate report for current month',
-				value: '2024-03-01'
+				value: '2024-03-01',
 			},
 			lastQuarter: {
 				summary: '📈 Last Quarter',
 				description: 'Generate report for previous quarter',
-				value: '2024-01-01'
+				value: '2024-01-01',
 			},
 			yearToDate: {
 				summary: '📊 Year to Date',
 				description: 'Generate report from beginning of year',
-				value: '2024-01-01'
-			}
-		}
+				value: '2024-01-01',
+			},
+		},
 	})
-	@ApiQuery({ 
-		name: 'dateTo', 
-		required: false, 
+	@ApiQuery({
+		name: 'dateTo',
+		required: false,
 		description: 'End date for report period (YYYY-MM-DD format). Defaults to current date if not specified.',
 		example: '2024-03-31',
 		examples: {
 			currentDate: {
 				summary: '🗓️ Current Date',
 				description: 'Generate report up to current date',
-				value: '2024-03-31'
+				value: '2024-03-31',
 			},
 			monthEnd: {
 				summary: '📅 Month End',
 				description: 'Generate report up to end of month',
-				value: '2024-03-31'
+				value: '2024-03-31',
 			},
 			quarterEnd: {
 				summary: '📈 Quarter End',
 				description: 'Generate report up to end of quarter',
-				value: '2024-03-31'
-			}
-		}
+				value: '2024-03-31',
+			},
+		},
 	})
-	@ApiQuery({ 
-		name: 'branchId', 
-		required: false, 
+	@ApiQuery({
+		name: 'branchId',
+		required: false,
 		description: 'Filter report by specific branch ID. Omit to include all branches in organization.',
 		example: '12',
 		examples: {
 			mainBranch: {
 				summary: '🏢 Main Branch',
 				description: 'Generate report for main branch only',
-				value: '1'
+				value: '1',
 			},
 			salesBranch: {
 				summary: '💼 Sales Branch',
 				description: 'Generate report for sales branch only',
-				value: '5'
+				value: '5',
 			},
 			techBranch: {
 				summary: '💻 Tech Branch',
 				description: 'Generate report for technology branch only',
-				value: '8'
-			}
-		}
+				value: '8',
+			},
+		},
 	})
-	@ApiQuery({ 
-		name: 'role', 
-		required: false, 
-		enum: AccessLevel, 
+	@ApiQuery({
+		name: 'role',
+		required: false,
+		enum: AccessLevel,
 		description: 'Filter report by specific role/access level. Omit to include all roles.',
 		example: 'USER',
 		examples: {
 			managers: {
 				summary: '👨‍💼 Managers Only',
 				description: 'Generate report for managers only',
-				value: 'MANAGER'
+				value: 'MANAGER',
 			},
 			regularUsers: {
 				summary: '👤 Regular Users',
 				description: 'Generate report for regular users only',
-				value: 'USER'
+				value: 'USER',
 			},
 			technicians: {
 				summary: '🔧 Technicians',
 				description: 'Generate report for technicians only',
-				value: 'TECHNICIAN'
-			}
-		}
+				value: 'TECHNICIAN',
+			},
+		},
 	})
 	@ApiQuery({
 		name: 'includeUserDetails',
 		required: false,
 		type: 'boolean',
-		description: 'Include individual user breakdowns and detailed metrics in the report. Set to false for summary-only reports.',
+		description:
+			'Include individual user breakdowns and detailed metrics in the report. Set to false for summary-only reports.',
 		example: true,
 		examples: {
 			detailedReport: {
 				summary: '📋 Detailed Report',
 				description: 'Include individual user breakdowns and detailed metrics',
-				value: true
+				value: true,
 			},
 			summaryOnly: {
 				summary: '📊 Summary Only',
 				description: 'Generate organization-level summary without individual details',
-				value: false
-			}
-		}
+				value: false,
+			},
+		},
 	})
 	@ApiOkResponse({
 		description: '✅ Organization attendance report generated successfully',
@@ -2753,18 +3123,30 @@ Generates comprehensive attendance reports with advanced analytics, multi-dimens
 								from: { type: 'string', example: '2024-01-01', description: 'Report start date' },
 								to: { type: 'string', example: '2024-03-31', description: 'Report end date' },
 								totalDays: { type: 'number', example: 90, description: 'Total days in report period' },
-								workingDays: { type: 'number', example: 65, description: 'Working days in report period' },
-								generatedAt: { type: 'string', example: '2024-04-01T10:30:00Z', description: 'Report generation timestamp' },
-								reportType: { type: 'string', example: 'COMPREHENSIVE', description: 'Type of report generated' },
+								workingDays: {
+									type: 'number',
+									example: 65,
+									description: 'Working days in report period',
+								},
+								generatedAt: {
+									type: 'string',
+									example: '2024-04-01T10:30:00Z',
+									description: 'Report generation timestamp',
+								},
+								reportType: {
+									type: 'string',
+									example: 'COMPREHENSIVE',
+									description: 'Type of report generated',
+								},
 								filters: {
 									type: 'object',
 									description: 'Applied filters for report generation',
 									properties: {
 										branchId: { type: 'string', example: '12', nullable: true },
 										role: { type: 'string', example: 'USER', nullable: true },
-										includeUserDetails: { type: 'boolean', example: true }
-									}
-								}
+										includeUserDetails: { type: 'boolean', example: true },
+									},
+								},
 							},
 						},
 						userMetrics: {
@@ -2779,11 +3161,27 @@ Generates comprehensive attendance reports with advanced analytics, multi-dimens
 										description: 'Basic user information',
 										properties: {
 											name: { type: 'string', example: 'John Doe', description: 'Full name' },
-											email: { type: 'string', example: 'john.doe@company.com', description: 'Email address' },
+											email: {
+												type: 'string',
+												example: 'john.doe@company.com',
+												description: 'Email address',
+											},
 											role: { type: 'string', example: 'USER', description: 'User role' },
-											branch: { type: 'string', example: 'Main Branch', description: 'Branch name' },
-											department: { type: 'string', example: 'Engineering', description: 'Department name' },
-											employeeId: { type: 'string', example: 'EMP001', description: 'Employee ID' }
+											branch: {
+												type: 'string',
+												example: 'Main Branch',
+												description: 'Branch name',
+											},
+											department: {
+												type: 'string',
+												example: 'Engineering',
+												description: 'Department name',
+											},
+											employeeId: {
+												type: 'string',
+												example: 'EMP001',
+												description: 'Employee ID',
+											},
 										},
 									},
 									metrics: {
@@ -2794,41 +3192,117 @@ Generates comprehensive attendance reports with advanced analytics, multi-dimens
 												type: 'object',
 												description: 'Total hours worked across different periods',
 												properties: {
-													reportPeriod: { type: 'number', example: 320.5, description: 'Total hours in report period' },
-													thisMonth: { type: 'number', example: 160.0, description: 'Hours worked this month' },
-													thisWeek: { type: 'number', example: 40.0, description: 'Hours worked this week' },
-													dailyAverage: { type: 'number', example: 8.0, description: 'Average hours per day' }
+													reportPeriod: {
+														type: 'number',
+														example: 320.5,
+														description: 'Total hours in report period',
+													},
+													thisMonth: {
+														type: 'number',
+														example: 160.0,
+														description: 'Hours worked this month',
+													},
+													thisWeek: {
+														type: 'number',
+														example: 40.0,
+														description: 'Hours worked this week',
+													},
+													dailyAverage: {
+														type: 'number',
+														example: 8.0,
+														description: 'Average hours per day',
+													},
 												},
 											},
 											totalShifts: {
 												type: 'object',
 												description: 'Total shifts worked across different periods',
 												properties: {
-													reportPeriod: { type: 'number', example: 45, description: 'Total shifts in report period' },
-													thisMonth: { type: 'number', example: 20, description: 'Shifts worked this month' },
-													thisWeek: { type: 'number', example: 5, description: 'Shifts worked this week' },
-													completed: { type: 'number', example: 42, description: 'Completed shifts' },
-													incomplete: { type: 'number', example: 3, description: 'Incomplete shifts' }
+													reportPeriod: {
+														type: 'number',
+														example: 45,
+														description: 'Total shifts in report period',
+													},
+													thisMonth: {
+														type: 'number',
+														example: 20,
+														description: 'Shifts worked this month',
+													},
+													thisWeek: {
+														type: 'number',
+														example: 5,
+														description: 'Shifts worked this week',
+													},
+													completed: {
+														type: 'number',
+														example: 42,
+														description: 'Completed shifts',
+													},
+													incomplete: {
+														type: 'number',
+														example: 3,
+														description: 'Incomplete shifts',
+													},
 												},
 											},
-											attendanceRate: { type: 'number', example: 96.5, description: 'Attendance rate percentage' },
-											punctualityRate: { type: 'number', example: 88.2, description: 'Punctuality rate percentage' },
-											averageHoursPerDay: { type: 'number', example: 7.8, description: 'Average hours per working day' },
-											attendanceStreak: { type: 'number', example: 12, description: 'Consecutive days with attendance' },
-											overtimeHours: { type: 'number', example: 25.5, description: 'Total overtime hours' },
-											breakTimeTotal: { type: 'number', example: 180, description: 'Total break time in minutes' }
+											attendanceRate: {
+												type: 'number',
+												example: 96.5,
+												description: 'Attendance rate percentage',
+											},
+											punctualityRate: {
+												type: 'number',
+												example: 88.2,
+												description: 'Punctuality rate percentage',
+											},
+											averageHoursPerDay: {
+												type: 'number',
+												example: 7.8,
+												description: 'Average hours per working day',
+											},
+											attendanceStreak: {
+												type: 'number',
+												example: 12,
+												description: 'Consecutive days with attendance',
+											},
+											overtimeHours: {
+												type: 'number',
+												example: 25.5,
+												description: 'Total overtime hours',
+											},
+											breakTimeTotal: {
+												type: 'number',
+												example: 180,
+												description: 'Total break time in minutes',
+											},
 										},
 									},
 									performance: {
 										type: 'object',
 										description: 'Performance indicators and insights',
 										properties: {
-											efficiency: { type: 'number', example: 87.5, description: 'Work efficiency percentage' },
-											consistency: { type: 'number', example: 92.0, description: 'Consistency score' },
-											trend: { type: 'string', example: 'IMPROVING', description: 'Performance trend' },
-											ranking: { type: 'number', example: 8, description: 'Performance ranking within organization' }
-										}
-									}
+											efficiency: {
+												type: 'number',
+												example: 87.5,
+												description: 'Work efficiency percentage',
+											},
+											consistency: {
+												type: 'number',
+												example: 92.0,
+												description: 'Consistency score',
+											},
+											trend: {
+												type: 'string',
+												example: 'IMPROVING',
+												description: 'Performance trend',
+											},
+											ranking: {
+												type: 'number',
+												example: 8,
+												description: 'Performance ranking within organization',
+											},
+										},
+									},
 								},
 							},
 						},
@@ -2840,39 +3314,115 @@ Generates comprehensive attendance reports with advanced analytics, multi-dimens
 									type: 'object',
 									description: 'High-level organizational summary',
 									properties: {
-										totalEmployees: { type: 'number', example: 125, description: 'Total employees in organization' },
-										activeEmployees: { type: 'number', example: 118, description: 'Active employees during period' },
-										totalHours: { type: 'number', example: 15750.5, description: 'Total hours worked' },
-										totalShifts: { type: 'number', example: 2250, description: 'Total shifts completed' },
-										overtimeHours: { type: 'number', example: 890.2, description: 'Total overtime hours' },
-										averageHoursPerEmployee: { type: 'number', example: 133.3, description: 'Average hours per employee' }
-									}
+										totalEmployees: {
+											type: 'number',
+											example: 125,
+											description: 'Total employees in organization',
+										},
+										activeEmployees: {
+											type: 'number',
+											example: 118,
+											description: 'Active employees during period',
+										},
+										totalHours: {
+											type: 'number',
+											example: 15750.5,
+											description: 'Total hours worked',
+										},
+										totalShifts: {
+											type: 'number',
+											example: 2250,
+											description: 'Total shifts completed',
+										},
+										overtimeHours: {
+											type: 'number',
+											example: 890.2,
+											description: 'Total overtime hours',
+										},
+										averageHoursPerEmployee: {
+											type: 'number',
+											example: 133.3,
+											description: 'Average hours per employee',
+										},
+									},
 								},
 								averageTimes: {
 									type: 'object',
 									description: 'Average timing patterns across organization',
 									properties: {
-										startTime: { type: 'string', example: '09:15:30', description: 'Average start time' },
-										endTime: { type: 'string', example: '17:45:20', description: 'Average end time' },
-										shiftDuration: { type: 'number', example: 8.5, description: 'Average shift duration in hours' },
-										breakDuration: { type: 'number', example: 1.0, description: 'Average break duration in hours' },
-										lunchDuration: { type: 'number', example: 0.75, description: 'Average lunch duration in hours' }
+										startTime: {
+											type: 'string',
+											example: '09:15:30',
+											description: 'Average start time',
+										},
+										endTime: {
+											type: 'string',
+											example: '17:45:20',
+											description: 'Average end time',
+										},
+										shiftDuration: {
+											type: 'number',
+											example: 8.5,
+											description: 'Average shift duration in hours',
+										},
+										breakDuration: {
+											type: 'number',
+											example: 1.0,
+											description: 'Average break duration in hours',
+										},
+										lunchDuration: {
+											type: 'number',
+											example: 0.75,
+											description: 'Average lunch duration in hours',
+										},
 									},
 								},
 								byBranch: {
-							type: 'array',
+									type: 'array',
 									description: 'Branch-level performance breakdown',
-							items: {
-								type: 'object',
-								properties: {
-											branchId: { type: 'string', example: '12', description: 'Branch identifier' },
-											branchName: { type: 'string', example: 'Main Branch', description: 'Branch name' },
-											employeeCount: { type: 'number', example: 45, description: 'Number of employees' },
-											totalHours: { type: 'number', example: 5680.5, description: 'Total branch hours' },
-											averageHoursPerEmployee: { type: 'number', example: 126.2, description: 'Average hours per employee' },
-											attendanceRate: { type: 'number', example: 94.8, description: 'Branch attendance rate' },
-											punctualityRate: { type: 'number', example: 89.5, description: 'Branch punctuality rate' },
-											performance: { type: 'string', example: 'ABOVE_AVERAGE', description: 'Branch performance rating' }
+									items: {
+										type: 'object',
+										properties: {
+											branchId: {
+												type: 'string',
+												example: '12',
+												description: 'Branch identifier',
+											},
+											branchName: {
+												type: 'string',
+												example: 'Main Branch',
+												description: 'Branch name',
+											},
+											employeeCount: {
+												type: 'number',
+												example: 45,
+												description: 'Number of employees',
+											},
+											totalHours: {
+												type: 'number',
+												example: 5680.5,
+												description: 'Total branch hours',
+											},
+											averageHoursPerEmployee: {
+												type: 'number',
+												example: 126.2,
+												description: 'Average hours per employee',
+											},
+											attendanceRate: {
+												type: 'number',
+												example: 94.8,
+												description: 'Branch attendance rate',
+											},
+											punctualityRate: {
+												type: 'number',
+												example: 89.5,
+												description: 'Branch punctuality rate',
+											},
+											performance: {
+												type: 'string',
+												example: 'ABOVE_AVERAGE',
+												description: 'Branch performance rating',
+											},
 										},
 									},
 								},
@@ -2883,26 +3433,78 @@ Generates comprehensive attendance reports with advanced analytics, multi-dimens
 										type: 'object',
 										properties: {
 											role: { type: 'string', example: 'USER', description: 'Employee role' },
-											employeeCount: { type: 'number', example: 85, description: 'Number of employees in role' },
-											totalHours: { type: 'number', example: 10200.5, description: 'Total role hours' },
-											averageHoursPerEmployee: { type: 'number', example: 120.0, description: 'Average hours per employee' },
-											attendanceRate: { type: 'number', example: 95.2, description: 'Role attendance rate' },
-											punctualityRate: { type: 'number', example: 87.8, description: 'Role punctuality rate' },
-											overtimeFrequency: { type: 'number', example: 32.5, description: 'Overtime frequency percentage' }
+											employeeCount: {
+												type: 'number',
+												example: 85,
+												description: 'Number of employees in role',
+											},
+											totalHours: {
+												type: 'number',
+												example: 10200.5,
+												description: 'Total role hours',
+											},
+											averageHoursPerEmployee: {
+												type: 'number',
+												example: 120.0,
+												description: 'Average hours per employee',
+											},
+											attendanceRate: {
+												type: 'number',
+												example: 95.2,
+												description: 'Role attendance rate',
+											},
+											punctualityRate: {
+												type: 'number',
+												example: 87.8,
+												description: 'Role punctuality rate',
+											},
+											overtimeFrequency: {
+												type: 'number',
+												example: 32.5,
+												description: 'Overtime frequency percentage',
+											},
 										},
 									},
 								},
 								insights: {
-										type: 'object',
+									type: 'object',
 									description: 'Advanced analytics and insights',
-										properties: {
-										attendanceRate: { type: 'number', example: 95.2, description: 'Overall attendance rate' },
-										punctualityRate: { type: 'number', example: 88.7, description: 'Overall punctuality rate' },
-										averageHoursPerDay: { type: 'number', example: 7.9, description: 'Average hours per day' },
-										peakCheckInTime: { type: 'string', example: '08:45:00', description: 'Most common check-in time' },
-										peakCheckOutTime: { type: 'string', example: '17:30:00', description: 'Most common check-out time' },
-										productivityScore: { type: 'number', example: 89.3, description: 'Overall productivity score' },
-										efficiencyTrend: { type: 'string', example: 'STABLE', description: 'Efficiency trend analysis' },
+									properties: {
+										attendanceRate: {
+											type: 'number',
+											example: 95.2,
+											description: 'Overall attendance rate',
+										},
+										punctualityRate: {
+											type: 'number',
+											example: 88.7,
+											description: 'Overall punctuality rate',
+										},
+										averageHoursPerDay: {
+											type: 'number',
+											example: 7.9,
+											description: 'Average hours per day',
+										},
+										peakCheckInTime: {
+											type: 'string',
+											example: '08:45:00',
+											description: 'Most common check-in time',
+										},
+										peakCheckOutTime: {
+											type: 'string',
+											example: '17:30:00',
+											description: 'Most common check-out time',
+										},
+										productivityScore: {
+											type: 'number',
+											example: 89.3,
+											description: 'Overall productivity score',
+										},
+										efficiencyTrend: {
+											type: 'string',
+											example: 'STABLE',
+											description: 'Efficiency trend analysis',
+										},
 										recommendations: {
 											type: 'array',
 											description: 'AI-generated recommendations for improvement',
@@ -2910,21 +3512,37 @@ Generates comprehensive attendance reports with advanced analytics, multi-dimens
 											example: [
 												'Consider flexible start times to improve punctuality',
 												'Implement break time optimization for better efficiency',
-												'Focus on specific branch performance improvements'
-											]
-										}
+												'Focus on specific branch performance improvements',
+											],
+										},
 									},
 								},
 								compliance: {
 									type: 'object',
 									description: 'Compliance and regulatory metrics',
 									properties: {
-										laborLawCompliance: { type: 'number', example: 98.5, description: 'Labor law compliance percentage' },
-										breakPolicyAdherence: { type: 'number', example: 94.2, description: 'Break policy adherence percentage' },
-										overtimeCompliance: { type: 'number', example: 96.8, description: 'Overtime policy compliance percentage' },
-										documentationCompleteness: { type: 'number', example: 99.1, description: 'Documentation completeness percentage' }
-									}
-								}
+										laborLawCompliance: {
+											type: 'number',
+											example: 98.5,
+											description: 'Labor law compliance percentage',
+										},
+										breakPolicyAdherence: {
+											type: 'number',
+											example: 94.2,
+											description: 'Break policy adherence percentage',
+										},
+										overtimeCompliance: {
+											type: 'number',
+											example: 96.8,
+											description: 'Overtime policy compliance percentage',
+										},
+										documentationCompleteness: {
+											type: 'number',
+											example: 99.1,
+											description: 'Documentation completeness percentage',
+										},
+									},
+								},
 							},
 						},
 					},
@@ -2933,12 +3551,20 @@ Generates comprehensive attendance reports with advanced analytics, multi-dimens
 					type: 'object',
 					description: 'Advanced analytics and performance insights',
 					properties: {
-						generationTime: { type: 'number', example: 1.25, description: 'Report generation time in seconds' },
+						generationTime: {
+							type: 'number',
+							example: 1.25,
+							description: 'Report generation time in seconds',
+						},
 						dataPoints: { type: 'number', example: 15680, description: 'Number of data points analyzed' },
 						cacheStatus: { type: 'string', example: 'GENERATED', description: 'Cache status for report' },
-						nextRefresh: { type: 'string', example: '2024-04-01T10:35:00Z', description: 'Next scheduled refresh time' }
-					}
-				}
+						nextRefresh: {
+							type: 'string',
+							example: '2024-04-01T10:35:00Z',
+							description: 'Next scheduled refresh time',
+						},
+					},
+				},
 			},
 		},
 	})
@@ -2957,8 +3583,8 @@ Generates comprehensive attendance reports with advanced analytics, multi-dimens
 						'Invalid date format: dateFrom must be YYYY-MM-DD',
 						'End date must be after start date',
 						'Branch ID must be a valid number',
-						'Role must be a valid AccessLevel enum value'
-					]
+						'Role must be a valid AccessLevel enum value',
+					],
 				},
 				suggestions: {
 					type: 'array',
@@ -2967,9 +3593,9 @@ Generates comprehensive attendance reports with advanced analytics, multi-dimens
 						'Use YYYY-MM-DD format for date parameters',
 						'Ensure end date is after start date',
 						'Verify branch ID exists in organization',
-						'Check available roles for your access level'
-					]
-				}
+						'Check available roles for your access level',
+					],
+				},
 			},
 		},
 	})
@@ -2984,8 +3610,8 @@ Generates comprehensive attendance reports with advanced analytics, multi-dimens
 				requiredRoles: {
 					type: 'array',
 					items: { type: 'string' },
-					example: ['ADMIN', 'MANAGER', 'HR']
-				}
+					example: ['ADMIN', 'MANAGER', 'HR'],
+				},
 			},
 		},
 	})
@@ -3000,8 +3626,8 @@ Generates comprehensive attendance reports with advanced analytics, multi-dimens
 				accessibleBranches: {
 					type: 'array',
 					items: { type: 'string' },
-					example: ['Main Branch', 'Sales Branch']
-				}
+					example: ['Main Branch', 'Sales Branch'],
+				},
 			},
 		},
 	})
@@ -3021,10 +3647,10 @@ Generates comprehensive attendance reports with advanced analytics, multi-dimens
 						availableBranches: {
 							type: 'array',
 							items: { type: 'string' },
-							example: ['Main Branch', 'Sales Branch', 'Tech Branch']
-						}
-					}
-				}
+							example: ['Main Branch', 'Sales Branch', 'Tech Branch'],
+						},
+					},
+				},
 			},
 		},
 	})
@@ -3037,7 +3663,7 @@ Generates comprehensive attendance reports with advanced analytics, multi-dimens
 				error: { type: 'string', example: 'Internal Server Error' },
 				statusCode: { type: 'number', example: 500 },
 				retryable: { type: 'boolean', example: true },
-				estimatedRetryTime: { type: 'string', example: '2024-04-01T10:35:00Z' }
+				estimatedRetryTime: { type: 'string', example: '2024-04-01T10:35:00Z' },
 			},
 		},
 	})
@@ -3112,7 +3738,7 @@ Triggers the generation and distribution of comprehensive morning attendance rep
 - **Audit Trail**: Complete logging of report generation and distribution activities
 - **Encryption**: Secure transmission and storage of sensitive attendance information
 - **Retention Policies**: Automated data retention and archival according to compliance requirements
-		`
+		`,
 	})
 	@ApiCreatedResponse({
 		description: '✅ Morning attendance report sent successfully',
@@ -3120,10 +3746,18 @@ Triggers the generation and distribution of comprehensive morning attendance rep
 			type: 'object',
 			properties: {
 				message: { type: 'string', example: 'Morning attendance report sent successfully' },
-				recipients: { type: 'number', example: 8, description: 'Total number of recipients who received the report' },
-				reportId: { type: 'string', example: 'MORNING-2024-03-15-001', description: 'Unique report identifier' },
+				recipients: {
+					type: 'number',
+					example: 8,
+					description: 'Total number of recipients who received the report',
+				},
+				reportId: {
+					type: 'string',
+					example: 'MORNING-2024-03-15-001',
+					description: 'Unique report identifier',
+				},
 				generatedAt: { type: 'string', format: 'date-time', example: '2024-03-15T07:30:00Z' },
-				timestamp: { type: 'string', format: 'date-time', example: '2024-03-15T07:30:00Z' }
+				timestamp: { type: 'string', format: 'date-time', example: '2024-03-15T07:30:00Z' },
 			},
 		},
 	})
@@ -3143,8 +3777,8 @@ Triggers the generation and distribution of comprehensive morning attendance rep
 						'No attendance data available for today',
 						'Organization configuration incomplete',
 						'Email service unavailable',
-						'No recipients configured for morning reports'
-					]
+						'No recipients configured for morning reports',
+					],
 				},
 				suggestions: {
 					type: 'array',
@@ -3153,9 +3787,9 @@ Triggers the generation and distribution of comprehensive morning attendance rep
 						'Verify organization has active employees with attendance data',
 						'Check email service configuration and status',
 						'Ensure recipient list is properly configured',
-						'Verify organization settings are complete'
-					]
-				}
+						'Verify organization settings are complete',
+					],
+				},
 			},
 		},
 	})
@@ -3170,13 +3804,13 @@ Triggers the generation and distribution of comprehensive morning attendance rep
 				requiredRoles: {
 					type: 'array',
 					items: { type: 'string' },
-					example: ['ADMIN', 'OWNER', 'HR']
+					example: ['ADMIN', 'OWNER', 'HR'],
 				},
 				permissions: {
 					type: 'array',
 					items: { type: 'string' },
-					example: ['reports:send', 'attendance:view_organization', 'notifications:send']
-				}
+					example: ['reports:send', 'attendance:view_organization', 'notifications:send'],
+				},
 			},
 		},
 	})
@@ -3194,9 +3828,9 @@ Triggers the generation and distribution of comprehensive morning attendance rep
 					example: [
 						'Organization-level reporting requires elevated permissions',
 						'Branch-level users cannot access organization reports',
-						'Report distribution requires HR or Admin role'
-					]
-				}
+						'Report distribution requires HR or Admin role',
+					],
+				},
 			},
 		},
 	})
@@ -3212,21 +3846,50 @@ Triggers the generation and distribution of comprehensive morning attendance rep
 					type: 'object',
 					description: 'Technical error information',
 					properties: {
-						component: { type: 'string', example: 'REPORT_GENERATOR', description: 'Component where error occurred' },
-						stage: { type: 'string', example: 'EMAIL_DELIVERY', description: 'Stage of process where error occurred' },
-						retryable: { type: 'boolean', example: true, description: 'Whether the operation can be retried' },
-						estimatedRetryTime: { type: 'string', format: 'date-time', example: '2024-03-15T07:35:00Z', description: 'Estimated time for retry' }
-					}
+						component: {
+							type: 'string',
+							example: 'REPORT_GENERATOR',
+							description: 'Component where error occurred',
+						},
+						stage: {
+							type: 'string',
+							example: 'EMAIL_DELIVERY',
+							description: 'Stage of process where error occurred',
+						},
+						retryable: {
+							type: 'boolean',
+							example: true,
+							description: 'Whether the operation can be retried',
+						},
+						estimatedRetryTime: {
+							type: 'string',
+							format: 'date-time',
+							example: '2024-03-15T07:35:00Z',
+							description: 'Estimated time for retry',
+						},
+					},
 				},
 				supportInfo: {
 					type: 'object',
 					description: 'Support and troubleshooting information',
 					properties: {
-						incidentId: { type: 'string', example: 'INC-2024-03-15-001', description: 'Support incident identifier' },
-						supportContact: { type: 'string', example: 'support@company.com', description: 'Support contact information' },
-						expectedResolution: { type: 'string', example: '30 minutes', description: 'Expected resolution time' }
-					}
-				}
+						incidentId: {
+							type: 'string',
+							example: 'INC-2024-03-15-001',
+							description: 'Support incident identifier',
+						},
+						supportContact: {
+							type: 'string',
+							example: 'support@company.com',
+							description: 'Support contact information',
+						},
+						expectedResolution: {
+							type: 'string',
+							example: '30 minutes',
+							description: 'Expected resolution time',
+						},
+					},
+				},
 			},
 		},
 	})
@@ -3315,7 +3978,7 @@ Triggers the generation and distribution of comprehensive evening attendance rep
 - **Audit Trail**: Complete logging of report generation and distribution activities
 - **Secure Transmission**: Encrypted delivery and storage of sensitive performance information
 - **Retention Management**: Automated data retention and archival according to compliance requirements
-		`
+		`,
 	})
 	@ApiCreatedResponse({
 		description: '✅ Evening attendance report sent successfully',
@@ -3323,20 +3986,45 @@ Triggers the generation and distribution of comprehensive evening attendance rep
 			type: 'object',
 			properties: {
 				message: { type: 'string', example: 'Evening attendance report sent successfully' },
-				recipients: { type: 'number', example: 8, description: 'Total number of recipients who received the report' },
-				reportId: { type: 'string', example: 'EVENING-2024-03-15-001', description: 'Unique report identifier' },
-				generatedAt: { type: 'string', format: 'date-time', example: '2024-03-15T18:00:00Z', description: 'Report generation timestamp' },
+				recipients: {
+					type: 'number',
+					example: 8,
+					description: 'Total number of recipients who received the report',
+				},
+				reportId: {
+					type: 'string',
+					example: 'EVENING-2024-03-15-001',
+					description: 'Unique report identifier',
+				},
+				generatedAt: {
+					type: 'string',
+					format: 'date-time',
+					example: '2024-03-15T18:00:00Z',
+					description: 'Report generation timestamp',
+				},
 				reportSummary: {
 					type: 'object',
 					description: 'End-of-day attendance summary',
 					properties: {
 						totalEmployees: { type: 'number', example: 125, description: 'Total employees tracked' },
-						completedShifts: { type: 'number', example: 118, description: 'Employees who completed their shifts' },
+						completedShifts: {
+							type: 'number',
+							example: 118,
+							description: 'Employees who completed their shifts',
+						},
 						activeEmployees: { type: 'number', example: 3, description: 'Employees still active/working' },
 						overtimeEmployees: { type: 'number', example: 15, description: 'Employees working overtime' },
-						averageShiftDuration: { type: 'string', example: '8h 25m', description: 'Average shift duration' },
-						totalProductiveHours: { type: 'number', example: 987.5, description: 'Total productive hours for the day' }
-					}
+						averageShiftDuration: {
+							type: 'string',
+							example: '8h 25m',
+							description: 'Average shift duration',
+						},
+						totalProductiveHours: {
+							type: 'number',
+							example: 987.5,
+							description: 'Total productive hours for the day',
+						},
+					},
 				},
 				deliveryChannels: {
 					type: 'object',
@@ -3345,10 +4033,10 @@ Triggers the generation and distribution of comprehensive evening attendance rep
 						email: { type: 'number', example: 8, description: 'Reports sent via email' },
 						dashboard: { type: 'number', example: 3, description: 'Dashboards updated' },
 						slack: { type: 'number', example: 2, description: 'Slack notifications sent' },
-						mobile: { type: 'number', example: 5, description: 'Mobile notifications sent' }
-					}
+						mobile: { type: 'number', example: 5, description: 'Mobile notifications sent' },
+					},
 				},
-				timestamp: { type: 'string', format: 'date-time', example: '2024-03-15T18:00:00Z' }
+				timestamp: { type: 'string', format: 'date-time', example: '2024-03-15T18:00:00Z' },
 			},
 		},
 	})
@@ -3372,13 +4060,13 @@ Triggers the generation and distribution of comprehensive evening attendance rep
 				requiredRoles: {
 					type: 'array',
 					items: { type: 'string' },
-					example: ['ADMIN', 'OWNER', 'HR']
+					example: ['ADMIN', 'OWNER', 'HR'],
 				},
 				permissions: {
 					type: 'array',
 					items: { type: 'string' },
-					example: ['reports:send', 'attendance:view_organization', 'notifications:send']
-				}
+					example: ['reports:send', 'attendance:view_organization', 'notifications:send'],
+				},
 			},
 		},
 	})
@@ -3396,9 +4084,9 @@ Triggers the generation and distribution of comprehensive evening attendance rep
 					example: [
 						'Organization-level reporting requires elevated permissions',
 						'Branch-level users cannot access organization reports',
-						'Report distribution requires HR or Admin role'
-					]
-				}
+						'Report distribution requires HR or Admin role',
+					],
+				},
 			},
 		},
 	})
@@ -3414,21 +4102,50 @@ Triggers the generation and distribution of comprehensive evening attendance rep
 					type: 'object',
 					description: 'Technical error information',
 					properties: {
-						component: { type: 'string', example: 'REPORT_GENERATOR', description: 'Component where error occurred' },
-						stage: { type: 'string', example: 'EMAIL_DELIVERY', description: 'Stage of process where error occurred' },
-						retryable: { type: 'boolean', example: true, description: 'Whether the operation can be retried' },
-						estimatedRetryTime: { type: 'string', format: 'date-time', example: '2024-03-15T07:35:00Z', description: 'Estimated time for retry' }
-					}
+						component: {
+							type: 'string',
+							example: 'REPORT_GENERATOR',
+							description: 'Component where error occurred',
+						},
+						stage: {
+							type: 'string',
+							example: 'EMAIL_DELIVERY',
+							description: 'Stage of process where error occurred',
+						},
+						retryable: {
+							type: 'boolean',
+							example: true,
+							description: 'Whether the operation can be retried',
+						},
+						estimatedRetryTime: {
+							type: 'string',
+							format: 'date-time',
+							example: '2024-03-15T07:35:00Z',
+							description: 'Estimated time for retry',
+						},
+					},
 				},
 				supportInfo: {
 					type: 'object',
 					description: 'Support and troubleshooting information',
 					properties: {
-						incidentId: { type: 'string', example: 'INC-2024-03-15-001', description: 'Support incident identifier' },
-						supportContact: { type: 'string', example: 'support@company.com', description: 'Support contact information' },
-						expectedResolution: { type: 'string', example: '30 minutes', description: 'Expected resolution time' }
-					}
-				}
+						incidentId: {
+							type: 'string',
+							example: 'INC-2024-03-15-001',
+							description: 'Support incident identifier',
+						},
+						supportContact: {
+							type: 'string',
+							example: 'support@company.com',
+							description: 'Support contact information',
+						},
+						expectedResolution: {
+							type: 'string',
+							example: '30 minutes',
+							description: 'Expected resolution time',
+						},
+					},
+				},
 			},
 		},
 	})
@@ -3496,7 +4213,7 @@ Generates and sends a comprehensive attendance report of the specified type (mor
 - **Secure Delivery**: Encrypted email transmission and secure API responses
 - **Access Logging**: Complete audit trail of report requests and deliveries
 - **Data Protection**: Full compliance with privacy and data protection regulations
-		`
+		`,
 	})
 	@ApiBody({
 		type: RequestReportDto,
@@ -3506,17 +4223,17 @@ Generates and sends a comprehensive attendance report of the specified type (mor
 				summary: '🌅 Morning Report Request',
 				description: 'Request morning attendance report with punctuality analysis',
 				value: {
-					reportType: 'morning'
-				}
+					reportType: 'morning',
+				},
 			},
 			eveningReport: {
 				summary: '🌆 Evening Report Request',
 				description: 'Request evening attendance report with completion metrics',
 				value: {
-					reportType: 'evening'
-				}
-			}
-		}
+					reportType: 'evening',
+				},
+			},
+		},
 	})
 	@ApiCreatedResponse({
 		description: '✅ Attendance report generated and sent successfully',
@@ -3525,8 +4242,17 @@ Generates and sends a comprehensive attendance report of the specified type (mor
 			properties: {
 				message: { type: 'string', example: 'Morning attendance report generated and sent successfully' },
 				reportType: { type: 'string', example: 'morning', description: 'Type of report that was generated' },
-				sentTo: { type: 'string', example: 'manager@company.com', description: 'Email address where report was sent' },
-				generatedAt: { type: 'string', format: 'date-time', example: '2024-03-15T10:30:00Z', description: 'Report generation timestamp' },
+				sentTo: {
+					type: 'string',
+					example: 'manager@company.com',
+					description: 'Email address where report was sent',
+				},
+				generatedAt: {
+					type: 'string',
+					format: 'date-time',
+					example: '2024-03-15T10:30:00Z',
+					description: 'Report generation timestamp',
+				},
 				organizationId: { type: 'number', example: 123, description: 'Organization ID for the report' },
 				reportData: {
 					type: 'object',
@@ -3540,21 +4266,27 @@ Generates and sends a comprehensive attendance report of the specified type (mor
 								totalEmployees: { type: 'number', example: 125 },
 								presentCount: { type: 'number', example: 118 },
 								attendanceRate: { type: 'number', example: 94.4 },
-								totalActualHours: { type: 'number', example: 987.5 }
-							}
+								totalActualHours: { type: 'number', example: 987.5 },
+							},
 						},
 						insights: {
 							type: 'array',
 							items: { type: 'string' },
-							example: ['Excellent attendance: 118/125 team present (94.4%)', 'Perfect punctuality: All present employees arrived on time']
+							example: [
+								'Excellent attendance: 118/125 team present (94.4%)',
+								'Perfect punctuality: All present employees arrived on time',
+							],
 						},
 						recommendations: {
 							type: 'array',
 							items: { type: 'string' },
-							example: ['Continue current successful practices', 'Recognize punctual team members for their reliability']
-						}
-					}
-				}
+							example: [
+								'Continue current successful practices',
+								'Recognize punctual team members for their reliability',
+							],
+						},
+					},
+				},
 			},
 		},
 	})
@@ -3569,8 +4301,8 @@ Generates and sends a comprehensive attendance report of the specified type (mor
 				validTypes: {
 					type: 'array',
 					items: { type: 'string' },
-					example: ['morning', 'evening']
-				}
+					example: ['morning', 'evening'],
+				},
 			},
 		},
 	})
@@ -3585,8 +4317,8 @@ Generates and sends a comprehensive attendance report of the specified type (mor
 				requiredRoles: {
 					type: 'array',
 					items: { type: 'string' },
-					example: ['ADMIN', 'OWNER', 'HR', 'MANAGER']
-				}
+					example: ['ADMIN', 'OWNER', 'HR', 'MANAGER'],
+				},
 			},
 		},
 	})
@@ -3597,7 +4329,7 @@ Generates and sends a comprehensive attendance report of the specified type (mor
 			properties: {
 				message: { type: 'string', example: 'Access denied to attendance reporting features' },
 				error: { type: 'string', example: 'Forbidden' },
-				statusCode: { type: 'number', example: 403 }
+				statusCode: { type: 'number', example: 403 },
 			},
 		},
 	})
@@ -3608,14 +4340,11 @@ Generates and sends a comprehensive attendance report of the specified type (mor
 			properties: {
 				message: { type: 'string', example: 'Report generation failed due to system error' },
 				error: { type: 'string', example: 'Internal Server Error' },
-				statusCode: { type: 'number', example: 500 }
+				statusCode: { type: 'number', example: 500 },
 			},
 		},
 	})
-	async requestAttendanceReport(
-		@Body() requestDto: RequestReportDto,
-		@Req() req: AuthenticatedRequest,
-	) {
+	async requestAttendanceReport(@Body() requestDto: RequestReportDto, @Req() req: AuthenticatedRequest) {
 		try {
 			const orgId = req.user?.org?.uid || req.user?.organisationRef;
 			const userId = req.user?.uid;
@@ -3630,7 +4359,7 @@ Generates and sends a comprehensive attendance report of the specified type (mor
 
 			// Get user details including email
 			const userResult = await this.userService.findOneByUid(userId);
-			
+
 			if (!userResult.user || !userResult.user.email) {
 				return { message: 'User email not found', statusCode: 400 };
 			}
@@ -3639,15 +4368,15 @@ Generates and sends a comprehensive attendance report of the specified type (mor
 			const { reportType } = requestDto;
 
 			if (!['morning', 'evening'].includes(reportType)) {
-				return { 
-					message: 'Invalid report type specified', 
+				return {
+					message: 'Invalid report type specified',
 					statusCode: 400,
-					validTypes: ['morning', 'evening']
+					validTypes: ['morning', 'evening'],
 				};
 			}
 
 			let reportData;
-			
+
 			if (reportType === 'morning') {
 				reportData = await this.attendanceReportsService.generateAndSendMorningReportToUser(orgId, userEmail);
 			} else {
@@ -3655,7 +4384,9 @@ Generates and sends a comprehensive attendance report of the specified type (mor
 			}
 
 			return {
-				message: `${reportType.charAt(0).toUpperCase() + reportType.slice(1)} attendance report generated and sent successfully`,
+				message: `${
+					reportType.charAt(0).toUpperCase() + reportType.slice(1)
+				} attendance report generated and sent successfully`,
 				reportType,
 				sentTo: userEmail,
 				generatedAt: new Date().toISOString(),
@@ -3736,7 +4467,7 @@ Manually triggers the overtime policy check system to identify employees working
 - **Audit Trail**: Complete logging of overtime checks and policy enforcement actions
 - **Regulatory Compliance**: Adherence to labor law requirements and industry standards
 - **Privacy Protection**: Safeguarding of employee privacy while maintaining compliance monitoring
-		`
+		`,
 	})
 	@ApiCreatedResponse({
 		description: '✅ Overtime policy check completed successfully',
@@ -3749,43 +4480,96 @@ Manually triggers the overtime policy check system to identify employees working
 					type: 'object',
 					description: 'Summary of overtime violations detected',
 					properties: {
-						totalViolations: { type: 'number', example: 8, description: 'Total overtime policy violations detected' },
+						totalViolations: {
+							type: 'number',
+							example: 8,
+							description: 'Total overtime policy violations detected',
+						},
 						dailyViolations: { type: 'number', example: 5, description: 'Daily overtime limit violations' },
-						weeklyViolations: { type: 'number', example: 3, description: 'Weekly overtime limit violations' },
+						weeklyViolations: {
+							type: 'number',
+							example: 3,
+							description: 'Weekly overtime limit violations',
+						},
 						breakViolations: { type: 'number', example: 2, description: 'Mandatory break violations' },
-						consecutiveDaysViolations: { type: 'number', example: 1, description: 'Consecutive work days violations' }
-					}
+						consecutiveDaysViolations: {
+							type: 'number',
+							example: 1,
+							description: 'Consecutive work days violations',
+						},
+					},
 				},
 				notificationsSent: {
 					type: 'object',
 					description: 'Notifications sent as a result of the check',
 					properties: {
-						employeeNotifications: { type: 'number', example: 8, description: 'Notifications sent to employees' },
-						managerNotifications: { type: 'number', example: 3, description: 'Notifications sent to managers' },
+						employeeNotifications: {
+							type: 'number',
+							example: 8,
+							description: 'Notifications sent to employees',
+						},
+						managerNotifications: {
+							type: 'number',
+							example: 3,
+							description: 'Notifications sent to managers',
+						},
 						hrNotifications: { type: 'number', example: 1, description: 'Notifications sent to HR' },
-						executiveAlerts: { type: 'number', example: 1, description: 'Alerts sent to executives' }
-					}
+						executiveAlerts: { type: 'number', example: 1, description: 'Alerts sent to executives' },
+					},
 				},
 				complianceStatus: {
 					type: 'object',
 					description: 'Overall compliance status after the check',
 					properties: {
-						complianceRate: { type: 'number', example: 93.6, description: 'Percentage of employees in compliance' },
-						riskLevel: { type: 'string', example: 'LOW', description: 'Overall risk level (LOW, MEDIUM, HIGH)' },
-						immediateActions: { type: 'number', example: 2, description: 'Number of immediate actions required' },
-						followUpRequired: { type: 'number', example: 5, description: 'Number of cases requiring follow-up' }
-					}
+						complianceRate: {
+							type: 'number',
+							example: 93.6,
+							description: 'Percentage of employees in compliance',
+						},
+						riskLevel: {
+							type: 'string',
+							example: 'LOW',
+							description: 'Overall risk level (LOW, MEDIUM, HIGH)',
+						},
+						immediateActions: {
+							type: 'number',
+							example: 2,
+							description: 'Number of immediate actions required',
+						},
+						followUpRequired: {
+							type: 'number',
+							example: 5,
+							description: 'Number of cases requiring follow-up',
+						},
+					},
 				},
 				processingDetails: {
 					type: 'object',
 					description: 'Details about the check processing',
 					properties: {
-						checkId: { type: 'string', example: 'OT-CHECK-2024-03-15-001', description: 'Unique check identifier' },
-						processingTime: { type: 'string', example: '2.3 seconds', description: 'Time taken to complete the check' },
-						triggeredBy: { type: 'string', example: 'John Manager', description: 'User who triggered the check' },
-						timestamp: { type: 'string', format: 'date-time', example: '2024-03-15T16:30:00Z', description: 'Check completion timestamp' }
-					}
-				}
+						checkId: {
+							type: 'string',
+							example: 'OT-CHECK-2024-03-15-001',
+							description: 'Unique check identifier',
+						},
+						processingTime: {
+							type: 'string',
+							example: '2.3 seconds',
+							description: 'Time taken to complete the check',
+						},
+						triggeredBy: {
+							type: 'string',
+							example: 'John Manager',
+							description: 'User who triggered the check',
+						},
+						timestamp: {
+							type: 'string',
+							format: 'date-time',
+							example: '2024-03-15T16:30:00Z',
+							description: 'Check completion timestamp',
+						},
+					},
+				},
 			},
 		},
 	})
@@ -3804,8 +4588,8 @@ Manually triggers the overtime policy check system to identify employees working
 					example: [
 						'No employees currently checked in',
 						'Overtime policies not configured',
-						'System time synchronization issues'
-					]
+						'System time synchronization issues',
+					],
 				},
 				suggestions: {
 					type: 'array',
@@ -3813,9 +4597,9 @@ Manually triggers the overtime policy check system to identify employees working
 					example: [
 						'Verify employees are checked in for the day',
 						'Configure overtime policies in system settings',
-						'Check system time synchronization'
-					]
-				}
+						'Check system time synchronization',
+					],
+				},
 			},
 		},
 	})
@@ -3830,13 +4614,13 @@ Manually triggers the overtime policy check system to identify employees working
 				requiredRoles: {
 					type: 'array',
 					items: { type: 'string' },
-					example: ['ADMIN', 'OWNER', 'MANAGER']
+					example: ['ADMIN', 'OWNER', 'MANAGER'],
 				},
 				permissions: {
 					type: 'array',
 					items: { type: 'string' },
-					example: ['overtime:check', 'attendance:manage', 'policies:enforce']
-				}
+					example: ['overtime:check', 'attendance:manage', 'policies:enforce'],
+				},
 			},
 		},
 	})
@@ -3854,9 +4638,9 @@ Manually triggers the overtime policy check system to identify employees working
 					example: [
 						'Overtime policy management requires management-level access',
 						'Branch-level users cannot trigger organization-wide checks',
-						'Policy enforcement requires HR or Admin role'
-					]
-				}
+						'Policy enforcement requires HR or Admin role',
+					],
+				},
 			},
 		},
 	})
@@ -3872,24 +4656,137 @@ Manually triggers the overtime policy check system to identify employees working
 					type: 'object',
 					description: 'Technical error information',
 					properties: {
-						component: { type: 'string', example: 'OVERTIME_SERVICE', description: 'Component where error occurred' },
-						stage: { type: 'string', example: 'POLICY_EVALUATION', description: 'Stage of process where error occurred' },
-						affectedEmployees: { type: 'number', example: 125, description: 'Number of employees affected by the error' },
-						retryable: { type: 'boolean', example: true, description: 'Whether the operation can be retried' }
-					}
+						component: {
+							type: 'string',
+							example: 'OVERTIME_SERVICE',
+							description: 'Component where error occurred',
+						},
+						stage: {
+							type: 'string',
+							example: 'POLICY_EVALUATION',
+							description: 'Stage of process where error occurred',
+						},
+						affectedEmployees: {
+							type: 'number',
+							example: 125,
+							description: 'Number of employees affected by the error',
+						},
+						retryable: {
+							type: 'boolean',
+							example: true,
+							description: 'Whether the operation can be retried',
+						},
+					},
 				},
 				supportInfo: {
 					type: 'object',
 					description: 'Support and troubleshooting information',
 					properties: {
-						incidentId: { type: 'string', example: 'INC-2024-03-15-002', description: 'Support incident identifier' },
-						supportContact: { type: 'string', example: 'support@company.com', description: 'Support contact information' },
-						expectedResolution: { type: 'string', example: '15 minutes', description: 'Expected resolution time' }
-					}
-				}
+						incidentId: {
+							type: 'string',
+							example: 'INC-2024-03-15-002',
+							description: 'Support incident identifier',
+						},
+						supportContact: {
+							type: 'string',
+							example: 'support@company.com',
+							description: 'Support contact information',
+						},
+						expectedResolution: {
+							type: 'string',
+							example: '15 minutes',
+							description: 'Expected resolution time',
+						},
+					},
+				},
 			},
 		},
 	})
+	@Get('metrics/user/:ref')
+	@ApiOperation({
+		summary: 'Get user attendance metrics for a date range',
+		description:
+			'Retrieves detailed attendance metrics and performance insights for a specific user within a date range',
+	})
+	@ApiParam({ name: 'ref', description: 'User ID', type: 'number' })
+	@ApiQuery({ name: 'startDate', description: 'Start date (YYYY-MM-DD)', required: true })
+	@ApiQuery({ name: 'endDate', description: 'End date (YYYY-MM-DD)', required: true })
+	@ApiQuery({
+		name: 'includeInsights',
+		description: 'Include performance insights',
+		required: false,
+		type: 'boolean',
+	})
+	@ApiOkResponse({
+		description: 'User metrics retrieved successfully',
+		type: UserMetricsResponseDto,
+	})
+	@ApiBadRequestResponse({ description: 'Invalid parameters provided' })
+	@ApiNotFoundResponse({ description: 'User not found' })
+	@UseGuards(AuthGuard, RoleGuard)
+	@Roles(AccessLevel.USER, AccessLevel.ADMIN, AccessLevel.OWNER)
+	async getUserMetrics(
+		@Param('ref') ref: number,
+		@Query('startDate') startDate: string,
+		@Query('endDate') endDate: string,
+		@Query('includeInsights') includeInsights: boolean = true,
+		@Req() req: AuthenticatedRequest,
+	): Promise<UserMetricsResponseDto> {
+		// Validate access - users can only view their own metrics unless they're admin/owner
+		if (
+			req.user.accessLevel !== AccessLevel.ADMIN &&
+			req.user.accessLevel !== AccessLevel.OWNER &&
+			req.user.uid !== Number(ref)
+		) {
+			throw new Error("You do not have permission to view this user's metrics");
+		}
+
+		return this.attendanceService.getUserMetricsForDateRange(
+			Number(ref),
+			startDate,
+			endDate,
+			typeof includeInsights === 'string' ? (includeInsights === 'false' ? false : true) : includeInsights,
+		);
+	}
+
+	@Get('report/:ref/:startDate/:endDate')
+	@ApiOperation({
+		summary: 'Get user attendance metrics for a specific date range',
+		description:
+			'Retrieves detailed attendance metrics and performance insights for a specific user within a date range using path parameters',
+	})
+	@ApiParam({ name: 'ref', description: 'User ID', type: 'number' })
+	@ApiParam({ name: 'startDate', description: 'Start date (YYYY-MM-DD)', type: 'string' })
+	@ApiParam({ name: 'endDate', description: 'End date (YYYY-MM-DD)', type: 'string' })
+	@ApiQuery({
+		name: 'includeInsights',
+		description: 'Include performance insights',
+		required: false,
+		type: 'boolean',
+	})
+	@ApiOkResponse({
+		description: 'User metrics retrieved successfully',
+		type: UserMetricsResponseDto,
+	})
+	@ApiBadRequestResponse({ description: 'Invalid parameters provided' })
+	@ApiNotFoundResponse({ description: 'User not found' })
+	@UseGuards(AuthGuard, RoleGuard)
+	@Roles(AccessLevel.USER, AccessLevel.ADMIN, AccessLevel.OWNER)
+	async getUserMetricsWithPathParams(
+		@Param('ref') ref: number,
+		@Param('startDate') startDate: string,
+		@Param('endDate') endDate: string,
+		@Query('includeInsights') includeInsights: boolean = true,
+	): Promise<UserMetricsResponseDto> {
+
+		return this.attendanceService.getUserMetricsForDateRange(
+			Number(ref),
+			startDate,
+			endDate,
+			typeof includeInsights === 'string' ? (includeInsights === 'false' ? false : true) : includeInsights,
+		);
+	}
+
 	async triggerOvertimeCheck(@CurrentUser() user: User): Promise<{ message: string; processed: number }> {
 		// Optional manual trigger for testing overtime reminders
 		return this.overtimeReminderService.triggerOvertimeCheck();

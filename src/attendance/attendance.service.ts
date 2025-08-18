@@ -9,8 +9,20 @@ import { CreateCheckInDto } from './dto/create-attendance-check-in.dto';
 import { CreateCheckOutDto } from './dto/create-attendance-check-out.dto';
 import { CreateBreakDto } from './dto/create-attendance-break.dto';
 import { OrganizationReportQueryDto } from './dto/organization-report-query.dto';
+import { UserMetricsResponseDto } from './dto/user-metrics-response.dto';
 import { isToday } from 'date-fns';
-import { differenceInMinutes, startOfMonth, endOfMonth, startOfDay, endOfDay, differenceInDays, format, parseISO } from 'date-fns';
+import {
+	differenceInMinutes,
+	startOfMonth,
+	endOfMonth,
+	startOfDay,
+	endOfDay,
+	differenceInDays,
+	format,
+	parseISO,
+	isWithinInterval,
+	subMonths,
+} from 'date-fns';
 import { UserService } from '../user/user.service';
 import { RewardsService } from '../rewards/rewards.service';
 import { XP_VALUES_TYPES } from '../lib/constants/constants';
@@ -52,7 +64,11 @@ export class AttendanceService {
 	// ATTENDANCE METRICS FUNCTIONALITY
 	// ======================================================
 
-	public async checkIn(checkInDto: CreateCheckInDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
+	public async checkIn(
+		checkInDto: CreateCheckInDto,
+		orgId?: number,
+		branchId?: number,
+	): Promise<{ message: string }> {
 		this.logger.log(`Check-in attempt for user: ${checkInDto.owner?.uid}, orgId: ${orgId}, branchId: ${branchId}`);
 		this.logger.debug(`Check-in data: ${JSON.stringify({ ...checkInDto, owner: checkInDto.owner?.uid })}`);
 
@@ -75,27 +91,33 @@ export class AttendanceService {
 				message: process.env.SUCCESS_MESSAGE,
 			};
 
-			this.logger.debug(`Awarding XP for check-in to user: ${checkInDto.owner.uid}, amount: ${XP_VALUES.CHECK_IN}`);
-			await this.rewardsService.awardXP({
-				owner: checkInDto.owner.uid,
-				amount: XP_VALUES.CHECK_IN,
-				action: XP_VALUES_TYPES.ATTENDANCE,
-				source: {
-					id: checkInDto.owner.uid.toString(),
-					type: XP_VALUES_TYPES.ATTENDANCE,
-					details: 'Check-in reward',
+			this.logger.debug(
+				`Awarding XP for check-in to user: ${checkInDto.owner.uid}, amount: ${XP_VALUES.CHECK_IN}`,
+			);
+			await this.rewardsService.awardXP(
+				{
+					owner: checkInDto.owner.uid,
+					amount: XP_VALUES.CHECK_IN,
+					action: XP_VALUES_TYPES.ATTENDANCE,
+					source: {
+						id: checkInDto.owner.uid.toString(),
+						type: XP_VALUES_TYPES.ATTENDANCE,
+						details: 'Check-in reward',
+					},
 				},
-			}, orgId, branchId);
+				orgId,
+				branchId,
+			);
 			this.logger.debug(`XP awarded successfully for check-in to user: ${checkInDto.owner.uid}`);
 
 			// Send shift start notification
 			try {
-				const checkInTime = new Date().toLocaleTimeString('en-US', { 
-					hour: '2-digit', 
+				const checkInTime = new Date().toLocaleTimeString('en-US', {
+					hour: '2-digit',
 					minute: '2-digit',
-					hour12: true
+					hour12: true,
 				});
-				
+
 				this.logger.debug(`Sending shift start notification to user: ${checkInDto.owner.uid}`);
 				await this.unifiedNotificationService.sendTemplatedNotification(
 					NotificationEvent.ATTENDANCE_SHIFT_STARTED,
@@ -112,7 +134,10 @@ export class AttendanceService {
 				);
 				this.logger.debug(`Shift start notification sent successfully to user: ${checkInDto.owner.uid}`);
 			} catch (notificationError) {
-				this.logger.warn(`Failed to send shift start notification to user: ${checkInDto.owner.uid}`, notificationError.message);
+				this.logger.warn(
+					`Failed to send shift start notification to user: ${checkInDto.owner.uid}`,
+					notificationError.message,
+				);
 				// Don't fail the check-in if notification fails
 			}
 
@@ -128,8 +153,14 @@ export class AttendanceService {
 		}
 	}
 
-	public async checkOut(checkOutDto: CreateCheckOutDto, orgId?: number, branchId?: number): Promise<{ message: string; duration?: string }> {
-		this.logger.log(`Check-out attempt for user: ${checkOutDto.owner?.uid}, orgId: ${orgId}, branchId: ${branchId}`);
+	public async checkOut(
+		checkOutDto: CreateCheckOutDto,
+		orgId?: number,
+		branchId?: number,
+	): Promise<{ message: string; duration?: string }> {
+		this.logger.log(
+			`Check-out attempt for user: ${checkOutDto.owner?.uid}, orgId: ${orgId}, branchId: ${branchId}`,
+		);
 		this.logger.debug(`Check-out data: ${JSON.stringify({ ...checkOutDto, owner: checkOutDto.owner?.uid })}`);
 
 		try {
@@ -150,18 +181,22 @@ export class AttendanceService {
 			});
 
 			if (activeShift) {
-				this.logger.debug(`Active shift found for user: ${checkOutDto.owner?.uid}, shift ID: ${activeShift.uid}`);
+				this.logger.debug(
+					`Active shift found for user: ${checkOutDto.owner?.uid}, shift ID: ${activeShift.uid}`,
+				);
 				const checkOutTime = new Date();
 				const checkInTime = new Date(activeShift.checkIn);
-				this.logger.debug(`Calculating work duration: check-in at ${checkInTime.toISOString()}, check-out at ${checkOutTime.toISOString()}`);
+				this.logger.debug(
+					`Calculating work duration: check-in at ${checkInTime.toISOString()}, check-out at ${checkOutTime.toISOString()}`,
+				);
 
 				// Enhanced calculation using our new utilities
 				const organizationId = activeShift.owner?.organisation?.uid;
 				this.logger.debug(`Processing time calculations for organization: ${organizationId}`);
-				
+
 				const breakMinutes = TimeCalculatorUtil.calculateTotalBreakMinutes(
 					activeShift.breakDetails,
-					activeShift.totalBreakTime
+					activeShift.totalBreakTime,
 				);
 				this.logger.debug(`Total break minutes calculated: ${breakMinutes}`);
 
@@ -171,12 +206,14 @@ export class AttendanceService {
 					checkOutTime,
 					activeShift.breakDetails,
 					activeShift.totalBreakTime,
-					organizationId ? await this.organizationHoursService.getOrganizationHours(organizationId) : null
+					organizationId ? await this.organizationHoursService.getOrganizationHours(organizationId) : null,
 				);
 
 				// Format duration (maintains original format)
 				const duration = TimeCalculatorUtil.formatDuration(workSession.netWorkMinutes);
-				this.logger.debug(`Work session calculated - net work minutes: ${workSession.netWorkMinutes}, formatted duration: ${duration}`);
+				this.logger.debug(
+					`Work session calculated - net work minutes: ${workSession.netWorkMinutes}, formatted duration: ${duration}`,
+				);
 
 				const updatedShift = {
 					...activeShift,
@@ -195,27 +232,33 @@ export class AttendanceService {
 					duration,
 				};
 
-				this.logger.debug(`Awarding XP for check-out to user: ${checkOutDto.owner.uid}, amount: ${XP_VALUES.CHECK_OUT}`);
-				await this.rewardsService.awardXP({
-					owner: checkOutDto.owner.uid,
-					amount: XP_VALUES.CHECK_OUT,
-					action: XP_VALUES_TYPES.ATTENDANCE,
-					source: {
-						id: checkOutDto.owner.uid.toString(),
-						type: XP_VALUES_TYPES.ATTENDANCE,
-						details: 'Check-out reward',
+				this.logger.debug(
+					`Awarding XP for check-out to user: ${checkOutDto.owner.uid}, amount: ${XP_VALUES.CHECK_OUT}`,
+				);
+				await this.rewardsService.awardXP(
+					{
+						owner: checkOutDto.owner.uid,
+						amount: XP_VALUES.CHECK_OUT,
+						action: XP_VALUES_TYPES.ATTENDANCE,
+						source: {
+							id: checkOutDto.owner.uid.toString(),
+							type: XP_VALUES_TYPES.ATTENDANCE,
+							details: 'Check-out reward',
+						},
 					},
-				}, orgId, branchId);
+					orgId,
+					branchId,
+				);
 				this.logger.debug(`XP awarded successfully for check-out to user: ${checkOutDto.owner.uid}`);
 
 				// Send shift end notification
 				try {
-					const checkOutTimeString = checkOutTime.toLocaleTimeString('en-US', { 
-						hour: '2-digit', 
+					const checkOutTimeString = checkOutTime.toLocaleTimeString('en-US', {
+						hour: '2-digit',
 						minute: '2-digit',
-						hour12: true
+						hour12: true,
 					});
-					
+
 					this.logger.debug(`Sending shift end notification to user: ${checkOutDto.owner.uid}`);
 					await this.unifiedNotificationService.sendTemplatedNotification(
 						NotificationEvent.ATTENDANCE_SHIFT_ENDED,
@@ -233,7 +276,10 @@ export class AttendanceService {
 					);
 					this.logger.debug(`Shift end notification sent successfully to user: ${checkOutDto.owner.uid}`);
 				} catch (notificationError) {
-					this.logger.warn(`Failed to send shift end notification to user: ${checkOutDto.owner.uid}`, notificationError.message);
+					this.logger.warn(
+						`Failed to send shift end notification to user: ${checkOutDto.owner.uid}`,
+						notificationError.message,
+					);
 					// Don't fail the check-out if notification fails
 				}
 
@@ -265,7 +311,7 @@ export class AttendanceService {
 
 	public async allCheckIns(orgId?: number, branchId?: number): Promise<{ message: string; checkIns: Attendance[] }> {
 		this.logger.log(`Retrieving all check-ins for orgId: ${orgId}, branchId: ${branchId}`);
-		
+
 		try {
 			const whereConditions: any = {};
 
@@ -284,7 +330,15 @@ export class AttendanceService {
 			this.logger.debug(`Querying attendance records with conditions: ${JSON.stringify(whereConditions)}`);
 			const checkIns = await this.attendanceRepository.find({
 				where: Object.keys(whereConditions).length > 0 ? whereConditions : undefined,
-				relations: ['owner', 'owner.branch', 'owner.organisation', 'owner.userProfile', 'verifiedBy', 'organisation', 'branch'],
+				relations: [
+					'owner',
+					'owner.branch',
+					'owner.organisation',
+					'owner.userProfile',
+					'verifiedBy',
+					'organisation',
+					'branch',
+				],
 			});
 
 			if (!checkIns) {
@@ -310,7 +364,11 @@ export class AttendanceService {
 		}
 	}
 
-	public async checkInsByDate(date: string, orgId?: number, branchId?: number): Promise<{ message: string; checkIns: Attendance[] }> {
+	public async checkInsByDate(
+		date: string,
+		orgId?: number,
+		branchId?: number,
+	): Promise<{ message: string; checkIns: Attendance[] }> {
 		try {
 			const startOfDay = new Date(date);
 			startOfDay.setHours(0, 0, 0, 0);
@@ -334,7 +392,15 @@ export class AttendanceService {
 			// Get check-ins that started on this date
 			const checkInsToday = await this.attendanceRepository.find({
 				where: whereConditions,
-				relations: ['owner', 'owner.branch', 'owner.organisation', 'owner.userProfile', 'verifiedBy', 'organisation', 'branch'],
+				relations: [
+					'owner',
+					'owner.branch',
+					'owner.organisation',
+					'owner.userProfile',
+					'verifiedBy',
+					'organisation',
+					'branch',
+				],
 				order: {
 					checkIn: 'DESC',
 				},
@@ -358,17 +424,25 @@ export class AttendanceService {
 
 			const ongoingShifts = await this.attendanceRepository.find({
 				where: ongoingShiftsConditions,
-				relations: ['owner', 'owner.branch', 'owner.organisation', 'owner.userProfile', 'verifiedBy', 'organisation', 'branch'],
+				relations: [
+					'owner',
+					'owner.branch',
+					'owner.organisation',
+					'owner.userProfile',
+					'verifiedBy',
+					'organisation',
+					'branch',
+				],
 				order: {
 					checkIn: 'DESC',
 				},
 			});
 
 			// Combine both sets of check-ins and mark multi-day shifts
-			const allCheckIns = [...checkInsToday, ...ongoingShifts].map(checkIn => {
+			const allCheckIns = [...checkInsToday, ...ongoingShifts].map((checkIn) => {
 				const checkInDate = new Date(checkIn.checkIn);
 				const isMultiDay = checkInDate < startOfDay;
-				
+
 				return {
 					...checkIn,
 					isMultiDayShift: isMultiDay,
@@ -415,13 +489,13 @@ export class AttendanceService {
 	 * Enhanced method to get attendance records that properly handles multi-day shifts
 	 */
 	public async getAttendanceForDateRange(
-		startDate: Date, 
-		endDate: Date, 
-		orgId?: number, 
-		branchId?: number
-	): Promise<{ 
-		message: string; 
-		checkIns: Attendance[]; 
+		startDate: Date,
+		endDate: Date,
+		orgId?: number,
+		branchId?: number,
+	): Promise<{
+		message: string;
+		checkIns: Attendance[];
 		multiDayShifts: Attendance[];
 		ongoingShifts: Attendance[];
 	}> {
@@ -448,7 +522,15 @@ export class AttendanceService {
 					...whereConditions,
 					checkIn: Between(startOfPeriod, endOfPeriod),
 				},
-				relations: ['owner', 'owner.branch', 'owner.organisation', 'owner.userProfile', 'verifiedBy', 'organisation', 'branch'],
+				relations: [
+					'owner',
+					'owner.branch',
+					'owner.organisation',
+					'owner.userProfile',
+					'verifiedBy',
+					'organisation',
+					'branch',
+				],
 				order: {
 					checkIn: 'DESC',
 				},
@@ -462,31 +544,39 @@ export class AttendanceService {
 					status: In([AttendanceStatus.PRESENT, AttendanceStatus.ON_BREAK]),
 					checkOut: IsNull(),
 				},
-				relations: ['owner', 'owner.branch', 'owner.organisation', 'owner.userProfile', 'verifiedBy', 'organisation', 'branch'],
+				relations: [
+					'owner',
+					'owner.branch',
+					'owner.organisation',
+					'owner.userProfile',
+					'verifiedBy',
+					'organisation',
+					'branch',
+				],
 				order: {
 					checkIn: 'DESC',
 				},
 			});
 
 			// Identify multi-day shifts (shifts that span more than 24 hours)
-			const multiDayShifts = checkInsInRange.filter(shift => {
+			const multiDayShifts = checkInsInRange.filter((shift) => {
 				if (!shift.checkOut) {
 					// Still ongoing - check if it's been more than 24 hours
 					const shiftDuration = new Date().getTime() - new Date(shift.checkIn).getTime();
-					return shiftDuration > (24 * 60 * 60 * 1000); // More than 24 hours
+					return shiftDuration > 24 * 60 * 60 * 1000; // More than 24 hours
 				} else {
 					// Completed shift - check if it spanned multiple days
 					const shiftDuration = new Date(shift.checkOut).getTime() - new Date(shift.checkIn).getTime();
-					return shiftDuration > (24 * 60 * 60 * 1000); // More than 24 hours
+					return shiftDuration > 24 * 60 * 60 * 1000; // More than 24 hours
 				}
 			});
 
 			// Mark all shifts with their day span information
-			const allCheckIns = [...checkInsInRange, ...ongoingShifts].map(checkIn => {
+			const allCheckIns = [...checkInsInRange, ...ongoingShifts].map((checkIn) => {
 				const checkInDate = new Date(checkIn.checkIn);
 				const endTime = checkIn.checkOut ? new Date(checkIn.checkOut) : new Date();
 				const daySpan = this.calculateShiftDaySpan(checkInDate, endTime);
-				
+
 				return {
 					...checkIn,
 					isMultiDayShift: daySpan > 1,
@@ -498,11 +588,14 @@ export class AttendanceService {
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,
 				checkIns: allCheckIns,
-				multiDayShifts: multiDayShifts.map(shift => ({
+				multiDayShifts: multiDayShifts.map((shift) => ({
 					...shift,
-					shiftDaySpan: this.calculateShiftDaySpan(new Date(shift.checkIn), shift.checkOut ? new Date(shift.checkOut) : new Date()),
+					shiftDaySpan: this.calculateShiftDaySpan(
+						new Date(shift.checkIn),
+						shift.checkOut ? new Date(shift.checkOut) : new Date(),
+					),
 				})),
-				ongoingShifts: ongoingShifts.map(shift => ({
+				ongoingShifts: ongoingShifts.map((shift) => ({
 					...shift,
 					shiftDaySpan: this.calculateShiftDaySpan(new Date(shift.checkIn), new Date()),
 				})),
@@ -519,7 +612,11 @@ export class AttendanceService {
 		}
 	}
 
-	public async checkInsByStatus(ref: number, orgId?: number, branchId?: number): Promise<{
+	public async checkInsByStatus(
+		ref: number,
+		orgId?: number,
+		branchId?: number,
+	): Promise<{
 		message: string;
 		startTime: string;
 		endTime: string;
@@ -548,7 +645,15 @@ export class AttendanceService {
 
 			const [checkIn] = await this.attendanceRepository.find({
 				where: whereConditions,
-				relations: ['owner', 'owner.branch', 'owner.organisation', 'owner.userProfile', 'verifiedBy', 'organisation', 'branch'],
+				relations: [
+					'owner',
+					'owner.branch',
+					'owner.organisation',
+					'owner.userProfile',
+					'verifiedBy',
+					'organisation',
+					'branch',
+				],
 				order: {
 					checkIn: 'DESC',
 				},
@@ -610,10 +715,14 @@ export class AttendanceService {
 	// ATTENDANCE REPORTS
 	// ======================================================
 
-	public async checkInsByUser(ref: number, orgId?: number, branchId?: number): Promise<{ message: string; checkIns: Attendance[]; user: any }> {
+	public async checkInsByUser(
+		ref: number,
+		orgId?: number,
+		branchId?: number,
+	): Promise<{ message: string; checkIns: Attendance[]; user: any }> {
 		try {
-			const whereConditions: any = { 
-				owner: { uid: ref } 
+			const whereConditions: any = {
+				owner: { uid: ref },
 			};
 
 			// Apply organization filtering - validate user belongs to requester's org
@@ -628,7 +737,15 @@ export class AttendanceService {
 
 			const checkIns = await this.attendanceRepository.find({
 				where: whereConditions,
-				relations: ['owner', 'owner.branch', 'owner.organisation', 'owner.userProfile', 'verifiedBy', 'organisation', 'branch'],
+				relations: [
+					'owner',
+					'owner.branch',
+					'owner.organisation',
+					'owner.userProfile',
+					'verifiedBy',
+					'organisation',
+					'branch',
+				],
 				order: {
 					checkIn: 'DESC',
 				},
@@ -659,7 +776,10 @@ export class AttendanceService {
 		}
 	}
 
-	public async checkInsByBranch(ref: string, orgId?: number): Promise<{ message: string; checkIns: Attendance[]; branch: any; totalUsers: number }> {
+	public async checkInsByBranch(
+		ref: string,
+		orgId?: number,
+	): Promise<{ message: string; checkIns: Attendance[]; branch: any; totalUsers: number }> {
 		try {
 			const whereConditions: any = {
 				branch: { ref },
@@ -672,7 +792,15 @@ export class AttendanceService {
 
 			const checkIns = await this.attendanceRepository.find({
 				where: whereConditions,
-				relations: ['owner', 'owner.branch', 'owner.organisation', 'owner.userProfile', 'verifiedBy', 'organisation', 'branch'],
+				relations: [
+					'owner',
+					'owner.branch',
+					'owner.organisation',
+					'owner.userProfile',
+					'verifiedBy',
+					'organisation',
+					'branch',
+				],
 				order: {
 					checkIn: 'DESC',
 				},
@@ -684,7 +812,7 @@ export class AttendanceService {
 
 			// Get branch info and count unique users
 			const branchInfo = checkIns[0]?.branch || null;
-			const uniqueUsers = new Set(checkIns.map(record => record.owner.uid));
+			const uniqueUsers = new Set(checkIns.map((record) => record.owner.uid));
 			const totalUsers = uniqueUsers.size;
 
 			const response = {
@@ -760,7 +888,15 @@ export class AttendanceService {
 					checkOut: LessThanOrEqual(endOfDayDate),
 					status: AttendanceStatus.COMPLETED,
 				},
-				relations: ['owner', 'owner.branch', 'owner.organisation', 'owner.userProfile', 'verifiedBy', 'organisation', 'branch'],
+				relations: [
+					'owner',
+					'owner.branch',
+					'owner.organisation',
+					'owner.userProfile',
+					'verifiedBy',
+					'organisation',
+					'branch',
+				],
 				order: {
 					checkIn: 'ASC',
 				},
@@ -783,7 +919,15 @@ export class AttendanceService {
 					checkIn: MoreThanOrEqual(startOfDayDate),
 					checkOut: IsNull(),
 				},
-				relations: ['owner', 'owner.branch', 'owner.organisation', 'owner.userProfile', 'verifiedBy', 'organisation', 'branch'],
+				relations: [
+					'owner',
+					'owner.branch',
+					'owner.organisation',
+					'owner.userProfile',
+					'verifiedBy',
+					'organisation',
+					'branch',
+				],
 				order: {
 					checkIn: 'ASC',
 				},
@@ -989,12 +1133,12 @@ export class AttendanceService {
 
 			// Send break start notification
 			try {
-				const breakStartTimeString = breakStartTime.toLocaleTimeString('en-US', { 
-					hour: '2-digit', 
+				const breakStartTimeString = breakStartTime.toLocaleTimeString('en-US', {
+					hour: '2-digit',
 					minute: '2-digit',
-					hour12: true
+					hour12: true,
 				});
-				
+
 				this.logger.debug(`Sending break start notification to user: ${breakDto.owner.uid}`);
 				await this.unifiedNotificationService.sendTemplatedNotification(
 					NotificationEvent.ATTENDANCE_BREAK_STARTED,
@@ -1009,7 +1153,10 @@ export class AttendanceService {
 				);
 				this.logger.debug(`Break start notification sent successfully to user: ${breakDto.owner.uid}`);
 			} catch (notificationError) {
-				this.logger.warn(`Failed to send break start notification to user: ${breakDto.owner.uid}`, notificationError.message);
+				this.logger.warn(
+					`Failed to send break start notification to user: ${breakDto.owner.uid}`,
+					notificationError.message,
+				);
 				// Don't fail the break start if notification fails
 			}
 
@@ -1115,7 +1262,10 @@ export class AttendanceService {
 				);
 				this.logger.debug(`Break end notification sent successfully to user: ${breakDto.owner.uid}`);
 			} catch (notificationError) {
-				this.logger.warn(`Failed to send break end notification to user: ${breakDto.owner.uid}`, notificationError.message);
+				this.logger.warn(
+					`Failed to send break end notification to user: ${breakDto.owner.uid}`,
+					notificationError.message,
+				);
 				// Don't fail the break end if notification fails
 			}
 
@@ -1164,14 +1314,14 @@ export class AttendanceService {
 			});
 
 			// Get organization ID for enhanced calculations
-			const organizationId = completedShifts[0]?.owner?.organisation?.uid || 
-							   activeShift?.owner?.organisation?.uid;
+			const organizationId =
+				completedShifts[0]?.owner?.organisation?.uid || activeShift?.owner?.organisation?.uid;
 
 			// Use enhanced calculation service
 			const result = await this.attendanceCalculatorService.calculateDailyStats(
 				completedShifts,
 				activeShift,
-				organizationId
+				organizationId,
 			);
 
 			return {
@@ -1293,15 +1443,9 @@ export class AttendanceService {
 			});
 
 			// Calculate total hours for different periods
-			const todayAttendance = allAttendance.filter(
-				(record) => new Date(record.checkIn) >= startOfToday
-			);
-			const weekAttendance = allAttendance.filter(
-				(record) => new Date(record.checkIn) >= startOfWeek
-			);
-			const monthAttendance = allAttendance.filter(
-				(record) => new Date(record.checkIn) >= startOfMonth
-			);
+			const todayAttendance = allAttendance.filter((record) => new Date(record.checkIn) >= startOfToday);
+			const weekAttendance = allAttendance.filter((record) => new Date(record.checkIn) >= startOfWeek);
+			const monthAttendance = allAttendance.filter((record) => new Date(record.checkIn) >= startOfMonth);
 
 			// Enhanced helper function using our new utilities
 			const calculateTotalHours = (records: Attendance[]): number => {
@@ -1309,11 +1453,13 @@ export class AttendanceService {
 					if (record.checkIn && record.checkOut) {
 						const breakMinutes = TimeCalculatorUtil.calculateTotalBreakMinutes(
 							record.breakDetails,
-							record.totalBreakTime
+							record.totalBreakTime,
 						);
 						const totalMinutes = differenceInMinutes(new Date(record.checkOut), new Date(record.checkIn));
 						const workMinutes = Math.max(0, totalMinutes - breakMinutes);
-						return total + TimeCalculatorUtil.minutesToHours(workMinutes, TimeCalculatorUtil.PRECISION.HOURS);
+						return (
+							total + TimeCalculatorUtil.minutesToHours(workMinutes, TimeCalculatorUtil.PRECISION.HOURS)
+						);
 					}
 					return total;
 				}, 0);
@@ -1326,7 +1472,7 @@ export class AttendanceService {
 			const totalHoursToday = calculateTotalHours(todayAttendance);
 
 			// Calculate average hours per day (based on days since first attendance)
-			const daysSinceFirst = firstAttendance 
+			const daysSinceFirst = firstAttendance
 				? Math.max(1, Math.ceil(differenceInMinutes(now, new Date(firstAttendance.checkIn)) / (24 * 60)))
 				: 1;
 			const averageHoursPerDay = totalHoursAllTime / daysSinceFirst;
@@ -1335,21 +1481,23 @@ export class AttendanceService {
 			let attendanceStreak = 0;
 			const today = new Date();
 			today.setHours(0, 0, 0, 0);
-			
-			for (let i = 0; i < 30; i++) { // Check last 30 days
+
+			for (let i = 0; i < 30; i++) {
+				// Check last 30 days
 				const checkDate = new Date(today);
 				checkDate.setDate(today.getDate() - i);
 				const nextDay = new Date(checkDate);
 				nextDay.setDate(checkDate.getDate() + 1);
-				
-				const hasAttendance = allAttendance.some(record => {
+
+				const hasAttendance = allAttendance.some((record) => {
 					const recordDate = new Date(record.checkIn);
 					return recordDate >= checkDate && recordDate < nextDay;
 				});
-				
+
 				if (hasAttendance) {
 					attendanceStreak++;
-				} else if (i > 0) { // Don't break on today if no attendance yet
+				} else if (i > 0) {
+					// Don't break on today if no attendance yet
 					break;
 				}
 			}
@@ -1360,13 +1508,13 @@ export class AttendanceService {
 				let totalBreaks = 0;
 				let breakDurations: number[] = [];
 
-				records.forEach(record => {
+				records.forEach((record) => {
 					// Use enhanced break calculation that handles multiple formats
 					const breakMinutes = TimeCalculatorUtil.calculateTotalBreakMinutes(
 						record.breakDetails,
-						record.totalBreakTime
+						record.totalBreakTime,
 					);
-					
+
 					if (breakMinutes > 0) {
 						totalBreakMinutes += breakMinutes;
 						breakDurations.push(breakMinutes);
@@ -1392,25 +1540,20 @@ export class AttendanceService {
 			const weekBreaks = calculateBreakAnalytics(weekAttendance);
 			const todayBreaks = calculateBreakAnalytics(todayAttendance);
 
-			const completedShifts = allAttendance.filter(record => record.checkOut);
-			const averageBreakDuration = completedShifts.length > 0 
-				? allTimeBreaks.totalBreakMinutes / completedShifts.length 
-				: 0;
-			const breakFrequency = completedShifts.length > 0 
-				? allTimeBreaks.totalBreaks / completedShifts.length 
-				: 0;
-			const longestBreak = allTimeBreaks.breakDurations.length > 0 
-				? Math.max(...allTimeBreaks.breakDurations) 
-				: 0;
-			const shortestBreak = allTimeBreaks.breakDurations.length > 0 
-				? Math.min(...allTimeBreaks.breakDurations) 
-				: 0;
+			const completedShifts = allAttendance.filter((record) => record.checkOut);
+			const averageBreakDuration =
+				completedShifts.length > 0 ? allTimeBreaks.totalBreakMinutes / completedShifts.length : 0;
+			const breakFrequency = completedShifts.length > 0 ? allTimeBreaks.totalBreaks / completedShifts.length : 0;
+			const longestBreak =
+				allTimeBreaks.breakDurations.length > 0 ? Math.max(...allTimeBreaks.breakDurations) : 0;
+			const shortestBreak =
+				allTimeBreaks.breakDurations.length > 0 ? Math.min(...allTimeBreaks.breakDurations) : 0;
 
 			// ===== ENHANCED TIMING PATTERNS =====
-			const checkInTimes = allAttendance.map(record => new Date(record.checkIn));
+			const checkInTimes = allAttendance.map((record) => new Date(record.checkIn));
 			const checkOutTimes = allAttendance
-				.filter(record => record.checkOut)
-				.map(record => new Date(record.checkOut!));
+				.filter((record) => record.checkOut)
+				.map((record) => new Date(record.checkOut!));
 
 			// Use enhanced average time calculation
 			const averageCheckInTime = TimeCalculatorUtil.calculateAverageTime(checkInTimes);
@@ -1431,7 +1574,7 @@ export class AttendanceService {
 				// Use enhanced productivity metrics calculation
 				const productivityMetrics = await this.attendanceCalculatorService.calculateProductivityMetrics(
 					allAttendance,
-					organizationId
+					organizationId,
 				);
 
 				punctualityScore = productivityMetrics.punctualityScore;
@@ -1455,7 +1598,7 @@ export class AttendanceService {
 
 				const productivityMetrics = await this.attendanceCalculatorService.calculateProductivityMetrics(
 					allAttendance,
-					organizationId
+					organizationId,
 				);
 
 				workEfficiencyScore = productivityMetrics.workEfficiencyScore;
@@ -1469,13 +1612,19 @@ export class AttendanceService {
 				firstAttendance: {
 					date: firstAttendance ? new Date(firstAttendance.checkIn).toISOString().split('T')[0] : null,
 					checkInTime: firstAttendance ? new Date(firstAttendance.checkIn).toLocaleTimeString() : null,
-					daysAgo: firstAttendance ? Math.floor(differenceInMinutes(now, new Date(firstAttendance.checkIn)) / (24 * 60)) : null,
+					daysAgo: firstAttendance
+						? Math.floor(differenceInMinutes(now, new Date(firstAttendance.checkIn)) / (24 * 60))
+						: null,
 				},
 				lastAttendance: {
 					date: lastAttendance ? new Date(lastAttendance.checkIn).toISOString().split('T')[0] : null,
 					checkInTime: lastAttendance ? new Date(lastAttendance.checkIn).toLocaleTimeString() : null,
-					checkOutTime: lastAttendance?.checkOut ? new Date(lastAttendance.checkOut).toLocaleTimeString() : null,
-					daysAgo: lastAttendance ? Math.floor(differenceInMinutes(now, new Date(lastAttendance.checkIn)) / (24 * 60)) : null,
+					checkOutTime: lastAttendance?.checkOut
+						? new Date(lastAttendance.checkOut).toLocaleTimeString()
+						: null,
+					daysAgo: lastAttendance
+						? Math.floor(differenceInMinutes(now, new Date(lastAttendance.checkIn)) / (24 * 60))
+						: null,
 				},
 				totalHours: {
 					allTime: Math.round(totalHoursAllTime * 10) / 10,
@@ -1557,6 +1706,416 @@ export class AttendanceService {
 	}
 
 	// ======================================================
+	// USER METRICS ANALYSIS
+	// ======================================================
+
+	/**
+	 * Calculate detailed metrics for a user within a specific date range
+	 * @param userId - User ID to get metrics for
+	 * @param startDate - Start date for metrics calculation
+	 * @param endDate - End date for metrics calculation
+	 * @param includeInsights - Whether to include performance insights
+	 * @returns Comprehensive user metrics including analytics and performance insights
+	 */
+	public async getUserMetricsForDateRange(
+		userId: number,
+		startDate: string,
+		endDate: string,
+		includeInsights: boolean = true,
+	): Promise<UserMetricsResponseDto> {
+		try {
+			// Validate input
+			if (!userId || userId <= 0) {
+				throw new BadRequestException('Invalid user ID provided');
+			}
+
+			// Parse dates
+			const parsedStartDate = startOfDay(new Date(startDate));
+			const parsedEndDate = endOfDay(new Date(endDate));
+
+			// Validate date range
+			if (parsedStartDate > parsedEndDate) {
+				throw new BadRequestException('Start date cannot be after end date');
+			}
+
+			// Check if user exists
+			const userExists = await this.userRepository.findOne({
+				where: { uid: userId },
+				relations: ['organisation', 'branch'],
+			});
+
+			if (!userExists) {
+				throw new NotFoundException(`User with ID ${userId} not found`);
+			}
+
+			// Get attendance records for the specified date range
+			const attendanceRecords = await this.attendanceRepository.find({
+				where: {
+					owner: { uid: userId },
+					checkIn: Between(parsedStartDate, parsedEndDate),
+				},
+				relations: ['owner', 'owner.branch', 'owner.organisation'],
+				order: { checkIn: 'ASC' },
+			});
+
+			// Get the most recent attendance record (even if outside date range)
+			const lastAttendanceRecord = await this.attendanceRepository.findOne({
+				where: { owner: { uid: userId } },
+				order: { checkIn: 'DESC' },
+			});
+
+			// Get previous period records for trend analysis
+			const previousPeriodStart = subMonths(parsedStartDate, 3);
+			const previousPeriodEnd = parsedStartDate;
+
+			const previousPeriodRecords = await this.attendanceRepository.find({
+				where: {
+					owner: { uid: userId },
+					checkIn: Between(previousPeriodStart, previousPeriodEnd),
+				},
+				order: { checkIn: 'ASC' },
+			});
+
+			// Calculate basic metrics
+			const completedShifts = attendanceRecords.filter((record) => record.checkOut);
+			const totalRecords = attendanceRecords.length;
+
+			// Skip detailed calculations if no records found
+			if (totalRecords === 0) {
+				return this.generateEmptyUserMetrics(lastAttendanceRecord);
+			}
+
+			// Get organization ID for enhanced calculations
+			const organizationId = userExists?.organisation?.uid;
+
+			// Calculate total work hours
+			let totalWorkMinutes = 0;
+			let totalBreakMinutes = 0;
+			let shiftDurations: number[] = [];
+
+			completedShifts.forEach((shift) => {
+				const breakMinutes = TimeCalculatorUtil.calculateTotalBreakMinutes(
+					shift.breakDetails,
+					shift.totalBreakTime,
+				);
+
+				const totalMinutes = differenceInMinutes(new Date(shift.checkOut), new Date(shift.checkIn));
+				const workMinutes = Math.max(0, totalMinutes - breakMinutes);
+
+				totalWorkMinutes += workMinutes;
+				totalBreakMinutes += breakMinutes;
+				shiftDurations.push(workMinutes);
+			});
+
+			// Calculate shift statistics
+			const longestShiftMinutes = Math.max(...shiftDurations, 0);
+			const shortestShiftMinutes = Math.min(...shiftDurations, longestShiftMinutes);
+
+			// Calculate time patterns
+			const checkInTimes = completedShifts.map((record) => new Date(record.checkIn));
+			const checkOutTimes = completedShifts.map((record) => new Date(record.checkOut));
+
+			const averageCheckInTime = TimeCalculatorUtil.calculateAverageTime(checkInTimes);
+			const averageCheckOutTime = TimeCalculatorUtil.calculateAverageTime(checkOutTimes);
+
+			// Calculate attendance rate
+			const daysBetween = differenceInDays(parsedEndDate, parsedStartDate) + 1;
+			const workingDays = this.calculateWorkingDays(parsedStartDate, parsedEndDate);
+			const attendanceRate = Math.min(100, (totalRecords / workingDays) * 100);
+
+			// Calculate punctuality and overtime using organization settings
+			const productivityMetrics = await this.attendanceCalculatorService.calculateProductivityMetrics(
+				attendanceRecords,
+				organizationId,
+			);
+
+			// Calculate attendance streak
+			const attendanceStreak = this.calculateAttendanceStreak(userId);
+
+			// Format response
+			const userAnalytics = {
+				totalRecords,
+				attendanceRate: Math.round(attendanceRate * 10) / 10,
+				averageHoursPerDay: Math.round((totalWorkMinutes / 60 / workingDays) * 10) / 10,
+				punctualityScore: Math.round(productivityMetrics.punctualityScore * 10) / 10,
+				overtimeFrequency: Math.round(productivityMetrics.overtimeFrequency * 10) / 10,
+				averageCheckInTime,
+				averageCheckOutTime,
+				totalWorkHours: Math.round((totalWorkMinutes / 60) * 10) / 10,
+				totalBreakTime: Math.round((totalBreakMinutes / 60) * 10) / 10,
+				longestShift: TimeCalculatorUtil.formatDuration(longestShiftMinutes),
+				shortestShift: TimeCalculatorUtil.formatDuration(shortestShiftMinutes),
+				attendanceStreak: await attendanceStreak,
+				lastAttendance: lastAttendanceRecord?.checkIn?.toISOString() || null,
+			};
+
+			// Generate performance insights if requested
+			let performanceInsights = null;
+			if (includeInsights) {
+				performanceInsights = this.generatePerformanceInsights(
+					userAnalytics,
+					productivityMetrics,
+					attendanceRecords,
+					previousPeriodRecords,
+				);
+			}
+
+			return {
+				message: process.env.SUCCESS_MESSAGE || 'success',
+				userAnalytics,
+				performanceInsights,
+			};
+		} catch (error) {
+			this.logger.error('Error calculating user metrics:', error);
+			throw new BadRequestException(error?.message || 'Error calculating user metrics');
+		}
+	}
+
+	/**
+	 * Generate empty metrics response when no records are found
+	 */
+	private generateEmptyUserMetrics(lastAttendanceRecord?: Attendance): UserMetricsResponseDto {
+		return {
+			message: 'No attendance records found for the specified date range',
+			userAnalytics: {
+				totalRecords: 0,
+				attendanceRate: 0,
+				averageHoursPerDay: 0,
+				punctualityScore: 0,
+				overtimeFrequency: 0,
+				averageCheckInTime: 'N/A',
+				averageCheckOutTime: 'N/A',
+				totalWorkHours: 0,
+				totalBreakTime: 0,
+				longestShift: '0h 0m',
+				shortestShift: '0h 0m',
+				attendanceStreak: 0,
+				lastAttendance: lastAttendanceRecord?.checkIn?.toISOString() || null,
+			},
+			performanceInsights: {
+				strengths: [],
+				improvements: ['Start recording attendance to see insights'],
+				trendAnalysis: {
+					trend: 'NEUTRAL',
+					confidence: 0,
+					details: 'Insufficient data for trend analysis',
+				},
+			},
+		};
+	}
+
+	/**
+	 * Calculate the number of working days between two dates (excluding weekends)
+	 */
+	private calculateWorkingDays(startDate: Date, endDate: Date): number {
+		let workingDays = 0;
+		const currentDate = new Date(startDate);
+
+		while (currentDate <= endDate) {
+			const dayOfWeek = currentDate.getDay();
+			// Skip weekends (0 = Sunday, 6 = Saturday)
+			if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+				workingDays++;
+			}
+			currentDate.setDate(currentDate.getDate() + 1);
+		}
+
+		return Math.max(workingDays, 1); // At least 1 working day
+	}
+
+	/**
+	 * Calculate the current attendance streak for a user
+	 */
+	private async calculateAttendanceStreak(userId: number): Promise<number> {
+		let streak = 0;
+		const today = new Date();
+		today.setHours(0, 0, 0, 0);
+
+		// Check last 60 days for streak calculation
+		for (let i = 0; i < 60; i++) {
+			const checkDate = new Date(today);
+			checkDate.setDate(today.getDate() - i);
+
+			// Skip weekends for streak calculation
+			const dayOfWeek = checkDate.getDay();
+			if (dayOfWeek === 0 || dayOfWeek === 6) {
+				continue; // Skip weekends
+			}
+
+			const nextDay = new Date(checkDate);
+			nextDay.setDate(checkDate.getDate() + 1);
+
+			// Check if user has attendance on this day
+			const hasAttendance = await this.attendanceRepository.findOne({
+				where: {
+					owner: { uid: userId },
+					checkIn: Between(checkDate, nextDay),
+				},
+			});
+
+			if (hasAttendance) {
+				streak++;
+			} else if (i > 0) {
+				// Don't break on today if no attendance yet
+				break;
+			}
+		}
+
+		return streak;
+	}
+
+	/**
+	 * Generate performance insights based on attendance patterns
+	 */
+	private generatePerformanceInsights(
+		analytics: any,
+		productivityMetrics: any,
+		currentRecords: Attendance[],
+		previousRecords: Attendance[],
+	): any {
+		const strengths: string[] = [];
+		const improvements: string[] = [];
+
+		// Analyze strengths
+		if (analytics.punctualityScore >= 90) {
+			strengths.push('Excellent punctuality');
+		} else if (analytics.punctualityScore >= 80) {
+			strengths.push('Good punctuality');
+		}
+
+		if (analytics.attendanceRate >= 95) {
+			strengths.push('Exceptional attendance rate');
+		} else if (analytics.attendanceRate >= 85) {
+			strengths.push('Consistent attendance');
+		}
+
+		if (analytics.overtimeFrequency <= 10) {
+			strengths.push('Good work-life balance');
+		}
+
+		if (analytics.attendanceStreak >= 10) {
+			strengths.push(`Strong attendance streak (${analytics.attendanceStreak} days)`);
+		}
+
+		// Analyze areas for improvement
+		if (analytics.punctualityScore < 75) {
+			improvements.push('Focus on arriving on time');
+		}
+
+		if (analytics.overtimeFrequency > 20) {
+			improvements.push('Consider reducing overtime hours');
+		}
+
+		if (analytics.totalBreakTime > analytics.totalWorkHours * 0.15) {
+			improvements.push('Optimize break timing and duration');
+		}
+
+		if (analytics.attendanceRate < 80) {
+			improvements.push('Improve attendance consistency');
+		}
+
+		// Ensure at least one strength and improvement
+		if (strengths.length === 0) strengths.push('Maintaining regular attendance');
+		if (improvements.length === 0) improvements.push('Continue current attendance patterns');
+
+		// Calculate trends by comparing with previous period
+		const trendAnalysis = this.calculateAttendanceTrends(currentRecords, previousRecords);
+
+		return {
+			strengths,
+			improvements,
+			trendAnalysis,
+		};
+	}
+
+	/**
+	 * Calculate attendance trends by comparing current and previous periods
+	 */
+	private calculateAttendanceTrends(currentRecords: Attendance[], previousRecords: Attendance[]): any {
+		// Default response for insufficient data
+		if (currentRecords.length < 5 || previousRecords.length < 5) {
+			return {
+				trend: 'NEUTRAL',
+				confidence: 50,
+				details: 'Insufficient data for reliable trend analysis',
+			};
+		}
+
+		// Calculate punctuality in both periods
+		const standardStartHour = 9;
+		const standardStartMinute = 0;
+		const standardStartMinutes = standardStartHour * 60 + standardStartMinute;
+
+		const currentPunctual = currentRecords.filter((record) => {
+			const checkInTime = new Date(record.checkIn);
+			const checkInMinutes = checkInTime.getHours() * 60 + checkInTime.getMinutes();
+			return checkInMinutes <= standardStartMinutes;
+		}).length;
+
+		const previousPunctual = previousRecords.filter((record) => {
+			const checkInTime = new Date(record.checkIn);
+			const checkInMinutes = checkInTime.getHours() * 60 + checkInTime.getMinutes();
+			return checkInMinutes <= standardStartMinutes;
+		}).length;
+
+		const currentPunctualityRate = currentRecords.length > 0 ? (currentPunctual / currentRecords.length) * 100 : 0;
+		const previousPunctualityRate =
+			previousRecords.length > 0 ? (previousPunctual / previousRecords.length) * 100 : 0;
+
+		const punctualityChange = currentPunctualityRate - previousPunctualityRate;
+
+		// Calculate attendance consistency
+		const currentAttendanceRate = this.calculateAttendanceConsistency(currentRecords);
+		const previousAttendanceRate = this.calculateAttendanceConsistency(previousRecords);
+		const attendanceChange = currentAttendanceRate - previousAttendanceRate;
+
+		// Determine overall trend
+		let trend = 'NEUTRAL';
+		let confidence = 50;
+		let details = 'No significant changes in attendance patterns';
+
+		if (punctualityChange > 5 && attendanceChange > 0) {
+			trend = 'IMPROVING';
+			confidence = Math.min(85, 50 + punctualityChange + attendanceChange);
+			details = `Punctuality has improved by ${Math.round(punctualityChange)}% compared to previous period`;
+		} else if (punctualityChange < -5 || attendanceChange < -5) {
+			trend = 'DECLINING';
+			confidence = Math.min(85, 50 + Math.abs(punctualityChange) + Math.abs(attendanceChange));
+			details = `Attendance metrics have declined compared to previous period`;
+		}
+
+		return {
+			trend,
+			confidence: Math.round(confidence * 10) / 10,
+			details,
+		};
+	}
+
+	/**
+	 * Calculate attendance consistency rate
+	 */
+	private calculateAttendanceConsistency(records: Attendance[]): number {
+		if (records.length === 0) return 0;
+
+		// Get date range
+		const dates = records.map((r) => new Date(r.checkIn));
+		const minDate = new Date(Math.min(...dates.map((d) => d.getTime())));
+		const maxDate = new Date(Math.max(...dates.map((d) => d.getTime())));
+
+		// Calculate working days in range
+		const workingDays = this.calculateWorkingDays(minDate, maxDate);
+
+		// Count unique days with attendance
+		const uniqueDays = new Set();
+		records.forEach((record) => {
+			const dateStr = new Date(record.checkIn).toISOString().split('T')[0];
+			uniqueDays.add(dateStr);
+		});
+
+		return workingDays > 0 ? (uniqueDays.size / workingDays) * 100 : 0;
+	}
+
+	// ======================================================
 	// ORGANIZATION ATTENDANCE REPORTING
 	// ======================================================
 
@@ -1602,9 +2161,11 @@ export class AttendanceService {
 		try {
 			// Set default date range (last 30 days if not provided)
 			const now = new Date();
-			const fromDate = queryDto.dateFrom ? parseISO(queryDto.dateFrom) : new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+			const fromDate = queryDto.dateFrom
+				? parseISO(queryDto.dateFrom)
+				: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 			const toDate = queryDto.dateTo ? parseISO(queryDto.dateTo) : now;
-			
+
 			// Validate date range
 			if (fromDate > toDate) {
 				throw new BadRequestException('Start date cannot be after end date');
@@ -1614,7 +2175,7 @@ export class AttendanceService {
 
 			// Generate cache key
 			const cacheKey = this.generateReportCacheKey(queryDto, orgId, branchId, fromDate, toDate);
-			
+
 			// Try to get from cache first
 			const cachedReport = await this.cacheManager.get(cacheKey);
 			if (cachedReport) {
@@ -1655,7 +2216,7 @@ export class AttendanceService {
 				throw new NotFoundException('No users found matching the specified criteria');
 			}
 
-			const userIds = users.map(user => user.uid);
+			const userIds = users.map((user) => user.uid);
 
 			// Get all attendance records for users in date range
 			const attendanceRecords = await this.attendanceRepository.find({
@@ -1729,7 +2290,7 @@ export class AttendanceService {
 
 			for (const user of users) {
 				// Filter attendance records for this user
-				const userAttendance = attendanceRecords.filter(record => record.owner.uid === user.uid);
+				const userAttendance = attendanceRecords.filter((record) => record.owner.uid === user.uid);
 
 				if (userAttendance.length === 0) {
 					// Include user with zero metrics if they have no attendance
@@ -1748,7 +2309,7 @@ export class AttendanceService {
 
 				// Get user metrics using existing method
 				const userMetricsResult = await this.getUserAttendanceMetrics(user.uid);
-				
+
 				userMetrics.push({
 					userId: user.uid,
 					userInfo: {
@@ -1770,7 +2331,7 @@ export class AttendanceService {
 
 	private async calculateOrganizationMetrics(attendanceRecords: Attendance[], users: User[]): Promise<any> {
 		try {
-			const completedShifts = attendanceRecords.filter(record => record.checkOut);
+			const completedShifts = attendanceRecords.filter((record) => record.checkOut);
 
 			// Calculate average times
 			const averageTimes = this.calculateAverageTimes(attendanceRecords);
@@ -1817,8 +2378,14 @@ export class AttendanceService {
 			return {
 				startTime: averageTimes.averageCheckInTime,
 				endTime: averageTimes.averageCheckOutTime,
-				shiftDuration: TimeCalculatorUtil.roundToHours(averageTimes.averageShiftDuration, TimeCalculatorUtil.PRECISION.HOURS),
-				breakDuration: TimeCalculatorUtil.roundToHours(averageTimes.averageBreakDuration, TimeCalculatorUtil.PRECISION.HOURS),
+				shiftDuration: TimeCalculatorUtil.roundToHours(
+					averageTimes.averageShiftDuration,
+					TimeCalculatorUtil.PRECISION.HOURS,
+				),
+				breakDuration: TimeCalculatorUtil.roundToHours(
+					averageTimes.averageBreakDuration,
+					TimeCalculatorUtil.PRECISION.HOURS,
+				),
 			};
 		} catch (error) {
 			this.logger.error('Error calculating average times:', error);
@@ -1833,13 +2400,13 @@ export class AttendanceService {
 
 	private async calculateTotals(attendanceRecords: Attendance[], users: User[]): Promise<any> {
 		try {
-			const completedShifts = attendanceRecords.filter(record => record.checkOut);
+			const completedShifts = attendanceRecords.filter((record) => record.checkOut);
 
 			// Enhanced total hours calculation using our utilities
 			const totalHours = completedShifts.reduce((sum, record) => {
 				const breakMinutes = TimeCalculatorUtil.calculateTotalBreakMinutes(
 					record.breakDetails,
-					record.totalBreakTime
+					record.totalBreakTime,
 				);
 				const totalMinutes = differenceInMinutes(new Date(record.checkOut!), new Date(record.checkIn));
 				const workMinutes = Math.max(0, totalMinutes - breakMinutes);
@@ -1853,26 +2420,32 @@ export class AttendanceService {
 				if (organizationId) {
 					const breakMinutes = TimeCalculatorUtil.calculateTotalBreakMinutes(
 						record.breakDetails,
-						record.totalBreakTime
+						record.totalBreakTime,
 					);
 					const totalMinutes = differenceInMinutes(new Date(record.checkOut!), new Date(record.checkIn));
 					const workMinutes = Math.max(0, totalMinutes - breakMinutes);
-					
+
 					const overtimeInfo = await this.organizationHoursService.calculateOvertime(
 						organizationId,
 						record.checkIn,
-						workMinutes
+						workMinutes,
 					);
-					overtimeHours += TimeCalculatorUtil.minutesToHours(overtimeInfo.overtimeMinutes, TimeCalculatorUtil.PRECISION.CURRENCY);
+					overtimeHours += TimeCalculatorUtil.minutesToHours(
+						overtimeInfo.overtimeMinutes,
+						TimeCalculatorUtil.PRECISION.CURRENCY,
+					);
 				} else {
 					// Fallback to default 8-hour calculation
 					const breakMinutes = TimeCalculatorUtil.calculateTotalBreakMinutes(
 						record.breakDetails,
-						record.totalBreakTime
+						record.totalBreakTime,
 					);
 					const totalMinutes = differenceInMinutes(new Date(record.checkOut!), new Date(record.checkIn));
 					const workMinutes = Math.max(0, totalMinutes - breakMinutes);
-					const workHours = TimeCalculatorUtil.minutesToHours(workMinutes, TimeCalculatorUtil.PRECISION.CURRENCY);
+					const workHours = TimeCalculatorUtil.minutesToHours(
+						workMinutes,
+						TimeCalculatorUtil.PRECISION.CURRENCY,
+					);
 					overtimeHours += Math.max(0, workHours - TimeCalculatorUtil.DEFAULT_WORK.STANDARD_HOURS);
 				}
 			}
@@ -1899,7 +2472,7 @@ export class AttendanceService {
 			const branchMap = new Map();
 
 			// Initialize branches
-			users.forEach(user => {
+			users.forEach((user) => {
 				if (user.branch) {
 					const branchId = user.branch.uid.toString();
 					if (!branchMap.has(branchId)) {
@@ -1917,24 +2490,30 @@ export class AttendanceService {
 			});
 
 			// Calculate metrics for each branch
-			attendanceRecords.forEach(record => {
-				const user = users.find(u => u.uid === record.owner.uid);
+			attendanceRecords.forEach((record) => {
+				const user = users.find((u) => u.uid === record.owner.uid);
 				if (user && user.branch) {
 					const branchId = user.branch.uid.toString();
 					const branchData = branchMap.get(branchId);
-					
+
 					if (branchData) {
 						branchData.totalShifts++;
-						
+
 						if (record.checkOut) {
 							// Enhanced calculation using our utilities
 							const breakMinutes = TimeCalculatorUtil.calculateTotalBreakMinutes(
 								record.breakDetails,
-								record.totalBreakTime
+								record.totalBreakTime,
 							);
-							const totalMinutes = differenceInMinutes(new Date(record.checkOut), new Date(record.checkIn));
+							const totalMinutes = differenceInMinutes(
+								new Date(record.checkOut),
+								new Date(record.checkIn),
+							);
 							const workMinutes = Math.max(0, totalMinutes - breakMinutes);
-							const workHours = TimeCalculatorUtil.minutesToHours(workMinutes, TimeCalculatorUtil.PRECISION.CURRENCY);
+							const workHours = TimeCalculatorUtil.minutesToHours(
+								workMinutes,
+								TimeCalculatorUtil.PRECISION.CURRENCY,
+							);
 							branchData.totalHours += workHours;
 						}
 					}
@@ -1942,18 +2521,26 @@ export class AttendanceService {
 			});
 
 			// Convert to array and calculate averages
-			return Array.from(branchMap.values()).map(branch => ({
+			return Array.from(branchMap.values()).map((branch) => ({
 				branchId: branch.branchId,
 				branchName: branch.branchName,
 				employeeCount: branch.employees.size,
 				totalHours: TimeCalculatorUtil.roundToHours(branch.totalHours, TimeCalculatorUtil.PRECISION.HOURS),
 				totalShifts: branch.totalShifts,
-				averageHoursPerEmployee: branch.employees.size > 0 
-					? TimeCalculatorUtil.roundToHours(branch.totalHours / branch.employees.size, TimeCalculatorUtil.PRECISION.HOURS) 
-					: 0,
-				averageShiftsPerEmployee: branch.employees.size > 0 
-					? TimeCalculatorUtil.roundToHours(branch.totalShifts / branch.employees.size, TimeCalculatorUtil.PRECISION.DISPLAY) 
-					: 0,
+				averageHoursPerEmployee:
+					branch.employees.size > 0
+						? TimeCalculatorUtil.roundToHours(
+								branch.totalHours / branch.employees.size,
+								TimeCalculatorUtil.PRECISION.HOURS,
+						  )
+						: 0,
+				averageShiftsPerEmployee:
+					branch.employees.size > 0
+						? TimeCalculatorUtil.roundToHours(
+								branch.totalShifts / branch.employees.size,
+								TimeCalculatorUtil.PRECISION.DISPLAY,
+						  )
+						: 0,
 			}));
 		} catch (error) {
 			this.logger.error('Error grouping by branch:', error);
@@ -1966,7 +2553,7 @@ export class AttendanceService {
 			const roleMap = new Map();
 
 			// Initialize roles
-			users.forEach(user => {
+			users.forEach((user) => {
 				const role = user.accessLevel;
 				if (!roleMap.has(role)) {
 					roleMap.set(role, {
@@ -1981,15 +2568,15 @@ export class AttendanceService {
 			});
 
 			// Calculate metrics for each role
-			attendanceRecords.forEach(record => {
-				const user = users.find(u => u.uid === record.owner.uid);
+			attendanceRecords.forEach((record) => {
+				const user = users.find((u) => u.uid === record.owner.uid);
 				if (user) {
 					const role = user.accessLevel;
 					const roleData = roleMap.get(role);
-					
+
 					if (roleData) {
 						roleData.totalShifts++;
-						
+
 						if (record.checkOut) {
 							const startTime = new Date(record.checkIn);
 							const endTime = new Date(record.checkOut);
@@ -2002,17 +2589,15 @@ export class AttendanceService {
 			});
 
 			// Convert to array and calculate averages
-			return Array.from(roleMap.values()).map(role => ({
+			return Array.from(roleMap.values()).map((role) => ({
 				role: role.role,
 				employeeCount: role.employees.size,
 				totalHours: Math.round(role.totalHours * 100) / 100,
 				totalShifts: role.totalShifts,
-				averageHoursPerEmployee: role.employees.size > 0 
-					? Math.round((role.totalHours / role.employees.size) * 100) / 100 
-					: 0,
-				averageShiftsPerEmployee: role.employees.size > 0 
-					? Math.round((role.totalShifts / role.employees.size) * 100) / 100 
-					: 0,
+				averageHoursPerEmployee:
+					role.employees.size > 0 ? Math.round((role.totalHours / role.employees.size) * 100) / 100 : 0,
+				averageShiftsPerEmployee:
+					role.employees.size > 0 ? Math.round((role.totalShifts / role.employees.size) * 100) / 100 : 0,
 			}));
 		} catch (error) {
 			this.logger.error('Error grouping by role:', error);
@@ -2035,7 +2620,7 @@ export class AttendanceService {
 			// Calculate punctuality rate (on time arrivals before 9:15 AM)
 			const standardStartHour = 9;
 			const standardStartMinute = 15;
-			const onTimeArrivals = attendanceRecords.filter(record => {
+			const onTimeArrivals = attendanceRecords.filter((record) => {
 				const checkInTime = new Date(record.checkIn);
 				const checkInMinutes = checkInTime.getHours() * 60 + checkInTime.getMinutes();
 				const standardStartMinutes = standardStartHour * 60 + standardStartMinute;
@@ -2045,7 +2630,7 @@ export class AttendanceService {
 			const punctualityRate = Math.round((onTimeArrivals / attendanceRecords.length) * 100);
 
 			// Calculate average hours per day
-			const completedShifts = attendanceRecords.filter(record => record.checkOut);
+			const completedShifts = attendanceRecords.filter((record) => record.checkOut);
 			const totalWorkHours = completedShifts.reduce((sum, record) => {
 				const startTime = new Date(record.checkIn);
 				const endTime = new Date(record.checkOut!);
@@ -2054,15 +2639,12 @@ export class AttendanceService {
 				return sum + workHours;
 			}, 0);
 
-			const averageHoursPerDay = completedShifts.length > 0 
-				? Math.round((totalWorkHours / completedShifts.length) * 100) / 100 
-				: 0;
+			const averageHoursPerDay =
+				completedShifts.length > 0 ? Math.round((totalWorkHours / completedShifts.length) * 100) / 100 : 0;
 
 			// Find peak check-in and check-out times
-			const peakCheckInTime = this.findPeakTime(attendanceRecords.map(r => new Date(r.checkIn)));
-			const peakCheckOutTime = this.findPeakTime(
-				completedShifts.map(r => new Date(r.checkOut!))
-			);
+			const peakCheckInTime = this.findPeakTime(attendanceRecords.map((r) => new Date(r.checkIn)));
+			const peakCheckOutTime = this.findPeakTime(completedShifts.map((r) => new Date(r.checkOut!)));
 
 			// Calculate attendance rate (assuming 100% for users who have any attendance)
 			const attendanceRate = 100; // This would need to be calculated against expected attendance
@@ -2091,8 +2673,8 @@ export class AttendanceService {
 
 		// Group times by hour
 		const hourCounts = new Map<number, number>();
-		
-		times.forEach(time => {
+
+		times.forEach((time) => {
 			const hour = time.getHours();
 			hourCounts.set(hour, (hourCounts.get(hour) || 0) + 1);
 		});
@@ -2100,7 +2682,7 @@ export class AttendanceService {
 		// Find the hour with most occurrences
 		let peakHour = 0;
 		let maxCount = 0;
-		
+
 		hourCounts.forEach((count, hour) => {
 			if (count > maxCount) {
 				maxCount = count;
