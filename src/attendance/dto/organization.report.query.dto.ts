@@ -1,7 +1,7 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsOptional, IsString, IsBoolean, IsDateString, IsEnum } from 'class-validator';
 import { Type } from 'class-transformer';
+import { ApiProperty } from '@nestjs/swagger';
 import { AccessLevel } from '../../lib/enums/user.enums';
+import { IsOptional, IsString, IsBoolean, IsDateString, IsEnum } from 'class-validator';
 
 export class OrganizationReportQueryDto {
   @IsOptional()

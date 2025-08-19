@@ -943,7 +943,7 @@ export class UserService {
 			if (filters?.search) {
 				this.logger.debug(`Applying search filter: ${filters.search}`);
 				queryBuilder.andWhere(
-					'(user.name ILIKE :search OR user.surname ILIKE :search OR user.email ILIKE :search OR user.username ILIKE :search)',
+					'(LOWER(user.name) LIKE LOWER(:search) OR LOWER(user.surname) LIKE LOWER(:search) OR LOWER(user.email) LIKE LOWER(:search) OR LOWER(user.username) LIKE LOWER(:search))',
 					{ search: `%${filters.search}%` },
 				);
 			}

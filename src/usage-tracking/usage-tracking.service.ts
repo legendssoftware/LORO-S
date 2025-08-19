@@ -127,7 +127,7 @@ export class UsageTrackingService {
 			}
 
 			if (query.endpoint) {
-				queryBuilder.andWhere('event.endpoint ILIKE :endpoint', { endpoint: `%${query.endpoint}%` });
+				queryBuilder.andWhere('LOWER(event.endpoint) LIKE LOWER(:endpoint)', { endpoint: `%${query.endpoint}%` });
 			}
 
 			if (query.eventType) {

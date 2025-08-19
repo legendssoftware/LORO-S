@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { OrganisationHours } from '../../organisation/entities/organisation-hours.entity';
-import { TimeCalculatorUtil } from '../utils/time-calculator.util';
+import { TimeCalculatorUtil } from '../../lib/utils/time-calculator.util';
 
 export interface WorkingDayInfo {
 	isWorkingDay: boolean;

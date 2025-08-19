@@ -5,10 +5,10 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { Attendance } from './entities/attendance.entity';
 import { AttendanceStatus } from '../lib/enums/attendance.enums';
-import { CreateCheckInDto } from './dto/create-attendance-check-in.dto';
-import { CreateCheckOutDto } from './dto/create-attendance-check-out.dto';
-import { CreateBreakDto } from './dto/create-attendance-break.dto';
-import { OrganizationReportQueryDto } from './dto/organization-report-query.dto';
+import { CreateCheckInDto } from './dto/create.attendance.check.in.dto';
+import { CreateCheckOutDto } from './dto/create.attendance.check.out.dto';
+import { CreateBreakDto } from './dto/create.attendance.break.dto';
+import { OrganizationReportQueryDto } from './dto/organization.report.query.dto';
 import { UserMetricsResponseDto } from './dto/user-metrics-response.dto';
 import { isToday } from 'date-fns';
 import {
@@ -20,7 +20,6 @@ import {
 	differenceInDays,
 	format,
 	parseISO,
-	isWithinInterval,
 	subMonths,
 } from 'date-fns';
 import { UserService } from '../user/user.service';
@@ -28,16 +27,16 @@ import { RewardsService } from '../rewards/rewards.service';
 import { XP_VALUES_TYPES } from '../lib/constants/constants';
 import { XP_VALUES } from '../lib/constants/constants';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { BreakDetail } from './interfaces/break-detail.interface';
+import { BreakDetail } from '../lib/interfaces/break-detail.interface';
 import { User } from '../user/entities/user.entity';
 import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
 import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
 
 // Import our enhanced calculation services
-import { TimeCalculatorUtil } from './utils/time-calculator.util';
-import { DateRangeUtil } from './utils/date-range.util';
-import { OrganizationHoursService } from './services/organization-hours.service';
-import { AttendanceCalculatorService } from './services/attendance-calculator.service';
+import { TimeCalculatorUtil } from '../lib/utils/time-calculator.util';
+import { DateRangeUtil } from '../lib/utils/date-range.util';
+import { OrganizationHoursService } from './services/organization.hours.service';
+import { AttendanceCalculatorService } from './services/attendance.calculator.service';
 
 @Injectable()
 export class AttendanceService {
