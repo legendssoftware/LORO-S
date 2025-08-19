@@ -26,7 +26,7 @@ async function bootstrap() {
 	});
 
 	const config = new DocumentBuilder()
-		.setTitle('LORO API')
+		.setTitle('LORO')
 		.setDescription(
 			`
 **LORO** is a comprehensive enterprise management platform that revolutionizes how businesses manage their workforce, operations, and client relationships through cutting-edge technology and intelligent automation.
