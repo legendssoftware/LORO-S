@@ -194,6 +194,7 @@ Creates a new user account in the system with full profile management and employ
 					status: 'active',
 					organisationRef: 'ORG123',
 					departmentId: 1,
+					hrID: 12345,
 					profile: {
 						gender: 'MALE',
 						dateOfBirth: '1990-01-15',
@@ -274,66 +275,14 @@ Creates a new user account in the system with full profile management and employ
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'User created successfully' },
-				data: {
-					type: 'object',
-					properties: {
-						uid: { type: 'number', example: 1 },
-						username: { type: 'string', example: 'john.doe' },
-						name: { type: 'string', example: 'John' },
-						surname: { type: 'string', example: 'Doe' },
-						email: { type: 'string', example: 'john.doe@loro.co.za' },
-						phone: { type: 'string', example: '+27 64 123 4567' },
-						photoURL: { type: 'string', example: 'https://example.com/photo.jpg' },
-						businesscardURL: { type: 'string', example: 'https://example.com/businesscard.jpg' },
-						avatar: { type: 'string', example: 'https://example.com/avatar.jpg', nullable: true },
-						role: { type: 'string', example: 'employee' },
-						status: { type: 'string', example: 'active' },
-						departmentId: { type: 'number', example: 1 },
-						accessLevel: { type: 'string', enum: Object.values(AccessLevel), example: AccessLevel.USER },
-						organisationRef: { type: 'string', example: 'ORG123' },
-						userref: { type: 'string', example: 'USR123456' },
-						hrID: { type: 'number', example: 12345, description: 'HR system ID for backward compatibility' },
-						expoPushToken: { type: 'string', example: 'ExponentPushToken[abc123]' },
-						deviceId: { type: 'string', example: 'device123' },
-						platform: { type: 'string', example: 'ios' },
-						isDeleted: { type: 'boolean', example: false },
-						profile: {
-							type: 'object',
-							properties: {
-								uid: { type: 'number', example: 1 },
-								height: { type: 'string', example: '180cm' },
-								weight: { type: 'string', example: '75kg' },
-								gender: { type: 'string', example: 'MALE' },
-								dateOfBirth: { type: 'string', format: 'date', example: '1990-01-15' },
-								address: { type: 'string', example: '123 Main Street' },
-								city: { type: 'string', example: 'Cape Town' },
-								country: { type: 'string', example: 'South Africa' },
-								zipCode: { type: 'string', example: '7700' },
-								maritalStatus: { type: 'string', example: 'Single' },
-								aboutMe: { type: 'string', example: 'Passionate software developer' },
-								currentAge: { type: 'number', example: 30 },
-								numberDependents: { type: 'number', example: 0 }
-							}
-						},
-						employmentProfile: {
-							type: 'object',
-							properties: {
-								uid: { type: 'string', example: '1' },
-								position: { type: 'string', example: 'Software Engineer' },
-								department: { type: 'string', example: 'Engineering' },
-								startDate: { type: 'string', format: 'date', example: '2023-01-15' },
-								isCurrentlyEmployed: { type: 'boolean', example: true },
-								email: { type: 'string', example: 'john.doe@company.com' },
-								contactNumber: { type: 'string', example: '+27 64 123 4567' }
-							}
-						},
-						createdAt: { type: 'string', format: 'date-time' },
-						updatedAt: { type: 'string', format: 'date-time' },
-					},
-				},
+				message: { 
+					type: 'string', 
+					example: 'Success',
+					description: 'Success message from environment variable (SUCCESS_MESSAGE)'
+				}
 			},
-		},
+			required: ['message']
+		}
 	})
 	@ApiBadRequestResponse({ 
 		description: '❌ Bad Request - Invalid or missing required data',
@@ -1082,9 +1031,6 @@ Retrieves a comprehensive list of all users in your organization with advanced f
 			type: 'object',
 			properties: {
 				data: {
-					type: 'object',
-					properties: {
-						users: {
 							type: 'array',
 							items: {
 								type: 'object',
@@ -1093,134 +1039,97 @@ Retrieves a comprehensive list of all users in your organization with advanced f
 									username: { type: 'string', example: 'john.doe' },
 									name: { type: 'string', example: 'John' },
 									surname: { type: 'string', example: 'Doe' },
-									email: { type: 'string', example: 'john.doe@loro.co.za' },
-									phone: { type: 'string', example: '+27 64 123 4567' },
-									photoURL: { type: 'string', example: 'https://example.com/photo.jpg' },
-									businesscardURL: { type: 'string', example: 'https://example.com/businesscard.jpg' },
-									role: { type: 'string', example: 'employee' },
+							email: { type: 'string', example: 'john.doe@orrbit.co.za' },
+							phone: { type: 'string', example: '+27123456789' },
+							photoURL: { type: 'string', example: 'https://example.com/photo.jpg', nullable: true },
+							businesscardURL: { type: 'string', example: 'https://example.com/businesscard.jpg', nullable: true },
+							avatar: { type: 'string', example: 'https://example.com/avatar.jpg', nullable: true },
+							role: { type: 'string', example: 'sales_rep' },
 									status: { type: 'string', example: 'active' },
-									departmentId: { type: 'number', example: 1 },
+							departmentId: { type: 'number', example: 1, nullable: true },
 									accessLevel: {
 										type: 'string',
 										enum: Object.values(AccessLevel),
 										example: AccessLevel.USER,
 									},
-									organisationRef: { type: 'string', example: 'ORG123' },
+							organisationRef: { type: 'string', example: '123', nullable: true },
 									userref: { type: 'string', example: 'USR123456' },
-									hrID: { type: 'number', example: 12345, description: 'HR system ID for backward compatibility' },
-									expoPushToken: { type: 'string', example: 'ExponentPushToken[abc123]' },
-									deviceId: { type: 'string', example: 'device123' },
-									platform: { type: 'string', example: 'ios' },
+							hrID: { type: 'number', example: 12345, nullable: true },
+							expoPushToken: { type: 'string', example: 'ExponentPushToken[abc123]', nullable: true },
+							deviceId: { type: 'string', example: 'device123', nullable: true },
+							platform: { type: 'string', example: 'ios', nullable: true },
 									isDeleted: { type: 'boolean', example: false },
-									createdAt: { type: 'string', format: 'date-time' },
-									updatedAt: { type: 'string', format: 'date-time' },
-									lastLoginAt: { type: 'string', format: 'date-time', example: '2023-11-30T14:30:00Z' },
-									profile: {
+							assignedClientIds: { 
+								type: 'array', 
+								items: { type: 'number' }, 
+								example: [101, 102, 103],
+								nullable: true 
+							},
+							assignedClients: {
+								type: 'array',
+								items: {
 										type: 'object',
 										properties: {
-											uid: { type: 'number', example: 1 },
-											height: { type: 'string', example: '180cm' },
-											weight: { type: 'string', example: '75kg' },
-											hairColor: { type: 'string', example: 'Brown' },
-											eyeColor: { type: 'string', example: 'Blue' },
-											gender: { type: 'string', example: 'MALE' },
-											ethnicity: { type: 'string', example: 'African' },
-											bodyType: { type: 'string', example: 'Athletic' },
-											smokingHabits: { type: 'string', example: 'Non-smoker' },
-											drinkingHabits: { type: 'string', example: 'Occasional' },
-											dateOfBirth: { type: 'string', format: 'date', example: '1990-01-15' },
-											address: { type: 'string', example: '123 Main Street' },
-											city: { type: 'string', example: 'Cape Town' },
-											country: { type: 'string', example: 'South Africa' },
-											zipCode: { type: 'string', example: '7700' },
-											aboutMe: { type: 'string', example: 'Passionate software developer' },
-											socialMedia: { type: 'string', example: 'twitter.com/johndoe' },
-											currentAge: { type: 'number', example: 30 },
-											maritalStatus: { type: 'string', example: 'Single' },
-											numberDependents: { type: 'number', example: 0 },
-											shoeSize: { type: 'string', example: '10' },
-											shirtSize: { type: 'string', example: 'L' },
-											pantsSize: { type: 'string', example: '32' },
-											dressSize: { type: 'string', example: 'M' },
-											coatSize: { type: 'string', example: 'L' }
-										},
-									},
-									employmentProfile: {
+										uid: { type: 'number', example: 101 },
+										name: { type: 'string', example: 'Client Name' },
+										contactPerson: { type: 'string', example: 'John Smith' },
+										email: { type: 'string', example: 'john@client.com' },
+										phone: { type: 'string', example: '+27123456789' },
+										status: { type: 'string', example: 'active' },
+										createdAt: { type: 'string', format: 'date-time' }
+									}
+								},
+								nullable: true
+							},
+							organisation: {
 										type: 'object',
+								nullable: true,
 										properties: {
-											uid: { type: 'string', example: '1' },
-											position: { type: 'string', example: 'Senior Software Engineer' },
-											department: { type: 'string', example: 'Engineering' },
-											startDate: { type: 'string', format: 'date', example: '2023-01-15' },
-											endDate: { type: 'string', format: 'date', example: '2024-01-15' },
-											isCurrentlyEmployed: { type: 'boolean', example: true },
-											email: { type: 'string', example: 'john.doe@company.com' },
-											contactNumber: { type: 'string', example: '+27 64 123 4567' },
-											branchref: { type: 'string', example: 'BRANCH123' },
-											createdAt: { type: 'string', format: 'date-time' },
-											updatedAt: { type: 'string', format: 'date-time' }
-										},
+									uid: { type: 'number', example: 1 },
+									name: { type: 'string', example: 'Orrbit Technologies' }
+								}
 									},
 									branch: {
 										type: 'object',
+								nullable: true,
 										properties: {
-											uid: { type: 'number', example: 123 },
-											name: { type: 'string', example: 'Cape Town Office' },
-											location: { type: 'string', example: 'Cape Town, South Africa' },
-										},
-									},
-									organization: {
+									uid: { type: 'number', example: 1 },
+									name: { type: 'string', example: 'Pretoria South Africa' }
+								}
+							},
+							userTarget: {
 										type: 'object',
+								nullable: true,
 										properties: {
-											uid: { type: 'number', example: 456 },
-											name: { type: 'string', example: 'Loro Technologies' },
-										},
-									},
-								},
+									uid: { type: 'number', example: 1 },
+									targetSalesAmount: { type: 'number', example: 50000 },
+									currentSalesAmount: { type: 'number', example: 32500 },
+									targetNewLeads: { type: 'number', example: 20 },
+									currentNewLeads: { type: 'number', example: 18 }
+								}
 							},
-						},
-						summary: {
-							type: 'object',
-							properties: {
-								totalUsers: { type: 'number', example: 156 },
-								activeUsers: { type: 'number', example: 145 },
-								inactiveUsers: { type: 'number', example: 11 },
-								byAccessLevel: {
-									type: 'object',
-									properties: {
-										ADMIN: { type: 'number', example: 5 },
-										MANAGER: { type: 'number', example: 15 },
-										USER: { type: 'number', example: 136 },
-									},
-								},
-								byDepartment: {
-									type: 'object',
-									properties: {
-										ENGINEERING: { type: 'number', example: 45 },
-										SALES: { type: 'number', example: 35 },
-										MARKETING: { type: 'number', example: 25 },
-										HR: { type: 'number', example: 15 },
-									},
-								},
-							},
-						},
-					},
+							createdAt: { type: 'string', format: 'date-time' },
+							updatedAt: { type: 'string', format: 'date-time' }
+						}
+					}
 				},
-				message: { type: 'string', example: 'Users retrieved successfully' },
 				meta: {
 					type: 'object',
 					properties: {
 						total: { type: 'number', example: 156 },
 						page: { type: 'number', example: 1 },
 						limit: { type: 'number', example: 10 },
-						totalPages: { type: 'number', example: 16 },
-						hasNextPage: { type: 'boolean', example: true },
-						hasPreviousPage: { type: 'boolean', example: false },
+						totalPages: { type: 'number', example: 16 }
+					}
 					},
+				message: { 
+					type: 'string', 
+					example: 'Success',
+					description: 'Success message from environment variable'
+				}
 				},
-				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
-			},
-		},
+			required: ['data', 'meta', 'message']
+		}
 	})
 	@ApiForbiddenResponse({
 		description: '🚫 Forbidden - Insufficient permissions to view users',
@@ -1340,36 +1249,74 @@ Retrieves detailed information about a specific user by their unique reference i
 	@ApiOkResponse({
 		description: '✅ User retrieved successfully',
 		schema: {
-			type: 'object',
-			properties: {
-				data: {
 					type: 'object',
 					properties: {
 						user: {
 							type: 'object',
+					nullable: true,
 							properties: {
 								uid: { type: 'number', example: 123 },
 								username: { type: 'string', example: 'john.doe' },
 								name: { type: 'string', example: 'John' },
 								surname: { type: 'string', example: 'Doe' },
-								email: { type: 'string', example: 'john.doe@loro.co.za' },
-								phone: { type: 'string', example: '+27 64 123 4567' },
-								photoURL: { type: 'string', example: 'https://example.com/photo.jpg' },
-								businesscardURL: { type: 'string', example: 'https://example.com/businesscard.jpg' },
-								role: { type: 'string', example: 'employee' },
+						email: { type: 'string', example: 'john.doe@orrbit.co.za' },
+						phone: { type: 'string', example: '+27123456789' },
+						photoURL: { type: 'string', example: 'https://example.com/photo.jpg', nullable: true },
+						businesscardURL: { type: 'string', example: 'https://example.com/businesscard.jpg', nullable: true },
+						avatar: { type: 'string', example: 'https://example.com/avatar.jpg', nullable: true },
+						role: { type: 'string', example: 'sales_rep' },
 								status: { type: 'string', example: 'active' },
-								departmentId: { type: 'number', example: 1 },
+						departmentId: { type: 'number', example: 1, nullable: true },
 								accessLevel: { type: 'string', enum: Object.values(AccessLevel), example: AccessLevel.USER },
-								organisationRef: { type: 'string', example: 'ORG123' },
+						organisationRef: { type: 'string', example: '123', nullable: true },
 								userref: { type: 'string', example: 'USR123456' },
-								hrID: { type: 'number', example: 12345 },
-								expoPushToken: { type: 'string', example: 'ExponentPushToken[abc123]' },
-								deviceId: { type: 'string', example: 'device123' },
-								platform: { type: 'string', example: 'ios' },
-								pushTokenUpdatedAt: { type: 'string', format: 'date-time', example: '2024-01-15T10:30:00Z' },
+						hrID: { type: 'number', example: 12345, nullable: true },
+						expoPushToken: { type: 'string', example: 'ExponentPushToken[abc123]', nullable: true },
+						deviceId: { type: 'string', example: 'device123', nullable: true },
+						platform: { type: 'string', example: 'ios', nullable: true },
+						pushTokenUpdatedAt: { type: 'string', format: 'date-time', example: '2024-01-15T10:30:00Z', nullable: true },
 								isDeleted: { type: 'boolean', example: false },
-								profile: {
+						assignedClientIds: { 
+							type: 'array', 
+							items: { type: 'number' }, 
+							example: [101, 102, 103],
+							nullable: true 
+						},
+						assignedClients: {
+							type: 'array',
+							items: {
 									type: 'object',
+								properties: {
+									uid: { type: 'number', example: 101 },
+									name: { type: 'string', example: 'Client Name' },
+									contactPerson: { type: 'string', example: 'John Smith' },
+									email: { type: 'string', example: 'john@client.com' },
+									phone: { type: 'string', example: '+27123456789' },
+									status: { type: 'string', example: 'active' },
+									createdAt: { type: 'string', format: 'date-time' }
+								}
+							},
+							nullable: true
+						},
+						organisation: {
+							type: 'object',
+							nullable: true,
+							properties: {
+								uid: { type: 'number', example: 1 },
+								name: { type: 'string', example: 'Orrbit Technologies' }
+							}
+						},
+						branch: {
+							type: 'object',
+							nullable: true,
+							properties: {
+								uid: { type: 'number', example: 1 },
+								name: { type: 'string', example: 'Pretoria South Africa' }
+							}
+						},
+						userProfile: {
+							type: 'object',
+							nullable: true,
 									properties: {
 										uid: { type: 'number', example: 1 },
 										height: { type: 'string', example: '180cm' },
@@ -1383,13 +1330,12 @@ Retrieves detailed information about a specific user by their unique reference i
 										maritalStatus: { type: 'string', example: 'Single' },
 										aboutMe: { type: 'string', example: 'Passionate software developer' },
 										currentAge: { type: 'number', example: 34 },
-										numberDependents: { type: 'number', example: 0 },
-										socialMedia: { type: 'string', example: 'linkedin.com/in/johndoe' },
-										emergencyContact: { type: 'string', example: 'Jane Doe: +27 64 987 6543' }
+								numberDependents: { type: 'number', example: 0 }
 									}
 								},
-								employmentProfile: {
+						userEmployeementProfile: {
 									type: 'object',
+							nullable: true,
 									properties: {
 										uid: { type: 'string', example: '1' },
 										position: { type: 'string', example: 'Software Engineer' },
@@ -1397,47 +1343,40 @@ Retrieves detailed information about a specific user by their unique reference i
 										startDate: { type: 'string', format: 'date', example: '2023-01-15' },
 										isCurrentlyEmployed: { type: 'boolean', example: true },
 										email: { type: 'string', example: 'john.doe@company.com' },
-										contactNumber: { type: 'string', example: '+27 64 123 4567' },
-										managerRef: { type: 'string', example: 'MGR456' },
-										branchref: { type: 'string', example: 'BRANCH123' },
-										salary: { type: 'number', example: 75000 },
-										benefits: { type: 'string', example: 'Health insurance, retirement fund' }
-									}
-								},
-								lastActivity: {
-									type: 'object',
-									properties: {
-										lastLogin: { type: 'string', format: 'date-time', example: '2024-01-15T09:30:00Z' },
-										lastSeen: { type: 'string', format: 'date-time', example: '2024-01-15T12:45:00Z' },
-										activeMinutes: { type: 'number', example: 180, description: 'Minutes active in the last 24 hours' },
-										loginCount: { type: 'number', example: 45, description: 'Total login count this month' }
-									}
-								},
-								analytics: {
-									type: 'object',
-									properties: {
-										profileCompleteness: { type: 'number', example: 85, description: 'Profile completion percentage' },
-										activityScore: { type: 'number', example: 7.8, description: 'User engagement score (0-10)' },
-										taskCompletionRate: { type: 'number', example: 94.2, description: 'Task completion rate percentage' },
-										performanceRating: { type: 'number', example: 8.5, description: 'Overall performance rating' }
-									}
-								},
-								permissions: {
-									type: 'object',
-									properties: {
-										canEdit: { type: 'boolean', example: true },
-										canDelete: { type: 'boolean', example: false },
-										canViewReports: { type: 'boolean', example: true },
-										canManageTeam: { type: 'boolean', example: false }
-									}
-								},
-								createdAt: { type: 'string', format: 'date-time', example: '2023-01-15T10:00:00Z' },
-								updatedAt: { type: 'string', format: 'date-time', example: '2024-01-15T14:30:00Z' },
+								contactNumber: { type: 'string', example: '+27123456789' }
 							}
-						}
+						},
+						userTarget: {
+									type: 'object',
+							nullable: true,
+									properties: {
+								uid: { type: 'number', example: 1 },
+								targetSalesAmount: { type: 'number', example: 50000 },
+								currentSalesAmount: { type: 'number', example: 32500 },
+								targetQuotationsAmount: { type: 'number', example: 30000 },
+								currentQuotationsAmount: { type: 'number', example: 18000 },
+								currentOrdersAmount: { type: 'number', example: 14500 },
+								targetNewLeads: { type: 'number', example: 20 },
+								currentNewLeads: { type: 'number', example: 18 },
+								targetNewClients: { type: 'number', example: 5 },
+								currentNewClients: { type: 'number', example: 3 },
+								targetCheckIns: { type: 'number', example: 30 },
+								currentCheckIns: { type: 'number', example: 25 },
+								periodStartDate: { type: 'string', format: 'date', example: '2024-01-01' },
+								periodEndDate: { type: 'string', format: 'date', example: '2024-03-31' }
+							}
+						},
+						createdAt: { type: 'string', format: 'date-time', example: '2023-01-15T10:00:00Z' },
+						updatedAt: { type: 'string', format: 'date-time', example: '2024-01-15T14:30:00Z' }
 					}
+				},
+				message: {
+					type: 'string',
+					example: 'Success',
+					description: 'Success message from environment variable'
 				}
-			}
+			},
+			required: ['user', 'message']
 		}
 	})
 	@ApiNotFoundResponse({
@@ -1628,116 +1567,14 @@ Updates an existing user's information with comprehensive validation and audit t
 		schema: {
 			type: 'object',
 			properties: {
-				data: {
-					type: 'object',
-					properties: {
-						user: {
-							type: 'object',
-							properties: {
-								uid: { type: 'number', example: 123 },
-								username: { type: 'string', example: 'john.doe' },
-								name: { type: 'string', example: 'John' },
-								surname: { type: 'string', example: 'Doe' },
-								email: { type: 'string', example: 'john.doe@loro.co.za' },
-								phone: { type: 'string', example: '+27 64 123 4567' },
-								photoURL: { type: 'string', example: 'https://example.com/photo.jpg' },
-								businesscardURL: { type: 'string', example: 'https://example.com/businesscard.jpg' },
-								role: { type: 'string', example: 'manager' },
-								status: { type: 'string', example: 'active' },
-								departmentId: { type: 'number', example: 2 },
-								accessLevel: { type: 'string', enum: Object.values(AccessLevel), example: AccessLevel.MANAGER },
-								organisationRef: { type: 'string', example: 'ORG456' },
-								userref: { type: 'string', example: 'USR789012' },
-								hrID: { type: 'number', example: 54321 },
-								expoPushToken: { type: 'string', example: 'ExponentPushToken[updated-token]' },
-								deviceId: { type: 'string', example: 'device456def' },
-								platform: { type: 'string', example: 'android' },
-								pushTokenUpdatedAt: { type: 'string', format: 'date-time', example: '2024-02-01T00:00:00Z' },
-								isDeleted: { type: 'boolean', example: false },
-								profile: {
-									type: 'object',
-									properties: {
-										uid: { type: 'number', example: 1 },
-										height: { type: 'string', example: '185cm' },
-										weight: { type: 'string', example: '80kg' },
-										gender: { type: 'string', example: 'MALE' },
-										address: { type: 'string', example: '456 New Street' },
-										city: { type: 'string', example: 'Johannesburg' },
-										country: { type: 'string', example: 'South Africa' },
-										maritalStatus: { type: 'string', example: 'Married' },
-										aboutMe: { type: 'string', example: 'Updated profile description with new experiences' }
-									}
-								},
-								employmentProfile: {
-									type: 'object',
-									properties: {
-										uid: { type: 'string', example: '1' },
-										position: { type: 'string', example: 'Lead Software Engineer' },
-										department: { type: 'string', example: 'Engineering' },
-										isCurrentlyEmployed: { type: 'boolean', example: true },
-										email: { type: 'string', example: 'john.doe@newcompany.com' },
-										contactNumber: { type: 'string', example: '+27 64 999 8888' }
-									}
-								},
-								updatedFields: {
-									type: 'array',
-									items: { type: 'string' },
-									example: ['name', 'phone', 'role', 'profile.address', 'employmentProfile.position']
-								},
-								updatedAt: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' }
-							}
-						},
-						auditLog: {
-							type: 'object',
-							properties: {
-								changes: {
-									type: 'array',
-									items: {
-										type: 'object',
-										properties: {
-											field: { type: 'string', example: 'position' },
-											oldValue: { type: 'string', example: 'Software Engineer' },
-											newValue: { type: 'string', example: 'Lead Software Engineer' },
-											category: { type: 'string', example: 'employment' }
-										}
-									},
-									example: [
-										{
-											field: 'position',
-											oldValue: 'Software Engineer',
-											newValue: 'Lead Software Engineer',
-											category: 'employment'
-										},
-										{
-											field: 'address',
-											oldValue: '123 Main Street',
-											newValue: '456 New Street',
-											category: 'profile'
-										},
-										{
-											field: 'role',
-											oldValue: 'employee',
-											newValue: 'manager',
-											category: 'system'
-										}
-									]
-								},
-								updatedBy: { type: 'string', example: 'Admin User' },
-								timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
-								totalChanges: { type: 'number', example: 3 },
-								affectedCategories: {
-									type: 'array',
-									items: { type: 'string' },
-									example: ['employment', 'profile', 'system']
-								}
-							}
-						}
-					}
-				},
-				message: { type: 'string', example: 'User updated successfully' },
-				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' }
+				message: {
+					type: 'string',
+					example: 'Success',
+					description: 'Success message from environment variable (SUCCESS_MESSAGE)'
+				}
 			},
-		},
+			required: ['message']
+		}
 	})
 	@ApiNotFoundResponse({ 
 		description: '🔍 User not found for update',
@@ -1885,50 +1722,14 @@ Restores a previously deleted user account back to active status, maintaining da
 		schema: {
 			type: 'object',
 			properties: {
-				data: {
-					type: 'object',
-					properties: {
-						user: {
-							type: 'object',
-							properties: {
-								uid: { type: 'number', example: 123 },
-								username: { type: 'string', example: 'john.doe' },
-								name: { type: 'string', example: 'John' },
-								surname: { type: 'string', example: 'Doe' },
-								email: { type: 'string', example: 'john.doe@loro.co.za' },
-								status: { type: 'string', example: AccountStatus.ACTIVE },
-								previousStatus: { type: 'string', example: 'DELETED' },
-								deletedAt: { type: 'string', format: 'date-time', example: '2023-11-15T10:00:00Z' },
-								restoredAt: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
-								restoredBy: { type: 'string', example: 'Admin User' },
-								daysDeleted: { type: 'number', example: 16, description: 'Number of days user was deleted' },
-								retentionPeriodRemaining: { type: 'number', example: 74, description: 'Days left in retention period' }
-							}
-						},
-						validationChecks: {
-							type: 'object',
-							properties: {
-								dataIntegrity: { type: 'boolean', example: true },
-								relatedRecords: { type: 'boolean', example: true },
-								businessRules: { type: 'boolean', example: true },
-								retentionPeriod: { type: 'boolean', example: true }
-							}
-						},
-						postRestoration: {
-							type: 'object',
-							properties: {
-								employmentRecordsPreserved: { type: 'boolean', example: true },
-								assetsReassigned: { type: 'boolean', example: true },
-								permissionsRestored: { type: 'boolean', example: true },
-								auditTrailMaintained: { type: 'boolean', example: true }
-							}
-						}
-					}
-				},
-				message: { type: 'string', example: 'User restored successfully' },
-				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' }
+				message: {
+					type: 'string',
+					example: 'Success',
+					description: 'Success message from environment variable (SUCCESS_MESSAGE)'
+				}
 			},
-		},
+			required: ['message']
+		}
 	})
 	@ApiNotFoundResponse({ 
 		description: '🔍 Deleted user not found',
@@ -2083,48 +1884,14 @@ Use the restore endpoint to recover accidentally deleted users within the retent
 		schema: {
 			type: 'object',
 			properties: {
-				data: {
-					type: 'object',
-					properties: {
-						user: {
-							type: 'object',
-							properties: {
-								uid: { type: 'number', example: 123 },
-								username: { type: 'string', example: 'john.doe' },
-								name: { type: 'string', example: 'John' },
-								surname: { type: 'string', example: 'Doe' },
-								email: { type: 'string', example: 'john.doe@loro.co.za' },
-								status: { type: 'string', example: 'DELETED' },
-								deletedAt: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
-								deletedBy: { type: 'string', example: 'Admin User' },
-								retentionPeriod: { type: 'number', example: 90, description: 'Days before permanent deletion' },
-								permanentDeletionDate: { type: 'string', format: 'date', example: '2024-03-01' }
-							}
-						},
-						preDeleteChecks: {
-							type: 'object',
-							properties: {
-								activeSessions: { type: 'number', example: 0 },
-								assignedAssets: { type: 'number', example: 0 },
-								pendingApprovals: { type: 'number', example: 0 },
-								complianceApproval: { type: 'boolean', example: true }
-							}
-						},
-						impactAssessment: {
-							type: 'object',
-							properties: {
-								assetsReturned: { type: 'number', example: 3 },
-								accessRevoked: { type: 'boolean', example: true },
-								approvalsTransferred: { type: 'number', example: 2 },
-								notificationsSent: { type: 'number', example: 5 }
-							}
-						}
-					}
-				},
-				message: { type: 'string', example: 'User deleted successfully' },
-				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' }
+				message: {
+					type: 'string',
+					example: 'Success',
+					description: 'Success message from environment variable (SUCCESS_MESSAGE)'
+				}
 			},
-		},
+			required: ['message']
+		}
 	})
 	@ApiNotFoundResponse({ 
 		description: '🔍 User not found for deletion',
@@ -2307,55 +2074,39 @@ Retrieves comprehensive performance targets for a specific user with detailed pr
 			properties: {
 									userTarget: {
 						type: 'object',
+					nullable: true,
 						properties: {
 							uid: { type: 'number', example: 1, description: 'Unique target record identifier' },
-							targetSalesAmount: { type: 'number', example: 50000, description: 'Sales revenue target amount (total of quotations + orders)' },
-							currentSalesAmount: { type: 'number', example: 32500, description: 'Current achieved sales amount (total of quotations + orders)' },
-							targetQuotationsAmount: { type: 'number', example: 30000, description: 'Target quotations amount (quotes made but not paid)' },
-							currentQuotationsAmount: { type: 'number', example: 18000, description: 'Current quotations amount (quotes made but not paid)' },
-
-							currentOrdersAmount: { type: 'number', example: 14500, description: 'Current orders amount (converted and paid)' },
-							targetCurrency: { type: 'string', example: 'ZAR', description: 'Currency code for sales targets' },
-							targetHoursWorked: { type: 'number', example: 160, description: 'Expected hours to work in target period' },
-							currentHoursWorked: { type: 'number', example: 142, description: 'Current hours worked in period' },
-							targetNewClients: { type: 'number', example: 5, description: 'Number of new clients to acquire' },
-							currentNewClients: { type: 'number', example: 3, description: 'Current new clients acquired' },
-							targetNewLeads: { type: 'number', example: 20, description: 'Number of new leads to generate' },
-							currentNewLeads: { type: 'number', example: 18, description: 'Current leads generated' },
-							targetCheckIns: { type: 'number', example: 15, description: 'Client check-in frequency target' },
-							currentCheckIns: { type: 'number', example: 12, description: 'Current check-ins completed' },
-							targetCalls: { type: 'number', example: 50, description: 'Communication calls target' },
-							currentCalls: { type: 'number', example: 45, description: 'Current calls completed' },
-							targetPeriod: { type: 'string', example: 'Monthly', enum: ['Weekly', 'Monthly', 'Quarterly', 'Yearly'], description: 'Target achievement period' },
-							periodStartDate: { type: 'string', format: 'date-time', example: '2024-01-01T00:00:00Z', description: 'Target period start date' },
-							periodEndDate: { type: 'string', format: 'date-time', example: '2024-01-31T23:59:59Z', description: 'Target period end date' },
+						targetSalesAmount: { type: 'number', example: 50000, description: 'Sales revenue target amount (total of quotations + orders)', nullable: true },
+						currentSalesAmount: { type: 'number', example: 32500, description: 'Current achieved sales amount (total of quotations + orders)', nullable: true },
+						targetQuotationsAmount: { type: 'number', example: 30000, description: 'Target quotations amount (quotes made but not paid)', nullable: true },
+						currentQuotationsAmount: { type: 'number', example: 18000, description: 'Current quotations amount (quotes made but not paid)', nullable: true },
+						targetOrdersAmount: { type: 'number', example: 20000, description: 'Target orders amount (converted and paid)', nullable: true },
+						currentOrdersAmount: { type: 'number', example: 14500, description: 'Current orders amount (converted and paid)', nullable: true },
+						targetHoursWorked: { type: 'number', example: 160, description: 'Expected hours to work in target period', nullable: true },
+						currentHoursWorked: { type: 'number', example: 142, description: 'Current hours worked in period', nullable: true },
+						targetNewClients: { type: 'number', example: 5, description: 'Number of new clients to acquire', nullable: true },
+						currentNewClients: { type: 'number', example: 3, description: 'Current new clients acquired', nullable: true },
+						targetNewLeads: { type: 'number', example: 20, description: 'Number of new leads to generate', nullable: true },
+						currentNewLeads: { type: 'number', example: 18, description: 'Current leads generated', nullable: true },
+						targetCheckIns: { type: 'number', example: 15, description: 'Client check-in frequency target', nullable: true },
+						currentCheckIns: { type: 'number', example: 12, description: 'Current check-ins completed', nullable: true },
+						targetCalls: { type: 'number', example: 50, description: 'Communication calls target', nullable: true },
+						currentCalls: { type: 'number', example: 45, description: 'Current calls completed', nullable: true },
+						periodStartDate: { type: 'string', format: 'date', example: '2024-01-01', description: 'Target period start date', nullable: true },
+						periodEndDate: { type: 'string', format: 'date', example: '2024-01-31', description: 'Target period end date', nullable: true },
 							createdAt: { type: 'string', format: 'date-time', description: 'Target creation timestamp' },
-							updatedAt: { type: 'string', format: 'date-time', description: 'Last update timestamp' },
-						progressMetrics: {
-							type: 'object',
-							properties: {
-								salesProgress: { type: 'number', example: 65, description: 'Sales achievement percentage (total of quotations + orders)' },
-								quotationsProgress: { type: 'number', example: 60, description: 'Quotations achievement percentage' },
-								ordersProgress: { type: 'number', example: 72.5, description: 'Orders achievement percentage' },
-								hoursProgress: { type: 'number', example: 88.75, description: 'Hours worked percentage' },
-								leadsProgress: { type: 'number', example: 90, description: 'Leads generation percentage' },
-								clientsProgress: { type: 'number', example: 60, description: 'Client acquisition percentage' },
-								overallProgress: { type: 'number', example: 75.9, description: 'Overall target achievement percentage' },
-							},
-						},
-					},
+						updatedAt: { type: 'string', format: 'date-time', description: 'Last update timestamp' }
+					}
 				},
-				message: { type: 'string', example: 'User targets retrieved successfully' },
-				meta: {
-					type: 'object',
-					properties: {
-						daysRemaining: { type: 'number', example: 12, description: 'Days remaining in target period' },
-						achievementTrend: { type: 'string', example: 'On Track', enum: ['Ahead', 'On Track', 'Behind', 'At Risk'] },
-						nextMilestone: { type: 'string', example: '75% target achievement', description: 'Next achievement milestone' },
-					},
-				},
+				message: { 
+					type: 'string', 
+					example: 'Success',
+					description: 'Success message from environment variable'
+				}
 			},
-		},
+			required: ['userTarget', 'message']
+		}
 	})
 	@ApiNotFoundResponse({ 
 		description: '❌ User not found or no targets configured',
@@ -2483,25 +2234,14 @@ Creates comprehensive performance targets for a specific user with advanced conf
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'User performance targets created successfully' },
-				targetId: { type: 'number', example: 42, description: 'Created target record ID' },
-				data: {
-					type: 'object',
-					properties: {
-						initialized: { type: 'boolean', example: true, description: 'Target tracking initialized' },
-						progressMetrics: {
-							type: 'object',
-							properties: {
-								salesProgress: { type: 'number', example: 0, description: 'Initial sales progress' },
-								hoursProgress: { type: 'number', example: 0, description: 'Initial hours progress' },
-								overallProgress: { type: 'number', example: 0, description: 'Initial overall progress' },
-							},
-						},
-						nextReview: { type: 'string', format: 'date', example: '2024-01-15', description: 'Next target review date' },
-					},
-				},
+				message: {
+					type: 'string',
+					example: 'User targets set successfully',
+					description: 'Success message from service'
+				}
 			},
-		},
+			required: ['message']
+		}
 	})
 	@ApiBadRequestResponse({ 
 		description: '❌ Invalid target configuration provided',
@@ -2744,88 +2484,17 @@ Update both targets and progress:
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'User performance targets updated successfully' },
-				data: {
-					type: 'object',
-					properties: {
-						updatedTarget: {
-							type: 'object',
-							properties: {
-								uid: { type: 'number', example: 42, description: 'Target record ID' },
-								targetSalesAmount: { type: 'number', example: 60000, description: 'Updated sales target' },
-								targetQuotationsAmount: { type: 'number', example: 35000, description: 'Updated quotations target' },
-								targetOrdersAmount: { type: 'number', example: 25000, description: 'Updated orders target' },
-								targetHoursWorked: { type: 'number', example: 180, description: 'Updated hours target' },
-								targetNewLeads: { type: 'number', example: 30, description: 'Updated leads target' },
-								targetNewClients: { type: 'number', example: 12, description: 'Updated clients target' },
-								targetCheckIns: { type: 'number', example: 40, description: 'Updated check-ins target' },
-								targetCalls: { type: 'number', example: 100, description: 'Updated calls target' },
-								targetCurrency: { type: 'string', example: 'USD', description: 'Target currency' },
-								targetPeriod: { type: 'string', example: 'Monthly', description: 'Target period type' },
-								periodStartDate: { type: 'string', format: 'date-time', example: '2024-01-01T00:00:00Z' },
-								periodEndDate: { type: 'string', format: 'date-time', example: '2024-01-31T23:59:59Z' },
-								updatedAt: { type: 'string', format: 'date-time', example: '2024-01-15T10:30:00Z' }
-							}
-						},
-						updatedFields: {
-							type: 'array',
-							items: { type: 'string' },
-							example: ['targetSalesAmount', 'targetQuotationsAmount', 'currentHoursWorked', 'targetCurrency'],
-							description: 'List of fields that were updated in this operation'
-						},
-						progressImpact: {
-							type: 'object',
-							properties: {
-								previousOverallProgress: { type: 'number', example: 65.2, description: 'Overall progress before update' },
-								newOverallProgress: { type: 'number', example: 72.8, description: 'Overall progress after update' },
-								impactDescription: { type: 'string', example: 'Target adjustment improved overall progress by 7.6%' },
-								categoryImpacts: {
-									type: 'object',
-									properties: {
-										sales: { type: 'number', example: 5.2, description: 'Sales category progress change' },
-										quotations: { type: 'number', example: 3.1, description: 'Quotations category progress change' },
-										hours: { type: 'number', example: -1.5, description: 'Hours category progress change' }
-									}
-								}
-							}
-						},
-						nextMilestone: { type: 'string', example: '75% target achievement', description: 'Next achievement milestone' },
-						forecasting: {
-							type: 'object',
-							properties: {
-								projectedCompletion: { type: 'string', format: 'date', example: '2024-01-28', description: 'Projected completion date' },
-								completionProbability: { type: 'number', example: 78.5, description: 'Probability of target completion (%)' },
-								recommendedActions: {
-									type: 'array',
-									items: { type: 'string' },
-									example: ['Increase sales activities', 'Focus on lead conversion', 'Optimize time allocation']
-								}
-							}
-						},
-						auditInfo: {
-							type: 'object',
-							properties: {
-								updatedBy: { type: 'string', example: 'admin-789', description: 'ID of user who made the update' },
-								updateReason: { type: 'string', example: 'Market opportunity adjustment', description: 'Reason for the update' },
-								approvalRequired: { type: 'boolean', example: false, description: 'Whether update requires approval' },
-								approvedBy: { type: 'string', example: 'manager-456', description: 'ID of approving user' },
-								changeType: { type: 'string', example: 'ADJUSTMENT', description: 'Type of change made' }
-							}
-						}
-					}
-				},
-				meta: {
-					type: 'object',
-					properties: {
-						updateType: { type: 'string', example: 'PARTIAL_UPDATE', description: 'Type of update performed' },
-						fieldsUpdated: { type: 'number', example: 4, description: 'Number of fields updated' },
-						validationsPassed: { type: 'number', example: 8, description: 'Number of validation checks passed' },
-						progressRecalculated: { type: 'boolean', example: true, description: 'Whether progress was recalculated' }
-					}
+				message: {
+					type: 'string',
+					example: 'User targets updated successfully',
+					description: 'Success message from service'
 				}
-			}
+			},
+			required: ['message']
 		}
 	})
+
+
 	@ApiBadRequestResponse({ 
 		description: '❌ Invalid update data provided',
 		schema: {
@@ -3002,87 +2671,13 @@ Safely removes performance targets for a specific user with comprehensive cleanu
 		schema: {
 			type: 'object',
 			properties: {
-				message: { type: 'string', example: 'User performance targets deleted successfully' },
-				data: {
-					type: 'object',
-					properties: {
-						deletedTarget: {
-							type: 'object',
-							properties: {
-								uid: { type: 'number', example: 42, description: 'ID of deleted target record' },
-								userId: { type: 'number', example: 123, description: 'User ID associated with deleted targets' },
-								targetPeriod: { type: 'string', example: 'Monthly', description: 'Period of deleted targets' },
-								periodStartDate: { type: 'string', format: 'date-time', example: '2024-01-01T00:00:00Z' },
-								periodEndDate: { type: 'string', format: 'date-time', example: '2024-01-31T23:59:59Z' },
-								deletedAt: { type: 'string', format: 'date-time', example: '2024-01-15T10:30:00Z' },
-								deletedBy: { type: 'string', example: 'admin-789', description: 'ID of user who deleted the targets' },
-								deletionReason: { type: 'string', example: 'Employee role change', description: 'Reason for target deletion' }
-							}
-						},
-						finalProgress: {
-							type: 'object',
-							properties: {
-								salesProgress: { type: 'number', example: 78.5, description: 'Final sales achievement percentage' },
-								quotationsProgress: { type: 'number', example: 85.2, description: 'Final quotations achievement percentage' },
-								ordersProgress: { type: 'number', example: 72.1, description: 'Final orders achievement percentage' },
-								hoursProgress: { type: 'number', example: 92.3, description: 'Final hours worked percentage' },
-								leadsProgress: { type: 'number', example: 88.7, description: 'Final leads generation percentage' },
-								clientsProgress: { type: 'number', example: 75.0, description: 'Final clients acquisition percentage' },
-								checkInsProgress: { type: 'number', example: 80.4, description: 'Final check-ins completion percentage' },
-								callsProgress: { type: 'number', example: 95.6, description: 'Final calls completion percentage' },
-								overallProgress: { type: 'number', example: 83.7, description: 'Final overall achievement percentage' }
-							},
-							description: 'Final progress snapshot before deletion'
-						},
-						archivalInfo: {
-							type: 'object',
-							properties: {
-								archivalReference: { type: 'string', example: 'ARCH_USER123_2024Q1', description: 'Reference for archived data' },
-								archivalDate: { type: 'string', format: 'date-time', example: '2024-01-15T10:30:00Z' },
-								retentionPeriod: { type: 'number', example: 90, description: 'Days data will be retained for recovery' },
-								recoveryDeadline: { type: 'string', format: 'date', example: '2024-04-15', description: 'Last date for target recovery' },
-								backupLocation: { type: 'string', example: '/archives/targets/2024/Q1/user123', description: 'Location of archived data' }
-							}
-						},
-						impactAnalysis: {
-							type: 'object',
-							properties: {
-								impactSummary: { type: 'string', example: 'Targets achieved 83.7% overall completion before deletion' },
-								teamImpact: { type: 'string', example: 'Team average performance adjusted by -2.3%' },
-								branchImpact: { type: 'string', example: 'Branch metrics recalculated excluding deleted targets' },
-								organizationalImpact: { type: 'string', example: 'Minimal impact on overall organizational performance' },
-								affectedReports: {
-									type: 'array',
-									items: { type: 'string' },
-									example: ['Monthly Performance Report', 'Team Analytics Dashboard', 'Individual Performance Tracker']
-								}
-							}
-						},
-						notification: {
-							type: 'object',
-							properties: {
-								stakeholdersNotified: { type: 'number', example: 5, description: 'Number of stakeholders notified' },
-								notificationsSent: {
-									type: 'array',
-									items: { type: 'string' },
-									example: ['Direct Manager', 'HR Department', 'Performance Team', 'Department Head', 'Analytics Team']
-								},
-								notificationDate: { type: 'string', format: 'date-time', example: '2024-01-15T10:30:00Z' }
-							}
-						}
-					}
-				},
-				meta: {
-					type: 'object',
-					properties: {
-						deletionType: { type: 'string', example: 'SOFT_DELETE', description: 'Type of deletion performed' },
-						dataPreserved: { type: 'boolean', example: true, description: 'Whether data was preserved' },
-						recoveryPossible: { type: 'boolean', example: true, description: 'Whether recovery is possible' },
-						complianceRequirements: { type: 'boolean', example: true, description: 'Whether compliance requirements are met' },
-						auditTrailMaintained: { type: 'boolean', example: true, description: 'Whether audit trail is maintained' }
-					}
+				message: {
+					type: 'string',
+					example: 'User targets deleted successfully',
+					description: 'Success message from service'
 				}
-			}
+			},
+			required: ['message']
 		}
 	})
 	@ApiNotFoundResponse({ 
