@@ -9,14 +9,23 @@ import { Attendance } from '../entities/attendance.entity';
 import { User } from '../../user/entities/user.entity';
 import { Organisation } from '../../organisation/entities/organisation.entity';
 import { OrganisationSettings } from '../../organisation/entities/organisation-settings.entity';
-import { OrganizationHoursService } from './organization-hours.service';
+import { OrganizationHoursService } from './organization.hours.service';
 import { UserService } from '../../user/user.service';
 import { AttendanceStatus } from '../../lib/enums/attendance.enums';
 import { AccessLevel } from '../../lib/enums/user.enums';
 import { EmailType } from '../../lib/enums/email.enums';
 import { AccountStatus } from '../../lib/enums/status.enums';
-import { TimeCalculatorUtil, SplitShiftResult } from '../utils/time-calculator.util';
-import { TimezoneUtil } from '../utils/timezone.util';
+import { TimeCalculatorUtil } from '../../lib/utils/time-calculator.util';
+import { TimezoneUtil } from '../../lib/utils/timezone.util';
+import {
+	PunctualityBreakdown,
+	BranchPunctuality,
+	EmployeeAttendanceMetric,
+	MorningReportData,
+	EveningReportData,
+	BranchSummary,
+	AttendanceReportUser,
+} from '../../lib/interfaces/reports.interface';
 
 /**
  * AttendanceReportsService
@@ -36,221 +45,6 @@ import { TimezoneUtil } from '../utils/timezone.util';
  * - Morning checks: Every minute (for accurate 5-minute timing)
  * - Evening checks: Every 30 minutes (sufficient for 30-minute delay)
  */
-
-interface AttendanceReportUser {
-	uid: number;
-	name: string;
-	surname: string;
-	fullName: string;
-	email: string;
-	phone?: string;
-	role: AccessLevel;
-	userProfile?: {
-		avatar?: string;
-	};
-	branch?: {
-		uid: number;
-		name: string;
-	};
-	lateMinutes?: number;
-	earlyMinutes?: number;
-	checkInTime?: string;
-	lateStatus?: 'on-time' | 'late' | 'very-late' | 'extremely-late';
-}
-
-interface AttendanceSummary {
-	totalEmployees: number;
-	presentCount: number;
-	absentCount: number;
-	attendanceRate: number;
-	totalActualHours: number;
-	totalExpectedHours: number;
-	productivityRate: number;
-	hoursDeficit: number;
-}
-
-interface BranchPunctuality {
-	branchId: number;
-	branchName: string;
-	earlyArrivals: AttendanceReportUser[];
-	onTimeArrivals: AttendanceReportUser[];
-	lateArrivals: AttendanceReportUser[];
-	veryLateArrivals: AttendanceReportUser[];
-	earlyPercentage: number;
-	onTimePercentage: number;
-	latePercentage: number;
-	veryLatePercentage: number;
-	averageLateMinutes: number;
-	totalLateMinutes: number;
-	totalEmployees: number;
-}
-
-interface PunctualityBreakdown {
-	earlyArrivals: AttendanceReportUser[];
-	onTimeArrivals: AttendanceReportUser[];
-	lateArrivals: AttendanceReportUser[];
-	veryLateArrivals: AttendanceReportUser[];
-	earlyPercentage: number;
-	onTimePercentage: number;
-	latePercentage: number;
-	veryLatePercentage: number;
-	averageLateMinutes: number;
-	totalLateMinutes: number;
-	byBranch: BranchPunctuality[];
-}
-
-interface EmployeeAttendanceMetric {
-	user: AttendanceReportUser;
-	todayCheckIn: string | null;
-	todayCheckOut: string | null;
-	hoursWorked: number;
-	isLate: boolean;
-	lateMinutes: number;
-	yesterdayHours: number;
-	comparisonText: string;
-	timingDifference: string;
-}
-
-interface BranchSummary {
-	branchId: number;
-	branchName: string;
-	presentEmployees: AttendanceReportUser[];
-	absentEmployees: AttendanceReportUser[];
-	currentlyWorkingEmployees: AttendanceReportUser[];
-	completedShiftEmployees: AttendanceReportUser[];
-	attendanceRate: number;
-	totalEmployees: number;
-	totalHoursWorked: number;
-	averageHoursWorked: number;
-}
-
-interface MorningReportData {
-	organizationName: string;
-	reportDate: string;
-	organizationStartTime: string;
-	summary: AttendanceSummary;
-	punctuality: PunctualityBreakdown;
-	presentEmployees: AttendanceReportUser[];
-	absentEmployees: AttendanceReportUser[];
-	currentlyWorkingEmployees: AttendanceReportUser[];
-	completedShiftEmployees: AttendanceReportUser[];
-	branchBreakdown: BranchSummary[];
-	targetPerformance: {
-		expectedDailyHours: number;
-		actualHoursToDate: number;
-		projectedEndOfDayHours: number;
-		onTrackToMeetTargets: boolean;
-		targetAchievementRate: number;
-		hoursGapAnalysis: string;
-	};
-	insights: string[];
-	recommendations: string[];
-	generatedAt: string;
-	dashboardUrl: string;
-	hasEmployees: boolean;
-	latenessSummary: {
-		totalLateEmployees: number;
-		totalLateMinutes: number;
-		averageLateMinutes: number;
-		worstLateArrival: {
-			employee: string;
-			minutes: number;
-		} | null;
-	};
-}
-
-interface TemplateEmployeeMetric {
-	uid: number;
-	name: string;
-	surname: string;
-	email: string;
-	role: string;
-	branch?: {
-		uid: number;
-		name: string;
-	};
-	checkInTime: string | null;
-	checkOutTime: string | null;
-	hoursWorked: number;
-	isLate: boolean;
-	lateMinutes: number;
-	status: string;
-	yesterdayComparison: {
-		hoursChange: number;
-		punctualityChange: string;
-	};
-	avatar: string | null;
-}
-
-interface EveningReportData {
-	organizationName: string;
-	reportDate: string;
-	organizationStartTime: string;
-	organizationCloseTime: string;
-	employeeMetrics: TemplateEmployeeMetric[];
-	presentEmployees: AttendanceReportUser[];
-	absentEmployees: AttendanceReportUser[];
-	currentlyWorkingEmployees: AttendanceReportUser[];
-	completedShiftEmployees: AttendanceReportUser[];
-	overtimeEmployees: AttendanceReportUser[];
-	branchBreakdown: BranchSummary[];
-	targetPerformance: {
-		expectedDailyHours: number;
-		actualTotalHours: number;
-		targetAchievementRate: number;
-		hoursOverTarget: number;
-		hoursUnderTarget: number;
-		teamEfficiencyRating: string;
-		individualTargetsMet: number;
-		individualTargetsMissed: number;
-	};
-	summary: {
-		totalEmployees: number;
-		completedShifts: number;
-		averageHours: number;
-		totalOvertimeMinutes: number;
-		totalActualHours: number;
-		totalExpectedHours: number;
-		productivityRate: number;
-	};
-	insights: string[];
-	hasEmployees: boolean;
-	latenessSummary: {
-		totalLateEmployees: number;
-		totalLateMinutes: number;
-		averageLateMinutes: number;
-		punctualityTrend: string;
-	};
-	totalEmployees: number;
-	workedTodayCount: number;
-	totalHoursWorked: number;
-	averageHoursWorked: number;
-	attendanceChange: number;
-	hoursChange: number;
-	punctualityChange: number;
-	performanceTrend: string;
-	attendanceRate: number;
-	yesterdayAttendanceRate: number;
-	punctualityRate: number;
-	overallPerformance: {
-		description: string;
-	};
-	topPerformers: Array<{
-		name: string;
-		surname: string;
-		hoursWorked: number;
-		achievement: string;
-		metric: string;
-	}> | null;
-	improvementAreas: Array<{
-		area: string;
-		description: string;
-		count: number;
-	}> | null;
-	tomorrowActions: string[];
-	generatedAt: string;
-	dashboardUrl: string;
-}
 
 @Injectable()
 export class AttendanceReportsService {
@@ -279,10 +73,10 @@ export class AttendanceReportsService {
 	@Cron('*/10 * * * *') // Run every 10 minutes
 	async checkAndSendReports() {
 		this.logger.log('Starting scheduled report check');
-		
+
 		try {
 			const now = new Date();
-			
+
 			const organizations = await this.organisationRepository.find({
 				where: { isDeleted: false },
 			});
@@ -300,28 +94,46 @@ export class AttendanceReportsService {
 					const organizationTimezone = organizationHours?.timezone;
 					const orgCurrentTime = TimezoneUtil.toOrganizationTime(now, organizationTimezone);
 					const orgCurrentHour = orgCurrentTime.getHours();
-					
+
 					// Only process organizations during reasonable business hours in their timezone (5 AM - 11 PM)
 					if (orgCurrentHour < 5 || orgCurrentHour > 23) {
-						this.logger.debug(`Skipping organization ${org.uid} (${org.name}) - quiet hours in ${TimezoneUtil.getSafeTimezone(organizationTimezone)} (${orgCurrentHour}:00)`);
+						this.logger.debug(
+							`Skipping organization ${org.uid} (${
+								org.name
+							}) - quiet hours in ${TimezoneUtil.getSafeTimezone(
+								organizationTimezone,
+							)} (${orgCurrentHour}:00)`,
+						);
 						skippedOrgs.push({
 							id: org.uid,
 							name: org.name,
 							timezone: TimezoneUtil.getSafeTimezone(organizationTimezone),
-							localTime: TimezoneUtil.formatInOrganizationTime(orgCurrentTime, 'HH:mm', organizationTimezone)
+							localTime: TimezoneUtil.formatInOrganizationTime(
+								orgCurrentTime,
+								'HH:mm',
+								organizationTimezone,
+							),
 						});
 						return;
 					}
 
-					this.logger.debug(`Processing reports for organization ${org.uid} (${org.name}) - Local time: ${TimezoneUtil.formatInOrganizationTime(orgCurrentTime, 'HH:mm zzz', organizationTimezone)}`);
-					
+					this.logger.debug(
+						`Processing reports for organization ${org.uid} (${
+							org.name
+						}) - Local time: ${TimezoneUtil.formatInOrganizationTime(
+							orgCurrentTime,
+							'HH:mm zzz',
+							organizationTimezone,
+						)}`,
+					);
+
 					processedOrgs.push({
 						id: org.uid,
 						name: org.name,
 						timezone: TimezoneUtil.getSafeTimezone(organizationTimezone),
-						localTime: TimezoneUtil.formatInOrganizationTime(orgCurrentTime, 'HH:mm', organizationTimezone)
+						localTime: TimezoneUtil.formatInOrganizationTime(orgCurrentTime, 'HH:mm', organizationTimezone),
 					});
-					
+
 					await Promise.all([
 						this.processMorningReportForOrganization(org, now),
 						this.processEveningReportForOrganization(org, now),
@@ -332,16 +144,26 @@ export class AttendanceReportsService {
 			});
 
 			await Promise.all(reportPromises);
-			
+
 			// Log summary
-			this.logger.log(`📊 Scheduled report check completed - Processed: ${processedOrgs.length}, Skipped: ${skippedOrgs.length}`);
-			
+			this.logger.log(
+				`📊 Scheduled report check completed - Processed: ${processedOrgs.length}, Skipped: ${skippedOrgs.length}`,
+			);
+
 			if (processedOrgs.length > 0) {
-				this.logger.debug(`✅ Processed organizations: ${processedOrgs.map(org => `${org.name} (${org.timezone} ${org.localTime})`).join(', ')}`);
+				this.logger.debug(
+					`✅ Processed organizations: ${processedOrgs
+						.map((org) => `${org.name} (${org.timezone} ${org.localTime})`)
+						.join(', ')}`,
+				);
 			}
-			
+
 			if (skippedOrgs.length > 0) {
-				this.logger.debug(`⏭️  Skipped organizations: ${skippedOrgs.map(org => `${org.name} (${org.timezone} ${org.localTime})`).join(', ')}`);
+				this.logger.debug(
+					`⏭️  Skipped organizations: ${skippedOrgs
+						.map((org) => `${org.name} (${org.timezone} ${org.localTime})`)
+						.join(', ')}`,
+				);
 			}
 		} catch (error) {
 			this.logger.error('Error in checkAndSendReports:', error);
@@ -350,20 +172,27 @@ export class AttendanceReportsService {
 
 	private async processMorningReportForOrganization(organization: Organisation, currentTime: Date) {
 		this.logger.debug(`Processing morning report for organization ${organization.uid} (${organization.name})`);
-		
+
 		try {
 			// Get organization timezone from organization hours service
 			const organizationHours = await this.organizationHoursService.getOrganizationHours(organization.uid);
 			const organizationTimezone = organizationHours?.timezone;
-			
+
 			// Convert current time to organization timezone
 			const orgCurrentTime = TimezoneUtil.toOrganizationTime(currentTime, organizationTimezone);
-			
+
 			// Get working day info using organization timezone
-			const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(organization.uid, orgCurrentTime);
+			const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(
+				organization.uid,
+				orgCurrentTime,
+			);
 
 			if (!workingDayInfo.isWorkingDay || !workingDayInfo.startTime) {
-				this.logger.debug(`⏭️  Skipping morning report for org ${organization.uid} (${organization.name}) - not a working day or no start time in ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`);
+				this.logger.debug(
+					`⏭️  Skipping morning report for org ${organization.uid} (${
+						organization.name
+					}) - not a working day or no start time in ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`,
+				);
 				return; // Skip non-working days
 			}
 
@@ -374,11 +203,21 @@ export class AttendanceReportsService {
 				30, // 30 minutes after start time
 				10, // 10-minute window (matches our cron interval)
 				organizationTimezone,
-				currentTime
+				currentTime,
 			);
 
 			if (!reportWindow.isTimeForMorningReport) {
-				this.logger.debug(`⏰ Not time for morning report for org ${organization.uid} (${organization.name}) yet - Current: ${TimezoneUtil.formatInOrganizationTime(orgCurrentTime, 'HH:mm', organizationTimezone)}, Report time: ${reportWindow.morningReportTime.toTimeString().substring(0, 5)} in ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`);
+				this.logger.debug(
+					`⏰ Not time for morning report for org ${organization.uid} (${
+						organization.name
+					}) yet - Current: ${TimezoneUtil.formatInOrganizationTime(
+						orgCurrentTime,
+						'HH:mm',
+						organizationTimezone,
+					)}, Report time: ${reportWindow.morningReportTime
+						.toTimeString()
+						.substring(0, 5)} in ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`,
+				);
 				return; // Not time for morning report yet
 			}
 
@@ -387,7 +226,11 @@ export class AttendanceReportsService {
 			const cacheKey = `morning_report_${organization.uid}_${format(orgToday, 'yyyy-MM-dd')}`;
 
 			if (this.hasReportBeenSent(cacheKey)) {
-				this.logger.debug(`✅ Morning report already sent today for org ${organization.uid} (${organization.name}) on ${format(orgToday, 'yyyy-MM-dd')} in ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`);
+				this.logger.debug(
+					`✅ Morning report already sent today for org ${organization.uid} (${
+						organization.name
+					}) on ${format(orgToday, 'yyyy-MM-dd')} in ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`,
+				);
 				return;
 			}
 
@@ -397,15 +240,23 @@ export class AttendanceReportsService {
 
 			// Enhanced timezone-aware logging
 			const serverTime = currentTime.toISOString();
-			const orgTimeFormatted = TimezoneUtil.formatInOrganizationTime(orgCurrentTime, 'HH:mm zzz', organizationTimezone);
-			const workTimeFormatted = `${workingDayInfo.startTime} (30min after: ${reportWindow.morningReportTime.toTimeString().substring(0, 5)})`;
-			
+			const orgTimeFormatted = TimezoneUtil.formatInOrganizationTime(
+				orgCurrentTime,
+				'HH:mm zzz',
+				organizationTimezone,
+			);
+			const workTimeFormatted = `${workingDayInfo.startTime} (30min after: ${reportWindow.morningReportTime
+				.toTimeString()
+				.substring(0, 5)})`;
+
 			this.logger.log(`✅ Morning report sent for organization ${organization.name} (ID: ${organization.uid})`);
 			this.logger.log(`  🕐 Server time: ${serverTime}`);
 			this.logger.log(`  🌍 Organization time: ${orgTimeFormatted}`);
 			this.logger.log(`  ⏰ Work start time: ${workTimeFormatted}`);
 			this.logger.log(`  🗺️  Timezone: ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`);
-			this.logger.log(`  📊 Report window: ${reportWindow.morningReportTime.toTimeString().substring(0, 5)} (10min window)`);
+			this.logger.log(
+				`  📊 Report window: ${reportWindow.morningReportTime.toTimeString().substring(0, 5)} (10min window)`,
+			);
 		} catch (error) {
 			this.logger.error(`Error processing morning report for organization ${organization.uid}:`, error);
 		}
@@ -413,20 +264,27 @@ export class AttendanceReportsService {
 
 	private async processEveningReportForOrganization(organization: Organisation, currentTime: Date) {
 		this.logger.debug(`Processing evening report for organization ${organization.uid} (${organization.name})`);
-		
+
 		try {
 			// Get organization timezone from organization hours service
 			const organizationHours = await this.organizationHoursService.getOrganizationHours(organization.uid);
 			const organizationTimezone = organizationHours?.timezone;
-			
+
 			// Convert current time to organization timezone
 			const orgCurrentTime = TimezoneUtil.toOrganizationTime(currentTime, organizationTimezone);
-			
+
 			// Get working day info using organization timezone
-			const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(organization.uid, orgCurrentTime);
+			const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(
+				organization.uid,
+				orgCurrentTime,
+			);
 
 			if (!workingDayInfo.isWorkingDay || !workingDayInfo.endTime) {
-				this.logger.debug(`⏭️  Skipping evening report for org ${organization.uid} (${organization.name}) - not a working day or no end time in ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`);
+				this.logger.debug(
+					`⏭️  Skipping evening report for org ${organization.uid} (${
+						organization.name
+					}) - not a working day or no end time in ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`,
+				);
 				return; // Skip non-working days
 			}
 
@@ -437,11 +295,21 @@ export class AttendanceReportsService {
 				30, // 30 minutes after end time
 				10, // 10-minute window (matches our cron interval)
 				organizationTimezone,
-				currentTime
+				currentTime,
 			);
 
 			if (!reportWindow.isTimeForEveningReport) {
-				this.logger.debug(`⏰ Not time for evening report for org ${organization.uid} (${organization.name}) yet - Current: ${TimezoneUtil.formatInOrganizationTime(orgCurrentTime, 'HH:mm', organizationTimezone)}, Report time: ${reportWindow.eveningReportTime.toTimeString().substring(0, 5)} in ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`);
+				this.logger.debug(
+					`⏰ Not time for evening report for org ${organization.uid} (${
+						organization.name
+					}) yet - Current: ${TimezoneUtil.formatInOrganizationTime(
+						orgCurrentTime,
+						'HH:mm',
+						organizationTimezone,
+					)}, Report time: ${reportWindow.eveningReportTime
+						.toTimeString()
+						.substring(0, 5)} in ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`,
+				);
 				return; // Not time for evening report yet
 			}
 
@@ -450,7 +318,11 @@ export class AttendanceReportsService {
 			const cacheKey = `evening_report_${organization.uid}_${format(orgToday, 'yyyy-MM-dd')}`;
 
 			if (this.hasReportBeenSent(cacheKey)) {
-				this.logger.debug(`✅ Evening report already sent today for org ${organization.uid} (${organization.name}) on ${format(orgToday, 'yyyy-MM-dd')} in ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`);
+				this.logger.debug(
+					`✅ Evening report already sent today for org ${organization.uid} (${
+						organization.name
+					}) on ${format(orgToday, 'yyyy-MM-dd')} in ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`,
+				);
 				return;
 			}
 
@@ -460,15 +332,23 @@ export class AttendanceReportsService {
 
 			// Enhanced timezone-aware logging
 			const serverTime = currentTime.toISOString();
-			const orgTimeFormatted = TimezoneUtil.formatInOrganizationTime(orgCurrentTime, 'HH:mm zzz', organizationTimezone);
-			const workTimeFormatted = `${workingDayInfo.endTime} (30min after: ${reportWindow.eveningReportTime.toTimeString().substring(0, 5)})`;
-			
+			const orgTimeFormatted = TimezoneUtil.formatInOrganizationTime(
+				orgCurrentTime,
+				'HH:mm zzz',
+				organizationTimezone,
+			);
+			const workTimeFormatted = `${workingDayInfo.endTime} (30min after: ${reportWindow.eveningReportTime
+				.toTimeString()
+				.substring(0, 5)})`;
+
 			this.logger.log(`✅ Evening report sent for organization ${organization.name} (ID: ${organization.uid})`);
 			this.logger.log(`  🕐 Server time: ${serverTime}`);
 			this.logger.log(`  🌍 Organization time: ${orgTimeFormatted}`);
 			this.logger.log(`  ⏰ Work end time: ${workTimeFormatted}`);
 			this.logger.log(`  🗺️  Timezone: ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`);
-			this.logger.log(`  📊 Report window: ${reportWindow.eveningReportTime.toTimeString().substring(0, 5)} (10min window)`);
+			this.logger.log(
+				`  📊 Report window: ${reportWindow.eveningReportTime.toTimeString().substring(0, 5)} (10min window)`,
+			);
 		} catch (error) {
 			this.logger.error(`Error processing evening report for organization ${organization.uid}:`, error);
 		}
@@ -494,11 +374,11 @@ export class AttendanceReportsService {
 	 */
 	async generateAndSendMorningReport(organizationId: number): Promise<void> {
 		this.logger.log(`Generating and sending morning report for organization ${organizationId}`);
-		
+
 		try {
 			const reportData = await this.generateMorningReportData(organizationId);
 			this.logger.log(`Morning report data generated for organization ${organizationId}`);
-			
+
 			const recipients = await this.getReportRecipients(organizationId);
 
 			if (recipients.length === 0) {
@@ -506,7 +386,9 @@ export class AttendanceReportsService {
 				return;
 			}
 
-			this.logger.log(`Sending morning report to ${recipients.length} recipients for organization ${organizationId}`);
+			this.logger.log(
+				`Sending morning report to ${recipients.length} recipients for organization ${organizationId}`,
+			);
 			this.eventEmitter.emit('send.email', EmailType.ATTENDANCE_MORNING_REPORT, recipients, reportData);
 
 			this.logger.log(
@@ -523,11 +405,11 @@ export class AttendanceReportsService {
 	 */
 	async generateAndSendEveningReport(organizationId: number): Promise<void> {
 		this.logger.log(`Generating and sending evening report for organization ${organizationId}`);
-		
+
 		try {
 			const reportData = await this.generateEveningReportData(organizationId);
 			this.logger.log(`Evening report data generated for organization ${organizationId}`);
-			
+
 			const recipients = await this.getReportRecipients(organizationId);
 
 			if (recipients.length === 0) {
@@ -535,7 +417,9 @@ export class AttendanceReportsService {
 				return;
 			}
 
-			this.logger.log(`Sending evening report to ${recipients.length} recipients for organization ${organizationId}`);
+			this.logger.log(
+				`Sending evening report to ${recipients.length} recipients for organization ${organizationId}`,
+			);
 			this.eventEmitter.emit('send.email', EmailType.ATTENDANCE_EVENING_REPORT, recipients, reportData);
 
 			this.logger.log(
@@ -551,8 +435,10 @@ export class AttendanceReportsService {
 	 * Generate and send morning attendance report to specific recipients
 	 */
 	async generateAndSendMorningReportToUser(organizationId: number, userEmail: string): Promise<MorningReportData> {
-		this.logger.log(`Generating and sending morning report to user ${userEmail} for organization ${organizationId}`);
-		
+		this.logger.log(
+			`Generating and sending morning report to user ${userEmail} for organization ${organizationId}`,
+		);
+
 		try {
 			const reportData = await this.generateMorningReportData(organizationId);
 			const recipients = [userEmail];
@@ -580,8 +466,10 @@ export class AttendanceReportsService {
 	 * Generate and send evening attendance report to specific recipients
 	 */
 	async generateAndSendEveningReportToUser(organizationId: number, userEmail: string): Promise<EveningReportData> {
-		this.logger.log(`Generating and sending evening report to user ${userEmail} for organization ${organizationId}`);
-		
+		this.logger.log(
+			`Generating and sending evening report to user ${userEmail} for organization ${organizationId}`,
+		);
+
 		try {
 			const reportData = await this.generateEveningReportData(organizationId);
 			const recipients = [userEmail];
@@ -607,17 +495,19 @@ export class AttendanceReportsService {
 
 	private async generateMorningReportData(organizationId: number): Promise<MorningReportData> {
 		this.logger.log(`Generating morning report data for organization ${organizationId}`);
-		
+
 		// Get organization timezone
 		const organizationHours = await this.organizationHoursService.getOrganizationHours(organizationId);
 		const organizationTimezone = organizationHours?.timezone;
-		
+
 		// Use organization timezone for "today" calculations
 		const today = TimezoneUtil.getCurrentOrganizationTime(organizationTimezone);
 		const startOfToday = startOfDay(today);
 		const endOfToday = endOfDay(today);
 
-		this.logger.debug(`Processing data for date range: ${startOfToday.toISOString()} to ${endOfToday.toISOString()}`);
+		this.logger.debug(
+			`Processing data for date range: ${startOfToday.toISOString()} to ${endOfToday.toISOString()}`,
+		);
 
 		// Get organization info
 		const organization = await this.organisationRepository.findOne({
@@ -651,7 +541,7 @@ export class AttendanceReportsService {
 			const usersResponse = await this.userService.findAll({ organisationId: organizationId }, 1, 1000);
 			allUsers = usersResponse.data || [];
 			this.logger.debug(`Found ${allUsers.length} users in organization`);
-			
+
 			// Only count active users who should work today (based on organization schedule)
 			totalEmployees = await this.getExpectedEmployeesForToday(allUsers, organizationId, today);
 			this.logger.log(`Expected employees for today: ${totalEmployees}`);
@@ -679,7 +569,11 @@ export class AttendanceReportsService {
 		this.logger.debug(`Retrieved user targets for ${userTargets.usersWithTargets} users`);
 
 		// Calculate real-time total hours worked (including people still working) using organization hours
-		const totalActualHours = await this.calculateTotalActualHoursWithOrgHours(todayAttendance, organizationId, today);
+		const totalActualHours = await this.calculateTotalActualHoursWithOrgHours(
+			todayAttendance,
+			organizationId,
+			today,
+		);
 		this.logger.log(`Total actual hours worked: ${totalActualHours}`);
 
 		// Use consolidated attendance for correct present count
@@ -687,15 +581,17 @@ export class AttendanceReportsService {
 		const absentCount = totalEmployees - presentCount;
 		const attendanceRate = totalEmployees > 0 ? (presentCount / totalEmployees) * 100 : 0;
 
-		this.logger.log(`Attendance summary: ${presentCount} present, ${absentCount} absent, ${attendanceRate.toFixed(1)}% rate`);
+		this.logger.log(
+			`Attendance summary: ${presentCount} present, ${absentCount} absent, ${attendanceRate.toFixed(1)}% rate`,
+		);
 
 		// Create present employees list from consolidated data
 		const presentEmployees: AttendanceReportUser[] = [];
 		for (const [userId, userRecord] of consolidatedAttendance) {
 			const { user, primaryAttendance, totalHours, isOvertime } = userRecord;
-			
+
 			const fullName = `${user.name || ''} ${user.surname || ''}`.trim();
-			
+
 			// Get late information using organization hours (based on first check-in)
 			let lateInfo = { isLate: false, lateMinutes: 0 };
 			if (primaryAttendance.checkIn) {
@@ -735,20 +631,29 @@ export class AttendanceReportsService {
 
 		// Enhanced employee categorization using consolidated data
 		const employeeCategories = await this.categorizeEmployeesByStatusWithConsolidatedData(
-			allUsers, 
-			consolidatedAttendance, 
-			organizationId, 
-			today
+			allUsers,
+			consolidatedAttendance,
+			organizationId,
+			today,
 		);
 
-		this.logger.log(`Employee categories: ${employeeCategories.currentlyWorkingEmployees.length} working, ${employeeCategories.completedShiftEmployees.length} completed`);
+		this.logger.log(
+			`Employee categories: ${employeeCategories.currentlyWorkingEmployees.length} working, ${employeeCategories.completedShiftEmployees.length} completed`,
+		);
 
 		// Generate punctuality breakdown using organization hours
 		const punctuality = await this.generatePunctualityBreakdown(organizationId, todayAttendance);
-		this.logger.log(`Punctuality breakdown: ${punctuality.onTimeArrivals.length} on time, ${punctuality.lateArrivals.length} late`);
+		this.logger.log(
+			`Punctuality breakdown: ${punctuality.onTimeArrivals.length} on time, ${punctuality.lateArrivals.length} late`,
+		);
 
 		// Generate branch breakdown using organization hours
-		const branchBreakdown = await this.generateBranchBreakdownWithOrgHours(allUsers, todayAttendance, organizationId, today);
+		const branchBreakdown = await this.generateBranchBreakdownWithOrgHours(
+			allUsers,
+			todayAttendance,
+			organizationId,
+			today,
+		);
 		this.logger.log(`Generated branch breakdown for ${branchBreakdown.length} branches`);
 
 		// Calculate comprehensive lateness summary
@@ -781,34 +686,35 @@ export class AttendanceReportsService {
 		const currentTime = today;
 		const workDayProgress = await this.calculateWorkDayProgressWithOrgHours(currentTime, organizationId, today);
 		const projectedEndOfDayHours = workDayProgress > 0 ? totalActualHours / workDayProgress : totalActualHours;
-		
+
 		const targetPerformance = {
 			expectedDailyHours: Math.round(expectedDailyHours * 100) / 100,
 			actualHoursToDate: Math.round(totalActualHours * 100) / 100,
 			projectedEndOfDayHours: Math.round(projectedEndOfDayHours * 100) / 100,
 			onTrackToMeetTargets: projectedEndOfDayHours >= expectedDailyHours * 0.9, // 90% threshold
 			targetAchievementRate: Math.round(productivityRate * 100) / 100,
-			hoursGapAnalysis: hoursDeficit > 0 
-				? `${Math.round(hoursDeficit * 100) / 100} hours behind target`
-				: 'On track or ahead of target'
+			hoursGapAnalysis:
+				hoursDeficit > 0
+					? `${Math.round(hoursDeficit * 100) / 100} hours behind target`
+					: 'On track or ahead of target',
 		};
 
 		this.logger.log(`Target performance: ${targetPerformance.targetAchievementRate}% achievement rate`);
 
 		// Generate enhanced insights and recommendations
 		const insights = this.generateEnhancedMorningInsights(
-			attendanceRate, 
-			punctuality, 
-			presentCount, 
+			attendanceRate,
+			punctuality,
+			presentCount,
 			totalEmployees,
 			targetPerformance,
-			employeeCategories
+			employeeCategories,
 		);
 		const recommendations = this.generateEnhancedMorningRecommendations(
-			punctuality, 
+			punctuality,
 			attendanceRate,
 			targetPerformance,
-			employeeCategories
+			employeeCategories,
 		);
 
 		this.logger.log(`Generated ${insights.length} insights and ${recommendations.length} recommendations`);
@@ -849,17 +755,19 @@ export class AttendanceReportsService {
 
 	private async generateEveningReportData(organizationId: number): Promise<EveningReportData> {
 		this.logger.log(`Generating evening report data for organization ${organizationId}`);
-		
+
 		// Get organization timezone
 		const organizationHours = await this.organizationHoursService.getOrganizationHours(organizationId);
 		const organizationTimezone = organizationHours?.timezone;
-		
+
 		// Use organization timezone for "today" calculations
 		const today = TimezoneUtil.getCurrentOrganizationTime(organizationTimezone);
 		const startOfToday = startOfDay(today);
 		const endOfToday = endOfDay(today);
 
-		this.logger.debug(`Processing data for date range: ${startOfToday.toISOString()} to ${endOfToday.toISOString()}`);
+		this.logger.debug(
+			`Processing data for date range: ${startOfToday.toISOString()} to ${endOfToday.toISOString()}`,
+		);
 
 		// Get organization info
 		const organization = await this.organisationRepository.findOne({
@@ -921,7 +829,9 @@ export class AttendanceReportsService {
 			}),
 		]);
 
-		this.logger.log(`Found ${todayAttendance.length} attendance records for today, ${comparisonAttendance.length} for ${comparisonLabel}`);
+		this.logger.log(
+			`Found ${todayAttendance.length} attendance records for today, ${comparisonAttendance.length} for ${comparisonLabel}`,
+		);
 
 		// Create present employees list using organization hours for lateness calculation
 		const presentEmployees: AttendanceReportUser[] = [];
@@ -930,7 +840,7 @@ export class AttendanceReportsService {
 			if (!owner) continue;
 
 			const fullName = `${owner.name || ''} ${owner.surname || ''}`.trim();
-			
+
 			// Get late information using organization hours
 			let lateInfo = { isLate: false, lateMinutes: 0 };
 			if (attendance.checkIn) {
@@ -967,10 +877,8 @@ export class AttendanceReportsService {
 
 		// Only include absent employees if today is a working day
 		if (workingDayInfo.isWorkingDay) {
-			const absentUsers = allUsers.filter((user) => 
-				!presentUserIds.has(user.uid) && 
-				!user.isDeleted && 
-				user.status !== 'INACTIVE'
+			const absentUsers = allUsers.filter(
+				(user) => !presentUserIds.has(user.uid) && !user.isDeleted && user.status !== 'INACTIVE',
 			);
 
 			for (const user of absentUsers) {
@@ -1007,14 +915,28 @@ export class AttendanceReportsService {
 		this.logger.debug(`Retrieved user targets for ${userTargets.usersWithTargets} users`);
 
 		// Enhanced employee categorization with organization hours
-		const employeeCategories = await this.categorizeEmployeesByStatusWithOrgHours(allUsers, todayAttendance, organizationId, today);
+		const employeeCategories = await this.categorizeEmployeesByStatusWithOrgHours(
+			allUsers,
+			todayAttendance,
+			organizationId,
+			today,
+		);
 
 		// Generate branch breakdown using organization hours
-		const branchBreakdown = await this.generateBranchBreakdownWithOrgHours(allUsers, todayAttendance, organizationId, today);
+		const branchBreakdown = await this.generateBranchBreakdownWithOrgHours(
+			allUsers,
+			todayAttendance,
+			organizationId,
+			today,
+		);
 		this.logger.log(`Generated branch breakdown for ${branchBreakdown.length} branches`);
 
 		// Calculate real-time total hours worked using organization hours
-		const totalActualHours = await this.calculateTotalActualHoursWithOrgHours(todayAttendance, organizationId, today);
+		const totalActualHours = await this.calculateTotalActualHoursWithOrgHours(
+			todayAttendance,
+			organizationId,
+			today,
+		);
 		this.logger.log(`Total actual hours worked: ${totalActualHours}`);
 
 		// Generate employee metrics with improved comparison logic using organization hours
@@ -1032,7 +954,9 @@ export class AttendanceReportsService {
 		const templateEmployeeMetrics = [];
 		for (const metric of employeeMetrics) {
 			const todayRecord = todayAttendance.find((a) => a.owner?.uid === metric.user.uid);
-			const realTimeHours = todayRecord ? await this.calculateRealTimeHoursWithOrgHours(todayRecord, organizationId, today) : 0;
+			const realTimeHours = todayRecord
+				? await this.calculateRealTimeHoursWithOrgHours(todayRecord, organizationId, today)
+				: 0;
 
 			// Determine employee status with real-time consideration using organization hours
 			let status = 'Absent';
@@ -1075,10 +999,17 @@ export class AttendanceReportsService {
 
 		// Calculate summary statistics with real-time hours using organization hours
 		const completedShifts = todayAttendance.filter((a) => a.status === AttendanceStatus.COMPLETED).length;
-		const avgHours = employeeCategories.presentEmployees.length > 0 ? totalActualHours / employeeCategories.presentEmployees.length : 0;
+		const avgHours =
+			employeeCategories.presentEmployees.length > 0
+				? totalActualHours / employeeCategories.presentEmployees.length
+				: 0;
 
 		const standardMinutes = workingDayInfo.expectedWorkMinutes;
-		const totalOvertimeMinutes = await this.calculateTotalOvertimeWithOrgHours(todayAttendance, organizationId, today);
+		const totalOvertimeMinutes = await this.calculateTotalOvertimeWithOrgHours(
+			todayAttendance,
+			organizationId,
+			today,
+		);
 
 		// Calculate target performance metrics using organization hours
 		const expectedDailyHours = userTargets.totalExpectedDailyHours;
@@ -1092,7 +1023,8 @@ export class AttendanceReportsService {
 
 		for (const emp of templateEmployeeMetrics) {
 			const userTarget = userTargets.userTargetsMap.get(emp.uid) || 8;
-			if (emp.hoursWorked >= userTarget * 0.9) { // 90% threshold
+			if (emp.hoursWorked >= userTarget * 0.9) {
+				// 90% threshold
 				individualTargetsMet++;
 			} else {
 				individualTargetsMissed++;
@@ -1120,7 +1052,9 @@ export class AttendanceReportsService {
 			individualTargetsMissed,
 		};
 
-		this.logger.log(`Target performance: ${targetPerformance.targetAchievementRate}% achievement rate (${teamEfficiencyRating})`);
+		this.logger.log(
+			`Target performance: ${targetPerformance.targetAchievementRate}% achievement rate (${teamEfficiencyRating})`,
+		);
 
 		// Calculate comprehensive lateness summary for evening report using organization hours
 		const lateEmployeesToday = employeeMetrics.filter((metric) => metric.isLate);
@@ -1170,7 +1104,10 @@ export class AttendanceReportsService {
 		const hoursChange = Math.round((totalActualHours - comparisonTotalHours) * 100) / 100;
 
 		// Calculate punctuality change using organization hours
-		const comparisonLateCount = await this.calculateComparisonLateCountWithOrgHours(comparisonAttendance, organizationId);
+		const comparisonLateCount = await this.calculateComparisonLateCountWithOrgHours(
+			comparisonAttendance,
+			organizationId,
+		);
 		const todayLateCount = lateEmployeesToday.length;
 		const punctualityChange =
 			comparisonAttendance.length > 0
@@ -1183,18 +1120,20 @@ export class AttendanceReportsService {
 			comparisonAttendance,
 			attendanceChange,
 			hoursChange,
-			punctualityChange
+			punctualityChange,
 		);
 
-		this.logger.log(`Performance trend: ${performanceTrend} (attendance: ${attendanceChange}%, hours: ${hoursChange}h, punctuality: ${punctualityChange}%)`);
+		this.logger.log(
+			`Performance trend: ${performanceTrend} (attendance: ${attendanceChange}%, hours: ${hoursChange}h, punctuality: ${punctualityChange}%)`,
+		);
 
 		// Generate enhanced insights with target analysis using organization hours
 		const insights = this.generateEnhancedEveningInsights(
-			employeeMetrics, 
-			completedShifts, 
+			employeeMetrics,
+			completedShifts,
 			avgHours,
 			targetPerformance,
-			employeeCategories
+			employeeCategories,
 		);
 
 		// Generate tomorrow's action items
@@ -1301,7 +1240,7 @@ export class AttendanceReportsService {
 
 	private async getReportRecipients(organizationId: number): Promise<string[]> {
 		this.logger.log(`Getting report recipients for organization ${organizationId}`);
-		
+
 		try {
 			// Get users with OWNER, ADMIN, or HR access levels for the organization
 			const ownerResult = await this.userService.findAll({
@@ -1332,7 +1271,7 @@ export class AttendanceReportsService {
 
 			const emails = uniqueRecipients.map((user) => user.email);
 			this.logger.log(`Found ${emails.length} report recipients for organization ${organizationId}`);
-			
+
 			return emails;
 		} catch (error) {
 			this.logger.error(`Error getting report recipients for organization ${organizationId}:`, error);
@@ -1422,22 +1361,27 @@ export class AttendanceReportsService {
 	private async consolidateAttendanceByUser(
 		organizationId: number,
 		todayAttendance: Attendance[],
-	): Promise<Map<number, {
-		user: User;
-		primaryAttendance: Attendance;
-		allAttendances: Attendance[];
-		totalHours: number;
-		isOvertime: boolean;
-		earliestCheckIn: Date;
-		latestCheckOut: Date | null;
-	}>> {
+	): Promise<
+		Map<
+			number,
+			{
+				user: User;
+				primaryAttendance: Attendance;
+				allAttendances: Attendance[];
+				totalHours: number;
+				isOvertime: boolean;
+				earliestCheckIn: Date;
+				latestCheckOut: Date | null;
+			}
+		>
+	> {
 		const userAttendanceMap = new Map();
 
 		// Group attendance records by user ID
 		const groupedByUser = new Map<number, Attendance[]>();
 		for (const attendance of todayAttendance) {
 			if (!attendance.owner?.uid) continue;
-			
+
 			const userId = attendance.owner.uid;
 			if (!groupedByUser.has(userId)) {
 				groupedByUser.set(userId, []);
@@ -1451,7 +1395,7 @@ export class AttendanceReportsService {
 
 			// Sort by check-in time to get chronological order
 			const sortedAttendances = attendances
-				.filter(a => a.checkIn)
+				.filter((a) => a.checkIn)
 				.sort((a, b) => new Date(a.checkIn!).getTime() - new Date(b.checkIn!).getTime());
 
 			if (sortedAttendances.length === 0) continue;
@@ -1465,22 +1409,25 @@ export class AttendanceReportsService {
 			const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
 			for (const attendance of sortedAttendances) {
 				const hours = await this.calculateRealTimeHoursWithOrgHours(
-					attendance, 
-					organizationId, 
+					attendance,
+					organizationId,
 					new Date(),
-					today // Only count hours for today from multi-day shifts
+					today, // Only count hours for today from multi-day shifts
 				);
 				totalHours += hours;
 			}
 
 			// Get working day info to determine if this is overtime
-			const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(organizationId, firstAttendance.checkIn!);
+			const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(
+				organizationId,
+				firstAttendance.checkIn!,
+			);
 			const standardHours = (workingDayInfo.expectedWorkMinutes || 480) / 60; // Default 8 hours
 			const isOvertime = totalHours > standardHours;
 
 			// Find latest check-out time
 			const checkOuts = sortedAttendances
-				.map(a => a.checkOut)
+				.map((a) => a.checkOut)
 				.filter(Boolean)
 				.sort((a, b) => new Date(b!).getTime() - new Date(a!).getTime());
 
@@ -1512,7 +1459,7 @@ export class AttendanceReportsService {
 
 		for (const [userId, userRecord] of consolidatedAttendance) {
 			const { user, primaryAttendance, totalHours, isOvertime, earliestCheckIn } = userRecord;
-			
+
 			if (!primaryAttendance.checkIn || !isValid(primaryAttendance.checkIn)) {
 				continue;
 			}
@@ -1585,7 +1532,9 @@ export class AttendanceReportsService {
 				continue;
 			}
 
-			const checkInMinutes = TimeCalculatorUtil.timeToMinutes(primaryAttendance.checkIn.toTimeString().substring(0, 5));
+			const checkInMinutes = TimeCalculatorUtil.timeToMinutes(
+				primaryAttendance.checkIn.toTimeString().substring(0, 5),
+			);
 			const expectedStartMinutes = TimeCalculatorUtil.timeToMinutes(workingDayInfo.startTime);
 
 			// Categorize based on FIRST check-in time (punctuality)
@@ -1614,7 +1563,7 @@ export class AttendanceReportsService {
 		const allEmployees = [...earlyArrivals, ...onTimeArrivals, ...lateArrivals, ...veryLateArrivals];
 
 		// Initialize branch data
-		allEmployees.forEach(employee => {
+		allEmployees.forEach((employee) => {
 			if (employee.branch) {
 				const branchId = employee.branch.uid;
 				if (!branchMap.has(branchId)) {
@@ -1638,21 +1587,25 @@ export class AttendanceReportsService {
 		});
 
 		// Group employees by branch and category
-		earlyArrivals.forEach(emp => emp.branch && branchMap.get(emp.branch.uid)?.earlyArrivals.push(emp));
-		onTimeArrivals.forEach(emp => emp.branch && branchMap.get(emp.branch.uid)?.onTimeArrivals.push(emp));
-		lateArrivals.forEach(emp => emp.branch && branchMap.get(emp.branch.uid)?.lateArrivals.push(emp));
-		veryLateArrivals.forEach(emp => emp.branch && branchMap.get(emp.branch.uid)?.veryLateArrivals.push(emp));
+		earlyArrivals.forEach((emp) => emp.branch && branchMap.get(emp.branch.uid)?.earlyArrivals.push(emp));
+		onTimeArrivals.forEach((emp) => emp.branch && branchMap.get(emp.branch.uid)?.onTimeArrivals.push(emp));
+		lateArrivals.forEach((emp) => emp.branch && branchMap.get(emp.branch.uid)?.lateArrivals.push(emp));
+		veryLateArrivals.forEach((emp) => emp.branch && branchMap.get(emp.branch.uid)?.veryLateArrivals.push(emp));
 
 		// Calculate percentages and metrics for each branch
-		const byBranch: BranchPunctuality[] = Array.from(branchMap.values()).map(branch => {
-			const branchTotal = branch.earlyArrivals.length + branch.onTimeArrivals.length + 
-				branch.lateArrivals.length + branch.veryLateArrivals.length;
-			
+		const byBranch: BranchPunctuality[] = Array.from(branchMap.values()).map((branch) => {
+			const branchTotal =
+				branch.earlyArrivals.length +
+				branch.onTimeArrivals.length +
+				branch.lateArrivals.length +
+				branch.veryLateArrivals.length;
+
 			const branchLateEmployees = [...branch.lateArrivals, ...branch.veryLateArrivals];
 			const branchTotalLateMinutes = branchLateEmployees.reduce((sum, emp) => sum + (emp.lateMinutes || 0), 0);
-			const branchAverageLateMinutes = branchLateEmployees.length > 0 
-				? Math.round((branchTotalLateMinutes / branchLateEmployees.length) * 100) / 100 
-				: 0;
+			const branchAverageLateMinutes =
+				branchLateEmployees.length > 0
+					? Math.round((branchTotalLateMinutes / branchLateEmployees.length) * 100) / 100
+					: 0;
 
 			return {
 				...branch,
@@ -1660,7 +1613,8 @@ export class AttendanceReportsService {
 				earlyPercentage: branchTotal > 0 ? Math.round((branch.earlyArrivals.length / branchTotal) * 100) : 0,
 				onTimePercentage: branchTotal > 0 ? Math.round((branch.onTimeArrivals.length / branchTotal) * 100) : 0,
 				latePercentage: branchTotal > 0 ? Math.round((branch.lateArrivals.length / branchTotal) * 100) : 0,
-				veryLatePercentage: branchTotal > 0 ? Math.round((branch.veryLateArrivals.length / branchTotal) * 100) : 0,
+				veryLatePercentage:
+					branchTotal > 0 ? Math.round((branch.veryLateArrivals.length / branchTotal) * 100) : 0,
 				averageLateMinutes: branchAverageLateMinutes,
 				totalLateMinutes: branchTotalLateMinutes,
 			};
@@ -1720,7 +1674,9 @@ export class AttendanceReportsService {
 			} else if (comparisonHours === 0 && todayHours > 0) {
 				// Today has work but yesterday didn't - this is new activity, not improvement
 				if (todayHours >= 6) {
-					comparisonText = `New activity: ${Math.round(todayHours * 100) / 100}h worked (no ${comparisonLabel} data)`;
+					comparisonText = `New activity: ${
+						Math.round(todayHours * 100) / 100
+					}h worked (no ${comparisonLabel} data)`;
 					timingDifference = '🆕';
 				} else {
 					comparisonText = `${Math.round(todayHours * 100) / 100}h worked (no ${comparisonLabel} data)`;
@@ -1728,7 +1684,9 @@ export class AttendanceReportsService {
 				}
 			} else if (todayHours === 0 && comparisonHours > 0) {
 				// Today has no work but yesterday did - this is absence, not decline
-				comparisonText = `No work today (worked ${Math.round(comparisonHours * 100) / 100}h ${comparisonLabel})`;
+				comparisonText = `No work today (worked ${
+					Math.round(comparisonHours * 100) / 100
+				}h ${comparisonLabel})`;
 				timingDifference = '❌';
 			} else if (Math.abs(hoursDifference) < 0.1) {
 				// Very small difference (less than 6 minutes) - consider it the same
@@ -1736,9 +1694,11 @@ export class AttendanceReportsService {
 				timingDifference = '📍';
 			} else if (hoursDifference > 0.5) {
 				// Meaningful increase
-				const increasePercent = Math.round(((hoursDifference) / comparisonHours) * 100);
+				const increasePercent = Math.round((hoursDifference / comparisonHours) * 100);
 				if (increasePercent >= 50) {
-					comparisonText = `Strong increase: +${Math.round(hoursDifference * 100) / 100}h (+${increasePercent}% vs ${comparisonLabel})`;
+					comparisonText = `Strong increase: +${
+						Math.round(hoursDifference * 100) / 100
+					}h (+${increasePercent}% vs ${comparisonLabel})`;
 					timingDifference = '📈';
 				} else {
 					comparisonText = `+${Math.round(hoursDifference * 100) / 100}h more than ${comparisonLabel}`;
@@ -1748,19 +1708,27 @@ export class AttendanceReportsService {
 				// Meaningful decrease
 				const decreasePercent = Math.round((Math.abs(hoursDifference) / comparisonHours) * 100);
 				if (decreasePercent >= 50) {
-					comparisonText = `Significant decrease: ${Math.round(Math.abs(hoursDifference) * 100) / 100}h less (-${decreasePercent}% vs ${comparisonLabel})`;
+					comparisonText = `Significant decrease: ${
+						Math.round(Math.abs(hoursDifference) * 100) / 100
+					}h less (-${decreasePercent}% vs ${comparisonLabel})`;
 					timingDifference = '📉';
 				} else {
-					comparisonText = `${Math.round(Math.abs(hoursDifference) * 100) / 100}h less than ${comparisonLabel}`;
+					comparisonText = `${
+						Math.round(Math.abs(hoursDifference) * 100) / 100
+					}h less than ${comparisonLabel}`;
 					timingDifference = '↘️';
 				}
 			} else {
 				// Small difference (0.1 to 0.5 hours) - acknowledge but don't overstate
 				if (hoursDifference > 0) {
-					comparisonText = `Slightly more: +${Math.round(hoursDifference * 100) / 100}h vs ${comparisonLabel}`;
+					comparisonText = `Slightly more: +${
+						Math.round(hoursDifference * 100) / 100
+					}h vs ${comparisonLabel}`;
 					timingDifference = '↗️';
 				} else {
-					comparisonText = `Slightly less: ${Math.round(Math.abs(hoursDifference) * 100) / 100}h vs ${comparisonLabel}`;
+					comparisonText = `Slightly less: ${
+						Math.round(Math.abs(hoursDifference) * 100) / 100
+					}h vs ${comparisonLabel}`;
 					timingDifference = '↘️';
 				}
 			}
@@ -1833,57 +1801,91 @@ export class AttendanceReportsService {
 
 		// Special handling for no present employees
 		if (presentCount === 0) {
-			insights.push('CRITICAL: No employees have checked in yet today. This requires immediate attention and follow-up.');
-			insights.push('Potential causes: system issues, holiday schedules, communication gaps, or emergency situations.');
-			insights.push('Immediate action required: Contact all team members to ensure safety and clarify work arrangements.');
-			insights.push('Consider checking attendance system functionality and recent organizational communications.');
+			insights.push(
+				'CRITICAL: No employees have checked in yet today. This requires immediate attention and follow-up.',
+			);
+			insights.push(
+				'Potential causes: system issues, holiday schedules, communication gaps, or emergency situations.',
+			);
+			insights.push(
+				'Immediate action required: Contact all team members to ensure safety and clarify work arrangements.',
+			);
+			insights.push(
+				'Consider checking attendance system functionality and recent organizational communications.',
+			);
 			return insights;
 		}
 
 		// Enhanced attendance rate insights with proper context
 		const attendanceContext = totalEmployees > 1 ? 'team' : 'employee';
 		if (attendanceRate >= 95) {
-			insights.push(`Exceptional attendance: ${presentCount}/${totalEmployees} ${attendanceContext} present (${attendanceRate}%) - outstanding commitment!`);
+			insights.push(
+				`Exceptional attendance: ${presentCount}/${totalEmployees} ${attendanceContext} present (${attendanceRate}%) - outstanding commitment!`,
+			);
 		} else if (attendanceRate >= 85) {
-			insights.push(`Strong attendance: ${presentCount}/${totalEmployees} ${attendanceContext} present (${attendanceRate}%) - excellent performance with minor room for improvement.`);
+			insights.push(
+				`Strong attendance: ${presentCount}/${totalEmployees} ${attendanceContext} present (${attendanceRate}%) - excellent performance with minor room for improvement.`,
+			);
 		} else if (attendanceRate >= 70) {
-			insights.push(`Good attendance: ${presentCount}/${totalEmployees} ${attendanceContext} present (${attendanceRate}%) - solid foundation with opportunities to enhance team engagement.`);
+			insights.push(
+				`Good attendance: ${presentCount}/${totalEmployees} ${attendanceContext} present (${attendanceRate}%) - solid foundation with opportunities to enhance team engagement.`,
+			);
 		} else if (attendanceRate >= 50) {
-			insights.push(`Moderate attendance: ${presentCount}/${totalEmployees} ${attendanceContext} present (${attendanceRate}%) - significant opportunity for improvement through targeted support.`);
+			insights.push(
+				`Moderate attendance: ${presentCount}/${totalEmployees} ${attendanceContext} present (${attendanceRate}%) - significant opportunity for improvement through targeted support.`,
+			);
 		} else if (attendanceRate > 0) {
-			insights.push(`Low attendance: Only ${presentCount}/${totalEmployees} ${attendanceContext} present (${attendanceRate}%) - requires immediate intervention and comprehensive strategy.`);
+			insights.push(
+				`Low attendance: Only ${presentCount}/${totalEmployees} ${attendanceContext} present (${attendanceRate}%) - requires immediate intervention and comprehensive strategy.`,
+			);
 		}
 
 		// Enhanced punctuality insights with meaningful context
 		const totalLateEmployees = punctuality.lateArrivals.length + punctuality.veryLateArrivals.length;
 		const totalOnTimeEmployees = punctuality.earlyArrivals.length + punctuality.onTimeArrivals.length;
-		
+
 		if (totalLateEmployees === 0 && presentCount > 0) {
-			insights.push(`Perfect punctuality: All ${presentCount} present employees arrived on time or early - exceptional team discipline!`);
+			insights.push(
+				`Perfect punctuality: All ${presentCount} present employees arrived on time or early - exceptional team discipline!`,
+			);
 		} else if (punctuality.veryLateArrivals.length > 0) {
 			const criticalCount = punctuality.veryLateArrivals.length;
 			const regularLateCount = punctuality.lateArrivals.length;
 			if (regularLateCount > 0) {
-				insights.push(`URGENT: ${criticalCount} employees arrived very late (30+ minutes) and ${regularLateCount} others were late. Total late: ${totalLateEmployees}/${presentCount} present employees.`);
+				insights.push(
+					`URGENT: ${criticalCount} employees arrived very late (30+ minutes) and ${regularLateCount} others were late. Total late: ${totalLateEmployees}/${presentCount} present employees.`,
+				);
 			} else {
-				insights.push(`URGENT: ${criticalCount} employees arrived very late (30+ minutes). This represents ${Math.round((criticalCount/presentCount)*100)}% of present employees requiring immediate attention.`);
+				insights.push(
+					`URGENT: ${criticalCount} employees arrived very late (30+ minutes). This represents ${Math.round(
+						(criticalCount / presentCount) * 100,
+					)}% of present employees requiring immediate attention.`,
+				);
 			}
 		} else if (punctuality.lateArrivals.length > 0) {
 			const lateRatio = `${punctuality.lateArrivals.length}/${presentCount}`;
-			insights.push(`${punctuality.lateArrivals.length} employees arrived late today (${lateRatio} present employees) with an average delay of ${punctuality.averageLateMinutes} minutes.`);
+			insights.push(
+				`${punctuality.lateArrivals.length} employees arrived late today (${lateRatio} present employees) with an average delay of ${punctuality.averageLateMinutes} minutes.`,
+			);
 		}
 
 		// Early arrival recognition with context
 		if (punctuality.earlyArrivals.length > 0) {
 			const earlyRatio = `${punctuality.earlyArrivals.length}/${presentCount}`;
-			insights.push(`Outstanding dedication: ${punctuality.earlyArrivals.length} employees arrived early (${earlyRatio} present employees) - demonstrating exceptional commitment.`);
+			insights.push(
+				`Outstanding dedication: ${punctuality.earlyArrivals.length} employees arrived early (${earlyRatio} present employees) - demonstrating exceptional commitment.`,
+			);
 		}
 
 		// Specific insights for severe lateness with proper context
 		if (punctuality.veryLatePercentage > 20 && presentCount >= 3) {
-			insights.push(`CRITICAL ALERT: ${punctuality.veryLatePercentage}% of present employees were extremely late - indicates systemic issues requiring immediate management intervention.`);
+			insights.push(
+				`CRITICAL ALERT: ${punctuality.veryLatePercentage}% of present employees were extremely late - indicates systemic issues requiring immediate management intervention.`,
+			);
 		} else if (punctuality.veryLatePercentage > 10 && presentCount >= 5) {
-			insights.push(`ATTENTION: ${punctuality.veryLatePercentage}% of present employees were extremely late - monitor for emerging patterns.`);
+			insights.push(
+				`ATTENTION: ${punctuality.veryLatePercentage}% of present employees were extremely late - monitor for emerging patterns.`,
+			);
 		}
 
 		// Contextual performance insights based on team size
@@ -1891,24 +1893,40 @@ export class AttendanceReportsService {
 			const onTimePercentage = Math.round((totalOnTimeEmployees / presentCount) * 100);
 			if (presentCount >= 10) {
 				if (onTimePercentage >= 90) {
-					insights.push(`Excellent punctuality: ${onTimePercentage}% (${totalOnTimeEmployees}/${presentCount}) of present employees arrived on time or early - strong team culture.`);
+					insights.push(
+						`Excellent punctuality: ${onTimePercentage}% (${totalOnTimeEmployees}/${presentCount}) of present employees arrived on time or early - strong team culture.`,
+					);
 				} else if (onTimePercentage >= 75) {
-					insights.push(`Good punctuality: ${onTimePercentage}% (${totalOnTimeEmployees}/${presentCount}) of present employees arrived on time or early - opportunity for improvement.`);
+					insights.push(
+						`Good punctuality: ${onTimePercentage}% (${totalOnTimeEmployees}/${presentCount}) of present employees arrived on time or early - opportunity for improvement.`,
+					);
 				} else if (onTimePercentage >= 50) {
-					insights.push(`Moderate punctuality: ${onTimePercentage}% (${totalOnTimeEmployees}/${presentCount}) of present employees arrived on time or early - requires attention.`);
+					insights.push(
+						`Moderate punctuality: ${onTimePercentage}% (${totalOnTimeEmployees}/${presentCount}) of present employees arrived on time or early - requires attention.`,
+					);
 				} else {
-					insights.push(`Low punctuality: Only ${onTimePercentage}% (${totalOnTimeEmployees}/${presentCount}) of present employees arrived on time or early - critical issue.`);
+					insights.push(
+						`Low punctuality: Only ${onTimePercentage}% (${totalOnTimeEmployees}/${presentCount}) of present employees arrived on time or early - critical issue.`,
+					);
 				}
 			} else if (presentCount >= 3) {
 				// Small team context
 				if (onTimePercentage >= 80) {
-					insights.push(`Small team punctuality: ${totalOnTimeEmployees} out of ${presentCount} present employees arrived on time or early (${onTimePercentage}%) - good performance.`);
+					insights.push(
+						`Small team punctuality: ${totalOnTimeEmployees} out of ${presentCount} present employees arrived on time or early (${onTimePercentage}%) - good performance.`,
+					);
 				} else {
-					insights.push(`Small team punctuality: ${totalOnTimeEmployees} out of ${presentCount} present employees arrived on time or early (${onTimePercentage}%) - room for improvement.`);
+					insights.push(
+						`Small team punctuality: ${totalOnTimeEmployees} out of ${presentCount} present employees arrived on time or early (${onTimePercentage}%) - room for improvement.`,
+					);
 				}
 			} else {
 				// Very small team or individual
-				insights.push(`${totalOnTimeEmployees} out of ${presentCount} present ${presentCount === 1 ? 'employee' : 'employees'} arrived on time or early.`);
+				insights.push(
+					`${totalOnTimeEmployees} out of ${presentCount} present ${
+						presentCount === 1 ? 'employee' : 'employees'
+					} arrived on time or early.`,
+				);
 			}
 		}
 
@@ -1920,63 +1938,97 @@ export class AttendanceReportsService {
 
 		// Special handling for zero attendance - immediate crisis response
 		if (attendanceRate === 0) {
-			recommendations.push('IMMEDIATE ACTION: Contact all team members within 30 minutes to verify safety and work status.');
-			recommendations.push('Check attendance system functionality and verify no technical issues are preventing check-ins.');
-			recommendations.push('Review today\'s schedule, holiday calendar, and recent organizational communications.');
+			recommendations.push(
+				'IMMEDIATE ACTION: Contact all team members within 30 minutes to verify safety and work status.',
+			);
+			recommendations.push(
+				'Check attendance system functionality and verify no technical issues are preventing check-ins.',
+			);
+			recommendations.push(
+				"Review today's schedule, holiday calendar, and recent organizational communications.",
+			);
 			recommendations.push('Prepare contingency plans for business operations if attendance issues persist.');
-			recommendations.push('Document incident for analysis and implement preventive measures for future occurrences.');
+			recommendations.push(
+				'Document incident for analysis and implement preventive measures for future occurrences.',
+			);
 			return recommendations;
 		}
 
 		// Critical lateness recommendations
 		if (punctuality.veryLateArrivals.length > 0) {
-			recommendations.push(`URGENT: Schedule immediate meetings with ${punctuality.veryLateArrivals.length} employees who were very late to identify critical barriers.`);
-			recommendations.push('Implement emergency support measures for employees facing significant attendance challenges.');
+			recommendations.push(
+				`URGENT: Schedule immediate meetings with ${punctuality.veryLateArrivals.length} employees who were very late to identify critical barriers.`,
+			);
+			recommendations.push(
+				'Implement emergency support measures for employees facing significant attendance challenges.',
+			);
 		}
 
 		// Standard lateness recommendations
 		if (punctuality.lateArrivals.length > 0) {
-			recommendations.push('Schedule one-on-one conversations with late employees to understand barriers and provide targeted support.');
-			recommendations.push('Review if start times and expectations are clearly communicated and realistic for all team members.');
-			recommendations.push('Consider flexible start time options for employees facing consistent transportation or personal challenges.');
+			recommendations.push(
+				'Schedule one-on-one conversations with late employees to understand barriers and provide targeted support.',
+			);
+			recommendations.push(
+				'Review if start times and expectations are clearly communicated and realistic for all team members.',
+			);
+			recommendations.push(
+				'Consider flexible start time options for employees facing consistent transportation or personal challenges.',
+			);
 		}
 
 		// Attendance improvement recommendations
 		if (attendanceRate < 80) {
-			recommendations.push('Implement proactive wellness check system to identify and address attendance barriers early.');
-			recommendations.push('Review organizational policies and support systems to ensure they meet current team needs.');
+			recommendations.push(
+				'Implement proactive wellness check system to identify and address attendance barriers early.',
+			);
+			recommendations.push(
+				'Review organizational policies and support systems to ensure they meet current team needs.',
+			);
 		}
 
 		if (attendanceRate < 60) {
-			recommendations.push('Conduct urgent team meeting to address systemic attendance challenges and gather feedback.');
+			recommendations.push(
+				'Conduct urgent team meeting to address systemic attendance challenges and gather feedback.',
+			);
 			recommendations.push('Consider implementing attendance incentive programs or enhanced support services.');
 		}
 
 		// Severe punctuality recommendations
 		if (punctuality.latePercentage > 25) {
-			recommendations.push('Evaluate and adjust start time expectations based on realistic commute and preparation needs.');
+			recommendations.push(
+				'Evaluate and adjust start time expectations based on realistic commute and preparation needs.',
+			);
 			recommendations.push('Implement attendance coaching program for employees struggling with punctuality.');
 		}
 
 		// Recognition and positive reinforcement
 		if (punctuality.earlyArrivals.length > 0) {
-			recommendations.push(`Recognize and appreciate the ${punctuality.earlyArrivals.length} employees who demonstrated exceptional commitment by arriving early.`);
+			recommendations.push(
+				`Recognize and appreciate the ${punctuality.earlyArrivals.length} employees who demonstrated exceptional commitment by arriving early.`,
+			);
 		}
 
 		if (punctuality.onTimeArrivals.length > 0) {
-			recommendations.push(`Acknowledge the ${punctuality.onTimeArrivals.length} punctual team members for their consistent reliability and professionalism.`);
+			recommendations.push(
+				`Acknowledge the ${punctuality.onTimeArrivals.length} punctual team members for their consistent reliability and professionalism.`,
+			);
 		}
 
 		// Excellence maintenance recommendations
 		if (punctuality.onTimePercentage > 80 && attendanceRate > 85) {
-			recommendations.push('Continue current successful practices and consider documenting what\'s working well for future reference.');
-			recommendations.push('Use today\'s positive performance as a benchmark for maintaining excellence.');
+			recommendations.push(
+				"Continue current successful practices and consider documenting what's working well for future reference.",
+			);
+			recommendations.push("Use today's positive performance as a benchmark for maintaining excellence.");
 		}
 
 		// Default positive reinforcement
 		if (recommendations.length === 0) {
-			recommendations.push('Maintain current excellent attendance practices and continue supporting team success.');
-			recommendations.push('Consider sharing today\'s positive results with the team to reinforce good habits.');
+			recommendations.push(
+				'Maintain current excellent attendance practices and continue supporting team success.',
+			);
+			recommendations.push("Consider sharing today's positive results with the team to reinforce good habits.");
 		}
 
 		return recommendations;
@@ -2006,21 +2058,29 @@ export class AttendanceReportsService {
 		// Special handling for complete absence
 		if (employeesWithCheckIn === 0) {
 			insights.push(`CRITICAL: No employees checked in today out of ${totalEmployees} registered employees.`);
-			insights.push('This requires immediate investigation - potential system issues, holiday schedules, or emergency situations.');
+			insights.push(
+				'This requires immediate investigation - potential system issues, holiday schedules, or emergency situations.',
+			);
 			insights.push('Immediate action: Verify employee safety and check attendance system functionality.');
 			return insights;
 		}
 
 		// Enhanced completion insights with context
 		if (completedShifts === 0 && employeesWithCheckIn > 0) {
-			insights.push(`${employeesWithCheckIn}/${totalEmployees} employees checked in today, but none have completed their shifts yet.`);
-			insights.push('All checked-in employees are still working or haven\'t checked out properly.');
+			insights.push(
+				`${employeesWithCheckIn}/${totalEmployees} employees checked in today, but none have completed their shifts yet.`,
+			);
+			insights.push("All checked-in employees are still working or haven't checked out properly.");
 		} else if (completedShifts > 0) {
 			const completionRate = Math.round((completedShifts / employeesWithCheckIn) * 100);
 			if (completionRate === 100) {
-				insights.push(`Excellent completion: All ${completedShifts} employees who checked in today completed their shifts.`);
+				insights.push(
+					`Excellent completion: All ${completedShifts} employees who checked in today completed their shifts.`,
+				);
 			} else {
-				insights.push(`${completedShifts}/${employeesWithCheckIn} employees completed their shifts (${completionRate}% completion rate).`);
+				insights.push(
+					`${completedShifts}/${employeesWithCheckIn} employees completed their shifts (${completionRate}% completion rate).`,
+				);
 			}
 		}
 
@@ -2028,19 +2088,41 @@ export class AttendanceReportsService {
 		if (avgHours > 0) {
 			if (completedShifts >= 3) {
 				if (avgHours >= 8) {
-					insights.push(`Strong productivity: Average working time of ${Math.round(avgHours * 100) / 100} hours indicates full engagement across ${completedShifts} completed shifts.`);
+					insights.push(
+						`Strong productivity: Average working time of ${
+							Math.round(avgHours * 100) / 100
+						} hours indicates full engagement across ${completedShifts} completed shifts.`,
+					);
 				} else if (avgHours >= 6) {
-					insights.push(`Moderate productivity: Average working time of ${Math.round(avgHours * 100) / 100} hours shows good effort across ${completedShifts} completed shifts.`);
+					insights.push(
+						`Moderate productivity: Average working time of ${
+							Math.round(avgHours * 100) / 100
+						} hours shows good effort across ${completedShifts} completed shifts.`,
+					);
 				} else if (avgHours >= 4) {
-					insights.push(`Limited productivity: Average working time of ${Math.round(avgHours * 100) / 100} hours indicates potential challenges across ${completedShifts} completed shifts.`);
+					insights.push(
+						`Limited productivity: Average working time of ${
+							Math.round(avgHours * 100) / 100
+						} hours indicates potential challenges across ${completedShifts} completed shifts.`,
+					);
 				} else {
-					insights.push(`Low productivity: Average working time of only ${Math.round(avgHours * 100) / 100} hours requires investigation across ${completedShifts} completed shifts.`);
+					insights.push(
+						`Low productivity: Average working time of only ${
+							Math.round(avgHours * 100) / 100
+						} hours requires investigation across ${completedShifts} completed shifts.`,
+					);
 				}
 			} else if (completedShifts > 0) {
-				insights.push(`Limited data: ${completedShifts} completed shift${completedShifts === 1 ? '' : 's'} with average working time of ${Math.round(avgHours * 100) / 100} hours.`);
+				insights.push(
+					`Limited data: ${completedShifts} completed shift${
+						completedShifts === 1 ? '' : 's'
+					} with average working time of ${Math.round(avgHours * 100) / 100} hours.`,
+				);
 			}
 		} else if (completedShifts === 0 && employeesWithCheckIn > 0) {
-			insights.push('No completed shifts yet - all employees are either still working or haven\'t properly checked out.');
+			insights.push(
+				"No completed shifts yet - all employees are either still working or haven't properly checked out.",
+			);
 		}
 
 		// Enhanced lateness analysis with proper context
@@ -2048,25 +2130,39 @@ export class AttendanceReportsService {
 			const lateRate = Math.round((lateEmployees / employeesWithCheckIn) * 100);
 			const totalLateMinutes = employeeMetrics.filter((m) => m.isLate).reduce((sum, m) => sum + m.lateMinutes, 0);
 			const avgLateMinutes = Math.round(totalLateMinutes / lateEmployees);
-			
+
 			if (lateRate >= 50) {
-				insights.push(`ATTENTION: ${lateEmployees}/${employeesWithCheckIn} employees arrived late (${lateRate}%) with average delay of ${avgLateMinutes} minutes - significant punctuality issue.`);
+				insights.push(
+					`ATTENTION: ${lateEmployees}/${employeesWithCheckIn} employees arrived late (${lateRate}%) with average delay of ${avgLateMinutes} minutes - significant punctuality issue.`,
+				);
 			} else if (lateRate >= 25) {
-				insights.push(`Moderate concern: ${lateEmployees}/${employeesWithCheckIn} employees arrived late (${lateRate}%) with average delay of ${avgLateMinutes} minutes.`);
+				insights.push(
+					`Moderate concern: ${lateEmployees}/${employeesWithCheckIn} employees arrived late (${lateRate}%) with average delay of ${avgLateMinutes} minutes.`,
+				);
 			} else {
-				insights.push(`Minor lateness: ${lateEmployees}/${employeesWithCheckIn} employees arrived late (${lateRate}%) with average delay of ${avgLateMinutes} minutes.`);
+				insights.push(
+					`Minor lateness: ${lateEmployees}/${employeesWithCheckIn} employees arrived late (${lateRate}%) with average delay of ${avgLateMinutes} minutes.`,
+				);
 			}
 		} else if (employeesWithCheckIn > 0) {
-			insights.push(`Excellent punctuality: All ${employeesWithCheckIn} employees who checked in arrived on time or early.`);
+			insights.push(
+				`Excellent punctuality: All ${employeesWithCheckIn} employees who checked in arrived on time or early.`,
+			);
 		}
 
 		// High performer recognition with context
 		if (highPerformers > 0) {
-			const highPerformerRate = Math.round((highPerformers / Math.max(completedShifts, employeesWithCheckIn)) * 100);
+			const highPerformerRate = Math.round(
+				(highPerformers / Math.max(completedShifts, employeesWithCheckIn)) * 100,
+			);
 			if (highPerformerRate >= 50) {
-				insights.push(`Outstanding dedication: ${highPerformers} employees worked significantly above average hours (${highPerformerRate}% of active employees).`);
+				insights.push(
+					`Outstanding dedication: ${highPerformers} employees worked significantly above average hours (${highPerformerRate}% of active employees).`,
+				);
 			} else {
-				insights.push(`Strong performers: ${highPerformers} employees worked above average hours, showing exceptional commitment.`);
+				insights.push(
+					`Strong performers: ${highPerformers} employees worked above average hours, showing exceptional commitment.`,
+				);
 			}
 		}
 
@@ -2074,11 +2170,17 @@ export class AttendanceReportsService {
 		if (noCheckOut > 0) {
 			const stillWorkingRate = Math.round((noCheckOut / employeesWithCheckIn) * 100);
 			if (stillWorkingRate >= 75) {
-				insights.push(`High engagement: ${noCheckOut}/${employeesWithCheckIn} employees are still actively working (${stillWorkingRate}%).`);
+				insights.push(
+					`High engagement: ${noCheckOut}/${employeesWithCheckIn} employees are still actively working (${stillWorkingRate}%).`,
+				);
 			} else if (stillWorkingRate >= 25) {
-				insights.push(`Continued activity: ${noCheckOut}/${employeesWithCheckIn} employees haven't checked out yet (${stillWorkingRate}%).`);
+				insights.push(
+					`Continued activity: ${noCheckOut}/${employeesWithCheckIn} employees haven't checked out yet (${stillWorkingRate}%).`,
+				);
 			} else {
-				insights.push(`${noCheckOut} employees haven't checked out yet - may be working late or forgot to check out.`);
+				insights.push(
+					`${noCheckOut} employees haven't checked out yet - may be working late or forgot to check out.`,
+				);
 			}
 		}
 
@@ -2086,9 +2188,13 @@ export class AttendanceReportsService {
 		if (noWorkToday > 0) {
 			const absenceRate = Math.round((noWorkToday / totalEmployees) * 100);
 			if (absenceRate >= 50) {
-				insights.push(`High absence: ${noWorkToday}/${totalEmployees} employees had no activity today (${absenceRate}%) - requires investigation.`);
+				insights.push(
+					`High absence: ${noWorkToday}/${totalEmployees} employees had no activity today (${absenceRate}%) - requires investigation.`,
+				);
 			} else if (absenceRate >= 25) {
-				insights.push(`Notable absence: ${noWorkToday}/${totalEmployees} employees had no activity today (${absenceRate}%).`);
+				insights.push(
+					`Notable absence: ${noWorkToday}/${totalEmployees} employees had no activity today (${absenceRate}%).`,
+				);
 			} else if (noWorkToday === 1) {
 				insights.push(`One employee had no activity today - may need follow-up.`);
 			} else {
@@ -2099,7 +2205,9 @@ export class AttendanceReportsService {
 		// Zero hours worked insights (preventing "0 improvement" messages)
 		const zeroHoursWorked = employeeMetrics.filter((m) => m.hoursWorked === 0).length;
 		if (zeroHoursWorked > 0 && zeroHoursWorked < totalEmployees) {
-			insights.push(`${zeroHoursWorked} employees recorded no working hours today - may need attention or system check.`);
+			insights.push(
+				`${zeroHoursWorked} employees recorded no working hours today - may need attention or system check.`,
+			);
 		}
 
 		return insights;
@@ -2194,14 +2302,14 @@ export class AttendanceReportsService {
 			return {
 				totalExpectedDailyHours: totalExpectedHours,
 				userTargetsMap,
-				usersWithTargets
+				usersWithTargets,
 			};
 		} catch (error) {
 			this.logger.error(`Error getting user targets for organization ${organizationId}:`, error);
 			return {
 				totalExpectedDailyHours: 0,
 				userTargetsMap: new Map(),
-				usersWithTargets: 0
+				usersWithTargets: 0,
 			};
 		}
 	}
@@ -2212,7 +2320,7 @@ export class AttendanceReportsService {
 	private categorizeEmployeesByStatus(
 		allUsers: Omit<User, 'password'>[],
 		todayAttendance: Attendance[],
-		currentTime: Date = new Date()
+		currentTime: Date = new Date(),
 	): {
 		presentEmployees: AttendanceReportUser[];
 		absentEmployees: AttendanceReportUser[];
@@ -2220,21 +2328,21 @@ export class AttendanceReportsService {
 		completedShiftEmployees: AttendanceReportUser[];
 		overtimeEmployees: AttendanceReportUser[];
 	} {
-		const presentUserIds = new Set(todayAttendance.map(att => att.owner?.uid));
-		
+		const presentUserIds = new Set(todayAttendance.map((att) => att.owner?.uid));
+
 		const presentEmployees: AttendanceReportUser[] = [];
 		const currentlyWorkingEmployees: AttendanceReportUser[] = [];
 		const completedShiftEmployees: AttendanceReportUser[] = [];
 		const overtimeEmployees: AttendanceReportUser[] = [];
 
 		// Categorize present employees
-		todayAttendance.forEach(attendance => {
+		todayAttendance.forEach((attendance) => {
 			const owner = attendance.owner;
 			if (!owner) return;
 
 			const fullName = `${owner.name || ''} ${owner.surname || ''}`.trim();
 			const hoursWorked = this.calculateRealTimeHours(attendance, currentTime);
-			
+
 			const employee: AttendanceReportUser = {
 				uid: owner.uid,
 				name: owner.name || 'Unknown',
@@ -2262,7 +2370,7 @@ export class AttendanceReportsService {
 				currentlyWorkingEmployees.push(employee);
 			} else if (attendance.checkOut) {
 				completedShiftEmployees.push(employee);
-				
+
 				// Check for overtime (more than 8 hours)
 				if (hoursWorked > 8) {
 					overtimeEmployees.push(employee);
@@ -2300,7 +2408,7 @@ export class AttendanceReportsService {
 			absentEmployees,
 			currentlyWorkingEmployees,
 			completedShiftEmployees,
-			overtimeEmployees
+			overtimeEmployees,
 		};
 	}
 
@@ -2312,11 +2420,11 @@ export class AttendanceReportsService {
 		try {
 			const currentMinutes = TimeCalculatorUtil.timeToMinutes(currentTime.toTimeString().substring(0, 5));
 			const startMinutes = TimeCalculatorUtil.timeToMinutes(startTime);
-			
+
 			// Assume 8-hour work day (480 minutes) minus 1 hour lunch = 7 hours (420 minutes)
 			const standardWorkDayMinutes = 420;
 			const minutesIntoWorkDay = Math.max(0, currentMinutes - startMinutes);
-			
+
 			return Math.min(1, minutesIntoWorkDay / standardWorkDayMinutes);
 		} catch (error) {
 			this.logger.warn('Error calculating work day progress:', error);
@@ -2330,12 +2438,12 @@ export class AttendanceReportsService {
 	private generateBranchBreakdown(
 		allUsers: Omit<User, 'password'>[],
 		todayAttendance: Attendance[],
-		currentTime: Date = new Date()
+		currentTime: Date = new Date(),
 	): BranchSummary[] {
 		const branchMap = new Map<number, BranchSummary>();
-		
+
 		// Initialize branch data
-		allUsers.forEach(user => {
+		allUsers.forEach((user) => {
 			if (user.branch) {
 				const branchId = user.branch.uid;
 				if (!branchMap.has(branchId)) {
@@ -2356,12 +2464,12 @@ export class AttendanceReportsService {
 		});
 
 		// Categorize employees by branch
-		const presentUserIds = new Set(todayAttendance.map(att => att.owner?.uid));
-		
+		const presentUserIds = new Set(todayAttendance.map((att) => att.owner?.uid));
+
 		// Process all users and categorize them by branch
-		allUsers.forEach(user => {
+		allUsers.forEach((user) => {
 			if (!user.branch) return;
-			
+
 			const branch = branchMap.get(user.branch.uid);
 			if (!branch) return;
 
@@ -2385,13 +2493,13 @@ export class AttendanceReportsService {
 
 			branch.totalEmployees++;
 
-			const attendance = todayAttendance.find(att => att.owner?.uid === user.uid);
-			
+			const attendance = todayAttendance.find((att) => att.owner?.uid === user.uid);
+
 			if (attendance) {
 				// Present employee
 				employeeData.checkInTime = attendance.checkIn ? format(attendance.checkIn, 'HH:mm') : undefined;
 				branch.presentEmployees.push(employeeData);
-				
+
 				// Calculate hours worked
 				const hoursWorked = this.calculateRealTimeHours(attendance, currentTime);
 				branch.totalHoursWorked += hoursWorked;
@@ -2409,14 +2517,16 @@ export class AttendanceReportsService {
 		});
 
 		// Calculate final metrics for each branch
-		const branchSummaries: BranchSummary[] = Array.from(branchMap.values()).map(branch => {
-			const attendanceRate = branch.totalEmployees > 0 
-				? Math.round((branch.presentEmployees.length / branch.totalEmployees) * 100) 
-				: 0;
-			
-			const averageHoursWorked = branch.presentEmployees.length > 0 
-				? Math.round((branch.totalHoursWorked / branch.presentEmployees.length) * 100) / 100 
-				: 0;
+		const branchSummaries: BranchSummary[] = Array.from(branchMap.values()).map((branch) => {
+			const attendanceRate =
+				branch.totalEmployees > 0
+					? Math.round((branch.presentEmployees.length / branch.totalEmployees) * 100)
+					: 0;
+
+			const averageHoursWorked =
+				branch.presentEmployees.length > 0
+					? Math.round((branch.totalHoursWorked / branch.presentEmployees.length) * 100) / 100
+					: 0;
 
 			return {
 				...branch,
@@ -2438,7 +2548,7 @@ export class AttendanceReportsService {
 		presentCount: number,
 		totalEmployees: number,
 		targetPerformance: any,
-		employeeCategories: any
+		employeeCategories: any,
 	): string[] {
 		const insights: string[] = [];
 
@@ -2449,16 +2559,16 @@ export class AttendanceReportsService {
 		// Add target-based insights
 		if (targetPerformance.expectedDailyHours > 0) {
 			insights.push(
-				`Target Analysis: ${targetPerformance.actualHoursToDate}h worked of ${targetPerformance.expectedDailyHours}h expected daily target (${targetPerformance.targetAchievementRate}% achieved)`
+				`Target Analysis: ${targetPerformance.actualHoursToDate}h worked of ${targetPerformance.expectedDailyHours}h expected daily target (${targetPerformance.targetAchievementRate}% achieved)`,
 			);
 
 			if (targetPerformance.onTrackToMeetTargets) {
 				insights.push(
-					`✅ Performance Outlook: Team is projected to achieve ${targetPerformance.projectedEndOfDayHours}h by day end - ON TRACK to meet targets!`
+					`✅ Performance Outlook: Team is projected to achieve ${targetPerformance.projectedEndOfDayHours}h by day end - ON TRACK to meet targets!`,
 				);
 			} else {
 				insights.push(
-					`⚠️ Performance Alert: Projected ${targetPerformance.projectedEndOfDayHours}h by day end - ${targetPerformance.hoursGapAnalysis}`
+					`⚠️ Performance Alert: Projected ${targetPerformance.projectedEndOfDayHours}h by day end - ${targetPerformance.hoursGapAnalysis}`,
 				);
 			}
 		}
@@ -2466,13 +2576,13 @@ export class AttendanceReportsService {
 		// Add status-based insights
 		if (employeeCategories.currentlyWorkingEmployees.length > 0) {
 			insights.push(
-				`Currently Active: ${employeeCategories.currentlyWorkingEmployees.length} employees are actively working and accumulating hours`
+				`Currently Active: ${employeeCategories.currentlyWorkingEmployees.length} employees are actively working and accumulating hours`,
 			);
 		}
 
 		if (employeeCategories.completedShiftEmployees.length > 0) {
 			insights.push(
-				`Completed Shifts: ${employeeCategories.completedShiftEmployees.length} employees have already completed their work for today`
+				`Completed Shifts: ${employeeCategories.completedShiftEmployees.length} employees have already completed their work for today`,
 			);
 		}
 
@@ -2486,7 +2596,7 @@ export class AttendanceReportsService {
 		punctuality: PunctualityBreakdown,
 		attendanceRate: number,
 		targetPerformance: any,
-		employeeCategories: any
+		employeeCategories: any,
 	): string[] {
 		const recommendations: string[] = [];
 
@@ -2497,26 +2607,26 @@ export class AttendanceReportsService {
 		// Add target-based recommendations
 		if (!targetPerformance.onTrackToMeetTargets && targetPerformance.expectedDailyHours > 0) {
 			recommendations.push(
-				`🎯 Target Recovery: Team needs ${targetPerformance.hoursGapAnalysis} - consider productivity support or schedule adjustments`
+				`🎯 Target Recovery: Team needs ${targetPerformance.hoursGapAnalysis} - consider productivity support or schedule adjustments`,
 			);
-			
+
 			if (employeeCategories.absentEmployees.length > 0) {
 				recommendations.push(
-					`📞 Urgent Contact: Follow up with ${employeeCategories.absentEmployees.length} absent employees to recover lost productivity hours`
+					`📞 Urgent Contact: Follow up with ${employeeCategories.absentEmployees.length} absent employees to recover lost productivity hours`,
 				);
 			}
 		}
 
 		if (targetPerformance.onTrackToMeetTargets && targetPerformance.targetAchievementRate > 100) {
 			recommendations.push(
-				`🏆 Excellence Opportunity: Team is exceeding targets - consider recognizing high performers and documenting best practices`
+				`🏆 Excellence Opportunity: Team is exceeding targets - consider recognizing high performers and documenting best practices`,
 			);
 		}
 
 		// Status-specific recommendations
 		if (employeeCategories.currentlyWorkingEmployees.length > 0) {
 			recommendations.push(
-				`⏰ Monitor Progress: Check in with ${employeeCategories.currentlyWorkingEmployees.length} active employees around midday to ensure they stay on track`
+				`⏰ Monitor Progress: Check in with ${employeeCategories.currentlyWorkingEmployees.length} active employees around midday to ensure they stay on track`,
 			);
 		}
 
@@ -2531,7 +2641,7 @@ export class AttendanceReportsService {
 		completedShifts: number,
 		avgHours: number,
 		targetPerformance: any,
-		employeeCategories: any
+		employeeCategories: any,
 	): string[] {
 		const insights: string[] = [];
 
@@ -2542,28 +2652,28 @@ export class AttendanceReportsService {
 		// Add comprehensive target analysis
 		if (targetPerformance.expectedDailyHours > 0) {
 			insights.push(
-				`🎯 Target Performance: ${targetPerformance.actualTotalHours}h worked of ${targetPerformance.expectedDailyHours}h target (${targetPerformance.targetAchievementRate}% achieved) - ${targetPerformance.teamEfficiencyRating} efficiency`
+				`🎯 Target Performance: ${targetPerformance.actualTotalHours}h worked of ${targetPerformance.expectedDailyHours}h target (${targetPerformance.targetAchievementRate}% achieved) - ${targetPerformance.teamEfficiencyRating} efficiency`,
 			);
 
 			if (targetPerformance.individualTargetsMet > 0) {
 				insights.push(
-					`✅ Individual Success: ${targetPerformance.individualTargetsMet} employees met their personal targets`
+					`✅ Individual Success: ${targetPerformance.individualTargetsMet} employees met their personal targets`,
 				);
 			}
 
 			if (targetPerformance.individualTargetsMissed > 0) {
 				insights.push(
-					`📊 Growth Opportunity: ${targetPerformance.individualTargetsMissed} employees need support to reach their targets`
+					`📊 Growth Opportunity: ${targetPerformance.individualTargetsMissed} employees need support to reach their targets`,
 				);
 			}
 
 			if (targetPerformance.hoursOverTarget > 0) {
 				insights.push(
-					`🚀 Exceeded Expectations: Team worked ${targetPerformance.hoursOverTarget}h above target - outstanding commitment!`
+					`🚀 Exceeded Expectations: Team worked ${targetPerformance.hoursOverTarget}h above target - outstanding commitment!`,
 				);
 			} else if (targetPerformance.hoursUnderTarget > 0) {
 				insights.push(
-					`⚡ Recovery Needed: Team is ${targetPerformance.hoursUnderTarget}h behind target - focus on productivity improvements`
+					`⚡ Recovery Needed: Team is ${targetPerformance.hoursUnderTarget}h behind target - focus on productivity improvements`,
 				);
 			}
 		}
@@ -2571,13 +2681,13 @@ export class AttendanceReportsService {
 		// Add enhanced status insights
 		if (employeeCategories.currentlyWorkingEmployees.length > 0) {
 			insights.push(
-				`⏰ Still Active: ${employeeCategories.currentlyWorkingEmployees.length} employees are still working and contributing to daily targets`
+				`⏰ Still Active: ${employeeCategories.currentlyWorkingEmployees.length} employees are still working and contributing to daily targets`,
 			);
 		}
 
 		if (employeeCategories.overtimeEmployees.length > 0) {
 			insights.push(
-				`💪 Overtime Champions: ${employeeCategories.overtimeEmployees.length} employees worked overtime, showing exceptional dedication`
+				`💪 Overtime Champions: ${employeeCategories.overtimeEmployees.length} employees worked overtime, showing exceptional dedication`,
 			);
 		}
 
@@ -2588,12 +2698,12 @@ export class AttendanceReportsService {
 	 * Calculate intelligent punctuality change comparing today vs yesterday
 	 */
 	private calculatePunctualityChange(
-		todayMetric: EmployeeAttendanceMetric, 
-		comparisonAttendance: Attendance[]
+		todayMetric: EmployeeAttendanceMetric,
+		comparisonAttendance: Attendance[],
 	): string {
 		const userId = todayMetric.user.uid;
-		const comparisonRecord = comparisonAttendance.find(a => a.owner?.uid === userId);
-		
+		const comparisonRecord = comparisonAttendance.find((a) => a.owner?.uid === userId);
+
 		// No comparison data available
 		if (!comparisonRecord || !comparisonRecord.checkIn) {
 			if (todayMetric.todayCheckIn) {
@@ -2602,19 +2712,19 @@ export class AttendanceReportsService {
 				return 'absent'; // Absent both days or just today
 			}
 		}
-		
+
 		// Today is absent but had attendance yesterday
 		if (!todayMetric.todayCheckIn) {
 			return 'absent_today'; // Present yesterday, absent today
 		}
-		
+
 		// Both days have attendance - check punctuality
 		const todayIsLate = todayMetric.isLate;
-		
+
 		// Simple late check for yesterday (could be enhanced with organization hours)
 		const yesterdayCheckIn = new Date(comparisonRecord.checkIn);
 		const yesterdayIsLate = yesterdayCheckIn.getHours() >= 9; // Simplified - should use org hours
-		
+
 		if (!todayIsLate && !yesterdayIsLate) {
 			return 'consistently_punctual'; // On time both days
 		} else if (!todayIsLate && yesterdayIsLate) {
@@ -2624,8 +2734,11 @@ export class AttendanceReportsService {
 		} else {
 			// Both days late - compare lateness severity
 			const todayLateMinutes = todayMetric.lateMinutes;
-			const yesterdayLateMinutes = Math.max(0, (yesterdayCheckIn.getHours() - 8) * 60 + yesterdayCheckIn.getMinutes());
-			
+			const yesterdayLateMinutes = Math.max(
+				0,
+				(yesterdayCheckIn.getHours() - 8) * 60 + yesterdayCheckIn.getMinutes(),
+			);
+
 			if (todayLateMinutes < yesterdayLateMinutes - 10) {
 				return 'less_late'; // Less late than yesterday
 			} else if (todayLateMinutes > yesterdayLateMinutes + 10) {
@@ -2644,44 +2757,44 @@ export class AttendanceReportsService {
 		comparisonAttendance: Attendance[],
 		attendanceChange: number,
 		hoursChange: number,
-		punctualityChange: number
+		punctualityChange: number,
 	): string {
-		const todayActiveCount = todayMetrics.filter(m => m.todayCheckIn).length;
+		const todayActiveCount = todayMetrics.filter((m) => m.todayCheckIn).length;
 		const yesterdayActiveCount = comparisonAttendance.length;
-		
+
 		// Calculate punctuality improvement score
-		const punctualityImprovements = todayMetrics.filter(metric => {
+		const punctualityImprovements = todayMetrics.filter((metric) => {
 			const change = this.calculatePunctualityChange(metric, comparisonAttendance);
 			return change === 'improved' || change === 'less_late';
 		}).length;
-		
-		const punctualityDeclines = todayMetrics.filter(metric => {
+
+		const punctualityDeclines = todayMetrics.filter((metric) => {
 			const change = this.calculatePunctualityChange(metric, comparisonAttendance);
 			return change === 'worsened' || change === 'more_late';
 		}).length;
-		
+
 		// Enhanced trend calculation
 		let trendScore = 0;
-		
+
 		// Attendance trend (40% weight)
 		if (attendanceChange > 10) trendScore += 4;
 		else if (attendanceChange > 5) trendScore += 2;
 		else if (attendanceChange < -10) trendScore -= 4;
 		else if (attendanceChange < -5) trendScore -= 2;
-		
+
 		// Hours trend (40% weight)
 		if (hoursChange > 2) trendScore += 4;
 		else if (hoursChange > 0.5) trendScore += 2;
 		else if (hoursChange < -2) trendScore -= 4;
 		else if (hoursChange < -0.5) trendScore -= 2;
-		
+
 		// Punctuality trend (20% weight)
 		const netPunctualityChange = punctualityImprovements - punctualityDeclines;
 		if (netPunctualityChange > 2) trendScore += 2;
 		else if (netPunctualityChange > 0) trendScore += 1;
 		else if (netPunctualityChange < -2) trendScore -= 2;
 		else if (netPunctualityChange < 0) trendScore -= 1;
-		
+
 		// Determine trend based on score
 		if (trendScore >= 6) {
 			return 'significantly_improving';
@@ -2693,7 +2806,11 @@ export class AttendanceReportsService {
 			return 'declining';
 		} else {
 			// Additional stability checks
-			if (Math.abs(attendanceChange) <= 2 && Math.abs(hoursChange) <= 0.5 && Math.abs(netPunctualityChange) <= 1) {
+			if (
+				Math.abs(attendanceChange) <= 2 &&
+				Math.abs(hoursChange) <= 0.5 &&
+				Math.abs(netPunctualityChange) <= 1
+			) {
 				return 'stable';
 			} else {
 				return 'mixed'; // Some improvements, some declines
@@ -2707,10 +2824,10 @@ export class AttendanceReportsService {
 	private async calculateTotalActualHoursWithOrgHours(
 		todayAttendance: Attendance[],
 		organizationId: number,
-		currentTime: Date = new Date()
+		currentTime: Date = new Date(),
 	): Promise<number> {
 		this.logger.debug(`Calculating total actual hours for ${todayAttendance.length} attendance records`);
-		
+
 		let totalHours = 0;
 		const today = currentTime.toISOString().split('T')[0]; // YYYY-MM-DD format
 
@@ -2719,10 +2836,10 @@ export class AttendanceReportsService {
 
 			// Use the new multi-day shift calculation to get hours for today only
 			const hours = await this.calculateRealTimeHoursWithOrgHours(
-				attendance, 
-				organizationId, 
+				attendance,
+				organizationId,
 				currentTime,
-				today // Only count hours for today from multi-day shifts
+				today, // Only count hours for today from multi-day shifts
 			);
 			totalHours += hours;
 		}
@@ -2735,13 +2852,13 @@ export class AttendanceReportsService {
 	 * Calculate work day progress using organization hours
 	 */
 	private async calculateWorkDayProgressWithOrgHours(
-		currentTime: Date, 
+		currentTime: Date,
 		organizationId: number,
-		date: Date
+		date: Date,
 	): Promise<number> {
 		try {
 			const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(organizationId, date);
-			
+
 			if (!workingDayInfo.isWorkingDay || !workingDayInfo.startTime || !workingDayInfo.endTime) {
 				return 0.5; // Default to 50% if no working hours defined
 			}
@@ -2749,11 +2866,11 @@ export class AttendanceReportsService {
 			const currentMinutes = TimeCalculatorUtil.timeToMinutes(currentTime.toTimeString().substring(0, 5));
 			const startMinutes = TimeCalculatorUtil.timeToMinutes(workingDayInfo.startTime);
 			const endMinutes = TimeCalculatorUtil.timeToMinutes(workingDayInfo.endTime);
-			
+
 			// Calculate progress within the working day
 			const workDayDuration = endMinutes - startMinutes;
 			const minutesIntoWorkDay = Math.max(0, currentMinutes - startMinutes);
-			
+
 			return Math.min(1, minutesIntoWorkDay / workDayDuration);
 		} catch (error) {
 			this.logger.warn('Error calculating work day progress with org hours:', error);
@@ -2767,11 +2884,11 @@ export class AttendanceReportsService {
 	private async getExpectedEmployeesForToday(
 		allUsers: Omit<User, 'password'>[],
 		organizationId: number,
-		date: Date
+		date: Date,
 	): Promise<number> {
 		try {
 			const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(organizationId, date);
-			
+
 			// If it's not a working day, no employees are expected
 			if (!workingDayInfo.isWorkingDay) {
 				return 0;
@@ -2779,7 +2896,7 @@ export class AttendanceReportsService {
 
 			// For now, assume all active users are expected on working days
 			// In the future, this could be enhanced to consider individual schedules
-			return allUsers.filter(user => !user.isDeleted && user.status !== 'INACTIVE').length;
+			return allUsers.filter((user) => !user.isDeleted && user.status !== 'INACTIVE').length;
 		} catch (error) {
 			this.logger.warn('Error calculating expected employees:', error);
 			return allUsers.length; // Fallback to all users
@@ -2793,7 +2910,7 @@ export class AttendanceReportsService {
 		allUsers: Omit<User, 'password'>[],
 		todayAttendance: Attendance[],
 		organizationId: number,
-		currentTime: Date = new Date()
+		currentTime: Date = new Date(),
 	): Promise<{
 		presentEmployees: AttendanceReportUser[];
 		absentEmployees: AttendanceReportUser[];
@@ -2801,8 +2918,8 @@ export class AttendanceReportsService {
 		completedShiftEmployees: AttendanceReportUser[];
 		overtimeEmployees: AttendanceReportUser[];
 	}> {
-		const presentUserIds = new Set(todayAttendance.map(att => att.owner?.uid));
-		
+		const presentUserIds = new Set(todayAttendance.map((att) => att.owner?.uid));
+
 		const presentEmployees: AttendanceReportUser[] = [];
 		const currentlyWorkingEmployees: AttendanceReportUser[] = [];
 		const completedShiftEmployees: AttendanceReportUser[] = [];
@@ -2810,7 +2927,8 @@ export class AttendanceReportsService {
 
 		// Get organization working day info for overtime calculation
 		const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(organizationId, currentTime);
-		const standardWorkMinutes = workingDayInfo.expectedWorkMinutes || TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES;
+		const standardWorkMinutes =
+			workingDayInfo.expectedWorkMinutes || TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES;
 
 		// Categorize present employees
 		for (const attendance of todayAttendance) {
@@ -2819,13 +2937,13 @@ export class AttendanceReportsService {
 
 			const fullName = `${owner.name || ''} ${owner.surname || ''}`.trim();
 			const hoursWorked = await this.calculateRealTimeHoursWithOrgHours(attendance, organizationId, currentTime);
-			
+
 			// Check if user is late using organization hours
 			let lateInfo = { isLate: false, lateMinutes: 0 };
 			if (attendance.checkIn) {
 				lateInfo = await this.organizationHoursService.isUserLate(organizationId, attendance.checkIn);
 			}
-			
+
 			const employee: AttendanceReportUser = {
 				uid: owner.uid,
 				name: owner.name || 'Unknown',
@@ -2855,7 +2973,7 @@ export class AttendanceReportsService {
 				currentlyWorkingEmployees.push(employee);
 			} else if (attendance.checkOut) {
 				completedShiftEmployees.push(employee);
-				
+
 				// Check for overtime using organization hours
 				const workMinutes = hoursWorked * 60;
 				if (workMinutes > standardWorkMinutes) {
@@ -2869,10 +2987,8 @@ export class AttendanceReportsService {
 		const absentEmployees: AttendanceReportUser[] = [];
 
 		if (workingDayInfo2.isWorkingDay) {
-			const absentUsers = allUsers.filter((user) => 
-				!presentUserIds.has(user.uid) && 
-				!user.isDeleted && 
-				user.status !== 'INACTIVE'
+			const absentUsers = allUsers.filter(
+				(user) => !presentUserIds.has(user.uid) && !user.isDeleted && user.status !== 'INACTIVE',
 			);
 
 			for (const user of absentUsers) {
@@ -2903,7 +3019,7 @@ export class AttendanceReportsService {
 			absentEmployees,
 			currentlyWorkingEmployees,
 			completedShiftEmployees,
-			overtimeEmployees
+			overtimeEmployees,
 		};
 	}
 
@@ -2911,10 +3027,10 @@ export class AttendanceReportsService {
 	 * Calculate real-time hours with organization hours context and multi-day shift support
 	 */
 	private async calculateRealTimeHoursWithOrgHours(
-		attendance: Attendance, 
+		attendance: Attendance,
 		organizationId: number,
 		currentTime: Date = new Date(),
-		targetDate?: string // YYYY-MM-DD format - if provided, only return hours for this specific date
+		targetDate?: string, // YYYY-MM-DD format - if provided, only return hours for this specific date
 	): Promise<number> {
 		if (!attendance.checkIn) return 0;
 
@@ -2926,12 +3042,12 @@ export class AttendanceReportsService {
 			checkInTime,
 			attendance.checkOut ? checkOutTime : null,
 			attendance.breakDetails,
-			attendance.totalBreakTime
+			attendance.totalBreakTime,
 		);
 
 		// If a target date is specified, return only hours for that date
 		if (targetDate) {
-			const targetSegment = splitResult.segments.find(segment => segment.date === targetDate);
+			const targetSegment = splitResult.segments.find((segment) => segment.date === targetDate);
 			return targetSegment ? targetSegment.netWorkMinutes / 60 : 0;
 		}
 
@@ -2962,12 +3078,12 @@ export class AttendanceReportsService {
 		allUsers: Omit<User, 'password'>[],
 		todayAttendance: Attendance[],
 		organizationId: number,
-		currentTime: Date = new Date()
+		currentTime: Date = new Date(),
 	): Promise<BranchSummary[]> {
 		const branchMap = new Map<number, BranchSummary>();
-		
+
 		// Initialize branch data
-		allUsers.forEach(user => {
+		allUsers.forEach((user) => {
 			if (user.branch) {
 				const branchId = user.branch.uid;
 				if (!branchMap.has(branchId)) {
@@ -2989,14 +3105,14 @@ export class AttendanceReportsService {
 
 		// Check if today is a working day
 		const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(organizationId, currentTime);
-		
+
 		// Categorize employees by branch
-		const presentUserIds = new Set(todayAttendance.map(att => att.owner?.uid));
-		
+		const presentUserIds = new Set(todayAttendance.map((att) => att.owner?.uid));
+
 		// Process all users and categorize them by branch
 		for (const user of allUsers) {
 			if (!user.branch) continue;
-			
+
 			const branch = branchMap.get(user.branch.uid);
 			if (!branch) continue;
 
@@ -3024,15 +3140,19 @@ export class AttendanceReportsService {
 
 			branch.totalEmployees++;
 
-			const attendance = todayAttendance.find(att => att.owner?.uid === user.uid);
-			
+			const attendance = todayAttendance.find((att) => att.owner?.uid === user.uid);
+
 			if (attendance) {
 				// Present employee
 				employeeData.checkInTime = attendance.checkIn ? format(attendance.checkIn, 'HH:mm') : undefined;
 				branch.presentEmployees.push(employeeData);
-				
+
 				// Calculate hours worked using organization hours
-				const hoursWorked = await this.calculateRealTimeHoursWithOrgHours(attendance, organizationId, currentTime);
+				const hoursWorked = await this.calculateRealTimeHoursWithOrgHours(
+					attendance,
+					organizationId,
+					currentTime,
+				);
 				branch.totalHoursWorked += hoursWorked;
 
 				// Categorize by status
@@ -3048,14 +3168,16 @@ export class AttendanceReportsService {
 		}
 
 		// Calculate final metrics for each branch
-		const branchSummaries: BranchSummary[] = Array.from(branchMap.values()).map(branch => {
-			const attendanceRate = branch.totalEmployees > 0 
-				? Math.round((branch.presentEmployees.length / branch.totalEmployees) * 100) 
-				: 0;
-			
-			const averageHoursWorked = branch.presentEmployees.length > 0 
-				? Math.round((branch.totalHoursWorked / branch.presentEmployees.length) * 100) / 100 
-				: 0;
+		const branchSummaries: BranchSummary[] = Array.from(branchMap.values()).map((branch) => {
+			const attendanceRate =
+				branch.totalEmployees > 0
+					? Math.round((branch.presentEmployees.length / branch.totalEmployees) * 100)
+					: 0;
+
+			const averageHoursWorked =
+				branch.presentEmployees.length > 0
+					? Math.round((branch.totalHoursWorked / branch.presentEmployees.length) * 100) / 100
+					: 0;
 
 			return {
 				...branch,
@@ -3110,7 +3232,9 @@ export class AttendanceReportsService {
 			} else if (comparisonHours === 0 && todayHours > 0) {
 				// Today has work but yesterday didn't - this is new activity, not improvement
 				if (todayHours >= 6) {
-					comparisonText = `New activity: ${Math.round(todayHours * 100) / 100}h worked (no ${comparisonLabel} data)`;
+					comparisonText = `New activity: ${
+						Math.round(todayHours * 100) / 100
+					}h worked (no ${comparisonLabel} data)`;
 					timingDifference = '🆕';
 				} else {
 					comparisonText = `${Math.round(todayHours * 100) / 100}h worked (no ${comparisonLabel} data)`;
@@ -3118,7 +3242,9 @@ export class AttendanceReportsService {
 				}
 			} else if (todayHours === 0 && comparisonHours > 0) {
 				// Today has no work but yesterday did - this is absence, not decline
-				comparisonText = `No work today (worked ${Math.round(comparisonHours * 100) / 100}h ${comparisonLabel})`;
+				comparisonText = `No work today (worked ${
+					Math.round(comparisonHours * 100) / 100
+				}h ${comparisonLabel})`;
 				timingDifference = '❌';
 			} else if (Math.abs(hoursDifference) < 0.1) {
 				// Very small difference (less than 6 minutes) - consider it the same
@@ -3126,9 +3252,11 @@ export class AttendanceReportsService {
 				timingDifference = '📍';
 			} else if (hoursDifference > 0.5) {
 				// Meaningful increase
-				const increasePercent = Math.round(((hoursDifference) / comparisonHours) * 100);
+				const increasePercent = Math.round((hoursDifference / comparisonHours) * 100);
 				if (increasePercent >= 50) {
-					comparisonText = `Strong increase: +${Math.round(hoursDifference * 100) / 100}h (+${increasePercent}% vs ${comparisonLabel})`;
+					comparisonText = `Strong increase: +${
+						Math.round(hoursDifference * 100) / 100
+					}h (+${increasePercent}% vs ${comparisonLabel})`;
 					timingDifference = '📈';
 				} else {
 					comparisonText = `+${Math.round(hoursDifference * 100) / 100}h more than ${comparisonLabel}`;
@@ -3138,19 +3266,27 @@ export class AttendanceReportsService {
 				// Meaningful decrease
 				const decreasePercent = Math.round((Math.abs(hoursDifference) / comparisonHours) * 100);
 				if (decreasePercent >= 50) {
-					comparisonText = `Significant decrease: ${Math.round(Math.abs(hoursDifference) * 100) / 100}h less (-${decreasePercent}% vs ${comparisonLabel})`;
+					comparisonText = `Significant decrease: ${
+						Math.round(Math.abs(hoursDifference) * 100) / 100
+					}h less (-${decreasePercent}% vs ${comparisonLabel})`;
 					timingDifference = '📉';
 				} else {
-					comparisonText = `${Math.round(Math.abs(hoursDifference) * 100) / 100}h less than ${comparisonLabel}`;
+					comparisonText = `${
+						Math.round(Math.abs(hoursDifference) * 100) / 100
+					}h less than ${comparisonLabel}`;
 					timingDifference = '↘️';
 				}
 			} else {
 				// Small difference (0.1 to 0.5 hours) - acknowledge but don't overstate
 				if (hoursDifference > 0) {
-					comparisonText = `Slightly more: +${Math.round(hoursDifference * 100) / 100}h vs ${comparisonLabel}`;
+					comparisonText = `Slightly more: +${
+						Math.round(hoursDifference * 100) / 100
+					}h vs ${comparisonLabel}`;
 					timingDifference = '↗️';
 				} else {
-					comparisonText = `Slightly less: ${Math.round(Math.abs(hoursDifference) * 100) / 100}h vs ${comparisonLabel}`;
+					comparisonText = `Slightly less: ${
+						Math.round(Math.abs(hoursDifference) * 100) / 100
+					}h vs ${comparisonLabel}`;
 					timingDifference = '↘️';
 				}
 			}
@@ -3212,7 +3348,7 @@ export class AttendanceReportsService {
 	private async calculateTotalOvertimeWithOrgHours(
 		todayAttendance: Attendance[],
 		organizationId: number,
-		currentTime: Date = new Date()
+		currentTime: Date = new Date(),
 	): Promise<number> {
 		let totalOvertimeMinutes = 0;
 
@@ -3222,7 +3358,11 @@ export class AttendanceReportsService {
 		const standardHours = standardMinutes / 60;
 
 		for (const attendance of todayAttendance) {
-			const realTimeHours = await this.calculateRealTimeHoursWithOrgHours(attendance, organizationId, currentTime);
+			const realTimeHours = await this.calculateRealTimeHoursWithOrgHours(
+				attendance,
+				organizationId,
+				currentTime,
+			);
 			const overtimeHours = Math.max(0, realTimeHours - standardHours);
 			totalOvertimeMinutes += overtimeHours * 60;
 		}
@@ -3235,7 +3375,7 @@ export class AttendanceReportsService {
 	 */
 	private async calculateComparisonLateCountWithOrgHours(
 		comparisonAttendance: Attendance[],
-		organizationId: number
+		organizationId: number,
 	): Promise<number> {
 		let lateCount = 0;
 
@@ -3257,17 +3397,20 @@ export class AttendanceReportsService {
 	 */
 	private async categorizeEmployeesByStatusWithConsolidatedData(
 		allUsers: Omit<User, 'password'>[],
-		consolidatedAttendance: Map<number, {
-			user: User;
-			primaryAttendance: Attendance;
-			allAttendances: Attendance[];
-			totalHours: number;
-			isOvertime: boolean;
-			earliestCheckIn: Date;
-			latestCheckOut: Date | null;
-		}>,
+		consolidatedAttendance: Map<
+			number,
+			{
+				user: User;
+				primaryAttendance: Attendance;
+				allAttendances: Attendance[];
+				totalHours: number;
+				isOvertime: boolean;
+				earliestCheckIn: Date;
+				latestCheckOut: Date | null;
+			}
+		>,
 		organizationId: number,
-		currentTime: Date = new Date()
+		currentTime: Date = new Date(),
 	): Promise<{
 		presentEmployees: AttendanceReportUser[];
 		absentEmployees: AttendanceReportUser[];
@@ -3276,7 +3419,7 @@ export class AttendanceReportsService {
 		overtimeEmployees: AttendanceReportUser[];
 	}> {
 		const presentUserIds = new Set(consolidatedAttendance.keys());
-		
+
 		const presentEmployees: AttendanceReportUser[] = [];
 		const currentlyWorkingEmployees: AttendanceReportUser[] = [];
 		const completedShiftEmployees: AttendanceReportUser[] = [];
@@ -3284,20 +3427,21 @@ export class AttendanceReportsService {
 
 		// Get organization working day info for overtime calculation
 		const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(organizationId, currentTime);
-		const standardWorkMinutes = workingDayInfo.expectedWorkMinutes || TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES;
+		const standardWorkMinutes =
+			workingDayInfo.expectedWorkMinutes || TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES;
 
 		// Categorize present employees using consolidated data
 		for (const [userId, userRecord] of consolidatedAttendance) {
 			const { user, primaryAttendance, totalHours, isOvertime, latestCheckOut } = userRecord;
 
 			const fullName = `${user.name || ''} ${user.surname || ''}`.trim();
-			
+
 			// Check if user is late using organization hours (based on first check-in)
 			let lateInfo = { isLate: false, lateMinutes: 0 };
 			if (primaryAttendance.checkIn) {
 				lateInfo = await this.organizationHoursService.isUserLate(organizationId, primaryAttendance.checkIn);
 			}
-			
+
 			const employee: AttendanceReportUser = {
 				uid: user.uid,
 				name: user.name || 'Unknown',
@@ -3334,7 +3478,7 @@ export class AttendanceReportsService {
 			} else if (latestCheckOut) {
 				// Completed shift (has final check-out)
 				completedShiftEmployees.push(employee);
-				
+
 				// Check for overtime using organization hours
 				const workMinutes = totalHours * 60;
 				if (workMinutes > standardWorkMinutes) {
@@ -3348,10 +3492,8 @@ export class AttendanceReportsService {
 		const absentEmployees: AttendanceReportUser[] = [];
 
 		if (workingDayInfo2.isWorkingDay) {
-			const absentUsers = allUsers.filter((user) => 
-				!presentUserIds.has(user.uid) && 
-				!user.isDeleted && 
-				user.status !== 'INACTIVE'
+			const absentUsers = allUsers.filter(
+				(user) => !presentUserIds.has(user.uid) && !user.isDeleted && user.status !== 'INACTIVE',
 			);
 
 			for (const user of absentUsers) {
@@ -3382,7 +3524,7 @@ export class AttendanceReportsService {
 			absentEmployees,
 			currentlyWorkingEmployees,
 			completedShiftEmployees,
-			overtimeEmployees
+			overtimeEmployees,
 		};
 	}
 
@@ -3403,7 +3545,7 @@ export class AttendanceReportsService {
 			const checkInTime = new Date(attendance.checkIn);
 			const diffInMs = currentTime.getTime() - checkInTime.getTime();
 			const diffInHours = diffInMs / (1000 * 60 * 60);
-			
+
 			// Cap at reasonable working hours (24 hours max to handle edge cases)
 			return Math.min(Math.max(0, diffInHours), 24);
 		}

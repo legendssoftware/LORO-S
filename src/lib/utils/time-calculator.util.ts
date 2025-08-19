@@ -1,5 +1,5 @@
 import { differenceInMinutes, differenceInMilliseconds, parseISO, format } from 'date-fns';
-import { BreakDetail } from '../interfaces/break-detail.interface';
+import { BreakDetail } from '../../lib/interfaces/break-detail.interface';
 import { OrganisationHours } from '../../organisation/entities/organisation-hours.entity';
 
 export interface WorkSession {

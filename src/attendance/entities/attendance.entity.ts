@@ -3,7 +3,7 @@ import { Branch } from '../../branch/entities/branch.entity';
 import { AttendanceStatus } from '../../lib/enums/attendance.enums';
 import { User } from '../../user/entities/user.entity';
 import { Column, Entity, PrimaryGeneratedColumn, ManyToOne, Index } from 'typeorm';
-import { BreakDetail } from '../interfaces/break-detail.interface';
+import { BreakDetail } from '../../lib/interfaces/break-detail.interface';
 
 @Entity('attendance')
 @Index(['owner', 'checkIn']) // User attendance queries

@@ -1,5 +1,5 @@
 import { AttendanceService } from './attendance.service';
-import { AttendanceReportsService } from './services/attendance-reports.service';
+import { AttendanceReportsService } from './services/attendance.reports.service';
 import {
 	ApiOperation,
 	ApiTags,
@@ -18,12 +18,12 @@ import {
 } from '@nestjs/swagger';
 import { Controller, Post, Body, Param, Get, UseGuards, Query, UseInterceptors, Req } from '@nestjs/common';
 import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
-import { CreateCheckInDto } from './dto/create-attendance-check-in.dto';
-import { CreateCheckOutDto } from './dto/create-attendance-check-out.dto';
-import { CreateBreakDto } from './dto/create-attendance-break.dto';
-import { OrganizationReportQueryDto } from './dto/organization-report-query.dto';
+import { CreateCheckInDto } from './dto/create.attendance.check.in.dto';
+import { CreateCheckOutDto } from './dto/create.attendance.check.out.dto';
+import { CreateBreakDto } from './dto/create.attendance.break.dto';
+import { OrganizationReportQueryDto } from './dto/organization.report.query.dto';
 import { UserMetricsResponseDto } from './dto/user-metrics-response.dto';
-import { RequestReportDto } from './dto/request-report.dto';
+import { RequestReportDto } from './dto/request.report.dto';
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { AuthGuard } from '../guards/auth.guard';
@@ -33,7 +33,7 @@ import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.in
 import { Attendance } from './entities/attendance.entity';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { User } from '../user/entities/user.entity';
-import { OvertimeReminderService } from './services/overtime-reminder.service';
+import { OvertimeReminderService } from './services/overtime.reminder.service';
 import { UserService } from '../user/user.service';
 
 // Reusable Schema Definitions for Swagger Documentation
