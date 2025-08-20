@@ -10,7 +10,7 @@ import { UpdateSubtaskDto } from './dto/update-subtask.dto';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { addDays, addWeeks, addMonths, addYears } from 'date-fns';
 import { Client } from '../clients/entities/client.entity';
-import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Inject, Logger } from '@nestjs/common';
 import { NotificationType, NotificationStatus } from '../lib/enums/notification.enums';
 import { TaskStatus, TaskPriority, RepetitionType, TaskType, JobStatus } from '../lib/enums/task.enums';
 import { PaginatedResponse } from '../lib/interfaces/product.interfaces';
@@ -38,6 +38,7 @@ import { TaskEmailDataMapper } from './helpers/email-data-mapper';
 
 @Injectable()
 export class TasksService {
+	private readonly logger = new Logger(TasksService.name);
 	private readonly CACHE_TTL: number;
 	private readonly CACHE_PREFIX = 'task:';
 
@@ -73,6 +74,20 @@ export class TasksService {
 		private readonly unifiedNotificationService: UnifiedNotificationService,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
+
+		this.logger.log('TasksService initialized with cache TTL: ' + this.CACHE_TTL + ' minutes');
+		this.logger.debug(`TasksService initialized with dependencies:`);
+		this.logger.debug(`Event Emitter: ${!!this.eventEmitter}`);
+		this.logger.debug(`Client Repository: ${!!this.clientRepository}`);
+		this.logger.debug(`User Repository: ${!!this.userRepository}`);
+		this.logger.debug(`Cache Manager: ${!!this.cacheManager}`);
+		this.logger.debug(`Config Service: ${!!this.configService}`);
+		this.logger.debug(`Communication Service: ${!!this.communicationService}`);
+		this.logger.debug(`Task Flag Repository: ${!!this.taskFlagRepository}`);
+		this.logger.debug(`Organisation Settings Repository: ${!!this.organisationSettingsRepository}`);
+		this.logger.debug(`Notifications Service: ${!!this.notificationsService}`);
+		this.logger.debug(`Unified Notification Service: ${!!this.unifiedNotificationService}`);
+		this.logger.debug(`Inactive user statuses: ${this.INACTIVE_USER_STATUSES.join(', ')}`);
 	}
 
 	/**
@@ -407,12 +422,23 @@ export class TasksService {
 	}
 
 	async create(createTaskDto: CreateTaskDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
+		this.logger.log(`Creating task: ${createTaskDto.title}, orgId: ${orgId}, branchId: ${branchId}`);
+
 		try {
+			// Enhanced validation
+			this.logger.debug('Validating task creation data');
 			if (!orgId) {
+				this.logger.warn('Organization ID is required for task creation');
 				throw new BadRequestException('Organization ID is required');
 			}
 
+			if (!createTaskDto.title || createTaskDto.title.trim() === '') {
+				this.logger.warn('Task title is required');
+				throw new BadRequestException('Task title is required');
+			}
+
 			// Creating the task from the DTOs
+			this.logger.debug('Creating task entity from DTO');
 			const task = new Task();
 
 			// Map DTO fields to task
@@ -428,47 +454,105 @@ export class TasksService {
 				? new Date(createTaskDto.repetitionDeadline)
 				: null;
 
-			// Handle assignees
+			// Handle assignees with enhanced validation
+			this.logger.debug(`Processing ${createTaskDto.assignees?.length || 0} assignees`);
 			if (createTaskDto.assignees?.length) {
-				task.assignees = createTaskDto.assignees.map((assignee) => ({ uid: assignee.uid }));
+				// Validate assignees belong to the same organization
+				const assigneeIds = createTaskDto.assignees.map((assignee) => assignee.uid);
+				const assignees = await this.userRepository.find({
+					where: { uid: In(assigneeIds) },
+					relations: ['organisation'],
+				});
+
+				const validAssignees = assignees.filter((user) => user.organisation?.uid === orgId);
+				const invalidAssignees = assignees.filter((user) => user.organisation?.uid !== orgId);
+
+				if (invalidAssignees.length > 0) {
+					this.logger.warn(`Found ${invalidAssignees.length} assignees from different organizations - excluding them`);
+				}
+
+				task.assignees = validAssignees.map((assignee) => ({ uid: assignee.uid }));
+				this.logger.debug(`Assigned ${validAssignees.length} valid assignees to task`);
 			} else {
 				task.assignees = [];
+				this.logger.debug('No assignees specified for task');
 			}
 
-			// Handle clients
+			// Handle clients with organization filtering
+			this.logger.debug(`Processing ${createTaskDto.client?.length || 0} clients`);
 			if (createTaskDto.client?.length) {
-				task.clients = createTaskDto.client.map((client) => ({ uid: client.uid }));
+				// Validate clients belong to the same organization
+				const clientIds = createTaskDto.client.map((client) => client.uid);
+				const clients = await this.clientRepository.find({
+					where: { uid: In(clientIds) },
+					relations: ['organisation'],
+				});
+
+				const validClients = clients.filter((client) => client.organisation?.uid === orgId);
+				const invalidClients = clients.filter((client) => client.organisation?.uid !== orgId);
+
+				if (invalidClients.length > 0) {
+					this.logger.warn(`Found ${invalidClients.length} clients from different organizations - excluding them`);
+				}
+
+				task.clients = validClients.map((client) => ({ uid: client.uid }));
+				this.logger.debug(`Assigned ${validClients.length} valid clients to task`);
 			} else {
 				task.clients = [];
+				this.logger.debug('No clients specified for task');
 			}
 
-			// Set creator
+			// Set creator with validation
+			this.logger.debug('Processing task creator');
 			if (createTaskDto.creators?.[0]) {
 				const creator = await this.userRepository.findOne({
 					where: { uid: createTaskDto.creators[0].uid },
+					relations: ['organisation'],
 				});
+
 				if (creator) {
+					// Validate creator belongs to the same organization
+					if (creator.organisation?.uid !== orgId) {
+						this.logger.warn(`Creator ${creator.uid} belongs to different organization ${creator.organisation?.uid}`);
+						throw new BadRequestException('Creator must belong to the same organization');
+					}
 					task.creator = creator;
+					this.logger.debug(`Set creator to user: ${creator.uid}`);
+				} else {
+					this.logger.warn(`Creator with ID ${createTaskDto.creators[0].uid} not found`);
 				}
 			}
 
-			// Set organization and branch
+			// Set organization and branch with enhanced validation
+			this.logger.debug(`Setting organization: ${orgId}, branch: ${branchId}`);
 			if (orgId) {
 				const organisation = { uid: orgId } as Organisation;
 				task.organisation = organisation;
+				this.logger.debug(`Task organization set to: ${orgId}`);
 			}
 
 			if (branchId) {
 				const branch = { uid: branchId } as Branch;
 				task.branch = branch;
+				this.logger.debug(`Task branch set to: ${branchId}`);
 			}
 
-			// Save the task
+			// Save the task with enhanced logging
+			this.logger.debug('Saving task to database');
 			const savedTask = await this.taskRepository.save(task);
 
-			// Create subtasks if provided
+			if (!savedTask) {
+				this.logger.error('Failed to save task - database returned null');
+				throw new BadRequestException('Failed to create task');
+			}
+
+			this.logger.debug(`Task saved successfully with ID: ${savedTask.uid}`);
+
+			// Create subtasks if provided with enhanced logging
 			if (createTaskDto.subtasks && createTaskDto.subtasks.length > 0) {
-				const subtasks = createTaskDto.subtasks.map((subtaskDto) => {
+				this.logger.debug(`Creating ${createTaskDto.subtasks.length} subtasks`);
+				const subtasks = createTaskDto.subtasks.map((subtaskDto, index) => {
+					this.logger.debug(`Creating subtask ${index + 1}: ${subtaskDto.title}`);
 					const subtask = new SubTask();
 					subtask.title = subtaskDto.title;
 					subtask.description = subtaskDto.description || '';
@@ -477,15 +561,25 @@ export class TasksService {
 					return subtask;
 				});
 
-				await this.subtaskRepository.save(subtasks);
+				try {
+					await this.subtaskRepository.save(subtasks);
+					this.logger.debug(`Successfully created ${subtasks.length} subtasks`);
+				} catch (subtaskError) {
+					this.logger.error(`Failed to create subtasks: ${subtaskError.message}`);
+					// Don't fail the whole task creation if subtasks fail
+				}
+			} else {
+				this.logger.debug('No subtasks provided for task');
 			}
 
-			// Send email notifications to assignees
+			// Send email notifications to assignees with enhanced logging
 			if (savedTask?.assignees?.length > 0) {
+				this.logger.debug(`Sending notifications to ${savedTask.assignees.length} assignees`);
 				try {
-					console.log('Sending task assignment email notifications');
+					this.logger.log('Sending task assignment email notifications');
 
 					const assigneeIds = savedTask.assignees.map((assignee) => assignee.uid);
+					this.logger.debug(`Assignee IDs: ${assigneeIds.join(', ')}`);
 
 					// Get assignee details for email
 					const assignees = await this.userRepository.find({
@@ -495,15 +589,28 @@ export class TasksService {
 
 					// Filter out inactive users
 					const activeAssignees = assignees.filter((user) => this.isUserActive(user));
+					const inactiveAssignees = assignees.filter((user) => !this.isUserActive(user));
+
+					if (inactiveAssignees.length > 0) {
+						this.logger.debug(`Filtered out ${inactiveAssignees.length} inactive assignees`);
+					}
+
+					this.logger.debug(`Sending emails to ${activeAssignees.length} active assignees`);
 
 					// Send individual emails to each assignee
+					let emailSentCount = 0;
 					for (const assignee of activeAssignees) {
 						if (assignee.email) {
+							this.logger.debug(`Sending email to assignee: ${assignee.email} (${assignee.uid})`);
 							const emailData = TaskEmailDataMapper.mapNewTaskData(savedTask, assignee);
-
 							this.eventEmitter.emit('send.email', EmailType.NEW_TASK, [assignee.email], emailData);
+							emailSentCount++;
+						} else {
+							this.logger.debug(`Assignee ${assignee.uid} has no email address`);
 						}
 					}
+
+					this.logger.debug(`Sent ${emailSentCount} task assignment emails`);
 
 					// Send push notifications to assignees
 					try {

@@ -348,6 +348,174 @@ Advanced employee check-in system with location verification, biometric support,
 			},
 		},
 	})
+	@Post('in')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.SUPPORT,
+		AccessLevel.DEVELOPER,
+		AccessLevel.USER,
+		AccessLevel.OWNER,
+		AccessLevel.TECHNICIAN,
+	)
+	@ApiOperation({
+		summary: '🕐 Employee check-in',
+		description: `
+# Smart Check-In System
+
+Advanced employee check-in system with location verification, biometric support, and comprehensive tracking.
+
+## 📍 **Location-Based Check-In**
+- **GPS Verification**: Verify employee location against designated work sites
+- **Geofencing**: Automatic check-in when entering predefined work areas
+- **QR Code Scanning**: Quick check-in using location-specific QR codes
+- **Bluetooth Beacons**: Proximity-based check-in for indoor locations
+- **Manual Override**: Supervisor approval for remote or off-site check-ins
+
+## 🛡️ **Security & Verification**
+- **Biometric Authentication**: Fingerprint, face recognition, or voice verification
+- **Photo Capture**: Optional photo capture for identity verification
+- **Device Verification**: Ensure check-in from authorized devices only
+- **Time Constraints**: Enforce check-in within allowed time windows
+- **Duplicate Prevention**: Prevent multiple check-ins for the same shift
+
+## 📊 **Smart Analytics**
+- **Pattern Recognition**: Learn employee check-in patterns and preferences
+- **Anomaly Detection**: Identify unusual check-in behavior or locations
+- **Predictive Analytics**: Forecast attendance patterns and staffing needs
+- **Performance Insights**: Track punctuality and attendance trends
+- **Compliance Monitoring**: Ensure adherence to labor laws and policies
+
+## 🎯 **Use Cases**
+- **Office Work**: Traditional office-based employee check-in
+- **Field Work**: Remote and mobile workforce attendance tracking
+- **Retail Operations**: Store and branch employee time tracking
+- **Manufacturing**: Factory and production line attendance management
+- **Healthcare**: Hospital and clinic staff scheduling and tracking
+- **Construction**: Job site and project-based attendance monitoring
+
+## 📱 **Multi-Platform Support**
+- **Mobile Apps**: Native iOS and Android applications
+- **Web Portal**: Browser-based check-in for desktop users
+- **Kiosk Mode**: Dedicated tablet or terminal-based check-in
+- **SMS Integration**: Simple SMS-based check-in for basic phones
+- **Voice Commands**: Voice-activated check-in for hands-free operations
+
+## 🔒 **Compliance & Reporting**
+- **Labor Law Compliance**: Ensure adherence to working time regulations
+- **Audit Trail**: Comprehensive logging for compliance and auditing
+- **Privacy Protection**: GDPR and POPIA compliant data handling
+- **Real-time Reporting**: Live attendance dashboards and alerts
+		`,
+	})
+	@ApiBody({
+		type: CreateCheckInDto,
+		description: 'Check-in payload with location, timing, and verification information',
+		examples: {
+			standardCheckIn: {
+				summary: '🏢 Standard Office Check-In',
+				description: 'Regular office-based employee check-in',
+				value: {
+					userId: 45,
+					location: {
+						latitude: -26.2041,
+						longitude: 28.0473,
+						accuracy: 10,
+					},
+					timestamp: '2023-12-01T08:30:00Z',
+					notes: 'Starting work day',
+					deviceInfo: {
+						deviceId: 'mobile-12345',
+						platform: 'iOS',
+						appVersion: '2.1.0',
+					},
+				},
+			},
+			qrCodeCheckIn: {
+				summary: '📱 QR Code Check-In',
+				description: 'Check-in using location QR code',
+				value: {
+					userId: 67,
+					qrCodeData: 'CHK_LOC_MAIN_OFFICE_2023',
+					timestamp: '2023-12-01T09:00:00Z',
+					notes: 'QR code scan at main entrance',
+					location: {
+						latitude: -26.2041,
+						longitude: 28.0473,
+						accuracy: 5,
+					},
+				},
+			},
+			biometricCheckIn: {
+				summary: '👆 Biometric Check-In',
+				description: 'Check-in with biometric verification',
+				value: {
+					userId: 89,
+					biometricData: {
+						type: 'FINGERPRINT',
+					},
+					timestamp: '2023-12-01T08:45:00Z',
+					location: {
+						latitude: -26.2041,
+						longitude: 28.0473,
+						accuracy: 8,
+					},
+					notes: 'Biometric check-in at security gate',
+				},
+			},
+		},
+	})
+	@ApiCreatedResponse({
+		description: '✅ Check-in recorded successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Check-in recorded successfully' },
+				data: {
+					type: 'object',
+					properties: {
+						attendanceId: { type: 'number', example: 12345 },
+						userId: { type: 'number', example: 45 },
+						checkInTime: { type: 'string', format: 'date-time', example: '2023-12-01T08:30:00Z' },
+						status: { type: 'string', example: 'PRESENT' },
+						organisationId: { type: 'number', example: 1 },
+						branchId: { type: 'number', example: 2 },
+						location: {
+							type: 'object',
+							properties: {
+								latitude: { type: 'number', example: -26.2041 },
+								longitude: { type: 'number', example: 28.0473 },
+								accuracy: { type: 'number', example: 10 },
+							},
+						},
+						xpAwarded: { type: 'number', example: 10 },
+						timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T08:30:00Z' },
+					},
+				},
+			},
+		},
+	})
+	@ApiBadRequestResponse({
+		description: '❌ Bad Request - Invalid data provided',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Error recording check-in' },
+				error: { type: 'string', example: 'Bad Request' },
+				statusCode: { type: 'number', example: 400 },
+				validationErrors: {
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'User ID is required',
+						'Check-in location is required',
+						'Invalid timestamp format',
+						'User already checked in',
+					],
+				},
+			},
+		},
+	})
 	checkIn(@Body() createAttendanceDto: CreateCheckInDto, @Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;

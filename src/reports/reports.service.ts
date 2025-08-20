@@ -506,67 +506,6 @@ export class ReportsService implements OnModuleInit {
 		}
 	}
 
-	/**
-	 * Clears all cached reports for a specific organization
-	 * @param organisationId The organization ID
-	 * @param reportType Optional specific report type to clear
-	 * @returns Number of cache keys cleared
-	 */
-	async clearOrganizationReportCache(organisationId: number, reportType?: ReportType): Promise<number> {
-		this.logger.log(
-			`Clearing organization report cache for org ${organisationId}${
-				reportType ? ` and type ${reportType}` : ''
-			}`,
-		);
-
-		try {
-			const cacheKeyPattern = reportType
-				? `${this.CACHE_PREFIX}${reportType}_org${organisationId}*`
-				: `${this.CACHE_PREFIX}*_org${organisationId}*`;
-
-			this.logger.debug(`Cache key pattern: ${cacheKeyPattern}`);
-
-			// For redis-based cache this would use a scan/delete pattern
-			// For the built-in cache we can only delete specific keys
-			// Since we don't know what cache implementation is being used, we'll log this
-			// This method would need to be enhanced to properly clear cache based on pattern
-
-			this.logger.log(`Cache clearing completed for organization ${organisationId}`);
-			return 0;
-		} catch (error) {
-			this.logger.error(`Error clearing organization report cache: ${error.message}`, error.stack);
-			return 0;
-		}
-	}
-
-	/**
-	 * Gets all branch IDs for an organization
-	 * @param organisationId The organization ID
-	 * @returns Array of branch IDs
-	 */
-	private async getBranchIdsForOrganization(organisationId: number): Promise<number[]> {
-		this.logger.debug(`Getting branch IDs for organization ${organisationId}`);
-
-		try {
-			// This assumes there's a branch repository with a findByOrganisation method
-			const branches = await this.reportRepository
-				.createQueryBuilder('r')
-				.select('DISTINCT r.branchUid', 'branchId')
-				.where('r.organisationUid = :organisationId', { organisationId })
-				.andWhere('r.branchUid IS NOT NULL')
-				.getRawMany();
-
-			this.logger.debug(`Found ${branches.length} branches for organization ${organisationId}`);
-			return branches.map((b) => b.branchId);
-		} catch (error) {
-			this.logger.error(
-				`Error getting branch IDs for organization ${organisationId}: ${error.message}`,
-				error.stack,
-			);
-			return [];
-		}
-	}
-
 	/* ---------------------------------------------------------
 	 * MAP-DATA helper (live map screen)
 	 * -------------------------------------------------------*/

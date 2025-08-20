@@ -37,7 +37,17 @@ export class LeaveService {
 		private readonly unifiedNotificationService: UnifiedNotificationService,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
-		this.logger.debug(`LeaveService initialized with cache TTL: ${this.CACHE_TTL} minutes`);
+
+		this.logger.log('LeaveService initialized with cache TTL: ' + this.CACHE_TTL + ' minutes');
+		this.logger.debug(`LeaveService initialized with dependencies:`);
+		this.logger.debug(`Leave Repository: ${!!this.leaveRepository}`);
+		this.logger.debug(`User Repository: ${!!this.userRepository}`);
+		this.logger.debug(`Cache Manager: ${!!this.cacheManager}`);
+		this.logger.debug(`Config Service: ${!!this.configService}`);
+		this.logger.debug(`Event Emitter: ${!!this.eventEmitter}`);
+		this.logger.debug(`Leave Email Service: ${!!this.leaveEmailService}`);
+		this.logger.debug(`Approvals Service: ${!!this.approvalsService}`);
+		this.logger.debug(`Unified Notification Service: ${!!this.unifiedNotificationService}`);
 	}
 
 	private getCacheKey(key: string | number): string {
@@ -87,20 +97,42 @@ export class LeaveService {
 		this.logger.debug(`Leave request data: ${JSON.stringify({ ...createLeaveDto, startDate: createLeaveDto.startDate, endDate: createLeaveDto.endDate })}`);
 
 		try {
-			// Find the owner user
+			// Enhanced validation
+			this.logger.debug('Validating leave request data');
 			if (!userId) {
 				this.logger.error('User ID is required but not provided for leave request creation');
 				throw new BadRequestException('User ID is required to create a leave request');
 			}
-			
-			this.logger.debug(`Finding user with ID: ${userId}`);
-			const owner = await this.userRepository.findOne({ where: { uid: userId } });
+
+			if (!orgId) {
+				this.logger.error('Organization ID is required for leave request creation');
+				throw new BadRequestException('Organization ID is required');
+			}
+
+			if (!createLeaveDto.startDate || !createLeaveDto.endDate) {
+				this.logger.error('Start date and end date are required for leave request');
+				throw new BadRequestException('Start date and end date are required');
+			}
+
+			// Find the owner user with organization validation
+			this.logger.debug(`Finding user with ID: ${userId} and validating organization access`);
+			const owner = await this.userRepository.findOne({
+				where: { uid: userId },
+				relations: ['organisation']
+			});
 
 			if (!owner) {
 				this.logger.error(`User not found with ID: ${userId}`);
 				throw new NotFoundException(`User with ID ${userId} not found`);
 			}
-			this.logger.debug(`User found: ${owner.email} (${owner.name})`);
+
+			// Validate user belongs to the specified organization
+			if (owner.organisation?.uid !== orgId) {
+				this.logger.error(`User ${userId} (org: ${owner.organisation?.uid}) attempting to create leave in different organization: ${orgId}`);
+				throw new BadRequestException('User does not belong to the specified organization');
+			}
+
+			this.logger.debug(`User found and validated: ${owner.email} (${owner.name}) in organization: ${orgId}`);
 
 			this.logger.debug('Calculating leave duration and processing dates');
 

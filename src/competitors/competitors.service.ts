@@ -48,6 +48,17 @@ export class CompetitorsService {
 		private readonly dataSource: DataSource,
 	) {
 		this.CACHE_TTL = +this.configService.get<number>('CACHE_EXPIRATION_TIME', 300);
+
+		this.logger.log('CompetitorsService initialized with cache TTL: ' + this.CACHE_TTL + ' seconds');
+		this.logger.debug(`CompetitorsService initialized with dependencies:`);
+		this.logger.debug(`Competitor Repository: ${!!this.competitorRepository}`);
+		this.logger.debug(`User Repository: ${!!this.userRepository}`);
+		this.logger.debug(`Organisation Repository: ${!!this.organisationRepository}`);
+		this.logger.debug(`Branch Repository: ${!!this.branchRepository}`);
+		this.logger.debug(`Organisation Settings Repository: ${!!this.organisationSettingsRepository}`);
+		this.logger.debug(`Cache Manager: ${!!this.cacheManager}`);
+		this.logger.debug(`Config Service: ${!!this.configService}`);
+		this.logger.debug(`Data Source: ${!!this.dataSource}`);
 	}
 
 	// Helper method to get organization settings
@@ -88,10 +99,27 @@ export class CompetitorsService {
 	}
 
 	async create(createCompetitorDto: CreateCompetitorDto, creator: User, orgId?: number, branchId?: number) {
+		this.logger.log(`Creating competitor: ${createCompetitorDto.name}, created by: ${creator.uid}, orgId: ${orgId}, branchId: ${branchId}`);
+
 		try {
+			// Enhanced validation
+			this.logger.debug('Validating competitor creation data');
+			if (!creator?.uid) {
+				this.logger.error('Creator information is required for competitor creation');
+				throw new BadRequestException('Creator information is required');
+			}
+
 			// Validate numeric parameters
 			const validatedOrgId = this.validateNumericParam(orgId);
 			const validatedBranchId = this.validateNumericParam(branchId);
+
+			// Validate organization access
+			if (validatedOrgId && creator.organisation?.uid !== validatedOrgId) {
+				this.logger.error(`User ${creator.uid} attempting to create competitor in different organization ${validatedOrgId}`);
+				throw new BadRequestException('Cannot create competitor in different organization');
+			}
+
+			this.logger.debug(`Validated orgId: ${validatedOrgId}, branchId: ${validatedBranchId}`);
 
 			// Validate required fields first
 			if (!createCompetitorDto.name || createCompetitorDto.name.trim() === '') {
