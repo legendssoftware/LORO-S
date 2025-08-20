@@ -313,6 +313,14 @@ export class ClaimsService {
 		orgId?: number,
 		branchId?: number,
 	): Promise<PaginatedResponse<Claim>> {
+		this.logger.log(`🔍 [ClaimsService] Finding claims with filters:`, {
+			filters,
+			page,
+			limit,
+			orgId,
+			branchId
+		});
+
 		try {
 			const queryBuilder = this.claimsRepository
 				.createQueryBuilder('claim')
@@ -366,6 +374,7 @@ export class ClaimsService {
 				amount: this.formatCurrency(Number(claim?.amount) || 0),
 			}));
 
+			this.logger.log(`✅ [ClaimsService] Successfully retrieved ${total} claims for page ${page}`);
 			return {
 				data: formattedClaims,
 				meta: {
@@ -377,6 +386,7 @@ export class ClaimsService {
 				message: process.env.SUCCESS_MESSAGE,
 			};
 		} catch (error) {
+			this.logger.error(`❌ [ClaimsService] Error retrieving claims:`, error.message);
 			return {
 				data: [],
 				meta: {
@@ -395,6 +405,8 @@ export class ClaimsService {
 		orgId?: number,
 		branchId?: number,
 	): Promise<{ message: string; claim: Claim | null; stats: any }> {
+		this.logger.log(`🔍 [ClaimsService] Finding claim with ID: ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
+
 		try {
 			const queryBuilder = this.claimsRepository
 				.createQueryBuilder('claim')
@@ -444,12 +456,14 @@ export class ClaimsService {
 				amount: this.formatCurrency(Number(claim?.amount) || 0),
 			};
 
+			this.logger.log(`✅ [ClaimsService] Successfully retrieved claim ${ref} with ${stats.total} total claims in organization`);
 			return {
 				message: process.env.SUCCESS_MESSAGE,
 				claim: formattedClaim,
 				stats,
 			};
 		} catch (error) {
+			this.logger.error(`❌ [ClaimsService] Error finding claim ${ref}:`, error.message);
 			return {
 				message: error?.message,
 				claim: null,
@@ -473,6 +487,8 @@ export class ClaimsService {
 			paid: number;
 		};
 	}> {
+		this.logger.log(`🔍 [ClaimsService] Finding claims for user ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
+
 		try {
 			const queryBuilder = this.claimsRepository
 				.createQueryBuilder('claim')
@@ -505,12 +521,14 @@ export class ClaimsService {
 
 			const stats = this.calculateStats(claims);
 
+			this.logger.log(`✅ [ClaimsService] Successfully retrieved ${formattedClaims.length} claims for user ${ref}`);
 			return {
 				message: process.env.SUCCESS_MESSAGE,
 				claims: formattedClaims,
 				stats,
 			};
 		} catch (error) {
+			this.logger.error(`❌ [ClaimsService] Error retrieving claims for user ${ref}:`, error?.message);
 			return {
 				message: `could not get claims by user - ${error?.message}`,
 				claims: null,
@@ -529,6 +547,8 @@ export class ClaimsService {
 			totalValue: string;
 		};
 	}> {
+		this.logger.log(`📅 [ClaimsService] Getting claims for date: ${date.toISOString().split('T')[0]}`);
+
 		try {
 			const claims = await this.claimsRepository.find({
 				where: { createdAt: Between(startOfDay(date), endOfDay(date)) },
@@ -546,6 +566,7 @@ export class ClaimsService {
 				paid: claims.filter((claim) => claim.status === ClaimStatus.PAID),
 			};
 
+			this.logger.log(`✅ [ClaimsService] Successfully retrieved ${claims.length} claims for date ${date.toISOString().split('T')[0]}`);
 			return {
 				message: process.env.SUCCESS_MESSAGE,
 				claims: {
@@ -556,6 +577,7 @@ export class ClaimsService {
 				},
 			};
 		} catch (error) {
+			this.logger.error(`❌ [ClaimsService] Error retrieving claims for date ${date.toISOString().split('T')[0]}:`, error?.message);
 			return {
 				message: error?.message,
 				claims: null,
@@ -569,6 +591,8 @@ export class ClaimsService {
 		orgId?: number,
 		branchId?: number,
 	): Promise<{ message: string }> {
+		this.logger.log(`🔄 [ClaimsService] Updating claim ${ref} with status: ${updateClaimDto.status}, orgId: ${orgId}, branchId: ${branchId}`);
+
 		try {
 			// First verify the claim belongs to the org/branch
 			const claimResult = await this.findOne(ref, orgId, branchId);
@@ -699,8 +723,10 @@ export class ClaimsService {
 				branchId,
 			);
 
+			this.logger.log(`✅ [ClaimsService] Successfully updated claim ${ref} to status: ${updateClaimDto.status}`);
 			return response;
 		} catch (error) {
+			this.logger.error(`❌ [ClaimsService] Error updating claim ${ref}:`, error?.message);
 			const response = {
 				message: error?.message || 'Failed to update claim',
 			};
@@ -710,6 +736,8 @@ export class ClaimsService {
 	}
 
 	async remove(ref: number, orgId?: number, branchId?: number): Promise<{ message: string }> {
+		this.logger.log(`🗑️ [ClaimsService] Removing claim ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
+
 		try {
 			// First verify the claim belongs to the org/branch
 			const claimResult = await this.findOne(ref, orgId, branchId);
@@ -725,12 +753,14 @@ export class ClaimsService {
 			// Invalidate cache after deletion
 			this.invalidateClaimsCache(claim);
 
+			this.logger.log(`✅ [ClaimsService] Successfully removed claim ${ref}`);
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,
 			};
 
 			return response;
 		} catch (error) {
+			this.logger.error(`❌ [ClaimsService] Error removing claim ${ref}:`, error?.message);
 			const response = {
 				message: error?.message,
 			};
@@ -740,6 +770,8 @@ export class ClaimsService {
 	}
 
 	async restore(ref: number, orgId?: number, branchId?: number): Promise<{ message: string }> {
+		this.logger.log(`♻️ [ClaimsService] Restoring claim ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
+
 		try {
 			// First find the claim with isDeleted=true
 			const queryBuilder = this.claimsRepository
@@ -775,12 +807,14 @@ export class ClaimsService {
 			// Invalidate cache
 			this.invalidateClaimsCache(claim);
 
+			this.logger.log(`✅ [ClaimsService] Successfully restored claim ${ref}`);
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,
 			};
 
 			return response;
 		} catch (error) {
+			this.logger.error(`❌ [ClaimsService] Error restoring claim ${ref}:`, error?.message);
 			return { message: error?.message };
 		}
 	}
@@ -790,6 +824,8 @@ export class ClaimsService {
 		totalValue: string;
 		byCategory: Record<ClaimCategory, number>;
 	}> {
+		this.logger.log(`📊 [ClaimsService] Getting total claims statistics`);
+
 		try {
 			const claims = await this.claimsRepository.find({
 				where: {
@@ -818,12 +854,14 @@ export class ClaimsService {
 				if (claim?.category) byCategory[claim?.category]++;
 			});
 
+			this.logger.log(`✅ [ClaimsService] Successfully retrieved statistics for ${claims.length} total claims`);
 			return {
 				totalClaims: claims.length,
 				totalValue: this.formatCurrency(claims.reduce((sum, claim) => sum + (Number(claim.amount) || 0), 0)),
 				byCategory,
 			};
 		} catch (error) {
+			this.logger.error(`❌ [ClaimsService] Error retrieving total claims statistics:`, error?.message);
 			return {
 				totalClaims: 0,
 				totalValue: this.formatCurrency(0),
@@ -847,6 +885,8 @@ export class ClaimsService {
 	}
 
 	async getClaimsReport(filter: any) {
+		this.logger.log(`📊 [ClaimsService] Generating claims report with filters:`, filter);
+
 		try {
 			const claims = await this.claimsRepository.find({
 				where: {
@@ -876,6 +916,7 @@ export class ClaimsService {
 			const categoryBreakdown = this.analyzeCategoryBreakdown(claims);
 			const topClaimants = this.analyzeTopClaimants(claims);
 
+			this.logger.log(`✅ [ClaimsService] Successfully generated report for ${totalClaims} claims`);
 			return {
 				...groupedClaims,
 				total: totalClaims,
@@ -893,6 +934,7 @@ export class ClaimsService {
 				},
 			};
 		} catch (error) {
+			this.logger.error(`❌ [ClaimsService] Error generating claims report:`, error?.message);
 			return null;
 		}
 	}

@@ -311,6 +311,15 @@ export class LeaveService {
 		branchId?: number,
 		userId?: number,
 	): Promise<PaginatedResponse<Leave>> {
+		this.logger.log(`🔍 [LeaveService] Finding leaves with filters:`, {
+			filters,
+			page,
+			limit,
+			orgId,
+			branchId,
+			userId
+		});
+
 		try {
 			// Building the where clause
 			const where: any = {};
@@ -367,6 +376,7 @@ export class LeaveService {
 			// Calculate total pages
 			const totalPages = Math.ceil(total / limit);
 
+			this.logger.log(`✅ [LeaveService] Successfully retrieved ${total} leaves for page ${page}`);
 			return {
 				data,
 				meta: {
@@ -378,6 +388,7 @@ export class LeaveService {
 				message: 'Success',
 			};
 		} catch (error) {
+			this.logger.error(`❌ [LeaveService] Error retrieving leaves:`, error.message);
 			throw new BadRequestException(error.message || 'Error retrieving leave requests');
 		}
 	}
@@ -388,6 +399,8 @@ export class LeaveService {
 		branchId?: number,
 		userId?: number,
 	): Promise<{ message: string; leave: Leave | null }> {
+		this.logger.log(`🔍 [LeaveService] Finding leave with ID: ${ref}, orgId: ${orgId}, branchId: ${branchId}, userId: ${userId}`);
+
 		try {
 			// Build query conditions
 			const where: any = { uid: ref };
@@ -428,11 +441,13 @@ export class LeaveService {
 			// Cache the result
 			await this.cacheManager.set(cacheKey, leave, this.CACHE_TTL);
 
+			this.logger.log(`✅ [LeaveService] Successfully retrieved leave ${ref}`);
 			return {
 				leave,
 				message: 'Success',
 			};
 		} catch (error) {
+			this.logger.error(`❌ [LeaveService] Error finding leave ${ref}:`, error.message);
 			throw new BadRequestException(error.message || 'Error retrieving leave request');
 		}
 	}
@@ -443,6 +458,8 @@ export class LeaveService {
 		branchId?: number,
 		userId?: number,
 	): Promise<{ message: string; leaves: Leave[] }> {
+		this.logger.log(`🔍 [LeaveService] Finding leaves for user ${ref}, orgId: ${orgId}, branchId: ${branchId}, userId: ${userId}`);
+
 		try {
 			// Build query conditions
 			const where: any = { owner: { uid: ref } };
@@ -465,11 +482,13 @@ export class LeaveService {
 				},
 			});
 
+			this.logger.log(`✅ [LeaveService] Successfully retrieved ${leaves.length} leaves for user ${ref}`);
 			return {
 				leaves,
 				message: 'Success',
 			};
 		} catch (error) {
+			this.logger.error(`❌ [LeaveService] Error retrieving leaves for user ${ref}:`, error.message);
 			throw new BadRequestException(error.message || 'Error retrieving user leave requests');
 		}
 	}
@@ -481,6 +500,14 @@ export class LeaveService {
 		branchId?: number,
 		userId?: number,
 	): Promise<{ message: string }> {
+		this.logger.log(`🔄 [LeaveService] Updating leave ${ref} with data:`, {
+			status: updateLeaveDto.status,
+			leaveType: updateLeaveDto.leaveType,
+			orgId,
+			branchId,
+			userId
+		});
+
 		try {
 			// Find the leave first
 			const { leave } = await this.findOne(ref, orgId, branchId, userId);
@@ -550,8 +577,10 @@ export class LeaveService {
 			// Clear cache
 			await this.clearLeaveCache(ref);
 
+			this.logger.log(`✅ [LeaveService] Successfully updated leave ${ref} to status: ${updateLeaveDto.status}`);
 			return { message: 'Leave request updated successfully' };
 		} catch (error) {
+			this.logger.error(`❌ [LeaveService] Error updating leave ${ref}:`, error.message);
 			if (error instanceof NotFoundException) {
 				throw error;
 			}
@@ -566,6 +595,8 @@ export class LeaveService {
 		branchId?: number,
 		userId?: number,
 	): Promise<{ message: string }> {
+		this.logger.log(`✅ [LeaveService] Approving leave ${ref} by approver ${approverUid}, orgId: ${orgId}, branchId: ${branchId}`);
+
 		try {
 			// Find the leave first
 			const { leave } = await this.findOne(ref, orgId, branchId, userId);
@@ -650,8 +681,10 @@ export class LeaveService {
 			// Clear cache
 			await this.clearLeaveCache(ref);
 
+			this.logger.log(`✅ [LeaveService] Successfully approved leave ${ref} by approver ${approverUid}`);
 			return { message: 'Leave request approved successfully' };
 		} catch (error) {
+			this.logger.error(`❌ [LeaveService] Error approving leave ${ref}:`, error.message);
 			if (error instanceof NotFoundException) {
 				throw error;
 			}
@@ -666,6 +699,8 @@ export class LeaveService {
 		branchId?: number,
 		userId?: number,
 	): Promise<{ message: string }> {
+		this.logger.log(`❌ [LeaveService] Rejecting leave ${ref} with reason: ${rejectionReason}, orgId: ${orgId}, branchId: ${branchId}`);
+
 		try {
 			// Find the leave first
 			const { leave } = await this.findOne(ref, orgId, branchId, userId);
@@ -746,8 +781,10 @@ export class LeaveService {
 			// Clear cache
 			await this.clearLeaveCache(ref);
 
+			this.logger.log(`✅ [LeaveService] Successfully rejected leave ${ref} with reason: ${rejectionReason}`);
 			return { message: 'Leave request rejected successfully' };
 		} catch (error) {
+			this.logger.error(`❌ [LeaveService] Error rejecting leave ${ref}:`, error.message);
 			if (error instanceof NotFoundException) {
 				throw error;
 			}
@@ -762,6 +799,8 @@ export class LeaveService {
 		orgId?: number,
 		branchId?: number,
 	): Promise<{ message: string }> {
+		this.logger.log(`🚫 [LeaveService] Canceling leave ${ref} with reason: ${cancellationReason}, userId: ${userId}, orgId: ${orgId}, branchId: ${branchId}`);
+
 		try {
 			// Find the leave first
 			const { leave } = await this.findOne(ref, orgId, branchId, userId);
@@ -810,8 +849,10 @@ export class LeaveService {
 			// Clear cache
 			await this.clearLeaveCache(ref);
 
+			this.logger.log(`✅ [LeaveService] Successfully canceled leave ${ref} with reason: ${cancellationReason}`);
 			return { message: 'Leave request canceled successfully' };
 		} catch (error) {
+			this.logger.error(`❌ [LeaveService] Error canceling leave ${ref}:`, error.message);
 			if (error instanceof NotFoundException) {
 				throw error;
 			}
@@ -820,6 +861,8 @@ export class LeaveService {
 	}
 
 	async remove(ref: number, orgId?: number, branchId?: number, userId?: number): Promise<{ message: string }> {
+		this.logger.log(`🗑️ [LeaveService] Removing leave ${ref}, orgId: ${orgId}, branchId: ${branchId}, userId: ${userId}`);
+
 		try {
 			// Find the leave first
 			const { leave } = await this.findOne(ref, orgId, branchId, userId);
@@ -834,8 +877,10 @@ export class LeaveService {
 			// Clear cache
 			await this.clearLeaveCache(ref);
 
+			this.logger.log(`✅ [LeaveService] Successfully removed leave ${ref}`);
 			return { message: 'Leave request deleted successfully' };
 		} catch (error) {
+			this.logger.error(`❌ [LeaveService] Error removing leave ${ref}:`, error.message);
 			if (error instanceof NotFoundException) {
 				throw error;
 			}

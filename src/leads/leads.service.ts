@@ -295,8 +295,10 @@ export class LeadsService {
 		orgId?: number,
 		branchId?: number,
 	): Promise<{ lead: Lead | null; message: string; stats: any }> {
+		this.logger.log(`Finding lead with ID: ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
 		try {
 			if (!orgId) {
+				this.logger.warn('Organization ID is required for lead retrieval');
 				throw new BadRequestException('Organization ID is required');
 			}
 
@@ -360,8 +362,10 @@ export class LeadsService {
 		orgId?: number,
 		branchId?: number,
 	): Promise<{ message: string; leads: Lead[]; stats: any }> {
+		this.logger.log(`Getting leads for user: ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
 		try {
 			if (!orgId) {
+				this.logger.warn('Organization ID is required for user leads retrieval');
 				throw new BadRequestException('Organization ID is required');
 			}
 
@@ -415,8 +419,10 @@ export class LeadsService {
 		branchId?: number,
 		userId?: number, // Optionally pass userId performing the update
 	): Promise<{ message: string }> {
+		this.logger.log(`Updating lead: ${ref}, orgId: ${orgId}, branchId: ${branchId}, userId: ${userId}, updateData: ${JSON.stringify(updateLeadDto)}`);
 		try {
 			if (!orgId) {
+				this.logger.warn('Organization ID is required for lead update');
 				throw new BadRequestException('Organization ID is required');
 			}
 
@@ -716,8 +722,10 @@ export class LeadsService {
 	}
 
 	async remove(ref: number, orgId?: number, branchId?: number): Promise<{ message: string }> {
+		this.logger.log(`Removing lead: ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
 		try {
 			if (!orgId) {
+				this.logger.warn('Organization ID is required for lead removal');
 				throw new BadRequestException('Organization ID is required');
 			}
 
@@ -1394,6 +1402,7 @@ export class LeadsService {
 			total: number;
 		};
 	}> {
+		this.logger.log(`Getting leads for date: ${date.toISOString()}`);
 		try {
 			const leads = await this.leadsRepository.find({
 				where: { createdAt: Between(startOfDay(date), endOfDay(date)) },

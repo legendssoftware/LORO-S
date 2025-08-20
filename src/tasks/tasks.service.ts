@@ -681,8 +681,10 @@ export class TasksService {
 	}
 
 	async findOne(ref: number, orgId?: number, branchId?: number): Promise<{ message: string; task: Task | null }> {
+		this.logger.log(`Finding task with ID: ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
 		try {
 			if (!orgId) {
+				this.logger.warn('Organization ID is required for task retrieval');
 				throw new BadRequestException('Organization ID is required');
 			}
 
@@ -690,6 +692,7 @@ export class TasksService {
 			const cachedTask = await this.cacheManager.get<{ message: string; task: Task }>(cacheKey);
 
 			if (cachedTask) {
+				this.logger.debug(`Task ${ref} retrieved from cache`);
 				return cachedTask;
 			}
 
@@ -737,8 +740,10 @@ export class TasksService {
 		orgId?: number,
 		branchId?: number,
 	): Promise<{ message: string; tasks: Task[] }> {
+		this.logger.log(`Getting tasks for user: ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
 		try {
 			if (!orgId) {
+				this.logger.warn('Organization ID is required for user tasks retrieval');
 				throw new BadRequestException('Organization ID is required');
 			}
 
@@ -806,8 +811,10 @@ export class TasksService {
 		orgId?: number,
 		branchId?: number,
 	): Promise<PaginatedResponse<Task>> {
+		this.logger.log(`Finding tasks with filters: ${JSON.stringify(filters)}, page: ${page}, limit: ${limit}, orgId: ${orgId}, branchId: ${branchId}`);
 		try {
 			if (!orgId) {
+				this.logger.warn('Organization ID is required for tasks retrieval');
 				throw new BadRequestException('Organization ID is required');
 			}
 
@@ -921,8 +928,10 @@ export class TasksService {
 		orgId?: number,
 		branchId?: number,
 	): Promise<{ message: string }> {
+		this.logger.log(`Updating task: ${ref}, orgId: ${orgId}, branchId: ${branchId}, updateData: ${JSON.stringify(updateTaskDto)}`);
 		try {
 			if (!orgId) {
+				this.logger.warn('Organization ID is required for task update');
 				throw new BadRequestException('Organization ID is required');
 			}
 
@@ -1102,8 +1111,10 @@ export class TasksService {
 	}
 
 	async remove(ref: number, orgId?: number, branchId?: number): Promise<{ message: string }> {
+		this.logger.log(`Removing task: ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
 		try {
 			if (!orgId) {
+				this.logger.warn('Organization ID is required for task removal');
 				throw new BadRequestException('Organization ID is required');
 			}
 
@@ -1141,6 +1152,7 @@ export class TasksService {
 		byStatus: Record<TaskStatus, number>;
 		total: number;
 	}> {
+		this.logger.log('Getting task status summary for today');
 		try {
 			const today = new Date();
 			const startOfDay = new Date(today.setHours(0, 0, 0, 0));
@@ -1767,6 +1779,7 @@ export class TasksService {
 	}
 
 	async toggleJobStatus(taskId: number): Promise<{ task: Partial<Task>; message: string }> {
+		this.logger.log(`Toggling job status for task: ${taskId}`);
 		try {
 			const task = await this.taskRepository.findOne({
 				where: {
