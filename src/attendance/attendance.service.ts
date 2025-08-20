@@ -133,7 +133,8 @@ export class AttendanceService {
 		orgId?: number,
 		branchId?: number,
 	): Promise<{ message: string; data?: any }> {
-		this.logger.log(`Check-in attempt for user: ${checkInDto.owner?.uid}, orgId: ${orgId}, branchId: ${branchId}`);
+		this.logger.log(`Check-in attempt for user ${checkInDto.owner.uid}, orgId: ${orgId}, branchId: ${branchId}`);
+		this.logger.debug(`Check-in data: ${JSON.stringify(checkInDto)}`);
 		this.logger.debug(`Check-in data: ${JSON.stringify({
 			...checkInDto,
 			owner: checkInDto.owner?.uid,
@@ -285,9 +286,8 @@ export class AttendanceService {
 		orgId?: number,
 		branchId?: number,
 	): Promise<{ message: string; data?: any }> {
-		this.logger.log(
-			`Check-out attempt for user: ${checkOutDto.owner?.uid}, orgId: ${orgId}, branchId: ${branchId}`,
-		);
+		this.logger.log(`Check-out attempt for user ${checkOutDto.owner.uid}, orgId: ${orgId}, branchId: ${branchId}`);
+		this.logger.debug(`Check-out data: ${JSON.stringify(checkOutDto)}`);
 		this.logger.debug(`Check-out data: ${JSON.stringify({
 			...checkOutDto,
 			owner: checkOutDto.owner?.uid,
@@ -490,7 +490,7 @@ export class AttendanceService {
 	}
 
 	public async allCheckIns(orgId?: number, branchId?: number): Promise<{ message: string; checkIns: Attendance[] }> {
-		this.logger.log(`Retrieving all check-ins for orgId: ${orgId}, branchId: ${branchId}`);
+		this.logger.log(`Fetching all check-ins, orgId: ${orgId}, branchId: ${branchId}`);
 
 		try {
 			const cacheKey = this.getCacheKey(`all_${orgId || 'no-org'}_${branchId || 'no-branch'}`);
@@ -575,6 +575,7 @@ export class AttendanceService {
 		orgId?: number,
 		branchId?: number,
 	): Promise<{ message: string; checkIns: Attendance[] }> {
+		this.logger.log(`Fetching check-ins for date: ${date}, orgId: ${orgId}, branchId: ${branchId}`);
 		try {
 			const startOfDay = new Date(date);
 			startOfDay.setHours(0, 0, 0, 0);
@@ -1273,12 +1274,17 @@ export class AttendanceService {
 
 	public async manageBreak(breakDto: CreateBreakDto): Promise<{ message: string }> {
 		try {
+			this.logger.log(`Managing break for user ${breakDto.owner.uid}, isStartingBreak: ${breakDto.isStartingBreak}`);
+
 			if (breakDto.isStartingBreak) {
+				this.logger.log(`Delegating to startBreak for user ${breakDto.owner.uid}`);
 				return this.startBreak(breakDto);
 			} else {
+				this.logger.log(`Delegating to endBreak for user ${breakDto.owner.uid}`);
 				return this.endBreak(breakDto);
 			}
 		} catch (error) {
+			this.logger.error(`Error managing break for user ${breakDto.owner.uid}: ${error?.message}`, error?.stack);
 			return {
 				message: error?.message,
 			};
@@ -1287,11 +1293,13 @@ export class AttendanceService {
 
 	private async startBreak(breakDto: CreateBreakDto): Promise<{ message: string }> {
 		try {
+			this.logger.log(`Starting break for user ${breakDto.owner.uid}`);
+
 			// Find the active shift
 			const activeShift = await this.attendanceRepository.findOne({
 				where: {
 					status: AttendanceStatus.PRESENT,
-					owner: breakDto.owner,
+					owner: { uid: breakDto.owner.uid },
 					checkIn: Not(IsNull()),
 					checkOut: IsNull(),
 				},
@@ -1301,8 +1309,11 @@ export class AttendanceService {
 			});
 
 			if (!activeShift) {
+				this.logger.warn(`No active shift found for user ${breakDto.owner.uid} to start break`);
 				throw new NotFoundException('No active shift found to start break');
 			}
+
+			this.logger.log(`Found active shift ${activeShift.uid} for user ${breakDto.owner.uid}, proceeding with break start`);
 
 			// Initialize the breakDetails array if it doesn't exist
 			const breakDetails: BreakDetail[] = activeShift.breakDetails || [];
@@ -1366,6 +1377,7 @@ export class AttendanceService {
 				// Don't fail the break start if notification fails
 			}
 
+			this.logger.log(`Break started successfully for user ${breakDto.owner.uid}, shift ${activeShift.uid}`);
 			return {
 				message: 'Break started successfully',
 			};
@@ -1378,11 +1390,13 @@ export class AttendanceService {
 
 	private async endBreak(breakDto: CreateBreakDto): Promise<{ message: string }> {
 		try {
+			this.logger.log(`Ending break for user ${breakDto.owner.uid}`);
+
 			// Find the shift on break
 			const shiftOnBreak = await this.attendanceRepository.findOne({
 				where: {
 					status: AttendanceStatus.ON_BREAK,
-					owner: breakDto.owner,
+					owner: { uid: breakDto.owner.uid },
 					checkIn: Not(IsNull()),
 					checkOut: IsNull(),
 					breakStartTime: Not(IsNull()),
@@ -1393,8 +1407,11 @@ export class AttendanceService {
 			});
 
 			if (!shiftOnBreak) {
+				this.logger.warn(`No shift on break found for user ${breakDto.owner.uid}`);
 				throw new NotFoundException('No shift on break found');
 			}
+
+			this.logger.log(`Found shift on break ${shiftOnBreak.uid} for user ${breakDto.owner.uid}, proceeding with break end`);
 
 			// Calculate break duration
 			const breakEndTime = new Date();
@@ -1475,6 +1492,7 @@ export class AttendanceService {
 				// Don't fail the break end if notification fails
 			}
 
+			this.logger.log(`Break ended successfully for user ${breakDto.owner.uid}, shift ${shiftOnBreak.uid}, duration: ${currentBreakDuration}`);
 			return {
 				message: 'Break ended successfully',
 			};
