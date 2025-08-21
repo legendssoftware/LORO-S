@@ -30,7 +30,8 @@ import { QuotationTemplateData } from '../pdf-generation/interfaces/pdf-template
 import { Project } from './entities/project.entity';
 import { ProjectsService } from './projects.service';
 import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
-import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
+import { NotificationPriority } from '../lib/types/unified-notification.types';
+import { User } from 'src/user/entities/user.entity';
 
 @Injectable()
 export class ShopService {
@@ -51,8 +52,10 @@ export class ShopService {
 		private bannersRepository: Repository<Banners>,
 		@InjectRepository(Project)
 		private projectRepository: Repository<Project>,
+		@InjectRepository(User)
+		private userRepository: Repository<User>,
 		@Inject(CACHE_MANAGER)
-		private cacheManager: Cache,
+		private cacheManager: Cache,	
 		private readonly configService: ConfigService,
 		private readonly clientsService: ClientsService,
 		private readonly eventEmitter: EventEmitter2,
@@ -225,6 +228,81 @@ export class ShopService {
 	}
 
 	/**
+	 * Send notifications for shop-related emails
+	 */
+	private async sendShopNotifications(
+		recipients: string[],
+		notificationType: string,
+		data: any,
+		orgId?: number,
+		branchId?: number
+	): Promise<void> {
+		const operationId = `shop_notifications_${Date.now()}`;
+		this.logger.log(`[${operationId}] Sending ${notificationType} notifications to ${recipients.length} recipients`);
+
+		try {
+			// Send push notifications to users with app
+			for (const recipient of recipients) {
+				try {
+					await this.unifiedNotificationService.sendTemplatedNotification(
+						notificationType as any,
+						[Number(recipient)],
+						data,
+						{ priority: NotificationPriority.NORMAL }
+					);
+					this.logger.debug(`[${operationId}] Notification sent to ${recipient}`);
+				} catch (error) {
+					this.logger.warn(`[${operationId}] Failed to send notification to ${recipient}:`, error.message);
+				}
+			}
+
+			// If this is for an organization, also notify org admins
+			if (orgId) {
+				try {
+					const orgAdmins = await this.getOrganizationAdmins(orgId);
+					if (orgAdmins.length > 0) {
+						this.logger.debug(`[${operationId}] Notifying ${orgAdmins.length} org admins about ${notificationType}`);
+						// Send admin notification
+						await this.unifiedNotificationService.sendTemplatedNotification(
+							'SHOP_ADMIN_NOTIFICATION' as any,
+							orgAdmins.map(admin => admin.uid.toString()),
+							{
+								...data,
+								notificationType,
+								adminContext: true
+							},
+							{ priority: NotificationPriority.HIGH }
+						);
+					}
+				} catch (error) {
+					this.logger.warn(`[${operationId}] Failed to notify org admins:`, error.message);
+				}
+			}
+		} catch (error) {
+			this.logger.error(`[${operationId}] Error sending shop notifications:`, error.stack);
+		}
+	}
+
+	/**
+	 * Get organization admins for notifications
+	 */
+	private async getOrganizationAdmins(orgId: number): Promise<any[]> {
+		try {
+			const adminUsers = await this.userRepository.find({
+				where: {
+					organisation: { uid: orgId },
+					accessLevel: AccessLevel.ADMIN
+				},
+				select: ['uid', 'email']
+			});
+			return adminUsers;
+		} catch (error) {
+			this.logger.error(`Error fetching org admins for org ${orgId}:`, error.message);
+			return [];
+		}
+	}
+
+	/**
 	 * Calculate total cost for a project based on associated quotations with specific statuses
 	 * @param projectId - Project ID to calculate costs for
 	 * @param includeStatuses - Array of quotation statuses to include in cost calculation
@@ -391,6 +469,9 @@ export class ShopService {
 	}
 
 	async categories(orgId?: number, branchId?: number): Promise<{ categories: string[] | null; message: string }> {
+		const operationId = `categories_${Date.now()}`;
+		this.logger.log(`[${operationId}] Fetching categories for orgId: ${orgId}, branchId: ${branchId}`);
+
 		try {
 			// Build query with optional org and branch filters
 			const query = this.productRepository.createQueryBuilder('product');
@@ -398,16 +479,20 @@ export class ShopService {
 			// Only add filters if values are provided
 			if (orgId) {
 				query.andWhere('product.organisationUid = :orgId', { orgId });
+				this.logger.debug(`[${operationId}] Applied organization filter: ${orgId}`);
 			}
 
 			if (branchId) {
 				query.andWhere('product.branchUid = :branchId', { branchId });
+				this.logger.debug(`[${operationId}] Applied branch filter: ${branchId}`);
 			}
 
 			const allProducts = await query.getMany();
+			this.logger.debug(`[${operationId}] Found ${allProducts?.length || 0} products for category extraction`);
 
 			// Return empty categories array if no products found instead of throwing error
 			if (!allProducts || allProducts?.length === 0) {
+				this.logger.warn(`[${operationId}] No products found for the specified criteria`);
 				return {
 					categories: [],
 					message: 'No products found',
@@ -416,6 +501,7 @@ export class ShopService {
 
 			const categories = allProducts.map((product) => product?.category);
 			const uniqueCategories = [...new Set(categories)].filter(Boolean); // Filter out null/undefined values
+			this.logger.log(`[${operationId}] Extracted ${uniqueCategories.length} unique categories: ${uniqueCategories.join(', ')}`);
 
 			const response = {
 				categories: uniqueCategories,
@@ -494,17 +580,32 @@ export class ShopService {
 	}
 
 	async specials(orgId?: number, branchId?: number): Promise<{ products: Product[] | null; message: string }> {
-		const result = await this.getProductsByStatus(ProductStatus.SPECIAL, orgId, branchId);
+		const operationId = `specials_${Date.now()}`;
+		this.logger.log(`[${operationId}] Fetching special products for orgId: ${orgId}, branchId: ${branchId}`);
 
-		const response = {
-			products: result?.products,
-			message: process.env.SUCCESS_MESSAGE,
-		};
+		try {
+			const result = await this.getProductsByStatus(ProductStatus.SPECIAL, orgId, branchId);
+			this.logger.log(`[${operationId}] Found ${result?.products?.length || 0} special products`);
 
-		return response;
+			const response = {
+				products: result?.products,
+				message: process.env.SUCCESS_MESSAGE,
+			};
+
+			return response;
+		} catch (error) {
+			this.logger.error(`[${operationId}] Failed to fetch special products:`, error.stack);
+			return {
+				products: null,
+				message: `Failed to fetch specials: ${error.message}`,
+			};
+		}
 	}
 
 	async getBestSellers(orgId?: number, branchId?: number): Promise<{ products: Product[] | null; message: string }> {
+		const operationId = `bestsellers_${Date.now()}`;
+		this.logger.log(`[${operationId}] Fetching bestsellers for orgId: ${orgId}, branchId: ${branchId}`);
+
 		try {
 			// Get products based on actual sales analytics or fallback to status
 			const query = this.productRepository
@@ -596,9 +697,10 @@ export class ShopService {
 				message: process.env.SUCCESS_MESSAGE,
 			};
 
+			this.logger.log(`[${operationId}] Successfully retrieved ${response.products?.length || 0} bestsellers`);
 			return response;
 		} catch (error) {
-			this.logger.warn(`Error fetching best sellers: ${error?.message}`);
+			this.logger.error(`[${operationId}] Failed to fetch bestsellers:`, error.stack);
 			return {
 				products: [],
 				message: 'Error fetching best sellers',
@@ -607,6 +709,9 @@ export class ShopService {
 	}
 
 	async getNewArrivals(orgId?: number, branchId?: number): Promise<{ products: Product[] | null; message: string }> {
+		const operationId = `newarrivals_${Date.now()}`;
+		this.logger.log(`[${operationId}] Fetching new arrivals for orgId: ${orgId}, branchId: ${branchId}`);
+
 		try {
 			// Get the most recently added products (within last 30 days or newest 20)
 			const thirtyDaysAgo = new Date();

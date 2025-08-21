@@ -75,6 +75,8 @@ import {
 	UserTargetDeletedEmailData,
 	UserTargetUpdatedEmailData,
 	ApprovalEmailData,
+	AttendanceMissedShiftAlertData,
+	AttendanceLateShiftAlertData,
 } from '../types/email-templates.types';
 
 // Auth Templates
@@ -312,6 +314,14 @@ export const AttendanceEveningReport = (data: EveningReportData): string => {
 
 export const OvertimeReminder = (data: OvertimeReminderData): string => {
 	return emailTemplateService.overtimeReminder(data);
+};
+
+export const AttendanceMissedShiftAlert = (data: AttendanceMissedShiftAlertData): string => {
+	return emailTemplateService.attendanceMissedShiftAlert(data);
+};
+
+export const AttendanceLateShiftAlert = (data: AttendanceLateShiftAlertData): string => {
+	return emailTemplateService.attendanceLateShiftAlert(data);
 };
 
 // Asset Templates

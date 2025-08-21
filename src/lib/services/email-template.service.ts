@@ -60,6 +60,8 @@ import {
 	JournalUpdatedEmailData,
 	JournalDeletedEmailData,
 	OvertimeReminderData,
+	AttendanceMissedShiftAlertData,
+	AttendanceLateShiftAlertData,
 	PayslipAvailableEmailData,
 	PayslipUploadedAdminEmailData,
 	MonthlyUnattendedLeadsReportData,
@@ -573,6 +575,14 @@ class EmailTemplateService {
 
 	overtimeReminder(data: OvertimeReminderData): string {
 		return this.renderTemplate('attendance/overtime-reminder.hbs', data);
+	}
+
+	attendanceMissedShiftAlert(data: AttendanceMissedShiftAlertData): string {
+		return this.renderTemplate('attendance/missed-shift-alert.hbs', data);
+	}
+
+	attendanceLateShiftAlert(data: AttendanceLateShiftAlertData): string {
+		return this.renderTemplate('attendance/late-shift-alert.hbs', data);
 	}
 
 	// Asset related email templates

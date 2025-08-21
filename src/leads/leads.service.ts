@@ -128,10 +128,22 @@ export class LeadsService {
 		orgId?: number,
 		branchId?: number,
 	): Promise<{ message: string; data: Lead | null }> {
+		const startTime = Date.now();
+		this.logger.log(`🔄 [LeadsService] Creating lead for org: ${orgId}, branch: ${branchId}, owner: ${createLeadDto.owner}, assigneeCount: ${createLeadDto.assignees?.length || 0}`);
+
 		try {
 			if (!orgId) {
+				this.logger.warn(`❌ [LeadsService] Organization ID is required for lead creation`);
 				throw new BadRequestException('Organization ID is required');
 			}
+
+			this.logger.debug(`📝 [LeadsService] Creating lead entity with data:`, {
+				owner: createLeadDto.owner,
+				orgId,
+				branchId,
+				hasAssignees: !!createLeadDto.assignees?.length,
+				assigneeCount: createLeadDto.assignees?.length || 0
+			});
 
 			// Create the lead entity
 			const lead = this.leadsRepository.create(createLeadDto as unknown as Lead);
@@ -151,22 +163,34 @@ export class LeadsService {
 			// Handle assignees if provided
 			if (createLeadDto.assignees?.length) {
 				lead.assignees = createLeadDto.assignees.map((assignee) => ({ uid: assignee.uid }));
+				this.logger.debug(`👥 [LeadsService] Assigned ${createLeadDto.assignees.length} assignees to lead`);
 			} else {
 				lead.assignees = [];
+				this.logger.debug(`👥 [LeadsService] No assignees provided for lead`);
 			}
 
 			// Set intelligent defaults for new leads
+			this.logger.debug(`🧠 [LeadsService] Setting intelligent defaults for lead`);
 			await this.setIntelligentDefaults(lead);
 
+			this.logger.debug(`💾 [LeadsService] Saving lead to database`);
 			const savedLead = await this.leadsRepository.save(lead);
 
+			if (!savedLead) {
+				this.logger.error(`❌ [LeadsService] Failed to save lead - database returned null`);
+				throw new NotFoundException(process.env.CREATE_ERROR_MESSAGE || 'Failed to create lead');
+			}
+
+			this.logger.debug(`🔗 [LeadsService] Populating lead relations for lead: ${savedLead.uid}`);
 			// Populate the lead with full relation data
 			const populatedLead = await this.populateLeadRelations(savedLead);
 
 			// Clear caches after successful lead creation
+			this.logger.debug(`🧹 [LeadsService] Clearing lead caches after creation`);
 			await this.clearLeadCache(savedLead.uid, savedLead.ownerUid);
 
 			// EVENT-DRIVEN AUTOMATION: Post-creation actions
+			this.logger.debug(`🚀 [LeadsService] Handling post-creation events for lead: ${savedLead.uid}`);
 			await this.handleLeadCreatedEvents(populatedLead);
 
 			const response = {
@@ -174,9 +198,13 @@ export class LeadsService {
 				data: populatedLead,
 			};
 
+			const duration = Date.now() - startTime;
+			this.logger.log(`✅ [LeadsService] Successfully created lead ${savedLead.uid} in ${duration}ms`);
+
 			return response;
 		} catch (error) {
-			this.logger.error(`Error creating lead: ${error.message}`, error.stack);
+			const duration = Date.now() - startTime;
+			this.logger.error(`❌ [LeadsService] Error creating lead after ${duration}ms: ${error.message}`, error.stack);
 			const response = {
 				message: error?.message,
 				data: null,
@@ -201,10 +229,22 @@ export class LeadsService {
 		orgId?: number,
 		branchId?: number,
 	): Promise<PaginatedResponse<Lead>> {
+		const startTime = Date.now();
+		this.logger.log(`🔍 [LeadsService] Finding leads with filters: page=${page}, limit=${limit}, orgId=${orgId}, branchId=${branchId}, filters:`, {
+			status: filters?.status,
+			search: filters?.search ? `${filters.search.substring(0, 50)}...` : undefined,
+			hasDateRange: !!(filters?.startDate && filters?.endDate),
+			temperature: filters?.temperature,
+			scoreRange: filters?.minScore !== undefined || filters?.maxScore !== undefined ? `${filters?.minScore || 0}-${filters?.maxScore || '∞'}` : undefined
+		});
+
 		try {
 			if (!orgId) {
+				this.logger.warn(`❌ [LeadsService] Organization ID is required for lead retrieval`);
 				throw new BadRequestException('Organization ID is required');
 			}
+
+			this.logger.debug(`🏗️ [LeadsService] Building query with filters for org: ${orgId}, branch: ${branchId || 'all'}`);
 
 			const queryBuilder = this.leadsRepository
 				.createQueryBuilder('lead')
@@ -216,26 +256,32 @@ export class LeadsService {
 
 			// Add branch filter if provided
 			if (branchId) {
+				this.logger.debug(`🏢 [LeadsService] Adding branch filter: ${branchId}`);
 				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
 			}
 
 			if (filters?.status) {
+				this.logger.debug(`📊 [LeadsService] Adding status filter: ${filters.status}`);
 				queryBuilder.andWhere('lead.status = :status', { status: filters.status });
 			}
 
 			if (filters?.temperature) {
+				this.logger.debug(`🌡️ [LeadsService] Adding temperature filter: ${filters.temperature}`);
 				queryBuilder.andWhere('lead.temperature = :temperature', { temperature: filters.temperature });
 			}
 
 			if (filters?.minScore !== undefined) {
+				this.logger.debug(`📈 [LeadsService] Adding minimum score filter: ${filters.minScore}`);
 				queryBuilder.andWhere('lead.leadScore >= :minScore', { minScore: filters.minScore });
 			}
 
 			if (filters?.maxScore !== undefined) {
+				this.logger.debug(`📉 [LeadsService] Adding maximum score filter: ${filters.maxScore}`);
 				queryBuilder.andWhere('lead.leadScore <= :maxScore', { maxScore: filters.maxScore });
 			}
 
 			if (filters?.startDate && filters?.endDate) {
+				this.logger.debug(`📅 [LeadsService] Adding date range filter: ${filters.startDate.toISOString()} to ${filters.endDate.toISOString()}`);
 				queryBuilder.andWhere('lead.createdAt BETWEEN :startDate AND :endDate', {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
@@ -243,6 +289,7 @@ export class LeadsService {
 			}
 
 			if (filters?.search) {
+				this.logger.debug(`🔍 [LeadsService] Adding search filter: "${filters.search}"`);
 				queryBuilder.andWhere(
 					'(lead.name ILIKE :search OR lead.email ILIKE :search OR lead.phone ILIKE :search OR lead.companyName ILIKE :search OR owner.name ILIKE :search OR owner.surname ILIKE :search)',
 					{ search: `%${filters.search}%` },
@@ -255,16 +302,23 @@ export class LeadsService {
 				.orderBy('lead.leadScore', 'DESC') // Order by lead score (highest priority first)
 				.addOrderBy('lead.createdAt', 'DESC');
 
+			this.logger.debug(`💾 [LeadsService] Executing query for leads with pagination: offset=${(page - 1) * limit}, limit=${limit}`);
 			const [leads, total] = await queryBuilder.getManyAndCount();
 
 			if (!leads) {
+				this.logger.warn(`⚠️ [LeadsService] No leads found for the given criteria`);
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
 			}
 
+			this.logger.debug(`🔗 [LeadsService] Populating relations for ${leads.length} leads`);
 			// Populate leads with full assignee details
 			const populatedLeads = await Promise.all(leads.map((lead) => this.populateLeadRelations(lead)));
 
+			this.logger.debug(`📊 [LeadsService] Calculating stats for ${leads.length} leads`);
 			const stats = this.calculateStats(leads);
+
+			const duration = Date.now() - startTime;
+			this.logger.log(`✅ [LeadsService] Successfully retrieved ${total} leads (${leads.length} on page ${page}) in ${duration}ms`);
 
 			return {
 				data: populatedLeads,
@@ -277,6 +331,8 @@ export class LeadsService {
 				message: process.env.SUCCESS_MESSAGE,
 			};
 		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`❌ [LeadsService] Error retrieving leads after ${duration}ms: ${error.message}`, error.stack);
 			return {
 				data: [],
 				meta: {
@@ -295,10 +351,16 @@ export class LeadsService {
 		orgId?: number,
 		branchId?: number,
 	): Promise<{ lead: Lead | null; message: string; stats: any }> {
+		const startTime = Date.now();
+		this.logger.log(`🔍 [LeadsService] Finding lead with ID: ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
+
 		try {
 			if (!orgId) {
+				this.logger.warn(`❌ [LeadsService] Organization ID is required for lead retrieval`);
 				throw new BadRequestException('Organization ID is required');
 			}
+
+			this.logger.debug(`🏗️ [LeadsService] Building query for lead ${ref} in org: ${orgId}, branch: ${branchId || 'all'}`);
 
 			const whereClause: any = {
 				uid: ref,
@@ -310,12 +372,14 @@ export class LeadsService {
 				whereClause.branch = { uid: branchId };
 			}
 
+			this.logger.debug(`💾 [LeadsService] Executing database query for lead ${ref}`);
 			const lead = await this.leadsRepository.findOne({
 				where: whereClause,
 				relations: ['owner', 'organisation', 'branch', 'interactions'],
 			});
 
 			if (!lead) {
+				this.logger.warn(`⚠️ [LeadsService] Lead ${ref} not found in organization ${orgId}`);
 				return {
 					lead: null,
 					message: process.env.NOT_FOUND_MESSAGE,
@@ -323,12 +387,15 @@ export class LeadsService {
 				};
 			}
 
+			this.logger.debug(`🔗 [LeadsService] Populating relations for lead ${ref}`);
 			// Populate the lead with full assignee details
 			const populatedLead = await this.populateLeadRelations(lead);
 
 			// Update activity data when lead is viewed
+			this.logger.debug(`📊 [LeadsService] Updating activity data for lead ${ref}`);
 			await this.leadScoringService.updateActivityData(ref);
 
+			this.logger.debug(`📈 [LeadsService] Calculating organization stats for lead ${ref}`);
 			const allLeads = await this.leadsRepository.find({
 				where: {
 					isDeleted: false,
@@ -343,8 +410,13 @@ export class LeadsService {
 				stats,
 			};
 
+			const duration = Date.now() - startTime;
+			this.logger.log(`✅ [LeadsService] Successfully retrieved lead ${ref} in ${duration}ms`);
+
 			return response;
 		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`❌ [LeadsService] Error finding lead ${ref} after ${duration}ms: ${error.message}`, error.stack);
 			const response = {
 				message: error?.message,
 				lead: null,
@@ -360,10 +432,16 @@ export class LeadsService {
 		orgId?: number,
 		branchId?: number,
 	): Promise<{ message: string; leads: Lead[]; stats: any }> {
+		const startTime = Date.now();
+		this.logger.log(`🔍 [LeadsService] Getting leads for user: ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
+
 		try {
 			if (!orgId) {
+				this.logger.warn(`❌ [LeadsService] Organization ID is required for user leads retrieval`);
 				throw new BadRequestException('Organization ID is required');
 			}
+
+			this.logger.debug(`🏗️ [LeadsService] Building query for user ${ref} leads in org: ${orgId}, branch: ${branchId || 'all'}`);
 
 			const whereClause: any = {
 				owner: { uid: ref },
@@ -375,6 +453,7 @@ export class LeadsService {
 				whereClause.branch = { uid: branchId };
 			}
 
+			this.logger.debug(`💾 [LeadsService] Executing database query for user ${ref} leads`);
 			const leads = await this.leadsRepository.find({
 				where: whereClause,
 				relations: ['owner', 'organisation', 'branch'],
@@ -382,12 +461,15 @@ export class LeadsService {
 			});
 
 			if (!leads) {
+				this.logger.warn(`⚠️ [LeadsService] No leads found for user ${ref} in organization ${orgId}`);
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
 			}
 
+			this.logger.debug(`🔗 [LeadsService] Populating relations for ${leads.length} user leads`);
 			// Populate all leads with full assignee details
 			const populatedLeads = await Promise.all(leads.map((lead) => this.populateLeadRelations(lead)));
 
+			this.logger.debug(`📊 [LeadsService] Calculating stats for ${leads.length} user leads`);
 			const stats = this.calculateStats(leads);
 
 			const response = {
@@ -396,8 +478,13 @@ export class LeadsService {
 				stats,
 			};
 
+			const duration = Date.now() - startTime;
+			this.logger.log(`✅ [LeadsService] Successfully retrieved ${leads.length} leads for user ${ref} in ${duration}ms`);
+
 			return response;
 		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`❌ [LeadsService] Error getting leads for user ${ref} after ${duration}ms: ${error.message}`, error.stack);
 			const response = {
 				message: `could not get leads by user - ${error?.message}`,
 				leads: null,
@@ -415,23 +502,37 @@ export class LeadsService {
 		branchId?: number,
 		userId?: number, // Optionally pass userId performing the update
 	): Promise<{ message: string }> {
+		const startTime = Date.now();
+		this.logger.log(`🔄 [LeadsService] Updating lead: ${ref}, orgId: ${orgId}, branchId: ${branchId}, userId: ${userId}, updateData:`, {
+			hasStatus: !!updateLeadDto.status,
+			hasAssignees: !!updateLeadDto.assignees,
+			hasTemperature: !!updateLeadDto.temperature,
+			hasPriority: !!updateLeadDto.priority,
+			assigneeCount: updateLeadDto.assignees?.length || 0
+		});
+
 		try {
 			if (!orgId) {
+				this.logger.warn(`❌ [LeadsService] Organization ID is required for lead update`);
 				throw new BadRequestException('Organization ID is required');
 			}
 
+			this.logger.debug(`🔍 [LeadsService] Finding lead ${ref} for update in org: ${orgId}, branch: ${branchId || 'all'}`);
 			const lead = await this.leadsRepository.findOne({
 				where: { uid: ref, organisation: { uid: orgId }, branch: { uid: branchId } },
 				relations: ['owner', 'organisation', 'branch', 'interactions'],
 			});
 
 			if (!lead) {
+				this.logger.warn(`⚠️ [LeadsService] Lead ${ref} not found for update in organization ${orgId}`);
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
 			}
 
 			const oldStatus = lead.status;
 			const oldTemperature = lead.temperature;
 			const oldPriority = lead.priority;
+
+			this.logger.debug(`📝 [LeadsService] Lead ${ref} current state: status=${oldStatus}, temperature=${oldTemperature}, priority=${oldPriority}`);
 
 			// Ensure changeHistory is treated as an array of LeadStatusHistoryEntry
 			const changeHistoryArray: LeadStatusHistoryEntry[] = Array.isArray(lead.changeHistory)
@@ -440,6 +541,7 @@ export class LeadsService {
 			const dataToSave: Partial<Lead> = {};
 
 			// Build the data to save, excluding reason/description from UpdateLeadDto that are specific to status change
+			this.logger.debug(`🏗️ [LeadsService] Building update data for lead ${ref}`);
 			for (const key in updateLeadDto) {
 				if (key !== 'statusChangeReason' && key !== 'statusChangeDescription' && key !== 'nextStep') {
 					dataToSave[key] = updateLeadDto[key];
@@ -448,6 +550,7 @@ export class LeadsService {
 
 			// If status is being updated, add a history entry
 			if (updateLeadDto.status && updateLeadDto.status !== oldStatus) {
+				this.logger.debug(`📊 [LeadsService] Status change detected: ${oldStatus} → ${updateLeadDto.status}`);
 				const newHistoryEntry: LeadStatusHistoryEntry = {
 					timestamp: new Date(),
 					oldStatus: oldStatus,
@@ -465,17 +568,22 @@ export class LeadsService {
 			// Handle assignees update specifically
 			if (updateLeadDto.assignees) {
 				dataToSave.assignees = updateLeadDto.assignees.map((a) => ({ uid: a.uid }));
+				this.logger.debug(`👥 [LeadsService] Updating assignees: ${updateLeadDto.assignees.length} assignees`);
 			} else if (updateLeadDto.hasOwnProperty('assignees')) {
 				// If assignees key exists but is empty/null, clear it
 				dataToSave.assignees = [];
+				this.logger.debug(`👥 [LeadsService] Clearing all assignees`);
 			}
 
 			// Apply intelligent updates based on data changes
+			this.logger.debug(`🧠 [LeadsService] Applying intelligent updates for lead ${ref}`);
 			await this.applyIntelligentUpdates(lead, dataToSave);
 
+			this.logger.debug(`💾 [LeadsService] Updating lead ${ref} in database`);
 			await this.leadsRepository.update(ref, dataToSave);
 
 			// EVENT-DRIVEN AUTOMATION: Post-update actions
+			this.logger.debug(`🔍 [LeadsService] Fetching updated lead ${ref} for post-update processing`);
 			const updatedLead = await this.leadsRepository.findOne({
 				where: { uid: ref },
 				relations: ['owner', 'organisation', 'branch', 'interactions'],
@@ -483,8 +591,10 @@ export class LeadsService {
 
 			if (updatedLead) {
 				// Clear caches after successful lead update
+				this.logger.debug(`🧹 [LeadsService] Clearing lead caches after update`);
 				await this.clearLeadCache(updatedLead.uid, updatedLead.ownerUid);
 
+				this.logger.debug(`🚀 [LeadsService] Handling post-update events for lead ${ref}`);
 				await this.handleLeadUpdatedEvents(updatedLead, {
 					statusChanged: oldStatus !== updateLeadDto.status,
 					temperatureChanged: oldTemperature !== updateLeadDto.temperature,
@@ -493,9 +603,13 @@ export class LeadsService {
 				});
 			}
 
+			const duration = Date.now() - startTime;
+			this.logger.log(`✅ [LeadsService] Successfully updated lead ${ref} in ${duration}ms`);
+
 			return { message: process.env.SUCCESS_MESSAGE };
 		} catch (error) {
-			this.logger.error(`Error updating lead ${ref}: ${error.message}`, error.stack);
+			const duration = Date.now() - startTime;
+			this.logger.error(`❌ [LeadsService] Error updating lead ${ref} after ${duration}ms: ${error.message}`, error.stack);
 			return {
 				message: error?.message,
 			};
@@ -716,10 +830,16 @@ export class LeadsService {
 	}
 
 	async remove(ref: number, orgId?: number, branchId?: number): Promise<{ message: string }> {
+		const startTime = Date.now();
+		this.logger.log(`🗑️ [LeadsService] Removing lead: ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
+
 		try {
 			if (!orgId) {
+				this.logger.warn(`❌ [LeadsService] Organization ID is required for lead removal`);
 				throw new BadRequestException('Organization ID is required');
 			}
+
+			this.logger.debug(`🔍 [LeadsService] Finding lead ${ref} for removal in org: ${orgId}, branch: ${branchId || 'all'}`);
 
 			const whereClause: any = {
 				uid: ref,
@@ -736,21 +856,29 @@ export class LeadsService {
 			});
 
 			if (!lead) {
+				this.logger.warn(`⚠️ [LeadsService] Lead ${ref} not found for removal in organization ${orgId}`);
 				return {
 					message: process.env.NOT_FOUND_MESSAGE,
 				};
 			}
 
+			this.logger.debug(`🗑️ [LeadsService] Soft deleting lead ${ref}`);
 			// Use soft delete by updating isDeleted flag
 			await this.leadsRepository.update(ref, { isDeleted: true });
 
 			// Clear caches after successful lead deletion
+			this.logger.debug(`🧹 [LeadsService] Clearing lead caches after removal`);
 			await this.clearLeadCache(lead.uid, lead.ownerUid);
+
+			const duration = Date.now() - startTime;
+			this.logger.log(`✅ [LeadsService] Successfully removed lead ${ref} in ${duration}ms`);
 
 			return {
 				message: process.env.SUCCESS_MESSAGE,
 			};
 		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`❌ [LeadsService] Error removing lead ${ref} after ${duration}ms: ${error.message}`, error.stack);
 			return {
 				message: error?.message,
 			};
@@ -758,10 +886,16 @@ export class LeadsService {
 	}
 
 	async restore(ref: number, orgId?: number, branchId?: number): Promise<{ message: string }> {
+		const startTime = Date.now();
+		this.logger.log(`♻️ [LeadsService] Restoring lead: ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
+
 		try {
 			if (!orgId) {
+				this.logger.warn(`❌ [LeadsService] Organization ID is required for lead restoration`);
 				throw new BadRequestException('Organization ID is required');
 			}
+
+			this.logger.debug(`🔍 [LeadsService] Finding deleted lead ${ref} for restoration in org: ${orgId}, branch: ${branchId || 'all'}`);
 
 			const whereClause: any = {
 				uid: ref,
@@ -778,21 +912,29 @@ export class LeadsService {
 			});
 
 			if (!lead) {
+				this.logger.warn(`⚠️ [LeadsService] Lead ${ref} not found for restoration in organization ${orgId}`);
 				return {
 					message: process.env.NOT_FOUND_MESSAGE,
 				};
 			}
 
+			this.logger.debug(`♻️ [LeadsService] Restoring lead ${ref} by setting isDeleted to false`);
 			// Restore by setting isDeleted to false
 			await this.leadsRepository.update(ref, { isDeleted: false });
 
 			// Recalculate score for restored lead
+			this.logger.debug(`📊 [LeadsService] Recalculating score for restored lead ${ref}`);
 			await this.leadScoringService.calculateLeadScore(ref);
+
+			const duration = Date.now() - startTime;
+			this.logger.log(`✅ [LeadsService] Successfully restored lead ${ref} in ${duration}ms`);
 
 			return {
 				message: process.env.SUCCESS_MESSAGE,
 			};
 		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`❌ [LeadsService] Error restoring lead ${ref} after ${duration}ms: ${error.message}`, error.stack);
 			return {
 				message: error?.message,
 			};
@@ -800,10 +942,16 @@ export class LeadsService {
 	}
 
 	async reactivate(ref: number, orgId?: number, branchId?: number, userId?: number): Promise<{ message: string }> {
+		const startTime = Date.now();
+		this.logger.log(`🔄 [LeadsService] Reactivating lead: ${ref}, orgId: ${orgId}, branchId: ${branchId}, userId: ${userId}`);
+
 		try {
 			if (!orgId) {
+				this.logger.warn(`❌ [LeadsService] Organization ID is required for lead reactivation`);
 				throw new BadRequestException('Organization ID is required');
 			}
+
+			this.logger.debug(`🔍 [LeadsService] Finding lead ${ref} for reactivation in org: ${orgId}, branch: ${branchId || 'all'}`);
 
 			const whereClause: any = {
 				uid: ref,
@@ -821,6 +969,7 @@ export class LeadsService {
 			});
 
 			if (!lead) {
+				this.logger.warn(`⚠️ [LeadsService] Lead ${ref} not found for reactivation in organization ${orgId}`);
 				return {
 					message: process.env.NOT_FOUND_MESSAGE,
 				};
@@ -828,6 +977,7 @@ export class LeadsService {
 
 			// Check if lead can be reactivated (only declined or cancelled leads)
 			if (lead.status !== LeadStatus.DECLINED && lead.status !== LeadStatus.CANCELLED) {
+				this.logger.warn(`⚠️ [LeadsService] Lead ${ref} cannot be reactivated - current status: ${lead.status}`);
 				return {
 					message: 'Only declined or cancelled leads can be reactivated',
 				};
@@ -835,6 +985,8 @@ export class LeadsService {
 
 			const oldStatus = lead.status;
 			const newStatus = LeadStatus.PENDING;
+
+			this.logger.debug(`📊 [LeadsService] Lead ${ref} reactivation: ${oldStatus} → ${newStatus}`);
 
 			// Ensure changeHistory is treated as an array of LeadStatusHistoryEntry
 			const changeHistoryArray: LeadStatusHistoryEntry[] = Array.isArray(lead.changeHistory)
@@ -854,6 +1006,8 @@ export class LeadsService {
 
 			changeHistoryArray.push(newHistoryEntry);
 
+			this.logger.debug(`📝 [LeadsService] Adding reactivation history entry for lead ${ref}`);
+
 			// Update lead status and add history
 			await this.leadsRepository.update(ref, {
 				status: newStatus,
@@ -864,10 +1018,12 @@ export class LeadsService {
 			});
 
 			// Recalculate lead score
+			this.logger.debug(`📊 [LeadsService] Recalculating score for reactivated lead ${ref}`);
 			await this.leadScoringService.calculateLeadScore(ref);
 			await this.leadScoringService.updateActivityData(ref);
 
 			// Send notification about reactivation
+			this.logger.debug(`📢 [LeadsService] Sending reactivation notifications for lead ${ref}`);
 			const updatedLead = await this.leadsRepository.findOne({
 				where: { uid: ref },
 				relations: ['owner', 'assignees'],
@@ -898,13 +1054,15 @@ export class LeadsService {
 				}
 			}
 
-			this.logger.log(`Lead ${ref} reactivated from ${oldStatus} to ${newStatus} by user ${userId}`);
+			const duration = Date.now() - startTime;
+			this.logger.log(`✅ [LeadsService] Successfully reactivated lead ${ref} from ${oldStatus} to ${newStatus} by user ${userId} in ${duration}ms`);
 
 			return {
 				message: process.env.SUCCESS_MESSAGE,
 			};
 		} catch (error) {
-			this.logger.error(`Error reactivating lead ${ref}: ${error.message}`, error.stack);
+			const duration = Date.now() - startTime;
+			this.logger.error(`❌ [LeadsService] Error reactivating lead ${ref} after ${duration}ms: ${error.message}`, error.stack);
 			return {
 				message: error?.message,
 			};
@@ -1394,6 +1552,7 @@ export class LeadsService {
 			total: number;
 		};
 	}> {
+		this.logger.log(`Getting leads for date: ${date.toISOString()}`);
 		try {
 			const leads = await this.leadsRepository.find({
 				where: { createdAt: Between(startOfDay(date), endOfDay(date)) },

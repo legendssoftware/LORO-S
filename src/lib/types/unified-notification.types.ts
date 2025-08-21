@@ -30,6 +30,8 @@ export enum NotificationEvent {
 	ATTENDANCE_OVERTIME_REMINDER = 'attendance_overtime_reminder',
 	ATTENDANCE_SHIFT_START_REMINDER = 'attendance_shift_start_reminder',
 	ATTENDANCE_SHIFT_END_REMINDER = 'attendance_shift_end_reminder',
+	ATTENDANCE_MISSED_SHIFT_ALERT = 'attendance_missed_shift_alert',
+	ATTENDANCE_LATE_SHIFT_ALERT = 'attendance_late_shift_alert',
 
 	// User Events
 	USER_CREATED = 'user_created',

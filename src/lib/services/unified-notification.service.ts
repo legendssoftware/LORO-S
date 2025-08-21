@@ -335,6 +335,30 @@ export class UnifiedNotificationService {
 				pushSettings: { sound: 'default', badge: 1 },
 			},
 		],
+		[
+			NotificationEvent.ATTENDANCE_MISSED_SHIFT_ALERT,
+			{
+				event: NotificationEvent.ATTENDANCE_MISSED_SHIFT_ALERT,
+				title: '⚠️ Missed Shift Alert',
+				messageTemplate: 'You missed your scheduled shift. Please contact your supervisor if there was an issue.',
+				priority: NotificationPriority.HIGH,
+				channel: NotificationChannel.IMPORTANT,
+				defaultData: { screen: '/', action: 'view_attendance' },
+				pushSettings: { sound: 'critical', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.ATTENDANCE_LATE_SHIFT_ALERT,
+			{
+				event: NotificationEvent.ATTENDANCE_LATE_SHIFT_ALERT,
+				title: '⏰ Late for Shift',
+				messageTemplate: 'You are running late for your shift. Please check in as soon as possible.',
+				priority: NotificationPriority.HIGH,
+				channel: NotificationChannel.IMPORTANT,
+				defaultData: { screen: '/', action: 'check_in' },
+				pushSettings: { sound: 'critical', badge: 1 },
+			},
+		],
 
 		// User Templates
 		[

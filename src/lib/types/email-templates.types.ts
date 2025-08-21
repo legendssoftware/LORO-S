@@ -509,6 +509,31 @@ export interface OvertimeReminderData extends BaseEmailData {
 	};
 }
 
+export interface AttendanceMissedShiftAlertData extends BaseEmailData {
+	employeeName: string;
+	employeeEmail: string;
+	scheduledShiftStart: string;
+	scheduledShiftEnd: string;
+	currentTime: string;
+	organizationName: string;
+	supervisorContact?: string;
+	dashboardUrl: string;
+	checkInUrl: string;
+	missedDuration: string;
+}
+
+export interface AttendanceLateShiftAlertData extends BaseEmailData {
+	employeeName: string;
+	employeeEmail: string;
+	scheduledShiftStart: string;
+	currentTime: string;
+	organizationName: string;
+	minutesLate: number;
+	dashboardUrl: string;
+	checkInUrl: string;
+	lateDuration: string;
+}
+
 export interface OrganizationHoursReminderData extends BaseEmailData {
 	organizationName: string;
 	organizationId: number;
@@ -1826,6 +1851,8 @@ export interface EmailDataMap {
 	[EmailType.ORGANIZATION_HOURS_REMINDER]: OrganizationHoursReminderData;
 	// Overtime email mappings
 	[EmailType.OVERTIME_REMINDER]: OvertimeReminderData;
+	[EmailType.ATTENDANCE_MISSED_SHIFT_ALERT]: AttendanceMissedShiftAlertData;
+	[EmailType.ATTENDANCE_LATE_SHIFT_ALERT]: AttendanceLateShiftAlertData;
 	// Quotation email mappings
 	[EmailType.NEW_QUOTATION_CLIENT]: QuotationData;
 	[EmailType.NEW_QUOTATION_INTERNAL]: QuotationInternalData;

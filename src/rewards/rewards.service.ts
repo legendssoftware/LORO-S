@@ -291,11 +291,11 @@ export class RewardsService {
 
   async getLeaderboard(orgId?: number, branchId?: number) {
     const logPrefix = `[getLeaderboard] Fetching leaderboard for org ${orgId}`;
-    
+
     try {
       this.logger.log(`${logPrefix} - Starting getLeaderboard process`);
       this.logger.log(`${logPrefix} - Parameters: orgId=${orgId}, branchId=${branchId}`);
-      
+
       if (!orgId) {
         this.logger.error(`${logPrefix} - Missing organization ID`);
         throw new BadRequestException('Organization ID is required');
@@ -303,7 +303,7 @@ export class RewardsService {
 
       // Build where clause for organization and branch filtering
       const whereClause: any = {
-        owner: { 
+        owner: {
           organisationRef: orgId
         }
       };
@@ -315,40 +315,222 @@ export class RewardsService {
 
       this.logger.log(`${logPrefix} - Query whereClause:`, JSON.stringify(whereClause, null, 2));
 
+      // Get leaderboard with enhanced relations
       const leaderboard = await this.userRewardsRepository.find({
         where: whereClause,
-        relations: ['owner', 'owner.branch'],
+        relations: [
+          'owner',
+          'owner.branch',
+          'owner.organisation',
+          'xpTransactions',
+          'achievements'
+        ],
         order: {
-          totalXP: 'DESC'
+          totalXP: 'DESC',
+          updatedAt: 'DESC' // Secondary sort by most recent activity
         },
         take: 10
       });
 
       this.logger.log(`${logPrefix} - Found ${leaderboard.length} entries for leaderboard`);
 
+      // Get total participants count for metadata
+      const totalParticipants = await this.userRewardsRepository.count({
+        where: whereClause
+      });
+
+      // Build comprehensive leaderboard response
+      const leaderboardData = await Promise.all(
+        leaderboard.map(async (entry, index) => {
+          // Calculate next level XP requirement
+          const currentLevel = entry.level || 1;
+          const nextLevelXP = this.getNextLevelXP(currentLevel);
+
+          // Calculate level progress percentage
+          const levelProgress = this.calculateLevelProgress(entry.totalXP, currentLevel);
+
+          // Get recent achievements (last 5)
+          const recentAchievements = entry.achievements
+            ?.filter(achievement => achievement.createdAt)
+            .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+            .slice(0, 5)
+            .map(achievement => ({
+              uid: achievement.uid,
+              name: achievement.name,
+              description: achievement.description,
+              icon: achievement.icon,
+              createdAt: achievement.createdAt
+            })) || [];
+
+          // Ensure xpBreakdown has all required fields
+          const requiredFields = ['tasks', 'leads', 'sales', 'attendance', 'collaboration', 'login', 'other'];
+          requiredFields.forEach(field => {
+            if (!entry.xpBreakdown[field] && entry.xpBreakdown[field] !== 0) {
+              entry.xpBreakdown[field] = 0;
+            }
+          });
+
+          return {
+            rank: index + 1,
+            user: {
+              uid: entry.owner.uid,
+              username: entry.owner.username,
+              name: entry.owner.name,
+              surname: entry.owner.surname,
+              photoURL: entry.owner.photoURL,
+              branch: entry.owner.branch ? {
+                uid: entry.owner.branch.uid,
+                name: entry.owner.branch.name
+              } : null
+            },
+            xp: {
+              totalXP: entry.totalXP,
+              currentXP: entry.currentXP,
+              level: entry.level,
+              rank: entry.rank,
+              nextLevelXP: nextLevelXP,
+              levelProgress: levelProgress,
+              breakdown: entry.xpBreakdown
+            },
+            statistics: {
+              xpThisMonth: await this.getXPThisMonth(entry.owner.uid),
+              xpLastMonth: await this.getXPLastMonth(entry.owner.uid),
+              rankChange: await this.getRankChange(entry.owner.uid, index + 1),
+              consistencyStreak: await this.getConsistencyStreak(entry.owner.uid)
+            },
+            achievements: recentAchievements
+          };
+        })
+      );
+
       const response = {
         message: process.env.SUCCESS_MESSAGE,
-        rewards: leaderboard.map(entry => ({
-          owner: { uid: entry?.owner?.uid },
-          username: entry?.owner?.username,
-          totalXP: entry?.totalXP,
-          level: entry?.level,
-          rank: entry?.rank
-        }))
-      }
+        data: {
+          leaderboard: leaderboardData,
+          metadata: {
+            totalParticipants: totalParticipants,
+            organizationId: orgId,
+            branchId: branchId,
+            generatedAt: new Date().toISOString(),
+            period: 'all-time'
+          }
+        }
+      };
 
-      this.logger.log(`${logPrefix} - Successfully returning leaderboard data`);
+      this.logger.log(`${logPrefix} - Successfully returning comprehensive leaderboard data`);
       return response;
     } catch (error) {
       this.logger.error(`${logPrefix} - Error occurred:`, error.message);
       this.logger.error(`${logPrefix} - Error stack:`, error.stack);
-      
+
       const response = {
         message: error?.message,
-        rewards: null
+        data: {
+          leaderboard: [],
+          metadata: {
+            totalParticipants: 0,
+            organizationId: orgId,
+            branchId: branchId,
+            generatedAt: new Date().toISOString(),
+            period: 'all-time'
+          }
+        }
       };
 
       return response;
     }
+  }
+
+  private getNextLevelXP(currentLevel: number): number {
+    // Find the next level's minimum XP requirement
+    for (const [level, range] of Object.entries(LEVELS)) {
+      const levelNum = parseInt(level);
+      if (levelNum === currentLevel + 1) {
+        return range.min;
+      }
+    }
+    // If no next level found, return current level max + 1000
+    const currentLevelRange = LEVELS[currentLevel.toString()];
+    return currentLevelRange ? currentLevelRange.max + 1000 : 5000;
+  }
+
+  private calculateLevelProgress(totalXP: number, currentLevel: number): number {
+    const currentLevelRange = LEVELS[currentLevel.toString()];
+    if (!currentLevelRange) return 0;
+
+    const levelMin = currentLevelRange.min;
+    const levelMax = currentLevelRange.max;
+    const xpInLevel = totalXP - levelMin;
+    const levelRange = levelMax - levelMin;
+
+    return levelRange > 0 ? Math.round((xpInLevel / levelRange) * 100 * 100) / 100 : 100;
+  }
+
+  private async getXPThisMonth(userId: number): Promise<number> {
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    const result = await this.xpTransactionRepository
+      .createQueryBuilder('transaction')
+      .select('SUM(transaction.xpAmount)', 'total')
+      .where('transaction.userRewards.owner.uid = :userId', { userId })
+      .andWhere('transaction.createdAt >= :startOfMonth', { startOfMonth })
+      .getRawOne();
+
+    return parseInt(result?.total || '0');
+  }
+
+  private async getXPLastMonth(userId: number): Promise<number> {
+    const now = new Date();
+    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+
+    const result = await this.xpTransactionRepository
+      .createQueryBuilder('transaction')
+      .select('SUM(transaction.xpAmount)', 'total')
+      .where('transaction.userRewards.owner.uid = :userId', { userId })
+      .andWhere('transaction.createdAt >= :startOfLastMonth', { startOfLastMonth })
+      .andWhere('transaction.createdAt <= :endOfLastMonth', { endOfLastMonth })
+      .getRawOne();
+
+    return parseInt(result?.total || '0');
+  }
+
+  private async getRankChange(userId: number, currentRank: number): Promise<number> {
+    // This would require storing historical rankings
+    // For now, return a placeholder calculation
+    // In a real implementation, you'd compare against last week's/month's ranking
+    return 0; // No change
+  }
+
+  private async getConsistencyStreak(userId: number): Promise<number> {
+    // Calculate consecutive days with XP activity
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const dailyXP = await this.xpTransactionRepository
+      .createQueryBuilder('transaction')
+      .select('DATE(transaction.createdAt) as date')
+      .addSelect('SUM(transaction.xpAmount) as daily_total')
+      .where('transaction.userRewards.owner.uid = :userId', { userId })
+      .andWhere('transaction.createdAt >= :thirtyDaysAgo', { thirtyDaysAgo })
+      .groupBy('DATE(transaction.createdAt)')
+      .orderBy('DATE(transaction.createdAt)', 'DESC')
+      .getRawMany();
+
+    // Calculate streak
+    let streak = 0;
+    const today = new Date().toDateString();
+
+    for (const day of dailyXP) {
+      const dayStr = new Date(day.date).toDateString();
+      if (dayStr === today || streak > 0) {
+        streak++;
+      } else {
+        break;
+      }
+    }
+
+    return streak;
   }
 }

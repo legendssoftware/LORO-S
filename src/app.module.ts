@@ -93,12 +93,12 @@ import { WarningsModule } from './warnings/warnings.module';
 import { Warning } from './warnings/entities/warning.entity';
 import { RoleGuard } from './guards/role.guard';
 import { ClientCommunicationSchedule } from './clients/entities/client-communication-schedule.entity';
-import { PayslipsModule } from './payslips/payslips.module';
 import { ApprovalsModule } from './approvals/approvals.module';
 import { Approval } from './approvals/entities/approval.entity';
 import { ApprovalHistory } from './approvals/entities/approval-history.entity';
 import { ApprovalSignature } from './approvals/entities/approval-signature.entity';
 import { Project } from './shop/entities/project.entity';
+import { MapModule } from './map/map.module';
 
 
 @Module({
@@ -240,8 +240,8 @@ import { Project } from './shop/entities/project.entity';
 		PdfGenerationModule,
 		LeaveModule,
 		WarningsModule,
-		PayslipsModule,
 		ApprovalsModule,
+		MapModule,
 	],
 	controllers: [],
 	providers: [

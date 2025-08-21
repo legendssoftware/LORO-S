@@ -152,7 +152,8 @@ export class CheckInsController {
 		},
 	})
 	checkIn(@Body() createCheckInDto: CreateCheckInDto, @Req() req: AuthenticatedRequest) {
-		const { orgId, branchId } = req.user;
+		const orgId = req.user?.organisationRef;
+		const branchId = req.user?.branch?.uid;
 		return this.checkInsService.checkIn(createCheckInDto, orgId, branchId);
 	}
 
@@ -238,7 +239,8 @@ export class CheckInsController {
 		},
 	})
 	checkOut(@Body() createCheckOutDto: CreateCheckOutDto, @Req() req: AuthenticatedRequest) {
-		const { orgId, branchId } = req.user;
+		const orgId = req.user?.organisationRef;
+		const branchId = req.user?.branch?.uid;
 		return this.checkInsService.checkOut(createCheckOutDto, orgId, branchId);
 	}
 
@@ -269,7 +271,8 @@ export class CheckInsController {
 		@Body() createCheckInDto: CreateCheckInDto,
 		@Req() req: AuthenticatedRequest,
 	) {
-		const { orgId, branchId } = req.user;
+		const orgId = req.user?.organisationRef;
+		const branchId = req.user?.branch?.uid;
 		// Add client to the DTO
 		const checkInWithClient = {
 			...createCheckInDto,

@@ -60,6 +60,22 @@ export class ClientsService {
 		private readonly dataSource: DataSource,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
+
+		this.logger.log('ClientsService initialized with cache TTL: ' + this.CACHE_TTL + ' minutes');
+		this.logger.debug(`ClientsService initialized with dependencies:`);
+		this.logger.debug(`Client Repository: ${!!this.clientsRepository}`);
+		this.logger.debug(`Client Auth Repository: ${!!this.clientAuthRepository}`);
+		this.logger.debug(`Organisation Repository: ${!!this.organisationRepository}`);
+		this.logger.debug(`Organisation Settings Repository: ${!!this.organisationSettingsRepository}`);
+		this.logger.debug(`User Repository: ${!!this.userRepository}`);
+		this.logger.debug(`Schedule Repository: ${!!this.scheduleRepository}`);
+		this.logger.debug(`Task Repository: ${!!this.taskRepository}`);
+		this.logger.debug(`Cache Manager: ${!!this.cacheManager}`);
+		this.logger.debug(`Config Service: ${!!this.configService}`);
+		this.logger.debug(`Event Emitter: ${!!this.eventEmitter}`);
+		this.logger.debug(`Communication Schedule Service: ${!!this.communicationScheduleService}`);
+		this.logger.debug(`Tasks Service: ${!!this.tasksService}`);
+		this.logger.debug(`Data Source: ${!!this.dataSource}`);
 	}
 
 	/**
