@@ -9,7 +9,6 @@ import { PLAN_FEATURES } from '../lib/constants/license-features';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { EmailType } from '../lib/enums/email.enums';
 import * as crypto from 'crypto';
-import { Cron, CronExpression } from '@nestjs/schedule';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 
@@ -27,18 +26,6 @@ export class LicensingService {
 		@Inject(CACHE_MANAGER) private cacheManager: Cache,
 		private readonly logger: Logger,
 	) {}
-
-	//TODO: Remove this cron job after testing and proper setup - THIS IS DANGEROUS
-	// @Cron(CronExpression.EVERY_10_MINUTES) // COMMENTED OUT - causes "Empty criteria" error
-	async resetAllLicensesToActive(): Promise<void> {
-		// This method should not run in production as it updates ALL records without criteria
-		// If needed, add proper where conditions:
-		// await this.licenseRepository.update(
-		// 	{ status: Not(LicenseStatus.ACTIVE) }, // Only update non-active licenses
-		// 	{ status: LicenseStatus.ACTIVE }
-		// );
-		this.logger.warn('resetAllLicensesToActive is disabled - would update all records without criteria');
-	}
 
 	private generateLicenseKey(): string {
 		return crypto.randomBytes(16).toString('hex').toUpperCase();

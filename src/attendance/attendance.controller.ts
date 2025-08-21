@@ -16,7 +16,7 @@ import {
 	ApiProperty,
 	ApiExtraModels,
 } from '@nestjs/swagger';
-import { Controller, Post, Body, Param, Get, UseGuards, Query, UseInterceptors, Req } from '@nestjs/common';
+import { Controller, Post, Body, Param, Get, UseGuards, Query, UseInterceptors, Req, BadRequestException } from '@nestjs/common';
 import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
 import { CreateCheckInDto } from './dto/create.attendance.check.in.dto';
 import { CreateCheckOutDto } from './dto/create.attendance.check.out.dto';
@@ -4953,6 +4953,96 @@ Manually triggers the overtime policy check system to identify employees working
 			endDate,
 			typeof includeInsights === 'string' ? (includeInsights === 'false' ? false : true) : includeInsights,
 		);
+	}
+
+	@Get('daily-overview')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.SUPPORT,
+		AccessLevel.DEVELOPER,
+		AccessLevel.OWNER,
+		AccessLevel.TECHNICIAN,
+	)
+	@ApiOperation({
+		summary: 'Get daily attendance overview',
+		description: 'Retrieves a comprehensive overview of daily attendance including present and absent employees with their details.',
+	})
+	@ApiParam({
+		name: 'date',
+		required: false,
+		description: 'Date for attendance overview (YYYY-MM-DD format). Defaults to today.',
+		example: '2024-01-15',
+	})
+	@ApiOkResponse({
+		description: 'Daily attendance overview retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Success' },
+				data: {
+					type: 'object',
+					properties: {
+						date: { type: 'string', example: '2024-01-15' },
+						totalEmployees: { type: 'number', example: 25 },
+						presentEmployees: { type: 'number', example: 20 },
+						absentEmployees: { type: 'number', example: 5 },
+						attendanceRate: { type: 'number', example: 80 },
+						presentUsers: {
+							type: 'array',
+							items: {
+								type: 'object',
+								properties: {
+									uid: { type: 'number', example: 1 },
+									name: { type: 'string', example: 'John' },
+									surname: { type: 'string', example: 'Doe' },
+									email: { type: 'string', example: 'john.doe@company.com' },
+									branchName: { type: 'string', example: 'Main Branch' },
+									checkInTime: { type: 'string', format: 'date-time' },
+									status: { type: 'string', example: 'PRESENT' },
+								},
+							},
+						},
+						absentUsers: {
+							type: 'array',
+							items: {
+								type: 'object',
+								properties: {
+									uid: { type: 'number', example: 2 },
+									name: { type: 'string', example: 'Jane' },
+									surname: { type: 'string', example: 'Smith' },
+									email: { type: 'string', example: 'jane.smith@company.com' },
+									branchName: { type: 'string', example: 'Branch 2' },
+									accessLevel: { type: 'string', example: 'USER' },
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	@ApiBadRequestResponse({ description: 'Invalid date format provided' })
+	@ApiUnauthorizedResponse({ description: 'User not authenticated' })
+	async getDailyAttendanceOverview(
+		@Query('date') dateQuery: string,
+		@Req() req: AuthenticatedRequest,
+	): Promise<any> {
+		const orgId = req.user?.organisationRef;
+		const branchId = req.user?.branch?.uid;
+
+		let targetDate: Date;
+		if (dateQuery) {
+			const parsedDate = new Date(dateQuery);
+			if (isNaN(parsedDate.getTime())) {
+				throw new BadRequestException('Invalid date format. Please use YYYY-MM-DD format.');
+			}
+			targetDate = parsedDate;
+		} else {
+			targetDate = new Date();
+		}
+
+		return this.attendanceService.getDailyAttendanceOverview(orgId, branchId, targetDate);
 	}
 
 	async triggerOvertimeCheck(@CurrentUser() user: User): Promise<{ message: string; processed: number }> {

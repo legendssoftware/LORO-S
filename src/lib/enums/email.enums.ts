@@ -14,6 +14,9 @@ export enum EmailType {
 	ORGANIZATION_HOURS_REMINDER = 'organization_hours_reminder',
 	// Overtime related emails
 	OVERTIME_REMINDER = 'overtime_reminder',
+	// Attendance shift alerts
+	ATTENDANCE_MISSED_SHIFT_ALERT = 'attendance_missed_shift_alert',
+	ATTENDANCE_LATE_SHIFT_ALERT = 'attendance_late_shift_alert',
 	// Quotation related emails
 	ORDER_RECEIVED_CLIENT = 'order_received_client',
 	NEW_QUOTATION_CLIENT = 'new_quotation_client',

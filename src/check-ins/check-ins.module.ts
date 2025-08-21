@@ -7,9 +7,17 @@ import { RewardsModule } from '../rewards/rewards.module';
 import { LicensingModule } from '../licensing/licensing.module';
 import { User } from '../user/entities/user.entity';
 import { Client } from 'src/clients/entities/client.entity';
+import { OrganisationModule } from '../organisation/organisation.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
-	imports: [LicensingModule, TypeOrmModule.forFeature([CheckIn, User, Client]), RewardsModule],
+	imports: [
+		LicensingModule,
+		TypeOrmModule.forFeature([CheckIn, User, Client]),
+		RewardsModule,
+		OrganisationModule,
+		NotificationsModule,
+	],
 	controllers: [CheckInsController],
 	providers: [CheckInsService],
 	exports: [CheckInsService],

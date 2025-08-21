@@ -1,0 +1,64 @@
+{{#base headerTitle="Missed Shift Alert" headerSubtitle="You missed your scheduled shift"}}
+
+<div class="greeting">
+    Hello {{employeeName}}! ⚠️
+</div>
+
+<div class="warning-notice" style="background: linear-gradient(135deg, #fef2f2 0%, #fce8e6 100%); border-left-color: #ef4444;">
+    <p>🚨 <strong>Missed Shift Alert:</strong> You haven't checked in for your scheduled shift that started at {{scheduledShiftStart}}.</p>
+</div>
+
+<div class="message">
+    <p>Your shift was scheduled to start at <strong>{{scheduledShiftStart}}</strong> and end at <strong>{{scheduledShiftEnd}}</strong>, but we haven't received a check-in from you yet.</p>
+</div>
+
+<div class="info-card">
+    <h3>📅 Shift Details</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Scheduled Start</span>
+            <span class="detail-value">{{scheduledShiftStart}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Scheduled End</span>
+            <span class="detail-value">{{scheduledShiftEnd}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Current Time</span>
+            <span class="detail-value">{{currentTime}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Time Missed</span>
+            <span class="detail-value" style="color: #ef4444; font-weight: 700;">{{missedDuration}}</span>
+        </div>
+    </div>
+</div>
+
+<div class="info-card" style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-left-color: #f59e0b;">
+    <h4 style="color: #92400e;">📞 What To Do Next</h4>
+    <ul style="margin-left: 20px; color: #92400e; line-height: 1.8;">
+        <li><strong>Contact Your Supervisor:</strong> Please reach out to explain your absence</li>
+        {{#if supervisorContact}}
+        <li><strong>Supervisor Contact:</strong> {{supervisorContact}}</li>
+        {{/if}}
+        <li><strong>Check In If Possible:</strong> If you're able to work now, please check in immediately</li>
+        <li><strong>Follow Company Policy:</strong> Ensure you follow your organization's attendance policy</li>
+    </ul>
+</div>
+
+<div class="cta-section">
+    <a href="{{checkInUrl}}" class="cta-button" style="background: #22c55e;">Check In Now</a>
+    <p style="margin-top: 16px; font-size: 14px; color: #6b7280;">
+        If you're experiencing an emergency or unexpected situation, please contact your supervisor immediately.
+    </p>
+</div>
+
+<div class="message">
+    <p style="font-size: 14px; color: #6b7280; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+        <strong>Organization:</strong> {{organizationName}}<br>
+        <strong>Alert sent:</strong> {{currentTime}}<br>
+        <strong>Need help?</strong> <a href="{{dashboardUrl}}" style="color: #7c2d92;">Visit your dashboard</a>
+    </p>
+</div>
+
+{{/base}}

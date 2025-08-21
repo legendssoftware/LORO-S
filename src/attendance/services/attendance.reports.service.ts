@@ -66,6 +66,41 @@ export class AttendanceReportsService {
 	}
 
 	/**
+	 * Get organization timezone with fallback to settings
+	 */
+	private async getOrganizationTimezone(organizationId: number): Promise<string> {
+		try {
+			// First try organization hours
+			const organizationHours = await this.organizationHoursService.getOrganizationHours(organizationId);
+			if (organizationHours?.timezone) {
+				return organizationHours.timezone;
+			}
+
+			// Fallback to organization settings
+			const orgSettings = await this.organisationSettingsRepository.findOne({
+				where: { organisationUid: organizationId }
+			});
+			if (orgSettings?.regional?.timezone) {
+				return orgSettings.regional.timezone;
+			}
+
+			// Final fallback to default
+			return TimezoneUtil.getSafeTimezone();
+		} catch (error) {
+			this.logger.warn(`Error getting timezone for org ${organizationId}, using default:`, error);
+			return TimezoneUtil.getSafeTimezone();
+		}
+	}
+
+	/**
+	 * Convert date to organization timezone for email templates
+	 */
+	private async convertTimeToOrgTimezone(date: Date, organizationId: number): Promise<string> {
+		const timezone = await this.getOrganizationTimezone(organizationId);
+		return TimezoneUtil.formatInOrganizationTime(date, 'HH:mm zzz', timezone);
+	}
+
+	/**
 	 * Schedule reports to run every 10 minutes with timezone-aware processing
 	 * Each organization is processed based on its local timezone
 	 */
@@ -88,9 +123,8 @@ export class AttendanceReportsService {
 
 			const reportPromises = organizations.map(async (org) => {
 				try {
-					// Get organization timezone for logging and filtering
-					const organizationHours = await this.organizationHoursService.getOrganizationHours(org.uid);
-					const organizationTimezone = organizationHours?.timezone;
+					// Get organization timezone using the new helper method
+					const organizationTimezone = await this.getOrganizationTimezone(org.uid);
 					const orgCurrentTime = TimezoneUtil.toOrganizationTime(now, organizationTimezone);
 					const orgCurrentHour = orgCurrentTime.getHours();
 
@@ -495,9 +529,8 @@ export class AttendanceReportsService {
 	private async generateMorningReportData(organizationId: number): Promise<MorningReportData> {
 		this.logger.log(`Generating morning report data for organization ${organizationId}`);
 
-		// Get organization timezone
-		const organizationHours = await this.organizationHoursService.getOrganizationHours(organizationId);
-		const organizationTimezone = organizationHours?.timezone;
+		// Get organization timezone using the enhanced helper method
+		const organizationTimezone = await this.getOrganizationTimezone(organizationId);
 
 		// Use organization timezone for "today" calculations
 		const today = TimezoneUtil.getCurrentOrganizationTime(organizationTimezone);
@@ -774,9 +807,8 @@ export class AttendanceReportsService {
 	private async generateEveningReportData(organizationId: number): Promise<EveningReportData> {
 		this.logger.log(`Generating evening report data for organization ${organizationId}`);
 
-		// Get organization timezone
-		const organizationHours = await this.organizationHoursService.getOrganizationHours(organizationId);
-		const organizationTimezone = organizationHours?.timezone;
+		// Get organization timezone using the enhanced helper method
+		const organizationTimezone = await this.getOrganizationTimezone(organizationId);
 
 		// Use organization timezone for "today" calculations
 		const today = TimezoneUtil.getCurrentOrganizationTime(organizationTimezone);
