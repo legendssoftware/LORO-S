@@ -118,6 +118,7 @@ import {
 	UserTargetDeadlineReminderEmailData,
 	UserTargetPerformanceAlertEmailData,
 	UserTargetERPUpdateConfirmationEmailData,
+	UserTargetContributionProgressEmailData,
 	UserTargetPeriodSummaryEmailData,
 	UserTargetSetEmailData,
 	UserTargetDeletedEmailData,
@@ -162,6 +163,7 @@ import {
 	UserTargetDeadlineReminder,
 	UserTargetPerformanceAlert,
 	UserTargetERPUpdateConfirmation,
+	UserTargetContributionProgress,
 	UserTargetPeriodSummary,
 	UserTargetSet,
 	UserTargetDeleted,
@@ -1146,6 +1148,11 @@ export class CommunicationService {
 				return {
 					subject: 'Your ERP System Update is Ready',
 					body: UserTargetERPUpdateConfirmation(data as UserTargetERPUpdateConfirmationEmailData),
+				};
+			case EmailType.USER_TARGET_CONTRIBUTION_PROGRESS:
+				return {
+					subject: 'Great Progress Update - Keep The Momentum Going!',
+					body: UserTargetContributionProgress(data as UserTargetContributionProgressEmailData),
 				};
 			case EmailType.USER_TARGET_PERIOD_SUMMARY:
 				return {

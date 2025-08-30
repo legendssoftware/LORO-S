@@ -20,6 +20,7 @@ import { Claim } from '../../claims/entities/claim.entity';
 import { UserRewards } from '../../rewards/entities/user-rewards.entity';
 import { XPTransaction } from '../../rewards/entities/xp-transaction.entity';
 import { UserTarget } from '../../user/entities/user-target.entity';
+import { OrganisationHoursService } from '../../organisation/services/organisation-hours.service';
 
 @Injectable()
 export class UserDailyReportGenerator {
@@ -52,6 +53,7 @@ export class UserDailyReportGenerator {
 		private userTargetRepository: Repository<UserTarget>,
 		private attendanceService: AttendanceService,
 		private trackingService: TrackingService,
+		private organisationHoursService: OrganisationHoursService,
 	) {}
 
 	private calculateGrowth(current: number, previous: number): string {
@@ -69,6 +71,40 @@ export class UserDailyReportGenerator {
 	private parseGrowthPercentage(growthStr: string): number {
 		if (!growthStr) return 0;
 		return parseFloat(growthStr.replace(/[+%]/g, '')) || 0;
+	}
+
+	/**
+	 * Check if the organization is open on the given date
+	 */
+	private async isOrganizationOpen(user: any, date: Date): Promise<boolean> {
+		try {
+			if (!user.organisation || !user.organisation.ref) {
+				this.logger.warn(`User ${user.uid} has no organization reference`);
+				return true; // Default to true if no organization hours are set
+			}
+
+			const orgHours = await this.organisationHoursService.findDefault(user.organisation.ref);
+			
+			if (!orgHours) {
+				this.logger.warn(`No organization hours found for org ${user.organisation.ref}`);
+				return true; // Default to true if no organization hours are set
+			}
+
+			const dayOfWeek = date.getDay(); // 0 = Sunday, 1 = Monday, etc.
+			const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+			const dayName = dayNames[dayOfWeek];
+
+			// Check if the organization is open on this day
+			const isOpen = orgHours[`${dayName}Open`] === true;
+			const startTime = orgHours[`${dayName}StartTime`];
+			const endTime = orgHours[`${dayName}EndTime`];
+
+			// If the day is marked as open and has valid start/end times, consider it a working day
+			return isOpen && startTime && endTime;
+		} catch (error) {
+			this.logger.error(`Error checking organization hours: ${error.message}`);
+			return true; // Default to true on error to avoid blocking reports
+		}
 	}
 
 	async generate(params: ReportParamsDto): Promise<Record<string, any>> {
@@ -95,14 +131,36 @@ export class UserDailyReportGenerator {
 		const previousEndDate = endOfDay(subDays(startDate, 1));
 
 		try {
-			// Get user data
-			const user = await this.userRepository.findOne({
-				where: { uid: userId },
-			});
+					// Get user data with organization relation
+		const user = await this.userRepository.findOne({
+			where: { uid: userId },
+			relations: ['organisation'],
+		});
 
-			if (!user) {
-				throw new Error(`User with ID ${userId} not found`);
-			}
+		if (!user) {
+			throw new Error(`User with ID ${userId} not found`);
+		}
+
+		// Check if organization is open on this date (only for working day reports)
+		const isWorkingDay = await this.isOrganizationOpen(user, startDate);
+		
+		if (!isWorkingDay) {
+			this.logger.log(`Skipping report generation for user ${userId} on ${format(startDate, 'yyyy-MM-dd')} - Organization is closed`);
+			return {
+				metadata: {
+					reportType: 'user_daily',
+					userId,
+					userName: `${user.name} ${user.surname || ''}`.trim(),
+					date: format(startDate, 'yyyy-MM-dd'),
+					generatedAt: new Date(),
+					isWorkingDay: false,
+					skipReason: 'Organization closed on this date',
+				},
+				summary: null,
+				details: null,
+				emailData: null,
+			};
+		}
 
 			// Collect all data in parallel for efficiency
 			const [
@@ -157,6 +215,8 @@ export class UserDailyReportGenerator {
 					userName: `${user.name} ${user.surname || ''}`.trim(),
 					date: formattedDate,
 					generatedAt: new Date(),
+					isWorkingDay: true,
+					organizationName: user.organisation?.name || 'Unknown Organization',
 				},
 				summary: {
 					hoursWorked: Math.round((attendanceData.totalWorkMinutes / 60) * 10) / 10,
@@ -640,25 +700,36 @@ export class UserDailyReportGenerator {
 
 	private async collectLocationData(userId: number, startDate: Date, endDate: Date) {
 		try {
-			// Use TrackingService to get real tracking data
-			// Assuming trackingService.getDailyTracking now returns a more detailed object
-			// including locationAnalysis with timeSpent and averageTimePerLocation
+			// Use enhanced TrackingService to get comprehensive tracking data
 			const trackingResult = await this.trackingService.getDailyTracking(userId, startDate);
 
 			if (!trackingResult || !trackingResult.data) {
 				return this.defaultLocationData();
 			}
 
-			const { trackingPoints, totalDistance, locationAnalysis } = trackingResult.data;
+			const { trackingPoints, totalDistance, locationAnalysis, tripSummary, stops } = trackingResult.data;
 
 			if (!trackingPoints || !trackingPoints.length) {
 				this.logger.warn(`No tracking points found for user ${userId} on ${format(startDate, 'yyyy-MM-dd')}`);
-				return this.defaultLocationData(totalDistance);
+				return this.defaultLocationData('0');
 			}
 
-			const totalDistanceKm = parseFloat(totalDistance) || 0;
+			// Extract distance value from formatted string or use tripSummary
+			let totalDistanceKm = 0;
+			if (tripSummary && tripSummary.totalDistanceKm) {
+				totalDistanceKm = tripSummary.totalDistanceKm;
+			} else if (typeof totalDistance === 'string') {
+				// Parse from formatted string like "5.2 km" or "500 meters"
+				const distanceMatch = totalDistance.match(/([0-9.]+)\s*(km|meters)/);
+				if (distanceMatch) {
+					const value = parseFloat(distanceMatch[1]);
+					totalDistanceKm = distanceMatch[2] === 'km' ? value : value / 1000;
+				}
+			} else {
+				totalDistanceKm = parseFloat(totalDistance) || 0;
+			}
 
-			// Format location data from tracking points
+			// Format tracking points for detailed view
 			const formattedTrackingPoints = trackingPoints.map((point) => ({
 				type: 'tracking-point',
 				timestamp: point.timestamp
@@ -666,40 +737,49 @@ export class UserDailyReportGenerator {
 					: format(new Date(point.createdAt), 'HH:mm:ss'),
 				latitude: point.latitude,
 				longitude: point.longitude,
-				address: point.address || `${point.latitude}, ${point.longitude}`,
+				address: point.address || `${point.latitude.toFixed(4)}, ${point.longitude.toFixed(4)}`,
 				accuracy: point.accuracy,
 				speed: point.speed,
 			}));
 
-			let emailTrackingLocations = [];
-			let averageTimePerLocationFormatted = '~';
+			// Format stops for email summary
+			const formattedStops = stops ? stops.map((stop) => ({
+				address: stop.address,
+				latitude: stop.latitude,
+				longitude: stop.longitude,
+				duration: stop.durationFormatted,
+				durationMinutes: stop.durationMinutes,
+				startTime: format(new Date(stop.startTime), 'HH:mm'),
+				endTime: format(new Date(stop.endTime), 'HH:mm'),
+				pointsCount: stop.pointsCount,
+			})) : [];
 
-			if (locationAnalysis && locationAnalysis.locationsVisited) {
-				emailTrackingLocations = locationAnalysis.locationsVisited.map((loc) => ({
-					address: loc.address || `${loc.latitude}, ${loc.longitude}`,
-					timeSpent: loc.timeSpentFormatted || this.formatDuration(loc.timeSpentMinutes || 0), // Assuming timeSpentMinutes is available
-				}));
-				averageTimePerLocationFormatted =
-					locationAnalysis.averageTimePerLocationFormatted ||
-					this.formatDuration(locationAnalysis.averageTimePerLocationMinutes || 0); // Assuming averageTimePerLocationMinutes
-			} else {
-				// Fallback if detailed locationAnalysis is not available
-				emailTrackingLocations = formattedTrackingPoints
-					.map((p) => ({ address: p.address, timeSpent: '~' }))
-					.slice(0, 5); // Show some points if no analysis
-			}
-
+			// Prepare email tracking data with enhanced trip summary
 			const trackingDataForEmail = {
 				totalDistance: `${totalDistanceKm.toFixed(1)} km`,
-				locations: emailTrackingLocations,
-				averageTimePerLocation: averageTimePerLocationFormatted,
+				locations: locationAnalysis?.locationsVisited || [],
+				averageTimePerLocation: locationAnalysis?.averageTimePerLocationFormatted || '~',
+				tripSummary: tripSummary ? {
+					totalDistanceKm: totalDistanceKm,
+					totalTimeFormatted: this.formatDuration(tripSummary.totalTimeMinutes),
+					movingTimeFormatted: this.formatDuration(tripSummary.movingTimeMinutes),
+					stoppedTimeFormatted: this.formatDuration(tripSummary.stoppedTimeMinutes),
+					averageSpeed: `${tripSummary.averageSpeedKmh} km/h`,
+					maxSpeed: `${tripSummary.maxSpeedKmh} km/h`,
+					numberOfStops: tripSummary.numberOfStops,
+				} : null,
+				stops: formattedStops.slice(0, 10), // Limit to top 10 stops for email
 			};
 
 			return {
-				locations: formattedTrackingPoints, // Raw points for detailed view
+				locations: formattedTrackingPoints,
 				totalDistance: totalDistanceKm.toFixed(1),
 				totalLocations: formattedTrackingPoints.length,
-				trackingData: trackingDataForEmail, // Analyzed/formatted data for email
+				trackingData: trackingDataForEmail,
+				// Enhanced trip metrics
+				tripMetrics: tripSummary || {},
+				stops: formattedStops,
+				locationAnalysis: locationAnalysis || {},
 			};
 		} catch (error) {
 			this.logger.error(`Error collecting location data for user ${userId}: ${error.message}`, error.stack);

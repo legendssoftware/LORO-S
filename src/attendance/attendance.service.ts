@@ -259,10 +259,12 @@ export class AttendanceService {
 					NotificationEvent.ATTENDANCE_SHIFT_STARTED,
 					[checkInDto.owner.uid],
 					{
+						message: `Shift started successfully at ${checkInTime}. Have a productive day!`,
 						checkInTime,
 						userId: checkInDto.owner.uid,
 						organisationId: orgId,
 						branchId: branchId,
+						timestamp: new Date().toISOString(),
 					},
 					{
 						priority: NotificationPriority.NORMAL,
@@ -454,16 +456,27 @@ export class AttendanceService {
 					hour12: true,
 				});
 
+				const checkInTimeString = new Date(activeShift.checkIn).toLocaleTimeString('en-US', {
+					hour: '2-digit',
+					minute: '2-digit',
+					hour12: true,
+				});
+
 				this.logger.debug(`Sending shift end notification to user: ${checkOutDto.owner.uid}`);
 				await this.unifiedNotificationService.sendTemplatedNotification(
 					NotificationEvent.ATTENDANCE_SHIFT_ENDED,
 					[checkOutDto.owner.uid],
 					{
+						message: `Shift completed successfully! Worked from ${checkInTimeString} to ${checkOutTimeString} (${duration}). Great work today!`,
 						checkOutTime: checkOutTimeString,
+						checkInTime: checkInTimeString,
 						duration,
+						totalWorkMinutes: workSession.netWorkMinutes,
+						totalBreakMinutes: breakMinutes,
 						userId: checkOutDto.owner.uid,
 						organisationId: orgId,
 						branchId: branchId,
+						timestamp: new Date().toISOString(),
 					},
 					{
 						priority: NotificationPriority.NORMAL,
@@ -476,6 +489,49 @@ export class AttendanceService {
 					notificationError.message,
 				);
 				// Don't fail the check-out if notification fails
+			}
+
+			// Check and send overtime notification if applicable
+			try {
+				const organizationId = activeShift.owner?.organisation?.uid;
+				if (organizationId) {
+					const overtimeInfo = await this.organizationHoursService.calculateOvertime(
+						organizationId,
+						activeShift.checkIn,
+						workSession.netWorkMinutes,
+					);
+					
+					if (overtimeInfo.overtimeMinutes > 0) {
+						const overtimeHours = Math.floor(overtimeInfo.overtimeMinutes / 60);
+						const overtimeMinutes = overtimeInfo.overtimeMinutes % 60;
+						const overtimeDuration = `${overtimeHours}h ${overtimeMinutes}m`;
+
+						this.logger.debug(`Sending overtime notification to user: ${checkOutDto.owner.uid}`);
+						await this.unifiedNotificationService.sendTemplatedNotification(
+							NotificationEvent.ATTENDANCE_OVERTIME_REMINDER,
+							[checkOutDto.owner.uid],
+							{
+								message: `You worked ${overtimeDuration} of overtime today. Great dedication! Please ensure you get adequate rest.`,
+								overtimeDuration,
+								overtimeHours: overtimeInfo.overtimeMinutes / 60,
+								regularHours: (workSession.netWorkMinutes - overtimeInfo.overtimeMinutes) / 60,
+								totalWorkMinutes: workSession.netWorkMinutes,
+								userId: checkOutDto.owner.uid,
+								timestamp: new Date().toISOString(),
+							},
+							{
+								priority: NotificationPriority.HIGH,
+							},
+						);
+						this.logger.debug(`Overtime notification sent successfully to user: ${checkOutDto.owner.uid}`);
+					}
+				}
+			} catch (overtimeNotificationError) {
+				this.logger.warn(
+					`Failed to send overtime notification to user: ${checkOutDto.owner.uid}`,
+					overtimeNotificationError.message,
+				);
+				// Don't fail the check-out if overtime notification fails
 			}
 
 			// Emit the daily-report event with the user ID
@@ -724,22 +780,28 @@ export class AttendanceService {
 			let notificationType: NotificationEvent;
 			let message: string;
 
+			const currentTime = new Date().toLocaleTimeString('en-US', {
+				hour: '2-digit',
+				minute: '2-digit',
+				hour12: true,
+			});
+
 			switch (reminderType) {
 				case 'start':
 					notificationType = NotificationEvent.ATTENDANCE_SHIFT_START_REMINDER;
-					message = "Don't forget to check in for your shift!";
+					message = `Good morning! Don't forget to check in for your shift. Current time: ${currentTime}`;
 					break;
 				case 'end':
 					notificationType = NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER;
-					message = "Don't forget to check out when your shift ends!";
+					message = `Your shift is ending soon. Don't forget to check out! Current time: ${currentTime}`;
 					break;
 				case 'missed':
 					notificationType = NotificationEvent.ATTENDANCE_MISSED_SHIFT_ALERT;
-					message = 'You missed your scheduled shift. Please contact your supervisor if there was an issue.';
+					message = `You missed your scheduled shift today. Please contact your supervisor if there was an issue. Current time: ${currentTime}`;
 					break;
 				case 'late':
 					notificationType = NotificationEvent.ATTENDANCE_LATE_SHIFT_ALERT;
-					message = 'You are running late for your shift. Please check in as soon as possible.';
+					message = `You are running late for your shift. Please check in as soon as possible. Current time: ${currentTime}`;
 					break;
 			}
 
@@ -747,10 +809,11 @@ export class AttendanceService {
 				notificationType,
 				[Number(userId)],
 				{
+					message,
+					currentTime,
 					userId,
 					orgId,
 					branchId,
-					message,
 					timestamp: new Date().toISOString(),
 					reminderType,
 				},
@@ -1933,8 +1996,11 @@ export class AttendanceService {
 					NotificationEvent.ATTENDANCE_BREAK_STARTED,
 					[breakDto.owner.uid],
 					{
+						message: `Break started at ${breakStartTimeString}. Take your time to recharge!`,
 						breakStartTime: breakStartTimeString,
+						breakCount: breakCount,
 						userId: breakDto.owner.uid,
+						timestamp: new Date().toISOString(),
 					},
 					{
 						priority: NotificationPriority.LOW,
@@ -2045,13 +2111,30 @@ export class AttendanceService {
 
 			// Send break end notification
 			try {
+				const breakEndTimeString = breakEndTime.toLocaleTimeString('en-US', {
+					hour: '2-digit',
+					minute: '2-digit',
+					hour12: true,
+				});
+
+				const breakStartTimeString = breakStartTime.toLocaleTimeString('en-US', {
+					hour: '2-digit',
+					minute: '2-digit',
+					hour12: true,
+				});
+
 				this.logger.debug(`Sending break end notification to user: ${breakDto.owner.uid}`);
 				await this.unifiedNotificationService.sendTemplatedNotification(
 					NotificationEvent.ATTENDANCE_BREAK_ENDED,
 					[breakDto.owner.uid],
 					{
+						message: `Break completed! You were on break from ${breakStartTimeString} to ${breakEndTimeString} (${currentBreakDuration}). Welcome back!`,
 						breakDuration: currentBreakDuration,
+						breakStartTime: breakStartTimeString,
+						breakEndTime: breakEndTimeString,
+						totalBreakTime,
 						userId: breakDto.owner.uid,
+						timestamp: new Date().toISOString(),
 					},
 					{
 						priority: NotificationPriority.LOW,

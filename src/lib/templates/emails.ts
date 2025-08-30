@@ -64,6 +64,7 @@ import {
 	UserTargetDeadlineReminderEmailData,
 	UserTargetPerformanceAlertEmailData,
 	UserTargetERPUpdateConfirmationEmailData,
+	UserTargetContributionProgressEmailData,
 	UserTargetPeriodSummaryEmailData,
 	BlankQuotationData,
 	BlankQuotationInternalData,
@@ -462,6 +463,10 @@ export const UserTargetPerformanceAlert = (data: UserTargetPerformanceAlertEmail
 
 export const UserTargetERPUpdateConfirmation = (data: UserTargetERPUpdateConfirmationEmailData): string => {
 	return emailTemplateService.userTargetERPUpdateConfirmation(data);
+};
+
+export const UserTargetContributionProgress = (data: UserTargetContributionProgressEmailData): string => {
+	return emailTemplateService.userTargetContributionProgress(data);
 };
 
 export const UserTargetPeriodSummary = (data: UserTargetPeriodSummaryEmailData): string => {

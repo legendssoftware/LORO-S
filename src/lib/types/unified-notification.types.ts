@@ -38,8 +38,20 @@ export enum NotificationEvent {
 	USER_UPDATED = 'user_updated',
 	USER_PASSWORD_RESET = 'user_password_reset',
 	USER_TARGET_ACHIEVEMENT = 'user_target_achievement',
+	USER_TARGET_CONTRIBUTION_PROGRESS = 'user_target_contribution_progress',
+	USER_TARGET_SET = 'user_target_set',
+	USER_TARGET_UPDATED = 'user_target_updated',
+	USER_TARGET_MILESTONE = 'user_target_milestone',
 	USER_ROLE_CHANGED = 'user_role_changed',
 	USER_STATUS_CHANGED = 'user_status_changed',
+
+	// Auth Events
+	AUTH_LOGIN_SUCCESS = 'auth_login_success',
+	AUTH_LOGIN_FAILED = 'auth_login_failed',
+	AUTH_PASSWORD_SET_SUCCESS = 'auth_password_set_success',
+	AUTH_PASSWORD_RESET_REQUEST = 'auth_password_reset_request',
+	AUTH_PASSWORD_CHANGED = 'auth_password_changed',
+	AUTH_TOKEN_EXPIRED = 'auth_token_expired',
 
 	// Leave Events
 	LEAVE_CREATED = 'leave_created',

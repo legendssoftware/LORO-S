@@ -22,6 +22,8 @@ import { PendingSignupService } from './pending-signup.service';
 import { PasswordResetService } from './password-reset.service';
 import { LicensingService } from '../licensing/licensing.service';
 import { PlatformService } from '../lib/services/platform.service';
+import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
+import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
 
 @Injectable()
 export class AuthService {
@@ -36,6 +38,7 @@ export class AuthService {
 		private passwordResetService: PasswordResetService,
 		private licensingService: LicensingService,
 		private platformService: PlatformService,
+		private unifiedNotificationService: UnifiedNotificationService,
 	) {
 		this.logger.debug('AuthService initialized with all dependencies');
 	}
@@ -87,6 +90,48 @@ export class AuthService {
 								'Contact support if you notice any unusual activity',
 							],
 						});
+
+						// Send failed login push notification
+						try {
+							const attemptTime = new Date().toLocaleTimeString('en-US', {
+								hour: '2-digit',
+								minute: '2-digit',
+								hour12: true,
+							});
+							const attemptDate = new Date().toLocaleDateString('en-US', {
+								weekday: 'long',
+								year: 'numeric',
+								month: 'long',
+								day: 'numeric',
+							});
+
+							this.logger.debug(`Sending failed login push notification to user: ${username}`);
+							await this.unifiedNotificationService.sendTemplatedNotification(
+								NotificationEvent.AUTH_LOGIN_FAILED,
+								[userByEmail.user.uid],
+								{
+									message: `🚨 Security Alert: Failed login attempt detected on your account on ${attemptDate} at ${attemptTime}. If this wasn't you, please secure your account immediately.`,
+									userName: userByEmail.user.name || username,
+									attemptTime,
+									attemptDate,
+									ipAddress: requestData?.ipAddress || 'Unknown',
+									location: requestData?.location || 'Unknown',
+									deviceType: requestData?.deviceType || 'Unknown',
+									browser: requestData?.browser || 'Unknown',
+									securityTip: 'Change your password immediately if you suspect unauthorized access',
+									timestamp: new Date().toISOString(),
+								},
+								{
+									priority: NotificationPriority.HIGH,
+								},
+							);
+							this.logger.debug(`Failed login push notification sent to user: ${username}`);
+						} catch (notificationError) {
+							this.logger.warn(
+								`Failed to send failed login push notification to user ${username}:`,
+								notificationError.message,
+							);
+						}
 					}
 				} catch (error) {
 					this.logger.error('Failed to send failed login notification email:', error);
@@ -233,6 +278,48 @@ export class AuthService {
 				} catch (error) {
 					// Don't fail login if email fails
 					this.logger.error('Failed to send login notification email:', error);
+				}
+
+				// Send successful login push notification
+				try {
+					const loginTime = new Date().toLocaleTimeString('en-US', {
+						hour: '2-digit',
+						minute: '2-digit',
+						hour12: true,
+					});
+					const loginDate = new Date().toLocaleDateString('en-US', {
+						weekday: 'long',
+						year: 'numeric',
+						month: 'long',
+						day: 'numeric',
+					});
+
+					this.logger.debug(`Sending successful login push notification to user: ${username}`);
+					await this.unifiedNotificationService.sendTemplatedNotification(
+						NotificationEvent.AUTH_LOGIN_SUCCESS,
+						[authProfile.user.uid],
+						{
+							message: `Welcome back, ${profileData.name}! Successfully signed in on ${loginDate} at ${loginTime}.`,
+							userName: profileData.name,
+							loginTime,
+							loginDate,
+							ipAddress: requestData?.ipAddress || 'Unknown',
+							location: requestData?.location || 'Unknown',
+							deviceType: requestData?.deviceType || 'Unknown',
+							browser: requestData?.browser || 'Unknown',
+							timestamp: new Date().toISOString(),
+						},
+						{
+							priority: NotificationPriority.LOW,
+						},
+					);
+					this.logger.debug(`Successful login push notification sent to user: ${username}`);
+				} catch (notificationError) {
+					this.logger.warn(
+						`Failed to send successful login push notification to user ${username}:`,
+						notificationError.message,
+					);
+					// Don't fail login if notification fails
 				}
 
 				this.logger.log(`User sign in successful: ${username}`);
@@ -429,38 +516,86 @@ export class AuthService {
 				throw new BadRequestException('Token has expired. Please sign up again.');
 			}
 
-			// Create the actual user account
-			this.logger.debug(`Creating user account for: ${pendingSignup.email}`);
-			const username = pendingSignup.email.split('@')[0].toLowerCase();
-			const hashedPassword = await bcrypt.hash(password, 10);
+					// Create the actual user account
+		this.logger.debug(`Creating user account for: ${pendingSignup.email}`);
+		const username = pendingSignup.email.split('@')[0].toLowerCase();
+		const hashedPassword = await bcrypt.hash(password, 10);
 
-			const createdUser = await this.userService.create({
-				email: pendingSignup.email,
-				username,
-				password: hashedPassword,
-				name: username,
-				surname: '',
-				phone: '',
-				photoURL: `https://ui-avatars.com/api/?name=${username}&background=805adc&color=fff`,
-				accessLevel: AccessLevel.USER,
-				userref: `USR${Date.now()}`,
-			});
+		await this.userService.create({
+			email: pendingSignup.email,
+			username,
+			password: hashedPassword,
+			name: username,
+			surname: '',
+			phone: '',
+			photoURL: `https://ui-avatars.com/api/?name=${username}&background=805adc&color=fff`,
+			accessLevel: AccessLevel.USER,
+			userref: `USR${Date.now()}`,
+		});
 
-			// Delete the pending signup
-			this.logger.debug(`Deleting pending signup record for: ${pendingSignup.email}`);
-			await this.pendingSignupService.delete(pendingSignup.uid);
+		// Get the created user for notifications
+		const createdUserResult = await this.userService.findOneByEmail(pendingSignup.email);
+		if (!createdUserResult?.user) {
+			this.logger.error(`Failed to find created user: ${pendingSignup.email}`);
+			throw new BadRequestException('User creation failed');
+		}
+		const createdUser = createdUserResult.user;
+
+		// Delete the pending signup
+		this.logger.debug(`Deleting pending signup record for: ${pendingSignup.email}`);
+		await this.pendingSignupService.delete(pendingSignup.uid);
 
 			// Get the web and mobile app links from environment variables
 			const webAppLink = `${process.env.WEBSITE_DOMAIN}/sign-in` || '/sign-in';
 			const mobileAppLink = `${process.env.WEBSITE_DOMAIN}/mobile-app` || null;
 
-			// Send welcome email to the new user
-			this.logger.debug(`Sending welcome email to new user: ${pendingSignup.email}`);
-			this.eventEmitter.emit('send.email', EmailType.SIGNUP, [pendingSignup.email], {
-				name: username,
-				webAppLink: webAppLink,
-				mobileAppLink: mobileAppLink,
+					// Send welcome email to the new user
+		this.logger.debug(`Sending welcome email to new user: ${pendingSignup.email}`);
+		this.eventEmitter.emit('send.email', EmailType.SIGNUP, [pendingSignup.email], {
+			name: username,
+			webAppLink: webAppLink,
+			mobileAppLink: mobileAppLink,
+		});
+
+		// Send password set success push notification
+		try {
+			const setupTime = new Date().toLocaleTimeString('en-US', {
+				hour: '2-digit',
+				minute: '2-digit',
+				hour12: true,
 			});
+			const setupDate = new Date().toLocaleDateString('en-US', {
+				weekday: 'long',
+				year: 'numeric',
+				month: 'long',
+				day: 'numeric',
+			});
+
+			this.logger.debug(`Sending password setup success push notification to: ${pendingSignup.email}`);
+			await this.unifiedNotificationService.sendTemplatedNotification(
+				NotificationEvent.AUTH_PASSWORD_SET_SUCCESS,
+				[createdUser.uid],
+				{
+					message: `🎉 Welcome to Loro! Your password has been set successfully on ${setupDate} at ${setupTime}. Your account is now ready to use.`,
+					userName: username,
+					setupTime,
+					setupDate,
+					webAppLink,
+					mobileAppLink,
+					timestamp: new Date().toISOString(),
+				},
+				{
+					priority: NotificationPriority.NORMAL,
+				},
+			);
+			this.logger.debug(`Password setup success push notification sent to: ${pendingSignup.email}`);
+		} catch (notificationError) {
+			this.logger.warn(
+				`Failed to send password setup success push notification to ${pendingSignup.email}:`,
+				notificationError.message,
+			);
+			// Don't fail account creation if notification fails
+		}
 
 			// Notify admin users about the new user registration
 			this.logger.debug(`Notifying admin users about new user registration: ${pendingSignup.email}`);
@@ -524,17 +659,56 @@ export class AuthService {
 			await this.passwordResetService.create(email, resetToken);
 			this.logger.debug(`Password reset record created successfully for: ${email}`);
 
-			// Send single password reset email with security alert and reset link
-			this.logger.debug(`Sending password reset email to: ${email}`);
-			this.eventEmitter.emit('send.email', EmailType.PASSWORD_RESET_REQUEST, [email], {
-				name: existingUser.user.name || email.split('@')[0],
-				userEmail: email,
-				requestTime: new Date().toLocaleString(),
-				resetLink: resetUrl,
-				expiryHours: 24,
-				supportEmail: process.env.SUPPORT_EMAIL || 'support@loro.africa',
-				dashboardUrl: `${process.env.WEBSITE_DOMAIN || process.env.SIGNUP_DOMAIN || 'https://dashboard.loro.co.za'}/dashboard`,
+					// Send single password reset email with security alert and reset link
+		this.logger.debug(`Sending password reset email to: ${email}`);
+		this.eventEmitter.emit('send.email', EmailType.PASSWORD_RESET_REQUEST, [email], {
+			name: existingUser.user.name || email.split('@')[0],
+			userEmail: email,
+			requestTime: new Date().toLocaleString(),
+			resetLink: resetUrl,
+			expiryHours: 24,
+			supportEmail: process.env.SUPPORT_EMAIL || 'support@loro.africa',
+			dashboardUrl: `${process.env.WEBSITE_DOMAIN || process.env.SIGNUP_DOMAIN || 'https://dashboard.loro.co.za'}/dashboard`,
+		});
+
+		// Send password reset push notification
+		try {
+			const requestTime = new Date().toLocaleTimeString('en-US', {
+				hour: '2-digit',
+				minute: '2-digit',
+				hour12: true,
 			});
+			const requestDate = new Date().toLocaleDateString('en-US', {
+				weekday: 'long',
+				year: 'numeric',
+				month: 'long',
+				day: 'numeric',
+			});
+
+			this.logger.debug(`Sending password reset push notification to: ${email}`);
+			await this.unifiedNotificationService.sendTemplatedNotification(
+				NotificationEvent.AUTH_PASSWORD_RESET_REQUEST,
+				[existingUser.user.uid],
+				{
+					message: `🔐 Password reset requested for your account on ${requestDate} at ${requestTime}. Check your email for reset instructions. If this wasn't you, please contact support immediately.`,
+					userName: existingUser.user.name || email.split('@')[0],
+					requestTime,
+					requestDate,
+					expiryHours: 24,
+					timestamp: new Date().toISOString(),
+				},
+				{
+					priority: NotificationPriority.HIGH,
+				},
+			);
+			this.logger.debug(`Password reset push notification sent to: ${email}`);
+		} catch (notificationError) {
+			this.logger.warn(
+				`Failed to send password reset push notification to ${email}:`,
+				notificationError.message,
+			);
+			// Don't fail the password reset if notification fails
+		}
 
 			this.logger.log(`Password reset request processed successfully for: ${email}`);
 			return {
@@ -601,12 +775,50 @@ export class AuthService {
 			this.logger.debug(`Marking reset token as used for: ${resetRecord.email}`);
 			await this.passwordResetService.markAsUsed(resetRecord.uid);
 
-			// Send confirmation email
-			this.logger.debug(`Sending password changed confirmation email to: ${resetRecord.email}`);
-			this.eventEmitter.emit('send.email', EmailType.PASSWORD_CHANGED, [resetRecord.email], {
-				name: user.user.name || resetRecord.email.split('@')[0],
-				changeTime: new Date().toLocaleString(),
+					// Send confirmation email
+		this.logger.debug(`Sending password changed confirmation email to: ${resetRecord.email}`);
+		this.eventEmitter.emit('send.email', EmailType.PASSWORD_CHANGED, [resetRecord.email], {
+			name: user.user.name || resetRecord.email.split('@')[0],
+			changeTime: new Date().toLocaleString(),
+		});
+
+		// Send password changed push notification
+		try {
+			const changeTime = new Date().toLocaleTimeString('en-US', {
+				hour: '2-digit',
+				minute: '2-digit',
+				hour12: true,
 			});
+			const changeDate = new Date().toLocaleDateString('en-US', {
+				weekday: 'long',
+				year: 'numeric',
+				month: 'long',
+				day: 'numeric',
+			});
+
+			this.logger.debug(`Sending password changed push notification to: ${resetRecord.email}`);
+			await this.unifiedNotificationService.sendTemplatedNotification(
+				NotificationEvent.AUTH_PASSWORD_CHANGED,
+				[user.user.uid],
+				{
+					message: `🔐 Password updated successfully! Your password was changed on ${changeDate} at ${changeTime}. If this wasn't you, please contact support immediately.`,
+					userName: user.user.name || resetRecord.email.split('@')[0],
+					changeTime,
+					changeDate,
+					timestamp: new Date().toISOString(),
+				},
+				{
+					priority: NotificationPriority.HIGH,
+				},
+			);
+			this.logger.debug(`Password changed push notification sent to: ${resetRecord.email}`);
+		} catch (notificationError) {
+			this.logger.warn(
+				`Failed to send password changed push notification to ${resetRecord.email}:`,
+				notificationError.message,
+			);
+			// Don't fail password reset if notification fails
+		}
 
 			this.logger.log(`Password reset successful for: ${resetRecord.email}`);
 			return {
@@ -719,6 +931,47 @@ export class AuthService {
 		} catch (error) {
 			this.logger.error(`Refresh token failed`, error.stack);
 			if (error?.name === 'TokenExpiredError') {
+				// Try to send expired token notification
+				try {
+					// Try to extract user information from the expired token without verification
+					const decodedToken = this.jwtService.decode(token) as any;
+					if (decodedToken?.uid) {
+						const expiredTime = new Date().toLocaleTimeString('en-US', {
+							hour: '2-digit',
+							minute: '2-digit',
+							hour12: true,
+						});
+						const expiredDate = new Date().toLocaleDateString('en-US', {
+							weekday: 'long',
+							year: 'numeric',
+							month: 'long',
+							day: 'numeric',
+						});
+
+						this.logger.debug(`Sending token expired push notification to user: ${decodedToken.uid}`);
+						await this.unifiedNotificationService.sendTemplatedNotification(
+							NotificationEvent.AUTH_TOKEN_EXPIRED,
+							[decodedToken.uid],
+							{
+								message: `🔐 Your session has expired on ${expiredDate} at ${expiredTime}. Please sign in again to continue using the application securely.`,
+								expiredTime,
+								expiredDate,
+								requiresSignIn: true,
+								timestamp: new Date().toISOString(),
+							},
+							{
+								priority: NotificationPriority.NORMAL,
+							},
+						);
+						this.logger.debug(`Token expired push notification sent to user: ${decodedToken.uid}`);
+					}
+				} catch (notificationError) {
+					this.logger.warn(
+						`Failed to send token expired push notification:`,
+						notificationError.message,
+					);
+					// Don't fail the token expiration if notification fails
+				}
 				throw new HttpException('Refresh token has expired', HttpStatus.UNAUTHORIZED);
 			}
 			throw new HttpException(error.message || 'Failed to refresh token', error.status || HttpStatus.BAD_REQUEST);

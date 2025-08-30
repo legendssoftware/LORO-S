@@ -1,36 +1,40 @@
-{{#base headerTitle="🎉 Target Achieved!" headerSubtitle="Congratulations on reaching your {{targetType}} target"}}
+{{#base headerTitle="🎯 Target Reached!" headerSubtitle="Congratulations on achieving your {{targetType}} target"}}
 
 <div class="greeting">
-    Hello {{userName}}! 🎉
+    Congratulations {{userName}}! 🎉
 </div>
 
 <div class="message">
-    <p><strong>Fantastic news!</strong> You've successfully achieved your {{targetType}} target at {{organizationName}}! This is a significant milestone that demonstrates your dedication and hard work.</p>
+    <p>Excellent news! You have successfully achieved your {{targetType}} target at {{organizationName}}. This is a remarkable accomplishment that demonstrates your dedication and performance excellence.</p>
 </div>
 
 <div class="success-notice">
-    <p>🎯 <strong>Target Achieved:</strong> You've reached {{achievementPercentage}}% of your {{targetType}} target!</p>
+    <p>🏆 <strong>Target Achieved!</strong> You've successfully met your {{targetType}} target and exceeded expectations!</p>
 </div>
 
 <div class="info-card">
-    <h3>🏆 Achievement Details</h3>
+    <h3>🎯 Achievement Details</h3>
     <div class="detail-grid">
         <div class="detail-item">
-            <span class="detail-label">Target Type</span>
-            <span class="detail-value">{{targetType}}</span>
+            <span class="detail-label">Employee</span>
+            <span class="detail-value">{{userName}}</span>
         </div>
         <div class="detail-item">
             <span class="detail-label">Achievement</span>
-            <span class="detail-value">{{achievementPercentage}}%</span>
+            <span class="detail-value">{{achievementPercentage}}% of {{targetType}} target reached</span>
         </div>
+        {{#if currentValue}}
         <div class="detail-item">
-            <span class="detail-label">Current Value</span>
-            <span class="detail-value">{{#if (eq targetType "Sales")}}ZAR {{formatNumber currentValue}}{{else}}{{currentValue}}{{/if}}</span>
+            <span class="detail-label">Current Achievement</span>
+            <span class="detail-value">{{#if (eq targetType "Sales")}}{{formatCurrency currentValue targetDetails.targetCurrency}}{{else}}{{currentValue}}{{/if}}</span>
         </div>
+        {{/if}}
+        {{#if targetValue}}
         <div class="detail-item">
-            <span class="detail-label">Target Value</span>
-            <span class="detail-value">{{#if (eq targetType "Sales")}}ZAR {{formatNumber targetValue}}{{else}}{{targetValue}}{{/if}}</span>
+            <span class="detail-label">Target Goal</span>
+            <span class="detail-value">{{#if (eq targetType "Sales")}}{{formatCurrency targetValue targetDetails.targetCurrency}}{{else}}{{targetValue}}{{/if}}</span>
         </div>
+        {{/if}}
         <div class="detail-item">
             <span class="detail-label">Achievement Date</span>
             <span class="detail-value">{{formatDate achievementDate}}</span>
@@ -69,30 +73,14 @@
 </div>
 {{/if}}
 
+<div class="celebration">
+    <h4>🎉 Outstanding Performance!</h4>
+    <p>Your dedication and hard work have paid off. This achievement is a testament to your commitment to excellence and customer service.</p>
+</div>
+
 <div class="cta-section">
     <a href="{{dashboardUrl}}" class="cta-button">View Your Dashboard</a>
 </div>
-
-{{#if mobileAppInfo}}
-<div class="info-card" style="background: linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%); border-left-color: #0ea5e9;">
-    <h4>📱 View on Mobile App</h4>
-    <p style="margin: 0; color: #0c4a6e; font-size: 14px;">
-        <strong>💡 Pro Tip:</strong> For the best experience tracking your achievements and targets, use our {{mobileAppInfo.appName}}. All your target updates, progress tracking, and achievements are instantly available on your mobile device.
-    </p>
-    <div style="margin-top: 12px; padding: 8px; background: rgba(255,255,255,0.8); border-radius: 6px;">
-        <p style="margin: 0; font-size: 13px; color: #0c4a6e;">
-            📲 <strong>Mobile Features:</strong>
-            {{#each mobileAppInfo.features}}
-            • {{this}}<br>
-            {{/each}}
-        </p>
-    </div>
-    <div style="margin-top: 12px; text-align: center;">
-        <a href="{{mobileAppInfo.appStoreUrl}}" style="background: #0ea5e9; color: white; padding: 8px 16px; text-decoration: none; border-radius: 20px; font-size: 12px; margin-right: 8px;">📱 iOS App</a>
-        <a href="{{mobileAppInfo.googlePlayUrl}}" style="background: #0ea5e9; color: white; padding: 8px 16px; text-decoration: none; border-radius: 20px; font-size: 12px;">🤖 Android App</a>
-    </div>
-</div>
-{{/if}}
 
 <div class="info-card">
     <h4>🌟 What This Achievement Means</h4>
@@ -112,13 +100,13 @@
         <li><strong>Share:</strong> Your achievement will be recognized in team communications</li>
         <li><strong>Continue:</strong> Maintain this momentum for the remainder of the period</li>
         <li><strong>Inspire:</strong> Support your teammates in achieving their targets</li>
-        <li><strong>Plan:</strong> Set new goals and challenges for continued growth</li>
+        <li><strong>Plan:</strong> Set new challenges for continued growth</li>
     </ol>
 </div>
 
 <div class="message">
     <p>Your achievement is a testament to your professionalism and dedication. Keep up the excellent work, and remember that your success contributes to the entire team's achievement.</p>
-    
+
     <p>We're proud to have you as part of our team and look forward to celebrating more of your successes!</p>
 </div>
 
@@ -127,4 +115,4 @@
     <p>Congratulations again,<br>The {{organizationName}} Team 🎉</p>
 </div>
 
-{{/base}} 
+{{/base}}

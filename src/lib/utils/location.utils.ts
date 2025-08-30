@@ -38,4 +38,14 @@ export class LocationUtils {
         }
         return `${distance.toFixed(2)} km`;
     }
+
+    // Format duration from minutes to human readable string
+    static formatDuration(minutes: number): string {
+        if (minutes < 60) {
+            return `${Math.round(minutes)}m`;
+        }
+        const hours = Math.floor(minutes / 60);
+        const remainingMinutes = Math.round(minutes % 60);
+        return `${hours}h${remainingMinutes > 0 ? ` ${remainingMinutes}m` : ''}`;
+    }
 } 

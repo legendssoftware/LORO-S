@@ -119,20 +119,24 @@ Submit a new approval request for organizational workflow processing with compre
                 value: {
                     title: 'Annual Leave Request - John Doe',
                     description: 'Requesting 10 days annual leave for family vacation to Europe',
-                    type: 'LEAVE_REQUEST',
-                    priority: 'MEDIUM',
+                    type: 'leave_request',
+                    priority: 'medium',
                     deadline: '2024-01-15',
                     entityType: 'leave_application',
                     entityId: 'LEAVE-2024-001',
                     supportingDocuments: [
                         {
-                            filename: 'flight-confirmation.pdf',
                             url: 'https://docs.loro.co.za/leaves/flight-conf-12345.pdf',
-                            description: 'Flight booking confirmation'
+                            name: 'Flight booking confirmation',
+                            type: 'application/pdf'
                         }
                     ],
-                    requestedAmount: null,
-                    requiresSignature: false
+                    amount: 0,
+                    requiresSignature: false,
+                    leaveType: 'annual_leave',
+                    startDate: '2024-01-20',
+                    endDate: '2024-01-30',
+                    totalDays: 10
                 }
             },
             purchaseOrder: {
@@ -141,40 +145,135 @@ Submit a new approval request for organizational workflow processing with compre
                 value: {
                     title: 'Dell Laptops Purchase - IT Department',
                     description: 'Purchase of 5 Dell Latitude laptops for new engineering team members',
-                    type: 'PURCHASE_ORDER',
-                    priority: 'HIGH',
+                    type: 'purchase_order',
+                    priority: 'high',
                     deadline: '2024-01-20',
                     entityType: 'purchase_order',
                     entityId: 'PO-2024-0156',
-                    requestedAmount: 15000.00,
+                    amount: 15000.00,
                     currency: 'ZAR',
                     supportingDocuments: [
                         {
-                            filename: 'laptop-quotation.pdf',
                             url: 'https://docs.loro.co.za/quotes/dell-quote-789.pdf',
-                            description: 'Official Dell quotation'
+                            name: 'Official Dell quotation',
+                            type: 'application/pdf'
                         }
                     ],
                     requiresSignature: true,
-                    approverUid: 45
+                    vendorName: 'Dell Technologies',
+                    quantity: 5,
+                    unitPrice: 3000.00
                 }
             },
-            budgetApproval: {
-                summary: '💰 Budget Approval Request',
+            expenseClaim: {
+                summary: '💳 Business Expense Claim',
+                description: 'Example of creating a business expense reimbursement request',
+                value: {
+                    title: 'Client Meeting Expenses - Sarah Johnson',
+                    description: 'Reimbursement for lunch and transportation expenses during client presentation',
+                    type: 'expense_claim',
+                    priority: 'medium',
+                    deadline: '2024-01-10',
+                    entityType: 'expense_claim',
+                    entityId: 'EXP-2024-0045',
+                    amount: 1250.00,
+                    currency: 'ZAR',
+                    supportingDocuments: [
+                        {
+                            url: 'https://docs.loro.co.za/expenses/receipts-jhb-meeting.pdf',
+                            name: 'Restaurant receipts',
+                            type: 'application/pdf'
+                        },
+                        {
+                            url: 'https://docs.loro.co.za/expenses/uber-receipts.pdf',
+                            name: 'Transportation receipts',
+                            type: 'application/pdf'
+                        }
+                    ],
+                    requiresSignature: false,
+                    expenseCategory: 'client_entertainment',
+                    expenseDate: '2023-12-15',
+                    clientName: 'ABC Manufacturing'
+                }
+            },
+            budgetRequest: {
+                summary: '💰 Budget Allocation Request',
                 description: 'Example of creating a budget approval request',
                 value: {
                     title: 'Q1 Marketing Budget Increase',
                     description: 'Requesting additional budget allocation for digital marketing campaigns in Q1 2024',
-                    type: 'BUDGET_APPROVAL',
-                    priority: 'URGENT',
+                    type: 'budget_request',
+                    priority: 'urgent',
                     deadline: '2023-12-31',
                     entityType: 'budget_request',
                     entityId: 'BUD-2024-Q1-001',
-                    requestedAmount: 50000.00,
+                    amount: 50000.00,
                     currency: 'ZAR',
+                    supportingDocuments: [
+                        {
+                            url: 'https://docs.loro.co.za/budgets/q1-marketing-plan.pdf',
+                            name: 'Q1 Marketing Plan',
+                            type: 'application/pdf'
+                        }
+                    ],
                     requiresSignature: true,
+                    department: 'Marketing',
+                    fiscalYear: '2024',
                     businessJustification: 'Projected 25% increase in lead generation and conversion rates',
                     expectedROI: 2.5
+                }
+            },
+            systemChange: {
+                summary: '🔧 System Configuration Change',
+                description: 'Example of requesting approval for system changes',
+                value: {
+                    title: 'Database Server Upgrade - Production Environment',
+                    description: 'Planned database server upgrade to improve performance and security',
+                    type: 'system_change',
+                    priority: 'urgent',
+                    deadline: '2024-01-03',
+                    entityType: 'system_change',
+                    entityId: 'SYS-2024-0012',
+                    amount: 0,
+                    supportingDocuments: [
+                        {
+                            url: 'https://docs.loro.co.za/systems/upgrade-plan.pdf',
+                            name: 'Upgrade Implementation Plan',
+                            type: 'application/pdf'
+                        }
+                    ],
+                    requiresSignature: true,
+                    changeType: 'infrastructure_upgrade',
+                    impactLevel: 'high',
+                    maintenanceWindow: '2024-01-06 02:00-04:00 UTC',
+                    businessImpact: '15-minute service interruption expected'
+                }
+            },
+            trainingRequest: {
+                summary: '📚 Training Course Request',
+                description: 'Example of requesting approval for training courses',
+                value: {
+                    title: 'AWS Cloud Certification Training',
+                    description: 'Advanced AWS cloud architecture and DevOps certification program',
+                    type: 'training_request',
+                    priority: 'medium',
+                    deadline: '2024-01-25',
+                    entityType: 'training_request',
+                    entityId: 'TRAIN-2024-0089',
+                    amount: 8500.00,
+                    currency: 'ZAR',
+                    supportingDocuments: [
+                        {
+                            url: 'https://docs.loro.co.za/training/aws-course-outline.pdf',
+                            name: 'Course Curriculum',
+                            type: 'application/pdf'
+                        }
+                    ],
+                    requiresSignature: false,
+                    courseName: 'AWS Solutions Architect Professional',
+                    trainingProvider: 'AWS Training',
+                    courseDuration: '5 days',
+                    businessJustification: 'Required for upcoming cloud migration project'
                 }
             }
         }

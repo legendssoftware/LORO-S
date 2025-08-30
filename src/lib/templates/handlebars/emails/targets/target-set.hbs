@@ -52,8 +52,29 @@
     <a href="{{dashboardUrl}}/targets" class="cta-button">View All Targets</a>
 </div>
 
+{{#if mobileAppInfo}}
+<div class="info-card" style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-left-color: #22c55e;">
+    <h4>📱 Track on Mobile App</h4>
+    <p style="margin: 0; color: #166534; font-size: 14px;">
+        <strong>📲 Mobile Access:</strong> Your new targets are now available in our {{mobileAppInfo.appName}}. Download the app to track progress, receive real-time notifications, and stay updated on your performance goals.
+    </p>
+    <div style="margin-top: 12px; padding: 8px; background: rgba(255,255,255,0.8); border-radius: 6px;">
+        <p style="margin: 0; font-size: 13px; color: #166534;">
+            🎯 <strong>Mobile Features:</strong>
+            {{#each mobileAppInfo.features}}
+            • {{this}}<br>
+            {{/each}}
+        </p>
+    </div>
+    <div style="margin-top: 12px; text-align: center;">
+        <a href="{{mobileAppInfo.appStoreUrl}}" style="background: #22c55e; color: white; padding: 8px 16px; text-decoration: none; border-radius: 20px; font-size: 12px; margin-right: 8px;">📱 iOS App</a>
+        <a href="{{mobileAppInfo.googlePlayUrl}}" style="background: #22c55e; color: white; padding: 8px 16px; text-decoration: none; border-radius: 20px; font-size: 12px;">🤖 Android App</a>
+    </div>
+</div>
+{{/if}}
+
 <div class="message">
-    <p>You can track your progress and view all your targets in the dashboard. If you have any questions about your targets, please contact your manager or our support team.</p>
+    <p>You can track your progress and view all your targets in the dashboard or mobile app. If you have any questions about your targets, please contact your manager or our support team.</p>
 </div>
 
 {{/base}} 

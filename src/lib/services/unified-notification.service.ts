@@ -410,6 +410,18 @@ export class UnifiedNotificationService {
 			},
 		],
 		[
+			NotificationEvent.USER_TARGET_CONTRIBUTION_PROGRESS,
+			{
+				event: NotificationEvent.USER_TARGET_CONTRIBUTION_PROGRESS,
+				title: '🚀 Great Progress Update!',
+				messageTemplate: 'Your contributions have increased by {totalProgressImprovement}%! Keep the momentum going!',
+				priority: NotificationPriority.HIGH,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/targets', action: 'view_targets' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
 			NotificationEvent.USER_ROLE_CHANGED,
 			{
 				event: NotificationEvent.USER_ROLE_CHANGED,
