@@ -112,20 +112,17 @@ export class TrackingService {
 		try {
 			// Validate input data
 			this.logger.debug('Validating tracking data');
-			    if (!createTrackingDto.owner) {
+			if (!createTrackingDto.owner) {
 				throw new BadRequestException('User ID is required for tracking');
 			}
 
-			if (!createTrackingDto.latitude || !createTrackingDto.longitude) {
-				throw new BadRequestException('Latitude and longitude are required');
-			}
-
-			// Extract coordinates from the DTO
+			// Extract coordinates from the DTO - handle both formats
 			let latitude = createTrackingDto.latitude;
 			let longitude = createTrackingDto.longitude;
 
-			// If the data comes in the new format with coords object
-			if (!latitude && !longitude && createTrackingDto['coords']) {
+			// If the data comes in the new format with coords object (from mobile app)
+			if ((!latitude || !longitude) && createTrackingDto['coords']) {
+				this.logger.debug('Extracting coordinates from coords object');
 				const coords = createTrackingDto['coords'] as any;
 				latitude = coords.latitude;
 				longitude = coords.longitude;
@@ -140,6 +137,17 @@ export class TrackingService {
 				if (coords.altitudeAccuracy !== undefined) createTrackingDto.altitudeAccuracy = coords.altitudeAccuracy;
 				if (coords.heading !== undefined) createTrackingDto.heading = coords.heading;
 				if (coords.speed !== undefined) createTrackingDto.speed = coords.speed;
+			}
+
+			// Now validate that we have coordinates after extraction
+			if (!latitude || !longitude) {
+				this.logger.error('Missing coordinates after extraction', {
+					hasLatitude: !!latitude,
+					hasLongitude: !!longitude,
+					hasCoords: !!createTrackingDto['coords'],
+					dtoKeys: Object.keys(createTrackingDto)
+				});
+				throw new BadRequestException('Latitude and longitude are required');
 			}
 
 			// Validate coordinates are within reasonable ranges

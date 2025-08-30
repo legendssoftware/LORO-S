@@ -439,11 +439,26 @@ export class ReportsService implements OnModuleInit {
 				return;
 			}
 
-			// Ensure emailData has the correct format
-			if (!emailData || !emailData.name || !emailData.date || !emailData.metrics) {
-				this.logger.error(`Invalid email data format for user ${userId}`);
-				throw new Error('Invalid email data format');
-			}
+					// Ensure emailData has the correct format
+		this.logger.debug(`Email data received for user ${userId}:`, {
+			hasEmailData: !!emailData,
+			emailDataType: typeof emailData,
+			emailDataKeys: emailData ? Object.keys(emailData) : [],
+			hasName: emailData && !!emailData.name,
+			hasDate: emailData && !!emailData.date,
+			hasMetrics: emailData && !!emailData.metrics,
+			emailData: emailData
+		});
+		
+		if (!emailData || !emailData.name || !emailData.date || !emailData.metrics) {
+			this.logger.error(`Invalid email data format for user ${userId}`, {
+				hasEmailData: !!emailData,
+				hasName: emailData && !!emailData.name,
+				hasDate: emailData && !!emailData.date,
+				hasMetrics: emailData && !!emailData.metrics
+			});
+			throw new Error('Invalid email data format');
+		}
 
 			// Validate required fields for the email template
 			if (!emailData.metrics.attendance) {
