@@ -1471,6 +1471,44 @@ export interface UserTargetERPUpdateConfirmationEmailData extends BaseEmailData 
 	supportEmail: string;
 }
 
+export interface UserTargetContributionProgressEmailData extends BaseEmailData {
+	userName: string;
+	userEmail: string;
+	updateDate: string;
+	updateSource?: string;
+	contributionProgress: Array<{
+		type: string;
+		previousValue: number;
+		newValue: number;
+		increase: number;
+		increasePercentage: number;
+		targetValue: number;
+		progressPercentage: number;
+		currency?: string;
+		formattedPrevious?: string;
+		formattedNew?: string;
+		formattedIncrease?: string;
+		formattedTarget?: string;
+	}>;
+	totalProgressImprovement: number;
+	organizationName: string;
+	branchName?: string;
+	periodStartDate?: string;
+	periodEndDate?: string;
+	daysRemaining?: number;
+	motivationalMessage: string;
+	encouragementTips: string[];
+	nextMilestone?: {
+		type: string;
+		milestone: string;
+		percentageToReach: number;
+		estimatedDaysToReach?: number;
+	};
+	performanceTrend: 'excellent' | 'good' | 'steady' | 'improving';
+	dashboardUrl: string;
+	supportEmail: string;
+}
+
 export interface UserTargetPeriodSummaryEmailData extends BaseEmailData {
 	userName: string;
 	userEmail: string;
@@ -1960,6 +1998,7 @@ export interface EmailDataMap {
 	[EmailType.USER_TARGET_DEADLINE_REMINDER]: UserTargetDeadlineReminderEmailData;
 	[EmailType.USER_TARGET_PERFORMANCE_ALERT]: UserTargetPerformanceAlertEmailData;
 	[EmailType.USER_TARGET_ERP_UPDATE_CONFIRMATION]: UserTargetERPUpdateConfirmationEmailData;
+	[EmailType.USER_TARGET_CONTRIBUTION_PROGRESS]: UserTargetContributionProgressEmailData;
 	[EmailType.USER_TARGET_PERIOD_SUMMARY]: UserTargetPeriodSummaryEmailData;
 	// Payslip email mappings
 	[EmailType.PAYSLIP_AVAILABLE]: PayslipAvailableEmailData;

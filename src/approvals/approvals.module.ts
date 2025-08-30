@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { CacheModule } from '@nestjs/cache-manager';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ApprovalsService } from './approvals.service';
 import { ApprovalsController } from './approvals.controller';
 import { ApprovalsWebSocketService } from './approvals-websocket.service';
@@ -27,6 +29,20 @@ import { ShopModule } from '../shop/shop.module';
       Organisation,
       Branch
     ]),
+    CacheModule.registerAsync({
+      imports: [ConfigModule],
+      useFactory: async (configService: ConfigService) => {
+        const ttl = Math.max(0, parseInt(configService.get('CACHE_EXPIRATION_TIME', '300'), 10));
+        const max = Math.max(0, parseInt(configService.get('CACHE_MAX_ITEMS', '100'), 10));
+
+        return {
+          ttl,
+          max,
+        };
+      },
+      inject: [ConfigService],
+    }),
+    ConfigModule,
     EventEmitterModule,
     UserModule,
     OrganisationModule,

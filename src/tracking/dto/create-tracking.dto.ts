@@ -12,22 +12,22 @@ export class CreateTrackingDto {
     owner: number;
 
     @ApiProperty({
-        description: 'Latitude coordinate',
+        description: 'Latitude coordinate (can be at root level or inside coords object)',
         example: -33.9249,
-        required: true
+        required: false
     })
-    @IsNotEmpty()
+    @IsOptional()
     @IsNumber()
-    latitude: number;
+    latitude?: number;
 
     @ApiProperty({
-        description: 'Longitude coordinate',
+        description: 'Longitude coordinate (can be at root level or inside coords object)',
         example: 18.4241,
-        required: true
+        required: false
     })
-    @IsNotEmpty()
+    @IsOptional()
     @IsNumber()
-    longitude: number;
+    longitude?: number;
 
     @ApiProperty({
         description: 'Physical address of the location (optional)',
@@ -199,4 +199,29 @@ export class CreateTrackingDto {
     @IsOptional()
     @IsObject()
     network?: Record<string, any>;
+
+    @ApiProperty({
+        description: 'Coordinate data (alternative format from mobile apps)',
+        example: {
+            latitude: -33.9249,
+            longitude: 18.4241,
+            accuracy: 5,
+            altitude: 100.2,
+            altitudeAccuracy: -1,
+            heading: -1,
+            speed: -1
+        },
+        required: false
+    })
+    @IsOptional()
+    @IsObject()
+    coords?: {
+        latitude: number;
+        longitude: number;
+        accuracy?: number;
+        altitude?: number;
+        altitudeAccuracy?: number;
+        heading?: number;
+        speed?: number;
+    };
 }

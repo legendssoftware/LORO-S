@@ -108,6 +108,28 @@
     <a href="{{dashboardUrl}}" class="cta-button">View Your Performance Dashboard</a>
 </div>
 
+{{#if mobileAppInfo}}
+<!-- Mobile App Access -->
+<div class="info-card" style="background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); border-left-color: #3b82f6;">
+    <h4 style="color: #1e40af; margin-bottom: 16px;">📱 Mobile Application Access</h4>
+    <p style="color: #1e40af; font-size: 15px; line-height: 1.6; margin-bottom: 12px;">
+        <strong>💡 Pro Tip:</strong> For the optimal experience in tracking your achievements and performance metrics, utilize our {{mobileAppInfo.appName}}. All target achievements and progress updates are instantly synchronized across all your devices.
+    </p>
+    <div style="background: rgba(255,255,255,0.9); padding: 12px; border-radius: 8px; border-left: 3px solid #3b82f6;">
+        <p style="margin: 0; font-size: 14px; color: #1e40af; line-height: 1.5;">
+            📲 <strong>Mobile Features Include:</strong><br>
+            {{#each mobileAppInfo.features}}
+            • {{this}}<br>
+            {{/each}}
+        </p>
+    </div>
+    <div style="margin-top: 12px; text-align: center;">
+        <a href="{{mobileAppInfo.appStoreUrl}}" style="background: #3b82f6; color: white; padding: 8px 16px; text-decoration: none; border-radius: 20px; font-size: 12px; margin-right: 8px;">📱 iOS App</a>
+        <a href="{{mobileAppInfo.googlePlayUrl}}" style="background: #3b82f6; color: white; padding: 8px 16px; text-decoration: none; border-radius: 20px; font-size: 12px;">🤖 Android App</a>
+    </div>
+</div>
+{{/if}}
+
 <!-- Personal Message -->
 <div class="message">
     <p style="font-size: 16px; color: #374151; line-height: 1.6; margin-top: 30px;">

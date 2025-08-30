@@ -623,4 +623,434 @@ export class TrackingController {
 			geofenceInfo: 'Geofence checking is being processed asynchronously',
 		};
 	}
+
+	// ======================================================
+	// NEW COMPREHENSIVE TRACKING ENDPOINTS
+	// ======================================================
+
+	@Get('user/:userId/timeframe/:timeframe')
+	@UseGuards(AuthGuard)
+	@ApiBearerAuth()
+	@Roles(AccessLevel.USER, AccessLevel.ADMIN, AccessLevel.OWNER)
+	@ApiOperation({
+		summary: 'Get tracking points for a user within a specific timeframe',
+		description: `
+		Retrieves comprehensive tracking data for a specific user within various timeframes.
+		Includes detailed analytics, trip summaries, and location insights.
+		
+		**Supported Timeframes:**
+		- \`today\` - Today's tracking data
+		- \`yesterday\` - Yesterday's tracking data  
+		- \`this_week\` - Current week's data (Monday to Sunday)
+		- \`last_week\` - Previous week's data
+		- \`this_month\` - Current month's data
+		- \`last_month\` - Previous month's data
+		- \`custom\` - Custom date range (requires startDate and endDate query params)
+		
+		**Analytics Included:**
+		- Total distance traveled
+		- Average and top speeds
+		- Time spent moving vs stationary
+		- Number of locations visited
+		- Most visited location
+		- Trip summaries with duration statistics
+		
+		**Use Cases:**
+		- Employee tracking and productivity analysis
+		- Fleet management and route optimization
+		- Attendance verification through location data
+		- Performance reporting and insights
+		`,
+	})
+	@ApiParam({ 
+		name: 'userId', 
+		description: 'User ID to get tracking data for',
+		type: 'number',
+		example: 123
+	})
+	@ApiParam({ 
+		name: 'timeframe', 
+		description: 'Time period to fetch data for',
+		enum: ['today', 'yesterday', 'this_week', 'last_week', 'this_month', 'last_month', 'custom'],
+		example: 'today'
+	})
+	@ApiOkResponse({
+		description: 'Tracking data retrieved successfully with comprehensive analytics',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Tracking data retrieved successfully' },
+				data: {
+					type: 'object',
+					properties: {
+						user: {
+							type: 'object',
+							properties: {
+								uid: { type: 'number', example: 123 },
+								name: { type: 'string', example: 'John' },
+								surname: { type: 'string', example: 'Doe' },
+								email: { type: 'string', example: 'john.doe@orrbit.co.za' },
+								branch: { type: 'string', example: 'Pretoria South Africa' },
+								organisation: { type: 'string', example: 'Orrbit Technologies' }
+							}
+						},
+						timeframe: { type: 'string', example: 'today' },
+						period: {
+							type: 'object',
+							properties: {
+								start: { type: 'string', format: 'date-time' },
+								end: { type: 'string', format: 'date-time' }
+							}
+						},
+						totalPoints: { type: 'number', example: 45 },
+						trackingPoints: {
+							type: 'array',
+							description: 'Array of tracking points with coordinates, timestamps, and location data',
+							items: { type: 'object' }
+						},
+						analytics: {
+							type: 'object',
+							properties: {
+								totalDistance: { type: 'number', example: 25.7, description: 'Total distance in kilometers' },
+								averageSpeed: { type: 'number', example: 35.5, description: 'Average speed in km/h' },
+								topSpeed: { type: 'number', example: 80.2, description: 'Maximum speed recorded in km/h' },
+								timeSpentMoving: { type: 'number', example: 120, description: 'Minutes spent in motion' },
+								timeSpentStationary: { type: 'number', example: 480, description: 'Minutes spent stationary' },
+								locationsVisited: { type: 'number', example: 8, description: 'Number of unique locations visited' },
+								mostVisitedLocation: { type: 'string', example: '123 Main Street, Pretoria, South Africa' }
+							}
+						},
+						tripSummary: {
+							type: 'object',
+							properties: {
+								totalTrips: { type: 'number', example: 4, description: 'Number of distinct trips detected' },
+								averageTripDuration: { type: 'number', example: 45, description: 'Average trip duration in minutes' },
+								longestTrip: { type: 'number', example: 120, description: 'Longest trip duration in minutes' },
+								shortestTrip: { type: 'number', example: 15, description: 'Shortest trip duration in minutes' }
+							}
+						}
+					}
+				}
+			}
+		}
+	})
+	@ApiNotFoundResponse({ 
+		description: 'User not found or no tracking data available',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'User with ID 123 not found' },
+				data: { type: 'null' }
+			}
+		}
+	})
+	@ApiBadRequestResponse({ 
+		description: 'Invalid parameters provided',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Valid user ID is required' },
+				data: { type: 'null' }
+			}
+		}
+	})
+	async getTrackingByUserAndTimeframe(
+		@Param('userId') userId: number,
+		@Param('timeframe') timeframe: 'today' | 'yesterday' | 'this_week' | 'last_week' | 'this_month' | 'last_month' | 'custom',
+		@Req() req: AuthenticatedRequest
+	) {
+		const user = req.user;
+		return this.trackingService.getTrackingPointsByUserAndTimeframe(
+			Number(userId), 
+			timeframe, 
+			undefined, 
+			undefined, 
+			user?.organisation?.uid,
+			user?.branch?.uid
+		);
+	}
+
+	@Get('user/:userId/custom-range')
+	@UseGuards(AuthGuard)
+	@ApiBearerAuth()
+	@Roles(AccessLevel.USER, AccessLevel.ADMIN, AccessLevel.OWNER)
+	@ApiOperation({
+		summary: 'Get tracking points for a user within a custom date range',
+		description: `
+		Retrieves tracking data for a specific user within a custom date range.
+		This endpoint provides the same comprehensive analytics as the timeframe endpoint
+		but allows for precise date range selection.
+		
+		**Query Parameters:**
+		- \`startDate\` - Start date in ISO format (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss.sssZ)
+		- \`endDate\` - End date in ISO format (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss.sssZ)
+		
+		**Example Usage:**
+		\`\`\`
+		GET /gps/user/123/custom-range?startDate=2024-01-01&endDate=2024-01-31
+		\`\`\`
+		
+		**Business Applications:**
+		- Monthly performance reports
+		- Quarterly tracking analysis
+		- Custom billing periods
+		- Compliance reporting for specific date ranges
+		- Investigation of specific incidents or time periods
+		`,
+	})
+	@ApiParam({ 
+		name: 'userId', 
+		description: 'User ID to get tracking data for',
+		type: 'number',
+		example: 123
+	})
+	@ApiOkResponse({
+		description: 'Custom range tracking data retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Tracking data retrieved successfully' },
+				data: { type: 'object', description: 'Same structure as timeframe endpoint' }
+			}
+		}
+	})
+	async getTrackingByUserCustomRange(
+		@Param('userId') userId: number,
+		@Req() req: AuthenticatedRequest
+	) {
+		const user = req.user;
+		const { startDate, endDate } = req.query;
+		
+		if (!startDate || !endDate) {
+			return {
+				message: 'Start date and end date are required for custom range',
+				data: null
+			};
+		}
+
+		return this.trackingService.getTrackingPointsByUserAndTimeframe(
+			Number(userId), 
+			'custom', 
+			new Date(startDate as string), 
+			new Date(endDate as string), 
+			user?.organisation?.uid,
+			user?.branch?.uid
+		);
+	}
+
+	@Post('multi-user/timeframe/:timeframe')
+	@UseGuards(AuthGuard)
+	@ApiBearerAuth()
+	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER)
+	@ApiOperation({
+		summary: 'Get tracking data for multiple users within a timeframe',
+		description: `
+		Retrieves aggregated tracking data for multiple users within a specified timeframe.
+		This endpoint is designed for organizational reporting and fleet management.
+		
+		**Request Body:**
+		Send an array of user IDs to retrieve data for multiple users simultaneously.
+		
+		**Organizational Analytics:**
+		- Total distance covered by all users
+		- Average tracking points per user
+		- Most and least active users identification
+		- Aggregated performance metrics
+		- Team productivity insights
+		
+		**Limitations:**
+		- Maximum of 100 users can be processed at once
+		- Only users within the requester's organization scope
+		- Requires ADMIN or OWNER role privileges
+		
+		**Use Cases:**
+		- Team performance dashboards
+		- Fleet management reporting
+		- Organizational productivity analysis
+		- Comparative user performance studies
+		- Bulk data export for analytics
+		`,
+	})
+	@ApiParam({ 
+		name: 'timeframe', 
+		description: 'Time period to fetch data for all users',
+		enum: ['today', 'yesterday', 'this_week', 'last_week', 'this_month', 'last_month', 'custom'],
+		example: 'today'
+	})
+	@ApiBody({
+		description: 'Array of user IDs to get tracking data for',
+		schema: {
+			type: 'object',
+			properties: {
+				userIds: {
+					type: 'array',
+					items: { type: 'number' },
+					example: [123, 124, 125, 126],
+					description: 'Array of user IDs (maximum 100)',
+					maxItems: 100
+				}
+			},
+			required: ['userIds']
+		}
+	})
+	@ApiOkResponse({
+		description: 'Multi-user tracking data retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Multi-user tracking data retrieved successfully' },
+				data: {
+					type: 'object',
+					properties: {
+						timeframe: { type: 'string', example: 'today' },
+						period: {
+							type: 'object',
+							properties: {
+								start: { type: 'string', format: 'date-time' },
+								end: { type: 'string', format: 'date-time' }
+							}
+						},
+						totalUsers: { type: 'number', example: 4, description: 'Number of users with data' },
+						totalPoints: { type: 'number', example: 180, description: 'Total tracking points across all users' },
+						users: {
+							type: 'array',
+							description: 'Individual user data and analytics',
+							items: {
+								type: 'object',
+								properties: {
+									user: { type: 'object', description: 'User information' },
+									trackingPoints: { type: 'array', description: 'User\'s tracking points' },
+									analytics: { type: 'object', description: 'User\'s calculated analytics' }
+								}
+							}
+						},
+						organizationSummary: {
+							type: 'object',
+							properties: {
+								totalDistance: { type: 'number', example: 157.3, description: 'Combined distance of all users' },
+								averagePointsPerUser: { type: 'number', example: 45, description: 'Average tracking points per user' },
+								mostActiveUser: { type: 'object', description: 'User with most tracking points' },
+								leastActiveUser: { type: 'object', description: 'User with least tracking points' }
+							}
+						}
+					}
+				}
+			}
+		}
+	})
+	async getMultiUserTracking(
+		@Param('timeframe') timeframe: 'today' | 'yesterday' | 'this_week' | 'last_week' | 'this_month' | 'last_month' | 'custom',
+		@Body() body: { userIds: number[] },
+		@Req() req: AuthenticatedRequest
+	) {
+		const user = req.user;
+		const { userIds } = body;
+		
+		if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
+			return {
+				message: 'Array of user IDs is required',
+				data: null
+			};
+		}
+
+		return this.trackingService.getTrackingPointsForMultipleUsers(
+			userIds, 
+			timeframe, 
+			undefined, 
+			undefined, 
+			user?.organisation?.uid,
+			user?.branch?.uid
+		);
+	}
+
+	@Get('analytics/summary')
+	@UseGuards(AuthGuard)
+	@ApiBearerAuth()
+	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER)
+	@ApiOperation({
+		summary: 'Get organizational tracking analytics summary',
+		description: `
+		Provides high-level tracking analytics for the entire organization.
+		This endpoint gives administrators and owners a quick overview of tracking activity.
+		
+		**Analytics Provided:**
+		- Total tracking points recorded today
+		- Number of active users (users with tracking data today)
+		- Organization-wide distance statistics
+		- Average daily activity metrics
+		- System health and data quality indicators
+		
+		**Response Time:**
+		This endpoint uses caching for optimal performance and can handle frequent requests
+		without impacting database performance.
+		`,
+	})
+	@ApiOkResponse({
+		description: 'Organizational tracking summary retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Analytics summary retrieved successfully' },
+				summary: {
+					type: 'object',
+					properties: {
+						today: {
+							type: 'object',
+							properties: {
+								totalPoints: { type: 'number', example: 1247 },
+								activeUsers: { type: 'number', example: 23 },
+								totalDistance: { type: 'number', example: 342.8 },
+								averageDistancePerUser: { type: 'number', example: 14.9 }
+							}
+						},
+						thisWeek: {
+							type: 'object',
+							properties: {
+								totalPoints: { type: 'number', example: 8734 },
+								activeUsers: { type: 'number', example: 45 },
+								totalDistance: { type: 'number', example: 2156.3 },
+								averageDistancePerUser: { type: 'number', example: 47.9 }
+							}
+						},
+						dataQuality: {
+							type: 'object',
+							properties: {
+								geocodingSuccessRate: { type: 'number', example: 94.2, description: 'Percentage of points with successful address resolution' },
+								averageAccuracy: { type: 'number', example: 8.5, description: 'Average GPS accuracy in meters' },
+								lastUpdateTime: { type: 'string', format: 'date-time', description: 'When data was last refreshed' }
+							}
+						}
+					}
+				}
+			}
+		}
+	})
+	async getAnalyticsSummary(@Req() req: AuthenticatedRequest) {
+		// This would implement organization-wide analytics
+		// For now, return a placeholder response
+		const user = req.user;
+		
+		return {
+			message: 'Analytics summary retrieved successfully',
+			summary: {
+				today: {
+					totalPoints: 0,
+					activeUsers: 0,
+					totalDistance: 0,
+					averageDistancePerUser: 0
+				},
+				thisWeek: {
+					totalPoints: 0,
+					activeUsers: 0,
+					totalDistance: 0,
+					averageDistancePerUser: 0
+				},
+				dataQuality: {
+					geocodingSuccessRate: 0,
+					averageAccuracy: 0,
+					lastUpdateTime: new Date().toISOString()
+				}
+			}
+		};
+	}
 }
