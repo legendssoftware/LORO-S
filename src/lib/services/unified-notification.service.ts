@@ -645,6 +645,156 @@ export class UnifiedNotificationService {
 				pushSettings: { sound: 'default', badge: 1 },
 			},
 		],
+
+		// Auth Templates
+		[
+			NotificationEvent.AUTH_LOGIN_SUCCESS,
+			{
+				event: NotificationEvent.AUTH_LOGIN_SUCCESS,
+				title: '✅ Welcome Back!',
+				messageTemplate: 'Successfully signed in at {loginTime} on {loginDate}',
+				priority: NotificationPriority.LOW,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/dashboard', action: 'view_dashboard' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.AUTH_LOGIN_FAILED,
+			{
+				event: NotificationEvent.AUTH_LOGIN_FAILED,
+				title: '🚨 Login Attempt Failed',
+				messageTemplate: 'Failed login attempt detected at {attemptTime} on {attemptDate}. If this wasn\'t you, please secure your account immediately.',
+				priority: NotificationPriority.HIGH,
+				channel: NotificationChannel.IMPORTANT,
+				defaultData: { screen: '/security', action: 'view_security' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.AUTH_PASSWORD_SET_SUCCESS,
+			{
+				event: NotificationEvent.AUTH_PASSWORD_SET_SUCCESS,
+				title: '🎉 Welcome to Loro!',
+				messageTemplate: 'Your password has been set successfully. Your account is now ready to use!',
+				priority: NotificationPriority.NORMAL,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/dashboard', action: 'view_dashboard' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.AUTH_PASSWORD_RESET_REQUEST,
+			{
+				event: NotificationEvent.AUTH_PASSWORD_RESET_REQUEST,
+				title: '🔐 Password Reset Requested',
+				messageTemplate: 'A password reset was requested for your account at {requestTime}. Check your email for instructions.',
+				priority: NotificationPriority.HIGH,
+				channel: NotificationChannel.IMPORTANT,
+				defaultData: { screen: '/security', action: 'view_security' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.AUTH_PASSWORD_CHANGED,
+			{
+				event: NotificationEvent.AUTH_PASSWORD_CHANGED,
+				title: '✅ Password Changed Successfully',
+				messageTemplate: 'Your password was successfully changed on {changeDate} at {changeTime}.',
+				priority: NotificationPriority.HIGH,
+				channel: NotificationChannel.IMPORTANT,
+				defaultData: { screen: '/security', action: 'view_security' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.AUTH_TOKEN_EXPIRED,
+			{
+				event: NotificationEvent.AUTH_TOKEN_EXPIRED,
+				title: '⏰ Session Expired',
+				messageTemplate: 'Your session has expired. Please sign in again to continue.',
+				priority: NotificationPriority.NORMAL,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/signin', action: 'sign_in' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+
+		// Additional User Templates  
+		[
+			NotificationEvent.USER_TARGET_SET,
+			{
+				event: NotificationEvent.USER_TARGET_SET,
+				title: '🎯 New Target Set',
+				messageTemplate: 'Your new {targetType} target has been set: {targetValue}. Let\'s achieve great things together!',
+				priority: NotificationPriority.NORMAL,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/targets', action: 'view_targets' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.USER_TARGET_UPDATED,
+			{
+				event: NotificationEvent.USER_TARGET_UPDATED,
+				title: '📈 Target Updated',
+				messageTemplate: 'Your {targetType} target has been updated to {newTargetValue}. Keep pushing towards your goals!',
+				priority: NotificationPriority.NORMAL,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/targets', action: 'view_targets' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.USER_TARGET_MILESTONE,
+			{
+				event: NotificationEvent.USER_TARGET_MILESTONE,
+				title: '🏆 Milestone Reached!',
+				messageTemplate: 'Congratulations! You\'ve reached {milestonePercentage}% of your {targetType} target. You\'re doing amazing!',
+				priority: NotificationPriority.HIGH,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/targets', action: 'view_targets' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+
+		// Additional Attendance Templates
+		[
+			NotificationEvent.ATTENDANCE_OVERTIME_REMINDER,
+			{
+				event: NotificationEvent.ATTENDANCE_OVERTIME_REMINDER,
+				title: '⏱️ Overtime Alert',
+				messageTemplate: 'You\'ve been working for {overtimeDuration} beyond your scheduled hours. Great dedication!',
+				priority: NotificationPriority.NORMAL,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/attendance', action: 'view_attendance' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.ATTENDANCE_MISSED_SHIFT_ALERT,
+			{
+				event: NotificationEvent.ATTENDANCE_MISSED_SHIFT_ALERT,
+				title: '❌ Missed Shift',
+				messageTemplate: 'You missed your scheduled shift that was supposed to start at {shiftTime}. Please contact your supervisor.',
+				priority: NotificationPriority.HIGH,
+				channel: NotificationChannel.IMPORTANT,
+				defaultData: { screen: '/attendance', action: 'view_attendance' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.ATTENDANCE_LATE_SHIFT_ALERT,
+			{
+				event: NotificationEvent.ATTENDANCE_LATE_SHIFT_ALERT,
+				title: '⏰ Late Check-In',
+				messageTemplate: 'You checked in {lateMinutes} minutes late for your shift. Please try to be punctual.',
+				priority: NotificationPriority.NORMAL,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/attendance', action: 'view_attendance' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
 	]);
 
 	constructor(
