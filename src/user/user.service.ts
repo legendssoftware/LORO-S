@@ -1042,19 +1042,22 @@ export class UserService {
 
 			// Build where conditions
 			const whereConditions: any = {
-				uid: searchParameter,
+				uid: Number(searchParameter), // 🔧 FIX: Ensure uid is a number
 				isDeleted: false,
 			};
 
 			// Add organization filter if provided
 			if (orgId) {
-				whereConditions.organisation = { uid: orgId };
+				whereConditions.organisation = { uid: Number(orgId) }; // 🔧 FIX: Ensure orgId is a number
 			}
 
 			// Add branch filter if provided
 			if (branchId) {
-				whereConditions.branch = { uid: branchId };
+				whereConditions.branch = { uid: Number(branchId) }; // 🔧 FIX: Ensure branchId is a number
 			}
+
+			// 🔍 DEBUG: Log the exact query conditions (temporary)
+			this.logger.debug(`Database Query Conditions:`, JSON.stringify(whereConditions, null, 2));
 
 			const user = await this.userRepository.findOne({
 				where: whereConditions,
@@ -1062,7 +1065,7 @@ export class UserService {
 			});
 
 			if (!user) {
-				this.logger.warn(`User ${searchParameter} not found in database`);
+				this.logger.warn(`User ${searchParameter} not found with applied filters (orgId: ${orgId}, branchId: ${branchId})`);
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
 			}
 

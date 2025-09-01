@@ -1210,10 +1210,11 @@ Retrieves detailed information about a specific user by their unique reference i
 - **Activity Metrics**: Login frequency, system usage, performance
 
 ## 🔒 **Security Features**
+- **Role-Based Access**: Elevated users (ADMIN, OWNER, MANAGER, DEVELOPER, SUPPORT) can access all users
+- **Organization Filtering**: Regular users can only access profiles in their organization/branch
 - **Permission Validation**: Only authorized users can access profiles
 - **Data Masking**: Sensitive information is filtered based on access level
 - **Audit Logging**: All profile access is logged for security
-- **Branch Filtering**: Users can only access profiles in their organization
 - **Real-time Validation**: User status and permissions are checked
 
 ## 📈 **Business Intelligence**
@@ -1415,7 +1416,40 @@ Retrieves detailed information about a specific user by their unique reference i
 	findOne(@Param('ref') ref: number, @Req() req: AuthenticatedRequest): Promise<{ user: Omit<User, 'password'> | null; message: string }> {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
-		return this.userService.findOne(ref, orgId, branchId);
+		
+		// 🔒 Role-based access control: Elevated users can see all users
+		const isElevatedUser = [
+			AccessLevel.ADMIN, 
+			AccessLevel.OWNER, 
+			AccessLevel.MANAGER,
+			AccessLevel.DEVELOPER,
+			AccessLevel.SUPPORT
+		].includes(req.user?.accessLevel);
+		
+		// 🔍 DEBUG: Log the access decision
+		console.log('🔍 DEBUG findOne route:', {
+			searchingForUser: ref,
+			requestingUser: {
+				uid: req.user?.uid,
+				accessLevel: req.user?.accessLevel,
+				isElevatedUser
+			},
+			filters: {
+				willApplyOrgFilter: !isElevatedUser,
+				orgId: isElevatedUser ? 'BYPASSED' : orgId,
+				branchId: isElevatedUser ? 'BYPASSED' : branchId
+			}
+		});
+		
+		if (isElevatedUser) {
+			// Elevated users can see all users (no org/branch filtering)
+			console.log('✅ Elevated user - bypassing org/branch filters');
+			return this.userService.findOne(ref);
+		} else {
+			// Regular users only see users from their org/branch
+			console.log('🔒 Regular user - applying org/branch filters');
+			return this.userService.findOne(ref, orgId, branchId);
+		}
 	}
 
 	@Patch(':ref')
