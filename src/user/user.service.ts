@@ -3020,28 +3020,59 @@ export class UserService {
 		// 🔧 Handle optional source field
 		const sourceSystem = externalUpdate.source || 'UNKNOWN_SOURCE';
 		
-		this.logger.log(`Updating user targets from ERP for user: ${userId}, source: ${sourceSystem}`);
+		this.logger.log(`🔄 [ERP_UPDATE] Starting ERP target update for user: ${userId}, source: ${sourceSystem}`);
+		
+		// 📋 Log detailed incoming payload for debugging
+		this.logger.debug(`📥 [ERP_UPDATE] Incoming payload details:`, {
+			userId,
+			sourceSystem,
+			updateMode: externalUpdate.updateMode,
+			transactionId: externalUpdate.transactionId,
+			orgId,
+			branchId,
+			updates: externalUpdate.updates,
+			metadata: externalUpdate.metadata,
+			saleDetails: externalUpdate.saleDetails ? `${externalUpdate.saleDetails.length} sale details` : 'No sale details',
+			timestamp: new Date().toISOString()
+		});
 
 		try {
 			// Validate external update data
+			this.logger.debug(`🔍 [ERP_UPDATE] Starting validation for user: ${userId}, transaction: ${externalUpdate.transactionId}`);
 			const validationResult = await this.validateExternalTargetUpdate(userId, externalUpdate, orgId, branchId);
+			
 			if (!validationResult.isValid) {
+				this.logger.error(`❌ [ERP_UPDATE] Validation failed for user: ${userId}, transaction: ${externalUpdate.transactionId}`, {
+					errors: validationResult.errors,
+					updateMode: externalUpdate.updateMode,
+					sourceSystem,
+					updates: externalUpdate.updates
+				});
 				return {
 					message: 'Validation failed',
 					validationErrors: validationResult.errors,
 				};
 			}
+			
+			this.logger.debug(`✅ [ERP_UPDATE] Validation passed for user: ${userId}, transaction: ${externalUpdate.transactionId}`);
 
 			// Implement optimistic locking with retry mechanism
 			const maxRetries = 3;
 			let retryCount = 0;
 			let lastError: any;
+			
+			this.logger.debug(`🔄 [ERP_UPDATE] Starting retry mechanism (max ${maxRetries} attempts) for user: ${userId}, transaction: ${externalUpdate.transactionId}`);
 
 			while (retryCount < maxRetries) {
+				const attemptStartTime = Date.now();
+				this.logger.debug(`🎯 [ERP_UPDATE] Attempt ${retryCount + 1}/${maxRetries} for user: ${userId}, transaction: ${externalUpdate.transactionId}`);
+				
 				try {
 					// Start transaction
+					this.logger.debug(`🔒 [ERP_UPDATE] Starting database transaction for user: ${userId}, attempt: ${retryCount + 1}`);
 					const result = await this.userRepository.manager.transaction(async (transactionalEntityManager) => {
 						// Get current user with target and version for optimistic locking
+						this.logger.debug(`🔍 [ERP_UPDATE] Querying user data with pessimistic lock for user: ${userId}`);
 						const user = await transactionalEntityManager
 							.createQueryBuilder(User, 'user')
 							.leftJoinAndSelect('user.userTarget', 'userTarget')
@@ -3055,17 +3086,37 @@ export class UserService {
 							.getOne();
 
 						if (!user) {
+							this.logger.error(`❌ [ERP_UPDATE] User not found or access denied - User: ${userId}, OrgId: ${orgId}, BranchId: ${branchId}, Transaction: ${externalUpdate.transactionId}`);
 							throw new NotFoundException(`User ${userId} not found or access denied`);
 						}
 
 						if (!user.userTarget) {
+							this.logger.error(`❌ [ERP_UPDATE] No targets found for user: ${userId}, Transaction: ${externalUpdate.transactionId}`);
 							throw new NotFoundException(`No targets found for user ${userId}`);
 						}
 
+						// Log current target values before update
+						this.logger.debug(`📊 [ERP_UPDATE] Current target values for user: ${userId}`, {
+							currentSalesAmount: user.userTarget.currentSalesAmount,
+							currentQuotationsAmount: user.userTarget.currentQuotationsAmount,
+							currentOrdersAmount: user.userTarget.currentOrdersAmount,
+							currentNewLeads: user.userTarget.currentNewLeads,
+							currentNewClients: user.userTarget.currentNewClients,
+							currentCheckIns: user.userTarget.currentCheckIns,
+							currentHoursWorked: user.userTarget.currentHoursWorked,
+							currentCalls: user.userTarget.currentCalls,
+							lastUpdated: user.userTarget.updatedAt
+						});
+
 						// Calculate new values based on update mode
+						this.logger.debug(`🧮 [ERP_UPDATE] Calculating target updates for user: ${userId}, mode: ${externalUpdate.updateMode}`);
 						const updatedTarget = this.calculateTargetUpdates(user.userTarget, externalUpdate);
+						
+						// Log calculated updates
+						this.logger.debug(`📈 [ERP_UPDATE] Calculated target updates for user: ${userId}`, updatedTarget);
 
 						// Update target with new values
+						this.logger.debug(`💾 [ERP_UPDATE] Updating UserTarget in database for user: ${userId}, target UID: ${user.userTarget.uid}`);
 						await transactionalEntityManager.update(
 							UserTarget,
 							{ uid: user.userTarget.uid },
@@ -3074,8 +3125,10 @@ export class UserService {
 								updatedAt: new Date(),
 							},
 						);
+						this.logger.debug(`✅ [ERP_UPDATE] UserTarget updated successfully for user: ${userId}`);
 
 						// Create audit trail
+						this.logger.debug(`📝 [ERP_UPDATE] Creating audit trail for user: ${userId}, transaction: ${externalUpdate.transactionId}`);
 						await this.createTargetUpdateAuditLog(
 							transactionalEntityManager,
 							userId,
@@ -3084,11 +3137,13 @@ export class UserService {
 							user.userTarget,
 							updatedTarget,
 						);
+						this.logger.debug(`✅ [ERP_UPDATE] Audit trail created for user: ${userId}`);
 
 						return updatedTarget;
 					});
 
 					// Get updated user for cache invalidation
+					this.logger.debug(`🔄 [ERP_UPDATE] Fetching updated user for cache invalidation, user: ${userId}`);
 					const updatedUser = await this.userRepository.findOne({
 						where: { uid: userId },
 						relations: ['organisation', 'branch'],
@@ -3096,11 +3151,16 @@ export class UserService {
 
 					if (updatedUser) {
 						// Invalidate cache
+						this.logger.debug(`🗑️ [ERP_UPDATE] Invalidating cache for user: ${userId}`);
 						await this.invalidateUserCache(updatedUser);
 						await this.cacheManager.del(this.getCacheKey(`target_${userId}`));
+						this.logger.debug(`✅ [ERP_UPDATE] Cache invalidated for user: ${userId}`);
+					} else {
+						this.logger.warn(`⚠️ [ERP_UPDATE] Updated user not found for cache invalidation, user: ${userId}`);
 					}
 
 					// Emit success event
+					this.logger.debug(`📡 [ERP_UPDATE] Emitting success event for user: ${userId}, transaction: ${externalUpdate.transactionId}`);
 					this.eventEmitter.emit('user.target.external.update.completed', {
 						userId,
 						source: sourceSystem,
@@ -3109,25 +3169,37 @@ export class UserService {
 					});
 
 					// Send contribution progress notification if there are increases
+					this.logger.debug(`📧 [ERP_UPDATE] Attempting to send contribution progress notification for user: ${userId}`);
 					try {
 						await this.sendContributionProgressNotification(
 							userId,
 							externalUpdate,
 							result,
 						);
+						this.logger.debug(`✅ [ERP_UPDATE] Contribution progress notification sent for user: ${userId}`);
 					} catch (notificationError) {
 						this.logger.warn(
-							`Failed to send contribution progress notification for user ${userId}: ${notificationError.message}`,
+							`⚠️ [ERP_UPDATE] Failed to send contribution progress notification for user ${userId}: ${notificationError.message}`,
 						);
 						// Don't fail the update if notification fails
 					}
 
-					const executionTime = Date.now() - startTime;
+					const attemptTime = Date.now() - attemptStartTime;
+					const totalTime = Date.now() - startTime;
 					this.logger.log(
-						`ERP target update completed for user ${userId} in ${executionTime}ms (attempt ${
+						`🎉 [ERP_UPDATE] SUCCESS - ERP target update completed for user ${userId} in ${totalTime}ms (attempt ${
 							retryCount + 1
-						})`,
+						}/${maxRetries}, attempt time: ${attemptTime}ms)`,
 					);
+					
+					this.logger.debug(`📊 [ERP_UPDATE] Final response for user: ${userId}`, {
+						success: true,
+						totalExecutionTime: totalTime,
+						attemptTime,
+						attemptNumber: retryCount + 1,
+						updatedValues: result,
+						transaction: externalUpdate.transactionId
+					});
 
 					return {
 						message: 'User targets updated successfully from ERP',
@@ -3136,19 +3208,44 @@ export class UserService {
 				} catch (error) {
 					lastError = error;
 					retryCount++;
+					const attemptTime = Date.now() - attemptStartTime;
+
+					this.logger.error(`❌ [ERP_UPDATE] Attempt ${retryCount}/${maxRetries} failed for user: ${userId}, transaction: ${externalUpdate.transactionId}`, {
+						error: error.message,
+						errorCode: error.code,
+						errorType: error.constructor.name,
+						attemptTime,
+						userId,
+						transactionId: externalUpdate.transactionId,
+						stackTrace: error.stack
+					});
 
 					if (error.code === 'ER_LOCK_WAIT_TIMEOUT' || error.message.includes('concurrent')) {
 						this.logger.warn(
-							`Concurrent update conflict for user ${userId}, retry ${retryCount}/${maxRetries}`,
+							`🔄 [ERP_UPDATE] Concurrent update conflict for user ${userId}, retry ${retryCount}/${maxRetries}`,
+							{
+								errorCode: error.code,
+								retryCount,
+								maxRetries,
+								nextBackoffTime: `${Math.pow(2, retryCount) * 100}ms`
+							}
 						);
 
 						if (retryCount < maxRetries) {
 							// Exponential backoff
-							await new Promise((resolve) => setTimeout(resolve, Math.pow(2, retryCount) * 100));
+							const backoffTime = Math.pow(2, retryCount) * 100;
+							this.logger.debug(`⏳ [ERP_UPDATE] Backing off for ${backoffTime}ms before retry ${retryCount + 1} for user: ${userId}`);
+							await new Promise((resolve) => setTimeout(resolve, backoffTime));
 							continue;
 						}
 					} else {
 						// Non-recoverable error, don't retry
+						this.logger.error(`💥 [ERP_UPDATE] Non-retryable error for user ${userId}, aborting retries: ${error.message}`, {
+							errorType: error.constructor.name,
+							errorCode: error.code,
+							userId,
+							transactionId: externalUpdate.transactionId
+						});
 						break;
 					}
 				}
@@ -3157,10 +3254,21 @@ export class UserService {
 			// All retries failed
 			const executionTime = Date.now() - startTime;
 			this.logger.error(
-				`ERP target update failed for user ${userId} after ${retryCount} attempts in ${executionTime}ms`,
+				`💀 [ERP_UPDATE] FINAL FAILURE - ERP target update failed for user ${userId} after ${retryCount} attempts in ${executionTime}ms`,
+				{
+					userId,
+					retryCount,
+					maxRetries,
+					totalExecutionTime: executionTime,
+					transactionId: externalUpdate.transactionId,
+					lastError: lastError?.message,
+					lastErrorCode: lastError?.code,
+					lastErrorType: lastError?.constructor?.name
+				}
 			);
 
 			// Emit failure event
+			this.logger.debug(`📡 [ERP_UPDATE] Emitting failure event for user: ${userId}, transaction: ${externalUpdate.transactionId}`);
 			this.eventEmitter.emit('user.target.external.update.failed', {
 				userId,
 				source: sourceSystem,
@@ -3170,6 +3278,11 @@ export class UserService {
 			});
 
 			if (lastError.code === 'ER_LOCK_WAIT_TIMEOUT' || lastError.message.includes('concurrent')) {
+				this.logger.warn(`⚠️ [ERP_UPDATE] Returning conflict response due to concurrent update for user: ${userId}`, {
+					transactionId: externalUpdate.transactionId,
+					retryCount,
+					error: lastError.message
+				});
 				return {
 					message: 'Concurrent update conflict detected',
 					conflictDetails: {
@@ -3180,12 +3293,25 @@ export class UserService {
 				};
 			}
 
+			this.logger.error(`💥 [ERP_UPDATE] Returning error response for user: ${userId}`, {
+				error: lastError?.message,
+				errorCode: lastError?.code,
+				transactionId: externalUpdate.transactionId
+			});
 			return {
 				message: lastError.message || 'Failed to update user targets from ERP',
 			};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
-			this.logger.error(`ERP target update error for user ${userId} after ${executionTime}ms: ${error.message}`);
+			this.logger.error(`🚨 [ERP_UPDATE] OUTER CATCH - Unexpected error for user ${userId} after ${executionTime}ms: ${error.message}`, {
+				userId,
+				transactionId: externalUpdate.transactionId,
+				executionTime,
+				error: error.message,
+				errorCode: error.code,
+				errorType: error.constructor.name,
+				stackTrace: error.stack
+			});
 
 			return {
 				message: error.message || 'Failed to update user targets from ERP',
@@ -3201,10 +3327,25 @@ export class UserService {
 		currentTarget: UserTarget,
 		externalUpdate: ExternalTargetUpdateDto,
 	): Partial<UserTarget> {
+		this.logger.debug(`🧮 [ERP_CALCULATION] Starting calculation for mode: ${externalUpdate.updateMode}, transaction: ${externalUpdate.transactionId}`, {
+			currentValues: {
+				salesAmount: currentTarget.currentSalesAmount,
+				quotationsAmount: currentTarget.currentQuotationsAmount,
+				ordersAmount: currentTarget.currentOrdersAmount,
+				newLeads: currentTarget.currentNewLeads,
+				newClients: currentTarget.currentNewClients,
+				checkIns: currentTarget.currentCheckIns,
+				hoursWorked: currentTarget.currentHoursWorked,
+				calls: currentTarget.currentCalls
+			},
+			incomingUpdates: externalUpdate.updates
+		});
+		
 		const updates: Partial<UserTarget> = {};
 
 		// Handle different update modes
 		if (externalUpdate.updateMode === TargetUpdateMode.INCREMENT) {
+			this.logger.debug(`📈 [ERP_CALCULATION] Processing INCREMENT mode for transaction: ${externalUpdate.transactionId}`);
 			// Add to current values
 			if (externalUpdate.updates.currentSalesAmount !== undefined) {
 				updates.currentSalesAmount =
@@ -3236,6 +3377,7 @@ export class UserService {
 				updates.currentCalls = (currentTarget.currentCalls || 0) + externalUpdate.updates.currentCalls;
 			}
 		} else if (externalUpdate.updateMode === TargetUpdateMode.DECREMENT) {
+			this.logger.debug(`📉 [ERP_CALCULATION] Processing DECREMENT mode for transaction: ${externalUpdate.transactionId}`);
 			// Subtract from current values (more explicit than using negative increments)
 			if (externalUpdate.updates.currentSalesAmount !== undefined) {
 				updates.currentSalesAmount =
@@ -3268,8 +3410,15 @@ export class UserService {
 			}
 		} else {
 			// REPLACE mode - set absolute values
+			this.logger.debug(`🔄 [ERP_CALCULATION] Processing REPLACE mode for transaction: ${externalUpdate.transactionId}`);
 			Object.assign(updates, externalUpdate.updates);
 		}
+
+		this.logger.debug(`✅ [ERP_CALCULATION] Calculation completed for transaction: ${externalUpdate.transactionId}`, {
+			mode: externalUpdate.updateMode,
+			calculatedUpdates: updates,
+			updatedFieldCount: Object.keys(updates).length
+		});
 
 		return updates;
 	}
@@ -3284,10 +3433,18 @@ export class UserService {
 		orgId?: number,
 		branchId?: number,
 	): Promise<{ isValid: boolean; errors: string[] }> {
+		this.logger.debug(`🔍 [ERP_VALIDATION] Starting comprehensive validation for user: ${userId}, transaction: ${externalUpdate.transactionId}`, {
+			updateMode: externalUpdate.updateMode,
+			orgId,
+			branchId,
+			hasUpdates: !!externalUpdate.updates,
+			hasMetadata: !!externalUpdate.metadata
+		});
 		const errors: string[] = [];
 
 		try {
 			// Validate user exists and has targets
+			this.logger.debug(`👤 [ERP_VALIDATION] Checking user existence for user: ${userId}`);
 			const user = await this.userRepository.findOne({
 				where: {
 					uid: userId,
@@ -3299,19 +3456,28 @@ export class UserService {
 			});
 
 			if (!user) {
+				this.logger.error(`❌ [ERP_VALIDATION] User not found or access denied - User: ${userId}, OrgId: ${orgId}, BranchId: ${branchId}, Transaction: ${externalUpdate.transactionId}`);
 				errors.push(`User ${userId} not found or access denied`);
 				return { isValid: false, errors };
-			} 
+			}
+			
+			this.logger.debug(`✅ [ERP_VALIDATION] User found: ${userId}, Name: ${user.name} ${user.surname}, Email: ${user.email}`);
 			
 			if (!user.userTarget) {
+				this.logger.error(`❌ [ERP_VALIDATION] No targets configured for user: ${userId}, Transaction: ${externalUpdate.transactionId}`);
 				errors.push(`No targets found for user ${userId}`);
 				return { isValid: false, errors };
 			}
+			
+			this.logger.debug(`✅ [ERP_VALIDATION] User targets found for user: ${userId}, Target UID: ${user.userTarget.uid}`);
 
 			// Validate update modes and values
+			this.logger.debug(`🔧 [ERP_VALIDATION] Validating update mode: ${externalUpdate.updateMode} for user: ${userId}`);
 			if (externalUpdate.updateMode === TargetUpdateMode.INCREMENT) {
+				this.logger.debug(`📈 [ERP_VALIDATION] Validating INCREMENT mode values for user: ${userId}`, externalUpdate.updates);
 				// INCREMENT mode: Only accept positive values to add to current amounts
 				if (externalUpdate.updates.currentSalesAmount !== undefined && externalUpdate.updates.currentSalesAmount <= 0) {
+					this.logger.warn(`❌ [ERP_VALIDATION] Invalid INCREMENT sales amount: ${externalUpdate.updates.currentSalesAmount} for user: ${userId}`);
 					errors.push('INCREMENT mode requires positive values (sales amount)');
 				}
 				if (externalUpdate.updates.currentQuotationsAmount !== undefined && externalUpdate.updates.currentQuotationsAmount <= 0) {
@@ -3447,19 +3613,39 @@ export class UserService {
 			}
 
 			// Validate transaction ID for idempotency
+			this.logger.debug(`🆔 [ERP_VALIDATION] Validating transaction ID for user: ${userId}`);
 			if (!externalUpdate.transactionId || externalUpdate.transactionId.trim() === '') {
+				this.logger.warn(`❌ [ERP_VALIDATION] Missing transaction ID for user: ${userId}`);
 				errors.push('Transaction ID is required for idempotency');
+			} else {
+				this.logger.debug(`✅ [ERP_VALIDATION] Transaction ID valid: ${externalUpdate.transactionId} for user: ${userId}`);
 			}
 
 			// Validate source system
-					// Source is now optional - no validation required
+			// Source is now optional - no validation required
+			this.logger.debug(`✅ [ERP_VALIDATION] Source field validation skipped (optional) for user: ${userId}`);
+
+			const isValid = errors.length === 0;
+			this.logger.log(`${isValid ? '✅' : '❌'} [ERP_VALIDATION] Validation ${isValid ? 'PASSED' : 'FAILED'} for user: ${userId}, transaction: ${externalUpdate.transactionId}`, {
+				isValid,
+				errorCount: errors.length,
+				errors: errors.length > 0 ? errors : undefined,
+				updateMode: externalUpdate.updateMode,
+				source: externalUpdate.source || 'UNKNOWN_SOURCE'
+			});
 
 			return {
-				isValid: errors.length === 0,
+				isValid,
 				errors,
 			};
 		} catch (error) {
-			this.logger.error(`Error validating external target update for user ${userId}:`, error.message);
+			this.logger.error(`🚨 [ERP_VALIDATION] EXCEPTION during validation for user ${userId}:`, {
+				error: error.message,
+				errorType: error.constructor.name,
+				userId,
+				transactionId: externalUpdate.transactionId,
+				stackTrace: error.stack
+			});
 			errors.push('Error validating update data');
 			return {
 				isValid: false,
