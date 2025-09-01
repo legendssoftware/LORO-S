@@ -133,13 +133,13 @@ export class TargetUpdateValuesDto {
 }
 
 export class ExternalTargetUpdateDto {
-	@ApiProperty({
-		description: 'Source system identifier',
-		example: 'SAP_ERP_SYSTEM',
+	@ApiPropertyOptional({
+		description: 'Source system identifier (optional - defaults to "UNKNOWN_SOURCE" if not provided)',
+		example: 'LEGEND_ERP_SYSTEM',
 	})
+	@IsOptional()
 	@IsString()
-	@IsNotEmpty()
-	source: string;
+	source?: string;
 
 	@ApiProperty({
 		description: 'Unique transaction ID for idempotency',
