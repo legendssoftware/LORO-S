@@ -3177,7 +3177,7 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 - "metadata": object containing updateReason, timestamp, etc. (REQUIRED)
 
 ### 🔑 **Key Differences**
-- **Add source**: Must be "LEGEND_ERP_SYSTEM" (based on your logs)
+- **Source field**: Now OPTIONAL (will default to "UNKNOWN_SOURCE" if not provided)
 - **Add metadata object**: Required container for update context
 - **Move fields**: transactionType, description, timestamp go inside metadata
 - **Add updateReason**: Required field explaining why the update happened
@@ -3287,8 +3287,8 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 ### ❌ **"X-ERP-API-Key header is required"**
 **Solution**: Add the header: X-ERP-API-Key: your-api-key-here
 
-### ❌ **"source is required"** 
-**Solution**: Add "source": "LEGEND_ERP_SYSTEM" to your payload
+### ✅ **"source is now optional"** 
+**Good News**: The source field is now optional! You can omit it entirely or include it for better tracking.
 
 ### ❌ **"metadata is required"**
 **Solution**: Wrap extra fields in metadata object with updateReason and timestamp
@@ -3310,7 +3310,25 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 		examples: {
 			correctedUserPayload: {
 				summary: '✅ Corrected User Payload',
-				description: 'This shows the corrected version of your original payload. Compare with your original to see required structure.',
+				description: 'This shows the corrected version of your original payload. Source field is now OPTIONAL.',
+				value: {
+					transactionId: 'test',
+					updateMode: 'INCREMENT',
+					updates: {
+						currentSalesAmount: 711376.21
+					},
+					metadata: {
+						updateReason: 'SALE_COMPLETED',
+						timestamp: '2025-09-01T19:34:00Z',
+						transactionType: 'SALE',
+						description: 'Test API Call',
+						erpVersion: '2.1.0'
+					}
+				}
+			},
+			correctedUserPayloadWithSource: {
+				summary: '✅ With Optional Source Field',
+				description: 'Example showing how to include the optional source field for better tracking.',
 				value: {
 					source: 'LEGEND_ERP_SYSTEM',
 					transactionId: 'test',

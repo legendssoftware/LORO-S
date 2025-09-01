@@ -3016,7 +3016,11 @@ export class UserService {
 		validationErrors?: string[];
 	}> {
 		const startTime = Date.now();
-		this.logger.log(`Updating user targets from ERP for user: ${userId}, source: ${externalUpdate.source}`);
+		
+		// 🔧 Handle optional source field
+		const sourceSystem = externalUpdate.source || 'UNKNOWN_SOURCE';
+		
+		this.logger.log(`Updating user targets from ERP for user: ${userId}, source: ${sourceSystem}`);
 
 		try {
 			// Validate external update data
@@ -3075,7 +3079,7 @@ export class UserService {
 						await this.createTargetUpdateAuditLog(
 							transactionalEntityManager,
 							userId,
-							externalUpdate.source,
+							sourceSystem,
 							externalUpdate.transactionId,
 							user.userTarget,
 							updatedTarget,
@@ -3099,7 +3103,7 @@ export class UserService {
 					// Emit success event
 					this.eventEmitter.emit('user.target.external.update.completed', {
 						userId,
-						source: externalUpdate.source,
+						source: sourceSystem,
 						transactionId: externalUpdate.transactionId,
 						updatedValues: result,
 					});
@@ -3159,7 +3163,7 @@ export class UserService {
 			// Emit failure event
 			this.eventEmitter.emit('user.target.external.update.failed', {
 				userId,
-				source: externalUpdate.source,
+				source: sourceSystem,
 				transactionId: externalUpdate.transactionId,
 				error: lastError.message,
 				retryCount,
@@ -3448,9 +3452,7 @@ export class UserService {
 			}
 
 			// Validate source system
-			if (!externalUpdate.source || externalUpdate.source.trim() === '') {
-				errors.push('Source system identifier is required');
-			}
+					// Source is now optional - no validation required
 
 			return {
 				isValid: errors.length === 0,
@@ -4099,7 +4101,7 @@ export class UserService {
 				userName: `${user.name} ${user.surname}`.trim(),
 				userEmail: user.email,
 				updateDate: new Date().toISOString(),
-				updateSource: externalUpdate.source,
+				updateSource: externalUpdate.source || 'EXTERNAL_SOURCE',
 				contributionProgress,
 				totalProgressImprovement,
 				organizationName: user.organisation?.name || 'Your Organization',
