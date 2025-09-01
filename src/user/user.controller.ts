@@ -3129,41 +3129,24 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 **Your payload was missing required fields! Here's the correct structure:**
 
 ### ❌ **Your Original Payload (WRONG)**
-\`\`\`json
-{
-  "updateMode": "INCREMENT",
-  "updates": { "currentSalesAmount": 711376.21 },
-  "transactionId": "test",
-  "transactionType": "SALE",      // ❌ Should be in metadata
-  "description": "Test API Call",  // ❌ Should be in metadata  
-  "timestamp": "2025-09-01T19:34:00Z" // ❌ Should be in metadata
-}
-\`\`\`
+**MISSING REQUIRED FIELDS:**
+- No "source" field (required)
+- No "metadata" object (required)
+- Fields in wrong location (transactionType, description, timestamp should be in metadata)
 
 ### ✅ **Corrected Payload (CORRECT)**
-\`\`\`json
-{
-  "source": "LEGEND_ERP_SYSTEM",        // ✅ REQUIRED: ERP system identifier
-  "transactionId": "test",              // ✅ REQUIRED: Unique transaction ID
-  "updateMode": "INCREMENT",            // ✅ REQUIRED: UPDATE mode
-  "updates": {                          // ✅ REQUIRED: Values to update
-    "currentSalesAmount": 711376.21
-  },
-  "metadata": {                         // ✅ REQUIRED: Metadata object
-    "updateReason": "SALE_COMPLETED",   // ✅ REQUIRED: Reason for update
-    "timestamp": "2025-09-01T19:34:00Z", // ✅ REQUIRED: When update occurred
-    "transactionType": "SALE",          // ✅ OPTIONAL: Move from root to metadata
-    "description": "Test API Call",     // ✅ OPTIONAL: Move from root to metadata
-    "erpVersion": "2.1.0"              // ✅ OPTIONAL: ERP system version
-  }
-}
-\`\`\`
+**ALL REQUIRED FIELDS INCLUDED:**
+- "source": "LEGEND_ERP_SYSTEM" (REQUIRED)
+- "transactionId": "test" (REQUIRED)
+- "updateMode": "INCREMENT" (REQUIRED)
+- "updates": with your values (REQUIRED)
+- "metadata": object containing updateReason, timestamp, etc. (REQUIRED)
 
 ### 🔑 **Key Differences**
-1. **Add `source`**: Must be "LEGEND_ERP_SYSTEM" (based on your logs)
-2. **Add `metadata` object**: Required container for update context
-3. **Move fields**: `transactionType`, `description`, `timestamp` go inside `metadata`
-4. **Add `updateReason`**: Required field explaining why the update happened
+- **Add source**: Must be "LEGEND_ERP_SYSTEM" (based on your logs)
+- **Add metadata object**: Required container for update context
+- **Move fields**: transactionType, description, timestamp go inside metadata
+- **Add updateReason**: Required field explaining why the update happened
 
 ## 🎯 **Key Features**
 - **Incremental Updates**: Add/subtract individual transactions (sales, credit notes, leads)
@@ -3177,67 +3160,40 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 ### **INCREMENT Mode**
 - **Purpose**: Add positive values to current amounts
 - **Only Positive Values Allowed**: Use positive numbers to increase totals
-- **Example**: Current R30,000 + Increment R5,000 = New R35,000
+- **Example**: Current R30000 + Increment R5000 = New R35000
 - **For Decreases**: Use DECREMENT mode instead
 
 ### **DECREMENT Mode**
 - **Purpose**: Subtract positive values from current amounts
 - **Only Positive Values Allowed**: Use positive numbers to decrease totals
-- **Example**: Current R30,000 - Decrement R2,000 = New R28,000
+- **Example**: Current R30000 - Decrement R2000 = New R28000
 - **Use Cases**: Credit notes, reversals, corrections
 
 ### **REPLACE Mode**
 - **Purpose**: Set exact absolute values
-- **Example**: Replace with R35,000 = New R35,000 (regardless of current value)
+- **Example**: Replace with R35000 = New R35000 (regardless of current value)
 - **Use Cases**: System recalculations, bulk corrections
 
 ## 💡 **Common Usage Scenarios**
 
 ### **Scenario 1: New Sale Made**
-\`\`\`json
-{
-  "updateMode": "INCREMENT",
-  "updates": {
-    "currentSalesAmount": 5000,
-    "currentOrdersAmount": 5000
-  },
-  "transactionId": "SALE_INV_12345"
-}
-\`\`\`
-**Result**: Adds R5,000 to both sales and orders totals
+**Payload**: INCREMENT mode with currentSalesAmount: 5000, currentOrdersAmount: 5000
+**Result**: Adds R5000 to both sales and orders totals
 
 ### **Scenario 2: Credit Note Applied**
-\`\`\`json
-{
-  "updateMode": "DECREMENT",
-  "updates": {
-    "currentSalesAmount": 2000,
-    "currentOrdersAmount": 2000
-  },
-  "transactionId": "CREDIT_NOTE_456"
-}
-\`\`\`
-**Result**: Subtracts R2,000 from both sales and orders totals
+**Payload**: DECREMENT mode with currentSalesAmount: 2000, currentOrdersAmount: 2000
+**Result**: Subtracts R2000 from both sales and orders totals
 
 ### **Scenario 3: Quotation Generated**
-\`\`\`json
-{
-  "updateMode": "INCREMENT",
-  "updates": {
-    "currentSalesAmount": 8000,
-    "currentQuotationsAmount": 8000
-  },
-  "transactionId": "QUOTE_789"
-}
-\`\`\`
-**Result**: Adds R8,000 to both sales and quotations totals
+**Payload**: INCREMENT mode with currentSalesAmount: 8000, currentQuotationsAmount: 8000
+**Result**: Adds R8000 to both sales and quotations totals
 
 ## ❓ **FAQ - User Questions Answered**
 
 ### **Q: How do I decrease amounts for credit notes or reversals?**
 **A: Use DECREMENT mode with positive values!**
-- ✅ Correct: \`"updateMode": "DECREMENT"\` with \`"currentSalesAmount": 5000\`
-- ❌ Wrong: \`"updateMode": "INCREMENT"\` with \`"currentSalesAmount": -5000\`
+- ✅ Correct: "updateMode": "DECREMENT" with "currentSalesAmount": 5000
+- ❌ Wrong: "updateMode": "INCREMENT" with "currentSalesAmount": -5000
 - Result: Current R50,000 - Decrement R5,000 = New R45,000
 
 ### **Q: Do I send the individual sale amount or cumulative monthly total?**
@@ -3295,39 +3251,16 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 ## 🔧 **Troubleshooting Common Issues**
 
 ### ❌ **"X-ERP-API-Key header is required"**
-**Solution**: Add the header to your request:
-\`\`\`bash
-curl -H "X-ERP-API-Key: your-api-key-here" ...
-\`\`\`
+**Solution**: Add the header: X-ERP-API-Key: your-api-key-here
 
 ### ❌ **"source is required"** 
-**Solution**: Add source field to payload:
-\`\`\`json
-{ "source": "LEGEND_ERP_SYSTEM", ... }
-\`\`\`
+**Solution**: Add "source": "LEGEND_ERP_SYSTEM" to your payload
 
 ### ❌ **"metadata is required"**
-**Solution**: Wrap your extra fields in metadata object:
-\`\`\`json
-{
-  "metadata": {
-    "updateReason": "SALE_COMPLETED",
-    "timestamp": "2025-09-01T19:34:00Z",
-    "transactionType": "SALE",
-    "description": "Your description"
-  }
-}
-\`\`\`
+**Solution**: Wrap extra fields in metadata object with updateReason and timestamp
 
 ### ❌ **"updateReason is required"**
-**Solution**: Add updateReason to metadata:
-\`\`\`json
-{
-  "metadata": {
-    "updateReason": "SALE_COMPLETED"  // or CREDIT_NOTE_APPLIED, LEAD_GENERATED, etc.
-  }
-}
-\`\`\`
+**Solution**: Add "updateReason": "SALE_COMPLETED" to metadata object
 		`,
 		operationId: 'updateTargetsFromERP',
 	})
