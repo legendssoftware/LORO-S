@@ -3124,6 +3124,47 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 
 **This endpoint is designed for INCREMENTAL updates from external systems (CRM, ERP, etc.)**
 
+## 🚨 **REQUIRED PAYLOAD STRUCTURE**
+
+**Your payload was missing required fields! Here's the correct structure:**
+
+### ❌ **Your Original Payload (WRONG)**
+\`\`\`json
+{
+  "updateMode": "INCREMENT",
+  "updates": { "currentSalesAmount": 711376.21 },
+  "transactionId": "test",
+  "transactionType": "SALE",      // ❌ Should be in metadata
+  "description": "Test API Call",  // ❌ Should be in metadata  
+  "timestamp": "2025-09-01T19:34:00Z" // ❌ Should be in metadata
+}
+\`\`\`
+
+### ✅ **Corrected Payload (CORRECT)**
+\`\`\`json
+{
+  "source": "LEGEND_ERP_SYSTEM",        // ✅ REQUIRED: ERP system identifier
+  "transactionId": "test",              // ✅ REQUIRED: Unique transaction ID
+  "updateMode": "INCREMENT",            // ✅ REQUIRED: UPDATE mode
+  "updates": {                          // ✅ REQUIRED: Values to update
+    "currentSalesAmount": 711376.21
+  },
+  "metadata": {                         // ✅ REQUIRED: Metadata object
+    "updateReason": "SALE_COMPLETED",   // ✅ REQUIRED: Reason for update
+    "timestamp": "2025-09-01T19:34:00Z", // ✅ REQUIRED: When update occurred
+    "transactionType": "SALE",          // ✅ OPTIONAL: Move from root to metadata
+    "description": "Test API Call",     // ✅ OPTIONAL: Move from root to metadata
+    "erpVersion": "2.1.0"              // ✅ OPTIONAL: ERP system version
+  }
+}
+\`\`\`
+
+### 🔑 **Key Differences**
+1. **Add `source`**: Must be "LEGEND_ERP_SYSTEM" (based on your logs)
+2. **Add `metadata` object**: Required container for update context
+3. **Move fields**: `transactionType`, `description`, `timestamp` go inside `metadata`
+4. **Add `updateReason`**: Required field explaining why the update happened
+
 ## 🎯 **Key Features**
 - **Incremental Updates**: Add/subtract individual transactions (sales, credit notes, leads)
 - **Three Update Modes**: INCREMENT (add), DECREMENT (subtract), REPLACE (set absolute)
@@ -3250,6 +3291,43 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 - **Organization Validation**: Ensures user belongs to correct organization
 - **Permission Checks**: Validates updating user has appropriate permissions
 - **Audit Logging**: Complete audit trail of all external updates
+
+## 🔧 **Troubleshooting Common Issues**
+
+### ❌ **"X-ERP-API-Key header is required"**
+**Solution**: Add the header to your request:
+\`\`\`bash
+curl -H "X-ERP-API-Key: your-api-key-here" ...
+\`\`\`
+
+### ❌ **"source is required"** 
+**Solution**: Add source field to payload:
+\`\`\`json
+{ "source": "LEGEND_ERP_SYSTEM", ... }
+\`\`\`
+
+### ❌ **"metadata is required"**
+**Solution**: Wrap your extra fields in metadata object:
+\`\`\`json
+{
+  "metadata": {
+    "updateReason": "SALE_COMPLETED",
+    "timestamp": "2025-09-01T19:34:00Z",
+    "transactionType": "SALE",
+    "description": "Your description"
+  }
+}
+\`\`\`
+
+### ❌ **"updateReason is required"**
+**Solution**: Add updateReason to metadata:
+\`\`\`json
+{
+  "metadata": {
+    "updateReason": "SALE_COMPLETED"  // or CREDIT_NOTE_APPLIED, LEAD_GENERATED, etc.
+  }
+}
+\`\`\`
 		`,
 		operationId: 'updateTargetsFromERP',
 	})
@@ -3263,140 +3341,206 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 		type: ExternalTargetUpdateDto,
 		description: 'External target update data from ERP system with incremental transaction support',
 		examples: {
+			correctedUserPayload: {
+				summary: '✅ Corrected User Payload',
+				description: 'This shows the corrected version of your original payload. Compare with your original to see required structure.',
+				value: {
+					source: 'LEGEND_ERP_SYSTEM',
+					transactionId: 'test',
+					updateMode: 'INCREMENT',
+					updates: {
+						currentSalesAmount: 711376.21
+					},
+					metadata: {
+						updateReason: 'SALE_COMPLETED',
+						timestamp: '2025-09-01T19:34:00Z',
+						transactionType: 'SALE',
+						description: 'Test API Call',
+						erpVersion: '2.1.0'
+					}
+				}
+			},
 			newSale: {
 				summary: '💰 New Sale Transaction',
 				description: 'Add a new sale to user targets. Send individual sale amount, not cumulative total.',
 				value: {
+					source: 'LEGEND_ERP_SYSTEM',
+					transactionId: 'SALE_INV_12345',
 					updateMode: 'INCREMENT',
 					updates: {
 						currentSalesAmount: 5000,
 						currentOrdersAmount: 5000
 					},
-					transactionId: 'SALE_INV_12345',
-					transactionType: 'SALE',
-					description: 'New sale - Invoice #12345 for R5,000',
-					timestamp: '2024-01-15T10:30:00Z'
+					metadata: {
+						updateReason: 'SALE_COMPLETED',
+						timestamp: '2024-01-15T10:30:00Z',
+						transactionType: 'SALE',
+						description: 'New sale - Invoice #12345 for R5,000',
+						erpVersion: '2.1.0'
+					}
 				}
 			},
 			creditNote: {
 				summary: '📄 Credit Note Application',
 				description: 'Apply credit note using DECREMENT mode. Uses positive values to subtract from totals.',
 				value: {
+					source: 'LEGEND_ERP_SYSTEM',
+					transactionId: 'CREDIT_NOTE_456',
 					updateMode: 'DECREMENT',
 					updates: {
 						currentSalesAmount: 2000,
 						currentOrdersAmount: 2000
 					},
-					transactionId: 'CREDIT_NOTE_456',
-					transactionType: 'CREDIT_NOTE',
-					description: 'Credit note for returned goods - R2,000',
-					timestamp: '2024-01-15T11:00:00Z'
+					metadata: {
+						updateReason: 'CREDIT_NOTE_APPLIED',
+						timestamp: '2024-01-15T11:00:00Z',
+						transactionType: 'CREDIT_NOTE',
+						description: 'Credit note for returned goods - R2,000',
+						erpVersion: '2.1.0'
+					}
 				}
 			},
 			newQuotation: {
 				summary: '📋 Quotation Generated',
 				description: 'Record new quotation. Adds to both sales and quotations totals.',
 				value: {
+					source: 'LEGEND_ERP_SYSTEM',
+					transactionId: 'QUOTE_789',
 					updateMode: 'INCREMENT',
 					updates: {
 						currentSalesAmount: 8000,
 						currentQuotationsAmount: 8000
 					},
-					transactionId: 'QUOTE_789',
-					transactionType: 'QUOTATION',
-					description: 'New quotation #789 for R8,000',
-					timestamp: '2024-01-15T12:00:00Z'
+					metadata: {
+						updateReason: 'QUOTATION_GENERATED',
+						timestamp: '2024-01-15T12:00:00Z',
+						transactionType: 'QUOTATION',
+						description: 'New quotation #789 for R8,000',
+						erpVersion: '2.1.0'
+					}
 				}
 			},
 			quotationConverted: {
 				summary: '✅ Quotation to Order Conversion',
 				description: 'Convert quotation to paid order. First decrement quotations, then increment orders.',
 				value: {
+					source: 'LEGEND_ERP_SYSTEM',
+					transactionId: 'CONVERT_QUOTE_789_STEP1',
 					updateMode: 'DECREMENT',
 					updates: {
 						currentQuotationsAmount: 8000
 					},
-					transactionId: 'CONVERT_QUOTE_789_STEP1',
-					transactionType: 'CONVERSION_STEP1',
-					description: 'Step 1: Remove R8,000 from quotations (converted to order)',
-					timestamp: '2024-01-15T14:00:00Z'
+					metadata: {
+						updateReason: 'QUOTATION_CONVERTED',
+						timestamp: '2024-01-15T14:00:00Z',
+						transactionType: 'CONVERSION_STEP1',
+						description: 'Step 1: Remove R8,000 from quotations (converted to order)',
+						erpVersion: '2.1.0'
+					}
 				}
 			},
 			quotationConvertedStep2: {
 				summary: '✅ Quotation Conversion - Step 2',
 				description: 'Second step: Add converted amount to orders. Use separate transaction.',
 				value: {
+					source: 'LEGEND_ERP_SYSTEM',
+					transactionId: 'CONVERT_QUOTE_789_STEP2',
 					updateMode: 'INCREMENT',
 					updates: {
 						currentOrdersAmount: 8000
 					},
-					transactionId: 'CONVERT_QUOTE_789_STEP2',
-					transactionType: 'CONVERSION_STEP2',
-					description: 'Step 2: Add R8,000 to orders (from converted quotation)',
-					timestamp: '2024-01-15T14:01:00Z'
+					metadata: {
+						updateReason: 'QUOTATION_CONVERTED',
+						timestamp: '2024-01-15T14:01:00Z',
+						transactionType: 'CONVERSION_STEP2',
+						description: 'Step 2: Add R8,000 to orders (from converted quotation)',
+						erpVersion: '2.1.0'
+					}
 				}
 			},
 			newLead: {
 				summary: '🎯 New Lead Added',
 				description: 'Record new lead generation. Increments lead count.',
 				value: {
+					source: 'LEGEND_ERP_SYSTEM',
+					transactionId: 'LEAD_2024_001',
 					updateMode: 'INCREMENT',
 					updates: {
 						currentNewLeads: 1
 					},
-					transactionId: 'LEAD_2024_001',
-					transactionType: 'LEAD',
-					description: 'New lead from marketing campaign',
-					timestamp: '2024-01-15T09:00:00Z'
+					metadata: {
+						updateReason: 'LEAD_GENERATED',
+						timestamp: '2024-01-15T09:00:00Z',
+						transactionType: 'LEAD',
+						description: 'New lead from marketing campaign',
+						erpVersion: '2.1.0'
+					}
 				}
 			},
 			clientCheckIn: {
 				summary: '📞 Client Check-in',
 				description: 'Record client interaction. Increments check-in and calls count.',
 				value: {
+					source: 'LEGEND_ERP_SYSTEM',
+					transactionId: 'CHECKIN_CLIENT_123',
 					updateMode: 'INCREMENT',
 					updates: {
 						currentCheckIns: 1,
 						currentCalls: 1
 					},
-					transactionId: 'CHECKIN_CLIENT_123',
-					transactionType: 'CHECK_IN',
-					description: 'Monthly check-in call with Client ABC',
-					timestamp: '2024-01-15T15:30:00Z'
+					metadata: {
+						updateReason: 'CLIENT_INTERACTION',
+						timestamp: '2024-01-15T15:30:00Z',
+						transactionType: 'CHECK_IN',
+						description: 'Monthly check-in call with Client ABC',
+						erpVersion: '2.1.0'
+					}
 				}
 			},
 			hoursWorked: {
 				summary: '⏰ Work Hours Logged',
 				description: 'Add work hours to user total using INCREMENT mode.',
 				value: {
+					source: 'LEGEND_ERP_SYSTEM',
+					transactionId: 'TIMESHEET_150124',
 					updateMode: 'INCREMENT',
 					updates: {
 						currentHoursWorked: 8
 					},
-					transactionId: 'TIMESHEET_150124',
-					transactionType: 'HOURS',
-					description: 'Daily timesheet - 8 hours logged',
-					timestamp: '2024-01-15T17:00:00Z'
+					metadata: {
+						updateReason: 'HOURS_LOGGED',
+						timestamp: '2024-01-15T17:00:00Z',
+						transactionType: 'HOURS',
+						description: 'Daily timesheet - 8 hours logged',
+						erpVersion: '2.1.0'
+					}
 				}
 			},
 			hourCorrection: {
 				summary: '🔧 Hours Correction',
 				description: 'Correct previously logged hours using DECREMENT mode with positive values.',
 				value: {
+					source: 'LEGEND_ERP_SYSTEM',
+					transactionId: 'CORRECTION_150124',
 					updateMode: 'DECREMENT',
 					updates: {
 						currentHoursWorked: 2
 					},
-					transactionId: 'CORRECTION_150124',
-					transactionType: 'CORRECTION',
-					description: 'Correction: Remove 2 hours from timesheet',
-					timestamp: '2024-01-15T18:00:00Z'
+					metadata: {
+						updateReason: 'HOURS_CORRECTION',
+						timestamp: '2024-01-15T18:00:00Z',
+						transactionType: 'CORRECTION',
+						description: 'Correction: Remove 2 hours from timesheet',
+						erpVersion: '2.1.0'
+					}
 				}
 			},
 			multipleUpdates: {
 				summary: '🔄 Multiple Transactions',
 				description: 'Update multiple metrics in single transaction (sale + new lead + call).',
 				value: {
+					source: 'LEGEND_ERP_SYSTEM',
+					transactionId: 'MULTI_TRANS_001',
 					updateMode: 'INCREMENT',
 					updates: {
 						currentSalesAmount: 12000,
@@ -3405,16 +3549,21 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 						currentCalls: 3,
 						currentCheckIns: 1
 					},
-					transactionId: 'MULTI_TRANS_001',
-					transactionType: 'MULTI_UPDATE',
-					description: 'Sale R12k + new lead + 3 calls + client check-in',
-					timestamp: '2024-01-15T16:00:00Z'
+					metadata: {
+						updateReason: 'MULTI_ACTIVITY',
+						timestamp: '2024-01-15T16:00:00Z',
+						transactionType: 'MULTI_UPDATE',
+						description: 'Sale R12k + new lead + 3 calls + client check-in',
+						erpVersion: '2.1.0'
+					}
 				}
 			},
 			systemRecalculation: {
 				summary: '🖥️ System Recalculation',
 				description: 'REPLACE mode: Set absolute values (like monthly system recalculation).',
 				value: {
+					source: 'LEGEND_ERP_SYSTEM',
+					transactionId: 'SYS_RECALC_0124',
 					updateMode: 'REPLACE',
 					updates: {
 						currentSalesAmount: 45000,
@@ -3426,10 +3575,13 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 						currentCalls: 68,
 						currentHoursWorked: 120
 					},
-					transactionId: 'SYS_RECALC_0124',
-					transactionType: 'SYSTEM_RECALC',
-					description: 'Monthly system recalculation from CRM data',
-					timestamp: '2024-01-15T20:00:00Z'
+					metadata: {
+						updateReason: 'SYSTEM_RECALCULATION',
+						timestamp: '2024-01-15T20:00:00Z',
+						transactionType: 'SYSTEM_RECALC',
+						description: 'Monthly system recalculation from CRM data',
+						erpVersion: '2.1.0'
+					}
 				}
 			}
 		}
