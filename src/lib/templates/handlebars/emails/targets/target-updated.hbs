@@ -52,8 +52,29 @@
     <a href="{{dashboardUrl}}/targets" class="cta-button">View All Targets</a>
 </div>
 
+{{#if mobileAppInfo}}
+<div class="info-card" style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-left-color: #f59e0b;">
+    <h4>📱 Updated Targets Available</h4>
+    <p style="margin: 0; color: #92400e; font-size: 14px;">
+        <strong>🔄 Changes Synced:</strong> Your target updates have been automatically synced to our {{mobileAppInfo.appName}}. View your revised targets and track your progress on-the-go.
+    </p>
+    <div style="margin-top: 12px; padding: 8px; background: rgba(255,255,255,0.8); border-radius: 6px;">
+        <p style="margin: 0; font-size: 13px; color: #92400e;">
+            📱 <strong>Mobile Features:</strong>
+            {{#each mobileAppInfo.features}}
+            • {{this}}<br>
+            {{/each}}
+        </p>
+    </div>
+    <div style="margin-top: 12px; text-align: center;">
+        <a href="{{mobileAppInfo.appStoreUrl}}" style="background: #f59e0b; color: white; padding: 8px 16px; text-decoration: none; border-radius: 20px; font-size: 12px; margin-right: 8px;">📱 iOS App</a>
+        <a href="{{mobileAppInfo.googlePlayUrl}}" style="background: #f59e0b; color: white; padding: 8px 16px; text-decoration: none; border-radius: 20px; font-size: 12px;">🤖 Android App</a>
+    </div>
+</div>
+{{/if}}
+
 <div class="message">
-    <p>Please review your updated targets in the dashboard. If you have any questions about these changes, contact your manager or our support team.</p>
+    <p>Please review your updated targets in the dashboard or mobile app. If you have any questions about these changes, contact your manager or our support team.</p>
 </div>
 
 {{/base}} 

@@ -439,11 +439,26 @@ export class ReportsService implements OnModuleInit {
 				return;
 			}
 
-			// Ensure emailData has the correct format
-			if (!emailData || !emailData.name || !emailData.date || !emailData.metrics) {
-				this.logger.error(`Invalid email data format for user ${userId}`);
-				throw new Error('Invalid email data format');
-			}
+					// Ensure emailData has the correct format
+		this.logger.debug(`Email data received for user ${userId}:`, {
+			hasEmailData: !!emailData,
+			emailDataType: typeof emailData,
+			emailDataKeys: emailData ? Object.keys(emailData) : [],
+			hasName: emailData && !!emailData.name,
+			hasDate: emailData && !!emailData.date,
+			hasMetrics: emailData && !!emailData.metrics,
+			emailData: emailData
+		});
+		
+		if (!emailData || !emailData.name || !emailData.date || !emailData.metrics) {
+			this.logger.error(`Invalid email data format for user ${userId}`, {
+				hasEmailData: !!emailData,
+				hasName: emailData && !!emailData.name,
+				hasDate: emailData && !!emailData.date,
+				hasMetrics: emailData && !!emailData.metrics
+			});
+			throw new Error('Invalid email data format');
+		}
 
 			// Validate required fields for the email template
 			if (!emailData.metrics.attendance) {
@@ -509,14 +524,14 @@ export class ReportsService implements OnModuleInit {
 	/* ---------------------------------------------------------
 	 * MAP-DATA helper (live map screen)
 	 * -------------------------------------------------------*/
-	async generateMapData(params: { organisationId: number; branchId?: number }): Promise<any> {
+	async generateMapData(params: { organisationId: number; branchId?: number; userId?: number }): Promise<any> {
 		this.logger.log(
 			`Generating map data for organization ${params.organisationId}${
 				params.branchId ? ` and branch ${params.branchId}` : ''
-			}`,
+			}${params.userId ? ` and user ${params.userId}` : ''}`,
 		);
 
-		const cacheKey = `${this.CACHE_PREFIX}mapdata_org${params.organisationId}_${params.branchId || 'all'}`;
+		const cacheKey = `${this.CACHE_PREFIX}mapdata_org${params.organisationId}_${params.branchId || 'all'}_${params.userId || 'all'}`;
 
 		// Try cache first
 		const cached = await this.cacheManager.get(cacheKey);
@@ -529,12 +544,13 @@ export class ReportsService implements OnModuleInit {
 			const data = await this.mapDataReportGenerator.generate(params);
 			this.logger.log(`Map data generated successfully for organization ${params.organisationId}`);
 
-			// Basic summary counts to match previous response structure
+			// Enhanced summary counts to match new response structure
 			const summary = {
 				totalWorkers: data.workers.length,
 				totalClients: data.clients.length,
 				totalCompetitors: data.competitors.length,
 				totalQuotations: data.quotations.length,
+				totalEvents: data.events?.length || 0,
 			};
 
 			const finalPayload = { data, summary };

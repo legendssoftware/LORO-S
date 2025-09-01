@@ -103,4 +103,7 @@ export class Tracking {
 
     @Column({ type: 'text', nullable: true })
     rawLocation: string;
+
+    @Column({ type: 'json', nullable: true })
+    metadata: Record<string, any>;
 }

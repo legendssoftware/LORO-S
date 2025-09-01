@@ -1,0 +1,131 @@
+{{#base headerTitle="🚀 Great Progress Update!" headerSubtitle="Your contributions have increased - keep the momentum going!"}}
+
+<div class="greeting">
+    Hello {{userName}}! 🚀
+</div>
+
+<div class="message">
+    <p><strong>Exciting news!</strong> Your latest contributions at {{organizationName}} show excellent progress toward your targets. Your hard work is paying off!</p>
+</div>
+
+<div class="success-notice">
+    <p>📈 <strong>Progress Update:</strong> Your contributions have improved across multiple areas - you're building great momentum!</p>
+</div>
+
+<div class="info-card">
+    <h3>💪 Your Progress Highlights</h3>
+    {{#each contributionProgress}}
+    <div class="progress-item" style="margin-bottom: 16px; padding: 12px; background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%); border-left: 4px solid #10b981; border-radius: 6px;">
+        <div class="detail-grid">
+            <div class="detail-item">
+                <span class="detail-label">{{type}}</span>
+                <span class="detail-value" style="font-weight: 700; color: #059669;">
+                    {{#if currency}}
+                        {{#if formattedIncrease}}
+                            +{{formattedIncrease}} ({{increasePercentage}}% ↑)
+                        {{else}}
+                            +{{currency}} {{formatNumber increase}} ({{increasePercentage}}% ↑)
+                        {{/if}}
+                    {{else}}
+                        +{{increase}} ({{increasePercentage}}% ↑)
+                    {{/if}}
+                </span>
+            </div>
+            <div class="detail-item">
+                <span class="detail-label">Current Total</span>
+                <span class="detail-value" style="font-weight: 600;">
+                    {{#if formattedNew}}
+                        {{formattedNew}}
+                    {{else if currency}}
+                        {{currency}} {{formatNumber newValue}}
+                    {{else}}
+                        {{newValue}}
+                    {{/if}}
+                </span>
+            </div>
+            <div class="detail-item">
+                <span class="detail-label">Target Progress</span>
+                <span class="detail-value" style="color: #7c3aed; font-weight: 600;">{{progressPercentage}}%</span>
+            </div>
+        </div>
+    </div>
+    {{/each}}
+    
+    <div style="margin-top: 20px; padding: 16px; background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-left: 4px solid #f59e0b; border-radius: 6px;">
+        <div class="detail-grid">
+            <div class="detail-item">
+                <span class="detail-label">Overall Improvement</span>
+                <span class="detail-value" style="font-size: 18px; font-weight: 700; color: #92400e;">{{totalProgressImprovement}}%</span>
+            </div>
+            <div class="detail-item">
+                <span class="detail-label">Performance Trend</span>
+                <span class="detail-value" style="font-weight: 600; {{#switch performanceTrend}}{{#case 'excellent'}}color: #059669;{{/case}}{{#case 'good'}}color: #0d9488;{{/case}}{{#case 'improving'}}color: #7c3aed;{{/case}}{{#default}}color: #6366f1;{{/default}}{{/switch}}">
+                    {{#switch performanceTrend}}
+                        {{#case 'excellent'}}🌟 Excellent{{/case}}
+                        {{#case 'good'}}👍 Good{{/case}}
+                        {{#case 'improving'}}📈 Improving{{/case}}
+                        {{#default}}📊 Steady{{/default}}
+                    {{/switch}}
+                </span>
+            </div>
+            {{#if branchName}}
+            <div class="detail-item">
+                <span class="detail-label">Branch</span>
+                <span class="detail-value">{{branchName}}</span>
+            </div>
+            {{/if}}
+        </div>
+    </div>
+</div>
+
+<div class="info-card" style="background: linear-gradient(135deg, #ddd6fe 0%, #c4b5fd 100%); border-left-color: #8b5cf6;">
+    <h4 style="color: #6b21a8;">💬 {{motivationalMessage}}</h4>
+    <p style="color: #6b21a8; font-size: 16px; font-weight: 500; margin: 0;">You're doing fantastic! This progress shows your dedication is making a real impact.</p>
+</div>
+
+{{#if nextMilestone}}
+<div class="info-card">
+    <h4>🎯 Next Milestone: {{nextMilestone.milestone}}</h4>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Target Progress</span>
+            <span class="detail-value">{{nextMilestone.percentageToReach}}%</span>
+        </div>
+        {{#if nextMilestone.estimatedDaysToReach}}
+        <div class="detail-item">
+            <span class="detail-label">Estimated Time</span>
+            <span class="detail-value">{{nextMilestone.estimatedDaysToReach}} days</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+{{/if}}
+
+<div class="cta-section">
+    <a href="{{dashboardUrl}}" class="cta-button">View Your Progress</a>
+</div>
+
+<div class="info-card">
+    <h4>🔥 Keep The Momentum Going</h4>
+    <ul class="feature-list">
+        <li>📊 Your increased contributions directly impact team success</li>
+        <li>🎯 Consistent progress puts you on track to exceed targets</li>
+        <li>💪 This momentum demonstrates your professional growth</li>
+        {{#each encouragementTips}}
+        <li>{{this}}</li>
+        {{/each}}
+    </ul>
+</div>
+
+{{#if updateSource}}
+<div class="message" style="font-size: 14px; color: #64748b;">
+    <p>This update was automatically processed from your {{updateSource}} system, updated on {{formatDate updateDate}}.</p>
+</div>
+{{/if}}
+
+<div class="message">
+    <p>Your progress is inspiring! Keep this momentum going, and you'll be amazed at what you can achieve.</p>
+    <p>We're proud of your dedication and excited to see your continued success!</p>
+</div>
+
+{{/base}}

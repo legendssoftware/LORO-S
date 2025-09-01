@@ -1042,19 +1042,22 @@ export class UserService {
 
 			// Build where conditions
 			const whereConditions: any = {
-				uid: searchParameter,
+				uid: Number(searchParameter), // 🔧 FIX: Ensure uid is a number
 				isDeleted: false,
 			};
 
 			// Add organization filter if provided
 			if (orgId) {
-				whereConditions.organisation = { uid: orgId };
+				whereConditions.organisation = { uid: Number(orgId) }; // 🔧 FIX: Ensure orgId is a number
 			}
 
 			// Add branch filter if provided
 			if (branchId) {
-				whereConditions.branch = { uid: branchId };
+				whereConditions.branch = { uid: Number(branchId) }; // 🔧 FIX: Ensure branchId is a number
 			}
+
+			// 🔍 DEBUG: Log the exact query conditions (temporary)
+			this.logger.debug(`Database Query Conditions:`, JSON.stringify(whereConditions, null, 2));
 
 			const user = await this.userRepository.findOne({
 				where: whereConditions,
@@ -1062,7 +1065,7 @@ export class UserService {
 			});
 
 			if (!user) {
-				this.logger.warn(`User ${searchParameter} not found in database`);
+				this.logger.warn(`User ${searchParameter} not found with applied filters (orgId: ${orgId}, branchId: ${branchId})`);
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
 			}
 
@@ -2066,23 +2069,68 @@ export class UserService {
 					createdAt: new Date().toISOString(),
 					dashboardUrl: `${this.configService.get('FRONTEND_URL')}/dashboard`,
 					supportEmail: this.configService.get('SUPPORT_EMAIL') || 'support@loro.africa',
+					mobileAppInfo: {
+						appStoreUrl: 'https://apps.apple.com/app/loro-crm/id123456789',
+						googlePlayUrl: 'https://play.google.com/store/apps/details?id=com.loro.crm',
+						appName: 'Loro CRM Mobile',
+						features: [
+							'Real-time target tracking',
+							'Push notifications for achievements',
+							'Offline performance monitoring',
+							'Interactive progress charts'
+						]
+					},
 				};
 
-				this.eventEmitter.emit('send.email', EmailType.USER_TARGET_SET, [user.email], emailData);
-				this.logger.log(`✅ [UserService] Target set email notification queued for user: ${userId}`);
-			} catch (emailError) {
-				this.logger.error(
-					`❌ [UserService] Failed to queue target set email for user ${userId}:`,
-					emailError.message,
-				);
-			}
+							this.eventEmitter.emit('send.email', EmailType.USER_TARGET_SET, [user.email], emailData);
+			this.logger.log(`✅ [UserService] Target set email notification queued for user: ${userId}`);
+		} catch (emailError) {
+			this.logger.error(
+				`❌ [UserService] Failed to queue target set email for user ${userId}:`,
+				emailError.message,
+			);
+		}
 
-			const executionTime = Date.now() - startTime;
-			this.logger.log(`User targets set successfully for user: ${userId} in ${executionTime}ms`);
+		// Send push notification for target changes
+		try {
+			await this.unifiedNotificationService.sendTemplatedNotification(
+				NotificationEvent.USER_TARGET_SET,
+				[userId],
+				{
+					message: `New targets have been set for your performance period. Check your dashboard to view your goals and start tracking progress!`,
+					userName: `${user.name} ${user.surname}`.trim(),
+					targetSalesAmount: createUserTargetDto.targetSalesAmount,
+					targetQuotationsAmount: createUserTargetDto.targetQuotationsAmount,
+					targetNewLeads: createUserTargetDto.targetNewLeads,
+					targetNewClients: createUserTargetDto.targetNewClients,
+					targetCheckIns: createUserTargetDto.targetCheckIns,
+					targetCalls: createUserTargetDto.targetCalls,
+					periodStartDate: createUserTargetDto.periodStartDate
+						? new Date(createUserTargetDto.periodStartDate).toISOString().split('T')[0]
+						: undefined,
+					periodEndDate: createUserTargetDto.periodEndDate
+						? new Date(createUserTargetDto.periodEndDate).toISOString().split('T')[0]
+						: undefined,
+					timestamp: new Date().toISOString(),
+				},
+				{
+					priority: NotificationPriority.HIGH,
+				},
+			);
+			this.logger.debug(`Target set push notification sent to user: ${userId}`);
+		} catch (notificationError) {
+			this.logger.warn(
+				`Failed to send target set push notification to user ${userId}:`,
+				notificationError.message,
+			);
+		}
 
-			return {
-				message: 'User targets set successfully',
-			};
+		const executionTime = Date.now() - startTime;
+		this.logger.log(`User targets set successfully for user: ${userId} in ${executionTime}ms`);
+
+		return {
+			message: 'User targets set successfully',
+		};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
 			this.logger.error(
@@ -2165,23 +2213,69 @@ export class UserService {
 					updatedAt: new Date().toISOString(),
 					dashboardUrl: `${this.configService.get('FRONTEND_URL')}/dashboard`,
 					supportEmail: this.configService.get('SUPPORT_EMAIL') || 'support@loro.africa',
+					mobileAppInfo: {
+						appStoreUrl: 'https://apps.apple.com/app/loro-crm/id123456789',
+						googlePlayUrl: 'https://play.google.com/store/apps/details?id=com.loro.crm',
+						appName: 'Loro CRM Mobile',
+						features: [
+							'Real-time target synchronization',
+							'Instant update notifications',
+							'Mobile-optimized progress tracking',
+							'Offline target viewing'
+						]
+					},
 				};
 
-				this.eventEmitter.emit('send.email', EmailType.USER_TARGET_UPDATED, [user.email], emailData);
-				this.logger.log(`✅ [UserService] Target updated email notification queued for user: ${userId}`);
-			} catch (emailError) {
-				this.logger.error(
-					`❌ [UserService] Failed to queue target updated email for user ${userId}:`,
-					emailError.message,
-				);
-			}
+							this.eventEmitter.emit('send.email', EmailType.USER_TARGET_UPDATED, [user.email], emailData);
+			this.logger.log(`✅ [UserService] Target updated email notification queued for user: ${userId}`);
+		} catch (emailError) {
+			this.logger.error(
+				`❌ [UserService] Failed to queue target updated email for user ${userId}:`,
+				emailError.message,
+			);
+		}
 
-			const executionTime = Date.now() - startTime;
-			this.logger.log(`User targets updated successfully for user: ${userId} in ${executionTime}ms`);
+		// Send push notification for target updates
+		try {
+			await this.unifiedNotificationService.sendTemplatedNotification(
+				NotificationEvent.USER_TARGET_UPDATED,
+				[userId],
+				{
+					message: `Your performance targets have been updated. Review the changes and adjust your strategy accordingly!`,
+					userName: `${user.name} ${user.surname}`.trim(),
+					targetSalesAmount: updateUserTargetDto.targetSalesAmount,
+					targetQuotationsAmount: updateUserTargetDto.targetQuotationsAmount,
+					targetNewLeads: updateUserTargetDto.targetNewLeads,
+					targetNewClients: updateUserTargetDto.targetNewClients,
+					targetCheckIns: updateUserTargetDto.targetCheckIns,
+					targetCalls: updateUserTargetDto.targetCalls,
+					periodStartDate: updateUserTargetDto.periodStartDate
+						? new Date(updateUserTargetDto.periodStartDate).toISOString().split('T')[0]
+						: undefined,
+					periodEndDate: updateUserTargetDto.periodEndDate
+						? new Date(updateUserTargetDto.periodEndDate).toISOString().split('T')[0]
+						: undefined,
+					updateDate: new Date().toISOString().split('T')[0],
+					timestamp: new Date().toISOString(),
+				},
+				{
+					priority: NotificationPriority.HIGH,
+				},
+			);
+			this.logger.debug(`Target update push notification sent to user: ${userId}`);
+		} catch (notificationError) {
+			this.logger.warn(
+				`Failed to send target update push notification to user ${userId}:`,
+				notificationError.message,
+			);
+		}
 
-			return {
-				message: 'User targets updated successfully',
-			};
+		const executionTime = Date.now() - startTime;
+		this.logger.log(`User targets updated successfully for user: ${userId} in ${executionTime}ms`);
+
+		return {
+			message: 'User targets updated successfully',
+		};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
 			this.logger.error(
@@ -3010,6 +3104,20 @@ export class UserService {
 						updatedValues: result,
 					});
 
+					// Send contribution progress notification if there are increases
+					try {
+						await this.sendContributionProgressNotification(
+							userId,
+							externalUpdate,
+							result,
+						);
+					} catch (notificationError) {
+						this.logger.warn(
+							`Failed to send contribution progress notification for user ${userId}: ${notificationError.message}`,
+						);
+						// Don't fail the update if notification fails
+					}
+
 					const executionTime = Date.now() - startTime;
 					this.logger.log(
 						`ERP target update completed for user ${userId} in ${executionTime}ms (attempt ${
@@ -3435,6 +3543,17 @@ export class UserService {
 				periodEndDate: achievementData.periodEndDate,
 				dashboardUrl: `${this.configService.get('FRONTEND_URL')}/dashboard`,
 				motivationalMessage: achievementData.motivationalMessage,
+				mobileAppInfo: {
+					appStoreUrl: 'https://apps.apple.com/app/loro-crm/id123456789',
+					googlePlayUrl: 'https://play.google.com/store/apps/details?id=com.loro.crm',
+					appName: 'Loro CRM Mobile',
+					features: [
+						'Real-time achievement notifications',
+						'Interactive progress visualization',
+						'Offline achievement tracking',
+						'Mobile-optimized celebration features'
+					]
+				},
 			};
 
 			this.eventEmitter.emit('send.email', EmailType.USER_TARGET_ACHIEVEMENT, [user.email], emailData);
@@ -3515,11 +3634,61 @@ export class UserService {
 				daysRemaining: milestoneData.daysRemaining,
 				dashboardUrl: `${this.configService.get('FRONTEND_URL')}/dashboard`,
 				encouragementMessage: milestoneData.encouragementMessage,
+				mobileAppInfo: {
+					appStoreUrl: 'https://apps.apple.com/app/loro-crm/id123456789',
+					googlePlayUrl: 'https://play.google.com/store/apps/details?id=com.loro.crm',
+					appName: 'Loro CRM Mobile',
+					features: [
+						'Real-time milestone notifications',
+						'Interactive progress tracking',
+						'Mobile milestone celebrations',
+						'Offline progress monitoring'
+					]
+				},
 			};
 
-			this.eventEmitter.emit('send.email', EmailType.USER_TARGET_MILESTONE, [user.email], emailData);
+					this.eventEmitter.emit('send.email', EmailType.USER_TARGET_MILESTONE, [user.email], emailData);
 
-			this.logger.log(`Target milestone email sent to user ${userId} for ${targetType} milestone`);
+		// Send push notification for milestone achievement
+		try {
+			const milestoneMessage = milestoneData.milestonePercentage >= 100 
+				? `🎉 Congratulations! You've achieved your ${targetType} target (${milestoneData.currentValue}/${milestoneData.targetValue})! Excellent work!`
+				: `🎯 Great progress! You've reached ${milestoneData.milestonePercentage}% of your ${targetType} target (${milestoneData.currentValue}/${milestoneData.targetValue}). Keep it up!`;
+
+			await this.unifiedNotificationService.sendTemplatedNotification(
+				NotificationEvent.USER_TARGET_MILESTONE,
+				[userId],
+				{
+					message: milestoneMessage,
+					userName: `${user.name} ${user.surname}`.trim(),
+					targetType,
+					milestonePercentage: milestoneData.milestonePercentage,
+					currentValue: milestoneData.currentValue,
+					targetValue: milestoneData.targetValue,
+					remainingValue: milestoneData.remainingValue,
+					milestoneName: milestoneData.milestoneName,
+					periodStartDate: milestoneData.periodStartDate,
+					periodEndDate: milestoneData.periodEndDate,
+					daysRemaining: milestoneData.daysRemaining,
+					encouragementMessage: milestoneData.encouragementMessage,
+					isFullAchievement: milestoneData.milestonePercentage >= 100,
+					timestamp: new Date().toISOString(),
+				},
+				{
+					priority: milestoneData.milestonePercentage >= 100 
+						? NotificationPriority.HIGH 
+						: NotificationPriority.NORMAL,
+				},
+			);
+			this.logger.debug(`Target milestone push notification sent to user: ${userId} for ${targetType}`);
+		} catch (notificationError) {
+			this.logger.warn(
+				`Failed to send target milestone push notification to user ${userId}:`,
+				notificationError.message,
+			);
+		}
+
+		this.logger.log(`Target milestone email sent to user ${userId} for ${targetType} milestone`);
 		} catch (error) {
 			this.logger.error(`Error sending target milestone email to user ${userId}:`, error.message);
 		}
@@ -3781,6 +3950,198 @@ export class UserService {
 			this.logger.log(`Period summary email sent to user ${userId} for ${summaryData.periodType} period`);
 		} catch (error) {
 			this.logger.error(`Error sending period summary email to user ${userId}:`, error.message);
+		}
+	}
+
+	/**
+	 * Send contribution progress notification (both email and push) when ERP updates show increases
+	 * @param userId - User ID to send notification to
+	 * @param externalUpdate - The external update data from ERP
+	 * @param updatedValues - The calculated updated values
+	 */
+	private async sendContributionProgressNotification(
+		userId: number,
+		externalUpdate: ExternalTargetUpdateDto,
+		updatedValues: Partial<UserTarget>,
+	): Promise<void> {
+		try {
+			// Only send notifications for INCREMENT mode as these represent actual progress
+			if (externalUpdate.updateMode !== TargetUpdateMode.INCREMENT) {
+				this.logger.debug(`Skipping contribution progress notification for user ${userId} - not increment mode`);
+				return;
+			}
+
+			// Get user details
+			const user = await this.userRepository.findOne({
+				where: { uid: userId },
+				relations: ['userTarget', 'organisation', 'branch'],
+			});
+
+			if (!user) {
+				this.logger.warn(`User ${userId} not found for contribution progress notification`);
+				return;
+			}
+
+			// Calculate contribution progress data
+			const contributionProgress = [];
+			let totalProgressImprovement = 0;
+			let hasSignificantProgress = false;
+
+			// Check sales amount progress
+			if (externalUpdate.updates.currentSalesAmount && externalUpdate.updates.currentSalesAmount > 0) {
+				const previousValue = (user.userTarget?.currentSalesAmount || 0) - externalUpdate.updates.currentSalesAmount;
+				const newValue = user.userTarget?.currentSalesAmount || 0;
+				const targetValue = user.userTarget?.targetSalesAmount || 0;
+				const increase = externalUpdate.updates.currentSalesAmount;
+				const increasePercentage = previousValue > 0 ? Math.round((increase / previousValue) * 100) : 100;
+				const progressPercentage = targetValue > 0 ? Math.round((newValue / targetValue) * 100) : 0;
+
+				contributionProgress.push({
+					type: 'Sales',
+					previousValue,
+					newValue,
+					increase,
+					increasePercentage,
+					targetValue,
+					progressPercentage,
+					currency: user.userTarget?.targetCurrency || 'ZAR',
+					formattedPrevious: `${user.userTarget?.targetCurrency || 'ZAR'} ${previousValue.toLocaleString()}`,
+					formattedNew: `${user.userTarget?.targetCurrency || 'ZAR'} ${newValue.toLocaleString()}`,
+					formattedIncrease: `${user.userTarget?.targetCurrency || 'ZAR'} ${increase.toLocaleString()}`,
+					formattedTarget: `${user.userTarget?.targetCurrency || 'ZAR'} ${targetValue.toLocaleString()}`,
+				});
+
+				totalProgressImprovement += Math.min(increasePercentage, 50); // Cap individual contributions
+				hasSignificantProgress = true;
+			}
+
+			// Check other metrics (quotations, orders, leads, clients, etc.)
+			const metricsToCheck = [
+				{ key: 'currentQuotationsAmount', label: 'Quotations', target: 'targetQuotationsAmount', hasCurrency: true },
+				{ key: 'currentOrdersAmount', label: 'Orders', target: 'targetOrdersAmount', hasCurrency: true },
+				{ key: 'currentNewLeads', label: 'New Leads', target: 'targetNewLeads', hasCurrency: false },
+				{ key: 'currentNewClients', label: 'New Clients', target: 'targetNewClients', hasCurrency: false },
+				{ key: 'currentCheckIns', label: 'Check-ins', target: 'targetCheckIns', hasCurrency: false },
+				{ key: 'currentCalls', label: 'Calls', target: 'targetCalls', hasCurrency: false },
+				{ key: 'currentHoursWorked', label: 'Hours Worked', target: 'targetHoursWorked', hasCurrency: false },
+			];
+
+			for (const metric of metricsToCheck) {
+				const updateValue = externalUpdate.updates[metric.key];
+				if (updateValue && updateValue > 0) {
+					const previousValue = (user.userTarget?.[metric.key] || 0) - updateValue;
+					const newValue = user.userTarget?.[metric.key] || 0;
+					const targetValue = user.userTarget?.[metric.target] || 0;
+					const increase = updateValue;
+					const increasePercentage = previousValue > 0 ? Math.round((increase / previousValue) * 100) : 100;
+					const progressPercentage = targetValue > 0 ? Math.round((newValue / targetValue) * 100) : 0;
+
+					const progressItem: any = {
+						type: metric.label,
+						previousValue,
+						newValue,
+						increase,
+						increasePercentage,
+						targetValue,
+						progressPercentage,
+					};
+
+					if (metric.hasCurrency) {
+						const currency = user.userTarget?.targetCurrency || 'ZAR';
+						progressItem.currency = currency;
+						progressItem.formattedPrevious = `${currency} ${previousValue.toLocaleString()}`;
+						progressItem.formattedNew = `${currency} ${newValue.toLocaleString()}`;
+						progressItem.formattedIncrease = `${currency} ${increase.toLocaleString()}`;
+						progressItem.formattedTarget = `${currency} ${targetValue.toLocaleString()}`;
+					}
+
+					contributionProgress.push(progressItem);
+					totalProgressImprovement += Math.min(increasePercentage, 30); // Cap individual contributions
+					hasSignificantProgress = true;
+				}
+			}
+
+			// Only send notification if there's significant progress
+			if (!hasSignificantProgress || contributionProgress.length === 0) {
+				this.logger.debug(`No significant contribution progress for user ${userId} - skipping notification`);
+				return;
+			}
+
+			// Cap total progress improvement at reasonable level
+			totalProgressImprovement = Math.min(totalProgressImprovement, 100);
+
+			// Generate motivational messages and tips
+			const motivationalMessages = [
+				"Fantastic progress! Your hard work is really paying off.",
+				"You're building great momentum with these results!",
+				"Excellent work! Keep this pace and you'll exceed your targets.",
+				"Your dedication is showing in these numbers - well done!",
+				"Outstanding progress! You're on track for great results.",
+			];
+
+			const encouragementTips = [
+				"📈 Keep tracking your daily activities to maintain this momentum",
+				"🎯 Focus on consistency - small daily improvements add up",
+				"💪 Your current pace suggests you'll reach your targets ahead of schedule",
+				"⭐ Share your success strategies with team members",
+				"🚀 Consider setting stretch goals as you're performing so well",
+			];
+
+			// Determine performance trend
+			let performanceTrend: 'excellent' | 'good' | 'steady' | 'improving' = 'improving';
+			if (totalProgressImprovement >= 50) performanceTrend = 'excellent';
+			else if (totalProgressImprovement >= 30) performanceTrend = 'good';
+			else if (totalProgressImprovement >= 15) performanceTrend = 'improving';
+
+			// Prepare email data
+			const emailData = {
+				name: `${user.name} ${user.surname}`.trim(),
+				userName: `${user.name} ${user.surname}`.trim(),
+				userEmail: user.email,
+				updateDate: new Date().toISOString(),
+				updateSource: externalUpdate.source,
+				contributionProgress,
+				totalProgressImprovement,
+				organizationName: user.organisation?.name || 'Your Organization',
+				branchName: user.branch?.name,
+				periodStartDate: user.userTarget?.periodStartDate?.toISOString(),
+				periodEndDate: user.userTarget?.periodEndDate?.toISOString(),
+				daysRemaining: user.userTarget?.periodEndDate ? Math.max(0, Math.ceil((new Date(user.userTarget.periodEndDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))) : undefined,
+				motivationalMessage: motivationalMessages[Math.floor(Math.random() * motivationalMessages.length)],
+				encouragementTips: encouragementTips.slice(0, 3), // Send 3 tips
+				performanceTrend,
+				dashboardUrl: `${this.configService.get('FRONTEND_URL')}/targets`,
+				supportEmail: this.configService.get('SUPPORT_EMAIL') || 'support@orrbit.co.za',
+			};
+
+			// Send email notification
+			this.eventEmitter.emit('send.email', EmailType.USER_TARGET_CONTRIBUTION_PROGRESS, [user.email], emailData);
+			this.logger.log(`✅ Contribution progress email queued for user: ${userId} (${totalProgressImprovement}% improvement)`);
+
+			// Send push notification
+			try {
+				await this.unifiedNotificationService.sendTemplatedNotification(
+					NotificationEvent.USER_TARGET_CONTRIBUTION_PROGRESS,
+					[userId],
+					{
+						totalProgressImprovement,
+						userName: emailData.userName,
+						organizationName: emailData.organizationName,
+						contributionCount: contributionProgress.length,
+					},
+					{
+						priority: NotificationPriority.HIGH,
+					},
+				);
+				this.logger.log(`✅ Contribution progress push notification sent to user: ${userId}`);
+			} catch (pushError) {
+				this.logger.warn(`Failed to send contribution progress push notification to user ${userId}: ${pushError.message}`);
+				// Don't fail the email if push notification fails
+			}
+
+		} catch (error) {
+			this.logger.error(`Error sending contribution progress notification to user ${userId}:`, error.message);
+			throw error;
 		}
 	}
 

@@ -72,6 +72,7 @@ import {
 	UserTargetDeadlineReminderEmailData,
 	UserTargetPerformanceAlertEmailData,
 	UserTargetERPUpdateConfirmationEmailData,
+	UserTargetContributionProgressEmailData,
 	UserTargetPeriodSummaryEmailData,
 	UserTargetSetEmailData,
 	UserTargetDeletedEmailData,
@@ -723,6 +724,10 @@ class EmailTemplateService {
 
 	userTargetERPUpdateConfirmation(data: UserTargetERPUpdateConfirmationEmailData): string {
 		return this.renderTemplate('targets/erp-update-confirmation.hbs', data);
+	}
+
+	userTargetContributionProgress(data: UserTargetContributionProgressEmailData): string {
+		return this.renderTemplate('targets/contribution-progress.hbs', data);
 	}
 
 	userTargetPeriodSummary(data: UserTargetPeriodSummaryEmailData): string {

@@ -764,6 +764,18 @@ export class AttendanceReportsService {
 
 		this.logger.log(`Generated ${insights.length} insights and ${recommendations.length} recommendations`);
 
+		// Log detailed user data for debugging
+		this.logger.log(`📊 Morning Report User Data Summary for org ${organizationId}:`);
+		this.logger.log(`  - Present Employees: ${employeeCategories.presentEmployees.length}`);
+		this.logger.log(`  - Absent Employees: ${employeeCategories.absentEmployees.length}`);
+		this.logger.log(`  - Currently Working: ${employeeCategories.currentlyWorkingEmployees.length}`);
+		this.logger.log(`  - Completed Shifts: ${employeeCategories.completedShiftEmployees.length}`);
+		this.logger.log(`  - Overtime Employees: ${employeeCategories.overtimeEmployees.length}`);
+		this.logger.log(`  - Consolidated Attendance Records: ${consolidatedAttendance.size}`);
+		this.logger.log(`  - Total Users Fetched: ${allUsers.length}`);
+		this.logger.log(`  - Today's Attendance Records: ${todayAttendance.length}`);
+
+		// Use employeeCategories consistently for all user lists
 		const morningReportData = {
 			organizationName: organization?.name || 'Organization',
 			reportDate: format(today, 'EEEE, MMMM do, yyyy'),
@@ -779,10 +791,11 @@ export class AttendanceReportsService {
 				hoursDeficit: Math.round(hoursDeficit * 100) / 100,
 			},
 			punctuality,
-			presentEmployees,
+			presentEmployees: employeeCategories.presentEmployees,
 			absentEmployees: employeeCategories.absentEmployees,
 			currentlyWorkingEmployees: employeeCategories.currentlyWorkingEmployees,
 			completedShiftEmployees: employeeCategories.completedShiftEmployees,
+			overtimeEmployees: employeeCategories.overtimeEmployees,
 			branchBreakdown,
 			targetPerformance,
 			insights,
@@ -805,7 +818,7 @@ export class AttendanceReportsService {
 	}
 
 	private async generateEveningReportData(organizationId: number): Promise<EveningReportData> {
-		this.logger.log(`Generating evening report data for organization ${organizationId}`);
+		this.logger.log(`🌅 ===== STARTING EVENING REPORT GENERATION for org ${organizationId} =====`);
 
 		// Get organization timezone using the enhanced helper method
 		const organizationTimezone = await this.getOrganizationTimezone(organizationId);
@@ -843,24 +856,6 @@ export class AttendanceReportsService {
 
 		this.logger.debug(`Organization hours: ${organizationStartTime} to ${organizationCloseTime}`);
 
-		// Get all users in the organization with better error handling - only count those who should work today
-		let allUsers = [];
-
-		try {
-			const usersResponse = await this.userService.findAll({ organisationId: organizationId }, 1, 1000);
-			allUsers = usersResponse.data || [];
-			this.logger.debug(`Found ${allUsers.length} users in organization ${organizationId}`);
-			
-			// Filter organization-specific users and exclude deleted/inactive users
-			allUsers = allUsers.filter(user => 
-				!user.isDeleted && 
-				user.status !== 'INACTIVE' && 
-				user.organisationId === organizationId
-			);
-		} catch (error) {
-			this.logger.warn(`Failed to fetch users for organization ${organizationId}:`, error);
-		}
-
 		// Find the most recent working day for comparison (smart yesterday logic)
 		const { comparisonDate, comparisonLabel } = await this.findLastWorkingDay(organizationId, today);
 		const startOfComparison = startOfDay(comparisonDate);
@@ -868,7 +863,7 @@ export class AttendanceReportsService {
 
 		this.logger.debug(`Comparison date (${comparisonLabel}): ${comparisonDate.toISOString()}`);
 
-		// Get today's and comparison day's attendance records
+		// Get today's and comparison day's attendance records (moved up for fallback logic)
 		const [todayAttendance, comparisonAttendance] = await Promise.all([
 			this.attendanceRepository.find({
 				where: {
@@ -887,8 +882,148 @@ export class AttendanceReportsService {
 		]);
 
 		this.logger.log(
-			`Found ${todayAttendance.length} attendance records for today, ${comparisonAttendance.length} for ${comparisonLabel}`,
+			`📊 ATTENDANCE DATA: Found ${todayAttendance.length} attendance records for today, ${comparisonAttendance.length} for ${comparisonLabel}`,
 		);
+
+		// Get all users in the organization with better error handling - only count those who should work today
+		let allUsers = [];
+
+		this.logger.log(`🚀 STARTING USER FETCH for evening report org ${organizationId}`);
+		
+		try {
+			this.logger.log(`📞 Calling userService.findAll with organisationId: ${organizationId}`);
+			const usersResponse = await this.userService.findAll({ organisationId: organizationId }, 1, 1000);
+			this.logger.log(`📞 UserService response received:`, {
+				success: !!usersResponse,
+				hasData: !!usersResponse?.data,
+				dataLength: usersResponse?.data?.length || 0,
+			});
+			
+			allUsers = usersResponse.data || [];
+			this.logger.log(`🔍 EVENING REPORT - INITIAL USER FETCH: Found ${allUsers.length} users in organization ${organizationId}`);
+			
+			if (allUsers.length === 0) {
+				this.logger.error(`🚨 EVENING REPORT - NO USERS FOUND! UserService response:`, {
+					response: usersResponse,
+					organisationId: organizationId,
+					queryParams: { organisationId: organizationId }
+				});
+			}
+			
+			// Log some sample users before filtering
+			const sampleUsers = allUsers.slice(0, 3).map(u => ({
+				uid: u.uid,
+				name: u.name,
+				surname: u.surname,
+				email: u.email,
+				isDeleted: u.isDeleted,
+				status: u.status,
+				organisationId: u.organisationId
+			}));
+			this.logger.log(`🔍 EVENING REPORT - Sample Users Before Filtering: ${JSON.stringify(sampleUsers, null, 2)}`);
+			
+			// Filter organization-specific users and exclude deleted/inactive users
+			const beforeFilterCount = allUsers.length;
+			allUsers = allUsers.filter(user => 
+				!user.isDeleted && 
+				user.status !== 'INACTIVE' && 
+				user.organisationId === organizationId
+			);
+			this.logger.log(`🔍 EVENING REPORT - USER FILTERING: ${beforeFilterCount} -> ${allUsers.length} users after filtering (removed deleted/inactive/wrong org)`);
+			
+			if (allUsers.length === 0 && beforeFilterCount > 0) {
+				this.logger.error(`🚨 ALL USERS FILTERED OUT! Filtering criteria removing all users:`, {
+					beforeCount: beforeFilterCount,
+					afterCount: allUsers.length,
+					organizationId: organizationId
+				});
+			}
+			
+			// Log filtered users
+			const filteredSample = allUsers.slice(0, 3).map(u => ({
+				uid: u.uid,
+				name: u.name,
+				surname: u.surname,
+				email: u.email
+			}));
+			this.logger.log(`🔍 EVENING REPORT - Sample Users After Filtering: ${JSON.stringify(filteredSample, null, 2)}`);
+		} catch (error) {
+			this.logger.error(`🚨 CRITICAL ERROR: Failed to fetch users for evening report organization ${organizationId}:`, error);
+			this.logger.error(`Error details:`, {
+				message: error.message,
+				stack: error.stack,
+				organizationId: organizationId
+			});
+		}
+
+		// If we still have no users, try an alternative query method
+		if (allUsers.length === 0) {
+			this.logger.log(`🔄 ATTEMPTING FALLBACK USER QUERY for org ${organizationId}`);
+			try {
+				// Try the same query pattern used for recipients that works
+				const fallbackResponse = await this.userService.findAll({
+					organisationId: organizationId,
+					status: AccountStatus.ACTIVE // Remove specific access level to get all active users
+				}, 1, 1000);
+				
+				this.logger.log(`🔄 Fallback query response:`, {
+					success: !!fallbackResponse,
+					hasData: !!fallbackResponse?.data,
+					dataLength: fallbackResponse?.data?.length || 0,
+				});
+
+				if (fallbackResponse?.data?.length > 0) {
+					allUsers = fallbackResponse.data.filter(user => 
+						!user.isDeleted && 
+						user.status !== 'INACTIVE' && 
+						user.organisation?.uid === organizationId
+					);
+					this.logger.log(`🔄 FALLBACK SUCCESS: Found ${allUsers.length} users via fallback query`);
+				}
+			} catch (fallbackError) {
+				this.logger.error(`🚨 FALLBACK QUERY ALSO FAILED:`, fallbackError);
+			}
+		}
+
+		// FINAL FALLBACK: If we still have no users but have attendance records, 
+		// create synthetic user data from attendance records (like morning report works)
+		if (allUsers.length === 0) {
+			this.logger.log(`🆘 EMERGENCY FALLBACK: Creating synthetic user data from attendance records`);
+			
+			// Extract unique users from attendance records
+			const attendanceUsers = new Map();
+
+			todayAttendance.forEach(attendance => {
+				if (attendance.owner && !attendanceUsers.has(attendance.owner.uid)) {
+					attendanceUsers.set(attendance.owner.uid, attendance.owner);
+				}
+			});
+			
+			allUsers = Array.from(attendanceUsers.values());
+			this.logger.log(`🆘 EMERGENCY FALLBACK SUCCESS: Created ${allUsers.length} synthetic users from attendance records`);
+			
+			// Log the synthetic users
+			const syntheticSample = allUsers.map(u => ({
+				uid: u.uid,
+				name: u.name,
+				surname: u.surname,
+				email: u.email
+			}));
+			this.logger.log(`🆘 Synthetic Users: ${JSON.stringify(syntheticSample, null, 2)}`);
+		}
+
+		// Final verification
+		this.logger.log(`🔎 FINAL USER COUNT CHECK for evening report org ${organizationId}: ${allUsers.length} users`);
+
+		// Log attendance records in detail
+		this.logger.log(`🔍 TODAY'S ATTENDANCE RECORDS DETAILS:`);
+		todayAttendance.forEach((attendance, index) => {
+			this.logger.log(`  [${index + 1}] Owner: ${attendance.owner?.name} ${attendance.owner?.surname} (UID: ${attendance.owner?.uid})`);
+			this.logger.log(`      - Check In: ${attendance.checkIn ? format(attendance.checkIn, 'HH:mm') : 'No check-in'}`);
+			this.logger.log(`      - Check Out: ${attendance.checkOut ? format(attendance.checkOut, 'HH:mm') : 'No check-out'}`);
+			this.logger.log(`      - Duration: ${attendance.duration || 'No duration'}`);
+			this.logger.log(`      - Status: ${attendance.status || 'No status'}`);
+		});
 
 		// Create present employees list using organization hours for lateness calculation
 		const presentEmployees: AttendanceReportUser[] = [];
@@ -1014,13 +1149,31 @@ export class AttendanceReportsService {
 
 		this.logger.log(`Generated metrics for ${employeeMetrics.length} employees`);
 
+		// Log the raw employee metrics before mapping to template format
+		this.logger.log(`🔄 Raw Employee Metrics Before Template Mapping:`);
+		this.logger.log(`  - Total Raw Metrics: ${employeeMetrics.length}`);
+		this.logger.log(`  - Raw Metrics with Check-in: ${employeeMetrics.filter(m => m.todayCheckIn).length}`);
+		this.logger.log(`  - Raw Metrics with Hours > 0: ${employeeMetrics.filter(m => m.hoursWorked > 0).length}`);
+		employeeMetrics.slice(0, 3).forEach((metric, index) => {
+			this.logger.log(`  Raw Metric ${index + 1}: ${metric.user.fullName} - Check-in: ${metric.todayCheckIn}, Hours: ${metric.hoursWorked}`);
+		});
+
 		// Map employee metrics to template format with enhanced real-time hours
 		const templateEmployeeMetrics = [];
+		
+		this.logger.log(`🔄 STARTING TEMPLATE MAPPING: ${employeeMetrics.length} metrics to process`);
+		
 		for (const metric of employeeMetrics) {
+			this.logger.debug(`🔄 Processing metric for user: ${metric.user.fullName} (UID: ${metric.user.uid})`);
+			
 			const todayRecord = todayAttendance.find((a) => a.owner?.uid === metric.user.uid);
+			this.logger.debug(`  - Found today record: ${!!todayRecord}`);
+			
 			const realTimeHours = todayRecord
 				? await this.calculateRealTimeHoursWithOrgHours(todayRecord, organizationId, today)
 				: 0;
+			
+			this.logger.debug(`  - Real-time hours: ${realTimeHours}`);
 
 			// Determine employee status with real-time consideration using organization hours
 			let status = 'Absent';
@@ -1043,7 +1196,7 @@ export class AttendanceReportsService {
 				punctualityChange: this.calculatePunctualityChange(metric, comparisonAttendance),
 			};
 
-			templateEmployeeMetrics.push({
+			const templateMetric = {
 				uid: metric.user.uid,
 				name: metric.user.name || 'Unknown',
 				surname: metric.user.surname || 'User',
@@ -1058,7 +1211,63 @@ export class AttendanceReportsService {
 				status,
 				yesterdayComparison,
 				avatar: metric.user.userProfile?.avatar || null,
+			};
+			
+			this.logger.debug(`  - Created template metric:`, {
+				name: templateMetric.name,
+				checkIn: templateMetric.checkInTime,
+				checkOut: templateMetric.checkOutTime,
+				hours: templateMetric.hoursWorked,
+				status: templateMetric.status
 			});
+			
+			templateEmployeeMetrics.push(templateMetric);
+		}
+
+		// Enhanced logging for template employee metrics (Individual Performance Summary data)
+		this.logger.log(`👥 Evening Report Individual Performance Summary for org ${organizationId}:`);
+		this.logger.log(`  - Template Employee Metrics: ${templateEmployeeMetrics.length}`);
+		this.logger.log(`  - Employees with hours > 0: ${templateEmployeeMetrics.filter(emp => emp.hoursWorked > 0).length}`);
+		this.logger.log(`  - Employees with check-in: ${templateEmployeeMetrics.filter(emp => emp.checkInTime).length}`);
+		this.logger.log(`  - Late employees: ${templateEmployeeMetrics.filter(emp => emp.isLate).length}`);
+		
+		// Log ALL template metrics for detailed debugging
+		this.logger.log(`📋 DETAILED Individual Performance Data for org ${organizationId}:`);
+		templateEmployeeMetrics.forEach((emp, index) => {
+			this.logger.log(`  [${index + 1}] Employee: ${emp.name} ${emp.surname}`);
+			this.logger.log(`      - UID: ${emp.uid}`);
+			this.logger.log(`      - Email: ${emp.email}`);
+			this.logger.log(`      - Role: ${emp.role}`);
+			this.logger.log(`      - Check In: ${emp.checkInTime || 'No check-in'}`);
+			this.logger.log(`      - Check Out: ${emp.checkOutTime || 'No check-out'}`);
+			this.logger.log(`      - Hours Worked: ${emp.hoursWorked}`);
+			this.logger.log(`      - Status: ${emp.status}`);
+			this.logger.log(`      - Is Late: ${emp.isLate}`);
+			this.logger.log(`      - Late Minutes: ${emp.lateMinutes}`);
+			this.logger.log(`      - Branch: ${emp.branch?.name || 'No branch'}`);
+			this.logger.log(`      - Yesterday Comparison: ${JSON.stringify(emp.yesterdayComparison)}`);
+			this.logger.log(`      ---`);
+		});
+		
+		// Log sample template metrics for debugging
+		const sampleTemplateMetrics = templateEmployeeMetrics.slice(0, 3).map(emp => ({
+			name: emp.name,
+			surname: emp.surname,
+			hoursWorked: emp.hoursWorked,
+			checkIn: emp.checkInTime,
+			checkOut: emp.checkOutTime,
+			status: emp.status,
+			isLate: emp.isLate
+		}));
+		this.logger.log(`  - Sample Template Metrics: ${JSON.stringify(sampleTemplateMetrics, null, 2)}`);
+
+		// Final verification log
+		this.logger.log(`🚨 FINAL TEMPLATE METRICS VERIFICATION:`);
+		this.logger.log(`  - templateEmployeeMetrics.length: ${templateEmployeeMetrics.length}`);
+		this.logger.log(`  - templateEmployeeMetrics is Array: ${Array.isArray(templateEmployeeMetrics)}`);
+		this.logger.log(`  - templateEmployeeMetrics[0] exists: ${!!templateEmployeeMetrics[0]}`);
+		if (templateEmployeeMetrics[0]) {
+			this.logger.log(`  - First metric keys: ${Object.keys(templateEmployeeMetrics[0]).join(', ')}`);
 		}
 
 		// Calculate summary statistics with real-time hours using organization hours
@@ -1191,9 +1400,9 @@ export class AttendanceReportsService {
 			`Performance trend: ${performanceTrend} (attendance: ${attendanceChange}%, hours: ${hoursChange}h, punctuality: ${punctualityChange}%)`,
 		);
 
-		// Generate enhanced insights with target analysis using organization hours
+		// Generate enhanced insights with target analysis using organization hours and template metrics
 		const insights = this.generateEnhancedEveningInsights(
-			employeeMetrics,
+			templateEmployeeMetrics, // Use templateEmployeeMetrics for more accurate insights
 			completedShifts,
 			avgHours,
 			targetPerformance,
@@ -1303,6 +1512,48 @@ export class AttendanceReportsService {
 				wellness: wellnessMetrics,
 			},
 		};
+
+		// Enhanced logging for final evening report data
+		this.logger.log(`📧 Final Evening Report Data for org ${organizationId}:`);
+		this.logger.log(`  - Organization: ${eveningReportData.organizationName}`);
+		this.logger.log(`  - Report Date: ${eveningReportData.reportDate}`);
+		this.logger.log(`  - Employee Metrics Count: ${eveningReportData.employeeMetrics.length}`);
+		this.logger.log(`  - Present Employees: ${eveningReportData.presentEmployees.length}`);
+		this.logger.log(`  - Absent Employees: ${eveningReportData.absentEmployees.length}`);
+		this.logger.log(`  - Currently Working: ${eveningReportData.currentlyWorkingEmployees.length}`);
+		this.logger.log(`  - Completed Shifts: ${eveningReportData.completedShiftEmployees.length}`);
+		this.logger.log(`  - Overtime Employees: ${eveningReportData.overtimeEmployees.length}`);
+		this.logger.log(`  - Branch Breakdown Count: ${eveningReportData.branchBreakdown.length}`);
+		this.logger.log(`  - Top Performers: ${eveningReportData.topPerformers?.length || 0}`);
+		this.logger.log(`  - Insights Count: ${eveningReportData.insights.length}`);
+		this.logger.log(`  - Has Employees: ${eveningReportData.hasEmployees}`);
+
+		// CRITICAL: Log the actual employeeMetrics data being sent to email template
+		this.logger.log(`🚨 CRITICAL - EMPLOYEE METRICS FOR EMAIL TEMPLATE:`);
+		this.logger.log(`employeeMetrics array length: ${eveningReportData.employeeMetrics.length}`);
+		
+		if (eveningReportData.employeeMetrics.length > 0) {
+			this.logger.log(`📊 First 3 Employee Metrics for Email Template:`);
+			eveningReportData.employeeMetrics.slice(0, 3).forEach((emp, index) => {
+				this.logger.log(`  Employee ${index + 1}:`);
+				this.logger.log(`    - Name: ${emp.name} ${emp.surname}`);
+				this.logger.log(`    - UID: ${emp.uid}`);
+				this.logger.log(`    - Check In: ${emp.checkInTime}`);
+				this.logger.log(`    - Check Out: ${emp.checkOutTime}`);
+				this.logger.log(`    - Hours: ${emp.hoursWorked}`);
+				this.logger.log(`    - Status: ${emp.status}`);
+				this.logger.log(`    - Role: ${emp.role}`);
+				this.logger.log(`    - Email: ${emp.email}`);
+			});
+		} else {
+			this.logger.error(`🚨 ERROR: No employeeMetrics data for email template! This explains the empty Individual Performance Summary.`);
+		}
+
+		// Log the complete structure for debugging
+		this.logger.log(`📋 Complete Employee Metrics Structure Sample:`);
+		if (eveningReportData.employeeMetrics.length > 0) {
+			this.logger.log(JSON.stringify(eveningReportData.employeeMetrics[0], null, 2));
+		}
 
 		this.logger.log(`Evening report data generated successfully for organization ${organizationId}`);
 		return eveningReportData;
@@ -2341,7 +2592,7 @@ export class AttendanceReportsService {
 	 * Enhanced evening insights including target performance analysis
 	 */
 	private generateEnhancedEveningInsights(
-		employeeMetrics: EmployeeAttendanceMetric[],
+		employeeMetrics: any[], // Accept both EmployeeAttendanceMetric[] and template metrics
 		completedShifts: number,
 		avgHours: number,
 		targetPerformance: any,
@@ -2349,8 +2600,33 @@ export class AttendanceReportsService {
 	): string[] {
 		const insights: string[] = [];
 
-		// Call existing insights first
-		const baseInsights = this.generateEveningInsights(employeeMetrics, completedShifts, avgHours);
+		// Normalize metrics to ensure compatibility with existing insight generation
+		const normalizedMetrics = employeeMetrics.map(metric => {
+			// Handle both template metrics and EmployeeAttendanceMetric formats
+			if (metric.hoursWorked !== undefined) {
+				// Template metrics format
+				return {
+					user: {
+						uid: metric.uid,
+						name: metric.name,
+						surname: metric.surname,
+						fullName: `${metric.name} ${metric.surname}`.trim(),
+					},
+					todayCheckIn: metric.checkInTime,
+					todayCheckOut: metric.checkOutTime,
+					hoursWorked: metric.hoursWorked,
+					isLate: metric.isLate,
+					lateMinutes: metric.lateMinutes,
+					yesterdayHours: metric.yesterdayComparison?.hoursChange || 0,
+				};
+			} else {
+				// EmployeeAttendanceMetric format - return as is
+				return metric;
+			}
+		});
+
+		// Call existing insights first with normalized metrics
+		const baseInsights = this.generateEveningInsights(normalizedMetrics, completedShifts, avgHours);
 		insights.push(...baseInsights);
 
 		// Add comprehensive target analysis
@@ -2906,11 +3182,43 @@ export class AttendanceReportsService {
 	): Promise<EmployeeAttendanceMetric[]> {
 		const metrics: EmployeeAttendanceMetric[] = [];
 
+		this.logger.debug(`🔍 GenerateEmployeeMetrics: Processing ${allUsers.length} users for org ${organizationId}`);
+		this.logger.debug(`🔍 Today's attendance records: ${todayAttendance.length}`);
+		this.logger.debug(`🔍 Comparison attendance records: ${comparisonAttendance.length}`);
+
+		// Log attendance record owners for debugging
+		const attendanceOwners = todayAttendance.map(a => ({
+			uid: a.owner?.uid,
+			name: a.owner?.name,
+			surname: a.owner?.surname,
+			checkIn: a.checkIn ? format(a.checkIn, 'HH:mm') : null,
+			checkOut: a.checkOut ? format(a.checkOut, 'HH:mm') : null
+		}));
+		this.logger.debug(`🔍 Today's Attendance Owners: ${JSON.stringify(attendanceOwners, null, 2)}`);
+
+		// Log all users for debugging
+		const userList = allUsers.map(u => ({
+			uid: u.uid,
+			name: u.name,
+			surname: u.surname,
+			email: u.email,
+			isDeleted: u.isDeleted,
+			status: u.status
+		}));
+		this.logger.debug(`🔍 All Users for Metrics: ${JSON.stringify(userList, null, 2)}`);
+
 		for (const user of allUsers) {
 			const todayRecord = todayAttendance.find((a) => a.owner?.uid === user.uid);
 			const comparisonRecord = comparisonAttendance.find((a) => a.owner?.uid === user.uid);
+			
+			this.logger.debug(`🔍 Processing user ${user.name} ${user.surname} (UID: ${user.uid})`);
+			this.logger.debug(`  - Today record found: ${!!todayRecord}`);
+			this.logger.debug(`  - Comparison record found: ${!!comparisonRecord}`);
 
-			const todayHours = todayRecord?.duration ? this.parseDurationToMinutes(todayRecord.duration) / 60 : 0;
+			// Use real-time hours calculation instead of duration field for more accurate data
+			const todayHours = todayRecord 
+				? await this.calculateRealTimeHoursWithOrgHours(todayRecord, organizationId, new Date())
+				: 0;
 			const comparisonHours = comparisonRecord?.duration
 				? this.parseDurationToMinutes(comparisonRecord.duration) / 60
 				: 0;
@@ -3020,7 +3328,7 @@ export class AttendanceReportsService {
 				lateStatus: undefined,
 			};
 
-			metrics.push({
+			const newMetric = {
 				user: reportUser,
 				todayCheckIn: todayRecord?.checkIn ? format(todayRecord.checkIn, 'HH:mm') : null,
 				todayCheckOut: todayRecord?.checkOut ? format(todayRecord.checkOut, 'HH:mm') : null,
@@ -3030,11 +3338,22 @@ export class AttendanceReportsService {
 				yesterdayHours: Math.round(comparisonHours * 100) / 100,
 				comparisonText,
 				timingDifference,
-			});
+			};
+
+			this.logger.debug(`  - Created metric: ${JSON.stringify({
+				name: newMetric.user.fullName,
+				checkIn: newMetric.todayCheckIn,
+				checkOut: newMetric.todayCheckOut,
+				hours: newMetric.hoursWorked,
+				isLate: newMetric.isLate,
+				status: todayRecord ? 'Has Record' : 'No Record'
+			})}`);
+
+			metrics.push(newMetric);
 		}
 
 		// Sort by hours worked (descending), then by punctuality (on-time first)
-		return metrics.sort((a, b) => {
+		const sortedMetrics = metrics.sort((a, b) => {
 			if (b.hoursWorked !== a.hoursWorked) {
 				return b.hoursWorked - a.hoursWorked;
 			}
@@ -3044,6 +3363,25 @@ export class AttendanceReportsService {
 			}
 			return 0;
 		});
+
+		// Enhanced logging for debugging
+		this.logger.debug(`📊 Employee Metrics Generated for org ${organizationId}:`);
+		this.logger.debug(`  - Total Metrics: ${sortedMetrics.length}`);
+		this.logger.debug(`  - With Hours > 0: ${sortedMetrics.filter(m => m.hoursWorked > 0).length}`);
+		this.logger.debug(`  - With Check-in: ${sortedMetrics.filter(m => m.todayCheckIn).length}`);
+		this.logger.debug(`  - Late Employees: ${sortedMetrics.filter(m => m.isLate).length}`);
+		
+		// Log first few metrics for debugging (without sensitive data)
+		const sampleMetrics = sortedMetrics.slice(0, 3).map(m => ({
+			user: m.user.fullName,
+			hoursWorked: m.hoursWorked,
+			checkIn: m.todayCheckIn,
+			checkOut: m.todayCheckOut,
+			isLate: m.isLate
+		}));
+		this.logger.debug(`  - Sample Metrics: ${JSON.stringify(sampleMetrics, null, 2)}`);
+
+		return sortedMetrics;
 	}
 
 	/**
