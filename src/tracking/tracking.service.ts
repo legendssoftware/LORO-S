@@ -1227,10 +1227,15 @@ export class TrackingService {
 		const endTime = new Date(trackingPoints[trackingPoints.length - 1].createdAt).getTime();
 		const totalTimeMinutes = (endTime - startTime) / (1000 * 60);
 
-		// Calculate speeds and movement analysis
+		// Calculate speeds and movement analysis with realistic bounds
 		let movingTimeMinutes = 0;
 		let maxSpeedKmh = 0;
 		const locationTimeSpent = new Map<string, number>();
+		
+		// Constants for realistic speed calculations
+		const MIN_TIME_INTERVAL_SECONDS = 5; // Minimum 5 seconds between points for speed calculation
+		const MAX_REASONABLE_SPEED_KMH = 200; // Maximum reasonable speed for ground vehicles
+		const MIN_DISTANCE_METERS = 5; // Minimum distance to consider as actual movement (GPS accuracy)
 
 		for (let i = 1; i < trackingPoints.length; i++) {
 			const prevPoint = trackingPoints[i - 1];
@@ -1239,6 +1244,7 @@ export class TrackingService {
 			const timeIntervalMs = new Date(currentPoint.createdAt).getTime() - new Date(prevPoint.createdAt).getTime();
 			const timeIntervalMinutes = timeIntervalMs / (1000 * 60);
 			const timeIntervalHours = timeIntervalMinutes / 60;
+			const timeIntervalSeconds = timeIntervalMs / 1000;
 
 			// Calculate distance between points
 			const segmentDistance = LocationUtils.calculateDistance(
@@ -1247,17 +1253,24 @@ export class TrackingService {
 				currentPoint.latitude,
 				currentPoint.longitude
 			);
+			const segmentDistanceMeters = segmentDistance * 1000;
 
-			// Calculate speed for this segment
-			const speedKmh = timeIntervalHours > 0 ? segmentDistance / timeIntervalHours : 0;
+			// Only calculate speed if we have sufficient time interval and distance
+			let speedKmh = 0;
+			if (timeIntervalSeconds >= MIN_TIME_INTERVAL_SECONDS && segmentDistanceMeters >= MIN_DISTANCE_METERS) {
+				speedKmh = timeIntervalHours > 0 ? segmentDistance / timeIntervalHours : 0;
+				
+				// Cap speed at reasonable maximum to prevent GPS-induced crazy speeds
+				speedKmh = Math.min(speedKmh, MAX_REASONABLE_SPEED_KMH);
+			}
 			
-			// Track max speed
-			if (speedKmh > maxSpeedKmh) {
+			// Track max speed (only if it's a valid calculation)
+			if (speedKmh > 0 && speedKmh <= MAX_REASONABLE_SPEED_KMH && speedKmh > maxSpeedKmh) {
 				maxSpeedKmh = speedKmh;
 			}
 
-			// Determine if this segment represents movement (speed > 1 km/h threshold)
-			const isMoving = speedKmh > 1;
+			// Determine if this segment represents movement (speed > 2 km/h threshold and minimum distance)
+			const isMoving = speedKmh > 2 && segmentDistanceMeters >= MIN_DISTANCE_METERS;
 			if (isMoving) {
 				movingTimeMinutes += timeIntervalMinutes;
 			}
@@ -1270,7 +1283,10 @@ export class TrackingService {
 		}
 
 		const stoppedTimeMinutes = totalTimeMinutes - movingTimeMinutes;
-		const averageSpeedKmh = movingTimeMinutes > 0 ? (totalDistanceKm / (movingTimeMinutes / 60)) : 0;
+		let averageSpeedKmh = movingTimeMinutes > 0 ? (totalDistanceKm / (movingTimeMinutes / 60)) : 0;
+		
+		// Cap average speed at reasonable maximum
+		averageSpeedKmh = Math.min(averageSpeedKmh, MAX_REASONABLE_SPEED_KMH);
 
 		return {
 			totalDistanceKm,

@@ -596,10 +596,11 @@ export class AttendanceService {
 				// Don't fail the check-out if overtime notification fails
 			}
 
-			// Emit the daily-report event with the user ID
+			// Emit the daily-report event with the user ID and activity trigger flag
 			this.logger.debug(`Emitting events for user: ${checkOutDto?.owner?.uid}`);
 			this.eventEmitter.emit('daily-report', {
 				userId: checkOutDto?.owner?.uid,
+				triggeredByActivity: true, // This report is triggered by actual user activity (check-out)
 			});
 
 			this.eventEmitter.emit('user.target.update.required', { userId: checkOutDto?.owner?.uid });

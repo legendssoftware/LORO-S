@@ -221,8 +221,8 @@ export class ReportsService implements OnModuleInit {
 	}
 
 	@OnEvent('daily-report')
-	async handleDailyReport(payload: { userId: number }) {
-		this.logger.log(`Handling daily report event for user ${payload?.userId}`);
+	async handleDailyReport(payload: { userId: number; triggeredByActivity?: boolean }) {
+		this.logger.log(`Handling daily report event for user ${payload?.userId}${payload?.triggeredByActivity ? ' (activity-triggered)' : ''}`);
 
 		try {
 			if (!payload || !payload.userId) {
@@ -230,7 +230,7 @@ export class ReportsService implements OnModuleInit {
 				return;
 			}
 
-			const { userId } = payload;
+			const { userId, triggeredByActivity } = payload;
 
 			// Get user to find their organization
 			const user = await this.userRepository.findOne({
@@ -251,6 +251,7 @@ export class ReportsService implements OnModuleInit {
 				organisationId: user.organisation.uid,
 				filters: {
 					userId: userId,
+					triggeredByActivity: triggeredByActivity, // Pass through the activity trigger flag
 					// Use default date range (today)
 				},
 			};

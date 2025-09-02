@@ -108,7 +108,7 @@ export class UserDailyReportGenerator {
 	}
 
 	async generate(params: ReportParamsDto): Promise<Record<string, any>> {
-		const { userId, dateRange } = params.filters || {};
+		const { userId, dateRange, triggeredByActivity } = params.filters || {};
 
 		if (!userId) {
 			throw new Error('User ID is required for generating a daily user report');
@@ -131,36 +131,43 @@ export class UserDailyReportGenerator {
 		const previousEndDate = endOfDay(subDays(startDate, 1));
 
 		try {
-					// Get user data with organization relation
-		const user = await this.userRepository.findOne({
-			where: { uid: userId },
-			relations: ['organisation'],
-		});
+			// Get user data with organization relation
+			const user = await this.userRepository.findOne({
+				where: { uid: userId },
+				relations: ['organisation'],
+			});
 
-		if (!user) {
-			throw new Error(`User with ID ${userId} not found`);
-		}
+			if (!user) {
+				throw new Error(`User with ID ${userId} not found`);
+			}
 
-		// Check if organization is open on this date (only for working day reports)
-		const isWorkingDay = await this.isOrganizationOpen(user, startDate);
-		
-		if (!isWorkingDay) {
-			this.logger.log(`Skipping report generation for user ${userId} on ${format(startDate, 'yyyy-MM-dd')} - Organization is closed`);
-			return {
-				metadata: {
-					reportType: 'user_daily',
-					userId,
-					userName: `${user.name} ${user.surname || ''}`.trim(),
-					date: format(startDate, 'yyyy-MM-dd'),
-					generatedAt: new Date(),
-					isWorkingDay: false,
-					skipReason: 'Organization closed on this date',
-				},
-				summary: null,
-				details: null,
-				emailData: null,
-			};
-		}
+			// Check if organization is open on this date (only for scheduled reports, not activity-triggered ones)
+			const isWorkingDay = await this.isOrganizationOpen(user, startDate);
+			
+			// Skip organization hours check if this report was triggered by user activity (like checking out)
+			// If user worked and checked out, they deserve their end-of-day report regardless of "official" hours
+			if (!isWorkingDay && !triggeredByActivity) {
+				this.logger.log(`Skipping report generation for user ${userId} on ${format(startDate, 'yyyy-MM-dd')} - Organization is closed (scheduled report)`);
+				return {
+					metadata: {
+						reportType: 'user_daily',
+						userId,
+						userName: `${user.name} ${user.surname || ''}`.trim(),
+						date: format(startDate, 'yyyy-MM-dd'),
+						generatedAt: new Date(),
+						isWorkingDay: false,
+						skipReason: 'Organization closed on this date (scheduled report)',
+					},
+					summary: null,
+					details: null,
+					emailData: null,
+				};
+			}
+
+			// If triggered by activity, log that we're generating despite organization being closed
+			if (!isWorkingDay && triggeredByActivity) {
+				this.logger.log(`Generating activity-triggered report for user ${userId} on ${format(startDate, 'yyyy-MM-dd')} despite organization being closed - user was active`);
+			}
 
 			// Collect all data in parallel for efficiency
 			const [
@@ -258,7 +265,7 @@ export class UserDailyReportGenerator {
 							status: attendanceData.status,
 							startTime: attendanceData.firstCheckIn,
 							endTime: attendanceData.lastCheckOut,
-							totalHours: attendanceData.totalWorkMinutes / 60,
+							totalHours: Math.round((attendanceData.totalWorkMinutes / 60) * 100) / 100, // Round to 2 decimal places
 							duration: this.formatDuration(attendanceData.totalWorkMinutes),
 							checkInLocation: attendanceData.firstCheckInLocation,
 							checkOutLocation: attendanceData.lastCheckOutLocation,
@@ -764,8 +771,8 @@ export class UserDailyReportGenerator {
 					totalTimeFormatted: this.formatDuration(tripSummary.totalTimeMinutes),
 					movingTimeFormatted: this.formatDuration(tripSummary.movingTimeMinutes),
 					stoppedTimeFormatted: this.formatDuration(tripSummary.stoppedTimeMinutes),
-					averageSpeed: `${tripSummary.averageSpeedKmh} km/h`,
-					maxSpeed: `${tripSummary.maxSpeedKmh} km/h`,
+					averageSpeed: `${Math.round(tripSummary.averageSpeedKmh * 10) / 10} km/h`,
+					maxSpeed: `${Math.round(tripSummary.maxSpeedKmh * 10) / 10} km/h`,
 					numberOfStops: tripSummary.numberOfStops,
 				} : null,
 				stops: formattedStops.slice(0, 10), // Limit to top 10 stops for email
