@@ -3184,6 +3184,22 @@ export class UserService {
 						// Don't fail the update if notification fails
 					}
 
+					// Send push notification for target update
+					this.logger.debug(`📱 [ERP_UPDATE] Attempting to send push notification for user: ${userId}`);
+					try {
+						await this.sendTargetUpdatePushNotification(
+							userId,
+							externalUpdate,
+							result,
+						);
+						this.logger.debug(`✅ [ERP_UPDATE] Push notification sent for user: ${userId}`);
+					} catch (pushNotificationError) {
+						this.logger.warn(
+							`⚠️ [ERP_UPDATE] Failed to send push notification for user ${userId}: ${pushNotificationError.message}`,
+						);
+						// Don't fail the update if push notification fails
+					}
+
 					const attemptTime = Date.now() - attemptStartTime;
 					const totalTime = Date.now() - startTime;
 					this.logger.log(
@@ -4138,6 +4154,76 @@ export class UserService {
 			this.logger.log(`Period summary email sent to user ${userId} for ${summaryData.periodType} period`);
 		} catch (error) {
 			this.logger.error(`Error sending period summary email to user ${userId}:`, error.message);
+		}
+	}
+
+	/**
+	 * Send push notification when targets are updated from ERP
+	 * @param userId - User ID to send notification to
+	 * @param externalUpdate - The external update data from ERP
+	 * @param updatedValues - The calculated updated values
+	 */
+	private async sendTargetUpdatePushNotification(
+		userId: number,
+		externalUpdate: ExternalTargetUpdateDto,
+		updatedValues: Partial<UserTarget>,
+	): Promise<void> {
+		try {
+			// Get user details
+			const user = await this.userRepository.findOne({
+				where: { uid: userId },
+				relations: ['userTarget', 'organisation', 'branch'],
+			});
+
+			if (!user) {
+				this.logger.warn(`User ${userId} not found for target update push notification`);
+				return;
+			}
+
+			// Determine notification message based on update mode
+			let title = '🎯 Target Update';
+			let message = '';
+			let priority = 'NORMAL' as any;
+
+			switch (externalUpdate.updateMode) {
+				case 'INCREMENT':
+					title = '📈 Progress Update!';
+					message = `Your targets have been updated with new progress from ${externalUpdate.source || 'external system'}`;
+					priority = 'HIGH';
+					break;
+				case 'REPLACE':
+					title = '🔄 Target Reset';
+					message = `Your targets have been updated by ${externalUpdate.source || 'external system'}`;
+					priority = 'NORMAL';
+					break;
+				default:
+					title = '🎯 Target Update';
+					message = `Your targets have been updated from ${externalUpdate.source || 'external system'}`;
+					priority = 'NORMAL';
+			}
+
+			// Send push notification using unified notification service
+			await this.unifiedNotificationService.sendTemplatedNotification(
+				'TARGET_UPDATE' as any,
+				[userId],
+				{
+					sourceSystem: externalUpdate.source || 'external system',
+					updateMode: externalUpdate.updateMode,
+					transactionId: externalUpdate.transactionId,
+					updatedValues,
+					updateTime: new Date().toLocaleString(),
+					title,
+					message,
+				},
+				{
+					priority,
+				},
+			);
+
+			this.logger.debug(`Push notification sent to user ${userId} for target update from ${externalUpdate.source || 'external system'}`);
+		} catch (error) {
+			this.logger.error(`Error sending target update push notification to user ${userId}:`, error.message);
+			throw error;
 		}
 	}
 

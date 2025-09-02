@@ -157,15 +157,10 @@ export class TrackingService {
 
 			this.logger.debug(`Processing coordinates: ${latitude}, ${longitude} with accuracy: ${createTrackingDto.accuracy || 'unknown'}`);
 
-			// Get address from coordinates with retries and fallback
-			this.logger.debug('Attempting to geocode coordinates');
-			const { address, error: geocodingError } = await this.getAddressFromCoordinates(latitude, longitude);
-			
-			if (geocodingError) {
-				this.logger.warn(`Geocoding failed for coordinates ${latitude}, ${longitude}: ${geocodingError}`);
-			} else {
-				this.logger.debug(`Successfully geocoded to address: ${address}`);
-			}
+			// Skip geocoding during creation for performance - will be done during retrieval
+			this.logger.debug('Skipping geocoding during creation for optimal performance');
+			const address = null;
+			const geocodingError = null;
 
 			// Extract owner ID before creating tracking data
 			const ownerId = createTrackingDto.owner;
@@ -358,6 +353,9 @@ export class TrackingService {
 			});
 
 			this.logger.debug(`Found ${trackingPoints.length} tracking points for user: ${userId}`);
+
+			// Geocode tracking points that don't have addresses
+			await this.geocodeTrackingPoints(trackingPoints);
 
 			// Calculate analytics
 			const analytics = this.calculateTrackingAnalytics(trackingPoints);
@@ -792,6 +790,68 @@ export class TrackingService {
 	}
 
 	/**
+	 * Geocode tracking points that don't have addresses
+	 * @param trackingPoints - Array of tracking points to geocode
+	 * @returns Updated tracking points with addresses
+	 */
+	private async geocodeTrackingPoints(trackingPoints: Tracking[]): Promise<Tracking[]> {
+		if (!trackingPoints || trackingPoints.length === 0) {
+			return trackingPoints;
+		}
+
+		const pointsToGeocode = trackingPoints.filter(point => !point.address && point.latitude && point.longitude);
+		
+		if (pointsToGeocode.length === 0) {
+			this.logger.debug('No tracking points need geocoding');
+			return trackingPoints;
+		}
+
+		this.logger.debug(`Geocoding ${pointsToGeocode.length} tracking points`);
+
+		// Process in batches to avoid hitting API rate limits
+		const BATCH_SIZE = 5;
+		const BATCH_DELAY = 1000; // 1 second delay between batches
+
+		for (let i = 0; i < pointsToGeocode.length; i += BATCH_SIZE) {
+			const batch = pointsToGeocode.slice(i, i + BATCH_SIZE);
+			
+			const geocodingPromises = batch.map(async (point) => {
+				const { address, error } = await this.getAddressFromCoordinates(point.latitude, point.longitude);
+				
+				if (address) {
+					point.address = address;
+					point.addressDecodingError = null;
+					
+					// Update in database for future use
+					try {
+						await this.trackingRepository.update(point.uid, { 
+							address, 
+							addressDecodingError: null 
+						});
+					} catch (updateError) {
+						this.logger.warn(`Failed to update address for tracking point ${point.uid}: ${updateError.message}`);
+					}
+				} else if (error) {
+					point.addressDecodingError = error;
+					this.logger.warn(`Geocoding failed for point ${point.uid}: ${error}`);
+				}
+				
+				return point;
+			});
+
+			await Promise.allSettled(geocodingPromises);
+			
+			// Add delay between batches to respect API rate limits
+			if (i + BATCH_SIZE < pointsToGeocode.length) {
+				await new Promise(resolve => setTimeout(resolve, BATCH_DELAY));
+			}
+		}
+
+		this.logger.debug(`Completed geocoding for ${pointsToGeocode.length} tracking points`);
+		return trackingPoints;
+	}
+
+	/**
 	 * Calculate organization-level summary for multiple users
 	 * @param userDataArray - Array of user tracking data
 	 * @returns Organization summary with aggregated statistics
@@ -924,6 +984,9 @@ export class TrackingService {
 				};
 			}
 
+			// Geocode tracking points that don't have addresses
+			await this.geocodeTrackingPoints(trackingPoints);
+
 			// Enhanced trip analysis
 			const tripAnalysis = this.generateTripAnalysis(trackingPoints);
 			const stopAnalysis = this.detectAndAnalyzeStops(trackingPoints);
@@ -1017,6 +1080,11 @@ export class TrackingService {
 				relations: ['branch', 'owner'],
 			});
 
+			// Geocode if address is missing
+			if (tracking && !tracking.address && tracking.latitude && tracking.longitude) {
+				await this.geocodeTrackingPoints([tracking]);
+			}
+
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,
 				tracking: tracking,
@@ -1042,6 +1110,9 @@ export class TrackingService {
 			if (!tracking) {
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
 			}
+
+			// Geocode tracking points that don't have addresses
+			await this.geocodeTrackingPoints(tracking);
 
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,
@@ -1298,6 +1369,94 @@ export class TrackingService {
 			maxSpeedKmh: Math.round(maxSpeedKmh * 10) / 10,
 			locationTimeSpent: Object.fromEntries(locationTimeSpent),
 		};
+	}
+
+	/**
+	 * Bulk geocode existing tracking points that don't have addresses
+	 * @param userId - Optional user ID to filter points
+	 * @param limit - Maximum number of points to process (default 100)
+	 * @returns Summary of geocoding results
+	 */
+	async bulkGeocodeTrackingPoints(userId?: number, limit: number = 100): Promise<{
+		message: string;
+		processed: number;
+		successful: number;
+		failed: number;
+		skipped: number;
+	}> {
+		const startTime = Date.now();
+		this.logger.log(`Starting bulk geocoding operation${userId ? ` for user: ${userId}` : ''}`);
+
+		try {
+			// Build query conditions
+			const whereConditions: any = {
+				address: IsNull(),
+				deletedAt: IsNull(),
+				latitude: MoreThanOrEqual(-90),
+				longitude: MoreThanOrEqual(-180),
+			};
+
+			if (userId) {
+				whereConditions.owner = { uid: userId };
+			}
+
+			// Get tracking points without addresses
+			const trackingPoints = await this.trackingRepository.find({
+				where: whereConditions,
+				take: limit,
+				order: { createdAt: 'DESC' },
+			});
+
+			if (trackingPoints.length === 0) {
+				return {
+					message: 'No tracking points found that need geocoding',
+					processed: 0,
+					successful: 0,
+					failed: 0,
+					skipped: 0,
+				};
+			}
+
+			this.logger.log(`Found ${trackingPoints.length} tracking points to geocode`);
+
+			const originalLength = trackingPoints.length;
+			let successful = 0;
+			let failed = 0;
+
+			// Use our existing geocoding method
+			await this.geocodeTrackingPoints(trackingPoints);
+
+			// Count results
+			for (const point of trackingPoints) {
+				if (point.address) {
+					successful++;
+				} else if (point.addressDecodingError) {
+					failed++;
+				}
+			}
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`Bulk geocoding completed in ${executionTime}ms: ${successful} successful, ${failed} failed`);
+
+			return {
+				message: `Bulk geocoding completed successfully`,
+				processed: originalLength,
+				successful,
+				failed,
+				skipped: 0,
+			};
+		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`Bulk geocoding failed after ${executionTime}ms: ${error.message}`, error.stack);
+
+			return {
+				message: `Bulk geocoding failed: ${error.message}`,
+				processed: 0,
+				successful: 0,
+				failed: 0,
+				skipped: 0,
+			};
+		}
 	}
 
 	/**
