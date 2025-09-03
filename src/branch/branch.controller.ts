@@ -83,6 +83,32 @@ import { Branch } from './entities/branch.entity';
 export class BranchController {
 	constructor(private readonly branchService: BranchService) {}
 
+	/**
+	 * Determines access scope for the authenticated user
+	 * @param user - Authenticated user object
+	 * @returns Access scope with orgId, branchId, and elevation status
+	 */
+	private getAccessScope(user: any) {
+		const isElevatedUser = [
+			AccessLevel.ADMIN,
+			AccessLevel.OWNER,
+			AccessLevel.MANAGER,
+			AccessLevel.DEVELOPER,
+			AccessLevel.SUPPORT
+		].includes(user?.role);
+
+		console.log('user access role in branch requests', isElevatedUser, user?.role);
+
+		const orgId = user?.org?.uid || user?.organisationRef;
+		const branchId = isElevatedUser ? null : user?.branch?.uid; // null = org-wide access for elevated users
+
+		return {
+			orgId,
+			branchId,
+			isElevated: isElevatedUser
+		};
+	}
+
 	@Post()
 	@isPublic()
 	@Roles(
@@ -297,13 +323,23 @@ Establishes a new branch location within your organization with comprehensive se
 		}
 	})
 	create(@Body() createBranchDto: CreateBranchDto, @Req() req: AuthenticatedRequest) {
-		// Try to get orgId from multiple sources
-		const orgId = req.user?.org?.uid || 
-					  (req.query?.organisationRef ? parseInt(req.query.organisationRef as string, 10) : null) ||
-					  req.user?.organisationRef;
+		const accessScope = this.getAccessScope(req.user);
 		
-		const branchId = req.user?.branch?.uid;
-		return this.branchService.create(createBranchDto, orgId, branchId);
+		// 🔍 DEBUG: Log the access decision
+		console.log('🔍 DEBUG create branch:', {
+			requestingUser: {
+				uid: req.user?.uid,
+				role: req.user?.role,
+				isElevated: accessScope.isElevated
+			},
+			accessScope: {
+				orgId: accessScope.orgId,
+				branchId: accessScope.branchId,
+				orgWideAccess: accessScope.branchId === null
+			}
+		});
+		
+		return this.branchService.create(createBranchDto, accessScope.orgId, accessScope.branchId);
 	}
 
 	@Get()
@@ -403,13 +439,23 @@ Retrieves a comprehensive directory of all active branches within your organizat
 		}
 	})
 	findAll(@Req() req: AuthenticatedRequest) {
-		// Try to get orgId from multiple sources
-		const orgId = req.user?.org?.uid || 
-					  (req.query?.organisationRef ? parseInt(req.query.organisationRef as string, 10) : null) ||
-					  req.user?.organisationRef;
+		const accessScope = this.getAccessScope(req.user);
 		
-		const branchId = req.user?.branch?.uid;
-		return this.branchService.findAll(orgId, branchId);
+		// 🔍 DEBUG: Log the access decision
+		console.log('🔍 DEBUG findAll branches:', {
+			requestingUser: {
+				uid: req.user?.uid,
+				role: req.user?.role,
+				isElevated: accessScope.isElevated
+			},
+			accessScope: {
+				orgId: accessScope.orgId,
+				branchId: accessScope.branchId,
+				orgWideAccess: accessScope.branchId === null
+			}
+		});
+		
+		return this.branchService.findAll(accessScope.orgId, accessScope.branchId, accessScope.isElevated);
 	}
 
 	@Get(':ref')
@@ -540,13 +586,24 @@ Retrieves comprehensive information about a specific branch including detailed a
 		}
 	})
 	findOne(@Param('ref') ref: string, @Req() req: AuthenticatedRequest) {
-		// Try to get orgId from multiple sources
-		const orgId = req.user?.org?.uid || 
-					  (req.query?.organisationRef ? parseInt(req.query.organisationRef as string, 10) : null) ||
-					  req.user?.organisationRef;
+		const accessScope = this.getAccessScope(req.user);
 		
-		const branchId = req.user?.branch?.uid;
-		return this.branchService.findOne(ref, orgId, branchId);
+		// 🔍 DEBUG: Log the access decision
+		console.log('🔍 DEBUG findOne branch:', {
+			searchingForBranch: ref,
+			requestingUser: {
+				uid: req.user?.uid,
+				role: req.user?.role,
+				isElevated: accessScope.isElevated
+			},
+			accessScope: {
+				orgId: accessScope.orgId,
+				branchId: accessScope.branchId,
+				orgWideAccess: accessScope.branchId === null
+			}
+		});
+		
+		return this.branchService.findOne(ref, accessScope.orgId, accessScope.branchId, accessScope.isElevated);
 	}
 
 	@Patch(':ref')
@@ -735,13 +792,24 @@ Updates existing branch information with comprehensive validation and audit trai
 		}
 	})
 	update(@Param('ref') ref: string, @Body() updateBranchDto: UpdateBranchDto, @Req() req: AuthenticatedRequest) {
-		// Try to get orgId from multiple sources
-		const orgId = req.user?.org?.uid || 
-					  (req.query?.organisationRef ? parseInt(req.query.organisationRef as string, 10) : null) ||
-					  req.user?.organisationRef;
+		const accessScope = this.getAccessScope(req.user);
 		
-		const branchId = req.user?.branch?.uid;
-		return this.branchService.update(ref, updateBranchDto, orgId, branchId);
+		// 🔍 DEBUG: Log the access decision
+		console.log('🔍 DEBUG update branch:', {
+			updatingBranch: ref,
+			requestingUser: {
+				uid: req.user?.uid,
+				role: req.user?.role,
+				isElevated: accessScope.isElevated
+			},
+			accessScope: {
+				orgId: accessScope.orgId,
+				branchId: accessScope.branchId,
+				orgWideAccess: accessScope.branchId === null
+			}
+		});
+		
+		return this.branchService.update(ref, updateBranchDto, accessScope.orgId, accessScope.branchId, accessScope.isElevated);
 	}
 
 	@Delete(':ref')
@@ -870,12 +938,23 @@ Safely deactivates a branch while preserving all historical data and maintaining
 		}
 	})
 	remove(@Param('ref') ref: string, @Req() req: AuthenticatedRequest) {
-		// Try to get orgId from multiple sources
-		const orgId = req.user?.org?.uid || 
-					  (req.query?.organisationRef ? parseInt(req.query.organisationRef as string, 10) : null) ||
-					  req.user?.organisationRef;
+		const accessScope = this.getAccessScope(req.user);
 		
-		const branchId = req.user?.branch?.uid;
-		return this.branchService.remove(ref, orgId, branchId);
+		// 🔍 DEBUG: Log the access decision
+		console.log('🔍 DEBUG remove branch:', {
+			removingBranch: ref,
+			requestingUser: {
+				uid: req.user?.uid,
+				role: req.user?.role,
+				isElevated: accessScope.isElevated
+			},
+			accessScope: {
+				orgId: accessScope.orgId,
+				branchId: accessScope.branchId,
+				orgWideAccess: accessScope.branchId === null
+			}
+		});
+		
+		return this.branchService.remove(ref, accessScope.orgId, accessScope.branchId, accessScope.isElevated);
 	}
 }

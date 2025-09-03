@@ -5,6 +5,7 @@ export interface AuthenticatedRequest extends Request {
 	user: {
 		uid: number;
 		accessLevel: AccessLevel;
+		role: AccessLevel;
 		branch?: {
 			uid: number;
 		};

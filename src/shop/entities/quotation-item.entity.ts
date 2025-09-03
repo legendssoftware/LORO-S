@@ -16,6 +16,15 @@ export class QuotationItem {
     @Column({ nullable: false, type: 'float' })
     totalPrice: number;
 
+    @Column({ nullable: false, type: 'float' })
+    unitPrice: number;
+
+    @Column({ nullable: true, default: 'item' })
+    purchaseMode: string;
+
+    @Column({ nullable: true, type: 'text' })
+    notes: string;
+
     @ManyToOne(() => Product, product => product?.quotationItems)
     product: Product;
 

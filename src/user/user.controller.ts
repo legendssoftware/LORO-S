@@ -96,6 +96,32 @@ import { PaginatedResponse } from '../lib/interfaces/product.interfaces';
 export class UserController {
 	constructor(private readonly userService: UserService) {}
 
+	/**
+	 * Determines access scope for the authenticated user
+	 * @param user - Authenticated user object
+	 * @returns Access scope with orgId and branchId (null for org-wide access)
+	 */
+	private getAccessScope(user: any) {
+		const isElevatedUser = [
+			AccessLevel.ADMIN,
+			AccessLevel.OWNER,
+			AccessLevel.MANAGER,
+			AccessLevel.DEVELOPER,
+			AccessLevel.SUPPORT
+		].includes(user?.role);
+
+		console.log('user access role in the fetch requests', isElevatedUser,)
+
+		const orgId = user?.org?.uid || user?.organisationRef;
+		const branchId = isElevatedUser ? null : user?.branch?.uid; // null = org-wide access for elevated users
+
+		return {
+			orgId,
+			branchId,
+			isElevated: isElevatedUser
+		};
+	}
+
 	@Post()
 	@Roles(
 		AccessLevel.ADMIN,
@@ -1165,8 +1191,7 @@ Retrieves a comprehensive list of all users in your organization with advanced f
 		@Query('branchId') branchId?: number,
 		@Query('organisationId') organisationId?: number,
 	): Promise<PaginatedResponse<Omit<User, 'password'>>> {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const userBranchId = req.user?.branch?.uid;
+		const accessScope = this.getAccessScope(req.user);
 
 		const filters = {
 			...(status && { status }),
@@ -1174,8 +1199,8 @@ Retrieves a comprehensive list of all users in your organization with advanced f
 			...(search && { search }),
 			...(branchId && { branchId: Number(branchId) }),
 			...(organisationId && { organisationId: Number(organisationId) }),
-			orgId,
-			userBranchId,
+			orgId: accessScope.orgId,
+			userBranchId: accessScope.branchId, // null for elevated users = org-wide access
 		};
 
 		return this.userService.findAll(
@@ -1414,17 +1439,7 @@ Retrieves detailed information about a specific user by their unique reference i
 		}
 	})
 	findOne(@Param('ref') ref: number, @Req() req: AuthenticatedRequest): Promise<{ user: Omit<User, 'password'> | null; message: string }> {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
-		
-		// 🔒 Role-based access control: Elevated users can see all users
-		const isElevatedUser = [
-			AccessLevel.ADMIN, 
-			AccessLevel.OWNER, 
-			AccessLevel.MANAGER,
-			AccessLevel.DEVELOPER,
-			AccessLevel.SUPPORT
-		].includes(req.user?.accessLevel);
+		const accessScope = this.getAccessScope(req.user);
 		
 		// 🔍 DEBUG: Log the access decision
 		console.log('🔍 DEBUG findOne route:', {
@@ -1432,23 +1447,23 @@ Retrieves detailed information about a specific user by their unique reference i
 			requestingUser: {
 				uid: req.user?.uid,
 				accessLevel: req.user?.accessLevel,
-				isElevatedUser
+				isElevated: accessScope.isElevated
 			},
-			filters: {
-				willApplyOrgFilter: !isElevatedUser,
-				orgId: isElevatedUser ? 'BYPASSED' : orgId,
-				branchId: isElevatedUser ? 'BYPASSED' : branchId
+			accessScope: {
+				orgId: accessScope.orgId,
+				branchId: accessScope.branchId,
+				orgWideAccess: accessScope.branchId === null
 			}
 		});
 		
-		if (isElevatedUser) {
-			// Elevated users can see all users (no org/branch filtering)
-			console.log('✅ Elevated user - bypassing org/branch filters');
-			return this.userService.findOne(ref);
+		if (accessScope.isElevated) {
+			// Elevated users can see all users in their organization (org-wide access)
+			console.log('✅ Elevated user - org-wide access within organization');
+			return this.userService.findOne(ref, accessScope.orgId, null);
 		} else {
 			// Regular users only see users from their org/branch
 			console.log('🔒 Regular user - applying org/branch filters');
-			return this.userService.findOne(ref, orgId, branchId);
+			return this.userService.findOne(ref, accessScope.orgId, accessScope.branchId);
 		}
 	}
 
@@ -1696,9 +1711,24 @@ Updates an existing user's information with comprehensive validation and audit t
 		}
 	})
 	update(@Param('ref') ref: number, @Body() updateUserDto: UpdateUserDto, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
-		return this.userService.update(ref, updateUserDto, orgId, branchId);
+		const accessScope = this.getAccessScope(req.user);
+		
+		// 🔍 DEBUG: Log the access decision
+		console.log('🔍 DEBUG update route:', {
+			updatingUser: ref,
+			requestingUser: {
+				uid: req.user?.uid,
+				accessLevel: req.user?.accessLevel,
+				isElevated: accessScope.isElevated
+			},
+			accessScope: {
+				orgId: accessScope.orgId,
+				branchId: accessScope.branchId,
+				orgWideAccess: accessScope.branchId === null
+			}
+		});
+		
+		return this.userService.update(ref, updateUserDto, accessScope.orgId, accessScope.branchId);
 	}
 
 	@Patch('restore/:ref')
@@ -1856,9 +1886,24 @@ Restores a previously deleted user account back to active status, maintaining da
 		}
 	})
 	restore(@Param('ref') ref: number, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
-		return this.userService.restore(ref, orgId, branchId);
+		const accessScope = this.getAccessScope(req.user);
+		
+		// 🔍 DEBUG: Log the access decision
+		console.log('🔍 DEBUG restore route:', {
+			restoringUser: ref,
+			requestingUser: {
+				uid: req.user?.uid,
+				accessLevel: req.user?.accessLevel,
+				isElevated: accessScope.isElevated
+			},
+			accessScope: {
+				orgId: accessScope.orgId,
+				branchId: accessScope.branchId,
+				orgWideAccess: accessScope.branchId === null
+			}
+		});
+		
+		return this.userService.restore(ref, accessScope.orgId, accessScope.branchId);
 	}
 
 	@Delete(':ref')
@@ -2008,9 +2053,24 @@ Use the restore endpoint to recover accidentally deleted users within the retent
 		}
 	})
 	remove(@Param('ref') ref: number, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
-		return this.userService.remove(ref, orgId, branchId);
+		const accessScope = this.getAccessScope(req.user);
+		
+		// 🔍 DEBUG: Log the access decision
+		console.log('🔍 DEBUG remove route:', {
+			removingUser: ref,
+			requestingUser: {
+				uid: req.user?.uid,
+				accessLevel: req.user?.accessLevel,
+				isElevated: accessScope.isElevated
+			},
+			accessScope: {
+				orgId: accessScope.orgId,
+				branchId: accessScope.branchId,
+				orgWideAccess: accessScope.branchId === null
+			}
+		});
+		
+		return this.userService.remove(ref, accessScope.orgId, accessScope.branchId);
 	}
 
 	@Get(':ref/target')
@@ -2152,8 +2212,25 @@ Retrieves comprehensive performance targets for a specific user with detailed pr
 			},
 		},
 	})
-	getUserTarget(@Param('ref') ref: number): Promise<{ userTarget: UserTarget | null; message: string }> {
-		return this.userService.getUserTarget(ref);
+	getUserTarget(@Param('ref') ref: number, @Req() req: AuthenticatedRequest): Promise<{ userTarget: UserTarget | null; message: string }> {
+		const accessScope = this.getAccessScope(req.user);
+		
+		// 🔍 DEBUG: Log the access decision
+		console.log('🔍 DEBUG getUserTarget route:', {
+			gettingTargetForUser: ref,
+			requestingUser: {
+				uid: req.user?.uid,
+				accessLevel: req.user?.accessLevel,
+				isElevated: accessScope.isElevated
+			},
+			accessScope: {
+				orgId: accessScope.orgId,
+				branchId: accessScope.branchId,
+				orgWideAccess: accessScope.branchId === null
+			}
+		});
+		
+		return this.userService.getUserTarget(ref, accessScope.orgId, accessScope.branchId);
 	}
 
 	@Post(':ref/target')
@@ -2296,8 +2373,25 @@ Creates comprehensive performance targets for a specific user with advanced conf
 		},
 	})
 	@ApiNotFoundResponse({ description: '❌ User not found or not accessible' })
-	setUserTarget(@Param('ref') ref: number, @Body() createUserTargetDto: CreateUserTargetDto): Promise<{ message: string }> {
-		return this.userService.setUserTarget(ref, createUserTargetDto);
+	setUserTarget(@Param('ref') ref: number, @Body() createUserTargetDto: CreateUserTargetDto, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
+		const accessScope = this.getAccessScope(req.user);
+		
+		// 🔍 DEBUG: Log the access decision
+		console.log('🔍 DEBUG setUserTarget route:', {
+			settingTargetForUser: ref,
+			requestingUser: {
+				uid: req.user?.uid,
+				accessLevel: req.user?.accessLevel,
+				isElevated: accessScope.isElevated
+			},
+			accessScope: {
+				orgId: accessScope.orgId,
+				branchId: accessScope.branchId,
+				orgWideAccess: accessScope.branchId === null
+			}
+		});
+		
+		return this.userService.setUserTarget(ref, createUserTargetDto, accessScope.orgId, accessScope.branchId);
 	}
 
 	@Patch(':ref/target')
@@ -2629,8 +2723,25 @@ Update both targets and progress:
 			}
 		}
 	})
-	updateUserTarget(@Param('ref') ref: number, @Body() updateUserTargetDto: UpdateUserTargetDto): Promise<{ message: string }> {
-		return this.userService.updateUserTarget(ref, updateUserTargetDto);
+	updateUserTarget(@Param('ref') ref: number, @Body() updateUserTargetDto: UpdateUserTargetDto, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
+		const accessScope = this.getAccessScope(req.user);
+		
+		// 🔍 DEBUG: Log the access decision
+		console.log('🔍 DEBUG updateUserTarget route:', {
+			updatingTargetForUser: ref,
+			requestingUser: {
+				uid: req.user?.uid,
+				accessLevel: req.user?.accessLevel,
+				isElevated: accessScope.isElevated
+			},
+			accessScope: {
+				orgId: accessScope.orgId,
+				branchId: accessScope.branchId,
+				orgWideAccess: accessScope.branchId === null
+			}
+		});
+		
+		return this.userService.updateUserTarget(ref, updateUserTargetDto, accessScope.orgId, accessScope.branchId);
 	}
 
 	@Delete(':ref/target')
@@ -2822,8 +2933,25 @@ Safely removes performance targets for a specific user with comprehensive cleanu
 			}
 		}
 	})
-	deleteUserTarget(@Param('ref') ref: number): Promise<{ message: string }> {
-		return this.userService.deleteUserTarget(ref);
+	deleteUserTarget(@Param('ref') ref: number, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
+		const accessScope = this.getAccessScope(req.user);
+		
+		// 🔍 DEBUG: Log the access decision
+		console.log('🔍 DEBUG deleteUserTarget route:', {
+			deletingTargetForUser: ref,
+			requestingUser: {
+				uid: req.user?.uid,
+				accessLevel: req.user?.accessLevel,
+				isElevated: accessScope.isElevated
+			},
+			accessScope: {
+				orgId: accessScope.orgId,
+				branchId: accessScope.branchId,
+				orgWideAccess: accessScope.branchId === null
+			}
+		});
+		
+		return this.userService.deleteUserTarget(ref, accessScope.orgId, accessScope.branchId);
 	}
 
 	@Post('admin/re-invite-all')
@@ -3706,10 +3834,24 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 			throw new Error('X-ERP-API-Key header is required');
 		}
 
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const accessScope = this.getAccessScope(req.user);
+		
+		// 🔍 DEBUG: Log the access decision
+		console.log('🔍 DEBUG updateTargetsFromERP route:', {
+			updatingTargetsForUser: userId,
+			requestingUser: {
+				uid: req.user?.uid,
+				accessLevel: req.user?.accessLevel,
+				isElevated: accessScope.isElevated
+			},
+			accessScope: {
+				orgId: accessScope.orgId,
+				branchId: accessScope.branchId,
+				orgWideAccess: accessScope.branchId === null
+			}
+		});
 
-		const result = await this.userService.updateUserTargetsFromERP(userId, externalUpdateDto, orgId, branchId);
+		const result = await this.userService.updateUserTargetsFromERP(userId, externalUpdateDto, accessScope.orgId, accessScope.branchId);
 
 		// Return appropriate status codes based on result
 		if (result.validationErrors && result.validationErrors.length > 0) {

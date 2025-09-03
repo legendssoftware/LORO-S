@@ -65,14 +65,27 @@ export class BranchService {
 		}
 	}
 
-	async findAll(orgId?: number, branchId?: number): Promise<{ branches: Branch[] | null; message: string }> {
+	async findAll(orgId?: number, branchId?: number, isElevatedUser?: boolean): Promise<{ branches: Branch[] | null; message: string }> {
 		try {
 			if (!orgId) {
 				throw new BadRequestException('Organization ID is required');
 			}
 
+			// Apply branch filter based on access level:
+			// - If isElevatedUser is true: show all branches in org (ignore branchId)
+			// - If isElevatedUser is false: show only user's branch (use branchId if provided)
+			const effectiveBranchId = isElevatedUser ? null : branchId;
+
 			// Create org-specific cache key
-			const cacheKey = `${this.ALL_BRANCHES_CACHE_KEY}:org:${orgId}${branchId ? `:branch:${branchId}` : ''}`;
+			const cacheKey = `${this.ALL_BRANCHES_CACHE_KEY}:org:${orgId}${effectiveBranchId ? `:branch:${effectiveBranchId}` : ':all'}`;
+			
+			console.log('🔍 DEBUG findAll branches:', {
+				orgId,
+				originalBranchId: branchId,
+				isElevatedUser,
+				effectiveBranchId,
+				orgWideAccess: effectiveBranchId === null
+			});
 			
 			// Try to get from cache first
 			const cachedBranches = await this.cacheManager.get<Branch[]>(cacheKey);
@@ -89,8 +102,12 @@ export class BranchService {
 				organisation: { uid: orgId },
 			};
 
-			if (branchId) {
-				whereClause.uid = branchId;
+			// Only apply branch filter for non-elevated users
+			if (effectiveBranchId !== null && effectiveBranchId !== undefined) {
+				console.log(`Applying branch filter for regular user: ${effectiveBranchId}`);
+				whereClause.uid = effectiveBranchId;
+			} else if (isElevatedUser) {
+				console.log('Elevated user detected - showing all branches in organization');
 			}
 
 			// If not in cache, fetch from database
@@ -123,7 +140,7 @@ export class BranchService {
 		}
 	}
 
-	async findOne(ref: string, orgId?: number, branchId?: number): Promise<{ branch: Branch | null; message: string }> {
+	async findOne(ref: string, orgId?: number, branchId?: number, isElevatedUser?: boolean): Promise<{ branch: Branch | null; message: string }> {
 		try {
 			if (!orgId) {
 				throw new BadRequestException('Organization ID is required');
@@ -134,6 +151,14 @@ export class BranchService {
 			const cachedBranch = await this.cacheManager.get<Branch>(cacheKey);
 			
 			if (cachedBranch) {
+				// For cached results, still need to apply access control
+				if (!isElevatedUser && branchId && cachedBranch.uid !== branchId) {
+					return {
+						branch: null,
+						message: 'Branch not found or access denied',
+					};
+				}
+				
 				return {
 					branch: cachedBranch,
 					message: process.env.SUCCESS_MESSAGE,
@@ -146,6 +171,22 @@ export class BranchService {
 				organisation: { uid: orgId },
 			};
 
+			// Apply branch access control for non-elevated users
+			if (!isElevatedUser && branchId !== null && branchId !== undefined) {
+				console.log(`Applying branch access control for regular user: ${branchId}`);
+				whereClause.uid = branchId;
+			} else if (isElevatedUser) {
+				console.log('Elevated user detected - can access any branch in organization');
+			}
+
+			console.log('🔍 DEBUG findOne branch:', {
+				ref,
+				orgId,
+				branchId,
+				isElevatedUser,
+				whereClause
+			});
+
 			// If not in cache, fetch from database
 			const branch = await this.branchRepository.findOne({
 				where: whereClause,
@@ -155,7 +196,7 @@ export class BranchService {
 			if (!branch) {
 				return {
 					branch: null,
-					message: 'Branch not found or does not belong to your organization',
+					message: 'Branch not found or access denied',
 				};
 			}
 
@@ -176,32 +217,49 @@ export class BranchService {
 		}
 	}
 
-	async update(ref: string, updateBranchDto: UpdateBranchDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
+	async update(ref: string, updateBranchDto: UpdateBranchDto, orgId?: number, branchId?: number, isElevatedUser?: boolean): Promise<{ message: string }> {
 		try {
 			if (!orgId) {
 				throw new BadRequestException('Organization ID is required');
 			}
 
-			// First verify the branch belongs to the org
-			const existingBranch = await this.findOne(ref, orgId, branchId);
+			console.log('🔍 DEBUG update branch:', {
+				ref,
+				orgId,
+				branchId,
+				isElevatedUser,
+				action: 'update'
+			});
+
+			// First verify the branch exists and user has access
+			const existingBranch = await this.findOne(ref, orgId, branchId, isElevatedUser);
 			if (!existingBranch.branch) {
 				return {
-					message: 'Branch not found or does not belong to your organization',
+					message: 'Branch not found or access denied',
 				};
 			}
 
-			await this.branchRepository.update({ ref }, updateBranchDto);
+			// Build where clause for access control
+			const whereClause: any = {
+				ref,
+				isDeleted: false,
+				organisation: { uid: orgId },
+			};
+
+			// Apply branch access control for non-elevated users
+			if (!isElevatedUser && branchId !== null && branchId !== undefined) {
+				console.log(`Applying branch access control for update by regular user: ${branchId}`);
+				whereClause.uid = branchId;
+			}
+
+			await this.branchRepository.update(whereClause, updateBranchDto);
 
 			const updatedBranch = await this.branchRepository.findOne({
-				where: { 
-					ref, 
-					isDeleted: false,
-					organisation: { uid: orgId },
-				},
+				where: whereClause,
 			});
 
 			if (!updatedBranch) {
-				throw new NotFoundException(process.env.UPDATE_ERROR_MESSAGE);
+				throw new NotFoundException('Failed to update branch or access denied');
 			}
 
 			// Clear cache after updating
@@ -217,33 +275,50 @@ export class BranchService {
 		}
 	}
 
-	async remove(ref: string, orgId?: number, branchId?: number): Promise<{ message: string }> {
+	async remove(ref: string, orgId?: number, branchId?: number, isElevatedUser?: boolean): Promise<{ message: string }> {
 		try {
 			if (!orgId) {
 				throw new BadRequestException('Organization ID is required');
 			}
 
-			// First verify the branch belongs to the org
-			const existingBranch = await this.findOne(ref, orgId, branchId);
+			console.log('🔍 DEBUG remove branch:', {
+				ref,
+				orgId,
+				branchId,
+				isElevatedUser,
+				action: 'remove'
+			});
+
+			// First verify the branch exists and user has access
+			const existingBranch = await this.findOne(ref, orgId, branchId, isElevatedUser);
 			if (!existingBranch.branch) {
 				return {
-					message: 'Branch not found or does not belong to your organization',
+					message: 'Branch not found or access denied',
 				};
 			}
 
+			// Build where clause for access control
+			const whereClause: any = {
+				ref,
+				isDeleted: false,
+				organisation: { uid: orgId },
+			};
+
+			// Apply branch access control for non-elevated users
+			if (!isElevatedUser && branchId !== null && branchId !== undefined) {
+				console.log(`Applying branch access control for remove by regular user: ${branchId}`);
+				whereClause.uid = branchId;
+			}
+
 			const branch = await this.branchRepository.findOne({
-				where: { 
-					ref, 
-					isDeleted: false,
-					organisation: { uid: orgId },
-				},
+				where: whereClause,
 			});
 
 			if (!branch) {
-				throw new NotFoundException(process.env.DELETE_ERROR_MESSAGE);
+				throw new NotFoundException('Branch not found or access denied for deletion');
 			}
 
-			await this.branchRepository.update({ ref }, { isDeleted: true });
+			await this.branchRepository.update(whereClause, { isDeleted: true });
 
 			// Clear cache after removing
 			await this.clearBranchCache(ref);

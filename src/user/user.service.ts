@@ -903,9 +903,32 @@ export class UserService {
 			this.logger.debug('Building query with filters and pagination');
 			const queryBuilder = this.userRepository
 				.createQueryBuilder('user')
-				.leftJoinAndSelect('user.branch', 'branch')
 				.leftJoinAndSelect('user.organisation', 'organisation')
-				.leftJoinAndSelect('user.userTarget', 'userTarget')
+				.leftJoin('user.userTarget', 'userTarget')
+				.addSelect([
+					'userTarget.uid',
+					'userTarget.targetSalesAmount',
+					'userTarget.currentSalesAmount', 
+					'userTarget.targetQuotationsAmount',
+					'userTarget.currentQuotationsAmount',
+					'userTarget.currentOrdersAmount',
+					'userTarget.targetCurrency',
+					'userTarget.targetHoursWorked',
+					'userTarget.currentHoursWorked',
+					'userTarget.targetNewClients',
+					'userTarget.currentNewClients',
+					'userTarget.targetNewLeads',
+					'userTarget.currentNewLeads',
+					'userTarget.targetCheckIns',
+					'userTarget.currentCheckIns',
+					'userTarget.targetCalls',
+					'userTarget.currentCalls',
+					'userTarget.targetPeriod',
+					'userTarget.periodStartDate',
+					'userTarget.periodEndDate',
+					'userTarget.createdAt',
+					'userTarget.updatedAt'
+				])
 				.where('user.isDeleted = :isDeleted', { isDeleted: false });
 
 			// Apply organization filter if provided
@@ -914,10 +937,15 @@ export class UserService {
 				queryBuilder.andWhere('organisation.uid = :orgId', { orgId: filters.orgId });
 			}
 
-			// Only apply branch filter if user has a branch and no specific branch filter is provided
-			if (filters?.userBranchId && !filters?.branchId) {
-				this.logger.debug(`Applying user branch filter: ${filters.userBranchId}`);
+			// Apply branch filter based on access level:
+			// - If userBranchId is null: elevated user with org-wide access (no branch filter)
+			// - If userBranchId is set: regular user restricted to their branch
+			// - If specific branchId filter provided: override user's default branch
+			if (filters?.userBranchId !== null && filters?.userBranchId !== undefined && !filters?.branchId) {
+				this.logger.debug(`Applying user branch filter for regular user: ${filters.userBranchId}`);
 				queryBuilder.andWhere('branch.uid = :userBranchId', { userBranchId: filters.userBranchId });
+			} else if (filters?.userBranchId === null) {
+				this.logger.debug('Elevated user detected - skipping branch filter for org-wide access');
 			}
 
 			if (filters?.status) {
@@ -960,7 +988,7 @@ export class UserService {
 			if (!users) {
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
 			}
-
+			
 			const executionTime = Date.now() - startTime;
 			this.logger.log(`Successfully fetched ${users.length} users out of ${total} total in ${executionTime}ms`);
 
@@ -1059,10 +1087,39 @@ export class UserService {
 			// 🔍 DEBUG: Log the exact query conditions (temporary)
 			this.logger.debug(`Database Query Conditions:`, JSON.stringify(whereConditions, null, 2));
 
-			const user = await this.userRepository.findOne({
-				where: whereConditions,
-				relations: ['organisation', 'branch', 'userProfile', 'userEmployeementProfile', 'userTarget'],
-			});
+			const user = await this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.organisation', 'organisation')
+				.leftJoinAndSelect('user.branch', 'branch') 
+				.leftJoinAndSelect('user.userProfile', 'userProfile')
+				.leftJoinAndSelect('user.userEmployeementProfile', 'userEmployeementProfile')
+				.leftJoin('user.userTarget', 'userTarget')
+				.addSelect([
+					'userTarget.uid',
+					'userTarget.targetSalesAmount',
+					'userTarget.currentSalesAmount', 
+					'userTarget.targetQuotationsAmount',
+					'userTarget.currentQuotationsAmount',
+					'userTarget.currentOrdersAmount',
+					'userTarget.targetCurrency',
+					'userTarget.targetHoursWorked',
+					'userTarget.currentHoursWorked',
+					'userTarget.targetNewClients',
+					'userTarget.currentNewClients',
+					'userTarget.targetNewLeads',
+					'userTarget.currentNewLeads',
+					'userTarget.targetCheckIns',
+					'userTarget.currentCheckIns',
+					'userTarget.targetCalls',
+					'userTarget.currentCalls',
+					'userTarget.targetPeriod',
+					'userTarget.periodStartDate',
+					'userTarget.periodEndDate',
+					'userTarget.createdAt',
+					'userTarget.updatedAt'
+				])
+				.where(whereConditions)
+				.getOne();
 
 			if (!user) {
 				this.logger.warn(`User ${searchParameter} not found with applied filters (orgId: ${orgId}, branchId: ${branchId})`);
@@ -1918,11 +1975,13 @@ export class UserService {
 	}
 
 	/**
-	 * Get user targets for a specific user with caching
+	 * Get user targets for a specific user with caching and access control
 	 * @param userId - User ID to get targets for
+	 * @param orgId - Optional organization ID for access control
+	 * @param branchId - Optional branch ID for access control (null for org-wide access)
 	 * @returns User target data or null with message
 	 */
-	async getUserTarget(userId: number): Promise<{ userTarget: UserTarget | null; message: string }> {
+	async getUserTarget(userId: number, orgId?: number, branchId?: number): Promise<{ userTarget: UserTarget | null; message: string }> {
 		const startTime = Date.now();
 		this.logger.log(`Getting user target for user: ${userId}`);
 
@@ -1940,11 +1999,52 @@ export class UserService {
 				};
 			}
 
-			this.logger.debug(`Cache miss for user target: ${userId}, querying database`);
-			const user = await this.userRepository.findOne({
-				where: { uid: userId, isDeleted: false },
-				relations: ['userTarget'],
-			});
+			this.logger.debug(`Cache miss for user target: ${userId}, querying database with access control`);
+			const queryBuilder = this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.organisation', 'organisation')
+				.leftJoinAndSelect('user.branch', 'branch')
+				.leftJoin('user.userTarget', 'userTarget')
+				.addSelect([
+					'userTarget.uid',
+					'userTarget.targetSalesAmount',
+					'userTarget.currentSalesAmount', 
+					'userTarget.targetQuotationsAmount',
+					'userTarget.currentQuotationsAmount',
+					'userTarget.currentOrdersAmount',
+					'userTarget.targetCurrency',
+					'userTarget.targetHoursWorked',
+					'userTarget.currentHoursWorked',
+					'userTarget.targetNewClients',
+					'userTarget.currentNewClients',
+					'userTarget.targetNewLeads',
+					'userTarget.currentNewLeads',
+					'userTarget.targetCheckIns',
+					'userTarget.currentCheckIns',
+					'userTarget.targetCalls',
+					'userTarget.currentCalls',
+					'userTarget.targetPeriod',
+					'userTarget.periodStartDate',
+					'userTarget.periodEndDate',
+					'userTarget.createdAt',
+					'userTarget.updatedAt'
+				])
+				.where('user.uid = :userId AND user.isDeleted = :isDeleted', { userId, isDeleted: false });
+
+			// Apply access control filters
+			if (orgId) {
+				this.logger.debug(`Applying organization filter: ${orgId}`);
+				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+			}
+
+			if (branchId !== null && branchId !== undefined) {
+				this.logger.debug(`Applying branch filter: ${branchId}`);
+				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
+			} else if (branchId === null) {
+				this.logger.debug('Elevated user detected - skipping branch filter for org-wide access');
+			}
+
+			const user = await queryBuilder.getOne();
 
 			if (!user) {
 				this.logger.warn(`User ${userId} not found when getting targets`);
@@ -1984,31 +2084,50 @@ export class UserService {
 	}
 
 	/**
-	 * Set targets for a user (create new or update existing)
+	 * Set targets for a user (create new or update existing) with access control
 	 * @param userId - User ID to set targets for
 	 * @param createUserTargetDto - Target data to set
+	 * @param orgId - Optional organization ID for access control
+	 * @param branchId - Optional branch ID for access control (null for org-wide access)
 	 * @returns Success message or error details
 	 */
-	async setUserTarget(userId: number, createUserTargetDto: CreateUserTargetDto): Promise<{ message: string }> {
+	async setUserTarget(userId: number, createUserTargetDto: CreateUserTargetDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
 		const startTime = Date.now();
 		this.logger.log(`Setting user target for user: ${userId}`);
 
 		try {
-			this.logger.debug(`Finding user ${userId} for target setting`);
+			this.logger.debug(`Finding user ${userId} for target setting with access control`);
+			
+			// Build where conditions for access control
+			const whereConditions: any = {
+				uid: userId,
+				isDeleted: false,
+			};
+
+			// Add organization filter if provided
+			if (orgId) {
+				whereConditions.organisation = { uid: orgId };
+			}
+
+			// Add branch filter if provided
+			if (branchId !== null && branchId !== undefined) {
+				whereConditions.branch = { uid: branchId };
+			}
+
 			const user = await this.userRepository.findOne({
-				where: { uid: userId, isDeleted: false },
-				relations: ['userTarget'],
+				where: whereConditions,
+				relations: ['userTarget', 'organisation', 'branch'],
 			});
 
 			if (!user) {
-				this.logger.warn(`User ${userId} not found for target setting`);
-				throw new NotFoundException(`User with ID ${userId} not found`);
+				this.logger.warn(`User ${userId} not found for target setting or access denied`);
+				throw new NotFoundException(`User with ID ${userId} not found or access denied`);
 			}
 
 			// If user already has targets, update them
 			if (user.userTarget) {
 				this.logger.debug(`User ${userId} already has targets, updating existing targets`);
-				await this.updateUserTarget(userId, createUserTargetDto);
+				await this.updateUserTarget(userId, createUserTargetDto, orgId, branchId);
 
 				const executionTime = Date.now() - startTime;
 				this.logger.log(`User targets updated for user: ${userId} in ${executionTime}ms`);
@@ -2149,20 +2268,38 @@ export class UserService {
 	 * @param updateUserTargetDto - Updated target data
 	 * @returns Success message or error details
 	 */
-	async updateUserTarget(userId: number, updateUserTargetDto: UpdateUserTargetDto): Promise<{ message: string }> {
+	async updateUserTarget(userId: number, updateUserTargetDto: UpdateUserTargetDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
 		const startTime = Date.now();
 		this.logger.log(`Updating user target for user: ${userId}`);
+		this.logger.debug(`Update DTO received:`, JSON.stringify(updateUserTargetDto, null, 2));
 
 		try {
-			this.logger.debug(`Finding user ${userId} for target update`);
+			this.logger.debug(`Finding user ${userId} for target update with access control`);
+			
+			// Build where conditions for access control
+			const whereConditions: any = {
+				uid: userId,
+				isDeleted: false,
+			};
+
+			// Add organization filter if provided
+			if (orgId) {
+				whereConditions.organisation = { uid: orgId };
+			}
+
+			// Add branch filter if provided
+			if (branchId !== null && branchId !== undefined) {
+				whereConditions.branch = { uid: branchId };
+			}
+
 			const user = await this.userRepository.findOne({
-				where: { uid: userId, isDeleted: false },
-				relations: ['userTarget'],
+				where: whereConditions,
+				relations: ['userTarget', 'organisation', 'branch'],
 			});
 
 			if (!user) {
-				this.logger.warn(`User ${userId} not found for target update`);
-				throw new NotFoundException(`User with ID ${userId} not found`);
+				this.logger.warn(`User ${userId} not found for target update or access denied`);
+				throw new NotFoundException(`User with ID ${userId} not found or access denied`);
 			}
 
 			if (!user.userTarget) {
@@ -2170,13 +2307,30 @@ export class UserService {
 				throw new NotFoundException(`No targets found for user with ID ${userId}`);
 			}
 
-			this.logger.debug(`Updating target data for user: ${userId}`);
+			this.logger.debug(`Current user target data:`, JSON.stringify(user.userTarget, null, 2));
+
+			// Only include defined values from the DTO
+			const filteredUpdateDto = Object.fromEntries(
+				Object.entries(updateUserTargetDto).filter(([_, value]) => value !== undefined && value !== null)
+			);
+
+			this.logger.debug(`Filtered update data:`, JSON.stringify(filteredUpdateDto, null, 2));
+
+			// Handle dates separately if they exist
 			const updatedUserTarget = {
 				...user.userTarget,
-				...updateUserTargetDto,
-				periodStartDate: new Date(updateUserTargetDto.periodStartDate),
-				periodEndDate: new Date(updateUserTargetDto.periodEndDate),
+				...filteredUpdateDto,
 			};
+
+			// Handle date fields if they exist
+			if (updateUserTargetDto.periodStartDate) {
+				updatedUserTarget.periodStartDate = new Date(updateUserTargetDto.periodStartDate);
+			}
+			if (updateUserTargetDto.periodEndDate) {
+				updatedUserTarget.periodEndDate = new Date(updateUserTargetDto.periodEndDate);
+			}
+
+			this.logger.debug(`Final target data to save:`, JSON.stringify(updatedUserTarget, null, 2));
 
 			// Update the user target properties
 			Object.assign(user.userTarget, updatedUserTarget);
@@ -2289,24 +2443,43 @@ export class UserService {
 	}
 
 	/**
-	 * Delete targets for a user
+	 * Delete targets for a user with access control
 	 * @param userId - User ID to delete targets for
+	 * @param orgId - Optional organization ID for access control
+	 * @param branchId - Optional branch ID for access control (null for org-wide access)
 	 * @returns Success message or error details
 	 */
-	async deleteUserTarget(userId: number): Promise<{ message: string }> {
+	async deleteUserTarget(userId: number, orgId?: number, branchId?: number): Promise<{ message: string }> {
 		const startTime = Date.now();
 		this.logger.log(`Deleting user target for user: ${userId}`);
 
 		try {
-			this.logger.debug(`Finding user ${userId} for target deletion`);
+			this.logger.debug(`Finding user ${userId} for target deletion with access control`);
+			
+			// Build where conditions for access control
+			const whereConditions: any = {
+				uid: userId,
+				isDeleted: false,
+			};
+
+			// Add organization filter if provided
+			if (orgId) {
+				whereConditions.organisation = { uid: orgId };
+			}
+
+			// Add branch filter if provided
+			if (branchId !== null && branchId !== undefined) {
+				whereConditions.branch = { uid: branchId };
+			}
+
 			const user = await this.userRepository.findOne({
-				where: { uid: userId, isDeleted: false },
-				relations: ['userTarget'],
+				where: whereConditions,
+				relations: ['userTarget', 'organisation', 'branch'],
 			});
 
 			if (!user) {
-				this.logger.warn(`User ${userId} not found for target deletion`);
-				throw new NotFoundException(`User with ID ${userId} not found`);
+				this.logger.warn(`User ${userId} not found for target deletion or access denied`);
+				throw new NotFoundException(`User with ID ${userId} not found or access denied`);
 			}
 
 			if (!user.userTarget) {
@@ -3075,7 +3248,31 @@ export class UserService {
 						this.logger.debug(`🔍 [ERP_UPDATE] Querying user data with pessimistic lock for user: ${userId}`);
 						const user = await transactionalEntityManager
 							.createQueryBuilder(User, 'user')
-							.leftJoinAndSelect('user.userTarget', 'userTarget')
+							.leftJoin('user.userTarget', 'userTarget')
+							.addSelect([
+								'userTarget.uid',
+								'userTarget.targetSalesAmount',
+								'userTarget.currentSalesAmount', 
+								'userTarget.targetQuotationsAmount',
+								'userTarget.currentQuotationsAmount',
+								'userTarget.currentOrdersAmount',
+								'userTarget.targetCurrency',
+								'userTarget.targetHoursWorked',
+								'userTarget.currentHoursWorked',
+								'userTarget.targetNewClients',
+								'userTarget.currentNewClients',
+								'userTarget.targetNewLeads',
+								'userTarget.currentNewLeads',
+								'userTarget.targetCheckIns',
+								'userTarget.currentCheckIns',
+								'userTarget.targetCalls',
+								'userTarget.currentCalls',
+								'userTarget.targetPeriod',
+								'userTarget.periodStartDate',
+								'userTarget.periodEndDate',
+								'userTarget.createdAt',
+								'userTarget.updatedAt'
+							])
 							.leftJoinAndSelect('user.organisation', 'organisation')
 							.leftJoinAndSelect('user.branch', 'branch')
 							.where('user.uid = :userId', { userId })

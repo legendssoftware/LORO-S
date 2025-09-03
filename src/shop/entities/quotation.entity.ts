@@ -66,6 +66,15 @@ export class Quotation {
 	@Column({ nullable: true })
 	packagingRequirements: string;
 
+	@Column({ nullable: true })
+	priceListType: string;
+
+	@Column({ nullable: true })
+	title: string;
+
+	@Column({ nullable: true, type: 'text' })
+	description: string;
+
 	@ManyToOne(() => User, { nullable: true })
 	reseller: User;
 
