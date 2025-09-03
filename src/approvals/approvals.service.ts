@@ -15,6 +15,8 @@ import { ApprovalSignature } from './entities/approval-signature.entity';
 import { User } from '../user/entities/user.entity';
 import { Organisation } from '../organisation/entities/organisation.entity';
 import { Branch } from '../branch/entities/branch.entity';
+import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
+import { NotificationPriority, NotificationEvent } from '../lib/types/unified-notification.types';
 import { 
     ApprovalStatus, 
     ApprovalAction, 
@@ -52,7 +54,8 @@ export class ApprovalsService {
         @Inject(CACHE_MANAGER)
         private readonly cacheManager: Cache,
         private readonly eventEmitter: EventEmitter2,
-        private readonly configService: ConfigService
+        private readonly configService: ConfigService,
+        private readonly unifiedNotificationService: UnifiedNotificationService
     ) {
         this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 300000; // 5 minutes default
         this.logger.log(`🚀 [ApprovalsService] Initialized with cache TTL: ${this.CACHE_TTL}ms`);
@@ -65,6 +68,86 @@ export class ApprovalsService {
      */
     private getCacheKey(key: string | number): string {
         return `${this.CACHE_PREFIX}${key}`;
+    }
+
+    /**
+     * 📱 Send push notifications for approval events
+     * @param approval - Approval entity
+     * @param event - Notification event type
+     * @param recipientUserIds - User IDs to send notifications to
+     * @param extraData - Additional data for the notification
+     */
+    private async sendApprovalPushNotification(
+        approval: Approval,
+        event: string,
+        recipientUserIds: number[],
+        extraData?: Record<string, any>
+    ): Promise<void> {
+        if (!recipientUserIds || recipientUserIds.length === 0) {
+            return;
+        }
+
+        try {
+            this.logger.debug(`📱 [sendApprovalPushNotification] Sending ${event} notification for approval ${approval.uid} to ${recipientUserIds.length} users`);
+
+            // Map approval event to notification priority
+            let priority = NotificationPriority.NORMAL;
+            switch (event) {
+                case 'APPROVAL_CREATED':
+                case 'APPROVAL_SUBMITTED':
+                    priority = approval.isUrgent || approval.priority === ApprovalPriority.URGENT || approval.priority === ApprovalPriority.CRITICAL 
+                        ? NotificationPriority.HIGH 
+                        : NotificationPriority.NORMAL;
+                    break;
+                case 'APPROVAL_APPROVED':
+                case 'APPROVAL_REJECTED':
+                case 'APPROVAL_ESCALATED':
+                    priority = NotificationPriority.HIGH;
+                    break;
+                case 'APPROVAL_INFO_REQUESTED':
+                    priority = NotificationPriority.HIGH;
+                    break;
+                default:
+                    priority = NotificationPriority.NORMAL;
+            }
+
+            // Prepare notification data
+            const notificationData = {
+                approvalId: approval.uid,
+                approvalReference: approval.approvalReference,
+                title: approval.title,
+                type: approval.type,
+                status: approval.status,
+                priority: approval.priority,
+                amount: approval.amount,
+                currency: approval.currency,
+                deadline: approval.deadline?.toISOString(),
+                isUrgent: approval.isUrgent,
+                requesterName: '', // Will be populated by the notification service
+                approverName: '',
+                ...extraData,
+            };
+
+            await this.unifiedNotificationService.sendTemplatedNotification(
+                event as NotificationEvent,
+                recipientUserIds,
+                notificationData,
+                {
+                    priority,
+                    customData: {
+                        type: 'approval',
+                        approvalId: approval.uid,
+                        approvalReference: approval.approvalReference,
+                        status: approval.status,
+                    },
+                }
+            );
+
+            this.logger.debug(`✅ [sendApprovalPushNotification] ${event} notification sent for approval ${approval.uid}`);
+        } catch (error) {
+            this.logger.error(`❌ [sendApprovalPushNotification] Failed to send ${event} notification for approval ${approval.uid}:`, error.message);
+            // Don't throw error - notifications are non-critical
+        }
     }
 
     /**
@@ -495,6 +578,30 @@ export class ApprovalsService {
             // Send creation notification email
             this.logger.debug(`📧 [create] Sending creation notification emails`);
             await this.sendApprovalNotification(savedApproval, 'created');
+
+            // Send push notifications
+            this.logger.debug(`📱 [create] Sending creation push notifications`);
+            try {
+                const recipients = [];
+                if (savedApproval.approverUid) {
+                    recipients.push(savedApproval.approverUid);
+                }
+                
+                if (recipients.length > 0) {
+                    await this.sendApprovalPushNotification(
+                        savedApproval,
+                        'APPROVAL_CREATED',
+                        recipients,
+                        {
+                            action: 'created',
+                            requesterName: fullUser.name,
+                            message: `New approval request from ${fullUser.name}: ${savedApproval.title}`,
+                        }
+                    );
+                }
+            } catch (pushError) {
+                this.logger.warn(`⚠️ [create] Failed to send push notifications: ${pushError.message}`);
+            }
 
             // Emit WebSocket event for real-time updates
             this.eventEmitter.emit('approval.created', {
@@ -1073,6 +1180,36 @@ export class ApprovalsService {
             this.logger.debug(`📧 [update] Sending update notification emails`);
             await this.sendApprovalNotification(updatedApproval, 'updated');
 
+            // Send push notification for update
+            try {
+                const recipients = [];
+                if (updatedApproval.approverUid && updatedApproval.approverUid !== user.uid) {
+                    recipients.push(updatedApproval.approverUid);
+                }
+
+                if (recipients.length > 0) {
+                    const requester = await this.userRepository.findOne({
+                        where: { uid: user.uid },
+                        select: ['name', 'surname']
+                    });
+                    const requesterName = requester ? `${requester.name} ${requester.surname}`.trim() : 'Team Member';
+
+                    await this.sendApprovalPushNotification(
+                        updatedApproval,
+                        'APPROVAL_UPDATED',
+                        recipients,
+                        {
+                            action: 'updated',
+                            updatedBy: requesterName,
+                            message: `Approval request "${updatedApproval.title}" has been updated`,
+                            version: updatedApproval.version,
+                        }
+                    );
+                }
+            } catch (pushError) {
+                this.logger.warn(`⚠️ [update] Failed to send push notifications: ${pushError.message}`);
+            }
+
             // Emit WebSocket event for real-time updates
             this.eventEmitter.emit('approval.updated', {
                 approvalId: updatedApproval.uid,
@@ -1157,6 +1294,31 @@ export class ApprovalsService {
 
             // Send notification to approver
             await this.sendApprovalNotification(approval, 'submitted');
+
+            // Send push notification to approver
+            try {
+                if (approval.approverUid) {
+                    // Get requester name from database
+                    const requester = await this.userRepository.findOne({
+                        where: { uid: user.uid },
+                        select: ['name', 'surname']
+                    });
+                    const requesterName = requester ? `${requester.name} ${requester.surname}`.trim() : 'Team Member';
+
+                    await this.sendApprovalPushNotification(
+                        updatedApproval,
+                        'APPROVAL_SUBMITTED',
+                        [approval.approverUid],
+                        {
+                            action: 'submitted',
+                            requesterName,
+                            message: `Approval request submitted for your review: ${approval.title}`,
+                        }
+                    );
+                }
+            } catch (pushError) {
+                this.logger.warn(`⚠️ [submitForReview] Failed to send push notification: ${pushError.message}`);
+            }
 
             this.logger.log(`Approval ${id} submitted for review successfully`);
 
@@ -1290,6 +1452,76 @@ export class ApprovalsService {
                 }
             }
 
+            // Send push notifications based on action
+            this.logger.debug(`📱 [performAction] Sending push notifications for action: ${actionDto.action}`);
+            try {
+                let pushRecipients: number[] = [];
+                let pushEvent = '';
+                let pushMessage = '';
+
+                switch (actionDto.action) {
+                    case ApprovalAction.APPROVE:
+                        pushRecipients = [updatedApproval.requesterUid];
+                        pushEvent = 'APPROVAL_APPROVED';
+                        pushMessage = `Your approval request "${updatedApproval.title}" has been approved`;
+                        break;
+
+                    case ApprovalAction.REJECT:
+                        pushRecipients = [updatedApproval.requesterUid];
+                        pushEvent = 'APPROVAL_REJECTED';
+                        pushMessage = `Your approval request "${updatedApproval.title}" has been rejected`;
+                        break;
+
+                    case ApprovalAction.REQUEST_INFO:
+                        pushRecipients = [updatedApproval.requesterUid];
+                        pushEvent = 'APPROVAL_INFO_REQUESTED';
+                        pushMessage = `Additional information requested for "${updatedApproval.title}"`;
+                        break;
+
+                    case ApprovalAction.DELEGATE:
+                        if (actionDto.delegateToUid) {
+                            pushRecipients = [actionDto.delegateToUid];
+                            pushEvent = 'APPROVAL_DELEGATED';
+                            pushMessage = `Approval request "${updatedApproval.title}" has been delegated to you`;
+                        }
+                        break;
+
+                    case ApprovalAction.ESCALATE:
+                        if (actionDto.escalateToUid) {
+                            pushRecipients = [actionDto.escalateToUid];
+                            pushEvent = 'APPROVAL_ESCALATED';
+                            pushMessage = `Approval request "${updatedApproval.title}" has been escalated to you`;
+                        }
+                        break;
+                }
+
+                if (pushRecipients.length > 0 && pushEvent) {
+                    // Get action performer name from database
+                    const actionUser = await this.userRepository.findOne({
+                        where: { uid: user.uid },
+                        select: ['name', 'surname']
+                    });
+                    const actionByName = actionUser ? `${actionUser.name} ${actionUser.surname}`.trim() : 'Team Member';
+
+                    await this.sendApprovalPushNotification(
+                        updatedApproval,
+                        pushEvent,
+                        pushRecipients,
+                        {
+                            action: actionDto.action,
+                            actionBy: actionByName,
+                            comments: actionDto.comments,
+                            reason: actionDto.reason,
+                            message: pushMessage,
+                            fromStatus,
+                            toStatus,
+                        }
+                    );
+                }
+            } catch (pushError) {
+                this.logger.warn(`⚠️ [performAction] Failed to send push notifications: ${pushError.message}`);
+            }
+
             // Emit WebSocket event for real-time updates
             this.eventEmitter.emit('approval.action.performed', {
                 approvalId: updatedApproval.uid,
@@ -1419,6 +1651,32 @@ export class ApprovalsService {
                 user.uid,
                 'Approval signed digitally'
             );
+
+            // Send push notification for signature completion
+            try {
+                if (updatedApproval.requesterUid && updatedApproval.requesterUid !== user.uid) {
+                    const signer = await this.userRepository.findOne({
+                        where: { uid: user.uid },
+                        select: ['name', 'surname']
+                    });
+                    const signerName = signer ? `${signer.name} ${signer.surname}`.trim() : 'Team Member';
+
+                    await this.sendApprovalPushNotification(
+                        updatedApproval,
+                        'APPROVAL_SIGNED',
+                        [updatedApproval.requesterUid],
+                        {
+                            action: 'signed',
+                            signedBy: signerName,
+                            message: `Your approval request "${updatedApproval.title}" has been digitally signed`,
+                            signatureType: signature.signatureType,
+                            signedAt: updatedApproval.signedAt?.toISOString(),
+                        }
+                    );
+                }
+            } catch (pushError) {
+                this.logger.warn(`⚠️ [signApproval] Failed to send push notification: ${pushError.message}`);
+            }
 
             this.logger.log(`Approval ${id} signed successfully`);
 

@@ -18,6 +18,7 @@ import { BranchModule } from '../branch/branch.module';
 import { CommunicationModule } from '../communication/communication.module';
 import { LicensingModule } from '../licensing/licensing.module';
 import { ShopModule } from '../shop/shop.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -49,7 +50,8 @@ import { ShopModule } from '../shop/shop.module';
     BranchModule,
     CommunicationModule,
     LicensingModule,
-    ShopModule
+    ShopModule,
+    NotificationsModule
   ],
   controllers: [ApprovalsController],
   providers: [ApprovalsService, ApprovalsWebSocketService],

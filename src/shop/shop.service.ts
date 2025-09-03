@@ -1012,7 +1012,7 @@ export class ShopService {
 				})),
 			});
 
-			// Emit WebSocket event for new quotation with full data
+			// Emit WebSocket event for new quotation with enhanced data
 			// Get the full quotation with all relations for WebSocket
 			const fullQuotationForSocket = await this.quotationRepository.findOne({
 				where: { uid: savedQuotation.uid },
@@ -1020,7 +1020,65 @@ export class ShopService {
 			});
 			
 			if (fullQuotationForSocket) {
-				this.shopGateway.emitNewQuotation(fullQuotationForSocket);
+				// Enhanced WebSocket emission with detailed quotation information
+				const enhancedQuotationData = {
+					...fullQuotationForSocket,
+					analytics: {
+						totalItems: fullQuotationForSocket.totalItems,
+						averageItemValue: fullQuotationForSocket.totalItems > 0 
+							? Number(fullQuotationForSocket.totalAmount) / fullQuotationForSocket.totalItems 
+							: 0,
+						createdByUser: {
+							uid: fullQuotationForSocket.placedBy?.uid,
+							name: fullQuotationForSocket.placedBy?.name,
+							email: fullQuotationForSocket.placedBy?.email,
+							branch: fullQuotationForSocket.placedBy?.branch?.name,
+							organisation: fullQuotationForSocket.organisation?.name,
+						},
+						clientInfo: {
+							uid: fullQuotationForSocket.client?.uid,
+							name: fullQuotationForSocket.client?.name,
+							email: fullQuotationForSocket.client?.email,
+							type: fullQuotationForSocket.client?.type || 'standard',
+						},
+						timeline: {
+							createdAt: fullQuotationForSocket.createdAt,
+							quotationDate: fullQuotationForSocket.quotationDate,
+							validUntil: fullQuotationForSocket.validUntil,
+							estimatedProcessingTime: '1-3 business days',
+						},
+						financial: {
+							currency: fullQuotationForSocket.currency || orgCurrency.code,
+							totalAmount: Number(fullQuotationForSocket.totalAmount),
+							formattedAmount: new Intl.NumberFormat(orgCurrency.locale, {
+								style: 'currency',
+								currency: fullQuotationForSocket.currency || orgCurrency.code,
+							}).format(Number(fullQuotationForSocket.totalAmount)),
+							itemBreakdown: fullQuotationForSocket.quotationItems?.map(item => ({
+								productName: item.product?.name,
+								quantity: item.quantity,
+								unitPrice: item.unitPrice,
+								totalPrice: item.totalPrice,
+								purchaseMode: item.purchaseMode || 'item',
+							})) || [],
+						},
+						projectInfo: fullQuotationForSocket.project ? {
+							uid: fullQuotationForSocket.project.uid,
+							name: fullQuotationForSocket.project.name,
+							status: fullQuotationForSocket.project.status,
+						} : null,
+					},
+					metadata: {
+						eventType: 'QUOTATION_CREATED',
+						timestamp: new Date().toISOString(),
+						source: 'shop_service',
+						orgId,
+						branchId,
+						isBlankQuotation: false,
+					}
+				};
+
+				this.shopGateway.emitNewQuotation(enhancedQuotationData);
 			}
 
 			const baseConfig: QuotationInternalData = {
@@ -1322,7 +1380,7 @@ export class ShopService {
 				})),
 			});
 
-			// Emit WebSocket event for new blank quotation with full data
+			// Emit WebSocket event for new blank quotation with enhanced data
 			this.logger.log(`[createBlankQuotation] Emitting WebSocket event`);
 			// Get the full quotation with all relations for WebSocket
 			const fullBlankQuotationForSocket = await this.quotationRepository.findOne({
@@ -1331,7 +1389,72 @@ export class ShopService {
 			});
 			
 			if (fullBlankQuotationForSocket) {
-				this.shopGateway.emitNewQuotation(fullBlankQuotationForSocket);
+				// Enhanced WebSocket emission with detailed blank quotation information
+				const enhancedBlankQuotationData = {
+					...fullBlankQuotationForSocket,
+					analytics: {
+						totalItems: fullBlankQuotationForSocket.totalItems,
+						averageItemValue: fullBlankQuotationForSocket.totalItems > 0 
+							? Number(fullBlankQuotationForSocket.totalAmount) / fullBlankQuotationForSocket.totalItems 
+							: 0,
+						createdByUser: {
+							uid: fullBlankQuotationForSocket.placedBy?.uid,
+							name: fullBlankQuotationForSocket.placedBy?.name,
+							email: fullBlankQuotationForSocket.placedBy?.email,
+							branch: fullBlankQuotationForSocket.placedBy?.branch?.name,
+							organisation: fullBlankQuotationForSocket.organisation?.name,
+						},
+						clientInfo: {
+							uid: fullBlankQuotationForSocket.client?.uid,
+							name: fullBlankQuotationForSocket.client?.name,
+							email: fullBlankQuotationForSocket.client?.email,
+							type: fullBlankQuotationForSocket.client?.type || 'standard',
+						},
+						timeline: {
+							createdAt: fullBlankQuotationForSocket.createdAt,
+							quotationDate: fullBlankQuotationForSocket.quotationDate,
+							validUntil: fullBlankQuotationForSocket.validUntil,
+							estimatedProcessingTime: '1-3 business days',
+						},
+						financial: {
+							currency: fullBlankQuotationForSocket.currency || orgCurrency.code,
+							totalAmount: Number(fullBlankQuotationForSocket.totalAmount),
+							formattedAmount: new Intl.NumberFormat(orgCurrency.locale, {
+								style: 'currency',
+								currency: fullBlankQuotationForSocket.currency || orgCurrency.code,
+							}).format(Number(fullBlankQuotationForSocket.totalAmount)),
+							itemBreakdown: fullBlankQuotationForSocket.quotationItems?.map(item => ({
+								productName: item.product?.name,
+								quantity: item.quantity,
+								unitPrice: item.unitPrice,
+								totalPrice: item.totalPrice,
+								purchaseMode: item.purchaseMode || 'item',
+								notes: item.notes,
+							})) || [],
+						},
+						blankQuotationDetails: {
+							priceListType: fullBlankQuotationForSocket.priceListType,
+							title: fullBlankQuotationForSocket.title,
+							description: fullBlankQuotationForSocket.description,
+							recipientEmail: blankQuotationData?.recipientEmail,
+						},
+						projectInfo: fullBlankQuotationForSocket.project ? {
+							uid: fullBlankQuotationForSocket.project.uid,
+							name: fullBlankQuotationForSocket.project.name,
+							status: fullBlankQuotationForSocket.project.status,
+						} : null,
+					},
+					metadata: {
+						eventType: 'BLANK_QUOTATION_CREATED',
+						timestamp: new Date().toISOString(),
+						source: 'shop_service',
+						orgId,
+						branchId,
+						isBlankQuotation: true,
+					}
+				};
+
+				this.shopGateway.emitNewQuotation(enhancedBlankQuotationData);
 			}
 
 			// Prepare email data for blank quotation
@@ -2013,7 +2136,7 @@ export class ShopService {
 					this.logger.debug(`Quotation ${quotation.quotationNumber} status update sent to client ${quotation.client.email} - push notifications not available for external clients`);
 				}
 
-				// Also notify internal team about the status change via WebSocket
+				// Also notify internal team about the status change via WebSocket with enhanced data
 				// Get updated quotation with full data for WebSocket
 				const updatedQuotationForSocket = await this.quotationRepository.findOne({
 					where: { uid: quotationId },
@@ -2021,7 +2144,67 @@ export class ShopService {
 				});
 				
 				if (updatedQuotationForSocket) {
-					this.shopGateway.notifyQuotationStatusChanged(updatedQuotationForSocket);
+					// Enhanced WebSocket emission with detailed status change information
+					const enhancedStatusChangeData = {
+						...updatedQuotationForSocket,
+						statusChange: {
+							previousStatus,
+							newStatus: status,
+							changedAt: new Date(),
+							statusMessage,
+							isClientVisible: clientVisibleStatuses.includes(status),
+						},
+						analytics: {
+							totalItems: updatedQuotationForSocket.totalItems,
+							averageItemValue: updatedQuotationForSocket.totalItems > 0 
+								? Number(updatedQuotationForSocket.totalAmount) / updatedQuotationForSocket.totalItems 
+								: 0,
+							statusHistory: {
+								draft: previousStatus === OrderStatus.DRAFT,
+								pendingInternal: previousStatus === OrderStatus.PENDING_INTERNAL,
+								pendingClient: previousStatus === OrderStatus.PENDING_CLIENT || status === OrderStatus.PENDING_CLIENT,
+								approved: status === OrderStatus.APPROVED,
+								rejected: status === OrderStatus.REJECTED,
+								inFulfillment: status === OrderStatus.IN_FULFILLMENT,
+								completed: status === OrderStatus.COMPLETED,
+							},
+							assignedUser: {
+								uid: updatedQuotationForSocket.placedBy?.uid,
+								name: updatedQuotationForSocket.placedBy?.name,
+								email: updatedQuotationForSocket.placedBy?.email,
+								branch: updatedQuotationForSocket.placedBy?.branch?.name,
+								organisation: updatedQuotationForSocket.organisation?.name,
+							},
+							clientInfo: {
+								uid: updatedQuotationForSocket.client?.uid,
+								name: updatedQuotationForSocket.client?.name,
+								email: updatedQuotationForSocket.client?.email,
+								type: updatedQuotationForSocket.client?.type || 'standard',
+							},
+						},
+						financial: {
+							currency: updatedQuotationForSocket.currency || this.currencyCode,
+							totalAmount: Number(updatedQuotationForSocket.totalAmount),
+							formattedAmount: new Intl.NumberFormat(this.currencyLocale, {
+								style: 'currency',
+								currency: updatedQuotationForSocket.currency || this.currencyCode,
+							}).format(Number(updatedQuotationForSocket.totalAmount)),
+						},
+						timeline: {
+							createdAt: updatedQuotationForSocket.createdAt,
+							quotationDate: updatedQuotationForSocket.quotationDate,
+							validUntil: updatedQuotationForSocket.validUntil,
+							lastStatusUpdate: new Date(),
+						},
+						metadata: {
+							eventType: 'QUOTATION_STATUS_CHANGED',
+							timestamp: new Date().toISOString(),
+							source: 'shop_service',
+							triggeredBy: 'system', // Could be enhanced to track who made the change
+						}
+					};
+
+					this.shopGateway.notifyQuotationStatusChanged(enhancedStatusChangeData);
 				}
 			} catch (error) {
 				this.logger.error('Failed to send quotation status update email:', error);
@@ -2657,8 +2840,45 @@ export class ShopService {
 					// Emit event for email sending
 					this.eventEmitter.emit('send.email', emailType, [updatedQuotation.client.email], emailData);
 
-					// Also notify internal team about the status change
-					this.shopGateway.notifyQuotationStatusChanged(updatedQuotation);
+					// Also notify internal team about the status change with enhanced data
+					const enhancedTokenStatusChangeData = {
+						...updatedQuotation,
+						statusChange: {
+							previousStatus: quotation.status,
+							newStatus: status,
+							changedAt: new Date(),
+							changedBy: 'client_review',
+							clientComments: comments,
+						},
+						analytics: {
+							totalItems: updatedQuotation.totalItems,
+							averageItemValue: updatedQuotation.totalItems > 0 
+								? Number(updatedQuotation.totalAmount) / updatedQuotation.totalItems 
+								: 0,
+							clientInfo: {
+								uid: updatedQuotation.client?.uid,
+								name: updatedQuotation.client?.name,
+								email: updatedQuotation.client?.email,
+								reviewedViaToken: true,
+							},
+						},
+						financial: {
+							currency: updatedQuotation.currency || this.currencyCode,
+							totalAmount: Number(updatedQuotation.totalAmount),
+							formattedAmount: new Intl.NumberFormat(this.currencyLocale, {
+								style: 'currency',
+								currency: updatedQuotation.currency || this.currencyCode,
+							}).format(Number(updatedQuotation.totalAmount)),
+						},
+						metadata: {
+							eventType: 'QUOTATION_CLIENT_REVIEW',
+							timestamp: new Date().toISOString(),
+							source: 'client_review_token',
+							reviewToken: token,
+						}
+					};
+
+					this.shopGateway.notifyQuotationStatusChanged(enhancedTokenStatusChangeData);
 				}
 			} catch (error) {
 				// Log but don't fail if emails fail
@@ -2804,8 +3024,51 @@ export class ShopService {
 			// For now, we'll log this limitation
 			this.logger.debug(`Quotation ${updatedQuotation.quotationNumber} sent to client ${updatedQuotation.client.email} - push notifications not available for external clients`);
 
-			// Emit WebSocket event
-			this.shopGateway.notifyQuotationStatusChanged(updatedQuotation);
+			// Emit WebSocket event with enhanced data
+			const enhancedSendToClientData = {
+				...updatedQuotation,
+				statusChange: {
+					previousStatus: OrderStatus.PENDING_INTERNAL,
+					newStatus: OrderStatus.PENDING_CLIENT,
+					changedAt: new Date(),
+					changedBy: 'system',
+					action: 'sent_to_client_for_review',
+				},
+				analytics: {
+					totalItems: updatedQuotation.totalItems,
+					averageItemValue: updatedQuotation.totalItems > 0 
+						? Number(updatedQuotation.totalAmount) / updatedQuotation.totalItems 
+						: 0,
+					clientInfo: {
+						uid: updatedQuotation.client?.uid,
+						name: updatedQuotation.client?.name,
+						email: updatedQuotation.client?.email,
+						sentForReview: true,
+					},
+				},
+				financial: {
+					currency: updatedQuotation.currency || this.currencyCode,
+					totalAmount: Number(updatedQuotation.totalAmount),
+					formattedAmount: new Intl.NumberFormat(this.currencyLocale, {
+						style: 'currency',
+						currency: updatedQuotation.currency || this.currencyCode,
+					}).format(Number(updatedQuotation.totalAmount)),
+				},
+				clientAccess: {
+					reviewUrl: updatedQuotation.reviewUrl,
+					pdfURL: updatedQuotation.pdfURL,
+					validUntil: updatedQuotation.validUntil,
+				},
+				metadata: {
+					eventType: 'QUOTATION_SENT_TO_CLIENT',
+					timestamp: new Date().toISOString(),
+					source: 'shop_service',
+					orgId,
+					branchId,
+				}
+			};
+
+			this.shopGateway.notifyQuotationStatusChanged(enhancedSendToClientData);
 
 			return {
 				success: true,

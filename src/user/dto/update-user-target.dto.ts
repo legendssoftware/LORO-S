@@ -120,4 +120,77 @@ export class UpdateUserTargetDto {
     required: false
   })
   periodEndDate?: Date;
+
+  // Cost Breakdown Fields (Monthly) - All in ZAR
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @ApiProperty({
+    description: 'Base salary amount in ZAR',
+    example: 25000,
+    required: false
+  })
+  baseSalary?: number;
+
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @ApiProperty({
+    description: 'Car instalment amount in ZAR',
+    example: 8000,
+    required: false
+  })
+  carInstalment?: number;
+
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @ApiProperty({
+    description: 'Car insurance amount in ZAR',
+    example: 1500,
+    required: false
+  })
+  carInsurance?: number;
+
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @ApiProperty({
+    description: 'Fuel allowance amount in ZAR',
+    example: 3000,
+    required: false
+  })
+  fuel?: number;
+
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @ApiProperty({
+    description: 'Cell phone allowance amount in ZAR',
+    example: 800,
+    required: false
+  })
+  cellPhoneAllowance?: number;
+
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @ApiProperty({
+    description: 'Car maintenance amount in ZAR',
+    example: 2000,
+    required: false
+  })
+  carMaintenance?: number;
+
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @ApiProperty({
+    description: 'COIC costs amount in ZAR',
+    example: 1200,
+    required: false
+  })
+  coicCosts?: number;
+
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @ApiProperty({
+    description: 'Total monthly cost amount in ZAR',
+    example: 41500,
+    required: false
+  })
+  totalCost?: number;
 } 
