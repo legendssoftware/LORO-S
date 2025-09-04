@@ -98,7 +98,7 @@ export class UpdateDeviceDto extends PartialType(CreateDeviceDto) {
  *   "metadata": {
  *     "correctionReason": "Time zone adjustment",
  *     "originalOpenTime": 1672901000,
- *     "correctedBy": "admin@orrbit.co.za"
+ *     "correctedBy": "admin@loro.co.za"
  *   }
  * }
  * ```
@@ -435,7 +435,7 @@ export class UpdateDeviceConfigurationDto {
     example: {
       "enableDailyReports": true,
       "enableWeeklyReports": true,
-      "reportRecipients": ["admin@orrbit.co.za"]
+      "reportRecipients": ["admin@loro.co.za"]
     }
   })
   @IsObject({ message: 'Reporting settings must be a valid object' })

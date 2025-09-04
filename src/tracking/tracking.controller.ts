@@ -689,7 +689,7 @@ export class TrackingController {
 								uid: { type: 'number', example: 123 },
 								name: { type: 'string', example: 'John' },
 								surname: { type: 'string', example: 'Doe' },
-								email: { type: 'string', example: 'john.doe@orrbit.co.za' },
+								email: { type: 'string', example: 'john.doe@loro.co.za' },
 								branch: { type: 'string', example: 'Pretoria South Africa' },
 								organisation: { type: 'string', example: 'Orrbit Technologies' }
 							}

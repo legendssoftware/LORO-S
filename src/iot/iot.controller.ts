@@ -592,6 +592,63 @@ Standard REST API call with complete JSON payload in request body.
 ### Mixed Headers + Body:
 Headers override body values where present - useful for partial overrides.
 
+## 💻 C++ Implementation Guide
+
+### Method 1: libcurl Header-Only (Minimal Payload)
+**Most efficient for IoT devices with limited bandwidth**
+- Use libcurl to create IoTTimeTracker class
+- Set headers: Authorization, X-Device-ID, X-Event-Type, X-Timestamp
+- Send empty JSON body: "{}"
+- Minimal network overhead, fastest transmission
+- Perfect for battery-powered devices
+
+### Method 2: libcurl with Full Headers and Metadata  
+**Complete sensor data transmission via headers**
+- Include all optional headers: X-Location, X-IP-Address, X-Metadata
+- Metadata as JSON string: battery level, signal strength, firmware version
+- Still uses empty body for maximum efficiency
+- Ideal for comprehensive device monitoring
+
+### Method 3: Traditional JSON Body Approach
+**Standard REST API integration**
+- Use nlohmann/json library for payload creation
+- Send deviceID, eventType, timestamp in JSON body
+- Standard Authorization header only
+- Better for debugging and development
+
+### Method 4: ESP32/Arduino IoT Device Implementation
+**Optimized for embedded systems**
+- WiFi and HTTPClient libraries for ESP32
+- Automatic timestamp using WiFi.getTime()
+- Built-in metadata: battery level, signal strength
+- Real-time device status reporting
+
+### Method 5: Mixed Headers + Body with Override Logic
+**Maximum flexibility for complex scenarios**
+- JSON body as fallback data source
+- Headers override specific values when present
+- Conditional header setting based on device state
+- Perfect for adaptive IoT protocols
+
+### 🔧 Implementation Requirements:
+- **libcurl**: Standard HTTP client library for C++
+- **nlohmann/json**: Modern JSON library for C++
+- **ESP32 Libraries**: WiFi, HTTPClient, ArduinoJson
+- **Platform**: Linux, Windows, ESP32, Arduino
+
+### 📊 Performance Analysis:
+- **Header-only**: 60-80% less bandwidth than JSON body
+- **Mixed mode**: Flexible but slightly higher overhead  
+- **JSON body**: Most readable, standard REST approach
+- **ESP32**: Optimized for real-time embedded applications
+
+### 🎯 C++ Integration Benefits:
+- **Low Latency**: Direct header transmission
+- **Bandwidth Efficient**: Minimal payload sizes
+- **Cross-Platform**: Works on embedded and desktop systems
+- **Real-Time**: Immediate event transmission
+- **Scalable**: Handles thousands of concurrent devices
+
 ## 🎯 Use Cases
 - **Employee Attendance**: Automatic arrival/departure tracking
 - **Access Control**: Door sensor integration for security
@@ -912,7 +969,7 @@ Headers override body values where present - useful for partial overrides.
 
 ## 📧 **Automated Delivery**
 Reports are automatically sent to administrators and owners:
-- **Email Recipients**: admin@orrbit.co.za, owner@orrbit.co.za
+- **Email Recipients**: admin@loro.co.za, owner@loro.co.za
 - **Delivery Time**: Every morning at 8:00 AM
 - **Format Options**: JSON (API), PDF (email), Excel (export)
     `,
@@ -1061,7 +1118,7 @@ Reports are automatically sent to administrators and owners:
 
 ## 📧 **Automated Delivery**
 Reports are automatically sent to administrators and owners:
-- **Email Recipients**: admin@orrbit.co.za, owner@orrbit.co.za
+- **Email Recipients**: admin@loro.co.za, owner@loro.co.za
 - **Delivery Time**: Every evening at 6:00 PM
 - **Format Options**: JSON (API), PDF (email), Excel (export)
     `,

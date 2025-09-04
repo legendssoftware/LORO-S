@@ -305,7 +305,7 @@ export class IoTReportingService {
 			this.eventEmitter.emit('iot.report.send_email', {
 				type: reportType,
 				report,
-				recipients: ['admin@orrbit.co.za', 'owner@orrbit.co.za'], // Can be made configurable
+				recipients: ['admin@loro.co.za', 'owner@loro.co.za'], // Can be made configurable
 				requestId,
 			});
 

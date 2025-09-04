@@ -4773,7 +4773,7 @@ export class UserService {
 				encouragementTips: encouragementTips.slice(0, 3), // Send 3 tips
 				performanceTrend,
 				dashboardUrl: `${this.configService.get('FRONTEND_URL')}/targets`,
-				supportEmail: this.configService.get('SUPPORT_EMAIL') || 'support@orrbit.co.za',
+				supportEmail: this.configService.get('SUPPORT_EMAIL') || 'support@loro.co.za',
 			};
 
 			// Send email notification

@@ -106,11 +106,11 @@ Creates a comprehensive organization with advanced configuration options, integr
 				description: 'Complete setup for a technology company with multiple departments',
 				value: {
 					name: 'Orrbit Technologies',
-					email: 'info@orrbit.co.za',
+					email: 'info@loro.co.za',
 					phone: '+27 11 123 4567',
 					contactPerson: 'The Guy',
-					website: 'https://www.orrbit.co.za',
-					logo: 'https://www.orrbit.co.za/logo.png',
+					website: 'https://www.loro.co.za',
+					logo: 'https://www.loro.co.za/logo.png',
 					address: {
 						street: '123 Innovation Drive',
 						city: 'Pretoria',
@@ -194,11 +194,11 @@ Creates a comprehensive organization with advanced configuration options, integr
 					properties: {
 						uid: { type: 'number', example: 1, description: 'Unique organization identifier' },
 						name: { type: 'string', example: 'Orrbit Technologies', description: 'Organization name' },
-						email: { type: 'string', example: 'info@orrbit.co.za', description: 'Primary contact email' },
+						email: { type: 'string', example: 'info@loro.co.za', description: 'Primary contact email' },
 						phone: { type: 'string', example: '+27 11 123 4567', description: 'Primary contact phone' },
 						contactPerson: { type: 'string', example: 'The Guy', description: 'Primary contact person' },
-						website: { type: 'string', example: 'https://www.orrbit.co.za', description: 'Organization website' },
-						logo: { type: 'string', example: 'https://www.orrbit.co.za/logo.png', description: 'Organization logo URL' },
+						website: { type: 'string', example: 'https://www.loro.co.za', description: 'Organization website' },
+						logo: { type: 'string', example: 'https://www.loro.co.za/logo.png', description: 'Organization logo URL' },
 						ref: { type: 'string', example: 'ORG123456', description: 'Organization reference code' },
 						timeZone: { type: 'string', example: 'Africa/Johannesburg', description: 'Organization timezone' },
 						createdAt: { type: 'string', format: 'date-time', description: 'Creation timestamp' },
@@ -368,11 +368,11 @@ Retrieves a comprehensive list of all organizations with advanced filtering, bra
 						properties: {
 							uid: { type: 'number', example: 1, description: 'Unique organization identifier' },
 							name: { type: 'string', example: 'Orrbit Technologies', description: 'Organization name' },
-							email: { type: 'string', example: 'info@orrbit.co.za', description: 'Primary contact email' },
+							email: { type: 'string', example: 'info@loro.co.za', description: 'Primary contact email' },
 							phone: { type: 'string', example: '+27 11 123 4567', description: 'Primary contact phone' },
 							contactPerson: { type: 'string', example: 'The Guy', description: 'Primary contact person' },
-							website: { type: 'string', example: 'https://www.orrbit.co.za', description: 'Organization website' },
-							logo: { type: 'string', example: 'https://www.orrbit.co.za/logo.png', description: 'Organization logo URL' },
+							website: { type: 'string', example: 'https://www.loro.co.za', description: 'Organization website' },
+							logo: { type: 'string', example: 'https://www.loro.co.za/logo.png', description: 'Organization logo URL' },
 							ref: { type: 'string', example: 'ORG123456', description: 'Organization reference code' },
 							createdAt: { type: 'string', format: 'date-time', description: 'Creation timestamp' },
 							updatedAt: { type: 'string', format: 'date-time', description: 'Last update timestamp' },
@@ -386,8 +386,8 @@ Retrieves a comprehensive list of all organizations with advanced filtering, bra
 										uid: { type: 'number', example: 1, description: 'Branch identifier' },
 										name: { type: 'string', example: 'Pretoria South Africa', description: 'Branch name' },
 										phone: { type: 'string', example: '+27 11 123 4567', description: 'Branch phone' },
-										email: { type: 'string', example: 'pretoria@orrbit.co.za', description: 'Branch email' },
-										website: { type: 'string', example: 'https://pretoria.orrbit.co.za', description: 'Branch website' }
+										email: { type: 'string', example: 'pretoria@loro.co.za', description: 'Branch email' },
+										website: { type: 'string', example: 'https://pretoria.loro.co.za', description: 'Branch website' }
 									}
 								}
 							},
@@ -548,11 +548,11 @@ Retrieves comprehensive organization information including settings, working hou
 					properties: {
 						uid: { type: 'number', example: 1, description: 'Unique organization identifier' },
 						name: { type: 'string', example: 'Orrbit Technologies', description: 'Organization name' },
-						email: { type: 'string', example: 'info@orrbit.co.za', description: 'Primary contact email' },
+						email: { type: 'string', example: 'info@loro.co.za', description: 'Primary contact email' },
 						phone: { type: 'string', example: '+27 11 123 4567', description: 'Primary contact phone' },
 						contactPerson: { type: 'string', example: 'The Guy', description: 'Primary contact person' },
-						website: { type: 'string', example: 'https://www.orrbit.co.za', description: 'Organization website' },
-						logo: { type: 'string', example: 'https://www.orrbit.co.za/logo.png', description: 'Organization logo URL' },
+						website: { type: 'string', example: 'https://www.loro.co.za', description: 'Organization website' },
+						logo: { type: 'string', example: 'https://www.loro.co.za/logo.png', description: 'Organization logo URL' },
 						ref: { type: 'string', example: 'ORG123456', description: 'Organization reference code' },
 						createdAt: { type: 'string', format: 'date-time', description: 'Creation timestamp' },
 						updatedAt: { type: 'string', format: 'date-time', description: 'Last update timestamp' },
@@ -566,8 +566,8 @@ Retrieves comprehensive organization information including settings, working hou
 									uid: { type: 'number', example: 1, description: 'Branch identifier' },
 									name: { type: 'string', example: 'Pretoria South Africa', description: 'Branch name' },
 									phone: { type: 'string', example: '+27 11 123 4567', description: 'Branch phone' },
-									email: { type: 'string', example: 'pretoria@orrbit.co.za', description: 'Branch email' },
-									website: { type: 'string', example: 'https://pretoria.orrbit.co.za', description: 'Branch website' },
+									email: { type: 'string', example: 'pretoria@loro.co.za', description: 'Branch email' },
+									website: { type: 'string', example: 'https://pretoria.loro.co.za', description: 'Branch website' },
 									address: { type: 'string', example: '123 Business Park, Pretoria', description: 'Branch address' }
 								}
 							}
@@ -607,7 +607,7 @@ Retrieves comprehensive organization information including settings, working hou
 								uid: { type: 'number', example: 1, description: 'Appearance settings identifier' },
 								primaryColor: { type: 'string', example: '#1E40AF', description: 'Primary brand color' },
 								secondaryColor: { type: 'string', example: '#64748B', description: 'Secondary brand color' },
-								logoUrl: { type: 'string', example: 'https://orrbit.co.za/logo.png', description: 'Custom logo URL' },
+								logoUrl: { type: 'string', example: 'https://loro.co.za/logo.png', description: 'Custom logo URL' },
 								theme: { type: 'string', example: 'modern', description: 'UI theme preference' }
 							}
 						},
@@ -677,7 +677,7 @@ Retrieves comprehensive organization information including settings, working hou
 								properties: {
 									uid: { type: 'number', example: 1, description: 'User identifier' },
 									name: { type: 'string', example: 'The Guy', description: 'User full name' },
-									email: { type: 'string', example: 'theguy@orrbit.co.za', description: 'User email' },
+									email: { type: 'string', example: 'theguy@loro.co.za', description: 'User email' },
 									role: { type: 'string', example: 'DEVELOPER', description: 'User role' },
 									status: { type: 'string', example: 'ACTIVE', description: 'User status' }
 								}
@@ -848,8 +848,8 @@ Updates existing organization information with comprehensive validation, audit t
 					name: 'Orrbit Technologies (Pty) Ltd',
 					contactPerson: 'The Guy - CTO',
 					phone: '+27 11 123 4567',
-					email: 'info@orrbit.co.za',
-					website: 'https://www.orrbit.co.za'
+					email: 'info@loro.co.za',
+					website: 'https://www.loro.co.za'
 				}
 			},
 			addressUpdate: {
@@ -871,8 +871,8 @@ Updates existing organization information with comprehensive validation, audit t
 				summary: '🎨 Branding and Visual Identity Update',
 				description: 'Update logo and branding elements',
 				value: {
-					logo: 'https://www.orrbit.co.za/new-logo.png',
-					website: 'https://www.orrbit.co.za',
+					logo: 'https://www.loro.co.za/new-logo.png',
+					website: 'https://www.loro.co.za',
 					name: 'Orrbit Technologies - Innovation Leaders'
 				}
 			},
@@ -881,9 +881,9 @@ Updates existing organization information with comprehensive validation, audit t
 				description: 'Update contact details and communication preferences',
 				value: {
 					phone: '+27 11 987 6543',
-					email: 'contact@orrbit.co.za',
+					email: 'contact@loro.co.za',
 					contactPerson: 'Jane Smith - Operations Manager',
-					website: 'https://www.orrbit.co.za'
+					website: 'https://www.loro.co.za'
 				}
 			},
 			comprehensiveUpdate: {
@@ -891,11 +891,11 @@ Updates existing organization information with comprehensive validation, audit t
 				description: 'Update multiple aspects of organization profile',
 				value: {
 					name: 'Orrbit Technologies (Pty) Ltd',
-					email: 'info@orrbit.co.za',
+					email: 'info@loro.co.za',
 					phone: '+27 11 123 4567',
 					contactPerson: 'The Guy - Chief Technology Officer',
-					website: 'https://www.orrbit.co.za',
-					logo: 'https://www.orrbit.co.za/updated-logo.png',
+					website: 'https://www.loro.co.za',
+					logo: 'https://www.loro.co.za/updated-logo.png',
 					address: {
 						street: '789 Technology Park',
 						city: 'Johannesburg',
