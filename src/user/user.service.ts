@@ -2027,7 +2027,15 @@ export class UserService {
 					'userTarget.periodStartDate',
 					'userTarget.periodEndDate',
 					'userTarget.createdAt',
-					'userTarget.updatedAt'
+					'userTarget.updatedAt',
+					'userTarget.baseSalary',
+					'userTarget.carInstalment',
+					'userTarget.carInsurance',
+					'userTarget.fuel',
+					'userTarget.cellPhoneAllowance',
+					'userTarget.carMaintenance',
+					'userTarget.cgicCosts',
+					'userTarget.totalCost',
 				])
 				.where('user.uid = :userId AND user.isDeleted = :isDeleted', { userId, isDeleted: false });
 
