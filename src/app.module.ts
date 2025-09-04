@@ -99,6 +99,7 @@ import { ApprovalHistory } from './approvals/entities/approval-history.entity';
 import { ApprovalSignature } from './approvals/entities/approval-signature.entity';
 import { Project } from './shop/entities/project.entity';
 import { MapModule } from './map/map.module';
+import { IotModule } from './iot/iot.module';
 
 
 @Module({
@@ -242,6 +243,7 @@ import { MapModule } from './map/map.module';
 		WarningsModule,
 		ApprovalsModule,
 		MapModule,
+		IotModule,
 	],
 	controllers: [],
 	providers: [

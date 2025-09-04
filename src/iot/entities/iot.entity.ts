@@ -1,0 +1,90 @@
+import { Column, Entity, Index, ManyToOne, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
+import { DeviceStatus, DeviceType } from '../../lib/enums/iot';
+
+@Entity('device_records')
+@Index(['name'])
+@Index(['description'])
+@Index(['createdAt'])
+@Index(['updatedAt'])
+@Index(['deletedAt'])
+export class DeviceRecords {
+	@PrimaryGeneratedColumn()
+	id: number;
+
+	@Column({ nullable: false })
+	openTime: number;
+
+	@Column({ nullable: false })
+	closeTime: number;
+
+	@ManyToOne(() => Device, (device) => device.records)
+	deviceID: Device;
+
+	@Column({ nullable: false, default: () => 'CURRENT_TIMESTAMP' })
+	createdAt: Date;
+
+	@Column({ nullable: false, default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
+	updatedAt: Date;
+}
+
+@Entity('device')
+@Index(['name'])
+@Index(['description'])
+@Index(['createdAt'])
+@Index(['updatedAt'])
+@Index(['deletedAt'])
+export class Device {
+	@PrimaryGeneratedColumn()
+	id: number;
+
+	@Column({ nullable: false })
+	orgID: number;
+
+	@Column({ nullable: false })
+	branchID: number;
+
+	@Column({ nullable: false, unique: true, type: 'varchar' })
+	deviceID: string;
+
+	@Column({ nullable: false, type: 'enum', enum: DeviceType, default: DeviceType.DOOR_SENSOR })
+	deviceType: DeviceType;
+
+	@Column({ nullable: false })
+	deviceIP: string;
+
+	@Column({ nullable: false })
+	devicePort: number;
+
+	@Column({ nullable: false })
+	devicLocation: string;
+
+	@Column({ nullable: false })
+	deviceTag: string;
+
+	@Column({ nullable: false, type: 'enum', enum: DeviceStatus, default: DeviceStatus.ONLINE })
+	currentStatus: DeviceStatus;
+
+	@Column({ nullable: false, default: () => 'CURRENT_TIMESTAMP' })
+	createdAt: Date;
+
+	@Column({ nullable: false, default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
+	updatedAt: Date;
+
+	@Column({ nullable: false, default: false })
+	isDeleted: boolean;
+
+	@Column({ nullable: false, type: 'json' })
+	analytics: {
+		openCount: number;
+		closeCount: number;
+		totalCount: number;
+		lastOpenAt: Date;
+		lastCloseAt: Date;
+		onTimeCount: number;
+		lateCount: number;
+		daysAbsent: number;
+	};
+
+	@OneToMany(() => DeviceRecords, (records) => records.deviceID)
+	records: DeviceRecords[];
+}
