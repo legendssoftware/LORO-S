@@ -216,6 +216,9 @@ export class UserTarget {
 	@Column({ type: 'date', nullable: true })
 	periodEndDate: Date;
 
+	@Column({ type: 'timestamp', nullable: true })
+	lastCalculatedAt: Date;
+
 	@CreateDateColumn()
 	createdAt: Date;
 
