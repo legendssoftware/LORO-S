@@ -11,7 +11,9 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
-  Req
+  Req,
+  Headers,
+  BadRequestException
 } from '@nestjs/common';
 import { 
   ApiTags, 
@@ -147,6 +149,80 @@ export class IotController {
       orgId,
       branchId,
       isElevated: isElevatedUser
+    };
+  }
+
+  /**
+   * Extracts time event data with header priority over body values
+   * @param bodyData - Data from request body (DeviceTimeRecordDto)
+   * @param req - Authenticated request containing headers
+   * @returns Merged data with source information
+   */
+  private extractTimeEventData(bodyData: DeviceTimeRecordDto, req: AuthenticatedRequest) {
+    const headers = req.headers;
+    const sources: string[] = [];
+    
+    // Helper function to safely parse JSON metadata
+    const parseMetadata = (metadataStr: string): Record<string, any> | undefined => {
+      try {
+        return JSON.parse(metadataStr);
+      } catch (error) {
+        // Log warning but don't fail the request
+        console.warn('Failed to parse metadata JSON from header:', metadataStr, error);
+        return undefined;
+      }
+    };
+
+    // Extract values with header priority
+    const mergedData: DeviceTimeRecordDto = {
+      deviceID: (headers['x-device-id'] as string) || bodyData.deviceID,
+      eventType: (headers['x-event-type'] as 'open' | 'close') || bodyData.eventType,
+      timestamp: headers['x-timestamp'] 
+        ? parseInt(headers['x-timestamp'] as string, 10) 
+        : bodyData.timestamp,
+      location: (headers['x-location'] as string) || bodyData.location,
+      ipAddress: (headers['x-ip-address'] as string) || bodyData.ipAddress,
+      metadata: headers['x-metadata'] 
+        ? parseMetadata(headers['x-metadata'] as string) || bodyData.metadata
+        : bodyData.metadata
+    };
+
+    // Track data sources for debugging and transparency
+    if (headers['x-device-id']) sources.push('deviceID from header');
+    else if (bodyData.deviceID) sources.push('deviceID from body');
+
+    if (headers['x-event-type']) sources.push('eventType from header');
+    else if (bodyData.eventType) sources.push('eventType from body');
+
+    if (headers['x-timestamp']) sources.push('timestamp from header');
+    else if (bodyData.timestamp) sources.push('timestamp from body');
+
+    if (headers['x-location']) sources.push('location from header');
+    else if (bodyData.location) sources.push('location from body');
+
+    if (headers['x-ip-address']) sources.push('ipAddress from header');
+    else if (bodyData.ipAddress) sources.push('ipAddress from body');
+
+    if (headers['x-metadata']) sources.push('metadata from header');
+    else if (bodyData.metadata) sources.push('metadata from body');
+
+    // Determine overall source classification
+    const hasHeaderData = Object.keys(headers).some(key => key.startsWith('x-'));
+    const hasBodyData = Object.values(bodyData).some(value => value !== undefined && value !== null);
+    
+    let sourceType: string;
+    if (hasHeaderData && hasBodyData) {
+      sourceType = 'mixed';
+    } else if (hasHeaderData) {
+      sourceType = 'headers';
+    } else {
+      sourceType = 'body';
+    }
+
+    return {
+      data: mergedData,
+      sources,
+      sourceType
     };
   }
 
@@ -471,24 +547,132 @@ Register new IoT devices in your organization with comprehensive configuration a
 
 **THIS IS THE CORE ENDPOINT** that IoT devices use to record employee arrival and departure times with intelligent daily record management.
 
-## 🎯 **Core Functionality**
+## 🎯 Core Functionality
 This endpoint processes time events from IoT devices and automatically manages daily attendance records with smart logic for morning arrivals and evening departures.
 
-## 📊 **Smart Daily Record Logic**
+## 📊 Smart Daily Record Logic
 - **One Record Per Device Per Day**: Prevents duplicate attendance records
 - **Automatic Aggregation**: Morning open + Evening close = Complete daily record
 - **Real-Time Analytics**: Updates attendance metrics immediately
 
-## 🔄 **Event Type Logic**
-### **"open" Events:** Creates new daily record or updates openTime
-### **"close" Events:** Updates existing record with closeTime
+## 🔄 Event Type Logic
+- **"open" Events:** Creates new daily record or updates openTime
+- **"close" Events:** Updates existing record with closeTime
 
-## 🎯 **Use Cases**
+## 🔧 Flexible Data Input
+This endpoint accepts data through **TWO METHODS** with **HEADER PRIORITY**:
+
+### 1️⃣ Headers (PRIORITY) - Perfect for IoT devices with limited payload capacity
+- X-Device-ID: Device identifier (e.g., "DOOR_SENSOR_001")
+- X-Event-Type: Event type ("open" or "close")
+- X-Timestamp: Unix timestamp (e.g., 1672905600)
+- X-Location: Device location (optional)
+- X-IP-Address: Source IP address (optional)
+- X-Metadata: JSON metadata string (optional)
+
+### 2️⃣ JSON Body (FALLBACK) - Traditional REST API approach
+Standard JSON payload with deviceID, eventType, timestamp, location, ipAddress, and metadata fields.
+
+### 🎯 Priority Logic:
+1. **Headers are checked FIRST** - if present, they override body values
+2. **Body values used as FALLBACK** - when headers are missing
+3. **Mixed usage supported** - combine headers + body for maximum flexibility
+
+## 🚀 IoT Device Integration Examples
+
+### Minimal Header-Only Request:
+Send POST to /iot/records/time-event with headers: X-Device-ID, X-Event-Type, X-Timestamp and empty body.
+
+### Full Header Request:
+Include all optional headers like X-Location, X-IP-Address, X-Metadata along with required headers.
+
+### Traditional JSON Body:
+Standard REST API call with complete JSON payload in request body.
+
+### Mixed Headers + Body:
+Headers override body values where present - useful for partial overrides.
+
+## 🎯 Use Cases
 - **Employee Attendance**: Automatic arrival/departure tracking
 - **Access Control**: Door sensor integration for security
 - **Work Hours**: Precise calculation of daily work hours
+- **IoT Protocol Flexibility**: Support various IoT communication patterns
+- **Lightweight Devices**: Minimize payload for resource-constrained devices
     `,
     operationId: 'recordDeviceTimeEvent',
+  })
+  @ApiHeader({
+    name: 'X-Device-ID',
+    description: 'Device identifier (takes priority over body.deviceID)',
+    required: false,
+    example: 'DOOR_SENSOR_001'
+  })
+  @ApiHeader({
+    name: 'X-Event-Type',
+    description: 'Event type: "open" or "close" (takes priority over body.eventType)',
+    required: false,
+    example: 'open'
+  })
+  @ApiHeader({
+    name: 'X-Timestamp',
+    description: 'Unix timestamp in seconds (takes priority over body.timestamp)',
+    required: false,
+    example: '1672905600'
+  })
+  @ApiHeader({
+    name: 'X-Location',
+    description: 'Device location (takes priority over body.location)',
+    required: false,
+    example: 'Main Entrance - Pretoria South Africa'
+  })
+  @ApiHeader({
+    name: 'X-IP-Address',
+    description: 'Source IP address (takes priority over body.ipAddress)',
+    required: false,
+    example: '192.168.1.100'
+  })
+  @ApiHeader({
+    name: 'X-Metadata',
+    description: 'JSON metadata string (takes priority over body.metadata)',
+    required: false,
+    example: '{"batteryLevel":92,"signalStrength":85}'
+  })
+  @ApiBody({
+    type: DeviceTimeRecordDto,
+    required: false,
+    description: 'Optional JSON body - all fields can be provided via headers instead. Headers take priority when both are present.',
+    examples: {
+      fullBody: {
+        summary: '📄 Complete JSON Body',
+        description: 'Traditional REST API approach with all data in body',
+        value: {
+          deviceID: 'DOOR_SENSOR_001',
+          eventType: 'open',
+          timestamp: 1672905600,
+          location: 'Main Entrance - Pretoria South Africa',
+          ipAddress: '192.168.1.100',
+          metadata: {
+            batteryLevel: 92,
+            signalStrength: 85,
+            firmwareVersion: '2.1.3'
+          }
+        }
+      },
+      emptyBody: {
+        summary: '🏷️ Header-Only Request (Empty Body)',
+        description: 'IoT-friendly approach using only headers with empty body',
+        value: {}
+      },
+      partialBody: {
+        summary: '🔄 Mixed Headers + Body',
+        description: 'Headers override body values where present',
+        value: {
+          deviceID: 'BODY_DEVICE_001',
+          timestamp: 1672905600,
+          metadata: { note: 'This will be used if no X-Metadata header' }
+        }
+      }
+    }
   })
   @ApiCreatedResponse({
     description: '✅ Time event recorded successfully',
@@ -507,6 +691,22 @@ This endpoint processes time events from IoT devices and automatically manages d
             closeTime: { type: 'number', example: 1641027600 },
             createdAt: { type: 'string', format: 'date-time' }
           }
+        },
+        source: {
+          type: 'string',
+          example: 'headers',
+          description: 'Data source used: "headers", "body", or "mixed"'
+        },
+        debug: {
+          type: 'object',
+          description: 'Debug information about data sources (only in development)',
+          properties: {
+            sourcesUsed: {
+              type: 'array',
+              items: { type: 'string' },
+              example: ['deviceID from header', 'eventType from header', 'timestamp from body']
+            }
+          }
         }
       }
     }
@@ -517,7 +717,22 @@ This endpoint processes time events from IoT devices and automatically manages d
       type: 'object',
       properties: {
         message: { type: 'string', example: 'Failed to record time event' },
-        statusCode: { type: 'number', example: 400 }
+        statusCode: { type: 'number', example: 400 },
+        details: {
+          type: 'object',
+          properties: {
+            missingFields: {
+              type: 'array',
+              items: { type: 'string' },
+              example: ['deviceID', 'eventType', 'timestamp']
+            },
+            invalidFields: {
+              type: 'array',
+              items: { type: 'string' },
+              example: ['timestamp must be a valid Unix timestamp']
+            }
+          }
+        }
       }
     }
   })
@@ -532,8 +747,40 @@ This endpoint processes time events from IoT devices and automatically manages d
     }
   })
   @HttpCode(HttpStatus.CREATED)
-  recordTimeEvent(@Body() timeEventDto: DeviceTimeRecordDto, @Req() req: AuthenticatedRequest) {
-    return this.iotService.recordTimeEvent(timeEventDto);
+  recordTimeEvent(@Body() timeEventDto: Partial<DeviceTimeRecordDto> = {}, @Req() req: AuthenticatedRequest) {
+    // Extract values from headers with priority over body
+    const mergedData = this.extractTimeEventData(timeEventDto as DeviceTimeRecordDto, req);
+    
+    // Validate that we have the required fields from either headers or body
+    const missingFields: string[] = [];
+    if (!mergedData.data.deviceID) missingFields.push('deviceID');
+    if (!mergedData.data.eventType) missingFields.push('eventType');
+    if (!mergedData.data.timestamp) missingFields.push('timestamp');
+    
+    if (missingFields.length > 0) {
+      throw new BadRequestException({
+        message: 'Missing required fields',
+        details: {
+          missingFields,
+          note: 'Required fields can be provided via headers (X-Device-ID, X-Event-Type, X-Timestamp) or request body',
+          sources: mergedData.sources
+        }
+      });
+    }
+    
+    // Validate eventType
+    if (mergedData.data.eventType && !['open', 'close'].includes(mergedData.data.eventType)) {
+      throw new BadRequestException({
+        message: 'Invalid event type',
+        details: {
+          providedValue: mergedData.data.eventType,
+          allowedValues: ['open', 'close'],
+          field: 'eventType'
+        }
+      });
+    }
+    
+    return this.iotService.recordTimeEvent(mergedData.data);
   }
 
   @Get('records')
