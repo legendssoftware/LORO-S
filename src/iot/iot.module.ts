@@ -5,6 +5,7 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from '../auth/auth.module';
 import { LicensingModule } from '../licensing/licensing.module';
+import { OrganisationModule } from '../organisation/organisation.module';
 
 import { IotService } from './iot.service';
 import { IotController } from './iot.controller';
@@ -39,6 +40,9 @@ import { IoTReportingService } from './services/iot-reporting.service';
     
     // Licensing module for LicensingService (required by AuthGuard)
     LicensingModule,
+    
+    // Organisation module for business hours validation
+    OrganisationModule,
   ],
   controllers: [IotController],
   providers: [

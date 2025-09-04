@@ -37,6 +37,7 @@ import {
   UpdateDeviceAnalyticsDto
 } from './dto/update-iot.dto';
 import { IoTReportingService } from './services/iot-reporting.service';
+import { OrganisationHoursService } from '../organisation/services/organisation-hours.service';
 
 export interface PaginatedResponse<T> {
   data: T[];
@@ -85,6 +86,7 @@ export class IotService {
     private readonly configService: ConfigService,
     private readonly dataSource: DataSource,
     private readonly iotReportingService: IoTReportingService,
+    private readonly organisationHoursService: OrganisationHoursService,
   ) {
     this.CACHE_TTL = parseInt(this.configService.get<string>('CACHE_TTL', '300'));
     this.logger.log('🤖 IoT Service initialized successfully with comprehensive reporting capabilities');
@@ -915,40 +917,38 @@ export class IotService {
       // 1. Device validation and retrieval
       const device = await this.getAndValidateDevice(timeEventDto.deviceID, queryRunner);
 
-      // 2. Smart daily record management
+      // 2. Business hours validation and analysis
+      const businessHoursAnalysis = await this.validateBusinessHours(timeEventDto, device);
+
+      // 3. Smart daily record management
       const recordResult = await this.smartRecordManagement(timeEventDto, device, queryRunner);
 
-      // 3. Advanced analytics update
-      await this.updateAdvancedAnalytics(device, timeEventDto, recordResult.action, queryRunner);
+      // 4. Advanced analytics update (includes business hours analysis)
+      await this.updateAdvancedAnalytics(device, timeEventDto, recordResult.action, queryRunner, businessHoursAnalysis);
 
-      // 4. Real-time notifications
+      // 5. Real-time notifications
       await this.processRealTimeNotifications(device, timeEventDto, recordResult);
 
-      // 5. Commit transaction
+      // 6. Commit transaction
       await queryRunner.commitTransaction();
 
       // 6. Post-processing activities
       await this.performPostEventActivities(device, timeEventDto, recordResult, startTime);
 
       const processingTime = Date.now() - startTime;
-      this.logger.log(`✅ Time event processed successfully in ${processingTime}ms for device: ${timeEventDto.deviceID}`);
+      
+      // Create comprehensive success message with business context
+      const attendanceContext = businessHoursAnalysis.attendanceStatus === 'ON_TIME' ? 'On-time arrival detected' :
+                               businessHoursAnalysis.attendanceStatus === 'LATE' ? 'Late arrival detected' :
+                               businessHoursAnalysis.attendanceStatus === 'EARLY' ? 'Early arrival detected' :
+                               'Outside business hours detected';
+      
+      const successMessage = `Time event recorded successfully - ${attendanceContext}`;
+      
+      this.logger.log(`✅ Time event processed successfully in ${processingTime}ms for device: ${timeEventDto.deviceID} - ${attendanceContext}`);
 
       return {
-        message: recordResult.action === 'created' ? 'Record created successfully' : 'Record updated successfully',
-        record: {
-          id: recordResult.record.id,
-          openTime: recordResult.record.openTime,
-          closeTime: recordResult.record.closeTime,
-          createdAt: recordResult.record.createdAt,
-          updatedAt: recordResult.record.updatedAt,
-        },
-        eventProcessing: {
-          eventId,
-          eventType: timeEventDto.eventType,
-          recordAction: recordResult.action,
-          deviceStatus: device.currentStatus,
-          processingTime,
-        }
+        message: process.env.SUCCESS_MESSAGE
       };
     } catch (error) {
       await queryRunner.rollbackTransaction();
@@ -1027,6 +1027,178 @@ export class IotService {
           deviceID: 'Ensure device ID matches a registered device',
         }
       });
+    }
+  }
+
+  /**
+   * Business hours validation and attendance analysis
+   */
+  private async validateBusinessHours(timeEventDto: DeviceTimeRecordDto, device: Device): Promise<any> {
+    try {
+      this.logger.debug(`🕒 Validating business hours for device: ${timeEventDto.deviceID}`);
+
+      // Get organization reference from device
+      // This assumes we can get org ref from device data - may need to be adjusted
+      const orgRef = `ORG${device.orgID}`; // Convert orgID to orgRef format
+      
+      // Get organization hours configuration
+      let organizationHours;
+      try {
+        organizationHours = await this.organisationHoursService.findDefault(orgRef);
+      } catch (error) {
+        this.logger.warn(`⚠️ No business hours configuration found for organization ${orgRef}, using default validation`);
+        
+        // Return basic analysis without business hours validation
+        return {
+          organizationHours: {
+            openTime: '08:00',
+            closeTime: '17:00',
+            timezone: 'UTC',
+            isHoliday: false,
+            configured: false
+          },
+          eventAnalysis: {
+            eventType: timeEventDto.eventType,
+            eventTime: new Date(timeEventDto.timestamp * 1000).toLocaleTimeString('en-GB', { hour12: false, hour: '2-digit', minute: '2-digit' }),
+            isWithinBusinessHours: true, // Default to true when no config
+            attendanceStatus: 'ON_TIME',
+            minutesFromSchedule: 0,
+            workingDay: true
+          }
+        };
+      }
+
+      // Convert timestamp to organization timezone
+      const eventDate = new Date(timeEventDto.timestamp * 1000);
+      const eventTimeString = eventDate.toLocaleTimeString('en-GB', { hour12: false, hour: '2-digit', minute: '2-digit' });
+      const dayOfWeek = eventDate.toLocaleDateString('en-US', { weekday: 'long' }) as keyof typeof organizationHours.weeklySchedule;
+      
+      // Determine business hours for the event day
+      let dayOpenTime = organizationHours.openTime;
+      let dayCloseTime = organizationHours.closeTime;
+      let isWorkingDay = true;
+      
+      // Check if organization has detailed schedule
+      if (organizationHours.schedule && organizationHours.schedule[dayOfWeek]) {
+        const daySchedule = organizationHours.schedule[dayOfWeek];
+        if (daySchedule.closed) {
+          isWorkingDay = false;
+        } else {
+          dayOpenTime = daySchedule.start;
+          dayCloseTime = daySchedule.end;
+        }
+      } else if (organizationHours.weeklySchedule && organizationHours.weeklySchedule[dayOfWeek] === false) {
+        isWorkingDay = false;
+      }
+
+      // Check for holiday mode
+      const isHoliday = organizationHours.holidayMode && 
+                       organizationHours.holidayUntil && 
+                       eventDate <= organizationHours.holidayUntil;
+
+      if (isHoliday) {
+        isWorkingDay = false;
+      }
+
+      // Check for special hours
+      const dateString = eventDate.toISOString().split('T')[0];
+      const specialHours = organizationHours.specialHours?.find(sh => sh.date === dateString);
+      if (specialHours) {
+        if (specialHours.openTime === '00:00' && specialHours.closeTime === '00:00') {
+          isWorkingDay = false;
+        } else {
+          dayOpenTime = specialHours.openTime;
+          dayCloseTime = specialHours.closeTime;
+        }
+      }
+
+      // Calculate attendance status
+      let attendanceStatus = 'ON_TIME';
+      let minutesFromSchedule = 0;
+      let isWithinBusinessHours = true;
+
+      if (isWorkingDay && timeEventDto.eventType === 'open') {
+        // Parse times for comparison
+        const [openHour, openMinute] = dayOpenTime.split(':').map(Number);
+        const [eventHour, eventMinute] = [eventDate.getHours(), eventDate.getMinutes()];
+        
+        const openTimeMinutes = openHour * 60 + openMinute;
+        const eventTimeMinutes = eventHour * 60 + eventMinute;
+        
+        minutesFromSchedule = eventTimeMinutes - openTimeMinutes;
+        
+        if (minutesFromSchedule > 15) { // More than 15 minutes late
+          attendanceStatus = 'LATE';
+        } else if (minutesFromSchedule < -30) { // More than 30 minutes early
+          attendanceStatus = 'EARLY';
+        } else {
+          attendanceStatus = 'ON_TIME';
+        }
+        
+        // Check if within business hours (with reasonable buffer)
+        const [closeHour, closeMinute] = dayCloseTime.split(':').map(Number);
+        const closeTimeMinutes = closeHour * 60 + closeMinute;
+        
+        isWithinBusinessHours = eventTimeMinutes >= (openTimeMinutes - 60) && // 1 hour before open
+                               eventTimeMinutes <= (closeTimeMinutes + 60);  // 1 hour after close
+      } else if (!isWorkingDay) {
+        attendanceStatus = 'OUTSIDE_HOURS';
+        isWithinBusinessHours = false;
+      }
+
+      const analysis = {
+        organizationHours: {
+          openTime: dayOpenTime,
+          closeTime: dayCloseTime,
+          timezone: organizationHours.timezone || 'UTC',
+          isHoliday,
+          configured: true
+        },
+        eventAnalysis: {
+          eventType: timeEventDto.eventType,
+          eventTime: eventTimeString,
+          isWithinBusinessHours,
+          attendanceStatus,
+          minutesFromSchedule,
+          workingDay: isWorkingDay
+        }
+      };
+
+      this.logger.debug(`🕒 Business hours analysis completed:`, {
+        deviceID: timeEventDto.deviceID,
+        eventType: timeEventDto.eventType,
+        attendanceStatus,
+        isWithinBusinessHours,
+        isWorkingDay,
+        minutesFromSchedule
+      });
+
+      return analysis;
+    } catch (error) {
+      this.logger.error(`❌ Failed to validate business hours: ${error.message}`, {
+        deviceID: timeEventDto.deviceID,
+        orgID: device.orgID,
+        error: error.message
+      });
+      
+      // Return safe default analysis on error
+      return {
+        organizationHours: {
+          openTime: '08:00',
+          closeTime: '17:00',
+          timezone: 'UTC',
+          isHoliday: false,
+          configured: false
+        },
+        eventAnalysis: {
+          eventType: timeEventDto.eventType,
+          eventTime: new Date(timeEventDto.timestamp * 1000).toLocaleTimeString('en-GB', { hour12: false, hour: '2-digit', minute: '2-digit' }),
+          isWithinBusinessHours: true,
+          attendanceStatus: 'ON_TIME',
+          minutesFromSchedule: 0,
+          workingDay: true
+        }
+      };
     }
   }
 
@@ -1138,7 +1310,7 @@ export class IotService {
   /**
    * Advanced analytics update with comprehensive metrics
    */
-  private async updateAdvancedAnalytics(device: Device, timeEventDto: DeviceTimeRecordDto, recordAction: string, queryRunner: any): Promise<void> {
+  private async updateAdvancedAnalytics(device: Device, timeEventDto: DeviceTimeRecordDto, recordAction: string, queryRunner: any, businessHoursAnalysis?: any): Promise<void> {
     const analytics = { ...device.analytics };
     const now = new Date();
 
@@ -1169,6 +1341,51 @@ export class IotService {
     // Update monthly stats (if monthlyStats exists)
     if (extendedAnalytics.monthlyStats) {
       extendedAnalytics.monthlyStats.eventsThisMonth = (extendedAnalytics.monthlyStats.eventsThisMonth || 0) + 1;
+    }
+
+    // Update attendance analytics based on business hours analysis
+    if (businessHoursAnalysis) {
+      const { eventAnalysis } = businessHoursAnalysis;
+      
+      // Track attendance metrics
+      if (timeEventDto.eventType === 'open') {
+        if (eventAnalysis.attendanceStatus === 'ON_TIME') {
+          analytics.onTimeCount = (analytics.onTimeCount || 0) + 1;
+        } else if (eventAnalysis.attendanceStatus === 'LATE') {
+          analytics.lateCount = (analytics.lateCount || 0) + 1;
+        }
+        
+        // Track early arrivals
+        if (eventAnalysis.attendanceStatus === 'EARLY') {
+          extendedAnalytics.earlyCount = (extendedAnalytics.earlyCount || 0) + 1;
+        }
+        
+        // Track outside hours events
+        if (eventAnalysis.attendanceStatus === 'OUTSIDE_HOURS') {
+          extendedAnalytics.outsideHoursCount = (extendedAnalytics.outsideHoursCount || 0) + 1;
+        }
+        
+        // Update punctuality rate
+        const totalArrivals = (analytics.onTimeCount || 0) + (analytics.lateCount || 0);
+        if (totalArrivals > 0) {
+          extendedAnalytics.punctualityRate = Math.round(((analytics.onTimeCount || 0) / totalArrivals) * 100 * 100) / 100;
+        }
+      }
+      
+      // Track working vs non-working day events
+      if (eventAnalysis.workingDay) {
+        extendedAnalytics.workingDayEvents = (extendedAnalytics.workingDayEvents || 0) + 1;
+      } else {
+        extendedAnalytics.nonWorkingDayEvents = (extendedAnalytics.nonWorkingDayEvents || 0) + 1;
+      }
+      
+      // Update last business hours check
+      extendedAnalytics.lastBusinessHoursCheck = {
+        timestamp: new Date(timeEventDto.timestamp * 1000),
+        attendanceStatus: eventAnalysis.attendanceStatus,
+        isWithinBusinessHours: eventAnalysis.isWithinBusinessHours,
+        minutesFromSchedule: eventAnalysis.minutesFromSchedule
+      };
     }
 
     // Update device analytics
