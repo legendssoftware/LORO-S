@@ -100,6 +100,7 @@ import { ApprovalSignature } from './approvals/entities/approval-signature.entit
 import { Project } from './shop/entities/project.entity';
 import { MapModule } from './map/map.module';
 import { IotModule } from './iot/iot.module';
+import { Device, DeviceRecords } from './iot/entities/iot.entity';
 
 
 @Module({
@@ -183,6 +184,8 @@ import { IotModule } from './iot/iot.module';
 					ApprovalHistory,
 					ApprovalSignature,
 					Project,
+					// Device,
+					// DeviceRecords,
 				],
 				synchronize: true,
 				logging: false,

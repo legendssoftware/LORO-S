@@ -645,6 +645,18 @@ export class UnifiedNotificationService {
 				pushSettings: { sound: 'default', badge: 1 },
 			},
 		],
+		[
+			NotificationEvent.CHECKOUT_COMPLETED,
+			{
+				event: NotificationEvent.CHECKOUT_COMPLETED,
+				title: '📍 Check-out Completed',
+				messageTemplate: 'You have successfully checked out from {clientName} after {duration}',
+				priority: NotificationPriority.NORMAL,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/checkins', action: 'view_checkin' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
 
 		// Auth Templates
 		[

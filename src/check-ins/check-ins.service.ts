@@ -13,7 +13,7 @@ import { Client } from 'src/clients/entities/client.entity';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
-import { NotificationPriority } from '../lib/types/unified-notification.types';
+import { NotificationPriority, NotificationEvent, NotificationChannel } from '../lib/types/unified-notification.types';
 import { AccessLevel } from 'src/lib/enums/user.enums';
 
 @Injectable()
@@ -200,9 +200,10 @@ export class CheckInsService {
 		try {
 			// Send notification to the user
 			await this.unifiedNotificationService.sendTemplatedNotification(
-				'CHECKIN_CONFIRMATION' as any,
+				NotificationEvent.CHECKIN_CREATED,
 				[Number(userId)],
 				{
+					clientName: checkIn.client?.name || 'Location',
 					checkInId: checkIn.uid,
 					checkInTime: checkIn.checkInTime,
 					orgId,
@@ -216,20 +217,33 @@ export class CheckInsService {
 			if (orgId) {
 				const orgAdmins = await this.getOrganizationAdmins(orgId);
 				if (orgAdmins.length > 0) {
-					await this.unifiedNotificationService.sendTemplatedNotification(
-						'CHECKIN_ADMIN_NOTIFICATION' as any,
-						orgAdmins.map((admin) => admin.uid.toString()),
-						{
-							userId,
-							checkInId: checkIn.uid,
-							checkInTime: checkIn.checkInTime,
-							orgId,
-							branchId,
-							adminContext: true,
-							timestamp: new Date().toISOString(),
+					// Send direct notification to admins (since there's no admin-specific template)
+					await this.unifiedNotificationService.sendNotification({
+						event: NotificationEvent.GENERAL_NOTIFICATION,
+						title: '📍 Staff Check-in Alert',
+						message: `Staff member has checked in at ${checkIn.client?.name || 'a location'}`,
+						priority: NotificationPriority.LOW,
+						channel: NotificationChannel.GENERAL,
+						recipients: orgAdmins.map((admin) => ({
+							userId: admin.uid,
+							email: admin.email,
+						})),
+						data: {
+							id: checkIn.uid,
+							screen: '/checkins',
+							action: 'view_checkin',
+							type: 'admin_checkin_alert',
+							metadata: {
+								userId,
+								checkInId: checkIn.uid,
+								checkInTime: checkIn.checkInTime,
+								orgId,
+								branchId,
+								adminContext: true,
+								timestamp: new Date().toISOString(),
+							},
 						},
-						{ priority: NotificationPriority.LOW },
-					);
+					});
 				}
 			}
 		} catch (error) {
@@ -270,14 +284,15 @@ export class CheckInsService {
 		const operationId = `checkout_notifications_${Date.now()}`;
 
 		try {
-			// Send notification to the user
+			// Send notification to the user using CHECKOUT_COMPLETED template
 			await this.unifiedNotificationService.sendTemplatedNotification(
-				'CHECKOUT_CONFIRMATION' as any,
+				NotificationEvent.CHECKOUT_COMPLETED,
 				[Number(userId)],
 				{
+					clientName: checkIn.client?.name || 'Location',
+					duration: duration,
 					checkInId: checkIn.uid,
 					checkOutTime: checkIn.checkOutTime,
-					duration: duration,
 					orgId,
 					branchId,
 					timestamp: new Date().toISOString(),
@@ -289,21 +304,34 @@ export class CheckInsService {
 			if (orgId) {
 				const orgAdmins = await this.getOrganizationAdmins(orgId);
 				if (orgAdmins.length > 0) {
-					await this.unifiedNotificationService.sendTemplatedNotification(
-						'CHECKOUT_ADMIN_NOTIFICATION' as any,
-						orgAdmins.map((admin) => admin.uid.toString()),
-						{
-							userId,
-							checkInId: checkIn.uid,
-							checkOutTime: checkIn.checkOutTime,
-							duration: duration,
-							orgId,
-							branchId,
-							adminContext: true,
-							timestamp: new Date().toISOString(),
+					// Send direct notification to admins (since there's no checkout admin template)
+					await this.unifiedNotificationService.sendNotification({
+						event: NotificationEvent.GENERAL_NOTIFICATION,
+						title: '📍 Staff Check-out Alert',
+						message: `Staff member has checked out from ${checkIn.client?.name || 'a location'} after ${duration}`,
+						priority: NotificationPriority.LOW,
+						channel: NotificationChannel.GENERAL,
+						recipients: orgAdmins.map((admin) => ({
+							userId: admin.uid,
+							email: admin.email,
+						})),
+						data: {
+							id: checkIn.uid,
+							screen: '/checkins',
+							action: 'view_checkin',
+							type: 'admin_checkout_alert',
+							metadata: {
+								userId,
+								checkInId: checkIn.uid,
+								checkOutTime: checkIn.checkOutTime,
+								duration: duration,
+								orgId,
+								branchId,
+								adminContext: true,
+								timestamp: new Date().toISOString(),
+							},
 						},
-						{ priority: NotificationPriority.LOW },
-					);
+					});
 				}
 			}
 		} catch (error) {

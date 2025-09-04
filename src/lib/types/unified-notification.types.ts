@@ -76,6 +76,7 @@ export enum NotificationEvent {
 	// Check-in Events
 	CHECKIN_CREATED = 'checkin_created',
 	CHECKIN_UPDATED = 'checkin_updated',
+	CHECKOUT_COMPLETED = 'checkout_completed',
 
 	// General Events
 	GENERAL_NOTIFICATION = 'general_notification',

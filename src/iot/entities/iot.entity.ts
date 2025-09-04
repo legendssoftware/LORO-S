@@ -1,38 +1,12 @@
 import { Column, Entity, Index, ManyToOne, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
 import { DeviceStatus, DeviceType } from '../../lib/enums/iot';
 
-@Entity('device_records')
-@Index(['name'])
-@Index(['description'])
-@Index(['createdAt'])
-@Index(['updatedAt'])
-@Index(['deletedAt'])
-export class DeviceRecords {
-	@PrimaryGeneratedColumn()
-	id: number;
-
-	@Column({ nullable: false })
-	openTime: number;
-
-	@Column({ nullable: false })
-	closeTime: number;
-
-	@ManyToOne(() => Device, (device) => device.records)
-	deviceID: Device;
-
-	@Column({ nullable: false, default: () => 'CURRENT_TIMESTAMP' })
-	createdAt: Date;
-
-	@Column({ nullable: false, default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
-	updatedAt: Date;
-}
-
 @Entity('device')
-@Index(['name'])
-@Index(['description'])
+@Index(['deviceID'])
+@Index(['orgID'])
+@Index(['branchID'])
 @Index(['createdAt'])
 @Index(['updatedAt'])
-@Index(['deletedAt'])
 export class Device {
 	@PrimaryGeneratedColumn()
 	id: number;
@@ -85,6 +59,35 @@ export class Device {
 		daysAbsent: number;
 	};
 
-	@OneToMany(() => DeviceRecords, (records) => records.deviceID)
+	@OneToMany(() => DeviceRecords, (records) => records.device)
 	records: DeviceRecords[];
+}
+
+@Entity('device_records')
+@Index(['deviceId'])
+@Index(['openTime'])
+@Index(['closeTime'])
+@Index(['createdAt'])
+@Index(['updatedAt'])
+export class DeviceRecords {
+	@PrimaryGeneratedColumn()
+	id: number;
+
+	@Column({ nullable: true })
+	openTime: number;
+
+	@Column({ nullable: true })
+	closeTime: number;
+
+	@Column({ nullable: false })
+	deviceId: number;
+
+	@ManyToOne(() => Device, (device) => device.records)
+	device: Device;
+
+	@Column({ nullable: false, default: () => 'CURRENT_TIMESTAMP' })
+	createdAt: Date;
+
+	@Column({ nullable: false, default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
+	updatedAt: Date;
 }
