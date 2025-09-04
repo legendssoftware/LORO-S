@@ -2731,7 +2731,8 @@ export class UserService {
 					this.logger.debug(`No new records found for user ${userId} and existing values present - skipping update to preserve ERP/external values`);
 					return;
 				} else {
-					this.logger.debug(`No new records found for user ${userId} and no existing values - proceeding with zero values`);
+					this.logger.debug(`No new records found for user ${userId} and no existing values - skipping update to prevent resetting targets to zero`);
+					return;
 				}
 			}
 
