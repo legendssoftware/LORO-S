@@ -4573,7 +4573,7 @@ export class UserService {
 			};
 
 			await this.unifiedNotificationService.sendTemplatedNotification(
-				'TARGET_UPDATE' as any,
+				NotificationEvent.USER_TARGET_UPDATED,
 				[userId],
 				notificationPayload,
 				{
@@ -4766,8 +4766,8 @@ export class UserService {
 				totalProgressImprovement,
 				organizationName: user.organisation?.name || 'Your Organization',
 				branchName: user.branch?.name,
-				periodStartDate: user.userTarget?.periodStartDate?.toISOString(),
-				periodEndDate: user.userTarget?.periodEndDate?.toISOString(),
+				periodStartDate: user.userTarget?.periodStartDate ? new Date(user.userTarget.periodStartDate).toISOString() : undefined,
+				periodEndDate: user.userTarget?.periodEndDate ? new Date(user.userTarget.periodEndDate).toISOString() : undefined,
 				daysRemaining: user.userTarget?.periodEndDate ? Math.max(0, Math.ceil((new Date(user.userTarget.periodEndDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))) : undefined,
 				motivationalMessage: motivationalMessages[Math.floor(Math.random() * motivationalMessages.length)],
 				encouragementTips: encouragementTips.slice(0, 3), // Send 3 tips
