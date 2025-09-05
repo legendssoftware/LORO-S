@@ -253,6 +253,35 @@ class EmailTemplateService {
 				args.pop();
 				return args.join('');
 			});
+
+			// Switch helpers for conditional rendering
+			Handlebars.registerHelper('switch', function(value: any, options: any) {
+				this.switchValue = value;
+				this.switchBreak = false;
+				
+				const content = options.fn(this);
+				delete this.switchValue;
+				delete this.switchBreak;
+				
+				return content;
+			});
+
+			Handlebars.registerHelper('case', function(value: any, options: any) {
+				if (this.switchBreak || this.switchValue !== value) {
+					return '';
+				}
+				
+				this.switchBreak = true;
+				return options.fn(this);
+			});
+
+			Handlebars.registerHelper('default', function(options: any) {
+				if (!this.switchBreak) {
+					return options.fn(this);
+				}
+				
+				return '';
+			});
 			
 			const helperTime = Date.now() - startTime;
 			this.logger.debug(`[${opId}] Registered fallback helpers in ${helperTime}ms`);
@@ -335,6 +364,13 @@ class EmailTemplateService {
 		} catch (error) {
 			const renderTime = Date.now() - startTime;
 			this.logger.error(`Failed to render template: ${templatePath} after ${renderTime}ms`, error.message);
+			
+			// Provide more specific error information for debugging
+			if (error.message.includes('Missing helper')) {
+				this.logger.error(`Handlebars helper missing. Available data keys: ${Object.keys(data).join(', ')}`);
+				this.logger.error(`Make sure all required helpers are registered in the helpers/index.ts file`);
+			}
+			
 			throw new Error(`Template rendering failed: ${templatePath} - ${error.message}`);
 		}
 	}

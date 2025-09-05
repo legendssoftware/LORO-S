@@ -295,3 +295,34 @@ Handlebars.registerHelper('contains', function(str: string, searchStr: string) {
     if (!str || !searchStr) return false;
     return str.toString().includes(searchStr.toString());
 });
+
+// Switch statement helper for conditional rendering
+Handlebars.registerHelper('switch', function(value: any, options: any) {
+    this.switchValue = value;
+    this.switchBreak = false;
+    
+    const content = options.fn(this);
+    delete this.switchValue;
+    delete this.switchBreak;
+    
+    return content;
+});
+
+// Case helper for switch statements
+Handlebars.registerHelper('case', function(value: any, options: any) {
+    if (this.switchBreak || this.switchValue !== value) {
+        return '';
+    }
+    
+    this.switchBreak = true;
+    return options.fn(this);
+});
+
+// Default case helper for switch statements
+Handlebars.registerHelper('default', function(options: any) {
+    if (!this.switchBreak) {
+        return options.fn(this);
+    }
+    
+    return '';
+});
