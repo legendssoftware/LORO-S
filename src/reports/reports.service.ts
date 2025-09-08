@@ -20,6 +20,7 @@ import { Cron } from '@nestjs/schedule';
 
 import { MapDataReportGenerator } from './generators/map-data-report.generator';
 import { Quotation } from '../shop/entities/quotation.entity';
+import { OrgActivityReportGenerator } from './generators/org-activity-report.generator';
 
 @Injectable()
 export class ReportsService implements OnModuleInit {
@@ -38,6 +39,7 @@ export class ReportsService implements OnModuleInit {
 		private mainReportGenerator: MainReportGenerator,
 		private quotationReportGenerator: QuotationReportGenerator,
 		private userDailyReportGenerator: UserDailyReportGenerator,
+		private orgActivityReportGenerator: OrgActivityReportGenerator,
 		@Inject(CACHE_MANAGER)
 		private cacheManager: Cache,
 		private readonly configService: ConfigService,
@@ -141,8 +143,46 @@ export class ReportsService implements OnModuleInit {
 			).length;
 
 			this.logger.log(`End-of-day reports completed: ${successful} successful, ${failed} failed`);
+
+			// Additionally, generate organisation activity daily report per organisation for EOD summary
+			try {
+				const orgIds = Array.from(new Set(usersWithActiveShifts.filter(u => u.organisation).map(u => u.organisation.uid)));
+				await Promise.all(orgIds.map(async (orgId) => {
+					const params: ReportParamsDto = {
+						type: ReportType.ORG_ACTIVITY,
+						organisationId: orgId,
+						granularity: 'daily',
+					};
+					await this.generateOrgActivityReport(params);
+				}));
+				this.logger.log(`Organisation daily activity reports generated for ${orgIds.length} organisations`);
+			} catch (e) {
+				this.logger.error(`Failed generating org daily activity reports: ${e.message}`, e.stack);
+			}
 		} catch (error) {
 			this.logger.error(`Critical error in generateEndOfDayReports: ${error.message}`, error.stack);
+			return null;
+		}
+	}
+
+	// Run weekly on Friday at 18:00
+	@Cron('0 0 18 * * FRI')
+	async generateWeeklyOrgActivityReports() {
+		this.logger.log('Starting weekly organisation activity reports generation (Friday 18:00)');
+		try {
+			const users = await this.userRepository.find({ relations: ['organisation'] });
+			const orgIds = Array.from(new Set(users.filter(u => !!u.organisation).map(u => u.organisation.uid)));
+			await Promise.all(orgIds.map(async (orgId) => {
+				const params: ReportParamsDto = {
+					type: ReportType.ORG_ACTIVITY,
+					organisationId: orgId,
+					granularity: 'weekly',
+				};
+				await this.generateOrgActivityReport(params);
+			}));
+			this.logger.log(`Weekly organisation activity reports generated for ${orgIds.length} organisations`);
+		} catch (error) {
+			this.logger.error(`Critical error in generateWeeklyOrgActivityReports: ${error.message}`, error.stack);
 			return null;
 		}
 	}
@@ -154,10 +194,11 @@ export class ReportsService implements OnModuleInit {
 		const clientIdStr = type === ReportType.QUOTATION && filters?.clientId ? `_client${filters.clientId}` : '';
 
 		const dateStr = dateRange ? `_${dateRange.start.toISOString()}_${dateRange.end.toISOString()}` : '';
+		const granularityStr = (params as any).granularity ? `_${(params as any).granularity}` : '';
 
 		const cacheKey = `${this.CACHE_PREFIX}${type}_org${organisationId}${
 			branchId ? `_branch${branchId}` : ''
-		}${clientIdStr}${dateStr}`;
+		}${clientIdStr}${dateStr}${granularityStr}`;
 
 		this.logger.debug(`Generated cache key: ${cacheKey}`);
 		return cacheKey;
@@ -361,6 +402,10 @@ export class ReportsService implements OnModuleInit {
 					this.logger.log('Generating user daily report');
 					reportData = await this.userDailyReportGenerator.generate(params);
 					break;
+				case ReportType.ORG_ACTIVITY:
+					this.logger.log('Generating organisation activity report');
+					reportData = await this.orgActivityReportGenerator.generate(params);
+					break;
 				case ReportType.USER:
 					this.logger.error('User report type not implemented yet');
 					throw new Error('User report type not implemented yet');
@@ -409,8 +454,63 @@ export class ReportsService implements OnModuleInit {
 		return report;
 	}
 
+	/* ---------------------------------------------------------
+	 * ORG-ACTIVITY generator entry (save + email)
+	 * -------------------------------------------------------*/
+	async generateOrgActivityReport(params: ReportParamsDto): Promise<Report> {
+		this.logger.log(`Generating org activity report with params: ${JSON.stringify(params)}`);
+		try {
+			// Idempotency: avoid duplicates for same org and period
+			const nowRange = params.dateRange || {} as any;
+			const periodStart = nowRange.start ? new Date(nowRange.start) : new Date();
+			periodStart.setHours(0, 0, 0, 0);
+			const periodEnd = nowRange.end ? new Date(nowRange.end) : new Date();
+			periodEnd.setHours(23, 59, 59, 999);
+			const existing = await this.reportRepository.findOne({
+				where: {
+					reportType: ReportType.ORG_ACTIVITY,
+					organisation: { uid: params.organisationId },
+					generatedAt: MoreThanOrEqual(periodStart),
+				},
+				order: { generatedAt: 'DESC' },
+			});
+			if (existing && existing.generatedAt <= periodEnd) {
+				this.logger.log(`Org activity report already exists for org ${params.organisationId} in period; skipping.`);
+				return existing;
+			}
+
+			const reportData = await this.orgActivityReportGenerator.generate(params);
+			const newReport = new Report();
+			newReport.name = `${params.granularity === 'weekly' ? 'Weekly' : 'Daily'} Org Activity Report - ${new Date().toISOString().split('T')[0]}`;
+			newReport.description = `${params.granularity === 'weekly' ? 'Weekly' : 'Daily'} organisation activity summary`;
+			newReport.reportType = ReportType.ORG_ACTIVITY;
+			newReport.filters = { ...params.filters, granularity: params.granularity, dateRange: params.dateRange };
+			newReport.reportData = reportData;
+			newReport.generatedAt = new Date();
+			(newReport as any).organisation = { uid: params.organisationId } as any;
+
+			const saved = await this.reportRepository.save(newReport);
+
+			// Emit event for email delivery
+			this.eventEmitter.emit('report.generated', {
+				reportType: ReportType.ORG_ACTIVITY,
+				reportId: saved.uid,
+				organisationId: params.organisationId,
+				emailData: reportData.emailData,
+				granularity: params.granularity || 'daily',
+			});
+
+			return saved;
+		} catch (error) {
+			this.logger.error(`Error generating org activity report: ${error.message}`, error.stack);
+			return null;
+		}
+	}
+
+
+
 	@OnEvent('report.generated')
-	async handleReportGenerated(payload: { reportType: ReportType; reportId: number; userId: number; emailData: any }) {
+	async handleReportGenerated(payload: { reportType: ReportType; reportId: number; userId?: number; organisationId?: number; emailData: any; granularity?: 'daily' | 'weekly' }) {
 		this.logger.log(
 			`Handling report generated event - Type: ${payload.reportType}, ID: ${payload.reportId}, User: ${payload.userId}`,
 		);
@@ -419,9 +519,40 @@ export class ReportsService implements OnModuleInit {
 			if (payload.reportType === ReportType.USER_DAILY) {
 				await this.sendUserDailyReportEmail(payload.userId, payload.emailData);
 			}
+			if (payload.reportType === ReportType.ORG_ACTIVITY) {
+				await this.sendOrgActivityReportEmail(payload.organisationId, payload.emailData, payload.granularity);
+			}
 		} catch (error) {
 			this.logger.error(`Error handling report generated event: ${error.message}`, error.stack);
 			return null;
+		}
+	}
+
+	private async sendOrgActivityReportEmail(organisationId: number, emailData: any, granularity: 'daily' | 'weekly' = 'daily') {
+		this.logger.log(`Sending organisation activity (${granularity}) report email for org ${organisationId}`);
+		try {
+			if (!organisationId) {
+				this.logger.warn('Organisation ID missing for org-activity email');
+				return;
+			}
+
+			// Determine recipients: org admins/managers
+			const recipientsQuery = this.userRepository
+				.createQueryBuilder('user')
+				.innerJoin('user.organisation', 'organisation', 'organisation.uid = :orgId', { orgId: organisationId })
+				.where('user.email IS NOT NULL');
+			const recipients = await recipientsQuery.getMany();
+			const emails = recipients.map(u => u.email).filter(Boolean);
+			if (emails.length === 0) {
+				this.logger.warn(`No recipients found for org ${organisationId}`);
+				return;
+			}
+
+			const emailService = this.communicationService as any;
+			await emailService.sendEmail(EmailType.ORG_ACTIVITY_REPORT, emails, emailData);
+			this.logger.log(`Organisation activity report email sent to ${emails.length} recipients`);
+		} catch (error) {
+			this.logger.error(`Error sending org activity report email: ${error.message}`, error.stack);
 		}
 	}
 

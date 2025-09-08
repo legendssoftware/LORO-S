@@ -74,10 +74,10 @@ export class DeviceRecords {
 	id: number;
 
 	@Column({ nullable: true })
-	openTime: number;
+	openTime: Date;
 
 	@Column({ nullable: true })
-	closeTime: number;
+	closeTime: Date;
 
 	@Column({ nullable: false })
 	deviceId: number;

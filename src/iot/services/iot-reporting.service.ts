@@ -235,9 +235,8 @@ export class IoTReportingService {
 				totalEvents++;
 
 				if (record.openTime) {
-					const openHour = new Date(record.openTime * 1000).getHours() * 3600;
-					const openMinute = new Date(record.openTime * 1000).getMinutes() * 60;
-					const actualOpenTime = openHour + openMinute;
+					const openDate = new Date(record.openTime as unknown as Date);
+					const actualOpenTime = openDate.getHours() * 3600 + openDate.getMinutes() * 60;
 
 					if (actualOpenTime <= expectedOpenTime + 15 * 60) {
 						// 15 minutes tolerance
@@ -248,9 +247,8 @@ export class IoTReportingService {
 				}
 
 				if (record.closeTime) {
-					const closeHour = new Date(record.closeTime * 1000).getHours() * 3600;
-					const closeMinute = new Date(record.closeTime * 1000).getMinutes() * 60;
-					const actualCloseTime = closeHour + closeMinute;
+					const closeDate = new Date(record.closeTime as unknown as Date);
+					const actualCloseTime = closeDate.getHours() * 3600 + closeDate.getMinutes() * 60;
 
 					if (actualCloseTime >= expectedCloseTime - 15 * 60) {
 						// 15 minutes tolerance
@@ -262,7 +260,9 @@ export class IoTReportingService {
 
 				// Calculate uptime for this record
 				if (record.openTime && record.closeTime) {
-					totalUptime += record.closeTime - record.openTime;
+					const openMs = (record.openTime as unknown as Date).getTime();
+					const closeMs = (record.closeTime as unknown as Date).getTime();
+					totalUptime += Math.max(0, Math.floor((closeMs - openMs) / 1000));
 				}
 			}
 
@@ -355,9 +355,9 @@ export class IoTReportingService {
 		const expectedOpenTime = 8 * 3600; // 8:00 AM
 		const lateOpenings = records.filter((r) => {
 			if (!r.openTime) return false;
-			const openHour = new Date(r.openTime * 1000).getHours() * 3600;
-			const openMinute = new Date(r.openTime * 1000).getMinutes() * 60;
-			return openHour + openMinute > expectedOpenTime + 15 * 60; // 15 min tolerance
+			const openDate = new Date(r.openTime as unknown as Date);
+			const actualOpen = openDate.getHours() * 3600 + openDate.getMinutes() * 60;
+			return actualOpen > expectedOpenTime + 15 * 60; // 15 min tolerance
 		}).length;
 
 		const punctualityRate = todayOpenEvents > 0 ? ((todayOpenEvents - lateOpenings) / todayOpenEvents) * 100 : 0;
@@ -389,14 +389,16 @@ export class IoTReportingService {
 		const expectedCloseTime = 17 * 3600; // 5:00 PM
 		const earlyClosings = records.filter((r) => {
 			if (!r.closeTime) return false;
-			const closeHour = new Date(r.closeTime * 1000).getHours() * 3600;
-			const closeMinute = new Date(r.closeTime * 1000).getMinutes() * 60;
-			return closeHour + closeMinute < expectedCloseTime - 15 * 60; // 15 min tolerance
+			const closeDate = new Date(r.closeTime as unknown as Date);
+			const actualClose = closeDate.getHours() * 3600 + closeDate.getMinutes() * 60;
+			return actualClose < expectedCloseTime - 15 * 60; // 15 min tolerance
 		}).length;
 
 		const totalWorkingHours = records.reduce((total, record) => {
 			if (record.openTime && record.closeTime) {
-				return total + (record.closeTime - record.openTime) / 3600;
+				const openMs = (record.openTime as unknown as Date).getTime();
+				const closeMs = (record.closeTime as unknown as Date).getTime();
+				return total + (Math.max(0, closeMs - openMs) / 1000) / 3600;
 			}
 			return total;
 		}, 0);
@@ -460,20 +462,20 @@ export class IoTReportingService {
 					location: device.devicLocation,
 					currentStatus: device.currentStatus,
 					lastOpenTime: latestRecord?.openTime
-						? new Date(latestRecord.openTime * 1000).toISOString()
+						? (latestRecord.openTime as unknown as Date).toISOString()
 						: undefined,
 					lastCloseTime: latestRecord?.closeTime
-						? new Date(latestRecord.closeTime * 1000).toISOString()
+						? (latestRecord.closeTime as unknown as Date).toISOString()
 						: undefined,
 					todayOpenTime: todayRecord?.openTime
-						? new Date(todayRecord.openTime * 1000).toISOString()
+						? (todayRecord.openTime as unknown as Date).toISOString()
 						: undefined,
 					todayCloseTime: todayRecord?.closeTime
-						? new Date(todayRecord.closeTime * 1000).toISOString()
+						? (todayRecord.closeTime as unknown as Date).toISOString()
 						: undefined,
-					isLateOpening: this.checkLateOpening(todayRecord?.openTime),
-					isEarlyClosing: this.checkEarlyClosing(todayRecord?.closeTime),
-					lateMinutes: this.calculateLateMinutes(todayRecord?.openTime),
+					isLateOpening: this.checkLateOpening(todayRecord?.openTime as unknown as Date | undefined),
+					isEarlyClosing: this.checkEarlyClosing(todayRecord?.closeTime as unknown as Date | undefined),
+					lateMinutes: this.calculateLateMinutes(todayRecord?.openTime as unknown as Date | undefined),
 					efficiency: this.calculateDeviceEfficiency(device),
 					uptime: device.currentStatus === DeviceStatus.ONLINE ? 100 : 0,
 					eventCount: deviceRecords.length,
@@ -565,7 +567,9 @@ export class IoTReportingService {
 		// Info alerts
 		const totalWorkingHours = records.reduce((total, record) => {
 			if (record.openTime && record.closeTime) {
-				return total + (record.closeTime - record.openTime) / 3600;
+				const openMs = (record.openTime as unknown as Date).getTime();
+				const closeMs = (record.closeTime as unknown as Date).getTime();
+				return total + (Math.max(0, closeMs - openMs) / 1000) / 3600;
 			}
 			return total;
 		}, 0);
@@ -685,27 +689,27 @@ export class IoTReportingService {
 
 	// Helper methods for calculations
 
-	private checkLateOpening(openTime?: number): boolean {
+	private checkLateOpening(openTime?: Date): boolean {
 		if (!openTime) return false;
 		const expectedOpenTime = 8 * 3600; // 8:00 AM
-		const actualOpenTime =
-			new Date(openTime * 1000).getHours() * 3600 + new Date(openTime * 1000).getMinutes() * 60;
+		const openDate = new Date(openTime);
+		const actualOpenTime = openDate.getHours() * 3600 + openDate.getMinutes() * 60;
 		return actualOpenTime > expectedOpenTime + 15 * 60; // 15 minutes tolerance
 	}
 
-	private checkEarlyClosing(closeTime?: number): boolean {
+	private checkEarlyClosing(closeTime?: Date): boolean {
 		if (!closeTime) return false;
 		const expectedCloseTime = 17 * 3600; // 5:00 PM
-		const actualCloseTime =
-			new Date(closeTime * 1000).getHours() * 3600 + new Date(closeTime * 1000).getMinutes() * 60;
+		const closeDate = new Date(closeTime);
+		const actualCloseTime = closeDate.getHours() * 3600 + closeDate.getMinutes() * 60;
 		return actualCloseTime < expectedCloseTime - 15 * 60; // 15 minutes tolerance
 	}
 
-	private calculateLateMinutes(openTime?: number): number | undefined {
+	private calculateLateMinutes(openTime?: Date): number | undefined {
 		if (!openTime) return undefined;
 		const expectedOpenTime = 8 * 3600; // 8:00 AM
-		const actualOpenTime =
-			new Date(openTime * 1000).getHours() * 3600 + new Date(openTime * 1000).getMinutes() * 60;
+		const openDate = new Date(openTime);
+		const actualOpenTime = openDate.getHours() * 3600 + openDate.getMinutes() * 60;
 		const diffSeconds = actualOpenTime - expectedOpenTime;
 		return diffSeconds > 0 ? Math.round(diffSeconds / 60) : 0;
 	}

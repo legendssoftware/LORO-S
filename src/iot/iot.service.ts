@@ -6,10 +6,9 @@ import {
   ConflictException,
   Inject,
   ForbiddenException,
-  UnprocessableEntityException
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource, Between, Not, QueryFailedError, IsNull, Like, In, MoreThan, LessThan } from 'typeorm';
+import { Repository, DataSource, Between, Not, QueryFailedError} from 'typeorm';
 import { Cache } from 'cache-manager';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -18,12 +17,10 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Device, DeviceRecords } from './entities/iot.entity';
 import { DeviceType, DeviceStatus } from '../lib/enums/iot';
 import { 
-  DeviceAnalytics, 
   DevicePerformanceMetrics 
 } from '../lib/interfaces/iot.interface';
 import { 
   DeviceReportOptions,
-  IoTServiceResponse 
 } from '../lib/types/iot.types';
 import { 
   CreateDeviceDto, 
@@ -832,7 +829,20 @@ export class IotService {
         throw new NotFoundException('Device not found');
       }
 
-      // Check if there's an existing record for today that needs updating
+      // Determine organization timezone
+      const orgRef = String(device.orgID);
+      const orgHoursArr = await this.organisationHoursService.findAll(orgRef).catch(() => []);
+      const orgTimezone = (Array.isArray(orgHoursArr) && orgHoursArr[0]?.timezone) || TimezoneUtil.AFRICA_JOHANNESBURG;
+
+      // Convert incoming epoch seconds to organization-local Date values
+      const openDateOrg = typeof recordDto.openTime === 'number' && recordDto.openTime > 0
+        ? TimezoneUtil.toOrganizationTime(new Date(recordDto.openTime * 1000), orgTimezone)
+        : null;
+      const closeDateOrg = typeof recordDto.closeTime === 'number' && recordDto.closeTime > 0
+        ? TimezoneUtil.toOrganizationTime(new Date(recordDto.closeTime * 1000), orgTimezone)
+        : null;
+
+      // Find latest record for today (if any)
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const tomorrow = new Date(today);
@@ -843,32 +853,46 @@ export class IotService {
           deviceId: device.id,
           createdAt: Between(today, tomorrow),
         },
+        order: { createdAt: 'DESC' },
       });
 
       let record: DeviceRecords;
 
       if (existingRecord) {
-        // Update existing record
-        if (recordDto.openTime !== undefined) {
-          existingRecord.openTime = recordDto.openTime;
-        }
-        if (recordDto.closeTime !== undefined) {
-          existingRecord.closeTime = recordDto.closeTime;
-        }
-        existingRecord.updatedAt = new Date();
+        const hasOpen = !!existingRecord.openTime;
+        const hasClose = !!existingRecord.closeTime;
 
-        record = await this.deviceRecordsRepository.save(existingRecord);
-        this.logger.log(`Updated existing record for device ID: ${recordDto.deviceId}`);
+        if (hasOpen && hasClose) {
+          // Latest record complete → create a new record
+          record = this.deviceRecordsRepository.create({
+            openTime: openDateOrg,
+            closeTime: closeDateOrg,
+            deviceId: device.id,
+          });
+          record = await this.deviceRecordsRepository.save(record);
+          this.logger.log(`Created new record (latest complete) for device ID: ${recordDto.deviceId}`);
+        } else {
+          // Update only missing parts on the latest record
+          if (!hasOpen && openDateOrg) {
+            existingRecord.openTime = openDateOrg;
+          }
+          if (!hasClose && closeDateOrg) {
+            // Only set close if we have an open or explicitly provided
+            existingRecord.closeTime = closeDateOrg;
+          }
+          existingRecord.updatedAt = new Date();
+          record = await this.deviceRecordsRepository.save(existingRecord);
+          this.logger.log(`Updated incomplete record for device ID: ${recordDto.deviceId}`);
+        }
       } else {
-        // Create new record
+        // No record today → create new
         record = this.deviceRecordsRepository.create({
-          openTime: recordDto.openTime || 0,
-          closeTime: recordDto.closeTime || 0,
+          openTime: openDateOrg,
+          closeTime: closeDateOrg,
           deviceId: device.id,
         });
-
         record = await this.deviceRecordsRepository.save(record);
-        this.logger.log(`Created new record for device ID: ${recordDto.deviceId}`);
+        this.logger.log(`Created new record (first of day) for device ID: ${recordDto.deviceId}`);
       }
 
       // Update device analytics
@@ -1271,52 +1295,120 @@ export class IotService {
    * Smart daily record management with advanced logic
    */
   private async smartRecordManagement(timeEventDto: DeviceTimeRecordDto, device: Device, queryRunner: any): Promise<any> {
-    const today = new Date(timeEventDto.timestamp * 1000);
+    // Determine organization timezone
+    const orgRef = String(device.orgID);
+    const orgHoursArr = await this.organisationHoursService.findAll(orgRef).catch(() => []);
+    const orgTimezone = (Array.isArray(orgHoursArr) && orgHoursArr[0]?.timezone) || TimezoneUtil.AFRICA_JOHANNESBURG;
+
+    // Convert incoming epoch seconds to organization-local Date
+    const eventDateOrg = TimezoneUtil.toOrganizationTime(new Date(timeEventDto.timestamp * 1000), orgTimezone);
+    const today = new Date(eventDateOrg);
     today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    // Find existing record for today
+    // Find the latest record for today (if any)
     let existingRecord = await queryRunner.manager.findOne(DeviceRecords, {
       where: {
         deviceId: device.id,
         createdAt: Between(today, tomorrow),
       },
+      order: { createdAt: 'DESC' },
     });
 
     let record: DeviceRecords;
     let action: string;
 
     if (existingRecord) {
-      // Update existing record with smart logic
-      action = 'updated';
-      
-      if (timeEventDto.eventType === 'open') {
-        existingRecord.openTime = timeEventDto.timestamp;
-        this.logger.log(`📝 Updating open time for existing record - Device: ${device.deviceID}`);
+      const hasOpen = !!existingRecord.openTime;
+      const hasClose = !!existingRecord.closeTime;
+
+      if (hasOpen && hasClose) {
+        // Latest is complete → create new record for this event
+        action = 'created';
+        const recordData = {
+          openTime: timeEventDto.eventType === 'open' ? eventDateOrg : null,
+          closeTime: timeEventDto.eventType === 'close' ? eventDateOrg : null,
+          deviceId: device.id,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+        record = queryRunner.manager.create(DeviceRecords, recordData);
+        record = await queryRunner.manager.save(record);
+        this.logger.log(`📝 Created new record (latest complete) with ${timeEventDto.eventType} - Device: ${device.deviceID}`);
       } else {
-        existingRecord.closeTime = timeEventDto.timestamp;
-        this.logger.log(`📝 Updating close time for existing record - Device: ${device.deviceID}`);
+        // Update missing side or create new if conflicting
+        action = 'updated';
+        if (timeEventDto.eventType === 'open') {
+          if (!hasOpen) {
+            existingRecord.openTime = eventDateOrg;
+            this.logger.log(`📝 Set open time on incomplete record - Device: ${device.deviceID}`);
+          } else {
+            // Already has open without close → start a new record
+            action = 'created';
+            const recordData = {
+              openTime: eventDateOrg,
+              closeTime: null,
+              deviceId: device.id,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            };
+            record = queryRunner.manager.create(DeviceRecords, recordData);
+            record = await queryRunner.manager.save(record);
+            this.logger.log(`📝 Created new record (conflicting open) - Device: ${device.deviceID}`);
+            return { record, action, existingRecord: !!existingRecord };
+          }
+        } else {
+          if (!hasClose && hasOpen) {
+            existingRecord.closeTime = eventDateOrg;
+            this.logger.log(`📝 Set close time on incomplete record - Device: ${device.deviceID}`);
+          } else if (!hasOpen && !hasClose) {
+            // No open set yet, treat as standalone close (edge case) → create new record with close only
+            action = 'created';
+            const recordData = {
+              openTime: null,
+              closeTime: eventDateOrg,
+              deviceId: device.id,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            };
+            record = queryRunner.manager.create(DeviceRecords, recordData);
+            record = await queryRunner.manager.save(record);
+            this.logger.log(`📝 Created new record (standalone close) - Device: ${device.deviceID}`);
+            return { record, action, existingRecord: !!existingRecord };
+          } else {
+            // Has close already → create a new record
+            action = 'created';
+            const recordData = {
+              openTime: null,
+              closeTime: eventDateOrg,
+              deviceId: device.id,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            };
+            record = queryRunner.manager.create(DeviceRecords, recordData);
+            record = await queryRunner.manager.save(record);
+            this.logger.log(`📝 Created new record (additional close) - Device: ${device.deviceID}`);
+            return { record, action, existingRecord: !!existingRecord };
+          }
+        }
+
+        existingRecord.updatedAt = new Date();
+        record = await queryRunner.manager.save(existingRecord);
       }
-      
-      existingRecord.updatedAt = new Date();
-      record = await queryRunner.manager.save(existingRecord);
     } else {
-      // Create new record
+      // No record for today → create new with the incoming event
       action = 'created';
-      
       const recordData = {
-        openTime: timeEventDto.eventType === 'open' ? timeEventDto.timestamp : 0,
-        closeTime: timeEventDto.eventType === 'close' ? timeEventDto.timestamp : 0,
+        openTime: timeEventDto.eventType === 'open' ? eventDateOrg : null,
+        closeTime: timeEventDto.eventType === 'close' ? eventDateOrg : null,
         deviceId: device.id,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
-
       record = queryRunner.manager.create(DeviceRecords, recordData);
       record = await queryRunner.manager.save(record);
-      
-      this.logger.log(`📝 Created new daily record with ${timeEventDto.eventType} event - Device: ${device.deviceID}`);
+      this.logger.log(`📝 Created first record of day with ${timeEventDto.eventType} - Device: ${device.deviceID}`);
     }
 
     return { record, action, existingRecord: !!existingRecord };
@@ -1332,10 +1424,17 @@ export class IotService {
     // Update basic counters
     if (timeEventDto.eventType === 'open') {
       analytics.openCount++;
-      analytics.lastOpenAt = new Date(timeEventDto.timestamp * 1000);
+      // Use organization-local Date for lastOpenAt
+      const orgRef = String(device.orgID);
+      const orgHoursArr = await this.organisationHoursService.findAll(orgRef).catch(() => []);
+      const orgTimezone = (Array.isArray(orgHoursArr) && orgHoursArr[0]?.timezone) || TimezoneUtil.AFRICA_JOHANNESBURG;
+      analytics.lastOpenAt = TimezoneUtil.toOrganizationTime(new Date(timeEventDto.timestamp * 1000), orgTimezone);
     } else {
       analytics.closeCount++;
-      analytics.lastCloseAt = new Date(timeEventDto.timestamp * 1000);
+      const orgRef = String(device.orgID);
+      const orgHoursArr = await this.organisationHoursService.findAll(orgRef).catch(() => []);
+      const orgTimezone = (Array.isArray(orgHoursArr) && orgHoursArr[0]?.timezone) || TimezoneUtil.AFRICA_JOHANNESBURG;
+      analytics.lastCloseAt = TimezoneUtil.toOrganizationTime(new Date(timeEventDto.timestamp * 1000), orgTimezone);
     }
 
     // Update total count
@@ -1347,7 +1446,10 @@ export class IotService {
     extendedAnalytics.successfulEvents = (extendedAnalytics.successfulEvents || 0) + 1;
 
     // Calculate daily patterns (if weeklyPattern exists)
-    const eventDate = new Date(timeEventDto.timestamp * 1000);
+    const orgRefForStats = String(device.orgID);
+    const orgHoursArrForStats = await this.organisationHoursService.findAll(orgRefForStats).catch(() => []);
+    const orgTimezoneForStats = (Array.isArray(orgHoursArrForStats) && orgHoursArrForStats[0]?.timezone) || TimezoneUtil.AFRICA_JOHANNESBURG;
+    const eventDate = TimezoneUtil.toOrganizationTime(new Date(timeEventDto.timestamp * 1000), orgTimezoneForStats);
     const dayName = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][eventDate.getDay()];
     if (extendedAnalytics.weeklyPattern) {
       extendedAnalytics.weeklyPattern[dayName] = (extendedAnalytics.weeklyPattern[dayName] || 0) + 1;
@@ -1395,8 +1497,11 @@ export class IotService {
       }
       
       // Update last business hours check
+      const orgRefForCheck = String(device.orgID);
+      const orgHoursArrForCheck = await this.organisationHoursService.findAll(orgRefForCheck).catch(() => []);
+      const orgTimezoneForCheck = (Array.isArray(orgHoursArrForCheck) && orgHoursArrForCheck[0]?.timezone) || TimezoneUtil.AFRICA_JOHANNESBURG;
       extendedAnalytics.lastBusinessHoursCheck = {
-        timestamp: new Date(timeEventDto.timestamp * 1000),
+        timestamp: TimezoneUtil.toOrganizationTime(new Date(timeEventDto.timestamp * 1000), orgTimezoneForCheck),
         attendanceStatus: eventAnalysis.attendanceStatus,
         isWithinBusinessHours: eventAnalysis.isWithinBusinessHours,
         minutesFromSchedule: eventAnalysis.minutesFromSchedule
@@ -1416,7 +1521,10 @@ export class IotService {
    * Process real-time notifications based on business rules
    */
   private async processRealTimeNotifications(device: Device, timeEventDto: DeviceTimeRecordDto, recordResult: any): Promise<void> {
-    const eventDate = new Date(timeEventDto.timestamp * 1000);
+    const orgRef = String(device.orgID);
+    const orgHoursArr = await this.organisationHoursService.findAll(orgRef).catch(() => []);
+    const orgTimezone = (Array.isArray(orgHoursArr) && orgHoursArr[0]?.timezone) || TimezoneUtil.AFRICA_JOHANNESBURG;
+    const eventDate = TimezoneUtil.toOrganizationTime(new Date(timeEventDto.timestamp * 1000), orgTimezone);
     const hour = eventDate.getHours();
 
     // Late arrival notifications
@@ -1427,7 +1535,7 @@ export class IotService {
         deviceID: device.deviceID,
         orgId: device.orgID,
         branchId: device.branchID,
-        timestamp: timeEventDto.timestamp,
+        timestamp: eventDate,
         severity: 'warning',
         message: `Late arrival detected at ${device.devicLocation} at ${hour}:${eventDate.getMinutes()}`,
       });
@@ -1442,7 +1550,7 @@ export class IotService {
         deviceID: device.deviceID,
         orgId: device.orgID,
         branchId: device.branchID,
-        timestamp: timeEventDto.timestamp,
+        timestamp: eventDate,
         severity: 'info',
         message: `Weekend work detected at ${device.devicLocation}`,
       });
@@ -1454,13 +1562,17 @@ export class IotService {
    */
   private async performPostEventActivities(device: Device, timeEventDto: DeviceTimeRecordDto, recordResult: any, startTime: number): Promise<void> {
     // Emit comprehensive time event for dashboard updates
+    const orgRef = String(device.orgID);
+    const orgHoursArr = await this.organisationHoursService.findAll(orgRef).catch(() => []);
+    const orgTimezone = (Array.isArray(orgHoursArr) && orgHoursArr[0]?.timezone) || TimezoneUtil.AFRICA_JOHANNESBURG;
+    const eventDate = TimezoneUtil.toOrganizationTime(new Date(timeEventDto.timestamp * 1000), orgTimezone);
     this.eventEmitter.emit('device.time.event', {
       deviceId: device.id,
       deviceID: device.deviceID,
       orgId: device.orgID,
       branchId: device.branchID,
       eventType: timeEventDto.eventType,
-      timestamp: timeEventDto.timestamp,
+      timestamp: eventDate,
       recordId: recordResult.record.id,
       action: recordResult.action,
       processingTime: Date.now() - startTime,
@@ -1475,14 +1587,14 @@ export class IotService {
     try {
       const analytics = { ...device.analytics };
 
-      if (recordDto.openTime) {
+      if (record.openTime) {
         analytics.openCount++;
-        analytics.lastOpenAt = new Date(recordDto.openTime * 1000);
+        analytics.lastOpenAt = record.openTime as unknown as Date;
       }
 
-      if (recordDto.closeTime) {
+      if (record.closeTime) {
         analytics.closeCount++;
-        analytics.lastCloseAt = new Date(recordDto.closeTime * 1000);
+        analytics.lastCloseAt = record.closeTime as unknown as Date;
       }
 
       analytics.totalCount = analytics.openCount + analytics.closeCount;
@@ -1752,7 +1864,9 @@ export class IotService {
     if (validRecords.length === 0) return 0;
 
     const totalDuration = validRecords.reduce((sum, record) => {
-      return sum + (record.closeTime - record.openTime);
+      const openMs = (record.openTime as unknown as Date).getTime();
+      const closeMs = (record.closeTime as unknown as Date).getTime();
+      return sum + (closeMs - openMs) / 1000; // return seconds to preserve previous semantics
     }, 0);
 
     return totalDuration / validRecords.length;
@@ -1952,95 +2066,6 @@ export class IotService {
         error.stack
       );
       throw error;
-    }
-  }
-
-  /**
-   * Enhanced Transaction Logging for Time Events
-   * 
-   * Provides comprehensive logging similar to user service patterns
-   */
-  private async logTimeEventTransaction(
-    operation: string,
-    deviceId: string,
-    eventType: 'open' | 'close',
-    requestId: string,
-    additionalData?: any
-  ) {
-    const timestamp = new Date().toISOString();
-    const logData = {
-      operation,
-      deviceId,
-      eventType,
-      requestId,
-      timestamp,
-      ...additionalData,
-    };
-
-    // Log with different levels based on operation success
-    if (additionalData?.success !== false) {
-      this.logger.log(
-        `[${requestId}] 🔄 TRANSACTION: ${operation} - Device: ${deviceId}, ` +
-        `Event: ${eventType}, Status: SUCCESS`
-      );
-    } else {
-      this.logger.error(
-        `[${requestId}] 💥 TRANSACTION FAILED: ${operation} - Device: ${deviceId}, ` +
-        `Event: ${eventType}, Error: ${additionalData?.error || 'Unknown error'}`
-      );
-    }
-
-    // Emit event for audit trail
-    this.eventEmitter.emit('iot.transaction.logged', logData);
-  }
-
-  /**
-   * Enhanced Error Handling with Ternary Operators
-   * 
-   * Provides robust error handling that prevents crashes
-   */
-  private handleServiceError(error: any, operation: string, requestId: string): never {
-    const errorMessage = error?.message || 'Unknown error occurred';
-    const errorStack = error?.stack || 'No stack trace available';
-    const isKnownError = error instanceof NotFoundException || 
-                        error instanceof BadRequestException || 
-                        error instanceof ConflictException;
-
-    this.logger.error(
-      `[${requestId}] 🚨 SERVICE ERROR in ${operation}: ${errorMessage}`,
-      errorStack
-    );
-
-    // Use ternary operators to determine appropriate error response
-    const errorToThrow = isKnownError ? error : 
-                        error instanceof QueryFailedError ? 
-                          new BadRequestException('Database operation failed') :
-                          new BadRequestException(`Failed to ${operation}`);
-
-    throw errorToThrow;
-  }
-
-  /**
-   * Smart Cache Management with Error Prevention
-   * 
-   * Enhanced caching with comprehensive error handling
-   */
-  private async safeGetFromCache<T>(cacheKey: string): Promise<T | null> {
-    try {
-      const cached = await this.cacheManager.get<T>(cacheKey);
-      return cached || null;
-    } catch (error) {
-      this.logger.warn(`Cache retrieval failed for key ${cacheKey}: ${error.message}`);
-      return null;
-    }
-  }
-
-  private async safeSetCache<T>(cacheKey: string, value: T, ttl?: number): Promise<void> {
-    try {
-      await this.cacheManager.set(cacheKey, value, ttl || this.CACHE_TTL);
-    } catch (error) {
-      this.logger.warn(`Cache storage failed for key ${cacheKey}: ${error.message}`);
-      // Continue execution even if caching fails
     }
   }
 }

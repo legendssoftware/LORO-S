@@ -4,4 +4,5 @@ export enum ReportType {
   USER_DAILY = 'user_daily',
   SHIFT = 'shift',
   QUOTATION = 'quotation',
+  ORG_ACTIVITY = 'org_activity',
 } 

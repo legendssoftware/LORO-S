@@ -10,6 +10,8 @@ export enum EmailType {
 	// Attendance Reports
 	ATTENDANCE_MORNING_REPORT = 'attendance_morning_report',
 	ATTENDANCE_EVENING_REPORT = 'attendance_evening_report',
+	// Organisation activity reports
+	ORG_ACTIVITY_REPORT = 'org_activity_report',
 	// Organization Settings Reminders
 	ORGANIZATION_HOURS_REMINDER = 'organization_hours_reminder',
 	// Overtime related emails

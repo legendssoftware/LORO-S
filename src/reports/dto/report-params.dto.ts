@@ -29,4 +29,8 @@ export class ReportParamsDto {
   @IsOptional()
   @IsNumber()
   userId?: number;
+
+  @IsOptional()
+  @IsString()
+  granularity?: 'daily' | 'weekly';
 } 
