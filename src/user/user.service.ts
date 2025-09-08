@@ -58,6 +58,7 @@ import { BulkUpdateUserDto, BulkUpdateUserResponse, BulkUpdateUserResult } from 
 import { DataSource } from 'typeorm';
 import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
 import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
+import { Branch } from '../branch/entities/branch.entity';
 
 @Injectable()
 export class UserService {
@@ -85,6 +86,8 @@ export class UserService {
 		private readonly configService: ConfigService,
 		private readonly dataSource: DataSource,
 		private readonly unifiedNotificationService: UnifiedNotificationService,
+		@InjectRepository(Branch)
+		private branchRepository: Repository<Branch>,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
 		this.logger.log('UserService initialized with cache TTL: ' + this.CACHE_TTL + 'ms');
@@ -415,7 +418,10 @@ export class UserService {
 				);
 				this.logger.debug('[USER_CREATION] User creation push notification sent successfully');
 			} catch (notificationError) {
-				this.logger.warn(`Failed to send user creation push notification to ${savedUser.uid}:`, notificationError.message);
+				this.logger.warn(
+					`Failed to send user creation push notification to ${savedUser.uid}:`,
+					notificationError.message,
+				);
 			}
 
 			await Promise.all(emailPromises);
@@ -453,7 +459,7 @@ export class UserService {
 	async createBulkUsers(bulkCreateUserDto: BulkCreateUserDto): Promise<BulkCreateUserResponse> {
 		const startTime = Date.now();
 		this.logger.log(`👥 [createBulkUsers] Starting bulk creation of ${bulkCreateUserDto.users.length} users`);
-		
+
 		const results: BulkUserResult[] = [];
 		let successCount = 0;
 		let failureCount = 0;
@@ -469,21 +475,25 @@ export class UserService {
 		try {
 			for (let i = 0; i < bulkCreateUserDto.users.length; i++) {
 				const userData = bulkCreateUserDto.users[i];
-				
+
 				try {
-					this.logger.debug(`👤 [createBulkUsers] Processing user ${i + 1}/${bulkCreateUserDto.users.length}: ${userData.username} (${userData.email})`);
-					
+					this.logger.debug(
+						`👤 [createBulkUsers] Processing user ${i + 1}/${bulkCreateUserDto.users.length}: ${
+							userData.username
+						} (${userData.email})`,
+					);
+
 					// Check if username already exists
-					const existingUsername = await queryRunner.manager.findOne(User, { 
-						where: { username: userData.username } 
+					const existingUsername = await queryRunner.manager.findOne(User, {
+						where: { username: userData.username },
 					});
 					if (existingUsername) {
 						throw new Error(`Username '${userData.username}' already exists`);
 					}
 
 					// Check if email already exists
-					const existingEmail = await queryRunner.manager.findOne(User, { 
-						where: { email: userData.email } 
+					const existingEmail = await queryRunner.manager.findOne(User, {
+						where: { email: userData.email },
 					});
 					if (existingEmail) {
 						throw new Error(`Email '${userData.email}' already exists`);
@@ -493,7 +503,9 @@ export class UserService {
 					let finalPassword = userData.password;
 					if (!finalPassword && bulkCreateUserDto.autoGeneratePasswords) {
 						finalPassword = this.generateRandomPassword();
-						this.logger.debug(`🔐 [createBulkUsers] Auto-generated password for user: ${userData.username}`);
+						this.logger.debug(
+							`🔐 [createBulkUsers] Auto-generated password for user: ${userData.username}`,
+						);
 					}
 
 					if (!finalPassword) {
@@ -518,11 +530,11 @@ export class UserService {
 						role: userData.role || 'user',
 						isDeleted: false,
 						createdAt: new Date(),
-						updatedAt: new Date()
+						updatedAt: new Date(),
 					});
 
 					const savedUser = await queryRunner.manager.save(User, user);
-					
+
 					// Exclude password from result
 					const { password: _, ...userWithoutPassword } = savedUser;
 
@@ -531,26 +543,29 @@ export class UserService {
 						success: true,
 						index: i,
 						username: userData.username,
-						email: userData.email
+						email: userData.email,
 					});
-					
+
 					successCount++;
 					createdUserIds.push(savedUser.uid);
-					this.logger.debug(`✅ [createBulkUsers] User ${i + 1} created successfully: ${userData.username} (ID: ${savedUser.uid})`);
-					
+					this.logger.debug(
+						`✅ [createBulkUsers] User ${i + 1} created successfully: ${userData.username} (ID: ${
+							savedUser.uid
+						})`,
+					);
 				} catch (userError) {
 					const errorMessage = `User ${i + 1} (${userData.username || userData.email}): ${userError.message}`;
 					this.logger.error(`❌ [createBulkUsers] ${errorMessage}`, userError.stack);
-					
+
 					results.push({
 						user: null,
 						success: false,
 						error: userError.message,
 						index: i,
 						username: userData.username,
-						email: userData.email
+						email: userData.email,
 					});
-					
+
 					errors.push(errorMessage);
 					failureCount++;
 				}
@@ -559,29 +574,33 @@ export class UserService {
 			// Commit transaction if we have at least some successes
 			if (successCount > 0) {
 				await queryRunner.commitTransaction();
-				this.logger.log(`✅ [createBulkUsers] Transaction committed - ${successCount} users created successfully`);
-				
+				this.logger.log(
+					`✅ [createBulkUsers] Transaction committed - ${successCount} users created successfully`,
+				);
+
 				// Clear relevant caches after successful bulk creation
 				await this.cacheManager.del(`${this.CACHE_PREFIX}all`);
-				
+
 				// Send welcome emails if requested
 				if (bulkCreateUserDto.sendWelcomeEmails !== false && successCount > 0) {
 					this.logger.debug(`📧 [createBulkUsers] Sending welcome emails to ${successCount} created users`);
-					
+
 					for (const result of results) {
 						if (result.success && result.user) {
 							try {
 								await this.sendUserCreationNotificationEmail(result.user);
 								welcomeEmailsSent++;
 							} catch (emailError) {
-								this.logger.warn(`⚠️ [createBulkUsers] Failed to send welcome email to ${result.user.email}: ${emailError.message}`);
+								this.logger.warn(
+									`⚠️ [createBulkUsers] Failed to send welcome email to ${result.user.email}: ${emailError.message}`,
+								);
 							}
 						}
 					}
-					
+
 					this.logger.log(`📧 [createBulkUsers] Sent ${welcomeEmailsSent} welcome emails`);
 				}
-				
+
 				// Emit bulk creation event
 				this.eventEmitter.emit('users.bulk.created', {
 					totalRequested: bulkCreateUserDto.users.length,
@@ -597,12 +616,14 @@ export class UserService {
 				await queryRunner.rollbackTransaction();
 				this.logger.warn(`⚠️ [createBulkUsers] Transaction rolled back - no users were created successfully`);
 			}
-
 		} catch (transactionError) {
 			// Rollback transaction on any unexpected error
 			await queryRunner.rollbackTransaction();
-			this.logger.error(`❌ [createBulkUsers] Transaction error: ${transactionError.message}`, transactionError.stack);
-			
+			this.logger.error(
+				`❌ [createBulkUsers] Transaction error: ${transactionError.message}`,
+				transactionError.stack,
+			);
+
 			return {
 				totalRequested: bulkCreateUserDto.users.length,
 				totalCreated: 0,
@@ -613,7 +634,7 @@ export class UserService {
 				errors: [transactionError.message],
 				duration: Date.now() - startTime,
 				createdUserIds: [],
-				welcomeEmailsSent: 0
+				welcomeEmailsSent: 0,
 			};
 		} finally {
 			// Release the query runner
@@ -623,7 +644,11 @@ export class UserService {
 		const duration = Date.now() - startTime;
 		const successRate = (successCount / bulkCreateUserDto.users.length) * 100;
 
-		this.logger.log(`🎉 [createBulkUsers] Bulk creation completed in ${duration}ms - Success: ${successCount}, Failed: ${failureCount}, Rate: ${successRate.toFixed(2)}%, Emails: ${welcomeEmailsSent}`);
+		this.logger.log(
+			`🎉 [createBulkUsers] Bulk creation completed in ${duration}ms - Success: ${successCount}, Failed: ${failureCount}, Rate: ${successRate.toFixed(
+				2,
+			)}%, Emails: ${welcomeEmailsSent}`,
+		);
 
 		return {
 			totalRequested: bulkCreateUserDto.users.length,
@@ -631,13 +656,14 @@ export class UserService {
 			totalFailed: failureCount,
 			successRate: parseFloat(successRate.toFixed(2)),
 			results,
-			message: successCount > 0 
-				? `Bulk creation completed: ${successCount} users created, ${failureCount} failed`
-				: 'Bulk creation failed: No users were created',
+			message:
+				successCount > 0
+					? `Bulk creation completed: ${successCount} users created, ${failureCount} failed`
+					: 'Bulk creation failed: No users were created',
 			errors: errors.length > 0 ? errors : undefined,
 			duration,
 			createdUserIds: createdUserIds.length > 0 ? createdUserIds : undefined,
-			welcomeEmailsSent: welcomeEmailsSent > 0 ? welcomeEmailsSent : undefined
+			welcomeEmailsSent: welcomeEmailsSent > 0 ? welcomeEmailsSent : undefined,
 		};
 	}
 
@@ -649,7 +675,7 @@ export class UserService {
 	async updateBulkUsers(bulkUpdateUserDto: BulkUpdateUserDto): Promise<BulkUpdateUserResponse> {
 		const startTime = Date.now();
 		this.logger.log(`📝 [updateBulkUsers] Starting bulk update of ${bulkUpdateUserDto.updates.length} users`);
-		
+
 		const results: BulkUpdateUserResult[] = [];
 		let successCount = 0;
 		let failureCount = 0;
@@ -666,21 +692,25 @@ export class UserService {
 			for (let i = 0; i < bulkUpdateUserDto.updates.length; i++) {
 				const updateItem = bulkUpdateUserDto.updates[i];
 				const { ref, data } = updateItem;
-				
+
 				try {
-					this.logger.debug(`👤 [updateBulkUsers] Processing user ${i + 1}/${bulkUpdateUserDto.updates.length}: ID ${ref}`);
-					
+					this.logger.debug(
+						`👤 [updateBulkUsers] Processing user ${i + 1}/${bulkUpdateUserDto.updates.length}: ID ${ref}`,
+					);
+
 					// First find the user to ensure it exists
-					const existingUser = await queryRunner.manager.findOne(User, { 
+					const existingUser = await queryRunner.manager.findOne(User, {
 						where: { uid: ref, isDeleted: false },
-						relations: ['organisation', 'branch']
+						relations: ['organisation', 'branch'],
 					});
 
 					if (!existingUser) {
 						throw new Error(`User with ID ${ref} not found`);
 					}
 
-					this.logger.debug(`✅ [updateBulkUsers] User found: ${existingUser.username} (${existingUser.email})`);
+					this.logger.debug(
+						`✅ [updateBulkUsers] User found: ${existingUser.username} (${existingUser.email})`,
+					);
 
 					// Track original values for change detection
 					const originalValues = {
@@ -688,21 +718,23 @@ export class UserService {
 						role: existingUser.role,
 						status: existingUser.status,
 						accessLevel: existingUser.accessLevel,
-						assignedClientIds: existingUser.assignedClientIds
+						assignedClientIds: existingUser.assignedClientIds,
 					};
 
 					// Validate assigned client IDs if provided and validation is enabled
 					if (data.assignedClientIds && bulkUpdateUserDto.validateClientIds !== false) {
-						this.logger.debug(`🔍 [updateBulkUsers] Validating ${data.assignedClientIds.length} assigned client IDs for user ${ref}`);
-						
+						this.logger.debug(
+							`🔍 [updateBulkUsers] Validating ${data.assignedClientIds.length} assigned client IDs for user ${ref}`,
+						);
+
 						const existingClients = await queryRunner.manager.find(Client, {
 							where: { uid: In(data.assignedClientIds), isDeleted: false },
-							select: ['uid']
+							select: ['uid'],
 						});
 
 						if (existingClients.length !== data.assignedClientIds.length) {
-							const foundIds = existingClients.map(c => c.uid);
-							const invalidIds = data.assignedClientIds.filter(id => !foundIds.includes(id));
+							const foundIds = existingClients.map((c) => c.uid);
+							const invalidIds = data.assignedClientIds.filter((id) => !foundIds.includes(id));
 							throw new Error(`Invalid client IDs: ${invalidIds.join(', ')}`);
 						}
 					}
@@ -715,8 +747,8 @@ export class UserService {
 					}
 
 					// Track changed fields for logging and notifications
-					const updatedFields = Object.keys(data).filter(key => 
-						data[key] !== undefined && data[key] !== existingUser[key]
+					const updatedFields = Object.keys(data).filter(
+						(key) => data[key] !== undefined && data[key] !== existingUser[key],
 					);
 
 					// Update the user
@@ -724,7 +756,7 @@ export class UserService {
 					await queryRunner.manager.update(User, ref, updateData);
 
 					// Check for significant changes that require notifications
-					const hasSignificantChanges = 
+					const hasSignificantChanges =
 						(data.password && data.password !== originalValues.password) ||
 						(data.role && data.role !== originalValues.role) ||
 						(data.status && data.status !== originalValues.status) ||
@@ -736,20 +768,24 @@ export class UserService {
 						index: i,
 						username: existingUser.username,
 						email: existingUser.email,
-						updatedFields
+						updatedFields,
 					});
-					
+
 					successCount++;
 					updatedUserIds.push(ref);
-					this.logger.debug(`✅ [updateBulkUsers] User ${i + 1} updated successfully: ${existingUser.username} (ID: ${ref}), Fields: ${updatedFields.join(', ')}`);
+					this.logger.debug(
+						`✅ [updateBulkUsers] User ${i + 1} updated successfully: ${
+							existingUser.username
+						} (ID: ${ref}), Fields: ${updatedFields.join(', ')}`,
+					);
 
 					// Send notification email for significant changes if enabled
 					if (hasSignificantChanges && bulkUpdateUserDto.sendNotificationEmails !== false) {
 						try {
 							// Get updated user for email
-							const updatedUser = await queryRunner.manager.findOne(User, { 
+							const updatedUser = await queryRunner.manager.findOne(User, {
 								where: { uid: ref },
-								relations: ['organisation', 'branch']
+								relations: ['organisation', 'branch'],
 							});
 
 							if (updatedUser) {
@@ -760,30 +796,35 @@ export class UserService {
 										password: !!data.password,
 										role: data.role !== originalValues.role,
 										status: data.status !== originalValues.status,
-										profile: updatedFields.some(field => ['name', 'surname', 'phone', 'photoURL'].includes(field)),
-										assignedClients: JSON.stringify(data.assignedClientIds) !== JSON.stringify(originalValues.assignedClientIds)
+										profile: updatedFields.some((field) =>
+											['name', 'surname', 'phone', 'photoURL'].includes(field),
+										),
+										assignedClients:
+											JSON.stringify(data.assignedClientIds) !==
+											JSON.stringify(originalValues.assignedClientIds),
 									},
 									originalValues.assignedClientIds || [],
-									data.assignedClientIds || updatedUser.assignedClientIds || []
+									data.assignedClientIds || updatedUser.assignedClientIds || [],
 								);
 								notificationEmailsSent++;
 							}
 						} catch (emailError) {
-							this.logger.warn(`⚠️ [updateBulkUsers] Failed to send notification email to ${existingUser.email}: ${emailError.message}`);
+							this.logger.warn(
+								`⚠️ [updateBulkUsers] Failed to send notification email to ${existingUser.email}: ${emailError.message}`,
+							);
 						}
 					}
-					
 				} catch (userError) {
 					const errorMessage = `User ID ${ref}: ${userError.message}`;
 					this.logger.error(`❌ [updateBulkUsers] ${errorMessage}`, userError.stack);
-					
+
 					results.push({
 						ref,
 						success: false,
 						error: userError.message,
-						index: i
+						index: i,
 					});
-					
+
 					errors.push(errorMessage);
 					failureCount++;
 				}
@@ -792,18 +833,16 @@ export class UserService {
 			// Commit transaction if we have at least some successes
 			if (successCount > 0) {
 				await queryRunner.commitTransaction();
-				this.logger.log(`✅ [updateBulkUsers] Transaction committed - ${successCount} users updated successfully`);
-				
+				this.logger.log(
+					`✅ [updateBulkUsers] Transaction committed - ${successCount} users updated successfully`,
+				);
+
 				// Invalidate relevant caches after successful bulk update
 				await this.cacheManager.del(`${this.CACHE_PREFIX}all`);
-				
+
 				// Clear specific user caches for updated users
-				await Promise.all(
-					updatedUserIds.map(userId => 
-						this.cacheManager.del(this.getCacheKey(userId))
-					)
-				);
-				
+				await Promise.all(updatedUserIds.map((userId) => this.cacheManager.del(this.getCacheKey(userId))));
+
 				// Emit bulk update event
 				this.eventEmitter.emit('users.bulk.updated', {
 					totalRequested: bulkUpdateUserDto.updates.length,
@@ -818,12 +857,14 @@ export class UserService {
 				await queryRunner.rollbackTransaction();
 				this.logger.warn(`⚠️ [updateBulkUsers] Transaction rolled back - no users were updated successfully`);
 			}
-
 		} catch (transactionError) {
 			// Rollback transaction on any unexpected error
 			await queryRunner.rollbackTransaction();
-			this.logger.error(`❌ [updateBulkUsers] Transaction error: ${transactionError.message}`, transactionError.stack);
-			
+			this.logger.error(
+				`❌ [updateBulkUsers] Transaction error: ${transactionError.message}`,
+				transactionError.stack,
+			);
+
 			return {
 				totalRequested: bulkUpdateUserDto.updates.length,
 				totalUpdated: 0,
@@ -834,7 +875,7 @@ export class UserService {
 				errors: [transactionError.message],
 				duration: Date.now() - startTime,
 				updatedUserIds: [],
-				notificationEmailsSent: 0
+				notificationEmailsSent: 0,
 			};
 		} finally {
 			// Release the query runner
@@ -844,7 +885,11 @@ export class UserService {
 		const duration = Date.now() - startTime;
 		const successRate = (successCount / bulkUpdateUserDto.updates.length) * 100;
 
-		this.logger.log(`🎉 [updateBulkUsers] Bulk update completed in ${duration}ms - Success: ${successCount}, Failed: ${failureCount}, Rate: ${successRate.toFixed(2)}%, Emails: ${notificationEmailsSent}`);
+		this.logger.log(
+			`🎉 [updateBulkUsers] Bulk update completed in ${duration}ms - Success: ${successCount}, Failed: ${failureCount}, Rate: ${successRate.toFixed(
+				2,
+			)}%, Emails: ${notificationEmailsSent}`,
+		);
 
 		return {
 			totalRequested: bulkUpdateUserDto.updates.length,
@@ -852,13 +897,14 @@ export class UserService {
 			totalFailed: failureCount,
 			successRate: parseFloat(successRate.toFixed(2)),
 			results,
-			message: successCount > 0 
-				? `Bulk update completed: ${successCount} users updated, ${failureCount} failed`
-				: 'Bulk update failed: No users were updated',
+			message:
+				successCount > 0
+					? `Bulk update completed: ${successCount} users updated, ${failureCount} failed`
+					: 'Bulk update failed: No users were updated',
 			errors: errors.length > 0 ? errors : undefined,
 			duration,
 			updatedUserIds: updatedUserIds.length > 0 ? updatedUserIds : undefined,
-			notificationEmailsSent: notificationEmailsSent > 0 ? notificationEmailsSent : undefined
+			notificationEmailsSent: notificationEmailsSent > 0 ? notificationEmailsSent : undefined,
 		};
 	}
 
@@ -908,7 +954,7 @@ export class UserService {
 				.addSelect([
 					'userTarget.uid',
 					'userTarget.targetSalesAmount',
-					'userTarget.currentSalesAmount', 
+					'userTarget.currentSalesAmount',
 					'userTarget.targetQuotationsAmount',
 					'userTarget.currentQuotationsAmount',
 					'userTarget.currentOrdersAmount',
@@ -927,7 +973,7 @@ export class UserService {
 					'userTarget.periodStartDate',
 					'userTarget.periodEndDate',
 					'userTarget.createdAt',
-					'userTarget.updatedAt'
+					'userTarget.updatedAt',
 				])
 				.where('user.isDeleted = :isDeleted', { isDeleted: false });
 
@@ -988,7 +1034,7 @@ export class UserService {
 			if (!users) {
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
 			}
-			
+
 			const executionTime = Date.now() - startTime;
 			this.logger.log(`Successfully fetched ${users.length} users out of ${total} total in ${executionTime}ms`);
 
@@ -1087,14 +1133,14 @@ export class UserService {
 			const user = await this.userRepository
 				.createQueryBuilder('user')
 				.leftJoinAndSelect('user.organisation', 'organisation')
-				.leftJoinAndSelect('user.branch', 'branch') 
+				.leftJoinAndSelect('user.branch', 'branch')
 				.leftJoinAndSelect('user.userProfile', 'userProfile')
 				.leftJoinAndSelect('user.userEmployeementProfile', 'userEmployeementProfile')
 				.leftJoin('user.userTarget', 'userTarget')
 				.addSelect([
 					'userTarget.uid',
 					'userTarget.targetSalesAmount',
-					'userTarget.currentSalesAmount', 
+					'userTarget.currentSalesAmount',
 					'userTarget.targetQuotationsAmount',
 					'userTarget.currentQuotationsAmount',
 					'userTarget.currentOrdersAmount',
@@ -1113,13 +1159,15 @@ export class UserService {
 					'userTarget.periodStartDate',
 					'userTarget.periodEndDate',
 					'userTarget.createdAt',
-					'userTarget.updatedAt'
+					'userTarget.updatedAt',
 				])
 				.where(whereConditions)
 				.getOne();
 
 			if (!user) {
-				this.logger.warn(`User ${searchParameter} not found with applied filters (orgId: ${orgId}, branchId: ${branchId})`);
+				this.logger.warn(
+					`User ${searchParameter} not found with applied filters (orgId: ${orgId}, branchId: ${branchId})`,
+				);
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
 			}
 
@@ -1588,7 +1636,10 @@ export class UserService {
 					this.logger.debug('[USER_UPDATE] General update push notification sent');
 				}
 			} catch (notificationError) {
-				this.logger.warn(`Failed to send user update push notification to ${updatedUser.uid}:`, notificationError.message);
+				this.logger.warn(
+					`Failed to send user update push notification to ${updatedUser.uid}:`,
+					notificationError.message,
+				);
 			}
 
 			// Send all notification emails in parallel
@@ -1978,7 +2029,11 @@ export class UserService {
 	 * @param branchId - Optional branch ID for access control (null for org-wide access)
 	 * @returns User target data or null with message
 	 */
-	async getUserTarget(userId: number, orgId?: number, branchId?: number): Promise<{ userTarget: UserTarget | null; message: string }> {
+	async getUserTarget(
+		userId: number,
+		orgId?: number,
+		branchId?: number,
+	): Promise<{ userTarget: any; message: string }> {
 		const startTime = Date.now();
 		this.logger.log(`Getting user target for user: ${userId}`);
 
@@ -2002,10 +2057,11 @@ export class UserService {
 				.leftJoinAndSelect('user.organisation', 'organisation')
 				.leftJoinAndSelect('user.branch', 'branch')
 				.leftJoin('user.userTarget', 'userTarget')
+				.addSelect(['user.managedStaff', 'user.managedBranches'])
 				.addSelect([
 					'userTarget.uid',
 					'userTarget.targetSalesAmount',
-					'userTarget.currentSalesAmount', 
+					'userTarget.currentSalesAmount',
 					'userTarget.targetQuotationsAmount',
 					'userTarget.currentQuotationsAmount',
 					'userTarget.currentOrdersAmount',
@@ -2025,14 +2081,7 @@ export class UserService {
 					'userTarget.periodEndDate',
 					'userTarget.createdAt',
 					'userTarget.updatedAt',
-					'userTarget.baseSalary',
-					'userTarget.carInstalment',
-					'userTarget.carInsurance',
-					'userTarget.fuel',
-					'userTarget.cellPhoneAllowance',
-					'userTarget.carMaintenance',
-					'userTarget.cgicCosts',
-					'userTarget.totalCost',
+					// Costings are hidden for now
 				])
 				.where('user.uid = :userId AND user.isDeleted = :isDeleted', { userId, isDeleted: false });
 
@@ -2056,23 +2105,304 @@ export class UserService {
 				throw new NotFoundException(`User with ID ${userId} not found`);
 			}
 
-			if (!user.userTarget) {
-				const executionTime = Date.now() - startTime;
-				this.logger.log(`No targets set for user: ${userId} in ${executionTime}ms`);
-				return {
-					userTarget: null,
-					message: 'No targets set for this user',
+			// Initialize response object - always return data even if user has no targets
+			let response: any = {
+				userId: userId,
+				hasPersonalTargets: !!user.userTarget,
+				managedBranches: [],
+				managedStaff: [],
+			};
+
+			// Add personal targets if they exist with enhanced format
+			if (user.userTarget) {
+				response.personalTargets = {
+					uid: user.userTarget.uid,
+					// Sales targets
+					sales: {
+						name: 'Sales',
+						target: user.userTarget.targetSalesAmount,
+						current: user.userTarget.currentSalesAmount,
+						remaining: Math.max(0, user.userTarget.targetSalesAmount - user.userTarget.currentSalesAmount),
+						progress: user.userTarget.targetSalesAmount > 0 ?
+							Math.round((user.userTarget.currentSalesAmount / user.userTarget.targetSalesAmount) * 100) : 0,
+						currency: user.userTarget.targetCurrency
+					},
+					// Quotations targets
+					quotations: {
+						name: 'Quotations',
+						target: user.userTarget.targetQuotationsAmount,
+						current: user.userTarget.currentQuotationsAmount,
+						remaining: Math.max(0, user.userTarget.targetQuotationsAmount - user.userTarget.currentQuotationsAmount),
+						progress: user.userTarget.targetQuotationsAmount > 0 ?
+							Math.round((user.userTarget.currentQuotationsAmount / user.userTarget.targetQuotationsAmount) * 100) : 0,
+						currency: user.userTarget.targetCurrency
+					},
+					// Hours worked targets
+					hours: {
+						name: 'Hours Worked',
+						target: user.userTarget.targetHoursWorked,
+						current: user.userTarget.currentHoursWorked,
+						remaining: Math.max(0, user.userTarget.targetHoursWorked - user.userTarget.currentHoursWorked),
+						progress: user.userTarget.targetHoursWorked > 0 ?
+							Math.round((user.userTarget.currentHoursWorked / user.userTarget.targetHoursWorked) * 100) : 0,
+						unit: 'hours'
+					},
+					// New clients targets
+					newClients: {
+						name: 'New Clients',
+						target: user.userTarget.targetNewClients,
+						current: user.userTarget.currentNewClients,
+						remaining: Math.max(0, user.userTarget.targetNewClients - user.userTarget.currentNewClients),
+						progress: user.userTarget.targetNewClients > 0 ?
+							Math.round((user.userTarget.currentNewClients / user.userTarget.targetNewClients) * 100) : 0,
+						unit: 'clients'
+					},
+					// New leads targets
+					newLeads: {
+						name: 'New Leads',
+						target: user.userTarget.targetNewLeads,
+						current: user.userTarget.currentNewLeads,
+						remaining: Math.max(0, user.userTarget.targetNewLeads - user.userTarget.currentNewLeads),
+						progress: user.userTarget.targetNewLeads > 0 ?
+							Math.round((user.userTarget.currentNewLeads / user.userTarget.targetNewLeads) * 100) : 0,
+						unit: 'leads'
+					},
+					// Check-ins targets
+					checkIns: {
+						name: 'Check Ins',
+						target: user.userTarget.targetCheckIns,
+						current: user.userTarget.currentCheckIns,
+						remaining: Math.max(0, user.userTarget.targetCheckIns - user.userTarget.currentCheckIns),
+						progress: user.userTarget.targetCheckIns > 0 ?
+							Math.round((user.userTarget.currentCheckIns / user.userTarget.targetCheckIns) * 100) : 0,
+						unit: 'check-ins'
+					},
+					// Calls targets
+					calls: {
+						name: 'Calls',
+						target: user.userTarget.targetCalls,
+						current: user.userTarget.currentCalls,
+						remaining: Math.max(0, user.userTarget.targetCalls - user.userTarget.currentCalls),
+						progress: user.userTarget.targetCalls > 0 ?
+							Math.round((user.userTarget.currentCalls / user.userTarget.targetCalls) * 100) : 0,
+						unit: 'calls'
+					},
+					// Period information
+					targetPeriod: user.userTarget.targetPeriod,
+					periodStartDate: user.userTarget.periodStartDate,
+					periodEndDate: user.userTarget.periodEndDate,
+					targetCurrency: user.userTarget.targetCurrency,
+					createdAt: user.userTarget.createdAt,
+					updatedAt: user.userTarget.updatedAt,
 				};
 			}
 
+			// Fetch managed branches with required details
+			if(user?.managedBranches?.length) {
+				const managedBranchesDetails = await this.branchRepository.find({
+					where: {
+						uid: In(user.managedBranches),
+						isDeleted: false
+					},
+					select: {
+						uid: true,
+						name: true,
+						address: true,
+						contactPerson: true,
+						email: true,
+						phone: true,
+						status: true,
+						createdAt: true
+					}
+				});
+
+				// Get staff count for each branch
+				const branchStaffCounts = await Promise.all(
+					managedBranchesDetails.map(async (branch) => {
+						const staffCount = await this.userRepository.count({
+							where: {
+								branch: { uid: branch.uid },
+								isDeleted: false
+							}
+						});
+						return { branchUid: branch.uid, staffCount };
+					})
+				);
+
+				response.managedBranches = managedBranchesDetails.map(branch => {
+					const staffCountData = branchStaffCounts.find(sc => sc.branchUid === branch.uid);
+					return {
+					uid: branch.uid,
+					name: branch.name,
+					address: branch.address,
+					contactPerson: branch.contactPerson,
+					email: branch.email,
+					phone: branch.phone,
+					status: branch.status,
+						staffCount: staffCountData?.staffCount || 0
+					};
+				});
+			}
+
+			// Fetch managed staff with their targets
+			if(user?.managedStaff?.length) {
+				this.logger.debug(`Fetching managed staff for user ${userId}: ${JSON.stringify(user.managedStaff)}`);
+				
+				// First, let's check if these users exist at all (without access control filters)
+				const allUsersCheck = await this.userRepository.find({
+					where: {
+						uid: In(user.managedStaff)
+					},
+					select: {
+						uid: true,
+						name: true,
+						surname: true,
+						email: true,
+						isDeleted: true,
+						organisationRef: true
+					}
+				});
+				
+				this.logger.debug(`All users check (including deleted): ${JSON.stringify(allUsersCheck.map(u => ({ uid: u.uid, name: u.name, email: u.email, isDeleted: u.isDeleted, orgRef: u.organisationRef })))}`);
+
+				// Now fetch managed staff with relaxed access control - they might be in different orgs/branches
+				const managedStaffDetails = await this.userRepository.find({
+					where: {
+						uid: In(user.managedStaff),
+						isDeleted: false
+						// Removed org/branch restrictions since managed staff can be cross-organizational
+					},
+					relations: ['userTarget', 'organisation', 'branch'],
+					select: {
+						uid: true,
+						name: true,
+						surname: true,
+						email: true,
+						avatar: true,
+						organisationRef: true,
+						userTarget: true,
+						organisation: {
+							uid: true,
+							name: true
+						},
+						branch: {
+							uid: true,
+							name: true
+						}
+					}
+				});
+
+				this.logger.debug(`Found ${managedStaffDetails.length} active managed staff members`);
+				this.logger.debug(`Managed staff details: ${JSON.stringify(managedStaffDetails.map(s => ({ uid: s.uid, name: s.name, email: s.email, orgRef: s.organisationRef, branchUid: s.branch?.uid })))}`);
+
+				// Process managed staff targets with progress calculations and remaining amounts
+				const staffWithTargets = managedStaffDetails.map((staff) => {
+					const staffTargetData = staff.userTarget ? {
+						uid: staff.userTarget.uid,
+						// Sales targets
+						sales: {
+							name: 'Sales',
+							target: staff.userTarget.targetSalesAmount,
+							current: staff.userTarget.currentSalesAmount,
+							remaining: Math.max(0, staff.userTarget.targetSalesAmount - staff.userTarget.currentSalesAmount),
+							progress: staff.userTarget.targetSalesAmount > 0 ?
+							Math.round((staff.userTarget.currentSalesAmount / staff.userTarget.targetSalesAmount) * 100) : 0,
+							currency: staff.userTarget.targetCurrency
+						},
+						// Quotations targets
+						quotations: {
+							name: 'Quotations',
+							target: staff.userTarget.targetQuotationsAmount,
+							current: staff.userTarget.currentQuotationsAmount,
+							remaining: Math.max(0, staff.userTarget.targetQuotationsAmount - staff.userTarget.currentQuotationsAmount),
+							progress: staff.userTarget.targetQuotationsAmount > 0 ?
+							Math.round((staff.userTarget.currentQuotationsAmount / staff.userTarget.targetQuotationsAmount) * 100) : 0,
+							currency: staff.userTarget.targetCurrency
+						},
+						// Hours worked targets
+						hours: {
+							name: 'Hours Worked',
+							target: staff.userTarget.targetHoursWorked,
+							current: staff.userTarget.currentHoursWorked,
+							remaining: Math.max(0, staff.userTarget.targetHoursWorked - staff.userTarget.currentHoursWorked),
+							progress: staff.userTarget.targetHoursWorked > 0 ?
+							Math.round((staff.userTarget.currentHoursWorked / staff.userTarget.targetHoursWorked) * 100) : 0,
+							unit: 'hours'
+						},
+						// New clients targets
+						newClients: {
+							name: 'New Clients',
+							target: staff.userTarget.targetNewClients,
+							current: staff.userTarget.currentNewClients,
+							remaining: Math.max(0, staff.userTarget.targetNewClients - staff.userTarget.currentNewClients),
+							progress: staff.userTarget.targetNewClients > 0 ?
+							Math.round((staff.userTarget.currentNewClients / staff.userTarget.targetNewClients) * 100) : 0,
+							unit: 'clients'
+						},
+						// New leads targets
+						newLeads: {
+							name: 'New Leads',
+							target: staff.userTarget.targetNewLeads,
+							current: staff.userTarget.currentNewLeads,
+							remaining: Math.max(0, staff.userTarget.targetNewLeads - staff.userTarget.currentNewLeads),
+							progress: staff.userTarget.targetNewLeads > 0 ?
+							Math.round((staff.userTarget.currentNewLeads / staff.userTarget.targetNewLeads) * 100) : 0,
+							unit: 'leads'
+						},
+						// Check-ins targets
+						checkIns: {
+							name: 'Check Ins',
+							target: staff.userTarget.targetCheckIns,
+							current: staff.userTarget.currentCheckIns,
+							remaining: Math.max(0, staff.userTarget.targetCheckIns - staff.userTarget.currentCheckIns),
+							progress: staff.userTarget.targetCheckIns > 0 ?
+							Math.round((staff.userTarget.currentCheckIns / staff.userTarget.targetCheckIns) * 100) : 0,
+							unit: 'check-ins'
+						},
+						// Calls targets
+						calls: {
+							name: 'Calls',
+							target: staff.userTarget.targetCalls,
+							current: staff.userTarget.currentCalls,
+							remaining: Math.max(0, staff.userTarget.targetCalls - staff.userTarget.currentCalls),
+							progress: staff.userTarget.targetCalls > 0 ?
+							Math.round((staff.userTarget.currentCalls / staff.userTarget.targetCalls) * 100) : 0,
+							unit: 'calls'
+						},
+						// Period information
+						targetPeriod: staff.userTarget.targetPeriod,
+						periodStartDate: staff.userTarget.periodStartDate,
+						periodEndDate: staff.userTarget.periodEndDate,
+						targetCurrency: staff.userTarget.targetCurrency,
+					} : null;
+
+					return {
+						uid: staff.uid,
+						fullName: `${staff.name} ${staff.surname || ''}`.trim(),
+						email: staff.email,
+						avatar: staff.avatar || null,
+						organisationRef: staff.organisationRef,
+						branchName: staff.branch?.name,
+						branchUid: staff.branch?.uid,
+						hasTargets: !!staff.userTarget,
+						targets: staffTargetData,
+					};
+				});
+
+				response.managedStaff = staffWithTargets;
+				this.logger.debug(`Final managed staff response: ${JSON.stringify(staffWithTargets.map(s => ({ uid: s.uid, fullName: s.fullName, hasTargets: s.hasTargets })))}`);
+			} else {
+				this.logger.debug(`User ${userId} has no managed staff or managedStaff is empty`);
+			}
+
 			this.logger.debug(`Caching user target for user: ${userId}`);
-			await this.cacheManager.set(cacheKey, user.userTarget, this.CACHE_TTL);
+			await this.cacheManager.set(cacheKey, response, this.CACHE_TTL);
 
 			const executionTime = Date.now() - startTime;
 			this.logger.log(`User target retrieved from database for user: ${userId} in ${executionTime}ms`);
 
 			return {
-				userTarget: user.userTarget,
+				userTarget: response,
 				message: process.env.SUCCESS_MESSAGE,
 			};
 		} catch (error) {
@@ -2096,13 +2426,18 @@ export class UserService {
 	 * @param branchId - Optional branch ID for access control (null for org-wide access)
 	 * @returns Success message or error details
 	 */
-	async setUserTarget(userId: number, createUserTargetDto: CreateUserTargetDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
+	async setUserTarget(
+		userId: number,
+		createUserTargetDto: CreateUserTargetDto,
+		orgId?: number,
+		branchId?: number,
+	): Promise<{ message: string }> {
 		const startTime = Date.now();
 		this.logger.log(`Setting user target for user: ${userId}`);
 
 		try {
 			this.logger.debug(`Finding user ${userId} for target setting with access control`);
-			
+
 			// Build where conditions for access control
 			const whereConditions: any = {
 				uid: userId,
@@ -2201,60 +2536,60 @@ export class UserService {
 							'Real-time target tracking',
 							'Push notifications for achievements',
 							'Offline performance monitoring',
-							'Interactive progress charts'
-						]
+							'Interactive progress charts',
+						],
 					},
 				};
 
-							this.eventEmitter.emit('send.email', EmailType.USER_TARGET_SET, [user.email], emailData);
-			this.logger.log(`✅ [UserService] Target set email notification queued for user: ${userId}`);
-		} catch (emailError) {
-			this.logger.error(
-				`❌ [UserService] Failed to queue target set email for user ${userId}:`,
-				emailError.message,
-			);
-		}
+				this.eventEmitter.emit('send.email', EmailType.USER_TARGET_SET, [user.email], emailData);
+				this.logger.log(`✅ [UserService] Target set email notification queued for user: ${userId}`);
+			} catch (emailError) {
+				this.logger.error(
+					`❌ [UserService] Failed to queue target set email for user ${userId}:`,
+					emailError.message,
+				);
+			}
 
-		// Send push notification for target changes
-		try {
-			await this.unifiedNotificationService.sendTemplatedNotification(
-				NotificationEvent.USER_TARGET_SET,
-				[userId],
-				{
-					message: `New targets have been set for your performance period. Check your dashboard to view your goals and start tracking progress!`,
-					userName: `${user.name} ${user.surname}`.trim(),
-					targetSalesAmount: createUserTargetDto.targetSalesAmount,
-					targetQuotationsAmount: createUserTargetDto.targetQuotationsAmount,
-					targetNewLeads: createUserTargetDto.targetNewLeads,
-					targetNewClients: createUserTargetDto.targetNewClients,
-					targetCheckIns: createUserTargetDto.targetCheckIns,
-					targetCalls: createUserTargetDto.targetCalls,
-					periodStartDate: createUserTargetDto.periodStartDate
-						? new Date(createUserTargetDto.periodStartDate).toISOString().split('T')[0]
-						: undefined,
-					periodEndDate: createUserTargetDto.periodEndDate
-						? new Date(createUserTargetDto.periodEndDate).toISOString().split('T')[0]
-						: undefined,
-					timestamp: new Date().toISOString(),
-				},
-				{
-					priority: NotificationPriority.HIGH,
-				},
-			);
-			this.logger.debug(`Target set push notification sent to user: ${userId}`);
-		} catch (notificationError) {
-			this.logger.warn(
-				`Failed to send target set push notification to user ${userId}:`,
-				notificationError.message,
-			);
-		}
+			// Send push notification for target changes
+			try {
+				await this.unifiedNotificationService.sendTemplatedNotification(
+					NotificationEvent.USER_TARGET_SET,
+					[userId],
+					{
+						message: `New targets have been set for your performance period. Check your dashboard to view your goals and start tracking progress!`,
+						userName: `${user.name} ${user.surname}`.trim(),
+						targetSalesAmount: createUserTargetDto.targetSalesAmount,
+						targetQuotationsAmount: createUserTargetDto.targetQuotationsAmount,
+						targetNewLeads: createUserTargetDto.targetNewLeads,
+						targetNewClients: createUserTargetDto.targetNewClients,
+						targetCheckIns: createUserTargetDto.targetCheckIns,
+						targetCalls: createUserTargetDto.targetCalls,
+						periodStartDate: createUserTargetDto.periodStartDate
+							? new Date(createUserTargetDto.periodStartDate).toISOString().split('T')[0]
+							: undefined,
+						periodEndDate: createUserTargetDto.periodEndDate
+							? new Date(createUserTargetDto.periodEndDate).toISOString().split('T')[0]
+							: undefined,
+						timestamp: new Date().toISOString(),
+					},
+					{
+						priority: NotificationPriority.HIGH,
+					},
+				);
+				this.logger.debug(`Target set push notification sent to user: ${userId}`);
+			} catch (notificationError) {
+				this.logger.warn(
+					`Failed to send target set push notification to user ${userId}:`,
+					notificationError.message,
+				);
+			}
 
-		const executionTime = Date.now() - startTime;
-		this.logger.log(`User targets set successfully for user: ${userId} in ${executionTime}ms`);
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`User targets set successfully for user: ${userId} in ${executionTime}ms`);
 
-		return {
-			message: 'User targets set successfully',
-		};
+			return {
+				message: 'User targets set successfully',
+			};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
 			this.logger.error(
@@ -2273,14 +2608,19 @@ export class UserService {
 	 * @param updateUserTargetDto - Updated target data
 	 * @returns Success message or error details
 	 */
-	async updateUserTarget(userId: number, updateUserTargetDto: UpdateUserTargetDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
+	async updateUserTarget(
+		userId: number,
+		updateUserTargetDto: UpdateUserTargetDto,
+		orgId?: number,
+		branchId?: number,
+	): Promise<{ message: string }> {
 		const startTime = Date.now();
 		this.logger.log(`Updating user target for user: ${userId}`);
 		this.logger.debug(`Update DTO received:`, JSON.stringify(updateUserTargetDto, null, 2));
 
 		try {
 			this.logger.debug(`Finding user ${userId} for target update with access control`);
-			
+
 			// Build where conditions for access control
 			const whereConditions: any = {
 				uid: userId,
@@ -2316,7 +2656,7 @@ export class UserService {
 
 			// Only include defined values from the DTO
 			const filteredUpdateDto = Object.fromEntries(
-				Object.entries(updateUserTargetDto).filter(([_, value]) => value !== undefined && value !== null)
+				Object.entries(updateUserTargetDto).filter(([_, value]) => value !== undefined && value !== null),
 			);
 
 			this.logger.debug(`Filtered update data:`, JSON.stringify(filteredUpdateDto, null, 2));
@@ -2380,61 +2720,61 @@ export class UserService {
 							'Real-time target synchronization',
 							'Instant update notifications',
 							'Mobile-optimized progress tracking',
-							'Offline target viewing'
-						]
+							'Offline target viewing',
+						],
 					},
 				};
 
-							this.eventEmitter.emit('send.email', EmailType.USER_TARGET_UPDATED, [user.email], emailData);
-			this.logger.log(`✅ [UserService] Target updated email notification queued for user: ${userId}`);
-		} catch (emailError) {
-			this.logger.error(
-				`❌ [UserService] Failed to queue target updated email for user ${userId}:`,
-				emailError.message,
-			);
-		}
+				this.eventEmitter.emit('send.email', EmailType.USER_TARGET_UPDATED, [user.email], emailData);
+				this.logger.log(`✅ [UserService] Target updated email notification queued for user: ${userId}`);
+			} catch (emailError) {
+				this.logger.error(
+					`❌ [UserService] Failed to queue target updated email for user ${userId}:`,
+					emailError.message,
+				);
+			}
 
-		// Send push notification for target updates
-		try {
-			await this.unifiedNotificationService.sendTemplatedNotification(
-				NotificationEvent.USER_TARGET_UPDATED,
-				[userId],
-				{
-					message: `Your performance targets have been updated. Review the changes and adjust your strategy accordingly!`,
-					userName: `${user.name} ${user.surname}`.trim(),
-					targetSalesAmount: updateUserTargetDto.targetSalesAmount,
-					targetQuotationsAmount: updateUserTargetDto.targetQuotationsAmount,
-					targetNewLeads: updateUserTargetDto.targetNewLeads,
-					targetNewClients: updateUserTargetDto.targetNewClients,
-					targetCheckIns: updateUserTargetDto.targetCheckIns,
-					targetCalls: updateUserTargetDto.targetCalls,
-					periodStartDate: updateUserTargetDto.periodStartDate
-						? new Date(updateUserTargetDto.periodStartDate).toISOString().split('T')[0]
-						: undefined,
-					periodEndDate: updateUserTargetDto.periodEndDate
-						? new Date(updateUserTargetDto.periodEndDate).toISOString().split('T')[0]
-						: undefined,
-					updateDate: new Date().toISOString().split('T')[0],
-					timestamp: new Date().toISOString(),
-				},
-				{
-					priority: NotificationPriority.HIGH,
-				},
-			);
-			this.logger.debug(`Target update push notification sent to user: ${userId}`);
-		} catch (notificationError) {
-			this.logger.warn(
-				`Failed to send target update push notification to user ${userId}:`,
-				notificationError.message,
-			);
-		}
+			// Send push notification for target updates
+			try {
+				await this.unifiedNotificationService.sendTemplatedNotification(
+					NotificationEvent.USER_TARGET_UPDATED,
+					[userId],
+					{
+						message: `Your performance targets have been updated. Review the changes and adjust your strategy accordingly!`,
+						userName: `${user.name} ${user.surname}`.trim(),
+						targetSalesAmount: updateUserTargetDto.targetSalesAmount,
+						targetQuotationsAmount: updateUserTargetDto.targetQuotationsAmount,
+						targetNewLeads: updateUserTargetDto.targetNewLeads,
+						targetNewClients: updateUserTargetDto.targetNewClients,
+						targetCheckIns: updateUserTargetDto.targetCheckIns,
+						targetCalls: updateUserTargetDto.targetCalls,
+						periodStartDate: updateUserTargetDto.periodStartDate
+							? new Date(updateUserTargetDto.periodStartDate).toISOString().split('T')[0]
+							: undefined,
+						periodEndDate: updateUserTargetDto.periodEndDate
+							? new Date(updateUserTargetDto.periodEndDate).toISOString().split('T')[0]
+							: undefined,
+						updateDate: new Date().toISOString().split('T')[0],
+						timestamp: new Date().toISOString(),
+					},
+					{
+						priority: NotificationPriority.HIGH,
+					},
+				);
+				this.logger.debug(`Target update push notification sent to user: ${userId}`);
+			} catch (notificationError) {
+				this.logger.warn(
+					`Failed to send target update push notification to user ${userId}:`,
+					notificationError.message,
+				);
+			}
 
-		const executionTime = Date.now() - startTime;
-		this.logger.log(`User targets updated successfully for user: ${userId} in ${executionTime}ms`);
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`User targets updated successfully for user: ${userId} in ${executionTime}ms`);
 
-		return {
-			message: 'User targets updated successfully',
-		};
+			return {
+				message: 'User targets updated successfully',
+			};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
 			this.logger.error(
@@ -2460,7 +2800,7 @@ export class UserService {
 
 		try {
 			this.logger.debug(`Finding user ${userId} for target deletion with access control`);
-			
+
 			// Build where conditions for access control
 			const whereConditions: any = {
 				uid: userId,
@@ -2511,7 +2851,6 @@ export class UserService {
 					name: `${user.name} ${user.surname}`.trim(),
 					userName: `${user.name} ${user.surname}`.trim(),
 					userEmail: user.email,
-					userId: user.uid,
 					targetType: 'User Performance Target',
 					reason: 'Target period ended or administrative decision',
 					organizationName: user.organisation?.name || user.branch?.organisation?.name || 'Your Organization',
@@ -2644,8 +2983,11 @@ export class UserService {
 
 			if (newQuotationsAmount > 0) {
 				hasNewRecords = true;
-				incrementalUpdates.currentQuotationsAmount = (userTarget.currentQuotationsAmount || 0) + newQuotationsAmount;
-				this.logger.debug(`NEW quotations amount: ${newQuotationsAmount}, total will be: ${incrementalUpdates.currentQuotationsAmount} for user ${userId}`);
+				incrementalUpdates.currentQuotationsAmount =
+					(userTarget.currentQuotationsAmount || 0) + newQuotationsAmount;
+				this.logger.debug(
+					`NEW quotations amount: ${newQuotationsAmount}, total will be: ${incrementalUpdates.currentQuotationsAmount} for user ${userId}`,
+				);
 			}
 
 			// --- Calculate NEW completed orders since last calculation ---
@@ -2667,7 +3009,9 @@ export class UserService {
 			if (newOrdersAmount > 0) {
 				hasNewRecords = true;
 				incrementalUpdates.currentOrdersAmount = (userTarget.currentOrdersAmount || 0) + newOrdersAmount;
-				this.logger.debug(`NEW orders amount: ${newOrdersAmount}, total will be: ${incrementalUpdates.currentOrdersAmount} for user ${userId}`);
+				this.logger.debug(
+					`NEW orders amount: ${newOrdersAmount}, total will be: ${incrementalUpdates.currentOrdersAmount} for user ${userId}`,
+				);
 			}
 
 			// --- Calculate NEW leads since last calculation ---
@@ -2682,7 +3026,9 @@ export class UserService {
 			if (newLeadsCount > 0) {
 				hasNewRecords = true;
 				incrementalUpdates.currentNewLeads = (userTarget.currentNewLeads || 0) + newLeadsCount;
-				this.logger.debug(`NEW leads count: ${newLeadsCount}, total will be: ${incrementalUpdates.currentNewLeads} for user ${userId}`);
+				this.logger.debug(
+					`NEW leads count: ${newLeadsCount}, total will be: ${incrementalUpdates.currentNewLeads} for user ${userId}`,
+				);
 			}
 
 			// --- Calculate NEW clients since last calculation ---
@@ -2697,7 +3043,9 @@ export class UserService {
 			if (newClientsCount > 0) {
 				hasNewRecords = true;
 				incrementalUpdates.currentNewClients = (userTarget.currentNewClients || 0) + newClientsCount;
-				this.logger.debug(`NEW clients count: ${newClientsCount}, total will be: ${incrementalUpdates.currentNewClients} for user ${userId}`);
+				this.logger.debug(
+					`NEW clients count: ${newClientsCount}, total will be: ${incrementalUpdates.currentNewClients} for user ${userId}`,
+				);
 			}
 
 			// --- Calculate NEW check-ins since last calculation ---
@@ -2712,12 +3060,15 @@ export class UserService {
 			if (newCheckInsCount > 0) {
 				hasNewRecords = true;
 				incrementalUpdates.currentCheckIns = (userTarget.currentCheckIns || 0) + newCheckInsCount;
-				this.logger.debug(`NEW check-ins count: ${newCheckInsCount}, total will be: ${incrementalUpdates.currentCheckIns} for user ${userId}`);
+				this.logger.debug(
+					`NEW check-ins count: ${newCheckInsCount}, total will be: ${incrementalUpdates.currentCheckIns} for user ${userId}`,
+				);
 			}
 
 			// Check if we should skip the update
 			if (!hasNewRecords) {
-				const hasExistingValues = (userTarget.currentSalesAmount || 0) > 0 || 
+				const hasExistingValues =
+					(userTarget.currentSalesAmount || 0) > 0 ||
 					(userTarget.currentQuotationsAmount || 0) > 0 ||
 					(userTarget.currentOrdersAmount || 0) > 0 ||
 					(userTarget.currentNewLeads || 0) > 0 ||
@@ -2725,10 +3076,14 @@ export class UserService {
 					(userTarget.currentCheckIns || 0) > 0;
 
 				if (hasExistingValues) {
-					this.logger.debug(`No new records found for user ${userId} and existing values present - skipping update to preserve ERP/external values`);
+					this.logger.debug(
+						`No new records found for user ${userId} and existing values present - skipping update to preserve ERP/external values`,
+					);
 					return;
 				} else {
-					this.logger.debug(`No new records found for user ${userId} and no existing values - skipping update to prevent resetting targets to zero`);
+					this.logger.debug(
+						`No new records found for user ${userId} and no existing values - skipping update to prevent resetting targets to zero`,
+					);
 					return;
 				}
 			}
@@ -2743,7 +3098,9 @@ export class UserService {
 				const ordersAmount = this.safeParseNumber(userTarget.currentOrdersAmount);
 				userTarget.currentSalesAmount = quotationsAmount + ordersAmount;
 
-				this.logger.debug(`Updated sales amount calculated: ${userTarget.currentSalesAmount} for user ${userId}`);
+				this.logger.debug(
+					`Updated sales amount calculated: ${userTarget.currentSalesAmount} for user ${userId}`,
+				);
 			}
 
 			// Update the last calculation timestamp
@@ -2769,9 +3126,13 @@ export class UserService {
 
 			const executionTime = Date.now() - startTime;
 			if (hasNewRecords) {
-				this.logger.log(`User targets calculated successfully for user: ${userId} in ${executionTime}ms - incremental updates applied`);
+				this.logger.log(
+					`User targets calculated successfully for user: ${userId} in ${executionTime}ms - incremental updates applied`,
+				);
 			} else {
-				this.logger.log(`User targets calculation completed for user: ${userId} in ${executionTime}ms - no new records to process`);
+				this.logger.log(
+					`User targets calculation completed for user: ${userId} in ${executionTime}ms - no new records to process`,
+				);
 			}
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
@@ -3254,12 +3615,12 @@ export class UserService {
 		validationErrors?: string[];
 	}> {
 		const startTime = Date.now();
-		
+
 		// 🔧 Handle optional source field
 		const sourceSystem = externalUpdate.source || 'UNKNOWN_SOURCE';
-		
+
 		this.logger.log(`🔄 [ERP_UPDATE] Starting ERP target update for user: ${userId}, source: ${sourceSystem}`);
-		
+
 		// 📋 Log detailed incoming payload for debugging
 		this.logger.debug(`📥 [ERP_UPDATE] Incoming payload details:`, {
 			userId,
@@ -3270,54 +3631,73 @@ export class UserService {
 			branchId,
 			updates: externalUpdate.updates,
 			metadata: externalUpdate.metadata,
-			saleDetails: externalUpdate.saleDetails ? `${externalUpdate.saleDetails.length} sale details` : 'No sale details',
-			timestamp: new Date().toISOString()
+			saleDetails: externalUpdate.saleDetails
+				? `${externalUpdate.saleDetails.length} sale details`
+				: 'No sale details',
+			timestamp: new Date().toISOString(),
 		});
 
 		try {
 			// Validate external update data
-			this.logger.debug(`🔍 [ERP_UPDATE] Starting validation for user: ${userId}, transaction: ${externalUpdate.transactionId}`);
+			this.logger.debug(
+				`🔍 [ERP_UPDATE] Starting validation for user: ${userId}, transaction: ${externalUpdate.transactionId}`,
+			);
 			const validationResult = await this.validateExternalTargetUpdate(userId, externalUpdate, orgId, branchId);
-			
+
 			if (!validationResult.isValid) {
-				this.logger.error(`❌ [ERP_UPDATE] Validation failed for user: ${userId}, transaction: ${externalUpdate.transactionId}`, {
-					errors: validationResult.errors,
-					updateMode: externalUpdate.updateMode,
-					sourceSystem,
-					updates: externalUpdate.updates
-				});
+				this.logger.error(
+					`❌ [ERP_UPDATE] Validation failed for user: ${userId}, transaction: ${externalUpdate.transactionId}`,
+					{
+						errors: validationResult.errors,
+						updateMode: externalUpdate.updateMode,
+						sourceSystem,
+						updates: externalUpdate.updates,
+					},
+				);
 				return {
 					message: 'Validation failed',
 					validationErrors: validationResult.errors,
 				};
 			}
-			
-			this.logger.debug(`✅ [ERP_UPDATE] Validation passed for user: ${userId}, transaction: ${externalUpdate.transactionId}`);
+
+			this.logger.debug(
+				`✅ [ERP_UPDATE] Validation passed for user: ${userId}, transaction: ${externalUpdate.transactionId}`,
+			);
 
 			// Implement optimistic locking with retry mechanism
 			const maxRetries = 3;
 			let retryCount = 0;
 			let lastError: any;
-			
-			this.logger.debug(`🔄 [ERP_UPDATE] Starting retry mechanism (max ${maxRetries} attempts) for user: ${userId}, transaction: ${externalUpdate.transactionId}`);
+
+			this.logger.debug(
+				`🔄 [ERP_UPDATE] Starting retry mechanism (max ${maxRetries} attempts) for user: ${userId}, transaction: ${externalUpdate.transactionId}`,
+			);
 
 			while (retryCount < maxRetries) {
 				const attemptStartTime = Date.now();
-				this.logger.debug(`🎯 [ERP_UPDATE] Attempt ${retryCount + 1}/${maxRetries} for user: ${userId}, transaction: ${externalUpdate.transactionId}`);
-				
+				this.logger.debug(
+					`🎯 [ERP_UPDATE] Attempt ${retryCount + 1}/${maxRetries} for user: ${userId}, transaction: ${
+						externalUpdate.transactionId
+					}`,
+				);
+
 				try {
 					// Start transaction
-					this.logger.debug(`🔒 [ERP_UPDATE] Starting database transaction for user: ${userId}, attempt: ${retryCount + 1}`);
+					this.logger.debug(
+						`🔒 [ERP_UPDATE] Starting database transaction for user: ${userId}, attempt: ${retryCount + 1}`,
+					);
 					const result = await this.userRepository.manager.transaction(async (transactionalEntityManager) => {
 						// Get current user with target and version for optimistic locking
-						this.logger.debug(`🔍 [ERP_UPDATE] Querying user data with pessimistic lock for user: ${userId}`);
+						this.logger.debug(
+							`🔍 [ERP_UPDATE] Querying user data with pessimistic lock for user: ${userId}`,
+						);
 						const user = await transactionalEntityManager
 							.createQueryBuilder(User, 'user')
 							.leftJoin('user.userTarget', 'userTarget')
 							.addSelect([
 								'userTarget.uid',
 								'userTarget.targetSalesAmount',
-								'userTarget.currentSalesAmount', 
+								'userTarget.currentSalesAmount',
 								'userTarget.targetQuotationsAmount',
 								'userTarget.currentQuotationsAmount',
 								'userTarget.currentOrdersAmount',
@@ -3336,7 +3716,7 @@ export class UserService {
 								'userTarget.periodStartDate',
 								'userTarget.periodEndDate',
 								'userTarget.createdAt',
-								'userTarget.updatedAt'
+								'userTarget.updatedAt',
 							])
 							.leftJoinAndSelect('user.organisation', 'organisation')
 							.leftJoinAndSelect('user.branch', 'branch')
@@ -3348,12 +3728,16 @@ export class UserService {
 							.getOne();
 
 						if (!user) {
-							this.logger.error(`❌ [ERP_UPDATE] User not found or access denied - User: ${userId}, OrgId: ${orgId}, BranchId: ${branchId}, Transaction: ${externalUpdate.transactionId}`);
+							this.logger.error(
+								`❌ [ERP_UPDATE] User not found or access denied - User: ${userId}, OrgId: ${orgId}, BranchId: ${branchId}, Transaction: ${externalUpdate.transactionId}`,
+							);
 							throw new NotFoundException(`User ${userId} not found or access denied`);
 						}
 
 						if (!user.userTarget) {
-							this.logger.error(`❌ [ERP_UPDATE] No targets found for user: ${userId}, Transaction: ${externalUpdate.transactionId}`);
+							this.logger.error(
+								`❌ [ERP_UPDATE] No targets found for user: ${userId}, Transaction: ${externalUpdate.transactionId}`,
+							);
 							throw new NotFoundException(`No targets found for user ${userId}`);
 						}
 
@@ -3367,18 +3751,25 @@ export class UserService {
 							currentCheckIns: user.userTarget.currentCheckIns,
 							currentHoursWorked: user.userTarget.currentHoursWorked,
 							currentCalls: user.userTarget.currentCalls,
-							lastUpdated: user.userTarget.updatedAt
+							lastUpdated: user.userTarget.updatedAt,
 						});
 
 						// Calculate new values based on update mode
-						this.logger.debug(`🧮 [ERP_UPDATE] Calculating target updates for user: ${userId}, mode: ${externalUpdate.updateMode}`);
+						this.logger.debug(
+							`🧮 [ERP_UPDATE] Calculating target updates for user: ${userId}, mode: ${externalUpdate.updateMode}`,
+						);
 						const updatedTarget = this.calculateTargetUpdates(user.userTarget, externalUpdate);
-						
+
 						// Log calculated updates
-						this.logger.debug(`📈 [ERP_UPDATE] Calculated target updates for user: ${userId}`, updatedTarget);
+						this.logger.debug(
+							`📈 [ERP_UPDATE] Calculated target updates for user: ${userId}`,
+							updatedTarget,
+						);
 
 						// Update target with new values
-						this.logger.debug(`💾 [ERP_UPDATE] Updating UserTarget in database for user: ${userId}, target UID: ${user.userTarget.uid}`);
+						this.logger.debug(
+							`💾 [ERP_UPDATE] Updating UserTarget in database for user: ${userId}, target UID: ${user.userTarget.uid}`,
+						);
 						await transactionalEntityManager.update(
 							UserTarget,
 							{ uid: user.userTarget.uid },
@@ -3390,7 +3781,9 @@ export class UserService {
 						this.logger.debug(`✅ [ERP_UPDATE] UserTarget updated successfully for user: ${userId}`);
 
 						// Create audit trail
-						this.logger.debug(`📝 [ERP_UPDATE] Creating audit trail for user: ${userId}, transaction: ${externalUpdate.transactionId}`);
+						this.logger.debug(
+							`📝 [ERP_UPDATE] Creating audit trail for user: ${userId}, transaction: ${externalUpdate.transactionId}`,
+						);
 						await this.createTargetUpdateAuditLog(
 							transactionalEntityManager,
 							userId,
@@ -3418,11 +3811,15 @@ export class UserService {
 						await this.cacheManager.del(this.getCacheKey(`target_${userId}`));
 						this.logger.debug(`✅ [ERP_UPDATE] Cache invalidated for user: ${userId}`);
 					} else {
-						this.logger.warn(`⚠️ [ERP_UPDATE] Updated user not found for cache invalidation, user: ${userId}`);
+						this.logger.warn(
+							`⚠️ [ERP_UPDATE] Updated user not found for cache invalidation, user: ${userId}`,
+						);
 					}
 
 					// Emit success event
-					this.logger.debug(`📡 [ERP_UPDATE] Emitting success event for user: ${userId}, transaction: ${externalUpdate.transactionId}`);
+					this.logger.debug(
+						`📡 [ERP_UPDATE] Emitting success event for user: ${userId}, transaction: ${externalUpdate.transactionId}`,
+					);
 					this.eventEmitter.emit('user.target.external.update.completed', {
 						userId,
 						source: sourceSystem,
@@ -3431,14 +3828,14 @@ export class UserService {
 					});
 
 					// Send contribution progress notification if there are increases
-					this.logger.debug(`📧 [ERP_UPDATE] Attempting to send contribution progress notification for user: ${userId}`);
+					this.logger.debug(
+						`📧 [ERP_UPDATE] Attempting to send contribution progress notification for user: ${userId}`,
+					);
 					try {
-						await this.sendContributionProgressNotification(
-							userId,
-							externalUpdate,
-							result,
+						await this.sendContributionProgressNotification(userId, externalUpdate, result);
+						this.logger.debug(
+							`✅ [ERP_UPDATE] Contribution progress notification sent for user: ${userId}`,
 						);
-						this.logger.debug(`✅ [ERP_UPDATE] Contribution progress notification sent for user: ${userId}`);
 					} catch (notificationError) {
 						this.logger.warn(
 							`⚠️ [ERP_UPDATE] Failed to send contribution progress notification for user ${userId}: ${notificationError.message}`,
@@ -3449,11 +3846,7 @@ export class UserService {
 					// Send push notification for target update
 					this.logger.debug(`📱 [ERP_UPDATE] Attempting to send push notification for user: ${userId}`);
 					try {
-						await this.sendTargetUpdatePushNotification(
-							userId,
-							externalUpdate,
-							result,
-						);
+						await this.sendTargetUpdatePushNotification(userId, externalUpdate, result);
 						this.logger.debug(`✅ [ERP_UPDATE] Push notification sent for user: ${userId}`);
 					} catch (pushNotificationError) {
 						this.logger.warn(
@@ -3469,14 +3862,14 @@ export class UserService {
 							retryCount + 1
 						}/${maxRetries}, attempt time: ${attemptTime}ms)`,
 					);
-					
+
 					this.logger.debug(`📊 [ERP_UPDATE] Final response for user: ${userId}`, {
 						success: true,
 						totalExecutionTime: totalTime,
 						attemptTime,
 						attemptNumber: retryCount + 1,
 						updatedValues: result,
-						transaction: externalUpdate.transactionId
+						transaction: externalUpdate.transactionId,
 					});
 
 					return {
@@ -3488,15 +3881,18 @@ export class UserService {
 					retryCount++;
 					const attemptTime = Date.now() - attemptStartTime;
 
-					this.logger.error(`❌ [ERP_UPDATE] Attempt ${retryCount}/${maxRetries} failed for user: ${userId}, transaction: ${externalUpdate.transactionId}`, {
-						error: error.message,
-						errorCode: error.code,
-						errorType: error.constructor.name,
-						attemptTime,
-						userId,
-						transactionId: externalUpdate.transactionId,
-						stackTrace: error.stack
-					});
+					this.logger.error(
+						`❌ [ERP_UPDATE] Attempt ${retryCount}/${maxRetries} failed for user: ${userId}, transaction: ${externalUpdate.transactionId}`,
+						{
+							error: error.message,
+							errorCode: error.code,
+							errorType: error.constructor.name,
+							attemptTime,
+							userId,
+							transactionId: externalUpdate.transactionId,
+							stackTrace: error.stack,
+						},
+					);
 
 					if (error.code === 'ER_LOCK_WAIT_TIMEOUT' || error.message.includes('concurrent')) {
 						this.logger.warn(
@@ -3505,25 +3901,32 @@ export class UserService {
 								errorCode: error.code,
 								retryCount,
 								maxRetries,
-								nextBackoffTime: `${Math.pow(2, retryCount) * 100}ms`
-							}
+								nextBackoffTime: `${Math.pow(2, retryCount) * 100}ms`,
+							},
 						);
 
 						if (retryCount < maxRetries) {
 							// Exponential backoff
 							const backoffTime = Math.pow(2, retryCount) * 100;
-							this.logger.debug(`⏳ [ERP_UPDATE] Backing off for ${backoffTime}ms before retry ${retryCount + 1} for user: ${userId}`);
+							this.logger.debug(
+								`⏳ [ERP_UPDATE] Backing off for ${backoffTime}ms before retry ${
+									retryCount + 1
+								} for user: ${userId}`,
+							);
 							await new Promise((resolve) => setTimeout(resolve, backoffTime));
 							continue;
 						}
 					} else {
 						// Non-recoverable error, don't retry
-						this.logger.error(`💥 [ERP_UPDATE] Non-retryable error for user ${userId}, aborting retries: ${error.message}`, {
-							errorType: error.constructor.name,
-							errorCode: error.code,
-							userId,
-							transactionId: externalUpdate.transactionId
-						});
+						this.logger.error(
+							`💥 [ERP_UPDATE] Non-retryable error for user ${userId}, aborting retries: ${error.message}`,
+							{
+								errorType: error.constructor.name,
+								errorCode: error.code,
+								userId,
+								transactionId: externalUpdate.transactionId,
+							},
+						);
 						break;
 					}
 				}
@@ -3541,12 +3944,14 @@ export class UserService {
 					transactionId: externalUpdate.transactionId,
 					lastError: lastError?.message,
 					lastErrorCode: lastError?.code,
-					lastErrorType: lastError?.constructor?.name
-				}
+					lastErrorType: lastError?.constructor?.name,
+				},
 			);
 
 			// Emit failure event
-			this.logger.debug(`📡 [ERP_UPDATE] Emitting failure event for user: ${userId}, transaction: ${externalUpdate.transactionId}`);
+			this.logger.debug(
+				`📡 [ERP_UPDATE] Emitting failure event for user: ${userId}, transaction: ${externalUpdate.transactionId}`,
+			);
 			this.eventEmitter.emit('user.target.external.update.failed', {
 				userId,
 				source: sourceSystem,
@@ -3556,11 +3961,14 @@ export class UserService {
 			});
 
 			if (lastError.code === 'ER_LOCK_WAIT_TIMEOUT' || lastError.message.includes('concurrent')) {
-				this.logger.warn(`⚠️ [ERP_UPDATE] Returning conflict response due to concurrent update for user: ${userId}`, {
-					transactionId: externalUpdate.transactionId,
-					retryCount,
-					error: lastError.message
-				});
+				this.logger.warn(
+					`⚠️ [ERP_UPDATE] Returning conflict response due to concurrent update for user: ${userId}`,
+					{
+						transactionId: externalUpdate.transactionId,
+						retryCount,
+						error: lastError.message,
+					},
+				);
 				return {
 					message: 'Concurrent update conflict detected',
 					conflictDetails: {
@@ -3574,22 +3982,25 @@ export class UserService {
 			this.logger.error(`💥 [ERP_UPDATE] Returning error response for user: ${userId}`, {
 				error: lastError?.message,
 				errorCode: lastError?.code,
-				transactionId: externalUpdate.transactionId
+				transactionId: externalUpdate.transactionId,
 			});
 			return {
 				message: lastError.message || 'Failed to update user targets from ERP',
 			};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
-			this.logger.error(`🚨 [ERP_UPDATE] OUTER CATCH - Unexpected error for user ${userId} after ${executionTime}ms: ${error.message}`, {
-				userId,
-				transactionId: externalUpdate.transactionId,
-				executionTime,
-				error: error.message,
-				errorCode: error.code,
-				errorType: error.constructor.name,
-				stackTrace: error.stack
-			});
+			this.logger.error(
+				`🚨 [ERP_UPDATE] OUTER CATCH - Unexpected error for user ${userId} after ${executionTime}ms: ${error.message}`,
+				{
+					userId,
+					transactionId: externalUpdate.transactionId,
+					executionTime,
+					error: error.message,
+					errorCode: error.code,
+					errorType: error.constructor.name,
+					stackTrace: error.stack,
+				},
+			);
 
 			return {
 				message: error.message || 'Failed to update user targets from ERP',
@@ -3605,25 +4016,30 @@ export class UserService {
 		currentTarget: UserTarget,
 		externalUpdate: ExternalTargetUpdateDto,
 	): Partial<UserTarget> {
-		this.logger.debug(`🧮 [ERP_CALCULATION] Starting calculation for mode: ${externalUpdate.updateMode}, transaction: ${externalUpdate.transactionId}`, {
-			currentValues: {
-				salesAmount: currentTarget.currentSalesAmount,
-				quotationsAmount: currentTarget.currentQuotationsAmount,
-				ordersAmount: currentTarget.currentOrdersAmount,
-				newLeads: currentTarget.currentNewLeads,
-				newClients: currentTarget.currentNewClients,
-				checkIns: currentTarget.currentCheckIns,
-				hoursWorked: currentTarget.currentHoursWorked,
-				calls: currentTarget.currentCalls
+		this.logger.debug(
+			`🧮 [ERP_CALCULATION] Starting calculation for mode: ${externalUpdate.updateMode}, transaction: ${externalUpdate.transactionId}`,
+			{
+				currentValues: {
+					salesAmount: currentTarget.currentSalesAmount,
+					quotationsAmount: currentTarget.currentQuotationsAmount,
+					ordersAmount: currentTarget.currentOrdersAmount,
+					newLeads: currentTarget.currentNewLeads,
+					newClients: currentTarget.currentNewClients,
+					checkIns: currentTarget.currentCheckIns,
+					hoursWorked: currentTarget.currentHoursWorked,
+					calls: currentTarget.currentCalls,
+				},
+				incomingUpdates: externalUpdate.updates,
 			},
-			incomingUpdates: externalUpdate.updates
-		});
-		
+		);
+
 		const updates: Partial<UserTarget> = {};
 
 		// Handle different update modes
 		if (externalUpdate.updateMode === TargetUpdateMode.INCREMENT) {
-			this.logger.debug(`📈 [ERP_CALCULATION] Processing INCREMENT mode for transaction: ${externalUpdate.transactionId}`);
+			this.logger.debug(
+				`📈 [ERP_CALCULATION] Processing INCREMENT mode for transaction: ${externalUpdate.transactionId}`,
+			);
 			// Add to current values
 			if (externalUpdate.updates.currentSalesAmount !== undefined) {
 				updates.currentSalesAmount =
@@ -3655,7 +4071,9 @@ export class UserService {
 				updates.currentCalls = (currentTarget.currentCalls || 0) + externalUpdate.updates.currentCalls;
 			}
 		} else if (externalUpdate.updateMode === TargetUpdateMode.DECREMENT) {
-			this.logger.debug(`📉 [ERP_CALCULATION] Processing DECREMENT mode for transaction: ${externalUpdate.transactionId}`);
+			this.logger.debug(
+				`📉 [ERP_CALCULATION] Processing DECREMENT mode for transaction: ${externalUpdate.transactionId}`,
+			);
 			// Subtract from current values (more explicit than using negative increments)
 			if (externalUpdate.updates.currentSalesAmount !== undefined) {
 				updates.currentSalesAmount =
@@ -3688,15 +4106,20 @@ export class UserService {
 			}
 		} else {
 			// REPLACE mode - set absolute values
-			this.logger.debug(`🔄 [ERP_CALCULATION] Processing REPLACE mode for transaction: ${externalUpdate.transactionId}`);
+			this.logger.debug(
+				`🔄 [ERP_CALCULATION] Processing REPLACE mode for transaction: ${externalUpdate.transactionId}`,
+			);
 			Object.assign(updates, externalUpdate.updates);
 		}
 
-		this.logger.debug(`✅ [ERP_CALCULATION] Calculation completed for transaction: ${externalUpdate.transactionId}`, {
-			mode: externalUpdate.updateMode,
-			calculatedUpdates: updates,
-			updatedFieldCount: Object.keys(updates).length
-		});
+		this.logger.debug(
+			`✅ [ERP_CALCULATION] Calculation completed for transaction: ${externalUpdate.transactionId}`,
+			{
+				mode: externalUpdate.updateMode,
+				calculatedUpdates: updates,
+				updatedFieldCount: Object.keys(updates).length,
+			},
+		);
 
 		return updates;
 	}
@@ -3711,13 +4134,16 @@ export class UserService {
 		orgId?: number,
 		branchId?: number,
 	): Promise<{ isValid: boolean; errors: string[] }> {
-		this.logger.debug(`🔍 [ERP_VALIDATION] Starting comprehensive validation for user: ${userId}, transaction: ${externalUpdate.transactionId}`, {
-			updateMode: externalUpdate.updateMode,
-			orgId,
-			branchId,
-			hasUpdates: !!externalUpdate.updates,
-			hasMetadata: !!externalUpdate.metadata
-		});
+		this.logger.debug(
+			`🔍 [ERP_VALIDATION] Starting comprehensive validation for user: ${userId}, transaction: ${externalUpdate.transactionId}`,
+			{
+				updateMode: externalUpdate.updateMode,
+				orgId,
+				branchId,
+				hasUpdates: !!externalUpdate.updates,
+				hasMetadata: !!externalUpdate.metadata,
+			},
+		);
 		const errors: string[] = [];
 
 		try {
@@ -3734,79 +4160,150 @@ export class UserService {
 			});
 
 			if (!user) {
-				this.logger.error(`❌ [ERP_VALIDATION] User not found or access denied - User: ${userId}, OrgId: ${orgId}, BranchId: ${branchId}, Transaction: ${externalUpdate.transactionId}`);
+				this.logger.error(
+					`❌ [ERP_VALIDATION] User not found or access denied - User: ${userId}, OrgId: ${orgId}, BranchId: ${branchId}, Transaction: ${externalUpdate.transactionId}`,
+				);
 				errors.push(`User ${userId} not found or access denied`);
 				return { isValid: false, errors };
 			}
-			
-			this.logger.debug(`✅ [ERP_VALIDATION] User found: ${userId}, Name: ${user.name} ${user.surname}, Email: ${user.email}`);
-			
+
+			this.logger.debug(
+				`✅ [ERP_VALIDATION] User found: ${userId}, Name: ${user.name} ${user.surname}, Email: ${user.email}`,
+			);
+
 			if (!user.userTarget) {
-				this.logger.error(`❌ [ERP_VALIDATION] No targets configured for user: ${userId}, Transaction: ${externalUpdate.transactionId}`);
+				this.logger.error(
+					`❌ [ERP_VALIDATION] No targets configured for user: ${userId}, Transaction: ${externalUpdate.transactionId}`,
+				);
 				errors.push(`No targets found for user ${userId}`);
 				return { isValid: false, errors };
 			}
-			
-			this.logger.debug(`✅ [ERP_VALIDATION] User targets found for user: ${userId}, Target UID: ${user.userTarget.uid}`);
+
+			this.logger.debug(
+				`✅ [ERP_VALIDATION] User targets found for user: ${userId}, Target UID: ${user.userTarget.uid}`,
+			);
 
 			// Validate update modes and values
-			this.logger.debug(`🔧 [ERP_VALIDATION] Validating update mode: ${externalUpdate.updateMode} for user: ${userId}`);
+			this.logger.debug(
+				`🔧 [ERP_VALIDATION] Validating update mode: ${externalUpdate.updateMode} for user: ${userId}`,
+			);
 			if (externalUpdate.updateMode === TargetUpdateMode.INCREMENT) {
-				this.logger.debug(`📈 [ERP_VALIDATION] Validating INCREMENT mode values for user: ${userId}`, externalUpdate.updates);
+				this.logger.debug(
+					`📈 [ERP_VALIDATION] Validating INCREMENT mode values for user: ${userId}`,
+					externalUpdate.updates,
+				);
 				// INCREMENT mode: Only accept positive values to add to current amounts
-				if (externalUpdate.updates.currentSalesAmount !== undefined && externalUpdate.updates.currentSalesAmount <= 0) {
-					this.logger.warn(`❌ [ERP_VALIDATION] Invalid INCREMENT sales amount: ${externalUpdate.updates.currentSalesAmount} for user: ${userId}`);
+				if (
+					externalUpdate.updates.currentSalesAmount !== undefined &&
+					externalUpdate.updates.currentSalesAmount <= 0
+				) {
+					this.logger.warn(
+						`❌ [ERP_VALIDATION] Invalid INCREMENT sales amount: ${externalUpdate.updates.currentSalesAmount} for user: ${userId}`,
+					);
 					errors.push('INCREMENT mode requires positive values (sales amount)');
 				}
-				if (externalUpdate.updates.currentQuotationsAmount !== undefined && externalUpdate.updates.currentQuotationsAmount <= 0) {
-					this.logger.warn(`❌ [ERP_VALIDATION] Invalid INCREMENT quotations amount: ${externalUpdate.updates.currentQuotationsAmount} for user: ${userId}`);
+				if (
+					externalUpdate.updates.currentQuotationsAmount !== undefined &&
+					externalUpdate.updates.currentQuotationsAmount <= 0
+				) {
+					this.logger.warn(
+						`❌ [ERP_VALIDATION] Invalid INCREMENT quotations amount: ${externalUpdate.updates.currentQuotationsAmount} for user: ${userId}`,
+					);
 					errors.push('INCREMENT mode requires positive values (quotations amount)');
 				}
-				if (externalUpdate.updates.currentOrdersAmount !== undefined && externalUpdate.updates.currentOrdersAmount <= 0) {
-					this.logger.warn(`❌ [ERP_VALIDATION] Invalid INCREMENT orders amount: ${externalUpdate.updates.currentOrdersAmount} for user: ${userId}`);
+				if (
+					externalUpdate.updates.currentOrdersAmount !== undefined &&
+					externalUpdate.updates.currentOrdersAmount <= 0
+				) {
+					this.logger.warn(
+						`❌ [ERP_VALIDATION] Invalid INCREMENT orders amount: ${externalUpdate.updates.currentOrdersAmount} for user: ${userId}`,
+					);
 					errors.push('INCREMENT mode requires positive values (orders amount)');
 				}
-				if (externalUpdate.updates.currentNewLeads !== undefined && externalUpdate.updates.currentNewLeads <= 0) {
-					this.logger.warn(`❌ [ERP_VALIDATION] Invalid INCREMENT new leads: ${externalUpdate.updates.currentNewLeads} for user: ${userId}`);
+				if (
+					externalUpdate.updates.currentNewLeads !== undefined &&
+					externalUpdate.updates.currentNewLeads <= 0
+				) {
+					this.logger.warn(
+						`❌ [ERP_VALIDATION] Invalid INCREMENT new leads: ${externalUpdate.updates.currentNewLeads} for user: ${userId}`,
+					);
 					errors.push('INCREMENT mode requires positive values (new leads)');
 				}
-				if (externalUpdate.updates.currentNewClients !== undefined && externalUpdate.updates.currentNewClients <= 0) {
-					this.logger.warn(`❌ [ERP_VALIDATION] Invalid INCREMENT new clients: ${externalUpdate.updates.currentNewClients} for user: ${userId}`);
+				if (
+					externalUpdate.updates.currentNewClients !== undefined &&
+					externalUpdate.updates.currentNewClients <= 0
+				) {
+					this.logger.warn(
+						`❌ [ERP_VALIDATION] Invalid INCREMENT new clients: ${externalUpdate.updates.currentNewClients} for user: ${userId}`,
+					);
 					errors.push('INCREMENT mode requires positive values (new clients)');
 				}
-				if (externalUpdate.updates.currentCheckIns !== undefined && externalUpdate.updates.currentCheckIns <= 0) {
-					this.logger.warn(`❌ [ERP_VALIDATION] Invalid INCREMENT check-ins: ${externalUpdate.updates.currentCheckIns} for user: ${userId}`);
+				if (
+					externalUpdate.updates.currentCheckIns !== undefined &&
+					externalUpdate.updates.currentCheckIns <= 0
+				) {
+					this.logger.warn(
+						`❌ [ERP_VALIDATION] Invalid INCREMENT check-ins: ${externalUpdate.updates.currentCheckIns} for user: ${userId}`,
+					);
 					errors.push('INCREMENT mode requires positive values (check-ins)');
 				}
-				if (externalUpdate.updates.currentHoursWorked !== undefined && externalUpdate.updates.currentHoursWorked <= 0) {
-					this.logger.warn(`❌ [ERP_VALIDATION] Invalid INCREMENT hours worked: ${externalUpdate.updates.currentHoursWorked} for user: ${userId}`);
+				if (
+					externalUpdate.updates.currentHoursWorked !== undefined &&
+					externalUpdate.updates.currentHoursWorked <= 0
+				) {
+					this.logger.warn(
+						`❌ [ERP_VALIDATION] Invalid INCREMENT hours worked: ${externalUpdate.updates.currentHoursWorked} for user: ${userId}`,
+					);
 					errors.push('INCREMENT mode requires positive values (hours worked)');
 				}
 				if (externalUpdate.updates.currentCalls !== undefined && externalUpdate.updates.currentCalls <= 0) {
-					this.logger.warn(`❌ [ERP_VALIDATION] Invalid INCREMENT calls: ${externalUpdate.updates.currentCalls} for user: ${userId}`);
+					this.logger.warn(
+						`❌ [ERP_VALIDATION] Invalid INCREMENT calls: ${externalUpdate.updates.currentCalls} for user: ${userId}`,
+					);
 					errors.push('INCREMENT mode requires positive values (calls)');
 				}
 			} else if (externalUpdate.updateMode === TargetUpdateMode.DECREMENT) {
 				// DECREMENT mode: Only accept positive values to subtract from current amounts
-				if (externalUpdate.updates.currentSalesAmount !== undefined && externalUpdate.updates.currentSalesAmount <= 0) {
+				if (
+					externalUpdate.updates.currentSalesAmount !== undefined &&
+					externalUpdate.updates.currentSalesAmount <= 0
+				) {
 					errors.push('DECREMENT mode requires positive values (sales amount)');
 				}
-				if (externalUpdate.updates.currentQuotationsAmount !== undefined && externalUpdate.updates.currentQuotationsAmount <= 0) {
+				if (
+					externalUpdate.updates.currentQuotationsAmount !== undefined &&
+					externalUpdate.updates.currentQuotationsAmount <= 0
+				) {
 					errors.push('DECREMENT mode requires positive values (quotations amount)');
 				}
-				if (externalUpdate.updates.currentOrdersAmount !== undefined && externalUpdate.updates.currentOrdersAmount <= 0) {
+				if (
+					externalUpdate.updates.currentOrdersAmount !== undefined &&
+					externalUpdate.updates.currentOrdersAmount <= 0
+				) {
 					errors.push('DECREMENT mode requires positive values (orders amount)');
 				}
-				if (externalUpdate.updates.currentNewLeads !== undefined && externalUpdate.updates.currentNewLeads <= 0) {
+				if (
+					externalUpdate.updates.currentNewLeads !== undefined &&
+					externalUpdate.updates.currentNewLeads <= 0
+				) {
 					errors.push('DECREMENT mode requires positive values (new leads)');
 				}
-				if (externalUpdate.updates.currentNewClients !== undefined && externalUpdate.updates.currentNewClients <= 0) {
+				if (
+					externalUpdate.updates.currentNewClients !== undefined &&
+					externalUpdate.updates.currentNewClients <= 0
+				) {
 					errors.push('DECREMENT mode requires positive values (new clients)');
 				}
-				if (externalUpdate.updates.currentCheckIns !== undefined && externalUpdate.updates.currentCheckIns <= 0) {
+				if (
+					externalUpdate.updates.currentCheckIns !== undefined &&
+					externalUpdate.updates.currentCheckIns <= 0
+				) {
 					errors.push('DECREMENT mode requires positive values (check-ins)');
 				}
-				if (externalUpdate.updates.currentHoursWorked !== undefined && externalUpdate.updates.currentHoursWorked <= 0) {
+				if (
+					externalUpdate.updates.currentHoursWorked !== undefined &&
+					externalUpdate.updates.currentHoursWorked <= 0
+				) {
 					errors.push('DECREMENT mode requires positive values (hours worked)');
 				}
 				if (externalUpdate.updates.currentCalls !== undefined && externalUpdate.updates.currentCalls <= 0) {
@@ -3815,80 +4312,138 @@ export class UserService {
 
 				// Validate that decrementing won't result in negative values
 				if (externalUpdate.updates.currentSalesAmount !== undefined) {
-					const finalAmount = (user.userTarget.currentSalesAmount || 0) - externalUpdate.updates.currentSalesAmount;
+					const finalAmount =
+						(user.userTarget.currentSalesAmount || 0) - externalUpdate.updates.currentSalesAmount;
 					if (finalAmount < 0) {
-						errors.push(`Sales amount would become negative (current: ${user.userTarget.currentSalesAmount || 0} - ${externalUpdate.updates.currentSalesAmount} = ${finalAmount})`);
+						errors.push(
+							`Sales amount would become negative (current: ${
+								user.userTarget.currentSalesAmount || 0
+							} - ${externalUpdate.updates.currentSalesAmount} = ${finalAmount})`,
+						);
 					}
 				}
 				if (externalUpdate.updates.currentQuotationsAmount !== undefined) {
-					const finalAmount = (user.userTarget.currentQuotationsAmount || 0) - externalUpdate.updates.currentQuotationsAmount;
+					const finalAmount =
+						(user.userTarget.currentQuotationsAmount || 0) - externalUpdate.updates.currentQuotationsAmount;
 					if (finalAmount < 0) {
-						errors.push(`Quotations amount would become negative (current: ${user.userTarget.currentQuotationsAmount || 0} - ${externalUpdate.updates.currentQuotationsAmount} = ${finalAmount})`);
+						errors.push(
+							`Quotations amount would become negative (current: ${
+								user.userTarget.currentQuotationsAmount || 0
+							} - ${externalUpdate.updates.currentQuotationsAmount} = ${finalAmount})`,
+						);
 					}
 				}
 				if (externalUpdate.updates.currentOrdersAmount !== undefined) {
-					const finalAmount = (user.userTarget.currentOrdersAmount || 0) - externalUpdate.updates.currentOrdersAmount;
+					const finalAmount =
+						(user.userTarget.currentOrdersAmount || 0) - externalUpdate.updates.currentOrdersAmount;
 					if (finalAmount < 0) {
-						errors.push(`Orders amount would become negative (current: ${user.userTarget.currentOrdersAmount || 0} - ${externalUpdate.updates.currentOrdersAmount} = ${finalAmount})`);
+						errors.push(
+							`Orders amount would become negative (current: ${
+								user.userTarget.currentOrdersAmount || 0
+							} - ${externalUpdate.updates.currentOrdersAmount} = ${finalAmount})`,
+						);
 					}
 				}
 				if (externalUpdate.updates.currentNewLeads !== undefined) {
 					const finalCount = (user.userTarget.currentNewLeads || 0) - externalUpdate.updates.currentNewLeads;
 					if (finalCount < 0) {
-						errors.push(`New leads count would become negative (current: ${user.userTarget.currentNewLeads || 0} - ${externalUpdate.updates.currentNewLeads} = ${finalCount})`);
+						errors.push(
+							`New leads count would become negative (current: ${
+								user.userTarget.currentNewLeads || 0
+							} - ${externalUpdate.updates.currentNewLeads} = ${finalCount})`,
+						);
 					}
 				}
 				if (externalUpdate.updates.currentNewClients !== undefined) {
-					const finalCount = (user.userTarget.currentNewClients || 0) - externalUpdate.updates.currentNewClients;
+					const finalCount =
+						(user.userTarget.currentNewClients || 0) - externalUpdate.updates.currentNewClients;
 					if (finalCount < 0) {
-						errors.push(`New clients count would become negative (current: ${user.userTarget.currentNewClients || 0} - ${externalUpdate.updates.currentNewClients} = ${finalCount})`);
+						errors.push(
+							`New clients count would become negative (current: ${
+								user.userTarget.currentNewClients || 0
+							} - ${externalUpdate.updates.currentNewClients} = ${finalCount})`,
+						);
 					}
 				}
 				if (externalUpdate.updates.currentCheckIns !== undefined) {
 					const finalCount = (user.userTarget.currentCheckIns || 0) - externalUpdate.updates.currentCheckIns;
 					if (finalCount < 0) {
-						errors.push(`Check-ins count would become negative (current: ${user.userTarget.currentCheckIns || 0} - ${externalUpdate.updates.currentCheckIns} = ${finalCount})`);
+						errors.push(
+							`Check-ins count would become negative (current: ${
+								user.userTarget.currentCheckIns || 0
+							} - ${externalUpdate.updates.currentCheckIns} = ${finalCount})`,
+						);
 					}
 				}
 				if (externalUpdate.updates.currentHoursWorked !== undefined) {
-					const finalHours = (user.userTarget.currentHoursWorked || 0) - externalUpdate.updates.currentHoursWorked;
+					const finalHours =
+						(user.userTarget.currentHoursWorked || 0) - externalUpdate.updates.currentHoursWorked;
 					if (finalHours < 0) {
-						errors.push(`Hours worked would become negative (current: ${user.userTarget.currentHoursWorked || 0} - ${externalUpdate.updates.currentHoursWorked} = ${finalHours})`);
+						errors.push(
+							`Hours worked would become negative (current: ${
+								user.userTarget.currentHoursWorked || 0
+							} - ${externalUpdate.updates.currentHoursWorked} = ${finalHours})`,
+						);
 					}
 				}
 				if (externalUpdate.updates.currentCalls !== undefined) {
 					const finalCalls = (user.userTarget.currentCalls || 0) - externalUpdate.updates.currentCalls;
 					if (finalCalls < 0) {
-						errors.push(`Calls count would become negative (current: ${user.userTarget.currentCalls || 0} - ${externalUpdate.updates.currentCalls} = ${finalCalls})`);
+						errors.push(
+							`Calls count would become negative (current: ${user.userTarget.currentCalls || 0} - ${
+								externalUpdate.updates.currentCalls
+							} = ${finalCalls})`,
+						);
 					}
 				}
 			} else {
 				// For REPLACE mode, validate the absolute values are not negative
-				if (externalUpdate.updates.currentSalesAmount !== undefined && externalUpdate.updates.currentSalesAmount < 0) {
+				if (
+					externalUpdate.updates.currentSalesAmount !== undefined &&
+					externalUpdate.updates.currentSalesAmount < 0
+				) {
 					errors.push('Sales amount cannot be negative in REPLACE mode');
 				}
 
-				if (externalUpdate.updates.currentQuotationsAmount !== undefined && externalUpdate.updates.currentQuotationsAmount < 0) {
+				if (
+					externalUpdate.updates.currentQuotationsAmount !== undefined &&
+					externalUpdate.updates.currentQuotationsAmount < 0
+				) {
 					errors.push('Quotations amount cannot be negative in REPLACE mode');
 				}
 
-				if (externalUpdate.updates.currentOrdersAmount !== undefined && externalUpdate.updates.currentOrdersAmount < 0) {
+				if (
+					externalUpdate.updates.currentOrdersAmount !== undefined &&
+					externalUpdate.updates.currentOrdersAmount < 0
+				) {
 					errors.push('Orders amount cannot be negative in REPLACE mode');
 				}
 
-				if (externalUpdate.updates.currentNewLeads !== undefined && externalUpdate.updates.currentNewLeads < 0) {
+				if (
+					externalUpdate.updates.currentNewLeads !== undefined &&
+					externalUpdate.updates.currentNewLeads < 0
+				) {
 					errors.push('New leads count cannot be negative in REPLACE mode');
 				}
 
-				if (externalUpdate.updates.currentNewClients !== undefined && externalUpdate.updates.currentNewClients < 0) {
+				if (
+					externalUpdate.updates.currentNewClients !== undefined &&
+					externalUpdate.updates.currentNewClients < 0
+				) {
 					errors.push('New clients count cannot be negative in REPLACE mode');
 				}
 
-				if (externalUpdate.updates.currentCheckIns !== undefined && externalUpdate.updates.currentCheckIns < 0) {
+				if (
+					externalUpdate.updates.currentCheckIns !== undefined &&
+					externalUpdate.updates.currentCheckIns < 0
+				) {
 					errors.push('Check-ins count cannot be negative in REPLACE mode');
 				}
 
-				if (externalUpdate.updates.currentHoursWorked !== undefined && externalUpdate.updates.currentHoursWorked < 0) {
+				if (
+					externalUpdate.updates.currentHoursWorked !== undefined &&
+					externalUpdate.updates.currentHoursWorked < 0
+				) {
 					errors.push('Hours worked cannot be negative in REPLACE mode');
 				}
 
@@ -3903,7 +4458,9 @@ export class UserService {
 				this.logger.warn(`❌ [ERP_VALIDATION] Missing transaction ID for user: ${userId}`);
 				errors.push('Transaction ID is required for idempotency');
 			} else {
-				this.logger.debug(`✅ [ERP_VALIDATION] Transaction ID valid: ${externalUpdate.transactionId} for user: ${userId}`);
+				this.logger.debug(
+					`✅ [ERP_VALIDATION] Transaction ID valid: ${externalUpdate.transactionId} for user: ${userId}`,
+				);
 			}
 
 			// Validate source system
@@ -3911,13 +4468,18 @@ export class UserService {
 			this.logger.debug(`✅ [ERP_VALIDATION] Source field validation skipped (optional) for user: ${userId}`);
 
 			const isValid = errors.length === 0;
-			this.logger.log(`${isValid ? '✅' : '❌'} [ERP_VALIDATION] Validation ${isValid ? 'PASSED' : 'FAILED'} for user: ${userId}, transaction: ${externalUpdate.transactionId}`, {
-				isValid,
-				errorCount: errors.length,
-				errors: errors.length > 0 ? errors : undefined,
-				updateMode: externalUpdate.updateMode,
-				source: externalUpdate.source || 'UNKNOWN_SOURCE'
-			});
+			this.logger.log(
+				`${isValid ? '✅' : '❌'} [ERP_VALIDATION] Validation ${
+					isValid ? 'PASSED' : 'FAILED'
+				} for user: ${userId}, transaction: ${externalUpdate.transactionId}`,
+				{
+					isValid,
+					errorCount: errors.length,
+					errors: errors.length > 0 ? errors : undefined,
+					updateMode: externalUpdate.updateMode,
+					source: externalUpdate.source || 'UNKNOWN_SOURCE',
+				},
+			);
 
 			return {
 				isValid,
@@ -3929,7 +4491,7 @@ export class UserService {
 				errorType: error.constructor.name,
 				userId,
 				transactionId: externalUpdate.transactionId,
-				stackTrace: error.stack
+				stackTrace: error.stack,
 			});
 			errors.push('Error validating update data');
 			return {
@@ -3952,19 +4514,36 @@ export class UserService {
 		afterValues: Partial<UserTarget>,
 	): Promise<void> {
 		const auditStartTime = Date.now();
-		this.logger.debug(`📝 [ERP_AUDIT] Starting audit log creation for user: ${userId}, transaction: ${transactionId}`);
-		
+		this.logger.debug(
+			`📝 [ERP_AUDIT] Starting audit log creation for user: ${userId}, transaction: ${transactionId}`,
+		);
+
 		try {
 			// Calculate deltas for better audit tracking
 			const deltas = {
-				salesAmountDelta: (afterValues.currentSalesAmount ?? beforeValues.currentSalesAmount ?? 0) - (beforeValues.currentSalesAmount ?? 0),
-				quotationsAmountDelta: (afterValues.currentQuotationsAmount ?? beforeValues.currentQuotationsAmount ?? 0) - (beforeValues.currentQuotationsAmount ?? 0),
-				ordersAmountDelta: (afterValues.currentOrdersAmount ?? beforeValues.currentOrdersAmount ?? 0) - (beforeValues.currentOrdersAmount ?? 0),
-				newLeadsDelta: (afterValues.currentNewLeads ?? beforeValues.currentNewLeads ?? 0) - (beforeValues.currentNewLeads ?? 0),
-				newClientsDelta: (afterValues.currentNewClients ?? beforeValues.currentNewClients ?? 0) - (beforeValues.currentNewClients ?? 0),
-				checkInsDelta: (afterValues.currentCheckIns ?? beforeValues.currentCheckIns ?? 0) - (beforeValues.currentCheckIns ?? 0),
-				hoursWorkedDelta: (afterValues.currentHoursWorked ?? beforeValues.currentHoursWorked ?? 0) - (beforeValues.currentHoursWorked ?? 0),
-				callsDelta: (afterValues.currentCalls ?? beforeValues.currentCalls ?? 0) - (beforeValues.currentCalls ?? 0),
+				salesAmountDelta:
+					(afterValues.currentSalesAmount ?? beforeValues.currentSalesAmount ?? 0) -
+					(beforeValues.currentSalesAmount ?? 0),
+				quotationsAmountDelta:
+					(afterValues.currentQuotationsAmount ?? beforeValues.currentQuotationsAmount ?? 0) -
+					(beforeValues.currentQuotationsAmount ?? 0),
+				ordersAmountDelta:
+					(afterValues.currentOrdersAmount ?? beforeValues.currentOrdersAmount ?? 0) -
+					(beforeValues.currentOrdersAmount ?? 0),
+				newLeadsDelta:
+					(afterValues.currentNewLeads ?? beforeValues.currentNewLeads ?? 0) -
+					(beforeValues.currentNewLeads ?? 0),
+				newClientsDelta:
+					(afterValues.currentNewClients ?? beforeValues.currentNewClients ?? 0) -
+					(beforeValues.currentNewClients ?? 0),
+				checkInsDelta:
+					(afterValues.currentCheckIns ?? beforeValues.currentCheckIns ?? 0) -
+					(beforeValues.currentCheckIns ?? 0),
+				hoursWorkedDelta:
+					(afterValues.currentHoursWorked ?? beforeValues.currentHoursWorked ?? 0) -
+					(beforeValues.currentHoursWorked ?? 0),
+				callsDelta:
+					(afterValues.currentCalls ?? beforeValues.currentCalls ?? 0) - (beforeValues.currentCalls ?? 0),
 			};
 
 			// Enhanced audit trail with structured logging
@@ -3987,7 +4566,8 @@ export class UserService {
 					},
 					afterValues: {
 						currentSalesAmount: afterValues.currentSalesAmount ?? beforeValues.currentSalesAmount ?? 0,
-						currentQuotationsAmount: afterValues.currentQuotationsAmount ?? beforeValues.currentQuotationsAmount ?? 0,
+						currentQuotationsAmount:
+							afterValues.currentQuotationsAmount ?? beforeValues.currentQuotationsAmount ?? 0,
 						currentOrdersAmount: afterValues.currentOrdersAmount ?? beforeValues.currentOrdersAmount ?? 0,
 						currentNewLeads: afterValues.currentNewLeads ?? beforeValues.currentNewLeads ?? 0,
 						currentNewClients: afterValues.currentNewClients ?? beforeValues.currentNewClients ?? 0,
@@ -3996,35 +4576,43 @@ export class UserService {
 						currentCalls: afterValues.currentCalls ?? beforeValues.currentCalls ?? 0,
 					},
 					deltas,
-					hasSignificantChanges: Object.values(deltas).some(delta => Math.abs(delta) > 0),
+					hasSignificantChanges: Object.values(deltas).some((delta) => Math.abs(delta) > 0),
 					totalValueImpact: deltas.salesAmountDelta + deltas.quotationsAmountDelta + deltas.ordersAmountDelta,
-					auditCreationTime: Date.now() - auditStartTime
-				}
+					auditCreationTime: Date.now() - auditStartTime,
+				},
 			);
 
 			// Log summary of changes for quick analysis
-			const changedFields = Object.keys(afterValues).filter(key => 
-				afterValues[key] !== undefined && afterValues[key] !== beforeValues[key]
+			const changedFields = Object.keys(afterValues).filter(
+				(key) => afterValues[key] !== undefined && afterValues[key] !== beforeValues[key],
 			);
-			
+
 			if (changedFields.length > 0) {
-				this.logger.log(`📊 [ERP_AUDIT] Summary: ${changedFields.length} fields updated for user ${userId} from ${source}: ${changedFields.join(', ')}`);
+				this.logger.log(
+					`📊 [ERP_AUDIT] Summary: ${
+						changedFields.length
+					} fields updated for user ${userId} from ${source}: ${changedFields.join(', ')}`,
+				);
 			}
 
 			const auditTime = Date.now() - auditStartTime;
-			this.logger.debug(`✅ [ERP_AUDIT] Audit log creation completed for user: ${userId}, transaction: ${transactionId} in ${auditTime}ms`);
-			
+			this.logger.debug(
+				`✅ [ERP_AUDIT] Audit log creation completed for user: ${userId}, transaction: ${transactionId} in ${auditTime}ms`,
+			);
 		} catch (error) {
 			const auditTime = Date.now() - auditStartTime;
-			this.logger.error(`❌ [ERP_AUDIT] Error creating target update audit log for user ${userId}, transaction ${transactionId}:`, {
-				error: error.message,
-				errorType: error.constructor.name,
-				userId,
-				source,
-				transactionId,
-				auditTime,
-				stackTrace: error.stack
-			});
+			this.logger.error(
+				`❌ [ERP_AUDIT] Error creating target update audit log for user ${userId}, transaction ${transactionId}:`,
+				{
+					error: error.message,
+					errorType: error.constructor.name,
+					userId,
+					source,
+					transactionId,
+					auditTime,
+					stackTrace: error.stack,
+				},
+			);
 			// Don't throw error as this shouldn't fail the main operation
 		}
 	}
@@ -4082,8 +4670,8 @@ export class UserService {
 						'Real-time achievement notifications',
 						'Interactive progress visualization',
 						'Offline achievement tracking',
-						'Mobile-optimized celebration features'
-					]
+						'Mobile-optimized celebration features',
+					],
 				},
 			};
 
@@ -4106,9 +4694,14 @@ export class UserService {
 						priority: NotificationPriority.HIGH,
 					},
 				);
-				this.logger.log(`Target achievement email & push notification sent to user ${userId} for ${targetType} target`);
+				this.logger.log(
+					`Target achievement email & push notification sent to user ${userId} for ${targetType} target`,
+				);
 			} catch (notificationError) {
-				this.logger.warn(`Failed to send target achievement push notification to user ${userId}:`, notificationError.message);
+				this.logger.warn(
+					`Failed to send target achievement push notification to user ${userId}:`,
+					notificationError.message,
+				);
 				this.logger.log(`Target achievement email sent to user ${userId} for ${targetType} target`);
 			}
 		} catch (error) {
@@ -4173,53 +4766,55 @@ export class UserService {
 						'Real-time milestone notifications',
 						'Interactive progress tracking',
 						'Mobile milestone celebrations',
-						'Offline progress monitoring'
-					]
+						'Offline progress monitoring',
+					],
 				},
 			};
 
-					this.eventEmitter.emit('send.email', EmailType.USER_TARGET_MILESTONE, [user.email], emailData);
+			this.eventEmitter.emit('send.email', EmailType.USER_TARGET_MILESTONE, [user.email], emailData);
 
-		// Send push notification for milestone achievement
-		try {
-			const milestoneMessage = milestoneData.milestonePercentage >= 100 
-				? `🎉 Congratulations! You've achieved your ${targetType} target (${milestoneData.currentValue}/${milestoneData.targetValue})! Excellent work!`
-				: `🎯 Great progress! You've reached ${milestoneData.milestonePercentage}% of your ${targetType} target (${milestoneData.currentValue}/${milestoneData.targetValue}). Keep it up!`;
+			// Send push notification for milestone achievement
+			try {
+				const milestoneMessage =
+					milestoneData.milestonePercentage >= 100
+						? `🎉 Congratulations! You've achieved your ${targetType} target (${milestoneData.currentValue}/${milestoneData.targetValue})! Excellent work!`
+						: `🎯 Great progress! You've reached ${milestoneData.milestonePercentage}% of your ${targetType} target (${milestoneData.currentValue}/${milestoneData.targetValue}). Keep it up!`;
 
-			await this.unifiedNotificationService.sendTemplatedNotification(
-				NotificationEvent.USER_TARGET_MILESTONE,
-				[userId],
-				{
-					message: milestoneMessage,
-					userName: `${user.name} ${user.surname}`.trim(),
-					targetType,
-					milestonePercentage: milestoneData.milestonePercentage,
-					currentValue: milestoneData.currentValue,
-					targetValue: milestoneData.targetValue,
-					remainingValue: milestoneData.remainingValue,
-					milestoneName: milestoneData.milestoneName,
-					periodStartDate: milestoneData.periodStartDate,
-					periodEndDate: milestoneData.periodEndDate,
-					daysRemaining: milestoneData.daysRemaining,
-					encouragementMessage: milestoneData.encouragementMessage,
-					isFullAchievement: milestoneData.milestonePercentage >= 100,
-					timestamp: new Date().toISOString(),
-				},
-				{
-					priority: milestoneData.milestonePercentage >= 100 
-						? NotificationPriority.HIGH 
-						: NotificationPriority.NORMAL,
-				},
-			);
-			this.logger.debug(`Target milestone push notification sent to user: ${userId} for ${targetType}`);
-		} catch (notificationError) {
-			this.logger.warn(
-				`Failed to send target milestone push notification to user ${userId}:`,
-				notificationError.message,
-			);
-		}
+				await this.unifiedNotificationService.sendTemplatedNotification(
+					NotificationEvent.USER_TARGET_MILESTONE,
+					[userId],
+					{
+						message: milestoneMessage,
+						userName: `${user.name} ${user.surname}`.trim(),
+						targetType,
+						milestonePercentage: milestoneData.milestonePercentage,
+						currentValue: milestoneData.currentValue,
+						targetValue: milestoneData.targetValue,
+						remainingValue: milestoneData.remainingValue,
+						milestoneName: milestoneData.milestoneName,
+						periodStartDate: milestoneData.periodStartDate,
+						periodEndDate: milestoneData.periodEndDate,
+						daysRemaining: milestoneData.daysRemaining,
+						encouragementMessage: milestoneData.encouragementMessage,
+						isFullAchievement: milestoneData.milestonePercentage >= 100,
+						timestamp: new Date().toISOString(),
+					},
+					{
+						priority:
+							milestoneData.milestonePercentage >= 100
+								? NotificationPriority.HIGH
+								: NotificationPriority.NORMAL,
+					},
+				);
+				this.logger.debug(`Target milestone push notification sent to user: ${userId} for ${targetType}`);
+			} catch (notificationError) {
+				this.logger.warn(
+					`Failed to send target milestone push notification to user ${userId}:`,
+					notificationError.message,
+				);
+			}
 
-		this.logger.log(`Target milestone email sent to user ${userId} for ${targetType} milestone`);
+			this.logger.log(`Target milestone email sent to user ${userId} for ${targetType} milestone`);
 		} catch (error) {
 			this.logger.error(`Error sending target milestone email to user ${userId}:`, error.message);
 		}
@@ -4496,27 +5091,33 @@ export class UserService {
 		updatedValues: Partial<UserTarget>,
 	): Promise<void> {
 		const notificationStartTime = Date.now();
-		this.logger.debug(`📱 [ERP_NOTIFICATION] Starting push notification for user: ${userId}, transaction: ${externalUpdate.transactionId}`);
-		
+		this.logger.debug(
+			`📱 [ERP_NOTIFICATION] Starting push notification for user: ${userId}, transaction: ${externalUpdate.transactionId}`,
+		);
+
 		try {
 			// Get user details with timeout
 			this.logger.debug(`👤 [ERP_NOTIFICATION] Fetching user details for push notification user: ${userId}`);
 			const user = await Promise.race([
 				this.userRepository.findOne({
-				where: { uid: userId },
-				relations: ['userTarget', 'organisation', 'branch'],
+					where: { uid: userId },
+					relations: ['userTarget', 'organisation', 'branch'],
 				}),
 				new Promise<never>((_, reject) =>
-					setTimeout(() => reject(new Error('User query timeout for push notification')), 3000)
-				)
+					setTimeout(() => reject(new Error('User query timeout for push notification')), 3000),
+				),
 			]);
 
 			if (!user) {
-				this.logger.warn(`⚠️ [ERP_NOTIFICATION] User ${userId} not found for target update push notification - transaction: ${externalUpdate.transactionId}`);
+				this.logger.warn(
+					`⚠️ [ERP_NOTIFICATION] User ${userId} not found for target update push notification - transaction: ${externalUpdate.transactionId}`,
+				);
 				return;
 			}
 
-			this.logger.debug(`✅ [ERP_NOTIFICATION] User found: ${user.name} ${user.surname} (${user.email}) for push notification`);
+			this.logger.debug(
+				`✅ [ERP_NOTIFICATION] User found: ${user.name} ${user.surname} (${user.email}) for push notification`,
+			);
 
 			// Determine notification message based on update mode
 			let title = '🎯 Target Update';
@@ -4526,7 +5127,9 @@ export class UserService {
 			switch (externalUpdate.updateMode) {
 				case 'INCREMENT':
 					title = '📈 Progress Update!';
-					message = `Your targets have been updated with new progress from ${externalUpdate.source || 'external system'}`;
+					message = `Your targets have been updated with new progress from ${
+						externalUpdate.source || 'external system'
+					}`;
 					priority = 'HIGH';
 					break;
 				case 'REPLACE':
@@ -4552,21 +5155,21 @@ export class UserService {
 				updateMode: externalUpdate.updateMode,
 				source: externalUpdate.source || 'external system',
 				transactionId: externalUpdate.transactionId,
-				updatedFieldsCount: Object.keys(updatedValues).length
+				updatedFieldsCount: Object.keys(updatedValues).length,
 			});
 
 			// Send push notification using unified notification service
 			const notificationPayload = {
-					sourceSystem: externalUpdate.source || 'external system',
-					updateMode: externalUpdate.updateMode,
-					transactionId: externalUpdate.transactionId,
-					updatedValues,
-					updateTime: new Date().toLocaleString(),
-					title,
-					message,
+				sourceSystem: externalUpdate.source || 'external system',
+				updateMode: externalUpdate.updateMode,
+				transactionId: externalUpdate.transactionId,
+				updatedValues,
+				updateTime: new Date().toLocaleString(),
+				title,
+				message,
 				userId,
 				organizationName: user.organisation?.name || 'Your Organization',
-				branchName: user.branch?.name || 'Your Branch'
+				branchName: user.branch?.name || 'Your Branch',
 			};
 
 			await this.unifiedNotificationService.sendTemplatedNotification(
@@ -4579,24 +5182,32 @@ export class UserService {
 			);
 
 			const notificationTime = Date.now() - notificationStartTime;
-			this.logger.log(`✅ [ERP_NOTIFICATION] Push notification sent successfully to user ${userId} for target update from ${externalUpdate.source || 'external system'} in ${notificationTime}ms`);
-			
+			this.logger.log(
+				`✅ [ERP_NOTIFICATION] Push notification sent successfully to user ${userId} for target update from ${
+					externalUpdate.source || 'external system'
+				} in ${notificationTime}ms`,
+			);
 		} catch (error) {
 			const notificationTime = Date.now() - notificationStartTime;
-			this.logger.error(`❌ [ERP_NOTIFICATION] Error sending target update push notification to user ${userId} after ${notificationTime}ms:`, {
-				error: error.message,
-				errorType: error.constructor.name,
-				userId,
-				transactionId: externalUpdate.transactionId,
-				source: externalUpdate.source || 'external system',
-				updateMode: externalUpdate.updateMode,
-				notificationTime,
-				stackTrace: error.stack
-			});
-			
+			this.logger.error(
+				`❌ [ERP_NOTIFICATION] Error sending target update push notification to user ${userId} after ${notificationTime}ms:`,
+				{
+					error: error.message,
+					errorType: error.constructor.name,
+					userId,
+					transactionId: externalUpdate.transactionId,
+					source: externalUpdate.source || 'external system',
+					updateMode: externalUpdate.updateMode,
+					notificationTime,
+					stackTrace: error.stack,
+				},
+			);
+
 			// Don't throw error as notification failure shouldn't fail the main ERP update
 			// Just log the failure for monitoring
-			this.logger.warn(`⚠️ [ERP_NOTIFICATION] Push notification failure will not affect ERP update success for user ${userId}, transaction ${externalUpdate.transactionId}`);
+			this.logger.warn(
+				`⚠️ [ERP_NOTIFICATION] Push notification failure will not affect ERP update success for user ${userId}, transaction ${externalUpdate.transactionId}`,
+			);
 		}
 	}
 
@@ -4612,34 +5223,44 @@ export class UserService {
 		updatedValues: Partial<UserTarget>,
 	): Promise<void> {
 		const contributionStartTime = Date.now();
-		this.logger.debug(`📧 [ERP_CONTRIBUTION] Starting contribution progress notification for user: ${userId}, transaction: ${externalUpdate.transactionId}`);
-		
+		this.logger.debug(
+			`📧 [ERP_CONTRIBUTION] Starting contribution progress notification for user: ${userId}, transaction: ${externalUpdate.transactionId}`,
+		);
+
 		try {
 			// Only send notifications for INCREMENT mode as these represent actual progress
 			if (externalUpdate.updateMode !== TargetUpdateMode.INCREMENT) {
-				this.logger.debug(`⏭️ [ERP_CONTRIBUTION] Skipping contribution progress notification for user ${userId} - update mode: ${externalUpdate.updateMode} (not INCREMENT)`);
+				this.logger.debug(
+					`⏭️ [ERP_CONTRIBUTION] Skipping contribution progress notification for user ${userId} - update mode: ${externalUpdate.updateMode} (not INCREMENT)`,
+				);
 				return;
 			}
 
-			this.logger.debug(`🔍 [ERP_CONTRIBUTION] Fetching user details for contribution notification user: ${userId}`);
-			
+			this.logger.debug(
+				`🔍 [ERP_CONTRIBUTION] Fetching user details for contribution notification user: ${userId}`,
+			);
+
 			// Get user details with timeout
 			const user = await Promise.race([
 				this.userRepository.findOne({
-				where: { uid: userId },
-				relations: ['userTarget', 'organisation', 'branch'],
+					where: { uid: userId },
+					relations: ['userTarget', 'organisation', 'branch'],
 				}),
 				new Promise<never>((_, reject) =>
-					setTimeout(() => reject(new Error('User query timeout for contribution notification')), 5000)
-				)
+					setTimeout(() => reject(new Error('User query timeout for contribution notification')), 5000),
+				),
 			]);
 
 			if (!user) {
-				this.logger.warn(`⚠️ [ERP_CONTRIBUTION] User ${userId} not found for contribution progress notification - transaction: ${externalUpdate.transactionId}`);
+				this.logger.warn(
+					`⚠️ [ERP_CONTRIBUTION] User ${userId} not found for contribution progress notification - transaction: ${externalUpdate.transactionId}`,
+				);
 				return;
 			}
 
-			this.logger.debug(`✅ [ERP_CONTRIBUTION] User found: ${user.name} ${user.surname} (${user.email}) for contribution notification`);
+			this.logger.debug(
+				`✅ [ERP_CONTRIBUTION] User found: ${user.name} ${user.surname} (${user.email}) for contribution notification`,
+			);
 
 			// Calculate contribution progress data
 			const contributionProgress = [];
@@ -4648,7 +5269,8 @@ export class UserService {
 
 			// Check sales amount progress
 			if (externalUpdate.updates.currentSalesAmount && externalUpdate.updates.currentSalesAmount > 0) {
-				const previousValue = (user.userTarget?.currentSalesAmount || 0) - externalUpdate.updates.currentSalesAmount;
+				const previousValue =
+					(user.userTarget?.currentSalesAmount || 0) - externalUpdate.updates.currentSalesAmount;
 				const newValue = user.userTarget?.currentSalesAmount || 0;
 				const targetValue = user.userTarget?.targetSalesAmount || 0;
 				const increase = externalUpdate.updates.currentSalesAmount;
@@ -4676,7 +5298,12 @@ export class UserService {
 
 			// Check other metrics (quotations, orders, leads, clients, etc.)
 			const metricsToCheck = [
-				{ key: 'currentQuotationsAmount', label: 'Quotations', target: 'targetQuotationsAmount', hasCurrency: true },
+				{
+					key: 'currentQuotationsAmount',
+					label: 'Quotations',
+					target: 'targetQuotationsAmount',
+					hasCurrency: true,
+				},
 				{ key: 'currentOrdersAmount', label: 'Orders', target: 'targetOrdersAmount', hasCurrency: true },
 				{ key: 'currentNewLeads', label: 'New Leads', target: 'targetNewLeads', hasCurrency: false },
 				{ key: 'currentNewClients', label: 'New Clients', target: 'targetNewClients', hasCurrency: false },
@@ -4731,18 +5358,18 @@ export class UserService {
 
 			// Generate motivational messages and tips
 			const motivationalMessages = [
-				"Fantastic progress! Your hard work is really paying off.",
+				'Fantastic progress! Your hard work is really paying off.',
 				"You're building great momentum with these results!",
 				"Excellent work! Keep this pace and you'll exceed your targets.",
-				"Your dedication is showing in these numbers - well done!",
+				'Your dedication is showing in these numbers - well done!',
 				"Outstanding progress! You're on track for great results.",
 			];
 
 			const encouragementTips = [
-				"📈 Keep tracking your daily activities to maintain this momentum",
-				"🎯 Focus on consistency - small daily improvements add up",
+				'📈 Keep tracking your daily activities to maintain this momentum',
+				'🎯 Focus on consistency - small daily improvements add up',
 				"💪 Your current pace suggests you'll reach your targets ahead of schedule",
-				"⭐ Share your success strategies with team members",
+				'⭐ Share your success strategies with team members',
 				"🚀 Consider setting stretch goals as you're performing so well",
 			];
 
@@ -4763,9 +5390,21 @@ export class UserService {
 				totalProgressImprovement,
 				organizationName: user.organisation?.name || 'Your Organization',
 				branchName: user.branch?.name,
-				periodStartDate: user.userTarget?.periodStartDate ? new Date(user.userTarget.periodStartDate).toISOString() : undefined,
-				periodEndDate: user.userTarget?.periodEndDate ? new Date(user.userTarget.periodEndDate).toISOString() : undefined,
-				daysRemaining: user.userTarget?.periodEndDate ? Math.max(0, Math.ceil((new Date(user.userTarget.periodEndDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))) : undefined,
+				periodStartDate: user.userTarget?.periodStartDate
+					? new Date(user.userTarget.periodStartDate).toISOString()
+					: undefined,
+				periodEndDate: user.userTarget?.periodEndDate
+					? new Date(user.userTarget.periodEndDate).toISOString()
+					: undefined,
+				daysRemaining: user.userTarget?.periodEndDate
+					? Math.max(
+							0,
+							Math.ceil(
+								(new Date(user.userTarget.periodEndDate).getTime() - new Date().getTime()) /
+									(1000 * 60 * 60 * 24),
+							),
+					  )
+					: undefined,
 				motivationalMessage: motivationalMessages[Math.floor(Math.random() * motivationalMessages.length)],
 				encouragementTips: encouragementTips.slice(0, 3), // Send 3 tips
 				performanceTrend,
@@ -4775,7 +5414,9 @@ export class UserService {
 
 			// Send email notification
 			this.eventEmitter.emit('send.email', EmailType.USER_TARGET_CONTRIBUTION_PROGRESS, [user.email], emailData);
-			this.logger.log(`✅ Contribution progress email queued for user: ${userId} (${totalProgressImprovement}% improvement)`);
+			this.logger.log(
+				`✅ Contribution progress email queued for user: ${userId} (${totalProgressImprovement}% improvement)`,
+			);
 
 			// Send push notification
 			try {
@@ -4794,27 +5435,33 @@ export class UserService {
 				);
 				this.logger.log(`✅ Contribution progress push notification sent to user: ${userId}`);
 			} catch (pushError) {
-				this.logger.warn(`Failed to send contribution progress push notification to user ${userId}: ${pushError.message}`);
+				this.logger.warn(
+					`Failed to send contribution progress push notification to user ${userId}: ${pushError.message}`,
+				);
 				// Don't fail the email if push notification fails
 			}
-
 		} catch (error) {
 			const contributionTime = Date.now() - contributionStartTime;
-			this.logger.error(`❌ [ERP_CONTRIBUTION] Error sending contribution progress notification to user ${userId} after ${contributionTime}ms:`, {
-				error: error.message,
-				errorType: error.constructor.name,
-				userId,
-				transactionId: externalUpdate.transactionId,
-				source: externalUpdate.source || 'EXTERNAL_SOURCE',
-				updateMode: externalUpdate.updateMode,
-				contributionTime,
-				stackTrace: error.stack,
-				updatedFieldsCount: Object.keys(updatedValues).length
-			});
-			
+			this.logger.error(
+				`❌ [ERP_CONTRIBUTION] Error sending contribution progress notification to user ${userId} after ${contributionTime}ms:`,
+				{
+					error: error.message,
+					errorType: error.constructor.name,
+					userId,
+					transactionId: externalUpdate.transactionId,
+					source: externalUpdate.source || 'EXTERNAL_SOURCE',
+					updateMode: externalUpdate.updateMode,
+					contributionTime,
+					stackTrace: error.stack,
+					updatedFieldsCount: Object.keys(updatedValues).length,
+				},
+			);
+
 			// Don't throw error as contribution notification failure shouldn't fail the main ERP update
 			// Just log the failure for monitoring
-			this.logger.warn(`⚠️ [ERP_CONTRIBUTION] Contribution progress notification failure will not affect ERP update success for user ${userId}, transaction ${externalUpdate.transactionId}`);
+			this.logger.warn(
+				`⚠️ [ERP_CONTRIBUTION] Contribution progress notification failure will not affect ERP update success for user ${userId}, transaction ${externalUpdate.transactionId}`,
+			);
 		}
 	}
 

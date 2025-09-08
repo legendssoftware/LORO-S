@@ -16,6 +16,7 @@ import { Quotation } from '../shop/entities/quotation.entity';
 import { Order } from '../shop/entities/order.entity';
 import { Client } from 'src/clients/entities/client.entity';
 import { Lead } from 'src/leads/entities/lead.entity';
+import { Branch } from '../branch/entities/branch.entity';
 
 @Module({
 	imports: [
@@ -29,6 +30,7 @@ import { Lead } from 'src/leads/entities/lead.entity';
 			Client,
 			CheckIn,
 			UserTarget,
+			Branch,
 		]),
 		OrganisationModule,
 		BranchModule,

@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between } from 'typeorm';
 import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, subDays } from 'date-fns';
+import { ReportUtils } from '../utils/report-utils';
 
 import { ReportParamsDto } from '../dto/report-params.dto';
 import { User } from '../../user/entities/user.entity';
@@ -35,29 +36,41 @@ export class OrgActivityReportGenerator {
 		private trackingService: TrackingService,
 	) {}
 
-	private calculateGrowth(current: number, previous: number): string {
-		if (previous === 0) {
-			return current > 0 ? '+100%' : '0%';
-		}
-		const growth = ((current - previous) / previous) * 100;
-		const sign = growth >= 0 ? '+' : '';
-		return `${sign}${Math.round(growth * 10) / 10}%`;
-	}
-
 	async generate(params: ReportParamsDto): Promise<Record<string, any>> {
 		const granularity = params.granularity || 'daily';
 
-		// Resolve date range
-		let startDate = params.dateRange?.start ? new Date(params.dateRange.start) : new Date();
-		let endDate = params.dateRange?.end ? new Date(params.dateRange.end) : new Date();
+		// Resolve date range based on report type
+		let startDate: Date;
+		let endDate: Date;
 
-		if (!params.dateRange) {
-			if (granularity === 'weekly') {
-				startDate = startOfWeek(new Date(), { weekStartsOn: 1 });
-				endDate = endOfWeek(new Date(), { weekStartsOn: 1 });
-			} else {
-				startDate = startOfDay(new Date());
-				endDate = endOfDay(new Date());
+		if (params.dateRange) {
+			startDate = new Date(params.dateRange.start);
+			endDate = new Date(params.dateRange.end);
+		} else {
+			const now = new Date();
+
+			switch (granularity) {
+				case 'daily':
+					startDate = startOfDay(now);
+					endDate = endOfDay(now);
+					break;
+				case 'weekly':
+					startDate = startOfWeek(now, { weekStartsOn: 1 });
+					endDate = endOfWeek(now, { weekStartsOn: 1 });
+					break;
+				case 'end-of-day':
+					// End of day report - previous day
+					startDate = startOfDay(subDays(now, 1));
+					endDate = endOfDay(subDays(now, 1));
+					break;
+				case 'end-of-week':
+					// End of week report - previous week
+					startDate = startOfWeek(subDays(now, 7), { weekStartsOn: 1 });
+					endDate = endOfWeek(subDays(now, 7), { weekStartsOn: 1 });
+					break;
+				default:
+					startDate = startOfDay(now);
+					endDate = endOfDay(now);
 			}
 		}
 
@@ -75,39 +88,20 @@ export class OrgActivityReportGenerator {
 				relations: ['organisation', 'branch'],
 			});
 
-			// Collect per-user aggregates in parallel
+			// Collect per-user aggregates in parallel using enhanced ReportUtils
 			const perUserData = await Promise.all(
 				users.map(async (user) => {
-					const [attendanceStats, checkIns, leadsNew, leadsConverted, quotations, claims] = await Promise.all(
-						[
-							this.collectAttendance(user.uid, startDate, endDate),
-							this.checkInRepository.find({
-								where: { owner: { uid: user.uid }, checkInTime: Between(startDate, endDate) },
-								relations: ['client'],
-							}),
-							this.leadRepository.find({
-								where: { ownerUid: user.uid, createdAt: Between(startDate, endDate) },
-							}),
-							this.leadRepository.find({
-								where: {
-									ownerUid: user.uid,
-									status: LeadStatus.CONVERTED,
-									updatedAt: Between(startDate, endDate),
-								},
-							}),
-							this.quotationRepository.find({
-								where: { placedBy: { uid: user.uid }, createdAt: Between(startDate, endDate) },
-								relations: ['client'],
-							}),
-							this.claimRepository.find({
-								where: { owner: { uid: user.uid }, createdAt: Between(startDate, endDate) },
-							}),
-						],
-					);
+					const [attendanceStats, checkInData, leadData, quotationData, claimData] = await Promise.all([
+						ReportUtils.collectAttendanceData(this.attendanceRepository, user.uid, startDate, endDate),
+						ReportUtils.collectCheckInData(this.checkInRepository, user.uid, startDate, endDate),
+						ReportUtils.collectLeadData(this.leadRepository, user.uid, startDate, endDate),
+						ReportUtils.collectQuotationData(this.quotationRepository, user.uid, startDate, endDate),
+						ReportUtils.collectClaimData(this.claimRepository, user.uid, startDate, endDate),
+					]);
 
 					// Distance travelled (best-effort): use tracking daily aggregator if available
 					let distanceKm = 0;
-					if (granularity === 'weekly') {
+					if (granularity === 'weekly' || granularity === 'end-of-week') {
 						// sample once per day (Mon..Sun)
 						for (
 							let d = new Date(startDate);
@@ -123,25 +117,29 @@ export class OrgActivityReportGenerator {
 						distanceKm = tr?.data?.tripSummary?.totalDistanceKm || 0;
 					}
 
-					const quotationRevenue = quotations.reduce((sum, q) => {
-						const amount =
-							typeof q.totalAmount === 'string' ? parseFloat(q.totalAmount) : q.totalAmount || 0;
-						return sum + (Number.isNaN(amount) ? 0 : amount);
-					}, 0);
-
 					return {
 						uid: user.uid,
 						fullName: `${user.name} ${user.surname || ''}`.trim(),
+						email: user.email,
 						branch: user.branch ? { uid: user.branch.uid, name: user.branch.name } : null,
-						visits: checkIns.length,
+						visits: checkInData.count,
 						hoursWorked: Math.round((attendanceStats.totalWorkMinutes / 60) * 10) / 10,
-						claims: claims.length,
-						leads: { new: leadsNew.length, converted: leadsConverted.length },
-						quotations: { count: quotations.length, revenue: quotationRevenue },
+						claims: claimData.count,
+						leads: { 
+							new: leadData.newLeadsCount, 
+							converted: leadData.convertedCount,
+							conversionRate: leadData.conversionRate
+						},
+						quotations: { 
+							count: quotationData.count, 
+							revenue: quotationData.totalRevenue 
+						},
 						leave: { events: 0 }, // TODO: integrate leave module
 						calls: { count: 0 }, // TODO: integrate calls source
 						distanceKm: Math.round(distanceKm * 10) / 10,
 						totalWorkingMinutes: attendanceStats.totalWorkMinutes,
+						efficiency: attendanceStats.totalWorkMinutes > 0 ? 
+							Math.round((quotationData.totalRevenue / (attendanceStats.totalWorkMinutes / 60)) * 100) / 100 : 0,
 					};
 				}),
 			);
@@ -244,48 +242,74 @@ export class OrgActivityReportGenerator {
 					calls: { count: 0 },
 					distanceKm: Math.round(totals.distanceKm * 10) / 10,
 					growth: {
-						visits: this.calculateGrowth(totals.visits, prevCheckIns.length),
-						quotations: this.calculateGrowth(totals.quotationsCount, prevQuotations.length),
-						leads: this.calculateGrowth(totals.leadsNew, prevLeadsNew.length),
+						visits: ReportUtils.calculateGrowth(totals.visits, prevCheckIns.length),
+						quotations: ReportUtils.calculateGrowth(totals.quotationsCount, prevQuotations.length),
+						leads: ReportUtils.calculateGrowth(totals.leadsNew, prevLeadsNew.length),
 					},
 				},
 				branchBreakdown,
 				users: perUserData,
+				// Enhanced insights using ReportUtils
 				insights: {
-					topPerformers: perUserData
-						.filter((u) => u.hoursWorked > 0)
-						.sort((a, b) => (b.quotations.revenue || 0) - (a.quotations.revenue || 0))
-						.slice(0, 10),
-					lowActivityUsers: perUserData.filter((u) => u.hoursWorked < (granularity === 'weekly' ? 10 : 1)),
-				},
-				emailData: {
-					title: granularity === 'weekly' ? 'Weekly Organisation Report' : 'Daily Organisation Report',
-					period: granularity,
-					date:
-						granularity === 'weekly'
-							? `${format(startDate, 'yyyy-MM-dd')} - ${format(endDate, 'yyyy-MM-dd')}`
-							: format(startDate, 'yyyy-MM-dd'),
-					summaryLabel: granularity === 'weekly' ? 'This Week' : 'Today',
-					summary: {
-						...(this as any).summary,
-					},
-					metrics: {
-						visits: totals.visits,
-						hoursWorked: Math.round(totals.hoursWorked * 10) / 10,
-						claims: totals.claims,
+					...ReportUtils.calculateTeamMetrics(perUserData),
+					performance: ReportUtils.generatePerformanceInsights({
+						hoursWorked: totals.hoursWorked,
+						quotationsRevenue: totals.quotationRevenue,
 						leadsNew: totals.leadsNew,
 						leadsConverted: totals.leadsConverted,
-						quotations: totals.quotationsCount,
-						revenue: totals.quotationRevenue,
-						leave: 0,
-						calls: 0,
-						distanceKm: Math.round(totals.distanceKm * 10) / 10,
-					},
-					branches: branchBreakdown,
-					users: perUserData,
-					dashboardUrl:
-						process.env.WEBSITE_DOMAIN || process.env.SIGNUP_DOMAIN || 'https://loro.co.za',
+						targetSalesAmount: 10000, // This could be dynamic based on org targets
+					}),
+					recommendations: this.generateRecommendations(totals, granularity, perUserData),
 				},
+				// Enhanced email data structure for template consumption
+				emailData: ReportUtils.generateEmailReportData(
+					'org_activity',
+					granularity,
+					startDate,
+					endDate,
+					{
+						summary: {
+							totalEmployees: users.length,
+							activeEmployees: perUserData.filter(u => u.hoursWorked > 0).length,
+							...totals,
+						},
+						growth: {
+							visits: ReportUtils.calculateGrowth(totals.visits, prevCheckIns.length),
+							quotations: ReportUtils.calculateGrowth(totals.quotationsCount, prevQuotations.length),
+							leads: ReportUtils.calculateGrowth(totals.leadsNew, prevLeadsNew.length),
+						},
+						branches: branchBreakdown,
+						topPerformers: perUserData
+							.filter((u) => u.hoursWorked > 0)
+							.sort((a, b) => (b.quotations.revenue || 0) - (a.quotations.revenue || 0))
+							.slice(0, 5)
+							.map(u => ({
+								name: u.fullName,
+								email: u.email,
+								revenue: u.quotations.revenue,
+								hours: u.hoursWorked,
+								efficiency: u.efficiency,
+							})),
+						alertUsers: perUserData
+							.filter((u) => u.hoursWorked < (granularity === 'weekly' ? 10 : 1))
+							.slice(0, 5)
+							.map(u => ({
+								name: u.fullName,
+								email: u.email,
+								hours: u.hoursWorked,
+								lastActivity: 'N/A', // Could be enhanced
+							})),
+						organizationName: users[0]?.organisation?.name || 'Organization',
+						reportPeriod: ReportUtils.formatDateRange(startDate, endDate, granularity),
+					},
+					ReportUtils.generatePerformanceInsights({
+						hoursWorked: totals.hoursWorked,
+						quotationsRevenue: totals.quotationRevenue,
+						leadsNew: totals.leadsNew,
+						leadsConverted: totals.leadsConverted,
+						targetSalesAmount: 10000,
+					})
+				),
 			};
 
 			return response;
@@ -295,22 +319,60 @@ export class OrgActivityReportGenerator {
 		}
 	}
 
-	private async collectAttendance(userId: number, startDate: Date, endDate: Date) {
-		// Use AttendanceService daily stats summation as best-effort
-		// For performance, also query raw records to get total minutes if needed
-		const records = await this.attendanceRepository.find({
-			where: { owner: { uid: userId }, checkIn: Between(startDate, endDate) },
-			order: { checkIn: 'ASC' },
-		});
+	/**
+	 * Generate actionable recommendations based on report data
+	 */
+	private generateRecommendations(totals: any, granularity: string, userData: any[]): string[] {
+		const recommendations: string[] = [];
+		const activeUsers = userData.filter(u => u.hoursWorked > 0).length;
+		const totalUsers = userData.length;
 
-		// If AttendanceService exposes a weekly method, prefer it; otherwise compute
-		const totalWorkMinutes = records.reduce((sum, r) => {
-			const start = r.checkIn ? new Date(r.checkIn).getTime() : 0;
-			const end = r.checkOut ? new Date(r.checkOut).getTime() : start;
-			const delta = Math.max(0, Math.floor((end - start) / (1000 * 60)));
-			return sum + delta;
-		}, 0);
+		// Low activity recommendations
+		if (activeUsers / totalUsers < 0.8) {
+			recommendations.push('Consider team engagement initiatives - less than 80% of staff are active');
+		}
 
-		return { totalWorkMinutes };
+		// Revenue performance
+		const avgRevenue = userData.length > 0 ? 
+			userData.reduce((sum, u) => sum + (u.quotations?.revenue || 0), 0) / userData.length : 0;
+		
+		if (avgRevenue < 1000) {
+			recommendations.push('Focus on sales training and quotation generation strategies');
+		}
+
+		// Lead conversion
+		const totalLeadsNew = userData.reduce((sum, u) => sum + (u.leads?.new || 0), 0);
+		const totalLeadsConverted = userData.reduce((sum, u) => sum + (u.leads?.converted || 0), 0);
+		const conversionRate = totalLeadsNew > 0 ? (totalLeadsConverted / totalLeadsNew) * 100 : 0;
+
+		if (conversionRate < 20) {
+			recommendations.push('Improve lead qualification and follow-up processes - conversion rate below 20%');
+		}
+
+		// Work hours balance
+		const avgHours = userData.length > 0 ? 
+			userData.reduce((sum, u) => sum + (u.hoursWorked || 0), 0) / userData.length : 0;
+		
+		if (granularity === 'weekly' && avgHours > 50) {
+			recommendations.push('Monitor work-life balance - average weekly hours exceeding 50');
+		} else if (granularity === 'daily' && avgHours > 10) {
+			recommendations.push('Monitor work-life balance - average daily hours exceeding 10');
+		}
+
+		// Distance and efficiency
+		const totalDistance = userData.reduce((sum, u) => sum + (u.distanceKm || 0), 0);
+		if (totalDistance > 1000 && granularity === 'weekly') {
+			recommendations.push('Consider route optimization to reduce travel distance and costs');
+		}
+
+		// Add time-specific recommendations
+		if (granularity === 'end-of-day') {
+			recommendations.push('Review daily achievements and prepare tomorrow\'s priorities');
+		} else if (granularity === 'end-of-week') {
+			recommendations.push('Analyze weekly performance trends and plan next week\'s focus areas');
+		}
+
+		return recommendations;
 	}
+
 }

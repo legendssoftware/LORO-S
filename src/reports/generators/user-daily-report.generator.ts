@@ -21,6 +21,7 @@ import { UserRewards } from '../../rewards/entities/user-rewards.entity';
 import { XPTransaction } from '../../rewards/entities/xp-transaction.entity';
 import { UserTarget } from '../../user/entities/user-target.entity';
 import { OrganisationHoursService } from '../../organisation/services/organisation-hours.service';
+import { ReportUtils } from '../utils/report-utils';
 
 @Injectable()
 export class UserDailyReportGenerator {
@@ -56,17 +57,6 @@ export class UserDailyReportGenerator {
 		private organisationHoursService: OrganisationHoursService,
 	) {}
 
-	private calculateGrowth(current: number, previous: number): string {
-		if (previous === 0) {
-			return current > 0 ? '+100%' : '0%';
-		}
-		if (current === 0 && previous === 0) {
-			return '0%';
-		}
-		const growth = ((current - previous) / previous) * 100;
-		const sign = growth >= 0 ? '+' : '';
-		return `${sign}${Math.round(growth * 10) / 10}%`;
-	}
 
 	private parseGrowthPercentage(growthStr: string): number {
 		if (!growthStr) return 0;
@@ -273,15 +263,15 @@ export class UserDailyReportGenerator {
 						totalQuotations: quotationData.totalQuotations,
 						totalRevenue: quotationData.totalRevenueFormatted,
 						newCustomers: clientInteractions.newClients,
-						quotationGrowth: this.calculateGrowth(
+						quotationGrowth: ReportUtils.calculateGrowth(
 							quotationData.totalQuotations,
 							previousQuotationData.totalQuotations,
 						),
-						revenueGrowth: this.calculateGrowth(
+						revenueGrowth: ReportUtils.calculateGrowth(
 							quotationData.totalRevenue,
 							previousQuotationData.totalRevenue,
 						),
-						customerGrowth: this.calculateGrowth(
+						customerGrowth: ReportUtils.calculateGrowth(
 							clientInteractions.newClients,
 							previousClientData.newClients,
 						),
@@ -1236,10 +1226,10 @@ export class UserDailyReportGenerator {
 				current: currentWeekData,
 				previous: previousWeekData,
 				changes: {
-					hoursWorked: this.calculateGrowth(currentWeekData.hoursWorked, previousWeekData.hoursWorked),
-					tasksCompleted: this.calculateGrowth(currentWeekData.tasksCompleted, previousWeekData.tasksCompleted),
-					revenue: this.calculateGrowth(currentWeekData.revenue, previousWeekData.revenue),
-					leads: this.calculateGrowth(currentWeekData.leads, previousWeekData.leads),
+					hoursWorked: ReportUtils.calculateGrowth(currentWeekData.hoursWorked, previousWeekData.hoursWorked),
+					tasksCompleted: ReportUtils.calculateGrowth(currentWeekData.tasksCompleted, previousWeekData.tasksCompleted),
+					revenue: ReportUtils.calculateGrowth(currentWeekData.revenue, previousWeekData.revenue),
+					leads: ReportUtils.calculateGrowth(currentWeekData.leads, previousWeekData.leads),
 				},
 				trend: this.determineTrend(currentWeekData, previousWeekData),
 			};

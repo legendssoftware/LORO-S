@@ -115,6 +115,12 @@ export class User {
 	@Column({ type: 'timestamp', nullable: true })
 	tokenExpires: Date;
 
+	@Column({ type: 'json', nullable: true })
+	managedBranches: number[];
+
+	@Column({ type: 'json', nullable: true })
+	managedStaff: number[];
+
 	@OneToOne(() => UserProfile, (userProfile) => userProfile?.owner, { nullable: true })
 	@JoinColumn()
 	userProfile: UserProfile;

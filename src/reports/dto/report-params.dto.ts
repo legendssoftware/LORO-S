@@ -32,5 +32,5 @@ export class ReportParamsDto {
 
   @IsOptional()
   @IsString()
-  granularity?: 'daily' | 'weekly';
+  granularity?: 'daily' | 'weekly' | 'end-of-day' | 'end-of-week';
 } 
