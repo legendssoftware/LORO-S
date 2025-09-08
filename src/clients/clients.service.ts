@@ -1619,7 +1619,7 @@ export class ClientsService {
 				}
 
 				// Format the current date for email
-				const formattedDate = new Date().toLocaleDateString('en-US', {
+				const formattedDate = new Date().toLocaleDateString('en-ZA', {
 					year: 'numeric',
 					month: 'long',
 					day: 'numeric',
@@ -3303,7 +3303,7 @@ export class ClientsService {
 		clientEmail: string,
 	): Promise<void> {
 		try {
-			const updateDate = new Date().toLocaleDateString('en-US', {
+			const updateDate = new Date().toLocaleDateString('en-ZA', {
 				year: 'numeric',
 				month: 'long',
 				day: 'numeric',

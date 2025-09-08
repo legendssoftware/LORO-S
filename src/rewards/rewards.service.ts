@@ -109,14 +109,6 @@ export class RewardsService {
           userRewards.xpBreakdown[field] = 0;
         }
       });
-      
-      const oldValues = {
-        currentXP: userRewards.currentXP,
-        totalXP: userRewards.totalXP,
-        level: userRewards.level,
-        rank: userRewards.rank,
-        categoryXP: userRewards.xpBreakdown[category]
-      };
 
       userRewards.xpBreakdown[category] += createRewardDto.amount;
       userRewards.currentXP += createRewardDto.amount;
@@ -130,17 +122,6 @@ export class RewardsService {
         userRewards.rank = this.calculateRank(newLevel);
         this.logger.log(`${logPrefix} - New rank: ${userRewards.rank}`);
       }
-
-      this.logger.log(`${logPrefix} - XP Changes:`, {
-        old: oldValues,
-        new: {
-          currentXP: userRewards.currentXP,
-          totalXP: userRewards.totalXP,
-          level: userRewards.level,
-          rank: userRewards.rank,
-          categoryXP: userRewards.xpBreakdown[category]
-        }
-      });
 
       await this.userRewardsRepository.save(userRewards);
       this.logger.log(`${logPrefix} - Successfully saved updated rewards`);

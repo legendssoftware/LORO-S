@@ -1,5 +1,5 @@
 export const formatDate = (date: Date): string => {
-    return new Date(date).toLocaleDateString('en-US', {
+    return new Date(date).toLocaleDateString('en-ZA', {
         year: 'numeric',
         month: 'long',
         day: 'numeric',
@@ -23,7 +23,7 @@ export const formatDateSafely = (date: Date | string | null | undefined, fallbac
     try {
         // If it's already a Date object, use it directly
         if (date instanceof Date) {
-            return date.toLocaleDateString('en-US', {
+            return date.toLocaleDateString('en-ZA', {
                 year: 'numeric',
                 month: 'short',
                 day: 'numeric'
@@ -34,7 +34,7 @@ export const formatDateSafely = (date: Date | string | null | undefined, fallbac
         if (typeof date === 'string') {
             const parsedDate = new Date(date);
             if (!isNaN(parsedDate.getTime())) {
-                return parsedDate.toLocaleDateString('en-US', {
+                return parsedDate.toLocaleDateString('en-ZA', {
                     year: 'numeric',
                     month: 'short',
                     day: 'numeric'

@@ -13,25 +13,25 @@ Handlebars.registerHelper('formatDate', function(date: string | Date, format?: s
     const dateObj = new Date(date);
     
     if (format === 'short') {
-        return dateObj.toLocaleDateString('en-US', {
+        return dateObj.toLocaleDateString('en-ZA', {
             month: 'short',
             day: 'numeric',
             year: 'numeric',
         });
     } else if (format === 'long') {
-        return dateObj.toLocaleDateString('en-US', {
+        return dateObj.toLocaleDateString('en-ZA', {
             weekday: 'long',
             year: 'numeric',
             month: 'long',
             day: 'numeric',
         });
     } else if (format === 'time') {
-        return dateObj.toLocaleString('en-US', {
+        return dateObj.toLocaleString('en-ZA', {
             hour: '2-digit',
             minute: '2-digit',
         });
     } else if (format === 'datetime') {
-        return dateObj.toLocaleString('en-US', {
+        return dateObj.toLocaleString('en-ZA', {
             year: 'numeric',
             month: 'long',
             day: 'numeric',
@@ -41,7 +41,7 @@ Handlebars.registerHelper('formatDate', function(date: string | Date, format?: s
     }
     
     // Default format
-    return dateObj.toLocaleDateString('en-US', {
+    return dateObj.toLocaleDateString('en-ZA', {
         year: 'numeric',
         month: 'long',
         day: 'numeric',
@@ -54,13 +54,13 @@ Handlebars.registerHelper('formatCurrency', function(amount: number, currency: s
     
     // Return 0 if not a valid number
     if (typeof numAmount !== 'number' || isNaN(numAmount) || !isFinite(numAmount)) {
-        return new Intl.NumberFormat('en-US', {
+        return new Intl.NumberFormat('en-ZA', {
             style: 'currency',
             currency: currency,
         }).format(0);
     }
     
-    return new Intl.NumberFormat('en-US', {
+    return new Intl.NumberFormat('en-ZA', {
         style: 'currency',
         currency: currency,
     }).format(numAmount);
@@ -82,7 +82,7 @@ Handlebars.registerHelper('formatNumber', function(number: number | string, deci
         validDecimals = Math.max(0, Math.min(20, Math.floor(decimals)));
     }
     
-    return new Intl.NumberFormat('en-US', {
+    return new Intl.NumberFormat('en-ZA', {
         minimumFractionDigits: validDecimals,
         maximumFractionDigits: validDecimals,
     }).format(numValue);

@@ -1084,9 +1084,6 @@ export class UserService {
 				whereConditions.branch = { uid: Number(branchId) }; // 🔧 FIX: Ensure branchId is a number
 			}
 
-			// 🔍 DEBUG: Log the exact query conditions (temporary)
-			this.logger.debug(`Database Query Conditions:`, JSON.stringify(whereConditions, null, 2));
-
 			const user = await this.userRepository
 				.createQueryBuilder('user')
 				.leftJoinAndSelect('user.organisation', 'organisation')

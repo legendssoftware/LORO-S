@@ -371,7 +371,7 @@ export class TaskEmailDataMapper {
    */
   private static formatDate(date?: Date): string {
     if (!date) return 'Not specified';
-    return new Date(date).toLocaleDateString('en-US', {
+    return new Date(date).toLocaleDateString('en-ZA', {
       weekday: 'long',
       year: 'numeric', 
       month: 'long',

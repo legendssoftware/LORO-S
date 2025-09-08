@@ -303,13 +303,13 @@ export class OvertimeReminderService {
 				name: `${user.name} ${user.surname || ''}`.trim(), // Required by BaseEmailData
 				employeeName: `${user.name} ${user.surname || ''}`.trim(),
 				employeeEmail: user.email,
-				checkInTime: checkIn.checkInTime.toLocaleTimeString('en-US', {
+				checkInTime: checkIn.checkInTime.toLocaleTimeString('en-ZA', {
 					hour: '2-digit',
 					minute: '2-digit',
 					hour12: true,
 				}),
 				organizationCloseTime: this.formatTime(orgHours.closeTime),
-				currentTime: currentTime.toLocaleTimeString('en-US', {
+				currentTime: currentTime.toLocaleTimeString('en-ZA', {
 					hour: '2-digit',
 					minute: '2-digit',
 					hour12: true,
@@ -400,7 +400,7 @@ export class OvertimeReminderService {
 		const date = new Date();
 		date.setHours(hour, minute);
 		
-		return date.toLocaleTimeString('en-US', {
+		return date.toLocaleTimeString('en-ZA', {
 			hour: '2-digit',
 			minute: '2-digit',
 			hour12: true,

@@ -215,7 +215,7 @@ export class OrganizationTimezoneService {
 	private async isWorkingDay(orgHours: OrganisationHours): Promise<boolean> {
 		try {
 			const now = new Date();
-			const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+			const dayOfWeek = now.toLocaleDateString('en-ZA', { weekday: 'long' }).toLowerCase();
 
 			// Check if holiday mode is active
 			if (orgHours.holidayMode && orgHours.holidayUntil) {

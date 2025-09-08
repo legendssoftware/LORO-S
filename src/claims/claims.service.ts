@@ -54,7 +54,7 @@ export class ClaimsService {
 		@Inject(CACHE_MANAGER) private cacheManager: Cache,
 	) {
 		this.CACHE_TTL = parseInt(process.env.CACHE_TTL || '300000', 10); // 5 minutes default
-		this.currencyLocale = this.configService.get<string>('CURRENCY_LOCALE', 'en-US');
+		this.currencyLocale = this.configService.get<string>('CURRENCY_LOCALE', 'en-ZA');
 		this.currencyCode = this.configService.get<string>('CURRENCY_CODE', 'USD');
 		this.currencySymbol = this.configService.get<string>('CURRENCY_SYMBOL', '$');
 

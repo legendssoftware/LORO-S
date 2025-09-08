@@ -287,7 +287,7 @@ export class AttendanceService {
 
 			// Send enhanced shift start notification with improved messaging
 			try {
-				const checkInTime = new Date(checkIn.checkIn).toLocaleTimeString('en-US', {
+				const checkInTime = new Date(checkIn.checkIn).toLocaleTimeString('en-ZA', {
 					hour: '2-digit',
 					minute: '2-digit',
 					hour12: true,
@@ -523,13 +523,13 @@ export class AttendanceService {
 
 			// Send enhanced shift end notification with improved messaging
 			try {
-				const checkOutTimeString = checkOutTime.toLocaleTimeString('en-US', {
+				const checkOutTimeString = checkOutTime.toLocaleTimeString('en-ZA', {
 					hour: '2-digit',
 					minute: '2-digit',
 					hour12: true,
 				});
 
-				const checkInTimeString = new Date(activeShift.checkIn).toLocaleTimeString('en-US', {
+				const checkInTimeString = new Date(activeShift.checkIn).toLocaleTimeString('en-ZA', {
 					hour: '2-digit',
 					minute: '2-digit',
 					hour12: true,
@@ -893,7 +893,7 @@ export class AttendanceService {
 			let message: string;
 			let priority = NotificationPriority.NORMAL;
 
-			const currentTime = new Date().toLocaleTimeString('en-US', {
+			const currentTime = new Date().toLocaleTimeString('en-ZA', {
 				hour: '2-digit',
 				minute: '2-digit',
 				hour12: true,
@@ -1204,12 +1204,12 @@ export class AttendanceService {
 								{
 									message,
 									breakDurationMinutes: interval.minutes,
-									breakStartTime: breakStartTime.toLocaleTimeString('en-US', {
+									breakStartTime: breakStartTime.toLocaleTimeString('en-ZA', {
 										hour: '2-digit',
 										minute: '2-digit',
 										hour12: true,
 									}),
-									currentTime: now.toLocaleTimeString('en-US', {
+									currentTime: now.toLocaleTimeString('en-ZA', {
 										hour: '2-digit',
 										minute: '2-digit',
 										hour12: true,
@@ -1278,7 +1278,7 @@ export class AttendanceService {
 			if (orgAdmins.length > 0) {
 				this.logger.debug(`[${operationId}] Notifying ${orgAdmins.length} admins about long break for user ${user.uid}`);
 				
-				const breakStartTimeString = breakStartTime.toLocaleTimeString('en-US', {
+				const breakStartTimeString = breakStartTime.toLocaleTimeString('en-ZA', {
 					hour: '2-digit',
 					minute: '2-digit',
 					hour12: true,
@@ -1770,7 +1770,7 @@ export class AttendanceService {
 			if (orgAdmins.length > 0) {
 				this.logger.debug(`[${operationId}] Notifying ${orgAdmins.length} admins about missed checkout for user ${user.uid}`);
 				
-				const checkInTime = new Date(activeShift.checkIn).toLocaleTimeString('en-US', {
+				const checkInTime = new Date(activeShift.checkIn).toLocaleTimeString('en-ZA', {
 					hour: '2-digit',
 					minute: '2-digit',
 					hour12: true,
@@ -2683,7 +2683,7 @@ export class AttendanceService {
 
 			// Send enhanced break start notification
 			try {
-				const breakStartTimeString = breakStartTime.toLocaleTimeString('en-US', {
+				const breakStartTimeString = breakStartTime.toLocaleTimeString('en-ZA', {
 					hour: '2-digit',
 					minute: '2-digit',
 					hour12: true,
@@ -2820,13 +2820,13 @@ export class AttendanceService {
 
 			// Send enhanced break end notification
 			try {
-				const breakEndTimeString = breakEndTime.toLocaleTimeString('en-US', {
+				const breakEndTimeString = breakEndTime.toLocaleTimeString('en-ZA', {
 					hour: '2-digit',
 					minute: '2-digit',
 					hour12: true,
 				});
 
-				const breakStartTimeString = breakStartTime.toLocaleTimeString('en-US', {
+				const breakStartTimeString = breakStartTime.toLocaleTimeString('en-ZA', {
 					hour: '2-digit',
 					minute: '2-digit',
 					hour12: true,

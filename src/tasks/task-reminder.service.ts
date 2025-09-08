@@ -126,7 +126,7 @@ export class TaskReminderService {
 					title: task.title,
 					description: task.description,
 					deadline: deadlineDate
-						? deadlineDate.toLocaleDateString('en-US', {
+						? deadlineDate.toLocaleDateString('en-ZA', {
 								year: 'numeric',
 								month: 'short',
 								day: 'numeric',
@@ -151,7 +151,7 @@ export class TaskReminderService {
 					title: task.title,
 					description: task.description,
 					deadline: deadlineDate
-						? deadlineDate.toLocaleDateString('en-US', {
+						? deadlineDate.toLocaleDateString('en-ZA', {
 								year: 'numeric',
 								month: 'short',
 								day: 'numeric',

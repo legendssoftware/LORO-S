@@ -17,7 +17,7 @@ export class Device {
 	@Column({ nullable: false })
 	branchID: number;
 
-	@Column({ nullable: false, unique: true, type: 'varchar' })
+	@Column({ nullable: false})
 	deviceID: string;
 
 	@Column({ nullable: false, type: 'enum', enum: DeviceType, default: DeviceType.DOOR_SENSOR })

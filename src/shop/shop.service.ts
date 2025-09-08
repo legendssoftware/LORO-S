@@ -182,7 +182,7 @@ export class ShopService {
 
 			// Map currency to appropriate symbol and locale (add more as needed)
 			const currencyMap = {
-				USD: { symbol: '$', locale: 'en-US' },
+				USD: { symbol: '$', locale: 'en-ZA' },
 				EUR: { symbol: '€', locale: 'en-EU' },
 				GBP: { symbol: '£', locale: 'en-GB' },
 				ZAR: { symbol: 'R', locale: 'en-ZA' },

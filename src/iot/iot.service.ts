@@ -38,6 +38,7 @@ import {
 } from './dto/update-iot.dto';
 import { IoTReportingService } from './services/iot-reporting.service';
 import { OrganisationHoursService } from '../organisation/services/organisation-hours.service';
+import { TimezoneUtil } from '../lib/utils/timezone.util';
 
 export interface PaginatedResponse<T> {
   data: T[];
@@ -943,8 +944,6 @@ export class IotService {
                                businessHoursAnalysis.attendanceStatus === 'EARLY' ? 'Early arrival detected' :
                                'Outside business hours detected';
       
-      const successMessage = `Time event recorded successfully - ${attendanceContext}`;
-      
       this.logger.log(`✅ Time event processed successfully in ${processingTime}ms for device: ${timeEventDto.deviceID} - ${attendanceContext}`);
 
       return {
@@ -1037,29 +1036,51 @@ export class IotService {
     try {
       this.logger.debug(`🕒 Validating business hours for device: ${timeEventDto.deviceID}`);
 
-      // Get organization reference from device
-      // This assumes we can get org ref from device data - may need to be adjusted
-      const orgRef = `ORG${device.orgID}`; // Convert orgID to orgRef format
+      // Get organization identifier from device as-is (no prefixes)
+      const orgRef = String(device.orgID);
       
       // Get organization hours configuration
-      let organizationHours;
+      let organizationHoursArr;
+
       try {
-        organizationHours = await this.organisationHoursService.findDefault(orgRef);
+        organizationHoursArr = await this.organisationHoursService.findAll(orgRef);
       } catch (error) {
         this.logger.warn(`⚠️ No business hours configuration found for organization ${orgRef}, using default validation`);
-        
         // Return basic analysis without business hours validation
         return {
           organizationHours: {
-            openTime: '08:00',
+            openTime: '07:00',
             closeTime: '17:00',
-            timezone: 'UTC',
+            timezone: 'Africa/Johannesburg',
             isHoliday: false,
             configured: false
           },
           eventAnalysis: {
             eventType: timeEventDto.eventType,
-            eventTime: new Date(timeEventDto.timestamp * 1000).toLocaleTimeString('en-GB', { hour12: false, hour: '2-digit', minute: '2-digit' }),
+            eventTime: new Date(timeEventDto.timestamp * 1000).toLocaleTimeString('en-ZA', { hour12: false, hour: '2-digit', minute: '2-digit' }),
+            isWithinBusinessHours: true, // Default to true when no config
+            attendanceStatus: 'ON_TIME',
+            minutesFromSchedule: 0,
+            workingDay: true
+          }
+        };
+      }
+
+      // Defensive: Use first config if available, else fallback
+      const organizationHours = Array.isArray(organizationHoursArr) && organizationHoursArr.length > 0 ? organizationHoursArr[0] : null;
+      if (!organizationHours) {
+        this.logger.warn(`⚠️ No business hours found for organization ${orgRef}, using default validation`);
+        return {
+          organizationHours: {
+            openTime: '07:00',
+            closeTime: '17:00',
+            timezone: 'Africa/Johannesburg',
+            isHoliday: false,
+            configured: false
+          },
+          eventAnalysis: {
+            eventType: timeEventDto.eventType,
+            eventTime: new Date(timeEventDto.timestamp * 1000).toLocaleTimeString('en-ZA', { hour12: false, hour: '2-digit', minute: '2-digit' }),
             isWithinBusinessHours: true, // Default to true when no config
             attendanceStatus: 'ON_TIME',
             minutesFromSchedule: 0,
@@ -1069,9 +1090,11 @@ export class IotService {
       }
 
       // Convert timestamp to organization timezone
-      const eventDate = new Date(timeEventDto.timestamp * 1000);
-      const eventTimeString = eventDate.toLocaleTimeString('en-GB', { hour12: false, hour: '2-digit', minute: '2-digit' });
-      const dayOfWeek = eventDate.toLocaleDateString('en-US', { weekday: 'long' }) as keyof typeof organizationHours.weeklySchedule;
+      const eventDateUTC = new Date(timeEventDto.timestamp * 1000);
+      const timezone = organizationHours.timezone || TimezoneUtil.AFRICA_JOHANNESBURG;
+      const eventDate = TimezoneUtil.toOrganizationTime(eventDateUTC, timezone);
+      const eventTimeString = eventDate.toLocaleTimeString('en-ZA', { hour12: false, hour: '2-digit', minute: '2-digit' });
+      const dayOfWeek = eventDate.toLocaleDateString('en-ZA', { weekday: 'long' }) as keyof typeof organizationHours.weeklySchedule;
       
       // Determine business hours for the event day
       let dayOpenTime = organizationHours.openTime;
@@ -1101,7 +1124,11 @@ export class IotService {
       }
 
       // Check for special hours
-      const dateString = eventDate.toISOString().split('T')[0];
+      // Build date string in org timezone (YYYY-MM-DD)
+      const yyyy = String(eventDate.getFullYear());
+      const mm = String(eventDate.getMonth() + 1).padStart(2, '0');
+      const dd = String(eventDate.getDate()).padStart(2, '0');
+      const dateString = `${yyyy}-${mm}-${dd}`;
       const specialHours = organizationHours.specialHours?.find(sh => sh.date === dateString);
       if (specialHours) {
         if (specialHours.openTime === '00:00' && specialHours.closeTime === '00:00') {
@@ -1118,15 +1145,15 @@ export class IotService {
       let isWithinBusinessHours = true;
 
       if (isWorkingDay && timeEventDto.eventType === 'open') {
-        // Parse times for comparison
-        const [openHour, openMinute] = dayOpenTime.split(':').map(Number);
-        const [eventHour, eventMinute] = [eventDate.getHours(), eventDate.getMinutes()];
-        
-        const openTimeMinutes = openHour * 60 + openMinute;
-        const eventTimeMinutes = eventHour * 60 + eventMinute;
-        
+        // Parse times for comparison in org timezone
+        const openDate = TimezoneUtil.parseTimeInOrganization(dayOpenTime, eventDate, timezone);
+        const closeDate = TimezoneUtil.parseTimeInOrganization(dayCloseTime, eventDate, timezone);
+        const openTimeMinutes = TimezoneUtil.getMinutesSinceMidnight(openDate, timezone);
+        const closeTimeMinutes = TimezoneUtil.getMinutesSinceMidnight(closeDate, timezone);
+        const eventTimeMinutes = TimezoneUtil.getMinutesSinceMidnight(eventDate, timezone);
+
         minutesFromSchedule = eventTimeMinutes - openTimeMinutes;
-        
+
         if (minutesFromSchedule > 15) { // More than 15 minutes late
           attendanceStatus = 'LATE';
         } else if (minutesFromSchedule < -30) { // More than 30 minutes early
@@ -1134,11 +1161,8 @@ export class IotService {
         } else {
           attendanceStatus = 'ON_TIME';
         }
-        
+
         // Check if within business hours (with reasonable buffer)
-        const [closeHour, closeMinute] = dayCloseTime.split(':').map(Number);
-        const closeTimeMinutes = closeHour * 60 + closeMinute;
-        
         isWithinBusinessHours = eventTimeMinutes >= (openTimeMinutes - 60) && // 1 hour before open
                                eventTimeMinutes <= (closeTimeMinutes + 60);  // 1 hour after close
       } else if (!isWorkingDay) {
@@ -1150,7 +1174,7 @@ export class IotService {
         organizationHours: {
           openTime: dayOpenTime,
           closeTime: dayCloseTime,
-          timezone: organizationHours.timezone || 'UTC',
+          timezone,
           isHoliday,
           configured: true
         },
@@ -1164,15 +1188,6 @@ export class IotService {
         }
       };
 
-      this.logger.debug(`🕒 Business hours analysis completed:`, {
-        deviceID: timeEventDto.deviceID,
-        eventType: timeEventDto.eventType,
-        attendanceStatus,
-        isWithinBusinessHours,
-        isWorkingDay,
-        minutesFromSchedule
-      });
-
       return analysis;
     } catch (error) {
       this.logger.error(`❌ Failed to validate business hours: ${error.message}`, {
@@ -1184,15 +1199,15 @@ export class IotService {
       // Return safe default analysis on error
       return {
         organizationHours: {
-          openTime: '08:00',
+          openTime: '07:00',
           closeTime: '17:00',
-          timezone: 'UTC',
+          timezone: 'Africa/Johannesburg',
           isHoliday: false,
           configured: false
         },
         eventAnalysis: {
           eventType: timeEventDto.eventType,
-          eventTime: new Date(timeEventDto.timestamp * 1000).toLocaleTimeString('en-GB', { hour12: false, hour: '2-digit', minute: '2-digit' }),
+          eventTime: new Date(timeEventDto.timestamp * 1000).toLocaleTimeString('en-ZA', { hour12: false, hour: '2-digit', minute: '2-digit' }),
           isWithinBusinessHours: true,
           attendanceStatus: 'ON_TIME',
           minutesFromSchedule: 0,
@@ -1264,7 +1279,7 @@ export class IotService {
     // Find existing record for today
     let existingRecord = await queryRunner.manager.findOne(DeviceRecords, {
       where: {
-        deviceID: device,
+        deviceId: device.id,
         createdAt: Between(today, tomorrow),
       },
     });
@@ -1293,7 +1308,7 @@ export class IotService {
       const recordData = {
         openTime: timeEventDto.eventType === 'open' ? timeEventDto.timestamp : 0,
         closeTime: timeEventDto.eventType === 'close' ? timeEventDto.timestamp : 0,
-        deviceID: device,
+        deviceId: device.id,
         createdAt: new Date(),
         updatedAt: new Date(),
       };

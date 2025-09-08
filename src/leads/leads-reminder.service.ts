@@ -149,7 +149,7 @@ export class LeadsReminderService {
         name: lead.name || 'Unnamed Lead',
         email: lead.email,
         phone: lead.phone,
-        createdAt: lead.createdAt.toLocaleDateString('en-US', {
+        createdAt: lead.createdAt.toLocaleDateString('en-ZA', {
           year: 'numeric', 
           month: 'short', 
           day: 'numeric'
@@ -213,12 +213,12 @@ export class LeadsReminderService {
           estimatedValue: lead.estimatedValue || 0,
           daysSinceCreated,
           daysSinceLastContact,
-          createdAt: lead.createdAt.toLocaleDateString('en-US', {
+          createdAt: lead.createdAt.toLocaleDateString('en-ZA', {
             year: 'numeric', 
             month: 'short', 
             day: 'numeric'
           }),
-          lastContactDate: lead.lastContactDate?.toLocaleDateString('en-US', {
+          lastContactDate: lead.lastContactDate?.toLocaleDateString('en-ZA', {
             year: 'numeric', 
             month: 'short', 
             day: 'numeric'
@@ -238,7 +238,7 @@ export class LeadsReminderService {
       // Prepare email data
       const emailData = {
         name: creator.name || 'Team Member',
-        weekOf: now.toLocaleDateString('en-US', { 
+        weekOf: now.toLocaleDateString('en-ZA', { 
           year: 'numeric', 
           month: 'long', 
           day: 'numeric' 

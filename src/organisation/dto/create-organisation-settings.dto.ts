@@ -64,7 +64,7 @@ export class RegionalDto {
 	@ApiProperty({ 
 		description: 'Primary language used by the organization (ISO code)',
 		required: false,
-		example: 'en-US'
+		example: 'en-ZA'
 	})
 	@IsString()
 	@IsOptional()
@@ -418,7 +418,7 @@ export class CreateOrganisationSettingsDto {
 		required: false,
 		description: 'Regional and localization preferences for the organization',
 		example: {
-			language: 'en-US',
+			language: 'en-ZA',
 			timezone: 'America/Los_Angeles',
 			currency: 'USD',
 			dateFormat: 'MM/DD/YYYY',

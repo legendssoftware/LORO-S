@@ -93,12 +93,12 @@ export class AuthService {
 
 						// Send failed login push notification
 						try {
-							const attemptTime = new Date().toLocaleTimeString('en-US', {
+							const attemptTime = new Date().toLocaleTimeString('en-ZA', {
 								hour: '2-digit',
 								minute: '2-digit',
 								hour12: true,
 							});
-							const attemptDate = new Date().toLocaleDateString('en-US', {
+							const attemptDate = new Date().toLocaleDateString('en-ZA', {
 								weekday: 'long',
 								year: 'numeric',
 								month: 'long',
@@ -282,12 +282,12 @@ export class AuthService {
 
 				// Send successful login push notification
 				try {
-					const loginTime = new Date().toLocaleTimeString('en-US', {
+					const loginTime = new Date().toLocaleTimeString('en-ZA', {
 						hour: '2-digit',
 						minute: '2-digit',
 						hour12: true,
 					});
-					const loginDate = new Date().toLocaleDateString('en-US', {
+					const loginDate = new Date().toLocaleDateString('en-ZA', {
 						weekday: 'long',
 						year: 'numeric',
 						month: 'long',
@@ -559,12 +559,12 @@ export class AuthService {
 
 		// Send password set success push notification
 		try {
-			const setupTime = new Date().toLocaleTimeString('en-US', {
+			const setupTime = new Date().toLocaleTimeString('en-ZA', {
 				hour: '2-digit',
 				minute: '2-digit',
 				hour12: true,
 			});
-			const setupDate = new Date().toLocaleDateString('en-US', {
+			const setupDate = new Date().toLocaleDateString('en-ZA', {
 				weekday: 'long',
 				year: 'numeric',
 				month: 'long',
@@ -673,12 +673,12 @@ export class AuthService {
 
 		// Send password reset push notification
 		try {
-			const requestTime = new Date().toLocaleTimeString('en-US', {
+			const requestTime = new Date().toLocaleTimeString('en-ZA', {
 				hour: '2-digit',
 				minute: '2-digit',
 				hour12: true,
 			});
-			const requestDate = new Date().toLocaleDateString('en-US', {
+			const requestDate = new Date().toLocaleDateString('en-ZA', {
 				weekday: 'long',
 				year: 'numeric',
 				month: 'long',
@@ -784,12 +784,12 @@ export class AuthService {
 
 		// Send password changed push notification
 		try {
-			const changeTime = new Date().toLocaleTimeString('en-US', {
+			const changeTime = new Date().toLocaleTimeString('en-ZA', {
 				hour: '2-digit',
 				minute: '2-digit',
 				hour12: true,
 			});
-			const changeDate = new Date().toLocaleDateString('en-US', {
+			const changeDate = new Date().toLocaleDateString('en-ZA', {
 				weekday: 'long',
 				year: 'numeric',
 				month: 'long',
@@ -936,12 +936,12 @@ export class AuthService {
 					// Try to extract user information from the expired token without verification
 					const decodedToken = this.jwtService.decode(token) as any;
 					if (decodedToken?.uid) {
-						const expiredTime = new Date().toLocaleTimeString('en-US', {
+						const expiredTime = new Date().toLocaleTimeString('en-ZA', {
 							hour: '2-digit',
 							minute: '2-digit',
 							hour12: true,
 						});
-						const expiredDate = new Date().toLocaleDateString('en-US', {
+						const expiredDate = new Date().toLocaleDateString('en-ZA', {
 							weekday: 'long',
 							year: 'numeric',
 							month: 'long',

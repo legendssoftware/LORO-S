@@ -28,7 +28,21 @@ import {
 	ApiProduces,
 	ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, Req, Put, ParseIntPipe, Headers } from '@nestjs/common';
+import {
+	Controller,
+	Get,
+	Post,
+	Body,
+	Patch,
+	Param,
+	Delete,
+	UseGuards,
+	Query,
+	Req,
+	Put,
+	ParseIntPipe,
+	Headers,
+} from '@nestjs/common';
 import { AccountStatus } from '../lib/enums/status.enums';
 import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
 import { CreateUserTargetDto } from './dto/create-user-target.dto';
@@ -44,51 +58,51 @@ import { PaginatedResponse } from '../lib/interfaces/product.interfaces';
 @UseGuards(AuthGuard, RoleGuard)
 @ApiConsumes('application/json')
 @ApiProduces('application/json')
-@ApiUnauthorizedResponse({ 
+@ApiUnauthorizedResponse({
 	description: '🔒 Unauthorized - Authentication required',
 	schema: {
 		type: 'object',
 		properties: {
 			message: { type: 'string', example: 'Authentication token is required' },
 			error: { type: 'string', example: 'Unauthorized' },
-			statusCode: { type: 'number', example: 401 }
-		}
-	}
+			statusCode: { type: 'number', example: 401 },
+		},
+	},
 })
 /**
  * ## 🎯 Performance Target Management Endpoints
- * 
+ *
  * This controller provides multiple endpoints for managing user performance targets:
- * 
+ *
  * ### **Target CRUD Operations**
  * - **GET /:ref/target** - Retrieve user's current targets and progress
  * - **POST /:ref/target** - Create new targets for a user
  * - **PATCH /:ref/target** - Update targets with ABSOLUTE values (set exact amounts)
  * - **DELETE /:ref/target** - Delete user's targets (soft delete with recovery option)
- * 
+ *
  * ### **External System Integration**
  * - **PUT /:userId/targets/external-update** - INCREMENTAL updates from CRM/ERP systems
- * 
+ *
  * ### **Which Endpoint Should I Use?**
- * 
+ *
  * #### **For Setting/Updating Targets & Progress Totals:**
  * Use **PATCH /:ref/target** when:
  * - Setting new target goals (e.g., monthly sales target = R50,000)
  * - Updating cumulative progress totals (e.g., month-to-date sales = R35,000)
  * - Making corrections with absolute values
  * - All values are **absolute amounts**, not increments
- * 
+ *
  * #### **For Recording Individual Transactions:**
  * Use **PUT /:userId/targets/external-update** when:
  * - Recording individual sales (e.g., +R5,000 for one sale)
  * - Processing credit notes (e.g., -R2,000 for return)
  * - Adding leads, calls, check-ins one by one
  * - All values are **incremental amounts** that get added/subtracted
- * 
+ *
  * ### **Key Differences:**
  * - **PATCH**: "Set the total to exactly R35,000"
  * - **PUT external-update**: "Add R5,000 to the current total"
- * 
+ *
  * ### **Negative Values:**
  * - **PATCH**: Use negative values for corrections (will set negative totals)
  * - **PUT external-update**: Use negative increments to reduce totals (e.g., credit notes)
@@ -107,10 +121,8 @@ export class UserController {
 			AccessLevel.OWNER,
 			AccessLevel.MANAGER,
 			AccessLevel.DEVELOPER,
-			AccessLevel.SUPPORT
+			AccessLevel.SUPPORT,
 		].includes(user?.role);
-
-		console.log('user access role in the fetch requests', isElevatedUser,)
 
 		const orgId = user?.org?.uid || user?.organisationRef;
 		const branchId = isElevatedUser ? null : user?.branch?.uid; // null = org-wide access for elevated users
@@ -118,7 +130,7 @@ export class UserController {
 		return {
 			orgId,
 			branchId,
-			isElevated: isElevatedUser
+			isElevated: isElevatedUser,
 		};
 	}
 
@@ -201,9 +213,10 @@ Creates a new user account in the system with full profile management and employ
 - Comprehensive input sanitization and validation
 		`,
 	})
-	@ApiBody({ 
+	@ApiBody({
 		type: CreateUserDto,
-		description: 'User creation payload with comprehensive user information including personal profile and employment details',
+		description:
+			'User creation payload with comprehensive user information including personal profile and employment details',
 		examples: {
 			employee: {
 				summary: '👨‍💼 Employee Account',
@@ -231,7 +244,7 @@ Creates a new user account in the system with full profile management and employ
 						height: '180cm',
 						weight: '75kg',
 						maritalStatus: 'Single',
-						aboutMe: 'Passionate software developer with 5+ years of experience'
+						aboutMe: 'Passionate software developer with 5+ years of experience',
 					},
 					employmentProfile: {
 						position: 'Software Engineer',
@@ -239,9 +252,9 @@ Creates a new user account in the system with full profile management and employ
 						startDate: '2023-01-15',
 						isCurrentlyEmployed: true,
 						email: 'john.doe@company.com',
-						contactNumber: '+27 64 123 4567'
-					}
-				}
+						contactNumber: '+27 64 123 4567',
+					},
+				},
 			},
 			manager: {
 				summary: '👔 Manager Account',
@@ -270,7 +283,7 @@ Creates a new user account in the system with full profile management and employ
 						weight: '60kg',
 						maritalStatus: 'Married',
 						numberDependents: 2,
-						aboutMe: 'Experienced engineering manager with leadership expertise'
+						aboutMe: 'Experienced engineering manager with leadership expertise',
 					},
 					employmentProfile: {
 						position: 'Engineering Manager',
@@ -278,9 +291,9 @@ Creates a new user account in the system with full profile management and employ
 						startDate: '2023-01-01',
 						isCurrentlyEmployed: true,
 						email: 'jane.smith@company.com',
-						contactNumber: '+27 64 987 6543'
-					}
-				}
+						contactNumber: '+27 64 987 6543',
+					},
+				},
 			},
 			basicUser: {
 				summary: '👤 Basic User Account',
@@ -291,26 +304,26 @@ Creates a new user account in the system with full profile management and employ
 					email: 'alex.johnson@loro.co.za',
 					username: 'alex.johnson',
 					password: 'BasicPass789!',
-					accessLevel: AccessLevel.USER
-				}
-			}
-		}
+					accessLevel: AccessLevel.USER,
+				},
+			},
+		},
 	})
 	@ApiCreatedResponse({
 		description: '✅ User created successfully',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { 
-					type: 'string', 
+				message: {
+					type: 'string',
 					example: 'Success',
-					description: 'Success message from environment variable (SUCCESS_MESSAGE)'
-				}
+					description: 'Success message from environment variable (SUCCESS_MESSAGE)',
+				},
 			},
-			required: ['message']
-		}
+			required: ['message'],
+		},
 	})
-	@ApiBadRequestResponse({ 
+	@ApiBadRequestResponse({
 		description: '❌ Bad Request - Invalid or missing required data',
 		schema: {
 			type: 'object',
@@ -324,11 +337,11 @@ Creates a new user account in the system with full profile management and employ
 					example: [
 						'Email must be a valid email address',
 						'Phone number must be in valid format',
-						'Access level must be one of the allowed values'
-					]
-				}
-			}
-		}
+						'Access level must be one of the allowed values',
+					],
+				},
+			},
+		},
 	})
 	@ApiForbiddenResponse({
 		description: '🚫 Forbidden - Insufficient permissions',
@@ -337,9 +350,9 @@ Creates a new user account in the system with full profile management and employ
 			properties: {
 				message: { type: 'string', example: 'You do not have permission to create users in this organization' },
 				error: { type: 'string', example: 'Forbidden' },
-				statusCode: { type: 'number', example: 403 }
-			}
-		}
+				statusCode: { type: 'number', example: 403 },
+			},
+		},
 	})
 	@ApiConflictResponse({
 		description: '⚠️ Conflict - User already exists',
@@ -354,11 +367,11 @@ Creates a new user account in the system with full profile management and employ
 					properties: {
 						uid: { type: 'number', example: 9876 },
 						email: { type: 'string', example: 'john.doe@loro.co.za' },
-						username: { type: 'string', example: 'john.doe' }
-					}
-				}
-			}
-		}
+						username: { type: 'string', example: 'john.doe' },
+					},
+				},
+			},
+		},
 	})
 	@ApiInternalServerErrorResponse({
 		description: '💥 Internal Server Error - System malfunction',
@@ -369,25 +382,19 @@ Creates a new user account in the system with full profile management and employ
 				error: { type: 'string', example: 'Internal Server Error' },
 				statusCode: { type: 'number', example: 500 },
 				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
-				path: { type: 'string', example: '/user' }
-			}
-		}
+				path: { type: 'string', example: '/user' },
+			},
+		},
 	})
 	create(@Body() createUserDto: CreateUserDto, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
-		console.log(req, 'full request body')
+		console.log(req, 'full request body');
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.userService.create(createUserDto, orgId, branchId);
 	}
 
 	@Post('bulk')
-	@Roles(
-		AccessLevel.ADMIN,
-		AccessLevel.MANAGER,
-		AccessLevel.SUPPORT,
-		AccessLevel.DEVELOPER,
-		AccessLevel.OWNER,
-	)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER, AccessLevel.OWNER)
 	@ApiOperation({
 		summary: '👥 Create multiple users in bulk',
 		description: `
@@ -461,15 +468,15 @@ Users will be automatically associated with the authenticated user's organizatio
 								dateOfBirth: '1990-05-15',
 								address: '123 Tech Street, Pretoria South Africa',
 								city: 'Pretoria',
-								country: 'South Africa'
+								country: 'South Africa',
 							},
 							employmentProfile: {
 								position: 'Senior Software Developer',
 								department: 'Information Technology',
 								startDate: '2024-01-15',
 								email: 'theguy.work@example.co.za',
-								contactNumber: '+27 64 123 4567'
-							}
+								contactNumber: '+27 64 123 4567',
+							},
 						},
 						{
 							username: 'devmanager',
@@ -487,15 +494,15 @@ Users will be automatically associated with the authenticated user's organizatio
 								dateOfBirth: '1985-03-20',
 								address: '456 Management Ave, Pretoria South Africa',
 								city: 'Pretoria',
-								country: 'South Africa'
+								country: 'South Africa',
 							},
 							employmentProfile: {
 								position: 'Development Team Manager',
 								department: 'Information Technology',
 								startDate: '2024-01-01',
 								email: 'dev.manager.work@example.co.za',
-								contactNumber: '+27 64 765 4321'
-							}
+								contactNumber: '+27 64 765 4321',
+							},
 						},
 						{
 							username: 'juniordev',
@@ -513,18 +520,18 @@ Users will be automatically associated with the authenticated user's organizatio
 								dateOfBirth: '1995-08-10',
 								address: '789 Starter Road, Pretoria South Africa',
 								city: 'Pretoria',
-								country: 'South Africa'
+								country: 'South Africa',
 							},
 							employmentProfile: {
 								position: 'Junior Software Developer',
 								department: 'Information Technology',
 								startDate: '2024-02-01',
 								email: 'junior.work@example.co.za',
-								contactNumber: '+27 64 555 1234'
-							}
-						}
-					]
-				}
+								contactNumber: '+27 64 555 1234',
+							},
+						},
+					],
+				},
 			},
 			'Sales Team Expansion': {
 				summary: 'Create sales team members with client assignments',
@@ -545,8 +552,8 @@ Users will be automatically associated with the authenticated user's organizatio
 							employmentProfile: {
 								position: 'Regional Sales Manager',
 								department: 'Sales',
-								startDate: '2024-01-01'
-							}
+								startDate: '2024-01-01',
+							},
 						},
 						{
 							username: 'salesrep1',
@@ -561,8 +568,8 @@ Users will be automatically associated with the authenticated user's organizatio
 							employmentProfile: {
 								position: 'Sales Representative',
 								department: 'Sales',
-								startDate: '2024-02-01'
-							}
+								startDate: '2024-02-01',
+							},
 						},
 						{
 							username: 'salesrep2',
@@ -577,11 +584,11 @@ Users will be automatically associated with the authenticated user's organizatio
 							employmentProfile: {
 								position: 'Sales Representative',
 								department: 'Sales',
-								startDate: '2024-02-15'
-							}
-						}
-					]
-				}
+								startDate: '2024-02-15',
+							},
+						},
+					],
+				},
 			},
 			'Support Team Setup': {
 				summary: 'Create customer support team with access levels',
@@ -603,8 +610,8 @@ Users will be automatically associated with the authenticated user's organizatio
 							employmentProfile: {
 								position: 'Customer Support Team Lead',
 								department: 'Customer Support',
-								startDate: '2024-01-05'
-							}
+								startDate: '2024-01-05',
+							},
 						},
 						{
 							username: 'supportagent1',
@@ -620,13 +627,13 @@ Users will be automatically associated with the authenticated user's organizatio
 							employmentProfile: {
 								position: 'Customer Support Agent',
 								department: 'Customer Support',
-								startDate: '2024-01-10'
-							}
-						}
-					]
-				}
-			}
-		}
+								startDate: '2024-01-10',
+							},
+						},
+					],
+				},
+			},
+		},
 	})
 	@ApiCreatedResponse({
 		description: '✅ Bulk creation completed successfully',
@@ -648,43 +655,40 @@ Users will be automatically associated with the authenticated user's organizatio
 							error: { type: 'string', example: 'Username already exists' },
 							index: { type: 'number', example: 0 },
 							username: { type: 'string', example: 'theguy' },
-							email: { type: 'string', example: 'theguy@example.co.za' }
-						}
-					}
+							email: { type: 'string', example: 'theguy@example.co.za' },
+						},
+					},
 				},
 				message: { type: 'string', example: 'Bulk creation completed: 9 users created, 1 failed' },
-				errors: { 
-					type: 'array', 
+				errors: {
+					type: 'array',
 					items: { type: 'string' },
-					example: ['User 3 (duplicate@email.com): Email already exists']
+					example: ['User 3 (duplicate@email.com): Email already exists'],
 				},
 				duration: { type: 'number', example: 2150 },
-				createdUserIds: { 
+				createdUserIds: {
 					type: 'array',
 					items: { type: 'number' },
-					example: [101, 102, 103, 104, 105, 106, 107, 108, 109]
+					example: [101, 102, 103, 104, 105, 106, 107, 108, 109],
 				},
-				welcomeEmailsSent: { type: 'number', example: 9 }
-			}
-		}
+				welcomeEmailsSent: { type: 'number', example: 9 },
+			},
+		},
 	})
 	@ApiBadRequestResponse({
 		description: '❌ Invalid bulk creation data',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { 
+				message: {
 					type: 'array',
 					items: { type: 'string' },
-					example: [
-						'users must contain at least 1 element',
-						'users must contain no more than 50 elements'
-					]
+					example: ['users must contain at least 1 element', 'users must contain no more than 50 elements'],
 				},
 				error: { type: 'string', example: 'Bad Request' },
-				statusCode: { type: 'number', example: 400 }
-			}
-		}
+				statusCode: { type: 'number', example: 400 },
+			},
+		},
 	})
 	@ApiUnprocessableEntityResponse({
 		description: '⚠️ Some validation errors occurred',
@@ -692,9 +696,9 @@ Users will be automatically associated with the authenticated user's organizatio
 			type: 'object',
 			properties: {
 				message: { type: 'string', example: 'Some users failed validation' },
-				statusCode: { type: 'number', example: 422 }
-			}
-		}
+				statusCode: { type: 'number', example: 422 },
+			},
+		},
 	})
 	@ApiInternalServerErrorResponse({
 		description: '🔥 Internal server error during bulk creation',
@@ -703,11 +707,14 @@ Users will be automatically associated with the authenticated user's organizatio
 			properties: {
 				message: { type: 'string', example: 'Database transaction failed' },
 				error: { type: 'string', example: 'Internal Server Error' },
-				statusCode: { type: 'number', example: 500 }
-			}
-		}
+				statusCode: { type: 'number', example: 500 },
+			},
+		},
 	})
-	async createBulkUsers(@Body() bulkCreateUserDto: BulkCreateUserDto, @Req() req: AuthenticatedRequest): Promise<BulkCreateUserResponse> {
+	async createBulkUsers(
+		@Body() bulkCreateUserDto: BulkCreateUserDto,
+		@Req() req: AuthenticatedRequest,
+	): Promise<BulkCreateUserResponse> {
 		// Automatically set orgId and branchId from authenticated user if not provided
 		if (!bulkCreateUserDto.orgId) {
 			bulkCreateUserDto.orgId = req.user?.org?.uid || req.user?.organisationRef;
@@ -715,18 +722,12 @@ Users will be automatically associated with the authenticated user's organizatio
 		if (!bulkCreateUserDto.branchId) {
 			bulkCreateUserDto.branchId = req.user?.branch?.uid;
 		}
-		
+
 		return this.userService.createBulkUsers(bulkCreateUserDto);
 	}
 
 	@Patch('bulk')
-	@Roles(
-		AccessLevel.ADMIN,
-		AccessLevel.MANAGER,
-		AccessLevel.SUPPORT,
-		AccessLevel.DEVELOPER,
-		AccessLevel.OWNER,
-	)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER, AccessLevel.OWNER)
 	@ApiOperation({
 		summary: '📝 Update multiple users in bulk',
 		description: `
@@ -793,8 +794,8 @@ Any fields from the UpdateUserDto can be updated:
 								accessLevel: 'DEVELOPER',
 								assignedClientIds: [1, 2, 3, 4, 5, 6],
 								departmentId: 1,
-								phone: '+27 64 999 8888'
-							}
+								phone: '+27 64 999 8888',
+							},
 						},
 						{
 							ref: 124,
@@ -802,8 +803,8 @@ Any fields from the UpdateUserDto can be updated:
 								role: 'Team Lead',
 								accessLevel: 'MANAGER',
 								assignedClientIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-								departmentId: 1
-							}
+								departmentId: 1,
+							},
 						},
 						{
 							ref: 125,
@@ -811,11 +812,11 @@ Any fields from the UpdateUserDto can be updated:
 								role: 'Development Manager',
 								accessLevel: 'ADMIN',
 								assignedClientIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
-								departmentId: 1
-							}
-						}
-					]
-				}
+								departmentId: 1,
+							},
+						},
+					],
+				},
 			},
 			'Contact Information Update': {
 				summary: 'Update contact details and profile information',
@@ -829,18 +830,18 @@ Any fields from the UpdateUserDto can be updated:
 								name: 'Updated Name',
 								phone: '+27 64 123 9999',
 								email: 'updated.email@example.co.za',
-								photoURL: 'https://example.co.za/photos/updated.jpg'
-							}
+								photoURL: 'https://example.co.za/photos/updated.jpg',
+							},
 						},
 						{
 							ref: 202,
 							data: {
 								phone: '+27 64 456 7890',
-								businesscardURL: 'https://example.co.za/cards/new-card.jpg'
-							}
-						}
-					]
-				}
+								businesscardURL: 'https://example.co.za/cards/new-card.jpg',
+							},
+						},
+					],
+				},
 			},
 			'Status and Security Updates': {
 				summary: 'Update user status, passwords and security settings',
@@ -853,26 +854,26 @@ Any fields from the UpdateUserDto can be updated:
 							data: {
 								status: 'active',
 								password: 'NewSecurePassword123!',
-								accessLevel: 'USER'
-							}
+								accessLevel: 'USER',
+							},
 						},
 						{
 							ref: 302,
 							data: {
 								status: 'suspended',
-								assignedClientIds: []
-							}
+								assignedClientIds: [],
+							},
 						},
 						{
 							ref: 303,
 							data: {
 								status: 'active',
 								role: 'Rehabilitated User',
-								assignedClientIds: [1, 2, 3]
-							}
-						}
-					]
-				}
+								assignedClientIds: [1, 2, 3],
+							},
+						},
+					],
+				},
 			},
 			'Client Assignment Batch': {
 				summary: 'Update client assignments for multiple users',
@@ -883,31 +884,31 @@ Any fields from the UpdateUserDto can be updated:
 						{
 							ref: 401,
 							data: {
-								assignedClientIds: [10, 11, 12, 13, 14, 15]
-							}
+								assignedClientIds: [10, 11, 12, 13, 14, 15],
+							},
 						},
 						{
 							ref: 402,
 							data: {
-								assignedClientIds: [16, 17, 18, 19, 20, 21]
-							}
+								assignedClientIds: [16, 17, 18, 19, 20, 21],
+							},
 						},
 						{
 							ref: 403,
 							data: {
-								assignedClientIds: [22, 23, 24, 25, 26, 27]
-							}
+								assignedClientIds: [22, 23, 24, 25, 26, 27],
+							},
 						},
 						{
 							ref: 404,
 							data: {
-								assignedClientIds: [28, 29, 30, 31, 32, 33]
-							}
-						}
-					]
-				}
-			}
-		}
+								assignedClientIds: [28, 29, 30, 31, 32, 33],
+							},
+						},
+					],
+				},
+			},
+		},
 	})
 	@ApiOkResponse({
 		description: '✅ Bulk update completed successfully',
@@ -930,47 +931,47 @@ Any fields from the UpdateUserDto can be updated:
 							index: { type: 'number', example: 0 },
 							username: { type: 'string', example: 'theguy' },
 							email: { type: 'string', example: 'theguy@example.co.za' },
-							updatedFields: { 
+							updatedFields: {
 								type: 'array',
 								items: { type: 'string' },
-								example: ['role', 'accessLevel', 'assignedClientIds']
-							}
-						}
-					}
+								example: ['role', 'accessLevel', 'assignedClientIds'],
+							},
+						},
+					},
 				},
 				message: { type: 'string', example: 'Bulk update completed: 9 users updated, 1 failed' },
-				errors: { 
-					type: 'array', 
+				errors: {
+					type: 'array',
 					items: { type: 'string' },
-					example: ['User ID 999: User not found']
+					example: ['User ID 999: User not found'],
 				},
 				duration: { type: 'number', example: 1850 },
-				updatedUserIds: { 
+				updatedUserIds: {
 					type: 'array',
 					items: { type: 'number' },
-					example: [123, 124, 125, 126, 127, 128, 129, 130, 131]
+					example: [123, 124, 125, 126, 127, 128, 129, 130, 131],
 				},
-				notificationEmailsSent: { type: 'number', example: 5 }
-			}
-		}
+				notificationEmailsSent: { type: 'number', example: 5 },
+			},
+		},
 	})
 	@ApiBadRequestResponse({
 		description: '❌ Invalid bulk update data',
 		schema: {
 			type: 'object',
 			properties: {
-				message: { 
+				message: {
 					type: 'array',
 					items: { type: 'string' },
 					example: [
 						'updates must contain at least 1 element',
-						'updates must contain no more than 50 elements'
-					]
+						'updates must contain no more than 50 elements',
+					],
 				},
 				error: { type: 'string', example: 'Bad Request' },
-				statusCode: { type: 'number', example: 400 }
-			}
-		}
+				statusCode: { type: 'number', example: 400 },
+			},
+		},
 	})
 	@ApiNotFoundResponse({
 		description: '🔍 Some users not found',
@@ -978,9 +979,9 @@ Any fields from the UpdateUserDto can be updated:
 			type: 'object',
 			properties: {
 				message: { type: 'string', example: 'Some users could not be found' },
-				statusCode: { type: 'number', example: 404 }
-			}
-		}
+				statusCode: { type: 'number', example: 404 },
+			},
+		},
 	})
 	@ApiInternalServerErrorResponse({
 		description: '🔥 Internal server error during bulk update',
@@ -989,11 +990,14 @@ Any fields from the UpdateUserDto can be updated:
 			properties: {
 				message: { type: 'string', example: 'Database transaction failed' },
 				error: { type: 'string', example: 'Internal Server Error' },
-				statusCode: { type: 'number', example: 500 }
-			}
-		}
+				statusCode: { type: 'number', example: 500 },
+			},
+		},
 	})
-	async updateBulkUsers(@Body() bulkUpdateUserDto: BulkUpdateUserDto, @Req() req: AuthenticatedRequest): Promise<BulkUpdateUserResponse> {
+	async updateBulkUsers(
+		@Body() bulkUpdateUserDto: BulkUpdateUserDto,
+		@Req() req: AuthenticatedRequest,
+	): Promise<BulkUpdateUserResponse> {
 		return this.userService.updateBulkUsers(bulkUpdateUserDto);
 	}
 
@@ -1044,100 +1048,140 @@ Retrieves a comprehensive list of all users in your organization with advanced f
 - **Communication**: Broadcast messages and announcements
 		`,
 	})
-	@ApiQuery({ name: 'page', description: 'Page number for pagination (starts from 1)', required: false, type: Number, example: 1 })
-	@ApiQuery({ name: 'limit', description: 'Number of items per page (max 100)', required: false, type: Number, example: 10 })
-	@ApiQuery({ name: 'status', description: 'Filter by account status', required: false, enum: AccountStatus, example: AccountStatus.ACTIVE })
-	@ApiQuery({ name: 'accessLevel', description: 'Filter by access level', required: false, enum: AccessLevel, example: AccessLevel.USER })
-	@ApiQuery({ name: 'search', description: 'Search term for filtering users (name, email, username)', required: false, type: String, example: 'john' })
+	@ApiQuery({
+		name: 'page',
+		description: 'Page number for pagination (starts from 1)',
+		required: false,
+		type: Number,
+		example: 1,
+	})
+	@ApiQuery({
+		name: 'limit',
+		description: 'Number of items per page (max 100)',
+		required: false,
+		type: Number,
+		example: 10,
+	})
+	@ApiQuery({
+		name: 'status',
+		description: 'Filter by account status',
+		required: false,
+		enum: AccountStatus,
+		example: AccountStatus.ACTIVE,
+	})
+	@ApiQuery({
+		name: 'accessLevel',
+		description: 'Filter by access level',
+		required: false,
+		enum: AccessLevel,
+		example: AccessLevel.USER,
+	})
+	@ApiQuery({
+		name: 'search',
+		description: 'Search term for filtering users (name, email, username)',
+		required: false,
+		type: String,
+		example: 'john',
+	})
 	@ApiQuery({ name: 'branchId', description: 'Filter by branch ID', required: false, type: Number, example: 123 })
-	@ApiQuery({ name: 'organisationId', description: 'Filter by organisation ID', required: false, type: Number, example: 456 })
+	@ApiQuery({
+		name: 'organisationId',
+		description: 'Filter by organisation ID',
+		required: false,
+		type: Number,
+		example: 456,
+	})
 	@ApiOkResponse({
 		description: '✅ Users retrieved successfully',
 		schema: {
 			type: 'object',
 			properties: {
 				data: {
-							type: 'array',
-							items: {
-								type: 'object',
-								properties: {
-									uid: { type: 'number', example: 1 },
-									username: { type: 'string', example: 'john.doe' },
-									name: { type: 'string', example: 'John' },
-									surname: { type: 'string', example: 'Doe' },
+					type: 'array',
+					items: {
+						type: 'object',
+						properties: {
+							uid: { type: 'number', example: 1 },
+							username: { type: 'string', example: 'john.doe' },
+							name: { type: 'string', example: 'John' },
+							surname: { type: 'string', example: 'Doe' },
 							email: { type: 'string', example: 'john.doe@loro.co.za' },
 							phone: { type: 'string', example: '+27123456789' },
 							photoURL: { type: 'string', example: 'https://example.com/photo.jpg', nullable: true },
-							businesscardURL: { type: 'string', example: 'https://example.com/businesscard.jpg', nullable: true },
+							businesscardURL: {
+								type: 'string',
+								example: 'https://example.com/businesscard.jpg',
+								nullable: true,
+							},
 							avatar: { type: 'string', example: 'https://example.com/avatar.jpg', nullable: true },
 							role: { type: 'string', example: 'sales_rep' },
-									status: { type: 'string', example: 'active' },
+							status: { type: 'string', example: 'active' },
 							departmentId: { type: 'number', example: 1, nullable: true },
-									accessLevel: {
-										type: 'string',
-										enum: Object.values(AccessLevel),
-										example: AccessLevel.USER,
-									},
+							accessLevel: {
+								type: 'string',
+								enum: Object.values(AccessLevel),
+								example: AccessLevel.USER,
+							},
 							organisationRef: { type: 'string', example: '123', nullable: true },
-									userref: { type: 'string', example: 'USR123456' },
+							userref: { type: 'string', example: 'USR123456' },
 							hrID: { type: 'number', example: 12345, nullable: true },
 							expoPushToken: { type: 'string', example: 'ExponentPushToken[abc123]', nullable: true },
 							deviceId: { type: 'string', example: 'device123', nullable: true },
 							platform: { type: 'string', example: 'ios', nullable: true },
-									isDeleted: { type: 'boolean', example: false },
-							assignedClientIds: { 
-								type: 'array', 
-								items: { type: 'number' }, 
+							isDeleted: { type: 'boolean', example: false },
+							assignedClientIds: {
+								type: 'array',
+								items: { type: 'number' },
 								example: [101, 102, 103],
-								nullable: true 
+								nullable: true,
 							},
 							assignedClients: {
 								type: 'array',
 								items: {
-										type: 'object',
-										properties: {
+									type: 'object',
+									properties: {
 										uid: { type: 'number', example: 101 },
 										name: { type: 'string', example: 'Client Name' },
 										contactPerson: { type: 'string', example: 'John Smith' },
 										email: { type: 'string', example: 'john@client.com' },
 										phone: { type: 'string', example: '+27123456789' },
 										status: { type: 'string', example: 'active' },
-										createdAt: { type: 'string', format: 'date-time' }
-									}
+										createdAt: { type: 'string', format: 'date-time' },
+									},
 								},
-								nullable: true
+								nullable: true,
 							},
 							organisation: {
-										type: 'object',
+								type: 'object',
 								nullable: true,
-										properties: {
+								properties: {
 									uid: { type: 'number', example: 1 },
-									name: { type: 'string', example: 'Orrbit Technologies' }
-								}
-									},
-									branch: {
-										type: 'object',
+									name: { type: 'string', example: 'Orrbit Technologies' },
+								},
+							},
+							branch: {
+								type: 'object',
 								nullable: true,
-										properties: {
+								properties: {
 									uid: { type: 'number', example: 1 },
-									name: { type: 'string', example: 'Pretoria South Africa' }
-								}
+									name: { type: 'string', example: 'Pretoria South Africa' },
+								},
 							},
 							userTarget: {
-										type: 'object',
+								type: 'object',
 								nullable: true,
-										properties: {
+								properties: {
 									uid: { type: 'number', example: 1 },
 									targetSalesAmount: { type: 'number', example: 50000 },
 									currentSalesAmount: { type: 'number', example: 32500 },
 									targetNewLeads: { type: 'number', example: 20 },
-									currentNewLeads: { type: 'number', example: 18 }
-								}
+									currentNewLeads: { type: 'number', example: 18 },
+								},
 							},
 							createdAt: { type: 'string', format: 'date-time' },
-							updatedAt: { type: 'string', format: 'date-time' }
-						}
-					}
+							updatedAt: { type: 'string', format: 'date-time' },
+						},
+					},
 				},
 				meta: {
 					type: 'object',
@@ -1145,17 +1189,17 @@ Retrieves a comprehensive list of all users in your organization with advanced f
 						total: { type: 'number', example: 156 },
 						page: { type: 'number', example: 1 },
 						limit: { type: 'number', example: 10 },
-						totalPages: { type: 'number', example: 16 }
-					}
+						totalPages: { type: 'number', example: 16 },
 					},
-				message: { 
-					type: 'string', 
-					example: 'Success',
-					description: 'Success message from environment variable'
-				}
 				},
-			required: ['data', 'meta', 'message']
-		}
+				message: {
+					type: 'string',
+					example: 'Success',
+					description: 'Success message from environment variable',
+				},
+			},
+			required: ['data', 'meta', 'message'],
+		},
 	})
 	@ApiForbiddenResponse({
 		description: '🚫 Forbidden - Insufficient permissions to view users',
@@ -1164,9 +1208,9 @@ Retrieves a comprehensive list of all users in your organization with advanced f
 			properties: {
 				message: { type: 'string', example: 'You do not have permission to view users in this organization' },
 				error: { type: 'string', example: 'Forbidden' },
-				statusCode: { type: 'number', example: 403 }
-			}
-		}
+				statusCode: { type: 'number', example: 403 },
+			},
+		},
 	})
 	@ApiInternalServerErrorResponse({
 		description: '💥 Internal Server Error - Database connection failed',
@@ -1177,9 +1221,9 @@ Retrieves a comprehensive list of all users in your organization with advanced f
 				error: { type: 'string', example: 'Internal Server Error' },
 				statusCode: { type: 'number', example: 500 },
 				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
-				path: { type: 'string', example: '/user' }
-			}
-		}
+				path: { type: 'string', example: '/user' },
+			},
+		},
 	})
 	findAll(
 		@Req() req: AuthenticatedRequest,
@@ -1255,7 +1299,7 @@ Retrieves detailed information about a specific user by their unique reference i
 - **Team Collaboration**: Find team member contact and role information
 - **System Administration**: User account verification and troubleshooting
 - **Reporting**: Generate individual user reports and analytics
-		`
+		`,
 	})
 	@Roles(
 		AccessLevel.ADMIN,
@@ -1275,43 +1319,52 @@ Retrieves detailed information about a specific user by their unique reference i
 	@ApiOkResponse({
 		description: '✅ User retrieved successfully',
 		schema: {
+			type: 'object',
+			properties: {
+				user: {
 					type: 'object',
-					properties: {
-						user: {
-							type: 'object',
 					nullable: true,
-							properties: {
-								uid: { type: 'number', example: 123 },
-								username: { type: 'string', example: 'john.doe' },
-								name: { type: 'string', example: 'John' },
-								surname: { type: 'string', example: 'Doe' },
+					properties: {
+						uid: { type: 'number', example: 123 },
+						username: { type: 'string', example: 'john.doe' },
+						name: { type: 'string', example: 'John' },
+						surname: { type: 'string', example: 'Doe' },
 						email: { type: 'string', example: 'john.doe@loro.co.za' },
 						phone: { type: 'string', example: '+27123456789' },
 						photoURL: { type: 'string', example: 'https://example.com/photo.jpg', nullable: true },
-						businesscardURL: { type: 'string', example: 'https://example.com/businesscard.jpg', nullable: true },
+						businesscardURL: {
+							type: 'string',
+							example: 'https://example.com/businesscard.jpg',
+							nullable: true,
+						},
 						avatar: { type: 'string', example: 'https://example.com/avatar.jpg', nullable: true },
 						role: { type: 'string', example: 'sales_rep' },
-								status: { type: 'string', example: 'active' },
+						status: { type: 'string', example: 'active' },
 						departmentId: { type: 'number', example: 1, nullable: true },
-								accessLevel: { type: 'string', enum: Object.values(AccessLevel), example: AccessLevel.USER },
+						accessLevel: { type: 'string', enum: Object.values(AccessLevel), example: AccessLevel.USER },
 						organisationRef: { type: 'string', example: '123', nullable: true },
-								userref: { type: 'string', example: 'USR123456' },
+						userref: { type: 'string', example: 'USR123456' },
 						hrID: { type: 'number', example: 12345, nullable: true },
 						expoPushToken: { type: 'string', example: 'ExponentPushToken[abc123]', nullable: true },
 						deviceId: { type: 'string', example: 'device123', nullable: true },
 						platform: { type: 'string', example: 'ios', nullable: true },
-						pushTokenUpdatedAt: { type: 'string', format: 'date-time', example: '2024-01-15T10:30:00Z', nullable: true },
-								isDeleted: { type: 'boolean', example: false },
-						assignedClientIds: { 
-							type: 'array', 
-							items: { type: 'number' }, 
+						pushTokenUpdatedAt: {
+							type: 'string',
+							format: 'date-time',
+							example: '2024-01-15T10:30:00Z',
+							nullable: true,
+						},
+						isDeleted: { type: 'boolean', example: false },
+						assignedClientIds: {
+							type: 'array',
+							items: { type: 'number' },
 							example: [101, 102, 103],
-							nullable: true 
+							nullable: true,
 						},
 						assignedClients: {
 							type: 'array',
 							items: {
-									type: 'object',
+								type: 'object',
 								properties: {
 									uid: { type: 'number', example: 101 },
 									name: { type: 'string', example: 'Client Name' },
@@ -1319,63 +1372,63 @@ Retrieves detailed information about a specific user by their unique reference i
 									email: { type: 'string', example: 'john@client.com' },
 									phone: { type: 'string', example: '+27123456789' },
 									status: { type: 'string', example: 'active' },
-									createdAt: { type: 'string', format: 'date-time' }
-								}
+									createdAt: { type: 'string', format: 'date-time' },
+								},
 							},
-							nullable: true
+							nullable: true,
 						},
 						organisation: {
 							type: 'object',
 							nullable: true,
 							properties: {
 								uid: { type: 'number', example: 1 },
-								name: { type: 'string', example: 'Orrbit Technologies' }
-							}
+								name: { type: 'string', example: 'Orrbit Technologies' },
+							},
 						},
 						branch: {
 							type: 'object',
 							nullable: true,
 							properties: {
 								uid: { type: 'number', example: 1 },
-								name: { type: 'string', example: 'Pretoria South Africa' }
-							}
+								name: { type: 'string', example: 'Pretoria South Africa' },
+							},
 						},
 						userProfile: {
 							type: 'object',
 							nullable: true,
-									properties: {
-										uid: { type: 'number', example: 1 },
-										height: { type: 'string', example: '180cm' },
-										weight: { type: 'string', example: '75kg' },
-										gender: { type: 'string', example: 'MALE' },
-										dateOfBirth: { type: 'string', format: 'date', example: '1990-01-15' },
-										address: { type: 'string', example: '123 Main Street' },
-										city: { type: 'string', example: 'Cape Town' },
-										country: { type: 'string', example: 'South Africa' },
-										zipCode: { type: 'string', example: '7700' },
-										maritalStatus: { type: 'string', example: 'Single' },
-										aboutMe: { type: 'string', example: 'Passionate software developer' },
-										currentAge: { type: 'number', example: 34 },
-								numberDependents: { type: 'number', example: 0 }
-									}
-								},
+							properties: {
+								uid: { type: 'number', example: 1 },
+								height: { type: 'string', example: '180cm' },
+								weight: { type: 'string', example: '75kg' },
+								gender: { type: 'string', example: 'MALE' },
+								dateOfBirth: { type: 'string', format: 'date', example: '1990-01-15' },
+								address: { type: 'string', example: '123 Main Street' },
+								city: { type: 'string', example: 'Cape Town' },
+								country: { type: 'string', example: 'South Africa' },
+								zipCode: { type: 'string', example: '7700' },
+								maritalStatus: { type: 'string', example: 'Single' },
+								aboutMe: { type: 'string', example: 'Passionate software developer' },
+								currentAge: { type: 'number', example: 34 },
+								numberDependents: { type: 'number', example: 0 },
+							},
+						},
 						userEmployeementProfile: {
-									type: 'object',
+							type: 'object',
 							nullable: true,
-									properties: {
-										uid: { type: 'string', example: '1' },
-										position: { type: 'string', example: 'Software Engineer' },
-										department: { type: 'string', example: 'Engineering' },
-										startDate: { type: 'string', format: 'date', example: '2023-01-15' },
-										isCurrentlyEmployed: { type: 'boolean', example: true },
-										email: { type: 'string', example: 'john.doe@company.com' },
-								contactNumber: { type: 'string', example: '+27123456789' }
-							}
+							properties: {
+								uid: { type: 'string', example: '1' },
+								position: { type: 'string', example: 'Software Engineer' },
+								department: { type: 'string', example: 'Engineering' },
+								startDate: { type: 'string', format: 'date', example: '2023-01-15' },
+								isCurrentlyEmployed: { type: 'boolean', example: true },
+								email: { type: 'string', example: 'john.doe@company.com' },
+								contactNumber: { type: 'string', example: '+27123456789' },
+							},
 						},
 						userTarget: {
-									type: 'object',
+							type: 'object',
 							nullable: true,
-									properties: {
+							properties: {
 								uid: { type: 'number', example: 1 },
 								targetSalesAmount: { type: 'number', example: 50000 },
 								currentSalesAmount: { type: 'number', example: 32500 },
@@ -1389,21 +1442,21 @@ Retrieves detailed information about a specific user by their unique reference i
 								targetCheckIns: { type: 'number', example: 30 },
 								currentCheckIns: { type: 'number', example: 25 },
 								periodStartDate: { type: 'string', format: 'date', example: '2024-01-01' },
-								periodEndDate: { type: 'string', format: 'date', example: '2024-03-31' }
-							}
+								periodEndDate: { type: 'string', format: 'date', example: '2024-03-31' },
+							},
 						},
 						createdAt: { type: 'string', format: 'date-time', example: '2023-01-15T10:00:00Z' },
-						updatedAt: { type: 'string', format: 'date-time', example: '2024-01-15T14:30:00Z' }
-					}
+						updatedAt: { type: 'string', format: 'date-time', example: '2024-01-15T14:30:00Z' },
+					},
 				},
 				message: {
 					type: 'string',
 					example: 'Success',
-					description: 'Success message from environment variable'
-				}
+					description: 'Success message from environment variable',
+				},
 			},
-			required: ['user', 'message']
-		}
+			required: ['user', 'message'],
+		},
 	})
 	@ApiNotFoundResponse({
 		description: '❌ User not found',
@@ -1412,9 +1465,9 @@ Retrieves detailed information about a specific user by their unique reference i
 			properties: {
 				message: { type: 'string', example: 'User with reference 123 not found' },
 				error: { type: 'string', example: 'Not Found' },
-				statusCode: { type: 'number', example: 404 }
-			}
-		}
+				statusCode: { type: 'number', example: 404 },
+			},
+		},
 	})
 	@ApiForbiddenResponse({
 		description: '🚫 Forbidden - Insufficient permissions',
@@ -1423,9 +1476,9 @@ Retrieves detailed information about a specific user by their unique reference i
 			properties: {
 				message: { type: 'string', example: 'You do not have permission to view this user profile' },
 				error: { type: 'string', example: 'Forbidden' },
-				statusCode: { type: 'number', example: 403 }
-			}
-		}
+				statusCode: { type: 'number', example: 403 },
+			},
+		},
 	})
 	@ApiInternalServerErrorResponse({
 		description: '💥 Internal Server Error - Profile retrieval failed',
@@ -1434,35 +1487,19 @@ Retrieves detailed information about a specific user by their unique reference i
 			properties: {
 				message: { type: 'string', example: 'An unexpected error occurred while retrieving user profile' },
 				error: { type: 'string', example: 'Internal Server Error' },
-				statusCode: { type: 'number', example: 500 }
-			}
-		}
-	})
-	findOne(@Param('ref') ref: number, @Req() req: AuthenticatedRequest): Promise<{ user: Omit<User, 'password'> | null; message: string }> {
-		const accessScope = this.getAccessScope(req.user);
-		
-		// 🔍 DEBUG: Log the access decision
-		console.log('🔍 DEBUG findOne route:', {
-			searchingForUser: ref,
-			requestingUser: {
-				uid: req.user?.uid,
-				accessLevel: req.user?.accessLevel,
-				isElevated: accessScope.isElevated
+				statusCode: { type: 'number', example: 500 },
 			},
-			accessScope: {
-				orgId: accessScope.orgId,
-				branchId: accessScope.branchId,
-				orgWideAccess: accessScope.branchId === null
-			}
-		});
-		
+		},
+	})
+	findOne(
+		@Param('ref') ref: number,
+		@Req() req: AuthenticatedRequest,
+	): Promise<{ user: Omit<User, 'password'> | null; message: string }> {
+		const accessScope = this.getAccessScope(req.user);
+
 		if (accessScope.isElevated) {
-			// Elevated users can see all users in their organization (org-wide access)
-			console.log('✅ Elevated user - org-wide access within organization');
 			return this.userService.findOne(ref, accessScope.orgId, null);
 		} else {
-			// Regular users only see users from their org/branch
-			console.log('🔒 Regular user - applying org/branch filters');
 			return this.userService.findOne(ref, accessScope.orgId, accessScope.branchId);
 		}
 	}
@@ -1513,7 +1550,7 @@ Updates an existing user's information with comprehensive validation and audit t
 		type: 'number',
 		example: 123,
 	})
-	@ApiBody({ 
+	@ApiBody({
 		type: UpdateUserDto,
 		description: 'User update payload with fields to modify - supports partial updates',
 		examples: {
@@ -1535,9 +1572,9 @@ Updates an existing user's information with comprehensive validation and audit t
 						zipCode: '2000',
 						maritalStatus: 'Married',
 						aboutMe: 'Updated profile description with new experiences',
-						socialMedia: 'linkedin.com/in/johndoe'
-					}
-				}
+						socialMedia: 'linkedin.com/in/johndoe',
+					},
+				},
 			},
 			employmentUpdate: {
 				summary: '💼 Employment Update',
@@ -1551,9 +1588,9 @@ Updates an existing user's information with comprehensive validation and audit t
 						isCurrentlyEmployed: true,
 						email: 'john.doe@newcompany.com',
 						contactNumber: '+27 64 999 8888',
-						branchref: 'BRANCH456'
-					}
-				}
+						branchref: 'BRANCH456',
+					},
+				},
 			},
 			statusUpdate: {
 				summary: '🔄 Status Change',
@@ -1562,8 +1599,8 @@ Updates an existing user's information with comprehensive validation and audit t
 					status: 'active',
 					role: 'manager',
 					accessLevel: AccessLevel.MANAGER,
-					organisationRef: 'ORG456'
-				}
+					organisationRef: 'ORG456',
+				},
 			},
 			deviceUpdate: {
 				summary: '📱 Device Information Update',
@@ -1572,8 +1609,8 @@ Updates an existing user's information with comprehensive validation and audit t
 					expoPushToken: 'ExponentPushToken[updated-token]',
 					deviceId: 'device789xyz',
 					platform: 'android',
-					pushTokenUpdatedAt: '2024-02-01T00:00:00Z'
-				}
+					pushTokenUpdatedAt: '2024-02-01T00:00:00Z',
+				},
 			},
 			comprehensiveUpdate: {
 				summary: '🔄 Comprehensive Update',
@@ -1597,7 +1634,7 @@ Updates an existing user's information with comprehensive validation and audit t
 						maritalStatus: 'Married',
 						numberDependents: 1,
 						aboutMe: 'Senior software engineer with team leadership experience',
-						currentAge: 34
+						currentAge: 34,
 					},
 					employmentProfile: {
 						position: 'Senior Software Engineer',
@@ -1605,11 +1642,11 @@ Updates an existing user's information with comprehensive validation and audit t
 						startDate: '2023-01-15',
 						isCurrentlyEmployed: true,
 						email: 'john.doesmith@company.com',
-						contactNumber: '+27 64 111 2222'
-					}
-				}
-			}
-		}
+						contactNumber: '+27 64 111 2222',
+					},
+				},
+			},
+		},
 	})
 	@ApiOkResponse({
 		description: '✅ User updated successfully',
@@ -1619,13 +1656,13 @@ Updates an existing user's information with comprehensive validation and audit t
 				message: {
 					type: 'string',
 					example: 'Success',
-					description: 'Success message from environment variable (SUCCESS_MESSAGE)'
-				}
+					description: 'Success message from environment variable (SUCCESS_MESSAGE)',
+				},
 			},
-			required: ['message']
-		}
+			required: ['message'],
+		},
 	})
-	@ApiNotFoundResponse({ 
+	@ApiNotFoundResponse({
 		description: '🔍 User not found for update',
 		schema: {
 			type: 'object',
@@ -1639,13 +1676,13 @@ Updates an existing user's information with comprehensive validation and audit t
 					example: [
 						'Verify the user reference code is correct',
 						'Check if the user has been deleted',
-						'Ensure you have permission to access this user'
-					]
-				}
-			}
-		}
+						'Ensure you have permission to access this user',
+					],
+				},
+			},
+		},
 	})
-	@ApiBadRequestResponse({ 
+	@ApiBadRequestResponse({
 		description: '❌ Bad Request - Invalid update data',
 		schema: {
 			type: 'object',
@@ -1659,11 +1696,11 @@ Updates an existing user's information with comprehensive validation and audit t
 					example: [
 						'Email must be a valid email address',
 						'Phone number must be in valid format',
-						'Access level must be one of the allowed values'
-					]
-				}
-			}
-		}
+						'Access level must be one of the allowed values',
+					],
+				},
+			},
+		},
 	})
 	@ApiForbiddenResponse({
 		description: '🚫 Forbidden - No permission to update user',
@@ -1673,9 +1710,12 @@ Updates an existing user's information with comprehensive validation and audit t
 				message: { type: 'string', example: 'You do not have permission to update this user' },
 				error: { type: 'string', example: 'Forbidden' },
 				statusCode: { type: 'number', example: 403 },
-				reason: { type: 'string', example: 'User belongs to different branch or insufficient role permissions' }
-			}
-		}
+				reason: {
+					type: 'string',
+					example: 'User belongs to different branch or insufficient role permissions',
+				},
+			},
+		},
 	})
 	@ApiConflictResponse({
 		description: '⚠️ Conflict - Update conflicts with current state',
@@ -1691,11 +1731,11 @@ Updates an existing user's information with comprehensive validation and audit t
 					example: [
 						'Email address already in use by another user',
 						'Username already exists',
-						'Cannot change role while user has active sessions'
-					]
-				}
-			}
-		}
+						'Cannot change role while user has active sessions',
+					],
+				},
+			},
+		},
 	})
 	@ApiInternalServerErrorResponse({
 		description: '💥 Internal Server Error - Update failed',
@@ -1706,28 +1746,32 @@ Updates an existing user's information with comprehensive validation and audit t
 				error: { type: 'string', example: 'Internal Server Error' },
 				statusCode: { type: 'number', example: 500 },
 				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
-				path: { type: 'string', example: '/user/123' }
-			}
-		}
+				path: { type: 'string', example: '/user/123' },
+			},
+		},
 	})
-	update(@Param('ref') ref: number, @Body() updateUserDto: UpdateUserDto, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
+	update(
+		@Param('ref') ref: number,
+		@Body() updateUserDto: UpdateUserDto,
+		@Req() req: AuthenticatedRequest,
+	): Promise<{ message: string }> {
 		const accessScope = this.getAccessScope(req.user);
-		
+
 		// 🔍 DEBUG: Log the access decision
 		console.log('🔍 DEBUG update route:', {
 			updatingUser: ref,
 			requestingUser: {
 				uid: req.user?.uid,
 				accessLevel: req.user?.accessLevel,
-				isElevated: accessScope.isElevated
+				isElevated: accessScope.isElevated,
 			},
 			accessScope: {
 				orgId: accessScope.orgId,
 				branchId: accessScope.branchId,
-				orgWideAccess: accessScope.branchId === null
-			}
+				orgWideAccess: accessScope.branchId === null,
+			},
 		});
-		
+
 		return this.userService.update(ref, updateUserDto, accessScope.orgId, accessScope.branchId);
 	}
 
@@ -1789,13 +1833,13 @@ Restores a previously deleted user account back to active status, maintaining da
 				message: {
 					type: 'string',
 					example: 'Success',
-					description: 'Success message from environment variable (SUCCESS_MESSAGE)'
-				}
+					description: 'Success message from environment variable (SUCCESS_MESSAGE)',
+				},
 			},
-			required: ['message']
-		}
+			required: ['message'],
+		},
 	})
-	@ApiNotFoundResponse({ 
+	@ApiNotFoundResponse({
 		description: '🔍 Deleted user not found',
 		schema: {
 			type: 'object',
@@ -1810,8 +1854,8 @@ Restores a previously deleted user account back to active status, maintaining da
 						'User was never deleted',
 						'User has been permanently deleted',
 						'User reference code is incorrect',
-						'User belongs to different organization'
-					]
+						'User belongs to different organization',
+					],
 				},
 				suggestions: {
 					type: 'array',
@@ -1819,11 +1863,11 @@ Restores a previously deleted user account back to active status, maintaining da
 					example: [
 						'Verify the user reference code is correct',
 						'Check if user was recently permanently deleted',
-						'Ensure you have permission to access this user'
-					]
-				}
-			}
-		}
+						'Ensure you have permission to access this user',
+					],
+				},
+			},
+		},
 	})
 	@ApiForbiddenResponse({
 		description: '🚫 Forbidden - No permission to restore users',
@@ -1833,9 +1877,9 @@ Restores a previously deleted user account back to active status, maintaining da
 				message: { type: 'string', example: 'You do not have permission to restore users' },
 				error: { type: 'string', example: 'Forbidden' },
 				statusCode: { type: 'number', example: 403 },
-				reason: { type: 'string', example: 'Insufficient permissions or user belongs to different branch' }
-			}
-		}
+				reason: { type: 'string', example: 'Insufficient permissions or user belongs to different branch' },
+			},
+		},
 	})
 	@ApiConflictResponse({
 		description: '⚠️ Conflict - User cannot be restored',
@@ -1851,8 +1895,8 @@ Restores a previously deleted user account back to active status, maintaining da
 					example: [
 						'Retention period expired 15 days ago',
 						'User data has been archived',
-						'Related records have been purged'
-					]
+						'Related records have been purged',
+					],
 				},
 				resolution: {
 					type: 'object',
@@ -1863,14 +1907,14 @@ Restores a previously deleted user account back to active status, maintaining da
 							example: [
 								'Contact system administrator for manual recovery',
 								'Check archived data sources',
-								'File data recovery request with IT department'
-							]
+								'File data recovery request with IT department',
+							],
 						},
-						escalationPath: { type: 'string', example: 'Contact IT Support for advanced recovery options' }
-					}
-				}
-			}
-		}
+						escalationPath: { type: 'string', example: 'Contact IT Support for advanced recovery options' },
+					},
+				},
+			},
+		},
 	})
 	@ApiInternalServerErrorResponse({
 		description: '💥 Internal Server Error - Restoration failed',
@@ -1881,28 +1925,28 @@ Restores a previously deleted user account back to active status, maintaining da
 				error: { type: 'string', example: 'Internal Server Error' },
 				statusCode: { type: 'number', example: 500 },
 				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
-				path: { type: 'string', example: '/user/restore/123' }
-			}
-		}
+				path: { type: 'string', example: '/user/restore/123' },
+			},
+		},
 	})
 	restore(@Param('ref') ref: number, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
 		const accessScope = this.getAccessScope(req.user);
-		
+
 		// 🔍 DEBUG: Log the access decision
 		console.log('🔍 DEBUG restore route:', {
 			restoringUser: ref,
 			requestingUser: {
 				uid: req.user?.uid,
 				accessLevel: req.user?.accessLevel,
-				isElevated: accessScope.isElevated
+				isElevated: accessScope.isElevated,
 			},
 			accessScope: {
 				orgId: accessScope.orgId,
 				branchId: accessScope.branchId,
-				orgWideAccess: accessScope.branchId === null
-			}
+				orgWideAccess: accessScope.branchId === null,
+			},
 		});
-		
+
 		return this.userService.restore(ref, accessScope.orgId, accessScope.branchId);
 	}
 
@@ -1966,13 +2010,13 @@ Use the restore endpoint to recover accidentally deleted users within the retent
 				message: {
 					type: 'string',
 					example: 'Success',
-					description: 'Success message from environment variable (SUCCESS_MESSAGE)'
-				}
+					description: 'Success message from environment variable (SUCCESS_MESSAGE)',
+				},
 			},
-			required: ['message']
-		}
+			required: ['message'],
+		},
 	})
-	@ApiNotFoundResponse({ 
+	@ApiNotFoundResponse({
 		description: '🔍 User not found for deletion',
 		schema: {
 			type: 'object',
@@ -1986,11 +2030,11 @@ Use the restore endpoint to recover accidentally deleted users within the retent
 					example: [
 						'Verify the user reference code is correct',
 						'Check if the user has already been deleted',
-						'Ensure you have permission to access this user'
-					]
-				}
-			}
-		}
+						'Ensure you have permission to access this user',
+					],
+				},
+			},
+		},
 	})
 	@ApiForbiddenResponse({
 		description: '🚫 Forbidden - No permission to delete user',
@@ -2000,9 +2044,9 @@ Use the restore endpoint to recover accidentally deleted users within the retent
 				message: { type: 'string', example: 'You do not have permission to delete this user' },
 				error: { type: 'string', example: 'Forbidden' },
 				statusCode: { type: 'number', example: 403 },
-				reason: { type: 'string', example: 'Insufficient permissions or user belongs to different branch' }
-			}
-		}
+				reason: { type: 'string', example: 'Insufficient permissions or user belongs to different branch' },
+			},
+		},
 	})
 	@ApiConflictResponse({
 		description: '⚠️ Conflict - User cannot be deleted',
@@ -2018,8 +2062,8 @@ Use the restore endpoint to recover accidentally deleted users within the retent
 					example: [
 						'User has 2 active sessions',
 						'User has 3 assets assigned',
-						'User has 1 pending approval workflow'
-					]
+						'User has 1 pending approval workflow',
+					],
 				},
 				resolution: {
 					type: 'object',
@@ -2030,14 +2074,14 @@ Use the restore endpoint to recover accidentally deleted users within the retent
 							example: [
 								'End active user sessions',
 								'Return assigned assets',
-								'Transfer pending approvals'
-							]
+								'Transfer pending approvals',
+							],
 						},
-						estimatedResolutionTime: { type: 'string', example: '2-3 business days' }
-					}
-				}
-			}
-		}
+						estimatedResolutionTime: { type: 'string', example: '2-3 business days' },
+					},
+				},
+			},
+		},
 	})
 	@ApiInternalServerErrorResponse({
 		description: '💥 Internal Server Error - Deletion failed',
@@ -2048,28 +2092,28 @@ Use the restore endpoint to recover accidentally deleted users within the retent
 				error: { type: 'string', example: 'Internal Server Error' },
 				statusCode: { type: 'number', example: 500 },
 				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
-				path: { type: 'string', example: '/user/123' }
-			}
-		}
+				path: { type: 'string', example: '/user/123' },
+			},
+		},
 	})
 	remove(@Param('ref') ref: number, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
 		const accessScope = this.getAccessScope(req.user);
-		
+
 		// 🔍 DEBUG: Log the access decision
 		console.log('🔍 DEBUG remove route:', {
 			removingUser: ref,
 			requestingUser: {
 				uid: req.user?.uid,
 				accessLevel: req.user?.accessLevel,
-				isElevated: accessScope.isElevated
+				isElevated: accessScope.isElevated,
 			},
 			accessScope: {
 				orgId: accessScope.orgId,
 				branchId: accessScope.branchId,
-				orgWideAccess: accessScope.branchId === null
-			}
+				orgWideAccess: accessScope.branchId === null,
+			},
 		});
-		
+
 		return this.userService.remove(ref, accessScope.orgId, accessScope.branchId);
 	}
 
@@ -2155,54 +2199,146 @@ Retrieves comprehensive performance targets for a specific user with detailed pr
 		`,
 		operationId: 'getUserTargets',
 	})
-	@ApiParam({ 
-		name: 'ref', 
+	@ApiParam({
+		name: 'ref',
 		description: 'User ID - Must be a valid user identifier',
 		type: Number,
-		example: 123
+		example: 123,
 	})
 	@ApiOkResponse({
 		description: '✅ User performance targets retrieved successfully',
 		schema: {
 			type: 'object',
 			properties: {
-									userTarget: {
-						type: 'object',
+				userTarget: {
+					type: 'object',
 					nullable: true,
-						properties: {
-							uid: { type: 'number', example: 1, description: 'Unique target record identifier' },
-						targetSalesAmount: { type: 'number', example: 50000, description: 'Sales revenue target amount (total of quotations + orders)', nullable: true },
-						currentSalesAmount: { type: 'number', example: 32500, description: 'Current achieved sales amount (total of quotations + orders)', nullable: true },
-						targetQuotationsAmount: { type: 'number', example: 30000, description: 'Target quotations amount (quotes made but not paid)', nullable: true },
-						currentQuotationsAmount: { type: 'number', example: 18000, description: 'Current quotations amount (quotes made but not paid)', nullable: true },
-						targetOrdersAmount: { type: 'number', example: 20000, description: 'Target orders amount (converted and paid)', nullable: true },
-						currentOrdersAmount: { type: 'number', example: 14500, description: 'Current orders amount (converted and paid)', nullable: true },
-						targetHoursWorked: { type: 'number', example: 160, description: 'Expected hours to work in target period', nullable: true },
-						currentHoursWorked: { type: 'number', example: 142, description: 'Current hours worked in period', nullable: true },
-						targetNewClients: { type: 'number', example: 5, description: 'Number of new clients to acquire', nullable: true },
-						currentNewClients: { type: 'number', example: 3, description: 'Current new clients acquired', nullable: true },
-						targetNewLeads: { type: 'number', example: 20, description: 'Number of new leads to generate', nullable: true },
-						currentNewLeads: { type: 'number', example: 18, description: 'Current leads generated', nullable: true },
-						targetCheckIns: { type: 'number', example: 15, description: 'Client check-in frequency target', nullable: true },
-						currentCheckIns: { type: 'number', example: 12, description: 'Current check-ins completed', nullable: true },
-						targetCalls: { type: 'number', example: 50, description: 'Communication calls target', nullable: true },
-						currentCalls: { type: 'number', example: 45, description: 'Current calls completed', nullable: true },
-						periodStartDate: { type: 'string', format: 'date', example: '2024-01-01', description: 'Target period start date', nullable: true },
-						periodEndDate: { type: 'string', format: 'date', example: '2024-01-31', description: 'Target period end date', nullable: true },
-							createdAt: { type: 'string', format: 'date-time', description: 'Target creation timestamp' },
-						updatedAt: { type: 'string', format: 'date-time', description: 'Last update timestamp' }
-					}
+					properties: {
+						uid: { type: 'number', example: 1, description: 'Unique target record identifier' },
+						targetSalesAmount: {
+							type: 'number',
+							example: 50000,
+							description: 'Sales revenue target amount (total of quotations + orders)',
+							nullable: true,
+						},
+						currentSalesAmount: {
+							type: 'number',
+							example: 32500,
+							description: 'Current achieved sales amount (total of quotations + orders)',
+							nullable: true,
+						},
+						targetQuotationsAmount: {
+							type: 'number',
+							example: 30000,
+							description: 'Target quotations amount (quotes made but not paid)',
+							nullable: true,
+						},
+						currentQuotationsAmount: {
+							type: 'number',
+							example: 18000,
+							description: 'Current quotations amount (quotes made but not paid)',
+							nullable: true,
+						},
+						targetOrdersAmount: {
+							type: 'number',
+							example: 20000,
+							description: 'Target orders amount (converted and paid)',
+							nullable: true,
+						},
+						currentOrdersAmount: {
+							type: 'number',
+							example: 14500,
+							description: 'Current orders amount (converted and paid)',
+							nullable: true,
+						},
+						targetHoursWorked: {
+							type: 'number',
+							example: 160,
+							description: 'Expected hours to work in target period',
+							nullable: true,
+						},
+						currentHoursWorked: {
+							type: 'number',
+							example: 142,
+							description: 'Current hours worked in period',
+							nullable: true,
+						},
+						targetNewClients: {
+							type: 'number',
+							example: 5,
+							description: 'Number of new clients to acquire',
+							nullable: true,
+						},
+						currentNewClients: {
+							type: 'number',
+							example: 3,
+							description: 'Current new clients acquired',
+							nullable: true,
+						},
+						targetNewLeads: {
+							type: 'number',
+							example: 20,
+							description: 'Number of new leads to generate',
+							nullable: true,
+						},
+						currentNewLeads: {
+							type: 'number',
+							example: 18,
+							description: 'Current leads generated',
+							nullable: true,
+						},
+						targetCheckIns: {
+							type: 'number',
+							example: 15,
+							description: 'Client check-in frequency target',
+							nullable: true,
+						},
+						currentCheckIns: {
+							type: 'number',
+							example: 12,
+							description: 'Current check-ins completed',
+							nullable: true,
+						},
+						targetCalls: {
+							type: 'number',
+							example: 50,
+							description: 'Communication calls target',
+							nullable: true,
+						},
+						currentCalls: {
+							type: 'number',
+							example: 45,
+							description: 'Current calls completed',
+							nullable: true,
+						},
+						periodStartDate: {
+							type: 'string',
+							format: 'date',
+							example: '2024-01-01',
+							description: 'Target period start date',
+							nullable: true,
+						},
+						periodEndDate: {
+							type: 'string',
+							format: 'date',
+							example: '2024-01-31',
+							description: 'Target period end date',
+							nullable: true,
+						},
+						createdAt: { type: 'string', format: 'date-time', description: 'Target creation timestamp' },
+						updatedAt: { type: 'string', format: 'date-time', description: 'Last update timestamp' },
+					},
 				},
-				message: { 
-					type: 'string', 
+				message: {
+					type: 'string',
 					example: 'Success',
-					description: 'Success message from environment variable'
-				}
+					description: 'Success message from environment variable',
+				},
 			},
-			required: ['userTarget', 'message']
-		}
+			required: ['userTarget', 'message'],
+		},
 	})
-	@ApiNotFoundResponse({ 
+	@ApiNotFoundResponse({
 		description: '❌ User not found or no targets configured',
 		schema: {
 			type: 'object',
@@ -2212,24 +2348,27 @@ Retrieves comprehensive performance targets for a specific user with detailed pr
 			},
 		},
 	})
-	getUserTarget(@Param('ref') ref: number, @Req() req: AuthenticatedRequest): Promise<{ userTarget: UserTarget | null; message: string }> {
+	getUserTarget(
+		@Param('ref') ref: number,
+		@Req() req: AuthenticatedRequest,
+	): Promise<{ userTarget: UserTarget | null; message: string }> {
 		const accessScope = this.getAccessScope(req.user);
-		
+
 		// 🔍 DEBUG: Log the access decision
 		console.log('🔍 DEBUG getUserTarget route:', {
 			gettingTargetForUser: ref,
 			requestingUser: {
 				uid: req.user?.uid,
 				accessLevel: req.user?.accessLevel,
-				isElevated: accessScope.isElevated
+				isElevated: accessScope.isElevated,
 			},
 			accessScope: {
 				orgId: accessScope.orgId,
 				branchId: accessScope.branchId,
-				orgWideAccess: accessScope.branchId === null
-			}
+				orgWideAccess: accessScope.branchId === null,
+			},
 		});
-		
+
 		return this.userService.getUserTarget(ref, accessScope.orgId, accessScope.branchId);
 	}
 
@@ -2294,13 +2433,13 @@ Creates comprehensive performance targets for a specific user with advanced conf
 		`,
 		operationId: 'createUserTargets',
 	})
-	@ApiParam({ 
-		name: 'ref', 
+	@ApiParam({
+		name: 'ref',
 		description: 'User ID for target assignment',
 		type: Number,
-		example: 123
+		example: 123,
 	})
-	@ApiBody({ 
+	@ApiBody({
 		type: CreateUserTargetDto,
 		description: 'Comprehensive target configuration data',
 		examples: {
@@ -2348,13 +2487,13 @@ Creates comprehensive performance targets for a specific user with advanced conf
 				message: {
 					type: 'string',
 					example: 'User targets set successfully',
-					description: 'Success message from service'
-				}
+					description: 'Success message from service',
+				},
 			},
-			required: ['message']
-		}
+			required: ['message'],
+		},
 	})
-	@ApiBadRequestResponse({ 
+	@ApiBadRequestResponse({
 		description: '❌ Invalid target configuration provided',
 		schema: {
 			type: 'object',
@@ -2373,24 +2512,28 @@ Creates comprehensive performance targets for a specific user with advanced conf
 		},
 	})
 	@ApiNotFoundResponse({ description: '❌ User not found or not accessible' })
-	setUserTarget(@Param('ref') ref: number, @Body() createUserTargetDto: CreateUserTargetDto, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
+	setUserTarget(
+		@Param('ref') ref: number,
+		@Body() createUserTargetDto: CreateUserTargetDto,
+		@Req() req: AuthenticatedRequest,
+	): Promise<{ message: string }> {
 		const accessScope = this.getAccessScope(req.user);
-		
+
 		// 🔍 DEBUG: Log the access decision
 		console.log('🔍 DEBUG setUserTarget route:', {
 			settingTargetForUser: ref,
 			requestingUser: {
 				uid: req.user?.uid,
 				accessLevel: req.user?.accessLevel,
-				isElevated: accessScope.isElevated
+				isElevated: accessScope.isElevated,
 			},
 			accessScope: {
 				orgId: accessScope.orgId,
 				branchId: accessScope.branchId,
-				orgWideAccess: accessScope.branchId === null
-			}
+				orgWideAccess: accessScope.branchId === null,
+			},
 		});
-		
+
 		return this.userService.setUserTarget(ref, createUserTargetDto, accessScope.orgId, accessScope.branchId);
 	}
 
@@ -2500,27 +2643,28 @@ Update both targets and progress:
 		`,
 		operationId: 'updateUserTargets',
 	})
-	@ApiParam({ 
-		name: 'ref', 
+	@ApiParam({
+		name: 'ref',
 		description: 'User reference identifier - Must be a valid user ID within your organization',
 		type: Number,
-		example: 123
+		example: 123,
 	})
-	@ApiBody({ 
+	@ApiBody({
 		type: UpdateUserTargetDto,
 		description: 'Target update configuration with comprehensive validation and support for partial updates',
 		examples: {
 			targetAdjustment: {
 				summary: '📈 Absolute Target Adjustment',
-				description: 'Set new absolute target values (not incremental). Current: R50k target → New: R60k target',
+				description:
+					'Set new absolute target values (not incremental). Current: R50k target → New: R60k target',
 				value: {
 					targetSalesAmount: 60000,
 					targetQuotationsAmount: 35000,
 					targetOrdersAmount: 25000,
 					reason: 'Market opportunity adjustment - setting new absolute targets',
 					adjustmentType: 'ABSOLUTE_INCREASE',
-					effectiveDate: '2024-01-15'
-				}
+					effectiveDate: '2024-01-15',
+				},
 			},
 			progressUpdate: {
 				summary: '📊 Absolute Progress Update',
@@ -2534,19 +2678,20 @@ Update both targets and progress:
 					currentNewClients: 8,
 					currentCheckIns: 25,
 					currentCalls: 68,
-					lastUpdated: '2024-01-15T10:30:00Z'
-				}
+					lastUpdated: '2024-01-15T10:30:00Z',
+				},
 			},
 			correctionUpdate: {
 				summary: '🔧 Correction with Negative Values',
-				description: 'Correct errors in progress values. Negative values allowed for corrections (credit notes, reversals)',
+				description:
+					'Correct errors in progress values. Negative values allowed for corrections (credit notes, reversals)',
 				value: {
 					currentSalesAmount: 42000,
 					currentOrdersAmount: 15000,
 					reason: 'Correcting for R3,000 credit note and cancelled order',
 					correctionType: 'ERROR_CORRECTION',
-					correctionDetails: 'Removed cancelled order (R3k) and applied credit note'
-				}
+					correctionDetails: 'Removed cancelled order (R3k) and applied credit note',
+				},
 			},
 			monthlyRecalibration: {
 				summary: '📅 Monthly Target Recalibration',
@@ -2557,8 +2702,8 @@ Update both targets and progress:
 					targetNewLeads: 25,
 					currentNewLeads: 16,
 					updateReason: 'Mid-month recalibration based on performance trend',
-					effectiveDate: '2024-01-15'
-				}
+					effectiveDate: '2024-01-15',
+				},
 			},
 			periodModification: {
 				summary: '📅 Period Extension',
@@ -2566,8 +2711,8 @@ Update both targets and progress:
 				value: {
 					periodEndDate: '2024-03-31',
 					extensionReason: 'Project timeline extension requires target period adjustment',
-					recalculateProgress: true
-				}
+					recalculateProgress: true,
+				},
 			},
 			currencyChange: {
 				summary: '💱 Currency Update',
@@ -2576,12 +2721,13 @@ Update both targets and progress:
 					targetCurrency: 'EUR',
 					exchangeRate: 0.85,
 					conversionDate: '2024-01-15',
-					currencyChangeReason: 'Regional expansion to European market'
-				}
+					currencyChangeReason: 'Regional expansion to European market',
+				},
 			},
 			comprehensiveUpdate: {
 				summary: '🔄 Comprehensive Absolute Update',
-				description: 'Update multiple categories with absolute values. All values represent new absolute targets/totals',
+				description:
+					'Update multiple categories with absolute values. All values represent new absolute targets/totals',
 				value: {
 					targetSalesAmount: 75000,
 					targetQuotationsAmount: 45000,
@@ -2602,10 +2748,10 @@ Update both targets and progress:
 					targetCurrency: 'USD',
 					updateReason: 'Q2 target recalibration - all values are new absolute totals',
 					approvedBy: 'manager-456',
-					effectiveDate: '2024-04-01'
-				}
-			}
-		}
+					effectiveDate: '2024-04-01',
+				},
+			},
+		},
 	})
 	@ApiOkResponse({
 		description: '✅ User performance targets updated successfully',
@@ -2615,15 +2761,13 @@ Update both targets and progress:
 				message: {
 					type: 'string',
 					example: 'User targets updated successfully',
-					description: 'Success message from service'
-				}
+					description: 'Success message from service',
+				},
 			},
-			required: ['message']
-		}
+			required: ['message'],
+		},
 	})
-
-
-	@ApiBadRequestResponse({ 
+	@ApiBadRequestResponse({
 		description: '❌ Invalid update data provided',
 		schema: {
 			type: 'object',
@@ -2639,21 +2783,27 @@ Update both targets and progress:
 						'Invalid currency code provided',
 						'Period dates must be within current fiscal year',
 						'Target values must be positive numbers',
-						'End date must be after start date'
-					]
+						'End date must be after start date',
+					],
 				},
 				fieldErrors: {
 					type: 'object',
 					properties: {
-						targetSalesAmount: { type: 'string', example: 'Value must be greater than current achievement of 45000' },
-						targetCurrency: { type: 'string', example: 'Invalid currency code. Must be valid ISO 4217 currency' },
-						periodEndDate: { type: 'string', example: 'End date must be after start date' }
-					}
-				}
-			}
-		}
+						targetSalesAmount: {
+							type: 'string',
+							example: 'Value must be greater than current achievement of 45000',
+						},
+						targetCurrency: {
+							type: 'string',
+							example: 'Invalid currency code. Must be valid ISO 4217 currency',
+						},
+						periodEndDate: { type: 'string', example: 'End date must be after start date' },
+					},
+				},
+			},
+		},
 	})
-	@ApiNotFoundResponse({ 
+	@ApiNotFoundResponse({
 		description: '❌ User not found or no targets configured to update',
 		schema: {
 			type: 'object',
@@ -2667,11 +2817,14 @@ Update both targets and progress:
 						userId: { type: 'number', example: 123 },
 						organizationId: { type: 'number', example: 456 },
 						branchId: { type: 'number', example: 789 },
-						reason: { type: 'string', example: 'User exists but no performance targets have been configured' }
-					}
-				}
-			}
-		}
+						reason: {
+							type: 'string',
+							example: 'User exists but no performance targets have been configured',
+						},
+					},
+				},
+			},
+		},
 	})
 	@ApiForbiddenResponse({
 		description: '🚫 Forbidden - Insufficient permissions to update targets',
@@ -2681,14 +2834,17 @@ Update both targets and progress:
 				message: { type: 'string', example: 'You do not have permission to update targets for this user' },
 				error: { type: 'string', example: 'Forbidden' },
 				statusCode: { type: 'number', example: 403 },
-				reason: { type: 'string', example: 'Insufficient access level or user belongs to different organization' },
+				reason: {
+					type: 'string',
+					example: 'Insufficient access level or user belongs to different organization',
+				},
 				requiredPermissions: {
 					type: 'array',
 					items: { type: 'string' },
-					example: ['ADMIN', 'MANAGER', 'OWNER']
-				}
-			}
-		}
+					example: ['ADMIN', 'MANAGER', 'OWNER'],
+				},
+			},
+		},
 	})
 	@ApiConflictResponse({
 		description: '⚠️ Conflict - Target update conflicts with current state',
@@ -2704,11 +2860,11 @@ Update both targets and progress:
 					example: [
 						'Target period has already ended',
 						'Another user is currently updating these targets',
-						'Target values conflict with organizational policies'
-					]
-				}
-			}
-		}
+						'Target values conflict with organizational policies',
+					],
+				},
+			},
+		},
 	})
 	@ApiInternalServerErrorResponse({
 		description: '💥 Internal Server Error - Target update failed',
@@ -2719,28 +2875,32 @@ Update both targets and progress:
 				error: { type: 'string', example: 'Internal Server Error' },
 				statusCode: { type: 'number', example: 500 },
 				timestamp: { type: 'string', format: 'date-time', example: '2024-01-15T10:30:00Z' },
-				path: { type: 'string', example: '/user/123/target' }
-			}
-		}
+				path: { type: 'string', example: '/user/123/target' },
+			},
+		},
 	})
-	updateUserTarget(@Param('ref') ref: number, @Body() updateUserTargetDto: UpdateUserTargetDto, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
+	updateUserTarget(
+		@Param('ref') ref: number,
+		@Body() updateUserTargetDto: UpdateUserTargetDto,
+		@Req() req: AuthenticatedRequest,
+	): Promise<{ message: string }> {
 		const accessScope = this.getAccessScope(req.user);
-		
+
 		// 🔍 DEBUG: Log the access decision
 		console.log('🔍 DEBUG updateUserTarget route:', {
 			updatingTargetForUser: ref,
 			requestingUser: {
 				uid: req.user?.uid,
 				accessLevel: req.user?.accessLevel,
-				isElevated: accessScope.isElevated
+				isElevated: accessScope.isElevated,
 			},
 			accessScope: {
 				orgId: accessScope.orgId,
 				branchId: accessScope.branchId,
-				orgWideAccess: accessScope.branchId === null
-			}
+				orgWideAccess: accessScope.branchId === null,
+			},
 		});
-		
+
 		return this.userService.updateUserTarget(ref, updateUserTargetDto, accessScope.orgId, accessScope.branchId);
 	}
 
@@ -2805,11 +2965,11 @@ Safely removes performance targets for a specific user with comprehensive cleanu
 		`,
 		operationId: 'deleteUserTargets',
 	})
-	@ApiParam({ 
-		name: 'ref', 
+	@ApiParam({
+		name: 'ref',
 		description: 'User reference identifier - Must be a valid user ID within your organization',
 		type: Number,
-		example: 123
+		example: 123,
 	})
 	@ApiOkResponse({
 		description: '✅ User performance targets deleted successfully',
@@ -2819,13 +2979,13 @@ Safely removes performance targets for a specific user with comprehensive cleanu
 				message: {
 					type: 'string',
 					example: 'User targets deleted successfully',
-					description: 'Success message from service'
-				}
+					description: 'Success message from service',
+				},
 			},
-			required: ['message']
-		}
+			required: ['message'],
+		},
 	})
-	@ApiNotFoundResponse({ 
+	@ApiNotFoundResponse({
 		description: '❌ User or targets not found',
 		schema: {
 			type: 'object',
@@ -2839,20 +2999,23 @@ Safely removes performance targets for a specific user with comprehensive cleanu
 						userId: { type: 'number', example: 123 },
 						organizationId: { type: 'number', example: 456 },
 						branchId: { type: 'number', example: 789 },
-						reason: { type: 'string', example: 'User exists but no performance targets have been configured' },
+						reason: {
+							type: 'string',
+							example: 'User exists but no performance targets have been configured',
+						},
 						suggestions: {
 							type: 'array',
 							items: { type: 'string' },
 							example: [
 								'Verify the user ID is correct',
 								'Check if targets have already been deleted',
-								'Ensure user belongs to your organization'
-							]
-						}
-					}
-				}
-			}
-		}
+								'Ensure user belongs to your organization',
+							],
+						},
+					},
+				},
+			},
+		},
 	})
 	@ApiForbiddenResponse({
 		description: '🚫 Forbidden - Insufficient permissions to delete targets',
@@ -2862,19 +3025,22 @@ Safely removes performance targets for a specific user with comprehensive cleanu
 				message: { type: 'string', example: 'You do not have permission to delete targets for this user' },
 				error: { type: 'string', example: 'Forbidden' },
 				statusCode: { type: 'number', example: 403 },
-				reason: { type: 'string', example: 'Insufficient access level or user belongs to different organization' },
+				reason: {
+					type: 'string',
+					example: 'Insufficient access level or user belongs to different organization',
+				},
 				requiredPermissions: {
 					type: 'array',
 					items: { type: 'string' },
-					example: ['ADMIN', 'MANAGER', 'OWNER']
+					example: ['ADMIN', 'MANAGER', 'OWNER'],
 				},
 				currentPermissions: {
 					type: 'array',
 					items: { type: 'string' },
-					example: ['USER']
-				}
-			}
-		}
+					example: ['USER'],
+				},
+			},
+		},
 	})
 	@ApiConflictResponse({
 		description: '⚠️ Conflict - Target deletion conflicts with current state',
@@ -2890,8 +3056,8 @@ Safely removes performance targets for a specific user with comprehensive cleanu
 					example: [
 						'User has active performance review in progress',
 						'Targets are locked for end-of-period calculations',
-						'Another user is currently updating these targets'
-					]
+						'Another user is currently updating these targets',
+					],
 				},
 				resolution: {
 					type: 'object',
@@ -2903,13 +3069,13 @@ Safely removes performance targets for a specific user with comprehensive cleanu
 							example: [
 								'Wait for active processes to complete',
 								'Contact system administrator for override',
-								'Schedule deletion for later time'
-							]
-						}
-					}
-				}
-			}
-		}
+								'Schedule deletion for later time',
+							],
+						},
+					},
+				},
+			},
+		},
 	})
 	@ApiInternalServerErrorResponse({
 		description: '💥 Internal Server Error - Target deletion failed',
@@ -2927,30 +3093,30 @@ Safely removes performance targets for a specific user with comprehensive cleanu
 						component: { type: 'string', example: 'Target Management Service' },
 						operation: { type: 'string', example: 'DELETE_TARGET' },
 						errorCode: { type: 'string', example: 'TMS_DELETE_FAILURE' },
-						retryable: { type: 'boolean', example: true }
-					}
-				}
-			}
-		}
+						retryable: { type: 'boolean', example: true },
+					},
+				},
+			},
+		},
 	})
 	deleteUserTarget(@Param('ref') ref: number, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
 		const accessScope = this.getAccessScope(req.user);
-		
+
 		// 🔍 DEBUG: Log the access decision
 		console.log('🔍 DEBUG deleteUserTarget route:', {
 			deletingTargetForUser: ref,
 			requestingUser: {
 				uid: req.user?.uid,
 				accessLevel: req.user?.accessLevel,
-				isElevated: accessScope.isElevated
+				isElevated: accessScope.isElevated,
 			},
 			accessScope: {
 				orgId: accessScope.orgId,
 				branchId: accessScope.branchId,
-				orgWideAccess: accessScope.branchId === null
-			}
+				orgWideAccess: accessScope.branchId === null,
+			},
 		});
-		
+
 		return this.userService.deleteUserTarget(ref, accessScope.orgId, accessScope.branchId);
 	}
 
@@ -3157,8 +3323,8 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 						'User ID does not exist',
 						'User belongs to different organization',
 						'User has been permanently deleted',
-						'User is not within your management scope'
-					]
+						'User is not within your management scope',
+					],
 				},
 				suggestions: {
 					type: 'array',
@@ -3166,11 +3332,11 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 					example: [
 						'Verify the user ID is correct',
 						'Check if user belongs to your organization',
-						'Ensure you have permission to manage this user'
-					]
-				}
-			}
-		}
+						'Ensure you have permission to manage this user',
+					],
+				},
+			},
+		},
 	})
 	@ApiForbiddenResponse({
 		description: '🚫 Forbidden - Insufficient permissions for re-invitation',
@@ -3185,10 +3351,10 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 				requiredPermissions: {
 					type: 'array',
 					items: { type: 'string' },
-					example: ['ADMIN', 'MANAGER']
-				}
-			}
-		}
+					example: ['ADMIN', 'MANAGER'],
+				},
+			},
+		},
 	})
 	@ApiConflictResponse({
 		description: '⚠️ Conflict - User not eligible for re-invitation',
@@ -3206,8 +3372,8 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 						'User is already active',
 						'User was recently invited (within 24 hours)',
 						'User has opted out of re-invitations',
-						'User account is suspended or banned'
-					]
+						'User account is suspended or banned',
+					],
 				},
 				resolution: {
 					type: 'object',
@@ -3219,13 +3385,13 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 							example: [
 								'Contact user directly',
 								'Update user status first',
-								'Use bulk re-invitation for multiple users'
-							]
-						}
-					}
-				}
-			}
-		}
+								'Use bulk re-invitation for multiple users',
+							],
+						},
+					},
+				},
+			},
+		},
 	})
 	@ApiInternalServerErrorResponse({
 		description: '💥 Internal Server Error - Re-invitation failed',
@@ -3243,11 +3409,11 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 					properties: {
 						component: { type: 'string', example: 'Email Service' },
 						errorCode: { type: 'string', example: 'SMTP_CONNECTION_FAILED' },
-						retryable: { type: 'boolean', example: true }
-					}
-				}
-			}
-		}
+						retryable: { type: 'boolean', example: true },
+					},
+				},
+			},
+		},
 	})
 	async reInviteUser(@Param('userId') userId: string, @Req() req: AuthenticatedRequest) {
 		try {
@@ -3443,16 +3609,16 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 					transactionId: 'test',
 					updateMode: 'INCREMENT',
 					updates: {
-						currentSalesAmount: 711376.21
+						currentSalesAmount: 711376.21,
 					},
 					metadata: {
 						updateReason: 'SALE_COMPLETED',
 						timestamp: '2025-09-01T19:34:00Z',
 						transactionType: 'SALE',
 						description: 'Test API Call',
-						erpVersion: '2.1.0'
-					}
-				}
+						erpVersion: '2.1.0',
+					},
+				},
 			},
 			correctedUserPayloadWithSource: {
 				summary: '✅ With Optional Source Field',
@@ -3462,16 +3628,16 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 					transactionId: 'test',
 					updateMode: 'INCREMENT',
 					updates: {
-						currentSalesAmount: 711376.21
+						currentSalesAmount: 711376.21,
 					},
 					metadata: {
 						updateReason: 'SALE_COMPLETED',
 						timestamp: '2025-09-01T19:34:00Z',
 						transactionType: 'SALE',
 						description: 'Test API Call',
-						erpVersion: '2.1.0'
-					}
-				}
+						erpVersion: '2.1.0',
+					},
+				},
 			},
 			newSale: {
 				summary: '💰 New Sale Transaction',
@@ -3482,16 +3648,16 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 					updateMode: 'INCREMENT',
 					updates: {
 						currentSalesAmount: 5000,
-						currentOrdersAmount: 5000
+						currentOrdersAmount: 5000,
 					},
 					metadata: {
 						updateReason: 'SALE_COMPLETED',
 						timestamp: '2024-01-15T10:30:00Z',
 						transactionType: 'SALE',
 						description: 'New sale - Invoice #12345 for R5,000',
-						erpVersion: '2.1.0'
-					}
-				}
+						erpVersion: '2.1.0',
+					},
+				},
 			},
 			creditNote: {
 				summary: '📄 Credit Note Application',
@@ -3502,16 +3668,16 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 					updateMode: 'DECREMENT',
 					updates: {
 						currentSalesAmount: 2000,
-						currentOrdersAmount: 2000
+						currentOrdersAmount: 2000,
 					},
 					metadata: {
 						updateReason: 'CREDIT_NOTE_APPLIED',
 						timestamp: '2024-01-15T11:00:00Z',
 						transactionType: 'CREDIT_NOTE',
 						description: 'Credit note for returned goods - R2,000',
-						erpVersion: '2.1.0'
-					}
-				}
+						erpVersion: '2.1.0',
+					},
+				},
 			},
 			newQuotation: {
 				summary: '📋 Quotation Generated',
@@ -3522,16 +3688,16 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 					updateMode: 'INCREMENT',
 					updates: {
 						currentSalesAmount: 8000,
-						currentQuotationsAmount: 8000
+						currentQuotationsAmount: 8000,
 					},
 					metadata: {
 						updateReason: 'QUOTATION_GENERATED',
 						timestamp: '2024-01-15T12:00:00Z',
 						transactionType: 'QUOTATION',
 						description: 'New quotation #789 for R8,000',
-						erpVersion: '2.1.0'
-					}
-				}
+						erpVersion: '2.1.0',
+					},
+				},
 			},
 			quotationConverted: {
 				summary: '✅ Quotation to Order Conversion',
@@ -3541,16 +3707,16 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 					transactionId: 'CONVERT_QUOTE_789_STEP1',
 					updateMode: 'DECREMENT',
 					updates: {
-						currentQuotationsAmount: 8000
+						currentQuotationsAmount: 8000,
 					},
 					metadata: {
 						updateReason: 'QUOTATION_CONVERTED',
 						timestamp: '2024-01-15T14:00:00Z',
 						transactionType: 'CONVERSION_STEP1',
 						description: 'Step 1: Remove R8,000 from quotations (converted to order)',
-						erpVersion: '2.1.0'
-					}
-				}
+						erpVersion: '2.1.0',
+					},
+				},
 			},
 			quotationConvertedStep2: {
 				summary: '✅ Quotation Conversion - Step 2',
@@ -3560,16 +3726,16 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 					transactionId: 'CONVERT_QUOTE_789_STEP2',
 					updateMode: 'INCREMENT',
 					updates: {
-						currentOrdersAmount: 8000
+						currentOrdersAmount: 8000,
 					},
 					metadata: {
 						updateReason: 'QUOTATION_CONVERTED',
 						timestamp: '2024-01-15T14:01:00Z',
 						transactionType: 'CONVERSION_STEP2',
 						description: 'Step 2: Add R8,000 to orders (from converted quotation)',
-						erpVersion: '2.1.0'
-					}
-				}
+						erpVersion: '2.1.0',
+					},
+				},
 			},
 			newLead: {
 				summary: '🎯 New Lead Added',
@@ -3579,16 +3745,16 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 					transactionId: 'LEAD_2024_001',
 					updateMode: 'INCREMENT',
 					updates: {
-						currentNewLeads: 1
+						currentNewLeads: 1,
 					},
 					metadata: {
 						updateReason: 'LEAD_GENERATED',
 						timestamp: '2024-01-15T09:00:00Z',
 						transactionType: 'LEAD',
 						description: 'New lead from marketing campaign',
-						erpVersion: '2.1.0'
-					}
-				}
+						erpVersion: '2.1.0',
+					},
+				},
 			},
 			clientCheckIn: {
 				summary: '📞 Client Check-in',
@@ -3599,16 +3765,16 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 					updateMode: 'INCREMENT',
 					updates: {
 						currentCheckIns: 1,
-						currentCalls: 1
+						currentCalls: 1,
 					},
 					metadata: {
 						updateReason: 'CLIENT_INTERACTION',
 						timestamp: '2024-01-15T15:30:00Z',
 						transactionType: 'CHECK_IN',
 						description: 'Monthly check-in call with Client ABC',
-						erpVersion: '2.1.0'
-					}
-				}
+						erpVersion: '2.1.0',
+					},
+				},
 			},
 			hoursWorked: {
 				summary: '⏰ Work Hours Logged',
@@ -3618,16 +3784,16 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 					transactionId: 'TIMESHEET_150124',
 					updateMode: 'INCREMENT',
 					updates: {
-						currentHoursWorked: 8
+						currentHoursWorked: 8,
 					},
 					metadata: {
 						updateReason: 'HOURS_LOGGED',
 						timestamp: '2024-01-15T17:00:00Z',
 						transactionType: 'HOURS',
 						description: 'Daily timesheet - 8 hours logged',
-						erpVersion: '2.1.0'
-					}
-				}
+						erpVersion: '2.1.0',
+					},
+				},
 			},
 			hourCorrection: {
 				summary: '🔧 Hours Correction',
@@ -3637,16 +3803,16 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 					transactionId: 'CORRECTION_150124',
 					updateMode: 'DECREMENT',
 					updates: {
-						currentHoursWorked: 2
+						currentHoursWorked: 2,
 					},
 					metadata: {
 						updateReason: 'HOURS_CORRECTION',
 						timestamp: '2024-01-15T18:00:00Z',
 						transactionType: 'CORRECTION',
 						description: 'Correction: Remove 2 hours from timesheet',
-						erpVersion: '2.1.0'
-					}
-				}
+						erpVersion: '2.1.0',
+					},
+				},
 			},
 			multipleUpdates: {
 				summary: '🔄 Multiple Transactions',
@@ -3660,16 +3826,16 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 						currentOrdersAmount: 12000,
 						currentNewLeads: 1,
 						currentCalls: 3,
-						currentCheckIns: 1
+						currentCheckIns: 1,
 					},
 					metadata: {
 						updateReason: 'MULTI_ACTIVITY',
 						timestamp: '2024-01-15T16:00:00Z',
 						transactionType: 'MULTI_UPDATE',
 						description: 'Sale R12k + new lead + 3 calls + client check-in',
-						erpVersion: '2.1.0'
-					}
-				}
+						erpVersion: '2.1.0',
+					},
+				},
 			},
 			systemRecalculation: {
 				summary: '🖥️ System Recalculation',
@@ -3686,18 +3852,18 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 						currentNewClients: 8,
 						currentCheckIns: 25,
 						currentCalls: 68,
-						currentHoursWorked: 120
+						currentHoursWorked: 120,
 					},
 					metadata: {
 						updateReason: 'SYSTEM_RECALCULATION',
 						timestamp: '2024-01-15T20:00:00Z',
 						transactionType: 'SYSTEM_RECALC',
 						description: 'Monthly system recalculation from CRM data',
-						erpVersion: '2.1.0'
-					}
-				}
-			}
-		}
+						erpVersion: '2.1.0',
+					},
+				},
+			},
+		},
 	})
 	@ApiHeader({
 		name: 'X-ERP-API-Key',
@@ -3714,7 +3880,11 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 				success: { type: 'boolean', example: true },
 				message: { type: 'string', example: 'User targets updated successfully from ERP' },
 				updateType: { type: 'string', example: 'INCREMENT', description: 'Type of update performed' },
-				transactionId: { type: 'string', example: 'SALE_INV_12345', description: 'Transaction ID for audit trail' },
+				transactionId: {
+					type: 'string',
+					example: 'SALE_INV_12345',
+					description: 'Transaction ID for audit trail',
+				},
 				calculations: {
 					type: 'object',
 					description: 'Detailed calculation breakdown',
@@ -3724,25 +3894,29 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 							properties: {
 								previousValue: { type: 'number', example: 30000, description: 'Value before update' },
 								increment: { type: 'number', example: 5000, description: 'Amount added/subtracted' },
-								newValue: { type: 'number', example: 35000, description: 'Value after update' }
-							}
+								newValue: { type: 'number', example: 35000, description: 'Value after update' },
+							},
 						},
 						ordersAmount: {
 							type: 'object',
 							properties: {
 								previousValue: { type: 'number', example: 20000, description: 'Value before update' },
 								increment: { type: 'number', example: 5000, description: 'Amount added/subtracted' },
-								newValue: { type: 'number', example: 25000, description: 'Value after update' }
-							}
-						}
-					}
+								newValue: { type: 'number', example: 25000, description: 'Value after update' },
+							},
+						},
+					},
 				},
 				updatedValues: {
 					type: 'object',
 					description: 'Final values after update',
 					properties: {
 						currentSalesAmount: { type: 'number', example: 35000, description: 'Total sales amount' },
-						currentQuotationsAmount: { type: 'number', example: 15000, description: 'Total quotations amount' },
+						currentQuotationsAmount: {
+							type: 'number',
+							example: 15000,
+							description: 'Total quotations amount',
+						},
 						currentOrdersAmount: { type: 'number', example: 25000, description: 'Total orders amount' },
 						currentNewLeads: { type: 'number', example: 12, description: 'Total leads generated' },
 						currentNewClients: { type: 'number', example: 8, description: 'Total new clients' },
@@ -3757,10 +3931,10 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 					properties: {
 						salesProgress: { type: 'number', example: 70.0, description: 'Sales achievement percentage' },
 						ordersProgress: { type: 'number', example: 83.3, description: 'Orders achievement percentage' },
-						overallProgress: { type: 'number', example: 76.2, description: 'Overall progress percentage' }
-					}
+						overallProgress: { type: 'number', example: 76.2, description: 'Overall progress percentage' },
+					},
 				},
-				timestamp: { type: 'string', format: 'date-time', example: '2024-01-15T10:30:00Z' }
+				timestamp: { type: 'string', format: 'date-time', example: '2024-01-15T10:30:00Z' },
 			},
 		},
 	})
@@ -3798,7 +3972,7 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 						'At least one increment value must be provided',
 						'Update mode must be either INCREMENT or REPLACE',
 						'Negative increments are allowed but will reduce totals',
-						'REPLACE mode requires absolute values, not increments'
+						'REPLACE mode requires absolute values, not increments',
 					],
 				},
 				fieldErrors: {
@@ -3806,17 +3980,29 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 					properties: {
 						transactionId: { type: 'string', example: 'Transaction ID is required for idempotency' },
 						updateMode: { type: 'string', example: 'Must be INCREMENT or REPLACE' },
-						salesAmountIncrement: { type: 'string', example: 'Must be a number (negative values allowed for reductions)' }
-					}
+						salesAmountIncrement: {
+							type: 'string',
+							example: 'Must be a number (negative values allowed for reductions)',
+						},
+					},
 				},
 				hints: {
 					type: 'object',
 					properties: {
-						incrementMode: { type: 'string', example: 'Use positive values to add, negative values to subtract' },
-						replaceMode: { type: 'string', example: 'Use REPLACE mode to set absolute values instead of increments' },
-						transactionIds: { type: 'string', example: 'Use unique transaction IDs to prevent duplicate processing' }
-					}
-				}
+						incrementMode: {
+							type: 'string',
+							example: 'Use positive values to add, negative values to subtract',
+						},
+						replaceMode: {
+							type: 'string',
+							example: 'Use REPLACE mode to set absolute values instead of increments',
+						},
+						transactionIds: {
+							type: 'string',
+							example: 'Use unique transaction IDs to prevent duplicate processing',
+						},
+					},
+				},
 			},
 		},
 	})
@@ -3835,23 +4021,28 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 		}
 
 		const accessScope = this.getAccessScope(req.user);
-		
+
 		// 🔍 DEBUG: Log the access decision
 		console.log('🔍 DEBUG updateTargetsFromERP route:', {
 			updatingTargetsForUser: userId,
 			requestingUser: {
 				uid: req.user?.uid,
 				accessLevel: req.user?.accessLevel,
-				isElevated: accessScope.isElevated
+				isElevated: accessScope.isElevated,
 			},
 			accessScope: {
 				orgId: accessScope.orgId,
 				branchId: accessScope.branchId,
-				orgWideAccess: accessScope.branchId === null
-			}
+				orgWideAccess: accessScope.branchId === null,
+			},
 		});
 
-		const result = await this.userService.updateUserTargetsFromERP(userId, externalUpdateDto, accessScope.orgId, accessScope.branchId);
+		const result = await this.userService.updateUserTargetsFromERP(
+			userId,
+			externalUpdateDto,
+			accessScope.orgId,
+			accessScope.branchId,
+		);
 
 		// Return appropriate status codes based on result
 		if (result.validationErrors && result.validationErrors.length > 0) {
@@ -3877,4 +4068,3 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 		};
 	}
 }
-

@@ -231,7 +231,7 @@ class EmailTemplateService {
 			Handlebars.registerHelper('formatDate', function (date: string | Date) {
 				if (!date) return 'N/A';
 				const dateObj = new Date(date);
-				return dateObj.toLocaleDateString('en-US', {
+				return dateObj.toLocaleDateString('en-ZA', {
 					year: 'numeric',
 					month: 'long',
 					day: 'numeric',
@@ -239,7 +239,7 @@ class EmailTemplateService {
 			});
 
 			Handlebars.registerHelper('formatCurrency', function (amount: number, currency: string) {
-				return new Intl.NumberFormat('en-US', {
+				return new Intl.NumberFormat('en-ZA', {
 					style: 'currency',
 					currency: currency || 'USD',
 				}).format(amount);

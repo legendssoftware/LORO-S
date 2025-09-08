@@ -263,7 +263,7 @@ export class TasksService {
 		seriesEnd: Date,
 	): Promise<Task> {
 		// Format date for display
-		const formattedDate = taskDate.toLocaleDateString('en-US', {
+		const formattedDate = taskDate.toLocaleDateString('en-ZA', {
 			month: 'short',
 			day: 'numeric',
 			year: 'numeric',
