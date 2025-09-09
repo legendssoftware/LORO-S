@@ -266,4 +266,24 @@ export class CreateUserDto {
         required: false,
     })
     assignedClientIds?: number[];
+
+    @IsOptional()
+    @IsNumber({}, { each: true })
+    @ApiProperty({
+        description: 'Array of branch UIDs that this user manages',
+        example: [1, 2],
+        type: [Number],
+        required: false,
+    })
+    managedBranches?: number[];
+
+    @IsOptional()
+    @IsNumber({}, { each: true })
+    @ApiProperty({
+        description: 'Array of user UIDs that this user manages as staff',
+        example: [5, 6, 7],
+        type: [Number],
+        required: false,
+    })
+    managedStaff?: number[];
 }

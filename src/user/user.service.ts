@@ -65,7 +65,7 @@ export class UserService {
 	private readonly logger = new Logger(UserService.name);
 	private readonly CACHE_PREFIX = 'users:';
 	private readonly CACHE_TTL: number;
-	private readonly activeCalculations = new Set<number>();
+	private readonly activeCalculations = new Map<number, Promise<void>>();
 
 	constructor(
 		@InjectRepository(User)
@@ -196,6 +196,107 @@ export class UserService {
 		} catch (error) {
 			this.logger.error(`Error validating calculated values: ${error.message}`);
 			return false;
+		}
+	}
+
+	/**
+	 * Audit and potentially fix historical data integrity issues
+	 * This method can be called manually to investigate data corruption
+	 */
+	async auditUserTargetData(userId: number): Promise<{
+		hasIssues: boolean;
+		issues: string[];
+		recommendations: string[];
+		historicalData?: any;
+	}> {
+		try {
+			this.logger.log(`Starting comprehensive data audit for user: ${userId}`);
+
+			const user = await this.userRepository.findOne({
+				where: { uid: userId, isDeleted: false },
+				relations: ['userTarget'],
+			});
+
+			if (!user?.userTarget) {
+				return {
+					hasIssues: false,
+					issues: [],
+					recommendations: ['User has no target data to audit'],
+				};
+			}
+
+			const { userTarget } = user;
+			const issues: string[] = [];
+			const recommendations: string[] = [];
+
+			// Audit current values against expected calculations
+			const quotationsAmount = this.safeParseNumber(userTarget.currentQuotationsAmount);
+			const ordersAmount = this.safeParseNumber(userTarget.currentOrdersAmount);
+			const salesAmount = this.safeParseNumber(userTarget.currentSalesAmount);
+			const expectedSalesAmount = quotationsAmount + ordersAmount;
+
+			// Check for calculation inconsistencies
+			if (Math.abs(expectedSalesAmount - salesAmount) > 0.01) {
+				issues.push(`Sales amount mismatch: current ${salesAmount}, expected ${expectedSalesAmount}`);
+				recommendations.push(`Recalculate sales amount as quotations (${quotationsAmount}) + orders (${ordersAmount})`);
+			}
+
+			// Check for unreasonable values
+			if (salesAmount > 10000000) {
+				issues.push(`Unreasonably large sales amount: ${salesAmount}`);
+				recommendations.push('Investigate source of large sales amount - possible data duplication');
+			}
+
+			// Verify against actual database records
+			const startDate = userTarget.periodStartDate;
+			const endDate = new Date();
+
+			// Count actual quotations
+			const actualQuotationsAmount = await this.quotationRepository
+				.createQueryBuilder('quotation')
+				.select('SUM(quotation.totalAmount)', 'total')
+				.where('quotation.placedBy = :userId', { userId })
+				.andWhere('quotation.createdAt BETWEEN :startDate AND :endDate', { startDate, endDate })
+				.andWhere('quotation.status IN (:...statuses)', {
+					statuses: ['DRAFT', 'PENDING_INTERNAL', 'PENDING_CLIENT', 'NEGOTIATION', 'APPROVED', 'REJECTED', 'SOURCING', 'PACKING']
+				})
+				.getRawOne();
+
+			const actualQuotationsTotal = this.safeParseNumber(actualQuotationsAmount?.total);
+
+			if (Math.abs(actualQuotationsTotal - quotationsAmount) > 100) {
+				issues.push(`Quotations amount mismatch: stored ${quotationsAmount}, actual ${actualQuotationsTotal}`);
+				recommendations.push('Trigger recalculation from database records');
+			}
+
+			return {
+				hasIssues: issues.length > 0,
+				issues,
+				recommendations,
+				historicalData: {
+					storedValues: {
+						quotations: quotationsAmount,
+						orders: ordersAmount,
+						sales: salesAmount,
+					},
+					calculatedValues: {
+						expectedSales: expectedSalesAmount,
+						actualQuotationsFromDB: actualQuotationsTotal,
+					},
+					period: {
+						start: startDate,
+						end: endDate,
+						lastCalculated: (userTarget as any).lastCalculatedAt,
+					},
+				},
+			};
+		} catch (error) {
+			this.logger.error(`Failed to audit user target data for user ${userId}: ${error.message}`, error.stack);
+			return {
+				hasIssues: true,
+				issues: [`Audit failed: ${error.message}`],
+				recommendations: ['Manual investigation required'],
+			};
 		}
 	}
 
@@ -2890,46 +2991,77 @@ export class UserService {
 	/**
 	 * Calculates the user's target progress based on related entities.
 	 * Triggered by 'user.target.update.required' event.
-	 * Currently calculates currentSalesAmount, currentNewLeads, currentNewClients, and currentCheckIns.
+	 * Enhanced with atomic race condition protection, data integrity checks, and detailed debugging.
 	 * @param payload - Event payload with userId
 	 */
 	@OnEvent('user.target.update.required')
 	async calculateUserTargets(payload: { userId: number }): Promise<void> {
 		const { userId } = payload;
 
-		// Check if calculation is already in progress for this user
+		// Atomic race condition protection using promises
 		if (this.activeCalculations.has(userId)) {
-			this.logger.debug(`Target calculation already in progress for user: ${userId}, skipping duplicate`);
+			this.logger.debug(`Target calculation already in progress for user: ${userId}, awaiting completion`);
+			await this.activeCalculations.get(userId);
 			return;
 		}
 
-		// Mark calculation as active
-		this.activeCalculations.add(userId);
-		const startTime = Date.now();
-		this.logger.log(`Calculating user targets for user: ${userId}`);
+		// Create calculation promise and mark as active atomically
+		const calculationPromise = this.performCalculation(userId);
+		this.activeCalculations.set(userId, calculationPromise);
 
 		try {
-			this.logger.debug(`Finding user and target data for user: ${userId}`);
+			await calculationPromise;
+		} finally {
+			// Always remove user from active calculations
+			this.activeCalculations.delete(userId);
+		}
+	}
+
+	/**
+	 * Performs the actual target calculation with enhanced debugging and validation
+	 */
+	private async performCalculation(userId: number): Promise<void> {
+		const startTime = Date.now();
+		const calculationId = `CALC_${userId}_${startTime}`;
+		
+		this.logger.log(`[${calculationId}] Starting target calculation for user: ${userId}`);
+
+		try {
+			// Load user and target data
+			this.logger.debug(`[${calculationId}] Finding user and target data for user: ${userId}`);
 			const user = await this.userRepository.findOne({
 				where: { uid: userId, isDeleted: false },
 				relations: ['userTarget'],
 			});
 
 			if (!user) {
-				this.logger.warn(`User ${userId} not found for target calculation`);
+				this.logger.warn(`[${calculationId}] User ${userId} not found for target calculation`);
 				return;
 			}
 
 			if (!user.userTarget) {
-				this.logger.debug(`No target set for user ${userId}, skipping calculation`);
+				this.logger.debug(`[${calculationId}] No target set for user ${userId}, skipping calculation`);
 				return;
 			}
 
 			const { userTarget } = user;
 
 			if (!userTarget.periodStartDate || !userTarget.periodEndDate) {
-				this.logger.warn(`User ${userId} has incomplete target period dates, skipping calculation`);
+				this.logger.warn(`[${calculationId}] User ${userId} has incomplete target period dates, skipping calculation`);
 				return;
+			}
+
+			// AUDIT HISTORICAL DATA
+			this.logger.log(`[${calculationId}] HISTORICAL DATA AUDIT for user ${userId}:`);
+			this.logger.log(`[${calculationId}] Current values - Quotations: ${userTarget.currentQuotationsAmount}, Orders: ${userTarget.currentOrdersAmount}, Sales: ${userTarget.currentSalesAmount}`);
+			this.logger.log(`[${calculationId}] Current values - Leads: ${userTarget.currentNewLeads}, Clients: ${userTarget.currentNewClients}, CheckIns: ${userTarget.currentCheckIns}`);
+			this.logger.log(`[${calculationId}] Period: ${userTarget.periodStartDate} to ${userTarget.periodEndDate}`);
+			this.logger.log(`[${calculationId}] Last calculated: ${(userTarget as any).lastCalculatedAt || 'NEVER'}`);
+
+			// DATA INTEGRITY CHECKS
+			const integrityIssues = this.validateExistingData(userTarget, calculationId);
+			if (integrityIssues.length > 0) {
+				this.logger.warn(`[${calculationId}] Data integrity issues detected: ${integrityIssues.join(', ')}`);
 			}
 
 			// Store previous values to check for achievements
@@ -2943,12 +3075,11 @@ export class UserService {
 			};
 
 			// Determine the calculation start point
-			// If lastCalculatedAt exists, use it; otherwise start from period start
 			const calculationStartDate = (userTarget as any).lastCalculatedAt || userTarget.periodStartDate;
-			const calculationEndDate = new Date(); // Calculate up to now
+			const calculationEndDate = new Date();
 
 			this.logger.debug(
-				`Calculating INCREMENTAL targets for user ${userId} from ${calculationStartDate} to ${calculationEndDate}`,
+				`[${calculationId}] Calculating INCREMENTAL targets for user ${userId} from ${calculationStartDate} to ${calculationEndDate}`,
 			);
 
 			// Track if any new records were found
@@ -2956,7 +3087,7 @@ export class UserService {
 			let incrementalUpdates: any = {};
 
 			// --- Calculate NEW quotations since last calculation ---
-			this.logger.debug(`Calculating NEW quotations amount for user: ${userId} since ${calculationStartDate}`);
+			this.logger.debug(`[${calculationId}] Calculating NEW quotations amount for user: ${userId} since ${calculationStartDate}`);
 			const quotationStatuses = [
 				OrderStatus.DRAFT,
 				OrderStatus.PENDING_INTERNAL,
@@ -2975,23 +3106,24 @@ export class UserService {
 				},
 			});
 
-			// Calculate incremental quotations amount
+			// Calculate incremental quotations amount with detailed logging
 			const newQuotationsAmount = newQuotations.reduce((sum, q) => {
 				const amount = this.safeParseNumber(q.totalAmount);
+				this.logger.debug(`[${calculationId}] Found quotation ID ${q.uid} with amount: ${amount}`);
 				return sum + amount;
 			}, 0);
 
 			if (newQuotationsAmount > 0) {
 				hasNewRecords = true;
-				incrementalUpdates.currentQuotationsAmount =
-					(userTarget.currentQuotationsAmount || 0) + newQuotationsAmount;
+				const currentQuotations = this.safeParseNumber(userTarget.currentQuotationsAmount);
+				incrementalUpdates.currentQuotationsAmount = currentQuotations + newQuotationsAmount;
 				this.logger.debug(
-					`NEW quotations amount: ${newQuotationsAmount}, total will be: ${incrementalUpdates.currentQuotationsAmount} for user ${userId}`,
+					`[${calculationId}] NEW quotations: ${newQuotationsAmount}, existing: ${currentQuotations}, total will be: ${incrementalUpdates.currentQuotationsAmount}`,
 				);
 			}
 
 			// --- Calculate NEW completed orders since last calculation ---
-			this.logger.debug(`Calculating NEW orders amount for user: ${userId} since ${calculationStartDate}`);
+			this.logger.debug(`[${calculationId}] Calculating NEW orders amount for user: ${userId} since ${calculationStartDate}`);
 			const newCompletedQuotations = await this.quotationRepository.find({
 				where: {
 					placedBy: { uid: userId },
@@ -3000,22 +3132,24 @@ export class UserService {
 				},
 			});
 
-			// Calculate incremental orders amount
+			// Calculate incremental orders amount with detailed logging
 			const newOrdersAmount = newCompletedQuotations.reduce((sum, q) => {
 				const amount = this.safeParseNumber(q.totalAmount);
+				this.logger.debug(`[${calculationId}] Found completed order ID ${q.uid} with amount: ${amount}`);
 				return sum + amount;
 			}, 0);
 
 			if (newOrdersAmount > 0) {
 				hasNewRecords = true;
-				incrementalUpdates.currentOrdersAmount = (userTarget.currentOrdersAmount || 0) + newOrdersAmount;
+				const currentOrders = this.safeParseNumber(userTarget.currentOrdersAmount);
+				incrementalUpdates.currentOrdersAmount = currentOrders + newOrdersAmount;
 				this.logger.debug(
-					`NEW orders amount: ${newOrdersAmount}, total will be: ${incrementalUpdates.currentOrdersAmount} for user ${userId}`,
+					`[${calculationId}] NEW orders: ${newOrdersAmount}, existing: ${currentOrders}, total will be: ${incrementalUpdates.currentOrdersAmount}`,
 				);
 			}
 
 			// --- Calculate NEW leads since last calculation ---
-			this.logger.debug(`Calculating NEW leads count for user: ${userId} since ${calculationStartDate}`);
+			this.logger.debug(`[${calculationId}] Calculating NEW leads count for user: ${userId} since ${calculationStartDate}`);
 			const newLeadsCount = await this.leadRepository.count({
 				where: {
 					owner: { uid: userId },
@@ -3025,14 +3159,15 @@ export class UserService {
 
 			if (newLeadsCount > 0) {
 				hasNewRecords = true;
-				incrementalUpdates.currentNewLeads = (userTarget.currentNewLeads || 0) + newLeadsCount;
+				const currentLeads = this.safeParseNumber(userTarget.currentNewLeads);
+				incrementalUpdates.currentNewLeads = currentLeads + newLeadsCount;
 				this.logger.debug(
-					`NEW leads count: ${newLeadsCount}, total will be: ${incrementalUpdates.currentNewLeads} for user ${userId}`,
+					`[${calculationId}] NEW leads: ${newLeadsCount}, existing: ${currentLeads}, total will be: ${incrementalUpdates.currentNewLeads}`,
 				);
 			}
 
 			// --- Calculate NEW clients since last calculation ---
-			this.logger.debug(`Calculating NEW clients count for user: ${userId} since ${calculationStartDate}`);
+			this.logger.debug(`[${calculationId}] Calculating NEW clients count for user: ${userId} since ${calculationStartDate}`);
 			const newClientsCount = await this.clientRepository.count({
 				where: {
 					assignedSalesRep: { uid: userId },
@@ -3042,14 +3177,15 @@ export class UserService {
 
 			if (newClientsCount > 0) {
 				hasNewRecords = true;
-				incrementalUpdates.currentNewClients = (userTarget.currentNewClients || 0) + newClientsCount;
+				const currentClients = this.safeParseNumber(userTarget.currentNewClients);
+				incrementalUpdates.currentNewClients = currentClients + newClientsCount;
 				this.logger.debug(
-					`NEW clients count: ${newClientsCount}, total will be: ${incrementalUpdates.currentNewClients} for user ${userId}`,
+					`[${calculationId}] NEW clients: ${newClientsCount}, existing: ${currentClients}, total will be: ${incrementalUpdates.currentNewClients}`,
 				);
 			}
 
 			// --- Calculate NEW check-ins since last calculation ---
-			this.logger.debug(`Calculating NEW check-ins count for user: ${userId} since ${calculationStartDate}`);
+			this.logger.debug(`[${calculationId}] Calculating NEW check-ins count for user: ${userId} since ${calculationStartDate}`);
 			const newCheckInsCount = await this.checkInRepository.count({
 				where: {
 					owner: { uid: userId },
@@ -3059,9 +3195,10 @@ export class UserService {
 
 			if (newCheckInsCount > 0) {
 				hasNewRecords = true;
-				incrementalUpdates.currentCheckIns = (userTarget.currentCheckIns || 0) + newCheckInsCount;
+				const currentCheckIns = this.safeParseNumber(userTarget.currentCheckIns);
+				incrementalUpdates.currentCheckIns = currentCheckIns + newCheckInsCount;
 				this.logger.debug(
-					`NEW check-ins count: ${newCheckInsCount}, total will be: ${incrementalUpdates.currentCheckIns} for user ${userId}`,
+					`[${calculationId}] NEW check-ins: ${newCheckInsCount}, existing: ${currentCheckIns}, total will be: ${incrementalUpdates.currentCheckIns}`,
 				);
 			}
 
@@ -3077,12 +3214,12 @@ export class UserService {
 
 				if (hasExistingValues) {
 					this.logger.debug(
-						`No new records found for user ${userId} and existing values present - skipping update to preserve ERP/external values`,
+						`[${calculationId}] No new records found for user ${userId} and existing values present - skipping update to preserve ERP/external values`,
 					);
 					return;
 				} else {
 					this.logger.debug(
-						`No new records found for user ${userId} and no existing values - skipping update to prevent resetting targets to zero`,
+						`[${calculationId}] No new records found for user ${userId} and no existing values - skipping update to prevent resetting targets to zero`,
 					);
 					return;
 				}
@@ -3090,30 +3227,46 @@ export class UserService {
 
 			// Apply incremental updates only if we have new records
 			if (hasNewRecords) {
+				this.logger.log(`[${calculationId}] Applying incremental updates for user ${userId}:`);
+				this.logger.log(`[${calculationId}] Updates: ${JSON.stringify(incrementalUpdates, null, 2)}`);
+
 				// Apply all incremental updates
 				Object.assign(userTarget, incrementalUpdates);
 
-				// Calculate currentSalesAmount (total for backward compatibility)
+				// ENHANCED SALES CALCULATION with detailed debugging
 				const quotationsAmount = this.safeParseNumber(userTarget.currentQuotationsAmount);
 				const ordersAmount = this.safeParseNumber(userTarget.currentOrdersAmount);
+				
+				this.logger.debug(`[${calculationId}] Sales calculation components:`);
+				this.logger.debug(`[${calculationId}] - Quotations amount: ${quotationsAmount} (parsed from ${userTarget.currentQuotationsAmount})`);
+				this.logger.debug(`[${calculationId}] - Orders amount: ${ordersAmount} (parsed from ${userTarget.currentOrdersAmount})`);
+				
 				userTarget.currentSalesAmount = quotationsAmount + ordersAmount;
+				
+				this.logger.debug(`[${calculationId}] Final sales amount: ${userTarget.currentSalesAmount}`);
 
-				this.logger.debug(
-					`Updated sales amount calculated: ${userTarget.currentSalesAmount} for user ${userId}`,
-				);
+				// Additional validation for sales amount calculation
+				if (userTarget.currentSalesAmount !== (quotationsAmount + ordersAmount)) {
+					this.logger.error(`[${calculationId}] CRITICAL: Sales amount calculation mismatch! Expected: ${quotationsAmount + ordersAmount}, Got: ${userTarget.currentSalesAmount}`);
+				}
 			}
 
 			// Update the last calculation timestamp
 			(userTarget as any).lastCalculatedAt = calculationEndDate;
 
-			// Validate the calculated values before saving
+			// Enhanced validation with detailed logging
+			this.logger.debug(`[${calculationId}] Validating calculated values before save...`);
 			if (!this.validateCalculatedValues(userTarget)) {
-				this.logger.error(`Invalid calculated values for user ${userId}, skipping save`);
+				this.logger.error(`[${calculationId}] VALIDATION FAILED for user ${userId}:`);
+				this.logger.error(`[${calculationId}] - Sales amount: ${userTarget.currentSalesAmount}`);
+				this.logger.error(`[${calculationId}] - Quotations amount: ${userTarget.currentQuotationsAmount}`);
+				this.logger.error(`[${calculationId}] - Orders amount: ${userTarget.currentOrdersAmount}`);
+				this.logger.error(`[${calculationId}] SKIPPING SAVE - User-set values preserved`);
 				return;
 			}
 
 			// Save the updated target (via user cascade)
-			this.logger.debug(`Saving updated targets for user: ${userId}`);
+			this.logger.debug(`[${calculationId}] Saving updated targets for user: ${userId}`);
 			await this.userRepository.save(user);
 
 			// Check for target achievements after saving (only if we had updates)
@@ -3127,23 +3280,62 @@ export class UserService {
 			const executionTime = Date.now() - startTime;
 			if (hasNewRecords) {
 				this.logger.log(
-					`User targets calculated successfully for user: ${userId} in ${executionTime}ms - incremental updates applied`,
+					`[${calculationId}] Target calculation completed successfully for user: ${userId} in ${executionTime}ms - incremental updates applied`,
 				);
 			} else {
 				this.logger.log(
-					`User targets calculation completed for user: ${userId} in ${executionTime}ms - no new records to process`,
+					`[${calculationId}] Target calculation completed for user: ${userId} in ${executionTime}ms - no new records to process`,
 				);
 			}
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
 			this.logger.error(
-				`Failed to calculate user targets for user ${userId} after ${executionTime}ms. Error: ${error.message}`,
+				`[${calculationId}] Failed to calculate user targets for user ${userId} after ${executionTime}ms. Error: ${error.message}`,
+				error.stack,
 			);
-			// Don't return null, just return void
-		} finally {
-			// Always remove user from active calculations
-			this.activeCalculations.delete(userId);
+			throw error; // Re-throw to ensure promise rejection
 		}
+	}
+
+	/**
+	 * Validates existing data for integrity issues
+	 */
+	private validateExistingData(userTarget: any, calculationId: string): string[] {
+		const issues: string[] = [];
+
+		// Check for unreasonably large existing values
+		if (userTarget.currentSalesAmount > 10000000) {
+			issues.push(`Large sales amount: ${userTarget.currentSalesAmount}`);
+		}
+		if (userTarget.currentQuotationsAmount > 10000000) {
+			issues.push(`Large quotations amount: ${userTarget.currentQuotationsAmount}`);
+		}
+		if (userTarget.currentOrdersAmount > 10000000) {
+			issues.push(`Large orders amount: ${userTarget.currentOrdersAmount}`);
+		}
+
+		// Check for negative values
+		if (userTarget.currentSalesAmount < 0) {
+			issues.push(`Negative sales amount: ${userTarget.currentSalesAmount}`);
+		}
+		if (userTarget.currentQuotationsAmount < 0) {
+			issues.push(`Negative quotations amount: ${userTarget.currentQuotationsAmount}`);
+		}
+		if (userTarget.currentOrdersAmount < 0) {
+			issues.push(`Negative orders amount: ${userTarget.currentOrdersAmount}`);
+		}
+
+		// Check for inconsistent sales calculation
+		const quotationsAmount = this.safeParseNumber(userTarget.currentQuotationsAmount);
+		const ordersAmount = this.safeParseNumber(userTarget.currentOrdersAmount);
+		const expectedSalesAmount = quotationsAmount + ordersAmount;
+		const actualSalesAmount = this.safeParseNumber(userTarget.currentSalesAmount);
+		
+		if (Math.abs(expectedSalesAmount - actualSalesAmount) > 0.01) {
+			issues.push(`Sales calculation mismatch: expected ${expectedSalesAmount}, actual ${actualSalesAmount}`);
+		}
+
+		return issues;
 	}
 
 	/**

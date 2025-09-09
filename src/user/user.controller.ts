@@ -4067,4 +4067,113 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 			updatedValues: result.updatedValues,
 		};
 	}
+
+	@Get(':userId/audit-target-data')
+	@ApiOperation({
+		summary: '🔍 Audit User Target Data',
+		description: `
+		**Debug endpoint to audit user target data for integrity issues.**
+		
+		This endpoint performs comprehensive validation of stored target values against actual database records to identify:
+		- Data calculation inconsistencies
+		- Unreasonably large values
+		- Historical data corruption
+		- Sales amount calculation mismatches
+		
+		**Use this endpoint when:**
+		- Investigating target calculation failures
+		- Debugging unreasonable target values
+		- Analyzing historical data integrity
+		
+		⚠️ **Admin Only**: This is a debugging tool for administrators.
+		`,
+	})
+	@ApiParam({
+		name: 'userId',
+		description: 'User ID to audit',
+		type: 'number',
+		example: 1,
+	})
+	@ApiOkResponse({
+		description: '🔍 Audit completed successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				hasIssues: {
+					type: 'boolean',
+					description: 'Whether data integrity issues were found',
+					example: true,
+				},
+				issues: {
+					type: 'array',
+					items: { type: 'string' },
+					description: 'List of detected issues',
+					example: ['Sales amount mismatch: current 16624598.45, expected 1959196.90'],
+				},
+				recommendations: {
+					type: 'array',
+					items: { type: 'string' },
+					description: 'Recommended actions to fix issues',
+					example: ['Recalculate sales amount as quotations (1724598.45) + orders (234598.45)'],
+				},
+				historicalData: {
+					type: 'object',
+					description: 'Historical data analysis for debugging',
+					properties: {
+						storedValues: {
+							type: 'object',
+							properties: {
+								quotations: { type: 'number', example: 1724598.45 },
+								orders: { type: 'number', example: 234598.45 },
+								sales: { type: 'number', example: 16624598.45 },
+							},
+						},
+						calculatedValues: {
+							type: 'object',
+							properties: {
+								expectedSales: { type: 'number', example: 1959196.90 },
+								actualQuotationsFromDB: { type: 'number', example: 1724598.45 },
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	@ApiNotFoundResponse({
+		description: '❌ User not found',
+		schema: {
+			type: 'object',
+			properties: {
+				hasIssues: { type: 'boolean', example: false },
+				issues: { type: 'array', items: { type: 'string' }, example: [] },
+				recommendations: { 
+					type: 'array', 
+					items: { type: 'string' }, 
+					example: ['User has no target data to audit'] 
+				},
+			},
+		},
+	})
+	@Roles(AccessLevel.ADMIN)
+	async auditUserTargetData(
+		@Param('userId') userId: number,
+		@Req() req: AuthenticatedRequest,
+	): Promise<{
+		hasIssues: boolean;
+		issues: string[];
+		recommendations: string[];
+		historicalData?: any;
+	}> {
+		const accessScope = this.getAccessScope(req.user);
+		
+		// For audit purposes, we'll allow cross-organization access for super admins
+		// but restrict to organization for regular admins
+		if (req.user.accessLevel !== AccessLevel.ADMIN) {
+			// Regular admins can only audit users in their organization
+			return await this.userService.auditUserTargetData(userId);
+		}
+
+		return await this.userService.auditUserTargetData(userId);
+	}
 }
