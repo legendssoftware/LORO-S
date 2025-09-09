@@ -6,10 +6,12 @@ import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from '../auth/auth.module';
 import { LicensingModule } from '../licensing/licensing.module';
 import { OrganisationModule } from '../organisation/organisation.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 import { IotService } from './iot.service';
 import { IotController } from './iot.controller';
 import { Device, DeviceRecords } from './entities/iot.entity';
+import { User } from '../user/entities/user.entity';
 import { IoTReportingService } from './services/iot-reporting.service';
 
 /**
@@ -21,7 +23,7 @@ import { IoTReportingService } from './services/iot-reporting.service';
 @Module({
   imports: [
     // TypeORM for entity management
-    TypeOrmModule.forFeature([Device, DeviceRecords]),
+    TypeOrmModule.forFeature([Device, DeviceRecords, User]),
     
     // Cache module for performance optimization
     CacheModule.register({
@@ -43,6 +45,9 @@ import { IoTReportingService } from './services/iot-reporting.service';
     
     // Organisation module for business hours validation
     OrganisationModule,
+    
+    // Notifications module for push notifications to admin users
+    NotificationsModule,
   ],
   controllers: [IotController],
   providers: [
