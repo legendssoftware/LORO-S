@@ -200,7 +200,7 @@ export class AttendanceService {
 				throw new BadRequestException('Check-in time is required');
 			}
 
-			// Check if user is already checked in (prevent duplicate check-ins)
+			// Check if user is already checked in - if so, auto-close previous shift
 			this.logger.debug(`Checking for existing active shift for user: ${checkInDto.owner.uid}`);
 			const existingShift = await this.attendanceRepository.findOne({
 				where: {
@@ -210,11 +210,19 @@ export class AttendanceService {
 					checkOut: IsNull(),
 					organisation: orgId ? { uid: orgId } : undefined,
 				},
+				relations: ['owner'], // Load the owner relation to avoid undefined errors
 			});
 
 			if (existingShift) {
-				this.logger.warn(`User ${checkInDto.owner.uid} already has an active shift`);
-				throw new BadRequestException('User is already checked in. Please check out first.');
+				this.logger.warn(`User ${checkInDto.owner.uid} already has an active shift - attempting auto-close`);
+				try {
+					await this.autoCloseExistingShift(existingShift, orgId);
+					this.logger.log(`Successfully auto-closed existing shift for user ${checkInDto.owner.uid}`);
+				} catch (error) {
+					this.logger.error(`Failed to auto-close existing shift for user ${checkInDto.owner.uid}: ${error.message}`);
+					// Re-throw the error to ensure it's properly caught by consolidation logic
+					throw new BadRequestException(`Failed to process check-in: User is already checked in and auto-close failed. ${error.message}`);
+				}
 			}
 
 			// Enhanced data mapping with proper validation
@@ -364,6 +372,92 @@ export class AttendanceService {
 			};
 
 			return errorResponse;
+		}
+	}
+
+	/**
+	 * Auto-close an existing shift at organization close time
+	 */
+	private async autoCloseExistingShift(existingShift: Attendance, orgId?: number): Promise<void> {
+		// Validate existingShift object
+		if (!existingShift) {
+			throw new Error('Existing shift is undefined');
+		}
+
+		const userId = existingShift.owner?.uid || 'unknown';
+		this.logger.debug(`Auto-closing existing shift for user ${userId}, orgId: ${orgId}`);
+
+		// Default close time is 4:30 PM as requested
+		const checkInDate = new Date(existingShift.checkIn);
+		let closeTime = new Date(checkInDate);
+		closeTime.setHours(16, 30, 0, 0); // 4:30 PM default
+
+		try {
+			// Try to get organization hours if orgId is provided
+			if (orgId) {
+				this.logger.debug(`Attempting to fetch organization hours for org ${orgId}`);
+				
+				const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(orgId, checkInDate);
+				
+				if (workingDayInfo && workingDayInfo.isWorkingDay && workingDayInfo.endTime) {
+					// Parse organization close time (format: "HH:MM")
+					try {
+						const [hours, minutes] = workingDayInfo.endTime.split(':').map(Number);
+						
+						if (!isNaN(hours) && !isNaN(minutes)) {
+							// Create close time on the same date as check-in
+							closeTime = new Date(checkInDate);
+							closeTime.setHours(hours, minutes, 0, 0);
+
+							// If the close time would be before the check-in time (e.g., night shift), 
+							// set it to the next day
+							if (closeTime <= checkInDate) {
+								closeTime.setDate(closeTime.getDate() + 1);
+							}
+
+							this.logger.debug(`Using organization close time: ${workingDayInfo.endTime} for user ${userId}`);
+						} else {
+							this.logger.warn(`Invalid organization hours format: ${workingDayInfo.endTime}, using default 4:30 PM`);
+						}
+					} catch (parseError) {
+						this.logger.warn(`Error parsing organization close time: ${parseError.message}, using default 4:30 PM`);
+					}
+				} else {
+					this.logger.warn(`Organization ${orgId} is not a working day or has no end time, using default 4:30 PM`);
+				}
+			} else {
+				this.logger.warn('No organization ID provided for auto-close, using default 4:30 PM');
+			}
+
+			this.logger.debug(`Setting auto-close time to: ${closeTime.toISOString()} for user ${userId}`);
+
+			// Update the existing shift
+			existingShift.checkOut = closeTime;
+			existingShift.status = AttendanceStatus.COMPLETED;
+			existingShift.checkOutNotes = 'Auto-closed at organization close time due to new shift';
+
+			await this.attendanceRepository.save(existingShift);
+			
+			this.logger.log(`Auto-closed existing shift for user ${userId} at ${closeTime.toISOString()}`);
+
+		} catch (error) {
+			this.logger.error(`Error auto-closing existing shift for user ${userId}: ${error.message}`);
+			
+			// Fallback: still try to close the shift with default time
+			try {
+				closeTime = new Date(checkInDate);
+				closeTime.setHours(16, 30, 0, 0); // 4:30 PM fallback
+				
+				existingShift.checkOut = closeTime;
+				existingShift.status = AttendanceStatus.COMPLETED;
+				existingShift.checkOutNotes = 'Auto-closed with fallback time due to org hours fetch error';
+
+				await this.attendanceRepository.save(existingShift);
+				this.logger.log(`Fallback auto-close successful for user ${userId} at 4:30 PM`);
+			} catch (fallbackError) {
+				this.logger.error(`Fallback auto-close also failed for user ${userId}: ${fallbackError.message}`);
+				throw new Error(`Failed to auto-close existing shift: ${error.message}`);
+			}
 		}
 	}
 
@@ -4409,6 +4503,12 @@ export class AttendanceService {
 					// Process as check-in
 					const checkInRecord = record as CreateCheckInDto;
 					result = await this.checkIn(checkInRecord, orgId, branchId);
+					
+					// Check if the result indicates an error (data is null)
+					if (!result.data) {
+						throw new Error(result.message || 'Check-in failed');
+					}
+					
 					message = 'Check-in processed successfully';
 					
 					// Try to extract attendance ID from result if available
@@ -4419,6 +4519,12 @@ export class AttendanceService {
 					// Process as check-out
 					const checkOutRecord = record as CreateCheckOutDto;
 					result = await this.checkOut(checkOutRecord, orgId, branchId);
+					
+					// Check if the result indicates an error (data is null)
+					if (!result.data) {
+						throw new Error(result.message || 'Check-out failed');
+					}
+					
 					message = 'Check-out processed successfully';
 					
 					// Try to extract attendance ID from result if available
