@@ -8,7 +8,7 @@ import {
 	ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource, Between, Not, QueryFailedError } from 'typeorm';
+import { Repository, DataSource, Between, Not, QueryFailedError, In } from 'typeorm';
 import { Cache } from 'cache-manager';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -696,25 +696,43 @@ export class IotService {
 		}
 	}
 
-	async findOneDevice(id: number): Promise<{ device: Device | null; message: string }> {
+	async findOneDevice(id: number, orgId?: number, branchId?: number): Promise<{ device: Device | null; message: string }> {
 		try {
-			const cacheKey = this.getCacheKey(`device:${id}`);
+			this.logger.log(`🔍 [findOneDevice] Starting device lookup - ID: ${id}, orgId: ${orgId}, branchId: ${branchId}`);
+			
+			const cacheKey = this.getCacheKey(`device:${id}:${orgId}:${branchId}`);
 			const cached = await this.cacheManager.get<Device>(cacheKey);
 
 			if (cached) {
-				this.logger.debug(`Returning cached device data for ID: ${id}`);
+				this.logger.debug(`📦 [findOneDevice] Returning cached device data for ID: ${id}`);
 				return { device: cached, message: 'Device found successfully' };
 			}
 
+			// Build where clause with org/branch filtering
+			const whereClause: any = { id, isDeleted: false };
+			
+			if (orgId) {
+				whereClause.orgID = orgId;
+				this.logger.debug(`🏢 [findOneDevice] Filtering by organization: ${orgId}`);
+			}
+			
+			if (branchId) {
+				whereClause.branchID = branchId;
+				this.logger.debug(`🏪 [findOneDevice] Filtering by branch: ${branchId}`);
+			}
+
 			const device = await this.deviceRepository.findOne({
-				where: { id, isDeleted: false },
+				where: whereClause,
 				relations: ['records'],
 				order: { records: { createdAt: 'DESC' } },
 			});
 
 			if (!device) {
-				return { device: null, message: 'Device not found' };
+				this.logger.warn(`❌ [findOneDevice] Device not found or access denied - ID: ${id}, orgId: ${orgId}, branchId: ${branchId}`);
+				return { device: null, message: 'Device not found or access denied' };
 			}
+
+			this.logger.log(`✅ [findOneDevice] Device found - ID: ${device.id}, deviceID: ${device.deviceID}, org: ${device.orgID}, branch: ${device.branchID}`);
 
 			// Limit records to latest 5
 			const processedDevice = {
@@ -729,30 +747,48 @@ export class IotService {
 			await this.cacheManager.set(cacheKey, processedDevice, this.CACHE_TTL);
 			return { device: processedDevice, message: 'Device found successfully' };
 		} catch (error) {
-			this.logger.error(`Failed to find device with ID ${id}: ${error.message}`, error.stack);
+			this.logger.error(`❌ [findOneDevice] Failed to find device with ID ${id}: ${error.message}`, error.stack);
 			throw new BadRequestException('Failed to find device');
 		}
 	}
 
-	async findDeviceByDeviceId(deviceId: string): Promise<{ device: Device | null; message: string }> {
+	async findDeviceByDeviceId(deviceId: string, orgId?: number, branchId?: number): Promise<{ device: Device | null; message: string }> {
 		try {
-			const cacheKey = this.getCacheKey(`device:deviceId:${deviceId}`);
+			this.logger.log(`🔍 [findDeviceByDeviceId] Starting device lookup - deviceID: ${deviceId}, orgId: ${orgId}, branchId: ${branchId}`);
+			
+			const cacheKey = this.getCacheKey(`device:deviceId:${deviceId}:${orgId}:${branchId}`);
 			const cached = await this.cacheManager.get<Device>(cacheKey);
 
 			if (cached) {
-				this.logger.debug(`Returning cached device data for deviceID: ${deviceId}`);
+				this.logger.debug(`📦 [findDeviceByDeviceId] Returning cached device data for deviceID: ${deviceId}`);
 				return { device: cached, message: 'Device found successfully' };
 			}
 
+			// Build where clause with org/branch filtering
+			const whereClause: any = { deviceID: deviceId, isDeleted: false };
+			
+			if (orgId) {
+				whereClause.orgID = orgId;
+				this.logger.debug(`🏢 [findDeviceByDeviceId] Filtering by organization: ${orgId}`);
+			}
+			
+			if (branchId) {
+				whereClause.branchID = branchId;
+				this.logger.debug(`🏪 [findDeviceByDeviceId] Filtering by branch: ${branchId}`);
+			}
+
 			const device = await this.deviceRepository.findOne({
-				where: { deviceID: deviceId, isDeleted: false },
+				where: whereClause,
 				relations: ['records'],
 				order: { records: { createdAt: 'DESC' } },
 			});
 
 			if (!device) {
-				return { device: null, message: 'Device not found' };
+				this.logger.warn(`❌ [findDeviceByDeviceId] Device not found or access denied - deviceID: ${deviceId}, orgId: ${orgId}, branchId: ${branchId}`);
+				return { device: null, message: 'Device not found or access denied' };
 			}
+
+			this.logger.log(`✅ [findDeviceByDeviceId] Device found - ID: ${device.id}, deviceID: ${device.deviceID}, org: ${device.orgID}, branch: ${device.branchID}`);
 
 			// Limit records to latest 5
 			const processedDevice = {
@@ -767,7 +803,7 @@ export class IotService {
 			await this.cacheManager.set(cacheKey, processedDevice, this.CACHE_TTL);
 			return { device: processedDevice, message: 'Device found successfully' };
 		} catch (error) {
-			this.logger.error(`Failed to find device with deviceID ${deviceId}: ${error.message}`, error.stack);
+			this.logger.error(`❌ [findDeviceByDeviceId] Failed to find device with deviceID ${deviceId}: ${error.message}`, error.stack);
 			throw new BadRequestException('Failed to find device');
 		}
 	}
@@ -1779,7 +1815,7 @@ export class IotService {
 	}
 
 	/**
-	 * Send device open/close notifications to admin users in the organization
+	 * Send device open/close notifications to admin, owner, manager and technician users in the organization
 	 */
 	private async sendDeviceNotificationToAdmins(
 		device: Device,
@@ -1787,24 +1823,24 @@ export class IotService {
 		eventDate: Date,
 	): Promise<void> {
 		try {
-			this.logger.log(`📢 Sending device ${timeEventDto.eventType} notification to admins for org ${device.orgID}`);
+			this.logger.log(`📢 [sendDeviceNotification] Sending device ${timeEventDto.eventType} notification for org ${device.orgID}`);
 
-			// Find all admin users in the organization
-			const adminUsers = await this.userRepository.find({
+			// Find all relevant users (admin, owner, manager, technician) in the organization
+			const relevantUsers = await this.userRepository.find({
 				where: {
 					organisationRef: device.orgID.toString(),
-					accessLevel: AccessLevel.ADMIN,
+					accessLevel: In([AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER, AccessLevel.TECHNICIAN]),
 					isDeleted: false,
 				},
-				select: ['uid', 'name', 'email', 'expoPushToken', 'organisationRef'],
+				select: ['uid', 'name', 'email', 'expoPushToken', 'organisationRef', 'accessLevel'],
 			});
 
-			if (adminUsers.length === 0) {
-				this.logger.warn(`⚠️ No admin users found for organization ${device.orgID}`);
+			if (relevantUsers.length === 0) {
+				this.logger.warn(`⚠️ [sendDeviceNotification] No relevant users found for organization ${device.orgID}`);
 				return;
 			}
 
-			this.logger.log(`👥 Found ${adminUsers.length} admin users to notify for org ${device.orgID}`);
+			this.logger.log(`👥 [sendDeviceNotification] Found ${relevantUsers.length} users to notify (${relevantUsers.map(u => u.accessLevel).join(', ')}) for org ${device.orgID}`);
 
 			// Prepare notification data
 			const eventAction = timeEventDto.eventType === 'open' ? 'opened' : 'closed';
@@ -1815,12 +1851,13 @@ export class IotService {
 				minute: '2-digit',
 			});
 
-			// Send notifications to all admin users
-			const recipients = adminUsers.map(user => ({
+			// Send notifications to all relevant users
+			const recipients = relevantUsers.map(user => ({
 				userId: user.uid,
 				email: user.email,
 				pushToken: user.expoPushToken,
 				name: user.name,
+				accessLevel: user.accessLevel,
 			}));
 
 			const notificationData = {
@@ -1863,7 +1900,7 @@ export class IotService {
 			const totalFailed = (notificationResult.pushResults?.failed || 0) + (notificationResult.emailResults?.failed || 0);
 
 			this.logger.log(
-				`✅ Device ${eventAction} notifications sent: ${totalSent} sent, ${totalFailed} failed`,
+				`✅ [sendDeviceNotification] Device ${eventAction} notifications sent: ${totalSent} sent, ${totalFailed} failed to ${relevantUsers.length} users`,
 			);
 
 			// Log any failures for debugging
@@ -1872,7 +1909,7 @@ export class IotService {
 					...(notificationResult.pushResults?.errors || []),
 					...(notificationResult.emailResults?.errors || [])
 				];
-				this.logger.warn(`❌ Some notifications failed to send`, {
+				this.logger.warn(`❌ [sendDeviceNotification] Some notifications failed to send`, {
 					errors,
 					deviceID: device.deviceID,
 					eventType: timeEventDto.eventType,
@@ -1882,7 +1919,7 @@ export class IotService {
 			}
 
 		} catch (error) {
-			this.logger.error(`❌ Failed to send device notifications to admins: ${error.message}`, {
+			this.logger.error(`❌ [sendDeviceNotification] Failed to send device notifications: ${error.message}`, {
 				deviceID: device.deviceID,
 				orgID: device.orgID,
 				eventType: timeEventDto.eventType,
@@ -1918,9 +1955,350 @@ export class IotService {
 			processingTime: Date.now() - startTime,
 		});
 
+		// Check if this is a close event and schedule daily logs email if it's the last device to close
+		if (timeEventDto.eventType === 'close') {
+			this.scheduleDailyDeviceLogsEmail(device.orgID, eventDate).catch(error => {
+				this.logger.warn(`⚠️ Failed to schedule daily device logs email: ${error.message}`);
+			});
+		}
+
 		// Invalidate relevant caches
 		await this.invalidateDeviceCache(device);
 		await this.invalidateRecordCache(recordResult.record);
+	}
+
+	/**
+	 * Schedule daily device logs email to be sent after the last close event of the day
+	 */
+	private async scheduleDailyDeviceLogsEmail(orgId: number, eventDate: Date): Promise<void> {
+		try {
+			this.logger.log(`📅 [scheduleDailyDeviceLogsEmail] Scheduling daily logs for org ${orgId}`);
+			
+			// Get organization hours to determine close time
+			const orgRef = String(orgId);
+			const orgHoursArr = await this.organisationHoursService.findAll(orgRef).catch(() => []);
+			const orgHours = Array.isArray(orgHoursArr) && orgHoursArr.length > 0 ? orgHoursArr[0] : null;
+			
+			if (!orgHours) {
+				this.logger.warn(`⚠️ [scheduleDailyDeviceLogsEmail] No organization hours found for org ${orgId}`);
+				return;
+			}
+
+			// Parse close time (e.g., "17:30")
+			const closeTimeParts = (orgHours.closeTime || "17:00").split(':');
+			const closeHour = parseInt(closeTimeParts[0], 10);
+			const closeMinute = parseInt(closeTimeParts[1] || '0', 10);
+			
+			// Create close time for today
+			const todayCloseTime = new Date(eventDate);
+			todayCloseTime.setHours(closeHour, closeMinute, 0, 0);
+			
+			// Schedule email 30 minutes after organization close time
+			const emailTime = new Date(todayCloseTime.getTime() + (30 * 60 * 1000));
+			const now = new Date();
+			
+			if (emailTime > now) {
+				const delay = emailTime.getTime() - now.getTime();
+				this.logger.log(`📧 [scheduleDailyDeviceLogsEmail] Scheduling daily logs email for org ${orgId} in ${Math.round(delay / 60000)} minutes`);
+				
+				setTimeout(async () => {
+					await this.sendDailyDeviceLogsEmail(orgId, eventDate);
+				}, delay);
+			} else {
+				// If we're already past the email time, send it now
+				this.logger.log(`📧 [scheduleDailyDeviceLogsEmail] Sending daily logs email now for org ${orgId}`);
+				await this.sendDailyDeviceLogsEmail(orgId, eventDate);
+			}
+		} catch (error) {
+			this.logger.error(`❌ [scheduleDailyDeviceLogsEmail] Failed to schedule daily logs email: ${error.message}`, error.stack);
+		}
+	}
+
+	/**
+	 * Send daily device logs email to admin, owner, manager, and technician users
+	 */
+	private async sendDailyDeviceLogsEmail(orgId: number, date: Date): Promise<void> {
+		try {
+			this.logger.log(`📧 [sendDailyDeviceLogsEmail] Sending daily device logs for org ${orgId} on ${date.toDateString()}`);
+
+			// Get all devices for the organization
+			const devices = await this.deviceRepository.find({
+				where: { orgID: orgId, isDeleted: false },
+				relations: ['records'],
+				order: { deviceID: 'ASC' },
+			});
+
+			if (devices.length === 0) {
+				this.logger.warn(`⚠️ [sendDailyDeviceLogsEmail] No devices found for org ${orgId}`);
+				return;
+			}
+
+			// Filter records for today
+			const today = new Date(date);
+			today.setHours(0, 0, 0, 0);
+			const tomorrow = new Date(today);
+			tomorrow.setDate(tomorrow.getDate() + 1);
+
+			const deviceLogs = devices.map(device => {
+				const todayRecords = device.records?.filter(record => {
+					const recordDate = new Date(record.createdAt);
+					return recordDate >= today && recordDate < tomorrow;
+				}) || [];
+
+				return {
+					deviceID: device.deviceID,
+					deviceType: device.deviceType,
+					location: device.devicLocation,
+					status: device.currentStatus,
+					records: todayRecords.map(record => {
+						// Calculate total hours from open and close times
+						let totalHours = 0;
+						if (record.openTime && record.closeTime) {
+							try {
+								const openDate = new Date(record.openTime);
+								const closeDate = new Date(record.closeTime);
+								if (!isNaN(openDate.getTime()) && !isNaN(closeDate.getTime())) {
+									const diffMs = closeDate.getTime() - openDate.getTime();
+									totalHours = Math.max(0, diffMs / (1000 * 60 * 60)); // Convert to hours
+								}
+							} catch (error) {
+								this.logger.warn(`Failed to calculate hours for record ${record.id}: ${error.message}`);
+							}
+						}
+						
+						return {
+							openTime: record.openTime ? this.formatTimeForEmail(record.openTime) : null,
+							closeTime: record.closeTime ? this.formatTimeForEmail(record.closeTime) : null,
+							totalHours,
+							createdAt: record.createdAt,
+						};
+					}),
+				};
+			});
+
+			// Get relevant users for notification
+			const relevantUsers = await this.userRepository.find({
+				where: {
+					organisationRef: orgId.toString(),
+					accessLevel: In([AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER, AccessLevel.TECHNICIAN]),
+					isDeleted: false,
+				},
+				select: ['uid', 'name', 'email', 'accessLevel'],
+			});
+
+			if (relevantUsers.length === 0) {
+				this.logger.warn(`⚠️ [sendDailyDeviceLogsEmail] No relevant users found for org ${orgId}`);
+				return;
+			}
+
+			// Prepare email data
+			const totalDevices = devices.length;
+			const activeDevices = deviceLogs.filter(log => log.records.length > 0).length;
+			const totalEvents = deviceLogs.reduce((sum, log) => sum + log.records.length, 0);
+
+			// Send email to each user
+			for (const user of relevantUsers) {
+				await this.sendDeviceLogsEmailToUser(user, deviceLogs, {
+					date: date.toDateString(),
+					totalDevices,
+					activeDevices,
+					totalEvents,
+					orgId,
+				});
+			}
+
+			this.logger.log(`✅ [sendDailyDeviceLogsEmail] Daily device logs sent to ${relevantUsers.length} users for org ${orgId}`);
+
+		} catch (error) {
+			this.logger.error(`❌ [sendDailyDeviceLogsEmail] Failed to send daily device logs: ${error.message}`, error.stack);
+		}
+	}
+
+	/**
+	 * Send device logs email to individual user
+	 */
+	private async sendDeviceLogsEmailToUser(
+		user: any, 
+		deviceLogs: any[], 
+		summary: { date: string; totalDevices: number; activeDevices: number; totalEvents: number; orgId: number }
+	): Promise<void> {
+		try {
+			const recipients = [{
+				userId: user.uid,
+				email: user.email,
+				name: user.name,
+			}];
+
+			// Create HTML content for the email
+			const htmlContent = this.generateDeviceLogsEmailHTML(user, deviceLogs, summary);
+
+			const emailData = {
+				event: NotificationEvent.GENERAL_NOTIFICATION,
+				title: `📊 Daily Device Activity Report - ${summary.date}`,
+				message: `Daily device activity summary: ${summary.activeDevices}/${summary.totalDevices} devices active, ${summary.totalEvents} total events`,
+				priority: NotificationPriority.NORMAL,
+				channel: NotificationChannel.GENERAL,
+				recipients,
+				data: {
+					type: 'DAILY_DEVICE_LOGS',
+					orgId: summary.orgId,
+					date: summary.date,
+					summary,
+					htmlContent, // Include HTML content in data instead
+				},
+				email: {
+					subject: `📊 Daily Device Activity Report - ${summary.date}`,
+					templateData: {
+						htmlContent,
+						date: summary.date,
+						summary,
+						user,
+					},
+				},
+				source: {
+					service: 'iot',
+					method: 'sendDailyDeviceLogsEmail',
+					entityId: summary.orgId,
+					entityType: 'organization',
+				},
+			};
+
+			await this.unifiedNotificationService.sendNotification(emailData);
+			this.logger.log(`📧 [sendDeviceLogsEmailToUser] Sent daily logs to ${user.email} (${user.accessLevel})`);
+
+		} catch (error) {
+			this.logger.error(`❌ [sendDeviceLogsEmailToUser] Failed to send logs to ${user.email}: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Generate HTML content for device logs email
+	 */
+	private generateDeviceLogsEmailHTML(user: any, deviceLogs: any[], summary: any): string {
+		const deviceRowsHTML = deviceLogs.map(device => {
+			const recordsHTML = device.records.length > 0 
+				? device.records.map(record => `
+					<li style="margin-bottom: 8px; padding: 8px; background-color: #f8f9fa; border-radius: 4px;">
+						<strong>Open:</strong> ${record.openTime || 'N/A'} | 
+						<strong>Close:</strong> ${record.closeTime || 'N/A'} | 
+						<strong>Hours:</strong> ${record.totalHours?.toFixed(1) || '0.0'}h
+					</li>
+				`).join('')
+				: '<li style="color: #6c757d; font-style: italic;">No activity recorded</li>';
+
+			const statusColor = device.status === 'online' ? '#28a745' : 
+							   device.status === 'offline' ? '#dc3545' : 
+							   device.status === 'maintenance' ? '#ffc107' : '#6c757d';
+
+			return `
+				<div style="margin-bottom: 20px; padding: 15px; border: 1px solid #dee2e6; border-radius: 8px; background-color: #ffffff;">
+					<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+						<h4 style="margin: 0; color: #495057;">${device.deviceID}</h4>
+						<span style="padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: bold; color: white; background-color: ${statusColor};">
+							${device.status.toUpperCase()}
+						</span>
+					</div>
+					<p style="margin: 5px 0; color: #6c757d; font-size: 14px;">
+						<strong>Type:</strong> ${device.deviceType} | <strong>Location:</strong> ${device.location}
+					</p>
+					<div style="margin-top: 10px;">
+						<strong>Today's Activity (${device.records.length} events):</strong>
+						<ul style="margin: 8px 0; padding-left: 20px;">
+							${recordsHTML}
+						</ul>
+					</div>
+				</div>
+			`;
+		}).join('');
+
+		return `
+			<!DOCTYPE html>
+			<html>
+			<head>
+				<meta charset="utf-8">
+				<title>Daily Device Activity Report</title>
+			</head>
+			<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; padding: 20px;">
+				<div style="text-align: center; margin-bottom: 30px; padding: 20px; background-color: #f8f9fa; border-radius: 8px;">
+					<h1 style="color: #495057; margin-bottom: 10px;">📊 Daily Device Activity Report</h1>
+					<p style="font-size: 18px; color: #6c757d; margin: 0;">${summary.date}</p>
+				</div>
+
+				<div style="margin-bottom: 30px;">
+					<h2 style="color: #495057;">Hello ${user.name},</h2>
+					<p>Here's your daily summary of IoT device activities for your organization:</p>
+				</div>
+
+				<div style="margin-bottom: 30px; padding: 20px; background-color: #e9ecef; border-radius: 8px;">
+					<h3 style="margin-top: 0; color: #495057;">📈 Summary</h3>
+					<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+						<div style="text-align: center; padding: 15px; background-color: #ffffff; border-radius: 6px;">
+							<div style="font-size: 24px; font-weight: bold; color: #007bff;">${summary.totalDevices}</div>
+							<div style="font-size: 14px; color: #6c757d;">Total Devices</div>
+						</div>
+						<div style="text-align: center; padding: 15px; background-color: #ffffff; border-radius: 6px;">
+							<div style="font-size: 24px; font-weight: bold; color: #28a745;">${summary.activeDevices}</div>
+							<div style="font-size: 14px; color: #6c757d;">Active Today</div>
+						</div>
+						<div style="text-align: center; padding: 15px; background-color: #ffffff; border-radius: 6px;">
+							<div style="font-size: 24px; font-weight: bold; color: #17a2b8;">${summary.totalEvents}</div>
+							<div style="font-size: 14px; color: #6c757d;">Total Events</div>
+						</div>
+					</div>
+				</div>
+
+				<div style="margin-bottom: 30px;">
+					<h3 style="color: #495057;">🔧 Device Details</h3>
+					${deviceRowsHTML}
+				</div>
+
+				<div style="margin-top: 40px; padding: 20px; background-color: #f8f9fa; border-radius: 8px; text-align: center;">
+					<p style="margin: 0; color: #6c757d; font-size: 14px;">
+						This is an automated report generated at ${new Date().toLocaleString('en-ZA')}.<br>
+						For questions or support, please contact your system administrator.
+					</p>
+				</div>
+			</body>
+			</html>
+		`;
+	}
+
+	/**
+	 * Format time for email display
+	 */
+	private formatTimeForEmail(timestamp: any): string {
+		try {
+			if (!timestamp) return 'N/A';
+			
+			let date: Date;
+			if (typeof timestamp === 'string') {
+				// Handle ISO string - extract UTC time components directly like in mobile
+				if (timestamp.includes('T') && timestamp.includes('Z')) {
+					const timeMatch = timestamp.match(/T(\d{2}):(\d{2}):(\d{2})/);
+					if (timeMatch) {
+						const hours = parseInt(timeMatch[1], 10);
+						const minutes = parseInt(timeMatch[2], 10);
+						const period = hours >= 12 ? 'PM' : 'AM';
+						const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+						const paddedMinutes = minutes.toString().padStart(2, '0');
+						return `${displayHours}:${paddedMinutes} ${period}`;
+					}
+				}
+				date = new Date(timestamp);
+			} else if (typeof timestamp === 'number') {
+				date = timestamp < 1e12 ? new Date(timestamp * 1000) : new Date(timestamp);
+			} else {
+				date = timestamp as Date;
+			}
+			
+			return date.toLocaleTimeString('en-ZA', {
+				hour12: true,
+				hour: 'numeric',
+				minute: '2-digit',
+			});
+		} catch (error) {
+			return 'N/A';
+		}
 	}
 
 	private async updateDeviceAnalyticsFromRecord(
@@ -2222,7 +2600,7 @@ export class IotService {
 			const queryStartTime = Date.now();
 			const device = await this.deviceRepository.findOne({
 				where: { id, isDeleted: false },
-				relations: ['records', 'organisation', 'branch'],
+				relations: ['records'],
 			});
 			const queryTime = Date.now() - queryStartTime;
 
@@ -2265,8 +2643,8 @@ export class IotService {
 					currentStatus: device.currentStatus,
 					location: device.devicLocation,
 					createdAt: device.createdAt,
-					organisationId: device.orgID,
-					branchId: device.branchID,
+					orgID: device.orgID,
+					branchID: device.branchID,
 				},
 			};
 			const analyticsTime = Date.now() - analyticsStartTime;

@@ -387,8 +387,6 @@ Register new IoT devices in your organization with comprehensive configuration a
 		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({ summary: 'Get all devices with optional filtering' })
-	@ApiQuery({ name: 'orgId', required: false, type: Number })
-	@ApiQuery({ name: 'branchId', required: false, type: Number })
 	@ApiQuery({
 		name: 'deviceType',
 		required: false,
@@ -411,14 +409,22 @@ Register new IoT devices in your organization with comprehensive configuration a
 	@ApiQuery({ name: 'limit', required: false, type: Number, description: 'Items per page (default: 10)' })
 	@ApiResponse({ status: 200, description: 'Devices retrieved successfully' })
 	findAllDevices(
-		@Query('orgId') orgId?: number,
-		@Query('branchId') branchId?: number,
+		@Req() req: AuthenticatedRequest,
 		@Query('deviceType') deviceType?: string,
 		@Query('status') status?: string,
 		@Query('page') page: number = 1,
 		@Query('limit') limit: number = 10,
 	) {
-		return this.iotService.findAllDevices({ orgId, branchId, deviceType, status }, page, limit);
+		const accessScope = this.getAccessScope(req.user);
+		
+		const filters = {
+			orgId: accessScope.orgId,
+			branchId: accessScope.branchId, // null for elevated users = org-wide access
+			...(deviceType && { deviceType }),
+			...(status && { status }),
+		};
+
+		return this.iotService.findAllDevices(filters, page, limit);
 	}
 
 	@Get('devices/:id')
@@ -434,8 +440,12 @@ Register new IoT devices in your organization with comprehensive configuration a
 	@ApiOperation({ summary: 'Get device by ID with records' })
 	@ApiResponse({ status: 200, description: 'Device found successfully' })
 	@ApiResponse({ status: 404, description: 'Device not found' })
-	findOneDevice(@Param('id', ParseIntPipe) id: number) {
-		return this.iotService.findOneDevice(id);
+	findOneDevice(
+		@Param('id', ParseIntPipe) id: number,
+		@Req() req: AuthenticatedRequest,
+	) {
+		const accessScope = this.getAccessScope(req.user);
+		return this.iotService.findOneDevice(id, accessScope.orgId, accessScope.branchId);
 	}
 
 	@Get('devices/by-device-id/:deviceId')
@@ -451,8 +461,12 @@ Register new IoT devices in your organization with comprehensive configuration a
 	@ApiOperation({ summary: 'Get device by unique device ID' })
 	@ApiResponse({ status: 200, description: 'Device found successfully' })
 	@ApiResponse({ status: 404, description: 'Device not found' })
-	findDeviceByDeviceId(@Param('deviceId') deviceId: string) {
-		return this.iotService.findDeviceByDeviceId(deviceId);
+	findDeviceByDeviceId(
+		@Param('deviceId') deviceId: string,
+		@Req() req: AuthenticatedRequest,
+	) {
+		const accessScope = this.getAccessScope(req.user);
+		return this.iotService.findDeviceByDeviceId(deviceId, accessScope.orgId, accessScope.branchId);
 	}
 
 	@Patch('devices/:id')
