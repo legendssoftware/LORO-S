@@ -353,4 +353,197 @@ export class ExpoPushService {
 	isValidExpoPushToken(token: string): boolean {
 		return token && typeof token === 'string' && token.startsWith('ExponentPushToken[');
 	}
+
+	/**
+	 * Check if device needs registration based on user's stored token
+	 */
+	async checkDeviceRegistrationStatus(
+		user: any,
+		deviceToken: string,
+		deviceId: string,
+		platform: string
+	): Promise<{
+		needsRegistration: boolean;
+		reason: string;
+		serverToken: string | null;
+		isValidFormat: boolean;
+	}> {
+		try {
+			console.log('🔍 [ExpoPushService] Checking device registration status for user:', user.uid);
+			
+			const serverToken = user.expoPushToken;
+			const isValidFormat = this.isValidExpoPushToken(deviceToken);
+			
+			// Check if user has no token stored
+			if (!serverToken) {
+				return {
+					needsRegistration: true,
+					reason: 'No token stored on server',
+					serverToken: null,
+					isValidFormat,
+				};
+			}
+
+			// Check if token format is invalid
+			if (!this.isValidExpoPushToken(serverToken)) {
+				return {
+					needsRegistration: true,
+					reason: 'Server token has invalid format',
+					serverToken,
+					isValidFormat,
+				};
+			}
+
+			// Check if tokens don't match
+			if (serverToken !== deviceToken) {
+				return {
+					needsRegistration: true,
+					reason: 'Device token differs from server token',
+					serverToken,
+					isValidFormat,
+				};
+			}
+
+			// Check if device ID or platform changed
+			if (user.deviceId && user.deviceId !== deviceId) {
+				return {
+					needsRegistration: true,
+					reason: 'Device ID changed',
+					serverToken,
+					isValidFormat,
+				};
+			}
+
+			if (user.platform && user.platform !== platform) {
+				return {
+					needsRegistration: true,
+					reason: 'Platform changed',
+					serverToken,
+					isValidFormat,
+				};
+			}
+
+			// Check if token is very old (older than 30 days)
+			if (user.pushTokenUpdatedAt) {
+				const daysSinceUpdate = Math.floor(
+					(Date.now() - new Date(user.pushTokenUpdatedAt).getTime()) / (1000 * 60 * 60 * 24)
+				);
+				
+				if (daysSinceUpdate > 30) {
+					return {
+						needsRegistration: true,
+						reason: `Token is ${daysSinceUpdate} days old (>30 days)`,
+						serverToken,
+						isValidFormat,
+					};
+				}
+			}
+
+			// All checks passed
+			return {
+				needsRegistration: false,
+				reason: 'Device registration is current and valid',
+				serverToken,
+				isValidFormat,
+			};
+		} catch (error) {
+			this.logger.error('❌ Failed to check device registration status:', error);
+			return {
+				needsRegistration: true,
+				reason: `Error checking registration: ${error.message}`,
+				serverToken: user.expoPushToken || null,
+				isValidFormat: false,
+			};
+		}
+	}
+
+	/**
+	 * Verify if a push token can receive notifications
+	 */
+	async verifyTokenDelivery(token: string): Promise<{
+		canReceive: boolean;
+		error?: string;
+	}> {
+		try {
+			// Send a test notification to verify the token works
+			const testMessage: ExpoPushMessage = {
+				to: token,
+				title: 'Connection Test',
+				body: 'Testing push notification connectivity',
+				data: { type: 'connectivity_test' },
+				sound: false, // Silent test
+				badge: 0,
+				priority: 'default',
+			};
+
+			const tickets = await this.sendPushNotifications([testMessage]);
+			const ticket = tickets[0];
+
+			if (ticket.status === 'ok') {
+				this.logger.log(`✅ Token verification successful for: ${token.substring(0, 30)}...`);
+				return { canReceive: true };
+			} else {
+				this.logger.warn(`⚠️ Token verification failed: ${ticket.message}`);
+				return { 
+					canReceive: false, 
+					error: ticket.message || 'Unknown verification error' 
+				};
+			}
+		} catch (error) {
+			this.logger.error('❌ Failed to verify token delivery:', error);
+			return { 
+				canReceive: false, 
+				error: error.message || 'Verification failed' 
+			};
+		}
+	}
+
+	/**
+	 * Get device registration summary for user
+	 */
+	getDeviceRegistrationSummary(user: any): {
+		hasToken: boolean;
+		tokenValid: boolean;
+		deviceInfo: {
+			deviceId: string | null;
+			platform: string | null;
+			lastUpdated: string | null;
+		};
+		recommendAction: string;
+	} {
+		const hasToken = !!user.expoPushToken;
+		const tokenValid = hasToken ? this.isValidExpoPushToken(user.expoPushToken) : false;
+		
+		let recommendAction = 'none';
+		
+		if (!hasToken) {
+			recommendAction = 'register';
+		} else if (!tokenValid) {
+			recommendAction = 'reregister';
+		} else {
+			// Check if token is old
+			if (user.pushTokenUpdatedAt) {
+				const daysSinceUpdate = Math.floor(
+					(Date.now() - new Date(user.pushTokenUpdatedAt).getTime()) / (1000 * 60 * 60 * 24)
+				);
+				
+				if (daysSinceUpdate > 30) {
+					recommendAction = 'refresh';
+				}
+			}
+		}
+
+		return {
+			hasToken,
+			tokenValid,
+			deviceInfo: {
+				deviceId: user.deviceId || null,
+				platform: user.platform || null,
+				lastUpdated: user.pushTokenUpdatedAt 
+					? user.pushTokenUpdatedAt.toISOString() 
+					: null,
+			},
+			recommendAction,
+		};
+	}
 }

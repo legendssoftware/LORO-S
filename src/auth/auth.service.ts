@@ -24,6 +24,7 @@ import { LicensingService } from '../licensing/licensing.service';
 import { PlatformService } from '../lib/services/platform.service';
 import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
 import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
+import { ExpoPushService } from '../lib/services/expo-push.service';
 
 @Injectable()
 export class AuthService {
@@ -39,6 +40,7 @@ export class AuthService {
 		private licensingService: LicensingService,
 		private platformService: PlatformService,
 		private unifiedNotificationService: UnifiedNotificationService,
+		private expoPushService: ExpoPushService,
 	) {
 		this.logger.debug('AuthService initialized with all dependencies');
 	}
@@ -323,6 +325,12 @@ export class AuthService {
 				}
 
 				this.logger.log(`User sign in successful: ${username}`);
+
+				// Check device registration for push notifications (async, don't block login)
+				this.checkAndUpdateDeviceRegistration(authProfile.user, requestData).catch(error => {
+					this.logger.warn(`Failed to check device registration for user ${username}:`, error.message);
+				});
+
 				return {
 					profileData,
 					accessToken,
@@ -354,6 +362,12 @@ export class AuthService {
 			const refreshToken = await this.jwtService.signAsync(payload, { expiresIn: `7d` });
 
 			this.logger.log(`User sign in successful (no org): ${username}`);
+
+			// Check device registration for push notifications (async, don't block login)
+			this.checkAndUpdateDeviceRegistration(authProfile.user, requestData).catch(error => {
+				this.logger.warn(`Failed to check device registration for user ${username}:`, error.message);
+			});
+
 			return {
 				profileData,
 				accessToken,
@@ -975,6 +989,66 @@ export class AuthService {
 				throw new HttpException('Refresh token has expired', HttpStatus.UNAUTHORIZED);
 			}
 			throw new HttpException(error.message || 'Failed to refresh token', error.status || HttpStatus.BAD_REQUEST);
+		}
+	}
+
+	/**
+	 * Check and update device registration for push notifications
+	 * This runs asynchronously after successful sign-in
+	 */
+	private async checkAndUpdateDeviceRegistration(user: any, requestData?: any): Promise<void> {
+		try {
+			this.logger.debug(`Checking device registration for user: ${user.email}`);
+
+			// Extract device info from request data
+			const deviceToken = requestData?.expoPushToken || requestData?.pushToken;
+			const deviceId = requestData?.deviceId;
+			const platform = requestData?.platform || requestData?.userAgent?.toLowerCase().includes('android') ? 'android' : 'ios';
+
+			// Skip if no device token provided
+			if (!deviceToken) {
+				this.logger.debug(`No device token provided for user: ${user.email}`);
+				return;
+			}
+
+			// Check if device registration is needed
+			const registrationStatus = await this.expoPushService.checkDeviceRegistrationStatus(
+				user,
+				deviceToken,
+				deviceId,
+				platform
+			);
+
+			this.logger.debug(`Device registration status for user ${user.email}:`, {
+				needsRegistration: registrationStatus.needsRegistration,
+				reason: registrationStatus.reason,
+				hasServerToken: !!registrationStatus.serverToken,
+				isValidFormat: registrationStatus.isValidFormat,
+			});
+
+			// If registration is needed, trigger device registration
+			if (registrationStatus.needsRegistration) {
+				this.logger.log(`Device registration needed for user ${user.email}: ${registrationStatus.reason}`);
+				
+				// Update user's push token in database
+				// This will be handled by the notifications service when the mobile app calls the register endpoint
+				// We just log the requirement here as the mobile app should handle the actual registration
+				
+				// Optionally, we could trigger a notification to prompt the user to update their app
+				if (registrationStatus.reason.includes('old') || registrationStatus.reason.includes('format')) {
+					this.logger.warn(`User ${user.email} has an outdated or invalid push token - may need app update`);
+				}
+			} else {
+				this.logger.debug(`Device registration is current for user: ${user.email}`);
+			}
+
+			// Get device registration summary for logging
+			const summary = this.expoPushService.getDeviceRegistrationSummary(user);
+			this.logger.debug(`Device registration summary for user ${user.email}:`, summary);
+
+		} catch (error) {
+			this.logger.error(`Failed to check device registration for user ${user.email}:`, error);
+			// Don't throw error as this should not block sign-in
 		}
 	}
 }

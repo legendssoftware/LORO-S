@@ -199,6 +199,8 @@ export class NotificationsService {
 				deviceId: registerTokenDto.deviceId,
 				platform: registerTokenDto.platform,
 				timestamp: new Date().toISOString(),
+				isProductionToken: registerTokenDto.token?.includes('ExponentPushToken'),
+				tokenFormat: registerTokenDto.token?.startsWith('ExponentPushToken[') ? 'VALID_FORMAT' : 'INVALID_FORMAT',
 			});
 
 			// Validate token format
