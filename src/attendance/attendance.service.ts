@@ -548,12 +548,36 @@ export class AttendanceService {
 				`Work session calculated - net work minutes: ${workSession.netWorkMinutes}, formatted duration: ${duration}`,
 			);
 
+			// Calculate overtime based on organization hours
+			let overtimeDuration = '0h 0m';
+			if (organizationId) {
+				try {
+					const overtimeInfo = await this.organizationHoursService.calculateOvertime(
+						organizationId,
+						checkInTime,
+						workSession.netWorkMinutes,
+					);
+
+					if (overtimeInfo.isOvertime && overtimeInfo.overtimeMinutes > 0) {
+						overtimeDuration = TimeCalculatorUtil.formatDuration(overtimeInfo.overtimeMinutes);
+						this.logger.debug(`Overtime calculated: ${overtimeDuration} (${overtimeInfo.overtimeMinutes} minutes)`);
+					}
+				} catch (overtimeCalcError) {
+					this.logger.warn(
+						`Failed to calculate overtime for user: ${checkOutDto.owner.uid}`,
+						overtimeCalcError.message,
+					);
+					// Continue with default overtime value
+				}
+			}
+
 			// Enhanced data mapping for shift update
 			const updatedShift = {
 				...activeShift,
 				...checkOutDto,
 				checkOut: checkOutTime,
 				duration,
+				overtime: overtimeDuration,
 				status: AttendanceStatus.COMPLETED,
 			};
 
@@ -568,6 +592,7 @@ export class AttendanceService {
 				checkInTime: activeShift.checkIn,
 				checkOutTime: checkOutTime,
 				duration,
+				overtime: overtimeDuration,
 				totalWorkMinutes: workSession.netWorkMinutes,
 				totalBreakMinutes: breakMinutes,
 				status: AttendanceStatus.COMPLETED,
@@ -1211,7 +1236,7 @@ export class AttendanceService {
 	 * - 45 minutes: strong reminder
 	 * - 60 minutes: urgent reminder
 	 */
-	@Cron('*/1 * * * *') // Run every 1 minute for more precise break tracking
+	@Cron('*/30 * * * *') // Run every 30 minutes to reduce database load and connection issues
 	async checkAndSendBreakDurationNotifications(): Promise<void> {
 		const operationId = `break_duration_check_${Date.now()}`;
 		this.logger.log(`[${operationId}] Starting break duration notification check`);

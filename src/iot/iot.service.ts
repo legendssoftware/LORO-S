@@ -1816,6 +1816,7 @@ export class IotService {
 
 	/**
 	 * Send device open/close notifications to admin, owner, manager and technician users in the organization
+	 * Using the same pattern as attendance service with sendTemplatedNotification
 	 */
 	private async sendDeviceNotificationToAdmins(
 		device: Device,
@@ -1851,71 +1852,50 @@ export class IotService {
 				minute: '2-digit',
 			});
 
-			// Send notifications to all relevant users
-			const recipients = relevantUsers.map(user => ({
-				userId: user.uid,
-				email: user.email,
-				pushToken: user.expoPushToken,
-				name: user.name,
-				accessLevel: user.accessLevel,
-			}));
+			// Extract user IDs for sendTemplatedNotification
+			const userIds = relevantUsers.map(user => user.uid);
 
-			const notificationData = {
-				event: NotificationEvent.GENERAL_NOTIFICATION,
-				title: `${eventIcon} Device ${eventAction.charAt(0).toUpperCase() + eventAction.slice(1)}`,
-				message: `${device.deviceID} at ${device.devicLocation} ${eventAction} at ${timeString}`,
-				priority: NotificationPriority.NORMAL,
-				channel: NotificationChannel.GENERAL,
-				recipients,
-				data: {
-					type: 'DEVICE_EVENT',
-					id: device.id,
-					screen: '/iot/devices',
-					action: 'view_device',
-					metadata: {
-						deviceId: device.id,
+			// Send enhanced push notifications using the attendance service pattern
+			try {
+				await this.unifiedNotificationService.sendTemplatedNotification(
+					NotificationEvent.GENERAL_NOTIFICATION,
+					userIds,
+					{
+						message: `${eventIcon} ${device.deviceID} at ${device.devicLocation} ${eventAction} at ${timeString}`,
+						deviceID: device.deviceID,
+						deviceLocation: device.devicLocation,
+						eventType: timeEventDto.eventType,
+						eventAction,
+						eventTime: timeString,
+						organisationId: device.orgID,
+						branchId: device.branchID,
+						timestamp: eventDate.toISOString(),
+						metadata: {
+							deviceId: device.id,
+							deviceType: device.deviceType,
+							screen: '/iot/devices',
+							action: 'view_device',
+						},
+					},
+					{
+						priority: NotificationPriority.NORMAL,
+					},
+				);
+
+				this.logger.log(
+					`✅ [sendDeviceNotification] Enhanced device ${eventAction} notifications sent to ${relevantUsers.length} users`,
+				);
+
+			} catch (notificationError) {
+				this.logger.warn(
+					`⚠️ [sendDeviceNotification] Failed to send push notifications: ${notificationError.message}`,
+					{
 						deviceID: device.deviceID,
 						eventType: timeEventDto.eventType,
-						timestamp: eventDate.toISOString(),
-						location: device.devicLocation,
-						orgId: device.orgID,
-						branchId: device.branchID,
+						userCount: relevantUsers.length,
 					},
-				},
-				push: {
-					sound: 'default',
-					badge: 1,
-				},
-				source: {
-					service: 'iot',
-					method: 'recordTimeEvent',
-					entityId: device.id,
-					entityType: 'device',
-				},
-			};
-
-			const notificationResult = await this.unifiedNotificationService.sendNotification(notificationData);
-
-			const totalSent = (notificationResult.pushResults?.sent || 0) + (notificationResult.emailResults?.sent || 0);
-			const totalFailed = (notificationResult.pushResults?.failed || 0) + (notificationResult.emailResults?.failed || 0);
-
-			this.logger.log(
-				`✅ [sendDeviceNotification] Device ${eventAction} notifications sent: ${totalSent} sent, ${totalFailed} failed to ${relevantUsers.length} users`,
-			);
-
-			// Log any failures for debugging
-			if (totalFailed > 0) {
-				const errors = [
-					...(notificationResult.pushResults?.errors || []),
-					...(notificationResult.emailResults?.errors || [])
-				];
-				this.logger.warn(`❌ [sendDeviceNotification] Some notifications failed to send`, {
-					errors,
-					deviceID: device.deviceID,
-					eventType: timeEventDto.eventType,
-					pushFailed: notificationResult.pushResults?.failed || 0,
-					emailFailed: notificationResult.emailResults?.failed || 0,
-				});
+				);
+				// Still continue execution - don't fail the entire process
 			}
 
 		} catch (error) {

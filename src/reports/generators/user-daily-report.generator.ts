@@ -257,6 +257,7 @@ export class UserDailyReportGenerator {
 							endTime: attendanceData.lastCheckOut,
 							totalHours: Math.round((attendanceData.totalWorkMinutes / 60) * 100) / 100, // Round to 2 decimal places
 							duration: this.formatDuration(attendanceData.totalWorkMinutes),
+							overtime: attendanceData.overtime || '0h 0m',
 							checkInLocation: attendanceData.firstCheckInLocation,
 							checkOutLocation: attendanceData.lastCheckOutLocation,
 						},
@@ -364,6 +365,24 @@ export class UserDailyReportGenerator {
 		const totalWorkMinutes = Math.floor(dailyStats.dailyWorkTime / (1000 * 60));
 		const totalBreakMinutes = Math.floor(dailyStats.dailyBreakTime / (1000 * 60));
 
+		// Calculate total overtime from all attendance records
+		let totalOvertimeMinutes = 0;
+		let totalOvertimeDuration = '0h 0m';
+
+		for (const record of attendanceRecords) {
+			if (record.overtime && record.overtime !== '0h 0m') {
+				// Parse overtime string (e.g., "2h 30m") and add to total
+				const overtimeMinutes = this.parseTimeString(record.overtime);
+				totalOvertimeMinutes += overtimeMinutes;
+			}
+		}
+
+		if (totalOvertimeMinutes > 0) {
+			const hours = Math.floor(totalOvertimeMinutes / 60);
+			const minutes = totalOvertimeMinutes % 60;
+			totalOvertimeDuration = `${hours}h ${minutes}m`;
+		}
+
 		// Format locations for reporting
 		let firstCheckInLocation = null;
 		if (firstRecord?.checkInLatitude && firstRecord?.checkInLongitude) {
@@ -389,6 +408,8 @@ export class UserDailyReportGenerator {
 			lastCheckOut: lastRecord?.checkOut ? format(new Date(lastRecord.checkOut), 'HH:mm:ss') : null,
 			totalWorkMinutes,
 			totalBreakMinutes,
+			totalOvertimeMinutes,
+			overtime: totalOvertimeDuration,
 			totalShifts: attendanceRecords.length,
 			firstCheckInLocation,
 			lastCheckOutLocation,
@@ -396,6 +417,18 @@ export class UserDailyReportGenerator {
 			breakDetails: this.formatBreakDetails(attendanceRecords),
 			isCurrentlyWorking: !!activeShift,
 		};
+	}
+
+	private parseTimeString(timeString: string): number {
+		if (!timeString || timeString === '0h 0m') return 0;
+		
+		const hoursMatch = timeString.match(/(\d+)h/);
+		const minutesMatch = timeString.match(/(\d+)m/);
+		
+		const hours = hoursMatch ? parseInt(hoursMatch[1], 10) : 0;
+		const minutes = minutesMatch ? parseInt(minutesMatch[1], 10) : 0;
+		
+		return hours * 60 + minutes;
 	}
 
 	private formatBreakDetails(attendanceRecords: Attendance[]) {

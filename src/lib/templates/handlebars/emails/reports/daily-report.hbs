@@ -28,6 +28,14 @@
             <span class="detail-label">Active Users</span>
             <span class="detail-value" style="font-weight: 600; color: #8b5cf6;">{{activeUsers}}</span>
         </div>
+        {{#if totalOvertimeHours}}
+        {{#unless (eq totalOvertimeHours "0h 0m")}}
+        <div class="detail-item">
+            <span class="detail-label">Total Overtime Today</span>
+            <span class="detail-value" style="font-weight: 700; color: #f59e0b; font-size: 17px;">⏰ {{totalOvertimeHours}}</span>
+        </div>
+        {{/unless}}
+        {{/if}}
         <div class="detail-item">
             <span class="detail-label">Conversion Rate</span>
             <span class="detail-value" style="font-weight: 700; color: {{#if (gte conversionRate 15)}}#22c55e{{else if (gte conversionRate 10)}}#f59e0b{{else}}#ef4444{{/if}};">{{conversionRate}}%</span>
@@ -171,6 +179,14 @@
             <span style="position: absolute; left: 0; top: 12px; color: #22c55e; font-weight: bold; font-size: 14px; width: 20px; height: 20px; background: #dcfce7; border-radius: 50%; display: flex; align-items: center; justify-content: center;">🤝</span>
             <strong>Client Relations:</strong> Schedule {{upcomingMeetings}} upcoming client meetings to strengthen partnerships
         </li>
+        {{#if totalOvertimeHours}}
+        {{#unless (eq totalOvertimeHours "0h 0m")}}
+        <li style="padding: 12px 0; color: #4b5563; padding-left: 35px; position: relative; font-size: 15px; line-height: 1.6;">
+            <span style="position: absolute; left: 0; top: 12px; color: #f59e0b; font-weight: bold; font-size: 14px; width: 20px; height: 20px; background: #fef3c7; border-radius: 50%; display: flex; align-items: center; justify-content: center;">⏰</span>
+            <strong>Overtime Management:</strong> Monitor team wellness as {{totalOvertimeHours}} overtime was worked today - ensure adequate rest and recovery
+        </li>
+        {{/unless}}
+        {{/if}}
     </div>
 </div>
 

@@ -746,6 +746,18 @@ export class AttendanceReportsService {
 
 		this.logger.log(`Target performance: ${targetPerformance.targetAchievementRate}% achievement rate`);
 
+		// Calculate total overtime for the day
+		const totalOvertimeMinutes = await this.calculateTotalOvertimeWithOrgHours(
+			todayAttendance,
+			organizationId,
+			today,
+		);
+		const totalOvertimeHours = totalOvertimeMinutes > 0 
+			? TimeCalculatorUtil.formatDuration(totalOvertimeMinutes)
+			: '0h 0m';
+		
+		this.logger.log(`Total overtime for organization: ${totalOvertimeHours}`);
+
 		// Generate enhanced insights and recommendations
 		const insights = this.generateEnhancedMorningInsights(
 			attendanceRate,
@@ -780,6 +792,7 @@ export class AttendanceReportsService {
 			organizationName: organization?.name || 'Organization',
 			reportDate: format(today, 'EEEE, MMMM do, yyyy'),
 			organizationStartTime,
+			totalOvertimeHours,
 			summary: {
 				totalEmployees,
 				presentCount,
@@ -1442,11 +1455,24 @@ export class AttendanceReportsService {
 
 		this.logger.log(`Generated ${insights.length} insights and ${tomorrowActions.length} tomorrow actions`);
 
+		// Calculate total overtime for the day (formatted for email template)
+		const totalOvertimeMinutesFormatted = await this.calculateTotalOvertimeWithOrgHours(
+			todayAttendance,
+			organizationId,
+			today,
+		);
+		const totalOvertimeHours = totalOvertimeMinutesFormatted > 0 
+			? TimeCalculatorUtil.formatDuration(totalOvertimeMinutesFormatted)
+			: '0h 0m';
+		
+		this.logger.log(`Total overtime for evening report: ${totalOvertimeHours}`);
+
 		const eveningReportData = {
 			organizationName: organization?.name || 'Organization',
 			reportDate: format(today, 'EEEE, MMMM do, yyyy'),
 			organizationStartTime,
 			organizationCloseTime,
+			totalOvertimeHours,
 			employeeMetrics: templateEmployeeMetrics, // Use the properly mapped metrics
 			presentEmployees: employeeCategories.presentEmployees,
 			absentEmployees: employeeCategories.absentEmployees,

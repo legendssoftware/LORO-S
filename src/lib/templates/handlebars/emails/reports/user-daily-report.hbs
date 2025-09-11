@@ -14,7 +14,7 @@
     <h4 style="color: #15803d; margin-bottom: 8px;">⏰ Today's Work Summary</h4>
     <p style="color: #15803d; margin: 0; font-size: 16px;">
         You worked <strong>{{metrics.attendance.duration}}</strong> today{{#if metrics.attendance.startTime}} 
-        ({{metrics.attendance.startTime}}{{#if metrics.attendance.endTime}} - {{metrics.attendance.endTime}}{{else}} - Currently Working{{/if}}){{/if}}! 
+        ({{metrics.attendance.startTime}}{{#if metrics.attendance.endTime}} - {{metrics.attendance.endTime}}{{else}} - Currently Working{{/if}}){{/if}}{{#if metrics.attendance.overtime}}{{#unless (eq metrics.attendance.overtime "0h 0m")}}, including <strong style="color: #f59e0b;">{{metrics.attendance.overtime}} overtime</strong>{{/unless}}{{/if}}! 
         Great commitment to your professional goals. 🎯
     </p>
 </div>
@@ -304,6 +304,14 @@
             <span class="detail-label">Total Duration</span>
             <span class="detail-value" style="font-weight: 700; color: #7c2d92;">{{metrics.attendance.duration}}</span>
         </div>
+        {{#if metrics.attendance.overtime}}
+        {{#unless (eq metrics.attendance.overtime "0h 0m")}}
+        <div class="detail-item">
+            <span class="detail-label">Overtime Worked</span>
+            <span class="detail-value" style="font-weight: 700; color: #f59e0b; font-size: 17px;">⏰ {{metrics.attendance.overtime}}</span>
+        </div>
+        {{/unless}}
+        {{/if}}
     </div>
     {{#if metrics.attendance.checkInLocation}}
     <div style="margin-top: 16px; padding: 12px; background: rgba(168, 85, 247, 0.05); border-radius: 8px; border-left: 3px solid #A855F7;">
