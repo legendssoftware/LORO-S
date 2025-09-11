@@ -404,14 +404,6 @@ export class CommunicationService {
 			});
 			const sendTime = Date.now() - sendStartTime;
 
-			this.logger.log(`[${operationId}] Email sent successfully for type: ${emailType} in ${sendTime}ms`);
-			this.logger.debug(`[${operationId}] SMTP Result - MessageId: ${result.messageId}, Accepted: ${result.accepted?.length || 0}, Rejected: ${result.rejected?.length || 0}`);
-			this.logger.debug(`[${operationId}] Message details - Size: ${result.messageSize || 'Unknown'}, Envelope time: ${result.envelopeTime || 'Unknown'}ms, Message time: ${result.messageTime || 'Unknown'}ms`);
-
-			if (result.rejected && result.rejected.length > 0) {
-				this.logger.warn(`[${operationId}] Some recipients were rejected: ${result.rejected.join(', ')}`);
-			}
-
 			// Log the communication to database
 			this.logger.debug(`[${operationId}] Saving communication log to database...`);
 			const dbSaveStartTime = Date.now();
@@ -430,8 +422,13 @@ export class CommunicationService {
 			const dbSaveTime = Date.now() - dbSaveStartTime;
 
 			const totalExecutionTime = Date.now() - startTime;
-			this.logger.debug(`[${operationId}] Communication log saved successfully in ${dbSaveTime}ms (Log ID: ${communicationLog.uid || 'Unknown'})`);
-			this.logger.log(`[${operationId}] Email operation completed successfully in ${totalExecutionTime}ms (Template: ${templateGenerationTime}ms, Send: ${sendTime}ms, DB: ${dbSaveTime}ms)`);
+			
+			// Single comprehensive log entry with all information
+			this.logger.log(`[${operationId}] Email sent successfully for type: ${emailType} in ${totalExecutionTime}ms (Template: ${templateGenerationTime}ms, Send: ${sendTime}ms, DB: ${dbSaveTime}ms) - MessageId: ${result.messageId}, Log ID: ${communicationLog.uid || 'Unknown'}`);
+			
+			if (result.rejected && result.rejected.length > 0) {
+				this.logger.warn(`[${operationId}] Some recipients were rejected: ${result.rejected.join(', ')}`);
+			}
 			
 			return result;
 		} catch (error) {

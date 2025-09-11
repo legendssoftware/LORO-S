@@ -14,12 +14,15 @@ export class LicenseUsageService {
 	private readonly ALERT_THRESHOLD = 0.8; // 80% utilization alert
 	private readonly AGGREGATION_INTERVAL = 1000 * 60 * 5; // 5 minutes
 	private usageBuffer: Map<string, any[]> = new Map();
+	private licenseCache: Map<string, License> = new Map(); // Cache for frequently accessed licenses
 
 	constructor(
 		@InjectRepository(LicenseUsage)
 		private readonly usageRepository: Repository<LicenseUsage>,
 		@InjectRepository(LicenseEvent)
 		private readonly eventRepository: Repository<LicenseEvent>,
+		@InjectRepository(License)
+		private readonly licenseRepository: Repository<License>,
 	) {
 		// Initialize periodic aggregation
 		setInterval(() => this.processBufferedUsage(), this.AGGREGATION_INTERVAL);
@@ -131,39 +134,58 @@ export class LicenseUsageService {
 
 				// If no license object is available, try to fetch it from database
 				if (!license) {
-					this.logger.warn(
-						`No license object found for license ID ${licenseId}. Attempting to fetch from database.`,
-					);
-					// Note: You'll need to inject License repository to fetch license by ID
-					// For now, we'll use a default limit to prevent the service from failing
-					const limit = 10000; // Default API call limit
-					this.logger.log(`Using default API call limit (${limit}) for license ${licenseId}`);
-
-					const utilizationPercentage = Number(((totalCalls / limit) * 100).toFixed(2));
-
-					const usage = this.usageRepository.create({
-						license: null, // License will be null but we still track usage
-						licenseId: licenseId,
-						metricType: MetricType.API_CALLS,
-						currentValue: totalCalls,
-						limit,
-						utilizationPercentage,
-						metadata: aggregatedMetadata,
-					});
-
-					const saved = await this.usageRepository.save(usage);
-					this.usageBuffer.set(key, []);
-
-					if (utilizationPercentage >= this.ALERT_THRESHOLD * 100) {
-						// Create a basic license object for the event
-						const basicLicense = {
-							uid: parseInt(licenseId),
-							licenseKey: `LICENSE_${licenseId}`,
-						} as License;
-						await this.createLimitExceededEvent(basicLicense, MetricType.API_CALLS, totalCalls, limit);
+					this.logger.debug(`No license object available in memory for ID ${licenseId}. Checking cache and database.`);
+					
+					// Check cache first
+					license = this.licenseCache.get(licenseId);
+					
+					if (!license) {
+						try {
+							// Fetch from database
+							license = await this.licenseRepository.findOne({
+								where: { uid: parseInt(licenseId) }
+							});
+							
+							if (license) {
+								// Cache the license for future use
+								this.licenseCache.set(licenseId, license);
+								this.logger.debug(`✅ License ${licenseId} fetched from database and cached`);
+							} else {
+								this.logger.warn(`❌ License with ID ${licenseId} not found in database`);
+							}
+						} catch (fetchError) {
+							this.logger.error(`❌ Failed to fetch license ${licenseId} from database: ${fetchError.message}`);
+						}
+					} else {
+						this.logger.debug(`✅ License ${licenseId} found in cache`);
 					}
+					
+					// If still no license found, use default limits with proper logging
+					if (!license) {
+						const defaultLimit = 10000; // Default API call limit
+						this.logger.warn(`⚠️ Using default API call limit (${defaultLimit}) for license ${licenseId} - license not found in database`);
 
-					return saved;
+						const utilizationPercentage = Number(((totalCalls / defaultLimit) * 100).toFixed(2));
+
+						const usage = this.usageRepository.create({
+							license: null, // License will be null but we still track usage
+							licenseId: licenseId,
+							metricType: MetricType.API_CALLS,
+							currentValue: totalCalls,
+							limit: defaultLimit,
+							utilizationPercentage,
+							metadata: aggregatedMetadata,
+						});
+
+						const saved = await this.usageRepository.save(usage);
+						this.usageBuffer.set(key, []);
+
+						if (utilizationPercentage >= this.ALERT_THRESHOLD * 100) {
+							this.logger.error(`🚨 License ${licenseId} exceeded API call limit: ${totalCalls}/${defaultLimit} (${utilizationPercentage}%)`);
+						}
+
+						return saved;
+					}
 				}
 
 				const limit = this.getLimitForMetric(license, MetricType.API_CALLS);

@@ -1007,48 +1007,53 @@ export class AuthService {
 	 * This runs asynchronously after successful sign-in
 	 */
 	private async checkAndUpdateDeviceRegistration(user: any, requestData?: any): Promise<void> {
+		// Extract correlation ID from request data for tracking
+		const correlationId = requestData?.correlationId || `device-reg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+		
 		try {
-			this.logger.log(`🔍 [DeviceRegistration] Starting device registration check for user: ${user.email}`);
+			this.logger.log(`🔍 [${correlationId}] [DeviceRegistration] Starting device registration check for user: ${user.email}`);
 
 			// Extract device info from request data
 			const deviceToken = requestData?.expoPushToken || requestData?.pushToken;
 			const deviceId = requestData?.deviceId;
 			const platform = requestData?.platform || (requestData?.userAgent?.toLowerCase().includes('android') ? 'android' : 'ios');
 
-			this.logger.debug(`📱 [DeviceRegistration] Device data received:`, {
+			this.logger.debug(`📱 [${correlationId}] [DeviceRegistration] Device data received:`, {
 				hasToken: !!deviceToken,
 				tokenPrefix: deviceToken ? deviceToken.substring(0, 30) + '...' : 'null',
 				deviceId: deviceId || 'null',
 				platform: platform || 'unknown',
 				userId: user.uid,
+				correlationId,
 			});
 
 			// Check if user has existing device registration
 			const currentRegistration = this.expoPushService.getDeviceRegistrationSummary(user);
-			this.logger.debug(`📊 [DeviceRegistration] Current user registration status:`, {
+			this.logger.debug(`📊 [${correlationId}] [DeviceRegistration] Current user registration status:`, {
 				hasToken: currentRegistration.hasToken,
 				tokenValid: currentRegistration.tokenValid,
 				recommendAction: currentRegistration.recommendAction,
 				lastUpdated: currentRegistration.deviceInfo.lastUpdated,
+				correlationId,
 			});
 
 			// Handle case where no device token is provided
 			if (!deviceToken) {
-				this.logger.warn(`⚠️ [DeviceRegistration] No device token provided for user: ${user.email}`);
+				this.logger.warn(`⚠️ [${correlationId}] [DeviceRegistration] No device token provided for user: ${user.email}`);
 				
 				if (!currentRegistration.hasToken) {
-					this.logger.log(`🔴 [DeviceRegistration] User ${user.email} has no push token registered - device needs to register for notifications`);
+					this.logger.log(`🔴 [${correlationId}] [DeviceRegistration] User ${user.email} has no push token registered - device needs to register for notifications`);
 					// Mobile app should handle registration after sign-in
 				} else if (!currentRegistration.tokenValid) {
-					this.logger.warn(`🔴 [DeviceRegistration] User ${user.email} has invalid push token format - needs re-registration`);
+					this.logger.warn(`🔴 [${correlationId}] [DeviceRegistration] User ${user.email} has invalid push token format - needs re-registration`);
 				} else {
-					this.logger.debug(`✅ [DeviceRegistration] User ${user.email} has valid existing token - no immediate action needed`);
+					this.logger.debug(`✅ [${correlationId}] [DeviceRegistration] User ${user.email} has valid existing token - no immediate action needed`);
 				}
 				return;
 			}
 
 			// Check if device registration is needed
-			this.logger.debug(`🔍 [DeviceRegistration] Checking registration status with provided token...`);
+			this.logger.debug(`🔍 [${correlationId}] [DeviceRegistration] Checking registration status with provided token...`);
 			const registrationStatus = await this.expoPushService.checkDeviceRegistrationStatus(
 				user,
 				deviceToken,
@@ -1056,17 +1061,18 @@ export class AuthService {
 				platform
 			);
 
-			this.logger.log(`📊 [DeviceRegistration] Registration check results for user ${user.email}:`, {
+			this.logger.log(`📊 [${correlationId}] [DeviceRegistration] Registration check results for user ${user.email}:`, {
 				needsRegistration: registrationStatus.needsRegistration,
 				reason: registrationStatus.reason,
 				hasServerToken: !!registrationStatus.serverToken,
 				isValidFormat: registrationStatus.isValidFormat,
-				tokensMatch: registrationStatus.serverToken === deviceToken,
+				tokensMatch: registrationStatus.tokensMatch,
+				correlationId,
 			});
 
 			// If registration is needed, we should update the user's token immediately
 			if (registrationStatus.needsRegistration) {
-				this.logger.log(`🔄 [DeviceRegistration] Device registration needed for user ${user.email}: ${registrationStatus.reason}`);
+				this.logger.log(`🔄 [${correlationId}] [DeviceRegistration] Device registration needed for user ${user.email}: ${registrationStatus.reason}`);
 				
 				try {
 					// Update user's push token directly in the database
@@ -1077,33 +1083,50 @@ export class AuthService {
 						pushTokenUpdatedAt: new Date(),
 					});
 
-					this.logger.log(`✅ [DeviceRegistration] Successfully updated device registration for user ${user.email}`);
+					this.logger.log(`✅ [${correlationId}] [DeviceRegistration] Successfully updated device registration for user ${user.email}`);
+					
+					// Update the user object in memory to reflect the changes for consistent status reporting
+					user.expoPushToken = deviceToken;
+					user.deviceId = deviceId;
+					user.platform = platform;
+					user.pushTokenUpdatedAt = new Date();
 					
 					// Optionally verify the token works
 					try {
 						const verificationResult = await this.expoPushService.verifyTokenDelivery(deviceToken);
 						if (verificationResult.canReceive) {
-							this.logger.log(`✅ [DeviceRegistration] Push token verified working for user ${user.email}`);
+							this.logger.log(`✅ [${correlationId}] [DeviceRegistration] Push token verified working for user ${user.email}`);
 						} else {
-							this.logger.warn(`⚠️ [DeviceRegistration] Push token verification failed for user ${user.email}: ${verificationResult.error}`);
+							this.logger.warn(`⚠️ [${correlationId}] [DeviceRegistration] Push token verification failed for user ${user.email}: ${verificationResult.error}`);
 						}
 					} catch (verifyError) {
-						this.logger.warn(`⚠️ [DeviceRegistration] Could not verify token delivery: ${verifyError.message}`);
+						this.logger.warn(`⚠️ [${correlationId}] [DeviceRegistration] Could not verify token delivery: ${verifyError.message}`);
 					}
 					
 				} catch (updateError) {
-					this.logger.error(`❌ [DeviceRegistration] Failed to update device registration for user ${user.email}:`, updateError.message);
+					this.logger.error(`❌ [${correlationId}] [DeviceRegistration] Failed to update device registration for user ${user.email}:`, updateError.message);
+					return; // Exit early if update failed
 				}
 			} else {
-				this.logger.log(`✅ [DeviceRegistration] Device registration is current for user: ${user.email}`);
+				this.logger.log(`✅ [${correlationId}] [DeviceRegistration] Device registration is current for user: ${user.email}`);
 			}
 
-			// Final status check
+			// Final status check with updated user object
 			const finalSummary = this.expoPushService.getDeviceRegistrationSummary(user);
-			this.logger.debug(`📋 [DeviceRegistration] Final registration summary for user ${user.email}:`, finalSummary);
+			this.logger.log(`📋 [${correlationId}] [DeviceRegistration] Final registration summary for user ${user.email}:`, {
+				hasToken: finalSummary.hasToken,
+				tokenValid: finalSummary.tokenValid,
+				recommendAction: finalSummary.recommendAction,
+				deviceInfo: finalSummary.deviceInfo,
+				correlationId,
+			});
 
 		} catch (error) {
-			this.logger.error(`❌ [DeviceRegistration] Failed to check device registration for user ${user.email}:`, error);
+			this.logger.error(`❌ [${correlationId}] [DeviceRegistration] Failed to check device registration for user ${user.email}:`, {
+				error: error.message,
+				stack: error.stack,
+				correlationId,
+			});
 			// Don't throw error as this should not block sign-in
 		}
 	}
