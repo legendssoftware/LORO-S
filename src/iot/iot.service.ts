@@ -8,7 +8,7 @@ import {
 	ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource, Between, Not, QueryFailedError, In } from 'typeorm';
+import { Repository, DataSource, Between, Not, IsNull, QueryFailedError, In } from 'typeorm';
 import { Cache } from 'cache-manager';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -1795,7 +1795,7 @@ export class IotService {
 	}
 
 	/**
-	 * Smart daily record management with advanced logic
+	 * Smart daily record management with advanced logic and proper close event validation
 	 */
 	private async smartRecordManagement(
 		timeEventDto: DeviceTimeRecordDto,
@@ -1815,6 +1815,45 @@ export class IotService {
 		const tomorrow = new Date(today);
 		tomorrow.setDate(tomorrow.getDate() + 1);
 
+		// For close events, first check for any existing open record without a close
+		if (timeEventDto.eventType === 'close') {
+			// Look for the most recent record with an open time but no close time (ordered by updatedAt)
+			const openRecordWithoutClose = await queryRunner.manager.findOne(DeviceRecords, {
+				where: {
+					deviceId: device.id,
+					openTime: Not(IsNull()),
+					closeTime: IsNull(),
+				},
+				order: { updatedAt: 'DESC' },
+			});
+
+			if (openRecordWithoutClose) {
+				// Found an open record without close - update it with the close time
+				openRecordWithoutClose.closeTime = eventDateOrg;
+				openRecordWithoutClose.updatedAt = new Date();
+				const record = await queryRunner.manager.save(openRecordWithoutClose);
+				
+				this.logger.log(
+					`📝 ✅ Updated existing open record (ID: ${openRecordWithoutClose.id}) with close time - Device: ${device.deviceID}`,
+				);
+				
+				return { record, action: 'updated', existingRecord: true };
+			} else {
+				// No open record found - this is the bug scenario
+				this.logger.warn(
+					`⚠️ Close event received without corresponding open event - Device: ${device.deviceID}. Rejecting close event.`,
+				);
+				
+				throw new BadRequestException({
+					message: 'Close event cannot be processed without a corresponding open event',
+					deviceID: device.deviceID,
+					eventType: timeEventDto.eventType,
+					timestamp: timeEventDto.timestamp,
+					hint: 'Ensure an open event is recorded before attempting to record a close event',
+				});
+			}
+		}
+
 		// Find the latest record for today (if any)
 		let existingRecord = await queryRunner.manager.findOne(DeviceRecords, {
 			where: {
@@ -1832,11 +1871,11 @@ export class IotService {
 			const hasClose = !!existingRecord.closeTime;
 
 			if (hasOpen && hasClose) {
-				// Latest is complete → create new record for this event
+				// Latest is complete → create new record for this event (only open events reach here)
 				action = 'created';
 				const recordData = {
-					openTime: timeEventDto.eventType === 'open' ? eventDateOrg : null,
-					closeTime: timeEventDto.eventType === 'close' ? eventDateOrg : null,
+					openTime: eventDateOrg, // Only open events reach this point now
+					closeTime: null,
 					deviceId: device.id,
 					createdAt: new Date(),
 					updatedAt: new Date(),
@@ -1868,50 +1907,17 @@ export class IotService {
 						this.logger.log(`📝 Created new record (conflicting open) - Device: ${device.deviceID}`);
 						return { record, action, existingRecord: !!existingRecord };
 					}
-				} else {
-					if (!hasClose && hasOpen) {
-						existingRecord.closeTime = eventDateOrg;
-						this.logger.log(`📝 Set close time on incomplete record - Device: ${device.deviceID}`);
-					} else if (!hasOpen && !hasClose) {
-						// No open set yet, treat as standalone close (edge case) → create new record with close only
-						action = 'created';
-						const recordData = {
-							openTime: null,
-							closeTime: eventDateOrg,
-							deviceId: device.id,
-							createdAt: new Date(),
-							updatedAt: new Date(),
-						};
-						record = queryRunner.manager.create(DeviceRecords, recordData);
-						record = await queryRunner.manager.save(record);
-						this.logger.log(`📝 Created new record (standalone close) - Device: ${device.deviceID}`);
-						return { record, action, existingRecord: !!existingRecord };
-					} else {
-						// Has close already → create a new record
-						action = 'created';
-						const recordData = {
-							openTime: null,
-							closeTime: eventDateOrg,
-							deviceId: device.id,
-							createdAt: new Date(),
-							updatedAt: new Date(),
-						};
-						record = queryRunner.manager.create(DeviceRecords, recordData);
-						record = await queryRunner.manager.save(record);
-						this.logger.log(`📝 Created new record (additional close) - Device: ${device.deviceID}`);
-						return { record, action, existingRecord: !!existingRecord };
-					}
 				}
 
 				existingRecord.updatedAt = new Date();
 				record = await queryRunner.manager.save(existingRecord);
 			}
 		} else {
-			// No record for today → create new with the incoming event
+			// No record for today → create new with the incoming event (only for open events now)
 			action = 'created';
 			const recordData = {
-				openTime: timeEventDto.eventType === 'open' ? eventDateOrg : null,
-				closeTime: timeEventDto.eventType === 'close' ? eventDateOrg : null,
+				openTime: eventDateOrg, // Only open events reach this point now
+				closeTime: null, // Close events are handled above
 				deviceId: device.id,
 				createdAt: new Date(),
 				updatedAt: new Date(),
