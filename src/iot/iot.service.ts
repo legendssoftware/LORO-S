@@ -97,32 +97,323 @@ export class IotService {
 	}
 
 	private async invalidateDeviceCache(device: Device) {
-		const cacheKeys = [
-			this.getCacheKey(`device:${device.id}`),
-			this.getCacheKey(`device:deviceId:${device.deviceID}`),
-			this.getCacheKey(`devices:org:${device.orgID}`),
-			this.getCacheKey(`devices:branch:${device.branchID}`),
-			this.getCacheKey('devices:all'),
-			this.getCacheKey(`analytics:device:${device.id}`),
-		];
+		try {
+			this.logger.debug(`🧹 Invalidating cache for device: ${device.deviceID} (org: ${device.orgID}, branch: ${device.branchID})`);
 
-		await Promise.all(cacheKeys.map((key) => this.cacheManager.del(key)));
+			// Get all cache keys from store (like user service pattern)
+			const keys = await this.cacheManager.store.keys();
+
+			// Keys to clear
+			const keysToDelete = [];
+
+			// Add device-specific keys
+			keysToDelete.push(
+				this.getCacheKey(`device:${device.id}`),
+				this.getCacheKey(`device:deviceId:${device.deviceID}`),
+				this.getCacheKey(`device:${device.id}:${device.orgID}:`),
+				this.getCacheKey(`device:${device.id}:${device.orgID}:${device.branchID}`),
+				this.getCacheKey(`device:deviceId:${device.deviceID}:${device.orgID}:`),
+				this.getCacheKey(`device:deviceId:${device.deviceID}:${device.orgID}:${device.branchID}`),
+				this.getCacheKey(`analytics:device:${device.id}`),
+				this.getCacheKey(`business_hours:${device.orgID}:*`),
+			);
+
+			// Add organization and branch specific keys
+			keysToDelete.push(
+				this.getCacheKey(`devices:org:${device.orgID}`),
+				this.getCacheKey(`devices:branch:${device.branchID}`),
+				this.getCacheKey('devices:all'),
+				this.getCacheKey(`analytics:summary:*`),
+			);
+
+			// Clear all pagination, filtered device list caches, and record caches
+			const deviceListCaches = keys.filter(
+				(key) =>
+					key.startsWith(`${this.CACHE_PREFIX}devices:`) ||
+					key.startsWith(`${this.CACHE_PREFIX}records:`) ||
+					key.startsWith(`${this.CACHE_PREFIX}analytics:`) ||
+					key.includes('_limit') ||
+					key.includes('_filter') ||
+					key.includes('page') ||
+					key.includes(device.orgID.toString()) ||
+					key.includes(device.deviceID),
+			);
+			keysToDelete.push(...deviceListCaches);
+
+			// Remove duplicates and clear all caches
+			const uniqueKeys = [...new Set(keysToDelete)];
+			await Promise.all(uniqueKeys.map((key) => this.cacheManager.del(key)));
+
+			this.logger.debug(`🗑️ Cache invalidated for device ${device.deviceID}. Cleared ${uniqueKeys.length} cache keys`);
+
+			// Emit event for other services that might be caching device data
+			this.eventEmitter.emit('iot.devices.cache.invalidate', {
+				deviceId: device.id,
+				deviceID: device.deviceID,
+				orgId: device.orgID,
+				branchId: device.branchID,
+				keys: uniqueKeys,
+			});
+		} catch (error) {
+			this.logger.error(`❌ Error invalidating device cache for device ${device.deviceID}:`, error.message);
+		}
 	}
 
 	private async invalidateRecordCache(record: DeviceRecords) {
-		const device = await this.deviceRepository.findOne({
-			where: { id: record.deviceId },
-			select: ['id', 'orgID', 'branchID', 'deviceID'],
-		});
+		try {
+			const device = await this.deviceRepository.findOne({
+				where: { id: record.deviceId },
+				select: ['id', 'orgID', 'branchID', 'deviceID'],
+			});
 
-		if (device) {
-			const cacheKeys = [
+			if (!device) {
+				this.logger.warn(`⚠️ Device not found for record ${record.id}, cannot invalidate cache`);
+				return;
+			}
+
+			this.logger.debug(`🧹 Invalidating record cache for device ${device.deviceID} (org: ${device.orgID}, branch: ${device.branchID})`);
+
+			// Get all cache keys from store (like user service pattern)
+			const keys = await this.cacheManager.store.keys();
+
+			// Keys to clear
+			const keysToDelete = [];
+
+			// Add record-specific keys
+			keysToDelete.push(
 				this.getCacheKey(`record:${record.id}`),
 				this.getCacheKey(`records:device:${device.id}`),
 				this.getCacheKey(`analytics:device:${device.id}`),
-			];
+			);
 
-			await Promise.all(cacheKeys.map((key) => this.cacheManager.del(key)));
+			// Add device-specific keys (since records affect device data)
+			keysToDelete.push(
+				this.getCacheKey(`device:${device.id}`),
+				this.getCacheKey(`device:deviceId:${device.deviceID}`),
+				this.getCacheKey(`device:${device.id}:${device.orgID}:`),
+				this.getCacheKey(`device:${device.id}:${device.orgID}:${device.branchID}`),
+				this.getCacheKey(`device:deviceId:${device.deviceID}:${device.orgID}:`),
+				this.getCacheKey(`device:deviceId:${device.deviceID}:${device.orgID}:${device.branchID}`),
+			);
+
+			// Add organization and branch specific keys
+			keysToDelete.push(
+				this.getCacheKey(`devices:org:${device.orgID}`),
+				this.getCacheKey(`devices:branch:${device.branchID}`),
+				this.getCacheKey('devices:all'),
+				this.getCacheKey(`analytics:summary:*`),
+			);
+
+			// Clear all pagination, filtered device/record list caches
+			const relatedCaches = keys.filter(
+				(key) =>
+					key.startsWith(`${this.CACHE_PREFIX}devices:`) ||
+					key.startsWith(`${this.CACHE_PREFIX}records:`) ||
+					key.startsWith(`${this.CACHE_PREFIX}analytics:`) ||
+					key.includes('_limit') ||
+					key.includes('_filter') ||
+					key.includes('page') ||
+					key.includes(device.orgID.toString()) ||
+					key.includes(device.deviceID) ||
+					key.includes(record.id.toString()),
+			);
+			keysToDelete.push(...relatedCaches);
+
+			// Remove duplicates and clear all caches
+			const uniqueKeys = [...new Set(keysToDelete)];
+			await Promise.all(uniqueKeys.map((key) => this.cacheManager.del(key)));
+
+			this.logger.debug(`🗑️ Record cache invalidated for device ${device.deviceID}. Cleared ${uniqueKeys.length} cache keys`);
+
+			// Emit event for other services that might be caching record data
+			this.eventEmitter.emit('iot.records.cache.invalidate', {
+				recordId: record.id,
+				deviceId: device.id,
+				deviceID: device.deviceID,
+				orgId: device.orgID,
+				branchId: device.branchID,
+				keys: uniqueKeys,
+			});
+		} catch (error) {
+			this.logger.error(`❌ Error invalidating record cache for record ${record.id}:`, error.message);
+		}
+	}
+
+	/**
+	 * Invalidate all IoT-related caches (for use in system-wide cache clearing)
+	 * Following the comprehensive pattern from user service
+	 */
+	async invalidateAllIoTCaches(): Promise<void> {
+		try {
+			this.logger.log(`🧹 Starting comprehensive IoT cache invalidation`);
+
+			// Get all cache keys from store
+			const keys = await this.cacheManager.store.keys();
+
+			// Filter all IoT-related cache keys
+			const iotCacheKeys = keys.filter(
+				(key) =>
+					key.startsWith(`${this.CACHE_PREFIX}`) ||
+					key.includes('iot') ||
+					key.includes('device') ||
+					key.includes('record') ||
+					key.includes('analytics') ||
+					key.includes('business_hours'),
+			);
+
+			// Clear all IoT caches in parallel
+			await Promise.all(iotCacheKeys.map((key) => this.cacheManager.del(key)));
+
+			this.logger.log(`🗑️ Comprehensive IoT cache invalidation completed. Cleared ${iotCacheKeys.length} cache keys`);
+
+			// Emit event for system-wide cache invalidation
+			this.eventEmitter.emit('iot.cache.invalidate.all', {
+				clearedKeys: iotCacheKeys.length,
+				timestamp: new Date(),
+			});
+		} catch (error) {
+			this.logger.error(`❌ Error during comprehensive IoT cache invalidation:`, error.message);
+		}
+	}
+
+	/**
+	 * Format device location name into user-friendly format
+	 */
+	private formatLocationName(deviceLocation: string): string {
+		try {
+			// Clean up device location name
+			let cleanLocation = deviceLocation || 'Unknown Location';
+			
+			// Remove common technical prefixes/suffixes
+			cleanLocation = cleanLocation
+				.replace(/^(device_|sensor_|door_|iot_)/i, '')
+				.replace(/(_device|_sensor|_door|_iot)$/i, '')
+				.replace(/[_-]/g, ' ')
+				.trim();
+
+			// Convert to title case
+			const titleCase = cleanLocation
+				.split(' ')
+				.map(word => {
+					// Handle common abbreviations
+					const upperWords = ['ID', 'RFID', 'NFC', 'QR', 'GPS', 'IoT', 'AI', 'API', 'UI', 'UX'];
+					if (upperWords.includes(word.toUpperCase())) {
+						return word.toUpperCase();
+					}
+					return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+				})
+				.join(' ');
+
+			// Handle common location patterns
+			if (titleCase.toLowerCase().includes('main') && titleCase.toLowerCase().includes('entrance')) {
+				return 'Main Entrance';
+			}
+			if (titleCase.toLowerCase().includes('front') && titleCase.toLowerCase().includes('door')) {
+				return 'Front Door';
+			}
+			if (titleCase.toLowerCase().includes('back') && titleCase.toLowerCase().includes('door')) {
+				return 'Back Door';
+			}
+			if (titleCase.toLowerCase().includes('emergency') && titleCase.toLowerCase().includes('exit')) {
+				return 'Emergency Exit';
+			}
+
+			return titleCase || 'Device Location';
+		} catch (error) {
+			this.logger.warn(`Failed to format location name: ${error.message}`);
+			return deviceLocation || 'Unknown Location';
+		}
+	}
+
+	/**
+	 * Get business hours information for an organization with caching for performance
+	 */
+	private async getBusinessHoursInfo(orgId: number, date: Date): Promise<{
+		isWorkingDay: boolean;
+		startTime: string | null;
+		endTime: string | null;
+	}> {
+		try {
+			// Create cache key based on org and date (since business hours can change daily)
+			const dateKey = date.toISOString().split('T')[0]; // YYYY-MM-DD format
+			const cacheKey = this.getCacheKey(`business_hours:${orgId}:${dateKey}`);
+			
+			// Check cache first
+			const cached = await this.cacheManager.get(cacheKey);
+			if (cached) {
+				this.logger.debug(`📦 Using cached business hours for org ${orgId} on ${dateKey}`);
+				return cached as any;
+			}
+
+			// Get organization hours using the organisation service
+			const orgHours = await this.organisationHoursService.findDefault(orgId.toString());
+			
+			let result: any;
+			
+			if (!orgHours) {
+				// Default to standard business hours if no config found
+				result = {
+					isWorkingDay: true,
+					startTime: '09:00',
+					endTime: '17:00',
+				};
+			} else {
+			// Check if it's a working day based on weekly schedule
+			const dayOfWeek = date.getDay(); // 0 = Sunday, 1 = Monday, etc.
+			const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+			const currentDay = dayNames[dayOfWeek] as keyof typeof orgHours.weeklySchedule;
+			
+			const isWorkingDay = orgHours.weeklySchedule[currentDay];
+
+				result = {
+				isWorkingDay,
+				startTime: isWorkingDay ? orgHours.openTime : null,
+				endTime: isWorkingDay ? orgHours.closeTime : null,
+			};
+			}
+
+			// Cache for 1 hour (3600 seconds) since business hours don't change frequently
+			await this.cacheManager.set(cacheKey, result, 3600);
+			this.logger.debug(`💾 Cached business hours for org ${orgId} on ${dateKey}`);
+			
+			return result;
+		} catch (error) {
+			this.logger.warn(`Error getting business hours for org ${orgId}: ${error.message}`);
+			// Default to standard business hours on error
+			return {
+				isWorkingDay: true,
+				startTime: '09:00',
+				endTime: '17:00',
+			};
+		}
+	}
+
+	/**
+	 * Helper method to determine if an event occurred after business hours
+	 */
+	private isAfterBusinessHours(eventDate: Date, businessHoursInfo: any): boolean {
+		try {
+			if (!businessHoursInfo || !businessHoursInfo.startTime || !businessHoursInfo.endTime) {
+				return false; // If no business hours defined, assume always during business hours
+			}
+
+			const eventHour = eventDate.getHours();
+			const eventMinute = eventDate.getMinutes();
+			const eventTimeInMinutes = eventHour * 60 + eventMinute;
+
+			// Parse start time
+			const [startHour, startMinute] = businessHoursInfo.startTime.split(':').map(Number);
+			const startTimeInMinutes = startHour * 60 + startMinute;
+
+			// Parse end time
+			const [endHour, endMinute] = businessHoursInfo.endTime.split(':').map(Number);
+			const endTimeInMinutes = endHour * 60 + endMinute;
+
+			// Check if event time is outside business hours
+			return eventTimeInMinutes < startTimeInMinutes || eventTimeInMinutes > endTimeInMinutes;
+		} catch (error) {
+			this.logger.warn(`Error checking business hours: ${error.message}`);
+			return false; // Default to business hours if error
 		}
 	}
 
@@ -1852,17 +2143,51 @@ export class IotService {
 				minute: '2-digit',
 			});
 
+			// Create user-friendly location name from device location
+			const locationName = this.formatLocationName(device.devicLocation);
+
 			// Extract user IDs for sendTemplatedNotification
 			const userIds = relevantUsers.map(user => user.uid);
+
+			// Determine appropriate notification event based on event type and business hours
+			let notificationEvent: NotificationEvent;
+			let priority: NotificationPriority;
+			let enhancedMessage: string;
+
+			// Check if this is after business hours
+			const businessHoursInfo = await this.getBusinessHoursInfo(device.orgID, eventDate);
+			const isAfterHours = !businessHoursInfo.isWorkingDay || this.isAfterBusinessHours(eventDate, businessHoursInfo);
+
+			if (timeEventDto.eventType === 'open') {
+				if (isAfterHours) {
+					notificationEvent = NotificationEvent.IOT_DEVICE_AFTER_HOURS_ACCESS;
+					priority = NotificationPriority.HIGH;
+					enhancedMessage = `🌙 ${locationName} Just Opened a few seconds ago (After Hours)`;
+				} else {
+					notificationEvent = NotificationEvent.IOT_DEVICE_OPENED;
+					priority = NotificationPriority.NORMAL;
+					enhancedMessage = `🚪 ${locationName} Just Opened a few seconds ago`;
+				}
+			} else if (timeEventDto.eventType === 'close') {
+				notificationEvent = NotificationEvent.IOT_DEVICE_CLOSED;
+				priority = NotificationPriority.LOW;
+				enhancedMessage = `🔒 ${locationName} Just Closed a few seconds ago`;
+			} else {
+				notificationEvent = NotificationEvent.IOT_DEVICE_OPENED; // Default fallback
+				priority = NotificationPriority.NORMAL;
+				enhancedMessage = `🔔 ${locationName} Just ${timeEventDto.eventType}ed a few seconds ago`;
+			}
 
 			// Send enhanced push notifications using the attendance service pattern
 			try {
 				await this.unifiedNotificationService.sendTemplatedNotification(
-					NotificationEvent.GENERAL_NOTIFICATION,
+					notificationEvent,
 					userIds,
 					{
-						message: `${eventIcon} ${device.deviceID} at ${device.devicLocation} ${eventAction} at ${timeString}`,
+						message: enhancedMessage,
 						deviceID: device.deviceID,
+						deviceName: device.deviceTag || device.deviceID,
+						location: device.devicLocation,
 						deviceLocation: device.devicLocation,
 						eventType: timeEventDto.eventType,
 						eventAction,
@@ -1870,15 +2195,23 @@ export class IotService {
 						organisationId: device.orgID,
 						branchId: device.branchID,
 						timestamp: eventDate.toISOString(),
+						ipAddress: timeEventDto.ipAddress || 'unknown',
+						accessMethod: 'IoT Sensor',
+						isAfterHours: isAfterHours,
+						businessHoursInfo: businessHoursInfo?.startTime && businessHoursInfo?.endTime 
+							? `${businessHoursInfo.startTime} - ${businessHoursInfo.endTime}` 
+							: 'Not defined',
 						metadata: {
 							deviceId: device.id,
 							deviceType: device.deviceType,
 							screen: '/iot/devices',
 							action: 'view_device',
+							notificationEvent: notificationEvent,
+							isSecurityAlert: isAfterHours,
 						},
 					},
 					{
-						priority: NotificationPriority.NORMAL,
+						priority: priority,
 					},
 				);
 
@@ -1942,17 +2275,47 @@ export class IotService {
 			});
 		}
 
-		// Invalidate relevant caches
-		await this.invalidateDeviceCache(device);
-		await this.invalidateRecordCache(recordResult.record);
+		// Invalidate all relevant caches - this is critical for real-time updates in mobile app
+		// Using comprehensive cache invalidation pattern like user service
+		await Promise.all([
+			this.invalidateDeviceCache(device),
+			this.invalidateRecordCache(recordResult.record),
+		]);
+		
+		this.logger.debug(`💾 Cache invalidation completed for device ${device.deviceID} after time event processing`);
+		
+		// Emit comprehensive cache invalidation event for real-time updates
+		this.eventEmitter.emit('iot.time.event.cache.cleared', {
+			deviceId: device.id,
+			deviceID: device.deviceID,
+			orgId: device.orgID,
+			branchId: device.branchID,
+			eventType: timeEventDto.eventType,
+			timestamp: new Date(),
+			recordId: recordResult.record.id,
+		});
 	}
 
 	/**
 	 * Schedule daily device logs email to be sent after the last close event of the day
+	 * Includes duplicate prevention to avoid multiple emails for the same day
 	 */
 	private async scheduleDailyDeviceLogsEmail(orgId: number, eventDate: Date): Promise<void> {
 		try {
-			this.logger.log(`📅 [scheduleDailyDeviceLogsEmail] Scheduling daily logs for org ${orgId}`);
+			// Check if we've already scheduled/sent daily logs for this org and date
+			const dateKey = eventDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+			const lockKey = this.getCacheKey(`daily_logs_sent:${orgId}:${dateKey}`);
+			
+			const alreadySent = await this.cacheManager.get(lockKey);
+			if (alreadySent) {
+				this.logger.debug(`📅 [scheduleDailyDeviceLogsEmail] Daily logs already scheduled/sent for org ${orgId} on ${dateKey}`);
+				return;
+			}
+
+			// Set lock to prevent duplicate scheduling (expires after 24 hours)
+			await this.cacheManager.set(lockKey, true, 86400); // 24 hours
+			
+			this.logger.log(`📅 [scheduleDailyDeviceLogsEmail] Scheduling daily logs for org ${orgId} on ${dateKey}`);
 			
 			// Get organization hours to determine close time
 			const orgRef = String(orgId);
@@ -1961,6 +2324,8 @@ export class IotService {
 			
 			if (!orgHours) {
 				this.logger.warn(`⚠️ [scheduleDailyDeviceLogsEmail] No organization hours found for org ${orgId}`);
+				// Still send the email with default timing
+				await this.sendDailyDeviceLogsEmail(orgId, eventDate);
 				return;
 			}
 
@@ -2076,21 +2441,92 @@ export class IotService {
 			const activeDevices = deviceLogs.filter(log => log.records.length > 0).length;
 			const totalEvents = deviceLogs.reduce((sum, log) => sum + log.records.length, 0);
 
-			// Send email to each user
-			for (const user of relevantUsers) {
-				await this.sendDeviceLogsEmailToUser(user, deviceLogs, {
+			// Batch send emails to all users at once for better performance
+			const summary = {
 					date: date.toDateString(),
 					totalDevices,
 					activeDevices,
 					totalEvents,
 					orgId,
-				});
-			}
+			};
+
+			await this.sendBatchedDeviceLogsEmail(relevantUsers, deviceLogs, summary);
 
 			this.logger.log(`✅ [sendDailyDeviceLogsEmail] Daily device logs sent to ${relevantUsers.length} users for org ${orgId}`);
 
 		} catch (error) {
 			this.logger.error(`❌ [sendDailyDeviceLogsEmail] Failed to send daily device logs: ${error.message}`, error.stack);
+		}
+	}
+
+	/**
+	 * Send device logs email to multiple users in batch for better performance
+	 */
+	private async sendBatchedDeviceLogsEmail(
+		users: any[], 
+		deviceLogs: any[], 
+		summary: { date: string; totalDevices: number; activeDevices: number; totalEvents: number; orgId: number }
+	): Promise<void> {
+		try {
+			if (users.length === 0) {
+				this.logger.warn(`⚠️ [sendBatchedDeviceLogsEmail] No users to send logs to for org ${summary.orgId}`);
+				return;
+			}
+
+			// Prepare recipients list for batch sending
+			const recipients = users.map(user => ({
+				userId: user.uid,
+				email: user.email,
+				name: user.name,
+			}));
+
+			// Generate HTML content once for all users
+			const htmlContent = this.generateDeviceLogsEmailHTML(users[0], deviceLogs, summary);
+
+			const emailData = {
+				event: NotificationEvent.GENERAL_NOTIFICATION,
+				title: `📊 Daily Device Activity Report - ${summary.date}`,
+				message: `Daily device activity summary: ${summary.activeDevices}/${summary.totalDevices} devices active, ${summary.totalEvents} total events`,
+				priority: NotificationPriority.NORMAL,
+				channel: NotificationChannel.GENERAL,
+				recipients, // Send to all users at once
+				data: {
+					type: 'DAILY_DEVICE_LOGS',
+					orgId: summary.orgId,
+					date: summary.date,
+					summary,
+					htmlContent,
+				},
+				email: {
+					subject: `📊 Daily Device Activity Report - ${summary.date}`,
+					templateData: {
+						htmlContent,
+						date: summary.date,
+						summary,
+					},
+				},
+				source: {
+					service: 'iot',
+					method: 'sendBatchedDeviceLogsEmail',
+					entityId: summary.orgId,
+					entityType: 'organization',
+				},
+			};
+
+			// Send to all users in one batch call
+			await this.unifiedNotificationService.sendNotification(emailData);
+			this.logger.log(`📧 [sendBatchedDeviceLogsEmail] Sent daily logs to ${users.length} users in batch for org ${summary.orgId}`);
+
+		} catch (error) {
+			this.logger.error(`❌ [sendBatchedDeviceLogsEmail] Failed to send batch logs: ${error.message}`, error.stack);
+			
+			// Fallback to individual sending if batch fails
+			this.logger.warn(`⚠️ [sendBatchedDeviceLogsEmail] Falling back to individual email sending`);
+			for (const user of users) {
+				await this.sendDeviceLogsEmailToUser(user, deviceLogs, summary).catch(individualError => {
+					this.logger.error(`❌ [sendBatchedDeviceLogsEmail] Failed to send individual log to ${user.email}: ${individualError.message}`);
+				});
+			}
 		}
 	}
 

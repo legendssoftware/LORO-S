@@ -78,6 +78,17 @@ export enum NotificationEvent {
 	CHECKIN_UPDATED = 'checkin_updated',
 	CHECKOUT_COMPLETED = 'checkout_completed',
 
+	// IoT Device Events
+	IOT_DEVICE_OPENED = 'iot_device_opened',
+	IOT_DEVICE_CLOSED = 'iot_device_closed',
+	IOT_DEVICE_ONLINE = 'iot_device_online',
+	IOT_DEVICE_OFFLINE = 'iot_device_offline',
+	IOT_DEVICE_MAINTENANCE_REQUIRED = 'iot_device_maintenance_required',
+	IOT_DEVICE_OVERTIME_ALERT = 'iot_device_overtime_alert',
+	IOT_DEVICE_AFTER_HOURS_ACCESS = 'iot_device_after_hours_access',
+	IOT_DEVICE_ERROR = 'iot_device_error',
+	IOT_DEVICE_DAILY_REPORT = 'iot_device_daily_report',
+
 	// General Events
 	GENERAL_NOTIFICATION = 'general_notification',
 }
