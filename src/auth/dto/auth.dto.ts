@@ -53,6 +53,33 @@ export class SignInInput {
     required: false,
   })
   browser?: string;
+
+  @IsOptional()
+  @IsString()
+  @ApiProperty({
+    example: 'ExponentPushToken[abc123...]',
+    description: 'The expo push token for notifications',
+    required: false,
+  })
+  expoPushToken?: string;
+
+  @IsOptional()
+  @IsString()
+  @ApiProperty({
+    example: 'ios_12345_abc',
+    description: 'The unique device identifier',
+    required: false,
+  })
+  deviceId?: string;
+
+  @IsOptional()
+  @IsString()
+  @ApiProperty({
+    example: 'ios',
+    description: 'The device platform (ios/android)',
+    required: false,
+  })
+  platform?: string;
 }
 
 export class SignUpInput {

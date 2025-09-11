@@ -6444,4 +6444,46 @@ export class UserService {
 			this.logger.error(`[EMAIL] Failed to send profile update notification to ${user.email}: ${error.message}`);
 		}
 	}
+
+	/**
+	 * Update device registration information for push notifications
+	 */
+	async updateDeviceRegistration(
+		userId: number,
+		deviceData: {
+			expoPushToken: string;
+			deviceId?: string;
+			platform?: string;
+			pushTokenUpdatedAt?: Date;
+		}
+	): Promise<void> {
+		try {
+			this.logger.debug(`Updating device registration for user: ${userId}`, {
+				hasToken: !!deviceData.expoPushToken,
+				tokenPrefix: deviceData.expoPushToken ? deviceData.expoPushToken.substring(0, 30) + '...' : 'null',
+				deviceId: deviceData.deviceId,
+				platform: deviceData.platform,
+			});
+
+			const updateResult = await this.userRepository.update(userId, {
+				expoPushToken: deviceData.expoPushToken,
+				deviceId: deviceData.deviceId,
+				platform: deviceData.platform,
+				pushTokenUpdatedAt: deviceData.pushTokenUpdatedAt || new Date(),
+			});
+
+			if (updateResult.affected === 0) {
+				throw new Error(`No user found with ID: ${userId}`);
+			}
+
+			this.logger.log(`✅ Successfully updated device registration for user: ${userId}`);
+
+			// Clear user cache to ensure fresh data
+			await this.invalidateUserCache({ uid: userId } as User);
+
+		} catch (error) {
+			this.logger.error(`Failed to update device registration for user ${userId}:`, error);
+			throw error;
+		}
+	}
 }
