@@ -1016,13 +1016,37 @@ export class AuthService {
 			// Extract device info from request data
 			const deviceToken = requestData?.expoPushToken || requestData?.pushToken;
 			const deviceId = requestData?.deviceId;
-			const platform = requestData?.platform || (requestData?.userAgent?.toLowerCase().includes('android') ? 'android' : 'ios');
+			// Ensure we use the actual device platform, not user platform
+			const devicePlatform = requestData?.platform;
+			const userAgent = requestData?.userAgent || '';
+			
+			// Determine platform with better detection logic
+			let platform = devicePlatform;
+			if (!platform || platform === 'all') {
+				// Fallback to user agent detection
+				if (userAgent.toLowerCase().includes('android')) {
+					platform = 'android';
+				} else if (userAgent.toLowerCase().includes('ios') || userAgent.toLowerCase().includes('iphone') || userAgent.toLowerCase().includes('ipad')) {
+					platform = 'ios';
+				} else {
+					// Default based on device ID pattern if available
+					if (deviceId?.toLowerCase().includes('android')) {
+						platform = 'android';
+					} else if (deviceId?.toLowerCase().includes('ios')) {
+						platform = 'ios';
+					} else {
+						platform = 'unknown';
+					}
+				}
+			}
 
 			this.logger.debug(`📱 [${correlationId}] [DeviceRegistration] Device data received:`, {
 				hasToken: !!deviceToken,
 				tokenPrefix: deviceToken ? deviceToken.substring(0, 30) + '...' : 'null',
 				deviceId: deviceId || 'null',
 				platform: platform || 'unknown',
+				originalPlatform: requestData?.platform || 'not-provided',
+				userAgent: userAgent ? userAgent.substring(0, 100) : 'not-provided',
 				userId: user.uid,
 				correlationId,
 			});
