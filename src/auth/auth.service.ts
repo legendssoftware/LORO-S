@@ -1042,12 +1042,14 @@ export class AuthService {
 
 			this.logger.debug(`📱 [${correlationId}] [DeviceRegistration] Device data received:`, {
 				hasToken: !!deviceToken,
-				tokenPrefix: deviceToken ? deviceToken.substring(0, 30) + '...' : 'null',
-				deviceId: deviceId || 'null',
-				platform: platform || 'unknown',
-				originalPlatform: requestData?.platform || 'not-provided',
-				userAgent: userAgent ? userAgent.substring(0, 100) : 'not-provided',
+				tokenLength: deviceToken?.length || 0,
+				tokenPrefix: deviceToken ? deviceToken.substring(0, 30) + '...' : 'NO_TOKEN_PROVIDED',
+				deviceId: deviceId || 'NO_DEVICE_ID',
+				platform: platform || 'NO_PLATFORM',
+				originalPlatform: requestData?.platform || 'NOT_PROVIDED',
+				userAgent: userAgent ? userAgent.substring(0, 100) + '...' : 'NOT_PROVIDED',
 				userId: user.uid,
+				userEmail: user.email,
 				correlationId,
 			});
 
@@ -1063,16 +1065,45 @@ export class AuthService {
 
 			// Handle case where no device token is provided
 			if (!deviceToken) {
-				this.logger.warn(`⚠️ [${correlationId}] [DeviceRegistration] No device token provided for user: ${user.email}`);
+				// Check if this is a mobile app that will register separately
+				const isMobileApp = userAgent?.includes('Expo') || userAgent?.includes('okhttp') || 
+								   platform === 'android' || platform === 'ios';
+				
+				this.logger.log(`🔍 [${correlationId}] [DeviceRegistration] No device token in sign-in request - analyzing situation for user: ${user.email}`);
+				this.logger.debug(`📱 [${correlationId}] [DeviceRegistration] Token analysis:`, {
+					isMobileApp,
+					hasCurrentToken: currentRegistration.hasToken,
+					currentTokenValid: currentRegistration.tokenValid,
+					recommendedAction: currentRegistration.recommendAction,
+					userAgent: userAgent ? userAgent.substring(0, 50) + '...' : 'NOT_PROVIDED',
+					detectedPlatform: platform,
+					correlationId
+				});
+				
+				if (isMobileApp) {
+					this.logger.log(`📱 [${correlationId}] [DeviceRegistration] Mobile app detected - expecting post-login registration attempts for user: ${user.email}`);
+					this.logger.log(`⏳ [${correlationId}] [DeviceRegistration] Mobile app ${user.email} should retry registration after sign-in with device token`);
+				} else {
+					this.logger.warn(`⚠️ [${correlationId}] [DeviceRegistration] Web/unknown client without token for user: ${user.email}`);
+				}
 				
 				if (!currentRegistration.hasToken) {
-					this.logger.log(`🔴 [${correlationId}] [DeviceRegistration] User ${user.email} has no push token registered - device needs to register for notifications`);
-					// Mobile app should handle registration after sign-in
+					if (isMobileApp) {
+						this.logger.log(`🟡 [${correlationId}] [DeviceRegistration] Mobile user ${user.email} has NO stored push token - post-login registration REQUIRED`);
+					} else {
+						this.logger.log(`🔴 [${correlationId}] [DeviceRegistration] User ${user.email} has NO push token registered - notifications DISABLED until device registers`);
+					}
 				} else if (!currentRegistration.tokenValid) {
-					this.logger.warn(`🔴 [${correlationId}] [DeviceRegistration] User ${user.email} has invalid push token format - needs re-registration`);
+					this.logger.warn(`🔴 [${correlationId}] [DeviceRegistration] User ${user.email} has INVALID stored push token - re-registration REQUIRED`);
 				} else {
-					this.logger.debug(`✅ [${correlationId}] [DeviceRegistration] User ${user.email} has valid existing token - no immediate action needed`);
+					this.logger.log(`✅ [${correlationId}] [DeviceRegistration] User ${user.email} has valid stored token - notifications should work`);
 				}
+				
+				// Add a clear indication that post-login registration is expected
+				if (isMobileApp && !currentRegistration.hasToken) {
+					this.logger.log(`📋 [${correlationId}] [DeviceRegistration] EXPECTATION: Mobile client should make 1-3 registration attempts after this sign-in for user: ${user.email}`);
+				}
+				
 				return;
 			}
 
@@ -1094,26 +1125,64 @@ export class AuthService {
 				correlationId,
 			});
 
-			// If registration is needed, we should update the user's token immediately
+			// Initialize registration tracking variables
+			let registrationSuccess = false;
+			let lastError: any = null;
+			
+			// If registration is needed, we should update the user's token immediately with retry logic
 			if (registrationStatus.needsRegistration) {
 				this.logger.log(`🔄 [${correlationId}] [DeviceRegistration] Device registration needed for user ${user.email}: ${registrationStatus.reason}`);
-				
-				try {
-					// Update user's push token directly in the database
-					await this.userService.updateDeviceRegistration(user.uid, {
-						expoPushToken: deviceToken,
-						deviceId: deviceId,
-						platform: platform,
-						pushTokenUpdatedAt: new Date(),
-					});
 
-					this.logger.log(`✅ [${correlationId}] [DeviceRegistration] Successfully updated device registration for user ${user.email}`);
-					
-					// Update the user object in memory to reflect the changes for consistent status reporting
-					user.expoPushToken = deviceToken;
-					user.deviceId = deviceId;
-					user.platform = platform;
-					user.pushTokenUpdatedAt = new Date();
+				// Retry device registration up to 3 times
+				for (let attempt = 1; attempt <= 3; attempt++) {
+					try {
+						this.logger.log(`📱 [${correlationId}] [DeviceRegistration] Registration attempt ${attempt}/3 for user ${user.email}`);
+						this.logger.debug(`📱 [${correlationId}] [DeviceRegistration] Attempt ${attempt} device data:`, {
+							tokenLength: deviceToken?.length || 0,
+							tokenPrefix: deviceToken ? deviceToken.substring(0, 30) + '...' : 'NO_TOKEN_PROVIDED',
+							deviceId: deviceId || 'NO_DEVICE_ID',
+							platform: platform || 'NO_PLATFORM',
+							userId: user.uid,
+							userEmail: user.email,
+							attempt,
+							correlationId
+						});
+
+						// Update user's push token directly in the database
+						await this.userService.updateDeviceRegistration(user.uid, {
+							expoPushToken: deviceToken,
+							deviceId: deviceId,
+							platform: platform,
+							pushTokenUpdatedAt: new Date(),
+						});
+
+						this.logger.log(`✅ [${correlationId}] [DeviceRegistration] Successfully updated device registration for user ${user.email} on attempt ${attempt}`);
+						
+						// Update the user object in memory to reflect the changes for consistent status reporting
+						user.expoPushToken = deviceToken;
+						user.deviceId = deviceId;
+						user.platform = platform;
+						user.pushTokenUpdatedAt = new Date();
+						
+						registrationSuccess = true;
+						break; // Exit retry loop on success
+
+					} catch (updateError) {
+						lastError = updateError;
+						this.logger.warn(`⚠️ [${correlationId}] [DeviceRegistration] Registration attempt ${attempt}/3 failed for user ${user.email}:`, updateError.message);
+						
+						// Wait before retry (exponential backoff)
+						if (attempt < 3) {
+							const delay = Math.min(500 * Math.pow(2, attempt - 1), 2000); // 500ms, 1s, 2s max
+							this.logger.debug(`⏳ [${correlationId}] [DeviceRegistration] Waiting ${delay}ms before retry attempt ${attempt + 1} for user ${user.email}`);
+							await new Promise(resolve => setTimeout(resolve, delay));
+						}
+					}
+				}
+
+				// Handle final result
+				if (registrationSuccess) {
+					this.logger.log(`🎉 [${correlationId}] [DeviceRegistration] Device registration completed successfully after retry attempts for user ${user.email}`);
 					
 					// Optionally verify the token works
 					try {
@@ -1126,13 +1195,14 @@ export class AuthService {
 					} catch (verifyError) {
 						this.logger.warn(`⚠️ [${correlationId}] [DeviceRegistration] Could not verify token delivery: ${verifyError.message}`);
 					}
-					
-				} catch (updateError) {
-					this.logger.error(`❌ [${correlationId}] [DeviceRegistration] Failed to update device registration for user ${user.email}:`, updateError.message);
-					return; // Exit early if update failed
+				} else {
+					this.logger.error(`❌ [${correlationId}] [DeviceRegistration] All 3 registration attempts failed for user ${user.email}. Last error:`, lastError?.message);
+					this.logger.error(`💔 [${correlationId}] [DeviceRegistration] User ${user.email} will not receive push notifications until device re-registers`);
+					return; // Exit early if all attempts failed
 				}
 			} else {
 				this.logger.log(`✅ [${correlationId}] [DeviceRegistration] Device registration is current for user: ${user.email}`);
+				registrationSuccess = true; // No registration needed means it's already successful
 			}
 
 			// Final status check with updated user object
@@ -1142,8 +1212,16 @@ export class AuthService {
 				tokenValid: finalSummary.tokenValid,
 				recommendAction: finalSummary.recommendAction,
 				deviceInfo: finalSummary.deviceInfo,
+				registrationAttemptsMade: registrationStatus.needsRegistration ? (registrationSuccess ? 'SUCCESS_AFTER_RETRIES' : 'FAILED_ALL_ATTEMPTS') : 'NO_ATTEMPTS_NEEDED',
 				correlationId,
 			});
+
+			// Log completion summary
+			if (registrationStatus.needsRegistration) {
+				this.logger.log(`🏁 [${correlationId}] [DeviceRegistration] Device registration process completed for ${user.email} - Outcome: ${registrationSuccess ? 'SUCCESS' : 'FAILED'}`);
+			} else {
+				this.logger.log(`🏁 [${correlationId}] [DeviceRegistration] Device registration check completed for ${user.email} - No registration needed`);
+			}
 
 		} catch (error) {
 			this.logger.error(`❌ [${correlationId}] [DeviceRegistration] Failed to check device registration for user ${user.email}:`, {

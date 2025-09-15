@@ -233,6 +233,22 @@ export class NotificationsService {
 				lastUpdated: existingUser.pushTokenUpdatedAt,
 			});
 
+			// Check if this is a duplicate registration
+			const isSameToken = existingUser.expoPushToken === registerTokenDto.token;
+			const isSameDevice = existingUser.deviceId === registerTokenDto.deviceId;
+			const isSamePlatform = existingUser.platform === registerTokenDto.platform;
+			const isRecent = existingUser.pushTokenUpdatedAt && 
+							 (Date.now() - new Date(existingUser.pushTokenUpdatedAt).getTime()) < 10000; // 10 seconds
+
+			if (isSameToken && isSameDevice && isSamePlatform && isRecent) {
+				console.log('⏭️ [NotificationService] Duplicate registration detected - same token, device, and platform updated recently', {
+					userId,
+					timeSinceLastUpdate: existingUser.pushTokenUpdatedAt ? 
+						Date.now() - new Date(existingUser.pushTokenUpdatedAt).getTime() : 'N/A'
+				});
+				return { message: 'Push token already registered (duplicate request)' };
+			}
+
 			console.log('💾 [NotificationService] Updating user with new token...');
 			const updateResult = await this.userRepository.update(userId, {
 				expoPushToken: registerTokenDto.token,
