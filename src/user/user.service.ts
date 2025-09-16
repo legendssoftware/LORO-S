@@ -59,6 +59,7 @@ import { DataSource } from 'typeorm';
 import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
 import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
 import { Branch } from '../branch/entities/branch.entity';
+import { OrganisationHoursService } from '../organisation/services/organisation-hours.service';
 
 @Injectable()
 export class UserService {
@@ -88,6 +89,7 @@ export class UserService {
 		private readonly unifiedNotificationService: UnifiedNotificationService,
 		@InjectRepository(Branch)
 		private branchRepository: Repository<Branch>,
+		private readonly organisationHoursService: OrganisationHoursService,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
 		this.logger.log('UserService initialized with cache TTL: ' + this.CACHE_TTL + 'ms');
@@ -197,6 +199,182 @@ export class UserService {
 			this.logger.error(`Error validating calculated values: ${error.message}`);
 			return false;
 		}
+	}
+
+	/**
+	 * Calculate working days remaining based on organization working hours
+	 * @param endDate - The target end date
+	 * @param organizationRef - Organization reference to get working schedule
+	 * @returns Number of working days remaining (positive) or overdue (negative)
+	 */
+	private async calculateWorkingDaysRemaining(endDate: Date, organizationRef?: string): Promise<number> {
+		try {
+			const currentDate = new Date();
+			currentDate.setHours(0, 0, 0, 0); // Start of current day
+			const targetDate = new Date(endDate);
+			targetDate.setHours(0, 0, 0, 0); // Start of target day
+
+			// Determine if we're calculating remaining days (positive) or overdue days (negative)
+			const isOverdue = targetDate < currentDate;
+			const startDate = isOverdue ? targetDate : currentDate;
+			const calculationEndDate = isOverdue ? currentDate : targetDate;
+
+			let workingDays = 0;
+
+			// If no organization reference, fall back to simple business days (Mon-Sat)
+			if (!organizationRef) {
+				workingDays = this.calculateSimpleBusinessDays(startDate, calculationEndDate);
+			} else {
+				// Get organization hours to determine working schedule
+				let orgHours;
+				try {
+					orgHours = await this.organisationHoursService.findDefault(organizationRef);
+				} catch (error) {
+					this.logger.warn(`Could not fetch organization hours for ${organizationRef}, falling back to default business days: ${error.message}`);
+					workingDays = this.calculateSimpleBusinessDays(startDate, calculationEndDate);
+				}
+
+				if (!orgHours) {
+					this.logger.warn(`No organization hours found for ${organizationRef}, falling back to default business days`);
+					workingDays = this.calculateSimpleBusinessDays(startDate, calculationEndDate);
+				} else {
+					// Calculate working days based on organization schedule
+					workingDays = this.calculateWorkingDaysWithSchedule(startDate, calculationEndDate, orgHours);
+				}
+			}
+
+			// Return negative value for overdue, positive for remaining
+			return isOverdue ? -workingDays : workingDays;
+
+		} catch (error) {
+			this.logger.error(`Error calculating working days remaining: ${error.message}`);
+			// Fall back to simple calculation
+			const currentDate = new Date();
+			const targetDate = new Date(endDate);
+			const isOverdue = targetDate < currentDate;
+			const simpleDays = this.calculateSimpleBusinessDays(
+				isOverdue ? targetDate : currentDate,
+				isOverdue ? currentDate : targetDate
+			);
+			return isOverdue ? -simpleDays : simpleDays;
+		}
+	}
+
+	/**
+	 * Calculate simple business days (Monday to Saturday, excluding Sundays)
+	 * @param startDate - Start date
+	 * @param endDate - End date
+	 * @returns Number of business days
+	 */
+	private calculateSimpleBusinessDays(startDate: Date, endDate: Date): number {
+		let workingDays = 0;
+		const currentDate = new Date(startDate);
+
+		while (currentDate < endDate) {
+			const dayOfWeek = currentDate.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+			
+			// Count Monday (1) through Saturday (6), exclude Sunday (0)
+			if (dayOfWeek !== 0) {
+				workingDays++;
+			}
+
+			currentDate.setDate(currentDate.getDate() + 1);
+		}
+
+		return workingDays;
+	}
+
+	/**
+	 * Calculate working days based on organization schedule
+	 * @param startDate - Start date
+	 * @param endDate - End date
+	 * @param orgHours - Organization hours configuration
+	 * @returns Number of working days
+	 */
+	private calculateWorkingDaysWithSchedule(startDate: Date, endDate: Date, orgHours: any): number {
+		let workingDays = 0;
+		const currentDate = new Date(startDate);
+
+		// Handle holiday mode
+		if (orgHours.holidayMode && orgHours.holidayUntil) {
+			const holidayEndDate = new Date(orgHours.holidayUntil);
+			if (currentDate <= holidayEndDate) {
+				// If we're currently in holiday mode, start counting from after holiday period
+				currentDate.setTime(Math.max(currentDate.getTime(), holidayEndDate.getTime() + 24 * 60 * 60 * 1000));
+			}
+		}
+
+		// Get working schedule - prefer detailed schedule, fall back to weeklySchedule
+		const schedule = orgHours.schedule || this.convertWeeklyScheduleToDetailed(orgHours.weeklySchedule);
+		
+		// Days mapping: 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+		const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
+		while (currentDate < endDate) {
+			const dayOfWeek = currentDate.getDay();
+			const dayName = dayNames[dayOfWeek];
+			
+			// Check if this day is a working day according to schedule
+			const daySchedule = schedule[dayName];
+			let isWorkingDay = false;
+
+			if (daySchedule) {
+				// If using detailed schedule, check if day is not marked as closed
+				if (typeof daySchedule === 'object' && 'closed' in daySchedule) {
+					isWorkingDay = !daySchedule.closed;
+				} else if (typeof daySchedule === 'boolean') {
+					// If using simple boolean schedule
+					isWorkingDay = daySchedule;
+				}
+			}
+
+			// Check for special hours on this specific date
+			if (isWorkingDay && orgHours.specialHours && Array.isArray(orgHours.specialHours)) {
+				const dateStr = currentDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+				const specialHour = orgHours.specialHours.find(sh => sh.date === dateStr);
+				
+				if (specialHour) {
+					// If there's special hours for this date, check if it's actually a working day
+					// Special hours with null/empty times might indicate closure
+					isWorkingDay = !!(specialHour.openTime && specialHour.closeTime);
+				}
+			}
+
+			if (isWorkingDay) {
+				workingDays++;
+			}
+
+			currentDate.setDate(currentDate.getDate() + 1);
+		}
+
+		return workingDays;
+	}
+
+	/**
+	 * Convert simple weeklySchedule to detailed schedule format
+	 * @param weeklySchedule - Simple boolean schedule
+	 * @returns Detailed schedule format
+	 */
+	private convertWeeklyScheduleToDetailed(weeklySchedule: any): any {
+		if (!weeklySchedule) {
+			// Default to Monday-Saturday if no schedule provided
+			return {
+				sunday: { closed: true },
+				monday: { closed: false },
+				tuesday: { closed: false },
+				wednesday: { closed: false },
+				thursday: { closed: false },
+				friday: { closed: false },
+				saturday: { closed: false },
+			};
+		}
+
+		const detailed: any = {};
+		Object.keys(weeklySchedule).forEach(day => {
+			detailed[day] = { closed: !weeklySchedule[day] };
+		});
+
+		return detailed;
 	}
 
 	/**
@@ -1357,6 +1535,11 @@ export class UserService {
 						isDeleted: false,
 						status: AccountStatus.ACTIVE,
 					},
+					{
+						email: searchParameter,
+						isDeleted: false,
+						status: AccountStatus.ACTIVE,
+					},
 				],
 				relations: ['branch', 'rewards', 'organisation'],
 			});
@@ -2182,7 +2365,14 @@ export class UserService {
 					'userTarget.periodEndDate',
 					'userTarget.createdAt',
 					'userTarget.updatedAt',
-					// Costings are hidden for now
+					// Cost breakdown fields
+					'userTarget.baseSalary',
+					'userTarget.carInstalment',
+					'userTarget.carInsurance',
+					'userTarget.fuel',
+					'userTarget.cellPhoneAllowance',
+					'userTarget.carMaintenance',
+					'userTarget.cgicCosts',
 				])
 				.where('user.uid = :userId AND user.isDeleted = :isDeleted', { userId, isDeleted: false });
 
@@ -2216,6 +2406,116 @@ export class UserService {
 
 			// Add personal targets if they exist with enhanced format
 			if (user.userTarget) {
+				// Calculate working days remaining if periodEndDate exists
+				let workingDaysRemaining = undefined;
+				if (user.userTarget.periodEndDate) {
+					try {
+						workingDaysRemaining = await this.calculateWorkingDaysRemaining(
+							user.userTarget.periodEndDate,
+							user.organisation?.ref
+						);
+					} catch (error) {
+						this.logger.warn(`Failed to calculate working days remaining for user ${userId}: ${error.message}`);
+						// Fall back to simple calendar days if working days calculation fails
+						workingDaysRemaining = Math.max(
+							0,
+							Math.ceil(
+								(new Date(user.userTarget.periodEndDate).getTime() - new Date().getTime()) /
+									(1000 * 60 * 60 * 24),
+							),
+						);
+					}
+				}
+
+				// Calculate sales rate analysis
+				let salesRateAnalysis = null;
+				if (user.userTarget.targetSalesAmount && user.userTarget.currentSalesAmount && 
+					user.userTarget.periodStartDate && user.userTarget.periodEndDate) {
+					
+					try {
+						const periodStart = new Date(user.userTarget.periodStartDate);
+						const periodEnd = new Date(user.userTarget.periodEndDate);
+						const currentDate = new Date();
+						
+						// Calculate total working days in the target period using simple business days
+						const totalWorkingDays = this.calculateSimpleBusinessDays(periodStart, periodEnd);
+						
+						// Calculate working days elapsed so far
+						const workingDaysElapsed = this.calculateSimpleBusinessDays(
+							periodStart, 
+							new Date(Math.min(currentDate.getTime(), periodEnd.getTime()))
+						);
+						
+						// Calculate actual sales rate based on days elapsed (more accurate)
+						const actualSalesRate = workingDaysElapsed > 0 ? 
+							Math.round(user.userTarget.currentSalesAmount / workingDaysElapsed) : 0;
+						
+						// Calculate required sales rate to meet target over the full period
+						const requiredSalesRate = totalWorkingDays > 0 ? 
+							Math.round(user.userTarget.targetSalesAmount / totalWorkingDays) : 0;
+						
+						// Calculate remaining amount 
+						const remainingSalesAmount = Math.max(0, user.userTarget.targetSalesAmount - user.userTarget.currentSalesAmount);
+						
+						// Enhanced analysis based on period status
+						const isOverdue = workingDaysRemaining < 0;
+						let achievabilityStatus = 'on-track';
+						let dailyRateNeeded = requiredSalesRate;
+						let projectedFinalAmount = 0;
+						
+						if (isOverdue) {
+							// For overdue targets, analyze what rate would have been needed to succeed
+							achievabilityStatus = remainingSalesAmount > 0 ? 'missed' : 'achieved';
+							
+							if (remainingSalesAmount > 0) {
+								// Calculate what daily rate would have been needed to achieve the remaining target
+								// in the remaining time that was available when target period ended
+								dailyRateNeeded = Math.round(remainingSalesAmount / Math.abs(workingDaysRemaining));
+							} else {
+								// Target was achieved, show the rate that was actually needed
+								dailyRateNeeded = actualSalesRate;
+							}
+						} else if (workingDaysRemaining > 0) {
+							// For active targets, calculate required daily rate for remaining days
+							dailyRateNeeded = Math.round(remainingSalesAmount / Math.abs(workingDaysRemaining));
+							
+							// Project final amount based on current performance
+							projectedFinalAmount = user.userTarget.currentSalesAmount + (actualSalesRate * Math.abs(workingDaysRemaining));
+							
+							// Determine achievability based on projected performance
+							const projectedAchievementRate = user.userTarget.targetSalesAmount > 0 ? 
+								(projectedFinalAmount / user.userTarget.targetSalesAmount) : 0;
+							
+							if (projectedAchievementRate >= 0.95) {
+								achievabilityStatus = 'achievable';
+							} else if (projectedAchievementRate >= 0.80) {
+								achievabilityStatus = 'challenging';
+							} else {
+								achievabilityStatus = 'at-risk';
+							}
+						} else {
+							// Period just ended today
+							achievabilityStatus = remainingSalesAmount > 0 ? 'missed' : 'achieved';
+							dailyRateNeeded = actualSalesRate;
+						}
+
+						salesRateAnalysis = {
+							actualSalesRate,
+							requiredSalesRate,
+							dailyRateNeeded,
+							totalWorkingDays,
+							workingDaysElapsed,
+							remainingSalesAmount,
+							achievabilityStatus,
+							performanceGap: requiredSalesRate - actualSalesRate,
+							projectedFinalAmount: projectedFinalAmount > 0 ? Math.round(projectedFinalAmount) : null,
+							isOverdue
+						};
+					} catch (error) {
+						this.logger.warn(`Failed to calculate sales rate analysis for user ${userId}: ${error.message}`);
+					}
+				}
+
 				response.personalTargets = {
 					uid: user.userTarget.uid,
 					// Sales targets
@@ -2292,9 +2592,19 @@ export class UserService {
 					targetPeriod: user.userTarget.targetPeriod,
 					periodStartDate: user.userTarget.periodStartDate,
 					periodEndDate: user.userTarget.periodEndDate,
+					workingDaysRemaining: workingDaysRemaining, // New field for working days remaining
+					salesRateAnalysis: salesRateAnalysis, // New field for sales rate analysis
 					targetCurrency: user.userTarget.targetCurrency,
 					createdAt: user.userTarget.createdAt,
 					updatedAt: user.userTarget.updatedAt,
+					// Cost breakdown fields
+					baseSalary: user.userTarget.baseSalary || 0,
+					carInstalment: user.userTarget.carInstalment || 0,
+					carInsurance: user.userTarget.carInsurance || 0,
+					fuel: user.userTarget.fuel || 0,
+					cellPhoneAllowance: user.userTarget.cellPhoneAllowance || 0,
+					carMaintenance: user.userTarget.carMaintenance || 0,
+					cgicCosts: user.userTarget.cgicCosts || 0,
 				};
 			}
 
@@ -5589,13 +5899,19 @@ export class UserService {
 					? new Date(user.userTarget.periodEndDate).toISOString()
 					: undefined,
 				daysRemaining: user.userTarget?.periodEndDate
-					? Math.max(
-							0,
-							Math.ceil(
-								(new Date(user.userTarget.periodEndDate).getTime() - new Date().getTime()) /
-									(1000 * 60 * 60 * 24),
-							),
-					  )
+					? await this.calculateWorkingDaysRemaining(
+							user.userTarget.periodEndDate,
+							user.organisation?.ref
+					  ).catch(() => {
+							// Fall back to simple calculation if working days calculation fails
+							return Math.max(
+								0,
+								Math.ceil(
+									(new Date(user.userTarget.periodEndDate).getTime() - new Date().getTime()) /
+										(1000 * 60 * 60 * 24),
+								),
+							);
+					  })
 					: undefined,
 				motivationalMessage: motivationalMessages[Math.floor(Math.random() * motivationalMessages.length)],
 				encouragementTips: encouragementTips.slice(0, 3), // Send 3 tips

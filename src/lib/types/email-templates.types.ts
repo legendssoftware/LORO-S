@@ -534,6 +534,84 @@ export interface AttendanceLateShiftAlertData extends BaseEmailData {
 	lateDuration: string;
 }
 
+export interface AttendanceShiftStartedData extends BaseEmailData {
+	employeeName: string;
+	employeeEmail: string;
+	checkInTime: string;
+	shiftStartTime: string;
+	organizationName: string;
+	branchName?: string;
+	dashboardUrl: string;
+	xpAwarded: number;
+	welcomeMessage: string;
+}
+
+export interface AttendanceShiftEndedData extends BaseEmailData {
+	employeeName: string;
+	employeeEmail: string;
+	checkInTime: string;
+	checkOutTime: string;
+	shiftDuration: string;
+	totalWorkMinutes: number;
+	totalBreakTime?: string;
+	organizationName: string;
+	branchName?: string;
+	dashboardUrl: string;
+	xpAwarded: number;
+	congratulationsMessage: string;
+}
+
+export interface AttendanceShiftStartReminderData extends BaseEmailData {
+	employeeName: string;
+	employeeEmail: string;
+	shiftStartTime: string;
+	currentTime: string;
+	organizationName: string;
+	branchName?: string;
+	reminderType: 'pre_start';
+	minutesUntilShift: number;
+	checkInUrl: string;
+	dashboardUrl: string;
+}
+
+export interface AttendanceShiftEndReminderData extends BaseEmailData {
+	employeeName: string;
+	employeeEmail: string;
+	shiftEndTime: string;
+	currentTime: string;
+	organizationName: string;
+	branchName?: string;
+	reminderType: 'pre_end' | 'missed_checkout';
+	checkOutUrl: string;
+	dashboardUrl: string;
+	currentShiftDuration?: string;
+}
+
+export interface AttendanceBreakStartedData extends BaseEmailData {
+	employeeName: string;
+	employeeEmail: string;
+	breakStartTime: string;
+	breakCount: number;
+	breakNumber: string; // 'first', 'second', etc.
+	organizationName: string;
+	branchName?: string;
+	dashboardUrl: string;
+	encouragementMessage: string;
+}
+
+export interface AttendanceBreakEndedData extends BaseEmailData {
+	employeeName: string;
+	employeeEmail: string;
+	breakStartTime: string;
+	breakEndTime: string;
+	breakDuration: string;
+	totalBreakTime: string;
+	organizationName: string;
+	branchName?: string;
+	dashboardUrl: string;
+	welcomeBackMessage: string;
+}
+
 export interface OrganizationHoursReminderData extends BaseEmailData {
 	organizationName: string;
 	organizationId: number;
@@ -1891,6 +1969,14 @@ export interface EmailDataMap {
 	[EmailType.OVERTIME_REMINDER]: OvertimeReminderData;
 	[EmailType.ATTENDANCE_MISSED_SHIFT_ALERT]: AttendanceMissedShiftAlertData;
 	[EmailType.ATTENDANCE_LATE_SHIFT_ALERT]: AttendanceLateShiftAlertData;
+	// Attendance shift notification mappings
+	[EmailType.ATTENDANCE_SHIFT_STARTED]: AttendanceShiftStartedData;
+	[EmailType.ATTENDANCE_SHIFT_ENDED]: AttendanceShiftEndedData;
+	[EmailType.ATTENDANCE_SHIFT_START_REMINDER]: AttendanceShiftStartReminderData;
+	[EmailType.ATTENDANCE_SHIFT_END_REMINDER]: AttendanceShiftEndReminderData;
+	// Attendance break notification mappings
+	[EmailType.ATTENDANCE_BREAK_STARTED]: AttendanceBreakStartedData;
+	[EmailType.ATTENDANCE_BREAK_ENDED]: AttendanceBreakEndedData;
 	// Quotation email mappings
 	[EmailType.NEW_QUOTATION_CLIENT]: QuotationData;
 	[EmailType.NEW_QUOTATION_INTERNAL]: QuotationInternalData;

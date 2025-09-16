@@ -1,0 +1,40 @@
+{{#base headerTitle="Shift Started Successfully" headerSubtitle="Welcome to work! Your day begins now"}}
+
+<div class="greeting">
+    Welcome to work, {{name}}! 🌟
+</div>
+
+<div class="success-notice">
+    <p>✅ <strong>Shift Started:</strong> You've successfully checked in at {{checkInTime}}. Have a productive day!</p>
+</div>
+
+<div class="info-card">
+    <h3>📅 Shift Details</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Check-in Time</span>
+            <span class="detail-value" style="color: #22c55e; font-weight: 700;">{{checkInTime}}</span>
+        </div>
+        {{#if shiftStartTime}}
+        <div class="detail-item">
+            <span class="detail-label">Scheduled Start</span>
+            <span class="detail-value">{{shiftStartTime}}</span>
+        </div>
+        {{/if}}
+        {{#if xpAwarded}}
+        <div class="detail-item">
+            <span class="detail-label">XP Earned</span>
+            <span class="detail-value" style="color: #f59e0b; font-weight: 700;">+{{xpAwarded}} XP</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+
+<div class="cta-section">
+    <a href="{{dashboardUrl}}" class="cta-button">View Dashboard</a>
+    <p style="margin-top: 16px; font-size: 14px; color: #6b7280;">
+        Have a productive day! Remember to take breaks and check out at the end of your shift.
+    </p>
+</div>
+
+{{/base}}

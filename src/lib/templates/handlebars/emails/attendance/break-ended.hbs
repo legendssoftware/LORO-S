@@ -1,0 +1,42 @@
+{{#base headerTitle="Break Complete" headerSubtitle="Welcome back! Time to get back to work"}}
+
+<div class="greeting">
+    Welcome back, {{name}}! 🚀
+</div>
+
+<div class="success-notice">
+    <p>✅ <strong>Break Complete:</strong> You refreshed from {{breakStartTime}} to {{breakEndTime}} ({{breakDuration}}). Hope you're feeling recharged!</p>
+</div>
+
+<div class="info-card">
+    <h3>☕ Break Summary</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Break Started</span>
+            <span class="detail-value" style="color: #8b5cf6; font-weight: 700;">{{breakStartTime}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Break Ended</span>
+            <span class="detail-value" style="color: #06b6d4; font-weight: 700;">{{breakEndTime}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Break Duration</span>
+            <span class="detail-value" style="color: #3b82f6; font-weight: 700;">{{breakDuration}}</span>
+        </div>
+        {{#if totalBreakTime}}
+        <div class="detail-item">
+            <span class="detail-label">Total Break Time Today</span>
+            <span class="detail-value" style="color: #8b5cf6; font-weight: 700;">{{totalBreakTime}}</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+
+<div class="cta-section">
+    <a href="{{dashboardUrl}}" class="cta-button">Back to Dashboard</a>
+    <p style="margin-top: 16px; font-size: 14px; color: #6b7280;">
+        Ready to tackle the rest of your day! Focus and maintain good energy.
+    </p>
+</div>
+
+{{/base}}

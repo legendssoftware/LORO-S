@@ -1,0 +1,40 @@
+{{#base headerTitle="Break Time Started" headerSubtitle="Time to recharge and refresh yourself"}}
+
+<div class="greeting">
+    Time for a well-deserved break, {{name}}! ☕
+</div>
+
+<div class="info-card" style="background: linear-gradient(135deg, #faf5ff 0%, #f3e8ff 100%); border-left-color: #8b5cf6;">
+    <p>🌟 <strong>Break Started:</strong> Your {{breakNumber}} break began at {{breakStartTime}}. Take your time to recharge!</p>
+</div>
+
+<div class="info-card">
+    <h3>☕ Break Details</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Break Started</span>
+            <span class="detail-value" style="color: #8b5cf6; font-weight: 700;">{{breakStartTime}}</span>
+        </div>
+        {{#if breakNumber}}
+        <div class="detail-item">
+            <span class="detail-label">Break Number</span>
+            <span class="detail-value">{{breakNumber}} break today</span>
+        </div>
+        {{/if}}
+        {{#if breakCount}}
+        <div class="detail-item">
+            <span class="detail-label">Total Breaks Today</span>
+            <span class="detail-value" style="color: #8b5cf6; font-weight: 700;">{{breakCount}}</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+
+<div class="cta-section">
+    <a href="{{dashboardUrl}}" class="cta-button">View Dashboard</a>
+    <p style="margin-top: 16px; font-size: 14px; color: #6b7280;">
+        Enjoy your break! Step away, stretch, and refresh yourself.
+    </p>
+</div>
+
+{{/base}}

@@ -27,10 +27,10 @@ export class Attendance {
 	@Column({ type: 'timestamp', nullable: true })
 	checkOut: Date;
 
-	@Column({ type: 'varchar', nullable: true, default: '0h 0m' })
+	@Column({ type: 'varchar', nullable: true })
 	duration: string;
 
-	@Column({ type: 'varchar', nullable: true, default: '0h 0m' })
+	@Column({ type: 'varchar', nullable: true})
 	overtime: string;
 
 	@Column({ type: 'decimal', precision: 10, scale: 6, nullable: true })
@@ -57,7 +57,7 @@ export class Attendance {
 	@Column({ type: 'timestamp', nullable: true })
 	breakEndTime: Date;
 
-	@Column({ type: 'varchar', nullable: true, default: '0h 0m' })
+	@Column({ type: 'varchar', nullable: true})
 	totalBreakTime: string;
 
 	@Column({ type: 'int', nullable: true, default: 0 })

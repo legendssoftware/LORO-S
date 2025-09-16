@@ -1,0 +1,36 @@
+{{#base headerTitle="Shift Starting Soon" headerSubtitle="Get ready! Your workday begins in 30 minutes"}}
+
+<div class="greeting">
+    Good morning, {{name}}! 🌅
+</div>
+
+<div class="warning-notice">
+    <p>⏰ <strong>Shift Reminder:</strong> Your shift starts at {{shiftStartTime}} (in {{minutesUntilShift}} minutes). Please prepare to check in on time!</p>
+</div>
+
+<div class="info-card">
+    <h3>📅 Shift Information</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Shift Start Time</span>
+            <span class="detail-value" style="color: #f59e0b; font-weight: 700;">{{shiftStartTime}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Current Time</span>
+            <span class="detail-value">{{currentTime}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Time Until Shift</span>
+            <span class="detail-value" style="color: #ef4444; font-weight: 700;">{{minutesUntilShift}} minutes</span>
+        </div>
+    </div>
+</div>
+
+<div class="cta-section">
+    <a href="{{checkInUrl}}" class="cta-button">Check In Now</a>
+    <p style="margin-top: 16px; font-size: 14px; color: #6b7280;">
+        Gather your materials and get ready for a productive day!
+    </p>
+</div>
+
+{{/base}}

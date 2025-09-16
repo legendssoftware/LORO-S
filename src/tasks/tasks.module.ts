@@ -22,6 +22,7 @@ import { TaskFlag } from './entities/task-flag.entity';
 import { TaskFlagItem } from './entities/task-flag-item.entity';
 import { UserModule } from '../user/user.module';
 import { UserService } from '../user/user.service';
+import { OrganisationModule } from '../organisation/organisation.module';
 import { OrganisationSettings } from '../organisation/entities/organisation-settings.entity';
 import { OrganisationAppearance } from '../organisation/entities/organisation-appearance.entity';
 import { OrganisationHours } from '../organisation/entities/organisation-hours.entity';
@@ -49,6 +50,7 @@ import { OrganisationHours } from '../organisation/entities/organisation-hours.e
 		NotificationsModule,
 		ScheduleModule.forRoot(),
 		UserModule,
+		OrganisationModule,
 	],
 	controllers: [TasksController],
 	providers: [TasksService, TaskReminderService, TaskRouteService, GoogleMapsService, UserService],

@@ -22,6 +22,15 @@ import {
 	UserDailyReport,
 	AttendanceMorningReport,
 	AttendanceEveningReport,
+	AttendanceMissedShiftAlert,
+	AttendanceLateShiftAlert,
+	AttendanceShiftStarted,
+	AttendanceShiftEnded,
+	AttendanceShiftStartReminder,
+	AttendanceShiftEndReminder,
+	AttendanceBreakStarted,
+	AttendanceBreakEnded,
+	OvertimeReminder,
 } from '../lib/templates/emails';
 // Quotation related templates
 import {
@@ -91,6 +100,15 @@ import {
 	WarningExpiredEmailData,
 	MorningReportData,
 	EveningReportData,
+	OvertimeReminderData,
+	AttendanceMissedShiftAlertData,
+	AttendanceLateShiftAlertData,
+	AttendanceShiftStartedData,
+	AttendanceShiftEndedData,
+	AttendanceShiftStartReminderData,
+	AttendanceShiftEndReminderData,
+	AttendanceBreakStartedData,
+	AttendanceBreakEndedData,
 	LeaveStatusUpdateUserData,
 	LeaveStatusUpdateAdminData,
 	LeaveApplicationConfirmationData,
@@ -960,6 +978,51 @@ export class CommunicationService {
 				return {
 					subject: 'Daily Attendance Evening Report',
 					body: AttendanceEveningReport(data as EveningReportData),
+				};
+			case EmailType.ATTENDANCE_SHIFT_STARTED:
+				return {
+					subject: 'Shift Started Successfully',
+					body: AttendanceShiftStarted(data as AttendanceShiftStartedData),
+				};
+			case EmailType.ATTENDANCE_SHIFT_ENDED:
+				return {
+					subject: 'Shift Completed Successfully',
+					body: AttendanceShiftEnded(data as AttendanceShiftEndedData),
+				};
+			case EmailType.ATTENDANCE_SHIFT_START_REMINDER:
+				return {
+					subject: 'Shift Starting Soon',
+					body: AttendanceShiftStartReminder(data as AttendanceShiftStartReminderData),
+				};
+			case EmailType.ATTENDANCE_SHIFT_END_REMINDER:
+				return {
+					subject: 'Shift End Reminder',
+					body: AttendanceShiftEndReminder(data as AttendanceShiftEndReminderData),
+				};
+			case EmailType.ATTENDANCE_BREAK_STARTED:
+				return {
+					subject: 'Break Time Started',
+					body: AttendanceBreakStarted(data as AttendanceBreakStartedData),
+				};
+			case EmailType.ATTENDANCE_BREAK_ENDED:
+				return {
+					subject: 'Break Complete',
+					body: AttendanceBreakEnded(data as AttendanceBreakEndedData),
+				};
+			case EmailType.ATTENDANCE_MISSED_SHIFT_ALERT:
+				return {
+					subject: 'Missed Shift Alert',
+					body: AttendanceMissedShiftAlert(data as AttendanceMissedShiftAlertData),
+				};
+			case EmailType.ATTENDANCE_LATE_SHIFT_ALERT:
+				return {
+					subject: 'Late Shift Alert',
+					body: AttendanceLateShiftAlert(data as AttendanceLateShiftAlertData),
+				};
+			case EmailType.OVERTIME_REMINDER:
+				return {
+					subject: 'Overtime Work Reminder',
+					body: OvertimeReminder(data as OvertimeReminderData),
 				};
 			case EmailType.LEAVE_STATUS_UPDATE_USER:
 				return {

@@ -78,6 +78,12 @@ import {
 	ApprovalEmailData,
 	AttendanceMissedShiftAlertData,
 	AttendanceLateShiftAlertData,
+	AttendanceShiftStartedData,
+	AttendanceShiftEndedData,
+	AttendanceShiftStartReminderData,
+	AttendanceShiftEndReminderData,
+	AttendanceBreakStartedData,
+	AttendanceBreakEndedData,
 } from '../types/email-templates.types';
 
 // Auth Templates
@@ -323,6 +329,30 @@ export const AttendanceMissedShiftAlert = (data: AttendanceMissedShiftAlertData)
 
 export const AttendanceLateShiftAlert = (data: AttendanceLateShiftAlertData): string => {
 	return emailTemplateService.attendanceLateShiftAlert(data);
+};
+
+export const AttendanceShiftStarted = (data: AttendanceShiftStartedData): string => {
+	return emailTemplateService.attendanceShiftStarted(data);
+};
+
+export const AttendanceShiftEnded = (data: AttendanceShiftEndedData): string => {
+	return emailTemplateService.attendanceShiftEnded(data);
+};
+
+export const AttendanceShiftStartReminder = (data: AttendanceShiftStartReminderData): string => {
+	return emailTemplateService.attendanceShiftStartReminder(data);
+};
+
+export const AttendanceShiftEndReminder = (data: AttendanceShiftEndReminderData): string => {
+	return emailTemplateService.attendanceShiftEndReminder(data);
+};
+
+export const AttendanceBreakStarted = (data: AttendanceBreakStartedData): string => {
+	return emailTemplateService.attendanceBreakStarted(data);
+};
+
+export const AttendanceBreakEnded = (data: AttendanceBreakEndedData): string => {
+	return emailTemplateService.attendanceBreakEnded(data);
 };
 
 // Asset Templates

@@ -6,7 +6,7 @@ export class SignInInput {
   @IsString()
   @ApiProperty({
     example: 'brandon',
-    description: 'The username of the user',
+    description: 'The username or email address of the user',
   })
   username: string;
 

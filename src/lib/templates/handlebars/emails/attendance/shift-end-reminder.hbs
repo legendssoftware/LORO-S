@@ -1,0 +1,52 @@
+{{#base headerTitle="Shift End Reminder" headerSubtitle="Time to wrap up your work and check out"}}
+
+<div class="greeting">
+    {{#if (eq reminderType "pre_end")}}
+    Time to wrap up, {{name}}! 🏁
+    {{else}}
+    Don't forget to check out, {{name}}! ⏰
+    {{/if}}
+</div>
+
+{{#if (eq reminderType "pre_end")}}
+<div class="warning-notice">
+    <p>⏰ <strong>Shift Ending Soon:</strong> Your shift ends in 30 minutes at {{shiftEndTime}}. Please prepare to check out!</p>
+</div>
+{{else}}
+<div class="error-notice">
+    <p>🚨 <strong>Missed Check-out:</strong> You forgot to check out! Your shift ended at {{shiftEndTime}}.</p>
+</div>
+{{/if}}
+
+<div class="info-card">
+    <h3>📅 Shift Information</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Shift End Time</span>
+            <span class="detail-value" style="color: #ef4444; font-weight: 700;">{{shiftEndTime}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Current Time</span>
+            <span class="detail-value">{{currentTime}}</span>
+        </div>
+        {{#if currentShiftDuration}}
+        <div class="detail-item">
+            <span class="detail-label">Current Duration</span>
+            <span class="detail-value" style="color: #3b82f6; font-weight: 700;">{{currentShiftDuration}}</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+
+<div class="cta-section">
+    <a href="{{checkOutUrl}}" class="cta-button" style="background: #ef4444;">Check Out Now</a>
+    <p style="margin-top: 16px; font-size: 14px; color: #6b7280;">
+        {{#if (eq reminderType "pre_end")}}
+        Wrap up your work and check out on time for accurate tracking.
+        {{else}}
+        Check out now to record your work hours accurately.
+        {{/if}}
+    </p>
+</div>
+
+{{/base}}

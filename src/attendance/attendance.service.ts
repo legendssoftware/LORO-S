@@ -41,6 +41,7 @@ import { DateRangeUtil } from '../lib/utils/date-range.util';
 import { OrganizationHoursService } from './services/organization.hours.service';
 import { AttendanceCalculatorService } from './services/attendance.calculator.service';
 import { AccessLevel } from 'src/lib/enums/user.enums';
+import { EmailType } from '../lib/enums/email.enums';
 import { Cron } from '@nestjs/schedule';
 
 @Injectable()
@@ -243,6 +244,9 @@ export class AttendanceService {
 
 			this.logger.debug(`Check-in record created successfully with ID: ${checkIn.uid}`);
 
+			// Clear attendance cache after successful check-in
+			await this.clearAttendanceCache(checkIn.uid, checkInDto.owner.uid);
+
 			// Enhanced response data mapping
 			const responseData = {
 				attendanceId: checkIn.uid,
@@ -301,15 +305,17 @@ export class AttendanceService {
 					hour12: true,
 				});
 
-				// Get user info for personalized message
+				// Get user info for personalized message with email and relations
 				const user = await this.userRepository.findOne({
 					where: { uid: checkInDto.owner.uid },
-					select: ['uid', 'name', 'surname'],
+					select: ['uid', 'name', 'surname', 'email'],
+					relations: ['organisation', 'branch', 'branch.organisation'],
 				});
 
 				const userName = user ? user.name : '';
 				
 				this.logger.debug(`Sending enhanced shift start notification to user: ${checkInDto.owner.uid}`);
+				// Send push notification
 				await this.unifiedNotificationService.sendTemplatedNotification(
 					NotificationEvent.ATTENDANCE_SHIFT_STARTED,
 					[checkInDto.owner.uid],
@@ -325,8 +331,50 @@ export class AttendanceService {
 					},
 					{
 						priority: NotificationPriority.NORMAL,
+						sendEmail: false, // We'll handle email separately
 					},
 				);
+
+				// Send email using event emitter (same pattern as user service)
+				this.logger.log(`📧 [AttendanceService] Sending shift started email notification for user: ${checkInDto.owner.uid}`);
+				if (user?.email) {
+					try {
+						// Get organization scheduled start time (like in sendShiftReminder)
+						let scheduledStartTime = '09:00'; // Default fallback
+						if (orgId) {
+							try {
+								const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
+								const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(orgId, new Date());
+								scheduledStartTime = workingDayInfo.startTime || organizationHours?.openTime || '09:00';
+							} catch (error) {
+								this.logger.warn(`Could not get organization hours for org ${orgId}:`, error.message);
+							}
+						}
+
+						const emailData = {
+							name: userName,
+							employeeName: userName,
+							employeeEmail: user.email,
+							checkInTime,
+							shiftStartTime: scheduledStartTime,
+							organizationName: user?.organisation?.name || user?.branch?.organisation?.name || 'Your Organization',
+							branchName: user?.branch?.name || '',
+							dashboardUrl: process.env.WEB_URL || 'https://app.loro.co.za',
+							xpAwarded: XP_VALUES.CHECK_IN,
+							welcomeMessage: `Welcome to work, ${userName}! 🌟 Your shift started successfully at ${checkInTime}. Have a productive and amazing day ahead!`,
+						};
+						
+						this.eventEmitter.emit('send.email', EmailType.ATTENDANCE_SHIFT_STARTED, [user.email], emailData);
+						this.logger.log(`✅ [AttendanceService] Shift started email notification queued for user: ${checkInDto.owner.uid}`);
+					} catch (emailError) {
+						this.logger.error(
+							`❌ [AttendanceService] Failed to queue shift started email for user ${checkInDto.owner.uid}:`,
+							emailError.message,
+						);
+					}
+				} else {
+					this.logger.warn(`⚠️ [AttendanceService] No email found for user ${checkInDto.owner.uid}, skipping email notification`);
+				}
 				this.logger.debug(`Enhanced shift start notification sent successfully to user: ${checkInDto.owner.uid}`);
 			} catch (notificationError) {
 				this.logger.warn(
@@ -585,6 +633,9 @@ export class AttendanceService {
 			await this.attendanceRepository.save(updatedShift);
 			this.logger.debug(`Shift updated successfully for user: ${checkOutDto.owner?.uid}`);
 
+			// Clear attendance cache after successful check-out
+			await this.clearAttendanceCache(activeShift.uid, checkOutDto.owner.uid);
+
 			// Enhanced response data mapping
 			const responseData = {
 				attendanceId: activeShift.uid,
@@ -654,10 +705,11 @@ export class AttendanceService {
 					hour12: true,
 				});
 
-				// Get user info for personalized message
+				// Get user info for personalized message with email and relations
 				const user = await this.userRepository.findOne({
 					where: { uid: checkOutDto.owner.uid },
-					select: ['uid', 'name', 'surname'],
+					select: ['uid', 'name', 'surname', 'email'],
+					relations: ['organisation', 'branch', 'branch.organisation'],
 				});
 
 				const userName = user ? user.name : '';
@@ -666,6 +718,7 @@ export class AttendanceService {
 				const workTimeDisplay = `${workHours}h ${workMinutesDisplay}m`;
 
 				this.logger.debug(`Sending enhanced shift end notification to user: ${checkOutDto.owner.uid}`);
+				// Send push notification
 				await this.unifiedNotificationService.sendTemplatedNotification(
 					NotificationEvent.ATTENDANCE_SHIFT_ENDED,
 					[checkOutDto.owner.uid],
@@ -686,8 +739,41 @@ export class AttendanceService {
 					},
 					{
 						priority: NotificationPriority.NORMAL,
+						sendEmail: false, // We'll handle email separately
 					},
 				);
+
+				// Send email using event emitter (same pattern as user service)
+				this.logger.log(`📧 [AttendanceService] Sending shift ended email notification for user: ${checkOutDto.owner.uid}`);
+				if (user?.email) {
+					try {
+						const emailData = {
+							name: userName,
+							employeeName: userName,
+							employeeEmail: user.email,
+							checkInTime: checkInTimeString,
+							checkOutTime: checkOutTimeString,
+							shiftDuration: duration,
+							totalWorkMinutes: workSession.netWorkMinutes,
+							totalBreakTime: breakMinutes > 0 ? `${Math.floor(breakMinutes / 60)}h ${breakMinutes % 60}m` : undefined,
+							organizationName: user?.organisation?.name || user?.branch?.organisation?.name || 'Your Organization',
+							branchName: user?.branch?.name || '',
+							dashboardUrl: process.env.WEB_URL || 'https://app.loro.co.za',
+							xpAwarded: XP_VALUES.CHECK_OUT,
+							congratulationsMessage: `Great work today, ${userName}! 🎉 You've successfully completed your shift. Worked from ${checkInTimeString} to ${checkOutTimeString} for a total of ${workTimeDisplay}. Rest well and see you tomorrow!`,
+						};
+						
+						this.eventEmitter.emit('send.email', EmailType.ATTENDANCE_SHIFT_ENDED, [user.email], emailData);
+						this.logger.log(`✅ [AttendanceService] Shift ended email notification queued for user: ${checkOutDto.owner.uid}`);
+					} catch (emailError) {
+						this.logger.error(
+							`❌ [AttendanceService] Failed to queue shift ended email for user ${checkOutDto.owner.uid}:`,
+							emailError.message,
+						);
+					}
+				} else {
+					this.logger.warn(`⚠️ [AttendanceService] No email found for user ${checkOutDto.owner.uid}, skipping email notification`);
+				}
 				this.logger.debug(`Enhanced shift end notification sent successfully to user: ${checkOutDto.owner.uid}`);
 			} catch (notificationError) {
 				this.logger.warn(
@@ -1035,10 +1121,11 @@ export class AttendanceService {
 				}
 			}
 
-			// Get user info for personalized messages
+			// Get user info for personalized messages with relations
 			const user = await this.userRepository.findOne({
 				where: { uid: userId },
 				select: ['uid', 'name', 'surname', 'email'],
+				relations: ['organisation', 'branch', 'branch.organisation'],
 			});
 			const userName = user ? `${user.name} ${user.surname}`.trim() : `User ${userId}`;
 
@@ -1124,12 +1211,111 @@ export class AttendanceService {
 			// Update message in notification data
 			notificationData.message = message;
 
+			// Determine email template based on notification type
+			let emailTemplate: EmailType | undefined;
+			let emailData: any = {};
+
+			switch (notificationType) {
+				case NotificationEvent.ATTENDANCE_SHIFT_START_REMINDER:
+					emailTemplate = EmailType.ATTENDANCE_SHIFT_START_REMINDER;
+					emailData = {
+						name: user?.name || '',
+						employeeName: userName,
+						employeeEmail: user?.email || '',
+						shiftStartTime: expectedShiftTime,
+						currentTime,
+						organizationName: 'Your Organization',
+						branchName: '',
+						reminderType: 'pre_start',
+						minutesUntilShift: 30,
+						checkInUrl: process.env.WEB_URL || 'https://app.loro.co.za',
+						dashboardUrl: process.env.WEB_URL || 'https://app.loro.co.za',
+					};
+					break;
+				case NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER:
+					emailTemplate = EmailType.ATTENDANCE_SHIFT_END_REMINDER;
+					emailData = {
+						name: user?.name || '',
+						employeeName: userName,
+						employeeEmail: user?.email || '',
+						shiftEndTime: expectedEndTime,
+						currentTime,
+						organizationName: 'Your Organization',
+						branchName: '',
+						reminderType: reminderType === 'pre_end' ? 'pre_end' : 'missed_checkout',
+						checkOutUrl: process.env.WEB_URL || 'https://app.loro.co.za',
+						dashboardUrl: process.env.WEB_URL || 'https://app.loro.co.za',
+						currentShiftDuration: notificationData.currentShiftDuration,
+					};
+					break;
+				case NotificationEvent.ATTENDANCE_MISSED_SHIFT_ALERT:
+					emailTemplate = EmailType.ATTENDANCE_MISSED_SHIFT_ALERT;
+					emailData = {
+						name: user?.name || '',
+						employeeName: userName,
+						employeeEmail: user?.email || '',
+						scheduledShiftStart: expectedShiftTime,
+						scheduledShiftEnd: expectedEndTime || '17:00',
+						currentTime,
+						organizationName: 'Your Organization',
+						supervisorContact: 'your supervisor',
+						dashboardUrl: process.env.WEB_URL || 'https://app.loro.co.za',
+						checkInUrl: process.env.WEB_URL || 'https://app.loro.co.za',
+						missedDuration: '30+ minutes',
+					};
+					break;
+				case NotificationEvent.ATTENDANCE_LATE_SHIFT_ALERT:
+					emailTemplate = EmailType.ATTENDANCE_LATE_SHIFT_ALERT;
+					emailData = {
+						name: user?.name || '',
+						employeeName: userName,
+						employeeEmail: user?.email || '',
+						scheduledShiftStart: expectedShiftTime,
+						currentTime,
+						organizationName: 'Your Organization',
+						minutesLate: lateMinutes || 0,
+						dashboardUrl: process.env.WEB_URL || 'https://app.loro.co.za',
+						checkInUrl: process.env.WEB_URL || 'https://app.loro.co.za',
+						lateDuration: lateMinutes ? `${lateMinutes} minutes` : 'unknown',
+					};
+					break;
+				case NotificationEvent.ATTENDANCE_OVERTIME_REMINDER:
+					emailTemplate = EmailType.OVERTIME_REMINDER;
+					emailData = {
+						name: user?.name || '',
+						employeeName: userName,
+						employeeEmail: user?.email || '',
+						minutesOvertime: overtimeMinutes || 0,
+						overtimeDuration: notificationData.overtimeDuration || 'unknown',
+						shiftDuration: 'current shift',
+						organizationName: 'Your Organization',
+						clockOutUrl: process.env.WEB_URL || 'https://app.loro.co.za',
+						dashboardUrl: process.env.WEB_URL || 'https://app.loro.co.za',
+						breakDetails: undefined,
+					};
+					break;
+			}
+
+			// Send push notification
 			await this.unifiedNotificationService.sendTemplatedNotification(
 				notificationType,
 				[Number(userId)],
 				notificationData,
-				{ priority },
+				{ 
+					priority,
+					sendEmail: false, // We'll handle email separately
+				},
 			);
+
+			// Send email using event emitter (same pattern as user service)
+			if (emailTemplate && user?.email && emailData) {
+				// Update email data with proper organization info
+				emailData.organizationName = user?.organisation?.name || user?.branch?.organisation?.name || 'Your Organization';
+				emailData.branchName = user?.branch?.name || '';
+				
+				this.eventEmitter.emit('send.email', emailTemplate, [user.email], emailData);
+				this.logger.debug(`✅ ${reminderType} email queued for user: ${userId}`);
+			}
 
 			this.logger.log(`[${operationId}] ${reminderType} notification sent successfully to user ${userId}`);
 
@@ -2800,6 +2986,9 @@ export class AttendanceService {
 
 			await this.attendanceRepository.save(updatedShift);
 
+			// Clear attendance cache after break start
+			await this.clearAttendanceCache(activeShift.uid, breakDto.owner.uid);
+
 			// Send enhanced break start notification
 			try {
 				const breakStartTimeString = breakStartTime.toLocaleTimeString('en-ZA', {
@@ -2808,16 +2997,18 @@ export class AttendanceService {
 					hour12: true,
 				});
 
-				// Get user info for personalized message
+				// Get user info for personalized message with email and relations
 				const user = await this.userRepository.findOne({
 					where: { uid: breakDto.owner.uid },
-					select: ['uid', 'name', 'surname'],
+					select: ['uid', 'name', 'surname', 'email'],
+					relations: ['organisation', 'branch', 'branch.organisation'],
 				});
 
 				const userName = user ? user.name : '';
 				const breakNumber = breakCount === 1 ? 'first' : breakCount === 2 ? 'second' : `${breakCount}${breakCount > 3 ? 'th' : breakCount === 3 ? 'rd' : 'nd'}`;
 
 				this.logger.debug(`Sending enhanced break start notification to user: ${breakDto.owner.uid}`);
+				// Send push notification
 				await this.unifiedNotificationService.sendTemplatedNotification(
 					NotificationEvent.ATTENDANCE_BREAK_STARTED,
 					[breakDto.owner.uid],
@@ -2832,8 +3023,38 @@ export class AttendanceService {
 					},
 					{
 						priority: NotificationPriority.LOW,
+						sendEmail: false, // We'll handle email separately
 					},
 				);
+
+				// Send email using event emitter (same pattern as user service)
+				this.logger.log(`📧 [AttendanceService] Sending break started email notification for user: ${breakDto.owner.uid}`);
+				if (user?.email) {
+					try {
+						const emailData = {
+							name: userName,
+							employeeName: userName,
+							employeeEmail: user.email,
+							breakStartTime: breakStartTimeString,
+							breakCount: breakCount,
+							breakNumber,
+							organizationName: user?.organisation?.name || user?.branch?.organisation?.name || 'Your Organization',
+							branchName: user?.branch?.name || '',
+							dashboardUrl: process.env.WEB_URL || 'https://app.loro.co.za',
+							encouragementMessage: `Time for a well-deserved break, ${userName}! ☕ Your ${breakNumber} break started at ${breakStartTimeString}. Take your time to recharge and refresh yourself!`,
+						};
+						
+						this.eventEmitter.emit('send.email', EmailType.ATTENDANCE_BREAK_STARTED, [user.email], emailData);
+						this.logger.log(`✅ [AttendanceService] Break started email notification queued for user: ${breakDto.owner.uid}`);
+					} catch (emailError) {
+						this.logger.error(
+							`❌ [AttendanceService] Failed to queue break started email for user ${breakDto.owner.uid}:`,
+							emailError.message,
+						);
+					}
+				} else {
+					this.logger.warn(`⚠️ [AttendanceService] No email found for user ${breakDto.owner.uid}, skipping email notification`);
+				}
 				this.logger.debug(`Enhanced break start notification sent successfully to user: ${breakDto.owner.uid}`);
 			} catch (notificationError) {
 				this.logger.warn(
@@ -2937,6 +3158,9 @@ export class AttendanceService {
 
 			await this.attendanceRepository.save(updatedShift);
 
+			// Clear attendance cache after break end
+			await this.clearAttendanceCache(shiftOnBreak.uid, breakDto.owner.uid);
+
 			// Send enhanced break end notification
 			try {
 				const breakEndTimeString = breakEndTime.toLocaleTimeString('en-ZA', {
@@ -2951,15 +3175,17 @@ export class AttendanceService {
 					hour12: true,
 				});
 
-				// Get user info for personalized message
+				// Get user info for personalized message with email and relations
 				const user = await this.userRepository.findOne({
 					where: { uid: breakDto.owner.uid },
-					select: ['uid', 'name', 'surname'],
+					select: ['uid', 'name', 'surname', 'email'],
+					relations: ['organisation', 'branch', 'branch.organisation'],
 				});
 
 				const userName = user ? user.name : '';
 
 				this.logger.debug(`Sending enhanced break end notification to user: ${breakDto.owner.uid}`);
+				// Send push notification
 				await this.unifiedNotificationService.sendTemplatedNotification(
 					NotificationEvent.ATTENDANCE_BREAK_ENDED,
 					[breakDto.owner.uid],
@@ -2975,8 +3201,39 @@ export class AttendanceService {
 					},
 					{
 						priority: NotificationPriority.LOW,
+						sendEmail: false, // We'll handle email separately
 					},
 				);
+
+				// Send email using event emitter (same pattern as user service)
+				this.logger.log(`📧 [AttendanceService] Sending break ended email notification for user: ${breakDto.owner.uid}`);
+				if (user?.email) {
+					try {
+						const emailData = {
+							name: userName,
+							employeeName: userName,
+							employeeEmail: user.email,
+							breakStartTime: breakStartTimeString,
+							breakEndTime: breakEndTimeString,
+							breakDuration: currentBreakDuration,
+							totalBreakTime,
+							organizationName: user?.organisation?.name || user?.branch?.organisation?.name || 'Your Organization',
+							branchName: user?.branch?.name || '',
+							dashboardUrl: process.env.WEB_URL || 'https://app.loro.co.za',
+							welcomeBackMessage: `Welcome back, ${userName}! 🚀 Your break is complete. You were refreshing from ${breakStartTimeString} to ${breakEndTimeString} (${currentBreakDuration}). Hope you're feeling recharged and ready to tackle the rest of your day!`,
+						};
+						
+						this.eventEmitter.emit('send.email', EmailType.ATTENDANCE_BREAK_ENDED, [user.email], emailData);
+						this.logger.log(`✅ [AttendanceService] Break ended email notification queued for user: ${breakDto.owner.uid}`);
+					} catch (emailError) {
+						this.logger.error(
+							`❌ [AttendanceService] Failed to queue break ended email for user ${breakDto.owner.uid}:`,
+							emailError.message,
+						);
+					}
+				} else {
+					this.logger.warn(`⚠️ [AttendanceService] No email found for user ${breakDto.owner.uid}, skipping email notification`);
+				}
 				this.logger.debug(`Enhanced break end notification sent successfully to user: ${breakDto.owner.uid}`);
 			} catch (notificationError) {
 				this.logger.warn(

@@ -19,6 +19,14 @@ export enum EmailType {
 	// Attendance shift alerts
 	ATTENDANCE_MISSED_SHIFT_ALERT = 'attendance_missed_shift_alert',
 	ATTENDANCE_LATE_SHIFT_ALERT = 'attendance_late_shift_alert',
+	// Attendance shift notifications
+	ATTENDANCE_SHIFT_STARTED = 'attendance_shift_started',
+	ATTENDANCE_SHIFT_ENDED = 'attendance_shift_ended',
+	ATTENDANCE_SHIFT_START_REMINDER = 'attendance_shift_start_reminder',
+	ATTENDANCE_SHIFT_END_REMINDER = 'attendance_shift_end_reminder',
+	// Attendance break notifications
+	ATTENDANCE_BREAK_STARTED = 'attendance_break_started',
+	ATTENDANCE_BREAK_ENDED = 'attendance_break_ended',
 	// Quotation related emails
 	ORDER_RECEIVED_CLIENT = 'order_received_client',
 	NEW_QUOTATION_CLIENT = 'new_quotation_client',

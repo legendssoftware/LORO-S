@@ -1,0 +1,48 @@
+{{#base headerTitle="Shift Completed Successfully" headerSubtitle="Great work today! Your shift is now complete"}}
+
+<div class="greeting">
+    Great work today, {{name}}! 🎉
+</div>
+
+<div class="success-notice">
+    <p>✅ <strong>Shift Complete:</strong> You've successfully checked out at {{checkOutTime}}. Well done!</p>
+</div>
+
+<div class="info-card">
+    <h3>📊 Shift Summary</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Check-in Time</span>
+            <span class="detail-value" style="color: #22c55e; font-weight: 700;">{{checkInTime}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Check-out Time</span>
+            <span class="detail-value" style="color: #ef4444; font-weight: 700;">{{checkOutTime}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Total Duration</span>
+            <span class="detail-value" style="color: #3b82f6; font-weight: 700;">{{shiftDuration}}</span>
+        </div>
+        {{#if totalBreakTime}}
+        <div class="detail-item">
+            <span class="detail-label">Break Time</span>
+            <span class="detail-value" style="color: #8b5cf6; font-weight: 700;">{{totalBreakTime}}</span>
+        </div>
+        {{/if}}
+        {{#if xpAwarded}}
+        <div class="detail-item">
+            <span class="detail-label">XP Earned</span>
+            <span class="detail-value" style="color: #f59e0b; font-weight: 700;">+{{xpAwarded}} XP</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+
+<div class="cta-section">
+    <a href="{{dashboardUrl}}" class="cta-button">View Dashboard</a>
+    <p style="margin-top: 16px; font-size: 14px; color: #6b7280;">
+        Rest well and recharge for tomorrow. Thank you for your dedication!
+    </p>
+</div>
+
+{{/base}}

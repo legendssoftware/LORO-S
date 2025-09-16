@@ -62,6 +62,12 @@ import {
 	OvertimeReminderData,
 	AttendanceMissedShiftAlertData,
 	AttendanceLateShiftAlertData,
+	AttendanceShiftStartedData,
+	AttendanceShiftEndedData,
+	AttendanceShiftStartReminderData,
+	AttendanceShiftEndReminderData,
+	AttendanceBreakStartedData,
+	AttendanceBreakEndedData,
 	PayslipAvailableEmailData,
 	PayslipUploadedAdminEmailData,
 	MonthlyUnattendedLeadsReportData,
@@ -620,6 +626,30 @@ class EmailTemplateService {
 
 	attendanceLateShiftAlert(data: AttendanceLateShiftAlertData): string {
 		return this.renderTemplate('attendance/late-shift-alert.hbs', data);
+	}
+
+	attendanceShiftStarted(data: AttendanceShiftStartedData): string {
+		return this.renderTemplate('attendance/shift-started.hbs', data);
+	}
+
+	attendanceShiftEnded(data: AttendanceShiftEndedData): string {
+		return this.renderTemplate('attendance/shift-ended.hbs', data);
+	}
+
+	attendanceShiftStartReminder(data: AttendanceShiftStartReminderData): string {
+		return this.renderTemplate('attendance/shift-start-reminder.hbs', data);
+	}
+
+	attendanceShiftEndReminder(data: AttendanceShiftEndReminderData): string {
+		return this.renderTemplate('attendance/shift-end-reminder.hbs', data);
+	}
+
+	attendanceBreakStarted(data: AttendanceBreakStartedData): string {
+		return this.renderTemplate('attendance/break-started.hbs', data);
+	}
+
+	attendanceBreakEnded(data: AttendanceBreakEndedData): string {
+		return this.renderTemplate('attendance/break-ended.hbs', data);
 	}
 
 	// Asset related email templates
