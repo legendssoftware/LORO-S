@@ -22,6 +22,8 @@ import { XPTransaction } from '../../rewards/entities/xp-transaction.entity';
 import { UserTarget } from '../../user/entities/user-target.entity';
 import { OrganisationHoursService } from '../../organisation/services/organisation-hours.service';
 import { ReportUtils } from '../utils/report-utils';
+import { TimezoneUtil } from '../../lib/utils/timezone.util';
+import { OrganizationHoursService } from '../../attendance/services/organization.hours.service';
 
 @Injectable()
 export class UserDailyReportGenerator {
@@ -55,8 +57,57 @@ export class UserDailyReportGenerator {
 		private attendanceService: AttendanceService,
 		private trackingService: TrackingService,
 		private organisationHoursService: OrganisationHoursService,
+		private organizationHoursService: OrganizationHoursService,
 	) {}
 
+	// ======================================================
+	// TIMEZONE HELPER METHODS
+	// ======================================================
+
+	/**
+	 * Get organization timezone with fallback
+	 */
+	private async getOrganizationTimezone(organizationId?: number): Promise<string> {
+		if (!organizationId) {
+			return TimezoneUtil.getSafeTimezone();
+		}
+
+		try {
+			const organizationHours = await this.organizationHoursService.getOrganizationHours(organizationId);
+			return organizationHours?.timezone || TimezoneUtil.getSafeTimezone();
+		} catch (error) {
+			this.logger.warn(`Error getting timezone for org ${organizationId}, using default:`, error);
+			return TimezoneUtil.getSafeTimezone();
+		}
+	}
+
+	/**
+	 * Format time in organization timezone for reports
+	 */
+	private async formatTimeInOrganizationTimezone(date: Date, organizationId?: number, format: string = 'h:mm a'): Promise<string> {
+		if (!date) return 'N/A';
+		
+		const timezone = await this.getOrganizationTimezone(organizationId);
+		return TimezoneUtil.formatInOrganizationTime(date, format, timezone);
+	}
+
+	/**
+	 * Format date in organization timezone for reports
+	 */
+	private async formatDateInOrganizationTimezone(date: Date, organizationId?: number, format: string = 'yyyy-MM-dd'): Promise<string> {
+		if (!date) return 'N/A';
+		
+		const timezone = await this.getOrganizationTimezone(organizationId);
+		return TimezoneUtil.formatInOrganizationTime(date, format, timezone);
+	}
+
+	/**
+	 * Convert server time to organization time
+	 */
+	private async toOrganizationTime(serverDate: Date, organizationId?: number): Promise<Date> {
+		const timezone = await this.getOrganizationTimezone(organizationId);
+		return TimezoneUtil.toOrganizationTime(serverDate, timezone);
+	}
 
 	private parseGrowthPercentage(growthStr: string): number {
 		if (!growthStr) return 0;
@@ -131,19 +182,22 @@ export class UserDailyReportGenerator {
 				throw new Error(`User with ID ${userId} not found`);
 			}
 
+			const organizationId = user?.organisation?.uid;
+
 			// Check if organization is open on this date (only for scheduled reports, not activity-triggered ones)
 			const isWorkingDay = await this.isOrganizationOpen(user, startDate);
 			
 			// Skip organization hours check if this report was triggered by user activity (like checking out)
 			// If user worked and checked out, they deserve their end-of-day report regardless of "official" hours
 			if (!isWorkingDay && !triggeredByActivity) {
-				this.logger.log(`Skipping report generation for user ${userId} on ${format(startDate, 'yyyy-MM-dd')} - Organization is closed (scheduled report)`);
+				const formattedDate = await this.formatDateInOrganizationTimezone(startDate, organizationId, 'yyyy-MM-dd');
+				this.logger.log(`Skipping report generation for user ${userId} on ${formattedDate} - Organization is closed (scheduled report)`);
 				return {
 					metadata: {
 						reportType: 'user_daily',
 						userId,
 						userName: `${user.name} ${user.surname || ''}`.trim(),
-						date: format(startDate, 'yyyy-MM-dd'),
+						date: formattedDate,
 						generatedAt: new Date(),
 						isWorkingDay: false,
 						skipReason: 'Organization closed on this date (scheduled report)',
@@ -156,7 +210,8 @@ export class UserDailyReportGenerator {
 
 			// If triggered by activity, log that we're generating despite organization being closed
 			if (!isWorkingDay && triggeredByActivity) {
-				this.logger.log(`Generating activity-triggered report for user ${userId} on ${format(startDate, 'yyyy-MM-dd')} despite organization being closed - user was active`);
+				const formattedDate = await this.formatDateInOrganizationTimezone(startDate, organizationId, 'yyyy-MM-dd');
+				this.logger.log(`Generating activity-triggered report for user ${userId} on ${formattedDate} despite organization being closed - user was active`);
 			}
 
 			// Collect all data in parallel for efficiency
@@ -200,8 +255,8 @@ export class UserDailyReportGenerator {
 				this.collectWellnessMetrics(userId, startDate, endDate),
 			]);
 
-			// Format the date for display
-			const formattedDate = format(startDate, 'yyyy-MM-dd');
+			// Format the date for display in organization timezone
+			const formattedDate = await this.formatDateInOrganizationTimezone(startDate, organizationId, 'yyyy-MM-dd');
 
 			// Build the report data structure
 
@@ -214,6 +269,8 @@ export class UserDailyReportGenerator {
 					generatedAt: new Date(),
 					isWorkingDay: true,
 					organizationName: user.organisation?.name || 'Unknown Organization',
+					organizationId: organizationId,
+					timezone: await this.getOrganizationTimezone(organizationId),
 				},
 				summary: {
 					hoursWorked: Math.round((attendanceData.totalWorkMinutes / 60) * 10) / 10,
@@ -334,6 +391,14 @@ export class UserDailyReportGenerator {
 	}
 
 	private async collectAttendanceData(userId: number, startDate: Date, endDate: Date) {
+		// Get user with organization info for timezone formatting
+		const user = await this.userRepository.findOne({
+			where: { uid: userId },
+			relations: ['organisation'],
+		});
+
+		const organizationId = user?.organisation?.uid;
+
 		// Get daily stats from attendance service
 		const dailyStats = await this.attendanceService.getDailyStats(userId, format(startDate, 'yyyy-MM-dd'));
 
@@ -404,8 +469,8 @@ export class UserDailyReportGenerator {
 
 		return {
 			status: activeShift ? activeShift.status : lastRecord ? lastRecord.status : 'NOT_PRESENT',
-			firstCheckIn: firstRecord?.checkIn ? format(new Date(firstRecord.checkIn), 'HH:mm:ss') : null,
-			lastCheckOut: lastRecord?.checkOut ? format(new Date(lastRecord.checkOut), 'HH:mm:ss') : null,
+			firstCheckIn: firstRecord?.checkIn ? await this.formatTimeInOrganizationTimezone(new Date(firstRecord.checkIn), organizationId, 'HH:mm:ss') : null,
+			lastCheckOut: lastRecord?.checkOut ? await this.formatTimeInOrganizationTimezone(new Date(lastRecord.checkOut), organizationId, 'HH:mm:ss') : null,
 			totalWorkMinutes,
 			totalBreakMinutes,
 			totalOvertimeMinutes,
@@ -414,7 +479,7 @@ export class UserDailyReportGenerator {
 			firstCheckInLocation,
 			lastCheckOutLocation,
 			onBreak: activeShift?.status === AttendanceStatus.ON_BREAK,
-			breakDetails: this.formatBreakDetails(attendanceRecords),
+			breakDetails: await this.formatBreakDetails(attendanceRecords, organizationId),
 			isCurrentlyWorking: !!activeShift,
 		};
 	}
@@ -431,32 +496,34 @@ export class UserDailyReportGenerator {
 		return hours * 60 + minutes;
 	}
 
-	private formatBreakDetails(attendanceRecords: Attendance[]) {
+	private async formatBreakDetails(attendanceRecords: Attendance[], organizationId?: number) {
 		let breakDetails = [];
 
-		attendanceRecords.forEach((record) => {
+		for (const record of attendanceRecords) {
 			if (record.breakDetails && record.breakDetails.length > 0) {
-				const formattedBreaks = record.breakDetails
-					.map((breakItem) => {
-						if (!breakItem.startTime || !breakItem.endTime) return null;
+				const formattedBreaks = await Promise.all(
+					record.breakDetails
+						.map(async (breakItem) => {
+							if (!breakItem.startTime || !breakItem.endTime) return null;
 
-						const startTime = new Date(breakItem.startTime);
-						const endTime = breakItem.endTime ? new Date(breakItem.endTime) : null;
+							const startTime = new Date(breakItem.startTime);
+							const endTime = breakItem.endTime ? new Date(breakItem.endTime) : null;
 
-						return {
-							startTime: format(startTime, 'HH:mm:ss'),
-							endTime: endTime ? format(endTime, 'HH:mm:ss') : null,
-							duration:
-								breakItem.duration ||
-								(endTime ? this.formatDuration(differenceInMinutes(endTime, startTime)) : null),
-							notes: breakItem.notes || '',
-						};
-					})
-					.filter(Boolean);
+							return {
+								startTime: await this.formatTimeInOrganizationTimezone(startTime, organizationId, 'HH:mm:ss'),
+								endTime: endTime ? await this.formatTimeInOrganizationTimezone(endTime, organizationId, 'HH:mm:ss') : null,
+								duration:
+									breakItem.duration ||
+									(endTime ? this.formatDuration(differenceInMinutes(endTime, startTime)) : null),
+								notes: breakItem.notes || '',
+							};
+						})
+				);
 
-				breakDetails = [...breakDetails, ...formattedBreaks];
+				const validBreaks = formattedBreaks.filter(Boolean);
+				breakDetails = [...breakDetails, ...validBreaks];
 			}
-		});
+		}
 
 		return breakDetails;
 	}

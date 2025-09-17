@@ -21,6 +21,9 @@ import { Cron } from '@nestjs/schedule';
 import { MapDataReportGenerator } from './generators/map-data-report.generator';
 import { Quotation } from '../shop/entities/quotation.entity';
 import { OrgActivityReportGenerator } from './generators/org-activity-report.generator';
+import { TimezoneUtil } from '../lib/utils/timezone.util';
+import { OrganizationHoursService } from '../attendance/services/organization.hours.service';
+import { Organisation } from '../organisation/entities/organisation.entity';
 
 @Injectable()
 export class ReportsService implements OnModuleInit {
@@ -36,6 +39,8 @@ export class ReportsService implements OnModuleInit {
 		private userRepository: Repository<User>,
 		@InjectRepository(Quotation)
 		private quotationRepository: Repository<Quotation>,
+		@InjectRepository(Organisation)
+		private organisationRepository: Repository<Organisation>,
 		private mainReportGenerator: MainReportGenerator,
 		private quotationReportGenerator: QuotationReportGenerator,
 		private userDailyReportGenerator: UserDailyReportGenerator,
@@ -46,9 +51,67 @@ export class ReportsService implements OnModuleInit {
 		private eventEmitter: EventEmitter2,
 		private communicationService: CommunicationService,
 		private readonly mapDataReportGenerator: MapDataReportGenerator,
+		private readonly organizationHoursService: OrganizationHoursService,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 300;
 		this.logger.log(`Reports service initialized with cache TTL: ${this.CACHE_TTL}s`);
+	}
+
+	// ======================================================
+	// TIMEZONE HELPER METHODS
+	// ======================================================
+
+	/**
+	 * Get organization timezone with fallback
+	 */
+	private async getOrganizationTimezone(organizationId?: number): Promise<string> {
+		if (!organizationId) {
+			return TimezoneUtil.getSafeTimezone();
+		}
+
+		try {
+			const organizationHours = await this.organizationHoursService.getOrganizationHours(organizationId);
+			return organizationHours?.timezone || TimezoneUtil.getSafeTimezone();
+		} catch (error) {
+			this.logger.warn(`Error getting timezone for org ${organizationId}, using default:`, error);
+			return TimezoneUtil.getSafeTimezone();
+		}
+	}
+
+	/**
+	 * Format time in organization timezone for reports
+	 */
+	private async formatTimeInOrganizationTimezone(date: Date, organizationId?: number, format: string = 'h:mm a'): Promise<string> {
+		if (!date) return 'N/A';
+		
+		const timezone = await this.getOrganizationTimezone(organizationId);
+		return TimezoneUtil.formatInOrganizationTime(date, format, timezone);
+	}
+
+	/**
+	 * Format date in organization timezone for reports
+	 */
+	private async formatDateInOrganizationTimezone(date: Date, organizationId?: number, format: string = 'yyyy-MM-dd'): Promise<string> {
+		if (!date) return 'N/A';
+		
+		const timezone = await this.getOrganizationTimezone(organizationId);
+		return TimezoneUtil.formatInOrganizationTime(date, format, timezone);
+	}
+
+	/**
+	 * Get current time in organization timezone
+	 */
+	private async getCurrentOrganizationTime(organizationId?: number): Promise<Date> {
+		const timezone = await this.getOrganizationTimezone(organizationId);
+		return TimezoneUtil.getCurrentOrganizationTime(timezone);
+	}
+
+	/**
+	 * Convert server time to organization time
+	 */
+	private async toOrganizationTime(serverDate: Date, organizationId?: number): Promise<Date> {
+		const timezone = await this.getOrganizationTimezone(organizationId);
+		return TimezoneUtil.toOrganizationTime(serverDate, timezone);
 	}
 
 	onModuleInit() {

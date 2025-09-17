@@ -49,6 +49,21 @@ import {
 export class AttendanceReportsService {
 	private readonly logger = new Logger(AttendanceReportsService.name);
 
+	// ======================================================
+	// TIMEZONE HELPER METHODS
+	// ======================================================
+
+	/**
+	 * Format time in organization timezone for reports
+	 */
+	private async formatTimeInOrganizationTimezone(date: Date, organizationId?: number, format: string = 'h:mm a'): Promise<string> {
+		if (!date) return 'N/A';
+		if (!organizationId) return TimezoneUtil.formatInOrganizationTime(date, format, TimezoneUtil.getSafeTimezone());
+		
+		const timezone = await this.getOrganizationTimezone(organizationId);
+		return TimezoneUtil.formatInOrganizationTime(date, format, timezone);
+	}
+
 	constructor(
 		@InjectRepository(Attendance)
 		private attendanceRepository: Repository<Attendance>,
@@ -3356,8 +3371,8 @@ export class AttendanceReportsService {
 
 			const newMetric = {
 				user: reportUser,
-				todayCheckIn: todayRecord?.checkIn ? format(todayRecord.checkIn, 'HH:mm') : null,
-				todayCheckOut: todayRecord?.checkOut ? format(todayRecord.checkOut, 'HH:mm') : null,
+				todayCheckIn: todayRecord?.checkIn ? await this.formatTimeInOrganizationTimezone(todayRecord.checkIn, organizationId, 'HH:mm') : null,
+				todayCheckOut: todayRecord?.checkOut ? await this.formatTimeInOrganizationTimezone(todayRecord.checkOut, organizationId, 'HH:mm') : null,
 				hoursWorked: Math.round(todayHours * 100) / 100,
 				isLate,
 				lateMinutes,
