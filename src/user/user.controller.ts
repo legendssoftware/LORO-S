@@ -5,6 +5,8 @@ import { AuthGuard } from '../guards/auth.guard';
 import { Roles } from '../decorators/role.decorator';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { CreateUserPreferencesDto } from './dto/create-user-preferences.dto';
+import { UpdateUserPreferencesDto } from './dto/update-user-preferences.dto';
 import { BulkCreateUserDto, BulkCreateUserResponse } from './dto/bulk-create-user.dto';
 import { BulkUpdateUserDto, BulkUpdateUserResponse } from './dto/bulk-update-user.dto';
 import {
@@ -3118,6 +3120,301 @@ Safely removes performance targets for a specific user with comprehensive cleanu
 		});
 
 		return this.userService.deleteUserTarget(ref, accessScope.orgId, accessScope.branchId);
+	}
+
+	// ======================================================
+	// USER PREFERENCES MANAGEMENT ROUTES
+	// ======================================================
+
+	@Get(':ref/preferences')
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.USER)
+	@ApiOperation({
+		summary: '⚙️ Get user preferences',
+		description: `
+# User Preferences Retrieval System
+
+Retrieves personalized preferences and settings for a specific user including theme, language, notification settings, and other customization options.
+
+## 🎯 **Core Features**
+- **Theme Settings**: Dark/light mode preferences
+- **Language Selection**: Multilingual interface support
+- **Notification Controls**: Granular notification preferences
+- **Display Settings**: Date/time format customization
+- **Security Settings**: Biometric and authentication preferences
+- **Accessibility**: Advanced feature visibility controls
+
+## 🔒 **Access Control**
+- **Self Access**: Users can view their own preferences
+- **Management Access**: Managers can view team member preferences
+- **Administrative Access**: Full organizational preference visibility
+- **Cross-Organization**: Admin-level cross-organization access (where permitted)
+
+## 📊 **Response Data**
+- **Current Settings**: All active preference configurations
+- **Default Values**: System defaults where no custom preferences exist
+- **Feature Availability**: Platform-specific feature availability
+- **Last Updated**: Timestamp of most recent preference changes
+		`,
+		operationId: 'getUserPreferences',
+	})
+	@ApiParam({
+		name: 'ref',
+		description: 'User reference identifier - Must be a valid user ID',
+		type: Number,
+		example: 123,
+	})
+	@ApiOkResponse({
+		description: '✅ User preferences retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				preferences: {
+					type: 'object',
+					properties: {
+						theme: { type: 'string', example: 'light', description: 'UI theme preference' },
+						language: { type: 'string', example: 'en', description: 'Interface language' },
+						notifications: { type: 'boolean', example: true, description: 'Push notifications enabled' },
+						shiftAutoEnd: { type: 'boolean', example: false, description: 'Auto-end shift when leaving work location' },
+						notificationFrequency: { type: 'string', example: 'real_time', description: 'Notification delivery frequency' },
+						dateFormat: { type: 'string', example: 'DD/MM/YYYY', description: 'Preferred date format' },
+						timeFormat: { type: 'string', example: '24h', description: 'Preferred time format' },
+						emailNotifications: { type: 'boolean', example: true, description: 'Email notifications enabled' },
+						smsNotifications: { type: 'boolean', example: false, description: 'SMS notifications enabled' },
+						biometricAuth: { type: 'boolean', example: true, description: 'Biometric authentication enabled' },
+						advancedFeatures: { type: 'boolean', example: false, description: 'Show advanced features' },
+						timezone: { type: 'string', example: 'Africa/Johannesburg', description: 'Preferred timezone' },
+					},
+				},
+				message: {
+					type: 'string',
+					example: 'User preferences retrieved successfully',
+					description: 'Success message from service',
+				},
+			},
+			required: ['preferences', 'message'],
+		},
+	})
+	@ApiNotFoundResponse({
+		description: '❌ User not found',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'User not found' },
+				error: { type: 'string', example: 'Not Found' },
+				statusCode: { type: 'number', example: 404 },
+			},
+		},
+	})
+	@ApiForbiddenResponse({
+		description: '🚫 Access denied - Insufficient permissions',
+	})
+	@ApiBearerAuth()
+	getUserPreferences(
+		@Param('ref', ParseIntPipe) ref: number,
+		@Req() req: AuthenticatedRequest,
+	): Promise<{ preferences: any; message: string }> {
+		const accessScope = this.getAccessScope(req.user);
+		return this.userService.getUserPreferences(ref, accessScope);
+	}
+
+	@Post(':ref/preferences')
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.USER)
+	@ApiOperation({
+		summary: '⚙️ Create user preferences',
+		description: `
+# User Preferences Creation System
+
+Creates initial preference settings for a user account including theme, language, notification settings, and other customization options.
+
+## 🎯 **Core Features**
+- **Theme Configuration**: Set dark/light mode preferences
+- **Language Setup**: Configure multilingual interface
+- **Notification Setup**: Establish notification preferences
+- **Display Configuration**: Set date/time format preferences
+- **Security Setup**: Configure biometric and authentication preferences
+- **Feature Controls**: Set advanced feature visibility
+
+## 🔒 **Access Control**
+- **Self Management**: Users can create their own preferences
+- **Management Control**: Managers can set team member preferences
+- **Administrative Control**: Full organizational preference management
+- **Default Inheritance**: System defaults applied for unspecified settings
+
+## ⚡ **Smart Defaults**
+- **Platform Detection**: Automatic platform-appropriate defaults
+- **Organization Standards**: Inherits organizational preference standards
+- **Accessibility**: Applies accessibility-friendly defaults when detected
+- **Security Policies**: Enforces organizational security requirements
+		`,
+		operationId: 'createUserPreferences',
+	})
+	@ApiParam({
+		name: 'ref',
+		description: 'User reference identifier - Must be a valid user ID',
+		type: Number,
+		example: 123,
+	})
+	@ApiBody({
+		description: 'User preferences configuration data',
+		type: CreateUserPreferencesDto,
+		examples: {
+			basic: {
+				summary: 'Basic preferences setup',
+				value: {
+					theme: 'light',
+					language: 'en',
+					notifications: true,
+					dateFormat: 'DD/MM/YYYY',
+					timeFormat: '24h',
+				},
+			},
+			advanced: {
+				summary: 'Advanced preferences configuration',
+				value: {
+					theme: 'dark',
+					language: 'en',
+					notifications: true,
+					shiftAutoEnd: true,
+					notificationFrequency: 'real_time',
+					dateFormat: 'DD/MM/YYYY',
+					timeFormat: '24h',
+					emailNotifications: true,
+					smsNotifications: false,
+					biometricAuth: true,
+					advancedFeatures: true,
+					timezone: 'Africa/Johannesburg',
+				},
+			},
+		},
+	})
+	@ApiCreatedResponse({
+		description: '✅ User preferences created successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: {
+					type: 'string',
+					example: 'User preferences created successfully',
+					description: 'Success message from service',
+				},
+			},
+			required: ['message'],
+		},
+	})
+	@ApiNotFoundResponse({
+		description: '❌ User not found',
+	})
+	@ApiForbiddenResponse({
+		description: '🚫 Access denied - Insufficient permissions',
+	})
+	@ApiBadRequestResponse({
+		description: '❌ Invalid preference data provided',
+	})
+	@ApiBearerAuth()
+	createUserPreferences(
+		@Param('ref', ParseIntPipe) ref: number,
+		@Body() createUserPreferencesDto: CreateUserPreferencesDto,
+		@Req() req: AuthenticatedRequest,
+	): Promise<{ message: string }> {
+		const accessScope = this.getAccessScope(req.user);
+		return this.userService.createUserPreferences(ref, createUserPreferencesDto, accessScope);
+	}
+
+	@Patch(':ref/preferences')
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.USER)
+	@ApiOperation({
+		summary: '⚙️ Update user preferences',
+		description: `
+# User Preferences Update System
+
+Updates specific preference settings for a user account with partial update support and validation.
+
+## 🎯 **Core Features**
+- **Partial Updates**: Update only specific preference fields
+- **Validation**: Comprehensive preference value validation
+- **Merge Strategy**: Intelligent merging with existing preferences
+- **Rollback Support**: Safe update with rollback capabilities
+- **Change Tracking**: Detailed logging of preference changes
+
+## 🔒 **Access Control**
+- **Self Management**: Users can update their own preferences
+- **Management Control**: Managers can modify team member preferences
+- **Administrative Control**: Full organizational preference modification
+- **Policy Enforcement**: Respects organizational preference policies
+
+## ⚡ **Smart Updates**
+- **Conflict Resolution**: Handles preference conflicts intelligently
+- **Dependency Management**: Updates related preferences automatically
+- **Validation Chain**: Multi-level validation for complex preferences
+- **Performance Optimization**: Efficient partial update processing
+		`,
+		operationId: 'updateUserPreferences',
+	})
+	@ApiParam({
+		name: 'ref',
+		description: 'User reference identifier - Must be a valid user ID',
+		type: Number,
+		example: 123,
+	})
+	@ApiBody({
+		description: 'Partial user preferences update data',
+		type: UpdateUserPreferencesDto,
+		examples: {
+			theme_update: {
+				summary: 'Update theme only',
+				value: {
+					theme: 'dark',
+				},
+			},
+			notification_update: {
+				summary: 'Update notification settings',
+				value: {
+					notifications: false,
+					notificationFrequency: 'disabled',
+					emailNotifications: false,
+				},
+			},
+			display_update: {
+				summary: 'Update display preferences',
+				value: {
+					dateFormat: 'MM/DD/YYYY',
+					timeFormat: '12h',
+					language: 'af',
+				},
+			},
+		},
+	})
+	@ApiOkResponse({
+		description: '✅ User preferences updated successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: {
+					type: 'string',
+					example: 'User preferences updated successfully',
+					description: 'Success message from service',
+				},
+			},
+			required: ['message'],
+		},
+	})
+	@ApiNotFoundResponse({
+		description: '❌ User not found',
+	})
+	@ApiForbiddenResponse({
+		description: '🚫 Access denied - Insufficient permissions',
+	})
+	@ApiBadRequestResponse({
+		description: '❌ Invalid preference data provided',
+	})
+	@ApiBearerAuth()
+	updateUserPreferences(
+		@Param('ref', ParseIntPipe) ref: number,
+		@Body() updateUserPreferencesDto: UpdateUserPreferencesDto,
+		@Req() req: AuthenticatedRequest,
+	): Promise<{ message: string }> {
+		const accessScope = this.getAccessScope(req.user);
+		return this.userService.updateUserPreferences(ref, updateUserPreferencesDto, accessScope);
 	}
 
 	@Post('admin/re-invite-all')

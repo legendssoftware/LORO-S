@@ -30,6 +30,8 @@ import { User } from './entities/user.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { CreateUserPreferencesDto } from './dto/create-user-preferences.dto';
+import { UpdateUserPreferencesDto } from './dto/update-user-preferences.dto';
 import { Injectable, NotFoundException, Inject, Logger } from '@nestjs/common';
 import { NewSignUp } from '../lib/types/user';
 import { AccountStatus } from '../lib/enums/status.enums';
@@ -6801,5 +6803,395 @@ export class UserService {
 			this.logger.error(`Failed to update device registration for user ${userId}:`, error);
 			throw error;
 		}
+	}
+
+	// ======================================================
+	// USER PREFERENCES MANAGEMENT METHODS
+	// ======================================================
+
+	/**
+	 * Get user preferences
+	 */
+	async getUserPreferences(
+		userId: number,
+		accessScope: { orgId?: number; branchId?: number; isElevated: boolean },
+	): Promise<{ preferences: any; message: string }> {
+		const operationId = `getUserPreferences_${userId}_${Date.now()}`;
+		
+		this.logger.log(`🔍 [${operationId}] Starting get user preferences operation`, {
+			userId,
+			accessScope: {
+				orgId: accessScope.orgId,
+				branchId: accessScope.branchId,
+				isElevated: accessScope.isElevated,
+			},
+			timestamp: new Date().toISOString(),
+		});
+
+		try {
+			this.logger.debug(`📋 [${operationId}] Building user query with access control`, {
+				userId,
+				isElevated: accessScope.isElevated,
+				orgScope: accessScope.orgId,
+				branchScope: accessScope.branchId,
+			});
+
+			// Find the user with access control
+			const user = await this.userRepository.findOne({
+				where: {
+					uid: userId,
+					isDeleted: false,
+					...(accessScope.isElevated
+						? {}
+						: {
+								organisation: { uid: accessScope.orgId },
+								...(accessScope.branchId ? { branch: { uid: accessScope.branchId } } : {}),
+						  }),
+				},
+			});
+
+			if (!user) {
+				this.logger.warn(`❌ [${operationId}] User not found or access denied`, {
+					userId,
+					accessScope,
+					isElevated: accessScope.isElevated,
+				});
+				throw new NotFoundException(`User with ID ${userId} not found or access denied`);
+			}
+
+			this.logger.debug(`👤 [${operationId}] User found, retrieving preferences`, {
+				userId: user.uid,
+				username: user.username,
+				email: user.email,
+				hasExistingPreferences: !!user.preferences,
+				preferenceKeys: user.preferences ? Object.keys(user.preferences) : [],
+			});
+
+			// Return user preferences or defaults
+			const preferences = user.preferences || this.getDefaultPreferences();
+			const isUsingDefaults = !user.preferences;
+
+			this.logger.log(`✅ [${operationId}] Successfully retrieved preferences for user: ${userId}`, {
+				userId,
+				username: user.username,
+				email: user.email,
+				isUsingDefaults,
+				preferenceCount: Object.keys(preferences).length,
+				preferences: {
+					theme: preferences.theme,
+					language: preferences.language,
+					notifications: preferences.notifications,
+					timezone: preferences.timezone,
+				},
+				operation: 'getUserPreferences',
+				duration: `${Date.now() - parseInt(operationId.split('_')[2])}ms`,
+			});
+
+			return {
+				preferences,
+				message: 'User preferences retrieved successfully',
+			};
+		} catch (error) {
+			this.logger.error(`❌ [${operationId}] Failed to get preferences for user ${userId}`, {
+				userId,
+				accessScope,
+				error: error.message,
+				stack: error.stack,
+				operation: 'getUserPreferences',
+				duration: `${Date.now() - parseInt(operationId.split('_')[2])}ms`,
+			});
+			throw error;
+		}
+	}
+
+	/**
+	 * Create user preferences
+	 */
+	async createUserPreferences(
+		userId: number,
+		createUserPreferencesDto: CreateUserPreferencesDto,
+		accessScope: { orgId?: number; branchId?: number; isElevated: boolean },
+	): Promise<{ message: string }> {
+		const operationId = `createUserPreferences_${userId}_${Date.now()}`;
+		
+		this.logger.log(`🆕 [${operationId}] Starting create user preferences operation`, {
+			userId,
+			accessScope: {
+				orgId: accessScope.orgId,
+				branchId: accessScope.branchId,
+				isElevated: accessScope.isElevated,
+			},
+			incomingPreferences: createUserPreferencesDto,
+			timestamp: new Date().toISOString(),
+		});
+
+		try {
+			this.logger.debug(`📋 [${operationId}] Validating user access and preferences data`, {
+				userId,
+				isElevated: accessScope.isElevated,
+				preferenceKeys: Object.keys(createUserPreferencesDto),
+				preferenceCount: Object.keys(createUserPreferencesDto).length,
+			});
+
+			// Find the user with access control
+			const user = await this.userRepository.findOne({
+				where: {
+					uid: userId,
+					isDeleted: false,
+					...(accessScope.isElevated
+						? {}
+						: {
+								organisation: { uid: accessScope.orgId },
+								...(accessScope.branchId ? { branch: { uid: accessScope.branchId } } : {}),
+						  }),
+				},
+			});
+
+			if (!user) {
+				this.logger.warn(`❌ [${operationId}] User not found or access denied for preference creation`, {
+					userId,
+					accessScope,
+					isElevated: accessScope.isElevated,
+				});
+				throw new NotFoundException(`User with ID ${userId} not found or access denied`);
+			}
+
+			this.logger.debug(`👤 [${operationId}] User found, preparing preference data`, {
+				userId: user.uid,
+				username: user.username,
+				email: user.email,
+				hasExistingPreferences: !!user.preferences,
+				existingPreferenceKeys: user.preferences ? Object.keys(user.preferences) : [],
+			});
+
+			// Merge with defaults and validate
+			const defaultPreferences = this.getDefaultPreferences();
+			const newPreferences = { ...defaultPreferences, ...createUserPreferencesDto };
+
+			this.logger.debug(`🔧 [${operationId}] Merging preferences with defaults`, {
+				defaultKeys: Object.keys(defaultPreferences),
+				incomingKeys: Object.keys(createUserPreferencesDto),
+				finalKeys: Object.keys(newPreferences),
+				finalPreferences: {
+					theme: newPreferences.theme,
+					language: newPreferences.language,
+					notifications: newPreferences.notifications,
+					timezone: newPreferences.timezone,
+				},
+			});
+
+			// Update user preferences
+			const updateResult = await this.userRepository.update(userId, {
+				preferences: newPreferences,
+			});
+
+			if (updateResult.affected === 0) {
+				this.logger.error(`❌ [${operationId}] No rows affected during preference update`, {
+					userId,
+					updateResult,
+				});
+				throw new Error(`Failed to update preferences for user ${userId}`);
+			}
+
+			this.logger.log(`✅ [${operationId}] Successfully created preferences for user: ${userId}`, {
+				userId,
+				username: user.username,
+				email: user.email,
+				preferencesCreated: Object.keys(newPreferences).length,
+				affectedRows: updateResult.affected,
+				operation: 'createUserPreferences',
+				duration: `${Date.now() - parseInt(operationId.split('_')[2])}ms`,
+			});
+
+			// Clear user cache
+			await this.invalidateUserCache(user);
+			this.logger.debug(`🗑️ [${operationId}] User cache invalidated for user: ${userId}`);
+
+			return {
+				message: 'User preferences created successfully',
+			};
+		} catch (error) {
+			this.logger.error(`❌ [${operationId}] Failed to create preferences for user ${userId}`, {
+				userId,
+				accessScope,
+				incomingPreferences: createUserPreferencesDto,
+				error: error.message,
+				stack: error.stack,
+				operation: 'createUserPreferences',
+				duration: `${Date.now() - parseInt(operationId.split('_')[2])}ms`,
+			});
+			throw error;
+		}
+	}
+
+	/**
+	 * Update user preferences
+	 */
+	async updateUserPreferences(
+		userId: number,
+		updateUserPreferencesDto: UpdateUserPreferencesDto,
+		accessScope: { orgId?: number; branchId?: number; isElevated: boolean },
+	): Promise<{ message: string }> {
+		const operationId = `updateUserPreferences_${userId}_${Date.now()}`;
+		
+		this.logger.log(`🔄 [${operationId}] Starting update user preferences operation`, {
+			userId,
+			accessScope: {
+				orgId: accessScope.orgId,
+				branchId: accessScope.branchId,
+				isElevated: accessScope.isElevated,
+			},
+			incomingPreferenceUpdates: updateUserPreferencesDto,
+			updateKeys: Object.keys(updateUserPreferencesDto),
+			timestamp: new Date().toISOString(),
+		});
+
+		try {
+			this.logger.debug(`📋 [${operationId}] Validating user access and preference updates`, {
+				userId,
+				isElevated: accessScope.isElevated,
+				updateKeys: Object.keys(updateUserPreferencesDto),
+				updateCount: Object.keys(updateUserPreferencesDto).length,
+			});
+
+			// Find the user with access control
+			const user = await this.userRepository.findOne({
+				where: {
+					uid: userId,
+					isDeleted: false,
+					...(accessScope.isElevated
+						? {}
+						: {
+								organisation: { uid: accessScope.orgId },
+								...(accessScope.branchId ? { branch: { uid: accessScope.branchId } } : {}),
+						  }),
+				},
+			});
+
+			if (!user) {
+				this.logger.warn(`❌ [${operationId}] User not found or access denied for preference update`, {
+					userId,
+					accessScope,
+					isElevated: accessScope.isElevated,
+				});
+				throw new NotFoundException(`User with ID ${userId} not found or access denied`);
+			}
+
+			this.logger.debug(`👤 [${operationId}] User found, preparing preference updates`, {
+				userId: user.uid,
+				username: user.username,
+				email: user.email,
+				hasExistingPreferences: !!user.preferences,
+				existingPreferenceKeys: user.preferences ? Object.keys(user.preferences) : [],
+			});
+
+			// Get current preferences or defaults
+			const currentPreferences = user.preferences || this.getDefaultPreferences();
+			const isUsingDefaults = !user.preferences;
+
+			this.logger.debug(`🔧 [${operationId}] Merging preference updates with current preferences`, {
+				currentKeys: Object.keys(currentPreferences),
+				updateKeys: Object.keys(updateUserPreferencesDto),
+				isUsingDefaults,
+				currentPreferences: {
+					theme: currentPreferences.theme,
+					language: currentPreferences.language,
+					notifications: currentPreferences.notifications,
+					timezone: currentPreferences.timezone,
+				},
+				updates: updateUserPreferencesDto,
+			});
+
+			// Merge with existing preferences
+			const updatedPreferences = { ...currentPreferences, ...updateUserPreferencesDto };
+
+			this.logger.debug(`📝 [${operationId}] Final preferences to be saved`, {
+				finalPreferences: {
+					theme: updatedPreferences.theme,
+					language: updatedPreferences.language,
+					notifications: updatedPreferences.notifications,
+					timezone: updatedPreferences.timezone,
+				},
+				changedKeys: Object.keys(updateUserPreferencesDto),
+				totalKeys: Object.keys(updatedPreferences).length,
+			});
+
+			// Update user preferences
+			const updateResult = await this.userRepository.update(userId, {
+				preferences: updatedPreferences,
+			});
+
+			if (updateResult.affected === 0) {
+				this.logger.error(`❌ [${operationId}] No rows affected during preference update`, {
+					userId,
+					updateResult,
+				});
+				throw new Error(`Failed to update preferences for user ${userId}`);
+			}
+
+			this.logger.log(`✅ [${operationId}] Successfully updated preferences for user: ${userId}`, {
+				userId,
+				username: user.username,
+				email: user.email,
+				updatedKeys: Object.keys(updateUserPreferencesDto),
+				totalPreferences: Object.keys(updatedPreferences).length,
+				affectedRows: updateResult.affected,
+				wasUsingDefaults: isUsingDefaults,
+				operation: 'updateUserPreferences',
+				duration: `${Date.now() - parseInt(operationId.split('_')[2])}ms`,
+			});
+
+			// Clear user cache
+			await this.invalidateUserCache(user);
+			this.logger.debug(`🗑️ [${operationId}] User cache invalidated for user: ${userId}`);
+
+			return {
+				message: 'User preferences updated successfully',
+			};
+		} catch (error) {
+			this.logger.error(`❌ [${operationId}] Failed to update preferences for user ${userId}`, {
+				userId,
+				accessScope,
+				incomingUpdates: updateUserPreferencesDto,
+				error: error.message,
+				stack: error.stack,
+				operation: 'updateUserPreferences',
+				duration: `${Date.now() - parseInt(operationId.split('_')[2])}ms`,
+			});
+			throw error;
+		}
+	}
+
+	/**
+	 * Get default user preferences
+	 */
+	private getDefaultPreferences(): any {
+		const defaults = {
+			theme: 'light',
+			language: 'en',
+			notifications: true,
+			shiftAutoEnd: false,
+			notificationFrequency: 'real_time',
+			dateFormat: 'DD/MM/YYYY',
+			timeFormat: '24h',
+			emailNotifications: true,
+			smsNotifications: false,
+			biometricAuth: false,
+			advancedFeatures: false,
+			timezone: 'Africa/Johannesburg',
+		};
+
+		this.logger.debug('🔧 Returning default user preferences', {
+			defaultKeys: Object.keys(defaults),
+			defaultCount: Object.keys(defaults).length,
+			defaults: {
+				theme: defaults.theme,
+				language: defaults.language,
+				notifications: defaults.notifications,
+				timezone: defaults.timezone,
+			},
+		});
+
+		return defaults;
 	}
 }

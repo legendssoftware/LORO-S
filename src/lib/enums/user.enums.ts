@@ -63,3 +63,43 @@ export enum Department {
 	OFFICER = 'officer',
 	EXECUTIVE = 'executive',
 }
+
+export enum Theme {
+	LIGHT = 'light',
+	DARK = 'dark',
+	SYSTEM = 'system',
+}
+
+export enum Language {
+	ENGLISH = 'en',
+	AFRIKAANS = 'af',
+	ZULU = 'zu',
+	XHOSA = 'xh',
+	SOTHO = 'st',
+	TSWANA = 'tn',
+	TSONGA = 'ts',
+	SWATI = 'ss',
+	VENDA = 've',
+	NDEBELE = 'nr',
+	PEDI = 'nso',
+}
+
+export enum NotificationFrequency {
+	REAL_TIME = 'real_time',
+	HOURLY = 'hourly',
+	DAILY = 'daily',
+	WEEKLY = 'weekly',
+	DISABLED = 'disabled',
+}
+
+export enum DateFormat {
+	DD_MM_YYYY = 'DD/MM/YYYY',
+	MM_DD_YYYY = 'MM/DD/YYYY',
+	YYYY_MM_DD = 'YYYY-MM-DD',
+	DD_MMM_YYYY = 'DD MMM YYYY',
+}
+
+export enum TimeFormat {
+	TWELVE_HOUR = '12h',
+	TWENTY_FOUR_HOUR = '24h',
+}
