@@ -1,0 +1,81 @@
+{{#base headerTitle="Preferences Updated Successfully" headerSubtitle="Your app experience has been customized to your preferences"}}
+
+<div class="greeting">
+    Hello {{userFirstName}}! ✨
+</div>
+
+<div class="success-notice">
+    <p>🎉 <strong>Great news!</strong> Your preferences have been successfully updated in {{platformName}}.</p>
+</div>
+
+<div class="message">
+    <p>The app will now be customized and served to you according to your new preferences. You'll notice the changes the next time you log in or refresh your app.</p>
+</div>
+
+<div class="info-card">
+    <h3>🔧 Your Updated Preferences</h3>
+    <div class="preference-changes">
+        {{#each preferenceChanges}}
+        <div class="preference-item">
+            <span class="preference-label">{{this.displayName}}</span>
+            <span class="preference-value">{{this.displayValue}}</span>
+        </div>
+        {{/each}}
+    </div>
+</div>
+
+<div class="info-card">
+    <h3>✅ Change Details</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Updated At</span>
+            <span class="detail-value">{{updateTime}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Organization</span>
+            <span class="detail-value">{{organizationName}}</span>
+        </div>
+        {{#if branchName}}
+        <div class="detail-item">
+            <span class="detail-label">Branch</span>
+            <span class="detail-value">{{branchName}}</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+
+<div class="info-card">
+    <h4>🌟 What's Next?</h4>
+    <ul class="feature-list">
+        <li>🔄 <strong>Immediate Effect:</strong> Your changes are now active across all your devices</li>
+        <li>📱 <strong>Mobile App:</strong> Your mobile app will sync the new preferences automatically</li>
+        <li>🌐 <strong>Web Dashboard:</strong> Your web experience is now personalized</li>
+        <li>⚙️ <strong>Future Changes:</strong> You can update your preferences anytime from Settings</li>
+    </ul>
+</div>
+
+<div class="warning-notice">
+    <p>💡 <strong>Pro Tip:</strong> You can update your preferences anytime from the Settings page to keep customizing your experience.</p>
+</div>
+
+<div class="info-card">
+    <h4>🔐 Security Notice</h4>
+    <p>If you didn't make these changes, please contact your administrator immediately to secure your account.</p>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Support Email</span>
+            <span class="detail-value"><a href="mailto:{{supportEmail}}">{{supportEmail}}</a></span>
+        </div>
+    </div>
+</div>
+
+<div class="cta-section">
+    <a href="{{settingsUrl}}" class="cta-button">⚙️ Manage Preferences</a>
+    <a href="{{dashboardUrl}}" class="cta-button secondary">🏠 Go to Dashboard</a>
+</div>
+
+<div class="message">
+    <p>Your personalized experience is now active! Thank you for customizing {{platformName}} to work best for you.</p>
+</div>
+
+{{/base}}

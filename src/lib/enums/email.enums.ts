@@ -27,6 +27,8 @@ export enum EmailType {
 	// Attendance break notifications
 	ATTENDANCE_BREAK_STARTED = 'attendance_break_started',
 	ATTENDANCE_BREAK_ENDED = 'attendance_break_ended',
+	// Attendance shift auto-end
+	ATTENDANCE_SHIFT_AUTO_ENDED = 'attendance_shift_auto_ended',
 	// Quotation related emails
 	ORDER_RECEIVED_CLIENT = 'order_received_client',
 	NEW_QUOTATION_CLIENT = 'new_quotation_client',
@@ -68,6 +70,7 @@ export enum EmailType {
 	// User related emails
 	NEW_USER_ADMIN_NOTIFICATION = 'new_user_admin_notification',
 	NEW_USER_WELCOME = 'new_user_welcome',
+	USER_PREFERENCES_UPDATED = 'user_preferences_updated',
 	// Lead related emails
 	LEAD_CONVERTED_CLIENT = 'lead_converted_client',
 	LEAD_CONVERTED_CREATOR = 'lead_converted_creator',

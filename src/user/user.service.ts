@@ -55,6 +55,7 @@ import { EmailType } from '../lib/enums/email.enums';
 import { NewUserWelcomeData } from '../lib/types/email-templates.types';
 import { ExternalTargetUpdateDto, TargetUpdateMode } from './dto/external-target-update.dto';
 import { formatDateSafely } from '../lib/utils/date.utils';
+import { TimezoneUtil } from '../lib/utils/timezone.util';
 import { BulkCreateUserDto, BulkCreateUserResponse, BulkUserResult } from './dto/bulk-create-user.dto';
 import { BulkUpdateUserDto, BulkUpdateUserResponse, BulkUpdateUserResult } from './dto/bulk-update-user.dto';
 import { DataSource } from 'typeorm';
@@ -104,6 +105,37 @@ export class UserService {
 	 */
 	private getCacheKey(key: string | number): string {
 		return `${this.CACHE_PREFIX}${key}`;
+	}
+
+	/**
+	 * Get organization timezone for user
+	 * @param user - User entity with organization relation
+	 * @returns Safe timezone string
+	 */
+	private async getOrganizationTimezone(user: User): Promise<string> {
+		if (!user?.organisation?.uid) {
+			return TimezoneUtil.getSafeTimezone();
+		}
+
+		try {
+			const organizationHours = await this.organisationHoursService.findDefault(String(user.organisation.uid));
+			return organizationHours?.timezone || TimezoneUtil.getSafeTimezone();
+		} catch (error) {
+			this.logger.warn(`Error getting timezone for user ${user.uid} org ${user.organisation?.uid}, using default:`, error);
+			return TimezoneUtil.getSafeTimezone();
+		}
+	}
+
+	/**
+	 * Format time in user's organization timezone
+	 * @param date - Date to format
+	 * @param user - User entity with organization relation
+	 * @param format - Date format string (default: 'PPPp')
+	 * @returns Formatted time string in organization timezone
+	 */
+	private async formatTimeInUserTimezone(date: Date, user: User, format: string = 'PPPp'): Promise<string> {
+		const timezone = await this.getOrganizationTimezone(user);
+		return TimezoneUtil.formatInOrganizationTime(date, format, timezone);
 	}
 
 	/**
@@ -6764,6 +6796,68 @@ export class UserService {
 	}
 
 	/**
+	 * Send preference update notification email
+	 */
+	private async sendPreferenceUpdateNotificationEmail(user: User, updateUserPreferencesDto: any): Promise<void> {
+		const startTime = Date.now();
+		this.logger.debug(`Preparing preference update email for: ${user.email} (${user.uid})`);
+
+		try {
+			// Get the formatted update time in user's organization timezone
+			const updateTime = await this.formatTimeInUserTimezone(new Date(), user, 'PPPp');
+
+			// Format the updated preferences for display (for template)
+			const formatPreferenceChanges = (changes: any) => {
+				const friendlyNames: { [key: string]: string } = {
+					theme: 'Theme',
+					language: 'Language',
+					notifications: 'Notifications',
+					shiftAutoEnd: 'Auto-End Shift',
+					notificationFrequency: 'Notification Frequency',
+					dateFormat: 'Date Format',
+					timeFormat: 'Time Format',
+					emailNotifications: 'Email Notifications',
+					smsNotifications: 'SMS Notifications',
+					biometricAuth: 'Biometric Authentication',
+					advancedFeatures: 'Advanced Features',
+					timezone: 'Timezone',
+				};
+
+				return Object.entries(changes).map(([key, value]) => ({
+					displayName: friendlyNames[key] || key,
+					displayValue: typeof value === 'boolean' ? (value ? 'Enabled' : 'Disabled') : String(value)
+				}));
+			};
+
+			const emailData = {
+				userEmail: user.email,
+				userName: `${user.name} ${user.surname}`,
+				userFirstName: user.name,
+				platformName: 'Loro CRM',
+				loginUrl: process.env.CLIENT_URL || 'https://dashboard.loro.co.za/sign-in',
+				supportEmail: process.env.SUPPORT_EMAIL || 'support@loro.africa',
+				organizationName: user.organisation?.name || 'Your Organization',
+				branchName: user.branch?.name || 'Main Branch',
+				dashboardUrl: process.env.CLIENT_URL || 'https://dashboard.loro.co.za',
+				settingsUrl: `${process.env.CLIENT_URL || 'https://dashboard.loro.co.za'}/settings`,
+				updateTime,
+				preferenceChanges: formatPreferenceChanges(updateUserPreferencesDto),
+			};
+
+			// Send email using proper EmailType enum (following attendance service pattern)
+			this.eventEmitter.emit('send.email', EmailType.USER_PREFERENCES_UPDATED, [user.email], emailData);
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`[EMAIL] Preference update notification sent to: ${user.email} in ${executionTime}ms`);
+		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(
+				`[EMAIL] Failed to send preference update notification to ${user.email} after ${executionTime}ms: ${error.message}`,
+			);
+		}
+	}
+
+	/**
 	 * Update device registration information for push notifications
 	 */
 	async updateDeviceRegistration(
@@ -7034,27 +7128,13 @@ export class UserService {
 	): Promise<{ message: string }> {
 		const operationId = `updateUserPreferences_${userId}_${Date.now()}`;
 		
-		this.logger.log(`🔄 [${operationId}] Starting update user preferences operation`, {
+		this.logger.log(`🔄 [${operationId}] Updating user preferences`, {
 			userId,
-			accessScope: {
-				orgId: accessScope.orgId,
-				branchId: accessScope.branchId,
-				isElevated: accessScope.isElevated,
-			},
-			incomingPreferenceUpdates: updateUserPreferencesDto,
 			updateKeys: Object.keys(updateUserPreferencesDto),
-			timestamp: new Date().toISOString(),
 		});
 
 		try {
-			this.logger.debug(`📋 [${operationId}] Validating user access and preference updates`, {
-				userId,
-				isElevated: accessScope.isElevated,
-				updateKeys: Object.keys(updateUserPreferencesDto),
-				updateCount: Object.keys(updateUserPreferencesDto).length,
-			});
-
-			// Find the user with access control
+			// Find the user with access control and load organization relation for timezone
 			const user = await this.userRepository.findOne({
 				where: {
 					uid: userId,
@@ -7066,55 +7146,23 @@ export class UserService {
 								...(accessScope.branchId ? { branch: { uid: accessScope.branchId } } : {}),
 						  }),
 				},
+				relations: ['organisation', 'branch'],
 			});
 
 			if (!user) {
 				this.logger.warn(`❌ [${operationId}] User not found or access denied for preference update`, {
 					userId,
 					accessScope,
-					isElevated: accessScope.isElevated,
 				});
 				throw new NotFoundException(`User with ID ${userId} not found or access denied`);
 			}
 
-			this.logger.debug(`👤 [${operationId}] User found, preparing preference updates`, {
-				userId: user.uid,
-				username: user.username,
-				email: user.email,
-				hasExistingPreferences: !!user.preferences,
-				existingPreferenceKeys: user.preferences ? Object.keys(user.preferences) : [],
-			});
-
 			// Get current preferences or defaults
 			const currentPreferences = user.preferences || this.getDefaultPreferences();
-			const isUsingDefaults = !user.preferences;
-
-			this.logger.debug(`🔧 [${operationId}] Merging preference updates with current preferences`, {
-				currentKeys: Object.keys(currentPreferences),
-				updateKeys: Object.keys(updateUserPreferencesDto),
-				isUsingDefaults,
-				currentPreferences: {
-					theme: currentPreferences.theme,
-					language: currentPreferences.language,
-					notifications: currentPreferences.notifications,
-					timezone: currentPreferences.timezone,
-				},
-				updates: updateUserPreferencesDto,
-			});
+			const previousPreferences = { ...currentPreferences };
 
 			// Merge with existing preferences
 			const updatedPreferences = { ...currentPreferences, ...updateUserPreferencesDto };
-
-			this.logger.debug(`📝 [${operationId}] Final preferences to be saved`, {
-				finalPreferences: {
-					theme: updatedPreferences.theme,
-					language: updatedPreferences.language,
-					notifications: updatedPreferences.notifications,
-					timezone: updatedPreferences.timezone,
-				},
-				changedKeys: Object.keys(updateUserPreferencesDto),
-				totalKeys: Object.keys(updatedPreferences).length,
-			});
 
 			// Update user preferences
 			const updateResult = await this.userRepository.update(userId, {
@@ -7124,26 +7172,32 @@ export class UserService {
 			if (updateResult.affected === 0) {
 				this.logger.error(`❌ [${operationId}] No rows affected during preference update`, {
 					userId,
-					updateResult,
 				});
 				throw new Error(`Failed to update preferences for user ${userId}`);
 			}
 
-			this.logger.log(`✅ [${operationId}] Successfully updated preferences for user: ${userId}`, {
-				userId,
-				username: user.username,
-				email: user.email,
-				updatedKeys: Object.keys(updateUserPreferencesDto),
-				totalPreferences: Object.keys(updatedPreferences).length,
-				affectedRows: updateResult.affected,
-				wasUsingDefaults: isUsingDefaults,
-				operation: 'updateUserPreferences',
-				duration: `${Date.now() - parseInt(operationId.split('_')[2])}ms`,
-			});
-
 			// Clear user cache
 			await this.invalidateUserCache(user);
-			this.logger.debug(`🗑️ [${operationId}] User cache invalidated for user: ${userId}`);
+
+			// Emit events for notifications and email
+			this.eventEmitter.emit('user.preferences.updated', {
+				userId: user.uid,
+				userEmail: user.email,
+				userName: `${user.name} ${user.surname}`,
+				previousPreferences,
+				updatedPreferences,
+				changedKeys: Object.keys(updateUserPreferencesDto),
+				timestamp: new Date(),
+			});
+
+			// Send preference update notification email
+			await this.sendPreferenceUpdateNotificationEmail(user, updateUserPreferencesDto);
+
+			this.logger.log(`✅ [${operationId}] Successfully updated preferences for user: ${userId}`, {
+				userId,
+				updatedKeys: Object.keys(updateUserPreferencesDto),
+				affectedRows: updateResult.affected,
+			});
 
 			return {
 				message: 'User preferences updated successfully',
@@ -7151,12 +7205,7 @@ export class UserService {
 		} catch (error) {
 			this.logger.error(`❌ [${operationId}] Failed to update preferences for user ${userId}`, {
 				userId,
-				accessScope,
-				incomingUpdates: updateUserPreferencesDto,
 				error: error.message,
-				stack: error.stack,
-				operation: 'updateUserPreferences',
-				duration: `${Date.now() - parseInt(operationId.split('_')[2])}ms`,
 			});
 			throw error;
 		}

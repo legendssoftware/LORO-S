@@ -564,6 +564,9 @@ export class AttendanceService {
 			await this.attendanceRepository.save(existingShift);
 
 			this.logger.log(`Auto-closed existing shift for user ${userId} at ${closeTime.toISOString()}`);
+
+			// Send email notification about auto-close
+			await this.sendAutoCloseShiftNotification(existingShift, closeTime, orgId);
 		} catch (error) {
 			this.logger.error(`Error auto-closing existing shift for user ${userId}: ${error.message}`);
 
@@ -578,10 +581,84 @@ export class AttendanceService {
 
 				await this.attendanceRepository.save(existingShift);
 				this.logger.log(`Fallback auto-close successful for user ${userId} at 4:30 PM`);
+
+				// Send email notification about fallback auto-close
+				await this.sendAutoCloseShiftNotification(existingShift, closeTime, orgId);
 			} catch (fallbackError) {
 				this.logger.error(`Fallback auto-close also failed for user ${userId}: ${fallbackError.message}`);
 				throw new Error(`Failed to auto-close existing shift: ${error.message}`);
 			}
+		}
+	}
+
+	/**
+	 * Send email notification for auto-closed shift
+	 */
+	private async sendAutoCloseShiftNotification(
+		closedShift: Attendance,
+		closeTime: Date,
+		orgId?: number,
+	): Promise<void> {
+		try {
+			const userId = closedShift.owner?.uid;
+			if (!userId) {
+				this.logger.warn('Cannot send auto-close notification: No user ID found');
+				return;
+			}
+
+			// Get user details
+			const user = await this.userRepository.findOne({
+				where: { uid: Number(userId) },
+				relations: ['organisation', 'branch'],
+			});
+
+			if (!user?.email) {
+				this.logger.warn(`Cannot send auto-close notification: No email found for user ${userId}`);
+				return;
+			}
+
+			// Calculate shift duration and details
+			const checkInTime = new Date(closedShift.checkIn);
+			const workSession = TimeCalculatorUtil.calculateWorkSession(
+				checkInTime,
+				closeTime,
+				closedShift.breakDetails,
+				closedShift.totalBreakTime,
+				orgId ? await this.organizationHoursService.getOrganizationHours(orgId) : null,
+			);
+
+			const checkInTimeString = await this.formatTimeInOrganizationTimezone(checkInTime, orgId);
+			const checkOutTimeString = await this.formatTimeInOrganizationTimezone(closeTime, orgId);
+			const userName = `${user.name} ${user.surname}`;
+			const workTimeDisplay = `${Math.floor(workSession.netWorkMinutes / 60)}h ${workSession.netWorkMinutes % 60}m`;
+			
+			// Prepare email data
+			const emailData = {
+				name: userName,
+				employeeName: userName,
+				employeeEmail: user.email,
+				checkInTime: checkInTimeString,
+				checkOutTime: checkOutTimeString,
+				shiftDuration: workTimeDisplay,
+				totalWorkMinutes: workSession.netWorkMinutes,
+				organizationName: user?.organisation?.name || user?.branch?.organisation?.name || 'Your Organization',
+				branchName: user?.branch?.name || '',
+				dashboardUrl: process.env.WEB_URL || 'https://app.loro.co.za',
+				autoCloseMessage: `This shift was automatically ended at organization close time (${checkOutTimeString}) as per your auto shift end setting that you agreed to use. You can change this setting in your preferences if needed.`,
+				congratulationsMessage: `Your shift has been automatically completed, ${userName}! 🏢 Your shift was ended at ${checkOutTimeString} when the organization closed, as per your auto-end shift preference. You worked from ${checkInTimeString} to ${checkOutTimeString} for a total of ${workTimeDisplay}. Great work today!`,
+			};
+
+			// Send email notification
+			this.eventEmitter.emit('send.email', EmailType.ATTENDANCE_SHIFT_AUTO_ENDED, [user.email], emailData);
+			
+			this.logger.log(
+				`✅ [AttendanceService] Auto-close shift email notification queued for user: ${userId}`,
+			);
+		} catch (error) {
+			this.logger.error(
+				`❌ [AttendanceService] Failed to send auto-close shift notification: ${error.message}`,
+			);
+			// Don't fail the auto-close process if email fails
 		}
 	}
 

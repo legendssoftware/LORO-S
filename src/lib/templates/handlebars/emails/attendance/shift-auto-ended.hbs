@@ -1,0 +1,86 @@
+{{#base headerTitle="Shift Automatically Completed" headerSubtitle="Your shift has been ended at organization close time"}}
+
+<div class="greeting">
+    Hello {{employeeName}}! 🏢
+</div>
+
+<div class="success-notice">
+    <p>🕰️ <strong>Auto-End Complete:</strong> Your shift has been automatically completed at {{checkOutTime}} when {{organizationName}} closed.</p>
+</div>
+
+<div class="message">
+    <p>Your shift was automatically ended at organization close time as per your <strong>auto shift end setting</strong> that you agreed to use.</p>
+</div>
+
+<div class="info-card">
+    <h3>📊 Shift Summary</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Check-in Time</span>
+            <span class="detail-value" style="color: #22c55e; font-weight: 700;">{{checkInTime}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Auto Check-out Time</span>
+            <span class="detail-value" style="color: #f59e0b; font-weight: 700;">{{checkOutTime}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Total Duration</span>
+            <span class="detail-value" style="color: #3b82f6; font-weight: 700;">{{shiftDuration}}</span>
+        </div>
+        {{#if totalBreakTime}}
+        <div class="detail-item">
+            <span class="detail-label">Break Time</span>
+            <span class="detail-value" style="color: #8b5cf6; font-weight: 700;">{{totalBreakTime}}</span>
+        </div>
+        {{/if}}
+        <div class="detail-item">
+            <span class="detail-label">Organization</span>
+            <span class="detail-value">{{organizationName}}</span>
+        </div>
+        {{#if branchName}}
+        <div class="detail-item">
+            <span class="detail-label">Branch</span>
+            <span class="detail-value">{{branchName}}</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+
+<div class="info-card auto-end-notice">
+    <h3>🔧 Auto-End Setting</h3>
+    <p>✅ <strong>Your Preference:</strong> You have enabled automatic shift ending when the organization closes.</p>
+    <p>This ensures your shifts are properly logged even when you forget to check out manually.</p>
+    
+    <div class="warning-notice">
+        <p>⚙️ <strong>Want to change this?</strong> You can update your auto shift end setting in your preferences anytime.</p>
+    </div>
+</div>
+
+<div class="info-card">
+    <h4>🌟 Great Work Today!</h4>
+    <p>You worked from <strong>{{checkInTime}}</strong> to <strong>{{checkOutTime}}</strong> for a total of <strong>{{shiftDuration}}</strong>.</p>
+    <p>{{autoCloseMessage}}</p>
+</div>
+
+<div class="info-card">
+    <h4>📈 What Happens Next?</h4>
+    <ul class="feature-list">
+        <li>✅ <strong>Attendance Logged:</strong> Your shift has been properly recorded in the system</li>
+        <li>📊 <strong>Reports Updated:</strong> Your work time will appear in attendance reports</li>
+        <li>🎯 <strong>Targets Tracked:</strong> Your performance metrics have been updated</li>
+        <li>🏆 <strong>XP Earned:</strong> You've been credited for completing your shift</li>
+        <li>💤 <strong>Rest Well:</strong> Take time to recharge for tomorrow!</li>
+    </ul>
+</div>
+
+<div class="cta-section">
+    <a href="{{dashboardUrl}}" class="cta-button">📊 View Dashboard</a>
+    <a href="{{dashboardUrl}}/settings" class="cta-button secondary">⚙️ Manage Preferences</a>
+</div>
+
+<div class="message">
+    <p>{{congratulationsMessage}}</p>
+    <p>Rest well and see you tomorrow! 🌙</p>
+</div>
+
+{{/base}}
