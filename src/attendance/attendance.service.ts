@@ -89,7 +89,7 @@ export class AttendanceService {
 		try {
 			// Get organization working hours for the check-in date
 			const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(orgId, checkInTime);
-			
+
 			if (!workingDayInfo.isWorkingDay || !workingDayInfo.startTime) {
 				// Not a working day or no start time defined
 				return 0;
@@ -113,7 +113,6 @@ export class AttendanceService {
 			// Calculate how many minutes late (excluding grace period)
 			const lateMinutes = Math.floor((checkInTime.getTime() - graceEndTime.getTime()) / (1000 * 60));
 			return Math.max(0, lateMinutes);
-
 		} catch (error) {
 			this.logger.warn(`Error calculating late minutes for org ${orgId}:`, error.message);
 			return 0; // Default to not late if we can't determine
@@ -220,9 +219,13 @@ export class AttendanceService {
 					await this.autoCloseExistingShift(existingShift, orgId);
 					this.logger.log(`Successfully auto-closed existing shift for user ${checkInDto.owner.uid}`);
 				} catch (error) {
-					this.logger.error(`Failed to auto-close existing shift for user ${checkInDto.owner.uid}: ${error.message}`);
+					this.logger.error(
+						`Failed to auto-close existing shift for user ${checkInDto.owner.uid}: ${error.message}`,
+					);
 					// Re-throw the error to ensure it's properly caught by consolidation logic
-					throw new BadRequestException(`Failed to process check-in: User is already checked in and auto-close failed. ${error.message}`);
+					throw new BadRequestException(
+						`Failed to process check-in: User is already checked in and auto-close failed. ${error.message}`,
+					);
 				}
 			}
 
@@ -313,7 +316,7 @@ export class AttendanceService {
 				});
 
 				const userName = user ? user.name : '';
-				
+
 				this.logger.debug(`Sending enhanced shift start notification to user: ${checkInDto.owner.uid}`);
 				// Send push notification
 				await this.unifiedNotificationService.sendTemplatedNotification(
@@ -336,15 +339,22 @@ export class AttendanceService {
 				);
 
 				// Send email using event emitter (same pattern as user service)
-				this.logger.log(`📧 [AttendanceService] Sending shift started email notification for user: ${checkInDto.owner.uid}`);
+				this.logger.log(
+					`📧 [AttendanceService] Sending shift started email notification for user: ${checkInDto.owner.uid}`,
+				);
 				if (user?.email) {
 					try {
 						// Get organization scheduled start time (like in sendShiftReminder)
 						let scheduledStartTime = '09:00'; // Default fallback
 						if (orgId) {
 							try {
-								const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
-								const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(orgId, new Date());
+								const organizationHours = await this.organizationHoursService.getOrganizationHours(
+									orgId,
+								);
+								const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(
+									orgId,
+									new Date(),
+								);
 								scheduledStartTime = workingDayInfo.startTime || organizationHours?.openTime || '09:00';
 							} catch (error) {
 								this.logger.warn(`Could not get organization hours for org ${orgId}:`, error.message);
@@ -357,15 +367,23 @@ export class AttendanceService {
 							employeeEmail: user.email,
 							checkInTime,
 							shiftStartTime: scheduledStartTime,
-							organizationName: user?.organisation?.name || user?.branch?.organisation?.name || 'Your Organization',
+							organizationName:
+								user?.organisation?.name || user?.branch?.organisation?.name || 'Your Organization',
 							branchName: user?.branch?.name || '',
 							dashboardUrl: process.env.WEB_URL || 'https://app.loro.co.za',
 							xpAwarded: XP_VALUES.CHECK_IN,
 							welcomeMessage: `Welcome to work, ${userName}! 🌟 Your shift started successfully at ${checkInTime}. Have a productive and amazing day ahead!`,
 						};
-						
-						this.eventEmitter.emit('send.email', EmailType.ATTENDANCE_SHIFT_STARTED, [user.email], emailData);
-						this.logger.log(`✅ [AttendanceService] Shift started email notification queued for user: ${checkInDto.owner.uid}`);
+
+						this.eventEmitter.emit(
+							'send.email',
+							EmailType.ATTENDANCE_SHIFT_STARTED,
+							[user.email],
+							emailData,
+						);
+						this.logger.log(
+							`✅ [AttendanceService] Shift started email notification queued for user: ${checkInDto.owner.uid}`,
+						);
 					} catch (emailError) {
 						this.logger.error(
 							`❌ [AttendanceService] Failed to queue shift started email for user ${checkInDto.owner.uid}:`,
@@ -373,9 +391,13 @@ export class AttendanceService {
 						);
 					}
 				} else {
-					this.logger.warn(`⚠️ [AttendanceService] No email found for user ${checkInDto.owner.uid}, skipping email notification`);
+					this.logger.warn(
+						`⚠️ [AttendanceService] No email found for user ${checkInDto.owner.uid}, skipping email notification`,
+					);
 				}
-				this.logger.debug(`Enhanced shift start notification sent successfully to user: ${checkInDto.owner.uid}`);
+				this.logger.debug(
+					`Enhanced shift start notification sent successfully to user: ${checkInDto.owner.uid}`,
+				);
 			} catch (notificationError) {
 				this.logger.warn(
 					`Failed to send shift start notification to user: ${checkInDto.owner.uid}`,
@@ -389,7 +411,9 @@ export class AttendanceService {
 				if (orgId) {
 					const lateMinutes = await this.checkAndCalculateLateMinutes(orgId, new Date(checkIn.checkIn));
 					if (lateMinutes > 0) {
-						this.logger.debug(`User ${checkInDto.owner.uid} is ${lateMinutes} minutes late - sending notification`);
+						this.logger.debug(
+							`User ${checkInDto.owner.uid} is ${lateMinutes} minutes late - sending notification`,
+						);
 						await this.sendShiftReminder(
 							checkInDto.owner.uid,
 							'late',
@@ -435,6 +459,29 @@ export class AttendanceService {
 		const userId = existingShift.owner?.uid || 'unknown';
 		this.logger.debug(`Auto-closing existing shift for user ${userId}, orgId: ${orgId}`);
 
+		// Check user preferences for shift auto-end
+		try {
+			const user = await this.userRepository.findOne({
+				where: { uid: Number(userId) },
+				select: ['uid', 'preferences'],
+			});
+
+			if (user?.preferences?.shiftAutoEnd === false) {
+				this.logger.debug(`User ${userId} has disabled shift auto-end, skipping auto-close`);
+				throw new Error(`User has disabled automatic shift ending`);
+			}
+
+			this.logger.debug(`User ${userId} preferences allow auto-close, proceeding`);
+		} catch (error) {
+			if (error.message.includes('disabled automatic')) {
+				throw error; // Re-throw the user preference error
+			}
+			this.logger.warn(
+				`Could not fetch user preferences for ${userId}, defaulting to allow auto-close: ${error.message}`,
+			);
+			// Continue with auto-close if we can't fetch preferences (fail-safe)
+		}
+
 		// Default close time is 4:30 PM as requested
 		const checkInDate = new Date(existingShift.checkIn);
 		let closeTime = new Date(checkInDate);
@@ -444,34 +491,42 @@ export class AttendanceService {
 			// Try to get organization hours if orgId is provided
 			if (orgId) {
 				this.logger.debug(`Attempting to fetch organization hours for org ${orgId}`);
-				
+
 				const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(orgId, checkInDate);
-				
+
 				if (workingDayInfo && workingDayInfo.isWorkingDay && workingDayInfo.endTime) {
 					// Parse organization close time (format: "HH:MM")
 					try {
 						const [hours, minutes] = workingDayInfo.endTime.split(':').map(Number);
-						
+
 						if (!isNaN(hours) && !isNaN(minutes)) {
 							// Create close time on the same date as check-in
 							closeTime = new Date(checkInDate);
 							closeTime.setHours(hours, minutes, 0, 0);
 
-							// If the close time would be before the check-in time (e.g., night shift), 
+							// If the close time would be before the check-in time (e.g., night shift),
 							// set it to the next day
 							if (closeTime <= checkInDate) {
 								closeTime.setDate(closeTime.getDate() + 1);
 							}
 
-							this.logger.debug(`Using organization close time: ${workingDayInfo.endTime} for user ${userId}`);
+							this.logger.debug(
+								`Using organization close time: ${workingDayInfo.endTime} for user ${userId}`,
+							);
 						} else {
-							this.logger.warn(`Invalid organization hours format: ${workingDayInfo.endTime}, using default 4:30 PM`);
+							this.logger.warn(
+								`Invalid organization hours format: ${workingDayInfo.endTime}, using default 4:30 PM`,
+							);
 						}
 					} catch (parseError) {
-						this.logger.warn(`Error parsing organization close time: ${parseError.message}, using default 4:30 PM`);
+						this.logger.warn(
+							`Error parsing organization close time: ${parseError.message}, using default 4:30 PM`,
+						);
 					}
 				} else {
-					this.logger.warn(`Organization ${orgId} is not a working day or has no end time, using default 4:30 PM`);
+					this.logger.warn(
+						`Organization ${orgId} is not a working day or has no end time, using default 4:30 PM`,
+					);
 				}
 			} else {
 				this.logger.warn('No organization ID provided for auto-close, using default 4:30 PM');
@@ -485,17 +540,16 @@ export class AttendanceService {
 			existingShift.checkOutNotes = 'Auto-closed at organization close time due to new shift';
 
 			await this.attendanceRepository.save(existingShift);
-			
-			this.logger.log(`Auto-closed existing shift for user ${userId} at ${closeTime.toISOString()}`);
 
+			this.logger.log(`Auto-closed existing shift for user ${userId} at ${closeTime.toISOString()}`);
 		} catch (error) {
 			this.logger.error(`Error auto-closing existing shift for user ${userId}: ${error.message}`);
-			
+
 			// Fallback: still try to close the shift with default time
 			try {
 				closeTime = new Date(checkInDate);
 				closeTime.setHours(16, 30, 0, 0); // 4:30 PM fallback
-				
+
 				existingShift.checkOut = closeTime;
 				existingShift.status = AttendanceStatus.COMPLETED;
 				existingShift.checkOutNotes = 'Auto-closed with fallback time due to org hours fetch error';
@@ -608,7 +662,9 @@ export class AttendanceService {
 
 					if (overtimeInfo.isOvertime && overtimeInfo.overtimeMinutes > 0) {
 						overtimeDuration = TimeCalculatorUtil.formatDuration(overtimeInfo.overtimeMinutes);
-						this.logger.debug(`Overtime calculated: ${overtimeDuration} (${overtimeInfo.overtimeMinutes} minutes)`);
+						this.logger.debug(
+							`Overtime calculated: ${overtimeDuration} (${overtimeInfo.overtimeMinutes} minutes)`,
+						);
 					}
 				} catch (overtimeCalcError) {
 					this.logger.warn(
@@ -744,7 +800,9 @@ export class AttendanceService {
 				);
 
 				// Send email using event emitter (same pattern as user service)
-				this.logger.log(`📧 [AttendanceService] Sending shift ended email notification for user: ${checkOutDto.owner.uid}`);
+				this.logger.log(
+					`📧 [AttendanceService] Sending shift ended email notification for user: ${checkOutDto.owner.uid}`,
+				);
 				if (user?.email) {
 					try {
 						const emailData = {
@@ -755,16 +813,22 @@ export class AttendanceService {
 							checkOutTime: checkOutTimeString,
 							shiftDuration: duration,
 							totalWorkMinutes: workSession.netWorkMinutes,
-							totalBreakTime: breakMinutes > 0 ? `${Math.floor(breakMinutes / 60)}h ${breakMinutes % 60}m` : undefined,
-							organizationName: user?.organisation?.name || user?.branch?.organisation?.name || 'Your Organization',
+							totalBreakTime:
+								breakMinutes > 0
+									? `${Math.floor(breakMinutes / 60)}h ${breakMinutes % 60}m`
+									: undefined,
+							organizationName:
+								user?.organisation?.name || user?.branch?.organisation?.name || 'Your Organization',
 							branchName: user?.branch?.name || '',
 							dashboardUrl: process.env.WEB_URL || 'https://app.loro.co.za',
 							xpAwarded: XP_VALUES.CHECK_OUT,
 							congratulationsMessage: `Great work today, ${userName}! 🎉 You've successfully completed your shift. Worked from ${checkInTimeString} to ${checkOutTimeString} for a total of ${workTimeDisplay}. Rest well and see you tomorrow!`,
 						};
-						
+
 						this.eventEmitter.emit('send.email', EmailType.ATTENDANCE_SHIFT_ENDED, [user.email], emailData);
-						this.logger.log(`✅ [AttendanceService] Shift ended email notification queued for user: ${checkOutDto.owner.uid}`);
+						this.logger.log(
+							`✅ [AttendanceService] Shift ended email notification queued for user: ${checkOutDto.owner.uid}`,
+						);
 					} catch (emailError) {
 						this.logger.error(
 							`❌ [AttendanceService] Failed to queue shift ended email for user ${checkOutDto.owner.uid}:`,
@@ -772,9 +836,13 @@ export class AttendanceService {
 						);
 					}
 				} else {
-					this.logger.warn(`⚠️ [AttendanceService] No email found for user ${checkOutDto.owner.uid}, skipping email notification`);
+					this.logger.warn(
+						`⚠️ [AttendanceService] No email found for user ${checkOutDto.owner.uid}, skipping email notification`,
+					);
 				}
-				this.logger.debug(`Enhanced shift end notification sent successfully to user: ${checkOutDto.owner.uid}`);
+				this.logger.debug(
+					`Enhanced shift end notification sent successfully to user: ${checkOutDto.owner.uid}`,
+				);
 			} catch (notificationError) {
 				this.logger.warn(
 					`Failed to send shift end notification to user: ${checkOutDto.owner.uid}`,
@@ -792,7 +860,7 @@ export class AttendanceService {
 						activeShift.checkIn,
 						workSession.netWorkMinutes,
 					);
-					
+
 					if (overtimeInfo.overtimeMinutes > 0) {
 						const overtimeHours = Math.floor(overtimeInfo.overtimeMinutes / 60);
 						const overtimeMinutes = overtimeInfo.overtimeMinutes % 60;
@@ -825,8 +893,10 @@ export class AttendanceService {
 								priority: NotificationPriority.HIGH,
 							},
 						);
-						this.logger.debug(`Enhanced overtime notification sent successfully to user: ${checkOutDto.owner.uid}`);
-						
+						this.logger.debug(
+							`Enhanced overtime notification sent successfully to user: ${checkOutDto.owner.uid}`,
+						);
+
 						// Also send overtime notification using the enhanced sendShiftReminder method
 						await this.sendShiftReminder(
 							checkOutDto.owner.uid,
@@ -1107,15 +1177,19 @@ export class AttendanceService {
 			// Get organization hours to determine expected shift time if not provided
 			let expectedShiftTime = shiftStartTime;
 			let expectedEndTime: string | undefined;
-			
+
 			if (orgId) {
 				try {
 					const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
 					const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(orgId, new Date());
-					expectedShiftTime = expectedShiftTime || workingDayInfo.startTime || organizationHours?.openTime || '09:00';
+					expectedShiftTime =
+						expectedShiftTime || workingDayInfo.startTime || organizationHours?.openTime || '09:00';
 					expectedEndTime = workingDayInfo.endTime || organizationHours?.closeTime || '17:00';
 				} catch (error) {
-					this.logger.warn(`[${operationId}] Could not get organization hours for org ${orgId}:`, error.message);
+					this.logger.warn(
+						`[${operationId}] Could not get organization hours for org ${orgId}:`,
+						error.message,
+					);
 					expectedShiftTime = expectedShiftTime || '09:00'; // Default fallback
 					expectedEndTime = '17:00';
 				}
@@ -1143,39 +1217,41 @@ export class AttendanceService {
 			switch (reminderType) {
 				case 'pre_start':
 					notificationType = NotificationEvent.ATTENDANCE_SHIFT_START_REMINDER;
-					message = `Good morning ${user?.name || ''}! Your shift starts in 30 minutes at ${expectedShiftTime}. Please prepare to check in on time. Have a great day! 🌅`;
+					message = `Good morning ${
+						user?.name || ''
+					}! Your shift starts in 30 minutes at ${expectedShiftTime}. Please prepare to check in on time. Have a great day! 🌅`;
 					notificationData.shiftStartTime = expectedShiftTime;
 					priority = NotificationPriority.NORMAL;
 					break;
-					
+
 				case 'start':
 					notificationType = NotificationEvent.ATTENDANCE_SHIFT_STARTED;
 					message = `Your shift has started! Please check in now. Current time: ${currentTime} ⏰`;
 					notificationData.shiftStartTime = expectedShiftTime;
 					priority = NotificationPriority.NORMAL;
 					break;
-					
+
 				case 'pre_end':
 					notificationType = NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER;
 					message = `Your shift ends in 30 minutes at ${expectedEndTime}. Please prepare to check out and wrap up your work. Thank you for your hard work today! 👏`;
 					notificationData.shiftEndTime = expectedEndTime;
 					priority = NotificationPriority.NORMAL;
 					break;
-					
+
 				case 'end':
 					notificationType = NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER;
 					message = `Your shift has ended! Please check out now to record your work hours accurately. Current time: ${currentTime} 🏁`;
 					notificationData.shiftEndTime = expectedEndTime;
 					priority = NotificationPriority.HIGH;
 					break;
-					
+
 				case 'missed':
 					notificationType = NotificationEvent.ATTENDANCE_MISSED_SHIFT_ALERT;
 					message = `You missed your scheduled shift that was supposed to start at ${expectedShiftTime}. Please contact your supervisor if there was an emergency. We hope everything is okay! 🚨`;
 					notificationData.shiftStartTime = expectedShiftTime;
 					priority = NotificationPriority.HIGH;
 					break;
-					
+
 				case 'late':
 					notificationType = NotificationEvent.ATTENDANCE_LATE_SHIFT_ALERT;
 					if (lateMinutes && lateMinutes > 0) {
@@ -1187,7 +1263,7 @@ export class AttendanceService {
 					notificationData.shiftStartTime = expectedShiftTime;
 					priority = NotificationPriority.HIGH;
 					break;
-					
+
 				case 'overtime':
 					notificationType = NotificationEvent.ATTENDANCE_OVERTIME_REMINDER;
 					if (overtimeMinutes && overtimeMinutes > 0) {
@@ -1202,7 +1278,7 @@ export class AttendanceService {
 					}
 					priority = NotificationPriority.HIGH;
 					break;
-					
+
 				default:
 					this.logger.warn(`[${operationId}] Unknown reminder type: ${reminderType}`);
 					return;
@@ -1301,7 +1377,7 @@ export class AttendanceService {
 				notificationType,
 				[Number(userId)],
 				notificationData,
-				{ 
+				{
 					priority,
 					sendEmail: false, // We'll handle email separately
 				},
@@ -1310,9 +1386,10 @@ export class AttendanceService {
 			// Send email using event emitter (same pattern as user service)
 			if (emailTemplate && user?.email && emailData) {
 				// Update email data with proper organization info
-				emailData.organizationName = user?.organisation?.name || user?.branch?.organisation?.name || 'Your Organization';
+				emailData.organizationName =
+					user?.organisation?.name || user?.branch?.organisation?.name || 'Your Organization';
 				emailData.branchName = user?.branch?.name || '';
-				
+
 				this.eventEmitter.emit('send.email', emailTemplate, [user.email], emailData);
 				this.logger.debug(`✅ ${reminderType} email queued for user: ${userId}`);
 			}
@@ -1361,13 +1438,19 @@ export class AttendanceService {
 								adminMessage = `Employee ${userName} missed their scheduled shift (${expectedShiftTime}). Please follow up as needed.`;
 								break;
 							case 'late':
-								adminMessage = `Employee ${userName} was late for their shift${lateMinutes ? ` by ${lateMinutes} minutes` : ''}. Shift started at ${expectedShiftTime}.`;
+								adminMessage = `Employee ${userName} was late for their shift${
+									lateMinutes ? ` by ${lateMinutes} minutes` : ''
+								}. Shift started at ${expectedShiftTime}.`;
 								break;
 							case 'overtime':
-								adminMessage = `Employee ${userName} is working overtime${overtimeMinutes ? ` (${Math.floor(overtimeMinutes / 60)}h ${overtimeMinutes % 60}m)` : ''}. Please monitor for employee wellness.`;
+								adminMessage = `Employee ${userName} is working overtime${
+									overtimeMinutes
+										? ` (${Math.floor(overtimeMinutes / 60)}h ${overtimeMinutes % 60}m)`
+										: ''
+								}. Please monitor for employee wellness.`;
 								break;
 						}
-						
+
 						adminNotificationData.message = adminMessage;
 
 						await this.unifiedNotificationService.sendTemplatedNotification(
@@ -1418,7 +1501,7 @@ export class AttendanceService {
 	 * Check and send break duration notifications
 	 * Notifications are sent when users have been on break for:
 	 * - 15 minutes: gentle reminder
-	 * - 30 minutes: moderate reminder  
+	 * - 30 minutes: moderate reminder
 	 * - 45 minutes: strong reminder
 	 * - 60 minutes: urgent reminder
 	 */
@@ -1477,11 +1560,11 @@ export class AttendanceService {
 							});
 
 							const userName = user ? user.name : 'there';
-							
+
 							// Generate appropriate message based on duration and level
 							let message = '';
 							let emoji = '';
-							
+
 							switch (interval.level) {
 								case 'gentle':
 									message = `Hi ${userName}! ☕ You've been on break for ${interval.minutes} minutes. Hope you're enjoying your refreshing break time!`;
@@ -1501,7 +1584,9 @@ export class AttendanceService {
 									break;
 							}
 
-							this.logger.debug(`[${operationId}] Sending ${interval.level} break duration notification to user: ${breakRecord.owner.uid} - ${interval.minutes} minutes`);
+							this.logger.debug(
+								`[${operationId}] Sending ${interval.level} break duration notification to user: ${breakRecord.owner.uid} - ${interval.minutes} minutes`,
+							);
 
 							await this.unifiedNotificationService.sendTemplatedNotification(
 								NotificationEvent.ATTENDANCE_BREAK_STARTED,
@@ -1532,20 +1617,28 @@ export class AttendanceService {
 
 							// Cache the notification to prevent duplicates
 							this.notificationCache.add(cacheKey);
-							
+
 							// Clean up cache after 24 hours
 							setTimeout(() => {
 								this.notificationCache.delete(cacheKey);
 							}, 24 * 60 * 60 * 1000);
 
-							this.logger.debug(`[${operationId}] Break duration notification sent successfully to user: ${breakRecord.owner.uid} for ${interval.minutes} minutes`);
+							this.logger.debug(
+								`[${operationId}] Break duration notification sent successfully to user: ${breakRecord.owner.uid} for ${interval.minutes} minutes`,
+							);
 
 							// Also notify organization admins for longer breaks (45+ minutes)
 							if (interval.minutes >= 45) {
 								try {
 									const orgId = breakRecord.owner.organisation?.uid;
 									if (orgId) {
-										await this.notifyAdminsAboutLongBreak(operationId, orgId, breakRecord.owner, interval.minutes, breakStartTime);
+										await this.notifyAdminsAboutLongBreak(
+											operationId,
+											orgId,
+											breakRecord.owner,
+											interval.minutes,
+											breakStartTime,
+										);
 									}
 								} catch (adminNotificationError) {
 									this.logger.warn(
@@ -1556,9 +1649,11 @@ export class AttendanceService {
 							}
 						}
 					}
-
 				} catch (error) {
-					this.logger.error(`[${operationId}] Error processing break duration notification for user ${breakRecord.owner.uid}:`, error.message);
+					this.logger.error(
+						`[${operationId}] Error processing break duration notification for user ${breakRecord.owner.uid}:`,
+						error.message,
+					);
 				}
 			}
 
@@ -1576,13 +1671,15 @@ export class AttendanceService {
 		orgId: number,
 		user: any,
 		breakDurationMinutes: number,
-		breakStartTime: Date
+		breakStartTime: Date,
 	): Promise<void> {
 		try {
 			const orgAdmins = await this.getOrganizationAdmins(orgId);
 			if (orgAdmins.length > 0) {
-				this.logger.debug(`[${operationId}] Notifying ${orgAdmins.length} admins about long break for user ${user.uid}`);
-				
+				this.logger.debug(
+					`[${operationId}] Notifying ${orgAdmins.length} admins about long break for user ${user.uid}`,
+				);
+
 				const breakStartTimeString = breakStartTime.toLocaleTimeString('en-ZA', {
 					hour: '2-digit',
 					minute: '2-digit',
@@ -1689,27 +1786,34 @@ export class AttendanceService {
 					missedCheckoutAlertTime.setHours(endHour, endMinute + 30, 0, 0);
 
 					// Check if we're within notification windows (±2.5 minutes for 5-minute cron)
-					const preShiftTimeDiff = Math.abs(orgCurrentTime.getTime() - preShiftReminderTime.getTime()) / (1000 * 60);
-					const missedShiftTimeDiff = Math.abs(orgCurrentTime.getTime() - missedShiftAlertTime.getTime()) / (1000 * 60);
-					const preCheckoutTimeDiff = Math.abs(orgCurrentTime.getTime() - preCheckoutReminderTime.getTime()) / (1000 * 60);
-					const missedCheckoutTimeDiff = Math.abs(orgCurrentTime.getTime() - missedCheckoutAlertTime.getTime()) / (1000 * 60);
+					const preShiftTimeDiff =
+						Math.abs(orgCurrentTime.getTime() - preShiftReminderTime.getTime()) / (1000 * 60);
+					const missedShiftTimeDiff =
+						Math.abs(orgCurrentTime.getTime() - missedShiftAlertTime.getTime()) / (1000 * 60);
+					const preCheckoutTimeDiff =
+						Math.abs(orgCurrentTime.getTime() - preCheckoutReminderTime.getTime()) / (1000 * 60);
+					const missedCheckoutTimeDiff =
+						Math.abs(orgCurrentTime.getTime() - missedCheckoutAlertTime.getTime()) / (1000 * 60);
 
 					const isInPreShiftWindow = preShiftTimeDiff <= 2.5;
 					const isInMissedShiftWindow = missedShiftTimeDiff <= 2.5;
 					const isInPreCheckoutWindow = preCheckoutTimeDiff <= 2.5;
 					const isInMissedCheckoutWindow = missedCheckoutTimeDiff <= 2.5;
 
-					if (!isInPreShiftWindow && !isInMissedShiftWindow && !isInPreCheckoutWindow && !isInMissedCheckoutWindow) {
-						this.logger.debug(
-							`[${operationId}] Not in any notification window for org ${org.uid}`
-						);
+					if (
+						!isInPreShiftWindow &&
+						!isInMissedShiftWindow &&
+						!isInPreCheckoutWindow &&
+						!isInMissedCheckoutWindow
+					) {
+						this.logger.debug(`[${operationId}] Not in any notification window for org ${org.uid}`);
 						continue;
 					}
 
 					const todayKey = format(orgCurrentTime, 'yyyy-MM-dd');
-					
+
 					this.logger.log(
-						`[${operationId}] Processing notifications for org ${org.uid} (${org.name}) - PreShift: ${isInPreShiftWindow}, MissedShift: ${isInMissedShiftWindow}, PreCheckout: ${isInPreCheckoutWindow}, MissedCheckout: ${isInMissedCheckoutWindow}`
+						`[${operationId}] Processing notifications for org ${org.uid} (${org.name}) - PreShift: ${isInPreShiftWindow}, MissedShift: ${isInMissedShiftWindow}, PreCheckout: ${isInPreCheckoutWindow}, MissedCheckout: ${isInMissedCheckoutWindow}`,
 					);
 
 					// Get users in this organization
@@ -1723,21 +1827,48 @@ export class AttendanceService {
 					});
 
 					if (isInPreShiftWindow) {
-						await this.processPreShiftReminders(operationId, org, orgUsers, orgCurrentTime, todayKey, startTime);
+						await this.processPreShiftReminders(
+							operationId,
+							org,
+							orgUsers,
+							orgCurrentTime,
+							todayKey,
+							startTime,
+						);
 					}
 
 					if (isInMissedShiftWindow) {
-						await this.processMissedShiftAlerts(operationId, org, orgUsers, orgCurrentTime, todayKey, startTime);
+						await this.processMissedShiftAlerts(
+							operationId,
+							org,
+							orgUsers,
+							orgCurrentTime,
+							todayKey,
+							startTime,
+						);
 					}
 
 					if (isInPreCheckoutWindow) {
-						await this.processPreCheckoutReminders(operationId, org, orgUsers, orgCurrentTime, todayKey, endTime);
+						await this.processPreCheckoutReminders(
+							operationId,
+							org,
+							orgUsers,
+							orgCurrentTime,
+							todayKey,
+							endTime,
+						);
 					}
 
 					if (isInMissedCheckoutWindow) {
-						await this.processMissedCheckoutAlerts(operationId, org, orgUsers, orgCurrentTime, todayKey, endTime);
+						await this.processMissedCheckoutAlerts(
+							operationId,
+							org,
+							orgUsers,
+							orgCurrentTime,
+							todayKey,
+							endTime,
+						);
 					}
-
 				} catch (error) {
 					this.logger.error(`[${operationId}] Error processing reminders for org ${org.uid}:`, error.message);
 				}
@@ -1759,21 +1890,21 @@ export class AttendanceService {
 		orgUsers: any[],
 		orgCurrentTime: Date,
 		todayKey: string,
-		startTime: string
+		startTime: string,
 	): Promise<void> {
 		this.logger.log(`[${operationId}] Processing pre-shift reminders for org ${org.uid}`);
 
 		for (const user of orgUsers) {
 			try {
 				const cacheKey = `pre_shift_reminder_${org.uid}_${user.uid}_${todayKey}`;
-				
+
 				// Skip if already notified today
 				if (this.notificationCache.has(cacheKey)) {
 					continue;
 				}
 
 				this.logger.debug(`[${operationId}] Sending pre-shift reminder to user ${user.uid}`);
-				
+
 				// Send reminder 30 minutes before shift starts
 				await this.unifiedNotificationService.sendTemplatedNotification(
 					NotificationEvent.ATTENDANCE_SHIFT_START_REMINDER,
@@ -1791,14 +1922,13 @@ export class AttendanceService {
 						priority: NotificationPriority.NORMAL,
 					},
 				);
-				
+
 				this.notificationCache.add(cacheKey);
-				
+
 				// Clean up cache after 24 hours
 				setTimeout(() => {
 					this.notificationCache.delete(cacheKey);
 				}, 24 * 60 * 60 * 1000);
-
 			} catch (error) {
 				this.logger.error(
 					`[${operationId}] Error sending pre-shift reminder to user ${user.uid}:`,
@@ -1818,7 +1948,7 @@ export class AttendanceService {
 		orgUsers: any[],
 		orgCurrentTime: Date,
 		todayKey: string,
-		startTime: string
+		startTime: string,
 	): Promise<void> {
 		this.logger.log(`[${operationId}] Processing missed shift alerts for org ${org.uid}`);
 
@@ -1828,7 +1958,7 @@ export class AttendanceService {
 		for (const user of orgUsers) {
 			try {
 				const cacheKey = `missed_shift_alert_${org.uid}_${user.uid}_${todayKey}`;
-				
+
 				// Skip if already notified today
 				if (this.notificationCache.has(cacheKey)) {
 					continue;
@@ -1844,7 +1974,7 @@ export class AttendanceService {
 
 				if (!todayAttendance) {
 					this.logger.debug(`[${operationId}] User ${user.uid} missed shift - sending alert`);
-					
+
 					await this.unifiedNotificationService.sendTemplatedNotification(
 						NotificationEvent.ATTENDANCE_MISSED_SHIFT_ALERT,
 						[user.uid],
@@ -1861,18 +1991,17 @@ export class AttendanceService {
 							priority: NotificationPriority.HIGH,
 						},
 					);
-					
+
 					// Also notify organization admins
 					await this.notifyAdminsAboutMissedShift(operationId, org.uid, user, startTime);
-					
+
 					this.notificationCache.add(cacheKey);
-					
+
 					// Clean up cache after 24 hours
 					setTimeout(() => {
 						this.notificationCache.delete(cacheKey);
 					}, 24 * 60 * 60 * 1000);
 				}
-
 			} catch (error) {
 				this.logger.error(
 					`[${operationId}] Error processing missed shift alert for user ${user.uid}:`,
@@ -1892,14 +2021,14 @@ export class AttendanceService {
 		orgUsers: any[],
 		orgCurrentTime: Date,
 		todayKey: string,
-		endTime: string
+		endTime: string,
 	): Promise<void> {
 		this.logger.log(`[${operationId}] Processing pre-checkout reminders for org ${org.uid}`);
 
 		for (const user of orgUsers) {
 			try {
 				const cacheKey = `pre_checkout_reminder_${org.uid}_${user.uid}_${todayKey}`;
-				
+
 				// Skip if already notified today
 				if (this.notificationCache.has(cacheKey)) {
 					continue;
@@ -1917,7 +2046,7 @@ export class AttendanceService {
 
 				if (activeShift) {
 					this.logger.debug(`[${operationId}] Sending pre-checkout reminder to user ${user.uid}`);
-					
+
 					await this.unifiedNotificationService.sendTemplatedNotification(
 						NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER,
 						[user.uid],
@@ -1934,15 +2063,14 @@ export class AttendanceService {
 							priority: NotificationPriority.NORMAL,
 						},
 					);
-					
+
 					this.notificationCache.add(cacheKey);
-					
+
 					// Clean up cache after 24 hours
 					setTimeout(() => {
 						this.notificationCache.delete(cacheKey);
 					}, 24 * 60 * 60 * 1000);
 				}
-
 			} catch (error) {
 				this.logger.error(
 					`[${operationId}] Error sending pre-checkout reminder to user ${user.uid}:`,
@@ -1962,14 +2090,14 @@ export class AttendanceService {
 		orgUsers: any[],
 		orgCurrentTime: Date,
 		todayKey: string,
-		endTime: string
+		endTime: string,
 	): Promise<void> {
 		this.logger.log(`[${operationId}] Processing missed checkout alerts for org ${org.uid}`);
 
 		for (const user of orgUsers) {
 			try {
 				const cacheKey = `missed_checkout_alert_${org.uid}_${user.uid}_${todayKey}`;
-				
+
 				// Skip if already notified today
 				if (this.notificationCache.has(cacheKey)) {
 					continue;
@@ -1987,7 +2115,7 @@ export class AttendanceService {
 
 				if (activeShift) {
 					this.logger.debug(`[${operationId}] User ${user.uid} forgot to check out - sending alert`);
-					
+
 					await this.unifiedNotificationService.sendTemplatedNotification(
 						NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER,
 						[user.uid],
@@ -2004,18 +2132,17 @@ export class AttendanceService {
 							priority: NotificationPriority.HIGH,
 						},
 					);
-					
+
 					// Also notify organization admins
 					await this.notifyAdminsAboutMissedCheckout(operationId, org.uid, user, endTime, activeShift);
-					
+
 					this.notificationCache.add(cacheKey);
-					
+
 					// Clean up cache after 24 hours
 					setTimeout(() => {
 						this.notificationCache.delete(cacheKey);
 					}, 24 * 60 * 60 * 1000);
 				}
-
 			} catch (error) {
 				this.logger.error(
 					`[${operationId}] Error processing missed checkout alert for user ${user.uid}:`,
@@ -2032,13 +2159,15 @@ export class AttendanceService {
 		operationId: string,
 		orgId: number,
 		user: any,
-		startTime: string
+		startTime: string,
 	): Promise<void> {
 		try {
 			const orgAdmins = await this.getOrganizationAdmins(orgId);
 			if (orgAdmins.length > 0) {
-				this.logger.debug(`[${operationId}] Notifying ${orgAdmins.length} admins about missed shift for user ${user.uid}`);
-				
+				this.logger.debug(
+					`[${operationId}] Notifying ${orgAdmins.length} admins about missed shift for user ${user.uid}`,
+				);
+
 				await this.unifiedNotificationService.sendTemplatedNotification(
 					NotificationEvent.ATTENDANCE_MISSED_SHIFT_ALERT,
 					orgAdmins.map((admin) => admin.uid),
@@ -2068,13 +2197,15 @@ export class AttendanceService {
 		orgId: number,
 		user: any,
 		endTime: string,
-		activeShift: any
+		activeShift: any,
 	): Promise<void> {
 		try {
 			const orgAdmins = await this.getOrganizationAdmins(orgId);
 			if (orgAdmins.length > 0) {
-				this.logger.debug(`[${operationId}] Notifying ${orgAdmins.length} admins about missed checkout for user ${user.uid}`);
-				
+				this.logger.debug(
+					`[${operationId}] Notifying ${orgAdmins.length} admins about missed checkout for user ${user.uid}`,
+				);
+
 				const checkInTime = new Date(activeShift.checkIn).toLocaleTimeString('en-ZA', {
 					hour: '2-digit',
 					minute: '2-digit',
@@ -2187,7 +2318,7 @@ export class AttendanceService {
 					status: 'active',
 				},
 				relations: ['branch', 'organisation', 'userProfile'],
-				select: ['uid', 'name', 'surname', 'email', 'accessLevel', 'phone', 'createdAt' , 'photoURL']
+				select: ['uid', 'name', 'surname', 'email', 'accessLevel', 'phone', 'createdAt', 'photoURL'],
 			});
 
 			this.logger.debug(`[${operationId}] Found ${allUsers.length} total users`);
@@ -2219,7 +2350,7 @@ export class AttendanceService {
 				if (attendance.owner && !presentUsersMap.has(attendance.owner.uid)) {
 					const user = attendance.owner;
 					const userProfile = user.userProfile || null;
-					
+
 					presentUsersMap.set(user.uid, {
 						uid: user.uid,
 						name: user.name || '',
@@ -2234,13 +2365,24 @@ export class AttendanceService {
 						checkInTime: attendance.checkIn,
 						checkOutTime: attendance.checkOut || null,
 						status: attendance.status || 'present',
-						workingHours: attendance.checkOut 
-							? ((new Date(attendance.checkOut).getTime() - new Date(attendance.checkIn).getTime()) / (1000 * 60 * 60)).toFixed(2)
+						workingHours: attendance.checkOut
+							? (
+									(new Date(attendance.checkOut).getTime() - new Date(attendance.checkIn).getTime()) /
+									(1000 * 60 * 60)
+							  ).toFixed(2)
 							: null,
 						isOnBreak: attendance.status === AttendanceStatus.ON_BREAK,
-						shiftDuration: attendance.checkOut 
-							? `${Math.floor((new Date(attendance.checkOut).getTime() - new Date(attendance.checkIn).getTime()) / (1000 * 60 * 60))}h ${Math.floor(((new Date(attendance.checkOut).getTime() - new Date(attendance.checkIn).getTime()) % (1000 * 60 * 60)) / (1000 * 60))}m`
-							: 'In Progress'
+						shiftDuration: attendance.checkOut
+							? `${Math.floor(
+									(new Date(attendance.checkOut).getTime() - new Date(attendance.checkIn).getTime()) /
+										(1000 * 60 * 60),
+							  )}h ${Math.floor(
+									((new Date(attendance.checkOut).getTime() -
+										new Date(attendance.checkIn).getTime()) %
+										(1000 * 60 * 60)) /
+										(1000 * 60),
+							  )}m`
+							: 'In Progress',
 					});
 					presentUserIds.add(user.uid);
 				}
@@ -2269,7 +2411,7 @@ export class AttendanceService {
 			allUsers.forEach((user) => {
 				if (!presentUserIds.has(user.uid)) {
 					const userProfile = user.userProfile || null;
-					
+
 					absentUsers.push({
 						uid: user.uid,
 						name: user.name || '',
@@ -2282,9 +2424,11 @@ export class AttendanceService {
 						branchName: user.branch?.name || 'N/A',
 						accessLevel: user.accessLevel || 'USER',
 						lastSeenDate: null, // This could be enhanced with last attendance record
-						employeeSince: user.createdAt ? new Date(user.createdAt).toISOString().split('T')[0] : 'Unknown',
+						employeeSince: user.createdAt
+							? new Date(user.createdAt).toISOString().split('T')[0]
+							: 'Unknown',
 						isActive: true,
-						role: user.accessLevel || 'USER'
+						role: user.accessLevel || 'USER',
 					});
 				}
 			});
@@ -3005,7 +3149,12 @@ export class AttendanceService {
 				});
 
 				const userName = user ? user.name : '';
-				const breakNumber = breakCount === 1 ? 'first' : breakCount === 2 ? 'second' : `${breakCount}${breakCount > 3 ? 'th' : breakCount === 3 ? 'rd' : 'nd'}`;
+				const breakNumber =
+					breakCount === 1
+						? 'first'
+						: breakCount === 2
+						? 'second'
+						: `${breakCount}${breakCount > 3 ? 'th' : breakCount === 3 ? 'rd' : 'nd'}`;
 
 				this.logger.debug(`Sending enhanced break start notification to user: ${breakDto.owner.uid}`);
 				// Send push notification
@@ -3028,7 +3177,9 @@ export class AttendanceService {
 				);
 
 				// Send email using event emitter (same pattern as user service)
-				this.logger.log(`📧 [AttendanceService] Sending break started email notification for user: ${breakDto.owner.uid}`);
+				this.logger.log(
+					`📧 [AttendanceService] Sending break started email notification for user: ${breakDto.owner.uid}`,
+				);
 				if (user?.email) {
 					try {
 						const emailData = {
@@ -3038,14 +3189,22 @@ export class AttendanceService {
 							breakStartTime: breakStartTimeString,
 							breakCount: breakCount,
 							breakNumber,
-							organizationName: user?.organisation?.name || user?.branch?.organisation?.name || 'Your Organization',
+							organizationName:
+								user?.organisation?.name || user?.branch?.organisation?.name || 'Your Organization',
 							branchName: user?.branch?.name || '',
 							dashboardUrl: process.env.WEB_URL || 'https://app.loro.co.za',
 							encouragementMessage: `Time for a well-deserved break, ${userName}! ☕ Your ${breakNumber} break started at ${breakStartTimeString}. Take your time to recharge and refresh yourself!`,
 						};
-						
-						this.eventEmitter.emit('send.email', EmailType.ATTENDANCE_BREAK_STARTED, [user.email], emailData);
-						this.logger.log(`✅ [AttendanceService] Break started email notification queued for user: ${breakDto.owner.uid}`);
+
+						this.eventEmitter.emit(
+							'send.email',
+							EmailType.ATTENDANCE_BREAK_STARTED,
+							[user.email],
+							emailData,
+						);
+						this.logger.log(
+							`✅ [AttendanceService] Break started email notification queued for user: ${breakDto.owner.uid}`,
+						);
 					} catch (emailError) {
 						this.logger.error(
 							`❌ [AttendanceService] Failed to queue break started email for user ${breakDto.owner.uid}:`,
@@ -3053,7 +3212,9 @@ export class AttendanceService {
 						);
 					}
 				} else {
-					this.logger.warn(`⚠️ [AttendanceService] No email found for user ${breakDto.owner.uid}, skipping email notification`);
+					this.logger.warn(
+						`⚠️ [AttendanceService] No email found for user ${breakDto.owner.uid}, skipping email notification`,
+					);
 				}
 				this.logger.debug(`Enhanced break start notification sent successfully to user: ${breakDto.owner.uid}`);
 			} catch (notificationError) {
@@ -3206,7 +3367,9 @@ export class AttendanceService {
 				);
 
 				// Send email using event emitter (same pattern as user service)
-				this.logger.log(`📧 [AttendanceService] Sending break ended email notification for user: ${breakDto.owner.uid}`);
+				this.logger.log(
+					`📧 [AttendanceService] Sending break ended email notification for user: ${breakDto.owner.uid}`,
+				);
 				if (user?.email) {
 					try {
 						const emailData = {
@@ -3217,14 +3380,17 @@ export class AttendanceService {
 							breakEndTime: breakEndTimeString,
 							breakDuration: currentBreakDuration,
 							totalBreakTime,
-							organizationName: user?.organisation?.name || user?.branch?.organisation?.name || 'Your Organization',
+							organizationName:
+								user?.organisation?.name || user?.branch?.organisation?.name || 'Your Organization',
 							branchName: user?.branch?.name || '',
 							dashboardUrl: process.env.WEB_URL || 'https://app.loro.co.za',
 							welcomeBackMessage: `Welcome back, ${userName}! 🚀 Your break is complete. You were refreshing from ${breakStartTimeString} to ${breakEndTimeString} (${currentBreakDuration}). Hope you're feeling recharged and ready to tackle the rest of your day!`,
 						};
-						
+
 						this.eventEmitter.emit('send.email', EmailType.ATTENDANCE_BREAK_ENDED, [user.email], emailData);
-						this.logger.log(`✅ [AttendanceService] Break ended email notification queued for user: ${breakDto.owner.uid}`);
+						this.logger.log(
+							`✅ [AttendanceService] Break ended email notification queued for user: ${breakDto.owner.uid}`,
+						);
 					} catch (emailError) {
 						this.logger.error(
 							`❌ [AttendanceService] Failed to queue break ended email for user ${breakDto.owner.uid}:`,
@@ -3232,7 +3398,9 @@ export class AttendanceService {
 						);
 					}
 				} else {
-					this.logger.warn(`⚠️ [AttendanceService] No email found for user ${breakDto.owner.uid}, skipping email notification`);
+					this.logger.warn(
+						`⚠️ [AttendanceService] No email found for user ${breakDto.owner.uid}, skipping email notification`,
+					);
 				}
 				this.logger.debug(`Enhanced break end notification sent successfully to user: ${breakDto.owner.uid}`);
 			} catch (notificationError) {
@@ -4709,18 +4877,18 @@ export class AttendanceService {
 
 	/**
 	 * ## 📦 Consolidate Attendance Records
-	 * 
+	 *
 	 * Process bulk attendance records from external systems (ERP, other time-tracking systems).
 	 * This method handles batch processing of check-ins or check-outs with comprehensive
 	 * error handling and audit trail capabilities.
-	 * 
+	 *
 	 * ### **Features:**
 	 * - Batch processing with individual record validation
 	 * - Source system tracking for audit trails
 	 * - Transaction support for data integrity
 	 * - Individual error handling without failing the entire batch
 	 * - Support for both check-in and check-out modes
-	 * 
+	 *
 	 * @param consolidateDto - Consolidation request containing mode and records array
 	 * @param orgId - Organization ID for filtering
 	 * @param branchId - Branch ID for filtering
@@ -4748,12 +4916,14 @@ export class AttendanceService {
 				error?: string;
 			}>;
 			warnings: string[];
-		}
+		};
 	}> {
 		const startTime = Date.now();
 		const operationId = `consolidate_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-		
-		this.logger.log(`[${operationId}] Starting attendance consolidation for ${consolidateDto.records.length} records in ${consolidateDto.mode} mode`);
+
+		this.logger.log(
+			`[${operationId}] Starting attendance consolidation for ${consolidateDto.records.length} records in ${consolidateDto.mode} mode`,
+		);
 
 		// Validate input
 		if (!consolidateDto.records || consolidateDto.records.length === 0) {
@@ -4773,7 +4943,7 @@ export class AttendanceService {
 		for (let i = 0; i < consolidateDto.records.length; i++) {
 			const record = consolidateDto.records[i];
 			const recordLog = `[${operationId}] Record ${i + 1}/${consolidateDto.records.length}`;
-			
+
 			this.logger.debug(`${recordLog} Processing ${consolidateDto.mode} record for user ${record.owner?.uid}`);
 
 			try {
@@ -4785,14 +4955,14 @@ export class AttendanceService {
 					// Process as check-in
 					const checkInRecord = record as CreateCheckInDto;
 					result = await this.checkIn(checkInRecord, orgId, branchId);
-					
+
 					// Check if the result indicates an error (data is null)
 					if (!result.data) {
 						throw new Error(result.message || 'Check-in failed');
 					}
-					
+
 					message = 'Check-in processed successfully';
-					
+
 					// Try to extract attendance ID from result if available
 					if (result.data && result.data.uid) {
 						attendanceId = result.data.uid;
@@ -4801,14 +4971,14 @@ export class AttendanceService {
 					// Process as check-out
 					const checkOutRecord = record as CreateCheckOutDto;
 					result = await this.checkOut(checkOutRecord, orgId, branchId);
-					
+
 					// Check if the result indicates an error (data is null)
 					if (!result.data) {
 						throw new Error(result.message || 'Check-out failed');
 					}
-					
+
 					message = 'Check-out processed successfully';
-					
+
 					// Try to extract attendance ID from result if available
 					if (result.data && result.data.uid) {
 						attendanceId = result.data.uid;
@@ -4826,11 +4996,10 @@ export class AttendanceService {
 
 				successful++;
 				this.logger.debug(`${recordLog} SUCCESS - ${message}`);
-
 			} catch (error) {
 				// Record failed processing but continue with other records
 				const errorMessage = error.message || 'Unknown error occurred';
-				
+
 				results.push({
 					recordIndex: i,
 					success: false,
@@ -4841,9 +5010,9 @@ export class AttendanceService {
 
 				warnings.push(`Record ${i + 1}: User ${record.owner?.uid} - ${errorMessage}`);
 				failed++;
-				
+
 				this.logger.warn(`${recordLog} FAILED - ${errorMessage}`);
-				
+
 				// Continue processing other records despite this failure
 				continue;
 			}
@@ -4855,14 +5024,14 @@ export class AttendanceService {
 		// Log consolidation summary
 		this.logger.log(
 			`[${operationId}] COMPLETED - Processed ${processed} records in ${processingTime}. ` +
-			`Success: ${successful}, Failed: ${failed}. Source: ${consolidateDto.sourceSystem || 'Unknown'}`
+				`Success: ${successful}, Failed: ${failed}. Source: ${consolidateDto.sourceSystem || 'Unknown'}`,
 		);
 
 		// Create audit log entry for the consolidation
 		if (consolidateDto.sourceSystem || consolidateDto.transactionId) {
 			this.logger.log(
 				`[${operationId}] AUDIT - Consolidation from ${consolidateDto.sourceSystem || 'Unknown'} ` +
-				`with transaction ID: ${consolidateDto.transactionId || 'N/A'}`
+					`with transaction ID: ${consolidateDto.transactionId || 'N/A'}`,
 			);
 		}
 
@@ -4877,7 +5046,7 @@ export class AttendanceService {
 				processingTime,
 				results,
 				warnings,
-			}
+			},
 		};
 	}
 }

@@ -219,4 +219,13 @@ export class User {
 
 	@OneToMany(() => Project, (project) => project.assignedUser, { nullable: true })
 	projects: Project[];
+
+	@Column({ type: 'json', nullable: true })
+	preferences: {
+		theme?: 'light' | 'dark';
+		language?: string;
+		notifications?: boolean;
+		shiftAutoEnd?: boolean;
+		[key: string]: any;
+	} | null;
 }
