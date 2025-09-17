@@ -354,8 +354,24 @@ export class TrackingService {
 
 			this.logger.debug(`Found ${trackingPoints.length} tracking points for user: ${userId}`);
 
-			// Geocode tracking points that don't have addresses
+			// Try to geocode tracking points that don't have addresses
+			// This will now stop after 3 consecutive failures
 			await this.geocodeTrackingPoints(trackingPoints);
+
+			// Check if geocoding failed and provide fallback data
+			const pointsWithoutAddress = trackingPoints.filter(point => !point.address && point.latitude && point.longitude);
+			const geocodingFailed = pointsWithoutAddress.length > 0;
+
+			if (geocodingFailed) {
+				this.logger.warn(`Geocoding failed for ${pointsWithoutAddress.length} tracking points in timeframe query. Using fallback location data.`);
+				
+				// Provide fallback addresses using coordinates
+				pointsWithoutAddress.forEach(point => {
+					if (!point.address) {
+						point.address = `${point.latitude.toFixed(4)}, ${point.longitude.toFixed(4)}`;
+					}
+				});
+			}
 
 			// Calculate analytics
 			const analytics = this.calculateTrackingAnalytics(trackingPoints);
@@ -378,6 +394,11 @@ export class TrackingService {
 					trackingPoints,
 					analytics,
 					tripSummary,
+					geocodingStatus: {
+						successful: trackingPoints.filter(p => p.address && !p.addressDecodingError).length,
+						failed: pointsWithoutAddress.length,
+						usedFallback: geocodingFailed,
+					},
 				},
 			};
 
@@ -811,9 +832,21 @@ export class TrackingService {
 		// Process in batches to avoid hitting API rate limits
 		const BATCH_SIZE = 5;
 		const BATCH_DELAY = 1000; // 1 second delay between batches
+		const MAX_CONSECUTIVE_FAILURES = 3; // Stop geocoding after 3 consecutive failures
+		let consecutiveFailures = 0;
+		let totalProcessed = 0;
+		let totalSuccessful = 0;
+		let totalFailed = 0;
 
 		for (let i = 0; i < pointsToGeocode.length; i += BATCH_SIZE) {
+			// Check if we've hit the failure threshold
+			if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+				this.logger.warn(`Stopping geocoding after ${consecutiveFailures} consecutive failures. Skipping remaining ${pointsToGeocode.length - totalProcessed} points.`);
+				break;
+			}
+
 			const batch = pointsToGeocode.slice(i, i + BATCH_SIZE);
+			let batchFailures = 0;
 			
 			const geocodingPromises = batch.map(async (point) => {
 				const { address, error } = await this.getAddressFromCoordinates(point.latitude, point.longitude);
@@ -831,23 +864,41 @@ export class TrackingService {
 					} catch (updateError) {
 						this.logger.warn(`Failed to update address for tracking point ${point.uid}: ${updateError.message}`);
 					}
+					
+					totalSuccessful++;
+					consecutiveFailures = 0; // Reset failure counter on success
 				} else if (error) {
 					point.addressDecodingError = error;
 					this.logger.warn(`Geocoding failed for point ${point.uid}: ${error}`);
+					batchFailures++;
+					totalFailed++;
+					consecutiveFailures++;
 				}
 				
+				totalProcessed++;
 				return point;
 			});
 
 			await Promise.allSettled(geocodingPromises);
 			
+			// If entire batch failed, increment consecutive failures
+			if (batchFailures === batch.length) {
+				consecutiveFailures += batchFailures;
+			}
+			
 			// Add delay between batches to respect API rate limits
-			if (i + BATCH_SIZE < pointsToGeocode.length) {
+			if (i + BATCH_SIZE < pointsToGeocode.length && consecutiveFailures < MAX_CONSECUTIVE_FAILURES) {
 				await new Promise(resolve => setTimeout(resolve, BATCH_DELAY));
 			}
 		}
 
-		this.logger.debug(`Completed geocoding for ${pointsToGeocode.length} tracking points`);
+		// Log final results
+		if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+			this.logger.warn(`Geocoding stopped early due to ${consecutiveFailures} consecutive failures. Processed: ${totalProcessed}/${pointsToGeocode.length}, Successful: ${totalSuccessful}, Failed: ${totalFailed}`);
+		} else {
+			this.logger.debug(`Completed geocoding for ${pointsToGeocode.length} tracking points. Successful: ${totalSuccessful}, Failed: ${totalFailed}`);
+		}
+
 		return trackingPoints;
 	}
 
@@ -984,12 +1035,28 @@ export class TrackingService {
 				};
 			}
 
-			// Geocode tracking points that don't have addresses
+			// Try to geocode tracking points that don't have addresses
+			// This will now stop after 3 consecutive failures
 			await this.geocodeTrackingPoints(trackingPoints);
 
 			// Enhanced trip analysis
 			const tripAnalysis = this.generateTripAnalysis(trackingPoints);
 			const stopAnalysis = this.detectAndAnalyzeStops(trackingPoints);
+
+			// Check if geocoding failed and provide fallback data
+			const pointsWithoutAddress = trackingPoints.filter(point => !point.address && point.latitude && point.longitude);
+			const geocodingFailed = pointsWithoutAddress.length > 0;
+
+			if (geocodingFailed) {
+				this.logger.warn(`Geocoding failed for ${pointsWithoutAddress.length} tracking points. Using fallback location data.`);
+				
+				// Provide fallback addresses using coordinates
+				pointsWithoutAddress.forEach(point => {
+					if (!point.address) {
+						point.address = `${point.latitude.toFixed(4)}, ${point.longitude.toFixed(4)}`;
+					}
+				});
+			}
 
 			return {
 				message: process.env.SUCCESS_MESSAGE,
@@ -1013,9 +1080,15 @@ export class TrackingService {
 						maxSpeedKmh: tripAnalysis.maxSpeedKmh,
 					},
 					stops: stopAnalysis.stops,
+					geocodingStatus: {
+						successful: trackingPoints.filter(p => p.address && !p.addressDecodingError).length,
+						failed: pointsWithoutAddress.length,
+						usedFallback: geocodingFailed,
+					},
 				},
 			};
 		} catch (error) {
+			this.logger.error(`Error in getDailyTracking for user ${userId}: ${error.message}`, error.stack);
 			return {
 				message: error.message,
 				data: null,

@@ -123,6 +123,31 @@ export class AttendanceService {
 		return `${this.CACHE_PREFIX}${key}`;
 	}
 
+	/**
+	 * Get organization timezone with fallback
+	 */
+	private async getOrganizationTimezone(organizationId?: number): Promise<string> {
+		if (!organizationId) {
+			return TimezoneUtil.getSafeTimezone();
+		}
+
+		try {
+			const organizationHours = await this.organizationHoursService.getOrganizationHours(organizationId);
+			return organizationHours?.timezone || TimezoneUtil.getSafeTimezone();
+		} catch (error) {
+			this.logger.warn(`Error getting timezone for org ${organizationId}, using default:`, error);
+			return TimezoneUtil.getSafeTimezone();
+		}
+	}
+
+	/**
+	 * Format time in organization timezone for notifications
+	 */
+	private async formatTimeInOrganizationTimezone(date: Date, organizationId?: number): Promise<string> {
+		const timezone = await this.getOrganizationTimezone(organizationId);
+		return TimezoneUtil.formatInOrganizationTime(date, 'h:mm a', timezone);
+	}
+
 	private async clearAttendanceCache(attendanceId?: number, userId?: number): Promise<void> {
 		try {
 			const keysToDelete: string[] = [];
@@ -302,12 +327,6 @@ export class AttendanceService {
 
 			// Send enhanced shift start notification with improved messaging
 			try {
-				const checkInTime = new Date(checkIn.checkIn).toLocaleTimeString('en-ZA', {
-					hour: '2-digit',
-					minute: '2-digit',
-					hour12: true,
-				});
-
 				// Get user info for personalized message with email and relations
 				const user = await this.userRepository.findOne({
 					where: { uid: checkInDto.owner.uid },
@@ -316,6 +335,9 @@ export class AttendanceService {
 				});
 
 				const userName = user ? user.name : '';
+				
+				// Format check-in time in organization timezone
+				const checkInTime = await this.formatTimeInOrganizationTimezone(new Date(checkIn.checkIn), orgId);
 
 				this.logger.debug(`Sending enhanced shift start notification to user: ${checkInDto.owner.uid}`);
 				// Send push notification
@@ -608,7 +630,10 @@ export class AttendanceService {
 
 			if (!activeShift) {
 				this.logger.warn(`No active shift found for check-out for user: ${checkOutDto.owner?.uid}`);
-				throw new NotFoundException('No active shift found. Please check in first.');
+				return {
+					message: 'No active shift found. Please check in first.',
+					data: { error: 'NO_ACTIVE_SHIFT', success: false }
+				};
 			}
 
 			this.logger.debug(`Active shift found for user: ${checkOutDto.owner?.uid}, shift ID: ${activeShift.uid}`);
@@ -749,17 +774,9 @@ export class AttendanceService {
 
 			// Send enhanced shift end notification with improved messaging
 			try {
-				const checkOutTimeString = checkOutTime.toLocaleTimeString('en-ZA', {
-					hour: '2-digit',
-					minute: '2-digit',
-					hour12: true,
-				});
-
-				const checkInTimeString = new Date(activeShift.checkIn).toLocaleTimeString('en-ZA', {
-					hour: '2-digit',
-					minute: '2-digit',
-					hour12: true,
-				});
+				// Format times in organization timezone
+				const checkOutTimeString = await this.formatTimeInOrganizationTimezone(checkOutTime, orgId);
+				const checkInTimeString = await this.formatTimeInOrganizationTimezone(new Date(activeShift.checkIn), orgId);
 
 				// Get user info for personalized message with email and relations
 				const user = await this.userRepository.findOne({
@@ -1168,11 +1185,7 @@ export class AttendanceService {
 			let message: string;
 			let priority = NotificationPriority.NORMAL;
 
-			const currentTime = new Date().toLocaleTimeString('en-ZA', {
-				hour: '2-digit',
-				minute: '2-digit',
-				hour12: true,
-			});
+			const currentTime = await this.formatTimeInOrganizationTimezone(new Date(), orgId);
 
 			// Get organization hours to determine expected shift time if not provided
 			let expectedShiftTime = shiftStartTime;
@@ -1594,16 +1607,8 @@ export class AttendanceService {
 								{
 									message,
 									breakDurationMinutes: interval.minutes,
-									breakStartTime: breakStartTime.toLocaleTimeString('en-ZA', {
-										hour: '2-digit',
-										minute: '2-digit',
-										hour12: true,
-									}),
-									currentTime: now.toLocaleTimeString('en-ZA', {
-										hour: '2-digit',
-										minute: '2-digit',
-										hour12: true,
-									}),
+									breakStartTime: await this.formatTimeInOrganizationTimezone(breakStartTime, breakRecord.owner.organisation?.uid),
+									currentTime: await this.formatTimeInOrganizationTimezone(now, breakRecord.owner.organisation?.uid),
 									reminderLevel: interval.level,
 									userName,
 									userId: breakRecord.owner.uid,
@@ -1680,11 +1685,7 @@ export class AttendanceService {
 					`[${operationId}] Notifying ${orgAdmins.length} admins about long break for user ${user.uid}`,
 				);
 
-				const breakStartTimeString = breakStartTime.toLocaleTimeString('en-ZA', {
-					hour: '2-digit',
-					minute: '2-digit',
-					hour12: true,
-				});
+				const breakStartTimeString = await this.formatTimeInOrganizationTimezone(breakStartTime, orgId);
 
 				const breakLevel = breakDurationMinutes >= 60 ? 'extended' : 'long';
 				const urgencyLevel = breakDurationMinutes >= 60 ? 'urgent attention' : 'monitoring';
@@ -2206,11 +2207,7 @@ export class AttendanceService {
 					`[${operationId}] Notifying ${orgAdmins.length} admins about missed checkout for user ${user.uid}`,
 				);
 
-				const checkInTime = new Date(activeShift.checkIn).toLocaleTimeString('en-ZA', {
-					hour: '2-digit',
-					minute: '2-digit',
-					hour12: true,
-				});
+				const checkInTime = await this.formatTimeInOrganizationTimezone(new Date(activeShift.checkIn), orgId);
 
 				await this.unifiedNotificationService.sendTemplatedNotification(
 					NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER,
@@ -3090,7 +3087,9 @@ export class AttendanceService {
 
 			if (!activeShift) {
 				this.logger.warn(`No active shift found for user ${breakDto.owner.uid} to start break`);
-				throw new NotFoundException('No active shift found to start break');
+				return {
+					message: 'No active shift found to start break. Please check in first.'
+				};
 			}
 
 			this.logger.log(
@@ -3135,12 +3134,6 @@ export class AttendanceService {
 
 			// Send enhanced break start notification
 			try {
-				const breakStartTimeString = breakStartTime.toLocaleTimeString('en-ZA', {
-					hour: '2-digit',
-					minute: '2-digit',
-					hour12: true,
-				});
-
 				// Get user info for personalized message with email and relations
 				const user = await this.userRepository.findOne({
 					where: { uid: breakDto.owner.uid },
@@ -3155,6 +3148,9 @@ export class AttendanceService {
 						: breakCount === 2
 						? 'second'
 						: `${breakCount}${breakCount > 3 ? 'th' : breakCount === 3 ? 'rd' : 'nd'}`;
+
+				// Format break start time in organization timezone
+				const breakStartTimeString = await this.formatTimeInOrganizationTimezone(breakStartTime, user?.organisation?.uid);
 
 				this.logger.debug(`Sending enhanced break start notification to user: ${breakDto.owner.uid}`);
 				// Send push notification
@@ -3256,7 +3252,10 @@ export class AttendanceService {
 
 			if (!shiftOnBreak) {
 				this.logger.warn(`No shift on break found for user ${breakDto.owner.uid}`);
-				throw new NotFoundException('No shift on break found');
+				
+				return {
+					message: 'No shift on break found. Please start a break first.',
+				};
 			}
 
 			this.logger.log(
@@ -3324,18 +3323,6 @@ export class AttendanceService {
 
 			// Send enhanced break end notification
 			try {
-				const breakEndTimeString = breakEndTime.toLocaleTimeString('en-ZA', {
-					hour: '2-digit',
-					minute: '2-digit',
-					hour12: true,
-				});
-
-				const breakStartTimeString = breakStartTime.toLocaleTimeString('en-ZA', {
-					hour: '2-digit',
-					minute: '2-digit',
-					hour12: true,
-				});
-
 				// Get user info for personalized message with email and relations
 				const user = await this.userRepository.findOne({
 					where: { uid: breakDto.owner.uid },
@@ -3344,6 +3331,10 @@ export class AttendanceService {
 				});
 
 				const userName = user ? user.name : '';
+
+				// Format break times in organization timezone
+				const breakEndTimeString = await this.formatTimeInOrganizationTimezone(breakEndTime, user?.organisation?.uid);
+				const breakStartTimeString = await this.formatTimeInOrganizationTimezone(breakStartTime, user?.organisation?.uid);
 
 				this.logger.debug(`Sending enhanced break end notification to user: ${breakDto.owner.uid}`);
 				// Send push notification
@@ -3561,17 +3552,22 @@ export class AttendanceService {
 				throw new NotFoundException(`User with ID ${userId} not found`);
 			}
 
-			// Get first ever attendance
+			// Get first ever attendance with organization info
 			const firstAttendance = await this.attendanceRepository.findOne({
 				where: { owner: { uid: userId } },
 				order: { checkIn: 'ASC' },
+				relations: ['organisation'],
 			});
 
-			// Get last attendance
+			// Get last attendance with organization info
 			const lastAttendance = await this.attendanceRepository.findOne({
 				where: { owner: { uid: userId } },
 				order: { checkIn: 'DESC' },
+				relations: ['organisation'],
 			});
+
+			// Get organization ID for timezone formatting
+			const organizationId = firstAttendance?.organisation?.uid || lastAttendance?.organisation?.uid;
 
 			// Calculate date ranges
 			const now = new Date();
@@ -3756,16 +3752,16 @@ export class AttendanceService {
 			const metrics = {
 				firstAttendance: {
 					date: firstAttendance ? new Date(firstAttendance.checkIn).toISOString().split('T')[0] : null,
-					checkInTime: firstAttendance ? new Date(firstAttendance.checkIn).toLocaleTimeString() : null,
+					checkInTime: firstAttendance ? await this.formatTimeInOrganizationTimezone(new Date(firstAttendance.checkIn), organizationId) : null,
 					daysAgo: firstAttendance
 						? Math.floor(differenceInMinutes(now, new Date(firstAttendance.checkIn)) / (24 * 60))
 						: null,
 				},
 				lastAttendance: {
 					date: lastAttendance ? new Date(lastAttendance.checkIn).toISOString().split('T')[0] : null,
-					checkInTime: lastAttendance ? new Date(lastAttendance.checkIn).toLocaleTimeString() : null,
+					checkInTime: lastAttendance ? await this.formatTimeInOrganizationTimezone(new Date(lastAttendance.checkIn), organizationId) : null,
 					checkOutTime: lastAttendance?.checkOut
-						? new Date(lastAttendance.checkOut).toLocaleTimeString()
+						? await this.formatTimeInOrganizationTimezone(new Date(lastAttendance.checkOut), organizationId)
 						: null,
 					daysAgo: lastAttendance
 						? Math.floor(differenceInMinutes(now, new Date(lastAttendance.checkIn)) / (24 * 60))

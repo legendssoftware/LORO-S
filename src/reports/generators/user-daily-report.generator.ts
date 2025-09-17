@@ -737,11 +737,16 @@ export class UserDailyReportGenerator {
 				return this.defaultLocationData();
 			}
 
-			const { trackingPoints, totalDistance, locationAnalysis, tripSummary, stops } = trackingResult.data;
+			const { trackingPoints, totalDistance, locationAnalysis, tripSummary, stops, geocodingStatus } = trackingResult.data;
 
 			if (!trackingPoints || !trackingPoints.length) {
 				this.logger.warn(`No tracking points found for user ${userId} on ${format(startDate, 'yyyy-MM-dd')}`);
 				return this.defaultLocationData('0');
+			}
+
+			// Log geocoding status for monitoring
+			if (geocodingStatus && geocodingStatus.usedFallback) {
+				this.logger.warn(`Geocoding failed for user ${userId} on ${format(startDate, 'yyyy-MM-dd')}. Using fallback location data. Successful: ${geocodingStatus.successful}, Failed: ${geocodingStatus.failed}`);
 			}
 
 			// Extract distance value from formatted string or use tripSummary
@@ -770,6 +775,8 @@ export class UserDailyReportGenerator {
 				address: point.address || `${point.latitude.toFixed(4)}, ${point.longitude.toFixed(4)}`,
 				accuracy: point.accuracy,
 				speed: point.speed,
+				// Add flag to indicate if this is fallback data
+				isFallbackAddress: !point.address || point.address.includes(',') && point.addressDecodingError,
 			}));
 
 			// Format stops for email summary
@@ -782,6 +789,8 @@ export class UserDailyReportGenerator {
 				startTime: format(new Date(stop.startTime), 'HH:mm'),
 				endTime: format(new Date(stop.endTime), 'HH:mm'),
 				pointsCount: stop.pointsCount,
+				// Add flag to indicate if this is fallback data
+				isFallbackAddress: stop.address && stop.address.includes(',') && stop.address.match(/^-?\d+\.\d+,\s*-?\d+\.\d+$/),
 			})) : [];
 
 			// Prepare email tracking data with enhanced trip summary
@@ -799,6 +808,13 @@ export class UserDailyReportGenerator {
 					numberOfStops: tripSummary.numberOfStops,
 				} : null,
 				stops: formattedStops.slice(0, 10), // Limit to top 10 stops for email
+				// Add geocoding status for transparency
+				geocodingStatus: geocodingStatus ? {
+					successful: geocodingStatus.successful,
+					failed: geocodingStatus.failed,
+					usedFallback: geocodingStatus.usedFallback,
+					note: geocodingStatus.usedFallback ? 'Some locations shown as coordinates due to geocoding service issues' : null,
+				} : null,
 			};
 
 			return {
@@ -810,6 +826,8 @@ export class UserDailyReportGenerator {
 				tripMetrics: tripSummary || {},
 				stops: formattedStops,
 				locationAnalysis: locationAnalysis || {},
+				// Add geocoding status for monitoring
+				geocodingStatus: geocodingStatus || null,
 			};
 		} catch (error) {
 			this.logger.error(`Error collecting location data for user ${userId}: ${error.message}`, error.stack);
