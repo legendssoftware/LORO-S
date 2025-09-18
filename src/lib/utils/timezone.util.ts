@@ -169,6 +169,22 @@ export class TimezoneUtil {
     const safeTimezone = this.getSafeTimezone(organizationTimezone);
     
     try {
+      // For simple time formats, use Intl.DateTimeFormat directly to avoid double timezone conversion
+      if (formatString === 'h:mm a' || formatString === 'HH:mm' || formatString === 'h:mm A') {
+        const is12Hour = formatString.includes('a') || formatString.includes('A');
+        const formatter = new Intl.DateTimeFormat('en-US', {
+          timeZone: safeTimezone,
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: is12Hour,
+        });
+        
+        const formatted = formatter.format(date);
+        console.log(`[TimezoneUtil] Formatted ${date.toISOString()} in ${safeTimezone} as: ${formatted}`);
+        return formatted;
+      }
+      
+      // For other formats, use the existing method but be more careful
       // Convert to organization timezone first
       const orgDate = this.toOrganizationTime(date, organizationTimezone);
       // Then format using date-fns
