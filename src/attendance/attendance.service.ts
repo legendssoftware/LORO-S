@@ -2982,8 +2982,38 @@ export class AttendanceService {
 				...restOfCheckIn
 			} = checkIn;
 
-			const nextAction = status === AttendanceStatus.PRESENT ? 'End Shift' : 'Start Shift';
-			const checkedIn = status === AttendanceStatus.PRESENT ? true : false;
+		// Enhanced status logic to properly handle break states
+		let nextAction: string;
+		let checkedIn: boolean;
+
+		// Determine status based on comprehensive attendance state
+		if (status === AttendanceStatus.PRESENT) {
+			checkedIn = true;
+			// Check if user can take a break or should end shift
+			const hasActiveBreak = checkIn.breakStartTime && !checkIn.breakEndTime;
+			nextAction = hasActiveBreak ? 'Resume Work' : 'End Shift';
+		} else if (status === AttendanceStatus.ON_BREAK) {
+			checkedIn = true;
+			nextAction = 'End Break';
+		} else if (status === AttendanceStatus.COMPLETED) {
+			checkedIn = false;
+			nextAction = 'Start Shift';
+		} else {
+			// Default case for ABSENT, MISSED, or other statuses
+			checkedIn = false;
+			nextAction = 'Start Shift';
+		}
+
+		// Additional validation: check break details for more accuracy
+		if (checkIn.breakDetails && Array.isArray(checkIn.breakDetails)) {
+			const activeBreak = checkIn.breakDetails.find(breakDetail => !breakDetail.endTime);
+			if (activeBreak && status !== AttendanceStatus.ON_BREAK) {
+				// User has an active break but status might be inconsistent
+				this.logger.warn(`Inconsistent break state detected for user ${ref}: has active break but status is ${status}`);
+				checkedIn = true;
+				nextAction = 'End Break';
+			}
+		}
 
 			// Apply timezone conversion to the attendance record using enhanced method
 			const response = {

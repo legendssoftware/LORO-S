@@ -937,15 +937,15 @@ export class IotService {
 				`🔌 [${requestId}] Main query completed: ${devices.length} devices fetched in ${queryTime}ms`,
 			);
 
-			// Limit records to latest 5 for each device
-			const processedDevices = devices.map(device => ({
-				...device,
-				records: device.records 
-					? device.records
-						.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-						.slice(0, 5)
-					: []
-			}));
+		// Limit records to latest 10 for each device
+		const processedDevices = devices.map(device => ({
+			...device,
+			records: device.records 
+				? device.records
+					.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+					.slice(0, 10)
+				: []
+		}));
 
 			// Log device details for debugging
 			if (processedDevices.length > 0) {
@@ -1025,13 +1025,13 @@ export class IotService {
 
 			this.logger.log(`✅ [findOneDevice] Device found - ID: ${device.id}, deviceID: ${device.deviceID}, org: ${device.orgID}, branch: ${device.branchID}`);
 
-			// Limit records to latest 5
+			// Limit records to latest 10
 			const processedDevice = {
 				...device,
 				records: device.records 
 					? device.records
 						.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-						.slice(0, 5)
+						.slice(0, 10)
 					: []
 			};
 
@@ -1081,13 +1081,13 @@ export class IotService {
 
 			this.logger.log(`✅ [findDeviceByDeviceId] Device found - ID: ${device.id}, deviceID: ${device.deviceID}, org: ${device.orgID}, branch: ${device.branchID}`);
 
-			// Limit records to latest 5
+			// Limit records to latest 10
 			const processedDevice = {
 				...device,
 				records: device.records 
 					? device.records
 						.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-						.slice(0, 5)
+						.slice(0, 10)
 					: []
 			};
 
