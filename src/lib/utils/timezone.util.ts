@@ -61,8 +61,12 @@ export class TimezoneUtil {
     const safeTimezone = this.getSafeTimezone(organizationTimezone);
     
     try {
-      // Get the timezone offset difference
-      const serverOffset = serverDate.getTimezoneOffset();
+      if (!isValid(serverDate)) {
+        console.warn('Invalid server date provided');
+        return new Date(); // Return current time as fallback
+      }
+
+      // Format the UTC date in the target timezone
       const orgFormatter = new Intl.DateTimeFormat('en-ZA', {
         timeZone: safeTimezone,
         year: 'numeric',
@@ -75,14 +79,20 @@ export class TimezoneUtil {
       });
       
       const orgParts = orgFormatter.formatToParts(serverDate);
-      const orgDate = new Date(
-        parseInt(orgParts.find(p => p.type === 'year')?.value || '0'),
-        parseInt(orgParts.find(p => p.type === 'month')?.value || '1') - 1,
-        parseInt(orgParts.find(p => p.type === 'day')?.value || '1'),
-        parseInt(orgParts.find(p => p.type === 'hour')?.value || '0'),
-        parseInt(orgParts.find(p => p.type === 'minute')?.value || '0'),
-        parseInt(orgParts.find(p => p.type === 'second')?.value || '0')
-      );
+      
+      // Extract the formatted parts
+      const year = parseInt(orgParts.find(p => p.type === 'year')?.value || '0');
+      const month = parseInt(orgParts.find(p => p.type === 'month')?.value || '1') - 1; // Month is 0-indexed
+      const day = parseInt(orgParts.find(p => p.type === 'day')?.value || '1');
+      const hour = parseInt(orgParts.find(p => p.type === 'hour')?.value || '0');
+      const minute = parseInt(orgParts.find(p => p.type === 'minute')?.value || '0');
+      const second = parseInt(orgParts.find(p => p.type === 'second')?.value || '0');
+      
+      // Create a UTC date object representing the local time in the organization timezone
+      // This is what we want: the time that shows in the organization's timezone, but as a UTC date
+      const orgDate = new Date(Date.UTC(year, month, day, hour, minute, second));
+      
+      console.log(`[TimezoneUtil] Converting ${serverDate.toISOString()} to ${safeTimezone}: ${orgDate.toISOString()}`);
       
       return orgDate;
     } catch (error) {

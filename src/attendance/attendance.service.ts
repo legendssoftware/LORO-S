@@ -128,15 +128,21 @@ export class AttendanceService {
 	 */
 	private async getOrganizationTimezone(organizationId?: number): Promise<string> {
 		if (!organizationId) {
-			return TimezoneUtil.getSafeTimezone();
+			const fallbackTimezone = TimezoneUtil.getSafeTimezone();
+			this.logger.debug(`No organizationId provided, using fallback timezone: ${fallbackTimezone}`);
+			return fallbackTimezone;
 		}
 
 		try {
 			const organizationHours = await this.organizationHoursService.getOrganizationHours(organizationId);
-			return organizationHours?.timezone || TimezoneUtil.getSafeTimezone();
+			const timezone = organizationHours?.timezone || TimezoneUtil.getSafeTimezone();
+			this.logger.debug(`Organization ${organizationId} timezone: ${timezone}`);
+			return timezone;
 		} catch (error) {
 			this.logger.warn(`Error getting timezone for org ${organizationId}, using default:`, error);
-			return TimezoneUtil.getSafeTimezone();
+			const fallbackTimezone = TimezoneUtil.getSafeTimezone();
+			this.logger.debug(`Using fallback timezone: ${fallbackTimezone}`);
+			return fallbackTimezone;
 		}
 	}
 
@@ -146,6 +152,247 @@ export class AttendanceService {
 	private async formatTimeInOrganizationTimezone(date: Date, organizationId?: number): Promise<string> {
 		const timezone = await this.getOrganizationTimezone(organizationId);
 		return TimezoneUtil.formatInOrganizationTime(date, 'h:mm a', timezone);
+	}
+
+	/**
+	 * Convert attendance record dates to organization timezone
+	 * This ensures all date fields are returned in the user's local timezone instead of UTC
+	 */
+	private async convertAttendanceRecordTimezone(
+		record: Attendance,
+		organizationId?: number,
+	): Promise<Attendance> {
+		try {
+			if (!record) return record;
+
+			// Get organization timezone or use user's timezone from preferences
+			let timezone = 'Africa/Johannesburg'; // Default fallback
+			
+			// First try to get timezone from organization
+			if (organizationId) {
+				timezone = await this.getOrganizationTimezone(organizationId);
+			} else if (record.owner?.organisation?.uid) {
+				timezone = await this.getOrganizationTimezone(record.owner.organisation.uid);
+			} else if (record.organisation?.uid) {
+				timezone = await this.getOrganizationTimezone(record.organisation.uid);
+			}
+
+			// If no organization timezone found, try user preferences
+			if (timezone === TimezoneUtil.getSafeTimezone() && record.owner?.preferences?.timezone) {
+				timezone = record.owner.preferences.timezone;
+			}
+
+			this.logger.debug(`Converting attendance record ${record.uid} to timezone: ${timezone}`);
+
+			// Convert all date fields to organization timezone
+			const convertedRecord = { ...record };
+
+			// Convert main timestamp fields
+			if (convertedRecord.checkIn) {
+				const originalTime = new Date(convertedRecord.checkIn);
+				convertedRecord.checkIn = TimezoneUtil.toOrganizationTime(originalTime, timezone);
+				this.logger.debug(`CheckIn converted from ${originalTime.toISOString()} to ${convertedRecord.checkIn.toISOString()}`);
+			}
+
+			if (convertedRecord.checkOut) {
+				const originalTime = new Date(convertedRecord.checkOut);
+				convertedRecord.checkOut = TimezoneUtil.toOrganizationTime(originalTime, timezone);
+				this.logger.debug(`CheckOut converted from ${originalTime.toISOString()} to ${convertedRecord.checkOut.toISOString()}`);
+			}
+
+			if (convertedRecord.breakStartTime) {
+				const originalTime = new Date(convertedRecord.breakStartTime);
+				convertedRecord.breakStartTime = TimezoneUtil.toOrganizationTime(originalTime, timezone);
+			}
+
+			if (convertedRecord.breakEndTime) {
+				const originalTime = new Date(convertedRecord.breakEndTime);
+				convertedRecord.breakEndTime = TimezoneUtil.toOrganizationTime(originalTime, timezone);
+			}
+
+			if (convertedRecord.createdAt) {
+				const originalTime = new Date(convertedRecord.createdAt);
+				convertedRecord.createdAt = TimezoneUtil.toOrganizationTime(originalTime, timezone);
+			}
+
+			if (convertedRecord.updatedAt) {
+				const originalTime = new Date(convertedRecord.updatedAt);
+				convertedRecord.updatedAt = TimezoneUtil.toOrganizationTime(originalTime, timezone);
+			}
+
+			if (convertedRecord.verifiedAt) {
+				const originalTime = new Date(convertedRecord.verifiedAt);
+				convertedRecord.verifiedAt = TimezoneUtil.toOrganizationTime(originalTime, timezone);
+			}
+
+			// Convert break details timestamps
+			if (convertedRecord.breakDetails && Array.isArray(convertedRecord.breakDetails)) {
+				convertedRecord.breakDetails = convertedRecord.breakDetails.map(breakDetail => ({
+					...breakDetail,
+					startTime: breakDetail.startTime ? TimezoneUtil.toOrganizationTime(new Date(breakDetail.startTime), timezone) : breakDetail.startTime,
+					endTime: breakDetail.endTime ? TimezoneUtil.toOrganizationTime(new Date(breakDetail.endTime), timezone) : breakDetail.endTime,
+				}));
+			}
+
+			return convertedRecord;
+		} catch (error) {
+			this.logger.warn(`Error converting attendance record timezone: ${error.message}`);
+			return record; // Return original record if conversion fails
+		}
+	}
+
+	/**
+	 * Convert multiple attendance records to organization timezone
+	 */
+	private async convertAttendanceRecordsTimezone(
+		records: Attendance[],
+		organizationId?: number,
+	): Promise<Attendance[]> {
+		if (!records || records.length === 0) return records;
+
+		try {
+			// Process records in parallel for better performance
+			const convertedRecords = await Promise.all(
+				records.map(record => this.convertAttendanceRecordTimezone(record, organizationId))
+			);
+
+			return convertedRecords;
+		} catch (error) {
+			this.logger.warn(`Error converting attendance records timezone: ${error.message}`);
+			return records; // Return original records if conversion fails
+		}
+	}
+
+	/**
+	 * Test timezone conversion to verify it's working correctly
+	 * This can be called to debug timezone issues
+	 */
+	public async testTimezoneConversion(organizationId?: number): Promise<{
+		original: string;
+		timezone: string;
+		converted: string;
+		expected: string;
+		isWorking: boolean;
+		message: string;
+	}> {
+		try {
+			const testDate = new Date('2025-09-18T05:25:00.000Z'); // UTC time from user's example
+			const timezone = await this.getOrganizationTimezone(organizationId);
+			const convertedDate = TimezoneUtil.toOrganizationTime(testDate, timezone);
+			
+			const original = testDate.toISOString();
+			const converted = convertedDate.toISOString();
+			const expected = '2025-09-18T07:25:00.000Z';
+			const isWorking = converted === expected;
+			
+			this.logger.log(`[TIMEZONE TEST] Original: ${original}`);
+			this.logger.log(`[TIMEZONE TEST] Timezone: ${timezone}`);
+			this.logger.log(`[TIMEZONE TEST] Converted: ${converted}`);
+			this.logger.log(`[TIMEZONE TEST] Expected: ${expected}`);
+			this.logger.log(`[TIMEZONE TEST] Working correctly: ${isWorking}`);
+			
+			return {
+				original,
+				timezone,
+				converted,
+				expected,
+				isWorking,
+				message: isWorking ? 'Timezone conversion is working correctly!' : 'Timezone conversion has issues'
+			};
+		} catch (error) {
+			this.logger.error(`[TIMEZONE TEST] Error: ${error.message}`);
+			return {
+				original: '',
+				timezone: '',
+				converted: '',
+				expected: '2025-09-18T07:25:00.000Z',
+				isWorking: false,
+				message: `Error testing timezone conversion: ${error.message}`
+			};
+		}
+	}
+
+	/**
+	 * Enhanced method to ensure attendance data is consistently timezone-converted
+	 * This method should be called for ALL attendance data returned to clients
+	 */
+	private async ensureTimezoneConversion(
+		data: Attendance | Attendance[] | any,
+		organizationId?: number,
+	): Promise<any> {
+		try {
+			if (!data) return data;
+
+			// Log timezone conversion for debugging
+			this.logger.debug(`[ensureTimezoneConversion] Processing data for organization: ${organizationId}`);
+
+			// Handle single attendance record
+			if (data.uid && data.checkIn) {
+				return await this.convertAttendanceRecordTimezone(data as Attendance, organizationId);
+			}
+
+			// Handle array of attendance records
+			if (Array.isArray(data)) {
+				const attendanceRecords = data.filter(item => item && item.checkIn);
+				if (attendanceRecords.length > 0) {
+					return await this.convertAttendanceRecordsTimezone(data as Attendance[], organizationId);
+				}
+			}
+
+			// Handle nested objects with attendance data
+			if (typeof data === 'object') {
+				const result = { ...data };
+				
+				// Check for attendance records in common response structures
+				if (result.checkIns && Array.isArray(result.checkIns)) {
+					result.checkIns = await this.convertAttendanceRecordsTimezone(result.checkIns, organizationId);
+				}
+				
+				if (result.attendance && result.attendance.checkIn) {
+					result.attendance = await this.convertAttendanceRecordTimezone(result.attendance, organizationId);
+				}
+				
+				if (result.activeShifts && Array.isArray(result.activeShifts)) {
+					result.activeShifts = await this.convertAttendanceRecordsTimezone(result.activeShifts, organizationId);
+				}
+				
+				if (result.attendanceRecords && Array.isArray(result.attendanceRecords)) {
+					result.attendanceRecords = await this.convertAttendanceRecordsTimezone(result.attendanceRecords, organizationId);
+				}
+
+				if (result.multiDayShifts && Array.isArray(result.multiDayShifts)) {
+					result.multiDayShifts = await this.convertAttendanceRecordsTimezone(result.multiDayShifts, organizationId);
+				}
+
+				if (result.ongoingShifts && Array.isArray(result.ongoingShifts)) {
+					result.ongoingShifts = await this.convertAttendanceRecordsTimezone(result.ongoingShifts, organizationId);
+				}
+
+				// Handle daily overview with present users
+				if (result.data && result.data.presentUsers && Array.isArray(result.data.presentUsers)) {
+					const timezone = await this.getOrganizationTimezone(organizationId);
+					for (const user of result.data.presentUsers) {
+						if (user.checkInTime) {
+							const originalTime = new Date(user.checkInTime);
+							user.checkInTime = TimezoneUtil.toOrganizationTime(originalTime, timezone);
+							this.logger.debug(`PresentUser checkInTime converted from ${originalTime.toISOString()} to ${user.checkInTime.toISOString()}`);
+						}
+						if (user.checkOutTime) {
+							const originalTime = new Date(user.checkOutTime);
+							user.checkOutTime = TimezoneUtil.toOrganizationTime(originalTime, timezone);
+							this.logger.debug(`PresentUser checkOutTime converted from ${originalTime.toISOString()} to ${user.checkOutTime.toISOString()}`);
+						}
+					}
+				}
+
+				return result;
+			}
+
+			return data;
+		} catch (error) {
+			this.logger.error(`Error ensuring timezone conversion: ${error.message}`);
+			return data; // Return original data if conversion fails
+		}
 	}
 
 	private async clearAttendanceCache(attendanceId?: number, userId?: number): Promise<void> {
@@ -1046,12 +1293,13 @@ export class AttendanceService {
 
 			if (cachedResult) {
 				this.logger.debug(
-					`Retrieved ${Array.isArray(cachedResult) ? cachedResult.length : 0} check-ins from cache`,
+					`Retrieved cached check-ins result`,
 				);
-				return {
-					message: process.env.SUCCESS_MESSAGE,
-					checkIns: cachedResult as Attendance[],
-				};
+				
+				// Apply timezone conversion to cached results using enhanced method
+				const cachedResultWithTimezone = await this.ensureTimezoneConversion(cachedResult, orgId);
+				
+				return cachedResultWithTimezone;
 			}
 
 			const whereConditions: any = {};
@@ -1099,16 +1347,19 @@ export class AttendanceService {
 
 			this.logger.log(`Successfully retrieved ${checkIns.length} check-in records`);
 
-			// Cache the result
-			await this.cacheManager.set(cacheKey, checkIns, this.CACHE_TTL);
-			this.logger.debug(`Cached check-ins result with key: ${cacheKey}`);
-
+			// Apply timezone conversion to all attendance records using enhanced method
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,
-				checkIns,
+				checkIns: checkIns,
 			};
 
-			return response;
+			const responseWithTimezone = await this.ensureTimezoneConversion(response, orgId);
+
+			// Cache the result (with timezone conversion applied)
+			await this.cacheManager.set(cacheKey, responseWithTimezone, this.CACHE_TTL);
+			this.logger.debug(`Cached check-ins result with key: ${cacheKey}`);
+
+			return responseWithTimezone;
 		} catch (error) {
 			this.logger.error(`Failed to retrieve all check-ins`, error.stack);
 			const response = {
@@ -1217,12 +1468,14 @@ export class AttendanceService {
 				};
 			}
 
+			// Apply timezone conversion to all attendance records using enhanced method
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,
 				checkIns: allCheckIns,
 			};
 
-			return response;
+			const responseWithTimezone = await this.ensureTimezoneConversion(response, orgId);
+			return responseWithTimezone;
 		} catch (error) {
 			const response = {
 				message: `could not get check ins by date - ${error.message}`,
@@ -2416,11 +2669,16 @@ export class AttendanceService {
 
 			this.logger.debug(`[${operationId}] Found ${todayAttendance.length} attendance records for today`);
 
-			// Build present users list with enhanced data (no duplicates)
+			// Apply timezone conversion to today's attendance records first
+			const todayAttendanceWithTimezone = await this.convertAttendanceRecordsTimezone(todayAttendance, orgId);
+
+			this.logger.debug(`[${operationId}] Applied timezone conversion to ${todayAttendanceWithTimezone.length} attendance records`);
+
+			// Build present users list with enhanced data (no duplicates) using timezone-converted data
 			const presentUsersMap = new Map<number, any>();
 			const presentUserIds = new Set<number>();
 
-			todayAttendance?.forEach((attendance) => {
+			todayAttendanceWithTimezone?.forEach((attendance) => {
 				if (attendance.owner && !presentUsersMap.has(attendance.owner.uid)) {
 					const user = attendance.owner;
 					const userProfile = user.userProfile || null;
@@ -2436,8 +2694,8 @@ export class AttendanceService {
 						branchId: user.branch?.uid || null,
 						branchName: user.branch?.name || 'N/A',
 						accessLevel: user.accessLevel || 'USER',
-						checkInTime: attendance.checkIn,
-						checkOutTime: attendance.checkOut || null,
+						checkInTime: attendance.checkIn, // Now in correct timezone
+						checkOutTime: attendance.checkOut || null, // Now in correct timezone
 						status: attendance.status || 'present',
 						workingHours: attendance.checkOut
 							? (
@@ -2526,7 +2784,9 @@ export class AttendanceService {
 				`[${operationId}] Daily attendance overview generated: ${presentUsers.length} present, ${absentUsers.length} absent, ${attendanceRate}% rate`,
 			);
 
-			return response;
+			// Apply timezone conversion to response data using enhanced method
+			const responseWithTimezone = await this.ensureTimezoneConversion(response, orgId);
+			return responseWithTimezone;
 		} catch (error) {
 			this.logger.error(`[${operationId}] Error generating daily attendance overview:`, error.stack);
 			return {
@@ -2644,6 +2904,7 @@ export class AttendanceService {
 				};
 			});
 
+			// Apply timezone conversion to all attendance records using enhanced method
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,
 				checkIns: allCheckIns,
@@ -2660,7 +2921,8 @@ export class AttendanceService {
 				})),
 			};
 
-			return response;
+			const responseWithTimezone = await this.ensureTimezoneConversion(response, orgId);
+			return responseWithTimezone;
 		} catch (error) {
 			return {
 				message: `Error retrieving attendance records: ${error.message}`,
@@ -2738,13 +3000,14 @@ export class AttendanceService {
 			const nextAction = status === AttendanceStatus.PRESENT ? 'End Shift' : 'Start Shift';
 			const checkedIn = status === AttendanceStatus.PRESENT ? true : false;
 
+			// Apply timezone conversion to the attendance record using enhanced method
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,
-				startTime: `${CheckInTime}`,
-				endTime: `${checkOut}`,
-				createdAt: `${createdAt}`,
-				updatedAt: `${updatedAt}`,
-				verifiedAt: `${verifiedAt}`,
+				startTime: `${checkIn.checkIn}`,
+				endTime: `${checkIn.checkOut}`,
+				createdAt: `${checkIn.createdAt}`,
+				updatedAt: `${checkIn.updatedAt}`,
+				verifiedAt: `${checkIn.verifiedAt}`,
 				nextAction,
 				isLatestCheckIn,
 				checkedIn,
@@ -2753,7 +3016,8 @@ export class AttendanceService {
 				...restOfCheckIn,
 			};
 
-			return response;
+			const responseWithTimezone = await this.ensureTimezoneConversion(response, orgId);
+			return responseWithTimezone;
 		} catch (error) {
 			const response = {
 				message: `could not get check in - ${error?.message}`,
@@ -2817,13 +3081,15 @@ export class AttendanceService {
 			// Get user info from the first attendance record
 			const userInfo = checkIns[0]?.owner || null;
 
+			// Apply timezone conversion to all attendance records using enhanced method
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,
-				checkIns,
+				checkIns: checkIns,
 				user: userInfo,
 			};
 
-			return response;
+			const responseWithTimezone = await this.ensureTimezoneConversion(response, orgId);
+			return responseWithTimezone;
 		} catch (error) {
 			const response = {
 				message: `could not get check ins by user - ${error?.message}`,
@@ -2874,14 +3140,16 @@ export class AttendanceService {
 			const uniqueUsers = new Set(checkIns.map((record) => record.owner.uid));
 			const totalUsers = uniqueUsers.size;
 
+			// Apply timezone conversion to all attendance records using enhanced method
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,
-				checkIns,
+				checkIns: checkIns,
 				branch: branchInfo,
 				totalUsers,
 			};
 
-			return response;
+			const responseWithTimezone = await this.ensureTimezoneConversion(response, orgId);
+			return responseWithTimezone;
 		} catch (error) {
 			const response = {
 				message: `could not get check ins by branch - ${error?.message}`,
@@ -3001,13 +3269,15 @@ export class AttendanceService {
 				}
 			});
 
+			// Apply timezone conversion to attendance records using enhanced method
 			const response = {
 				totalHours: Math.round((totalMinutesWorked / 60) * 10) / 10, // Round to 1 decimal place
-				activeShifts,
-				attendanceRecords,
+				activeShifts: activeShifts,
+				attendanceRecords: attendanceRecords,
 			};
 
-			return response;
+			const responseWithTimezone = await this.ensureTimezoneConversion(response);
+			return responseWithTimezone;
 		} catch (error) {
 			const response = {
 				totalHours: 0,
@@ -3630,18 +3900,25 @@ export class AttendanceService {
 			}
 
 			// Get first ever attendance with organization info
-			const firstAttendance = await this.attendanceRepository.findOne({
+			const firstAttendanceRaw = await this.attendanceRepository.findOne({
 				where: { owner: { uid: userId } },
 				order: { checkIn: 'ASC' },
 				relations: ['organisation'],
 			});
 
 			// Get last attendance with organization info
-			const lastAttendance = await this.attendanceRepository.findOne({
+			const lastAttendanceRaw = await this.attendanceRepository.findOne({
 				where: { owner: { uid: userId } },
 				order: { checkIn: 'DESC' },
 				relations: ['organisation'],
 			});
+
+			// Apply timezone conversion to first and last attendance if they exist
+			const firstAttendance = firstAttendanceRaw ? await this.convertAttendanceRecordTimezone(firstAttendanceRaw, firstAttendanceRaw.organisation?.uid) : null;
+			const lastAttendance = lastAttendanceRaw ? await this.convertAttendanceRecordTimezone(lastAttendanceRaw, lastAttendanceRaw.organisation?.uid) : null;
+			
+			this.logger.debug(`Converted first attendance: ${firstAttendance ? firstAttendance.checkIn.toISOString() : 'null'}`);
+			this.logger.debug(`Converted last attendance: ${lastAttendance ? lastAttendance.checkIn.toISOString() : 'null'}`);
 
 			// Get organization ID for timezone formatting
 			const organizationId = firstAttendance?.organisation?.uid || lastAttendance?.organisation?.uid;
@@ -3967,7 +4244,7 @@ export class AttendanceService {
 			}
 
 			// Get attendance records for the specified date range
-			const attendanceRecords = await this.attendanceRepository.find({
+			const attendanceRecordsRaw = await this.attendanceRepository.find({
 				where: {
 					owner: { uid: userId },
 					checkIn: Between(parsedStartDate, parsedEndDate),
@@ -3977,22 +4254,35 @@ export class AttendanceService {
 			});
 
 			// Get the most recent attendance record (even if outside date range)
-			const lastAttendanceRecord = await this.attendanceRepository.findOne({
+			const lastAttendanceRecordRaw = await this.attendanceRepository.findOne({
 				where: { owner: { uid: userId } },
 				order: { checkIn: 'DESC' },
 			});
+
+			// Apply timezone conversion to attendance records
+			const organizationId = userExists?.organisation?.uid;
+			const attendanceRecords = await this.convertAttendanceRecordsTimezone(attendanceRecordsRaw, organizationId);
+			const lastAttendanceRecord = lastAttendanceRecordRaw ? await this.convertAttendanceRecordTimezone(lastAttendanceRecordRaw, organizationId) : null;
+			
+			this.logger.debug(`Converted ${attendanceRecords.length} attendance records for user metrics`);
+			if (lastAttendanceRecord) {
+				this.logger.debug(`Converted last attendance record: ${lastAttendanceRecord.checkIn.toISOString()}`);
+			}
 
 			// Get previous period records for trend analysis
 			const previousPeriodStart = subMonths(parsedStartDate, 3);
 			const previousPeriodEnd = parsedStartDate;
 
-			const previousPeriodRecords = await this.attendanceRepository.find({
+			const previousPeriodRecordsRaw = await this.attendanceRepository.find({
 				where: {
 					owner: { uid: userId },
 					checkIn: Between(previousPeriodStart, previousPeriodEnd),
 				},
 				order: { checkIn: 'ASC' },
 			});
+
+			// Apply timezone conversion to previous period records
+			const previousPeriodRecords = await this.convertAttendanceRecordsTimezone(previousPeriodRecordsRaw, organizationId);
 
 			// Calculate basic metrics
 			const completedShifts = attendanceRecords.filter((record) => record.checkOut);
@@ -4003,8 +4293,8 @@ export class AttendanceService {
 				return this.generateEmptyUserMetrics(lastAttendanceRecord);
 			}
 
-			// Get organization ID for enhanced calculations
-			const organizationId = userExists?.organisation?.uid;
+			// Get organization ID for enhanced calculations (already declared above)
+			// const organizationId = userExists?.organisation?.uid;
 
 			// Calculate total work hours
 			let totalWorkMinutes = 0;
@@ -4437,7 +4727,7 @@ export class AttendanceService {
 			const userIds = users.map((user) => user.uid);
 
 			// Get all attendance records for users in date range
-			const attendanceRecords = await this.attendanceRepository.find({
+			const attendanceRecordsRaw = await this.attendanceRepository.find({
 				where: {
 					...attendanceFilters,
 					owner: { uid: In(userIds) },
@@ -4447,6 +4737,10 @@ export class AttendanceService {
 					checkIn: 'ASC',
 				},
 			});
+
+			// Apply timezone conversion to attendance records for the organization report
+			const attendanceRecords = await this.convertAttendanceRecordsTimezone(attendanceRecordsRaw, orgId);
+			this.logger.debug(`Applied timezone conversion to ${attendanceRecords.length} records for organization report`);
 
 			// PART 1: Individual User Metrics
 			let userMetrics: any[] = [];
@@ -4473,10 +4767,13 @@ export class AttendanceService {
 				report,
 			};
 
-			// Cache the result for 5 minutes
-			await this.cacheManager.set(cacheKey, response, 300);
+			// Apply timezone conversion to the response data using enhanced method
+			const responseWithTimezone = await this.ensureTimezoneConversion(response, orgId);
 
-			return response;
+			// Cache the result for 5 minutes
+			await this.cacheManager.set(cacheKey, responseWithTimezone, 300);
+
+			return responseWithTimezone;
 		} catch (error) {
 			this.logger.error('Error generating organization attendance report:', error);
 			throw new BadRequestException(error?.message || 'Error generating organization attendance report');
