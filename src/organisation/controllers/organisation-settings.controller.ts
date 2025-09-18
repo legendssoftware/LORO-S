@@ -137,7 +137,7 @@ export class OrganisationSettingsController {
                         dateFormat: { 
                             type: 'string', 
                             example: 'DD/MM/YYYY',
-                            enum: ['DD/MM/YYYY', 'MM/DD/YYYY', 'YYYY-MM-DD', 'DD-MM-YYYY'],
+                            enum: ['DD/MM/YYYY', 'MM/DD/YYYY', 'yyyy-MM-dd', 'DD-MM-YYYY'],
                             description: 'Date format preference for the organization'
                         },
                         timeFormat: { 

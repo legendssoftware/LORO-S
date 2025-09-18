@@ -672,24 +672,30 @@ export class AuthService {
 				};
 			}
 
-			// Generate reset token and URL
-			this.logger.debug(`Generating reset token for user: ${email}`);
-			const resetToken = await this.generateSecureToken();
-			const resetUrl = `${process.env.WEBSITE_DOMAIN || process.env.SIGNUP_DOMAIN}/new-password?token=${resetToken}`;
-			this.logger.debug(`Reset URL generated: ${resetUrl.substring(0, resetUrl.lastIndexOf('/') + 1)}[TOKEN]`);
+		// Generate reset token and mobile deep link URL
+		this.logger.debug(`Generating reset token for user: ${email}`);
+		const resetToken = await this.generateSecureToken();
+		// Create mobile app deep link for password reset
+		const mobileDeepLink = `loro://new-password?token=${resetToken}`;
+		// Fallback web URL for email clients that don't support deep links
+		const webResetUrl = `${process.env.WEBSITE_DOMAIN || process.env.SIGNUP_DOMAIN}/new-password?token=${resetToken}`;
+		this.logger.debug(`Mobile deep link generated: loro://new-password?token=[TOKEN]`);
+		this.logger.debug(`Web fallback URL generated: ${webResetUrl.substring(0, webResetUrl.lastIndexOf('/') + 1)}[TOKEN]`);
 
 			// Create password reset record (this will handle rate limiting and duplicates)
 			this.logger.debug(`Creating password reset record for: ${email}`);
 			await this.passwordResetService.create(email, resetToken);
 			this.logger.debug(`Password reset record created successfully for: ${email}`);
 
-					// Send single password reset email with security alert and reset link
+					// Send password reset email with mobile deep link and web fallback
 		this.logger.debug(`Sending password reset email to: ${email}`);
 		this.eventEmitter.emit('send.email', EmailType.PASSWORD_RESET_REQUEST, [email], {
 			name: existingUser.user.name || email.split('@')[0],
 			userEmail: email,
 			requestTime: new Date().toLocaleString(),
-			resetLink: resetUrl,
+			resetLink: mobileDeepLink, // Primary mobile deep link
+			webResetLink: webResetUrl, // Fallback web URL
+			mobileDeepLink: mobileDeepLink, // Explicit mobile deep link for email template
 			expiryHours: 24,
 			supportEmail: process.env.SUPPORT_EMAIL || 'support@loro.africa',
 			dashboardUrl: `${process.env.WEBSITE_DOMAIN || process.env.SIGNUP_DOMAIN || 'https://dashboard.loro.co.za'}/dashboard`,

@@ -653,7 +653,7 @@ export class ReportsService implements OnModuleInit {
 				...reportData.emailData,
 				name: user.name,
 				email: user.email,
-				date: TimezoneUtil.formatInOrganizationTime(orgCurrentTime, 'YYYY-MM-DD', orgTimezone),
+				date: TimezoneUtil.formatInOrganizationTime(orgCurrentTime, 'yyyy-MM-dd', orgTimezone),
 				organizationTimezone: orgTimezone,
 				comprehensiveMetrics: {
 					attendanceMetrics,
@@ -664,7 +664,7 @@ export class ReportsService implements OnModuleInit {
 
 			// Create a new report record
 			const newReport = new Report();
-			newReport.name = `Daily Report - ${user.name} - ${TimezoneUtil.formatInOrganizationTime(orgCurrentTime, 'YYYY-MM-DD', orgTimezone)}`;
+			newReport.name = `Daily Report - ${user.name} - ${TimezoneUtil.formatInOrganizationTime(orgCurrentTime, 'yyyy-MM-dd', orgTimezone)}`;
 			newReport.description = `Comprehensive daily activity report for ${user.name}`;
 			newReport.reportType = ReportType.USER_DAILY;
 			newReport.filters = enhancedParams.filters;
@@ -894,7 +894,7 @@ export class ReportsService implements OnModuleInit {
 				organizationTimezone: orgTimezone,
 				reportGeneratedAt: TimezoneUtil.formatInOrganizationTime(
 					new Date(), 
-					'YYYY-MM-DD HH:mm:ss', 
+					'yyyy-MM-dd HH:mm:ss', 
 					orgTimezone
 				),
 				granularity,
@@ -997,7 +997,7 @@ export class ReportsService implements OnModuleInit {
 				organizationTimezone: orgTimezone,
 				reportGeneratedAt: TimezoneUtil.formatInOrganizationTime(
 					new Date(), 
-					'YYYY-MM-DD HH:mm:ss', 
+					'yyyy-MM-dd HH:mm:ss', 
 					orgTimezone
 				),
 				userName: user.name,

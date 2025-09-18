@@ -320,9 +320,23 @@ export class CommunicationService {
 		this.logger.debug(`Validating email format for: ${email ? email.substring(0, 3) + '***' + email.substring(email.lastIndexOf('@')) : 'null'}`);
 		
 		try {
-		const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-			const isValid = emailRegex.test(email);
+			// Handle null, undefined, or non-string inputs
+			if (!email || typeof email !== 'string') {
+				this.logger.debug('Email validation failed: null, undefined, or non-string input');
+				return false;
+			}
+			
+			// Trim whitespace and convert to lowercase for validation
+			const trimmedEmail = email.trim().toLowerCase();
+			
+			// Basic format validation
+			const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+			const isValid = emailRegex.test(trimmedEmail);
 			const validationTime = Date.now() - startTime;
+			
+			if (!isValid) {
+				this.logger.debug(`Email validation failed for: ${email} (trimmed: ${trimmedEmail}). Reason: Failed regex test`);
+			}
 			
 			this.logger.debug(`Email validation completed in ${validationTime}ms. Result: ${isValid ? 'Valid' : 'Invalid'}`);
 			return isValid;

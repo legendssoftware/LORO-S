@@ -190,9 +190,9 @@ import { Device, DeviceRecords } from './iot/entities/iot.entity';
 				synchronize: true,
 				logging: false,
 				extra: {
-					connectionLimit: parseInt(configService.get<string>('DB_CONNECTION_LIMIT') || '10', 10), // Reasonable connection limit
-					acquireTimeout: parseInt(configService.get<string>('DB_ACQUIRE_TIMEOUT') || '30000', 10), // 30 seconds
-					timeout: parseInt(configService.get<string>('DB_QUERY_TIMEOUT') || '30000', 10), // 30 seconds
+					connectionLimit: parseInt(configService.get<string>('DB_CONNECTION_LIMIT') || '20', 10), // Increased connection limit
+					acquireTimeout: parseInt(configService.get<string>('DB_ACQUIRE_TIMEOUT') || '60000', 10), // 60 seconds
+					timeout: parseInt(configService.get<string>('DB_QUERY_TIMEOUT') || '60000', 10), // 60 seconds
 					reconnect: true,
 					idleTimeout: parseInt(configService.get<string>('DB_IDLE_TIMEOUT') || '300000', 10), // 5 minutes
 					maxReconnects: parseInt(configService.get<string>('DB_MAX_RECONNECTS') || '10', 10),
@@ -205,6 +205,13 @@ import { Device, DeviceRecords } from './iot/entities/iot.entity';
 					timezone: 'Z',
 					multipleStatements: false,
 					typeCast: true,
+					// Additional connection stability settings
+					keepAliveInitialDelay: 0,
+					enableKeepAlive: true,
+					maxIdle: 10, // maximum idle connections
+					maxIdleTime: 600000, // 10 minutes
+					acquireIncrement: 3,
+					checkoutTimeout: 30000, // 30 seconds
 				},
 				retryAttempts: 10,
 				retryDelay: 1000,
