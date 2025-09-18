@@ -210,21 +210,6 @@ export class AttendanceService {
 				convertedRecord.breakEndTime = TimezoneUtil.toOrganizationTime(originalTime, timezone);
 			}
 
-			if (convertedRecord.createdAt) {
-				const originalTime = new Date(convertedRecord.createdAt);
-				convertedRecord.createdAt = TimezoneUtil.toOrganizationTime(originalTime, timezone);
-			}
-
-			if (convertedRecord.updatedAt) {
-				const originalTime = new Date(convertedRecord.updatedAt);
-				convertedRecord.updatedAt = TimezoneUtil.toOrganizationTime(originalTime, timezone);
-			}
-
-			if (convertedRecord.verifiedAt) {
-				const originalTime = new Date(convertedRecord.verifiedAt);
-				convertedRecord.verifiedAt = TimezoneUtil.toOrganizationTime(originalTime, timezone);
-			}
-
 			// Convert break details timestamps
 			if (convertedRecord.breakDetails && Array.isArray(convertedRecord.breakDetails)) {
 				convertedRecord.breakDetails = convertedRecord.breakDetails.map(breakDetail => ({
