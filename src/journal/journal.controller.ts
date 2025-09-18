@@ -304,4 +304,191 @@ export class JournalController {
     const branchId = req.user?.branch?.uid;
     return this.journalService.remove(ref, orgId, branchId);
   }
+
+  // Inspection-specific endpoints
+
+  @Post('inspection')
+  @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
+  @ApiOperation({ 
+    summary: 'Create a new inspection journal',
+    description: 'Creates a new inspection journal with form data, scoring, and validation. Requires appropriate role.'
+  })
+  @ApiBody({ type: CreateJournalDto })
+  @ApiCreatedResponse({ 
+    description: 'Inspection journal created successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', example: 'Success' },
+        data: {
+          type: 'object',
+          properties: {
+            uid: { type: 'number', example: 1 },
+            totalScore: { type: 'number', example: 85.5 },
+            percentage: { type: 'number', example: 85.5 },
+            overallRating: { type: 'string', example: 'GOOD' }
+          }
+        }
+      }
+    }
+  })
+  @ApiBadRequestResponse({ description: 'Invalid inspection data provided' })
+  createInspection(@Body() createJournalDto: CreateJournalDto, @Req() req: AuthenticatedRequest) {
+    const orgId = req.user?.org?.uid || req.user?.organisationRef;
+    const branchId = req.user?.branch?.uid;
+    return this.journalService.createInspection(createJournalDto, orgId, branchId);
+  }
+
+  @Get('inspections')
+  @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
+  @ApiOperation({ 
+    summary: 'Get all inspection journals',
+    description: 'Retrieves all inspection-type journal entries with scoring data.'
+  })
+  @ApiOkResponse({ 
+    description: 'List of all inspection journals',
+    schema: {
+      type: 'object',
+      properties: {
+        data: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              uid: { type: 'number', example: 1 },
+              title: { type: 'string', example: 'Store Inspection Report' },
+              type: { type: 'string', example: 'INSPECTION' },
+              totalScore: { type: 'number', example: 85.5 },
+              percentage: { type: 'number', example: 85.5 },
+              overallRating: { type: 'string', example: 'GOOD' },
+              inspectionDate: { type: 'string', format: 'date-time' },
+              createdAt: { type: 'string', format: 'date-time' }
+            }
+          }
+        },
+        message: { type: 'string', example: 'Success' }
+      }
+    }
+  })
+  getAllInspections(@Req() req: AuthenticatedRequest) {
+    const orgId = req.user?.org?.uid || req.user?.organisationRef;
+    const branchId = req.user?.branch?.uid;
+    return this.journalService.getAllInspections(orgId, branchId);
+  }
+
+  @Get('inspection/:ref')
+  @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
+  @ApiOperation({ 
+    summary: 'Get inspection journal with detailed form data',
+    description: 'Retrieves a specific inspection journal with complete form data and scoring breakdown.'
+  })
+  @ApiParam({ 
+    name: 'ref', 
+    description: 'Inspection journal reference code',
+    type: 'number',
+    example: 1
+  })
+  @ApiOkResponse({ 
+    description: 'Inspection journal with detailed data',
+    schema: {
+      type: 'object',
+      properties: {
+        data: {
+          type: 'object',
+          properties: {
+            uid: { type: 'number', example: 1 },
+            title: { type: 'string', example: 'Store Inspection Report' },
+            inspectionData: { 
+              type: 'object',
+              description: 'Complete inspection form data with categories and scoring'
+            },
+            totalScore: { type: 'number', example: 85.5 },
+            percentage: { type: 'number', example: 85.5 },
+            overallRating: { type: 'string', example: 'GOOD' },
+            inspectorComments: { type: 'string', example: 'Overall good performance' }
+          }
+        },
+        message: { type: 'string', example: 'Success' }
+      }
+    }
+  })
+  @ApiNotFoundResponse({ description: 'Inspection journal not found' })
+  getInspectionDetail(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
+    const orgId = req.user?.org?.uid || req.user?.organisationRef;
+    const branchId = req.user?.branch?.uid;
+    return this.journalService.getInspectionDetail(ref, orgId, branchId);
+  }
+
+  @Get('templates')
+  @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
+  @ApiOperation({ 
+    summary: 'Get inspection form templates',
+    description: 'Retrieves predefined inspection form templates for different types of inspections.'
+  })
+  @ApiOkResponse({ 
+    description: 'List of available inspection templates',
+    schema: {
+      type: 'object',
+      properties: {
+        data: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', example: 'store_inspection' },
+              name: { type: 'string', example: 'Store Inspection' },
+              description: { type: 'string', example: 'Comprehensive store inspection checklist' },
+              categories: {
+                type: 'array',
+                description: 'Template categories and items'
+              }
+            }
+          }
+        },
+        message: { type: 'string', example: 'Success' }
+      }
+    }
+  })
+  getInspectionTemplates(@Req() req: AuthenticatedRequest) {
+    const orgId = req.user?.org?.uid || req.user?.organisationRef;
+    const branchId = req.user?.branch?.uid;
+    return this.journalService.getInspectionTemplates(orgId, branchId);
+  }
+
+  @Post('calculate-score/:ref')
+  @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
+  @ApiOperation({ 
+    summary: 'Recalculate inspection scores',
+    description: 'Recalculates the total score and percentage for an inspection journal.'
+  })
+  @ApiParam({ 
+    name: 'ref', 
+    description: 'Inspection journal reference code',
+    type: 'number',
+    example: 1
+  })
+  @ApiOkResponse({ 
+    description: 'Score calculation completed',
+    schema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', example: 'Success' },
+        data: {
+          type: 'object',
+          properties: {
+            totalScore: { type: 'number', example: 85.5 },
+            maxScore: { type: 'number', example: 100 },
+            percentage: { type: 'number', example: 85.5 },
+            overallRating: { type: 'string', example: 'GOOD' }
+          }
+        }
+      }
+    }
+  })
+  @ApiNotFoundResponse({ description: 'Inspection journal not found' })
+  recalculateScore(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
+    const orgId = req.user?.org?.uid || req.user?.organisationRef;
+    const branchId = req.user?.branch?.uid;
+    return this.journalService.recalculateScore(ref, orgId, branchId);
+  }
 }

@@ -2,26 +2,40 @@ import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, Index } from 'typeor
 import { User } from '../../user/entities/user.entity';
 import { Branch } from '../../branch/entities/branch.entity';
 import { Organisation } from 'src/organisation/entities/organisation.entity';
-import { JournalStatus } from 'src/lib/enums/journal.enums';
+import { JournalStatus, JournalType, InspectionRating, InspectionFormData } from 'src/lib/enums/journal.enums';
 
 @Entity('journal')
 @Index(['owner', 'timestamp']) // User journal entries
 @Index(['clientRef', 'timestamp']) // Client journal history
 @Index(['status', 'isDeleted']) // Journal status filtering
 @Index(['organisation', 'branch', 'timestamp']) // Regional journal reports
+@Index(['type', 'createdAt']) // Type-based filtering
 @Index(['createdAt']) // Date-based sorting
 export class Journal {
     @PrimaryGeneratedColumn()
     uid: number;
 
-    @Column({ nullable: false })
-    clientRef: string;
+    @Column({ nullable: true })
+    clientRef?: string;
 
-    @Column({ nullable: false })
-    fileURL: string;
+    @Column({ nullable: true })
+    fileURL?: string;
 
-    @Column({ nullable: false })
-    comments: string;
+    @Column({ type: 'text', nullable: true })
+    comments?: string;
+
+    @Column({ 
+        type: 'enum', 
+        enum: JournalType, 
+        default: JournalType.GENERAL 
+    })
+    type: JournalType;
+
+    @Column({ type: 'varchar', nullable: true })
+    title?: string;
+
+    @Column({ type: 'text', nullable: true })
+    description?: string;
 
     @Column({ 
         type: 'enum', 
@@ -29,6 +43,47 @@ export class Journal {
         default: JournalStatus.PENDING_REVIEW 
     })
     status: JournalStatus;
+
+    // Inspection-specific fields
+    @Column({ type: 'json', nullable: true })
+    inspectionData?: InspectionFormData;
+
+    @Column({ type: 'decimal', precision: 5, scale: 2, nullable: true })
+    totalScore?: number;
+
+    @Column({ type: 'decimal', precision: 5, scale: 2, nullable: true })
+    maxScore?: number;
+
+    @Column({ type: 'decimal', precision: 5, scale: 2, nullable: true })
+    percentage?: number;
+
+    @Column({ 
+        type: 'enum', 
+        enum: InspectionRating, 
+        nullable: true 
+    })
+    overallRating?: InspectionRating;
+
+    @Column({ type: 'text', nullable: true })
+    inspectorComments?: string;
+
+    @Column({ type: 'varchar', nullable: true })
+    storeManagerSignature?: string;
+
+    @Column({ type: 'varchar', nullable: true })
+    qcInspectorSignature?: string;
+
+    @Column({ type: 'timestamp', nullable: true })
+    inspectionDate?: Date;
+
+    @Column({ type: 'varchar', nullable: true })
+    inspectionLocation?: string;
+
+    @Column({ type: 'json', nullable: true })
+    attachments?: string[]; // Array of file URLs
+
+    @Column({ type: 'json', nullable: true })
+    metadata?: Record<string, any>; // Additional flexible data
 
     @Column({ type: 'timestamp', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
     timestamp: Date;

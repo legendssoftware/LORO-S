@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Journal } from './entities/journal.entity';
@@ -6,7 +6,7 @@ import { CreateJournalDto } from './dto/create-journal.dto';
 import { UpdateJournalDto } from './dto/update-journal.dto';
 import { NotificationType, NotificationStatus } from '../lib/enums/notification.enums';
 import { AccessLevel } from '../lib/enums/user.enums';
-import { JournalStatus } from '../lib/enums/journal.enums';
+import { JournalStatus, JournalType, InspectionRating, InspectionFormData, InspectionCategory, InspectionItem } from '../lib/enums/journal.enums';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { endOfDay, startOfDay } from 'date-fns';
 import { RewardsService } from '../rewards/rewards.service';
@@ -626,5 +626,400 @@ export class JournalService {
 		).length;
 
 		return Number(((completedEntries / journals.length) * 100).toFixed(1));
+	}
+
+	// ======================================================
+	// INSPECTION-SPECIFIC FUNCTIONALITY
+	// ======================================================
+
+	async createInspection(createJournalDto: CreateJournalDto, orgId?: number, branchId?: number): Promise<{ message: string; data?: any }> {
+		this.logger.log(`Creating inspection journal for orgId: ${orgId}, branchId: ${branchId}`);
+		this.logger.debug(`Create inspection DTO: ${JSON.stringify(createJournalDto)}`);
+
+		try {
+			// Set type to INSPECTION
+			const inspectionData = {
+				...createJournalDto,
+				type: JournalType.INSPECTION,
+				organisation: orgId ? { uid: orgId } : undefined,
+				branch: branchId ? { uid: branchId } : undefined,
+			};
+
+			// Calculate scores if inspection data is provided
+			if (inspectionData.inspectionData) {
+				const scoreCalculation = this.calculateInspectionScore(inspectionData.inspectionData);
+				inspectionData.totalScore = scoreCalculation.totalScore;
+				inspectionData.maxScore = scoreCalculation.maxScore;
+				inspectionData.percentage = scoreCalculation.percentage;
+				inspectionData.overallRating = scoreCalculation.overallRating;
+			}
+
+			this.logger.debug(`Inspection data to save: ${JSON.stringify(inspectionData)}`);
+
+			const journal = await this.journalRepository.save(inspectionData);
+
+			if (!journal) {
+				this.logger.error('Failed to save inspection journal - repository returned null');
+				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
+			}
+
+			this.logger.log(`Inspection journal created successfully with ID: ${journal.uid}`);
+
+			const response = {
+				message: process.env.SUCCESS_MESSAGE,
+				data: {
+					uid: journal.uid,
+					totalScore: journal.totalScore,
+					percentage: journal.percentage,
+					overallRating: journal.overallRating
+				}
+			};
+
+			// Send notification
+			const notification = {
+				type: NotificationType.USER,
+				title: 'Inspection Completed',
+				message: `An inspection has been completed with ${journal.percentage?.toFixed(1)}% score`,
+				status: NotificationStatus.UNREAD,
+				owner: journal?.owner,
+			};
+
+			const recipients = [
+				AccessLevel.ADMIN,
+				AccessLevel.MANAGER,
+				AccessLevel.OWNER,
+				AccessLevel.SUPERVISOR,
+			];
+
+			this.eventEmitter.emit('send.notification', notification, recipients);
+
+			// Award XP based on inspection score
+			try {
+				const xpAmount = this.calculateInspectionXP(journal.percentage || 0);
+				await this.rewardsService.awardXP({
+					owner: createJournalDto.owner.uid,
+					amount: xpAmount,
+					action: 'INSPECTION',
+					source: {
+						id: createJournalDto.owner.uid.toString(),
+						type: 'inspection',
+						details: `Inspection completed with ${journal.percentage?.toFixed(1)}% score`,
+					},
+				}, orgId, branchId);
+				this.logger.log(`XP awarded for inspection: ${createJournalDto.owner.uid} - ${xpAmount}XP`);
+			} catch (xpError) {
+				this.logger.warn(`Failed to award XP for inspection: ${xpError.message}`);
+			}
+
+			return response;
+		} catch (error) {
+			this.logger.error(`Error creating inspection journal: ${error.message}`, error.stack);
+			return {
+				message: error?.message,
+			};
+		}
+	}
+
+	async getAllInspections(orgId?: number, branchId?: number): Promise<{ message: string; data: Journal[] }> {
+		try {
+			const queryBuilder = this.journalRepository
+				.createQueryBuilder('journal')
+				.leftJoinAndSelect('journal.owner', 'owner')
+				.leftJoinAndSelect('journal.branch', 'branch')
+				.leftJoinAndSelect('journal.organisation', 'organisation')
+				.where('journal.type = :type', { type: JournalType.INSPECTION })
+				.andWhere('journal.isDeleted = :isDeleted', { isDeleted: false });
+
+			// Add organization filter if provided
+			if (orgId) {
+				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+			}
+
+			// Add branch filter if provided
+			if (branchId) {
+				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
+			}
+
+			queryBuilder.orderBy('journal.createdAt', 'DESC');
+
+			const inspections = await queryBuilder.getMany();
+
+			if (!inspections) {
+				throw new NotFoundException('No inspections found');
+			}
+
+			return {
+				message: process.env.SUCCESS_MESSAGE,
+				data: inspections,
+			};
+		} catch (error) {
+			return {
+				message: error?.message,
+				data: [],
+			};
+		}
+	}
+
+	async getInspectionDetail(ref: number, orgId?: number, branchId?: number): Promise<{ message: string; data: Journal | null }> {
+		try {
+			const queryBuilder = this.journalRepository
+				.createQueryBuilder('journal')
+				.leftJoinAndSelect('journal.owner', 'owner')
+				.leftJoinAndSelect('journal.organisation', 'organisation')
+				.leftJoinAndSelect('journal.branch', 'branch')
+				.where('journal.uid = :ref', { ref })
+				.andWhere('journal.type = :type', { type: JournalType.INSPECTION })
+				.andWhere('journal.isDeleted = :isDeleted', { isDeleted: false });
+
+			// Add organization filter if provided
+			if (orgId) {
+				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+			}
+
+			// Add branch filter if provided
+			if (branchId) {
+				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
+			}
+
+			const inspection = await queryBuilder.getOne();
+
+			if (!inspection) {
+				return {
+					message: process.env.NOT_FOUND_MESSAGE,
+					data: null,
+				};
+			}
+
+			return {
+				message: process.env.SUCCESS_MESSAGE,
+				data: inspection,
+			};
+		} catch (error) {
+			return {
+				message: error?.message,
+				data: null,
+			};
+		}
+	}
+
+	async getInspectionTemplates(orgId?: number, branchId?: number): Promise<{ message: string; data: any[] }> {
+		try {
+			// Return predefined inspection templates based on the images
+			const templates = [
+				{
+					id: 'store_comprehensive',
+					name: 'Comprehensive Store Inspection',
+					description: 'Complete store inspection covering all operational areas',
+					categories: [
+						{
+							id: 'fresh_produce',
+							name: 'Fresh Produce, Meat & Bakery',
+							weight: 20,
+							items: [
+								{ id: 'fruits_vegetables', name: 'Fruits & vegetables freshness', required: true },
+								{ id: 'meat_hygiene', name: 'Meat & fish hygiene standards', required: true },
+								{ id: 'bakery_freshness', name: 'Bakery freshness & labeling', required: true },
+								{ id: 'temp_compliance', name: 'Refrigerated product temp compliance', required: true },
+								{ id: 'storage_rotation', name: 'Storage/rotation practices', required: true }
+							]
+						},
+						{
+							id: 'cold_storage',
+							name: 'Cold Storage & Freezers',
+							weight: 15,
+							items: [
+								{ id: 'temperature_control', name: 'Temperature control', required: true },
+								{ id: 'temp_logs', name: 'Temperature logs maintained', required: true },
+								{ id: 'freezer_cleanliness', name: 'Freezers clean, no ice/leakage', required: true },
+								{ id: 'items_sealed', name: 'Items sealed & labeled', required: true }
+							]
+						},
+						{
+							id: 'health_safety',
+							name: 'Health & Safety',
+							weight: 25,
+							items: [
+								{ id: 'fire_extinguishers', name: 'Fire extinguishers serviced & accessible', required: true },
+								{ id: 'emergency_exits', name: 'Emergency exits clear & marked', required: true },
+								{ id: 'first_aid', name: 'First aid kit stocked', required: true },
+								{ id: 'electrical_safety', name: 'Electrical & structural safety', required: true },
+								{ id: 'pest_control', name: 'Pest control records', required: true }
+							]
+						},
+						{
+							id: 'customer_service',
+							name: 'Customer Service',
+							weight: 15,
+							items: [
+								{ id: 'staff_availability', name: 'Staff availability & presence', required: true },
+								{ id: 'staff_attitude', name: 'Staff attitude & training', required: true },
+								{ id: 'queue_management', name: 'Queue management', required: true },
+								{ id: 'feedback_handling', name: 'Feedback/complaints handling', required: false },
+								{ id: 'pa_system', name: 'PA system functionality', required: false }
+							]
+						},
+						{
+							id: 'cashier_checkout',
+							name: 'Cashier & Checkout Area',
+							weight: 15,
+							items: [
+								{ id: 'pos_system', name: 'POS system functionality', required: true },
+								{ id: 'transaction_efficiency', name: 'Transaction efficiency', required: true },
+								{ id: 'queue_barriers', name: 'Queue barriers & order', required: true },
+								{ id: 'bag_availability', name: 'Bag availability', required: true },
+								{ id: 'till_cleanliness', name: 'Till area cleanliness', required: true }
+							]
+						},
+						{
+							id: 'warehouse',
+							name: 'Back of House (Warehouse/Storage)',
+							weight: 10,
+							items: [
+								{ id: 'stock_organization', name: 'Stock organization & labeling', required: true },
+								{ id: 'temp_sensitive_storage', name: 'Temperature-sensitive storage', required: true },
+								{ id: 'security_measures', name: 'Security measures', required: true }
+							]
+						},
+						{
+							id: 'compliance',
+							name: 'Compliance & Documentation',
+							weight: 20,
+							items: [
+								{ id: 'business_licenses', name: 'Business licenses & certificates', required: true },
+								{ id: 'staff_training', name: 'Staff hygiene training records', required: true },
+								{ id: 'cleaning_logs', name: 'Cleaning/temperature logs', required: true },
+								{ id: 'promo_approvals', name: 'Promo & discount approvals', required: false }
+							]
+						}
+					]
+				}
+			];
+
+			return {
+				message: process.env.SUCCESS_MESSAGE,
+				data: templates,
+			};
+		} catch (error) {
+			return {
+				message: error?.message,
+				data: [],
+			};
+		}
+	}
+
+	async recalculateScore(ref: number, orgId?: number, branchId?: number): Promise<{ message: string; data?: any }> {
+		try {
+			const inspectionResult = await this.getInspectionDetail(ref, orgId, branchId);
+			
+			if (!inspectionResult.data) {
+				return {
+					message: process.env.NOT_FOUND_MESSAGE,
+				};
+			}
+
+			const inspection = inspectionResult.data;
+
+			if (!inspection.inspectionData) {
+				throw new BadRequestException('No inspection data found to recalculate');
+			}
+
+			// Recalculate scores
+			const scoreCalculation = this.calculateInspectionScore(inspection.inspectionData);
+
+			// Update the inspection record
+			await this.journalRepository.update(ref, {
+				totalScore: scoreCalculation.totalScore,
+				maxScore: scoreCalculation.maxScore,
+				percentage: scoreCalculation.percentage,
+				overallRating: scoreCalculation.overallRating
+			});
+
+			this.logger.log(`Recalculated scores for inspection ${ref}: ${scoreCalculation.percentage}%`);
+
+			return {
+				message: process.env.SUCCESS_MESSAGE,
+				data: {
+					totalScore: scoreCalculation.totalScore,
+					maxScore: scoreCalculation.maxScore,
+					percentage: scoreCalculation.percentage,
+					overallRating: scoreCalculation.overallRating
+				}
+			};
+		} catch (error) {
+			this.logger.error(`Error recalculating scores for inspection ${ref}: ${error.message}`, error.stack);
+			return {
+				message: error?.message,
+			};
+		}
+	}
+
+	// ======================================================
+	// INSPECTION HELPER METHODS
+	// ======================================================
+
+	private calculateInspectionScore(inspectionData: InspectionFormData): {
+		totalScore: number;
+		maxScore: number;
+		percentage: number;
+		overallRating: InspectionRating;
+	} {
+		let totalScore = 0;
+		let maxScore = 0;
+		let weightedScore = 0;
+		let totalWeight = 0;
+
+		// Calculate scores for each category
+		for (const category of inspectionData.categories) {
+			let categoryScore = 0;
+			let categoryMaxScore = 0;
+
+			for (const item of category.items) {
+				if (item.score !== undefined) {
+					categoryScore += item.score;
+				}
+				categoryMaxScore += 5; // Assuming 1-5 scale
+			}
+
+			// Apply category weight if provided
+			const weight = category.weight || 1;
+			weightedScore += (categoryScore / categoryMaxScore) * weight;
+			totalWeight += weight;
+
+			totalScore += categoryScore;
+			maxScore += categoryMaxScore;
+		}
+
+		// Calculate final percentage (prefer weighted if weights are provided)
+		const percentage = totalWeight > 0 ? (weightedScore / totalWeight) * 100 : (totalScore / maxScore) * 100;
+
+		// Determine overall rating
+		let overallRating: InspectionRating;
+		if (percentage >= 95) {
+			overallRating = InspectionRating.EXCELLENT;
+		} else if (percentage >= 85) {
+			overallRating = InspectionRating.GOOD;
+		} else if (percentage >= 70) {
+			overallRating = InspectionRating.AVERAGE;
+		} else if (percentage >= 50) {
+			overallRating = InspectionRating.POOR;
+		} else {
+			overallRating = InspectionRating.CRITICAL;
+		}
+
+		return {
+			totalScore,
+			maxScore,
+			percentage: Number(percentage.toFixed(2)),
+			overallRating
+		};
+	}
+
+	private calculateInspectionXP(percentage: number): number {
+		// Award XP based on inspection performance
+		if (percentage >= 95) return 50; // Excellent
+		if (percentage >= 85) return 30; // Good
+		if (percentage >= 70) return 20; // Average
+		if (percentage >= 50) return 10; // Poor
+		return 5; // Critical (participation award)
 	}
 }
