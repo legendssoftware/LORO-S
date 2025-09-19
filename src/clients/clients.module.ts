@@ -14,6 +14,8 @@ import { OrganisationSettings } from '../organisation/entities/organisation-sett
 import { User } from '../user/entities/user.entity';
 import { Task } from '../tasks/entities/task.entity';
 import { TasksModule } from '../tasks/tasks.module';
+import { AttendanceModule } from '../attendance/attendance.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { ScheduleModule } from '@nestjs/schedule';
 
 @Module({
@@ -23,6 +25,8 @@ import { ScheduleModule } from '@nestjs/schedule';
     ConfigModule,
     LibModule,
     TasksModule,
+    AttendanceModule,
+    NotificationsModule,
     ScheduleModule.forRoot(),
   ],
   controllers: [ClientsController],

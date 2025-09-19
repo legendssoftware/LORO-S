@@ -48,6 +48,10 @@ import {
 	EmailVerifiedEmailData,
 	ClaimEmailData,
 	ClaimStatusUpdateEmailData,
+	ClientVisitReminderData,
+	ClientVisitCompletedData,
+	ClientVisitOverdueData,
+	ClientVisitWeeklyReportData,
 	LeadCreatedEmailData,
 	LeadStatusUpdateEmailData,
 	JournalEmailData,
@@ -532,6 +536,23 @@ export const ClientProfileUpdateAdmin = (data: ClientProfileUpdateAdminData): st
 // Client Communication Templates
 export const ClientCommunicationReminder = (data: ClientCommunicationReminderData): string => {
 	return emailTemplateService.clientCommunicationReminder(data);
+};
+
+// Client Visit Templates
+export const ClientVisitReminder = (data: ClientVisitReminderData): string => {
+	return emailTemplateService.clientVisitReminder(data);
+};
+
+export const ClientVisitCompleted = (data: ClientVisitCompletedData): string => {
+	return emailTemplateService.clientVisitCompleted(data);
+};
+
+export const ClientVisitOverdue = (data: ClientVisitOverdueData): string => {
+	return emailTemplateService.clientVisitOverdue(data);
+};
+
+export const ClientVisitWeeklyReport = (data: ClientVisitWeeklyReportData): string => {
+	return emailTemplateService.clientVisitWeeklyReport(data);
 };
 
 // Approval Templates

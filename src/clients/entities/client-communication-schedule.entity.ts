@@ -34,6 +34,15 @@ export class ClientCommunicationSchedule {
     @Column({ type: 'timestamp', nullable: true })
     lastCompletedDate: Date;
 
+    @Column({ type: 'timestamp', nullable: true })
+    firstVisitDate: Date; // Track when the first visit was made
+
+    @Column({ type: 'timestamp', nullable: true })
+    lastVisitDate: Date; // Track the most recent completed visit
+
+    @Column({ type: 'int', default: 0 })
+    visitCount: number; // Track total number of completed visits
+
     @Column({ type: 'boolean', default: true })
     isActive: boolean;
 

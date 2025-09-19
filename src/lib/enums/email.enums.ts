@@ -93,6 +93,10 @@ export enum EmailType {
 	CLIENT_PROFILE_UPDATED_CONFIRMATION = 'client_profile_updated_confirmation',
 	// Client communication related emails
 	CLIENT_COMMUNICATION_REMINDER = 'client_communication_reminder',
+	CLIENT_VISIT_REMINDER = 'client_visit_reminder',
+	CLIENT_VISIT_COMPLETED = 'client_visit_completed',
+	CLIENT_VISIT_OVERDUE = 'client_visit_overdue',
+	CLIENT_VISIT_WEEKLY_REPORT = 'client_visit_weekly_report',
 	// Warning related emails
 	WARNING_ISSUED = 'warning_issued',
 	WARNING_UPDATED = 'warning_updated',

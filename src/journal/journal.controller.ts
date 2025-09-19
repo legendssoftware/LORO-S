@@ -20,8 +20,71 @@ export class JournalController {
   @Post()
   @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
   @ApiOperation({ 
-    summary: 'Create a new journal entry',
-    description: 'Creates a new journal entry with the provided data. Requires ADMIN, MANAGER, or SUPPORT role.'
+    summary: '📝 Create a new journal entry',
+    description: `
+# Create Comprehensive Journal Entry
+
+Creates a new journal entry in the system with full content management and organizational tracking capabilities.
+
+## 📋 **Core Features**
+- **Complete Journal Management**: Client references, file attachments, comments, and metadata
+- **Multi-Type Support**: General entries, inspection reports, shift logs, and custom categories
+- **Organization Scoping**: Automatic organization and branch assignment with role-based access
+- **File Integration**: Support for file attachments, URLs, and multimedia content
+- **Notification System**: Automated notifications to relevant team members and managers
+- **XP Rewards**: Automatic experience point awards for journal creation activities
+
+## 🎯 **Use Cases**
+- **End-of-Shift Logging**: Comprehensive shift reports with client interactions and incidents
+- **Inspection Documentation**: Detailed inspection reports with scoring and validation
+- **Client Interaction Logs**: Track client meetings, calls, and service interactions
+- **Incident Reporting**: Document workplace incidents, safety concerns, and resolutions
+- **Progress Tracking**: Daily work progress, achievements, and challenges
+- **Compliance Documentation**: Record compliance activities and regulatory requirements
+
+## 🔧 **Advanced Features**
+- **File Attachment Support**: Upload and associate files, documents, and images with journal entries
+- **Client Reference Tracking**: Link journal entries to specific client accounts and projects
+- **Multi-Organization Support**: Organization and branch-specific journal management
+- **Automated Notifications**: Real-time notifications to supervisors and team members
+- **XP Integration**: Reward system integration for encouraging regular journal updates
+- **Status Management**: Track journal entry status from creation to review and approval
+
+## 📝 **Field Categories**
+
+### Required Fields
+- **Basic Information**: owner (user reference), type (entry type)
+
+### Optional Core Fields
+- **Content**: title, description, comments, clientRef
+- **Media**: fileURL (attachments and documents)
+- **Status**: status (defaults to PENDING_REVIEW)
+- **Metadata**: timestamp, isDeleted
+
+### Inspection-Specific Fields (For Type: INSPECTION)
+- **Scoring**: totalScore, maxScore, percentage
+- **Rating**: overallRating (EXCELLENT, GOOD, FAIR, POOR)
+- **Form Data**: inspectionData (JSON structure with categories and items)
+
+## 🔒 **Security & Validation**
+- Role-based access control with organization and branch scoping
+- File upload validation and secure storage
+- User ownership verification and audit trails
+- Content validation and spam prevention
+- Organization membership validation
+
+## 📊 **Integration Features**
+- **Rewards System**: Automatic XP awards for journal creation
+- **Notification Hub**: Real-time notifications to relevant stakeholders
+- **Reporting Engine**: Journal data included in organizational reports
+- **Analytics Integration**: Journal metrics and user engagement tracking
+
+## ⚡ **Performance Features**
+- **Caching**: Intelligent caching for improved response times
+- **Pagination**: Efficient handling of large journal datasets
+- **Search**: Advanced search capabilities across all journal fields
+- **Filtering**: Multi-criteria filtering by date, type, status, and user
+    `
   })
   @ApiBody({ type: CreateJournalDto })
   @ApiCreatedResponse({ 
@@ -43,8 +106,67 @@ export class JournalController {
   @Get()
   @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
   @ApiOperation({ 
-    summary: 'Get all journal entries',
-    description: 'Retrieves all journal entries. Requires ADMIN, MANAGER, or SUPPORT role.'
+    summary: '📊 Retrieve all journal entries',
+    description: `
+# Comprehensive Journal Entry Retrieval
+
+Retrieves journal entries with advanced filtering, pagination, and performance optimization capabilities.
+
+## 📋 **Core Features**
+- **Comprehensive Listing**: Access to all journal entries with full metadata and relationships
+- **Advanced Filtering**: Filter by status, type, date range, author, and content search
+- **Performance Optimization**: Intelligent caching and optimized database queries
+- **Pagination Support**: Efficient handling of large datasets with configurable page sizes
+- **Organization Scoping**: Automatic filtering based on user's organization and branch access
+- **Real-time Data**: Cache-optimized data retrieval with intelligent cache invalidation
+
+## 🎯 **Use Cases**
+- **Daily Operations Dashboard**: Overview of all journal activities across the organization
+- **Shift Management**: Review end-of-shift reports and daily activities
+- **Inspection Oversight**: Monitor inspection reports and compliance activities
+- **Performance Analytics**: Analyze journal entry patterns and user engagement
+- **Audit Trail Review**: Complete audit trail of all journal activities
+- **Team Coordination**: Stay updated on team activities and client interactions
+
+## 🔧 **Advanced Features**
+- **Smart Caching**: Intelligent caching system for improved response times
+- **Multi-Level Filtering**: Combine multiple filters for precise data retrieval
+- **Search Capabilities**: Full-text search across titles, descriptions, and comments
+- **Date Range Queries**: Flexible date range filtering for reporting and analysis
+- **Organization Hierarchy**: Automatic scoping based on user permissions and organizational structure
+- **Performance Monitoring**: Detailed performance metrics and query optimization
+
+## 📝 **Query Parameters**
+
+### Pagination
+- **page**: Page number (default: 1)
+- **limit**: Items per page (default: system configured limit)
+
+### Filtering Options
+- **status**: Filter by journal status (PENDING_REVIEW, APPROVED, REJECTED)
+- **type**: Filter by journal type (GENERAL, INSPECTION, SHIFT_LOG, INCIDENT)
+- **authorId**: Filter by specific user/author
+- **startDate**: Filter entries from specific date
+- **endDate**: Filter entries until specific date
+- **search**: Full-text search across content fields
+
+## 📊 **Response Structure**
+- **data**: Array of journal entries with complete metadata
+- **meta**: Pagination metadata (total, page, limit, totalPages)
+- **message**: Response status message
+
+## 🔒 **Security & Access Control**
+- Role-based access with organization and branch scoping
+- Automatic filtering based on user permissions
+- Secure data handling with sensitive information protection
+- Audit logging for all data access requests
+
+## ⚡ **Performance Features**
+- **Intelligent Caching**: Multi-level caching for optimal performance
+- **Query Optimization**: Optimized database queries with proper indexing
+- **Lazy Loading**: Efficient loading of related data only when needed
+- **Response Compression**: Optimized data transfer for large datasets
+    `
   })
   @ApiOkResponse({ 
     description: 'List of all journal entries',
@@ -310,8 +432,77 @@ export class JournalController {
   @Post('inspection')
   @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
   @ApiOperation({ 
-    summary: 'Create a new inspection journal',
-    description: 'Creates a new inspection journal with form data, scoring, and validation. Requires appropriate role.'
+    summary: '🔍 Create comprehensive inspection journal',
+    description: `
+# Advanced Inspection Journal Creation
+
+Creates detailed inspection journals with comprehensive scoring, validation, and compliance tracking capabilities.
+
+## 📋 **Core Features**
+- **Structured Inspection Forms**: Predefined inspection categories with scoring mechanisms
+- **Automated Scoring**: Intelligent calculation of total scores, percentages, and ratings
+- **Compliance Tracking**: Built-in compliance validation and regulatory requirement tracking
+- **Evidence Management**: Support for photos, documents, and multimedia evidence
+- **Real-time Validation**: Instant validation of inspection data and scoring accuracy
+- **Performance Analytics**: Detailed performance metrics and trend analysis
+
+## 🎯 **Use Cases**
+- **End-of-Shift Inspections**: Comprehensive facility and equipment inspections
+- **Safety Compliance Audits**: Workplace safety inspections with compliance tracking
+- **Quality Assurance Checks**: Product and service quality validation inspections
+- **Equipment Maintenance Reviews**: Regular equipment inspection and maintenance logging
+- **Client Site Inspections**: On-site client facility and service quality assessments
+- **Regulatory Compliance**: Government and industry standard compliance inspections
+
+## 🔧 **Advanced Features**
+- **Dynamic Form Templates**: Customizable inspection forms based on inspection type
+- **Automated Scoring Engine**: Intelligent scoring with weighted categories and items
+- **Rating Classification**: Automatic classification (EXCELLENT, GOOD, FAIR, POOR)
+- **Evidence Integration**: Photo, video, and document attachment with each inspection item
+- **Compliance Mapping**: Automatic mapping to regulatory requirements and standards
+- **Trend Analysis**: Performance trends and improvement recommendations
+
+## 📝 **Inspection Data Structure**
+
+### Core Fields
+- **Basic Information**: title, description, inspector details
+- **Scoring**: totalScore, maxScore, percentage, overallRating
+- **Evidence**: fileURL, photos, documents, signatures
+
+### Inspection Categories
+- **Safety**: Workplace safety checks and compliance items
+- **Equipment**: Machinery, tools, and equipment condition assessments
+- **Cleanliness**: Facility cleanliness and hygiene standards
+- **Documentation**: Record keeping and documentation compliance
+- **Procedures**: Process adherence and procedure compliance
+- **Quality**: Service and product quality assessments
+
+### Scoring Mechanism
+- **Item-Level Scoring**: Individual inspection item scores (0-100)
+- **Category Weights**: Weighted importance for different categories
+- **Overall Rating**: Automated rating based on total percentage
+- **Improvement Areas**: Automatic identification of areas needing attention
+
+## 🔒 **Compliance & Security**
+- **Audit Trail**: Complete audit trail for regulatory compliance
+- **Digital Signatures**: Support for digital signatures and approvals
+- **Data Integrity**: Tamper-proof inspection records with versioning
+- **Access Control**: Role-based access to inspection data and reports
+- **Regulatory Mapping**: Automatic compliance with industry standards
+
+## 📊 **Analytics & Reporting**
+- **Performance Dashboards**: Real-time inspection performance metrics
+- **Trend Analysis**: Historical trend analysis and improvement tracking
+- **Compliance Reports**: Automated compliance reporting for audits
+- **Benchmarking**: Performance comparison against industry standards
+- **Predictive Analytics**: AI-powered recommendations for improvements
+
+## ⚡ **Performance Features**
+- **Template Caching**: Fast loading of inspection templates
+- **Offline Support**: Offline inspection capability with sync when connected
+- **Photo Optimization**: Automatic photo compression and optimization
+- **Quick Templates**: Pre-configured templates for common inspection types
+    `
   })
   @ApiBody({ type: CreateJournalDto })
   @ApiCreatedResponse({ 

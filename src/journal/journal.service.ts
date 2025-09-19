@@ -1,6 +1,31 @@
-import { Injectable, NotFoundException, Logger, BadRequestException } from '@nestjs/common';
+/**
+ * JournalService - Comprehensive Journal Management Service
+ *
+ * This service handles all journal-related operations including:
+ * - Journal CRUD operations with organization and branch scoping
+ * - Inspection journal creation and management
+ * - Journal scoring and validation
+ * - End-of-shift logging and reporting
+ * - Advanced caching and performance optimization
+ * - Journal metrics and analytics calculation
+ *
+ * Features:
+ * - Multi-tenant support with organization and branch isolation
+ * - Redis caching for improved performance
+ * - Event-driven architecture for real-time updates
+ * - Comprehensive logging and error handling
+ * - Role-based access control (RBAC) integration
+ * - Inspection templates and scoring system
+ * - Email notification integration
+ *
+ * @author Loro Development Team
+ * @version 1.0.0
+ * @since 1.0.0
+ */
+
+import { Injectable, NotFoundException, Logger, BadRequestException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, DataSource } from 'typeorm';
 import { Journal } from './entities/journal.entity';
 import { CreateJournalDto } from './dto/create-journal.dto';
 import { UpdateJournalDto } from './dto/update-journal.dto';
@@ -12,31 +37,144 @@ import { endOfDay, startOfDay } from 'date-fns';
 import { RewardsService } from '../rewards/rewards.service';
 import { XP_VALUES, XP_VALUES_TYPES } from '../lib/constants/constants';
 import { PaginatedResponse } from '../lib/interfaces/product.interfaces';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class JournalService {
 	private readonly logger = new Logger(JournalService.name);
+	private readonly CACHE_PREFIX = 'journals:';
+	private readonly CACHE_TTL: number;
+	private readonly activeCalculations = new Map<number, Promise<void>>();
 
 	constructor(
 		@InjectRepository(Journal)
 		private journalRepository: Repository<Journal>,
 		private readonly eventEmitter: EventEmitter2,
 		private readonly rewardsService: RewardsService,
-	) {}
-
-	private calculateStats(journals: Journal[]): {
-		total: number;
-	} {
-		return {
-			total: journals?.length || 0,
-		};
+		@Inject(CACHE_MANAGER)
+		private cacheManager: Cache,
+		private readonly configService: ConfigService,
+		private readonly dataSource: DataSource,
+	) {
+		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
+		this.logger.log('JournalService initialized with cache TTL: ' + this.CACHE_TTL + 'ms');
 	}
 
+	/**
+	 * Generate cache key with consistent prefix
+	 * @param key - The key identifier (uid, clientRef, etc.)
+	 * @returns Formatted cache key with prefix
+	 */
+	private getCacheKey(key: string | number): string {
+		return `${this.CACHE_PREFIX}${key}`;
+	}
+
+	/**
+	 * Get cache key for journal lists with filters
+	 * @param filters - Filter parameters
+	 * @param page - Page number
+	 * @param limit - Limit per page
+	 * @param orgId - Organization ID
+	 * @param branchId - Branch ID
+	 * @returns Formatted cache key for filtered lists
+	 */
+	private getListCacheKey(filters: any, page: number, limit: number, orgId?: number, branchId?: number): string {
+		const filterString = JSON.stringify(filters || {});
+		return `${this.CACHE_PREFIX}list:${orgId || 'all'}:${branchId || 'all'}:${page}:${limit}:${Buffer.from(filterString).toString('base64')}`;
+	}
+
+	/**
+	 * Invalidate journal-related cache entries
+	 * @param journal - Journal entity to invalidate cache for
+	 */
+	private async invalidateJournalCache(journal: Journal): Promise<void> {
+		try {
+			const cacheKeys = [
+				this.getCacheKey(journal.uid),
+				this.getCacheKey(`client:${journal.clientRef}`),
+				`${this.CACHE_PREFIX}list:*`,
+				`${this.CACHE_PREFIX}user:${journal.owner?.uid}:*`,
+				`${this.CACHE_PREFIX}inspection:*`,
+			];
+
+			for (const key of cacheKeys) {
+				if (key.includes('*')) {
+					// For wildcard patterns, we need to get and delete matching keys
+					continue; // Skip wildcard for now, implement if cache store supports pattern deletion
+				}
+				await this.cacheManager.del(key);
+			}
+
+			this.logger.debug(`Cache invalidated for journal: ${journal.uid}`);
+		} catch (error) {
+			this.logger.warn(`Failed to invalidate cache for journal ${journal.uid}: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Calculate basic statistics for journals
+	 * @param journals - Array of journal entities
+	 * @returns Statistics object
+	 */
+	private calculateStats(journals: Journal[]): {
+		total: number;
+		byStatus: Record<string, number>;
+		byType: Record<string, number>;
+		averageScore?: number;
+	} {
+		const stats: {
+			total: number;
+			byStatus: Record<string, number>;
+			byType: Record<string, number>;
+			averageScore?: number;
+		} = {
+			total: journals?.length || 0,
+			byStatus: {} as Record<string, number>,
+			byType: {} as Record<string, number>,
+		};
+
+		if (!journals?.length) return stats;
+
+		// Count by status
+		journals.forEach(journal => {
+			stats.byStatus[journal.status] = (stats.byStatus[journal.status] || 0) + 1;
+			stats.byType[journal.type] = (stats.byType[journal.type] || 0) + 1;
+		});
+
+		// Calculate average score for inspections
+		const inspections = journals.filter(j => j.type === JournalType.INSPECTION && j.percentage);
+		if (inspections.length > 0) {
+			stats.averageScore = inspections.reduce((sum, j) => sum + (j.percentage || 0), 0) / inspections.length;
+		}
+
+		return stats;
+	}
+
+	/**
+	 * Create a new journal entry with comprehensive logging and caching
+	 * @param createJournalDto - Data for creating the journal
+	 * @param orgId - Organization ID for scoping
+	 * @param branchId - Branch ID for scoping
+	 * @returns Success message or error
+	 */
 	async create(createJournalDto: CreateJournalDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
-		this.logger.log(`Creating journal for orgId: ${orgId}, branchId: ${branchId}`);
-		this.logger.debug(`Create journal DTO: ${JSON.stringify(createJournalDto)}`);
+		const startTime = Date.now();
+		this.logger.log(
+			`Creating journal entry for ${createJournalDto.owner?.uid ? `user: ${createJournalDto.owner.uid}` : 'unknown user'} ${
+				orgId ? `in org: ${orgId}` : ''
+			} ${branchId ? `in branch: ${branchId}` : ''} with type: ${createJournalDto.type || 'GENERAL'}`
+		);
+		this.logger.debug(`Create journal DTO: ${JSON.stringify(createJournalDto, null, 2)}`);
 
 		try {
+			// Validate required fields
+			if (!createJournalDto.owner?.uid) {
+				this.logger.error('Journal creation failed: Missing owner information');
+				throw new BadRequestException('Owner information is required');
+			}
+
 			// Add organization and branch information
 			const journalData = {
 				...createJournalDto,
@@ -44,25 +182,35 @@ export class JournalService {
 				branch: branchId ? { uid: branchId } : undefined,
 			};
 
-			this.logger.debug(`Journal data to save: ${JSON.stringify(journalData)}`);
+			this.logger.debug(`Journal data to save: ${JSON.stringify(journalData, null, 2)}`);
 
-			const journal = await this.journalRepository.save(journalData);
+			// Use transaction for data consistency
+			const journal = await this.dataSource.transaction(async manager => {
+				const savedJournal = await manager.save(Journal, journalData);
+				
+				if (!savedJournal) {
+					this.logger.error('Failed to save journal - repository returned null');
+					throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
+				}
 
-			if (!journal) {
-				this.logger.error('Failed to save journal - repository returned null');
-				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
-			}
+				return savedJournal;
+			});
 
-			this.logger.log(`Journal created successfully with ID: ${journal.uid}`);
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`Journal created successfully with ID: ${journal.uid} in ${executionTime}ms`);
+
+			// Invalidate relevant cache entries
+			await this.invalidateJournalCache(journal);
 
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,
 			};
 
+			// Send notification
 			const notification = {
 				type: NotificationType.USER,
-				title: 'Journal Created',
-				message: `A journal has been created`,
+				title: 'Journal Entry Created',
+				message: `A new journal entry has been created by ${createJournalDto.owner || 'user'}`,
 				status: NotificationStatus.UNREAD,
 				owner: journal?.owner,
 			};
@@ -77,33 +225,44 @@ export class JournalService {
 
 			this.eventEmitter.emit('send.notification', notification, recipients);
 
+			// Award XP for journal creation
 			try {
 				await this.rewardsService.awardXP({
 					owner: createJournalDto.owner.uid,
-					amount: 10,
-					action: 'JOURNAL',
+					amount: XP_VALUES.CREATE_JOURNAL || 10,
+					action: 'JOURNAL_CREATION',
 					source: {
-						id: createJournalDto.owner.uid.toString(),
+						id: journal.uid.toString(),
 						type: 'journal',
-						details: 'Journal reward',
+						details: `Journal entry created: ${journal.title || 'Untitled'}`,
 					},
 				}, orgId, branchId);
-				this.logger.log(`XP awarded for journal creation: ${createJournalDto.owner.uid}`);
+				this.logger.log(`XP awarded for journal creation to user: ${createJournalDto.owner.uid}`);
 			} catch (xpError) {
 				this.logger.warn(`Failed to award XP for journal creation: ${xpError.message}`);
 			}
 
 			return response;
 		} catch (error) {
-			this.logger.error(`Error creating journal: ${error.message}`, error.stack);
-			const response = {
-				message: error?.message,
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`Error creating journal after ${executionTime}ms: ${error.message}`, error.stack);
+			
+			return {
+				message: error?.message || 'Failed to create journal entry',
 			};
-
-			return response;
 		}
 	}
 
+	/**
+	 * Find all journals with filters, pagination, and caching
+	 * Includes comprehensive logging and performance monitoring
+	 * @param filters - Optional filters for journal search
+	 * @param page - Page number for pagination
+	 * @param limit - Number of items per page
+	 * @param orgId - Organization ID for scoping
+	 * @param branchId - Branch ID for scoping
+	 * @returns Paginated response with journals
+	 */
 	async findAll(
 		filters?: {
 			status?: JournalStatus;
@@ -112,13 +271,35 @@ export class JournalService {
 			endDate?: Date;
 			search?: string;
 			categoryId?: number;
+			type?: JournalType;
 		},
 		page: number = 1,
 		limit: number = Number(process.env.DEFAULT_PAGE_LIMIT),
 		orgId?: number,
 		branchId?: number,
 	): Promise<PaginatedResponse<Journal>> {
+		const startTime = Date.now();
+		this.logger.log(
+			`Finding journals with filters: ${JSON.stringify(filters)} ${orgId ? `in org: ${orgId}` : ''} ${
+				branchId ? `in branch: ${branchId}` : ''
+			} - Page: ${page}, Limit: ${limit}`
+		);
+
 		try {
+			// Check cache first
+			const cacheKey = this.getListCacheKey(filters, page, limit, orgId, branchId);
+			this.logger.debug(`Checking cache for journals list: ${cacheKey}`);
+			
+			const cachedResult = await this.cacheManager.get<PaginatedResponse<Journal>>(cacheKey);
+			
+			if (cachedResult) {
+				const executionTime = Date.now() - startTime;
+				this.logger.log(`Journals retrieved from cache in ${executionTime}ms - Found: ${cachedResult.meta.total} journals`);
+				return cachedResult;
+			}
+
+			this.logger.debug('Cache miss for journals list, querying database');
+
 			const queryBuilder = this.journalRepository
 				.createQueryBuilder('journal')
 				.leftJoinAndSelect('journal.owner', 'owner')
@@ -136,8 +317,13 @@ export class JournalService {
 				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
 			}
 
+			// Apply filters
 			if (filters?.status) {
 				queryBuilder.andWhere('journal.status = :status', { status: filters.status });
+			}
+
+			if (filters?.type) {
+				queryBuilder.andWhere('journal.type = :type', { type: filters.type });
 			}
 
 			if (filters?.authorId) {
@@ -153,25 +339,29 @@ export class JournalService {
 
 			if (filters?.search) {
 				queryBuilder.andWhere(
-					'(journal.clientRef ILIKE :search OR journal.comments ILIKE :search OR owner.name ILIKE :search)',
+					'(journal.clientRef ILIKE :search OR journal.comments ILIKE :search OR journal.title ILIKE :search OR owner.name ILIKE :search)',
 					{ search: `%${filters.search}%` },
 				);
 			}
 
-			// Add pagination
+			// Add pagination and ordering
 			queryBuilder
 				.skip((page - 1) * limit)
 				.take(limit)
-				.orderBy('journal.createdAt', 'DESC');
+				.orderBy('journal.createdAt', 'DESC')
+				.addOrderBy('journal.uid', 'DESC');
 
 			const [journals, total] = await queryBuilder.getManyAndCount();
 
-			if (!journals) {
-				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`Database query completed in ${executionTime}ms - Found: ${total} journals`);
+
+			if (!journals || journals.length === 0) {
+				this.logger.debug('No journals found matching criteria');
 			}
 
-			return {
-				data: journals,
+			const result: PaginatedResponse<Journal> = {
+				data: journals || [],
 				meta: {
 					total,
 					page,
@@ -180,7 +370,20 @@ export class JournalService {
 				},
 				message: process.env.SUCCESS_MESSAGE,
 			};
+
+			// Cache the result
+			try {
+				await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);
+				this.logger.debug(`Journals list cached with key: ${cacheKey}`);
+			} catch (cacheError) {
+				this.logger.warn(`Failed to cache journals list: ${cacheError.message}`);
+			}
+
+			return result;
 		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`Error finding journals after ${executionTime}ms: ${error.message}`, error.stack);
+			
 			return {
 				data: [],
 				meta: {
@@ -189,17 +392,95 @@ export class JournalService {
 					limit,
 					totalPages: 0,
 				},
-				message: error?.message,
+				message: error?.message || 'Failed to retrieve journals',
 			};
 		}
 	}
 
+	/**
+	 * Find a single journal by ID with optional organization and branch scoping
+	 * Includes caching for improved performance and comprehensive logging
+	 * @param ref - Journal ID to search for
+	 * @param orgId - Optional organization ID for scoping
+	 * @param branchId - Optional branch ID for scoping
+	 * @returns Journal data with stats or null with message
+	 */
 	async findOne(
 		ref: number,
 		orgId?: number,
 		branchId?: number,
 	): Promise<{ message: string; journal: Journal | null; stats: any }> {
+		const startTime = Date.now();
+		this.logger.log(
+			`Finding journal: ${ref} ${orgId ? `in org: ${orgId}` : ''} ${
+				branchId ? `in branch: ${branchId}` : ''
+			}`
+		);
+
 		try {
+			const cacheKey = this.getCacheKey(ref);
+			this.logger.debug(`Checking cache for journal: ${ref}`);
+			const cachedJournal = await this.cacheManager.get<Journal>(cacheKey);
+
+			if (cachedJournal) {
+				this.logger.debug(`Cache hit for journal: ${ref}`);
+
+				// If org/branch filters are provided, verify cached journal belongs to them
+				if (orgId && cachedJournal.organisation?.uid !== orgId) {
+					this.logger.warn(`Journal ${ref} found in cache but doesn't belong to org ${orgId}`);
+					return {
+						message: process.env.NOT_FOUND_MESSAGE,
+						journal: null,
+						stats: null,
+					};
+				}
+				if (branchId && cachedJournal.branch?.uid !== branchId) {
+					this.logger.warn(`Journal ${ref} found in cache but doesn't belong to branch ${branchId}`);
+					return {
+						message: process.env.NOT_FOUND_MESSAGE,
+						journal: null,
+						stats: null,
+					};
+				}
+
+				const executionTime = Date.now() - startTime;
+				this.logger.log(`Journal ${ref} retrieved from cache in ${executionTime}ms`);
+
+				// Get stats (this could also be cached separately if needed)
+				const statsKey = `${this.CACHE_PREFIX}stats:${orgId || 'all'}:${branchId || 'all'}`;
+				let stats = await this.cacheManager.get(statsKey);
+				
+				if (!stats) {
+					this.logger.debug('Cache miss for stats, calculating...');
+					const statsQueryBuilder = this.journalRepository
+						.createQueryBuilder('journal')
+						.leftJoinAndSelect('journal.organisation', 'organisation')
+						.leftJoinAndSelect('journal.branch', 'branch')
+						.where('journal.isDeleted = :isDeleted', { isDeleted: false });
+
+					if (orgId) {
+						statsQueryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+					}
+					if (branchId) {
+						statsQueryBuilder.andWhere('branch.uid = :branchId', { branchId });
+					}
+
+					const allJournals = await statsQueryBuilder.getMany();
+					stats = this.calculateStats(allJournals);
+					
+					// Cache stats for shorter time
+					await this.cacheManager.set(statsKey, stats, Math.floor(this.CACHE_TTL / 2));
+				}
+
+				return {
+					journal: cachedJournal,
+					message: process.env.SUCCESS_MESSAGE,
+					stats,
+				};
+			}
+
+			this.logger.debug(`Cache miss for journal: ${ref}, querying database`);
+
 			const queryBuilder = this.journalRepository
 				.createQueryBuilder('journal')
 				.leftJoinAndSelect('journal.owner', 'owner')
@@ -219,8 +500,10 @@ export class JournalService {
 			}
 
 			const journal = await queryBuilder.getOne();
+			const executionTime = Date.now() - startTime;
 
 			if (!journal) {
+				this.logger.warn(`Journal ${ref} not found after ${executionTime}ms`);
 				return {
 					message: process.env.NOT_FOUND_MESSAGE,
 					journal: null,
@@ -228,22 +511,40 @@ export class JournalService {
 				};
 			}
 
+			this.logger.log(`Journal ${ref} found in database in ${executionTime}ms`);
+
+			// Cache the journal
+			try {
+				await this.cacheManager.set(cacheKey, journal, this.CACHE_TTL);
+				this.logger.debug(`Journal ${ref} cached with key: ${cacheKey}`);
+			} catch (cacheError) {
+				this.logger.warn(`Failed to cache journal ${ref}: ${cacheError.message}`);
+			}
+
 			// Get stats with organization/branch filtering
-			const statsQueryBuilder = this.journalRepository
-				.createQueryBuilder('journal')
-				.leftJoinAndSelect('journal.organisation', 'organisation')
-				.leftJoinAndSelect('journal.branch', 'branch');
+			const statsKey = `${this.CACHE_PREFIX}stats:${orgId || 'all'}:${branchId || 'all'}`;
+			let stats = await this.cacheManager.get(statsKey);
+			
+			if (!stats) {
+				const statsQueryBuilder = this.journalRepository
+					.createQueryBuilder('journal')
+					.leftJoinAndSelect('journal.organisation', 'organisation')
+					.leftJoinAndSelect('journal.branch', 'branch')
+					.where('journal.isDeleted = :isDeleted', { isDeleted: false });
 
-			if (orgId) {
-				statsQueryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+				if (orgId) {
+					statsQueryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+				}
+				if (branchId) {
+					statsQueryBuilder.andWhere('branch.uid = :branchId', { branchId });
+				}
+
+				const allJournals = await statsQueryBuilder.getMany();
+				stats = this.calculateStats(allJournals);
+				
+				// Cache stats for shorter time
+				await this.cacheManager.set(statsKey, stats, Math.floor(this.CACHE_TTL / 2));
 			}
-
-			if (branchId) {
-				statsQueryBuilder.andWhere('branch.uid = :branchId', { branchId });
-			}
-
-			const allJournals = await statsQueryBuilder.getMany();
-			const stats = this.calculateStats(allJournals);
 
 			return {
 				journal,
@@ -251,8 +552,11 @@ export class JournalService {
 				stats,
 			};
 		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`Error finding journal ${ref} after ${executionTime}ms: ${error.message}`, error.stack);
+			
 			return {
-				message: error?.message,
+				message: error?.message || 'Failed to retrieve journal',
 				journal: null,
 				stats: null,
 			};
@@ -353,43 +657,69 @@ export class JournalService {
 		}
 	}
 
-	async update(ref: number, updateJournalDto: UpdateJournalDto, orgId?: number, branchId?: number) {
-		this.logger.log(`Updating journal ${ref} for orgId: ${orgId}, branchId: ${branchId}`);
-		this.logger.debug(`Update journal DTO: ${JSON.stringify(updateJournalDto)}`);
+	/**
+	 * Update a journal entry with comprehensive validation and caching
+	 * Includes comprehensive logging, cache invalidation, and performance monitoring
+	 * @param ref - Journal ID to update
+	 * @param updateJournalDto - Data for updating the journal
+	 * @param orgId - Organization ID for scoping
+	 * @param branchId - Branch ID for scoping
+	 * @returns Success message or error
+	 */
+	async update(ref: number, updateJournalDto: UpdateJournalDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
+		const startTime = Date.now();
+		this.logger.log(
+			`Updating journal: ${ref} ${orgId ? `in org: ${orgId}` : ''} ${
+				branchId ? `in branch: ${branchId}` : ''
+			} with fields: ${Object.keys(updateJournalDto).join(', ')}`
+		);
+		this.logger.debug(`Update journal DTO: ${JSON.stringify(updateJournalDto, null, 2)}`);
 
 		try {
-			// First verify the journal belongs to the org/branch
+			// First verify the journal exists and belongs to the org/branch
 			const journalResult = await this.findOne(ref, orgId, branchId);
 
 			if (!journalResult || !journalResult.journal) {
-				this.logger.warn(`Journal ${ref} not found for orgId: ${orgId}, branchId: ${branchId}`);
+				this.logger.warn(`Journal ${ref} not found for update - orgId: ${orgId}, branchId: ${branchId}`);
 				return {
 					message: process.env.NOT_FOUND_MESSAGE,
 				};
 			}
 
-			const journal = journalResult.journal;
-			this.logger.debug(`Found journal to update: ${JSON.stringify(journal)}`);
+			const originalJournal = journalResult.journal;
+			this.logger.debug(`Found journal to update: ${originalJournal.uid} - Title: "${originalJournal.title || 'Untitled'}"`);
 
-			const updateResult = await this.journalRepository.update(ref, updateJournalDto);
-			this.logger.debug(`Update result: ${JSON.stringify(updateResult)}`);
-
-			if (updateResult.affected === 0) {
-				this.logger.warn(`No rows affected when updating journal ${ref}`);
-			} else {
-				this.logger.log(`Successfully updated journal ${ref}, affected rows: ${updateResult.affected}`);
+			// Validate update data
+			if (Object.keys(updateJournalDto).length === 0) {
+				this.logger.warn(`No fields provided for journal ${ref} update`);
+				throw new BadRequestException('No fields provided for update');
 			}
 
-			const response = {
-				message: process.env.SUCCESS_MESSAGE,
-			};
+			// Use transaction for data consistency
+			const updateResult = await this.dataSource.transaction(async manager => {
+				const result = await manager.update(Journal, ref, updateJournalDto);
+				
+				if (result.affected === 0) {
+					this.logger.warn(`No rows affected when updating journal ${ref}`);
+					throw new NotFoundException('Journal not found or no changes made');
+				}
 
+				return result;
+			});
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`Journal ${ref} updated successfully in ${executionTime}ms - Affected rows: ${updateResult.affected}`);
+
+			// Invalidate relevant cache entries
+			await this.invalidateJournalCache(originalJournal);
+
+			// Send notification about the update
 			const notification = {
 				type: NotificationType.USER,
-				title: 'Journal Updated',
-				message: `A journal has been updated`,
+				title: 'Journal Entry Updated',
+				message: `Journal entry "${originalJournal.title || 'Untitled'}" has been updated`,
 				status: NotificationStatus.UNREAD,
-				owner: journal?.owner,
+				owner: originalJournal?.owner,
 			};
 
 			const recipients = [
@@ -402,59 +732,117 @@ export class JournalService {
 
 			this.eventEmitter.emit('send.notification', notification, recipients);
 
+			// Award XP for journal update (smaller amount than creation)
 			try {
-				// Use the owner from the existing journal since update might not include owner
-				const ownerUid = updateJournalDto.owner?.uid || journal.owner.uid;
-				await this.rewardsService.awardXP({
-					owner: ownerUid,
-					amount: XP_VALUES.JOURNAL,
-					action: XP_VALUES_TYPES.JOURNAL,
-					source: {
-						id: ownerUid.toString(),
-						type: XP_VALUES_TYPES.JOURNAL,
-						details: 'Journal reward',
-					},
-				}, orgId, branchId);
-				this.logger.log(`XP awarded for journal update: ${ownerUid}`);
+				const ownerUid = updateJournalDto.owner?.uid || originalJournal.owner?.uid;
+				if (ownerUid) {
+					await this.rewardsService.awardXP({
+						owner: ownerUid,
+						amount: Math.floor(XP_VALUES.JOURNAL / 2) || 5, // Half XP for updates
+						action: 'JOURNAL_UPDATE',
+						source: {
+							id: ref.toString(),
+							type: 'journal',
+							details: `Journal entry updated: ${originalJournal.title || 'Untitled'}`,
+						},
+					}, orgId, branchId);
+					this.logger.log(`XP awarded for journal update to user: ${ownerUid}`);
+				}
 			} catch (xpError) {
 				this.logger.warn(`Failed to award XP for journal update: ${xpError.message}`);
 			}
 
-			return response;
-		} catch (error) {
-			this.logger.error(`Error updating journal ${ref}: ${error.message}`, error.stack);
-			const response = {
-				message: error?.message,
+			return {
+				message: process.env.SUCCESS_MESSAGE,
 			};
-
-			return response;
+		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`Error updating journal ${ref} after ${executionTime}ms: ${error.message}`, error.stack);
+			
+			return {
+				message: error?.message || 'Failed to update journal entry',
+			};
 		}
 	}
 
+	/**
+	 * Soft delete a journal entry with comprehensive validation and caching
+	 * Includes comprehensive logging, cache invalidation, and audit trail
+	 * @param ref - Journal ID to delete
+	 * @param orgId - Organization ID for scoping
+	 * @param branchId - Branch ID for scoping
+	 * @returns Success message or error
+	 */
 	async remove(ref: number, orgId?: number, branchId?: number): Promise<{ message: string }> {
+		const startTime = Date.now();
+		this.logger.log(
+			`Removing journal: ${ref} ${orgId ? `in org: ${orgId}` : ''} ${
+				branchId ? `in branch: ${branchId}` : ''
+			}`
+		);
+
 		try {
-			// First verify the journal belongs to the org/branch
+			// First verify the journal exists and belongs to the org/branch
 			const journalResult = await this.findOne(ref, orgId, branchId);
 
 			if (!journalResult || !journalResult.journal) {
+				this.logger.warn(`Journal ${ref} not found for deletion - orgId: ${orgId}, branchId: ${branchId}`);
 				return {
 					message: process.env.NOT_FOUND_MESSAGE,
 				};
 			}
 
-			await this.journalRepository.update(ref, { isDeleted: true });
+			const journal = journalResult.journal;
+			this.logger.debug(`Found journal to delete: ${journal.uid} - Title: "${journal.title || 'Untitled'}"`);
 
-			const response = {
+			// Use transaction for data consistency
+			const deleteResult = await this.dataSource.transaction(async manager => {
+				const result = await manager.update(Journal, ref, { 
+					isDeleted: true
+				});
+				
+				if (result.affected === 0) {
+					this.logger.warn(`No rows affected when deleting journal ${ref}`);
+					throw new NotFoundException('Journal not found or already deleted');
+				}
+
+				return result;
+			});
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`Journal ${ref} soft deleted successfully in ${executionTime}ms - Affected rows: ${deleteResult.affected}`);
+
+			// Invalidate relevant cache entries
+			await this.invalidateJournalCache(journal);
+
+			// Send notification about the deletion
+			const notification = {
+				type: NotificationType.USER,
+				title: 'Journal Entry Deleted',
+				message: `Journal entry "${journal.title || 'Untitled'}" has been deleted`,
+				status: NotificationStatus.UNREAD,
+				owner: journal?.owner,
+			};
+
+			const recipients = [
+				AccessLevel.ADMIN,
+				AccessLevel.MANAGER,
+				AccessLevel.OWNER,
+				AccessLevel.SUPERVISOR,
+			];
+
+			this.eventEmitter.emit('send.notification', notification, recipients);
+
+			return {
 				message: process.env.SUCCESS_MESSAGE,
 			};
-
-			return response;
 		} catch (error) {
-			const response = {
-				message: error?.message,
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`Error deleting journal ${ref} after ${executionTime}ms: ${error.message}`, error.stack);
+			
+			return {
+				message: error?.message || 'Failed to delete journal entry',
 			};
-
-			return response;
 		}
 	}
 

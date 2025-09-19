@@ -1869,6 +1869,222 @@ export interface ClientCommunicationReminderData extends BaseEmailData {
 	nextSteps?: string[];
 }
 
+export interface ClientVisitReminderData extends BaseEmailData {
+	salesRepName: string;
+	salesRepEmail: string;
+	client: {
+		uid: number;
+		name: string;
+		email?: string;
+		phone?: string;
+		company?: string;
+		contactPerson?: string;
+		address?: string;
+		latitude?: number;
+		longitude?: number;
+	};
+	visit: {
+		type: string;
+		scheduledDate: string;
+		scheduledTime?: string;
+		frequency: string;
+		notes?: string;
+		lastVisitDate?: string;
+		daysSinceLastVisit?: number;
+		totalVisits: number;
+		visitPurpose?: string;
+		estimatedDuration?: string;
+	};
+	schedule: {
+		uid: number;
+		isOverdue?: boolean;
+		daysOverdue?: number;
+		priority: 'low' | 'medium' | 'high';
+		urgencyLevel: 'normal' | 'urgent' | 'critical';
+	};
+	organization: {
+		name: string;
+		uid: number;
+	};
+	branch?: {
+		name: string;
+		uid: number;
+	};
+	dashboardLink: string;
+	clientDetailsLink: string;
+	tasksLink: string;
+	supportEmail: string;
+	reminderDate: string;
+	visitPreparationTips?: string[];
+	nextSteps?: string[];
+	directionsLink?: string;
+}
+
+export interface ClientVisitCompletedData extends BaseEmailData {
+	salesRepName: string;
+	salesRepEmail: string;
+	client: {
+		uid: number;
+		name: string;
+		email?: string;
+		phone?: string;
+		company?: string;
+		contactPerson?: string;
+	};
+	visit: {
+		completedDate: string;
+		completedTime: string;
+		duration?: string;
+		notes?: string;
+		outcomes?: string[];
+		followUpRequired?: boolean;
+		followUpDate?: string;
+		visitRating?: number;
+		totalVisits: number;
+	};
+	schedule: {
+		uid: number;
+		nextVisitDate?: string;
+		frequency: string;
+	};
+	organization: {
+		name: string;
+		uid: number;
+	};
+	branch?: {
+		name: string;
+		uid: number;
+	};
+	dashboardLink: string;
+	clientDetailsLink: string;
+	supportEmail: string;
+	congratulationsMessage: string;
+}
+
+export interface ClientVisitOverdueData extends BaseEmailData {
+	salesRepName: string;
+	salesRepEmail: string;
+	client: {
+		uid: number;
+		name: string;
+		email?: string;
+		phone?: string;
+		company?: string;
+		contactPerson?: string;
+	};
+	visit: {
+		type: string;
+		originalScheduledDate: string;
+		originalScheduledTime?: string;
+		daysOverdue: number;
+		frequency: string;
+		lastVisitDate?: string;
+		daysSinceLastVisit?: number;
+	};
+	schedule: {
+		uid: number;
+		priority: 'low' | 'medium' | 'high';
+		urgencyLevel: 'normal' | 'urgent' | 'critical';
+	};
+	organization: {
+		name: string;
+		uid: number;
+	};
+	branch?: {
+		name: string;
+		uid: number;
+	};
+	dashboardLink: string;
+	clientDetailsLink: string;
+	rescheduleLink: string;
+	supportEmail: string;
+	escalationMessage: string;
+	managerEmail?: string;
+}
+
+export interface ClientVisitWeeklyReportData extends BaseEmailData {
+	salesRepName: string;
+	salesRepEmail: string;
+	reportPeriod: {
+		startDate: string;
+		endDate: string;
+		weekNumber: number;
+		year: number;
+	};
+	summary: {
+		totalVisitsCompleted: number;
+		totalVisitsScheduled: number;
+		completionRate: number;
+		totalClientsVisited: number;
+		overdueVisits: number;
+		upcomingVisits: number;
+		averageVisitDuration?: string;
+		totalTravelTime?: string;
+		totalVisitTime?: string;
+	};
+	completedVisits: Array<{
+		clientName: string;
+		clientUid: number;
+		visitDate: string;
+		visitTime: string;
+		duration?: string;
+		notes?: string;
+		outcomes?: string[];
+		followUpRequired?: boolean;
+		rating?: number;
+	}>;
+	upcomingVisits: Array<{
+		clientName: string;
+		clientUid: number;
+		scheduledDate: string;
+		scheduledTime?: string;
+		visitType: string;
+		notes?: string;
+		isOverdue?: boolean;
+		daysOverdue?: number;
+	}>;
+	missedVisits: Array<{
+		clientName: string;
+		clientUid: number;
+		originalDate: string;
+		daysMissed: number;
+		frequency: string;
+		lastVisitDate?: string;
+	}>;
+	clientInsights: Array<{
+		clientName: string;
+		clientUid: number;
+		totalVisits: number;
+		lastVisitDate?: string;
+		nextVisitDate?: string;
+		visitFrequency: string;
+		trend: 'improving' | 'stable' | 'declining';
+		notes?: string;
+	}>;
+	performance: {
+		punctualityRate: number;
+		clientSatisfactionAverage?: number;
+		visitGoalsAchieved: number;
+		visitGoalsTotal: number;
+		improvementAreas?: string[];
+		strengths?: string[];
+	};
+	organization: {
+		name: string;
+		uid: number;
+	};
+	branch?: {
+		name: string;
+		uid: number;
+	};
+	dashboardLink: string;
+	detailedReportLink: string;
+	supportEmail: string;
+	managerName?: string;
+	managerEmail?: string;
+	nextWeekGoals?: string[];
+}
+
 export interface AppUpdateNotificationData extends BaseEmailData {
 	appName: string;
 	version: string;
@@ -2061,6 +2277,11 @@ export interface EmailDataMap {
 	[EmailType.CLIENT_PROFILE_UPDATED_ADMIN]: ClientProfileUpdateAdminData;
 	// Client communication mappings
 	[EmailType.CLIENT_COMMUNICATION_REMINDER]: ClientCommunicationReminderData;
+	// Client visit mappings
+	[EmailType.CLIENT_VISIT_REMINDER]: ClientVisitReminderData;
+	[EmailType.CLIENT_VISIT_COMPLETED]: ClientVisitCompletedData;
+	[EmailType.CLIENT_VISIT_OVERDUE]: ClientVisitOverdueData;
+	[EmailType.CLIENT_VISIT_WEEKLY_REPORT]: ClientVisitWeeklyReportData;
 	// Claims email mappings
 	[EmailType.CLAIM_CREATED]: ClaimEmailData;
 	[EmailType.CLAIM_CREATED_ADMIN]: ClaimEmailData;

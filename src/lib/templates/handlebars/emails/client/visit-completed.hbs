@@ -1,0 +1,162 @@
+{{#base headerTitle="Visit Completed Successfully" headerSubtitle="Great job on completing your client visit!"}}
+
+<div class="greeting">
+    Congratulations {{salesRepName}}! 🎉
+</div>
+
+<div class="success-notice">
+    <p>{{congratulationsMessage}}</p>
+</div>
+
+<div class="info-card">
+    <h3>👤 Client Information</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Client Name</span>
+            <span class="detail-value">{{client.name}}</span>
+        </div>
+        {{#if client.company}}
+        <div class="detail-item">
+            <span class="detail-label">Company</span>
+            <span class="detail-value">{{client.company}}</span>
+        </div>
+        {{/if}}
+        {{#if client.contactPerson}}
+        <div class="detail-item">
+            <span class="detail-label">Contact Person</span>
+            <span class="detail-value">{{client.contactPerson}}</span>
+        </div>
+        {{/if}}
+        {{#if client.email}}
+        <div class="detail-item">
+            <span class="detail-label">Email</span>
+            <span class="detail-value">{{client.email}}</span>
+        </div>
+        {{/if}}
+        {{#if client.phone}}
+        <div class="detail-item">
+            <span class="detail-label">Phone</span>
+            <span class="detail-value">{{client.phone}}</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+
+<div class="info-card">
+    <h3>✅ Visit Summary</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Visit Date</span>
+            <span class="detail-value">{{visit.completedDate}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Visit Time</span>
+            <span class="detail-value">{{visit.completedTime}}</span>
+        </div>
+        {{#if visit.duration}}
+        <div class="detail-item">
+            <span class="detail-label">Duration</span>
+            <span class="detail-value">{{visit.duration}}</span>
+        </div>
+        {{/if}}
+        <div class="detail-item">
+            <span class="detail-label">Total Client Visits</span>
+            <span class="detail-value">{{visit.totalVisits}}</span>
+        </div>
+        {{#if visit.visitRating}}
+        <div class="detail-item">
+            <span class="detail-label">Visit Rating</span>
+            <span class="detail-value">{{visit.visitRating}}/5 ⭐</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+
+{{#if visit.notes}}
+<div class="info-card">
+    <h4>📝 Visit Notes</h4>
+    <p>{{visit.notes}}</p>
+</div>
+{{/if}}
+
+{{#if visit.outcomes}}
+<div class="info-card">
+    <h4>🎯 Visit Outcomes</h4>
+    <ul class="feature-list">
+        {{#each visit.outcomes}}
+        <li>{{this}}</li>
+        {{/each}}
+    </ul>
+</div>
+{{/if}}
+
+{{#if visit.followUpRequired}}
+<div class="warning-notice">
+    <p>📅 <strong>Follow-up Required:</strong> {{#if visit.followUpDate}}Scheduled for {{visit.followUpDate}}{{else}}Please schedule a follow-up action{{/if}}.</p>
+</div>
+{{/if}}
+
+{{#if schedule.nextVisitDate}}
+<div class="info-notice">
+    <p>📆 <strong>Next Visit:</strong> Based on the {{schedule.frequency}} schedule, your next visit is planned for {{schedule.nextVisitDate}}.</p>
+</div>
+{{/if}}
+
+<div class="cta-section">
+    <a href="{{clientDetailsLink}}" class="cta-button">View Client Details</a>
+</div>
+
+<div class="info-card">
+    <h4>📊 Visit Statistics</h4>
+    <p>Your visit performance with {{client.name}}:</p>
+    <ul style="margin-left: 20px; color: #4b5563;">
+        <li><strong>Total visits completed:</strong> {{visit.totalVisits}}</li>
+        <li><strong>Visit frequency:</strong> {{schedule.frequency}}</li>
+        {{#if visit.visitRating}}
+        <li><strong>Average visit satisfaction:</strong> {{visit.visitRating}}/5 stars</li>
+        {{/if}}
+        {{#if visit.followUpRequired}}
+        <li><strong>Follow-up status:</strong> Required{{#if visit.followUpDate}} - {{visit.followUpDate}}{{/if}}</li>
+        {{else}}
+        <li><strong>Follow-up status:</strong> No immediate follow-up needed</li>
+        {{/if}}
+    </ul>
+</div>
+
+<div class="success-notice">
+    <p>🌟 <strong>Keep up the excellent work!</strong> Regular client visits are essential for maintaining strong business relationships and driving growth. Your dedication makes a real difference!</p>
+</div>
+
+<div class="message">
+    <p><strong>Resources and Support:</strong></p>
+    <ul style="margin-left: 20px; color: #4b5563;">
+        <li>Dashboard: <a href="{{dashboardLink}}" style="color: #7c2d92;">View Full Dashboard</a></li>
+        <li>Support Team: {{supportEmail}}</li>
+        {{#if branch}}
+        <li>Branch: {{branch.name}}</li>
+        {{/if}}
+    </ul>
+</div>
+
+<div class="info-card">
+    <h4>🎯 Next Steps</h4>
+    <p>To maximize the value of this visit:</p>
+    <ul style="margin-left: 20px; color: #4b5563;">
+        <li>Ensure all visit notes are comprehensive and saved</li>
+        <li>Create any necessary follow-up tasks or reminders</li>
+        <li>Update client status or opportunities as needed</li>
+        <li>Send a thank-you message to the client if appropriate</li>
+        {{#if schedule.nextVisitDate}}
+        <li>Confirm the next visit date ({{schedule.nextVisitDate}}) is in your calendar</li>
+        {{else}}
+        <li>Schedule the next visit based on the agreed frequency</li>
+        {{/if}}
+        <li>Share insights with your team if relevant</li>
+    </ul>
+</div>
+
+<div class="message">
+    <p><em>This confirmation was generated automatically to acknowledge your completed visit and help you track your client engagement progress.</em></p>
+</div>
+
+{{/base}}

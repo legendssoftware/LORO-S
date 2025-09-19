@@ -1,0 +1,178 @@
+{{#base headerTitle="Overdue Client Visit Alert" headerSubtitle="Important: Client visit requires immediate attention"}}
+
+<div class="greeting">
+    Attention {{salesRepName}}! 🚨
+</div>
+
+<div class="error-notice">
+    <p>{{escalationMessage}}</p>
+</div>
+
+<div class="error-notice">
+    <p>🚨 <strong>Overdue Visit Alert:</strong> Your scheduled {{visit.type}} with <strong>{{client.name}}</strong> was due on {{visit.originalScheduledDate}} and is now {{visit.daysOverdue}} day{{#if (gt visit.daysOverdue 1)}}s{{/if}} overdue.</p>
+</div>
+
+<div class="info-card">
+    <h3>👤 Client Information</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Client Name</span>
+            <span class="detail-value">{{client.name}}</span>
+        </div>
+        {{#if client.company}}
+        <div class="detail-item">
+            <span class="detail-label">Company</span>
+            <span class="detail-value">{{client.company}}</span>
+        </div>
+        {{/if}}
+        {{#if client.contactPerson}}
+        <div class="detail-item">
+            <span class="detail-label">Contact Person</span>
+            <span class="detail-value">{{client.contactPerson}}</span>
+        </div>
+        {{/if}}
+        {{#if client.email}}
+        <div class="detail-item">
+            <span class="detail-label">Email</span>
+            <span class="detail-value">{{client.email}}</span>
+        </div>
+        {{/if}}
+        {{#if client.phone}}
+        <div class="detail-item">
+            <span class="detail-label">Phone</span>
+            <span class="detail-value">{{client.phone}}</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+
+<div class="info-card">
+    <h3>⚠️ Overdue Visit Details</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Visit Type</span>
+            <span class="detail-value">{{visit.type}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Original Scheduled Date</span>
+            <span class="detail-value" style="color: #dc2626; font-weight: 600;">{{visit.originalScheduledDate}}</span>
+        </div>
+        {{#if visit.originalScheduledTime}}
+        <div class="detail-item">
+            <span class="detail-label">Original Scheduled Time</span>
+            <span class="detail-value" style="color: #dc2626; font-weight: 600;">{{visit.originalScheduledTime}}</span>
+        </div>
+        {{/if}}
+        <div class="detail-item">
+            <span class="detail-label">Days Overdue</span>
+            <span class="detail-value" style="color: #dc2626; font-weight: 600; font-size: 1.1em;">{{visit.daysOverdue}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Visit Frequency</span>
+            <span class="detail-value">{{visit.frequency}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Priority Level</span>
+            <span class="detail-value" style="color: {{#eq schedule.priority 'high'}}#dc2626{{else if (eq schedule.priority 'medium')}}#f59e0b{{else}}#22c55e{{/eq}}; font-weight: 600; text-transform: uppercase;">{{schedule.priority}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Urgency Level</span>
+            <span class="detail-value" style="color: #dc2626; font-weight: 600; text-transform: uppercase;">{{schedule.urgencyLevel}}</span>
+        </div>
+        {{#if visit.lastVisitDate}}
+        <div class="detail-item">
+            <span class="detail-label">Last Visit</span>
+            <span class="detail-value">{{visit.lastVisitDate}}</span>
+        </div>
+        {{/if}}
+        {{#if visit.daysSinceLastVisit}}
+        <div class="detail-item">
+            <span class="detail-label">Days Since Last Visit</span>
+            <span class="detail-value" style="{{#if (gt visit.daysSinceLastVisit 30)}}color: #dc2626; font-weight: 600;{{/if}}">{{visit.daysSinceLastVisit}}</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+
+<div class="cta-section">
+    <a href="{{rescheduleLink}}" class="cta-button" style="background-color: #dc2626;">Reschedule Visit Now</a>
+    <a href="{{clientDetailsLink}}" class="cta-button secondary" style="margin-left: 10px;">View Client Details</a>
+</div>
+
+<div class="error-notice">
+    <h4>⚠️ Immediate Action Required</h4>
+    <p><strong>Priority Actions:</strong></p>
+    <ul style="margin-left: 20px; color: #4b5563;">
+        <li><strong>Contact the client immediately</strong> to explain the delay and reschedule</li>
+        <li><strong>Apologize professionally</strong> for the missed appointment</li>
+        <li><strong>Offer flexible scheduling options</strong> to accommodate their availability</li>
+        <li><strong>Update the visit schedule</strong> in the system with the new date</li>
+        <li><strong>Set reminders</strong> to ensure the rescheduled visit doesn't get missed</li>
+        {{#if (gt visit.daysOverdue 7)}}
+        <li><strong>Consider escalating to management</strong> due to extended delay</li>
+        {{/if}}
+    </ul>
+</div>
+
+{{#if (gt visit.daysOverdue 3)}}
+<div class="warning-notice">
+    <h4>📞 Client Relationship Risk</h4>
+    <p>This visit has been overdue for {{visit.daysOverdue}} days, which may impact your relationship with {{client.name}}. Consider:</p>
+    <ul style="margin-left: 20px; color: #4b5563;">
+        <li>Sending a personal apology message</li>
+        <li>Offering additional value or incentives during the rescheduled visit</li>
+        <li>Reviewing your scheduling process to prevent future occurrences</li>
+        <li>Discussing the delay with your supervisor if needed</li>
+    </ul>
+</div>
+{{/if}}
+
+{{#if (gt visit.daysOverdue 7)}}
+<div class="error-notice">
+    <h4>🚨 Management Escalation</h4>
+    <p><strong>Critical Status:</strong> This visit has been overdue for over a week. {{#if managerEmail}}Your manager ({{managerEmail}}) has been notified{{else}}Please inform your manager immediately{{/if}}.</p>
+</div>
+{{/if}}
+
+<div class="info-card">
+    <h4>📞 Contact Information</h4>
+    <p>Use this information to contact the client immediately:</p>
+    <ul style="margin-left: 20px; color: #4b5563;">
+        {{#if client.phone}}<li><strong>Phone:</strong> {{client.phone}}</li>{{/if}}
+        {{#if client.email}}<li><strong>Email:</strong> {{client.email}}</li>{{/if}}
+        {{#if client.contactPerson}}<li><strong>Contact Person:</strong> {{client.contactPerson}}</li>{{/if}}
+    </ul>
+</div>
+
+<div class="info-card">
+    <h4>💬 Suggested Communication Script</h4>
+    <p><strong>When contacting the client, consider saying:</strong></p>
+    <div style="background-color: #f3f4f6; padding: 15px; border-left: 4px solid #7c2d92; margin: 10px 0; font-style: italic;">
+        "Hello {{#if client.contactPerson}}{{client.contactPerson}}{{else}}[Client Name]{{/if}}, this is {{salesRepName}} from {{organization.name}}. I sincerely apologize for missing our scheduled visit on {{visit.originalScheduledDate}}. I understand this may have caused inconvenience, and I'd like to reschedule at your earliest convenience. When would be a good time for you?"
+    </div>
+</div>
+
+<div class="message">
+    <p><strong>Need immediate assistance?</strong> Contact:</p>
+    <ul style="margin-left: 20px; color: #4b5563;">
+        <li>Dashboard: <a href="{{dashboardLink}}" style="color: #7c2d92;">View Full Dashboard</a></li>
+        <li>Reschedule: <a href="{{rescheduleLink}}" style="color: #dc2626;">Reschedule Visit</a></li>
+        <li>Support Team: {{supportEmail}}</li>
+        {{#if managerEmail}}
+        <li>Manager: {{managerEmail}}</li>
+        {{/if}}
+        {{#if branch}}
+        <li>Branch: {{branch.name}}</li>
+        {{/if}}
+    </ul>
+</div>
+
+<div class="warning-notice">
+    <p>⚠️ <strong>Remember:</strong> Timely client visits are crucial for maintaining relationships, identifying opportunities, and driving business growth. Please take immediate action to address this overdue visit.</p>
+</div>
+
+<div class="message">
+    <p><em>This alert was generated automatically to help you maintain strong client relationships and meet your visit commitments.</em></p>
+</div>
+
+{{/base}}

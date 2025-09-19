@@ -1,0 +1,206 @@
+{{#base headerTitle="Client Visit Reminder" headerSubtitle="Time to visit your client"}}
+
+<div class="greeting">
+    Hello {{salesRepName}}! 🚗
+</div>
+
+<div class="message">
+    <p>This is a friendly reminder that you have a scheduled {{visit.type}} with <strong>{{client.name}}</strong> {{#if schedule.isOverdue}}that is now overdue{{else}}scheduled for today{{/if}}.</p>
+</div>
+
+{{#if schedule.isOverdue}}
+<div class="error-notice">
+    <p>🚨 <strong>Overdue Visit:</strong> This {{visit.type}} was scheduled for {{visit.scheduledDate}} and is now {{schedule.daysOverdue}} day{{#if (gt schedule.daysOverdue 1)}}s{{/if}} overdue.</p>
+</div>
+{{else}}
+<div class="{{#if (eq schedule.urgencyLevel 'urgent')}}warning-notice{{else if (eq schedule.urgencyLevel 'critical')}}error-notice{{else}}info-notice{{/if}}">
+    <p>📅 <strong>Scheduled Visit:</strong> {{visit.type}} with {{client.name}} is scheduled for {{visit.scheduledDate}}{{#if visit.scheduledTime}} at {{visit.scheduledTime}}{{/if}}.</p>
+</div>
+{{/if}}
+
+<div class="info-card">
+    <h3>👤 Client Information</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Client Name</span>
+            <span class="detail-value">{{client.name}}</span>
+        </div>
+        {{#if client.company}}
+        <div class="detail-item">
+            <span class="detail-label">Company</span>
+            <span class="detail-value">{{client.company}}</span>
+        </div>
+        {{/if}}
+        {{#if client.contactPerson}}
+        <div class="detail-item">
+            <span class="detail-label">Contact Person</span>
+            <span class="detail-value">{{client.contactPerson}}</span>
+        </div>
+        {{/if}}
+        {{#if client.email}}
+        <div class="detail-item">
+            <span class="detail-label">Email</span>
+            <span class="detail-value">{{client.email}}</span>
+        </div>
+        {{/if}}
+        {{#if client.phone}}
+        <div class="detail-item">
+            <span class="detail-label">Phone</span>
+            <span class="detail-value">{{client.phone}}</span>
+        </div>
+        {{/if}}
+        {{#if client.address}}
+        <div class="detail-item">
+            <span class="detail-label">Address</span>
+            <span class="detail-value">{{client.address}}</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+
+<div class="info-card">
+    <h3>🏢 Visit Details</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Visit Type</span>
+            <span class="detail-value">{{visit.type}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Scheduled Date</span>
+            <span class="detail-value">{{visit.scheduledDate}}</span>
+        </div>
+        {{#if visit.scheduledTime}}
+        <div class="detail-item">
+            <span class="detail-label">Scheduled Time</span>
+            <span class="detail-value">{{visit.scheduledTime}}</span>
+        </div>
+        {{/if}}
+        {{#if visit.estimatedDuration}}
+        <div class="detail-item">
+            <span class="detail-label">Estimated Duration</span>
+            <span class="detail-value">{{visit.estimatedDuration}}</span>
+        </div>
+        {{/if}}
+        <div class="detail-item">
+            <span class="detail-label">Visit Frequency</span>
+            <span class="detail-value">{{visit.frequency}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Priority</span>
+            <span class="detail-value" style="color: {{#eq schedule.priority 'high'}}#dc2626{{else if (eq schedule.priority 'medium')}}#f59e0b{{else}}#22c55e{{/eq}}; font-weight: 600; text-transform: uppercase;">{{schedule.priority}}</span>
+        </div>
+        {{#if visit.lastVisitDate}}
+        <div class="detail-item">
+            <span class="detail-label">Last Visit</span>
+            <span class="detail-value">{{visit.lastVisitDate}}</span>
+        </div>
+        {{/if}}
+        {{#if visit.daysSinceLastVisit}}
+        <div class="detail-item">
+            <span class="detail-label">Days Since Last Visit</span>
+            <span class="detail-value">{{visit.daysSinceLastVisit}}</span>
+        </div>
+        {{/if}}
+        <div class="detail-item">
+            <span class="detail-label">Total Visits</span>
+            <span class="detail-value">{{visit.totalVisits}}</span>
+        </div>
+    </div>
+</div>
+
+{{#if visit.visitPurpose}}
+<div class="info-card">
+    <h4>🎯 Visit Purpose</h4>
+    <p>{{visit.visitPurpose}}</p>
+</div>
+{{/if}}
+
+{{#if visit.notes}}
+<div class="info-card">
+    <h4>📝 Visit Notes</h4>
+    <p>{{visit.notes}}</p>
+</div>
+{{/if}}
+
+<div class="cta-section">
+    <a href="{{clientDetailsLink}}" class="cta-button">{{#if schedule.isOverdue}}Schedule Visit Now{{else}}View Client Details{{/if}}</a>
+    {{#if directionsLink}}
+    <a href="{{directionsLink}}" class="cta-button secondary" style="margin-left: 10px;">Get Directions</a>
+    {{/if}}
+</div>
+
+{{#if visitPreparationTips}}
+<div class="info-card">
+    <h4>💡 Visit Preparation Tips</h4>
+    <ul class="feature-list">
+        {{#each visitPreparationTips}}
+        <li>{{this}}</li>
+        {{/each}}
+    </ul>
+</div>
+{{/if}}
+
+{{#if nextSteps}}
+<div class="info-card">
+    <h4>🎯 Recommended Next Steps</h4>
+    <ul class="feature-list">
+        {{#each nextSteps}}
+        <li>{{this}}</li>
+        {{/each}}
+    </ul>
+</div>
+{{/if}}
+
+{{#if schedule.isOverdue}}
+<div class="error-notice">
+    <p>⚠️ <strong>Action Required:</strong> This visit is overdue. Please contact the client to reschedule and maintain the relationship.</p>
+</div>
+{{else}}
+<div class="success-notice">
+    <p>🎯 <strong>Great Planning!</strong> Regular client visits are essential for building strong business relationships. Your proactive approach makes a difference!</p>
+</div>
+{{/if}}
+
+<div class="message">
+    <p><strong>Need assistance with this visit?</strong> Contact:</p>
+    <ul style="margin-left: 20px; color: #4b5563;">
+        <li>Dashboard: <a href="{{dashboardLink}}" style="color: #7c2d92;">View Full Dashboard</a></li>
+        <li>Tasks: <a href="{{tasksLink}}" style="color: #7c2d92;">View Related Tasks</a></li>
+        <li>Support Team: {{supportEmail}}</li>
+        {{#if branch}}
+        <li>Branch: {{branch.name}}</li>
+        {{/if}}
+    </ul>
+</div>
+
+<div class="info-card">
+    <h4>📊 Visit Checklist</h4>
+    <p>Before heading out, make sure to:</p>
+    <ul style="margin-left: 20px; color: #4b5563;">
+        <li>Review client history and previous visit notes</li>
+        <li>Prepare any materials or samples needed</li>
+        <li>Confirm the appointment with the client</li>
+        <li>Check traffic conditions and plan your route</li>
+        <li>Bring business cards and contact information</li>
+        <li>Have your mobile device charged for updates</li>
+    </ul>
+</div>
+
+<div class="info-card">
+    <h4>📱 Post-Visit Actions</h4>
+    <p>After completing this visit, remember to:</p>
+    <ul style="margin-left: 20px; color: #4b5563;">
+        <li>Update the visit status in the system</li>
+        <li>Add detailed notes about the visit outcome</li>
+        <li>Schedule the next visit if needed</li>
+        <li>Create follow-up tasks as necessary</li>
+        <li>Update client opportunities or status</li>
+        <li>Record any client feedback or concerns</li>
+    </ul>
+</div>
+
+<div class="message">
+    <p><em>This reminder was generated automatically on {{reminderDate}} to help you stay on top of your client visits.</em></p>
+</div>
+
+{{/base}}

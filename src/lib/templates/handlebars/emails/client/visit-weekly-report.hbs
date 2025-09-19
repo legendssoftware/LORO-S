@@ -1,0 +1,304 @@
+{{#base headerTitle="Weekly Client Visit Report" headerSubtitle="Your client visit summary for week {{reportPeriod.weekNumber}}, {{reportPeriod.year}}"}}
+
+<div class="greeting">
+    Hello {{salesRepName}}! 📊
+</div>
+
+<div class="message">
+    <p>Here's your comprehensive client visit report for <strong>Week {{reportPeriod.weekNumber}}</strong> ({{reportPeriod.startDate}} - {{reportPeriod.endDate}}).</p>
+</div>
+
+<div class="info-card">
+    <h3>📈 Visit Summary</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Visits Completed</span>
+            <span class="detail-value" style="color: #22c55e; font-weight: 600; font-size: 1.2em;">{{summary.totalVisitsCompleted}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Visits Scheduled</span>
+            <span class="detail-value">{{summary.totalVisitsScheduled}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Completion Rate</span>
+            <span class="detail-value" style="color: {{#if (gt summary.completionRate 80)}}#22c55e{{else if (gt summary.completionRate 60)}}#f59e0b{{else}}#dc2626{{/if}}; font-weight: 600;">{{summary.completionRate}}%</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Clients Visited</span>
+            <span class="detail-value">{{summary.totalClientsVisited}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Overdue Visits</span>
+            <span class="detail-value" style="{{#if (gt summary.overdueVisits 0)}}color: #dc2626; font-weight: 600;{{/if}}">{{summary.overdueVisits}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Upcoming Visits</span>
+            <span class="detail-value">{{summary.upcomingVisits}}</span>
+        </div>
+        {{#if summary.averageVisitDuration}}
+        <div class="detail-item">
+            <span class="detail-label">Average Visit Duration</span>
+            <span class="detail-value">{{summary.averageVisitDuration}}</span>
+        </div>
+        {{/if}}
+        {{#if summary.totalTravelTime}}
+        <div class="detail-item">
+            <span class="detail-label">Total Travel Time</span>
+            <span class="detail-value">{{summary.totalTravelTime}}</span>
+        </div>
+        {{/if}}
+        {{#if summary.totalVisitTime}}
+        <div class="detail-item">
+            <span class="detail-label">Total Visit Time</span>
+            <span class="detail-value">{{summary.totalVisitTime}}</span>
+        </div>
+        {{/if}}
+    </div>
+</div>
+
+{{#if (gt summary.completionRate 80)}}
+<div class="success-notice">
+    <p>🎉 <strong>Excellent Performance!</strong> You achieved a {{summary.completionRate}}% completion rate this week. Keep up the outstanding work!</p>
+</div>
+{{else if (gt summary.completionRate 60)}}
+<div class="warning-notice">
+    <p>⚡ <strong>Good Progress!</strong> You achieved a {{summary.completionRate}}% completion rate. Consider optimizing your schedule to reach even higher performance.</p>
+</div>
+{{else}}
+<div class="error-notice">
+    <p>📈 <strong>Room for Improvement:</strong> Your {{summary.completionRate}}% completion rate indicates opportunity for better visit planning and execution.</p>
+</div>
+{{/if}}
+
+{{#if completedVisits}}
+<div class="info-card">
+    <h3>✅ Completed Visits ({{summary.totalVisitsCompleted}})</h3>
+    {{#each completedVisits}}
+    <div style="border-left: 4px solid #22c55e; padding: 10px; margin: 10px 0; background-color: #f0fdf4;">
+        <h4 style="margin: 0 0 5px 0; color: #166534;">{{clientName}}</h4>
+        <div class="detail-grid" style="font-size: 0.9em;">
+            <div class="detail-item">
+                <span class="detail-label">Date & Time</span>
+                <span class="detail-value">{{visitDate}} at {{visitTime}}</span>
+            </div>
+            {{#if duration}}
+            <div class="detail-item">
+                <span class="detail-label">Duration</span>
+                <span class="detail-value">{{duration}}</span>
+            </div>
+            {{/if}}
+            {{#if rating}}
+            <div class="detail-item">
+                <span class="detail-label">Rating</span>
+                <span class="detail-value">{{rating}}/5 ⭐</span>
+            </div>
+            {{/if}}
+        </div>
+        {{#if notes}}
+        <p style="margin: 5px 0; font-style: italic; color: #374151;"><strong>Notes:</strong> {{notes}}</p>
+        {{/if}}
+        {{#if outcomes}}
+        <div style="margin: 5px 0;">
+            <strong>Outcomes:</strong>
+            <ul style="margin: 5px 0 0 20px; color: #374151;">
+                {{#each outcomes}}
+                <li>{{this}}</li>
+                {{/each}}
+            </ul>
+        </div>
+        {{/if}}
+        {{#if followUpRequired}}
+        <p style="margin: 5px 0; color: #f59e0b; font-weight: 600;">📅 Follow-up required</p>
+        {{/if}}
+    </div>
+    {{/each}}
+</div>
+{{/if}}
+
+{{#if upcomingVisits}}
+<div class="info-card">
+    <h3>📅 Upcoming Visits ({{summary.upcomingVisits}})</h3>
+    {{#each upcomingVisits}}
+    <div style="border-left: 4px solid {{#if isOverdue}}#dc2626{{else}}#3b82f6{{/if}}; padding: 10px; margin: 10px 0; background-color: {{#if isOverdue}}#fef2f2{{else}}#eff6ff{{/if}};">
+        <h4 style="margin: 0 0 5px 0; color: {{#if isOverdue}}#dc2626{{else}}#1e40af{{/if}};">{{clientName}} {{#if isOverdue}}(OVERDUE){{/if}}</h4>
+        <div class="detail-grid" style="font-size: 0.9em;">
+            <div class="detail-item">
+                <span class="detail-label">Scheduled</span>
+                <span class="detail-value" style="{{#if isOverdue}}color: #dc2626; font-weight: 600;{{/if}}">{{scheduledDate}}{{#if scheduledTime}} at {{scheduledTime}}{{/if}}</span>
+            </div>
+            <div class="detail-item">
+                <span class="detail-label">Visit Type</span>
+                <span class="detail-value">{{visitType}}</span>
+            </div>
+            {{#if isOverdue}}
+            <div class="detail-item">
+                <span class="detail-label">Days Overdue</span>
+                <span class="detail-value" style="color: #dc2626; font-weight: 600;">{{daysOverdue}}</span>
+            </div>
+            {{/if}}
+        </div>
+        {{#if notes}}
+        <p style="margin: 5px 0; font-style: italic; color: #374151;"><strong>Notes:</strong> {{notes}}</p>
+        {{/if}}
+    </div>
+    {{/each}}
+</div>
+{{/if}}
+
+{{#if missedVisits}}
+<div class="info-card">
+    <h3>❌ Missed Visits ({{missedVisits.length}})</h3>
+    {{#each missedVisits}}
+    <div style="border-left: 4px solid #dc2626; padding: 10px; margin: 10px 0; background-color: #fef2f2;">
+        <h4 style="margin: 0 0 5px 0; color: #dc2626;">{{clientName}}</h4>
+        <div class="detail-grid" style="font-size: 0.9em;">
+            <div class="detail-item">
+                <span class="detail-label">Original Date</span>
+                <span class="detail-value" style="color: #dc2626; font-weight: 600;">{{originalDate}}</span>
+            </div>
+            <div class="detail-item">
+                <span class="detail-label">Days Missed</span>
+                <span class="detail-value" style="color: #dc2626; font-weight: 600;">{{daysMissed}}</span>
+            </div>
+            <div class="detail-item">
+                <span class="detail-label">Frequency</span>
+                <span class="detail-value">{{frequency}}</span>
+            </div>
+            {{#if lastVisitDate}}
+            <div class="detail-item">
+                <span class="detail-label">Last Visit</span>
+                <span class="detail-value">{{lastVisitDate}}</span>
+            </div>
+            {{/if}}
+        </div>
+    </div>
+    {{/each}}
+</div>
+{{/if}}
+
+<div class="info-card">
+    <h3>👥 Client Insights</h3>
+    {{#each clientInsights}}
+    <div style="border-left: 4px solid #7c2d92; padding: 10px; margin: 10px 0; background-color: #faf5ff;">
+        <h4 style="margin: 0 0 5px 0; color: #7c2d92;">{{clientName}}</h4>
+        <div class="detail-grid" style="font-size: 0.9em;">
+            <div class="detail-item">
+                <span class="detail-label">Total Visits</span>
+                <span class="detail-value">{{totalVisits}}</span>
+            </div>
+            <div class="detail-item">
+                <span class="detail-label">Visit Frequency</span>
+                <span class="detail-value">{{visitFrequency}}</span>
+            </div>
+            <div class="detail-item">
+                <span class="detail-label">Trend</span>
+                <span class="detail-value" style="color: {{#eq trend 'improving'}}#22c55e{{else if (eq trend 'stable')}}#3b82f6{{else}}#dc2626{{/eq}}; font-weight: 600; text-transform: capitalize;">{{trend}}</span>
+            </div>
+            {{#if lastVisitDate}}
+            <div class="detail-item">
+                <span class="detail-label">Last Visit</span>
+                <span class="detail-value">{{lastVisitDate}}</span>
+            </div>
+            {{/if}}
+            {{#if nextVisitDate}}
+            <div class="detail-item">
+                <span class="detail-label">Next Visit</span>
+                <span class="detail-value">{{nextVisitDate}}</span>
+            </div>
+            {{/if}}
+        </div>
+        {{#if notes}}
+        <p style="margin: 5px 0; font-style: italic; color: #374151;"><strong>Notes:</strong> {{notes}}</p>
+        {{/if}}
+    </div>
+    {{/each}}
+</div>
+
+<div class="info-card">
+    <h3>📊 Performance Analysis</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Punctuality Rate</span>
+            <span class="detail-value" style="color: {{#if (gt performance.punctualityRate 90)}}#22c55e{{else if (gt performance.punctualityRate 75)}}#f59e0b{{else}}#dc2626{{/if}}; font-weight: 600;">{{performance.punctualityRate}}%</span>
+        </div>
+        {{#if performance.clientSatisfactionAverage}}
+        <div class="detail-item">
+            <span class="detail-label">Client Satisfaction</span>
+            <span class="detail-value" style="color: {{#if (gt performance.clientSatisfactionAverage 4)}}#22c55e{{else if (gt performance.clientSatisfactionAverage 3)}}#f59e0b{{else}}#dc2626{{/if}}; font-weight: 600;">{{performance.clientSatisfactionAverage}}/5 ⭐</span>
+        </div>
+        {{/if}}
+        <div class="detail-item">
+            <span class="detail-label">Visit Goals</span>
+            <span class="detail-value">{{performance.visitGoalsAchieved}}/{{performance.visitGoalsTotal}}</span>
+        </div>
+    </div>
+
+    {{#if performance.strengths}}
+    <div style="margin: 15px 0;">
+        <h4 style="color: #22c55e; margin: 10px 0 5px 0;">🌟 Strengths</h4>
+        <ul style="margin: 5px 0 0 20px; color: #374151;">
+            {{#each performance.strengths}}
+            <li>{{this}}</li>
+            {{/each}}
+        </ul>
+    </div>
+    {{/if}}
+
+    {{#if performance.improvementAreas}}
+    <div style="margin: 15px 0;">
+        <h4 style="color: #f59e0b; margin: 10px 0 5px 0;">📈 Areas for Improvement</h4>
+        <ul style="margin: 5px 0 0 20px; color: #374151;">
+            {{#each performance.improvementAreas}}
+            <li>{{this}}</li>
+            {{/each}}
+        </ul>
+    </div>
+    {{/if}}
+</div>
+
+{{#if nextWeekGoals}}
+<div class="info-card">
+    <h3>🎯 Goals for Next Week</h3>
+    <ul class="feature-list">
+        {{#each nextWeekGoals}}
+        <li>{{this}}</li>
+        {{/each}}
+    </ul>
+</div>
+{{/if}}
+
+<div class="cta-section">
+    <a href="{{detailedReportLink}}" class="cta-button">View Detailed Report</a>
+    <a href="{{dashboardLink}}" class="cta-button secondary" style="margin-left: 10px;">Go to Dashboard</a>
+</div>
+
+{{#if (gt summary.overdueVisits 0)}}
+<div class="error-notice">
+    <p>⚠️ <strong>Action Required:</strong> You have {{summary.overdueVisits}} overdue visit{{#if (gt summary.overdueVisits 1)}}s{{/if}}. Please prioritize rescheduling these to maintain client relationships.</p>
+</div>
+{{/if}}
+
+<div class="message">
+    <p><strong>Resources and Support:</strong></p>
+    <ul style="margin-left: 20px; color: #4b5563;">
+        <li>Full Dashboard: <a href="{{dashboardLink}}" style="color: #7c2d92;">View Complete Analytics</a></li>
+        <li>Detailed Report: <a href="{{detailedReportLink}}" style="color: #7c2d92;">Download PDF Report</a></li>
+        <li>Support Team: {{supportEmail}}</li>
+        {{#if managerName}}
+        <li>Manager: {{managerName}}{{#if managerEmail}} ({{managerEmail}}){{/if}}</li>
+        {{/if}}
+        {{#if branch}}
+        <li>Branch: {{branch.name}}</li>
+        {{/if}}
+    </ul>
+</div>
+
+<div class="success-notice">
+    <p>🚀 <strong>Keep Growing!</strong> Regular client visits are the foundation of strong business relationships. Your commitment to client engagement drives success and growth. Keep up the excellent work!</p>
+</div>
+
+<div class="message">
+    <p><em>This weekly report was generated automatically to help you track your client visit performance and identify opportunities for improvement.</em></p>
+</div>
+
+{{/base}}

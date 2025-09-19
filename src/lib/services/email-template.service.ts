@@ -87,6 +87,10 @@ import {
 	ClientProfileUpdateConfirmationData,
 	ClientProfileUpdateAdminData,
 	ClientCommunicationReminderData,
+	ClientVisitReminderData,
+	ClientVisitCompletedData,
+	ClientVisitOverdueData,
+	ClientVisitWeeklyReportData,
 	ApprovalEmailData,
 } from '../types/email-templates.types';
 
@@ -828,6 +832,23 @@ class EmailTemplateService {
 
 	clientCommunicationReminder(data: ClientCommunicationReminderData): string {
 		return this.renderTemplate('client/communication-reminder.hbs', data);
+	}
+
+	// Client Visit Templates
+	clientVisitReminder(data: ClientVisitReminderData): string {
+		return this.renderTemplate('client/visit-reminder.hbs', data);
+	}
+
+	clientVisitCompleted(data: ClientVisitCompletedData): string {
+		return this.renderTemplate('client/visit-completed.hbs', data);
+	}
+
+	clientVisitOverdue(data: ClientVisitOverdueData): string {
+		return this.renderTemplate('client/visit-overdue.hbs', data);
+	}
+
+	clientVisitWeeklyReport(data: ClientVisitWeeklyReportData): string {
+		return this.renderTemplate('client/visit-weekly-report.hbs', data);
 	}
 
 	// Approval Templates
