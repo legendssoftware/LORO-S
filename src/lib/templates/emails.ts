@@ -88,6 +88,7 @@ import {
 	AttendanceShiftEndReminderData,
 	AttendanceBreakStartedData,
 	AttendanceBreakEndedData,
+	AttendanceRecordsRequestData,
 } from '../types/email-templates.types';
 
 // Auth Templates
@@ -590,4 +591,8 @@ export const ApprovalArchived = (data: ApprovalEmailData): string => {
 
 export const ApprovalDeleted = (data: ApprovalEmailData): string => {
 	return emailTemplateService.approvalDeleted(data);
+};
+
+export const AttendanceRecordsRequest = (data: AttendanceRecordsRequestData): string => {
+	return emailTemplateService.attendanceRecordsRequest(data);
 };

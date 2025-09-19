@@ -42,6 +42,7 @@ import { OrganizationHoursService } from './services/organization.hours.service'
 import { AttendanceCalculatorService } from './services/attendance.calculator.service';
 import { AccessLevel } from 'src/lib/enums/user.enums';
 import { EmailType } from '../lib/enums/email.enums';
+import { CommunicationService } from '../communication/communication.service';
 import { Cron } from '@nestjs/schedule';
 
 @Injectable()
@@ -66,6 +67,7 @@ export class AttendanceService {
 		private readonly organizationHoursService: OrganizationHoursService,
 		private readonly attendanceCalculatorService: AttendanceCalculatorService,
 		private readonly unifiedNotificationService: UnifiedNotificationService,
+		private readonly communicationService: CommunicationService,
 	) {
 		this.CACHE_TTL = parseInt(process.env.CACHE_TTL || '300000', 10); // 5 minutes default
 		this.logger.log('AttendanceService initialized with cache TTL: ' + this.CACHE_TTL + 'ms');
@@ -5433,5 +5435,123 @@ export class AttendanceService {
 				warnings,
 			},
 		};
+	}
+
+	public async requestUserAttendanceRecords(
+		userId: number,
+		requesterId: number,
+		startDate?: string,
+		endDate?: string,
+		orgId?: number,
+		branchId?: number,
+	): Promise<{
+		message: string;
+		success: boolean;
+		userEmail: string;
+		requestedUserName: string;
+	}> {
+		const operationId = `req-user-records-${requesterId}-${userId}-${Date.now()}`;
+		this.logger.log(`[${operationId}] Starting user records request for user ${userId} by requester ${requesterId}`);
+
+		try {
+			// Get requester user details
+			const requester = await this.userRepository.findOne({
+				where: { uid: requesterId },
+				relations: ['organisation', 'branch'],
+			});
+
+			if (!requester) {
+				throw new Error('Requester not found');
+			}
+
+			// Get target user details
+			const targetUser = await this.userRepository.findOne({
+				where: { uid: userId },
+				relations: ['organisation', 'branch'],
+			});
+
+			if (!targetUser) {
+				throw new Error('Target user not found');
+			}
+
+			// Verify users are in the same organization
+			if (requester.organisation?.uid !== targetUser.organisation?.uid) {
+				throw new Error('Cannot request records for users outside your organization');
+			}
+
+			// Set default date range if not provided (last 30 days)
+			const endDateTime = endDate ? new Date(endDate) : new Date();
+			const startDateTime = startDate ? new Date(startDate) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+			// Get user attendance records for the date range
+			const attendanceRecords = await this.attendanceRepository.find({
+				where: {
+					owner: { uid: userId },
+					organisation: { uid: orgId },
+					checkIn: Between(startDateTime, endDateTime),
+				},
+				relations: ['owner', 'organisation', 'branch'],
+				order: { checkIn: 'DESC' },
+			});
+
+			// Convert timezone if needed
+			const convertedRecords = await this.convertAttendanceRecordsTimezone(attendanceRecords, orgId);
+
+			// Get organization timezone for proper formatting
+			const orgTimezone = await this.getOrganizationTimezone(orgId);
+
+		// Prepare email data
+		const emailData = {
+			name: `${requester.name} ${requester.surname}`,
+			requesterName: `${requester.name} ${requester.surname}`,
+			requesterEmail: requester.email,
+			targetUserName: `${targetUser.name} ${targetUser.surname}`,
+			targetUserEmail: targetUser.email,
+			organizationName: requester.organisation?.name || 'Organization',
+			startDate: startDateTime.toISOString().split('T')[0],
+			endDate: endDateTime.toISOString().split('T')[0],
+			recordsCount: convertedRecords.length,
+				attendanceRecords: convertedRecords.map(record => ({
+					date: record.checkIn ? new Date(record.checkIn).toLocaleDateString() : 'N/A',
+					checkInTime: record.checkIn ? 
+						new Date(record.checkIn).toLocaleTimeString('en-US', { 
+							timeZone: orgTimezone,
+							hour12: false 
+						}) : 'N/A',
+					checkOutTime: record.checkOut ? 
+						new Date(record.checkOut).toLocaleTimeString('en-US', { 
+							timeZone: orgTimezone,
+							hour12: false 
+						}) : 'Not checked out',
+					duration: record.duration || 'N/A',
+					status: record.status,
+					totalBreakTime: record.totalBreakTime || '0m',
+					checkInNotes: record.checkInNotes || '',
+					checkOutNotes: record.checkOutNotes || '',
+					branchName: record.branch?.name || 'N/A',
+				})),
+				timezone: orgTimezone,
+				generatedAt: new Date().toLocaleString('en-US', { timeZone: orgTimezone }),
+			};
+
+			// Send email to requester
+			await this.communicationService.sendEmail(
+				EmailType.ATTENDANCE_RECORDS_REQUEST,
+				[requester.email],
+				emailData,
+			);
+
+			this.logger.log(`[${operationId}] Successfully sent attendance records email to ${requester.email}`);
+
+			return {
+				message: `Attendance records for ${targetUser.name} ${targetUser.surname} have been sent to your email`,
+				success: true,
+				userEmail: requester.email,
+				requestedUserName: `${targetUser.name} ${targetUser.surname}`,
+			};
+		} catch (error) {
+			this.logger.error(`[${operationId}] Error sending user records: ${error.message}`, error.stack);
+			throw new Error(`Failed to send attendance records: ${error.message}`);
+		}
 	}
 }

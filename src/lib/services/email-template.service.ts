@@ -68,6 +68,7 @@ import {
 	AttendanceShiftEndReminderData,
 	AttendanceBreakStartedData,
 	AttendanceBreakEndedData,
+	AttendanceRecordsRequestData,
 	PayslipAvailableEmailData,
 	PayslipUploadedAdminEmailData,
 	MonthlyUnattendedLeadsReportData,
@@ -654,6 +655,10 @@ class EmailTemplateService {
 
 	attendanceBreakEnded(data: AttendanceBreakEndedData): string {
 		return this.renderTemplate('attendance/break-ended.hbs', data);
+	}
+
+	attendanceRecordsRequest(data: AttendanceRecordsRequestData): string {
+		return this.renderTemplate('attendance/records-request.hbs', data);
 	}
 
 	// Asset related email templates

@@ -122,6 +122,37 @@ export interface MorningReportData {
 	};
 }
 
+export interface DailyMetrics {
+	visits: {
+		totalVisits: number;
+		completedVisits: number;
+		totalDistance: string;
+		avgDuration: number;
+		topLocations: string[];
+	};
+	tasks: {
+		total: number;
+		completed: number;
+	};
+	leads: {
+		newLeads: number;
+	};
+	claims: {
+		totalClaims: number;
+		totalClaimsValue: string;
+	};
+	sales: {
+		totalRevenue: string;
+	};
+	performance: {
+		efficiencyScore: number;
+	};
+	wellness: {
+		wellnessScore: number;
+		stressLevel: 'low' | 'medium' | 'high';
+	};
+}
+
 export interface TemplateEmployeeMetric {
 	uid: number;
 	name: string;
@@ -143,6 +174,7 @@ export interface TemplateEmployeeMetric {
 		punctualityChange: string;
 	};
 	avatar: string | null;
+	dailyMetrics: DailyMetrics;
 }
 
 export interface EveningReportData {

@@ -127,6 +127,65 @@
                 </div>
             </div>
             {{/if}}
+            
+            <!-- Enhanced Metrics for Mobile -->
+            <div style="border-top: 1px solid #e5e7eb; padding-top: 8px; margin-top: 8px;">
+                <div style="font-size: 12px; color: #6b7280; text-transform: uppercase; font-weight: 600; margin-bottom: 8px;">Daily Performance</div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+                    <div style="text-align: center;">
+                        <div style="font-size: 11px; color: #6b7280; text-transform: uppercase; font-weight: 600;">Visits</div>
+                        <div style="font-weight: 600; color: #374151;">
+                            {{#if dailyMetrics.visits.completedVisits}}{{dailyMetrics.visits.completedVisits}}{{else}}0{{/if}}/{{#if dailyMetrics.visits.totalVisits}}{{dailyMetrics.visits.totalVisits}}{{else}}0{{/if}}
+                        </div>
+                        <div style="font-size: 10px; color: #6b7280;">
+                            {{#if dailyMetrics.visits.totalDistance}}{{dailyMetrics.visits.totalDistance}}{{else}}0.0 km{{/if}}
+                        </div>
+                    </div>
+                    <div style="text-align: center;">
+                        <div style="font-size: 11px; color: #6b7280; text-transform: uppercase; font-weight: 600;">Leads</div>
+                        <div style="font-weight: 600; color: #2563eb;">
+                            {{#if dailyMetrics.leads.newLeads}}{{dailyMetrics.leads.newLeads}}{{else}}0{{/if}}
+                        </div>
+                        <div style="font-size: 10px; color: #6b7280;">new</div>
+                    </div>
+                    <div style="text-align: center;">
+                        <div style="font-size: 11px; color: #6b7280; text-transform: uppercase; font-weight: 600;">Tasks</div>
+                        <div style="font-weight: 600; color: #059669;">
+                            {{#if dailyMetrics.tasks.completed}}{{dailyMetrics.tasks.completed}}{{else}}0{{/if}}/{{#if dailyMetrics.tasks.total}}{{dailyMetrics.tasks.total}}{{else}}0{{/if}}
+                        </div>
+                        <div style="font-size: 10px; color: #6b7280;">done</div>
+                    </div>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
+                    <div style="text-align: center;">
+                        <div style="font-size: 11px; color: #6b7280; text-transform: uppercase; font-weight: 600;">Claims</div>
+                        <div style="font-weight: 600; color: #374151;">
+                            {{#if dailyMetrics.claims.totalClaims}}{{dailyMetrics.claims.totalClaims}}{{else}}0{{/if}}
+                        </div>
+                        <div style="font-size: 10px; color: #6b7280;">
+                            {{#if dailyMetrics.claims.totalClaimsValue}}{{dailyMetrics.claims.totalClaimsValue}}{{else}}R 0{{/if}}
+                        </div>
+                    </div>
+                    <div style="text-align: center;">
+                        <div style="font-size: 11px; color: #6b7280; text-transform: uppercase; font-weight: 600;">Revenue</div>
+                        <div style="font-weight: 600; color: #059669;">
+                            {{#if dailyMetrics.sales.totalRevenue}}{{dailyMetrics.sales.totalRevenue}}{{else}}R 0{{/if}}
+                        </div>
+                        <div style="font-size: 10px; color: #6b7280;">earned</div>
+                    </div>
+                    <div style="text-align: center;">
+                        <div style="font-size: 11px; color: #6b7280; text-transform: uppercase; font-weight: 600;">Wellness</div>
+                        <div style="font-weight: 600; color: {{#if (eq dailyMetrics.wellness.stressLevel 'low')}}#059669{{else if (eq dailyMetrics.wellness.stressLevel 'medium')}}#f59e0b{{else}}#dc2626{{/if}};">
+                            {{#if dailyMetrics.wellness.wellnessScore}}{{dailyMetrics.wellness.wellnessScore}}{{else}}54{{/if}}
+                        </div>
+                        <div style="font-size: 10px; color: #6b7280;">
+                            {{#if dailyMetrics.wellness.stressLevel}}{{dailyMetrics.wellness.stressLevel}}{{else}}low{{/if}} stress
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
         {{/each}}
     </div>
@@ -141,7 +200,15 @@
                     <th style="padding: 16px 12px; text-align: center; font-weight: 700; color: #374151; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">Check Out</th>
                     <th style="padding: 16px 12px; text-align: center; font-weight: 700; color: #374151; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">Hours</th>
                     <th style="padding: 16px 12px; text-align: center; font-weight: 700; color: #374151; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">Status</th>
-                    <th style="padding: 16px 12px; text-align: center; font-weight: 700; color: #374151; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">vs Yesterday</th>
+                            <th style="padding: 16px 12px; text-align: center; font-weight: 700; color: #374151; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">vs Yesterday</th>
+                            <th style="padding: 16px 12px; text-align: center; font-weight: 700; color: #374151; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">Visits</th>
+                            <th style="padding: 16px 12px; text-align: center; font-weight: 700; color: #374151; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">Distance</th>
+                            <th style="padding: 16px 12px; text-align: center; font-weight: 700; color: #374151; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">Leads</th>
+                            <th style="padding: 16px 12px; text-align: center; font-weight: 700; color: #374151; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">Tasks</th>
+                            <th style="padding: 16px 12px; text-align: center; font-weight: 700; color: #374151; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">Claims</th>
+                            <th style="padding: 16px 12px; text-align: center; font-weight: 700; color: #374151; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">Revenue</th>
+                            <th style="padding: 16px 12px; text-align: center; font-weight: 700; color: #374151; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">Efficiency</th>
+                            <th style="padding: 16px 12px; text-align: center; font-weight: 700; color: #374151; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">Wellness</th>
                 </tr>
             </thead>
             <tbody>
@@ -207,6 +274,107 @@
                             <div style="color: #9ca3af; font-size: 12px; font-style: italic;">No data</div>
                         {{/if}}
                     </td>
+                    
+                    <!-- New Comprehensive Metrics Columns -->
+                    <!-- Visits -->
+                    <td style="padding: 16px 12px; text-align: center;">
+                        <div style="font-size: 13px;">
+                            <div style="font-weight: 600; color: #374151; margin-bottom: 4px;">
+                                {{#if dailyMetrics.visits.completedVisits}}{{dailyMetrics.visits.completedVisits}}{{else}}0{{/if}}/{{#if dailyMetrics.visits.totalVisits}}{{dailyMetrics.visits.totalVisits}}{{else}}0{{/if}}
+                            </div>
+                            <div style="color: #6b7280; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">
+                                visits
+                            </div>
+                            {{#if dailyMetrics.visits.avgDuration}}
+                            <div style="color: #059669; font-size: 11px; font-weight: 500; margin-bottom: 4px;">
+                                Avg: {{dailyMetrics.visits.avgDuration}}m
+                            </div>
+                            {{/if}}
+                            {{#if dailyMetrics.visits.topLocations}}
+                            <div style="font-size: 10px; color: #6b7280; line-height: 1.2;">
+                                {{#each dailyMetrics.visits.topLocations}}
+                                {{#if (lt @index 3)}}
+                                <div style="margin-bottom: 1px;">{{this}}</div>
+                                {{/if}}
+                                {{/each}}
+                            </div>
+                            {{/if}}
+                        </div>
+                    </td>
+                    
+                    <!-- Distance -->
+                    <td style="padding: 16px 12px; text-align: center;">
+                        <div style="font-size: 12px; color: #374151; font-weight: 500;">
+                            {{#if dailyMetrics.visits.totalDistance}}{{dailyMetrics.visits.totalDistance}}{{else}}0.0 km{{/if}}
+                        </div>
+                    </td>
+                    
+                    <!-- Leads -->
+                    <td style="padding: 16px 12px; text-align: center;">
+                        <div style="font-size: 13px;">
+                            <div style="font-weight: 600; color: #2563eb; margin-bottom: 2px;">
+                                {{#if dailyMetrics.leads.newLeads}}{{dailyMetrics.leads.newLeads}}{{else}}0{{/if}}
+                            </div>
+                            <div style="color: #6b7280; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">
+                                new
+                            </div>
+                        </div>
+                    </td>
+                    
+                    <!-- Tasks -->
+                    <td style="padding: 16px 12px; text-align: center;">
+                        <div style="font-size: 13px;">
+                            <div style="font-weight: 600; color: #059669; margin-bottom: 2px;">
+                                {{#if dailyMetrics.tasks.completed}}{{dailyMetrics.tasks.completed}}{{else}}0{{/if}}/{{#if dailyMetrics.tasks.total}}{{dailyMetrics.tasks.total}}{{else}}0{{/if}}
+                            </div>
+                            <div style="color: #6b7280; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">
+                                done
+                            </div>
+                        </div>
+                    </td>
+                    
+                    <!-- Claims -->
+                    <td style="padding: 16px 12px; text-align: center;">
+                        <div style="font-size: 13px;">
+                            <div style="font-weight: 600; color: #374151; margin-bottom: 2px;">
+                                {{#if dailyMetrics.claims.totalClaims}}{{dailyMetrics.claims.totalClaims}}{{else}}0{{/if}}
+                            </div>
+                            <div style="color: #6b7280; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">
+                                {{#if dailyMetrics.claims.totalClaimsValue}}{{dailyMetrics.claims.totalClaimsValue}}{{else}}R 0{{/if}}
+                            </div>
+                        </div>
+                    </td>
+                    
+                    <!-- Revenue -->
+                    <td style="padding: 16px 12px; text-align: center;">
+                        <div style="font-size: 12px; color: #059669; font-weight: 600;">
+                            {{#if dailyMetrics.sales.totalRevenue}}{{dailyMetrics.sales.totalRevenue}}{{else}}R 0{{/if}}
+                        </div>
+                    </td>
+                    
+                    <!-- Efficiency -->
+                    <td style="padding: 16px 12px; text-align: center;">
+                        <div style="font-size: 13px;">
+                            <div style="font-weight: 600; color: {{#if (gte dailyMetrics.performance.efficiencyScore 80)}}#059669{{else if (gte dailyMetrics.performance.efficiencyScore 60)}}#f59e0b{{else}}#dc2626{{/if}}; margin-bottom: 2px;">
+                                {{#if dailyMetrics.performance.efficiencyScore}}{{dailyMetrics.performance.efficiencyScore}}{{else}}0{{/if}}%
+                            </div>
+                            <div style="color: #6b7280; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">
+                                score
+                            </div>
+                        </div>
+                    </td>
+                    
+                    <!-- Wellness -->
+                    <td style="padding: 16px 12px; text-align: center;">
+                        <div style="font-size: 13px;">
+                            <div style="font-weight: 600; color: {{#if (eq dailyMetrics.wellness.stressLevel 'low')}}#059669{{else if (eq dailyMetrics.wellness.stressLevel 'medium')}}#f59e0b{{else}}#dc2626{{/if}}; margin-bottom: 2px;">
+                                {{#if dailyMetrics.wellness.wellnessScore}}{{dailyMetrics.wellness.wellnessScore}}{{else}}54{{/if}}
+                            </div>
+                            <div style="color: #6b7280; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">
+                                {{#if dailyMetrics.wellness.stressLevel}}{{dailyMetrics.wellness.stressLevel}}{{else}}low{{/if}} stress
+                            </div>
+                        </div>
+                    </td>
                 </tr>
                 {{/each}}
             </tbody>
@@ -217,17 +385,16 @@
 <!-- Top Performers -->
 {{#if topPerformers}}
 <div class="success-notice">
-    <h4 style="color: #15803d; margin-bottom: 16px;">🏆 Top Performers Today</h4>
-    <div style="display: grid; gap: 12px;">
+    <h4 style="color: #15803d; margin-bottom: 24px;">🏆 Top Performers Today</h4>
+    <div style="display: grid; gap: 20px;">
         {{#each topPerformers}}
-        <div style="display: flex; align-items: center; padding: 16px; background: rgba(34, 197, 94, 0.1); border-radius: 12px; border-left: 4px solid #22c55e;">
-            <div style="flex: 1;">
-                <div style="font-weight: 700; color: #15803d; font-size: 15px;">{{name}} {{surname}}</div>
-                <div style="font-size: 14px; color: #16a34a; margin-top: 2px;">{{achievement}}</div>
+        <div style="display: flex; align-items: center; padding: 20px; background: rgba(34, 197, 94, 0.1); border-radius: 12px; border-left: 4px solid #22c55e; margin-bottom: 8px;">
+            <div style="flex: 1; padding-right: 16px;">
+                <div style="font-weight: 700; color: #15803d; font-size: 16px; margin-bottom: 6px;">{{name}} {{surname}} {{hoursWorked}}h</div>
+                <div style="font-size: 14px; color: #16a34a; line-height: 1.4;">{{achievement}}</div>
             </div>
-            <div style="text-align: right;">
-                <div style="font-weight: 700; color: #15803d; font-size: 16px;">{{hoursWorked}}h</div>
-                <div style="font-size: 12px; color: #16a34a; text-transform: uppercase; letter-spacing: 0.5px;">{{metric}}</div>
+            <div style="text-align: right; background: rgba(34, 197, 94, 0.15); padding: 12px; border-radius: 8px; min-width: 80px;">
+                <div style="font-size: 12px; color: #16a34a; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;">{{metric}}</div>
             </div>
         </div>
         {{/each}}

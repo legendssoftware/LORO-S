@@ -29,6 +29,8 @@ export enum EmailType {
 	ATTENDANCE_BREAK_ENDED = 'attendance_break_ended',
 	// Attendance shift auto-end
 	ATTENDANCE_SHIFT_AUTO_ENDED = 'attendance_shift_auto_ended',
+	// Attendance records request
+	ATTENDANCE_RECORDS_REQUEST = 'attendance_records_request',
 	// Quotation related emails
 	ORDER_RECEIVED_CLIENT = 'order_received_client',
 	NEW_QUOTATION_CLIENT = 'new_quotation_client',

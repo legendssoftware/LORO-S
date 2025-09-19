@@ -612,6 +612,30 @@ export interface AttendanceBreakEndedData extends BaseEmailData {
 	welcomeBackMessage: string;
 }
 
+export interface AttendanceRecordsRequestData extends BaseEmailData {
+	requesterName: string;
+	requesterEmail: string;
+	targetUserName: string;
+	targetUserEmail: string;
+	organizationName: string;
+	startDate: string;
+	endDate: string;
+	recordsCount: number;
+	attendanceRecords: Array<{
+		date: string;
+		checkInTime: string;
+		checkOutTime: string;
+		duration: string;
+		status: string;
+		totalBreakTime: string;
+		checkInNotes: string;
+		checkOutNotes: string;
+		branchName: string;
+	}>;
+	timezone: string;
+	generatedAt: string;
+}
+
 export interface OrganizationHoursReminderData extends BaseEmailData {
 	organizationName: string;
 	organizationId: number;
@@ -2193,6 +2217,8 @@ export interface EmailDataMap {
 	// Attendance break notification mappings
 	[EmailType.ATTENDANCE_BREAK_STARTED]: AttendanceBreakStartedData;
 	[EmailType.ATTENDANCE_BREAK_ENDED]: AttendanceBreakEndedData;
+	// Attendance records request mapping
+	[EmailType.ATTENDANCE_RECORDS_REQUEST]: AttendanceRecordsRequestData;
 	// Quotation email mappings
 	[EmailType.NEW_QUOTATION_CLIENT]: QuotationData;
 	[EmailType.NEW_QUOTATION_INTERNAL]: QuotationInternalData;

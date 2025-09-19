@@ -5527,4 +5527,49 @@ Manually triggers the overtime policy check system to identify employees working
 		// Optional manual trigger for testing overtime reminders
 		return this.overtimeReminderService.triggerOvertimeCheck();
 	}
+
+	@Post('request-user-records')
+	@ApiOperation({ summary: 'Request attendance records for a specific user to be emailed' })
+	@ApiOkResponse({
+		description: 'User attendance records have been sent via email',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Attendance records sent successfully to john.doe@company.com' },
+				success: { type: 'boolean', example: true },
+				userEmail: { type: 'string', example: 'requester@company.com' },
+				requestedUserName: { type: 'string', example: 'John Doe' },
+			},
+		},
+	})
+	@ApiBadRequestResponse({
+		description: 'Bad request - Invalid parameters',
+	})
+	async requestUserRecords(
+		@Body() requestDto: {
+			userId: number;
+			startDate?: string;
+			endDate?: string;
+		},
+		@Req() req: AuthenticatedRequest,
+	): Promise<{
+		message: string;
+		success: boolean;
+		userEmail: string;
+		requestedUserName: string;
+	}> {
+		const { userId, startDate, endDate } = requestDto;
+		const orgId = req.user?.org?.uid;
+		const branchId = req.user?.branch?.uid;
+		const requesterId = req.user?.uid;
+
+		return this.attendanceService.requestUserAttendanceRecords(
+			userId,
+			requesterId,
+			startDate,
+			endDate,
+			orgId,
+			branchId,
+		);
+	}
 }

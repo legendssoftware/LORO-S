@@ -19,14 +19,17 @@ import { OvertimeReminderService } from './services/overtime.reminder.service';
 import { OrganisationSettings } from '../organisation/entities/organisation-settings.entity';
 import { Notification } from '../notifications/entities/notification.entity';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { CommunicationModule } from '../communication/communication.module';
+import { Report } from '../reports/entities/report.entity';
 	
 @Module({
 	imports: [
 		LicensingModule,
-		TypeOrmModule.forFeature([Attendance, CheckIn, User, Organisation, OrganisationHours, OrganisationSettings, Notification]),
+		TypeOrmModule.forFeature([Attendance, CheckIn, User, Organisation, OrganisationHours, OrganisationSettings, Notification, Report]),
 		UserModule,
 		RewardsModule,
 		NotificationsModule,
+		CommunicationModule,
 		CacheModule.registerAsync({
 			imports: [ConfigModule],
 			useFactory: async (configService: ConfigService) => {

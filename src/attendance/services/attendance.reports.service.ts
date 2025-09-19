@@ -8,6 +8,8 @@ import { Attendance } from '../entities/attendance.entity';
 import { User } from '../../user/entities/user.entity';
 import { Organisation } from '../../organisation/entities/organisation.entity';
 import { OrganisationSettings } from '../../organisation/entities/organisation-settings.entity';
+import { Report } from '../../reports/entities/report.entity';
+import { ReportType } from '../../reports/constants/report-types.enum';
 import { OrganizationHoursService } from './organization.hours.service';
 import { UserService } from '../../user/user.service';
 import { AttendanceStatus } from '../../lib/enums/attendance.enums';
@@ -73,6 +75,8 @@ export class AttendanceReportsService {
 		private organisationRepository: Repository<Organisation>,
 		@InjectRepository(OrganisationSettings)
 		private organisationSettingsRepository: Repository<OrganisationSettings>,
+		@InjectRepository(Report)
+		private reportsRepository: Repository<Report>,
 		private readonly organizationHoursService: OrganizationHoursService,
 		private readonly userService: UserService,
 		private readonly eventEmitter: EventEmitter2,
@@ -1452,18 +1456,13 @@ export class AttendanceReportsService {
 			tomorrowActions.push('Continue maintaining excellent team performance and punctuality');
 		}
 
-		// Generate top performers
-		const topPerformers = templateEmployeeMetrics
-			.filter((emp) => emp.hoursWorked > 0)
-			.sort((a, b) => b.hoursWorked - a.hoursWorked)
-			.slice(0, 3)
-			.map((emp) => ({
-				name: emp.name,
-				surname: emp.surname,
-				hoursWorked: emp.hoursWorked,
-				achievement: emp.hoursWorked >= 8 ? 'Full day completed' : 'Good performance',
-				metric: 'hours',
-			}));
+		// Generate comprehensive top performers based on multiple metrics
+		const topPerformers = await this.calculateComprehensiveTopPerformers(
+			templateEmployeeMetrics,
+			organizationId,
+			startOfToday,
+			endOfToday
+		);
 
 		// Get total employees expected to work today using organization hours
 		const totalEmployeesExpected = await this.getExpectedEmployeesForToday(allUsers, organizationId, today);
@@ -3209,6 +3208,173 @@ export class AttendanceReportsService {
 		});
 
 		return branchSummaries.sort((a, b) => a.branchName.localeCompare(b.branchName));
+	}
+
+	/**
+	 * Calculate comprehensive top performers based on multiple metrics
+	 */
+	private async calculateComprehensiveTopPerformers(
+		templateEmployeeMetrics: any[],
+		organizationId: number,
+		startDate: Date,
+		endDate: Date
+	): Promise<any[]> {
+		this.logger.debug(`Calculating comprehensive top performers for ${templateEmployeeMetrics.length} employees`);
+
+		const performersWithScores = [];
+
+		for (const emp of templateEmployeeMetrics) {
+			if (!emp.uid || emp.hoursWorked <= 0) continue;
+
+			try {
+				// Get user daily report data for comprehensive metrics
+				const dailyReportData = await this.getUserDailyReportData(emp.uid, startDate);
+				
+				// Calculate comprehensive performance score
+				const score = this.calculatePerformanceScore(emp, dailyReportData);
+				
+				performersWithScores.push({
+					uid: emp.uid,
+					name: emp.name,
+					surname: emp.surname,
+					fullName: `${emp.name} ${emp.surname}`.trim(),
+					hoursWorked: emp.hoursWorked,
+					totalScore: score,
+					efficiency: dailyReportData?.details?.performance?.efficiencyScore || 0,
+					totalWorkingMinutes: Math.round(emp.hoursWorked * 60),
+					tasksCompleted: dailyReportData?.details?.tasks?.completedCount || 0,
+					leadsGenerated: dailyReportData?.details?.leads?.newLeadsCount || 0,
+					salesRevenue: dailyReportData?.details?.quotations?.totalRevenueFormatted || 'R 0',
+					branch: emp.branch,
+					role: emp.role,
+					achievement: this.getAchievementDescription(score, emp.hoursWorked),
+					metric: this.getPrimaryMetric(score, emp.hoursWorked, dailyReportData),
+				});
+			} catch (error) {
+				this.logger.warn(`Failed to get daily report data for user ${emp.uid}: ${error.message}`);
+				// Fallback to basic metrics
+				performersWithScores.push({
+					uid: emp.uid,
+					name: emp.name,
+					surname: emp.surname,
+					fullName: `${emp.name} ${emp.surname}`.trim(),
+					hoursWorked: emp.hoursWorked,
+					totalScore: emp.hoursWorked * 10, // Basic score based on hours
+					efficiency: 0,
+					totalWorkingMinutes: Math.round(emp.hoursWorked * 60),
+					tasksCompleted: 0,
+					leadsGenerated: 0,
+					salesRevenue: 'R 0',
+					branch: emp.branch,
+					role: emp.role,
+					achievement: emp.hoursWorked >= 8 ? 'Full day completed' : 'Good performance',
+					metric: 'hours',
+				});
+			}
+		}
+
+		// Sort by total score and return top performers
+		const topPerformers = performersWithScores
+			.sort((a, b) => b.totalScore - a.totalScore)
+			.slice(0, 5) // Top 5 performers
+			.map((performer, index) => ({
+				...performer,
+				rank: index + 1,
+			}));
+
+		this.logger.log(`Generated ${topPerformers.length} top performers with comprehensive scoring`);
+		return topPerformers;
+	}
+
+	/**
+	 * Calculate performance score based on multiple metrics
+	 */
+	private calculatePerformanceScore(emp: any, dailyReportData: any): number {
+		let score = 0;
+
+		// Hours worked score (40% weight) - up to 40 points
+		const hoursScore = Math.min(emp.hoursWorked * 5, 40);
+		score += hoursScore;
+
+		if (dailyReportData?.details) {
+			const details = dailyReportData.details;
+
+			// Tasks completion score (20% weight) - up to 20 points
+			const tasksCompleted = details.tasks?.completedCount || 0;
+			const tasksScore = Math.min(tasksCompleted * 2, 20);
+			score += tasksScore;
+
+			// Leads generation score (20% weight) - up to 20 points
+			const leadsGenerated = details.leads?.newLeadsCount || 0;
+			const leadsScore = Math.min(leadsGenerated * 4, 20);
+			score += leadsScore;
+
+			// Sales revenue score (15% weight) - up to 15 points
+			const revenue = details.quotations?.totalRevenue || 0;
+			const revenueScore = Math.min(revenue / 1000, 15); // 1 point per R1000
+			score += revenueScore;
+
+			// Efficiency score (5% weight) - up to 5 points
+			const efficiency = details.performance?.efficiencyScore || 0;
+			const efficiencyScore = efficiency / 20; // Convert percentage to 5-point scale
+			score += efficiencyScore;
+		}
+
+		return Math.round(score * 10) / 10; // Round to 1 decimal place
+	}
+
+	/**
+	 * Get achievement description based on performance
+	 */
+	private getAchievementDescription(score: number, hoursWorked: number): string {
+		if (score >= 80) return 'Outstanding performance across all metrics';
+		if (score >= 60) return 'Excellent multi-dimensional performance';
+		if (score >= 40) return 'Strong performance with good balance';
+		if (hoursWorked >= 8) return 'Full day completed';
+		return 'Good performance';
+	}
+
+	/**
+	 * Get primary metric for achievement
+	 */
+	private getPrimaryMetric(score: number, hoursWorked: number, dailyReportData: any): string {
+		if (!dailyReportData?.details) return 'hours';
+
+		const details = dailyReportData.details;
+		const tasksCompleted = details.tasks?.completedCount || 0;
+		const leadsGenerated = details.leads?.newLeadsCount || 0;
+		const revenue = details.quotations?.totalRevenue || 0;
+
+		// Determine primary strength
+		if (revenue > 5000) return 'sales';
+		if (leadsGenerated >= 3) return 'leads';
+		if (tasksCompleted >= 5) return 'tasks';
+		return 'hours';
+	}
+
+	/**
+	 * Get user daily report data for comprehensive metrics
+	 */
+	private async getUserDailyReportData(userId: number, date: Date): Promise<any> {
+		try {
+			// Get the most recent daily report for this user and date
+			const report = await this.reportsRepository.findOne({
+				where: {
+					owner: { uid: userId },
+					reportType: ReportType.USER_DAILY,
+					generatedAt: Between(
+						startOfDay(date),
+						endOfDay(date)
+					),
+				},
+				order: { generatedAt: 'DESC' },
+			});
+
+			return report?.reportData || null;
+		} catch (error) {
+			this.logger.warn(`Failed to get daily report for user ${userId}: ${error.message}`);
+			return null;
+		}
 	}
 
 	/**

@@ -205,64 +205,91 @@ export class ReportsService implements OnModuleInit {
 		}
 	}
 
-	// Run weekly on Friday at 18:00 - Comprehensive weekly reports for all organizations
-	@Cron('0 0 18 * * FRI')
+	// Run weekly on Friday at 17:00 - Comprehensive weekly reports for all organizations
+	@Cron('0 0 17 * * FRI')
 	async generateWeeklyOrgActivityReports() {
-		this.logger.log('Starting comprehensive weekly organization reports generation (Friday 18:00)');
+		this.logger.log('📊 Starting comprehensive weekly organization reports generation (Friday 17:00)');
 		
 		try {
+			const startTime = Date.now();
+			
 			// Get all active organizations
 			const organizations = await this.organisationRepository.find({
 				where: { isDeleted: false },
+				select: ['uid', 'name'], // Only select needed fields to improve performance
 			});
 
-			this.logger.log(`Found ${organizations.length} active organizations for weekly reports`);
+			this.logger.log(`📋 Found ${organizations.length} active organizations for weekly reports`);
 
 			if (organizations.length === 0) {
-				this.logger.log('No active organizations found, skipping weekly report generation');
+				this.logger.log('⚠️ No active organizations found, skipping weekly report generation');
 				return;
 			}
 
-			const results = await Promise.allSettled(
-				organizations.map(async (org) => {
-					try {
-						this.logger.debug(`Processing weekly report for organization ${org.uid} (${org.name})`);
+			// Process in smaller batches to avoid overwhelming the system
+			const batchSize = 10;
+			let totalSuccessful = 0;
+			let totalFailed = 0;
+			
+			for (let i = 0; i < organizations.length; i += batchSize) {
+				const batch = organizations.slice(i, i + batchSize);
+				this.logger.debug(`📦 Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(organizations.length / batchSize)} (${batch.length} organizations)`);
+				
+				const batchResults = await Promise.allSettled(
+					batch.map(async (org) => {
+						try {
+							this.logger.debug(`📈 Processing weekly report for organization ${org.uid} (${org.name})`);
 
-						const params: ReportParamsDto = {
-							type: ReportType.ORG_ACTIVITY,
-							organisationId: org.uid,
-							granularity: 'weekly',
-							dateRange: this.getWeekDateRange(),
-						};
+							// Get the previous week's date range (last Sunday to last Saturday)
+							const weekRange = this.getPreviousWeekDateRange();
+							
+							const params: ReportParamsDto = {
+								type: ReportType.ORG_ACTIVITY,
+								organisationId: org.uid,
+								granularity: 'weekly',
+								dateRange: weekRange,
+							};
 
-						await this.generateOrgActivityReport(params);
-						
-						this.logger.log(`Successfully generated weekly report for organization ${org.uid}`);
-						return { orgId: org.uid, orgName: org.name, success: true };
-					} catch (error) {
-						this.logger.error(
-							`Failed to generate weekly report for organization ${org.uid}: ${error.message}`,
-							error.stack,
-						);
-						return {
-							orgId: org.uid,
-							orgName: org.name || 'Unknown',
-							success: false,
-							reason: error.message,
-						};
-					}
-				}),
-			);
+							await this.generateOrgActivityReport(params);
+							
+							this.logger.log(`✅ Successfully generated weekly report for organization ${org.uid} (${org.name})`);
+							return { orgId: org.uid, orgName: org.name, success: true };
+						} catch (error) {
+							this.logger.error(
+								`❌ Failed to generate weekly report for organization ${org.uid} (${org.name}): ${error.message}`,
+								error.stack,
+							);
+							return {
+								orgId: org.uid,
+								orgName: org.name || 'Unknown',
+								success: false,
+								reason: error.message,
+							};
+						}
+					}),
+				);
 
-			const successful = results.filter((r) => r.status === 'fulfilled' && r.value.success).length;
-			const failed = results.filter(
-				(r) => r.status === 'rejected' || (r.status === 'fulfilled' && !r.value.success),
-			).length;
+				const batchSuccessful = batchResults.filter((r) => r.status === 'fulfilled' && r.value.success).length;
+				const batchFailed = batchResults.filter(
+					(r) => r.status === 'rejected' || (r.status === 'fulfilled' && !r.value.success),
+				).length;
+				
+				totalSuccessful += batchSuccessful;
+				totalFailed += batchFailed;
+				
+				this.logger.debug(`📊 Batch ${Math.floor(i / batchSize) + 1} completed: ${batchSuccessful} successful, ${batchFailed} failed`);
+				
+				// Small delay between batches to reduce system load
+				if (i + batchSize < organizations.length) {
+					await new Promise(resolve => setTimeout(resolve, 1000));
+				}
+			}
 
-			this.logger.log(`Weekly reports completed: ${successful} organizations successful, ${failed} failed`);
+			const duration = Date.now() - startTime;
+			this.logger.log(`🎉 Weekly reports completed in ${duration}ms: ${totalSuccessful} organizations successful, ${totalFailed} failed`);
 
 		} catch (error) {
-			this.logger.error(`Critical error in generateWeeklyOrgActivityReports: ${error.message}`, error.stack);
+			this.logger.error(`💥 Critical error in generateWeeklyOrgActivityReports: ${error.message}`, error.stack);
 		}
 	}
 
@@ -445,6 +472,7 @@ export class ReportsService implements OnModuleInit {
 
 	/**
 	 * Get current week date range for weekly reports
+	 * Returns the current week from Sunday to Saturday
 	 */
 	private getWeekDateRange(): { start: Date; end: Date } {
 		const now = new Date();
@@ -457,6 +485,28 @@ export class ReportsService implements OnModuleInit {
 		endOfWeek.setHours(23, 59, 59, 999);
 
 		return { start: startOfWeek, end: endOfWeek };
+	}
+
+	/**
+	 * Get previous week date range for weekly reports
+	 * Returns the previous completed week from Sunday to Saturday
+	 */
+	private getPreviousWeekDateRange(): { start: Date; end: Date } {
+		const now = new Date();
+		const currentWeekStart = new Date(now);
+		currentWeekStart.setDate(now.getDate() - now.getDay()); // Start of current week (Sunday)
+		
+		// Go back one week for the previous week
+		const previousWeekStart = new Date(currentWeekStart);
+		previousWeekStart.setDate(currentWeekStart.getDate() - 7);
+		previousWeekStart.setHours(0, 0, 0, 0);
+		
+		const previousWeekEnd = new Date(previousWeekStart);
+		previousWeekEnd.setDate(previousWeekStart.getDate() + 6); // End of previous week (Saturday)
+		previousWeekEnd.setHours(23, 59, 59, 999);
+
+		this.logger.debug(`📅 Previous week range: ${previousWeekStart.toISOString()} to ${previousWeekEnd.toISOString()}`);
+		return { start: previousWeekStart, end: previousWeekEnd };
 	}
 
 	private getCacheKey(params: ReportParamsDto): string {

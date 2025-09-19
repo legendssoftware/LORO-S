@@ -3060,7 +3060,7 @@ Manually triggers the automated communication task generation cron job for testi
 	})
 	async testTaskGeneration(@Req() req: AuthenticatedRequest) {
 		try {
-			await this.clientsService.generateCommunicationTasks();
+			await this.clientsService.generateWeeklyCommunicationTasks();
 			return {
 				message: 'Communication task generation completed successfully',
 			};
@@ -3269,5 +3269,238 @@ Allows authenticated clients to delete their communication schedules through the
 		const clientAuthId = req.user?.uid;
 		const organisationRef = req.user?.organisationRef;
 		return this.clientsService.deleteClientCommunicationSchedule(clientAuthId, scheduleId, organisationRef);
+	}
+
+	@Get('my-communication-schedules')
+	@Roles(AccessLevel.USER, AccessLevel.MANAGER, AccessLevel.ADMIN, AccessLevel.OWNER)
+	@ApiOperation({
+		summary: '📅 Get My Communication Schedules',
+		description: `
+# Get My Communication Schedules
+
+Retrieve all communication schedules assigned to the authenticated user.
+
+## 🎯 **Purpose**
+- View all client communication schedules assigned to the current user
+- Plan and organize upcoming client interactions
+- Track communication frequencies and schedules
+- Prepare for the upcoming week's client engagements
+
+## 🔐 **Security & Permissions**
+- **Authenticated Users**: Users, Managers, Admins, and Owners can access this endpoint
+- **Personal Schedules**: Users only see schedules assigned to them
+- **Organization Scoped**: Results are filtered by user's organization
+- **Branch Filtered**: Results can be filtered by branch if specified
+
+## 📊 **Response Data**
+- **Schedule Details**: Communication type, frequency, preferred time
+- **Client Information**: Client name, contact details, last interaction
+- **Next Scheduled**: When the next communication is due
+- **Status**: Active/inactive status of each schedule
+
+## 📅 **Use Cases**
+- **Weekly Planning**: Sales reps planning their week on Sunday/Monday
+- **Daily Review**: Checking today's scheduled communications
+- **Client Relationship Management**: Maintaining regular client contact
+- **Performance Tracking**: Monitoring communication consistency
+
+## 🎯 **Filters**
+- **Status**: Filter by active/inactive schedules
+- **Communication Type**: Filter by phone, email, visit, etc.
+- **Client**: Filter by specific client
+- **Date Range**: Filter by next scheduled date range
+
+## ⏰ **Timing**
+- Perfect for Sunday planning sessions
+- Daily morning reviews
+- Weekly schedule optimization
+		`,
+	})
+	@ApiQuery({
+		name: 'page',
+		required: false,
+		type: Number,
+		description: 'Page number for pagination (default: 1)',
+		example: 1,
+	})
+	@ApiQuery({
+		name: 'limit',
+		required: false,
+		type: Number,
+		description: 'Number of schedules per page (default: 20)',
+		example: 20,
+	})
+	@ApiQuery({
+		name: 'status',
+		required: false,
+		type: String,
+		description: 'Filter by schedule status (active/inactive)',
+		example: 'active',
+	})
+	@ApiQuery({
+		name: 'communicationType',
+		required: false,
+		type: String,
+		description: 'Filter by communication type',
+		example: 'PHONE_CALL',
+	})
+	@ApiQuery({
+		name: 'clientId',
+		required: false,
+		type: Number,
+		description: 'Filter by specific client ID',
+		example: 123,
+	})
+	@ApiQuery({
+		name: 'startDate',
+		required: false,
+		type: String,
+		description: 'Filter schedules from this date (ISO format)',
+		example: '2024-01-01T00:00:00.000Z',
+	})
+	@ApiQuery({
+		name: 'endDate',
+		required: false,
+		type: String,
+		description: 'Filter schedules until this date (ISO format)',
+		example: '2024-12-31T23:59:59.999Z',
+	})
+	@ApiOkResponse({
+		description: '✅ Communication schedules retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { 
+					type: 'string', 
+					example: 'My communication schedules retrieved successfully',
+				},
+				data: {
+					type: 'array',
+					items: {
+						type: 'object',
+						properties: {
+							uid: { type: 'number', example: 1 },
+							communicationType: { type: 'string', example: 'PHONE_CALL' },
+							frequency: { type: 'string', example: 'WEEKLY' },
+							preferredTime: { type: 'string', example: '09:00' },
+							nextScheduledDate: { type: 'string', example: '2024-01-15T09:00:00.000Z' },
+							lastCompletedDate: { type: 'string', example: '2024-01-08T09:30:00.000Z' },
+							isActive: { type: 'boolean', example: true },
+							client: {
+								type: 'object',
+								properties: {
+									uid: { type: 'number', example: 123 },
+									name: { type: 'string', example: 'LORO Corp' },
+									email: { type: 'string', example: 'contact@loro.co.za' },
+									phone: { type: 'string', example: '+27 11 123 4567' },
+								}
+							},
+							visitCount: { type: 'number', example: 12 },
+							notes: { type: 'string', example: 'Monthly check-in call' },
+						}
+					}
+				},
+				meta: {
+					type: 'object',
+					properties: {
+						total: { type: 'number', example: 45 },
+						page: { type: 'number', example: 1 },
+						limit: { type: 'number', example: 20 },
+						totalPages: { type: 'number', example: 3 },
+					}
+				}
+			},
+		},
+		examples: {
+			weeklySchedules: {
+				summary: '📅 Weekly Communication Schedules',
+				value: {
+					message: 'My communication schedules retrieved successfully',
+					data: [
+						{
+							uid: 1,
+							communicationType: 'PHONE_CALL',
+							frequency: 'WEEKLY',
+							preferredTime: '09:00',
+							nextScheduledDate: '2024-01-15T09:00:00.000Z',
+							lastCompletedDate: '2024-01-08T09:30:00.000Z',
+							isActive: true,
+							client: {
+								uid: 123,
+								name: 'LORO Corp',
+								email: 'contact@loro.co.za',
+								phone: '+27 11 123 4567'
+							},
+							visitCount: 12,
+							notes: 'Weekly progress call'
+						},
+						{
+							uid: 2,
+							communicationType: 'IN_PERSON_VISIT',
+							frequency: 'MONTHLY',
+							preferredTime: '14:00',
+							nextScheduledDate: '2024-01-20T14:00:00.000Z',
+							lastCompletedDate: '2023-12-20T14:30:00.000Z',
+							isActive: true,
+							client: {
+								uid: 456,
+								name: 'TechStart Solutions',
+								email: 'hello@techstart.co.za',
+								phone: '+27 21 987 6543'
+							},
+							visitCount: 5,
+							notes: 'Monthly client review meeting'
+						}
+					],
+					meta: {
+						total: 8,
+						page: 1,
+						limit: 20,
+						totalPages: 1
+					}
+				}
+			}
+		}
+	})
+	@ApiBadRequestResponse({
+		description: '❌ Invalid request parameters',
+		schema: {
+			type: 'object',
+			properties: {
+				message: {
+					type: 'string',
+					example: 'Invalid date format or pagination parameters',
+				},
+			},
+		},
+	})
+	async getMyCommunicationSchedules(
+		@Req() req: AuthenticatedRequest,
+		@Query('page') page?: number,
+		@Query('limit') limit?: number,
+		@Query('status') status?: string,
+		@Query('communicationType') communicationType?: string,
+		@Query('clientId') clientId?: number,
+		@Query('startDate') startDate?: string,
+		@Query('endDate') endDate?: string,
+	): Promise<{ message: string; data?: any[]; meta?: any }> {
+		const userId = req.user?.uid;
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
+		const branchId = req.user?.branch?.uid;
+
+		return this.clientsService.getUserCommunicationSchedules(
+			userId,
+			{
+				page: page || 1,
+				limit: limit || 20,
+				status: status === 'active' ? true : status === 'inactive' ? false : undefined,
+				communicationType,
+				clientId,
+				startDate: startDate ? new Date(startDate) : undefined,
+				endDate: endDate ? new Date(endDate) : undefined,
+			},
+			orgId,
+			branchId,
+		);
 	}
 }

@@ -1,0 +1,166 @@
+{{#base headerTitle="Attendance Records Export" headerSubtitle="Detailed attendance records for {{targetUserName}}"}}
+
+<div class="greeting">
+    Hello {{requesterName}}! 📊
+</div>
+
+<div class="message">
+    <p>You requested attendance records for <strong>{{targetUserName}}</strong> from <strong>{{startDate}}</strong> to <strong>{{endDate}}</strong>. Please find the detailed attendance records below.</p>
+</div>
+
+<!-- Summary Information -->
+<div class="info-card">
+    <h3>📋 Records Summary</h3>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Employee</span>
+            <span class="detail-value" style="font-weight: 700; color: #7c2d92; font-size: 17px;">{{targetUserName}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Period</span>
+            <span class="detail-value" style="font-weight: 700; color: #7c2d92; font-size: 17px;">{{startDate}} to {{endDate}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Total Records</span>
+            <span class="detail-value" style="font-weight: 700; color: #22c55e; font-size: 17px;">{{recordsCount}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Organization</span>
+            <span class="detail-value" style="font-weight: 700; color: #7c2d92; font-size: 17px;">{{organizationName}}</span>
+        </div>
+    </div>
+</div>
+
+<!-- Attendance Records Table -->
+{{#if attendanceRecords}}
+<div class="info-card">
+    <h3>🕐 Detailed Attendance Records</h3>
+    <div style="overflow-x: auto; margin-top: 16px;">
+        <table style="width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);">
+            <thead>
+                <tr style="background: linear-gradient(135deg, #7c2d92 0%, #9333ea 100%); color: white;">
+                    <th style="padding: 12px 8px; text-align: left; font-weight: 600; font-size: 14px; border-right: 1px solid rgba(255,255,255,0.2);">Date</th>
+                    <th style="padding: 12px 8px; text-align: left; font-weight: 600; font-size: 14px; border-right: 1px solid rgba(255,255,255,0.2);">Check In</th>
+                    <th style="padding: 12px 8px; text-align: left; font-weight: 600; font-size: 14px; border-right: 1px solid rgba(255,255,255,0.2);">Check Out</th>
+                    <th style="padding: 12px 8px; text-align: left; font-weight: 600; font-size: 14px; border-right: 1px solid rgba(255,255,255,0.2);">Duration</th>
+                    <th style="padding: 12px 8px; text-align: left; font-weight: 600; font-size: 14px; border-right: 1px solid rgba(255,255,255,0.2);">Status</th>
+                    <th style="padding: 12px 8px; text-align: left; font-weight: 600; font-size: 14px; border-right: 1px solid rgba(255,255,255,0.2);">Break Time</th>
+                    <th style="padding: 12px 8px; text-align: left; font-weight: 600; font-size: 14px; border-right: 1px solid rgba(255,255,255,0.2);">Branch</th>
+                    <th style="padding: 12px 8px; text-align: left; font-weight: 600; font-size: 14px;">Notes</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{#each attendanceRecords}}
+                <tr style="border-bottom: 1px solid #e5e7eb; {{#unless @last}}border-bottom: 1px solid #f3f4f6;{{/unless}}">
+                    <td style="padding: 12px 8px; font-size: 13px; color: #374151; font-weight: 600; border-right: 1px solid #f3f4f6;">{{date}}</td>
+                    <td style="padding: 12px 8px; font-size: 13px; color: #059669; font-weight: 600; border-right: 1px solid #f3f4f6;">{{checkInTime}}</td>
+                    <td style="padding: 12px 8px; font-size: 13px; {{#if (eq checkOutTime 'Not checked out')}}color: #dc2626;{{else}}color: #0ea5e9;{{/if}} font-weight: 600; border-right: 1px solid #f3f4f6;">{{checkOutTime}}</td>
+                    <td style="padding: 12px 8px; font-size: 13px; color: #7c2d92; font-weight: 600; border-right: 1px solid #f3f4f6;">{{duration}}</td>
+                    <td style="padding: 12px 8px; font-size: 13px; border-right: 1px solid #f3f4f6;">
+                        <span style="padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; 
+                        {{#if (eq status 'COMPLETED')}}background: #dcfce7; color: #166534;{{else if (eq status 'PRESENT')}}background: #dbeafe; color: #1e40af;{{else if (eq status 'ON_BREAK')}}background: #fef3c7; color: #92400e;{{else}}background: #fef2f2; color: #991b1b;{{/if}}">
+                            {{status}}
+                        </span>
+                    </td>
+                    <td style="padding: 12px 8px; font-size: 13px; color: #f59e0b; font-weight: 600; border-right: 1px solid #f3f4f6;">{{totalBreakTime}}</td>
+                    <td style="padding: 12px 8px; font-size: 13px; color: #6b7280; font-weight: 500; border-right: 1px solid #f3f4f6;">{{branchName}}</td>
+                    <td style="padding: 12px 8px; font-size: 12px; color: #6b7280; max-width: 200px; word-wrap: break-word;">
+                        {{#if checkInNotes}}
+                        <div style="margin-bottom: 4px;"><strong>In:</strong> {{checkInNotes}}</div>
+                        {{/if}}
+                        {{#if checkOutNotes}}
+                        <div><strong>Out:</strong> {{checkOutNotes}}</div>
+                        {{/if}}
+                        {{#unless (or checkInNotes checkOutNotes)}}
+                        <span style="color: #9ca3af; font-style: italic;">No notes</span>
+                        {{/unless}}
+                    </td>
+                </tr>
+                {{/each}}
+            </tbody>
+        </table>
+    </div>
+</div>
+{{else}}
+<div class="info-card" style="background: linear-gradient(135deg, #fafafa 0%, #f4f4f5 100%); border-left-color: #71717a;">
+    <h4 style="color: #52525b;">📋 No Records Found</h4>
+    <p style="color: #6b7280; margin-top: 12px;">No attendance records were found for {{targetUserName}} in the specified date range ({{startDate}} to {{endDate}}).</p>
+</div>
+{{/if}}
+
+<!-- Summary Statistics -->
+{{#if (gt recordsCount 0)}}
+<div class="info-card">
+    <h3>📊 Quick Statistics</h3>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-top: 16px;">
+        <div style="background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%); padding: 16px; border-radius: 8px; border-left: 4px solid #22c55e;">
+            <div style="font-size: 14px; color: #166534; font-weight: 600; margin-bottom: 4px;">Total Attendance Days</div>
+            <div style="font-size: 24px; color: #15803d; font-weight: 700;">{{recordsCount}}</div>
+        </div>
+        
+        <div style="background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); padding: 16px; border-radius: 8px; border-left: 4px solid #3b82f6;">
+            <div style="font-size: 14px; color: #1e40af; font-weight: 600; margin-bottom: 4px;">Completed Shifts</div>
+            <div style="font-size: 24px; color: #1d4ed8; font-weight: 700;">
+                {{#each attendanceRecords}}{{#if (eq status 'COMPLETED')}}1{{else}}0{{/if}}{{/each}}
+            </div>
+        </div>
+        
+        <div style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); padding: 16px; border-radius: 8px; border-left: 4px solid #f59e0b;">
+            <div style="font-size: 14px; color: #92400e; font-weight: 600; margin-bottom: 4px;">Active Days</div>
+            <div style="font-size: 24px; color: #b45309; font-weight: 700;">
+                {{#each attendanceRecords}}{{#if (eq status 'PRESENT')}}1{{else}}0{{/if}}{{/each}}
+            </div>
+        </div>
+        
+        <div style="background: linear-gradient(135deg, #f3e8ff 0%, #e9d5ff 100%); padding: 16px; border-radius: 8px; border-left: 4px solid #8b5cf6;">
+            <div style="font-size: 14px; color: #6b21a8; font-weight: 600; margin-bottom: 4px;">Timezone</div>
+            <div style="font-size: 16px; color: #7c2d92; font-weight: 700;">{{timezone}}</div>
+        </div>
+    </div>
+</div>
+{{/if}}
+
+<!-- Important Notes -->
+<div class="info-card" style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border-left-color: #0ea5e9;">
+    <h4 style="color: #0369a1; margin-bottom: 16px;">📝 Important Information</h4>
+    <ul style="margin-left: 20px; color: #0f172a; line-height: 1.6; font-size: 14px;">
+        <li style="margin-bottom: 8px;">
+            <strong>Data Privacy:</strong> This report contains confidential employee attendance information and should be handled according to your organization's data protection policies.
+        </li>
+        <li style="margin-bottom: 8px;">
+            <strong>Timezone:</strong> All times are displayed in your organization's timezone ({{timezone}}) for consistency.
+        </li>
+        <li style="margin-bottom: 8px;">
+            <strong>Status Definitions:</strong> 
+            <span style="color: #166534;">COMPLETED</span> = Full shift worked, 
+            <span style="color: #1e40af;">PRESENT</span> = Currently working, 
+            <span style="color: #92400e;">ON_BREAK</span> = Currently on break
+        </li>
+        <li style="margin-bottom: 8px;">
+            <strong>Generated:</strong> {{generatedAt}} for {{requesterName}} ({{requesterEmail}})
+        </li>
+    </ul>
+</div>
+
+<!-- Action Section -->
+<div class="message">
+    <p style="font-size: 14px; color: #6b7280; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+        If you need additional information or have questions about these records, please contact your system administrator or HR department.
+        For technical support with the attendance system, please reach out through your organization's support channels.
+    </p>
+</div>
+
+<!-- Report Footer -->
+<div class="message">
+    <p style="font-size: 14px; color: #6b7280; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+        <strong>Report Details:</strong><br>
+        Requested by: {{requesterName}} ({{requesterEmail}})<br>
+        Employee: {{targetUserName}}<br>
+        Period: {{startDate}} to {{endDate}}<br>
+        Organization: {{organizationName}}<br>
+        Generated: {{generatedAt}}<br>
+        Records Found: {{recordsCount}}
+    </p>
+</div>
+
+{{/base}}

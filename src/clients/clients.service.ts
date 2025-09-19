@@ -2217,21 +2217,23 @@ export class ClientsService {
 	}
 
 	/**
-	 * Cron job that runs daily at 5:00 AM to generate communication tasks 3 months ahead
+	 * Cron job that runs every Sunday at 6:00 AM to generate communication tasks for the coming week
 	 * for all active client communication schedules with assigned users.
 	 */
-	@Cron(CronExpression.EVERY_DAY_AT_5AM) // Daily at 5:00 AM
-	async generateCommunicationTasks(): Promise<void> {
-		this.logger.log('🚀 Starting automated communication task generation...');
+	@Cron('0 6 * * SUN') // Every Sunday at 6:00 AM
+	async generateWeeklyCommunicationTasks(): Promise<void> {
+		this.logger.log('🚀 Starting weekly communication task generation (Sunday 6:00 AM)...');
 
 		try {
 			const startTime = Date.now();
 
-			// Calculate 3-month window: today to 3 months from now
+			// Calculate upcoming week window: next Monday to next Sunday
 			const today = startOfDay(new Date());
-			const threeMonthsFromNow = addMonths(today, 3);
+			const nextMonday = this.getNextMonday(today);
+			const nextSunday = addDays(nextMonday, 6);
+			nextSunday.setHours(23, 59, 59, 999);
 
-			this.logger.log(`📅 Generating tasks from ${today.toISOString()} to ${threeMonthsFromNow.toISOString()}`);
+			this.logger.log(`📅 Generating tasks for upcoming week: ${nextMonday.toISOString()} to ${nextSunday.toISOString()}`);
 
 			// Get all active communication schedules with assigned users
 			const activeSchedules = await this.getActiveSchedulesWithUsers();
@@ -2242,7 +2244,7 @@ export class ClientsService {
 				return;
 			}
 
-			// Process each schedule to generate tasks
+			// Process each schedule to generate tasks for the coming week
 			let totalTasksCreated = 0;
 			const userTasksMap = new Map<number, Array<{ task: any; schedule: ClientCommunicationSchedule }>>();
 
@@ -2250,8 +2252,8 @@ export class ClientsService {
 				try {
 					const tasksCreated = await this.processScheduleForTaskGeneration(
 						schedule,
-						today,
-						threeMonthsFromNow,
+						nextMonday,
+						nextSunday,
 						userTasksMap,
 					);
 					totalTasksCreated += tasksCreated;
@@ -2264,11 +2266,80 @@ export class ClientsService {
 			await this.sendTaskCreationNotifications(userTasksMap);
 
 			const duration = Date.now() - startTime;
-			this.logger.log(`✅ Communication task generation completed in ${duration}ms`);
-			this.logger.log(`📊 Summary: ${totalTasksCreated} tasks created for ${userTasksMap.size} users`);
+			this.logger.log(`✅ Weekly communication task generation completed in ${duration}ms`);
+			this.logger.log(`📊 Summary: ${totalTasksCreated} tasks created for ${userTasksMap.size} users for the coming week`);
 		} catch (error) {
-			this.logger.error(`💥 Fatal error in communication task generation: ${error.message}`, error.stack);
+			this.logger.error(`💥 Fatal error in weekly communication task generation: ${error.message}`, error.stack);
 		}
+	}
+
+	/**
+	 * Fallback cron job that runs daily at 5:00 AM to generate any missed communication tasks
+	 * This ensures we don't miss any tasks if the Sunday job fails or if schedules are updated mid-week.
+	 */
+	@Cron(CronExpression.EVERY_DAY_AT_5AM) // Daily at 5:00 AM
+	async generateDailyCommunicationTasks(): Promise<void> {
+		this.logger.log('🔄 Starting daily communication task check...');
+
+		try {
+			const startTime = Date.now();
+
+			// Calculate next 7 days to ensure we have tasks ready
+			const today = startOfDay(new Date());
+			const nextWeek = addDays(today, 7);
+
+			this.logger.debug(`📅 Checking tasks for next 7 days: ${today.toISOString()} to ${nextWeek.toISOString()}`);
+
+			// Get all active communication schedules with assigned users
+			const activeSchedules = await this.getActiveSchedulesWithUsers();
+			
+			if (activeSchedules.length === 0) {
+				this.logger.debug('✅ No active schedules found for daily check');
+				return;
+			}
+
+			// Process each schedule to generate any missing tasks
+			let totalTasksCreated = 0;
+			const userTasksMap = new Map<number, Array<{ task: any; schedule: ClientCommunicationSchedule }>>();
+
+			for (const schedule of activeSchedules) {
+				try {
+					const tasksCreated = await this.processScheduleForTaskGeneration(
+						schedule,
+						today,
+						nextWeek,
+						userTasksMap,
+					);
+					totalTasksCreated += tasksCreated;
+				} catch (error) {
+					this.logger.error(`❌ Error processing schedule ${schedule.uid} in daily check: ${error.message}`);
+				}
+			}
+
+			if (totalTasksCreated > 0) {
+				// Send email notifications only if new tasks were created
+				await this.sendTaskCreationNotifications(userTasksMap);
+				
+				const duration = Date.now() - startTime;
+				this.logger.log(`✅ Daily communication task check completed in ${duration}ms`);
+				this.logger.log(`📊 Summary: ${totalTasksCreated} missed tasks created for ${userTasksMap.size} users`);
+			} else {
+				this.logger.debug('✅ Daily communication task check completed - no missing tasks found');
+			}
+		} catch (error) {
+			this.logger.error(`💥 Fatal error in daily communication task check: ${error.message}`, error.stack);
+		}
+	}
+
+	/**
+	 * Get the next Monday from the given date
+	 */
+	private getNextMonday(fromDate: Date): Date {
+		const nextMonday = new Date(fromDate);
+		const daysUntilMonday = (8 - nextMonday.getDay()) % 7 || 7; // If today is Sunday (0), add 1 day. Otherwise, calculate days until next Monday
+		nextMonday.setDate(nextMonday.getDate() + daysUntilMonday);
+		nextMonday.setHours(0, 0, 0, 0);
+		return nextMonday;
 	}
 
 	/**
@@ -3286,6 +3357,192 @@ export class ClientsService {
 		} catch (error) {
 			return {
 				message: error?.message || 'Failed to delete communication schedule',
+			};
+		}
+	}
+
+	/**
+	 * Get communication schedules assigned to a specific user
+	 * 
+	 * @param userId - The user ID to get schedules for
+	 * @param filters - Pagination and filtering options
+	 * @param orgId - Organization ID for filtering
+	 * @param branchId - Branch ID for filtering
+	 * @returns Promise with user's communication schedules
+	 */
+	async getUserCommunicationSchedules(
+		userId: number,
+		filters: {
+			page: number;
+			limit: number;
+			status?: boolean;
+			communicationType?: string;
+			clientId?: number;
+			startDate?: Date;
+			endDate?: Date;
+		},
+		orgId?: number,
+		branchId?: number,
+	): Promise<{ message: string; data?: any[]; meta?: any }> {
+		const startTime = Date.now();
+		this.logger.log(`[USER_COMM_SCHEDULES] Getting communication schedules for user ${userId}, orgId: ${orgId}, branchId: ${branchId}`);
+
+		try {
+			if (!userId) {
+				throw new BadRequestException('User ID is required');
+			}
+
+			// Build query conditions
+			const where: any = {
+				assignedTo: { uid: userId, isDeleted: false },
+				isDeleted: false,
+			};
+
+			// Add status filter
+			if (filters.status !== undefined) {
+				where.isActive = filters.status;
+			}
+
+			// Add communication type filter
+			if (filters.communicationType) {
+				where.communicationType = filters.communicationType;
+			}
+
+			// Add client filter
+			if (filters.clientId) {
+				where.client = { uid: filters.clientId };
+			}
+
+			// Add organization filter
+			if (orgId) {
+				where.organisation = { uid: orgId };
+			}
+
+			// Add branch filter
+			if (branchId) {
+				where.branch = { uid: branchId };
+			}
+
+			// Calculate pagination
+			const skip = (filters.page - 1) * filters.limit;
+
+			// Build query
+			let queryBuilder = this.scheduleRepository
+				.createQueryBuilder('schedule')
+				.leftJoinAndSelect('schedule.client', 'client')
+				.leftJoinAndSelect('schedule.assignedTo', 'assignedTo')
+				.leftJoinAndSelect('schedule.organisation', 'organisation')
+				.leftJoinAndSelect('schedule.branch', 'branch')
+				.where('schedule.assignedToUid = :userId', { userId })
+				.andWhere('schedule.isDeleted = :isDeleted', { isDeleted: false })
+				.andWhere('assignedTo.isDeleted = :userDeleted', { userDeleted: false });
+
+			// Add status filter
+			if (filters.status !== undefined) {
+				queryBuilder = queryBuilder.andWhere('schedule.isActive = :isActive', { isActive: filters.status });
+			}
+
+			// Add communication type filter
+			if (filters.communicationType) {
+				queryBuilder = queryBuilder.andWhere('schedule.communicationType = :communicationType', { 
+					communicationType: filters.communicationType 
+				});
+			}
+
+			// Add client filter
+			if (filters.clientId) {
+				queryBuilder = queryBuilder.andWhere('schedule.clientUid = :clientId', { clientId: filters.clientId });
+			}
+
+			// Add organization filter
+			if (orgId) {
+				queryBuilder = queryBuilder.andWhere('schedule.organisationUid = :orgId', { orgId });
+			}
+
+			// Add branch filter
+			if (branchId) {
+				queryBuilder = queryBuilder.andWhere('schedule.branchUid = :branchId', { branchId });
+			}
+
+			// Add date range filters
+			if (filters.startDate) {
+				queryBuilder = queryBuilder.andWhere('schedule.nextScheduledDate >= :startDate', { 
+					startDate: filters.startDate 
+				});
+			}
+
+			if (filters.endDate) {
+				queryBuilder = queryBuilder.andWhere('schedule.nextScheduledDate <= :endDate', { 
+					endDate: filters.endDate 
+				});
+			}
+
+			// Get total count
+			const total = await queryBuilder.getCount();
+
+			// Get paginated results
+			const schedules = await queryBuilder
+				.orderBy('schedule.nextScheduledDate', 'ASC')
+				.addOrderBy('schedule.createdAt', 'DESC')
+				.skip(skip)
+				.take(filters.limit)
+				.getMany();
+
+			// Transform data for response
+			const transformedSchedules = schedules.map(schedule => ({
+				uid: schedule.uid,
+				communicationType: schedule.communicationType,
+				frequency: schedule.frequency,
+				customFrequencyDays: schedule.customFrequencyDays,
+				preferredTime: schedule.preferredTime,
+				preferredDays: schedule.preferredDays,
+				nextScheduledDate: schedule.nextScheduledDate,
+				lastCompletedDate: schedule.lastCompletedDate,
+				firstVisitDate: schedule.firstVisitDate,
+				lastVisitDate: schedule.lastVisitDate,
+				visitCount: schedule.visitCount,
+				isActive: schedule.isActive,
+				notes: schedule.notes,
+				createdAt: schedule.createdAt,
+				updatedAt: schedule.updatedAt,
+				client: schedule.client ? {
+					uid: schedule.client.uid,
+					name: schedule.client.name,
+					email: schedule.client.email,
+					phone: schedule.client.phone,
+					contactPerson: schedule.client.contactPerson,
+					address: schedule.client.address,
+				} : null,
+				organisation: schedule.organisation ? {
+					uid: schedule.organisation.uid,
+					name: schedule.organisation.name,
+				} : null,
+				branch: schedule.branch ? {
+					uid: schedule.branch.uid,
+					name: schedule.branch.name,
+				} : null,
+			}));
+
+			const totalPages = Math.ceil(total / filters.limit);
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`[USER_COMM_SCHEDULES] Successfully retrieved ${schedules.length} schedules for user ${userId} in ${executionTime}ms`);
+
+			return {
+				message: 'My communication schedules retrieved successfully',
+				data: transformedSchedules,
+				meta: {
+					total,
+					page: filters.page,
+					limit: filters.limit,
+					totalPages,
+				},
+			};
+		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`[USER_COMM_SCHEDULES] Failed to get schedules for user ${userId} after ${executionTime}ms: ${error.message}`, error.stack);
+			return {
+				message: error?.message || 'Failed to retrieve communication schedules',
 			};
 		}
 	}
