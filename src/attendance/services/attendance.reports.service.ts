@@ -1190,10 +1190,36 @@ export class AttendanceReportsService {
 			this.logger.log(`  Raw Metric ${index + 1}: ${metric.user.fullName} - Check-in: ${metric.todayCheckIn}, Hours: ${metric.hoursWorked}`);
 		});
 
-		// Map employee metrics to template format with enhanced real-time hours
+		// Map employee metrics to template format with enhanced real-time hours and daily report data
 		const templateEmployeeMetrics = [];
 		
 		this.logger.log(`🔄 STARTING TEMPLATE MAPPING: ${employeeMetrics.length} metrics to process`);
+		
+		// Fetch today's daily reports for all users in the organization to get distance/location data
+		this.logger.log(`📍 Fetching daily reports for distance/location data...`);
+		const dailyReports = new Map();
+		
+		try {
+			const todayDateString = format(today, 'yyyy-MM-dd');
+			const reportsResult = await this.reportsRepository.find({
+				where: {
+					reportType: ReportType.USER_DAILY,
+					generatedAt: Between(startOfToday, endOfToday),
+					organisation: { uid: organizationId }
+				},
+				relations: ['owner']
+			});
+			
+			this.logger.log(`📍 Found ${reportsResult.length} daily reports for ${todayDateString}`);
+			
+			reportsResult.forEach(report => {
+				if (report.owner?.uid) {
+					dailyReports.set(report.owner.uid, report.reportData);
+				}
+			});
+		} catch (error) {
+			this.logger.error(`Error fetching daily reports for distance data: ${error.message}`);
+		}
 		
 		for (const metric of employeeMetrics) {
 			this.logger.debug(`🔄 Processing metric for user: ${metric.user.fullName} (UID: ${metric.user.uid})`);
@@ -1209,6 +1235,8 @@ export class AttendanceReportsService {
 
 			// Determine employee status with real-time consideration using organization hours
 			let status = 'Absent';
+			const isCurrentlyWorking = todayRecord && !todayRecord.checkOut && todayRecord.checkIn;
+			
 			if (metric.todayCheckIn) {
 				if (metric.isLate) {
 					status = 'Late';
@@ -1228,6 +1256,37 @@ export class AttendanceReportsService {
 				punctualityChange: this.calculatePunctualityChange(metric, comparisonAttendance),
 			};
 
+			// Get daily report data for this user
+			const userDailyReport = dailyReports.get(metric.user.uid);
+			const locationData = userDailyReport?.details?.location;
+			
+			// Extract distance data - show 0 for active shifts, actual distance for completed shifts
+			let totalDistance = '0.0 km';
+			let visits = {
+				totalVisits: 0,
+				totalDistance: '0.0 km',
+				averageTimePerLocation: '~',
+				visitDetails: []
+			};
+			
+			if (locationData && status === 'Completed') {
+				// Only show distance for completed shifts
+				totalDistance = locationData.trackingData?.totalDistance || locationData.totalDistance + ' km' || '0.0 km';
+				
+				visits = {
+					totalVisits: locationData.locationAnalysis?.locationsVisited?.length || 0,
+					totalDistance: totalDistance,
+					averageTimePerLocation: locationData.trackingData?.averageTimePerLocation || '~',
+					visitDetails: (locationData.stops || []).map(stop => ({
+						location: stop.address || 'Unknown location',
+						duration: stop.duration || '0m',
+						timestamp: stop.startTime || ''
+					}))
+				};
+			}
+			
+			this.logger.debug(`  - Distance data: ${totalDistance} (status: ${status})`);
+
 			const templateMetric = {
 				uid: metric.user.uid,
 				name: metric.user.name || 'Unknown',
@@ -1243,6 +1302,57 @@ export class AttendanceReportsService {
 				status,
 				yesterdayComparison,
 				avatar: metric.user.userProfile?.avatar || null,
+				// Add comprehensive daily metrics from user daily reports
+				dailyMetrics: {
+					visits,
+					leads: {
+						newLeads: userDailyReport?.details?.leads?.newLeadsCount || 0,
+						convertedLeads: userDailyReport?.details?.leads?.convertedCount || 0,
+						conversionRate: userDailyReport?.details?.leads?.conversionRate || 0,
+						totalValue: userDailyReport?.details?.quotations?.totalRevenueFormatted || 'R 0,00'
+					},
+					claims: {
+						totalClaims: userDailyReport?.details?.claims?.count || 0,
+						totalClaimsValue: 'R 0', // This would need to be calculated if claim values are tracked
+						claimTypes: []
+					},
+					tasks: {
+						completed: userDailyReport?.details?.tasks?.completedCount || 0,
+						overdue: userDailyReport?.details?.tasks?.overdueCount || 0,
+						completionRate: userDailyReport?.details?.tasks?.completionRate || 0,
+						priorityBreakdown: userDailyReport?.details?.tasks?.priorityBreakdown || {
+							urgent: 0,
+							high: 0,
+							medium: 0,
+							low: 0
+						}
+					},
+					sales: {
+						totalRevenue: userDailyReport?.details?.quotations?.totalRevenueFormatted || 'R 0,00',
+						quotations: userDailyReport?.details?.quotations?.totalQuotations || 0,
+						clientInteractions: userDailyReport?.details?.clients?.totalInteractions || 0,
+						revenuePerHour: userDailyReport?.details?.performance?.revenuePerHour || 0
+					},
+					targets: {
+						salesProgress: userDailyReport?.details?.targets?.targetProgress?.sales?.progress || 0,
+						leadsProgress: userDailyReport?.details?.targets?.targetProgress?.leads?.progress || 0,
+						hoursProgress: userDailyReport?.details?.targets?.targetProgress?.hours?.progress || 0,
+						overallTargetScore: 0 // Calculate average if needed
+					},
+					wellness: {
+						stressLevel: userDailyReport?.details?.wellness?.stressLevel || 'low',
+						wellnessScore: userDailyReport?.details?.wellness?.wellnessScore || 75,
+						breaksTaken: userDailyReport?.details?.attendance?.breakDetails?.length || 0,
+						leaveStatus: undefined
+					},
+					performance: {
+						efficiencyScore: userDailyReport?.details?.performance?.overallScore * 100 || 0,
+						productivityRank: 0, // This would need ranking calculation
+						xpEarned: userDailyReport?.details?.rewards?.dailyXPEarned || 0,
+						currentLevel: userDailyReport?.details?.rewards?.currentLevel || 1,
+						currentRank: userDailyReport?.details?.rewards?.currentRank || 'ROOKIE'
+					}
+				}
 			};
 			
 			this.logger.debug(`  - Created template metric:`, {
@@ -1250,7 +1360,8 @@ export class AttendanceReportsService {
 				checkIn: templateMetric.checkInTime,
 				checkOut: templateMetric.checkOutTime,
 				hours: templateMetric.hoursWorked,
-				status: templateMetric.status
+				status: templateMetric.status,
+				distance: templateMetric.dailyMetrics.visits.totalDistance
 			});
 			
 			templateEmployeeMetrics.push(templateMetric);
