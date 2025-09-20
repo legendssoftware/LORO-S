@@ -39,6 +39,7 @@ import {
 	MorningReportData,
 	EveningReportData,
 	UserReInvitationData,
+	UserPreferencesUpdatedData,
 	AssetEmailData,
 	AssetTransferredEmailData,
 	AssetUpdatedEmailData,
@@ -73,6 +74,7 @@ import {
 	BlankQuotationData,
 	BlankQuotationInternalData,
 	AppUpdateNotificationData,
+	BulkAnnouncementEmailData,
 	ClientProfileUpdateConfirmationData,
 	ClientProfileUpdateAdminData,
 	ClientCommunicationReminderData,
@@ -266,6 +268,10 @@ export const NewUserWelcome = (data: NewUserWelcomeData): string => {
 
 export const UserReInvitation = (data: UserReInvitationData): string => {
 	return emailTemplateService.userReInvitation(data);
+};
+
+export const UserPreferencesUpdated = (data: UserPreferencesUpdatedData): string => {
+	return emailTemplateService.userPreferencesUpdated(data);
 };
 
 // Client Templates
@@ -523,6 +529,10 @@ export const UserTargetDeleted = (data: UserTargetDeletedEmailData): string => {
 // App/System Templates
 export const AppUpdateNotification = (data: AppUpdateNotificationData): string => {
 	return emailTemplateService.appUpdateNotification(data);
+};
+
+export const BulkAnnouncement = (data: BulkAnnouncementEmailData): string => {
+	return emailTemplateService.bulkAnnouncement(data);
 };
 
 // Client Profile Update Templates

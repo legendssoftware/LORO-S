@@ -55,7 +55,7 @@ import {
 // Task related templates
 import { TaskReminderAssignee, TaskReminderCreator, TaskOverdueMissed } from '../lib/templates/emails';
 // User related templates
-import { NewUserAdminNotification, NewUserWelcome, UserReInvitation } from '../lib/templates/emails';
+import { NewUserAdminNotification, NewUserWelcome, UserReInvitation, UserPreferencesUpdated } from '../lib/templates/emails';
 // Lead related templates
 import { LeadConvertedClient, LeadConvertedCreator, LeadReminder, LeadAssignedToUser, MonthlyUnattendedLeadsReport } from '../lib/templates/emails';
 // Client auth templates
@@ -84,6 +84,7 @@ import {
 	NewUserAdminNotificationData,
 	NewUserWelcomeData,
 	UserReInvitationData,
+	UserPreferencesUpdatedData,
 	TaskReminderData,
 	TaskCompletedEmailData,
 	LeadConvertedClientData,
@@ -142,6 +143,7 @@ import {
 	UserTargetDeletedEmailData,
 	UserTargetUpdatedEmailData,
 	AppUpdateNotificationData,
+	BulkAnnouncementEmailData,
 	ClientCommunicationReminderData,
 	ApprovalEmailData,
 } from '../lib/types/email-templates.types';
@@ -187,6 +189,7 @@ import {
 	UserTargetDeleted,
 	UserTargetUpdated,
 	AppUpdateNotification,
+	BulkAnnouncement,
 	ApprovalCreated,
 	ApprovalSubmitted,
 	ApprovalApproved,
@@ -888,6 +891,11 @@ export class CommunicationService {
 					subject: 'You\'re Invited Back to the Platform!',
 					body: UserReInvitation(data as UserReInvitationData),
 				};
+			case EmailType.USER_PREFERENCES_UPDATED:
+				return {
+					subject: 'Preferences Updated Successfully',
+					body: UserPreferencesUpdated(data as UserPreferencesUpdatedData),
+				};
 			case EmailType.TASK_REMINDER_ASSIGNEE:
 				return {
 					subject: 'Task Deadline Approaching',
@@ -1252,6 +1260,12 @@ export class CommunicationService {
 				return {
 					subject: 'App Update Available - New Features Include Leads & PDF Uploads!',
 					body: AppUpdateNotification(data as AppUpdateNotificationData),
+				};
+			case EmailType.BULK_ANNOUNCEMENT:
+				const bulkData = data as BulkAnnouncementEmailData;
+				return {
+					subject: bulkData.subject,
+					body: BulkAnnouncement(bulkData),
 				};
 			case EmailType.CLIENT_COMMUNICATION_REMINDER:
 				return {

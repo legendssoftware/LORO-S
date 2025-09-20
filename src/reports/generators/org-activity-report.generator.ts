@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between } from 'typeorm';
-import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, subDays } from 'date-fns';
+import { startOfDay, endOfDay, startOfWeek, endOfWeek, subDays } from 'date-fns';
 import { ReportUtils } from '../utils/report-utils';
 
 import { ReportParamsDto } from '../dto/report-params.dto';
@@ -9,10 +9,8 @@ import { User } from '../../user/entities/user.entity';
 import { Attendance } from '../../attendance/entities/attendance.entity';
 import { CheckIn } from '../../check-ins/entities/check-in.entity';
 import { Lead } from '../../leads/entities/lead.entity';
-import { LeadStatus } from '../../lib/enums/lead.enums';
 import { Quotation } from '../../shop/entities/quotation.entity';
 import { Claim } from '../../claims/entities/claim.entity';
-import { AttendanceService } from '../../attendance/attendance.service';
 import { TrackingService } from '../../tracking/tracking.service';
 
 @Injectable()
@@ -32,7 +30,6 @@ export class OrgActivityReportGenerator {
 		private quotationRepository: Repository<Quotation>,
 		@InjectRepository(Claim)
 		private claimRepository: Repository<Claim>,
-		private attendanceService: AttendanceService,
 		private trackingService: TrackingService,
 	) {}
 

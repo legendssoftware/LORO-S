@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Logger, BadRequestException, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger, BadRequestException, Inject, forwardRef } from '@nestjs/common';
 import { IsNull, MoreThanOrEqual, Not, Repository, LessThanOrEqual, Between, In, LessThan } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
@@ -43,7 +43,12 @@ import { AttendanceCalculatorService } from './services/attendance.calculator.se
 import { AccessLevel } from 'src/lib/enums/user.enums';
 import { EmailType } from '../lib/enums/email.enums';
 import { CommunicationService } from '../communication/communication.service';
+import { ReportsService } from '../reports/reports.service';
+import { ReportType } from '../reports/constants/report-types.enum';
 import { Cron } from '@nestjs/schedule';
+import { GoogleMapsService } from '../lib/services/google-maps.service';
+import { Address } from '../lib/interfaces/address.interface';
+import { Language } from '@googlemaps/google-maps-services-js';
 
 @Injectable()
 export class AttendanceService {
@@ -68,6 +73,9 @@ export class AttendanceService {
 		private readonly attendanceCalculatorService: AttendanceCalculatorService,
 		private readonly unifiedNotificationService: UnifiedNotificationService,
 		private readonly communicationService: CommunicationService,
+		@Inject(forwardRef(() => ReportsService))
+		private readonly reportsService: ReportsService,
+		private readonly googleMapsService: GoogleMapsService,
 	) {
 		this.CACHE_TTL = parseInt(process.env.CACHE_TTL || '300000', 10); // 5 minutes default
 		this.logger.log('AttendanceService initialized with cache TTL: ' + this.CACHE_TTL + 'ms');
@@ -428,6 +436,57 @@ export class AttendanceService {
 		this.logger.debug(`${operation} data validation passed`);
 	}
 
+	/**
+	 * Process location coordinates to get address information using Google Maps
+	 */
+	private async processLocationCoordinates(
+		latitude: number, 
+		longitude: number, 
+		locationName: string = 'Location'
+	): Promise<Address | null> {
+		if (!latitude || !longitude) {
+			this.logger.debug(`No coordinates provided for ${locationName}`);
+			return null;
+		}
+
+		try {
+			this.logger.debug(`Processing location coordinates for ${locationName}: ${latitude}, ${longitude}`);
+			
+			const geocodingResult = await this.googleMapsService.reverseGeocode(
+				{ latitude, longitude },
+				{ language: Language.en }
+			);
+
+			if (geocodingResult && geocodingResult.formattedAddress) {
+				const address: Address = {
+					streetNumber: geocodingResult.address.streetNumber || '',
+					street: geocodingResult.address.streetNumber && geocodingResult.address.street 
+						? `${geocodingResult.address.streetNumber} ${geocodingResult.address.street}`
+						: geocodingResult.address.street || '',
+					suburb: geocodingResult.address.suburb || '',
+					city: geocodingResult.address.city || '',
+					province: geocodingResult.address.province || '',
+					state: geocodingResult.address.state || '',
+					country: geocodingResult.address.country || '',
+					postalCode: geocodingResult.address.postalCode || '',
+					formattedAddress: geocodingResult.formattedAddress,
+					latitude,
+					longitude,
+					placeId: geocodingResult.placeId,
+				};
+
+				this.logger.debug(`Successfully processed ${locationName}: ${address.formattedAddress}`);
+				return address;
+			}
+
+			this.logger.warn(`No address found for ${locationName} coordinates: ${latitude}, ${longitude}`);
+			return null;
+		} catch (error) {
+			this.logger.error(`Failed to process location for ${locationName}: ${error.message}`, error.stack);
+			return null;
+		}
+	}
+
 	// ======================================================
 	// ATTENDANCE METRICS FUNCTIONALITY
 	// ======================================================
@@ -488,23 +547,40 @@ export class AttendanceService {
 				}
 			}
 
-			// Enhanced data mapping with proper validation
-			const attendanceData = {
-				...checkInDto,
-				status: checkInDto.status || AttendanceStatus.PRESENT,
-				organisation: orgId ? { uid: orgId } : undefined,
-				branch: branchId ? { uid: branchId } : undefined,
-			};
+		// Process check-in location if coordinates are provided
+		let checkInAddress: Address | null = null;
+		if (checkInDto.checkInLatitude && checkInDto.checkInLongitude) {
+			checkInAddress = await this.processLocationCoordinates(
+				checkInDto.checkInLatitude,
+				checkInDto.checkInLongitude,
+				'Check-in Location'
+			);
+		}
 
-			this.logger.debug('Saving check-in record to database with enhanced validation');
-			const checkIn = await this.attendanceRepository.save(attendanceData);
+		// Enhanced data mapping with proper validation and location data
+		const attendanceData = {
+			...checkInDto,
+			status: checkInDto.status || AttendanceStatus.PRESENT,
+			organisation: orgId ? { uid: orgId } : undefined,
+			branch: branchId ? { uid: branchId } : undefined,
+			placesOfInterest: checkInAddress ? {
+				startAddress: checkInAddress,
+				endAddress: null, // Will be filled during check-out
+				breakStart: null,
+				breakEnd: null,
+				otherPlacesOfInterest: []
+			} : null,
+		};
 
-			if (!checkIn) {
-				this.logger.error('Failed to create check-in record - database returned null');
-				throw new NotFoundException(process.env.CREATE_ERROR_MESSAGE || 'Failed to create attendance record');
-			}
+		this.logger.debug('Saving check-in record to database with enhanced validation and location processing');
+		const checkIn = await this.attendanceRepository.save(attendanceData);
 
-			this.logger.debug(`Check-in record created successfully with ID: ${checkIn.uid}`);
+		if (!checkIn) {
+			this.logger.error('Failed to create check-in record - database returned null');
+			throw new NotFoundException(process.env.CREATE_ERROR_MESSAGE || 'Failed to create attendance record');
+		}
+
+		this.logger.debug(`Check-in record created successfully with ID: ${checkIn.uid}`);
 
 			// Clear attendance cache after successful check-in
 			await this.clearAttendanceCache(checkIn.uid, checkInDto.owner.uid);
@@ -1011,19 +1087,48 @@ export class AttendanceService {
 				}
 			}
 
-			// Enhanced data mapping for shift update
-			const updatedShift = {
-				...activeShift,
-				...checkOutDto,
-				checkOut: checkOutTime,
-				duration,
-				overtime: overtimeDuration,
-				status: AttendanceStatus.COMPLETED,
-			};
+		// Process check-out location if coordinates are provided
+		let checkOutAddress: Address | null = null;
+		if (checkOutDto.checkOutLatitude && checkOutDto.checkOutLongitude) {
+			checkOutAddress = await this.processLocationCoordinates(
+				checkOutDto.checkOutLatitude,
+				checkOutDto.checkOutLongitude,
+				'Check-out Location'
+			);
+		}
 
-			this.logger.debug('Saving updated shift with check-out data');
-			await this.attendanceRepository.save(updatedShift);
-			this.logger.debug(`Shift updated successfully for user: ${checkOutDto.owner?.uid}`);
+		// Update placesOfInterest with check-out location
+		let updatedPlacesOfInterest = activeShift.placesOfInterest;
+		if (checkOutAddress) {
+			if (updatedPlacesOfInterest) {
+				// Update existing placesOfInterest with end address
+				updatedPlacesOfInterest.endAddress = checkOutAddress;
+			} else {
+				// Create new placesOfInterest if it doesn't exist
+				updatedPlacesOfInterest = {
+					startAddress: null, // This should have been set during check-in
+					endAddress: checkOutAddress,
+					breakStart: null,
+					breakEnd: null,
+					otherPlacesOfInterest: []
+				};
+			}
+		}
+
+		// Enhanced data mapping for shift update
+		const updatedShift = {
+			...activeShift,
+			...checkOutDto,
+			checkOut: checkOutTime,
+			duration,
+			overtime: overtimeDuration,
+			status: AttendanceStatus.COMPLETED,
+			placesOfInterest: updatedPlacesOfInterest,
+		};
+
+		this.logger.debug('Saving updated shift with check-out data and location processing');
+		await this.attendanceRepository.save(updatedShift);
+		this.logger.debug(`Shift updated successfully for user: ${checkOutDto.owner?.uid}`);
 
 			// Clear attendance cache after successful check-out
 			await this.clearAttendanceCache(activeShift.uid, checkOutDto.owner.uid);
@@ -1179,84 +1284,97 @@ export class AttendanceService {
 				// Don't fail the check-out if notification fails
 			}
 
-			// Check and send overtime notification if applicable
-			try {
-				const organizationId = activeShift.owner?.organisation?.uid;
-				if (organizationId) {
-					const overtimeInfo = await this.organizationHoursService.calculateOvertime(
-						organizationId,
-						activeShift.checkIn,
-						workSession.netWorkMinutes,
-					);
+			// Return success response immediately to user after shift-ended email is sent
+			this.logger.log(`Check-out successful for user: ${checkOutDto.owner?.uid}, duration: ${duration}`);
+			
+			// Process non-critical operations asynchronously (don't block user response)
+			setImmediate(async () => {
+				try {
+					// Check and send overtime notification if applicable
+					try {
+						const organizationId = activeShift.owner?.organisation?.uid;
+						if (organizationId) {
+							const overtimeInfo = await this.organizationHoursService.calculateOvertime(
+								organizationId,
+								activeShift.checkIn,
+								workSession.netWorkMinutes,
+							);
 
-					if (overtimeInfo.overtimeMinutes > 0) {
-						const overtimeHours = Math.floor(overtimeInfo.overtimeMinutes / 60);
-						const overtimeMinutes = overtimeInfo.overtimeMinutes % 60;
-						const overtimeDuration = `${overtimeHours}h ${overtimeMinutes}m`;
+							if (overtimeInfo.overtimeMinutes > 0) {
+								const overtimeHours = Math.floor(overtimeInfo.overtimeMinutes / 60);
+								const overtimeMinutes = overtimeInfo.overtimeMinutes % 60;
+								const overtimeDuration = `${overtimeHours}h ${overtimeMinutes}m`;
 
-						// Get user info for personalized message
-						const user = await this.userRepository.findOne({
-							where: { uid: checkOutDto.owner.uid },
-							select: ['uid', 'name', 'surname'],
-						});
+								// Get user info for personalized message
+								const user = await this.userRepository.findOne({
+									where: { uid: checkOutDto.owner.uid },
+									select: ['uid', 'name', 'surname'],
+								});
 
-						const userName = user ? user.name : '';
+								const userName = user ? user.name : '';
 
-						this.logger.debug(`Sending enhanced overtime notification to user: ${checkOutDto.owner.uid}`);
-						await this.unifiedNotificationService.sendTemplatedNotification(
-							NotificationEvent.ATTENDANCE_OVERTIME_REMINDER,
-							[checkOutDto.owner.uid],
-							{
-								message: `Wow, ${userName}! 💪 You worked ${overtimeDuration} of overtime today. Your dedication is truly appreciated! Please ensure you get adequate rest and take care of yourself. Thank you for going above and beyond!`,
-								overtimeDuration,
-								overtimeHours: overtimeInfo.overtimeMinutes / 60,
-								regularHours: (workSession.netWorkMinutes - overtimeInfo.overtimeMinutes) / 60,
-								totalWorkMinutes: workSession.netWorkMinutes,
-								overtimeMinutes: overtimeInfo.overtimeMinutes,
-								userName,
-								userId: checkOutDto.owner.uid,
-								timestamp: new Date().toISOString(),
-							},
-							{
-								priority: NotificationPriority.HIGH,
-							},
+								this.logger.debug(`Sending enhanced overtime notification to user: ${checkOutDto.owner.uid}`);
+								await this.unifiedNotificationService.sendTemplatedNotification(
+									NotificationEvent.ATTENDANCE_OVERTIME_REMINDER,
+									[checkOutDto.owner.uid],
+									{
+										message: `Wow, ${userName}! 💪 You worked ${overtimeDuration} of overtime today. Your dedication is truly appreciated! Please ensure you get adequate rest and take care of yourself. Thank you for going above and beyond!`,
+										overtimeDuration,
+										overtimeHours: overtimeInfo.overtimeMinutes / 60,
+										regularHours: (workSession.netWorkMinutes - overtimeInfo.overtimeMinutes) / 60,
+										totalWorkMinutes: workSession.netWorkMinutes,
+										overtimeMinutes: overtimeInfo.overtimeMinutes,
+										userName,
+										userId: checkOutDto.owner.uid,
+										timestamp: new Date().toISOString(),
+									},
+									{
+										priority: NotificationPriority.HIGH,
+									},
+								);
+								this.logger.debug(
+									`Enhanced overtime notification sent successfully to user: ${checkOutDto.owner.uid}`,
+								);
+
+								// Also send overtime notification using the enhanced sendShiftReminder method
+								await this.sendShiftReminder(
+									checkOutDto.owner.uid,
+									'overtime',
+									organizationId,
+									branchId,
+									undefined,
+									undefined,
+									overtimeInfo.overtimeMinutes,
+								);
+							}
+						}
+					} catch (overtimeNotificationError) {
+						this.logger.warn(
+							`Failed to send overtime notification to user: ${checkOutDto.owner.uid}`,
+							overtimeNotificationError.message,
 						);
-						this.logger.debug(
-							`Enhanced overtime notification sent successfully to user: ${checkOutDto.owner.uid}`,
-						);
-
-						// Also send overtime notification using the enhanced sendShiftReminder method
-						await this.sendShiftReminder(
-							checkOutDto.owner.uid,
-							'overtime',
-							organizationId,
-							branchId,
-							undefined,
-							undefined,
-							overtimeInfo.overtimeMinutes,
-						);
+						// Don't fail the async processing if overtime notification fails
 					}
-				}
-			} catch (overtimeNotificationError) {
-				this.logger.warn(
-					`Failed to send overtime notification to user: ${checkOutDto.owner.uid}`,
-					overtimeNotificationError.message,
-				);
-				// Don't fail the check-out if overtime notification fails
-			}
 
-			// Emit the daily-report event with the user ID and activity trigger flag
-			this.logger.debug(`Emitting events for user: ${checkOutDto?.owner?.uid}`);
-			this.eventEmitter.emit('daily-report', {
-				userId: checkOutDto?.owner?.uid,
-				triggeredByActivity: true, // This report is triggered by actual user activity (check-out)
+					// Emit daily report event for async processing (user already got their response)
+					this.logger.debug(`Emitting daily report event for user: ${checkOutDto?.owner?.uid}, attendance: ${activeShift.uid}`);
+					this.eventEmitter.emit('daily-report', {
+						userId: checkOutDto?.owner?.uid,
+						attendanceId: activeShift.uid, // Include the attendance ID that triggered this report
+						triggeredByActivity: true, // This report is triggered by actual user activity (check-out)
+					});
+
+					// Emit other background events
+					this.eventEmitter.emit('user.target.update.required', { userId: checkOutDto?.owner?.uid });
+					this.eventEmitter.emit('user.metrics.update.required', checkOutDto?.owner?.uid);
+					this.logger.debug(`Background events emitted successfully for user: ${checkOutDto?.owner?.uid}`);
+
+				} catch (asyncError) {
+					this.logger.error(`Error in async checkout processing for user ${checkOutDto?.owner?.uid}:`, asyncError.stack);
+					// Don't propagate errors from async operations
+				}
 			});
 
-			this.eventEmitter.emit('user.target.update.required', { userId: checkOutDto?.owner?.uid });
-			this.eventEmitter.emit('user.metrics.update.required', checkOutDto?.owner?.uid);
-			this.logger.debug(`Events emitted successfully for user: ${checkOutDto?.owner?.uid}`);
-
-			this.logger.log(`Check-out successful for user: ${checkOutDto.owner?.uid}, duration: ${duration}`);
 			return response;
 		} catch (error) {
 			this.logger.error(`Check-out failed for user: ${checkOutDto.owner?.uid}`, error.stack);
@@ -1270,6 +1388,7 @@ export class AttendanceService {
 			return errorResponse;
 		}
 	}
+
 
 	public async allCheckIns(orgId?: number, branchId?: number): Promise<{ message: string; checkIns: Attendance[] }> {
 		this.logger.log(`Fetching all check-ins, orgId: ${orgId}, branchId: ${branchId}`);
@@ -1307,20 +1426,21 @@ export class AttendanceService {
 
 			this.logger.debug(`Querying attendance records with conditions: ${JSON.stringify(whereConditions)}`);
 
-			const checkIns = await this.attendanceRepository.find({
-				where: Object.keys(whereConditions).length > 0 ? whereConditions : undefined,
-				relations: [
-					'owner',
-					'owner.branch',
-					'owner.organisation',
-					'owner.userProfile',
-					'verifiedBy',
-					'organisation',
-					'branch',
-				],
-				order: {
-					checkIn: 'DESC',
-				},
+		const checkIns = await this.attendanceRepository.find({
+			where: Object.keys(whereConditions).length > 0 ? whereConditions : undefined,
+			relations: [
+				'owner',
+				'owner.branch',
+				'owner.organisation',
+				'owner.userProfile',
+				'verifiedBy',
+				'organisation',
+				'branch',
+				'dailyReport',
+			],
+			order: {
+				checkIn: 'DESC',
+			},
 				take: 1000, // Limit results to prevent memory issues
 			});
 
@@ -2836,6 +2956,7 @@ export class AttendanceService {
 					'verifiedBy',
 					'organisation',
 					'branch',
+					'dailyReport',
 				],
 				order: {
 					checkIn: 'DESC',
@@ -2858,6 +2979,7 @@ export class AttendanceService {
 					'verifiedBy',
 					'organisation',
 					'branch',
+					'dailyReport',
 				],
 				order: {
 					checkIn: 'DESC',
@@ -2961,6 +3083,7 @@ export class AttendanceService {
 					'verifiedBy',
 					'organisation',
 					'branch',
+					'dailyReport',
 				],
 				order: {
 					checkIn: 'DESC',
@@ -3070,26 +3193,27 @@ export class AttendanceService {
 				whereConditions.organisation = { uid: orgId };
 			}
 
-			// Apply branch filtering if provided
-			if (branchId) {
-				whereConditions.branch = { uid: branchId };
-			}
+		// Apply branch filtering if provided
+		if (branchId) {
+			whereConditions.branch = { uid: branchId };
+		}
 
-			const checkIns = await this.attendanceRepository.find({
-				where: whereConditions,
-				relations: [
-					'owner',
-					'owner.branch',
-					'owner.organisation',
-					'owner.userProfile',
-					'verifiedBy',
-					'organisation',
-					'branch',
-				],
-				order: {
-					checkIn: 'DESC',
-				},
-			});
+		const checkIns = await this.attendanceRepository.find({
+			where: whereConditions,
+			relations: [
+				'owner',
+				'owner.branch',
+				'owner.organisation',
+				'owner.userProfile',
+				'verifiedBy',
+				'organisation',
+				'branch',
+				'dailyReport',
+			],
+			order: {
+				checkIn: 'DESC',
+			},
+		});
 
 			if (!checkIns || checkIns.length === 0) {
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
@@ -3142,6 +3266,7 @@ export class AttendanceService {
 					'verifiedBy',
 					'organisation',
 					'branch',
+					'dailyReport',
 				],
 				order: {
 					checkIn: 'DESC',

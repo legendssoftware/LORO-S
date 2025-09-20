@@ -12,6 +12,6 @@ import { LicensingModule } from '../licensing/licensing.module';
   ],
   controllers: [BranchController],
   providers: [BranchService],
-  exports: [BranchService],
+  exports: [BranchService, TypeOrmModule],
 })
 export class BranchModule { }

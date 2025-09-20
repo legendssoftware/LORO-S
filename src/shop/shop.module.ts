@@ -51,6 +51,10 @@ import { NotificationsModule } from '../notifications/notifications.module';
 	],
 	controllers: [ShopController, QuotationConversionController],
 	providers: [ShopService, ProjectsService, ShopGateway, BannersService, QuotationConversionService],
-	exports: [ShopService, ShopGateway],
+	exports: [
+		ShopService, 
+		ShopGateway,
+		TypeOrmModule
+	],
 })
 export class ShopModule {}

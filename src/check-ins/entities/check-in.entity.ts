@@ -3,6 +3,7 @@ import { Branch } from '../../branch/entities/branch.entity';
 import { Client } from '../../clients/entities/client.entity';
 import { User } from '../../user/entities/user.entity';
 import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, Index } from 'typeorm';
+import { Address } from 'src/lib/interfaces/address.interface';
 
 @Entity('check-ins')
 @Index(['owner', 'checkInTime']) // User check-in history
@@ -33,6 +34,9 @@ export class CheckIn {
 
 	@Column({ type: 'varchar', nullable: true })
 	duration: string;
+
+	@Column({ type: 'json', nullable: true })
+	fullAddress: Address;
 
 	// Relations
 	@ManyToOne(() => User, (user) => user?.checkIns)

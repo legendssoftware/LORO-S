@@ -6,6 +6,22 @@
 
 <div class="message">
     <p>Here's your comprehensive daily attendance summary for <strong>{{reportDate}}</strong>. This report provides detailed employee performance metrics and comparisons with yesterday's data, generated 30 minutes after the standard close time ({{organizationCloseTime}}).</p>
+    
+    <!-- CSV File Availability Notice -->
+    <div style="background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); border-left: 4px solid #3b82f6; padding: 16px; margin: 16px 0; border-radius: 8px;">
+        <div style="display: flex; align-items: center; margin-bottom: 8px;">
+            <span style="color: #1e40af; font-weight: bold; margin-right: 8px;">📊</span>
+            <span style="font-weight: 700; color: #1e40af; font-size: 16px;">Detailed CSV Report Available</span>
+        </div>
+        <p style="color: #1e3a8a; margin: 0; font-size: 14px; line-height: 1.5;">
+            A comprehensive CSV file containing all employee metrics, performance data, and detailed analytics has been generated and attached to this email. 
+            <strong>Open the attached CSV file for in-depth analysis, filtering, and data manipulation.</strong> 
+            The CSV includes all employee details, daily metrics, wellness scores, productivity data, and comparative analytics that you can import into Excel or your preferred data analysis tool.
+        </p>
+        <div style="margin-top: 12px; padding: 8px 12px; background: rgba(59, 130, 246, 0.1); border-radius: 6px; border: 1px dashed #3b82f6;">
+            <span style="color: #1e40af; font-size: 13px; font-weight: 600;">📎 Attachment: evening-attendance-report-{{reportDate}}.csv</span>
+        </div>
+    </div>
 </div>
 
 <!-- Daily Overview Summary -->

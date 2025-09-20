@@ -2,8 +2,10 @@ import { Organisation } from 'src/organisation/entities/organisation.entity';
 import { Branch } from '../../branch/entities/branch.entity';
 import { AttendanceStatus } from '../../lib/enums/attendance.enums';
 import { User } from '../../user/entities/user.entity';
-import { Column, Entity, PrimaryGeneratedColumn, ManyToOne, Index } from 'typeorm';
+import { Report } from '../../reports/entities/report.entity';
+import { Column, Entity, PrimaryGeneratedColumn, ManyToOne, OneToOne, JoinColumn, Index } from 'typeorm';
 import { BreakDetail } from '../../lib/interfaces/break-detail.interface';
+import { Address } from 'src/lib/interfaces/address.interface';
 
 @Entity('attendance')
 @Index(['owner', 'checkIn']) // User attendance queries
@@ -30,7 +32,7 @@ export class Attendance {
 	@Column({ type: 'varchar', nullable: true })
 	duration: string;
 
-	@Column({ type: 'varchar', nullable: true})
+	@Column({ type: 'varchar', nullable: true })
 	overtime: string;
 
 	@Column({ type: 'decimal', precision: 10, scale: 6, nullable: true })
@@ -45,6 +47,18 @@ export class Attendance {
 	@Column({ type: 'decimal', precision: 10, scale: 6, nullable: true })
 	checkOutLongitude: number;
 
+	@Column({ type: 'json', nullable: true })
+	placesOfInterest: {
+		startAddress: Address;
+		endAddress: Address;
+		breakStart: Address;
+		breakEnd: Address;
+		otherPlacesOfInterest: {
+			address: Address;
+			notes: string;
+		}[];
+	};
+
 	@Column({ type: 'text', nullable: true })
 	checkInNotes: string;
 
@@ -57,7 +71,7 @@ export class Attendance {
 	@Column({ type: 'timestamp', nullable: true })
 	breakEndTime: Date;
 
-	@Column({ type: 'varchar', nullable: true})
+	@Column({ type: 'varchar', nullable: true })
 	totalBreakTime: string;
 
 	@Column({ type: 'int', nullable: true, default: 0 })
@@ -96,4 +110,9 @@ export class Attendance {
 
 	@ManyToOne(() => Branch, (branch) => branch?.attendances, { nullable: true })
 	branch: Branch;
+
+	// Relationship to the daily report generated for this attendance record
+	@OneToOne(() => Report, { nullable: true })
+	@JoinColumn()
+	dailyReport: Report;
 }

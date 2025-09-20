@@ -15,6 +15,7 @@ import { Cache } from 'cache-manager';
 import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
 import { NotificationPriority, NotificationEvent, NotificationChannel } from '../lib/types/unified-notification.types';
 import { AccessLevel } from 'src/lib/enums/user.enums';
+import { GoogleMapsService } from '../lib/services/google-maps.service';
 
 @Injectable()
 export class CheckInsService {
@@ -32,6 +33,7 @@ export class CheckInsService {
 		private clientRepository: Repository<Client>,
 		@Inject(CACHE_MANAGER) private cacheManager: Cache,
 		private readonly unifiedNotificationService: UnifiedNotificationService,
+		private readonly googleMapsService: GoogleMapsService,
 	) {
 		this.CACHE_TTL = parseInt(process.env.CACHE_TTL || '300000', 10); // 5 minutes default
 
@@ -43,6 +45,7 @@ export class CheckInsService {
 		this.logger.debug(`Rewards Service: ${!!this.rewardsService}`);
 		this.logger.debug(`Cache Manager: ${!!this.cacheManager}`);
 		this.logger.debug(`Unified Notification Service: ${!!this.unifiedNotificationService}`);
+		this.logger.debug(`Google Maps Service: ${!!this.googleMapsService}`);
 	}
 
 	async checkIn(createCheckInDto: CreateCheckInDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
@@ -400,6 +403,46 @@ export class CheckInsService {
 				`[${operationId}] Calculated work duration: ${duration} (${minutesWorked} minutes total)`,
 			);
 
+			// Reverse geocode the check-in location to get full address
+			let fullAddress = null;
+			try {
+				this.logger.debug(`[${operationId}] Reverse geocoding check-in location: ${checkIn.checkInLocation}`);
+				
+				// Parse coordinates from checkInLocation based on DTO format: "latitude, longitude"
+				const coordinateStr = checkIn.checkInLocation?.trim();
+				if (!coordinateStr) {
+					this.logger.warn(`[${operationId}] Empty check-in location provided`);
+				} else {
+					// Split by comma and handle various spacing
+					const coords = coordinateStr.split(',').map(coord => coord.trim());
+					
+					if (coords.length !== 2) {
+						this.logger.warn(`[${operationId}] Invalid coordinate format - expected 'latitude, longitude': ${checkIn.checkInLocation}`);
+					} else {
+						const latitude = parseFloat(coords[0]);
+						const longitude = parseFloat(coords[1]);
+
+						// Validate coordinate ranges
+						if (isNaN(latitude) || isNaN(longitude)) {
+							this.logger.warn(`[${operationId}] Non-numeric coordinates provided: lat=${coords[0]}, lng=${coords[1]}`);
+						} else if (latitude < -90 || latitude > 90) {
+							this.logger.warn(`[${operationId}] Invalid latitude (must be -90 to 90): ${latitude}`);
+						} else if (longitude < -180 || longitude > 180) {
+							this.logger.warn(`[${operationId}] Invalid longitude (must be -180 to 180): ${longitude}`);
+						} else {
+							const geocodingResult = await this.googleMapsService.reverseGeocode({ latitude, longitude });
+							fullAddress = geocodingResult.address;
+							this.logger.debug(`[${operationId}] Successfully geocoded address: ${geocodingResult.formattedAddress}`);
+						}
+					}
+				}
+			} catch (geocodingError) {
+				this.logger.warn(
+					`[${operationId}] Failed to reverse geocode check-in location: ${geocodingError.message}`,
+				);
+				// Don't fail the check-out if geocoding fails
+			}
+
 			// Update check-in record with check-out data
 			this.logger.debug(`[${operationId}] Updating check-in record with check-out data`);
 			await this.checkInRepository.update(checkIn.uid, {
@@ -407,6 +450,7 @@ export class CheckInsService {
 				checkOutPhoto: createCheckOutDto?.checkOutPhoto,
 				checkOutLocation: createCheckOutDto?.checkOutLocation,
 				duration: duration,
+				fullAddress: fullAddress,
 			});
 
 			// Send check-out notifications

@@ -100,6 +100,7 @@ import { ApprovalSignature } from './approvals/entities/approval-signature.entit
 import { Project } from './shop/entities/project.entity';
 import { MapModule } from './map/map.module';
 import { IotModule } from './iot/iot.module';
+import { BulkEmailModule } from './bulk-email/bulk-email.module';
 import { Device, DeviceRecords } from './iot/entities/iot.entity';
 
 
@@ -254,6 +255,7 @@ import { Device, DeviceRecords } from './iot/entities/iot.entity';
 		ApprovalsModule,
 		MapModule,
 		IotModule,
+		BulkEmailModule,
 	],
 	controllers: [],
 	providers: [

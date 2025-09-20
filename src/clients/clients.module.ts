@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { ClientsService } from './clients.service';
 import { ClientsController } from './clients.controller';
 import { ClientCommunicationScheduleService } from './services/client-communication-schedule.service';
@@ -25,12 +25,12 @@ import { ScheduleModule } from '@nestjs/schedule';
     ConfigModule,
     LibModule,
     TasksModule,
-    AttendanceModule,
+    forwardRef(() => AttendanceModule),
     NotificationsModule,
     ScheduleModule.forRoot(),
   ],
   controllers: [ClientsController],
   providers: [ClientsService, ClientCommunicationScheduleService],
-  exports: [ClientsService, ClientCommunicationScheduleService]
+  exports: [ClientsService, ClientCommunicationScheduleService, TypeOrmModule]
 })
 export class ClientsModule { }

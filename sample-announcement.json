@@ -1,0 +1,42 @@
+{
+  "subject": "🚀 Exciting New Features Coming to LORO!",
+  "title": "Major Platform Updates",
+  "greeting": "Hi there",
+  "body": "<p>We're thrilled to announce some amazing new features that will revolutionize how you work with LORO!</p><p><strong>What's New:</strong></p><ul><li>🔄 <strong>Enhanced Dashboard</strong> - New analytics and reporting capabilities</li><li>📱 <strong>Mobile App Updates</strong> - Improved performance and new features</li><li>🔗 <strong>API Integrations</strong> - Connect with your favorite tools seamlessly</li><li>🛡️ <strong>Security Enhancements</strong> - Advanced protection for your data</li></ul><p>These updates represent months of development based on your valuable feedback. We can't wait for you to experience them!</p>",
+  "cta": {
+    "text": "Explore New Features",
+    "url": "https://loro.co.za/features"
+  },
+  "images": [
+    {
+      "url": "https://picsum.photos/600/300?random=1",
+      "alt": "LORO Dashboard Screenshot",
+      "title": "New Dashboard Interface"
+    },
+    {
+      "url": "https://picsum.photos/100/60?random=2",
+      "alt": "Feature Icon",
+      "width": 100,
+      "height": 60,
+      "inline": true
+    }
+  ],
+  "links": [
+    {
+      "text": "📚 Feature Documentation",
+      "url": "https://docs.loro.co.za/new-features",
+      "description": "Complete guide to all new features"
+    },
+    {
+      "text": "🎥 Watch Demo Video", 
+      "url": "https://loro.co.za/demo-video",
+      "description": "5-minute overview of the updates"
+    },
+    {
+      "text": "💬 Join Community Discussion",
+      "url": "https://community.loro.co.za/updates",
+      "description": "Share feedback and connect with other users"
+    }
+  ],
+  "footer": "<p><strong>Need help getting started?</strong></p><p>Our support team is ready to help you make the most of these new features. Don't hesitate to reach out!</p><p><em>The updates will be rolled out gradually over the next 48 hours. You'll receive a notification once they're available in your account.</em></p>"
+}

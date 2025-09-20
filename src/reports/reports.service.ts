@@ -1,4 +1,4 @@
-import { Injectable, Inject, NotFoundException, OnModuleInit, Logger } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException, OnModuleInit, Logger, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThanOrEqual, Between, Not } from 'typeorm';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
@@ -11,6 +11,7 @@ import { Cron } from '@nestjs/schedule';
 import { Report } from './entities/report.entity';
 import { User } from '../user/entities/user.entity';
 import { Organisation } from '../organisation/entities/organisation.entity';
+import { Attendance } from '../attendance/entities/attendance.entity';
 
 // DTOs and Enums
 import { ReportType } from './constants/report-types.enum';
@@ -82,6 +83,8 @@ export class ReportsService implements OnModuleInit {
 		private userRepository: Repository<User>,
 		@InjectRepository(Organisation)
 		private organisationRepository: Repository<Organisation>,
+		@InjectRepository(Attendance)
+		private attendanceRepository: Repository<Attendance>,
 		private mainReportGenerator: MainReportGenerator,
 		private quotationReportGenerator: QuotationReportGenerator,
 		private userDailyReportGenerator: UserDailyReportGenerator,
@@ -93,6 +96,7 @@ export class ReportsService implements OnModuleInit {
 		private communicationService: CommunicationService,
 		private readonly mapDataReportGenerator: MapDataReportGenerator,
 		private readonly organizationHoursService: OrganizationHoursService,
+		@Inject(forwardRef(() => AttendanceService))
 		private readonly attendanceService: AttendanceService,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 300;
@@ -580,8 +584,8 @@ export class ReportsService implements OnModuleInit {
 	}
 
 	@OnEvent('daily-report')
-	async handleDailyReport(payload: { userId: number; triggeredByActivity?: boolean }) {
-		this.logger.log(`Handling daily report event for user ${payload?.userId}${payload?.triggeredByActivity ? ' (activity-triggered)' : ''}`);
+	async handleDailyReport(payload: { userId: number; attendanceId?: number; triggeredByActivity?: boolean }) {
+		this.logger.log(`Handling daily report event for user ${payload?.userId}${payload?.triggeredByActivity ? ' (activity-triggered)' : ''}${payload?.attendanceId ? `, attendance: ${payload.attendanceId}` : ''}`);
 
 		try {
 			if (!payload || !payload.userId) {
@@ -589,7 +593,7 @@ export class ReportsService implements OnModuleInit {
 				return;
 			}
 
-			const { userId, triggeredByActivity } = payload;
+			const { userId, attendanceId, triggeredByActivity } = payload;
 
 			// Get user to find their organization
 			const user = await this.userRepository.findOne({
@@ -610,6 +614,7 @@ export class ReportsService implements OnModuleInit {
 				organisationId: user.organisation.uid,
 				filters: {
 					userId: userId,
+					attendanceId: attendanceId, // Include the attendance ID that triggered this report
 					triggeredByActivity: triggeredByActivity, // Pass through the activity trigger flag
 					// Use default date range (today)
 				},
@@ -682,17 +687,22 @@ export class ReportsService implements OnModuleInit {
 				this.logger.warn(`Failed to get daily overview for user ${userId}: ${error.message}`);
 			}
 
-			// Enhance params with comprehensive data
-			const enhancedParams = {
-				...params,
-				filters: {
-					...params.filters,
-					attendanceMetrics,
-					dailyOverview,
-					organizationTimezone: orgTimezone,
-					reportGeneratedAt: orgCurrentTime,
-				}
-			};
+		// Enhance params with comprehensive data
+		const enhancedParams = {
+			...params,
+			filters: {
+				...params.filters,
+				attendanceMetrics,
+				dailyOverview,
+				organizationTimezone: orgTimezone,
+				reportGeneratedAt: orgCurrentTime,
+			} as typeof params.filters & {
+				attendanceMetrics: any;
+				dailyOverview: any;
+				organizationTimezone: string;
+				reportGeneratedAt: Date;
+			}
+		};
 
 			// Generate report data with enhanced information
 			const reportData = await this.userDailyReportGenerator.generate(enhancedParams);
@@ -729,6 +739,24 @@ export class ReportsService implements OnModuleInit {
 			// Save the report
 			const savedReport = await this.reportRepository.save(newReport);
 			this.logger.log(`Comprehensive daily report saved with ID: ${savedReport.uid} for user ${userId}`);
+
+			// Link the attendance record to the generated report (bidirectional linking)
+			const attendanceId = enhancedParams.filters?.attendanceId;
+			if (attendanceId) {
+				try {
+					this.logger.debug(`Linking attendance record ${attendanceId} to report ${savedReport.uid}`);
+					await this.attendanceRepository.update(
+						{ uid: attendanceId },
+						{ dailyReport: savedReport }
+					);
+					this.logger.log(`Successfully linked attendance ${attendanceId} to daily report ${savedReport.uid}`);
+				} catch (linkingError) {
+					this.logger.error(`Failed to link attendance ${attendanceId} to report ${savedReport.uid}: ${linkingError.message}`);
+					// Don't fail the report generation if linking fails
+				}
+			} else {
+				this.logger.debug('No attendance ID provided - skipping attendance-report linking');
+			}
 
 			// Emit event to send email (single email delivery)
 			this.eventEmitter.emit('report.generated', {

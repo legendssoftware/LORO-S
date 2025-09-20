@@ -1,0 +1,74 @@
+<!-- Greeting -->
+{{#if greeting}}
+<div class="greeting">
+	{{greeting}} {{fallback recipientName "Team Member"}},
+</div>
+{{else}}
+<div class="greeting">
+	Hello {{fallback recipientName "Team Member"}},
+</div>
+{{/if}}
+
+<!-- Main Message -->
+<div class="message">
+	{{{body}}}
+</div>
+
+<!-- Inline Images for Content -->
+{{#if images}}
+<div style="margin: 20px 0;">
+	{{#each images}}
+	<div style="{{#if this.inline}}display: inline-block; margin: 0 10px 10px 0; vertical-align: top;{{else}}text-align: center; margin: 20px 0;{{/if}}">
+		<img src="{{this.url}}" alt="{{this.alt}}" 
+			 style="{{#if this.inline}}max-width: {{fallback this.width '150'}}px; max-height: {{fallback this.height '100'}}px;{{else}}max-width: 100%; height: auto;{{/if}} border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);{{#if this.width}} width: {{this.width}}px;{{/if}}{{#if this.height}} height: {{this.height}}px;{{/if}}"
+			 title="{{fallback this.title this.alt}}" />
+		{{#if this.title}}
+		{{#unless this.inline}}
+		<p style="font-size: 14px; color: #7f8c8d; margin: 10px 0 0 0; font-style: italic; text-align: center;">
+			{{this.title}}
+		</p>
+		{{/unless}}
+		{{/if}}
+	</div>
+	{{/each}}
+</div>
+{{/if}}
+
+<!-- Call to Action -->
+{{#if cta}}
+<div class="cta-section">
+	<a href="{{cta.url}}" class="cta-button">
+		{{cta.text}}
+	</a>
+</div>
+{{/if}}
+
+<!-- Useful Links -->
+{{#if links}}
+<div class="info-card">
+	<h3>Useful Links</h3>
+	<div style="display: flex; flex-direction: column; gap: 15px;">
+		{{#each links}}
+		<div style="padding: 12px; background: rgba(168, 85, 247, 0.05); border-radius: 8px; border-left: 3px solid #A855F7;">
+			<a href="{{this.url}}" style="color: #A855F7; text-decoration: none; font-weight: 600; font-size: 16px; display: block; margin-bottom: 5px;">
+				{{this.text}}
+			</a>
+			{{#if this.description}}
+			<p style="margin: 0; color: #4b5563; font-size: 14px; line-height: 1.5;">
+				{{this.description}}
+			</p>
+			{{/if}}
+		</div>
+		{{/each}}
+	</div>
+</div>
+{{/if}}
+
+<!-- Custom Footer Content -->
+{{#if footer}}
+<div class="info-card" style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border-left-color: #0ea5e9;">
+	<div style="color: #0c4a6e; font-size: 15px; line-height: 1.6;">
+		{{{footer}}}
+	</div>
+</div>
+{{/if}}

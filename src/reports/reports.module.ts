@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { ReportsService } from './reports.service';
 import { ReportsController } from './reports.controller';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -116,7 +116,7 @@ import { XPTransaction } from '../rewards/entities/xp-transaction.entity';
 		CommunicationModule,
 		RewardsModule,
 		TrackingModule,
-		AttendanceModule,
+		forwardRef(() => AttendanceModule),
 	],
 	controllers: [ReportsController],
 	providers: [

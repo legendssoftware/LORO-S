@@ -17,4 +17,17 @@ export interface GeocodingResult {
   address: Address;
   placeId: string;
   formattedAddress: string;
+  geometry?: {
+    location: { lat: number; lng: number };
+    locationType?: string;
+    viewport?: {
+      northeast: { lat: number; lng: number };
+      southwest: { lat: number; lng: number };
+    };
+    bounds?: {
+      northeast: { lat: number; lng: number };
+      southwest: { lat: number; lng: number };
+    };
+  };
+  types?: string[];
 } 

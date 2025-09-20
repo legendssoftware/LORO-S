@@ -25,6 +25,6 @@ import { Task } from '../tasks/entities/task.entity';
   ],
   controllers: [LeadsController],
   providers: [LeadsService, LeadsReminderService, LeadScoringService],
-  exports: [LeadsService, LeadScoringService],
+  exports: [LeadsService, LeadScoringService, TypeOrmModule],
 })
 export class LeadsModule { }

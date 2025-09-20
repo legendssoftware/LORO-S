@@ -45,6 +45,7 @@ import {
 	MorningReportData,
 	EveningReportData,
 	UserReInvitationData,
+	UserPreferencesUpdatedData,
 	AssetEmailData,
 	AssetTransferredEmailData,
 	AssetUpdatedEmailData,
@@ -85,6 +86,7 @@ import {
 	UserTargetDeletedEmailData,
 	UserTargetUpdatedEmailData,
 	AppUpdateNotificationData,
+	BulkAnnouncementEmailData,
 	ClientProfileUpdateConfirmationData,
 	ClientProfileUpdateAdminData,
 	ClientCommunicationReminderData,
@@ -565,6 +567,11 @@ class EmailTemplateService {
 		return this.renderTemplate('auth/user-re-invitation.hbs', data);
 	}
 
+	// User preferences updated template
+	userPreferencesUpdated(data: UserPreferencesUpdatedData): string {
+		return this.renderTemplate('system/user-preferences-updated.hbs', data);
+	}
+
 	// Client Templates
 	clientPasswordReset(data: PasswordResetData): string {
 		return this.renderTemplate('client/password-reset.hbs', data);
@@ -824,6 +831,16 @@ class EmailTemplateService {
 	// App/System Templates
 	appUpdateNotification(data: AppUpdateNotificationData): string {
 		return this.renderTemplate('system/app-update-notification.hbs', data);
+	}
+
+	bulkAnnouncement(data: BulkAnnouncementEmailData): string {
+		// Prepare data for base template
+		const templateData = {
+			...data,
+			headerTitle: data.title || 'Important Announcement',
+			headerSubtitle: data.greeting ? `${data.greeting} ${data.recipientName}` : `Hello ${data.recipientName}`,
+		};
+		return this.renderTemplate('system/bulk-announcement.hbs', templateData);
 	}
 
 	// Client Profile Update Templates

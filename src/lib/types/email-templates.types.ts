@@ -1036,6 +1036,24 @@ export interface UserReInvitationData extends BaseEmailData {
 	branchName: string;
 }
 
+export interface UserPreferencesUpdatedData extends BaseEmailData {
+	userEmail: string;
+	userName: string;
+	userFirstName: string;
+	platformName: string;
+	loginUrl: string;
+	supportEmail: string;
+	organizationName: string;
+	branchName: string;
+	dashboardUrl: string;
+	settingsUrl: string;
+	updateTime: string;
+	preferenceChanges: Array<{
+		displayName: string;
+		displayValue: string;
+	}>;
+}
+
 export interface LeadConvertedClientData extends BaseEmailData {
 	clientId: number;
 	conversionDate: string;
@@ -1850,6 +1868,37 @@ export interface ClientProfileUpdateAdminData extends BaseEmailData {
 	};
 }
 
+export interface BulkAnnouncementEmailData extends BaseEmailData {
+	recipientName: string;
+	recipientEmail: string;
+	subject: string;
+	title?: string;
+	greeting?: string;
+	body: string;
+	cta?: {
+		text: string;
+		url: string;
+	};
+	images?: Array<{
+		url: string;
+		alt: string;
+		title?: string;
+		width?: number;
+		height?: number;
+		inline?: boolean; // For small images that can be inline with text
+	}>;
+	links?: Array<{
+		text: string;
+		url: string;
+		description?: string;
+	}>;
+	footer?: string;
+	companyName?: string;
+	appUrl?: string;
+	supportEmail?: string;
+	currentYear?: number;
+}
+
 export interface ClientCommunicationReminderData extends BaseEmailData {
 	salesRepName: string;
 	salesRepEmail: string;
@@ -2282,6 +2331,7 @@ export interface EmailDataMap {
 	[EmailType.LEAVE_STATUS_UPDATE_ADMIN]: LeaveStatusUpdateAdminData;
 	[EmailType.LEAVE_DELETED_NOTIFICATION]: LeaveDeletedNotificationData;
 	[EmailType.USER_RE_INVITATION]: UserReInvitationData;
+	[EmailType.USER_PREFERENCES_UPDATED]: UserPreferencesUpdatedData;
 	// Asset related email mappings
 	[EmailType.ASSET_ASSIGNED]: AssetEmailData;
 	[EmailType.ASSET_TRANSFERRED]: AssetTransferredEmailData;
@@ -2341,6 +2391,7 @@ export interface EmailDataMap {
 	[EmailType.LEAD_TARGET_ACHIEVEMENT_ADMIN]: LeadTargetAchievementAdminData;
 	// App/System notification email mappings
 	[EmailType.APP_UPDATE_NOTIFICATION]: AppUpdateNotificationData;
+	[EmailType.BULK_ANNOUNCEMENT]: BulkAnnouncementEmailData;
 	// Approval email mappings
 	    [EmailType.APPROVAL_CREATED]: ApprovalEmailData;
     [EmailType.APPROVAL_SUBMITTED]: ApprovalEmailData;

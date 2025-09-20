@@ -18,7 +18,9 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "jest --config ./test/jest-e2e.json"
+    "test:e2e": "jest --config ./test/jest-e2e.json",
+    "bulk-email": "ts-node -r tsconfig-paths/register src/scripts/bulk-email.script.ts",
+    "bulk-email:help": "npm run bulk-email -- --help"
   },
   "dependencies": {
     "@apollo/server": "^4.11.2",
@@ -50,6 +52,7 @@
     "@types/node-fetch": "^2.6.12",
     "@types/nodemailer": "^6.4.17",
     "@types/pdfkit": "^0.13.9",
+    "@types/yargs": "^17.0.33",
     "axios": "^1.7.8",
     "bcrypt": "^5.1.1",
     "bull": "^4.16.5",
@@ -75,6 +78,7 @@
     "type-fest": "^4.10.2",
     "typeorm": "^0.3.20",
     "ua-parser-js": "^2.0.4",
+    "yargs": "^18.0.0",
     "zod": "^3.22.4"
   },
   "devDependencies": {

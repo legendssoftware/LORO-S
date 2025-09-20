@@ -159,6 +159,7 @@ export enum EmailType {
 	LEAD_TARGET_ACHIEVEMENT_ADMIN = 'lead_target_achievement_admin',
 	// App/System notifications
 	APP_UPDATE_NOTIFICATION = 'app_update_notification',
+	BULK_ANNOUNCEMENT = 'bulk_announcement',
 	// Approval related emails
 	APPROVAL_CREATED = 'approval_created',
 	APPROVAL_SUBMITTED = 'approval_submitted',

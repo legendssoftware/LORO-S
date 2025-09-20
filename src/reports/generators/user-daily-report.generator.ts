@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, In, MoreThanOrEqual, Not, Repository, LessThanOrEqual, IsNull } from 'typeorm';
 import { User } from '../../user/entities/user.entity';
@@ -54,6 +54,7 @@ export class UserDailyReportGenerator {
 		private xpTransactionRepository: Repository<XPTransaction>,
 		@InjectRepository(UserTarget)
 		private userTargetRepository: Repository<UserTarget>,
+		@Inject(forwardRef(() => AttendanceService))
 		private attendanceService: AttendanceService,
 		private trackingService: TrackingService,
 		private organisationHoursService: OrganisationHoursService,
@@ -149,7 +150,7 @@ export class UserDailyReportGenerator {
 	}
 
 	async generate(params: ReportParamsDto): Promise<Record<string, any>> {
-		const { userId, dateRange, triggeredByActivity } = params.filters || {};
+		const { userId, dateRange, triggeredByActivity, attendanceId } = params.filters || {};
 
 		if (!userId) {
 			throw new Error('User ID is required for generating a daily user report');
@@ -235,7 +236,7 @@ export class UserDailyReportGenerator {
 				predictiveAnalytics,
 				wellnessMetrics,
 			] = await Promise.all([
-				this.collectAttendanceData(userId, startDate, endDate),
+				this.collectAttendanceData(userId, startDate, endDate, attendanceId),
 				this.collectTaskMetrics(userId, startDate, endDate),
 				this.collectLeadMetrics(userId, startDate, endDate),
 				this.collectJournalData(userId, startDate, endDate),
@@ -390,7 +391,7 @@ export class UserDailyReportGenerator {
 		}
 	}
 
-	private async collectAttendanceData(userId: number, startDate: Date, endDate: Date) {
+	private async collectAttendanceData(userId: number, startDate: Date, endDate: Date, triggeringAttendanceId?: number) {
 		// Get user with organization info for timezone formatting
 		const user = await this.userRepository.findOne({
 			where: { uid: userId },
@@ -415,6 +416,17 @@ export class UserDailyReportGenerator {
 		// Get the first check-in and last check-out
 		const firstRecord = attendanceRecords[0];
 		const lastRecord = attendanceRecords[attendanceRecords.length - 1];
+
+		// Identify the triggering attendance record if provided
+		let triggeringRecord = null;
+		if (triggeringAttendanceId) {
+			triggeringRecord = attendanceRecords.find(record => record.uid === triggeringAttendanceId);
+			if (triggeringRecord) {
+				this.logger.debug(`Found triggering attendance record ${triggeringAttendanceId} for report generation`);
+			} else {
+				this.logger.warn(`Triggering attendance record ${triggeringAttendanceId} not found in today's records`);
+			}
+		}
 
 		// Find active shift
 		const activeShift = await this.attendanceRepository.findOne({
@@ -481,6 +493,15 @@ export class UserDailyReportGenerator {
 			onBreak: activeShift?.status === AttendanceStatus.ON_BREAK,
 			breakDetails: await this.formatBreakDetails(attendanceRecords, organizationId),
 			isCurrentlyWorking: !!activeShift,
+			// Include information about the triggering attendance record
+			triggeringRecord: triggeringRecord ? {
+				uid: triggeringRecord.uid,
+				checkIn: triggeringRecord.checkIn ? await this.formatTimeInOrganizationTimezone(new Date(triggeringRecord.checkIn), organizationId, 'HH:mm:ss') : null,
+				checkOut: triggeringRecord.checkOut ? await this.formatTimeInOrganizationTimezone(new Date(triggeringRecord.checkOut), organizationId, 'HH:mm:ss') : null,
+				duration: triggeringRecord.duration,
+				overtime: triggeringRecord.overtime,
+				status: triggeringRecord.status,
+			} : null,
 		};
 	}
 

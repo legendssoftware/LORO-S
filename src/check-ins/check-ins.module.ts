@@ -9,6 +9,7 @@ import { User } from '../user/entities/user.entity';
 import { Client } from 'src/clients/entities/client.entity';
 import { OrganisationModule } from '../organisation/organisation.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { LibModule } from '../lib/lib.module';
 
 @Module({
 	imports: [
@@ -17,9 +18,10 @@ import { NotificationsModule } from '../notifications/notifications.module';
 		RewardsModule,
 		OrganisationModule,
 		NotificationsModule,
+		LibModule,
 	],
 	controllers: [CheckInsController],
 	providers: [CheckInsService],
-	exports: [CheckInsService],
+	exports: [CheckInsService, TypeOrmModule],
 })
 export class CheckInsModule {}

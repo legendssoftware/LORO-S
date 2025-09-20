@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { AttendanceService } from './attendance.service';
 import { AttendanceController } from './attendance.controller';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -21,15 +21,28 @@ import { Notification } from '../notifications/entities/notification.entity';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { CommunicationModule } from '../communication/communication.module';
 import { Report } from '../reports/entities/report.entity';
-	
+import { ReportsModule } from '../reports/reports.module';
+import { LibModule } from '../lib/lib.module';
+
 @Module({
 	imports: [
 		LicensingModule,
-		TypeOrmModule.forFeature([Attendance, CheckIn, User, Organisation, OrganisationHours, OrganisationSettings, Notification, Report]),
+		TypeOrmModule.forFeature([
+			Attendance,
+			CheckIn,
+			User,
+			Organisation,
+			OrganisationHours,
+			OrganisationSettings,
+			Notification,
+			Report,
+		]),
 		UserModule,
 		RewardsModule,
 		NotificationsModule,
 		CommunicationModule,
+		forwardRef(() => ReportsModule),
+		LibModule,
 		CacheModule.registerAsync({
 			imports: [ConfigModule],
 			useFactory: async (configService: ConfigService) => {
