@@ -1053,4 +1053,187 @@ export class TrackingController {
 			}
 		};
 	}
+
+	@Post('re-cal/:ref')
+	@UseGuards(AuthGuard)
+	@ApiBearerAuth()
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER, AccessLevel.USER)
+	@ApiOperation({
+		summary: 'Recalculate tracking data for a user',
+		description: `
+		Recalculates tracking analytics for a specific user by filtering out virtual/fake locations 
+		and recomputing all distance, speed, and location analytics.
+		
+		**What it does:**
+		- Fetches all tracking points for the specified user and date
+		- Filters out virtual locations (coordinates containing '122')
+		- Recalculates distances, speeds, and trip analytics
+		- Updates geocoding for points without addresses
+		- Provides detailed information about filtered points
+		
+		**Use Cases:**
+		- Correcting reports affected by fake GPS locations
+		- Cleaning up tracking data after detecting anomalies
+		- Regenerating accurate analytics after data quality issues
+		- Administrative cleanup of corrupted tracking data
+		
+		**Query Parameters:**
+		- \`date\` (optional) - Date in YYYY-MM-DD format (defaults to today)
+		
+		**Example Usage:**
+		\`\`\`
+		POST /gps/re-cal/123?date=2024-01-15
+		\`\`\`
+		`,
+	})
+	@ApiParam({
+		name: 'ref',
+		description: 'User ID to recalculate tracking data for',
+		type: 'number',
+		example: 123
+	})
+	@ApiBody({
+		required: false,
+		description: 'Optional request body (can be empty)',
+		schema: {
+			type: 'object',
+			properties: {
+				date: {
+					type: 'string',
+					format: 'date',
+					example: '2024-01-15',
+					description: 'Optional date override in YYYY-MM-DD format'
+				}
+			}
+		}
+	})
+	@ApiOkResponse({
+		description: 'Tracking data recalculated successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Tracking data recalculated successfully with virtual locations filtered out' },
+				data: {
+					type: 'object',
+					properties: {
+						user: {
+							type: 'object',
+							properties: {
+								uid: { type: 'number', example: 123 },
+								name: { type: 'string', example: 'John' },
+								surname: { type: 'string', example: 'Doe' },
+								email: { type: 'string', example: 'john.doe@loro.co.za' },
+								branch: { type: 'string', example: 'Pretoria South Africa' },
+								organisation: { type: 'string', example: 'Orrbit Technologies' }
+							}
+						},
+						date: { type: 'string', example: '2024-01-15' },
+						totalDistance: { type: 'string', example: '25.7 km' },
+						trackingPoints: { type: 'array', description: 'Filtered tracking points without virtual locations' },
+						tripSummary: {
+							type: 'object',
+							properties: {
+								totalDistanceKm: { type: 'number', example: 25.7 },
+								totalTimeMinutes: { type: 'number', example: 480 },
+								averageSpeedKmh: { type: 'number', example: 35.5 },
+								movingTimeMinutes: { type: 'number', example: 120 },
+								stoppedTimeMinutes: { type: 'number', example: 360 },
+								numberOfStops: { type: 'number', example: 8 },
+								maxSpeedKmh: { type: 'number', example: 80.2 }
+							}
+						},
+						locationAnalysis: { type: 'object', description: 'Detailed location and stop analysis' },
+						geocodingStatus: { type: 'object', description: 'Address resolution status' }
+					}
+				},
+				recalculationInfo: {
+					type: 'object',
+					properties: {
+						originalPointsCount: { type: 'number', example: 45, description: 'Total points before filtering' },
+						filteredPointsCount: { type: 'number', example: 38, description: 'Valid points after filtering' },
+						virtualPointsRemoved: { type: 'number', example: 7, description: 'Number of virtual/fake locations removed' },
+						recalculatedAt: { type: 'string', format: 'date-time', description: 'When recalculation was performed' }
+					}
+				}
+			}
+		}
+	})
+	@ApiNotFoundResponse({ 
+		description: 'User not found',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'User with ID 123 not found' }
+			}
+		}
+	})
+	@ApiBadRequestResponse({ 
+		description: 'Invalid user ID provided',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Valid user ID is required' }
+			}
+		}
+	})
+	async recalculateUserTracking(
+		@Param('ref') ref: number,
+		@Body() body: { date?: string } = {},
+		@Req() req: AuthenticatedRequest
+	) {
+		try {
+			// Validate user ID
+			const userId = Number(ref);
+			if (!userId || userId <= 0) {
+				return {
+					message: 'Valid user ID is required',
+					data: null,
+					recalculationInfo: {
+						originalPointsCount: 0,
+						filteredPointsCount: 0,
+						virtualPointsRemoved: 0,
+						recalculatedAt: new Date().toISOString(),
+					}
+				};
+			}
+
+			// Parse date from body or query params, or use today
+			let targetDate = new Date();
+			
+			// Check body first, then query params
+			const dateString = body.date || req.query.date;
+			if (dateString) {
+				const parsedDate = new Date(dateString as string);
+				if (!isNaN(parsedDate.getTime())) {
+					targetDate = parsedDate;
+				} else {
+					return {
+						message: 'Invalid date format. Please use YYYY-MM-DD format.',
+						data: null,
+						recalculationInfo: {
+							originalPointsCount: 0,
+							filteredPointsCount: 0,
+							virtualPointsRemoved: 0,
+							recalculatedAt: new Date().toISOString(),
+						}
+					};
+				}
+			}
+
+			// Call the service method to recalculate
+			return this.trackingService.recalculateUserTrackingForDay(userId, targetDate);
+
+		} catch (error) {
+			return {
+				message: `Failed to recalculate tracking data: ${error.message}`,
+				data: null,
+				recalculationInfo: {
+					originalPointsCount: 0,
+					filteredPointsCount: 0,
+					virtualPointsRemoved: 0,
+					recalculatedAt: new Date().toISOString(),
+				}
+			};
+		}
+	}
 }

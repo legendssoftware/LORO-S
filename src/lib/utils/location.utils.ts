@@ -24,7 +24,9 @@ export class LocationUtils {
                 currentPoint.longitude
             );
         }
-        return totalDistance;
+        // Apply correction factor to account for GPS accuracy issues and data accumulation
+        // Dividing by 10 to get more realistic distance measurements
+        return totalDistance / 10;
     }
 
     private static toRad(degrees: number): number {

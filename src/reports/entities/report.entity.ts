@@ -38,6 +38,48 @@ export class Report {
 	@Column({ nullable: true })
 	notes: string;
 
+	// GPS tracking data
+	@Column({ type: 'json', nullable: true })
+	gpsData: {
+		tripSummary?: {
+			totalDistanceKm: number;
+			totalTimeMinutes: number;
+			averageSpeedKmh: number;
+			movingTimeMinutes: number;
+			stoppedTimeMinutes: number;
+			numberOfStops: number;
+			maxSpeedKmh: number;
+		};
+		stops?: Array<{
+			latitude: number;
+			longitude: number;
+			address: string;
+			startTime: string;
+			endTime: string;
+			durationMinutes: number;
+			durationFormatted: string;
+			pointsCount: number;
+		}>;
+		timeSpentByLocation?: Record<string, number>;
+		averageTimePerLocationFormatted?: string;
+		locationAnalysis?: {
+			locationsVisited: number;
+			averageTimePerLocation: number;
+			averageTimePerLocationMinutes: number;
+		};
+		geocodingStatus?: {
+			successful: number;
+			failed: number;
+			usedFallback: boolean;
+		};
+	};
+
+	@Column({ type: 'decimal', precision: 10, scale: 6, nullable: true })
+	totalDistanceKm: number;
+
+	@Column({ type: 'int', nullable: true })
+	totalStops: number;
+
 	@ManyToOne(() => Organisation, (organisation) => organisation.reports)
 	organisation: Organisation;
 

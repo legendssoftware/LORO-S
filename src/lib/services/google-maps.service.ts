@@ -1358,6 +1358,411 @@ export class GoogleMapsService implements OnModuleInit {
   }
 
   // ======================================================
+  // GPS TRACKING AND STOP ANALYSIS METHODS
+  // ======================================================
+
+  /**
+   * Analyze GPS tracking data to detect stops and calculate trip metrics
+   */
+  async analyzeGPSTrackingData(
+    trackingPoints: Array<{
+      latitude: number;
+      longitude: number;
+      createdAt: Date;
+      address?: string;
+    }>,
+    options: {
+      minStopDurationMinutes?: number;
+      maxStopRadiusMeters?: number;
+      geocodeStops?: boolean;
+    } = {}
+  ): Promise<{
+    tripSummary: {
+      totalDistanceKm: number;
+      totalTimeMinutes: number;
+      averageSpeedKmh: number;
+      movingTimeMinutes: number;
+      stoppedTimeMinutes: number;
+      numberOfStops: number;
+      maxSpeedKmh: number;
+    };
+    stops: Array<{
+      latitude: number;
+      longitude: number;
+      address: string;
+      startTime: string;
+      endTime: string;
+      durationMinutes: number;
+      durationFormatted: string;
+      pointsCount: number;
+    }>;
+    timeSpentByLocation: Record<string, number>;
+    averageTimePerLocationFormatted: string;
+    locationAnalysis: {
+      locationsVisited: number;
+      averageTimePerLocation: number;
+      averageTimePerLocationMinutes: number;
+    };
+  }> {
+    const operationId = `gps-analysis-${Date.now()}`;
+    this.logger.debug(`[${operationId}] Starting GPS tracking data analysis for ${trackingPoints.length} points`);
+
+    // Default options
+    const {
+      minStopDurationMinutes = 3,
+      maxStopRadiusMeters = 100,
+      geocodeStops = true
+    } = options;
+
+    if (trackingPoints.length < 2) {
+      return {
+        tripSummary: {
+          totalDistanceKm: 0,
+          totalTimeMinutes: 0,
+          averageSpeedKmh: 0,
+          movingTimeMinutes: 0,
+          stoppedTimeMinutes: 0,
+          numberOfStops: 0,
+          maxSpeedKmh: 0,
+        },
+        stops: [],
+        timeSpentByLocation: {},
+        averageTimePerLocationFormatted: '0m',
+        locationAnalysis: {
+          locationsVisited: 0,
+          averageTimePerLocation: 0,
+          averageTimePerLocationMinutes: 0,
+        },
+      };
+    }
+
+    // Sort points by time
+    const sortedPoints = trackingPoints.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+    // Calculate total distance using corrected formula
+    const totalDistanceKm = this.calculateTotalDistanceFromPoints(sortedPoints);
+
+    // Calculate time metrics
+    const startTime = new Date(sortedPoints[0].createdAt).getTime();
+    const endTime = new Date(sortedPoints[sortedPoints.length - 1].createdAt).getTime();
+    const totalTimeMinutes = (endTime - startTime) / (1000 * 60);
+
+    // Detect stops
+    const stops = await this.detectStops(sortedPoints, minStopDurationMinutes, maxStopRadiusMeters, geocodeStops);
+
+    // Calculate speed metrics
+    const { movingTimeMinutes, maxSpeedKmh } = this.calculateSpeedMetrics(sortedPoints);
+    const stoppedTimeMinutes = totalTimeMinutes - movingTimeMinutes;
+    const averageSpeedKmh = totalTimeMinutes > 0 ? (totalDistanceKm / (totalTimeMinutes / 60)) : 0;
+
+    // Calculate time spent by location
+    const timeSpentByLocation = await this.calculateTimeSpentByLocation(sortedPoints, stops);
+
+    // Calculate location analysis
+    const locationAnalysis = this.calculateLocationAnalysis(stops, timeSpentByLocation);
+
+    this.logger.debug(`[${operationId}] GPS analysis completed: ${stops.length} stops detected, ${totalDistanceKm.toFixed(2)}km total distance`);
+
+    return {
+      tripSummary: {
+        totalDistanceKm: Math.round(totalDistanceKm * 100) / 100,
+        totalTimeMinutes: Math.round(totalTimeMinutes),
+        averageSpeedKmh: Math.round(averageSpeedKmh * 10) / 10,
+        movingTimeMinutes: Math.round(movingTimeMinutes),
+        stoppedTimeMinutes: Math.round(stoppedTimeMinutes),
+        numberOfStops: stops.length,
+        maxSpeedKmh: Math.round(maxSpeedKmh * 10) / 10,
+      },
+      stops,
+      timeSpentByLocation,
+      averageTimePerLocationFormatted: this.formatDuration(locationAnalysis.averageTimePerLocationMinutes),
+      locationAnalysis,
+    };
+  }
+
+  /**
+   * Calculate total distance from tracking points with corrected formula
+   */
+  private calculateTotalDistanceFromPoints(points: Array<{ latitude: number; longitude: number }>): number {
+    let totalDistance = 0;
+    for (let i = 1; i < points.length; i++) {
+      const prevPoint = points[i - 1];
+      const currentPoint = points[i];
+      const distance = this.calculateDistance(
+        { latitude: prevPoint.latitude, longitude: prevPoint.longitude },
+        { latitude: currentPoint.latitude, longitude: currentPoint.longitude }
+      );
+      totalDistance += distance;
+    }
+    // Apply the same correction factor as LocationUtils
+    return totalDistance / 10;
+  }
+
+  /**
+   * Detect stops in GPS tracking data
+   */
+  private async detectStops(
+    points: Array<{
+      latitude: number;
+      longitude: number;
+      createdAt: Date;
+      address?: string;
+    }>,
+    minStopDurationMinutes: number,
+    maxStopRadiusMeters: number,
+    geocodeStops: boolean
+  ): Promise<Array<{
+    latitude: number;
+    longitude: number;
+    address: string;
+    startTime: string;
+    endTime: string;
+    durationMinutes: number;
+    durationFormatted: string;
+    pointsCount: number;
+  }>> {
+    const stops: any[] = [];
+    let currentStop: any = null;
+
+    for (let i = 0; i < points.length; i++) {
+      const point = points[i];
+
+      if (currentStop === null) {
+        // Start a new potential stop
+        currentStop = {
+          points: [point],
+          startTime: new Date(point.createdAt),
+          endTime: new Date(point.createdAt),
+        };
+      } else {
+        // Check if current point is within stop radius
+        const distanceFromStopCenter = this.calculateDistance(
+          {
+            latitude: currentStop.points.reduce((sum: number, p: any) => sum + p.latitude, 0) / currentStop.points.length,
+            longitude: currentStop.points.reduce((sum: number, p: any) => sum + p.longitude, 0) / currentStop.points.length,
+          },
+          { latitude: point.latitude, longitude: point.longitude }
+        );
+
+        if (distanceFromStopCenter * 1000 <= maxStopRadiusMeters) {
+          // Point is within stop radius, add to current stop
+          currentStop.points.push(point);
+          currentStop.endTime = new Date(point.createdAt);
+        } else {
+          // Point is outside stop radius, finalize current stop if it meets duration threshold
+          const stopDurationMinutes = (currentStop.endTime.getTime() - currentStop.startTime.getTime()) / (1000 * 60);
+
+          if (stopDurationMinutes >= minStopDurationMinutes) {
+            const centerLat = currentStop.points.reduce((sum: number, p: any) => sum + p.latitude, 0) / currentStop.points.length;
+            const centerLng = currentStop.points.reduce((sum: number, p: any) => sum + p.longitude, 0) / currentStop.points.length;
+
+            let address = 'Unknown Location';
+            
+            // Try to get address from existing points first
+            const pointWithAddress = currentStop.points.find((p: any) => p.address);
+            if (pointWithAddress) {
+              address = pointWithAddress.address;
+            } else if (geocodeStops) {
+              // Geocode the stop location
+              try {
+                const geocodingResult = await this.reverseGeocode({ latitude: centerLat, longitude: centerLng });
+                address = geocodingResult.formattedAddress;
+              } catch (error) {
+                this.logger.warn(`Failed to geocode stop location: ${error.message}`);
+                address = `${centerLat.toFixed(6)}, ${centerLng.toFixed(6)}`;
+              }
+            }
+
+            stops.push({
+              latitude: centerLat,
+              longitude: centerLng,
+              address,
+              startTime: currentStop.startTime.toISOString(),
+              endTime: currentStop.endTime.toISOString(),
+              durationMinutes: Math.round(stopDurationMinutes),
+              durationFormatted: this.formatDuration(stopDurationMinutes),
+              pointsCount: currentStop.points.length,
+            });
+          }
+
+          // Start a new potential stop
+          currentStop = {
+            points: [point],
+            startTime: new Date(point.createdAt),
+            endTime: new Date(point.createdAt),
+          };
+        }
+      }
+    }
+
+    // Handle the last stop
+    if (currentStop && currentStop.points.length > 0) {
+      const stopDurationMinutes = (currentStop.endTime.getTime() - currentStop.startTime.getTime()) / (1000 * 60);
+
+      if (stopDurationMinutes >= minStopDurationMinutes) {
+        const centerLat = currentStop.points.reduce((sum: number, p: any) => sum + p.latitude, 0) / currentStop.points.length;
+        const centerLng = currentStop.points.reduce((sum: number, p: any) => sum + p.longitude, 0) / currentStop.points.length;
+
+        let address = 'Unknown Location';
+        
+        const pointWithAddress = currentStop.points.find((p: any) => p.address);
+        if (pointWithAddress) {
+          address = pointWithAddress.address;
+        } else if (geocodeStops) {
+          try {
+            const geocodingResult = await this.reverseGeocode({ latitude: centerLat, longitude: centerLng });
+            address = geocodingResult.formattedAddress;
+          } catch (error) {
+            this.logger.warn(`Failed to geocode stop location: ${error.message}`);
+            address = `${centerLat.toFixed(6)}, ${centerLng.toFixed(6)}`;
+          }
+        }
+
+        stops.push({
+          latitude: centerLat,
+          longitude: centerLng,
+          address,
+          startTime: currentStop.startTime.toISOString(),
+          endTime: currentStop.endTime.toISOString(),
+          durationMinutes: Math.round(stopDurationMinutes),
+          durationFormatted: this.formatDuration(stopDurationMinutes),
+          pointsCount: currentStop.points.length,
+        });
+      }
+    }
+
+    return stops;
+  }
+
+  /**
+   * Calculate speed metrics from tracking points
+   */
+  private calculateSpeedMetrics(points: Array<{
+    latitude: number;
+    longitude: number;
+    createdAt: Date;
+  }>): { movingTimeMinutes: number; maxSpeedKmh: number } {
+    let movingTimeMinutes = 0;
+    let maxSpeedKmh = 0;
+
+    for (let i = 1; i < points.length; i++) {
+      const prevPoint = points[i - 1];
+      const currentPoint = points[i];
+      
+      const distance = this.calculateDistance(
+        { latitude: prevPoint.latitude, longitude: prevPoint.longitude },
+        { latitude: currentPoint.latitude, longitude: currentPoint.longitude }
+      );
+      
+      const timeDiffHours = (new Date(currentPoint.createdAt).getTime() - new Date(prevPoint.createdAt).getTime()) / (1000 * 60 * 60);
+      
+      if (timeDiffHours > 0 && distance > 0.005) { // More than 5 meters movement
+        const speedKmh = distance / timeDiffHours;
+        
+        if (speedKmh <= 200) { // Reasonable speed limit
+          maxSpeedKmh = Math.max(maxSpeedKmh, speedKmh);
+          movingTimeMinutes += timeDiffHours * 60;
+        }
+      }
+    }
+
+    return { movingTimeMinutes, maxSpeedKmh };
+  }
+
+  /**
+   * Calculate time spent by location
+   */
+  private async calculateTimeSpentByLocation(
+    points: Array<{
+      latitude: number;
+      longitude: number;
+      createdAt: Date;
+      address?: string;
+    }>,
+    stops: Array<{
+      latitude: number;
+      longitude: number;
+      address: string;
+      startTime: string;
+      endTime: string;
+      durationMinutes: number;
+    }>
+  ): Promise<Record<string, number>> {
+    const timeSpentByLocation: Record<string, number> = {};
+
+    // Add time from detected stops
+    for (const stop of stops) {
+      const address = stop.address || `${stop.latitude.toFixed(6)}, ${stop.longitude.toFixed(6)}`;
+      timeSpentByLocation[address] = (timeSpentByLocation[address] || 0) + stop.durationMinutes;
+    }
+
+    // Add time for points not in stops (moving time distributed by nearby addresses)
+    for (let i = 1; i < points.length; i++) {
+      const prevPoint = points[i - 1];
+      const currentPoint = points[i];
+      
+      const timeDiffMinutes = (new Date(currentPoint.createdAt).getTime() - new Date(prevPoint.createdAt).getTime()) / (1000 * 60);
+      
+      // Check if this point is part of a stop
+      const nearStop = stops.find(stop => {
+        const distanceToStop = this.calculateDistance(
+          { latitude: currentPoint.latitude, longitude: currentPoint.longitude },
+          { latitude: stop.latitude, longitude: stop.longitude }
+        );
+        return distanceToStop * 1000 <= 100; // Within 100 meters
+      });
+
+      if (!nearStop) {
+        // This is movement time, attribute to the current location
+        let address = currentPoint.address;
+        if (!address) {
+          address = `${currentPoint.latitude.toFixed(6)}, ${currentPoint.longitude.toFixed(6)}`;
+        }
+        
+        timeSpentByLocation[address] = (timeSpentByLocation[address] || 0) + timeDiffMinutes;
+      }
+    }
+
+    return timeSpentByLocation;
+  }
+
+  /**
+   * Calculate location analysis metrics
+   */
+  private calculateLocationAnalysis(
+    stops: Array<any>,
+    timeSpentByLocation: Record<string, number>
+  ): {
+    locationsVisited: number;
+    averageTimePerLocation: number;
+    averageTimePerLocationMinutes: number;
+  } {
+    const uniqueLocations = Object.keys(timeSpentByLocation);
+    const totalTime = Object.values(timeSpentByLocation).reduce((sum, time) => sum + time, 0);
+    
+    const locationsVisited = uniqueLocations.length;
+    const averageTimePerLocationMinutes = locationsVisited > 0 ? totalTime / locationsVisited : 0;
+
+    return {
+      locationsVisited,
+      averageTimePerLocation: averageTimePerLocationMinutes,
+      averageTimePerLocationMinutes,
+    };
+  }
+
+  /**
+   * Format duration from minutes to human readable string
+   */
+  private formatDuration(minutes: number): string {
+    if (minutes < 60) {
+      return `${Math.round(minutes)}m`;
+    }
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = Math.round(minutes % 60);
+    return `${hours}h${remainingMinutes > 0 ? ` ${remainingMinutes}m` : ''}`;
+  }
+
+  // ======================================================
   // HELPER METHODS (ENHANCED)
   // ======================================================
 

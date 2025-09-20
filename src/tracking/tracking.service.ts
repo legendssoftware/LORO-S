@@ -3,7 +3,7 @@ import { CreateTrackingDto } from './dto/create-tracking.dto';
 import { UpdateTrackingDto } from './dto/update-tracking.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Tracking } from './entities/tracking.entity';
-import { DeepPartial, Repository, IsNull, Between, MoreThanOrEqual, LessThanOrEqual } from 'typeorm';
+import { DeepPartial, Repository, IsNull, Between, MoreThanOrEqual, LessThanOrEqual, Not, Raw } from 'typeorm';
 import { LocationUtils } from '../lib/utils/location.utils';
 import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays, addDays } from 'date-fns';
 import axios from 'axios';
@@ -36,6 +36,51 @@ export class TrackingService {
 	// ======================================================
 	// HELPER METHODS
 	// ======================================================
+
+	/**
+	 * Check if coordinates represent a virtual/fake location
+	 * Virtual locations contain '122' in either latitude or longitude
+	 * @param latitude - Latitude coordinate
+	 * @param longitude - Longitude coordinate
+	 * @returns True if location is virtual/fake
+	 */
+	private isVirtualLocation(latitude: number, longitude: number): boolean {
+		const latStr = Math.abs(latitude).toString();
+		const lngStr = Math.abs(longitude).toString();
+		
+		// Check if either coordinate contains '122'
+		const hasVirtualMarker = latStr.includes('122') || lngStr.includes('122');
+		
+		if (hasVirtualMarker) {
+			this.logger.debug(`Virtual location detected: lat=${latitude}, lng=${longitude}`);
+		}
+		
+		return hasVirtualMarker;
+	}
+
+	/**
+	 * Get TypeORM where conditions to exclude virtual locations
+	 * @returns Object with latitude and longitude conditions to exclude virtual locations
+	 */
+	private getVirtualLocationFilters(): any {
+		return {
+			latitude: Raw(alias => `ABS(${alias}) NOT LIKE '%122%'`),
+			longitude: Raw(alias => `ABS(${alias}) NOT LIKE '%122%'`),
+		};
+	}
+
+	/**
+	 * Filter out virtual locations from tracking points array
+	 * @param trackingPoints - Array of tracking points
+	 * @returns Filtered array without virtual locations
+	 */
+	private filterVirtualLocations(trackingPoints: Tracking[]): Tracking[] {
+		return trackingPoints.filter(point => 
+			point.latitude && 
+			point.longitude && 
+			!this.isVirtualLocation(point.latitude, point.longitude)
+		);
+	}
 
 	/**
 	 * Generate cache key with prefix
@@ -153,6 +198,16 @@ export class TrackingService {
 			// Validate coordinates are within reasonable ranges
 			if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
 				throw new BadRequestException('Invalid coordinates provided');
+			}
+
+			// Skip virtual locations (coordinates containing '122' indicate virtual/test locations)
+			if (this.isVirtualLocation(latitude, longitude)) {
+				this.logger.debug(`Skipping virtual location with coordinates: ${latitude}, ${longitude} for user: ${createTrackingDto.owner}`);
+				return {
+					message: 'Virtual location skipped - not recorded',
+					data: null,
+					warnings: [{ type: 'VIRTUAL_LOCATION', message: `Virtual location with coordinates ${latitude}, ${longitude} was skipped` }],
+				};
 			}
 
 			this.logger.debug(`Processing coordinates: ${latitude}, ${longitude} with accuracy: ${createTrackingDto.accuracy || 'unknown'}`);
@@ -331,6 +386,8 @@ export class TrackingService {
 			const whereConditions: any = {
 				owner: { uid: userId },
 				timestamp: Between(dateRange.start, dateRange.end),
+				// Exclude virtual locations containing '122' in coordinates
+				...this.getVirtualLocationFilters(),
 			};
 
 			// Add organization filter if provided
@@ -1022,6 +1079,8 @@ export class TrackingService {
 				where: {
 					owner: { uid: userId },
 					createdAt: Between(startOfDay(date), endOfDay(date)),
+					// Exclude virtual locations containing '122' in coordinates
+					...this.getVirtualLocationFilters(),
 				},
 				order: {
 					createdAt: 'ASC',
@@ -1177,7 +1236,11 @@ export class TrackingService {
 	public async trackingByUser(ref: number): Promise<{ message: string; tracking: Tracking[] }> {
 		try {
 			const tracking = await this.trackingRepository.find({
-				where: { owner: { uid: ref } },
+				where: { 
+					owner: { uid: ref },
+					// Exclude virtual locations containing '122' in coordinates
+					...this.getVirtualLocationFilters(),
+				},
 			});
 
 			if (!tracking) {
@@ -1331,6 +1394,8 @@ export class TrackingService {
 				where: {
 					owner: { uid: userId },
 					deletedAt: IsNull(),
+					// Exclude virtual locations containing '122' in coordinates
+					...this.getVirtualLocationFilters(),
 				},
 			});
 
@@ -1467,6 +1532,8 @@ export class TrackingService {
 				deletedAt: IsNull(),
 				latitude: MoreThanOrEqual(-90),
 				longitude: MoreThanOrEqual(-180),
+				// Exclude virtual locations containing '122' in coordinates
+				...this.getVirtualLocationFilters(),
 			};
 
 			if (userId) {
@@ -1669,5 +1736,182 @@ export class TrackingService {
 			averageTimeMinutes,
 			averageTimeFormatted: LocationUtils.formatDuration(averageTimeMinutes),
 		};
+	}
+
+	/**
+	 * Recalculate tracking analytics for a user on a specific date
+	 * This method fetches all tracking points, filters out virtual locations,
+	 * and recalculates all metrics with accurate data
+	 * @param userId - User ID to recalculate data for
+	 * @param date - Date to recalculate (defaults to today)
+	 * @returns Recalculated tracking data with updated analytics
+	 */
+	async recalculateUserTrackingForDay(userId: number, date: Date = new Date()): Promise<{
+		message: string;
+		data: any;
+		recalculationInfo: {
+			originalPointsCount: number;
+			filteredPointsCount: number;
+			virtualPointsRemoved: number;
+			recalculatedAt: string;
+		};
+	}> {
+		const startTime = Date.now();
+		this.logger.log(`Recalculating tracking data for user: ${userId} on date: ${date.toISOString().split('T')[0]}`);
+
+		try {
+			// Validate user exists
+			const user = await this.userRepository.findOne({
+				where: { uid: userId },
+				relations: ['organisation', 'branch'],
+			});
+
+			if (!user) {
+				throw new NotFoundException(`User with ID ${userId} not found`);
+			}
+
+			// Fetch ALL tracking points for the day (including virtual ones initially)
+			// This allows us to see what was filtered out
+			this.logger.debug('Fetching all tracking points for the day (including virtual locations)');
+			const allTrackingPoints = await this.trackingRepository.find({
+				where: {
+					owner: { uid: userId },
+					createdAt: Between(startOfDay(date), endOfDay(date)),
+					deletedAt: IsNull(),
+				},
+				order: {
+					createdAt: 'ASC',
+				},
+			});
+
+			const originalCount = allTrackingPoints.length;
+			this.logger.debug(`Found ${originalCount} total tracking points before filtering`);
+
+			if (originalCount === 0) {
+				return {
+					message: 'No tracking data found for the specified date',
+					data: null,
+					recalculationInfo: {
+						originalPointsCount: 0,
+						filteredPointsCount: 0,
+						virtualPointsRemoved: 0,
+						recalculatedAt: new Date().toISOString(),
+					},
+				};
+			}
+
+			// Filter out virtual locations
+			const filteredTrackingPoints = this.filterVirtualLocations(allTrackingPoints);
+			const filteredCount = filteredTrackingPoints.length;
+			const virtualPointsRemoved = originalCount - filteredCount;
+
+			this.logger.debug(`Filtered out ${virtualPointsRemoved} virtual locations, ${filteredCount} valid points remaining`);
+
+			if (filteredCount === 0) {
+				return {
+					message: 'All tracking points for this date were virtual locations and have been filtered out',
+					data: null,
+					recalculationInfo: {
+						originalPointsCount: originalCount,
+						filteredPointsCount: 0,
+						virtualPointsRemoved,
+						recalculatedAt: new Date().toISOString(),
+					},
+				};
+			}
+
+			// Clear cache for this user to ensure fresh data
+			await this.clearTrackingCache(undefined, userId);
+
+			// Try to geocode tracking points that don't have addresses
+			await this.geocodeTrackingPoints(filteredTrackingPoints);
+
+			// Recalculate all analytics with filtered data
+			const tripAnalysis = this.generateTripAnalysis(filteredTrackingPoints);
+			const stopAnalysis = this.detectAndAnalyzeStops(filteredTrackingPoints);
+
+			// Check if geocoding failed and provide fallback data
+			const pointsWithoutAddress = filteredTrackingPoints.filter(point => !point.address && point.latitude && point.longitude);
+			const geocodingFailed = pointsWithoutAddress.length > 0;
+
+			if (geocodingFailed) {
+				this.logger.warn(`Geocoding failed for ${pointsWithoutAddress.length} tracking points during recalculation. Using fallback location data.`);
+				
+				// Provide fallback addresses using coordinates
+				pointsWithoutAddress.forEach(point => {
+					if (!point.address) {
+						point.address = `${point.latitude.toFixed(4)}, ${point.longitude.toFixed(4)}`;
+					}
+				});
+			}
+
+			const recalculatedData = {
+				user: {
+					uid: user.uid,
+					name: user.name,
+					surname: user.surname,
+					email: user.email,
+					branch: user.branch?.name,
+					organisation: user.organisation?.name,
+				},
+				date: date.toISOString().split('T')[0],
+				totalDistance: tripAnalysis.formattedDistance,
+				trackingPoints: filteredTrackingPoints,
+				locationAnalysis: {
+					locationsVisited: stopAnalysis.locations,
+					averageTimePerLocation: stopAnalysis.averageTimeFormatted,
+					averageTimePerLocationMinutes: stopAnalysis.averageTimeMinutes,
+					timeSpentByLocation: tripAnalysis.locationTimeSpent,
+					averageTimePerLocationFormatted: LocationUtils.formatDuration(stopAnalysis.averageTimeMinutes),
+				},
+				tripSummary: {
+					totalDistanceKm: tripAnalysis.totalDistanceKm,
+					totalTimeMinutes: tripAnalysis.totalTimeMinutes,
+					averageSpeedKmh: tripAnalysis.averageSpeedKmh,
+					movingTimeMinutes: tripAnalysis.movingTimeMinutes,
+					stoppedTimeMinutes: tripAnalysis.stoppedTimeMinutes,
+					numberOfStops: stopAnalysis.stops.length,
+					maxSpeedKmh: tripAnalysis.maxSpeedKmh,
+				},
+				stops: stopAnalysis.stops,
+				geocodingStatus: {
+					successful: filteredTrackingPoints.filter(p => p.address && !p.addressDecodingError).length,
+					failed: pointsWithoutAddress.length,
+					usedFallback: geocodingFailed,
+				},
+			};
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`Successfully recalculated tracking data for user: ${userId} in ${executionTime}ms`);
+
+			return {
+				message: 'Tracking data recalculated successfully with virtual locations filtered out',
+				data: recalculatedData,
+				recalculationInfo: {
+					originalPointsCount: originalCount,
+					filteredPointsCount: filteredCount,
+					virtualPointsRemoved,
+					recalculatedAt: new Date().toISOString(),
+				},
+			};
+
+		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(
+				`Failed to recalculate tracking data for user: ${userId} after ${executionTime}ms. Error: ${error.message}`,
+				error.stack
+			);
+
+			return {
+				message: error?.message || 'Failed to recalculate tracking data',
+				data: null,
+				recalculationInfo: {
+					originalPointsCount: 0,
+					filteredPointsCount: 0,
+					virtualPointsRemoved: 0,
+					recalculatedAt: new Date().toISOString(),
+				},
+			};
+		}
 	}
 }
