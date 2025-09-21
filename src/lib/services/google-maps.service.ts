@@ -1362,7 +1362,91 @@ export class GoogleMapsService implements OnModuleInit {
   // ======================================================
 
   /**
+   * Check if GPS accuracy is acceptable for processing
+   * @param accuracy - GPS accuracy in meters
+   * @returns True if accuracy is acceptable (≤ 20 meters)
+   */
+  private isAcceptableGPSAccuracy(accuracy?: number): boolean {
+    // If no accuracy provided, consider it potentially inaccurate
+    if (accuracy === undefined || accuracy === null) {
+      return false;
+    }
+    
+    const ACCURACY_THRESHOLD_METERS = 20;
+    const isAcceptable = accuracy <= ACCURACY_THRESHOLD_METERS;
+    
+    if (!isAcceptable) {
+      this.logger.debug(`Low accuracy GPS point detected: ${accuracy}m (threshold: ${ACCURACY_THRESHOLD_METERS}m)`);
+    }
+    
+    return isAcceptable;
+  }
+
+  /**
+   * Filter GPS tracking points by accuracy
+   * @param trackingPoints - Array of tracking points
+   * @returns Object with filtered points and accuracy statistics
+   */
+  private filterTrackingPointsByAccuracy(trackingPoints: Array<{
+    latitude: number;
+    longitude: number;
+    createdAt: Date;
+    address?: string;
+    accuracy?: number;
+  }>): {
+    filteredPoints: typeof trackingPoints;
+    originalCount: number;
+    filteredCount: number;
+    inaccurateCount: number;
+    accuracyStats: {
+      hasAccuracy: number;
+      noAccuracy: number;
+      aboveThreshold: number;
+    };
+  } {
+    const originalCount = trackingPoints.length;
+    let hasAccuracy = 0;
+    let noAccuracy = 0;
+    let aboveThreshold = 0;
+
+    const filteredPoints = trackingPoints.filter(point => {
+      if (point.accuracy === undefined || point.accuracy === null) {
+        noAccuracy++;
+        return false; // Skip points with no accuracy data
+      }
+
+      hasAccuracy++;
+      
+      if (!this.isAcceptableGPSAccuracy(point.accuracy)) {
+        aboveThreshold++;
+        return false; // Skip points with poor accuracy
+      }
+
+      return true; // Keep points with good accuracy
+    });
+
+    const filteredCount = filteredPoints.length;
+    const inaccurateCount = originalCount - filteredCount;
+
+    this.logger.debug(`GPS accuracy filtering: ${originalCount} -> ${filteredCount} points. ` +
+      `Removed: ${inaccurateCount} (${noAccuracy} no accuracy, ${aboveThreshold} low accuracy)`);
+
+    return {
+      filteredPoints,
+      originalCount,
+      filteredCount,
+      inaccurateCount,
+      accuracyStats: {
+        hasAccuracy,
+        noAccuracy,
+        aboveThreshold,
+      },
+    };
+  }
+
+  /**
    * Analyze GPS tracking data to detect stops and calculate trip metrics
+   * Now includes accuracy filtering to ensure reliable analysis
    */
   async analyzeGPSTrackingData(
     trackingPoints: Array<{
@@ -1370,11 +1454,13 @@ export class GoogleMapsService implements OnModuleInit {
       longitude: number;
       createdAt: Date;
       address?: string;
+      accuracy?: number;
     }>,
     options: {
       minStopDurationMinutes?: number;
       maxStopRadiusMeters?: number;
       geocodeStops?: boolean;
+      filterByAccuracy?: boolean;
     } = {}
   ): Promise<{
     tripSummary: {
@@ -1403,6 +1489,16 @@ export class GoogleMapsService implements OnModuleInit {
       averageTimePerLocation: number;
       averageTimePerLocationMinutes: number;
     };
+    accuracyReport?: {
+      originalPoints: number;
+      filteredPoints: number;
+      inaccuratePointsRemoved: number;
+      accuracyStats: {
+        hasAccuracy: number;
+        noAccuracy: number;
+        aboveThreshold: number;
+      };
+    };
   }> {
     const operationId = `gps-analysis-${Date.now()}`;
     this.logger.debug(`[${operationId}] Starting GPS tracking data analysis for ${trackingPoints.length} points`);
@@ -1411,10 +1507,32 @@ export class GoogleMapsService implements OnModuleInit {
     const {
       minStopDurationMinutes = 3,
       maxStopRadiusMeters = 100,
-      geocodeStops = true
+      geocodeStops = true,
+      filterByAccuracy = true
     } = options;
 
-    if (trackingPoints.length < 2) {
+    // Sort points by time first
+    const sortedPoints = trackingPoints.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+    // Apply accuracy filtering if enabled
+    let pointsToAnalyze = sortedPoints;
+    let accuracyReport = null;
+
+    if (filterByAccuracy) {
+      const accuracyFilter = this.filterTrackingPointsByAccuracy(sortedPoints);
+      pointsToAnalyze = accuracyFilter.filteredPoints;
+      
+      accuracyReport = {
+        originalPoints: accuracyFilter.originalCount,
+        filteredPoints: accuracyFilter.filteredCount,
+        inaccuratePointsRemoved: accuracyFilter.inaccurateCount,
+        accuracyStats: accuracyFilter.accuracyStats,
+      };
+      
+      this.logger.debug(`[${operationId}] Accuracy filtering: ${accuracyFilter.originalCount} -> ${accuracyFilter.filteredCount} points (removed ${accuracyFilter.inaccurateCount} inaccurate points)`);
+    }
+
+    if (pointsToAnalyze.length < 2) {
       return {
         tripSummary: {
           totalDistanceKm: 0,
@@ -1433,35 +1551,37 @@ export class GoogleMapsService implements OnModuleInit {
           averageTimePerLocation: 0,
           averageTimePerLocationMinutes: 0,
         },
+        accuracyReport,
       };
     }
 
-    // Sort points by time
-    const sortedPoints = trackingPoints.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    // Calculate total distance using corrected formula with filtered points
+    const totalDistanceKm = this.calculateTotalDistanceFromPoints(pointsToAnalyze);
 
-    // Calculate total distance using corrected formula
-    const totalDistanceKm = this.calculateTotalDistanceFromPoints(sortedPoints);
-
-    // Calculate time metrics
-    const startTime = new Date(sortedPoints[0].createdAt).getTime();
-    const endTime = new Date(sortedPoints[sortedPoints.length - 1].createdAt).getTime();
+    // Calculate time metrics using original timespan to preserve total time
+    const startTime = new Date(pointsToAnalyze[0].createdAt).getTime();
+    const endTime = new Date(pointsToAnalyze[pointsToAnalyze.length - 1].createdAt).getTime();
     const totalTimeMinutes = (endTime - startTime) / (1000 * 60);
 
-    // Detect stops
-    const stops = await this.detectStops(sortedPoints, minStopDurationMinutes, maxStopRadiusMeters, geocodeStops);
+    // Detect stops using filtered points
+    const stops = await this.detectStops(pointsToAnalyze, minStopDurationMinutes, maxStopRadiusMeters, geocodeStops);
 
-    // Calculate speed metrics
-    const { movingTimeMinutes, maxSpeedKmh } = this.calculateSpeedMetrics(sortedPoints);
+    // Calculate speed metrics using filtered points
+    const { movingTimeMinutes, maxSpeedKmh } = this.calculateSpeedMetrics(pointsToAnalyze);
     const stoppedTimeMinutes = totalTimeMinutes - movingTimeMinutes;
     const averageSpeedKmh = totalTimeMinutes > 0 ? (totalDistanceKm / (totalTimeMinutes / 60)) : 0;
 
-    // Calculate time spent by location
-    const timeSpentByLocation = await this.calculateTimeSpentByLocation(sortedPoints, stops);
+    // Calculate time spent by location using filtered points
+    const timeSpentByLocation = await this.calculateTimeSpentByLocation(pointsToAnalyze, stops);
 
     // Calculate location analysis
     const locationAnalysis = this.calculateLocationAnalysis(stops, timeSpentByLocation);
 
     this.logger.debug(`[${operationId}] GPS analysis completed: ${stops.length} stops detected, ${totalDistanceKm.toFixed(2)}km total distance`);
+    
+    if (accuracyReport) {
+      this.logger.debug(`[${operationId}] Accuracy filtering removed ${accuracyReport.inaccuratePointsRemoved} points for more reliable analysis`);
+    }
 
     return {
       tripSummary: {
@@ -1477,6 +1597,7 @@ export class GoogleMapsService implements OnModuleInit {
       timeSpentByLocation,
       averageTimePerLocationFormatted: this.formatDuration(locationAnalysis.averageTimePerLocationMinutes),
       locationAnalysis,
+      accuracyReport,
     };
   }
 

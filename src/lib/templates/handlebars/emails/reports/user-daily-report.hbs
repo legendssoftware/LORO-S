@@ -397,6 +397,72 @@
 <!-- Location & Travel Summary -->
 {{#if tracking.totalDistance}}
 
+<!-- Distance Insights Section -->
+{{#if tracking.distanceInsights}}
+<div class="info-card" style="background: linear-gradient(135deg, {{#if (eq tracking.distanceInsights.category 'minimal')}}#f0fdf4{{else if (eq tracking.distanceInsights.category 'local')}}#eff6ff{{else if (eq tracking.distanceInsights.category 'moderate')}}#fdf4ff{{else}}#fefce8{{/if}} 0%, {{#if (eq tracking.distanceInsights.category 'minimal')}}#dcfce7{{else if (eq tracking.distanceInsights.category 'local')}}#dbeafe{{else if (eq tracking.distanceInsights.category 'moderate')}}#fae8ff{{else}}#fef3c7{{/if}} 100%); border-left-color: {{tracking.distanceInsights.color}};">
+    <h4 style="color: {{tracking.distanceInsights.color}};">{{tracking.distanceInsights.icon}} Distance Insights</h4>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Total Distance</span>
+            <span class="detail-value" style="font-weight: 700; color: {{tracking.distanceInsights.color}}; font-size: 16px;">{{tracking.totalDistance}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Movement Category</span>
+            <span class="detail-value" style="font-weight: 600; color: {{tracking.distanceInsights.color}}; text-transform: capitalize;">{{tracking.distanceInsights.category}}</span>
+        </div>
+    </div>
+    
+    <div style="margin-top: 16px; padding: 16px; background: rgba(255, 255, 255, 0.7); border-radius: 12px; border-left: 4px solid {{tracking.distanceInsights.color}};">
+        <h5 style="color: {{tracking.distanceInsights.color}}; margin: 0 0 8px 0; font-size: 15px; font-weight: 600;">Movement Analysis</h5>
+        <p style="color: #1e293b; margin: 0 0 12px 0; font-size: 14px; line-height: 1.5;">
+            {{tracking.distanceInsights.message}}
+        </p>
+        <p style="color: #64748b; margin: 0; font-size: 13px; line-height: 1.4; font-style: italic;">
+            💡 {{tracking.distanceInsights.recommendation}}
+        </p>
+    </div>
+</div>
+{{/if}}
+
+<!-- GPS Accuracy Information -->
+{{#if tracking.gpsAccuracy}}
+<div class="info-card" style="background: linear-gradient(135deg, {{#if (eq tracking.gpsAccuracy.severityLevel 'high')}}#fef2f2{{else if (eq tracking.gpsAccuracy.severityLevel 'medium')}}#fefce8{{else}}#f0fdf4{{/if}} 0%, {{#if (eq tracking.gpsAccuracy.severityLevel 'high')}}#fee2e2{{else if (eq tracking.gpsAccuracy.severityLevel 'medium')}}#fef3c7{{else}}#dcfce7{{/if}} 100%); border-left-color: {{#if (eq tracking.gpsAccuracy.severityLevel 'high')}}#ef4444{{else if (eq tracking.gpsAccuracy.severityLevel 'medium')}}#f59e0b{{else}}#22c55e{{/if}};">
+    <h4 style="color: {{#if (eq tracking.gpsAccuracy.severityLevel 'high')}}#dc2626{{else if (eq tracking.gpsAccuracy.severityLevel 'medium')}}#d97706{{else}}#15803d{{/if}};">📡 GPS Accuracy Report</h4>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">GPS Points Collected</span>
+            <span class="detail-value" style="font-weight: 600; color: #4b5563;">{{tracking.gpsAccuracy.originalPointsCount}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Points Used for Analysis</span>
+            <span class="detail-value" style="font-weight: 600; color: #22c55e;">{{tracking.gpsAccuracy.usedPointsCount}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Points Filtered (Poor Accuracy)</span>
+            <span class="detail-value" style="font-weight: 600; color: {{#if (gt tracking.gpsAccuracy.filteredPointsCount 0)}}#ef4444{{else}}#22c55e{{/if}};">{{tracking.gpsAccuracy.filteredPointsCount}} ({{tracking.gpsAccuracy.filteredPercentage}}%)</span>
+        </div>
+    </div>
+    
+    <div style="margin-top: 16px; padding: 16px; background: rgba(255, 255, 255, 0.8); border-radius: 12px; border-left: 4px solid {{#if (eq tracking.gpsAccuracy.severityLevel 'high')}}#ef4444{{else if (eq tracking.gpsAccuracy.severityLevel 'medium')}}#f59e0b{{else}}#22c55e{{/if}};">
+        <h5 style="color: {{#if (eq tracking.gpsAccuracy.severityLevel 'high')}}#dc2626{{else if (eq tracking.gpsAccuracy.severityLevel 'medium')}}#d97706{{else}}#15803d{{/if}}; margin: 0 0 8px 0; font-size: 15px; font-weight: 600;">Accuracy Analysis</h5>
+        <p style="color: #1e293b; margin: 0 0 12px 0; font-size: 14px; line-height: 1.5;">
+            {{tracking.gpsAccuracy.message}}
+        </p>
+        {{#if tracking.gpsAccuracy.needsAttention}}
+        <div style="background: #fef3c7; border: 1px solid #fcd34d; border-radius: 8px; padding: 12px; margin-top: 12px;">
+            <p style="color: #92400e; margin: 0; font-size: 13px; line-height: 1.4;">
+                ⚠️ <strong>Action Required:</strong> {{tracking.gpsAccuracy.recommendation}}
+            </p>
+        </div>
+        {{else}}
+        <p style="color: #15803d; margin: 0; font-size: 13px; line-height: 1.4; font-style: italic;">
+            ✅ {{tracking.gpsAccuracy.recommendation}}
+        </p>
+        {{/if}}
+    </div>
+</div>
+{{/if}}
+
 <!-- Movement Efficiency Section -->
 {{#if tracking.movementEfficiency}}
 <div class="info-card">

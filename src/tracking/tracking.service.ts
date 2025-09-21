@@ -65,6 +65,27 @@ export class TrackingService {
 	}
 
 	/**
+	 * Check if GPS accuracy is acceptable for processing
+	 * @param accuracy - GPS accuracy in meters
+	 * @returns True if accuracy is acceptable (≤ 20 meters)
+	 */
+	private isAcceptableAccuracy(accuracy?: number): boolean {
+		// If no accuracy provided, consider it potentially inaccurate
+		if (accuracy === undefined || accuracy === null) {
+			return false;
+		}
+		
+		const ACCURACY_THRESHOLD_METERS = 20;
+		const isAcceptable = accuracy <= ACCURACY_THRESHOLD_METERS;
+		
+		if (!isAcceptable) {
+			this.logger.debug(`Low accuracy GPS point detected: ${accuracy}m (threshold: ${ACCURACY_THRESHOLD_METERS}m)`);
+		}
+		
+		return isAcceptable;
+	}
+
+	/**
 	 * Get TypeORM where conditions to exclude virtual locations
 	 * @returns Object with latitude and longitude conditions to exclude virtual locations
 	 */
@@ -86,6 +107,62 @@ export class TrackingService {
 			point.longitude && 
 			!this.isVirtualLocation(point.latitude, point.longitude)
 		);
+	}
+
+	/**
+	 * Filter out tracking points with poor GPS accuracy
+	 * @param trackingPoints - Array of tracking points
+	 * @returns Object with filtered points and accuracy info
+	 */
+	private filterByAccuracy(trackingPoints: Tracking[]): {
+		filteredPoints: Tracking[];
+		originalCount: number;
+		filteredCount: number;
+		inaccurateCount: number;
+		accuracyInfo: {
+			hasAccuracy: number;
+			noAccuracy: number;
+			aboveThreshold: number;
+		};
+	} {
+		const originalCount = trackingPoints.length;
+		let hasAccuracy = 0;
+		let noAccuracy = 0;
+		let aboveThreshold = 0;
+
+		const filteredPoints = trackingPoints.filter(point => {
+			if (point.accuracy === undefined || point.accuracy === null) {
+				noAccuracy++;
+				return false; // Skip points with no accuracy data
+			}
+
+			hasAccuracy++;
+			
+			if (!this.isAcceptableAccuracy(point.accuracy)) {
+				aboveThreshold++;
+				return false; // Skip points with poor accuracy
+			}
+
+			return true; // Keep points with good accuracy
+		});
+
+		const filteredCount = filteredPoints.length;
+		const inaccurateCount = originalCount - filteredCount;
+
+		this.logger.debug(`Accuracy filtering: ${originalCount} -> ${filteredCount} points. ` +
+			`Removed: ${inaccurateCount} (${noAccuracy} no accuracy, ${aboveThreshold} low accuracy)`);
+
+		return {
+			filteredPoints,
+			originalCount,
+			filteredCount,
+			inaccurateCount,
+			accuracyInfo: {
+				hasAccuracy,
+				noAccuracy,
+				aboveThreshold,
+			},
+		};
 	}
 
 	/**
@@ -216,7 +293,23 @@ export class TrackingService {
 				};
 			}
 
-			this.logger.debug(`Processing coordinates: ${latitude}, ${longitude} with accuracy: ${createTrackingDto.accuracy || 'unknown'}`);
+			// Check GPS accuracy before processing
+			if (!this.isAcceptableAccuracy(createTrackingDto.accuracy)) {
+				const accuracyValue = createTrackingDto.accuracy || 'unknown';
+				this.logger.debug(`Skipping low accuracy GPS point: ${accuracyValue}m for user: ${createTrackingDto.owner} at ${latitude}, ${longitude}`);
+				return {
+					message: 'Low accuracy GPS point skipped - not recorded',
+					data: null,
+					warnings: [{ 
+						type: 'LOW_ACCURACY_GPS', 
+						message: `GPS point with accuracy ${accuracyValue}m was skipped (threshold: 20m)`,
+						accuracy: createTrackingDto.accuracy,
+						coordinates: `${latitude}, ${longitude}`
+					}],
+				};
+			}
+
+			this.logger.debug(`Processing coordinates: ${latitude}, ${longitude} with accuracy: ${createTrackingDto.accuracy || 'unknown'}m`);
 
 			// Skip geocoding during creation for performance - will be done during retrieval
 			this.logger.debug('Skipping geocoding during creation for optimal performance');
@@ -1394,12 +1487,23 @@ export class TrackingService {
 
 	/**
 	 * Enhanced trip analysis with comprehensive metrics
+	 * Now includes accuracy filtering to ensure reliable calculations
 	 */
 	private generateTripAnalysis(trackingPoints: Tracking[]) {
-		const totalDistanceKm = LocationUtils.calculateTotalDistance(trackingPoints);
+		// Filter points by accuracy first for reliable distance calculations
+		const accuracyFilter = this.filterByAccuracy(trackingPoints);
+		const accuratePoints = accuracyFilter.filteredPoints;
+		
+		// Calculate distance with accurate points only
+		const totalDistanceKm = LocationUtils.calculateTotalDistance(accuratePoints);
 		const formattedDistance = LocationUtils.formatDistance(totalDistanceKm);
 		
-		if (trackingPoints.length < 2) {
+		// Log accuracy filtering results
+		if (accuracyFilter.inaccurateCount > 0) {
+			this.logger.debug(`Trip analysis: Filtered ${accuracyFilter.inaccurateCount}/${accuracyFilter.originalCount} points due to poor accuracy`);
+		}
+		
+		if (accuratePoints.length < 2) {
 			return {
 				totalDistanceKm: 0,
 				formattedDistance: '0 km',
@@ -1409,15 +1513,18 @@ export class TrackingService {
 				stoppedTimeMinutes: 0,
 				maxSpeedKmh: 0,
 				locationTimeSpent: {},
+				accuracyInfo: accuracyFilter.accuracyInfo,
+				pointsUsed: accuratePoints.length,
+				pointsFiltered: accuracyFilter.inaccurateCount,
 			};
 		}
 
-		// Calculate time metrics
+		// Calculate time metrics using original points to preserve time span
 		const startTime = new Date(trackingPoints[0].createdAt).getTime();
 		const endTime = new Date(trackingPoints[trackingPoints.length - 1].createdAt).getTime();
 		const totalTimeMinutes = (endTime - startTime) / (1000 * 60);
 
-		// Calculate speeds and movement analysis with realistic bounds
+		// Calculate speeds and movement analysis with realistic bounds using accurate points only
 		let movingTimeMinutes = 0;
 		let maxSpeedKmh = 0;
 		const locationTimeSpent = new Map<string, number>();
@@ -1427,9 +1534,10 @@ export class TrackingService {
 		const MAX_REASONABLE_SPEED_KMH = 200; // Maximum reasonable speed for ground vehicles
 		const MIN_DISTANCE_METERS = 5; // Minimum distance to consider as actual movement (GPS accuracy)
 
-		for (let i = 1; i < trackingPoints.length; i++) {
-			const prevPoint = trackingPoints[i - 1];
-			const currentPoint = trackingPoints[i];
+		// Use accurate points for distance and speed calculations
+		for (let i = 1; i < accuratePoints.length; i++) {
+			const prevPoint = accuratePoints[i - 1];
+			const currentPoint = accuratePoints[i];
 			
 			const timeIntervalMs = new Date(currentPoint.createdAt).getTime() - new Date(prevPoint.createdAt).getTime();
 			const timeIntervalMinutes = timeIntervalMs / (1000 * 60);
@@ -1487,6 +1595,9 @@ export class TrackingService {
 			stoppedTimeMinutes: Math.round(stoppedTimeMinutes),
 			maxSpeedKmh: Math.round(maxSpeedKmh * 10) / 10,
 			locationTimeSpent: Object.fromEntries(locationTimeSpent),
+			accuracyInfo: accuracyFilter.accuracyInfo,
+			pointsUsed: accuratePoints.length,
+			pointsFiltered: accuracyFilter.inaccurateCount,
 		};
 	}
 
@@ -1895,17 +2006,30 @@ export class TrackingService {
 
 	/**
 	 * Advanced stop detection and analysis
+	 * Now includes accuracy filtering for reliable stop detection
 	 */
 	private detectAndAnalyzeStops(trackingPoints: Tracking[]) {
 		const STOP_RADIUS_METERS = 50; // 50 meter radius
 		const MIN_STOP_DURATION_MINUTES = 3; // Minimum 3 minutes to be considered a stop
 		
-		if (trackingPoints.length < 2) {
+		// Filter points by accuracy for reliable stop detection
+		const accuracyFilter = this.filterByAccuracy(trackingPoints);
+		const accuratePoints = accuracyFilter.filteredPoints;
+		
+		// Log accuracy filtering for stop detection
+		if (accuracyFilter.inaccurateCount > 0) {
+			this.logger.debug(`Stop detection: Filtered ${accuracyFilter.inaccurateCount}/${accuracyFilter.originalCount} points due to poor accuracy`);
+		}
+		
+		if (accuratePoints.length < 2) {
 			return {
 				stops: [],
 				locations: [],
 				averageTimeMinutes: 0,
 				averageTimeFormatted: '0m',
+				accuracyInfo: accuracyFilter.accuracyInfo,
+				pointsUsed: accuratePoints.length,
+				pointsFiltered: accuracyFilter.inaccurateCount,
 			};
 		}
 
@@ -1913,8 +2037,8 @@ export class TrackingService {
 		const locations = [];
 		let currentStop = null;
 
-		for (let i = 0; i < trackingPoints.length; i++) {
-			const point = trackingPoints[i];
+		for (let i = 0; i < accuratePoints.length; i++) {
+			const point = accuratePoints[i];
 			
 			if (!currentStop) {
 				// Start a potential new stop
@@ -2029,6 +2153,9 @@ export class TrackingService {
 			locations,
 			averageTimeMinutes,
 			averageTimeFormatted: LocationUtils.formatDuration(averageTimeMinutes),
+			accuracyInfo: accuracyFilter.accuracyInfo,
+			pointsUsed: accuratePoints.length,
+			pointsFiltered: accuracyFilter.inaccurateCount,
 		};
 	}
 

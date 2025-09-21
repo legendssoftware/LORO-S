@@ -847,20 +847,95 @@ export class UserDailyReportGenerator {
 				this.logger.warn(`Geocoding failed for user ${userId} on ${format(startDate, 'yyyy-MM-dd')}. Using fallback location data. Successful: ${geocodingStatus.successful}, Failed: ${geocodingStatus.failed}`);
 			}
 
-			// Extract distance value from formatted string or use tripSummary
-			let totalDistanceKm = 0;
-			if (tripSummary && tripSummary.totalDistanceKm) {
-				totalDistanceKm = tripSummary.totalDistanceKm;
-			} else if (typeof totalDistance === 'string') {
-				// Parse from formatted string like "5.2 km" or "500 meters"
-				const distanceMatch = totalDistance.match(/([0-9.]+)\s*(km|meters)/);
-				if (distanceMatch) {
-					const value = parseFloat(distanceMatch[1]);
-					totalDistanceKm = distanceMatch[2] === 'km' ? value : value / 1000;
-				}
-			} else {
-				totalDistanceKm = parseFloat(totalDistance) || 0;
+		// Extract distance value from formatted string or use tripSummary
+		let totalDistanceKm = 0;
+		if (tripSummary && tripSummary.totalDistanceKm) {
+			totalDistanceKm = tripSummary.totalDistanceKm;
+		} else if (typeof totalDistance === 'string') {
+			// Parse from formatted string like "5.2 km" or "500 meters"
+			const distanceMatch = totalDistance.match(/([0-9.]+)\s*(km|meters)/);
+			if (distanceMatch) {
+				const value = parseFloat(distanceMatch[1]);
+				totalDistanceKm = distanceMatch[2] === 'km' ? value : value / 1000;
 			}
+		} else {
+			totalDistanceKm = parseFloat(totalDistance) || 0;
+		}
+
+		// Generate distance insights based on total distance
+		const generateDistanceInsights = (distanceKm: number) => {
+			if (distanceKm < 0.5) { // Less than 500m
+				return {
+					category: 'minimal',
+					message: '🚶‍♂️ Minimal movement detected - likely just walking around the workplace or getting some steps in at work',
+					recommendation: 'Great job staying active even with minimal travel! Every step counts towards your daily activity.',
+					icon: '🚶‍♂️',
+					color: '#22c55e' // Green for positive/good
+				};
+			} else if (distanceKm < 2) { // 500m - 2km
+				return {
+					category: 'local',
+					message: '🚗 Local movement - short trips within the work area or nearby locations',
+					recommendation: 'Good local mobility! Consider if some short trips could be combined for efficiency.',
+					icon: '🚗',
+					color: '#3b82f6' // Blue for moderate
+				};
+			} else if (distanceKm < 10) { // 2km - 10km
+				return {
+					category: 'moderate',
+					message: '🛣️ Moderate travel distance - covering good ground for work activities',
+					recommendation: 'Solid travel efficiency! You\'re covering good distance for productive work.',
+					icon: '🛣️',
+					color: '#8b5cf6' // Purple for good
+				};
+			} else {
+				return {
+					category: 'extensive',
+					message: '🗺️ Extensive travel - significant movement across multiple locations',
+					recommendation: 'High mobility day! Consider route optimization for even better efficiency.',
+					icon: '🗺️',
+					color: '#f59e0b' // Amber for attention
+				};
+			}
+		};
+
+		const distanceInsights = generateDistanceInsights(totalDistanceKm);
+
+		// Extract GPS accuracy filtering information
+		let gpsAccuracyInfo = null;
+		if (tripSummary && tripSummary.accuracyInfo) {
+			const { accuracyInfo } = tripSummary;
+			const filteredCount = accuracyInfo.inaccurateCount || 0;
+			const originalCount = accuracyInfo.originalCount || trackingPoints.length;
+			const filteredPercentage = originalCount > 0 ? Math.round((filteredCount / originalCount) * 100) : 0;
+
+			gpsAccuracyInfo = {
+				originalPointsCount: originalCount,
+				filteredPointsCount: filteredCount,
+				usedPointsCount: originalCount - filteredCount,
+				filteredPercentage,
+				needsAttention: filteredPercentage > 30, // Flag if >30% of points were filtered
+				message: filteredCount > 0 
+					? `${filteredCount} GPS points were filtered out due to poor accuracy (>${accuracyInfo.accuracyThreshold || 20}m)`
+					: 'All GPS points had acceptable accuracy',
+				recommendation: filteredCount > 0 
+					? 'For more accurate location tracking, ensure "Precise Location" is enabled in your device settings for the Loro app'
+					: 'Great! Your device is providing accurate location data',
+				severityLevel: filteredPercentage > 50 ? 'high' : filteredPercentage > 30 ? 'medium' : 'low'
+			};
+		} else if (trackingPoints && trackingPoints.length > 0) {
+			// Fallback when accuracy info is not available in tripSummary
+			gpsAccuracyInfo = {
+				originalPointsCount: trackingPoints.length,
+				filteredPointsCount: 0,
+				usedPointsCount: trackingPoints.length,
+				filteredPercentage: 0,
+				needsAttention: false,
+				message: 'GPS accuracy filtering information not available',
+				recommendation: 'Ensure "Precise Location" is enabled in your device settings for optimal tracking',
+				severityLevel: 'low'
+			};
+		}
 
 			// Format tracking points for detailed view
 			const formattedTrackingPoints = trackingPoints.map((point) => ({
@@ -894,8 +969,13 @@ export class UserDailyReportGenerator {
 		// Prepare email tracking data with comprehensive enhanced metrics
 		const trackingDataForEmail = {
 			totalDistance: `${totalDistanceKm.toFixed(1)} km`,
+			totalDistanceKm: totalDistanceKm,
 			locations: locationAnalysis?.locationsVisited || [],
 			averageTimePerLocation: locationAnalysis?.averageTimePerLocationFormatted || '~',
+			// Distance insights for contextual understanding
+			distanceInsights: distanceInsights,
+			// GPS accuracy filtering information
+			gpsAccuracy: gpsAccuracyInfo,
 			tripSummary: tripSummary ? {
 				totalDistanceKm: totalDistanceKm,
 				totalTimeFormatted: this.formatDuration(tripSummary.totalTimeMinutes),
