@@ -676,8 +676,24 @@ export class AttendanceService {
 				);
 				if (user?.email) {
 					try {
-						// Get organization scheduled start time (like in sendShiftReminder)
+						// Get organization scheduled start time and check if org is open
 						let scheduledStartTime = '09:00'; // Default fallback
+						let orgStatus: {
+							isOpen: boolean;
+							isWorkingDay: boolean;
+							isHolidayMode: boolean;
+							reason?: string;
+							scheduledOpen?: string;
+							scheduledClose?: string;
+							dayOfWeek: string;
+						} = {
+							isOpen: true,
+							isWorkingDay: true,
+							isHolidayMode: false,
+							reason: 'Operating hours not configured',
+							dayOfWeek: 'monday',
+						};
+
 						if (orgId) {
 							try {
 								const organizationHours = await this.organizationHoursService.getOrganizationHours(
@@ -688,8 +704,34 @@ export class AttendanceService {
 									new Date(),
 								);
 								scheduledStartTime = workingDayInfo.startTime || organizationHours?.openTime || '09:00';
+
+								// Check if organization is currently open
+								orgStatus = await this.organizationHoursService.isOrganizationOpen(
+									orgId, // Use orgId directly
+									new Date()
+								);
 							} catch (error) {
 								this.logger.warn(`Could not get organization hours for org ${orgId}:`, error.message);
+							}
+						}
+
+						// Determine appropriate welcome message based on organization status
+						let welcomeMessage = `Welcome to work, ${userName}! 🌟 Your shift started successfully at ${checkInTime}. Have a productive and amazing day ahead!`;
+						let specialNotice = '';
+
+						if (!orgStatus.isWorkingDay || !orgStatus.isOpen) {
+							if (orgStatus.isHolidayMode) {
+								welcomeMessage = `Hello ${userName}! 🏖️ We notice you're at work during our holiday period.`;
+								specialNotice = `We appreciate your dedication, but please note that the organization is currently in holiday mode. ${orgStatus.reason}`;
+							} else if (!orgStatus.isWorkingDay) {
+								welcomeMessage = `Hello ${userName}! 👋 We notice you're at work on ${orgStatus.dayOfWeek}, but we're normally closed today.`;
+								specialNotice = `We appreciate your commitment to work during off-hours. ${orgStatus.reason}. If this is part of a special project or emergency, thank you for your dedication!`;
+							} else if (!orgStatus.isOpen) {
+								const scheduledHours = orgStatus.scheduledOpen && orgStatus.scheduledClose 
+									? ` (scheduled hours: ${orgStatus.scheduledOpen} - ${orgStatus.scheduledClose})`
+									: '';
+								welcomeMessage = `Hello ${userName}! 🕐 We notice you're starting work outside our normal operating hours.`;
+								specialNotice = `We appreciate your early arrival or late dedication. ${orgStatus.reason}${scheduledHours}. Stay safe and productive!`;
 							}
 						}
 
@@ -704,7 +746,19 @@ export class AttendanceService {
 							branchName: user?.branch?.name || '',
 							dashboardUrl: process.env.WEB_URL || 'https://app.loro.co.za',
 							xpAwarded: XP_VALUES.CHECK_IN,
-							welcomeMessage: `Welcome to work, ${userName}! 🌟 Your shift started successfully at ${checkInTime}. Have a productive and amazing day ahead!`,
+							welcomeMessage,
+							// Organization status information for email template
+							organizationStatus: {
+								isOpen: orgStatus.isOpen,
+								isWorkingDay: orgStatus.isWorkingDay,
+								isHolidayMode: orgStatus.isHolidayMode,
+								reason: orgStatus.reason,
+								dayOfWeek: orgStatus.dayOfWeek,
+								scheduledOpen: orgStatus.scheduledOpen,
+								scheduledClose: orgStatus.scheduledClose,
+								specialNotice,
+								isOffHours: !orgStatus.isWorkingDay || !orgStatus.isOpen,
+							},
 						};
 
 						this.eventEmitter.emit(

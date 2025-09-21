@@ -249,4 +249,171 @@ export class OrganizationHoursService {
 		const schedule = orgHours.weeklySchedule;
 		return Object.keys(schedule).filter((day) => schedule[day as keyof typeof schedule]);
 	}
+
+	/**
+	 * Check if organization is currently open based on hours configuration
+	 * @param orgRef - Organization reference (we'll use the organization ID for compatibility)
+	 * @param checkTime - Time to check (defaults to current time)
+	 * @returns Object with organization status information
+	 */
+	async isOrganizationOpen(orgRef: string | number, checkTime: Date = new Date()): Promise<{
+		isOpen: boolean;
+		isWorkingDay: boolean;
+		isHolidayMode: boolean;
+		reason?: string;
+		scheduledOpen?: string;
+		scheduledClose?: string;
+		dayOfWeek: string;
+	}> {
+		try {
+			// Convert orgRef to organizationId if it's a string
+			const organizationId = typeof orgRef === 'string' ? parseInt(orgRef) : orgRef;
+			
+			const hours = await this.getOrganizationHours(organizationId);
+			
+			if (!hours) {
+				return {
+					isOpen: true, // Default to open if no hours configured
+					isWorkingDay: true,
+					isHolidayMode: false,
+					reason: 'No operating hours configured',
+					dayOfWeek: this.getDayOfWeek(checkTime),
+				};
+			}
+
+			const dayOfWeek = this.getDayOfWeek(checkTime);
+			const currentTime = this.formatTime(checkTime);
+
+			// Check holiday mode first
+			if (hours.holidayMode) {
+				const isStillHoliday = hours.holidayUntil ? checkTime <= hours.holidayUntil : true;
+				if (isStillHoliday) {
+					return {
+						isOpen: false,
+						isWorkingDay: false,
+						isHolidayMode: true,
+						reason: `Organization is in holiday mode${hours.holidayUntil ? ` until ${hours.holidayUntil.toDateString()}` : ''}`,
+						dayOfWeek,
+					};
+				}
+			}
+
+			// Check detailed schedule first (if available)
+			if (hours.schedule) {
+				const daySchedule = hours.schedule[dayOfWeek.toLowerCase() as keyof typeof hours.schedule];
+				if (daySchedule?.closed) {
+					return {
+						isOpen: false,
+						isWorkingDay: false,
+						isHolidayMode: false,
+						reason: `Organization is closed on ${dayOfWeek}s`,
+						dayOfWeek,
+					};
+				}
+
+				if (daySchedule) {
+					const isWithinHours = this.isTimeWithinRange(
+						currentTime,
+						daySchedule.start,
+						daySchedule.end
+					);
+
+					return {
+						isOpen: isWithinHours,
+						isWorkingDay: true,
+						isHolidayMode: false,
+						reason: isWithinHours 
+							? 'Within operating hours' 
+							: `Outside operating hours (${daySchedule.start} - ${daySchedule.end})`,
+						scheduledOpen: daySchedule.start,
+						scheduledClose: daySchedule.end,
+						dayOfWeek,
+					};
+				}
+			}
+
+			// Fall back to weeklySchedule and default times
+			const isWorkingDay = hours.weeklySchedule[dayOfWeek.toLowerCase() as keyof typeof hours.weeklySchedule];
+			
+			if (!isWorkingDay) {
+				return {
+					isOpen: false,
+					isWorkingDay: false,
+					isHolidayMode: false,
+					reason: `Organization is closed on ${dayOfWeek}s`,
+					dayOfWeek,
+				};
+			}
+
+			// Check if within operating hours
+			const isWithinHours = this.isTimeWithinRange(
+				currentTime,
+				hours.openTime,
+				hours.closeTime
+			);
+
+			return {
+				isOpen: isWithinHours,
+				isWorkingDay: true,
+				isHolidayMode: false,
+				reason: isWithinHours 
+					? 'Within operating hours' 
+					: `Outside operating hours (${hours.openTime} - ${hours.closeTime})`,
+				scheduledOpen: hours.openTime,
+				scheduledClose: hours.closeTime,
+				dayOfWeek,
+			};
+
+		} catch (error) {
+			this.logger.error(`Error checking organization hours: ${error.message}`);
+			// If there's any error, default to open to avoid blocking legitimate check-ins
+			return {
+				isOpen: true,
+				isWorkingDay: true,
+				isHolidayMode: false,
+				reason: `Error checking organization hours: ${error.message}`,
+				dayOfWeek: this.getDayOfWeek(checkTime),
+			};
+		}
+	}
+
+	/**
+	 * Get day of week from date
+	 */
+	private getDayOfWeek(date: Date): string {
+		const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+		return days[date.getDay()];
+	}
+
+	/**
+	 * Format time as HH:mm from Date object
+	 */
+	private formatTime(date: Date): string {
+		return date.toTimeString().slice(0, 5);
+	}
+
+	/**
+	 * Check if time is within range (handles overnight periods)
+	 */
+	private isTimeWithinRange(checkTime: string, startTime: string, endTime: string): boolean {
+		const check = this.timeToMinutes(checkTime);
+		const start = this.timeToMinutes(startTime);
+		const end = this.timeToMinutes(endTime);
+
+		if (start <= end) {
+			// Same day range (e.g., 09:00 - 17:00)
+			return check >= start && check <= end;
+		} else {
+			// Overnight range (e.g., 22:00 - 06:00)
+			return check >= start || check <= end;
+		}
+	}
+
+	/**
+	 * Convert time string to minutes since midnight
+	 */
+	private timeToMinutes(time: string): number {
+		const [hours, minutes] = time.split(':').map(Number);
+		return hours * 60 + minutes;
+	}
 }

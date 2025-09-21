@@ -1,12 +1,40 @@
 {{#base headerTitle="Shift Started Successfully" headerSubtitle="Welcome to work! Your day begins now"}}
 
 <div class="greeting">
-    Welcome to work, {{name}}! 🌟
+    {{#if welcomeMessage}}
+        {{{welcomeMessage}}}
+    {{else}}
+        Welcome to work, {{name}}! 🌟
+    {{/if}}
 </div>
 
 <div class="success-notice">
-    <p>✅ <strong>Shift Started:</strong> You've successfully checked in at {{checkInTime}}. Have a productive day!</p>
+    <p>✅ <strong>Shift Started:</strong> You've successfully checked in at {{checkInTime}}{{#if organizationStatus.isOffHours}}, even though we're normally closed{{/if}}.</p>
 </div>
+
+{{#if organizationStatus.isOffHours}}
+<div class="warning-notice" style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 16px; margin: 20px 0; border-radius: 8px;">
+    <h4 style="margin: 0 0 12px 0; color: #92400e; font-size: 16px;">
+        {{#if organizationStatus.isHolidayMode}}
+            🏖️ Holiday Period Notice
+        {{else if organizationStatus.isWorkingDay}}
+            🕐 Off-Hours Check-in
+        {{else}}
+            📅 Weekend/Closed Day Notice
+        {{/if}}
+    </h4>
+    {{#if organizationStatus.specialNotice}}
+        <p style="margin: 0; color: #92400e; font-size: 14px; line-height: 1.5;">
+            {{{organizationStatus.specialNotice}}}
+        </p>
+    {{/if}}
+    {{#if organizationStatus.scheduledOpen}}
+        <p style="margin: 8px 0 0 0; color: #92400e; font-size: 13px;">
+            <strong>Normal Operating Hours:</strong> {{organizationStatus.scheduledOpen}} - {{organizationStatus.scheduledClose}}
+        </p>
+    {{/if}}
+</div>
+{{/if}}
 
 <div class="info-card">
     <h3>📅 Shift Details</h3>
@@ -21,6 +49,26 @@
             <span class="detail-value">{{shiftStartTime}}</span>
         </div>
         {{/if}}
+        {{#if organizationStatus}}
+        <div class="detail-item">
+            <span class="detail-label">Day of Week</span>
+            <span class="detail-value" style="text-transform: capitalize;">{{organizationStatus.dayOfWeek}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Organization Status</span>
+            <span class="detail-value" style="{{#if organizationStatus.isOpen}}color: #22c55e;{{else}}color: #f59e0b;{{/if}} font-weight: 600;">
+                {{#if organizationStatus.isHolidayMode}}
+                    🏖️ Holiday Mode
+                {{else if organizationStatus.isOpen}}
+                    ✅ Open
+                {{else if organizationStatus.isWorkingDay}}
+                    🕐 Closed (Off Hours)
+                {{else}}
+                    📅 Closed ({{organizationStatus.dayOfWeek}})
+                {{/if}}
+            </span>
+        </div>
+        {{/if}}
         {{#if xpAwarded}}
         <div class="detail-item">
             <span class="detail-label">XP Earned</span>
@@ -30,10 +78,31 @@
     </div>
 </div>
 
+{{#if organizationStatus.isOffHours}}
+<div class="appreciation-card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 12px; color: white; margin: 20px 0; text-align: center;">
+    <h3 style="margin: 0 0 12px 0; color: white;">🌟 Above & Beyond</h3>
+    <p style="margin: 0; opacity: 0.9; font-size: 14px; line-height: 1.6;">
+        We appreciate your dedication to work during 
+        {{#if organizationStatus.isHolidayMode}}
+            our holiday period
+        {{else if organizationStatus.isWorkingDay}}
+            off-hours
+        {{else}}
+            closed days
+        {{/if}}. 
+        Your commitment does not go unnoticed! 🙌
+    </p>
+</div>
+{{/if}}
+
 <div class="cta-section">
     <a href="{{dashboardUrl}}" class="cta-button">View Dashboard</a>
     <p style="margin-top: 16px; font-size: 14px; color: #6b7280;">
-        Have a productive day! Remember to take breaks and check out at the end of your shift.
+        {{#if organizationStatus.isOffHours}}
+            Stay safe and productive during your {{#if organizationStatus.isWorkingDay}}off-hours{{else}}special{{/if}} work session!
+        {{else}}
+            Have a productive day! Remember to take breaks and check out at the end of your shift.
+        {{/if}}
     </p>
 </div>
 
