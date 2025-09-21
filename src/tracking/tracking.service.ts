@@ -2153,6 +2153,8 @@ export class TrackingService {
 			// Update existing reports with the new GPS data
 			try {
 				if (this.reportsService) {
+					this.logger.log(`🔄 Starting report updates with recalculated GPS data for user ${userId}`);
+					
 					const reportUpdateResult = await this.reportsService.updateReportsWithRecalculatedGpsData(
 						userId,
 						date,
@@ -2167,10 +2169,24 @@ export class TrackingService {
 						}
 					);
 					
-					this.logger.log(`Updated ${reportUpdateResult.updated} existing reports with recalculated GPS data for user ${userId}`);
+					// Enhanced logging with emojis and details
+					this.logger.log(`🎉 REPORT UPDATE RESULTS:`);
+					this.logger.log(`📊 Total reports found: ${reportUpdateResult.totalFound}`);
+					this.logger.log(`✅ Successfully updated: ${reportUpdateResult.updated}`);
+					this.logger.log(`❌ Failed to update: ${reportUpdateResult.totalFound - reportUpdateResult.updated}`);
+					this.logger.log(`📍 GPS data details: Distance=${enhancedData.comprehensiveData.tripSummary?.totalDistanceKm}km, Stops=${enhancedData.comprehensiveData.tripSummary?.numberOfStops}, Points=${filteredCount}`);
+					
+					if (reportUpdateResult.updated > 0) {
+						this.logger.log(`✨ Successfully synchronized GPS data across ${reportUpdateResult.updated} reports for user ${userId}`);
+					} else {
+						this.logger.warn(`⚠️  No reports were updated - check if reports exist for user ${userId} on ${date.toISOString().split('T')[0]}`);
+					}
+				} else {
+					this.logger.warn('⚠️  ReportsService not available - GPS recalculation completed but reports not updated');
 				}
 			} catch (error) {
-				this.logger.error(`Failed to update reports with recalculated GPS data for user ${userId}:`, error.message);
+				this.logger.error(`💥 CRITICAL: Failed to update reports with recalculated GPS data for user ${userId}:`, error.message);
+				this.logger.error(`Error details:`, error.stack);
 				// Don't fail the entire recalculation if report update fails
 			}
 

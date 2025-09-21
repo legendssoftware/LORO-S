@@ -40,7 +40,6 @@ import { RewardsModule } from '../rewards/rewards.module';
 import { ProductAnalytics } from '../products/entities/product-analytics.entity';
 import { TaskFlag } from '../tasks/entities/task-flag.entity';
 import { TaskFlagItem } from '../tasks/entities/task-flag-item.entity';
-import { Tracking } from 'src/tracking/entities/tracking.entity';
 import { Competitor } from '../competitors/entities/competitor.entity';
 import { MapDataReportGenerator } from './generators/map-data-report.generator';
 import { OrgActivityReportGenerator } from './generators/org-activity-report.generator';
@@ -52,6 +51,9 @@ import { AttendanceModule } from '../attendance/attendance.module';
 import { TrackingModule } from '../tracking/tracking.module';
 import { UserRewards } from '../rewards/entities/user-rewards.entity';
 import { XPTransaction } from '../rewards/entities/xp-transaction.entity';
+import { Tracking } from '../tracking/entities/tracking.entity';
+import { GoogleMapsService } from '../lib/services/google-maps.service';
+import { TrackingService } from '../tracking/tracking.service';
 
 @Module({
 	imports: [
@@ -102,9 +104,9 @@ import { XPTransaction } from '../rewards/entities/xp-transaction.entity';
 			Reward,
 			TaskFlag,
 			TaskFlagItem,
-			Tracking,
 			Competitor,
 			License,
+			Tracking,
 		]),
 		UserModule,
 		CheckInsModule,
@@ -126,6 +128,8 @@ import { XPTransaction } from '../rewards/entities/xp-transaction.entity';
 		UserDailyReportGenerator,
 		MapDataReportGenerator,
 		OrgActivityReportGenerator,
+		GoogleMapsService,
+		TrackingService,
 	],
 	exports: [TypeOrmModule, ReportsService],
 })

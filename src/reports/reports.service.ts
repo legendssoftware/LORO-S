@@ -150,53 +150,61 @@ export class ReportsService implements OnModuleInit {
 
 	/**
 	 * Update GPS/location data in existing reports when tracking data is recalculated
+	 * Updates ALL reports for the user on the specified date with the same recalculated data
 	 * @param userId - User ID whose reports need updating
 	 * @param date - Date for which reports should be updated
 	 * @param recalculatedGpsData - New GPS data from recalculation
-	 * @returns Promise<{ updated: number; reports: Report[] }>
+	 * @returns Promise<{ updated: number; reports: Report[]; totalFound: number }>
 	 */
 	async updateReportsWithRecalculatedGpsData(
 		userId: number,
 		date: Date,
 		recalculatedGpsData: any
-	): Promise<{ updated: number; reports: Report[] }> {
-		this.logger.log(`Updating reports with recalculated GPS data for user ${userId} on ${date.toISOString().split('T')[0]}`);
+	): Promise<{ updated: number; reports: Report[]; totalFound: number }> {
+		const operationId = `update-reports-gps-${userId}-${Date.now()}`;
+		this.logger.log(`[${operationId}] 🔄 Starting GPS data update for ALL reports - User: ${userId}, Date: ${date.toISOString().split('T')[0]}`);
 
 		try {
-			// Find all reports for this user on this date that might contain GPS data
+			// Find ALL reports for this user on this date (not just USER_DAILY)
 			const startOfReportDay = new Date(date);
 			startOfReportDay.setHours(0, 0, 0, 0);
 			const endOfReportDay = new Date(date);
 			endOfReportDay.setHours(23, 59, 59, 999);
 
+			// Get ALL report types for this user on this date
 			const existingReports = await this.reportRepository.find({
 				where: {
 					owner: { uid: userId },
 					generatedAt: Between(startOfReportDay, endOfReportDay),
-					reportType: ReportType.USER_DAILY,
+					// Remove reportType filter to get ALL reports for this user/date
 				},
 				relations: ['owner', 'organisation'],
 				order: { generatedAt: 'DESC' },
 			});
 
-			this.logger.debug(`Found ${existingReports.length} existing reports to update for user ${userId}`);
+			this.logger.log(`[${operationId}] 📋 Found ${existingReports.length} total reports to update for user ${userId} on ${date.toISOString().split('T')[0]}`);
+			this.logger.debug(`[${operationId}] Report types found:`, existingReports.map(r => ({ uid: r.uid, type: r.reportType, generatedAt: r.generatedAt })));
 
 			if (existingReports.length === 0) {
-				this.logger.log(`No existing reports found for user ${userId} on ${date.toISOString().split('T')[0]}`);
-				return { updated: 0, reports: [] };
+				this.logger.warn(`[${operationId}] ⚠️  No existing reports found for user ${userId} on ${date.toISOString().split('T')[0]}`);
+				return { updated: 0, reports: [], totalFound: 0 };
 			}
 
 			const updatedReports: Report[] = [];
+			let updateSuccessCount = 0;
+			let updateFailureCount = 0;
 
-			// Update each report with the new GPS data
+			// Update EACH AND EVERY report with the same recalculated GPS data
 			for (const report of existingReports) {
 				try {
+					this.logger.debug(`[${operationId}] 🔧 Processing report ${report.uid} (${report.reportType})`);
+					
 					const updatedReportData = this.mergeGpsDataIntoReport(report.reportData, recalculatedGpsData);
 					
-					// Update the report in database
-					await this.reportRepository.update(report.uid, {
+					// Update the report in database with comprehensive GPS data
+					const updateResult = await this.reportRepository.update(report.uid, {
 						reportData: updatedReportData,
-						notes: `GPS data recalculated on ${new Date().toISOString()}`,
+						notes: `GPS data recalculated on ${new Date().toISOString()} - Applied to all ${existingReports.length} reports for this day`,
 						// Store GPS data in the dedicated gpsData field as well
 						gpsData: {
 							tripSummary: recalculatedGpsData.tripSummary,
@@ -210,7 +218,7 @@ export class ReportsService implements OnModuleInit {
 						totalStops: recalculatedGpsData.tripSummary?.numberOfStops,
 					});
 
-					// Fetch the updated report
+					// Fetch the updated report to confirm changes
 					const updatedReport = await this.reportRepository.findOne({
 						where: { uid: report.uid },
 						relations: ['owner', 'organisation'],
@@ -218,27 +226,54 @@ export class ReportsService implements OnModuleInit {
 
 					if (updatedReport) {
 						updatedReports.push(updatedReport);
+						updateSuccessCount++;
+						this.logger.debug(`[${operationId}] ✅ Successfully updated report ${report.uid} (${report.reportType}) with recalculated GPS data`);
+					} else {
+						updateFailureCount++;
+						this.logger.warn(`[${operationId}] ❌ Failed to fetch updated report ${report.uid} after update`);
 					}
 
-					this.logger.debug(`Successfully updated report ${report.uid} with recalculated GPS data`);
 				} catch (error) {
-					this.logger.error(`Failed to update report ${report.uid} with GPS data:`, error.message);
+					updateFailureCount++;
+					this.logger.error(`[${operationId}] ❌ Failed to update report ${report.uid} (${report.reportType}) with GPS data:`, error.message);
+					this.logger.error(`[${operationId}] Error details:`, error.stack);
 				}
 			}
 
-			// Clear cache for this user to ensure fresh data
-			const cacheKey = `reports:user:${userId}:${date.toISOString().split('T')[0]}`;
-			await this.cacheManager.del(cacheKey);
+			// Clear ALL cache entries for this user to ensure fresh data
+			try {
+				const cacheKeysToDelete = [
+					`reports:user:${userId}:${date.toISOString().split('T')[0]}`,
+					`user_${userId}`,
+					`daily_${userId}`,
+					`enhanced_tracking_${userId}_${date.toISOString().split('T')[0]}`,
+				];
+				
+				for (const cacheKey of cacheKeysToDelete) {
+					await this.cacheManager.del(cacheKey);
+				}
+				this.logger.debug(`[${operationId}] 🧹 Cleared ${cacheKeysToDelete.length} cache entries for user ${userId}`);
+			} catch (cacheError) {
+				this.logger.warn(`[${operationId}] ⚠️  Failed to clear cache:`, cacheError.message);
+			}
 
-			this.logger.log(`Successfully updated ${updatedReports.length} reports with recalculated GPS data for user ${userId}`);
+			// Comprehensive logging
+			this.logger.log(`[${operationId}] 🎉 GPS UPDATE SUMMARY:`);
+			this.logger.log(`[${operationId}]   📊 Total reports found: ${existingReports.length}`);
+			this.logger.log(`[${operationId}]   ✅ Successfully updated: ${updateSuccessCount}`);
+			this.logger.log(`[${operationId}]   ❌ Failed to update: ${updateFailureCount}`);
+			this.logger.log(`[${operationId}]   📍 GPS data applied: Distance=${recalculatedGpsData.tripSummary?.totalDistanceKm}km, Stops=${recalculatedGpsData.tripSummary?.numberOfStops}`);
+			this.logger.log(`[${operationId}] 🏁 GPS data update completed for user ${userId}`);
 
 			return {
-				updated: updatedReports.length,
+				updated: updateSuccessCount,
 				reports: updatedReports,
+				totalFound: existingReports.length,
 			};
 
 		} catch (error) {
-			this.logger.error(`Failed to update reports with recalculated GPS data for user ${userId}:`, error.message);
+			this.logger.error(`[${operationId}] 💥 CRITICAL: Failed to update reports with recalculated GPS data for user ${userId}:`, error.message);
+			this.logger.error(`[${operationId}] Error stack:`, error.stack);
 			throw error;
 		}
 	}

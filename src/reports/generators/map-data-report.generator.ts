@@ -14,11 +14,17 @@ import { CheckIn } from '../../check-ins/entities/check-in.entity';
 import { Task } from '../../tasks/entities/task.entity';
 import { Journal } from '../../journal/entities/journal.entity';
 import { Lead } from '../../leads/entities/lead.entity';
+import { Tracking } from '../../tracking/entities/tracking.entity';
+import { GoogleMapsService } from '../../lib/services/google-maps.service';
+import { TrackingService } from '../../tracking/tracking.service';
 
 interface MapDataRequestParams {
 	organisationId: number;
 	branchId?: number;
 	userId?: number; // Add user context for authorization
+	includeGpsAnalysis?: boolean; // Enable advanced GPS analysis
+	includeRouteOptimization?: boolean; // Enable route optimization for workers
+	gpsAnalysisDate?: Date; // Specific date for GPS analysis (defaults to today)
 }
 
 @Injectable()
@@ -46,6 +52,10 @@ export class MapDataReportGenerator {
 		private journalRepository: Repository<Journal>,
 		@InjectRepository(Lead)
 		private leadRepository: Repository<Lead>,
+		@InjectRepository(Tracking)
+		private trackingRepository: Repository<Tracking>,
+		private googleMapsService: GoogleMapsService,
+		private trackingService: TrackingService,
 	) {}
 
 	async generate(params: MapDataRequestParams): Promise<Record<string, any>> {
@@ -1039,6 +1049,161 @@ export class MapDataReportGenerator {
 			const quotationsInAll = allMarkers.filter(m => m.markerType === 'quotation');
 			this.logger.log(`📊 Debug verification - Competitors in allMarkers: ${competitorsInAll.length}, Quotations in allMarkers: ${quotationsInAll.length}`);
 			
+			// ---------- ADVANCED GPS ANALYSIS AND ROUTE OPTIMIZATION ----------
+			let enhancedGpsAnalysis: any = {};
+			let routeOptimizations: any = {};
+			
+			if (params.includeGpsAnalysis || params.includeRouteOptimization) {
+				this.logger.log(`🗺️  Starting advanced GPS analysis for organization ${organisationId}`);
+				
+				try {
+					const gpsAnalysisDate = params.gpsAnalysisDate || new Date();
+					
+					// Get active workers with tracking data
+					const workersWithTracking = activeAttendance.filter(a => a.owner?.uid);
+					
+					if (workersWithTracking.length > 0) {
+						this.logger.log(`📍 Processing GPS analysis for ${workersWithTracking.length} active workers`);
+						
+						const gpsAnalysisResults = await Promise.allSettled(
+							workersWithTracking.map(async (worker) => {
+								try {
+									// Get tracking points for this worker today
+									const trackingPoints = await this.trackingRepository.find({
+										where: {
+											owner: { uid: worker.owner.uid },
+											createdAt: MoreThanOrEqual(startOfDay(gpsAnalysisDate)),
+										},
+										order: { createdAt: 'ASC' },
+									});
+									
+									if (trackingPoints.length < 2) {
+										return { workerId: worker.owner.uid, analysis: null, routes: null };
+									}
+									
+									// Use GoogleMapsService for advanced GPS analysis
+									let gpsAnalysis = null;
+									if (params.includeGpsAnalysis) {
+										gpsAnalysis = await this.googleMapsService.analyzeGPSTrackingData(
+											trackingPoints.map(tp => ({
+												latitude: tp.latitude,
+												longitude: tp.longitude,
+												createdAt: tp.createdAt,
+												address: tp.address,
+											})),
+											{
+												minStopDurationMinutes: 5,
+												maxStopRadiusMeters: 100,
+												geocodeStops: false, // Already have addresses
+											}
+										);
+									}
+									
+									// Route optimization for this worker's path
+									let routeOptimization = null;
+									if (params.includeRouteOptimization && gpsAnalysis?.stops && gpsAnalysis.stops.length > 2) {
+										try {
+											const stops = gpsAnalysis.stops;
+											const origin = { latitude: stops[0].latitude, longitude: stops[0].longitude };
+											const destinations = stops.slice(1, -1).map(stop => ({ latitude: stop.latitude, longitude: stop.longitude }));
+											const destination = { latitude: stops[stops.length - 1].latitude, longitude: stops[stops.length - 1].longitude };
+											
+											if (destinations.length > 0 && destinations.length <= 8) { // Limit for performance
+												const optimizedRoute = await this.googleMapsService.optimizeRoute(
+													origin,
+													[...destinations, destination],
+													{
+														travelMode: 'DRIVING' as any,
+														avoidTolls: false,
+														avoidHighways: false,
+													},
+													false // Don't return to origin
+												);
+												
+												routeOptimization = {
+													originalDistance: gpsAnalysis.tripSummary.totalDistanceKm,
+													optimizedDistance: optimizedRoute.totalDistance / 1000, // Convert to km
+													potentialSaving: Math.max(0, gpsAnalysis.tripSummary.totalDistanceKm - (optimizedRoute.totalDistance / 1000)),
+													optimizedWaypointOrder: optimizedRoute.waypointOrder,
+													stops: stops.length,
+													recommendation: optimizedRoute.totalDistance / 1000 < gpsAnalysis.tripSummary.totalDistanceKm 
+														? `Route could be optimized to save ${(gpsAnalysis.tripSummary.totalDistanceKm - (optimizedRoute.totalDistance / 1000)).toFixed(1)}km`
+														: 'Current route appears well optimized'
+												};
+											}
+										} catch (routeError) {
+											this.logger.warn(`Failed to optimize route for worker ${worker.owner.uid}:`, routeError.message);
+										}
+									}
+									
+									return {
+										workerId: worker.owner.uid,
+										workerName: worker.owner.name,
+										analysis: gpsAnalysis,
+										routes: routeOptimization,
+									};
+								} catch (error) {
+									this.logger.warn(`GPS analysis failed for worker ${worker.owner?.uid}:`, error.message);
+									return { workerId: worker.owner?.uid, analysis: null, routes: null, error: error.message };
+								}
+							})
+						);
+						
+						// Process results
+						const successfulAnalyses = gpsAnalysisResults
+							.filter(result => result.status === 'fulfilled')
+							.map(result => (result as any).value)
+							.filter(result => result.analysis || result.routes);
+						
+						if (successfulAnalyses.length > 0) {
+							// Aggregate GPS analysis data
+							enhancedGpsAnalysis = {
+								totalWorkersAnalyzed: successfulAnalyses.length,
+								totalDistanceCovered: successfulAnalyses.reduce((sum, w) => sum + (w.analysis?.tripSummary?.totalDistanceKm || 0), 0),
+								totalStopsDetected: successfulAnalyses.reduce((sum, w) => sum + (w.analysis?.tripSummary?.numberOfStops || 0), 0),
+								averageStopsPerWorker: successfulAnalyses.length > 0 
+									? Math.round(successfulAnalyses.reduce((sum, w) => sum + (w.analysis?.tripSummary?.numberOfStops || 0), 0) / successfulAnalyses.length * 10) / 10
+									: 0,
+								averageSpeedKmh: successfulAnalyses.length > 0
+									? Math.round(successfulAnalyses.reduce((sum, w) => sum + (w.analysis?.tripSummary?.averageSpeedKmh || 0), 0) / successfulAnalyses.length * 10) / 10
+									: 0,
+								maxSpeedRecorded: Math.max(...successfulAnalyses.map(w => w.analysis?.tripSummary?.maxSpeedKmh || 0)),
+								workersData: successfulAnalyses.map(w => ({
+									workerId: w.workerId,
+									workerName: w.workerName,
+									tripSummary: w.analysis?.tripSummary,
+									stopsCount: w.analysis?.stops?.length || 0,
+									topStops: (w.analysis?.stops || []).slice(0, 3), // Top 3 stops
+								})),
+							};
+							
+							// Route optimization aggregation
+							if (params.includeRouteOptimization) {
+								const workersWithRoutes = successfulAnalyses.filter(w => w.routes);
+								if (workersWithRoutes.length > 0) {
+									routeOptimizations = {
+										totalWorkersOptimized: workersWithRoutes.length,
+										totalPotentialSaving: workersWithRoutes.reduce((sum, w) => sum + (w.routes?.potentialSaving || 0), 0),
+										averagePotentialSaving: workersWithRoutes.length > 0
+											? Math.round(workersWithRoutes.reduce((sum, w) => sum + (w.routes?.potentialSaving || 0), 0) / workersWithRoutes.length * 100) / 100
+											: 0,
+										workersWithOptimizations: workersWithRoutes.map(w => ({
+											workerId: w.workerId,
+											workerName: w.workerName,
+											optimization: w.routes,
+										})),
+									};
+								}
+							}
+							
+							this.logger.log(`🎯 GPS Analysis Complete: ${successfulAnalyses.length} workers analyzed, ${enhancedGpsAnalysis.totalDistanceCovered}km total distance`);
+						}
+					}
+				} catch (gpsError) {
+					this.logger.error('GPS analysis failed:', gpsError.message);
+				}
+			}
+			
 			const finalData = {
 				// Individual arrays for backward compatibility
 				workers: markersByType.workers,
@@ -1066,6 +1231,18 @@ export class MapDataReportGenerator {
 				mapConfig: {
 					defaultCenter,
 					orgRegions,
+				},
+				
+				// Enhanced GPS Analysis Data
+				gpsAnalysis: enhancedGpsAnalysis,
+				routeOptimizations: routeOptimizations,
+				
+				// Enhanced data matching client expectations
+				analytics: {
+					totalMarkers: allMarkers.length,
+					markerBreakdown: markersByType,
+					gpsInsights: enhancedGpsAnalysis,
+					routeInsights: routeOptimizations,
 				},
 			};
 			
