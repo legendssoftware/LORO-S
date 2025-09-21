@@ -1,15 +1,19 @@
-import { Injectable, NotFoundException, Logger, BadRequestException, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger, BadRequestException, Inject, forwardRef } from '@nestjs/common';
 import { CreateTrackingDto } from './dto/create-tracking.dto';
 import { UpdateTrackingDto } from './dto/update-tracking.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Tracking } from './entities/tracking.entity';
-import { DeepPartial, Repository, IsNull, Between, MoreThanOrEqual, LessThanOrEqual, Not, Raw } from 'typeorm';
+import { DeepPartial, Repository, IsNull, Between, MoreThanOrEqual, Raw } from 'typeorm';
 import { LocationUtils } from '../lib/utils/location.utils';
-import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays, addDays } from 'date-fns';
+import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays } from 'date-fns';
 import axios from 'axios';
 import { User } from '../user/entities/user.entity';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
+import { 
+	EnhancedTrackingResult, 
+} from './interfaces/enhanced-tracking.interface';
+import { ReportsService } from '../reports/reports.service';
 
 @Injectable()
 export class TrackingService {
@@ -25,6 +29,8 @@ export class TrackingService {
 		private userRepository: Repository<User>,
 		@Inject(CACHE_MANAGER)
 		private cacheManager: Cache,
+		@Inject(forwardRef(() => ReportsService))
+		private reportsService?: ReportsService,
 	) {
 		this.geocodingApiKey = process.env.GOOGLE_MAPS_API_KEY || '';
 		this.CACHE_TTL = parseInt(process.env.CACHE_TTL || '300000', 10); // 5 minutes default
@@ -382,13 +388,13 @@ export class TrackingService {
 				throw new NotFoundException(`User with ID ${userId} not found`);
 			}
 
-			// Build query conditions
-			const whereConditions: any = {
-				owner: { uid: userId },
-				timestamp: Between(dateRange.start, dateRange.end),
-				// Exclude virtual locations containing '122' in coordinates
-				...this.getVirtualLocationFilters(),
-			};
+		// Build optimized query conditions with selective fields
+		const whereConditions: any = {
+			owner: { uid: userId },
+			timestamp: Between(dateRange.start, dateRange.end),
+			// Exclude virtual locations containing '122' in coordinates
+			...this.getVirtualLocationFilters(),
+		};
 
 			// Add organization filter if provided
 			if (orgId) {
@@ -402,12 +408,17 @@ export class TrackingService {
 				this.logger.debug(`Added branch filter: ${branchId}`);
 			}
 
-			this.logger.debug('Querying tracking points from database');
-			const trackingPoints = await this.trackingRepository.find({
-				where: whereConditions,
-				relations: ['owner', 'owner.branch', 'owner.organisation'],
-				order: { timestamp: 'ASC' },
-			});
+		this.logger.debug('Querying tracking points from database with optimized fields');
+		const trackingPoints = await this.trackingRepository.find({
+			where: whereConditions,
+			select: [
+				'uid', 'latitude', 'longitude', 'timestamp', 'createdAt', 
+				'address', 'addressDecodingError', 'accuracy', 'speed', 
+				'heading', 'altitude', 'rawLocation'
+			],
+			relations: ['owner'],
+			order: { timestamp: 'ASC' },
+		});
 
 			this.logger.debug(`Found ${trackingPoints.length} tracking points for user: ${userId}`);
 
@@ -1098,18 +1109,10 @@ export class TrackingService {
 			// This will now stop after 3 consecutive failures
 			await this.geocodeTrackingPoints(trackingPoints);
 
-			// Enhanced trip analysis
-			const tripAnalysis = this.generateTripAnalysis(trackingPoints);
-			const stopAnalysis = this.detectAndAnalyzeStops(trackingPoints);
-
-			// Check if geocoding failed and provide fallback data
+		// Provide fallback addresses for points without addresses
 			const pointsWithoutAddress = trackingPoints.filter(point => !point.address && point.latitude && point.longitude);
-			const geocodingFailed = pointsWithoutAddress.length > 0;
-
-			if (geocodingFailed) {
+		if (pointsWithoutAddress.length > 0) {
 				this.logger.warn(`Geocoding failed for ${pointsWithoutAddress.length} tracking points. Using fallback location data.`);
-				
-				// Provide fallback addresses using coordinates
 				pointsWithoutAddress.forEach(point => {
 					if (!point.address) {
 						point.address = `${point.latitude.toFixed(4)}, ${point.longitude.toFixed(4)}`;
@@ -1117,34 +1120,12 @@ export class TrackingService {
 				});
 			}
 
+		// Use unified enhanced tracking data calculation
+		const enhancedData = await this.calculateEnhancedTrackingData(trackingPoints, userId, date);
+
 			return {
 				message: process.env.SUCCESS_MESSAGE,
-				data: {
-					totalDistance: tripAnalysis.formattedDistance,
-					trackingPoints,
-					locationAnalysis: {
-						locationsVisited: stopAnalysis.locations,
-						averageTimePerLocation: stopAnalysis.averageTimeFormatted,
-						averageTimePerLocationMinutes: stopAnalysis.averageTimeMinutes,
-						timeSpentByLocation: tripAnalysis.locationTimeSpent,
-						averageTimePerLocationFormatted: LocationUtils.formatDuration(stopAnalysis.averageTimeMinutes),
-					},
-					tripSummary: {
-						totalDistanceKm: tripAnalysis.totalDistanceKm,
-						totalTimeMinutes: tripAnalysis.totalTimeMinutes,
-						averageSpeedKmh: tripAnalysis.averageSpeedKmh,
-						movingTimeMinutes: tripAnalysis.movingTimeMinutes,
-						stoppedTimeMinutes: tripAnalysis.stoppedTimeMinutes,
-						numberOfStops: stopAnalysis.stops.length,
-						maxSpeedKmh: tripAnalysis.maxSpeedKmh,
-					},
-					stops: stopAnalysis.stops,
-					geocodingStatus: {
-						successful: trackingPoints.filter(p => p.address && !p.addressDecodingError).length,
-						failed: pointsWithoutAddress.length,
-						usedFallback: geocodingFailed,
-					},
-				},
+			data: enhancedData.comprehensiveData,
 			};
 		} catch (error) {
 			this.logger.error(`Error in getDailyTracking for user ${userId}: ${error.message}`, error.stack);
@@ -1600,6 +1581,319 @@ export class TrackingService {
 	}
 
 	/**
+	 * Unified method to calculate enhanced tracking data that both endpoints use
+	 * @param trackingPoints - Array of tracking points to analyze
+	 * @param userId - User ID for caching purposes
+	 * @param date - Date for caching purposes
+	 * @returns Enhanced tracking data with comprehensive analytics
+	 */
+	private async calculateEnhancedTrackingData(
+		trackingPoints: Tracking[], 
+		userId?: number, 
+		date?: Date
+	): Promise<EnhancedTrackingResult> {
+		const cacheKey = userId && date ? 
+			this.getCacheKey(`enhanced_tracking_${userId}_${date.toISOString().split('T')[0]}`) : 
+			null;
+		
+		// Try to get from cache first
+		if (cacheKey) {
+			const cached = await this.cacheManager.get(cacheKey);
+			if (cached) {
+				this.logger.debug(`Retrieved enhanced tracking data from cache for user: ${userId}`);
+				return cached as any;
+			}
+		}
+
+		// Calculate enhanced analytics
+		const tripAnalysis = this.generateTripAnalysis(trackingPoints);
+		const stopAnalysis = this.detectAndAnalyzeStops(trackingPoints);
+
+		// Check for geocoding status
+		const pointsWithoutAddress = trackingPoints.filter(point => !point.address && point.latitude && point.longitude);
+		const geocodingFailed = pointsWithoutAddress.length > 0;
+
+		const comprehensiveData = {
+			totalDistance: tripAnalysis.formattedDistance,
+			trackingPoints,
+			locationAnalysis: {
+				locationsVisited: stopAnalysis.locations,
+				averageTimePerLocation: stopAnalysis.averageTimeFormatted,
+				averageTimePerLocationMinutes: stopAnalysis.averageTimeMinutes,
+				timeSpentByLocation: tripAnalysis.locationTimeSpent,
+				averageTimePerLocationFormatted: LocationUtils.formatDuration(stopAnalysis.averageTimeMinutes),
+			},
+			tripSummary: {
+				totalDistanceKm: tripAnalysis.totalDistanceKm,
+				totalTimeMinutes: tripAnalysis.totalTimeMinutes,
+				averageSpeedKmh: tripAnalysis.averageSpeedKmh,
+				movingTimeMinutes: tripAnalysis.movingTimeMinutes,
+				stoppedTimeMinutes: tripAnalysis.stoppedTimeMinutes,
+				numberOfStops: stopAnalysis.stops.length,
+				maxSpeedKmh: tripAnalysis.maxSpeedKmh,
+			},
+			stops: stopAnalysis.stops,
+			geocodingStatus: {
+				successful: trackingPoints.filter(p => p.address && !p.addressDecodingError).length,
+				failed: pointsWithoutAddress.length,
+				usedFallback: geocodingFailed,
+			},
+			// Additional enhanced metrics
+			movementEfficiency: {
+				efficiencyRating: this.calculateEfficiencyRating(tripAnalysis, stopAnalysis),
+				travelOptimization: this.analyzeTravelOptimization(stopAnalysis.stops),
+				productivityScore: this.calculateProductivityScore(stopAnalysis.stops),
+			},
+			locationProductivity: {
+				totalLocations: stopAnalysis.stops.length,
+				averageTimePerStop: stopAnalysis.averageTimeMinutes,
+				productiveStops: stopAnalysis.stops.filter(stop => stop.durationMinutes >= 15).length,
+				keyLocations: stopAnalysis.stops.slice(0, 5).map(stop => ({
+					...stop,
+					productivity: this.assessLocationProductivity(stop)
+				})),
+			},
+			travelInsights: {
+				totalTravelDistance: tripAnalysis.totalDistanceKm,
+				travelEfficiency: this.calculateTravelEfficiency(tripAnalysis),
+				routeOptimization: this.analyzeRouteOptimization(stopAnalysis.stops),
+				movementPatterns: this.analyzeMovementPatterns(trackingPoints),
+			},
+		};
+
+		const result = {
+			tripAnalysis,
+			stopAnalysis,
+			comprehensiveData,
+		};
+
+		// Cache the result for 1 hour
+		if (cacheKey) {
+			await this.cacheManager.set(cacheKey, result, 3600000);
+			this.logger.debug(`Cached enhanced tracking data for user: ${userId}`);
+		}
+
+		return result;
+	}
+
+	/**
+	 * Calculate efficiency rating based on movement patterns
+	 */
+	private calculateEfficiencyRating(tripAnalysis: any, stopAnalysis: any): 'High' | 'Medium' | 'Low' {
+		let score = 0;
+		
+		// Factor 1: Speed efficiency (0-30 points)
+		if (tripAnalysis.averageSpeedKmh > 15 && tripAnalysis.averageSpeedKmh < 60) {
+			score += 30;
+		} else if (tripAnalysis.averageSpeedKmh > 10) {
+			score += 20;
+		} else {
+			score += 10;
+		}
+		
+		// Factor 2: Stop efficiency (0-30 points)
+		const avgStopDuration = stopAnalysis.averageTimeMinutes;
+		if (avgStopDuration > 15 && avgStopDuration < 120) {
+			score += 30;
+		} else if (avgStopDuration > 10) {
+			score += 20;
+		} else {
+			score += 10;
+		}
+		
+		// Factor 3: Distance vs time efficiency (0-40 points)
+		const distanceTimeRatio = tripAnalysis.totalDistanceKm / (tripAnalysis.totalTimeMinutes / 60);
+		if (distanceTimeRatio > 5) {
+			score += 40;
+		} else if (distanceTimeRatio > 2) {
+			score += 30;
+		} else if (distanceTimeRatio > 1) {
+			score += 20;
+		} else {
+			score += 10;
+		}
+		
+		// Return rating
+		if (score >= 80) return 'High';
+		if (score >= 60) return 'Medium';
+		return 'Low';
+	}
+
+	/**
+	 * Analyze travel optimization opportunities
+	 */
+	private analyzeTravelOptimization(stops: any[]): any {
+		if (stops.length < 2) return { score: 'N/A', suggestions: [] };
+		
+		const suggestions = [];
+		let totalDistance = 0;
+		
+		// Calculate total travel distance between stops
+		for (let i = 1; i < stops.length; i++) {
+			const distance = LocationUtils.calculateDistance(
+				stops[i-1].latitude, stops[i-1].longitude,
+				stops[i].latitude, stops[i].longitude
+			);
+			totalDistance += distance;
+		}
+		
+		// Analyze for optimization opportunities
+		if (totalDistance > 50) {
+			suggestions.push('Consider route optimization to reduce travel distance');
+		}
+		
+		if (stops.some(stop => stop.durationMinutes < 10)) {
+			suggestions.push('Some stops were very short - consider consolidating tasks');
+		}
+		
+		return {
+			totalTravelDistance: totalDistance,
+			optimizationScore: totalDistance < 30 ? 'High' : totalDistance < 60 ? 'Medium' : 'Low',
+			suggestions,
+		};
+	}
+
+	/**
+	 * Calculate productivity score based on stops
+	 */
+	private calculateProductivityScore(stops: any[]): number {
+		if (stops.length === 0) return 0;
+		
+		const productiveStops = stops.filter(stop => stop.durationMinutes >= 15).length;
+		return Math.round((productiveStops / stops.length) * 100);
+	}
+
+	/**
+	 * Assess individual location productivity
+	 */
+	private assessLocationProductivity(stop: any): string {
+		if (stop.durationMinutes >= 60) return 'High';
+		if (stop.durationMinutes >= 30) return 'Medium';
+		if (stop.durationMinutes >= 15) return 'Low';
+		return 'Minimal';
+	}
+
+	/**
+	 * Calculate travel efficiency metrics
+	 */
+	private calculateTravelEfficiency(tripAnalysis: any): any {
+		const efficiency = {
+			score: 'Medium',
+			metrics: {
+				avgSpeed: tripAnalysis.averageSpeedKmh,
+				maxSpeed: tripAnalysis.maxSpeedKmh,
+				movingRatio: tripAnalysis.movingTimeMinutes / tripAnalysis.totalTimeMinutes,
+			}
+		};
+		
+		// Calculate efficiency score
+		let score = 0;
+		if (efficiency.metrics.avgSpeed > 20) score += 30;
+		else if (efficiency.metrics.avgSpeed > 10) score += 20;
+		else score += 10;
+		
+		if (efficiency.metrics.movingRatio > 0.4) score += 30;
+		else if (efficiency.metrics.movingRatio > 0.2) score += 20;
+		else score += 10;
+		
+		if (efficiency.metrics.maxSpeed < 80 && efficiency.metrics.maxSpeed > 30) score += 40;
+		else score += 20;
+		
+		efficiency.score = score >= 80 ? 'High' : score >= 60 ? 'Medium' : 'Low';
+		
+		return efficiency;
+	}
+
+	/**
+	 * Analyze route optimization opportunities
+	 */
+	private analyzeRouteOptimization(stops: any[]): any {
+		if (stops.length < 3) {
+			return {
+				canOptimize: false,
+				potentialSavings: 0,
+				recommendation: 'Need at least 3 stops to analyze route optimization'
+			};
+		}
+		
+		// Calculate current route distance
+		let currentDistance = 0;
+		for (let i = 1; i < stops.length; i++) {
+			currentDistance += LocationUtils.calculateDistance(
+				stops[i-1].latitude, stops[i-1].longitude,
+				stops[i].latitude, stops[i].longitude
+			);
+		}
+		
+		// Simple optimization: check if reversing route would be shorter
+		let reverseDistance = 0;
+		const reversedStops = [...stops].reverse();
+		for (let i = 1; i < reversedStops.length; i++) {
+			reverseDistance += LocationUtils.calculateDistance(
+				reversedStops[i-1].latitude, reversedStops[i-1].longitude,
+				reversedStops[i].latitude, reversedStops[i].longitude
+			);
+		}
+		
+		const savings = Math.max(0, currentDistance - reverseDistance);
+		
+		return {
+			canOptimize: savings > 2, // 2km savings threshold
+			currentRouteDistance: Math.round(currentDistance * 100) / 100,
+			optimizedRouteDistance: Math.round(reverseDistance * 100) / 100,
+			potentialSavings: Math.round(savings * 100) / 100,
+			recommendation: savings > 2 ? 
+				`Route could be optimized to save ${savings.toFixed(1)}km` : 
+				'Current route appears well optimized'
+		};
+	}
+
+	/**
+	 * Analyze movement patterns throughout the day
+	 */
+	private analyzeMovementPatterns(trackingPoints: Tracking[]): any {
+		if (trackingPoints.length < 10) {
+			return { pattern: 'Insufficient data', analysis: 'Need more tracking points for pattern analysis' };
+		}
+		
+		// Analyze movement by time of day
+		const hourlyMovement = new Map<number, { distance: number, points: number }>();
+		
+		for (let i = 1; i < trackingPoints.length; i++) {
+			const hour = new Date(trackingPoints[i].createdAt).getHours();
+			const distance = LocationUtils.calculateDistance(
+				trackingPoints[i-1].latitude, trackingPoints[i-1].longitude,
+				trackingPoints[i].latitude, trackingPoints[i].longitude
+			);
+			
+			const current = hourlyMovement.get(hour) || { distance: 0, points: 0 };
+			hourlyMovement.set(hour, {
+				distance: current.distance + distance,
+				points: current.points + 1
+			});
+		}
+		
+		// Find peak movement hours
+		const peakHour = Array.from(hourlyMovement.entries())
+			.sort(([,a], [,b]) => b.distance - a.distance)[0];
+		
+		return {
+			pattern: peakHour ? `Most active during ${peakHour[0]}:00 hour` : 'Even distribution',
+			peakMovementHour: peakHour ? peakHour[0] : null,
+			peakMovementDistance: peakHour ? Math.round(peakHour[1].distance * 100) / 100 : 0,
+			analysis: `Movement distributed across ${hourlyMovement.size} different hours`,
+			hourlyBreakdown: Array.from(hourlyMovement.entries())
+				.map(([hour, data]) => ({
+					hour,
+					distance: Math.round(data.distance * 100) / 100,
+					points: data.points
+				}))
+				.sort((a, b) => b.distance - a.distance)
+				.slice(0, 5) // Top 5 hours
+		};
+	}
+
+	/**
 	 * Advanced stop detection and analysis
 	 */
 	private detectAndAnalyzeStops(trackingPoints: Tracking[]) {
@@ -1826,24 +2120,19 @@ export class TrackingService {
 			// Try to geocode tracking points that don't have addresses
 			await this.geocodeTrackingPoints(filteredTrackingPoints);
 
-			// Recalculate all analytics with filtered data
-			const tripAnalysis = this.generateTripAnalysis(filteredTrackingPoints);
-			const stopAnalysis = this.detectAndAnalyzeStops(filteredTrackingPoints);
-
-			// Check if geocoding failed and provide fallback data
+			// Provide fallback addresses for points without addresses
 			const pointsWithoutAddress = filteredTrackingPoints.filter(point => !point.address && point.latitude && point.longitude);
-			const geocodingFailed = pointsWithoutAddress.length > 0;
-
-			if (geocodingFailed) {
+			if (pointsWithoutAddress.length > 0) {
 				this.logger.warn(`Geocoding failed for ${pointsWithoutAddress.length} tracking points during recalculation. Using fallback location data.`);
-				
-				// Provide fallback addresses using coordinates
 				pointsWithoutAddress.forEach(point => {
 					if (!point.address) {
 						point.address = `${point.latitude.toFixed(4)}, ${point.longitude.toFixed(4)}`;
 					}
 				});
 			}
+
+			// Use unified enhanced tracking data calculation
+			const enhancedData = await this.calculateEnhancedTrackingData(filteredTrackingPoints, userId, date);
 
 			const recalculatedData = {
 				user: {
@@ -1855,34 +2144,35 @@ export class TrackingService {
 					organisation: user.organisation?.name,
 				},
 				date: date.toISOString().split('T')[0],
-				totalDistance: tripAnalysis.formattedDistance,
-				trackingPoints: filteredTrackingPoints,
-				locationAnalysis: {
-					locationsVisited: stopAnalysis.locations,
-					averageTimePerLocation: stopAnalysis.averageTimeFormatted,
-					averageTimePerLocationMinutes: stopAnalysis.averageTimeMinutes,
-					timeSpentByLocation: tripAnalysis.locationTimeSpent,
-					averageTimePerLocationFormatted: LocationUtils.formatDuration(stopAnalysis.averageTimeMinutes),
-				},
-				tripSummary: {
-					totalDistanceKm: tripAnalysis.totalDistanceKm,
-					totalTimeMinutes: tripAnalysis.totalTimeMinutes,
-					averageSpeedKmh: tripAnalysis.averageSpeedKmh,
-					movingTimeMinutes: tripAnalysis.movingTimeMinutes,
-					stoppedTimeMinutes: tripAnalysis.stoppedTimeMinutes,
-					numberOfStops: stopAnalysis.stops.length,
-					maxSpeedKmh: tripAnalysis.maxSpeedKmh,
-				},
-				stops: stopAnalysis.stops,
-				geocodingStatus: {
-					successful: filteredTrackingPoints.filter(p => p.address && !p.addressDecodingError).length,
-					failed: pointsWithoutAddress.length,
-					usedFallback: geocodingFailed,
-				},
+				...enhancedData.comprehensiveData,
 			};
 
 			const executionTime = Date.now() - startTime;
 			this.logger.log(`Successfully recalculated tracking data for user: ${userId} in ${executionTime}ms`);
+
+			// Update existing reports with the new GPS data
+			try {
+				if (this.reportsService) {
+					const reportUpdateResult = await this.reportsService.updateReportsWithRecalculatedGpsData(
+						userId,
+						date,
+						{
+							...enhancedData.comprehensiveData,
+							recalculationInfo: {
+								originalPointsCount: originalCount,
+								filteredPointsCount: filteredCount,
+								virtualPointsRemoved,
+								recalculatedAt: new Date().toISOString(),
+							}
+						}
+					);
+					
+					this.logger.log(`Updated ${reportUpdateResult.updated} existing reports with recalculated GPS data for user ${userId}`);
+				}
+			} catch (error) {
+				this.logger.error(`Failed to update reports with recalculated GPS data for user ${userId}:`, error.message);
+				// Don't fail the entire recalculation if report update fails
+			}
 
 			return {
 				message: 'Tracking data recalculated successfully with virtual locations filtered out',

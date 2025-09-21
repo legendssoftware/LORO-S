@@ -144,6 +144,182 @@ export class ReportsService implements OnModuleInit {
 		this.logger.log('Reports service module initialized successfully');
 	}
 
+	// ======================================================
+	// GPS RECALCULATION METHODS
+	// ======================================================
+
+	/**
+	 * Update GPS/location data in existing reports when tracking data is recalculated
+	 * @param userId - User ID whose reports need updating
+	 * @param date - Date for which reports should be updated
+	 * @param recalculatedGpsData - New GPS data from recalculation
+	 * @returns Promise<{ updated: number; reports: Report[] }>
+	 */
+	async updateReportsWithRecalculatedGpsData(
+		userId: number,
+		date: Date,
+		recalculatedGpsData: any
+	): Promise<{ updated: number; reports: Report[] }> {
+		this.logger.log(`Updating reports with recalculated GPS data for user ${userId} on ${date.toISOString().split('T')[0]}`);
+
+		try {
+			// Find all reports for this user on this date that might contain GPS data
+			const startOfReportDay = new Date(date);
+			startOfReportDay.setHours(0, 0, 0, 0);
+			const endOfReportDay = new Date(date);
+			endOfReportDay.setHours(23, 59, 59, 999);
+
+			const existingReports = await this.reportRepository.find({
+				where: {
+					owner: { uid: userId },
+					generatedAt: Between(startOfReportDay, endOfReportDay),
+					reportType: ReportType.USER_DAILY,
+				},
+				relations: ['owner', 'organisation'],
+				order: { generatedAt: 'DESC' },
+			});
+
+			this.logger.debug(`Found ${existingReports.length} existing reports to update for user ${userId}`);
+
+			if (existingReports.length === 0) {
+				this.logger.log(`No existing reports found for user ${userId} on ${date.toISOString().split('T')[0]}`);
+				return { updated: 0, reports: [] };
+			}
+
+			const updatedReports: Report[] = [];
+
+			// Update each report with the new GPS data
+			for (const report of existingReports) {
+				try {
+					const updatedReportData = this.mergeGpsDataIntoReport(report.reportData, recalculatedGpsData);
+					
+					// Update the report in database
+					await this.reportRepository.update(report.uid, {
+						reportData: updatedReportData,
+						notes: `GPS data recalculated on ${new Date().toISOString()}`,
+						// Store GPS data in the dedicated gpsData field as well
+						gpsData: {
+							tripSummary: recalculatedGpsData.tripSummary,
+							stops: recalculatedGpsData.stops,
+							timeSpentByLocation: recalculatedGpsData.locationAnalysis?.timeSpentByLocation,
+							averageTimePerLocationFormatted: recalculatedGpsData.locationAnalysis?.averageTimePerLocationFormatted,
+							locationAnalysis: recalculatedGpsData.locationAnalysis,
+							geocodingStatus: recalculatedGpsData.geocodingStatus,
+						},
+						totalDistanceKm: recalculatedGpsData.tripSummary?.totalDistanceKm,
+						totalStops: recalculatedGpsData.tripSummary?.numberOfStops,
+					});
+
+					// Fetch the updated report
+					const updatedReport = await this.reportRepository.findOne({
+						where: { uid: report.uid },
+						relations: ['owner', 'organisation'],
+					});
+
+					if (updatedReport) {
+						updatedReports.push(updatedReport);
+					}
+
+					this.logger.debug(`Successfully updated report ${report.uid} with recalculated GPS data`);
+				} catch (error) {
+					this.logger.error(`Failed to update report ${report.uid} with GPS data:`, error.message);
+				}
+			}
+
+			// Clear cache for this user to ensure fresh data
+			const cacheKey = `reports:user:${userId}:${date.toISOString().split('T')[0]}`;
+			await this.cacheManager.del(cacheKey);
+
+			this.logger.log(`Successfully updated ${updatedReports.length} reports with recalculated GPS data for user ${userId}`);
+
+			return {
+				updated: updatedReports.length,
+				reports: updatedReports,
+			};
+
+		} catch (error) {
+			this.logger.error(`Failed to update reports with recalculated GPS data for user ${userId}:`, error.message);
+			throw error;
+		}
+	}
+
+	/**
+	 * Merge recalculated GPS data into existing report data structure
+	 * @param existingReportData - Current report data
+	 * @param recalculatedGpsData - New GPS data from recalculation
+	 * @returns Updated report data with new GPS information
+	 */
+	private mergeGpsDataIntoReport(existingReportData: any, recalculatedGpsData: any): any {
+		// Create a deep copy of existing report data
+		const updatedData = JSON.parse(JSON.stringify(existingReportData));
+
+		// Update location/GPS related fields while preserving other data
+		if (updatedData.locationData) {
+			updatedData.locationData = {
+				...updatedData.locationData,
+				totalDistance: recalculatedGpsData.totalDistance,
+				trackingPoints: recalculatedGpsData.trackingPoints,
+				locationAnalysis: recalculatedGpsData.locationAnalysis,
+				tripSummary: recalculatedGpsData.tripSummary,
+				stops: recalculatedGpsData.stops,
+				geocodingStatus: recalculatedGpsData.geocodingStatus,
+				movementEfficiency: recalculatedGpsData.movementEfficiency,
+				locationProductivity: recalculatedGpsData.locationProductivity,
+				travelInsights: recalculatedGpsData.travelInsights,
+			};
+		} else {
+			// If locationData doesn't exist, create it
+			updatedData.locationData = {
+				totalDistance: recalculatedGpsData.totalDistance,
+				trackingPoints: recalculatedGpsData.trackingPoints,
+				locationAnalysis: recalculatedGpsData.locationAnalysis,
+				tripSummary: recalculatedGpsData.tripSummary,
+				stops: recalculatedGpsData.stops,
+				geocodingStatus: recalculatedGpsData.geocodingStatus,
+				movementEfficiency: recalculatedGpsData.movementEfficiency,
+				locationProductivity: recalculatedGpsData.locationProductivity,
+				travelInsights: recalculatedGpsData.travelInsights,
+			};
+		}
+
+		// Update email data GPS metrics if they exist
+		if (updatedData.emailData) {
+			updatedData.emailData = {
+				...updatedData.emailData,
+				totalDistance: recalculatedGpsData.totalDistance,
+				tripSummary: recalculatedGpsData.tripSummary,
+				stops: recalculatedGpsData.stops,
+				locationAnalysis: recalculatedGpsData.locationAnalysis,
+				movementEfficiency: recalculatedGpsData.movementEfficiency,
+				locationProductivity: recalculatedGpsData.locationProductivity,
+				travelInsights: recalculatedGpsData.travelInsights,
+			};
+
+			// Update metrics if they exist
+			if (updatedData.emailData.metrics) {
+				updatedData.emailData.metrics = {
+					...updatedData.emailData.metrics,
+					totalDistanceKm: recalculatedGpsData.tripSummary?.totalDistanceKm,
+					averageSpeedKmh: recalculatedGpsData.tripSummary?.averageSpeedKmh,
+					maxSpeedKmh: recalculatedGpsData.tripSummary?.maxSpeedKmh,
+					numberOfStops: recalculatedGpsData.tripSummary?.numberOfStops,
+					movingTimeMinutes: recalculatedGpsData.tripSummary?.movingTimeMinutes,
+					stoppedTimeMinutes: recalculatedGpsData.tripSummary?.stoppedTimeMinutes,
+				};
+			}
+		}
+
+		// Add recalculation metadata
+		updatedData.recalculationInfo = {
+			originalPointsCount: recalculatedGpsData.recalculationInfo?.originalPointsCount || 0,
+			filteredPointsCount: recalculatedGpsData.recalculationInfo?.filteredPointsCount || 0,
+			virtualPointsRemoved: recalculatedGpsData.recalculationInfo?.virtualPointsRemoved || 0,
+			recalculatedAt: new Date().toISOString(),
+		};
+
+		return updatedData;
+	}
+
 	// Run every day at 18:00 (6:00 PM) - Comprehensive daily reports for all organizations
 	@Cron('0 0 18 * * *')
 	async generateEndOfDayReports() {

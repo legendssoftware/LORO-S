@@ -825,12 +825,22 @@ export class UserDailyReportGenerator {
 				return this.defaultLocationData();
 			}
 
-			const { trackingPoints, totalDistance, locationAnalysis, tripSummary, stops, geocodingStatus } = trackingResult.data;
+		const { 
+			trackingPoints, 
+			totalDistance, 
+			locationAnalysis, 
+			tripSummary, 
+			stops, 
+			geocodingStatus,
+			movementEfficiency,
+			locationProductivity,
+			travelInsights 
+		} = trackingResult.data;
 
-			if (!trackingPoints || !trackingPoints.length) {
-				this.logger.warn(`No tracking points found for user ${userId} on ${format(startDate, 'yyyy-MM-dd')}`);
-				return this.defaultLocationData('0');
-			}
+		if (!trackingPoints || !trackingPoints.length) {
+			this.logger.warn(`No tracking points found for user ${userId} on ${format(startDate, 'yyyy-MM-dd')}`);
+			return this.defaultLocationData('0');
+		}
 
 			// Log geocoding status for monitoring
 			if (geocodingStatus && geocodingStatus.usedFallback) {
@@ -881,42 +891,98 @@ export class UserDailyReportGenerator {
 				isFallbackAddress: stop.address && stop.address.includes(',') && stop.address.match(/^-?\d+\.\d+,\s*-?\d+\.\d+$/),
 			})) : [];
 
-			// Prepare email tracking data with enhanced trip summary
-			const trackingDataForEmail = {
-				totalDistance: `${totalDistanceKm.toFixed(1)} km`,
-				locations: locationAnalysis?.locationsVisited || [],
-				averageTimePerLocation: locationAnalysis?.averageTimePerLocationFormatted || '~',
-				tripSummary: tripSummary ? {
-					totalDistanceKm: totalDistanceKm,
-					totalTimeFormatted: this.formatDuration(tripSummary.totalTimeMinutes),
-					movingTimeFormatted: this.formatDuration(tripSummary.movingTimeMinutes),
-					stoppedTimeFormatted: this.formatDuration(tripSummary.stoppedTimeMinutes),
-					averageSpeed: `${Math.round(tripSummary.averageSpeedKmh * 10) / 10} km/h`,
-					maxSpeed: `${Math.round(tripSummary.maxSpeedKmh * 10) / 10} km/h`,
-					numberOfStops: tripSummary.numberOfStops,
-				} : null,
-				stops: formattedStops.slice(0, 10), // Limit to top 10 stops for email
-				// Add geocoding status for transparency
-				geocodingStatus: geocodingStatus ? {
-					successful: geocodingStatus.successful,
-					failed: geocodingStatus.failed,
-					usedFallback: geocodingStatus.usedFallback,
-					note: geocodingStatus.usedFallback ? 'Some locations shown as coordinates due to geocoding service issues' : null,
-				} : null,
-			};
+		// Prepare email tracking data with comprehensive enhanced metrics
+		const trackingDataForEmail = {
+			totalDistance: `${totalDistanceKm.toFixed(1)} km`,
+			locations: locationAnalysis?.locationsVisited || [],
+			averageTimePerLocation: locationAnalysis?.averageTimePerLocationFormatted || '~',
+			tripSummary: tripSummary ? {
+				totalDistanceKm: totalDistanceKm,
+				totalTimeFormatted: this.formatDuration(tripSummary.totalTimeMinutes),
+				movingTimeFormatted: this.formatDuration(tripSummary.movingTimeMinutes),
+				stoppedTimeFormatted: this.formatDuration(tripSummary.stoppedTimeMinutes),
+				averageSpeedKmh: Math.round(tripSummary.averageSpeedKmh * 10) / 10,
+				averageSpeed: `${Math.round(tripSummary.averageSpeedKmh * 10) / 10} km/h`,
+				maxSpeedKmh: Math.round(tripSummary.maxSpeedKmh * 10) / 10,
+				maxSpeed: `${Math.round(tripSummary.maxSpeedKmh * 10) / 10} km/h`,
+				numberOfStops: tripSummary.numberOfStops,
+				movingTimeMinutes: tripSummary.movingTimeMinutes,
+				stoppedTimeMinutes: tripSummary.stoppedTimeMinutes,
+			} : null,
+			stops: formattedStops.slice(0, 10), // Limit to top 10 stops for email
+			// Enhanced movement efficiency metrics
+			movementEfficiency: movementEfficiency ? {
+				efficiencyRating: movementEfficiency.efficiencyRating,
+				productivityScore: movementEfficiency.productivityScore,
+				travelOptimization: {
+					score: movementEfficiency.travelOptimization?.optimizationScore || 'Medium',
+					totalTravelDistance: movementEfficiency.travelOptimization?.totalTravelDistance || 0,
+					suggestions: movementEfficiency.travelOptimization?.suggestions || [],
+				},
+			} : null,
+			// Location productivity insights
+			locationProductivity: locationProductivity ? {
+				totalLocations: locationProductivity.totalLocations,
+				averageTimePerStop: Math.round(locationProductivity.averageTimePerStop || 0),
+				averageTimePerStopFormatted: this.formatDuration(locationProductivity.averageTimePerStop || 0),
+				productiveStops: locationProductivity.productiveStops,
+				productivityRatio: locationProductivity.totalLocations > 0 ? 
+					Math.round((locationProductivity.productiveStops / locationProductivity.totalLocations) * 100) : 0,
+				keyLocations: locationProductivity.keyLocations?.slice(0, 5)?.map(location => ({
+					address: location.address,
+					duration: location.durationFormatted,
+					productivity: location.productivity,
+					startTime: format(new Date(location.startTime), 'HH:mm'),
+					endTime: format(new Date(location.endTime), 'HH:mm'),
+				})) || [],
+			} : null,
+			// Travel insights and patterns
+			travelInsights: travelInsights ? {
+				totalTravelDistance: Math.round(travelInsights.totalTravelDistance * 10) / 10,
+				travelEfficiency: {
+					score: travelInsights.travelEfficiency?.score || 'Medium',
+					avgSpeed: Math.round(travelInsights.travelEfficiency?.metrics?.avgSpeed * 10) / 10 || 0,
+					maxSpeed: Math.round(travelInsights.travelEfficiency?.metrics?.maxSpeed * 10) / 10 || 0,
+					movingRatio: Math.round((travelInsights.travelEfficiency?.metrics?.movingRatio || 0) * 100),
+				},
+				routeOptimization: {
+					canOptimize: travelInsights.routeOptimization?.canOptimize || false,
+					currentRouteDistance: travelInsights.routeOptimization?.currentRouteDistance || 0,
+					potentialSavings: travelInsights.routeOptimization?.potentialSavings || 0,
+					recommendation: travelInsights.routeOptimization?.recommendation || 'Route appears optimized',
+				},
+				movementPatterns: {
+					pattern: travelInsights.movementPatterns?.pattern || 'Insufficient data',
+					peakMovementHour: travelInsights.movementPatterns?.peakMovementHour,
+					peakMovementDistance: Math.round((travelInsights.movementPatterns?.peakMovementDistance || 0) * 10) / 10,
+					analysis: travelInsights.movementPatterns?.analysis || 'No pattern analysis available',
+				},
+			} : null,
+			// Add geocoding status for transparency
+			geocodingStatus: geocodingStatus ? {
+				successful: geocodingStatus.successful,
+				failed: geocodingStatus.failed,
+				usedFallback: geocodingStatus.usedFallback,
+				note: geocodingStatus.usedFallback ? 'Some locations shown as coordinates due to geocoding service issues' : null,
+			} : null,
+		};
 
-			return {
-				locations: formattedTrackingPoints,
-				totalDistance: totalDistanceKm.toFixed(1),
-				totalLocations: formattedTrackingPoints.length,
-				trackingData: trackingDataForEmail,
-				// Enhanced trip metrics
-				tripMetrics: tripSummary || {},
-				stops: formattedStops,
-				locationAnalysis: locationAnalysis || {},
-				// Add geocoding status for monitoring
-				geocodingStatus: geocodingStatus || null,
-			};
+		return {
+			locations: formattedTrackingPoints,
+			totalDistance: totalDistanceKm.toFixed(1),
+			totalLocations: formattedTrackingPoints.length,
+			trackingData: trackingDataForEmail,
+			// Enhanced trip metrics
+			tripMetrics: tripSummary || {},
+			stops: formattedStops,
+			locationAnalysis: locationAnalysis || {},
+			// Add comprehensive enhanced metrics
+			movementEfficiency: movementEfficiency || null,
+			locationProductivity: locationProductivity || null, 
+			travelInsights: travelInsights || null,
+			// Add geocoding status for monitoring
+			geocodingStatus: geocodingStatus || null,
+		};
 		} catch (error) {
 			this.logger.error(`Error collecting location data for user ${userId}: ${error.message}`, error.stack);
 			return this.defaultLocationData();

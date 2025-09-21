@@ -40,7 +40,6 @@ import { RewardsModule } from '../rewards/rewards.module';
 import { ProductAnalytics } from '../products/entities/product-analytics.entity';
 import { TaskFlag } from '../tasks/entities/task-flag.entity';
 import { TaskFlagItem } from '../tasks/entities/task-flag-item.entity';
-import { TrackingModule } from '../tracking/tracking.module';
 import { Tracking } from 'src/tracking/entities/tracking.entity';
 import { Competitor } from '../competitors/entities/competitor.entity';
 import { MapDataReportGenerator } from './generators/map-data-report.generator';
@@ -50,6 +49,7 @@ import { UserEmployeementProfile } from 'src/user/entities/user.employeement.pro
 import { UserTarget } from '../user/entities/user-target.entity';
 import { License } from 'src/licensing/entities/license.entity';
 import { AttendanceModule } from '../attendance/attendance.module';
+import { TrackingModule } from '../tracking/tracking.module';
 import { UserRewards } from '../rewards/entities/user-rewards.entity';
 import { XPTransaction } from '../rewards/entities/xp-transaction.entity';
 
@@ -57,6 +57,7 @@ import { XPTransaction } from '../rewards/entities/xp-transaction.entity';
 	imports: [
 		LicensingModule,
 		ConfigModule,
+		forwardRef(() => TrackingModule),
 		CacheModule.registerAsync({
 			imports: [ConfigModule],
 			useFactory: async (configService: ConfigService) => {
@@ -115,7 +116,6 @@ import { XPTransaction } from '../rewards/entities/xp-transaction.entity';
 		EventEmitterModule,
 		CommunicationModule,
 		RewardsModule,
-		TrackingModule,
 		forwardRef(() => AttendanceModule),
 	],
 	controllers: [ReportsController],

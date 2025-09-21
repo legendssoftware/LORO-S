@@ -396,8 +396,157 @@
 
 <!-- Location & Travel Summary -->
 {{#if tracking.totalDistance}}
+
+<!-- Movement Efficiency Section -->
+{{#if tracking.movementEfficiency}}
 <div class="info-card">
-    <h4>🗺️ Location & Travel Activity</h4>
+    <h4>🚗 Movement Efficiency Analysis</h4>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Total Distance</span>
+            <span class="detail-value" style="font-weight: 700; color: #7c2d92; font-size: 16px;">{{tracking.totalDistance}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Efficiency Rating</span>
+            <span class="detail-value" style="font-weight: 600; color: {{#if (eq tracking.movementEfficiency.efficiencyRating 'High')}}#22c55e{{else if (eq tracking.movementEfficiency.efficiencyRating 'Medium')}}#f59e0b{{else}}#ef4444{{/if}};">{{tracking.movementEfficiency.efficiencyRating}}</span>
+        </div>
+        {{#if tracking.tripSummary}}
+        <div class="detail-item">
+            <span class="detail-label">Average Speed</span>
+            <span class="detail-value" style="color: #0ea5e9;">{{tracking.tripSummary.averageSpeedKmh}} km/h</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Max Speed</span>
+            <span class="detail-value" style="color: #f59e0b;">{{tracking.tripSummary.maxSpeedKmh}} km/h</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Moving Time</span>
+            <span class="detail-value" style="color: #22c55e;">{{tracking.tripSummary.movingTimeFormatted}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Stopped Time</span>
+            <span class="detail-value" style="color: #8b5cf6;">{{tracking.tripSummary.stoppedTimeFormatted}}</span>
+        </div>
+        {{/if}}
+    </div>
+    
+    {{#if tracking.movementEfficiency.travelOptimization.suggestions}}
+    {{#if tracking.movementEfficiency.travelOptimization.suggestions.length}}
+    <div style="margin-top: 16px; padding: 16px; background: rgba(34, 197, 94, 0.05); border-radius: 12px; border-left: 4px solid #22c55e;">
+        <h5 style="color: #15803d; margin: 0 0 12px 0; font-size: 15px; font-weight: 600;">💡 Travel Optimization Tips</h5>
+        <div style="list-style: none; padding: 0; margin: 0;">
+            {{#each tracking.movementEfficiency.travelOptimization.suggestions}}
+            <div style="padding: 4px 0; color: #15803d; font-size: 14px; line-height: 1.5;">
+                • {{this}}
+            </div>
+            {{/each}}
+        </div>
+    </div>
+    {{/if}}
+    {{/if}}
+</div>
+{{/if}}
+
+<!-- Location Productivity Section -->
+{{#if tracking.locationProductivity}}
+<div class="info-card">
+    <h4>📍 Location Productivity</h4>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Total Stops</span>
+            <span class="detail-value" style="font-weight: 600; color: #0ea5e9;">{{tracking.locationProductivity.totalLocations}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Productive Stops</span>
+            <span class="detail-value" style="font-weight: 600; color: #22c55e;">{{tracking.locationProductivity.productiveStops}} ({{tracking.locationProductivity.productivityRatio}}%)</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Avg Time Per Stop</span>
+            <span class="detail-value" style="font-weight: 600; color: #8b5cf6;">{{tracking.locationProductivity.averageTimePerStopFormatted}}</span>
+        </div>
+    </div>
+    
+    {{#if tracking.locationProductivity.keyLocations}}
+    {{#if tracking.locationProductivity.keyLocations.length}}
+    <div style="margin-top: 16px; padding: 16px; background: rgba(168, 85, 247, 0.05); border-radius: 12px; border-left: 4px solid #A855F7;">
+        <h5 style="color: #7c2d92; margin: 0 0 12px 0; font-size: 15px; font-weight: 600;">🎯 Key Productive Locations</h5>
+        <div style="list-style: none; padding: 0; margin: 0;">
+            {{#each tracking.locationProductivity.keyLocations}}
+            <div style="padding: 8px 0; {{#unless @last}}border-bottom: 1px solid rgba(168, 85, 247, 0.1);{{/unless}}">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px;">
+                    <strong style="color: #1e293b; font-size: 14px;">{{address}}</strong>
+                    <span style="background: {{#if (eq productivity 'High')}}#dcfce7{{else if (eq productivity 'Medium')}}#fef3c7{{else if (eq productivity 'Low')}}#fee2e2{{else}}#f1f5f9{{/if}}; color: {{#if (eq productivity 'High')}}#15803d{{else if (eq productivity 'Medium')}}#d97706{{else if (eq productivity 'Low')}}#dc2626{{else}}#64748b{{/if}}; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 500;">{{productivity}}</span>
+                </div>
+                <div style="color: #64748b; font-size: 13px; line-height: 1.4;">
+                    Duration: {{duration}} | Time: {{startTime}} - {{endTime}}
+                </div>
+            </div>
+            {{/each}}
+        </div>
+    </div>
+    {{/if}}
+    {{/if}}
+</div>
+{{/if}}
+
+<!-- Travel Insights Section -->
+{{#if tracking.travelInsights}}
+<div class="info-card">
+    <h4>🗺️ Travel Insights & Patterns</h4>
+    
+    <!-- Travel Efficiency Metrics -->
+    <div class="detail-grid">
+        <div class="detail-item">
+            <span class="detail-label">Travel Efficiency</span>
+            <span class="detail-value" style="font-weight: 600; color: {{#if (eq tracking.travelInsights.travelEfficiency.score 'High')}}#22c55e{{else if (eq tracking.travelInsights.travelEfficiency.score 'Medium')}}#f59e0b{{else}}#ef4444{{/if}};">{{tracking.travelInsights.travelEfficiency.score}}</span>
+        </div>
+        <div class="detail-item">
+            <span class="detail-label">Moving Time Ratio</span>
+            <span class="detail-value" style="color: #8b5cf6;">{{tracking.travelInsights.travelEfficiency.movingRatio}}%</span>
+        </div>
+        {{#if tracking.travelInsights.routeOptimization.canOptimize}}
+        <div class="detail-item">
+            <span class="detail-label">Route Optimization</span>
+            <span class="detail-value" style="color: #f59e0b;">Save {{tracking.travelInsights.routeOptimization.potentialSavings}} km</span>
+        </div>
+        {{/if}}
+    </div>
+
+    <!-- Movement Patterns -->
+    {{#if tracking.travelInsights.movementPatterns.pattern}}
+    {{#unless (eq tracking.travelInsights.movementPatterns.pattern 'Insufficient data')}}
+    <div style="margin-top: 16px; padding: 16px; background: rgba(59, 130, 246, 0.05); border-radius: 12px; border-left: 4px solid #3b82f6;">
+        <h5 style="color: #1d4ed8; margin: 0 0 8px 0; font-size: 15px; font-weight: 600;">📊 Movement Pattern Analysis</h5>
+        <p style="color: #1e40af; margin: 0 0 8px 0; font-size: 14px; line-height: 1.5;">
+            {{tracking.travelInsights.movementPatterns.pattern}}
+        </p>
+        {{#if tracking.travelInsights.movementPatterns.peakMovementHour}}
+        <p style="color: #64748b; margin: 0; font-size: 13px;">
+            Peak activity: {{tracking.travelInsights.movementPatterns.peakMovementDistance}} km at {{tracking.travelInsights.movementPatterns.peakMovementHour}}:00
+        </p>
+        {{/if}}
+    </div>
+    {{/unless}}
+    {{/if}}
+
+    <!-- Route Optimization -->
+    {{#if tracking.travelInsights.routeOptimization.recommendation}}
+    <div style="margin-top: 16px; padding: 16px; background: rgba(245, 158, 11, 0.05); border-radius: 12px; border-left: 4px solid #f59e0b;">
+        <h5 style="color: #d97706; margin: 0 0 8px 0; font-size: 15px; font-weight: 600;">🛣️ Route Optimization</h5>
+        <p style="color: #92400e; margin: 0; font-size: 14px; line-height: 1.5;">
+            {{tracking.travelInsights.routeOptimization.recommendation}}
+        </p>
+    </div>
+    {{/if}}
+
+</div>
+{{/if}}
+
+<!-- Detailed Stop Analysis (fallback to original if new data not available) -->
+{{#if tracking.stops}}
+{{#unless tracking.locationProductivity}}
+<div class="info-card">
+    <h4>📍 Location Activity</h4>
     <div class="detail-grid">
         <div class="detail-item">
             <span class="detail-label">Total Distance</span>
@@ -405,29 +554,31 @@
         </div>
         <div class="detail-item">
             <span class="detail-label">Locations Visited</span>
-            <span class="detail-value" style="font-weight: 600; color: #0ea5e9;">{{#each tracking.locations}}{{#if @first}}{{@root.tracking.locations.length}}{{/if}}{{/each}}</span>
+            <span class="detail-value" style="font-weight: 600; color: #0ea5e9;">{{tracking.stops.length}}</span>
         </div>
         <div class="detail-item">
             <span class="detail-label">Avg Time Per Location</span>
             <span class="detail-value" style="font-weight: 600; color: #8b5cf6;">{{tracking.averageTimePerLocation}}</span>
         </div>
     </div>
-    {{#if tracking.locations}}
     <div style="margin-top: 16px; padding: 16px; background: rgba(168, 85, 247, 0.05); border-radius: 12px; border-left: 4px solid #A855F7;">
         <h5 style="color: #7c2d92; margin: 0 0 12px 0; font-size: 15px; font-weight: 600;">📍 Key Locations Today</h5>
-        <div class="feature-list" style="list-style: none; padding: 0; margin: 0;">
-            {{#each tracking.locations}}
+        <div style="list-style: none; padding: 0; margin: 0;">
+            {{#each tracking.stops}}
             {{#unless (gt @index 4)}}
-            <li style="padding: 6px 0; color: #4b5563; padding-left: 25px; position: relative; font-size: 14px; line-height: 1.5; {{#unless @last}}border-bottom: 1px solid rgba(168, 85, 247, 0.1);{{/unless}}">
+            <div style="padding: 6px 0; color: #4b5563; padding-left: 25px; position: relative; font-size: 14px; line-height: 1.5; {{#unless @last}}border-bottom: 1px solid rgba(168, 85, 247, 0.1);{{/unless}}">
                 <span style="position: absolute; left: 0; top: 6px; color: #A855F7; font-weight: bold; font-size: 12px;">📍</span>
-                <strong>{{address}}</strong> - {{timeSpent}}
-            </li>
+                <strong>{{address}}</strong> - {{duration}}
+                {{#if startTime}}({{startTime}} - {{endTime}}){{/if}}
+            </div>
             {{/unless}}
             {{/each}}
         </div>
     </div>
-    {{/if}}
 </div>
+{{/unless}}
+{{/if}}
+
 {{/if}}
 
 <!-- Quick Dashboard Access -->
