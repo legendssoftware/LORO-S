@@ -1262,6 +1262,7 @@ export class AttendanceReportsService {
 			
 			// Extract distance data - show 0 for active shifts, actual distance for completed shifts
 			let totalDistance = '0.0 km';
+			let distanceKm = 0; // DECLARE DISTANCE KM IN PROPER SCOPE
 			let visits = {
 				totalVisits: 0,
 				totalDistance: '0.0 km',
@@ -1270,8 +1271,29 @@ export class AttendanceReportsService {
 			};
 			
 			if (locationData && status === 'Completed') {
-				// Only show distance for completed shifts
-				totalDistance = locationData.trackingData?.totalDistance || locationData.totalDistance + ' km' || '0.0 km';
+				// PRIORITIZE ENHANCED DISTANCE CALCULATION - USE tripSummary.totalDistanceKm
+				
+				// Priority order: Enhanced tripSummary > gpsData > legacy fields
+				if (userDailyReport?.gpsData?.tripSummary?.totalDistanceKm !== undefined) {
+					// Use enhanced calculation from GPS recalculation
+					distanceKm = userDailyReport.gpsData.tripSummary.totalDistanceKm;
+					totalDistance = `${distanceKm.toFixed(1)} km`;
+					this.logger.debug(`  - Using enhanced GPS distance: ${totalDistance}`);
+				} else if (locationData.tripMetrics?.totalDistanceKm !== undefined) {
+					// Use enhanced calculation from location data
+					distanceKm = locationData.tripMetrics.totalDistanceKm;
+					totalDistance = `${distanceKm.toFixed(1)} km`;
+					this.logger.debug(`  - Using tripMetrics distance: ${totalDistance}`);
+				} else if (locationData.trackingData?.totalDistanceKm !== undefined) {
+					// Use enhanced calculation from tracking data
+					distanceKm = locationData.trackingData.totalDistanceKm;
+					totalDistance = `${distanceKm.toFixed(1)} km`;
+					this.logger.debug(`  - Using trackingData enhanced distance: ${totalDistance}`);
+				} else {
+					// Fallback to legacy fields
+					totalDistance = locationData.trackingData?.totalDistance || locationData.totalDistance + ' km' || '0.0 km';
+					this.logger.debug(`  - Using legacy distance: ${totalDistance}`);
+				}
 				
 				visits = {
 					totalVisits: locationData.locationAnalysis?.locationsVisited?.length || 0,
@@ -1304,7 +1326,19 @@ export class AttendanceReportsService {
 				avatar: metric.user.userProfile?.avatar || null,
 				// Add comprehensive daily metrics from user daily reports
 				dailyMetrics: {
+					// STANDARDIZED DISTANCE FIELDS FOR FRONTEND/EMAIL COMPATIBILITY
 					visits,
+					location: {
+						// Map enhanced distance to location field for frontend compatibility
+						totalDistance: totalDistance,
+						totalDistanceKm: distanceKm || 0,
+						totalLocations: visits.totalVisits,
+						trackingData: {
+							averageTimePerLocation: visits.averageTimePerLocation,
+							distanceTraveled: totalDistance,
+							totalDistanceKm: distanceKm || 0,
+						},
+					},
 					leads: {
 						newLeads: userDailyReport?.details?.leads?.newLeadsCount || 0,
 						convertedLeads: userDailyReport?.details?.leads?.convertedCount || 0,

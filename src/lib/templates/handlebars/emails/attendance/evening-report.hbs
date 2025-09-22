@@ -155,7 +155,16 @@
                             {{#if dailyMetrics.visits.completedVisits}}{{dailyMetrics.visits.completedVisits}}{{else}}0{{/if}}/{{#if dailyMetrics.visits.totalVisits}}{{dailyMetrics.visits.totalVisits}}{{else}}0{{/if}}
                         </div>
                         <div style="font-size: 10px; color: #6b7280;">
-                            {{#if dailyMetrics.visits.totalDistance}}{{dailyMetrics.visits.totalDistance}}{{else}}0.0 km{{/if}}
+                            {{!-- PRIORITIZE ENHANCED DISTANCE CALCULATION --}}
+                            {{#if tracking.tripSummary.totalDistanceKm}}
+                                {{tracking.tripSummary.totalDistanceKm}} km
+                            {{else if tracking.visits.totalDistance}}
+                                {{tracking.visits.totalDistance}}
+                            {{else if dailyMetrics.visits.totalDistance}}
+                                {{dailyMetrics.visits.totalDistance}}
+                            {{else}}
+                                0.0 km
+                            {{/if}}
                         </div>
                     </div>
                     <div style="text-align: center;">
@@ -318,10 +327,21 @@
                         </div>
                     </td>
                     
-                    <!-- Distance -->
+                    <!-- Distance - PRIORITIZE ENHANCED CALCULATION -->
                     <td style="padding: 16px 12px; text-align: center;">
                         <div style="font-size: 12px; color: #374151; font-weight: 500;">
-                            {{#if dailyMetrics.visits.totalDistance}}{{dailyMetrics.visits.totalDistance}}{{else}}0.0 km{{/if}}
+                            {{!-- Priority: Enhanced tripSummary > tracking fields > legacy fields --}}
+                            {{#if tracking.tripSummary.totalDistanceKm}}
+                                {{tracking.tripSummary.totalDistanceKm}} km
+                            {{else if tracking.visits.totalDistance}}
+                                {{tracking.visits.totalDistance}}
+                            {{else if tracking.location.totalDistance}}
+                                {{tracking.location.totalDistance}}
+                            {{else if dailyMetrics.visits.totalDistance}}
+                                {{dailyMetrics.visits.totalDistance}}
+                            {{else}}
+                                0.0 km
+                            {{/if}}
                         </div>
                     </td>
                     

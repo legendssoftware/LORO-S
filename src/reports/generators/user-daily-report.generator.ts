@@ -967,9 +967,16 @@ export class UserDailyReportGenerator {
 			})) : [];
 
 		// Prepare email tracking data with comprehensive enhanced metrics
+		// STANDARDIZE ALL DISTANCE REFERENCES TO USE ENHANCED CALCULATION
+		const formattedDistance = `${totalDistanceKm.toFixed(1)} km`;
 		const trackingDataForEmail = {
-			totalDistance: `${totalDistanceKm.toFixed(1)} km`,
+			// Primary enhanced distance field
+			totalDistance: formattedDistance,
 			totalDistanceKm: totalDistanceKm,
+			// Legacy field mappings for backward compatibility
+			totalDistanceFormatted: formattedDistance,
+			distanceTraveled: formattedDistance,
+			distanceKm: totalDistanceKm,
 			locations: locationAnalysis?.locationsVisited || [],
 			averageTimePerLocation: locationAnalysis?.averageTimePerLocationFormatted || '~',
 			// Distance insights for contextual understanding
@@ -1047,15 +1054,56 @@ export class UserDailyReportGenerator {
 			} : null,
 		};
 
-		return {
+		// STANDARDIZE ALL DISTANCE FIELD MAPPINGS TO USE ENHANCED CALCULATION
+		const standardizedLocationData = {
 			locations: formattedTrackingPoints,
-			totalDistance: totalDistanceKm.toFixed(1),
+			// PRIMARY ENHANCED DISTANCE FIELDS
+			totalDistance: formattedDistance,
+			totalDistanceKm: totalDistanceKm,
+			// LEGACY FIELD MAPPINGS FOR FRONTEND/EMAIL COMPATIBILITY
+			totalDistanceFormatted: formattedDistance,
+			distanceTraveled: formattedDistance,
+			distanceKm: totalDistanceKm,
 			totalLocations: formattedTrackingPoints.length,
-			trackingData: trackingDataForEmail,
-			// Enhanced trip metrics
-			tripMetrics: tripSummary || {},
+			trackingData: {
+				...trackingDataForEmail,
+				// ENSURE VISITS FIELD HAS ENHANCED DISTANCE
+				visits: {
+					totalDistance: formattedDistance,
+					totalDistanceKm: totalDistanceKm,
+					completedVisits: locationAnalysis?.locationsVisited?.length || 0,
+					totalVisits: locationAnalysis?.locationsVisited?.length || 0,
+					avgDuration: locationAnalysis?.averageTimePerLocationFormatted || '~',
+					topLocations: formattedStops.slice(0, 3).map(stop => stop.address),
+				},
+				// ENSURE LOCATION FIELD HAS ENHANCED DISTANCE
+				location: {
+					totalDistance: formattedDistance,
+					totalDistanceKm: totalDistanceKm,
+					totalLocations: locationAnalysis?.locationsVisited?.length || 0,
+					trackingData: {
+						averageTimePerLocation: locationAnalysis?.averageTimePerLocationFormatted || '~',
+						distanceTraveled: formattedDistance,
+						totalDistanceKm: totalDistanceKm,
+					},
+				},
+			},
+			// Enhanced trip metrics with standardized distance
+			tripMetrics: tripSummary ? {
+				...tripSummary,
+				totalDistanceKm: totalDistanceKm,
+				totalDistance: formattedDistance,
+			} : {
+				totalDistanceKm: totalDistanceKm,
+				totalDistance: formattedDistance,
+			},
 			stops: formattedStops,
-			locationAnalysis: locationAnalysis || {},
+			locationAnalysis: {
+				...(locationAnalysis || {}),
+				// Ensure location analysis has enhanced distance
+				totalDistanceKm: totalDistanceKm,
+				totalDistance: formattedDistance,
+			},
 			// Add comprehensive enhanced metrics
 			movementEfficiency: movementEfficiency || null,
 			locationProductivity: locationProductivity || null, 
@@ -1063,6 +1111,8 @@ export class UserDailyReportGenerator {
 			// Add geocoding status for monitoring
 			geocodingStatus: geocodingStatus || null,
 		};
+
+		return standardizedLocationData;
 		} catch (error) {
 			this.logger.error(`Error collecting location data for user ${userId}: ${error.message}`, error.stack);
 			return this.defaultLocationData();
@@ -1071,14 +1121,52 @@ export class UserDailyReportGenerator {
 
 	private defaultLocationData(totalDistanceStr?: string) {
 		const totalDistanceKm = parseFloat(totalDistanceStr || '0') || 0;
+		const formattedDistance = `${totalDistanceKm.toFixed(1)} km`;
+		
+		// STANDARDIZED DEFAULT DATA WITH ALL DISTANCE FIELD MAPPINGS
 		return {
 			locations: [],
-			totalDistance: totalDistanceKm.toFixed(1),
+			// PRIMARY ENHANCED DISTANCE FIELDS
+			totalDistance: formattedDistance,
+			totalDistanceKm: totalDistanceKm,
+			// LEGACY FIELD MAPPINGS
+			totalDistanceFormatted: formattedDistance,
+			distanceTraveled: formattedDistance,
+			distanceKm: totalDistanceKm,
 			totalLocations: 0,
 			trackingData: {
-				totalDistance: `${totalDistanceKm.toFixed(1)} km`,
+				totalDistance: formattedDistance,
+				totalDistanceKm: totalDistanceKm,
 				locations: [],
 				averageTimePerLocation: '~',
+				// ENSURE VISITS FIELD EXISTS
+				visits: {
+					totalDistance: formattedDistance,
+					totalDistanceKm: totalDistanceKm,
+					completedVisits: 0,
+					totalVisits: 0,
+					avgDuration: '~',
+					topLocations: [],
+				},
+				// ENSURE LOCATION FIELD EXISTS
+				location: {
+					totalDistance: formattedDistance,
+					totalDistanceKm: totalDistanceKm,
+					totalLocations: 0,
+					trackingData: {
+						averageTimePerLocation: '~',
+						distanceTraveled: formattedDistance,
+						totalDistanceKm: totalDistanceKm,
+					},
+				},
+			},
+			tripMetrics: {
+				totalDistanceKm: totalDistanceKm,
+				totalDistance: formattedDistance,
+			},
+			locationAnalysis: {
+				totalDistanceKm: totalDistanceKm,
+				totalDistance: formattedDistance,
 			},
 		};
 	}
