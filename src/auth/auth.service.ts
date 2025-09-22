@@ -242,106 +242,123 @@ export class AuthService {
 				const refreshToken = await this.jwtService.signAsync(payload, { expiresIn: `7d` });
 				this.logger.debug(`JWT tokens generated successfully for user: ${username}`);
 
-				const gainedXP = {
-					owner: Number(uid),
-					amount: XP_VALUES.DAILY_LOGIN,
-					action: 'DAILY_LOGIN',
-					source: {
-						id: uid.toString(),
-						type: XP_VALUES_TYPES.LOGIN,
-						details: 'Daily login reward',
-					},
-				};
-
-				this.logger.debug(`Awarding XP for daily login to user: ${username}, amount: ${XP_VALUES.DAILY_LOGIN}`);
-				await this.rewardsService.awardXP(gainedXP, organisationRef, restOfUser?.branch?.uid);
-				this.logger.debug(`XP awarded successfully for daily login to user: ${username}`);
-
-				// Send login notification email
-				try {
-					this.logger.debug(`Sending login notification email to user: ${username}`);
-					this.eventEmitter.emit('send.email', EmailType.LOGIN_NOTIFICATION, [authProfile.user.email], {
-						name: profileData.name,
-						loginTime: new Date().toLocaleString(),
-						ipAddress: requestData?.ipAddress || 'Unknown',
-						location: requestData?.location || 'Unknown',
-						country: requestData?.country || 'Unknown',
-						deviceType: requestData?.deviceType || 'Unknown',
-						browser: requestData?.browser || 'Unknown',
-						operatingSystem: requestData?.operatingSystem || 'Unknown',
-						userAgent: requestData?.userAgent || 'Unknown',
-						suspicious: false, // You can implement logic to detect suspicious logins
-						securityTips: [
-							'Always log out from shared devices',
-							'Use strong, unique passwords',
-							'Enable two-factor authentication when available',
-						],
-					});
-				} catch (error) {
-					// Don't fail login if email fails
-					this.logger.error('Failed to send login notification email:', error);
-				}
-
-				// Send successful login push notification
-				try {
-					const loginTime = new Date().toLocaleTimeString('en-ZA', {
-						hour: '2-digit',
-						minute: '2-digit',
-						hour12: true,
-					});
-					const loginDate = new Date().toLocaleDateString('en-ZA', {
-						weekday: 'long',
-						year: 'numeric',
-						month: 'long',
-						day: 'numeric',
-					});
-
-					this.logger.debug(`Sending successful login push notification to user: ${username}`);
-					await this.unifiedNotificationService.sendTemplatedNotification(
-						NotificationEvent.AUTH_LOGIN_SUCCESS,
-						[authProfile.user.uid],
-						{
-							message: `Welcome back, ${profileData.name}! Successfully signed in on ${loginDate} at ${loginTime}.`,
-							userName: profileData.name,
-							loginTime,
-							loginDate,
-							ipAddress: requestData?.ipAddress || 'Unknown',
-							location: requestData?.location || 'Unknown',
-							deviceType: requestData?.deviceType || 'Unknown',
-							browser: requestData?.browser || 'Unknown',
-							timestamp: new Date().toISOString(),
-						},
-						{
-							priority: NotificationPriority.LOW,
-						},
-					);
-					this.logger.debug(`Successful login push notification sent to user: ${username}`);
-				} catch (notificationError) {
-					this.logger.warn(
-						`Failed to send successful login push notification to user ${username}:`,
-						notificationError.message,
-					);
-					// Don't fail login if notification fails
-				}
-
 				this.logger.log(`User sign in successful: ${username}`);
 
-				// Check device registration for push notifications (async, don't block login)
-				this.checkAndUpdateDeviceRegistration(authProfile.user, {
-					expoPushToken,
-					deviceId,
-					platform,
-					...requestData,
-				}).catch(error => {
-					this.logger.warn(`Failed to check device registration for user ${username}:`, error.message);
-				});
-
-				return {
+				// Prepare response data immediately
+				const responseData = {
 					profileData,
 					accessToken,
 					refreshToken,
 					message: `Welcome ${profileData.name}!`,
 				};
+
+				// Process non-critical operations asynchronously (don't block user response)
+				setImmediate(async () => {
+					try {
+						// Award XP for daily login
+						try {
+							const gainedXP = {
+								owner: Number(uid),
+								amount: XP_VALUES.DAILY_LOGIN,
+								action: 'DAILY_LOGIN',
+								source: {
+									id: uid.toString(),
+									type: XP_VALUES_TYPES.LOGIN,
+									details: 'Daily login reward',
+								},
+							};
+
+							this.logger.debug(`Awarding XP for daily login to user: ${username}, amount: ${XP_VALUES.DAILY_LOGIN}`);
+							await this.rewardsService.awardXP(gainedXP, organisationRef, restOfUser?.branch?.uid);
+							this.logger.debug(`XP awarded successfully for daily login to user: ${username}`);
+						} catch (xpError) {
+							this.logger.error(`Failed to award XP for daily login to user ${username}:`, xpError.message);
+						}
+
+						// Send login notification email
+						try {
+							this.logger.debug(`Sending login notification email to user: ${username}`);
+							this.eventEmitter.emit('send.email', EmailType.LOGIN_NOTIFICATION, [authProfile.user.email], {
+								name: profileData.name,
+								loginTime: new Date().toLocaleString(),
+								ipAddress: requestData?.ipAddress || 'Unknown',
+								location: requestData?.location || 'Unknown',
+								country: requestData?.country || 'Unknown',
+								deviceType: requestData?.deviceType || 'Unknown',
+								browser: requestData?.browser || 'Unknown',
+								operatingSystem: requestData?.operatingSystem || 'Unknown',
+								userAgent: requestData?.userAgent || 'Unknown',
+								suspicious: false, // You can implement logic to detect suspicious logins
+								securityTips: [
+									'Always log out from shared devices',
+									'Use strong, unique passwords',
+									'Enable two-factor authentication when available',
+								],
+							});
+						} catch (emailError) {
+							this.logger.error(`Failed to send login notification email to user ${username}:`, emailError.message);
+						}
+
+						// Send successful login push notification
+						try {
+							const loginTime = new Date().toLocaleTimeString('en-ZA', {
+								hour: '2-digit',
+								minute: '2-digit',
+								hour12: true,
+							});
+							const loginDate = new Date().toLocaleDateString('en-ZA', {
+								weekday: 'long',
+								year: 'numeric',
+								month: 'long',
+								day: 'numeric',
+							});
+
+							this.logger.debug(`Sending successful login push notification to user: ${username}`);
+							await this.unifiedNotificationService.sendTemplatedNotification(
+								NotificationEvent.AUTH_LOGIN_SUCCESS,
+								[authProfile.user.uid],
+								{
+									message: `Welcome back, ${profileData.name}! Successfully signed in on ${loginDate} at ${loginTime}.`,
+									userName: profileData.name,
+									loginTime,
+									loginDate,
+									ipAddress: requestData?.ipAddress || 'Unknown',
+									location: requestData?.location || 'Unknown',
+									deviceType: requestData?.deviceType || 'Unknown',
+									browser: requestData?.browser || 'Unknown',
+									timestamp: new Date().toISOString(),
+								},
+								{
+									priority: NotificationPriority.LOW,
+								},
+							);
+							this.logger.debug(`Successful login push notification sent to user: ${username}`);
+						} catch (notificationError) {
+							this.logger.warn(
+								`Failed to send successful login push notification to user ${username}:`,
+								notificationError.message,
+							);
+						}
+
+						// Check device registration for push notifications (async, don't block login)
+						try {
+							await this.checkAndUpdateDeviceRegistration(authProfile.user, {
+								expoPushToken,
+								deviceId,
+								platform,
+								...requestData,
+							});
+						} catch (deviceError) {
+							this.logger.warn(`Failed to check device registration for user ${username}:`, deviceError.message);
+						}
+
+					} catch (backgroundError) {
+						this.logger.error(`Background sign-in tasks failed for user ${username}:`, backgroundError.message);
+						// Don't affect user experience
+					}
+				});
+
+				return responseData;
 			}
 
 			// For users without organization (like system admins)
