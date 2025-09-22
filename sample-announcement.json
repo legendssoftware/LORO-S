@@ -1,42 +1,11 @@
 {
-  "subject": "🚀 Exciting New Features Coming to LORO!",
-  "title": "Major Platform Updates",
-  "greeting": "Hi there",
-  "body": "<p>We're thrilled to announce some amazing new features that will revolutionize how you work with LORO!</p><p><strong>What's New:</strong></p><ul><li>🔄 <strong>Enhanced Dashboard</strong> - New analytics and reporting capabilities</li><li>📱 <strong>Mobile App Updates</strong> - Improved performance and new features</li><li>🔗 <strong>API Integrations</strong> - Connect with your favorite tools seamlessly</li><li>🛡️ <strong>Security Enhancements</strong> - Advanced protection for your data</li></ul><p>These updates represent months of development based on your valuable feedback. We can't wait for you to experience them!</p>",
+  "subject": "📱 Critical App Update Available - Enhanced GPS & Attendance Tracking!",
+  "title": "LORO Mobile App Update Required", 
+  "greeting": "Dear Team",
+  "body": "<p>We're excited to announce a major update to the LORO mobile app that significantly improves your daily attendance and location tracking experience!</p><p><strong>🆕 What's New in This Version:</strong></p><ul><li>🎯 <strong>Enhanced GPS Accuracy</strong> - Dramatically improved location precision for more accurate attendance tracking</li><li>📍 <strong>Advanced Location Analysis</strong> - Comprehensive attendance details with precise location verification</li><li>🔧 <strong>Smart Error Handling</strong> - Better handling of GPS signal issues and location discrepancies</li><li>📊 <strong>Detailed Reporting</strong> - Enhanced location-based attendance reports with accuracy metrics</li><li>⚡ <strong>Performance Optimizations</strong> - Faster GPS acquisition and reduced battery consumption</li><li>🛡️ <strong>Reliability Improvements</strong> - More consistent tracking even in challenging GPS conditions</li></ul><p><strong>⚠️ Important:</strong> This update is <em>required</em> for continued use of attendance tracking features. Please update your app as soon as possible to ensure seamless functionality.</p><p><strong>🔄 Installation Issues?</strong> If the app update fails to install, please <em>completely uninstall</em> the existing LORO app from your device first, then download and install the new version fresh. This will ensure all new features work correctly.</p>",
   "cta": {
-    "text": "Explore New Features",
-    "url": "https://loro.co.za/features"
+    "text": "Download Update Now",
+    "url": "https://loro.co.za"
   },
-  "images": [
-    {
-      "url": "https://picsum.photos/600/300?random=1",
-      "alt": "LORO Dashboard Screenshot",
-      "title": "New Dashboard Interface"
-    },
-    {
-      "url": "https://picsum.photos/100/60?random=2",
-      "alt": "Feature Icon",
-      "width": 100,
-      "height": 60,
-      "inline": true
-    }
-  ],
-  "links": [
-    {
-      "text": "📚 Feature Documentation",
-      "url": "https://docs.loro.co.za/new-features",
-      "description": "Complete guide to all new features"
-    },
-    {
-      "text": "🎥 Watch Demo Video", 
-      "url": "https://loro.co.za/demo-video",
-      "description": "5-minute overview of the updates"
-    },
-    {
-      "text": "💬 Join Community Discussion",
-      "url": "https://community.loro.co.za/updates",
-      "description": "Share feedback and connect with other users"
-    }
-  ],
-  "footer": "<p><strong>Need help getting started?</strong></p><p>Our support team is ready to help you make the most of these new features. Don't hesitate to reach out!</p><p><em>The updates will be rolled out gradually over the next 48 hours. You'll receive a notification once they're available in your account.</em></p>"
+  "footer": "<p><strong>🚨 Action Required:</strong></p><p>Please update your LORO mobile app within the next 7 days to continue using attendance tracking features. Older versions will gradually lose compatibility with our enhanced GPS systems.</p><p><strong>Having trouble updating?</strong> Our support team is standing by to help. Contact us immediately if you experience any issues with the update process.</p><p><em>📊 After updating, you'll notice significantly more accurate location tracking and detailed attendance reports. Thank you for helping us make LORO better!</em></p>"
 }

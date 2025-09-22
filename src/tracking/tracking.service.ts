@@ -14,6 +14,7 @@ import {
 	EnhancedTrackingResult, 
 } from './interfaces/enhanced-tracking.interface';
 import { ReportsService } from '../reports/reports.service';
+import { GoogleMapsService, TrackingPoint } from '../lib/services/google-maps.service';
 
 @Injectable()
 export class TrackingService {
@@ -30,7 +31,8 @@ export class TrackingService {
 		@Inject(CACHE_MANAGER)
 		private cacheManager: Cache,
 		@Inject(forwardRef(() => ReportsService))
-		private reportsService?: ReportsService,
+		private reportsService: ReportsService,
+		private googleMapsService: GoogleMapsService,
 	) {
 		this.geocodingApiKey = process.env.GOOGLE_MAPS_API_KEY || '';
 		this.CACHE_TTL = parseInt(process.env.CACHE_TTL || '300000', 10); // 5 minutes default
@@ -1489,13 +1491,43 @@ export class TrackingService {
 	 * Enhanced trip analysis with comprehensive metrics
 	 * Now includes accuracy filtering to ensure reliable calculations
 	 */
-	private generateTripAnalysis(trackingPoints: Tracking[]) {
+	private async generateTripAnalysis(trackingPoints: Tracking[]) {
 		// Filter points by accuracy first for reliable distance calculations
 		const accuracyFilter = this.filterByAccuracy(trackingPoints);
 		const accuratePoints = accuracyFilter.filteredPoints;
 		
-		// Calculate distance with accurate points only
-		const totalDistanceKm = LocationUtils.calculateTotalDistance(accuratePoints);
+		// Calculate distance using enhanced method from GoogleMapsService
+		let totalDistanceKm = 0;
+		let distanceCalculationMethod = 'fallback';
+		
+		if (accuratePoints.length >= 2) {
+			try {
+				// Convert Tracking points to TrackingPoint format for GoogleMapsService
+				const trackingPointsForCalculation: TrackingPoint[] = accuratePoints.map(point => ({
+					latitude: point.latitude,
+					longitude: point.longitude,
+					createdAt: point.createdAt,
+					accuracy: point.accuracy
+				}));
+
+				// Use enhanced distance calculation
+				const distanceResult = await this.googleMapsService.calculateEnhancedDistance(trackingPointsForCalculation);
+				totalDistanceKm = distanceResult.totalDistance;
+				distanceCalculationMethod = distanceResult.method;
+				
+				this.logger.debug(`Enhanced distance calculation: ${totalDistanceKm}km using ${distanceCalculationMethod} method (baseline: ${distanceResult.baselineDistance}km)`);
+				
+			} catch (error) {
+				this.logger.warn(`Enhanced distance calculation failed: ${error.message}. Falling back to traditional method.`);
+				// Fallback to original calculation
+				totalDistanceKm = LocationUtils.calculateTotalDistance(accuratePoints);
+				distanceCalculationMethod = 'traditional-fallback';
+			}
+		} else {
+			// Fallback for insufficient data
+			totalDistanceKm = LocationUtils.calculateTotalDistance(accuratePoints);
+		}
+		
 		const formattedDistance = LocationUtils.formatDistance(totalDistanceKm);
 		
 		// Log accuracy filtering results
@@ -1516,6 +1548,7 @@ export class TrackingService {
 				accuracyInfo: accuracyFilter.accuracyInfo,
 				pointsUsed: accuratePoints.length,
 				pointsFiltered: accuracyFilter.inaccurateCount,
+				distanceCalculationMethod: 'insufficient-data',
 			};
 		}
 
@@ -1598,6 +1631,7 @@ export class TrackingService {
 			accuracyInfo: accuracyFilter.accuracyInfo,
 			pointsUsed: accuratePoints.length,
 			pointsFiltered: accuracyFilter.inaccurateCount,
+			distanceCalculationMethod,
 		};
 	}
 
@@ -1717,7 +1751,7 @@ export class TrackingService {
 		}
 
 		// Calculate enhanced analytics
-		const tripAnalysis = this.generateTripAnalysis(trackingPoints);
+		const tripAnalysis = await this.generateTripAnalysis(trackingPoints);
 		const stopAnalysis = this.detectAndAnalyzeStops(trackingPoints);
 
 		// Check for geocoding status

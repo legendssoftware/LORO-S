@@ -16,8 +16,7 @@ import {
   ReverseGeocodingLocationType
 } from '@googlemaps/google-maps-services-js';
 import { Address, GeocodingResult } from '../interfaces/address.interface';
-import { IsString, IsNumber, IsOptional, IsArray, IsBoolean, IsEnum, ValidateNested, IsLatitude, IsLongitude } from 'class-validator';
-import { Transform, Type } from 'class-transformer';
+import { IsString, IsNumber, IsOptional, IsArray, IsBoolean, IsEnum, IsLatitude, IsLongitude } from 'class-validator';
 import { throttle } from 'lodash';
 
 // ======================================================
@@ -130,6 +129,44 @@ export interface BatchGeocodingResult {
   errorCount: number;
 }
 
+export interface TrackingPoint {
+  latitude: number;
+  longitude: number;
+  createdAt: Date;
+  accuracy?: number;
+}
+
+export interface GapAnalysis {
+  hasGaps: boolean;
+  gaps: Array<{
+    startIndex: number;
+    endIndex: number;
+    timeGapMinutes: number;
+    distanceGapKm: number;
+    startPoint: TrackingPoint;
+    endPoint: TrackingPoint;
+  }>;
+  segments: Array<{
+    startIndex: number;
+    endIndex: number;
+    points: TrackingPoint[];
+    isDense: boolean;
+  }>;
+}
+
+export interface DistanceCalculationResult {
+  totalDistance: number;
+  method: 'point-to-point' | 'hybrid' | 'baseline';
+  segments: Array<{
+    distance: number;
+    method: 'dense-tracking' | 'route-api' | 'direct';
+    startPoint: TrackingPoint;
+    endPoint: TrackingPoint;
+  }>;
+  gapAnalysis: GapAnalysis;
+  baselineDistance: number;
+}
+
 // ======================================================
 // VALIDATION CLASSES
 // ======================================================
@@ -194,6 +231,13 @@ export class GoogleMapsService implements OnModuleInit {
   private readonly RETRY_DELAY_MS = 1000;
   private readonly REQUEST_TIMEOUT_MS = 30000;
   private readonly RATE_LIMIT_PER_SECOND = 50;
+  
+  // Gap detection configuration
+  private readonly MAX_TIME_GAP_MINUTES = 15;
+  private readonly MAX_DISTANCE_GAP_KM = 2;
+  private readonly MAX_REASONABLE_SPEED_KMH = 200;
+  private readonly MAX_ROUTE_DEVIATION_PERCENT = 150;
+  private readonly MIN_POINTS_FOR_DENSE_TRACKING = 5;
   
   // Connection pooling and optimization
   private readonly connectionPool = new Map<string, Date>();
@@ -1194,6 +1238,286 @@ export class GoogleMapsService implements OnModuleInit {
   }
 
   // ======================================================
+  // GPS TRACKING DISTANCE CALCULATION METHODS
+  // ======================================================
+
+  /**
+   * Analyze tracking points for gaps and segments
+   */
+  private analyzeTrackingGaps(points: TrackingPoint[]): GapAnalysis {
+    if (points.length < 2) {
+      return {
+        hasGaps: false,
+        gaps: [],
+        segments: points.length > 0 ? [{
+          startIndex: 0,
+          endIndex: 0,
+          points: [points[0]],
+          isDense: false
+        }] : []
+      };
+    }
+
+    const gaps: GapAnalysis['gaps'] = [];
+    const segments: GapAnalysis['segments'] = [];
+    let currentSegmentStart = 0;
+
+    for (let i = 1; i < points.length; i++) {
+      const prevPoint = points[i - 1];
+      const currentPoint = points[i];
+
+      // Calculate time gap
+      const timeGapMinutes = (new Date(currentPoint.createdAt).getTime() - new Date(prevPoint.createdAt).getTime()) / (1000 * 60);
+      
+      // Calculate distance gap
+      const distanceGapKm = this.calculateDistance(prevPoint, currentPoint);
+
+      // Calculate speed
+      const speedKmh = timeGapMinutes > 0 ? (distanceGapKm / (timeGapMinutes / 60)) : 0;
+
+      // Check if this constitutes a gap
+      const isTimeGap = timeGapMinutes > this.MAX_TIME_GAP_MINUTES;
+      const isDistanceGap = distanceGapKm > this.MAX_DISTANCE_GAP_KM;
+      const isSpeedAnomalous = speedKmh > this.MAX_REASONABLE_SPEED_KMH;
+
+      if (isTimeGap || isDistanceGap || isSpeedAnomalous) {
+        // End current segment
+        if (i - 1 > currentSegmentStart) {
+          const segmentPoints = points.slice(currentSegmentStart, i);
+          segments.push({
+            startIndex: currentSegmentStart,
+            endIndex: i - 1,
+            points: segmentPoints,
+            isDense: segmentPoints.length >= this.MIN_POINTS_FOR_DENSE_TRACKING
+          });
+        }
+
+        // Record gap
+        gaps.push({
+          startIndex: i - 1,
+          endIndex: i,
+          timeGapMinutes,
+          distanceGapKm,
+          startPoint: prevPoint,
+          endPoint: currentPoint
+        });
+
+        // Start new segment
+        currentSegmentStart = i;
+      }
+    }
+
+    // Add final segment
+    if (currentSegmentStart < points.length) {
+      const segmentPoints = points.slice(currentSegmentStart);
+      segments.push({
+        startIndex: currentSegmentStart,
+        endIndex: points.length - 1,
+        points: segmentPoints,
+        isDense: segmentPoints.length >= this.MIN_POINTS_FOR_DENSE_TRACKING
+      });
+    }
+
+    return {
+      hasGaps: gaps.length > 0,
+      gaps,
+      segments
+    };
+  }
+
+  /**
+   * Get route distance between two points using Google Maps Directions API
+   */
+  async getRouteDistance(start: Coordinates, end: Coordinates): Promise<number> {
+    const operationId = `route-distance-${Date.now()}`;
+    this.logger.debug(`[${operationId}] Getting route distance from ${start.latitude},${start.longitude} to ${end.latitude},${end.longitude}`);
+
+    try {
+      // Check cache first
+      const cacheKey = this.generateCacheKey('route-distance', { start, end });
+      const cachedResult = await this.getCacheWithMetrics<number>(cacheKey);
+
+      if (cachedResult) {
+        this.logger.debug(`[${operationId}] Returning cached route distance: ${cachedResult}km`);
+        return cachedResult;
+      }
+
+      const result = await this.executeWithRetry(async () => {
+        return await this.queueRequest(async () => {
+          const response = await this.client.directions({
+            params: {
+              origin: `${start.latitude},${start.longitude}`,
+              destination: `${end.latitude},${end.longitude}`,
+              mode: TravelMode.driving,
+              key: this.apiKey,
+            },
+          });
+
+          if (!response.data.routes.length) {
+            throw new Error('No route found');
+          }
+
+          const route = response.data.routes[0];
+          const totalDistance = route.legs.reduce((acc, leg) => acc + leg.distance.value, 0);
+          
+          // Convert meters to kilometers
+          return totalDistance / 1000;
+        });
+      }, `Route distance calculation`);
+
+      // Cache the result
+      await this.setCacheWithMetrics(cacheKey, result);
+
+      this.logger.debug(`[${operationId}] Route distance calculated: ${result}km`);
+      return result;
+
+    } catch (error) {
+      this.logger.warn(`[${operationId}] Route distance calculation failed: ${error.message}. Using direct distance as fallback.`);
+      // Fallback to direct distance
+      return this.calculateDistance(start, end);
+    }
+  }
+
+  /**
+   * Calculate enhanced distance with gap detection and hybrid approach
+   */
+  async calculateEnhancedDistance(trackingPoints: TrackingPoint[]): Promise<DistanceCalculationResult> {
+    const operationId = `enhanced-distance-${Date.now()}`;
+    this.logger.debug(`[${operationId}] Starting enhanced distance calculation for ${trackingPoints.length} points`);
+
+    if (trackingPoints.length < 2) {
+      return {
+        totalDistance: 0,
+        method: 'baseline',
+        segments: [],
+        gapAnalysis: { hasGaps: false, gaps: [], segments: [] },
+        baselineDistance: 0
+      };
+    }
+
+    // Calculate baseline distance (start to end)
+    const startPoint = trackingPoints[0];
+    const endPoint = trackingPoints[trackingPoints.length - 1];
+    const baselineDistance = this.calculateDistance(startPoint, endPoint);
+
+    // Analyze gaps
+    const gapAnalysis = this.analyzeTrackingGaps(trackingPoints);
+
+    this.logger.debug(`[${operationId}] Gap analysis: ${gapAnalysis.hasGaps ? gapAnalysis.gaps.length + ' gaps found' : 'no gaps'}, ${gapAnalysis.segments.length} segments`);
+
+    // If no gaps and dense tracking, use point-to-point
+    if (!gapAnalysis.hasGaps && gapAnalysis.segments.length === 1 && gapAnalysis.segments[0].isDense) {
+      const pointToPointDistance = this.calculatePointToPointDistance(trackingPoints);
+      
+      // Validate that point-to-point is reasonable (not less than baseline)
+      const finalDistance = Math.max(pointToPointDistance, baselineDistance);
+      
+      return {
+        totalDistance: finalDistance,
+        method: 'point-to-point',
+        segments: [{
+          distance: finalDistance,
+          method: 'dense-tracking',
+          startPoint,
+          endPoint
+        }],
+        gapAnalysis,
+        baselineDistance
+      };
+    }
+
+    // Use hybrid approach for sparse/gapped data
+    let totalDistance = 0;
+    const segments: DistanceCalculationResult['segments'] = [];
+
+    // Process each segment
+    for (const segment of gapAnalysis.segments) {
+      if (segment.isDense && segment.points.length > 1) {
+        // Dense segment - use point-to-point
+        const segmentDistance = this.calculatePointToPointDistance(segment.points);
+        totalDistance += segmentDistance;
+        
+        segments.push({
+          distance: segmentDistance,
+          method: 'dense-tracking',
+          startPoint: segment.points[0],
+          endPoint: segment.points[segment.points.length - 1]
+        });
+      } else if (segment.points.length > 1) {
+        // Sparse segment - use direct distance
+        const segmentStart = segment.points[0];
+        const segmentEnd = segment.points[segment.points.length - 1];
+        const segmentDistance = this.calculateDistance(segmentStart, segmentEnd);
+        totalDistance += segmentDistance;
+        
+        segments.push({
+          distance: segmentDistance,
+          method: 'direct',
+          startPoint: segmentStart,
+          endPoint: segmentEnd
+        });
+      }
+    }
+
+    // Process gaps with route API
+    for (const gap of gapAnalysis.gaps) {
+      try {
+        const gapDistance = await this.getRouteDistance(gap.startPoint, gap.endPoint);
+        totalDistance += gapDistance;
+        
+        segments.push({
+          distance: gapDistance,
+          method: 'route-api',
+          startPoint: gap.startPoint,
+          endPoint: gap.endPoint
+        });
+      } catch (error) {
+        // Fallback to direct distance for gaps
+        const gapDistance = this.calculateDistance(gap.startPoint, gap.endPoint);
+        totalDistance += gapDistance;
+        
+        segments.push({
+          distance: gapDistance,
+          method: 'direct',
+          startPoint: gap.startPoint,
+          endPoint: gap.endPoint
+        });
+      }
+    }
+
+    // Ensure minimum distance is baseline
+    const finalDistance = Math.max(totalDistance, baselineDistance);
+
+    // Validate maximum reasonable deviation
+    const maxAllowedDistance = baselineDistance * (this.MAX_ROUTE_DEVIATION_PERCENT / 100);
+    const validatedDistance = Math.min(finalDistance, maxAllowedDistance);
+
+    this.logger.debug(`[${operationId}] Enhanced distance calculation completed: ${validatedDistance}km (baseline: ${baselineDistance}km)`);
+
+    return {
+      totalDistance: validatedDistance,
+      method: 'hybrid',
+      segments,
+      gapAnalysis,
+      baselineDistance
+    };
+  }
+
+  /**
+   * Calculate point-to-point distance (existing logic)
+   */
+  private calculatePointToPointDistance(points: TrackingPoint[]): number {
+    let totalDistance = 0;
+    for (let i = 1; i < points.length; i++) {
+      const prevPoint = points[i - 1];
+      const currentPoint = points[i];
+      const distance = this.calculateDistance(prevPoint, currentPoint);
+      totalDistance += distance;
+    }
+    return totalDistance;
+  }
+
+  // ======================================================
   // NEW ENHANCED METHODS
   // ======================================================
 
@@ -1615,8 +1939,9 @@ export class GoogleMapsService implements OnModuleInit {
       );
       totalDistance += distance;
     }
-    // Apply the same correction factor as LocationUtils
-    return totalDistance / 10;
+
+    //deduced distance
+    return totalDistance;
   }
 
   /**

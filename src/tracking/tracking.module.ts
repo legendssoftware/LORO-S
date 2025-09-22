@@ -13,12 +13,14 @@ import { Organisation } from '../organisation/entities/organisation.entity';
 import { User } from '../user/entities/user.entity';
 import { JwtModule } from '@nestjs/jwt';
 import { ReportsModule } from '../reports/reports.module';
+import { LibModule } from '../lib/lib.module';
 
 @Module({
 	imports: [
 		LicensingModule,
 		OrganisationModule,
 		forwardRef(() => ReportsModule),
+		LibModule,
 		TypeOrmModule.forFeature([Tracking, Geofence, GeofenceEvent, Organisation, User]),
 		JwtModule.register({
 			secret: process.env.JWT_SECRET,
