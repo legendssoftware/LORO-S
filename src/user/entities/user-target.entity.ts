@@ -5,6 +5,7 @@ import { Entity, Column, PrimaryGeneratedColumn, OneToOne, CreateDateColumn, Upd
 @Index(['targetPeriod', 'periodStartDate', 'periodEndDate']) // Period-based filtering
 @Index(['periodStartDate', 'periodEndDate']) // Date range queries
 @Index(['updatedAt']) // Recent updates tracking
+@Index(['isRecurring', 'nextRecurrenceDate']) // For cron job queries
 export class UserTarget {
 	@PrimaryGeneratedColumn()
 	uid: number;
@@ -218,6 +219,46 @@ export class UserTarget {
 
 	@Column({ type: 'timestamp', nullable: true })
 	lastCalculatedAt: Date;
+
+	// 🔄 Recurring Target Configuration
+	@Column({ type: 'boolean', default: false, comment: 'Enable automatic target recurrence' })
+	isRecurring: boolean;
+
+	@Column({ 
+		type: 'enum', 
+		enum: ['daily', 'weekly', 'monthly'],
+		nullable: true,
+		comment: 'Frequency of target recurrence'
+	})
+	recurringInterval?: 'daily' | 'weekly' | 'monthly';
+
+	@Column({ 
+		type: 'boolean', 
+		default: false, 
+		comment: 'Add unfulfilled targets to next period' 
+	})
+	carryForwardUnfulfilled: boolean;
+
+	@Column({ 
+		type: 'timestamp', 
+		nullable: true,
+		comment: 'Calculated date when next recurrence should happen'
+	})
+	nextRecurrenceDate: Date;
+
+	@Column({ 
+		type: 'timestamp', 
+		nullable: true,
+		comment: 'When the last recurrence was processed'
+	})
+	lastRecurrenceDate: Date;
+
+	@Column({ 
+		type: 'int', 
+		default: 0,
+		comment: 'Number of times this target has recurred'
+	})
+	recurrenceCount: number;
 
 	// Monthly target history tracking
 	@Column({

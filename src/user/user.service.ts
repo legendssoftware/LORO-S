@@ -25,14 +25,16 @@
  */
 
 import * as bcrypt from 'bcrypt';
-import { In, Repository } from 'typeorm';
+import { In, Repository, LessThanOrEqual } from 'typeorm';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { format, addDays, addMonths } from 'date-fns';
 import { User } from './entities/user.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { CreateUserPreferencesDto } from './dto/create-user-preferences.dto';
 import { UpdateUserPreferencesDto } from './dto/update-user-preferences.dto';
-import { Injectable, NotFoundException, Inject, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Inject, Logger } from '@nestjs/common';
 import { NewSignUp } from '../lib/types/user';
 import { AccountStatus } from '../lib/enums/status.enums';
 import { PaginatedResponse } from '../lib/interfaces/product.interfaces';
@@ -74,6 +76,8 @@ export class UserService {
 	constructor(
 		@InjectRepository(User)
 		private userRepository: Repository<User>,
+		@InjectRepository(UserTarget)
+		private userTargetRepository: Repository<UserTarget>,
 		@InjectRepository(Quotation)
 		private quotationRepository: Repository<Quotation>,
 		@InjectRepository(Order)
@@ -2938,6 +2942,32 @@ export class UserService {
 					: undefined,
 			});
 
+			// Handle recurring target configuration
+			if (createUserTargetDto.isRecurring) {
+				// Validate that interval is provided
+				if (!createUserTargetDto.recurringInterval) {
+					throw new BadRequestException('recurringInterval is required when isRecurring is true');
+				}
+				
+				// Set recurring fields
+				userTarget.isRecurring = true;
+				userTarget.recurringInterval = createUserTargetDto.recurringInterval;
+				userTarget.carryForwardUnfulfilled = createUserTargetDto.carryForwardUnfulfilled ?? false;
+				userTarget.recurrenceCount = 0;
+				
+				// Calculate next recurrence date
+				const endDate = userTarget.periodEndDate || new Date();
+				userTarget.nextRecurrenceDate = this.calculateNextRecurrenceDate(
+					endDate,
+					createUserTargetDto.recurringInterval
+				);
+				
+				this.logger.debug(
+					`Recurring target configured: ${createUserTargetDto.recurringInterval}, ` +
+					`next recurrence: ${userTarget.nextRecurrenceDate}`
+				);
+			}
+
 			// Save the user target and update the user
 			user.userTarget = userTarget;
 			await this.userRepository.save(user);
@@ -3119,6 +3149,48 @@ export class UserService {
 			}
 			if (updateUserTargetDto.periodEndDate) {
 				updatedUserTarget.periodEndDate = new Date(updateUserTargetDto.periodEndDate);
+			}
+
+			// Handle recurring configuration updates
+			if (updateUserTargetDto.isRecurring !== undefined) {
+				updatedUserTarget.isRecurring = updateUserTargetDto.isRecurring;
+				
+				if (updateUserTargetDto.isRecurring) {
+					// Validate interval
+					const interval = updateUserTargetDto.recurringInterval || updatedUserTarget.recurringInterval;
+					if (!interval) {
+						throw new BadRequestException('recurringInterval is required when isRecurring is true');
+					}
+					
+					updatedUserTarget.recurringInterval = interval;
+					updatedUserTarget.carryForwardUnfulfilled = 
+						updateUserTargetDto.carryForwardUnfulfilled ?? updatedUserTarget.carryForwardUnfulfilled ?? false;
+					
+					// Recalculate next recurrence date
+					const endDate = updatedUserTarget.periodEndDate || new Date();
+					updatedUserTarget.nextRecurrenceDate = this.calculateNextRecurrenceDate(endDate, interval);
+					
+					this.logger.debug(`Updated recurring config: ${interval}, next: ${updatedUserTarget.nextRecurrenceDate}`);
+				} else {
+					// Recurring disabled - clear related fields
+					updatedUserTarget.recurringInterval = null;
+					updatedUserTarget.nextRecurrenceDate = null;
+				}
+			}
+
+			// Handle interval change without isRecurring change
+			if (updateUserTargetDto.recurringInterval && updatedUserTarget.isRecurring) {
+				updatedUserTarget.recurringInterval = updateUserTargetDto.recurringInterval;
+				const endDate = updatedUserTarget.periodEndDate || new Date();
+				updatedUserTarget.nextRecurrenceDate = this.calculateNextRecurrenceDate(
+					endDate,
+					updateUserTargetDto.recurringInterval
+				);
+			}
+
+			// Handle carry forward toggle
+			if (updateUserTargetDto.carryForwardUnfulfilled !== undefined && updatedUserTarget.isRecurring) {
+				updatedUserTarget.carryForwardUnfulfilled = updateUserTargetDto.carryForwardUnfulfilled;
 			}
 
 			this.logger.debug(`Final target data to save:`, JSON.stringify(updatedUserTarget, null, 2));
@@ -7242,5 +7314,340 @@ export class UserService {
 		});
 
 		return defaults;
+	}
+
+	/**
+	 * 🔄 RECURRING TARGETS: Cron job to process target recurrence
+	 * Runs daily at 00:05 AM (5 minutes past midnight) to process any targets due for recurrence
+	 */
+	@Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+	async processRecurringTargets(): Promise<void> {
+		this.logger.log('🔄 Starting recurring targets processing...');
+		const startTime = Date.now();
+		
+		try {
+			const now = new Date();
+			
+			// Find all recurring targets where nextRecurrenceDate has passed
+			const targetsToRecur = await this.userTargetRepository.find({
+				where: {
+					isRecurring: true,
+					nextRecurrenceDate: LessThanOrEqual(now)
+				},
+				relations: ['user', 'user.organisation', 'user.branch']
+			});
+			
+			this.logger.log(`Found ${targetsToRecur.length} targets ready for recurrence`);
+			
+			if (targetsToRecur.length === 0) {
+				this.logger.log('✅ No targets to process');
+				return;
+			}
+			
+			let successCount = 0;
+			let errorCount = 0;
+			
+			// Process each target
+			for (const target of targetsToRecur) {
+				try {
+					await this.recurSingleTarget(target);
+					successCount++;
+				} catch (error) {
+					errorCount++;
+					this.logger.error(
+						`Failed to recur target for user ${target.user?.uid}: ${error.message}`,
+						error.stack
+					);
+				}
+			}
+			
+			const duration = Date.now() - startTime;
+			this.logger.log(
+				`✅ Recurring targets processing completed in ${duration}ms - ` +
+				`Success: ${successCount}, Errors: ${errorCount}`
+			);
+			
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(
+				`❌ Error processing recurring targets after ${duration}ms: ${error.message}`,
+				error.stack
+			);
+		}
+	}
+
+	/**
+	 * Process recurrence for a single target
+	 */
+	private async recurSingleTarget(target: UserTarget): Promise<void> {
+		this.logger.log(`Processing recurrence for user ${target.user?.uid} - Target ${target.uid}`);
+		
+		// 1️⃣ Archive current period to history
+		const historyEntry = {
+			date: format(new Date(), 'yyyy-MM'),
+			targetSalesAmount: target.targetSalesAmount,
+			achievedSalesAmount: target.currentSalesAmount,
+			targetQuotationsAmount: target.targetQuotationsAmount,
+			achievedQuotationsAmount: target.currentQuotationsAmount,
+			targetNewClients: target.targetNewClients,
+			achievedNewClients: target.currentNewClients,
+			targetNewLeads: target.targetNewLeads,
+			achievedNewLeads: target.currentNewLeads,
+			targetCheckIns: target.targetCheckIns,
+			achievedCheckIns: target.currentCheckIns,
+			targetCalls: target.targetCalls,
+			achievedCalls: target.currentCalls,
+			targetHoursWorked: target.targetHoursWorked,
+			achievedHoursWorked: target.currentHoursWorked,
+			missingAmount: Math.max(0, (target.targetSalesAmount || 0) - (target.currentSalesAmount || 0)),
+			completionPercentage: this.calculateCompletionPercentage(target),
+			status: this.determineCompletionStatus(target),
+			lastUpdated: new Date().toISOString()
+		};
+		
+		const history = target.history || [];
+		history.push(historyEntry);
+		
+		// 2️⃣ Calculate carry forward amounts if enabled
+		let carryForwardAmounts = {};
+		if (target.carryForwardUnfulfilled) {
+			carryForwardAmounts = this.calculateCarryForward(target);
+			this.logger.debug(`Carry forward amounts:`, carryForwardAmounts);
+		}
+		
+		// 3️⃣ Reset current values
+		target.currentSalesAmount = 0;
+		target.currentQuotationsAmount = 0;
+		target.currentOrdersAmount = 0;
+		target.currentHoursWorked = 0;
+		target.currentNewClients = 0;
+		target.currentNewLeads = 0;
+		target.currentCheckIns = 0;
+		target.currentCalls = 0;
+		
+		// 4️⃣ Apply carry forward to targets if enabled
+		if (target.carryForwardUnfulfilled && Object.keys(carryForwardAmounts).length > 0) {
+			target.targetSalesAmount = (target.targetSalesAmount || 0) + (carryForwardAmounts['salesAmount'] || 0);
+			target.targetQuotationsAmount = (target.targetQuotationsAmount || 0) + (carryForwardAmounts['quotationsAmount'] || 0);
+			target.targetNewClients = (target.targetNewClients || 0) + (carryForwardAmounts['newClients'] || 0);
+			target.targetNewLeads = (target.targetNewLeads || 0) + (carryForwardAmounts['newLeads'] || 0);
+			target.targetCheckIns = (target.targetCheckIns || 0) + (carryForwardAmounts['checkIns'] || 0);
+			target.targetCalls = (target.targetCalls || 0) + (carryForwardAmounts['calls'] || 0);
+			target.targetHoursWorked = (target.targetHoursWorked || 0) + (carryForwardAmounts['hoursWorked'] || 0);
+		}
+		
+		// 5️⃣ Update period dates
+		const oldEndDate = target.periodEndDate;
+		
+		target.periodStartDate = this.calculateNextPeriodStart(oldEndDate, target.recurringInterval);
+		target.periodEndDate = this.calculateNextPeriodEnd(target.periodStartDate, target.recurringInterval);
+		
+		// 6️⃣ Update recurrence metadata
+		target.lastRecurrenceDate = new Date();
+		target.nextRecurrenceDate = this.calculateNextRecurrenceDate(
+			target.periodEndDate,
+			target.recurringInterval
+		);
+		target.recurrenceCount = (target.recurrenceCount || 0) + 1;
+		target.lastCalculatedAt = new Date();
+		target.history = history;
+		
+		// 7️⃣ Save updated target
+		await this.userTargetRepository.save(target);
+		
+		// 8️⃣ Invalidate cache
+		if (target.user?.uid) {
+			await this.cacheManager.del(this.getCacheKey(`target_${target.user.uid}`));
+		}
+		
+		this.logger.log(
+			`✅ Target recurred for user ${target.user?.uid} - ` +
+			`Period: ${format(target.periodStartDate, 'yyyy-MM-dd')} to ${format(target.periodEndDate, 'yyyy-MM-dd')} ` +
+			`(Recurrence #${target.recurrenceCount})`
+		);
+		
+		// 9️⃣ Send notification to user
+		await this.notifyUserOfNewPeriod(target);
+	}
+
+	/**
+	 * Calculate the next recurrence date based on end date and interval
+	 */
+	private calculateNextRecurrenceDate(currentEndDate: Date, interval: 'daily' | 'weekly' | 'monthly'): Date {
+		const endDate = new Date(currentEndDate);
+		
+		switch (interval) {
+			case 'daily':
+				return addDays(endDate, 1);
+			case 'weekly':
+				return addDays(endDate, 7);
+			case 'monthly':
+				return addMonths(endDate, 1);
+			default:
+				throw new Error(`Invalid recurring interval: ${interval}`);
+		}
+	}
+
+	/**
+	 * Calculate the start date for the next period
+	 */
+	private calculateNextPeriodStart(previousEndDate: Date, interval: string): Date {
+		const nextStart = new Date(previousEndDate);
+		nextStart.setDate(nextStart.getDate() + 1);
+		nextStart.setHours(0, 0, 0, 0);
+		return nextStart;
+	}
+
+	/**
+	 * Calculate the end date for the next period
+	 */
+	private calculateNextPeriodEnd(startDate: Date, interval: 'daily' | 'weekly' | 'monthly'): Date {
+		const start = new Date(startDate);
+		let endDate: Date;
+		
+		switch (interval) {
+			case 'daily':
+				endDate = addDays(start, 1);
+				break;
+			case 'weekly':
+				endDate = addDays(start, 7);
+				break;
+			case 'monthly':
+				endDate = addMonths(start, 1);
+				break;
+			default:
+				throw new Error(`Invalid recurring interval: ${interval}`);
+		}
+		
+		// End date is inclusive (last day of period)
+		endDate.setDate(endDate.getDate() - 1);
+		endDate.setHours(23, 59, 59, 999);
+		return endDate;
+	}
+
+	/**
+	 * Calculate completion percentage for a target
+	 */
+	private calculateCompletionPercentage(target: UserTarget): number {
+		const metrics: { target: number; current: number }[] = [];
+		
+		if (target.targetSalesAmount > 0) {
+			metrics.push({ target: target.targetSalesAmount, current: target.currentSalesAmount || 0 });
+		}
+		if (target.targetQuotationsAmount > 0) {
+			metrics.push({ target: target.targetQuotationsAmount, current: target.currentQuotationsAmount || 0 });
+		}
+		if (target.targetNewClients > 0) {
+			metrics.push({ target: target.targetNewClients, current: target.currentNewClients || 0 });
+		}
+		if (target.targetNewLeads > 0) {
+			metrics.push({ target: target.targetNewLeads, current: target.currentNewLeads || 0 });
+		}
+		if (target.targetCheckIns > 0) {
+			metrics.push({ target: target.targetCheckIns, current: target.currentCheckIns || 0 });
+		}
+		if (target.targetCalls > 0) {
+			metrics.push({ target: target.targetCalls, current: target.currentCalls || 0 });
+		}
+		if (target.targetHoursWorked > 0) {
+			metrics.push({ target: target.targetHoursWorked, current: target.currentHoursWorked || 0 });
+		}
+		
+		if (metrics.length === 0) {
+			return 0;
+		}
+		
+		const totalPercentage = metrics.reduce((sum, metric) => {
+			const percentage = Math.min((metric.current / metric.target) * 100, 100);
+			return sum + percentage;
+		}, 0);
+		
+		return Math.round(totalPercentage / metrics.length);
+	}
+
+	/**
+	 * Determine completion status based on percentage
+	 */
+	private determineCompletionStatus(target: UserTarget): 'achieved' | 'partial' | 'missed' {
+		const completion = this.calculateCompletionPercentage(target);
+		
+		if (completion >= 100) return 'achieved';
+		if (completion >= 50) return 'partial';
+		return 'missed';
+	}
+
+	/**
+	 * Calculate amounts to carry forward to next period
+	 */
+	private calculateCarryForward(target: UserTarget): Record<string, number> {
+		const carryForward: Record<string, number> = {};
+		
+		if (target.targetSalesAmount && target.currentSalesAmount < target.targetSalesAmount) {
+			carryForward.salesAmount = target.targetSalesAmount - target.currentSalesAmount;
+		}
+		
+		if (target.targetQuotationsAmount && target.currentQuotationsAmount < target.targetQuotationsAmount) {
+			carryForward.quotationsAmount = target.targetQuotationsAmount - target.currentQuotationsAmount;
+		}
+		
+		if (target.targetNewClients && target.currentNewClients < target.targetNewClients) {
+			carryForward.newClients = target.targetNewClients - target.currentNewClients;
+		}
+		
+		if (target.targetNewLeads && target.currentNewLeads < target.targetNewLeads) {
+			carryForward.newLeads = target.targetNewLeads - target.currentNewLeads;
+		}
+		
+		if (target.targetCheckIns && target.currentCheckIns < target.targetCheckIns) {
+			carryForward.checkIns = target.targetCheckIns - target.currentCheckIns;
+		}
+		
+		if (target.targetCalls && target.currentCalls < target.targetCalls) {
+			carryForward.calls = target.targetCalls - target.currentCalls;
+		}
+		
+		if (target.targetHoursWorked && target.currentHoursWorked < target.targetHoursWorked) {
+			carryForward.hoursWorked = target.targetHoursWorked - target.currentHoursWorked;
+		}
+		
+		return carryForward;
+	}
+
+	/**
+	 * Send notification to user about new target period
+	 */
+	private async notifyUserOfNewPeriod(target: UserTarget): Promise<void> {
+		if (!target.user?.uid) {
+			this.logger.warn('Cannot send notification: user not loaded');
+			return;
+		}
+		
+		try {
+			// Send push notification
+			await this.unifiedNotificationService.sendTemplatedNotification(
+				NotificationEvent.USER_TARGET_UPDATED,
+				[target.user.uid],
+				{
+					message: `🔄 New target period started! Your targets have been reset. ${
+						target.carryForwardUnfulfilled ? 'Unfulfilled targets have been carried forward.' : ''
+					}`,
+					userName: `${target.user.name} ${target.user.surname}`.trim(),
+					periodStartDate: format(target.periodStartDate, 'yyyy-MM-dd'),
+					periodEndDate: format(target.periodEndDate, 'yyyy-MM-dd'),
+					recurringInterval: target.recurringInterval,
+					recurrenceCount: target.recurrenceCount,
+					timestamp: new Date().toISOString(),
+				},
+				{
+					priority: NotificationPriority.HIGH,
+				},
+			);
+			
+			this.logger.debug(`Recurrence notification sent to user: ${target.user.uid}`);
+		} catch (error) {
+			this.logger.error(
+				`Failed to send recurrence notification to user ${target.user.uid}: ${error.message}`
+			);
+		}
 	}
 }

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
 import { UserService } from './user.service';
 import { UserController } from './user.controller';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -20,6 +21,7 @@ import { Branch } from '../branch/entities/branch.entity';
 
 @Module({
 	imports: [
+		ScheduleModule.forRoot(),
 		TypeOrmModule.forFeature([
 			User,
 			UserProfile,

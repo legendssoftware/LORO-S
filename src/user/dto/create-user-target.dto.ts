@@ -1,5 +1,5 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { IsDate, IsNumber, IsOptional, IsString } from "class-validator";
+import { IsBoolean, IsDate, IsEnum, IsNumber, IsOptional, IsString } from "class-validator";
 
 export class CreateUserTargetDto {
   @IsOptional()
@@ -21,6 +21,15 @@ export class CreateUserTargetDto {
   targetQuotationsAmount?: number;
 
 
+
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @ApiProperty({
+    description: 'Current sales amount for the user (total of quotations + orders)',
+    example: 45000,
+    required: false
+  })
+  currentSalesAmount?: number;
 
   @IsOptional()
   @IsNumber({ allowNaN: false, allowInfinity: false })
@@ -61,11 +70,29 @@ export class CreateUserTargetDto {
   @IsOptional()
   @IsNumber({ allowNaN: false, allowInfinity: false })
   @ApiProperty({
+    description: 'Current hours worked for the user',
+    example: 120,
+    required: false
+  })
+  currentHoursWorked?: number;
+
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @ApiProperty({
     description: 'Target number of new clients for the user',
     example: 5,
     required: false
   })
   targetNewClients?: number;
+
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @ApiProperty({
+    description: 'Current number of new clients for the user',
+    example: 3,
+    required: false
+  })
+  currentNewClients?: number;
 
   @IsOptional()
   @IsNumber({ allowNaN: false, allowInfinity: false })
@@ -79,6 +106,15 @@ export class CreateUserTargetDto {
   @IsOptional()
   @IsNumber({ allowNaN: false, allowInfinity: false })
   @ApiProperty({
+    description: 'Current number of new leads for the user',
+    example: 15,
+    required: false
+  })
+  currentNewLeads?: number;
+
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @ApiProperty({
     description: 'Target number of check-ins for the user',
     example: 15,
     required: false
@@ -88,11 +124,29 @@ export class CreateUserTargetDto {
   @IsOptional()
   @IsNumber({ allowNaN: false, allowInfinity: false })
   @ApiProperty({
+    description: 'Current number of check-ins for the user',
+    example: 10,
+    required: false
+  })
+  currentCheckIns?: number;
+
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @ApiProperty({
     description: 'Target number of calls for the user',
     example: 50,
     required: false
   })
   targetCalls?: number;
+
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @ApiProperty({
+    description: 'Current number of calls for the user',
+    example: 35,
+    required: false
+  })
+  currentCalls?: number;
 
   @IsOptional()
   @IsString()
@@ -120,6 +174,37 @@ export class CreateUserTargetDto {
     required: false
   })
   periodEndDate?: Date;
+
+  // Recurring Target Configuration
+  @IsOptional()
+  @IsBoolean()
+  @ApiProperty({
+    description: 'Enable automatic target recurrence',
+    example: true,
+    required: false,
+    default: false
+  })
+  isRecurring?: boolean;
+
+  @IsOptional()
+  @IsEnum(['daily', 'weekly', 'monthly'])
+  @ApiProperty({
+    description: 'Recurrence interval: daily, weekly, or monthly',
+    enum: ['daily', 'weekly', 'monthly'],
+    example: 'monthly',
+    required: false
+  })
+  recurringInterval?: 'daily' | 'weekly' | 'monthly';
+
+  @IsOptional()
+  @IsBoolean()
+  @ApiProperty({
+    description: 'Carry forward unfulfilled targets to the next period',
+    example: false,
+    required: false,
+    default: false
+  })
+  carryForwardUnfulfilled?: boolean;
 
   // Cost Breakdown Fields (Monthly) - All in ZAR
   @IsOptional()
@@ -179,11 +264,11 @@ export class CreateUserTargetDto {
   @IsOptional()
   @IsNumber({ allowNaN: false, allowInfinity: false })
   @ApiProperty({
-    description: 'COIC costs amount in ZAR',
+    description: 'CGIC costs amount in ZAR (Compensation for Occupational Injuries and Diseases)',
     example: 1200,
     required: false
   })
-  coicCosts?: number;
+  cgicCosts?: number;
 
   @IsOptional()
   @IsNumber({ allowNaN: false, allowInfinity: false })
