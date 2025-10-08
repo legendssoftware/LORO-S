@@ -10,6 +10,24 @@ Handlebars.registerHelper('formatPhoneForTel', function(phone: string) {
 // Date formatting helper
 Handlebars.registerHelper('formatDate', function(date: string | Date, format?: string) {
     if (!date) return 'N/A';
+    
+    // If already a formatted string, return as-is to avoid double timezone conversion
+    if (typeof date === 'string') {
+        // Time format (HH:mm or HH:mm:ss) - already formatted by TimezoneUtil or date-fns
+        if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(date.trim())) {
+            return date;
+        }
+        // Pre-formatted date strings (contains commas, slashes, or ISO format)
+        if (date.includes(',') || date.includes('/') || /^\d{4}-\d{2}-\d{2}/.test(date)) {
+            return date;
+        }
+        // Already formatted with text (e.g., "Wednesday, January 8th, 2025")
+        if (/[a-zA-Z]/.test(date) && date.length > 10) {
+            return date;
+        }
+    }
+    
+    // Only parse and format if it's a Date object or needs formatting
     const dateObj = new Date(date);
     
     if (format === 'short') {

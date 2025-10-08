@@ -2399,6 +2399,7 @@ export class UserService {
 					'userTarget.periodEndDate',
 					'userTarget.createdAt',
 					'userTarget.updatedAt',
+					'userTarget.history', // Monthly target performance history
 					// Cost breakdown fields
 					'userTarget.baseSalary',
 					'userTarget.carInstalment',
@@ -5954,10 +5955,9 @@ export class UserService {
 				supportEmail: this.configService.get('SUPPORT_EMAIL') || 'support@loro.co.za',
 			};
 
-			// Send email notification
-			this.eventEmitter.emit('send.email', EmailType.USER_TARGET_CONTRIBUTION_PROGRESS, [user.email], emailData);
-			this.logger.log(
-				`✅ Contribution progress email queued for user: ${userId} (${totalProgressImprovement}% improvement)`,
+			// Email notification removed to reduce Gmail quota usage - push notification only
+			this.logger.debug(
+				`⏭️ [ERP_CONTRIBUTION] Skipping email notification for user: ${userId} - push notification will be sent instead`,
 			);
 
 			// Send push notification

@@ -3715,46 +3715,10 @@ export class AttendanceService {
 					},
 				);
 
-				// Send email using event emitter (same pattern as user service)
-				this.logger.log(
-					`📧 [AttendanceService] Sending break started email notification for user: ${breakDto.owner.uid}`,
-				);
-				if (user?.email) {
-					try {
-						const emailData = {
-							name: userName,
-							employeeName: userName,
-							employeeEmail: user.email,
-							breakStartTime: breakStartTimeString,
-							breakCount: breakCount,
-							breakNumber,
-							organizationName:
-								user?.organisation?.name || user?.branch?.organisation?.name || 'Your Organization',
-							branchName: user?.branch?.name || '',
-							dashboardUrl: process.env.WEB_URL || 'https://app.loro.co.za',
-							encouragementMessage: `Time for a well-deserved break, ${userName}! ☕ Your ${breakNumber} break started at ${breakStartTimeString}. Take your time to recharge and refresh yourself!`,
-						};
-
-						this.eventEmitter.emit(
-							'send.email',
-							EmailType.ATTENDANCE_BREAK_STARTED,
-							[user.email],
-							emailData,
-						);
-						this.logger.log(
-							`✅ [AttendanceService] Break started email notification queued for user: ${breakDto.owner.uid}`,
-						);
-					} catch (emailError) {
-						this.logger.error(
-							`❌ [AttendanceService] Failed to queue break started email for user ${breakDto.owner.uid}:`,
-							emailError.message,
-						);
-					}
-				} else {
-					this.logger.warn(
-						`⚠️ [AttendanceService] No email found for user ${breakDto.owner.uid}, skipping email notification`,
-					);
-				}
+			// Email notification removed to reduce Gmail quota usage - push notification only
+			this.logger.debug(
+				`⏭️ [AttendanceService] Skipping break started email for user: ${breakDto.owner.uid} - push notification sent instead`,
+			);
 				this.logger.debug(`Enhanced break start notification sent successfully to user: ${breakDto.owner.uid}`);
 			} catch (notificationError) {
 				this.logger.warn(
@@ -3900,42 +3864,10 @@ export class AttendanceService {
 					},
 				);
 
-				// Send email using event emitter (same pattern as user service)
-				this.logger.log(
-					`📧 [AttendanceService] Sending break ended email notification for user: ${breakDto.owner.uid}`,
-				);
-				if (user?.email) {
-					try {
-						const emailData = {
-							name: userName,
-							employeeName: userName,
-							employeeEmail: user.email,
-							breakStartTime: breakStartTimeString,
-							breakEndTime: breakEndTimeString,
-							breakDuration: currentBreakDuration,
-							totalBreakTime,
-							organizationName:
-								user?.organisation?.name || user?.branch?.organisation?.name || 'Your Organization',
-							branchName: user?.branch?.name || '',
-							dashboardUrl: process.env.WEB_URL || 'https://app.loro.co.za',
-							welcomeBackMessage: `Welcome back, ${userName}! 🚀 Your break is complete. You were refreshing from ${breakStartTimeString} to ${breakEndTimeString} (${currentBreakDuration}). Hope you're feeling recharged and ready to tackle the rest of your day!`,
-						};
-
-						this.eventEmitter.emit('send.email', EmailType.ATTENDANCE_BREAK_ENDED, [user.email], emailData);
-						this.logger.log(
-							`✅ [AttendanceService] Break ended email notification queued for user: ${breakDto.owner.uid}`,
-						);
-					} catch (emailError) {
-						this.logger.error(
-							`❌ [AttendanceService] Failed to queue break ended email for user ${breakDto.owner.uid}:`,
-							emailError.message,
-						);
-					}
-				} else {
-					this.logger.warn(
-						`⚠️ [AttendanceService] No email found for user ${breakDto.owner.uid}, skipping email notification`,
-					);
-				}
+			// Email notification removed to reduce Gmail quota usage - push notification only
+			this.logger.debug(
+				`⏭️ [AttendanceService] Skipping break ended email for user: ${breakDto.owner.uid} - push notification sent instead`,
+			);
 				this.logger.debug(`Enhanced break end notification sent successfully to user: ${breakDto.owner.uid}`);
 			} catch (notificationError) {
 				this.logger.warn(

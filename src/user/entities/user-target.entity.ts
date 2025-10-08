@@ -219,6 +219,36 @@ export class UserTarget {
 	@Column({ type: 'timestamp', nullable: true })
 	lastCalculatedAt: Date;
 
+	// Monthly target history tracking
+	@Column({
+		type: 'json',
+		nullable: true,
+		comment: 'JSON array tracking monthly target performance history'
+	})
+	history: {
+		date: string; // YYYY-MM format
+		targetSalesAmount?: number;
+		achievedSalesAmount?: number;
+		targetQuotationsAmount?: number;
+		achievedQuotationsAmount?: number;
+		targetOrdersAmount?: number;
+		achievedOrdersAmount?: number;
+		targetNewClients?: number;
+		achievedNewClients?: number;
+		targetNewLeads?: number;
+		achievedNewLeads?: number;
+		targetCheckIns?: number;
+		achievedCheckIns?: number;
+		targetCalls?: number;
+		achievedCalls?: number;
+		targetHoursWorked?: number;
+		achievedHoursWorked?: number;
+		missingAmount?: number; // Amount missing to reach target
+		completionPercentage?: number; // Overall completion percentage for the month
+		status: 'achieved' | 'partial' | 'missed'; // Completion status
+		lastUpdated: string; // ISO timestamp when this record was created/updated
+	}[];
+
 	@CreateDateColumn()
 	createdAt: Date;
 
