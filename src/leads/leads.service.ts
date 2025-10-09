@@ -453,24 +453,41 @@ export class LeadsService {
 				whereClause.branch = { uid: branchId };
 			}
 
-			this.logger.debug(`💾 [LeadsService] Executing database query for user ${ref} leads`);
-			const leads = await this.leadsRepository.find({
-				where: whereClause,
-				relations: ['owner', 'organisation', 'branch'],
-				order: { leadScore: 'DESC', updatedAt: 'DESC' }, // Order by score and recency
-			});
+		this.logger.debug(`💾 [LeadsService] Executing database query for user ${ref} leads`);
+		const leads = await this.leadsRepository.find({
+			where: whereClause,
+			relations: ['owner', 'organisation', 'branch'],
+			order: { leadScore: 'DESC', updatedAt: 'DESC' }, // Order by score and recency
+		});
 
-			if (!leads) {
-				this.logger.warn(`⚠️ [LeadsService] No leads found for user ${ref} in organization ${orgId}`);
-				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
-			}
+		// Handle empty results gracefully - return empty array instead of throwing error
+		if (!leads || leads.length === 0) {
+			this.logger.warn(`⚠️ [LeadsService] No leads found for user ${ref} in organization ${orgId}`);
+			const duration = Date.now() - startTime;
+			this.logger.log(`✅ [LeadsService] Successfully retrieved 0 leads for user ${ref} in ${duration}ms`);
+			
+			return {
+				message: 'No leads found for this user',
+				leads: [],
+				stats: {
+					total: 0,
+					new: 0,
+					contacted: 0,
+					qualified: 0,
+					negotiation: 0,
+					won: 0,
+					lost: 0,
+					avgLeadScore: 0,
+				},
+			};
+		}
 
-			this.logger.debug(`🔗 [LeadsService] Populating relations for ${leads.length} user leads`);
-			// Populate all leads with full assignee details
-			const populatedLeads = await Promise.all(leads.map((lead) => this.populateLeadRelations(lead)));
+		this.logger.debug(`🔗 [LeadsService] Populating relations for ${leads.length} user leads`);
+		// Populate all leads with full assignee details
+		const populatedLeads = await Promise.all(leads.map((lead) => this.populateLeadRelations(lead)));
 
-			this.logger.debug(`📊 [LeadsService] Calculating stats for ${leads.length} user leads`);
-			const stats = this.calculateStats(leads);
+		this.logger.debug(`📊 [LeadsService] Calculating stats for ${leads.length} user leads`);
+		const stats = this.calculateStats(leads);
 
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,

@@ -1,5 +1,7 @@
 import { Column, Entity, Index, ManyToOne, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
 import { DeviceStatus, DeviceType } from '../../lib/enums/iot';
+import { Branch } from '../../branch/entities/branch.entity';
+import { Organisation } from '../../organisation/entities/organisation.entity';
 
 @Entity('device')
 @Index(['deviceID'])
@@ -61,6 +63,12 @@ export class Device {
 
 	@OneToMany(() => DeviceRecords, (records) => records.device)
 	records: DeviceRecords[];
+
+	@ManyToOne(() => Branch, { nullable: true })
+	branch: Branch;
+
+	@ManyToOne(() => Organisation, { nullable: true })
+	organisation: Organisation;
 }
 
 @Entity('device_records')

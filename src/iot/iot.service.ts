@@ -880,12 +880,14 @@ export class IotService {
 
 			this.logger.debug(`🔌 [${requestId}] Cache miss. Building database query...`);
 
-			const queryBuilder = this.deviceRepository
-				.createQueryBuilder('device')
-				.leftJoinAndSelect('device.records', 'records')
-				.where('device.isDeleted = :isDeleted', { isDeleted: false })
-				.orderBy('device.createdAt', 'DESC')
-				.addOrderBy('records.createdAt', 'DESC');
+		const queryBuilder = this.deviceRepository
+			.createQueryBuilder('device')
+			.leftJoinAndSelect('device.records', 'records')
+			.leftJoinAndSelect('device.branch', 'branch')
+			.leftJoinAndSelect('device.organisation', 'organisation')
+			.where('device.isDeleted = :isDeleted', { isDeleted: false })
+			.orderBy('device.createdAt', 'DESC')
+			.addOrderBy('records.createdAt', 'DESC');
 
 			this.logger.debug(`🔌 [${requestId}] Base query created with relations`);
 
