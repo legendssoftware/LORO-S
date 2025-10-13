@@ -1,5 +1,5 @@
 import { User } from './user.entity'; // Adjusted path assuming it's in the same directory
-import { Entity, Column, PrimaryGeneratedColumn, OneToOne, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, OneToOne, CreateDateColumn, UpdateDateColumn, Index, BeforeInsert, BeforeUpdate } from 'typeorm';
 
 @Entity('user_targets')
 @Index(['targetPeriod', 'periodStartDate', 'periodEndDate']) // Period-based filtering
@@ -298,4 +298,38 @@ export class UserTarget {
 
 	@OneToOne(() => User, (user) => user.userTarget)
 	user: User;
+
+	/**
+	 * Auto-calculate totalCost before insert
+	 * Sums all individual cost components to ensure accurate total
+	 */
+	@BeforeInsert()
+	calculateTotalCostBeforeInsert() {
+		this.totalCost = this.calculateTotalCost();
+	}
+
+	/**
+	 * Auto-calculate totalCost before update
+	 * Ensures totalCost is always in sync with individual cost fields
+	 */
+	@BeforeUpdate()
+	calculateTotalCostBeforeUpdate() {
+		this.totalCost = this.calculateTotalCost();
+	}
+
+	/**
+	 * Helper method to calculate total cost from all individual components
+	 * Returns the sum of: baseSalary + carInstalment + carInsurance + fuel + cellPhoneAllowance + carMaintenance + cgicCosts
+	 */
+	private calculateTotalCost(): number {
+		const baseSalary = this.baseSalary || 0;
+		const carInstalment = this.carInstalment || 0;
+		const carInsurance = this.carInsurance || 0;
+		const fuel = this.fuel || 0;
+		const cellPhoneAllowance = this.cellPhoneAllowance || 0;
+		const carMaintenance = this.carMaintenance || 0;
+		const cgicCosts = this.cgicCosts || 0;
+
+		return baseSalary + carInstalment + carInsurance + fuel + cellPhoneAllowance + carMaintenance + cgicCosts;
+	}
 }

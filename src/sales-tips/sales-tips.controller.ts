@@ -12,6 +12,11 @@ export class SalesTipsController {
     return this.salesTipsService.getTipByDate();
   }
 
+  @Post('trigger-broadcast')
+  async triggerSalesTipBroadcast() {
+    return this.salesTipsService.triggerManualSalesTip();
+  }
+
   @Post()
   create(@Body() createSalesTipDto: CreateSalesTipDto) {
     return this.salesTipsService.create(createSalesTipDto);
