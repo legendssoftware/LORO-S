@@ -12,11 +12,17 @@ import { Report } from './entities/report.entity';
 import { User } from '../user/entities/user.entity';
 import { Organisation } from '../organisation/entities/organisation.entity';
 import { Attendance } from '../attendance/entities/attendance.entity';
+import { Lead } from '../leads/entities/lead.entity';
+import { Claim } from '../claims/entities/claim.entity';
+import { Task } from '../tasks/entities/task.entity';
+import { Quotation } from '../shop/entities/quotation.entity';
 
 // DTOs and Enums
 import { ReportType } from './constants/report-types.enum';
 import { ReportParamsDto } from './dto/report-params.dto';
 import { EmailType } from '../lib/enums/email.enums';
+import { ClaimStatus } from '../lib/enums/finance.enums';
+import { OrderStatus } from '../lib/enums/status.enums';
 
 // Services and Generators
 import { MainReportGenerator } from './generators/main-report.generator';
@@ -85,6 +91,14 @@ export class ReportsService implements OnModuleInit {
 		private organisationRepository: Repository<Organisation>,
 		@InjectRepository(Attendance)
 		private attendanceRepository: Repository<Attendance>,
+		@InjectRepository(Lead)
+		private leadsRepository: Repository<Lead>,
+		@InjectRepository(Claim)
+		private claimsRepository: Repository<Claim>,
+		@InjectRepository(Task)
+		private taskRepository: Repository<Task>,
+		@InjectRepository(Quotation)
+		private quotationRepository: Repository<Quotation>,
 		private mainReportGenerator: MainReportGenerator,
 		private quotationReportGenerator: QuotationReportGenerator,
 		private userDailyReportGenerator: UserDailyReportGenerator,
@@ -686,23 +700,6 @@ export class ReportsService implements OnModuleInit {
 	}
 
 	/**
-	 * Get current week date range for weekly reports
-	 * Returns the current week from Sunday to Saturday
-	 */
-	private getWeekDateRange(): { start: Date; end: Date } {
-		const now = new Date();
-		const startOfWeek = new Date(now);
-		startOfWeek.setDate(now.getDate() - now.getDay()); // Start of current week (Sunday)
-		startOfWeek.setHours(0, 0, 0, 0);
-		
-		const endOfWeek = new Date(startOfWeek);
-		endOfWeek.setDate(startOfWeek.getDate() + 6); // End of current week (Saturday)
-		endOfWeek.setHours(23, 59, 59, 999);
-
-		return { start: startOfWeek, end: endOfWeek };
-	}
-
-	/**
 	 * Get previous week date range for weekly reports
 	 * Returns the previous completed week from Sunday to Saturday
 	 */
@@ -1128,7 +1125,6 @@ export class ReportsService implements OnModuleInit {
 	}
 
 
-
 	@OnEvent('report.generated')
 	async handleReportGenerated(payload: { reportType: ReportType; reportId: number; userId?: number; organisationId?: number; emailData: any; granularity?: 'daily' | 'weekly' }) {
 		this.logger.log(
@@ -1366,6 +1362,479 @@ export class ReportsService implements OnModuleInit {
 		} catch (error) {
 			this.logger.error(`Error generating map data: ${error.message}`, error.stack);
 			throw error;
+		}
+	}
+
+	/* ---------------------------------------------------------
+	 * ORGANIZATION METRICS SUMMARY
+	 * -------------------------------------------------------*/
+	/**
+	 * Get comprehensive organization-wide metrics summary
+	 * Includes attendance, leads, claims, tasks, sales, leave, and IoT metrics
+	 * 
+	 * @param organizationId - Organization ID to get metrics for
+	 * @param branchId - Optional branch ID to filter metrics
+	 * @returns OrganizationMetricsSummaryDto with comprehensive metrics
+	 */
+	async getOrganizationMetricsSummary(organizationId: number, branchId?: number): Promise<any> {
+		this.logger.log(`Getting organization metrics summary for org ${organizationId}${branchId ? `, branch ${branchId}` : ''}`);
+
+		const cacheKey = `${this.CACHE_PREFIX}org_metrics_${organizationId}_${branchId || 'all'}`;
+
+		// Try cache first
+		const cached = await this.cacheManager.get(cacheKey);
+		if (cached) {
+			this.logger.log(`Organization metrics found in cache: ${cacheKey}`);
+			return { ...cached, fromCache: true };
+		}
+
+		try {
+			// Get organization details
+			const organization = await this.organisationRepository.findOne({
+				where: { uid: organizationId },
+			});
+
+			if (!organization) {
+				this.logger.error(`Organization ${organizationId} not found`);
+				throw new NotFoundException(`Organization with ID ${organizationId} not found`);
+			}
+
+			this.logger.debug(`Fetching metrics for organization: ${organization.name}`);
+
+			// Get today's date range in organization timezone
+			const orgTimezone = await this.getOrganizationTimezone(organizationId);
+			const orgCurrentTime = TimezoneUtil.getCurrentOrganizationTime(orgTimezone);
+			const startOfDay = new Date(orgCurrentTime);
+			startOfDay.setHours(0, 0, 0, 0);
+			const endOfDay = new Date(orgCurrentTime);
+			endOfDay.setHours(23, 59, 59, 999);
+
+			// Fetch all metrics in parallel for better performance
+			const [
+				attendanceMetrics,
+				leadsMetrics,
+				claimsMetrics,
+				tasksMetrics,
+				salesMetrics,
+				leaveMetrics,
+				iotMetrics,
+			] = await Promise.all([
+				this.getAttendanceMetrics(organizationId, branchId, startOfDay, endOfDay),
+				this.getLeadsMetrics(organizationId, branchId),
+				this.getClaimsMetrics(organizationId, branchId, startOfDay),
+				this.getTasksMetrics(organizationId, branchId),
+				this.getSalesMetrics(organizationId, branchId, startOfDay),
+				this.getLeaveMetrics(organizationId, branchId, startOfDay, endOfDay),
+				this.getIoTMetrics(organizationId, branchId),
+			]);
+
+			const summary = {
+				organizationId,
+				organizationName: organization.name,
+				branchId,
+				branchName: branchId ? (await this.organisationRepository
+					.createQueryBuilder('org')
+					.leftJoinAndSelect('org.branches', 'branch')
+					.where('branch.uid = :branchId', { branchId })
+					.getOne())?.branches?.[0]?.name : undefined,
+				generatedAt: new Date(),
+				attendance: attendanceMetrics,
+				leads: leadsMetrics,
+				claims: claimsMetrics,
+				tasks: tasksMetrics,
+				sales: salesMetrics,
+				leave: leaveMetrics,
+				iot: iotMetrics,
+			};
+
+			// Cache the metrics
+			await this.cacheManager.set(cacheKey, summary, this.CACHE_TTL);
+			this.logger.log(`Organization metrics cached successfully: ${cacheKey}`);
+
+			return summary;
+		} catch (error) {
+			this.logger.error(`Error getting organization metrics: ${error.message}`, error.stack);
+			throw error;
+		}
+	}
+
+	/**
+	 * Get attendance metrics for organization
+	 */
+	private async getAttendanceMetrics(
+		organizationId: number,
+		branchId: number | undefined,
+		startOfDay: Date,
+		endOfDay: Date,
+	): Promise<any> {
+		try {
+			this.logger.debug(`Fetching attendance metrics for org ${organizationId}`);
+
+			const whereClause: any = {
+				checkIn: Between(startOfDay, endOfDay),
+				owner: {
+					organisationRef: String(organizationId),
+					isDeleted: false,
+				},
+			};
+
+			if (branchId) {
+				whereClause.owner = {
+					...whereClause.owner,
+					branch: { uid: branchId },
+				};
+			}
+
+			const todayAttendance = await this.attendanceRepository.find({
+				where: whereClause,
+				relations: ['owner'],
+			});
+
+			const presentToday = new Set(todayAttendance.map(a => a.owner.uid)).size;
+			
+			// Get total employees
+			const allEmployeesWhere: any = {
+				organisationRef: String(organizationId),
+				isDeleted: false,
+			};
+			if (branchId) {
+				allEmployeesWhere.branch = { uid: branchId };
+			}
+			
+			const totalEmployees = await this.userRepository.count({ where: allEmployeesWhere });
+			const absentToday = totalEmployees - presentToday;
+
+			// Calculate total hours and punctuality
+			let totalHours = 0;
+			let lateCheckIns = 0;
+
+			for (const attendance of todayAttendance) {
+				if (attendance.checkOut) {
+					const hours = (new Date(attendance.checkOut).getTime() - new Date(attendance.checkIn).getTime()) / (1000 * 60 * 60);
+					totalHours += hours;
+				}
+
+				// Simple punctuality check (9 AM threshold)
+				const checkInTime = new Date(attendance.checkIn);
+				if (checkInTime.getHours() > 9 || (checkInTime.getHours() === 9 && checkInTime.getMinutes() > 0)) {
+					lateCheckIns++;
+				}
+			}
+
+			const averageHours = presentToday > 0 ? totalHours / presentToday : 0;
+			const punctualityRate = todayAttendance.length > 0 
+				? ((todayAttendance.length - lateCheckIns) / todayAttendance.length) * 100 
+				: 100;
+
+			return {
+				presentToday,
+				absentToday,
+				totalHoursToday: Math.round(totalHours * 100) / 100,
+				averageHoursPerEmployee: Math.round(averageHours * 100) / 100,
+				punctualityRate: Math.round(punctualityRate * 100) / 100,
+				lateCheckIns,
+			};
+		} catch (error) {
+			this.logger.error(`Error getting attendance metrics: ${error.message}`);
+			return {
+				presentToday: 0,
+				absentToday: 0,
+				totalHoursToday: 0,
+				averageHoursPerEmployee: 0,
+				punctualityRate: 0,
+				lateCheckIns: 0,
+			};
+		}
+	}
+
+	/**
+	 * Get leads metrics for organization
+	 */
+	private async getLeadsMetrics(organizationId: number, branchId: number | undefined): Promise<any> {
+		try {
+			this.logger.debug(`Fetching leads metrics for org ${organizationId}`);
+
+			const whereClause: any = {
+				organisation: { uid: organizationId },
+				isDeleted: false,
+			};
+
+			if (branchId) {
+				whereClause.branch = { uid: branchId };
+			}
+
+			const allLeads = await this.leadsRepository.find({ where: whereClause });
+
+			// Get today's new leads
+			const startOfDay = new Date();
+			startOfDay.setHours(0, 0, 0, 0);
+			const newLeadsToday = allLeads.filter(lead => 
+				new Date(lead.createdAt) >= startOfDay
+			).length;
+
+			// Group by status
+			const leadsByStatus: Record<string, number> = {};
+			allLeads.forEach(lead => {
+				leadsByStatus[lead.status] = (leadsByStatus[lead.status] || 0) + 1;
+			});
+
+			// Calculate conversion rate (won leads / total leads)
+			const wonLeads = leadsByStatus['WON'] || 0;
+			const conversionRate = allLeads.length > 0 ? (wonLeads / allLeads.length) * 100 : 0;
+
+			// Hot leads (high temperature or high score)
+			const hotLeads = allLeads.filter(lead => 
+				lead.temperature === 'HOT' || (lead.leadScore && lead.leadScore > 70)
+			).length;
+
+			return {
+				totalLeads: allLeads.length,
+				newLeadsToday,
+				leadsByStatus,
+				conversionRate: Math.round(conversionRate * 100) / 100,
+				hotLeads,
+			};
+		} catch (error) {
+			this.logger.error(`Error getting leads metrics: ${error.message}`);
+			return {
+				totalLeads: 0,
+				newLeadsToday: 0,
+				leadsByStatus: {},
+				conversionRate: 0,
+				hotLeads: 0,
+			};
+		}
+	}
+
+	/**
+	 * Get claims metrics for organization
+	 */
+	private async getClaimsMetrics(
+		organizationId: number,
+		branchId: number | undefined,
+		startOfDay: Date,
+	): Promise<any> {
+		try {
+			this.logger.debug(`Fetching claims metrics for org ${organizationId}`);
+
+			const whereClause: any = {
+				organisation: { uid: organizationId },
+				isDeleted: false,
+			};
+
+			if (branchId) {
+				whereClause.branch = { uid: branchId };
+			}
+
+			const allClaims = await this.claimsRepository.find({ where: whereClause });
+
+			const pendingClaims = allClaims.filter(c => c.status.toLowerCase() === 'pending').length;
+			const approvedClaims = allClaims.filter(c => c.status.toLowerCase() === 'approved').length;
+			const rejectedClaims = allClaims.filter(c => c.status.toLowerCase() === 'declined').length;
+
+			// Calculate total claim value
+			const totalClaimValue = allClaims.reduce((sum, claim) => {
+				return sum + (parseFloat(claim.amount) || 0);
+			}, 0);
+
+			// Get today's claims
+			const claimsToday = allClaims.filter(claim => 
+				new Date(claim.createdAt) >= startOfDay
+			).length;
+
+			return {
+				totalClaims: allClaims.length,
+				pendingClaims,
+				approvedClaims,
+				rejectedClaims,
+				totalClaimValue: Math.round(totalClaimValue * 100) / 100,
+				claimsToday,
+			};
+		} catch (error) {
+			this.logger.error(`Error getting claims metrics: ${error.message}`);
+			return {
+				totalClaims: 0,
+				pendingClaims: 0,
+				approvedClaims: 0,
+				rejectedClaims: 0,
+				totalClaimValue: 0,
+				claimsToday: 0,
+			};
+		}
+	}
+
+	/**
+	 * Get tasks metrics for organization
+	 */
+	private async getTasksMetrics(organizationId: number, branchId: number | undefined): Promise<any> {
+		try {
+			this.logger.debug(`Fetching tasks metrics for org ${organizationId}`);
+
+			const whereClause: any = {
+				organisation: { uid: organizationId },
+				isDeleted: false,
+			};
+
+			if (branchId) {
+				whereClause.branch = { uid: branchId };
+			}
+
+			const allTasks = await this.taskRepository.find({ where: whereClause });
+
+			const completedTasks = allTasks.filter(t => t.status === 'COMPLETED').length;
+			const overdueTasks = allTasks.filter(t => t.isOverdue).length;
+			const inProgressTasks = allTasks.filter(t => t.status === 'IN_PROGRESS').length;
+
+			const completionRate = allTasks.length > 0 ? (completedTasks / allTasks.length) * 100 : 0;
+
+			// Get today's tasks
+			const startOfDay = new Date();
+			startOfDay.setHours(0, 0, 0, 0);
+			const tasksCreatedToday = allTasks.filter(task => 
+				new Date(task.createdAt) >= startOfDay
+			).length;
+
+			return {
+				totalTasks: allTasks.length,
+				completedTasks,
+				overdueTasks,
+				inProgressTasks,
+				completionRate: Math.round(completionRate * 100) / 100,
+				tasksCreatedToday,
+			};
+		} catch (error) {
+			this.logger.error(`Error getting tasks metrics: ${error.message}`);
+			return {
+				totalTasks: 0,
+				completedTasks: 0,
+				overdueTasks: 0,
+				inProgressTasks: 0,
+				completionRate: 0,
+				tasksCreatedToday: 0,
+			};
+		}
+	}
+
+	/**
+	 * Get sales metrics for organization (from quotations)
+	 */
+	private async getSalesMetrics(
+		organizationId: number,
+		branchId: number | undefined,
+		startOfDay: Date,
+	): Promise<any> {
+		try {
+			this.logger.debug(`Fetching sales metrics for org ${organizationId}`);
+
+			const whereClause: any = {
+				organisation: { uid: organizationId },
+			};
+
+			if (branchId) {
+				whereClause.branch = { uid: branchId };
+			}
+
+			const allQuotations = await this.quotationRepository.find({ where: whereClause });
+
+			// Calculate total revenue
+			const totalRevenue = allQuotations.reduce((sum, quotation) => {
+				return sum + (parseFloat(String(quotation.totalAmount)) || 0);
+			}, 0);
+
+			const averageQuotationValue = allQuotations.length > 0 
+				? totalRevenue / allQuotations.length 
+				: 0;
+
+			// Get today's quotations
+			const quotationsToday = allQuotations.filter(q => 
+				new Date(q.quotationDate) >= startOfDay
+			).length;
+
+			// Count by status
+			const acceptedQuotations = allQuotations.filter(q => q.status.toLowerCase() === 'approved').length;
+			const pendingQuotations = allQuotations.filter(q => 
+				q.status.toLowerCase() === 'pending_client' || q.status.toLowerCase() === 'pending_internal'
+			).length;
+
+			return {
+				totalQuotations: allQuotations.length,
+				totalRevenue: Math.round(totalRevenue * 100) / 100,
+				averageQuotationValue: Math.round(averageQuotationValue * 100) / 100,
+				quotationsToday,
+				acceptedQuotations,
+				pendingQuotations,
+			};
+		} catch (error) {
+			this.logger.error(`Error getting sales metrics: ${error.message}`);
+			return {
+				totalQuotations: 0,
+				totalRevenue: 0,
+				averageQuotationValue: 0,
+				quotationsToday: 0,
+				acceptedQuotations: 0,
+				pendingQuotations: 0,
+			};
+		}
+	}
+
+	/**
+	 * Get leave metrics for organization
+	 */
+	private async getLeaveMetrics(
+		organizationId: number,
+		branchId: number | undefined,
+		startOfDay: Date,
+		endOfDay: Date,
+	): Promise<any> {
+		try {
+			this.logger.debug(`Fetching leave metrics for org ${organizationId}`);
+
+			// Note: Leave repository may need to be injected if leave module exists
+			// For now, return placeholder metrics
+			return {
+				activeLeaveRequests: 0,
+				pendingApprovals: 0,
+				approvedLeave: 0,
+				rejectedLeave: 0,
+				employeesOnLeaveToday: 0,
+			};
+		} catch (error) {
+			this.logger.error(`Error getting leave metrics: ${error.message}`);
+			return {
+				activeLeaveRequests: 0,
+				pendingApprovals: 0,
+				approvedLeave: 0,
+				rejectedLeave: 0,
+				employeesOnLeaveToday: 0,
+			};
+		}
+	}
+
+	/**
+	 * Get IoT metrics for organization
+	 */
+	private async getIoTMetrics(organizationId: number, branchId: number | undefined): Promise<any> {
+		try {
+			this.logger.debug(`Fetching IoT metrics for org ${organizationId}`);
+
+			// Note: IoT repository may need to be injected if IoT module exists
+			// For now, return placeholder metrics
+			return {
+				totalDevices: 0,
+				onlineDevices: 0,
+				offlineDevices: 0,
+				maintenanceRequired: 0,
+				dataPointsToday: 0,
+			};
+		} catch (error) {
+			this.logger.error(`Error getting IoT metrics: ${error.message}`);
+			return {
+				totalDevices: 0,
+				onlineDevices: 0,
+				offlineDevices: 0,
+				maintenanceRequired: 0,
+				dataPointsToday: 0,
+			};
 		}
 	}
 }

@@ -1,35 +1,75 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import { Lead } from './entities/lead.entity';
 import { LeadStatus } from '../lib/enums/lead.enums';
-import { EmailType } from '../lib/enums/email.enums';
 import { User } from '../user/entities/user.entity';
-import { CommunicationService } from '../communication/communication.service';
+import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
+import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
+import { AccountStatus } from '../lib/enums/status.enums';
 
 @Injectable()
 export class LeadsReminderService {
   private readonly logger = new Logger(LeadsReminderService.name);
+
+  // Define inactive user statuses that should not receive notifications
+  private readonly INACTIVE_USER_STATUSES = [
+    AccountStatus.INACTIVE,
+    AccountStatus.DELETED,
+    AccountStatus.BANNED,
+    AccountStatus.DECLINED,
+  ];
 
   constructor(
     @InjectRepository(Lead)
     private readonly leadRepository: Repository<Lead>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
-    private readonly communicationService: CommunicationService,
+    private readonly unifiedNotificationService: UnifiedNotificationService,
   ) {}
 
   /**
-   * Cron job that runs daily at 5:00 AM to check for pending leads
-   * and send reminder emails to lead owners
+   * Check if a user is active and should receive notifications
    */
-  @Cron(CronExpression.EVERY_DAY_AT_5AM)
-  async handlePendingLeadsReminders() {
-    this.logger.log('Starting pending leads reminder check...');
+  private isUserActive(user: User): boolean {
+    return !this.INACTIVE_USER_STATUSES.includes(user.status as AccountStatus);
+  }
+
+  /**
+   * Filter active users from a list of users
+   */
+  private async filterActiveUsers(userIds: number[]): Promise<User[]> {
+    if (userIds.length === 0) return [];
+
+    const users = await this.userRepository.find({
+      where: { uid: In(userIds) },
+      select: ['uid', 'name', 'surname', 'email', 'status'],
+    });
+
+    const activeUsers = users.filter((user) => this.isUserActive(user));
+    const filteredCount = userIds.length - activeUsers.length;
+
+    if (filteredCount > 0) {
+      this.logger.debug(`Filtered out ${filteredCount} inactive users from lead notifications`);
+    }
+
+    return activeUsers;
+  }
+
+  /**
+   * Daily lead summary - Runs at 8:00 AM
+   * Sends ONE consolidated push notification per user with all their leads (pending + stale)
+   */
+  @Cron(CronExpression.EVERY_DAY_AT_8AM)
+  async sendDailyLeadSummary() {
+    this.logger.log('Starting daily lead summary notification...');
 
     try {
-      // Get all leads with PENDING status
+      const now = new Date();
+      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+      // Get all pending leads
       const pendingLeads = await this.leadRepository.find({
         where: {
           status: LeadStatus.PENDING,
@@ -38,52 +78,11 @@ export class LeadsReminderService {
         relations: ['owner'],
       });
 
-      if (pendingLeads.length === 0) {
-        this.logger.log('No pending leads found.');
-        return;
-      }
-
-      this.logger.log(`Found ${pendingLeads.length} pending leads.`);
-
-      // Group leads by owner
-      const leadsByOwner = this.groupLeadsByOwner(pendingLeads);
-
-      // Process each owner's leads and send reminders
-      for (const [ownerUid, leads] of Object.entries(leadsByOwner)) {
-        await this.sendReminderEmail(parseInt(ownerUid), leads);
-      }
-
-      this.logger.log('Pending leads reminder process completed successfully.');
-    } catch (error) {
-      this.logger.error('Failed to process pending leads reminders', error.stack);
-    }
-  }
-
-  /**
-   * Cron job that runs daily at 5:00 AM to check for stale leads
-   * and send reminder emails to lead creators
-   */
-  @Cron(CronExpression.EVERY_DAY_AT_5AM) // Daily at 5:00 AM
-  async handleWeeklyStaleLeadsReminders() {
-    this.logger.log('Starting weekly stale leads reminder check...');
-
-    try {
-      const now = new Date();
-      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-
-      // Get all leads that are stale (haven't been contacted in 7+ days or never contacted)
+      // Get all stale leads (not contacted in 7+ days or never contacted)
       const staleLeads = await this.leadRepository.find({
         where: [
           {
-            // Never contacted leads that are older than 7 days
             lastContactDate: null,
-            isDeleted: false,
-            status: LeadStatus.PENDING,
-            createdAt: sevenDaysAgo,
-          },
-          {
-            // Leads that haven't been contacted in 7+ days
-            lastContactDate: sevenDaysAgo,
             isDeleted: false,
             status: LeadStatus.PENDING,
           },
@@ -91,24 +90,17 @@ export class LeadsReminderService {
         relations: ['owner'],
       });
 
-      if (staleLeads.length === 0) {
-        this.logger.log('No stale leads found for weekly reminder.');
-        return;
+      // Group leads by owner
+      const leadsByOwner = this.groupLeadsByOwner([...pendingLeads, ...staleLeads]);
+
+      // Send consolidated notification to each user
+      for (const [ownerUid, leads] of Object.entries(leadsByOwner)) {
+        await this.sendConsolidatedLeadNotification(parseInt(ownerUid), leads, sevenDaysAgo);
       }
 
-      this.logger.log(`Found ${staleLeads.length} stale leads for weekly reminder.`);
-
-      // Group leads by their creator/owner
-      const leadsByCreator = this.groupLeadsByOwner(staleLeads);
-
-      // Process each creator's leads and send reminders
-      for (const [creatorUid, leads] of Object.entries(leadsByCreator)) {
-        await this.sendWeeklyStaleLeadsEmail(parseInt(creatorUid), leads);
-      }
-
-      this.logger.log('Weekly stale leads reminder process completed successfully.');
+      this.logger.log(`✅ Daily lead summary sent to ${Object.keys(leadsByOwner).length} users`);
     } catch (error) {
-      this.logger.error('Failed to process weekly stale leads reminders', error.stack);
+      this.logger.error('Failed to process daily lead summary', error.stack);
     }
   }
 
@@ -120,11 +112,11 @@ export class LeadsReminderService {
 
     for (const lead of leads) {
       if (!lead.ownerUid) continue;
-      
+
       if (!leadsByOwner[lead.ownerUid]) {
         leadsByOwner[lead.ownerUid] = [];
       }
-      
+
       leadsByOwner[lead.ownerUid].push(lead);
     }
 
@@ -132,135 +124,91 @@ export class LeadsReminderService {
   }
 
   /**
-   * Sends a reminder email to a lead owner about their pending leads
+   * Send consolidated lead notification to a user
    */
-  private async sendReminderEmail(ownerUid: number, leads: Lead[]) {
+  private async sendConsolidatedLeadNotification(ownerUid: number, leads: Lead[], sevenDaysAgo: Date) {
     try {
-      const owner = await this.userRepository.findOne({ where: { uid: ownerUid } });
-      
-      if (!owner || !owner.email) {
-        this.logger.warn(`Owner not found or has no email: ${ownerUid}`);
+      // Check if user is active
+      const activeUsers = await this.filterActiveUsers([ownerUid]);
+      if (activeUsers.length === 0) {
+        this.logger.debug(`User ${ownerUid} is inactive, skipping notification`);
         return;
       }
 
-      // Format leads for the email template
-      const formattedLeads = leads.map(lead => ({
-        uid: lead.uid,
-        name: lead.name || 'Unnamed Lead',
-        email: lead.email,
-        phone: lead.phone,
-        createdAt: lead.createdAt.toLocaleDateString('en-ZA', {
-          year: 'numeric', 
-          month: 'short', 
-          day: 'numeric'
-        }),
-        image: lead.image,
-        latitude: lead.latitude ? Number(lead.latitude) : undefined,
-        longitude: lead.longitude ? Number(lead.longitude) : undefined,
-        notes: lead.notes,
-      }));
-
-      // Prepare email data
-      const emailData = {
-        name: owner.name || 'Team Member',
-        leads: formattedLeads,
-        leadsCount: leads.length,
-        dashboardLink: `${process.env.DASHBOARD_URL}/leads`,
-      };
-
-      // Send email using the communication service
-      await this.communicationService.sendEmail(
-        EmailType.LEAD_REMINDER,
-        [owner.email],
-        emailData
-      );
-
-      this.logger.log(`Reminder email sent to ${owner.email} for ${leads.length} pending leads.`);
-    } catch (error) {
-      this.logger.error(`Failed to send reminder email to owner ${ownerUid}:`, error.stack);
-    }
-  }
-
-  /**
-   * Sends a weekly stale leads reminder email to a lead creator
-   */
-  private async sendWeeklyStaleLeadsEmail(creatorUid: number, leads: Lead[]) {
-    try {
-      const creator = await this.userRepository.findOne({ where: { uid: creatorUid } });
-      
-      if (!creator || !creator.email) {
-        this.logger.warn(`Creator not found or has no email: ${creatorUid}`);
-        return;
-      }
-
+      const user = activeUsers[0];
       const now = new Date();
 
-      // Format leads with additional stale lead information
-      const formattedLeads = leads.map(lead => {
-        const daysSinceCreated = Math.floor((now.getTime() - lead.createdAt.getTime()) / (24 * 60 * 60 * 1000));
-        const daysSinceLastContact = lead.lastContactDate 
-          ? Math.floor((now.getTime() - lead.lastContactDate.getTime()) / (24 * 60 * 60 * 1000))
-          : 'Never contacted';
+      // Categorize leads
+      const pendingLeads = leads.filter((lead) => lead.status === LeadStatus.PENDING);
+      const staleLeads = leads.filter(
+        (lead) =>
+          !lead.lastContactDate ||
+          (lead.lastContactDate && lead.lastContactDate < sevenDaysAgo)
+      );
+      const neverContactedLeads = leads.filter((lead) => !lead.lastContactDate);
+      const hotLeads = leads.filter((lead) => lead.temperature === 'HOT');
+      const highPriorityLeads = leads.filter((lead) => lead.priority === 'HIGH' || lead.priority === 'CRITICAL');
 
-        return {
-          uid: lead.uid,
-          name: lead.name || 'Unnamed Lead',
-          email: lead.email,
-          phone: lead.phone,
-          companyName: lead.companyName,
-          temperature: lead.temperature,
-          priority: lead.priority,
-          estimatedValue: lead.estimatedValue || 0,
-          daysSinceCreated,
-          daysSinceLastContact,
-          createdAt: lead.createdAt.toLocaleDateString('en-ZA', {
-            year: 'numeric', 
-            month: 'short', 
-            day: 'numeric'
-          }),
-          lastContactDate: lead.lastContactDate?.toLocaleDateString('en-ZA', {
-            year: 'numeric', 
-            month: 'short', 
-            day: 'numeric'
-          }) || 'Never',
-          image: lead.image,
-          latitude: lead.latitude ? Number(lead.latitude) : undefined,
-          longitude: lead.longitude ? Number(lead.longitude) : undefined,
-          notes: lead.notes,
-        };
-      });
-
-      // Calculate summary statistics
+      // Calculate total estimated value
       const totalEstimatedValue = leads.reduce((sum, lead) => sum + (lead.estimatedValue || 0), 0);
-      const neverContactedCount = leads.filter(lead => !lead.lastContactDate).length;
-      const highPriorityCount = leads.filter(lead => lead.priority === 'HIGH' || lead.priority === 'CRITICAL').length;
 
-      // Prepare email data
-      const emailData = {
-        name: creator.name || 'Team Member',
-        weekOf: now.toLocaleDateString('en-ZA', { 
-          year: 'numeric', 
-          month: 'long', 
-          day: 'numeric' 
-        }),
-        staleLeads: formattedLeads,
-        totalCount: leads.length,
-        totalEstimatedValue,
-        neverContactedCount,
-        highPriorityCount,
-        dashboardUrl: `${process.env.DASHBOARD_URL}/leads`,
-      };
+      // Get top 5 most urgent leads (by priority and temperature)
+      const sortedLeads = [...leads].sort((a, b) => {
+        const priorityOrder = { URGENT: 0, CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+        const temperatureOrder = { HOT: 0, WARM: 1, COLD: 2, FROZEN: 3 };
+        
+        const priorityDiff = (priorityOrder[a.priority] || 3) - (priorityOrder[b.priority] || 3);
+        if (priorityDiff !== 0) return priorityDiff;
+        
+        return (temperatureOrder[a.temperature] || 3) - (temperatureOrder[b.temperature] || 3);
+      });
+      const topLeads = sortedLeads.slice(0, 5);
 
-      // Send email using the communication service
-      await this.communicationService.sendEmail(
-        EmailType.LEAD_REMINDER,
-        [creator.email],
-        emailData as any
+      // Only send notification if there are actionable leads
+      if (pendingLeads.length === 0 && staleLeads.length === 0) {
+        this.logger.debug(`No actionable leads for user ${ownerUid}, skipping notification`);
+        return;
+      }
+
+      await this.unifiedNotificationService.sendTemplatedNotification(
+        NotificationEvent.LEAD_DAILY_SUMMARY,
+        [ownerUid],
+        {
+          userName: user.name || 'Team Member',
+          totalLeads: leads.length,
+          pendingCount: pendingLeads.length,
+          staleCount: staleLeads.length,
+          neverContactedCount: neverContactedLeads.length,
+          hotCount: hotLeads.length,
+          highPriorityCount: highPriorityLeads.length,
+          totalEstimatedValue: totalEstimatedValue.toLocaleString('en-ZA', {
+            style: 'currency',
+            currency: 'ZAR',
+          }),
+          topLeads: topLeads.map((lead) => ({
+            id: lead.uid,
+            name: lead.name || 'Unnamed Lead',
+            company: lead.companyName,
+            temperature: lead.temperature,
+            priority: lead.priority,
+            estimatedValue: lead.estimatedValue || 0,
+            daysSinceLastContact: lead.lastContactDate
+              ? Math.floor((now.getTime() - lead.lastContactDate.getTime()) / (24 * 60 * 60 * 1000))
+              : 'Never',
+          })),
+        },
+        {
+          priority: hotLeads.length > 0 || highPriorityLeads.length > 0 
+            ? NotificationPriority.HIGH 
+            : NotificationPriority.NORMAL,
+        },
       );
 
-      this.logger.log(`Weekly stale leads reminder sent to ${creator.email} for ${leads.length} stale leads.`);
+      this.logger.debug(
+        `✅ Daily lead summary sent to user ${ownerUid}: ${leads.length} leads (${pendingLeads.length} pending, ${staleLeads.length} stale)`
+      );
     } catch (error) {
-      this.logger.error(`Failed to send weekly stale leads reminder to creator ${creatorUid}:`, error.stack);
+      this.logger.error(`Error sending consolidated lead notification to user ${ownerUid}`, error.stack);
     }
   }
 } 

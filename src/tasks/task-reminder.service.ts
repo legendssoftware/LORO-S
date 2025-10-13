@@ -4,246 +4,271 @@ import { Repository, Between, Not, In, LessThan, IsNull } from 'typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Task } from './entities/task.entity';
 import { User } from '../user/entities/user.entity';
-import { CommunicationService } from '../communication/communication.service';
-import { NotificationsService } from '../notifications/notifications.service';
 import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
 import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
-import { EmailType } from '../lib/enums/email.enums';
-import { TaskStatus } from '../lib/enums/task.enums';
-import { NotificationType } from '../lib/enums/notification.enums';
-import { TaskEmailDataMapper } from './helpers/email-data-mapper';
+import { TaskStatus, TaskPriority } from '../lib/enums/task.enums';
+import { AccountStatus } from '../lib/enums/status.enums';
 
 @Injectable()
 export class TaskReminderService {
 	private readonly logger = new Logger(TaskReminderService.name);
+
+	// Define inactive user statuses that should not receive notifications
+	private readonly INACTIVE_USER_STATUSES = [
+		AccountStatus.INACTIVE,
+		AccountStatus.DELETED,
+		AccountStatus.BANNED,
+		AccountStatus.DECLINED,
+	];
 
 	constructor(
 		@InjectRepository(Task)
 		private readonly taskRepository: Repository<Task>,
 		@InjectRepository(User)
 		private readonly userRepository: Repository<User>,
-		private readonly communicationService: CommunicationService,
-		private readonly notificationsService: NotificationsService,
 		private readonly unifiedNotificationService: UnifiedNotificationService,
 	) {}
 
-	@Cron('*/5 * * * *') // Run every 5 minutes
-	async checkUpcomingDeadlines() {
-		const now = new Date();
-		const thirtyMinutesFromNow = new Date(now.getTime() + 30 * 60000);
+	/**
+	 * Check if a user is active and should receive notifications
+	 */
+	private isUserActive(user: User): boolean {
+		return !this.INACTIVE_USER_STATUSES.includes(user.status as AccountStatus);
+	}
 
-		// Find tasks due in 30 minutes
-		const tasks = await this.taskRepository.find({
-			where: {
-				deadline: Between(now, thirtyMinutesFromNow),
-				status: Not(In([TaskStatus.COMPLETED, TaskStatus.CANCELLED])),
-				isDeleted: false,
-			},
-			relations: ['creator', 'subtasks'],
+	/**
+	 * Filter active users from a list of users
+	 */
+	private async filterActiveUsers(userIds: number[]): Promise<User[]> {
+		if (userIds.length === 0) return [];
+
+		const users = await this.userRepository.find({
+			where: { uid: In(userIds) },
+			select: ['uid', 'name', 'surname', 'email', 'status'],
 		});
 
-		// Send reminders for each task
-		for (const task of tasks) {
-			await this.sendReminders(task);
+		const activeUsers = users.filter((user) => this.isUserActive(user));
+		const filteredCount = userIds.length - activeUsers.length;
+		
+		if (filteredCount > 0) {
+			this.logger.debug(`Filtered out ${filteredCount} inactive users from task notifications`);
 		}
+
+		return activeUsers;
 	}
 
-	// Run every day at 5:00 AM
-	@Cron(CronExpression.EVERY_DAY_AT_5AM)
-	async checkOverdueAndMissedTasks() {
-		this.logger.log('Starting overdue and missed tasks check...');
-
-		const now = new Date();
-
-		try {
-			// Get all users
-			const users = await this.userRepository.find();
-
-			for (const user of users) {
-				await this.processUserOverdueAndMissedTasks(user);
-			}
-
-			this.logger.log('Overdue and missed tasks check completed');
-		} catch (error) {
-			this.logger.error('Error checking overdue and missed tasks', error.stack);
-		}
-	}
-
-	private async processUserOverdueAndMissedTasks(user: User) {
-		const now = new Date();
+	/**
+	 * Daily task summary - Runs at 7:00 AM
+	 * Sends ONE consolidated push notification per user with all their tasks
+	 */
+	@Cron(CronExpression.EVERY_DAY_AT_7AM)
+	async sendDailyTaskSummary() {
+		this.logger.log('Starting daily task summary notification...');
 
 		try {
-			// Find overdue tasks (tasks with status OVERDUE)
-			const overdueTasks = await this.taskRepository.find({
+			const now = new Date();
+			const startOfToday = new Date(now);
+			startOfToday.setHours(0, 0, 0, 0);
+			const endOfToday = new Date(now);
+			endOfToday.setHours(23, 59, 59, 999);
+
+			// Get all tasks due today that are not completed or cancelled
+			const tasksToday = await this.taskRepository.find({
 				where: {
-					status: TaskStatus.OVERDUE,
+					deadline: Between(startOfToday, endOfToday),
+					status: Not(In([TaskStatus.COMPLETED, TaskStatus.CANCELLED])),
 					isDeleted: false,
-					assignees: { uid: user.uid },
 				},
-				order: { deadline: 'ASC' },
+				relations: ['creator', 'assignees'],
 			});
 
-			// Find missed tasks (tasks with status MISSED or tasks with deadline in past and not completed)
-			const missedTasks = await this.taskRepository.find({
-				where: [
-					{
-						status: TaskStatus.MISSED,
-						isDeleted: false,
-						assignees: { uid: user.uid },
-					},
-					{
-						deadline: LessThan(now),
-						status: Not(In([TaskStatus.COMPLETED, TaskStatus.CANCELLED, TaskStatus.OVERDUE])),
-						isDeleted: false,
-						assignees: { uid: user.uid },
-					},
-				],
-				order: { deadline: 'ASC' },
-			});
+			// Group tasks by user (assignees + creators)
+			const tasksByUser = this.groupTasksByUser(tasksToday);
 
-			// If there are any overdue or missed tasks, send an email notification
-			if (overdueTasks.length > 0 || missedTasks.length > 0) {
-				await this.sendOverdueAndMissedTasksReminder(user, overdueTasks, missedTasks);
+			// Send consolidated notification to each user
+			for (const [userId, userTasks] of Object.entries(tasksByUser)) {
+				await this.sendConsolidatedTaskNotification(parseInt(userId), userTasks, 'today');
 			}
+
+			this.logger.log(`✅ Daily task summary sent to ${Object.keys(tasksByUser).length} users`);
 		} catch (error) {
-			this.logger.error(`Error processing overdue/missed tasks for user ${user.uid}`, error.stack);
+			this.logger.error('Error sending daily task summary', error.stack);
 		}
 	}
 
-	private async sendOverdueAndMissedTasksReminder(user: User, overdueTasks: Task[], missedTasks: Task[]) {
+	/**
+	 * Overdue and missed tasks check - Runs at 6:00 AM
+	 * Sends ONE consolidated push notification per user with all overdue/missed tasks
+	 */
+	@Cron(CronExpression.EVERY_DAY_AT_6AM)
+	async sendOverdueTasksSummary() {
+		this.logger.log('Starting overdue and missed tasks summary notification...');
+
 		try {
 			const now = new Date();
 
-			// Format overdue tasks for the email
-			const formattedOverdueTasks = overdueTasks.map((task) => {
-				const deadlineDate = task.deadline ? new Date(task.deadline) : null;
-				const daysOverdue = deadlineDate
-					? Math.ceil((now.getTime() - deadlineDate.getTime()) / (1000 * 3600 * 24))
-					: 0;
-
-				return {
-					uid: task.uid,
-					title: task.title,
-					description: task.description,
-					deadline: deadlineDate
-						? deadlineDate.toLocaleDateString('en-ZA', {
-								year: 'numeric',
-								month: 'short',
-								day: 'numeric',
-						  })
-						: 'No deadline',
-					priority: task.priority,
-					status: task.status,
-					progress: task.progress,
-					daysOverdue,
-				};
+			// Find all overdue tasks
+			const overdueTasks = await this.taskRepository.find({
+				where: [
+					{
+						status: TaskStatus.OVERDUE,
+						isDeleted: false,
+					},
+					{
+						status: TaskStatus.MISSED,
+						isDeleted: false,
+					},
+					{
+						deadline: LessThan(now),
+						status: Not(In([TaskStatus.COMPLETED, TaskStatus.CANCELLED, TaskStatus.OVERDUE, TaskStatus.MISSED])),
+						isDeleted: false,
+					},
+				],
+				relations: ['creator', 'assignees'],
+				order: { deadline: 'ASC' },
 			});
 
-			// Format missed tasks for the email
-			const formattedMissedTasks = missedTasks.map((task) => {
-				const deadlineDate = task.deadline ? new Date(task.deadline) : null;
-				const daysOverdue = deadlineDate
-					? Math.ceil((now.getTime() - deadlineDate.getTime()) / (1000 * 3600 * 24))
-					: 0;
+			// Group overdue tasks by user
+			const tasksByUser = this.groupTasksByUser(overdueTasks);
 
-				return {
-					uid: task.uid,
-					title: task.title,
-					description: task.description,
-					deadline: deadlineDate
-						? deadlineDate.toLocaleDateString('en-ZA', {
-								year: 'numeric',
-								month: 'short',
-								day: 'numeric',
-						  })
-						: 'No deadline',
-					priority: task.priority,
-					status: task.status,
-					progress: task.progress,
-					daysOverdue,
-				};
-			});
+			// Send consolidated notification to each user
+			for (const [userId, userTasks] of Object.entries(tasksByUser)) {
+				await this.sendConsolidatedTaskNotification(parseInt(userId), userTasks, 'overdue');
+			}
 
-			// Prepare email data
-			const emailData = {
-				name: user.name || 'Team Member',
-				overdueTasks: formattedOverdueTasks,
-				missedTasks: formattedMissedTasks,
-				overdueMissedCount: {
-					overdue: formattedOverdueTasks.length,
-					missed: formattedMissedTasks.length,
-					total: formattedOverdueTasks.length + formattedMissedTasks.length,
-				},
-				dashboardLink: `${process.env.DASHBOARD_URL}/tasks`,
-			};
-
-			// Send email notification
-			await this.communicationService.sendEmail(EmailType.TASK_OVERDUE_MISSED, [user.email], emailData);
-
-			// Create in-app notification
-			await this.notificationsService.create({
-				title: 'Overdue & Missed Tasks',
-				message: `You have ${emailData.overdueMissedCount.total} task(s) that need attention (${emailData.overdueMissedCount.overdue} overdue, ${emailData.overdueMissedCount.missed} missed)`,
-				type: NotificationType.TASK_REMINDER,
-				owner: user,
-			});
-
-			this.logger.log(`Sent overdue/missed tasks reminder to user ${user.uid} (${user.email})`);
+			this.logger.log(`✅ Overdue tasks summary sent to ${Object.keys(tasksByUser).length} users`);
 		} catch (error) {
-			this.logger.error(`Error sending overdue/missed tasks reminder to user ${user.uid}`, error.stack);
+			this.logger.error('Error sending overdue tasks summary', error.stack);
 		}
 	}
 
-	private async sendReminders(task: Task) {
-		// Get all assignees' full user objects
-		const assignees = await this.userRepository.findBy({
-			uid: In(task.assignees.map((a) => a.uid)),
-		});
+	/**
+	 * Group tasks by user (includes both assignees and creators)
+	 */
+	private groupTasksByUser(tasks: Task[]): Record<number, Task[]> {
+		const tasksByUser: Record<number, Task[]> = {};
 
-		// Get the creator
-		const creator = await this.userRepository.findOne({
-			where: { uid: task.creator[0]?.uid || task.creator.uid },
-		});
+		for (const task of tasks) {
+			const userIds = new Set<number>();
 
-		if (!creator) {
-			this.logger.error(`Creator not found for task ${task.uid}`);
+			// Add creator
+			if (task.creator && Array.isArray(task.creator) && task.creator.length > 0) {
+				userIds.add(task.creator[0].uid);
+			} else if (task.creator && typeof task.creator === 'object' && 'uid' in task.creator) {
+				userIds.add((task.creator as any).uid);
+			}
+
+			// Add assignees
+			if (task.assignees && Array.isArray(task.assignees)) {
+				task.assignees.forEach((assignee: any) => {
+					if (assignee.uid) {
+						userIds.add(assignee.uid);
+					}
+				});
+			}
+
+			// Add task to each user's list
+			userIds.forEach((userId) => {
+				if (!tasksByUser[userId]) {
+					tasksByUser[userId] = [];
+				}
+				tasksByUser[userId].push(task);
+			});
+		}
+
+		return tasksByUser;
+	}
+
+	/**
+	 * Send consolidated task notification to a user
+	 */
+	private async sendConsolidatedTaskNotification(userId: number, tasks: Task[], type: 'today' | 'overdue') {
+		try {
+			// Check if user is active
+			const activeUsers = await this.filterActiveUsers([userId]);
+			if (activeUsers.length === 0) {
+				this.logger.debug(`User ${userId} is inactive, skipping notification`);
 			return;
 		}
 
-		// Send to creator with proper data mapping
-		const creatorEmailData = TaskEmailDataMapper.mapTaskReminderCreatorData(task, creator, assignees);
-		await this.communicationService.sendEmail(EmailType.TASK_REMINDER_CREATOR, [creator.email], creatorEmailData);
+			const user = activeUsers[0];
 
-		// Send to each assignee with proper data mapping
-		for (const assignee of assignees) {
-			const assigneeEmailData = TaskEmailDataMapper.mapTaskReminderAssigneeData(task, assignee);
-			await this.communicationService.sendEmail(
-				EmailType.TASK_REMINDER_ASSIGNEE,
-				[assignee.email],
-				assigneeEmailData,
-			);
-		}
+		// Calculate task statistics
+		const urgentCount = tasks.filter((t) => t.priority === TaskPriority.URGENT).length;
+			const highCount = tasks.filter((t) => t.priority === TaskPriority.HIGH).length;
+			const mediumCount = tasks.filter((t) => t.priority === TaskPriority.MEDIUM).length;
+			const lowCount = tasks.filter((t) => t.priority === TaskPriority.LOW).length;
 
-		// Send push notifications to all recipients (creator and assignees)
-		try {
-			const allRecipientIds = [creator.uid, ...assignees.map(a => a.uid)];
+		// Get top 5 most urgent tasks
+		const sortedTasks = [...tasks].sort((a, b) => {
+			const priorityOrder = { URGENT: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+			return priorityOrder[a.priority] - priorityOrder[b.priority];
+		});
+			const topTasks = sortedTasks.slice(0, 5);
+
+			if (type === 'today') {
+				// Daily task summary
+				await this.unifiedNotificationService.sendTemplatedNotification(
+					NotificationEvent.TASK_DAILY_SUMMARY,
+					[userId],
+					{
+						userName: user.name || 'Team Member',
+						taskCount: tasks.length,
+						urgentCount,
+						highCount,
+						mediumCount,
+						lowCount,
+						topTasks: topTasks.map((t) => ({
+							id: t.uid,
+							title: t.title,
+							priority: t.priority,
+							deadline: t.deadline?.toLocaleTimeString('en-ZA', {
+								hour: '2-digit',
+								minute: '2-digit',
+							}) || 'No time set',
+						})),
+					},
+					{
+						priority: urgentCount > 0 ? NotificationPriority.HIGH : NotificationPriority.NORMAL,
+					},
+				);
+
+				this.logger.debug(`✅ Daily task summary sent to user ${userId}: ${tasks.length} tasks`);
+			} else {
+				// Overdue tasks summary
+				const now = new Date();
+				const mostOverdue = tasks.reduce((max, task) => {
+					if (!task.deadline) return max;
+					const daysOverdue = Math.floor((now.getTime() - task.deadline.getTime()) / (24 * 60 * 60 * 1000));
+					return daysOverdue > max ? daysOverdue : max;
+				}, 0);
+
 			await this.unifiedNotificationService.sendTemplatedNotification(
-				NotificationEvent.TASK_REMINDER,
-				allRecipientIds,
-				{
-					taskTitle: task.title,
-					taskId: task.uid,
-					deadline: task.deadline?.toLocaleDateString() || 'No deadline',
-					priority: task.priority,
-					timeRemaining: '30 minutes',
+					NotificationEvent.TASKS_OVERDUE_SUMMARY,
+					[userId],
+					{
+						userName: user.name || 'Team Member',
+						overdueCount: tasks.length,
+						mostOverdueDays: mostOverdue,
+						urgentCount,
+						topTasks: topTasks.map((t) => ({
+							id: t.uid,
+							title: t.title,
+							priority: t.priority,
+							daysOverdue: t.deadline
+								? Math.floor((now.getTime() - t.deadline.getTime()) / (24 * 60 * 60 * 1000))
+								: 0,
+						})),
 				},
 				{
 					priority: NotificationPriority.HIGH,
 				},
 			);
-			console.log(`✅ Task reminder emails & push notifications sent for task: ${task.title}`);
-		} catch (notificationError) {
-			console.error('Failed to send task reminder push notifications:', notificationError.message);
+
+				this.logger.debug(`✅ Overdue tasks summary sent to user ${userId}: ${tasks.length} overdue tasks`);
+			}
+		} catch (error) {
+			this.logger.error(`Error sending consolidated task notification to user ${userId}`, error.stack);
 		}
 	}
 }

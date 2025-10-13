@@ -8,6 +8,8 @@ export enum NotificationEvent {
 	TASK_STATUS_CHANGED = 'task_status_changed',
 	TASK_REMINDER = 'task_reminder',
 	TASK_OVERDUE = 'task_overdue',
+	TASK_DAILY_SUMMARY = 'task_daily_summary',
+	TASKS_OVERDUE_SUMMARY = 'tasks_overdue_summary',
 	TASK_FLAG_CREATED = 'task_flag_created',
 	TASK_FLAG_UPDATED = 'task_flag_updated',
 	TASK_FLAG_RESOLVED = 'task_flag_resolved',
@@ -21,6 +23,8 @@ export enum NotificationEvent {
 	LEAD_DELETED = 'lead_deleted',
 	LEAD_REMINDER = 'lead_reminder',
 	LEAD_FOLLOW_UP_OVERDUE = 'lead_follow_up_overdue',
+	LEAD_DAILY_SUMMARY = 'lead_daily_summary',
+	LEADS_STALE_SUMMARY = 'leads_stale_summary',
 
 	// Attendance Events
 	ATTENDANCE_SHIFT_STARTED = 'attendance_shift_started',

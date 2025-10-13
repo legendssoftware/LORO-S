@@ -18,8 +18,6 @@ import { User } from '../user/entities/user.entity';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { ConfigService } from '@nestjs/config';
-import { CommunicationService } from '../communication/communication.service';
-import { EmailType } from '../lib/enums/email.enums';
 import { TaskFlag } from './entities/task-flag.entity';
 import { TaskFlagItem } from './entities/task-flag-item.entity';
 import { CreateTaskFlagDto } from './dto/create-task-flag.dto';
@@ -34,7 +32,6 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
 import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
 import { AccountStatus } from '../lib/enums/status.enums';
-import { TaskEmailDataMapper } from './helpers/email-data-mapper';
 
 @Injectable()
 export class TasksService {
@@ -63,7 +60,6 @@ export class TasksService {
 		@Inject(CACHE_MANAGER)
 		private cacheManager: Cache,
 		private readonly configService: ConfigService,
-		private readonly communicationService: CommunicationService,
 		@InjectRepository(TaskFlag)
 		private taskFlagRepository: Repository<TaskFlag>,
 		@InjectRepository(TaskFlagItem)
@@ -82,7 +78,6 @@ export class TasksService {
 		this.logger.debug(`User Repository: ${!!this.userRepository}`);
 		this.logger.debug(`Cache Manager: ${!!this.cacheManager}`);
 		this.logger.debug(`Config Service: ${!!this.configService}`);
-		this.logger.debug(`Communication Service: ${!!this.communicationService}`);
 		this.logger.debug(`Task Flag Repository: ${!!this.taskFlagRepository}`);
 		this.logger.debug(`Organisation Settings Repository: ${!!this.organisationSettingsRepository}`);
 		this.logger.debug(`Notifications Service: ${!!this.notificationsService}`);
@@ -572,49 +567,17 @@ export class TasksService {
 				this.logger.debug('No subtasks provided for task');
 			}
 
-			// Send email notifications to assignees with enhanced logging
+			// Send push notifications to assignees
 			if (savedTask?.assignees?.length > 0) {
 				this.logger.debug(`Sending notifications to ${savedTask.assignees.length} assignees`);
 				try {
-					this.logger.log('Sending task assignment email notifications');
-
 					const assigneeIds = savedTask.assignees.map((assignee) => assignee.uid);
 					this.logger.debug(`Assignee IDs: ${assigneeIds.join(', ')}`);
 
-					// Get assignee details for email
-					const assignees = await this.userRepository.find({
-						where: { uid: In(assigneeIds) },
-						select: ['uid', 'name', 'surname', 'email', 'username'],
-					});
-
 					// Filter out inactive users
-					const activeAssignees = assignees.filter((user) => this.isUserActive(user));
-					const inactiveAssignees = assignees.filter((user) => !this.isUserActive(user));
+					const activeAssigneeIds = await this.filterActiveUsers(assigneeIds);
 
-					if (inactiveAssignees.length > 0) {
-						this.logger.debug(`Filtered out ${inactiveAssignees.length} inactive assignees`);
-					}
-
-					this.logger.debug(`Sending emails to ${activeAssignees.length} active assignees`);
-
-					// Send individual emails to each assignee
-					let emailSentCount = 0;
-					for (const assignee of activeAssignees) {
-						if (assignee.email) {
-							this.logger.debug(`Sending email to assignee: ${assignee.email} (${assignee.uid})`);
-							const emailData = TaskEmailDataMapper.mapNewTaskData(savedTask, assignee);
-							this.eventEmitter.emit('send.email', EmailType.NEW_TASK, [assignee.email], emailData);
-							emailSentCount++;
-						} else {
-							this.logger.debug(`Assignee ${assignee.uid} has no email address`);
-						}
-					}
-
-					this.logger.debug(`Sent ${emailSentCount} task assignment emails`);
-
-					// Send push notifications to assignees
-					try {
-						const activeAssigneeIds = activeAssignees.map(assignee => assignee.uid);
+					if (activeAssigneeIds.length > 0) {
 						const creatorName = savedTask.creator?.name || 'Team Member';
 						
 						await this.unifiedNotificationService.sendTemplatedNotification(
@@ -631,14 +594,11 @@ export class TasksService {
 								priority: NotificationPriority.HIGH,
 							},
 						);
-						console.log(`✅ Task assignment emails & push notifications sent to ${activeAssignees.length} assignees`);
-					} catch (notificationError) {
-						console.error('Failed to send task assignment push notifications:', notificationError.message);
-						console.log(`✅ Task assignment emails sent to ${activeAssignees.length} assignees`);
+						this.logger.log(`✅ Task assignment push notifications sent to ${activeAssigneeIds.length} assignees`);
 					}
 				} catch (notificationError) {
 					// Log error but don't fail task creation
-					console.error('Failed to send task assignment emails:', notificationError.message);
+					this.logger.error('Failed to send task assignment push notifications:', notificationError.message);
 				}
 			}
 
@@ -976,30 +936,36 @@ export class TasksService {
 			// Update the task with the new data
 			await this.taskRepository.update(ref, updateTaskDto);
 
-			// Send email notifications for task updates
+			// Send push notifications for task updates
 			if (Array.isArray(updateTaskDto.assignees) && updateTaskDto.assignees.length > 0) {
 				try {
 					const newAssigneeIds = updateTaskDto.assignees.map((assignee) => assignee?.uid).filter(Boolean);
 					const addedAssigneeIds = newAssigneeIds.filter((id) => !originalAssigneeIds.includes(id));
 
-					// Track changes for email
-					const changes = TaskEmailDataMapper.trackTaskChanges(task, updateTaskDto);
+					// Track changes
+					const changes = this.trackTaskChanges(task, updateTaskDto);
 
-					// Send to new assignees (NEW_TASK email)
+					// Send push notification to new assignees
 					if (addedAssigneeIds.length > 0) {
-						const newAssignees = await this.userRepository.find({
-							where: { uid: In(addedAssigneeIds) },
-							select: ['uid', 'name', 'surname', 'email', 'username'],
-						});
+						const activeNewAssigneeIds = await this.filterActiveUsers(addedAssigneeIds);
 
-						const activeNewAssignees = newAssignees.filter((user) => this.isUserActive(user));
-
-						for (const assignee of activeNewAssignees) {
-							if (assignee.email) {
-								const emailData = TaskEmailDataMapper.mapNewTaskData(task, assignee);
-
-								this.eventEmitter.emit('send.email', EmailType.NEW_TASK, [assignee.email], emailData);
-							}
+						if (activeNewAssigneeIds.length > 0) {
+							const creatorName = task.creator?.name || 'Team Member';
+							await this.unifiedNotificationService.sendTemplatedNotification(
+								NotificationEvent.TASK_ASSIGNED,
+								activeNewAssigneeIds,
+								{
+									taskTitle: task.title,
+									taskId: task.uid,
+									assignedBy: creatorName,
+									deadline: task.deadline?.toLocaleDateString() || 'No deadline',
+									priority: task.priority,
+								},
+								{
+									priority: NotificationPriority.HIGH,
+								},
+							);
+							this.logger.log(`✅ Task assignment push notifications sent to ${activeNewAssigneeIds.length} new assignees`);
 						}
 					}
 
@@ -1008,37 +974,12 @@ export class TasksService {
 						const existingAssigneeIds = newAssigneeIds.filter((id) => originalAssigneeIds.includes(id));
 
 						if (existingAssigneeIds.length > 0) {
-							const existingAssignees = await this.userRepository.find({
-								where: { uid: In(existingAssigneeIds) },
-								select: ['uid', 'name', 'surname', 'email', 'username'],
-							});
+							const activeExistingAssigneeIds = await this.filterActiveUsers(existingAssigneeIds);
 
-							const activeExistingAssignees = existingAssignees.filter((user) => this.isUserActive(user));
-
-							for (const assignee of activeExistingAssignees) {
-								if (assignee.email) {
-									const emailData = TaskEmailDataMapper.mapUpdateTaskData(
-										task,
-										assignee,
-										'Task Manager',
-										changes,
-									);
-
-									this.eventEmitter.emit(
-										'send.email',
-										EmailType.TASK_UPDATED,
-										[assignee.email],
-										emailData,
-									);
-								}
-							}
-
-							// Send push notifications for task updates
-							try {
-								const activeAssigneeIds = activeExistingAssignees.map(assignee => assignee.uid);
+							if (activeExistingAssigneeIds.length > 0) {
 								await this.unifiedNotificationService.sendTemplatedNotification(
 									NotificationEvent.TASK_UPDATED,
-									activeAssigneeIds,
+									activeExistingAssigneeIds,
 									{
 										taskTitle: task.title,
 										taskId: task.uid,
@@ -1049,15 +990,13 @@ export class TasksService {
 										priority: NotificationPriority.NORMAL,
 									},
 								);
-								console.log(`✅ Task update emails & push notifications sent to ${activeExistingAssignees.length} assignees`);
-							} catch (notificationError) {
-								console.error('Failed to send task update push notifications:', notificationError.message);
+								this.logger.log(`✅ Task update push notifications sent to ${activeExistingAssigneeIds.length} assignees`);
 							}
 						}
 					}
 				} catch (notificationError) {
 					// Log error but don't fail task update
-					console.error('Failed to send task update notifications:', notificationError.message);
+					this.logger.error('Failed to send task update push notifications:', notificationError.message);
 				}
 			}
 
@@ -1096,8 +1035,8 @@ export class TasksService {
 				});
 
 				if (updatedTask) {
-					// Send emails to all relevant parties (clients, assignees, creator)
-					await this.sendTaskEmails(updatedTask, EmailType.TASK_COMPLETED, 'Task Manager');
+					// Push notifications are already sent above when task is completed
+					this.logger.log('Task completed - push notifications already sent');
 				}
 			}
 
@@ -1400,29 +1339,7 @@ export class TasksService {
 						);
 					}
 
-					// Send task completion emails to assignees and creators
-					console.log('Sending task completion email notifications to assignees and creators');
-
-					// Get detailed user information for email sending
-					const userDetails = await this.userRepository.find({
-						where: { uid: In(activeRecipientIds) },
-						select: ['uid', 'name', 'surname', 'email', 'username'],
-					});
-
-					// Send emails to each user
-					for (const user of userDetails) {
-						if (user.email) {
-							console.log(`📧 Preparing task completion email for user: ${user.email}`);
-							const emailData = TaskEmailDataMapper.mapAssigneeCompletionData(task, user, completedBy);
-							console.log(`📧 Emitting email event for task completion: ${EmailType.TASK_COMPLETED}`);
-							this.eventEmitter.emit('send.email', EmailType.TASK_COMPLETED, [user.email], emailData);
-							console.log(`📧 Email event emitted successfully for: ${user.email}`);
-						} else {
-							console.log(`⚠️ User ${user.uid} has no email address`);
-						}
-					}
-
-					console.log(`✅ Task completion emails sent to ${userDetails.length} assignees/creators`);
+					this.logger.log(`✅ Task completion push notifications sent to ${activeRecipientIds.length} assignees/creators`);
 				} catch (notificationError) {
 					// Log error but don't fail task completion
 					console.error('Failed to send task completion notifications:', notificationError.message);
@@ -1458,8 +1375,8 @@ export class TasksService {
 					);
 				});
 
-				// Send emails to all relevant parties (clients, assignees, creator)
-				await this.sendTaskEmails(task, EmailType.TASK_COMPLETED, completedBy);
+				// Push notifications already sent above to assignees and creators
+				this.logger.log('Task completed - push notifications already sent');
 			}
 
 			// Clear cache after progress update
@@ -1473,103 +1390,41 @@ export class TasksService {
 		}
 	}
 
-	// Simple unified method to send task emails to all relevant parties
-	private async sendTaskEmails(
-		task: Task,
-		emailType: EmailType,
-		actionBy: string = 'System',
-		changes?: string[],
-	): Promise<void> {
-		try {
-			console.log(`📧 Sending ${emailType} emails for task: ${task.title}`);
+	/**
+	 * Track changes in task updates for notifications
+	 */
+	private trackTaskChanges(originalTask: Task, updates: UpdateTaskDto): string[] {
+		const changes: string[] = [];
 
-			// 1. Get task creator
-			let creator: any = null;
-			if (task.creator && task.creator[0]) {
-				creator = await this.userRepository.findOne({
-					where: { uid: task.creator[0].uid },
-					select: ['uid', 'name', 'surname', 'email', 'username'],
-				});
-			}
-
-			// 2. Get assigned users
-			let assignees: any[] = [];
-			if (task.assignees && task.assignees.length > 0) {
-				const assigneeIds = task.assignees.map((a) => a.uid);
-				assignees = await this.userRepository.find({
-					where: { uid: In(assigneeIds) },
-					select: ['uid', 'name', 'surname', 'email', 'username'],
-				});
-			}
-
-			// 3. Get clients
-			let clients: any[] = [];
-			if (task.clients && task.clients.length > 0) {
-				const clientIds = task.clients.map((c) => c.uid);
-				clients = await this.clientRepository.find({
-					where: { uid: In(clientIds) },
-					select: ['uid', 'name', 'email', 'contactPerson'],
-				});
-			}
-
-			// Send emails to creator
-			if (creator && creator.email) {
-				const emailData = this.getEmailData(emailType, task, creator, actionBy, changes, 'user');
-				this.eventEmitter.emit('send.email', emailType, [creator.email], emailData);
-				console.log(`📧 Email sent to creator: ${creator.email}`);
-			}
-
-			// Send emails to assignees (exclude creator to avoid duplicates)
-			for (const assignee of assignees) {
-				if (assignee.email && assignee.uid !== creator?.uid) {
-					const emailData = this.getEmailData(emailType, task, assignee, actionBy, changes, 'user');
-					this.eventEmitter.emit('send.email', emailType, [assignee.email], emailData);
-					console.log(`📧 Email sent to assignee: ${assignee.email}`);
-				}
-			}
-
-			// Send emails to clients
-			for (const client of clients) {
-				if (client.email) {
-					const emailData = this.getEmailData(emailType, task, client, actionBy, changes, 'client');
-					this.eventEmitter.emit('send.email', emailType, [client.email], emailData);
-					console.log(`📧 Email sent to client: ${client.email}`);
-				}
-			}
-
-			console.log(`✅ ${emailType} emails sent successfully`);
-		} catch (error) {
-			console.error(`Error sending ${emailType} emails:`, error);
+		if (updates.title && updates.title !== originalTask.title) {
+			changes.push('Title updated');
 		}
-	}
-
-	// Helper to get the right email data based on email type and recipient type
-	private getEmailData(
-		emailType: EmailType,
-		task: Task,
-		recipient: any,
-		actionBy: string,
-		changes?: string[],
-		recipientType: 'user' | 'client' = 'user',
-	): any {
-		switch (emailType) {
-			case EmailType.TASK_COMPLETED:
-				return recipientType === 'client'
-					? TaskEmailDataMapper.mapCompletedTaskData(task, recipient, actionBy)
-					: TaskEmailDataMapper.mapAssigneeCompletionData(task, recipient, actionBy);
-
-			case EmailType.TASK_UPDATED:
-				return TaskEmailDataMapper.mapUpdateTaskData(task, recipient, actionBy, changes || []);
-
-			case EmailType.NEW_TASK:
-				return TaskEmailDataMapper.mapNewTaskData(task, recipient);
-
-			default:
-				return TaskEmailDataMapper.mapNewTaskData(task, recipient);
+		if (updates.description !== undefined && updates.description !== originalTask.description) {
+			changes.push('Description updated');
 		}
-	}
+		if (updates.priority && updates.priority !== originalTask.priority) {
+			changes.push(`Priority changed to ${updates.priority}`);
+		}
+		if (updates.status && updates.status !== originalTask.status) {
+			changes.push(`Status changed to ${updates.status}`);
+		}
+		if (updates.deadline) {
+			const newDeadline = new Date(updates.deadline).getTime();
+			const oldDeadline = originalTask.deadline ? new Date(originalTask.deadline).getTime() : 0;
+			if (newDeadline !== oldDeadline) {
+				changes.push('Deadline updated');
+			}
+		}
+		if (updates.assignees && Array.isArray(updates.assignees)) {
+			const newAssigneeIds = updates.assignees.map((a) => a.uid).sort().join(',');
+			const oldAssigneeIds = (originalTask.assignees || []).map((a) => a.uid).sort().join(',');
+			if (newAssigneeIds !== oldAssigneeIds) {
+				changes.push('Assignees updated');
+			}
+		}
 
-	// Helper method to send notifications to assignees and creators when a task is completed
+		return changes;
+	}
 
 	private async populateTasksForAnalytics(tasks: Task[]): Promise<Task[]> {
 		return Promise.all(tasks.map((task) => this.populateTaskRelations(task)));
@@ -1830,10 +1685,35 @@ export class TasksService {
 						task.completionDate = now;
 					}
 
-					// Send completion notifications if task was just completed
-					if (task.status === TaskStatus.COMPLETED) {
-						await this.sendTaskEmails(task, EmailType.TASK_COMPLETED, 'Task Manager');
+				// Send completion push notifications if task was just completed
+				if (task.status === TaskStatus.COMPLETED) {
+					try {
+						const creatorId = task.creator && task.creator[0] ? task.creator[0].uid : null;
+						const assigneeIds = task.assignees?.map((assignee) => assignee.uid) || [];
+						const allRecipientIds = [creatorId, ...assigneeIds].filter(Boolean);
+						const activeRecipientIds = await this.filterActiveUsers(allRecipientIds);
+
+						if (activeRecipientIds.length > 0) {
+							await this.unifiedNotificationService.sendTemplatedNotification(
+								NotificationEvent.TASK_COMPLETED,
+								activeRecipientIds,
+								{
+									taskId: task.uid,
+									taskTitle: task.title,
+									completedBy: 'Task Manager',
+									taskDescription: task.description,
+									taskPriority: task.priority,
+								},
+								{
+									priority: NotificationPriority.NORMAL,
+								},
+							);
+							this.logger.log(`✅ Task completion push notifications sent to ${activeRecipientIds.length} users`);
+						}
+					} catch (notificationError) {
+						this.logger.error('Failed to send task completion push notifications:', notificationError.message);
 					}
+				}
 					break;
 
 				case JobStatus.COMPLETED:
@@ -2054,9 +1934,9 @@ export class TasksService {
 				message: 'Task flag created successfully',
 			};
 
-			// Send email notifications asynchronously
-			this.sendTaskFlagEmailNotification(task, taskFlag, savedFlag, user, savedItems).catch((error) => {
-				console.error('Failed to send task flag email notification:', error.message);
+			// Send push notifications asynchronously
+			this.sendTaskFlagPushNotification(task, taskFlag, savedFlag, user, savedItems).catch((error) => {
+				this.logger.error('Failed to send task flag push notification:', error.message);
 			});
 
 			return response;
@@ -2065,8 +1945,8 @@ export class TasksService {
 		}
 	}
 
-	// Helper method to send email notifications for task flags
-	private async sendTaskFlagEmailNotification(
+	// Helper method to send push notifications for task flags
+	private async sendTaskFlagPushNotification(
 		task: Task,
 		taskFlag: TaskFlag,
 		savedFlag: TaskFlag,
@@ -2074,10 +1954,9 @@ export class TasksService {
 		savedItems: TaskFlagItem[],
 	): Promise<void> {
 		try {
-			const recipients = new Set<string>();
 			const userIds = new Set<number>();
 
-			// Collect all user IDs first
+			// Collect all user IDs
 			if (task.creator?.uid) {
 				userIds.add(task.creator.uid);
 			}
@@ -2093,54 +1972,28 @@ export class TasksService {
 			const activeUserIds = await this.filterActiveUsers(Array.from(userIds));
 
 			if (activeUserIds.length === 0) {
-				console.log(`No active users found for task flag notification on task ${task.uid}`);
+				this.logger.log(`No active users found for task flag notification on task ${task.uid}`);
 				return;
 			}
 
-			// Get email addresses for active users only
-			const activeUsers = await this.userRepository.find({
-				where: { uid: In(activeUserIds) },
-				select: ['uid', 'email'],
-			});
-
-			activeUsers.forEach((activeUser) => {
-				if (activeUser.email) {
-					recipients.add(activeUser.email);
-				}
-			});
-
-			// Convert Set to Array and filter out empty emails
-			const emailRecipients = Array.from(recipients).filter((email) => email);
-
-			if (emailRecipients.length > 0) {
-				const emailData = TaskEmailDataMapper.mapTaskFlagData(savedFlag, task, user, 'Team Member');
-
-				this.eventEmitter.emit('send.email', EmailType.TASK_FLAG_CREATED, emailRecipients, emailData);
-
-				// Send push notification for task flag creation
-				try {
-					await this.unifiedNotificationService.sendTemplatedNotification(
-						NotificationEvent.TASK_FLAG_CREATED,
-						activeUserIds,
-						{
-							taskTitle: task.title,
-							taskId: task.uid,
-							flagTitle: savedFlag.title,
-							flagCreatedBy: `${user.name} ${user.surname || ''}`.trim(),
-							flagDescription: savedFlag.description,
-						},
-						{
-							priority: NotificationPriority.HIGH,
-						},
-					);
-					console.log(`✅ Task flag emails & push notifications sent to ${emailRecipients.length} recipients`);
-				} catch (notificationError) {
-					console.error('Failed to send task flag push notifications:', notificationError.message);
-					console.log(`✅ Task flag emails sent to ${emailRecipients.length} recipients`);
-				}
-			}
+			// Send push notification for task flag creation
+			await this.unifiedNotificationService.sendTemplatedNotification(
+				NotificationEvent.TASK_FLAG_CREATED,
+				activeUserIds,
+				{
+					taskTitle: task.title,
+					taskId: task.uid,
+					flagTitle: savedFlag.title,
+					flagCreatedBy: `${user.name} ${user.surname || ''}`.trim(),
+					flagDescription: savedFlag.description,
+				},
+				{
+					priority: NotificationPriority.HIGH,
+				},
+			);
+			this.logger.log(`✅ Task flag push notifications sent to ${activeUserIds.length} recipients`);
 		} catch (error) {
-			console.error('Error sending task flag email notification:', error.message);
+			this.logger.error('Error sending task flag push notification:', error.message);
 			// Don't rethrow - we don't want this to affect the main operation
 		}
 	}
@@ -2254,15 +2107,14 @@ export class TasksService {
 				message: 'Task flag updated successfully',
 			};
 
-			// Send email notifications asynchronously if status has changed
+			// Send push notifications asynchronously if status has changed
 			if (updateTaskFlagDto.status && updateTaskFlagDto.status !== previousStatus) {
 				// Use setTimeout with 0 to make this non-blocking
 				setTimeout(async () => {
 					try {
-						const recipients = new Set<string>();
 						const userIds = new Set<number>();
 
-						// Collect all user IDs first
+						// Collect all user IDs
 						if (taskFlag.task.creator?.uid) {
 							userIds.add(taskFlag.task.creator.uid);
 						}
@@ -2278,44 +2130,35 @@ export class TasksService {
 						const activeUserIds = await this.filterActiveUsers(Array.from(userIds));
 
 						if (activeUserIds.length === 0) {
-							console.log(
+							this.logger.log(
 								`No active users found for task flag update notification on task ${taskFlag.task.uid}`,
 							);
 							return;
 						}
 
-						// Get email addresses for active users only
-						const activeUsers = await this.userRepository.find({
-							where: { uid: In(activeUserIds) },
-							select: ['uid', 'email'],
-						});
+						// Send appropriate push notification based on status
+						const notificationEvent =
+							updateTaskFlagDto.status === TaskFlagStatus.RESOLVED
+								? NotificationEvent.TASK_FLAG_RESOLVED
+								: NotificationEvent.TASK_FLAG_UPDATED;
 
-						activeUsers.forEach((activeUser) => {
-							if (activeUser.email) {
-								recipients.add(activeUser.email);
-							}
-						});
-
-						const emailRecipients = Array.from(recipients).filter((email) => email);
-
-						if (emailRecipients.length > 0) {
-							const emailType =
-								updateTaskFlagDto.status === TaskFlagStatus.RESOLVED
-									? EmailType.TASK_FLAG_RESOLVED
-									: EmailType.TASK_FLAG_UPDATED;
-
-							const emailData = TaskEmailDataMapper.mapTaskFlagData(
-								taskFlag,
-								taskFlag.task,
-								taskFlag.createdBy,
-								'Team Member',
-							);
-
-							this.eventEmitter.emit('send.email', emailType, emailRecipients, emailData);
-						}
+						await this.unifiedNotificationService.sendTemplatedNotification(
+							notificationEvent,
+							activeUserIds,
+							{
+								taskTitle: taskFlag.task.title,
+								taskId: taskFlag.task.uid,
+								flagTitle: taskFlag.title,
+								flagStatus: updateTaskFlagDto.status,
+							},
+							{
+								priority: NotificationPriority.NORMAL,
+							},
+						);
+						this.logger.log(`✅ Task flag update push notifications sent to ${activeUserIds.length} users`);
 					} catch (error) {
-						// Log error but don't throw - this allows task resolution to succeed even if email fails
-						console.error(`Email notification failed for task flag ${flagId}: ${error.message}`);
+						// Log error but don't throw - this allows task resolution to succeed even if notification fails
+						this.logger.error(`Push notification failed for task flag ${flagId}: ${error.message}`);
 					}
 				}, 0);
 			}
@@ -2367,11 +2210,10 @@ export class TasksService {
 					flagItem.taskFlag.status = TaskFlagStatus.RESOLVED;
 					await this.taskFlagRepository.save(flagItem.taskFlag);
 
-					// Send email notification when flag is resolved
-					const recipients = new Set<string>();
+					// Send push notification when flag is resolved
 					const userIds = new Set<number>();
 
-					// Collect all user IDs first
+					// Collect all user IDs
 					if (flagItem.taskFlag.task.creator?.uid) {
 						userIds.add(flagItem.taskFlag.task.creator.uid);
 					}
@@ -2387,7 +2229,7 @@ export class TasksService {
 					const activeUserIds = await this.filterActiveUsers(Array.from(userIds));
 
 					if (activeUserIds.length === 0) {
-						console.log(
+						this.logger.log(
 							`No active users found for task flag resolution notification on task ${flagItem.taskFlag.task.uid}`,
 						);
 						return {
@@ -2395,30 +2237,20 @@ export class TasksService {
 						};
 					}
 
-					// Get email addresses for active users only
-					const activeUsers = await this.userRepository.find({
-						where: { uid: In(activeUserIds) },
-						select: ['uid', 'email'],
-					});
-
-					activeUsers.forEach((activeUser) => {
-						if (activeUser.email) {
-							recipients.add(activeUser.email);
-						}
-					});
-
-					const emailRecipients = Array.from(recipients).filter((email) => email);
-
-					if (emailRecipients.length > 0) {
-						const emailData = TaskEmailDataMapper.mapTaskFlagData(
-							flagItem.taskFlag,
-							flagItem.taskFlag.task,
-							flagItem.taskFlag.createdBy,
-							'Team Member',
-						);
-
-						this.eventEmitter.emit('send.email', EmailType.TASK_FLAG_RESOLVED, emailRecipients, emailData);
-					}
+					// Send push notification
+					await this.unifiedNotificationService.sendTemplatedNotification(
+						NotificationEvent.TASK_FLAG_RESOLVED,
+						activeUserIds,
+						{
+							taskTitle: flagItem.taskFlag.task.title,
+							taskId: flagItem.taskFlag.task.uid,
+							flagTitle: flagItem.taskFlag.title,
+						},
+						{
+							priority: NotificationPriority.NORMAL,
+						},
+					);
+					this.logger.log(`✅ Task flag resolution push notifications sent to ${activeUserIds.length} users`);
 				}
 			}
 

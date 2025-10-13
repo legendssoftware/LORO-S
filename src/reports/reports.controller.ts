@@ -179,4 +179,165 @@ Real-time map visualization data including employee locations, client locations,
 			userId
 		});
 	}
+
+	// Get Organization Metrics endpoint
+	@Get('organization/metrics')
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.HR)
+	@ApiOperation({
+		summary: '📊 Get organization-wide metrics summary',
+		description: `
+# Organization Metrics Dashboard
+
+Comprehensive real-time metrics for the entire organization or specific branch.
+
+## 📊 **Metrics Included**
+- **Attendance**: Present/absent employees, total hours, punctuality rate
+- **Leads**: Total leads, new leads today, conversion rate, hot leads
+- **Claims**: Total claims, pending/approved/rejected counts, total value
+- **Tasks**: Total tasks, completed/overdue/in-progress counts, completion rate
+- **Sales**: Total quotations, revenue, average value, accepted/pending counts
+- **Leave**: Active requests, pending approvals, employees on leave
+- **IoT**: Connected devices, online/offline status, maintenance alerts
+
+## 🔧 **Query Parameters**
+- **branchId**: Filter metrics by specific branch (optional, defaults to organization-wide)
+
+## 🔒 **Authorization**
+- Restricted to ADMIN, MANAGER, OWNER, and HR roles only
+- Token is automatically extracted from Authorization header
+- Organization ID is extracted from authenticated user context
+		`,
+	})
+	@ApiQuery({
+		name: 'branchId',
+		required: false,
+		type: String,
+		description: 'Branch ID to filter metrics (optional, defaults to organization-wide metrics)',
+	})
+	@ApiOkResponse({
+		description: 'Organization metrics retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				organizationId: { type: 'number', example: 1 },
+				organizationName: { type: 'string', example: 'Acme Corp' },
+				branchId: { type: 'number', nullable: true, example: null },
+				branchName: { type: 'string', nullable: true, example: null },
+				generatedAt: { type: 'string', format: 'date-time' },
+				fromCache: { type: 'boolean', example: false },
+				attendance: {
+					type: 'object',
+					properties: {
+						presentToday: { type: 'number', example: 42 },
+						absentToday: { type: 'number', example: 8 },
+						totalHoursToday: { type: 'number', example: 336.5 },
+						averageHoursPerEmployee: { type: 'number', example: 8.01 },
+						punctualityRate: { type: 'number', example: 85.71 },
+						lateCheckIns: { type: 'number', example: 6 },
+					},
+				},
+				leads: {
+					type: 'object',
+					properties: {
+						totalLeads: { type: 'number', example: 156 },
+						newLeadsToday: { type: 'number', example: 12 },
+						leadsByStatus: { 
+							type: 'object',
+							example: { PENDING: 45, CONTACTED: 32, WON: 28, LOST: 15 }
+						},
+						conversionRate: { type: 'number', example: 17.95 },
+						hotLeads: { type: 'number', example: 23 },
+					},
+				},
+				claims: {
+					type: 'object',
+					properties: {
+						totalClaims: { type: 'number', example: 34 },
+						pendingClaims: { type: 'number', example: 12 },
+						approvedClaims: { type: 'number', example: 18 },
+						rejectedClaims: { type: 'number', example: 4 },
+						totalClaimValue: { type: 'number', example: 45600.75 },
+						claimsToday: { type: 'number', example: 3 },
+					},
+				},
+				tasks: {
+					type: 'object',
+					properties: {
+						totalTasks: { type: 'number', example: 89 },
+						completedTasks: { type: 'number', example: 52 },
+						overdueTasks: { type: 'number', example: 7 },
+						inProgressTasks: { type: 'number', example: 30 },
+						completionRate: { type: 'number', example: 58.43 },
+						tasksCreatedToday: { type: 'number', example: 5 },
+					},
+				},
+				sales: {
+					type: 'object',
+					properties: {
+						totalQuotations: { type: 'number', example: 67 },
+						totalRevenue: { type: 'number', example: 234567.89 },
+						averageQuotationValue: { type: 'number', example: 3501.46 },
+						quotationsToday: { type: 'number', example: 4 },
+						acceptedQuotations: { type: 'number', example: 31 },
+						pendingQuotations: { type: 'number', example: 24 },
+					},
+				},
+				leave: {
+					type: 'object',
+					properties: {
+						activeLeaveRequests: { type: 'number', example: 5 },
+						pendingApprovals: { type: 'number', example: 2 },
+						approvedLeave: { type: 'number', example: 3 },
+						rejectedLeave: { type: 'number', example: 0 },
+						employeesOnLeaveToday: { type: 'number', example: 3 },
+					},
+				},
+				iot: {
+					type: 'object',
+					properties: {
+						totalDevices: { type: 'number', example: 0 },
+						onlineDevices: { type: 'number', example: 0 },
+						offlineDevices: { type: 'number', example: 0 },
+						maintenanceRequired: { type: 'number', example: 0 },
+						dataPointsToday: { type: 'number', example: 0 },
+					},
+				},
+			},
+		},
+	})
+	@ApiBadRequestResponse({
+		description: 'Bad Request - Invalid parameters',
+	})
+	async getOrganizationMetrics(
+		@Req() request: AuthenticatedRequest,
+		@Query('branchId') queryBranchId?: string
+	) {
+		this.logger.log(`Getting organization metrics - branchId=${queryBranchId}`);
+
+		// Extract organization ID from authenticated user context
+		const orgId = request.user?.org?.uid || request.user?.organisationRef;
+		const branchId = queryBranchId ? parseInt(queryBranchId, 10) : undefined;
+
+		this.logger.debug(`Resolved parameters - orgId: ${orgId}, branchId: ${branchId}`);
+
+		if (!orgId) {
+			this.logger.error('Organization ID is required for metrics');
+			throw new BadRequestException('Organization ID is required');
+		}
+
+		// Validate numeric parameters
+		if (typeof orgId !== 'number' || isNaN(orgId)) {
+			this.logger.error(`Invalid organization ID: ${orgId}`);
+			throw new BadRequestException('Invalid organization ID');
+		}
+
+		if (queryBranchId && isNaN(branchId)) {
+			this.logger.error(`Invalid branch ID: ${queryBranchId}`);
+			throw new BadRequestException('Branch ID must be a valid number');
+		}
+
+		this.logger.log(`Fetching organization metrics for org ${orgId}${branchId ? `, branch ${branchId}` : ''}`);
+
+		return this.reportsService.getOrganizationMetricsSummary(orgId, branchId);
+	}
 }

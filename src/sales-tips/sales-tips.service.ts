@@ -186,17 +186,19 @@ export class SalesTipsService {
 	}
 
 	/**
-	 * Get tip by date (deterministic based on date)
-	 * This ensures users get the same tip on the same day
+	 * Get tip by date with randomization
+	 * Uses date + milliseconds for better randomization on each call
 	 */
 	getTipByDate(date: Date = new Date()): SalesTip {
-		// Use date to calculate an index (same tip for same date)
+		// Combine day of year with current time for better randomization
 		const dayOfYear = Math.floor(
 			(date.getTime() - new Date(date.getFullYear(), 0, 0).getTime()) / 1000 / 60 / 60 / 24
 		);
-		const tipIndex = dayOfYear % this.salesTips.length;
+		const timeComponent = Date.now();
+		const randomSeed = dayOfYear + timeComponent;
+		const tipIndex = Math.floor(Math.random() * this.salesTips.length + randomSeed) % this.salesTips.length;
 		const tip = this.salesTips[tipIndex];
-		this.logger.log(`💡 Selected tip for date ${date.toDateString()}: "${tip.title}" (Day ${dayOfYear}, Index ${tipIndex})`);
+		this.logger.log(`💡 Selected randomized tip for date ${date.toDateString()}: "${tip.title}" (Day ${dayOfYear}, Random Index ${tipIndex})`);
 		return tip;
 	}
 

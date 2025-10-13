@@ -21,7 +21,6 @@ import { Branch } from '../branch/entities/branch.entity';
 import { User } from '../user/entities/user.entity';
 import { CommunicationService } from '../communication/communication.service';
 import { ConfigService } from '@nestjs/config';
-import { EmailType } from '../lib/enums/email.enums';
 import { LeadStatusHistoryEntry } from './entities/lead.entity';
 import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
 import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
@@ -720,21 +719,8 @@ export class LeadsService {
 				motivationalMessage: this.generateLeadMotivationalMessage(achievementData),
 			};
 
-			// Send congratulations email to user
-			this.eventEmitter.emit('email.send', {
-				to: [user.email],
-				type: EmailType.USER_TARGET_ACHIEVEMENT,
-				data: {
-					name: `${user.name} ${user.surname}`.trim(),
-					userName: `${user.name} ${user.surname}`.trim(),
-					userEmail: user.email,
-					targetType: 'New Leads',
-					...achievementEmailData,
-					organizationName: user.organisation?.name || 'Organization',
-					branchName: user.branch?.name,
-					dashboardUrl: `${this.configService.get('DASHBOARD_URL')}/dashboard`,
-				}
-			});
+			// Push notification already sent by USER_TARGET_ACHIEVEMENT event above
+			this.logger.log('Lead target achievement push notification already sent');
 
 			// Send notification to organization admins
 			await this.sendLeadTargetAdminNotifications(user, achievementData);
@@ -780,16 +766,25 @@ export class LeadsService {
 				recognitionMessage: this.generateLeadRecognitionMessage(user, achievementData),
 			};
 
-			// Send admin notification emails
-			const adminEmails = admins.map(admin => admin.email);
+			// Send push notifications to admins
+			const adminIds = admins.map(admin => admin.uid);
 			
-			this.eventEmitter.emit('email.send', {
-				to: adminEmails,
-				type: EmailType.LEAD_TARGET_ACHIEVEMENT_ADMIN,
-				data: adminEmailData,
-			});
+			await this.unifiedNotificationService.sendTemplatedNotification(
+				NotificationEvent.USER_TARGET_ACHIEVEMENT,
+				adminIds,
+				{
+					userName: `${user.name} ${user.surname}`.trim(),
+					targetType: 'New Leads',
+					currentValue: achievementData.currentValue,
+					targetValue: achievementData.targetValue,
+					achievementPercentage: achievementData.achievementPercentage,
+				},
+				{
+					priority: NotificationPriority.NORMAL,
+				},
+			);
 
-			this.logger.log(`Lead target achievement admin notifications sent to ${adminEmails.length} admins for user: ${user.uid}`);
+			this.logger.log(`Lead target achievement admin notifications sent to ${adminIds.length} admins for user: ${user.uid}`);
 		} catch (error) {
 			this.logger.error(`Error sending lead admin notifications for user ${user.uid}: ${error.message}`);
 		}
@@ -1521,14 +1516,31 @@ export class LeadsService {
 						sampleLead: emailData.unattendedLeads[0],
 					});
 
-					// Send email to user
-					await this.communicationService.sendEmail(
-						EmailType.MONTHLY_UNATTENDED_LEADS_REPORT,
-						[user.email],
-						emailData,
+					// Send push notification to user
+					await this.unifiedNotificationService.sendTemplatedNotification(
+						NotificationEvent.LEADS_STALE_SUMMARY,
+						[user.uid],
+						{
+							userName: emailData.name,
+							month: emailData.month,
+							unattendedCount: emailData.totalCount,
+							totalEstimatedValue: totalEstimatedValue.toLocaleString('en-ZA', {
+								style: 'currency',
+								currency: 'ZAR',
+							}),
+							topLeads: validatedLeadData.slice(0, 5).map(lead => ({
+								id: lead.id,
+								name: lead.name,
+								company: lead.company,
+								value: lead.estimatedValue,
+							})),
+						},
+						{
+							priority: NotificationPriority.HIGH,
+						},
 					);
 
-					this.logger.log(`✅ Sent monthly unattended leads email to ${user.email} (${validatedLeadData.length} leads, R${totalEstimatedValue} total value)`);
+					this.logger.log(`✅ Sent monthly unattended leads push notification to ${user.uid} (${validatedLeadData.length} leads, R${totalEstimatedValue} total value)`);
 					emailsSent++;
 
 				} catch (error) {
@@ -2299,19 +2311,10 @@ export class LeadsService {
 						assignedBy: creatorName,
 						leadDetails: populatedLead.notes,
 						leadCreatorName: creatorName,
+						leadLink: `${this.configService.get<string>('DASHBOARD_URL')}/leads/${populatedLead.uid}`,
 					},
 					{
-						sendEmail: true,
-						emailTemplate: EmailType.LEAD_ASSIGNED_TO_USER,
-						emailData: {
-							name: 'Team Member',
-							assigneeName: 'Team Member',
-							leadId: populatedLead.uid,
-							leadName: populatedLead.name,
-							leadCreatorName: creatorName,
-							leadDetails: populatedLead.notes,
-							leadLink: `${this.configService.get<string>('DASHBOARD_URL')}/leads/${populatedLead.uid}`,
-						},
+						priority: NotificationPriority.HIGH,
 					},
 				);
 			} catch (error) {
