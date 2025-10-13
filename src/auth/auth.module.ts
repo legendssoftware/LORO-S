@@ -17,6 +17,7 @@ import { ClientAuth } from '../clients/entities/client.auth.entity';
 import { ClientJwtAuthGuard } from '../guards/client-jwt-auth.guard';
 import { PlatformService } from '../lib/services/platform.service';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { SalesTipsModule } from '../sales-tips/sales-tips.module';
 
 @Module({
     imports: [
@@ -35,6 +36,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
         RewardsModule,
         LicensingModule,
         NotificationsModule,
+        SalesTipsModule,
     ],
     controllers: [AuthController, ClientAuthController],
     providers: [

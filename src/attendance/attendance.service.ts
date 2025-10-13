@@ -670,119 +670,8 @@ export class AttendanceService {
 					},
 				);
 
-				// Send email using event emitter (same pattern as user service)
-				this.logger.log(
-					`📧 [AttendanceService] Sending shift started email notification for user: ${checkInDto.owner.uid}`,
-				);
-				if (user?.email) {
-					try {
-						// Get organization scheduled start time and check if org is open
-						let scheduledStartTime = '09:00'; // Default fallback
-						let orgStatus: {
-							isOpen: boolean;
-							isWorkingDay: boolean;
-							isHolidayMode: boolean;
-							reason?: string;
-							scheduledOpen?: string;
-							scheduledClose?: string;
-							dayOfWeek: string;
-						} = {
-							isOpen: true,
-							isWorkingDay: true,
-							isHolidayMode: false,
-							reason: 'Operating hours not configured',
-							dayOfWeek: 'monday',
-						};
-
-						if (orgId) {
-							try {
-								const organizationHours = await this.organizationHoursService.getOrganizationHours(
-									orgId,
-								);
-								const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(
-									orgId,
-									new Date(),
-								);
-								scheduledStartTime = workingDayInfo.startTime || organizationHours?.openTime || '09:00';
-
-								// Check if organization is currently open
-								orgStatus = await this.organizationHoursService.isOrganizationOpen(
-									orgId, // Use orgId directly
-									new Date()
-								);
-							} catch (error) {
-								this.logger.warn(`Could not get organization hours for org ${orgId}:`, error.message);
-							}
-						}
-
-						// Determine appropriate welcome message based on organization status
-						let welcomeMessage = `Welcome to work, ${userName}! 🌟 Your shift started successfully at ${checkInTime}. Have a productive and amazing day ahead!`;
-						let specialNotice = '';
-
-						if (!orgStatus.isWorkingDay || !orgStatus.isOpen) {
-							if (orgStatus.isHolidayMode) {
-								welcomeMessage = `Hello ${userName}! 🏖️ We notice you're at work during our holiday period.`;
-								specialNotice = `We appreciate your dedication, but please note that the organization is currently in holiday mode. ${orgStatus.reason}`;
-							} else if (!orgStatus.isWorkingDay) {
-								welcomeMessage = `Hello ${userName}! 👋 We notice you're at work on ${orgStatus.dayOfWeek}, but we're normally closed today.`;
-								specialNotice = `We appreciate your commitment to work during off-hours. ${orgStatus.reason}. If this is part of a special project or emergency, thank you for your dedication!`;
-							} else if (!orgStatus.isOpen) {
-								const scheduledHours = orgStatus.scheduledOpen && orgStatus.scheduledClose 
-									? ` (scheduled hours: ${orgStatus.scheduledOpen} - ${orgStatus.scheduledClose})`
-									: '';
-								welcomeMessage = `Hello ${userName}! 🕐 We notice you're starting work outside our normal operating hours.`;
-								specialNotice = `We appreciate your early arrival or late dedication. ${orgStatus.reason}${scheduledHours}. Stay safe and productive!`;
-							}
-						}
-
-						const emailData = {
-							name: userName,
-							employeeName: userName,
-							employeeEmail: user.email,
-							checkInTime,
-							shiftStartTime: scheduledStartTime,
-							organizationName:
-								user?.organisation?.name || user?.branch?.organisation?.name || 'Your Organization',
-							branchName: user?.branch?.name || '',
-							dashboardUrl: process.env.WEB_URL || 'https://app.loro.co.za',
-							xpAwarded: XP_VALUES.CHECK_IN,
-							welcomeMessage,
-							// Organization status information for email template
-							organizationStatus: {
-								isOpen: orgStatus.isOpen,
-								isWorkingDay: orgStatus.isWorkingDay,
-								isHolidayMode: orgStatus.isHolidayMode,
-								reason: orgStatus.reason,
-								dayOfWeek: orgStatus.dayOfWeek,
-								scheduledOpen: orgStatus.scheduledOpen,
-								scheduledClose: orgStatus.scheduledClose,
-								specialNotice,
-								isOffHours: !orgStatus.isWorkingDay || !orgStatus.isOpen,
-							},
-						};
-
-						this.eventEmitter.emit(
-							'send.email',
-							EmailType.ATTENDANCE_SHIFT_STARTED,
-							[user.email],
-							emailData,
-						);
-						this.logger.log(
-							`✅ [AttendanceService] Shift started email notification queued for user: ${checkInDto.owner.uid}`,
-						);
-					} catch (emailError) {
-						this.logger.error(
-							`❌ [AttendanceService] Failed to queue shift started email for user ${checkInDto.owner.uid}:`,
-							emailError.message,
-						);
-					}
-				} else {
-					this.logger.warn(
-						`⚠️ [AttendanceService] No email found for user ${checkInDto.owner.uid}, skipping email notification`,
-					);
-				}
 				this.logger.debug(
-					`Enhanced shift start notification sent successfully to user: ${checkInDto.owner.uid}`,
+					`Shift start push notification sent successfully to user: ${checkInDto.owner.uid}`,
 				);
 			} catch (notificationError) {
 				this.logger.warn(
@@ -1009,21 +898,18 @@ export class AttendanceService {
 				branchName: user?.branch?.name || '',
 				dashboardUrl: process.env.WEB_URL || 'https://app.loro.co.za',
 				autoCloseMessage: `This shift was automatically ended at organization close time (${checkOutTimeString}) as per your auto shift end setting that you agreed to use. You can change this setting in your preferences if needed.`,
-				congratulationsMessage: `Your shift has been automatically completed, ${userName}! 🏢 Your shift was ended at ${checkOutTimeString} when the organization closed, as per your auto-end shift preference. You worked from ${checkInTimeString} to ${checkOutTimeString} for a total of ${workTimeDisplay}. Great work today!`,
-			};
+			congratulationsMessage: `Your shift has been automatically completed, ${userName}! 🏢 Your shift was ended at ${checkOutTimeString} when the organization closed, as per your auto-end shift preference. You worked from ${checkInTimeString} to ${checkOutTimeString} for a total of ${workTimeDisplay}. Great work today!`,
+		};
 
-			// Send email notification
-			this.eventEmitter.emit('send.email', EmailType.ATTENDANCE_SHIFT_AUTO_ENDED, [user.email], emailData);
-			
-			this.logger.log(
-				`✅ [AttendanceService] Auto-close shift email notification queued for user: ${userId}`,
-			);
-		} catch (error) {
-			this.logger.error(
-				`❌ [AttendanceService] Failed to send auto-close shift notification: ${error.message}`,
-			);
-			// Don't fail the auto-close process if email fails
-		}
+		this.logger.log(
+			`✅ [AttendanceService] Auto-close shift notification processed for user: ${userId}`,
+		);
+	} catch (error) {
+		this.logger.error(
+			`❌ [AttendanceService] Failed to send auto-close shift notification: ${error.message}`,
+		);
+		// Don't fail the auto-close process if notification fails
+	}
 	}
 
 	public async checkOut(
@@ -1286,49 +1172,8 @@ export class AttendanceService {
 					},
 				);
 
-				// Send email using event emitter (same pattern as user service)
-				this.logger.log(
-					`📧 [AttendanceService] Sending shift ended email notification for user: ${checkOutDto.owner.uid}`,
-				);
-				if (user?.email) {
-					try {
-						const emailData = {
-							name: userName,
-							employeeName: userName,
-							employeeEmail: user.email,
-							checkInTime: checkInTimeString,
-							checkOutTime: checkOutTimeString,
-							shiftDuration: duration,
-							totalWorkMinutes: workSession.netWorkMinutes,
-							totalBreakTime:
-								breakMinutes > 0
-									? `${Math.floor(breakMinutes / 60)}h ${breakMinutes % 60}m`
-									: undefined,
-							organizationName:
-								user?.organisation?.name || user?.branch?.organisation?.name || 'Your Organization',
-							branchName: user?.branch?.name || '',
-							dashboardUrl: process.env.WEB_URL || 'https://app.loro.co.za',
-							xpAwarded: XP_VALUES.CHECK_OUT,
-							congratulationsMessage: `Great work today, ${userName}! 🎉 You've successfully completed your shift. Worked from ${checkInTimeString} to ${checkOutTimeString} for a total of ${workTimeDisplay}. Rest well and see you tomorrow!`,
-						};
-
-						this.eventEmitter.emit('send.email', EmailType.ATTENDANCE_SHIFT_ENDED, [user.email], emailData);
-						this.logger.log(
-							`✅ [AttendanceService] Shift ended email notification queued for user: ${checkOutDto.owner.uid}`,
-						);
-					} catch (emailError) {
-						this.logger.error(
-							`❌ [AttendanceService] Failed to queue shift ended email for user ${checkOutDto.owner.uid}:`,
-							emailError.message,
-						);
-					}
-				} else {
-					this.logger.warn(
-						`⚠️ [AttendanceService] No email found for user ${checkOutDto.owner.uid}, skipping email notification`,
-					);
-				}
 				this.logger.debug(
-					`Enhanced shift end notification sent successfully to user: ${checkOutDto.owner.uid}`,
+					`Shift end push notification sent successfully to user: ${checkOutDto.owner.uid}`,
 				);
 			} catch (notificationError) {
 				this.logger.warn(
@@ -1788,117 +1633,21 @@ export class AttendanceService {
 					return;
 			}
 
-			// Update message in notification data
-			notificationData.message = message;
+		// Update message in notification data
+		notificationData.message = message;
 
-			// Determine email template based on notification type
-			let emailTemplate: EmailType | undefined;
-			let emailData: any = {};
+		// Send push notification only (no emails for reminders)
+		await this.unifiedNotificationService.sendTemplatedNotification(
+			notificationType,
+			[Number(userId)],
+			notificationData,
+			{
+				priority,
+				sendEmail: false,
+			},
+		);
 
-			switch (notificationType) {
-				case NotificationEvent.ATTENDANCE_SHIFT_START_REMINDER:
-					emailTemplate = EmailType.ATTENDANCE_SHIFT_START_REMINDER;
-					emailData = {
-						name: user?.name || '',
-						employeeName: userName,
-						employeeEmail: user?.email || '',
-						shiftStartTime: expectedShiftTime,
-						currentTime,
-						organizationName: 'Your Organization',
-						branchName: '',
-						reminderType: 'pre_start',
-						minutesUntilShift: 30,
-						checkInUrl: process.env.WEB_URL || 'https://app.loro.co.za',
-						dashboardUrl: process.env.WEB_URL || 'https://app.loro.co.za',
-					};
-					break;
-				case NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER:
-					emailTemplate = EmailType.ATTENDANCE_SHIFT_END_REMINDER;
-					emailData = {
-						name: user?.name || '',
-						employeeName: userName,
-						employeeEmail: user?.email || '',
-						shiftEndTime: expectedEndTime,
-						currentTime,
-						organizationName: 'Your Organization',
-						branchName: '',
-						reminderType: reminderType === 'pre_end' ? 'pre_end' : 'missed_checkout',
-						checkOutUrl: process.env.WEB_URL || 'https://app.loro.co.za',
-						dashboardUrl: process.env.WEB_URL || 'https://app.loro.co.za',
-						currentShiftDuration: notificationData.currentShiftDuration,
-					};
-					break;
-				case NotificationEvent.ATTENDANCE_MISSED_SHIFT_ALERT:
-					emailTemplate = EmailType.ATTENDANCE_MISSED_SHIFT_ALERT;
-					emailData = {
-						name: user?.name || '',
-						employeeName: userName,
-						employeeEmail: user?.email || '',
-						scheduledShiftStart: expectedShiftTime,
-						scheduledShiftEnd: expectedEndTime || '17:00',
-						currentTime,
-						organizationName: 'Your Organization',
-						supervisorContact: 'your supervisor',
-						dashboardUrl: process.env.WEB_URL || 'https://app.loro.co.za',
-						checkInUrl: process.env.WEB_URL || 'https://app.loro.co.za',
-						missedDuration: '30+ minutes',
-					};
-					break;
-				case NotificationEvent.ATTENDANCE_LATE_SHIFT_ALERT:
-					emailTemplate = EmailType.ATTENDANCE_LATE_SHIFT_ALERT;
-					emailData = {
-						name: user?.name || '',
-						employeeName: userName,
-						employeeEmail: user?.email || '',
-						scheduledShiftStart: expectedShiftTime,
-						currentTime,
-						organizationName: 'Your Organization',
-						minutesLate: lateMinutes || 0,
-						dashboardUrl: process.env.WEB_URL || 'https://app.loro.co.za',
-						checkInUrl: process.env.WEB_URL || 'https://app.loro.co.za',
-						lateDuration: lateMinutes ? `${lateMinutes} minutes` : 'unknown',
-					};
-					break;
-				case NotificationEvent.ATTENDANCE_OVERTIME_REMINDER:
-					emailTemplate = EmailType.OVERTIME_REMINDER;
-					emailData = {
-						name: user?.name || '',
-						employeeName: userName,
-						employeeEmail: user?.email || '',
-						minutesOvertime: overtimeMinutes || 0,
-						overtimeDuration: notificationData.overtimeDuration || 'unknown',
-						shiftDuration: 'current shift',
-						organizationName: 'Your Organization',
-						clockOutUrl: process.env.WEB_URL || 'https://app.loro.co.za',
-						dashboardUrl: process.env.WEB_URL || 'https://app.loro.co.za',
-						breakDetails: undefined,
-					};
-					break;
-			}
-
-			// Send push notification
-			await this.unifiedNotificationService.sendTemplatedNotification(
-				notificationType,
-				[Number(userId)],
-				notificationData,
-				{
-					priority,
-					sendEmail: false, // We'll handle email separately
-				},
-			);
-
-			// Send email using event emitter (same pattern as user service)
-			if (emailTemplate && user?.email && emailData) {
-				// Update email data with proper organization info
-				emailData.organizationName =
-					user?.organisation?.name || user?.branch?.organisation?.name || 'Your Organization';
-				emailData.branchName = user?.branch?.name || '';
-
-				this.eventEmitter.emit('send.email', emailTemplate, [user.email], emailData);
-				this.logger.debug(`✅ ${reminderType} email queued for user: ${userId}`);
-			}
-
-			this.logger.log(`[${operationId}] ${reminderType} notification sent successfully to user ${userId}`);
+		this.logger.log(`[${operationId}] ${reminderType} push notification sent successfully to user ${userId}`);
 
 			// Also notify organization admins for critical events
 			if (['missed', 'late', 'overtime'].includes(reminderType) && orgId) {

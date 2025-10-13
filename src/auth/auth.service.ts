@@ -25,6 +25,7 @@ import { PlatformService } from '../lib/services/platform.service';
 import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
 import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
 import { ExpoPushService } from '../lib/services/expo-push.service';
+import { SalesTipsService } from '../sales-tips/sales-tips.service';
 
 @Injectable()
 export class AuthService {
@@ -41,6 +42,7 @@ export class AuthService {
 		private platformService: PlatformService,
 		private unifiedNotificationService: UnifiedNotificationService,
 		private expoPushService: ExpoPushService,
+		private salesTipsService: SalesTipsService,
 	) {
 		this.logger.debug('AuthService initialized with all dependencies');
 	}
@@ -69,30 +71,11 @@ export class AuthService {
 
 			if (!authProfile?.user) {
 				this.logger.warn(`User not found for authentication: ${username}`);
-				// Send failed login email for unknown user
+				// Send failed login push notification for unknown user
 				try {
 					// Try to find user by email for failed login notification
 					const userByEmail = await this.userService.findOneByEmail(username);
 					if (userByEmail?.user) {
-						this.logger.debug(`Sending failed login notification email for user: ${username}`);
-						this.eventEmitter.emit('send.email', EmailType.FAILED_LOGIN_ATTEMPT, [userByEmail.user.email], {
-							name: userByEmail.user.name || username,
-							loginTime: new Date().toLocaleString(),
-							ipAddress: requestData?.ipAddress || 'Unknown',
-							location: requestData?.location || 'Unknown',
-							country: requestData?.country || 'Unknown',
-							deviceType: requestData?.deviceType || 'Unknown',
-							browser: requestData?.browser || 'Unknown',
-							operatingSystem: requestData?.operatingSystem || 'Unknown',
-							userAgent: requestData?.userAgent || 'Unknown',
-							suspicious: true,
-							securityTips: [
-								'Change your password immediately if you suspect unauthorized access',
-								'Enable two-factor authentication for additional security',
-								'Contact support if you notice any unusual activity',
-							],
-						});
-
 						// Send failed login push notification
 						try {
 							const attemptTime = new Date().toLocaleTimeString('en-ZA', {
@@ -136,7 +119,7 @@ export class AuthService {
 						}
 					}
 				} catch (error) {
-					this.logger.error('Failed to send failed login notification email:', error);
+					this.logger.error('Failed to send failed login notification:', error);
 				}
 				throw new BadRequestException('Invalid credentials provided');
 			}
@@ -148,28 +131,43 @@ export class AuthService {
 
 			if (!isPasswordValid) {
 				this.logger.warn(`Invalid password attempt for user: ${username}`);
-				// Send failed login email for incorrect password
+				// Send failed login push notification for incorrect password
 				try {
-					this.logger.debug(`Sending failed login notification email for invalid password: ${username}`);
-					this.eventEmitter.emit('send.email', EmailType.FAILED_LOGIN_ATTEMPT, [authProfile.user.email], {
-						name: authProfile.user.name || authProfile.user.email,
-						loginTime: new Date().toLocaleString(),
-						ipAddress: requestData?.ipAddress || 'Unknown',
-						location: requestData?.location || 'Unknown',
-						country: requestData?.country || 'Unknown',
-						deviceType: requestData?.deviceType || 'Unknown',
-						browser: requestData?.browser || 'Unknown',
-						operatingSystem: requestData?.operatingSystem || 'Unknown',
-						userAgent: requestData?.userAgent || 'Unknown',
-						suspicious: true,
-						securityTips: [
-							'Change your password immediately if you suspect unauthorized access',
-							'Enable two-factor authentication for additional security',
-							'Contact support if you notice any unusual activity',
-						],
+					const attemptTime = new Date().toLocaleTimeString('en-ZA', {
+						hour: '2-digit',
+						minute: '2-digit',
+						hour12: true,
 					});
+					const attemptDate = new Date().toLocaleDateString('en-ZA', {
+						weekday: 'long',
+						year: 'numeric',
+						month: 'long',
+						day: 'numeric',
+					});
+
+					this.logger.debug(`Sending failed login push notification for invalid password: ${username}`);
+					await this.unifiedNotificationService.sendTemplatedNotification(
+						NotificationEvent.AUTH_LOGIN_FAILED,
+						[authProfile.user.uid],
+						{
+							message: `🚨 Security Alert: Failed login attempt detected on your account on ${attemptDate} at ${attemptTime}. If this wasn't you, please secure your account immediately.`,
+							userName: authProfile.user.name || authProfile.user.email,
+							attemptTime,
+							attemptDate,
+							ipAddress: requestData?.ipAddress || 'Unknown',
+							location: requestData?.location || 'Unknown',
+							deviceType: requestData?.deviceType || 'Unknown',
+							browser: requestData?.browser || 'Unknown',
+							securityTip: 'Change your password immediately if you suspect unauthorized access',
+							timestamp: new Date().toISOString(),
+						},
+						{
+							priority: NotificationPriority.HIGH,
+						},
+					);
+					this.logger.debug(`Failed login push notification sent for invalid password: ${username}`);
 				} catch (error) {
-					this.logger.error('Failed to send failed login notification email:', error);
+					this.logger.error('Failed to send failed login push notification:', error);
 				}
 
 				return {
@@ -275,30 +273,6 @@ export class AuthService {
 							this.logger.error(`Failed to award XP for daily login to user ${username}:`, xpError.message);
 						}
 
-						// Send login notification email
-						try {
-							this.logger.debug(`Sending login notification email to user: ${username}`);
-							this.eventEmitter.emit('send.email', EmailType.LOGIN_NOTIFICATION, [authProfile.user.email], {
-								name: profileData.name,
-								loginTime: new Date().toLocaleString(),
-								ipAddress: requestData?.ipAddress || 'Unknown',
-								location: requestData?.location || 'Unknown',
-								country: requestData?.country || 'Unknown',
-								deviceType: requestData?.deviceType || 'Unknown',
-								browser: requestData?.browser || 'Unknown',
-								operatingSystem: requestData?.operatingSystem || 'Unknown',
-								userAgent: requestData?.userAgent || 'Unknown',
-								suspicious: false, // You can implement logic to detect suspicious logins
-								securityTips: [
-									'Always log out from shared devices',
-									'Use strong, unique passwords',
-									'Enable two-factor authentication when available',
-								],
-							});
-						} catch (emailError) {
-							this.logger.error(`Failed to send login notification email to user ${username}:`, emailError.message);
-						}
-
 						// Send successful login push notification
 						try {
 							const loginTime = new Date().toLocaleTimeString('en-ZA', {
@@ -339,6 +313,41 @@ export class AuthService {
 								notificationError.message,
 							);
 						}
+
+					// Send Sales Tip of the Day push notification
+					try {
+						this.logger.log(`💡 [SalesTip] Fetching sales tip of the day for user: ${username}`);
+						const salesTip = this.salesTipsService.getTipByDate();
+						
+						if (salesTip) {
+							this.logger.log(`💡 [SalesTip] Sending sales tip "${salesTip.title}" to user ${username} (ID: ${salesTip.id}, Category: ${salesTip.category})`);
+							await this.unifiedNotificationService.sendTemplatedNotification(
+								NotificationEvent.SALES_TIP_OF_THE_DAY,
+								[authProfile.user.uid],
+								{
+									message: `💡 Sales Tip: ${salesTip.title} - ${salesTip.content}`,
+									title: salesTip.title,
+									content: salesTip.content,
+									category: salesTip.category,
+									tipId: salesTip.id.toString(),
+									timestamp: new Date().toISOString(),
+								},
+								{
+									priority: NotificationPriority.LOW,
+									sendEmail: false,
+								},
+							);
+							this.logger.log(`✅ [SalesTip] Sales tip #${salesTip.id} "${salesTip.title}" sent successfully to user: ${username}`);
+						} else {
+							this.logger.warn(`⚠️ [SalesTip] No sales tip found for today for user: ${username}`);
+						}
+					} catch (salesTipError) {
+						this.logger.error(
+							`❌ [SalesTip] Failed to send sales tip of the day to user ${username}:`,
+							salesTipError.stack || salesTipError.message,
+						);
+						// Don't fail login if sales tip fails
+					}
 
 						// Check device registration for push notifications (async, don't block login)
 						try {

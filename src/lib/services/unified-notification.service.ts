@@ -732,6 +732,20 @@ export class UnifiedNotificationService {
 			},
 		],
 
+		// Sales Tip Templates
+		[
+			NotificationEvent.SALES_TIP_OF_THE_DAY,
+			{
+				event: NotificationEvent.SALES_TIP_OF_THE_DAY,
+				title: '💡 Sales Tip of the Day',
+				messageTemplate: '{title} - {content}',
+				priority: NotificationPriority.LOW,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/home', action: 'view_tip' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+
 		// Additional User Templates  
 		[
 			NotificationEvent.USER_TARGET_SET,

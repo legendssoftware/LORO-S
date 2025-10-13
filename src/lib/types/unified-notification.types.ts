@@ -89,6 +89,9 @@ export enum NotificationEvent {
 	IOT_DEVICE_ERROR = 'iot_device_error',
 	IOT_DEVICE_DAILY_REPORT = 'iot_device_daily_report',
 
+	// Sales & Tips Events
+	SALES_TIP_OF_THE_DAY = 'sales_tip_of_the_day',
+
 	// General Events
 	GENERAL_NOTIFICATION = 'general_notification',
 }

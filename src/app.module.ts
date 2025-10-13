@@ -102,6 +102,7 @@ import { MapModule } from './map/map.module';
 import { IotModule } from './iot/iot.module';
 import { BulkEmailModule } from './bulk-email/bulk-email.module';
 import { Device, DeviceRecords } from './iot/entities/iot.entity';
+import { SalesTipsModule } from './sales-tips/sales-tips.module';
 
 
 @Module({
@@ -250,6 +251,7 @@ import { Device, DeviceRecords } from './iot/entities/iot.entity';
 		MapModule,
 		IotModule,
 		BulkEmailModule,
+		SalesTipsModule,
 	],
 	controllers: [],
 	providers: [
