@@ -139,7 +139,7 @@ export class CheckInsService {
 			// Send check-in notifications
 			try {
 				this.logger.debug(`[${operationId}] Sending check-in notifications`);
-				await this.sendCheckInNotifications(createCheckInDto.owner.uid, checkIn, orgId, branchId);
+				await this.sendCheckInNotifications(createCheckInDto.owner.uid, checkIn, user.name, orgId, branchId);
 				this.logger.debug(`[${operationId}] Check-in notifications sent successfully`);
 			} catch (notificationError) {
 				this.logger.warn(
@@ -195,12 +195,22 @@ export class CheckInsService {
 	private async sendCheckInNotifications(
 		userId: number,
 		checkIn: CheckIn,
+		userName: string,
 		orgId?: number,
 		branchId?: number,
 	): Promise<void> {
 		const operationId = `checkin_notifications_${Date.now()}`;
 
 		try {
+			// Build detailed location string
+			const locationDetails = checkIn.client?.name 
+				? `${checkIn.client.name}` 
+				: 'a location';
+			
+			const coordinatesInfo = checkIn.checkInLocation 
+				? ` (${checkIn.checkInLocation})` 
+				: '';
+
 			// Send notification to the user
 			await this.unifiedNotificationService.sendTemplatedNotification(
 				NotificationEvent.CHECKIN_CREATED,
@@ -220,11 +230,11 @@ export class CheckInsService {
 			if (orgId) {
 				const orgAdmins = await this.getOrganizationAdmins(orgId);
 				if (orgAdmins.length > 0) {
-					// Send direct notification to admins (since there's no admin-specific template)
+					// Send detailed notification to admins
 					await this.unifiedNotificationService.sendNotification({
 						event: NotificationEvent.GENERAL_NOTIFICATION,
 						title: '📍 Staff Check-in Alert',
-						message: `Staff member has checked in at ${checkIn.client?.name || 'a location'}`,
+						message: `${userName} has checked in at ${locationDetails}${coordinatesInfo}`,
 						priority: NotificationPriority.LOW,
 						channel: NotificationChannel.GENERAL,
 						recipients: orgAdmins.map((admin) => ({
@@ -238,8 +248,12 @@ export class CheckInsService {
 							type: 'admin_checkin_alert',
 							metadata: {
 								userId,
+								userName,
 								checkInId: checkIn.uid,
 								checkInTime: checkIn.checkInTime,
+								location: locationDetails,
+								coordinates: checkIn.checkInLocation,
+								clientName: checkIn.client?.name,
 								orgId,
 								branchId,
 								adminContext: true,
@@ -281,12 +295,26 @@ export class CheckInsService {
 		userId: number,
 		checkIn: CheckIn,
 		duration: string,
+		userName: string,
+		fullAddress: string,
 		orgId?: number,
 		branchId?: number,
 	): Promise<void> {
 		const operationId = `checkout_notifications_${Date.now()}`;
 
 		try {
+			// Build detailed location string
+			const locationDetails = checkIn.client?.name 
+				? `${checkIn.client.name}` 
+				: 'a location';
+			
+			// Include full address if available, otherwise use coordinates
+			const addressInfo = fullAddress 
+				? ` at ${fullAddress}` 
+				: checkIn.checkOutLocation 
+					? ` (${checkIn.checkOutLocation})` 
+					: '';
+
 			// Send notification to the user using CHECKOUT_COMPLETED template
 			await this.unifiedNotificationService.sendTemplatedNotification(
 				NotificationEvent.CHECKOUT_COMPLETED,
@@ -307,11 +335,11 @@ export class CheckInsService {
 			if (orgId) {
 				const orgAdmins = await this.getOrganizationAdmins(orgId);
 				if (orgAdmins.length > 0) {
-					// Send direct notification to admins (since there's no checkout admin template)
+					// Send detailed notification to admins
 					await this.unifiedNotificationService.sendNotification({
 						event: NotificationEvent.GENERAL_NOTIFICATION,
 						title: '📍 Staff Check-out Alert',
-						message: `Staff member has checked out from ${checkIn.client?.name || 'a location'} after ${duration}`,
+						message: `${userName} has checked out from ${locationDetails}${addressInfo} after ${duration}`,
 						priority: NotificationPriority.LOW,
 						channel: NotificationChannel.GENERAL,
 						recipients: orgAdmins.map((admin) => ({
@@ -325,9 +353,14 @@ export class CheckInsService {
 							type: 'admin_checkout_alert',
 							metadata: {
 								userId,
+								userName,
 								checkInId: checkIn.uid,
 								checkOutTime: checkIn.checkOutTime,
 								duration: duration,
+								location: locationDetails,
+								fullAddress: fullAddress,
+								coordinates: checkIn.checkOutLocation,
+								clientName: checkIn.client?.name,
 								orgId,
 								branchId,
 								adminContext: true,
@@ -456,7 +489,16 @@ export class CheckInsService {
 			// Send check-out notifications
 			try {
 				this.logger.debug(`[${operationId}] Sending check-out notifications`);
-				await this.sendCheckOutNotifications(createCheckOutDto.owner.uid, checkIn, duration, orgId, branchId);
+				const userName = checkIn.owner?.name || 'Staff member';
+				await this.sendCheckOutNotifications(
+					createCheckOutDto.owner.uid, 
+					checkIn, 
+					duration, 
+					userName,
+					fullAddress,
+					orgId, 
+					branchId
+				);
 				this.logger.debug(`[${operationId}] Check-out notifications sent successfully`);
 			} catch (notificationError) {
 				this.logger.warn(
