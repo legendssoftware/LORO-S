@@ -12,6 +12,8 @@ import { Lead } from '../../leads/entities/lead.entity';
 import { Quotation } from '../../shop/entities/quotation.entity';
 import { Claim } from '../../claims/entities/claim.entity';
 import { TrackingService } from '../../tracking/tracking.service';
+import { TimezoneUtil } from '../../lib/utils/timezone.util';
+import { OrganizationHoursService } from '../../attendance/services/organization.hours.service';
 
 @Injectable()
 export class OrgActivityReportGenerator {
@@ -31,7 +33,35 @@ export class OrgActivityReportGenerator {
 		@InjectRepository(Claim)
 		private claimRepository: Repository<Claim>,
 		private trackingService: TrackingService,
+		private organizationHoursService: OrganizationHoursService,
 	) {}
+
+	/**
+	 * Get organization timezone with fallback
+	 */
+	private async getOrganizationTimezone(organizationId?: number): Promise<string> {
+		if (!organizationId) {
+			return TimezoneUtil.getSafeTimezone();
+		}
+
+		try {
+			const organizationHours = await this.organizationHoursService.getOrganizationHours(organizationId);
+			return organizationHours?.timezone || TimezoneUtil.getSafeTimezone();
+		} catch (error) {
+			this.logger.warn(`Error getting timezone for org ${organizationId}, using default:`, error);
+			return TimezoneUtil.getSafeTimezone();
+		}
+	}
+
+	/**
+	 * Format date in organization timezone for reports
+	 */
+	private async formatDateInOrganizationTimezone(date: Date, organizationId?: number, format: string = 'yyyy-MM-dd'): Promise<string> {
+		if (!date) return 'N/A';
+		
+		const timezone = await this.getOrganizationTimezone(organizationId);
+		return TimezoneUtil.formatInOrganizationTime(date, format, timezone);
+	}
 
 	async generate(params: ReportParamsDto): Promise<Record<string, any>> {
 		const granularity = params.granularity || 'daily';
@@ -221,7 +251,7 @@ export class OrgActivityReportGenerator {
 					branchId: params.branchId || null,
 					granularity,
 					dateRange: { start: startDate, end: endDate },
-					generatedAt: new Date(),
+					generatedAt: await this.formatDateInOrganizationTimezone(new Date(), params.organisationId, 'yyyy-MM-dd HH:mm:ss'),
 				},
 				summary: {
 					totalEmployees: users.length,

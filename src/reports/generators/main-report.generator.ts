@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, Repository } from 'typeorm';
 import { User } from '../../user/entities/user.entity';
@@ -16,9 +16,13 @@ import { CheckIn } from '../../check-ins/entities/check-in.entity';
 import { Doc } from '../../docs/entities/doc.entity';
 import { Notification } from '../../notifications/entities/notification.entity';
 import { ReportParamsDto } from '../dto/report-params.dto';
+import { TimezoneUtil } from '../../lib/utils/timezone.util';
+import { OrganizationHoursService } from '../../attendance/services/organization.hours.service';
 
 @Injectable()
 export class MainReportGenerator {
+	private readonly logger = new Logger(MainReportGenerator.name);
+
 	constructor(
 		@InjectRepository(User)
 		private userRepository: Repository<User>,
@@ -48,7 +52,35 @@ export class MainReportGenerator {
 		private docRepository: Repository<Doc>,
 		@InjectRepository(Notification)
 		private notificationRepository: Repository<Notification>,
+		private organizationHoursService: OrganizationHoursService,
 	) {}
+
+	/**
+	 * Get organization timezone with fallback
+	 */
+	private async getOrganizationTimezone(organizationId?: number): Promise<string> {
+		if (!organizationId) {
+			return TimezoneUtil.getSafeTimezone();
+		}
+
+		try {
+			const organizationHours = await this.organizationHoursService.getOrganizationHours(organizationId);
+			return organizationHours?.timezone || TimezoneUtil.getSafeTimezone();
+		} catch (error) {
+			this.logger.warn(`Error getting timezone for org ${organizationId}, using default:`, error);
+			return TimezoneUtil.getSafeTimezone();
+		}
+	}
+
+	/**
+	 * Format date in organization timezone for reports
+	 */
+	private async formatDateInOrganizationTimezone(date: Date, organizationId?: number, format: string = 'yyyy-MM-dd'): Promise<string> {
+		if (!date) return 'N/A';
+		
+		const timezone = await this.getOrganizationTimezone(organizationId);
+		return TimezoneUtil.formatInOrganizationTime(date, format, timezone);
+	}
 
 	async generate(params: ReportParamsDto): Promise<Record<string, any>> {
 		const { organisationId, branchId, dateRange } = params;
@@ -150,7 +182,7 @@ export class MainReportGenerator {
 			metadata: {
 				organisationId,
 				branchId,
-				generatedAt: new Date(),
+				generatedAt: await this.formatDateInOrganizationTimezone(new Date(), organisationId, 'yyyy-MM-dd HH:mm:ss'),
 				reportType: 'main',
 				name: params.name || 'Main Organization Report',
 			},
