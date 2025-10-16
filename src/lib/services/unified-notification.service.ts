@@ -256,10 +256,10 @@ export class UnifiedNotificationService {
 			{
 				event: NotificationEvent.ATTENDANCE_SHIFT_STARTED,
 				title: '🟢 Shift Started',
-				messageTemplate: 'Welcome back! Your shift has started at {checkInTime}',
+				messageTemplate: 'Welcome back! Your shift has started at {checkInTime:time}',
 				priority: NotificationPriority.NORMAL,
 				channel: NotificationChannel.GENERAL,
-				defaultData: { screen: '/', action: 'view_attendance' },
+				defaultData: { screen: '/hr/attendance', action: 'attendance_start' },
 				pushSettings: { sound: 'default', badge: 1 },
 			},
 		],
@@ -268,10 +268,10 @@ export class UnifiedNotificationService {
 			{
 				event: NotificationEvent.ATTENDANCE_SHIFT_ENDED,
 				title: '🔴 Shift Ended',
-				messageTemplate: 'Great work! Your shift ended at {checkOutTime}. Total duration: {duration}',
+				messageTemplate: 'Great work! Your shift ended at {checkOutTime:time}. Total duration: {duration:duration}',
 				priority: NotificationPriority.NORMAL,
 				channel: NotificationChannel.GENERAL,
-				defaultData: { screen: '/home', action: 'view_attendance' },
+				defaultData: { screen: '/hr/attendance', action: 'attendance_end' },
 				pushSettings: { sound: 'default', badge: 1 },
 			},
 		],
@@ -280,10 +280,10 @@ export class UnifiedNotificationService {
 			{
 				event: NotificationEvent.ATTENDANCE_BREAK_STARTED,
 				title: '☕ Break Started',
-				messageTemplate: 'Enjoy your break! Started at {breakStartTime}',
+				messageTemplate: 'Enjoy your break! Started at {breakStartTime:time}',
 				priority: NotificationPriority.LOW,
 				channel: NotificationChannel.GENERAL,
-				defaultData: { screen: '/home', action: 'view_attendance' },
+				defaultData: { screen: '/hr/attendance', action: 'attendance_break_reminder' },
 				pushSettings: { sound: 'default', badge: 1 },
 			},
 		],
@@ -292,10 +292,10 @@ export class UnifiedNotificationService {
 			{
 				event: NotificationEvent.ATTENDANCE_BREAK_ENDED,
 				title: '🏃 Break Ended',
-				messageTemplate: 'Welcome back from your break! Duration: {breakDuration}',
+				messageTemplate: 'Welcome back from your break! Duration: {breakDuration:duration}',
 				priority: NotificationPriority.LOW,
 				channel: NotificationChannel.GENERAL,
-				defaultData: { screen: '/home', action: 'view_attendance' },
+				defaultData: { screen: '/hr/attendance', action: 'attendance_break_reminder' },
 				pushSettings: { sound: 'default', badge: 1 },
 			},
 		],
@@ -304,10 +304,10 @@ export class UnifiedNotificationService {
 			{
 				event: NotificationEvent.ATTENDANCE_OVERTIME_REMINDER,
 				title: '⏰ Overtime Alert',
-				messageTemplate: 'You are now working overtime. Duration: {overtimeDuration}',
+				messageTemplate: 'You are now working overtime. Duration: {overtimeDuration:duration}',
 				priority: NotificationPriority.HIGH,
 				channel: NotificationChannel.GENERAL,
-				defaultData: { screen: '/home', action: 'view_attendance' },
+				defaultData: { screen: '/hr/attendance', action: 'attendance_overtime' },
 				pushSettings: { sound: 'default', badge: 1 },
 			},
 		],
@@ -316,10 +316,10 @@ export class UnifiedNotificationService {
 			{
 				event: NotificationEvent.ATTENDANCE_SHIFT_START_REMINDER,
 				title: '🌅 Time to Start Work',
-				messageTemplate: 'Your shift starts in {timeRemaining}. Remember to check in!',
+				messageTemplate: 'Your shift starts in {timeRemaining:duration}. Remember to check in!',
 				priority: NotificationPriority.NORMAL,
 				channel: NotificationChannel.GENERAL,
-				defaultData: { screen: '/home', action: 'check_in' },
+				defaultData: { screen: '/hr/attendance', action: 'attendance_pre_start' },
 				pushSettings: { sound: 'default', badge: 1 },
 			},
 		],
@@ -328,10 +328,10 @@ export class UnifiedNotificationService {
 			{
 				event: NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER,
 				title: '🌆 End of Shift Reminder',
-				messageTemplate: 'Your shift ends in {timeRemaining}. Remember to check out!',
+				messageTemplate: 'Your shift ends in {timeRemaining:duration}. Remember to check out!',
 				priority: NotificationPriority.NORMAL,
 				channel: NotificationChannel.GENERAL,
-				defaultData: { screen: '/home', action: 'check_out' },
+				defaultData: { screen: '/hr/attendance', action: 'attendance_pre_end' },
 				pushSettings: { sound: 'default', badge: 1 },
 			},
 		],
@@ -340,10 +340,10 @@ export class UnifiedNotificationService {
 			{
 				event: NotificationEvent.ATTENDANCE_MISSED_SHIFT_ALERT,
 				title: '⚠️ Missed Shift Alert',
-				messageTemplate: 'You missed your scheduled shift. Please contact your supervisor if there was an issue.',
+				messageTemplate: 'You missed your scheduled shift that was supposed to start at {shiftStartTime:time}. Please contact your supervisor if there was an emergency.',
 				priority: NotificationPriority.HIGH,
 				channel: NotificationChannel.IMPORTANT,
-				defaultData: { screen: '/home', action: 'view_attendance' },
+				defaultData: { screen: '/hr/attendance', action: 'attendance_missed_shift' },
 				pushSettings: { sound: 'critical', badge: 1 },
 			},
 		],
@@ -352,10 +352,10 @@ export class UnifiedNotificationService {
 			{
 				event: NotificationEvent.ATTENDANCE_LATE_SHIFT_ALERT,
 				title: '⏰ Late for Shift',
-				messageTemplate: 'You are running late for your shift. Please check in as soon as possible.',
+				messageTemplate: 'You checked in {lateMinutes:number} minutes late for your shift. Please try to be punctual in the future.',
 				priority: NotificationPriority.HIGH,
 				channel: NotificationChannel.IMPORTANT,
-				defaultData: { screen: '/home', action: 'check_in' },
+				defaultData: { screen: '/hr/attendance', action: 'attendance_late_shift' },
 				pushSettings: { sound: 'critical', badge: 1 },
 			},
 		],
@@ -802,10 +802,10 @@ export class UnifiedNotificationService {
 			{
 				event: NotificationEvent.ATTENDANCE_MISSED_SHIFT_ALERT,
 				title: '❌ Missed Shift',
-				messageTemplate: 'You missed your scheduled shift that was supposed to start at {shiftTime}. Please contact your supervisor.',
+				messageTemplate: 'You missed your scheduled shift that was supposed to start at {shiftTime:time}. Please contact your supervisor.',
 				priority: NotificationPriority.HIGH,
 				channel: NotificationChannel.IMPORTANT,
-				defaultData: { screen: '/attendance', action: 'view_attendance' },
+				defaultData: { screen: '/hr/attendance', action: 'attendance_missed_shift' },
 				pushSettings: { sound: 'default', badge: 1 },
 			},
 		],
@@ -814,10 +814,10 @@ export class UnifiedNotificationService {
 			{
 				event: NotificationEvent.ATTENDANCE_LATE_SHIFT_ALERT,
 				title: '⏰ Late Check-In',
-				messageTemplate: 'You checked in {lateMinutes} minutes late for your shift. Please try to be punctual.',
+				messageTemplate: 'You checked in {lateMinutes:number} minutes late for your shift. Please try to be punctual.',
 				priority: NotificationPriority.NORMAL,
 				channel: NotificationChannel.GENERAL,
-				defaultData: { screen: '/attendance', action: 'view_attendance' },
+				defaultData: { screen: '/hr/attendance', action: 'attendance_late_shift' },
 				pushSettings: { sound: 'default', badge: 1 },
 			},
 		],
@@ -1269,12 +1269,92 @@ export class UnifiedNotificationService {
 	}
 
 	/**
-	 * Simple template interpolation
+	 * Enhanced template interpolation with formatting support
 	 */
 	private interpolateTemplate(template: string, variables: Record<string, any>): string {
-		return template.replace(/\{(\w+)\}/g, (match, key) => {
-			return variables[key]?.toString() || match;
+		return template.replace(/\{(\w+)(?::([^}]+))?\}/g, (match, key, format) => {
+			const value = variables[key];
+			if (value === undefined || value === null) return match;
+			
+			// Apply formatting based on type
+			if (format) {
+				switch (format) {
+					case 'time':
+						return this.formatTime(value);
+					case 'duration':
+						return this.formatDuration(value);
+					case 'date':
+						return this.formatDate(value);
+					case 'number':
+						return this.formatNumber(value);
+					default:
+						return value.toString();
+				}
+			}
+			
+			return value.toString();
 		});
+	}
+
+	/**
+	 * Format time values for display
+	 */
+	private formatTime(value: any): string {
+		if (value instanceof Date) {
+			return value.toLocaleTimeString('en-ZA', { 
+				hour: '2-digit', 
+				minute: '2-digit',
+				hour12: false 
+			});
+		}
+		if (typeof value === 'string') {
+			// Try to parse string as time
+			const timeMatch = value.match(/(\d{1,2}):(\d{2})/);
+			if (timeMatch) {
+				return `${timeMatch[1].padStart(2, '0')}:${timeMatch[2]}`;
+			}
+		}
+		return value.toString();
+	}
+
+	/**
+	 * Format duration values (minutes) for display
+	 */
+	private formatDuration(minutes: number): string {
+		if (typeof minutes !== 'number' || isNaN(minutes)) {
+			return '0m';
+		}
+		
+		const hours = Math.floor(minutes / 60);
+		const mins = minutes % 60;
+		
+		if (hours === 0) return `${mins}m`;
+		if (mins === 0) return `${hours}h`;
+		return `${hours}h ${mins}m`;
+	}
+
+	/**
+	 * Format date values for display
+	 */
+	private formatDate(value: any): string {
+		if (value instanceof Date) {
+			return value.toLocaleDateString('en-ZA', {
+				day: '2-digit',
+				month: '2-digit',
+				year: 'numeric'
+			});
+		}
+		return value.toString();
+	}
+
+	/**
+	 * Format number values for display
+	 */
+	private formatNumber(value: any): string {
+		if (typeof value === 'number') {
+			return value.toLocaleString('en-ZA');
+		}
+		return value.toString();
 	}
 
 	/**

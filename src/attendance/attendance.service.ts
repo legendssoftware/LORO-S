@@ -655,7 +655,7 @@ export class AttendanceService {
 					NotificationEvent.ATTENDANCE_SHIFT_STARTED,
 					[checkInDto.owner.uid],
 					{
-						message: `Welcome to work, ${userName}! 🌟 Your shift started successfully at ${checkInTime}. Have a productive and amazing day ahead!`,
+						message: `Welcome to work, ${userName}! 🟢 Your shift started successfully at {checkInTime:time}. Have a productive day ahead!`,
 						checkInTime,
 						userName,
 						userId: checkInDto.owner.uid,
@@ -1152,7 +1152,7 @@ export class AttendanceService {
 					NotificationEvent.ATTENDANCE_SHIFT_ENDED,
 					[checkOutDto.owner.uid],
 					{
-						message: `Great work today, ${userName}! 🎉 You've successfully completed your shift. Worked from ${checkInTimeString} to ${checkOutTimeString} for a total of ${workTimeDisplay}. Rest well and see you tomorrow!`,
+						message: `Great work today, ${userName}! 🔴 You've successfully completed your shift. Worked from {checkInTime:time} to {checkOutTime:time} for a total of {workTimeDisplay:duration}. Rest well and see you tomorrow!`,
 						checkOutTime: checkOutTimeString,
 						checkInTime: checkInTimeString,
 						duration,
@@ -1566,37 +1566,37 @@ export class AttendanceService {
 			switch (reminderType) {
 				case 'pre_start':
 					notificationType = NotificationEvent.ATTENDANCE_SHIFT_START_REMINDER;
-					message = `Good morning ${
-						user?.name || ''
-					}! Your shift starts in 30 minutes at ${expectedShiftTime}. Please prepare to check in on time. Have a great day! 🌅`;
+					message = `Good morning ${user?.name || 'there'}! ⏰ Your shift starts in 30 minutes at {shiftStartTime:time}. Please prepare to check in on time. Have a productive day ahead!`;
 					notificationData.shiftStartTime = expectedShiftTime;
 					priority = NotificationPriority.NORMAL;
 					break;
 
 				case 'start':
 					notificationType = NotificationEvent.ATTENDANCE_SHIFT_STARTED;
-					message = `Your shift has started! Please check in now. Current time: ${currentTime} ⏰`;
+					message = `Hi ${user?.name || 'there'}! 🟢 Your shift has started. Please check in now to record your attendance. Current time: {currentTime:time}`;
 					notificationData.shiftStartTime = expectedShiftTime;
+					notificationData.currentTime = currentTime;
 					priority = NotificationPriority.NORMAL;
 					break;
 
 				case 'pre_end':
 					notificationType = NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER;
-					message = `Your shift ends in 30 minutes at ${expectedEndTime}. Please prepare to check out and wrap up your work. Thank you for your hard work today! 👏`;
+					message = `Hi ${user?.name || 'there'}! ⏰ Your shift ends in 30 minutes at {shiftEndTime:time}. Please prepare to check out and wrap up your work. Thank you for your dedication today!`;
 					notificationData.shiftEndTime = expectedEndTime;
 					priority = NotificationPriority.NORMAL;
 					break;
 
 				case 'end':
 					notificationType = NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER;
-					message = `Your shift has ended! Please check out now to record your work hours accurately. Current time: ${currentTime} 🏁`;
+					message = `Hi ${user?.name || 'there'}! 🔴 Your shift has ended. Please check out now to record your work hours accurately. Current time: {currentTime:time}`;
 					notificationData.shiftEndTime = expectedEndTime;
+					notificationData.currentTime = currentTime;
 					priority = NotificationPriority.HIGH;
 					break;
 
 				case 'missed':
 					notificationType = NotificationEvent.ATTENDANCE_MISSED_SHIFT_ALERT;
-					message = `You missed your scheduled shift that was supposed to start at ${expectedShiftTime}. Please contact your supervisor if there was an emergency. We hope everything is okay! 🚨`;
+					message = `Hi ${user?.name || 'there'}! ⚠️ You missed your scheduled shift that was supposed to start at {shiftStartTime:time}. Please contact your supervisor if there was an emergency. We hope everything is okay!`;
 					notificationData.shiftStartTime = expectedShiftTime;
 					priority = NotificationPriority.HIGH;
 					break;
@@ -1604,10 +1604,11 @@ export class AttendanceService {
 				case 'late':
 					notificationType = NotificationEvent.ATTENDANCE_LATE_SHIFT_ALERT;
 					if (lateMinutes && lateMinutes > 0) {
-						message = `You checked in ${lateMinutes} minutes late for your shift. Please try to be punctual in the future. Thanks for checking in! ⏱️`;
+						message = `Hi ${user?.name || 'there'}! ⏰ You checked in {lateMinutes:number} minutes late for your shift. Please try to be punctual in the future. Thanks for checking in!`;
 						notificationData.lateMinutes = lateMinutes;
 					} else {
-						message = `You are running late for your shift. Please check in as soon as possible. Current time: ${currentTime} 🏃‍♂️`;
+						message = `Hi ${user?.name || 'there'}! ⏰ You are running late for your shift. Please check in as soon as possible. Current time: {currentTime:time}`;
+						notificationData.currentTime = currentTime;
 					}
 					notificationData.shiftStartTime = expectedShiftTime;
 					priority = NotificationPriority.HIGH;
@@ -1616,14 +1617,10 @@ export class AttendanceService {
 				case 'overtime':
 					notificationType = NotificationEvent.ATTENDANCE_OVERTIME_REMINDER;
 					if (overtimeMinutes && overtimeMinutes > 0) {
-						const overtimeHours = Math.floor(overtimeMinutes / 60);
-						const overtimeMinutesRemainder = overtimeMinutes % 60;
-						const overtimeDuration = `${overtimeHours}h ${overtimeMinutesRemainder}m`;
-						message = `You've worked ${overtimeDuration} of overtime today. Great dedication! Please ensure you get adequate rest and consider checking out when possible. 💪`;
+						message = `Hi ${user?.name || 'there'}! ⏰ You've worked {overtimeMinutes:duration} of overtime today. Great dedication! Please ensure you get adequate rest and consider checking out when possible.`;
 						notificationData.overtimeMinutes = overtimeMinutes;
-						notificationData.overtimeDuration = overtimeDuration;
 					} else {
-						message = `You're working overtime today. Great dedication! Please ensure you take care of yourself and get adequate rest. 🌟`;
+						message = `Hi ${user?.name || 'there'}! ⏰ You're working overtime today. Great dedication! Please ensure you take care of yourself and get adequate rest.`;
 					}
 					priority = NotificationPriority.HIGH;
 					break;
@@ -1636,6 +1633,18 @@ export class AttendanceService {
 		// Update message in notification data
 		notificationData.message = message;
 
+		// Add navigation data for mobile app with context-aware routing
+		notificationData.screen = '/hr/attendance';
+		notificationData.action = `attendance_${reminderType}`;
+		notificationData.type = 'attendance';
+		notificationData.context = {
+			reminderType,
+			userId,
+			orgId,
+			branchId,
+			timestamp: new Date().toISOString()
+		};
+
 		// Send push notification only (no emails for reminders)
 		await this.unifiedNotificationService.sendTemplatedNotification(
 			notificationType,
@@ -1644,6 +1653,18 @@ export class AttendanceService {
 			{
 				priority,
 				sendEmail: false,
+				customData: {
+					screen: '/hr/attendance',
+					action: `attendance_${reminderType}`,
+					type: 'attendance',
+					context: {
+						reminderType,
+						userId,
+						orgId,
+						branchId,
+						timestamp: new Date().toISOString()
+					}
+				}
 			},
 		);
 
