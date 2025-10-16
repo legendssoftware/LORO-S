@@ -2209,17 +2209,17 @@ export class IotService {
 						businessHoursInfo: businessHoursInfo?.startTime && businessHoursInfo?.endTime 
 							? `${businessHoursInfo.startTime} - ${businessHoursInfo.endTime}` 
 							: 'Not defined',
-						metadata: {
+					},
+					{
+						priority: priority,
+						customData: {
 							deviceId: device.id,
 							deviceType: device.deviceType,
-							screen: '/iot/devices',
+							screen: '/home/iot',
 							action: 'view_device',
 							notificationEvent: notificationEvent,
 							isSecurityAlert: isAfterHours,
 						},
-					},
-					{
-						priority: priority,
 					},
 				);
 

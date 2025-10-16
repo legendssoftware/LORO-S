@@ -751,22 +751,7 @@ export class LeadsService {
 				return;
 			}
 
-			const adminEmailData = {
-				userName: `${user.name} ${user.surname}`.trim(),
-				userEmail: user.email,
-				organizationName: user.organisation?.name || 'Organization',
-				branchName: user.branch?.name || 'N/A',
-				targetType: 'New Leads',
-				currentValue: achievementData.currentValue,
-				targetValue: achievementData.targetValue,
-				achievementPercentage: achievementData.achievementPercentage,
-				periodStartDate: formatDateSafely(user.userTarget?.periodStartDate),
-				periodEndDate: formatDateSafely(user.userTarget?.periodEndDate),
-				dashboardUrl: `${this.configService.get('DASHBOARD_URL')}/dashboard`,
-				recognitionMessage: this.generateLeadRecognitionMessage(user, achievementData),
-			};
-
-			// Send push notifications to admins
+			// Send detailed push notifications to admins
 			const adminIds = admins.map(admin => admin.uid);
 			
 			await this.unifiedNotificationService.sendTemplatedNotification(
@@ -774,16 +759,37 @@ export class LeadsService {
 				adminIds,
 				{
 					userName: `${user.name} ${user.surname}`.trim(),
+					userEmail: user.email,
+					organizationName: user.organisation?.name || 'Organization',
+					branchName: user.branch?.name || 'N/A',
 					targetType: 'New Leads',
 					currentValue: achievementData.currentValue,
 					targetValue: achievementData.targetValue,
 					achievementPercentage: achievementData.achievementPercentage,
+					periodStartDate: formatDateSafely(user.userTarget?.periodStartDate),
+					periodEndDate: formatDateSafely(user.userTarget?.periodEndDate),
+					recognitionMessage: this.generateLeadRecognitionMessage(user, achievementData),
+					achievementDetails: {
+						userId: user.uid,
+						userName: `${user.name} ${user.surname}`.trim(),
+						targetType: 'New Leads',
+						currentValue: achievementData.currentValue,
+						targetValue: achievementData.targetValue,
+						achievementPercentage: achievementData.achievementPercentage,
+						periodStartDate: formatDateSafely(user.userTarget?.periodStartDate),
+						periodEndDate: formatDateSafely(user.userTarget?.periodEndDate),
+						organizationName: user.organisation?.name || 'Organization',
+						branchName: user.branch?.name || 'N/A',
+					},
 				},
 				{
 					priority: NotificationPriority.NORMAL,
 					customData: {
 						screen: '/sales/leads',
 						action: 'view_leads',
+						userId: user.uid,
+						achievementType: 'lead_target',
+						achievementPercentage: achievementData.achievementPercentage,
 					},
 				},
 			);
@@ -1411,26 +1417,16 @@ export class LeadsService {
 	}
 
 	/**
-	 * MONTHLY UNATTENDED LEADS EMAIL: Send monthly report daily at 5am
+	 * MONTHLY UNATTENDED LEADS PUSH NOTIFICATION: Send monthly report daily at 5am
 	 */
 	@Cron('0 0 5 * * *') // Daily at 5am
-	async sendMonthlyUnattendedLeadsEmail(): Promise<void> {
-		this.logger.log('Sending monthly unattended leads email...');
+	async sendMonthlyUnattendedLeadsNotification(): Promise<void> {
+		this.logger.log('Sending monthly unattended leads push notification...');
 
 		try {
 			const now = new Date();
 			const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 			const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-
-			// Get dashboard URL and validate it
-			const dashboardUrl = this.configService.get<string>('DASHBOARD_URL') || this.configService.get<string>('CLIENT_URL');
-			
-			if (!dashboardUrl || dashboardUrl === 'undefined') {
-				this.logger.error('Dashboard URL is not configured properly. Skipping email sending.');
-				return;
-			}
-
-			this.logger.debug(`Using dashboard URL: ${dashboardUrl}`);
 
 			// Get all active users
 			const activeUsers = await this.userRepository.find({
@@ -1438,23 +1434,16 @@ export class LeadsService {
 					status: In([AccountStatus.ACTIVE, AccountStatus.PENDING]),
 					isDeleted: false,
 				},
-				select: ['uid', 'name', 'surname', 'username', 'email'],
+				select: ['uid', 'name', 'surname', 'username'],
 			});
 
 			this.logger.log(`Found ${activeUsers.length} active users to process`);
 
-			let emailsSent = 0;
-			let emailsSkipped = 0;
+			let notificationsSent = 0;
+			let notificationsSkipped = 0;
 
 			for (const user of activeUsers) {
 				try {
-					// Validate user has email
-					if (!user.email || user.email.trim() === '') {
-						this.logger.warn(`User ${user.uid} has no email address, skipping`);
-						emailsSkipped++;
-						continue;
-					}
-
 					// Find unattended leads for this user this month
 					const unattendedLeads = await this.leadsRepository.find({
 						where: {
@@ -1482,92 +1471,72 @@ export class LeadsService {
 					const allUnattendedLeads = [...unattendedLeads, ...stalledLeads];
 
 					if (allUnattendedLeads.length === 0) {
-						this.logger.debug(`No unattended leads found for user ${user.uid} (${user.email}) this month`);
+						this.logger.debug(`No unattended leads found for user ${user.uid} this month`);
 						continue;
 					}
 
-					// Prepare and validate lead data
-					const validatedLeadData = allUnattendedLeads
-						.map(lead => this.prepareLeadDataForEmail(lead, dashboardUrl))
-						.filter(leadData => leadData !== null); // Remove invalid leads
+					// Calculate totals
+					const totalEstimatedValue = allUnattendedLeads.reduce((sum, lead) => sum + (Number(lead.estimatedValue) || 0), 0);
+					const userName = user.name || user.surname || user.username || 'Team Member';
 
-					if (validatedLeadData.length === 0) {
-						this.logger.warn(`All leads for user ${user.uid} failed validation, skipping email`);
-						emailsSkipped++;
-						continue;
-					}
-
-					// Calculate totals from validated data
-					const totalEstimatedValue = validatedLeadData.reduce((sum, lead) => sum + (lead.estimatedValue || 0), 0);
-
-					// Prepare email data
-					const emailData = {
-						name: user.name || user.surname || user.username || 'Team Member',
-						month: now.toLocaleString('default', { month: 'long', year: 'numeric' }),
-						unattendedLeads: validatedLeadData,
-						totalCount: validatedLeadData.length,
-						totalEstimatedValue: totalEstimatedValue,
-						dashboardUrl: dashboardUrl,
-					};
-
-					// Verify email data before sending
-					if (!this.verifyEmailData(emailData, user.email)) {
-						this.logger.error(`Email data verification failed for user ${user.uid} (${user.email}), skipping email`);
-						emailsSkipped++;
-						continue;
-					}
-
-					// Log the data being sent for debugging
-					this.logger.debug(`Sending email to ${user.email} with data:`, {
-						name: emailData.name,
-						month: emailData.month,
-						totalCount: emailData.totalCount,
-						totalEstimatedValue: emailData.totalEstimatedValue,
-						dashboardUrl: emailData.dashboardUrl,
-						leadIds: emailData.unattendedLeads.map(l => l.id),
-						sampleLead: emailData.unattendedLeads[0],
-					});
-
-					// Send push notification to user
-				await this.unifiedNotificationService.sendTemplatedNotification(
-					NotificationEvent.LEADS_STALE_SUMMARY,
-					[user.uid],
-					{
-						userName: emailData.name,
-						month: emailData.month,
-						unattendedCount: emailData.totalCount,
-						totalEstimatedValue: totalEstimatedValue.toLocaleString('en-ZA', {
-							style: 'currency',
-							currency: 'ZAR',
-						}),
-						topLeads: validatedLeadData.slice(0, 5).map(lead => ({
-							id: lead.id,
-							name: lead.name,
-							company: lead.company,
-							value: lead.estimatedValue,
-						})),
-					},
-					{
-						priority: NotificationPriority.HIGH,
-						customData: {
-							screen: '/sales/leads',
-							action: 'view_leads',
+					// Send detailed push notification to user
+					await this.unifiedNotificationService.sendTemplatedNotification(
+						NotificationEvent.LEADS_STALE_SUMMARY,
+						[user.uid],
+						{
+							userName: userName,
+							month: now.toLocaleString('default', { month: 'long', year: 'numeric' }),
+							unattendedCount: allUnattendedLeads.length,
+							totalEstimatedValue: totalEstimatedValue.toLocaleString('en-ZA', {
+								style: 'currency',
+								currency: 'ZAR',
+							}),
+							topLeads: allUnattendedLeads.slice(0, 5).map(lead => ({
+								id: lead.uid,
+								name: lead.name || `Lead #${lead.uid}`,
+								company: lead.companyName || 'N/A',
+								value: Number(lead.estimatedValue) || 0,
+								status: lead.status,
+								temperature: lead.temperature,
+								daysSinceCreated: Math.floor((now.getTime() - lead.createdAt.getTime()) / (24 * 60 * 60 * 1000)),
+							})),
+							leadDetails: allUnattendedLeads.map(lead => ({
+								id: lead.uid,
+								name: lead.name || `Lead #${lead.uid}`,
+								company: lead.companyName || 'N/A',
+								email: lead.email || 'N/A',
+								phone: lead.phone || 'N/A',
+								status: lead.status,
+								temperature: lead.temperature,
+								priority: lead.priority,
+								estimatedValue: Number(lead.estimatedValue) || 0,
+								daysSinceCreated: Math.floor((now.getTime() - lead.createdAt.getTime()) / (24 * 60 * 60 * 1000)),
+								lastContactDate: lead.lastContactDate ? Math.floor((now.getTime() - lead.lastContactDate.getTime()) / (24 * 60 * 60 * 1000)) : 'Never',
+							})),
 						},
-					},
-				);
+						{
+							priority: NotificationPriority.HIGH,
+							customData: {
+								screen: '/sales/leads',
+								action: 'view_leads',
+								leadsCount: allUnattendedLeads.length,
+								totalValue: totalEstimatedValue,
+							},
+						},
+					);
 
-					this.logger.log(`✅ Sent monthly unattended leads push notification to ${user.uid} (${validatedLeadData.length} leads, R${totalEstimatedValue} total value)`);
-					emailsSent++;
+					this.logger.log(`✅ Sent monthly unattended leads push notification to ${user.uid} (${allUnattendedLeads.length} leads, R${totalEstimatedValue} total value)`);
+					notificationsSent++;
 
 				} catch (error) {
-					this.logger.error(`Failed to send monthly email to user ${user.uid} (${user.email}): ${error.message}`);
-					emailsSkipped++;
+					this.logger.error(`Failed to send monthly notification to user ${user.uid}: ${error.message}`);
+					notificationsSkipped++;
 				}
 			}
 
-			this.logger.log(`Completed monthly unattended leads email process: ${emailsSent} emails sent, ${emailsSkipped} skipped`);
+			this.logger.log(`Completed monthly unattended leads notification process: ${notificationsSent} notifications sent, ${notificationsSkipped} skipped`);
 		} catch (error) {
-			this.logger.error(`Monthly unattended leads email failed: ${error.message}`, error.stack);
+			this.logger.error(`Monthly unattended leads notification failed: ${error.message}`, error.stack);
 		}
 	}
 

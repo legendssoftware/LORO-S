@@ -211,19 +211,43 @@ export class CheckInsService {
 				? ` (${checkIn.checkInLocation})` 
 				: '';
 
-			// Send notification to the user
+			// Send detailed notification to the user
 			await this.unifiedNotificationService.sendTemplatedNotification(
 				NotificationEvent.CHECKIN_CREATED,
 				[Number(userId)],
 				{
+					userName: userName,
 					clientName: checkIn.client?.name || 'Location',
 					checkInId: checkIn.uid,
 					checkInTime: checkIn.checkInTime,
+					location: locationDetails,
+					coordinates: checkIn.checkInLocation,
 					orgId,
 					branchId,
 					timestamp: new Date().toISOString(),
+					checkInDetails: {
+						id: checkIn.uid,
+						userId: userId,
+						userName: userName,
+						clientName: checkIn.client?.name || 'Location',
+						clientId: checkIn.client?.uid,
+						checkInTime: checkIn.checkInTime,
+						location: checkIn.checkInLocation,
+						notes: checkIn.notes,
+						createdAt: checkIn.createdAt?.toISOString(),
+						orgId,
+						branchId,
+					},
 				},
-				{ priority: NotificationPriority.NORMAL },
+				{ 
+					priority: NotificationPriority.NORMAL,
+					customData: {
+						screen: '/checkins',
+						action: 'view_checkin',
+						checkInId: checkIn.uid,
+						clientId: checkIn.client?.uid,
+					},
+				},
 			);
 
 			// If organization ID is provided, notify admins
@@ -231,36 +255,46 @@ export class CheckInsService {
 				const orgAdmins = await this.getOrganizationAdmins(orgId);
 				if (orgAdmins.length > 0) {
 					// Send detailed notification to admins
-					await this.unifiedNotificationService.sendNotification({
-						event: NotificationEvent.GENERAL_NOTIFICATION,
-						title: '📍 Staff Check-in Alert',
-						message: `${userName} has checked in at ${locationDetails}${coordinatesInfo}`,
-						priority: NotificationPriority.LOW,
-						channel: NotificationChannel.GENERAL,
-						recipients: orgAdmins.map((admin) => ({
-							userId: admin.uid,
-							email: admin.email,
-						})),
-						data: {
-							id: checkIn.uid,
-							screen: '/checkins',
-							action: 'view_checkin',
-							type: 'admin_checkin_alert',
-							metadata: {
-								userId,
-								userName,
-								checkInId: checkIn.uid,
+					await this.unifiedNotificationService.sendTemplatedNotification(
+						NotificationEvent.ATTENDANCE_SHIFT_STARTED,
+						orgAdmins.map(admin => admin.uid),
+						{
+							userName: userName,
+							clientName: checkIn.client?.name || 'Location',
+							checkInId: checkIn.uid,
+							checkInTime: checkIn.checkInTime,
+							location: locationDetails,
+							coordinates: checkIn.checkInLocation,
+							orgId,
+							branchId,
+							timestamp: new Date().toISOString(),
+							adminNotification: true,
+							checkInDetails: {
+								id: checkIn.uid,
+								userId: userId,
+								userName: userName,
+								clientName: checkIn.client?.name || 'Location',
+								clientId: checkIn.client?.uid,
 								checkInTime: checkIn.checkInTime,
-								location: locationDetails,
-								coordinates: checkIn.checkInLocation,
-								clientName: checkIn.client?.name,
+								location: checkIn.checkInLocation,
+								notes: checkIn.notes,
+								createdAt: checkIn.createdAt?.toISOString(),
 								orgId,
 								branchId,
-								adminContext: true,
-								timestamp: new Date().toISOString(),
 							},
 						},
-					});
+						{
+							priority: NotificationPriority.LOW,
+							customData: {
+								screen: '/checkins',
+								action: 'view_checkin',
+								checkInId: checkIn.uid,
+								clientId: checkIn.client?.uid,
+								userId: userId,
+								adminContext: true,
+							},
+						},
+					);
 				}
 			}
 		} catch (error) {
@@ -315,20 +349,48 @@ export class CheckInsService {
 					? ` (${checkIn.checkOutLocation})` 
 					: '';
 
-			// Send notification to the user using CHECKOUT_COMPLETED template
+			// Send detailed notification to the user using CHECKOUT_COMPLETED template
 			await this.unifiedNotificationService.sendTemplatedNotification(
 				NotificationEvent.CHECKOUT_COMPLETED,
 				[Number(userId)],
 				{
+					userName: userName,
 					clientName: checkIn.client?.name || 'Location',
 					duration: duration,
 					checkInId: checkIn.uid,
 					checkOutTime: checkIn.checkOutTime,
+					location: locationDetails,
+					address: fullAddress,
 					orgId,
 					branchId,
 					timestamp: new Date().toISOString(),
+					checkOutDetails: {
+						id: checkIn.uid,
+						userId: userId,
+						userName: userName,
+						clientName: checkIn.client?.name || 'Location',
+						clientId: checkIn.client?.uid,
+						checkInTime: checkIn.checkInTime,
+						checkOutTime: checkIn.checkOutTime,
+						duration: duration,
+						location: checkIn.checkOutLocation,
+						address: fullAddress,
+						notes: checkIn.notes,
+						createdAt: checkIn.createdAt?.toISOString(),
+						updatedAt: checkIn.updatedAt?.toISOString(),
+						orgId,
+						branchId,
+					},
 				},
-				{ priority: NotificationPriority.NORMAL },	
+				{ 
+					priority: NotificationPriority.NORMAL,
+					customData: {
+						screen: '/checkins',
+						action: 'view_checkin',
+						checkInId: checkIn.uid,
+						clientId: checkIn.client?.uid,
+					},
+				},	
 			);
 
 			// If organization ID is provided, notify admins
@@ -336,38 +398,51 @@ export class CheckInsService {
 				const orgAdmins = await this.getOrganizationAdmins(orgId);
 				if (orgAdmins.length > 0) {
 					// Send detailed notification to admins
-					await this.unifiedNotificationService.sendNotification({
-						event: NotificationEvent.GENERAL_NOTIFICATION,
-						title: '📍 Staff Check-out Alert',
-						message: `${userName} has checked out from ${locationDetails}${addressInfo} after ${duration}`,
-						priority: NotificationPriority.LOW,
-						channel: NotificationChannel.GENERAL,
-						recipients: orgAdmins.map((admin) => ({
-							userId: admin.uid,
-							email: admin.email,
-						})),
-						data: {
-							id: checkIn.uid,
-							screen: '/checkins',
-							action: 'view_checkin',
-							type: 'admin_checkout_alert',
-							metadata: {
-								userId,
-								userName,
-								checkInId: checkIn.uid,
+					await this.unifiedNotificationService.sendTemplatedNotification(
+						NotificationEvent.ATTENDANCE_SHIFT_ENDED,
+						orgAdmins.map(admin => admin.uid),
+						{
+							userName: userName,
+							clientName: checkIn.client?.name || 'Location',
+							duration: duration,
+							checkInId: checkIn.uid,
+							checkOutTime: checkIn.checkOutTime,
+							location: locationDetails,
+							address: fullAddress,
+							orgId,
+							branchId,
+							timestamp: new Date().toISOString(),
+							adminNotification: true,
+							checkOutDetails: {
+								id: checkIn.uid,
+								userId: userId,
+								userName: userName,
+								clientName: checkIn.client?.name || 'Location',
+								clientId: checkIn.client?.uid,
+								checkInTime: checkIn.checkInTime,
 								checkOutTime: checkIn.checkOutTime,
 								duration: duration,
-								location: locationDetails,
-								fullAddress: fullAddress,
-								coordinates: checkIn.checkOutLocation,
-								clientName: checkIn.client?.name,
+								location: checkIn.checkOutLocation,
+								address: fullAddress,
+								notes: checkIn.notes,
+								createdAt: checkIn.createdAt?.toISOString(),
+								updatedAt: checkIn.updatedAt?.toISOString(),
 								orgId,
 								branchId,
-								adminContext: true,
-								timestamp: new Date().toISOString(),
 							},
 						},
-					});
+						{
+							priority: NotificationPriority.LOW,
+							customData: {
+								screen: '/checkins',
+								action: 'view_checkin',
+								checkInId: checkIn.uid,
+								clientId: checkIn.client?.uid,
+								userId: userId,
+								adminContext: true,
+							},
+						},
+					);
 				}
 			}
 		} catch (error) {

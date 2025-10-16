@@ -655,7 +655,6 @@ export class AttendanceService {
 					NotificationEvent.ATTENDANCE_SHIFT_STARTED,
 					[checkInDto.owner.uid],
 					{
-						message: `Welcome to work, ${userName}! 🟢 Your shift started successfully at {checkInTime:time}. Have a productive day ahead!`,
 						checkInTime,
 						userName,
 						userId: checkInDto.owner.uid,
@@ -1152,7 +1151,6 @@ export class AttendanceService {
 					NotificationEvent.ATTENDANCE_SHIFT_ENDED,
 					[checkOutDto.owner.uid],
 					{
-						message: `Great work today, ${userName}! 🔴 You've successfully completed your shift. Worked from {checkInTime:time} to {checkOutTime:time} for a total of {workTimeDisplay:duration}. Rest well and see you tomorrow!`,
 						checkOutTime: checkOutTimeString,
 						checkInTime: checkInTimeString,
 						duration,
@@ -1217,7 +1215,6 @@ export class AttendanceService {
 									NotificationEvent.ATTENDANCE_OVERTIME_REMINDER,
 									[checkOutDto.owner.uid],
 									{
-										message: `Wow, ${userName}! 💪 You worked ${overtimeDuration} of overtime today. Your dedication is truly appreciated! Please ensure you get adequate rest and take care of yourself. Thank you for going above and beyond!`,
 										overtimeDuration,
 										overtimeHours: overtimeInfo.overtimeMinutes / 60,
 										regularHours: (workSession.netWorkMinutes - overtimeInfo.overtimeMinutes) / 60,
@@ -1566,62 +1563,59 @@ export class AttendanceService {
 			switch (reminderType) {
 				case 'pre_start':
 					notificationType = NotificationEvent.ATTENDANCE_SHIFT_START_REMINDER;
-					message = `Good morning ${user?.name || 'there'}! ⏰ Your shift starts in 30 minutes at {shiftStartTime:time}. Please prepare to check in on time. Have a productive day ahead!`;
 					notificationData.shiftStartTime = expectedShiftTime;
+					notificationData.userName = user?.name || 'there';
 					priority = NotificationPriority.NORMAL;
 					break;
 
 				case 'start':
 					notificationType = NotificationEvent.ATTENDANCE_SHIFT_STARTED;
-					message = `Hi ${user?.name || 'there'}! 🟢 Your shift has started. Please check in now to record your attendance. Current time: {currentTime:time}`;
 					notificationData.shiftStartTime = expectedShiftTime;
 					notificationData.currentTime = currentTime;
+					notificationData.userName = user?.name || 'there';
 					priority = NotificationPriority.NORMAL;
 					break;
 
 				case 'pre_end':
 					notificationType = NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER;
-					message = `Hi ${user?.name || 'there'}! ⏰ Your shift ends in 30 minutes at {shiftEndTime:time}. Please prepare to check out and wrap up your work. Thank you for your dedication today!`;
 					notificationData.shiftEndTime = expectedEndTime;
+					notificationData.userName = user?.name || 'there';
 					priority = NotificationPriority.NORMAL;
 					break;
 
 				case 'end':
 					notificationType = NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER;
-					message = `Hi ${user?.name || 'there'}! 🔴 Your shift has ended. Please check out now to record your work hours accurately. Current time: {currentTime:time}`;
 					notificationData.shiftEndTime = expectedEndTime;
 					notificationData.currentTime = currentTime;
+					notificationData.userName = user?.name || 'there';
 					priority = NotificationPriority.HIGH;
 					break;
 
 				case 'missed':
 					notificationType = NotificationEvent.ATTENDANCE_MISSED_SHIFT_ALERT;
-					message = `Hi ${user?.name || 'there'}! ⚠️ You missed your scheduled shift that was supposed to start at {shiftStartTime:time}. Please contact your supervisor if there was an emergency. We hope everything is okay!`;
 					notificationData.shiftStartTime = expectedShiftTime;
+					notificationData.userName = user?.name || 'there';
 					priority = NotificationPriority.HIGH;
 					break;
 
 				case 'late':
 					notificationType = NotificationEvent.ATTENDANCE_LATE_SHIFT_ALERT;
 					if (lateMinutes && lateMinutes > 0) {
-						message = `Hi ${user?.name || 'there'}! ⏰ You checked in {lateMinutes:number} minutes late for your shift. Please try to be punctual in the future. Thanks for checking in!`;
 						notificationData.lateMinutes = lateMinutes;
 					} else {
-						message = `Hi ${user?.name || 'there'}! ⏰ You are running late for your shift. Please check in as soon as possible. Current time: {currentTime:time}`;
 						notificationData.currentTime = currentTime;
 					}
 					notificationData.shiftStartTime = expectedShiftTime;
+					notificationData.userName = user?.name || 'there';
 					priority = NotificationPriority.HIGH;
 					break;
 
 				case 'overtime':
 					notificationType = NotificationEvent.ATTENDANCE_OVERTIME_REMINDER;
 					if (overtimeMinutes && overtimeMinutes > 0) {
-						message = `Hi ${user?.name || 'there'}! ⏰ You've worked {overtimeMinutes:duration} of overtime today. Great dedication! Please ensure you get adequate rest and consider checking out when possible.`;
 						notificationData.overtimeMinutes = overtimeMinutes;
-					} else {
-						message = `Hi ${user?.name || 'there'}! ⏰ You're working overtime today. Great dedication! Please ensure you take care of yourself and get adequate rest.`;
 					}
+					notificationData.userName = user?.name || 'there';
 					priority = NotificationPriority.HIGH;
 					break;
 
@@ -1630,8 +1624,6 @@ export class AttendanceService {
 					return;
 			}
 
-		// Update message in notification data
-		notificationData.message = message;
 
 		// Add navigation data for mobile app with context-aware routing
 		notificationData.screen = '/hr/attendance';
@@ -1835,28 +1827,6 @@ export class AttendanceService {
 
 							const userName = user ? user.name : 'there';
 
-							// Generate appropriate message based on duration and level
-							let message = '';
-							let emoji = '';
-
-							switch (interval.level) {
-								case 'gentle':
-									message = `Hi ${userName}! ☕ You've been on break for ${interval.minutes} minutes. Hope you're enjoying your refreshing break time!`;
-									emoji = '☕';
-									break;
-								case 'moderate':
-									message = `Hey ${userName}! ⏰ You've been on break for ${interval.minutes} minutes. Consider wrapping up your break soon to stay on track with your day.`;
-									emoji = '⏰';
-									break;
-								case 'strong':
-									message = `Hello ${userName}! ⚠️ You've been on break for ${interval.minutes} minutes. It might be time to head back to work to maintain productivity.`;
-									emoji = '⚠️';
-									break;
-								case 'urgent':
-									message = `${userName}! 🚨 You've been on break for ${interval.minutes} minutes (1 hour). Please return to work as soon as possible to avoid affecting your shift metrics.`;
-									emoji = '🚨';
-									break;
-							}
 
 							this.logger.debug(
 								`[${operationId}] Sending ${interval.level} break duration notification to user: ${breakRecord.owner.uid} - ${interval.minutes} minutes`,
@@ -1866,7 +1836,6 @@ export class AttendanceService {
 								NotificationEvent.ATTENDANCE_BREAK_STARTED,
 								[breakRecord.owner.uid],
 								{
-									message,
 									breakDurationMinutes: interval.minutes,
 									breakStartTime: await this.formatTimeInOrganizationTimezone(breakStartTime, breakRecord.owner.organisation?.uid),
 									currentTime: await this.formatTimeInOrganizationTimezone(now, breakRecord.owner.organisation?.uid),
@@ -1955,7 +1924,6 @@ export class AttendanceService {
 					NotificationEvent.ATTENDANCE_BREAK_STARTED,
 					orgAdmins.map((admin) => admin.uid),
 					{
-						message: `Employee ${user.name} ${user.surname} has been on a ${breakLevel} break for ${breakDurationMinutes} minutes (started at ${breakStartTimeString}). This may require ${urgencyLevel}.`,
 						employeeName: `${user.name} ${user.surname}`.trim(),
 						employeeEmail: user.email,
 						breakDurationMinutes,
@@ -2172,7 +2140,6 @@ export class AttendanceService {
 					NotificationEvent.ATTENDANCE_SHIFT_START_REMINDER,
 					[user.uid],
 					{
-						message: `Good morning! Your shift starts in 30 minutes at ${startTime}. Please prepare to check in on time.`,
 						shiftStartTime: startTime,
 						reminderType: 'pre_shift',
 						userName: `${user.name} ${user.surname}`.trim(),
@@ -2241,7 +2208,6 @@ export class AttendanceService {
 						NotificationEvent.ATTENDANCE_MISSED_SHIFT_ALERT,
 						[user.uid],
 						{
-							message: `You missed your scheduled shift that was supposed to start at ${startTime}. Please contact your supervisor if there was an emergency.`,
 							shiftStartTime: startTime,
 							reminderType: 'missed_shift',
 							userName: `${user.name} ${user.surname}`.trim(),
@@ -2313,7 +2279,6 @@ export class AttendanceService {
 						NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER,
 						[user.uid],
 						{
-							message: `Your shift ends in 30 minutes at ${endTime}. Please prepare to check out and wrap up your work.`,
 							shiftEndTime: endTime,
 							reminderType: 'pre_checkout',
 							userName: `${user.name} ${user.surname}`.trim(),
@@ -2382,7 +2347,6 @@ export class AttendanceService {
 						NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER,
 						[user.uid],
 						{
-							message: `You forgot to check out! Your shift was scheduled to end at ${endTime}. Please check out now to record your work hours accurately.`,
 							shiftEndTime: endTime,
 							reminderType: 'missed_checkout',
 							userName: `${user.name} ${user.surname}`.trim(),
@@ -2434,7 +2398,6 @@ export class AttendanceService {
 					NotificationEvent.ATTENDANCE_MISSED_SHIFT_ALERT,
 					orgAdmins.map((admin) => admin.uid),
 					{
-						message: `Employee ${user.name} ${user.surname} missed their scheduled shift that was supposed to start at ${startTime}.`,
 						employeeName: `${user.name} ${user.surname}`.trim(),
 						employeeEmail: user.email,
 						shiftStartTime: startTime,
@@ -2474,7 +2437,6 @@ export class AttendanceService {
 					NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER,
 					orgAdmins.map((admin) => admin.uid),
 					{
-						message: `Employee ${user.name} ${user.surname} forgot to check out. They checked in at ${checkInTime} but missed checkout at ${endTime}.`,
 						employeeName: `${user.name} ${user.surname}`.trim(),
 						employeeEmail: user.email,
 						checkInTime,
@@ -3471,7 +3433,6 @@ export class AttendanceService {
 					NotificationEvent.ATTENDANCE_BREAK_STARTED,
 					[breakDto.owner.uid],
 					{
-						message: `Time for a well-deserved break, ${userName}! ☕ Your ${breakNumber} break started at ${breakStartTimeString}. Take your time to recharge and refresh yourself!`,
 						breakStartTime: breakStartTimeString,
 						breakCount: breakCount,
 						breakNumber,
@@ -3619,7 +3580,6 @@ export class AttendanceService {
 					NotificationEvent.ATTENDANCE_BREAK_ENDED,
 					[breakDto.owner.uid],
 					{
-						message: `Welcome back, ${userName}! 🚀 Your break is complete. You were refreshing from ${breakStartTimeString} to ${breakEndTimeString} (${currentBreakDuration}). Hope you're feeling recharged and ready to tackle the rest of your day!`,
 						breakDuration: currentBreakDuration,
 						breakStartTime: breakStartTimeString,
 						breakEndTime: breakEndTimeString,

@@ -1976,6 +1976,17 @@ export class TasksService {
 		try {
 			const userIds = new Set<number>();
 
+			// Fetch client names if clients exist
+			let clientNames = 'No Client';
+			if (task.clients?.length > 0) {
+				const clientIds = task.clients.map((c) => c.uid);
+				const clientProfiles = await this.clientRepository.find({
+					where: { uid: In(clientIds) },
+					select: ['name'],
+				});
+				clientNames = clientProfiles.map(c => c.name).join(', ') || 'No Client';
+			}
+
 			// Collect all user IDs
 			if (task.creator?.uid) {
 				userIds.add(task.creator.uid);
@@ -1996,7 +2007,7 @@ export class TasksService {
 				return;
 			}
 
-			// Send push notification for task flag creation
+			// Send detailed push notification for task flag creation
 			await this.unifiedNotificationService.sendTemplatedNotification(
 				NotificationEvent.TASK_FLAG_CREATED,
 				activeUserIds,
@@ -2006,12 +2017,50 @@ export class TasksService {
 					flagTitle: savedFlag.title,
 					flagCreatedBy: `${user.name} ${user.surname || ''}`.trim(),
 					flagDescription: savedFlag.description,
+					itemsCount: savedItems.length,
+					items: savedItems.map(item => ({
+						id: item.uid,
+						title: item.title,
+						description: item.description,
+						status: item.status,
+					})),
+					taskDetails: {
+						id: task.uid,
+						title: task.title,
+						description: task.description,
+						priority: task.priority,
+						status: task.status,
+						deadline: task.deadline?.toISOString(),
+						assignees: task.assignees?.map((a: any) => a.name || a.username) || [],
+						creator: task.creator?.name || task.creator?.username || 'Unknown',
+						client: clientNames,
+						createdAt: task.createdAt?.toISOString(),
+						updatedAt: task.updatedAt?.toISOString(),
+					},
+					flagDetails: {
+						id: savedFlag.uid,
+						title: taskFlag.title,
+						description: taskFlag.description,
+						createdBy: `${user.name} ${user.surname || ''}`.trim(),
+						createdAt: savedFlag.createdAt?.toISOString(),
+						items: savedItems.map(item => ({
+							id: item.uid,
+							title: item.title,
+							description: item.description,
+							status: item.status,
+							createdAt: item.createdAt?.toISOString(),
+						})),
+					},
 				},
 				{
 					priority: NotificationPriority.HIGH,
 					customData: {
 						screen: '/sales/tasks',
-						action: 'view_task',
+						action: 'view_task_flag',
+						taskId: task.uid,
+						flagId: savedFlag.uid,
+						flagTitle: taskFlag.title,
+						itemsCount: savedItems.length,
 					},
 				},
 			);

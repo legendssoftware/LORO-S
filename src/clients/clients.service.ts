@@ -29,6 +29,8 @@ import { AccessLevel } from '../lib/enums/user.enums';
 import { addDays, addWeeks, addMonths, addYears, format, startOfDay, setHours, setMinutes, isWeekend } from 'date-fns';
 import { BulkCreateClientDto, BulkCreateClientResponse, BulkClientResult } from './dto/bulk-create-client.dto';
 import { BulkUpdateClientDto, BulkUpdateClientResponse, BulkUpdateClientResult } from './dto/bulk-update-client.dto';
+import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
+import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
 
 @Injectable()
 export class ClientsService {
@@ -58,6 +60,7 @@ export class ClientsService {
 		private readonly communicationScheduleService: ClientCommunicationScheduleService,
 		private readonly tasksService: TasksService,
 		private readonly dataSource: DataSource,
+		private readonly unifiedNotificationService: UnifiedNotificationService,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
 
@@ -1630,58 +1633,82 @@ export class ClientsService {
 					this.configService.get<string>('DASHBOARD_URL') || 'https://dashboard.yourapp.com';
 				const dashboardLink = `${dashboardBaseUrl}/clients/${updatedClient.uid}`;
 
-				// 1. Send email to the client
+				// 1. Send detailed push notification to the client
 				if (updatedClient.email) {
-					// Prepare client email data
-					const clientEmailData: LeadConvertedClientData = {
-						name: updatedClient.name,
-						clientId: updatedClient.uid,
-						conversionDate: formattedDate,
-						dashboardLink,
-						// Include sales rep info if available
-						...(updatedClient.assignedSalesRep
-							? {
-									accountManagerName: updatedClient.assignedSalesRep.name,
-									accountManagerEmail: updatedClient.assignedSalesRep.email,
-									accountManagerPhone: updatedClient.assignedSalesRep.phone,
-							  }
-							: {}),
-						// Some example next steps - customize as needed
-						nextSteps: [
-							'Complete your profile information',
-							'Schedule an onboarding call with your account manager',
-							'Explore available products and services',
-						],
-					};
-
-					// Emit event to send client email with type-safe enum
-					this.eventEmitter.emit(
-						'send.email',
-						EmailType.LEAD_CONVERTED_CLIENT,
-						[updatedClient.email],
-						clientEmailData,
+					// Send push notification to client about conversion
+					await this.unifiedNotificationService.sendTemplatedNotification(
+						NotificationEvent.LEAD_CONVERTED,
+						[updatedClient.uid], // Assuming client has a user account
+						{
+							name: updatedClient.name,
+							clientId: updatedClient.uid,
+							conversionDate: formattedDate,
+							dashboardLink,
+							accountManagerName: updatedClient.assignedSalesRep?.name || 'Sales Team',
+							accountManagerEmail: updatedClient.assignedSalesRep?.email || 'sales@company.com',
+							accountManagerPhone: updatedClient.assignedSalesRep?.phone || 'N/A',
+							nextSteps: [
+								'Complete your profile information',
+								'Schedule an onboarding call with your account manager',
+								'Explore available products and services',
+							],
+							conversionDetails: {
+								clientId: updatedClient.uid,
+								clientName: updatedClient.name,
+								clientEmail: updatedClient.email,
+								conversionDate: formattedDate,
+								assignedSalesRep: updatedClient.assignedSalesRep?.name || 'Sales Team',
+								organization: updatedClient.organisation?.name || 'Organization',
+								branch: updatedClient.branch?.name || 'Branch',
+							},
+						},
+						{
+							priority: NotificationPriority.HIGH,
+							customData: {
+								screen: '/home/clients',
+								action: 'view_client',
+								clientId: updatedClient.uid,
+								conversionType: 'lead_to_client',
+							},
+						},
 					);
 				}
 
-				// 2. Send email to the lead creator/sales rep
-				if (updatedClient.assignedSalesRep?.email) {
-					// Prepare creator email data
-					const creatorEmailData: LeadConvertedCreatorData = {
-						name: updatedClient.assignedSalesRep.name,
-						clientId: updatedClient.uid,
-						clientName: updatedClient.name,
-						clientEmail: updatedClient.email,
-						clientPhone: updatedClient.phone,
-						conversionDate: formattedDate,
-						dashboardLink,
-					};
-
-					// Emit event to send creator email with type-safe enum
-					this.eventEmitter.emit(
-						'send.email',
-						EmailType.LEAD_CONVERTED_CREATOR,
-						[updatedClient.assignedSalesRep.email],
-						creatorEmailData,
+				// 2. Send detailed push notification to the lead creator/sales rep
+				if (updatedClient.assignedSalesRep?.uid) {
+					await this.unifiedNotificationService.sendTemplatedNotification(
+						NotificationEvent.LEAD_CONVERTED,
+						[updatedClient.assignedSalesRep.uid],
+						{
+							name: updatedClient.assignedSalesRep.name,
+							clientId: updatedClient.uid,
+							clientName: updatedClient.name,
+							clientEmail: updatedClient.email,
+							clientPhone: updatedClient.phone,
+							conversionDate: formattedDate,
+							dashboardLink,
+							conversionDetails: {
+								salesRepId: updatedClient.assignedSalesRep.uid,
+								salesRepName: updatedClient.assignedSalesRep.name,
+								clientId: updatedClient.uid,
+								clientName: updatedClient.name,
+								clientEmail: updatedClient.email,
+								clientPhone: updatedClient.phone,
+								conversionDate: formattedDate,
+								organization: updatedClient.organisation?.name || 'Organization',
+								branch: updatedClient.branch?.name || 'Branch',
+							},
+						},
+						{
+							priority: NotificationPriority.HIGH,
+							customData: {
+								screen: '/home/clients',
+								action: 'view_client',
+								clientId: updatedClient.uid,
+								salesRepId: updatedClient.assignedSalesRep.uid,
+								conversionType: 'lead_to_client',
+							},
+						},
 					);
 				}
 			}
