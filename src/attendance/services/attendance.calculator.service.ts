@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { differenceInMinutes, differenceInMilliseconds } from 'date-fns';
 import { TimeCalculatorUtil, WorkSession } from '../../lib/utils/time-calculator.util';
+import { TimezoneUtil } from '../../lib/utils/timezone.util';
 import { OrganizationHoursService } from './organization.hours.service';
 import { Attendance } from '../entities/attendance.entity';
 import { BreakDetail } from '../../lib/interfaces/break-detail.interface';
@@ -230,8 +231,13 @@ export class AttendanceCalculatorService {
 
 	/**
 	 * Calculate average times with enhanced precision
+	 * @param attendanceRecords - Array of attendance records
+	 * @param organizationTimezone - Optional timezone for conversion (e.g., 'Africa/Johannesburg')
 	 */
-	calculateAverageTimes(attendanceRecords: Attendance[]): {
+	calculateAverageTimes(
+		attendanceRecords: Attendance[], 
+		organizationTimezone?: string
+	): {
 		averageCheckInTime: string;
 		averageCheckOutTime: string;
 		averageShiftDuration: number;
@@ -246,13 +252,23 @@ export class AttendanceCalculatorService {
 			};
 		}
 
-		// Calculate average check-in time
-		const checkInTimes = attendanceRecords.map((record) => new Date(record.checkIn));
+		// Calculate average check-in time with timezone conversion
+		const checkInTimes = attendanceRecords.map((record) => {
+			const time = new Date(record.checkIn);
+			return organizationTimezone 
+				? TimezoneUtil.toOrganizationTime(time, organizationTimezone)
+				: time;
+		});
 		const averageCheckInTime = TimeCalculatorUtil.calculateAverageTime(checkInTimes);
 
-		// Calculate average check-out time
+		// Calculate average check-out time with timezone conversion
 		const completedShifts = attendanceRecords.filter((record) => record.checkOut);
-		const checkOutTimes = completedShifts.map((record) => new Date(record.checkOut!));
+		const checkOutTimes = completedShifts.map((record) => {
+			const time = new Date(record.checkOut!);
+			return organizationTimezone
+				? TimezoneUtil.toOrganizationTime(time, organizationTimezone)
+				: time;
+		});
 		const averageCheckOutTime = TimeCalculatorUtil.calculateAverageTime(checkOutTimes);
 
 		// Calculate average shift duration

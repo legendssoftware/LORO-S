@@ -2673,13 +2673,13 @@ export class AttendanceService {
 				},
 			};
 
-			this.logger.log(
-				`[${operationId}] Daily attendance overview generated: ${presentUsers.length} present, ${absentUsers.length} absent, ${attendanceRate}% rate`,
-			);
+		this.logger.log(
+			`[${operationId}] Daily attendance overview generated: ${presentUsers.length} present, ${absentUsers.length} absent, ${attendanceRate}% rate`,
+		);
 
-			// Apply timezone conversion to response data using enhanced method
-			const responseWithTimezone = await this.ensureTimezoneConversion(response, orgId);
-			return responseWithTimezone;
+		// Timezone conversion already applied to attendance records at line 2566
+		// No need for second conversion to avoid double timezone shift
+		return response;
 		} catch (error) {
 			this.logger.error(`[${operationId}] Error generating daily attendance overview:`, error.stack);
 			return {
@@ -3771,12 +3771,12 @@ export class AttendanceService {
 				relations: ['organisation'],
 			});
 
-			// Apply timezone conversion to first and last attendance if they exist
-			const firstAttendance = firstAttendanceRaw ? await this.convertAttendanceRecordTimezone(firstAttendanceRaw, firstAttendanceRaw.organisation?.uid) : null;
-			const lastAttendance = lastAttendanceRaw ? await this.convertAttendanceRecordTimezone(lastAttendanceRaw, lastAttendanceRaw.organisation?.uid) : null;
-			
-			this.logger.debug(`Converted first attendance: ${firstAttendance ? firstAttendance.checkIn.toISOString() : 'null'}`);
-			this.logger.debug(`Converted last attendance: ${lastAttendance ? lastAttendance.checkIn.toISOString() : 'null'}`);
+		// Keep raw attendance records - timezone conversion will be applied during formatting
+		const firstAttendance = firstAttendanceRaw;
+		const lastAttendance = lastAttendanceRaw;
+		
+		this.logger.debug(`First attendance (raw): ${firstAttendance ? firstAttendance.checkIn.toISOString() : 'null'}`);
+		this.logger.debug(`Last attendance (raw): ${lastAttendance ? lastAttendance.checkIn.toISOString() : 'null'}`);
 
 			// Get organization ID for timezone formatting
 			const organizationId = firstAttendance?.organisation?.uid || lastAttendance?.organisation?.uid;
@@ -3902,15 +3902,23 @@ export class AttendanceService {
 			const shortestBreak =
 				allTimeBreaks.breakDurations.length > 0 ? Math.min(...allTimeBreaks.breakDurations) : 0;
 
-			// ===== ENHANCED TIMING PATTERNS =====
-			const checkInTimes = allAttendance.map((record) => new Date(record.checkIn));
-			const checkOutTimes = allAttendance
-				.filter((record) => record.checkOut)
-				.map((record) => new Date(record.checkOut!));
+		// ===== ENHANCED TIMING PATTERNS =====
+		// Get organization timezone for proper conversion
+		const timezone = await this.getOrganizationTimezone(organizationId);
+		
+		// Convert times to organization timezone before calculating averages
+		const checkInTimes = allAttendance.map((record) => 
+			TimezoneUtil.toOrganizationTime(new Date(record.checkIn), timezone)
+		);
+		const checkOutTimes = allAttendance
+			.filter((record) => record.checkOut)
+			.map((record) => 
+				TimezoneUtil.toOrganizationTime(new Date(record.checkOut!), timezone)
+			);
 
-			// Use enhanced average time calculation
-			const averageCheckInTime = TimeCalculatorUtil.calculateAverageTime(checkInTimes);
-			const averageCheckOutTime = TimeCalculatorUtil.calculateAverageTime(checkOutTimes);
+		// Use enhanced average time calculation with timezone-converted times
+		const averageCheckInTime = TimeCalculatorUtil.calculateAverageTime(checkInTimes);
+		const averageCheckOutTime = TimeCalculatorUtil.calculateAverageTime(checkOutTimes);
 
 			// Enhanced punctuality and overtime calculation using organization hours
 			let punctualityScore = 0;
@@ -4177,12 +4185,19 @@ export class AttendanceService {
 			const longestShiftMinutes = Math.max(...shiftDurations, 0);
 			const shortestShiftMinutes = Math.min(...shiftDurations, longestShiftMinutes);
 
-			// Calculate time patterns
-			const checkInTimes = completedShifts.map((record) => new Date(record.checkIn));
-			const checkOutTimes = completedShifts.map((record) => new Date(record.checkOut));
+		// Calculate time patterns with timezone conversion
+		const timezone = await this.getOrganizationTimezone(organizationId);
+		
+		// Convert times to organization timezone before calculating averages
+		const checkInTimes = completedShifts.map((record) => 
+			TimezoneUtil.toOrganizationTime(new Date(record.checkIn), timezone)
+		);
+		const checkOutTimes = completedShifts.map((record) => 
+			TimezoneUtil.toOrganizationTime(new Date(record.checkOut), timezone)
+		);
 
-			const averageCheckInTime = TimeCalculatorUtil.calculateAverageTime(checkInTimes);
-			const averageCheckOutTime = TimeCalculatorUtil.calculateAverageTime(checkOutTimes);
+		const averageCheckInTime = TimeCalculatorUtil.calculateAverageTime(checkInTimes);
+		const averageCheckOutTime = TimeCalculatorUtil.calculateAverageTime(checkOutTimes);
 
 			// Calculate attendance rate
 			const daysBetween = differenceInDays(parsedEndDate, parsedStartDate) + 1;
@@ -4606,8 +4621,8 @@ export class AttendanceService {
 				userMetrics = await this.generateAllUsersMetrics(users, attendanceRecords);
 			}
 
-			// PART 2: Organization-level metrics
-			const organizationMetrics = await this.calculateOrganizationMetrics(attendanceRecords, users);
+		// PART 2: Organization-level metrics with timezone support
+		const organizationMetrics = await this.calculateOrganizationMetrics(attendanceRecords, users, orgId);
 
 			const report = {
 				reportPeriod: {
@@ -4702,12 +4717,12 @@ export class AttendanceService {
 		}
 	}
 
-	private async calculateOrganizationMetrics(attendanceRecords: Attendance[], users: User[]): Promise<any> {
+	private async calculateOrganizationMetrics(attendanceRecords: Attendance[], users: User[], organizationId?: number): Promise<any> {
 		try {
 			const completedShifts = attendanceRecords.filter((record) => record.checkOut);
 
-			// Calculate average times
-			const averageTimes = this.calculateAverageTimes(attendanceRecords);
+			// Calculate average times with timezone conversion
+			const averageTimes = await this.calculateAverageTimes(attendanceRecords, organizationId);
 
 			// Calculate totals
 			const totals = await this.calculateTotals(attendanceRecords, users);
@@ -4734,7 +4749,7 @@ export class AttendanceService {
 		}
 	}
 
-	private calculateAverageTimes(attendanceRecords: Attendance[]): any {
+	private async calculateAverageTimes(attendanceRecords: Attendance[], organizationId?: number): Promise<any> {
 		try {
 			if (attendanceRecords.length === 0) {
 				return {
@@ -4745,8 +4760,11 @@ export class AttendanceService {
 				};
 			}
 
-			// Use enhanced calculation service for average times
-			const averageTimes = this.attendanceCalculatorService.calculateAverageTimes(attendanceRecords);
+			// Get organization timezone for proper conversion
+			const timezone = await this.getOrganizationTimezone(organizationId);
+
+			// Use enhanced calculation service for average times with timezone
+			const averageTimes = this.attendanceCalculatorService.calculateAverageTimes(attendanceRecords, timezone);
 
 			return {
 				startTime: averageTimes.averageCheckInTime,
