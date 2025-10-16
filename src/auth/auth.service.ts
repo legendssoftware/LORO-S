@@ -91,25 +91,29 @@ export class AuthService {
 							});
 
 							this.logger.debug(`Sending failed login push notification to user: ${username}`);
-							await this.unifiedNotificationService.sendTemplatedNotification(
-								NotificationEvent.AUTH_LOGIN_FAILED,
-								[userByEmail.user.uid],
-								{
-									message: `🚨 Security Alert: Failed login attempt detected on your account on ${attemptDate} at ${attemptTime}. If this wasn't you, please secure your account immediately.`,
-									userName: userByEmail.user.name || username,
-									attemptTime,
-									attemptDate,
-									ipAddress: requestData?.ipAddress || 'Unknown',
-									location: requestData?.location || 'Unknown',
-									deviceType: requestData?.deviceType || 'Unknown',
-									browser: requestData?.browser || 'Unknown',
-									securityTip: 'Change your password immediately if you suspect unauthorized access',
-									timestamp: new Date().toISOString(),
+						await this.unifiedNotificationService.sendTemplatedNotification(
+							NotificationEvent.AUTH_LOGIN_FAILED,
+							[userByEmail.user.uid],
+							{
+								message: `🚨 Security Alert: Failed login attempt detected on your account on ${attemptDate} at ${attemptTime}. If this wasn't you, please secure your account immediately.`,
+								userName: userByEmail.user.name || username,
+								attemptTime,
+								attemptDate,
+								ipAddress: requestData?.ipAddress || 'Unknown',
+								location: requestData?.location || 'Unknown',
+								deviceType: requestData?.deviceType || 'Unknown',
+								browser: requestData?.browser || 'Unknown',
+								securityTip: 'Change your password immediately if you suspect unauthorized access',
+								timestamp: new Date().toISOString(),
+							},
+							{
+								priority: NotificationPriority.HIGH,
+								customData: {
+									screen: '/profile',
+									action: 'view_security',
 								},
-								{
-									priority: NotificationPriority.HIGH,
-								},
-							);
+							},
+						);
 							this.logger.debug(`Failed login push notification sent to user: ${username}`);
 						} catch (notificationError) {
 							this.logger.warn(
@@ -146,25 +150,29 @@ export class AuthService {
 					});
 
 					this.logger.debug(`Sending failed login push notification for invalid password: ${username}`);
-					await this.unifiedNotificationService.sendTemplatedNotification(
-						NotificationEvent.AUTH_LOGIN_FAILED,
-						[authProfile.user.uid],
-						{
-							message: `🚨 Security Alert: Failed login attempt detected on your account on ${attemptDate} at ${attemptTime}. If this wasn't you, please secure your account immediately.`,
-							userName: authProfile.user.name || authProfile.user.email,
-							attemptTime,
-							attemptDate,
-							ipAddress: requestData?.ipAddress || 'Unknown',
-							location: requestData?.location || 'Unknown',
-							deviceType: requestData?.deviceType || 'Unknown',
-							browser: requestData?.browser || 'Unknown',
-							securityTip: 'Change your password immediately if you suspect unauthorized access',
-							timestamp: new Date().toISOString(),
+				await this.unifiedNotificationService.sendTemplatedNotification(
+					NotificationEvent.AUTH_LOGIN_FAILED,
+					[authProfile.user.uid],
+					{
+						message: `🚨 Security Alert: Failed login attempt detected on your account on ${attemptDate} at ${attemptTime}. If this wasn't you, please secure your account immediately.`,
+						userName: authProfile.user.name || authProfile.user.email,
+						attemptTime,
+						attemptDate,
+						ipAddress: requestData?.ipAddress || 'Unknown',
+						location: requestData?.location || 'Unknown',
+						deviceType: requestData?.deviceType || 'Unknown',
+						browser: requestData?.browser || 'Unknown',
+						securityTip: 'Change your password immediately if you suspect unauthorized access',
+						timestamp: new Date().toISOString(),
+					},
+					{
+						priority: NotificationPriority.HIGH,
+						customData: {
+							screen: '/profile',
+							action: 'view_security',
 						},
-						{
-							priority: NotificationPriority.HIGH,
-						},
-					);
+					},
+				);
 					this.logger.debug(`Failed login push notification sent for invalid password: ${username}`);
 				} catch (error) {
 					this.logger.error('Failed to send failed login push notification:', error);
@@ -288,24 +296,28 @@ export class AuthService {
 							});
 
 							this.logger.debug(`Sending successful login push notification to user: ${username}`);
-							await this.unifiedNotificationService.sendTemplatedNotification(
-								NotificationEvent.AUTH_LOGIN_SUCCESS,
-								[authProfile.user.uid],
-								{
-									message: `Welcome back, ${profileData.name}! Successfully signed in on ${loginDate} at ${loginTime}.`,
-									userName: profileData.name,
-									loginTime,
-									loginDate,
-									ipAddress: requestData?.ipAddress || 'Unknown',
-									location: requestData?.location || 'Unknown',
-									deviceType: requestData?.deviceType || 'Unknown',
-									browser: requestData?.browser || 'Unknown',
-									timestamp: new Date().toISOString(),
+						await this.unifiedNotificationService.sendTemplatedNotification(
+							NotificationEvent.AUTH_LOGIN_SUCCESS,
+							[authProfile.user.uid],
+							{
+								message: `Welcome back, ${profileData.name}! Successfully signed in on ${loginDate} at ${loginTime}.`,
+								userName: profileData.name,
+								loginTime,
+								loginDate,
+								ipAddress: requestData?.ipAddress || 'Unknown',
+								location: requestData?.location || 'Unknown',
+								deviceType: requestData?.deviceType || 'Unknown',
+								browser: requestData?.browser || 'Unknown',
+								timestamp: new Date().toISOString(),
+							},
+							{
+								priority: NotificationPriority.LOW,
+								customData: {
+									screen: '/home',
+									action: 'view_dashboard',
 								},
-								{
-									priority: NotificationPriority.LOW,
-								},
-							);
+							},
+						);
 							this.logger.debug(`Successful login push notification sent to user: ${username}`);
 						} catch (notificationError) {
 							this.logger.warn(
@@ -321,22 +333,26 @@ export class AuthService {
 						
 						if (salesTip) {
 							this.logger.log(`💡 [SalesTip] Sending sales tip "${salesTip.title}" to user ${username} (ID: ${salesTip.id}, Category: ${salesTip.category})`);
-							await this.unifiedNotificationService.sendTemplatedNotification(
-								NotificationEvent.SALES_TIP_OF_THE_DAY,
-								[authProfile.user.uid],
-								{
-									message: `💡 Sales Tip: ${salesTip.title} - ${salesTip.content}`,
-									title: salesTip.title,
-									content: salesTip.content,
-									category: salesTip.category,
-									tipId: salesTip.id.toString(),
-									timestamp: new Date().toISOString(),
+						await this.unifiedNotificationService.sendTemplatedNotification(
+							NotificationEvent.SALES_TIP_OF_THE_DAY,
+							[authProfile.user.uid],
+							{
+								message: `💡 Sales Tip: ${salesTip.title} - ${salesTip.content}`,
+								title: salesTip.title,
+								content: salesTip.content,
+								category: salesTip.category,
+								tipId: salesTip.id.toString(),
+								timestamp: new Date().toISOString(),
+							},
+							{
+								priority: NotificationPriority.LOW,
+								sendEmail: false,
+								customData: {
+									screen: '/home',
+									action: 'view_tip',
 								},
-								{
-									priority: NotificationPriority.LOW,
-									sendEmail: false,
-								},
-							);
+							},
+						);
 							this.logger.log(`✅ [SalesTip] Sales tip #${salesTip.id} "${salesTip.title}" sent successfully to user: ${username}`);
 						} else {
 							this.logger.warn(`⚠️ [SalesTip] No sales tip found for today for user: ${username}`);
@@ -636,6 +652,10 @@ export class AuthService {
 				},
 				{
 					priority: NotificationPriority.NORMAL,
+					customData: {
+						screen: '/profile',
+						action: 'view_profile',
+					},
 				},
 			);
 			this.logger.debug(`Password setup success push notification sent to: ${pendingSignup.email}`);
@@ -755,6 +775,10 @@ export class AuthService {
 				},
 				{
 					priority: NotificationPriority.HIGH,
+					customData: {
+						screen: '/auth/reset-password',
+						action: 'reset_password',
+					},
 				},
 			);
 			this.logger.debug(`Password reset push notification sent to: ${email}`);
@@ -865,6 +889,10 @@ export class AuthService {
 				},
 				{
 					priority: NotificationPriority.HIGH,
+					customData: {
+						screen: '/profile',
+						action: 'view_security',
+					},
 				},
 			);
 			this.logger.debug(`Password changed push notification sent to: ${resetRecord.email}`);
@@ -1017,6 +1045,10 @@ export class AuthService {
 							},
 							{
 								priority: NotificationPriority.NORMAL,
+								customData: {
+									screen: '/sign-in',
+									action: 'sign_in',
+								},
 							},
 						);
 						this.logger.debug(`Token expired push notification sent to user: ${decodedToken.uid}`);

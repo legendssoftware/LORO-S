@@ -580,20 +580,24 @@ export class TasksService {
 					if (activeAssigneeIds.length > 0) {
 						const creatorName = savedTask.creator?.name || 'Team Member';
 						
-						await this.unifiedNotificationService.sendTemplatedNotification(
-							NotificationEvent.TASK_ASSIGNED,
-							activeAssigneeIds,
-							{
-								taskTitle: savedTask.title,
-								taskId: savedTask.uid,
-								assignedBy: creatorName,
-								deadline: savedTask.deadline?.toLocaleDateString() || 'No deadline',
-								priority: savedTask.priority,
+					await this.unifiedNotificationService.sendTemplatedNotification(
+						NotificationEvent.TASK_ASSIGNED,
+						activeAssigneeIds,
+						{
+							taskTitle: savedTask.title,
+							taskId: savedTask.uid,
+							assignedBy: creatorName,
+							deadline: savedTask.deadline?.toLocaleDateString() || 'No deadline',
+							priority: savedTask.priority,
+						},
+						{
+							priority: NotificationPriority.HIGH,
+							customData: {
+								screen: '/sales/tasks',
+								action: 'view_task',
 							},
-							{
-								priority: NotificationPriority.HIGH,
-							},
-						);
+						},
+					);
 						this.logger.log(`✅ Task assignment push notifications sent to ${activeAssigneeIds.length} assignees`);
 					}
 				} catch (notificationError) {
@@ -951,20 +955,24 @@ export class TasksService {
 
 						if (activeNewAssigneeIds.length > 0) {
 							const creatorName = task.creator?.name || 'Team Member';
-							await this.unifiedNotificationService.sendTemplatedNotification(
-								NotificationEvent.TASK_ASSIGNED,
-								activeNewAssigneeIds,
-								{
-									taskTitle: task.title,
-									taskId: task.uid,
-									assignedBy: creatorName,
-									deadline: task.deadline?.toLocaleDateString() || 'No deadline',
-									priority: task.priority,
+						await this.unifiedNotificationService.sendTemplatedNotification(
+							NotificationEvent.TASK_ASSIGNED,
+							activeNewAssigneeIds,
+							{
+								taskTitle: task.title,
+								taskId: task.uid,
+								assignedBy: creatorName,
+								deadline: task.deadline?.toLocaleDateString() || 'No deadline',
+								priority: task.priority,
+							},
+							{
+								priority: NotificationPriority.HIGH,
+								customData: {
+									screen: '/sales/tasks',
+									action: 'view_task',
 								},
-								{
-									priority: NotificationPriority.HIGH,
-								},
-							);
+							},
+						);
 							this.logger.log(`✅ Task assignment push notifications sent to ${activeNewAssigneeIds.length} new assignees`);
 						}
 					}
@@ -977,19 +985,23 @@ export class TasksService {
 							const activeExistingAssigneeIds = await this.filterActiveUsers(existingAssigneeIds);
 
 							if (activeExistingAssigneeIds.length > 0) {
-								await this.unifiedNotificationService.sendTemplatedNotification(
-									NotificationEvent.TASK_UPDATED,
-									activeExistingAssigneeIds,
-									{
-										taskTitle: task.title,
-										taskId: task.uid,
-										updatedBy: 'Task Manager',
-										changes: changes.join(', '),
+							await this.unifiedNotificationService.sendTemplatedNotification(
+								NotificationEvent.TASK_UPDATED,
+								activeExistingAssigneeIds,
+								{
+									taskTitle: task.title,
+									taskId: task.uid,
+									updatedBy: 'Task Manager',
+									changes: changes.join(', '),
+								},
+								{
+									priority: NotificationPriority.NORMAL,
+									customData: {
+										screen: '/sales/tasks',
+										action: 'view_task',
 									},
-									{
-										priority: NotificationPriority.NORMAL,
-									},
-								);
+								},
+							);
 								this.logger.log(`✅ Task update push notifications sent to ${activeExistingAssigneeIds.length} assignees`);
 							}
 						}
@@ -1335,6 +1347,10 @@ export class TasksService {
 							},
 							{
 								priority: NotificationPriority.NORMAL,
+								customData: {
+									screen: '/sales/tasks',
+									action: 'view_task',
+								},
 							},
 						);
 					}
@@ -1694,20 +1710,24 @@ export class TasksService {
 						const activeRecipientIds = await this.filterActiveUsers(allRecipientIds);
 
 						if (activeRecipientIds.length > 0) {
-							await this.unifiedNotificationService.sendTemplatedNotification(
-								NotificationEvent.TASK_COMPLETED,
-								activeRecipientIds,
-								{
-									taskId: task.uid,
-									taskTitle: task.title,
-									completedBy: 'Task Manager',
-									taskDescription: task.description,
-									taskPriority: task.priority,
+						await this.unifiedNotificationService.sendTemplatedNotification(
+							NotificationEvent.TASK_COMPLETED,
+							activeRecipientIds,
+							{
+								taskId: task.uid,
+								taskTitle: task.title,
+								completedBy: 'Task Manager',
+								taskDescription: task.description,
+								taskPriority: task.priority,
+							},
+							{
+								priority: NotificationPriority.NORMAL,
+								customData: {
+									screen: '/sales/tasks',
+									action: 'view_task',
 								},
-								{
-									priority: NotificationPriority.NORMAL,
-								},
-							);
+							},
+						);
 							this.logger.log(`✅ Task completion push notifications sent to ${activeRecipientIds.length} users`);
 						}
 					} catch (notificationError) {
@@ -1989,6 +2009,10 @@ export class TasksService {
 				},
 				{
 					priority: NotificationPriority.HIGH,
+					customData: {
+						screen: '/sales/tasks',
+						action: 'view_task',
+					},
 				},
 			);
 			this.logger.log(`✅ Task flag push notifications sent to ${activeUserIds.length} recipients`);
@@ -2142,19 +2166,23 @@ export class TasksService {
 								? NotificationEvent.TASK_FLAG_RESOLVED
 								: NotificationEvent.TASK_FLAG_UPDATED;
 
-						await this.unifiedNotificationService.sendTemplatedNotification(
-							notificationEvent,
-							activeUserIds,
-							{
-								taskTitle: taskFlag.task.title,
-								taskId: taskFlag.task.uid,
-								flagTitle: taskFlag.title,
-								flagStatus: updateTaskFlagDto.status,
+					await this.unifiedNotificationService.sendTemplatedNotification(
+						notificationEvent,
+						activeUserIds,
+						{
+							taskTitle: taskFlag.task.title,
+							taskId: taskFlag.task.uid,
+							flagTitle: taskFlag.title,
+							flagStatus: updateTaskFlagDto.status,
+						},
+						{
+							priority: NotificationPriority.NORMAL,
+							customData: {
+								screen: '/sales/tasks',
+								action: 'view_task',
 							},
-							{
-								priority: NotificationPriority.NORMAL,
-							},
-						);
+						},
+					);
 						this.logger.log(`✅ Task flag update push notifications sent to ${activeUserIds.length} users`);
 					} catch (error) {
 						// Log error but don't throw - this allows task resolution to succeed even if notification fails
@@ -2237,19 +2265,23 @@ export class TasksService {
 						};
 					}
 
-					// Send push notification
-					await this.unifiedNotificationService.sendTemplatedNotification(
-						NotificationEvent.TASK_FLAG_RESOLVED,
-						activeUserIds,
-						{
-							taskTitle: flagItem.taskFlag.task.title,
-							taskId: flagItem.taskFlag.task.uid,
-							flagTitle: flagItem.taskFlag.title,
+				// Send push notification
+				await this.unifiedNotificationService.sendTemplatedNotification(
+					NotificationEvent.TASK_FLAG_RESOLVED,
+					activeUserIds,
+					{
+						taskTitle: flagItem.taskFlag.task.title,
+						taskId: flagItem.taskFlag.task.uid,
+						flagTitle: flagItem.taskFlag.title,
+					},
+					{
+						priority: NotificationPriority.NORMAL,
+						customData: {
+							screen: '/sales/tasks',
+							action: 'view_task',
 						},
-						{
-							priority: NotificationPriority.NORMAL,
-						},
-					);
+					},
+				);
 					this.logger.log(`✅ Task flag resolution push notifications sent to ${activeUserIds.length} users`);
 				}
 			}

@@ -781,6 +781,10 @@ export class LeadsService {
 				},
 				{
 					priority: NotificationPriority.NORMAL,
+					customData: {
+						screen: '/sales/leads',
+						action: 'view_leads',
+					},
 				},
 			);
 
@@ -1051,18 +1055,22 @@ export class LeadsService {
 				const activeUserIds = await this.filterActiveUsers(userIds);
 
 				if (activeUserIds.length > 0) {
-					await this.unifiedNotificationService.sendTemplatedNotification(
-						NotificationEvent.LEAD_UPDATED,
-						activeUserIds,
-						{
-							leadId: updatedLead.uid,
-							leadName: updatedLead.name || `Lead #${updatedLead.uid}`,
-							status: newStatus,
+				await this.unifiedNotificationService.sendTemplatedNotification(
+					NotificationEvent.LEAD_UPDATED,
+					activeUserIds,
+					{
+						leadId: updatedLead.uid,
+						leadName: updatedLead.name || `Lead #${updatedLead.uid}`,
+						status: newStatus,
+					},
+					{
+						priority: NotificationPriority.MEDIUM,
+						customData: {
+							screen: '/sales/leads',
+							action: 'view_lead',
 						},
-						{
-							priority: NotificationPriority.MEDIUM,
-						},
-					);
+					},
+				);
 				}
 			}
 
@@ -1167,20 +1175,24 @@ export class LeadsService {
 					const activeUserIds = await this.filterActiveUsers(userIds);
 
 					if (activeUserIds.length > 0) {
-						await this.unifiedNotificationService.sendTemplatedNotification(
-							NotificationEvent.LEAD_FOLLOW_UP_OVERDUE,
-							activeUserIds,
-							{
-								leadId: lead.uid,
-								leadName: lead.name || `Lead #${lead.uid}`,
-								daysOverdue: Math.floor(
-									(now.getTime() - lead.nextFollowUpDate!.getTime()) / (24 * 60 * 60 * 1000),
-								),
+					await this.unifiedNotificationService.sendTemplatedNotification(
+						NotificationEvent.LEAD_FOLLOW_UP_OVERDUE,
+						activeUserIds,
+						{
+							leadId: lead.uid,
+							leadName: lead.name || `Lead #${lead.uid}`,
+							daysOverdue: Math.floor(
+								(now.getTime() - lead.nextFollowUpDate!.getTime()) / (24 * 60 * 60 * 1000),
+							),
+						},
+						{
+							priority: NotificationPriority.HIGH,
+							customData: {
+								screen: '/sales/leads',
+								action: 'view_lead',
 							},
-							{
-								priority: NotificationPriority.HIGH,
-							},
-						);
+						},
+					);
 					}
 
 					// Update priority if significantly overdue
@@ -1517,28 +1529,32 @@ export class LeadsService {
 					});
 
 					// Send push notification to user
-					await this.unifiedNotificationService.sendTemplatedNotification(
-						NotificationEvent.LEADS_STALE_SUMMARY,
-						[user.uid],
-						{
-							userName: emailData.name,
-							month: emailData.month,
-							unattendedCount: emailData.totalCount,
-							totalEstimatedValue: totalEstimatedValue.toLocaleString('en-ZA', {
-								style: 'currency',
-								currency: 'ZAR',
-							}),
-							topLeads: validatedLeadData.slice(0, 5).map(lead => ({
-								id: lead.id,
-								name: lead.name,
-								company: lead.company,
-								value: lead.estimatedValue,
-							})),
+				await this.unifiedNotificationService.sendTemplatedNotification(
+					NotificationEvent.LEADS_STALE_SUMMARY,
+					[user.uid],
+					{
+						userName: emailData.name,
+						month: emailData.month,
+						unattendedCount: emailData.totalCount,
+						totalEstimatedValue: totalEstimatedValue.toLocaleString('en-ZA', {
+							style: 'currency',
+							currency: 'ZAR',
+						}),
+						topLeads: validatedLeadData.slice(0, 5).map(lead => ({
+							id: lead.id,
+							name: lead.name,
+							company: lead.company,
+							value: lead.estimatedValue,
+						})),
+					},
+					{
+						priority: NotificationPriority.HIGH,
+						customData: {
+							screen: '/sales/leads',
+							action: 'view_leads',
 						},
-						{
-							priority: NotificationPriority.HIGH,
-						},
-					);
+					},
+				);
 
 					this.logger.log(`✅ Sent monthly unattended leads push notification to ${user.uid} (${validatedLeadData.length} leads, R${totalEstimatedValue} total value)`);
 					emailsSent++;
@@ -2232,6 +2248,10 @@ export class LeadsService {
 					},
 					{
 						priority: NotificationPriority.HIGH,
+						customData: {
+							screen: '/sales/leads',
+							action: 'view_lead',
+						},
 					},
 				);
 			}
@@ -2315,6 +2335,10 @@ export class LeadsService {
 					},
 					{
 						priority: NotificationPriority.HIGH,
+						customData: {
+							screen: '/sales/leads',
+							action: 'view_lead',
+						},
 					},
 				);
 			} catch (error) {
