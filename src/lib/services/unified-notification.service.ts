@@ -1420,42 +1420,99 @@ export class UnifiedNotificationService {
 	 */
 	private interpolateTemplate(template: string, variables: Record<string, any>): string {
 		const missingVars: string[] = [];
+		const operationId = `interpolate_${Date.now()}`;
+
+		// Log what we're working with for debugging
+		this.logger.debug(
+			`[${operationId}] Interpolating template with ${Object.keys(variables).length} variables: ${Object.keys(variables).join(', ')}`
+		);
 
 		const result = template.replace(/\{(\w+)(?::([^}]+))?\}/g, (match, key, format) => {
 			const value = variables[key];
 			
+			// Handle undefined/null values
 			if (value === undefined || value === null) {
-				// Track missing variables for debugging
 				missingVars.push(key);
-				this.logger.warn(
-					`Missing template variable: "${key}" in template. Available: ${Object.keys(variables).join(', ')}`
+				this.logger.error(
+					`[${operationId}] ⚠️ Missing template variable: "${key}". Available: ${Object.keys(variables).join(', ')}`
 				);
-				return match; // Return placeholder unchanged
+				
+				// Return user-friendly fallback instead of placeholder
+				switch(key) {
+					case 'userName':
+					case 'userFullName':
+					case 'name':
+						return 'Team Member';
+					case 'employeeName':
+						return 'Employee';
+					case 'assignedBy':
+					case 'createdBy':
+					case 'updatedBy':
+					case 'completedBy':
+					case 'deletedBy':
+						return 'User';
+					case 'taskTitle':
+						return 'Task';
+					case 'leadName':
+						return 'Lead';
+					case 'clientName':
+						return 'Client';
+					default:
+						return `[${key}]`; // More obvious than {key}
+				}
+			}
+			
+			// Handle empty strings
+			if (typeof value === 'string' && value.trim() === '') {
+				this.logger.warn(
+					`[${operationId}] Empty string for variable: "${key}". Using fallback.`
+				);
+				switch(key) {
+					case 'userName':
+					case 'userFullName':
+						return 'Team Member';
+					default:
+						return `[${key}]`;
+				}
 			}
 			
 			// Apply formatting based on type
 			if (format) {
-				switch (format) {
-					case 'time':
-						return this.formatTime(value);
-					case 'duration':
-						return this.formatDuration(value);
-					case 'date':
-						return this.formatDate(value);
-					case 'number':
-						return this.formatNumber(value);
-					default:
-						return value.toString();
+				try {
+					switch (format) {
+						case 'time':
+							return this.formatTime(value);
+						case 'duration':
+							return this.formatDuration(value);
+						case 'date':
+							return this.formatDate(value);
+						case 'number':
+							return this.formatNumber(value);
+						default:
+							return value.toString();
+					}
+				} catch (error) {
+					this.logger.error(
+						`[${operationId}] Error formatting ${key} with format ${format}: ${error.message}`
+					);
+					return value.toString();
 				}
 			}
 			
 			return value.toString();
 		});
 
-		// Log summary if any variables were missing
+		// Enhanced logging if variables were missing
 		if (missingVars.length > 0) {
 			this.logger.error(
-				`Template interpolation incomplete. Missing: [${missingVars.join(', ')}]. Template: "${template.substring(0, 80)}..."`
+				`[${operationId}] ⚠️ Template interpolation incomplete!\n` +
+				`Missing variables: [${missingVars.join(', ')}]\n` +
+				`Template: "${template.substring(0, 100)}..."\n` +
+				`Provided variables: ${JSON.stringify(Object.keys(variables))}`
+			);
+		} else {
+			this.logger.debug(
+				`[${operationId}] ✅ Successfully interpolated all template variables`
 			);
 		}
 

@@ -197,3 +197,31 @@ export interface NotificationTemplate {
 		badge?: number;
 	};
 }
+
+// Type-safe notification variables for attendance notifications
+export interface AttendanceNotificationVariables {
+	userName: string;
+	userId: number;
+	shiftStartTime?: string;
+	shiftEndTime?: string;
+	currentTime?: string;
+	lateMinutes?: number;
+	overtimeMinutes?: number;
+	overtimeHours?: number;
+	overtimeFormatted?: string;
+	reminderType: string;
+	orgId?: number;
+	branchId?: number;
+	timestamp: string;
+	screen?: string;
+	action?: string;
+	type?: string;
+	context?: Record<string, any>;
+	breakNumber?: string;
+	breakStartTime?: string;
+	breakEndTime?: string;
+	breakDuration?: string;
+	checkInTime?: string;
+	checkOutTime?: string;
+	workTimeDisplay?: string;
+}

@@ -1566,6 +1566,19 @@ export class AttendanceService {
 		const fullName = `${user.name || ''} ${user.surname || ''}`.trim();
 		const userName = fullName || user.username || 'Team Member';
 
+		// Log user data for debugging
+		this.logger.log(
+			`[${operationId}] User data retrieved for notification:`,
+			JSON.stringify({
+				userId,
+				name: user.name,
+				surname: user.surname,
+				username: user.username,
+				constructedFullName: fullName,
+				finalUserName: userName,
+			})
+		);
+
 		// Prepare notification data based on reminder type
 		const notificationData: any = {
 			currentTime,
@@ -1652,6 +1665,35 @@ export class AttendanceService {
 			branchId,
 			timestamp: new Date().toISOString()
 		};
+
+		// Validate critical notification data before sending
+		if (!notificationData.userName || notificationData.userName.trim() === '') {
+			this.logger.error(
+				`[${operationId}] ⚠️ userName is empty for user ${userId}! Using fallback.`
+			);
+			notificationData.userName = 'Team Member';
+		}
+
+		if (reminderType === 'pre_end' || reminderType === 'end') {
+			if (!notificationData.shiftEndTime) {
+				this.logger.error(
+					`[${operationId}] ⚠️ shiftEndTime is missing for ${reminderType} notification! Using fallback.`
+				);
+				notificationData.shiftEndTime = '17:00';
+			}
+		}
+
+		// Log final notification data being sent
+		this.logger.log(
+			`[${operationId}] Sending ${notificationType} notification with data:`,
+			JSON.stringify({
+				userName: notificationData.userName,
+				shiftStartTime: notificationData.shiftStartTime,
+				shiftEndTime: notificationData.shiftEndTime,
+				userId: notificationData.userId,
+				reminderType: notificationData.reminderType,
+			})
+		);
 
 		// Send push notification only (no emails for reminders)
 		await this.unifiedNotificationService.sendTemplatedNotification(
@@ -1961,13 +2003,17 @@ export class AttendanceService {
 				const breakLevel = breakDurationMinutes >= 60 ? 'extended' : 'long';
 				const urgencyLevel = breakDurationMinutes >= 60 ? 'urgent attention' : 'monitoring';
 
-				await this.unifiedNotificationService.sendTemplatedNotification(
-					NotificationEvent.ATTENDANCE_BREAK_STARTED,
-					orgAdmins.map((admin) => admin.uid),
-					{
-						employeeName: `${user.name} ${user.surname}`.trim(),
-						employeeEmail: user.email,
-						breakDurationMinutes,
+			// Construct employeeName with proper fallbacks
+			const fullName = `${user.name || ''} ${user.surname || ''}`.trim();
+			const employeeName = fullName || user.username || user.email?.split('@')[0] || 'Employee';
+
+			await this.unifiedNotificationService.sendTemplatedNotification(
+				NotificationEvent.ATTENDANCE_BREAK_STARTED,
+				orgAdmins.map((admin) => admin.uid),
+				{
+					employeeName,
+					employeeEmail: user.email,
+					breakDurationMinutes,
 						breakStartTime: breakStartTimeString,
 						breakLevel,
 						userId: user.uid,
@@ -2176,6 +2222,10 @@ export class AttendanceService {
 
 				this.logger.debug(`[${operationId}] Sending pre-shift reminder to user ${user.uid}`);
 
+				// Construct userName with proper fallbacks
+				const fullName = `${user.name || ''} ${user.surname || ''}`.trim();
+				const userName = fullName || user.username || user.email?.split('@')[0] || 'Team Member';
+
 				// Send reminder 30 minutes before shift starts
 				await this.unifiedNotificationService.sendTemplatedNotification(
 					NotificationEvent.ATTENDANCE_SHIFT_START_REMINDER,
@@ -2183,7 +2233,7 @@ export class AttendanceService {
 					{
 						shiftStartTime: startTime,
 						reminderType: 'pre_shift',
-						userName: `${user.name} ${user.surname}`.trim(),
+						userName,
 						userId: user.uid,
 						orgId: org.uid,
 						timestamp: new Date().toISOString(),
@@ -2320,13 +2370,17 @@ export class AttendanceService {
 				if (activeShift) {
 					this.logger.debug(`[${operationId}] Sending pre-checkout reminder to user ${user.uid}`);
 
+					// Construct userName with proper fallbacks
+					const fullName = `${user.name || ''} ${user.surname || ''}`.trim();
+					const userName = fullName || user.username || user.email?.split('@')[0] || 'Team Member';
+
 					await this.unifiedNotificationService.sendTemplatedNotification(
 						NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER,
 						[user.uid],
 						{
 							shiftEndTime: endTime,
 							reminderType: 'pre_checkout',
-							userName: `${user.name} ${user.surname}`.trim(),
+							userName,
 							userId: user.uid,
 							orgId: org.uid,
 							timestamp: new Date().toISOString(),
@@ -2388,13 +2442,17 @@ export class AttendanceService {
 				if (activeShift) {
 					this.logger.debug(`[${operationId}] User ${user.uid} forgot to check out - sending alert`);
 
+					// Construct userName with proper fallbacks
+					const fullName = `${user.name || ''} ${user.surname || ''}`.trim();
+					const userName = fullName || user.username || user.email?.split('@')[0] || 'Team Member';
+
 					await this.unifiedNotificationService.sendTemplatedNotification(
 						NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER,
 						[user.uid],
 						{
 							shiftEndTime: endTime,
 							reminderType: 'missed_checkout',
-							userName: `${user.name} ${user.surname}`.trim(),
+							userName,
 							userId: user.uid,
 							orgId: org.uid,
 							timestamp: new Date().toISOString(),
@@ -2435,17 +2493,21 @@ export class AttendanceService {
 		try {
 			const orgAdmins = await this.getOrganizationAdmins(orgId);
 			if (orgAdmins.length > 0) {
-				this.logger.debug(
-					`[${operationId}] Notifying ${orgAdmins.length} admins about missed shift for user ${user.uid}`,
-				);
+			this.logger.debug(
+				`[${operationId}] Notifying ${orgAdmins.length} admins about missed shift for user ${user.uid}`,
+			);
 
-				await this.unifiedNotificationService.sendTemplatedNotification(
-					NotificationEvent.ATTENDANCE_MISSED_SHIFT_ALERT,
-					orgAdmins.map((admin) => admin.uid),
-					{
-						employeeName: `${user.name} ${user.surname}`.trim(),
-						employeeEmail: user.email,
-						shiftStartTime: startTime,
+			// Construct employeeName with proper fallbacks
+			const fullName = `${user.name || ''} ${user.surname || ''}`.trim();
+			const employeeName = fullName || user.username || user.email?.split('@')[0] || 'Employee';
+
+			await this.unifiedNotificationService.sendTemplatedNotification(
+				NotificationEvent.ATTENDANCE_MISSED_SHIFT_ALERT,
+				orgAdmins.map((admin) => admin.uid),
+				{
+					employeeName,
+					employeeEmail: user.email,
+					shiftStartTime: startTime,
 						userId: user.uid,
 						orgId,
 						adminContext: true,
@@ -2472,19 +2534,23 @@ export class AttendanceService {
 		try {
 			const orgAdmins = await this.getOrganizationAdmins(orgId);
 			if (orgAdmins.length > 0) {
-				this.logger.debug(
-					`[${operationId}] Notifying ${orgAdmins.length} admins about missed checkout for user ${user.uid}`,
-				);
+			this.logger.debug(
+				`[${operationId}] Notifying ${orgAdmins.length} admins about missed checkout for user ${user.uid}`,
+			);
 
-				const checkInTime = await this.formatTimeInOrganizationTimezone(new Date(activeShift.checkIn), orgId);
+			const checkInTime = await this.formatTimeInOrganizationTimezone(new Date(activeShift.checkIn), orgId);
 
-				await this.unifiedNotificationService.sendTemplatedNotification(
-					NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER,
-					orgAdmins.map((admin) => admin.uid),
-					{
-						employeeName: `${user.name} ${user.surname}`.trim(),
-						employeeEmail: user.email,
-						checkInTime,
+			// Construct employeeName with proper fallbacks
+			const fullName = `${user.name || ''} ${user.surname || ''}`.trim();
+			const employeeName = fullName || user.username || user.email?.split('@')[0] || 'Employee';
+
+			await this.unifiedNotificationService.sendTemplatedNotification(
+				NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER,
+				orgAdmins.map((admin) => admin.uid),
+				{
+					employeeName,
+					employeeEmail: user.email,
+					checkInTime,
 						shiftEndTime: endTime,
 						userId: user.uid,
 						orgId,
