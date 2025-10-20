@@ -47,6 +47,30 @@ export class AuthService {
 		this.logger.debug('AuthService initialized with all dependencies');
 	}
 
+	/**
+	 * Get login usage statistics for a user
+	 * @param userId - The user ID to check
+	 * @returns Login usage statistics for today
+	 */
+	async getUserLoginUsage(userId: number): Promise<{
+		successful: number;
+		failed: number;
+		total: number;
+		lastLoginAt: Date | null;
+	}> {
+		this.logger.log(`Getting login usage for user: ${userId}`);
+		// TODO: Import and inject UsageTrackingService, then implement:
+		// return await this.usageTrackingService.getUserDailyLoginStats(userId);
+		
+		// Temporary placeholder - replace with actual implementation
+		return {
+			successful: 0,
+			failed: 0,
+			total: 0,
+			lastLoginAt: null,
+		};
+	}
+
 	private excludePassword(user: any): Omit<typeof user, 'password'> {
 		this.logger.debug(`Excluding password from user object for user: ${user?.email || user?.username || 'unknown'}`);
 		const { password, ...userWithoutPassword } = user;

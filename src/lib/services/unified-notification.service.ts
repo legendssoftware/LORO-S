@@ -1419,9 +1419,19 @@ export class UnifiedNotificationService {
 	 * Enhanced template interpolation with formatting support
 	 */
 	private interpolateTemplate(template: string, variables: Record<string, any>): string {
-		return template.replace(/\{(\w+)(?::([^}]+))?\}/g, (match, key, format) => {
+		const missingVars: string[] = [];
+
+		const result = template.replace(/\{(\w+)(?::([^}]+))?\}/g, (match, key, format) => {
 			const value = variables[key];
-			if (value === undefined || value === null) return match;
+			
+			if (value === undefined || value === null) {
+				// Track missing variables for debugging
+				missingVars.push(key);
+				this.logger.warn(
+					`Missing template variable: "${key}" in template. Available: ${Object.keys(variables).join(', ')}`
+				);
+				return match; // Return placeholder unchanged
+			}
 			
 			// Apply formatting based on type
 			if (format) {
@@ -1441,6 +1451,15 @@ export class UnifiedNotificationService {
 			
 			return value.toString();
 		});
+
+		// Log summary if any variables were missing
+		if (missingVars.length > 0) {
+			this.logger.error(
+				`Template interpolation incomplete. Missing: [${missingVars.join(', ')}]. Template: "${template.substring(0, 80)}..."`
+			);
+		}
+
+		return result;
 	}
 
 	/**

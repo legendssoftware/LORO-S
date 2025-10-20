@@ -545,4 +545,295 @@ export class UsageTrackingService {
 			}, {}),
 		};
 	}
+
+	/**
+	 * ============================================================================
+	 * LOGIN USAGE TRACKING METHODS
+	 * ============================================================================
+	 */
+
+	/**
+	 * Get the count of successful login attempts for a user today
+	 * @param userId - The user ID to check
+	 * @returns The number of successful logins today
+	 */
+	async getUserDailyLoginCount(userId: number): Promise<number> {
+		const startTime = Date.now();
+		this.logger.debug(`[GET_DAILY_LOGIN_COUNT] Counting login attempts for user ${userId}`);
+
+		try {
+			const today = startOfDay(new Date());
+			const endOfToday = endOfDay(new Date());
+
+			const loginCount = await this.usageEventRepository.count({
+				where: {
+					userId,
+					eventType: UsageEventType.AUTHENTICATION,
+					status: UsageEventStatus.SUCCESS,
+					endpoint: '/auth/sign-in', // Adjust based on your login endpoint
+					createdAt: Between(today, endOfToday),
+				},
+			});
+
+			const executionTime = Date.now() - startTime;
+			this.logger.debug(
+				`[GET_DAILY_LOGIN_COUNT] User ${userId} has ${loginCount} successful logins today (query took ${executionTime}ms)`,
+			);
+
+			return loginCount;
+		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(
+				`[GET_DAILY_LOGIN_COUNT] Failed to count daily logins for user ${userId} after ${executionTime}ms. Error: ${error.message}`,
+				error.stack,
+			);
+			return 0; // Return 0 on error to avoid blocking login
+		}
+	}
+
+	/**
+	 * Get the count of all login attempts (including failed) for a user today
+	 * @param userId - The user ID to check
+	 * @returns Object with successful, failed, and total login attempts
+	 */
+	async getUserDailyLoginStats(userId: number): Promise<{
+		successful: number;
+		failed: number;
+		total: number;
+		lastLoginAt: Date | null;
+	}> {
+		const startTime = Date.now();
+		this.logger.debug(`[GET_DAILY_LOGIN_STATS] Getting login stats for user ${userId}`);
+
+		try {
+			const today = startOfDay(new Date());
+			const endOfToday = endOfDay(new Date());
+
+			const allLogins = await this.usageEventRepository.find({
+				where: {
+					userId,
+					eventType: UsageEventType.AUTHENTICATION,
+					endpoint: '/auth/sign-in',
+					createdAt: Between(today, endOfToday),
+				},
+				order: {
+					createdAt: 'DESC',
+				},
+			});
+
+			const successful = allLogins.filter((login) => login.status === UsageEventStatus.SUCCESS).length;
+			const failed = allLogins.filter((login) => login.status !== UsageEventStatus.SUCCESS).length;
+			const total = allLogins.length;
+			const lastLoginAt = allLogins.length > 0 ? allLogins[0].createdAt : null;
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(
+				`[GET_DAILY_LOGIN_STATS] User ${userId} - Successful: ${successful}, Failed: ${failed}, Total: ${total} (query took ${executionTime}ms)`,
+			);
+
+			return {
+				successful,
+				failed,
+				total,
+				lastLoginAt,
+			};
+		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(
+				`[GET_DAILY_LOGIN_STATS] Failed to get login stats for user ${userId} after ${executionTime}ms. Error: ${error.message}`,
+				error.stack,
+			);
+			return {
+				successful: 0,
+				failed: 0,
+				total: 0,
+				lastLoginAt: null,
+			};
+		}
+	}
+
+	/**
+	 * Check if a user has exceeded their maximum allowed daily logins
+	 * @param userId - The user ID to check
+	 * @param maxLoginsPerDay - Maximum allowed logins per day (default: 50)
+	 * @returns Object indicating if limit is exceeded and current count
+	 */
+	async checkDailyLoginLimit(
+		userId: number,
+		maxLoginsPerDay: number = 50,
+	): Promise<{
+		limitExceeded: boolean;
+		currentCount: number;
+		maxAllowed: number;
+		remainingLogins: number;
+	}> {
+		const startTime = Date.now();
+		this.logger.debug(`[CHECK_LOGIN_LIMIT] Checking login limit for user ${userId} (max: ${maxLoginsPerDay})`);
+
+		try {
+			const currentCount = await this.getUserDailyLoginCount(userId);
+			const limitExceeded = currentCount >= maxLoginsPerDay;
+			const remainingLogins = Math.max(0, maxLoginsPerDay - currentCount);
+
+			const executionTime = Date.now() - startTime;
+
+			if (limitExceeded) {
+				this.logger.warn(
+					`[CHECK_LOGIN_LIMIT] ⚠️ User ${userId} has EXCEEDED daily login limit: ${currentCount}/${maxLoginsPerDay} (check took ${executionTime}ms)`,
+				);
+			} else {
+				this.logger.debug(
+					`[CHECK_LOGIN_LIMIT] User ${userId} login count: ${currentCount}/${maxLoginsPerDay}, remaining: ${remainingLogins} (check took ${executionTime}ms)`,
+				);
+			}
+
+			return {
+				limitExceeded,
+				currentCount,
+				maxAllowed: maxLoginsPerDay,
+				remainingLogins,
+			};
+		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(
+				`[CHECK_LOGIN_LIMIT] Failed to check login limit for user ${userId} after ${executionTime}ms. Error: ${error.message}`,
+				error.stack,
+			);
+			// Return safe defaults on error (don't block login)
+			return {
+				limitExceeded: false,
+				currentCount: 0,
+				maxAllowed: maxLoginsPerDay,
+				remainingLogins: maxLoginsPerDay,
+			};
+		}
+	}
+
+	/**
+	 * Get login history for a user over a specified date range
+	 * @param userId - The user ID
+	 * @param startDate - Start date for the query
+	 * @param endDate - End date for the query
+	 * @returns Array of login events with details
+	 */
+	async getUserLoginHistory(
+		userId: number,
+		startDate: Date,
+		endDate: Date,
+	): Promise<
+		Array<{
+			timestamp: Date;
+			status: UsageEventStatus;
+			ipAddress: string;
+			deviceType: string;
+			browserName: string;
+			country: string;
+			wasSuccessful: boolean;
+		}>
+	> {
+		const startTime = Date.now();
+		this.logger.debug(`[GET_LOGIN_HISTORY] Fetching login history for user ${userId} from ${startDate} to ${endDate}`);
+
+		try {
+			const loginEvents = await this.usageEventRepository.find({
+				where: {
+					userId,
+					eventType: UsageEventType.AUTHENTICATION,
+					endpoint: '/auth/sign-in',
+					createdAt: Between(startDate, endDate),
+				},
+				order: {
+					createdAt: 'DESC',
+				},
+			});
+
+			const history = loginEvents.map((event) => ({
+				timestamp: event.createdAt,
+				status: event.status,
+				ipAddress: event.ipAddress || 'Unknown',
+				deviceType: event.deviceType || 'Unknown',
+				browserName: event.browserName || 'Unknown',
+				country: event.country || 'Unknown',
+				wasSuccessful: event.status === UsageEventStatus.SUCCESS,
+			}));
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(
+				`[GET_LOGIN_HISTORY] Retrieved ${history.length} login events for user ${userId} (query took ${executionTime}ms)`,
+			);
+
+			return history;
+		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(
+				`[GET_LOGIN_HISTORY] Failed to fetch login history for user ${userId} after ${executionTime}ms. Error: ${error.message}`,
+				error.stack,
+			);
+			return [];
+		}
+	}
+
+	/**
+	 * Record a login attempt (call this from auth.service.ts)
+	 * @param userId - The user ID (optional for failed logins)
+	 * @param wasSuccessful - Whether the login was successful
+	 * @param requestData - Request metadata (IP, device, etc.)
+	 * @param durationMs - How long the login request took
+	 */
+	async recordLoginAttempt(
+		userId: number | null,
+		wasSuccessful: boolean,
+		requestData: {
+			ipAddress?: string;
+			userAgent?: string;
+			deviceType?: string;
+			browserName?: string;
+			country?: string;
+			organisationId?: number;
+			branchId?: number;
+		},
+		durationMs: number,
+	): Promise<void> {
+		const startTime = Date.now();
+		this.logger.debug(
+			`[RECORD_LOGIN_ATTEMPT] Recording ${wasSuccessful ? 'successful' : 'failed'} login attempt${userId ? ` for user ${userId}` : ''}`,
+		);
+
+		try {
+			const loginEvent: CreateUsageEventDto = {
+				userId: userId || undefined,
+				organisationId: requestData.organisationId,
+				branchId: requestData.branchId,
+				endpoint: '/auth/sign-in',
+				method: 'POST',
+				eventType: UsageEventType.AUTHENTICATION,
+				status: wasSuccessful ? UsageEventStatus.SUCCESS : UsageEventStatus.FAILED,
+				httpStatusCode: wasSuccessful ? 200 : 401,
+				durationMs,
+				userAgent: requestData.userAgent,
+				ipAddress: requestData.ipAddress,
+				deviceType: requestData.deviceType,
+				browserName: requestData.browserName,
+				country: requestData.country,
+				metadata: {
+					loginSuccess: wasSuccessful,
+					timestamp: new Date().toISOString(),
+				},
+			};
+
+			await this.recordUsageEvent(loginEvent);
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(
+				`[RECORD_LOGIN_ATTEMPT] Login attempt recorded successfully in ${executionTime}ms (user: ${userId || 'unknown'}, success: ${wasSuccessful})`,
+			);
+		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(
+				`[RECORD_LOGIN_ATTEMPT] Failed to record login attempt after ${executionTime}ms. Error: ${error.message}`,
+				error.stack,
+			);
+			// Don't throw - login tracking failure shouldn't block authentication
+		}
+	}
 }

@@ -637,14 +637,16 @@ export class AttendanceService {
 
 			// Send enhanced shift start notification with improved messaging
 			try {
-				// Get user info for personalized message with email and relations
-				const user = await this.userRepository.findOne({
-					where: { uid: checkInDto.owner.uid },
-					select: ['uid', 'name', 'surname', 'email'],
-					relations: ['organisation', 'branch', 'branch.organisation'],
-				});
+			// Get user info for personalized message with email and relations
+			const user = await this.userRepository.findOne({
+				where: { uid: checkInDto.owner.uid },
+				select: ['uid', 'name', 'surname', 'email', 'username'],
+				relations: ['organisation', 'branch', 'branch.organisation'],
+			});
 
-				const userName = user ? user.name : '';
+			// Construct full name with proper fallbacks
+			const fullName = `${user?.name || ''} ${user?.surname || ''}`.trim();
+			const userName = fullName || user?.username || 'Team Member';
 				
 				// Format check-in time in organization timezone
 				const checkInTime = await this.formatTimeInOrganizationTimezone(new Date(checkIn.checkIn), orgId);
@@ -1133,15 +1135,17 @@ export class AttendanceService {
 				const checkOutTimeString = await this.formatTimeInOrganizationTimezone(checkOutTime, orgId);
 				const checkInTimeString = await this.formatTimeInOrganizationTimezone(new Date(activeShift.checkIn), orgId);
 
-				// Get user info for personalized message with email and relations
-				const user = await this.userRepository.findOne({
-					where: { uid: checkOutDto.owner.uid },
-					select: ['uid', 'name', 'surname', 'email'],
-					relations: ['organisation', 'branch', 'branch.organisation'],
-				});
+			// Get user info for personalized message with email and relations
+			const user = await this.userRepository.findOne({
+				where: { uid: checkOutDto.owner.uid },
+				select: ['uid', 'name', 'surname', 'email', 'username'],
+				relations: ['organisation', 'branch', 'branch.organisation'],
+			});
 
-				const userName = user ? user.name : '';
-				const workHours = Math.floor(workSession.netWorkMinutes / 60);
+			// Construct full name with proper fallbacks
+			const fullName = `${user?.name || ''} ${user?.surname || ''}`.trim();
+			const userName = fullName || user?.username || 'Team Member';
+			const workHours = Math.floor(workSession.netWorkMinutes / 60);
 				const workMinutesDisplay = workSession.netWorkMinutes % 60;
 				const workTimeDisplay = `${workHours}h ${workMinutesDisplay}m`;
 
@@ -1198,17 +1202,21 @@ export class AttendanceService {
 							);
 
 							if (overtimeInfo.overtimeMinutes > 0) {
-								const overtimeHours = Math.floor(overtimeInfo.overtimeMinutes / 60);
-								const overtimeMinutes = overtimeInfo.overtimeMinutes % 60;
+								// Cap overtime at 16 hours (960 minutes) to prevent impossible values
+								const cappedMinutes = Math.min(overtimeInfo.overtimeMinutes, 960);
+								const overtimeHours = Math.floor(cappedMinutes / 60);
+								const overtimeMinutes = cappedMinutes % 60;
 								const overtimeDuration = `${overtimeHours}h ${overtimeMinutes}m`;
 
-								// Get user info for personalized message
+								// Get user info for personalized message with username
 								const user = await this.userRepository.findOne({
 									where: { uid: checkOutDto.owner.uid },
-									select: ['uid', 'name', 'surname'],
+									select: ['uid', 'name', 'surname', 'username'],
 								});
 
-								const userName = user ? user.name : '';
+								// Construct full name with proper fallbacks
+								const fullName = `${user?.name || ''} ${user?.surname || ''}`.trim();
+								const userName = fullName || user?.username || 'Team Member';
 
 								this.logger.debug(`Sending enhanced overtime notification to user: ${checkOutDto.owner.uid}`);
 								await this.unifiedNotificationService.sendTemplatedNotification(
@@ -1216,10 +1224,11 @@ export class AttendanceService {
 									[checkOutDto.owner.uid],
 									{
 										overtimeDuration,
-										overtimeHours: overtimeInfo.overtimeMinutes / 60,
+										overtimeMinutes: cappedMinutes, // Total minutes for :duration formatter
+										overtimeHours: overtimeHours,
+										overtimeFormatted: overtimeDuration,
 										regularHours: (workSession.netWorkMinutes - overtimeInfo.overtimeMinutes) / 60,
 										totalWorkMinutes: workSession.netWorkMinutes,
-										overtimeMinutes: overtimeInfo.overtimeMinutes,
 										userName,
 										userId: checkOutDto.owner.uid,
 										timestamp: new Date().toISOString(),
@@ -1240,7 +1249,7 @@ export class AttendanceService {
 									branchId,
 									undefined,
 									undefined,
-									overtimeInfo.overtimeMinutes,
+									cappedMinutes,
 								);
 							}
 						}
@@ -1541,83 +1550,90 @@ export class AttendanceService {
 				}
 			}
 
-			// Get user info for personalized messages with relations
-			const user = await this.userRepository.findOne({
-				where: { uid: userId },
-				select: ['uid', 'name', 'surname', 'email'],
-				relations: ['organisation', 'branch', 'branch.organisation'],
-			});
-			const userName = user ? `${user.name} ${user.surname}`.trim() : `User ${userId}`;
+		// Get user info for personalized messages with relations
+		const user = await this.userRepository.findOne({
+			where: { uid: userId },
+			select: ['uid', 'name', 'surname', 'email', 'username'],
+			relations: ['organisation', 'branch', 'branch.organisation'],
+		});
 
-			// Prepare notification data based on reminder type
-			const notificationData: any = {
-				currentTime,
-				userId,
-				userName,
-				orgId,
-				branchId,
-				timestamp: new Date().toISOString(),
-				reminderType,
-			};
+		if (!user) {
+			this.logger.warn(`[${operationId}] User ${userId} not found`);
+			return;
+		}
+
+		// Construct full name with proper fallbacks
+		const fullName = `${user.name || ''} ${user.surname || ''}`.trim();
+		const userName = fullName || user.username || 'Team Member';
+
+		// Prepare notification data based on reminder type
+		const notificationData: any = {
+			currentTime,
+			userId,
+			userName, // Full name now properly populated
+			orgId,
+			branchId,
+			timestamp: new Date().toISOString(),
+			reminderType,
+		};
 
 			switch (reminderType) {
-				case 'pre_start':
-					notificationType = NotificationEvent.ATTENDANCE_SHIFT_START_REMINDER;
-					notificationData.shiftStartTime = expectedShiftTime;
-					notificationData.userName = user?.name || 'there';
-					priority = NotificationPriority.NORMAL;
-					break;
+		case 'pre_start':
+			notificationType = NotificationEvent.ATTENDANCE_SHIFT_START_REMINDER;
+			notificationData.shiftStartTime = expectedShiftTime;
+			priority = NotificationPriority.NORMAL;
+			break;
 
-				case 'start':
-					notificationType = NotificationEvent.ATTENDANCE_SHIFT_STARTED;
-					notificationData.shiftStartTime = expectedShiftTime;
-					notificationData.currentTime = currentTime;
-					notificationData.userName = user?.name || 'there';
-					priority = NotificationPriority.NORMAL;
-					break;
+		case 'start':
+			notificationType = NotificationEvent.ATTENDANCE_SHIFT_STARTED;
+			notificationData.shiftStartTime = expectedShiftTime;
+			notificationData.currentTime = currentTime;
+			priority = NotificationPriority.NORMAL;
+			break;
 
-				case 'pre_end':
-					notificationType = NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER;
-					notificationData.shiftEndTime = expectedEndTime;
-					notificationData.userName = user?.name || 'there';
-					priority = NotificationPriority.NORMAL;
-					break;
+		case 'pre_end':
+			notificationType = NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER;
+			notificationData.shiftEndTime = expectedEndTime;
+			priority = NotificationPriority.NORMAL;
+			break;
 
-				case 'end':
-					notificationType = NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER;
-					notificationData.shiftEndTime = expectedEndTime;
-					notificationData.currentTime = currentTime;
-					notificationData.userName = user?.name || 'there';
-					priority = NotificationPriority.HIGH;
-					break;
+		case 'end':
+			notificationType = NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER;
+			notificationData.shiftEndTime = expectedEndTime;
+			notificationData.currentTime = currentTime;
+			priority = NotificationPriority.HIGH;
+			break;
 
-				case 'missed':
-					notificationType = NotificationEvent.ATTENDANCE_MISSED_SHIFT_ALERT;
-					notificationData.shiftStartTime = expectedShiftTime;
-					notificationData.userName = user?.name || 'there';
-					priority = NotificationPriority.HIGH;
-					break;
+		case 'missed':
+			notificationType = NotificationEvent.ATTENDANCE_MISSED_SHIFT_ALERT;
+			notificationData.shiftStartTime = expectedShiftTime;
+			priority = NotificationPriority.HIGH;
+			break;
 
-				case 'late':
-					notificationType = NotificationEvent.ATTENDANCE_LATE_SHIFT_ALERT;
-					if (lateMinutes && lateMinutes > 0) {
-						notificationData.lateMinutes = lateMinutes;
-					} else {
-						notificationData.currentTime = currentTime;
-					}
-					notificationData.shiftStartTime = expectedShiftTime;
-					notificationData.userName = user?.name || 'there';
-					priority = NotificationPriority.HIGH;
-					break;
+		case 'late':
+			notificationType = NotificationEvent.ATTENDANCE_LATE_SHIFT_ALERT;
+			if (lateMinutes && lateMinutes > 0) {
+				notificationData.lateMinutes = lateMinutes;
+			} else {
+				notificationData.currentTime = currentTime;
+			}
+			notificationData.shiftStartTime = expectedShiftTime;
+			priority = NotificationPriority.HIGH;
+			break;
 
-				case 'overtime':
-					notificationType = NotificationEvent.ATTENDANCE_OVERTIME_REMINDER;
-					if (overtimeMinutes && overtimeMinutes > 0) {
-						notificationData.overtimeMinutes = overtimeMinutes;
-					}
-					notificationData.userName = user?.name || 'there';
-					priority = NotificationPriority.HIGH;
-					break;
+		case 'overtime':
+			notificationType = NotificationEvent.ATTENDANCE_OVERTIME_REMINDER;
+			if (overtimeMinutes && overtimeMinutes > 0) {
+				// Cap overtime at 16 hours (24h - 8h standard shift) to prevent impossible values
+				const cappedMinutes = Math.min(overtimeMinutes, 960);
+				const hours = Math.floor(cappedMinutes / 60);
+				const minutes = cappedMinutes % 60;
+				notificationData.overtimeMinutes = cappedMinutes; // Total minutes for :duration formatter
+				notificationData.overtimeHours = hours;
+				notificationData.overtimeFormatted = `${hours}h ${minutes}m`;
+			}
+			priority = NotificationPriority.HIGH;
+			break;
 
 				default:
 					this.logger.warn(`[${operationId}] Unknown reminder type: ${reminderType}`);
@@ -1697,34 +1713,57 @@ export class AttendanceService {
 							adminNotificationData.overtimeMinutes = overtimeMinutes;
 						}
 
-						// Admin-specific messages
-						let adminMessage = '';
-						switch (reminderType) {
-							case 'missed':
-								adminMessage = `Employee ${userName} missed their scheduled shift (${expectedShiftTime}). Please follow up as needed.`;
-								break;
-							case 'late':
-								adminMessage = `Employee ${userName} was late for their shift${
-									lateMinutes ? ` by ${lateMinutes} minutes` : ''
-								}. Shift started at ${expectedShiftTime}.`;
-								break;
-							case 'overtime':
-								adminMessage = `Employee ${userName} is working overtime${
-									overtimeMinutes
-										? ` (${Math.floor(overtimeMinutes / 60)}h ${overtimeMinutes % 60}m)`
-										: ''
-								}. Please monitor for employee wellness.`;
-								break;
-						}
+					// Admin-specific messages and titles
+					let adminTitle = '';
+					let adminMessage = '';
+					switch (reminderType) {
+						case 'missed':
+							adminTitle = '⚠️ Employee Missed Shift';
+							adminMessage = `${userName} missed their scheduled shift that was supposed to start at ${expectedShiftTime}. Please follow up as needed.`;
+							break;
+						case 'late':
+							adminTitle = '⏰ Employee Late Arrival';
+							adminMessage = `${userName} checked in ${lateMinutes || 'several'} minute${lateMinutes !== 1 ? 's' : ''} late for their shift. Expected start time: ${expectedShiftTime}.`;
+							break;
+						case 'overtime':
+							const otHours = Math.floor((overtimeMinutes || 0) / 60);
+							const otMins = (overtimeMinutes || 0) % 60;
+							adminTitle = '🔥 Employee Working Overtime';
+							adminMessage = `${userName} is currently working overtime (${otHours}h ${otMins}m). Please monitor for employee wellness and ensure proper rest periods.`;
+							break;
+					}
 
-						adminNotificationData.message = adminMessage;
-
-						await this.unifiedNotificationService.sendTemplatedNotification(
-							notificationType,
-							orgAdmins.map((admin) => admin.uid),
-							adminNotificationData,
-							{ priority: NotificationPriority.HIGH },
-						);
+					// Use GENERAL_NOTIFICATION for admin alerts with custom message
+					await this.unifiedNotificationService.sendTemplatedNotification(
+						NotificationEvent.GENERAL_NOTIFICATION,
+						orgAdmins.map((admin) => admin.uid),
+						{
+							message: adminMessage,
+							userId,
+							employeeName: userName,
+							userEmail: user?.email || '',
+							orgId,
+							branchId,
+							alertType: reminderType,
+							shiftStartTime: expectedShiftTime,
+							lateMinutes,
+							overtimeMinutes,
+							timestamp: new Date().toISOString(),
+						},
+						{ 
+							priority: NotificationPriority.HIGH,
+							customData: {
+								screen: '/staff',
+								action: 'view_employee_attendance',
+								type: 'admin_alert',
+								context: {
+									employeeId: userId,
+									employeeName: userName,
+									alertType: reminderType,
+								}
+							}
+						},
+					);
 					}
 				} catch (error) {
 					this.logger.warn(
@@ -1819,13 +1858,15 @@ export class AttendanceService {
 								continue;
 							}
 
-							// Get user info for personalized message
-							const user = await this.userRepository.findOne({
-								where: { uid: breakRecord.owner.uid },
-								select: ['uid', 'name', 'surname'],
-							});
+						// Get user info for personalized message
+						const user = await this.userRepository.findOne({
+							where: { uid: breakRecord.owner.uid },
+							select: ['uid', 'name', 'surname', 'username'],
+						});
 
-							const userName = user ? user.name : 'there';
+						// Construct full name with proper fallbacks
+						const fullName = `${user?.name || ''} ${user?.surname || ''}`.trim();
+						const userName = fullName || user?.username || 'Team Member';
 
 
 							this.logger.debug(
@@ -2201,24 +2242,28 @@ export class AttendanceService {
 					},
 				});
 
-				if (!todayAttendance) {
-					this.logger.debug(`[${operationId}] User ${user.uid} missed shift - sending alert`);
+			if (!todayAttendance) {
+				this.logger.debug(`[${operationId}] User ${user.uid} missed shift - sending alert`);
 
-					await this.unifiedNotificationService.sendTemplatedNotification(
-						NotificationEvent.ATTENDANCE_MISSED_SHIFT_ALERT,
-						[user.uid],
-						{
-							shiftStartTime: startTime,
-							reminderType: 'missed_shift',
-							userName: `${user.name} ${user.surname}`.trim(),
-							userId: user.uid,
-							orgId: org.uid,
-							timestamp: new Date().toISOString(),
-						},
-						{
-							priority: NotificationPriority.HIGH,
-						},
-					);
+				// Construct full name with proper fallbacks
+				const fullName = `${user.name || ''} ${user.surname || ''}`.trim();
+				const userName = fullName || user.username || 'Team Member';
+
+				await this.unifiedNotificationService.sendTemplatedNotification(
+					NotificationEvent.ATTENDANCE_MISSED_SHIFT_ALERT,
+					[user.uid],
+					{
+						shiftStartTime: startTime,
+						reminderType: 'missed_shift',
+						userName: userName,
+						userId: user.uid,
+						orgId: org.uid,
+						timestamp: new Date().toISOString(),
+					},
+					{
+						priority: NotificationPriority.HIGH,
+					},
+				);
 
 					// Also notify organization admins
 					await this.notifyAdminsAboutMissedShift(operationId, org.uid, user, startTime);
@@ -3409,20 +3454,22 @@ export class AttendanceService {
 
 			// Send enhanced break start notification
 			try {
-				// Get user info for personalized message with email and relations
-				const user = await this.userRepository.findOne({
-					where: { uid: breakDto.owner.uid },
-					select: ['uid', 'name', 'surname', 'email'],
-					relations: ['organisation', 'branch', 'branch.organisation'],
-				});
+			// Get user info for personalized message with email and relations
+			const user = await this.userRepository.findOne({
+				where: { uid: breakDto.owner.uid },
+				select: ['uid', 'name', 'surname', 'email', 'username'],
+				relations: ['organisation', 'branch', 'branch.organisation'],
+			});
 
-				const userName = user ? user.name : '';
-				const breakNumber =
-					breakCount === 1
-						? 'first'
-						: breakCount === 2
-						? 'second'
-						: `${breakCount}${breakCount > 3 ? 'th' : breakCount === 3 ? 'rd' : 'nd'}`;
+			// Construct full name with proper fallbacks
+			const fullName = `${user?.name || ''} ${user?.surname || ''}`.trim();
+			const userName = fullName || user?.username || 'Team Member';
+			const breakNumber =
+				breakCount === 1
+					? 'first'
+					: breakCount === 2
+					? 'second'
+					: `${breakCount}${breakCount > 3 ? 'th' : breakCount === 3 ? 'rd' : 'nd'}`;
 
 				// Format break start time in organization timezone
 				const breakStartTimeString = await this.formatTimeInOrganizationTimezone(breakStartTime, user?.organisation?.uid);
@@ -3561,16 +3608,18 @@ export class AttendanceService {
 
 			// Send enhanced break end notification
 			try {
-				// Get user info for personalized message with email and relations
-				const user = await this.userRepository.findOne({
-					where: { uid: breakDto.owner.uid },
-					select: ['uid', 'name', 'surname', 'email'],
-					relations: ['organisation', 'branch', 'branch.organisation'],
-				});
+			// Get user info for personalized message with email and relations
+			const user = await this.userRepository.findOne({
+				where: { uid: breakDto.owner.uid },
+				select: ['uid', 'name', 'surname', 'email', 'username'],
+				relations: ['organisation', 'branch', 'branch.organisation'],
+			});
 
-				const userName = user ? user.name : '';
+			// Construct full name with proper fallbacks
+			const fullName = `${user?.name || ''} ${user?.surname || ''}`.trim();
+			const userName = fullName || user?.username || 'Team Member';
 
-				// Format break times in organization timezone
+			// Format break times in organization timezone
 				const breakEndTimeString = await this.formatTimeInOrganizationTimezone(breakEndTime, user?.organisation?.uid);
 				const breakStartTimeString = await this.formatTimeInOrganizationTimezone(breakStartTime, user?.organisation?.uid);
 
