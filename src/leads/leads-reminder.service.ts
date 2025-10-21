@@ -5,9 +5,12 @@ import { Repository, In } from 'typeorm';
 import { Lead } from './entities/lead.entity';
 import { LeadStatus } from '../lib/enums/lead.enums';
 import { User } from '../user/entities/user.entity';
+import { Organisation } from '../organisation/entities/organisation.entity';
 import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
 import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
 import { AccountStatus } from '../lib/enums/status.enums';
+import { OrganizationHoursService } from '../attendance/services/organization.hours.service';
+import { TimezoneUtil } from '../lib/utils/timezone.util';
 
 @Injectable()
 export class LeadsReminderService {
@@ -26,7 +29,10 @@ export class LeadsReminderService {
     private readonly leadRepository: Repository<Lead>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    @InjectRepository(Organisation)
+    private readonly organisationRepository: Repository<Organisation>,
     private readonly unifiedNotificationService: UnifiedNotificationService,
+    private readonly organizationHoursService: OrganizationHoursService,
   ) {}
 
   /**
@@ -58,49 +64,89 @@ export class LeadsReminderService {
   }
 
   /**
-   * Daily lead summary - Runs at 8:00 AM
-   * Sends ONE consolidated push notification per user with all their leads (pending + stale)
+   * Daily lead summary - Runs every hour and checks each organization's timezone
+   * Sends notifications at 8:00 AM in each organization's timezone
    */
-  @Cron(CronExpression.EVERY_DAY_AT_8AM)
+  @Cron('0 * * * *') // Run every hour
   async sendDailyLeadSummary() {
-    this.logger.log('Starting daily lead summary notification...');
+    this.logger.log('Starting daily lead summary notification check...');
 
     try {
-      const now = new Date();
-      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const serverNow = new Date();
 
-      // Get all pending leads
-      const pendingLeads = await this.leadRepository.find({
-        where: {
-          status: LeadStatus.PENDING,
-          isDeleted: false,
-        },
-        relations: ['owner'],
+      // Get all organizations
+      const organizations = await this.organisationRepository.find({
+        where: { isDeleted: false },
       });
 
-      // Get all stale leads (not contacted in 7+ days or never contacted)
-      const staleLeads = await this.leadRepository.find({
-        where: [
-          {
-            lastContactDate: null,
-            isDeleted: false,
-            status: LeadStatus.PENDING,
-          },
-        ],
-        relations: ['owner'],
-      });
+      for (const org of organizations) {
+        try {
+          // Get organization timezone
+          const organizationHours = await this.organizationHoursService.getOrganizationHours(org.uid);
+          const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
 
-      // Group leads by owner
-      const leadsByOwner = this.groupLeadsByOwner([...pendingLeads, ...staleLeads]);
+          // Get current time in organization timezone
+          const orgCurrentTime = TimezoneUtil.getCurrentOrganizationTime(organizationTimezone);
+          const currentHour = orgCurrentTime.getHours();
+          const currentMinute = orgCurrentTime.getMinutes();
 
-      // Send consolidated notification to each user
-      for (const [ownerUid, leads] of Object.entries(leadsByOwner)) {
-        await this.sendConsolidatedLeadNotification(parseInt(ownerUid), leads, sevenDaysAgo);
+          // Only send notifications at 8:00 AM in the organization's timezone (±30 minutes window)
+          if (currentHour !== 8 || currentMinute > 30) {
+            continue;
+          }
+
+          this.logger.debug(`Processing daily lead summary for org ${org.uid} (${org.name}) at their 8:00 AM`);
+
+          // Calculate 7 days ago in organization timezone
+          const sevenDaysAgo = TimezoneUtil.addMinutesInOrganizationTime(
+            orgCurrentTime,
+            -7 * 24 * 60,
+            organizationTimezone
+          );
+
+          // Get all pending leads for this organization
+          const pendingLeads = await this.leadRepository.find({
+            where: {
+              organisation: { uid: org.uid },
+              status: LeadStatus.PENDING,
+              isDeleted: false,
+            },
+            relations: ['owner', 'organisation'],
+          });
+
+          // Get all stale leads (not contacted in 7+ days or never contacted) for this organization
+          const staleLeads = await this.leadRepository.find({
+            where: [
+              {
+                organisation: { uid: org.uid },
+                lastContactDate: null,
+                isDeleted: false,
+                status: LeadStatus.PENDING,
+              },
+            ],
+            relations: ['owner', 'organisation'],
+          });
+
+          if (pendingLeads.length === 0 && staleLeads.length === 0) {
+            this.logger.debug(`No leads to notify for org ${org.uid}`);
+            continue;
+          }
+
+          // Group leads by owner
+          const leadsByOwner = this.groupLeadsByOwner([...pendingLeads, ...staleLeads]);
+
+          // Send consolidated notification to each user
+          for (const [ownerUid, leads] of Object.entries(leadsByOwner)) {
+            await this.sendConsolidatedLeadNotification(parseInt(ownerUid), leads, sevenDaysAgo);
+          }
+
+          this.logger.log(`✅ Daily lead summary sent to ${Object.keys(leadsByOwner).length} users in org ${org.uid}`);
+        } catch (error) {
+          this.logger.error(`Error processing daily lead summary for org ${org.uid}:`, error.message);
+        }
       }
-
-      this.logger.log(`✅ Daily lead summary sent to ${Object.keys(leadsByOwner).length} users`);
     } catch (error) {
-      this.logger.error('Failed to process daily lead summary', error.stack);
+      this.logger.error('Error in daily lead summary check:', error.stack);
     }
   }
 

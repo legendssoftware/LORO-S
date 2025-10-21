@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { LeadsService } from './leads.service';
 import { LeadsController } from './leads.controller';
 import { Lead } from './entities/lead.entity';
@@ -13,15 +13,18 @@ import { CommunicationModule } from '../communication/communication.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { TasksModule } from '../tasks/tasks.module';
 import { Task } from '../tasks/entities/task.entity';
+import { Organisation } from '../organisation/entities/organisation.entity';
+import { AttendanceModule } from '../attendance/attendance.module';
 
 @Module({
   imports: [
     LicensingModule,
-    TypeOrmModule.forFeature([Lead, User, Interaction, Task]),
+    TypeOrmModule.forFeature([Lead, User, Interaction, Task, Organisation]),
     RewardsModule,
     CommunicationModule,
     NotificationsModule,
-    TasksModule
+    TasksModule,
+    forwardRef(() => AttendanceModule)
   ],
   controllers: [LeadsController],
   providers: [LeadsService, LeadsReminderService, LeadScoringService],

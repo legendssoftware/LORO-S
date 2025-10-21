@@ -2,12 +2,16 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, Not, In, LessThan, IsNull } from 'typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { startOfDay, endOfDay } from 'date-fns';
 import { Task } from './entities/task.entity';
 import { User } from '../user/entities/user.entity';
+import { Organisation } from '../organisation/entities/organisation.entity';
 import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
 import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
 import { TaskStatus, TaskPriority } from '../lib/enums/task.enums';
 import { AccountStatus } from '../lib/enums/status.enums';
+import { OrganizationHoursService } from '../attendance/services/organization.hours.service';
+import { TimezoneUtil } from '../lib/utils/timezone.util';
 
 @Injectable()
 export class TaskReminderService {
@@ -26,7 +30,10 @@ export class TaskReminderService {
 		private readonly taskRepository: Repository<Task>,
 		@InjectRepository(User)
 		private readonly userRepository: Repository<User>,
+		@InjectRepository(Organisation)
+		private readonly organisationRepository: Repository<Organisation>,
 		private readonly unifiedNotificationService: UnifiedNotificationService,
+		private readonly organizationHoursService: OrganizationHoursService,
 	) {}
 
 	/**
@@ -58,29 +65,60 @@ export class TaskReminderService {
 	}
 
 	/**
-	 * Daily task summary - Runs at 7:00 AM
-	 * Sends ONE consolidated push notification per user with all their tasks
+	 * Daily task summary - Runs every hour and checks each organization's timezone
+	 * Sends notifications at 7:00 AM in each organization's timezone
 	 */
-	@Cron(CronExpression.EVERY_DAY_AT_7AM)
+	@Cron('0 * * * *') // Run every hour
 	async sendDailyTaskSummary() {
-		this.logger.log('Starting daily task summary notification...');
+		this.logger.log('Starting daily task summary notification check...');
 
 		try {
-			const now = new Date();
-			const startOfToday = new Date(now);
-			startOfToday.setHours(0, 0, 0, 0);
-			const endOfToday = new Date(now);
-			endOfToday.setHours(23, 59, 59, 999);
+			const serverNow = new Date();
 
-			// Get all tasks due today that are not completed or cancelled
+			// Get all organizations
+			const organizations = await this.organisationRepository.find({
+				where: { isDeleted: false },
+			});
+
+			for (const org of organizations) {
+				try {
+					// Get organization timezone
+					const organizationHours = await this.organizationHoursService.getOrganizationHours(org.uid);
+					const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
+
+					// Get current time in organization timezone
+					const orgCurrentTime = TimezoneUtil.getCurrentOrganizationTime(organizationTimezone);
+					const currentHour = orgCurrentTime.getHours();
+					const currentMinute = orgCurrentTime.getMinutes();
+
+					// Only send notifications at 7:00 AM in the organization's timezone (±30 minutes window)
+					if (currentHour !== 7 || currentMinute > 30) {
+						continue;
+					}
+
+					this.logger.debug(`Processing daily task summary for org ${org.uid} (${org.name}) at their 7:00 AM`);
+
+					// Get start and end of today in organization timezone
+					const dayStart = startOfDay(orgCurrentTime);
+					const dayEnd = endOfDay(orgCurrentTime);
+					const todayStart = TimezoneUtil.toOrganizationTime(dayStart, organizationTimezone);
+					const todayEnd = TimezoneUtil.toOrganizationTime(dayEnd, organizationTimezone);
+
+					// Get all tasks due today in this organization that are not completed or cancelled
 			const tasksToday = await this.taskRepository.find({
 				where: {
-					deadline: Between(startOfToday, endOfToday),
+							organisation: { uid: org.uid },
+							deadline: Between(todayStart, todayEnd),
 					status: Not(In([TaskStatus.COMPLETED, TaskStatus.CANCELLED])),
 					isDeleted: false,
 				},
-				relations: ['creator', 'assignees'],
+						relations: ['creator', 'assignees', 'organisation'],
 			});
+
+					if (tasksToday.length === 0) {
+						this.logger.debug(`No tasks due today for org ${org.uid}`);
+						continue;
+					}
 
 			// Group tasks by user (assignees + creators)
 			const tasksByUser = this.groupTasksByUser(tasksToday);
@@ -90,43 +128,78 @@ export class TaskReminderService {
 				await this.sendConsolidatedTaskNotification(parseInt(userId), userTasks, 'today');
 			}
 
-			this.logger.log(`✅ Daily task summary sent to ${Object.keys(tasksByUser).length} users`);
+					this.logger.log(`✅ Daily task summary sent to ${Object.keys(tasksByUser).length} users in org ${org.uid}`);
+				} catch (error) {
+					this.logger.error(`Error processing daily task summary for org ${org.uid}:`, error.message);
+				}
+			}
 		} catch (error) {
-			this.logger.error('Error sending daily task summary', error.stack);
+			this.logger.error('Error in daily task summary check:', error.stack);
 		}
 	}
 
 	/**
-	 * Overdue and missed tasks check - Runs at 6:00 AM
-	 * Sends ONE consolidated push notification per user with all overdue/missed tasks
+	 * Overdue and missed tasks check - Runs every hour and checks each organization's timezone
+	 * Sends notifications at 6:00 AM in each organization's timezone
 	 */
-	@Cron(CronExpression.EVERY_DAY_AT_6AM)
+	@Cron('0 * * * *') // Run every hour
 	async sendOverdueTasksSummary() {
-		this.logger.log('Starting overdue and missed tasks summary notification...');
+		this.logger.log('Starting overdue and missed tasks summary notification check...');
 
 		try {
-			const now = new Date();
+			const serverNow = new Date();
 
-			// Find all overdue tasks
+			// Get all organizations
+			const organizations = await this.organisationRepository.find({
+				where: { isDeleted: false },
+			});
+
+			for (const org of organizations) {
+				try {
+					// Get organization timezone
+					const organizationHours = await this.organizationHoursService.getOrganizationHours(org.uid);
+					const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
+
+					// Get current time in organization timezone
+					const orgCurrentTime = TimezoneUtil.getCurrentOrganizationTime(organizationTimezone);
+					const currentHour = orgCurrentTime.getHours();
+					const currentMinute = orgCurrentTime.getMinutes();
+
+					// Only send notifications at 6:00 AM in the organization's timezone (±30 minutes window)
+					if (currentHour !== 6 || currentMinute > 30) {
+						continue;
+					}
+
+					this.logger.debug(`Processing overdue tasks summary for org ${org.uid} (${org.name}) at their 6:00 AM`);
+
+					// Find all overdue tasks for this organization
 			const overdueTasks = await this.taskRepository.find({
 				where: [
 					{
+								organisation: { uid: org.uid },
 						status: TaskStatus.OVERDUE,
 						isDeleted: false,
 					},
 					{
+								organisation: { uid: org.uid },
 						status: TaskStatus.MISSED,
 						isDeleted: false,
 					},
 					{
-						deadline: LessThan(now),
+								organisation: { uid: org.uid },
+								deadline: LessThan(orgCurrentTime),
 						status: Not(In([TaskStatus.COMPLETED, TaskStatus.CANCELLED, TaskStatus.OVERDUE, TaskStatus.MISSED])),
 						isDeleted: false,
 					},
 				],
-				relations: ['creator', 'assignees'],
+						relations: ['creator', 'assignees', 'organisation'],
 				order: { deadline: 'ASC' },
 			});
+
+					if (overdueTasks.length === 0) {
+						this.logger.debug(`No overdue tasks for org ${org.uid}`);
+						continue;
+					}
 
 			// Group overdue tasks by user
 			const tasksByUser = this.groupTasksByUser(overdueTasks);
@@ -136,9 +209,13 @@ export class TaskReminderService {
 				await this.sendConsolidatedTaskNotification(parseInt(userId), userTasks, 'overdue');
 			}
 
-			this.logger.log(`✅ Overdue tasks summary sent to ${Object.keys(tasksByUser).length} users`);
+					this.logger.log(`✅ Overdue tasks summary sent to ${Object.keys(tasksByUser).length} users in org ${org.uid}`);
+				} catch (error) {
+					this.logger.error(`Error processing overdue tasks summary for org ${org.uid}:`, error.message);
+				}
+			}
 		} catch (error) {
-			this.logger.error('Error sending overdue tasks summary', error.stack);
+			this.logger.error('Error in overdue tasks summary check:', error.stack);
 		}
 	}
 

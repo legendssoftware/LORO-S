@@ -97,7 +97,7 @@ export class AttendanceService {
 	 */
 	private async checkAndCalculateLateMinutes(orgId: number, checkInTime: Date): Promise<number> {
 		try {
-			// Get organization working hours for the check-in date
+			// Get organization working hours and timezone for the check-in date
 			const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(orgId, checkInTime);
 
 			if (!workingDayInfo.isWorkingDay || !workingDayInfo.startTime) {
@@ -105,15 +105,24 @@ export class AttendanceService {
 				return 0;
 			}
 
-			// Parse the expected start time
-			const [expectedHour, expectedMinute] = workingDayInfo.startTime.split(':').map(Number);
-			const expectedStartTime = new Date(checkInTime);
-			expectedStartTime.setHours(expectedHour, expectedMinute, 0, 0);
+			// Get organization timezone
+			const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
+			const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
 
-			// Calculate late minutes with grace period
-			const gracePeriodMinutes = 15; // Allow 15 minutes grace period
-			const graceEndTime = new Date(expectedStartTime);
-			graceEndTime.setMinutes(graceEndTime.getMinutes() + gracePeriodMinutes);
+			// Parse the expected start time in organization's timezone
+			const expectedStartTime = TimezoneUtil.parseTimeInOrganization(
+				workingDayInfo.startTime,
+				checkInTime,
+				organizationTimezone
+			);
+
+			// Calculate late minutes with grace period (15 minutes)
+			const gracePeriodMinutes = 15;
+			const graceEndTime = TimezoneUtil.addMinutesInOrganizationTime(
+				expectedStartTime,
+				gracePeriodMinutes,
+				organizationTimezone
+			);
 
 			if (checkInTime <= graceEndTime) {
 				// On time or within grace period
@@ -758,10 +767,13 @@ export class AttendanceService {
 			// Continue with auto-close if we can't fetch preferences (fail-safe)
 		}
 
-		// Default close time is 4:30 PM as requested
+		// Get organization timezone for accurate close time calculation
+		const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
+		const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
+		
+		// Default close time is 4:30 PM as requested (in organization timezone)
 		const checkInDate = new Date(existingShift.checkIn);
-		let closeTime = new Date(checkInDate);
-		closeTime.setHours(16, 30, 0, 0); // 4:30 PM default
+		let closeTime = TimezoneUtil.parseTimeInOrganization('16:30', checkInDate, organizationTimezone);
 
 		try {
 			// Try to get organization hours if orgId is provided
@@ -771,33 +783,32 @@ export class AttendanceService {
 				const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(orgId, checkInDate);
 
 				if (workingDayInfo && workingDayInfo.isWorkingDay && workingDayInfo.endTime) {
-					// Parse organization close time (format: "HH:MM")
+					// Parse organization close time (format: "HH:MM") in organization's timezone
 					try {
-						const [hours, minutes] = workingDayInfo.endTime.split(':').map(Number);
+						closeTime = TimezoneUtil.parseTimeInOrganization(
+							workingDayInfo.endTime,
+							checkInDate,
+							organizationTimezone
+						);
 
-						if (!isNaN(hours) && !isNaN(minutes)) {
-							// Create close time on the same date as check-in
-							closeTime = new Date(checkInDate);
-							closeTime.setHours(hours, minutes, 0, 0);
-
-							// If the close time would be before the check-in time (e.g., night shift),
-							// set it to the next day
-							if (closeTime <= checkInDate) {
-								closeTime.setDate(closeTime.getDate() + 1);
-							}
-
-							this.logger.debug(
-								`Using organization close time: ${workingDayInfo.endTime} for user ${userId}`,
-							);
-						} else {
-							this.logger.warn(
-								`Invalid organization hours format: ${workingDayInfo.endTime}, using default 4:30 PM`,
+						// If the close time would be before the check-in time (e.g., night shift),
+						// add one day
+						if (closeTime <= checkInDate) {
+							closeTime = TimezoneUtil.addMinutesInOrganizationTime(
+								closeTime,
+								24 * 60,
+								organizationTimezone
 							);
 						}
+
+						this.logger.debug(
+							`Using organization close time: ${workingDayInfo.endTime} for user ${userId}`,
+						);
 					} catch (parseError) {
 						this.logger.warn(
 							`Error parsing organization close time: ${parseError.message}, using default 4:30 PM`,
 						);
+						// closeTime already set to default 4:30 PM
 					}
 				} else {
 					this.logger.warn(
@@ -824,10 +835,9 @@ export class AttendanceService {
 		} catch (error) {
 			this.logger.error(`Error auto-closing existing shift for user ${userId}: ${error.message}`);
 
-			// Fallback: still try to close the shift with default time
+			// Fallback: still try to close the shift with default time (4:30 PM in org timezone)
 			try {
-				closeTime = new Date(checkInDate);
-				closeTime.setHours(16, 30, 0, 0); // 4:30 PM fallback
+				closeTime = TimezoneUtil.parseTimeInOrganization('16:30', checkInDate, organizationTimezone);
 
 				existingShift.checkOut = closeTime;
 				existingShift.status = AttendanceStatus.COMPLETED;
@@ -1390,13 +1400,19 @@ export class AttendanceService {
 	): Promise<{ message: string; checkIns: Attendance[] }> {
 		this.logger.log(`Fetching check-ins for date: ${date}, orgId: ${orgId}, branchId: ${branchId}`);
 		try {
-			const startOfDay = new Date(date);
-			startOfDay.setHours(0, 0, 0, 0);
-			const endOfDay = new Date(date);
-			endOfDay.setHours(23, 59, 59, 999);
+			// Get organization timezone for accurate date range
+			const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
+			const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
+			
+			// Use date-fns to properly handle start and end of day in organization timezone
+			const dateObj = new Date(date);
+			const dayStart = startOfDay(dateObj);
+			const dayEnd = endOfDay(dateObj);
+			const startOfDayConverted = TimezoneUtil.toOrganizationTime(dayStart, organizationTimezone);
+			const endOfDayConverted = TimezoneUtil.toOrganizationTime(dayEnd, organizationTimezone);
 
 			const whereConditions: any = {
-				checkIn: Between(startOfDay, endOfDay),
+				checkIn: Between(startOfDayConverted, endOfDayConverted),
 			};
 
 			// Apply organization filtering
@@ -1426,49 +1442,49 @@ export class AttendanceService {
 				},
 			});
 
-			// Also get shifts that started on previous days but are still ongoing on this date
-			const ongoingShiftsConditions: any = {
-				checkIn: LessThan(startOfDay), // Started before today
-				checkOut: IsNull(), // Not checked out yet
-				status: In([AttendanceStatus.PRESENT, AttendanceStatus.ON_BREAK]), // Still active
+		// Also get shifts that started on previous days but are still ongoing on this date
+		const ongoingShiftsConditions: any = {
+			checkIn: LessThan(startOfDayConverted), // Started before today
+			checkOut: IsNull(), // Not checked out yet
+			status: In([AttendanceStatus.PRESENT, AttendanceStatus.ON_BREAK]), // Still active
+		};
+
+		// Apply same organization and branch filtering for ongoing shifts
+		if (orgId) {
+			ongoingShiftsConditions.organisation = { uid: orgId };
+		}
+
+		if (branchId) {
+			ongoingShiftsConditions.branch = { uid: branchId };
+		}
+
+		const ongoingShifts = await this.attendanceRepository.find({
+			where: ongoingShiftsConditions,
+			relations: [
+				'owner',
+				'owner.branch',
+				'owner.organisation',
+				'owner.userProfile',
+				'verifiedBy',
+				'organisation',
+				'branch',
+			],
+			order: {
+				checkIn: 'DESC',
+			},
+		});
+
+		// Combine both sets of check-ins and mark multi-day shifts
+		const allCheckIns = [...checkInsToday, ...ongoingShifts].map((checkIn) => {
+			const checkInDate = new Date(checkIn.checkIn);
+			const isMultiDay = checkInDate < startOfDayConverted;
+
+			return {
+				...checkIn,
+				isMultiDayShift: isMultiDay,
+				shiftDaySpan: isMultiDay ? this.calculateShiftDaySpan(checkInDate, endOfDayConverted) : 1,
 			};
-
-			// Apply same organization and branch filtering for ongoing shifts
-			if (orgId) {
-				ongoingShiftsConditions.organisation = { uid: orgId };
-			}
-
-			if (branchId) {
-				ongoingShiftsConditions.branch = { uid: branchId };
-			}
-
-			const ongoingShifts = await this.attendanceRepository.find({
-				where: ongoingShiftsConditions,
-				relations: [
-					'owner',
-					'owner.branch',
-					'owner.organisation',
-					'owner.userProfile',
-					'verifiedBy',
-					'organisation',
-					'branch',
-				],
-				order: {
-					checkIn: 'DESC',
-				},
-			});
-
-			// Combine both sets of check-ins and mark multi-day shifts
-			const allCheckIns = [...checkInsToday, ...ongoingShifts].map((checkIn) => {
-				const checkInDate = new Date(checkIn.checkIn);
-				const isMultiDay = checkInDate < startOfDay;
-
-				return {
-					...checkIn,
-					isMultiDayShift: isMultiDay,
-					shiftDaySpan: isMultiDay ? this.calculateShiftDaySpan(checkInDate, endOfDay) : 1,
-				};
-			});
+		});
 
 			// Sort by check-in time descending
 			allCheckIns.sort((a, b) => new Date(b.checkIn).getTime() - new Date(a.checkIn).getTime());
@@ -1858,7 +1874,7 @@ export class AttendanceService {
 		this.logger.log(`[${operationId}] Starting break duration notification check`);
 
 		try {
-			const now = new Date();
+			const serverNow = new Date();
 
 			// Get all active breaks (users currently on break)
 			const activeBreaks = await this.attendanceRepository.find({
@@ -1877,6 +1893,14 @@ export class AttendanceService {
 
 			for (const breakRecord of activeBreaks) {
 				try {
+					// Get organization timezone for accurate time calculations
+					const orgId = breakRecord.owner.organisation?.uid;
+					const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
+					const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
+					
+					// Get current time in organization's timezone
+					const now = TimezoneUtil.getCurrentOrganizationTime(organizationTimezone);
+					
 					const breakStartTime = new Date(breakRecord.breakStartTime);
 					const breakDurationMinutes = Math.floor((now.getTime() - breakStartTime.getTime()) / (1000 * 60));
 
@@ -2082,25 +2106,25 @@ export class AttendanceService {
 						continue;
 					}
 
-					// Calculate notification windows
-					const [startHour, startMinute] = startTime.split(':').map(Number);
-					const [endHour, endMinute] = endTime.split(':').map(Number);
+				// Calculate notification windows using TimezoneUtil to properly handle organization timezone
+				const [startHour, startMinute] = startTime.split(':').map(Number);
+				const [endHour, endMinute] = endTime.split(':').map(Number);
 
-					// 30 minutes BEFORE start time (shift start reminder)
-					const preShiftReminderTime = new Date(orgCurrentTime);
-					preShiftReminderTime.setHours(startHour, startMinute - 30, 0, 0);
+				// Parse organization working times in their timezone
+				const orgStartTime = TimezoneUtil.parseTimeInOrganization(startTime, orgCurrentTime, organizationTimezone);
+				const orgEndTime = TimezoneUtil.parseTimeInOrganization(endTime, orgCurrentTime, organizationTimezone);
 
-					// 30 minutes AFTER start time (missed shift alert)
-					const missedShiftAlertTime = new Date(orgCurrentTime);
-					missedShiftAlertTime.setHours(startHour, startMinute + 30, 0, 0);
+				// 30 minutes BEFORE start time (shift start reminder)
+				const preShiftReminderTime = TimezoneUtil.addMinutesInOrganizationTime(orgStartTime, -30, organizationTimezone);
 
-					// 30 minutes BEFORE end time (checkout reminder)
-					const preCheckoutReminderTime = new Date(orgCurrentTime);
-					preCheckoutReminderTime.setHours(endHour, endMinute - 30, 0, 0);
+				// 30 minutes AFTER start time (missed shift alert)
+				const missedShiftAlertTime = TimezoneUtil.addMinutesInOrganizationTime(orgStartTime, 30, organizationTimezone);
 
-					// 30 minutes AFTER end time (missed checkout alert)
-					const missedCheckoutAlertTime = new Date(orgCurrentTime);
-					missedCheckoutAlertTime.setHours(endHour, endMinute + 30, 0, 0);
+				// 30 minutes BEFORE end time (checkout reminder)
+				const preCheckoutReminderTime = TimezoneUtil.addMinutesInOrganizationTime(orgEndTime, -30, organizationTimezone);
+
+				// 30 minutes AFTER end time (missed checkout alert)
+				const missedCheckoutAlertTime = TimezoneUtil.addMinutesInOrganizationTime(orgEndTime, 30, organizationTimezone);
 
 					// Check if we're within notification windows (±2.5 minutes for 5-minute cron)
 					const preShiftTimeDiff =
@@ -2823,10 +2847,15 @@ export class AttendanceService {
 		ongoingShifts: Attendance[];
 	}> {
 		try {
-			const startOfPeriod = new Date(startDate);
-			startOfPeriod.setHours(0, 0, 0, 0);
-			const endOfPeriod = new Date(endDate);
-			endOfPeriod.setHours(23, 59, 59, 999);
+			// Get organization timezone for accurate date range
+			const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
+			const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
+			
+			// Use date-fns with timezone conversion for start and end of period
+			const periodStart = startOfDay(startDate);
+			const periodEnd = endOfDay(endDate);
+			const startOfPeriod = TimezoneUtil.toOrganizationTime(periodStart, organizationTimezone);
+			const endOfPeriod = TimezoneUtil.toOrganizationTime(periodEnd, organizationTimezone);
 
 			const whereConditions: any = {};
 

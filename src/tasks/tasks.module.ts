@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { TasksService } from './tasks.service';
 import { TasksController } from './tasks.controller';
 import { Task } from './entities/task.entity';
@@ -26,6 +26,7 @@ import { OrganisationModule } from '../organisation/organisation.module';
 import { OrganisationSettings } from '../organisation/entities/organisation-settings.entity';
 import { OrganisationAppearance } from '../organisation/entities/organisation-appearance.entity';
 import { OrganisationHours } from '../organisation/entities/organisation-hours.entity';
+import { AttendanceModule } from '../attendance/attendance.module';
 
 @Module({
 	imports: [
@@ -51,6 +52,7 @@ import { OrganisationHours } from '../organisation/entities/organisation-hours.e
 		ScheduleModule.forRoot(),
 		UserModule,
 		OrganisationModule,
+		forwardRef(() => AttendanceModule),
 	],
 	controllers: [TasksController],
 	providers: [TasksService, TaskReminderService, TaskRouteService, GoogleMapsService, UserService],

@@ -1,10 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, In } from 'typeorm';
+import { startOfDay as dateFnsStartOfDay, endOfDay as dateFnsEndOfDay } from 'date-fns';
 import { Task } from './entities/task.entity';
 import { Client } from '../clients/entities/client.entity';
 import { User } from '../user/entities/user.entity';
 import { Branch } from '../branch/entities/branch.entity';
+import { Organisation } from '../organisation/entities/organisation.entity';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { GoogleMapsService } from '../lib/services/google-maps.service';
 import { Route } from './entities/route.entity';
@@ -13,6 +15,8 @@ import { Location } from './interfaces/route.interface';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { Inject } from '@nestjs/common';
+import { OrganizationHoursService } from '../attendance/services/organization.hours.service';
+import { TimezoneUtil } from '../lib/utils/timezone.util';
 
 @Injectable()
 export class TaskRouteService {
@@ -28,10 +32,13 @@ export class TaskRouteService {
 		private readonly userRepository: Repository<User>,
 		@InjectRepository(Branch)
 		private readonly branchRepository: Repository<Branch>,
+		@InjectRepository(Organisation)
+		private readonly organisationRepository: Repository<Organisation>,
 		@InjectRepository(Route)
 		private readonly routeRepository: Repository<Route>,
 		private readonly googleMapsService: GoogleMapsService,
 		@Inject(CACHE_MANAGER) private cacheManager: Cache,
+		private readonly organizationHoursService: OrganizationHoursService,
 	) {}
 
 	private getBranchCacheKey(branchUid: number): string {
@@ -276,15 +283,30 @@ export class TaskRouteService {
 	}
 
 	/**
-	 * Plan routes for all tasks on a given date
+	 * Plan routes for all tasks on a given date - timezone-aware
 	 */
 	@Cron(CronExpression.EVERY_DAY_AT_5AM)
 	async planRoutes(date: Date = new Date(), organisationRef?: string, branchId?: number): Promise<Route[]> {
-		const startOfDay = new Date(date);
-		startOfDay.setHours(0, 0, 0, 0);
+		// If organization is provided, use its timezone; otherwise use default
+		let organizationTimezone = 'Africa/Johannesburg';
+		let orgId: number | undefined;
+		
+		if (organisationRef) {
+			const org = await this.organisationRepository.findOne({
+				where: { ref: organisationRef },
+			});
+			if (org) {
+				orgId = org.uid;
+				const organizationHours = await this.organizationHoursService.getOrganizationHours(org.uid);
+				organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
+			}
+		}
 
-		const endOfDay = new Date(date);
-		endOfDay.setHours(23, 59, 59, 999);
+		// Calculate start and end of day in organization timezone
+		const dayStart = dateFnsStartOfDay(date);
+		const dayEnd = dateFnsEndOfDay(date);
+		const startOfDay = TimezoneUtil.toOrganizationTime(dayStart, organizationTimezone);
+		const endOfDay = TimezoneUtil.toOrganizationTime(dayEnd, organizationTimezone);
 
 		// Build the where clause
 		const where: any = {
