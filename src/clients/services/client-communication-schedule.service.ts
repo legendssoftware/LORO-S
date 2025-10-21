@@ -11,7 +11,7 @@ import { CommunicationFrequency, CommunicationType } from '../../lib/enums/clien
 import { TaskType, TaskPriority, RepetitionType, TaskStatus } from '../../lib/enums/task.enums';
 import { EmailType } from '../../lib/enums/email.enums';
 import { PaginatedResponse } from '../../lib/interfaces/product.interfaces';
-import { addDays, addWeeks, addMonths, addYears, format, startOfDay, setHours, setMinutes, differenceInDays, startOfWeek, endOfWeek, isToday } from 'date-fns';
+import { addDays, addWeeks, addMonths, addYears, format, startOfDay, setHours, setMinutes, startOfWeek, endOfWeek } from 'date-fns';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
@@ -45,6 +45,70 @@ export class ClientCommunicationScheduleService {
         private readonly unifiedNotificationService: UnifiedNotificationService,
     ) {
         this.logger.log('ClientCommunicationScheduleService initialized with enhanced visit tracking');
+    }
+
+    /**
+     * Check if user has assigned clients
+     */
+    private async hasAssignedClients(userId: number): Promise<boolean> {
+        const user = await this.userRepository.findOne({
+            where: { uid: userId, isDeleted: false },
+            select: ['assignedClientIds']
+        });
+        return user?.assignedClientIds && user.assignedClientIds.length > 0;
+    }
+
+    /**
+     * Send notification to user with no assigned clients
+     */
+    private async sendNoClientsNotification(user: User, operationId: string): Promise<void> {
+        try {
+            // Fetch user with full details for proper name construction
+            const fullUser = await this.userRepository.findOne({
+                where: { uid: user.uid },
+                select: ['uid', 'name', 'surname', 'email', 'username'],
+                relations: ['organisation', 'branch', 'branch.organisation'],
+            });
+
+            if (!fullUser) {
+                this.logger.warn(`[${operationId}] User ${user.uid} not found for no-clients notification`);
+                return;
+            }
+
+            // Construct full name with proper fallbacks
+            const fullName = `${fullUser.name || ''} ${fullUser.surname || ''}`.trim();
+            const userName = fullName || fullUser.username || 'Team Member';
+
+            await this.unifiedNotificationService.sendTemplatedNotification(
+                NotificationEvent.GENERAL_NOTIFICATION,
+                [fullUser.uid],
+                {
+                    message: `Hi ${userName}, we would have scheduled a visit to a customer for you but we realised you do not have any assigned clients. Please contact your manager to get some clients assigned to your profile.`,
+                    userName,
+                    userId: fullUser.uid,
+                    orgId: fullUser.organisation?.uid,
+                    branchId: fullUser.branch?.uid,
+                    timestamp: new Date().toISOString(),
+                },
+                {
+                    priority: NotificationPriority.NORMAL,
+                    sendEmail: false,
+                    customData: {
+                        screen: '/clients',
+                        action: 'no_clients_assigned',
+                        type: 'client_reminder',
+                        context: {
+                            userId: fullUser.uid,
+                            reminderType: 'no_clients',
+                            timestamp: new Date().toISOString()
+                        }
+                    }
+                }
+            );
+            this.logger.log(`[${operationId}] No-clients notification sent to user ${fullUser.uid} (${userName})`);
+        } catch (error) {
+            this.logger.error(`[${operationId}] Error sending no-clients notification:`, error.message);
+        }
     }
 
     /**
@@ -797,6 +861,14 @@ export class ClientCommunicationScheduleService {
                 return;
             }
 
+            // Check if user has assigned clients
+            const hasClients = await this.hasAssignedClients(schedule.assignedTo.uid);
+            if (!hasClients) {
+                this.logger.log(`[${operationId}] User ${schedule.assignedTo.uid} has no assigned clients, sending alternative notification`);
+                await this.sendNoClientsNotification(schedule.assignedTo, operationId);
+                return;
+            }
+
             const now = new Date();
             const organizationId = schedule.organisation?.uid;
             const daysOverdue = Math.floor((now.getTime() - schedule.nextScheduledDate.getTime()) / (24 * 60 * 60 * 1000));
@@ -932,6 +1004,14 @@ export class ClientCommunicationScheduleService {
         try {
             if (!schedule.assignedTo?.email) {
                 this.logger.warn(`[${operationId}] No email found for schedule ${schedule.uid}, skipping reminder`);
+                return;
+            }
+
+            // Check if user has assigned clients
+            const hasClients = await this.hasAssignedClients(schedule.assignedTo.uid);
+            if (!hasClients) {
+                this.logger.log(`[${operationId}] User ${schedule.assignedTo.uid} has no assigned clients, sending alternative notification`);
+                await this.sendNoClientsNotification(schedule.assignedTo, operationId);
                 return;
             }
 
@@ -1074,6 +1154,14 @@ export class ClientCommunicationScheduleService {
         try {
             if (!salesRep.email) {
                 this.logger.warn(`[${operationId}] No email found for user ${salesRep.uid}, skipping report`);
+                return;
+            }
+
+            // Check if user has assigned clients
+            const hasClients = await this.hasAssignedClients(salesRep.uid);
+            if (!hasClients) {
+                this.logger.log(`[${operationId}] User ${salesRep.uid} has no assigned clients, sending alternative notification`);
+                await this.sendNoClientsNotification(salesRep, operationId);
                 return;
             }
 

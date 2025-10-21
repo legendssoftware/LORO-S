@@ -300,6 +300,70 @@ export class ClientsService {
 		};
 	}
 
+	/**
+	 * Check if user has assigned clients
+	 */
+	private async hasAssignedClients(userId: number): Promise<boolean> {
+		const user = await this.userRepository.findOne({
+			where: { uid: userId, isDeleted: false },
+			select: ['assignedClientIds']
+		});
+		return user?.assignedClientIds && user.assignedClientIds.length > 0;
+	}
+
+	/**
+	 * Send notification to user with no assigned clients
+	 */
+	private async sendNoClientsNotification(user: User): Promise<void> {
+		try {
+			// Fetch user with full details for proper name construction
+			const fullUser = await this.userRepository.findOne({
+				where: { uid: user.uid },
+				select: ['uid', 'name', 'surname', 'email', 'username'],
+				relations: ['organisation', 'branch', 'branch.organisation'],
+			});
+
+			if (!fullUser) {
+				this.logger.warn(`[CLIENT_NO_CLIENTS] User ${user.uid} not found for no-clients notification`);
+				return;
+			}
+
+			// Construct full name with proper fallbacks
+			const fullName = `${fullUser.name || ''} ${fullUser.surname || ''}`.trim();
+			const userName = fullName || fullUser.username || 'Team Member';
+
+			await this.unifiedNotificationService.sendTemplatedNotification(
+				NotificationEvent.GENERAL_NOTIFICATION,
+				[fullUser.uid],
+				{
+					message: `Hi ${userName}, we would have scheduled a visit to a customer for you but we realised you do not have any assigned clients. Please contact your manager to get some clients assigned to your profile.`,
+					userName,
+					userId: fullUser.uid,
+					orgId: fullUser.organisation?.uid,
+					branchId: fullUser.branch?.uid,
+					timestamp: new Date().toISOString(),
+				},
+				{
+					priority: NotificationPriority.NORMAL,
+					sendEmail: false,
+					customData: {
+						screen: '/clients',
+						action: 'no_clients_assigned',
+						type: 'client_reminder',
+						context: {
+							userId: fullUser.uid,
+							reminderType: 'no_clients',
+							timestamp: new Date().toISOString()
+						}
+					}
+				}
+			);
+			this.logger.log(`[CLIENT_NO_CLIENTS] No-clients notification sent to user ${fullUser.uid} (${userName})`);
+		} catch (error) {
+			this.logger.error(`[CLIENT_NO_CLIENTS] Error sending no-clients notification:`, error.message);
+		}
+	}
+
 	private async invalidateClientCache(client: Client): Promise<void> {
 		const startTime = Date.now();
 		this.logger.debug(`[CACHE_INVALIDATION] Starting cache invalidation for client ${client.uid} (${client.name})`);
@@ -2857,6 +2921,14 @@ export class ClientsService {
 		dashboardBaseUrl: string,
 		supportEmail: string,
 	): Promise<void> {
+		// Check if user has assigned clients
+		const hasClients = await this.hasAssignedClients(user.uid);
+		if (!hasClients) {
+			this.logger.log(`[CLIENT_COMM_REMINDER] User ${user.uid} has no assigned clients, sending alternative notification`);
+			await this.sendNoClientsNotification(user);
+			return;
+		}
+
 		const now = new Date();
 		const isOverdue = schedule.nextScheduledDate < now;
 		const daysOverdue = isOverdue ? Math.floor((now.getTime() - schedule.nextScheduledDate.getTime()) / (1000 * 60 * 60 * 24)) : 0;
