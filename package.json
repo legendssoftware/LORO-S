@@ -7,7 +7,6 @@
   "license": "UNLICENSED",
   "scripts": {
     "build": "nest build",
-    "vercel-build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
@@ -20,7 +19,9 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "bulk-email": "ts-node -r tsconfig-paths/register src/scripts/bulk-email.script.ts",
-    "bulk-email:help": "npm run bulk-email -- --help"
+    "bulk-email:help": "npm run bulk-email -- --help",
+    "cleanup:tokens": "ts-node -r tsconfig-paths/register src/scripts/cleanup-duplicate-tokens.ts",
+    "cleanup:tokens:auto": "ts-node -r tsconfig-paths/register src/scripts/cleanup-duplicate-tokens.ts --auto"
   },
   "dependencies": {
     "@apollo/server": "^4.11.2",

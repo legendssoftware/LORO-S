@@ -25,7 +25,7 @@
  */
 
 import * as bcrypt from 'bcrypt';
-import { In, Repository, LessThanOrEqual } from 'typeorm';
+import { In, Repository, LessThanOrEqual, Not } from 'typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { format, addDays, addMonths } from 'date-fns';
 import { User } from './entities/user.entity';
@@ -6931,6 +6931,7 @@ export class UserService {
 
 	/**
 	 * Update device registration information for push notifications
+	 * Ensures token uniqueness to prevent notifications from being sent to wrong users
 	 */
 	async updateDeviceRegistration(
 		userId: number,
@@ -6949,6 +6950,53 @@ export class UserService {
 				platform: deviceData.platform,
 			});
 
+			// CRITICAL FIX: Ensure token uniqueness before assignment
+			// Find and clear this token from any other users
+			if (deviceData.expoPushToken) {
+				const usersWithToken = await this.userRepository.find({
+					where: { 
+						expoPushToken: deviceData.expoPushToken,
+						uid: Not(userId) 
+					},
+					select: ['uid', 'email', 'name', 'surname']
+				});
+
+				if (usersWithToken.length > 0) {
+					this.logger.warn(`🔴 [UserService] [TokenConflict] Detected ${usersWithToken.length} users with duplicate token`, {
+						token: deviceData.expoPushToken.substring(0, 30) + '...',
+						currentUserId: userId,
+						conflictingUserIds: usersWithToken.map(u => u.uid),
+						conflictingUserEmails: usersWithToken.map(u => u.email),
+					});
+
+					// Clear the token from all conflicting users
+					await this.userRepository.update(
+						{ expoPushToken: deviceData.expoPushToken, uid: Not(userId) },
+						{ 
+							expoPushToken: null, 
+							deviceId: null, 
+							platform: null, 
+							pushTokenUpdatedAt: null 
+						}
+					);
+
+					this.logger.log(`✅ [UserService] [TokenConflict] Cleared duplicate token from ${usersWithToken.length} users`, {
+						clearedUsers: usersWithToken.map(u => ({
+							uid: u.uid,
+							email: u.email,
+							name: `${u.name || ''} ${u.surname || ''}`.trim()
+						})),
+						newOwnerUserId: userId
+					});
+				} else {
+					this.logger.debug(`✅ [UserService] [TokenUniqueness] No duplicate tokens found - token is unique`, {
+						token: deviceData.expoPushToken.substring(0, 30) + '...',
+						userId
+					});
+				}
+			}
+
+			// Now update the current user's token
 			const updateResult = await this.userRepository.update(userId, {
 				expoPushToken: deviceData.expoPushToken,
 				deviceId: deviceData.deviceId,

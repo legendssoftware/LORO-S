@@ -190,6 +190,77 @@ export class NotificationsService {
 		}
 	}
 
+	/**
+	 * Ensure push token uniqueness - one token per user
+	 * Clears token from other users before assigning to current user
+	 * This prevents notifications from being sent to the wrong user when multiple users share a device
+	 */
+	private async ensureTokenUniqueness(
+		userId: number, 
+		token: string
+	): Promise<{ conflictingUsers: number; clearedUsers: User[] }> {
+		try {
+			// Find all users (except current user) who have this same token
+			const usersWithToken = await this.userRepository.find({
+				where: { 
+					expoPushToken: token,
+					uid: Not(userId) 
+				},
+				select: ['uid', 'email', 'name', 'surname', 'expoPushToken']
+			});
+
+			if (usersWithToken.length > 0) {
+				console.warn(`🔴 [NotificationService] [TokenConflict] Detected ${usersWithToken.length} users with duplicate token`, {
+					token: token.substring(0, 30) + '...',
+					currentUserId: userId,
+					conflictingUserIds: usersWithToken.map(u => u.uid),
+					conflictingUserEmails: usersWithToken.map(u => u.email),
+				});
+
+				// Clear the token from all conflicting users
+				// This is necessary because a device can only be logged into one account at a time
+				await this.userRepository.update(
+					{ expoPushToken: token, uid: Not(userId) },
+					{ 
+						expoPushToken: null, 
+						deviceId: null, 
+						platform: null, 
+						pushTokenUpdatedAt: null 
+					}
+				);
+
+				console.log(`✅ [NotificationService] [TokenConflict] Cleared duplicate token from ${usersWithToken.length} users`, {
+					clearedUsers: usersWithToken.map(u => ({
+						uid: u.uid,
+						email: u.email,
+						name: `${u.name || ''} ${u.surname || ''}`.trim()
+					})),
+					newOwnerUserId: userId
+				});
+
+				return { 
+					conflictingUsers: usersWithToken.length, 
+					clearedUsers: usersWithToken 
+				};
+			}
+
+			console.log(`✅ [NotificationService] [TokenUniqueness] No duplicate tokens found - token is unique`, {
+				token: token.substring(0, 30) + '...',
+				userId
+			});
+
+			return { conflictingUsers: 0, clearedUsers: [] };
+		} catch (error) {
+			console.error('❌ [NotificationService] [TokenUniqueness] Failed to ensure token uniqueness:', {
+				userId,
+				token: token.substring(0, 30) + '...',
+				error: error instanceof Error ? error.message : 'Unknown error',
+			});
+			// Don't throw - allow registration to proceed even if uniqueness check fails
+			return { conflictingUsers: 0, clearedUsers: [] };
+		}
+	}
+
 	async registerPushToken(userId: number, registerTokenDto: RegisterPushTokenDto): Promise<{ message: string }> {
 		try {
 			console.log('🚀 [NotificationService] Starting push token registration', {
@@ -247,6 +318,18 @@ export class NotificationsService {
 						Date.now() - new Date(existingUser.pushTokenUpdatedAt).getTime() : 'N/A'
 				});
 				return { message: 'Push token already registered (duplicate request)' };
+			}
+
+			// CRITICAL FIX: Ensure token uniqueness before assignment
+			// This prevents notifications from being sent to wrong users when devices are shared
+			console.log('🔍 [NotificationService] Checking for duplicate tokens across users...');
+			const uniquenessCheck = await this.ensureTokenUniqueness(userId, registerTokenDto.token);
+			
+			if (uniquenessCheck.conflictingUsers > 0) {
+				console.log(`🔧 [NotificationService] Token conflict resolved - cleared token from ${uniquenessCheck.conflictingUsers} other user(s)`, {
+					clearedUserIds: uniquenessCheck.clearedUsers.map(u => u.uid),
+					clearedUserEmails: uniquenessCheck.clearedUsers.map(u => u.email),
+				});
 			}
 
 			console.log('💾 [NotificationService] Updating user with new token...');
