@@ -3221,8 +3221,16 @@ export class UserService {
 						targetNewClients: updatedUserTarget.targetNewClients,
 						targetCheckIns: updatedUserTarget.targetCheckIns,
 						targetCalls: updatedUserTarget.targetCalls,
-						periodStartDate: updatedUserTarget.periodStartDate?.toISOString().split('T')[0],
-						periodEndDate: updatedUserTarget.periodEndDate?.toISOString().split('T')[0],
+						periodStartDate: updatedUserTarget.periodStartDate 
+							? (typeof updatedUserTarget.periodStartDate === 'string' 
+								? updatedUserTarget.periodStartDate 
+								: new Date(updatedUserTarget.periodStartDate).toISOString().split('T')[0])
+							: undefined,
+						periodEndDate: updatedUserTarget.periodEndDate 
+							? (typeof updatedUserTarget.periodEndDate === 'string' 
+								? updatedUserTarget.periodEndDate 
+								: new Date(updatedUserTarget.periodEndDate).toISOString().split('T')[0])
+							: undefined,
 						description: 'Your performance targets have been updated',
 					},
 					organizationName: user.organisation?.name || user.branch?.organisation?.name || 'Your Organization',
@@ -3254,12 +3262,38 @@ export class UserService {
 
 			// Send push notification for target updates
 			try {
+				// Determine which target was updated (prioritize the ones that changed)
+				const updatedTargets = [];
+				if (updateUserTargetDto.targetSalesAmount !== undefined) {
+					updatedTargets.push({ type: 'Sales', value: updateUserTargetDto.targetSalesAmount });
+				}
+				if (updateUserTargetDto.targetQuotationsAmount !== undefined) {
+					updatedTargets.push({ type: 'Quotations', value: updateUserTargetDto.targetQuotationsAmount });
+				}
+				if (updateUserTargetDto.targetNewLeads !== undefined) {
+					updatedTargets.push({ type: 'New Leads', value: updateUserTargetDto.targetNewLeads });
+				}
+				if (updateUserTargetDto.targetNewClients !== undefined) {
+					updatedTargets.push({ type: 'New Clients', value: updateUserTargetDto.targetNewClients });
+				}
+				if (updateUserTargetDto.targetCheckIns !== undefined) {
+					updatedTargets.push({ type: 'Check-ins', value: updateUserTargetDto.targetCheckIns });
+				}
+				if (updateUserTargetDto.targetCalls !== undefined) {
+					updatedTargets.push({ type: 'Calls', value: updateUserTargetDto.targetCalls });
+				}
+
+				// Use the first updated target or default to "Performance"
+				const primaryTarget = updatedTargets.length > 0 ? updatedTargets[0] : { type: 'Performance', value: 'updated' };
+
 				await this.unifiedNotificationService.sendTemplatedNotification(
 					NotificationEvent.USER_TARGET_UPDATED,
 					[userId],
 					{
 						message: `Your performance targets have been updated. Review the changes and adjust your strategy accordingly!`,
 						userName: `${user.name} ${user.surname}`.trim(),
+						targetType: primaryTarget.type,
+						newTargetValue: String(primaryTarget.value),
 						targetSalesAmount: updateUserTargetDto.targetSalesAmount,
 						targetQuotationsAmount: updateUserTargetDto.targetQuotationsAmount,
 						targetNewLeads: updateUserTargetDto.targetNewLeads,

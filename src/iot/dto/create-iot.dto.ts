@@ -17,7 +17,7 @@ import {
   IsEmail,
   Matches
 } from 'class-validator';
-import { Type, Transform } from 'class-transformer';
+import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { DeviceType, DeviceStatus } from '../../lib/enums/iot';
 import { DeviceAnalytics, DeviceTimeEvent } from '../../lib/interfaces/iot.interface';
