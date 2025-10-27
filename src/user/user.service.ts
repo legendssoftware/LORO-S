@@ -5801,19 +5801,41 @@ export class UserService {
 				updatedFieldsCount: Object.keys(updatedValues).length,
 			});
 
-			// Send push notification using unified notification service
-			const notificationPayload = {
-				sourceSystem: externalUpdate.source || 'external system',
-				updateMode: externalUpdate.updateMode,
-				transactionId: externalUpdate.transactionId,
-				updatedValues,
-				updateTime: new Date().toLocaleString(),
-				title,
-				message,
-				userId,
-				organizationName: user.organisation?.name || 'Your Organization',
-				branchName: user.branch?.name || 'Your Branch',
-			};
+		// Send push notification using unified notification service
+		// Extract target type and new value from updatedValues
+		const updatedFields = Object.entries(updatedValues);
+		const primaryField = updatedFields[0] || ['unknown', 0];
+		const [fieldName, fieldValue] = primaryField;
+		
+		// Format field name to human-readable target type
+		const targetType = fieldName
+			.replace(/([A-Z])/g, ' $1') // Add space before capital letters
+			.replace(/^./, (str) => str.toUpperCase()) // Capitalize first letter
+			.trim();
+		
+		// Format the new value (handle currency formatting for sales amounts)
+		const newTargetValue = fieldName.toLowerCase().includes('amount')
+			? new Intl.NumberFormat('en-US', {
+					style: 'currency',
+					currency: 'USD',
+					minimumFractionDigits: 2,
+			  }).format(Number(fieldValue))
+			: String(fieldValue);
+
+		const notificationPayload = {
+			sourceSystem: externalUpdate.source || 'external system',
+			updateMode: externalUpdate.updateMode,
+			transactionId: externalUpdate.transactionId,
+			updatedValues,
+			updateTime: new Date().toLocaleString(),
+			title,
+			message,
+			userId,
+			organizationName: user.organisation?.name || 'Your Organization',
+			branchName: user.branch?.name || 'Your Branch',
+			targetType,
+			newTargetValue,
+		};
 
 			await this.unifiedNotificationService.sendTemplatedNotification(
 				NotificationEvent.USER_TARGET_UPDATED,
