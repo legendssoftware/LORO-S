@@ -581,32 +581,17 @@ export class AttendanceService {
 			}
 		}
 
-		// Process check-in location if coordinates are provided
-		let checkInAddress: Address | null = null;
-		if (checkInDto.checkInLatitude && checkInDto.checkInLongitude) {
-			checkInAddress = await this.processLocationCoordinates(
-				checkInDto.checkInLatitude,
-				checkInDto.checkInLongitude,
-				'Check-in Location'
-			);
-		}
-
-		// Enhanced data mapping with proper validation and location data
+		// Enhanced data mapping - save record first WITHOUT location processing
+		// Location processing will happen asynchronously after response is sent
 		const attendanceData = {
 			...checkInDto,
 			status: checkInDto.status || AttendanceStatus.PRESENT,
 			organisation: orgId ? { uid: orgId } : undefined,
 			branch: branchId ? { uid: branchId } : undefined,
-			placesOfInterest: checkInAddress ? {
-				startAddress: checkInAddress,
-				endAddress: null, // Will be filled during check-out
-				breakStart: null,
-				breakEnd: null,
-				otherPlacesOfInterest: []
-			} : null,
+			placesOfInterest: null, // Will be updated asynchronously
 		};
 
-		this.logger.debug('Saving check-in record to database with enhanced validation and location processing');
+		this.logger.debug('Saving check-in record to database');
 		const checkIn = await this.attendanceRepository.save(attendanceData);
 
 		if (!checkIn) {
@@ -644,103 +629,141 @@ export class AttendanceService {
 				data: responseData,
 			};
 
-			// Award XP with enhanced error handling
-			try {
-				this.logger.debug(
-					`Awarding XP for check-in to user: ${checkInDto.owner.uid}, amount: ${XP_VALUES.CHECK_IN}`,
-				);
-				await this.rewardsService.awardXP(
-					{
-						owner: checkInDto.owner.uid,
-						amount: XP_VALUES.CHECK_IN,
-						action: XP_VALUES_TYPES.ATTENDANCE,
-						source: {
-							id: checkInDto.owner.uid.toString(),
-							type: XP_VALUES_TYPES.ATTENDANCE,
-							details: 'Check-in reward',
-						},
-					},
-					orgId,
-					branchId,
-				);
-				this.logger.debug(`XP awarded successfully for check-in to user: ${checkInDto.owner.uid}`);
-			} catch (xpError) {
-				this.logger.error(`Failed to award XP for check-in to user: ${checkInDto.owner.uid}`, xpError.stack);
-				// Don't fail the check-in if XP award fails
-			}
+			// Process non-critical operations asynchronously (don't block user response)
+			setImmediate(async () => {
+				try {
+					// Process check-in location if coordinates are provided (async)
+					try {
+						if (checkInDto.checkInLatitude && checkInDto.checkInLongitude) {
+							this.logger.debug(`Processing check-in location coordinates asynchronously for user: ${checkInDto.owner.uid}`);
+							const checkInAddress = await this.processLocationCoordinates(
+								checkInDto.checkInLatitude,
+								checkInDto.checkInLongitude,
+								'Check-in Location'
+							);
 
-			// Send enhanced shift start notification with improved messaging
-			try {
-			// Get user info for personalized message with email and relations
-			const user = await this.userRepository.findOne({
-				where: { uid: checkInDto.owner.uid },
-				select: ['uid', 'name', 'surname', 'email', 'username'],
-				relations: ['organisation', 'branch', 'branch.organisation'],
-			});
+							if (checkInAddress) {
+								// Update the attendance record with location data
+								await this.attendanceRepository.update(checkIn.uid, {
+									placesOfInterest: {
+										startAddress: checkInAddress,
+										endAddress: null,
+										breakStart: null,
+										breakEnd: null,
+										otherPlacesOfInterest: []
+									}
+								});
+								this.logger.debug(`Location data updated successfully for check-in: ${checkIn.uid}`);
+							}
+						}
+					} catch (locationError) {
+						this.logger.error(`Failed to process location for check-in ${checkIn.uid}:`, locationError.message);
+						// Don't fail check-in if location processing fails
+					}
 
-			// Construct full name with proper fallbacks
-			const fullName = `${user?.name || ''} ${user?.surname || ''}`.trim();
-			const userName = fullName || user?.username || 'Team Member';
-				
-				// Format check-in time in organization timezone
-				const checkInTime = await this.formatTimeInOrganizationTimezone(new Date(checkIn.checkIn), orgId);
-
-				this.logger.debug(`Sending enhanced shift start notification to user: ${checkInDto.owner.uid}`);
-				// Send push notification
-				await this.unifiedNotificationService.sendTemplatedNotification(
-					NotificationEvent.ATTENDANCE_SHIFT_STARTED,
-					[checkInDto.owner.uid],
-					{
-						checkInTime,
-						userName,
-						userId: checkInDto.owner.uid,
-						organisationId: orgId,
-						branchId: branchId,
-						xpAwarded: XP_VALUES.CHECK_IN,
-						timestamp: new Date().toISOString(),
-					},
-					{
-						priority: NotificationPriority.NORMAL,
-						sendEmail: false, // We'll handle email separately
-					},
-				);
-
-				this.logger.debug(
-					`Shift start push notification sent successfully to user: ${checkInDto.owner.uid}`,
-				);
-			} catch (notificationError) {
-				this.logger.warn(
-					`Failed to send shift start notification to user: ${checkInDto.owner.uid}`,
-					notificationError.message,
-				);
-				// Don't fail the check-in if notification fails
-			}
-
-			// Check if user is late and send late notification if applicable
-			try {
-				if (orgId) {
-					const lateMinutes = await this.checkAndCalculateLateMinutes(orgId, new Date(checkIn.checkIn));
-					if (lateMinutes > 0) {
+					// Award XP with enhanced error handling
+					try {
 						this.logger.debug(
-							`User ${checkInDto.owner.uid} is ${lateMinutes} minutes late - sending notification`,
+							`Awarding XP for check-in to user: ${checkInDto.owner.uid}, amount: ${XP_VALUES.CHECK_IN}`,
 						);
-						await this.sendShiftReminder(
-							checkInDto.owner.uid,
-							'late',
+						await this.rewardsService.awardXP(
+							{
+								owner: checkInDto.owner.uid,
+								amount: XP_VALUES.CHECK_IN,
+								action: XP_VALUES_TYPES.ATTENDANCE,
+								source: {
+									id: checkInDto.owner.uid.toString(),
+									type: XP_VALUES_TYPES.ATTENDANCE,
+									details: 'Check-in reward',
+								},
+							},
 							orgId,
 							branchId,
-							undefined,
-							lateMinutes,
 						);
+						this.logger.debug(`XP awarded successfully for check-in to user: ${checkInDto.owner.uid}`);
+					} catch (xpError) {
+						this.logger.error(`Failed to award XP for check-in to user: ${checkInDto.owner.uid}`, xpError.stack);
+						// Don't fail the check-in if XP award fails
 					}
+
+					// Send enhanced shift start notification with improved messaging
+					try {
+						// Get user info for personalized message with email and relations
+						const user = await this.userRepository.findOne({
+							where: { uid: checkInDto.owner.uid },
+							select: ['uid', 'name', 'surname', 'email', 'username'],
+							relations: ['organisation', 'branch', 'branch.organisation'],
+						});
+
+						// Construct full name with proper fallbacks
+						const fullName = `${user?.name || ''} ${user?.surname || ''}`.trim();
+						const userName = fullName || user?.username || 'Team Member';
+						
+						// Format check-in time in organization timezone
+						const checkInTime = await this.formatTimeInOrganizationTimezone(new Date(checkIn.checkIn), orgId);
+
+						this.logger.debug(`Sending enhanced shift start notification to user: ${checkInDto.owner.uid}`);
+						// Send push notification
+						await this.unifiedNotificationService.sendTemplatedNotification(
+							NotificationEvent.ATTENDANCE_SHIFT_STARTED,
+							[checkInDto.owner.uid],
+							{
+								checkInTime,
+								userName,
+								userId: checkInDto.owner.uid,
+								organisationId: orgId,
+								branchId: branchId,
+								xpAwarded: XP_VALUES.CHECK_IN,
+								timestamp: new Date().toISOString(),
+							},
+							{
+								priority: NotificationPriority.NORMAL,
+								sendEmail: false, // We'll handle email separately
+							},
+						);
+
+						this.logger.debug(
+							`Shift start push notification sent successfully to user: ${checkInDto.owner.uid}`,
+						);
+					} catch (notificationError) {
+						this.logger.warn(
+							`Failed to send shift start notification to user: ${checkInDto.owner.uid}`,
+							notificationError.message,
+						);
+						// Don't fail the check-in if notification fails
+					}
+
+					// Check if user is late and send late notification if applicable
+					try {
+						if (orgId) {
+							const lateMinutes = await this.checkAndCalculateLateMinutes(orgId, new Date(checkIn.checkIn));
+							if (lateMinutes > 0) {
+								this.logger.debug(
+									`User ${checkInDto.owner.uid} is ${lateMinutes} minutes late - sending notification`,
+								);
+								await this.sendShiftReminder(
+									checkInDto.owner.uid,
+									'late',
+									orgId,
+									branchId,
+									undefined,
+									lateMinutes,
+								);
+							}
+						}
+					} catch (lateCheckError) {
+						this.logger.warn(
+							`Failed to check/send late notification for user: ${checkInDto.owner.uid}`,
+							lateCheckError.message,
+						);
+						// Don't fail the check-in if late check fails
+					}
+
+				} catch (backgroundError) {
+					this.logger.error(`Background check-in tasks failed for user ${checkInDto.owner.uid}:`, backgroundError.message);
+					// Don't affect user experience
 				}
-			} catch (lateCheckError) {
-				this.logger.warn(
-					`Failed to check/send late notification for user: ${checkInDto.owner.uid}`,
-					lateCheckError.message,
-				);
-				// Don't fail the check-in if late check fails
-			}
+			});
 
 			this.logger.log(`Check-in successful for user: ${checkInDto.owner.uid}`);
 			return response;
@@ -1096,35 +1119,7 @@ export class AttendanceService {
 				}
 			}
 
-		// Process check-out location if coordinates are provided
-		let checkOutAddress: Address | null = null;
-		if (checkOutDto.checkOutLatitude && checkOutDto.checkOutLongitude) {
-			checkOutAddress = await this.processLocationCoordinates(
-				checkOutDto.checkOutLatitude,
-				checkOutDto.checkOutLongitude,
-				'Check-out Location'
-			);
-		}
-
-		// Update placesOfInterest with check-out location
-		let updatedPlacesOfInterest = activeShift.placesOfInterest;
-		if (checkOutAddress) {
-			if (updatedPlacesOfInterest) {
-				// Update existing placesOfInterest with end address
-				updatedPlacesOfInterest.endAddress = checkOutAddress;
-			} else {
-				// Create new placesOfInterest if it doesn't exist
-				updatedPlacesOfInterest = {
-					startAddress: null, // This should have been set during check-in
-					endAddress: checkOutAddress,
-					breakStart: null,
-					breakEnd: null,
-					otherPlacesOfInterest: []
-				};
-			}
-		}
-
-		// Enhanced data mapping for shift update
+		// Enhanced data mapping for shift update - location will be processed asynchronously
 		const updatedShift = {
 			...activeShift,
 			...checkOutDto,
@@ -1132,10 +1127,10 @@ export class AttendanceService {
 			duration,
 			overtime: overtimeDuration,
 			status: AttendanceStatus.COMPLETED,
-			placesOfInterest: updatedPlacesOfInterest,
+			// Keep existing placesOfInterest - will be updated asynchronously if needed
 		};
 
-		this.logger.debug('Saving updated shift with check-out data and location processing');
+		this.logger.debug('Saving updated shift with check-out data');
 		await this.attendanceRepository.save(updatedShift);
 		this.logger.debug(`Shift updated successfully for user: ${checkOutDto.owner?.uid}`);
 
@@ -1259,6 +1254,48 @@ export class AttendanceService {
 			// Process non-critical operations asynchronously (don't block user response)
 			setImmediate(async () => {
 				try {
+					// Process check-out location if coordinates are provided (async)
+					try {
+						if (checkOutDto.checkOutLatitude && checkOutDto.checkOutLongitude) {
+							this.logger.debug(`Processing check-out location coordinates asynchronously for user: ${checkOutDto.owner.uid}`);
+							const checkOutAddress = await this.processLocationCoordinates(
+								checkOutDto.checkOutLatitude,
+								checkOutDto.checkOutLongitude,
+								'Check-out Location'
+							);
+
+							if (checkOutAddress) {
+								// Update placesOfInterest with check-out location
+								const currentRecord = await this.attendanceRepository.findOne({
+									where: { uid: activeShift.uid },
+								});
+
+								let updatedPlacesOfInterest = currentRecord?.placesOfInterest;
+								if (updatedPlacesOfInterest) {
+									// Update existing placesOfInterest with end address
+									updatedPlacesOfInterest.endAddress = checkOutAddress;
+								} else {
+									// Create new placesOfInterest if it doesn't exist
+									updatedPlacesOfInterest = {
+										startAddress: null, // This should have been set during check-in
+										endAddress: checkOutAddress,
+										breakStart: null,
+										breakEnd: null,
+										otherPlacesOfInterest: []
+									};
+								}
+
+								await this.attendanceRepository.update(activeShift.uid, {
+									placesOfInterest: updatedPlacesOfInterest
+								});
+								this.logger.debug(`Location data updated successfully for check-out: ${activeShift.uid}`);
+							}
+						}
+					} catch (locationError) {
+						this.logger.error(`Failed to process location for check-out ${activeShift.uid}:`, locationError.message);
+						// Don't fail check-out if location processing fails
+					}
+
 					// Check and send overtime notification if applicable
 					try {
 						const organizationId = activeShift.owner?.organisation?.uid;
