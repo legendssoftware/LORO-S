@@ -500,6 +500,28 @@ export class AttendanceService {
 	// ATTENDANCE METRICS FUNCTIONALITY
 	// ======================================================
 
+	/**
+	 * Process employee check-in with automatic shift conflict resolution
+	 * 
+	 * This method handles employee check-ins and automatically resolves conflicts when a user
+	 * has an existing active shift. When a user tries to check in while already having an
+	 * active shift, the system automatically closes the old shift and starts the new one.
+	 * 
+	 * ### Auto-Close Behavior:
+	 * - **User Preference Override**: When a user actively starts a new shift, their `shiftAutoEnd` 
+	 *   preference is bypassed. The old shift is closed regardless of their preference settings.
+	 * - **Reasoning**: Active user action (starting a new shift) takes precedence over passive 
+	 *   preference settings, allowing users who forgot to check out to seamlessly start a new shift.
+	 * 
+	 * ### Usage:
+	 * - Regular check-ins: Called via `POST /att/in` endpoint
+	 * - External consolidation: Called via `POST /att/consolidate` endpoint in "in" mode
+	 * 
+	 * @param checkInDto - Check-in data including user, time, location, and notes
+	 * @param orgId - Organization ID for filtering and configuration
+	 * @param branchId - Branch ID for filtering
+	 * @returns Promise with success message and check-in data, or error message
+	 */
 	public async checkIn(
 		checkInDto: CreateCheckInDto,
 		orgId?: number,
@@ -527,34 +549,37 @@ export class AttendanceService {
 				throw new BadRequestException('Check-in time is required');
 			}
 
-			// Check if user is already checked in - if so, auto-close previous shift
-			this.logger.debug(`Checking for existing active shift for user: ${checkInDto.owner.uid}`);
-			const existingShift = await this.attendanceRepository.findOne({
-				where: {
-					owner: checkInDto.owner,
-					status: AttendanceStatus.PRESENT,
-					checkIn: Not(IsNull()),
-					checkOut: IsNull(),
-					organisation: orgId ? { uid: orgId } : undefined,
-				},
-				relations: ['owner'], // Load the owner relation to avoid undefined errors
-			});
+		// Check if user is already checked in - if so, auto-close previous shift
+		this.logger.debug(`Checking for existing active shift for user: ${checkInDto.owner.uid}`);
+		const existingShift = await this.attendanceRepository.findOne({
+			where: {
+				owner: checkInDto.owner,
+				status: AttendanceStatus.PRESENT,
+				checkIn: Not(IsNull()),
+				checkOut: IsNull(),
+				organisation: orgId ? { uid: orgId } : undefined,
+			},
+			relations: ['owner'], // Load the owner relation to avoid undefined errors
+		});
 
-			if (existingShift) {
-				this.logger.warn(`User ${checkInDto.owner.uid} already has an active shift - attempting auto-close`);
-				try {
-					await this.autoCloseExistingShift(existingShift, orgId);
-					this.logger.log(`Successfully auto-closed existing shift for user ${checkInDto.owner.uid}`);
-				} catch (error) {
-					this.logger.error(
-						`Failed to auto-close existing shift for user ${checkInDto.owner.uid}: ${error.message}`,
-					);
-					// Re-throw the error to ensure it's properly caught by consolidation logic
-					throw new BadRequestException(
-						`Failed to process check-in: User is already checked in and auto-close failed. ${error.message}`,
-					);
-				}
+		if (existingShift) {
+			this.logger.warn(`User ${checkInDto.owner.uid} already has an active shift - attempting auto-close`);
+			try {
+				// Pass true for skipPreferenceCheck since user is actively starting a new shift
+				// User's active action to start a new shift should override their shiftAutoEnd preference
+				// The preference only applies to scheduled/automated shift closures, not when user actively checks in
+				await this.autoCloseExistingShift(existingShift, orgId, true);
+				this.logger.log(`Successfully auto-closed existing shift for user ${checkInDto.owner.uid} (preference check bypassed - active check-in)`);
+			} catch (error) {
+				this.logger.error(
+					`Failed to auto-close existing shift for user ${checkInDto.owner.uid}: ${error.message}`,
+				);
+				// Re-throw the error to ensure it's properly caught by consolidation logic
+				throw new BadRequestException(
+					`Failed to process check-in: User is already checked in and auto-close failed. ${error.message}`,
+				);
 			}
+		}
 
 		// Process check-in location if coordinates are provided
 		let checkInAddress: Address | null = null;
@@ -734,37 +759,57 @@ export class AttendanceService {
 
 	/**
 	 * Auto-close an existing shift at organization close time
+	 * 
+	 * @param existingShift - The attendance record to close
+	 * @param orgId - Organization ID for timezone and hours configuration
+	 * @param skipPreferenceCheck - If true, ignores user's shiftAutoEnd preference (used when user actively starts new shift)
+	 *                             If false, respects user's shiftAutoEnd preference (used for scheduled auto-close)
 	 */
-	private async autoCloseExistingShift(existingShift: Attendance, orgId?: number): Promise<void> {
+	private async autoCloseExistingShift(
+		existingShift: Attendance, 
+		orgId?: number,
+		skipPreferenceCheck: boolean = false
+	): Promise<void> {
 		// Validate existingShift object
 		if (!existingShift) {
 			throw new Error('Existing shift is undefined');
 		}
 
 		const userId = existingShift.owner?.uid || 'unknown';
-		this.logger.debug(`Auto-closing existing shift for user ${userId}, orgId: ${orgId}`);
+		this.logger.debug(
+			`Auto-closing existing shift for user ${userId}, orgId: ${orgId}, skipPreferenceCheck: ${skipPreferenceCheck}`
+		);
 
-		// Check user preferences for shift auto-end
-		try {
-			const user = await this.userRepository.findOne({
-				where: { uid: Number(userId) },
-				select: ['uid', 'preferences'],
-			});
+		// Only check user preferences if this is NOT triggered by a new check-in
+		// When a user actively starts a new shift, we should close the old one regardless of preferences
+		// Preferences only apply to scheduled/automated shift closures
+		if (!skipPreferenceCheck) {
+			this.logger.debug(`Checking user preferences for shift auto-end (scheduled auto-close scenario)`);
+			try {
+				const user = await this.userRepository.findOne({
+					where: { uid: Number(userId) },
+					select: ['uid', 'preferences'],
+				});
 
-			if (user?.preferences?.shiftAutoEnd === false) {
-				this.logger.debug(`User ${userId} has disabled shift auto-end, skipping auto-close`);
-				throw new Error(`User has disabled automatic shift ending`);
+				if (user?.preferences?.shiftAutoEnd === false) {
+					this.logger.debug(`User ${userId} has disabled shift auto-end, skipping auto-close`);
+					throw new Error(`User has disabled automatic shift ending`);
+				}
+
+				this.logger.debug(`User ${userId} preferences allow auto-close, proceeding`);
+			} catch (error) {
+				if (error.message.includes('disabled automatic')) {
+					throw error; // Re-throw the user preference error
+				}
+				this.logger.warn(
+					`Could not fetch user preferences for ${userId}, defaulting to allow auto-close: ${error.message}`,
+				);
+				// Continue with auto-close if we can't fetch preferences (fail-safe)
 			}
-
-			this.logger.debug(`User ${userId} preferences allow auto-close, proceeding`);
-		} catch (error) {
-			if (error.message.includes('disabled automatic')) {
-				throw error; // Re-throw the user preference error
-			}
-			this.logger.warn(
-				`Could not fetch user preferences for ${userId}, defaulting to allow auto-close: ${error.message}`,
+		} else {
+			this.logger.debug(
+				`Skipping preference check - user is actively starting a new shift (preference check bypassed)`
 			);
-			// Continue with auto-close if we can't fetch preferences (fail-safe)
 		}
 
 		// Get organization timezone for accurate close time calculation
@@ -819,35 +864,48 @@ export class AttendanceService {
 				this.logger.warn('No organization ID provided for auto-close, using default 4:30 PM');
 			}
 
-			this.logger.debug(`Setting auto-close time to: ${closeTime.toISOString()} for user ${userId}`);
+		this.logger.debug(`Setting auto-close time to: ${closeTime.toISOString()} for user ${userId}`);
 
-			// Update the existing shift
-			existingShift.checkOut = closeTime;
-			existingShift.status = AttendanceStatus.COMPLETED;
-			existingShift.checkOutNotes = 'Auto-closed at organization close time due to new shift';
+		// Update the existing shift
+		existingShift.checkOut = closeTime;
+		existingShift.status = AttendanceStatus.COMPLETED;
+		// Set appropriate note based on whether this is a user-initiated or scheduled auto-close
+		existingShift.checkOutNotes = skipPreferenceCheck 
+			? 'Auto-closed at organization close time due to new shift being started'
+			: 'Auto-closed at organization close time (scheduled auto-end)';
 
-			await this.attendanceRepository.save(existingShift);
+		await this.attendanceRepository.save(existingShift);
 
-			this.logger.log(`Auto-closed existing shift for user ${userId} at ${closeTime.toISOString()}`);
+		this.logger.log(`Auto-closed existing shift for user ${userId} at ${closeTime.toISOString()}`);
 
-			// Send email notification about auto-close
-			await this.sendAutoCloseShiftNotification(existingShift, closeTime, orgId);
+		// Clear attendance cache after auto-close to ensure fresh data in subsequent queries
+		await this.clearAttendanceCache(existingShift.uid, Number(userId));
+		this.logger.debug(`Cleared cache for auto-closed shift ${existingShift.uid} and user ${userId}`);
+
+		// Send email notification about auto-close
+		await this.sendAutoCloseShiftNotification(existingShift, closeTime, orgId);
 		} catch (error) {
 			this.logger.error(`Error auto-closing existing shift for user ${userId}: ${error.message}`);
 
-			// Fallback: still try to close the shift with default time (4:30 PM in org timezone)
-			try {
-				closeTime = TimezoneUtil.parseTimeInOrganization('16:30', checkInDate, organizationTimezone);
+		// Fallback: still try to close the shift with default time (4:30 PM in org timezone)
+		try {
+			closeTime = TimezoneUtil.parseTimeInOrganization('16:30', checkInDate, organizationTimezone);
 
-				existingShift.checkOut = closeTime;
-				existingShift.status = AttendanceStatus.COMPLETED;
-				existingShift.checkOutNotes = 'Auto-closed with fallback time due to org hours fetch error';
+			existingShift.checkOut = closeTime;
+			existingShift.status = AttendanceStatus.COMPLETED;
+			existingShift.checkOutNotes = skipPreferenceCheck
+				? 'Auto-closed with fallback time due to new shift (org hours fetch error)'
+				: 'Auto-closed with fallback time due to org hours fetch error (scheduled auto-end)';
 
-				await this.attendanceRepository.save(existingShift);
-				this.logger.log(`Fallback auto-close successful for user ${userId} at 4:30 PM`);
+			await this.attendanceRepository.save(existingShift);
+			this.logger.log(`Fallback auto-close successful for user ${userId} at 4:30 PM`);
 
-				// Send email notification about fallback auto-close
-				await this.sendAutoCloseShiftNotification(existingShift, closeTime, orgId);
+			// Clear attendance cache after fallback auto-close
+			await this.clearAttendanceCache(existingShift.uid, Number(userId));
+			this.logger.debug(`Cleared cache for fallback auto-closed shift ${existingShift.uid} and user ${userId}`);
+
+			// Send email notification about fallback auto-close
+			await this.sendAutoCloseShiftNotification(existingShift, closeTime, orgId);
 			} catch (fallbackError) {
 				this.logger.error(`Fallback auto-close also failed for user ${userId}: ${fallbackError.message}`);
 				throw new Error(`Failed to auto-close existing shift: ${error.message}`);
