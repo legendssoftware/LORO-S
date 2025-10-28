@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards, Req, BadRequestException, Logger, Query } from '@nestjs/common';
+import { Controller, Get, UseGuards, Req, BadRequestException, Logger, Query, ValidationPipe } from '@nestjs/common';
 import { ReportsService } from './reports.service';
 import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
 import {
@@ -14,6 +14,7 @@ import { RoleGuard } from '../guards/role.guard';
 import { AuthGuard } from '../guards/auth.guard';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { Roles } from '../decorators/role.decorator';
+import { PerformanceFiltersDto } from './dto/performance-filters.dto';
 
 @ApiBearerAuth('JWT-auth')
 @ApiTags('📊 Reports')
@@ -339,5 +340,162 @@ Comprehensive real-time metrics for the entire organization or specific branch.
 		this.logger.log(`Fetching organization metrics for org ${orgId}${branchId ? `, branch ${branchId}` : ''}`);
 
 		return this.reportsService.getOrganizationMetricsSummary(orgId, branchId);
+	}
+
+	// ======================================================
+	// PERFORMANCE TRACKER ENDPOINTS
+	// ======================================================
+
+	@Get('performance/dashboard')
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.USER)
+	@ApiOperation({
+		summary: '📊 Get Performance Dashboard Data',
+		description: `
+# Performance Tracker Dashboard
+
+Comprehensive performance analytics with advanced filtering and data visualization.
+
+## 📊 **Dashboard Components**
+- **Summary Metrics**: Revenue, targets, performance rates, transaction counts
+- **Revenue Trends**: Time-series revenue analysis
+- **Hourly Sales**: Sales patterns throughout the day
+- **Category Performance**: Sales distribution by product category
+- **Branch Performance**: Top 10 performing branches
+- **Top Products**: Best-selling products
+- **Salesperson Performance**: Individual salesperson metrics
+- **Conversion Rates**: Quotation to sales conversion
+- **Customer Composition**: Customer type distribution
+
+## 🔍 **Filtering Options**
+- **Date Range**: Filter by start and end dates
+- **Location**: Filter by county, province, city, suburb
+- **Branch**: Filter by specific branches
+- **Products**: Filter by category or specific products
+- **Price Range**: Filter by min/max price
+- **Salesperson**: Filter by specific salespeople
+
+## 🔒 **Authorization**
+- Available to ADMIN, MANAGER, OWNER, and USER roles
+- Organization ID is required
+		`,
+	})
+	@ApiQuery({ name: 'organisationId', required: true, type: Number })
+	@ApiQuery({ name: 'branchId', required: false, type: Number })
+	@ApiQuery({ name: 'startDate', required: false, type: String, description: 'YYYY-MM-DD format' })
+	@ApiQuery({ name: 'endDate', required: false, type: String, description: 'YYYY-MM-DD format' })
+	@ApiQuery({ name: 'branchIds', required: false, type: String, description: 'Comma-separated branch IDs' })
+	@ApiQuery({ name: 'salesPersonIds', required: false, type: String, description: 'Comma-separated salesperson IDs' })
+	@ApiQuery({ name: 'category', required: false, type: String })
+	@ApiQuery({ name: 'productIds', required: false, type: String, description: 'Comma-separated product IDs' })
+	@ApiQuery({ name: 'minPrice', required: false, type: Number })
+	@ApiQuery({ name: 'maxPrice', required: false, type: Number })
+	@ApiQuery({ name: 'county', required: false, type: String })
+	@ApiQuery({ name: 'province', required: false, type: String })
+	@ApiQuery({ name: 'city', required: false, type: String })
+	@ApiQuery({ name: 'suburb', required: false, type: String })
+	async getPerformanceDashboard(
+		@Req() request: AuthenticatedRequest,
+		@Query(new ValidationPipe({ transform: true })) filters: PerformanceFiltersDto
+	) {
+		this.logger.log(`Getting performance dashboard for org ${filters.organisationId}`);
+
+		// Validate organization access
+		const userOrgId = request.user?.org?.uid || request.user?.organisationRef;
+		if (filters.organisationId !== userOrgId && request.user.accessLevel !== AccessLevel.OWNER) {
+			this.logger.warn(`User ${request.user.uid} attempted to access org ${filters.organisationId} data without permission`);
+			throw new BadRequestException('Access denied to requested organization data');
+		}
+
+		return this.reportsService.getPerformanceDashboard(filters);
+	}
+
+	@Get('performance/daily-sales')
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER)
+	@ApiOperation({
+		summary: '📊 Get Daily Sales Performance',
+		description: 'Get detailed daily sales performance data with basket counts, sales revenue, and gross profit metrics.',
+	})
+	@ApiQuery({ name: 'organisationId', required: true, type: Number })
+	@ApiQuery({ name: 'startDate', required: false, type: String })
+	@ApiQuery({ name: 'endDate', required: false, type: String })
+	async getDailySalesPerformance(
+		@Req() request: AuthenticatedRequest,
+		@Query(new ValidationPipe({ transform: true })) filters: PerformanceFiltersDto
+	) {
+		this.logger.log(`Getting daily sales performance for org ${filters.organisationId}`);
+
+		const userOrgId = request.user?.org?.uid || request.user?.organisationRef;
+		if (filters.organisationId !== userOrgId && request.user.accessLevel !== AccessLevel.OWNER) {
+			throw new BadRequestException('Access denied to requested organization data');
+		}
+
+		return this.reportsService.getDailySalesPerformance(filters);
+	}
+
+	@Get('performance/branch-category')
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER)
+	@ApiOperation({
+		summary: '📊 Get Branch × Category Performance',
+		description: 'Get performance matrix showing sales by branch and product category.',
+	})
+	@ApiQuery({ name: 'organisationId', required: true, type: Number })
+	@ApiQuery({ name: 'startDate', required: false, type: String })
+	@ApiQuery({ name: 'endDate', required: false, type: String })
+	async getBranchCategoryPerformance(
+		@Req() request: AuthenticatedRequest,
+		@Query(new ValidationPipe({ transform: true })) filters: PerformanceFiltersDto
+	) {
+		this.logger.log(`Getting branch-category performance for org ${filters.organisationId}`);
+
+		const userOrgId = request.user?.org?.uid || request.user?.organisationRef;
+		if (filters.organisationId !== userOrgId && request.user.accessLevel !== AccessLevel.OWNER) {
+			throw new BadRequestException('Access denied to requested organization data');
+		}
+
+		return this.reportsService.getBranchCategoryPerformance(filters);
+	}
+
+	@Get('performance/sales-per-store')
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER)
+	@ApiOperation({
+		summary: '📊 Get Sales Per Store',
+		description: 'Get aggregated sales data for each store/branch.',
+	})
+	@ApiQuery({ name: 'organisationId', required: true, type: Number })
+	@ApiQuery({ name: 'startDate', required: false, type: String })
+	@ApiQuery({ name: 'endDate', required: false, type: String })
+	async getSalesPerStore(
+		@Req() request: AuthenticatedRequest,
+		@Query(new ValidationPipe({ transform: true })) filters: PerformanceFiltersDto
+	) {
+		this.logger.log(`Getting sales per store for org ${filters.organisationId}`);
+
+		const userOrgId = request.user?.org?.uid || request.user?.organisationRef;
+		if (filters.organisationId !== userOrgId && request.user.accessLevel !== AccessLevel.OWNER) {
+			throw new BadRequestException('Access denied to requested organization data');
+		}
+
+		return this.reportsService.getSalesPerStore(filters);
+	}
+
+	@Get('performance/meta')
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.USER)
+	@ApiOperation({
+		summary: '📊 Get Performance Master Data',
+		description: 'Get master data for filters: branches, products, categories, locations, salespeople.',
+	})
+	@ApiQuery({ name: 'organisationId', required: true, type: Number })
+	async getPerformanceMasterData(
+		@Req() request: AuthenticatedRequest,
+		@Query('organisationId') organisationId: number
+	) {
+		this.logger.log(`Getting performance master data for org ${organisationId}`);
+
+		const userOrgId = request.user?.org?.uid || request.user?.organisationRef;
+		if (organisationId !== userOrgId && request.user.accessLevel !== AccessLevel.OWNER) {
+			throw new BadRequestException('Access denied to requested organization data');
+		}
+
+		return this.reportsService.getPerformanceMasterData(organisationId);
 	}
 }

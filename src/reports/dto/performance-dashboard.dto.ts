@@ -1,0 +1,360 @@
+import { ApiProperty } from '@nestjs/swagger';
+
+/**
+ * ========================================================================
+ * PERFORMANCE DASHBOARD DTOs
+ * ========================================================================
+ * 
+ * Data Transfer Objects for performance dashboard responses.
+ * Defines the structure of all performance data returned to the frontend.
+ * 
+ * Includes:
+ * - Summary metrics (revenue, targets, performance rates)
+ * - Chart data (line, bar, pie, area charts)
+ * - Metadata (timestamps, data quality indicators)
+ * ========================================================================
+ */
+
+// ===================================================================
+// CHART DATA TYPES
+// ===================================================================
+
+export class LineChartDataPoint {
+	@ApiProperty({ description: 'X-axis label' })
+	label: string;
+
+	@ApiProperty({ description: 'Y-axis value' })
+	value: number;
+
+	@ApiProperty({ description: 'Formatted display text', required: false })
+	dataPointText?: string;
+}
+
+export class BarChartDataPoint {
+	@ApiProperty({ description: 'Bar label' })
+	label: string;
+
+	@ApiProperty({ description: 'Bar value' })
+	value: number;
+
+	@ApiProperty({ description: 'Target value for comparison', required: false })
+	target?: number;
+
+	@ApiProperty({ description: 'Full name (non-abbreviated)', required: false })
+	fullName?: string;
+}
+
+export class PieChartDataPoint {
+	@ApiProperty({ description: 'Segment label' })
+	label: string;
+
+	@ApiProperty({ description: 'Segment value' })
+	value: number;
+
+	@ApiProperty({ description: 'Custom color', required: false })
+	color?: string;
+
+	@ApiProperty({ description: 'Display text', required: false })
+	text?: string;
+}
+
+export class DualAxisChartDataPoint {
+	@ApiProperty({ description: 'X-axis label' })
+	label: string;
+
+	@ApiProperty({ description: 'Primary Y-axis value' })
+	value: number;
+
+	@ApiProperty({ description: 'Secondary Y-axis value' })
+	secondaryValue: number;
+
+	@ApiProperty({ description: 'Full name (non-abbreviated)', required: false })
+	fullName?: string;
+}
+
+// ===================================================================
+// CHART RESPONSE DTOs
+// ===================================================================
+
+export class LineChartResponseDto {
+	@ApiProperty({ type: [LineChartDataPoint] })
+	data: LineChartDataPoint[];
+
+	@ApiProperty({ description: 'Target value for comparison', required: false })
+	targetValue?: number;
+}
+
+export class BarChartResponseDto {
+	@ApiProperty({ type: [BarChartDataPoint] })
+	data: BarChartDataPoint[];
+
+	@ApiProperty({ description: 'Average target value', required: false })
+	averageTarget?: number;
+}
+
+export class PieChartResponseDto {
+	@ApiProperty({ type: [PieChartDataPoint] })
+	data: PieChartDataPoint[];
+
+	@ApiProperty({ description: 'Total of all segments' })
+	total: number;
+
+	@ApiProperty({ description: 'Percentage value', required: false })
+	percentage?: number;
+}
+
+export class DualAxisChartResponseDto {
+	@ApiProperty({ type: [DualAxisChartDataPoint] })
+	data: DualAxisChartDataPoint[];
+
+	@ApiProperty({ description: 'Target value', required: false })
+	targetValue?: number;
+}
+
+// ===================================================================
+// SUMMARY METRICS
+// ===================================================================
+
+export class PerformanceSummaryDto {
+	@ApiProperty({ 
+		description: 'Total revenue in the period',
+		example: 1500000.50
+	})
+	totalRevenue: number;
+
+	@ApiProperty({ 
+		description: 'Total target for the period',
+		example: 2000000.00
+	})
+	totalTarget: number;
+
+	@ApiProperty({ 
+		description: 'Performance rate as percentage (revenue/target * 100)',
+		example: 75.00
+	})
+	performanceRate: number;
+
+	@ApiProperty({ 
+		description: 'Total number of transactions',
+		example: 1250
+	})
+	transactionCount: number;
+
+	@ApiProperty({ 
+		description: 'Average order value',
+		example: 1200.00
+	})
+	averageOrderValue: number;
+
+	@ApiProperty({ 
+		description: 'Average items per basket/transaction',
+		example: 5.5
+	})
+	averageItemsPerBasket: number;
+}
+
+// ===================================================================
+// CHARTS COLLECTION
+// ===================================================================
+
+export class PerformanceChartsDto {
+	@ApiProperty({ type: LineChartResponseDto, description: 'Revenue trend over time' })
+	revenueTrend: LineChartResponseDto;
+
+	@ApiProperty({ type: LineChartResponseDto, description: 'Hourly sales pattern' })
+	hourlySales: LineChartResponseDto;
+
+	@ApiProperty({ type: PieChartResponseDto, description: 'Sales distribution by category' })
+	salesByCategory: PieChartResponseDto;
+
+	@ApiProperty({ type: BarChartResponseDto, description: 'Branch performance comparison' })
+	branchPerformance: BarChartResponseDto;
+
+	@ApiProperty({ type: BarChartResponseDto, description: 'Top selling products' })
+	topProducts: BarChartResponseDto;
+
+	@ApiProperty({ type: DualAxisChartResponseDto, description: 'Items per basket trend' })
+	itemsPerBasket: DualAxisChartResponseDto;
+
+	@ApiProperty({ type: DualAxisChartResponseDto, description: 'Sales by salesperson' })
+	salesBySalesperson: DualAxisChartResponseDto;
+
+	@ApiProperty({ type: PieChartResponseDto, description: 'Conversion rate (quotations vs sales)' })
+	conversionRate: PieChartResponseDto;
+
+	@ApiProperty({ type: PieChartResponseDto, description: 'Customer type composition' })
+	customerComposition: PieChartResponseDto;
+}
+
+// ===================================================================
+// METADATA
+// ===================================================================
+
+export class PerformanceMetadataDto {
+	@ApiProperty({ 
+		description: 'Timestamp of last data update',
+		example: '2025-10-28T10:30:00.000Z'
+	})
+	lastUpdated: string;
+
+	@ApiProperty({ 
+		description: 'Data quality indicator',
+		example: 'excellent',
+		enum: ['excellent', 'good', 'fair', 'poor']
+	})
+	dataQuality: string;
+
+	@ApiProperty({ 
+		description: 'Number of records in filtered dataset',
+		example: 1250
+	})
+	recordCount: number;
+
+	@ApiProperty({ 
+		description: 'Organization timezone',
+		example: 'Africa/Johannesburg'
+	})
+	organizationTimezone: string;
+
+	@ApiProperty({ 
+		description: 'Whether data was served from cache',
+		required: false
+	})
+	fromCache?: boolean;
+
+	@ApiProperty({ 
+		description: 'Cache timestamp if from cache',
+		required: false
+	})
+	cachedAt?: string;
+}
+
+// ===================================================================
+// MAIN DASHBOARD RESPONSE
+// ===================================================================
+
+export class PerformanceDashboardDataDto {
+	@ApiProperty({ type: PerformanceSummaryDto })
+	summary: PerformanceSummaryDto;
+
+	@ApiProperty({ type: PerformanceChartsDto })
+	charts: PerformanceChartsDto;
+
+	@ApiProperty({ description: 'Applied filters', required: false })
+	filters?: any;
+
+	@ApiProperty({ type: PerformanceMetadataDto })
+	metadata: PerformanceMetadataDto;
+}
+
+// ===================================================================
+// DAILY SALES PERFORMANCE
+// ===================================================================
+
+export class DailySalesPerformanceDto {
+	@ApiProperty({ description: 'Date in YYYY-MM-DD format' })
+	date: string;
+
+	@ApiProperty({ description: 'Day of week name' })
+	dayOfWeek: string;
+
+	@ApiProperty({ description: 'Number of transactions/baskets' })
+	basketCount: number;
+
+	@ApiProperty({ description: 'Average basket value' })
+	basketValue: number;
+
+	@ApiProperty({ description: 'Number of unique clients' })
+	clientsQty: number;
+
+	@ApiProperty({ description: 'Total sales revenue' })
+	salesR: number;
+
+	@ApiProperty({ description: 'Total gross profit' })
+	gpR: number;
+
+	@ApiProperty({ description: 'Gross profit percentage' })
+	gpPercentage: number;
+}
+
+// ===================================================================
+// BRANCH × CATEGORY PERFORMANCE
+// ===================================================================
+
+export class CategoryPerformanceDto {
+	@ApiProperty({ description: 'Category name' })
+	categoryName: string;
+
+	@ApiProperty({ description: 'Number of transactions' })
+	basketCount: number;
+
+	@ApiProperty({ description: 'Average basket value' })
+	basketValue: number;
+
+	@ApiProperty({ description: 'Number of unique clients' })
+	clientsQty: number;
+
+	@ApiProperty({ description: 'Total sales revenue' })
+	salesR: number;
+
+	@ApiProperty({ description: 'Total gross profit' })
+	gpR: number;
+
+	@ApiProperty({ description: 'Gross profit percentage' })
+	gpPercentage: number;
+}
+
+export class BranchCategoryPerformanceDto {
+	@ApiProperty({ description: 'Branch ID' })
+	branchId: string;
+
+	@ApiProperty({ description: 'Branch name' })
+	branchName: string;
+
+	@ApiProperty({ 
+		description: 'Performance by category',
+		type: 'object',
+		additionalProperties: { type: 'object' }
+	})
+	categories: Record<string, CategoryPerformanceDto>;
+
+	@ApiProperty({ 
+		description: 'Total performance across all categories',
+		type: CategoryPerformanceDto
+	})
+	total: CategoryPerformanceDto;
+}
+
+// ===================================================================
+// SALES PER STORE
+// ===================================================================
+
+export class SalesPerStoreDto {
+	@ApiProperty({ description: 'Store/Branch ID' })
+	storeId: string;
+
+	@ApiProperty({ description: 'Store/Branch name' })
+	storeName: string;
+
+	@ApiProperty({ description: 'Total revenue' })
+	totalRevenue: number;
+
+	@ApiProperty({ description: 'Total transactions' })
+	transactionCount: number;
+
+	@ApiProperty({ description: 'Average transaction value' })
+	averageTransactionValue: number;
+
+	@ApiProperty({ description: 'Total items sold' })
+	totalItemsSold: number;
+
+	@ApiProperty({ description: 'Unique clients served' })
+	uniqueClients: number;
+
+	@ApiProperty({ description: 'Gross profit' })
+	grossProfit: number;
+
+	@ApiProperty({ description: 'Gross profit percentage' })
+	grossProfitPercentage: number;
+}
+

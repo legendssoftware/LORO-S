@@ -1837,4 +1837,313 @@ export class ReportsService implements OnModuleInit {
 			};
 		}
 	}
+
+	// ===================================================================
+	// PERFORMANCE TRACKER ENDPOINTS
+	// ===================================================================
+
+	/**
+	 * Get performance dashboard data
+	 * Main endpoint for performance tracker with comprehensive filtering and analytics
+	 */
+	async getPerformanceDashboard(params: any): Promise<any> {
+		this.logger.log(`Getting performance dashboard for org ${params.organisationId}`);
+
+		try {
+			// Generate cache key
+			const cacheKey = this.getPerformanceCacheKey(params);
+			
+			// Check cache
+			const cachedData = await this.cacheManager.get(cacheKey);
+			if (cachedData) {
+				this.logger.log(`Performance dashboard served from cache: ${cacheKey}`);
+				return {
+					success: true,
+					data: {
+						...cachedData,
+						metadata: {
+							...cachedData.metadata,
+							fromCache: true,
+							cachedAt: cachedData.metadata.lastUpdated,
+						},
+					},
+					timestamp: new Date().toISOString(),
+				};
+			}
+
+			// Get organization timezone
+			const timezone = await this.getOrganizationTimezone(params.organisationId);
+
+			// Convert DTO params to filters format
+			const filters = this.convertParamsToFilters(params);
+
+			// Generate dashboard data using the generator
+			const PerformanceDashboardGenerator = require('./generators/performance-dashboard.generator').PerformanceDashboardGenerator;
+			const generator = new PerformanceDashboardGenerator();
+			const dashboardData = await generator.generate(filters);
+
+			// Add timezone to metadata
+			dashboardData.metadata.organizationTimezone = timezone;
+
+			// Cache the result
+			await this.cacheManager.set(cacheKey, dashboardData, this.CACHE_TTL);
+			this.logger.log(`Performance dashboard cached: ${cacheKey}`);
+
+			return {
+				success: true,
+				data: dashboardData,
+				timestamp: new Date().toISOString(),
+			};
+		} catch (error) {
+			this.logger.error(`Error getting performance dashboard: ${error.message}`, error.stack);
+			return {
+				success: false,
+				error: {
+					code: 'PERFORMANCE_DASHBOARD_ERROR',
+					details: error.message,
+				},
+				timestamp: new Date().toISOString(),
+			};
+		}
+	}
+
+	/**
+	 * Get daily sales performance data
+	 */
+	async getDailySalesPerformance(params: any): Promise<any> {
+		this.logger.log(`Getting daily sales performance for org ${params.organisationId}`);
+
+		try {
+			const cacheKey = this.getPerformanceCacheKey({ ...params, type: 'daily-sales' });
+			
+			const cachedData = await this.cacheManager.get(cacheKey);
+			if (cachedData) {
+				this.logger.log(`Daily sales performance served from cache`);
+				return {
+					success: true,
+					data: cachedData,
+					timestamp: new Date().toISOString(),
+				};
+			}
+
+			const filters = this.convertParamsToFilters(params);
+			
+			const PerformanceDashboardGenerator = require('./generators/performance-dashboard.generator').PerformanceDashboardGenerator;
+			const generator = new PerformanceDashboardGenerator();
+			const dailySalesData = await generator.generateDailySalesPerformance(filters);
+
+			await this.cacheManager.set(cacheKey, dailySalesData, this.CACHE_TTL);
+
+			return {
+				success: true,
+				data: dailySalesData,
+				timestamp: new Date().toISOString(),
+			};
+		} catch (error) {
+			this.logger.error(`Error getting daily sales performance: ${error.message}`, error.stack);
+			return {
+				success: false,
+				error: {
+					code: 'DAILY_SALES_ERROR',
+					details: error.message,
+				},
+				timestamp: new Date().toISOString(),
+			};
+		}
+	}
+
+	/**
+	 * Get branch × category performance matrix
+	 */
+	async getBranchCategoryPerformance(params: any): Promise<any> {
+		this.logger.log(`Getting branch-category performance for org ${params.organisationId}`);
+
+		try {
+			const cacheKey = this.getPerformanceCacheKey({ ...params, type: 'branch-category' });
+			
+			const cachedData = await this.cacheManager.get(cacheKey);
+			if (cachedData) {
+				return {
+					success: true,
+					data: cachedData,
+					timestamp: new Date().toISOString(),
+				};
+			}
+
+			const filters = this.convertParamsToFilters(params);
+			
+			const PerformanceDashboardGenerator = require('./generators/performance-dashboard.generator').PerformanceDashboardGenerator;
+			const generator = new PerformanceDashboardGenerator();
+			const branchCategoryData = await generator.generateBranchCategoryPerformance(filters);
+
+			await this.cacheManager.set(cacheKey, branchCategoryData, this.CACHE_TTL);
+
+			return {
+				success: true,
+				data: branchCategoryData,
+				timestamp: new Date().toISOString(),
+			};
+		} catch (error) {
+			this.logger.error(`Error getting branch-category performance: ${error.message}`, error.stack);
+			return {
+				success: false,
+				error: {
+					code: 'BRANCH_CATEGORY_ERROR',
+					details: error.message,
+				},
+				timestamp: new Date().toISOString(),
+			};
+		}
+	}
+
+	/**
+	 * Get sales per store data
+	 */
+	async getSalesPerStore(params: any): Promise<any> {
+		this.logger.log(`Getting sales per store for org ${params.organisationId}`);
+
+		try {
+			const cacheKey = this.getPerformanceCacheKey({ ...params, type: 'sales-per-store' });
+			
+			const cachedData = await this.cacheManager.get(cacheKey);
+			if (cachedData) {
+				return {
+					success: true,
+					data: cachedData,
+					timestamp: new Date().toISOString(),
+				};
+			}
+
+			const filters = this.convertParamsToFilters(params);
+			
+			const PerformanceDashboardGenerator = require('./generators/performance-dashboard.generator').PerformanceDashboardGenerator;
+			const generator = new PerformanceDashboardGenerator();
+			const salesPerStoreData = await generator.generateSalesPerStore(filters);
+
+			await this.cacheManager.set(cacheKey, salesPerStoreData, this.CACHE_TTL);
+
+			return {
+				success: true,
+				data: salesPerStoreData,
+				timestamp: new Date().toISOString(),
+			};
+		} catch (error) {
+			this.logger.error(`Error getting sales per store: ${error.message}`, error.stack);
+			return {
+				success: false,
+				error: {
+					code: 'SALES_PER_STORE_ERROR',
+					details: error.message,
+				},
+				timestamp: new Date().toISOString(),
+			};
+		}
+	}
+
+	/**
+	 * Get master data for performance tracker (branches, products, etc.)
+	 */
+	async getPerformanceMasterData(organisationId: number): Promise<any> {
+		this.logger.log(`Getting performance master data for org ${organisationId}`);
+
+		try {
+			const cacheKey = `${this.CACHE_PREFIX}performance_master_${organisationId}`;
+			
+			const cachedData = await this.cacheManager.get(cacheKey);
+			if (cachedData) {
+				return {
+					success: true,
+					data: cachedData,
+					timestamp: new Date().toISOString(),
+				};
+			}
+
+			const PerformanceDashboardGenerator = require('./generators/performance-dashboard.generator').PerformanceDashboardGenerator;
+			const generator = new PerformanceDashboardGenerator();
+			const masterData = generator.getMasterData();
+
+			await this.cacheManager.set(cacheKey, masterData, this.CACHE_TTL);
+
+			return {
+				success: true,
+				data: masterData,
+				timestamp: new Date().toISOString(),
+			};
+		} catch (error) {
+			this.logger.error(`Error getting performance master data: ${error.message}`, error.stack);
+			return {
+				success: false,
+				error: {
+					code: 'MASTER_DATA_ERROR',
+					details: error.message,
+				},
+				timestamp: new Date().toISOString(),
+			};
+		}
+	}
+
+	// ===================================================================
+	// PERFORMANCE HELPER METHODS
+	// ===================================================================
+
+	/**
+	 * Generate cache key for performance data
+	 */
+	private getPerformanceCacheKey(params: any): string {
+		const keyParts = [
+			'performance',
+			params.type || 'dashboard',
+			`org_${params.organisationId}`,
+			params.startDate || 'nostart',
+			params.endDate || 'noend',
+			params.branchIds?.join('-') || 'allbranches',
+			params.county || 'nocounty',
+			params.province || 'noprovince',
+			params.city || 'nocity',
+			params.suburb || 'nosuburb',
+			params.category || 'nocat',
+			params.productIds?.join('-') || 'allproducts',
+			params.minPrice || 'nomin',
+			params.maxPrice || 'nomax',
+			params.salesPersonIds?.join('-') || 'allsales',
+		];
+
+		return keyParts.join(':');
+	}
+
+	/**
+	 * Convert request params to filter format
+	 */
+	private convertParamsToFilters(params: any): any {
+		return {
+			organisationId: params.organisationId,
+			branchId: params.branchId,
+			startDate: params.startDate,
+			endDate: params.endDate,
+			location: params.county || params.province || params.city || params.suburb ? {
+				county: params.county,
+				province: params.province,
+				city: params.city,
+				suburb: params.suburb,
+			} : undefined,
+			product: params.category || params.productIds ? {
+				category: params.category,
+				productIds: params.productIds,
+			} : undefined,
+			priceRange: params.minPrice || params.maxPrice ? {
+				min: params.minPrice,
+				max: params.maxPrice,
+			} : undefined,
+			branchIds: params.branchIds,
+			salesPersonIds: params.salesPersonIds,
+			category: params.category,
+			productIds: params.productIds,
+			minPrice: params.minPrice,
+			maxPrice: params.maxPrice,
+			county: params.county,
+			province: params.province,
+			city: params.city,
+			suburb: params.suburb,
+		};
+	}
 }

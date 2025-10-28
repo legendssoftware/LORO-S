@@ -43,6 +43,7 @@ import { TaskFlagItem } from '../tasks/entities/task-flag-item.entity';
 import { Competitor } from '../competitors/entities/competitor.entity';
 import { MapDataReportGenerator } from './generators/map-data-report.generator';
 import { OrgActivityReportGenerator } from './generators/org-activity-report.generator';
+import { PerformanceDashboardGenerator } from './generators/performance-dashboard.generator';
 import { UserProfile } from 'src/user/entities/user.profile.entity';
 import { UserEmployeementProfile } from 'src/user/entities/user.employeement.profile.entity';
 import { UserTarget } from '../user/entities/user-target.entity';
@@ -128,6 +129,7 @@ import { TrackingService } from '../tracking/tracking.service';
 		UserDailyReportGenerator,
 		MapDataReportGenerator,
 		OrgActivityReportGenerator,
+		PerformanceDashboardGenerator,
 		GoogleMapsService,
 		TrackingService,
 	],
