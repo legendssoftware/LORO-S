@@ -346,6 +346,102 @@ Comprehensive real-time metrics for the entire organization or specific branch.
 	// PERFORMANCE TRACKER ENDPOINTS
 	// ======================================================
 
+	@Get('performance')
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.USER)
+	@ApiOperation({
+		summary: '🚀 Get ALL Performance Data (UNIFIED ENDPOINT)',
+		description: `
+# 🎯 UNIFIED Performance Tracker - One Endpoint for Everything
+
+**THIS IS THE MAIN ENDPOINT FOR MOBILE APP** - Returns ALL performance data in a single call.
+
+## 📦 **What You Get (All in One Response)**
+
+### 1. Dashboard Data
+- **Summary Metrics**: Revenue, targets, performance rates, transaction counts
+- **Revenue Trends**: Time-series revenue analysis
+- **Hourly Sales**: Sales patterns throughout the day  
+- **Category Performance**: Sales distribution by product category
+- **Branch Performance**: Top 10 performing branches
+- **Top Products**: Best-selling products
+- **Salesperson Performance**: Individual salesperson metrics
+- **Conversion Rates**: Quotation to sales conversion
+- **Customer Composition**: Customer type distribution
+
+### 2. Daily Sales Performance
+- Date-by-date breakdown
+- Basket counts and values
+- Client quantities
+- Sales revenue and gross profit
+
+### 3. Branch × Category Performance
+- Performance matrix showing sales by branch and category
+- Comprehensive metrics per branch per category
+
+### 4. Sales Per Store
+- Aggregated sales data for each store/branch
+- Transaction counts, revenue, items sold, unique clients
+
+### 5. Master Data (for Filters)
+- Locations (33 Southern African locations)
+- Branches (33 branches)
+- Products (30 building materials)
+- Product Categories (5 categories)
+- Sales People (66 salespeople)
+
+## 🔍 **Filtering Options**
+All filters apply to ALL data sections:
+- **Date Range**: Filter by start and end dates
+- **Location**: Filter by county, province, city, suburb
+- **Branch**: Filter by specific branches
+- **Products**: Filter by category or specific products
+- **Price Range**: Filter by min/max price
+- **Salesperson**: Filter by specific salespeople
+
+## 📊 **Data Generation**
+- **Phase 1 (Current)**: Server-side mock data with realistic patterns
+- **Phase 2 (Future)**: External database queries with real data
+
+## 🔒 **Authorization**
+- Available to ADMIN, MANAGER, OWNER, and USER roles
+- Organization ID is required
+
+## ⚡ **Performance**
+- Cached for better performance
+- All data generated in parallel
+- Single network call from mobile app
+		`,
+	})
+	@ApiQuery({ name: 'organisationId', required: true, type: Number })
+	@ApiQuery({ name: 'branchId', required: false, type: Number })
+	@ApiQuery({ name: 'startDate', required: false, type: String, description: 'YYYY-MM-DD format' })
+	@ApiQuery({ name: 'endDate', required: false, type: String, description: 'YYYY-MM-DD format' })
+	@ApiQuery({ name: 'branchIds', required: false, type: String, description: 'Comma-separated branch IDs' })
+	@ApiQuery({ name: 'salesPersonIds', required: false, type: String, description: 'Comma-separated salesperson IDs' })
+	@ApiQuery({ name: 'category', required: false, type: String })
+	@ApiQuery({ name: 'productIds', required: false, type: String, description: 'Comma-separated product IDs' })
+	@ApiQuery({ name: 'minPrice', required: false, type: Number })
+	@ApiQuery({ name: 'maxPrice', required: false, type: Number })
+	@ApiQuery({ name: 'county', required: false, type: String })
+	@ApiQuery({ name: 'province', required: false, type: String })
+	@ApiQuery({ name: 'city', required: false, type: String })
+	@ApiQuery({ name: 'suburb', required: false, type: String })
+	async getUnifiedPerformanceData(
+		@Req() request: AuthenticatedRequest,
+		@Query(new ValidationPipe({ transform: true })) filters: PerformanceFiltersDto
+	) {
+		this.logger.log(`🚀 Getting UNIFIED performance data for org ${filters.organisationId}`);
+
+		// Validate organization access
+		const userOrgId = request.user?.org?.uid || request.user?.organisationRef;
+		if (filters.organisationId !== userOrgId && request.user.accessLevel !== AccessLevel.OWNER) {
+			this.logger.warn(`User ${request.user.uid} attempted to access org ${filters.organisationId} data without permission`);
+			throw new BadRequestException('Access denied to requested organization data');
+		}
+
+		return this.reportsService.getUnifiedPerformanceData(filters);
+	}
+
 	@Get('performance/dashboard')
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.USER)
 	@ApiOperation({

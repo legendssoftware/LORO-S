@@ -1843,6 +1843,97 @@ export class ReportsService implements OnModuleInit {
 	// ===================================================================
 
 	/**
+	 * Get ALL performance data in one unified response
+	 * This is the main endpoint for mobile app - returns everything in one call
+	 * Phase 1: Uses mock data
+	 * Phase 2: Will query external database
+	 */
+	async getUnifiedPerformanceData(params: any): Promise<any> {
+		this.logger.log(`🚀 Getting UNIFIED performance data for org ${params.organisationId}`);
+
+		try {
+			// Generate cache key for unified data
+			const cacheKey = this.getPerformanceCacheKey({ ...params, type: 'unified' });
+			
+			// Check cache
+			const cachedData = await this.cacheManager.get(cacheKey);
+			if (cachedData) {
+				this.logger.log(`✅ Unified performance data served from cache: ${cacheKey}`);
+				return {
+					success: true,
+					data: cachedData,
+					message: 'Unified performance data retrieved successfully from cache',
+					timestamp: new Date().toISOString(),
+				};
+			}
+
+			this.logger.log(`📊 Generating fresh unified performance data...`);
+
+			// Convert params to filters format
+			const filters = this.convertParamsToFilters(params);
+
+			// Get organization timezone
+			const timezone = await this.getOrganizationTimezone(params.organisationId);
+
+			// Initialize the generator
+			const PerformanceDashboardGenerator = require('./generators/performance-dashboard.generator').PerformanceDashboardGenerator;
+			const generator = new PerformanceDashboardGenerator();
+
+			// Generate ALL data in parallel for better performance
+			this.logger.debug('🔄 Generating all performance data components in parallel...');
+			const [
+				dashboardData,
+				dailySalesData,
+				branchCategoryData,
+				salesPerStoreData,
+				masterData
+			] = await Promise.all([
+				generator.generate(filters),
+				generator.generateDailySalesPerformance(filters),
+				generator.generateBranchCategoryPerformance(filters),
+				generator.generateSalesPerStore(filters),
+				Promise.resolve(generator.getMasterData())
+			]);
+
+			this.logger.log(`✅ All performance data components generated successfully`);
+
+			// Add timezone to dashboard metadata
+			dashboardData.metadata.organizationTimezone = timezone;
+
+			// Create unified response
+			const unifiedData = {
+				dashboard: dashboardData,
+				dailySales: dailySalesData,
+				branchCategory: branchCategoryData,
+				salesPerStore: salesPerStoreData,
+				masterData: masterData,
+			};
+
+			// Cache the unified result
+			await this.cacheManager.set(cacheKey, unifiedData, this.CACHE_TTL);
+			this.logger.log(`💾 Unified performance data cached: ${cacheKey}`);
+
+			return {
+				success: true,
+				data: unifiedData,
+				message: 'Unified performance data retrieved successfully',
+				timestamp: new Date().toISOString(),
+			};
+		} catch (error) {
+			this.logger.error(`❌ Error getting unified performance data: ${error.message}`, error.stack);
+			return {
+				success: false,
+				error: {
+					code: 'UNIFIED_PERFORMANCE_ERROR',
+					details: error.message,
+					context: { organisationId: params.organisationId }
+				},
+				timestamp: new Date().toISOString(),
+			};
+		}
+	}
+
+	/**
 	 * Get performance dashboard data
 	 * Main endpoint for performance tracker with comprehensive filtering and analytics
 	 */

@@ -4,10 +4,18 @@
  * ========================================================================
  * 
  * Server-side mock data generation for Performance Tracker.
- * Phase 1: Generate realistic mock data matching frontend structure
- * Phase 2: This will be replaced by real database queries
  * 
- * Mock data includes:
+ * 📍 CURRENT STATE (Phase 1): 
+ * - Generates realistic mock data matching frontend structure
+ * - All data returned via unified endpoint: GET /reports/performance
+ * - Mobile app makes ONE API call to get ALL data
+ * 
+ * 🚀 FUTURE STATE (Phase 2):
+ * - Will query external database (one method, multiple queries/sequences)
+ * - All functions below will be replaced with database queries
+ * - Same unified endpoint, but with real data
+ * 
+ * 📊 Mock data includes:
  * - Locations (33 Southern African locations)
  * - Branches (33 branches across locations)
  * - Products (30 building materials products)
@@ -15,6 +23,14 @@
  * - Sales People (66 salesperson across branches)
  * - Performance Data (365 days of performance metrics)
  * - Sales Transactions (90 days of detailed transactions)
+ * 
+ * 🔄 DATABASE INTEGRATION PLAN (Phase 2):
+ * Replace the following functions with database queries:
+ * 1. generatePerformanceData() -> Query quotations, orders, sales tables
+ * 2. generateSalesTransactions() -> Query transactions, orders tables
+ * 3. locations, branches, products -> Query from organization database
+ * 4. salesPeople -> Query from users table with role filters
+ * 
  * ========================================================================
  */
 

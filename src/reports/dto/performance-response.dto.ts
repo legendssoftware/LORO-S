@@ -77,6 +77,42 @@ export class SalesPerStoreResponseDto extends ApiResponseDto<SalesPerStoreDto[]>
 }
 
 // ===================================================================
+// UNIFIED COMPREHENSIVE PERFORMANCE RESPONSE
+// ===================================================================
+
+/**
+ * Unified response containing ALL performance data
+ * This is the main response for mobile app - single endpoint for all data
+ */
+export class UnifiedPerformanceDataDto {
+	@ApiProperty({ type: PerformanceDashboardDataDto, description: 'Main dashboard with summary and charts' })
+	dashboard: PerformanceDashboardDataDto;
+
+	@ApiProperty({ type: [DailySalesPerformanceDto], description: 'Daily sales performance data' })
+	dailySales: DailySalesPerformanceDto[];
+
+	@ApiProperty({ type: [BranchCategoryPerformanceDto], description: 'Branch × Category performance matrix' })
+	branchCategory: BranchCategoryPerformanceDto[];
+
+	@ApiProperty({ type: [SalesPerStoreDto], description: 'Sales per store/branch data' })
+	salesPerStore: SalesPerStoreDto[];
+
+	@ApiProperty({ description: 'Master data for filters' })
+	masterData: {
+		locations: LocationDto[];
+		productCategories: ProductCategoryDto[];
+		products: ProductDto[];
+		branches: BranchDto[];
+		salesPeople: SalesPersonDto[];
+	};
+}
+
+export class UnifiedPerformanceResponseDto extends ApiResponseDto<UnifiedPerformanceDataDto> {
+	@ApiProperty({ type: UnifiedPerformanceDataDto })
+	data: UnifiedPerformanceDataDto;
+}
+
+// ===================================================================
 // MASTER DATA RESPONSES
 // ===================================================================
 
