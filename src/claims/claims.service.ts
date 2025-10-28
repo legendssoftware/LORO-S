@@ -107,6 +107,18 @@ export class ClaimsService {
 		};
 	}
 
+	/**
+	 * Create a new claim with early-return pattern for optimal client response time
+	 * 
+	 * FLOW:
+	 * 1. Validate input and fetch user details
+	 * 2. Save claim record to database
+	 * 3. Return success response to client immediately
+	 * 4. Process non-critical operations asynchronously (approvals, XP, notifications, etc.)
+	 * 
+	 * This pattern ensures the client receives confirmation as soon as the core operation completes,
+	 * while background processes run without blocking the response.
+	 */
 	async create(createClaimDto: CreateClaimDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
 		const startTime = Date.now();
 		this.logger.log(`🔄 [ClaimsService] Creating claim for user: ${createClaimDto.owner}, orgId: ${orgId}, branchId: ${branchId}, amount: ${createClaimDto.amount}`);
@@ -162,6 +174,9 @@ export class ClaimsService {
 				category: createClaimDto.category,
 			});
 
+			// ============================================================
+			// CRITICAL PATH: Save claim to database (must complete before response)
+			// ============================================================
 			this.logger.debug(`💾 [ClaimsService] Saving claim to database`);
 			const claim = await this.claimsRepository.save(claimData);
 
@@ -172,129 +187,149 @@ export class ClaimsService {
 
 			this.logger.debug(`✅ [ClaimsService] Claim created successfully with ID: ${claim.uid}`);
 
-			// Initialize approval workflow for the claim
-			try {
-				this.logger.debug(`🔄 [ClaimsService] Initializing approval workflow for claim ${claim.uid}`);
-				await this.initializeClaimApprovalWorkflow(claim, user);
-				this.logger.debug(`✅ [ClaimsService] Approval workflow initialized successfully for claim: ${claim.uid}`);
-			} catch (approvalError) {
-				this.logger.error(
-					`❌ [ClaimsService] Failed to initialize approval workflow for claim: ${claim.uid}`,
-					approvalError.stack,
-				);
-				// Don't fail claim creation if approval workflow fails
-			}
-
-			// Invalidate cache after creation
+			// Invalidate cache after creation (fast operation, safe to await)
 			this.invalidateClaimsCache(claim);
 			this.logger.debug(`🧹 [ClaimsService] Claims cache invalidated after claim creation`);
 
-			// Enhanced response mapping
+			// ============================================================
+			// EARLY RETURN: Respond to client immediately after successful save
+			// ============================================================
 			const response = {
 				message: process.env.SUCCESS_MESSAGE || 'Claim created successfully',
 			};
 
-			// Send email notification for claim creation
-			try {
-				if (user.email) {
-					this.logger.debug(`📧 [ClaimsService] Preparing email notification for claim ${claim.uid}`);
-					const emailData: ClaimEmailData = {
-						name: user.name || user.email,
-						claimId: claim.uid,
-						amount: this.formatCurrency(Number(claim.amount) || 0),
-						category: claim.category || 'General',
-						status: claim.status || ClaimStatus.PENDING,
-						comments: claim.comments || '',
-						submittedDate: claim.createdAt.toISOString().split('T')[0],
-						submittedBy: {
-							name: user.name || user.email,
-							email: user.email,
-						},
-						branch: user.branch
-							? {
-									name: user.branch.name,
-							  }
-							: undefined,
-						organization: {
-							name: user.organisation?.name || 'Organization',
-						},
-						dashboardLink: `${process.env.APP_URL || 'https://loro.co.za'}/claims`,
+			const duration = Date.now() - startTime;
+			this.logger.log(`✅ [ClaimsService] Claim created successfully for user: ${createClaimDto.owner} in ${duration}ms - returning response to client`);
+
+			// ============================================================
+			// POST-RESPONSE PROCESSING: Execute non-critical operations asynchronously
+			// These operations run after the response is sent, without blocking the client
+			// ============================================================
+			setImmediate(async () => {
+				try {
+					this.logger.debug(`🔄 [ClaimsService] Starting post-response processing for claim: ${claim.uid}`);
+
+					// 1. Initialize approval workflow for the claim
+					try {
+						this.logger.debug(`🔄 [ClaimsService] Initializing approval workflow for claim ${claim.uid}`);
+						await this.initializeClaimApprovalWorkflow(claim, user);
+						this.logger.debug(`✅ [ClaimsService] Approval workflow initialized successfully for claim: ${claim.uid}`);
+					} catch (approvalError) {
+						this.logger.error(
+							`❌ [ClaimsService] Failed to initialize approval workflow for claim: ${claim.uid}`,
+							approvalError.stack,
+						);
+						// Don't fail post-processing if approval workflow fails
+					}
+
+					// 2. Send email notifications
+					try {
+						if (user.email) {
+							this.logger.debug(`📧 [ClaimsService] Preparing email notification for claim ${claim.uid}`);
+							const emailData: ClaimEmailData = {
+								name: user.name || user.email,
+								claimId: claim.uid,
+								amount: this.formatCurrency(Number(claim.amount) || 0),
+								category: claim.category || 'General',
+								status: claim.status || ClaimStatus.PENDING,
+								comments: claim.comments || '',
+								submittedDate: claim.createdAt.toISOString().split('T')[0],
+								submittedBy: {
+									name: user.name || user.email,
+									email: user.email,
+								},
+								branch: user.branch
+									? {
+											name: user.branch.name,
+									  }
+									: undefined,
+								organization: {
+									name: user.organisation?.name || 'Organization',
+								},
+								dashboardLink: `${process.env.APP_URL || 'https://loro.co.za'}/claims`,
+							};
+
+							// Send email to the user who created the claim
+							this.eventEmitter.emit('send.email', EmailType.CLAIM_CREATED, [user.email], emailData);
+
+							// Send admin notification email
+							this.eventEmitter.emit('send.email', EmailType.CLAIM_CREATED_ADMIN, [], emailData);
+
+							// Send push notification to the user who created the claim
+							try {
+								this.logger.debug(`📱 [ClaimsService] Sending push notification for claim ${claim.uid}`);
+								await this.unifiedNotificationService.sendTemplatedNotification(
+									NotificationEvent.CLAIM_CREATED,
+									[user.uid],
+									{
+										userName: user.name || user.email,
+										claimCategory: claim.category || 'General',
+										claimAmount: this.formatCurrency(Number(claim.amount) || 0),
+										claimId: claim.uid,
+										status: claim.status || ClaimStatus.PENDING,
+									},
+									{
+										priority: NotificationPriority.NORMAL,
+									},
+								);
+								this.logger.debug(`✅ [ClaimsService] Claim creation push notification sent to user: ${user.email}`);
+							} catch (notificationError) {
+								this.logger.error(`❌ [ClaimsService] Failed to send claim creation push notification:`, notificationError.message);
+							}
+						}
+					} catch (emailError) {
+						this.logger.error(`❌ [ClaimsService] Error sending claim creation email:`, emailError.message);
+					}
+
+					// 3. Send internal notification for admins/managers
+					this.logger.debug(`📢 [ClaimsService] Sending internal notification for new claim ${claim.uid}`);
+					const notification = {
+						type: NotificationType.USER,
+						title: 'New Claim',
+						message: `A new claim has been created by ${user.name || user.email}`,
+						status: NotificationStatus.UNREAD,
+						owner: claim?.owner,
 					};
 
-					// Send email to the user who created the claim
-					this.eventEmitter.emit('send.email', EmailType.CLAIM_CREATED, [user.email], emailData);
+					const recipients = [AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.SUPERVISOR];
 
-					// Send admin notification email
-					this.eventEmitter.emit('send.email', EmailType.CLAIM_CREATED_ADMIN, [], emailData);
+					this.eventEmitter.emit('send.notification', notification, recipients);
 
-					// Send push notification to the user who created the claim
+					// 4. Award XP for creating a claim
 					try {
-						this.logger.debug(`📱 [ClaimsService] Sending push notification for claim ${claim.uid}`);
-						await this.unifiedNotificationService.sendTemplatedNotification(
-							NotificationEvent.CLAIM_CREATED,
-							[user.uid],
+						this.logger.debug(`🏆 [ClaimsService] Awarding XP for claim creation to user: ${createClaimDto.owner}`);
+						await this.rewardsService.awardXP(
 							{
-								userName: user.name || user.email,
-								claimCategory: claim.category || 'General',
-								claimAmount: this.formatCurrency(Number(claim.amount) || 0),
-								claimId: claim.uid,
-								status: claim.status || ClaimStatus.PENDING,
+								owner: createClaimDto.owner,
+								amount: XP_VALUES.CLAIM,
+								action: XP_VALUES_TYPES.CLAIM,
+								source: {
+									id: String(createClaimDto.owner),
+									type: XP_VALUES_TYPES.CLAIM,
+									details: 'Claim reward',
+								},
 							},
-							{
-								priority: NotificationPriority.NORMAL,
-							},
+							orgId,
+							branchId,
 						);
-						this.logger.debug(`✅ [ClaimsService] Claim creation push notification sent to user: ${user.email}`);
-					} catch (notificationError) {
-						this.logger.error(`❌ [ClaimsService] Failed to send claim creation push notification:`, notificationError.message);
+						this.logger.debug(`✅ [ClaimsService] XP awarded successfully for claim creation to user: ${createClaimDto.owner}`);
+					} catch (xpError) {
+						this.logger.error(
+							`❌ [ClaimsService] Failed to award XP for claim creation to user: ${createClaimDto.owner}`,
+							xpError.stack,
+						);
+						// Don't fail post-processing if XP award fails
 					}
+
+					this.logger.debug(`✅ [ClaimsService] Post-response processing completed for claim: ${claim.uid}`);
+				} catch (backgroundError) {
+					// Log errors but don't affect user experience since response already sent
+					this.logger.error(
+						`❌ [ClaimsService] Background processing failed for claim ${claim.uid}: ${backgroundError.message}`,
+						backgroundError.stack
+					);
 				}
-			} catch (emailError) {
-				this.logger.error(`❌ [ClaimsService] Error sending claim creation email:`, emailError.message);
-			}
-
-			// Send internal notification for admins/managers
-			this.logger.debug(`📢 [ClaimsService] Sending internal notification for new claim ${claim.uid}`);
-			const notification = {
-				type: NotificationType.USER,
-				title: 'New Claim',
-				message: `A new claim has been created by ${user.name || user.email}`,
-				status: NotificationStatus.UNREAD,
-				owner: claim?.owner,
-			};
-
-			const recipients = [AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.SUPERVISOR];
-
-			this.eventEmitter.emit('send.notification', notification, recipients);
-
-			// Award XP for creating a claim with enhanced error handling
-			try {
-				this.logger.debug(`🏆 [ClaimsService] Awarding XP for claim creation to user: ${createClaimDto.owner}`);
-				await this.rewardsService.awardXP(
-					{
-						owner: createClaimDto.owner,
-						amount: XP_VALUES.CLAIM,
-						action: XP_VALUES_TYPES.CLAIM,
-						source: {
-							id: String(createClaimDto.owner),
-							type: XP_VALUES_TYPES.CLAIM,
-							details: 'Claim reward',
-						},
-					},
-					orgId,
-					branchId,
-				);
-				this.logger.debug(`✅ [ClaimsService] XP awarded successfully for claim creation to user: ${createClaimDto.owner}`);
-			} catch (xpError) {
-				this.logger.error(
-					`❌ [ClaimsService] Failed to award XP for claim creation to user: ${createClaimDto.owner}`,
-					xpError.stack,
-				);
-				// Don't fail claim creation if XP award fails
-			}
-
-			const duration = Date.now() - startTime;
-			this.logger.log(`✅ [ClaimsService] Claim created successfully for user: ${createClaimDto.owner} in ${duration}ms`);
+			});
 
 			return response;
 		} catch (error) {
@@ -640,12 +675,25 @@ export class ClaimsService {
 		}
 	}
 
+	/**
+	 * Update a claim with early-return pattern for optimal client response time
+	 * 
+	 * FLOW:
+	 * 1. Validate and fetch existing claim
+	 * 2. Update claim in database
+	 * 3. Return success response to client immediately
+	 * 4. Process non-critical operations asynchronously (emails, notifications, XP, etc.)
+	 * 
+	 * This pattern ensures the client receives confirmation as soon as the database update completes,
+	 * while background processes run without blocking the response.
+	 */
 	async update(
 		ref: number,
 		updateClaimDto: UpdateClaimDto,
 		orgId?: number,
 		branchId?: number,
 	): Promise<{ message: string }> {
+		const startTime = Date.now();
 		this.logger.log(`🔄 [ClaimsService] Updating claim ${ref} with status: ${updateClaimDto.status}, orgId: ${orgId}, branchId: ${branchId}`);
 
 		try {
@@ -657,6 +705,7 @@ export class ClaimsService {
 			}
 
 			const claim = claimResult.claim;
+			const previousStatus = claim.status;
 
 			// Convert DTO fields to match entity field types
 			const updateData = {
@@ -671,117 +720,157 @@ export class ClaimsService {
 				updateData.amount = updateClaimDto.amount.toString();
 			}
 
+			// ============================================================
+			// CRITICAL PATH: Update claim in database (must complete before response)
+			// ============================================================
 			const result = await this.claimsRepository.update({ uid: ref }, updateData);
 
 			if (!result) {
 				throw new NotFoundException(process.env.UPDATE_ERROR_MESSAGE);
 			}
 
-			// Invalidate cache after update
+			// Invalidate cache after update (fast operation, safe to await)
 			this.invalidateClaimsCache(claim);
 
-			// Get the updated claim with all relations
-			const updatedClaim = await this.claimsRepository.findOne({
-				where: { uid: ref },
-				relations: ['owner', 'owner.organisation', 'owner.branch', 'organisation', 'branch'],
-			});
-
+			// ============================================================
+			// EARLY RETURN: Respond to client immediately after successful update
+			// ============================================================
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,
 			};
 
-			// Send appropriate email notification based on status change
-			try {
-				if (updatedClaim && updatedClaim.owner?.email) {
-					const baseEmailData: ClaimStatusUpdateEmailData = {
-						name: updatedClaim.owner.name || updatedClaim.owner.email,
-						claimId: updatedClaim.uid,
-						amount: this.formatCurrency(Number(updatedClaim.amount) || 0),
-						category: updatedClaim.category || 'General',
-						status: updatedClaim.status,
-						comments: updatedClaim.comments || '',
-						submittedDate: updatedClaim.createdAt.toISOString().split('T')[0],
-						submittedBy: {
-							name: updatedClaim.owner.name || updatedClaim.owner.email,
-							email: updatedClaim.owner.email,
-						},
-						branch: updatedClaim.branch
-							? {
-									name: updatedClaim.branch.name,
-							  }
-							: undefined,
-						organization: {
-							name: updatedClaim.organisation?.name || 'Organization',
-						},
-						dashboardLink: `${process.env.APP_URL || 'https://loro.co.za'}/claims`,
-						previousStatus: claim.status, // Original status before update
-						processedAt: new Date().toISOString(),
+			const duration = Date.now() - startTime;
+			this.logger.log(`✅ [ClaimsService] Successfully updated claim ${ref} to status: ${updateClaimDto.status} in ${duration}ms - returning response to client`);
+
+			// ============================================================
+			// POST-RESPONSE PROCESSING: Execute non-critical operations asynchronously
+			// These operations run after the response is sent, without blocking the client
+			// ============================================================
+			setImmediate(async () => {
+				try {
+					this.logger.debug(`🔄 [ClaimsService] Starting post-response processing for claim update: ${ref}`);
+
+					// Get the updated claim with all relations for post-processing
+					const updatedClaim = await this.claimsRepository.findOne({
+						where: { uid: ref },
+						relations: ['owner', 'owner.organisation', 'owner.branch', 'organisation', 'branch'],
+					});
+
+					if (!updatedClaim) {
+						this.logger.warn(`⚠️ [ClaimsService] Could not fetch updated claim ${ref} for post-processing`);
+						return;
+					}
+
+					// 1. Send email notification for status change
+					try {
+						if (updatedClaim.owner?.email) {
+							const baseEmailData: ClaimStatusUpdateEmailData = {
+								name: updatedClaim.owner.name || updatedClaim.owner.email,
+								claimId: updatedClaim.uid,
+								amount: this.formatCurrency(Number(updatedClaim.amount) || 0),
+								category: updatedClaim.category || 'General',
+								status: updatedClaim.status,
+								comments: updatedClaim.comments || '',
+								submittedDate: updatedClaim.createdAt.toISOString().split('T')[0],
+								submittedBy: {
+									name: updatedClaim.owner.name || updatedClaim.owner.email,
+									email: updatedClaim.owner.email,
+								},
+								branch: updatedClaim.branch
+									? {
+											name: updatedClaim.branch.name,
+									  }
+									: undefined,
+								organization: {
+									name: updatedClaim.organisation?.name || 'Organization',
+								},
+								dashboardLink: `${process.env.APP_URL || 'https://loro.co.za'}/claims`,
+								previousStatus: previousStatus,
+								processedAt: new Date().toISOString(),
+							};
+
+							// Add rejection reason or approval notes if available
+							if (updateClaimDto.status === ClaimStatus.DECLINED && updateClaimDto.comment) {
+								baseEmailData.rejectionReason = updateClaimDto.comment;
+							} else if (updateClaimDto.status === ClaimStatus.APPROVED && updateClaimDto.comment) {
+								baseEmailData.approvalNotes = updateClaimDto.comment;
+							}
+
+							let emailType: EmailType = EmailType.CLAIM_STATUS_UPDATE;
+
+							// Determine specific email type based on new status
+							switch (updateClaimDto.status) {
+								case ClaimStatus.APPROVED:
+									emailType = EmailType.CLAIM_APPROVED;
+									break;
+								case ClaimStatus.DECLINED:
+									emailType = EmailType.CLAIM_REJECTED;
+									break;
+								case ClaimStatus.PAID:
+									emailType = EmailType.CLAIM_PAID;
+									break;
+								default:
+									emailType = EmailType.CLAIM_STATUS_UPDATE;
+									break;
+							}
+
+							// Send email to the claim owner
+							this.eventEmitter.emit('send.email', emailType, [updatedClaim.owner.email], baseEmailData);
+							this.logger.debug(`📧 [ClaimsService] Sent status update email for claim ${ref}`);
+						}
+					} catch (emailError) {
+						this.logger.error(`❌ [ClaimsService] Error sending claim status update email:`, emailError.message);
+					}
+
+					// 2. Send internal notification for status changes
+					const notification = {
+						type: NotificationType.USER,
+						title: 'Claim Updated',
+						message: `Claim #${updatedClaim?.uid} status changed to ${updateClaimDto.status || 'updated'}`,
+						status: NotificationStatus.UNREAD,
+						owner: claim.owner,
 					};
 
-					// Add rejection reason or approval notes if available
-					if (updateClaimDto.status === ClaimStatus.DECLINED && updateClaimDto.comment) {
-						baseEmailData.rejectionReason = updateClaimDto.comment;
-					} else if (updateClaimDto.status === ClaimStatus.APPROVED && updateClaimDto.comment) {
-						baseEmailData.approvalNotes = updateClaimDto.comment;
+					const recipients = [AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.SUPERVISOR];
+
+					this.eventEmitter.emit('send.notification', notification, recipients);
+					this.logger.debug(`📢 [ClaimsService] Sent internal notification for claim ${ref}`);
+
+					// 3. Award XP for claim update
+					try {
+						await this.rewardsService.awardXP(
+							{
+								owner: claim.owner.uid,
+								amount: XP_VALUES.CLAIM,
+								action: XP_VALUES_TYPES.CLAIM,
+								source: {
+									id: String(claim.owner.uid),
+									type: XP_VALUES_TYPES.CLAIM,
+									details: 'Claim reward',
+								},
+							},
+							orgId,
+							branchId,
+						);
+						this.logger.debug(`🏆 [ClaimsService] Awarded XP for claim update to user: ${claim.owner.uid}`);
+					} catch (xpError) {
+						this.logger.error(`❌ [ClaimsService] Failed to award XP for claim update:`, xpError.message);
 					}
 
-					let emailType: EmailType = EmailType.CLAIM_STATUS_UPDATE;
-
-					// Determine specific email type based on new status
-					switch (updateClaimDto.status) {
-						case ClaimStatus.APPROVED:
-							emailType = EmailType.CLAIM_APPROVED;
-							break;
-						case ClaimStatus.DECLINED:
-							emailType = EmailType.CLAIM_REJECTED;
-							break;
-						case ClaimStatus.PAID:
-							emailType = EmailType.CLAIM_PAID;
-							break;
-						default:
-							emailType = EmailType.CLAIM_STATUS_UPDATE;
-							break;
-					}
-
-					// Send email to the claim owner
-					this.eventEmitter.emit('send.email', emailType, [updatedClaim.owner.email], baseEmailData);
+					this.logger.debug(`✅ [ClaimsService] Post-response processing completed for claim: ${ref}`);
+				} catch (backgroundError) {
+					// Log errors but don't affect user experience since response already sent
+					this.logger.error(
+						`❌ [ClaimsService] Background processing failed for claim ${ref}: ${backgroundError.message}`,
+						backgroundError.stack
+					);
 				}
-			} catch (emailError) {
-				console.error('Error sending claim status update email:', emailError);
-			}
+			});
 
-			// Send internal notification for status changes
-			const notification = {
-				type: NotificationType.USER,
-				title: 'Claim Updated',
-				message: `Claim #${updatedClaim?.uid} status changed to ${updateClaimDto.status || 'updated'}`,
-				status: NotificationStatus.UNREAD,
-				owner: claim.owner,
-			};
-
-			const recipients = [AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.SUPERVISOR];
-
-			this.eventEmitter.emit('send.notification', notification, recipients);
-
-			await this.rewardsService.awardXP(
-				{
-					owner: claim.owner.uid,
-					amount: XP_VALUES.CLAIM,
-					action: XP_VALUES_TYPES.CLAIM,
-					source: {
-						id: String(claim.owner.uid),
-						type: XP_VALUES_TYPES.CLAIM,
-						details: 'Claim reward',
-					},
-				},
-				orgId,
-				branchId,
-			);
-
-			this.logger.log(`✅ [ClaimsService] Successfully updated claim ${ref} to status: ${updateClaimDto.status}`);
 			return response;
 		} catch (error) {
-			this.logger.error(`❌ [ClaimsService] Error updating claim ${ref}:`, error?.message);
+			const duration = Date.now() - startTime;
+			this.logger.error(`❌ [ClaimsService] Error updating claim ${ref} after ${duration}ms:`, error?.message);
 			const response = {
 				message: error?.message || 'Failed to update claim',
 			};
