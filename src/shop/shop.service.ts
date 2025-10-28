@@ -944,201 +944,218 @@ export class ShopService {
 				newQuotation['branchUid'] = branchId;
 			}
 
-			const savedQuotation = await this.quotationRepository.save(newQuotation);
+		const savedQuotation = await this.quotationRepository.save(newQuotation);
 
-			// Trigger recalculation of user targets for the owner after a new quotation (checkout)
-			if (quotationData?.owner?.uid && this.eventEmitter) {
-				this.eventEmitter.emit('user.target.update.required', { userId: quotationData.owner.uid });
-			}
-
-			// Generate PDF for the quotation
-			// First get the full quotation with all relations for PDF generation
-			const fullQuotation = await this.quotationRepository.findOne({
-				where: { uid: savedQuotation.uid },
-				relations: ['client', 'quotationItems', 'quotationItems.product', 'organisation', 'branch', 'project'],
-			});
-
-			if (fullQuotation) {
-				const pdfUrl = await this.generateQuotationPDF(fullQuotation);
-
-				// If PDF was generated successfully, update the quotation record
-				if (pdfUrl) {
-					await this.quotationRepository.update(savedQuotation.uid, { pdfURL: pdfUrl });
-				}
-			}
-
-			// Update analytics for each product
-			for (const item of quotationData.items) {
-				const product = products.flat().find((p) => p.uid === item.uid);
-				if (product) {
-					// Record view and cart add with enhanced tracking
-					await this.productsService.recordView(
-						product.uid, 
-						quotationData.owner?.uid, 
-						orgId, 
-						branchId
-					);
-					await this.productsService.recordCartAdd(
-						product.uid, 
-						item.quantity,
-						quotationData.owner?.uid, 
-						orgId, 
-						branchId
-					);
-
-					// Update stock history
-					await this.productsService.updateStockHistory(product.uid, item.quantity, 'out');
-
-					// Calculate updated performance metrics
-					await this.productsService.calculateProductPerformance(product.uid);
-				}
-			}
-
-			// Emit quotation creation event for real-time analytics
-			this.eventEmitter.emit('quotation.created', {
-				quotationId: savedQuotation.quotationNumber,
-				amount: savedQuotation.totalAmount,
-				itemCount: savedQuotation.totalItems,
-				clientId: quotationData.client.uid,
-				ownerId: quotationData.owner.uid,
-				orgId,
-				branchId,
-				timestamp: new Date(),
-				items: quotationData.items.map(item => ({
-					productId: item.uid,
-					quantity: item.quantity,
-					unitPrice: item.unitPrice,
-					totalPrice: item.totalPrice,
-				})),
-			});
-
-			// Emit WebSocket event for new quotation with enhanced data
-			// Get the full quotation with all relations for WebSocket
-			const fullQuotationForSocket = await this.quotationRepository.findOne({
-				where: { uid: savedQuotation.uid },
-				relations: ['client', 'placedBy', 'quotationItems', 'quotationItems.product', 'organisation', 'branch', 'project'],
-			});
-			
-			if (fullQuotationForSocket) {
-				// Enhanced WebSocket emission with detailed quotation information
-				const enhancedQuotationData = {
-					...fullQuotationForSocket,
-					analytics: {
-						totalItems: fullQuotationForSocket.totalItems,
-						averageItemValue: fullQuotationForSocket.totalItems > 0 
-							? Number(fullQuotationForSocket.totalAmount) / fullQuotationForSocket.totalItems 
-							: 0,
-						createdByUser: {
-							uid: fullQuotationForSocket.placedBy?.uid,
-							name: fullQuotationForSocket.placedBy?.name,
-							email: fullQuotationForSocket.placedBy?.email,
-							branch: fullQuotationForSocket.placedBy?.branch?.name,
-							organisation: fullQuotationForSocket.organisation?.name,
-						},
-						clientInfo: {
-							uid: fullQuotationForSocket.client?.uid,
-							name: fullQuotationForSocket.client?.name,
-							email: fullQuotationForSocket.client?.email,
-							type: fullQuotationForSocket.client?.type || 'standard',
-						},
-						timeline: {
-							createdAt: fullQuotationForSocket.createdAt,
-							quotationDate: fullQuotationForSocket.quotationDate,
-							validUntil: fullQuotationForSocket.validUntil,
-							estimatedProcessingTime: '1-3 business days',
-						},
-						financial: {
-							currency: fullQuotationForSocket.currency || orgCurrency.code,
-							totalAmount: Number(fullQuotationForSocket.totalAmount),
-							formattedAmount: new Intl.NumberFormat(orgCurrency.locale, {
-								style: 'currency',
-								currency: fullQuotationForSocket.currency || orgCurrency.code,
-							}).format(Number(fullQuotationForSocket.totalAmount)),
-							itemBreakdown: fullQuotationForSocket.quotationItems?.map(item => ({
-								productName: item.product?.name,
-								quantity: item.quantity,
-								unitPrice: item.unitPrice,
-								totalPrice: item.totalPrice,
-								purchaseMode: item.purchaseMode || 'item',
-							})) || [],
-						},
-						projectInfo: fullQuotationForSocket.project ? {
-							uid: fullQuotationForSocket.project.uid,
-							name: fullQuotationForSocket.project.name,
-							status: fullQuotationForSocket.project.status,
-						} : null,
-					},
-					metadata: {
-						eventType: 'QUOTATION_CREATED',
-						timestamp: new Date().toISOString(),
-						source: 'shop_service',
-						orgId,
-						branchId,
-						isBlankQuotation: false,
-					}
-				};
-
-				this.shopGateway.emitNewQuotation(enhancedQuotationData);
-			}
-
-			const baseConfig: QuotationInternalData = {
-				name: clientName,
-				quotationId: savedQuotation?.quotationNumber,
-				validUntil: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days validity
-				total: Number(savedQuotation?.totalAmount),
-				currency: orgCurrency.code, // Use organization's currency code
-				reviewUrl: savedQuotation.reviewUrl,
-				customerType: clientData?.client?.type || 'standard', // Assuming client type exists, add a fallback
-				priority: 'high', // Add default priority for internal notification
-				quotationItems: quotationData?.items?.map((item) => {
-					const product = products.flat().find((p) => p.uid === item.uid);
-					const purchaseMode = item?.purchaseMode || 'item';
-					const itemsPerUnit = Number(item?.itemsPerUnit || 1);
-					
-					return {
-						quantity: Number(item?.quantity),
-						product: {
-							uid: item?.uid,
-							name: product?.name || 'Unknown Product',
-							code: product?.productRef || 'N/A',
-						},
-						totalPrice: Number(item?.totalPrice),
-						purchaseMode: purchaseMode,
-						itemsPerUnit: itemsPerUnit,
-						actualItems: Number(item?.quantity) * itemsPerUnit, // Total individual items
-					};
-				}),
-			};
-
-			// Only send internal notification and order acknowledgment to client
-			// Do NOT send the full quotation to the client yet
-
-			// Notify internal team about new quotation
-			this.eventEmitter.emit('send.email', EmailType.NEW_QUOTATION_INTERNAL, [internalEmail], baseConfig);
-
-			// Notify resellers about products in the quotation
-			resellerEmails?.forEach((email) => {
-				this.eventEmitter.emit('send.email', EmailType.NEW_QUOTATION_RESELLER, [email?.email], {
-					...baseConfig,
-					name: email?.retailerName,
-					email: email?.email,
-				});
-			});
-
-			// Send order acknowledgment to client (NOT the full quotation)
-			this.eventEmitter.emit('send.email', EmailType.ORDER_RECEIVED_CLIENT, [clientData?.client?.email], {
-				name: clientName,
-				quotationId: savedQuotation?.quotationNumber,
-				// Don't include detailed information yet
-				message: 'We have received your order request and will prepare a quotation for you shortly.',
-			});
-
-			// Clear caches after successful quotation creation
-			await this.clearShopCache(savedQuotation.uid, quotationData.client?.uid);
-
-					return {
+		// EARLY RETURN: Respond to user immediately with success
+		// All non-critical operations will continue asynchronously
+		const immediateResponse = {
 			message: process.env.SUCCESS_MESSAGE,
 		};
+
+		// Process all non-critical operations asynchronously after responding to user
+		setImmediate(async () => {
+			const asyncOperationId = `QUOTATION_ASYNC_${savedQuotation.uid}_${Date.now()}`;
+			this.logger.log(`[${asyncOperationId}] Starting async post-quotation processing for ${savedQuotation.quotationNumber}`);
+
+			try {
+				// Trigger recalculation of user targets for the owner after a new quotation (checkout)
+				if (quotationData?.owner?.uid && this.eventEmitter) {
+					this.eventEmitter.emit('user.target.update.required', { userId: quotationData.owner.uid });
+				}
+
+				// Generate PDF for the quotation
+				// First get the full quotation with all relations for PDF generation
+				const fullQuotation = await this.quotationRepository.findOne({
+					where: { uid: savedQuotation.uid },
+					relations: ['client', 'quotationItems', 'quotationItems.product', 'organisation', 'branch', 'project'],
+				});
+
+				if (fullQuotation) {
+					const pdfUrl = await this.generateQuotationPDF(fullQuotation);
+
+					// If PDF was generated successfully, update the quotation record
+					if (pdfUrl) {
+						await this.quotationRepository.update(savedQuotation.uid, { pdfURL: pdfUrl });
+					}
+				}
+
+				// Update analytics for each product
+				for (const item of quotationData.items) {
+					const product = products.flat().find((p) => p.uid === item.uid);
+					if (product) {
+						// Record view and cart add with enhanced tracking
+						await this.productsService.recordView(
+							product.uid, 
+							quotationData.owner?.uid, 
+							orgId, 
+							branchId
+						);
+						await this.productsService.recordCartAdd(
+							product.uid, 
+							item.quantity,
+							quotationData.owner?.uid, 
+							orgId, 
+							branchId
+						);
+
+						// Update stock history
+						await this.productsService.updateStockHistory(product.uid, item.quantity, 'out');
+
+						// Calculate updated performance metrics
+						await this.productsService.calculateProductPerformance(product.uid);
+					}
+				}
+
+				// Emit quotation creation event for real-time analytics
+				this.eventEmitter.emit('quotation.created', {
+					quotationId: savedQuotation.quotationNumber,
+					amount: savedQuotation.totalAmount,
+					itemCount: savedQuotation.totalItems,
+					clientId: quotationData.client.uid,
+					ownerId: quotationData.owner.uid,
+					orgId,
+					branchId,
+					timestamp: new Date(),
+					items: quotationData.items.map(item => ({
+						productId: item.uid,
+						quantity: item.quantity,
+						unitPrice: item.unitPrice,
+						totalPrice: item.totalPrice,
+					})),
+				});
+
+				// Emit WebSocket event for new quotation with enhanced data
+				// Get the full quotation with all relations for WebSocket
+				const fullQuotationForSocket = await this.quotationRepository.findOne({
+					where: { uid: savedQuotation.uid },
+					relations: ['client', 'placedBy', 'quotationItems', 'quotationItems.product', 'organisation', 'branch', 'project'],
+				});
+				
+				if (fullQuotationForSocket) {
+					// Enhanced WebSocket emission with detailed quotation information
+					const enhancedQuotationData = {
+						...fullQuotationForSocket,
+						analytics: {
+							totalItems: fullQuotationForSocket.totalItems,
+							averageItemValue: fullQuotationForSocket.totalItems > 0 
+								? Number(fullQuotationForSocket.totalAmount) / fullQuotationForSocket.totalItems 
+								: 0,
+							createdByUser: {
+								uid: fullQuotationForSocket.placedBy?.uid,
+								name: fullQuotationForSocket.placedBy?.name,
+								email: fullQuotationForSocket.placedBy?.email,
+								branch: fullQuotationForSocket.placedBy?.branch?.name,
+								organisation: fullQuotationForSocket.organisation?.name,
+							},
+							clientInfo: {
+								uid: fullQuotationForSocket.client?.uid,
+								name: fullQuotationForSocket.client?.name,
+								email: fullQuotationForSocket.client?.email,
+								type: fullQuotationForSocket.client?.type || 'standard',
+							},
+							timeline: {
+								createdAt: fullQuotationForSocket.createdAt,
+								quotationDate: fullQuotationForSocket.quotationDate,
+								validUntil: fullQuotationForSocket.validUntil,
+								estimatedProcessingTime: '1-3 business days',
+							},
+							financial: {
+								currency: fullQuotationForSocket.currency || orgCurrency.code,
+								totalAmount: Number(fullQuotationForSocket.totalAmount),
+								formattedAmount: new Intl.NumberFormat(orgCurrency.locale, {
+									style: 'currency',
+									currency: fullQuotationForSocket.currency || orgCurrency.code,
+								}).format(Number(fullQuotationForSocket.totalAmount)),
+								itemBreakdown: fullQuotationForSocket.quotationItems?.map(item => ({
+									productName: item.product?.name,
+									quantity: item.quantity,
+									unitPrice: item.unitPrice,
+									totalPrice: item.totalPrice,
+									purchaseMode: item.purchaseMode || 'item',
+								})) || [],
+							},
+							projectInfo: fullQuotationForSocket.project ? {
+								uid: fullQuotationForSocket.project.uid,
+								name: fullQuotationForSocket.project.name,
+								status: fullQuotationForSocket.project.status,
+							} : null,
+						},
+						metadata: {
+							eventType: 'QUOTATION_CREATED',
+							timestamp: new Date().toISOString(),
+							source: 'shop_service',
+							orgId,
+							branchId,
+							isBlankQuotation: false,
+						}
+					};
+
+					this.shopGateway.emitNewQuotation(enhancedQuotationData);
+				}
+
+				const baseConfig: QuotationInternalData = {
+					name: clientName,
+					quotationId: savedQuotation?.quotationNumber,
+					validUntil: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days validity
+					total: Number(savedQuotation?.totalAmount),
+					currency: orgCurrency.code, // Use organization's currency code
+					reviewUrl: savedQuotation.reviewUrl,
+					customerType: clientData?.client?.type || 'standard', // Assuming client type exists, add a fallback
+					priority: 'high', // Add default priority for internal notification
+					quotationItems: quotationData?.items?.map((item) => {
+						const product = products.flat().find((p) => p.uid === item.uid);
+						const purchaseMode = item?.purchaseMode || 'item';
+						const itemsPerUnit = Number(item?.itemsPerUnit || 1);
+						
+						return {
+							quantity: Number(item?.quantity),
+							product: {
+								uid: item?.uid,
+								name: product?.name || 'Unknown Product',
+								code: product?.productRef || 'N/A',
+							},
+							totalPrice: Number(item?.totalPrice),
+							purchaseMode: purchaseMode,
+							itemsPerUnit: itemsPerUnit,
+							actualItems: Number(item?.quantity) * itemsPerUnit, // Total individual items
+						};
+					}),
+				};
+
+				// Only send internal notification and order acknowledgment to client
+				// Do NOT send the full quotation to the client yet
+
+				// Notify internal team about new quotation
+				this.eventEmitter.emit('send.email', EmailType.NEW_QUOTATION_INTERNAL, [internalEmail], baseConfig);
+
+				// Notify resellers about products in the quotation
+				resellerEmails?.forEach((email) => {
+					this.eventEmitter.emit('send.email', EmailType.NEW_QUOTATION_RESELLER, [email?.email], {
+						...baseConfig,
+						name: email?.retailerName,
+						email: email?.email,
+					});
+				});
+
+				// Send order acknowledgment to client (NOT the full quotation)
+				this.eventEmitter.emit('send.email', EmailType.ORDER_RECEIVED_CLIENT, [clientData?.client?.email], {
+					name: clientName,
+					quotationId: savedQuotation?.quotationNumber,
+					// Don't include detailed information yet
+					message: 'We have received your order request and will prepare a quotation for you shortly.',
+				});
+
+				// Clear caches after successful quotation creation
+				await this.clearShopCache(savedQuotation.uid, quotationData.client?.uid);
+
+				this.logger.log(`[${asyncOperationId}] Async post-quotation processing completed successfully`);
+			} catch (error) {
+				this.logger.error(`[${asyncOperationId}] Error in async post-quotation processing: ${error.message}`, error.stack);
+				// Don't throw - user already has success response
+			}
+		});
+
+		return immediateResponse;
 	} catch (error) {
 		this.logger.error(`Error creating quotation: ${error.message}`, error.stack);
 		return {
@@ -1299,223 +1316,238 @@ export class ShopService {
 				...(branchId && { branchUid: branchId }),
 			};
 
-			this.logger.log(`[createBlankQuotation] Saving quotation to database`);
-			const savedQuotation = await this.quotationRepository.save(newQuotation);
-			this.logger.log(`[createBlankQuotation] Quotation saved with ID: ${savedQuotation.uid}`);
+		this.logger.log(`[createBlankQuotation] Saving quotation to database`);
+		const savedQuotation = await this.quotationRepository.save(newQuotation);
+		this.logger.log(`[createBlankQuotation] Quotation saved with ID: ${savedQuotation.uid}`);
 
-			// Trigger recalculation of user targets for the owner (same as regular quotation)
-			if (blankQuotationData?.owner?.uid && this.eventEmitter) {
-				this.logger.log(`[createBlankQuotation] Triggering target update for user: ${blankQuotationData.owner.uid}`);
-				this.eventEmitter.emit('user.target.update.required', { userId: blankQuotationData.owner.uid });
-			}
+		// EARLY RETURN: Respond to user immediately with success
+		// All non-critical operations will continue asynchronously
+		const immediateResponse = {
+			message: process.env.SUCCESS_MESSAGE,
+			quotationId: savedQuotation?.quotationNumber,
+		};
 
-			// Generate PDF for the quotation
-			this.logger.log(`[createBlankQuotation] Generating PDF for quotation`);
-			const fullQuotation = await this.quotationRepository.findOne({
-				where: { uid: savedQuotation.uid },
-				relations: ['client', 'quotationItems', 'quotationItems.product', 'organisation', 'branch', 'project'],
-			});
+		// Process all non-critical operations asynchronously after responding to user
+		setImmediate(async () => {
+			const asyncOperationId = `BLANK_QUOTATION_ASYNC_${savedQuotation.uid}_${Date.now()}`;
+			this.logger.log(`[${asyncOperationId}] Starting async post-blank-quotation processing for ${savedQuotation.quotationNumber}`);
 
-			if (fullQuotation) {
-				const pdfUrl = await this.generateQuotationPDF(fullQuotation);
-				if (pdfUrl) {
-					this.logger.log(`[createBlankQuotation] PDF generated successfully: ${pdfUrl}`);
-					await this.quotationRepository.update(savedQuotation.uid, { pdfURL: pdfUrl });
-				} else {
-					this.logger.warn(`[createBlankQuotation] Failed to generate PDF`);
+			try {
+				// Trigger recalculation of user targets for the owner (same as regular quotation)
+				if (blankQuotationData?.owner?.uid && this.eventEmitter) {
+					this.logger.log(`[${asyncOperationId}] Triggering target update for user: ${blankQuotationData.owner.uid}`);
+					this.eventEmitter.emit('user.target.update.required', { userId: blankQuotationData.owner.uid });
 				}
-			}
 
-			// Update analytics for each product (same as regular quotation)
-			this.logger.log(`[createBlankQuotation] Updating product analytics for ${blankQuotationData.items.length} items`);
-			for (const item of blankQuotationData.items) {
-				const product = productMap.get(item.uid);
-				if (product) {
-					try {
-						// Record view and cart add with enhanced tracking
-						await this.productsService.recordView(
-							product.uid,
-							blankQuotationData.owner?.uid,
-							orgId,
-							branchId
-						);
-						await this.productsService.recordCartAdd(
-							product.uid,
-							item.quantity,
-							blankQuotationData.owner?.uid,
-							orgId,
-							branchId
-						);
+				// Generate PDF for the quotation
+				this.logger.log(`[${asyncOperationId}] Generating PDF for quotation`);
+				const fullQuotation = await this.quotationRepository.findOne({
+					where: { uid: savedQuotation.uid },
+					relations: ['client', 'quotationItems', 'quotationItems.product', 'organisation', 'branch', 'project'],
+				});
 
-						// Update stock history
-						await this.productsService.updateStockHistory(product.uid, item.quantity, 'out');
-
-						// Calculate updated performance metrics
-						await this.productsService.calculateProductPerformance(product.uid);
-
-						this.logger.log(`[createBlankQuotation] Analytics updated for product: ${product.name} (${product.uid})`);
-					} catch (analyticsError) {
-						this.logger.warn(`[createBlankQuotation] Failed to update analytics for product ${product.uid}: ${analyticsError.message}`);
+				if (fullQuotation) {
+					const pdfUrl = await this.generateQuotationPDF(fullQuotation);
+					if (pdfUrl) {
+						this.logger.log(`[${asyncOperationId}] PDF generated successfully: ${pdfUrl}`);
+						await this.quotationRepository.update(savedQuotation.uid, { pdfURL: pdfUrl });
+					} else {
+						this.logger.warn(`[${asyncOperationId}] Failed to generate PDF`);
 					}
 				}
-			}
 
-			// Emit blank quotation creation event for real-time analytics
-			this.eventEmitter.emit('quotation.created', {
-				quotationId: savedQuotation.quotationNumber,
-				amount: savedQuotation.totalAmount,
-				itemCount: savedQuotation.totalItems,
-				clientId: blankQuotationData.client.uid,
-				ownerId: blankQuotationData.owner.uid,
-				isBlankQuotation: true,
-				priceListType: blankQuotationData.priceListType,
-				orgId,
-				branchId,
-				timestamp: new Date(),
-				items: quotationItems.map(item => ({
-					productId: item.product.uid,
-					quantity: item.quantity,
-					unitPrice: item.unitPrice,
-					totalPrice: item.totalPrice,
-				})),
-			});
+				// Update analytics for each product (same as regular quotation)
+				this.logger.log(`[${asyncOperationId}] Updating product analytics for ${blankQuotationData.items.length} items`);
+				for (const item of blankQuotationData.items) {
+					const product = productMap.get(item.uid);
+					if (product) {
+						try {
+							// Record view and cart add with enhanced tracking
+							await this.productsService.recordView(
+								product.uid,
+								blankQuotationData.owner?.uid,
+								orgId,
+								branchId
+							);
+							await this.productsService.recordCartAdd(
+								product.uid,
+								item.quantity,
+								blankQuotationData.owner?.uid,
+								orgId,
+								branchId
+							);
 
-			// Emit WebSocket event for new blank quotation with enhanced data
-			this.logger.log(`[createBlankQuotation] Emitting WebSocket event`);
-			// Get the full quotation with all relations for WebSocket
-			const fullBlankQuotationForSocket = await this.quotationRepository.findOne({
-				where: { uid: savedQuotation.uid },
-				relations: ['client', 'placedBy', 'quotationItems', 'quotationItems.product', 'organisation', 'branch', 'project'],
-			});
-			
-			if (fullBlankQuotationForSocket) {
-				// Enhanced WebSocket emission with detailed blank quotation information
-				const enhancedBlankQuotationData = {
-					...fullBlankQuotationForSocket,
-					analytics: {
-						totalItems: fullBlankQuotationForSocket.totalItems,
-						averageItemValue: fullBlankQuotationForSocket.totalItems > 0 
-							? Number(fullBlankQuotationForSocket.totalAmount) / fullBlankQuotationForSocket.totalItems 
-							: 0,
-						createdByUser: {
-							uid: fullBlankQuotationForSocket.placedBy?.uid,
-							name: fullBlankQuotationForSocket.placedBy?.name,
-							email: fullBlankQuotationForSocket.placedBy?.email,
-							branch: fullBlankQuotationForSocket.placedBy?.branch?.name,
-							organisation: fullBlankQuotationForSocket.organisation?.name,
-						},
-						clientInfo: {
-							uid: fullBlankQuotationForSocket.client?.uid,
-							name: fullBlankQuotationForSocket.client?.name,
-							email: fullBlankQuotationForSocket.client?.email,
-							type: fullBlankQuotationForSocket.client?.type || 'standard',
-						},
-						timeline: {
-							createdAt: fullBlankQuotationForSocket.createdAt,
-							quotationDate: fullBlankQuotationForSocket.quotationDate,
-							validUntil: fullBlankQuotationForSocket.validUntil,
-							estimatedProcessingTime: '1-3 business days',
-						},
-						financial: {
-							currency: fullBlankQuotationForSocket.currency || orgCurrency.code,
-							totalAmount: Number(fullBlankQuotationForSocket.totalAmount),
-							formattedAmount: new Intl.NumberFormat(orgCurrency.locale, {
-								style: 'currency',
+							// Update stock history
+							await this.productsService.updateStockHistory(product.uid, item.quantity, 'out');
+
+							// Calculate updated performance metrics
+							await this.productsService.calculateProductPerformance(product.uid);
+
+							this.logger.log(`[${asyncOperationId}] Analytics updated for product: ${product.name} (${product.uid})`);
+						} catch (analyticsError) {
+							this.logger.warn(`[${asyncOperationId}] Failed to update analytics for product ${product.uid}: ${analyticsError.message}`);
+						}
+					}
+				}
+
+				// Emit blank quotation creation event for real-time analytics
+				this.eventEmitter.emit('quotation.created', {
+					quotationId: savedQuotation.quotationNumber,
+					amount: savedQuotation.totalAmount,
+					itemCount: savedQuotation.totalItems,
+					clientId: blankQuotationData.client.uid,
+					ownerId: blankQuotationData.owner.uid,
+					isBlankQuotation: true,
+					priceListType: blankQuotationData.priceListType,
+					orgId,
+					branchId,
+					timestamp: new Date(),
+					items: quotationItems.map(item => ({
+						productId: item.product.uid,
+						quantity: item.quantity,
+						unitPrice: item.unitPrice,
+						totalPrice: item.totalPrice,
+					})),
+				});
+
+				// Emit WebSocket event for new blank quotation with enhanced data
+				this.logger.log(`[${asyncOperationId}] Emitting WebSocket event`);
+				// Get the full quotation with all relations for WebSocket
+				const fullBlankQuotationForSocket = await this.quotationRepository.findOne({
+					where: { uid: savedQuotation.uid },
+					relations: ['client', 'placedBy', 'quotationItems', 'quotationItems.product', 'organisation', 'branch', 'project'],
+				});
+				
+				if (fullBlankQuotationForSocket) {
+					// Enhanced WebSocket emission with detailed blank quotation information
+					const enhancedBlankQuotationData = {
+						...fullBlankQuotationForSocket,
+						analytics: {
+							totalItems: fullBlankQuotationForSocket.totalItems,
+							averageItemValue: fullBlankQuotationForSocket.totalItems > 0 
+								? Number(fullBlankQuotationForSocket.totalAmount) / fullBlankQuotationForSocket.totalItems 
+								: 0,
+							createdByUser: {
+								uid: fullBlankQuotationForSocket.placedBy?.uid,
+								name: fullBlankQuotationForSocket.placedBy?.name,
+								email: fullBlankQuotationForSocket.placedBy?.email,
+								branch: fullBlankQuotationForSocket.placedBy?.branch?.name,
+								organisation: fullBlankQuotationForSocket.organisation?.name,
+							},
+							clientInfo: {
+								uid: fullBlankQuotationForSocket.client?.uid,
+								name: fullBlankQuotationForSocket.client?.name,
+								email: fullBlankQuotationForSocket.client?.email,
+								type: fullBlankQuotationForSocket.client?.type || 'standard',
+							},
+							timeline: {
+								createdAt: fullBlankQuotationForSocket.createdAt,
+								quotationDate: fullBlankQuotationForSocket.quotationDate,
+								validUntil: fullBlankQuotationForSocket.validUntil,
+								estimatedProcessingTime: '1-3 business days',
+							},
+							financial: {
 								currency: fullBlankQuotationForSocket.currency || orgCurrency.code,
-							}).format(Number(fullBlankQuotationForSocket.totalAmount)),
-							itemBreakdown: fullBlankQuotationForSocket.quotationItems?.map(item => ({
-								productName: item.product?.name,
-								quantity: item.quantity,
-								unitPrice: item.unitPrice,
-								totalPrice: item.totalPrice,
-								purchaseMode: item.purchaseMode || 'item',
-								notes: item.notes,
-							})) || [],
+								totalAmount: Number(fullBlankQuotationForSocket.totalAmount),
+								formattedAmount: new Intl.NumberFormat(orgCurrency.locale, {
+									style: 'currency',
+									currency: fullBlankQuotationForSocket.currency || orgCurrency.code,
+								}).format(Number(fullBlankQuotationForSocket.totalAmount)),
+								itemBreakdown: fullBlankQuotationForSocket.quotationItems?.map(item => ({
+									productName: item.product?.name,
+									quantity: item.quantity,
+									unitPrice: item.unitPrice,
+									totalPrice: item.totalPrice,
+									purchaseMode: item.purchaseMode || 'item',
+									notes: item.notes,
+								})) || [],
+							},
+							blankQuotationDetails: {
+								priceListType: fullBlankQuotationForSocket.priceListType,
+								title: fullBlankQuotationForSocket.title,
+								description: fullBlankQuotationForSocket.description,
+								recipientEmail: blankQuotationData?.recipientEmail,
+							},
+							projectInfo: fullBlankQuotationForSocket.project ? {
+								uid: fullBlankQuotationForSocket.project.uid,
+								name: fullBlankQuotationForSocket.project.name,
+								status: fullBlankQuotationForSocket.project.status,
+							} : null,
 						},
-						blankQuotationDetails: {
-							priceListType: fullBlankQuotationForSocket.priceListType,
-							title: fullBlankQuotationForSocket.title,
-							description: fullBlankQuotationForSocket.description,
-							recipientEmail: blankQuotationData?.recipientEmail,
+						metadata: {
+							eventType: 'BLANK_QUOTATION_CREATED',
+							timestamp: new Date().toISOString(),
+							source: 'shop_service',
+							orgId,
+							branchId,
+							isBlankQuotation: true,
+						}
+					};
+
+					this.shopGateway.emitNewQuotation(enhancedBlankQuotationData);
+				}
+
+				// Prepare email data for blank quotation
+				const emailData = {
+					name: clientName,
+					quotationId: savedQuotation?.quotationNumber,
+					validUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days validity
+					total: Number(savedQuotation?.totalAmount),
+					currency: orgCurrency.code,
+					reviewUrl: savedQuotation.reviewUrl,
+					priceListType: blankQuotationData.priceListType,
+					title: blankQuotationData?.title || 'Blank Quotation',
+					description: blankQuotationData?.description || 'Price list quotation for your review',
+					customerType: clientData?.client?.type || 'standard', // Add customer type like regular quotation
+					priority: 'medium', // Add priority for blank quotations
+					quotationItems: quotationItems.map((item) => ({
+						quantity: item.quantity,
+						product: {
+							uid: item.product.uid,
+							name: item.product.name,
+							code: item.product.productRef || item.product.sku,
 						},
-						projectInfo: fullBlankQuotationForSocket.project ? {
-							uid: fullBlankQuotationForSocket.project.uid,
-							name: fullBlankQuotationForSocket.project.name,
-							status: fullBlankQuotationForSocket.project.status,
-						} : null,
-					},
-					metadata: {
-						eventType: 'BLANK_QUOTATION_CREATED',
-						timestamp: new Date().toISOString(),
-						source: 'shop_service',
-						orgId,
-						branchId,
-						isBlankQuotation: true,
-					}
+						unitPrice: item.unitPrice,
+						totalPrice: item.totalPrice,
+						notes: item.notes,
+						purchaseMode: item.purchaseMode,
+						itemsPerUnit: item.itemsPerUnit,
+						actualItems: item.quantity * item.itemsPerUnit,
+					})),
+					pdfURL: fullQuotation?.pdfURL,
 				};
 
-				this.shopGateway.emitNewQuotation(enhancedBlankQuotationData);
-			}
+				// Send email to recipient if provided, otherwise to client
+				const recipientEmail = blankQuotationData?.recipientEmail || clientEmail;
+				if (recipientEmail) {
+					this.logger.log(`[${asyncOperationId}] Sending client email to: ${recipientEmail}`);
+					this.eventEmitter.emit('send.email', EmailType.BLANK_QUOTATION_CLIENT, [recipientEmail], emailData);
+				}
 
-			// Prepare email data for blank quotation
-			const emailData = {
-				name: clientName,
-				quotationId: savedQuotation?.quotationNumber,
-				validUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days validity
-				total: Number(savedQuotation?.totalAmount),
-				currency: orgCurrency.code,
-				reviewUrl: savedQuotation.reviewUrl,
-				priceListType: blankQuotationData.priceListType,
-				title: blankQuotationData?.title || 'Blank Quotation',
-				description: blankQuotationData?.description || 'Price list quotation for your review',
-				customerType: clientData?.client?.type || 'standard', // Add customer type like regular quotation
-				priority: 'medium', // Add priority for blank quotations
-				quotationItems: quotationItems.map((item) => ({
-					quantity: item.quantity,
-					product: {
-						uid: item.product.uid,
-						name: item.product.name,
-						code: item.product.productRef || item.product.sku,
-					},
-					unitPrice: item.unitPrice,
-					totalPrice: item.totalPrice,
-					notes: item.notes,
-					purchaseMode: item.purchaseMode,
-					itemsPerUnit: item.itemsPerUnit,
-					actualItems: item.quantity * item.itemsPerUnit,
-				})),
-				pdfURL: fullQuotation?.pdfURL,
-			};
+				// Notify internal team about new blank quotation
+				this.logger.log(`[${asyncOperationId}] Sending internal notification to: ${internalEmail}`);
+				this.eventEmitter.emit('send.email', EmailType.BLANK_QUOTATION_INTERNAL, [internalEmail], emailData);
 
-			// Send email to recipient if provided, otherwise to client
-			const recipientEmail = blankQuotationData?.recipientEmail || clientEmail;
-			if (recipientEmail) {
-				this.logger.log(`[createBlankQuotation] Sending client email to: ${recipientEmail}`);
-				this.eventEmitter.emit('send.email', EmailType.BLANK_QUOTATION_CLIENT, [recipientEmail], emailData);
-			}
-
-			// Notify internal team about new blank quotation
-			this.logger.log(`[createBlankQuotation] Sending internal notification to: ${internalEmail}`);
-			this.eventEmitter.emit('send.email', EmailType.BLANK_QUOTATION_INTERNAL, [internalEmail], emailData);
-
-			// Notify resellers about products in the blank quotation (same as regular quotation)
-			if (resellerEmails?.length > 0) {
-				this.logger.log(`[createBlankQuotation] Notifying ${resellerEmails.length} resellers`);
-				resellerEmails?.forEach((email) => {
-					this.eventEmitter.emit('send.email', EmailType.NEW_QUOTATION_RESELLER, [email?.email], {
-						...emailData,
-						name: email?.retailerName,
-						email: email?.email,
+				// Notify resellers about products in the blank quotation (same as regular quotation)
+				if (resellerEmails?.length > 0) {
+					this.logger.log(`[${asyncOperationId}] Notifying ${resellerEmails.length} resellers`);
+					resellerEmails?.forEach((email) => {
+						this.eventEmitter.emit('send.email', EmailType.NEW_QUOTATION_RESELLER, [email?.email], {
+							...emailData,
+							name: email?.retailerName,
+							email: email?.email,
+						});
 					});
-				});
+				}
+
+				this.logger.log(`[${asyncOperationId}] Async post-blank-quotation processing completed successfully`);
+			} catch (error) {
+				this.logger.error(`[${asyncOperationId}] Error in async post-blank-quotation processing: ${error.message}`, error.stack);
+				// Don't throw - user already has success response
 			}
+		});
 
-			this.logger.log(`[createBlankQuotation] Blank quotation creation completed successfully: ${quotationNumber}`);
-
-			return {
-				message: process.env.SUCCESS_MESSAGE,
-				quotationId: savedQuotation?.quotationNumber,
-			};
+		return immediateResponse;
 		} catch (error) {
 			this.logger.error(`[createBlankQuotation] Error creating blank quotation: ${error.message}`, error.stack);
 			return {
