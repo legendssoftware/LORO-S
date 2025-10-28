@@ -1544,13 +1544,22 @@ export class AttendanceReportsService {
 				? Math.round(((workedTodayCount - comparisonWorkedCount) / comparisonWorkedCount) * 100)
 				: 0;
 
-		const comparisonTotalHours = comparisonAttendance.reduce((sum, attendance) => {
-			if (attendance.duration) {
-				const minutes = this.parseDurationToMinutes(attendance.duration);
-				return sum + minutes / 60;
-			}
-			return sum;
-		}, 0);
+	// Calculate total hours including both duration (capped) and overtime
+	const comparisonTotalHours = comparisonAttendance.reduce((sum, attendance) => {
+		let totalMinutes = 0;
+		
+		// Parse duration (capped at expected hours)
+		if (attendance.duration) {
+			totalMinutes += this.parseDurationToMinutes(attendance.duration);
+		}
+		
+		// Parse overtime (hours beyond expected)
+		if (attendance.overtime) {
+			totalMinutes += this.parseDurationToMinutes(attendance.overtime);
+		}
+		
+		return sum + totalMinutes / 60;
+	}, 0);
 		const hoursChange = Math.round((totalActualHours - comparisonTotalHours) * 100) / 100;
 
 		// Calculate punctuality change using organization hours
@@ -3567,13 +3576,21 @@ export class AttendanceReportsService {
 			this.logger.debug(`  - Today record found: ${!!todayRecord}`);
 			this.logger.debug(`  - Comparison record found: ${!!comparisonRecord}`);
 
-			// Use real-time hours calculation instead of duration field for more accurate data
-			const todayHours = todayRecord 
-				? await this.calculateRealTimeHoursWithOrgHours(todayRecord, organizationId, new Date())
-				: 0;
-			const comparisonHours = comparisonRecord?.duration
-				? this.parseDurationToMinutes(comparisonRecord.duration) / 60
-				: 0;
+		// Use real-time hours calculation instead of duration field for more accurate data
+		const todayHours = todayRecord 
+			? await this.calculateRealTimeHoursWithOrgHours(todayRecord, organizationId, new Date())
+			: 0;
+		
+		// Calculate comparison hours including both duration and overtime
+		let comparisonHours = 0;
+		if (comparisonRecord) {
+			if (comparisonRecord.duration) {
+				comparisonHours += this.parseDurationToMinutes(comparisonRecord.duration) / 60;
+			}
+			if (comparisonRecord.overtime) {
+				comparisonHours += this.parseDurationToMinutes(comparisonRecord.overtime) / 60;
+			}
+		}
 
 			let isLate = false;
 			let lateMinutes = 0;

@@ -128,6 +128,7 @@ export class AttendanceCalculatorService {
 
 	/**
 	 * Process attendance record with enhanced calculations (maintains original response structure)
+	 * Duration is now capped at expected work hours, with overtime capturing excess hours
 	 */
 	async processAttendanceRecord(attendance: Attendance): Promise<{
 		duration: string;
@@ -156,11 +157,29 @@ export class AttendanceCalculatorService {
 			organizationId,
 		);
 
+		// Get expected work minutes to cap duration
+		let expectedWorkMinutes = TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES;
+		if (organizationId) {
+			try {
+				const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(
+					organizationId,
+					attendance.checkIn,
+				);
+				expectedWorkMinutes = workingDayInfo.expectedWorkMinutes || expectedWorkMinutes;
+			} catch (error) {
+				this.logger.warn(`Failed to get expected work minutes, using default: ${expectedWorkMinutes}`);
+			}
+		}
+
+		// Cap duration at expected work hours
+		const durationMinutes = Math.min(metrics.workSession.netWorkMinutes, expectedWorkMinutes);
+		const overtimeMinutes = Math.max(0, metrics.workSession.netWorkMinutes - expectedWorkMinutes);
+
 		return {
-			duration: TimeCalculatorUtil.formatDuration(metrics.workSession.netWorkMinutes),
+			duration: TimeCalculatorUtil.formatDuration(durationMinutes),
 			netWorkHours: metrics.workSession.netWorkHours,
-			isOvertime: metrics.overtime.isOvertime,
-			overtimeMinutes: metrics.overtime.overtimeMinutes,
+			isOvertime: overtimeMinutes > 0,
+			overtimeMinutes: overtimeMinutes,
 			efficiency: metrics.efficiency,
 		};
 	}

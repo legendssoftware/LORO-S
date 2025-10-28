@@ -887,17 +887,66 @@ export class AttendanceService {
 				this.logger.warn('No organization ID provided for auto-close, using default 4:30 PM');
 			}
 
-		this.logger.debug(`Setting auto-close time to: ${closeTime.toISOString()} for user ${userId}`);
+	this.logger.debug(`Setting auto-close time to: ${closeTime.toISOString()} for user ${userId}`);
 
-		// Update the existing shift
-		existingShift.checkOut = closeTime;
-		existingShift.status = AttendanceStatus.COMPLETED;
-		// Set appropriate note based on whether this is a user-initiated or scheduled auto-close
-		existingShift.checkOutNotes = skipPreferenceCheck 
-			? 'Auto-closed at organization close time due to new shift being started'
-			: 'Auto-closed at organization close time (scheduled auto-end)';
+	// Calculate duration and overtime for the auto-closed shift
+	const checkInTime = new Date(existingShift.checkIn);
+	const checkOutTime = closeTime;
 
-		await this.attendanceRepository.save(existingShift);
+	// Calculate break minutes
+	const breakMinutes = TimeCalculatorUtil.calculateTotalBreakMinutes(
+		existingShift.breakDetails,
+		existingShift.totalBreakTime,
+	);
+
+	// Calculate work session
+	const workSession = TimeCalculatorUtil.calculateWorkSession(
+		checkInTime,
+		checkOutTime,
+		existingShift.breakDetails,
+		existingShift.totalBreakTime,
+		organizationHours,
+	);
+
+	this.logger.debug(
+		`Auto-close work session: net work minutes: ${workSession.netWorkMinutes}, break minutes: ${breakMinutes}`
+	);
+
+	// Get expected work minutes from organization hours
+	let expectedWorkMinutes = TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES;
+	if (orgId) {
+		try {
+			const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(orgId, checkInTime);
+			expectedWorkMinutes = workingDayInfo.expectedWorkMinutes || expectedWorkMinutes;
+			this.logger.debug(`Expected work minutes: ${expectedWorkMinutes}`);
+		} catch (error) {
+			this.logger.warn(`Failed to get expected work minutes, using default: ${expectedWorkMinutes}`);
+		}
+	}
+
+	// Cap duration at expected work hours, rest goes to overtime
+	const durationMinutes = Math.min(workSession.netWorkMinutes, expectedWorkMinutes);
+	const overtimeMinutes = Math.max(0, workSession.netWorkMinutes - expectedWorkMinutes);
+
+	const duration = TimeCalculatorUtil.formatDuration(durationMinutes);
+	const overtimeDuration = TimeCalculatorUtil.formatDuration(overtimeMinutes);
+
+	this.logger.debug(
+		`Auto-close calculated - Duration: ${duration} (${durationMinutes} min), ` +
+		`Overtime: ${overtimeDuration} (${overtimeMinutes} min)`
+	);
+
+	// Update the existing shift
+	existingShift.checkOut = closeTime;
+	existingShift.duration = duration;
+	existingShift.overtime = overtimeDuration;
+	existingShift.status = AttendanceStatus.COMPLETED;
+	// Set appropriate note based on whether this is a user-initiated or scheduled auto-close
+	existingShift.checkOutNotes = skipPreferenceCheck 
+		? 'Auto-closed at organization close time due to new shift being started'
+		: 'Auto-closed at organization close time (scheduled auto-end)';
+
+	await this.attendanceRepository.save(existingShift);
 
 		this.logger.log(`Auto-closed existing shift for user ${userId} at ${closeTime.toISOString()}`);
 
@@ -910,17 +959,52 @@ export class AttendanceService {
 		} catch (error) {
 			this.logger.error(`Error auto-closing existing shift for user ${userId}: ${error.message}`);
 
-		// Fallback: still try to close the shift with default time (4:30 PM in org timezone)
-		try {
-			closeTime = TimezoneUtil.parseTimeInOrganization('16:30', checkInDate, organizationTimezone);
+	// Fallback: still try to close the shift with default time (4:30 PM in org timezone)
+	try {
+		closeTime = TimezoneUtil.parseTimeInOrganization('16:30', checkInDate, organizationTimezone);
 
-			existingShift.checkOut = closeTime;
-			existingShift.status = AttendanceStatus.COMPLETED;
-			existingShift.checkOutNotes = skipPreferenceCheck
-				? 'Auto-closed with fallback time due to new shift (org hours fetch error)'
-				: 'Auto-closed with fallback time due to org hours fetch error (scheduled auto-end)';
+		// Calculate duration and overtime for fallback auto-close
+		const fallbackCheckInTime = new Date(existingShift.checkIn);
+		const fallbackCheckOutTime = closeTime;
 
-			await this.attendanceRepository.save(existingShift);
+		// Calculate break minutes
+		const fallbackBreakMinutes = TimeCalculatorUtil.calculateTotalBreakMinutes(
+			existingShift.breakDetails,
+			existingShift.totalBreakTime,
+		);
+
+		// Calculate work session
+		const fallbackWorkSession = TimeCalculatorUtil.calculateWorkSession(
+			fallbackCheckInTime,
+			fallbackCheckOutTime,
+			existingShift.breakDetails,
+			existingShift.totalBreakTime,
+			organizationHours,
+		);
+
+		// Use default expected work minutes for fallback
+		const fallbackExpectedWorkMinutes = TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES;
+		
+		// Cap duration at expected work hours
+		const fallbackDurationMinutes = Math.min(fallbackWorkSession.netWorkMinutes, fallbackExpectedWorkMinutes);
+		const fallbackOvertimeMinutes = Math.max(0, fallbackWorkSession.netWorkMinutes - fallbackExpectedWorkMinutes);
+
+		const fallbackDuration = TimeCalculatorUtil.formatDuration(fallbackDurationMinutes);
+		const fallbackOvertimeDuration = TimeCalculatorUtil.formatDuration(fallbackOvertimeMinutes);
+
+		this.logger.debug(
+			`Fallback auto-close - Duration: ${fallbackDuration}, Overtime: ${fallbackOvertimeDuration}`
+		);
+
+		existingShift.checkOut = closeTime;
+		existingShift.duration = fallbackDuration;
+		existingShift.overtime = fallbackOvertimeDuration;
+		existingShift.status = AttendanceStatus.COMPLETED;
+		existingShift.checkOutNotes = skipPreferenceCheck
+			? 'Auto-closed with fallback time due to new shift (org hours fetch error)'
+			: 'Auto-closed with fallback time due to org hours fetch error (scheduled auto-end)';
+
+		await this.attendanceRepository.save(existingShift);
 			this.logger.log(`Fallback auto-close successful for user ${userId} at 4:30 PM`);
 
 			// Clear attendance cache after fallback auto-close
@@ -1079,45 +1163,54 @@ export class AttendanceService {
 			);
 			this.logger.debug(`Total break minutes calculated: ${breakMinutes}`);
 
-			// Calculate precise work session
-			const workSession = TimeCalculatorUtil.calculateWorkSession(
-				checkInTime,
-				checkOutTime,
-				activeShift.breakDetails,
-				activeShift.totalBreakTime,
-				organizationId ? await this.organizationHoursService.getOrganizationHours(organizationId) : null,
-			);
+		// Calculate precise work session
+		const workSession = TimeCalculatorUtil.calculateWorkSession(
+			checkInTime,
+			checkOutTime,
+			activeShift.breakDetails,
+			activeShift.totalBreakTime,
+			organizationId ? await this.organizationHoursService.getOrganizationHours(organizationId) : null,
+		);
 
-			// Format duration (maintains original format)
-			const duration = TimeCalculatorUtil.formatDuration(workSession.netWorkMinutes);
-			this.logger.debug(
-				`Work session calculated - net work minutes: ${workSession.netWorkMinutes}, formatted duration: ${duration}`,
-			);
+		this.logger.debug(
+			`Work session calculated - net work minutes: ${workSession.netWorkMinutes}`,
+		);
 
-			// Calculate overtime based on organization hours
-			let overtimeDuration = '0h 0m';
-			if (organizationId) {
-				try {
-					const overtimeInfo = await this.organizationHoursService.calculateOvertime(
-						organizationId,
-						checkInTime,
-						workSession.netWorkMinutes,
-					);
-
-					if (overtimeInfo.isOvertime && overtimeInfo.overtimeMinutes > 0) {
-						overtimeDuration = TimeCalculatorUtil.formatDuration(overtimeInfo.overtimeMinutes);
-						this.logger.debug(
-							`Overtime calculated: ${overtimeDuration} (${overtimeInfo.overtimeMinutes} minutes)`,
-						);
-					}
-				} catch (overtimeCalcError) {
-					this.logger.warn(
-						`Failed to calculate overtime for user: ${checkOutDto.owner.uid}`,
-						overtimeCalcError.message,
-					);
-					// Continue with default overtime value
-				}
+		// Get expected work minutes from organization hours
+		let expectedWorkMinutes = TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES; // Default 8 hours (480 minutes)
+		
+		if (organizationId) {
+			try {
+				const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(
+					organizationId,
+					checkInTime,
+				);
+				expectedWorkMinutes = workingDayInfo.expectedWorkMinutes || expectedWorkMinutes;
+				this.logger.debug(
+					`Expected work minutes for organization: ${expectedWorkMinutes} (${expectedWorkMinutes / 60} hours)`,
+				);
+			} catch (error) {
+				this.logger.warn(
+					`Failed to fetch expected work minutes for org ${organizationId}, using default: ${expectedWorkMinutes}`,
+					error.message,
+				);
 			}
+		}
+
+		// Cap duration at expected work hours, rest goes to overtime
+		// Duration = min(actual work time, expected work time)
+		// Overtime = max(0, actual work time - expected work time)
+		const durationMinutes = Math.min(workSession.netWorkMinutes, expectedWorkMinutes);
+		const overtimeMinutes = Math.max(0, workSession.netWorkMinutes - expectedWorkMinutes);
+
+		const duration = TimeCalculatorUtil.formatDuration(durationMinutes);
+		const overtimeDuration = TimeCalculatorUtil.formatDuration(overtimeMinutes);
+
+		this.logger.debug(
+			`Duration capped at expected hours: ${duration} (${durationMinutes} minutes), ` +
+			`Overtime: ${overtimeDuration} (${overtimeMinutes} minutes), ` +
+			`Total work time: ${workSession.netWorkMinutes} minutes`,
+		);
 
 		// Enhanced data mapping for shift update - location will be processed asynchronously
 		const updatedShift = {
@@ -3467,16 +3560,28 @@ export class AttendanceService {
 				},
 			});
 
-			// Calculate hours from completed shifts
-			const completedHours = attendanceRecords.reduce((total, record) => {
-				if (record?.duration) {
-					const [hours, minutes] = record.duration.split(' ');
-					const hoursValue = parseFloat(hours.replace('h', ''));
-					const minutesValue = parseFloat(minutes.replace('m', '')) / 60;
-					return total + hoursValue + minutesValue;
-				}
-				return total;
-			}, 0);
+		// Calculate hours from completed shifts (duration + overtime = total actual work time)
+		const completedHours = attendanceRecords.reduce((total, record) => {
+			let totalWorkHours = 0;
+			
+			// Parse duration (capped at expected hours)
+			if (record?.duration) {
+				const [hours, minutes] = record.duration.split(' ');
+				const hoursValue = parseFloat(hours.replace('h', ''));
+				const minutesValue = parseFloat(minutes.replace('m', '')) / 60;
+				totalWorkHours += hoursValue + minutesValue;
+			}
+			
+			// Parse overtime (hours beyond expected)
+			if (record?.overtime) {
+				const [overtimeHours, overtimeMinutes] = record.overtime.split(' ');
+				const overtimeHoursValue = parseFloat(overtimeHours.replace('h', ''));
+				const overtimeMinutesValue = parseFloat(overtimeMinutes.replace('m', '')) / 60;
+				totalWorkHours += overtimeHoursValue + overtimeMinutesValue;
+			}
+			
+			return total + totalWorkHours;
+		}, 0);
 
 			// Get today's attendance hours
 			const todayHours = (await this.getAttendanceForDate(new Date())).totalHours;

@@ -122,6 +122,18 @@ export class LeadsService {
 		}
 	}
 
+	/**
+	 * Create a new lead with early-return pattern for optimal client response time
+	 * 
+	 * FLOW:
+	 * 1. Validate and save lead record to database
+	 * 2. Populate relations for immediate response
+	 * 3. Return success response to client immediately
+	 * 4. Process non-critical operations asynchronously (XP, notifications, scoring, etc.)
+	 * 
+	 * This pattern ensures the client receives confirmation as soon as the core operation completes,
+	 * while background processes (XP awards, notifications, integrations) run without blocking the response.
+	 */
 	async create(
 		createLeadDto: CreateLeadDto,
 		orgId?: number,
@@ -172,6 +184,9 @@ export class LeadsService {
 			this.logger.debug(`🧠 [LeadsService] Setting intelligent defaults for lead`);
 			await this.setIntelligentDefaults(lead);
 
+			// ============================================================
+			// CRITICAL PATH: Save lead to database (must complete before response)
+			// ============================================================
 			this.logger.debug(`💾 [LeadsService] Saving lead to database`);
 			const savedLead = await this.leadsRepository.save(lead);
 
@@ -181,24 +196,45 @@ export class LeadsService {
 			}
 
 			this.logger.debug(`🔗 [LeadsService] Populating lead relations for lead: ${savedLead.uid}`);
-			// Populate the lead with full relation data
+			// Populate the lead with full relation data for response
 			const populatedLead = await this.populateLeadRelations(savedLead);
 
-			// Clear caches after successful lead creation
+			// Clear caches after successful lead creation (fast operation, safe to await)
 			this.logger.debug(`🧹 [LeadsService] Clearing lead caches after creation`);
 			await this.clearLeadCache(savedLead.uid, savedLead.ownerUid);
 
-			// EVENT-DRIVEN AUTOMATION: Post-creation actions
-			this.logger.debug(`🚀 [LeadsService] Handling post-creation events for lead: ${savedLead.uid}`);
-			await this.handleLeadCreatedEvents(populatedLead);
-
+			// ============================================================
+			// EARLY RETURN: Respond to client immediately after successful save
+			// ============================================================
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,
 				data: populatedLead,
 			};
 
 			const duration = Date.now() - startTime;
-			this.logger.log(`✅ [LeadsService] Successfully created lead ${savedLead.uid} in ${duration}ms`);
+			this.logger.log(`✅ [LeadsService] Successfully created lead ${savedLead.uid} in ${duration}ms - returning response to client`);
+
+			// ============================================================
+			// POST-RESPONSE PROCESSING: Execute non-critical operations asynchronously
+			// These operations run after the response is sent, without blocking the client
+			// ============================================================
+			setImmediate(async () => {
+				try {
+					this.logger.debug(`🔄 [LeadsService] Starting post-response processing for lead: ${savedLead.uid}`);
+					
+					// EVENT-DRIVEN AUTOMATION: Post-creation actions
+					// These include: XP awards, notifications, lead scoring, target checks, CRM sync, etc.
+					await this.handleLeadCreatedEvents(populatedLead);
+					
+					this.logger.debug(`✅ [LeadsService] Post-response processing completed for lead: ${savedLead.uid}`);
+				} catch (backgroundError) {
+					// Log errors but don't affect user experience since response already sent
+					this.logger.error(
+						`❌ [LeadsService] Background processing failed for lead ${savedLead.uid}: ${backgroundError.message}`,
+						backgroundError.stack
+					);
+				}
+			});
 
 			return response;
 		} catch (error) {
@@ -511,6 +547,19 @@ export class LeadsService {
 		}
 	}
 
+	/**
+	 * Update a lead with early-return pattern for optimal client response time
+	 * 
+	 * FLOW:
+	 * 1. Validate and fetch existing lead
+	 * 2. Build update data with status history tracking
+	 * 3. Apply intelligent updates and save to database
+	 * 4. Return success response to client immediately
+	 * 5. Process non-critical operations asynchronously (XP, notifications, scoring, etc.)
+	 * 
+	 * This pattern ensures the client receives confirmation as soon as the database update completes,
+	 * while background processes (lead scoring, notifications, CRM sync) run without blocking the response.
+	 */
 	async update(
 		ref: number,
 		updateLeadDto: UpdateLeadDto,
@@ -595,34 +644,63 @@ export class LeadsService {
 			this.logger.debug(`🧠 [LeadsService] Applying intelligent updates for lead ${ref}`);
 			await this.applyIntelligentUpdates(lead, dataToSave);
 
+			// ============================================================
+			// CRITICAL PATH: Update lead in database (must complete before response)
+			// ============================================================
 			this.logger.debug(`💾 [LeadsService] Updating lead ${ref} in database`);
 			await this.leadsRepository.update(ref, dataToSave);
 
-			// EVENT-DRIVEN AUTOMATION: Post-update actions
-			this.logger.debug(`🔍 [LeadsService] Fetching updated lead ${ref} for post-update processing`);
-			const updatedLead = await this.leadsRepository.findOne({
-				where: { uid: ref },
-				relations: ['owner', 'organisation', 'branch', 'interactions'],
+			// Clear caches after successful lead update (fast operation, safe to await)
+			this.logger.debug(`🧹 [LeadsService] Clearing lead caches after update`);
+			await this.clearLeadCache(ref, lead.ownerUid);
+
+			// ============================================================
+			// EARLY RETURN: Respond to client immediately after successful update
+			// ============================================================
+			const duration = Date.now() - startTime;
+			this.logger.log(`✅ [LeadsService] Successfully updated lead ${ref} in ${duration}ms - returning response to client`);
+
+			const response = { message: process.env.SUCCESS_MESSAGE };
+
+			// ============================================================
+			// POST-RESPONSE PROCESSING: Execute non-critical operations asynchronously
+			// These operations run after the response is sent, without blocking the client
+			// ============================================================
+			setImmediate(async () => {
+				try {
+					this.logger.debug(`🔄 [LeadsService] Starting post-response processing for lead update: ${ref}`);
+					
+					// Fetch updated lead with relations for post-processing
+					const updatedLead = await this.leadsRepository.findOne({
+						where: { uid: ref },
+						relations: ['owner', 'organisation', 'branch', 'interactions'],
+					});
+
+					if (updatedLead) {
+						// EVENT-DRIVEN AUTOMATION: Post-update actions
+						// These include: lead scoring recalculation, status-specific events, 
+						// assignment notifications, temperature updates, CRM sync, etc.
+						await this.handleLeadUpdatedEvents(updatedLead, {
+							statusChanged: oldStatus !== updateLeadDto.status,
+							temperatureChanged: oldTemperature !== updateLeadDto.temperature,
+							priorityChanged: oldPriority !== updateLeadDto.priority,
+							assigneesChanged: !!updateLeadDto.assignees,
+						});
+						
+						this.logger.debug(`✅ [LeadsService] Post-response processing completed for lead: ${ref}`);
+					} else {
+						this.logger.warn(`⚠️ [LeadsService] Could not fetch updated lead ${ref} for post-processing`);
+					}
+				} catch (backgroundError) {
+					// Log errors but don't affect user experience since response already sent
+					this.logger.error(
+						`❌ [LeadsService] Background processing failed for lead ${ref}: ${backgroundError.message}`,
+						backgroundError.stack
+					);
+				}
 			});
 
-			if (updatedLead) {
-				// Clear caches after successful lead update
-				this.logger.debug(`🧹 [LeadsService] Clearing lead caches after update`);
-				await this.clearLeadCache(updatedLead.uid, updatedLead.ownerUid);
-
-				this.logger.debug(`🚀 [LeadsService] Handling post-update events for lead ${ref}`);
-				await this.handleLeadUpdatedEvents(updatedLead, {
-					statusChanged: oldStatus !== updateLeadDto.status,
-					temperatureChanged: oldTemperature !== updateLeadDto.temperature,
-					priorityChanged: oldPriority !== updateLeadDto.priority,
-					assigneesChanged: !!updateLeadDto.assignees,
-				});
-			}
-
-			const duration = Date.now() - startTime;
-			this.logger.log(`✅ [LeadsService] Successfully updated lead ${ref} in ${duration}ms`);
-
-			return { message: process.env.SUCCESS_MESSAGE };
+			return response;
 		} catch (error) {
 			const duration = Date.now() - startTime;
 			this.logger.error(`❌ [LeadsService] Error updating lead ${ref} after ${duration}ms: ${error.message}`, error.stack);
