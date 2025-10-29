@@ -13,6 +13,13 @@ import {
 	CategoryPerformanceDto,
 	SalesPerStoreDto,
 } from '../dto/performance-dashboard.dto';
+import { ErpDataService } from '../../erp/services/erp-data.service';
+import { ErpTransformerService } from '../../erp/services/erp-transformer.service';
+import { 
+	ErpQueryFilters, 
+	SalesTransaction as ErpSalesTransaction 
+} from '../../erp/interfaces/erp-data.interface';
+import { getCategoryName } from '../../erp/config/category-mapping.config';
 
 /**
  * ========================================================================
@@ -109,19 +116,24 @@ interface SalesTransaction {
 export class PerformanceDashboardGenerator {
 	private readonly logger = new Logger(PerformanceDashboardGenerator.name);
 
-	// Cache for generated mock data (Phase 1)
+	constructor(
+		private readonly erpDataService: ErpDataService,
+		private readonly erpTransformerService: ErpTransformerService,
+	) {
+		this.logger.log('PerformanceDashboardGenerator initialized with ERP services');
+	}
+
+	// Cache for master data structures (minimal - for filtering/lookup only)
 	private mockDataCache: {
 		locations?: Location[];
 		productCategories?: ProductCategory[];
 		products?: Product[];
 		branches?: Branch[];
 		salesPeople?: SalesPerson[];
-		performanceData?: PerformanceData[];
-		salesTransactions?: SalesTransaction[];
 	} = {};
 
 	/**
-	 * Generate complete performance dashboard data
+	 * Generate complete performance dashboard data (includes charts + tables)
 	 */
 	async generate(params: PerformanceFiltersDto): Promise<PerformanceDashboardDataDto> {
 		this.logger.log(`Generating performance dashboard for org ${params.organisationId}`);
@@ -141,9 +153,21 @@ export class PerformanceDashboardGenerator {
 			// Generate all chart data
 			const charts = this.generateCharts(filteredData, params);
 
+			// Generate table data (parallel execution for performance)
+			this.logger.log('Generating table data in parallel...');
+			const [dailySalesPerformance, branchCategoryPerformance, salesPerStore] = await Promise.all([
+				this.generateDailySalesPerformance(params),
+				this.generateBranchCategoryPerformance(params),
+				this.generateSalesPerStore(params),
+			]);
+			this.logger.log(`Table data generated: ${dailySalesPerformance.length} daily records, ${branchCategoryPerformance.length} branch-category records, ${salesPerStore.length} store records`);
+
 			return {
 				summary,
 				charts,
+				dailySalesPerformance,
+				branchCategoryPerformance,
+				salesPerStore,
 				filters: params,
 				metadata: {
 					lastUpdated: new Date().toISOString(),
@@ -199,35 +223,77 @@ export class PerformanceDashboardGenerator {
 	// ===================================================================
 
 	/**
-	 * Get performance data (Phase 1: Mock / Phase 2: DB Query)
+	 * Get performance data - NOW USING ERP DATABASE
 	 */
 	private async getPerformanceData(params: PerformanceFiltersDto): Promise<PerformanceData[]> {
-		// Phase 1: Return mock data
-		if (!this.mockDataCache.performanceData) {
-			this.mockDataCache.performanceData = this.generateMockPerformanceData();
-		}
-		return this.mockDataCache.performanceData;
+		try {
+			// Build ERP query filters
+			const filters: ErpQueryFilters = {
+				startDate: params.startDate || this.getDefaultStartDate(),
+				endDate: params.endDate || this.getDefaultEndDate(),
+				storeCode: params.branchIds && params.branchIds.length > 0 ? params.branchIds[0] : undefined,
+				category: params.category,
+			};
 
-		// Phase 2: Query real database
-		// return this.queryPerformanceData(params);
+			this.logger.log(`Fetching ERP performance data for ${filters.startDate} to ${filters.endDate}`);
+
+			// Get sales lines from ERP
+			const salesLines = await this.erpDataService.getSalesLinesByDateRange(filters);
+			
+			// Transform to performance data format
+			const performanceData = this.erpTransformerService.transformToPerformanceDataList(salesLines);
+			
+			this.logger.log(`Transformed ${performanceData.length} performance data records from ERP`);
+			
+			return performanceData;
+		} catch (error) {
+			this.logger.error(`Error fetching ERP performance data: ${error.message}`, error.stack);
+			
+			// Return empty data on error
+			this.logger.warn('Returning empty data due to ERP error');
+			return [];
+		}
 	}
 
 	/**
-	 * Get sales transactions
+	 * Get sales transactions - NOW USING ERP DATABASE
 	 */
-	private async getSalesTransactions(params: PerformanceFiltersDto): Promise<SalesTransaction[]> {
-		// Phase 1: Return mock data
-		if (!this.mockDataCache.salesTransactions) {
-			this.mockDataCache.salesTransactions = this.generateMockSalesTransactions();
-		}
-		return this.mockDataCache.salesTransactions;
+	private async getSalesTransactions(params: PerformanceFiltersDto): Promise<ErpSalesTransaction[]> {
+		try {
+			// Build ERP query filters
+			const filters: ErpQueryFilters = {
+				startDate: params.startDate || this.getDefaultStartDate(),
+				endDate: params.endDate || this.getDefaultEndDate(),
+				storeCode: params.branchIds && params.branchIds.length > 0 ? params.branchIds[0] : undefined,
+				category: params.category,
+			};
 
-		// Phase 2: Query real database
-		// return this.querySalesTransactions(params);
+			this.logger.log(`Fetching ERP sales transactions for ${filters.startDate} to ${filters.endDate}`);
+
+			// Get sales lines from ERP
+			const salesLines = await this.erpDataService.getSalesLinesByDateRange(filters);
+			
+			// Get headers if needed
+			const headers = await this.erpDataService.getSalesHeadersByDateRange(filters);
+			
+			// Transform to sales transaction format
+			const transactions = this.erpTransformerService.transformToSalesTransactions(salesLines, headers);
+			
+			this.logger.log(`Transformed ${transactions.length} sales transactions from ERP`);
+			
+			return transactions;
+		} catch (error) {
+			this.logger.error(`Error fetching ERP sales transactions: ${error.message}`, error.stack);
+			
+			// Return empty data on error
+			this.logger.warn('Returning empty data due to ERP error');
+			return [];
+		}
 	}
 
 	/**
 	 * Get master data (branches, products, locations, etc.)
+	 * Returns empty structures if not initialized
 	 */
 	getMasterData() {
 		if (!this.mockDataCache.locations) {
@@ -235,11 +301,11 @@ export class PerformanceDashboardGenerator {
 		}
 
 		return {
-			locations: this.mockDataCache.locations,
-			productCategories: this.mockDataCache.productCategories,
-			products: this.mockDataCache.products,
-			branches: this.mockDataCache.branches,
-			salesPeople: this.mockDataCache.salesPeople,
+			locations: this.mockDataCache.locations || [],
+			productCategories: this.mockDataCache.productCategories || [],
+			products: this.mockDataCache.products || [],
+			branches: this.mockDataCache.branches || [],
+			salesPeople: this.mockDataCache.salesPeople || [],
 		};
 	}
 
@@ -326,9 +392,9 @@ export class PerformanceDashboardGenerator {
 	 * Filter sales transactions
 	 */
 	private filterSalesTransactions(
-		data: SalesTransaction[],
+		data: ErpSalesTransaction[],
 		params: PerformanceFiltersDto,
-	): SalesTransaction[] {
+	): ErpSalesTransaction[] {
 		let filtered = [...data];
 
 		// Date range filter
@@ -757,7 +823,7 @@ export class PerformanceDashboardGenerator {
 	/**
 	 * Calculate daily sales performance
 	 */
-	private calculateDailySalesPerformance(transactions: SalesTransaction[]): DailySalesPerformanceDto[] {
+	private calculateDailySalesPerformance(transactions: ErpSalesTransaction[]): DailySalesPerformanceDto[] {
 		const dailyData = new Map<string, SalesTransaction[]>();
 		
 		transactions.forEach((t) => {
@@ -800,7 +866,7 @@ export class PerformanceDashboardGenerator {
 	/**
 	 * Calculate branch × category performance
 	 */
-	private calculateBranchCategoryPerformance(transactions: SalesTransaction[]): BranchCategoryPerformanceDto[] {
+	private calculateBranchCategoryPerformance(transactions: ErpSalesTransaction[]): BranchCategoryPerformanceDto[] {
 		const masterData = this.getMasterData();
 		const branchData = new Map<string, Map<string, SalesTransaction[]>>();
 
@@ -878,7 +944,7 @@ export class PerformanceDashboardGenerator {
 	/**
 	 * Calculate sales per store
 	 */
-	private calculateSalesPerStore(transactions: SalesTransaction[]): SalesPerStoreDto[] {
+	private calculateSalesPerStore(transactions: ErpSalesTransaction[]): SalesPerStoreDto[] {
 		const masterData = this.getMasterData();
 		const storeData = new Map<string, SalesTransaction[]>();
 
@@ -1003,20 +1069,19 @@ export class PerformanceDashboardGenerator {
 
 	/**
 	 * Initialize master data (locations, products, branches, salespeople)
+	 * Now returns empty structures - all data comes from ERP
 	 */
 	private initializeMasterData() {
-		this.logger.log('Initializing master data...');
+		this.logger.log('Initializing empty master data structures...');
 		
-		// Import master data from mock data generator
-		const mockData = require('./performance-mock-data.generator');
+		// Initialize empty arrays - all real data comes from ERP
+		this.mockDataCache.locations = [];
+		this.mockDataCache.productCategories = [];
+		this.mockDataCache.products = [];
+		this.mockDataCache.branches = [];
+		this.mockDataCache.salesPeople = [];
 		
-		this.mockDataCache.locations = mockData.locations;
-		this.mockDataCache.productCategories = mockData.productCategories;
-		this.mockDataCache.products = mockData.products;
-		this.mockDataCache.branches = mockData.branches;
-		this.mockDataCache.salesPeople = mockData.salesPeople;
-		
-		this.logger.log(`Master data initialized: ${this.mockDataCache.branches.length} branches, ${this.mockDataCache.products.length} products, ${this.mockDataCache.salesPeople.length} salespeople`);
+		this.logger.log('Master data structures initialized (empty - all data from ERP)');
 	}
 
 	/**
@@ -1035,7 +1100,7 @@ export class PerformanceDashboardGenerator {
 	/**
 	 * Generate mock sales transactions
 	 */
-	private generateMockSalesTransactions(): SalesTransaction[] {
+	private generateMockSalesTransactions(): ErpSalesTransaction[] {
 		this.logger.log('Generating mock sales transactions (90 days)...');
 		
 		const mockData = require('./performance-mock-data.generator');
@@ -1043,6 +1108,22 @@ export class PerformanceDashboardGenerator {
 		
 		this.logger.log(`Generated ${transactions.length} sales transactions`);
 		return transactions;
+	}
+
+	/**
+	 * Get default start date (30 days ago)
+	 */
+	private getDefaultStartDate(): string {
+		const date = new Date();
+		date.setDate(date.getDate() - 30);
+		return date.toISOString().split('T')[0];
+	}
+
+	/**
+	 * Get default end date (today)
+	 */
+	private getDefaultEndDate(): string {
+		return new Date().toISOString().split('T')[0];
 	}
 }
 

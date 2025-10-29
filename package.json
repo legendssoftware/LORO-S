@@ -21,7 +21,8 @@
     "bulk-email": "ts-node -r tsconfig-paths/register src/scripts/bulk-email.script.ts",
     "bulk-email:help": "npm run bulk-email -- --help",
     "cleanup:tokens": "ts-node -r tsconfig-paths/register src/scripts/cleanup-duplicate-tokens.ts",
-    "cleanup:tokens:auto": "ts-node -r tsconfig-paths/register src/scripts/cleanup-duplicate-tokens.ts --auto"
+    "cleanup:tokens:auto": "ts-node -r tsconfig-paths/register src/scripts/cleanup-duplicate-tokens.ts --auto",
+    "test:erp-connection": "node test-erp-connection.js"
   },
   "dependencies": {
     "@apollo/server": "^4.11.2",

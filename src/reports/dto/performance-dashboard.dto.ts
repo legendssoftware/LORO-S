@@ -230,24 +230,6 @@ export class PerformanceMetadataDto {
 }
 
 // ===================================================================
-// MAIN DASHBOARD RESPONSE
-// ===================================================================
-
-export class PerformanceDashboardDataDto {
-	@ApiProperty({ type: PerformanceSummaryDto })
-	summary: PerformanceSummaryDto;
-
-	@ApiProperty({ type: PerformanceChartsDto })
-	charts: PerformanceChartsDto;
-
-	@ApiProperty({ description: 'Applied filters', required: false })
-	filters?: any;
-
-	@ApiProperty({ type: PerformanceMetadataDto })
-	metadata: PerformanceMetadataDto;
-}
-
-// ===================================================================
 // DAILY SALES PERFORMANCE
 // ===================================================================
 
@@ -356,5 +338,41 @@ export class SalesPerStoreDto {
 
 	@ApiProperty({ description: 'Gross profit percentage' })
 	grossProfitPercentage: number;
+}
+
+// ===================================================================
+// MAIN DASHBOARD RESPONSE
+// ===================================================================
+
+export class PerformanceDashboardDataDto {
+	@ApiProperty({ type: PerformanceSummaryDto })
+	summary: PerformanceSummaryDto;
+
+	@ApiProperty({ type: PerformanceChartsDto })
+	charts: PerformanceChartsDto;
+
+	@ApiProperty({ 
+		type: [DailySalesPerformanceDto],
+		description: 'Daily sales performance table data'
+	})
+	dailySalesPerformance: DailySalesPerformanceDto[];
+
+	@ApiProperty({ 
+		type: [BranchCategoryPerformanceDto],
+		description: 'Branch × Category performance matrix table data'
+	})
+	branchCategoryPerformance: BranchCategoryPerformanceDto[];
+
+	@ApiProperty({ 
+		type: [SalesPerStoreDto],
+		description: 'Sales per store table data'
+	})
+	salesPerStore: SalesPerStoreDto[];
+
+	@ApiProperty({ description: 'Applied filters', required: false })
+	filters?: any;
+
+	@ApiProperty({ type: PerformanceMetadataDto })
+	metadata: PerformanceMetadataDto;
 }
 

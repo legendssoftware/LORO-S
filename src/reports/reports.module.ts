@@ -55,11 +55,13 @@ import { XPTransaction } from '../rewards/entities/xp-transaction.entity';
 import { Tracking } from '../tracking/entities/tracking.entity';
 import { GoogleMapsService } from '../lib/services/google-maps.service';
 import { TrackingService } from '../tracking/tracking.service';
+import { ErpModule } from '../erp/erp.module';
 
 @Module({
 	imports: [
 		LicensingModule,
 		ConfigModule,
+		ErpModule,
 		forwardRef(() => TrackingModule),
 		CacheModule.registerAsync({
 			imports: [ConfigModule],

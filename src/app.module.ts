@@ -103,6 +103,9 @@ import { IotModule } from './iot/iot.module';
 import { BulkEmailModule } from './bulk-email/bulk-email.module';
 import { Device, DeviceRecords } from './iot/entities/iot.entity';
 import { SalesTipsModule } from './sales-tips/sales-tips.module';
+import { ErpModule } from './erp/erp.module';
+import { TblSalesHeader } from './erp/entities/tblsalesheader.entity';
+import { TblSalesLines } from './erp/entities/tblsaleslines.entity';
 
 
 @Module({
@@ -116,6 +119,7 @@ import { SalesTipsModule } from './sales-tips/sales-tips.module';
 			isGlobal: true,
 		}),
 		EventEmitterModule.forRoot(),
+		// Main application database connection
 		TypeOrmModule.forRootAsync({
 			imports: [ConfigModule],
 			useFactory: (configService: ConfigService) => ({
@@ -215,6 +219,41 @@ import { SalesTipsModule } from './sales-tips/sales-tips.module';
 			}),
 			inject: [ConfigService],
 		}),
+		// ERP database connection (second database)
+		TypeOrmModule.forRootAsync({
+			name: 'erp', // Named connection for ERP database
+			imports: [ConfigModule],
+			useFactory: (configService: ConfigService) => ({
+				type: 'mysql',
+				host: configService.get<string>('ERP_DATABASE_HOST'),
+				port: parseInt(configService.get<string>('ERP_DATABASE_PORT'), 10) || 3306,
+				username: configService.get<string>('ERP_DATABASE_USER'),
+				password: configService.get<string>('ERP_DATABASE_PASSWORD'),
+				database: configService.get<string>('ERP_DATABASE_NAME'),
+				entities: [TblSalesHeader, TblSalesLines],
+				synchronize: false, // CRITICAL: Never sync with ERP database
+				logging: false,
+				extra: {
+					connectionLimit: parseInt(configService.get<string>('DB_CONNECTION_LIMIT') || '20', 10),
+					dateStrings: false,
+					ssl: configService.get<string>('NODE_ENV') === 'production' ? { rejectUnauthorized: false } : false,
+					supportBigNumbers: true,
+					bigNumberStrings: false,
+					charset: 'utf8mb4',
+					timezone: 'Z',
+					multipleStatements: false,
+					typeCast: true,
+					keepAliveInitialDelay: 0,
+					enableKeepAlive: true,
+					idleTimeout: parseInt(configService.get<string>('DB_IDLE_TIMEOUT') || '300000', 10),
+					queueLimit: 0,
+				},
+				retryAttempts: 10,
+				retryDelay: 1000,
+				autoLoadEntities: false,
+			}),
+			inject: [ConfigService],
+		}),
 		AssetsModule,
 		AttendanceModule,
 		AuthModule,
@@ -252,6 +291,7 @@ import { SalesTipsModule } from './sales-tips/sales-tips.module';
 		IotModule,
 		BulkEmailModule,
 		SalesTipsModule,
+		ErpModule,
 	],
 	controllers: [],
 	providers: [

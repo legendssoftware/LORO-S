@@ -30,6 +30,7 @@ import { QuotationReportGenerator } from './generators/quotation-report.generato
 import { UserDailyReportGenerator } from './generators/user-daily-report.generator';
 import { OrgActivityReportGenerator } from './generators/org-activity-report.generator';
 import { MapDataReportGenerator } from './generators/map-data-report.generator';
+import { PerformanceDashboardGenerator } from './generators/performance-dashboard.generator';
 import { CommunicationService } from '../communication/communication.service';
 import { OrganizationHoursService } from '../attendance/services/organization.hours.service';
 import { AttendanceService } from '../attendance/attendance.service';
@@ -112,6 +113,7 @@ export class ReportsService implements OnModuleInit {
 		private readonly organizationHoursService: OrganizationHoursService,
 		@Inject(forwardRef(() => AttendanceService))
 		private readonly attendanceService: AttendanceService,
+		private readonly performanceDashboardGenerator: PerformanceDashboardGenerator,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 300;
 		this.logger.log(`Reports service initialized with cache TTL: ${this.CACHE_TTL}s`);
@@ -1965,13 +1967,11 @@ export class ReportsService implements OnModuleInit {
 			// Get organization timezone
 			const timezone = await this.getOrganizationTimezone(params.organisationId);
 
-			// Convert DTO params to filters format
-			const filters = this.convertParamsToFilters(params);
+		// Convert DTO params to filters format
+		const filters = this.convertParamsToFilters(params);
 
-			// Generate dashboard data using the generator
-			const PerformanceDashboardGenerator = require('./generators/performance-dashboard.generator').PerformanceDashboardGenerator;
-			const generator = new PerformanceDashboardGenerator();
-			const dashboardData = await generator.generate(filters);
+		// Generate dashboard data using the injected generator
+		const dashboardData = await this.performanceDashboardGenerator.generate(filters);
 
 			// Add timezone to metadata
 			dashboardData.metadata.organizationTimezone = timezone;
