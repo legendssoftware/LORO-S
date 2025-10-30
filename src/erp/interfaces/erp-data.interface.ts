@@ -31,7 +31,10 @@ export interface PerformanceData {
 	id: string;
 	date: string;
 	productId: string;
+	productName?: string; // Product description from ERP
+	category?: string; // Category name from ERP
 	branchId: string;
+	branchName?: string; // Branch/Store name
 	salesPersonId: string;
 	quantity: number;
 	revenue: number;

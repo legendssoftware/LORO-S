@@ -19,97 +19,42 @@ import {
 	ErpQueryFilters, 
 	SalesTransaction as ErpSalesTransaction 
 } from '../../erp/interfaces/erp-data.interface';
-import { getCategoryName } from '../../erp/config/category-mapping.config';
 
 /**
  * ========================================================================
  * PERFORMANCE DASHBOARD GENERATOR
  * ========================================================================
  * 
- * Generates comprehensive performance dashboard data with filtering and aggregation.
- * 
- * PHASE 1: Uses server-side mock data generation (matching frontend structure)
- * PHASE 2: Will integrate with real database queries (Quotations, Orders, etc.)
+ * Generates comprehensive performance dashboard data using ERP database.
  * 
  * Features:
- * - Mock data generation with realistic patterns
- * - Multi-dimensional filtering (date, location, branch, product, price, salesperson)
+ * - ERP database integration for real-time data
+ * - Date range filtering
  * - Summary calculations (revenue, targets, performance rates)
  * - Chart data generation (line, bar, pie, dual-axis)
  * - Daily sales performance tracking
  * - Branch × Category performance matrix
+ * - Sales per store tracking
  * 
  * ========================================================================
  */
 
-// ===================================================================
-// MOCK DATA INTERFACES (Phase 1)
-// ===================================================================
-
-interface Location {
-	id: string;
-	county: string;
-	province: string;
-	city: string;
-	suburb: string;
-}
-
-interface ProductCategory {
-	id: string;
-	name: string;
-	description: string;
-}
-
-interface Product {
-	id: string;
-	name: string;
-	category: string;
-	categoryId: string;
-	price: number;
-	costPrice: number;
-}
-
-interface Branch {
-	id: string;
-	name: string;
-	locationId: string;
-}
-
-interface SalesPerson {
-	id: string;
-	name: string;
-	branchId: string;
-	role: string;
-	employeeNumber: string;
-	avatar?: string;
-}
-
+/**
+ * Performance data interface (derived from ERP data)
+ */
 interface PerformanceData {
 	id: string;
 	date: string;
 	productId: string;
+	productName?: string; // Product description from ERP
+	category?: string; // Category name from ERP
 	branchId: string;
+	branchName?: string; // Branch/Store name
 	salesPersonId: string;
 	quantity: number;
 	revenue: number;
 	target: number;
 	actualSales: number;
-}
-
-interface SalesTransaction {
-	id: string;
-	date: string;
-	branchId: string;
-	categoryId: string;
-	productId: string;
-	quantity: number;
-	salesPrice: number;
-	costPrice: number;
-	revenue: number;
-	cost: number;
-	grossProfit: number;
-	grossProfitPercentage: number;
-	clientId: string;
 }
 
 @Injectable()
@@ -123,35 +68,25 @@ export class PerformanceDashboardGenerator {
 		this.logger.log('PerformanceDashboardGenerator initialized with ERP services');
 	}
 
-	// Cache for master data structures (minimal - for filtering/lookup only)
-	private mockDataCache: {
-		locations?: Location[];
-		productCategories?: ProductCategory[];
-		products?: Product[];
-		branches?: Branch[];
-		salesPeople?: SalesPerson[];
-	} = {};
 
 	/**
 	 * Generate complete performance dashboard data (includes charts + tables)
 	 */
 	async generate(params: PerformanceFiltersDto): Promise<PerformanceDashboardDataDto> {
 		this.logger.log(`Generating performance dashboard for org ${params.organisationId}`);
+		this.logger.log(`Date range: ${params.startDate} to ${params.endDate}`);
 
 		try {
-			// Get or generate mock data (Phase 1)
+			// Get ERP data
 			const rawData = await this.getPerformanceData(params);
 			
-			// Filter data based on parameters
-			const filteredData = this.filterData(rawData, params);
-
-			this.logger.debug(`Filtered ${filteredData.length} records from ${rawData.length} total`);
+			this.logger.log(`Retrieved ${rawData.length} performance records from ERP`);
 
 			// Calculate summary metrics
-			const summary = this.calculateSummary(filteredData);
+			const summary = this.calculateSummary(rawData);
 
 			// Generate all chart data
-			const charts = this.generateCharts(filteredData, params);
+			const charts = this.generateCharts(rawData, params);
 
 			// Generate table data (parallel execution for performance)
 			this.logger.log('Generating table data in parallel...');
@@ -160,7 +95,16 @@ export class PerformanceDashboardGenerator {
 				this.generateBranchCategoryPerformance(params),
 				this.generateSalesPerStore(params),
 			]);
-			this.logger.log(`Table data generated: ${dailySalesPerformance.length} daily records, ${branchCategoryPerformance.length} branch-category records, ${salesPerStore.length} store records`);
+			
+			// Calculate total transactions across all days
+			const totalTransactions = dailySalesPerformance.reduce((sum, day) => sum + day.basketCount, 0);
+			
+			this.logger.log(`✅ Dashboard generated successfully:`);
+			this.logger.log(`   - Total transactions: ${totalTransactions}`);
+			this.logger.log(`   - Total records: ${rawData.length}`);
+			this.logger.log(`   - Daily records: ${dailySalesPerformance.length}`);
+			this.logger.log(`   - Branch-category records: ${branchCategoryPerformance.length}`);
+			this.logger.log(`   - Store records: ${salesPerStore.length}`);
 
 			return {
 				summary,
@@ -172,7 +116,7 @@ export class PerformanceDashboardGenerator {
 				metadata: {
 					lastUpdated: new Date().toISOString(),
 					dataQuality: 'excellent',
-					recordCount: filteredData.length,
+					recordCount: rawData.length,
 					organizationTimezone: 'Africa/Johannesburg', // TODO: Get from organization settings
 				},
 			};
@@ -189,9 +133,7 @@ export class PerformanceDashboardGenerator {
 		this.logger.log(`Generating daily sales performance for org ${params.organisationId}`);
 
 		const transactions = await this.getSalesTransactions(params);
-		const filteredTransactions = this.filterSalesTransactions(transactions, params);
-
-		return this.calculateDailySalesPerformance(filteredTransactions);
+		return this.calculateDailySalesPerformance(transactions);
 	}
 
 	/**
@@ -201,9 +143,7 @@ export class PerformanceDashboardGenerator {
 		this.logger.log(`Generating branch-category performance for org ${params.organisationId}`);
 
 		const transactions = await this.getSalesTransactions(params);
-		const filteredTransactions = this.filterSalesTransactions(transactions, params);
-
-		return this.calculateBranchCategoryPerformance(filteredTransactions);
+		return this.calculateBranchCategoryPerformance(transactions);
 	}
 
 	/**
@@ -213,9 +153,7 @@ export class PerformanceDashboardGenerator {
 		this.logger.log(`Generating sales per store for org ${params.organisationId}`);
 
 		const transactions = await this.getSalesTransactions(params);
-		const filteredTransactions = this.filterSalesTransactions(transactions, params);
-
-		return this.calculateSalesPerStore(filteredTransactions);
+		return this.calculateSalesPerStore(transactions);
 	}
 
 	// ===================================================================
@@ -227,12 +165,10 @@ export class PerformanceDashboardGenerator {
 	 */
 	private async getPerformanceData(params: PerformanceFiltersDto): Promise<PerformanceData[]> {
 		try {
-			// Build ERP query filters
+			// Build ERP query filters (only date range)
 			const filters: ErpQueryFilters = {
 				startDate: params.startDate || this.getDefaultStartDate(),
 				endDate: params.endDate || this.getDefaultEndDate(),
-				storeCode: params.branchIds && params.branchIds.length > 0 ? params.branchIds[0] : undefined,
-				category: params.category,
 			};
 
 			this.logger.log(`Fetching ERP performance data for ${filters.startDate} to ${filters.endDate}`);
@@ -260,12 +196,10 @@ export class PerformanceDashboardGenerator {
 	 */
 	private async getSalesTransactions(params: PerformanceFiltersDto): Promise<ErpSalesTransaction[]> {
 		try {
-			// Build ERP query filters
+			// Build ERP query filters (only date range)
 			const filters: ErpQueryFilters = {
 				startDate: params.startDate || this.getDefaultStartDate(),
 				endDate: params.endDate || this.getDefaultEndDate(),
-				storeCode: params.branchIds && params.branchIds.length > 0 ? params.branchIds[0] : undefined,
-				category: params.category,
 			};
 
 			this.logger.log(`Fetching ERP sales transactions for ${filters.startDate} to ${filters.endDate}`);
@@ -291,149 +225,7 @@ export class PerformanceDashboardGenerator {
 		}
 	}
 
-	/**
-	 * Get master data (branches, products, locations, etc.)
-	 * Returns empty structures if not initialized
-	 */
-	getMasterData() {
-		if (!this.mockDataCache.locations) {
-			this.initializeMasterData();
-		}
 
-		return {
-			locations: this.mockDataCache.locations || [],
-			productCategories: this.mockDataCache.productCategories || [],
-			products: this.mockDataCache.products || [],
-			branches: this.mockDataCache.branches || [],
-			salesPeople: this.mockDataCache.salesPeople || [],
-		};
-	}
-
-	// ===================================================================
-	// FILTERING LOGIC
-	// ===================================================================
-
-	/**
-	 * Filter performance data based on parameters
-	 */
-	private filterData(data: PerformanceData[], params: PerformanceFiltersDto): PerformanceData[] {
-		let filtered = [...data];
-
-		// Date range filter
-		if (params.startDate && params.endDate) {
-			filtered = filtered.filter(
-				(item) => item.date >= params.startDate && item.date <= params.endDate,
-			);
-		}
-
-		// Branch filter
-		if (params.branchIds && params.branchIds.length > 0) {
-			filtered = filtered.filter((item) => params.branchIds.includes(item.branchId));
-		}
-
-		// Location filter (hierarchical)
-		if (params.county || params.province || params.city || params.suburb) {
-			const masterData = this.getMasterData();
-			filtered = filtered.filter((item) => {
-				const branch = masterData.branches.find((b) => b.id === item.branchId);
-				if (!branch) return false;
-
-				const location = masterData.locations.find((l) => l.id === branch.locationId);
-				if (!location) return false;
-
-				if (params.county && location.county !== params.county) return false;
-				if (params.province && location.province !== params.province) return false;
-				if (params.city && location.city !== params.city) return false;
-				if (params.suburb && location.suburb !== params.suburb) return false;
-
-				return true;
-			});
-		}
-
-		// Product/Category filter
-		if (params.category || (params.productIds && params.productIds.length > 0)) {
-			const masterData = this.getMasterData();
-			filtered = filtered.filter((item) => {
-				const product = masterData.products.find((p) => p.id === item.productId);
-				if (!product) return false;
-
-				if (params.category && product.category !== params.category) return false;
-				if (params.productIds && params.productIds.length > 0 && !params.productIds.includes(product.id)) {
-					return false;
-				}
-
-				return true;
-			});
-		}
-
-		// Price range filter
-		if (params.minPrice || params.maxPrice) {
-			const masterData = this.getMasterData();
-			filtered = filtered.filter((item) => {
-				const product = masterData.products.find((p) => p.id === item.productId);
-				if (!product) return false;
-
-				if (params.minPrice && product.price < params.minPrice) return false;
-				if (params.maxPrice && product.price > params.maxPrice) return false;
-
-				return true;
-			});
-		}
-
-		// Sales person filter
-		if (params.salesPersonIds && params.salesPersonIds.length > 0) {
-			filtered = filtered.filter((item) => params.salesPersonIds.includes(item.salesPersonId));
-		}
-
-		return filtered;
-	}
-
-	/**
-	 * Filter sales transactions
-	 */
-	private filterSalesTransactions(
-		data: ErpSalesTransaction[],
-		params: PerformanceFiltersDto,
-	): ErpSalesTransaction[] {
-		let filtered = [...data];
-
-		// Date range filter
-		if (params.startDate && params.endDate) {
-			filtered = filtered.filter(
-				(item) => item.date >= params.startDate && item.date <= params.endDate,
-			);
-		}
-
-		// Branch filter
-		if (params.branchIds && params.branchIds.length > 0) {
-			filtered = filtered.filter((item) => params.branchIds.includes(item.branchId));
-		}
-
-		// Category filter
-		if (params.category) {
-			const masterData = this.getMasterData();
-			const category = masterData.productCategories.find((c) => c.name === params.category);
-			if (category) {
-				filtered = filtered.filter((item) => item.categoryId === category.id);
-			}
-		}
-
-		// Product filter
-		if (params.productIds && params.productIds.length > 0) {
-			filtered = filtered.filter((item) => params.productIds.includes(item.productId));
-		}
-
-		// Price range filter
-		if (params.minPrice || params.maxPrice) {
-			filtered = filtered.filter((item) => {
-				if (params.minPrice && item.salesPrice < params.minPrice) return false;
-				if (params.maxPrice && item.salesPrice > params.maxPrice) return false;
-				return true;
-			});
-		}
-
-		return filtered;
-	}
 
 	// ===================================================================
 	// SUMMARY CALCULATIONS
@@ -450,22 +242,8 @@ export class PerformanceDashboardGenerator {
 		const averageOrderValue = transactionCount > 0 ? totalRevenue / transactionCount : 0;
 
 		// Calculate average items per basket
-		const dateAggregated = data.reduce((acc, item) => {
-			if (!acc[item.date]) {
-				acc[item.date] = { totalItems: 0, transactionCount: 0 };
-			}
-			acc[item.date].totalItems += item.quantity;
-			acc[item.date].transactionCount += 1;
-			return acc;
-		}, {} as Record<string, { totalItems: number; transactionCount: number }>);
-
-		const itemsPerBasketByDate = Object.values(dateAggregated).map(
-			(d) => d.totalItems / d.transactionCount,
-		);
-		const averageItemsPerBasket =
-			itemsPerBasketByDate.length > 0
-				? itemsPerBasketByDate.reduce((sum, val) => sum + val, 0) / itemsPerBasketByDate.length
-				: 0;
+		const totalQuantity = data.reduce((sum, item) => sum + item.quantity, 0);
+		const averageItemsPerBasket = transactionCount > 0 ? totalQuantity / transactionCount : 0;
 
 		return {
 			totalRevenue,
@@ -583,22 +361,22 @@ export class PerformanceDashboardGenerator {
 	 * Generate sales by category chart
 	 */
 	private generateSalesByCategoryChart(data: PerformanceData[]) {
-		const masterData = this.getMasterData();
+		// Aggregate revenue by category from real ERP data
 		const aggregated = data.reduce((acc, item) => {
-			const product = masterData.products.find((p) => p.id === item.productId);
-			if (product) {
-				if (!acc[product.category]) {
-					acc[product.category] = 0;
-				}
-				acc[product.category] += item.revenue;
+			const category = item.category || 'Uncategorized';
+			if (!acc[category]) {
+				acc[category] = 0;
 			}
+			acc[category] += item.revenue;
 			return acc;
 		}, {} as Record<string, number>);
 
-		const chartData: PieChartDataPoint[] = Object.entries(aggregated).map(([category, revenue]) => ({
-			label: category,
-			value: revenue,
-		}));
+		const chartData: PieChartDataPoint[] = Object.entries(aggregated)
+			.map(([category, revenue]) => ({
+				label: category,
+				value: revenue,
+			}))
+			.sort((a, b) => b.value - a.value); // Sort by revenue descending
 
 		const total = chartData.reduce((sum, item) => sum + item.value, 0);
 
@@ -609,44 +387,26 @@ export class PerformanceDashboardGenerator {
 	 * Generate branch performance chart
 	 */
 	private generateBranchPerformanceChart(data: PerformanceData[]) {
-		const masterData = this.getMasterData();
+		// Aggregate by branch from real ERP data
 		const aggregated = data.reduce((acc, item) => {
-			const branch = masterData.branches.find((b) => b.id === item.branchId);
-			if (branch) {
-				if (!acc[branch.name]) {
-					acc[branch.name] = { revenue: 0, target: 0 };
-				}
-				acc[branch.name].revenue += item.revenue;
-				acc[branch.name].target += item.target;
+			const branchKey = item.branchName || item.branchId;
+			if (!acc[branchKey]) {
+				acc[branchKey] = { revenue: 0, target: 0 };
 			}
+			acc[branchKey].revenue += item.revenue;
+			acc[branchKey].target += item.target;
 			return acc;
 		}, {} as Record<string, { revenue: number; target: number }>);
 
 		const sortedBranches = Object.entries(aggregated)
 			.map(([name, values]) => ({
 				label: this.getBranchAbbreviation(name),
+				fullName: name,
 				value: values.revenue,
 				target: values.target,
 			}))
 			.sort((a, b) => b.value - a.value)
-			.slice(0, 10);
-
-		// Calculate targets
-		if (sortedBranches.length > 0) {
-			const maxTarget = 2000000;
-			const minTarget = 350000;
-
-			sortedBranches.forEach((branch, index) => {
-				if (index === 0) {
-					branch.target = maxTarget;
-				} else if (index === sortedBranches.length - 1) {
-					branch.target = minTarget;
-				} else {
-					const ratio = index / (sortedBranches.length - 1);
-					branch.target = maxTarget - (maxTarget - minTarget) * ratio;
-				}
-			});
-		}
+			.slice(0, 10); // Top 10 branches
 
 		const averageTarget =
 			sortedBranches.length > 0
@@ -660,25 +420,28 @@ export class PerformanceDashboardGenerator {
 	 * Generate top products chart
 	 */
 	private generateTopProductsChart(data: PerformanceData[]) {
-		const masterData = this.getMasterData();
+		// Aggregate revenue by product from real ERP data
 		const aggregated = data.reduce((acc, item) => {
-			const product = masterData.products.find((p) => p.id === item.productId);
-			if (product) {
-				if (!acc[product.id]) {
-					acc[product.id] = { code: product.id, revenue: 0 };
-				}
-				acc[product.id].revenue += item.revenue;
+			const productKey = item.productId;
+			if (!acc[productKey]) {
+				acc[productKey] = {
+					id: item.productId,
+					name: item.productName || item.productId,
+					revenue: 0,
+				};
 			}
+			acc[productKey].revenue += item.revenue;
 			return acc;
-		}, {} as Record<string, { code: string; revenue: number }>);
+		}, {} as Record<string, { id: string; name: string; revenue: number }>);
 
 		const chartData: BarChartDataPoint[] = Object.entries(aggregated)
-			.map(([id, values]) => ({
-				label: values.code,
-				value: values.revenue,
+			.map(([_, product]) => ({
+				label: product.id, // Use product code for label
+				fullName: product.name, // Full name for tooltip
+				value: product.revenue,
 			}))
 			.sort((a, b) => b.value - a.value)
-			.slice(0, 10);
+			.slice(0, 10); // Top 10 products
 
 		const total = chartData.reduce((sum, item) => sum + item.value, 0);
 
@@ -729,24 +492,23 @@ export class PerformanceDashboardGenerator {
 
 	/**
 	 * Generate sales by salesperson chart
+	 * Note: Currently returns empty data as salesperson info is not in ERP data
 	 */
 	private generateSalesBySalespersonChart(data: PerformanceData[]) {
-		const masterData = this.getMasterData();
+		// Aggregate by salesPersonId from ERP data
 		const aggregated = data.reduce((acc, item) => {
-			const salesPerson = masterData.salesPeople.find((s) => s.id === item.salesPersonId);
-			if (salesPerson) {
-				if (!acc[salesPerson.name]) {
-					acc[salesPerson.name] = { transactionCount: 0, revenue: 0 };
-				}
-				acc[salesPerson.name].transactionCount += 1;
-				acc[salesPerson.name].revenue += item.revenue;
+			const salesPersonKey = item.salesPersonId || 'Unknown';
+			if (!acc[salesPersonKey]) {
+				acc[salesPersonKey] = { transactionCount: 0, revenue: 0 };
 			}
+			acc[salesPersonKey].transactionCount += 1;
+			acc[salesPersonKey].revenue += item.revenue;
 			return acc;
 		}, {} as Record<string, { transactionCount: number; revenue: number }>);
 
 		const chartData: DualAxisChartDataPoint[] = Object.entries(aggregated)
-			.map(([name, values]) => ({
-				label: this.getSalesPersonAbbreviation(name),
+			.map(([id, values]) => ({
+				label: this.getSalesPersonAbbreviation(id),
 				value: values.transactionCount,
 				secondaryValue: values.revenue,
 			}))
@@ -824,7 +586,7 @@ export class PerformanceDashboardGenerator {
 	 * Calculate daily sales performance
 	 */
 	private calculateDailySalesPerformance(transactions: ErpSalesTransaction[]): DailySalesPerformanceDto[] {
-		const dailyData = new Map<string, SalesTransaction[]>();
+		const dailyData = new Map<string, ErpSalesTransaction[]>();
 		
 		transactions.forEach((t) => {
 			if (!dailyData.has(t.date)) {
@@ -867,49 +629,56 @@ export class PerformanceDashboardGenerator {
 	 * Calculate branch × category performance
 	 */
 	private calculateBranchCategoryPerformance(transactions: ErpSalesTransaction[]): BranchCategoryPerformanceDto[] {
-		const masterData = this.getMasterData();
-		const branchData = new Map<string, Map<string, SalesTransaction[]>>();
+		if (transactions.length === 0) return [];
+
+		// Group transactions by branch and category (using actual ERP data)
+		const branchData = new Map<string, {
+			branchName: string;
+			categories: Map<string, ErpSalesTransaction[]>;
+		}>();
 
 		transactions.forEach((t) => {
-			if (!branchData.has(t.branchId)) {
-				branchData.set(t.branchId, new Map());
+			// Get branch name from transaction (from ERP store field)
+			const branchKey = t.branchId;
+			const categoryKey = t.categoryId || 'Uncategorized';
+
+			if (!branchData.has(branchKey)) {
+				branchData.set(branchKey, {
+					branchName: branchKey, // Use store code as name
+					categories: new Map(),
+				});
 			}
-			const categoryMap = branchData.get(t.branchId);
-			if (!categoryMap.has(t.categoryId)) {
-				categoryMap.set(t.categoryId, []);
+
+			const branchInfo = branchData.get(branchKey)!;
+			if (!branchInfo.categories.has(categoryKey)) {
+				branchInfo.categories.set(categoryKey, []);
 			}
-			categoryMap.get(t.categoryId).push(t);
+			branchInfo.categories.get(categoryKey)!.push(t);
 		});
 
 		const performance: BranchCategoryPerformanceDto[] = [];
 
-		branchData.forEach((categoryMap, branchId) => {
-			const branch = masterData.branches.find((b) => b.id === branchId);
-			if (!branch) return;
-
+		branchData.forEach((branchInfo, branchId) => {
 			const categories: Record<string, CategoryPerformanceDto> = {};
 			let totalBasketCount = 0;
 			let totalRevenue = 0;
 			let totalGP = 0;
 			const totalUniqueClients = new Set<string>();
 
-			categoryMap.forEach((categoryTransactions, categoryId) => {
-				const category = masterData.productCategories.find((c) => c.id === categoryId);
-				if (!category) return;
-
+			branchInfo.categories.forEach((categoryTransactions, categoryKey) => {
 				const uniqueClients = new Set(categoryTransactions.map((t) => t.clientId));
 				const revenue = categoryTransactions.reduce((sum, t) => sum + t.revenue, 0);
 				const gp = categoryTransactions.reduce((sum, t) => sum + t.grossProfit, 0);
 				const basketCount = categoryTransactions.length;
 
-				categories[categoryId] = {
-					categoryName: category.name,
+				categories[categoryKey] = {
+					categoryName: categoryKey,
 					basketCount,
-					basketValue: revenue / basketCount,
+					basketValue: basketCount > 0 ? revenue / basketCount : 0,
 					clientsQty: uniqueClients.size,
 					salesR: revenue,
 					gpR: gp,
-					gpPercentage: (gp / revenue) * 100,
+					gpPercentage: revenue > 0 ? (gp / revenue) * 100 : 0,
 				};
 
 				totalBasketCount += basketCount;
@@ -920,21 +689,21 @@ export class PerformanceDashboardGenerator {
 
 			performance.push({
 				branchId,
-				branchName: branch.name,
+				branchName: branchInfo.branchName,
 				categories,
 				total: {
 					categoryName: 'Total',
 					basketCount: totalBasketCount,
-					basketValue: totalRevenue / totalBasketCount,
+					basketValue: totalBasketCount > 0 ? totalRevenue / totalBasketCount : 0,
 					clientsQty: totalUniqueClients.size,
 					salesR: totalRevenue,
 					gpR: totalGP,
-					gpPercentage: (totalGP / totalRevenue) * 100,
+					gpPercentage: totalRevenue > 0 ? (totalGP / totalRevenue) * 100 : 0,
 				},
 			});
 		});
 
-		return performance.sort((a, b) => a.branchName.localeCompare(b.branchName));
+		return performance.sort((a, b) => b.total.salesR - a.total.salesR); // Sort by revenue
 	}
 
 	// ===================================================================
@@ -945,37 +714,38 @@ export class PerformanceDashboardGenerator {
 	 * Calculate sales per store
 	 */
 	private calculateSalesPerStore(transactions: ErpSalesTransaction[]): SalesPerStoreDto[] {
-		const masterData = this.getMasterData();
-		const storeData = new Map<string, SalesTransaction[]>();
+		if (transactions.length === 0) return [];
+
+		// Group transactions by store (using actual ERP data)
+		const storeData = new Map<string, ErpSalesTransaction[]>();
 
 		transactions.forEach((t) => {
-			if (!storeData.has(t.branchId)) {
-				storeData.set(t.branchId, []);
+			const storeKey = t.branchId;
+			if (!storeData.has(storeKey)) {
+				storeData.set(storeKey, []);
 			}
-			storeData.get(t.branchId).push(t);
+			storeData.get(storeKey)!.push(t);
 		});
 
 		const salesPerStore: SalesPerStoreDto[] = [];
 
 		storeData.forEach((storeTransactions, branchId) => {
-			const branch = masterData.branches.find((b) => b.id === branchId);
-			if (!branch) return;
-
 			const uniqueClients = new Set(storeTransactions.map((t) => t.clientId));
 			const totalRevenue = storeTransactions.reduce((sum, t) => sum + t.revenue, 0);
 			const totalGP = storeTransactions.reduce((sum, t) => sum + t.grossProfit, 0);
 			const totalItemsSold = storeTransactions.reduce((sum, t) => sum + t.quantity, 0);
+			const transactionCount = storeTransactions.length;
 
 			salesPerStore.push({
 				storeId: branchId,
-				storeName: branch.name,
+				storeName: branchId, // Use store code as name
 				totalRevenue,
-				transactionCount: storeTransactions.length,
-				averageTransactionValue: totalRevenue / storeTransactions.length,
+				transactionCount,
+				averageTransactionValue: transactionCount > 0 ? totalRevenue / transactionCount : 0,
 				totalItemsSold,
 				uniqueClients: uniqueClients.size,
 				grossProfit: totalGP,
-				grossProfitPercentage: (totalGP / totalRevenue) * 100,
+				grossProfitPercentage: totalRevenue > 0 ? (totalGP / totalRevenue) * 100 : 0,
 			});
 		});
 
@@ -1062,53 +832,6 @@ export class PerformanceDashboardGenerator {
 		}
 	}
 
-	// ===================================================================
-	// MOCK DATA GENERATION (Phase 1)
-	// To be replaced with real database queries in Phase 2
-	// ===================================================================
-
-	/**
-	 * Initialize master data (locations, products, branches, salespeople)
-	 * Now returns empty structures - all data comes from ERP
-	 */
-	private initializeMasterData() {
-		this.logger.log('Initializing empty master data structures...');
-		
-		// Initialize empty arrays - all real data comes from ERP
-		this.mockDataCache.locations = [];
-		this.mockDataCache.productCategories = [];
-		this.mockDataCache.products = [];
-		this.mockDataCache.branches = [];
-		this.mockDataCache.salesPeople = [];
-		
-		this.logger.log('Master data structures initialized (empty - all data from ERP)');
-	}
-
-	/**
-	 * Generate mock performance data
-	 */
-	private generateMockPerformanceData(): PerformanceData[] {
-		this.logger.log('Generating mock performance data (365 days)...');
-		
-		const mockData = require('./performance-mock-data.generator');
-		const data = mockData.generatePerformanceData(365);
-		
-		this.logger.log(`Generated ${data.length} performance records`);
-		return data;
-	}
-
-	/**
-	 * Generate mock sales transactions
-	 */
-	private generateMockSalesTransactions(): ErpSalesTransaction[] {
-		this.logger.log('Generating mock sales transactions (90 days)...');
-		
-		const mockData = require('./performance-mock-data.generator');
-		const transactions = mockData.generateSalesTransactions(90);
-		
-		this.logger.log(`Generated ${transactions.length} sales transactions`);
-		return transactions;
-	}
 
 	/**
 	 * Get default start date (30 days ago)

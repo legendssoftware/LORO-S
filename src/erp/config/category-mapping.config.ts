@@ -178,3 +178,71 @@ export function getCategoryName(categoryId: string): string {
 	return categoryNames[categoryId] || 'Other';
 }
 
+/**
+ * Store Code to Branch Name Mapping
+ * Maps ERP store codes to human-readable branch names
+ */
+export const STORE_NAME_MAPPING: Record<string, string> = {
+	// South Africa
+	'001': 'Sandton',
+	'002': 'Rosebank',
+	'003': 'Centurion',
+	'004': 'Cape Town CBD',
+	'005': 'Umhlanga',
+	
+	// Botswana
+	'006': 'Gaborone Main',
+	'007': 'Riverwalk',
+	'008': 'Maun',
+	'009': 'Francistown',
+	
+	// Namibia
+	'010': 'Maerua',
+	'011': 'Grove Mall',
+	'012': 'Swakopmund',
+	'013': 'Oshakati',
+	
+	// Zimbabwe
+	'014': 'Avondale',
+	'015': 'Borrowdale',
+	'016': 'Bulawayo',
+	'017': 'Mutare',
+	
+	// Zambia
+	'018': 'Woodlands',
+	'019': 'Kabulonga',
+	'020': 'Kitwe',
+	'021': 'Ndola',
+	
+	// Malawi
+	'022': 'Chichiri',
+	'023': 'Limbe',
+	'024': 'Lilongwe Area 47',
+	'025': 'Lilongwe City',
+	
+	// Rwanda
+	'026': 'Kimihurura',
+	'027': 'Nyarutarama',
+	'028': 'Rwamagana',
+	'029': 'Huye',
+	
+	// Mozambique
+	'030': 'Sommerschield',
+	'031': 'Polana',
+	'032': 'Beira',
+	'033': 'Nampula',
+};
+
+/**
+ * Helper function to get branch name from ERP store code
+ */
+export function getBranchName(storeCode: string | null | undefined): string {
+	if (!storeCode) return 'Unknown Branch';
+	
+	// Normalize store code (remove leading zeros, pad to 3 digits)
+	const normalizedStore = storeCode.trim().padStart(3, '0');
+	
+	// Return the friendly name or the store code itself as fallback
+	return STORE_NAME_MAPPING[normalizedStore] || storeCode;
+}
+

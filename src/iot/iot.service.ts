@@ -1394,7 +1394,19 @@ export class IotService {
 		);
 
 		// Comprehensive validation first
-		await this.validateTimeEvent(timeEventDto);
+		try {
+			await this.validateTimeEvent(timeEventDto);
+		} catch (validationError) {
+			this.logger.warn(`⚠️ Time event validation failed: ${validationError.message}`, {
+				deviceID: timeEventDto.deviceID,
+				eventType: timeEventDto.eventType,
+				timestamp: timeEventDto.timestamp,
+			});
+			
+			return {
+				message: validationError.message || 'Time event validation failed',
+			};
+		}
 
 		// Start transaction for atomic operations
 		const queryRunner = this.dataSource.createQueryRunner();
@@ -1446,11 +1458,54 @@ export class IotService {
 			);
 
 			return {
-				message: process.env.SUCCESS_MESSAGE,
+				message: process.env.SUCCESS_MESSAGE || 'Time event processed successfully',
 			};
 		} catch (error) {
 			await queryRunner.rollbackTransaction();
 
+			// Handle NotFoundException for device not found
+			if (error instanceof NotFoundException) {
+				this.logger.warn(`⚠️ Device not found: ${error.message}`, {
+					deviceID: timeEventDto.deviceID,
+					eventType: timeEventDto.eventType,
+					timestamp: timeEventDto.timestamp,
+					duration: Date.now() - startTime,
+				});
+
+				return {
+					message: `Device with ID '${timeEventDto.deviceID}' not found. Please ensure the device is registered in the system.`,
+				};
+			}
+
+			// Handle BadRequestException for validation errors
+			if (error instanceof BadRequestException) {
+				this.logger.warn(`⚠️ Bad request: ${error.message}`, {
+					deviceID: timeEventDto.deviceID,
+					eventType: timeEventDto.eventType,
+					timestamp: timeEventDto.timestamp,
+					duration: Date.now() - startTime,
+				});
+
+				return {
+					message: error.message || 'Invalid request. Please check your input and try again.',
+				};
+			}
+
+			// Handle ConflictException for business rule violations
+			if (error instanceof ConflictException) {
+				this.logger.warn(`⚠️ Conflict detected: ${error.message}`, {
+					deviceID: timeEventDto.deviceID,
+					eventType: timeEventDto.eventType,
+					timestamp: timeEventDto.timestamp,
+					duration: Date.now() - startTime,
+				});
+
+				return {
+					message: error.message || 'Operation conflict detected. Please try again.',
+				};
+			}
+
+			// Log unexpected errors
 			this.logger.error(`❌ Failed to process time event: ${error.message}`, {
 				deviceID: timeEventDto.deviceID,
 				eventType: timeEventDto.eventType,
@@ -1460,15 +1515,9 @@ export class IotService {
 				stack: error.stack,
 			});
 
-			if (
-				error instanceof NotFoundException ||
-				error instanceof BadRequestException ||
-				error instanceof ConflictException
-			) {
-				throw error;
-			}
-
-			throw new BadRequestException('Failed to process time event due to system error');
+			return {
+				message: 'Failed to process time event due to system error. Please try again later.',
+			};
 		} finally {
 			await queryRunner.release();
 		}

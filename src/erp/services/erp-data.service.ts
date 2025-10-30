@@ -82,11 +82,32 @@ export class ErpDataService implements OnModuleInit {
 	}
 
 	/**
+	 * Build cache key with all filtering dimensions
+	 */
+	private buildCacheKey(
+		dataType: string,
+		filters: ErpQueryFilters,
+		docTypes?: string[]
+	): string {
+		return [
+			'erp',
+			'v2',  // Version for cache busting
+			dataType,
+			filters.startDate,
+			filters.endDate,
+			filters.storeCode || 'all',
+			filters.category || 'all',
+			docTypes ? docTypes.join('-') : 'all',
+		].join(':');
+	}
+
+	/**
 	 * Get sales headers by date range with optional filters
+	 * Only returns Tax Invoices (doc_type = 1) by default
 	 */
 	async getSalesHeadersByDateRange(filters: ErpQueryFilters): Promise<TblSalesHeader[]> {
 		const operationId = this.generateOperationId('GET_HEADERS');
-		const cacheKey = `erp:headers:${filters.startDate}:${filters.endDate}:${filters.storeCode || 'all'}`;
+		const cacheKey = this.buildCacheKey('headers', filters, ['1']);
 		
 		this.logger.log(`[${operationId}] Starting getSalesHeadersByDateRange operation`);
 		this.logger.log(`[${operationId}] Filters: ${JSON.stringify(filters)}`);
@@ -112,7 +133,9 @@ export class ErpDataService implements OnModuleInit {
 				.where('header.sale_date BETWEEN :startDate AND :endDate', {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
-				});
+				})
+				// ✅ CRITICAL: Only Tax Invoices (doc_type = 1)
+				.andWhere('header.doc_type = :docType', { docType: 1 });
 
 			if (filters.storeCode) {
 				this.logger.debug(`[${operationId}] Filtering by store: ${filters.storeCode}`);
@@ -142,21 +165,28 @@ export class ErpDataService implements OnModuleInit {
 	}
 
 	/**
-	 * Get sales lines by date range with optional filters
+	 * Get sales lines by date range with doc_type filtering
+	 * 
+	 * @param filters - Query filters
+	 * @param includeDocTypes - Document types to include (defaults to Tax Invoices only)
+	 * @returns Sales lines matching criteria
 	 */
-	async getSalesLinesByDateRange(filters: ErpQueryFilters): Promise<TblSalesLines[]> {
+	async getSalesLinesByDateRange(
+		filters: ErpQueryFilters,
+		includeDocTypes: string[] = ['1']  // Default: Tax Invoices only
+	): Promise<TblSalesLines[]> {
 		const operationId = this.generateOperationId('GET_LINES');
-		const cacheKey = `erp:lines:${filters.startDate}:${filters.endDate}:${filters.storeCode || 'all'}:${filters.category || 'all'}`;
+		const cacheKey = this.buildCacheKey('lines', filters, includeDocTypes);
 		
 		this.logger.log(`[${operationId}] Starting getSalesLinesByDateRange operation`);
 		this.logger.log(`[${operationId}] Filters: ${JSON.stringify(filters)}`);
+		this.logger.log(`[${operationId}] Doc Types: ${includeDocTypes.join(',')}`);
 		this.logger.log(`[${operationId}] Cache key: ${cacheKey}`);
 		
 		const startTime = Date.now();
 		
 		try {
 			// Check cache first
-			this.logger.debug(`[${operationId}] Checking cache...`);
 			const cached = await this.cacheManager.get<TblSalesLines[]>(cacheKey);
 			if (cached) {
 				const duration = Date.now() - startTime;
@@ -165,15 +195,17 @@ export class ErpDataService implements OnModuleInit {
 			}
 
 			this.logger.log(`[${operationId}] Cache MISS - Querying database...`);
-			this.logger.log(`[${operationId}] Date range: ${filters.startDate} to ${filters.endDate}`);
 			
 			const queryStart = Date.now();
 			const query = this.salesLinesRepo.createQueryBuilder('line')
 				.where('line.sale_date BETWEEN :startDate AND :endDate', {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
-				});
+				})
+				// ✅ CRITICAL: Filter by document type
+				.andWhere('line.doc_type IN (:...docTypes)', { docTypes: includeDocTypes });
 
+			// Apply additional filters
 			if (filters.storeCode) {
 				this.logger.debug(`[${operationId}] Filtering by store: ${filters.storeCode}`);
 				query.andWhere('line.store = :store', { store: filters.storeCode });
@@ -184,19 +216,19 @@ export class ErpDataService implements OnModuleInit {
 				query.andWhere('line.category = :category', { category: filters.category });
 			}
 
-		if (filters.docType) {
-			this.logger.debug(`[${operationId}] Filtering by doc type: ${filters.docType}`);
-			query.andWhere('line.doc_type = :docType', { docType: filters.docType });
-		}
+			// ✅ Data quality filters
+			query.andWhere('line.item_code IS NOT NULL');
+			query.andWhere('line.quantity != 0');
+			query.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' });
 
 			const results = await query.getMany();
 			const queryDuration = Date.now() - queryStart;
 			
 			this.logger.log(`[${operationId}] Database query completed in ${queryDuration}ms`);
 			this.logger.log(`[${operationId}] Retrieved ${results.length} sales lines`);
+			this.logger.log(`[${operationId}] Doc types included: ${includeDocTypes.join(', ')}`);
 			
 			// Cache results
-			this.logger.debug(`[${operationId}] Caching results with TTL: ${this.CACHE_TTL}s`);
 			await this.cacheManager.set(cacheKey, results, this.CACHE_TTL);
 			
 			const totalDuration = Date.now() - startTime;
@@ -212,11 +244,25 @@ export class ErpDataService implements OnModuleInit {
 	}
 
 	/**
+	 * Get credit notes (returns/refunds) by date range
+	 * 
+	 * @param filters - Query filters
+	 * @returns Credit note lines
+	 */
+	async getCreditNotesByDateRange(filters: ErpQueryFilters): Promise<TblSalesLines[]> {
+		const operationId = this.generateOperationId('GET_CREDIT_NOTES');
+		this.logger.log(`[${operationId}] Fetching credit notes for ${filters.startDate} to ${filters.endDate}`);
+		
+		// Use doc_type = '2' for credit notes
+		return this.getSalesLinesByDateRange(filters, ['2']);
+	}
+
+	/**
 	 * Get daily aggregations - optimized query
 	 */
 	async getDailyAggregations(filters: ErpQueryFilters): Promise<DailyAggregation[]> {
 		const operationId = this.generateOperationId('GET_DAILY_AGG');
-		const cacheKey = `erp:daily_agg:${filters.startDate}:${filters.endDate}:${filters.storeCode || 'all'}`;
+		const cacheKey = this.buildCacheKey('daily_agg', filters);
 		
 		this.logger.log(`[${operationId}] Starting getDailyAggregations operation`);
 		this.logger.log(`[${operationId}] Filters: ${JSON.stringify(filters)}`);
@@ -250,6 +296,12 @@ export class ErpDataService implements OnModuleInit {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
 				})
+				// ✅ CRITICAL: Only Tax Invoices for revenue calculations
+				.andWhere('line.doc_type = :docType', { docType: '1' })
+				// ✅ Data quality filters
+				.andWhere('line.item_code IS NOT NULL')
+				.andWhere('line.quantity != 0')
+				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' })
 				.groupBy('DATE(line.sale_date), line.store')
 				.orderBy('DATE(line.sale_date)', 'ASC');
 
@@ -284,7 +336,7 @@ export class ErpDataService implements OnModuleInit {
 	 */
 	async getBranchAggregations(filters: ErpQueryFilters): Promise<BranchAggregation[]> {
 		const operationId = this.generateOperationId('GET_BRANCH_AGG');
-		const cacheKey = `erp:branch_agg:${filters.startDate}:${filters.endDate}`;
+		const cacheKey = this.buildCacheKey('branch_agg', filters);
 		
 		this.logger.log(`[${operationId}] Starting getBranchAggregations operation`);
 		this.logger.log(`[${operationId}] Date range: ${filters.startDate} to ${filters.endDate}`);
@@ -317,6 +369,12 @@ export class ErpDataService implements OnModuleInit {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
 				})
+				// ✅ CRITICAL: Only Tax Invoices for revenue calculations
+				.andWhere('line.doc_type = :docType', { docType: '1' })
+				// ✅ Data quality filters
+				.andWhere('line.item_code IS NOT NULL')
+				.andWhere('line.quantity != 0')
+				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' })
 				.groupBy('line.store')
 				.orderBy('totalRevenue', 'DESC');
 
@@ -346,7 +404,7 @@ export class ErpDataService implements OnModuleInit {
 	 */
 	async getCategoryAggregations(filters: ErpQueryFilters): Promise<CategoryAggregation[]> {
 		const operationId = this.generateOperationId('GET_CATEGORY_AGG');
-		const cacheKey = `erp:category_agg:${filters.startDate}:${filters.endDate}:${filters.storeCode || 'all'}`;
+		const cacheKey = this.buildCacheKey('category_agg', filters);
 		
 		this.logger.log(`[${operationId}] Starting getCategoryAggregations operation`);
 		this.logger.log(`[${operationId}] Filters: ${JSON.stringify(filters)}`);
@@ -380,6 +438,12 @@ export class ErpDataService implements OnModuleInit {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
 				})
+				// ✅ CRITICAL: Only Tax Invoices for revenue calculations
+				.andWhere('line.doc_type = :docType', { docType: '1' })
+				// ✅ Data quality filters
+				.andWhere('line.item_code IS NOT NULL')
+				.andWhere('line.quantity != 0')
+				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' })
 				.groupBy('line.category, line.store')
 				.orderBy('totalRevenue', 'DESC');
 
@@ -414,7 +478,7 @@ export class ErpDataService implements OnModuleInit {
 	 */
 	async getProductAggregations(filters: ErpQueryFilters, limit: number = 50): Promise<ProductAggregation[]> {
 		const operationId = this.generateOperationId('GET_PRODUCT_AGG');
-		const cacheKey = `erp:product_agg:${filters.startDate}:${filters.endDate}:${filters.storeCode || 'all'}:${limit}`;
+		const cacheKey = this.buildCacheKey('product_agg', filters) + `:${limit}`;
 		
 		this.logger.log(`[${operationId}] Starting getProductAggregations operation`);
 		this.logger.log(`[${operationId}] Filters: ${JSON.stringify(filters)}, Limit: ${limit}`);
@@ -448,6 +512,12 @@ export class ErpDataService implements OnModuleInit {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
 				})
+				// ✅ CRITICAL: Only Tax Invoices for revenue calculations
+				.andWhere('line.doc_type = :docType', { docType: '1' })
+				// ✅ Data quality filters
+				.andWhere('line.item_code IS NOT NULL')
+				.andWhere('line.quantity != 0')
+				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' })
 				.groupBy('line.item_code, line.description, line.category')
 				.orderBy('totalRevenue', 'DESC')
 				.limit(limit);
@@ -536,12 +606,12 @@ export class ErpDataService implements OnModuleInit {
 		try {
 			if (startDate && endDate) {
 				const patterns = [
-					`erp:headers:${startDate}:${endDate}:*`,
-					`erp:lines:${startDate}:${endDate}:*`,
-					`erp:daily_agg:${startDate}:${endDate}:*`,
-					`erp:branch_agg:${startDate}:${endDate}:*`,
-					`erp:category_agg:${startDate}:${endDate}:*`,
-					`erp:product_agg:${startDate}:${endDate}:*`,
+					`erp:v2:headers:${startDate}:${endDate}:*`,
+					`erp:v2:lines:${startDate}:${endDate}:*`,
+					`erp:v2:daily_agg:${startDate}:${endDate}:*`,
+					`erp:v2:branch_agg:${startDate}:${endDate}:*`,
+					`erp:v2:category_agg:${startDate}:${endDate}:*`,
+					`erp:v2:product_agg:${startDate}:${endDate}:*`,
 				];
 				
 				this.logger.log(`[${operationId}] Clearing cache for date range: ${startDate} to ${endDate}`);

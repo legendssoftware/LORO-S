@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { TblSalesLines } from '../entities/tblsaleslines.entity';
 import { TblSalesHeader } from '../entities/tblsalesheader.entity';
 import { SalesTransaction, PerformanceData } from '../interfaces/erp-data.interface';
-import { getCategoryId, getBranchId } from '../config/category-mapping.config';
+import { getCategoryId, getBranchId, getBranchName } from '../config/category-mapping.config';
 
 /**
  * ERP Transformer Service
@@ -124,7 +124,10 @@ export class ErpTransformerService {
 				id: `PD${line.ID.toString().padStart(6, '0')}`,
 				date: this.formatDate(line.sale_date),
 				productId: line.item_code || 'UNKNOWN',
+				productName: line.description || undefined,
+				category: line.category || undefined,
 				branchId: getBranchId(line.store),
+				branchName: getBranchName(line.store),
 				salesPersonId: line.rep_code || 'SP001', // Use rep_code or default
 				quantity: line.quantity || 0,
 				revenue,

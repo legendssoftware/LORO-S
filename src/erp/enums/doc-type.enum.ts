@@ -121,3 +121,7 @@ export function isConvertibleToInvoice(docType: DocType | DocTypeString): boolea
 	return numType === DocType.QUOTATION || numType === DocType.SALES_ORDER;
 }
 
+
+
+
+
