@@ -106,7 +106,9 @@ export class ErpTransformerService {
 	 * Transform TblSalesLines to PerformanceData format
 	 * 
 	 * This matches the PerformanceData interface from performance-mock-data.ts
-	 * Note: salesPersonId is not available in ERP data, so we use a placeholder
+	 * Note: Target is set to 0 here - actual targets should be calculated at the 
+	 * daily/period level in the performance dashboard generator using ErpTargetsService.
+	 * Individual line items don't have meaningful targets.
 	 */
 	transformToPerformanceData(line: TblSalesLines): PerformanceData {
 		try {
@@ -114,8 +116,9 @@ export class ErpTransformerService {
 			const cost = (line.cost_price || 0) * (line.quantity || 0);
 			const grossProfit = revenue - cost;
 			
-			// Calculate target based on revenue (assume 20% above revenue as target)
-			const target = revenue * 1.2;
+			// ✅ FIXED: Target should be set at the daily/period level, not line-item level
+			// This is calculated in performance-dashboard.generator.ts using ErpTargetsService
+			const target = 0;
 			
 			// Actual sales = revenue in this context
 			const actualSales = revenue;

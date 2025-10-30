@@ -107,6 +107,17 @@ export class OrganisationSettings {
 		}>;
 	};
 
+	@Column({ type: 'json', nullable: true })
+	performance: {
+		dailyRevenueTarget?: number; // Daily revenue target in organization currency (default: 500000)
+		weeklyRevenueTarget?: number; // Weekly revenue target
+		monthlyRevenueTarget?: number; // Monthly revenue target
+		yearlyRevenueTarget?: number; // Yearly revenue target
+		targetCalculationMethod?: 'fixed' | 'dynamic' | 'historical'; // How targets are calculated
+		historicalPeriodDays?: number; // Number of days to use for historical average (default: 30)
+		growthTargetPercentage?: number; // Target growth percentage over historical average (default: 20)
+	};
+
 	@Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
 	createdAt: Date;
 

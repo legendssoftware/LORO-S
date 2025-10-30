@@ -31,7 +31,7 @@ export class LineChartDataPoint {
 }
 
 export class BarChartDataPoint {
-	@ApiProperty({ description: 'Bar label' })
+	@ApiProperty({ description: 'Bar label (code from database)' })
 	label: string;
 
 	@ApiProperty({ description: 'Bar value' })
@@ -39,9 +39,6 @@ export class BarChartDataPoint {
 
 	@ApiProperty({ description: 'Target value for comparison', required: false })
 	target?: number;
-
-	@ApiProperty({ description: 'Full name (non-abbreviated)', required: false })
-	fullName?: string;
 }
 
 export class PieChartDataPoint {

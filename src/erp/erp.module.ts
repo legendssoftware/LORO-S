@@ -5,9 +5,11 @@ import { JwtModule } from '@nestjs/jwt';
 import { LicensingModule } from '../licensing/licensing.module';
 import { TblSalesHeader } from './entities/tblsalesheader.entity';
 import { TblSalesLines } from './entities/tblsaleslines.entity';
+import { OrganisationSettings } from '../organisation/entities/organisation-settings.entity';
 import { ErpDataService } from './services/erp-data.service';
 import { ErpTransformerService } from './services/erp-transformer.service';
 import { ErpCacheWarmerService } from './services/erp-cache-warmer.service';
+import { ErpTargetsService } from './services/erp-targets.service';
 import { ErpHealthIndicator } from './erp.health';
 import { ErpController } from './erp.controller';
 
@@ -27,6 +29,8 @@ import { ErpController } from './erp.controller';
 	imports: [
 		// Register ERP entities with the 'erp' connection
 		TypeOrmModule.forFeature([TblSalesHeader, TblSalesLines], 'erp'),
+		// Register OrganisationSettings with default connection for targets
+		TypeOrmModule.forFeature([OrganisationSettings]),
 		// Cache module for query result caching
 		CacheModule.register({
 			ttl: 3600, // 1 hour
@@ -45,12 +49,14 @@ import { ErpController } from './erp.controller';
 		ErpDataService,
 		ErpTransformerService,
 		ErpCacheWarmerService,
+		ErpTargetsService,
 		ErpHealthIndicator,
 	],
 	exports: [
 		ErpDataService,
 		ErpTransformerService,
 		ErpCacheWarmerService,
+		ErpTargetsService,
 		ErpHealthIndicator,
 	],
 })

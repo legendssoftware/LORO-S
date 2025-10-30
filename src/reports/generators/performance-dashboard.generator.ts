@@ -15,6 +15,7 @@ import {
 } from '../dto/performance-dashboard.dto';
 import { ErpDataService } from '../../erp/services/erp-data.service';
 import { ErpTransformerService } from '../../erp/services/erp-transformer.service';
+import { ErpTargetsService } from '../../erp/services/erp-targets.service';
 import { 
 	ErpQueryFilters, 
 	SalesTransaction as ErpSalesTransaction 
@@ -64,6 +65,7 @@ export class PerformanceDashboardGenerator {
 	constructor(
 		private readonly erpDataService: ErpDataService,
 		private readonly erpTransformerService: ErpTransformerService,
+		private readonly erpTargetsService: ErpTargetsService,
 	) {
 		this.logger.log('PerformanceDashboardGenerator initialized with ERP services');
 	}
@@ -82,11 +84,18 @@ export class PerformanceDashboardGenerator {
 			
 			this.logger.log(`Retrieved ${rawData.length} performance records from ERP`);
 
-			// Calculate summary metrics
-			const summary = this.calculateSummary(rawData);
+			// ✅ FIXED: Get real revenue target from organization settings
+			const totalTarget = await this.erpTargetsService.getRevenueTargetForDateRange(
+				params.organisationId,
+				params.startDate,
+				params.endDate,
+			);
 
-			// Generate all chart data
-			const charts = this.generateCharts(rawData, params);
+			// Calculate summary metrics with real target
+			const summary = await this.calculateSummary(rawData, totalTarget);
+
+			// Generate all chart data (now async due to hourly sales)
+			const charts = await this.generateCharts(rawData, params);
 
 			// Generate table data (parallel execution for performance)
 			this.logger.log('Generating table data in parallel...');
@@ -232,18 +241,30 @@ export class PerformanceDashboardGenerator {
 	// ===================================================================
 
 	/**
-	 * Calculate summary metrics
+	 * Calculate summary metrics with real revenue target from organization settings
+	 * 
+	 * @param data - Performance data (line items)
+	 * @param totalTarget - Real revenue target from ErpTargetsService (based on org settings)
 	 */
-	private calculateSummary(data: PerformanceData[]): PerformanceSummaryDto {
+	private calculateSummary(data: PerformanceData[], totalTarget: number): PerformanceSummaryDto {
 		const totalRevenue = data.reduce((sum, item) => sum + item.revenue, 0);
-		const totalTarget = data.reduce((sum, item) => sum + item.target, 0);
+		
+		// ✅ FIXED: Use real target from organization settings, not calculated from data
+		// This fixes the "stuck at 83.3%" issue where target was always proportional to revenue
 		const performanceRate = totalTarget === 0 ? 0 : (totalRevenue / totalTarget) * 100;
+		
 		const transactionCount = data.length;
 		const averageOrderValue = transactionCount > 0 ? totalRevenue / transactionCount : 0;
 
 		// Calculate average items per basket
 		const totalQuantity = data.reduce((sum, item) => sum + item.quantity, 0);
 		const averageItemsPerBasket = transactionCount > 0 ? totalQuantity / transactionCount : 0;
+
+		this.logger.log(`📊 Summary Calculated:`);
+		this.logger.log(`   - Total Revenue: R${totalRevenue.toFixed(2)}`);
+		this.logger.log(`   - Total Target: R${totalTarget.toFixed(2)} (from org settings)`);
+		this.logger.log(`   - Performance Rate: ${performanceRate.toFixed(2)}%`);
+		this.logger.log(`   - Transactions: ${transactionCount}`);
 
 		return {
 			totalRevenue,
@@ -262,10 +283,13 @@ export class PerformanceDashboardGenerator {
 	/**
 	 * Generate all chart data
 	 */
-	private generateCharts(data: PerformanceData[], params: PerformanceFiltersDto): PerformanceChartsDto {
+	private async generateCharts(data: PerformanceData[], params: PerformanceFiltersDto): Promise<PerformanceChartsDto> {
+		// ✅ FIXED: Now using real hourly sales data (async)
+		const hourlySales = await this.generateHourlySalesChart(params);
+		
 		return {
 			revenueTrend: this.generateRevenueTrendChart(data, params),
-			hourlySales: this.generateHourlySalesChart(data),
+			hourlySales,
 			salesByCategory: this.generateSalesByCategoryChart(data),
 			branchPerformance: this.generateBranchPerformanceChart(data),
 			topProducts: this.generateTopProductsChart(data),
@@ -318,43 +342,67 @@ export class PerformanceDashboardGenerator {
 	}
 
 	/**
-	 * Generate hourly sales chart
+	 * Generate hourly sales chart from real ERP data
+	 * 
+	 * ✅ FIXED: Now uses real sale_time data from ERP, no more Math.random()
+	 * ✅ Shows only hours up to current time (not future hours)
+	 * ✅ Filters to doc_type='1' (Tax Invoices only)
 	 */
-	private generateHourlySalesChart(data: PerformanceData[]) {
-		const hours = Array.from({ length: 13 }, (_, i) => i + 7); // 7-19 (7am-7pm)
-		const hourlyAggregation: Record<number, number> = {};
-		
-		hours.forEach((hour) => {
-			hourlyAggregation[hour] = 0;
-		});
-
-		// Simulate hourly distribution
-		data.forEach((item) => {
-			hours.forEach((hour) => {
-				const peakMultiplier = hour >= 10 && hour <= 14 ? 1.5 : hour >= 17 && hour <= 19 ? 1.3 : 1;
-				const hourlyPortion = (item.revenue / 13) * peakMultiplier * (0.8 + Math.random() * 0.4);
-				hourlyAggregation[hour] += hourlyPortion;
-			});
-		});
-
-		const chartData: LineChartDataPoint[] = hours.map((hour) => {
-			let label: string;
-			if (hour === 7) label = '7am';
-			else if (hour === 12) label = '12pm';
-			else if (hour < 12) label = `${hour}am`;
-			else if (hour === 19) label = '7pm';
-			else label = `${hour - 12}pm`;
-
-			return {
-				label,
-				value: hourlyAggregation[hour],
+	private async generateHourlySalesChart(params: PerformanceFiltersDto) {
+		try {
+			// Build ERP query filters
+			const filters: ErpQueryFilters = {
+				startDate: params.startDate || this.getDefaultStartDate(),
+				endDate: params.endDate || this.getDefaultEndDate(),
+				storeCode: params.branchId?.toString(),
 			};
-		});
 
-		const avgHourlyRevenue = chartData.reduce((sum, item) => sum + item.value, 0) / chartData.length;
-		const targetValue = avgHourlyRevenue * 1.15;
+			// ✅ Get real hourly sales data from ERP
+			const hourlyData = await this.erpDataService.getHourlySalesPattern(filters);
+			
+			// Get current hour to avoid showing future hours
+			const currentHour = new Date().getHours();
+			const isToday = filters.endDate === new Date().toISOString().split('T')[0];
+			
+			// Create hour labels and populate with real data
+			const chartData: LineChartDataPoint[] = [];
+			
+			for (const hourData of hourlyData) {
+				const hour = hourData.hour;
+				
+				// ✅ Skip future hours if viewing today's data
+				if (isToday && hour > currentHour) {
+					this.logger.debug(`Skipping future hour ${hour} (current hour: ${currentHour})`);
+					continue;
+				}
+				
+				// Create hour label
+				let label: string;
+				if (hour === 0) label = '12am';
+				else if (hour < 12) label = `${hour}am`;
+				else if (hour === 12) label = '12pm';
+				else label = `${hour - 12}pm`;
 
-		return { data: chartData, targetValue };
+				chartData.push({
+					label,
+					value: hourData.totalRevenue,
+				});
+			}
+
+			// Calculate average and target
+			const avgHourlyRevenue = chartData.length > 0
+				? chartData.reduce((sum, item) => sum + item.value, 0) / chartData.length
+				: 0;
+			const targetValue = avgHourlyRevenue * 1.15;
+
+			this.logger.log(`✅ Hourly sales chart generated with ${chartData.length} data points (real data from ERP)`);
+			
+			return { data: chartData, targetValue };
+		} catch (error) {
+			this.logger.error(`Error generating hourly sales chart: ${error.message}`);
+			// Return empty data on error
+			return { data: [], targetValue: 0 };
+		}
 	}
 
 	/**
@@ -385,23 +433,24 @@ export class PerformanceDashboardGenerator {
 
 	/**
 	 * Generate branch performance chart
+	 * 
+	 * ✅ Uses branch codes from database (not mock names)
 	 */
 	private generateBranchPerformanceChart(data: PerformanceData[]) {
-		// Aggregate by branch from real ERP data
+		// Aggregate by branch code from real ERP data
 		const aggregated = data.reduce((acc, item) => {
-			const branchKey = item.branchName || item.branchId;
-			if (!acc[branchKey]) {
-				acc[branchKey] = { revenue: 0, target: 0 };
+			const branchCode = item.branchId; // Use only branch code from database
+			if (!acc[branchCode]) {
+				acc[branchCode] = { revenue: 0, target: 0 };
 			}
-			acc[branchKey].revenue += item.revenue;
-			acc[branchKey].target += item.target;
+			acc[branchCode].revenue += item.revenue;
+			acc[branchCode].target += item.target;
 			return acc;
 		}, {} as Record<string, { revenue: number; target: number }>);
 
 		const sortedBranches = Object.entries(aggregated)
-			.map(([name, values]) => ({
-				label: this.getBranchAbbreviation(name),
-				fullName: name,
+			.map(([code, values]) => ({
+				label: code, // Use branch code only
 				value: values.revenue,
 				target: values.target,
 			}))
@@ -413,37 +462,40 @@ export class PerformanceDashboardGenerator {
 				? sortedBranches.reduce((sum, item) => sum + item.target, 0) / sortedBranches.length
 				: 0;
 
+		this.logger.debug(`Branch performance chart generated with ${sortedBranches.length} branches (using codes)`);
+
 		return { data: sortedBranches, averageTarget };
 	}
 
 	/**
 	 * Generate top products chart
+	 * 
+	 * ✅ Uses product codes from database (not full names)
 	 */
 	private generateTopProductsChart(data: PerformanceData[]) {
-		// Aggregate revenue by product from real ERP data
+		// Aggregate revenue by product code from real ERP data
 		const aggregated = data.reduce((acc, item) => {
-			const productKey = item.productId;
-			if (!acc[productKey]) {
-				acc[productKey] = {
-					id: item.productId,
-					name: item.productName || item.productId,
+			const productCode = item.productId; // Use only product code from database
+			if (!acc[productCode]) {
+				acc[productCode] = {
 					revenue: 0,
 				};
 			}
-			acc[productKey].revenue += item.revenue;
+			acc[productCode].revenue += item.revenue;
 			return acc;
-		}, {} as Record<string, { id: string; name: string; revenue: number }>);
+		}, {} as Record<string, { revenue: number }>);
 
 		const chartData: BarChartDataPoint[] = Object.entries(aggregated)
-			.map(([_, product]) => ({
-				label: product.id, // Use product code for label
-				fullName: product.name, // Full name for tooltip
-				value: product.revenue,
+			.map(([code, values]) => ({
+				label: code, // Use product code only
+				value: values.revenue,
 			}))
 			.sort((a, b) => b.value - a.value)
 			.slice(0, 10); // Top 10 products
 
 		const total = chartData.reduce((sum, item) => sum + item.value, 0);
+
+		this.logger.debug(`Top products chart generated with ${chartData.length} products (using codes)`);
 
 		return { data: chartData, total };
 	}

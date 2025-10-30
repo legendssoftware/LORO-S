@@ -387,6 +387,76 @@ export class SocialLinksDto {
 	custom?: CustomSocialLinkDto[];
 }
 
+export class PerformanceDto {
+	@ApiProperty({ 
+		description: 'Daily revenue target in organization currency',
+		required: false,
+		example: 500000,
+		default: 500000
+	})
+	@IsNumber()
+	@IsOptional()
+	dailyRevenueTarget?: number;
+
+	@ApiProperty({ 
+		description: 'Weekly revenue target in organization currency',
+		required: false,
+		example: 3500000
+	})
+	@IsNumber()
+	@IsOptional()
+	weeklyRevenueTarget?: number;
+
+	@ApiProperty({ 
+		description: 'Monthly revenue target in organization currency',
+		required: false,
+		example: 15000000
+	})
+	@IsNumber()
+	@IsOptional()
+	monthlyRevenueTarget?: number;
+
+	@ApiProperty({ 
+		description: 'Yearly revenue target in organization currency',
+		required: false,
+		example: 180000000
+	})
+	@IsNumber()
+	@IsOptional()
+	yearlyRevenueTarget?: number;
+
+	@ApiProperty({ 
+		description: 'Method used to calculate targets: fixed (use provided values), dynamic (calculate based on current performance), historical (use historical averages)',
+		required: false,
+		enum: ['fixed', 'dynamic', 'historical'],
+		example: 'fixed',
+		default: 'fixed'
+	})
+	@IsEnum(['fixed', 'dynamic', 'historical'])
+	@IsOptional()
+	targetCalculationMethod?: 'fixed' | 'dynamic' | 'historical';
+
+	@ApiProperty({ 
+		description: 'Number of days to use for calculating historical average targets',
+		required: false,
+		example: 30,
+		default: 30
+	})
+	@IsNumber()
+	@IsOptional()
+	historicalPeriodDays?: number;
+
+	@ApiProperty({ 
+		description: 'Target growth percentage over historical average (e.g., 20 means targets are 20% higher than historical average)',
+		required: false,
+		example: 20,
+		default: 20
+	})
+	@IsNumber()
+	@IsOptional()
+	growthTargetPercentage?: number;
+}
+
 export class CreateOrganisationSettingsDto {
 	@ApiProperty({
 		type: ContactDto,
@@ -535,4 +605,23 @@ export class CreateOrganisationSettingsDto {
 	@Type(() => SocialLinksDto)
 	@IsOptional()
 	socialLinks?: SocialLinksDto;
+
+	@ApiProperty({
+		type: PerformanceDto,
+		required: false,
+		description: 'Performance tracking settings including daily/weekly/monthly revenue targets',
+		example: {
+			dailyRevenueTarget: 500000,
+			weeklyRevenueTarget: 3500000,
+			monthlyRevenueTarget: 15000000,
+			targetCalculationMethod: 'fixed',
+			historicalPeriodDays: 30,
+			growthTargetPercentage: 20,
+		},
+	})
+	@IsObject()
+	@IsOptional()
+	@ValidateNested()
+	@Type(() => PerformanceDto)
+	performance?: PerformanceDto;
 }

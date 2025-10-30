@@ -1,6 +1,6 @@
 import { Injectable, Logger, Inject, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between } from 'typeorm';
+import { Repository } from 'typeorm';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { TblSalesHeader } from '../entities/tblsalesheader.entity';
@@ -16,7 +16,7 @@ import { ConfigService } from '@nestjs/config';
 
 /**
  * ERP Data Service
- * 
+ *
  * Handles all queries to the ERP database with aggressive caching
  * and parallel query execution for optimal performance.
  */
@@ -24,7 +24,6 @@ import { ConfigService } from '@nestjs/config';
 export class ErpDataService implements OnModuleInit {
 	private readonly logger = new Logger(ErpDataService.name);
 	private readonly CACHE_TTL = 3600; // 1 hour in seconds
-	private operationCounter = 0;
 
 	constructor(
 		@InjectRepository(TblSalesHeader, 'erp')
@@ -42,14 +41,14 @@ export class ErpDataService implements OnModuleInit {
 	async onModuleInit() {
 		const operationId = this.generateOperationId('INIT');
 		this.logger.log(`[${operationId}] ===== ERP Data Service Initialization =====`);
-		
+
 		try {
 			// Log connection details (without password)
 			const host = this.configService.get<string>('ERP_DATABASE_HOST');
 			const port = this.configService.get<string>('ERP_DATABASE_PORT');
 			const database = this.configService.get<string>('ERP_DATABASE_NAME');
 			const user = this.configService.get<string>('ERP_DATABASE_USER');
-			
+
 			this.logger.log(`[${operationId}] ERP Database Configuration:`);
 			this.logger.log(`[${operationId}]   Host: ${host || 'NOT SET'}`);
 			this.logger.log(`[${operationId}]   Port: ${port || 'NOT SET'}`);
@@ -60,9 +59,9 @@ export class ErpDataService implements OnModuleInit {
 			// Test connection
 			this.logger.log(`[${operationId}] Testing ERP database connection...`);
 			const testStart = Date.now();
-			
+
 			await this.salesLinesRepo.count({ take: 1 });
-			
+
 			const testDuration = Date.now() - testStart;
 			this.logger.log(`[${operationId}] ✅ ERP database connection successful (${testDuration}ms)`);
 			this.logger.log(`[${operationId}] ===== ERP Data Service Ready =====`);
@@ -84,14 +83,10 @@ export class ErpDataService implements OnModuleInit {
 	/**
 	 * Build cache key with all filtering dimensions
 	 */
-	private buildCacheKey(
-		dataType: string,
-		filters: ErpQueryFilters,
-		docTypes?: string[]
-	): string {
+	private buildCacheKey(dataType: string, filters: ErpQueryFilters, docTypes?: string[]): string {
 		return [
 			'erp',
-			'v2',  // Version for cache busting
+			'v2', // Version for cache busting
 			dataType,
 			filters.startDate,
 			filters.endDate,
@@ -108,13 +103,13 @@ export class ErpDataService implements OnModuleInit {
 	async getSalesHeadersByDateRange(filters: ErpQueryFilters): Promise<TblSalesHeader[]> {
 		const operationId = this.generateOperationId('GET_HEADERS');
 		const cacheKey = this.buildCacheKey('headers', filters, ['1']);
-		
+
 		this.logger.log(`[${operationId}] Starting getSalesHeadersByDateRange operation`);
 		this.logger.log(`[${operationId}] Filters: ${JSON.stringify(filters)}`);
 		this.logger.log(`[${operationId}] Cache key: ${cacheKey}`);
-		
+
 		const startTime = Date.now();
-		
+
 		try {
 			// Check cache first
 			this.logger.debug(`[${operationId}] Checking cache...`);
@@ -127,9 +122,10 @@ export class ErpDataService implements OnModuleInit {
 
 			this.logger.log(`[${operationId}] Cache MISS - Querying database...`);
 			this.logger.log(`[${operationId}] Date range: ${filters.startDate} to ${filters.endDate}`);
-			
+
 			const queryStart = Date.now();
-			const query = this.salesHeaderRepo.createQueryBuilder('header')
+			const query = this.salesHeaderRepo
+				.createQueryBuilder('header')
 				.where('header.sale_date BETWEEN :startDate AND :endDate', {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
@@ -144,14 +140,14 @@ export class ErpDataService implements OnModuleInit {
 
 			const results = await query.getMany();
 			const queryDuration = Date.now() - queryStart;
-			
+
 			this.logger.log(`[${operationId}] Database query completed in ${queryDuration}ms`);
 			this.logger.log(`[${operationId}] Retrieved ${results.length} sales headers`);
-			
+
 			// Cache results
 			this.logger.debug(`[${operationId}] Caching results with TTL: ${this.CACHE_TTL}s`);
 			await this.cacheManager.set(cacheKey, results, this.CACHE_TTL);
-			
+
 			const totalDuration = Date.now() - startTime;
 			this.logger.log(`[${operationId}] ✅ Operation completed successfully (${totalDuration}ms)`);
 			return results;
@@ -166,25 +162,25 @@ export class ErpDataService implements OnModuleInit {
 
 	/**
 	 * Get sales lines by date range with doc_type filtering
-	 * 
+	 *
 	 * @param filters - Query filters
 	 * @param includeDocTypes - Document types to include (defaults to Tax Invoices only)
 	 * @returns Sales lines matching criteria
 	 */
 	async getSalesLinesByDateRange(
 		filters: ErpQueryFilters,
-		includeDocTypes: string[] = ['1']  // Default: Tax Invoices only
+		includeDocTypes: string[] = ['1'], // Default: Tax Invoices only
 	): Promise<TblSalesLines[]> {
 		const operationId = this.generateOperationId('GET_LINES');
 		const cacheKey = this.buildCacheKey('lines', filters, includeDocTypes);
-		
+
 		this.logger.log(`[${operationId}] Starting getSalesLinesByDateRange operation`);
 		this.logger.log(`[${operationId}] Filters: ${JSON.stringify(filters)}`);
 		this.logger.log(`[${operationId}] Doc Types: ${includeDocTypes.join(',')}`);
 		this.logger.log(`[${operationId}] Cache key: ${cacheKey}`);
-		
+
 		const startTime = Date.now();
-		
+
 		try {
 			// Check cache first
 			const cached = await this.cacheManager.get<TblSalesLines[]>(cacheKey);
@@ -195,9 +191,10 @@ export class ErpDataService implements OnModuleInit {
 			}
 
 			this.logger.log(`[${operationId}] Cache MISS - Querying database...`);
-			
+
 			const queryStart = Date.now();
-			const query = this.salesLinesRepo.createQueryBuilder('line')
+			const query = this.salesLinesRepo
+				.createQueryBuilder('line')
 				.where('line.sale_date BETWEEN :startDate AND :endDate', {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
@@ -223,14 +220,14 @@ export class ErpDataService implements OnModuleInit {
 
 			const results = await query.getMany();
 			const queryDuration = Date.now() - queryStart;
-			
+
 			this.logger.log(`[${operationId}] Database query completed in ${queryDuration}ms`);
 			this.logger.log(`[${operationId}] Retrieved ${results.length} sales lines`);
 			this.logger.log(`[${operationId}] Doc types included: ${includeDocTypes.join(', ')}`);
-			
+
 			// Cache results
 			await this.cacheManager.set(cacheKey, results, this.CACHE_TTL);
-			
+
 			const totalDuration = Date.now() - startTime;
 			this.logger.log(`[${operationId}] ✅ Operation completed successfully (${totalDuration}ms)`);
 			return results;
@@ -245,14 +242,14 @@ export class ErpDataService implements OnModuleInit {
 
 	/**
 	 * Get credit notes (returns/refunds) by date range
-	 * 
+	 *
 	 * @param filters - Query filters
 	 * @returns Credit note lines
 	 */
 	async getCreditNotesByDateRange(filters: ErpQueryFilters): Promise<TblSalesLines[]> {
 		const operationId = this.generateOperationId('GET_CREDIT_NOTES');
 		this.logger.log(`[${operationId}] Fetching credit notes for ${filters.startDate} to ${filters.endDate}`);
-		
+
 		// Use doc_type = '2' for credit notes
 		return this.getSalesLinesByDateRange(filters, ['2']);
 	}
@@ -263,25 +260,28 @@ export class ErpDataService implements OnModuleInit {
 	async getDailyAggregations(filters: ErpQueryFilters): Promise<DailyAggregation[]> {
 		const operationId = this.generateOperationId('GET_DAILY_AGG');
 		const cacheKey = this.buildCacheKey('daily_agg', filters);
-		
+
 		this.logger.log(`[${operationId}] Starting getDailyAggregations operation`);
 		this.logger.log(`[${operationId}] Filters: ${JSON.stringify(filters)}`);
-		
+
 		const startTime = Date.now();
-		
+
 		try {
 			// Check cache first
 			const cached = await this.cacheManager.get<DailyAggregation[]>(cacheKey);
 			if (cached) {
 				const duration = Date.now() - startTime;
-				this.logger.log(`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} aggregations (${duration}ms)`);
+				this.logger.log(
+					`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} aggregations (${duration}ms)`,
+				);
 				return cached;
 			}
 
 			this.logger.log(`[${operationId}] Cache MISS - Computing daily aggregations...`);
-			
+
 			const queryStart = Date.now();
-			const query = this.salesLinesRepo.createQueryBuilder('line')
+			const query = this.salesLinesRepo
+				.createQueryBuilder('line')
 				.select([
 					'DATE(line.sale_date) as date',
 					'line.store as store',
@@ -312,13 +312,13 @@ export class ErpDataService implements OnModuleInit {
 
 			const results = await query.getRawMany();
 			const queryDuration = Date.now() - queryStart;
-			
+
 			this.logger.log(`[${operationId}] Aggregation query completed in ${queryDuration}ms`);
 			this.logger.log(`[${operationId}] Computed ${results.length} daily aggregations`);
-			
+
 			// Cache results
 			await this.cacheManager.set(cacheKey, results, this.CACHE_TTL);
-			
+
 			const totalDuration = Date.now() - startTime;
 			this.logger.log(`[${operationId}] ✅ Operation completed successfully (${totalDuration}ms)`);
 			return results;
@@ -337,25 +337,28 @@ export class ErpDataService implements OnModuleInit {
 	async getBranchAggregations(filters: ErpQueryFilters): Promise<BranchAggregation[]> {
 		const operationId = this.generateOperationId('GET_BRANCH_AGG');
 		const cacheKey = this.buildCacheKey('branch_agg', filters);
-		
+
 		this.logger.log(`[${operationId}] Starting getBranchAggregations operation`);
 		this.logger.log(`[${operationId}] Date range: ${filters.startDate} to ${filters.endDate}`);
-		
+
 		const startTime = Date.now();
-		
+
 		try {
 			// Check cache first
 			const cached = await this.cacheManager.get<BranchAggregation[]>(cacheKey);
 			if (cached) {
 				const duration = Date.now() - startTime;
-				this.logger.log(`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} branch aggregations (${duration}ms)`);
+				this.logger.log(
+					`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} branch aggregations (${duration}ms)`,
+				);
 				return cached;
 			}
 
 			this.logger.log(`[${operationId}] Cache MISS - Computing branch aggregations...`);
-			
+
 			const queryStart = Date.now();
-			const query = this.salesLinesRepo.createQueryBuilder('line')
+			const query = this.salesLinesRepo
+				.createQueryBuilder('line')
 				.select([
 					'line.store as store',
 					'SUM(line.incl_line_total - line.discount) as totalRevenue',
@@ -380,13 +383,13 @@ export class ErpDataService implements OnModuleInit {
 
 			const results = await query.getRawMany();
 			const queryDuration = Date.now() - queryStart;
-			
+
 			this.logger.log(`[${operationId}] Aggregation query completed in ${queryDuration}ms`);
 			this.logger.log(`[${operationId}] Computed ${results.length} branch aggregations`);
-			
+
 			// Cache results
 			await this.cacheManager.set(cacheKey, results, this.CACHE_TTL);
-			
+
 			const totalDuration = Date.now() - startTime;
 			this.logger.log(`[${operationId}] ✅ Operation completed successfully (${totalDuration}ms)`);
 			return results;
@@ -405,25 +408,28 @@ export class ErpDataService implements OnModuleInit {
 	async getCategoryAggregations(filters: ErpQueryFilters): Promise<CategoryAggregation[]> {
 		const operationId = this.generateOperationId('GET_CATEGORY_AGG');
 		const cacheKey = this.buildCacheKey('category_agg', filters);
-		
+
 		this.logger.log(`[${operationId}] Starting getCategoryAggregations operation`);
 		this.logger.log(`[${operationId}] Filters: ${JSON.stringify(filters)}`);
-		
+
 		const startTime = Date.now();
-		
+
 		try {
 			// Check cache first
 			const cached = await this.cacheManager.get<CategoryAggregation[]>(cacheKey);
 			if (cached) {
 				const duration = Date.now() - startTime;
-				this.logger.log(`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} category aggregations (${duration}ms)`);
+				this.logger.log(
+					`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} category aggregations (${duration}ms)`,
+				);
 				return cached;
 			}
 
 			this.logger.log(`[${operationId}] Cache MISS - Computing category aggregations...`);
-			
+
 			const queryStart = Date.now();
-			const query = this.salesLinesRepo.createQueryBuilder('line')
+			const query = this.salesLinesRepo
+				.createQueryBuilder('line')
 				.select([
 					'line.category as category',
 					'line.store as store',
@@ -454,13 +460,13 @@ export class ErpDataService implements OnModuleInit {
 
 			const results = await query.getRawMany();
 			const queryDuration = Date.now() - queryStart;
-			
+
 			this.logger.log(`[${operationId}] Aggregation query completed in ${queryDuration}ms`);
 			this.logger.log(`[${operationId}] Computed ${results.length} category aggregations`);
-			
+
 			// Cache results
 			await this.cacheManager.set(cacheKey, results, this.CACHE_TTL);
-			
+
 			const totalDuration = Date.now() - startTime;
 			this.logger.log(`[${operationId}] ✅ Operation completed successfully (${totalDuration}ms)`);
 			return results;
@@ -479,25 +485,28 @@ export class ErpDataService implements OnModuleInit {
 	async getProductAggregations(filters: ErpQueryFilters, limit: number = 50): Promise<ProductAggregation[]> {
 		const operationId = this.generateOperationId('GET_PRODUCT_AGG');
 		const cacheKey = this.buildCacheKey('product_agg', filters) + `:${limit}`;
-		
+
 		this.logger.log(`[${operationId}] Starting getProductAggregations operation`);
 		this.logger.log(`[${operationId}] Filters: ${JSON.stringify(filters)}, Limit: ${limit}`);
-		
+
 		const startTime = Date.now();
-		
+
 		try {
 			// Check cache first
 			const cached = await this.cacheManager.get<ProductAggregation[]>(cacheKey);
 			if (cached) {
 				const duration = Date.now() - startTime;
-				this.logger.log(`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} product aggregations (${duration}ms)`);
+				this.logger.log(
+					`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} product aggregations (${duration}ms)`,
+				);
 				return cached;
 			}
 
 			this.logger.log(`[${operationId}] Cache MISS - Computing product aggregations...`);
-			
+
 			const queryStart = Date.now();
-			const query = this.salesLinesRepo.createQueryBuilder('line')
+			const query = this.salesLinesRepo
+				.createQueryBuilder('line')
 				.select([
 					'line.item_code as itemCode',
 					'line.description as description',
@@ -529,13 +538,13 @@ export class ErpDataService implements OnModuleInit {
 
 			const results = await query.getRawMany();
 			const queryDuration = Date.now() - queryStart;
-			
+
 			this.logger.log(`[${operationId}] Aggregation query completed in ${queryDuration}ms`);
 			this.logger.log(`[${operationId}] Computed ${results.length} product aggregations`);
-			
+
 			// Cache results
 			await this.cacheManager.set(cacheKey, results, this.CACHE_TTL);
-			
+
 			const totalDuration = Date.now() - startTime;
 			this.logger.log(`[${operationId}] ✅ Operation completed successfully (${totalDuration}ms)`);
 			return results;
@@ -558,13 +567,13 @@ export class ErpDataService implements OnModuleInit {
 		products: ProductAggregation[];
 	}> {
 		const operationId = this.generateOperationId('GET_ALL_AGG_PARALLEL');
-		
+
 		this.logger.log(`[${operationId}] ===== Starting Parallel Aggregations =====`);
 		this.logger.log(`[${operationId}] Date range: ${filters.startDate} to ${filters.endDate}`);
 		this.logger.log(`[${operationId}] Executing 4 queries in parallel...`);
-		
+
 		const startTime = Date.now();
-		
+
 		try {
 			const [daily, branch, category, products] = await Promise.all([
 				this.getDailyAggregations(filters),
@@ -572,16 +581,16 @@ export class ErpDataService implements OnModuleInit {
 				this.getCategoryAggregations(filters),
 				this.getProductAggregations(filters),
 			]);
-			
+
 			const duration = Date.now() - startTime;
-			
+
 			this.logger.log(`[${operationId}] ===== Parallel Aggregations Results =====`);
 			this.logger.log(`[${operationId}] Daily aggregations: ${daily.length} records`);
 			this.logger.log(`[${operationId}] Branch aggregations: ${branch.length} records`);
 			this.logger.log(`[${operationId}] Category aggregations: ${category.length} records`);
 			this.logger.log(`[${operationId}] Product aggregations: ${products.length} records`);
 			this.logger.log(`[${operationId}] ✅ All parallel aggregations completed in ${duration}ms`);
-			
+
 			return { daily, branch, category, products };
 		} catch (error) {
 			const duration = Date.now() - startTime;
@@ -597,12 +606,12 @@ export class ErpDataService implements OnModuleInit {
 	 */
 	async clearCache(startDate?: string, endDate?: string): Promise<void> {
 		const operationId = this.generateOperationId('CLEAR_CACHE');
-		
+
 		this.logger.log(`[${operationId}] Starting cache clear operation`);
-		
+
 		const startTime = Date.now();
 		let clearedCount = 0;
-		
+
 		try {
 			if (startDate && endDate) {
 				const patterns = [
@@ -613,10 +622,10 @@ export class ErpDataService implements OnModuleInit {
 					`erp:v2:category_agg:${startDate}:${endDate}:*`,
 					`erp:v2:product_agg:${startDate}:${endDate}:*`,
 				];
-				
+
 				this.logger.log(`[${operationId}] Clearing cache for date range: ${startDate} to ${endDate}`);
 				this.logger.log(`[${operationId}] Patterns to clear: ${patterns.length}`);
-				
+
 				for (const pattern of patterns) {
 					try {
 						await this.cacheManager.del(pattern);
@@ -626,9 +635,11 @@ export class ErpDataService implements OnModuleInit {
 						this.logger.warn(`[${operationId}] Failed to clear cache pattern ${pattern}: ${error.message}`);
 					}
 				}
-				
+
 				const duration = Date.now() - startTime;
-				this.logger.log(`[${operationId}] ✅ Cleared ${clearedCount}/${patterns.length} cache patterns (${duration}ms)`);
+				this.logger.log(
+					`[${operationId}] ✅ Cleared ${clearedCount}/${patterns.length} cache patterns (${duration}ms)`,
+				);
 			} else {
 				this.logger.log(`[${operationId}] Clearing ALL ERP cache...`);
 				await this.cacheManager.reset();
@@ -656,5 +667,101 @@ export class ErpDataService implements OnModuleInit {
 			return { keys: 0 };
 		}
 	}
-}
 
+	/**
+	 * Get hourly sales pattern using real sale_time data
+	 *
+	 * @param filters - Query filters (date range, store, etc.)
+	 * @returns Hourly sales data aggregated by hour
+	 */
+	async getHourlySalesPattern(filters: ErpQueryFilters): Promise<
+		Array<{
+			hour: number;
+			transactionCount: number;
+			totalRevenue: number;
+			uniqueCustomers: number;
+		}>
+	> {
+		const operationId = this.generateOperationId('GET_HOURLY_SALES');
+		const cacheKey = this.buildCacheKey('hourly_sales', filters, ['1']);
+
+		this.logger.log(`[${operationId}] Getting hourly sales pattern for ${filters.startDate} to ${filters.endDate}`);
+
+		const startTime = Date.now();
+
+		try {
+			// Check cache first
+			const cached = await this.cacheManager.get(cacheKey);
+			if (cached) {
+				const duration = Date.now() - startTime;
+				this.logger.log(`[${operationId}] ✅ Cache HIT (${duration}ms)`);
+				return cached as any;
+			}
+
+			this.logger.log(`[${operationId}] Cache MISS - Querying hourly pattern...`);
+
+			const queryStart = Date.now();
+
+			const query = this.salesLinesRepo
+				.createQueryBuilder('line')
+				.select([
+					'HOUR(line.sale_time) as hour',
+					'COUNT(DISTINCT line.doc_number) as transactionCount',
+					'CAST(SUM(CAST(line.incl_line_total AS DECIMAL(19,3)) - CAST(COALESCE(line.discount, 0) AS DECIMAL(19,3))) AS DECIMAL(19,2)) as totalRevenue',
+					'COUNT(DISTINCT line.customer) as uniqueCustomers',
+				])
+				.where('line.sale_date BETWEEN :startDate AND :endDate', {
+					startDate: filters.startDate,
+					endDate: filters.endDate,
+				})
+				.andWhere('line.doc_type = :docType', { docType: '1' }) // ✅ Only Tax Invoices
+				.andWhere('line.sale_time IS NOT NULL') // ✅ Only records with time
+				.andWhere('line.item_code IS NOT NULL')
+				.andWhere('line.quantity != 0')
+				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' })
+				.groupBy('HOUR(line.sale_time)')
+				.orderBy('HOUR(line.sale_time)', 'ASC');
+
+			if (filters.storeCode) {
+				query.andWhere('line.store = :store', { store: filters.storeCode });
+			}
+
+			const results = await query.getRawMany();
+			const queryDuration = Date.now() - queryStart;
+
+			// Process results
+			const processedResults = results.map((row) => ({
+				hour: parseInt(row.hour, 10),
+				transactionCount: parseInt(row.transactionCount, 10) || 0,
+				totalRevenue: parseFloat(row.totalRevenue) || 0,
+				uniqueCustomers: parseInt(row.uniqueCustomers, 10) || 0,
+			}));
+
+			this.logger.log(`[${operationId}] Query completed in ${queryDuration}ms`);
+			this.logger.log(`[${operationId}] Found ${processedResults.length} hours with sales data`);
+
+			// Find peak hours
+			const sortedByRevenue = [...processedResults].sort((a, b) => b.totalRevenue - a.totalRevenue);
+			if (sortedByRevenue.length > 0) {
+				this.logger.log(
+					`[${operationId}] Peak hour: ${
+						sortedByRevenue[0].hour
+					}:00 (R${sortedByRevenue[0].totalRevenue.toFixed(2)})`,
+				);
+			}
+
+			// Cache results
+			await this.cacheManager.set(cacheKey, processedResults, this.CACHE_TTL);
+
+			const totalDuration = Date.now() - startTime;
+			this.logger.log(`[${operationId}] ✅ Operation completed successfully (${totalDuration}ms)`);
+
+			return processedResults;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`[${operationId}] ❌ Error getting hourly sales (${duration}ms)`);
+			this.logger.error(`[${operationId}] Error: ${error.message}`);
+			throw error;
+		}
+	}
+}
