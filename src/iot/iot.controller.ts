@@ -147,11 +147,8 @@ export class IotController {
 	@UseGuards(AuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
-		AccessLevel.MANAGER,
-		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.OWNER,
-		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({
 		summary: '🤖 Register a new IoT device',
@@ -380,11 +377,8 @@ Register new IoT devices in your organization with comprehensive configuration a
 	@UseGuards(AuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
-		AccessLevel.MANAGER,
-		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.OWNER,
-		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({ summary: 'Get all devices with optional filtering' })
 	@ApiQuery({
@@ -431,11 +425,8 @@ Register new IoT devices in your organization with comprehensive configuration a
 	@UseGuards(AuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
-		AccessLevel.MANAGER,
-		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.OWNER,
-		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({ summary: 'Get device by ID with records' })
 	@ApiResponse({ status: 200, description: 'Device found successfully' })
@@ -452,11 +443,8 @@ Register new IoT devices in your organization with comprehensive configuration a
 	@UseGuards(AuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
-		AccessLevel.MANAGER,
-		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.OWNER,
-		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({ summary: 'Get device by unique device ID' })
 	@ApiResponse({ status: 200, description: 'Device found successfully' })
@@ -473,11 +461,8 @@ Register new IoT devices in your organization with comprehensive configuration a
 	@UseGuards(AuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
-		AccessLevel.MANAGER,
-		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.OWNER,
-		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({ summary: 'Update device information' })
 	@ApiResponse({ status: 200, description: 'Device updated successfully' })
@@ -490,11 +475,8 @@ Register new IoT devices in your organization with comprehensive configuration a
 	@UseGuards(AuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
-		AccessLevel.MANAGER,
-		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.OWNER,
-		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({ summary: 'Update device status' })
 	@ApiResponse({ status: 200, description: 'Device status updated successfully' })
@@ -507,11 +489,8 @@ Register new IoT devices in your organization with comprehensive configuration a
 	@UseGuards(AuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
-		AccessLevel.MANAGER,
-		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.OWNER,
-		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({ summary: 'Update device analytics' })
 	@ApiResponse({ status: 200, description: 'Device analytics updated successfully' })
@@ -524,11 +503,8 @@ Register new IoT devices in your organization with comprehensive configuration a
 	@UseGuards(AuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
-		AccessLevel.MANAGER,
-		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.OWNER,
-		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({ summary: 'Soft delete a device' })
 	@ApiResponse({ status: 200, description: 'Device deleted successfully' })
@@ -542,11 +518,8 @@ Register new IoT devices in your organization with comprehensive configuration a
 	@UseGuards(AuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
-		AccessLevel.MANAGER,
-		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.OWNER,
-		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({ summary: 'Create or update device record' })
 	@ApiResponse({ status: 201, description: 'Record created/updated successfully' })

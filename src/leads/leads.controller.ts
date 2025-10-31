@@ -188,6 +188,8 @@ export class LeadsController {
 	): Promise<PaginatedResponse<Lead>> {
 		const orgId = req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
+		const userId = req.user?.uid;
+		const userAccessLevel = req.user?.role;
 
 		const filters = {
 			...(status && { status }),
@@ -210,6 +212,8 @@ export class LeadsController {
 			limit ? Number(limit) : 25,
 			Number(orgId),
 			branchId,
+			userId,
+			userAccessLevel,
 		);
 	}
 

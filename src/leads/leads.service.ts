@@ -263,9 +263,11 @@ export class LeadsService {
 		limit: number = 25,
 		orgId?: number,
 		branchId?: number,
+		userId?: number,
+		userAccessLevel?: string,
 	): Promise<PaginatedResponse<Lead>> {
 		const startTime = Date.now();
-		this.logger.log(`🔍 [LeadsService] Finding leads with filters: page=${page}, limit=${limit}, orgId=${orgId}, branchId=${branchId}, filters:`, {
+		this.logger.log(`🔍 [LeadsService] Finding leads with filters: page=${page}, limit=${limit}, orgId=${orgId}, branchId=${branchId}, userId=${userId}, role=${userAccessLevel}, filters:`, {
 			status: filters?.status,
 			search: filters?.search ? `${filters.search.substring(0, 50)}...` : undefined,
 			hasDateRange: !!(filters?.startDate && filters?.endDate),
@@ -279,7 +281,14 @@ export class LeadsService {
 				throw new BadRequestException('Organization ID is required');
 			}
 
-			this.logger.debug(`🏗️ [LeadsService] Building query with filters for org: ${orgId}, branch: ${branchId || 'all'}`);
+			// Determine if user has elevated access (can see all leads)
+			const hasElevatedAccess = [
+				AccessLevel.ADMIN,
+				AccessLevel.OWNER,
+				AccessLevel.DEVELOPER,
+			].includes(userAccessLevel as AccessLevel);
+
+			this.logger.debug(`🏗️ [LeadsService] Building query with filters for org: ${orgId}, branch: ${branchId || 'all'}, elevated: ${hasElevatedAccess}`);
 
 			const queryBuilder = this.leadsRepository
 				.createQueryBuilder('lead')
@@ -293,6 +302,19 @@ export class LeadsService {
 			if (branchId) {
 				this.logger.debug(`🏢 [LeadsService] Adding branch filter: ${branchId}`);
 				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
+			}
+
+			// Access control: Regular users can only see their own leads or leads they're assigned to
+			if (!hasElevatedAccess && userId) {
+				this.logger.debug(`👤 [LeadsService] Applying user-level access filter for user: ${userId}`);
+				// User can see leads where they are the owner OR where they are in the assignees array
+				queryBuilder.andWhere(
+					'(lead.ownerUid = :userId OR lead.assignees @> CAST(:userIdJson AS jsonb))',
+					{ 
+						userId,
+						userIdJson: JSON.stringify([{ uid: userId }])
+					}
+				);
 			}
 
 			if (filters?.status) {
