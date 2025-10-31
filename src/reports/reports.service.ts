@@ -2237,4 +2237,140 @@ export class ReportsService implements OnModuleInit {
 			suburb: params.suburb,
 		};
 	}
+
+	// ===================================================================
+	// DAILY REPORTS METHODS (MORNING & EVENING)
+	// ===================================================================
+
+	/**
+	 * Get organization daily reports (morning and evening attendance reports)
+	 * Fetches ALL reports without date filtering
+	 */
+	async getOrganizationDailyReports(params: {
+		organisationRef: string;
+		reportType?: 'MORNING' | 'EVENING';
+		branchId?: number;
+		page?: number;
+		limit?: number;
+	}): Promise<any> {
+		this.logger.log(`Getting organization daily reports for org ${params.organisationRef}`);
+
+		try {
+			const { organisationRef, reportType, branchId, page = 1, limit = 50 } = params;
+
+			// Build query - fetch ALL reports
+			const queryBuilder = this.reportRepository
+				.createQueryBuilder('report')
+				.leftJoinAndSelect('report.organisation', 'organisation')
+				.leftJoinAndSelect('report.branch', 'branch')
+				.leftJoinAndSelect('report.owner', 'owner')
+				.where('organisation.ref = :organisationRef', { organisationRef });
+
+			// Filter by report type if specified
+			if (reportType) {
+				queryBuilder.andWhere('report.reportType = :reportType', { 
+					reportType: reportType.toLowerCase() 
+				});
+			} else {
+				// Only show MORNING and EVENING reports
+				queryBuilder.andWhere('report.reportType IN (:...reportTypes)', {
+					reportTypes: ['morning', 'evening']
+				});
+			}
+
+			// Filter by branch if specified
+			if (branchId) {
+				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
+			}
+
+			// Count total for pagination
+			const total = await queryBuilder.getCount();
+
+			// Apply pagination and sorting (most recent first)
+			const reports = await queryBuilder
+				.orderBy('report.generatedAt', 'DESC')
+				.skip((page - 1) * limit)
+				.take(limit)
+				.getMany();
+
+			this.logger.log(`Found ${reports.length} daily reports for org ${organisationRef} (total: ${total})`);
+
+			return {
+				message: 'Daily reports retrieved successfully',
+				reports,
+				pagination: {
+					total,
+					page,
+					limit,
+					totalPages: Math.ceil(total / limit),
+				},
+			};
+		} catch (error) {
+			this.logger.error(`Error getting organization daily reports: ${error.message}`, error.stack);
+			throw error;
+		}
+	}
+
+	/**
+	 * Get user personal daily reports (morning and evening attendance reports)
+	 * Fetches ALL reports without date filtering
+	 */
+	async getUserDailyReports(params: {
+		userId: number;
+		reportType?: 'MORNING' | 'EVENING';
+		page?: number;
+		limit?: number;
+	}): Promise<any> {
+		this.logger.log(`Getting user daily reports for user ${params.userId}`);
+
+		try {
+			const { userId, reportType, page = 1, limit = 50 } = params;
+
+			// Build query - fetch ALL reports
+			const queryBuilder = this.reportRepository
+				.createQueryBuilder('report')
+				.leftJoinAndSelect('report.owner', 'owner')
+				.leftJoinAndSelect('report.organisation', 'organisation')
+				.leftJoinAndSelect('report.branch', 'branch')
+				.where('owner.uid = :userId', { userId });
+
+			// Filter by report type if specified
+			if (reportType) {
+				queryBuilder.andWhere('report.reportType = :reportType', { 
+					reportType: reportType.toLowerCase() 
+				});
+			} else {
+				// Only show MORNING and EVENING reports
+				queryBuilder.andWhere('report.reportType IN (:...reportTypes)', {
+					reportTypes: ['morning', 'evening']
+				});
+			}
+
+			// Count total for pagination
+			const total = await queryBuilder.getCount();
+
+			// Apply pagination and sorting (most recent first)
+			const reports = await queryBuilder
+				.orderBy('report.generatedAt', 'DESC')
+				.skip((page - 1) * limit)
+				.take(limit)
+				.getMany();
+
+			this.logger.log(`Found ${reports.length} daily reports for user ${userId} (total: ${total})`);
+
+			return {
+				message: 'Daily reports retrieved successfully',
+				reports,
+				pagination: {
+					total,
+					page,
+					limit,
+					totalPages: Math.ceil(total / limit),
+				},
+			};
+		} catch (error) {
+			this.logger.error(`Error getting user daily reports: ${error.message}`, error.stack);
+			throw error;
+		}
+	}
 }

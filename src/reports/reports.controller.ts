@@ -26,6 +26,31 @@ export class ReportsController {
 
 	constructor(private readonly reportsService: ReportsService) {}
 
+	/**
+	 * Determines access scope for the authenticated user
+	 * @param user - Authenticated user object
+	 * @returns Access scope with orgId and branchId (null for org-wide access)
+	 */
+	private getAccessScope(user: any) {
+		const isElevatedUser = [
+			AccessLevel.ADMIN,
+			AccessLevel.OWNER,
+			AccessLevel.MANAGER,
+			AccessLevel.DEVELOPER,
+			AccessLevel.SUPPORT,
+			AccessLevel.HR, // HR has elevated access to reports
+		].includes(user?.accessLevel);
+
+		const orgId = user?.org?.uid || user?.organisationRef;
+		const branchId = isElevatedUser ? null : user?.branch?.uid; // null = org-wide access for elevated users
+
+		return {
+			orgId,
+			branchId,
+			isElevated: isElevatedUser,
+		};
+	}
+
 	// Get Map Data endpoint
 	@Get('map')
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.USER, AccessLevel.OWNER)
@@ -593,5 +618,204 @@ Comprehensive performance analytics with advanced filtering and data visualizati
 		}
 
 		return this.reportsService.getPerformanceMasterData(organisationId);
+	}
+
+	// ======================================================
+	// DAILY REPORTS ENDPOINTS (MORNING & EVENING)
+	// ======================================================
+
+	@Get('organization/:organisationRef/daily-reports')
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.HR)
+	@ApiOperation({
+		summary: '📄 Get Organization Daily Reports',
+		description: `
+# Organization Daily Reports Archive
+
+Access all morning and evening attendance reports for your organization.
+
+## 📊 **What You Get**
+- **Morning Reports**: Generated at 8:00 AM with overnight attendance data
+- **Evening Reports**: Generated at 6:00 PM with full day attendance data
+- **PDF Downloads**: Direct PDF URL links for each report
+- **All Historical Data**: All reports from all dates
+
+## 🔍 **Filtering Options**
+- **Report Type**: Filter by MORNING or EVENING reports (or show ALL)
+- **Branch**: Filter by specific branch (optional)
+- **Pagination**: Page and limit parameters
+
+## 🔒 **Authorization**
+- Available to ADMIN, MANAGER, OWNER, and HR roles only
+- Organization reference is validated against user's organization
+- Elevated users (ADMIN, OWNER, MANAGER, DEVELOPER, SUPPORT) have org-wide access
+		`,
+	})
+	@ApiParam({
+		name: 'organisationRef',
+		description: 'Organization reference identifier',
+		type: 'string',
+		example: '123',
+	})
+	@ApiQuery({ name: 'reportType', required: false, enum: ['MORNING', 'EVENING'], description: 'Filter by report type' })
+	@ApiQuery({ name: 'branchId', required: false, type: Number, description: 'Filter by branch' })
+	@ApiQuery({ name: 'page', required: false, type: Number, description: 'Page number (default: 1)' })
+	@ApiQuery({ name: 'limit', required: false, type: Number, description: 'Items per page (default: 50)' })
+	async getOrganizationDailyReports(
+		@Req() request: AuthenticatedRequest,
+		@Param('organisationRef') organisationRef: string,
+		@Query('reportType') reportType?: 'MORNING' | 'EVENING',
+		@Query('branchId') branchId?: string,
+		@Query('page') page?: string,
+		@Query('limit') limit?: string
+	) {
+		this.logger.log(`Getting organization daily reports for org ${organisationRef}`);
+
+		// Use the same access scope pattern as user controller
+		const accessScope = this.getAccessScope(request.user);
+		
+		// Get user's organization reference - could be string or number
+		const userOrgRef = (request.user?.organisationRef || request.user?.org?.uid)?.toString();
+		const requestedOrgRef = organisationRef?.toString();
+		
+		// 🔍 DEBUG: Log the access decision with full user object
+		console.log('🔍 DEBUG getOrganizationDailyReports:', {
+			requestedOrg: requestedOrgRef,
+			userOrg: userOrgRef,
+			fullUser: {
+				uid: request.user?.uid,
+				accessLevel: request.user?.accessLevel,
+				organisationRef: request.user?.organisationRef,
+				org: request.user?.org,
+			},
+			requestingUser: {
+				uid: request.user?.uid,
+				accessLevel: request.user?.accessLevel,
+				isElevated: accessScope.isElevated,
+			},
+			accessScope: {
+				orgId: accessScope.orgId,
+				branchId: accessScope.branchId,
+				orgWideAccess: accessScope.branchId === null,
+			},
+			comparison: {
+				requestedOrgRef,
+				userOrgRef,
+				match: requestedOrgRef === userOrgRef,
+				isOwner: request.user.accessLevel === AccessLevel.OWNER,
+				willAllow: requestedOrgRef === userOrgRef || request.user.accessLevel === AccessLevel.OWNER || accessScope.isElevated,
+			},
+		});
+
+		// Elevated users (including HR) can access their org's reports
+		// Only OWNER can access other organizations
+		const hasAccess = 
+			requestedOrgRef === userOrgRef || 
+			request.user.accessLevel === AccessLevel.OWNER ||
+			(accessScope.isElevated && requestedOrgRef === userOrgRef);
+
+		if (!hasAccess) {
+			this.logger.warn(`User ${request.user.uid} (level: ${request.user.accessLevel}) attempted to access org ${requestedOrgRef} reports without permission. User org: ${userOrgRef}`);
+			throw new BadRequestException(`Access denied to requested organization reports. User org: ${userOrgRef}, Requested: ${requestedOrgRef}`);
+		}
+
+		return this.reportsService.getOrganizationDailyReports({
+			organisationRef: requestedOrgRef,
+			reportType,
+			branchId: branchId ? parseInt(branchId, 10) : undefined,
+			page: page ? parseInt(page, 10) : 1,
+			limit: limit ? parseInt(limit, 10) : 50,
+		});
+	}
+
+	@Get('user/:userId/daily-reports')
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.HR, AccessLevel.USER)
+	@ApiOperation({
+		summary: '📄 Get User Personal Daily Reports',
+		description: `
+# Personal Daily Reports Archive
+
+Access all your personal morning and evening attendance reports.
+
+## 📊 **What You Get**
+- **Morning Reports**: Your overnight attendance data
+- **Evening Reports**: Your full day attendance data
+- **PDF Downloads**: Direct PDF URL links for each report
+- **All Historical Data**: All your reports from all dates
+
+## 🔍 **Filtering Options**
+- **Report Type**: Filter by MORNING or EVENING reports (or show ALL)
+- **Pagination**: Page and limit parameters
+
+## 🔒 **Authorization**
+- Users can access their own reports
+- Elevated users (ADMIN, MANAGER, OWNER, HR) can access any user's reports within their organization
+- Branch-level access respected for non-elevated users
+		`,
+	})
+	@ApiParam({
+		name: 'userId',
+		description: 'User ID to get daily reports for',
+		type: 'number',
+		example: 123,
+	})
+	@ApiQuery({ name: 'reportType', required: false, enum: ['MORNING', 'EVENING'], description: 'Filter by report type' })
+	@ApiQuery({ name: 'page', required: false, type: Number, description: 'Page number (default: 1)' })
+	@ApiQuery({ name: 'limit', required: false, type: Number, description: 'Items per page (default: 50)' })
+	async getUserDailyReports(
+		@Req() request: AuthenticatedRequest,
+		@Param('userId') userId: string,
+		@Query('reportType') reportType?: 'MORNING' | 'EVENING',
+		@Query('page') page?: string,
+		@Query('limit') limit?: string
+	) {
+		const parsedUserId = parseInt(userId, 10);
+		this.logger.log(`Getting user daily reports for user ${parsedUserId}`);
+
+		// Use the same access scope pattern as user controller
+		const accessScope = this.getAccessScope(request.user);
+
+		// 🔍 DEBUG: Log the access decision with full details
+		console.log('🔍 DEBUG getUserDailyReports:', {
+			requestedUserId: parsedUserId,
+			fullUser: {
+				uid: request.user?.uid,
+				accessLevel: request.user?.accessLevel,
+				role: request.user?.role,
+			},
+			requestingUser: {
+				uid: request.user?.uid,
+				accessLevel: request.user?.accessLevel,
+				isElevated: accessScope.isElevated,
+			},
+			accessScope: {
+				orgId: accessScope.orgId,
+				branchId: accessScope.branchId,
+				orgWideAccess: accessScope.branchId === null,
+			},
+			comparison: {
+				requestedUserId: parsedUserId,
+				currentUserId: request.user?.uid,
+				match: parsedUserId === request.user.uid,
+				isElevated: accessScope.isElevated,
+				willAllow: accessScope.isElevated || parsedUserId === request.user.uid,
+			},
+		});
+
+		// Check access permissions
+		// Users can access their own reports OR elevated users can access any user's reports
+		const isSelfAccess = parsedUserId === request.user.uid;
+		const hasAccess = isSelfAccess || accessScope.isElevated;
+
+		if (!hasAccess) {
+			this.logger.warn(`User ${request.user.uid} (level: ${request.user.accessLevel}) attempted to access user ${parsedUserId} reports without permission`);
+			throw new BadRequestException(`Access denied to requested user reports. You can only access your own reports (UID: ${request.user.uid})`);
+		}
+
+		return this.reportsService.getUserDailyReports({
+			userId: parsedUserId,
+			reportType,
+			page: page ? parseInt(page, 10) : 1,
+			limit: limit ? parseInt(limit, 10) : 50,
+		});
 	}
 }

@@ -5,4 +5,6 @@ export enum ReportType {
   SHIFT = 'shift',
   QUOTATION = 'quotation',
   ORG_ACTIVITY = 'org_activity',
+  MORNING = 'morning',
+  EVENING = 'evening',
 } 
