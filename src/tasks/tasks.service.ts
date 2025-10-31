@@ -420,6 +420,8 @@ export class TasksService {
 		this.logger.log(`Creating task: ${createTaskDto.title}, orgId: ${orgId}, branchId: ${branchId}`);
 
 		try {
+			// === CRITICAL PATH - Operations before response ===
+			
 			// Enhanced validation
 			this.logger.debug('Validating task creation data');
 			if (!orgId) {
@@ -541,84 +543,152 @@ export class TasksService {
 				throw new BadRequestException('Failed to create task');
 			}
 
-			this.logger.debug(`Task saved successfully with ID: ${savedTask.uid}`);
+			this.logger.log(`Task created successfully with ID: ${savedTask.uid}`);
 
-			// Create subtasks if provided with enhanced logging
-			if (createTaskDto.subtasks && createTaskDto.subtasks.length > 0) {
-				this.logger.debug(`Creating ${createTaskDto.subtasks.length} subtasks`);
-				const subtasks = createTaskDto.subtasks.map((subtaskDto, index) => {
-					this.logger.debug(`Creating subtask ${index + 1}: ${subtaskDto.title}`);
-					const subtask = new SubTask();
-					subtask.title = subtaskDto.title;
-					subtask.description = subtaskDto.description || '';
-					subtask.status = SubTaskStatus.PENDING;
-					subtask.task = savedTask;
-					return subtask;
-				});
+			// === EARLY RETURN: Respond to user immediately with success ===
+			// All non-critical operations will continue asynchronously
+			const immediateResponse = { message: 'success' };
+
+			// === POST-RESPONSE PROCESSING ===
+			// Process all non-critical operations asynchronously after responding to user
+			setImmediate(async () => {
+				const asyncOperationId = `TASK_ASYNC_${savedTask.uid}_${Date.now()}`;
+				this.logger.log(`[${asyncOperationId}] Starting async post-task processing for task: ${savedTask.title}`);
 
 				try {
-					await this.subtaskRepository.save(subtasks);
-					this.logger.debug(`Successfully created ${subtasks.length} subtasks`);
-				} catch (subtaskError) {
-					this.logger.error(`Failed to create subtasks: ${subtaskError.message}`);
-					// Don't fail the whole task creation if subtasks fail
-				}
-			} else {
-				this.logger.debug('No subtasks provided for task');
-			}
+					// 1. Create subtasks if provided
+					if (createTaskDto.subtasks && createTaskDto.subtasks.length > 0) {
+						this.logger.debug(`[${asyncOperationId}] Creating ${createTaskDto.subtasks.length} subtasks`);
+						const subtasks = createTaskDto.subtasks.map((subtaskDto, index) => {
+							this.logger.debug(`[${asyncOperationId}] Creating subtask ${index + 1}: ${subtaskDto.title}`);
+							const subtask = new SubTask();
+							subtask.title = subtaskDto.title;
+							subtask.description = subtaskDto.description || '';
+							subtask.status = SubTaskStatus.PENDING;
+							subtask.task = savedTask;
+							return subtask;
+						});
 
-			// Send push notifications to assignees
-			if (savedTask?.assignees?.length > 0) {
-				this.logger.debug(`Sending notifications to ${savedTask.assignees.length} assignees`);
-				try {
-					const assigneeIds = savedTask.assignees.map((assignee) => assignee.uid);
-					this.logger.debug(`Assignee IDs: ${assigneeIds.join(', ')}`);
-
-					// Filter out inactive users
-					const activeAssigneeIds = await this.filterActiveUsers(assigneeIds);
-
-					if (activeAssigneeIds.length > 0) {
-						const creatorName = savedTask.creator?.name || 'Team Member';
-						
-					await this.unifiedNotificationService.sendTemplatedNotification(
-						NotificationEvent.TASK_ASSIGNED,
-						activeAssigneeIds,
-						{
-							taskTitle: savedTask.title,
-							taskId: savedTask.uid,
-							assignedBy: creatorName,
-							deadline: savedTask.deadline?.toLocaleDateString() || 'No deadline',
-							priority: savedTask.priority,
-						},
-						{
-							priority: NotificationPriority.HIGH,
-							customData: {
-								screen: '/sales/tasks',
-								action: 'view_task',
-							},
-						},
-					);
-						this.logger.log(`✅ Task assignment push notifications sent to ${activeAssigneeIds.length} assignees`);
+						try {
+							await this.subtaskRepository.save(subtasks);
+							this.logger.log(`[${asyncOperationId}] ✅ Successfully created ${subtasks.length} subtasks`);
+						} catch (subtaskError) {
+							this.logger.error(`[${asyncOperationId}] Failed to create subtasks: ${subtaskError.message}`);
+							// Don't throw - user already has success response
+						}
+					} else {
+						this.logger.debug(`[${asyncOperationId}] No subtasks to create`);
 					}
-				} catch (notificationError) {
-					// Log error but don't fail task creation
-					this.logger.error('Failed to send task assignment push notifications:', notificationError.message);
+
+					// 2. Send push notifications to assignees
+					if (savedTask?.assignees?.length > 0) {
+						this.logger.debug(`[${asyncOperationId}] Sending notifications to ${savedTask.assignees.length} assignees`);
+						try {
+							const assigneeIds = savedTask.assignees.map((assignee) => assignee.uid);
+							this.logger.debug(`[${asyncOperationId}] Assignee IDs: ${assigneeIds.join(', ')}`);
+
+							// Filter out inactive users
+							const activeAssigneeIds = await this.filterActiveUsers(assigneeIds);
+
+							if (activeAssigneeIds.length > 0) {
+								const creatorName = savedTask.creator?.name || 'Team Member';
+								
+								await this.unifiedNotificationService.sendTemplatedNotification(
+									NotificationEvent.TASK_ASSIGNED,
+									activeAssigneeIds,
+									{
+										taskTitle: savedTask.title,
+										taskId: savedTask.uid,
+										assignedBy: creatorName,
+										deadline: savedTask.deadline?.toLocaleDateString() || 'No deadline',
+										priority: savedTask.priority,
+									},
+									{
+										priority: NotificationPriority.HIGH,
+										customData: {
+											screen: '/sales/tasks',
+											action: 'view_task',
+										},
+									},
+								);
+								this.logger.log(`[${asyncOperationId}] ✅ Task assignment push notifications sent to ${activeAssigneeIds.length} assignees`);
+							} else {
+								this.logger.debug(`[${asyncOperationId}] No active assignees to notify`);
+							}
+						} catch (notificationError) {
+							this.logger.error(`[${asyncOperationId}] Failed to send task assignment push notifications: ${notificationError.message}`);
+							// Don't throw - user already has success response
+						}
+					} else {
+						this.logger.debug(`[${asyncOperationId}] No assignees to notify`);
+					}
+
+					// 3. Create repeating tasks if needed
+					if (task.repetitionType !== RepetitionType.NONE && task.repetitionDeadline && task.deadline) {
+						this.logger.debug(`[${asyncOperationId}] Creating repeating tasks for repetition type: ${task.repetitionType}`);
+						try {
+							await this.createRepeatingTasks(savedTask, createTaskDto);
+							this.logger.log(`[${asyncOperationId}] ✅ Repeating tasks created successfully`);
+						} catch (repeatError) {
+							this.logger.error(`[${asyncOperationId}] Failed to create repeating tasks: ${repeatError.message}`);
+							// Don't throw - user already has success response
+						}
+					} else {
+						this.logger.debug(`[${asyncOperationId}] No repeating tasks to create`);
+					}
+
+					// 4. Check for flags and update task status if needed
+					try {
+						await this.checkFlagsAndUpdateTaskStatus(savedTask.uid);
+						this.logger.debug(`[${asyncOperationId}] Flag checking completed`);
+					} catch (flagError) {
+						this.logger.error(`[${asyncOperationId}] Failed to check flags: ${flagError.message}`);
+						// Don't throw - user already has success response
+					}
+
+					// 5. Clear cache
+					try {
+						await this.clearTaskCache();
+						this.logger.debug(`[${asyncOperationId}] Task cache cleared`);
+					} catch (cacheError) {
+						this.logger.error(`[${asyncOperationId}] Failed to clear cache: ${cacheError.message}`);
+						// Don't throw - user already has success response
+					}
+
+					// 6. Emit task creation event for external integrations
+					try {
+						this.eventEmitter.emit('task.created', {
+							taskId: savedTask.uid,
+							title: savedTask.title,
+							description: savedTask.description,
+							priority: savedTask.priority,
+							deadline: savedTask.deadline,
+							taskType: savedTask.taskType,
+							assignees: savedTask.assignees,
+							clients: savedTask.clients,
+							creator: savedTask.creator,
+							orgId,
+							branchId,
+							timestamp: new Date(),
+						});
+						this.logger.debug(`[${asyncOperationId}] Task creation event emitted`);
+					} catch (eventError) {
+						this.logger.error(`[${asyncOperationId}] Failed to emit task creation event: ${eventError.message}`);
+						// Don't throw - user already has success response
+					}
+
+					this.logger.log(`[${asyncOperationId}] Async post-task processing completed successfully`);
+
+				} catch (error) {
+					this.logger.error(`[${asyncOperationId}] Error in async post-task processing: ${error.message}`, error.stack);
+					// Don't throw - user already has success response
 				}
-			}
+			});
 
-			// Check if this is a repeating task
-			if (task.repetitionType !== RepetitionType.NONE && task.repetitionDeadline && task.deadline) {
-				await this.createRepeatingTasks(savedTask, createTaskDto);
-			}
+			return immediateResponse;
 
-			// Check for flags and update task status if needed
-			await this.checkFlagsAndUpdateTaskStatus(savedTask.uid);
-
-			// Clear cache
-			await this.clearTaskCache();
-
-			return { message: 'success' };
 		} catch (error) {
+			this.logger.error(`Error creating task: ${error.message}`, error.stack);
 			return { message: error?.message };
 		}
 	}
