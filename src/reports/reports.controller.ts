@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards, Req, BadRequestException, Logger, Query, ValidationPipe } from '@nestjs/common';
+import { Controller, Get, UseGuards, Req, BadRequestException, Logger, Query, ValidationPipe, Param } from '@nestjs/common';
 import { ReportsService } from './reports.service';
 import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
 import {
@@ -9,6 +9,7 @@ import {
 	ApiBadRequestResponse,
 	ApiUnauthorizedResponse,
 	ApiQuery,
+	ApiParam,
 } from '@nestjs/swagger';
 import { RoleGuard } from '../guards/role.guard';
 import { AuthGuard } from '../guards/auth.guard';
