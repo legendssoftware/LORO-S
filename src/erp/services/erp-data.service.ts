@@ -1,6 +1,6 @@
 import { Injectable, Logger, Inject, OnModuleInit } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
+import { Repository, DataSource } from 'typeorm';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { TblSalesHeader } from '../entities/tblsalesheader.entity';
@@ -23,13 +23,29 @@ import { ConfigService } from '@nestjs/config';
 @Injectable()
 export class ErpDataService implements OnModuleInit {
 	private readonly logger = new Logger(ErpDataService.name);
-	private readonly CACHE_TTL = 3600; // 1 hour in seconds
+	private readonly CACHE_TTL = 14400; // 4 hours in seconds (increased from 1 hour)
+	
+	// ✅ Circuit Breaker State
+	private circuitBreakerState: 'CLOSED' | 'OPEN' | 'HALF_OPEN' = 'CLOSED';
+	private failureCount = 0;
+	private lastFailureTime: number = 0;
+	private readonly FAILURE_THRESHOLD = 3; // Open circuit after 3 failures
+	private readonly CIRCUIT_RESET_TIMEOUT = 30000; // 30 seconds
+	private readonly HALF_OPEN_MAX_REQUESTS = 1; // Only 1 request in half-open state
+	private halfOpenRequests = 0;
+	
+	// ✅ Query Semaphore for limiting concurrent queries
+	private activeQueries = 0;
+	private readonly MAX_CONCURRENT_QUERIES = 3; // Max 3 parallel queries at once
+	private queryQueue: Array<() => Promise<any>> = [];
 
 	constructor(
 		@InjectRepository(TblSalesHeader, 'erp')
 		private salesHeaderRepo: Repository<TblSalesHeader>,
 		@InjectRepository(TblSalesLines, 'erp')
 		private salesLinesRepo: Repository<TblSalesLines>,
+		@InjectDataSource('erp')
+		private erpDataSource: DataSource,
 		@Inject(CACHE_MANAGER)
 		private cacheManager: Cache,
 		private readonly configService: ConfigService,
@@ -48,13 +64,22 @@ export class ErpDataService implements OnModuleInit {
 			const port = this.configService.get<string>('ERP_DATABASE_PORT');
 			const database = this.configService.get<string>('ERP_DATABASE_NAME');
 			const user = this.configService.get<string>('ERP_DATABASE_USER');
+			const connectionLimit = this.configService.get<string>('ERP_DB_CONNECTION_LIMIT') || '30';
 
 			this.logger.log(`[${operationId}] ERP Database Configuration:`);
 			this.logger.log(`[${operationId}]   Host: ${host || 'NOT SET'}`);
 			this.logger.log(`[${operationId}]   Port: ${port || 'NOT SET'}`);
 			this.logger.log(`[${operationId}]   Database: ${database || 'NOT SET'}`);
 			this.logger.log(`[${operationId}]   User: ${user || 'NOT SET'}`);
+			this.logger.log(`[${operationId}]   Connection Pool Size: ${connectionLimit}`);
 			this.logger.log(`[${operationId}]   Cache TTL: ${this.CACHE_TTL}s`);
+
+			// ✅ Log connection pool information
+			const poolInfo = this.getConnectionPoolInfo();
+			this.logger.log(`[${operationId}] Connection Pool Info:`);
+			this.logger.log(`[${operationId}]   Pool Size: ${poolInfo.poolSize}`);
+			this.logger.log(`[${operationId}]   Active Connections: ${poolInfo.activeConnections}`);
+			this.logger.log(`[${operationId}]   Idle Connections: ${poolInfo.idleConnections}`);
 
 			// Test connection
 			this.logger.log(`[${operationId}] Testing ERP database connection...`);
@@ -74,10 +99,176 @@ export class ErpDataService implements OnModuleInit {
 	}
 
 	/**
+	 * Get connection pool information for monitoring
+	 */
+	getConnectionPoolInfo(): {
+		poolSize: number | string;
+		activeConnections: number | string;
+		idleConnections: number | string;
+	} {
+		try {
+			const driver = this.erpDataSource?.driver as any;
+			const pool = driver?.pool;
+
+			if (!pool) {
+				return {
+					poolSize: 'N/A',
+					activeConnections: 'N/A',
+					idleConnections: 'N/A',
+				};
+			}
+
+			const poolSize = pool?.config?.connectionLimit || 'unknown';
+			const allConnections = pool?._allConnections?.length || 0;
+			const freeConnections = pool?._freeConnections?.length || 0;
+			const activeConnections = allConnections - freeConnections;
+
+			return {
+				poolSize,
+				activeConnections,
+				idleConnections: freeConnections,
+			};
+		} catch (error) {
+			this.logger.warn(`Failed to get connection pool info: ${error.message}`);
+			return {
+				poolSize: 'error',
+				activeConnections: 'error',
+				idleConnections: 'error',
+			};
+		}
+	}
+
+	/**
 	 * Generate unique operation ID for tracking
 	 */
 	private generateOperationId(operation: string): string {
 		return `${operation}_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+	}
+
+	/**
+	 * ✅ Circuit Breaker: Check if circuit is open
+	 */
+	private isCircuitOpen(): boolean {
+		if (this.circuitBreakerState === 'OPEN') {
+			const timeSinceLastFailure = Date.now() - this.lastFailureTime;
+			
+			// Try to move to HALF_OPEN after timeout
+			if (timeSinceLastFailure >= this.CIRCUIT_RESET_TIMEOUT) {
+				this.logger.warn('Circuit breaker moving to HALF_OPEN state');
+				this.circuitBreakerState = 'HALF_OPEN';
+				this.halfOpenRequests = 0;
+				return false;
+			}
+			
+			return true;
+		}
+		
+		return false;
+	}
+
+	/**
+	 * ✅ Circuit Breaker: Record success
+	 */
+	private recordSuccess(): void {
+		if (this.circuitBreakerState === 'HALF_OPEN') {
+			this.logger.log('Circuit breaker test request succeeded - closing circuit');
+			this.circuitBreakerState = 'CLOSED';
+			this.failureCount = 0;
+			this.halfOpenRequests = 0;
+		} else if (this.circuitBreakerState === 'CLOSED') {
+			// Reset failure count on success
+			this.failureCount = 0;
+		}
+	}
+
+	/**
+	 * ✅ Circuit Breaker: Record failure
+	 */
+	private recordFailure(error: Error): void {
+		this.failureCount++;
+		this.lastFailureTime = Date.now();
+
+		if (this.circuitBreakerState === 'HALF_OPEN') {
+			this.logger.error('Circuit breaker test request failed - reopening circuit');
+			this.circuitBreakerState = 'OPEN';
+		} else if (this.failureCount >= this.FAILURE_THRESHOLD) {
+			this.logger.error(`Circuit breaker OPENED after ${this.failureCount} failures`);
+			this.circuitBreakerState = 'OPEN';
+		}
+	}
+
+	/**
+	 * ✅ Query Semaphore: Execute query with concurrency control
+	 */
+	private async executeWithSemaphore<T>(
+		queryFn: () => Promise<T>,
+		operationId: string,
+	): Promise<T> {
+		// Wait if too many active queries
+		while (this.activeQueries >= this.MAX_CONCURRENT_QUERIES) {
+			this.logger.debug(
+				`[${operationId}] Query queue: ${this.activeQueries}/${this.MAX_CONCURRENT_QUERIES} active, waiting...`,
+			);
+			await new Promise((resolve) => setTimeout(resolve, 100)); // Wait 100ms
+		}
+
+		this.activeQueries++;
+		const poolInfo = this.getConnectionPoolInfo();
+		this.logger.debug(
+			`[${operationId}] Starting query (${this.activeQueries}/${this.MAX_CONCURRENT_QUERIES} active) - Pool: ${poolInfo.activeConnections}/${poolInfo.poolSize} connections`,
+		);
+
+		try {
+			const result = await queryFn();
+			return result;
+		} finally {
+			this.activeQueries--;
+			this.logger.debug(
+				`[${operationId}] Query completed (${this.activeQueries}/${this.MAX_CONCURRENT_QUERIES} active)`,
+			);
+		}
+	}
+
+	/**
+	 * ✅ Wrap query execution with circuit breaker, timeout, and retry logic
+	 */
+	private async executeQueryWithProtection<T>(
+		queryFn: () => Promise<T>,
+		operationId: string,
+		timeoutMs: number = 60000, // 60 second default timeout
+	) {
+		// Check circuit breaker
+		if (this.isCircuitOpen()) {
+			const error = new Error('Circuit breaker is OPEN - ERP queries temporarily disabled');
+			this.logger.error(`[${operationId}] ${error.message}`);
+			throw error;
+		}
+
+		// Check half-open state
+		if (this.circuitBreakerState === 'HALF_OPEN') {
+			if (this.halfOpenRequests >= this.HALF_OPEN_MAX_REQUESTS) {
+				const error = new Error('Circuit breaker is HALF_OPEN - max test requests reached');
+				this.logger.warn(`[${operationId}] ${error.message}`);
+				throw error;
+			}
+			this.halfOpenRequests++;
+		}
+
+		try {
+			// Execute with timeout protection
+			const result = await Promise.race([
+				this.executeWithSemaphore(queryFn, operationId),
+				new Promise<T>((_, reject) =>
+					setTimeout(() => reject(new Error(`Query timeout after ${timeoutMs}ms`)), timeoutMs),
+				),
+			]);
+
+			this.recordSuccess();
+			return result;
+		} catch (error) {
+			this.recordFailure(error);
+			throw error;
+		}
 	}
 
 	/**
@@ -124,21 +315,30 @@ export class ErpDataService implements OnModuleInit {
 			this.logger.log(`[${operationId}] Date range: ${filters.startDate} to ${filters.endDate}`);
 
 			const queryStart = Date.now();
-			const query = this.salesHeaderRepo
-				.createQueryBuilder('header')
-				.where('header.sale_date BETWEEN :startDate AND :endDate', {
-					startDate: filters.startDate,
-					endDate: filters.endDate,
-				})
-				// ✅ CRITICAL: Only Tax Invoices (doc_type = 1)
-				.andWhere('header.doc_type = :docType', { docType: 1 });
+			
+			// ✅ Execute with circuit breaker and timeout protection
+			const results = await this.executeQueryWithProtection(
+				async () => {
+					const query = this.salesHeaderRepo
+						.createQueryBuilder('header')
+						.where('header.sale_date BETWEEN :startDate AND :endDate', {
+							startDate: filters.startDate,
+							endDate: filters.endDate,
+						})
+						// ✅ CRITICAL: Only Tax Invoices (doc_type = 1)
+						.andWhere('header.doc_type = :docType', { docType: 1 });
 
-			if (filters.storeCode) {
-				this.logger.debug(`[${operationId}] Filtering by store: ${filters.storeCode}`);
-				query.andWhere('header.store = :store', { store: filters.storeCode });
-			}
+					if (filters.storeCode) {
+						this.logger.debug(`[${operationId}] Filtering by store: ${filters.storeCode}`);
+						query.andWhere('header.store = :store', { store: filters.storeCode });
+					}
 
-			const results = await query.getMany();
+					return await query.getMany();
+				},
+				operationId,
+				45000, // 45 second timeout for headers
+			);
+			
 			const queryDuration = Date.now() - queryStart;
 
 			this.logger.log(`[${operationId}] Database query completed in ${queryDuration}ms`);
@@ -193,32 +393,40 @@ export class ErpDataService implements OnModuleInit {
 			this.logger.log(`[${operationId}] Cache MISS - Querying database...`);
 
 			const queryStart = Date.now();
-			const query = this.salesLinesRepo
-				.createQueryBuilder('line')
-				.where('line.sale_date BETWEEN :startDate AND :endDate', {
-					startDate: filters.startDate,
-					endDate: filters.endDate,
-				})
-				// ✅ CRITICAL: Filter by document type
-				.andWhere('line.doc_type IN (:...docTypes)', { docTypes: includeDocTypes });
+			
+			// ✅ Execute with circuit breaker and timeout protection
+			const results = await this.executeQueryWithProtection(
+				async () => {
+					const query = this.salesLinesRepo
+						.createQueryBuilder('line')
+						.where('line.sale_date BETWEEN :startDate AND :endDate', {
+							startDate: filters.startDate,
+							endDate: filters.endDate,
+						})
+						// ✅ CRITICAL: Filter by document type
+						.andWhere('line.doc_type IN (:...docTypes)', { docTypes: includeDocTypes });
 
-			// Apply additional filters
-			if (filters.storeCode) {
-				this.logger.debug(`[${operationId}] Filtering by store: ${filters.storeCode}`);
-				query.andWhere('line.store = :store', { store: filters.storeCode });
-			}
+					// Apply additional filters
+					if (filters.storeCode) {
+						this.logger.debug(`[${operationId}] Filtering by store: ${filters.storeCode}`);
+						query.andWhere('line.store = :store', { store: filters.storeCode });
+					}
 
-			if (filters.category) {
-				this.logger.debug(`[${operationId}] Filtering by category: ${filters.category}`);
-				query.andWhere('line.category = :category', { category: filters.category });
-			}
+					if (filters.category) {
+						this.logger.debug(`[${operationId}] Filtering by category: ${filters.category}`);
+						query.andWhere('line.category = :category', { category: filters.category });
+					}
 
-			// ✅ Data quality filters
-			query.andWhere('line.item_code IS NOT NULL');
-			query.andWhere('line.quantity != 0');
-			query.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' });
+					// ✅ Data quality filters - using gross amounts (incl_line_total) without discount subtraction
+					query.andWhere('line.item_code IS NOT NULL');
+					query.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' });
 
-			const results = await query.getMany();
+					return await query.getMany();
+				},
+				operationId,
+				60000, // 60 second timeout for lines
+			);
+			
 			const queryDuration = Date.now() - queryStart;
 
 			this.logger.log(`[${operationId}] Database query completed in ${queryDuration}ms`);
@@ -285,9 +493,8 @@ export class ErpDataService implements OnModuleInit {
 				.select([
 					'DATE(line.sale_date) as date',
 					'line.store as store',
-					'SUM(line.incl_line_total - line.discount) as totalRevenue',
+					'SUM(line.incl_line_total) as totalRevenue',
 					'SUM(line.cost_price * line.quantity) as totalCost',
-					'SUM(line.incl_line_total - line.discount - (line.cost_price * line.quantity)) as totalGrossProfit',
 					'COUNT(DISTINCT line.doc_number) as transactionCount',
 					'COUNT(DISTINCT line.customer) as uniqueCustomers',
 					'SUM(line.quantity) as totalQuantity',
@@ -296,11 +503,10 @@ export class ErpDataService implements OnModuleInit {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
 				})
-				// ✅ CRITICAL: Only Tax Invoices for revenue calculations
+				// ✅ CRITICAL: Only Tax Invoices (doc_type = 1) for revenue calculations
 				.andWhere('line.doc_type = :docType', { docType: '1' })
-				// ✅ Data quality filters
+				// ✅ Data quality filters - using gross amounts (incl_line_total) without discount subtraction
 				.andWhere('line.item_code IS NOT NULL')
-				.andWhere('line.quantity != 0')
 				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' })
 				.groupBy('DATE(line.sale_date), line.store')
 				.orderBy('DATE(line.sale_date)', 'ASC');
@@ -361,9 +567,8 @@ export class ErpDataService implements OnModuleInit {
 				.createQueryBuilder('line')
 				.select([
 					'line.store as store',
-					'SUM(line.incl_line_total - line.discount) as totalRevenue',
+					'SUM(line.incl_line_total) as totalRevenue',
 					'SUM(line.cost_price * line.quantity) as totalCost',
-					'SUM(line.incl_line_total - line.discount - (line.cost_price * line.quantity)) as totalGrossProfit',
 					'COUNT(DISTINCT line.doc_number) as transactionCount',
 					'COUNT(DISTINCT line.customer) as uniqueCustomers',
 					'SUM(line.quantity) as totalQuantity',
@@ -372,11 +577,10 @@ export class ErpDataService implements OnModuleInit {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
 				})
-				// ✅ CRITICAL: Only Tax Invoices for revenue calculations
+				// ✅ CRITICAL: Only Tax Invoices (doc_type = 1) for revenue calculations
 				.andWhere('line.doc_type = :docType', { docType: '1' })
-				// ✅ Data quality filters
+				// ✅ Data quality filters - using gross amounts (incl_line_total) without discount subtraction
 				.andWhere('line.item_code IS NOT NULL')
-				.andWhere('line.quantity != 0')
 				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' })
 				.groupBy('line.store')
 				.orderBy('totalRevenue', 'DESC');
@@ -433,9 +637,8 @@ export class ErpDataService implements OnModuleInit {
 				.select([
 					'line.category as category',
 					'line.store as store',
-					'SUM(line.incl_line_total - line.discount) as totalRevenue',
+					'SUM(line.incl_line_total) as totalRevenue',
 					'SUM(line.cost_price * line.quantity) as totalCost',
-					'SUM(line.incl_line_total - line.discount - (line.cost_price * line.quantity)) as totalGrossProfit',
 					'COUNT(DISTINCT line.doc_number) as transactionCount',
 					'COUNT(DISTINCT line.customer) as uniqueCustomers',
 					'SUM(line.quantity) as totalQuantity',
@@ -444,11 +647,10 @@ export class ErpDataService implements OnModuleInit {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
 				})
-				// ✅ CRITICAL: Only Tax Invoices for revenue calculations
+				// ✅ CRITICAL: Only Tax Invoices (doc_type = 1) for revenue calculations
 				.andWhere('line.doc_type = :docType', { docType: '1' })
-				// ✅ Data quality filters
+				// ✅ Data quality filters - using gross amounts (incl_line_total) without discount subtraction
 				.andWhere('line.item_code IS NOT NULL')
-				.andWhere('line.quantity != 0')
 				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' })
 				.groupBy('line.category, line.store')
 				.orderBy('totalRevenue', 'DESC');
@@ -511,9 +713,8 @@ export class ErpDataService implements OnModuleInit {
 					'line.item_code as itemCode',
 					'line.description as description',
 					'line.category as category',
-					'SUM(line.incl_line_total - line.discount) as totalRevenue',
+					'SUM(line.incl_line_total) as totalRevenue',
 					'SUM(line.cost_price * line.quantity) as totalCost',
-					'SUM(line.incl_line_total - line.discount - (line.cost_price * line.quantity)) as totalGrossProfit',
 					'SUM(line.quantity) as totalQuantity',
 					'COUNT(DISTINCT line.doc_number) as transactionCount',
 				])
@@ -521,11 +722,10 @@ export class ErpDataService implements OnModuleInit {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
 				})
-				// ✅ CRITICAL: Only Tax Invoices for revenue calculations
+				// ✅ CRITICAL: Only Tax Invoices (doc_type = 1) for revenue calculations
 				.andWhere('line.doc_type = :docType', { docType: '1' })
-				// ✅ Data quality filters
+				// ✅ Data quality filters - using gross amounts (incl_line_total) without discount subtraction
 				.andWhere('line.item_code IS NOT NULL')
-				.andWhere('line.quantity != 0')
 				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' })
 				.groupBy('line.item_code, line.description, line.category')
 				.orderBy('totalRevenue', 'DESC')
@@ -558,7 +758,9 @@ export class ErpDataService implements OnModuleInit {
 	}
 
 	/**
-	 * Execute multiple aggregation queries in parallel
+	 * Execute multiple aggregation queries in batches (not all parallel)
+	 * ✅ IMPROVED: Batched execution to prevent connection pool exhaustion
+	 * Executes 2 queries at a time instead of 4 to reduce load
 	 */
 	async getAllAggregationsParallel(filters: ErpQueryFilters): Promise<{
 		daily: DailyAggregation[];
@@ -566,37 +768,141 @@ export class ErpDataService implements OnModuleInit {
 		category: CategoryAggregation[];
 		products: ProductAggregation[];
 	}> {
-		const operationId = this.generateOperationId('GET_ALL_AGG_PARALLEL');
+		const operationId = this.generateOperationId('GET_ALL_AGG_BATCHED');
 
-		this.logger.log(`[${operationId}] ===== Starting Parallel Aggregations =====`);
+		this.logger.log(`[${operationId}] ===== Starting Batched Aggregations =====`);
 		this.logger.log(`[${operationId}] Date range: ${filters.startDate} to ${filters.endDate}`);
-		this.logger.log(`[${operationId}] Executing 4 queries in parallel...`);
+		this.logger.log(`[${operationId}] Executing queries in 2 batches (2 queries per batch)...`);
 
 		const startTime = Date.now();
 
 		try {
-			const [daily, branch, category, products] = await Promise.all([
+			// ✅ BATCH 1: Critical queries (daily + branch)
+			this.logger.log(`[${operationId}] Batch 1: Executing daily + branch aggregations...`);
+			const batch1Start = Date.now();
+			const [daily, branch] = await Promise.all([
 				this.getDailyAggregations(filters),
 				this.getBranchAggregations(filters),
+			]);
+			const batch1Duration = Date.now() - batch1Start;
+			this.logger.log(`[${operationId}] Batch 1 completed in ${batch1Duration}m[Nest] 18321  - 2025/11/03, 10:28:30   DEBUG [CheckInsService] [checkout_1762158510845] Calculated work duration: 0h 0m (0 minutes total)
+[Nest] 18321  - 2025/11/03, 10:28:30   DEBUG [CheckInsService] [checkout_1762158510845] Reverse geocoding check-in location: 37.33233141,-122.0312186
+[Nest] 18321  - 2025/11/03, 10:28:30   DEBUG [GoogleMapsService] [reverse-geocode-1762158510936] Starting reverse geocoding for coordinates: 37.33233141, -122.0312186
+[Nest] 18321  - 2025/11/03, 10:28:30   DEBUG [GoogleMapsService] Cache MISS for key: gmaps:reverse-geocode:5fa5afaaee12ecad3f4443d7370ba9ac in 0ms
+[Nest] 18321  - 2025/11/03, 10:28:31    WARN [GoogleMapsService] Reverse geocoding for coordinates attempt 1 failed: Request failed with status code 403. Retrying in 1000ms...
+[Nest] 18321  - 2025/11/03, 10:28:32    WARN [GoogleMapsService] Reverse geocoding for coordinates attempt 2 failed: Request failed with status code 403. Retrying in 2000ms...
+[Nest] 18321  - 2025/11/03, 10:28:34   ERROR [GoogleMapsService] Reverse geocoding for coordinates failed after 3 attempts: Request failed with status code 403
+[Nest] 18321  - 2025/11/03, 10:28:34   ERROR [GoogleMapsService] [reverse-geocode-1762158510936] Reverse geocoding failed: Request failed with status code 403
+[Nest] 18321  - 2025/11/03, 10:28:34    WARN [CheckInsService] [checkout_1762158510845] Failed to reverse geocode check-in location: Request failed with status code 403
+[Nest] 18321  - 2025/11/03, 10:28:34   DEBUG [CheckInsService] [checkout_1762158510845] Updating check-in record with check-out data
+[Nest] 18321  - 2025/11/03, 10:28:34   DEBUG [CheckInsService] [checkout_1762158510845] Sending check-out notifications
+[Nest] 18321  - 2025/11/03, 10:28:34   DEBUG [UnifiedNotificationService] [interpolate_1762158514997] Interpolating template with 11 variables: userName, clientName, duration, checkInId, checkOutTime, location, address, orgId, branchId, timestamp, checkOutDetails
+[Nest] 18321  - 2025/11/03, 10:28:34   DEBUG [UnifiedNotificationService] [interpolate_1762158514997] ✅ Successfully interpolated all template variables
+[Nest] 18321  - 2025/11/03, 10:28:34     LOG [UnifiedNotificationService] 🚀 Sending checkout_completed notification to 1 recipient(s)
+[Nest] 18321  - 2025/11/03, 10:28:35   DEBUG [ExpoPushService] ✅ Token validation passed
+[Nest] 18321  - 2025/11/03, 10:28:35   DEBUG [ExpoPushService] Object:
+{
+  "tokenPrefix": "ExponentPushToken[OiAx8eKGa93_...",
+  "length": 41
+}
+
+[Nest] 18321  - 2025/11/03, 10:28:35     LOG [ExpoPushService] ✅ Sent 1 push notification(s) to Expo
+[Nest] 18321  - 2025/11/03, 10:28:35   ERROR [ExpoPushService] ❌ 1/1 push notifications failed:
+[Nest] 18321  - 2025/11/03, 10:28:35   ERROR [ExpoPushService] Object:
+{
+  "errors": [
+    {
+      "index": 0,
+      "token": "ExponentPushToken[OiAx8eKGa93_...",
+      "message": "Unable to retrieve the FCM server key for the recipient's app. Make sure you have provided a server key as directed by the Expo FCM documentation.",
+      "details": {
+        "error": "InvalidCredentials",
+        "fault": "developer"
+      }
+    }
+  ]
+}
+
+[Nest] 18321  - 2025/11/03, 10:28:35     LOG [UnifiedNotificationService] 📱 Push notifications: 0 sent, 1 failed
+[Nest] 18321  - 2025/11/03, 10:28:35   DEBUG [UnifiedNotificationService] [interpolate_1762158515578] Interpolating template with 12 variables: userName, clientName, duration, checkInId, checkOutTime, location, address, orgId, branchId, timestamp, adminNotification, checkOutDetails
+[Nest] 18321  - 2025/11/03, 10:28:35   ERROR [UnifiedNotificationService] [interpolate_1762158515578] ⚠️ Missing template variable: "checkInTime". Available: userName, clientName, duration, checkInId, checkOutTime, location, address, orgId, branchId, timestamp, adminNotification, checkOutDetails
+[Nest] 18321  - 2025/11/03, 10:28:35   ERROR [UnifiedNotificationService] [interpolate_1762158515578] ⚠️ Missing template variable: "checkOutTime". Available: userName, clientName, duration, checkInId, checkOutTime, location, address, orgId, branchId, timestamp, adminNotification, checkOutDetails
+[Nest] 18321  - 2025/11/03, 10:28:35   ERROR [UnifiedNotificationService] [interpolate_1762158515578] ⚠️ Missing template variable: "workTimeDisplay". Available: userName, clientName, duration, checkInId, checkOutTime, location, address, orgId, branchId, timestamp, adminNotification, checkOutDetails
+[Nest] 18321  - 2025/11/03, 10:28:35   ERROR [UnifiedNotificationService] [interpolate_1762158515578] ⚠️ Template interpolation incomplete!
+Missing variables: [checkInTime, checkOutTime, workTimeDisplay]
+Template: "Great work today, {userName}! 🔴 You've successfully completed your shift. Worked from {checkInTime:..."
+Provided variables: ["userName","clientName","duration","checkInId","checkOutTime","location","address","orgId","branchId","timestamp","adminNotification","checkOutDetails"]
+[Nest] 18321  - 2025/11/03, 10:28:35     LOG [UnifiedNotificationService] 🚀 Sending attendance_shift_ended notification to 5 recipient(s)
+[Nest] 18321  - 2025/11/03, 10:28:35   DEBUG [ExpoPushService] ✅ Token validation passed
+[Nest] 18321  - 2025/11/03, 10:28:35   DEBUG [ExpoPushService] Object:
+{
+  "tokenPrefix": "ExponentPushToken[OiAx8eKGa93_...",
+  "length": 41
+}
+
+[Nest] 18321  - 2025/11/03, 10:28:35   DEBUG [ExpoPushService] ✅ Token validation passed
+[Nest] 18321  - 2025/11/03, 10:28:35   DEBUG [ExpoPushService] Object:
+{
+  "tokenPrefix": "ExponentPushToken[CUqPq1OUvDFF...",
+  "length": 41
+}
+
+[Nest] 18321  - 2025/11/03, 10:28:35     LOG [ExpoPushService] ✅ Sent 2 push notification(s) to Expo
+[Nest] 18321  - 2025/11/03, 10:28:35   ERROR [ExpoPushService] ❌ 2/2 push notifications failed:
+[Nest] 18321  - 2025/11/03, 10:28:35   ERROR [ExpoPushService] Object:
+{
+  "errors": [
+    {
+      "index": 0,
+      "token": "ExponentPushToken[OiAx8eKGa93_...",
+      "message": "Unable to retrieve the FCM server key for the recipient's app. Make sure you have provided a server key as directed by the Expo FCM documentation.",
+      "details": {
+        "error": "InvalidCredentials",
+        "fault": "developer"
+      }
+    },
+    {
+      "index": 1,
+      "token": "ExponentPushToken[CUqPq1OUvDFF...",
+      "message": "Unable to retrieve the FCM server key for the recipient's app. Make sure you have provided a server key as directed by the Expo FCM documentation.",
+      "details": {
+        "error": "InvalidCredentials",
+        "fault": "developer"
+      }
+    }
+  ]
+}
+
+[Nest] 18321  - 2025/11/03, 10:28:35     LOG [UnifiedNotificationService] 📱 Push notifications: 0 sent, 2 failed
+s`);
+
+			// ✅ BATCH 2: Secondary queries (category + products)
+			this.logger.log(`[${operationId}] Batch 2: Executing category + product aggregations...`);
+			const batch2Start = Date.now();
+			const [category, products] = await Promise.all([
 				this.getCategoryAggregations(filters),
 				this.getProductAggregations(filters),
 			]);
+			const batch2Duration = Date.now() - batch2Start;
+			this.logger.log(`[${operationId}] Batch 2 completed in ${batch2Duration}ms`);
 
 			const duration = Date.now() - startTime;
 
-			this.logger.log(`[${operationId}] ===== Parallel Aggregations Results =====`);
+			this.logger.log(`[${operationId}] ===== Batched Aggregations Results =====`);
 			this.logger.log(`[${operationId}] Daily aggregations: ${daily.length} records`);
 			this.logger.log(`[${operationId}] Branch aggregations: ${branch.length} records`);
 			this.logger.log(`[${operationId}] Category aggregations: ${category.length} records`);
 			this.logger.log(`[${operationId}] Product aggregations: ${products.length} records`);
-			this.logger.log(`[${operationId}] ✅ All parallel aggregations completed in ${duration}ms`);
+			this.logger.log(`[${operationId}] ✅ All batched aggregations completed in ${duration}ms`);
+			this.logger.log(`[${operationId}] Circuit breaker state: ${this.circuitBreakerState}`);
 
 			return { daily, branch, category, products };
 		} catch (error) {
 			const duration = Date.now() - startTime;
-			this.logger.error(`[${operationId}] ❌ Error executing parallel aggregations (${duration}ms)`);
+			this.logger.error(`[${operationId}] ❌ Error executing batched aggregations (${duration}ms)`);
 			this.logger.error(`[${operationId}] Error message: ${error.message}`);
 			this.logger.error(`[${operationId}] Stack trace: ${error.stack}`);
+			this.logger.error(`[${operationId}] Circuit breaker state: ${this.circuitBreakerState}`);
 			throw error;
 		}
 	}
@@ -707,17 +1013,16 @@ export class ErpDataService implements OnModuleInit {
 				.select([
 					'HOUR(line.sale_time) as hour',
 					'COUNT(DISTINCT line.doc_number) as transactionCount',
-					'CAST(SUM(CAST(line.incl_line_total AS DECIMAL(19,3)) - CAST(COALESCE(line.discount, 0) AS DECIMAL(19,3))) AS DECIMAL(19,2)) as totalRevenue',
+					'CAST(SUM(CAST(line.incl_line_total AS DECIMAL(19,3))) AS DECIMAL(19,2)) as totalRevenue',
 					'COUNT(DISTINCT line.customer) as uniqueCustomers',
 				])
 				.where('line.sale_date BETWEEN :startDate AND :endDate', {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
 				})
-				.andWhere('line.doc_type = :docType', { docType: '1' }) // ✅ Only Tax Invoices
+				.andWhere('line.doc_type = :docType', { docType: '1' }) // ✅ Only Tax Invoices (doc_type = 1)
 				.andWhere('line.sale_time IS NOT NULL') // ✅ Only records with time
 				.andWhere('line.item_code IS NOT NULL')
-				.andWhere('line.quantity != 0')
 				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' })
 				.groupBy('HOUR(line.sale_time)')
 				.orderBy('HOUR(line.sale_time)', 'ASC');

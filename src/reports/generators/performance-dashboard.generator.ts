@@ -247,7 +247,11 @@ export class PerformanceDashboardGenerator {
 	 * @param totalTarget - Real revenue target from ErpTargetsService (based on org settings)
 	 */
 	private calculateSummary(data: PerformanceData[], totalTarget: number): PerformanceSummaryDto {
-		const totalRevenue = data.reduce((sum, item) => sum + item.revenue, 0);
+		// Convert all revenues to numbers and sum (handles any Decimal/string types from database)
+		const totalRevenue = data.reduce((sum, item) => {
+			const revenue = typeof item.revenue === 'number' ? item.revenue : parseFloat(String(item.revenue || 0));
+			return sum + revenue;
+		}, 0);
 		
 		// ✅ FIXED: Use real target from organization settings, not calculated from data
 		// This fixes the "stuck at 83.3%" issue where target was always proportional to revenue
@@ -256,8 +260,11 @@ export class PerformanceDashboardGenerator {
 		const transactionCount = data.length;
 		const averageOrderValue = transactionCount > 0 ? totalRevenue / transactionCount : 0;
 
-		// Calculate average items per basket
-		const totalQuantity = data.reduce((sum, item) => sum + item.quantity, 0);
+		// Calculate average items per basket (convert quantities to numbers)
+		const totalQuantity = data.reduce((sum, item) => {
+			const quantity = typeof item.quantity === 'number' ? item.quantity : parseFloat(String(item.quantity || 0));
+			return sum + quantity;
+		}, 0);
 		const averageItemsPerBasket = transactionCount > 0 ? totalQuantity / transactionCount : 0;
 
 		this.logger.log(`📊 Summary Calculated:`);

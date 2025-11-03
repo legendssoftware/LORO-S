@@ -47,6 +47,7 @@ export class ErpCacheWarmerService implements OnModuleInit {
 
 	/**
 	 * Warm cache for common date ranges
+	 * Processes in batches to avoid overwhelming the database connection pool
 	 */
 	async warmCommonDateRanges(): Promise<void> {
 		const today = new Date();
@@ -60,28 +61,46 @@ export class ErpCacheWarmerService implements OnModuleInit {
 		let successCount = 0;
 		let errorCount = 0;
 
-		// Process date ranges in parallel
-		const results = await Promise.allSettled(
-			dateRanges.map(async ({ label, startDate, endDate }) => {
-				const rangeStart = Date.now();
-				try {
-					this.logger.log(`Warming cache: ${label} (${startDate} to ${endDate})`);
-					
-					const filters: ErpQueryFilters = { startDate, endDate };
-					
-					// Warm all aggregation caches in parallel
-					await this.erpDataService.getAllAggregationsParallel(filters);
-					
-					const rangeDuration = Date.now() - rangeStart;
-					successCount++;
-					this.logger.log(`✅ Successfully warmed cache for: ${label} (${rangeDuration}ms)`);
-				} catch (error) {
-					const rangeDuration = Date.now() - rangeStart;
-					errorCount++;
-					this.logger.warn(`❌ Failed to warm cache for ${label} (${rangeDuration}ms): ${error.message}`);
-				}
-			})
-		);
+		// ✅ Process date ranges in BATCHES to avoid connection pool exhaustion
+		// Each date range runs 4 parallel queries, so batch size of 2 = max 8 concurrent queries
+		const BATCH_SIZE = 2;
+		
+		for (let i = 0; i < dateRanges.length; i += BATCH_SIZE) {
+			const batch = dateRanges.slice(i, i + BATCH_SIZE);
+			
+			this.logger.debug(`Processing batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(dateRanges.length / BATCH_SIZE)}`);
+			
+			const results = await Promise.allSettled(
+				batch.map(async ({ label, startDate, endDate }) => {
+					const rangeStart = Date.now();
+					try {
+						this.logger.log(`Warming cache: ${label} (${startDate} to ${endDate})`);
+						
+						const filters: ErpQueryFilters = { startDate, endDate };
+						
+						// Retry logic with exponential backoff
+						await this.retryWithBackoff(
+							() => this.erpDataService.getAllAggregationsParallel(filters),
+							3, // max retries
+							label,
+						);
+						
+						const rangeDuration = Date.now() - rangeStart;
+						successCount++;
+						this.logger.log(`✅ Successfully warmed cache for: ${label} (${rangeDuration}ms)`);
+					} catch (error) {
+						const rangeDuration = Date.now() - rangeStart;
+						errorCount++;
+						this.logger.warn(`❌ Failed to warm cache for ${label} (${rangeDuration}ms): ${error.message}`);
+					}
+				})
+			);
+			
+			// Small delay between batches to let connection pool recover
+			if (i + BATCH_SIZE < dateRanges.length) {
+				await this.delay(100);
+			}
+		}
 
 		const duration = Date.now() - startTime;
 		
@@ -90,6 +109,40 @@ export class ErpCacheWarmerService implements OnModuleInit {
 		this.logger.log(`Success: ${successCount}/${dateRanges.length}`);
 		this.logger.log(`Errors: ${errorCount}/${dateRanges.length}`);
 		this.logger.log(`Success rate: ${((successCount / dateRanges.length) * 100).toFixed(1)}%`);
+	}
+
+	/**
+	 * Retry a function with exponential backoff
+	 */
+	private async retryWithBackoff<T>(
+		fn: () => Promise<T>,
+		maxRetries: number,
+		label: string,
+	): Promise<T> {
+		let lastError: Error;
+		
+		for (let attempt = 0; attempt < maxRetries; attempt++) {
+			try {
+				return await fn();
+			} catch (error) {
+				lastError = error;
+				
+				if (attempt < maxRetries - 1) {
+					const delayMs = Math.min(1000 * Math.pow(2, attempt), 5000); // Max 5s delay
+					this.logger.debug(`Retry ${attempt + 1}/${maxRetries} for ${label} after ${delayMs}ms`);
+					await this.delay(delayMs);
+				}
+			}
+		}
+		
+		throw lastError;
+	}
+
+	/**
+	 * Delay helper
+	 */
+	private delay(ms: number): Promise<void> {
+		return new Promise(resolve => setTimeout(resolve, ms));
 	}
 
 	/**

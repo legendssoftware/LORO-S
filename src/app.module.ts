@@ -220,6 +220,8 @@ import { TblSalesLines } from './erp/entities/tblsaleslines.entity';
 			inject: [ConfigService],
 		}),
 		// ERP database connection (second database)
+		// ✅ PROCESSES ONLY TAX INVOICES (doc_type = 1) - USES GROSS AMOUNTS (incl_line_total)
+		// Revenue calculations use incl_line_total without discount subtraction since discounts are already applied to selling prices
 		TypeOrmModule.forRootAsync({
 			name: 'erp', // Named connection for ERP database
 			imports: [ConfigModule],
@@ -234,7 +236,30 @@ import { TblSalesLines } from './erp/entities/tblsaleslines.entity';
 				synchronize: false, // CRITICAL: Never sync with ERP database
 				logging: false,
 				extra: {
-					connectionLimit: parseInt(configService.get<string>('DB_CONNECTION_LIMIT') || '20', 10),
+					// ✅ INCREASED: Connection pool for ERP to handle parallel queries for Tax Invoices (doc_type = 1)
+					// Increased from 30 to 75 to prevent ERRCONRESET under load
+					// Supports: 15 concurrent requests × 4 parallel queries + 15 buffer
+					connectionLimit: parseInt(configService.get<string>('ERP_DB_CONNECTION_LIMIT') || '75', 10),
+					
+					// ✅ Connection timeout - fail fast if can't connect (10 seconds)
+					connectTimeout: parseInt(configService.get<string>('ERP_DB_CONNECT_TIMEOUT') || '10000', 10),
+					
+					// ✅ Connection acquisition timeout - max wait for available connection (30 seconds)
+					acquireTimeout: parseInt(configService.get<string>('ERP_DB_ACQUIRE_TIMEOUT') || '30000', 10),
+					
+					// ✅ Query execution timeout - prevent runaway queries (90 seconds for large aggregations)
+					timeout: parseInt(configService.get<string>('ERP_DB_QUERY_TIMEOUT') || '90000', 10),
+					
+					// ✅ Idle timeout - release idle connections (10 minutes)
+					idleTimeout: parseInt(configService.get<string>('ERP_DB_IDLE_TIMEOUT') || '600000', 10),
+					
+					// ✅ Connection validation and stability
+					waitForConnections: true, // Queue requests instead of failing immediately
+					queueLimit: 0, // No queue limit - let queries wait rather than fail
+					keepAliveInitialDelay: 0,
+					enableKeepAlive: true,
+					
+					// ✅ MySQL-specific optimizations
 					dateStrings: false,
 					ssl: configService.get<string>('NODE_ENV') === 'production' ? { rejectUnauthorized: false } : false,
 					supportBigNumbers: true,
@@ -243,10 +268,10 @@ import { TblSalesLines } from './erp/entities/tblsaleslines.entity';
 					timezone: 'Z',
 					multipleStatements: false,
 					typeCast: true,
-					keepAliveInitialDelay: 0,
-					enableKeepAlive: true,
-					idleTimeout: parseInt(configService.get<string>('DB_IDLE_TIMEOUT') || '300000', 10),
-					queueLimit: 0,
+					
+					// ✅ Connection pool behavior
+					connectionPoolSize: parseInt(configService.get<string>('ERP_DB_CONNECTION_LIMIT') || '75', 10),
+					maxQueryExecutionTime: parseInt(configService.get<string>('ERP_DB_QUERY_TIMEOUT') || '90000', 10),
 				},
 				retryAttempts: 10,
 				retryDelay: 1000,

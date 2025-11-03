@@ -28,11 +28,12 @@ export class ErpTransformerService {
 	 */
 	transformToSalesTransaction(line: TblSalesLines, header?: TblSalesHeader): SalesTransaction {
 		try {
-			// Calculate revenue (line total minus discount)
-			const revenue = (line.incl_line_total || 0) - (line.discount || 0);
+			// Calculate revenue using gross amount (incl_line_total) - discount already applied to selling price
+			// Convert to number to ensure JavaScript numeric operations work correctly
+			const revenue = parseFloat(String(line.incl_line_total || 0));
 			
 			// Calculate cost
-			const cost = (line.cost_price || 0) * (line.quantity || 0);
+			const cost = parseFloat(String(line.cost_price || 0)) * parseFloat(String(line.quantity || 0));
 			
 			// Calculate gross profit
 			const grossProfit = revenue - cost;
@@ -46,9 +47,9 @@ export class ErpTransformerService {
 				branchId: getBranchId(line.store),
 				categoryId: getCategoryId(line.category),
 				productId: line.item_code || 'UNKNOWN',
-				quantity: line.quantity || 0,
-				salesPrice: line.incl_price || 0,
-				costPrice: line.cost_price || 0,
+				quantity: parseFloat(String(line.quantity || 0)),
+				salesPrice: parseFloat(String(line.incl_price || 0)),
+				costPrice: parseFloat(String(line.cost_price || 0)),
 				revenue,
 				cost,
 				grossProfit,
@@ -112,8 +113,10 @@ export class ErpTransformerService {
 	 */
 	transformToPerformanceData(line: TblSalesLines): PerformanceData {
 		try {
-			const revenue = (line.incl_line_total || 0) - (line.discount || 0);
-			const cost = (line.cost_price || 0) * (line.quantity || 0);
+			// Use gross amount (incl_line_total) - discount already applied to selling price
+			// Convert to number to ensure JavaScript numeric operations work correctly
+			const revenue = parseFloat(String(line.incl_line_total || 0));
+			const cost = parseFloat(String(line.cost_price || 0)) * parseFloat(String(line.quantity || 0));
 			const grossProfit = revenue - cost;
 			
 			// ✅ FIXED: Target should be set at the daily/period level, not line-item level
@@ -132,7 +135,7 @@ export class ErpTransformerService {
 				branchId: getBranchId(line.store),
 				branchName: getBranchName(line.store),
 				salesPersonId: line.rep_code || 'SP001', // Use rep_code or default
-				quantity: line.quantity || 0,
+				quantity: parseFloat(String(line.quantity || 0)),
 				revenue,
 				target,
 				actualSales,
@@ -313,8 +316,10 @@ export class ErpTransformerService {
 		const categoryGP = new Map<string, { revenue: number; gp: number }>();
 
 		lines.forEach(line => {
-			const revenue = (line.incl_line_total || 0) - (line.discount || 0);
-			const cost = (line.cost_price || 0) * (line.quantity || 0);
+			// Use gross amount (incl_line_total) - discount already applied to selling price
+			// Convert to number to ensure JavaScript numeric operations work correctly
+			const revenue = parseFloat(String(line.incl_line_total || 0));
+			const cost = parseFloat(String(line.cost_price || 0)) * parseFloat(String(line.quantity || 0));
 			const gp = revenue - cost;
 
 			totalRevenue += revenue;

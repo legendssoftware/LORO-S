@@ -44,13 +44,14 @@ export interface PerformanceData {
 
 /**
  * Daily Aggregation Result from ERP
+ * Note: Uses gross amounts (incl_line_total) - discount already applied to selling prices
+ * Only processes Tax Invoices (doc_type = 1)
  */
 export interface DailyAggregation {
 	date: string;
 	store: string;
 	totalRevenue: number;
 	totalCost: number;
-	totalGrossProfit: number;
 	transactionCount: number;
 	uniqueCustomers: number;
 	totalQuantity: number;
@@ -58,12 +59,13 @@ export interface DailyAggregation {
 
 /**
  * Branch Aggregation Result from ERP
+ * Note: Uses gross amounts (incl_line_total) - discount already applied to selling prices
+ * Only processes Tax Invoices (doc_type = 1)
  */
 export interface BranchAggregation {
 	store: string;
 	totalRevenue: number;
 	totalCost: number;
-	totalGrossProfit: number;
 	transactionCount: number;
 	uniqueCustomers: number;
 	totalQuantity: number;
@@ -71,13 +73,14 @@ export interface BranchAggregation {
 
 /**
  * Category Aggregation Result from ERP
+ * Note: Uses gross amounts (incl_line_total) - discount already applied to selling prices
+ * Only processes Tax Invoices (doc_type = 1)
  */
 export interface CategoryAggregation {
 	category: string;
 	store: string;
 	totalRevenue: number;
 	totalCost: number;
-	totalGrossProfit: number;
 	transactionCount: number;
 	uniqueCustomers: number;
 	totalQuantity: number;
@@ -85,6 +88,8 @@ export interface CategoryAggregation {
 
 /**
  * Product Aggregation Result from ERP
+ * Note: Uses gross amounts (incl_line_total) - discount already applied to selling prices
+ * Only processes Tax Invoices (doc_type = 1)
  */
 export interface ProductAggregation {
 	itemCode: string;
@@ -92,7 +97,6 @@ export interface ProductAggregation {
 	category: string;
 	totalRevenue: number;
 	totalCost: number;
-	totalGrossProfit: number;
 	totalQuantity: number;
 	transactionCount: number;
 }

@@ -20,12 +20,69 @@ import { AccessLevel } from '../lib/enums/user.enums';
 @ApiBearerAuth()
 export class ErpController {
 	private readonly logger = new Logger(ErpController.name);
+	
+	// ✅ Request throttling state
+	private activeRequests = 0;
+	private readonly MAX_CONCURRENT_REQUESTS = 10; // Max 10 concurrent ERP requests
+	private requestQueue: Array<{ resolve: () => void; timestamp: number }> = [];
+	private readonly REQUEST_TIMEOUT = 60000; // 60 second max wait in queue
 
 	constructor(
 		private readonly erpHealthIndicator: ErpHealthIndicator,
 		private readonly erpCacheWarmerService: ErpCacheWarmerService,
 		private readonly erpDataService: ErpDataService,
 	) {}
+
+	/**
+	 * ✅ Request throttling: Acquire slot for request
+	 */
+	private async acquireRequestSlot(operationId: string): Promise<void> {
+		const startWait = Date.now();
+		
+		while (this.activeRequests >= this.MAX_CONCURRENT_REQUESTS) {
+			const waitTime = Date.now() - startWait;
+			
+			if (waitTime > this.REQUEST_TIMEOUT) {
+				throw new Error(`Request timeout: waited ${waitTime}ms for available slot`);
+			}
+			
+			this.logger.debug(
+				`[${operationId}] Request queue: ${this.activeRequests}/${this.MAX_CONCURRENT_REQUESTS} active, waiting...`,
+			);
+			
+			await new Promise((resolve) => setTimeout(resolve, 200)); // Wait 200ms
+		}
+		
+		this.activeRequests++;
+		this.logger.log(
+			`[${operationId}] Request slot acquired (${this.activeRequests}/${this.MAX_CONCURRENT_REQUESTS} active)`,
+		);
+	}
+
+	/**
+	 * ✅ Request throttling: Release slot after request
+	 */
+	private releaseRequestSlot(operationId: string): void {
+		this.activeRequests--;
+		this.logger.log(
+			`[${operationId}] Request slot released (${this.activeRequests}/${this.MAX_CONCURRENT_REQUESTS} active)`,
+		);
+	}
+
+	/**
+	 * ✅ Wrap endpoint execution with request throttling
+	 */
+	private async executeWithThrottling<T>(
+		operationId: string,
+		operation: () => Promise<T>,
+	): Promise<T> {
+		try {
+			await this.acquireRequestSlot(operationId);
+			return await operation();
+		} finally {
+			this.releaseRequestSlot(operationId);
+		}
+	}
 
 	/**
 	 * Get ERP health status
@@ -159,6 +216,30 @@ export class ErpController {
 			};
 		} catch (error) {
 			this.logger.error(`Cache stats error: ${error.message}`);
+			return {
+				success: false,
+				error: error.message,
+			};
+		}
+	}
+
+	/**
+	 * Get connection pool information for monitoring
+	 */
+	@Get('connection/pool')
+	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER)
+	@ApiOperation({ summary: 'Get ERP database connection pool information' })
+	@ApiResponse({ status: 200, description: 'Connection pool statistics' })
+	async getConnectionPoolInfo() {
+		try {
+			const poolInfo = this.erpDataService.getConnectionPoolInfo();
+			return {
+				success: true,
+				data: poolInfo,
+				timestamp: new Date().toISOString(),
+			};
+		} catch (error) {
+			this.logger.error(`Connection pool info error: ${error.message}`);
 			return {
 				success: false,
 				error: error.message,

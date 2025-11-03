@@ -405,7 +405,9 @@ export class CheckInsService {
 							userName: userName,
 							clientName: checkIn.client?.name || 'Location',
 							duration: duration,
+							workTimeDisplay: duration, // Add workTimeDisplay for template compatibility
 							checkInId: checkIn.uid,
+							checkInTime: checkIn.checkInTime, // Add missing checkInTime
 							checkOutTime: checkIn.checkOutTime,
 							location: locationDetails,
 							address: fullAddress,
