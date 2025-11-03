@@ -221,12 +221,13 @@ export class UserTarget {
 	lastCalculatedAt: Date;
 
 	// 🔄 Recurring Target Configuration
-	@Column({ type: 'boolean', default: false, comment: 'Enable automatic target recurrence' })
+	@Column({ type: 'boolean', default: true, comment: 'Enable automatic target recurrence' })
 	isRecurring: boolean;
 
 	@Column({ 
 		type: 'enum', 
 		enum: ['daily', 'weekly', 'monthly'],
+		default: 'monthly',
 		nullable: true,
 		comment: 'Frequency of target recurrence'
 	})

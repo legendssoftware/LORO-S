@@ -2927,46 +2927,52 @@ export class UserService {
 				};
 			}
 
-			this.logger.debug(`Creating new user target for user: ${userId}`);
-			// Create a new user target
-			const userTarget = new UserTarget();
+		this.logger.debug(`Creating new user target for user: ${userId}`);
+		// Create a new user target
+		const userTarget = new UserTarget();
 
-			// Map DTO properties to entity with proper date conversion
-			Object.assign(userTarget, {
-				...createUserTargetDto,
-				periodStartDate: createUserTargetDto.periodStartDate
-					? new Date(createUserTargetDto.periodStartDate)
-					: undefined,
-				periodEndDate: createUserTargetDto.periodEndDate
-					? new Date(createUserTargetDto.periodEndDate)
-					: undefined,
-			});
+		// Map DTO properties to entity with proper date conversion
+		Object.assign(userTarget, {
+			...createUserTargetDto,
+			periodStartDate: createUserTargetDto.periodStartDate
+				? new Date(createUserTargetDto.periodStartDate)
+				: undefined,
+			periodEndDate: createUserTargetDto.periodEndDate
+				? new Date(createUserTargetDto.periodEndDate)
+				: undefined,
+		});
 
-			// Handle recurring target configuration
-			if (createUserTargetDto.isRecurring) {
-				// Validate that interval is provided
-				if (!createUserTargetDto.recurringInterval) {
-					throw new BadRequestException('recurringInterval is required when isRecurring is true');
-				}
-				
-				// Set recurring fields
-				userTarget.isRecurring = true;
-				userTarget.recurringInterval = createUserTargetDto.recurringInterval;
-				userTarget.carryForwardUnfulfilled = createUserTargetDto.carryForwardUnfulfilled ?? false;
-				userTarget.recurrenceCount = 0;
-				
-				// Calculate next recurrence date
-				const endDate = userTarget.periodEndDate || new Date();
-				userTarget.nextRecurrenceDate = this.calculateNextRecurrenceDate(
-					endDate,
-					createUserTargetDto.recurringInterval
-				);
-				
-				this.logger.debug(
-					`Recurring target configured: ${createUserTargetDto.recurringInterval}, ` +
-					`next recurrence: ${userTarget.nextRecurrenceDate}`
-				);
-			}
+		// Set recurring defaults if not explicitly provided
+		const isRecurring = createUserTargetDto.isRecurring !== undefined 
+			? createUserTargetDto.isRecurring 
+			: true; // Default to true
+		
+		const recurringInterval = createUserTargetDto.recurringInterval || 'monthly'; // Default to monthly
+
+		// Handle recurring target configuration
+		if (isRecurring) {
+			// Set recurring fields
+			userTarget.isRecurring = true;
+			userTarget.recurringInterval = recurringInterval;
+			userTarget.carryForwardUnfulfilled = createUserTargetDto.carryForwardUnfulfilled ?? false;
+			userTarget.recurrenceCount = 0;
+			
+			// Calculate next recurrence date
+			const endDate = userTarget.periodEndDate || new Date();
+			userTarget.nextRecurrenceDate = this.calculateNextRecurrenceDate(
+				endDate,
+				recurringInterval
+			);
+			
+			this.logger.debug(
+				`Recurring target configured: ${recurringInterval}, ` +
+				`next recurrence: ${userTarget.nextRecurrenceDate}`
+			);
+		} else {
+			// Explicitly set to false if user disabled it
+			userTarget.isRecurring = false;
+			userTarget.nextRecurrenceDate = null;
+		}
 
 			// Save the user target and update the user
 			user.userTarget = userTarget;

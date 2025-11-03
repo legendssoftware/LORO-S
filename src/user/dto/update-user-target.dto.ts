@@ -182,7 +182,7 @@ export class UpdateUserTargetDto {
     description: 'Enable automatic target recurrence',
     example: true,
     required: false,
-    default: false
+    default: true
   })
   isRecurring?: boolean;
 
@@ -192,7 +192,8 @@ export class UpdateUserTargetDto {
     description: 'Recurrence interval: daily, weekly, or monthly',
     enum: ['daily', 'weekly', 'monthly'],
     example: 'monthly',
-    required: false
+    required: false,
+    default: 'monthly'
   })
   recurringInterval?: 'daily' | 'weekly' | 'monthly';
 
