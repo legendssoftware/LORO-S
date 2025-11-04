@@ -1516,22 +1516,17 @@ export class ErpDataService implements OnModuleInit {
 				return cached as any;
 			}
 
-			this.logger.log(`[${operationId}] Cache MISS - Querying master data sequentially...`);
+			this.logger.log(`[${operationId}] Cache MISS - Querying master data...`);
 
 			const queryStart = Date.now();
 
-			// Execute queries sequentially to avoid connection pool exhaustion
-			this.logger.log(`[${operationId}] Fetching branches...`);
-			const branches = await this.getUniqueBranches(filters);
-			
-			this.logger.log(`[${operationId}] Fetching products...`);
-			const products = await this.getUniqueProducts(filters);
-			
-			this.logger.log(`[${operationId}] Fetching salespeople...`);
-			const salespeople = await this.getUniqueSalespeople(filters);
-			
-			this.logger.log(`[${operationId}] Fetching payment methods...`);
-			const paymentMethods = await this.getUniquePaymentMethods(filters);
+			// Execute all queries in parallel
+			const [branches, products, salespeople, paymentMethods] = await Promise.all([
+				this.getUniqueBranches(filters),
+				this.getUniqueProducts(filters),
+				this.getUniqueSalespeople(filters),
+				this.getUniquePaymentMethods(filters),
+			]);
 
 			const queryDuration = Date.now() - queryStart;
 
@@ -1556,7 +1551,6 @@ export class ErpDataService implements OnModuleInit {
 			const duration = Date.now() - startTime;
 			this.logger.error(`[${operationId}] ❌ Error getting master data (${duration}ms)`);
 			this.logger.error(`[${operationId}] Error: ${error.message}`);
-			this.logger.error(`[${operationId}] Stack: ${error.stack}`);
 			throw error;
 		}
 	}

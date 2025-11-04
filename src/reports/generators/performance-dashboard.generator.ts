@@ -80,13 +80,11 @@ export class PerformanceDashboardGenerator {
 
 		try {
 			// Get ERP data
-			this.logger.log('Step 1: Fetching ERP performance data...');
 			const rawData = await this.getPerformanceData(params);
 			
-			this.logger.log(`✅ Retrieved ${rawData.length} performance records from ERP`);
+			this.logger.log(`Retrieved ${rawData.length} performance records from ERP`);
 
 			// ✅ FIXED: Get real revenue target from organization settings
-			this.logger.log('Step 2: Getting revenue target...');
 			const totalTarget = await this.erpTargetsService.getRevenueTargetForDateRange(
 				params.organisationId,
 				params.startDate,
@@ -94,27 +92,19 @@ export class PerformanceDashboardGenerator {
 			);
 
 			// Calculate summary metrics with real target
-			this.logger.log('Step 3: Calculating summary metrics...');
 			const summary = await this.calculateSummary(rawData, totalTarget);
 
 			// Generate all chart data (now async due to hourly sales)
-			this.logger.log('Step 4: Generating chart data...');
 			const charts = await this.generateCharts(rawData, params);
 
-			// Generate table data (sequential execution to avoid connection pool exhaustion)
-			this.logger.log('Step 5: Generating table data (sequential for stability)...');
-			
-			this.logger.log('   - Generating daily sales performance...');
-			const dailySalesPerformance = await this.generateDailySalesPerformance(params);
-			
-			this.logger.log('   - Generating branch-category performance...');
-			const branchCategoryPerformance = await this.generateBranchCategoryPerformance(params);
-			
-			this.logger.log('   - Generating sales per store...');
-			const salesPerStore = await this.generateSalesPerStore(params);
-			
-			this.logger.log('   - Generating master data for filters...');
-			const masterData = await this.getMasterData(params);
+			// Generate table data (parallel execution for performance)
+			this.logger.log('Generating table data in parallel...');
+			const [dailySalesPerformance, branchCategoryPerformance, salesPerStore, masterData] = await Promise.all([
+				this.generateDailySalesPerformance(params),
+				this.generateBranchCategoryPerformance(params),
+				this.generateSalesPerStore(params),
+				this.getMasterData(params),
+			]);
 			
 			// Calculate total transactions across all days
 			const totalTransactions = dailySalesPerformance.reduce((sum, day) => sum + day.basketCount, 0);
@@ -143,8 +133,7 @@ export class PerformanceDashboardGenerator {
 				},
 			};
 		} catch (error) {
-			this.logger.error(`❌ Error generating performance dashboard: ${error.message}`);
-			this.logger.error(`Stack trace: ${error.stack}`);
+			this.logger.error(`Error generating performance dashboard: ${error.message}`, error.stack);
 			throw error;
 		}
 	}
