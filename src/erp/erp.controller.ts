@@ -92,19 +92,21 @@ export class ErpController {
 	@ApiOperation({ summary: 'Check ERP database health' })
 	@ApiResponse({ status: 200, description: 'ERP health status' })
 	async getHealth() {
-		try {
-			const health = await this.erpHealthIndicator.isHealthy();
-			return {
-				success: health.status === 'up',
-				erp: health,
-			};
-		} catch (error) {
-			this.logger.error(`Health check error: ${error.message}`);
-			return {
-				success: false,
-				error: error.message,
-			};
-		}
+		return this.executeWithThrottling('health', async () => {
+			try {
+				const health = await this.erpHealthIndicator.isHealthy();
+				return {
+					success: health.status === 'up',
+					erp: health,
+				};
+			} catch (error) {
+				this.logger.error(`Health check error: ${error.message}`);
+				return {
+					success: false,
+					error: error.message,
+				};
+			}
+		});
 	}
 
 	/**
@@ -115,19 +117,21 @@ export class ErpController {
 	@ApiOperation({ summary: 'Get detailed ERP statistics' })
 	@ApiResponse({ status: 200, description: 'ERP statistics' })
 	async getStats() {
-		try {
-			const stats = await this.erpHealthIndicator.getErpStats();
-			return {
-				success: true,
-				data: stats,
-			};
-		} catch (error) {
-			this.logger.error(`Stats error: ${error.message}`);
-			return {
-				success: false,
-				error: error.message,
-			};
-		}
+		return this.executeWithThrottling('stats', async () => {
+			try {
+				const stats = await this.erpHealthIndicator.getErpStats();
+				return {
+					success: true,
+					data: stats,
+				};
+			} catch (error) {
+				this.logger.error(`Stats error: ${error.message}`);
+				return {
+					success: false,
+					error: error.message,
+				};
+			}
+		});
 	}
 
 	/**
@@ -138,16 +142,18 @@ export class ErpController {
 	@ApiOperation({ summary: 'Manually trigger cache warming' })
 	@ApiResponse({ status: 200, description: 'Cache warming triggered' })
 	async warmCache() {
-		try {
-			const result = await this.erpCacheWarmerService.triggerCacheWarming();
-			return result;
-		} catch (error) {
-			this.logger.error(`Cache warming error: ${error.message}`);
-			return {
-				success: false,
-				message: error.message,
-			};
-		}
+		return this.executeWithThrottling('cache-warm', async () => {
+			try {
+				const result = await this.erpCacheWarmerService.triggerCacheWarming();
+				return result;
+			} catch (error) {
+				this.logger.error(`Cache warming error: ${error.message}`);
+				return {
+					success: false,
+					message: error.message,
+				};
+			}
+		});
 	}
 
 	/**
@@ -158,16 +164,18 @@ export class ErpController {
 	@ApiOperation({ summary: 'Clear and refresh ERP cache' })
 	@ApiResponse({ status: 200, description: 'Cache refreshed' })
 	async refreshCache() {
-		try {
-			const result = await this.erpCacheWarmerService.refreshCache();
-			return result;
-		} catch (error) {
-			this.logger.error(`Cache refresh error: ${error.message}`);
-			return {
-				success: false,
-				message: error.message,
-			};
-		}
+		return this.executeWithThrottling('cache-refresh', async () => {
+			try {
+				const result = await this.erpCacheWarmerService.refreshCache();
+				return result;
+			} catch (error) {
+				this.logger.error(`Cache refresh error: ${error.message}`);
+				return {
+					success: false,
+					message: error.message,
+				};
+			}
+		});
 	}
 
 	/**
@@ -183,21 +191,23 @@ export class ErpController {
 		@Query('startDate') startDate?: string,
 		@Query('endDate') endDate?: string,
 	) {
-		try {
-			await this.erpDataService.clearCache(startDate, endDate);
-			return {
-				success: true,
-				message: startDate && endDate
-					? `Cache cleared for ${startDate} to ${endDate}`
-					: 'All cache cleared',
-			};
-		} catch (error) {
-			this.logger.error(`Cache clear error: ${error.message}`);
-			return {
-				success: false,
-				message: error.message,
-			};
-		}
+		return this.executeWithThrottling('cache-clear', async () => {
+			try {
+				await this.erpDataService.clearCache(startDate, endDate);
+				return {
+					success: true,
+					message: startDate && endDate
+						? `Cache cleared for ${startDate} to ${endDate}`
+						: 'All cache cleared',
+				};
+			} catch (error) {
+				this.logger.error(`Cache clear error: ${error.message}`);
+				return {
+					success: false,
+					message: error.message,
+				};
+			}
+		});
 	}
 
 	/**
@@ -208,19 +218,21 @@ export class ErpController {
 	@ApiOperation({ summary: 'Get cache statistics' })
 	@ApiResponse({ status: 200, description: 'Cache statistics' })
 	async getCacheStats() {
-		try {
-			const stats = await this.erpDataService.getCacheStats();
-			return {
-				success: true,
-				data: stats,
-			};
-		} catch (error) {
-			this.logger.error(`Cache stats error: ${error.message}`);
-			return {
-				success: false,
-				error: error.message,
-			};
-		}
+		return this.executeWithThrottling('cache-stats', async () => {
+			try {
+				const stats = await this.erpDataService.getCacheStats();
+				return {
+					success: true,
+					data: stats,
+				};
+			} catch (error) {
+				this.logger.error(`Cache stats error: ${error.message}`);
+				return {
+					success: false,
+					error: error.message,
+				};
+			}
+		});
 	}
 
 	/**
@@ -231,20 +243,48 @@ export class ErpController {
 	@ApiOperation({ summary: 'Get ERP database connection pool information' })
 	@ApiResponse({ status: 200, description: 'Connection pool statistics' })
 	async getConnectionPoolInfo() {
-		try {
-			const poolInfo = this.erpDataService.getConnectionPoolInfo();
-			return {
-				success: true,
-				data: poolInfo,
-				timestamp: new Date().toISOString(),
-			};
-		} catch (error) {
-			this.logger.error(`Connection pool info error: ${error.message}`);
-			return {
-				success: false,
-				error: error.message,
-			};
-		}
+		return this.executeWithThrottling('connection-pool', async () => {
+			try {
+				const poolInfo = this.erpDataService.getConnectionPoolInfo();
+				return {
+					success: true,
+					data: poolInfo,
+					timestamp: new Date().toISOString(),
+				};
+			} catch (error) {
+				this.logger.error(`Connection pool info error: ${error.message}`);
+				return {
+					success: false,
+					error: error.message,
+				};
+			}
+		});
+	}
+
+	/**
+	 * Get connection health check
+	 */
+	@Get('connection/health')
+	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER)
+	@ApiOperation({ summary: 'Check ERP database connection health' })
+	@ApiResponse({ status: 200, description: 'Connection health status' })
+	async getConnectionHealth() {
+		return this.executeWithThrottling('connection-health', async () => {
+			try {
+				const health = await this.erpDataService.checkConnectionHealth();
+				return {
+					success: true,
+					data: health,
+					timestamp: new Date().toISOString(),
+				};
+			} catch (error) {
+				this.logger.error(`Connection health check error: ${error.message}`);
+				return {
+					success: false,
+					error: error.message,
+				};
+			}
+		});
 	}
 }
 

@@ -80,11 +80,13 @@ export class PerformanceDashboardGenerator {
 
 		try {
 			// Get ERP data
+			this.logger.log('Step 1: Fetching ERP performance data...');
 			const rawData = await this.getPerformanceData(params);
 			
-			this.logger.log(`Retrieved ${rawData.length} performance records from ERP`);
+			this.logger.log(`✅ Retrieved ${rawData.length} performance records from ERP`);
 
 			// ✅ FIXED: Get real revenue target from organization settings
+			this.logger.log('Step 2: Getting revenue target...');
 			const totalTarget = await this.erpTargetsService.getRevenueTargetForDateRange(
 				params.organisationId,
 				params.startDate,
@@ -92,18 +94,27 @@ export class PerformanceDashboardGenerator {
 			);
 
 			// Calculate summary metrics with real target
+			this.logger.log('Step 3: Calculating summary metrics...');
 			const summary = await this.calculateSummary(rawData, totalTarget);
 
 			// Generate all chart data (now async due to hourly sales)
+			this.logger.log('Step 4: Generating chart data...');
 			const charts = await this.generateCharts(rawData, params);
 
-			// Generate table data (parallel execution for performance)
-			this.logger.log('Generating table data in parallel...');
-			const [dailySalesPerformance, branchCategoryPerformance, salesPerStore] = await Promise.all([
-				this.generateDailySalesPerformance(params),
-				this.generateBranchCategoryPerformance(params),
-				this.generateSalesPerStore(params),
-			]);
+			// Generate table data (sequential execution to avoid connection pool exhaustion)
+			this.logger.log('Step 5: Generating table data (sequential for stability)...');
+			
+			this.logger.log('   - Generating daily sales performance...');
+			const dailySalesPerformance = await this.generateDailySalesPerformance(params);
+			
+			this.logger.log('   - Generating branch-category performance...');
+			const branchCategoryPerformance = await this.generateBranchCategoryPerformance(params);
+			
+			this.logger.log('   - Generating sales per store...');
+			const salesPerStore = await this.generateSalesPerStore(params);
+			
+			this.logger.log('   - Generating master data for filters...');
+			const masterData = await this.getMasterData(params);
 			
 			// Calculate total transactions across all days
 			const totalTransactions = dailySalesPerformance.reduce((sum, day) => sum + day.basketCount, 0);
@@ -114,6 +125,7 @@ export class PerformanceDashboardGenerator {
 			this.logger.log(`   - Daily records: ${dailySalesPerformance.length}`);
 			this.logger.log(`   - Branch-category records: ${branchCategoryPerformance.length}`);
 			this.logger.log(`   - Store records: ${salesPerStore.length}`);
+			this.logger.log(`   - Master data: ${masterData.branches.length} branches, ${masterData.products.length} products`);
 
 			return {
 				summary,
@@ -121,6 +133,7 @@ export class PerformanceDashboardGenerator {
 				dailySalesPerformance,
 				branchCategoryPerformance,
 				salesPerStore,
+				masterData,
 				filters: params,
 				metadata: {
 					lastUpdated: new Date().toISOString(),
@@ -130,7 +143,8 @@ export class PerformanceDashboardGenerator {
 				},
 			};
 		} catch (error) {
-			this.logger.error(`Error generating performance dashboard: ${error.message}`, error.stack);
+			this.logger.error(`❌ Error generating performance dashboard: ${error.message}`);
+			this.logger.error(`Stack trace: ${error.stack}`);
 			throw error;
 		}
 	}
@@ -163,6 +177,25 @@ export class PerformanceDashboardGenerator {
 
 		const transactions = await this.getSalesTransactions(params);
 		return this.calculateSalesPerStore(transactions);
+	}
+
+	/**
+	 * Get master data for filters
+	 */
+	async getMasterData(params: PerformanceFiltersDto): Promise<{
+		branches: Array<{ id: string; name: string }>;
+		products: Array<{ id: string; name: string }>;
+		salespeople: Array<{ id: string; name: string }>;
+		paymentMethods: Array<{ id: string; name: string }>;
+	}> {
+		this.logger.log(`Getting master data for filters`);
+
+		const filters: ErpQueryFilters = {
+			startDate: params.startDate || this.getDefaultStartDate(),
+			endDate: params.endDate || this.getDefaultEndDate(),
+		};
+
+		return await this.erpDataService.getMasterDataForFilters(filters);
 	}
 
 	// ===================================================================
@@ -294,6 +327,12 @@ export class PerformanceDashboardGenerator {
 		// ✅ FIXED: Now using real hourly sales data (async)
 		const hourlySales = await this.generateHourlySalesChart(params);
 		
+		// ✅ FIXED: Now using real payment type data (async)
+		const customerComposition = await this.generateCustomerCompositionChart(params);
+		
+		// ✅ FIXED: Now using real conversion rate data (quotations vs invoices)
+		const conversionRate = await this.generateConversionRateChart(params);
+		
 		return {
 			revenueTrend: this.generateRevenueTrendChart(data, params),
 			hourlySales,
@@ -302,8 +341,8 @@ export class PerformanceDashboardGenerator {
 			topProducts: this.generateTopProductsChart(data),
 			itemsPerBasket: this.generateItemsPerBasketChart(data),
 			salesBySalesperson: this.generateSalesBySalespersonChart(data),
-			conversionRate: this.generateConversionRateChart(data),
-			customerComposition: this.generateCustomerCompositionChart(data),
+			conversionRate,
+			customerComposition,
 		};
 	}
 
@@ -477,24 +516,27 @@ export class PerformanceDashboardGenerator {
 	/**
 	 * Generate top products chart
 	 * 
-	 * ✅ Uses product codes from database (not full names)
+	 * ✅ Uses product names from database (with code fallback)
 	 */
 	private generateTopProductsChart(data: PerformanceData[]) {
 		// Aggregate revenue by product code from real ERP data
 		const aggregated = data.reduce((acc, item) => {
-			const productCode = item.productId; // Use only product code from database
+			const productCode = item.productId;
+			const productName = item.productName || productCode; // Use name if available, fallback to code
+			
 			if (!acc[productCode]) {
 				acc[productCode] = {
 					revenue: 0,
+					name: productName,
 				};
 			}
 			acc[productCode].revenue += item.revenue;
 			return acc;
-		}, {} as Record<string, { revenue: number }>);
+		}, {} as Record<string, { revenue: number; name: string }>);
 
 		const chartData: BarChartDataPoint[] = Object.entries(aggregated)
 			.map(([code, values]) => ({
-				label: code, // Use product code only
+				label: values.name, // ✅ Use product name instead of code
 				value: values.revenue,
 			}))
 			.sort((a, b) => b.value - a.value)
@@ -502,7 +544,7 @@ export class PerformanceDashboardGenerator {
 
 		const total = chartData.reduce((sum, item) => sum + item.value, 0);
 
-		this.logger.debug(`Top products chart generated with ${chartData.length} products (using codes)`);
+		this.logger.debug(`Top products chart generated with ${chartData.length} products (using product names)`);
 
 		return { data: chartData, total };
 	}
@@ -578,63 +620,122 @@ export class PerformanceDashboardGenerator {
 	}
 
 	/**
-	 * Generate conversion rate chart
+	 * Generate conversion rate chart using real quotation and invoice data
+	 * 
+	 * ✅ FIXED: Now uses real data from tblsalesheader
+	 * - Quotations: doc_type = 3
+	 * - Converted Invoices: doc_type = 1 with invoice_used = 1
+	 * - Pending Quotations: Quotations not yet converted
 	 */
-	private generateConversionRateChart(data: PerformanceData[]) {
-		const totalQuotationsValue = data.reduce((sum, item) => sum + item.target, 0);
-		const totalSalesValue = data.reduce((sum, item) => sum + item.actualSales, 0);
+	private async generateConversionRateChart(params: PerformanceFiltersDto) {
+		try {
+			// Build ERP query filters
+			const filters: ErpQueryFilters = {
+				startDate: params.startDate || this.getDefaultStartDate(),
+				endDate: params.endDate || this.getDefaultEndDate(),
+				storeCode: params.branchId?.toString(),
+			};
 
-		const conversionValue = Math.min(totalSalesValue, totalQuotationsValue);
-		const unconvertedValue = Math.max(0, totalQuotationsValue - totalSalesValue);
+			// ✅ Get real conversion rate data from ERP
+			const conversionData = await this.erpDataService.getConversionRateData(filters);
+			
+			this.logger.log(`📊 Conversion Data Retrieved:`);
+			this.logger.log(`   - Total Quotations: ${conversionData.totalQuotations}`);
+			this.logger.log(`   - Quotation Value: R${conversionData.totalQuotationValue.toFixed(2)}`);
+			this.logger.log(`   - Converted Invoices: ${conversionData.convertedInvoices}`);
+			this.logger.log(`   - Converted Value: R${conversionData.convertedInvoiceValue.toFixed(2)}`);
+			this.logger.log(`   - Conversion Rate: ${conversionData.conversionRate.toFixed(2)}%`);
+			
+			const convertedValue = conversionData.convertedInvoiceValue;
+			const pendingValue = Math.max(0, conversionData.totalQuotationValue - conversionData.convertedInvoiceValue);
 
-		const chartData: PieChartDataPoint[] = [
-			{
-				label: 'Converted Sales',
-				value: conversionValue,
-				color: '#10B981',
-			},
-			{
-				label: 'Pending Quotations',
-				value: unconvertedValue,
-				color: '#F59E0B',
-			},
-		];
+			const chartData: PieChartDataPoint[] = [];
+			
+			// Only add data points if they have values
+			if (convertedValue > 0) {
+				chartData.push({
+					label: 'Converted to Sales',
+					value: convertedValue,
+					color: '#10B981',
+				});
+			}
+			
+			if (pendingValue > 0) {
+				chartData.push({
+					label: 'Pending Quotations',
+					value: pendingValue,
+					color: '#F59E0B',
+				});
+			}
 
-		const total = conversionValue + unconvertedValue;
-		const percentage = total > 0 ? (conversionValue / total) * 100 : 0;
+			const total = chartData.reduce((sum, item) => sum + item.value, 0);
+			const percentage = conversionData.conversionRate;
 
-		return { data: chartData, total, percentage };
+			if (chartData.length === 0) {
+				this.logger.warn(`⚠️ No conversion data found for date range ${filters.startDate} to ${filters.endDate}`);
+			} else {
+				this.logger.log(`✅ Conversion rate chart generated: ${percentage.toFixed(2)}% with ${chartData.length} segments`);
+			}
+			
+			return { data: chartData, total, percentage };
+		} catch (error) {
+			this.logger.error(`Error generating conversion rate chart: ${error.message}`);
+			// Return empty data on error
+			return { data: [], total: 0, percentage: 0 };
+		}
 	}
 
 	/**
-	 * Generate customer composition chart
+	 * Generate customer composition chart using real payment type data
+	 * 
+	 * ✅ FIXED: Now uses real payment type data from tblsalesheader (cash, credit_card, eft, etc.)
+	 * Previously used simulated data with hardcoded customer types
 	 */
-	private generateCustomerCompositionChart(data: PerformanceData[]) {
-		const customerTypes: Record<string, { value: number; color: string }> = {
-			'Walk-in': { value: 0, color: '#8B5CF6' },
-			'Account': { value: 0, color: '#06B6D4' },
-			'Returning': { value: 0, color: '#10B981' },
-		};
+	private async generateCustomerCompositionChart(params: PerformanceFiltersDto) {
+		try {
+			// Build ERP query filters
+			const filters: ErpQueryFilters = {
+				startDate: params.startDate || this.getDefaultStartDate(),
+				endDate: params.endDate || this.getDefaultEndDate(),
+				storeCode: params.branchId?.toString(),
+			};
 
-		// Simulate distribution based on sales data
-		data.forEach((item) => {
-			const revenue = item.actualSales;
-			customerTypes['Walk-in'].value += revenue * 0.4;
-			customerTypes['Account'].value += revenue * 0.35;
-			customerTypes['Returning'].value += revenue * 0.25;
-		});
+			// ✅ Get real payment type data from ERP
+			const paymentTypes = await this.erpDataService.getPaymentTypeAggregations(filters);
+			
+			// Define colors for different payment types
+			const colorMap: Record<string, string> = {
+				'Cash': '#10B981',
+				'Credit Card': '#8B5CF6',
+				'EFT': '#06B6D4',
+				'Debit Card': '#F59E0B',
+				'Account': '#EF4444',
+				'SnapScan': '#EC4899',
+				'Zapper': '#6366F1',
+				'Voucher': '#14B8A6',
+				'Cheque': '#84CC16',
+				'Extra': '#F97316',
+				'Offline Card': '#A855F7',
+				'FNB QR': '#22D3EE',
+			};
 
-		const chartData: PieChartDataPoint[] = Object.entries(customerTypes)
-			.map(([label, data]) => ({
-				label,
-				value: data.value,
-				color: data.color,
-			}))
-			.sort((a, b) => b.value - a.value);
+			// Convert to chart data format
+			const chartData: PieChartDataPoint[] = paymentTypes.map((pt) => ({
+				label: pt.paymentType,
+				value: pt.totalAmount,
+				color: colorMap[pt.paymentType] || '#6B7280', // Default gray if not mapped
+			}));
 
-		const total = chartData.reduce((sum, item) => sum + item.value, 0);
+			const total = chartData.reduce((sum, item) => sum + item.value, 0);
 
-		return { data: chartData, total };
+			this.logger.log(`✅ Customer composition chart generated with ${chartData.length} payment types (real data from ERP)`);
+			
+			return { data: chartData, total };
+		} catch (error) {
+			this.logger.error(`Error generating customer composition chart: ${error.message}`);
+			// Return empty data on error
+			return { data: [], total: 0 };
+		}
 	}
 
 	// ===================================================================

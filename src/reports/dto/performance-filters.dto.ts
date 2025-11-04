@@ -176,6 +176,22 @@ export class PerformanceFiltersDto {
 	salesPersonIds?: string[];
 
 	@ApiPropertyOptional({ 
+		description: 'Array of payment method IDs to filter (comma-separated in query string)',
+		type: [String],
+		example: ['cash', 'credit_card', 'eft']
+	})
+	@IsOptional()
+	@Transform(({ value }) => {
+		if (typeof value === 'string') {
+			return value.split(',').map(id => id.trim());
+		}
+		return value;
+	})
+	@IsArray()
+	@IsString({ each: true })
+	paymentMethodIds?: string[];
+
+	@ApiPropertyOptional({ 
 		description: 'Product category name for filtering',
 		example: 'Drywall & Partition'
 	})

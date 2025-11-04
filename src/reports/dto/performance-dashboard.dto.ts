@@ -338,6 +338,44 @@ export class SalesPerStoreDto {
 }
 
 // ===================================================================
+// MASTER DATA FOR FILTERS
+// ===================================================================
+
+export class FilterOptionDto {
+	@ApiProperty({ description: 'Unique identifier' })
+	id: string;
+
+	@ApiProperty({ description: 'Display name' })
+	name: string;
+}
+
+export class MasterDataDto {
+	@ApiProperty({ 
+		type: [FilterOptionDto],
+		description: 'List of available branches/stores'
+	})
+	branches: FilterOptionDto[];
+
+	@ApiProperty({ 
+		type: [FilterOptionDto],
+		description: 'List of available products'
+	})
+	products: FilterOptionDto[];
+
+	@ApiProperty({ 
+		type: [FilterOptionDto],
+		description: 'List of available salespeople'
+	})
+	salespeople: FilterOptionDto[];
+
+	@ApiProperty({ 
+		type: [FilterOptionDto],
+		description: 'List of available payment methods'
+	})
+	paymentMethods: FilterOptionDto[];
+}
+
+// ===================================================================
 // MAIN DASHBOARD RESPONSE
 // ===================================================================
 
@@ -365,6 +403,12 @@ export class PerformanceDashboardDataDto {
 		description: 'Sales per store table data'
 	})
 	salesPerStore: SalesPerStoreDto[];
+
+	@ApiProperty({ 
+		type: MasterDataDto,
+		description: 'Master data for populating filter dropdowns'
+	})
+	masterData: MasterDataDto;
 
 	@ApiProperty({ description: 'Applied filters', required: false })
 	filters?: any;

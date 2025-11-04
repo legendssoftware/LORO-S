@@ -102,6 +102,16 @@ export interface ProductAggregation {
 }
 
 /**
+ * Payment Type Aggregation Result from ERP
+ * Aggregates payment amounts from tblsalesheader by payment type
+ */
+export interface PaymentTypeAggregation {
+	paymentType: string;
+	totalAmount: number;
+	transactionCount: number;
+}
+
+/**
  * ERP Query Filters
  */
 export interface ErpQueryFilters {

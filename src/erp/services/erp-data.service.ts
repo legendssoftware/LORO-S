@@ -19,25 +19,78 @@ import { ConfigService } from '@nestjs/config';
  *
  * Handles all queries to the ERP database with aggressive caching
  * and parallel query execution for optimal performance.
+ * 
+ * ========================================================================
+ * PERFORMANCE & SCALABILITY FEATURES (Optimized for Remote Servers)
+ * ========================================================================
+ * 
+ * 1. **Circuit Breaker Pattern**
+ *    - Automatically stops queries after 5 consecutive failures
+ *    - Prevents cascading failures and database overload
+ *    - Auto-recovery after 60 seconds
+ * 
+ * 2. **Automatic Retry with Exponential Backoff**
+ *    - Up to 3 retry attempts for transient failures
+ *    - Intelligent error detection (retries network issues, not SQL errors)
+ *    - Exponential backoff: 1s → 2s → 4s (with jitter)
+ * 
+ * 3. **Query Concurrency Control**
+ *    - Maximum 3 parallel queries to prevent connection pool exhaustion
+ *    - Request queuing for overflow
+ *    - Connection pool monitoring
+ * 
+ * 4. **Aggressive Caching Strategy**
+ *    - 4-hour TTL for all queries
+ *    - Cache-first approach reduces database load
+ *    - Individual cache keys for different query combinations
+ * 
+ * 5. **Extended Timeouts for Remote Servers**
+ *    - 90 seconds for headers queries
+ *    - 120 seconds for lines and aggregations
+ *    - Accounts for network latency on remote databases
+ * 
+ * 6. **Batched Query Execution**
+ *    - Aggregations run in 2 batches (2 queries per batch)
+ *    - Prevents connection pool saturation
+ *    - Critical queries (daily + branch) run first
+ * 
+ * 7. **Enhanced Error Diagnostics**
+ *    - Detailed logging of error type, code, and stack trace
+ *    - Connection pool state logging
+ *    - Circuit breaker state tracking
+ *    - Query parameter logging for debugging
+ * 
+ * 8. **Pagination Strategy**
+ *    - Current: Caching + batched execution (optimal for this use case)
+ *    - Result sets are aggregated, not raw transactional data
+ *    - Most queries return summary data (< 1000 rows)
+ *    - If pagination needed: Use LIMIT/OFFSET in TypeORM with .take()/.skip()
+ * 
+ * ========================================================================
  */
 @Injectable()
 export class ErpDataService implements OnModuleInit {
 	private readonly logger = new Logger(ErpDataService.name);
 	private readonly CACHE_TTL = 14400; // 4 hours in seconds (increased from 1 hour)
 	
-	// ✅ Circuit Breaker State
+	// ✅ Circuit Breaker State (More resilient for remote servers)
 	private circuitBreakerState: 'CLOSED' | 'OPEN' | 'HALF_OPEN' = 'CLOSED';
 	private failureCount = 0;
 	private lastFailureTime: number = 0;
-	private readonly FAILURE_THRESHOLD = 3; // Open circuit after 3 failures
-	private readonly CIRCUIT_RESET_TIMEOUT = 30000; // 30 seconds
-	private readonly HALF_OPEN_MAX_REQUESTS = 1; // Only 1 request in half-open state
+	private readonly FAILURE_THRESHOLD = 5; // Open circuit after 5 consecutive failures (increased from 3)
+	private readonly CIRCUIT_RESET_TIMEOUT = 60000; // 60 seconds (increased from 30s)
+	private readonly HALF_OPEN_MAX_REQUESTS = 2; // Allow 2 test requests in half-open state (increased from 1)
 	private halfOpenRequests = 0;
 	
 	// ✅ Query Semaphore for limiting concurrent queries
 	private activeQueries = 0;
 	private readonly MAX_CONCURRENT_QUERIES = 3; // Max 3 parallel queries at once
 	private queryQueue: Array<() => Promise<any>> = [];
+	
+	// ✅ Retry Configuration for transient failures
+	private readonly MAX_RETRIES = 3; // Maximum retry attempts
+	private readonly INITIAL_RETRY_DELAY = 1000; // Start with 1 second
+	private readonly MAX_RETRY_DELAY = 10000; // Max 10 seconds between retries
 
 	constructor(
 		@InjectRepository(TblSalesHeader, 'erp')
@@ -73,6 +126,9 @@ export class ErpDataService implements OnModuleInit {
 			this.logger.log(`[${operationId}]   User: ${user || 'NOT SET'}`);
 			this.logger.log(`[${operationId}]   Connection Pool Size: ${connectionLimit}`);
 			this.logger.log(`[${operationId}]   Cache TTL: ${this.CACHE_TTL}s`);
+			this.logger.log(`[${operationId}]   Query Timeout: 120s (default)`);
+			this.logger.log(`[${operationId}]   Max Retries: ${this.MAX_RETRIES}`);
+			this.logger.log(`[${operationId}]   Circuit Breaker Threshold: ${this.FAILURE_THRESHOLD} failures`);
 
 			// ✅ Log connection pool information
 			const poolInfo = this.getConnectionPoolInfo();
@@ -81,11 +137,11 @@ export class ErpDataService implements OnModuleInit {
 			this.logger.log(`[${operationId}]   Active Connections: ${poolInfo.activeConnections}`);
 			this.logger.log(`[${operationId}]   Idle Connections: ${poolInfo.idleConnections}`);
 
-			// Test connection
+			// Test connection with retry
 			this.logger.log(`[${operationId}] Testing ERP database connection...`);
 			const testStart = Date.now();
 
-			await this.salesLinesRepo.count({ take: 1 });
+			await this.testDatabaseConnection(operationId);
 
 			const testDuration = Date.now() - testStart;
 			this.logger.log(`[${operationId}] ✅ ERP database connection successful (${testDuration}ms)`);
@@ -96,6 +152,51 @@ export class ErpDataService implements OnModuleInit {
 			this.logger.error(`[${operationId}] Stack: ${error.stack}`);
 			this.logger.error(`[${operationId}] ===== ERP Data Service NOT Ready =====`);
 		}
+	}
+
+	/**
+	 * ✅ Test database connection with retry logic
+	 */
+	private async testDatabaseConnection(operationId: string): Promise<void> {
+		for (let attempt = 1; attempt <= 3; attempt++) {
+			try {
+				await this.salesLinesRepo.count({ take: 1 });
+				if (attempt > 1) {
+					this.logger.log(`[${operationId}] Connection test succeeded on attempt ${attempt}`);
+				}
+				return;
+			} catch (error) {
+				if (attempt < 3) {
+					const delay = 2000 * attempt;
+					this.logger.warn(
+						`[${operationId}] Connection test attempt ${attempt} failed: ${error.message}. Retrying in ${delay}ms...`,
+					);
+					await new Promise(resolve => setTimeout(resolve, delay));
+				} else {
+					throw error;
+				}
+			}
+		}
+	}
+
+	/**
+	 * ✅ Check connection pool health
+	 */
+	async checkConnectionHealth(): Promise<{
+		healthy: boolean;
+		poolInfo: ReturnType<typeof this.getConnectionPoolInfo>;
+		circuitBreakerState: string;
+		activeQueries: number;
+	}> {
+		const poolInfo = this.getConnectionPoolInfo();
+		const healthy = this.circuitBreakerState === 'CLOSED' && poolInfo.poolSize !== 'error';
+		
+		return {
+			healthy,
+			poolInfo,
+			circuitBreakerState: this.circuitBreakerState,
+			activeQueries: this.activeQueries,
+		};
 	}
 
 	/**
@@ -169,32 +270,88 @@ export class ErpDataService implements OnModuleInit {
 	/**
 	 * ✅ Circuit Breaker: Record success
 	 */
-	private recordSuccess(): void {
+	private recordSuccess(operationId: string): void {
 		if (this.circuitBreakerState === 'HALF_OPEN') {
-			this.logger.log('Circuit breaker test request succeeded - closing circuit');
+			this.logger.log(`[${operationId}] Circuit breaker test request succeeded - closing circuit`);
 			this.circuitBreakerState = 'CLOSED';
 			this.failureCount = 0;
 			this.halfOpenRequests = 0;
 		} else if (this.circuitBreakerState === 'CLOSED') {
 			// Reset failure count on success
-			this.failureCount = 0;
+			if (this.failureCount > 0) {
+				this.logger.debug(`[${operationId}] Resetting failure count (was ${this.failureCount})`);
+				this.failureCount = 0;
+			}
 		}
 	}
 
 	/**
 	 * ✅ Circuit Breaker: Record failure
 	 */
-	private recordFailure(error: Error): void {
+	private recordFailure(operationId: string, error: Error): void {
 		this.failureCount++;
 		this.lastFailureTime = Date.now();
 
+		this.logger.warn(
+			`[${operationId}] Query failure recorded (${this.failureCount}/${this.FAILURE_THRESHOLD}) - ${error.message}`,
+		);
+
 		if (this.circuitBreakerState === 'HALF_OPEN') {
-			this.logger.error('Circuit breaker test request failed - reopening circuit');
+			this.logger.error(`[${operationId}] Circuit breaker test request failed - reopening circuit`);
 			this.circuitBreakerState = 'OPEN';
 		} else if (this.failureCount >= this.FAILURE_THRESHOLD) {
-			this.logger.error(`Circuit breaker OPENED after ${this.failureCount} failures`);
+			this.logger.error(
+				`[${operationId}] ⚠️ CIRCUIT BREAKER OPENED after ${this.failureCount} consecutive failures. Will retry in ${this.CIRCUIT_RESET_TIMEOUT / 1000}s`,
+			);
 			this.circuitBreakerState = 'OPEN';
 		}
+	}
+
+	/**
+	 * ✅ Calculate exponential backoff delay for retries
+	 */
+	private calculateRetryDelay(attempt: number): number {
+		const exponentialDelay = this.INITIAL_RETRY_DELAY * Math.pow(2, attempt - 1);
+		const jitter = Math.random() * 500; // Add 0-500ms jitter to avoid thundering herd
+		return Math.min(exponentialDelay + jitter, this.MAX_RETRY_DELAY);
+	}
+
+	/**
+	 * ✅ Determine if error is retryable (transient failure vs permanent error)
+	 */
+	private isRetryableError(error: any): boolean {
+		const errorMessage = error.message?.toLowerCase() || '';
+		
+		// Retryable: Network issues, timeouts, connection problems
+		const retryablePatterns = [
+			'timeout',
+			'etimedout',
+			'econnreset',
+			'econnrefused',
+			'ehostunreach',
+			'enetunreach',
+			'socket hang up',
+			'connection lost',
+			'too many connections',
+			'connection pool',
+		];
+		
+		// Non-retryable: SQL errors, authentication issues
+		const nonRetryablePatterns = [
+			'syntax error',
+			'access denied',
+			'unknown column',
+			'unknown table',
+			'foreign key constraint',
+		];
+		
+		// Check if error is non-retryable
+		if (nonRetryablePatterns.some(pattern => errorMessage.includes(pattern))) {
+			return false;
+		}
+		
+		// Check if error is retryable
+		return retryablePatterns.some(pattern => errorMessage.includes(pattern));
 	}
 
 	/**
@@ -235,11 +392,13 @@ export class ErpDataService implements OnModuleInit {
 	private async executeQueryWithProtection<T>(
 		queryFn: () => Promise<T>,
 		operationId: string,
-		timeoutMs: number = 60000, // 60 second default timeout
-	) {
+		timeoutMs: number = 120000, // 120 second default timeout (increased from 60s for remote servers)
+	): Promise<T> {
 		// Check circuit breaker
 		if (this.isCircuitOpen()) {
-			const error = new Error('Circuit breaker is OPEN - ERP queries temporarily disabled');
+			const error = new Error(
+				`Circuit breaker is OPEN - ERP queries temporarily disabled. Will retry in ${Math.ceil((this.CIRCUIT_RESET_TIMEOUT - (Date.now() - this.lastFailureTime)) / 1000)}s`,
+			);
 			this.logger.error(`[${operationId}] ${error.message}`);
 			throw error;
 		}
@@ -254,21 +413,57 @@ export class ErpDataService implements OnModuleInit {
 			this.halfOpenRequests++;
 		}
 
-		try {
-			// Execute with timeout protection
-			const result = await Promise.race([
-				this.executeWithSemaphore(queryFn, operationId),
-				new Promise<T>((_, reject) =>
-					setTimeout(() => reject(new Error(`Query timeout after ${timeoutMs}ms`)), timeoutMs),
-				),
-			]);
+		// ✅ Retry loop with exponential backoff
+		let lastError: Error | null = null;
+		
+		for (let attempt = 1; attempt <= this.MAX_RETRIES; attempt++) {
+			try {
+				this.logger.debug(
+					`[${operationId}] Query attempt ${attempt}/${this.MAX_RETRIES} (timeout: ${timeoutMs}ms)`,
+				);
+				
+				// Execute with timeout protection
+				const result = await Promise.race([
+					this.executeWithSemaphore(queryFn, operationId),
+					new Promise<T>((_, reject) =>
+						setTimeout(() => reject(new Error(`Query timeout after ${timeoutMs}ms`)), timeoutMs),
+					),
+				]);
 
-			this.recordSuccess();
-			return result;
-		} catch (error) {
-			this.recordFailure(error);
-			throw error;
+				// Success! Record and return
+				this.recordSuccess(operationId);
+				
+				if (attempt > 1) {
+					this.logger.log(`[${operationId}] ✅ Query succeeded on retry attempt ${attempt}`);
+				}
+				
+				return result;
+			} catch (error) {
+				lastError = error;
+				
+				// Check if we should retry
+				const isLastAttempt = attempt === this.MAX_RETRIES;
+				const shouldRetry = this.isRetryableError(error) && !isLastAttempt;
+				
+				if (shouldRetry) {
+					const delay = this.calculateRetryDelay(attempt);
+					this.logger.warn(
+						`[${operationId}] Query attempt ${attempt} failed: ${error.message}. Retrying in ${delay}ms...`,
+					);
+					await new Promise(resolve => setTimeout(resolve, delay));
+				} else {
+					// Final failure - record it
+					this.logger.error(
+						`[${operationId}] Query failed after ${attempt} attempt(s): ${error.message}`,
+					);
+					this.recordFailure(operationId, error);
+					throw error;
+				}
+			}
 		}
+		
+		// Should never reach here, but TypeScript needs this
+		throw lastError || new Error('Query failed with unknown error');
 	}
 
 	/**
@@ -336,7 +531,7 @@ export class ErpDataService implements OnModuleInit {
 					return await query.getMany();
 				},
 				operationId,
-				45000, // 45 second timeout for headers
+				90000, // 90 second timeout for headers (increased from 45s)
 			);
 			
 			const queryDuration = Date.now() - queryStart;
@@ -353,9 +548,27 @@ export class ErpDataService implements OnModuleInit {
 			return results;
 		} catch (error) {
 			const duration = Date.now() - startTime;
+			
+			// ✅ Enhanced error diagnostics for remote debugging
 			this.logger.error(`[${operationId}] ❌ Error fetching sales headers (${duration}ms)`);
-			this.logger.error(`[${operationId}] Error message: ${error.message}`);
-			this.logger.error(`[${operationId}] Stack trace: ${error.stack}`);
+			this.logger.error(`[${operationId}] Error Type: ${error.constructor?.name || 'Unknown'}`);
+			this.logger.error(`[${operationId}] Error Message: ${error.message}`);
+			this.logger.error(`[${operationId}] Error Code: ${error.code || 'N/A'}`);
+			
+			// Log connection state
+			const poolInfo = this.getConnectionPoolInfo();
+			this.logger.error(`[${operationId}] Connection Pool State: ${JSON.stringify(poolInfo)}`);
+			this.logger.error(`[${operationId}] Circuit Breaker State: ${this.circuitBreakerState}`);
+			this.logger.error(`[${operationId}] Active Queries: ${this.activeQueries}/${this.MAX_CONCURRENT_QUERIES}`);
+			
+			// Log query parameters
+			this.logger.error(`[${operationId}] Query Parameters: ${JSON.stringify({
+				startDate: filters.startDate,
+				endDate: filters.endDate,
+				storeCode: filters.storeCode || 'all',
+			})}`);
+			
+			this.logger.error(`[${operationId}] Stack Trace: ${error.stack}`);
 			throw error;
 		}
 	}
@@ -424,7 +637,7 @@ export class ErpDataService implements OnModuleInit {
 					return await query.getMany();
 				},
 				operationId,
-				60000, // 60 second timeout for lines
+				120000, // 120 second timeout for lines (increased from 60s)
 			);
 			
 			const queryDuration = Date.now() - queryStart;
@@ -441,9 +654,29 @@ export class ErpDataService implements OnModuleInit {
 			return results;
 		} catch (error) {
 			const duration = Date.now() - startTime;
+			
+			// ✅ Enhanced error diagnostics for remote debugging
 			this.logger.error(`[${operationId}] ❌ Error fetching sales lines (${duration}ms)`);
-			this.logger.error(`[${operationId}] Error message: ${error.message}`);
-			this.logger.error(`[${operationId}] Stack trace: ${error.stack}`);
+			this.logger.error(`[${operationId}] Error Type: ${error.constructor?.name || 'Unknown'}`);
+			this.logger.error(`[${operationId}] Error Message: ${error.message}`);
+			this.logger.error(`[${operationId}] Error Code: ${error.code || 'N/A'}`);
+			
+			// Log connection state
+			const poolInfo = this.getConnectionPoolInfo();
+			this.logger.error(`[${operationId}] Connection Pool State: ${JSON.stringify(poolInfo)}`);
+			this.logger.error(`[${operationId}] Circuit Breaker State: ${this.circuitBreakerState}`);
+			this.logger.error(`[${operationId}] Active Queries: ${this.activeQueries}/${this.MAX_CONCURRENT_QUERIES}`);
+			
+			// Log query parameters
+			this.logger.error(`[${operationId}] Query Parameters: ${JSON.stringify({
+				startDate: filters.startDate,
+				endDate: filters.endDate,
+				storeCode: filters.storeCode || 'all',
+				category: filters.category || 'all',
+				docTypes: includeDocTypes,
+			})}`);
+			
+			this.logger.error(`[${operationId}] Stack Trace: ${error.stack}`);
 			throw error;
 		}
 	}
@@ -530,9 +763,13 @@ export class ErpDataService implements OnModuleInit {
 			return results;
 		} catch (error) {
 			const duration = Date.now() - startTime;
+			
+			// ✅ Enhanced error diagnostics
 			this.logger.error(`[${operationId}] ❌ Error computing daily aggregations (${duration}ms)`);
-			this.logger.error(`[${operationId}] Error message: ${error.message}`);
-			this.logger.error(`[${operationId}] Stack trace: ${error.stack}`);
+			this.logger.error(`[${operationId}] Error: ${error.message}`);
+			this.logger.error(`[${operationId}] Circuit Breaker: ${this.circuitBreakerState}`);
+			this.logger.error(`[${operationId}] Connection Pool: ${JSON.stringify(this.getConnectionPoolInfo())}`);
+			this.logger.error(`[${operationId}] Stack: ${error.stack}`);
 			throw error;
 		}
 	}
@@ -599,9 +836,13 @@ export class ErpDataService implements OnModuleInit {
 			return results;
 		} catch (error) {
 			const duration = Date.now() - startTime;
+			
+			// ✅ Enhanced error diagnostics
 			this.logger.error(`[${operationId}] ❌ Error computing branch aggregations (${duration}ms)`);
-			this.logger.error(`[${operationId}] Error message: ${error.message}`);
-			this.logger.error(`[${operationId}] Stack trace: ${error.stack}`);
+			this.logger.error(`[${operationId}] Error: ${error.message}`);
+			this.logger.error(`[${operationId}] Circuit Breaker: ${this.circuitBreakerState}`);
+			this.logger.error(`[${operationId}] Connection Pool: ${JSON.stringify(this.getConnectionPoolInfo())}`);
+			this.logger.error(`[${operationId}] Stack: ${error.stack}`);
 			throw error;
 		}
 	}
@@ -674,9 +915,13 @@ export class ErpDataService implements OnModuleInit {
 			return results;
 		} catch (error) {
 			const duration = Date.now() - startTime;
+			
+			// ✅ Enhanced error diagnostics
 			this.logger.error(`[${operationId}] ❌ Error computing category aggregations (${duration}ms)`);
-			this.logger.error(`[${operationId}] Error message: ${error.message}`);
-			this.logger.error(`[${operationId}] Stack trace: ${error.stack}`);
+			this.logger.error(`[${operationId}] Error: ${error.message}`);
+			this.logger.error(`[${operationId}] Circuit Breaker: ${this.circuitBreakerState}`);
+			this.logger.error(`[${operationId}] Connection Pool: ${JSON.stringify(this.getConnectionPoolInfo())}`);
+			this.logger.error(`[${operationId}] Stack: ${error.stack}`);
 			throw error;
 		}
 	}
@@ -750,9 +995,13 @@ export class ErpDataService implements OnModuleInit {
 			return results;
 		} catch (error) {
 			const duration = Date.now() - startTime;
+			
+			// ✅ Enhanced error diagnostics
 			this.logger.error(`[${operationId}] ❌ Error computing product aggregations (${duration}ms)`);
-			this.logger.error(`[${operationId}] Error message: ${error.message}`);
-			this.logger.error(`[${operationId}] Stack trace: ${error.stack}`);
+			this.logger.error(`[${operationId}] Error: ${error.message}`);
+			this.logger.error(`[${operationId}] Circuit Breaker: ${this.circuitBreakerState}`);
+			this.logger.error(`[${operationId}] Connection Pool: ${JSON.stringify(this.getConnectionPoolInfo())}`);
+			this.logger.error(`[${operationId}] Stack: ${error.stack}`);
 			throw error;
 		}
 	}
@@ -780,101 +1029,12 @@ export class ErpDataService implements OnModuleInit {
 			// ✅ BATCH 1: Critical queries (daily + branch)
 			this.logger.log(`[${operationId}] Batch 1: Executing daily + branch aggregations...`);
 			const batch1Start = Date.now();
-			const [daily, branch] = await Promise.all([
-				this.getDailyAggregations(filters),
-				this.getBranchAggregations(filters),
-			]);
-			const batch1Duration = Date.now() - batch1Start;
-			this.logger.log(`[${operationId}] Batch 1 completed in ${batch1Duration}m[Nest] 18321  - 2025/11/03, 10:28:30   DEBUG [CheckInsService] [checkout_1762158510845] Calculated work duration: 0h 0m (0 minutes total)
-[Nest] 18321  - 2025/11/03, 10:28:30   DEBUG [CheckInsService] [checkout_1762158510845] Reverse geocoding check-in location: 37.33233141,-122.0312186
-[Nest] 18321  - 2025/11/03, 10:28:30   DEBUG [GoogleMapsService] [reverse-geocode-1762158510936] Starting reverse geocoding for coordinates: 37.33233141, -122.0312186
-[Nest] 18321  - 2025/11/03, 10:28:30   DEBUG [GoogleMapsService] Cache MISS for key: gmaps:reverse-geocode:5fa5afaaee12ecad3f4443d7370ba9ac in 0ms
-[Nest] 18321  - 2025/11/03, 10:28:31    WARN [GoogleMapsService] Reverse geocoding for coordinates attempt 1 failed: Request failed with status code 403. Retrying in 1000ms...
-[Nest] 18321  - 2025/11/03, 10:28:32    WARN [GoogleMapsService] Reverse geocoding for coordinates attempt 2 failed: Request failed with status code 403. Retrying in 2000ms...
-[Nest] 18321  - 2025/11/03, 10:28:34   ERROR [GoogleMapsService] Reverse geocoding for coordinates failed after 3 attempts: Request failed with status code 403
-[Nest] 18321  - 2025/11/03, 10:28:34   ERROR [GoogleMapsService] [reverse-geocode-1762158510936] Reverse geocoding failed: Request failed with status code 403
-[Nest] 18321  - 2025/11/03, 10:28:34    WARN [CheckInsService] [checkout_1762158510845] Failed to reverse geocode check-in location: Request failed with status code 403
-[Nest] 18321  - 2025/11/03, 10:28:34   DEBUG [CheckInsService] [checkout_1762158510845] Updating check-in record with check-out data
-[Nest] 18321  - 2025/11/03, 10:28:34   DEBUG [CheckInsService] [checkout_1762158510845] Sending check-out notifications
-[Nest] 18321  - 2025/11/03, 10:28:34   DEBUG [UnifiedNotificationService] [interpolate_1762158514997] Interpolating template with 11 variables: userName, clientName, duration, checkInId, checkOutTime, location, address, orgId, branchId, timestamp, checkOutDetails
-[Nest] 18321  - 2025/11/03, 10:28:34   DEBUG [UnifiedNotificationService] [interpolate_1762158514997] ✅ Successfully interpolated all template variables
-[Nest] 18321  - 2025/11/03, 10:28:34     LOG [UnifiedNotificationService] 🚀 Sending checkout_completed notification to 1 recipient(s)
-[Nest] 18321  - 2025/11/03, 10:28:35   DEBUG [ExpoPushService] ✅ Token validation passed
-[Nest] 18321  - 2025/11/03, 10:28:35   DEBUG [ExpoPushService] Object:
-{
-  "tokenPrefix": "ExponentPushToken[OiAx8eKGa93_...",
-  "length": 41
-}
-
-[Nest] 18321  - 2025/11/03, 10:28:35     LOG [ExpoPushService] ✅ Sent 1 push notification(s) to Expo
-[Nest] 18321  - 2025/11/03, 10:28:35   ERROR [ExpoPushService] ❌ 1/1 push notifications failed:
-[Nest] 18321  - 2025/11/03, 10:28:35   ERROR [ExpoPushService] Object:
-{
-  "errors": [
-    {
-      "index": 0,
-      "token": "ExponentPushToken[OiAx8eKGa93_...",
-      "message": "Unable to retrieve the FCM server key for the recipient's app. Make sure you have provided a server key as directed by the Expo FCM documentation.",
-      "details": {
-        "error": "InvalidCredentials",
-        "fault": "developer"
-      }
-    }
-  ]
-}
-
-[Nest] 18321  - 2025/11/03, 10:28:35     LOG [UnifiedNotificationService] 📱 Push notifications: 0 sent, 1 failed
-[Nest] 18321  - 2025/11/03, 10:28:35   DEBUG [UnifiedNotificationService] [interpolate_1762158515578] Interpolating template with 12 variables: userName, clientName, duration, checkInId, checkOutTime, location, address, orgId, branchId, timestamp, adminNotification, checkOutDetails
-[Nest] 18321  - 2025/11/03, 10:28:35   ERROR [UnifiedNotificationService] [interpolate_1762158515578] ⚠️ Missing template variable: "checkInTime". Available: userName, clientName, duration, checkInId, checkOutTime, location, address, orgId, branchId, timestamp, adminNotification, checkOutDetails
-[Nest] 18321  - 2025/11/03, 10:28:35   ERROR [UnifiedNotificationService] [interpolate_1762158515578] ⚠️ Missing template variable: "checkOutTime". Available: userName, clientName, duration, checkInId, checkOutTime, location, address, orgId, branchId, timestamp, adminNotification, checkOutDetails
-[Nest] 18321  - 2025/11/03, 10:28:35   ERROR [UnifiedNotificationService] [interpolate_1762158515578] ⚠️ Missing template variable: "workTimeDisplay". Available: userName, clientName, duration, checkInId, checkOutTime, location, address, orgId, branchId, timestamp, adminNotification, checkOutDetails
-[Nest] 18321  - 2025/11/03, 10:28:35   ERROR [UnifiedNotificationService] [interpolate_1762158515578] ⚠️ Template interpolation incomplete!
-Missing variables: [checkInTime, checkOutTime, workTimeDisplay]
-Template: "Great work today, {userName}! 🔴 You've successfully completed your shift. Worked from {checkInTime:..."
-Provided variables: ["userName","clientName","duration","checkInId","checkOutTime","location","address","orgId","branchId","timestamp","adminNotification","checkOutDetails"]
-[Nest] 18321  - 2025/11/03, 10:28:35     LOG [UnifiedNotificationService] 🚀 Sending attendance_shift_ended notification to 5 recipient(s)
-[Nest] 18321  - 2025/11/03, 10:28:35   DEBUG [ExpoPushService] ✅ Token validation passed
-[Nest] 18321  - 2025/11/03, 10:28:35   DEBUG [ExpoPushService] Object:
-{
-  "tokenPrefix": "ExponentPushToken[OiAx8eKGa93_...",
-  "length": 41
-}
-
-[Nest] 18321  - 2025/11/03, 10:28:35   DEBUG [ExpoPushService] ✅ Token validation passed
-[Nest] 18321  - 2025/11/03, 10:28:35   DEBUG [ExpoPushService] Object:
-{
-  "tokenPrefix": "ExponentPushToken[CUqPq1OUvDFF...",
-  "length": 41
-}
-
-[Nest] 18321  - 2025/11/03, 10:28:35     LOG [ExpoPushService] ✅ Sent 2 push notification(s) to Expo
-[Nest] 18321  - 2025/11/03, 10:28:35   ERROR [ExpoPushService] ❌ 2/2 push notifications failed:
-[Nest] 18321  - 2025/11/03, 10:28:35   ERROR [ExpoPushService] Object:
-{
-  "errors": [
-    {
-      "index": 0,
-      "token": "ExponentPushToken[OiAx8eKGa93_...",
-      "message": "Unable to retrieve the FCM server key for the recipient's app. Make sure you have provided a server key as directed by the Expo FCM documentation.",
-      "details": {
-        "error": "InvalidCredentials",
-        "fault": "developer"
-      }
-    },
-    {
-      "index": 1,
-      "token": "ExponentPushToken[CUqPq1OUvDFF...",
-      "message": "Unable to retrieve the FCM server key for the recipient's app. Make sure you have provided a server key as directed by the Expo FCM documentation.",
-      "details": {
-        "error": "InvalidCredentials",
-        "fault": "developer"
-      }
-    }
-  ]
-}
-
-[Nest] 18321  - 2025/11/03, 10:28:35     LOG [UnifiedNotificationService] 📱 Push notifications: 0 sent, 2 failed
-s`);
+		const [daily, branch] = await Promise.all([
+			this.getDailyAggregations(filters),
+			this.getBranchAggregations(filters),
+		]);
+		const batch1Duration = Date.now() - batch1Start;
+		this.logger.log(`[${operationId}] Batch 1 completed in ${batch1Duration}ms`);
 
 			// ✅ BATCH 2: Secondary queries (category + products)
 			this.logger.log(`[${operationId}] Batch 2: Executing category + product aggregations...`);
@@ -899,10 +1059,25 @@ s`);
 			return { daily, branch, category, products };
 		} catch (error) {
 			const duration = Date.now() - startTime;
+			
+			// ✅ Enhanced error diagnostics for batched operations
 			this.logger.error(`[${operationId}] ❌ Error executing batched aggregations (${duration}ms)`);
-			this.logger.error(`[${operationId}] Error message: ${error.message}`);
-			this.logger.error(`[${operationId}] Stack trace: ${error.stack}`);
-			this.logger.error(`[${operationId}] Circuit breaker state: ${this.circuitBreakerState}`);
+			this.logger.error(`[${operationId}] Error Type: ${error.constructor?.name || 'Unknown'}`);
+			this.logger.error(`[${operationId}] Error Message: ${error.message}`);
+			this.logger.error(`[${operationId}] Error Code: ${error.code || 'N/A'}`);
+			
+			// Log system state
+			const poolInfo = this.getConnectionPoolInfo();
+			this.logger.error(`[${operationId}] System State:`);
+			this.logger.error(`[${operationId}]   Circuit Breaker: ${this.circuitBreakerState}`);
+			this.logger.error(`[${operationId}]   Failure Count: ${this.failureCount}/${this.FAILURE_THRESHOLD}`);
+			this.logger.error(`[${operationId}]   Active Queries: ${this.activeQueries}/${this.MAX_CONCURRENT_QUERIES}`);
+			this.logger.error(`[${operationId}]   Connection Pool: ${JSON.stringify(poolInfo)}`);
+			
+			// Log query parameters
+			this.logger.error(`[${operationId}] Query Parameters: ${JSON.stringify(filters)}`);
+			
+			this.logger.error(`[${operationId}] Stack Trace: ${error.stack}`);
 			throw error;
 		}
 	}
@@ -1068,5 +1243,449 @@ s`);
 			this.logger.error(`[${operationId}] Error: ${error.message}`);
 			throw error;
 		}
+	}
+
+	/**
+	 * Get payment type aggregations from tblsalesheader
+	 * 
+	 * Aggregates payment amounts by payment type (cash, credit_card, eft, etc.)
+	 * Only includes Tax Invoices (doc_type = 1)
+	 * 
+	 * @param filters - Query filters (date range, store, etc.)
+	 * @returns Array of payment type aggregations
+	 */
+	async getPaymentTypeAggregations(filters: ErpQueryFilters): Promise<
+		Array<{
+			paymentType: string;
+			totalAmount: number;
+			transactionCount: number;
+		}>
+	> {
+		const operationId = this.generateOperationId('GET_PAYMENT_TYPES');
+		const cacheKey = this.buildCacheKey('payment_types', filters, ['1']);
+
+		this.logger.log(`[${operationId}] Getting payment type aggregations for ${filters.startDate} to ${filters.endDate}`);
+
+		const startTime = Date.now();
+
+		try {
+			// Check cache first
+			const cached = await this.cacheManager.get(cacheKey);
+			if (cached) {
+				const duration = Date.now() - startTime;
+				this.logger.log(`[${operationId}] ✅ Cache HIT (${duration}ms)`);
+				return cached as any;
+			}
+
+			this.logger.log(`[${operationId}] Cache MISS - Querying payment types...`);
+
+			const queryStart = Date.now();
+
+			// Build base query
+			let query = this.salesHeaderRepo
+				.createQueryBuilder('header')
+				.select([
+					'CAST(SUM(CAST(header.cash AS DECIMAL(19,3))) AS DECIMAL(19,2)) as cash',
+					'CAST(SUM(CAST(header.credit_card AS DECIMAL(19,3))) AS DECIMAL(19,2)) as credit_card',
+					'CAST(SUM(CAST(header.eft AS DECIMAL(19,3))) AS DECIMAL(19,2)) as eft',
+					'CAST(SUM(CAST(header.debit_card AS DECIMAL(19,3))) AS DECIMAL(19,2)) as debit_card',
+					'CAST(SUM(CAST(header.cheque AS DECIMAL(19,3))) AS DECIMAL(19,2)) as cheque',
+					'CAST(SUM(CAST(header.voucher AS DECIMAL(19,3))) AS DECIMAL(19,2)) as voucher',
+					'CAST(SUM(CAST(header.account AS DECIMAL(19,3))) AS DECIMAL(19,2)) as account',
+					'CAST(SUM(CAST(header.snap_scan AS DECIMAL(19,3))) AS DECIMAL(19,2)) as snap_scan',
+					'CAST(SUM(CAST(header.zapper AS DECIMAL(19,3))) AS DECIMAL(19,2)) as zapper',
+					'CAST(SUM(CAST(header.extra AS DECIMAL(19,3))) AS DECIMAL(19,2)) as extra',
+					'CAST(SUM(CAST(header.offline_card AS DECIMAL(19,3))) AS DECIMAL(19,2)) as offline_card',
+					'CAST(SUM(CAST(header.fnb_qr AS DECIMAL(19,3))) AS DECIMAL(19,2)) as fnb_qr',
+					'COUNT(*) as totalTransactions',
+				])
+				.where('header.sale_date BETWEEN :startDate AND :endDate', {
+					startDate: filters.startDate,
+					endDate: filters.endDate,
+				})
+				.andWhere('header.doc_type = :docType', { docType: 1 }) // Only Tax Invoices
+				.andWhere('header.sale_date >= :minDate', { minDate: '2020-01-01' });
+
+			if (filters.storeCode) {
+				query = query.andWhere('header.store = :store', { store: filters.storeCode });
+			}
+
+			const results = await query.getRawOne();
+			const queryDuration = Date.now() - queryStart;
+
+			this.logger.log(`[${operationId}] Query completed in ${queryDuration}ms`);
+
+			// Process results - convert to array of payment type objects
+			const paymentTypes = [
+				{ paymentType: 'Cash', totalAmount: parseFloat(results?.cash || 0) },
+				{ paymentType: 'Credit Card', totalAmount: parseFloat(results?.credit_card || 0) },
+				{ paymentType: 'EFT', totalAmount: parseFloat(results?.eft || 0) },
+				{ paymentType: 'Debit Card', totalAmount: parseFloat(results?.debit_card || 0) },
+				{ paymentType: 'Cheque', totalAmount: parseFloat(results?.cheque || 0) },
+				{ paymentType: 'Voucher', totalAmount: parseFloat(results?.voucher || 0) },
+				{ paymentType: 'Account', totalAmount: parseFloat(results?.account || 0) },
+				{ paymentType: 'SnapScan', totalAmount: parseFloat(results?.snap_scan || 0) },
+				{ paymentType: 'Zapper', totalAmount: parseFloat(results?.zapper || 0) },
+				{ paymentType: 'Extra', totalAmount: parseFloat(results?.extra || 0) },
+				{ paymentType: 'Offline Card', totalAmount: parseFloat(results?.offline_card || 0) },
+				{ paymentType: 'FNB QR', totalAmount: parseFloat(results?.fnb_qr || 0) },
+			];
+
+			// Filter out payment types with zero amounts and calculate transaction counts
+			const nonZeroPayments = paymentTypes.filter((pt) => pt.totalAmount > 0);
+			const totalAmount = nonZeroPayments.reduce((sum, pt) => sum + pt.totalAmount, 0);
+
+			// Calculate approximate transaction count per payment type based on proportion
+			const totalTransactions = parseInt(results?.totalTransactions || 0, 10);
+			const processedResults = nonZeroPayments.map((pt) => ({
+				paymentType: pt.paymentType,
+				totalAmount: pt.totalAmount,
+				transactionCount: Math.round((pt.totalAmount / totalAmount) * totalTransactions),
+			}));
+
+			// Sort by total amount descending
+			processedResults.sort((a, b) => b.totalAmount - a.totalAmount);
+
+			this.logger.log(`[${operationId}] Found ${processedResults.length} payment types with non-zero amounts`);
+			if (processedResults.length > 0) {
+				this.logger.log(
+					`[${operationId}] Top payment type: ${processedResults[0].paymentType} (R${processedResults[0].totalAmount.toFixed(2)})`,
+				);
+			}
+
+			// Cache results
+			await this.cacheManager.set(cacheKey, processedResults, this.CACHE_TTL);
+
+			const totalDuration = Date.now() - startTime;
+			this.logger.log(`[${operationId}] ✅ Operation completed successfully (${totalDuration}ms)`);
+
+			return processedResults;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`[${operationId}] ❌ Error getting payment type aggregations (${duration}ms)`);
+			this.logger.error(`[${operationId}] Error: ${error.message}`);
+			throw error;
+		}
+	}
+
+	/**
+	 * Get conversion rate data (Quotations vs Converted Invoices)
+	 * 
+	 * Tracks:
+	 * - Total quotations (doc_type = 3)
+	 * - Converted quotations (doc_type = 1 with invoice_used = 1)
+	 * - Conversion rate percentage
+	 * 
+	 * @param filters - Query filters (date range, store, etc.)
+	 * @returns Conversion rate data
+	 */
+	async getConversionRateData(filters: ErpQueryFilters): Promise<{
+		totalQuotations: number;
+		totalQuotationValue: number;
+		convertedInvoices: number;
+		convertedInvoiceValue: number;
+		conversionRate: number;
+	}> {
+		const operationId = this.generateOperationId('GET_CONVERSION');
+		const cacheKey = this.buildCacheKey('conversion_rate', filters);
+
+		this.logger.log(`[${operationId}] Getting conversion rate data for ${filters.startDate} to ${filters.endDate}`);
+
+		const startTime = Date.now();
+
+		try {
+			// Check cache first
+			const cached = await this.cacheManager.get(cacheKey);
+			if (cached) {
+				const duration = Date.now() - startTime;
+				this.logger.log(`[${operationId}] ✅ Cache HIT (${duration}ms)`);
+				return cached as any;
+			}
+
+			this.logger.log(`[${operationId}] Cache MISS - Querying conversion data...`);
+
+			const queryStart = Date.now();
+
+			// Query 1: Get quotations (doc_type = 3)
+			let quotationsQuery = this.salesHeaderRepo
+				.createQueryBuilder('header')
+				.select([
+					'COUNT(*) as totalQuotations',
+					'CAST(SUM(CAST(header.total_incl AS DECIMAL(19,3))) AS DECIMAL(19,2)) as totalQuotationValue',
+				])
+				.where('header.sale_date BETWEEN :startDate AND :endDate', {
+					startDate: filters.startDate,
+					endDate: filters.endDate,
+				})
+				.andWhere('header.doc_type = :docType', { docType: 3 }) // Quotations
+				.andWhere('header.sale_date >= :minDate', { minDate: '2020-01-01' });
+
+			if (filters.storeCode) {
+				quotationsQuery = quotationsQuery.andWhere('header.store = :store', { store: filters.storeCode });
+			}
+
+			// Query 2: Get converted invoices (doc_type = 1 with invoice_used = 1)
+			let invoicesQuery = this.salesHeaderRepo
+				.createQueryBuilder('header')
+				.select([
+					'COUNT(*) as convertedInvoices',
+					'CAST(SUM(CAST(header.total_incl AS DECIMAL(19,3))) AS DECIMAL(19,2)) as convertedInvoiceValue',
+				])
+				.where('header.sale_date BETWEEN :startDate AND :endDate', {
+					startDate: filters.startDate,
+					endDate: filters.endDate,
+				})
+				.andWhere('header.doc_type = :docType', { docType: 1 }) // Tax Invoices
+				.andWhere('header.invoice_used = :invoiceUsed', { invoiceUsed: 1 }) // Converted from quotation
+				.andWhere('header.sale_date >= :minDate', { minDate: '2020-01-01' });
+
+			if (filters.storeCode) {
+				invoicesQuery = invoicesQuery.andWhere('header.store = :store', { store: filters.storeCode });
+			}
+
+			// Execute both queries in parallel
+			const [quotationsResult, invoicesResult] = await Promise.all([
+				quotationsQuery.getRawOne(),
+				invoicesQuery.getRawOne(),
+			]);
+
+			const queryDuration = Date.now() - queryStart;
+
+			// Process results
+			const totalQuotations = parseInt(quotationsResult?.totalQuotations || 0, 10);
+			const totalQuotationValue = parseFloat(quotationsResult?.totalQuotationValue || 0);
+			const convertedInvoices = parseInt(invoicesResult?.convertedInvoices || 0, 10);
+			const convertedInvoiceValue = parseFloat(invoicesResult?.convertedInvoiceValue || 0);
+			
+			// Calculate conversion rate
+			const conversionRate = totalQuotations > 0 ? (convertedInvoices / totalQuotations) * 100 : 0;
+
+			const result = {
+				totalQuotations,
+				totalQuotationValue,
+				convertedInvoices,
+				convertedInvoiceValue,
+				conversionRate,
+			};
+
+			this.logger.log(`[${operationId}] Query completed in ${queryDuration}ms`);
+			this.logger.log(`[${operationId}] Quotations: ${totalQuotations} (R${totalQuotationValue.toFixed(2)})`);
+			this.logger.log(`[${operationId}] Converted: ${convertedInvoices} (R${convertedInvoiceValue.toFixed(2)})`);
+			this.logger.log(`[${operationId}] Conversion Rate: ${conversionRate.toFixed(2)}%`);
+
+			// Cache results
+			await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);
+
+			const totalDuration = Date.now() - startTime;
+			this.logger.log(`[${operationId}] ✅ Operation completed successfully (${totalDuration}ms)`);
+
+			return result;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`[${operationId}] ❌ Error getting conversion rate data (${duration}ms)`);
+			this.logger.error(`[${operationId}] Error: ${error.message}`);
+			throw error;
+		}
+	}
+
+	/**
+	 * Get master data for filters (unique branches, products, salespeople, payment methods)
+	 * 
+	 * @param filters - Query filters for date range
+	 * @returns Master data for populating filter dropdowns
+	 */
+	async getMasterDataForFilters(filters: ErpQueryFilters): Promise<{
+		branches: Array<{ id: string; name: string }>;
+		products: Array<{ id: string; name: string }>;
+		salespeople: Array<{ id: string; name: string }>;
+		paymentMethods: Array<{ id: string; name: string }>;
+	}> {
+		const operationId = this.generateOperationId('GET_MASTER_DATA');
+		const cacheKey = this.buildCacheKey('master_data', filters);
+
+		this.logger.log(`[${operationId}] Getting master data for filters`);
+
+		const startTime = Date.now();
+
+		try {
+			// Check cache first
+			const cached = await this.cacheManager.get(cacheKey);
+			if (cached) {
+				const duration = Date.now() - startTime;
+				this.logger.log(`[${operationId}] ✅ Cache HIT (${duration}ms)`);
+				return cached as any;
+			}
+
+			this.logger.log(`[${operationId}] Cache MISS - Querying master data sequentially...`);
+
+			const queryStart = Date.now();
+
+			// Execute queries sequentially to avoid connection pool exhaustion
+			this.logger.log(`[${operationId}] Fetching branches...`);
+			const branches = await this.getUniqueBranches(filters);
+			
+			this.logger.log(`[${operationId}] Fetching products...`);
+			const products = await this.getUniqueProducts(filters);
+			
+			this.logger.log(`[${operationId}] Fetching salespeople...`);
+			const salespeople = await this.getUniqueSalespeople(filters);
+			
+			this.logger.log(`[${operationId}] Fetching payment methods...`);
+			const paymentMethods = await this.getUniquePaymentMethods(filters);
+
+			const queryDuration = Date.now() - queryStart;
+
+			const result = {
+				branches,
+				products,
+				salespeople,
+				paymentMethods,
+			};
+
+			this.logger.log(`[${operationId}] Query completed in ${queryDuration}ms`);
+			this.logger.log(`[${operationId}] Found ${branches.length} branches, ${products.length} products, ${salespeople.length} salespeople, ${paymentMethods.length} payment methods`);
+
+			// Cache results
+			await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);
+
+			const totalDuration = Date.now() - startTime;
+			this.logger.log(`[${operationId}] ✅ Operation completed successfully (${totalDuration}ms)`);
+
+			return result;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`[${operationId}] ❌ Error getting master data (${duration}ms)`);
+			this.logger.error(`[${operationId}] Error: ${error.message}`);
+			this.logger.error(`[${operationId}] Stack: ${error.stack}`);
+			throw error;
+		}
+	}
+
+	/**
+	 * Get unique branches from sales data
+	 */
+	private async getUniqueBranches(filters: ErpQueryFilters): Promise<Array<{ id: string; name: string }>> {
+		const query = this.salesLinesRepo
+			.createQueryBuilder('line')
+			.select('DISTINCT line.store', 'store')
+			.where('line.sale_date BETWEEN :startDate AND :endDate', {
+				startDate: filters.startDate,
+				endDate: filters.endDate,
+			})
+			.andWhere('line.doc_type = :docType', { docType: '1' })
+			.andWhere('line.store IS NOT NULL')
+			.andWhere('line.store != :empty', { empty: '' })
+			.orderBy('line.store', 'ASC');
+
+		const results = await query.getRawMany();
+		
+		return results.map((row) => ({
+			id: row.store,
+			name: row.store, // For now, use store code as name
+		}));
+	}
+
+	/**
+	 * Get unique products from sales data
+	 */
+	private async getUniqueProducts(filters: ErpQueryFilters): Promise<Array<{ id: string; name: string }>> {
+		const query = this.salesLinesRepo
+			.createQueryBuilder('line')
+			.select([
+				'DISTINCT line.item_code as itemCode',
+				'line.description as description',
+			])
+			.where('line.sale_date BETWEEN :startDate AND :endDate', {
+				startDate: filters.startDate,
+				endDate: filters.endDate,
+			})
+			.andWhere('line.doc_type = :docType', { docType: '1' })
+			.andWhere('line.item_code IS NOT NULL')
+			.andWhere('line.item_code != :empty', { empty: '' })
+			.orderBy('line.item_code', 'ASC')
+			.limit(1000); // Limit to top 1000 products
+
+		const results = await query.getRawMany();
+		
+		return results.map((row) => ({
+			id: row.itemCode,
+			name: row.description || row.itemCode,
+		}));
+	}
+
+	/**
+	 * Get unique salespeople from sales data
+	 * Uses tblsalesheader.sales_code field
+	 */
+	private async getUniqueSalespeople(filters: ErpQueryFilters): Promise<Array<{ id: string; name: string }>> {
+		const query = this.salesHeaderRepo
+			.createQueryBuilder('header')
+			.select('DISTINCT header.sales_code', 'salesCode')
+			.where('header.sale_date BETWEEN :startDate AND :endDate', {
+				startDate: filters.startDate,
+				endDate: filters.endDate,
+			})
+			.andWhere('header.doc_type = :docType', { docType: 1 }) // Tax Invoices
+			.andWhere('header.sales_code IS NOT NULL')
+			.andWhere('header.sales_code != :empty', { empty: '' })
+			.orderBy('header.sales_code', 'ASC');
+
+		const results = await query.getRawMany();
+		
+		return results.map((row) => ({
+			id: row.salesCode,
+			name: row.salesCode, // For now, use sales code as name
+		}));
+	}
+
+	/**
+	 * Get unique payment methods from sales header data
+	 */
+	private async getUniquePaymentMethods(filters: ErpQueryFilters): Promise<Array<{ id: string; name: string }>> {
+		// Query to get which payment methods have non-zero values
+		const query = this.salesHeaderRepo
+			.createQueryBuilder('header')
+			.select([
+				'CAST(SUM(CAST(header.cash AS DECIMAL(19,3))) AS DECIMAL(19,2)) as cash',
+				'CAST(SUM(CAST(header.credit_card AS DECIMAL(19,3))) AS DECIMAL(19,2)) as credit_card',
+				'CAST(SUM(CAST(header.eft AS DECIMAL(19,3))) AS DECIMAL(19,2)) as eft',
+				'CAST(SUM(CAST(header.debit_card AS DECIMAL(19,3))) AS DECIMAL(19,2)) as debit_card',
+				'CAST(SUM(CAST(header.cheque AS DECIMAL(19,3))) AS DECIMAL(19,2)) as cheque',
+				'CAST(SUM(CAST(header.voucher AS DECIMAL(19,3))) AS DECIMAL(19,2)) as voucher',
+				'CAST(SUM(CAST(header.account AS DECIMAL(19,3))) AS DECIMAL(19,2)) as account',
+				'CAST(SUM(CAST(header.snap_scan AS DECIMAL(19,3))) AS DECIMAL(19,2)) as snap_scan',
+				'CAST(SUM(CAST(header.zapper AS DECIMAL(19,3))) AS DECIMAL(19,2)) as zapper',
+				'CAST(SUM(CAST(header.extra AS DECIMAL(19,3))) AS DECIMAL(19,2)) as extra',
+				'CAST(SUM(CAST(header.offline_card AS DECIMAL(19,3))) AS DECIMAL(19,2)) as offline_card',
+				'CAST(SUM(CAST(header.fnb_qr AS DECIMAL(19,3))) AS DECIMAL(19,2)) as fnb_qr',
+			])
+			.where('header.sale_date BETWEEN :startDate AND :endDate', {
+				startDate: filters.startDate,
+				endDate: filters.endDate,
+			})
+			.andWhere('header.doc_type = :docType', { docType: 1 });
+
+		const results = await query.getRawOne();
+
+		// Build payment methods list based on which ones have values
+		const paymentMethods = [
+			{ id: 'cash', name: 'Cash', value: parseFloat(results?.cash || 0) },
+			{ id: 'credit_card', name: 'Credit Card', value: parseFloat(results?.credit_card || 0) },
+			{ id: 'eft', name: 'EFT', value: parseFloat(results?.eft || 0) },
+			{ id: 'debit_card', name: 'Debit Card', value: parseFloat(results?.debit_card || 0) },
+			{ id: 'cheque', name: 'Cheque', value: parseFloat(results?.cheque || 0) },
+			{ id: 'voucher', name: 'Voucher', value: parseFloat(results?.voucher || 0) },
+			{ id: 'account', name: 'Account', value: parseFloat(results?.account || 0) },
+			{ id: 'snap_scan', name: 'SnapScan', value: parseFloat(results?.snap_scan || 0) },
+			{ id: 'zapper', name: 'Zapper', value: parseFloat(results?.zapper || 0) },
+			{ id: 'extra', name: 'Extra', value: parseFloat(results?.extra || 0) },
+			{ id: 'offline_card', name: 'Offline Card', value: parseFloat(results?.offline_card || 0) },
+			{ id: 'fnb_qr', name: 'FNB QR', value: parseFloat(results?.fnb_qr || 0) },
+		];
+
+		// Filter out payment methods with zero values
+		return paymentMethods
+			.filter((pm) => pm.value > 0)
+			.map((pm) => ({ id: pm.id, name: pm.name }));
 	}
 }
