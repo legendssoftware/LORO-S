@@ -549,7 +549,7 @@ export class AttendanceService {
 				throw new BadRequestException('Check-in time is required');
 			}
 
-		// Check if user is already checked in - if so, auto-close previous shift
+		// Check if user is already checked in - if so, check if same day or auto-close previous shift
 		this.logger.debug(`Checking for existing active shift for user: ${checkInDto.owner.uid}`);
 		const existingShift = await this.attendanceRepository.findOne({
 			where: {
@@ -563,14 +563,65 @@ export class AttendanceService {
 		});
 
 		if (existingShift) {
-			this.logger.warn(`User ${checkInDto.owner.uid} already has an active shift - attempting auto-close`);
+			this.logger.warn(`User ${checkInDto.owner.uid} already has an active shift - checking if same day`);
+			
+			// Get organization timezone for accurate date comparison
+			const orgTimezone = await this.getOrganizationTimezone(orgId);
+			
+			// Convert both dates to organization timezone for comparison
+			const existingShiftDate = TimezoneUtil.toOrganizationTime(
+				new Date(existingShift.checkIn),
+				orgTimezone
+			);
+			const newCheckInDate = TimezoneUtil.toOrganizationTime(
+				new Date(checkInDto.checkIn),
+				orgTimezone
+			);
+			
+			// Check if both shifts are on the same calendar day in organization timezone
+			const isSameCalendarDay = 
+				existingShiftDate.getFullYear() === newCheckInDate.getFullYear() &&
+				existingShiftDate.getMonth() === newCheckInDate.getMonth() &&
+				existingShiftDate.getDate() === newCheckInDate.getDate();
+			
+			if (isSameCalendarDay) {
+				// Same day - prevent check-in, return error
+				this.logger.warn(
+					`User ${checkInDto.owner.uid} already has active shift for today. ` +
+					`Existing shift: ${existingShiftDate.toISOString()}, New check-in: ${newCheckInDate.toISOString()}`
+				);
+				
+				const checkInTime = await this.formatTimeInOrganizationTimezone(
+					new Date(existingShift.checkIn),
+					orgId
+				);
+				
+				return {
+					message: `You already have an active shift for today (started at ${checkInTime}). Please complete your current shift before starting a new one.`,
+					data: {
+						error: 'ACTIVE_SHIFT_TODAY',
+						existingShift: {
+							id: existingShift.uid,
+							checkInTime: existingShift.checkIn,
+							status: existingShift.status,
+						},
+						success: false
+					}
+				};
+			}
+			
+			// Different day - proceed with auto-close
+			this.logger.warn(
+				`User ${checkInDto.owner.uid} has shift from different day - auto-closing previous shift`
+			);
+			
 			try {
 				// Pass true for skipPreferenceCheck since user is actively starting a new shift
 				// User's active action to start a new shift should override their shiftAutoEnd preference
 				// The preference only applies to scheduled/automated shift closures, not when user actively checks in
 				// Pass the new check-in time as the close time for the old shift
 				await this.autoCloseExistingShift(existingShift, orgId, true, new Date(checkInDto.checkIn));
-				this.logger.log(`Successfully auto-closed existing shift for user ${checkInDto.owner.uid} at ${checkInDto.checkIn}`);
+				this.logger.log(`Successfully auto-closed existing shift from different day for user ${checkInDto.owner.uid}`);
 			} catch (error) {
 				this.logger.error(
 					`Failed to auto-close existing shift for user ${checkInDto.owner.uid}: ${error.message}`,
