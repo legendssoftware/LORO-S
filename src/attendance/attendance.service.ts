@@ -568,8 +568,10 @@ export class AttendanceService {
 				// Pass true for skipPreferenceCheck since user is actively starting a new shift
 				// User's active action to start a new shift should override their shiftAutoEnd preference
 				// The preference only applies to scheduled/automated shift closures, not when user actively checks in
-				await this.autoCloseExistingShift(existingShift, orgId, true);
-				this.logger.log(`Successfully auto-closed existing shift for user ${checkInDto.owner.uid} (preference check bypassed - active check-in)`);
+				// Pass the new check-in time as the close time for the old shift (accurate time tracking)
+				const newCheckInTime = new Date(checkInDto.checkIn);
+				await this.autoCloseExistingShift(existingShift, orgId, true, newCheckInTime);
+				this.logger.log(`Successfully auto-closed existing shift for user ${checkInDto.owner.uid} at ${newCheckInTime.toISOString()} (user-triggered close)`);
 			} catch (error) {
 				this.logger.error(
 					`Failed to auto-close existing shift for user ${checkInDto.owner.uid}: ${error.message}`,
@@ -781,17 +783,20 @@ export class AttendanceService {
 	}
 
 	/**
-	 * Auto-close an existing shift at organization close time
+	 * Auto-close an existing shift at organization close time or specified time
 	 * 
 	 * @param existingShift - The attendance record to close
 	 * @param orgId - Organization ID for timezone and hours configuration
 	 * @param skipPreferenceCheck - If true, ignores user's shiftAutoEnd preference (used when user actively starts new shift)
 	 *                             If false, respects user's shiftAutoEnd preference (used for scheduled auto-close)
+	 * @param closeAtTime - Optional explicit time to close the shift (used when user starts new shift)
+	 *                     If provided, this time is used instead of organization close time
 	 */
 	private async autoCloseExistingShift(
 		existingShift: Attendance, 
 		orgId?: number,
-		skipPreferenceCheck: boolean = false
+		skipPreferenceCheck: boolean = false,
+		closeAtTime?: Date
 	): Promise<void> {
 		// Validate existingShift object
 		if (!existingShift) {
@@ -800,7 +805,7 @@ export class AttendanceService {
 
 		const userId = existingShift.owner?.uid || 'unknown';
 		this.logger.debug(
-			`Auto-closing existing shift for user ${userId}, orgId: ${orgId}, skipPreferenceCheck: ${skipPreferenceCheck}`
+			`Auto-closing existing shift for user ${userId}, orgId: ${orgId}, skipPreferenceCheck: ${skipPreferenceCheck}, closeAtTime: ${closeAtTime?.toISOString() || 'not provided'}`
 		);
 
 		// Only check user preferences if this is NOT triggered by a new check-in
@@ -839,53 +844,82 @@ export class AttendanceService {
 		const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
 		const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
 		
-		// Default close time is 4:30 PM as requested (in organization timezone)
 		const checkInDate = new Date(existingShift.checkIn);
-		let closeTime = TimezoneUtil.parseTimeInOrganization('16:30', checkInDate, organizationTimezone);
+		let closeTime: Date;
 
-		try {
-			// Try to get organization hours if orgId is provided
-			if (orgId) {
-				this.logger.debug(`Attempting to fetch organization hours for org ${orgId}`);
+		// Priority 1: Use explicit closeAtTime if provided (user-triggered new shift)
+		if (closeAtTime) {
+			closeTime = new Date(closeAtTime);
+			
+			// Validation: Ensure closeAtTime is after checkInDate
+			if (closeTime <= checkInDate) {
+				this.logger.warn(
+					`Invalid closeAtTime ${closeTime.toISOString()} is before or equal to checkIn ${checkInDate.toISOString()}. ` +
+					`Falling back to organization close time.`
+				);
+				// Fall back to org close time
+				closeTime = TimezoneUtil.parseTimeInOrganization('16:30', checkInDate, organizationTimezone);
+			} else {
+				this.logger.debug(
+					`Using explicit close time (user-triggered new shift): ${closeTime.toISOString()} for user ${userId}`
+				);
+			}
+		} else {
+			// Priority 2: Use organization close time (scheduled auto-close)
+			// Default close time is 4:30 PM as requested (in organization timezone)
+			closeTime = TimezoneUtil.parseTimeInOrganization('16:30', checkInDate, organizationTimezone);
 
-				const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(orgId, checkInDate);
+			try {
+				// Try to get organization hours if orgId is provided
+				if (orgId) {
+					this.logger.debug(`Attempting to fetch organization hours for org ${orgId}`);
 
-				if (workingDayInfo && workingDayInfo.isWorkingDay && workingDayInfo.endTime) {
-					// Parse organization close time (format: "HH:MM") in organization's timezone
-					try {
-						closeTime = TimezoneUtil.parseTimeInOrganization(
-							workingDayInfo.endTime,
-							checkInDate,
-							organizationTimezone
-						);
+					const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(orgId, checkInDate);
 
-						// If the close time would be before the check-in time (e.g., night shift),
-						// add one day
-						if (closeTime <= checkInDate) {
-							closeTime = TimezoneUtil.addMinutesInOrganizationTime(
-								closeTime,
-								24 * 60,
+					if (workingDayInfo && workingDayInfo.isWorkingDay && workingDayInfo.endTime) {
+						// Parse organization close time (format: "HH:MM") in organization's timezone
+						try {
+							closeTime = TimezoneUtil.parseTimeInOrganization(
+								workingDayInfo.endTime,
+								checkInDate,
 								organizationTimezone
 							);
-						}
 
-						this.logger.debug(
-							`Using organization close time: ${workingDayInfo.endTime} for user ${userId}`,
-						);
-					} catch (parseError) {
+							// If the close time would be before the check-in time (e.g., night shift),
+							// add one day
+							if (closeTime <= checkInDate) {
+								closeTime = TimezoneUtil.addMinutesInOrganizationTime(
+									closeTime,
+									24 * 60,
+									organizationTimezone
+								);
+							}
+
+							this.logger.debug(
+								`Using organization close time: ${workingDayInfo.endTime} for user ${userId}`,
+							);
+						} catch (parseError) {
+							this.logger.warn(
+								`Error parsing organization close time: ${parseError.message}, using default 4:30 PM`,
+							);
+							// closeTime already set to default 4:30 PM
+						}
+					} else {
 						this.logger.warn(
-							`Error parsing organization close time: ${parseError.message}, using default 4:30 PM`,
+							`Organization ${orgId} is not a working day or has no end time, using default 4:30 PM`,
 						);
-						// closeTime already set to default 4:30 PM
 					}
 				} else {
-					this.logger.warn(
-						`Organization ${orgId} is not a working day or has no end time, using default 4:30 PM`,
-					);
+					this.logger.warn('No organization ID provided for auto-close, using default 4:30 PM');
 				}
-			} else {
-				this.logger.warn('No organization ID provided for auto-close, using default 4:30 PM');
+			} catch (orgHoursError) {
+				this.logger.warn(
+					`Error fetching organization hours: ${orgHoursError.message}, using default 4:30 PM`
+				);
 			}
+
+			this.logger.debug(`Using scheduled auto-close time: ${closeTime.toISOString()} for user ${userId}`);
+		}
 
 	this.logger.debug(`Setting auto-close time to: ${closeTime.toISOString()} for user ${userId}`);
 
@@ -942,9 +976,13 @@ export class AttendanceService {
 	existingShift.overtime = overtimeDuration;
 	existingShift.status = AttendanceStatus.COMPLETED;
 	// Set appropriate note based on whether this is a user-initiated or scheduled auto-close
-	existingShift.checkOutNotes = skipPreferenceCheck 
-		? 'Auto-closed at organization close time due to new shift being started'
-		: 'Auto-closed at organization close time (scheduled auto-end)';
+	if (closeAtTime) {
+		existingShift.checkOutNotes = 'Auto-closed when you started a new shift at ' + closeTime.toISOString();
+	} else if (skipPreferenceCheck) {
+		existingShift.checkOutNotes = 'Auto-closed at organization close time due to new shift being started';
+	} else {
+		existingShift.checkOutNotes = 'Auto-closed at organization close time (scheduled auto-end)';
+	}
 
 	await this.attendanceRepository.save(existingShift);
 
@@ -1000,9 +1038,14 @@ export class AttendanceService {
 		existingShift.duration = fallbackDuration;
 		existingShift.overtime = fallbackOvertimeDuration;
 		existingShift.status = AttendanceStatus.COMPLETED;
-		existingShift.checkOutNotes = skipPreferenceCheck
-			? 'Auto-closed with fallback time due to new shift (org hours fetch error)'
-			: 'Auto-closed with fallback time due to org hours fetch error (scheduled auto-end)';
+		// Set appropriate fallback note
+		if (closeAtTime) {
+			existingShift.checkOutNotes = 'Auto-closed when you started a new shift at ' + closeTime.toISOString() + ' (fallback used due to error)';
+		} else if (skipPreferenceCheck) {
+			existingShift.checkOutNotes = 'Auto-closed with fallback time due to new shift (org hours fetch error)';
+		} else {
+			existingShift.checkOutNotes = 'Auto-closed with fallback time due to org hours fetch error (scheduled auto-end)';
+		}
 
 		await this.attendanceRepository.save(existingShift);
 			this.logger.log(`Fallback auto-close successful for user ${userId} at 4:30 PM`);
