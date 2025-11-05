@@ -568,10 +568,9 @@ export class AttendanceService {
 				// Pass true for skipPreferenceCheck since user is actively starting a new shift
 				// User's active action to start a new shift should override their shiftAutoEnd preference
 				// The preference only applies to scheduled/automated shift closures, not when user actively checks in
-				// Pass the new check-in time as the close time for the old shift (accurate time tracking)
-				const newCheckInTime = new Date(checkInDto.checkIn);
-				await this.autoCloseExistingShift(existingShift, orgId, true, newCheckInTime);
-				this.logger.log(`Successfully auto-closed existing shift for user ${checkInDto.owner.uid} at ${newCheckInTime.toISOString()} (user-triggered close)`);
+				// Pass the new check-in time as the close time for the old shift
+				await this.autoCloseExistingShift(existingShift, orgId, true, new Date(checkInDto.checkIn));
+				this.logger.log(`Successfully auto-closed existing shift for user ${checkInDto.owner.uid} at ${checkInDto.checkIn}`);
 			} catch (error) {
 				this.logger.error(
 					`Failed to auto-close existing shift for user ${checkInDto.owner.uid}: ${error.message}`,
@@ -783,14 +782,13 @@ export class AttendanceService {
 	}
 
 	/**
-	 * Auto-close an existing shift at organization close time or specified time
+	 * Auto-close an existing shift
 	 * 
 	 * @param existingShift - The attendance record to close
 	 * @param orgId - Organization ID for timezone and hours configuration
 	 * @param skipPreferenceCheck - If true, ignores user's shiftAutoEnd preference (used when user actively starts new shift)
 	 *                             If false, respects user's shiftAutoEnd preference (used for scheduled auto-close)
-	 * @param closeAtTime - Optional explicit time to close the shift (used when user starts new shift)
-	 *                     If provided, this time is used instead of organization close time
+	 * @param closeAtTime - Optional explicit close time. If provided, uses this time instead of org close time (used for user-triggered close)
 	 */
 	private async autoCloseExistingShift(
 		existingShift: Attendance, 
@@ -805,7 +803,7 @@ export class AttendanceService {
 
 		const userId = existingShift.owner?.uid || 'unknown';
 		this.logger.debug(
-			`Auto-closing existing shift for user ${userId}, orgId: ${orgId}, skipPreferenceCheck: ${skipPreferenceCheck}, closeAtTime: ${closeAtTime?.toISOString() || 'not provided'}`
+			`Auto-closing existing shift for user ${userId}, orgId: ${orgId}, skipPreferenceCheck: ${skipPreferenceCheck}`
 		);
 
 		// Only check user preferences if this is NOT triggered by a new check-in
@@ -847,26 +845,23 @@ export class AttendanceService {
 		const checkInDate = new Date(existingShift.checkIn);
 		let closeTime: Date;
 
-		// Priority 1: Use explicit closeAtTime if provided (user-triggered new shift)
+		// Priority: Use explicit closeAtTime if provided (user-triggered), otherwise use org close time (scheduled)
 		if (closeAtTime) {
 			closeTime = new Date(closeAtTime);
 			
-			// Validation: Ensure closeAtTime is after checkInDate
+			// Validate that close time is after check-in time
 			if (closeTime <= checkInDate) {
 				this.logger.warn(
-					`Invalid closeAtTime ${closeTime.toISOString()} is before or equal to checkIn ${checkInDate.toISOString()}. ` +
-					`Falling back to organization close time.`
+					`Close time (${closeTime.toISOString()}) is before or equal to check-in time (${checkInDate.toISOString()}), using current time instead`
 				);
-				// Fall back to org close time
-				closeTime = TimezoneUtil.parseTimeInOrganization('16:30', checkInDate, organizationTimezone);
-			} else {
-				this.logger.debug(
-					`Using explicit close time (user-triggered new shift): ${closeTime.toISOString()} for user ${userId}`
-				);
+				closeTime = new Date();
 			}
+			
+			this.logger.debug(
+				`Using explicit close time for user-triggered auto-close: ${closeTime.toISOString()} for user ${userId}`
+			);
 		} else {
-			// Priority 2: Use organization close time (scheduled auto-close)
-			// Default close time is 4:30 PM as requested (in organization timezone)
+			// Scheduled auto-close: use organization close time
 			closeTime = TimezoneUtil.parseTimeInOrganization('16:30', checkInDate, organizationTimezone);
 
 			try {
@@ -912,150 +907,142 @@ export class AttendanceService {
 				} else {
 					this.logger.warn('No organization ID provided for auto-close, using default 4:30 PM');
 				}
-			} catch (orgHoursError) {
-				this.logger.warn(
-					`Error fetching organization hours: ${orgHoursError.message}, using default 4:30 PM`
-				);
+			} catch (error) {
+				this.logger.warn(`Error fetching org hours, using default 4:30 PM: ${error.message}`);
+			}
+		}
+
+		try {
+			this.logger.debug(`Setting auto-close time to: ${closeTime.toISOString()} for user ${userId}`);
+
+			// Calculate duration and overtime for the auto-closed shift
+			const checkInTime = new Date(existingShift.checkIn);
+			const checkOutTime = closeTime;
+
+			// Calculate break minutes
+			const breakMinutes = TimeCalculatorUtil.calculateTotalBreakMinutes(
+				existingShift.breakDetails,
+				existingShift.totalBreakTime,
+			);
+
+			// Calculate work session
+			const workSession = TimeCalculatorUtil.calculateWorkSession(
+				checkInTime,
+				checkOutTime,
+				existingShift.breakDetails,
+				existingShift.totalBreakTime,
+				organizationHours,
+			);
+
+			this.logger.debug(
+				`Auto-close work session: net work minutes: ${workSession.netWorkMinutes}, break minutes: ${breakMinutes}`
+			);
+
+			// Get expected work minutes from organization hours
+			let expectedWorkMinutes = TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES;
+			if (orgId) {
+				try {
+					const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(orgId, checkInTime);
+					expectedWorkMinutes = workingDayInfo.expectedWorkMinutes || expectedWorkMinutes;
+					this.logger.debug(`Expected work minutes: ${expectedWorkMinutes}`);
+				} catch (error) {
+					this.logger.warn(`Failed to get expected work minutes, using default: ${expectedWorkMinutes}`);
+				}
 			}
 
-			this.logger.debug(`Using scheduled auto-close time: ${closeTime.toISOString()} for user ${userId}`);
-		}
+			// Cap duration at expected work hours, rest goes to overtime
+			const durationMinutes = Math.min(workSession.netWorkMinutes, expectedWorkMinutes);
+			const overtimeMinutes = Math.max(0, workSession.netWorkMinutes - expectedWorkMinutes);
 
-	this.logger.debug(`Setting auto-close time to: ${closeTime.toISOString()} for user ${userId}`);
+			const duration = TimeCalculatorUtil.formatDuration(durationMinutes);
+			const overtimeDuration = TimeCalculatorUtil.formatDuration(overtimeMinutes);
 
-	// Calculate duration and overtime for the auto-closed shift
-	const checkInTime = new Date(existingShift.checkIn);
-	const checkOutTime = closeTime;
+			this.logger.debug(
+				`Auto-close calculated - Duration: ${duration} (${durationMinutes} min), ` +
+				`Overtime: ${overtimeDuration} (${overtimeMinutes} min)`
+			);
 
-	// Calculate break minutes
-	const breakMinutes = TimeCalculatorUtil.calculateTotalBreakMinutes(
-		existingShift.breakDetails,
-		existingShift.totalBreakTime,
-	);
+			// Update the existing shift
+			existingShift.checkOut = closeTime;
+			existingShift.duration = duration;
+			existingShift.overtime = overtimeDuration;
+			existingShift.status = AttendanceStatus.COMPLETED;
+			// Set appropriate note based on whether this is a user-initiated or scheduled auto-close
+			existingShift.checkOutNotes = closeAtTime 
+				? 'Auto-closed when new shift was started'
+				: (skipPreferenceCheck 
+					? 'Auto-closed at organization close time due to new shift being started'
+					: 'Auto-closed at organization close time (scheduled auto-end)');
 
-	// Calculate work session
-	const workSession = TimeCalculatorUtil.calculateWorkSession(
-		checkInTime,
-		checkOutTime,
-		existingShift.breakDetails,
-		existingShift.totalBreakTime,
-		organizationHours,
-	);
+			await this.attendanceRepository.save(existingShift);
 
-	this.logger.debug(
-		`Auto-close work session: net work minutes: ${workSession.netWorkMinutes}, break minutes: ${breakMinutes}`
-	);
+			this.logger.log(`Auto-closed existing shift for user ${userId} at ${closeTime.toISOString()}`);
 
-	// Get expected work minutes from organization hours
-	let expectedWorkMinutes = TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES;
-	if (orgId) {
-		try {
-			const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(orgId, checkInTime);
-			expectedWorkMinutes = workingDayInfo.expectedWorkMinutes || expectedWorkMinutes;
-			this.logger.debug(`Expected work minutes: ${expectedWorkMinutes}`);
-		} catch (error) {
-			this.logger.warn(`Failed to get expected work minutes, using default: ${expectedWorkMinutes}`);
-		}
-	}
+			// Clear attendance cache after auto-close to ensure fresh data in subsequent queries
+			await this.clearAttendanceCache(existingShift.uid, Number(userId));
+			this.logger.debug(`Cleared cache for auto-closed shift ${existingShift.uid} and user ${userId}`);
 
-	// Cap duration at expected work hours, rest goes to overtime
-	const durationMinutes = Math.min(workSession.netWorkMinutes, expectedWorkMinutes);
-	const overtimeMinutes = Math.max(0, workSession.netWorkMinutes - expectedWorkMinutes);
-
-	const duration = TimeCalculatorUtil.formatDuration(durationMinutes);
-	const overtimeDuration = TimeCalculatorUtil.formatDuration(overtimeMinutes);
-
-	this.logger.debug(
-		`Auto-close calculated - Duration: ${duration} (${durationMinutes} min), ` +
-		`Overtime: ${overtimeDuration} (${overtimeMinutes} min)`
-	);
-
-	// Update the existing shift
-	existingShift.checkOut = closeTime;
-	existingShift.duration = duration;
-	existingShift.overtime = overtimeDuration;
-	existingShift.status = AttendanceStatus.COMPLETED;
-	// Set appropriate note based on whether this is a user-initiated or scheduled auto-close
-	if (closeAtTime) {
-		existingShift.checkOutNotes = 'Auto-closed when you started a new shift at ' + closeTime.toISOString();
-	} else if (skipPreferenceCheck) {
-		existingShift.checkOutNotes = 'Auto-closed at organization close time due to new shift being started';
-	} else {
-		existingShift.checkOutNotes = 'Auto-closed at organization close time (scheduled auto-end)';
-	}
-
-	await this.attendanceRepository.save(existingShift);
-
-		this.logger.log(`Auto-closed existing shift for user ${userId} at ${closeTime.toISOString()}`);
-
-		// Clear attendance cache after auto-close to ensure fresh data in subsequent queries
-		await this.clearAttendanceCache(existingShift.uid, Number(userId));
-		this.logger.debug(`Cleared cache for auto-closed shift ${existingShift.uid} and user ${userId}`);
-
-		// Send email notification about auto-close
-		await this.sendAutoCloseShiftNotification(existingShift, closeTime, orgId);
+			// Send email notification about auto-close
+			await this.sendAutoCloseShiftNotification(existingShift, closeTime, orgId);
 		} catch (error) {
 			this.logger.error(`Error auto-closing existing shift for user ${userId}: ${error.message}`);
 
-	// Fallback: still try to close the shift with default time (4:30 PM in org timezone)
-	try {
-		closeTime = TimezoneUtil.parseTimeInOrganization('16:30', checkInDate, organizationTimezone);
+			// Fallback: still try to close the shift with default time (4:30 PM in org timezone)
+			try {
+				closeTime = TimezoneUtil.parseTimeInOrganization('16:30', checkInDate, organizationTimezone);
 
-		// Calculate duration and overtime for fallback auto-close
-		const fallbackCheckInTime = new Date(existingShift.checkIn);
-		const fallbackCheckOutTime = closeTime;
+				// Calculate duration and overtime for fallback auto-close
+				const fallbackCheckInTime = new Date(existingShift.checkIn);
+				const fallbackCheckOutTime = closeTime;
 
-		// Calculate break minutes
-		const fallbackBreakMinutes = TimeCalculatorUtil.calculateTotalBreakMinutes(
-			existingShift.breakDetails,
-			existingShift.totalBreakTime,
-		);
+				// Calculate break minutes
+				const fallbackBreakMinutes = TimeCalculatorUtil.calculateTotalBreakMinutes(
+					existingShift.breakDetails,
+					existingShift.totalBreakTime,
+				);
 
-		// Calculate work session
-		const fallbackWorkSession = TimeCalculatorUtil.calculateWorkSession(
-			fallbackCheckInTime,
-			fallbackCheckOutTime,
-			existingShift.breakDetails,
-			existingShift.totalBreakTime,
-			organizationHours,
-		);
+				// Calculate work session
+				const fallbackWorkSession = TimeCalculatorUtil.calculateWorkSession(
+					fallbackCheckInTime,
+					fallbackCheckOutTime,
+					existingShift.breakDetails,
+					existingShift.totalBreakTime,
+					organizationHours,
+				);
 
-		// Use default expected work minutes for fallback
-		const fallbackExpectedWorkMinutes = TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES;
-		
-		// Cap duration at expected work hours
-		const fallbackDurationMinutes = Math.min(fallbackWorkSession.netWorkMinutes, fallbackExpectedWorkMinutes);
-		const fallbackOvertimeMinutes = Math.max(0, fallbackWorkSession.netWorkMinutes - fallbackExpectedWorkMinutes);
+				// Use default expected work minutes for fallback
+				const fallbackExpectedWorkMinutes = TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES;
+				
+				// Cap duration at expected work hours
+				const fallbackDurationMinutes = Math.min(fallbackWorkSession.netWorkMinutes, fallbackExpectedWorkMinutes);
+				const fallbackOvertimeMinutes = Math.max(0, fallbackWorkSession.netWorkMinutes - fallbackExpectedWorkMinutes);
 
-		const fallbackDuration = TimeCalculatorUtil.formatDuration(fallbackDurationMinutes);
-		const fallbackOvertimeDuration = TimeCalculatorUtil.formatDuration(fallbackOvertimeMinutes);
+				const fallbackDuration = TimeCalculatorUtil.formatDuration(fallbackDurationMinutes);
+				const fallbackOvertimeDuration = TimeCalculatorUtil.formatDuration(fallbackOvertimeMinutes);
 
-		this.logger.debug(
-			`Fallback auto-close - Duration: ${fallbackDuration}, Overtime: ${fallbackOvertimeDuration}`
-		);
+				this.logger.debug(
+					`Fallback auto-close - Duration: ${fallbackDuration}, Overtime: ${fallbackOvertimeDuration}`
+				);
 
-		existingShift.checkOut = closeTime;
-		existingShift.duration = fallbackDuration;
-		existingShift.overtime = fallbackOvertimeDuration;
-		existingShift.status = AttendanceStatus.COMPLETED;
-		// Set appropriate fallback note
-		if (closeAtTime) {
-			existingShift.checkOutNotes = 'Auto-closed when you started a new shift at ' + closeTime.toISOString() + ' (fallback used due to error)';
-		} else if (skipPreferenceCheck) {
-			existingShift.checkOutNotes = 'Auto-closed with fallback time due to new shift (org hours fetch error)';
-		} else {
-			existingShift.checkOutNotes = 'Auto-closed with fallback time due to org hours fetch error (scheduled auto-end)';
-		}
+				existingShift.checkOut = closeTime;
+				existingShift.duration = fallbackDuration;
+				existingShift.overtime = fallbackOvertimeDuration;
+				existingShift.status = AttendanceStatus.COMPLETED;
+				existingShift.checkOutNotes = closeAtTime
+					? 'Auto-closed when new shift was started (fallback)'
+					: (skipPreferenceCheck
+						? 'Auto-closed with fallback time due to new shift (org hours fetch error)'
+						: 'Auto-closed with fallback time due to org hours fetch error (scheduled auto-end)');
 
-		await this.attendanceRepository.save(existingShift);
-			this.logger.log(`Fallback auto-close successful for user ${userId} at 4:30 PM`);
+				await this.attendanceRepository.save(existingShift);
+				this.logger.log(`Fallback auto-close successful for user ${userId} at 4:30 PM`);
 
-			// Clear attendance cache after fallback auto-close
-			await this.clearAttendanceCache(existingShift.uid, Number(userId));
-			this.logger.debug(`Cleared cache for fallback auto-closed shift ${existingShift.uid} and user ${userId}`);
+				// Clear attendance cache after fallback auto-close
+				await this.clearAttendanceCache(existingShift.uid, Number(userId));
+				this.logger.debug(`Cleared cache for fallback auto-closed shift ${existingShift.uid} and user ${userId}`);
 
-			// Send email notification about fallback auto-close
-			await this.sendAutoCloseShiftNotification(existingShift, closeTime, orgId);
+				// Send email notification about fallback auto-close
+				await this.sendAutoCloseShiftNotification(existingShift, closeTime, orgId);
 			} catch (fallbackError) {
 				this.logger.error(`Fallback auto-close also failed for user ${userId}: ${fallbackError.message}`);
 				throw new Error(`Failed to auto-close existing shift: ${error.message}`);
