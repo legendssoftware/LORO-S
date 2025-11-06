@@ -4159,6 +4159,17 @@ export class AttendanceService {
 				punctualityScore: number; // percentage of on-time arrivals
 				overtimeFrequency: number; // percentage of shifts with overtime
 			};
+			overtimeAnalytics: {
+				totalOvertimeHours: {
+					allTime: number; // in hours
+					thisMonth: number;
+					thisWeek: number;
+					today: number;
+				};
+				averageOvertimePerShift: number; // in hours
+				overtimeFrequency: number; // percentage of shifts with overtime
+				longestOvertimeShift: number; // in hours
+			};
 			productivityInsights: {
 				workEfficiencyScore: number; // percentage based on work vs break time
 				shiftCompletionRate: number; // percentage of completed shifts
@@ -4350,13 +4361,7 @@ export class AttendanceService {
 			let overtimeFrequency = 0;
 
 			if (allAttendance.length > 0) {
-				// Get organization ID from user data
-				let organizationId = null;
-				if (allAttendance[0]?.owner?.uid) {
-					const userResult = await this.userService.findOneByUid(allAttendance[0].owner.uid);
-					organizationId = userResult?.user?.organisation?.uid || null;
-				}
-
+				// Use the organizationId already retrieved above
 				// Use enhanced productivity metrics calculation
 				const productivityMetrics = await this.attendanceCalculatorService.calculateProductivityMetrics(
 					allAttendance,
@@ -4375,13 +4380,7 @@ export class AttendanceService {
 			let earlyDeparturesCount = 0;
 
 			if (allAttendance.length > 0) {
-				// Get organization ID if not already retrieved
-				let organizationId = null;
-				if (allAttendance[0]?.owner?.uid) {
-					const userResult = await this.userService.findOneByUid(allAttendance[0].owner.uid);
-					organizationId = userResult?.user?.organisation?.uid || null;
-				}
-
+				// Use the organizationId already retrieved above
 				const productivityMetrics = await this.attendanceCalculatorService.calculateProductivityMetrics(
 					allAttendance,
 					organizationId,
@@ -4392,6 +4391,13 @@ export class AttendanceService {
 				lateArrivalsCount = productivityMetrics.lateArrivalsCount;
 				earlyDeparturesCount = productivityMetrics.earlyDeparturesCount;
 			}
+
+			// ===== ENHANCED OVERTIME ANALYTICS =====
+			// Calculate overtime analytics for all periods
+			const overtimeAnalyticsAllTime = await this.calculateOvertimeAnalytics(allAttendance, organizationId);
+			const overtimeAnalyticsToday = await this.calculateOvertimeAnalytics(todayAttendance, organizationId);
+			const overtimeAnalyticsThisWeek = await this.calculateOvertimeAnalytics(weekAttendance, organizationId);
+			const overtimeAnalyticsThisMonth = await this.calculateOvertimeAnalytics(monthAttendance, organizationId);
 
 			// Format response
 			const metrics = {
@@ -4444,6 +4450,17 @@ export class AttendanceService {
 					punctualityScore,
 					overtimeFrequency,
 				},
+				overtimeAnalytics: {
+					totalOvertimeHours: {
+						allTime: Math.round(overtimeAnalyticsAllTime.totalOvertimeHours * 10) / 10,
+						thisMonth: Math.round(overtimeAnalyticsThisMonth.totalOvertimeHours * 10) / 10,
+						thisWeek: Math.round(overtimeAnalyticsThisWeek.totalOvertimeHours * 10) / 10,
+						today: Math.round(overtimeAnalyticsToday.totalOvertimeHours * 10) / 10,
+					},
+					averageOvertimePerShift: Math.round(overtimeAnalyticsAllTime.averageOvertimePerShift * 10) / 10,
+					overtimeFrequency: Math.round(overtimeAnalyticsAllTime.overtimeFrequency * 10) / 10,
+					longestOvertimeShift: Math.round(overtimeAnalyticsAllTime.longestOvertimeShift * 10) / 10,
+				},
 				productivityInsights: {
 					workEfficiencyScore,
 					shiftCompletionRate,
@@ -4480,6 +4497,12 @@ export class AttendanceService {
 						punctualityScore: 0,
 						overtimeFrequency: 0,
 					},
+					overtimeAnalytics: {
+						totalOvertimeHours: { allTime: 0, thisMonth: 0, thisWeek: 0, today: 0 },
+						averageOvertimePerShift: 0,
+						overtimeFrequency: 0,
+						longestOvertimeShift: 0,
+					},
 					productivityInsights: {
 						workEfficiencyScore: 0,
 						shiftCompletionRate: 0,
@@ -4487,6 +4510,135 @@ export class AttendanceService {
 						earlyDeparturesCount: 0,
 					},
 				},
+			};
+		}
+	}
+
+	/**
+	 * Calculate comprehensive overtime analytics for attendance records
+	 * @param records - Attendance records to analyze
+	 * @param organizationId - Organization ID for overtime calculation
+	 * @returns Overtime analytics object
+	 */
+	private async calculateOvertimeAnalytics(
+		records: Attendance[],
+		organizationId?: number,
+	): Promise<{
+		totalOvertimeHours: number;
+		averageOvertimePerShift: number;
+		overtimeFrequency: number;
+		longestOvertimeShift: number;
+	}> {
+		try {
+			// Filter only completed shifts (must have checkOut)
+			const completedShifts = records.filter((r) => r.checkIn && r.checkOut);
+
+			if (completedShifts.length === 0) {
+				return {
+					totalOvertimeHours: 0,
+					averageOvertimePerShift: 0,
+					overtimeFrequency: 0,
+					longestOvertimeShift: 0,
+				};
+			}
+
+			let totalOvertimeMinutes = 0;
+			let shiftsWithOvertime = 0;
+			let longestOvertimeMinutes = 0;
+
+			// Process each completed shift
+			for (const shift of completedShifts) {
+				try {
+					// Calculate net work minutes (same logic as checkOut method)
+					const breakMinutes = TimeCalculatorUtil.calculateTotalBreakMinutes(
+						shift.breakDetails,
+						shift.totalBreakTime,
+					);
+
+					const totalMinutes = differenceInMinutes(
+						new Date(shift.checkOut),
+						new Date(shift.checkIn),
+					);
+					const workMinutes = Math.max(0, totalMinutes - breakMinutes);
+
+					// Calculate overtime using organization hours (same logic as checkOut)
+					let overtimeMinutes = 0;
+					if (organizationId) {
+						try {
+							const overtimeInfo = await this.organizationHoursService.calculateOvertime(
+								organizationId,
+								new Date(shift.checkIn),
+								workMinutes,
+							);
+							overtimeMinutes = overtimeInfo.overtimeMinutes || 0;
+						} catch (error) {
+							this.logger.warn(
+								`Error calculating overtime for shift ${shift.uid}, using fallback: ${error.message}`,
+							);
+							// Fallback to default 8 hours
+							const standardMinutes = TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES;
+							overtimeMinutes = Math.max(0, workMinutes - standardMinutes);
+						}
+					} else {
+						// Fallback to default 8 hours if no organization ID
+						const standardMinutes = TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES;
+						overtimeMinutes = Math.max(0, workMinutes - standardMinutes);
+					}
+
+					if (overtimeMinutes > 0) {
+						totalOvertimeMinutes += overtimeMinutes;
+						shiftsWithOvertime++;
+						longestOvertimeMinutes = Math.max(longestOvertimeMinutes, overtimeMinutes);
+					}
+				} catch (error) {
+					this.logger.warn(
+						`Error processing shift ${shift.uid} for overtime analytics: ${error.message}`,
+					);
+					// Continue with next shift
+					continue;
+				}
+			}
+
+			// Convert minutes to hours with proper precision
+			const totalOvertimeHours = TimeCalculatorUtil.minutesToHours(
+				totalOvertimeMinutes,
+				TimeCalculatorUtil.PRECISION.HOURS,
+			);
+
+			const averageOvertimePerShift =
+				completedShifts.length > 0
+					? TimeCalculatorUtil.minutesToHours(
+							totalOvertimeMinutes / completedShifts.length,
+							TimeCalculatorUtil.PRECISION.HOURS,
+					  )
+					: 0;
+
+			const overtimeFrequency =
+				completedShifts.length > 0 ? (shiftsWithOvertime / completedShifts.length) * 100 : 0;
+
+			const longestOvertimeShift = TimeCalculatorUtil.minutesToHours(
+				longestOvertimeMinutes,
+				TimeCalculatorUtil.PRECISION.HOURS,
+			);
+
+			this.logger.debug(
+				`Overtime analytics calculated: total=${totalOvertimeHours}h, avg=${averageOvertimePerShift}h, ` +
+					`frequency=${overtimeFrequency}%, longest=${longestOvertimeShift}h for ${completedShifts.length} shifts`,
+			);
+
+			return {
+				totalOvertimeHours,
+				averageOvertimePerShift,
+				overtimeFrequency,
+				longestOvertimeShift,
+			};
+		} catch (error) {
+			this.logger.error(`Error calculating overtime analytics: ${error.message}`, error.stack);
+			return {
+				totalOvertimeHours: 0,
+				averageOvertimePerShift: 0,
+				overtimeFrequency: 0,
+				longestOvertimeShift: 0,
 			};
 		}
 	}

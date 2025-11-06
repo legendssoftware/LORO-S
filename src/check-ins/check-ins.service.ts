@@ -50,11 +50,16 @@ export class CheckInsService {
 
 	async checkIn(createCheckInDto: CreateCheckInDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
 		const operationId = `checkin_${Date.now()}`;
+		const startTime = Date.now();
 		this.logger.log(
 			`[${operationId}] Check-in attempt for user: ${createCheckInDto.owner?.uid}, orgId: ${orgId}, branchId: ${branchId}`,
 		);
 
 		try {
+			// ============================================================
+			// CRITICAL PATH: Operations that must complete before response
+			// ============================================================
+
 			// Enhanced validation
 			this.logger.debug(`[${operationId}] Validating check-in data`);
 			if (!createCheckInDto?.owner?.uid) {
@@ -110,6 +115,7 @@ export class CheckInsService {
 				},
 			};
 
+			// Core operation: Save check-in to database
 			const checkIn = await this.checkInRepository.save(checkInData);
 
 			if (!checkIn) {
@@ -119,68 +125,96 @@ export class CheckInsService {
 
 			this.logger.debug(`[${operationId}] Check-in record created successfully with ID: ${checkIn.uid}`);
 
-			// Update client GPS coordinates if client is provided
-			if (createCheckInDto.client && createCheckInDto.client.uid) {
-				this.logger.debug(`[${operationId}] Updating client ${createCheckInDto.client.uid} GPS coordinates`);
-				try {
-					await this.clientRepository.update(
-						{ uid: createCheckInDto.client.uid },
-						{ gpsCoordinates: createCheckInDto.checkInLocation },
-					);
-					this.logger.debug(`[${operationId}] Client GPS coordinates updated successfully`);
-				} catch (clientError) {
-					this.logger.error(
-						`[${operationId}] Failed to update client GPS coordinates: ${clientError.message}`,
-					);
-					// Don't fail the check-in if client update fails
-				}
-			}
+			// ============================================================
+			// EARLY RETURN: Respond to client immediately after successful save
+			// ============================================================
+			const duration = Date.now() - startTime;
+			this.logger.log(
+				`✅ [${operationId}] Check-in successful for user: ${createCheckInDto.owner.uid} in ${duration}ms - returning response to client`,
+			);
 
-			// Send check-in notifications
-			try {
-				this.logger.debug(`[${operationId}] Sending check-in notifications`);
-				await this.sendCheckInNotifications(createCheckInDto.owner.uid, checkIn, user.name, orgId, branchId);
-				this.logger.debug(`[${operationId}] Check-in notifications sent successfully`);
-			} catch (notificationError) {
-				this.logger.warn(
-					`[${operationId}] Failed to send check-in notifications: ${notificationError.message}`,
-				);
-				// Don't fail the check-in if notifications fail
-			}
-
-			// Award XP with enhanced error handling
-			try {
-				this.logger.debug(`[${operationId}] Awarding XP for check-in to user: ${createCheckInDto.owner.uid}`);
-				await this.rewardsService.awardXP(
-					{
-						owner: createCheckInDto.owner.uid,
-						amount: XP_VALUES.CHECK_IN_CLIENT,
-						action: XP_VALUES_TYPES.CHECK_IN_CLIENT,
-						source: {
-							id: String(createCheckInDto.owner.uid),
-							type: XP_VALUES_TYPES.CHECK_IN_CLIENT,
-							details: 'Check-in reward',
-						},
-					},
-					orgId,
-					branchId,
-				);
-				this.logger.debug(
-					`[${operationId}] XP awarded successfully for check-in to user: ${createCheckInDto.owner.uid}`,
-				);
-			} catch (xpError) {
-				this.logger.error(
-					`[${operationId}] Failed to award XP for check-in to user: ${createCheckInDto.owner.uid}`,
-					xpError.stack,
-				);
-				// Don't fail the check-in if XP award fails
-			}
-
-			this.logger.log(`[${operationId}] Check-in successful for user: ${createCheckInDto.owner.uid}`);
-
-			return {
+			const response = {
 				message: process.env.SUCCESS_MESSAGE || 'Check-in recorded successfully',
 			};
+
+			// ============================================================
+			// POST-RESPONSE PROCESSING: Execute non-critical operations asynchronously
+			// These operations run after the response is sent, without blocking the client
+			// ============================================================
+			setImmediate(async () => {
+				try {
+					this.logger.debug(`🔄 [${operationId}] Starting post-response processing for check-in: ${checkIn.uid}`);
+
+					// 1. Update client GPS coordinates if client is provided
+					if (createCheckInDto.client && createCheckInDto.client.uid) {
+						try {
+							this.logger.debug(`[${operationId}] Updating client ${createCheckInDto.client.uid} GPS coordinates`);
+							await this.clientRepository.update(
+								{ uid: createCheckInDto.client.uid },
+								{ gpsCoordinates: createCheckInDto.checkInLocation },
+							);
+							this.logger.debug(`✅ [${operationId}] Client GPS coordinates updated successfully`);
+						} catch (clientError) {
+							this.logger.error(
+								`❌ [${operationId}] Failed to update client GPS coordinates: ${clientError.message}`,
+								clientError.stack,
+							);
+							// Don't fail post-processing if client update fails
+						}
+					}
+
+					// 2. Send check-in notifications
+					try {
+						this.logger.debug(`[${operationId}] Sending check-in notifications`);
+						await this.sendCheckInNotifications(createCheckInDto.owner.uid, checkIn, user.name, orgId, branchId);
+						this.logger.debug(`✅ [${operationId}] Check-in notifications sent successfully`);
+					} catch (notificationError) {
+						this.logger.error(
+							`❌ [${operationId}] Failed to send check-in notifications: ${notificationError.message}`,
+							notificationError.stack,
+						);
+						// Don't fail post-processing if notifications fail
+					}
+
+					// 3. Award XP with enhanced error handling
+					try {
+						this.logger.debug(`[${operationId}] Awarding XP for check-in to user: ${createCheckInDto.owner.uid}`);
+						await this.rewardsService.awardXP(
+							{
+								owner: createCheckInDto.owner.uid,
+								amount: XP_VALUES.CHECK_IN_CLIENT,
+								action: XP_VALUES_TYPES.CHECK_IN_CLIENT,
+								source: {
+									id: String(createCheckInDto.owner.uid),
+									type: XP_VALUES_TYPES.CHECK_IN_CLIENT,
+									details: 'Check-in reward',
+								},
+							},
+							orgId,
+							branchId,
+						);
+						this.logger.debug(
+							`✅ [${operationId}] XP awarded successfully for check-in to user: ${createCheckInDto.owner.uid}`,
+						);
+					} catch (xpError) {
+						this.logger.error(
+							`❌ [${operationId}] Failed to award XP for check-in to user: ${createCheckInDto.owner.uid}`,
+							xpError.stack,
+						);
+						// Don't fail post-processing if XP award fails
+					}
+
+					this.logger.debug(`✅ [${operationId}] Post-response processing completed for check-in: ${checkIn.uid}`);
+				} catch (backgroundError) {
+					// Log errors but don't affect user experience since response already sent
+					this.logger.error(
+						`❌ [${operationId}] Background processing failed for check-in ${checkIn.uid}: ${backgroundError.message}`,
+						backgroundError.stack,
+					);
+				}
+			});
+
+			return response;
 		} catch (error) {
 			this.logger.error(`[${operationId}] Check-in failed for user: ${createCheckInDto.owner?.uid}`, error.stack);
 			return {
@@ -459,11 +493,16 @@ export class CheckInsService {
 		branchId?: number,
 	): Promise<{ message: string; duration?: string }> {
 		const operationId = `checkout_${Date.now()}`;
+		const startTime = Date.now();
 		this.logger.log(
 			`[${operationId}] Check-out attempt for user: ${createCheckOutDto.owner?.uid}, orgId: ${orgId}, branchId: ${branchId}`,
 		);
 
 		try {
+			// ============================================================
+			// CRITICAL PATH: Operations that must complete before response
+			// ============================================================
+
 			// Enhanced validation
 			this.logger.debug(`[${operationId}] Validating check-out data`);
 			if (!createCheckOutDto?.owner) {
@@ -501,6 +540,7 @@ export class CheckInsService {
 
 			this.logger.debug(`[${operationId}] Found active check-in with ID: ${checkIn.uid}, calculating duration`);
 
+			// Calculate duration (needed for response)
 			const checkOutTime = new Date(createCheckOutDto.checkOutTime);
 			const checkInTime = new Date(checkIn.checkInTime);
 
@@ -513,113 +553,156 @@ export class CheckInsService {
 				`[${operationId}] Calculated work duration: ${duration} (${minutesWorked} minutes total)`,
 			);
 
-			// Reverse geocode the check-in location to get full address
-			let fullAddress = null;
-			try {
-				this.logger.debug(`[${operationId}] Reverse geocoding check-in location: ${checkIn.checkInLocation}`);
-				
-				// Parse coordinates from checkInLocation based on DTO format: "latitude, longitude"
-				const coordinateStr = checkIn.checkInLocation?.trim();
-				if (!coordinateStr) {
-					this.logger.warn(`[${operationId}] Empty check-in location provided`);
-				} else {
-					// Split by comma and handle various spacing
-					const coords = coordinateStr.split(',').map(coord => coord.trim());
-					
-					if (coords.length !== 2) {
-						this.logger.warn(`[${operationId}] Invalid coordinate format - expected 'latitude, longitude': ${checkIn.checkInLocation}`);
-					} else {
-						const latitude = parseFloat(coords[0]);
-						const longitude = parseFloat(coords[1]);
-
-						// Validate coordinate ranges
-						if (isNaN(latitude) || isNaN(longitude)) {
-							this.logger.warn(`[${operationId}] Non-numeric coordinates provided: lat=${coords[0]}, lng=${coords[1]}`);
-						} else if (latitude < -90 || latitude > 90) {
-							this.logger.warn(`[${operationId}] Invalid latitude (must be -90 to 90): ${latitude}`);
-						} else if (longitude < -180 || longitude > 180) {
-							this.logger.warn(`[${operationId}] Invalid longitude (must be -180 to 180): ${longitude}`);
-						} else {
-							const geocodingResult = await this.googleMapsService.reverseGeocode({ latitude, longitude });
-							fullAddress = geocodingResult.address;
-							this.logger.debug(`[${operationId}] Successfully geocoded address: ${geocodingResult.formattedAddress}`);
-						}
-					}
-				}
-			} catch (geocodingError) {
-				this.logger.warn(
-					`[${operationId}] Failed to reverse geocode check-in location: ${geocodingError.message}`,
-				);
-				// Don't fail the check-out if geocoding fails
-			}
-
-			// Update check-in record with check-out data
+			// Core operation: Update check-in record with check-out data (without fullAddress - will be updated later)
 			this.logger.debug(`[${operationId}] Updating check-in record with check-out data`);
 			await this.checkInRepository.update(checkIn.uid, {
 				checkOutTime: createCheckOutDto?.checkOutTime,
 				checkOutPhoto: createCheckOutDto?.checkOutPhoto,
 				checkOutLocation: createCheckOutDto?.checkOutLocation,
 				duration: duration,
-				fullAddress: fullAddress,
+				// fullAddress will be updated in post-response processing
 			});
 
-			// Send check-out notifications
-			try {
-				this.logger.debug(`[${operationId}] Sending check-out notifications`);
-				const userName = checkIn.owner?.name || 'Staff member';
-				await this.sendCheckOutNotifications(
-					createCheckOutDto.owner.uid, 
-					checkIn, 
-					duration, 
-					userName,
-					fullAddress,
-					orgId, 
-					branchId
-				);
-				this.logger.debug(`[${operationId}] Check-out notifications sent successfully`);
-			} catch (notificationError) {
-				this.logger.warn(
-					`[${operationId}] Failed to send check-out notifications: ${notificationError.message}`,
-				);
-				// Don't fail the check-out if notifications fail
-			}
-
-			// Award XP with enhanced error handling
-			try {
-				this.logger.debug(`[${operationId}] Awarding XP for check-out to user: ${createCheckOutDto.owner.uid}`);
-				await this.rewardsService.awardXP(
-					{
-						owner: createCheckOutDto.owner.uid,
-						amount: 10,
-						action: 'CHECK_OUT',
-						source: {
-							id: createCheckOutDto.owner.toString(),
-							type: 'check-in',
-							details: 'Check-out reward',
-						},
-					},
-					orgId,
-					branchId,
-				);
-				this.logger.debug(
-					`[${operationId}] XP awarded successfully for check-out to user: ${createCheckOutDto.owner.uid}`,
-				);
-			} catch (xpError) {
-				this.logger.error(
-					`[${operationId}] Failed to award XP for check-out to user: ${createCheckOutDto.owner.uid}`,
-					xpError.stack,
-				);
-				// Don't fail the check-out if XP award fails
-			}
-
+			// ============================================================
+			// EARLY RETURN: Respond to client immediately after successful update
+			// ============================================================
+			const durationMs = Date.now() - startTime;
 			this.logger.log(
-				`[${operationId}] Check-out successful for user: ${createCheckOutDto.owner.uid}, duration: ${duration}`,
+				`✅ [${operationId}] Check-out successful for user: ${createCheckOutDto.owner.uid} in ${durationMs}ms - returning response to client`,
 			);
 
-			return {
+			const response = {
 				message: process.env.SUCCESS_MESSAGE,
 				duration: duration,
 			};
+
+			// ============================================================
+			// POST-RESPONSE PROCESSING: Execute non-critical operations asynchronously
+			// These operations run after the response is sent, without blocking the client
+			// ============================================================
+			setImmediate(async () => {
+				try {
+					this.logger.debug(`🔄 [${operationId}] Starting post-response processing for check-out: ${checkIn.uid}`);
+
+					// 1. Reverse geocode the check-in location to get full address
+					let fullAddress = null;
+					try {
+						this.logger.debug(`[${operationId}] Reverse geocoding check-in location: ${checkIn.checkInLocation}`);
+						
+						// Parse coordinates from checkInLocation based on DTO format: "latitude, longitude"
+						const coordinateStr = checkIn.checkInLocation?.trim();
+						if (!coordinateStr) {
+							this.logger.warn(`[${operationId}] Empty check-in location provided`);
+						} else {
+							// Split by comma and handle various spacing
+							const coords = coordinateStr.split(',').map(coord => coord.trim());
+							
+							if (coords.length !== 2) {
+								this.logger.warn(`[${operationId}] Invalid coordinate format - expected 'latitude, longitude': ${checkIn.checkInLocation}`);
+							} else {
+								const latitude = parseFloat(coords[0]);
+								const longitude = parseFloat(coords[1]);
+
+								// Validate coordinate ranges
+								if (isNaN(latitude) || isNaN(longitude)) {
+									this.logger.warn(`[${operationId}] Non-numeric coordinates provided: lat=${coords[0]}, lng=${coords[1]}`);
+								} else if (latitude < -90 || latitude > 90) {
+									this.logger.warn(`[${operationId}] Invalid latitude (must be -90 to 90): ${latitude}`);
+								} else if (longitude < -180 || longitude > 180) {
+									this.logger.warn(`[${operationId}] Invalid longitude (must be -180 to 180): ${longitude}`);
+								} else {
+									const geocodingResult = await this.googleMapsService.reverseGeocode({ latitude, longitude });
+									fullAddress = geocodingResult.address;
+									this.logger.debug(`✅ [${operationId}] Successfully geocoded address: ${geocodingResult.formattedAddress}`);
+
+									// Update check-in record with full address
+									await this.checkInRepository.update(checkIn.uid, {
+										fullAddress: fullAddress,
+									});
+									this.logger.debug(`✅ [${operationId}] Updated check-in record with full address`);
+								}
+							}
+						}
+					} catch (geocodingError) {
+						this.logger.error(
+							`❌ [${operationId}] Failed to reverse geocode check-in location: ${geocodingError.message}`,
+							geocodingError.stack,
+						);
+						// Don't fail post-processing if geocoding fails
+					}
+
+					// 2. Fetch updated check-in with relations for notifications
+					const updatedCheckIn = await this.checkInRepository.findOne({
+						where: { uid: checkIn.uid },
+						relations: ['owner', 'client', 'branch'],
+					});
+
+					if (!updatedCheckIn) {
+						this.logger.warn(`⚠️ [${operationId}] Could not fetch updated check-in ${checkIn.uid} for post-processing`);
+						return;
+					}
+
+					// 3. Send check-out notifications
+					try {
+						this.logger.debug(`[${operationId}] Sending check-out notifications`);
+						const userName = updatedCheckIn.owner?.name || 'Staff member';
+						await this.sendCheckOutNotifications(
+							createCheckOutDto.owner.uid, 
+							updatedCheckIn, 
+							duration, 
+							userName,
+							fullAddress,
+							orgId, 
+							branchId
+						);
+						this.logger.debug(`✅ [${operationId}] Check-out notifications sent successfully`);
+					} catch (notificationError) {
+						this.logger.error(
+							`❌ [${operationId}] Failed to send check-out notifications: ${notificationError.message}`,
+							notificationError.stack,
+						);
+						// Don't fail post-processing if notifications fail
+					}
+
+					// 4. Award XP with enhanced error handling
+					try {
+						this.logger.debug(`[${operationId}] Awarding XP for check-out to user: ${createCheckOutDto.owner.uid}`);
+						await this.rewardsService.awardXP(
+							{
+								owner: createCheckOutDto.owner.uid,
+								amount: 10,
+								action: 'CHECK_OUT',
+								source: {
+									id: createCheckOutDto.owner.toString(),
+									type: 'check-in',
+									details: 'Check-out reward',
+								},
+							},
+							orgId,
+							branchId,
+						);
+						this.logger.debug(
+							`✅ [${operationId}] XP awarded successfully for check-out to user: ${createCheckOutDto.owner.uid}`,
+						);
+					} catch (xpError) {
+						this.logger.error(
+							`❌ [${operationId}] Failed to award XP for check-out to user: ${createCheckOutDto.owner.uid}`,
+							xpError.stack,
+						);
+						// Don't fail post-processing if XP award fails
+					}
+
+					this.logger.debug(`✅ [${operationId}] Post-response processing completed for check-out: ${checkIn.uid}`);
+				} catch (backgroundError) {
+					// Log errors but don't affect user experience since response already sent
+					this.logger.error(
+						`❌ [${operationId}] Background processing failed for check-out ${checkIn.uid}: ${backgroundError.message}`,
+						backgroundError.stack,
+					);
+				}
+			});
+
+			return response;
 		} catch (error) {
 			this.logger.error(
 				`[${operationId}] Check-out failed for user: ${createCheckOutDto.owner?.uid}`,
