@@ -520,6 +520,7 @@ Advanced employee check-in system with location verification, biometric support,
 	checkIn(@Body() createAttendanceDto: CreateCheckInDto, @Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
+		const userAccessLevel = req.user?.accessLevel;
 
 		return this.attendanceService.checkIn(createAttendanceDto, orgId, branchId);
 	}
@@ -1578,7 +1579,8 @@ Retrieves complete attendance records with advanced filtering, analytics, and co
 	allCheckIns(@Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
-		return this.attendanceService.allCheckIns(orgId, branchId);
+		const userAccessLevel = req.user?.accessLevel;
+		return this.attendanceService.allCheckIns(orgId, branchId, userAccessLevel);
 	}
 
 	@Get('date/:date')
@@ -1814,7 +1816,8 @@ Retrieves comprehensive attendance records for a specific date with advanced fil
 	checkInsByDate(@Param('date') date: string, @Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
-		return this.attendanceService.checkInsByDate(date, orgId, branchId);
+		const userAccessLevel = req.user?.accessLevel;
+		return this.attendanceService.checkInsByDate(date, orgId, branchId, userAccessLevel);
 	}
 
 	@Get('user/:ref')
@@ -2147,7 +2150,8 @@ Retrieves comprehensive attendance records for a specific user with detailed ana
 	checkInsByUser(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
-		return this.attendanceService.checkInsByUser(ref, orgId, branchId);
+		const userAccessLevel = req.user?.accessLevel;
+		return this.attendanceService.checkInsByUser(ref, orgId, branchId, userAccessLevel);
 	}
 
 	@Get('status/:ref')
@@ -2457,7 +2461,8 @@ Retrieves the current attendance status for a specific user with live updates, s
 	checkInsByStatus(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
-		return this.attendanceService.checkInsByStatus(ref, orgId, branchId);
+		const userAccessLevel = req.user?.accessLevel;
+		return this.attendanceService.checkInsByStatus(ref, orgId, branchId, userAccessLevel);
 	}
 
 	@Get('branch/:ref')
@@ -2781,7 +2786,8 @@ Retrieves comprehensive attendance records for a specific branch with advanced a
 	})
 	checkInsByBranch(@Param('ref') ref: string, @Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		return this.attendanceService.checkInsByBranch(ref, orgId);
+		const userAccessLevel = req.user?.accessLevel;
+		return this.attendanceService.checkInsByBranch(ref, orgId, userAccessLevel);
 	}
 
 	@Get('daily-stats/:uid')
@@ -4316,8 +4322,9 @@ Generates comprehensive attendance reports with advanced analytics, multi-dimens
 	getOrganizationReport(@Query() queryDto: OrganizationReportQueryDto, @Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
+		const userAccessLevel = req.user?.accessLevel;
 
-		return this.attendanceService.generateOrganizationReport(queryDto, orgId, branchId);
+		return this.attendanceService.generateOrganizationReport(queryDto, orgId, branchId, userAccessLevel);
 	}
 
 	@Post('reports/morning/send')
@@ -5508,6 +5515,7 @@ Manually triggers the overtime policy check system to identify employees working
 	): Promise<any> {
 		const orgId = req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
+		const userAccessLevel = req.user?.accessLevel;
 
 		let targetDate: Date;
 		if (dateQuery) {
@@ -5520,7 +5528,7 @@ Manually triggers the overtime policy check system to identify employees working
 			targetDate = new Date();
 		}
 
-		return this.attendanceService.getDailyAttendanceOverview(orgId, branchId, targetDate);
+		return this.attendanceService.getDailyAttendanceOverview(orgId, branchId, targetDate, userAccessLevel);
 	}
 
 	async triggerOvertimeCheck(@CurrentUser() user: User): Promise<{ message: string; processed: number }> {
@@ -5562,6 +5570,7 @@ Manually triggers the overtime policy check system to identify employees working
 		const orgId = req.user?.org?.uid;
 		const branchId = req.user?.branch?.uid;
 		const requesterId = req.user?.uid;
+		const userAccessLevel = req.user?.accessLevel;
 
 		return this.attendanceService.requestUserAttendanceRecords(
 			userId,
@@ -5570,6 +5579,7 @@ Manually triggers the overtime policy check system to identify employees working
 			endDate,
 			orgId,
 			branchId,
+			userAccessLevel,
 		);
 	}
 }

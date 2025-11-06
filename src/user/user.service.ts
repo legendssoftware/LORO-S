@@ -176,36 +176,34 @@ export class UserService {
 			// Check for invalid numeric values
 			if (userTarget.currentSalesAmount !== null && userTarget.currentSalesAmount !== undefined) {
 				if (isNaN(userTarget.currentSalesAmount) || userTarget.currentSalesAmount < 0) {
-					this.logger.warn(`Invalid currentSalesAmount: ${userTarget.currentSalesAmount}`);
+					this.logger.warn('Invalid currentSalesAmount detected');
 					return false;
 				}
 				// Check for unreasonably large values (e.g., over 10 million)
 				if (userTarget.currentSalesAmount > 10000000) {
-					this.logger.warn(`Unreasonably large currentSalesAmount: ${userTarget.currentSalesAmount}`);
+					this.logger.warn('Unreasonably large currentSalesAmount detected');
 					return false;
 				}
 			}
 
 			if (userTarget.currentQuotationsAmount !== null && userTarget.currentQuotationsAmount !== undefined) {
 				if (isNaN(userTarget.currentQuotationsAmount) || userTarget.currentQuotationsAmount < 0) {
-					this.logger.warn(`Invalid currentQuotationsAmount: ${userTarget.currentQuotationsAmount}`);
+					this.logger.warn('Invalid currentQuotationsAmount detected');
 					return false;
 				}
 				if (userTarget.currentQuotationsAmount > 10000000) {
-					this.logger.warn(
-						`Unreasonably large currentQuotationsAmount: ${userTarget.currentQuotationsAmount}`,
-					);
+					this.logger.warn('Unreasonably large currentQuotationsAmount detected');
 					return false;
 				}
 			}
 
 			if (userTarget.currentOrdersAmount !== null && userTarget.currentOrdersAmount !== undefined) {
 				if (isNaN(userTarget.currentOrdersAmount) || userTarget.currentOrdersAmount < 0) {
-					this.logger.warn(`Invalid currentOrdersAmount: ${userTarget.currentOrdersAmount}`);
+					this.logger.warn('Invalid currentOrdersAmount detected');
 					return false;
 				}
 				if (userTarget.currentOrdersAmount > 10000000) {
-					this.logger.warn(`Unreasonably large currentOrdersAmount: ${userTarget.currentOrdersAmount}`);
+					this.logger.warn('Unreasonably large currentOrdersAmount detected');
 					return false;
 				}
 			}
@@ -213,21 +211,21 @@ export class UserService {
 			// Check for negative counts
 			if (userTarget.currentNewLeads !== null && userTarget.currentNewLeads !== undefined) {
 				if (userTarget.currentNewLeads < 0) {
-					this.logger.warn(`Invalid currentNewLeads: ${userTarget.currentNewLeads}`);
+					this.logger.warn('Invalid currentNewLeads detected');
 					return false;
 				}
 			}
 
 			if (userTarget.currentNewClients !== null && userTarget.currentNewClients !== undefined) {
 				if (userTarget.currentNewClients < 0) {
-					this.logger.warn(`Invalid currentNewClients: ${userTarget.currentNewClients}`);
+					this.logger.warn('Invalid currentNewClients detected');
 					return false;
 				}
 			}
 
 			if (userTarget.currentCheckIns !== null && userTarget.currentCheckIns !== undefined) {
 				if (userTarget.currentCheckIns < 0) {
-					this.logger.warn(`Invalid currentCheckIns: ${userTarget.currentCheckIns}`);
+					this.logger.warn('Invalid currentCheckIns detected');
 					return false;
 				}
 			}
@@ -1260,7 +1258,7 @@ export class UserService {
 		limit: number = Number(process.env.DEFAULT_PAGE_LIMIT),
 	): Promise<PaginatedResponse<Omit<User, 'password'>>> {
 		const startTime = Date.now();
-		this.logger.log(`Fetching users with filters: ${JSON.stringify(filters)}, page: ${page}, limit: ${limit}`);
+		this.logger.log(`Fetching users with filters applied, page: ${page}, limit: ${limit}`);
 
 		try {
 			this.logger.debug('Building query with filters and pagination');
@@ -2365,6 +2363,8 @@ export class UserService {
 			const cachedTarget = await this.cacheManager.get(cacheKey);
 
 			if (cachedTarget) {
+				this.logger.debug(`User target cache hit for user: ${userId}`);
+				
 				const executionTime = Date.now() - startTime;
 				this.logger.log(`User target retrieved from cache for user: ${userId} in ${executionTime}ms`);
 				return {
@@ -2374,6 +2374,17 @@ export class UserService {
 			}
 
 			this.logger.debug(`Cache miss for user target: ${userId}, querying database with access control`);
+			
+			// First, let's directly query the user_targets table through the user relationship to see what's actually stored
+			const userForDirectQuery = await this.userRepository.findOne({
+				where: { uid: userId },
+				relations: ['userTarget'],
+			});
+			
+			if (userForDirectQuery?.userTarget) {
+				this.logger.debug(`Direct database query completed for user target: ${userId}`);
+			}
+			
 			const queryBuilder = this.userRepository
 				.createQueryBuilder('user')
 				.leftJoinAndSelect('user.organisation', 'organisation')
@@ -2433,6 +2444,28 @@ export class UserService {
 			if (!user) {
 				this.logger.warn(`User ${userId} not found when getting targets`);
 				throw new NotFoundException(`User with ID ${userId} not found`);
+			}
+
+			// Log raw history data from database for debugging and ensure proper parsing
+			if (user.userTarget) {
+				// Ensure history is properly parsed (transformer should handle this, but add fallback)
+				const rawHistory = user.userTarget.history as any;
+				if (typeof rawHistory === 'string') {
+					try {
+						user.userTarget.history = JSON.parse(rawHistory);
+					} catch (e) {
+						this.logger.error(`Failed to parse history JSON for user ${userId}:`, e);
+						user.userTarget.history = [];
+					}
+				}
+				
+				this.logger.debug(`Raw history from DB for user ${userId}:`, {
+					history: user.userTarget.history,
+					historyType: typeof user.userTarget.history,
+					isArray: Array.isArray(user.userTarget.history),
+					historyLength: Array.isArray(user.userTarget.history) ? user.userTarget.history.length : 0,
+					historyString: typeof rawHistory === 'string' ? rawHistory.substring(0, 200) : 'not a string',
+				});
 			}
 
 			// Initialize response object - always return data even if user has no targets
@@ -2644,7 +2677,14 @@ export class UserService {
 					cellPhoneAllowance: user.userTarget.cellPhoneAllowance || 0,
 					carMaintenance: user.userTarget.carMaintenance || 0,
 					cgicCosts: user.userTarget.cgicCosts || 0,
+					// History tracking - monthly target performance history
+					// Ensure history is always an array (transformer + fallback should handle parsing)
+					history: Array.isArray(user.userTarget.history) ? user.userTarget.history : [],
 				};
+
+				// Log history being added to response
+				this.logger.debug(`History being added to response for user ${userId}:`);
+
 			}
 
 			// Fetch managed branches with required details
@@ -2850,6 +2890,22 @@ export class UserService {
 
 			const executionTime = Date.now() - startTime;
 			this.logger.log(`User target retrieved from database for user: ${userId} in ${executionTime}ms`);
+
+			// Comprehensive logging of final response
+			this.logger.debug(`🔍 FINAL RESPONSE for user ${userId}:`, {
+				hasPersonalTargets: response.hasPersonalTargets,
+				personalTargetsExists: !!response.personalTargets,
+				historyInPersonalTargets: response.personalTargets?.history,
+				historyLength: response.personalTargets?.history?.length || 0,
+				historyType: typeof response.personalTargets?.history,
+				historyIsArray: Array.isArray(response.personalTargets?.history),
+				fullPersonalTargets: JSON.stringify(response.personalTargets, null, 2),
+			});
+
+			console.log('🔍 FULL RESPONSE OBJECT:', JSON.stringify(response, null, 2));
+			console.log('🔍 HISTORY SPECIFICALLY:', response.personalTargets?.history);
+			console.log('🔍 HISTORY TYPE:', typeof response.personalTargets?.history);
+			console.log('🔍 HISTORY IS ARRAY:', Array.isArray(response.personalTargets?.history));
 
 			return {
 				userTarget: response,

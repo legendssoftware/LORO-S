@@ -93,6 +93,34 @@ export class AttendanceService {
 	// ======================================================
 
 	/**
+	 * Check if user should see all branches (admin, owner, developer)
+	 * @param userAccessLevel - User's access level
+	 * @returns true if user should see all branches, false otherwise
+	 */
+	private shouldSeeAllBranches(userAccessLevel?: string): boolean {
+		if (!userAccessLevel) {
+			return false;
+		}
+		const elevatedRoles = [AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.DEVELOPER];
+		return elevatedRoles.includes(userAccessLevel.toLowerCase() as AccessLevel);
+	}
+
+	/**
+	 * Get effective branch ID based on user access level
+	 * Returns undefined for admin/owner/developer (to show all branches)
+	 * Returns branchId for other roles (to filter by branch)
+	 * @param branchId - Original branch ID
+	 * @param userAccessLevel - User's access level
+	 * @returns branchId or undefined
+	 */
+	private getEffectiveBranchId(branchId?: number, userAccessLevel?: string): number | undefined {
+		if (this.shouldSeeAllBranches(userAccessLevel)) {
+			return undefined; // Don't filter by branch for elevated roles
+		}
+		return branchId; // Filter by branch for other roles
+	}
+
+	/**
 	 * Check if a user's check-in is late and calculate how many minutes late
 	 */
 	private async checkAndCalculateLateMinutes(orgId: number, checkInTime: Date): Promise<number> {
@@ -1574,11 +1602,13 @@ export class AttendanceService {
 	}
 
 
-	public async allCheckIns(orgId?: number, branchId?: number): Promise<{ message: string; checkIns: Attendance[] }> {
-		this.logger.log(`Fetching all check-ins, orgId: ${orgId}, branchId: ${branchId}`);
+	public async allCheckIns(orgId?: number, branchId?: number, userAccessLevel?: string): Promise<{ message: string; checkIns: Attendance[] }> {
+		// Get effective branch ID based on user role
+		const effectiveBranchId = this.getEffectiveBranchId(branchId, userAccessLevel);
+		this.logger.log(`Fetching all check-ins, orgId: ${orgId}, branchId: ${branchId}, effectiveBranchId: ${effectiveBranchId}, userAccessLevel: ${userAccessLevel}`);
 
 		try {
-			const cacheKey = this.getCacheKey(`all_${orgId || 'no-org'}_${branchId || 'no-branch'}`);
+			const cacheKey = this.getCacheKey(`all_${orgId || 'no-org'}_${effectiveBranchId || 'no-branch'}`);
 			const cachedResult = await this.cacheManager.get(cacheKey);
 
 			if (cachedResult) {
@@ -1602,10 +1632,12 @@ export class AttendanceService {
 				this.logger.warn('No organization ID provided - this may return data from all organizations');
 			}
 
-			// Apply branch filtering if provided
-			if (branchId) {
-				whereConditions.branch = { uid: branchId };
-				this.logger.debug(`Added branch filter: ${branchId}`);
+			// Apply branch filtering if provided (and user is not admin/owner/developer)
+			if (effectiveBranchId) {
+				whereConditions.branch = { uid: effectiveBranchId };
+				this.logger.debug(`Added branch filter: ${effectiveBranchId}`);
+			} else if (userAccessLevel) {
+				this.logger.debug(`User ${userAccessLevel} can see all branches - no branch filter applied`);
 			}
 
 			this.logger.debug(`Querying attendance records with conditions: ${JSON.stringify(whereConditions)}`);
@@ -1666,8 +1698,11 @@ export class AttendanceService {
 		date: string,
 		orgId?: number,
 		branchId?: number,
+		userAccessLevel?: string,
 	): Promise<{ message: string; checkIns: Attendance[] }> {
-		this.logger.log(`Fetching check-ins for date: ${date}, orgId: ${orgId}, branchId: ${branchId}`);
+		// Get effective branch ID based on user role
+		const effectiveBranchId = this.getEffectiveBranchId(branchId, userAccessLevel);
+		this.logger.log(`Fetching check-ins for date: ${date}, orgId: ${orgId}, branchId: ${branchId}, effectiveBranchId: ${effectiveBranchId}, userAccessLevel: ${userAccessLevel}`);
 		try {
 			// Get organization timezone for accurate date range
 			const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
@@ -1689,9 +1724,11 @@ export class AttendanceService {
 				whereConditions.organisation = { uid: orgId };
 			}
 
-			// Apply branch filtering if provided
-			if (branchId) {
-				whereConditions.branch = { uid: branchId };
+			// Apply branch filtering if provided (and user is not admin/owner/developer)
+			if (effectiveBranchId) {
+				whereConditions.branch = { uid: effectiveBranchId };
+			} else if (userAccessLevel) {
+				this.logger.debug(`User ${userAccessLevel} can see all branches - no branch filter applied`);
 			}
 
 			// Get check-ins that started on this date
@@ -1723,8 +1760,8 @@ export class AttendanceService {
 			ongoingShiftsConditions.organisation = { uid: orgId };
 		}
 
-		if (branchId) {
-			ongoingShiftsConditions.branch = { uid: branchId };
+		if (effectiveBranchId) {
+			ongoingShiftsConditions.branch = { uid: effectiveBranchId };
 		}
 
 		const ongoingShifts = await this.attendanceRepository.find({
@@ -2865,6 +2902,7 @@ export class AttendanceService {
 		orgId?: number,
 		branchId?: number,
 		date?: Date,
+		userAccessLevel?: string,
 	): Promise<{
 		message: string;
 		data: {
@@ -2909,9 +2947,11 @@ export class AttendanceService {
 			}>;
 		};
 	}> {
+		// Get effective branch ID based on user role
+		const effectiveBranchId = this.getEffectiveBranchId(branchId, userAccessLevel);
 		const operationId = `daily_overview_${Date.now()}`;
 		this.logger.log(
-			`[${operationId}] Getting daily attendance overview for orgId: ${orgId}, branchId: ${branchId}, date: ${
+			`[${operationId}] Getting daily attendance overview for orgId: ${orgId}, branchId: ${branchId}, effectiveBranchId: ${effectiveBranchId}, userAccessLevel: ${userAccessLevel}, date: ${
 				date || 'today'
 			}`,
 		);
@@ -2930,8 +2970,10 @@ export class AttendanceService {
 			if (orgId) {
 				userConditions.organisation = { uid: orgId };
 			}
-			if (branchId) {
-				userConditions.branch = { uid: branchId };
+			if (effectiveBranchId) {
+				userConditions.branch = { uid: effectiveBranchId };
+			} else if (userAccessLevel) {
+				this.logger.debug(`[${operationId}] User ${userAccessLevel} can see all branches - no branch filter applied`);
 			}
 
 			// Get all users in the organization/branch with enhanced data
@@ -2954,8 +2996,8 @@ export class AttendanceService {
 			if (orgId) {
 				attendanceConditions.organisation = { uid: orgId };
 			}
-			if (branchId) {
-				attendanceConditions.branch = { uid: branchId };
+			if (effectiveBranchId) {
+				attendanceConditions.branch = { uid: effectiveBranchId };
 			}
 
 			const todayAttendance = await this.attendanceRepository.find({
@@ -3109,12 +3151,15 @@ export class AttendanceService {
 		endDate: Date,
 		orgId?: number,
 		branchId?: number,
+		userAccessLevel?: string,
 	): Promise<{
 		message: string;
 		checkIns: Attendance[];
 		multiDayShifts: Attendance[];
 		ongoingShifts: Attendance[];
 	}> {
+		// Get effective branch ID based on user role
+		const effectiveBranchId = this.getEffectiveBranchId(branchId, userAccessLevel);
 		try {
 			// Get organization timezone for accurate date range
 			const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
@@ -3133,8 +3178,10 @@ export class AttendanceService {
 				whereConditions.organisation = { uid: orgId };
 			}
 
-			if (branchId) {
-				whereConditions.branch = { uid: branchId };
+			if (effectiveBranchId) {
+				whereConditions.branch = { uid: effectiveBranchId };
+			} else if (userAccessLevel) {
+				this.logger.debug(`User ${userAccessLevel} can see all branches - no branch filter applied`);
 			}
 
 			// Get all check-ins within the date range
@@ -3159,9 +3206,10 @@ export class AttendanceService {
 			});
 
 			// Get shifts that started before the range but are still ongoing
+			const ongoingShiftsWhereConditions = { ...whereConditions };
 			const ongoingShifts = await this.attendanceRepository.find({
 				where: {
-					...whereConditions,
+					...ongoingShiftsWhereConditions,
 					checkIn: LessThan(startOfPeriod),
 					status: In([AttendanceStatus.PRESENT, AttendanceStatus.ON_BREAK]),
 					checkOut: IsNull(),
@@ -3241,6 +3289,7 @@ export class AttendanceService {
 		ref: number,
 		orgId?: number,
 		branchId?: number,
+		userAccessLevel?: string,
 	): Promise<{
 		message: string;
 		startTime: string;
@@ -3251,6 +3300,8 @@ export class AttendanceService {
 		user: any;
 		attendance: Attendance;
 	}> {
+		// Get effective branch ID based on user role
+		const effectiveBranchId = this.getEffectiveBranchId(branchId, userAccessLevel);
 		try {
 			const whereConditions: any = {
 				owner: {
@@ -3263,9 +3314,11 @@ export class AttendanceService {
 				whereConditions.organisation = { uid: orgId };
 			}
 
-			// Apply branch filtering if provided
-			if (branchId) {
-				whereConditions.branch = { uid: branchId };
+			// Apply branch filtering if provided (and user is not admin/owner/developer)
+			if (effectiveBranchId) {
+				whereConditions.branch = { uid: effectiveBranchId };
+			} else if (userAccessLevel) {
+				this.logger.debug(`User ${userAccessLevel} can see all branches - no branch filter applied`);
 			}
 
 			const [checkIn] = await this.attendanceRepository.find({
@@ -3377,7 +3430,10 @@ export class AttendanceService {
 		ref: number,
 		orgId?: number,
 		branchId?: number,
+		userAccessLevel?: string,
 	): Promise<{ message: string; checkIns: Attendance[]; user: any }> {
+		// Get effective branch ID based on user role
+		const effectiveBranchId = this.getEffectiveBranchId(branchId, userAccessLevel);
 		try {
 			const whereConditions: any = {
 				owner: { uid: ref },
@@ -3388,9 +3444,11 @@ export class AttendanceService {
 				whereConditions.organisation = { uid: orgId };
 			}
 
-		// Apply branch filtering if provided
-		if (branchId) {
-			whereConditions.branch = { uid: branchId };
+		// Apply branch filtering if provided (and user is not admin/owner/developer)
+		if (effectiveBranchId) {
+			whereConditions.branch = { uid: effectiveBranchId };
+		} else if (userAccessLevel) {
+			this.logger.debug(`User ${userAccessLevel} can see all branches - no branch filter applied`);
 		}
 
 		const checkIns = await this.attendanceRepository.find({
@@ -3440,7 +3498,10 @@ export class AttendanceService {
 	public async checkInsByBranch(
 		ref: string,
 		orgId?: number,
+		userAccessLevel?: string,
 	): Promise<{ message: string; checkIns: Attendance[]; branch: any; totalUsers: number }> {
+		// Note: This method is specifically for querying by branch ref, so we still filter by branch
+		// but admin/owner/developer can query any branch in their org
 		try {
 			const whereConditions: any = {
 				branch: { ref },
@@ -5081,6 +5142,7 @@ export class AttendanceService {
 		queryDto: OrganizationReportQueryDto,
 		orgId?: number,
 		branchId?: number,
+		userAccessLevel?: string,
 	): Promise<{
 		message: string;
 		report: {
@@ -5153,10 +5215,15 @@ export class AttendanceService {
 				userFilters.organisation = { uid: orgId };
 			}
 
-			// Add branch filter
-			if (branchId || queryDto.branchId) {
-				const targetBranchId = branchId || queryDto.branchId;
-				userFilters.branch = { uid: targetBranchId };
+			// Add branch filter (respect user access level)
+			const effectiveBranchId = this.getEffectiveBranchId(
+				branchId ?? (queryDto.branchId ? Number(queryDto.branchId) : undefined),
+				userAccessLevel,
+			);
+			if (effectiveBranchId) {
+				userFilters.branch = { uid: effectiveBranchId };
+			} else if (userAccessLevel) {
+				this.logger.debug(`User ${userAccessLevel} can see all branches - no branch filter applied for organization report`);
 			}
 
 			// Add role filter
@@ -5880,6 +5947,7 @@ export class AttendanceService {
 		endDate?: string,
 		orgId?: number,
 		branchId?: number,
+		userAccessLevel?: string,
 	): Promise<{
 		message: string;
 		success: boolean;
@@ -5919,13 +5987,24 @@ export class AttendanceService {
 			const endDateTime = endDate ? new Date(endDate) : new Date();
 			const startDateTime = startDate ? new Date(startDate) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
+			// Get effective branch ID based on user role
+			const effectiveBranchId = this.getEffectiveBranchId(branchId, userAccessLevel);
+			
+			// Build where conditions
+			const attendanceWhereConditions: any = {
+				owner: { uid: userId },
+				organisation: { uid: orgId },
+				checkIn: Between(startDateTime, endDateTime),
+			};
+			
+			// Apply branch filtering if provided (and user is not admin/owner/developer)
+			if (effectiveBranchId) {
+				attendanceWhereConditions.branch = { uid: effectiveBranchId };
+			}
+			
 			// Get user attendance records for the date range
 			const attendanceRecords = await this.attendanceRepository.find({
-				where: {
-					owner: { uid: userId },
-					organisation: { uid: orgId },
-					checkIn: Between(startDateTime, endDateTime),
-				},
+				where: attendanceWhereConditions,
 				relations: ['owner', 'organisation', 'branch'],
 				order: { checkIn: 'DESC' },
 			});

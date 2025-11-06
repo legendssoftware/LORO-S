@@ -265,7 +265,30 @@ export class UserTarget {
 	@Column({
 		type: 'json',
 		nullable: true,
-		comment: 'JSON array tracking monthly target performance history'
+		comment: 'JSON array tracking monthly target performance history',
+		transformer: {
+			to: (value: any) => {
+				// When saving, ensure it's a valid JSON string
+				if (value === null || value === undefined) return null;
+				if (typeof value === 'string') return value;
+				return JSON.stringify(value);
+			},
+			from: (value: string | any) => {
+				// When loading, parse JSON string to array
+				if (value === null || value === undefined) return [];
+				if (typeof value === 'string') {
+					try {
+						const parsed = JSON.parse(value);
+						return Array.isArray(parsed) ? parsed : [];
+					} catch (e) {
+						console.error('Failed to parse history JSON:', e, 'Raw value:', value);
+						return [];
+					}
+				}
+				// If already parsed (shouldn't happen but handle it)
+				return Array.isArray(value) ? value : [];
+			},
+		},
 	})
 	history: {
 		date: string; // YYYY-MM format
