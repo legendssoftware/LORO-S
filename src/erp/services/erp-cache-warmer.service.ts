@@ -32,16 +32,16 @@ export class ErpCacheWarmerService implements OnModuleInit {
 	}
 
 	/**
-	 * Warm cache every hour
+	 * Warm cache every 5 minutes
 	 */
-	@Cron(CronExpression.EVERY_HOUR)
-	async warmCacheHourly() {
-		this.logger.log('===== Scheduled Hourly Cache Warming =====');
+	@Cron('*/5 * * * *')
+	async warmCacheEvery5Minutes() {
+		this.logger.log('===== Scheduled 5-Minute Cache Warming =====');
 		try {
 			await this.warmCommonDateRanges();
-			this.logger.log('===== Hourly Cache Warming Complete =====');
+			this.logger.log('===== 5-Minute Cache Warming Complete =====');
 		} catch (error) {
-			this.logger.error(`❌ Hourly cache warming failed: ${error.message}`);
+			this.logger.error(`❌ 5-minute cache warming failed: ${error.message}`);
 		}
 	}
 
@@ -72,16 +72,27 @@ export class ErpCacheWarmerService implements OnModuleInit {
 				
 				const filters: ErpQueryFilters = { startDate, endDate };
 				
-				// ✅ PHASE 1 & 4: Warm ALL chart data queries sequentially
-				await this.warmAllChartData(filters, label);
+				// ✅ PHASE 1 & 4: Warm ALL chart data queries sequentially (with partial success)
+				const warmingResult = await this.warmAllChartData(filters, label);
 				
 				// ✅ PHASE 1: Verify cache after warming
 				const cacheHealth = await this.verifyCacheHealth(filters);
 				this.logCacheHealthStatus(label, cacheHealth);
 				
 				const rangeDuration = Date.now() - rangeStart;
-				successCount++;
-				this.logger.log(`✅ Successfully warmed cache for: ${label} (${rangeDuration}ms)`);
+				
+				// Consider partial success as success (at least some cache entries created)
+				if (warmingResult.success.length > 0) {
+					successCount++;
+					if (warmingResult.failed.length > 0) {
+						this.logger.log(`✅ Partially warmed cache for: ${label} (${rangeDuration}ms) - ${warmingResult.success.length} succeeded, ${warmingResult.failed.length} failed`);
+					} else {
+						this.logger.log(`✅ Successfully warmed cache for: ${label} (${rangeDuration}ms)`);
+					}
+				} else {
+					errorCount++;
+					this.logger.warn(`❌ Failed to warm cache for ${label} (${rangeDuration}ms) - all queries failed`);
+				}
 			} catch (error) {
 				const rangeDuration = Date.now() - rangeStart;
 				errorCount++;
@@ -104,97 +115,124 @@ export class ErpCacheWarmerService implements OnModuleInit {
 	}
 
 	/**
-	 * ✅ PHASE 1 & 4: Warm all chart data queries sequentially
-	 * Executes all chart data queries one after another for a given date range
+	 * ✅ PHASE 1 & 4: Warm all chart data queries sequentially with partial success handling
+	 * Executes all chart data queries one after another, continuing on failures
+	 * No retries - if a query fails, it will be handled naturally when users request it
 	 */
-	private async warmAllChartData(filters: ErpQueryFilters, label: string): Promise<void> {
+	private async warmAllChartData(filters: ErpQueryFilters, label: string): Promise<{
+		success: string[];
+		failed: string[];
+	}> {
 		const warmingStart = Date.now();
+		const success: string[] = [];
+		const failed: string[] = [];
 		
+		// Step 1/7: Aggregations
+		this.logger.log(`   Warming ${label}: 1/7 aggregations...`);
+		const step1Start = Date.now();
 		try {
-			// Step 1/7: Aggregations
-			this.logger.log(`   Warming ${label}: 1/7 aggregations...`);
-			const step1Start = Date.now();
-			await this.retryWithBackoff(
-				() => this.erpDataService.getAllAggregationsParallel(filters),
-				3,
-				`${label} - aggregations`,
-			);
+			await this.erpDataService.getAllAggregationsParallel(filters);
 			const step1Duration = Date.now() - step1Start;
 			this.logger.log(`   ✅ Aggregations warmed (${step1Duration}ms)`);
+			success.push('aggregations');
+		} catch (error) {
+			const step1Duration = Date.now() - step1Start;
+			this.logger.warn(`   ❌ Aggregations failed (${step1Duration}ms): ${error.message}`);
+			failed.push('aggregations');
+		}
 
-			// Step 2/7: Hourly Sales
-			this.logger.log(`   Warming ${label}: 2/7 hourly sales...`);
-			const step2Start = Date.now();
-			await this.retryWithBackoff(
-				() => this.erpDataService.getHourlySalesPattern(filters),
-				3,
-				`${label} - hourly sales`,
-			);
+		// Step 2/7: Hourly Sales
+		this.logger.log(`   Warming ${label}: 2/7 hourly sales...`);
+		const step2Start = Date.now();
+		try {
+			await this.erpDataService.getHourlySalesPattern(filters);
 			const step2Duration = Date.now() - step2Start;
 			this.logger.log(`   ✅ Hourly sales warmed (${step2Duration}ms)`);
+			success.push('hourlySales');
+		} catch (error) {
+			const step2Duration = Date.now() - step2Start;
+			this.logger.warn(`   ❌ Hourly sales failed (${step2Duration}ms): ${error.message}`);
+			failed.push('hourlySales');
+		}
 
-			// Step 3/7: Payment Types
-			this.logger.log(`   Warming ${label}: 3/7 payment types...`);
-			const step3Start = Date.now();
-			await this.retryWithBackoff(
-				() => this.erpDataService.getPaymentTypeAggregations(filters),
-				3,
-				`${label} - payment types`,
-			);
+		// Step 3/7: Payment Types
+		this.logger.log(`   Warming ${label}: 3/7 payment types...`);
+		const step3Start = Date.now();
+		try {
+			await this.erpDataService.getPaymentTypeAggregations(filters);
 			const step3Duration = Date.now() - step3Start;
 			this.logger.log(`   ✅ Payment types warmed (${step3Duration}ms)`);
+			success.push('paymentTypes');
+		} catch (error) {
+			const step3Duration = Date.now() - step3Start;
+			this.logger.warn(`   ❌ Payment types failed (${step3Duration}ms): ${error.message}`);
+			failed.push('paymentTypes');
+		}
 
-			// Step 4/7: Conversion Rate
-			this.logger.log(`   Warming ${label}: 4/7 conversion rate...`);
-			const step4Start = Date.now();
-			await this.retryWithBackoff(
-				() => this.erpDataService.getConversionRateData(filters),
-				3,
-				`${label} - conversion rate`,
-			);
+		// Step 4/7: Conversion Rate
+		this.logger.log(`   Warming ${label}: 4/7 conversion rate...`);
+		const step4Start = Date.now();
+		try {
+			await this.erpDataService.getConversionRateData(filters);
 			const step4Duration = Date.now() - step4Start;
 			this.logger.log(`   ✅ Conversion rate warmed (${step4Duration}ms)`);
+			success.push('conversionRate');
+		} catch (error) {
+			const step4Duration = Date.now() - step4Start;
+			this.logger.warn(`   ❌ Conversion rate failed (${step4Duration}ms): ${error.message}`);
+			failed.push('conversionRate');
+		}
 
-			// Step 5/7: Master Data
-			this.logger.log(`   Warming ${label}: 5/7 master data...`);
-			const step5Start = Date.now();
-			await this.retryWithBackoff(
-				() => this.erpDataService.getMasterDataForFilters(filters),
-				3,
-				`${label} - master data`,
-			);
+		// Step 5/7: Master Data
+		this.logger.log(`   Warming ${label}: 5/7 master data...`);
+		const step5Start = Date.now();
+		try {
+			await this.erpDataService.getMasterDataForFilters(filters);
 			const step5Duration = Date.now() - step5Start;
 			this.logger.log(`   ✅ Master data warmed (${step5Duration}ms)`);
+			success.push('masterData');
+		} catch (error) {
+			const step5Duration = Date.now() - step5Start;
+			this.logger.warn(`   ❌ Master data failed (${step5Duration}ms): ${error.message}`);
+			failed.push('masterData');
+		}
 
-			// Step 6/7: Sales Lines
-			this.logger.log(`   Warming ${label}: 6/7 sales lines...`);
-			const step6Start = Date.now();
-			await this.retryWithBackoff(
-				() => this.erpDataService.getSalesLinesByDateRange(filters),
-				3,
-				`${label} - sales lines`,
-			);
+		// Step 6/7: Sales Lines
+		this.logger.log(`   Warming ${label}: 6/7 sales lines...`);
+		const step6Start = Date.now();
+		try {
+			await this.erpDataService.getSalesLinesByDateRange(filters);
 			const step6Duration = Date.now() - step6Start;
 			this.logger.log(`   ✅ Sales lines warmed (${step6Duration}ms)`);
+			success.push('salesLines');
+		} catch (error) {
+			const step6Duration = Date.now() - step6Start;
+			this.logger.warn(`   ❌ Sales lines failed (${step6Duration}ms): ${error.message}`);
+			failed.push('salesLines');
+		}
 
-			// Step 7/7: Sales Headers
-			this.logger.log(`   Warming ${label}: 7/7 sales headers...`);
-			const step7Start = Date.now();
-			await this.retryWithBackoff(
-				() => this.erpDataService.getSalesHeadersByDateRange(filters),
-				3,
-				`${label} - sales headers`,
-			);
+		// Step 7/7: Sales Headers
+		this.logger.log(`   Warming ${label}: 7/7 sales headers...`);
+		const step7Start = Date.now();
+		try {
+			await this.erpDataService.getSalesHeadersByDateRange(filters);
 			const step7Duration = Date.now() - step7Start;
 			this.logger.log(`   ✅ Sales headers warmed (${step7Duration}ms)`);
-
-			const totalWarmingDuration = Date.now() - warmingStart;
-			this.logger.log(`   ✅ All chart data warmed for ${label} (${totalWarmingDuration}ms)`);
+			success.push('salesHeaders');
 		} catch (error) {
-			const totalWarmingDuration = Date.now() - warmingStart;
-			this.logger.error(`   ❌ Error warming chart data for ${label} (${totalWarmingDuration}ms): ${error.message}`);
-			throw error;
+			const step7Duration = Date.now() - step7Start;
+			this.logger.warn(`   ❌ Sales headers failed (${step7Duration}ms): ${error.message}`);
+			failed.push('salesHeaders');
 		}
+
+		const totalWarmingDuration = Date.now() - warmingStart;
+		this.logger.log(`   ✅ Chart data warming complete for ${label} (${totalWarmingDuration}ms)`);
+		this.logger.log(`   Success: ${success.length}/7 (${success.join(', ')})`);
+		if (failed.length > 0) {
+			this.logger.warn(`   Failed: ${failed.length}/7 (${failed.join(', ')}) - queries will work naturally when requested`);
+		}
+		
+		return { success, failed };
 	}
 
 	/**
@@ -240,32 +278,6 @@ export class ErpCacheWarmerService implements OnModuleInit {
 		}
 	}
 
-	/**
-	 * Retry a function with exponential backoff
-	 */
-	private async retryWithBackoff<T>(
-		fn: () => Promise<T>,
-		maxRetries: number,
-		label: string,
-	): Promise<T> {
-		let lastError: Error;
-		
-		for (let attempt = 0; attempt < maxRetries; attempt++) {
-			try {
-				return await fn();
-			} catch (error) {
-				lastError = error;
-				
-				if (attempt < maxRetries - 1) {
-					const delayMs = Math.min(1000 * Math.pow(2, attempt), 5000); // Max 5s delay
-					this.logger.debug(`Retry ${attempt + 1}/${maxRetries} for ${label} after ${delayMs}ms`);
-					await this.delay(delayMs);
-				}
-			}
-		}
-		
-		throw lastError;
-	}
 
 	/**
 	 * Delay helper

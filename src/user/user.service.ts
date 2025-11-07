@@ -2458,14 +2458,6 @@ export class UserService {
 						user.userTarget.history = [];
 					}
 				}
-				
-				this.logger.debug(`Raw history from DB for user ${userId}:`, {
-					history: user.userTarget.history,
-					historyType: typeof user.userTarget.history,
-					isArray: Array.isArray(user.userTarget.history),
-					historyLength: Array.isArray(user.userTarget.history) ? user.userTarget.history.length : 0,
-					historyString: typeof rawHistory === 'string' ? rawHistory.substring(0, 200) : 'not a string',
-				});
 			}
 
 			// Initialize response object - always return data even if user has no targets

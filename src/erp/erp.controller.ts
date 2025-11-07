@@ -21,11 +21,24 @@ import { AccessLevel } from '../lib/enums/user.enums';
 export class ErpController {
 	private readonly logger = new Logger(ErpController.name);
 	
-	// ✅ Request throttling state
+	// ✅ Request throttling state (with priority support)
 	private activeRequests = 0;
 	private readonly MAX_CONCURRENT_REQUESTS = 10; // Max 10 concurrent ERP requests
-	private requestQueue: Array<{ resolve: () => void; timestamp: number }> = [];
+	private requestQueue: Array<{ resolve: () => void; timestamp: number; priority: 'high' | 'normal' | 'low' }> = [];
 	private readonly REQUEST_TIMEOUT = 60000; // 60 second max wait in queue
+	
+	// ✅ Endpoint priority mapping
+	private readonly ENDPOINT_PRIORITIES: Record<string, 'high' | 'normal' | 'low'> = {
+		'health': 'high',
+		'connection/health': 'high',
+		'stats': 'normal',
+		'cache/stats': 'normal',
+		'connection/pool': 'normal',
+		'cache/health': 'normal',
+		'cache/warm': 'low',
+		'cache/refresh': 'low',
+		'cache/clear': 'low',
+	};
 
 	constructor(
 		private readonly erpHealthIndicator: ErpHealthIndicator,
@@ -34,28 +47,65 @@ export class ErpController {
 	) {}
 
 	/**
-	 * ✅ Request throttling: Acquire slot for request
+	 * ✅ Request throttling: Acquire slot for request (with priority)
 	 */
-	private async acquireRequestSlot(operationId: string): Promise<void> {
+	private async acquireRequestSlot(operationId: string, priority: 'high' | 'normal' | 'low' = 'normal'): Promise<void> {
 		const startWait = Date.now();
 		
+		// High priority requests bypass queue if slots available
+		if (priority === 'high' && this.activeRequests < this.MAX_CONCURRENT_REQUESTS) {
+			this.activeRequests++;
+			this.logger.log(
+				`[${operationId}] High priority request slot acquired immediately (${this.activeRequests}/${this.MAX_CONCURRENT_REQUESTS} active)`,
+			);
+			return;
+		}
+		
+		// Add to queue with priority
+		const queueEntry = { resolve: () => {}, timestamp: Date.now(), priority };
+		const queuePromise = new Promise<void>((resolve) => {
+			queueEntry.resolve = resolve;
+		});
+		
+		// Insert based on priority (high first, then normal, then low)
+		let insertIndex = this.requestQueue.length;
+		for (let i = 0; i < this.requestQueue.length; i++) {
+			const currentPriority = this.requestQueue[i].priority;
+			if (
+				(priority === 'high' && currentPriority !== 'high') ||
+				(priority === 'normal' && currentPriority === 'low')
+			) {
+				insertIndex = i;
+				break;
+			}
+		}
+		this.requestQueue.splice(insertIndex, 0, queueEntry);
+		
+		// Wait for slot
 		while (this.activeRequests >= this.MAX_CONCURRENT_REQUESTS) {
 			const waitTime = Date.now() - startWait;
 			
 			if (waitTime > this.REQUEST_TIMEOUT) {
+				// Remove from queue
+				const index = this.requestQueue.indexOf(queueEntry);
+				if (index > -1) this.requestQueue.splice(index, 1);
 				throw new Error(`Request timeout: waited ${waitTime}ms for available slot`);
 			}
 			
 			this.logger.debug(
-				`[${operationId}] Request queue: ${this.activeRequests}/${this.MAX_CONCURRENT_REQUESTS} active, waiting...`,
+				`[${operationId}] Request queue: ${this.activeRequests}/${this.MAX_CONCURRENT_REQUESTS} active, ${this.requestQueue.length} queued (priority: ${priority}), waiting...`,
 			);
 			
 			await new Promise((resolve) => setTimeout(resolve, 200)); // Wait 200ms
 		}
 		
+		// Remove from queue and acquire slot
+		const index = this.requestQueue.indexOf(queueEntry);
+		if (index > -1) this.requestQueue.splice(index, 1);
+		
 		this.activeRequests++;
 		this.logger.log(
-			`[${operationId}] Request slot acquired (${this.activeRequests}/${this.MAX_CONCURRENT_REQUESTS} active)`,
+			`[${operationId}] Request slot acquired (${this.activeRequests}/${this.MAX_CONCURRENT_REQUESTS} active, priority: ${priority})`,
 		);
 	}
 
@@ -70,15 +120,29 @@ export class ErpController {
 	}
 
 	/**
-	 * ✅ Wrap endpoint execution with request throttling
+	 * ✅ Wrap endpoint execution with request throttling (with priority and graceful degradation)
 	 */
 	private async executeWithThrottling<T>(
 		operationId: string,
 		operation: () => Promise<T>,
+		endpointName?: string,
 	): Promise<T> {
+		const priority = endpointName ? (this.ENDPOINT_PRIORITIES[endpointName] || 'normal') : 'normal';
+		
 		try {
-			await this.acquireRequestSlot(operationId);
+			await this.acquireRequestSlot(operationId, priority);
 			return await operation();
+		} catch (error) {
+			// Graceful degradation: Return partial response for cache operations
+			if (endpointName?.startsWith('cache/') && error.message?.includes('timeout')) {
+				this.logger.warn(`[${operationId}] Cache operation timeout, returning partial response`);
+				return {
+					success: false,
+					message: 'Operation timed out, some cache entries may be incomplete',
+					error: error.message,
+				} as T;
+			}
+			throw error;
 		} finally {
 			this.releaseRequestSlot(operationId);
 		}
@@ -106,7 +170,7 @@ export class ErpController {
 					error: error.message,
 				};
 			}
-		});
+		}, 'health');
 	}
 
 	/**
@@ -131,7 +195,7 @@ export class ErpController {
 					error: error.message,
 				};
 			}
-		});
+		}, 'stats');
 	}
 
 	/**
@@ -153,7 +217,7 @@ export class ErpController {
 					message: error.message,
 				};
 			}
-		});
+		}, 'cache/warm');
 	}
 
 	/**
@@ -175,7 +239,7 @@ export class ErpController {
 					message: error.message,
 				};
 			}
-		});
+		}, 'cache/refresh');
 	}
 
 	/**
@@ -207,7 +271,7 @@ export class ErpController {
 					message: error.message,
 				};
 			}
-		});
+		}, 'cache/clear');
 	}
 
 	/**
@@ -232,7 +296,7 @@ export class ErpController {
 					error: error.message,
 				};
 			}
-		});
+		}, 'cache/stats');
 	}
 
 	/**
@@ -258,7 +322,7 @@ export class ErpController {
 					error: error.message,
 				};
 			}
-		});
+		}, 'connection/pool');
 	}
 
 	/**
@@ -284,7 +348,7 @@ export class ErpController {
 					error: error.message,
 				};
 			}
-		});
+		}, 'connection/health');
 	}
 
 	/**
@@ -337,7 +401,7 @@ export class ErpController {
 					error: error.message,
 				};
 			}
-		});
+		}, 'cache/health');
 	}
 }
 

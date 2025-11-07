@@ -78,8 +78,12 @@ export class ErpDataService implements OnModuleInit {
 	// ✅ Circuit Breaker State (More resilient for remote servers)
 	private circuitBreakerState: 'CLOSED' | 'OPEN' | 'HALF_OPEN' = 'CLOSED';
 	private failureCount = 0;
+	private networkFailureCount = 0; // Track network errors separately
+	private sqlFailureCount = 0; // Track SQL errors separately
 	private lastFailureTime: number = 0;
 	private readonly FAILURE_THRESHOLD = 5; // Open circuit after 5 consecutive failures (increased from 3)
+	private readonly NETWORK_FAILURE_THRESHOLD = 5; // Network errors trigger circuit breaker
+	private readonly SQL_FAILURE_THRESHOLD = 10; // SQL errors need more failures (likely data issues, not server)
 	private readonly CIRCUIT_RESET_TIMEOUT = 60000; // 60 seconds (increased from 30s)
 	private readonly HALF_OPEN_MAX_REQUESTS = 2; // Allow 2 test requests in half-open state (increased from 1)
 	private halfOpenRequests = 0;
@@ -89,8 +93,10 @@ export class ErpDataService implements OnModuleInit {
 	private readonly MAX_CONCURRENT_QUERIES = 3; // Max 3 concurrent queries (legacy, now using sequential)
 	private queryQueue: Array<() => Promise<any>> = [];
 	
-	// ✅ Retry Configuration for transient failures
-	private readonly MAX_RETRIES = 3; // Maximum retry attempts
+	// ✅ Retry Configuration for transient failures (Adaptive)
+	private readonly MAX_RETRIES_NETWORK = 5; // More retries for network errors
+	private readonly MAX_RETRIES_SQL = 1; // Fewer retries for SQL errors (likely permanent)
+	private readonly MAX_RETRIES_DEFAULT = 3; // Default retries for unknown errors
 	private readonly INITIAL_RETRY_DELAY = 1000; // Start with 1 second
 	private readonly MAX_RETRY_DELAY = 10000; // Max 10 seconds between retries
 
@@ -128,8 +134,8 @@ export class ErpDataService implements OnModuleInit {
 			this.logger.log(`[${operationId}]   User: ${user || 'NOT SET'}`);
 			this.logger.log(`[${operationId}]   Connection Pool Size: ${connectionLimit}`);
 			this.logger.log(`[${operationId}]   Cache TTL: ${this.CACHE_TTL}s`);
-			this.logger.log(`[${operationId}]   Query Timeout: 120s (default)`);
-			this.logger.log(`[${operationId}]   Max Retries: ${this.MAX_RETRIES}`);
+			this.logger.log(`[${operationId}]   Query Timeout: 120s (default, adaptive)`);
+			this.logger.log(`[${operationId}]   Max Retries: Network=${this.MAX_RETRIES_NETWORK}, SQL=${this.MAX_RETRIES_SQL}, Default=${this.MAX_RETRIES_DEFAULT}`);
 			this.logger.log(`[${operationId}]   Circuit Breaker Threshold: ${this.FAILURE_THRESHOLD} failures`);
 
 			// ✅ Log connection pool information
@@ -277,33 +283,62 @@ export class ErpDataService implements OnModuleInit {
 			this.logger.log(`[${operationId}] Circuit breaker test request succeeded - closing circuit`);
 			this.circuitBreakerState = 'CLOSED';
 			this.failureCount = 0;
+			this.networkFailureCount = 0;
+			this.sqlFailureCount = 0;
 			this.halfOpenRequests = 0;
 		} else if (this.circuitBreakerState === 'CLOSED') {
-			// Reset failure count on success
-			if (this.failureCount > 0) {
-				this.logger.debug(`[${operationId}] Resetting failure count (was ${this.failureCount})`);
+			// Reset failure counts on success
+			if (this.failureCount > 0 || this.networkFailureCount > 0 || this.sqlFailureCount > 0) {
+				this.logger.debug(`[${operationId}] Resetting failure counts (network: ${this.networkFailureCount}, sql: ${this.sqlFailureCount})`);
 				this.failureCount = 0;
+				this.networkFailureCount = 0;
+				this.sqlFailureCount = 0;
 			}
 		}
 	}
 
 	/**
-	 * ✅ Circuit Breaker: Record failure
+	 * ✅ Circuit Breaker: Record failure (with error type tracking)
 	 */
 	private recordFailure(operationId: string, error: Error): void {
 		this.failureCount++;
 		this.lastFailureTime = Date.now();
 
+		// Classify error type
+		const isNetworkError = this.isRetryableError(error);
+		const isSqlError = !isNetworkError && (
+			error.message?.toLowerCase().includes('syntax') ||
+			error.message?.toLowerCase().includes('unknown column') ||
+			error.message?.toLowerCase().includes('unknown table') ||
+			error.message?.toLowerCase().includes('foreign key')
+		);
+
+		if (isNetworkError) {
+			this.networkFailureCount++;
+		} else if (isSqlError) {
+			this.sqlFailureCount++;
+		}
+
 		this.logger.warn(
-			`[${operationId}] Query failure recorded (${this.failureCount}/${this.FAILURE_THRESHOLD}) - ${error.message}`,
+			`[${operationId}] Query failure recorded (total: ${this.failureCount}, network: ${this.networkFailureCount}, sql: ${this.sqlFailureCount}) - ${error.message}`,
 		);
 
 		if (this.circuitBreakerState === 'HALF_OPEN') {
 			this.logger.error(`[${operationId}] Circuit breaker test request failed - reopening circuit`);
 			this.circuitBreakerState = 'OPEN';
-		} else if (this.failureCount >= this.FAILURE_THRESHOLD) {
+		} else if (
+			this.networkFailureCount >= this.NETWORK_FAILURE_THRESHOLD ||
+			this.sqlFailureCount >= this.SQL_FAILURE_THRESHOLD ||
+			this.failureCount >= this.FAILURE_THRESHOLD
+		) {
+			const reason = this.networkFailureCount >= this.NETWORK_FAILURE_THRESHOLD 
+				? `network errors (${this.networkFailureCount})`
+				: this.sqlFailureCount >= this.SQL_FAILURE_THRESHOLD
+				? `SQL errors (${this.sqlFailureCount})`
+				: `total failures (${this.failureCount})`;
+			
 			this.logger.error(
-				`[${operationId}] ⚠️ CIRCUIT BREAKER OPENED after ${this.failureCount} consecutive failures. Will retry in ${this.CIRCUIT_RESET_TIMEOUT / 1000}s`,
+				`[${operationId}] ⚠️ CIRCUIT BREAKER OPENED after ${reason}. Will retry in ${this.CIRCUIT_RESET_TIMEOUT / 1000}s`,
 			);
 			this.circuitBreakerState = 'OPEN';
 		}
@@ -389,13 +424,50 @@ export class ErpDataService implements OnModuleInit {
 	}
 
 	/**
+	 * ✅ Calculate adaptive timeout based on date range size
+	 */
+	private calculateTimeout(dateRangeDays: number, baseTimeout: number = 120000): number {
+		// Scale timeout: 90s base, +30s per 60 days
+		if (dateRangeDays <= 30) return baseTimeout * 0.75; // 90s for small ranges
+		if (dateRangeDays <= 60) return baseTimeout; // 120s for medium ranges
+		if (dateRangeDays <= 180) return baseTimeout * 1.5; // 180s for large ranges
+		return baseTimeout * 2; // 240s for very large ranges
+	}
+
+	/**
+	 * ✅ Determine max retries based on error type
+	 */
+	private getMaxRetries(error: Error | null): number {
+		if (!error) return this.MAX_RETRIES_DEFAULT;
+		
+		if (this.isRetryableError(error)) {
+			return this.MAX_RETRIES_NETWORK; // More retries for network errors
+		}
+		
+		const errorMessage = error.message?.toLowerCase() || '';
+		if (
+			errorMessage.includes('syntax') ||
+			errorMessage.includes('unknown column') ||
+			errorMessage.includes('unknown table') ||
+			errorMessage.includes('foreign key')
+		) {
+			return this.MAX_RETRIES_SQL; // Fewer retries for SQL errors
+		}
+		
+		return this.MAX_RETRIES_DEFAULT;
+	}
+
+	/**
 	 * ✅ Wrap query execution with circuit breaker, timeout, and retry logic
 	 */
 	private async executeQueryWithProtection<T>(
 		queryFn: () => Promise<T>,
 		operationId: string,
 		timeoutMs: number = 120000, // 120 second default timeout (increased from 60s for remote servers)
+		dateRangeDays?: number, // Optional: for adaptive timeout
 	): Promise<T> {
+		// Use adaptive timeout if date range provided
+		const adaptiveTimeout = dateRangeDays ? this.calculateTimeout(dateRangeDays, timeoutMs) : timeoutMs;
 		// Check circuit breaker
 		if (this.isCircuitOpen()) {
 			const error = new Error(
@@ -415,20 +487,28 @@ export class ErpDataService implements OnModuleInit {
 			this.halfOpenRequests++;
 		}
 
-		// ✅ Retry loop with exponential backoff
+		// ✅ Retry loop with exponential backoff (adaptive retries)
 		let lastError: Error | null = null;
+		let maxRetries = this.MAX_RETRIES_DEFAULT;
 		
-		for (let attempt = 1; attempt <= this.MAX_RETRIES; attempt++) {
+		for (let attempt = 1; attempt <= maxRetries; attempt++) {
 			try {
+				// Determine max retries based on previous error (if any)
+				if (attempt === 1 && lastError) {
+					maxRetries = this.getMaxRetries(lastError);
+				} else if (attempt === 1) {
+					maxRetries = this.MAX_RETRIES_DEFAULT;
+				}
+				
 				this.logger.debug(
-					`[${operationId}] Query attempt ${attempt}/${this.MAX_RETRIES} (timeout: ${timeoutMs}ms)`,
+					`[${operationId}] Query attempt ${attempt}/${maxRetries} (timeout: ${adaptiveTimeout}ms)`,
 				);
 				
 				// Execute with timeout protection
 				const result = await Promise.race([
 					this.executeWithSemaphore(queryFn, operationId),
 					new Promise<T>((_, reject) =>
-						setTimeout(() => reject(new Error(`Query timeout after ${timeoutMs}ms`)), timeoutMs),
+						setTimeout(() => reject(new Error(`Query timeout after ${adaptiveTimeout}ms`)), adaptiveTimeout),
 					),
 				]);
 
@@ -443,14 +523,17 @@ export class ErpDataService implements OnModuleInit {
 			} catch (error) {
 				lastError = error;
 				
+				// Update max retries based on error type
+				maxRetries = this.getMaxRetries(error);
+				
 				// Check if we should retry
-				const isLastAttempt = attempt === this.MAX_RETRIES;
+				const isLastAttempt = attempt >= maxRetries;
 				const shouldRetry = this.isRetryableError(error) && !isLastAttempt;
 				
 				if (shouldRetry) {
 					const delay = this.calculateRetryDelay(attempt);
 					this.logger.warn(
-						`[${operationId}] Query attempt ${attempt} failed: ${error.message}. Retrying in ${delay}ms...`,
+						`[${operationId}] Query attempt ${attempt} failed: ${error.message}. Retrying in ${delay}ms... (max retries: ${maxRetries})`,
 					);
 					await new Promise(resolve => setTimeout(resolve, delay));
 				} else {
@@ -497,9 +580,9 @@ export class ErpDataService implements OnModuleInit {
 
 	/**
 	 * ✅ PHASE 2: Split large date ranges into smaller chunks
-	 * Returns array of date range chunks (max 30 days per chunk)
+	 * Returns array of date range chunks (max 15 days per chunk for faster queries)
 	 */
-	private splitDateRange(startDate: string, endDate: string, chunkSizeDays: number = 30): Array<{ startDate: string; endDate: string }> {
+	private splitDateRange(startDate: string, endDate: string, chunkSizeDays: number = 15): Array<{ startDate: string; endDate: string }> {
 		const start = new Date(startDate);
 		const end = new Date(endDate);
 		const chunks: Array<{ startDate: string; endDate: string }> = [];
@@ -534,21 +617,21 @@ export class ErpDataService implements OnModuleInit {
 		if (queryDuration > 5000) {
 			this.logger.warn(`[${operationId}] ⚠️ Slow query detected: ${queryDuration}ms`);
 			this.logger.warn(`[${operationId}] Date range: ${startDate} to ${endDate} (${dateRangeDays} days)`);
-			this.logger.warn(`[${operationId}] Consider using date range chunking for ranges > 90 days`);
+			this.logger.warn(`[${operationId}] Consider using date range chunking for ranges > 60 days`);
 		}
 	}
 
 	/**
 	 * Get sales headers by date range with optional filters
 	 * Only returns Tax Invoices (doc_type = 1) by default
-	 * ✅ PHASE 2: Supports date range chunking for large ranges (>90 days)
+	 * ✅ PHASE 2: Supports date range chunking for large ranges (>60 days)
 	 */
 	async getSalesHeadersByDateRange(filters: ErpQueryFilters): Promise<TblSalesHeader[]> {
 		const operationId = this.generateOperationId('GET_HEADERS');
 		const dateRangeDays = this.calculateDateRangeDays(filters.startDate, filters.endDate);
 		
-		// ✅ PHASE 2: Use chunking for large date ranges (>90 days)
-		if (dateRangeDays > 90) {
+		// ✅ PHASE 2: Use chunking for large date ranges (>60 days)
+		if (dateRangeDays > 60) {
 			this.logger.log(`[${operationId}] Large date range detected (${dateRangeDays} days) - using chunking`);
 			return await this.getSalesHeadersBatched(filters);
 		}
@@ -576,7 +659,7 @@ export class ErpDataService implements OnModuleInit {
 
 			const queryStart = Date.now();
 			
-			// ✅ Execute with circuit breaker and timeout protection
+			// ✅ Execute with circuit breaker and timeout protection (adaptive timeout)
 			const results = await this.executeQueryWithProtection(
 				async () => {
 					const query = this.salesHeaderRepo
@@ -596,7 +679,8 @@ export class ErpDataService implements OnModuleInit {
 					return await query.getMany();
 				},
 				operationId,
-				90000, // 90 second timeout for headers (increased from 45s)
+				90000, // 90 second base timeout for headers
+				dateRangeDays, // Pass date range for adaptive timeout
 			);
 			
 			const queryDuration = Date.now() - queryStart;
@@ -673,6 +757,7 @@ export class ErpDataService implements OnModuleInit {
 				allResults.push(...cached);
 			} else {
 				// Query directly without chunking check (chunks are already small)
+				const chunkDateRangeDays = this.calculateDateRangeDays(chunkFilters.startDate, chunkFilters.endDate);
 				const chunkResults = await this.executeQueryWithProtection(
 					async () => {
 						const query = this.salesHeaderRepo
@@ -691,6 +776,7 @@ export class ErpDataService implements OnModuleInit {
 					},
 					operationId,
 					90000,
+					chunkDateRangeDays, // Adaptive timeout for chunk
 				);
 				
 				await this.cacheManager.set(chunkCacheKey, chunkResults, this.CACHE_TTL);
@@ -709,7 +795,7 @@ export class ErpDataService implements OnModuleInit {
 	 * @param filters - Query filters
 	 * @param includeDocTypes - Document types to include (defaults to Tax Invoices only)
 	 * @returns Sales lines matching criteria
-	 * ✅ PHASE 2: Supports date range chunking for large ranges (>90 days)
+	 * ✅ PHASE 2: Supports date range chunking for large ranges (>60 days)
 	 */
 	async getSalesLinesByDateRange(
 		filters: ErpQueryFilters,
@@ -718,8 +804,8 @@ export class ErpDataService implements OnModuleInit {
 		const operationId = this.generateOperationId('GET_LINES');
 		const dateRangeDays = this.calculateDateRangeDays(filters.startDate, filters.endDate);
 		
-		// ✅ PHASE 2: Use chunking for large date ranges (>90 days)
-		if (dateRangeDays > 90) {
+		// ✅ PHASE 2: Use chunking for large date ranges (>60 days)
+		if (dateRangeDays > 60) {
 			this.logger.log(`[${operationId}] Large date range detected (${dateRangeDays} days) - using chunking`);
 			return await this.getSalesLinesBatched(filters, includeDocTypes);
 		}
@@ -746,7 +832,7 @@ export class ErpDataService implements OnModuleInit {
 
 			const queryStart = Date.now();
 			
-			// ✅ Execute with circuit breaker and timeout protection
+			// ✅ Execute with circuit breaker and timeout protection (adaptive timeout)
 			const results = await this.executeQueryWithProtection(
 				async () => {
 					const query = this.salesLinesRepo
@@ -776,7 +862,8 @@ export class ErpDataService implements OnModuleInit {
 					return await query.getMany();
 				},
 				operationId,
-				120000, // 120 second timeout for lines (increased from 60s)
+				120000, // 120 second base timeout for lines
+				dateRangeDays, // Pass date range for adaptive timeout
 			);
 			
 			const queryDuration = Date.now() - queryStart;
@@ -858,6 +945,7 @@ export class ErpDataService implements OnModuleInit {
 				allResults.push(...cached);
 			} else {
 				// Query directly without chunking check (chunks are already small)
+				const chunkDateRangeDays = this.calculateDateRangeDays(chunkFilters.startDate, chunkFilters.endDate);
 				const chunkResults = await this.executeQueryWithProtection(
 					async () => {
 						const query = this.salesLinesRepo
@@ -883,6 +971,7 @@ export class ErpDataService implements OnModuleInit {
 					},
 					operationId,
 					120000,
+					chunkDateRangeDays, // Adaptive timeout for chunk
 				);
 				
 				await this.cacheManager.set(chunkCacheKey, chunkResults, this.CACHE_TTL);
