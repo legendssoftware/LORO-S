@@ -3,12 +3,6 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { ErpDataService } from './erp-data.service';
 import { ErpQueryFilters } from '../interfaces/erp-data.interface';
 
-// Type declaration for Node.js garbage collection (available when running with --expose-gc flag)
-declare global {
-	// eslint-disable-next-line no-var
-	var gc: (() => void) | undefined;
-}
-
 /**
  * ERP Cache Warmer Service
  * 
