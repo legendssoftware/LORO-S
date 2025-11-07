@@ -18,7 +18,7 @@ import { ConfigService } from '@nestjs/config';
  * ERP Data Service
  *
  * Handles all queries to the ERP database with aggressive caching
- * and parallel query execution for optimal performance.
+ * and sequential query execution for optimal reliability.
  * 
  * ========================================================================
  * PERFORMANCE & SCALABILITY FEATURES (Optimized for Remote Servers)
@@ -35,7 +35,8 @@ import { ConfigService } from '@nestjs/config';
  *    - Exponential backoff: 1s → 2s → 4s (with jitter)
  * 
  * 3. **Query Concurrency Control**
- *    - Maximum 3 parallel queries to prevent connection pool exhaustion
+ *    - Sequential query execution (one query at a time)
+ *    - Prevents connection pool exhaustion
  *    - Request queuing for overflow
  *    - Connection pool monitoring
  * 
@@ -49,10 +50,11 @@ import { ConfigService } from '@nestjs/config';
  *    - 120 seconds for lines and aggregations
  *    - Accounts for network latency on remote databases
  * 
- * 6. **Batched Query Execution**
- *    - Aggregations run in 2 batches (2 queries per batch)
+ * 6. **Sequential Query Execution**
+ *    - All queries execute one after another (not in parallel)
  *    - Prevents connection pool saturation
- *    - Critical queries (daily + branch) run first
+ *    - Ensures all queries complete successfully
+ *    - Critical queries run first in sequence
  * 
  * 7. **Enhanced Error Diagnostics**
  *    - Detailed logging of error type, code, and stack trace
@@ -61,7 +63,7 @@ import { ConfigService } from '@nestjs/config';
  *    - Query parameter logging for debugging
  * 
  * 8. **Pagination Strategy**
- *    - Current: Caching + batched execution (optimal for this use case)
+ *    - Current: Caching + sequential execution (optimal for this use case)
  *    - Result sets are aggregated, not raw transactional data
  *    - Most queries return summary data (< 1000 rows)
  *    - If pagination needed: Use LIMIT/OFFSET in TypeORM with .take()/.skip()
@@ -84,7 +86,7 @@ export class ErpDataService implements OnModuleInit {
 	
 	// ✅ Query Semaphore for limiting concurrent queries
 	private activeQueries = 0;
-	private readonly MAX_CONCURRENT_QUERIES = 3; // Max 3 parallel queries at once
+	private readonly MAX_CONCURRENT_QUERIES = 3; // Max 3 concurrent queries (legacy, now using sequential)
 	private queryQueue: Array<() => Promise<any>> = [];
 	
 	// ✅ Retry Configuration for transient failures
@@ -483,11 +485,74 @@ export class ErpDataService implements OnModuleInit {
 	}
 
 	/**
+	 * ✅ PHASE 2: Calculate date range in days
+	 */
+	private calculateDateRangeDays(startDate: string, endDate: string): number {
+		const start = new Date(startDate);
+		const end = new Date(endDate);
+		const diffTime = Math.abs(end.getTime() - start.getTime());
+		const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+		return diffDays;
+	}
+
+	/**
+	 * ✅ PHASE 2: Split large date ranges into smaller chunks
+	 * Returns array of date range chunks (max 30 days per chunk)
+	 */
+	private splitDateRange(startDate: string, endDate: string, chunkSizeDays: number = 30): Array<{ startDate: string; endDate: string }> {
+		const start = new Date(startDate);
+		const end = new Date(endDate);
+		const chunks: Array<{ startDate: string; endDate: string }> = [];
+		
+		let currentStart = new Date(start);
+		
+		while (currentStart < end) {
+			const currentEnd = new Date(currentStart);
+			currentEnd.setDate(currentEnd.getDate() + chunkSizeDays - 1);
+			
+			// Don't go past the end date
+			if (currentEnd > end) {
+				currentEnd.setTime(end.getTime());
+			}
+			
+			chunks.push({
+				startDate: currentStart.toISOString().split('T')[0],
+				endDate: currentEnd.toISOString().split('T')[0],
+			});
+			
+			currentStart = new Date(currentEnd);
+			currentStart.setDate(currentStart.getDate() + 1);
+		}
+		
+		return chunks;
+	}
+
+	/**
+	 * ✅ PHASE 2: Log slow query warning
+	 */
+	private logSlowQuery(operationId: string, queryDuration: number, dateRangeDays: number, startDate: string, endDate: string): void {
+		if (queryDuration > 5000) {
+			this.logger.warn(`[${operationId}] ⚠️ Slow query detected: ${queryDuration}ms`);
+			this.logger.warn(`[${operationId}] Date range: ${startDate} to ${endDate} (${dateRangeDays} days)`);
+			this.logger.warn(`[${operationId}] Consider using date range chunking for ranges > 90 days`);
+		}
+	}
+
+	/**
 	 * Get sales headers by date range with optional filters
 	 * Only returns Tax Invoices (doc_type = 1) by default
+	 * ✅ PHASE 2: Supports date range chunking for large ranges (>90 days)
 	 */
 	async getSalesHeadersByDateRange(filters: ErpQueryFilters): Promise<TblSalesHeader[]> {
 		const operationId = this.generateOperationId('GET_HEADERS');
+		const dateRangeDays = this.calculateDateRangeDays(filters.startDate, filters.endDate);
+		
+		// ✅ PHASE 2: Use chunking for large date ranges (>90 days)
+		if (dateRangeDays > 90) {
+			this.logger.log(`[${operationId}] Large date range detected (${dateRangeDays} days) - using chunking`);
+			return await this.getSalesHeadersBatched(filters);
+		}
+		
 		const cacheKey = this.buildCacheKey('headers', filters, ['1']);
 
 		this.logger.log(`[${operationId}] Starting getSalesHeadersByDateRange operation`);
@@ -535,6 +600,9 @@ export class ErpDataService implements OnModuleInit {
 			);
 			
 			const queryDuration = Date.now() - queryStart;
+			
+			// ✅ PHASE 2: Log slow query warning
+			this.logSlowQuery(operationId, queryDuration, dateRangeDays, filters.startDate, filters.endDate);
 
 			this.logger.log(`[${operationId}] Database query completed in ${queryDuration}ms`);
 			this.logger.log(`[${operationId}] Retrieved ${results.length} sales headers`);
@@ -574,17 +642,88 @@ export class ErpDataService implements OnModuleInit {
 	}
 
 	/**
+	 * ✅ PHASE 2: Get sales headers using batched processing for large date ranges
+	 * Processes date range in chunks and combines results
+	 * Note: This method bypasses chunking check to avoid infinite recursion
+	 */
+	private async getSalesHeadersBatched(filters: ErpQueryFilters): Promise<TblSalesHeader[]> {
+		const operationId = this.generateOperationId('GET_HEADERS_BATCHED');
+		const chunks = this.splitDateRange(filters.startDate, filters.endDate, 30);
+		
+		this.logger.log(`[${operationId}] Processing ${chunks.length} date range chunks...`);
+		
+		const allResults: TblSalesHeader[] = [];
+		
+		for (let i = 0; i < chunks.length; i++) {
+			const chunk = chunks[i];
+			this.logger.log(`[${operationId}] Processing chunk ${i + 1}/${chunks.length}: ${chunk.startDate} to ${chunk.endDate}`);
+			
+			const chunkFilters: ErpQueryFilters = {
+				...filters,
+				startDate: chunk.startDate,
+				endDate: chunk.endDate,
+			};
+			
+			// Directly call the internal query method to avoid chunking check recursion
+			const chunkCacheKey = this.buildCacheKey('headers', chunkFilters, ['1']);
+			const cached = await this.cacheManager.get<TblSalesHeader[]>(chunkCacheKey);
+			
+			if (cached) {
+				this.logger.log(`[${operationId}] Chunk ${i + 1} cache HIT: ${cached.length} records`);
+				allResults.push(...cached);
+			} else {
+				// Query directly without chunking check (chunks are already small)
+				const chunkResults = await this.executeQueryWithProtection(
+					async () => {
+						const query = this.salesHeaderRepo
+							.createQueryBuilder('header')
+							.where('header.sale_date BETWEEN :startDate AND :endDate', {
+								startDate: chunkFilters.startDate,
+								endDate: chunkFilters.endDate,
+							})
+							.andWhere('header.doc_type = :docType', { docType: 1 });
+
+						if (chunkFilters.storeCode) {
+							query.andWhere('header.store = :store', { store: chunkFilters.storeCode });
+						}
+
+						return await query.getMany();
+					},
+					operationId,
+					90000,
+				);
+				
+				await this.cacheManager.set(chunkCacheKey, chunkResults, this.CACHE_TTL);
+				allResults.push(...chunkResults);
+				this.logger.log(`[${operationId}] Chunk ${i + 1} completed: ${chunkResults.length} records`);
+			}
+		}
+		
+		this.logger.log(`[${operationId}] ✅ Batched processing complete: ${allResults.length} total records`);
+		return allResults;
+	}
+
+	/**
 	 * Get sales lines by date range with doc_type filtering
 	 *
 	 * @param filters - Query filters
 	 * @param includeDocTypes - Document types to include (defaults to Tax Invoices only)
 	 * @returns Sales lines matching criteria
+	 * ✅ PHASE 2: Supports date range chunking for large ranges (>90 days)
 	 */
 	async getSalesLinesByDateRange(
 		filters: ErpQueryFilters,
 		includeDocTypes: string[] = ['1'], // Default: Tax Invoices only
 	): Promise<TblSalesLines[]> {
 		const operationId = this.generateOperationId('GET_LINES');
+		const dateRangeDays = this.calculateDateRangeDays(filters.startDate, filters.endDate);
+		
+		// ✅ PHASE 2: Use chunking for large date ranges (>90 days)
+		if (dateRangeDays > 90) {
+			this.logger.log(`[${operationId}] Large date range detected (${dateRangeDays} days) - using chunking`);
+			return await this.getSalesLinesBatched(filters, includeDocTypes);
+		}
+		
 		const cacheKey = this.buildCacheKey('lines', filters, includeDocTypes);
 
 		this.logger.log(`[${operationId}] Starting getSalesLinesByDateRange operation`);
@@ -641,6 +780,9 @@ export class ErpDataService implements OnModuleInit {
 			);
 			
 			const queryDuration = Date.now() - queryStart;
+			
+			// ✅ PHASE 2: Log slow query warning
+			this.logSlowQuery(operationId, queryDuration, dateRangeDays, filters.startDate, filters.endDate);
 
 			this.logger.log(`[${operationId}] Database query completed in ${queryDuration}ms`);
 			this.logger.log(`[${operationId}] Retrieved ${results.length} sales lines`);
@@ -679,6 +821,78 @@ export class ErpDataService implements OnModuleInit {
 			this.logger.error(`[${operationId}] Stack Trace: ${error.stack}`);
 			throw error;
 		}
+	}
+
+	/**
+	 * ✅ PHASE 2: Get sales lines using batched processing for large date ranges
+	 * Processes date range in chunks and combines results
+	 * Note: This method bypasses chunking check to avoid infinite recursion
+	 */
+	private async getSalesLinesBatched(
+		filters: ErpQueryFilters,
+		includeDocTypes: string[],
+	): Promise<TblSalesLines[]> {
+		const operationId = this.generateOperationId('GET_LINES_BATCHED');
+		const chunks = this.splitDateRange(filters.startDate, filters.endDate, 30);
+		
+		this.logger.log(`[${operationId}] Processing ${chunks.length} date range chunks...`);
+		
+		const allResults: TblSalesLines[] = [];
+		
+		for (let i = 0; i < chunks.length; i++) {
+			const chunk = chunks[i];
+			this.logger.log(`[${operationId}] Processing chunk ${i + 1}/${chunks.length}: ${chunk.startDate} to ${chunk.endDate}`);
+			
+			const chunkFilters: ErpQueryFilters = {
+				...filters,
+				startDate: chunk.startDate,
+				endDate: chunk.endDate,
+			};
+			
+			// Directly call the internal query method to avoid chunking check recursion
+			const chunkCacheKey = this.buildCacheKey('lines', chunkFilters, includeDocTypes);
+			const cached = await this.cacheManager.get<TblSalesLines[]>(chunkCacheKey);
+			
+			if (cached) {
+				this.logger.log(`[${operationId}] Chunk ${i + 1} cache HIT: ${cached.length} records`);
+				allResults.push(...cached);
+			} else {
+				// Query directly without chunking check (chunks are already small)
+				const chunkResults = await this.executeQueryWithProtection(
+					async () => {
+						const query = this.salesLinesRepo
+							.createQueryBuilder('line')
+							.where('line.sale_date BETWEEN :startDate AND :endDate', {
+								startDate: chunkFilters.startDate,
+								endDate: chunkFilters.endDate,
+							})
+							.andWhere('line.doc_type IN (:...docTypes)', { docTypes: includeDocTypes });
+
+						if (chunkFilters.storeCode) {
+							query.andWhere('line.store = :store', { store: chunkFilters.storeCode });
+						}
+
+						if (chunkFilters.category) {
+							query.andWhere('line.category = :category', { category: chunkFilters.category });
+						}
+
+						query.andWhere('line.item_code IS NOT NULL');
+						query.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' });
+
+						return await query.getMany();
+					},
+					operationId,
+					120000,
+				);
+				
+				await this.cacheManager.set(chunkCacheKey, chunkResults, this.CACHE_TTL);
+				allResults.push(...chunkResults);
+				this.logger.log(`[${operationId}] Chunk ${i + 1} completed: ${chunkResults.length} records`);
+			}
+		}
+		
+		this.logger.log(`[${operationId}] ✅ Batched processing complete: ${allResults.length} total records`);
+		return allResults;
 	}
 
 	/**
@@ -721,6 +935,9 @@ export class ErpDataService implements OnModuleInit {
 			this.logger.log(`[${operationId}] Cache MISS - Computing daily aggregations...`);
 
 			const queryStart = Date.now();
+			const dateRangeDays = this.calculateDateRangeDays(filters.startDate, filters.endDate);
+			
+			// ✅ PHASE 2: Add result size limit for aggregations (max 10k records)
 			const query = this.salesLinesRepo
 				.createQueryBuilder('line')
 				.select([
@@ -742,7 +959,8 @@ export class ErpDataService implements OnModuleInit {
 				.andWhere('line.item_code IS NOT NULL')
 				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' })
 				.groupBy('DATE(line.sale_date), line.store')
-				.orderBy('DATE(line.sale_date)', 'ASC');
+				.orderBy('DATE(line.sale_date)', 'ASC')
+				.limit(10000); // ✅ PHASE 2: Max 10k records per aggregation
 
 			if (filters.storeCode) {
 				this.logger.debug(`[${operationId}] Filtering by store: ${filters.storeCode}`);
@@ -751,6 +969,9 @@ export class ErpDataService implements OnModuleInit {
 
 			const results = await query.getRawMany();
 			const queryDuration = Date.now() - queryStart;
+			
+			// ✅ PHASE 2: Log slow query warning
+			this.logSlowQuery(operationId, queryDuration, dateRangeDays, filters.startDate, filters.endDate);
 
 			this.logger.log(`[${operationId}] Aggregation query completed in ${queryDuration}ms`);
 			this.logger.log(`[${operationId}] Computed ${results.length} daily aggregations`);
@@ -800,6 +1021,9 @@ export class ErpDataService implements OnModuleInit {
 			this.logger.log(`[${operationId}] Cache MISS - Computing branch aggregations...`);
 
 			const queryStart = Date.now();
+			const dateRangeDays = this.calculateDateRangeDays(filters.startDate, filters.endDate);
+			
+			// ✅ PHASE 2: Add result size limit for aggregations (max 10k records)
 			const query = this.salesLinesRepo
 				.createQueryBuilder('line')
 				.select([
@@ -820,10 +1044,14 @@ export class ErpDataService implements OnModuleInit {
 				.andWhere('line.item_code IS NOT NULL')
 				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' })
 				.groupBy('line.store')
-				.orderBy('totalRevenue', 'DESC');
+				.orderBy('totalRevenue', 'DESC')
+				.limit(10000); // ✅ PHASE 2: Max 10k records per aggregation
 
 			const results = await query.getRawMany();
 			const queryDuration = Date.now() - queryStart;
+			
+			// ✅ PHASE 2: Log slow query warning
+			this.logSlowQuery(operationId, queryDuration, dateRangeDays, filters.startDate, filters.endDate);
 
 			this.logger.log(`[${operationId}] Aggregation query completed in ${queryDuration}ms`);
 			this.logger.log(`[${operationId}] Computed ${results.length} branch aggregations`);
@@ -873,6 +1101,9 @@ export class ErpDataService implements OnModuleInit {
 			this.logger.log(`[${operationId}] Cache MISS - Computing category aggregations...`);
 
 			const queryStart = Date.now();
+			const dateRangeDays = this.calculateDateRangeDays(filters.startDate, filters.endDate);
+			
+			// ✅ PHASE 2: Add result size limit for aggregations (max 10k records)
 			const query = this.salesLinesRepo
 				.createQueryBuilder('line')
 				.select([
@@ -894,7 +1125,8 @@ export class ErpDataService implements OnModuleInit {
 				.andWhere('line.item_code IS NOT NULL')
 				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' })
 				.groupBy('line.category, line.store')
-				.orderBy('totalRevenue', 'DESC');
+				.orderBy('totalRevenue', 'DESC')
+				.limit(10000); // ✅ PHASE 2: Max 10k records per aggregation
 
 			if (filters.storeCode) {
 				this.logger.debug(`[${operationId}] Filtering by store: ${filters.storeCode}`);
@@ -903,6 +1135,9 @@ export class ErpDataService implements OnModuleInit {
 
 			const results = await query.getRawMany();
 			const queryDuration = Date.now() - queryStart;
+			
+			// ✅ PHASE 2: Log slow query warning
+			this.logSlowQuery(operationId, queryDuration, dateRangeDays, filters.startDate, filters.endDate);
 
 			this.logger.log(`[${operationId}] Aggregation query completed in ${queryDuration}ms`);
 			this.logger.log(`[${operationId}] Computed ${results.length} category aggregations`);
@@ -952,6 +1187,9 @@ export class ErpDataService implements OnModuleInit {
 			this.logger.log(`[${operationId}] Cache MISS - Computing product aggregations...`);
 
 			const queryStart = Date.now();
+			const dateRangeDays = this.calculateDateRangeDays(filters.startDate, filters.endDate);
+			
+			// ✅ PHASE 2: Use provided limit or default to 50 (already has limit)
 			const query = this.salesLinesRepo
 				.createQueryBuilder('line')
 				.select([
@@ -974,7 +1212,7 @@ export class ErpDataService implements OnModuleInit {
 				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' })
 				.groupBy('line.item_code, line.description, line.category')
 				.orderBy('totalRevenue', 'DESC')
-				.limit(limit);
+				.limit(Math.min(limit, 10000)); // ✅ PHASE 2: Cap at 10k even if limit is higher
 
 			if (filters.storeCode) {
 				this.logger.debug(`[${operationId}] Filtering by store: ${filters.storeCode}`);
@@ -983,6 +1221,9 @@ export class ErpDataService implements OnModuleInit {
 
 			const results = await query.getRawMany();
 			const queryDuration = Date.now() - queryStart;
+			
+			// ✅ PHASE 2: Log slow query warning
+			this.logSlowQuery(operationId, queryDuration, dateRangeDays, filters.startDate, filters.endDate);
 
 			this.logger.log(`[${operationId}] Aggregation query completed in ${queryDuration}ms`);
 			this.logger.log(`[${operationId}] Computed ${results.length} product aggregations`);
@@ -1007,9 +1248,9 @@ export class ErpDataService implements OnModuleInit {
 	}
 
 	/**
-	 * Execute multiple aggregation queries in batches (not all parallel)
-	 * ✅ IMPROVED: Batched execution to prevent connection pool exhaustion
-	 * Executes 2 queries at a time instead of 4 to reduce load
+	 * Execute multiple aggregation queries sequentially (one after another)
+	 * ✅ IMPROVED: Sequential execution to prevent connection pool exhaustion
+	 * Executes queries one at a time to ensure reliability and prevent database overload
 	 */
 	async getAllAggregationsParallel(filters: ErpQueryFilters): Promise<{
 		daily: DailyAggregation[];
@@ -1017,51 +1258,56 @@ export class ErpDataService implements OnModuleInit {
 		category: CategoryAggregation[];
 		products: ProductAggregation[];
 	}> {
-		const operationId = this.generateOperationId('GET_ALL_AGG_BATCHED');
+		const operationId = this.generateOperationId('GET_ALL_AGG_SEQUENTIAL');
 
-		this.logger.log(`[${operationId}] ===== Starting Batched Aggregations =====`);
+		this.logger.log(`[${operationId}] ===== Starting Sequential Aggregations =====`);
 		this.logger.log(`[${operationId}] Date range: ${filters.startDate} to ${filters.endDate}`);
-		this.logger.log(`[${operationId}] Executing queries in 2 batches (2 queries per batch)...`);
+		this.logger.log(`[${operationId}] Executing queries sequentially (one after another)...`);
 
 		const startTime = Date.now();
 
 		try {
-			// ✅ BATCH 1: Critical queries (daily + branch)
-			this.logger.log(`[${operationId}] Batch 1: Executing daily + branch aggregations...`);
-			const batch1Start = Date.now();
-		const [daily, branch] = await Promise.all([
-			this.getDailyAggregations(filters),
-			this.getBranchAggregations(filters),
-		]);
-		const batch1Duration = Date.now() - batch1Start;
-		this.logger.log(`[${operationId}] Batch 1 completed in ${batch1Duration}ms`);
+			// ✅ Sequential execution - queries run one after another
+			this.logger.log(`[${operationId}] Step 1/4: Getting daily aggregations...`);
+			const step1Start = Date.now();
+			const daily = await this.getDailyAggregations(filters);
+			const step1Duration = Date.now() - step1Start;
+			this.logger.log(`[${operationId}] Step 1 completed in ${step1Duration}ms (${daily.length} records)`);
 
-			// ✅ BATCH 2: Secondary queries (category + products)
-			this.logger.log(`[${operationId}] Batch 2: Executing category + product aggregations...`);
-			const batch2Start = Date.now();
-			const [category, products] = await Promise.all([
-				this.getCategoryAggregations(filters),
-				this.getProductAggregations(filters),
-			]);
-			const batch2Duration = Date.now() - batch2Start;
-			this.logger.log(`[${operationId}] Batch 2 completed in ${batch2Duration}ms`);
+			this.logger.log(`[${operationId}] Step 2/4: Getting branch aggregations...`);
+			const step2Start = Date.now();
+			const branch = await this.getBranchAggregations(filters);
+			const step2Duration = Date.now() - step2Start;
+			this.logger.log(`[${operationId}] Step 2 completed in ${step2Duration}ms (${branch.length} records)`);
+
+			this.logger.log(`[${operationId}] Step 3/4: Getting category aggregations...`);
+			const step3Start = Date.now();
+			const category = await this.getCategoryAggregations(filters);
+			const step3Duration = Date.now() - step3Start;
+			this.logger.log(`[${operationId}] Step 3 completed in ${step3Duration}ms (${category.length} records)`);
+
+			this.logger.log(`[${operationId}] Step 4/4: Getting product aggregations...`);
+			const step4Start = Date.now();
+			const products = await this.getProductAggregations(filters);
+			const step4Duration = Date.now() - step4Start;
+			this.logger.log(`[${operationId}] Step 4 completed in ${step4Duration}ms (${products.length} records)`);
 
 			const duration = Date.now() - startTime;
 
-			this.logger.log(`[${operationId}] ===== Batched Aggregations Results =====`);
+			this.logger.log(`[${operationId}] ===== Sequential Aggregations Results =====`);
 			this.logger.log(`[${operationId}] Daily aggregations: ${daily.length} records`);
 			this.logger.log(`[${operationId}] Branch aggregations: ${branch.length} records`);
 			this.logger.log(`[${operationId}] Category aggregations: ${category.length} records`);
 			this.logger.log(`[${operationId}] Product aggregations: ${products.length} records`);
-			this.logger.log(`[${operationId}] ✅ All batched aggregations completed in ${duration}ms`);
+			this.logger.log(`[${operationId}] ✅ All sequential aggregations completed in ${duration}ms`);
 			this.logger.log(`[${operationId}] Circuit breaker state: ${this.circuitBreakerState}`);
 
 			return { daily, branch, category, products };
 		} catch (error) {
 			const duration = Date.now() - startTime;
 			
-			// ✅ Enhanced error diagnostics for batched operations
-			this.logger.error(`[${operationId}] ❌ Error executing batched aggregations (${duration}ms)`);
+			// ✅ Enhanced error diagnostics for sequential operations
+			this.logger.error(`[${operationId}] ❌ Error executing sequential aggregations (${duration}ms)`);
 			this.logger.error(`[${operationId}] Error Type: ${error.constructor?.name || 'Unknown'}`);
 			this.logger.error(`[${operationId}] Error Message: ${error.message}`);
 			this.logger.error(`[${operationId}] Error Code: ${error.code || 'N/A'}`);
@@ -1147,6 +1393,63 @@ export class ErpDataService implements OnModuleInit {
 			this.logger.error(`Error getting cache stats: ${error.message}`);
 			return { keys: 0 };
 		}
+	}
+
+	/**
+	 * ✅ PHASE 1 & 3: Verify cache health for a given date range
+	 * Checks that all required cache keys exist
+	 */
+	async verifyCacheHealth(filters: ErpQueryFilters): Promise<{
+		aggregations: boolean;
+		hourlySales: boolean;
+		paymentTypes: boolean;
+		conversionRate: boolean;
+		masterData: boolean;
+		salesLines: boolean;
+		salesHeaders: boolean;
+	}> {
+		// Build cache keys using the same logic as buildCacheKey
+		const buildKey = (dataType: string, docTypes?: string[]) => {
+			return [
+				'erp',
+				'v2',
+				dataType,
+				filters.startDate,
+				filters.endDate,
+				filters.storeCode || 'all',
+				filters.category || 'all',
+				docTypes ? docTypes.join('-') : 'all',
+			].join(':');
+		};
+
+		// Check each cache key
+		const aggregationsKey = buildKey('daily_agg');
+		const hourlySalesKey = buildKey('hourly_sales', ['1']);
+		const paymentTypesKey = buildKey('payment_types', ['1']);
+		const conversionRateKey = buildKey('conversion_rate');
+		const masterDataKey = buildKey('master_data');
+		const salesLinesKey = buildKey('lines', ['1']);
+		const salesHeadersKey = buildKey('headers', ['1']);
+
+		const [aggregations, hourlySales, paymentTypes, conversionRate, masterData, salesLines, salesHeaders] = await Promise.all([
+			this.cacheManager.get(aggregationsKey),
+			this.cacheManager.get(hourlySalesKey),
+			this.cacheManager.get(paymentTypesKey),
+			this.cacheManager.get(conversionRateKey),
+			this.cacheManager.get(masterDataKey),
+			this.cacheManager.get(salesLinesKey),
+			this.cacheManager.get(salesHeadersKey),
+		]);
+
+		return {
+			aggregations: !!aggregations,
+			hourlySales: !!hourlySales,
+			paymentTypes: !!paymentTypes,
+			conversionRate: !!conversionRate,
+			masterData: !!masterData,
+			salesLines: !!salesLines,
+			salesHeaders: !!salesHeaders,
+		};
 	}
 
 	/**
@@ -1443,11 +1746,18 @@ export class ErpDataService implements OnModuleInit {
 				invoicesQuery = invoicesQuery.andWhere('header.store = :store', { store: filters.storeCode });
 			}
 
-			// Execute both queries in parallel
-			const [quotationsResult, invoicesResult] = await Promise.all([
-				quotationsQuery.getRawOne(),
-				invoicesQuery.getRawOne(),
-			]);
+			// ✅ PHASE 3: Sequential execution with individual step timing
+			this.logger.log(`[${operationId}] Step 1/2: Getting quotations data...`);
+			const step1Start = Date.now();
+			const quotationsResult = await quotationsQuery.getRawOne();
+			const step1Duration = Date.now() - step1Start;
+			this.logger.log(`[${operationId}] Step 1 completed in ${step1Duration}ms`);
+			
+			this.logger.log(`[${operationId}] Step 2/2: Getting converted invoices data...`);
+			const step2Start = Date.now();
+			const invoicesResult = await invoicesQuery.getRawOne();
+			const step2Duration = Date.now() - step2Start;
+			this.logger.log(`[${operationId}] Step 2 completed in ${step2Duration}ms`);
 
 			const queryDuration = Date.now() - queryStart;
 
@@ -1520,13 +1830,30 @@ export class ErpDataService implements OnModuleInit {
 
 			const queryStart = Date.now();
 
-			// Execute all queries in parallel
-			const [branches, products, salespeople, paymentMethods] = await Promise.all([
-				this.getUniqueBranches(filters),
-				this.getUniqueProducts(filters),
-				this.getUniqueSalespeople(filters),
-				this.getUniquePaymentMethods(filters),
-			]);
+			// ✅ PHASE 3: Sequential execution with individual step timing
+			this.logger.log(`[${operationId}] Step 1/4: Getting branches...`);
+			const step1Start = Date.now();
+			const branches = await this.getUniqueBranches(filters);
+			const step1Duration = Date.now() - step1Start;
+			this.logger.log(`[${operationId}] Step 1 completed in ${step1Duration}ms (${branches.length} records)`);
+			
+			this.logger.log(`[${operationId}] Step 2/4: Getting products...`);
+			const step2Start = Date.now();
+			const products = await this.getUniqueProducts(filters);
+			const step2Duration = Date.now() - step2Start;
+			this.logger.log(`[${operationId}] Step 2 completed in ${step2Duration}ms (${products.length} records)`);
+			
+			this.logger.log(`[${operationId}] Step 3/4: Getting salespeople...`);
+			const step3Start = Date.now();
+			const salespeople = await this.getUniqueSalespeople(filters);
+			const step3Duration = Date.now() - step3Start;
+			this.logger.log(`[${operationId}] Step 3 completed in ${step3Duration}ms (${salespeople.length} records)`);
+			
+			this.logger.log(`[${operationId}] Step 4/4: Getting payment methods...`);
+			const step4Start = Date.now();
+			const paymentMethods = await this.getUniquePaymentMethods(filters);
+			const step4Duration = Date.now() - step4Start;
+			this.logger.log(`[${operationId}] Step 4 completed in ${step4Duration}ms (${paymentMethods.length} records)`);
 
 			const queryDuration = Date.now() - queryStart;
 

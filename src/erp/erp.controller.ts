@@ -286,5 +286,58 @@ export class ErpController {
 			}
 		});
 	}
+
+	/**
+	 * ✅ PHASE 3: Get cache health check for a specific date range
+	 */
+	@Get('cache/health')
+	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER)
+	@ApiOperation({ summary: 'Check cache health for a date range' })
+	@ApiQuery({ name: 'startDate', required: true, example: '2024-01-01' })
+	@ApiQuery({ name: 'endDate', required: true, example: '2024-01-31' })
+	@ApiQuery({ name: 'storeCode', required: false })
+	@ApiQuery({ name: 'category', required: false })
+	@ApiResponse({ status: 200, description: 'Cache health status' })
+	async getCacheHealth(
+		@Query('startDate') startDate: string,
+		@Query('endDate') endDate: string,
+		@Query('storeCode') storeCode?: string,
+		@Query('category') category?: string,
+	) {
+		return this.executeWithThrottling('cache-health', async () => {
+			try {
+				const filters = {
+					startDate,
+					endDate,
+					storeCode,
+					category,
+				};
+				
+				const health = await this.erpDataService.verifyCacheHealth(filters);
+				
+				// Calculate completeness percentage
+				const totalChecks = Object.keys(health).length;
+				const cachedCount = Object.values(health).filter(Boolean).length;
+				const completeness = (cachedCount / totalChecks) * 100;
+				
+				return {
+					success: true,
+					data: {
+						...health,
+						completeness: `${completeness.toFixed(1)}%`,
+						cachedCount,
+						totalChecks,
+					},
+					timestamp: new Date().toISOString(),
+				};
+			} catch (error) {
+				this.logger.error(`Cache health check error: ${error.message}`);
+				return {
+					success: false,
+					error: error.message,
+				};
+			}
+		});
+	}
 }
 

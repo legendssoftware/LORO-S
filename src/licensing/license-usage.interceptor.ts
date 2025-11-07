@@ -1,5 +1,5 @@
-import { Injectable, NestInterceptor, ExecutionContext, CallHandler, Logger, Inject } from '@nestjs/common';
-import { Observable } from 'rxjs';
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler, Logger, Inject, HttpException } from '@nestjs/common';
+import { Observable, throwError } from 'rxjs';
 import { tap, catchError } from 'rxjs/operators';
 import { LicenseUsageService } from './license-usage.service';
 import { MetricType } from '../lib/enums/licenses';
@@ -8,7 +8,6 @@ import { Request } from 'express';
 import { Token } from '../lib/types/token';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
-import { of } from 'rxjs';
 
 // Custom timeout error class
 class LicenseTimeoutError extends Error {
@@ -112,9 +111,16 @@ export class LicenseUsageInterceptor implements NestInterceptor {
 					}
 				}),
 				catchError((error) => {
-					// Handle any errors in the main request flow
-					this.logger.error(`❌ Error in license interceptor request flow: ${error.message}`);
-					return of(error);
+					// Re-throw HTTP exceptions (BadRequestException, UnauthorizedException, etc.)
+					// These are legitimate business logic errors that should be handled by NestJS exception filters
+					if (error instanceof HttpException) {
+						return throwError(() => error);
+					}
+					
+					// Only log unexpected errors (not HTTP exceptions) that occur in the request flow
+					// These would be unexpected errors that might be related to license tracking
+					this.logger.error(`❌ Unexpected error in license interceptor request flow: ${error.message}`, error.stack);
+					return throwError(() => error);
 				})
 			);
 		} catch (error) {

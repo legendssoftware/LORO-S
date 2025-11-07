@@ -97,14 +97,22 @@ export class PerformanceDashboardGenerator {
 			// Generate all chart data (now async due to hourly sales)
 			const charts = await this.generateCharts(rawData, params);
 
-			// Generate table data (parallel execution for performance)
-			this.logger.log('Generating table data in parallel...');
-			const [dailySalesPerformance, branchCategoryPerformance, salesPerStore, masterData] = await Promise.all([
-				this.generateDailySalesPerformance(params),
-				this.generateBranchCategoryPerformance(params),
-				this.generateSalesPerStore(params),
-				this.getMasterData(params),
-			]);
+			// Generate table data (sequential execution for reliability)
+			this.logger.log('Starting sequential query execution for table data...');
+			
+			this.logger.log('Step 1/4: Generating daily sales performance...');
+			const dailySalesPerformance = await this.generateDailySalesPerformance(params);
+			
+			this.logger.log('Step 2/4: Generating branch-category performance...');
+			const branchCategoryPerformance = await this.generateBranchCategoryPerformance(params);
+			
+			this.logger.log('Step 3/4: Generating sales per store...');
+			const salesPerStore = await this.generateSalesPerStore(params);
+			
+			this.logger.log('Step 4/4: Getting master data...');
+			const masterData = await this.getMasterData(params);
+			
+			this.logger.log('✅ All sequential queries completed successfully');
 			
 			// Calculate total transactions across all days
 			const totalTransactions = dailySalesPerformance.reduce((sum, day) => sum + day.basketCount, 0);

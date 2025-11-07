@@ -20,7 +20,7 @@ import { ErpController } from './erp.controller';
  * Uses a separate database connection ('erp') configured in app.module.ts.
  * 
  * Features:
- * - Parallel query execution
+ * - Sequential query execution (one query at a time)
  * - Aggressive caching with automatic warming
  * - Data transformation to performance dashboard format
  * - Optimized aggregations
