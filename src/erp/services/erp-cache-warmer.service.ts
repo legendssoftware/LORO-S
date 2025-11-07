@@ -3,9 +3,15 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { ErpDataService } from './erp-data.service';
 import { ErpQueryFilters } from '../interfaces/erp-data.interface';
 
+// Type declaration for Node.js garbage collection (available when running with --expose-gc flag)
+declare global {
+	// eslint-disable-next-line no-var
+	var gc: (() => void) | undefined;
+}
+
 /**
  * ERP Cache Warmer Service
- *
+ * 
  * Pre-caches common date ranges to ensure fast response times
  * for frequently accessed data.
  */
@@ -32,9 +38,9 @@ export class ErpCacheWarmerService implements OnModuleInit {
 	}
 
 	/**
-	 * Warm cache twice per day (at 8 AM, 10 AM, 12 PM, 2 PM, 4 PM, 6 PM)
+	 * Warm cache twice per day (at 9 AM and 5 PM)
 	 */
-	@Cron('0 8,10,12,14,16,18 * * *')
+	@Cron('0 9,16 * * *')
 	async warmCacheTwiceDaily() {
 		this.logger.log('===== Scheduled Daily Cache Warming =====');
 		try {
@@ -66,21 +72,21 @@ export class ErpCacheWarmerService implements OnModuleInit {
 		for (let i = 0; i < dateRanges.length; i++) {
 			const { label, startDate, endDate } = dateRanges[i];
 			const rangeStart = Date.now();
-
+			
 			try {
 				this.logger.log(`[${i + 1}/${dateRanges.length}] Warming cache: ${label} (${startDate} to ${endDate})`);
-
+				
 				const filters: ErpQueryFilters = { startDate, endDate };
-
+				
 				// ✅ PHASE 1 & 4: Warm ALL chart data queries sequentially (with partial success)
 				const warmingResult = await this.warmAllChartData(filters, label);
-
+				
 				// ✅ PHASE 1: Verify cache after warming
 				const cacheHealth = await this.verifyCacheHealth(filters);
 				this.logCacheHealthStatus(label, cacheHealth);
-
+				
 				const rangeDuration = Date.now() - rangeStart;
-
+				
 				// Consider partial success as success (at least some cache entries created)
 				if (warmingResult.success.length > 0) {
 					successCount++;
@@ -100,15 +106,19 @@ export class ErpCacheWarmerService implements OnModuleInit {
 				errorCount++;
 				this.logger.warn(`❌ Failed to warm cache for ${label} (${rangeDuration}ms): ${error.message}`);
 			}
-
-			// Small delay between date ranges to let connection pool recover
+			
+			// Delay between date ranges to let connection pool recover and allow garbage collection
 			if (i < dateRanges.length - 1) {
-				await this.delay(100);
+				await this.delay(2000); // Increased to 2 seconds for better memory management
+				// Force garbage collection hint if available
+				if (global.gc) {
+					global.gc();
+				}
 			}
 		}
 
 		const duration = Date.now() - startTime;
-
+		
 		this.logger.log(`===== Cache Warming Completed =====`);
 		this.logger.log(`Total duration: ${duration}ms (${(duration / 1000).toFixed(2)}s)`);
 		this.logger.log(`Success: ${successCount}/${dateRanges.length}`);
@@ -131,7 +141,7 @@ export class ErpCacheWarmerService implements OnModuleInit {
 		const warmingStart = Date.now();
 		const success: string[] = [];
 		const failed: string[] = [];
-
+		
 		// Step 1/7: Aggregations
 		this.logger.log(`   Warming ${label}: 1/7 aggregations...`);
 		const step1Start = Date.now();
@@ -145,6 +155,7 @@ export class ErpCacheWarmerService implements OnModuleInit {
 			this.logger.warn(`   ❌ Aggregations failed (${step1Duration}ms): ${error.message}`);
 			failed.push('aggregations');
 		}
+		await this.delay(500); // Delay between queries for memory management
 
 		// Step 2/7: Hourly Sales
 		this.logger.log(`   Warming ${label}: 2/7 hourly sales...`);
@@ -159,6 +170,7 @@ export class ErpCacheWarmerService implements OnModuleInit {
 			this.logger.warn(`   ❌ Hourly sales failed (${step2Duration}ms): ${error.message}`);
 			failed.push('hourlySales');
 		}
+		await this.delay(500);
 
 		// Step 3/7: Payment Types
 		this.logger.log(`   Warming ${label}: 3/7 payment types...`);
@@ -173,6 +185,7 @@ export class ErpCacheWarmerService implements OnModuleInit {
 			this.logger.warn(`   ❌ Payment types failed (${step3Duration}ms): ${error.message}`);
 			failed.push('paymentTypes');
 		}
+		await this.delay(500);
 
 		// Step 4/7: Conversion Rate
 		this.logger.log(`   Warming ${label}: 4/7 conversion rate...`);
@@ -187,6 +200,7 @@ export class ErpCacheWarmerService implements OnModuleInit {
 			this.logger.warn(`   ❌ Conversion rate failed (${step4Duration}ms): ${error.message}`);
 			failed.push('conversionRate');
 		}
+		await this.delay(500);
 
 		// Step 5/7: Master Data
 		this.logger.log(`   Warming ${label}: 5/7 master data...`);
@@ -201,6 +215,7 @@ export class ErpCacheWarmerService implements OnModuleInit {
 			this.logger.warn(`   ❌ Master data failed (${step5Duration}ms): ${error.message}`);
 			failed.push('masterData');
 		}
+		await this.delay(500);
 
 		// Step 6/7: Sales Lines
 		this.logger.log(`   Warming ${label}: 6/7 sales lines...`);
@@ -215,6 +230,7 @@ export class ErpCacheWarmerService implements OnModuleInit {
 			this.logger.warn(`   ❌ Sales lines failed (${step6Duration}ms): ${error.message}`);
 			failed.push('salesLines');
 		}
+		await this.delay(500);
 
 		// Step 7/7: Sales Headers
 		this.logger.log(`   Warming ${label}: 7/7 sales headers...`);
@@ -238,7 +254,7 @@ export class ErpCacheWarmerService implements OnModuleInit {
 				`   Failed: ${failed.length}/7 (${failed.join(', ')}) - queries will work naturally when requested`,
 			);
 		}
-
+		
 		return { success, failed };
 	}
 
@@ -264,13 +280,13 @@ export class ErpCacheWarmerService implements OnModuleInit {
 	private logCacheHealthStatus(
 		label: string,
 		cacheHealth: {
-			aggregations: boolean;
-			hourlySales: boolean;
-			paymentTypes: boolean;
-			conversionRate: boolean;
-			masterData: boolean;
-			salesLines: boolean;
-			salesHeaders: boolean;
+		aggregations: boolean;
+		hourlySales: boolean;
+		paymentTypes: boolean;
+		conversionRate: boolean;
+		masterData: boolean;
+		salesLines: boolean;
+		salesHeaders: boolean;
 		},
 	): void {
 		this.logger.log(`✅ Cache warmed for ${label}:`);
@@ -281,7 +297,7 @@ export class ErpCacheWarmerService implements OnModuleInit {
 		this.logger.log(`   - Master Data: ${cacheHealth.masterData ? '✅' : '❌'}`);
 		this.logger.log(`   - Sales Lines: ${cacheHealth.salesLines ? '✅' : '❌'}`);
 		this.logger.log(`   - Sales Headers: ${cacheHealth.salesHeaders ? '✅' : '❌'}`);
-
+		
 		const allCached = Object.values(cacheHealth).every(Boolean);
 		if (!allCached) {
 			this.logger.warn(`   ⚠️ Some cache entries missing for ${label}`);
@@ -361,10 +377,10 @@ export class ErpCacheWarmerService implements OnModuleInit {
 		try {
 			this.logger.log('Clearing all ERP cache...');
 			await this.erpDataService.clearCache();
-
+			
 			this.logger.log('Re-warming cache...');
 			await this.warmCommonDateRanges();
-
+			
 			return {
 				success: true,
 				message: 'Cache refreshed successfully',
