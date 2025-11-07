@@ -5,7 +5,7 @@ import { ErpQueryFilters } from '../interfaces/erp-data.interface';
 
 /**
  * ERP Cache Warmer Service
- * 
+ *
  * Pre-caches common date ranges to ensure fast response times
  * for frequently accessed data.
  */
@@ -24,7 +24,7 @@ export class ErpCacheWarmerService implements OnModuleInit {
 		// Wait a few seconds after startup before warming cache
 		setTimeout(() => {
 			this.logger.log('Starting initial cache warming...');
-			this.warmCommonDateRanges().catch(error => {
+			this.warmCommonDateRanges().catch((error) => {
 				this.logger.error(`❌ Error warming cache on startup: ${error.message}`);
 				this.logger.error(`Stack: ${error.stack}`);
 			});
@@ -32,16 +32,16 @@ export class ErpCacheWarmerService implements OnModuleInit {
 	}
 
 	/**
-	 * Warm cache every 5 minutes
+	 * Warm cache twice per day (at 8 AM, 10 AM, 12 PM, 2 PM, 4 PM, 6 PM)
 	 */
-	@Cron('*/5 * * * *')
-	async warmCacheEvery5Minutes() {
-		this.logger.log('===== Scheduled 5-Minute Cache Warming =====');
+	@Cron('0 8,10,12,14,16,18 * * *')
+	async warmCacheTwiceDaily() {
+		this.logger.log('===== Scheduled Daily Cache Warming =====');
 		try {
 			await this.warmCommonDateRanges();
-			this.logger.log('===== 5-Minute Cache Warming Complete =====');
+			this.logger.log('===== Daily Cache Warming Complete =====');
 		} catch (error) {
-			this.logger.error(`❌ 5-minute cache warming failed: ${error.message}`);
+			this.logger.error(`❌ Daily cache warming failed: ${error.message}`);
 		}
 	}
 
@@ -66,26 +66,28 @@ export class ErpCacheWarmerService implements OnModuleInit {
 		for (let i = 0; i < dateRanges.length; i++) {
 			const { label, startDate, endDate } = dateRanges[i];
 			const rangeStart = Date.now();
-			
+
 			try {
 				this.logger.log(`[${i + 1}/${dateRanges.length}] Warming cache: ${label} (${startDate} to ${endDate})`);
-				
+
 				const filters: ErpQueryFilters = { startDate, endDate };
-				
+
 				// ✅ PHASE 1 & 4: Warm ALL chart data queries sequentially (with partial success)
 				const warmingResult = await this.warmAllChartData(filters, label);
-				
+
 				// ✅ PHASE 1: Verify cache after warming
 				const cacheHealth = await this.verifyCacheHealth(filters);
 				this.logCacheHealthStatus(label, cacheHealth);
-				
+
 				const rangeDuration = Date.now() - rangeStart;
-				
+
 				// Consider partial success as success (at least some cache entries created)
 				if (warmingResult.success.length > 0) {
 					successCount++;
 					if (warmingResult.failed.length > 0) {
-						this.logger.log(`✅ Partially warmed cache for: ${label} (${rangeDuration}ms) - ${warmingResult.success.length} succeeded, ${warmingResult.failed.length} failed`);
+						this.logger.log(
+							`✅ Partially warmed cache for: ${label} (${rangeDuration}ms) - ${warmingResult.success.length} succeeded, ${warmingResult.failed.length} failed`,
+						);
 					} else {
 						this.logger.log(`✅ Successfully warmed cache for: ${label} (${rangeDuration}ms)`);
 					}
@@ -98,7 +100,7 @@ export class ErpCacheWarmerService implements OnModuleInit {
 				errorCount++;
 				this.logger.warn(`❌ Failed to warm cache for ${label} (${rangeDuration}ms): ${error.message}`);
 			}
-			
+
 			// Small delay between date ranges to let connection pool recover
 			if (i < dateRanges.length - 1) {
 				await this.delay(100);
@@ -106,7 +108,7 @@ export class ErpCacheWarmerService implements OnModuleInit {
 		}
 
 		const duration = Date.now() - startTime;
-		
+
 		this.logger.log(`===== Cache Warming Completed =====`);
 		this.logger.log(`Total duration: ${duration}ms (${(duration / 1000).toFixed(2)}s)`);
 		this.logger.log(`Success: ${successCount}/${dateRanges.length}`);
@@ -119,14 +121,17 @@ export class ErpCacheWarmerService implements OnModuleInit {
 	 * Executes all chart data queries one after another, continuing on failures
 	 * No retries - if a query fails, it will be handled naturally when users request it
 	 */
-	private async warmAllChartData(filters: ErpQueryFilters, label: string): Promise<{
+	private async warmAllChartData(
+		filters: ErpQueryFilters,
+		label: string,
+	): Promise<{
 		success: string[];
 		failed: string[];
 	}> {
 		const warmingStart = Date.now();
 		const success: string[] = [];
 		const failed: string[] = [];
-		
+
 		// Step 1/7: Aggregations
 		this.logger.log(`   Warming ${label}: 1/7 aggregations...`);
 		const step1Start = Date.now();
@@ -229,9 +234,11 @@ export class ErpCacheWarmerService implements OnModuleInit {
 		this.logger.log(`   ✅ Chart data warming complete for ${label} (${totalWarmingDuration}ms)`);
 		this.logger.log(`   Success: ${success.length}/7 (${success.join(', ')})`);
 		if (failed.length > 0) {
-			this.logger.warn(`   Failed: ${failed.length}/7 (${failed.join(', ')}) - queries will work naturally when requested`);
+			this.logger.warn(
+				`   Failed: ${failed.length}/7 (${failed.join(', ')}) - queries will work naturally when requested`,
+			);
 		}
-		
+
 		return { success, failed };
 	}
 
@@ -254,15 +261,18 @@ export class ErpCacheWarmerService implements OnModuleInit {
 	/**
 	 * ✅ PHASE 1: Log cache health status
 	 */
-	private logCacheHealthStatus(label: string, cacheHealth: {
-		aggregations: boolean;
-		hourlySales: boolean;
-		paymentTypes: boolean;
-		conversionRate: boolean;
-		masterData: boolean;
-		salesLines: boolean;
-		salesHeaders: boolean;
-	}): void {
+	private logCacheHealthStatus(
+		label: string,
+		cacheHealth: {
+			aggregations: boolean;
+			hourlySales: boolean;
+			paymentTypes: boolean;
+			conversionRate: boolean;
+			masterData: boolean;
+			salesLines: boolean;
+			salesHeaders: boolean;
+		},
+	): void {
 		this.logger.log(`✅ Cache warmed for ${label}:`);
 		this.logger.log(`   - Aggregations: ${cacheHealth.aggregations ? '✅' : '❌'}`);
 		this.logger.log(`   - Hourly Sales: ${cacheHealth.hourlySales ? '✅' : '❌'}`);
@@ -271,23 +281,23 @@ export class ErpCacheWarmerService implements OnModuleInit {
 		this.logger.log(`   - Master Data: ${cacheHealth.masterData ? '✅' : '❌'}`);
 		this.logger.log(`   - Sales Lines: ${cacheHealth.salesLines ? '✅' : '❌'}`);
 		this.logger.log(`   - Sales Headers: ${cacheHealth.salesHeaders ? '✅' : '❌'}`);
-		
+
 		const allCached = Object.values(cacheHealth).every(Boolean);
 		if (!allCached) {
 			this.logger.warn(`   ⚠️ Some cache entries missing for ${label}`);
 		}
 	}
 
-
 	/**
 	 * Delay helper
 	 */
 	private delay(ms: number): Promise<void> {
-		return new Promise(resolve => setTimeout(resolve, ms));
+		return new Promise((resolve) => setTimeout(resolve, ms));
 	}
 
 	/**
 	 * Get common date ranges for caching
+	 * Only returns Today and Last 7 Days - other periods will be queried on demand
 	 */
 	private getCommonDateRanges(referenceDate: Date): Array<{
 		label: string;
@@ -295,10 +305,8 @@ export class ErpCacheWarmerService implements OnModuleInit {
 		endDate: string;
 	}> {
 		const today = this.formatDate(referenceDate);
-		const currentYear = referenceDate.getFullYear();
-		const currentMonth = referenceDate.getMonth(); // 0-11
 
-		// Calculate date ranges
+		// Calculate date ranges - only Today and Last 7 Days
 		const ranges = [];
 
 		// Today
@@ -314,63 +322,6 @@ export class ErpCacheWarmerService implements OnModuleInit {
 		ranges.push({
 			label: 'Last 7 Days',
 			startDate: this.formatDate(last7Days),
-			endDate: today,
-		});
-
-		// Last 30 days
-		const last30Days = new Date(referenceDate);
-		last30Days.setDate(last30Days.getDate() - 30);
-		ranges.push({
-			label: 'Last 30 Days',
-			startDate: this.formatDate(last30Days),
-			endDate: today,
-		});
-
-		// Last 90 days
-		const last90Days = new Date(referenceDate);
-		last90Days.setDate(last90Days.getDate() - 90);
-		ranges.push({
-			label: 'Last 90 Days',
-			startDate: this.formatDate(last90Days),
-			endDate: today,
-		});
-
-		// Current quarter
-		const currentQuarter = Math.floor(currentMonth / 3);
-		const quarterStartMonth = currentQuarter * 3;
-		const quarterEndMonth = quarterStartMonth + 2;
-		const quarterStart = new Date(currentYear, quarterStartMonth, 1);
-		const quarterEnd = new Date(currentYear, quarterEndMonth + 1, 0);
-		ranges.push({
-			label: `Q${currentQuarter + 1} ${currentYear}`,
-			startDate: this.formatDate(quarterStart),
-			endDate: this.formatDate(quarterEnd),
-		});
-
-		// Previous quarter
-		const prevQuarterStartMonth = quarterStartMonth - 3;
-		const prevQuarterEndMonth = prevQuarterStartMonth + 2;
-		const prevQuarterStart = new Date(currentYear, prevQuarterStartMonth, 1);
-		const prevQuarterEnd = new Date(currentYear, prevQuarterEndMonth + 1, 0);
-		ranges.push({
-			label: `Previous Quarter`,
-			startDate: this.formatDate(prevQuarterStart),
-			endDate: this.formatDate(prevQuarterEnd),
-		});
-
-		// Month to date
-		const monthStart = new Date(currentYear, currentMonth, 1);
-		ranges.push({
-			label: 'Month to Date',
-			startDate: this.formatDate(monthStart),
-			endDate: today,
-		});
-
-		// Year to date
-		const yearStart = new Date(currentYear, 0, 1);
-		ranges.push({
-			label: 'Year to Date',
-			startDate: this.formatDate(yearStart),
 			endDate: today,
 		});
 
@@ -410,10 +361,10 @@ export class ErpCacheWarmerService implements OnModuleInit {
 		try {
 			this.logger.log('Clearing all ERP cache...');
 			await this.erpDataService.clearCache();
-			
+
 			this.logger.log('Re-warming cache...');
 			await this.warmCommonDateRanges();
-			
+
 			return {
 				success: true,
 				message: 'Cache refreshed successfully',
@@ -427,4 +378,3 @@ export class ErpCacheWarmerService implements OnModuleInit {
 		}
 	}
 }
-
