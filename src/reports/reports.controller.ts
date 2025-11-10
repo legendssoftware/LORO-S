@@ -461,6 +461,14 @@ All filters apply to ALL data sections:
 		// Validate organization access
 		const userOrgId = request.user?.org?.uid || request.user?.organisationRef;
 		
+		// ✅ MIGRATION: Map org 1 requests to org 2 for performance tracking data
+		// This allows org 2 users to access data that was previously associated with org 1
+		if (filters.organisationId === 1 && userOrgId === 2) {
+			this.logger.log(`🔄 Migrating performance data request: org 1 → org 2`);
+			filters.organisationId = 2;
+		}
+		
+		// Validate organization access (after migration mapping)
 		if (filters.organisationId !== userOrgId && request.user.accessLevel !== AccessLevel.OWNER) {
 			this.logger.warn(`User ${request.user.uid} attempted to access org ${filters.organisationId} data without permission`);
 			throw new BadRequestException('Access denied to requested organization data');
@@ -524,6 +532,15 @@ Comprehensive performance analytics with advanced filtering and data visualizati
 
 		// Validate organization access
 		const userOrgId = request.user?.org?.uid || request.user?.organisationRef;
+		
+		// ✅ MIGRATION: Map org 1 requests to org 2 for performance tracking data
+		// This allows org 2 users to access data that was previously associated with org 1
+		if (filters.organisationId === 1 && userOrgId === 2) {
+			this.logger.log(`🔄 Migrating performance data request: org 1 → org 2`);
+			filters.organisationId = 2;
+		}
+		
+		// Validate organization access (after migration mapping)
 		if (filters.organisationId !== userOrgId && request.user.accessLevel !== AccessLevel.OWNER) {
 			this.logger.warn(`User ${request.user.uid} attempted to access org ${filters.organisationId} data without permission`);
 			throw new BadRequestException('Access denied to requested organization data');
