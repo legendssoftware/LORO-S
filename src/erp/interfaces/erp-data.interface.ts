@@ -121,5 +121,6 @@ export interface ErpQueryFilters {
 	category?: string;
 	customer?: string;
 	docType?: string;
+	salesPersonId?: string | string[]; // Sales person code(s) from tblsalesheader.sales_code or tblsaleslines.rep_code
 }
 

@@ -1,5 +1,5 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { ErpDataService } from './erp-data.service';
 import { ErpQueryFilters } from '../interfaces/erp-data.interface';
 

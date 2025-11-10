@@ -125,7 +125,7 @@ export class ErpDataService implements OnModuleInit {
 			const port = this.configService.get<string>('ERP_DATABASE_PORT');
 			const database = this.configService.get<string>('ERP_DATABASE_NAME');
 			const user = this.configService.get<string>('ERP_DATABASE_USER');
-			const connectionLimit = this.configService.get<string>('ERP_DB_CONNECTION_LIMIT') || '30';
+			const connectionLimit = this.configService.get<string>('ERP_DB_CONNECTION_LIMIT') || '100';
 
 			this.logger.log(`[${operationId}] ERP Database Configuration:`);
 			this.logger.log(`[${operationId}]   Host: ${host || 'NOT SET'}`);
@@ -555,6 +555,10 @@ export class ErpDataService implements OnModuleInit {
 	 * Build cache key with all filtering dimensions
 	 */
 	private buildCacheKey(dataType: string, filters: ErpQueryFilters, docTypes?: string[]): string {
+		const salesPersonKey = filters.salesPersonId 
+			? (Array.isArray(filters.salesPersonId) ? filters.salesPersonId.sort().join('-') : filters.salesPersonId)
+			: 'all';
+		
 		return [
 			'erp',
 			'v2', // Version for cache busting
@@ -563,6 +567,7 @@ export class ErpDataService implements OnModuleInit {
 			filters.endDate,
 			filters.storeCode || 'all',
 			filters.category || 'all',
+			salesPersonKey,
 			docTypes ? docTypes.join('-') : 'all',
 		].join(':');
 	}
@@ -676,6 +681,14 @@ export class ErpDataService implements OnModuleInit {
 						query.andWhere('header.store = :store', { store: filters.storeCode });
 					}
 
+					if (filters.salesPersonId) {
+						const salesPersonIds = Array.isArray(filters.salesPersonId) 
+							? filters.salesPersonId 
+							: [filters.salesPersonId];
+						this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
+						query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
+					}
+
 					return await query.getMany();
 				},
 				operationId,
@@ -772,6 +785,13 @@ export class ErpDataService implements OnModuleInit {
 							query.andWhere('header.store = :store', { store: chunkFilters.storeCode });
 						}
 
+						if (chunkFilters.salesPersonId) {
+							const salesPersonIds = Array.isArray(chunkFilters.salesPersonId) 
+								? chunkFilters.salesPersonId 
+								: [chunkFilters.salesPersonId];
+							query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
+						}
+
 						return await query.getMany();
 					},
 					operationId,
@@ -853,6 +873,22 @@ export class ErpDataService implements OnModuleInit {
 					if (filters.category) {
 						this.logger.debug(`[${operationId}] Filtering by category: ${filters.category}`);
 						query.andWhere('line.category = :category', { category: filters.category });
+					}
+
+					// ✅ Sales person filtering: Join with headers to filter by sales_code
+					if (filters.salesPersonId) {
+						const salesPersonIds = Array.isArray(filters.salesPersonId) 
+							? filters.salesPersonId 
+							: [filters.salesPersonId];
+						this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
+						
+						// Join with sales header to access sales_code
+						query.innerJoin(
+							'tblsalesheader',
+							'header',
+							'header.doc_number = line.doc_number AND header.sale_date = line.sale_date'
+						);
+						query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
 					}
 
 					// ✅ Data quality filters - using gross amounts (incl_line_total) without discount subtraction
@@ -964,6 +1000,19 @@ export class ErpDataService implements OnModuleInit {
 							query.andWhere('line.category = :category', { category: chunkFilters.category });
 						}
 
+						if (chunkFilters.salesPersonId) {
+							const salesPersonIds = Array.isArray(chunkFilters.salesPersonId) 
+								? chunkFilters.salesPersonId 
+								: [chunkFilters.salesPersonId];
+							// Join with sales header to access sales_code
+							query.innerJoin(
+								'tblsalesheader',
+								'header',
+								'header.doc_number = line.doc_number AND header.sale_date = line.sale_date'
+							);
+							query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
+						}
+
 						query.andWhere('line.item_code IS NOT NULL');
 						query.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' });
 
@@ -1056,6 +1105,20 @@ export class ErpDataService implements OnModuleInit {
 				query.andWhere('line.store = :store', { store: filters.storeCode });
 			}
 
+			if (filters.salesPersonId) {
+				const salesPersonIds = Array.isArray(filters.salesPersonId) 
+					? filters.salesPersonId 
+					: [filters.salesPersonId];
+				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
+				// Join with sales header to access sales_code
+				query.innerJoin(
+					'tblsalesheader',
+					'header',
+					'header.doc_number = line.doc_number AND header.sale_date = line.sale_date'
+				);
+				query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
+			}
+
 			const results = await query.getRawMany();
 			const queryDuration = Date.now() - queryStart;
 			
@@ -1135,6 +1198,20 @@ export class ErpDataService implements OnModuleInit {
 				.groupBy('line.store')
 				.orderBy('totalRevenue', 'DESC')
 				.limit(10000); // ✅ PHASE 2: Max 10k records per aggregation
+
+			if (filters.salesPersonId) {
+				const salesPersonIds = Array.isArray(filters.salesPersonId) 
+					? filters.salesPersonId 
+					: [filters.salesPersonId];
+				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
+				// Join with sales header to access sales_code
+				query.innerJoin(
+					'tblsalesheader',
+					'header',
+					'header.doc_number = line.doc_number AND header.sale_date = line.sale_date'
+				);
+				query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
+			}
 
 			const results = await query.getRawMany();
 			const queryDuration = Date.now() - queryStart;
@@ -1222,6 +1299,20 @@ export class ErpDataService implements OnModuleInit {
 				query.andWhere('line.store = :store', { store: filters.storeCode });
 			}
 
+			if (filters.salesPersonId) {
+				const salesPersonIds = Array.isArray(filters.salesPersonId) 
+					? filters.salesPersonId 
+					: [filters.salesPersonId];
+				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
+				// Join with sales header to access sales_code
+				query.innerJoin(
+					'tblsalesheader',
+					'header',
+					'header.doc_number = line.doc_number AND header.sale_date = line.sale_date'
+				);
+				query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
+			}
+
 			const results = await query.getRawMany();
 			const queryDuration = Date.now() - queryStart;
 			
@@ -1306,6 +1397,20 @@ export class ErpDataService implements OnModuleInit {
 			if (filters.storeCode) {
 				this.logger.debug(`[${operationId}] Filtering by store: ${filters.storeCode}`);
 				query.andWhere('line.store = :store', { store: filters.storeCode });
+			}
+
+			if (filters.salesPersonId) {
+				const salesPersonIds = Array.isArray(filters.salesPersonId) 
+					? filters.salesPersonId 
+					: [filters.salesPersonId];
+				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
+				// Join with sales header to access sales_code
+				query.innerJoin(
+					'tblsalesheader',
+					'header',
+					'header.doc_number = line.doc_number AND header.sale_date = line.sale_date'
+				);
+				query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
 
 			const results = await query.getRawMany();
@@ -1499,6 +1604,10 @@ export class ErpDataService implements OnModuleInit {
 	}> {
 		// Build cache keys using the same logic as buildCacheKey
 		const buildKey = (dataType: string, docTypes?: string[]) => {
+			const salesPersonKey = filters.salesPersonId 
+				? (Array.isArray(filters.salesPersonId) ? filters.salesPersonId.sort().join('-') : filters.salesPersonId)
+				: 'all';
+			
 			return [
 				'erp',
 				'v2',
@@ -1507,6 +1616,7 @@ export class ErpDataService implements OnModuleInit {
 				filters.endDate,
 				filters.storeCode || 'all',
 				filters.category || 'all',
+				salesPersonKey,
 				docTypes ? docTypes.join('-') : 'all',
 			].join(':');
 		};
@@ -1596,6 +1706,20 @@ export class ErpDataService implements OnModuleInit {
 
 			if (filters.storeCode) {
 				query.andWhere('line.store = :store', { store: filters.storeCode });
+			}
+
+			if (filters.salesPersonId) {
+				const salesPersonIds = Array.isArray(filters.salesPersonId) 
+					? filters.salesPersonId 
+					: [filters.salesPersonId];
+				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
+				// Join with sales header to access sales_code
+				query.innerJoin(
+					'tblsalesheader',
+					'header',
+					'header.doc_number = line.doc_number AND header.sale_date = line.sale_date'
+				);
+				query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
 
 			const results = await query.getRawMany();
@@ -1700,6 +1824,14 @@ export class ErpDataService implements OnModuleInit {
 
 			if (filters.storeCode) {
 				query = query.andWhere('header.store = :store', { store: filters.storeCode });
+			}
+
+			if (filters.salesPersonId) {
+				const salesPersonIds = Array.isArray(filters.salesPersonId) 
+					? filters.salesPersonId 
+					: [filters.salesPersonId];
+				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
+				query = query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
 
 			const results = await query.getRawOne();
@@ -1816,6 +1948,14 @@ export class ErpDataService implements OnModuleInit {
 				quotationsQuery = quotationsQuery.andWhere('header.store = :store', { store: filters.storeCode });
 			}
 
+			if (filters.salesPersonId) {
+				const salesPersonIds = Array.isArray(filters.salesPersonId) 
+					? filters.salesPersonId 
+					: [filters.salesPersonId];
+				this.logger.debug(`[${operationId}] Filtering quotations by sales person(s): ${salesPersonIds.join(', ')}`);
+				quotationsQuery = quotationsQuery.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
+			}
+
 			// Query 2: Get converted invoices (doc_type = 1 with invoice_used = 1)
 			let invoicesQuery = this.salesHeaderRepo
 				.createQueryBuilder('header')
@@ -1833,6 +1973,14 @@ export class ErpDataService implements OnModuleInit {
 
 			if (filters.storeCode) {
 				invoicesQuery = invoicesQuery.andWhere('header.store = :store', { store: filters.storeCode });
+			}
+
+			if (filters.salesPersonId) {
+				const salesPersonIds = Array.isArray(filters.salesPersonId) 
+					? filters.salesPersonId 
+					: [filters.salesPersonId];
+				this.logger.debug(`[${operationId}] Filtering invoices by sales person(s): ${salesPersonIds.join(', ')}`);
+				invoicesQuery = invoicesQuery.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
 
 			// ✅ PHASE 3: Sequential execution with individual step timing

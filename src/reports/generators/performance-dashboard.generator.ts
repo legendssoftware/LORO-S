@@ -187,10 +187,7 @@ export class PerformanceDashboardGenerator {
 	}> {
 		this.logger.log(`Getting master data for filters`);
 
-		const filters: ErpQueryFilters = {
-			startDate: params.startDate || this.getDefaultStartDate(),
-			endDate: params.endDate || this.getDefaultEndDate(),
-		};
+		const filters = this.buildErpFilters(params);
 
 		return await this.erpDataService.getMasterDataForFilters(filters);
 	}
@@ -204,11 +201,8 @@ export class PerformanceDashboardGenerator {
 	 */
 	private async getPerformanceData(params: PerformanceFiltersDto): Promise<PerformanceData[]> {
 		try {
-			// Build ERP query filters (only date range)
-			const filters: ErpQueryFilters = {
-				startDate: params.startDate || this.getDefaultStartDate(),
-				endDate: params.endDate || this.getDefaultEndDate(),
-			};
+			// Build ERP query filters
+			const filters = this.buildErpFilters(params);
 
 			this.logger.log(`Fetching ERP performance data for ${filters.startDate} to ${filters.endDate}`);
 
@@ -235,11 +229,8 @@ export class PerformanceDashboardGenerator {
 	 */
 	private async getSalesTransactions(params: PerformanceFiltersDto): Promise<ErpSalesTransaction[]> {
 		try {
-			// Build ERP query filters (only date range)
-			const filters: ErpQueryFilters = {
-				startDate: params.startDate || this.getDefaultStartDate(),
-				endDate: params.endDate || this.getDefaultEndDate(),
-			};
+			// Build ERP query filters
+			const filters = this.buildErpFilters(params);
 
 			this.logger.log(`Fetching ERP sales transactions for ${filters.startDate} to ${filters.endDate}`);
 
@@ -394,11 +385,7 @@ export class PerformanceDashboardGenerator {
 	private async generateHourlySalesChart(params: PerformanceFiltersDto) {
 		try {
 			// Build ERP query filters
-			const filters: ErpQueryFilters = {
-				startDate: params.startDate || this.getDefaultStartDate(),
-				endDate: params.endDate || this.getDefaultEndDate(),
-				storeCode: params.branchId?.toString(),
-			};
+			const filters = this.buildErpFilters(params);
 
 			// ✅ Get real hourly sales data from ERP
 			const hourlyData = await this.erpDataService.getHourlySalesPattern(filters);
@@ -627,11 +614,7 @@ export class PerformanceDashboardGenerator {
 	private async generateConversionRateChart(params: PerformanceFiltersDto) {
 		try {
 			// Build ERP query filters
-			const filters: ErpQueryFilters = {
-				startDate: params.startDate || this.getDefaultStartDate(),
-				endDate: params.endDate || this.getDefaultEndDate(),
-				storeCode: params.branchId?.toString(),
-			};
+			const filters = this.buildErpFilters(params);
 
 			// ✅ Get real conversion rate data from ERP
 			const conversionData = await this.erpDataService.getConversionRateData(filters);
@@ -691,11 +674,7 @@ export class PerformanceDashboardGenerator {
 	private async generateCustomerCompositionChart(params: PerformanceFiltersDto) {
 		try {
 			// Build ERP query filters
-			const filters: ErpQueryFilters = {
-				startDate: params.startDate || this.getDefaultStartDate(),
-				endDate: params.endDate || this.getDefaultEndDate(),
-				storeCode: params.branchId?.toString(),
-			};
+			const filters = this.buildErpFilters(params);
 
 			// ✅ Get real payment type data from ERP
 			const paymentTypes = await this.erpDataService.getPaymentTypeAggregations(filters);
@@ -989,6 +968,41 @@ export class PerformanceDashboardGenerator {
 		}
 	}
 
+
+	/**
+	 * Build ERP query filters from PerformanceFiltersDto
+	 * Centralizes filter mapping logic
+	 */
+	private buildErpFilters(params: PerformanceFiltersDto): ErpQueryFilters {
+		const filters: ErpQueryFilters = {
+			startDate: params.startDate || this.getDefaultStartDate(),
+			endDate: params.endDate || this.getDefaultEndDate(),
+		};
+
+		// Map branch filter
+		if (params.branchId) {
+			filters.storeCode = params.branchId.toString();
+		} else if (params.branchIds && params.branchIds.length > 0) {
+			// If multiple branches, use first one (or handle differently based on requirements)
+			filters.storeCode = params.branchIds[0];
+		}
+
+		// Map category filter
+		if (params.category) {
+			filters.category = params.category;
+		} else if (params.product?.category) {
+			filters.category = params.product.category;
+		}
+
+		// Map sales person filter
+		if (params.salesPersonIds && params.salesPersonIds.length > 0) {
+			filters.salesPersonId = params.salesPersonIds.length === 1 
+				? params.salesPersonIds[0] 
+				: params.salesPersonIds;
+		}
+
+		return filters;
+	}
 
 	/**
 	 * Get default start date (30 days ago)
