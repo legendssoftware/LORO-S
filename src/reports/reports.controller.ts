@@ -460,6 +460,7 @@ All filters apply to ALL data sections:
 
 		// Validate organization access
 		const userOrgId = request.user?.org?.uid || request.user?.organisationRef;
+		
 		if (filters.organisationId !== userOrgId && request.user.accessLevel !== AccessLevel.OWNER) {
 			this.logger.warn(`User ${request.user.uid} attempted to access org ${filters.organisationId} data without permission`);
 			throw new BadRequestException('Access denied to requested organization data');

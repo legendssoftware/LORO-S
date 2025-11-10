@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Query, Logger, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Query, Logger, UseGuards, Req } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { ErpHealthIndicator } from './erp.health';
 import { ErpCacheWarmerService } from './services/erp-cache-warmer.service';
@@ -7,6 +7,7 @@ import { AuthGuard } from '../guards/auth.guard';
 import { RoleGuard } from '../guards/role.guard';
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
+import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
 
 /**
  * ERP Controller
@@ -45,6 +46,13 @@ export class ErpController {
 		private readonly erpCacheWarmerService: ErpCacheWarmerService,
 		private readonly erpDataService: ErpDataService,
 	) {}
+
+	/**
+	 * Get organization ID from authenticated request
+	 */
+	private getOrgId(request: AuthenticatedRequest): number | undefined {
+		return request.user?.org?.uid || request.user?.organisationRef;
+	}
 
 	/**
 	 * ✅ Request throttling: Acquire slot for request (with priority)
@@ -155,19 +163,24 @@ export class ErpController {
 	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER)
 	@ApiOperation({ summary: 'Check ERP database health' })
 	@ApiResponse({ status: 200, description: 'ERP health status' })
-	async getHealth() {
+	async getHealth(@Req() request: AuthenticatedRequest) {
+		const orgId = this.getOrgId(request);
+		this.logger.log(`Getting ERP health for org ${orgId}`);
+		
 		return this.executeWithThrottling('health', async () => {
 			try {
 				const health = await this.erpHealthIndicator.isHealthy();
 				return {
 					success: health.status === 'up',
 					erp: health,
+					orgId,
 				};
 			} catch (error) {
-				this.logger.error(`Health check error: ${error.message}`);
+				this.logger.error(`Health check error for org ${orgId}: ${error.message}`);
 				return {
 					success: false,
 					error: error.message,
+					orgId,
 				};
 			}
 		}, 'health');
@@ -180,19 +193,24 @@ export class ErpController {
 	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER)
 	@ApiOperation({ summary: 'Get detailed ERP statistics' })
 	@ApiResponse({ status: 200, description: 'ERP statistics' })
-	async getStats() {
+	async getStats(@Req() request: AuthenticatedRequest) {
+		const orgId = this.getOrgId(request);
+		this.logger.log(`Getting ERP stats for org ${orgId}`);
+		
 		return this.executeWithThrottling('stats', async () => {
 			try {
 				const stats = await this.erpHealthIndicator.getErpStats();
 				return {
 					success: true,
 					data: stats,
+					orgId,
 				};
 			} catch (error) {
-				this.logger.error(`Stats error: ${error.message}`);
+				this.logger.error(`Stats error for org ${orgId}: ${error.message}`);
 				return {
 					success: false,
 					error: error.message,
+					orgId,
 				};
 			}
 		}, 'stats');
@@ -205,16 +223,23 @@ export class ErpController {
 	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER)
 	@ApiOperation({ summary: 'Manually trigger cache warming' })
 	@ApiResponse({ status: 200, description: 'Cache warming triggered' })
-	async warmCache() {
+	async warmCache(@Req() request: AuthenticatedRequest) {
+		const orgId = this.getOrgId(request);
+		this.logger.log(`Triggering cache warming for org ${orgId}`);
+		
 		return this.executeWithThrottling('cache-warm', async () => {
 			try {
 				const result = await this.erpCacheWarmerService.triggerCacheWarming();
-				return result;
+				return {
+					...result,
+					orgId,
+				};
 			} catch (error) {
-				this.logger.error(`Cache warming error: ${error.message}`);
+				this.logger.error(`Cache warming error for org ${orgId}: ${error.message}`);
 				return {
 					success: false,
 					message: error.message,
+					orgId,
 				};
 			}
 		}, 'cache/warm');
@@ -227,16 +252,23 @@ export class ErpController {
 	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER)
 	@ApiOperation({ summary: 'Clear and refresh ERP cache' })
 	@ApiResponse({ status: 200, description: 'Cache refreshed' })
-	async refreshCache() {
+	async refreshCache(@Req() request: AuthenticatedRequest) {
+		const orgId = this.getOrgId(request);
+		this.logger.log(`Refreshing cache for org ${orgId}`);
+		
 		return this.executeWithThrottling('cache-refresh', async () => {
 			try {
 				const result = await this.erpCacheWarmerService.refreshCache();
-				return result;
+				return {
+					...result,
+					orgId,
+				};
 			} catch (error) {
-				this.logger.error(`Cache refresh error: ${error.message}`);
+				this.logger.error(`Cache refresh error for org ${orgId}: ${error.message}`);
 				return {
 					success: false,
 					message: error.message,
+					orgId,
 				};
 			}
 		}, 'cache/refresh');
@@ -252,9 +284,13 @@ export class ErpController {
 	@ApiQuery({ name: 'endDate', required: false, example: '2024-01-31' })
 	@ApiResponse({ status: 200, description: 'Cache cleared' })
 	async clearCache(
+		@Req() request: AuthenticatedRequest,
 		@Query('startDate') startDate?: string,
 		@Query('endDate') endDate?: string,
 	) {
+		const orgId = this.getOrgId(request);
+		this.logger.log(`Clearing cache for org ${orgId}${startDate && endDate ? ` (${startDate} to ${endDate})` : ''}`);
+		
 		return this.executeWithThrottling('cache-clear', async () => {
 			try {
 				await this.erpDataService.clearCache(startDate, endDate);
@@ -263,12 +299,14 @@ export class ErpController {
 					message: startDate && endDate
 						? `Cache cleared for ${startDate} to ${endDate}`
 						: 'All cache cleared',
+					orgId,
 				};
 			} catch (error) {
-				this.logger.error(`Cache clear error: ${error.message}`);
+				this.logger.error(`Cache clear error for org ${orgId}: ${error.message}`);
 				return {
 					success: false,
 					message: error.message,
+					orgId,
 				};
 			}
 		}, 'cache/clear');
@@ -281,19 +319,24 @@ export class ErpController {
 	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER)
 	@ApiOperation({ summary: 'Get cache statistics' })
 	@ApiResponse({ status: 200, description: 'Cache statistics' })
-	async getCacheStats() {
+	async getCacheStats(@Req() request: AuthenticatedRequest) {
+		const orgId = this.getOrgId(request);
+		this.logger.log(`Getting cache stats for org ${orgId}`);
+		
 		return this.executeWithThrottling('cache-stats', async () => {
 			try {
 				const stats = await this.erpDataService.getCacheStats();
 				return {
 					success: true,
 					data: stats,
+					orgId,
 				};
 			} catch (error) {
-				this.logger.error(`Cache stats error: ${error.message}`);
+				this.logger.error(`Cache stats error for org ${orgId}: ${error.message}`);
 				return {
 					success: false,
 					error: error.message,
+					orgId,
 				};
 			}
 		}, 'cache/stats');
@@ -306,7 +349,10 @@ export class ErpController {
 	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER)
 	@ApiOperation({ summary: 'Get ERP database connection pool information' })
 	@ApiResponse({ status: 200, description: 'Connection pool statistics' })
-	async getConnectionPoolInfo() {
+	async getConnectionPoolInfo(@Req() request: AuthenticatedRequest) {
+		const orgId = this.getOrgId(request);
+		this.logger.log(`Getting connection pool info for org ${orgId}`);
+		
 		return this.executeWithThrottling('connection-pool', async () => {
 			try {
 				const poolInfo = this.erpDataService.getConnectionPoolInfo();
@@ -314,12 +360,14 @@ export class ErpController {
 					success: true,
 					data: poolInfo,
 					timestamp: new Date().toISOString(),
+					orgId,
 				};
 			} catch (error) {
-				this.logger.error(`Connection pool info error: ${error.message}`);
+				this.logger.error(`Connection pool info error for org ${orgId}: ${error.message}`);
 				return {
 					success: false,
 					error: error.message,
+					orgId,
 				};
 			}
 		}, 'connection/pool');
@@ -332,7 +380,10 @@ export class ErpController {
 	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER)
 	@ApiOperation({ summary: 'Check ERP database connection health' })
 	@ApiResponse({ status: 200, description: 'Connection health status' })
-	async getConnectionHealth() {
+	async getConnectionHealth(@Req() request: AuthenticatedRequest) {
+		const orgId = this.getOrgId(request);
+		this.logger.log(`Getting connection health for org ${orgId}`);
+		
 		return this.executeWithThrottling('connection-health', async () => {
 			try {
 				const health = await this.erpDataService.checkConnectionHealth();
@@ -340,12 +391,14 @@ export class ErpController {
 					success: true,
 					data: health,
 					timestamp: new Date().toISOString(),
+					orgId,
 				};
 			} catch (error) {
-				this.logger.error(`Connection health check error: ${error.message}`);
+				this.logger.error(`Connection health check error for org ${orgId}: ${error.message}`);
 				return {
 					success: false,
 					error: error.message,
+					orgId,
 				};
 			}
 		}, 'connection/health');
@@ -363,11 +416,15 @@ export class ErpController {
 	@ApiQuery({ name: 'category', required: false })
 	@ApiResponse({ status: 200, description: 'Cache health status' })
 	async getCacheHealth(
+		@Req() request: AuthenticatedRequest,
 		@Query('startDate') startDate: string,
 		@Query('endDate') endDate: string,
 		@Query('storeCode') storeCode?: string,
 		@Query('category') category?: string,
 	) {
+		const orgId = this.getOrgId(request);
+		this.logger.log(`Getting cache health for org ${orgId} (${startDate} to ${endDate})`);
+		
 		return this.executeWithThrottling('cache-health', async () => {
 			try {
 				const filters = {
@@ -393,12 +450,14 @@ export class ErpController {
 						totalChecks,
 					},
 					timestamp: new Date().toISOString(),
+					orgId,
 				};
 			} catch (error) {
-				this.logger.error(`Cache health check error: ${error.message}`);
+				this.logger.error(`Cache health check error for org ${orgId}: ${error.message}`);
 				return {
 					success: false,
 					error: error.message,
+					orgId,
 				};
 			}
 		}, 'cache/health');

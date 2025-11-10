@@ -80,13 +80,14 @@ export class PriceRangeDto {
 }
 
 export class PerformanceFiltersDto {
-	@ApiProperty({ 
-		description: 'Organization ID (required)',
+	@ApiPropertyOptional({ 
+		description: 'Organization ID (optional, defaults to authenticated user\'s organization)',
 		example: 1
 	})
+	@IsOptional()
 	@IsNumber()
 	@Type(() => Number)
-	organisationId: number;
+	organisationId?: number;
 
 	@ApiPropertyOptional({ 
 		description: 'Branch ID to filter by specific branch',
