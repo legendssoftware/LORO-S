@@ -458,19 +458,34 @@ All filters apply to ALL data sections:
 	) {
 		this.logger.log(`🚀 Getting UNIFIED performance data for org ${filters.organisationId}`);
 
-		// Validate organization access
-		const userOrgId = request.user?.org?.uid || request.user?.organisationRef;
+		// Validate organization access - normalize to numbers for comparison
+		const userOrgIdRaw = request.user?.org?.uid || request.user?.organisationRef;
+		const userOrgId = userOrgIdRaw ? Number(userOrgIdRaw) : null;
+		const requestedOrgId = filters.organisationId ? Number(filters.organisationId) : null;
+		
+		this.logger.debug(`Authorization check - User org: ${userOrgId} (raw: ${userOrgIdRaw}), Requested org: ${requestedOrgId} (raw: ${filters.organisationId})`);
+		
+		if (!userOrgId) {
+			this.logger.error(`User ${request.user.uid} has no organization ID`);
+			throw new BadRequestException('User organization ID not found');
+		}
+		
+		if (!requestedOrgId) {
+			this.logger.error(`No organization ID provided in request`);
+			throw new BadRequestException('Organization ID is required');
+		}
 		
 		// ✅ MIGRATION: Map org 1 requests to org 2 for performance tracking data
 		// This allows org 2 users to access data that was previously associated with org 1
-		if (filters.organisationId === 1 && userOrgId === 2) {
+		if (requestedOrgId === 1 && userOrgId === 2) {
 			this.logger.log(`🔄 Migrating performance data request: org 1 → org 2`);
 			filters.organisationId = 2;
 		}
 		
 		// Validate organization access (after migration mapping)
-		if (filters.organisationId !== userOrgId && request.user.accessLevel !== AccessLevel.OWNER) {
-			this.logger.warn(`User ${request.user.uid} attempted to access org ${filters.organisationId} data without permission`);
+		const finalOrgId = Number(filters.organisationId);
+		if (finalOrgId !== userOrgId && request.user.accessLevel !== AccessLevel.OWNER) {
+			this.logger.warn(`User ${request.user.uid} attempted to access org ${finalOrgId} data without permission (user org: ${userOrgId})`);
 			throw new BadRequestException('Access denied to requested organization data');
 		}
 
@@ -530,19 +545,34 @@ Comprehensive performance analytics with advanced filtering and data visualizati
 	) {
 		this.logger.log(`Getting performance dashboard for org ${filters.organisationId}`);
 
-		// Validate organization access
-		const userOrgId = request.user?.org?.uid || request.user?.organisationRef;
+		// Validate organization access - normalize to numbers for comparison
+		const userOrgIdRaw = request.user?.org?.uid || request.user?.organisationRef;
+		const userOrgId = userOrgIdRaw ? Number(userOrgIdRaw) : null;
+		const requestedOrgId = filters.organisationId ? Number(filters.organisationId) : null;
+		
+		this.logger.debug(`Authorization check - User org: ${userOrgId} (raw: ${userOrgIdRaw}), Requested org: ${requestedOrgId} (raw: ${filters.organisationId})`);
+		
+		if (!userOrgId) {
+			this.logger.error(`User ${request.user.uid} has no organization ID`);
+			throw new BadRequestException('User organization ID not found');
+		}
+		
+		if (!requestedOrgId) {
+			this.logger.error(`No organization ID provided in request`);
+			throw new BadRequestException('Organization ID is required');
+		}
 		
 		// ✅ MIGRATION: Map org 1 requests to org 2 for performance tracking data
 		// This allows org 2 users to access data that was previously associated with org 1
-		if (filters.organisationId === 1 && userOrgId === 2) {
+		if (requestedOrgId === 1 && userOrgId === 2) {
 			this.logger.log(`🔄 Migrating performance data request: org 1 → org 2`);
 			filters.organisationId = 2;
 		}
 		
 		// Validate organization access (after migration mapping)
-		if (filters.organisationId !== userOrgId && request.user.accessLevel !== AccessLevel.OWNER) {
-			this.logger.warn(`User ${request.user.uid} attempted to access org ${filters.organisationId} data without permission`);
+		const finalOrgId = Number(filters.organisationId);
+		if (finalOrgId !== userOrgId && request.user.accessLevel !== AccessLevel.OWNER) {
+			this.logger.warn(`User ${request.user.uid} attempted to access org ${finalOrgId} data without permission (user org: ${userOrgId})`);
 			throw new BadRequestException('Access denied to requested organization data');
 		}
 
