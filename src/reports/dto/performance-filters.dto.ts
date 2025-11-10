@@ -242,6 +242,14 @@ export class PerformanceFiltersDto {
 	county?: string;
 
 	@ApiPropertyOptional({ 
+		description: 'Country code for filtering (SA, Botswana, Zimbabwe, Zambia, Malawi, Mozambique)',
+		example: 'SA'
+	})
+	@IsOptional()
+	@IsString()
+	country?: string;
+
+	@ApiPropertyOptional({ 
 		description: 'Province/State name for location filtering',
 		example: 'Gauteng'
 	})

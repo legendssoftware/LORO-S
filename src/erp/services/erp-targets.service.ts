@@ -14,7 +14,7 @@ export class ErpTargetsService {
 	private readonly logger = new Logger(ErpTargetsService.name);
 
 	// Default targets (in organization currency)
-	private readonly DEFAULT_DAILY_TARGET = 500000; // R500k per day
+	private readonly DEFAULT_DAILY_TARGET = 1000000; // R1M per day
 	private readonly DEFAULT_WEEKLY_TARGET = 3500000; // R3.5M per week
 	private readonly DEFAULT_MONTHLY_TARGET = 15000000; // R15M per month
 	private readonly DEFAULT_YEARLY_TARGET = 180000000; // R180M per year

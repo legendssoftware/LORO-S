@@ -75,54 +75,30 @@ export const CATEGORY_MAPPING: Record<string, string> = {
  * store locations in the ERP system.
  */
 export const STORE_BRANCH_MAPPING: Record<string, string> = {
-	// South Africa
-	'001': 'B001', // Sandton Branch
-	'002': 'B002', // Rosebank Branch
-	'003': 'B003', // Centurion Branch
-	'004': 'B004', // Cape Town CBD Branch
-	'005': 'B005', // Umhlanga Branch
-	
-	// Botswana
-	'006': 'B006', // Gaborone Main Branch
-	'007': 'B007', // Riverwalk Branch
-	'008': 'B008', // Maun Branch
-	'009': 'B009', // Francistown Branch
-	
-	// Namibia
-	'010': 'B010', // Maerua Branch
-	'011': 'B011', // Grove Mall Branch
-	'012': 'B012', // Swakopmund Branch
-	'013': 'B013', // Oshakati Branch
-	
-	// Zimbabwe
-	'014': 'B014', // Avondale Branch
-	'015': 'B015', // Borrowdale Branch
-	'016': 'B016', // Bulawayo Branch
-	'017': 'B017', // Mutare Branch
-	
-	// Zambia
-	'018': 'B018', // Woodlands Branch
-	'019': 'B019', // Kabulonga Branch
-	'020': 'B020', // Kitwe Branch
-	'021': 'B021', // Ndola Branch
-	
-	// Malawi
-	'022': 'B022', // Chichiri Branch
-	'023': 'B023', // Limbe Branch
-	'024': 'B024', // Lilongwe Area 47 Branch
-	'025': 'B025', // Lilongwe City Branch
-	
-	// Rwanda
-	'026': 'B026', // Kimihurura Branch
-	'027': 'B027', // Nyarutarama Branch
-	'028': 'B028', // Rwamagana Branch
-	'029': 'B029', // Huye Branch
-	
-	// Mozambique
-	'030': 'B030', // Sommerschield Branch
-	'031': 'B031', // Polana Branch
-	'032': 'B032', // Beira Branch
-	'033': 'B033', // Nampula Branch
+	// South Africa - Only these branches are active
+	'001': 'B001',
+	'002': 'B002',
+	'003': 'B003',
+	'004': 'B004',
+	'005': 'B005',
+	'006': 'B006',
+	'007': 'B007',
+	'008': 'B008',
+	'009': 'B009',
+	'010': 'B010',
+	'011': 'B011',
+	'012': 'B012',
+	'013': 'B013',
+	'014': 'B014',
+	'015': 'B015',
+	'016': 'B016',
+	'017': 'B017',
+	'018': 'B018',
+	'019': 'B019',
+	'020': 'B020',
+	'021': 'B021',
+	'022': 'B022',
+	'023': 'B023',
 	
 	// Default fallback for unknown stores
 	'000': 'B001', // Default to first branch
@@ -181,56 +157,54 @@ export function getCategoryName(categoryId: string): string {
 /**
  * Store Code to Branch Name Mapping
  * Maps ERP store codes to human-readable branch names
+ * Only South Africa branches are included
  */
 export const STORE_NAME_MAPPING: Record<string, string> = {
-	// South Africa
-	'001': 'Sandton',
-	'002': 'Rosebank',
-	'003': 'Centurion',
-	'004': 'Cape Town CBD',
-	'005': 'Umhlanga',
-	
-	// Botswana
-	'006': 'Gaborone Main',
-	'007': 'Riverwalk',
-	'008': 'Maun',
-	'009': 'Francistown',
-	
-	// Namibia
-	'010': 'Maerua',
-	'011': 'Grove Mall',
-	'012': 'Swakopmund',
-	'013': 'Oshakati',
-	
-	// Zimbabwe
-	'014': 'Avondale',
-	'015': 'Borrowdale',
-	'016': 'Bulawayo',
-	'017': 'Mutare',
-	
-	// Zambia
-	'018': 'Woodlands',
-	'019': 'Kabulonga',
-	'020': 'Kitwe',
-	'021': 'Ndola',
-	
-	// Malawi
-	'022': 'Chichiri',
-	'023': 'Limbe',
-	'024': 'Lilongwe Area 47',
-	'025': 'Lilongwe City',
-	
-	// Rwanda
-	'026': 'Kimihurura',
-	'027': 'Nyarutarama',
-	'028': 'Rwamagana',
-	'029': 'Huye',
-	
-	// Mozambique
-	'030': 'Sommerschield',
-	'031': 'Polana',
-	'032': 'Beira',
-	'033': 'Nampula',
+	// South Africa - Only these branches are active
+	'001': 'DENVER - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
+	'002': 'BOKSBURG - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
+	'003': 'LANSERIA - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
+	'004': 'MIDRAND - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
+	'005': 'ROBERTSVILLE - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
+	'006': 'BURGERSFORT - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
+	'007': 'EMALAHLENI - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
+	'008': 'POLOKWANE - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
+	'009': 'NELSPRUIT - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
+	'010': 'TZANEEN - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
+	'011': 'SOUTHGATE - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
+	'012': 'RICHARDS BAY - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
+	'013': 'RANDFONTEIN - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
+	'014': 'MOKOPANE - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
+	'015': 'BETHLEHEM - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
+	'016': 'RUSTENBURG - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
+	'017': 'THOHOYANDOU - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
+	'018': 'GIYANI - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
+	'019': 'LOUIS TRICHARDT - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
+	'020': 'MAFIKENG - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
+	'021': 'BRONKHORSTSPRUIT - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
+	'022': 'PORT ELIZABETH - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
+	'023': 'GEORGE - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
+};
+
+/**
+ * Country to Store Code Mapping
+ * Only South Africa is active
+ */
+export const COUNTRY_STORE_MAPPING: Record<string, string[]> = {
+	'SA': ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012', '013', '014', '015', '016', '017', '018', '019', '020', '021', '022', '023'],
+};
+
+/**
+ * Store Code to Country Mapping
+ * All stores are in South Africa
+ */
+export const STORE_COUNTRY_MAPPING: Record<string, string> = {
+	// South Africa - All active stores
+	'001': 'SA', '002': 'SA', '003': 'SA', '004': 'SA', '005': 'SA',
+	'006': 'SA', '007': 'SA', '008': 'SA', '009': 'SA', '010': 'SA',
+	'011': 'SA', '012': 'SA', '013': 'SA', '014': 'SA', '015': 'SA',
+	'016': 'SA', '017': 'SA', '018': 'SA', '019': 'SA', '020': 'SA',
+	'021': 'SA', '022': 'SA', '023': 'SA',
 };
 
 /**
@@ -244,5 +218,25 @@ export function getBranchName(storeCode: string | null | undefined): string {
 	
 	// Return the friendly name or the store code itself as fallback
 	return STORE_NAME_MAPPING[normalizedStore] || storeCode;
+}
+
+/**
+ * Helper function to get country from ERP store code
+ */
+export function getCountryFromStoreCode(storeCode: string | null | undefined): string {
+	if (!storeCode) return 'SA'; // Default to SA
+	
+	// Normalize store code (remove leading zeros, pad to 3 digits)
+	const normalizedStore = storeCode.trim().padStart(3, '0');
+	
+	// Return the country or default to SA
+	return STORE_COUNTRY_MAPPING[normalizedStore] || 'SA';
+}
+
+/**
+ * Helper function to get store codes for a country
+ */
+export function getStoreCodesForCountry(country: string): string[] {
+	return COUNTRY_STORE_MAPPING[country] || [];
 }
 

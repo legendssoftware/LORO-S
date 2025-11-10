@@ -207,7 +207,20 @@ export class PerformanceDashboardGenerator {
 			this.logger.log(`Fetching ERP performance data for ${filters.startDate} to ${filters.endDate}`);
 
 			// Get sales lines from ERP
-			const salesLines = await this.erpDataService.getSalesLinesByDateRange(filters);
+			let salesLines = await this.erpDataService.getSalesLinesByDateRange(filters);
+			
+			// Filter by country if specified
+			if (params.country) {
+				const { getStoreCodesForCountry, getCountryFromStoreCode } = require('../../erp/config/category-mapping.config');
+				const countryStoreCodes = getStoreCodesForCountry(params.country);
+				if (countryStoreCodes.length > 0) {
+					salesLines = salesLines.filter(line => {
+						const storeCode = String(line.store || '').padStart(3, '0');
+						return countryStoreCodes.includes(storeCode);
+					});
+					this.logger.log(`Filtered to ${salesLines.length} sales lines for country ${params.country}`);
+				}
+			}
 			
 			// Transform to performance data format
 			const performanceData = this.erpTransformerService.transformToPerformanceDataList(salesLines);
@@ -235,7 +248,20 @@ export class PerformanceDashboardGenerator {
 			this.logger.log(`Fetching ERP sales transactions for ${filters.startDate} to ${filters.endDate}`);
 
 			// Get sales lines from ERP
-			const salesLines = await this.erpDataService.getSalesLinesByDateRange(filters);
+			let salesLines = await this.erpDataService.getSalesLinesByDateRange(filters);
+			
+			// Filter by country if specified
+			if (params.country) {
+				const { getStoreCodesForCountry } = require('../../erp/config/category-mapping.config');
+				const countryStoreCodes = getStoreCodesForCountry(params.country);
+				if (countryStoreCodes.length > 0) {
+					salesLines = salesLines.filter(line => {
+						const storeCode = String(line.store || '').padStart(3, '0');
+						return countryStoreCodes.includes(storeCode);
+					});
+					this.logger.log(`Filtered to ${salesLines.length} sales lines for country ${params.country}`);
+				}
+			}
 			
 			// Get headers if needed
 			const headers = await this.erpDataService.getSalesHeadersByDateRange(filters);
@@ -464,12 +490,15 @@ export class PerformanceDashboardGenerator {
 	/**
 	 * Generate branch performance chart
 	 * 
-	 * ✅ Uses branch codes from database (not mock names)
+	 * ✅ Uses branch names from mapping (not codes)
 	 */
 	private generateBranchPerformanceChart(data: PerformanceData[]) {
+		// Import branch name mapping
+		const { getBranchName } = require('../../erp/config/category-mapping.config');
+		
 		// Aggregate by branch code from real ERP data
 		const aggregated = data.reduce((acc, item) => {
-			const branchCode = item.branchId; // Use only branch code from database
+			const branchCode = item.branchId; // Use branch code from database
 			if (!acc[branchCode]) {
 				acc[branchCode] = { revenue: 0, target: 0 };
 			}
@@ -479,11 +508,15 @@ export class PerformanceDashboardGenerator {
 		}, {} as Record<string, { revenue: number; target: number }>);
 
 		const sortedBranches = Object.entries(aggregated)
-			.map(([code, values]) => ({
-				label: code, // Use branch code only
-				value: values.revenue,
-				target: values.target,
-			}))
+			.map(([code, values]) => {
+				// code is branchId in format "B001", "B002", etc., but getBranchName expects store code "001", "002"
+				const storeCode = code.replace(/^B/, ''); // Remove "B" prefix to get store code
+				return {
+					label: getBranchName(storeCode), // ✅ Use branch name from mapping (pass store code, not branch ID)
+					value: values.revenue,
+					target: values.target,
+				};
+			})
 			.sort((a, b) => b.value - a.value)
 			.slice(0, 10); // Top 10 branches
 
@@ -492,7 +525,7 @@ export class PerformanceDashboardGenerator {
 				? sortedBranches.reduce((sum, item) => sum + item.target, 0) / sortedBranches.length
 				: 0;
 
-		this.logger.debug(`Branch performance chart generated with ${sortedBranches.length} branches (using codes)`);
+		this.logger.debug(`Branch performance chart generated with ${sortedBranches.length} branches (using names)`);
 
 		return { data: sortedBranches, averageTarget };
 	}
@@ -763,9 +796,14 @@ export class PerformanceDashboardGenerator {
 
 	/**
 	 * Calculate branch × category performance
+	 * 
+	 * ✅ Uses branch names from mapping (not codes)
 	 */
 	private calculateBranchCategoryPerformance(transactions: ErpSalesTransaction[]): BranchCategoryPerformanceDto[] {
 		if (transactions.length === 0) return [];
+
+		// Import branch name mapping
+		const { getBranchName } = require('../../erp/config/category-mapping.config');
 
 		// Group transactions by branch and category (using actual ERP data)
 		const branchData = new Map<string, {
@@ -775,12 +813,14 @@ export class PerformanceDashboardGenerator {
 
 		transactions.forEach((t) => {
 			// Get branch name from transaction (from ERP store field)
+			// branchId is in format "B001", "B002", etc., but getBranchName expects store code "001", "002"
 			const branchKey = t.branchId;
+			const storeCode = branchKey.replace(/^B/, ''); // Remove "B" prefix to get store code
 			const categoryKey = t.categoryId || 'Uncategorized';
 
 			if (!branchData.has(branchKey)) {
 				branchData.set(branchKey, {
-					branchName: branchKey, // Use store code as name
+					branchName: getBranchName(storeCode), // ✅ Use branch name from mapping (pass store code, not branch ID)
 					categories: new Map(),
 				});
 			}
@@ -848,9 +888,14 @@ export class PerformanceDashboardGenerator {
 
 	/**
 	 * Calculate sales per store
+	 * 
+	 * ✅ Uses branch names from mapping (not codes)
 	 */
 	private calculateSalesPerStore(transactions: ErpSalesTransaction[]): SalesPerStoreDto[] {
 		if (transactions.length === 0) return [];
+
+		// Import branch name mapping
+		const { getBranchName } = require('../../erp/config/category-mapping.config');
 
 		// Group transactions by store (using actual ERP data)
 		const storeData = new Map<string, ErpSalesTransaction[]>();
@@ -872,9 +917,12 @@ export class PerformanceDashboardGenerator {
 			const totalItemsSold = storeTransactions.reduce((sum, t) => sum + t.quantity, 0);
 			const transactionCount = storeTransactions.length;
 
+			// branchId is in format "B001", "B002", etc., but getBranchName expects store code "001", "002"
+			const storeCode = branchId.replace(/^B/, ''); // Remove "B" prefix to get store code
+
 			salesPerStore.push({
 				storeId: branchId,
-				storeName: branchId, // Use store code as name
+				storeName: getBranchName(storeCode), // ✅ Use branch name from mapping (pass store code, not branch ID)
 				totalRevenue,
 				transactionCount,
 				averageTransactionValue: transactionCount > 0 ? totalRevenue / transactionCount : 0,
@@ -979,12 +1027,26 @@ export class PerformanceDashboardGenerator {
 			endDate: params.endDate || this.getDefaultEndDate(),
 		};
 
-		// Map branch filter
-		if (params.branchId) {
-			filters.storeCode = params.branchId.toString();
-		} else if (params.branchIds && params.branchIds.length > 0) {
-			// If multiple branches, use first one (or handle differently based on requirements)
-			filters.storeCode = params.branchIds[0];
+		// Map country filter - if country is specified, filter by store codes for that country
+		if (params.country) {
+			const { getStoreCodesForCountry } = require('../../erp/config/category-mapping.config');
+			const storeCodes = getStoreCodesForCountry(params.country);
+			if (storeCodes.length > 0) {
+				// If country filter is set, use store codes for that country
+				// Note: This will override branchId/branchIds if country is specified
+				// For now, we'll handle country filtering at the data level
+				// Store codes will be filtered in the data retrieval layer
+			}
+		}
+
+		// Map branch filter (only if country filter is not set)
+		if (!params.country) {
+			if (params.branchId) {
+				filters.storeCode = params.branchId.toString();
+			} else if (params.branchIds && params.branchIds.length > 0) {
+				// If multiple branches, use first one (or handle differently based on requirements)
+				filters.storeCode = params.branchIds[0];
+			}
 		}
 
 		// Map category filter
