@@ -671,62 +671,72 @@ export class PerformanceDashboardGenerator {
 	}
 
 	/**
-	 * Generate conversion rate chart using real quotation and invoice data
+	 * Generate conversion rate chart showing ALL document types breakdown
 	 * 
-	 * ✅ FIXED: Now uses real data from tblsalesheader
-	 * - Quotations: doc_type = 3
-	 * - Converted Invoices: doc_type = 1 with invoice_used = 1
-	 * - Pending Quotations: Quotations not yet converted
+	 * ✅ UPDATED: Now shows breakdown by all document types:
+	 * - Tax Invoice (doc_type = 1)
+	 * - Credit Note (doc_type = 2)
+	 * - Quotation (doc_type = 3)
+	 * - Sales Order (doc_type = 4)
+	 * - Receipt (doc_type = 6)
+	 * - And any other doc_types that exist
 	 */
 	private async generateConversionRateChart(params: PerformanceFiltersDto) {
 		try {
 			// Build ERP query filters
 			const filters = this.buildErpFilters(params);
 
-			// ✅ Get real conversion rate data from ERP
-			const conversionData = await this.erpDataService.getConversionRateData(filters);
+			// ✅ Get document type breakdown from ERP
+			const docTypeBreakdown = await this.erpDataService.getDocumentTypeBreakdown(filters);
 			
-			this.logger.log(`📊 Conversion Data Retrieved:`);
-			this.logger.log(`   - Total Quotations: ${conversionData.totalQuotations}`);
-			this.logger.log(`   - Quotation Value: R${conversionData.totalQuotationValue.toFixed(2)}`);
-			this.logger.log(`   - Converted Invoices: ${conversionData.convertedInvoices}`);
-			this.logger.log(`   - Converted Value: R${conversionData.convertedInvoiceValue.toFixed(2)}`);
-			this.logger.log(`   - Conversion Rate: ${conversionData.conversionRate.toFixed(2)}%`);
-			
-			const convertedValue = conversionData.convertedInvoiceValue;
-			const pendingValue = Math.max(0, conversionData.totalQuotationValue - conversionData.convertedInvoiceValue);
+			this.logger.log(`📊 Document Type Breakdown Retrieved:`);
+			docTypeBreakdown.forEach((item) => {
+				this.logger.log(`   - ${item.docTypeLabel} (${item.docType}): ${item.count} docs, R${item.totalValue.toFixed(2)}`);
+			});
 
-			const chartData: PieChartDataPoint[] = [];
-			
-			// Only add data points if they have values
-			if (convertedValue > 0) {
-				chartData.push({
-					label: 'Converted to Sales',
-					value: convertedValue,
-					color: '#10B981',
-				});
-			}
-			
-			if (pendingValue > 0) {
-				chartData.push({
-					label: 'Pending Quotations',
-					value: pendingValue,
-					color: '#F59E0B',
-				});
-			}
+			// Color mapping for different document types
+			const docTypeColors: Record<number, string> = {
+				1: '#10B981', // Tax Invoice - Green
+				2: '#EF4444', // Credit Note - Red
+				3: '#F59E0B', // Quotation - Amber
+				4: '#3B82F6', // Sales Order - Blue
+				6: '#8B5CF6', // Receipt - Purple
+				10: '#6B7280', // Suspended - Gray
+				11: '#F97316', // Return - Orange
+				12: '#14B8A6', // Purchase Order - Teal
+				55: '#EC4899', // Sales - Pink
+			};
 
+			// Generate chart data from breakdown
+			const chartData: PieChartDataPoint[] = docTypeBreakdown
+				.filter((item) => item.totalValue > 0) // Only include types with values
+				.map((item) => ({
+					label: `${item.docTypeLabel} (${item.count})`,
+					value: item.totalValue,
+					color: docTypeColors[item.docType] || '#9CA3AF', // Default gray if color not mapped
+				}));
+
+			// Calculate total and conversion rate (Tax Invoices / Total)
 			const total = chartData.reduce((sum, item) => sum + item.value, 0);
-			const percentage = conversionData.conversionRate;
+			const taxInvoiceData = docTypeBreakdown.find((item) => item.docType === 1);
+			const quotationData = docTypeBreakdown.find((item) => item.docType === 3);
+			const conversionRate = quotationData && quotationData.count > 0 && taxInvoiceData
+				? (taxInvoiceData.count / quotationData.count) * 100
+				: 0;
 
 			if (chartData.length === 0) {
-				this.logger.warn(`⚠️ No conversion data found for date range ${filters.startDate} to ${filters.endDate}`);
+				this.logger.warn(`⚠️ No document type data found for date range ${filters.startDate} to ${filters.endDate}`);
 			} else {
-				this.logger.log(`✅ Conversion rate chart generated: ${percentage.toFixed(2)}% with ${chartData.length} segments`);
+				this.logger.log(`✅ Document type breakdown chart generated: ${chartData.length} document types, Total: R${total.toFixed(2)}`);
+				if (conversionRate > 0) {
+					this.logger.log(`   Conversion Rate (Tax Invoices / Quotations): ${conversionRate.toFixed(2)}%`);
+				}
 			}
 			
-			return { data: chartData, total, percentage };
+			return { data: chartData, total, percentage: conversionRate };
 		} catch (error) {
 			this.logger.error(`Error generating conversion rate chart: ${error.message}`);
+			this.logger.error(`Stack: ${error.stack}`);
 			// Return empty data on error
 			return { data: [], total: 0, percentage: 0 };
 		}
@@ -877,6 +887,7 @@ export class PerformanceDashboardGenerator {
 
 			branchInfo.categories.forEach((categoryTransactions, categoryKey) => {
 				const uniqueClients = new Set(categoryTransactions.map((t) => t.clientId));
+				// ✅ GP Calculation: Sum all GP values (NOT averaged)
 				const revenue = categoryTransactions.reduce((sum, t) => sum + t.revenue, 0);
 				const gp = categoryTransactions.reduce((sum, t) => sum + t.grossProfit, 0);
 				const basketCount = categoryTransactions.length;
@@ -887,13 +898,13 @@ export class PerformanceDashboardGenerator {
 					basketValue: basketCount > 0 ? revenue / basketCount : 0,
 					clientsQty: uniqueClients.size,
 					salesR: revenue,
-					gpR: gp,
-					gpPercentage: revenue > 0 ? (gp / revenue) * 100 : 0,
+					gpR: gp, // ✅ Total GP for this category (summed, not averaged)
+					gpPercentage: revenue > 0 ? (gp / revenue) * 100 : 0, // ✅ GP% = (GP / Revenue) * 100
 				};
 
 				totalBasketCount += basketCount;
 				totalRevenue += revenue;
-				totalGP += gp;
+				totalGP += gp; // ✅ Accumulate GP (summed across categories)
 				categoryTransactions.forEach((t) => totalUniqueClients.add(t.clientId));
 			});
 
@@ -907,8 +918,8 @@ export class PerformanceDashboardGenerator {
 					basketValue: totalBasketCount > 0 ? totalRevenue / totalBasketCount : 0,
 					clientsQty: totalUniqueClients.size,
 					salesR: totalRevenue,
-					gpR: totalGP,
-					gpPercentage: totalRevenue > 0 ? (totalGP / totalRevenue) * 100 : 0,
+					gpR: totalGP, // ✅ Total GP for branch (summed across all categories, not averaged)
+					gpPercentage: totalRevenue > 0 ? (totalGP / totalRevenue) * 100 : 0, // ✅ Overall GP% = (Total GP / Total Revenue) * 100
 				},
 			});
 		});
@@ -946,6 +957,7 @@ export class PerformanceDashboardGenerator {
 
 		storeData.forEach((storeTransactions, branchId) => {
 			const uniqueClients = new Set(storeTransactions.map((t) => t.clientId));
+			// ✅ GP Calculation: Sum all GP values (NOT averaged)
 			const totalRevenue = storeTransactions.reduce((sum, t) => sum + t.revenue, 0);
 			const totalGP = storeTransactions.reduce((sum, t) => sum + t.grossProfit, 0);
 			const totalItemsSold = storeTransactions.reduce((sum, t) => sum + t.quantity, 0);
@@ -962,8 +974,8 @@ export class PerformanceDashboardGenerator {
 				averageTransactionValue: transactionCount > 0 ? totalRevenue / transactionCount : 0,
 				totalItemsSold,
 				uniqueClients: uniqueClients.size,
-				grossProfit: totalGP,
-				grossProfitPercentage: totalRevenue > 0 ? (totalGP / totalRevenue) * 100 : 0,
+				grossProfit: totalGP, // ✅ Total GP (summed, not averaged)
+				grossProfitPercentage: totalRevenue > 0 ? (totalGP / totalRevenue) * 100 : 0, // ✅ GP% = (Total GP / Total Revenue) * 100
 			});
 		});
 

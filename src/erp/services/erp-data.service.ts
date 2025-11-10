@@ -2023,6 +2023,128 @@ export class ErpDataService implements OnModuleInit {
 	}
 
 	/**
+	 * Get document type breakdown (all document types with counts and values)
+	 * 
+	 * Returns breakdown by all document types:
+	 * - Tax Invoice (doc_type = 1)
+	 * - Credit Note (doc_type = 2)
+	 * - Quotation (doc_type = 3)
+	 * - Sales Order (doc_type = 4)
+	 * - Receipt (doc_type = 6)
+	 * - And any other doc_types that exist
+	 * 
+	 * @param filters - Query filters (date range, store, etc.)
+	 * @returns Document type breakdown data
+	 * 
+	 * Sales Person Filtering: Uses tblsalesheader.sales_code field
+	 */
+	async getDocumentTypeBreakdown(filters: ErpQueryFilters): Promise<Array<{
+		docType: number;
+		docTypeLabel: string;
+		count: number;
+		totalValue: number;
+	}>> {
+		const operationId = this.generateOperationId('GET_DOC_TYPE_BREAKDOWN');
+		const cacheKey = this.buildCacheKey('doc_type_breakdown', filters);
+
+		this.logger.log(`[${operationId}] Getting document type breakdown for ${filters.startDate} to ${filters.endDate}`);
+
+		const startTime = Date.now();
+
+		try {
+			// Check cache first
+			const cached = await this.cacheManager.get(cacheKey);
+			if (cached) {
+				const duration = Date.now() - startTime;
+				this.logger.log(`[${operationId}] ✅ Cache HIT (${duration}ms)`);
+				return cached as any;
+			}
+
+			this.logger.log(`[${operationId}] Cache MISS - Querying document type breakdown...`);
+
+			const queryStart = Date.now();
+
+			// Query to get breakdown by doc_type
+			let query = this.salesHeaderRepo
+				.createQueryBuilder('header')
+				.select([
+					'header.doc_type as docType',
+					'header.doc_desc as docDesc',
+					'COUNT(*) as count',
+					'CAST(SUM(CAST(header.total_incl AS DECIMAL(19,3))) AS DECIMAL(19,2)) as totalValue',
+				])
+				.where('header.sale_date BETWEEN :startDate AND :endDate', {
+					startDate: filters.startDate,
+					endDate: filters.endDate,
+				})
+				.andWhere('header.sale_date >= :minDate', { minDate: '2020-01-01' })
+				.groupBy('header.doc_type, header.doc_desc')
+				.orderBy('header.doc_type', 'ASC');
+
+			if (filters.storeCode) {
+				query = query.andWhere('header.store = :store', { store: filters.storeCode });
+			}
+
+			if (filters.salesPersonId) {
+				const salesPersonIds = Array.isArray(filters.salesPersonId) 
+					? filters.salesPersonId 
+					: [filters.salesPersonId];
+				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
+				query = query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
+			}
+
+			const results = await query.getRawMany();
+			const queryDuration = Date.now() - queryStart;
+
+			// Map doc_type numbers to labels
+			const docTypeLabels: Record<number, string> = {
+				1: 'Tax Invoice',
+				2: 'Credit Note',
+				3: 'Quotation',
+				4: 'Sales Order',
+				6: 'Receipt',
+				10: 'Suspended',
+				11: 'Return',
+				12: 'Purchase Order',
+				55: 'Sales',
+			};
+
+			// Process results
+			const breakdown = results.map((row) => {
+				const docType = parseInt(row.docType, 10);
+				const docDesc = row.docDesc || '';
+				const label = docTypeLabels[docType] || docDesc || `Document Type ${docType}`;
+				
+				return {
+					docType,
+					docTypeLabel: label,
+					count: parseInt(row.count, 10) || 0,
+					totalValue: parseFloat(row.totalValue) || 0,
+				};
+			});
+
+			this.logger.log(`[${operationId}] Query completed in ${queryDuration}ms`);
+			this.logger.log(`[${operationId}] Found ${breakdown.length} document types`);
+			breakdown.forEach((item) => {
+				this.logger.log(`[${operationId}]   - ${item.docTypeLabel} (${item.docType}): ${item.count} docs, R${item.totalValue.toFixed(2)}`);
+			});
+
+			// Cache results
+			await this.cacheManager.set(cacheKey, breakdown, this.CACHE_TTL);
+
+			const totalDuration = Date.now() - startTime;
+			this.logger.log(`[${operationId}] ✅ Operation completed successfully (${totalDuration}ms)`);
+
+			return breakdown;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`[${operationId}] ❌ Error getting document type breakdown (${duration}ms)`);
+			this.logger.error(`[${operationId}] Error: ${error.message}`);
+			throw error;
+		}
+	}
+
+	/**
 	 * Get master data for filters (unique branches, products, salespeople, payment methods)
 	 * 
 	 * @param filters - Query filters for date range
