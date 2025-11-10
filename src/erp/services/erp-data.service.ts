@@ -13,6 +13,7 @@ import {
 	ErpQueryFilters,
 } from '../interfaces/erp-data.interface';
 import { ConfigService } from '@nestjs/config';
+import { getBranchName } from '../config/category-mapping.config';
 
 /**
  * ERP Data Service
@@ -2107,6 +2108,7 @@ export class ErpDataService implements OnModuleInit {
 
 	/**
 	 * Get unique branches from sales data
+	 * Returns branches with aliases from STORE_NAME_MAPPING
 	 */
 	private async getUniqueBranches(filters: ErpQueryFilters): Promise<Array<{ id: string; name: string }>> {
 		const query = this.salesLinesRepo
@@ -2125,7 +2127,7 @@ export class ErpDataService implements OnModuleInit {
 		
 		return results.map((row) => ({
 			id: row.store,
-			name: row.store, // For now, use store code as name
+			name: getBranchName(row.store), // Use alias from mapping
 		}));
 	}
 

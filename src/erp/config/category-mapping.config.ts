@@ -155,35 +155,35 @@ export function getCategoryName(categoryId: string): string {
 }
 
 /**
- * Store Code to Branch Name Mapping
- * Maps ERP store codes to human-readable branch names
+ * Store Code to Branch Alias Mapping
+ * Maps ERP store codes to branch aliases from database
  * Only South Africa branches are included
  */
 export const STORE_NAME_MAPPING: Record<string, string> = {
-	// South Africa - Only these branches are active
-	'001': 'DENVER - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
-	'002': 'BOKSBURG - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
-	'003': 'LANSERIA - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
-	'004': 'MIDRAND - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
-	'005': 'ROBERTSVILLE - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
-	'006': 'BURGERSFORT - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
-	'007': 'EMALAHLENI - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
-	'008': 'POLOKWANE - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
-	'009': 'NELSPRUIT - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
-	'010': 'TZANEEN - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
-	'011': 'SOUTHGATE - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
-	'012': 'RICHARDS BAY - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
-	'013': 'RANDFONTEIN - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
-	'014': 'MOKOPANE - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
-	'015': 'BETHLEHEM - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
-	'016': 'RUSTENBURG - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
-	'017': 'THOHOYANDOU - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
-	'018': 'GIYANI - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
-	'019': 'LOUIS TRICHARDT - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
-	'020': 'MAFIKENG - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
-	'021': 'BRONKHORSTSPRUIT - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
-	'022': 'PORT ELIZABETH - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
-	'023': 'GEORGE - BRADEIRENSE INTERNATIONAL TRADING (PTY) LTD',
+	// South Africa - Only these branches are active (using aliases from database)
+	'001': 'BitDenver',
+	'002': 'BitBoksburg',
+	'003': 'BitLanseria',
+	'004': 'BitMidrand',
+	'005': 'BitRobertsville',
+	'006': 'BitBurgersfort',
+	'007': 'BitWitbank', // EMALAHLENI
+	'008': 'BitPolokwane',
+	'009': 'BitNelspruit',
+	'010': 'BitTzaneen',
+	'011': 'BitSouthgate',
+	'012': 'BitRichardsBay',
+	'013': 'BitRandfontein',
+	'014': 'BitMokopane',
+	'015': 'BitBethlehem',
+	'016': 'BitRustenburg',
+	'017': 'BitThohoyandou',
+	'018': 'BitGiyani',
+	'019': 'BitLouis Trichardt',
+	'020': 'BitMafikeng',
+	'021': 'BitBronkhorstspruit',
+	'022': 'BitPE', // Port Elizabeth
+	'023': 'BitGeorge',
 };
 
 /**
