@@ -630,6 +630,8 @@ export class ErpDataService implements OnModuleInit {
 	 * Get sales headers by date range with optional filters
 	 * Only returns Tax Invoices (doc_type = 1) by default
 	 * ✅ PHASE 2: Supports date range chunking for large ranges (>60 days)
+	 * 
+	 * Sales Person Filtering: Uses tblsalesheader.sales_code field
 	 */
 	async getSalesHeadersByDateRange(filters: ErpQueryFilters): Promise<TblSalesHeader[]> {
 		const operationId = this.generateOperationId('GET_HEADERS');
@@ -686,6 +688,7 @@ export class ErpDataService implements OnModuleInit {
 							? filters.salesPersonId 
 							: [filters.salesPersonId];
 						this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
+						// Use sales_code from tblsalesheader for header queries
 						query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
 					}
 
@@ -789,6 +792,7 @@ export class ErpDataService implements OnModuleInit {
 							const salesPersonIds = Array.isArray(chunkFilters.salesPersonId) 
 								? chunkFilters.salesPersonId 
 								: [chunkFilters.salesPersonId];
+							// Use sales_code from tblsalesheader for header queries
 							query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
 						}
 
@@ -816,6 +820,8 @@ export class ErpDataService implements OnModuleInit {
 	 * @param includeDocTypes - Document types to include (defaults to Tax Invoices only)
 	 * @returns Sales lines matching criteria
 	 * ✅ PHASE 2: Supports date range chunking for large ranges (>60 days)
+	 * 
+	 * Sales Person Filtering: Uses tblsaleslines.rep_code field directly (not joined with header)
 	 */
 	async getSalesLinesByDateRange(
 		filters: ErpQueryFilters,
@@ -875,20 +881,13 @@ export class ErpDataService implements OnModuleInit {
 						query.andWhere('line.category = :category', { category: filters.category });
 					}
 
-					// ✅ Sales person filtering: Join with headers to filter by sales_code
+					// ✅ Sales person filtering: Use rep_code directly from tblsaleslines
 					if (filters.salesPersonId) {
 						const salesPersonIds = Array.isArray(filters.salesPersonId) 
 							? filters.salesPersonId 
 							: [filters.salesPersonId];
 						this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
-						
-						// Join with sales header to access sales_code
-						query.innerJoin(
-							'tblsalesheader',
-							'header',
-							'header.doc_number = line.doc_number AND header.sale_date = line.sale_date'
-						);
-						query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
+						query.andWhere('line.rep_code IN (:...salesPersonIds)', { salesPersonIds });
 					}
 
 					// ✅ Data quality filters - using gross amounts (incl_line_total) without discount subtraction
@@ -1004,13 +1003,8 @@ export class ErpDataService implements OnModuleInit {
 							const salesPersonIds = Array.isArray(chunkFilters.salesPersonId) 
 								? chunkFilters.salesPersonId 
 								: [chunkFilters.salesPersonId];
-							// Join with sales header to access sales_code
-							query.innerJoin(
-								'tblsalesheader',
-								'header',
-								'header.doc_number = line.doc_number AND header.sale_date = line.sale_date'
-							);
-							query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
+							// Use rep_code directly from tblsaleslines
+							query.andWhere('line.rep_code IN (:...salesPersonIds)', { salesPersonIds });
 						}
 
 						query.andWhere('line.item_code IS NOT NULL');
@@ -1049,6 +1043,8 @@ export class ErpDataService implements OnModuleInit {
 
 	/**
 	 * Get daily aggregations - optimized query
+	 * 
+	 * Sales Person Filtering: Uses tblsaleslines.rep_code field directly
 	 */
 	async getDailyAggregations(filters: ErpQueryFilters): Promise<DailyAggregation[]> {
 		const operationId = this.generateOperationId('GET_DAILY_AGG');
@@ -1110,13 +1106,8 @@ export class ErpDataService implements OnModuleInit {
 					? filters.salesPersonId 
 					: [filters.salesPersonId];
 				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
-				// Join with sales header to access sales_code
-				query.innerJoin(
-					'tblsalesheader',
-					'header',
-					'header.doc_number = line.doc_number AND header.sale_date = line.sale_date'
-				);
-				query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
+				// Use rep_code directly from tblsaleslines
+				query.andWhere('line.rep_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
 
 			const results = await query.getRawMany();
@@ -1149,6 +1140,8 @@ export class ErpDataService implements OnModuleInit {
 
 	/**
 	 * Get branch aggregations - optimized query
+	 * 
+	 * Sales Person Filtering: Uses tblsaleslines.rep_code field directly
 	 */
 	async getBranchAggregations(filters: ErpQueryFilters): Promise<BranchAggregation[]> {
 		const operationId = this.generateOperationId('GET_BRANCH_AGG');
@@ -1204,13 +1197,8 @@ export class ErpDataService implements OnModuleInit {
 					? filters.salesPersonId 
 					: [filters.salesPersonId];
 				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
-				// Join with sales header to access sales_code
-				query.innerJoin(
-					'tblsalesheader',
-					'header',
-					'header.doc_number = line.doc_number AND header.sale_date = line.sale_date'
-				);
-				query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
+				// Use rep_code directly from tblsaleslines
+				query.andWhere('line.rep_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
 
 			const results = await query.getRawMany();
@@ -1243,6 +1231,8 @@ export class ErpDataService implements OnModuleInit {
 
 	/**
 	 * Get category aggregations - optimized query
+	 * 
+	 * Sales Person Filtering: Uses tblsaleslines.rep_code field directly
 	 */
 	async getCategoryAggregations(filters: ErpQueryFilters): Promise<CategoryAggregation[]> {
 		const operationId = this.generateOperationId('GET_CATEGORY_AGG');
@@ -1304,13 +1294,8 @@ export class ErpDataService implements OnModuleInit {
 					? filters.salesPersonId 
 					: [filters.salesPersonId];
 				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
-				// Join with sales header to access sales_code
-				query.innerJoin(
-					'tblsalesheader',
-					'header',
-					'header.doc_number = line.doc_number AND header.sale_date = line.sale_date'
-				);
-				query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
+				// Use rep_code directly from tblsaleslines
+				query.andWhere('line.rep_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
 
 			const results = await query.getRawMany();
@@ -1343,6 +1328,8 @@ export class ErpDataService implements OnModuleInit {
 
 	/**
 	 * Get product aggregations - top products by revenue
+	 * 
+	 * Sales Person Filtering: Uses tblsaleslines.rep_code field directly
 	 */
 	async getProductAggregations(filters: ErpQueryFilters, limit: number = 50): Promise<ProductAggregation[]> {
 		const operationId = this.generateOperationId('GET_PRODUCT_AGG');
@@ -1404,13 +1391,8 @@ export class ErpDataService implements OnModuleInit {
 					? filters.salesPersonId 
 					: [filters.salesPersonId];
 				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
-				// Join with sales header to access sales_code
-				query.innerJoin(
-					'tblsalesheader',
-					'header',
-					'header.doc_number = line.doc_number AND header.sale_date = line.sale_date'
-				);
-				query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
+				// Use rep_code directly from tblsaleslines
+				query.andWhere('line.rep_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
 
 			const results = await query.getRawMany();
@@ -1656,6 +1638,8 @@ export class ErpDataService implements OnModuleInit {
 	 *
 	 * @param filters - Query filters (date range, store, etc.)
 	 * @returns Hourly sales data aggregated by hour
+	 * 
+	 * Sales Person Filtering: Uses tblsaleslines.rep_code field directly
 	 */
 	async getHourlySalesPattern(filters: ErpQueryFilters): Promise<
 		Array<{
@@ -1713,13 +1697,8 @@ export class ErpDataService implements OnModuleInit {
 					? filters.salesPersonId 
 					: [filters.salesPersonId];
 				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
-				// Join with sales header to access sales_code
-				query.innerJoin(
-					'tblsalesheader',
-					'header',
-					'header.doc_number = line.doc_number AND header.sale_date = line.sale_date'
-				);
-				query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
+				// Use rep_code directly from tblsaleslines
+				query.andWhere('line.rep_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
 
 			const results = await query.getRawMany();
@@ -1769,6 +1748,8 @@ export class ErpDataService implements OnModuleInit {
 	 * 
 	 * @param filters - Query filters (date range, store, etc.)
 	 * @returns Array of payment type aggregations
+	 * 
+	 * Sales Person Filtering: Uses tblsalesheader.sales_code field
 	 */
 	async getPaymentTypeAggregations(filters: ErpQueryFilters): Promise<
 		Array<{
@@ -1831,6 +1812,7 @@ export class ErpDataService implements OnModuleInit {
 					? filters.salesPersonId 
 					: [filters.salesPersonId];
 				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
+				// Use sales_code from tblsalesheader for header queries
 				query = query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
 
@@ -1902,6 +1884,8 @@ export class ErpDataService implements OnModuleInit {
 	 * 
 	 * @param filters - Query filters (date range, store, etc.)
 	 * @returns Conversion rate data
+	 * 
+	 * Sales Person Filtering: Uses tblsalesheader.sales_code field
 	 */
 	async getConversionRateData(filters: ErpQueryFilters): Promise<{
 		totalQuotations: number;
@@ -1953,6 +1937,7 @@ export class ErpDataService implements OnModuleInit {
 					? filters.salesPersonId 
 					: [filters.salesPersonId];
 				this.logger.debug(`[${operationId}] Filtering quotations by sales person(s): ${salesPersonIds.join(', ')}`);
+				// Use sales_code from tblsalesheader for header queries
 				quotationsQuery = quotationsQuery.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
 
@@ -1980,6 +1965,7 @@ export class ErpDataService implements OnModuleInit {
 					? filters.salesPersonId 
 					: [filters.salesPersonId];
 				this.logger.debug(`[${operationId}] Filtering invoices by sales person(s): ${salesPersonIds.join(', ')}`);
+				// Use sales_code from tblsalesheader for header queries
 				invoicesQuery = invoicesQuery.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
 
@@ -2173,7 +2159,8 @@ export class ErpDataService implements OnModuleInit {
 
 	/**
 	 * Get unique salespeople from sales data
-	 * Uses tblsalesheader.sales_code field
+	 * Uses tblsalesheader.sales_code field (header-level sales person codes)
+	 * Note: For line-level rep codes, use tblsaleslines.rep_code
 	 */
 	private async getUniqueSalespeople(filters: ErpQueryFilters): Promise<Array<{ id: string; name: string }>> {
 		const query = this.salesHeaderRepo
