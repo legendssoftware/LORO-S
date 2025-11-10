@@ -173,8 +173,8 @@ export class PerformanceChartsDto {
 	@ApiProperty({ type: DualAxisChartResponseDto, description: 'Items per basket trend' })
 	itemsPerBasket: DualAxisChartResponseDto;
 
-	@ApiProperty({ type: DualAxisChartResponseDto, description: 'Sales by salesperson' })
-	salesBySalesperson: DualAxisChartResponseDto;
+	@ApiProperty({ type: BarChartResponseDto, description: 'Sales by salesperson' })
+	salesBySalesperson: BarChartResponseDto;
 
 	@ApiProperty({ type: PieChartResponseDto, description: 'Conversion rate (quotations vs sales)' })
 	conversionRate: PieChartResponseDto;
@@ -409,6 +409,12 @@ export class PerformanceDashboardDataDto {
 		description: 'Master data for populating filter dropdowns'
 	})
 	masterData: MasterDataDto;
+
+	@ApiProperty({ 
+		description: 'Total unique clients across all transactions (prevents double-counting)',
+		example: 65
+	})
+	totalUniqueClients?: number;
 
 	@ApiProperty({ description: 'Applied filters', required: false })
 	filters?: any;

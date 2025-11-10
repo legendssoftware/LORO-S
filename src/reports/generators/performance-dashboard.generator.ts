@@ -117,8 +117,21 @@ export class PerformanceDashboardGenerator {
 			// Calculate total transactions across all days
 			const totalTransactions = dailySalesPerformance.reduce((sum, day) => sum + day.basketCount, 0);
 			
+			// ✅ FIX: Calculate total unique clients across ALL transactions (not summing per day/store)
+			// This prevents double-counting clients who shop on multiple days or at multiple stores
+			// Use transactions data which has clientId (PerformanceData doesn't have clientId)
+			const allUniqueClients = new Set<string>();
+			const transactions = await this.getSalesTransactions(params);
+			transactions.forEach((t) => {
+				if (t.clientId && t.clientId !== 'UNKNOWN') {
+					allUniqueClients.add(t.clientId);
+				}
+			});
+			const totalUniqueClients = allUniqueClients.size;
+			
 			this.logger.log(`✅ Dashboard generated successfully:`);
 			this.logger.log(`   - Total transactions: ${totalTransactions}`);
+			this.logger.log(`   - Total unique clients: ${totalUniqueClients}`);
 			this.logger.log(`   - Total records: ${rawData.length}`);
 			this.logger.log(`   - Daily records: ${dailySalesPerformance.length}`);
 			this.logger.log(`   - Branch-category records: ${branchCategoryPerformance.length}`);
@@ -132,6 +145,7 @@ export class PerformanceDashboardGenerator {
 				branchCategoryPerformance,
 				salesPerStore,
 				masterData,
+				totalUniqueClients, // ✅ Add total unique clients to response
 				filters: params,
 				metadata: {
 					lastUpdated: new Date().toISOString(),
@@ -198,6 +212,8 @@ export class PerformanceDashboardGenerator {
 
 	/**
 	 * Get performance data - NOW USING ERP DATABASE
+	 * 
+	 * ✅ UPDATED: Now fetches headers to get sales_code for sales person mapping
 	 */
 	private async getPerformanceData(params: PerformanceFiltersDto): Promise<PerformanceData[]> {
 		try {
@@ -209,6 +225,10 @@ export class PerformanceDashboardGenerator {
 			// Get sales lines from ERP
 			let salesLines = await this.erpDataService.getSalesLinesByDateRange(filters);
 			
+			// ✅ Get headers to access sales_code for sales person mapping
+			const headers = await this.erpDataService.getSalesHeadersByDateRange(filters);
+			this.logger.log(`Fetched ${headers.length} sales headers for sales_code mapping`);
+			
 			// Filter by country if specified
 			if (params.country) {
 				const { getStoreCodesForCountry, getCountryFromStoreCode } = require('../../erp/config/category-mapping.config');
@@ -218,12 +238,21 @@ export class PerformanceDashboardGenerator {
 						const storeCode = String(line.store || '').padStart(3, '0');
 						return countryStoreCodes.includes(storeCode);
 					});
-					this.logger.log(`Filtered to ${salesLines.length} sales lines for country ${params.country}`);
+					// Also filter headers by country
+					const filteredHeaders = headers.filter(header => {
+						const storeCode = String(header.store || '').padStart(3, '0');
+						return countryStoreCodes.includes(storeCode);
+					});
+					this.logger.log(`Filtered to ${salesLines.length} sales lines and ${filteredHeaders.length} headers for country ${params.country}`);
+					// Use filtered headers
+					const performanceData = this.erpTransformerService.transformToPerformanceDataList(salesLines, filteredHeaders);
+					this.logger.log(`Transformed ${performanceData.length} performance data records from ERP`);
+					return performanceData;
 				}
 			}
 			
-			// Transform to performance data format
-			const performanceData = this.erpTransformerService.transformToPerformanceDataList(salesLines);
+			// Transform to performance data format with headers for sales_code mapping
+			const performanceData = this.erpTransformerService.transformToPerformanceDataList(salesLines, headers);
 			
 			this.logger.log(`Transformed ${performanceData.length} performance data records from ERP`);
 			
@@ -610,10 +639,14 @@ export class PerformanceDashboardGenerator {
 
 	/**
 	 * Generate sales by salesperson chart
-	 * Note: Currently returns empty data as salesperson info is not in ERP data
+	 * 
+	 * ✅ UPDATED: Now uses sales_code mapping to show actual sales person names instead of codes
 	 */
 	private generateSalesBySalespersonChart(data: PerformanceData[]) {
-		// Aggregate by salesPersonId from ERP data
+		// Import sales code mapping
+		const { getSalesPersonName } = require('../../erp/config/sales-code-mapping.config');
+		
+		// Aggregate by salesPersonId (which is now sales_code from header)
 		const aggregated = data.reduce((acc, item) => {
 			const salesPersonKey = item.salesPersonId || 'Unknown';
 			if (!acc[salesPersonKey]) {
@@ -624,14 +657,15 @@ export class PerformanceDashboardGenerator {
 			return acc;
 		}, {} as Record<string, { transactionCount: number; revenue: number }>);
 
-		const chartData: DualAxisChartDataPoint[] = Object.entries(aggregated)
-			.map(([id, values]) => ({
-				label: this.getSalesPersonAbbreviation(id),
-				value: values.transactionCount,
-				secondaryValue: values.revenue,
+		const chartData: BarChartDataPoint[] = Object.entries(aggregated)
+			.map(([code, values]) => ({
+				label: getSalesPersonName(code), // ✅ Use actual sales person name from mapping
+				value: values.revenue, // Use revenue as primary value for bar chart
 			}))
-			.sort((a, b) => b.secondaryValue - a.secondaryValue)
-			.slice(0, 10);
+			.sort((a, b) => b.value - a.value)
+			.slice(0, 10); // Top 10 salespeople
+
+		this.logger.debug(`Sales by salesperson chart generated with ${chartData.length} salespeople (using names from mapping)`);
 
 		return { data: chartData };
 	}

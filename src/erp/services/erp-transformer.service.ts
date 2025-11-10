@@ -110,8 +110,10 @@ export class ErpTransformerService {
 	 * Note: Target is set to 0 here - actual targets should be calculated at the 
 	 * daily/period level in the performance dashboard generator using ErpTargetsService.
 	 * Individual line items don't have meaningful targets.
+	 * 
+	 * ✅ UPDATED: Now uses sales_code from header instead of rep_code from line
 	 */
-	transformToPerformanceData(line: TblSalesLines): PerformanceData {
+	transformToPerformanceData(line: TblSalesLines, header?: TblSalesHeader): PerformanceData {
 		try {
 			// Use gross amount (incl_line_total) - discount already applied to selling price
 			// Convert to number to ensure JavaScript numeric operations work correctly
@@ -126,6 +128,11 @@ export class ErpTransformerService {
 			// Actual sales = revenue in this context
 			const actualSales = revenue;
 
+			// ✅ UPDATED: Use sales_code from header (tblsalesheader) instead of rep_code from line
+			// sales_code is the primary field for sales person identification
+			const salesCode = header?.sales_code || line.rep_code || null;
+			const salesPersonId = salesCode || 'UNKNOWN';
+
 			return {
 				id: `PD${line.ID.toString().padStart(6, '0')}`,
 				date: this.formatDate(line.sale_date),
@@ -134,7 +141,7 @@ export class ErpTransformerService {
 				category: line.category || undefined,
 				branchId: getBranchId(line.store),
 				branchName: getBranchName(line.store),
-				salesPersonId: line.rep_code || 'SP001', // Use rep_code or default
+				salesPersonId, // ✅ Now uses sales_code from header
 				quantity: parseFloat(String(line.quantity || 0)),
 				revenue,
 				target,
@@ -148,17 +155,35 @@ export class ErpTransformerService {
 
 	/**
 	 * Transform multiple sales lines to performance data
+	 * 
+	 * ✅ UPDATED: Now accepts headers to map sales_code from tblsalesheader
 	 */
-	transformToPerformanceDataList(lines: TblSalesLines[]): PerformanceData[] {
+	transformToPerformanceDataList(lines: TblSalesLines[], headers?: TblSalesHeader[]): PerformanceData[] {
 		const operationId = this.generateOperationId('TRANSFORM_PERF_DATA');
 		
 		this.logger.log(`[${operationId}] Starting bulk performance data transformation`);
 		this.logger.log(`[${operationId}] Lines to transform: ${lines.length}`);
+		this.logger.log(`[${operationId}] Headers provided: ${headers ? headers.length : 0}`);
 		
 		const startTime = Date.now();
 		
 		try {
-			const results = lines.map(line => this.transformToPerformanceData(line));
+			// Build header map by doc_number for quick lookup
+			const headerMap = new Map<string, TblSalesHeader>();
+			
+			if (headers) {
+				headers.forEach(header => {
+					if (header.doc_number) {
+						headerMap.set(header.doc_number, header);
+					}
+				});
+				this.logger.debug(`[${operationId}] Built header map with ${headerMap.size} entries`);
+			}
+
+			const results = lines.map(line => {
+				const header = line.doc_number ? headerMap.get(line.doc_number) : undefined;
+				return this.transformToPerformanceData(line, header);
+			});
 			
 			const duration = Date.now() - startTime;
 			this.logger.log(`[${operationId}] ✅ Transformed ${results.length} performance data records (${duration}ms)`);
