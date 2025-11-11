@@ -4302,22 +4302,6 @@ export class UserService {
 
 		this.logger.log(`🔄 [ERP_UPDATE] Starting ERP target update for user: ${userId}, source: ${sourceSystem}`);
 
-		// 📋 Log detailed incoming payload for debugging
-		this.logger.debug(`📥 [ERP_UPDATE] Incoming payload details:`, {
-			userId,
-			sourceSystem,
-			updateMode: externalUpdate.updateMode,
-			transactionId: externalUpdate.transactionId,
-			orgId,
-			branchId,
-			updates: externalUpdate.updates,
-			metadata: externalUpdate.metadata,
-			saleDetails: externalUpdate.saleDetails
-				? `${externalUpdate.saleDetails.length} sale details`
-				: 'No sale details',
-			timestamp: new Date().toISOString(),
-		});
-
 		try {
 			// Validate external update data
 			this.logger.debug(
@@ -4544,15 +4528,6 @@ export class UserService {
 						}/${maxRetries}, attempt time: ${attemptTime}ms)`,
 					);
 
-					this.logger.debug(`📊 [ERP_UPDATE] Final response for user: ${userId}`, {
-						success: true,
-						totalExecutionTime: totalTime,
-						attemptTime,
-						attemptNumber: retryCount + 1,
-						updatedValues: result,
-						transaction: externalUpdate.transactionId,
-					});
-
 					return {
 						message: 'User targets updated successfully from ERP',
 						updatedValues: result,
@@ -4697,23 +4672,6 @@ export class UserService {
 		currentTarget: UserTarget,
 		externalUpdate: ExternalTargetUpdateDto,
 	): Partial<UserTarget> {
-		this.logger.debug(
-			`🧮 [ERP_CALCULATION] Starting calculation for mode: ${externalUpdate.updateMode}, transaction: ${externalUpdate.transactionId}`,
-			{
-				currentValues: {
-					salesAmount: currentTarget.currentSalesAmount,
-					quotationsAmount: currentTarget.currentQuotationsAmount,
-					ordersAmount: currentTarget.currentOrdersAmount,
-					newLeads: currentTarget.currentNewLeads,
-					newClients: currentTarget.currentNewClients,
-					checkIns: currentTarget.currentCheckIns,
-					hoursWorked: currentTarget.currentHoursWorked,
-					calls: currentTarget.currentCalls,
-				},
-				incomingUpdates: externalUpdate.updates,
-			},
-		);
-
 		const updates: Partial<UserTarget> = {};
 
 		// Handle different update modes
@@ -4815,16 +4773,6 @@ export class UserService {
 		orgId?: number,
 		branchId?: number,
 	): Promise<{ isValid: boolean; errors: string[] }> {
-		this.logger.debug(
-			`🔍 [ERP_VALIDATION] Starting comprehensive validation for user: ${userId}, transaction: ${externalUpdate.transactionId}`,
-			{
-				updateMode: externalUpdate.updateMode,
-				orgId,
-				branchId,
-				hasUpdates: !!externalUpdate.updates,
-				hasMetadata: !!externalUpdate.metadata,
-			},
-		);
 		const errors: string[] = [];
 
 		try {
@@ -5149,18 +5097,6 @@ export class UserService {
 			this.logger.debug(`✅ [ERP_VALIDATION] Source field validation skipped (optional) for user: ${userId}`);
 
 			const isValid = errors.length === 0;
-			this.logger.log(
-				`${isValid ? '✅' : '❌'} [ERP_VALIDATION] Validation ${
-					isValid ? 'PASSED' : 'FAILED'
-				} for user: ${userId}, transaction: ${externalUpdate.transactionId}`,
-				{
-					isValid,
-					errorCount: errors.length,
-					errors: errors.length > 0 ? errors : undefined,
-					updateMode: externalUpdate.updateMode,
-					source: externalUpdate.source || 'UNKNOWN_SOURCE',
-				},
-			);
 
 			return {
 				isValid,
@@ -5226,42 +5162,6 @@ export class UserService {
 				callsDelta:
 					(afterValues.currentCalls ?? beforeValues.currentCalls ?? 0) - (beforeValues.currentCalls ?? 0),
 			};
-
-			// Enhanced audit trail with structured logging
-			this.logger.log(
-				`📋 [ERP_AUDIT] Target update audit trail - User: ${userId}, Source: ${source}, Transaction: ${transactionId}`,
-				{
-					userId,
-					source,
-					transactionId,
-					timestamp: new Date().toISOString(),
-					beforeValues: {
-						currentSalesAmount: beforeValues.currentSalesAmount ?? 0,
-						currentQuotationsAmount: beforeValues.currentQuotationsAmount ?? 0,
-						currentOrdersAmount: beforeValues.currentOrdersAmount ?? 0,
-						currentNewLeads: beforeValues.currentNewLeads ?? 0,
-						currentNewClients: beforeValues.currentNewClients ?? 0,
-						currentCheckIns: beforeValues.currentCheckIns ?? 0,
-						currentHoursWorked: beforeValues.currentHoursWorked ?? 0,
-						currentCalls: beforeValues.currentCalls ?? 0,
-					},
-					afterValues: {
-						currentSalesAmount: afterValues.currentSalesAmount ?? beforeValues.currentSalesAmount ?? 0,
-						currentQuotationsAmount:
-							afterValues.currentQuotationsAmount ?? beforeValues.currentQuotationsAmount ?? 0,
-						currentOrdersAmount: afterValues.currentOrdersAmount ?? beforeValues.currentOrdersAmount ?? 0,
-						currentNewLeads: afterValues.currentNewLeads ?? beforeValues.currentNewLeads ?? 0,
-						currentNewClients: afterValues.currentNewClients ?? beforeValues.currentNewClients ?? 0,
-						currentCheckIns: afterValues.currentCheckIns ?? beforeValues.currentCheckIns ?? 0,
-						currentHoursWorked: afterValues.currentHoursWorked ?? beforeValues.currentHoursWorked ?? 0,
-						currentCalls: afterValues.currentCalls ?? beforeValues.currentCalls ?? 0,
-					},
-					deltas,
-					hasSignificantChanges: Object.values(deltas).some((delta) => Math.abs(delta) > 0),
-					totalValueImpact: deltas.salesAmountDelta + deltas.quotationsAmountDelta + deltas.ordersAmountDelta,
-					auditCreationTime: Date.now() - auditStartTime,
-				},
-			);
 
 			// Log summary of changes for quick analysis
 			const changedFields = Object.keys(afterValues).filter(
@@ -5828,16 +5728,6 @@ export class UserService {
 					message = `Your targets have been updated from ${externalUpdate.source || 'external system'}`;
 					priority = 'NORMAL';
 			}
-
-			this.logger.debug(`📨 [ERP_NOTIFICATION] Preparing push notification for user ${userId}:`, {
-				title,
-				message,
-				priority,
-				updateMode: externalUpdate.updateMode,
-				source: externalUpdate.source || 'external system',
-				transactionId: externalUpdate.transactionId,
-				updatedFieldsCount: Object.keys(updatedValues).length,
-			});
 
 		// Send push notification using unified notification service
 		// Extract target type and new value from updatedValues

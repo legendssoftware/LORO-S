@@ -325,7 +325,6 @@ export class TrackingService {
 			}
 
 			// Validate user exists and has access
-			this.logger.debug(`Validating user access for user: ${ownerId}`);
 			const userExists = await this.userRepository.findOne({
 				where: { uid: ownerId },
 				relations: ['organisation', 'branch'],

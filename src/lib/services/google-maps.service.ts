@@ -400,18 +400,6 @@ export class GoogleMapsService implements OnModuleInit {
   }
 
   /**
-   * Log performance metrics
-   */
-  private logPerformanceMetrics() {
-    this.logger.log('Google Maps Service Performance Metrics:', {
-      totalRequests: this.performanceMetrics.totalRequests,
-      successRate: `${((this.performanceMetrics.successfulRequests / this.performanceMetrics.totalRequests) * 100).toFixed(2)}%`,
-      averageResponseTime: `${this.performanceMetrics.averageResponseTime.toFixed(2)}ms`,
-      cacheHitRate: `${((this.performanceMetrics.cacheHits / (this.performanceMetrics.cacheHits + this.performanceMetrics.cacheMisses)) * 100).toFixed(2)}%`,
-    });
-  }
-
-  /**
    * Enhanced input validation and sanitization
    */
   private validateAndSanitizeAddress(address: string): string {
