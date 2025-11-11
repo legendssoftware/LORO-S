@@ -1045,7 +1045,10 @@ export class ErpDataService implements OnModuleInit {
 	/**
 	 * Get daily aggregations - optimized query
 	 * 
-	 * Sales Person Filtering: Uses tblsaleslines.rep_code field directly
+	 * ✅ REVISED: Now uses tblsalesheader.total_incl for revenue calculation
+	 * Uses doc_type IN (1, 2) - Tax Invoices and Credit Notes
+	 * 
+	 * Sales Person Filtering: Uses tblsalesheader.sales_code field
 	 */
 	async getDailyAggregations(filters: ErpQueryFilters): Promise<DailyAggregation[]> {
 		const operationId = this.generateOperationId('GET_DAILY_AGG');
@@ -1072,34 +1075,33 @@ export class ErpDataService implements OnModuleInit {
 			const queryStart = Date.now();
 			const dateRangeDays = this.calculateDateRangeDays(filters.startDate, filters.endDate);
 			
-			// ✅ PHASE 2: Add result size limit for aggregations (max 10k records)
-			const query = this.salesLinesRepo
-				.createQueryBuilder('line')
+			// ✅ REVISED: Use tblsalesheader instead of tblsaleslines
+			// Sum total_incl for revenue, count transactions and customers
+			const query = this.salesHeaderRepo
+				.createQueryBuilder('header')
 				.select([
-					'DATE(line.sale_date) as date',
-					'line.store as store',
-					'SUM(line.incl_line_total) as totalRevenue',
-					'SUM(line.cost_price * line.quantity) as totalCost',
-					'COUNT(DISTINCT line.doc_number) as transactionCount',
-					'COUNT(DISTINCT line.customer) as uniqueCustomers',
-					'SUM(line.quantity) as totalQuantity',
+					'DATE(header.sale_date) as date',
+					'header.store as store',
+					'SUM(header.total_incl) as totalRevenue', // ✅ No CAST rounding - matches user's SQL query exactly
+					'CAST(0 AS DECIMAL(19,2)) as totalCost', // Cost not available in header table
+					'COUNT(DISTINCT header.doc_number) as transactionCount',
+					'COUNT(DISTINCT header.customer) as uniqueCustomers',
+					'0 as totalQuantity', // Quantity not available in header table (integer)
 				])
-				.where('line.sale_date BETWEEN :startDate AND :endDate', {
+				.where('header.sale_date BETWEEN :startDate AND :endDate', {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
 				})
-				// ✅ CRITICAL: Only Tax Invoices (doc_type = 1) for revenue calculations
-				.andWhere('line.doc_type = :docType', { docType: '1' })
-				// ✅ Data quality filters - using gross amounts (incl_line_total) without discount subtraction
-				.andWhere('line.item_code IS NOT NULL')
-				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' })
-				.groupBy('DATE(line.sale_date), line.store')
-				.orderBy('DATE(line.sale_date)', 'ASC')
+				// ✅ CRITICAL: Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2) for revenue calculations
+				.andWhere('header.doc_type IN (:...docTypes)', { docTypes: [1, 2] })
+				.andWhere('header.sale_date >= :minDate', { minDate: '2020-01-01' })
+				.groupBy('DATE(header.sale_date), header.store')
+				.orderBy('DATE(header.sale_date)', 'ASC')
 				.limit(10000); // ✅ PHASE 2: Max 10k records per aggregation
 
 			if (filters.storeCode) {
 				this.logger.debug(`[${operationId}] Filtering by store: ${filters.storeCode}`);
-				query.andWhere('line.store = :store', { store: filters.storeCode });
+				query.andWhere('header.store = :store', { store: filters.storeCode });
 			}
 
 			if (filters.salesPersonId) {
@@ -1107,8 +1109,8 @@ export class ErpDataService implements OnModuleInit {
 					? filters.salesPersonId 
 					: [filters.salesPersonId];
 				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
-				// Use rep_code directly from tblsaleslines
-				query.andWhere('line.rep_code IN (:...salesPersonIds)', { salesPersonIds });
+				// Use sales_code from tblsalesheader for header queries
+				query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
 
 			const results = await query.getRawMany();
@@ -1117,15 +1119,26 @@ export class ErpDataService implements OnModuleInit {
 			// ✅ PHASE 2: Log slow query warning
 			this.logSlowQuery(operationId, queryDuration, dateRangeDays, filters.startDate, filters.endDate);
 
+			// Process results to ensure correct types
+			const processedResults = results.map((row) => ({
+				date: row.date,
+				store: row.store,
+				totalRevenue: parseFloat(row.totalRevenue) || 0,
+				totalCost: 0, // Not available from header table
+				transactionCount: parseInt(row.transactionCount, 10) || 0,
+				uniqueCustomers: parseInt(row.uniqueCustomers, 10) || 0,
+				totalQuantity: 0, // Not available from header table
+			}));
+
 			this.logger.log(`[${operationId}] Aggregation query completed in ${queryDuration}ms`);
-			this.logger.log(`[${operationId}] Computed ${results.length} daily aggregations`);
+			this.logger.log(`[${operationId}] Computed ${processedResults.length} daily aggregations`);
 
 			// Cache results
-			await this.cacheManager.set(cacheKey, results, this.CACHE_TTL);
+			await this.cacheManager.set(cacheKey, processedResults, this.CACHE_TTL);
 
 			const totalDuration = Date.now() - startTime;
 			this.logger.log(`[${operationId}] ✅ Operation completed successfully (${totalDuration}ms)`);
-			return results;
+			return processedResults;
 		} catch (error) {
 			const duration = Date.now() - startTime;
 			
@@ -1184,8 +1197,8 @@ export class ErpDataService implements OnModuleInit {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
 				})
-				// ✅ CRITICAL: Only Tax Invoices (doc_type = 1) for revenue calculations
-				.andWhere('line.doc_type = :docType', { docType: '1' })
+				// ✅ CRITICAL: Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2) for revenue calculations
+				.andWhere('line.doc_type IN (:...docTypes)', { docTypes: ['1', '2'] })
 				// ✅ Data quality filters - using gross amounts (incl_line_total) without discount subtraction
 				.andWhere('line.item_code IS NOT NULL')
 				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' })
@@ -1261,6 +1274,7 @@ export class ErpDataService implements OnModuleInit {
 			const dateRangeDays = this.calculateDateRangeDays(filters.startDate, filters.endDate);
 			
 			// ✅ PHASE 2: Add result size limit for aggregations (max 10k records)
+			// ✅ Using exact query structure as specified for sales by category
 			const query = this.salesLinesRepo
 				.createQueryBuilder('line')
 				.select([
@@ -1268,20 +1282,16 @@ export class ErpDataService implements OnModuleInit {
 					'line.store as store',
 					'SUM(line.incl_line_total) as totalRevenue',
 					'SUM(line.cost_price * line.quantity) as totalCost',
-					'COUNT(DISTINCT line.doc_number) as transactionCount',
-					'COUNT(DISTINCT line.customer) as uniqueCustomers',
 					'SUM(line.quantity) as totalQuantity',
 				])
 				.where('line.sale_date BETWEEN :startDate AND :endDate', {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
 				})
-				// ✅ CRITICAL: Only Tax Invoices (doc_type = 1) for revenue calculations
-				.andWhere('line.doc_type = :docType', { docType: '1' })
-				// ✅ Data quality filters - using gross amounts (incl_line_total) without discount subtraction
-				.andWhere('line.item_code IS NOT NULL')
-				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' })
-				.groupBy('line.category, line.store')
+				.andWhere('line.doc_type IN (:...docTypes)', { docTypes: [1, 2] })
+				.andWhere('line.item_code NOT IN (:...excludedItemCodes)', { excludedItemCodes: ['.'] })
+				.andWhere('line.type = :type', { type: 'I' })
+				.groupBy('line.store, line.category')
 				.orderBy('totalRevenue', 'DESC')
 				.limit(10000); // ✅ PHASE 2: Max 10k records per aggregation
 
@@ -1373,8 +1383,8 @@ export class ErpDataService implements OnModuleInit {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
 				})
-				// ✅ CRITICAL: Only Tax Invoices (doc_type = 1) for revenue calculations
-				.andWhere('line.doc_type = :docType', { docType: '1' })
+				// ✅ CRITICAL: Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2) for revenue calculations
+				.andWhere('line.doc_type IN (:...docTypes)', { docTypes: ['1', '2'] })
 				// ✅ Data quality filters - using gross amounts (incl_line_total) without discount subtraction
 				.andWhere('line.item_code IS NOT NULL')
 				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' })
@@ -1606,12 +1616,12 @@ export class ErpDataService implements OnModuleInit {
 
 		// Check each cache key
 		const aggregationsKey = buildKey('daily_agg');
-		const hourlySalesKey = buildKey('hourly_sales', ['1']);
-		const paymentTypesKey = buildKey('payment_types', ['1']);
+		const hourlySalesKey = buildKey('hourly_sales', ['1', '2']); // Tax Invoices (1) AND Credit Notes (2)
+		const paymentTypesKey = buildKey('payment_types', ['1', '2']); // Tax Invoices (1) AND Credit Notes (2)
 		const conversionRateKey = buildKey('conversion_rate');
 		const masterDataKey = buildKey('master_data');
-		const salesLinesKey = buildKey('lines', ['1']);
-		const salesHeadersKey = buildKey('headers', ['1']);
+		const salesLinesKey = buildKey('lines', ['1']); // Raw data queries still use doc_type 1 only
+		const salesHeadersKey = buildKey('headers', ['1']); // Raw data queries still use doc_type 1 only
 
 		const [aggregations, hourlySales, paymentTypes, conversionRate, masterData, salesLines, salesHeaders] = await Promise.all([
 			this.cacheManager.get(aggregationsKey),
@@ -1651,7 +1661,7 @@ export class ErpDataService implements OnModuleInit {
 		}>
 	> {
 		const operationId = this.generateOperationId('GET_HOURLY_SALES');
-		const cacheKey = this.buildCacheKey('hourly_sales', filters, ['1']);
+		const cacheKey = this.buildCacheKey('hourly_sales', filters, ['1', '2']); // Tax Invoices (1) AND Credit Notes (2)
 
 		this.logger.log(`[${operationId}] Getting hourly sales pattern for ${filters.startDate} to ${filters.endDate}`);
 
@@ -1682,7 +1692,7 @@ export class ErpDataService implements OnModuleInit {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
 				})
-				.andWhere('line.doc_type = :docType', { docType: '1' }) // ✅ Only Tax Invoices (doc_type = 1)
+				.andWhere('line.doc_type IN (:...docTypes)', { docTypes: ['1', '2'] }) // ✅ Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2)
 				.andWhere('line.sale_time IS NOT NULL') // ✅ Only records with time
 				.andWhere('line.item_code IS NOT NULL')
 				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' })
@@ -1760,7 +1770,7 @@ export class ErpDataService implements OnModuleInit {
 		}>
 	> {
 		const operationId = this.generateOperationId('GET_PAYMENT_TYPES');
-		const cacheKey = this.buildCacheKey('payment_types', filters, ['1']);
+		const cacheKey = this.buildCacheKey('payment_types', filters, ['1', '2']); // Tax Invoices (1) AND Credit Notes (2)
 
 		this.logger.log(`[${operationId}] Getting payment type aggregations for ${filters.startDate} to ${filters.endDate}`);
 
@@ -1801,7 +1811,7 @@ export class ErpDataService implements OnModuleInit {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
 				})
-				.andWhere('header.doc_type = :docType', { docType: 1 }) // Only Tax Invoices
+				.andWhere('header.doc_type IN (:...docTypes)', { docTypes: [1, 2] }) // Tax Invoices (1) AND Credit Notes (2)
 				.andWhere('header.sale_date >= :minDate', { minDate: '2020-01-01' });
 
 			if (filters.storeCode) {

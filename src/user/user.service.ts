@@ -4406,30 +4406,11 @@ export class UserService {
 							throw new NotFoundException(`No targets found for user ${userId}`);
 						}
 
-						// Log current target values before update
-						this.logger.debug(`📊 [ERP_UPDATE] Current target values for user: ${userId}`, {
-							currentSalesAmount: user.userTarget.currentSalesAmount,
-							currentQuotationsAmount: user.userTarget.currentQuotationsAmount,
-							currentOrdersAmount: user.userTarget.currentOrdersAmount,
-							currentNewLeads: user.userTarget.currentNewLeads,
-							currentNewClients: user.userTarget.currentNewClients,
-							currentCheckIns: user.userTarget.currentCheckIns,
-							currentHoursWorked: user.userTarget.currentHoursWorked,
-							currentCalls: user.userTarget.currentCalls,
-							lastUpdated: user.userTarget.updatedAt,
-						});
-
 						// Calculate new values based on update mode
 						this.logger.debug(
 							`🧮 [ERP_UPDATE] Calculating target updates for user: ${userId}, mode: ${externalUpdate.updateMode}`,
 						);
 						const updatedTarget = this.calculateTargetUpdates(user.userTarget, externalUpdate);
-
-						// Log calculated updates
-						this.logger.debug(
-							`📈 [ERP_UPDATE] Calculated target updates for user: ${userId}`,
-							updatedTarget,
-						);
 
 						// Update target with new values
 						this.logger.debug(
@@ -4750,15 +4731,6 @@ export class UserService {
 			);
 			Object.assign(updates, externalUpdate.updates);
 		}
-
-		this.logger.debug(
-			`✅ [ERP_CALCULATION] Calculation completed for transaction: ${externalUpdate.transactionId}`,
-			{
-				mode: externalUpdate.updateMode,
-				calculatedUpdates: updates,
-				updatedFieldCount: Object.keys(updates).length,
-			},
-		);
 
 		return updates;
 	}
