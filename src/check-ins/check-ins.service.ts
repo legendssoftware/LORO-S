@@ -48,7 +48,7 @@ export class CheckInsService {
 		this.logger.debug(`Google Maps Service: ${!!this.googleMapsService}`);
 	}
 
-	async checkIn(createCheckInDto: CreateCheckInDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
+	async checkIn(createCheckInDto: CreateCheckInDto, orgId?: number, branchId?: number): Promise<{ message: string; checkInId?: number }> {
 		const operationId = `checkin_${Date.now()}`;
 		const startTime = Date.now();
 		this.logger.log(
@@ -135,6 +135,7 @@ export class CheckInsService {
 
 			const response = {
 				message: process.env.SUCCESS_MESSAGE || 'Check-in recorded successfully',
+				checkInId: checkIn.uid,
 			};
 
 			// ============================================================
@@ -491,7 +492,7 @@ export class CheckInsService {
 		createCheckOutDto: CreateCheckOutDto,
 		orgId?: number,
 		branchId?: number,
-	): Promise<{ message: string; duration?: string }> {
+	): Promise<{ message: string; duration?: string; checkInId?: number }> {
 		const operationId = `checkout_${Date.now()}`;
 		const startTime = Date.now();
 		this.logger.log(
@@ -574,6 +575,7 @@ export class CheckInsService {
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,
 				duration: duration,
+				checkInId: checkIn.uid,
 			};
 
 			// ============================================================
@@ -832,6 +834,102 @@ export class CheckInsService {
 			};
 
 			return response;
+		}
+	}
+
+	/**
+	 * Fast update endpoint for check-in photo URL
+	 * Used after background upload completes
+	 */
+	async updateCheckInPhoto(
+		checkInId: number,
+		photoUrl: string,
+		orgId?: number,
+		branchId?: number,
+	): Promise<{ message: string }> {
+		const operationId = `update_checkin_photo_${Date.now()}`;
+		const startTime = Date.now();
+		this.logger.log(`[${operationId}] Updating check-in photo for check-in: ${checkInId}`);
+
+		try {
+			// Find check-in record
+			const checkIn = await this.checkInRepository.findOne({
+				where: { uid: checkInId },
+			});
+
+			if (!checkIn) {
+				this.logger.error(`[${operationId}] Check-in not found: ${checkInId}`);
+				throw new NotFoundException('Check-in not found');
+			}
+
+			// Update photo URL
+			await this.checkInRepository.update(checkInId, {
+				checkInPhoto: photoUrl,
+			});
+
+			const duration = Date.now() - startTime;
+			this.logger.log(`✅ [${operationId}] Check-in photo updated successfully in ${duration}ms`);
+
+			return {
+				message: process.env.SUCCESS_MESSAGE || 'Check-in photo updated successfully',
+			};
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(
+				`❌ [${operationId}] Failed to update check-in photo after ${duration}ms: ${error.message}`,
+				error.stack,
+			);
+			return {
+				message: error?.message || 'Failed to update check-in photo',
+			};
+		}
+	}
+
+	/**
+	 * Fast update endpoint for check-out photo URL
+	 * Used after background upload completes
+	 */
+	async updateCheckOutPhoto(
+		checkInId: number,
+		photoUrl: string,
+		orgId?: number,
+		branchId?: number,
+	): Promise<{ message: string }> {
+		const operationId = `update_checkout_photo_${Date.now()}`;
+		const startTime = Date.now();
+		this.logger.log(`[${operationId}] Updating check-out photo for check-in: ${checkInId}`);
+
+		try {
+			// Find check-in record
+			const checkIn = await this.checkInRepository.findOne({
+				where: { uid: checkInId },
+			});
+
+			if (!checkIn) {
+				this.logger.error(`[${operationId}] Check-in not found: ${checkInId}`);
+				throw new NotFoundException('Check-in not found');
+			}
+
+			// Update photo URL
+			await this.checkInRepository.update(checkInId, {
+				checkOutPhoto: photoUrl,
+			});
+
+			const duration = Date.now() - startTime;
+			this.logger.log(`✅ [${operationId}] Check-out photo updated successfully in ${duration}ms`);
+
+			return {
+				message: process.env.SUCCESS_MESSAGE || 'Check-out photo updated successfully',
+			};
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(
+				`❌ [${operationId}] Failed to update check-out photo after ${duration}ms: ${error.message}`,
+				error.stack,
+			);
+			return {
+				message: error?.message || 'Failed to update check-out photo',
+			};
 		}
 	}
 }

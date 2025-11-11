@@ -84,6 +84,10 @@ export class DocsService {
 		this.logger.log(`📤 [uploadFile] Starting file upload: ${file?.originalname || 'unknown'} (${file?.size || 0} bytes)`);
 
 		try {
+			// ============================================================
+			// CRITICAL PATH: Operations that must complete before response
+			// ============================================================
+
 			// Validate file
 			if (!file || !file.buffer) {
 				throw new Error('Invalid file: No file data provided');
@@ -102,50 +106,87 @@ export class DocsService {
 
 			this.logger.debug(`📤 [uploadFile] Upload context - Owner: ${ownerId}, Branch: ${branchId}, Type: ${type || 'auto'}`);
 
-			try {
-				const result = await this.storageService.upload(
-					{
-						buffer: file.buffer,
-						mimetype: file.mimetype,
-						originalname: file.originalname,
-						size: file.size,
-						metadata: {
-							type,
-							uploadedBy: ownerId?.toString(),
-							branch: branchId?.toString(),
-						},
+			// Core operation: Upload to storage and create doc record
+			const result = await this.storageService.upload(
+				{
+					buffer: file.buffer,
+					mimetype: file.mimetype,
+					originalname: file.originalname,
+					size: file.size,
+					metadata: {
+						type,
+						uploadedBy: ownerId?.toString(),
+						branch: branchId?.toString(),
 					},
-					undefined,
-					ownerId,
-					branchId,
-				);
-
-				// Invalidate caches after successful upload
-				await this.invalidateDocumentCache();
-
-							// Emit upload event
-			this.eventEmitter.emit('docs.file.uploaded', {
-				fileName: file.originalname,
-				fileSize: file.size,
-				mimeType: file.mimetype,
-				type,
+				},
+				undefined,
 				ownerId,
 				branchId,
-				uploadUrl: result.publicUrl,
-				timestamp: new Date(),
+			);
+
+			// ============================================================
+			// EARLY RETURN: Respond to client immediately after successful upload
+			// ============================================================
+			const duration = Date.now() - startTime;
+			this.logger.log(`✅ [uploadFile] File uploaded successfully in ${duration}ms: ${file.originalname} - returning response to client`);
+
+			const response = {
+				message: 'File uploaded successfully',
+				...result,
+			};
+
+			// ============================================================
+			// POST-RESPONSE PROCESSING: Execute non-critical operations asynchronously
+			// These operations run after the response is sent, without blocking the client
+			// ============================================================
+			setImmediate(async () => {
+				try {
+					this.logger.debug(`🔄 [uploadFile] Starting post-response processing for file: ${file.originalname}`);
+
+					// 1. Invalidate caches (non-critical, can happen in background)
+					try {
+						await this.invalidateDocumentCache();
+						this.logger.debug(`✅ [uploadFile] Cache invalidated successfully`);
+					} catch (cacheError) {
+						this.logger.error(
+							`❌ [uploadFile] Failed to invalidate cache: ${cacheError.message}`,
+							cacheError.stack,
+						);
+						// Don't fail post-processing if cache invalidation fails
+					}
+
+					// 2. Emit upload event (non-critical, can happen in background)
+					try {
+						this.eventEmitter.emit('docs.file.uploaded', {
+							fileName: file.originalname,
+							fileSize: file.size,
+							mimeType: file.mimetype,
+							type,
+							ownerId,
+							branchId,
+							uploadUrl: result.publicUrl,
+							timestamp: new Date(),
+						});
+						this.logger.debug(`✅ [uploadFile] Upload event emitted successfully`);
+					} catch (eventError) {
+						this.logger.error(
+							`❌ [uploadFile] Failed to emit upload event: ${eventError.message}`,
+							eventError.stack,
+						);
+						// Don't fail post-processing if event emission fails
+					}
+
+					this.logger.debug(`✅ [uploadFile] Post-response processing completed for file: ${file.originalname}`);
+				} catch (backgroundError) {
+					// Log errors but don't affect user experience since response already sent
+					this.logger.error(
+						`❌ [uploadFile] Background processing failed for file ${file.originalname}: ${backgroundError.message}`,
+						backgroundError.stack,
+					);
+				}
 			});
 
-				const duration = Date.now() - startTime;
-				this.logger.log(`✅ [uploadFile] File uploaded successfully in ${duration}ms: ${file.originalname}`);
-
-				return {
-					message: 'File uploaded successfully',
-					...result,
-				};
-			} catch (storageError) {
-				this.logger.error(`❌ [uploadFile] Storage service error: ${storageError.message}`, storageError.stack);
-				throw new Error(`Storage service error: ${storageError.message}`);
-			}
+			return response;
 		} catch (error) {
 			const duration = Date.now() - startTime;
 			this.logger.error(`❌ [uploadFile] File upload failed after ${duration}ms: ${error.message}`, error.stack);

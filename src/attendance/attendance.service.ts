@@ -166,6 +166,66 @@ export class AttendanceService {
 		}
 	}
 
+	/**
+	 * Check if a user's check-in is early and calculate how many minutes early
+	 */
+	private async checkAndCalculateEarlyMinutes(orgId: number, checkInTime: Date): Promise<number> {
+		try {
+			// Get organization working hours and timezone for the check-in date
+			const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(orgId, checkInTime);
+
+			if (!workingDayInfo.isWorkingDay || !workingDayInfo.startTime) {
+				// Not a working day or no start time defined
+				return 0;
+			}
+
+			// Get organization timezone
+			const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
+			const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
+
+			// Parse the expected start time in organization's timezone
+			const expectedStartTime = TimezoneUtil.parseTimeInOrganization(
+				workingDayInfo.startTime,
+				checkInTime,
+				organizationTimezone
+			);
+
+			// Calculate grace period (15 minutes)
+			const gracePeriodMinutes = 15;
+			const graceEndTime = TimezoneUtil.addMinutesInOrganizationTime(
+				expectedStartTime,
+				gracePeriodMinutes,
+				organizationTimezone
+			);
+
+			if (checkInTime >= expectedStartTime && checkInTime <= graceEndTime) {
+				// On time or within grace period - not early
+				return 0;
+			}
+
+			if (checkInTime < expectedStartTime) {
+				// Check-in is before expected start time - calculate early minutes
+				const earlyMinutes = Math.floor((expectedStartTime.getTime() - checkInTime.getTime()) / (1000 * 60));
+				return Math.max(0, earlyMinutes);
+			}
+
+			// After grace period - not early (would be late)
+			return 0;
+		} catch (error) {
+			this.logger.warn(`Error calculating early minutes for org ${orgId}:`, error.message);
+			return 0; // Default to not early if we can't determine
+		}
+	}
+
+	/**
+	 * Calculate both early and late minutes for a check-in
+	 */
+	private async calculateEarlyAndLateMinutes(orgId: number, checkInTime: Date): Promise<{ earlyMinutes: number; lateMinutes: number }> {
+		const earlyMinutes = await this.checkAndCalculateEarlyMinutes(orgId, checkInTime);
+		const lateMinutes = await this.checkAndCalculateLateMinutes(orgId, checkInTime);
+		return { earlyMinutes, lateMinutes };
+	}
+
 	private getCacheKey(key: string | number): string {
 		return `${this.CACHE_PREFIX}${key}`;
 	}
@@ -661,6 +721,23 @@ export class AttendanceService {
 			}
 		}
 
+		// Calculate early and late minutes based on organization hours
+		let earlyMinutes = 0;
+		let lateMinutes = 0;
+		if (orgId) {
+			try {
+				const timingInfo = await this.calculateEarlyAndLateMinutes(orgId, new Date(checkInDto.checkIn));
+				earlyMinutes = timingInfo.earlyMinutes;
+				lateMinutes = timingInfo.lateMinutes;
+				this.logger.debug(
+					`Check-in timing for user ${checkInDto.owner.uid}: Early: ${earlyMinutes}min, Late: ${lateMinutes}min`
+				);
+			} catch (timingError) {
+				this.logger.warn(`Failed to calculate early/late minutes: ${timingError.message}`);
+				// Continue with check-in even if timing calculation fails
+			}
+		}
+
 		// Enhanced data mapping - save record first WITHOUT location processing
 		// Location processing will happen asynchronously after response is sent
 		const attendanceData = {
@@ -669,6 +746,8 @@ export class AttendanceService {
 			organisation: orgId ? { uid: orgId } : undefined,
 			branch: branchId ? { uid: branchId } : undefined,
 			placesOfInterest: null, // Will be updated asynchronously
+			earlyMinutes: earlyMinutes,
+			lateMinutes: lateMinutes,
 		};
 
 		this.logger.debug('Saving check-in record to database');
@@ -692,6 +771,8 @@ export class AttendanceService {
 				status: checkIn.status,
 				organisationId: orgId,
 				branchId: branchId,
+				earlyMinutes: checkIn.earlyMinutes || 0,
+				lateMinutes: checkIn.lateMinutes || 0,
 				location:
 					checkInDto.checkInLatitude && checkInDto.checkInLongitude
 						? {
@@ -814,22 +895,20 @@ export class AttendanceService {
 					}
 
 					// Check if user is late and send late notification if applicable
+					// Use stored lateMinutes from checkIn record instead of recalculating
 					try {
-						if (orgId) {
-							const lateMinutes = await this.checkAndCalculateLateMinutes(orgId, new Date(checkIn.checkIn));
-							if (lateMinutes > 0) {
-								this.logger.debug(
-									`User ${checkInDto.owner.uid} is ${lateMinutes} minutes late - sending notification`,
-								);
-								await this.sendShiftReminder(
-									checkInDto.owner.uid,
-									'late',
-									orgId,
-									branchId,
-									undefined,
-									lateMinutes,
-								);
-							}
+						if (orgId && checkIn.lateMinutes && checkIn.lateMinutes > 0) {
+							this.logger.debug(
+								`User ${checkInDto.owner.uid} is ${checkIn.lateMinutes} minutes late - sending notification`,
+							);
+							await this.sendShiftReminder(
+								checkInDto.owner.uid,
+								'late',
+								orgId,
+								branchId,
+								undefined,
+								checkIn.lateMinutes,
+							);
 						}
 					} catch (lateCheckError) {
 						this.logger.warn(

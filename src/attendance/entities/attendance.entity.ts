@@ -35,6 +35,12 @@ export class Attendance {
 	@Column({ type: 'varchar', nullable: true })
 	overtime: string;
 
+	@Column({ type: 'int', nullable: true, default: 0 })
+	earlyMinutes: number;
+
+	@Column({ type: 'int', nullable: true, default: 0 })
+	lateMinutes: number;
+
 	@Column({ type: 'decimal', precision: 10, scale: 6, nullable: true })
 	checkInLatitude: number;
 

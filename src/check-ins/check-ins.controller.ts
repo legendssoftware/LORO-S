@@ -2,6 +2,8 @@ import { Controller, Post, Body, Patch, Param, UseGuards, Get, Query, Req } from
 import { CheckInsService } from './check-ins.service';
 import { CreateCheckInDto } from './dto/create-check-in.dto';
 import { CreateCheckOutDto } from './dto/create-check-out.dto';
+import { UpdateCheckInPhotoDto } from './dto/update-check-in-photo.dto';
+import { UpdateCheckOutPhotoDto } from './dto/update-check-out-photo.dto';
 import { Request } from 'express';
 
 interface AuthenticatedRequest extends Request {
@@ -279,5 +281,59 @@ export class CheckInsController {
 			client: { uid: clientId }
 		};
 		return this.checkInsService.checkIn(checkInWithClient, orgId, branchId);
+	}
+
+	@Patch('photo/check-in')
+	@ApiOperation({
+		summary: 'Update check-in photo URL',
+		description: 'Fast endpoint to update check-in photo URL after background upload completes',
+	})
+	@ApiBody({ type: UpdateCheckInPhotoDto })
+	@ApiOkResponse({
+		description: 'Check-in photo updated successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Success' },
+			},
+		},
+	})
+	@ApiBadRequestResponse({
+		description: 'Bad Request - Invalid data provided',
+	})
+	@ApiNotFoundResponse({
+		description: 'Check-in not found',
+	})
+	updateCheckInPhoto(@Body() updateDto: UpdateCheckInPhotoDto, @Req() req: AuthenticatedRequest) {
+		const orgId = req.user?.organisationRef;
+		const branchId = req.user?.branch?.uid;
+		return this.checkInsService.updateCheckInPhoto(updateDto.checkInId, updateDto.photoUrl, orgId, branchId);
+	}
+
+	@Patch('photo/check-out')
+	@ApiOperation({
+		summary: 'Update check-out photo URL',
+		description: 'Fast endpoint to update check-out photo URL after background upload completes',
+	})
+	@ApiBody({ type: UpdateCheckOutPhotoDto })
+	@ApiOkResponse({
+		description: 'Check-out photo updated successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Success' },
+			},
+		},
+	})
+	@ApiBadRequestResponse({
+		description: 'Bad Request - Invalid data provided',
+	})
+	@ApiNotFoundResponse({
+		description: 'Check-in not found',
+	})
+	updateCheckOutPhoto(@Body() updateDto: UpdateCheckOutPhotoDto, @Req() req: AuthenticatedRequest) {
+		const orgId = req.user?.organisationRef;
+		const branchId = req.user?.branch?.uid;
+		return this.checkInsService.updateCheckOutPhoto(updateDto.checkInId, updateDto.photoUrl, orgId, branchId);
 	}
 }
