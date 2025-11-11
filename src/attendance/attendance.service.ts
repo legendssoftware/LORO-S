@@ -1700,9 +1700,8 @@ export class AttendanceService {
 		branchId?: number,
 		userAccessLevel?: string,
 	): Promise<{ message: string; checkIns: Attendance[] }> {
-		// Get effective branch ID based on user role
-		const effectiveBranchId = this.getEffectiveBranchId(branchId, userAccessLevel);
-		this.logger.log(`Fetching check-ins for date: ${date}, orgId: ${orgId}, branchId: ${branchId}, effectiveBranchId: ${effectiveBranchId}, userAccessLevel: ${userAccessLevel}`);
+		// This endpoint returns org-wide data - no branch filtering applied
+		this.logger.log(`Fetching check-ins for date: ${date}, orgId: ${orgId} (org-wide, no branch filtering)`);
 		try {
 			// Get organization timezone for accurate date range
 			const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
@@ -1719,19 +1718,12 @@ export class AttendanceService {
 				checkIn: Between(startOfDayConverted, endOfDayConverted),
 			};
 
-			// Apply organization filtering
+			// Apply organization filtering only - no branch filtering for org-wide results
 			if (orgId) {
 				whereConditions.organisation = { uid: orgId };
 			}
 
-			// Apply branch filtering if provided (and user is not admin/owner/developer)
-			if (effectiveBranchId) {
-				whereConditions.branch = { uid: effectiveBranchId };
-			} else if (userAccessLevel) {
-				this.logger.debug(`User ${userAccessLevel} can see all branches - no branch filter applied`);
-			}
-
-			// Get check-ins that started on this date
+			// Get check-ins that started on this date (org-wide, includes records with NULL branch)
 			const checkInsToday = await this.attendanceRepository.find({
 				where: whereConditions,
 				relations: [
@@ -1755,13 +1747,9 @@ export class AttendanceService {
 			status: In([AttendanceStatus.PRESENT, AttendanceStatus.ON_BREAK]), // Still active
 		};
 
-		// Apply same organization and branch filtering for ongoing shifts
+		// Apply organization filtering only - no branch filtering for org-wide results
 		if (orgId) {
 			ongoingShiftsConditions.organisation = { uid: orgId };
-		}
-
-		if (effectiveBranchId) {
-			ongoingShiftsConditions.branch = { uid: effectiveBranchId };
 		}
 
 		const ongoingShifts = await this.attendanceRepository.find({
