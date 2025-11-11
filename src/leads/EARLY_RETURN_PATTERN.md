@@ -1,7 +1,7 @@
-# Lead Service Early-Return Pattern Implementation
+# Early-Return Pattern Implementation
 
 ## Overview
-The `LeadsService` has been refactored to follow the early-return pattern used in `AttendanceService` and `AuthService`. This pattern ensures optimal client response times by:
+The early-return pattern has been implemented in `LeadsService` and `LeaveService` following the pattern used in `AttendanceService` and `AuthService`. This pattern ensures optimal client response times by:
 1. Completing the core database operation
 2. Returning the response to the client immediately
 3. Processing non-critical operations asynchronously using `setImmediate()`
@@ -192,10 +192,105 @@ Potential improvements to consider:
 - Implementation pattern: `server/src/attendance/attendance.service.ts` (lines 525-781)
 - Auth service example: `server/src/auth/auth.service.ts`
 - Event emitter usage: Throughout `handleLeadCreatedEvents` and `handleLeadUpdatedEvents`
+- LeaveService implementation: `server/src/leave/leave.service.ts` (create, update, approveLeave, rejectLeave methods)
 
 ---
 
-**Date Implemented**: October 28, 2025  
+## LeaveService Implementation
+
+The `LeaveService` has also been refactored to follow the early-return pattern for the following methods:
+
+### Create Method (`create()`)
+
+#### Critical Path (Before Response)
+- ✅ Validate user and organization
+- ✅ Calculate leave duration
+- ✅ Create leave entity
+- ✅ **Save leave to database** (core operation)
+- ✅ Check for conflicts and auto-reject if necessary
+- ✅ Clear cache (fast operation)
+- ✅ **Return success response to client**
+
+#### Post-Response Processing (Asynchronous)
+Executed via `setImmediate(async () => { ... })` after response is sent:
+
+1. **Approval Workflow**
+   - Initialize approval workflow chain
+   - Create approval request
+
+2. **Notifications**
+   - Send confirmation email to applicant
+   - Send admin notification emails
+   - Send push notification to applicant
+
+3. **Event Emission**
+   - Emit `leave.created` event for external integrations
+
+### Update Method (`update()`)
+
+#### Critical Path (Before Response)
+- ✅ Find existing leave
+- ✅ Validate leave can be updated
+- ✅ Calculate duration if dates changed
+- ✅ Handle modifications during approval
+- ✅ **Update leave in database** (core operation)
+- ✅ Clear cache (fast operation)
+- ✅ **Return success response to client**
+
+#### Post-Response Processing (Asynchronous)
+Executed via `setImmediate(async () => { ... })` after response is sent:
+
+1. **Approval Workflow Reinitialization**
+   - Reinitialize approval workflow if critical fields modified
+
+### Approve Leave Method (`approveLeave()`)
+
+#### Critical Path (Before Response)
+- ✅ Find leave and approver
+- ✅ Validate leave can be approved
+- ✅ **Update leave status to APPROVED** (core operation)
+- ✅ Clear cache (fast operation)
+- ✅ **Return success response to client**
+
+#### Post-Response Processing (Asynchronous)
+Executed via `setImmediate(async () => { ... })` after response is sent:
+
+1. **Email Notifications**
+   - Send status update email to user
+   - Send status update email to admins
+
+2. **Push Notifications**
+   - Send push notification for leave approval
+
+3. **Event Emission**
+   - Emit `leave.approved` event
+
+### Reject Leave Method (`rejectLeave()`)
+
+#### Critical Path (Before Response)
+- ✅ Find leave
+- ✅ Validate leave can be rejected
+- ✅ Validate rejection reason
+- ✅ **Update leave status to REJECTED** (core operation)
+- ✅ Clear cache (fast operation)
+- ✅ **Return success response to client**
+
+#### Post-Response Processing (Asynchronous)
+Executed via `setImmediate(async () => { ... })` after response is sent:
+
+1. **Email Notifications**
+   - Send status update email to user
+   - Send status update email to admins
+
+2. **Push Notifications**
+   - Send push notification for leave rejection
+
+3. **Event Emission**
+   - Emit `leave.rejected` event
+
+---
+
+**Date Implemented**: October 28, 2025 (LeadsService), November 11, 2025 (LeaveService)  
 **Pattern Source**: AttendanceService and AuthService  
 **Status**: ✅ Complete and Tested
 

@@ -2883,22 +2883,6 @@ export class UserService {
 			const executionTime = Date.now() - startTime;
 			this.logger.log(`User target retrieved from database for user: ${userId} in ${executionTime}ms`);
 
-			// Comprehensive logging of final response
-			this.logger.debug(`🔍 FINAL RESPONSE for user ${userId}:`, {
-				hasPersonalTargets: response.hasPersonalTargets,
-				personalTargetsExists: !!response.personalTargets,
-				historyInPersonalTargets: response.personalTargets?.history,
-				historyLength: response.personalTargets?.history?.length || 0,
-				historyType: typeof response.personalTargets?.history,
-				historyIsArray: Array.isArray(response.personalTargets?.history),
-				fullPersonalTargets: JSON.stringify(response.personalTargets, null, 2),
-			});
-
-			console.log('🔍 FULL RESPONSE OBJECT:', JSON.stringify(response, null, 2));
-			console.log('🔍 HISTORY SPECIFICALLY:', response.personalTargets?.history);
-			console.log('🔍 HISTORY TYPE:', typeof response.personalTargets?.history);
-			console.log('🔍 HISTORY IS ARRAY:', Array.isArray(response.personalTargets?.history));
-
 			return {
 				userTarget: response,
 				message: process.env.SUCCESS_MESSAGE,

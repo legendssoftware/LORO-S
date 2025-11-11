@@ -208,6 +208,7 @@ export class LeaveService {
 			// Check for leave conflicts and auto-reject if necessary
 			this.logger.debug(`Checking for leave conflicts for leave ID: ${savedLeave.uid}`);
 			const conflictCheck = await this.validateLeaveConflicts(savedLeave);
+			let isAutoRejected = false;
 			if (conflictCheck.hasConflict) {
 				this.logger.warn(`Auto-rejecting leave ${savedLeave.uid} due to conflicts with leaves: ${conflictCheck.conflictingLeaves.map(l => `#${l.uid}`).join(', ')}`);
 				
@@ -217,76 +218,93 @@ export class LeaveService {
 					rejectedAt: new Date(),
 					rejectionReason: `Automatically rejected due to conflicting leave requests on the same dates. Conflicting leaves: ${conflictCheck.conflictingLeaves.map(l => `#${l.uid}`).join(', ')}`,
 				});
-
-				this.logger.debug(`Sending rejection notification for auto-rejected leave: ${savedLeave.uid}`);
-				// Send rejection notification
-				const rejectedLeave = await this.leaveRepository.findOne({
-					where: { uid: savedLeave.uid },
-					relations: ['owner', 'organisation', 'branch'],
-				});
-
-				if (rejectedLeave) {
-					await this.leaveEmailService.sendStatusUpdateToUser(
-						rejectedLeave,
-						owner,
-						LeaveStatus.PENDING,
-						null, // No specific user performed the rejection - system auto-rejection
-					);
-					this.logger.debug(`Rejection notification sent successfully for leave: ${savedLeave.uid}`);
-				}
-
-				// Clear cache and return
-				await this.clearLeaveCache();
-				this.logger.log(`Leave request ${savedLeave.uid} created but automatically rejected due to conflicts`);
-				return { message: 'Leave request created but automatically rejected due to conflicting dates' };
+				isAutoRejected = true;
 			}
-			this.logger.debug(`No conflicts found for leave ID: ${savedLeave.uid}`);
+			this.logger.debug(`${isAutoRejected ? 'Auto-rejected' : 'No conflicts found'} for leave ID: ${savedLeave.uid}`);
 
-			// Initialize approval workflow chain for the leave request
-			this.logger.debug(`Initializing approval workflow for leave: ${savedLeave.uid}`);
-			await this.initializeLeaveApprovalWorkflow(savedLeave, owner);
-
-			// Send confirmation email to applicant
-			this.logger.debug(`Sending confirmation email to applicant: ${owner.email}`);
-			await this.leaveEmailService.sendApplicationConfirmation(savedLeave, owner);
-
-			// Send notification email to admins
-			this.logger.debug('Sending admin notification emails');
-			await this.leaveEmailService.sendNewApplicationAdminNotification(savedLeave, owner);
-
-			// Send push notification to applicant
-			try {
-				await this.unifiedNotificationService.sendTemplatedNotification(
-					NotificationEvent.LEAVE_CREATED,
-					[owner.uid],
-					{
-						userName: `${owner.name} ${owner.surname || ''}`.trim(),
-						leaveType: savedLeave.leaveType,
-						startDate: savedLeave.startDate.toLocaleDateString(),
-						endDate: savedLeave.endDate.toLocaleDateString(),
-						duration: savedLeave.duration.toString(),
-					},
-					{
-						priority: NotificationPriority.NORMAL,
-					},
-				);
-				this.logger.debug(`Leave creation push notification sent to user: ${owner.uid}`);
-			} catch (notificationError) {
-				this.logger.warn(`Failed to send leave creation push notification to user ${owner.uid}:`, notificationError.message);
-			}
-
-			// Emit leave created event for notifications
-			this.logger.debug(`Emitting leave.created event for leave: ${savedLeave.uid}`);
-			this.eventEmitter.emit('leave.created', {
-				leave: savedLeave,
-				owner,
-			});
-
-			// Clear cache
+			// Clear cache (fast operation)
 			await this.clearLeaveCache();
 
-			this.logger.log(`Leave request created successfully for user: ${userId}, leave ID: ${savedLeave.uid}`);
-			return { message: 'Leave request created successfully' };
+			// === EARLY RETURN ===
+			const response = isAutoRejected 
+				? { message: 'Leave request created but automatically rejected due to conflicting dates' }
+				: { message: 'Leave request created successfully' };
+			
+			this.logger.log(`Leave request ${savedLeave.uid} created successfully for user: ${userId}`);
+
+			// === POST-RESPONSE PROCESSING ===
+			setImmediate(async () => {
+				try {
+					// Reload leave with relations for post-processing
+					const leaveForProcessing = await this.leaveRepository.findOne({
+						where: { uid: savedLeave.uid },
+						relations: ['owner', 'organisation', 'branch'],
+					});
+
+					if (!leaveForProcessing) {
+						this.logger.warn(`Leave ${savedLeave.uid} not found for post-response processing`);
+						return;
+					}
+
+					if (isAutoRejected) {
+						// Send rejection notification for auto-rejected leave
+						this.logger.debug(`Sending rejection notification for auto-rejected leave: ${savedLeave.uid}`);
+						await this.leaveEmailService.sendStatusUpdateToUser(
+							leaveForProcessing,
+							owner,
+							LeaveStatus.PENDING,
+							null, // No specific user performed the rejection - system auto-rejection
+						);
+						this.logger.debug(`Rejection notification sent successfully for leave: ${savedLeave.uid}`);
+					} else {
+						// Initialize approval workflow chain for the leave request
+						this.logger.debug(`Initializing approval workflow for leave: ${savedLeave.uid}`);
+						await this.initializeLeaveApprovalWorkflow(leaveForProcessing, owner);
+
+						// Send confirmation email to applicant
+						this.logger.debug(`Sending confirmation email to applicant: ${owner.email}`);
+						await this.leaveEmailService.sendApplicationConfirmation(leaveForProcessing, owner);
+
+						// Send notification email to admins
+						this.logger.debug('Sending admin notification emails');
+						await this.leaveEmailService.sendNewApplicationAdminNotification(leaveForProcessing, owner);
+
+						// Send push notification to applicant
+						try {
+							await this.unifiedNotificationService.sendTemplatedNotification(
+								NotificationEvent.LEAVE_CREATED,
+								[owner.uid],
+								{
+									userName: `${owner.name} ${owner.surname || ''}`.trim(),
+									leaveType: leaveForProcessing.leaveType,
+									startDate: leaveForProcessing.startDate.toLocaleDateString(),
+									endDate: leaveForProcessing.endDate.toLocaleDateString(),
+									duration: leaveForProcessing.duration.toString(),
+								},
+								{
+									priority: NotificationPriority.NORMAL,
+								},
+							);
+							this.logger.debug(`Leave creation push notification sent to user: ${owner.uid}`);
+						} catch (notificationError) {
+							this.logger.warn(`Failed to send leave creation push notification to user ${owner.uid}:`, notificationError.message);
+						}
+
+						// Emit leave created event for notifications
+						this.logger.debug(`Emitting leave.created event for leave: ${savedLeave.uid}`);
+						this.eventEmitter.emit('leave.created', {
+							leave: leaveForProcessing,
+							owner,
+						});
+					}
+
+					this.logger.debug(`Post-response processing completed for leave ${savedLeave.uid}`);
+				} catch (backgroundError) {
+					this.logger.error(`Background processing failed for leave ${savedLeave.uid}:`, backgroundError.stack);
+				}
+			});
+
+			return response;
 		} catch (error) {
 			this.logger.error(`Failed to create leave request for user: ${userId}`, error.stack);
 			if (error instanceof NotFoundException) {
@@ -556,29 +574,46 @@ export class LeaveService {
 				...updateLeaveDto,
 			});
 
-			// Get updated leave for further processing
-			const updatedLeave = await this.leaveRepository.findOne({
-				where: { uid: ref },
-				relations: ['owner', 'organisation', 'branch'],
-			});
-
-			// If critical fields were modified and leave is back to pending, reinitialize approval workflow
-			const criticalFieldsModified = 
-				(updateLeaveDto.startDate && updateLeaveDto.startDate !== leave.startDate) ||
-				(updateLeaveDto.endDate && updateLeaveDto.endDate !== leave.endDate) ||
-				(updateLeaveDto.leaveType && updateLeaveDto.leaveType !== leave.leaveType) ||
-				(updateLeaveDto.duration && updateLeaveDto.duration !== leave.duration);
-
-			if (criticalFieldsModified && updatedLeave && updatedLeave.status === LeaveStatus.PENDING) {
-				this.logger.log(`🔄 [LeaveService] Reinitializing approval workflow for modified leave ${ref}`);
-				await this.initializeLeaveApprovalWorkflow(updatedLeave, updatedLeave.owner);
-			}
-
-			// Clear cache
+			// Clear cache (fast operation)
 			await this.clearLeaveCache(ref);
 
+			// === EARLY RETURN ===
+			const response = { message: 'Leave request updated successfully' };
 			this.logger.log(`✅ [LeaveService] Successfully updated leave ${ref} to status: ${updateLeaveDto.status}`);
-			return { message: 'Leave request updated successfully' };
+
+			// === POST-RESPONSE PROCESSING ===
+			setImmediate(async () => {
+				try {
+					// Get updated leave for further processing
+					const updatedLeave = await this.leaveRepository.findOne({
+						where: { uid: ref },
+						relations: ['owner', 'organisation', 'branch'],
+					});
+
+					if (!updatedLeave) {
+						this.logger.warn(`Leave ${ref} not found for post-response processing`);
+						return;
+					}
+
+					// If critical fields were modified and leave is back to pending, reinitialize approval workflow
+					const criticalFieldsModified = 
+						(updateLeaveDto.startDate && updateLeaveDto.startDate !== leave.startDate) ||
+						(updateLeaveDto.endDate && updateLeaveDto.endDate !== leave.endDate) ||
+						(updateLeaveDto.leaveType && updateLeaveDto.leaveType !== leave.leaveType) ||
+						(updateLeaveDto.duration && updateLeaveDto.duration !== leave.duration);
+
+					if (criticalFieldsModified && updatedLeave.status === LeaveStatus.PENDING) {
+						this.logger.log(`🔄 [LeaveService] Reinitializing approval workflow for modified leave ${ref}`);
+						await this.initializeLeaveApprovalWorkflow(updatedLeave, updatedLeave.owner);
+					}
+
+					this.logger.debug(`Post-response processing completed for leave ${ref}`);
+				} catch (backgroundError) {
+					this.logger.error(`Background processing failed for leave ${ref}:`, backgroundError.stack);
+				}
+			});
+
+			return response;
 		} catch (error) {
 			this.logger.error(`❌ [LeaveService] Error updating leave ${ref}:`, error.message);
 			if (error instanceof NotFoundException) {
@@ -629,60 +664,75 @@ export class LeaveService {
 				approvedAt: new Date(),
 			});
 
-			// Get updated leave with relations
-			const updatedLeave = await this.leaveRepository.findOne({
-				where: { uid: ref },
-				relations: ['owner', 'approvedBy', 'organisation', 'branch'],
-			});
-
-			if (updatedLeave && updatedLeave.owner) {
-				// Send status update emails
-				await this.leaveEmailService.sendStatusUpdateToUser(
-					updatedLeave,
-					updatedLeave.owner,
-					previousStatus,
-					approver
-				);
-				await this.leaveEmailService.sendStatusUpdateToAdmins(
-					updatedLeave,
-					updatedLeave.owner,
-					previousStatus,
-					approver
-				);
-
-				// Send push notification for leave approval
-				try {
-					await this.unifiedNotificationService.sendTemplatedNotification(
-						NotificationEvent.LEAVE_APPROVED,
-						[updatedLeave.owner.uid],
-						{
-							userName: `${updatedLeave.owner.name} ${updatedLeave.owner.surname || ''}`.trim(),
-							leaveType: updatedLeave.leaveType,
-							approvedBy: `${approver.name} ${approver.surname || ''}`.trim(),
-							startDate: updatedLeave.startDate.toLocaleDateString(),
-							endDate: updatedLeave.endDate.toLocaleDateString(),
-						},
-						{
-							priority: NotificationPriority.HIGH,
-						},
-					);
-					this.logger.debug(`Leave approval push notification sent to user: ${updatedLeave.owner.uid}`);
-				} catch (notificationError) {
-					this.logger.warn(`Failed to send leave approval push notification to user ${updatedLeave.owner.uid}:`, notificationError.message);
-				}
-			}
-
-			// Emit leave approved event for notifications
-			this.eventEmitter.emit('leave.approved', {
-				leave: updatedLeave,
-				approver,
-			});
-
-			// Clear cache
+			// Clear cache (fast operation)
 			await this.clearLeaveCache(ref);
 
+			// === EARLY RETURN ===
+			const response = { message: 'Leave request approved successfully' };
 			this.logger.log(`✅ [LeaveService] Successfully approved leave ${ref} by approver ${approverUid}`);
-			return { message: 'Leave request approved successfully' };
+
+			// === POST-RESPONSE PROCESSING ===
+			setImmediate(async () => {
+				try {
+					// Get updated leave with relations
+					const updatedLeave = await this.leaveRepository.findOne({
+						where: { uid: ref },
+						relations: ['owner', 'approvedBy', 'organisation', 'branch'],
+					});
+
+					if (!updatedLeave || !updatedLeave.owner) {
+						this.logger.warn(`Leave ${ref} or owner not found for post-response processing`);
+						return;
+					}
+
+					// Send status update emails
+					await this.leaveEmailService.sendStatusUpdateToUser(
+						updatedLeave,
+						updatedLeave.owner,
+						previousStatus,
+						approver
+					);
+					await this.leaveEmailService.sendStatusUpdateToAdmins(
+						updatedLeave,
+						updatedLeave.owner,
+						previousStatus,
+						approver
+					);
+
+					// Send push notification for leave approval
+					try {
+						await this.unifiedNotificationService.sendTemplatedNotification(
+							NotificationEvent.LEAVE_APPROVED,
+							[updatedLeave.owner.uid],
+							{
+								userName: `${updatedLeave.owner.name} ${updatedLeave.owner.surname || ''}`.trim(),
+								leaveType: updatedLeave.leaveType,
+								approvedBy: `${approver.name} ${approver.surname || ''}`.trim(),
+								startDate: updatedLeave.startDate.toLocaleDateString(),
+								endDate: updatedLeave.endDate.toLocaleDateString(),
+							},
+							{
+								priority: NotificationPriority.HIGH,
+							},
+						);
+						this.logger.debug(`Leave approval push notification sent to user: ${updatedLeave.owner.uid}`);
+					} catch (notificationError) {
+						this.logger.warn(`Failed to send leave approval push notification to user ${updatedLeave.owner.uid}:`, notificationError.message);
+					}
+
+					// Emit leave approved event for notifications
+					this.eventEmitter.emit('leave.approved', {
+						leave: updatedLeave,
+						approver,
+					});
+
+					this.logger.debug(`Post-response processing completed for leave approval ${ref}`);
+				} catch (backgroundError) {
+					this.logger.error(`Background processing failed for leave approval ${ref}:`, backgroundError.stack);
+				}
+			});
+
+			return response;
 		} catch (error) {
 			this.logger.error(`❌ [LeaveService] Error approving leave ${ref}:`, error.message);
 			if (error instanceof NotFoundException) {
@@ -731,58 +781,73 @@ export class LeaveService {
 				rejectionReason,
 			});
 
-			// Get updated leave with relations
-			const updatedLeave = await this.leaveRepository.findOne({
-				where: { uid: ref },
-				relations: ['owner', 'approvedBy', 'organisation', 'branch'],
-			});
-
-			if (updatedLeave && updatedLeave.owner) {
-				// Send status update emails
-				await this.leaveEmailService.sendStatusUpdateToUser(
-					updatedLeave,
-					updatedLeave.owner,
-					previousStatus
-				);
-				await this.leaveEmailService.sendStatusUpdateToAdmins(
-					updatedLeave,
-					updatedLeave.owner,
-					previousStatus
-				);
-
-				// Send push notification for leave rejection
-				try {
-					await this.unifiedNotificationService.sendTemplatedNotification(
-						NotificationEvent.LEAVE_REJECTED,
-						[updatedLeave.owner.uid],
-						{
-							userName: `${updatedLeave.owner.name} ${updatedLeave.owner.surname || ''}`.trim(),
-							leaveType: updatedLeave.leaveType,
-							rejectionReason: rejectionReason,
-							startDate: updatedLeave.startDate.toLocaleDateString(),
-							endDate: updatedLeave.endDate.toLocaleDateString(),
-						},
-						{
-							priority: NotificationPriority.HIGH,
-						},
-					);
-					this.logger.debug(`Leave rejection push notification sent to user: ${updatedLeave.owner.uid}`);
-				} catch (notificationError) {
-					this.logger.warn(`Failed to send leave rejection push notification to user ${updatedLeave.owner.uid}:`, notificationError.message);
-				}
-			}
-
-			// Emit leave rejected event for notifications
-			this.eventEmitter.emit('leave.rejected', {
-				leave: updatedLeave,
-				rejectionReason,
-			});
-
-			// Clear cache
+			// Clear cache (fast operation)
 			await this.clearLeaveCache(ref);
 
+			// === EARLY RETURN ===
+			const response = { message: 'Leave request rejected successfully' };
 			this.logger.log(`✅ [LeaveService] Successfully rejected leave ${ref} with reason: ${rejectionReason}`);
-			return { message: 'Leave request rejected successfully' };
+
+			// === POST-RESPONSE PROCESSING ===
+			setImmediate(async () => {
+				try {
+					// Get updated leave with relations
+					const updatedLeave = await this.leaveRepository.findOne({
+						where: { uid: ref },
+						relations: ['owner', 'approvedBy', 'organisation', 'branch'],
+					});
+
+					if (!updatedLeave || !updatedLeave.owner) {
+						this.logger.warn(`Leave ${ref} or owner not found for post-response processing`);
+						return;
+					}
+
+					// Send status update emails
+					await this.leaveEmailService.sendStatusUpdateToUser(
+						updatedLeave,
+						updatedLeave.owner,
+						previousStatus
+					);
+					await this.leaveEmailService.sendStatusUpdateToAdmins(
+						updatedLeave,
+						updatedLeave.owner,
+						previousStatus
+					);
+
+					// Send push notification for leave rejection
+					try {
+						await this.unifiedNotificationService.sendTemplatedNotification(
+							NotificationEvent.LEAVE_REJECTED,
+							[updatedLeave.owner.uid],
+							{
+								userName: `${updatedLeave.owner.name} ${updatedLeave.owner.surname || ''}`.trim(),
+								leaveType: updatedLeave.leaveType,
+								rejectionReason: rejectionReason,
+								startDate: updatedLeave.startDate.toLocaleDateString(),
+								endDate: updatedLeave.endDate.toLocaleDateString(),
+							},
+							{
+								priority: NotificationPriority.HIGH,
+							},
+						);
+						this.logger.debug(`Leave rejection push notification sent to user: ${updatedLeave.owner.uid}`);
+					} catch (notificationError) {
+						this.logger.warn(`Failed to send leave rejection push notification to user ${updatedLeave.owner.uid}:`, notificationError.message);
+					}
+
+					// Emit leave rejected event for notifications
+					this.eventEmitter.emit('leave.rejected', {
+						leave: updatedLeave,
+						rejectionReason,
+					});
+
+					this.logger.debug(`Post-response processing completed for leave rejection ${ref}`);
+				} catch (backgroundError) {
+					this.logger.error(`Background processing failed for leave rejection ${ref}:`, backgroundError.stack);
+				}
+			});
+
+			return response;
 		} catch (error) {
 			this.logger.error(`❌ [LeaveService] Error rejecting leave ${ref}:`, error.message);
 			if (error instanceof NotFoundException) {
