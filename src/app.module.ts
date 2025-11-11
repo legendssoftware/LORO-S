@@ -197,6 +197,23 @@ import { TblSalesLines } from './erp/entities/tblsaleslines.entity';
 				logging: false,
 				extra: {
 					connectionLimit: parseInt(configService.get<string>('DB_CONNECTION_LIMIT') || '20', 10), // Increased connection limit
+					
+					// ✅ Connection timeout - fail fast if can't connect (10 seconds)
+					connectTimeout: parseInt(configService.get<string>('DB_CONNECT_TIMEOUT') || '10000', 10),
+					
+					// ✅ Connection acquisition timeout - max wait for available connection (30 seconds)
+					acquireTimeout: parseInt(configService.get<string>('DB_ACQUIRE_TIMEOUT') || '30000', 10),
+					
+					// ✅ Query execution timeout - prevent runaway queries (60 seconds)
+					timeout: parseInt(configService.get<string>('DB_QUERY_TIMEOUT') || '60000', 10),
+					
+					// ✅ Idle timeout - release idle connections (5 minutes)
+					idleTimeout: parseInt(configService.get<string>('DB_IDLE_TIMEOUT') || '300000', 10),
+					
+					// ✅ Connection validation and stability
+					waitForConnections: true, // Queue requests instead of failing immediately
+					queueLimit: 0, // No queue limit - let queries wait rather than fail
+					
 					dateStrings: false,
 					ssl: configService.get<string>('NODE_ENV') === 'production' ? { rejectUnauthorized: false } : false,
 					// Additional MySQL optimizations for high load
@@ -209,9 +226,6 @@ import { TblSalesLines } from './erp/entities/tblsaleslines.entity';
 					// Additional connection stability settings
 					keepAliveInitialDelay: 0,
 					enableKeepAlive: true,
-					// Valid MySQL2 connection pool options
-					idleTimeout: parseInt(configService.get<string>('DB_IDLE_TIMEOUT') || '300000', 10), // 5 minutes
-					queueLimit: 0,
 				},
 				retryAttempts: 10,
 				retryDelay: 1000,

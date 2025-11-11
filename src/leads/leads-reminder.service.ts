@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
+import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
+import { Repository, In, DataSource } from 'typeorm';
 import { Lead } from './entities/lead.entity';
 import { LeadStatus } from '../lib/enums/lead.enums';
 import { User } from '../user/entities/user.entity';
@@ -15,6 +15,7 @@ import { TimezoneUtil } from '../lib/utils/timezone.util';
 @Injectable()
 export class LeadsReminderService {
   private readonly logger = new Logger(LeadsReminderService.name);
+  private isProcessing = false; // Prevent concurrent executions
 
   // Define inactive user statuses that should not receive notifications
   private readonly INACTIVE_USER_STATUSES = [
@@ -31,9 +32,30 @@ export class LeadsReminderService {
     private readonly userRepository: Repository<User>,
     @InjectRepository(Organisation)
     private readonly organisationRepository: Repository<Organisation>,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
     private readonly unifiedNotificationService: UnifiedNotificationService,
     private readonly organizationHoursService: OrganizationHoursService,
   ) {}
+
+  /**
+   * Check if database connection is healthy
+   */
+  private async isDatabaseConnected(): Promise<boolean> {
+    try {
+      if (!this.dataSource.isInitialized) {
+        this.logger.warn('Database connection not initialized');
+        return false;
+      }
+
+      // Try a simple query to test connection
+      await this.dataSource.query('SELECT 1');
+      return true;
+    } catch (error) {
+      this.logger.error(`Database connection check failed: ${error.message}`);
+      return false;
+    }
+  }
 
   /**
    * Check if a user is active and should receive notifications
@@ -69,9 +91,23 @@ export class LeadsReminderService {
    */
   @Cron('0 * * * *') // Run every hour
   async sendDailyLeadSummary() {
+    // Prevent concurrent executions
+    if (this.isProcessing) {
+      this.logger.debug('Daily lead summary check already in progress, skipping...');
+      return;
+    }
+
+    this.isProcessing = true;
     this.logger.log('Starting daily lead summary notification check...');
 
     try {
+      // Check database connection first
+      const isConnected = await this.isDatabaseConnected();
+      if (!isConnected) {
+        this.logger.warn('⚠️ Database connection not available, skipping daily lead summary check');
+        return;
+      }
+
       const serverNow = new Date();
 
       // Get all organizations
@@ -142,11 +178,24 @@ export class LeadsReminderService {
 
           this.logger.log(`✅ Daily lead summary sent to ${Object.keys(leadsByOwner).length} users in org ${org.uid}`);
         } catch (error) {
+          // Check if it's a timeout error
+          if (error.message?.includes('ETIMEDOUT') || error.message?.includes('timeout')) {
+            this.logger.error(`Database timeout error processing org ${org.uid}: ${error.message}`);
+            // Continue to next org instead of failing completely
+            continue;
+          }
           this.logger.error(`Error processing daily lead summary for org ${org.uid}:`, error.message);
         }
       }
     } catch (error) {
-      this.logger.error('Error in daily lead summary check:', error.stack);
+      // Check if it's a timeout error
+      if (error.message?.includes('ETIMEDOUT') || error.message?.includes('timeout')) {
+        this.logger.error(`Database timeout error in daily lead summary check: ${error.message}`);
+      } else {
+        this.logger.error('Error in daily lead summary check:', error.stack);
+      }
+    } finally {
+      this.isProcessing = false;
     }
   }
 
