@@ -95,60 +95,62 @@ export class AuthService {
 
 			if (!authProfile?.user) {
 				this.logger.warn(`User not found for authentication: ${username}`);
-				// Send failed login push notification for unknown user
-				try {
-					// Try to find user by email for failed login notification
-					const userByEmail = await this.userService.findOneByEmail(username);
-					if (userByEmail?.user) {
-						// Send failed login push notification
-						try {
-							const attemptTime = new Date().toLocaleTimeString('en-ZA', {
-								hour: '2-digit',
-								minute: '2-digit',
-								hour12: true,
-							});
-							const attemptDate = new Date().toLocaleDateString('en-ZA', {
-								weekday: 'long',
-								year: 'numeric',
-								month: 'long',
-								day: 'numeric',
-							});
+				// Send failed login push notification for unknown user (async, don't block response)
+				setImmediate(async () => {
+					try {
+						// Try to find user by email for failed login notification
+						const userByEmail = await this.userService.findOneByEmail(username);
+						if (userByEmail?.user) {
+							// Send failed login push notification
+							try {
+								const attemptTime = new Date().toLocaleTimeString('en-ZA', {
+									hour: '2-digit',
+									minute: '2-digit',
+									hour12: true,
+								});
+								const attemptDate = new Date().toLocaleDateString('en-ZA', {
+									weekday: 'long',
+									year: 'numeric',
+									month: 'long',
+									day: 'numeric',
+								});
 
-							this.logger.debug(`Sending failed login push notification to user: ${username}`);
-						await this.unifiedNotificationService.sendTemplatedNotification(
-							NotificationEvent.AUTH_LOGIN_FAILED,
-							[userByEmail.user.uid],
-							{
-								message: `🚨 Security Alert: Failed login attempt detected on your account on ${attemptDate} at ${attemptTime}. If this wasn't you, please secure your account immediately.`,
-								userName: userByEmail.user.name || username,
-								attemptTime,
-								attemptDate,
-								ipAddress: requestData?.ipAddress || 'Unknown',
-								location: requestData?.location || 'Unknown',
-								deviceType: requestData?.deviceType || 'Unknown',
-								browser: requestData?.browser || 'Unknown',
-								securityTip: 'Change your password immediately if you suspect unauthorized access',
-								timestamp: new Date().toISOString(),
-							},
-							{
-								priority: NotificationPriority.HIGH,
-								customData: {
-									screen: '/profile',
-									action: 'view_security',
+								this.logger.debug(`Sending failed login push notification to user: ${username}`);
+							await this.unifiedNotificationService.sendTemplatedNotification(
+								NotificationEvent.AUTH_LOGIN_FAILED,
+								[userByEmail.user.uid],
+								{
+									message: `🚨 Security Alert: Failed login attempt detected on your account on ${attemptDate} at ${attemptTime}. If this wasn't you, please secure your account immediately.`,
+									userName: userByEmail.user.name || username,
+									attemptTime,
+									attemptDate,
+									ipAddress: requestData?.ipAddress || 'Unknown',
+									location: requestData?.location || 'Unknown',
+									deviceType: requestData?.deviceType || 'Unknown',
+									browser: requestData?.browser || 'Unknown',
+									securityTip: 'Change your password immediately if you suspect unauthorized access',
+									timestamp: new Date().toISOString(),
 								},
-							},
-						);
-							this.logger.debug(`Failed login push notification sent to user: ${username}`);
-						} catch (notificationError) {
-							this.logger.warn(
-								`Failed to send failed login push notification to user ${username}:`,
-								notificationError.message,
+								{
+									priority: NotificationPriority.HIGH,
+									customData: {
+										screen: '/profile',
+										action: 'view_security',
+									},
+								},
 							);
+								this.logger.debug(`Failed login push notification sent to user: ${username}`);
+							} catch (notificationError) {
+								this.logger.warn(
+									`Failed to send failed login push notification to user ${username}:`,
+									notificationError.message,
+								);
+							}
 						}
+					} catch (error) {
+						this.logger.error('Failed to send failed login notification:', error);
 					}
-				} catch (error) {
-					this.logger.error('Failed to send failed login notification:', error);
-				}
+				});
 				throw new BadRequestException('Invalid credentials provided');
 			}
 
@@ -159,48 +161,50 @@ export class AuthService {
 
 			if (!isPasswordValid) {
 				this.logger.warn(`Invalid password attempt for user: ${username}`);
-				// Send failed login push notification for incorrect password
-				try {
-					const attemptTime = new Date().toLocaleTimeString('en-ZA', {
-						hour: '2-digit',
-						minute: '2-digit',
-						hour12: true,
-					});
-					const attemptDate = new Date().toLocaleDateString('en-ZA', {
-						weekday: 'long',
-						year: 'numeric',
-						month: 'long',
-						day: 'numeric',
-					});
+				// Send failed login push notification for incorrect password (async, don't block response)
+				setImmediate(async () => {
+					try {
+						const attemptTime = new Date().toLocaleTimeString('en-ZA', {
+							hour: '2-digit',
+							minute: '2-digit',
+							hour12: true,
+						});
+						const attemptDate = new Date().toLocaleDateString('en-ZA', {
+							weekday: 'long',
+							year: 'numeric',
+							month: 'long',
+							day: 'numeric',
+						});
 
-					this.logger.debug(`Sending failed login push notification for invalid password: ${username}`);
-				await this.unifiedNotificationService.sendTemplatedNotification(
-					NotificationEvent.AUTH_LOGIN_FAILED,
-					[authProfile.user.uid],
-					{
-						message: `🚨 Security Alert: Failed login attempt detected on your account on ${attemptDate} at ${attemptTime}. If this wasn't you, please secure your account immediately.`,
-						userName: authProfile.user.name || authProfile.user.email,
-						attemptTime,
-						attemptDate,
-						ipAddress: requestData?.ipAddress || 'Unknown',
-						location: requestData?.location || 'Unknown',
-						deviceType: requestData?.deviceType || 'Unknown',
-						browser: requestData?.browser || 'Unknown',
-						securityTip: 'Change your password immediately if you suspect unauthorized access',
-						timestamp: new Date().toISOString(),
-					},
-					{
-						priority: NotificationPriority.HIGH,
-						customData: {
-							screen: '/profile',
-							action: 'view_security',
+						this.logger.debug(`Sending failed login push notification for invalid password: ${username}`);
+					await this.unifiedNotificationService.sendTemplatedNotification(
+						NotificationEvent.AUTH_LOGIN_FAILED,
+						[authProfile.user.uid],
+						{
+							message: `🚨 Security Alert: Failed login attempt detected on your account on ${attemptDate} at ${attemptTime}. If this wasn't you, please secure your account immediately.`,
+							userName: authProfile.user.name || authProfile.user.email,
+							attemptTime,
+							attemptDate,
+							ipAddress: requestData?.ipAddress || 'Unknown',
+							location: requestData?.location || 'Unknown',
+							deviceType: requestData?.deviceType || 'Unknown',
+							browser: requestData?.browser || 'Unknown',
+							securityTip: 'Change your password immediately if you suspect unauthorized access',
+							timestamp: new Date().toISOString(),
 						},
-					},
-				);
-					this.logger.debug(`Failed login push notification sent for invalid password: ${username}`);
-				} catch (error) {
-					this.logger.error('Failed to send failed login push notification:', error);
-				}
+						{
+							priority: NotificationPriority.HIGH,
+							customData: {
+								screen: '/profile',
+								action: 'view_security',
+							},
+						},
+					);
+						this.logger.debug(`Failed login push notification sent for invalid password: ${username}`);
+					} catch (error) {
+						this.logger.error('Failed to send failed login push notification:', error);
+					}
+				});
 
 				return {
 					message: 'Invalid credentials provided',

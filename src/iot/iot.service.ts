@@ -115,7 +115,6 @@ export class IotService {
 				this.getCacheKey(`device:deviceId:${device.deviceID}:${device.orgID}:`),
 				this.getCacheKey(`device:deviceId:${device.deviceID}:${device.orgID}:${device.branchID}`),
 				this.getCacheKey(`analytics:device:${device.id}`),
-				this.getCacheKey(`business_hours:${device.orgID}:*`),
 			);
 
 			// Add organization and branch specific keys
@@ -123,28 +122,51 @@ export class IotService {
 				this.getCacheKey(`devices:org:${device.orgID}`),
 				this.getCacheKey(`devices:branch:${device.branchID}`),
 				this.getCacheKey('devices:all'),
-				this.getCacheKey(`analytics:summary:*`),
 			);
 
-			// Clear all pagination, filtered device list caches, and record caches
+			// Clear ALL device list caches that match the orgId (critical for device list updates)
+			// The cache key format is: iot:devices:{"filters":{"orgId":2,"branchId":null},"page":"1","limit":"100"}
+			const orgIdStr = device.orgID.toString();
+			const branchIdStr = device.branchID?.toString() || '';
+			
 			const deviceListCaches = keys.filter(
-				(key) =>
-					key.startsWith(`${this.CACHE_PREFIX}devices:`) ||
-					key.startsWith(`${this.CACHE_PREFIX}records:`) ||
-					key.startsWith(`${this.CACHE_PREFIX}analytics:`) ||
-					key.includes('_limit') ||
-					key.includes('_filter') ||
-					key.includes('page') ||
-					key.includes(device.orgID.toString()) ||
-					key.includes(device.deviceID),
+				(key) => {
+					// Match device list cache keys that contain this orgId
+					if (key.startsWith(`${this.CACHE_PREFIX}devices:`)) {
+						// Check if the key contains the orgId in the filters
+						return key.includes(`"orgId":${orgIdStr}`) || 
+						       key.includes(`"orgId":"${orgIdStr}"`) ||
+						       key.includes(`orgId:${orgIdStr}`) ||
+						       key.includes(orgIdStr);
+					}
+					return false;
+				}
 			);
 			keysToDelete.push(...deviceListCaches);
 
+			// Clear all record and analytics caches for this organization
+			const relatedCaches = keys.filter(
+				(key) =>
+					key.startsWith(`${this.CACHE_PREFIX}records:`) ||
+					key.startsWith(`${this.CACHE_PREFIX}analytics:`) ||
+					key.includes(device.deviceID) ||
+					(key.includes(orgIdStr) && (key.includes('device') || key.includes('record')))
+			);
+			keysToDelete.push(...relatedCaches);
+
 			// Remove duplicates and clear all caches
 			const uniqueKeys = [...new Set(keysToDelete)];
+			
+			// Log which cache keys are being cleared for debugging
+			this.logger.debug(`🗑️ Clearing ${uniqueKeys.length} cache keys for device ${device.deviceID}:`, {
+				deviceListCaches: deviceListCaches.length,
+				relatedCaches: relatedCaches.length,
+				sampleKeys: uniqueKeys.slice(0, 5),
+			});
+			
 			await Promise.all(uniqueKeys.map((key) => this.cacheManager.del(key)));
 
-			this.logger.debug(`🗑️ Cache invalidated for device ${device.deviceID}. Cleared ${uniqueKeys.length} cache keys`);
+			this.logger.log(`🗑️ Cache invalidated for device ${device.deviceID}. Cleared ${uniqueKeys.length} cache keys`);
 
 			// Emit event for other services that might be caching device data
 			this.eventEmitter.emit('iot.devices.cache.invalidate', {
@@ -472,7 +494,10 @@ export class IotService {
 			// 9. Commit transaction
 			await queryRunner.commitTransaction();
 
-			// 10. Post-creation activities (outside transaction)
+			// 10. Invalidate device list caches AFTER transaction commit
+			await this.invalidateDeviceCache(savedDevice);
+
+			// 11. Post-creation activities (outside transaction)
 			await this.performPostCreationActivities(savedDevice, startTime);
 
 			this.logger.log(`✅ Device created successfully with ID: ${savedDevice.id} in ${Date.now() - startTime}ms`);
@@ -886,8 +911,7 @@ export class IotService {
 			.leftJoinAndSelect('device.branch', 'branch')
 			.leftJoinAndSelect('device.organisation', 'organisation')
 			.where('device.isDeleted = :isDeleted', { isDeleted: false })
-			.orderBy('device.createdAt', 'DESC')
-			.addOrderBy('records.createdAt', 'DESC');
+			.orderBy('device.createdAt', 'DESC');
 
 			this.logger.debug(`🔌 [${requestId}] Base query created with relations`);
 
@@ -920,9 +944,27 @@ export class IotService {
 
 			this.logger.log(`🔌 [${requestId}] Applied ${appliedFilters} filters to query`);
 
-			// Get total count
+			// Get total count - use a separate query builder without joins to get accurate count
 			const countStartTime = Date.now();
-			const total = await queryBuilder.getCount();
+			const countQueryBuilder = this.deviceRepository
+				.createQueryBuilder('device')
+				.where('device.isDeleted = :isDeleted', { isDeleted: false });
+			
+			// Apply same filters to count query
+			if (filters.orgId) {
+				countQueryBuilder.andWhere('device.orgID = :orgId', { orgId: filters.orgId });
+			}
+			if (filters.branchId) {
+				countQueryBuilder.andWhere('device.branchID = :branchId', { branchId: filters.branchId });
+			}
+			if (filters.deviceType) {
+				countQueryBuilder.andWhere('device.deviceType = :deviceType', { deviceType: filters.deviceType });
+			}
+			if (filters.status) {
+				countQueryBuilder.andWhere('device.currentStatus = :status', { status: filters.status });
+			}
+			
+			const total = await countQueryBuilder.getCount();
 			const countTime = Date.now() - countStartTime;
 			this.logger.debug(`🔌 [${requestId}] Count query completed: ${total} devices found in ${countTime}ms`);
 
@@ -939,6 +981,12 @@ export class IotService {
 				`🔌 [${requestId}] Main query completed: ${devices.length} devices fetched in ${queryTime}ms`,
 			);
 
+			// Log all device IDs for debugging missing devices issue
+			const deviceIds = devices.map(d => ({ id: d.id, deviceID: d.deviceID, branchID: d.branchID }));
+			this.logger.debug(
+				`🔌 [${requestId}] Fetched device IDs: ${JSON.stringify(deviceIds)}`,
+			);
+
 		// Limit records to latest 10 for each device
 		const processedDevices = devices.map(device => ({
 			...device,
@@ -953,6 +1001,13 @@ export class IotService {
 			if (processedDevices.length > 0) {
 				this.logger.debug(
 					`🔌 [${requestId}] Sample device data: ID=${processedDevices[0].id}, deviceID=${processedDevices[0].deviceID}, type=${processedDevices[0].deviceType}, status=${processedDevices[0].currentStatus}, records=${processedDevices[0].records.length}`,
+				);
+			}
+			
+			// Log discrepancy if total count doesn't match fetched devices
+			if (total !== devices.length) {
+				this.logger.warn(
+					`🔌 [${requestId}] ⚠️ Count mismatch: total=${total}, fetched=${devices.length}. This may indicate a query issue.`,
 				);
 			}
 
