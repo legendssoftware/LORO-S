@@ -400,6 +400,29 @@ export class GoogleMapsService implements OnModuleInit {
   }
 
   /**
+   * Log performance metrics for monitoring
+   */
+  private logPerformanceMetrics(): void {
+    const totalCacheRequests = this.performanceMetrics.cacheHits + this.performanceMetrics.cacheMisses;
+    const cacheHitRate = totalCacheRequests > 0
+      ? ((this.performanceMetrics.cacheHits / totalCacheRequests) * 100).toFixed(2)
+      : '0.00';
+    
+    const successRate = this.performanceMetrics.totalRequests > 0
+      ? ((this.performanceMetrics.successfulRequests / this.performanceMetrics.totalRequests) * 100).toFixed(2)
+      : '0.00';
+
+    this.logger.log(`📊 Google Maps Service Performance Metrics:`);
+    this.logger.log(`   Total Requests: ${this.performanceMetrics.totalRequests}`);
+    this.logger.log(`   Successful: ${this.performanceMetrics.successfulRequests} (${successRate}%)`);
+    this.logger.log(`   Failed: ${this.performanceMetrics.failedRequests}`);
+    this.logger.log(`   Average Response Time: ${this.performanceMetrics.averageResponseTime.toFixed(2)}ms`);
+    this.logger.log(`   Cache Hits: ${this.performanceMetrics.cacheHits}`);
+    this.logger.log(`   Cache Misses: ${this.performanceMetrics.cacheMisses}`);
+    this.logger.log(`   Cache Hit Rate: ${cacheHitRate}%`);
+  }
+
+  /**
    * Enhanced input validation and sanitization
    */
   private validateAndSanitizeAddress(address: string): string {
