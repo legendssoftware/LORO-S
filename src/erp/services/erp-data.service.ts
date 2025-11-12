@@ -1155,7 +1155,10 @@ export class ErpDataService implements OnModuleInit {
 	/**
 	 * Get branch aggregations - optimized query
 	 * 
-	 * Sales Person Filtering: Uses tblsaleslines.rep_code field directly
+	 * ✅ REVISED: Uses tblsalesheader instead of tblsaleslines
+	 * Revenue calculation: SUM(total_incl) - SUM(total_tax) grouped by store
+	 * Processes Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2)
+	 * Sales Person Filtering: Uses tblsalesheader.sales_code field
 	 */
 	async getBranchAggregations(filters: ErpQueryFilters): Promise<BranchAggregation[]> {
 		const operationId = this.generateOperationId('GET_BRANCH_AGG');
@@ -1182,37 +1185,42 @@ export class ErpDataService implements OnModuleInit {
 			const queryStart = Date.now();
 			const dateRangeDays = this.calculateDateRangeDays(filters.startDate, filters.endDate);
 			
-			// ✅ PHASE 2: Add result size limit for aggregations (max 10k records)
-			const query = this.salesLinesRepo
-				.createQueryBuilder('line')
+			// ✅ REVISED: Use tblsalesheader instead of tblsaleslines
+			// Sum total_incl - total_tax for revenue (exclusive of tax), grouped by store
+			// Matches SQL: SELECT store, SUM(total_incl) - SUM(total_tax) AS total_sum FROM tblsalesheader WHERE doc_type IN (1, 2) GROUP BY store
+			const query = this.salesHeaderRepo
+				.createQueryBuilder('header')
 				.select([
-					'line.store as store',
-					'SUM(line.incl_line_total) as totalRevenue',
-					'SUM(line.cost_price * line.quantity) as totalCost',
-					'COUNT(DISTINCT line.doc_number) as transactionCount',
-					'COUNT(DISTINCT line.customer) as uniqueCustomers',
-					'SUM(line.quantity) as totalQuantity',
+					'header.store as store',
+					'SUM(header.total_incl) - SUM(header.total_tax) as totalRevenue', // ✅ Subtract tax: matches SQL query exactly
+					'CAST(0 AS DECIMAL(19,2)) as totalCost', // Cost not available in header table
+					'COUNT(DISTINCT header.doc_number) as transactionCount',
+					'COUNT(DISTINCT header.customer) as uniqueCustomers',
+					'0 as totalQuantity', // Quantity not available in header table (integer)
 				])
-				.where('line.sale_date BETWEEN :startDate AND :endDate', {
+				.where('header.sale_date BETWEEN :startDate AND :endDate', {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
 				})
 				// ✅ CRITICAL: Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2) for revenue calculations
-				.andWhere('line.doc_type IN (:...docTypes)', { docTypes: ['1', '2'] })
-				// ✅ Data quality filters - using gross amounts (incl_line_total) without discount subtraction
-				.andWhere('line.item_code IS NOT NULL')
-				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' })
-				.groupBy('line.store')
+				.andWhere('header.doc_type IN (:...docTypes)', { docTypes: [1, 2] })
+				.andWhere('header.sale_date >= :minDate', { minDate: '2020-01-01' })
+				.groupBy('header.store')
 				.orderBy('totalRevenue', 'DESC')
 				.limit(10000); // ✅ PHASE 2: Max 10k records per aggregation
+
+			if (filters.storeCode) {
+				this.logger.debug(`[${operationId}] Filtering by store: ${filters.storeCode}`);
+				query.andWhere('header.store = :store', { store: filters.storeCode });
+			}
 
 			if (filters.salesPersonId) {
 				const salesPersonIds = Array.isArray(filters.salesPersonId) 
 					? filters.salesPersonId 
 					: [filters.salesPersonId];
 				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
-				// Use rep_code directly from tblsaleslines
-				query.andWhere('line.rep_code IN (:...salesPersonIds)', { salesPersonIds });
+				// Use sales_code from tblsalesheader for header queries
+				query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
 
 			const results = await query.getRawMany();

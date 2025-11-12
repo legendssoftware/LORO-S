@@ -391,7 +391,7 @@ export class PerformanceDashboardGenerator {
 			revenueTrend,
 			hourlySales,
 			salesByCategory,
-			branchPerformance: this.generateBranchPerformanceChart(data),
+			branchPerformance: await this.generateBranchPerformanceChart(data, params),
 			topProducts: this.generateTopProductsChart(data),
 			itemsPerBasket: this.generateItemsPerBasketChart(data),
 			salesBySalesperson: this.generateSalesBySalespersonChart(data),
@@ -565,31 +565,32 @@ export class PerformanceDashboardGenerator {
 	/**
 	 * Generate branch performance chart
 	 * 
+	 * ✅ REVISED: Uses branch aggregations from tblsalesheader grouped by store
 	 * ✅ Uses branch names from mapping (not codes)
 	 */
-	private generateBranchPerformanceChart(data: PerformanceData[]) {
+	private async generateBranchPerformanceChart(data: PerformanceData[], params: PerformanceFiltersDto) {
 		// Import branch name mapping
 		const { getBranchName } = require('../../erp/config/category-mapping.config');
 		
-		// Aggregate by branch code from real ERP data
-		const aggregated = data.reduce((acc, item) => {
-			const branchCode = item.branchId; // Use branch code from database
-			if (!acc[branchCode]) {
-				acc[branchCode] = { revenue: 0, target: 0 };
-			}
-			acc[branchCode].revenue += item.revenue;
-			acc[branchCode].target += item.target;
-			return acc;
-		}, {} as Record<string, { revenue: number; target: number }>);
-
-		const sortedBranches = Object.entries(aggregated)
-			.map(([code, values]) => {
-				// code is branchId in format "B001", "B002", etc., but getBranchName expects store code "001", "002"
-				const storeCode = code.replace(/^B/, ''); // Remove "B" prefix to get store code
+		// Build ERP query filters
+		const filters = this.buildErpFilters(params);
+		
+		// ✅ Get branch aggregations directly from tblsalesheader (SUM(total_incl) - SUM(total_tax) grouped by store)
+		const branchAggregations = await this.erpDataService.getBranchAggregations(filters);
+		
+		// Map branch aggregations to chart data using branch name mapping
+		const sortedBranches = branchAggregations
+			.map((agg) => {
+				const storeCode = String(agg.store || '').trim().padStart(3, '0');
+				const branchName = getBranchName(storeCode); // ✅ Use branch name from mapping
+				const revenue = typeof agg.totalRevenue === 'number' 
+					? agg.totalRevenue 
+					: parseFloat(String(agg.totalRevenue || 0));
+				
 				return {
-					label: getBranchName(storeCode), // ✅ Use branch name from mapping (pass store code, not branch ID)
-					value: values.revenue,
-					target: values.target,
+					label: branchName,
+					value: revenue,
+					target: 0, // Target not available from aggregations, can be calculated separately if needed
 				};
 			})
 			.sort((a, b) => b.value - a.value)
@@ -600,7 +601,7 @@ export class PerformanceDashboardGenerator {
 				? sortedBranches.reduce((sum, item) => sum + item.target, 0) / sortedBranches.length
 				: 0;
 
-		this.logger.debug(`Branch performance chart generated with ${sortedBranches.length} branches (using names)`);
+		this.logger.debug(`Branch performance chart generated with ${sortedBranches.length} branches (using names from tblsalesheader aggregations)`);
 
 		return { data: sortedBranches, averageTarget };
 	}

@@ -90,22 +90,25 @@ LIMIT 10000;
 -- ============================================================================
 -- Method: getBranchAggregations()
 -- Purpose: Revenue, cost, transactions by store/branch
+-- ✅ REVISED: Uses tblsalesheader instead of tblsaleslines
+-- Revenue calculation: SUM(total_incl) - SUM(total_tax) grouped by store
+-- Processes Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2)
 
 SELECT 
-    line.store as store,
-    SUM(line.incl_line_total) as totalRevenue,
-    SUM(line.cost_price * line.quantity) as totalCost,
-    COUNT(DISTINCT line.doc_number) as transactionCount,
-    COUNT(DISTINCT line.customer) as uniqueCustomers,
-    SUM(line.quantity) as totalQuantity
-FROM tblsaleslines line
-WHERE line.sale_date BETWEEN :startDate AND :endDate
-    AND line.doc_type = '1'
-    AND line.item_code IS NOT NULL
-    AND line.sale_date >= '2020-01-01'
-    -- Optional filter:
-    -- AND line.rep_code IN (:salesPersonIds)
-GROUP BY line.store
+    header.store as store,
+    SUM(header.total_incl) - SUM(header.total_tax) as totalRevenue,
+    CAST(0 AS DECIMAL(19,2)) as totalCost,
+    COUNT(DISTINCT header.doc_number) as transactionCount,
+    COUNT(DISTINCT header.customer) as uniqueCustomers,
+    0 as totalQuantity
+FROM tblsalesheader header
+WHERE header.sale_date BETWEEN :startDate AND :endDate
+    AND header.doc_type IN (1, 2)
+    AND header.sale_date >= '2020-01-01'
+    -- Optional filters:
+    -- AND header.store = :storeCode
+    -- AND header.sales_code IN (:salesPersonIds)
+GROUP BY header.store
 ORDER BY totalRevenue DESC
 LIMIT 10000;
 
