@@ -177,35 +177,40 @@ LIMIT :limit;
 -- Method: getHourlySalesPattern()
 -- Purpose: Sales aggregated by hour of day
 -- Filter: Only records with sale_time data
+-- ✅ REVISED: Uses tblsalesheader table with SUM(total_incl) - SUM(total_tax) formula
+-- Processes Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2)
 
 SELECT 
-    HOUR(line.sale_time) as hour,
-    COUNT(DISTINCT line.doc_number) as transactionCount,
-    CAST(SUM(CAST(line.incl_line_total AS DECIMAL(19,3))) AS DECIMAL(19,2)) as totalRevenue,
-    COUNT(DISTINCT line.customer) as uniqueCustomers
-FROM tblsaleslines line
-WHERE line.sale_date BETWEEN :startDate AND :endDate
-    AND line.doc_type = '1'
-    AND line.sale_time IS NOT NULL
-    AND line.item_code IS NOT NULL
-    AND line.sale_date >= '2020-01-01'
+    HOUR(header.sale_time) as hour,
+    COUNT(DISTINCT header.doc_number) as transactionCount,
+    CAST(SUM(CAST(header.total_incl AS DECIMAL(19,3))) - SUM(CAST(header.total_tax AS DECIMAL(19,3))) AS DECIMAL(19,2)) as totalRevenue,
+    COUNT(DISTINCT header.customer) as uniqueCustomers
+FROM tblsalesheader header
+WHERE header.sale_date BETWEEN :startDate AND :endDate
+    AND header.doc_type IN (1, 2)
+    AND header.sale_time IS NOT NULL
+    AND header.sale_date >= '2020-01-01'
     -- Optional filters:
-    -- AND line.store = :storeCode
-    -- AND line.rep_code IN (:salesPersonIds)
-GROUP BY HOUR(line.sale_time)
-ORDER BY HOUR(line.sale_time) ASC;
+    -- AND header.store = :storeCode
+    -- AND header.sales_code IN (:salesPersonIds)
+GROUP BY HOUR(header.sale_time)
+ORDER BY HOUR(header.sale_time) ASC;
 
 -- ============================================================================
 -- 9. PAYMENT TYPE AGGREGATIONS
 -- ============================================================================
 -- Method: getPaymentTypeAggregations()
--- Purpose: Payment amounts by type from headers
--- Filter: Only Tax Invoices (doc_type = 1)
+-- Purpose: Payment amounts by type from headers (tax-excluded)
+-- Filter: Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2)
 -- Sales Person: Uses header.sales_code
 -- Note: Results filtered to non-zero amounts, transaction counts calculated proportionally
+-- ✅ REVISED: Uses tax exclusion approach - payment methods calculated proportionally
+--    based on SUM(total_incl) - SUM(total_tax) to match base query
+--    Base query: SELECT SUM(total_incl) - SUM(total_tax) AS total_sum FROM tblsalesheader WHERE doc_type IN (1, 2)
 
 SELECT 
-    CAST(SUM(CAST(header.cash AS DECIMAL(19,3))) AS DECIMAL(19,2)) as cash,
+    CAST(SUM(CAST(header.total_incl AS DECIMAL(19,3))) - SUM(CAST(header.total_tax AS DECIMAL(19,3))) AS DECIMAL(19,2)) as taxExcludedTotal,
+    CAST(SUM(CAST(header.cash AS DECIMAL(19,3))) - SUM(CAST(header.change_amnt AS DECIMAL(19,3))) AS DECIMAL(19,2)) as cash,
     CAST(SUM(CAST(header.credit_card AS DECIMAL(19,3))) AS DECIMAL(19,2)) as credit_card,
     CAST(SUM(CAST(header.eft AS DECIMAL(19,3))) AS DECIMAL(19,2)) as eft,
     CAST(SUM(CAST(header.debit_card AS DECIMAL(19,3))) AS DECIMAL(19,2)) as debit_card,
@@ -220,7 +225,7 @@ SELECT
     COUNT(*) as totalTransactions
 FROM tblsalesheader header
 WHERE header.sale_date BETWEEN :startDate AND :endDate
-    AND header.doc_type = 1
+    AND header.doc_type IN (1, 2)
     AND header.sale_date >= '2020-01-01'
     -- Optional filters:
     -- AND header.store = :storeCode

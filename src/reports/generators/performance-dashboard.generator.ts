@@ -18,7 +18,10 @@ import { ErpTransformerService } from '../../erp/services/erp-transformer.servic
 import { ErpTargetsService } from '../../erp/services/erp-targets.service';
 import { 
 	ErpQueryFilters, 
-	SalesTransaction as ErpSalesTransaction 
+	SalesTransaction as ErpSalesTransaction,
+	DailyAggregation,
+	BranchAggregation,
+	BranchCategoryAggregation,
 } from '../../erp/interfaces/erp-data.interface';
 
 /**
@@ -153,32 +156,62 @@ export class PerformanceDashboardGenerator {
 
 	/**
 	 * Generate daily sales performance data
+	 * 
+	 * ✅ REVISED: Now uses daily aggregations from tblsalesheader (same as revenue trend)
+	 * Uses SUM(total_incl) - SUM(total_tax) for revenue, COUNT(DISTINCT doc_number) for transactions,
+	 * COUNT(DISTINCT customer) for unique clients
+	 * This ensures consistency with revenue trend chart data
 	 */
 	async generateDailySalesPerformance(params: PerformanceFiltersDto): Promise<DailySalesPerformanceDto[]> {
 		this.logger.log(`Generating daily sales performance for org ${params.organisationId}`);
 
-		const transactions = await this.getSalesTransactions(params);
-		return this.calculateDailySalesPerformance(transactions);
+		// Build ERP query filters
+		const filters = this.buildErpFilters(params);
+		
+		// ✅ Get daily aggregations from tblsalesheader (same as revenue trend)
+		const dailyAggregations = await this.erpDataService.getDailyAggregations(filters);
+		
+		return this.calculateDailySalesPerformanceFromAggregations(dailyAggregations);
 	}
 
 	/**
 	 * Generate branch × category performance matrix
+	 * 
+	 * ✅ REVISED: Now uses Branch X Category aggregations from tblsaleslines
+	 * Combines sales by category and sales per branch queries
+	 * Uses SUM(incl_line_total) - SUM(tax) grouped by store and category
+	 * This provides solid Branch X Category performance metric charts
 	 */
 	async generateBranchCategoryPerformance(params: PerformanceFiltersDto): Promise<BranchCategoryPerformanceDto[]> {
 		this.logger.log(`Generating branch-category performance for org ${params.organisationId}`);
 
-		const transactions = await this.getSalesTransactions(params);
-		return this.calculateBranchCategoryPerformance(transactions);
+		// Build ERP query filters
+		const filters = this.buildErpFilters(params);
+		
+		// ✅ Get Branch X Category aggregations (combines branch and category queries)
+		const branchCategoryAggregations = await this.erpDataService.getBranchCategoryAggregations(filters);
+		
+		return this.calculateBranchCategoryPerformanceFromAggregations(branchCategoryAggregations);
 	}
 
 	/**
 	 * Generate sales per store data
+	 * 
+	 * ✅ REVISED: Now uses branch aggregations from tblsalesheader (same query structure as base query)
+	 * Uses SUM(total_incl) - SUM(total_tax) for revenue, COUNT(DISTINCT doc_number) for transactions,
+	 * COUNT(DISTINCT customer) for unique clients
+	 * Matches SQL: SELECT store, SUM(total_incl) - SUM(total_tax) AS total_sum FROM tblsalesheader WHERE doc_type IN (1, 2) GROUP BY store
 	 */
 	async generateSalesPerStore(params: PerformanceFiltersDto): Promise<SalesPerStoreDto[]> {
 		this.logger.log(`Generating sales per store for org ${params.organisationId}`);
 
-		const transactions = await this.getSalesTransactions(params);
-		return this.calculateSalesPerStore(transactions);
+		// Build ERP query filters
+		const filters = this.buildErpFilters(params);
+		
+		// ✅ Get branch aggregations from tblsalesheader (same query structure)
+		const branchAggregations = await this.erpDataService.getBranchAggregations(filters);
+		
+		return this.calculateSalesPerStoreFromAggregations(branchAggregations);
 	}
 
 	/**
@@ -696,14 +729,8 @@ export class PerformanceDashboardGenerator {
 		// Import sales code mapping
 		const { getSalesPersonName } = require('../../erp/config/sales-code-mapping.config');
 		
-		// Build ERP query filters
-		const filters = {
-			startDate: params.startDate,
-			endDate: params.endDate,
-			storeCode: params.branchId,
-			category: params.categoryId,
-			salesPersonId: params.salesPersonId,
-		};
+		// Build ERP query filters using buildErpFilters helper
+		const filters = this.buildErpFilters(params);
 
 		// Get sales person aggregations from ERP service
 		const aggregations = await this.erpDataService.getSalesPersonAggregations(filters);
@@ -848,7 +875,67 @@ export class PerformanceDashboardGenerator {
 	// ===================================================================
 
 	/**
-	 * Calculate daily sales performance
+	 * ✅ REVISED: Calculate daily sales performance from daily aggregations (tblsalesheader)
+	 * Uses the same data source as revenue trend chart for consistency
+	 * Revenue = SUM(total_incl) - SUM(total_tax) from tblsalesheader
+	 * Transaction count = COUNT(DISTINCT doc_number)
+	 * Unique clients = COUNT(DISTINCT customer)
+	 * 
+	 * Note: GP (gross profit) is not available in header table, so we calculate it as 0 or fetch from transactions if needed
+	 */
+	private calculateDailySalesPerformanceFromAggregations(aggregations: DailyAggregation[]): DailySalesPerformanceDto[] {
+		// Group aggregations by date (sum across all stores for each date)
+		const dailyData = new Map<string, {
+			revenue: number;
+			transactionCount: number;
+			uniqueCustomers: number;
+		}>();
+
+		aggregations.forEach((agg) => {
+			const date = typeof agg.date === 'string' ? agg.date : new Date(agg.date).toISOString().split('T')[0];
+			if (!dailyData.has(date)) {
+				dailyData.set(date, { revenue: 0, transactionCount: 0, uniqueCustomers: 0 });
+			}
+			const dayData = dailyData.get(date)!;
+			const revenue = typeof agg.totalRevenue === 'number' ? agg.totalRevenue : parseFloat(String(agg.totalRevenue || 0));
+			const transactionCount = typeof agg.transactionCount === 'number' ? agg.transactionCount : parseInt(String(agg.transactionCount || 0), 10);
+			const uniqueCustomers = typeof agg.uniqueCustomers === 'number' ? agg.uniqueCustomers : parseInt(String(agg.uniqueCustomers || 0), 10);
+			
+			dayData.revenue += revenue;
+			dayData.transactionCount += transactionCount;
+			// For unique customers: Since aggregations are grouped by date AND store,
+			// each store has its own COUNT(DISTINCT customer). When aggregating across stores,
+			// we sum them (customers shopping at multiple stores will be counted multiple times,
+			// but this is an approximation since we don't have actual customer IDs in aggregations)
+			dayData.uniqueCustomers += uniqueCustomers;
+		});
+
+		const performance: DailySalesPerformanceDto[] = [];
+		const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+		dailyData.forEach((dayData, date) => {
+			const dateObj = new Date(date);
+			const basketCount = dayData.transactionCount;
+			const basketValue = basketCount > 0 ? dayData.revenue / basketCount : 0;
+
+			performance.push({
+				date,
+				dayOfWeek: dayNames[dateObj.getDay()],
+				basketCount, // ✅ Transaction count from aggregations
+				basketValue,
+				clientsQty: dayData.uniqueCustomers, // ✅ Unique clients from aggregations
+				salesR: dayData.revenue, // ✅ Revenue from aggregations (same as revenue trend)
+				gpR: 0, // GP not available in header table - set to 0 or calculate separately if needed
+				gpPercentage: 0, // GP% not available without GP
+			});
+		});
+
+		return performance.sort((a, b) => a.date.localeCompare(b.date));
+	}
+
+	/**
+	 * Calculate daily sales performance (legacy method using transactions)
+	 * Kept for backward compatibility if needed
 	 */
 	private calculateDailySalesPerformance(transactions: ErpSalesTransaction[]): DailySalesPerformanceDto[] {
 		const dailyData = new Map<string, ErpSalesTransaction[]>();
@@ -891,7 +978,96 @@ export class PerformanceDashboardGenerator {
 	// ===================================================================
 
 	/**
-	 * Calculate branch × category performance
+	 * ✅ REVISED: Calculate branch × category performance from Branch X Category aggregations
+	 * Uses tblsaleslines grouped by store and category
+	 * Revenue = SUM(incl_line_total) - SUM(tax) grouped by store, category
+	 * Combines sales by category and sales per branch queries
+	 * This provides solid Branch X Category performance metric charts
+	 */
+	private calculateBranchCategoryPerformanceFromAggregations(aggregations: BranchCategoryAggregation[]): BranchCategoryPerformanceDto[] {
+		if (aggregations.length === 0) return [];
+
+		// Import branch name mapping
+		const { getBranchName } = require('../../erp/config/category-mapping.config');
+
+		// Group aggregations by branch (store)
+		const branchData = new Map<string, {
+			branchName: string;
+			categories: Map<string, BranchCategoryAggregation>;
+		}>();
+
+		aggregations.forEach((agg) => {
+			const storeCode = String(agg.store || '').trim().padStart(3, '0');
+			const branchId = `B${storeCode}`; // Format as B001, B002, etc.
+			const categoryKey = String(agg.category || 'Uncategorized').trim();
+
+			if (!branchData.has(branchId)) {
+				branchData.set(branchId, {
+					branchName: getBranchName(storeCode), // ✅ Use branch name from mapping
+					categories: new Map(),
+				});
+			}
+
+			const branchInfo = branchData.get(branchId)!;
+			branchInfo.categories.set(categoryKey, agg);
+		});
+
+		const performance: BranchCategoryPerformanceDto[] = [];
+
+		branchData.forEach((branchInfo, branchId) => {
+			const categories: Record<string, CategoryPerformanceDto> = {};
+			let totalBasketCount = 0;
+			let totalRevenue = 0;
+			let totalGP = 0;
+			let totalUniqueClients = 0;
+
+			branchInfo.categories.forEach((agg, categoryKey) => {
+				const revenue = typeof agg.totalRevenue === 'number' ? agg.totalRevenue : parseFloat(String(agg.totalRevenue || 0));
+				const cost = typeof agg.totalCost === 'number' ? agg.totalCost : parseFloat(String(agg.totalCost || 0));
+				const basketCount = typeof agg.transactionCount === 'number' ? agg.transactionCount : parseInt(String(agg.transactionCount || 0), 10);
+				const uniqueCustomers = typeof agg.uniqueCustomers === 'number' ? agg.uniqueCustomers : parseInt(String(agg.uniqueCustomers || 0), 10);
+				const gp = revenue - cost; // Calculate GP from revenue and cost
+
+				categories[categoryKey] = {
+					categoryName: categoryKey,
+					basketCount, // ✅ Transaction count from aggregations
+					basketValue: basketCount > 0 ? revenue / basketCount : 0,
+					clientsQty: uniqueCustomers, // ✅ Unique clients from aggregations
+					salesR: revenue, // ✅ Revenue from aggregations
+					gpR: gp, // ✅ GP calculated from revenue - cost
+					gpPercentage: revenue > 0 ? (gp / revenue) * 100 : 0, // ✅ GP% = (GP / Revenue) * 100
+				};
+
+				totalBasketCount += basketCount;
+				totalRevenue += revenue;
+				totalGP += gp;
+				// For unique clients: Sum across categories (customers may shop in multiple categories)
+				// Note: This is an approximation since we don't have actual customer IDs in aggregations
+				totalUniqueClients += uniqueCustomers;
+			});
+
+			performance.push({
+				branchId,
+				branchName: branchInfo.branchName,
+				categories,
+				total: {
+					categoryName: 'Total',
+					basketCount: totalBasketCount,
+					basketValue: totalBasketCount > 0 ? totalRevenue / totalBasketCount : 0,
+					clientsQty: totalUniqueClients,
+					salesR: totalRevenue,
+					gpR: totalGP, // ✅ Total GP for branch (summed across all categories)
+					gpPercentage: totalRevenue > 0 ? (totalGP / totalRevenue) * 100 : 0, // ✅ Overall GP% = (Total GP / Total Revenue) * 100
+				},
+			});
+		});
+
+		return performance.sort((a, b) => b.total.salesR - a.total.salesR); // Sort by revenue
+	}
+
+	/**
+	 * Calculate branch × category performance (legacy method using transactions)
+	 * Kept for backward compatibility if needed
 	 * 
 	 * ✅ Uses branch names from mapping (not codes)
 	 */
@@ -984,9 +1160,48 @@ export class PerformanceDashboardGenerator {
 	// ===================================================================
 
 	/**
-	 * Calculate sales per store
+	 * ✅ REVISED: Calculate sales per store from branch aggregations (tblsalesheader)
+	 * Uses the same query structure as the base query: SELECT store, SUM(total_incl) - SUM(total_tax) AS total_sum FROM tblsalesheader WHERE doc_type IN (1, 2) GROUP BY store
+	 * Revenue = SUM(total_incl) - SUM(total_tax) from tblsalesheader
+	 * Transaction count = COUNT(DISTINCT doc_number)
+	 * Unique clients = COUNT(DISTINCT customer)
 	 * 
-	 * ✅ Uses branch names from mapping (not codes)
+	 * Note: GP and totalItemsSold are not available in header table, so we set them to 0
+	 */
+	private calculateSalesPerStoreFromAggregations(aggregations: BranchAggregation[]): SalesPerStoreDto[] {
+		if (aggregations.length === 0) return [];
+
+		// Import branch name mapping
+		const { getBranchName } = require('../../erp/config/category-mapping.config');
+
+		const salesPerStore: SalesPerStoreDto[] = [];
+
+		aggregations.forEach((agg) => {
+			const storeCode = String(agg.store || '').trim().padStart(3, '0');
+			const branchId = `B${storeCode}`; // Format as B001, B002, etc.
+			const revenue = typeof agg.totalRevenue === 'number' ? agg.totalRevenue : parseFloat(String(agg.totalRevenue || 0));
+			const transactionCount = typeof agg.transactionCount === 'number' ? agg.transactionCount : parseInt(String(agg.transactionCount || 0), 10);
+			const uniqueCustomers = typeof agg.uniqueCustomers === 'number' ? agg.uniqueCustomers : parseInt(String(agg.uniqueCustomers || 0), 10);
+
+			salesPerStore.push({
+				storeId: branchId,
+				storeName: getBranchName(storeCode), // ✅ Use branch name from mapping
+				totalRevenue: revenue, // ✅ Revenue from aggregations (same as base query)
+				transactionCount, // ✅ Transaction count from aggregations
+				averageTransactionValue: transactionCount > 0 ? revenue / transactionCount : 0,
+				totalItemsSold: 0, // Not available in header table
+				uniqueClients: uniqueCustomers, // ✅ Unique clients from aggregations
+				grossProfit: 0, // GP not available in header table
+				grossProfitPercentage: 0, // GP% not available without GP
+			});
+		});
+
+		return salesPerStore.sort((a, b) => b.totalRevenue - a.totalRevenue);
+	}
+
+	/**
+	 * Calculate sales per store (legacy method using transactions)
+	 * Kept for backward compatibility if needed
 	 */
 	private calculateSalesPerStore(transactions: ErpSalesTransaction[]): SalesPerStoreDto[] {
 		if (transactions.length === 0) return [];

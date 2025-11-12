@@ -10,6 +10,7 @@ import {
 	BranchAggregation,
 	SalesPersonAggregation,
 	CategoryAggregation,
+	BranchCategoryAggregation,
 	ProductAggregation,
 	ErpQueryFilters,
 } from '../interfaces/erp-data.interface';
@@ -1449,6 +1450,130 @@ export class ErpDataService implements OnModuleInit {
 	}
 
 	/**
+	 * Get branch × category aggregations - combines store and category performance
+	 * 
+	 * ✅ NEW: Uses tblsaleslines for category data (category is only in lines table)
+	 * Revenue calculation: SUM(incl_line_total) - SUM(tax) grouped by store and category
+	 * Processes Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2)
+	 * This provides Branch X Category performance metrics
+	 */
+	async getBranchCategoryAggregations(filters: ErpQueryFilters): Promise<BranchCategoryAggregation[]> {
+		const operationId = this.generateOperationId('GET_BRANCH_CATEGORY_AGG');
+		const cacheKey = this.buildCacheKey('branch_category_agg', filters);
+
+		this.logger.log(`[${operationId}] Starting getBranchCategoryAggregations operation`);
+		this.logger.log(`[${operationId}] Date range: ${filters.startDate} to ${filters.endDate}`);
+
+		const startTime = Date.now();
+
+		try {
+			// Check cache first
+			const cached = await this.cacheManager.get<BranchCategoryAggregation[]>(cacheKey);
+			if (cached) {
+				const duration = Date.now() - startTime;
+				this.logger.log(
+					`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} branch-category aggregations (${duration}ms)`,
+				);
+				return cached;
+			}
+
+			this.logger.log(`[${operationId}] Cache MISS - Computing branch-category aggregations...`);
+
+			const queryStart = Date.now();
+			const dateRangeDays = this.calculateDateRangeDays(filters.startDate, filters.endDate);
+			
+			// ✅ Branch × Category aggregation: Uses tblsaleslines grouped by store and category
+			// Revenue calculation: SUM(incl_line_total) - SUM(tax) grouped by store, category
+			// Matches SQL: SELECT store, category, SUM(incl_line_total) - SUM(tax) AS totalRevenue, ... FROM tblsaleslines WHERE doc_type IN (1, 2) GROUP BY store, category
+			const query = this.salesLinesRepo
+				.createQueryBuilder('line')
+				.select([
+					'line.store as store',
+					'line.category as category',
+					'SUM(line.incl_line_total) - SUM(line.tax) as totalRevenue', // ✅ Subtract tax: matches SQL query exactly
+					'SUM(line.cost_price * line.quantity) as totalCost',
+					'COUNT(DISTINCT line.doc_number) as transactionCount',
+					'COUNT(DISTINCT line.customer) as uniqueCustomers',
+					'SUM(line.quantity) as totalQuantity',
+				])
+				.where('line.sale_date BETWEEN :startDate AND :endDate', {
+					startDate: filters.startDate,
+					endDate: filters.endDate,
+				})
+				// ✅ CRITICAL: Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2) for revenue calculations
+				.andWhere('line.doc_type IN (:...docTypes)', { docTypes: ['1', '2'] })
+				.andWhere('line.item_code IS NOT NULL')
+				.andWhere('line.item_code != :excludeItemCode', { excludeItemCode: '.' })
+				.andWhere('line.type = :itemType', { itemType: 'I' })
+				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' })
+				.groupBy('line.store, line.category')
+				.orderBy('totalRevenue', 'DESC')
+				.limit(10000); // ✅ PHASE 2: Max 10k records per aggregation
+
+			if (filters.storeCode) {
+				this.logger.debug(`[${operationId}] Filtering by store: ${filters.storeCode}`);
+				query.andWhere('line.store = :store', { store: filters.storeCode });
+			}
+
+			if (filters.category) {
+				this.logger.debug(`[${operationId}] Filtering by category: ${filters.category}`);
+				query.andWhere('line.category = :category', { category: filters.category });
+			}
+
+			if (filters.salesPersonId) {
+				const salesPersonIds = Array.isArray(filters.salesPersonId) 
+					? filters.salesPersonId 
+					: [filters.salesPersonId];
+				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
+				// Use rep_code directly from tblsaleslines
+				query.andWhere('line.rep_code IN (:...salesPersonIds)', { salesPersonIds });
+			}
+
+			const results = await this.executeQueryWithProtection(
+				async () => query.getRawMany(),
+				operationId,
+				120000, // 120 second base timeout
+				dateRangeDays, // Adaptive timeout
+			);
+			const queryDuration = Date.now() - queryStart;
+			
+			// ✅ PHASE 2: Log slow query warning
+			this.logSlowQuery(operationId, queryDuration, dateRangeDays, filters.startDate, filters.endDate);
+
+			// Process results to ensure correct types
+			const processedResults = results.map((row) => ({
+				store: String(row.store || '').trim().padStart(3, '0'),
+				category: String(row.category || 'Uncategorized').trim(),
+				totalRevenue: parseFloat(row.totalRevenue) || 0,
+				totalCost: parseFloat(row.totalCost) || 0,
+				transactionCount: parseInt(row.transactionCount, 10) || 0,
+				uniqueCustomers: parseInt(row.uniqueCustomers, 10) || 0,
+				totalQuantity: parseFloat(row.totalQuantity) || 0,
+			}));
+
+			this.logger.log(`[${operationId}] Aggregation query completed in ${queryDuration}ms`);
+			this.logger.log(`[${operationId}] Computed ${processedResults.length} branch-category aggregations`);
+
+			// Cache results
+			await this.cacheManager.set(cacheKey, processedResults, this.CACHE_TTL);
+
+			const totalDuration = Date.now() - startTime;
+			this.logger.log(`[${operationId}] ✅ Operation completed successfully (${totalDuration}ms)`);
+			return processedResults;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			
+			// ✅ Enhanced error diagnostics
+			this.logger.error(`[${operationId}] ❌ Error computing branch-category aggregations (${duration}ms)`);
+			this.logger.error(`[${operationId}] Error: ${error.message}`);
+			this.logger.error(`[${operationId}] Circuit Breaker: ${this.circuitBreakerState}`);
+			this.logger.error(`[${operationId}] Connection Pool: ${JSON.stringify(this.getConnectionPoolInfo())}`);
+			this.logger.error(`[${operationId}] Stack: ${error.stack}`);
+			throw error;
+		}
+	}
+
+	/**
 	 * Get product aggregations - top products by revenue
 	 * 
 	 * ✅ REVISED: Uses SUM(incl_line_total) - SUM(tax) for revenue calculation
@@ -1779,11 +1904,17 @@ export class ErpDataService implements OnModuleInit {
 
 	/**
 	 * Get hourly sales pattern using real sale_time data
+	 * 
+	 * Aggregates sales by hour of day to identify peak sales hours
+	 * Only includes records with sale_time data
+	 * Processes Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2)
+	 * 
+	 * ✅ REVISED: Uses tblsalesheader table with SUM(total_incl) - SUM(total_tax) formula
 	 *
 	 * @param filters - Query filters (date range, store, etc.)
 	 * @returns Hourly sales data aggregated by hour
 	 * 
-	 * Sales Person Filtering: Uses tblsaleslines.rep_code field directly
+	 * Sales Person Filtering: Uses tblsalesheader.sales_code field
 	 */
 	async getHourlySalesPattern(filters: ErpQueryFilters): Promise<
 		Array<{
@@ -1813,27 +1944,27 @@ export class ErpDataService implements OnModuleInit {
 
 			const queryStart = Date.now();
 
-			const query = this.salesLinesRepo
-				.createQueryBuilder('line')
+			// ✅ REVISED: Uses tblsalesheader with SUM(total_incl) - SUM(total_tax) formula
+			const query = this.salesHeaderRepo
+				.createQueryBuilder('header')
 				.select([
-					'HOUR(line.sale_time) as hour',
-					'COUNT(DISTINCT line.doc_number) as transactionCount',
-					'CAST(SUM(CAST(line.incl_line_total AS DECIMAL(19,3))) AS DECIMAL(19,2)) as totalRevenue',
-					'COUNT(DISTINCT line.customer) as uniqueCustomers',
+					'HOUR(header.sale_time) as hour',
+					'COUNT(DISTINCT header.doc_number) as transactionCount',
+					'CAST(SUM(CAST(header.total_incl AS DECIMAL(19,3))) - SUM(CAST(header.total_tax AS DECIMAL(19,3))) AS DECIMAL(19,2)) as totalRevenue', // ✅ SUM(total_incl) - SUM(total_tax)
+					'COUNT(DISTINCT header.customer) as uniqueCustomers',
 				])
-				.where('line.sale_date BETWEEN :startDate AND :endDate', {
+				.where('header.sale_date BETWEEN :startDate AND :endDate', {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
 				})
-				.andWhere('line.doc_type IN (:...docTypes)', { docTypes: ['1', '2'] }) // ✅ Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2)
-				.andWhere('line.sale_time IS NOT NULL') // ✅ Only records with time
-				.andWhere('line.item_code IS NOT NULL')
-				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' })
-				.groupBy('HOUR(line.sale_time)')
-				.orderBy('HOUR(line.sale_time)', 'ASC');
+				.andWhere('header.doc_type IN (:...docTypes)', { docTypes: [1, 2] }) // ✅ Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2)
+				.andWhere('header.sale_time IS NOT NULL') // ✅ Only records with time
+				.andWhere('header.sale_date >= :minDate', { minDate: '2020-01-01' })
+				.groupBy('HOUR(header.sale_time)')
+				.orderBy('HOUR(header.sale_time)', 'ASC');
 
 			if (filters.storeCode) {
-				query.andWhere('line.store = :store', { store: filters.storeCode });
+				query.andWhere('header.store = :store', { store: filters.storeCode });
 			}
 
 			if (filters.salesPersonId) {
@@ -1841,8 +1972,8 @@ export class ErpDataService implements OnModuleInit {
 					? filters.salesPersonId 
 					: [filters.salesPersonId];
 				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
-				// Use rep_code directly from tblsaleslines
-				query.andWhere('line.rep_code IN (:...salesPersonIds)', { salesPersonIds });
+				// Use sales_code from tblsalesheader
+				query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
 
 			const results = await query.getRawMany();
@@ -1888,10 +2019,16 @@ export class ErpDataService implements OnModuleInit {
 	 * Get payment type aggregations from tblsalesheader
 	 * 
 	 * Aggregates payment amounts by payment type (cash, credit_card, eft, etc.)
-	 * Only includes Tax Invoices (doc_type = 1)
+	 * Processes Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2)
+	 * 
+	 * ✅ REVISED: Uses tax exclusion approach matching base query
+	 * - Base calculation: SUM(total_incl) - SUM(total_tax) AS total_sum
+	 * - Payment methods are calculated proportionally based on tax-excluded total
+	 * - Cash amount = SUM(cash) - SUM(change_amnt) (net cash received)
+	 * - All payment methods scaled to match tax-excluded revenue total
 	 * 
 	 * @param filters - Query filters (date range, store, etc.)
-	 * @returns Array of payment type aggregations
+	 * @returns Array of payment type aggregations (tax-excluded amounts)
 	 * 
 	 * Sales Person Filtering: Uses tblsalesheader.sales_code field
 	 */
@@ -1922,30 +2059,33 @@ export class ErpDataService implements OnModuleInit {
 
 			const queryStart = Date.now();
 
-			// Build base query
-			let query = this.salesHeaderRepo
-				.createQueryBuilder('header')
-				.select([
-					'CAST(SUM(CAST(header.cash AS DECIMAL(19,3))) AS DECIMAL(19,2)) as cash',
-					'CAST(SUM(CAST(header.credit_card AS DECIMAL(19,3))) AS DECIMAL(19,2)) as credit_card',
-					'CAST(SUM(CAST(header.eft AS DECIMAL(19,3))) AS DECIMAL(19,2)) as eft',
-					'CAST(SUM(CAST(header.debit_card AS DECIMAL(19,3))) AS DECIMAL(19,2)) as debit_card',
-					'CAST(SUM(CAST(header.cheque AS DECIMAL(19,3))) AS DECIMAL(19,2)) as cheque',
-					'CAST(SUM(CAST(header.voucher AS DECIMAL(19,3))) AS DECIMAL(19,2)) as voucher',
-					'CAST(SUM(CAST(header.account AS DECIMAL(19,3))) AS DECIMAL(19,2)) as account',
-					'CAST(SUM(CAST(header.snap_scan AS DECIMAL(19,3))) AS DECIMAL(19,2)) as snap_scan',
-					'CAST(SUM(CAST(header.zapper AS DECIMAL(19,3))) AS DECIMAL(19,2)) as zapper',
-					'CAST(SUM(CAST(header.extra AS DECIMAL(19,3))) AS DECIMAL(19,2)) as extra',
-					'CAST(SUM(CAST(header.offline_card AS DECIMAL(19,3))) AS DECIMAL(19,2)) as offline_card',
-					'CAST(SUM(CAST(header.fnb_qr AS DECIMAL(19,3))) AS DECIMAL(19,2)) as fnb_qr',
-					'COUNT(*) as totalTransactions',
-				])
-				.where('header.sale_date BETWEEN :startDate AND :endDate', {
-					startDate: filters.startDate,
-					endDate: filters.endDate,
-				})
-				.andWhere('header.doc_type IN (:...docTypes)', { docTypes: [1, 2] }) // Tax Invoices (1) AND Credit Notes (2)
-				.andWhere('header.sale_date >= :minDate', { minDate: '2020-01-01' });
+		// Build base query
+		// ✅ REVISED: Use tax exclusion approach - calculate payment methods proportionally based on SUM(total_incl) - SUM(total_tax)
+		// This matches the base query: SELECT SUM(total_incl) - SUM(total_tax) AS total_sum FROM tblsalesheader WHERE doc_type IN (1, 2)
+		let query = this.salesHeaderRepo
+			.createQueryBuilder('header')
+			.select([
+				'CAST(SUM(CAST(header.total_incl AS DECIMAL(19,3))) - SUM(CAST(header.total_tax AS DECIMAL(19,3))) AS DECIMAL(19,2)) as taxExcludedTotal', // ✅ Tax-excluded total
+				'CAST(SUM(CAST(header.cash AS DECIMAL(19,3))) - SUM(CAST(header.change_amnt AS DECIMAL(19,3))) AS DECIMAL(19,2)) as cash', // ✅ Cash minus change
+				'CAST(SUM(CAST(header.credit_card AS DECIMAL(19,3))) AS DECIMAL(19,2)) as credit_card',
+				'CAST(SUM(CAST(header.eft AS DECIMAL(19,3))) AS DECIMAL(19,2)) as eft',
+				'CAST(SUM(CAST(header.debit_card AS DECIMAL(19,3))) AS DECIMAL(19,2)) as debit_card',
+				'CAST(SUM(CAST(header.cheque AS DECIMAL(19,3))) AS DECIMAL(19,2)) as cheque',
+				'CAST(SUM(CAST(header.voucher AS DECIMAL(19,3))) AS DECIMAL(19,2)) as voucher',
+				'CAST(SUM(CAST(header.account AS DECIMAL(19,3))) AS DECIMAL(19,2)) as account',
+				'CAST(SUM(CAST(header.snap_scan AS DECIMAL(19,3))) AS DECIMAL(19,2)) as snap_scan',
+				'CAST(SUM(CAST(header.zapper AS DECIMAL(19,3))) AS DECIMAL(19,2)) as zapper',
+				'CAST(SUM(CAST(header.extra AS DECIMAL(19,3))) AS DECIMAL(19,2)) as extra',
+				'CAST(SUM(CAST(header.offline_card AS DECIMAL(19,3))) AS DECIMAL(19,2)) as offline_card',
+				'CAST(SUM(CAST(header.fnb_qr AS DECIMAL(19,3))) AS DECIMAL(19,2)) as fnb_qr',
+				'COUNT(*) as totalTransactions',
+			])
+			.where('header.sale_date BETWEEN :startDate AND :endDate', {
+				startDate: filters.startDate,
+				endDate: filters.endDate,
+			})
+			.andWhere('header.doc_type IN (:...docTypes)', { docTypes: [1, 2] }) // Tax Invoices (1) AND Credit Notes (2)
+			.andWhere('header.sale_date >= :minDate', { minDate: '2020-01-01' });
 
 			if (filters.storeCode) {
 				query = query.andWhere('header.store = :store', { store: filters.storeCode });
@@ -1965,20 +2105,49 @@ export class ErpDataService implements OnModuleInit {
 
 			this.logger.log(`[${operationId}] Query completed in ${queryDuration}ms`);
 
-			// Process results - convert to array of payment type objects
+			// ✅ REVISED: Calculate tax-excluded payment methods proportionally
+			// Get raw payment method totals (including tax)
+			const rawPaymentMethods = {
+				cash: parseFloat(results?.cash || 0),
+				credit_card: parseFloat(results?.credit_card || 0),
+				eft: parseFloat(results?.eft || 0),
+				debit_card: parseFloat(results?.debit_card || 0),
+				cheque: parseFloat(results?.cheque || 0),
+				voucher: parseFloat(results?.voucher || 0),
+				account: parseFloat(results?.account || 0),
+				snap_scan: parseFloat(results?.snap_scan || 0),
+				zapper: parseFloat(results?.zapper || 0),
+				extra: parseFloat(results?.extra || 0),
+				offline_card: parseFloat(results?.offline_card || 0),
+				fnb_qr: parseFloat(results?.fnb_qr || 0),
+			};
+
+			// Calculate total payment received (sum of all payment methods)
+			const totalPaymentReceived = Object.values(rawPaymentMethods).reduce((sum, val) => sum + val, 0);
+			
+			// Get tax-excluded total
+			const taxExcludedTotal = parseFloat(results?.taxExcludedTotal || 0);
+
+			// Calculate scaling factor to convert payment methods to tax-excluded amounts
+			// If totalPaymentReceived is 0, use 1.0 to avoid division by zero
+			const scalingFactor = totalPaymentReceived > 0 ? taxExcludedTotal / totalPaymentReceived : 1.0;
+
+			this.logger.log(`[${operationId}] Tax-excluded total: R${taxExcludedTotal.toFixed(2)}, Total payment received: R${totalPaymentReceived.toFixed(2)}, Scaling factor: ${scalingFactor.toFixed(4)}`);
+
+			// Apply scaling factor to each payment method to get tax-excluded amounts
 			const paymentTypes = [
-				{ paymentType: 'Cash', totalAmount: parseFloat(results?.cash || 0) },
-				{ paymentType: 'Credit Card', totalAmount: parseFloat(results?.credit_card || 0) },
-				{ paymentType: 'EFT', totalAmount: parseFloat(results?.eft || 0) },
-				{ paymentType: 'Debit Card', totalAmount: parseFloat(results?.debit_card || 0) },
-				{ paymentType: 'Cheque', totalAmount: parseFloat(results?.cheque || 0) },
-				{ paymentType: 'Voucher', totalAmount: parseFloat(results?.voucher || 0) },
-				{ paymentType: 'Account', totalAmount: parseFloat(results?.account || 0) },
-				{ paymentType: 'SnapScan', totalAmount: parseFloat(results?.snap_scan || 0) },
-				{ paymentType: 'Zapper', totalAmount: parseFloat(results?.zapper || 0) },
-				{ paymentType: 'Extra', totalAmount: parseFloat(results?.extra || 0) },
-				{ paymentType: 'Offline Card', totalAmount: parseFloat(results?.offline_card || 0) },
-				{ paymentType: 'FNB QR', totalAmount: parseFloat(results?.fnb_qr || 0) },
+				{ paymentType: 'Cash', totalAmount: rawPaymentMethods.cash * scalingFactor },
+				{ paymentType: 'Credit Card', totalAmount: rawPaymentMethods.credit_card * scalingFactor },
+				{ paymentType: 'EFT', totalAmount: rawPaymentMethods.eft * scalingFactor },
+				{ paymentType: 'Debit Card', totalAmount: rawPaymentMethods.debit_card * scalingFactor },
+				{ paymentType: 'Cheque', totalAmount: rawPaymentMethods.cheque * scalingFactor },
+				{ paymentType: 'Voucher', totalAmount: rawPaymentMethods.voucher * scalingFactor },
+				{ paymentType: 'Account', totalAmount: rawPaymentMethods.account * scalingFactor },
+				{ paymentType: 'SnapScan', totalAmount: rawPaymentMethods.snap_scan * scalingFactor },
+				{ paymentType: 'Zapper', totalAmount: rawPaymentMethods.zapper * scalingFactor },
+				{ paymentType: 'Extra', totalAmount: rawPaymentMethods.extra * scalingFactor },
+				{ paymentType: 'Offline Card', totalAmount: rawPaymentMethods.offline_card * scalingFactor },
+				{ paymentType: 'FNB QR', totalAmount: rawPaymentMethods.fnb_qr * scalingFactor },
 			];
 
 			// Filter out payment types with zero amounts and calculate transaction counts
@@ -2455,10 +2624,11 @@ export class ErpDataService implements OnModuleInit {
 	 */
 	private async getUniquePaymentMethods(filters: ErpQueryFilters): Promise<Array<{ id: string; name: string }>> {
 		// Query to get which payment methods have non-zero values
+		// ✅ REVISED: Cash calculation subtracts change_amnt (cash received minus change given)
 		const query = this.salesHeaderRepo
 			.createQueryBuilder('header')
 			.select([
-				'CAST(SUM(CAST(header.cash AS DECIMAL(19,3))) AS DECIMAL(19,2)) as cash',
+				'CAST(SUM(CAST(header.cash AS DECIMAL(19,3))) - SUM(CAST(header.change_amnt AS DECIMAL(19,3))) AS DECIMAL(19,2)) as cash', // ✅ Cash minus change
 				'CAST(SUM(CAST(header.credit_card AS DECIMAL(19,3))) AS DECIMAL(19,2)) as credit_card',
 				'CAST(SUM(CAST(header.eft AS DECIMAL(19,3))) AS DECIMAL(19,2)) as eft',
 				'CAST(SUM(CAST(header.debit_card AS DECIMAL(19,3))) AS DECIMAL(19,2)) as debit_card',
@@ -2475,7 +2645,7 @@ export class ErpDataService implements OnModuleInit {
 				startDate: filters.startDate,
 				endDate: filters.endDate,
 			})
-			.andWhere('header.doc_type = :docType', { docType: 1 });
+			.andWhere('header.doc_type IN (:...docTypes)', { docTypes: [1, 2] }); // Tax Invoices (1) AND Credit Notes (2)
 
 		const results = await query.getRawOne();
 

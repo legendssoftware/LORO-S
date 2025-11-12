@@ -93,12 +93,30 @@ export interface SalesPersonAggregation {
 
 /**
  * Category Aggregation Result from ERP
- * Note: Uses gross amounts (incl_line_total) - discount already applied to selling prices
- * Only processes Tax Invoices (doc_type = 1)
+ * Note: Uses SUM(incl_line_total) - SUM(tax) for revenue calculation (exclusive of tax)
+ * Revenue = SUM(incl_line_total) - SUM(tax) grouped by category
+ * Processes Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2)
  */
 export interface CategoryAggregation {
 	category: string;
 	store: string;
+	totalRevenue: number;
+	totalCost: number;
+	transactionCount: number;
+	uniqueCustomers: number;
+	totalQuantity: number;
+}
+
+/**
+ * Branch × Category Aggregation Result from ERP
+ * Note: Uses tblsaleslines for category data (category is only in lines table)
+ * Revenue calculation: SUM(incl_line_total) - SUM(tax) grouped by store and category
+ * Processes Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2)
+ * This combines branch (store) and category performance metrics
+ */
+export interface BranchCategoryAggregation {
+	store: string;
+	category: string;
 	totalRevenue: number;
 	totalCost: number;
 	transactionCount: number;
@@ -126,6 +144,11 @@ export interface ProductAggregation {
 /**
  * Payment Type Aggregation Result from ERP
  * Aggregates payment amounts from tblsalesheader by payment type
+ * Processes Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2)
+ * 
+ * ✅ REVISED: Cash payment type calculation
+ * - Cash amount = SUM(cash) - SUM(change_amnt)
+ * - This gives the net cash received after deducting change given to customers
  */
 export interface PaymentTypeAggregation {
 	paymentType: string;
