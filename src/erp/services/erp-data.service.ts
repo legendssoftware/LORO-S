@@ -8,6 +8,7 @@ import { TblSalesLines } from '../entities/tblsaleslines.entity';
 import {
 	DailyAggregation,
 	BranchAggregation,
+	SalesPersonAggregation,
 	CategoryAggregation,
 	ProductAggregation,
 	ErpQueryFilters,
@@ -1252,6 +1253,124 @@ export class ErpDataService implements OnModuleInit {
 	}
 
 	/**
+	 * Get sales person aggregations - optimized query
+	 * 
+	 * ✅ REVISED: Uses tblsalesheader instead of tblsaleslines
+	 * Revenue calculation: SUM(total_incl) - SUM(total_tax) grouped by sales_code
+	 * Processes Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2)
+	 * Groups by sales_code to show how much each sales rep sold
+	 */
+	async getSalesPersonAggregations(filters: ErpQueryFilters): Promise<SalesPersonAggregation[]> {
+		const operationId = this.generateOperationId('GET_SALES_PERSON_AGG');
+		const cacheKey = this.buildCacheKey('sales_person_agg', filters);
+
+		this.logger.log(`[${operationId}] Starting getSalesPersonAggregations operation`);
+		this.logger.log(`[${operationId}] Date range: ${filters.startDate} to ${filters.endDate}`);
+
+		const startTime = Date.now();
+
+		try {
+			// Check cache first
+			const cached = await this.cacheManager.get<SalesPersonAggregation[]>(cacheKey);
+			if (cached) {
+				const duration = Date.now() - startTime;
+				this.logger.log(
+					`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} sales person aggregations (${duration}ms)`,
+				);
+				return cached;
+			}
+
+			this.logger.log(`[${operationId}] Cache MISS - Computing sales person aggregations...`);
+
+			const queryStart = Date.now();
+			const dateRangeDays = this.calculateDateRangeDays(filters.startDate, filters.endDate);
+			
+			// ✅ REVISED: Use tblsalesheader instead of tblsaleslines
+			// Sum total_incl - total_tax for revenue (exclusive of tax), grouped by sales_code
+			// Matches SQL: SELECT sales_code, SUM(total_incl) - SUM(total_tax) AS total_sum FROM tblsalesheader WHERE doc_type IN (1, 2) GROUP BY sales_code
+			const query = this.salesHeaderRepo
+				.createQueryBuilder('header')
+				.select([
+					'header.sales_code as salesCode',
+					'SUM(header.total_incl) - SUM(header.total_tax) as totalRevenue', // ✅ Subtract tax: matches SQL query exactly
+					'CAST(0 AS DECIMAL(19,2)) as totalCost', // Cost not available in header table
+					'COUNT(DISTINCT header.doc_number) as transactionCount',
+					'COUNT(DISTINCT header.customer) as uniqueCustomers',
+					'0 as totalQuantity', // Quantity not available in header table (integer)
+				])
+				.where('header.sale_date BETWEEN :startDate AND :endDate', {
+					startDate: filters.startDate,
+					endDate: filters.endDate,
+				})
+				// ✅ CRITICAL: Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2) for revenue calculations
+				.andWhere('header.doc_type IN (:...docTypes)', { docTypes: [1, 2] })
+				.andWhere('header.sale_date >= :minDate', { minDate: '2020-01-01' })
+				.andWhere('header.sales_code IS NOT NULL')
+				.andWhere('header.sales_code != :empty', { empty: '' })
+				.groupBy('header.sales_code')
+				.orderBy('totalRevenue', 'DESC')
+				.limit(10000); // ✅ PHASE 2: Max 10k records per aggregation
+
+			if (filters.storeCode) {
+				this.logger.debug(`[${operationId}] Filtering by store: ${filters.storeCode}`);
+				query.andWhere('header.store = :store', { store: filters.storeCode });
+			}
+
+			// Note: We don't filter by salesPersonId here since we're grouping by sales_code
+			// If salesPersonId filter is provided, it would limit results to only those sales people
+			if (filters.salesPersonId) {
+				const salesPersonIds = Array.isArray(filters.salesPersonId) 
+					? filters.salesPersonId 
+					: [filters.salesPersonId];
+				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
+				// Use sales_code from tblsalesheader for header queries
+				query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
+			}
+
+			const results = await this.executeQueryWithProtection(
+				async () => query.getRawMany(),
+				operationId,
+				120000, // 120 second base timeout
+				dateRangeDays, // Adaptive timeout
+			);
+			const queryDuration = Date.now() - queryStart;
+			
+			// ✅ PHASE 2: Log slow query warning
+			this.logSlowQuery(operationId, queryDuration, dateRangeDays, filters.startDate, filters.endDate);
+
+			// Process results to ensure correct types
+			const processedResults = results.map((row) => ({
+				salesCode: row.salesCode || 'UNKNOWN',
+				totalRevenue: parseFloat(row.totalRevenue) || 0,
+				totalCost: 0, // Not available from header table
+				transactionCount: parseInt(row.transactionCount, 10) || 0,
+				uniqueCustomers: parseInt(row.uniqueCustomers, 10) || 0,
+				totalQuantity: 0, // Not available from header table
+			}));
+
+			this.logger.log(`[${operationId}] Aggregation query completed in ${queryDuration}ms`);
+			this.logger.log(`[${operationId}] Computed ${processedResults.length} sales person aggregations`);
+
+			// Cache results
+			await this.cacheManager.set(cacheKey, processedResults, this.CACHE_TTL);
+
+			const totalDuration = Date.now() - startTime;
+			this.logger.log(`[${operationId}] ✅ Operation completed successfully (${totalDuration}ms)`);
+			return processedResults;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			
+			// ✅ Enhanced error diagnostics
+			this.logger.error(`[${operationId}] ❌ Error computing sales person aggregations (${duration}ms)`);
+			this.logger.error(`[${operationId}] Error: ${error.message}`);
+			this.logger.error(`[${operationId}] Circuit Breaker: ${this.circuitBreakerState}`);
+			this.logger.error(`[${operationId}] Connection Pool: ${JSON.stringify(this.getConnectionPoolInfo())}`);
+			this.logger.error(`[${operationId}] Stack: ${error.stack}`);
+			throw error;
+		}
+	}
+
+	/**
 	 * Get category aggregations - optimized query
 	 * 
 	 * Sales Person Filtering: Uses tblsaleslines.rep_code field directly
@@ -1332,6 +1451,8 @@ export class ErpDataService implements OnModuleInit {
 	/**
 	 * Get product aggregations - top products by revenue
 	 * 
+	 * ✅ REVISED: Uses SUM(incl_line_total) - SUM(tax) for revenue calculation
+	 * Filters: item_code != '.', type = 'I' (inventory items), groups by description
 	 * Sales Person Filtering: Uses tblsaleslines.rep_code field directly
 	 */
 	async getProductAggregations(filters: ErpQueryFilters, limit: number = 50): Promise<ProductAggregation[]> {
@@ -1359,14 +1480,15 @@ export class ErpDataService implements OnModuleInit {
 			const queryStart = Date.now();
 			const dateRangeDays = this.calculateDateRangeDays(filters.startDate, filters.endDate);
 			
-			// ✅ PHASE 2: Use provided limit or default to 50 (already has limit)
+			// ✅ REVISED: Use SUM(incl_line_total) - SUM(tax) for revenue, filter item_code != '.', type = 'I', group by description
+			// Matches SQL: SELECT SUM(incl_line_total) - SUM(tax) as totalRevenue FROM tblsaleslines WHERE item_code != '.' AND type = 'I' GROUP BY description
 			const query = this.salesLinesRepo
 				.createQueryBuilder('line')
 				.select([
 					'line.item_code as itemCode',
 					'line.description as description',
 					'line.category as category',
-					'SUM(line.incl_line_total) as totalRevenue',
+					'SUM(line.incl_line_total) - SUM(line.tax) as totalRevenue', // ✅ Subtract tax: matches SQL query exactly
 					'SUM(line.cost_price * line.quantity) as totalCost',
 					'SUM(line.quantity) as totalQuantity',
 					'COUNT(DISTINCT line.doc_number) as transactionCount',
@@ -1377,16 +1499,23 @@ export class ErpDataService implements OnModuleInit {
 				})
 				// ✅ CRITICAL: Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2) for revenue calculations
 				.andWhere('line.doc_type IN (:...docTypes)', { docTypes: ['1', '2'] })
-				// ✅ Data quality filters - using gross amounts (incl_line_total) without discount subtraction
+				// ✅ Data quality filters
 				.andWhere('line.item_code IS NOT NULL')
+				.andWhere('line.item_code != :excludeItemCode', { excludeItemCode: '.' }) // ✅ Exclude '.' item codes
+				.andWhere('line.type = :itemType', { itemType: 'I' }) // ✅ Only inventory items
 				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' })
-				.groupBy('line.item_code, line.description, line.category')
+				.groupBy('line.description') // ✅ Group by description (product name)
 				.orderBy('totalRevenue', 'DESC')
 				.limit(Math.min(limit, 10000)); // ✅ PHASE 2: Cap at 10k even if limit is higher
 
 			if (filters.storeCode) {
 				this.logger.debug(`[${operationId}] Filtering by store: ${filters.storeCode}`);
 				query.andWhere('line.store = :store', { store: filters.storeCode });
+			}
+
+			if (filters.category) {
+				this.logger.debug(`[${operationId}] Filtering by category: ${filters.category}`);
+				query.andWhere('line.category = :category', { category: filters.category });
 			}
 
 			if (filters.salesPersonId) {
@@ -1434,6 +1563,7 @@ export class ErpDataService implements OnModuleInit {
 	async getAllAggregationsParallel(filters: ErpQueryFilters): Promise<{
 		daily: DailyAggregation[];
 		branch: BranchAggregation[];
+		salesPerson: SalesPersonAggregation[];
 		category: CategoryAggregation[];
 		products: ProductAggregation[];
 	}> {
@@ -1447,41 +1577,48 @@ export class ErpDataService implements OnModuleInit {
 
 		try {
 			// ✅ Sequential execution - queries run one after another
-			this.logger.log(`[${operationId}] Step 1/4: Getting daily aggregations...`);
+			this.logger.log(`[${operationId}] Step 1/5: Getting daily aggregations...`);
 			const step1Start = Date.now();
 			const daily = await this.getDailyAggregations(filters);
 			const step1Duration = Date.now() - step1Start;
 			this.logger.log(`[${operationId}] Step 1 completed in ${step1Duration}ms (${daily.length} records)`);
 
-			this.logger.log(`[${operationId}] Step 2/4: Getting branch aggregations...`);
+			this.logger.log(`[${operationId}] Step 2/5: Getting branch aggregations...`);
 			const step2Start = Date.now();
 			const branch = await this.getBranchAggregations(filters);
 			const step2Duration = Date.now() - step2Start;
 			this.logger.log(`[${operationId}] Step 2 completed in ${step2Duration}ms (${branch.length} records)`);
 
-			this.logger.log(`[${operationId}] Step 3/4: Getting category aggregations...`);
+			this.logger.log(`[${operationId}] Step 3/5: Getting sales person aggregations...`);
 			const step3Start = Date.now();
-			const category = await this.getCategoryAggregations(filters);
+			const salesPerson = await this.getSalesPersonAggregations(filters);
 			const step3Duration = Date.now() - step3Start;
-			this.logger.log(`[${operationId}] Step 3 completed in ${step3Duration}ms (${category.length} records)`);
+			this.logger.log(`[${operationId}] Step 3 completed in ${step3Duration}ms (${salesPerson.length} records)`);
 
-			this.logger.log(`[${operationId}] Step 4/4: Getting product aggregations...`);
+			this.logger.log(`[${operationId}] Step 4/5: Getting category aggregations...`);
 			const step4Start = Date.now();
-			const products = await this.getProductAggregations(filters);
+			const category = await this.getCategoryAggregations(filters);
 			const step4Duration = Date.now() - step4Start;
-			this.logger.log(`[${operationId}] Step 4 completed in ${step4Duration}ms (${products.length} records)`);
+			this.logger.log(`[${operationId}] Step 4 completed in ${step4Duration}ms (${category.length} records)`);
+
+			this.logger.log(`[${operationId}] Step 5/5: Getting product aggregations...`);
+			const step5Start = Date.now();
+			const products = await this.getProductAggregations(filters);
+			const step5Duration = Date.now() - step5Start;
+			this.logger.log(`[${operationId}] Step 5 completed in ${step5Duration}ms (${products.length} records)`);
 
 			const duration = Date.now() - startTime;
 
 			this.logger.log(`[${operationId}] ===== Sequential Aggregations Results =====`);
 			this.logger.log(`[${operationId}] Daily aggregations: ${daily.length} records`);
 			this.logger.log(`[${operationId}] Branch aggregations: ${branch.length} records`);
+			this.logger.log(`[${operationId}] Sales person aggregations: ${salesPerson.length} records`);
 			this.logger.log(`[${operationId}] Category aggregations: ${category.length} records`);
 			this.logger.log(`[${operationId}] Product aggregations: ${products.length} records`);
 			this.logger.log(`[${operationId}] ✅ All sequential aggregations completed in ${duration}ms`);
 			this.logger.log(`[${operationId}] Circuit breaker state: ${this.circuitBreakerState}`);
 
-			return { daily, branch, category, products };
+			return { daily, branch, salesPerson, category, products };
 		} catch (error) {
 			const duration = Date.now() - startTime;
 			
@@ -1580,6 +1717,7 @@ export class ErpDataService implements OnModuleInit {
 	 */
 	async verifyCacheHealth(filters: ErpQueryFilters): Promise<{
 		aggregations: boolean;
+		salesPersonAggregations: boolean;
 		hourlySales: boolean;
 		paymentTypes: boolean;
 		conversionRate: boolean;
@@ -1608,6 +1746,7 @@ export class ErpDataService implements OnModuleInit {
 
 		// Check each cache key
 		const aggregationsKey = buildKey('daily_agg');
+		const salesPersonAggregationsKey = buildKey('sales_person_agg');
 		const hourlySalesKey = buildKey('hourly_sales', ['1', '2']); // Tax Invoices (1) AND Credit Notes (2)
 		const paymentTypesKey = buildKey('payment_types', ['1', '2']); // Tax Invoices (1) AND Credit Notes (2)
 		const conversionRateKey = buildKey('conversion_rate');
@@ -1615,8 +1754,9 @@ export class ErpDataService implements OnModuleInit {
 		const salesLinesKey = buildKey('lines', ['1']); // Raw data queries still use doc_type 1 only
 		const salesHeadersKey = buildKey('headers', ['1']); // Raw data queries still use doc_type 1 only
 
-		const [aggregations, hourlySales, paymentTypes, conversionRate, masterData, salesLines, salesHeaders] = await Promise.all([
+		const [aggregations, salesPersonAggregations, hourlySales, paymentTypes, conversionRate, masterData, salesLines, salesHeaders] = await Promise.all([
 			this.cacheManager.get(aggregationsKey),
+			this.cacheManager.get(salesPersonAggregationsKey),
 			this.cacheManager.get(hourlySalesKey),
 			this.cacheManager.get(paymentTypesKey),
 			this.cacheManager.get(conversionRateKey),
@@ -1627,6 +1767,7 @@ export class ErpDataService implements OnModuleInit {
 
 		return {
 			aggregations: !!aggregations,
+			salesPersonAggregations: !!salesPersonAggregations,
 			hourlySales: !!hourlySales,
 			paymentTypes: !!paymentTypes,
 			conversionRate: !!conversionRate,

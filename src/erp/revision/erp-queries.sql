@@ -143,25 +143,31 @@ ORDER BY totalRevenue DESC
 -- ============================================================================
 -- Method: getProductAggregations(limit)
 -- Purpose: Top products by revenue
--- Limit: Default 50, max 10000
+-- ✅ REVISED: Uses SUM(incl_line_total) - SUM(tax) for revenue calculation
+-- Filters: item_code != '.', type = 'I' (inventory items), groups by description
+-- Processes Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2)
+-- Limit: Default 50, max 10000 (Top 10 for sales per product chart)
 
 SELECT 
     line.item_code as itemCode,
     line.description as description,
     line.category as category,
-    SUM(line.incl_line_total) as totalRevenue,
+    SUM(line.incl_line_total) - SUM(line.tax) as totalRevenue,
     SUM(line.cost_price * line.quantity) as totalCost,
     SUM(line.quantity) as totalQuantity,
     COUNT(DISTINCT line.doc_number) as transactionCount
 FROM tblsaleslines line
 WHERE line.sale_date BETWEEN :startDate AND :endDate
-    AND line.doc_type = '1'
+    AND line.doc_type IN (1, 2)
     AND line.item_code IS NOT NULL
+    AND line.item_code != '.'
+    AND line.type = 'I'
     AND line.sale_date >= '2020-01-01'
     -- Optional filters:
     -- AND line.store = :storeCode
+    -- AND line.category = :category
     -- AND line.rep_code IN (:salesPersonIds)
-GROUP BY line.item_code, line.description, line.category
+GROUP BY line.description
 ORDER BY totalRevenue DESC
 LIMIT :limit;
 

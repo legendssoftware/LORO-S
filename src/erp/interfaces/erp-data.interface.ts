@@ -76,6 +76,22 @@ export interface BranchAggregation {
 }
 
 /**
+ * Sales Person Aggregation Result from ERP
+ * Note: Uses tblsalesheader.total_incl - total_tax for revenue calculation (exclusive of tax)
+ * Revenue = SUM(total_incl) - SUM(total_tax) grouped by sales_code
+ * Processes Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2)
+ * totalCost and totalQuantity are set to 0 as they're not available in header table
+ */
+export interface SalesPersonAggregation {
+	salesCode: string;
+	totalRevenue: number;
+	totalCost: number;
+	transactionCount: number;
+	uniqueCustomers: number;
+	totalQuantity: number;
+}
+
+/**
  * Category Aggregation Result from ERP
  * Note: Uses gross amounts (incl_line_total) - discount already applied to selling prices
  * Only processes Tax Invoices (doc_type = 1)
@@ -92,8 +108,10 @@ export interface CategoryAggregation {
 
 /**
  * Product Aggregation Result from ERP
- * Note: Uses gross amounts (incl_line_total) - discount already applied to selling prices
- * Only processes Tax Invoices (doc_type = 1)
+ * Note: Uses SUM(incl_line_total) - SUM(tax) for revenue calculation (exclusive of tax)
+ * Revenue = SUM(incl_line_total) - SUM(tax) grouped by description
+ * Processes Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2)
+ * Filters: item_code != '.', type = 'I' (inventory items only)
  */
 export interface ProductAggregation {
 	itemCode: string;

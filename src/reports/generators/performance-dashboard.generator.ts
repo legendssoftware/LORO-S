@@ -392,9 +392,9 @@ export class PerformanceDashboardGenerator {
 			hourlySales,
 			salesByCategory,
 			branchPerformance: await this.generateBranchPerformanceChart(data, params),
-			topProducts: this.generateTopProductsChart(data),
+			topProducts: await this.generateTopProductsChart(data, params),
 			itemsPerBasket: this.generateItemsPerBasketChart(data),
-			salesBySalesperson: this.generateSalesBySalespersonChart(data),
+			salesBySalesperson: await this.generateSalesBySalespersonChart(params),
 			conversionRate,
 			customerComposition,
 		};
@@ -609,35 +609,36 @@ export class PerformanceDashboardGenerator {
 	/**
 	 * Generate top products chart
 	 * 
-	 * ✅ Uses product names from database (with code fallback)
+	 * ✅ REVISED: Uses product aggregations from tblsaleslines grouped by description
+	 * ✅ Revenue calculation: SUM(incl_line_total) - SUM(tax)
+	 * ✅ Filters: item_code != '.', type = 'I' (inventory items)
+	 * ✅ Limits to top 10 best selling products
 	 */
-	private generateTopProductsChart(data: PerformanceData[]) {
-		// Aggregate revenue by product code from real ERP data
-		const aggregated = data.reduce((acc, item) => {
-			const productCode = item.productId;
-			const productName = item.productName || productCode; // Use name if available, fallback to code
-			
-			if (!acc[productCode]) {
-				acc[productCode] = {
-					revenue: 0,
-					name: productName,
+	private async generateTopProductsChart(data: PerformanceData[], params: PerformanceFiltersDto) {
+		// Build ERP query filters
+		const filters = this.buildErpFilters(params);
+		
+		// ✅ Get product aggregations directly from tblsaleslines (SUM(incl_line_total) - SUM(tax) grouped by description)
+		const productAggregations = await this.erpDataService.getProductAggregations(filters, 10); // Top 10 products
+		
+		// Map product aggregations to chart data using product description
+		const chartData: BarChartDataPoint[] = productAggregations
+			.map((agg) => {
+				const revenue = typeof agg.totalRevenue === 'number' 
+					? agg.totalRevenue 
+					: parseFloat(String(agg.totalRevenue || 0));
+				const productName = String(agg.description || agg.itemCode || 'Unknown Product').trim();
+				
+				return {
+					label: productName, // ✅ Use product description (grouped by description)
+					value: revenue,
 				};
-			}
-			acc[productCode].revenue += item.revenue;
-			return acc;
-		}, {} as Record<string, { revenue: number; name: string }>);
-
-		const chartData: BarChartDataPoint[] = Object.entries(aggregated)
-			.map(([code, values]) => ({
-				label: values.name, // ✅ Use product name instead of code
-				value: values.revenue,
-			}))
-			.sort((a, b) => b.value - a.value)
-			.slice(0, 10); // Top 10 products
+			})
+			.sort((a, b) => b.value - a.value); // Already sorted by query, but ensure it's sorted
 
 		const total = chartData.reduce((sum, item) => sum + item.value, 0);
 
-		this.logger.debug(`Top products chart generated with ${chartData.length} products (using product names)`);
+		this.logger.debug(`Top products chart generated with ${chartData.length} products (using product aggregations, top 10)`);
 
 		return { data: chartData, total };
 	}
@@ -687,32 +688,36 @@ export class PerformanceDashboardGenerator {
 	/**
 	 * Generate sales by salesperson chart
 	 * 
-	 * ✅ UPDATED: Now uses sales_code mapping to show actual sales person names instead of codes
+	 * ✅ REVISED: Now uses getSalesPersonAggregations from ERP service
+	 * Groups by sales_code and calculates SUM(total_incl) - SUM(total_tax) for revenue
+	 * Uses sales_code mapping to show actual sales person names instead of codes
 	 */
-	private generateSalesBySalespersonChart(data: PerformanceData[]) {
+	private async generateSalesBySalespersonChart(params: PerformanceFiltersDto) {
 		// Import sales code mapping
 		const { getSalesPersonName } = require('../../erp/config/sales-code-mapping.config');
 		
-		// Aggregate by salesPersonId (which is now sales_code from header)
-		const aggregated = data.reduce((acc, item) => {
-			const salesPersonKey = item.salesPersonId || 'Unknown';
-			if (!acc[salesPersonKey]) {
-				acc[salesPersonKey] = { transactionCount: 0, revenue: 0 };
-			}
-			acc[salesPersonKey].transactionCount += 1;
-			acc[salesPersonKey].revenue += item.revenue;
-			return acc;
-		}, {} as Record<string, { transactionCount: number; revenue: number }>);
+		// Build ERP query filters
+		const filters = {
+			startDate: params.startDate,
+			endDate: params.endDate,
+			storeCode: params.branchId,
+			category: params.categoryId,
+			salesPersonId: params.salesPersonId,
+		};
 
-		const chartData: BarChartDataPoint[] = Object.entries(aggregated)
-			.map(([code, values]) => ({
-				label: getSalesPersonName(code), // ✅ Use actual sales person name from mapping
-				value: values.revenue, // Use revenue as primary value for bar chart
+		// Get sales person aggregations from ERP service
+		const aggregations = await this.erpDataService.getSalesPersonAggregations(filters);
+
+		// Convert to chart data format
+		const chartData: BarChartDataPoint[] = aggregations
+			.map((agg) => ({
+				label: getSalesPersonName(agg.salesCode), // ✅ Use actual sales person name from mapping
+				value: agg.totalRevenue, // Use revenue as primary value for bar chart
 			}))
 			.sort((a, b) => b.value - a.value)
 			.slice(0, 10); // Top 10 salespeople
 
-		this.logger.debug(`Sales by salesperson chart generated with ${chartData.length} salespeople (using names from mapping)`);
+		this.logger.debug(`Sales by salesperson chart generated with ${chartData.length} salespeople (using ERP aggregations)`);
 
 		return { data: chartData };
 	}
