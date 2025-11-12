@@ -981,7 +981,7 @@ export class PerformanceDashboardGenerator {
 	 * ✅ REVISED: Calculate branch × category performance from Branch X Category aggregations
 	 * Uses tblsaleslines grouped by store and category
 	 * Revenue = SUM(incl_line_total) - SUM(tax) grouped by store, category
-	 * Combines sales by category and sales per branch queries
+	 * ✅ Matches daily sales calculation - no cost deductions, no GP calculations
 	 * This provides solid Branch X Category performance metric charts
 	 */
 	private calculateBranchCategoryPerformanceFromAggregations(aggregations: BranchCategoryAggregation[]): BranchCategoryPerformanceDto[] {
@@ -1018,29 +1018,26 @@ export class PerformanceDashboardGenerator {
 			const categories: Record<string, CategoryPerformanceDto> = {};
 			let totalBasketCount = 0;
 			let totalRevenue = 0;
-			let totalGP = 0;
 			let totalUniqueClients = 0;
 
 			branchInfo.categories.forEach((agg, categoryKey) => {
 				const revenue = typeof agg.totalRevenue === 'number' ? agg.totalRevenue : parseFloat(String(agg.totalRevenue || 0));
-				const cost = typeof agg.totalCost === 'number' ? agg.totalCost : parseFloat(String(agg.totalCost || 0));
 				const basketCount = typeof agg.transactionCount === 'number' ? agg.transactionCount : parseInt(String(agg.transactionCount || 0), 10);
 				const uniqueCustomers = typeof agg.uniqueCustomers === 'number' ? agg.uniqueCustomers : parseInt(String(agg.uniqueCustomers || 0), 10);
-				const gp = revenue - cost; // Calculate GP from revenue and cost
+				// ✅ Removed GP calculations - matches daily sales calculation (no cost deductions)
 
 				categories[categoryKey] = {
 					categoryName: categoryKey,
 					basketCount, // ✅ Transaction count from aggregations
 					basketValue: basketCount > 0 ? revenue / basketCount : 0,
 					clientsQty: uniqueCustomers, // ✅ Unique clients from aggregations
-					salesR: revenue, // ✅ Revenue from aggregations
-					gpR: gp, // ✅ GP calculated from revenue - cost
-					gpPercentage: revenue > 0 ? (gp / revenue) * 100 : 0, // ✅ GP% = (GP / Revenue) * 100
+					salesR: revenue, // ✅ Revenue from aggregations (SUM(incl_line_total) - SUM(tax))
+					gpR: 0, // ✅ GP removed - matches daily sales calculation
+					gpPercentage: 0, // ✅ GP% removed - matches daily sales calculation
 				};
 
 				totalBasketCount += basketCount;
 				totalRevenue += revenue;
-				totalGP += gp;
 				// For unique clients: Sum across categories (customers may shop in multiple categories)
 				// Note: This is an approximation since we don't have actual customer IDs in aggregations
 				totalUniqueClients += uniqueCustomers;
@@ -1056,8 +1053,8 @@ export class PerformanceDashboardGenerator {
 					basketValue: totalBasketCount > 0 ? totalRevenue / totalBasketCount : 0,
 					clientsQty: totalUniqueClients,
 					salesR: totalRevenue,
-					gpR: totalGP, // ✅ Total GP for branch (summed across all categories)
-					gpPercentage: totalRevenue > 0 ? (totalGP / totalRevenue) * 100 : 0, // ✅ Overall GP% = (Total GP / Total Revenue) * 100
+					gpR: 0, // ✅ GP removed - matches daily sales calculation
+					gpPercentage: 0, // ✅ GP% removed - matches daily sales calculation
 				},
 			});
 		});
