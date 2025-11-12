@@ -1076,13 +1076,13 @@ export class ErpDataService implements OnModuleInit {
 			const dateRangeDays = this.calculateDateRangeDays(filters.startDate, filters.endDate);
 			
 			// ✅ REVISED: Use tblsalesheader instead of tblsaleslines
-			// Sum total_incl for revenue, count transactions and customers
+			// Sum total_incl - total_tax for revenue (exclusive of tax), count transactions and customers
 			const query = this.salesHeaderRepo
 				.createQueryBuilder('header')
 				.select([
 					'DATE(header.sale_date) as date',
 					'header.store as store',
-					'SUM(header.total_incl) as totalRevenue', // ✅ No CAST rounding - matches user's SQL query exactly
+					'SUM(header.total_incl) - SUM(header.total_tax) as totalRevenue', // ✅ Subtract tax: matches SQL query exactly
 					'CAST(0 AS DECIMAL(19,2)) as totalCost', // Cost not available in header table
 					'COUNT(DISTINCT header.doc_number) as transactionCount',
 					'COUNT(DISTINCT header.customer) as uniqueCustomers',

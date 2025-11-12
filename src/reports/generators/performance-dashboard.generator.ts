@@ -381,10 +381,16 @@ export class PerformanceDashboardGenerator {
 		// ✅ FIXED: Now using real conversion rate data (quotations vs invoices)
 		const conversionRate = await this.generateConversionRateChart(params);
 		
+		// ✅ REVISED: Revenue trend chart now uses daily aggregations (async)
+		const revenueTrend = await this.generateRevenueTrendChart(data, params);
+		
+		// ✅ REVISED: Sales by category chart now uses category aggregations (async) - top 5 only
+		const salesByCategory = await this.generateSalesByCategoryChart(data, params);
+		
 		return {
-			revenueTrend: this.generateRevenueTrendChart(data, params),
+			revenueTrend,
 			hourlySales,
-			salesByCategory: this.generateSalesByCategoryChart(data),
+			salesByCategory,
 			branchPerformance: this.generateBranchPerformanceChart(data),
 			topProducts: this.generateTopProductsChart(data),
 			itemsPerBasket: this.generateItemsPerBasketChart(data),
@@ -395,17 +401,46 @@ export class PerformanceDashboardGenerator {
 	}
 
 	/**
-	 * Generate revenue trend chart
+	 * ✅ REVISED: Generate revenue trend chart using daily aggregations (tblsalesheader.total_incl - total_tax)
+	 * This matches the user's SQL query: SELECT SUM(total_incl) - SUM(total_tax) FROM tblsalesheader WHERE doc_type IN (1, 2)
+	 * Revenue is exclusive of tax
 	 */
-	private generateRevenueTrendChart(data: PerformanceData[], params: PerformanceFiltersDto) {
-		const aggregated = data.reduce((acc, item) => {
-			if (!acc[item.date]) {
-				acc[item.date] = { revenue: 0, target: 0 };
+	private async generateRevenueTrendChart(data: PerformanceData[], params: PerformanceFiltersDto) {
+		// Build ERP query filters
+		const filters = this.buildErpFilters(params);
+		
+		// ✅ Get revenue from daily aggregations (uses tblsalesheader.total_incl - total_tax, exclusive of tax)
+		const dailyAggregations = await this.erpDataService.getDailyAggregations(filters);
+		
+		// Aggregate revenue by date (sum across all stores for each date)
+		const aggregated = dailyAggregations.reduce((acc, agg) => {
+			const date = typeof agg.date === 'string' ? agg.date : new Date(agg.date).toISOString().split('T')[0];
+			if (!acc[date]) {
+				acc[date] = { revenue: 0, target: 0 };
 			}
-			acc[item.date].revenue += item.revenue;
-			acc[item.date].target += item.target;
+			const revenue = typeof agg.totalRevenue === 'number' ? agg.totalRevenue : parseFloat(String(agg.totalRevenue || 0));
+			acc[date].revenue += revenue;
+			// Target calculation: use average target from line items (for now, can be enhanced later)
+			acc[date].target += 0; // Targets are not in daily aggregations, keeping for compatibility
 			return acc;
 		}, {} as Record<string, { revenue: number; target: number }>);
+
+		// Calculate average target from line items for display
+		const targetByDate = data.reduce((acc, item) => {
+			if (!acc[item.date]) {
+				acc[item.date] = { sum: 0, count: 0 };
+			}
+			acc[item.date].sum += item.target;
+			acc[item.date].count += 1;
+			return acc;
+		}, {} as Record<string, { sum: number; count: number }>);
+
+		// Merge target data
+		Object.keys(aggregated).forEach(date => {
+			if (targetByDate[date]) {
+				aggregated[date].target = targetByDate[date].sum / targetByDate[date].count;
+			}
+		});
 
 		const sortedData = Object.entries(aggregated)
 			.map(([date, values]) => ({
@@ -496,25 +531,31 @@ export class PerformanceDashboardGenerator {
 	}
 
 	/**
-	 * Generate sales by category chart
+	 * ✅ REVISED: Generate sales by category chart using category aggregations (tblsaleslines.incl_line_total - tax)
+	 * This matches the user's SQL query: SELECT line.category, SUM(line.incl_line_total) - SUM(tax) as totalRevenue
+	 * Revenue is exclusive of tax
+	 * Returns only top 5 categories
 	 */
-	private generateSalesByCategoryChart(data: PerformanceData[]) {
-		// Aggregate revenue by category from real ERP data
-		const aggregated = data.reduce((acc, item) => {
-			const category = item.category || 'Uncategorized';
-			if (!acc[category]) {
-				acc[category] = 0;
-			}
-			acc[category] += item.revenue;
-			return acc;
-		}, {} as Record<string, number>);
-
-		const chartData: PieChartDataPoint[] = Object.entries(aggregated)
-			.map(([category, revenue]) => ({
-				label: category,
-				value: revenue,
+	private async generateSalesByCategoryChart(data: PerformanceData[], params: PerformanceFiltersDto) {
+		// Build ERP query filters
+		const filters = this.buildErpFilters(params);
+		
+		// ✅ Get revenue from category aggregations (uses tblsaleslines.incl_line_total - tax, exclusive of tax)
+		const categoryAggregations = await this.erpDataService.getCategoryAggregations(filters);
+		
+		// Sort by revenue descending and take top 5
+		const sortedCategories = categoryAggregations
+			.map(agg => ({
+				category: agg.category || 'Uncategorized',
+				revenue: typeof agg.totalRevenue === 'number' ? agg.totalRevenue : parseFloat(String(agg.totalRevenue || 0)),
 			}))
-			.sort((a, b) => b.value - a.value); // Sort by revenue descending
+			.sort((a, b) => b.revenue - a.revenue) // Sort by revenue descending
+			.slice(0, 5); // ✅ Return only top 5 categories
+
+		const chartData: PieChartDataPoint[] = sortedCategories.map((item) => ({
+			label: item.category,
+			value: item.revenue,
+		}));
 
 		const total = chartData.reduce((sum, item) => sum + item.value, 0);
 
