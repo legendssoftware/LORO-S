@@ -1273,14 +1273,14 @@ export class ErpDataService implements OnModuleInit {
 			const queryStart = Date.now();
 			const dateRangeDays = this.calculateDateRangeDays(filters.startDate, filters.endDate);
 			
-			// ✅ PHASE 2: Add result size limit for aggregations (max 10k records)
-			// ✅ Using exact query structure as specified for sales by category
+			// ✅ Sales by category - aggregated across all stores (totals per category)
+			// ✅ Revenue excludes tax: SUM(incl_line_total) - SUM(tax)
+			// ✅ Query matches: SELECT line.category, SUM(line.incl_line_total) - SUM(tax) as totalRevenue, ...
 			const query = this.salesLinesRepo
 				.createQueryBuilder('line')
 				.select([
 					'line.category as category',
-					'line.store as store',
-					'SUM(line.incl_line_total) as totalRevenue',
+					'SUM(line.incl_line_total) - SUM(line.tax) as totalRevenue',
 					'SUM(line.cost_price * line.quantity) as totalCost',
 					'SUM(line.quantity) as totalQuantity',
 				])
@@ -1291,23 +1291,7 @@ export class ErpDataService implements OnModuleInit {
 				.andWhere('line.doc_type IN (:...docTypes)', { docTypes: [1, 2] })
 				.andWhere('line.item_code NOT IN (:...excludedItemCodes)', { excludedItemCodes: ['.'] })
 				.andWhere('line.type = :type', { type: 'I' })
-				.groupBy('line.store, line.category')
-				.orderBy('totalRevenue', 'DESC')
-				.limit(10000); // ✅ PHASE 2: Max 10k records per aggregation
-
-			if (filters.storeCode) {
-				this.logger.debug(`[${operationId}] Filtering by store: ${filters.storeCode}`);
-				query.andWhere('line.store = :store', { store: filters.storeCode });
-			}
-
-			if (filters.salesPersonId) {
-				const salesPersonIds = Array.isArray(filters.salesPersonId) 
-					? filters.salesPersonId 
-					: [filters.salesPersonId];
-				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
-				// Use rep_code directly from tblsaleslines
-				query.andWhere('line.rep_code IN (:...salesPersonIds)', { salesPersonIds });
-			}
+				.groupBy('line.category');
 
 			const results = await query.getRawMany();
 			const queryDuration = Date.now() - queryStart;

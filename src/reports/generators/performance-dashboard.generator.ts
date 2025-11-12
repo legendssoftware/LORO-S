@@ -308,8 +308,9 @@ export class PerformanceDashboardGenerator {
 	// ===================================================================
 
 	/**
-	 * ✅ REVISED: Calculate summary metrics using daily aggregations (tblsalesheader.total_incl)
-	 * This matches the user's SQL query: SELECT SUM(total_incl) FROM tblsalesheader WHERE doc_type IN (1, 2)
+	 * ✅ REVISED: Calculate summary metrics using daily aggregations (tblsalesheader.total_incl - total_tax)
+	 * This matches the user's SQL query: SELECT SUM(total_incl) - SUM(total_tax) FROM tblsalesheader WHERE doc_type IN (1, 2)
+	 * Revenue is exclusive of tax
 	 * 
 	 * @param params - Performance filters
 	 * @param data - Performance data (line items) - still used for transaction count and quantity
@@ -323,10 +324,10 @@ export class PerformanceDashboardGenerator {
 		// Build ERP query filters
 		const filters = this.buildErpFilters(params);
 		
-		// ✅ Get revenue from daily aggregations (uses tblsalesheader.total_incl)
+		// ✅ Get revenue from daily aggregations (uses tblsalesheader.total_incl - total_tax, exclusive of tax)
 		const dailyAggregations = await this.erpDataService.getDailyAggregations(filters);
 		
-		// Sum totalRevenue from all daily aggregations (matches SQL: SUM(total_incl))
+		// Sum totalRevenue from all daily aggregations (matches SQL: SUM(total_incl) - SUM(total_tax))
 		const totalRevenue = dailyAggregations.reduce((sum, agg) => {
 			const revenue = typeof agg.totalRevenue === 'number' ? agg.totalRevenue : parseFloat(String(agg.totalRevenue || 0));
 			return sum + revenue;
@@ -348,7 +349,7 @@ export class PerformanceDashboardGenerator {
 		const averageItemsPerBasket = transactionCount > 0 ? totalQuantity / transactionCount : 0;
 
 		this.logger.log(`📊 Summary Calculated (from daily aggregations):`);
-		this.logger.log(`   - Total Revenue: R${totalRevenue.toFixed(2)} (from tblsalesheader.total_incl)`);
+		this.logger.log(`   - Total Revenue: R${totalRevenue.toFixed(2)} (from tblsalesheader.total_incl - total_tax, exclusive of tax)`);
 		this.logger.log(`   - Total Target: R${totalTarget.toFixed(2)} (from org settings)`);
 		this.logger.log(`   - Performance Rate: ${performanceRate.toFixed(2)}%`);
 		this.logger.log(`   - Transactions: ${transactionCount}`);

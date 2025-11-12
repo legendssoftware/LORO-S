@@ -44,7 +44,8 @@ export interface PerformanceData {
 
 /**
  * Daily Aggregation Result from ERP
- * Note: Uses tblsalesheader.total_incl for revenue calculation
+ * Note: Uses tblsalesheader.total_incl - total_tax for revenue calculation (exclusive of tax)
+ * Revenue = SUM(total_incl) - SUM(total_tax)
  * Processes Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2)
  * totalCost and totalQuantity are set to 0 as they're not available in header table
  */
