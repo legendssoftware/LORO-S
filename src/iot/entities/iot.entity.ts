@@ -1,4 +1,4 @@
-import { Column, Entity, Index, ManyToOne, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, Index, JoinColumn, ManyToOne, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
 import { DeviceStatus, DeviceType } from '../../lib/enums/iot';
 import { Branch } from '../../branch/entities/branch.entity';
 import { Organisation } from '../../organisation/entities/organisation.entity';
@@ -18,6 +18,13 @@ export class Device {
 
 	@Column({ nullable: false })
 	branchID: number;
+
+	@ManyToOne(() => Branch, { nullable: true })
+	@JoinColumn({ name: 'branchUid' })
+	branch: Branch;
+
+	@Column({ nullable: true })
+	branchUid: number;
 
 	@Column({ nullable: false})
 	deviceID: string;
@@ -63,9 +70,6 @@ export class Device {
 
 	@OneToMany(() => DeviceRecords, (records) => records.device)
 	records: DeviceRecords[];
-
-	@ManyToOne(() => Branch, { nullable: true })
-	branch: Branch;
 
 	@ManyToOne(() => Organisation, { nullable: true })
 	organisation: Organisation;

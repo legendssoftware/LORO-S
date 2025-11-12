@@ -32,6 +32,7 @@ import { UnifiedNotificationService } from '../lib/services/unified-notification
 import { User } from '../user/entities/user.entity';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { NotificationEvent, NotificationPriority, NotificationChannel } from '../lib/types/unified-notification.types';
+import { Branch } from '../branch/entities/branch.entity';
 
 export interface PaginatedResponse<T> {
 	data: T[];
@@ -76,6 +77,8 @@ export class IotService {
 		private deviceRecordsRepository: Repository<DeviceRecords>,
 		@InjectRepository(User)
 		private userRepository: Repository<User>,
+		@InjectRepository(Branch)
+		private branchRepository: Repository<Branch>,
 		@Inject(CACHE_MANAGER)
 		private cacheManager: Cache,
 		private readonly eventEmitter: EventEmitter2,
@@ -457,20 +460,41 @@ export class IotService {
 			// 1. Comprehensive validation
 			await this.validateDeviceCreation(createDeviceDto, queryRunner);
 
-			// 2. Check for existing device conflicts
+			// 2. Fetch and validate branch exists and belongs to organization
+			const branch = await queryRunner.manager.findOne(Branch, {
+				where: {
+					uid: createDeviceDto.branchID,
+					isDeleted: false,
+					organisation: { uid: createDeviceDto.orgID },
+				},
+				relations: ['organisation'],
+			});
+
+			if (!branch) {
+				throw new NotFoundException(
+					`Branch with ID ${createDeviceDto.branchID} not found or does not belong to organization ${createDeviceDto.orgID}`,
+				);
+			}
+
+			// Ensure branchID and branchUid are both populated with the branch's uid
+			const branchUid = branch.uid;
+
+			// 3. Check for existing device conflicts
 			await this.checkDeviceConflicts(createDeviceDto, queryRunner);
 
-			// 3. Validate network connectivity (if enabled)
+			// 4. Validate network connectivity (if enabled)
 			if (this.configService.get<boolean>('IOT_VALIDATE_CONNECTIVITY', false)) {
 				await this.validateDeviceConnectivity(createDeviceDto);
 			}
 
-			// 4. Initialize comprehensive analytics
+			// 5. Initialize comprehensive analytics
 			const defaultAnalytics = this.initializeDeviceAnalytics();
 
-			// 5. Create device with enriched data
+			// 6. Create device with enriched data - ensure both branchID and branchUid are set
 			const deviceData = {
 				...createDeviceDto,
+				branchID: branchUid, // Ensure branchID is set to branch's uid
+				branchUid: branchUid, // Set branchUid to branch's uid
 				deviceType: createDeviceDto.deviceType || DeviceType.DOOR_SENSOR,
 				currentStatus: createDeviceDto.currentStatus || DeviceStatus.ONLINE,
 				analytics: createDeviceDto.analytics || defaultAnalytics,
@@ -482,22 +506,22 @@ export class IotService {
 			const device = queryRunner.manager.create(Device, deviceData);
 			const savedDevice = await queryRunner.manager.save(device);
 
-			// 6. Create initial audit log
+			// 7. Create initial audit log
 			await this.createDeviceAuditLog(queryRunner, savedDevice, 'DEVICE_CREATED', 'Initial device registration');
 
-			// 7. Initialize device monitoring
+			// 8. Initialize device monitoring
 			await this.initializeDeviceMonitoring(savedDevice);
 
-			// 8. Cache device data
+			// 9. Cache device data
 			await this.cacheDeviceData(savedDevice);
 
-			// 9. Commit transaction
+			// 10. Commit transaction
 			await queryRunner.commitTransaction();
 
-			// 10. Invalidate device list caches AFTER transaction commit
+			// 11. Invalidate device list caches AFTER transaction commit
 			await this.invalidateDeviceCache(savedDevice);
 
-			// 11. Post-creation activities (outside transaction)
+			// 12. Post-creation activities (outside transaction)
 			await this.performPostCreationActivities(savedDevice, startTime);
 
 			this.logger.log(`✅ Device created successfully with ID: ${savedDevice.id} in ${Date.now() - startTime}ms`);
