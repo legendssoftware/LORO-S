@@ -2930,6 +2930,14 @@ export class UserService {
 						periodStartDate: staff.userTarget.periodStartDate,
 						periodEndDate: staff.userTarget.periodEndDate,
 						targetCurrency: staff.userTarget.targetCurrency,
+						// Cost breakdown fields - same as user-target.entity.ts
+						baseSalary: staff.userTarget.baseSalary || 0,
+						carInstalment: staff.userTarget.carInstalment || 0,
+						carInsurance: staff.userTarget.carInsurance || 0,
+						fuel: staff.userTarget.fuel || 0,
+						cellPhoneAllowance: staff.userTarget.cellPhoneAllowance || 0,
+						carMaintenance: staff.userTarget.carMaintenance || 0,
+						cgicCosts: staff.userTarget.cgicCosts || 0,
 					} : null;
 
 					return {
