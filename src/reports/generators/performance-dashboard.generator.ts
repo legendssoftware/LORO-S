@@ -229,6 +229,7 @@ export class PerformanceDashboardGenerator {
 		products: Array<{ id: string; name: string }>;
 		salespeople: Array<{ id: string; name: string }>;
 		paymentMethods: Array<{ id: string; name: string }>;
+		customerCategories: Array<{ id: string; name: string }>;
 	}> {
 		this.logger.log(`Getting master data for filters`);
 
@@ -253,8 +254,24 @@ export class PerformanceDashboardGenerator {
 
 			this.logger.log(`Fetching ERP performance data for ${filters.startDate} to ${filters.endDate}`);
 
-			// Get sales lines from ERP
-			let salesLines = await this.erpDataService.getSalesLinesByDateRange(filters);
+			// ✅ Use customer category filtering if include/exclude filters are specified
+			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
+				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
+
+			let salesLines: any[];
+			if (hasCustomerCategoryFilters) {
+				// Use method with customer category JOINs when filtering by customer categories
+				this.logger.log(`Using customer category filtering - include: ${filters.includeCustomerCategories?.join(',') || 'none'}, exclude: ${filters.excludeCustomerCategories?.join(',') || 'none'}`);
+				const salesLinesWithCategories = await this.erpDataService.getSalesLinesWithCustomerCategories(filters);
+				// Convert to regular sales lines format (remove category fields for compatibility)
+				salesLines = salesLinesWithCategories.map(line => {
+					const { customer_category_code, customer_category_description, ...rest } = line;
+					return rest;
+				});
+			} else {
+				// Use standard method when no customer category filtering
+				salesLines = await this.erpDataService.getSalesLinesByDateRange(filters);
+			}
 			
 			// ✅ Get headers to access sales_code for sales person mapping
 			const headers = await this.erpDataService.getSalesHeadersByDateRange(filters);
@@ -1477,6 +1494,15 @@ export class PerformanceDashboardGenerator {
 			filters.salesPersonId = params.salesPersonIds.length === 1 
 				? params.salesPersonIds[0] 
 				: params.salesPersonIds;
+		}
+
+		// Map customer category filters
+		if (params.includeCustomerCategories && params.includeCustomerCategories.length > 0) {
+			filters.includeCustomerCategories = params.includeCustomerCategories;
+		}
+
+		if (params.excludeCustomerCategories && params.excludeCustomerCategories.length > 0) {
+			filters.excludeCustomerCategories = params.excludeCustomerCategories;
 		}
 
 		return filters;

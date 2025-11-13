@@ -5,6 +5,8 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { TblSalesHeader } from '../entities/tblsalesheader.entity';
 import { TblSalesLines } from '../entities/tblsaleslines.entity';
+import { TblCustomers } from '../entities/tblcustomers.entity';
+import { TblCustomerCategories } from '../entities/tblcustomercategories.entity';
 import {
 	DailyAggregation,
 	BranchAggregation,
@@ -13,6 +15,7 @@ import {
 	BranchCategoryAggregation,
 	ProductAggregation,
 	ErpQueryFilters,
+	TblSalesLinesWithCategory,
 } from '../interfaces/erp-data.interface';
 import { ConfigService } from '@nestjs/config';
 import { getBranchName } from '../config/category-mapping.config';
@@ -108,6 +111,10 @@ export class ErpDataService implements OnModuleInit {
 		private salesHeaderRepo: Repository<TblSalesHeader>,
 		@InjectRepository(TblSalesLines, 'erp')
 		private salesLinesRepo: Repository<TblSalesLines>,
+		@InjectRepository(TblCustomers, 'erp')
+		private customersRepo: Repository<TblCustomers>,
+		@InjectRepository(TblCustomerCategories, 'erp')
+		private customerCategoriesRepo: Repository<TblCustomerCategories>,
 		@InjectDataSource('erp')
 		private erpDataSource: DataSource,
 		@Inject(CACHE_MANAGER)
@@ -1045,6 +1052,234 @@ export class ErpDataService implements OnModuleInit {
 	}
 
 	/**
+	 * Get sales lines with customer category information
+	 * Uses LEFT JOINs to link tblsaleslines → tblcustomers → tblcustomercategories
+	 * 
+	 * Relationship chain:
+	 * - tblsaleslines.customer → tblcustomers.Code
+	 * - tblcustomers.Category → tblcustomercategories.cust_cat_code
+	 * 
+	 * @param filters - Query filters (supports customerCategoryCode and customerCategoryDescription filters)
+	 * @param includeDocTypes - Document types to include (default: ['1'] for Tax Invoices)
+	 * @returns Sales lines with customer category code and description
+	 */
+	async getSalesLinesWithCustomerCategories(
+		filters: ErpQueryFilters,
+		includeDocTypes: string[] = ['1'], // Default: Tax Invoices only
+	): Promise<TblSalesLinesWithCategory[]> {
+		const operationId = this.generateOperationId('GET_LINES_WITH_CATEGORY');
+		const dateRangeDays = this.calculateDateRangeDays(filters.startDate, filters.endDate);
+		
+		// ✅ PHASE 2: Use chunking for large date ranges (>60 days)
+		if (dateRangeDays > 60) {
+			this.logger.log(`[${operationId}] Large date range detected (${dateRangeDays} days) - using chunking`);
+			return await this.getSalesLinesWithCustomerCategoriesBatched(filters, includeDocTypes);
+		}
+		
+		const cacheKey = this.buildCacheKey('lines_with_category', filters, includeDocTypes);
+
+		this.logger.log(`[${operationId}] Starting getSalesLinesWithCustomerCategories operation`);
+		this.logger.log(`[${operationId}] Filters: ${JSON.stringify(filters)}`);
+		this.logger.log(`[${operationId}] Doc Types: ${includeDocTypes.join(',')}`);
+		this.logger.log(`[${operationId}] Cache key: ${cacheKey}`);
+
+		const startTime = Date.now();
+
+		try {
+			// Check cache first
+			const cached = await this.cacheManager.get<TblSalesLinesWithCategory[]>(cacheKey);
+			if (cached) {
+				const duration = Date.now() - startTime;
+				this.logger.log(`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} lines (${duration}ms)`);
+				return cached;
+			}
+
+			this.logger.log(`[${operationId}] Cache MISS - Querying database...`);
+
+			const queryStart = Date.now();
+			
+			// ✅ Execute with circuit breaker and timeout protection (adaptive timeout)
+			const results = await this.executeQueryWithProtection(
+				async () => {
+					// Get all column names from the entity metadata for explicit selection
+					const lineColumns = this.salesLinesRepo.metadata.columns.map(col => `line.${col.databaseName} as line_${col.propertyName}`);
+					
+					const query = this.salesLinesRepo
+						.createQueryBuilder('line')
+						.leftJoin('tblcustomers', 'customer', 'line.customer = customer.Code')
+						.leftJoin('tblcustomercategories', 'category', 'customer.Category = category.cust_cat_code')
+						.select(lineColumns.join(', '))
+						.addSelect('customer.Category', 'customer_category_code')
+						.addSelect('category.cust_cat_description', 'customer_category_description')
+						.where('line.sale_date BETWEEN :startDate AND :endDate', {
+							startDate: filters.startDate,
+							endDate: filters.endDate,
+						})
+						// ✅ CRITICAL: Filter by document type
+						.andWhere('line.doc_type IN (:...docTypes)', { docTypes: includeDocTypes });
+
+					// Apply additional filters
+					if (filters.storeCode) {
+						this.logger.debug(`[${operationId}] Filtering by store: ${filters.storeCode}`);
+						query.andWhere('line.store = :store', { store: filters.storeCode });
+					}
+
+					if (filters.category) {
+						this.logger.debug(`[${operationId}] Filtering by category: ${filters.category}`);
+						query.andWhere('line.category = :category', { category: filters.category });
+					}
+
+					// ✅ Sales person filtering: Use rep_code directly from tblsaleslines
+					if (filters.salesPersonId) {
+						const salesPersonIds = Array.isArray(filters.salesPersonId) 
+							? filters.salesPersonId 
+							: [filters.salesPersonId];
+						this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
+						query.andWhere('line.rep_code IN (:...salesPersonIds)', { salesPersonIds });
+					}
+
+					// ✅ Customer category code filtering (legacy single category)
+					if (filters.customerCategoryCode) {
+						this.logger.debug(`[${operationId}] Filtering by customer category code: ${filters.customerCategoryCode}`);
+						query.andWhere('customer.Category = :customerCategoryCode', { customerCategoryCode: filters.customerCategoryCode });
+					}
+
+					// ✅ Customer category description filtering
+					if (filters.customerCategoryDescription) {
+						this.logger.debug(`[${operationId}] Filtering by customer category description: ${filters.customerCategoryDescription}`);
+						query.andWhere('category.cust_cat_description = :customerCategoryDescription', { customerCategoryDescription: filters.customerCategoryDescription });
+					}
+
+					// ✅ Include customer categories (IN filter)
+					if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
+						this.logger.debug(`[${operationId}] Including customer categories: ${filters.includeCustomerCategories.join(', ')}`);
+						query.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: filters.includeCustomerCategories });
+					}
+
+					// ✅ Exclude customer categories (NOT IN filter)
+					if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
+						this.logger.debug(`[${operationId}] Excluding customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
+						query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
+					}
+
+					// ✅ Data quality filters
+					query.andWhere('line.item_code IS NOT NULL');
+					query.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' });
+
+					const rawResults = await query.getRawMany();
+					
+					// Map raw results to TblSalesLinesWithCategory interface
+					// Remove 'line_' prefix from aliased fields and map to proper property names
+					return rawResults.map((row: any) => {
+						const mappedRow: any = {
+							customer_category_code: row.customer_category_code || null,
+							customer_category_description: row.customer_category_description || null,
+						};
+						
+						// Map all line fields (remove 'line_' prefix from aliases)
+						this.salesLinesRepo.metadata.columns.forEach(col => {
+							const aliasKey = `line_${col.propertyName}`;
+							if (row[aliasKey] !== undefined) {
+								mappedRow[col.propertyName] = row[aliasKey];
+							}
+						});
+						
+						return mappedRow;
+					}) as TblSalesLinesWithCategory[];
+				},
+				operationId,
+				120000, // 120 second base timeout for lines
+				dateRangeDays, // Pass date range for adaptive timeout
+			);
+			
+			const queryDuration = Date.now() - queryStart;
+			
+			// ✅ PHASE 2: Log slow query warning
+			this.logSlowQuery(operationId, queryDuration, dateRangeDays, filters.startDate, filters.endDate);
+
+			this.logger.log(`[${operationId}] Database query completed in ${queryDuration}ms`);
+			this.logger.log(`[${operationId}] Retrieved ${results.length} sales lines with customer categories`);
+			this.logger.log(`[${operationId}] Doc types included: ${includeDocTypes.join(', ')}`);
+
+			// Log data quality warnings
+			const linesWithCategory = results.filter(r => r.customer_category_description).length;
+			const linesWithoutCategory = results.length - linesWithCategory;
+			if (linesWithoutCategory > 0) {
+				this.logger.warn(`[${operationId}] ⚠️ ${linesWithoutCategory} sales lines have no customer category (customer not found or category missing)`);
+			}
+
+			// Cache results
+			await this.cacheManager.set(cacheKey, results, this.CACHE_TTL);
+
+			const totalDuration = Date.now() - startTime;
+			this.logger.log(`[${operationId}] ✅ Operation completed successfully (${totalDuration}ms)`);
+			return results;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			
+			// ✅ Enhanced error diagnostics for remote debugging
+			this.logger.error(`[${operationId}] ❌ Error fetching sales lines with customer categories (${duration}ms)`);
+			this.logger.error(`[${operationId}] Error Type: ${error.constructor?.name || 'Unknown'}`);
+			this.logger.error(`[${operationId}] Error Message: ${error.message}`);
+			this.logger.error(`[${operationId}] Error Code: ${error.code || 'N/A'}`);
+			
+			// Log connection state
+			const poolInfo = this.getConnectionPoolInfo();
+			this.logger.error(`[${operationId}] Connection Pool State: ${JSON.stringify(poolInfo)}`);
+			this.logger.error(`[${operationId}] Circuit Breaker State: ${this.circuitBreakerState}`);
+			this.logger.error(`[${operationId}] Active Queries: ${this.activeQueries}/${this.MAX_CONCURRENT_QUERIES}`);
+			
+			// Log query parameters
+			this.logger.error(`[${operationId}] Query Parameters: ${JSON.stringify({
+				startDate: filters.startDate,
+				endDate: filters.endDate,
+				storeCode: filters.storeCode || 'all',
+				category: filters.category || 'all',
+				customerCategoryCode: filters.customerCategoryCode || 'all',
+				customerCategoryDescription: filters.customerCategoryDescription || 'all',
+				docTypes: includeDocTypes,
+			})}`);
+			
+			this.logger.error(`[${operationId}] Stack Trace: ${error.stack}`);
+			throw error;
+		}
+	}
+
+	/**
+	 * ✅ PHASE 2: Get sales lines with customer categories using batched processing for large date ranges
+	 * Processes date range in chunks and combines results
+	 */
+	private async getSalesLinesWithCustomerCategoriesBatched(
+		filters: ErpQueryFilters,
+		includeDocTypes: string[],
+	): Promise<TblSalesLinesWithCategory[]> {
+		const operationId = this.generateOperationId('GET_LINES_WITH_CATEGORY_BATCHED');
+		const chunks = this.splitDateRange(filters.startDate, filters.endDate, 30);
+		
+		this.logger.log(`[${operationId}] Processing ${chunks.length} date range chunks...`);
+		
+		const allResults: TblSalesLinesWithCategory[] = [];
+		
+		for (let i = 0; i < chunks.length; i++) {
+			const chunk = chunks[i];
+			this.logger.log(`[${operationId}] Processing chunk ${i + 1}/${chunks.length}: ${chunk.startDate} to ${chunk.endDate}`);
+			
+			const chunkFilters: ErpQueryFilters = {
+				...filters,
+				startDate: chunk.startDate,
+				endDate: chunk.endDate,
+			};
+			
+			// Recursively call the main method (it will skip chunking check since chunks are small)
+			const chunkResults = await this.getSalesLinesWithCustomerCategories(chunkFilters, includeDocTypes);
+			allResults.push(...chunkResults);
+		}
+		
+		this.logger.log(`[${operationId}] ✅ Batched processing complete: ${allResults.length} total records`);
+		return allResults;
+	}
+
+	/**
 	 * Get daily aggregations - optimized query
 	 * 
 	 * ✅ REVISED: Now uses tblsalesheader.total_incl for revenue calculation
@@ -1079,17 +1314,27 @@ export class ErpDataService implements OnModuleInit {
 			
 			// ✅ REVISED: Use tblsalesheader instead of tblsaleslines
 			// Sum total_incl - total_tax for revenue (exclusive of tax), count transactions and customers
+			// ✅ Add customer category filtering when needed
+			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
+				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
+
 			const query = this.salesHeaderRepo
-				.createQueryBuilder('header')
-				.select([
-					'DATE(header.sale_date) as date',
-					'header.store as store',
-					'SUM(header.total_incl) - SUM(header.total_tax) as totalRevenue', // ✅ Subtract tax: matches SQL query exactly
-					'CAST(0 AS DECIMAL(19,2)) as totalCost', // Cost not available in header table
-					'COUNT(DISTINCT header.doc_number) as transactionCount',
-					'COUNT(DISTINCT header.customer) as uniqueCustomers',
-					'0 as totalQuantity', // Quantity not available in header table (integer)
-				])
+				.createQueryBuilder('header');
+
+			// Add LEFT JOINs for customer category filtering if needed
+			if (hasCustomerCategoryFilters) {
+				query.leftJoin('tblcustomers', 'customer', 'header.customer = customer.Code');
+			}
+
+			query.select([
+				'DATE(header.sale_date) as date',
+				'header.store as store',
+				'SUM(header.total_incl) - SUM(header.total_tax) as totalRevenue', // ✅ Subtract tax: matches SQL query exactly
+				'CAST(0 AS DECIMAL(19,2)) as totalCost', // Cost not available in header table
+				'COUNT(DISTINCT header.doc_number) as transactionCount',
+				'COUNT(DISTINCT header.customer) as uniqueCustomers',
+				'0 as totalQuantity', // Quantity not available in header table (integer)
+			])
 				.where('header.sale_date BETWEEN :startDate AND :endDate', {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
@@ -1113,6 +1358,17 @@ export class ErpDataService implements OnModuleInit {
 				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
 				// Use sales_code from tblsalesheader for header queries
 				query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
+			}
+
+			// ✅ Customer category filtering for aggregations
+			if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
+				this.logger.debug(`[${operationId}] Including customer categories: ${filters.includeCustomerCategories.join(', ')}`);
+				query.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: filters.includeCustomerCategories });
+			}
+
+			if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
+				this.logger.debug(`[${operationId}] Excluding customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
+				query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
 			}
 
 			const results = await query.getRawMany();
@@ -1190,16 +1446,26 @@ export class ErpDataService implements OnModuleInit {
 			// ✅ REVISED: Use tblsalesheader instead of tblsaleslines
 			// Sum total_incl - total_tax for revenue (exclusive of tax), grouped by store
 			// Matches SQL: SELECT store, SUM(total_incl) - SUM(total_tax) AS total_sum FROM tblsalesheader WHERE doc_type IN (1, 2) GROUP BY store
+			// ✅ Add customer category filtering when needed
+			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
+				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
+
 			const query = this.salesHeaderRepo
-				.createQueryBuilder('header')
-				.select([
-					'header.store as store',
-					'SUM(header.total_incl) - SUM(header.total_tax) as totalRevenue', // ✅ Subtract tax: matches SQL query exactly
-					'CAST(0 AS DECIMAL(19,2)) as totalCost', // Cost not available in header table
-					'COUNT(DISTINCT header.doc_number) as transactionCount',
-					'COUNT(DISTINCT header.customer) as uniqueCustomers',
-					'0 as totalQuantity', // Quantity not available in header table (integer)
-				])
+				.createQueryBuilder('header');
+
+			// Add LEFT JOINs for customer category filtering if needed
+			if (hasCustomerCategoryFilters) {
+				query.leftJoin('tblcustomers', 'customer', 'header.customer = customer.Code');
+			}
+
+			query.select([
+				'header.store as store',
+				'SUM(header.total_incl) - SUM(header.total_tax) as totalRevenue', // ✅ Subtract tax: matches SQL query exactly
+				'CAST(0 AS DECIMAL(19,2)) as totalCost', // Cost not available in header table
+				'COUNT(DISTINCT header.doc_number) as transactionCount',
+				'COUNT(DISTINCT header.customer) as uniqueCustomers',
+				'0 as totalQuantity', // Quantity not available in header table (integer)
+			])
 				.where('header.sale_date BETWEEN :startDate AND :endDate', {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
@@ -1223,6 +1489,17 @@ export class ErpDataService implements OnModuleInit {
 				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
 				// Use sales_code from tblsalesheader for header queries
 				query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
+			}
+
+			// ✅ Customer category filtering for aggregations
+			if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
+				this.logger.debug(`[${operationId}] Including customer categories: ${filters.includeCustomerCategories.join(', ')}`);
+				query.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: filters.includeCustomerCategories });
+			}
+
+			if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
+				this.logger.debug(`[${operationId}] Excluding customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
+				query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
 			}
 
 			const results = await query.getRawMany();
@@ -1404,14 +1681,24 @@ export class ErpDataService implements OnModuleInit {
 			// ✅ Sales by category - aggregated across all stores (totals per category)
 			// ✅ Revenue excludes tax: SUM(incl_line_total) - SUM(tax)
 			// ✅ Query matches: SELECT line.category, SUM(line.incl_line_total) - SUM(tax) as totalRevenue, ...
+			// ✅ Add customer category filtering when needed
+			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
+				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
+
 			const query = this.salesLinesRepo
-				.createQueryBuilder('line')
-				.select([
-					'line.category as category',
-					'SUM(line.incl_line_total) - SUM(line.tax) as totalRevenue',
-					'SUM(line.cost_price * line.quantity) as totalCost',
-					'SUM(line.quantity) as totalQuantity',
-				])
+				.createQueryBuilder('line');
+
+			// Add LEFT JOINs for customer category filtering if needed
+			if (hasCustomerCategoryFilters) {
+				query.leftJoin('tblcustomers', 'customer', 'line.customer = customer.Code');
+			}
+
+			query.select([
+				'line.category as category',
+				'SUM(line.incl_line_total) - SUM(line.tax) as totalRevenue',
+				'SUM(line.cost_price * line.quantity) as totalCost',
+				'SUM(line.quantity) as totalQuantity',
+			])
 				.where('line.sale_date BETWEEN :startDate AND :endDate', {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
@@ -1419,7 +1706,20 @@ export class ErpDataService implements OnModuleInit {
 				.andWhere('line.doc_type IN (:...docTypes)', { docTypes: [1, 2] })
 				.andWhere('line.item_code NOT IN (:...excludedItemCodes)', { excludedItemCodes: ['.'] })
 				.andWhere('line.type = :type', { type: 'I' })
-				.groupBy('line.category');
+				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' });
+
+			// ✅ Customer category filtering for aggregations
+			if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
+				this.logger.debug(`[${operationId}] Including customer categories: ${filters.includeCustomerCategories.join(', ')}`);
+				query.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: filters.includeCustomerCategories });
+			}
+
+			if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
+				this.logger.debug(`[${operationId}] Excluding customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
+				query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
+			}
+
+			query.groupBy('line.category');
 
 			const results = await query.getRawMany();
 			const queryDuration = Date.now() - queryStart;
@@ -1485,17 +1785,27 @@ export class ErpDataService implements OnModuleInit {
 			// ✅ Branch × Category aggregation: Uses tblsaleslines grouped by store and category
 			// Revenue calculation: SUM(incl_line_total) - SUM(tax) grouped by store, category
 			// Matches SQL: SELECT store, category, SUM(incl_line_total) - SUM(tax) AS totalRevenue, ... FROM tblsaleslines WHERE doc_type IN (1, 2) GROUP BY store, category
+			// ✅ Add customer category filtering when needed
+			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
+				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
+
 			const query = this.salesLinesRepo
-				.createQueryBuilder('line')
-				.select([
-					'line.store as store',
-					'line.category as category',
-					'SUM(line.incl_line_total) - SUM(line.tax) as totalRevenue', // ✅ Subtract tax: matches SQL query exactly
-					'SUM(line.cost_price * line.quantity) as totalCost',
-					'COUNT(DISTINCT line.doc_number) as transactionCount',
-					'COUNT(DISTINCT line.customer) as uniqueCustomers',
-					'SUM(line.quantity) as totalQuantity',
-				])
+				.createQueryBuilder('line');
+
+			// Add LEFT JOINs for customer category filtering if needed
+			if (hasCustomerCategoryFilters) {
+				query.leftJoin('tblcustomers', 'customer', 'line.customer = customer.Code');
+			}
+
+			query.select([
+				'line.store as store',
+				'line.category as category',
+				'SUM(line.incl_line_total) - SUM(line.tax) as totalRevenue', // ✅ Subtract tax: matches SQL query exactly
+				'SUM(line.cost_price * line.quantity) as totalCost',
+				'COUNT(DISTINCT line.doc_number) as transactionCount',
+				'COUNT(DISTINCT line.customer) as uniqueCustomers',
+				'SUM(line.quantity) as totalQuantity',
+			])
 				.where('line.sale_date BETWEEN :startDate AND :endDate', {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
@@ -1505,10 +1815,7 @@ export class ErpDataService implements OnModuleInit {
 				.andWhere('line.item_code IS NOT NULL')
 				.andWhere('line.item_code != :excludeItemCode', { excludeItemCode: '.' })
 				.andWhere('line.type = :itemType', { itemType: 'I' })
-				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' })
-				.groupBy('line.store, line.category')
-				.orderBy('totalRevenue', 'DESC')
-				.limit(10000); // ✅ PHASE 2: Max 10k records per aggregation
+				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' });
 
 			if (filters.storeCode) {
 				this.logger.debug(`[${operationId}] Filtering by store: ${filters.storeCode}`);
@@ -1528,6 +1835,21 @@ export class ErpDataService implements OnModuleInit {
 				// Use rep_code directly from tblsaleslines
 				query.andWhere('line.rep_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
+
+			// ✅ Customer category filtering for aggregations
+			if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
+				this.logger.debug(`[${operationId}] Including customer categories: ${filters.includeCustomerCategories.join(', ')}`);
+				query.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: filters.includeCustomerCategories });
+			}
+
+			if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
+				this.logger.debug(`[${operationId}] Excluding customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
+				query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
+			}
+
+			query.groupBy('line.store, line.category')
+				.orderBy('totalRevenue', 'DESC')
+				.limit(10000); // ✅ PHASE 2: Max 10k records per aggregation
 
 			const results = await this.executeQueryWithProtection(
 				async () => query.getRawMany(),
@@ -2467,6 +2789,7 @@ export class ErpDataService implements OnModuleInit {
 		products: Array<{ id: string; name: string }>;
 		salespeople: Array<{ id: string; name: string }>;
 		paymentMethods: Array<{ id: string; name: string }>;
+		customerCategories: Array<{ id: string; name: string }>;
 	}> {
 		const operationId = this.generateOperationId('GET_MASTER_DATA');
 		const cacheKey = this.buildCacheKey('master_data', filters);
@@ -2507,11 +2830,17 @@ export class ErpDataService implements OnModuleInit {
 			const step3Duration = Date.now() - step3Start;
 			this.logger.log(`[${operationId}] Step 3 completed in ${step3Duration}ms (${salespeople.length} records)`);
 			
-			this.logger.log(`[${operationId}] Step 4/4: Getting payment methods...`);
+			this.logger.log(`[${operationId}] Step 4/5: Getting payment methods...`);
 			const step4Start = Date.now();
 			const paymentMethods = await this.getUniquePaymentMethods(filters);
 			const step4Duration = Date.now() - step4Start;
 			this.logger.log(`[${operationId}] Step 4 completed in ${step4Duration}ms (${paymentMethods.length} records)`);
+
+			this.logger.log(`[${operationId}] Step 5/5: Getting customer categories...`);
+			const step5Start = Date.now();
+			const customerCategories = await this.getUniqueCustomerCategories(filters);
+			const step5Duration = Date.now() - step5Start;
+			this.logger.log(`[${operationId}] Step 5 completed in ${step5Duration}ms (${customerCategories.length} records)`);
 
 			const queryDuration = Date.now() - queryStart;
 
@@ -2520,10 +2849,11 @@ export class ErpDataService implements OnModuleInit {
 				products,
 				salespeople,
 				paymentMethods,
+				customerCategories,
 			};
 
 			this.logger.log(`[${operationId}] Query completed in ${queryDuration}ms`);
-			this.logger.log(`[${operationId}] Found ${branches.length} branches, ${products.length} products, ${salespeople.length} salespeople, ${paymentMethods.length} payment methods`);
+			this.logger.log(`[${operationId}] Found ${branches.length} branches, ${products.length} products, ${salespeople.length} salespeople, ${paymentMethods.length} payment methods, ${customerCategories.length} customer categories`);
 
 			// Cache results
 			await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);
@@ -2669,5 +2999,37 @@ export class ErpDataService implements OnModuleInit {
 		return paymentMethods
 			.filter((pm) => pm.value > 0)
 			.map((pm) => ({ id: pm.id, name: pm.name }));
+	}
+
+	/**
+	 * Get unique customer categories from sales data
+	 * Uses LEFT JOIN to get customer categories from tblcustomers and tblcustomercategories
+	 */
+	private async getUniqueCustomerCategories(filters: ErpQueryFilters): Promise<Array<{ id: string; name: string }>> {
+		const query = this.salesLinesRepo
+			.createQueryBuilder('line')
+			.leftJoin('tblcustomers', 'customer', 'line.customer = customer.Code')
+			.leftJoin('tblcustomercategories', 'category', 'customer.Category = category.cust_cat_code')
+			.select([
+				'DISTINCT customer.Category as categoryCode',
+				'category.cust_cat_description as categoryDescription',
+			])
+			.where('line.sale_date BETWEEN :startDate AND :endDate', {
+				startDate: filters.startDate,
+				endDate: filters.endDate,
+			})
+			.andWhere('line.doc_type = :docType', { docType: '1' })
+			.andWhere('customer.Category IS NOT NULL')
+			.andWhere('customer.Category != :empty', { empty: '' })
+			.orderBy('customer.Category', 'ASC');
+
+		const results = await query.getRawMany();
+		
+		return results
+			.filter((row) => row.categoryCode) // Filter out nulls
+			.map((row) => ({
+				id: row.categoryCode,
+				name: row.categoryDescription || row.categoryCode, // Use description if available, otherwise code
+			}));
 	}
 }

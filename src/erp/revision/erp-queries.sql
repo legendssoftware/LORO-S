@@ -59,6 +59,40 @@ WHERE line.sale_date BETWEEN :startDate AND :endDate
 ORDER BY line.sale_date ASC;
 
 -- ============================================================================
+-- 3B. SALES LINES WITH CUSTOMER CATEGORIES
+-- ============================================================================
+-- Method: getSalesLinesWithCustomerCategories()
+-- Purpose: Get sales lines with customer category information from joined tables
+-- Relationship chain:
+--   - tblsaleslines.customer → tblcustomers.Code
+--   - tblcustomers.Category → tblcustomercategories.cust_cat_code
+-- Returns: All sales line fields + customer_category_code + customer_category_description
+-- Filter: Multiple doc_types supported (default: ['1'] for Tax Invoices)
+-- Sales Person: Uses line.rep_code
+
+SELECT 
+    line.*,
+    customer.Category as customer_category_code,
+    category.cust_cat_description as customer_category_description
+FROM tblsaleslines line
+LEFT JOIN tblcustomers customer ON line.customer = customer.Code
+LEFT JOIN tblcustomercategories category ON customer.Category = category.cust_cat_code
+WHERE line.sale_date BETWEEN :startDate AND :endDate
+    AND line.doc_type IN (:docType1, :docType2, ...)  -- Default: ['1']
+    AND line.item_code IS NOT NULL
+    AND line.sale_date >= '2020-01-01'
+    -- Optional filters (applied conditionally):
+    -- AND line.store = :storeCode
+    -- AND line.category = :category
+    -- AND line.rep_code IN (:salesPersonId1, :salesPersonId2, ...)
+    -- AND customer.Category = :customerCategoryCode
+    -- AND category.cust_cat_description = :customerCategoryDescription
+ORDER BY line.sale_date ASC;
+
+-- Note: LEFT JOINs ensure all sales lines are returned even if customer/category is missing
+-- Missing customer or category will result in NULL values for customer_category_code/description
+
+-- ============================================================================
 -- 4. DAILY AGGREGATIONS
 -- ============================================================================
 -- Method: getDailyAggregations()

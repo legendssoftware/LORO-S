@@ -106,6 +106,8 @@ import { SalesTipsModule } from './sales-tips/sales-tips.module';
 import { ErpModule } from './erp/erp.module';
 import { TblSalesHeader } from './erp/entities/tblsalesheader.entity';
 import { TblSalesLines } from './erp/entities/tblsaleslines.entity';
+import { TblCustomers } from './erp/entities/tblcustomers.entity';
+import { TblCustomerCategories } from './erp/entities/tblcustomercategories.entity';
 
 
 @Module({
@@ -246,7 +248,7 @@ import { TblSalesLines } from './erp/entities/tblsaleslines.entity';
 				username: configService.get<string>('ERP_DATABASE_USER'),
 				password: configService.get<string>('ERP_DATABASE_PASSWORD'),
 				database: configService.get<string>('ERP_DATABASE_NAME'),
-				entities: [TblSalesHeader, TblSalesLines],
+				entities: [TblSalesHeader, TblSalesLines, TblCustomers, TblCustomerCategories],
 				synchronize: false, // CRITICAL: Never sync with ERP database
 				logging: false,
 				extra: {

@@ -886,6 +886,270 @@ export class IotService {
 		});
 	}
 
+	/**
+	 * Calculate device performance metrics using organization hours
+	 * This replaces the client-side calculation with server-side logic
+	 */
+	private async calculateDevicePerformanceMetrics(
+		device: Device,
+		records: DeviceRecords[],
+	): Promise<{
+		opensOnTime: boolean;
+		opensOnTimePercentage: number;
+		closesOnTime: boolean;
+		closesOnTimePercentage: number;
+		score: number;
+		note: string;
+		latestOpenTime: string | null;
+		latestCloseTime: string | null;
+	}> {
+		try {
+			// Get organization hours
+			const orgRef = String(device.orgID);
+			const orgHoursArr = await this.organisationHoursService.findAll(orgRef).catch(() => []);
+			const orgHours = Array.isArray(orgHoursArr) && orgHoursArr.length > 0 ? orgHoursArr[0] : null;
+
+			// Default target times if no organization hours configured
+			let targetOpenTimeMinutes = 7.5 * 60; // 7:30 AM default
+			let targetCloseTimeMinutes = 17 * 60; // 5:00 PM default
+
+			if (orgHours) {
+				// Parse organization open/close times
+				const [openHour, openMinute] = (orgHours.openTime || '07:30').split(':').map(Number);
+				const [closeHour, closeMinute] = (orgHours.closeTime || '17:00').split(':').map(Number);
+				targetOpenTimeMinutes = openHour * 60 + openMinute;
+				targetCloseTimeMinutes = closeHour * 60 + closeMinute;
+			}
+
+			// Get latest 10 records
+			const recordsToCheck = records.slice(0, 10);
+
+			// Track records with time data
+			let opensOnTimeCount = 0;
+			let closesOnTimeCount = 0;
+			let recordsWithOpenTime = 0;
+			let recordsWithCloseTime = 0;
+
+			// Get organization timezone
+			const orgTimezone = orgHours?.timezone || TimezoneUtil.AFRICA_JOHANNESBURG;
+
+			recordsToCheck.forEach((record) => {
+				// Check open time
+				if (record.openTime) {
+					recordsWithOpenTime++;
+					let openMinutes: number | null = null;
+
+					// Convert to organization timezone and extract minutes
+					try {
+						const openDate = typeof record.openTime === 'string'
+							? new Date(record.openTime)
+							: (record.openTime as unknown as Date);
+						
+						// Convert to organization timezone
+						const openDateOrg = TimezoneUtil.toOrganizationTime(openDate, orgTimezone);
+						openMinutes = openDateOrg.getHours() * 60 + openDateOrg.getMinutes();
+
+						if (openMinutes !== null && openMinutes <= targetOpenTimeMinutes) {
+							opensOnTimeCount++;
+						}
+					} catch (error) {
+						this.logger.warn(`Failed to parse open time for device ${device.deviceID}: ${error.message}`);
+					}
+				}
+
+				// Check close time
+				if (record.closeTime) {
+					recordsWithCloseTime++;
+					let closeMinutes: number | null = null;
+
+					try {
+						const closeDate = typeof record.closeTime === 'string'
+							? new Date(record.closeTime)
+							: (record.closeTime as unknown as Date);
+						
+						// Convert to organization timezone
+						const closeDateOrg = TimezoneUtil.toOrganizationTime(closeDate, orgTimezone);
+						closeMinutes = closeDateOrg.getHours() * 60 + closeDateOrg.getMinutes();
+
+						if (closeMinutes !== null && closeMinutes >= targetCloseTimeMinutes) {
+							closesOnTimeCount++;
+						}
+					} catch (error) {
+						this.logger.warn(`Failed to parse close time for device ${device.deviceID}: ${error.message}`);
+					}
+				}
+			});
+
+			// Calculate percentages based on records that actually have time data
+			const opensOnTimePercentage = recordsWithOpenTime > 0
+				? (opensOnTimeCount / recordsWithOpenTime) * 100
+				: 0;
+			const closesOnTimePercentage = recordsWithCloseTime > 0
+				? (closesOnTimeCount / recordsWithCloseTime) * 100
+				: 0;
+
+			// Determine punctuality flags
+			const opensOnTime = opensOnTimePercentage >= 80;
+			const closesOnTime = closesOnTimePercentage >= 80;
+
+			// Calculate composite score
+			// Use type assertion for extended analytics properties that may exist but aren't in the strict type
+			const analytics = device.analytics as any;
+			const punctualityScore = analytics?.punctualityRate
+				? analytics.punctualityRate * 100
+				: (opensOnTimePercentage + closesOnTimePercentage) / 2;
+
+			const efficiencyScore =
+				device.analytics?.totalCount > 0
+					? ((device.analytics.onTimeCount || 0) / device.analytics.totalCount) * 100
+					: punctualityScore;
+
+			const totalDays = Math.max(recordsToCheck.length, 10);
+			const absentDays = analytics?.daysAbsent || device.analytics?.daysAbsent || 0;
+			const uptimePercentage = ((totalDays - absentDays) / totalDays) * 100;
+
+			let statusWeight = 0;
+			if (device.currentStatus === 'online') statusWeight = 100;
+			else if (device.currentStatus === 'maintenance') statusWeight = 70;
+			else if (device.currentStatus === 'offline') statusWeight = 30;
+			else statusWeight = 50;
+
+			const compositePercentage =
+				efficiencyScore * 0.3 + uptimePercentage * 0.2 + punctualityScore * 0.3 + statusWeight * 0.2;
+
+			// Calculate base score
+			let score = 1;
+			if (compositePercentage >= 90) score = 5;
+			else if (compositePercentage >= 80) score = 4;
+			else if (compositePercentage >= 70) score = 3;
+			else if (compositePercentage >= 60) score = 2;
+			else score = 1;
+
+			// Cap score based on punctuality - can't be excellent if not opening/closing on time
+			if (score === 5 && (!opensOnTime || !closesOnTime)) {
+				score = 4; // Downgrade to "Very Good" if punctuality is not perfect
+			}
+			if (score === 4 && !opensOnTime && !closesOnTime) {
+				score = 3; // Downgrade to "Average" if both punctuality metrics are poor
+			}
+
+			// Generate note based on performance
+			let note = '';
+			if (score === 5) {
+				const notes = ['Consistently punctual', 'Very reliable', 'Excellent performance', 'Outstanding reliability'];
+				note = notes[Math.floor(Math.random() * notes.length)];
+			} else if (score === 4) {
+				const notes = ['Highly dependable', 'Very good performance', 'Mostly punctual'];
+				note = notes[Math.floor(Math.random() * notes.length)];
+			} else if (score === 3) {
+				if (!opensOnTime && closesOnTime) {
+					note = 'Opens late some days';
+				} else if (opensOnTime && !closesOnTime) {
+					note = 'Closes too early sometimes';
+				} else if (!opensOnTime && !closesOnTime) {
+					note = 'Opens late and closes early';
+				} else {
+					const notes = ['Generally reliable', 'Average performance', 'Acceptable reliability'];
+					note = notes[Math.floor(Math.random() * notes.length)];
+				}
+			} else if (score === 2) {
+				if (!opensOnTime && !closesOnTime) {
+					note = 'Opens late and closes early';
+				} else if (!opensOnTime) {
+					note = 'Frequently opens late';
+				} else if (!closesOnTime) {
+					note = 'Frequently closes too early';
+				} else {
+					note = 'Poor punctuality';
+				}
+			} else {
+				if (!opensOnTime && !closesOnTime) {
+					note = 'Rarely on schedule';
+				} else if (!opensOnTime) {
+					note = 'Consistently opens late';
+				} else if (!closesOnTime) {
+					note = 'Consistently closes too early';
+				} else {
+					note = 'Rarely on schedule';
+				}
+			}
+
+			// Add contextual notes based on device status
+			if (device.currentStatus === 'maintenance') {
+				note += ' (Under maintenance)';
+			} else if (device.currentStatus === 'offline') {
+				note += ' (Device offline)';
+			} else if (device.currentStatus === 'disconnected') {
+				note += ' (Connection issue)';
+			}
+
+			// Format latest times
+			const latestRecord = records.length > 0 ? records[0] : null;
+			let latestOpenTime: string | null = null;
+			let latestCloseTime: string | null = null;
+
+			if (latestRecord) {
+				if (latestRecord.openTime) {
+					try {
+						const openDate = typeof latestRecord.openTime === 'string'
+							? new Date(latestRecord.openTime)
+							: (latestRecord.openTime as unknown as Date);
+						const openDateOrg = TimezoneUtil.toOrganizationTime(openDate, orgTimezone);
+						const hours = openDateOrg.getHours();
+						const minutes = openDateOrg.getMinutes();
+						const period = hours >= 12 ? 'pm' : 'am';
+						const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+						const paddedMinutes = minutes.toString().padStart(2, '0');
+						latestOpenTime = `${displayHours}:${paddedMinutes}${period}`;
+					} catch (error) {
+						latestOpenTime = null;
+					}
+				}
+
+				if (latestRecord.closeTime) {
+					try {
+						const closeDate = typeof latestRecord.closeTime === 'string'
+							? new Date(latestRecord.closeTime)
+							: (latestRecord.closeTime as unknown as Date);
+						const closeDateOrg = TimezoneUtil.toOrganizationTime(closeDate, orgTimezone);
+						const hours = closeDateOrg.getHours();
+						const minutes = closeDateOrg.getMinutes();
+						const period = hours >= 12 ? 'pm' : 'am';
+						const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+						const paddedMinutes = minutes.toString().padStart(2, '0');
+						latestCloseTime = `${displayHours}:${paddedMinutes}${period}`;
+					} catch (error) {
+						latestCloseTime = null;
+					}
+				}
+			}
+
+			return {
+				opensOnTime,
+				opensOnTimePercentage,
+				closesOnTime,
+				closesOnTimePercentage,
+				score,
+				note,
+				latestOpenTime,
+				latestCloseTime,
+			};
+		} catch (error) {
+			this.logger.error(`Failed to calculate device performance metrics: ${error.message}`, error.stack);
+			// Return default values on error
+			return {
+				opensOnTime: false,
+				opensOnTimePercentage: 0,
+				closesOnTime: false,
+				closesOnTimePercentage: 0,
+				score: 1,
+				note: 'Error calculating performance',
+				latestOpenTime: null,
+				latestCloseTime: null,
+			};
+		}
+	}
+
 	async findAllDevices(
 		filters: DeviceFilters = {},
 		page: number = 1,
@@ -1011,15 +1275,25 @@ export class IotService {
 				`🔌 [${requestId}] Fetched device IDs: ${JSON.stringify(deviceIds)}`,
 			);
 
-		// Limit records to latest 10 for each device
-		const processedDevices = devices.map(device => ({
-			...device,
-			records: device.records 
-				? device.records
-					.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-					.slice(0, 10)
-				: []
-		}));
+		// Limit records to latest 10 for each device and calculate performance metrics
+		const processedDevices = await Promise.all(
+			devices.map(async (device) => {
+				const sortedRecords = device.records
+					? device.records
+							.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+							.slice(0, 10)
+					: [];
+
+				// Calculate performance metrics using organization hours
+				const performanceMetrics = await this.calculateDevicePerformanceMetrics(device, sortedRecords);
+
+				return {
+					...device,
+					records: sortedRecords,
+					performance: performanceMetrics,
+				};
+			})
+		);
 
 			// Log device details for debugging
 			if (processedDevices.length > 0) {

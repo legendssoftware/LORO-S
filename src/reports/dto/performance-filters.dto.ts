@@ -272,5 +272,37 @@ export class PerformanceFiltersDto {
 	@IsOptional()
 	@IsString()
 	suburb?: string;
+
+	@ApiPropertyOptional({ 
+		description: 'Array of customer category codes to INCLUDE in the report (comma-separated)',
+		type: [String],
+		example: ['001', '002', '003']
+	})
+	@IsOptional()
+	@Transform(({ value }) => {
+		if (typeof value === 'string') {
+			return value.split(',').map(id => id.trim());
+		}
+		return value;
+	})
+	@IsArray()
+	@IsString({ each: true })
+	includeCustomerCategories?: string[];
+
+	@ApiPropertyOptional({ 
+		description: 'Array of customer category codes to EXCLUDE from the report (comma-separated). When specified, sales linked to these customer categories will be excluded from all totals.',
+		type: [String],
+		example: ['004', '005']
+	})
+	@IsOptional()
+	@Transform(({ value }) => {
+		if (typeof value === 'string') {
+			return value.split(',').map(id => id.trim());
+		}
+		return value;
+	})
+	@IsArray()
+	@IsString({ each: true })
+	excludeCustomerCategories?: string[];
 }
 

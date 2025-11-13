@@ -157,6 +157,68 @@ export interface PaymentTypeAggregation {
 }
 
 /**
+ * Sales Lines with Customer Category Information
+ * Extends TblSalesLines with customer category data from joined tables
+ */
+export interface TblSalesLinesWithCategory {
+	// All fields from TblSalesLines
+	ID: number;
+	discount: number;
+	pay_type: string;
+	isSpecial: number;
+	discount_perc: number;
+	doc_number: string;
+	item_code: string;
+	description: string;
+	serialNumber: string;
+	unit: string;
+	quantity: number;
+	excl_price: number;
+	incl_price: number;
+	tax: number;
+	tax_per: number;
+	incl_line_total: number;
+	store: string;
+	deposit: number;
+	total_incl_disc: number;
+	sale_date: Date;
+	deliver: string;
+	cost_price: number;
+	tax_type: string;
+	rep_code: string;
+	doc_type: string;
+	sale_time: string;
+	customer: string;
+	category: string;
+	lot_item: string;
+	period: string;
+	type: string;
+	net_mass: number;
+	status: number;
+	link: number;
+	link_qty: number;
+	DI: number;
+	ho_sales: number;
+	qty_left: number;
+	DocLinked: string;
+	main_item: string;
+	supplier: string;
+	edit_date: Date;
+	edit_time: string;
+	smart: number;
+	int_line_excl: number;
+	int_line_incl: number;
+	int_line_tax: number;
+	int_line_total: number;
+	exchange_rate_line: number;
+	commission_item: number;
+	commission_per: number;
+	// Additional fields from JOINs
+	customer_category_code?: string;
+	customer_category_description?: string;
+}
+
+/**
  * ERP Query Filters
  */
 export interface ErpQueryFilters {
@@ -167,5 +229,9 @@ export interface ErpQueryFilters {
 	customer?: string;
 	docType?: string;
 	salesPersonId?: string | string[]; // Sales person code(s): use tblsalesheader.sales_code for header queries, tblsaleslines.rep_code for line queries
+	customerCategoryCode?: string; // Filter by customer category code (from tblcustomers.Category) - single category filter (legacy)
+	customerCategoryDescription?: string; // Filter by customer category description (from tblcustomercategories.cust_cat_description)
+	includeCustomerCategories?: string[]; // Array of customer category codes to INCLUDE
+	excludeCustomerCategories?: string[]; // Array of customer category codes to EXCLUDE
 }
 
