@@ -1,6 +1,6 @@
 import { IsNotEmpty, IsNumber, IsString, IsEnum, IsOptional } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
-import { ClaimCategory } from '../../lib/enums/finance.enums';
+import { ClaimCategory, Currency } from '../../lib/enums/finance.enums';
 
 export class CreateClaimDto {
 	@ApiProperty({
@@ -43,4 +43,13 @@ export class CreateClaimDto {
 	@IsNotEmpty()
 	@IsNumber()
 	owner: number;
+
+	@ApiProperty({
+		example: Currency.ZAR,
+		description: 'Currency code for the claim amount',
+		required: false,
+	})
+	@IsOptional()
+	@IsEnum(Currency)
+	currency?: Currency;
 }

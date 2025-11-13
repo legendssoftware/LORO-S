@@ -708,17 +708,18 @@ export class ClaimsService {
 			const previousStatus = claim.status;
 
 			// Convert DTO fields to match entity field types
-			const updateData = {
-				comments: updateClaimDto.comment,
-				status: updateClaimDto.status,
-				category: updateClaimDto.category,
-				documentUrl: updateClaimDto.documentUrl,
-			} as DeepPartial<Claim>;
+		const updateData = {
+			comments: updateClaimDto.comment,
+			status: updateClaimDto.status,
+			category: updateClaimDto.category,
+			documentUrl: updateClaimDto.documentUrl,
+			currency: updateClaimDto.currency,
+		} as DeepPartial<Claim>;
 
-			// Handle amount conversion from number to string
-			if (updateClaimDto.amount !== undefined) {
-				updateData.amount = updateClaimDto.amount.toString();
-			}
+		// Handle amount conversion from number to string
+		if (updateClaimDto.amount !== undefined) {
+			updateData.amount = updateClaimDto.amount.toString();
+		}
 
 			// ============================================================
 			// CRITICAL PATH: Update claim in database (must complete before response)

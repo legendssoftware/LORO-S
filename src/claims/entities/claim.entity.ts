@@ -1,6 +1,6 @@
 import { User } from '../../user/entities/user.entity';
 import { Branch } from '../../branch/entities/branch.entity';
-import { ClaimCategory, ClaimStatus } from '../../lib/enums/finance.enums';
+import { ClaimCategory, ClaimStatus, Currency } from '../../lib/enums/finance.enums';
 import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, Index } from 'typeorm';
 import { Organisation } from 'src/organisation/entities/organisation.entity';
 
@@ -46,6 +46,9 @@ export class Claim {
 	// Relations
 	@Column({ type: 'enum', enum: ClaimCategory, nullable: true, default: ClaimCategory.GENERAL })
 	category: ClaimCategory;
+
+	@Column({ type: 'enum', enum: Currency, nullable: true, default: Currency.ZAR })
+	currency: Currency;
 
 	@ManyToOne(() => User, (user) => user?.userClaims)
 	owner: User;

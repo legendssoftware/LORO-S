@@ -1,6 +1,6 @@
 import { PartialType } from '@nestjs/swagger';
 import { CreateClaimDto } from './create-claim.dto';
-import { ClaimCategory, ClaimStatus } from '../../lib/enums/finance.enums';
+import { ClaimCategory, ClaimStatus, Currency } from '../../lib/enums/finance.enums';
 import { IsEnum, IsOptional, IsNumber, IsString } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
@@ -46,11 +46,20 @@ export class UpdateClaimDto extends PartialType(CreateClaimDto) {
     @IsEnum(ClaimCategory)
     category: ClaimCategory;
 
-    @ApiProperty({
-        example: 1,
-        description: 'UID of the owner of the claim'
-    })
-    @IsOptional()
-    @IsNumber()
-    owner: number;
+	@ApiProperty({
+		example: 1,
+		description: 'UID of the owner of the claim'
+	})
+	@IsOptional()
+	@IsNumber()
+	owner: number;
+
+	@ApiProperty({
+		example: Currency.ZAR,
+		description: 'Currency code for the claim amount',
+		required: false
+	})
+	@IsOptional()
+	@IsEnum(Currency)
+	currency?: Currency;
 }
