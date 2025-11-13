@@ -499,6 +499,19 @@ export class ErpController {
 					throw new NotFoundException(`No targets found for user ${userId}`);
 				}
 
+				// ✅ Check if user is active - skip inactive users
+				const userResult = await this.userService.findOne(userId, orgId);
+				if (!userResult?.user || userResult.user.status !== 'active') {
+					this.logger.warn(`[${operationId}] ⚠️  User ${userId} is inactive (status: ${userResult?.user?.status || 'not found'}), skipping target processing`);
+					return {
+						success: false,
+						message: `User is inactive (status: ${userResult?.user?.status || 'not found'}). Target processing skipped.`,
+						data: null,
+						userId,
+						orgId,
+					};
+				}
+
 				const userTarget = userTargetResult.userTarget;
 				// Try to get erpSalesRepCode from multiple possible locations:
 				// 1. Top level of response object
@@ -660,6 +673,19 @@ export class ErpController {
 			try {
 				if (!targetUserId) {
 					throw new BadRequestException('User ID parameter is required');
+				}
+
+				// ✅ Check if target user is active - skip inactive users
+				const targetUserResult = await this.userService.findOne(targetUserId, orgId);
+				if (!targetUserResult?.user || targetUserResult.user.status !== 'active') {
+					this.logger.warn(`[${operationId}] ⚠️  Target user ${targetUserId} is inactive (status: ${targetUserResult?.user?.status || 'not found'}), skipping target processing`);
+					return {
+						success: false,
+						message: `Target user is inactive (status: ${targetUserResult?.user?.status || 'not found'}). Target processing skipped.`,
+						data: null,
+						userId: targetUserId,
+						orgId,
+					};
 				}
 
 				// Verify that the current user has access to view this user's sales
