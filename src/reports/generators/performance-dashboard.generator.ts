@@ -384,11 +384,27 @@ export class PerformanceDashboardGenerator {
 		// ✅ Get revenue from daily aggregations (uses tblsalesheader.total_incl - total_tax, exclusive of tax)
 		const dailyAggregations = await this.erpDataService.getDailyAggregations(filters);
 		
+		// Log filter details for debugging
+		if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
+			this.logger.log(`📊 Summary calculation with EXCLUSION filters: ${filters.excludeCustomerCategories.join(', ')}`);
+			this.logger.log(`📊 Daily aggregations count: ${dailyAggregations.length}`);
+		}
+		
 		// Sum totalRevenue from all daily aggregations (matches SQL: SUM(total_incl) - SUM(total_tax))
 		const totalRevenue = dailyAggregations.reduce((sum, agg) => {
 			const revenue = typeof agg.totalRevenue === 'number' ? agg.totalRevenue : parseFloat(String(agg.totalRevenue || 0));
 			return sum + revenue;
 		}, 0);
+		
+		// Log revenue breakdown for debugging
+		if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
+			this.logger.log(`📊 Calculated Total Revenue (after exclusions): R${totalRevenue.toFixed(2)}`);
+			dailyAggregations.forEach((agg, idx) => {
+				if (idx < 5) { // Log first 5 aggregations
+					this.logger.log(`📊   [${idx + 1}] ${agg.date} | Store: ${agg.store} | Revenue: R${agg.totalRevenue.toFixed(2)} | Transactions: ${agg.transactionCount}`);
+				}
+			});
+		}
 		
 		// ✅ Get category aggregations to calculate cost and GP (from tblsaleslines)
 		// This gives us totalSalesExVatAndCost (matches Sales by Category chart: R823,481.96)

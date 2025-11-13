@@ -1488,17 +1488,30 @@ export class ErpDataService implements OnModuleInit {
 
 			// ✅ Customer category filtering for aggregations
 			if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
-				this.logger.debug(`[${operationId}] Including customer categories: ${filters.includeCustomerCategories.join(', ')}`);
+				this.logger.log(`[${operationId}] ✅ INCLUDING customer categories: ${filters.includeCustomerCategories.join(', ')}`);
 				query.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: filters.includeCustomerCategories });
 			}
 
 			if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
-				this.logger.debug(`[${operationId}] Excluding customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
+				this.logger.log(`[${operationId}] 🚫 EXCLUDING customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
+				this.logger.log(`[${operationId}] Filter logic: Excluding headers where customer.Category IN (${filters.excludeCustomerCategories.join(', ')})`);
 				query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
 			}
 
 			const results = await query.getRawMany();
 			const queryDuration = Date.now() - queryStart;
+			
+			// Log detailed results for debugging exclusion filters
+			if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
+				const totalRevenueAfterFilter = results.reduce((sum, r) => sum + (parseFloat(r.totalRevenue) || 0), 0);
+				const totalTransactionsAfterFilter = results.reduce((sum, r) => sum + (parseInt(r.transactionCount, 10) || 0), 0);
+				this.logger.log(`[${operationId}] 📊 After exclusion filter: ${results.length} aggregations, Total Revenue: R${totalRevenueAfterFilter.toFixed(2)}, Total Transactions: ${totalTransactionsAfterFilter}`);
+				if (results.length > 0 && results.length <= 10) {
+					results.forEach((agg, idx) => {
+						this.logger.log(`[${operationId}]   [${idx + 1}] Date: ${agg.date} | Store: ${agg.store} | Revenue: R${parseFloat(agg.totalRevenue || 0).toFixed(2)} | Transactions: ${parseInt(agg.transactionCount, 10) || 0}`);
+					});
+				}
+			}
 			
 			// ✅ PHASE 2: Log slow query warning
 			this.logSlowQuery(operationId, queryDuration, dateRangeDays, filters.startDate, filters.endDate);
