@@ -620,10 +620,8 @@ export class PerformanceDashboardGenerator {
 		// ✅ Calculate total from ALL categories (whole scope)
 		const total = allCategories.reduce((sum, item) => sum + item.revenue, 0);
 
-		// ✅ Only show top 5 in legend/chart, but total reflects all data
-		const topCategories = allCategories.slice(0, 5);
-
-		const chartData: PieChartDataPoint[] = topCategories.map((item) => ({
+		// ✅ Show ALL categories in chart (legend will be limited to 5 items on frontend)
+		const chartData: PieChartDataPoint[] = allCategories.map((item) => ({
 			label: item.category,
 			value: item.revenue,
 		}));
@@ -666,17 +664,15 @@ export class PerformanceDashboardGenerator {
 			})
 			.sort((a, b) => b.value - a.value);
 
-		// ✅ Only show top 10 in legend/chart, but calculations reflect all data
-		const topBranches = allBranches.slice(0, 10);
-
+		// ✅ Show ALL branches in chart (no limit)
 		const averageTarget =
 			allBranches.length > 0
 				? allBranches.reduce((sum, item) => sum + item.target, 0) / allBranches.length
 				: 0;
 
-		this.logger.debug(`Branch performance chart generated with ${topBranches.length} branches displayed (${allBranches.length} total branches, using names from tblsalesheader aggregations)`);
+		this.logger.debug(`Branch performance chart generated with ${allBranches.length} branches displayed (using names from tblsalesheader aggregations)`);
 
-		return { data: topBranches, averageTarget };
+		return { data: allBranches, averageTarget };
 	}
 
 	/**
@@ -713,12 +709,10 @@ export class PerformanceDashboardGenerator {
 		// ✅ Calculate total from ALL products (whole scope)
 		const total = allProducts.reduce((sum, item) => sum + item.value, 0);
 
-		// ✅ Only show top 10 in legend/chart, but total reflects all data
-		const topProducts = allProducts.slice(0, 10);
+		// ✅ Show ALL products in chart (no limit)
+		this.logger.debug(`Top products chart generated with ${allProducts.length} products displayed (using product aggregations)`);
 
-		this.logger.debug(`Top products chart generated with ${topProducts.length} products displayed (${allProducts.length} total products, using product aggregations)`);
-
-		return { data: topProducts, total };
+		return { data: allProducts, total };
 	}
 
 	/**
@@ -790,12 +784,10 @@ export class PerformanceDashboardGenerator {
 			}))
 			.sort((a, b) => b.value - a.value);
 
-		// ✅ Only show top 10 in legend/chart, but calculations reflect all data
-		const topSalespeople = allSalespeople.slice(0, 10);
+		// ✅ Show ALL salespeople in chart (no limit)
+		this.logger.debug(`Sales by salesperson chart generated with ${allSalespeople.length} salespeople displayed (using ERP aggregations)`);
 
-		this.logger.debug(`Sales by salesperson chart generated with ${topSalespeople.length} salespeople displayed (${allSalespeople.length} total salespeople, using ERP aggregations)`);
-
-		return { data: topSalespeople };
+		return { data: allSalespeople };
 	}
 
 	/**
