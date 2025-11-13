@@ -1873,26 +1873,44 @@ export class ReportsService implements OnModuleInit {
 						timestamp: new Date().toISOString(),
 					};
 				}
-			} else {
-				this.logger.log(`Skipping cache - forcing recalculation for unified performance data (org ${params.organisationId})`);
-				// Clear cache for this key to force recalculation
-				await this.cacheManager.del(cacheKey);
-			}
-
-			this.logger.log(`📊 Generating fresh unified performance data...`);
-
-			// Convert params to filters format
-			const filters = this.convertParamsToFilters(params);
+		} else {
+			this.logger.log(`🔄 REFRESH MODE: Skipping cache - forcing recalculation for unified performance data (org ${params.organisationId})`);
 			
-			// ✅ If skipCache is true, clear ERP cache for the date range to force fresh DB queries
-			if (skipCache && filters.startDate && filters.endDate) {
-				this.logger.log(`Clearing ERP cache for date range: ${filters.startDate} to ${filters.endDate}`);
-				try {
-					await this.erpDataService.clearCache(filters.startDate, filters.endDate);
-				} catch (error) {
-					this.logger.warn(`Failed to clear ERP cache: ${error.message}`);
+			// ✅ STEP 1: Clear performance dashboard cache FIRST
+			this.logger.log(`🧹 Step 1/2: Clearing performance dashboard cache: ${cacheKey}`);
+			try {
+				await this.cacheManager.del(cacheKey);
+				// Verify cache is cleared
+				const verifyCache = await this.cacheManager.get(cacheKey);
+				if (verifyCache) {
+					this.logger.warn(`⚠️ Cache key still exists after deletion attempt: ${cacheKey}`);
+				} else {
+					this.logger.log(`✅ Performance dashboard cache cleared successfully`);
 				}
+			} catch (error) {
+				this.logger.error(`❌ Failed to clear performance dashboard cache: ${error.message}`);
+				throw new Error(`Cache clear failed: ${error.message}`);
 			}
+		}
+
+		// Convert params to filters format
+		const filters = this.convertParamsToFilters(params);
+		
+		// ✅ STEP 2: Clear ERP cache for the date range BEFORE fetching data
+		if (skipCache && filters.startDate && filters.endDate) {
+			this.logger.log(`🧹 Step 2/2: Clearing ERP cache for date range: ${filters.startDate} to ${filters.endDate}`);
+			try {
+				await this.erpDataService.clearCache(filters.startDate, filters.endDate);
+				this.logger.log(`✅ ERP cache cleared successfully for date range ${filters.startDate} to ${filters.endDate}`);
+			} catch (error) {
+				this.logger.error(`❌ Failed to clear ERP cache: ${error.message}`);
+				// Don't throw - allow data fetch to proceed, but log the error
+				this.logger.warn(`⚠️ Proceeding with data fetch despite ERP cache clear failure`);
+			}
+		}
+
+		// ✅ STEP 3: All caches cleared - now fetch fresh data
+		this.logger.log(`📊 Generating fresh unified performance data (all caches cleared)...`);
 
 			// Get organization timezone
 			const timezone = await this.getOrganizationTimezone(params.organisationId);
@@ -1986,29 +2004,49 @@ export class ReportsService implements OnModuleInit {
 					};
 				}
 			} else {
-				this.logger.log(`Skipping cache - forcing recalculation for org ${params.organisationId}`);
-				// Clear cache for this key to force recalculation
-				await this.cacheManager.del(cacheKey);
+				this.logger.log(`🔄 REFRESH MODE: Skipping cache - forcing recalculation for org ${params.organisationId}`);
+				
+				// ✅ STEP 1: Clear performance dashboard cache FIRST
+				this.logger.log(`🧹 Step 1/2: Clearing performance dashboard cache: ${cacheKey}`);
+				try {
+					await this.cacheManager.del(cacheKey);
+					// Verify cache is cleared
+					const verifyCache = await this.cacheManager.get(cacheKey);
+					if (verifyCache) {
+						this.logger.warn(`⚠️ Cache key still exists after deletion attempt: ${cacheKey}`);
+					} else {
+						this.logger.log(`✅ Performance dashboard cache cleared successfully`);
+					}
+				} catch (error) {
+					this.logger.error(`❌ Failed to clear performance dashboard cache: ${error.message}`);
+					throw new Error(`Cache clear failed: ${error.message}`);
+				}
 			}
 
 			// Get organization timezone
 			const timezone = await this.getOrganizationTimezone(params.organisationId);
 
-		// Convert DTO params to filters format
-		const filters = this.convertParamsToFilters(params);
-		
-		// ✅ If skipCache is true, clear ERP cache for the date range to force fresh DB queries
-		if (skipCache && filters.startDate && filters.endDate) {
-			this.logger.log(`Clearing ERP cache for date range: ${filters.startDate} to ${filters.endDate}`);
-			try {
-				await this.erpDataService.clearCache(filters.startDate, filters.endDate);
-			} catch (error) {
-				this.logger.warn(`Failed to clear ERP cache: ${error.message}`);
+			// Convert DTO params to filters format
+			const filters = this.convertParamsToFilters(params);
+			
+			// ✅ STEP 2: Clear ERP cache for the date range BEFORE fetching data
+			if (skipCache && filters.startDate && filters.endDate) {
+				this.logger.log(`🧹 Step 2/2: Clearing ERP cache for date range: ${filters.startDate} to ${filters.endDate}`);
+				try {
+					await this.erpDataService.clearCache(filters.startDate, filters.endDate);
+					this.logger.log(`✅ ERP cache cleared successfully for date range ${filters.startDate} to ${filters.endDate}`);
+				} catch (error) {
+					this.logger.error(`❌ Failed to clear ERP cache: ${error.message}`);
+					// Don't throw - allow data fetch to proceed, but log the error
+					this.logger.warn(`⚠️ Proceeding with data fetch despite ERP cache clear failure`);
+				}
 			}
-		}
 
-		// Generate dashboard data using the injected generator
-		const dashboardData = await this.performanceDashboardGenerator.generate(filters);
+			// ✅ STEP 3: All caches cleared - now fetch fresh data
+			this.logger.log(`📊 Generating fresh dashboard data (all caches cleared)...`);
+			
+			// Generate dashboard data using the injected generator
+			const dashboardData = await this.performanceDashboardGenerator.generate(filters);
 
 			// Add timezone to metadata
 			dashboardData.metadata.organizationTimezone = timezone;

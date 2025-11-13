@@ -116,25 +116,59 @@ LIMIT 10000;
 -- 6. CATEGORY AGGREGATIONS
 -- ============================================================================
 -- Method: getCategoryAggregations()
--- Purpose: Revenue, cost, transactions by category and store
+-- Purpose: Revenue, cost, transactions by category (aggregated across all stores)
+-- ✅ REVISED: Uses SUM(incl_line_total) - SUM(tax) for revenue (excludes tax)
+-- Used for: Sales by Category chart, Summary totalSalesExVatAndCost
+-- Revenue matches Sales by Category chart total (R823,481.96)
 
 SELECT 
     line.category as category,
+    SUM(line.incl_line_total) - SUM(line.tax) as totalRevenue,
+    SUM(line.cost_price * line.quantity) as totalCost,
+    SUM(line.quantity) as totalQuantity
+FROM tblsaleslines line
+WHERE line.sale_date BETWEEN :startDate AND :endDate
+    AND line.doc_type IN (1, 2)
+    AND line.item_code NOT IN ('.')
+    AND line.type = 'I'
+    AND line.sale_date >= '2020-01-01'
+    -- Optional filters:
+    -- AND line.store = :storeCode
+    -- AND line.rep_code IN (:salesPersonIds)
+GROUP BY line.category
+ORDER BY totalRevenue DESC
+
+
+-- ============================================================================
+-- 6B. BRANCH × CATEGORY AGGREGATIONS
+-- ============================================================================
+-- Method: getBranchCategoryAggregations()
+-- Purpose: Revenue, cost, transactions by store and category
+-- ✅ REVISED: Uses SUM(incl_line_total) - SUM(tax) for revenue (excludes tax)
+-- Used for: Branch × Category performance table
+-- Revenue matches Sales by Category chart total (R823,481.96) when summed across all stores
+-- GP Calculation: (revenue - cost) / revenue * 100
+
+SELECT 
     line.store as store,
-    SUM(line.incl_line_total) as totalRevenue,
+    line.category as category,
+    SUM(line.incl_line_total) - SUM(line.tax) as totalRevenue,
     SUM(line.cost_price * line.quantity) as totalCost,
     COUNT(DISTINCT line.doc_number) as transactionCount,
     COUNT(DISTINCT line.customer) as uniqueCustomers,
     SUM(line.quantity) as totalQuantity
 FROM tblsaleslines line
 WHERE line.sale_date BETWEEN :startDate AND :endDate
-    AND line.doc_type = '1'
+    AND line.doc_type IN (1, 2)
     AND line.item_code IS NOT NULL
+    AND line.item_code != '.'
+    AND line.type = 'I'
     AND line.sale_date >= '2020-01-01'
     -- Optional filters:
     -- AND line.store = :storeCode
+    -- AND line.category = :category
     -- AND line.rep_code IN (:salesPersonIds)
-GROUP BY line.category, line.store
+GROUP BY line.store, line.category
 ORDER BY totalRevenue DESC
 
 

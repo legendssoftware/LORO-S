@@ -114,10 +114,28 @@ export class DualAxisChartResponseDto {
 
 export class PerformanceSummaryDto {
 	@ApiProperty({ 
-		description: 'Total revenue in the period',
-		example: 1500000.50
+		description: 'Total revenue in the period (from tblsalesheader: SUM(total_incl) - SUM(total_tax))',
+		example: 835244.01
 	})
 	totalRevenue: number;
+
+	@ApiProperty({ 
+		description: 'Total sales ex VAT and costings (from tblsaleslines: SUM(incl_line_total) - SUM(tax), matches Sales by Category chart)',
+		example: 823481.96
+	})
+	totalSalesExVatAndCost?: number;
+
+	@ApiProperty({ 
+		description: 'Total cost (from tblsaleslines: SUM(cost_price * quantity))',
+		example: 650000.00
+	})
+	totalCost?: number;
+
+	@ApiProperty({ 
+		description: 'Total gross profit (Revenue - Cost)',
+		example: 173481.96
+	})
+	totalGP?: number;
 
 	@ApiProperty({ 
 		description: 'Total target for the period',
