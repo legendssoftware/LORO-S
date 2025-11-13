@@ -675,13 +675,20 @@ export class ErpDataService implements OnModuleInit {
 		const startTime = Date.now();
 
 		try {
-			// Check cache first
-			this.logger.debug(`[${operationId}] Checking cache...`);
-			const cached = await this.cacheManager.get<TblSalesHeader[]>(cacheKey);
-			if (cached) {
-				const duration = Date.now() - startTime;
-				this.logger.log(`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} headers (${duration}ms)`);
-				return cached;
+			// ✅ Skip cache when exclusion filters are present - always recalculate from DB
+			const hasExclusionFilters = filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0;
+			
+			if (!hasExclusionFilters) {
+				// Check cache first (only when no exclusion filters)
+				this.logger.debug(`[${operationId}] Checking cache...`);
+				const cached = await this.cacheManager.get<TblSalesHeader[]>(cacheKey);
+				if (cached) {
+					const duration = Date.now() - startTime;
+					this.logger.log(`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} headers (${duration}ms)`);
+					return cached;
+				}
+			} else {
+				this.logger.log(`[${operationId}] ⚠️ Cache BYPASSED - Exclusion filters detected, recalculating from database...`);
 			}
 
 			this.logger.log(`[${operationId}] Cache MISS - Querying database...`);
@@ -808,12 +815,18 @@ export class ErpDataService implements OnModuleInit {
 			
 			// Directly call the internal query method to avoid chunking check recursion
 			const chunkCacheKey = this.buildCacheKey('headers', chunkFilters, ['1']);
-			const cached = await this.cacheManager.get<TblSalesHeader[]>(chunkCacheKey);
+			
+			// ✅ Skip cache when exclusion filters are present - always recalculate from DB
+			const hasExclusionFilters = chunkFilters.excludeCustomerCategories && chunkFilters.excludeCustomerCategories.length > 0;
+			const cached = hasExclusionFilters ? null : await this.cacheManager.get<TblSalesHeader[]>(chunkCacheKey);
 			
 			if (cached) {
 				this.logger.log(`[${operationId}] Chunk ${i + 1} cache HIT: ${cached.length} records`);
 				allResults.push(...cached);
 			} else {
+				if (hasExclusionFilters) {
+					this.logger.log(`[${operationId}] Chunk ${i + 1} cache BYPASSED - Exclusion filters detected`);
+				}
 				// Query directly without chunking check (chunks are already small)
 				const chunkDateRangeDays = this.calculateDateRangeDays(chunkFilters.startDate, chunkFilters.endDate);
 				const chunkResults = await this.executeQueryWithProtection(
@@ -905,12 +918,19 @@ export class ErpDataService implements OnModuleInit {
 		const startTime = Date.now();
 
 		try {
-			// Check cache first
-			const cached = await this.cacheManager.get<TblSalesLines[]>(cacheKey);
-			if (cached) {
-				const duration = Date.now() - startTime;
-				this.logger.log(`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} lines (${duration}ms)`);
-				return cached;
+			// ✅ Skip cache when exclusion filters are present - always recalculate from DB
+			const hasExclusionFilters = filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0;
+			
+			if (!hasExclusionFilters) {
+				// Check cache first (only when no exclusion filters)
+				const cached = await this.cacheManager.get<TblSalesLines[]>(cacheKey);
+				if (cached) {
+					const duration = Date.now() - startTime;
+					this.logger.log(`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} lines (${duration}ms)`);
+					return cached;
+				}
+			} else {
+				this.logger.log(`[${operationId}] ⚠️ Cache BYPASSED - Exclusion filters detected, recalculating from database...`);
 			}
 
 			this.logger.log(`[${operationId}] Cache MISS - Querying database...`);
@@ -1051,12 +1071,18 @@ export class ErpDataService implements OnModuleInit {
 			
 			// Directly call the internal query method to avoid chunking check recursion
 			const chunkCacheKey = this.buildCacheKey('lines', chunkFilters, includeDocTypes);
-			const cached = await this.cacheManager.get<TblSalesLines[]>(chunkCacheKey);
+			
+			// ✅ Skip cache when exclusion filters are present - always recalculate from DB
+			const hasExclusionFilters = chunkFilters.excludeCustomerCategories && chunkFilters.excludeCustomerCategories.length > 0;
+			const cached = hasExclusionFilters ? null : await this.cacheManager.get<TblSalesLines[]>(chunkCacheKey);
 			
 			if (cached) {
 				this.logger.log(`[${operationId}] Chunk ${i + 1} cache HIT: ${cached.length} records`);
 				allResults.push(...cached);
 			} else {
+				if (hasExclusionFilters) {
+					this.logger.log(`[${operationId}] Chunk ${i + 1} cache BYPASSED - Exclusion filters detected`);
+				}
 				// Query directly without chunking check (chunks are already small)
 				const chunkDateRangeDays = this.calculateDateRangeDays(chunkFilters.startDate, chunkFilters.endDate);
 				const chunkResults = await this.executeQueryWithProtection(
@@ -1171,12 +1197,19 @@ export class ErpDataService implements OnModuleInit {
 		const startTime = Date.now();
 
 		try {
-			// Check cache first
-			const cached = await this.cacheManager.get<TblSalesLinesWithCategory[]>(cacheKey);
-			if (cached) {
-				const duration = Date.now() - startTime;
-				this.logger.log(`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} lines (${duration}ms)`);
-				return cached;
+			// ✅ Skip cache when exclusion filters are present - always recalculate from DB
+			const hasExclusionFilters = filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0;
+			
+			if (!hasExclusionFilters) {
+				// Check cache first (only when no exclusion filters)
+				const cached = await this.cacheManager.get<TblSalesLinesWithCategory[]>(cacheKey);
+				if (cached) {
+					const duration = Date.now() - startTime;
+					this.logger.log(`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} lines (${duration}ms)`);
+					return cached;
+				}
+			} else {
+				this.logger.log(`[${operationId}] ⚠️ Cache BYPASSED - Exclusion filters detected, recalculating from database...`);
 			}
 
 			this.logger.log(`[${operationId}] Cache MISS - Querying database...`);
@@ -1243,7 +1276,8 @@ export class ErpDataService implements OnModuleInit {
 
 					// ✅ Exclude customer categories (NOT IN filter)
 					if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
-						this.logger.debug(`[${operationId}] Excluding customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
+						this.logger.log(`[${operationId}] 🚫 EXCLUDING customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
+						this.logger.log(`[${operationId}] Filter logic: Excluding sales where customer.Category IN (${filters.excludeCustomerCategories.join(', ')})`);
 						query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
 					}
 
@@ -1382,14 +1416,21 @@ export class ErpDataService implements OnModuleInit {
 		const startTime = Date.now();
 
 		try {
-			// Check cache first
-			const cached = await this.cacheManager.get<DailyAggregation[]>(cacheKey);
-			if (cached) {
-				const duration = Date.now() - startTime;
-				this.logger.log(
-					`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} aggregations (${duration}ms)`,
-				);
-				return cached;
+			// ✅ Skip cache when exclusion filters are present - always recalculate from DB
+			const hasExclusionFilters = filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0;
+			
+			if (!hasExclusionFilters) {
+				// Check cache first (only when no exclusion filters)
+				const cached = await this.cacheManager.get<DailyAggregation[]>(cacheKey);
+				if (cached) {
+					const duration = Date.now() - startTime;
+					this.logger.log(
+						`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} aggregations (${duration}ms)`,
+					);
+					return cached;
+				}
+			} else {
+				this.logger.log(`[${operationId}] ⚠️ Cache BYPASSED - Exclusion filters detected, recalculating from database...`);
 			}
 
 			this.logger.log(`[${operationId}] Cache MISS - Computing daily aggregations...`);
@@ -1513,14 +1554,21 @@ export class ErpDataService implements OnModuleInit {
 		const startTime = Date.now();
 
 		try {
-			// Check cache first
-			const cached = await this.cacheManager.get<BranchAggregation[]>(cacheKey);
-			if (cached) {
-				const duration = Date.now() - startTime;
-				this.logger.log(
-					`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} branch aggregations (${duration}ms)`,
-				);
-				return cached;
+			// ✅ Skip cache when exclusion filters are present - always recalculate from DB
+			const hasExclusionFilters = filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0;
+			
+			if (!hasExclusionFilters) {
+				// Check cache first (only when no exclusion filters)
+				const cached = await this.cacheManager.get<BranchAggregation[]>(cacheKey);
+				if (cached) {
+					const duration = Date.now() - startTime;
+					this.logger.log(
+						`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} branch aggregations (${duration}ms)`,
+					);
+					return cached;
+				}
+			} else {
+				this.logger.log(`[${operationId}] ⚠️ Cache BYPASSED - Exclusion filters detected, recalculating from database...`);
 			}
 
 			this.logger.log(`[${operationId}] Cache MISS - Computing branch aggregations...`);
@@ -1633,14 +1681,21 @@ export class ErpDataService implements OnModuleInit {
 		const startTime = Date.now();
 
 		try {
-			// Check cache first
-			const cached = await this.cacheManager.get<SalesPersonAggregation[]>(cacheKey);
-			if (cached) {
-				const duration = Date.now() - startTime;
-				this.logger.log(
-					`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} sales person aggregations (${duration}ms)`,
-				);
-				return cached;
+			// ✅ Skip cache when exclusion filters are present - always recalculate from DB
+			const hasExclusionFilters = filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0;
+			
+			if (!hasExclusionFilters) {
+				// Check cache first (only when no exclusion filters)
+				const cached = await this.cacheManager.get<SalesPersonAggregation[]>(cacheKey);
+				if (cached) {
+					const duration = Date.now() - startTime;
+					this.logger.log(
+						`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} sales person aggregations (${duration}ms)`,
+					);
+					return cached;
+				}
+			} else {
+				this.logger.log(`[${operationId}] ⚠️ Cache BYPASSED - Exclusion filters detected, recalculating from database...`);
 			}
 
 			this.logger.log(`[${operationId}] Cache MISS - Computing sales person aggregations...`);
@@ -1777,14 +1832,21 @@ export class ErpDataService implements OnModuleInit {
 		const startTime = Date.now();
 
 		try {
-			// Check cache first
-			const cached = await this.cacheManager.get<CategoryAggregation[]>(cacheKey);
-			if (cached) {
-				const duration = Date.now() - startTime;
-				this.logger.log(
-					`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} category aggregations (${duration}ms)`,
-				);
-				return cached;
+			// ✅ Skip cache when exclusion filters are present - always recalculate from DB
+			const hasExclusionFilters = filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0;
+			
+			if (!hasExclusionFilters) {
+				// Check cache first (only when no exclusion filters)
+				const cached = await this.cacheManager.get<CategoryAggregation[]>(cacheKey);
+				if (cached) {
+					const duration = Date.now() - startTime;
+					this.logger.log(
+						`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} category aggregations (${duration}ms)`,
+					);
+					return cached;
+				}
+			} else {
+				this.logger.log(`[${operationId}] ⚠️ Cache BYPASSED - Exclusion filters detected, recalculating from database...`);
 			}
 
 			this.logger.log(`[${operationId}] Cache MISS - Computing category aggregations...`);
@@ -1881,14 +1943,21 @@ export class ErpDataService implements OnModuleInit {
 		const startTime = Date.now();
 
 		try {
-			// Check cache first
-			const cached = await this.cacheManager.get<BranchCategoryAggregation[]>(cacheKey);
-			if (cached) {
-				const duration = Date.now() - startTime;
-				this.logger.log(
-					`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} branch-category aggregations (${duration}ms)`,
-				);
-				return cached;
+			// ✅ Skip cache when exclusion filters are present - always recalculate from DB
+			const hasExclusionFilters = filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0;
+			
+			if (!hasExclusionFilters) {
+				// Check cache first (only when no exclusion filters)
+				const cached = await this.cacheManager.get<BranchCategoryAggregation[]>(cacheKey);
+				if (cached) {
+					const duration = Date.now() - startTime;
+					this.logger.log(
+						`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} branch-category aggregations (${duration}ms)`,
+					);
+					return cached;
+				}
+			} else {
+				this.logger.log(`[${operationId}] ⚠️ Cache BYPASSED - Exclusion filters detected, recalculating from database...`);
 			}
 
 			this.logger.log(`[${operationId}] Cache MISS - Computing branch-category aggregations...`);
@@ -2026,14 +2095,21 @@ export class ErpDataService implements OnModuleInit {
 		const startTime = Date.now();
 
 		try {
-			// Check cache first
-			const cached = await this.cacheManager.get<ProductAggregation[]>(cacheKey);
-			if (cached) {
-				const duration = Date.now() - startTime;
-				this.logger.log(
-					`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} product aggregations (${duration}ms)`,
-				);
-				return cached;
+			// ✅ Skip cache when exclusion filters are present - always recalculate from DB
+			const hasExclusionFilters = filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0;
+			
+			if (!hasExclusionFilters) {
+				// Check cache first (only when no exclusion filters)
+				const cached = await this.cacheManager.get<ProductAggregation[]>(cacheKey);
+				if (cached) {
+					const duration = Date.now() - startTime;
+					this.logger.log(
+						`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} product aggregations (${duration}ms)`,
+					);
+					return cached;
+				}
+			} else {
+				this.logger.log(`[${operationId}] ⚠️ Cache BYPASSED - Exclusion filters detected, recalculating from database...`);
 			}
 
 			this.logger.log(`[${operationId}] Cache MISS - Computing product aggregations...`);
@@ -2387,12 +2463,19 @@ export class ErpDataService implements OnModuleInit {
 		const startTime = Date.now();
 
 		try {
-			// Check cache first
-			const cached = await this.cacheManager.get(cacheKey);
-			if (cached) {
-				const duration = Date.now() - startTime;
-				this.logger.log(`[${operationId}] ✅ Cache HIT (${duration}ms)`);
-				return cached as any;
+			// ✅ Skip cache when exclusion filters are present - always recalculate from DB
+			const hasExclusionFilters = filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0;
+			
+			if (!hasExclusionFilters) {
+				// Check cache first (only when no exclusion filters)
+				const cached = await this.cacheManager.get(cacheKey);
+				if (cached) {
+					const duration = Date.now() - startTime;
+					this.logger.log(`[${operationId}] ✅ Cache HIT (${duration}ms)`);
+					return cached as any;
+				}
+			} else {
+				this.logger.log(`[${operationId}] ⚠️ Cache BYPASSED - Exclusion filters detected, recalculating from database...`);
 			}
 
 			this.logger.log(`[${operationId}] Cache MISS - Querying hourly pattern...`);
@@ -2521,12 +2604,19 @@ export class ErpDataService implements OnModuleInit {
 		const startTime = Date.now();
 
 		try {
-			// Check cache first
-			const cached = await this.cacheManager.get(cacheKey);
-			if (cached) {
-				const duration = Date.now() - startTime;
-				this.logger.log(`[${operationId}] ✅ Cache HIT (${duration}ms)`);
-				return cached as any;
+			// ✅ Skip cache when exclusion filters are present - always recalculate from DB
+			const hasExclusionFilters = filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0;
+			
+			if (!hasExclusionFilters) {
+				// Check cache first (only when no exclusion filters)
+				const cached = await this.cacheManager.get(cacheKey);
+				if (cached) {
+					const duration = Date.now() - startTime;
+					this.logger.log(`[${operationId}] ✅ Cache HIT (${duration}ms)`);
+					return cached as any;
+				}
+			} else {
+				this.logger.log(`[${operationId}] ⚠️ Cache BYPASSED - Exclusion filters detected, recalculating from database...`);
 			}
 
 			this.logger.log(`[${operationId}] Cache MISS - Querying payment types...`);
@@ -2708,12 +2798,19 @@ export class ErpDataService implements OnModuleInit {
 		const startTime = Date.now();
 
 		try {
-			// Check cache first
-			const cached = await this.cacheManager.get(cacheKey);
-			if (cached) {
-				const duration = Date.now() - startTime;
-				this.logger.log(`[${operationId}] ✅ Cache HIT (${duration}ms)`);
-				return cached as any;
+			// ✅ Skip cache when exclusion filters are present - always recalculate from DB
+			const hasExclusionFilters = filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0;
+			
+			if (!hasExclusionFilters) {
+				// Check cache first (only when no exclusion filters)
+				const cached = await this.cacheManager.get(cacheKey);
+				if (cached) {
+					const duration = Date.now() - startTime;
+					this.logger.log(`[${operationId}] ✅ Cache HIT (${duration}ms)`);
+					return cached as any;
+				}
+			} else {
+				this.logger.log(`[${operationId}] ⚠️ Cache BYPASSED - Exclusion filters detected, recalculating from database...`);
 			}
 
 			this.logger.log(`[${operationId}] Cache MISS - Querying conversion data...`);
@@ -2887,12 +2984,19 @@ export class ErpDataService implements OnModuleInit {
 		const startTime = Date.now();
 
 		try {
-			// Check cache first
-			const cached = await this.cacheManager.get(cacheKey);
-			if (cached) {
-				const duration = Date.now() - startTime;
-				this.logger.log(`[${operationId}] ✅ Cache HIT (${duration}ms)`);
-				return cached as any;
+			// ✅ Skip cache when exclusion filters are present - always recalculate from DB
+			const hasExclusionFilters = filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0;
+			
+			if (!hasExclusionFilters) {
+				// Check cache first (only when no exclusion filters)
+				const cached = await this.cacheManager.get(cacheKey);
+				if (cached) {
+					const duration = Date.now() - startTime;
+					this.logger.log(`[${operationId}] ✅ Cache HIT (${duration}ms)`);
+					return cached as any;
+				}
+			} else {
+				this.logger.log(`[${operationId}] ⚠️ Cache BYPASSED - Exclusion filters detected, recalculating from database...`);
 			}
 
 			this.logger.log(`[${operationId}] Cache MISS - Querying document type breakdown...`);
@@ -3019,12 +3123,19 @@ export class ErpDataService implements OnModuleInit {
 		const startTime = Date.now();
 
 		try {
-			// Check cache first
-			const cached = await this.cacheManager.get(cacheKey);
-			if (cached) {
-				const duration = Date.now() - startTime;
-				this.logger.log(`[${operationId}] ✅ Cache HIT (${duration}ms)`);
-				return cached as any;
+			// ✅ Skip cache when exclusion filters are present - always recalculate from DB
+			const hasExclusionFilters = filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0;
+			
+			if (!hasExclusionFilters) {
+				// Check cache first (only when no exclusion filters)
+				const cached = await this.cacheManager.get(cacheKey);
+				if (cached) {
+					const duration = Date.now() - startTime;
+					this.logger.log(`[${operationId}] ✅ Cache HIT (${duration}ms)`);
+					return cached as any;
+				}
+			} else {
+				this.logger.log(`[${operationId}] ⚠️ Cache BYPASSED - Exclusion filters detected, recalculating from database...`);
 			}
 
 			this.logger.log(`[${operationId}] Cache MISS - Querying master data...`);

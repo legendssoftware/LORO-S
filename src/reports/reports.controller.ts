@@ -546,6 +546,8 @@ Comprehensive performance analytics with advanced filtering and data visualizati
 	@ApiQuery({ name: 'province', required: false, type: String })
 	@ApiQuery({ name: 'city', required: false, type: String })
 	@ApiQuery({ name: 'suburb', required: false, type: String })
+	@ApiQuery({ name: 'includeCustomerCategories', required: false, type: String, description: 'Comma-separated customer category codes to INCLUDE' })
+	@ApiQuery({ name: 'excludeCustomerCategories', required: false, type: String, description: 'Comma-separated customer category codes to EXCLUDE (forces cache bypass and recalculation)' })
 	@ApiQuery({ name: 'skipCache', required: false, type: Boolean, description: 'Skip cache and force recalculation' })
 	async getPerformanceDashboard(
 		@Req() request: AuthenticatedRequest,
@@ -553,6 +555,14 @@ Comprehensive performance analytics with advanced filtering and data visualizati
 		@Query('skipCache') skipCache?: string
 	) {
 		this.logger.log(`Getting performance dashboard for org ${filters.organisationId}`);
+		
+		// Log customer category filters if present
+		if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
+			this.logger.log(`📊 Customer category EXCLUSION filters: ${filters.excludeCustomerCategories.join(', ')}`);
+		}
+		if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
+			this.logger.log(`📊 Customer category INCLUSION filters: ${filters.includeCustomerCategories.join(', ')}`);
+		}
 
 		// Validate organization access - normalize to numbers for comparison
 		const userOrgIdRaw = request.user?.org?.uid || request.user?.organisationRef;

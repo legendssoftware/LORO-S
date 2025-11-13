@@ -1980,13 +1980,22 @@ export class ReportsService implements OnModuleInit {
 	async getPerformanceDashboard(params: any): Promise<any> {
 		this.logger.log(`Getting performance dashboard for org ${params.organisationId}`);
 		const skipCache = params.skipCache === true || params.skipCache === 'true';
+		
+		// Auto-bypass cache when customer category filters are present (force recalculation)
+		const hasCustomerCategoryFilters = (params.excludeCustomerCategories && params.excludeCustomerCategories.length > 0) ||
+			(params.includeCustomerCategories && params.includeCustomerCategories.length > 0);
+		const shouldSkipCache = skipCache || hasCustomerCategoryFilters;
+		
+		if (hasCustomerCategoryFilters) {
+			this.logger.log(`🔄 CUSTOMER CATEGORY FILTER MODE: Auto-bypassing cache - exclude: ${params.excludeCustomerCategories?.join(',') || 'none'}, include: ${params.includeCustomerCategories?.join(',') || 'none'}`);
+		}
 
 		try {
 			// Generate cache key
 			const cacheKey = this.getPerformanceCacheKey(params);
 			
 			// Check cache only if skipCache is false
-			if (!skipCache) {
+			if (!shouldSkipCache) {
 				const cachedData = await this.cacheManager.get(cacheKey);
 				if (cachedData) {
 					this.logger.log(`Performance dashboard served from cache: ${cacheKey}`);
@@ -2004,7 +2013,8 @@ export class ReportsService implements OnModuleInit {
 					};
 				}
 			} else {
-				this.logger.log(`🔄 REFRESH MODE: Skipping cache - forcing recalculation for org ${params.organisationId}`);
+				const mode = hasCustomerCategoryFilters ? 'CUSTOMER CATEGORY FILTER MODE' : 'REFRESH MODE';
+				this.logger.log(`🔄 ${mode}: Skipping cache - forcing recalculation for org ${params.organisationId}`);
 				
 				// ✅ STEP 1: Clear performance dashboard cache FIRST
 				this.logger.log(`🧹 Step 1/2: Clearing performance dashboard cache: ${cacheKey}`);
@@ -2030,7 +2040,7 @@ export class ReportsService implements OnModuleInit {
 			const filters = this.convertParamsToFilters(params);
 			
 			// ✅ STEP 2: Clear ERP cache for the date range BEFORE fetching data
-			if (skipCache && filters.startDate && filters.endDate) {
+			if (shouldSkipCache && filters.startDate && filters.endDate) {
 				this.logger.log(`🧹 Step 2/2: Clearing ERP cache for date range: ${filters.startDate} to ${filters.endDate}`);
 				try {
 					await this.erpDataService.clearCache(filters.startDate, filters.endDate);
@@ -2081,6 +2091,13 @@ export class ReportsService implements OnModuleInit {
 	 * Generate cache key for performance data
 	 */
 	private getPerformanceCacheKey(params: any): string {
+		const includeCustomerCategoriesKey = params.includeCustomerCategories && params.includeCustomerCategories.length > 0
+			? params.includeCustomerCategories.sort().join('-')
+			: 'all';
+		const excludeCustomerCategoriesKey = params.excludeCustomerCategories && params.excludeCustomerCategories.length > 0
+			? params.excludeCustomerCategories.sort().join('-')
+			: 'all';
+		
 		const keyParts = [
 			'performance',
 			params.type || 'dashboard',
@@ -2097,6 +2114,8 @@ export class ReportsService implements OnModuleInit {
 			params.minPrice || 'nomin',
 			params.maxPrice || 'nomax',
 			params.salesPersonIds?.join('-') || 'allsales',
+			`inc_cat:${includeCustomerCategoriesKey}`,
+			`exc_cat:${excludeCustomerCategoriesKey}`,
 		];
 
 		return keyParts.join(':');
@@ -2135,6 +2154,8 @@ export class ReportsService implements OnModuleInit {
 			province: params.province,
 			city: params.city,
 			suburb: params.suburb,
+			includeCustomerCategories: params.includeCustomerCategories,
+			excludeCustomerCategories: params.excludeCustomerCategories,
 		};
 	}
 
