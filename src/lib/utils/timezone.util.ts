@@ -62,7 +62,6 @@ export class TimezoneUtil {
     
     try {
       if (!isValid(serverDate)) {
-        console.warn('Invalid server date provided');
         return new Date(); // Return current time as fallback
       }
 
@@ -92,11 +91,8 @@ export class TimezoneUtil {
       // This is what we want: the time that shows in the organization's timezone, but as a UTC date
       const orgDate = new Date(Date.UTC(year, month, day, hour, minute, second));
       
-      console.log(`[TimezoneUtil] Converting ${serverDate.toISOString()} to ${safeTimezone}: ${orgDate.toISOString()}`);
-      
       return orgDate;
     } catch (error) {
-      console.warn(`Error converting to timezone ${safeTimezone}:`, error);
       return serverDate; // Fallback to original date
     }
   }
@@ -145,7 +141,6 @@ export class TimezoneUtil {
       
       return new Date(tempDate.getTime() - offset);
     } catch (error) {
-      console.warn(`Error converting from timezone ${safeTimezone}:`, error);
       return orgDate; // Fallback to original date
     }
   }
@@ -180,7 +175,6 @@ export class TimezoneUtil {
         });
         
         const formatted = formatter.format(date);
-        console.log(`[TimezoneUtil] Formatted ${date.toISOString()} in ${safeTimezone} as: ${formatted}`);
         return formatted;
       }
       
@@ -190,7 +184,6 @@ export class TimezoneUtil {
       // Then format using date-fns
       return format(orgDate, formatString);
     } catch (error) {
-      console.warn(`Error formatting date in timezone ${safeTimezone}:`, error);
       return format(date, formatString); // Fallback without timezone
     }
   }
@@ -246,7 +239,6 @@ export class TimezoneUtil {
       
       return orgDate;
     } catch (error) {
-      console.warn(`Error parsing time ${timeString} in timezone ${safeTimezone}:`, error);
       // Fallback: parse in server timezone
       const fallbackDate = new Date(baseDate);
       const timeMatch = timeString.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
@@ -351,15 +343,6 @@ export class TimezoneUtil {
     organizationTimezone?: string, 
     label: string = 'Timezone Conversion'
   ): void {
-    const safeTimezone = this.getSafeTimezone(organizationTimezone);
-    const orgTime = this.toOrganizationTime(serverTime, organizationTimezone);
-    
-    console.log(`${label}:`, {
-      serverTime: serverTime.toISOString(),
-      serverLocal: serverTime.toLocaleString(),
-      organizationTimezone: safeTimezone,
-      organizationTime: orgTime.toISOString(),
-      organizationLocal: this.formatInOrganizationTime(serverTime, 'yyyy-MM-dd HH:mm:ss zzz', organizationTimezone),
-    });
+    // Logging removed - method kept for API compatibility
   }
 } 

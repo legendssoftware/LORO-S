@@ -84,6 +84,7 @@ export interface BranchAggregation {
  */
 export interface SalesPersonAggregation {
 	salesCode: string;
+	salesName?: string; // Sales person name from tblsalesman.Description
 	totalRevenue: number;
 	totalCost: number;
 	transactionCount: number;

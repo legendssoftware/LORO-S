@@ -7,6 +7,7 @@ import { TblSalesHeader } from '../entities/tblsalesheader.entity';
 import { TblSalesLines } from '../entities/tblsaleslines.entity';
 import { TblCustomers } from '../entities/tblcustomers.entity';
 import { TblCustomerCategories } from '../entities/tblcustomercategories.entity';
+import { TblSalesman } from '../entities/tblsalesman.entity';
 import {
 	DailyAggregation,
 	BranchAggregation,
@@ -115,6 +116,8 @@ export class ErpDataService implements OnModuleInit {
 		private customersRepo: Repository<TblCustomers>,
 		@InjectRepository(TblCustomerCategories, 'erp')
 		private customerCategoriesRepo: Repository<TblCustomerCategories>,
+		@InjectRepository(TblSalesman, 'erp')
+		private salesmanRepo: Repository<TblSalesman>,
 		@InjectDataSource('erp')
 		private erpDataSource: DataSource,
 		@Inject(CACHE_MANAGER)
@@ -569,6 +572,14 @@ export class ErpDataService implements OnModuleInit {
 			? (Array.isArray(filters.salesPersonId) ? filters.salesPersonId.sort().join('-') : filters.salesPersonId)
 			: 'all';
 		
+		// Include customer category filters in cache key
+		const includeCustomerCategoriesKey = filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0
+			? filters.includeCustomerCategories.sort().join('-')
+			: 'all';
+		const excludeCustomerCategoriesKey = filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0
+			? filters.excludeCustomerCategories.sort().join('-')
+			: 'all';
+		
 		return [
 			'erp',
 			'v2', // Version for cache busting
@@ -579,6 +590,8 @@ export class ErpDataService implements OnModuleInit {
 			filters.category || 'all',
 			salesPersonKey,
 			docTypes ? docTypes.join('-') : 'all',
+			`inc_cat:${includeCustomerCategoriesKey}`,
+			`exc_cat:${excludeCustomerCategoriesKey}`,
 		].join(':');
 	}
 
@@ -679,12 +692,22 @@ export class ErpDataService implements OnModuleInit {
 			// ✅ Execute with circuit breaker and timeout protection (adaptive timeout)
 			const results = await this.executeQueryWithProtection(
 				async () => {
+					// Check if customer category filters are needed
+					const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
+						(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
+
 					const query = this.salesHeaderRepo
-						.createQueryBuilder('header')
-						.where('header.sale_date BETWEEN :startDate AND :endDate', {
-							startDate: filters.startDate,
-							endDate: filters.endDate,
-						})
+						.createQueryBuilder('header');
+
+					// Add LEFT JOIN for customer category filtering if needed
+					if (hasCustomerCategoryFilters) {
+						query.leftJoin('tblcustomers', 'customer', 'header.customer = customer.Code');
+					}
+
+					query.where('header.sale_date BETWEEN :startDate AND :endDate', {
+						startDate: filters.startDate,
+						endDate: filters.endDate,
+					})
 						// ✅ CRITICAL: Only Tax Invoices (doc_type = 1)
 						.andWhere('header.doc_type = :docType', { docType: 1 });
 
@@ -700,6 +723,15 @@ export class ErpDataService implements OnModuleInit {
 						this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
 						// Use sales_code from tblsalesheader for header queries
 						query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
+					}
+
+					// ✅ Customer category filtering
+					if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
+						this.logger.debug(`[${operationId}] Including customer categories: ${filters.includeCustomerCategories.join(', ')}`);
+						query.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: filters.includeCustomerCategories });
+					} else if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
+						this.logger.debug(`[${operationId}] Excluding customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
+						query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
 					}
 
 					return await query.getMany();
@@ -786,12 +818,22 @@ export class ErpDataService implements OnModuleInit {
 				const chunkDateRangeDays = this.calculateDateRangeDays(chunkFilters.startDate, chunkFilters.endDate);
 				const chunkResults = await this.executeQueryWithProtection(
 					async () => {
+						// Check if customer category filters are needed
+						const hasCustomerCategoryFilters = (chunkFilters.includeCustomerCategories && chunkFilters.includeCustomerCategories.length > 0) ||
+							(chunkFilters.excludeCustomerCategories && chunkFilters.excludeCustomerCategories.length > 0);
+
 						const query = this.salesHeaderRepo
-							.createQueryBuilder('header')
-							.where('header.sale_date BETWEEN :startDate AND :endDate', {
-								startDate: chunkFilters.startDate,
-								endDate: chunkFilters.endDate,
-							})
+							.createQueryBuilder('header');
+
+						// Add LEFT JOIN for customer category filtering if needed
+						if (hasCustomerCategoryFilters) {
+							query.leftJoin('tblcustomers', 'customer', 'header.customer = customer.Code');
+						}
+
+						query.where('header.sale_date BETWEEN :startDate AND :endDate', {
+							startDate: chunkFilters.startDate,
+							endDate: chunkFilters.endDate,
+						})
 							.andWhere('header.doc_type = :docType', { docType: 1 });
 
 						if (chunkFilters.storeCode) {
@@ -804,6 +846,13 @@ export class ErpDataService implements OnModuleInit {
 								: [chunkFilters.salesPersonId];
 							// Use sales_code from tblsalesheader for header queries
 							query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
+						}
+
+						// ✅ Customer category filtering
+						if (chunkFilters.includeCustomerCategories && chunkFilters.includeCustomerCategories.length > 0) {
+							query.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: chunkFilters.includeCustomerCategories });
+						} else if (chunkFilters.excludeCustomerCategories && chunkFilters.excludeCustomerCategories.length > 0) {
+							query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: chunkFilters.excludeCustomerCategories });
 						}
 
 						return await query.getMany();
@@ -871,12 +920,22 @@ export class ErpDataService implements OnModuleInit {
 			// ✅ Execute with circuit breaker and timeout protection (adaptive timeout)
 			const results = await this.executeQueryWithProtection(
 				async () => {
+					// Check if customer category filters are needed
+					const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
+						(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
+
 					const query = this.salesLinesRepo
-						.createQueryBuilder('line')
-						.where('line.sale_date BETWEEN :startDate AND :endDate', {
-							startDate: filters.startDate,
-							endDate: filters.endDate,
-						})
+						.createQueryBuilder('line');
+
+					// Add LEFT JOIN for customer category filtering if needed
+					if (hasCustomerCategoryFilters) {
+						query.leftJoin('tblcustomers', 'customer', 'line.customer = customer.Code');
+					}
+
+					query.where('line.sale_date BETWEEN :startDate AND :endDate', {
+						startDate: filters.startDate,
+						endDate: filters.endDate,
+					})
 						// ✅ CRITICAL: Filter by document type
 						.andWhere('line.doc_type IN (:...docTypes)', { docTypes: includeDocTypes });
 
@@ -898,6 +957,15 @@ export class ErpDataService implements OnModuleInit {
 							: [filters.salesPersonId];
 						this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
 						query.andWhere('line.rep_code IN (:...salesPersonIds)', { salesPersonIds });
+					}
+
+					// ✅ Customer category filtering
+					if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
+						this.logger.debug(`[${operationId}] Including customer categories: ${filters.includeCustomerCategories.join(', ')}`);
+						query.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: filters.includeCustomerCategories });
+					} else if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
+						this.logger.debug(`[${operationId}] Excluding customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
+						query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
 					}
 
 					// ✅ Data quality filters - using gross amounts (incl_line_total) without discount subtraction
@@ -993,12 +1061,22 @@ export class ErpDataService implements OnModuleInit {
 				const chunkDateRangeDays = this.calculateDateRangeDays(chunkFilters.startDate, chunkFilters.endDate);
 				const chunkResults = await this.executeQueryWithProtection(
 					async () => {
+						// Check if customer category filters are needed
+						const hasCustomerCategoryFilters = (chunkFilters.includeCustomerCategories && chunkFilters.includeCustomerCategories.length > 0) ||
+							(chunkFilters.excludeCustomerCategories && chunkFilters.excludeCustomerCategories.length > 0);
+
 						const query = this.salesLinesRepo
-							.createQueryBuilder('line')
-							.where('line.sale_date BETWEEN :startDate AND :endDate', {
-								startDate: chunkFilters.startDate,
-								endDate: chunkFilters.endDate,
-							})
+							.createQueryBuilder('line');
+
+						// Add LEFT JOIN for customer category filtering if needed
+						if (hasCustomerCategoryFilters) {
+							query.leftJoin('tblcustomers', 'customer', 'line.customer = customer.Code');
+						}
+
+						query.where('line.sale_date BETWEEN :startDate AND :endDate', {
+							startDate: chunkFilters.startDate,
+							endDate: chunkFilters.endDate,
+						})
 							.andWhere('line.doc_type IN (:...docTypes)', { docTypes: includeDocTypes });
 
 						if (chunkFilters.storeCode) {
@@ -1015,6 +1093,13 @@ export class ErpDataService implements OnModuleInit {
 								: [chunkFilters.salesPersonId];
 							// Use rep_code directly from tblsaleslines
 							query.andWhere('line.rep_code IN (:...salesPersonIds)', { salesPersonIds });
+						}
+
+						// ✅ Customer category filtering
+						if (chunkFilters.includeCustomerCategories && chunkFilters.includeCustomerCategories.length > 0) {
+							query.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: chunkFilters.includeCustomerCategories });
+						} else if (chunkFilters.excludeCustomerCategories && chunkFilters.excludeCustomerCategories.length > 0) {
+							query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: chunkFilters.excludeCustomerCategories });
 						}
 
 						query.andWhere('line.item_code IS NOT NULL');
@@ -1566,16 +1651,26 @@ export class ErpDataService implements OnModuleInit {
 			// ✅ REVISED: Use tblsalesheader instead of tblsaleslines
 			// Sum total_incl - total_tax for revenue (exclusive of tax), grouped by sales_code
 			// Matches SQL: SELECT sales_code, SUM(total_incl) - SUM(total_tax) AS total_sum FROM tblsalesheader WHERE doc_type IN (1, 2) GROUP BY sales_code
+			// ✅ Add customer category filtering when needed
+			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
+				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
+
 			const query = this.salesHeaderRepo
-				.createQueryBuilder('header')
-				.select([
-					'header.sales_code as salesCode',
-					'SUM(header.total_incl) - SUM(header.total_tax) as totalRevenue', // ✅ Subtract tax: matches SQL query exactly
-					'CAST(0 AS DECIMAL(19,2)) as totalCost', // Cost not available in header table
-					'COUNT(DISTINCT header.doc_number) as transactionCount',
-					'COUNT(DISTINCT header.customer) as uniqueCustomers',
-					'0 as totalQuantity', // Quantity not available in header table (integer)
-				])
+				.createQueryBuilder('header');
+
+			// Add LEFT JOINs for customer category filtering if needed
+			if (hasCustomerCategoryFilters) {
+				query.leftJoin('tblcustomers', 'customer', 'header.customer = customer.Code');
+			}
+
+			query.select([
+				'header.sales_code as salesCode',
+				'SUM(header.total_incl) - SUM(header.total_tax) as totalRevenue', // ✅ Subtract tax: matches SQL query exactly
+				'CAST(0 AS DECIMAL(19,2)) as totalCost', // Cost not available in header table
+				'COUNT(DISTINCT header.doc_number) as transactionCount',
+				'COUNT(DISTINCT header.customer) as uniqueCustomers',
+				'0 as totalQuantity', // Quantity not available in header table (integer)
+			])
 				.where('header.sale_date BETWEEN :startDate AND :endDate', {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
@@ -1605,6 +1700,15 @@ export class ErpDataService implements OnModuleInit {
 				query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
 
+			// ✅ Customer category filtering for aggregations
+			if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
+				this.logger.debug(`[${operationId}] Including customer categories: ${filters.includeCustomerCategories.join(', ')}`);
+				query.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: filters.includeCustomerCategories });
+			} else if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
+				this.logger.debug(`[${operationId}] Excluding customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
+				query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
+			}
+
 			const results = await this.executeQueryWithProtection(
 				async () => query.getRawMany(),
 				operationId,
@@ -1626,15 +1730,25 @@ export class ErpDataService implements OnModuleInit {
 				totalQuantity: 0, // Not available from header table
 			}));
 
+			// ✅ Get sales rep names from tblsalesman table
+			const salesCodes = processedResults.map(r => r.salesCode).filter(Boolean);
+			const nameMap = await this.getSalesPersonNames(salesCodes);
+			
+			// Add names to results
+			const resultsWithNames = processedResults.map(result => ({
+				...result,
+				salesName: nameMap.get(result.salesCode.toUpperCase()) || result.salesCode,
+			}));
+
 			this.logger.log(`[${operationId}] Aggregation query completed in ${queryDuration}ms`);
-			this.logger.log(`[${operationId}] Computed ${processedResults.length} sales person aggregations`);
+			this.logger.log(`[${operationId}] Computed ${resultsWithNames.length} sales person aggregations`);
 
 			// Cache results
-			await this.cacheManager.set(cacheKey, processedResults, this.CACHE_TTL);
+			await this.cacheManager.set(cacheKey, resultsWithNames, this.CACHE_TTL);
 
 			const totalDuration = Date.now() - startTime;
 			this.logger.log(`[${operationId}] ✅ Operation completed successfully (${totalDuration}ms)`);
-			return processedResults;
+			return resultsWithNames;
 		} catch (error) {
 			const duration = Date.now() - startTime;
 			
@@ -1929,17 +2043,27 @@ export class ErpDataService implements OnModuleInit {
 			
 			// ✅ REVISED: Use SUM(incl_line_total) - SUM(tax) for revenue, filter item_code != '.', type = 'I', group by description
 			// Matches SQL: SELECT SUM(incl_line_total) - SUM(tax) as totalRevenue FROM tblsaleslines WHERE item_code != '.' AND type = 'I' GROUP BY description
+			// ✅ Add customer category filtering when needed
+			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
+				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
+
 			const query = this.salesLinesRepo
-				.createQueryBuilder('line')
-				.select([
-					'line.item_code as itemCode',
-					'line.description as description',
-					'line.category as category',
-					'SUM(line.incl_line_total) - SUM(line.tax) as totalRevenue', // ✅ Subtract tax: matches SQL query exactly
-					'SUM(line.cost_price * line.quantity) as totalCost',
-					'SUM(line.quantity) as totalQuantity',
-					'COUNT(DISTINCT line.doc_number) as transactionCount',
-				])
+				.createQueryBuilder('line');
+
+			// Add LEFT JOINs for customer category filtering if needed
+			if (hasCustomerCategoryFilters) {
+				query.leftJoin('tblcustomers', 'customer', 'line.customer = customer.Code');
+			}
+
+			query.select([
+				'line.item_code as itemCode',
+				'line.description as description',
+				'line.category as category',
+				'SUM(line.incl_line_total) - SUM(line.tax) as totalRevenue', // ✅ Subtract tax: matches SQL query exactly
+				'SUM(line.cost_price * line.quantity) as totalCost',
+				'SUM(line.quantity) as totalQuantity',
+				'COUNT(DISTINCT line.doc_number) as transactionCount',
+			])
 				.where('line.sale_date BETWEEN :startDate AND :endDate', {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
@@ -1972,6 +2096,15 @@ export class ErpDataService implements OnModuleInit {
 				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
 				// Use rep_code directly from tblsaleslines
 				query.andWhere('line.rep_code IN (:...salesPersonIds)', { salesPersonIds });
+			}
+
+			// ✅ Customer category filtering for aggregations
+			if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
+				this.logger.debug(`[${operationId}] Including customer categories: ${filters.includeCustomerCategories.join(', ')}`);
+				query.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: filters.includeCustomerCategories });
+			} else if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
+				this.logger.debug(`[${operationId}] Excluding customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
+				query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
 			}
 
 			const results = await query.getRawMany();
@@ -2267,14 +2400,24 @@ export class ErpDataService implements OnModuleInit {
 			const queryStart = Date.now();
 
 			// ✅ REVISED: Uses tblsalesheader with SUM(total_incl) - SUM(total_tax) formula
+			// ✅ Add customer category filtering when needed
+			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
+				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
+
 			const query = this.salesHeaderRepo
-				.createQueryBuilder('header')
-				.select([
-					'HOUR(header.sale_time) as hour',
-					'COUNT(DISTINCT header.doc_number) as transactionCount',
-					'CAST(SUM(CAST(header.total_incl AS DECIMAL(19,3))) - SUM(CAST(header.total_tax AS DECIMAL(19,3))) AS DECIMAL(19,2)) as totalRevenue', // ✅ SUM(total_incl) - SUM(total_tax)
-					'COUNT(DISTINCT header.customer) as uniqueCustomers',
-				])
+				.createQueryBuilder('header');
+
+			// Add LEFT JOINs for customer category filtering if needed
+			if (hasCustomerCategoryFilters) {
+				query.leftJoin('tblcustomers', 'customer', 'header.customer = customer.Code');
+			}
+
+			query.select([
+				'HOUR(header.sale_time) as hour',
+				'COUNT(DISTINCT header.doc_number) as transactionCount',
+				'CAST(SUM(CAST(header.total_incl AS DECIMAL(19,3))) - SUM(CAST(header.total_tax AS DECIMAL(19,3))) AS DECIMAL(19,2)) as totalRevenue', // ✅ SUM(total_incl) - SUM(total_tax)
+				'COUNT(DISTINCT header.customer) as uniqueCustomers',
+			])
 				.where('header.sale_date BETWEEN :startDate AND :endDate', {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
@@ -2296,6 +2439,15 @@ export class ErpDataService implements OnModuleInit {
 				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
 				// Use sales_code from tblsalesheader
 				query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
+			}
+
+			// ✅ Customer category filtering
+			if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
+				this.logger.debug(`[${operationId}] Including customer categories: ${filters.includeCustomerCategories.join(', ')}`);
+				query.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: filters.includeCustomerCategories });
+			} else if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
+				this.logger.debug(`[${operationId}] Excluding customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
+				query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
 			}
 
 			const results = await query.getRawMany();
@@ -2384,24 +2536,34 @@ export class ErpDataService implements OnModuleInit {
 		// Build base query
 		// ✅ REVISED: Use tax exclusion approach - calculate payment methods proportionally based on SUM(total_incl) - SUM(total_tax)
 		// This matches the base query: SELECT SUM(total_incl) - SUM(total_tax) AS total_sum FROM tblsalesheader WHERE doc_type IN (1, 2)
+		// ✅ Add customer category filtering when needed
+		const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
+			(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
+
 		let query = this.salesHeaderRepo
-			.createQueryBuilder('header')
-			.select([
-				'CAST(SUM(CAST(header.total_incl AS DECIMAL(19,3))) - SUM(CAST(header.total_tax AS DECIMAL(19,3))) AS DECIMAL(19,2)) as taxExcludedTotal', // ✅ Tax-excluded total
-				'CAST(SUM(CAST(header.cash AS DECIMAL(19,3))) - SUM(CAST(header.change_amnt AS DECIMAL(19,3))) AS DECIMAL(19,2)) as cash', // ✅ Cash minus change
-				'CAST(SUM(CAST(header.credit_card AS DECIMAL(19,3))) AS DECIMAL(19,2)) as credit_card',
-				'CAST(SUM(CAST(header.eft AS DECIMAL(19,3))) AS DECIMAL(19,2)) as eft',
-				'CAST(SUM(CAST(header.debit_card AS DECIMAL(19,3))) AS DECIMAL(19,2)) as debit_card',
-				'CAST(SUM(CAST(header.cheque AS DECIMAL(19,3))) AS DECIMAL(19,2)) as cheque',
-				'CAST(SUM(CAST(header.voucher AS DECIMAL(19,3))) AS DECIMAL(19,2)) as voucher',
-				'CAST(SUM(CAST(header.account AS DECIMAL(19,3))) AS DECIMAL(19,2)) as account',
-				'CAST(SUM(CAST(header.snap_scan AS DECIMAL(19,3))) AS DECIMAL(19,2)) as snap_scan',
-				'CAST(SUM(CAST(header.zapper AS DECIMAL(19,3))) AS DECIMAL(19,2)) as zapper',
-				'CAST(SUM(CAST(header.extra AS DECIMAL(19,3))) AS DECIMAL(19,2)) as extra',
-				'CAST(SUM(CAST(header.offline_card AS DECIMAL(19,3))) AS DECIMAL(19,2)) as offline_card',
-				'CAST(SUM(CAST(header.fnb_qr AS DECIMAL(19,3))) AS DECIMAL(19,2)) as fnb_qr',
-				'COUNT(*) as totalTransactions',
-			])
+			.createQueryBuilder('header');
+
+		// Add LEFT JOINs for customer category filtering if needed
+		if (hasCustomerCategoryFilters) {
+			query.leftJoin('tblcustomers', 'customer', 'header.customer = customer.Code');
+		}
+
+		query.select([
+			'CAST(SUM(CAST(header.total_incl AS DECIMAL(19,3))) - SUM(CAST(header.total_tax AS DECIMAL(19,3))) AS DECIMAL(19,2)) as taxExcludedTotal', // ✅ Tax-excluded total
+			'CAST(SUM(CAST(header.cash AS DECIMAL(19,3))) - SUM(CAST(header.change_amnt AS DECIMAL(19,3))) AS DECIMAL(19,2)) as cash', // ✅ Cash minus change
+			'CAST(SUM(CAST(header.credit_card AS DECIMAL(19,3))) AS DECIMAL(19,2)) as credit_card',
+			'CAST(SUM(CAST(header.eft AS DECIMAL(19,3))) AS DECIMAL(19,2)) as eft',
+			'CAST(SUM(CAST(header.debit_card AS DECIMAL(19,3))) AS DECIMAL(19,2)) as debit_card',
+			'CAST(SUM(CAST(header.cheque AS DECIMAL(19,3))) AS DECIMAL(19,2)) as cheque',
+			'CAST(SUM(CAST(header.voucher AS DECIMAL(19,3))) AS DECIMAL(19,2)) as voucher',
+			'CAST(SUM(CAST(header.account AS DECIMAL(19,3))) AS DECIMAL(19,2)) as account',
+			'CAST(SUM(CAST(header.snap_scan AS DECIMAL(19,3))) AS DECIMAL(19,2)) as snap_scan',
+			'CAST(SUM(CAST(header.zapper AS DECIMAL(19,3))) AS DECIMAL(19,2)) as zapper',
+			'CAST(SUM(CAST(header.extra AS DECIMAL(19,3))) AS DECIMAL(19,2)) as extra',
+			'CAST(SUM(CAST(header.offline_card AS DECIMAL(19,3))) AS DECIMAL(19,2)) as offline_card',
+			'CAST(SUM(CAST(header.fnb_qr AS DECIMAL(19,3))) AS DECIMAL(19,2)) as fnb_qr',
+			'COUNT(*) as totalTransactions',
+		])
 			.where('header.sale_date BETWEEN :startDate AND :endDate', {
 				startDate: filters.startDate,
 				endDate: filters.endDate,
@@ -2420,6 +2582,15 @@ export class ErpDataService implements OnModuleInit {
 				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
 				// Use sales_code from tblsalesheader for header queries
 				query = query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
+			}
+
+			// ✅ Customer category filtering
+			if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
+				this.logger.debug(`[${operationId}] Including customer categories: ${filters.includeCustomerCategories.join(', ')}`);
+				query = query.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: filters.includeCustomerCategories });
+			} else if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
+				this.logger.debug(`[${operationId}] Excluding customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
+				query = query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
 			}
 
 			const results = await query.getRawOne();
@@ -2549,13 +2720,23 @@ export class ErpDataService implements OnModuleInit {
 
 			const queryStart = Date.now();
 
+			// ✅ Add customer category filtering when needed
+			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
+				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
+
 			// Query 1: Get quotations (doc_type = 3)
 			let quotationsQuery = this.salesHeaderRepo
-				.createQueryBuilder('header')
-				.select([
-					'COUNT(*) as totalQuotations',
-					'CAST(SUM(CAST(header.total_incl AS DECIMAL(19,3))) AS DECIMAL(19,2)) as totalQuotationValue',
-				])
+				.createQueryBuilder('header');
+
+			// Add LEFT JOINs for customer category filtering if needed
+			if (hasCustomerCategoryFilters) {
+				quotationsQuery.leftJoin('tblcustomers', 'customer', 'header.customer = customer.Code');
+			}
+
+			quotationsQuery.select([
+				'COUNT(*) as totalQuotations',
+				'CAST(SUM(CAST(header.total_incl AS DECIMAL(19,3))) AS DECIMAL(19,2)) as totalQuotationValue',
+			])
 				.where('header.sale_date BETWEEN :startDate AND :endDate', {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
@@ -2576,13 +2757,26 @@ export class ErpDataService implements OnModuleInit {
 				quotationsQuery = quotationsQuery.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
 
+			// ✅ Customer category filtering for quotations
+			if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
+				quotationsQuery = quotationsQuery.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: filters.includeCustomerCategories });
+			} else if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
+				quotationsQuery = quotationsQuery.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
+			}
+
 			// Query 2: Get converted invoices (doc_type = 1 with invoice_used = 1)
 			let invoicesQuery = this.salesHeaderRepo
-				.createQueryBuilder('header')
-				.select([
-					'COUNT(*) as convertedInvoices',
-					'CAST(SUM(CAST(header.total_incl AS DECIMAL(19,3))) AS DECIMAL(19,2)) as convertedInvoiceValue',
-				])
+				.createQueryBuilder('header');
+
+			// Add LEFT JOINs for customer category filtering if needed
+			if (hasCustomerCategoryFilters) {
+				invoicesQuery.leftJoin('tblcustomers', 'customer', 'header.customer = customer.Code');
+			}
+
+			invoicesQuery.select([
+				'COUNT(*) as convertedInvoices',
+				'CAST(SUM(CAST(header.total_incl AS DECIMAL(19,3))) AS DECIMAL(19,2)) as convertedInvoiceValue',
+			])
 				.where('header.sale_date BETWEEN :startDate AND :endDate', {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
@@ -2602,6 +2796,13 @@ export class ErpDataService implements OnModuleInit {
 				this.logger.debug(`[${operationId}] Filtering invoices by sales person(s): ${salesPersonIds.join(', ')}`);
 				// Use sales_code from tblsalesheader for header queries
 				invoicesQuery = invoicesQuery.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
+			}
+
+			// ✅ Customer category filtering for invoices
+			if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
+				invoicesQuery = invoicesQuery.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: filters.includeCustomerCategories });
+			} else if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
+				invoicesQuery = invoicesQuery.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
 			}
 
 			// ✅ PHASE 3: Sequential execution with individual step timing
@@ -2698,15 +2899,25 @@ export class ErpDataService implements OnModuleInit {
 
 			const queryStart = Date.now();
 
+			// ✅ Add customer category filtering when needed
+			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
+				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
+
 			// Query to get breakdown by doc_type
 			let query = this.salesHeaderRepo
-				.createQueryBuilder('header')
-				.select([
-					'header.doc_type as docType',
-					'header.doc_desc as docDesc',
-					'COUNT(*) as count',
-					'CAST(SUM(CAST(header.total_incl AS DECIMAL(19,3))) AS DECIMAL(19,2)) as totalValue',
-				])
+				.createQueryBuilder('header');
+
+			// Add LEFT JOINs for customer category filtering if needed
+			if (hasCustomerCategoryFilters) {
+				query.leftJoin('tblcustomers', 'customer', 'header.customer = customer.Code');
+			}
+
+			query.select([
+				'header.doc_type as docType',
+				'header.doc_desc as docDesc',
+				'COUNT(*) as count',
+				'CAST(SUM(CAST(header.total_incl AS DECIMAL(19,3))) AS DECIMAL(19,2)) as totalValue',
+			])
 				.where('header.sale_date BETWEEN :startDate AND :endDate', {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
@@ -2725,6 +2936,15 @@ export class ErpDataService implements OnModuleInit {
 					: [filters.salesPersonId];
 				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
 				query = query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
+			}
+
+			// ✅ Customer category filtering
+			if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
+				this.logger.debug(`[${operationId}] Including customer categories: ${filters.includeCustomerCategories.join(', ')}`);
+				query = query.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: filters.includeCustomerCategories });
+			} else if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
+				this.logger.debug(`[${operationId}] Excluding customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
+				query = query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
 			}
 
 			const results = await query.getRawMany();
@@ -2924,14 +3144,119 @@ export class ErpDataService implements OnModuleInit {
 	}
 
 	/**
+	 * Get sales person name from tblsalesman table by sales code
+	 * Uses caching to avoid repeated database queries
+	 */
+	private async getSalesPersonName(salesCode: string | null | undefined): Promise<string> {
+		if (!salesCode || salesCode.trim() === '') {
+			return 'Unknown Sales Person';
+		}
+
+		const normalizedCode = salesCode.trim().toUpperCase();
+		const cacheKey = `sales_rep_name:${normalizedCode}`;
+
+		// Check cache first
+		const cached = await this.cacheManager.get<string>(cacheKey);
+		if (cached) {
+			return cached;
+		}
+
+		try {
+			const salesman = await this.salesmanRepo.findOne({
+				where: { Code: normalizedCode },
+				select: ['Code', 'Description'],
+			});
+
+			const name = salesman?.Description || salesCode;
+			
+			// Cache the result (4-hour TTL like other ERP queries)
+			await this.cacheManager.set(cacheKey, name, this.CACHE_TTL);
+			
+			return name;
+		} catch (error) {
+			this.logger.warn(`Failed to lookup sales rep name for code ${normalizedCode}: ${error.message}`);
+			return salesCode; // Fallback to code if lookup fails
+		}
+	}
+
+	/**
+	 * Batch get sales person names for multiple codes
+	 * More efficient than individual lookups
+	 */
+	private async getSalesPersonNames(salesCodes: string[]): Promise<Map<string, string>> {
+		const nameMap = new Map<string, string>();
+		const codesToLookup: string[] = [];
+
+		// Check cache for each code
+		for (const code of salesCodes) {
+			if (!code || code.trim() === '') continue;
+			
+			const normalizedCode = code.trim().toUpperCase();
+			const cacheKey = `sales_rep_name:${normalizedCode}`;
+			
+			const cached = await this.cacheManager.get<string>(cacheKey);
+			if (cached) {
+				nameMap.set(normalizedCode, cached);
+			} else {
+				codesToLookup.push(normalizedCode);
+			}
+		}
+
+		// Batch lookup remaining codes
+		if (codesToLookup.length > 0) {
+			try {
+				const salesmen = await this.salesmanRepo.find({
+					where: codesToLookup.map(code => ({ Code: code })),
+					select: ['Code', 'Description'],
+				});
+
+				// Add to map and cache
+				for (const salesman of salesmen) {
+					const code = salesman.Code?.trim().toUpperCase();
+					if (code) {
+						const name = salesman.Description || code;
+						nameMap.set(code, name);
+						
+						// Cache the result
+						const cacheKey = `sales_rep_name:${code}`;
+						await this.cacheManager.set(cacheKey, name, this.CACHE_TTL);
+					}
+				}
+
+				// For codes not found in database, use code as name and cache it
+				for (const code of codesToLookup) {
+					if (!nameMap.has(code)) {
+						nameMap.set(code, code);
+						const cacheKey = `sales_rep_name:${code}`;
+						await this.cacheManager.set(cacheKey, code, this.CACHE_TTL);
+					}
+				}
+			} catch (error) {
+				this.logger.warn(`Failed to batch lookup sales rep names: ${error.message}`);
+				// Fallback: use codes as names
+				for (const code of codesToLookup) {
+					if (!nameMap.has(code)) {
+						nameMap.set(code, code);
+					}
+				}
+			}
+		}
+
+		return nameMap;
+	}
+
+	/**
 	 * Get unique salespeople from sales data
 	 * Uses tblsalesheader.sales_code field (header-level sales person codes)
+	 * Joins with tblsalesman to get actual names
 	 * Note: For line-level rep codes, use tblsaleslines.rep_code
 	 */
 	private async getUniqueSalespeople(filters: ErpQueryFilters): Promise<Array<{ id: string; name: string }>> {
 		const query = this.salesHeaderRepo
 			.createQueryBuilder('header')
+			.leftJoin('tblsalesman', 'salesman', 'header.sales_code = salesman.Code')
 			.select('DISTINCT header.sales_code', 'salesCode')
+			.addSelect('salesman.Description', 'salesName')
 			.where('header.sale_date BETWEEN :startDate AND :endDate', {
 				startDate: filters.startDate,
 				endDate: filters.endDate,
@@ -2945,7 +3270,7 @@ export class ErpDataService implements OnModuleInit {
 		
 		return results.map((row) => ({
 			id: row.salesCode,
-			name: row.salesCode, // For now, use sales code as name
+			name: row.salesName || row.salesCode, // Use name from tblsalesman or fallback to code
 		}));
 	}
 

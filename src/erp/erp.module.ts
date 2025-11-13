@@ -7,6 +7,7 @@ import { TblSalesHeader } from './entities/tblsalesheader.entity';
 import { TblSalesLines } from './entities/tblsaleslines.entity';
 import { TblCustomers } from './entities/tblcustomers.entity';
 import { TblCustomerCategories } from './entities/tblcustomercategories.entity';
+import { TblSalesman } from './entities/tblsalesman.entity';
 import { OrganisationSettings } from '../organisation/entities/organisation-settings.entity';
 import { ErpDataService } from './services/erp-data.service';
 import { ErpTransformerService } from './services/erp-transformer.service';
@@ -30,7 +31,7 @@ import { ErpController } from './erp.controller';
 @Module({
 	imports: [
 		// Register ERP entities with the 'erp' connection
-		TypeOrmModule.forFeature([TblSalesHeader, TblSalesLines, TblCustomers, TblCustomerCategories], 'erp'),
+		TypeOrmModule.forFeature([TblSalesHeader, TblSalesLines, TblCustomers, TblCustomerCategories, TblSalesman], 'erp'),
 		// Register OrganisationSettings with default connection for targets
 		TypeOrmModule.forFeature([OrganisationSettings]),
 		// Cache module for query result caching

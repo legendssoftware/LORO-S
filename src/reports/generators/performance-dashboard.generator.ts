@@ -783,20 +783,18 @@ export class PerformanceDashboardGenerator {
 	 * ✅ FIXED: Calculates total from ALL salespeople, but only shows top 10 in legend
 	 */
 	private async generateSalesBySalespersonChart(params: PerformanceFiltersDto) {
-		// Import sales code mapping
-		const { getSalesPersonName } = require('../../erp/config/sales-code-mapping.config');
-		
 		// Build ERP query filters using buildErpFilters helper
 		const filters = this.buildErpFilters(params);
 
 		// ✅ Get sales person aggregations from ERP service
 		// ✅ Get ALL salespeople (no limit) - data and calculations reflect whole scope
+		// ✅ Sales rep names are now included in aggregations from tblsalesman table
 		const aggregations = await this.erpDataService.getSalesPersonAggregations(filters);
 
 		// Convert ALL aggregations to chart data format
 		const allSalespeople = aggregations
 			.map((agg) => ({
-				label: getSalesPersonName(agg.salesCode), // ✅ Use actual sales person name from mapping
+				label: agg.salesName || agg.salesCode, // ✅ Use sales name from tblsalesman or fallback to code
 				value: agg.totalRevenue, // Use revenue as primary value for bar chart
 			}))
 			.sort((a, b) => b.value - a.value);
