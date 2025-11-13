@@ -13,7 +13,6 @@ import { Cache } from 'cache-manager';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
-
 import { Device, DeviceRecords } from './entities/iot.entity';
 import { DeviceType, DeviceStatus } from '../lib/enums/iot';
 import { DevicePerformanceMetrics } from '../lib/interfaces/iot.interface';
