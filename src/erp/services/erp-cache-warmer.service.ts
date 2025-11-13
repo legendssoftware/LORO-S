@@ -29,6 +29,9 @@ export class ErpCacheWarmerService implements OnModuleInit {
 				this.logger.error(`Stack: ${error.stack}`);
 			});
 		}, 5000);
+
+		// ✅ Start interval-based cache warming every 2.5 minutes
+		this.startIntervalCacheWarming();
 	}
 
 	/**
@@ -43,6 +46,25 @@ export class ErpCacheWarmerService implements OnModuleInit {
 		} catch (error) {
 			this.logger.error(`❌ Daily cache warming failed: ${error.message}`);
 		}
+	}
+
+
+	/**
+	 * Start interval-based cache warming every 2.5 minutes
+	 */
+	private startIntervalCacheWarming() {
+		const intervalMs = 2.5 * 60 * 1000; // 2.5 minutes in milliseconds
+		this.logger.log(`Starting interval-based cache warming every ${intervalMs / 1000} seconds`);
+		
+		setInterval(async () => {
+			this.logger.log('===== Interval Cache Warming (Every 2.5 minutes) =====');
+			try {
+				await this.warmCommonDateRanges();
+				this.logger.log('===== Interval Cache Warming Complete =====');
+			} catch (error) {
+				this.logger.error(`❌ Interval cache warming failed: ${error.message}`);
+			}
+		}, intervalMs);
 	}
 
 	/**

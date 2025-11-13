@@ -34,6 +34,7 @@ import { PerformanceDashboardGenerator } from './generators/performance-dashboar
 import { CommunicationService } from '../communication/communication.service';
 import { OrganizationHoursService } from '../attendance/services/organization.hours.service';
 import { AttendanceService } from '../attendance/attendance.service';
+import { ErpDataService } from '../erp/services/erp-data.service';
 
 // Utilities
 import { TimezoneUtil } from '../lib/utils/timezone.util';
@@ -114,6 +115,8 @@ export class ReportsService implements OnModuleInit {
 		@Inject(forwardRef(() => AttendanceService))
 		private readonly attendanceService: AttendanceService,
 		private readonly performanceDashboardGenerator: PerformanceDashboardGenerator,
+		@Inject(forwardRef(() => ErpDataService))
+		private readonly erpDataService: ErpDataService,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 300;
 		this.logger.log(`Reports service initialized with cache TTL: ${this.CACHE_TTL}s`);
@@ -1852,27 +1855,44 @@ export class ReportsService implements OnModuleInit {
 	 */
 	async getUnifiedPerformanceData(params: any): Promise<any> {
 		this.logger.log(`🚀 Getting UNIFIED performance data for org ${params.organisationId}`);
+		const skipCache = params.skipCache === true || params.skipCache === 'true';
 
 		try {
 			// Generate cache key for unified data
 			const cacheKey = this.getPerformanceCacheKey({ ...params, type: 'unified' });
 			
-			// Check cache
-			const cachedData = await this.cacheManager.get(cacheKey);
-			if (cachedData) {
-				this.logger.log(`✅ Unified performance data served from cache: ${cacheKey}`);
-				return {
-					success: true,
-					data: cachedData,
-					message: 'Unified performance data retrieved successfully from cache',
-					timestamp: new Date().toISOString(),
-				};
+			// Check cache only if skipCache is false
+			if (!skipCache) {
+				const cachedData = await this.cacheManager.get(cacheKey);
+				if (cachedData) {
+					this.logger.log(`✅ Unified performance data served from cache: ${cacheKey}`);
+					return {
+						success: true,
+						data: cachedData,
+						message: 'Unified performance data retrieved successfully from cache',
+						timestamp: new Date().toISOString(),
+					};
+				}
+			} else {
+				this.logger.log(`Skipping cache - forcing recalculation for unified performance data (org ${params.organisationId})`);
+				// Clear cache for this key to force recalculation
+				await this.cacheManager.del(cacheKey);
 			}
 
 			this.logger.log(`📊 Generating fresh unified performance data...`);
 
 			// Convert params to filters format
 			const filters = this.convertParamsToFilters(params);
+			
+			// ✅ If skipCache is true, clear ERP cache for the date range to force fresh DB queries
+			if (skipCache && filters.startDate && filters.endDate) {
+				this.logger.log(`Clearing ERP cache for date range: ${filters.startDate} to ${filters.endDate}`);
+				try {
+					await this.erpDataService.clearCache(filters.startDate, filters.endDate);
+				} catch (error) {
+					this.logger.warn(`Failed to clear ERP cache: ${error.message}`);
+				}
+			}
 
 			// Get organization timezone
 			const timezone = await this.getOrganizationTimezone(params.organisationId);
@@ -1941,27 +1961,34 @@ export class ReportsService implements OnModuleInit {
 	 */
 	async getPerformanceDashboard(params: any): Promise<any> {
 		this.logger.log(`Getting performance dashboard for org ${params.organisationId}`);
+		const skipCache = params.skipCache === true || params.skipCache === 'true';
 
 		try {
 			// Generate cache key
 			const cacheKey = this.getPerformanceCacheKey(params);
 			
-			// Check cache
-			const cachedData = await this.cacheManager.get(cacheKey);
-			if (cachedData) {
-				this.logger.log(`Performance dashboard served from cache: ${cacheKey}`);
-				return {
-					success: true,
-					data: {
-						...cachedData,
-						metadata: {
-							...cachedData.metadata,
-							fromCache: true,
-							cachedAt: cachedData.metadata.lastUpdated,
+			// Check cache only if skipCache is false
+			if (!skipCache) {
+				const cachedData = await this.cacheManager.get(cacheKey);
+				if (cachedData) {
+					this.logger.log(`Performance dashboard served from cache: ${cacheKey}`);
+					return {
+						success: true,
+						data: {
+							...cachedData,
+							metadata: {
+								...cachedData.metadata,
+								fromCache: true,
+								cachedAt: cachedData.metadata.lastUpdated,
+							},
 						},
-					},
-					timestamp: new Date().toISOString(),
-				};
+						timestamp: new Date().toISOString(),
+					};
+				}
+			} else {
+				this.logger.log(`Skipping cache - forcing recalculation for org ${params.organisationId}`);
+				// Clear cache for this key to force recalculation
+				await this.cacheManager.del(cacheKey);
 			}
 
 			// Get organization timezone
@@ -1969,6 +1996,16 @@ export class ReportsService implements OnModuleInit {
 
 		// Convert DTO params to filters format
 		const filters = this.convertParamsToFilters(params);
+		
+		// ✅ If skipCache is true, clear ERP cache for the date range to force fresh DB queries
+		if (skipCache && filters.startDate && filters.endDate) {
+			this.logger.log(`Clearing ERP cache for date range: ${filters.startDate} to ${filters.endDate}`);
+			try {
+				await this.erpDataService.clearCache(filters.startDate, filters.endDate);
+			} catch (error) {
+				this.logger.warn(`Failed to clear ERP cache: ${error.message}`);
+			}
+		}
 
 		// Generate dashboard data using the injected generator
 		const dashboardData = await this.performanceDashboardGenerator.generate(filters);

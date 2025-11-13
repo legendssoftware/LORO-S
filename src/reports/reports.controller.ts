@@ -453,9 +453,11 @@ All filters apply to ALL data sections:
 	@ApiQuery({ name: 'province', required: false, type: String })
 	@ApiQuery({ name: 'city', required: false, type: String })
 	@ApiQuery({ name: 'suburb', required: false, type: String })
+	@ApiQuery({ name: 'skipCache', required: false, type: Boolean, description: 'Skip cache and force recalculation' })
 	async getUnifiedPerformanceData(
 		@Req() request: AuthenticatedRequest,
-		@Query(new ValidationPipe({ transform: true })) filters: PerformanceFiltersDto
+		@Query(new ValidationPipe({ transform: true })) filters: PerformanceFiltersDto,
+		@Query('skipCache') skipCache?: string
 	) {
 		this.logger.log(`🚀 Getting UNIFIED performance data for org ${filters.organisationId}`);
 
@@ -490,7 +492,10 @@ All filters apply to ALL data sections:
 			throw new BadRequestException('Access denied to requested organization data');
 		}
 
-		return this.reportsService.getUnifiedPerformanceData(filters);
+		return this.reportsService.getUnifiedPerformanceData({
+			...filters,
+			skipCache: skipCache === 'true' || skipCache === '1',
+		});
 	}
 
 	@Get('performance/dashboard')
@@ -541,9 +546,11 @@ Comprehensive performance analytics with advanced filtering and data visualizati
 	@ApiQuery({ name: 'province', required: false, type: String })
 	@ApiQuery({ name: 'city', required: false, type: String })
 	@ApiQuery({ name: 'suburb', required: false, type: String })
+	@ApiQuery({ name: 'skipCache', required: false, type: Boolean, description: 'Skip cache and force recalculation' })
 	async getPerformanceDashboard(
 		@Req() request: AuthenticatedRequest,
-		@Query(new ValidationPipe({ transform: true })) filters: PerformanceFiltersDto
+		@Query(new ValidationPipe({ transform: true })) filters: PerformanceFiltersDto,
+		@Query('skipCache') skipCache?: string
 	) {
 		this.logger.log(`Getting performance dashboard for org ${filters.organisationId}`);
 
@@ -578,7 +585,10 @@ Comprehensive performance analytics with advanced filtering and data visualizati
 			throw new BadRequestException('Access denied to requested organization data');
 		}
 
-		return this.reportsService.getPerformanceDashboard(filters);
+		return this.reportsService.getPerformanceDashboard({
+			...filters,
+			skipCache: skipCache === 'true' || skipCache === '1',
+		});
 	}
 
 	// ======================================================

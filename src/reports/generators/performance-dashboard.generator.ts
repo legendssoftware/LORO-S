@@ -205,6 +205,7 @@ export class PerformanceDashboardGenerator {
 	 * ✅ REVISED: Now uses branch aggregations from tblsalesheader (same query structure as base query)
 	 * Uses SUM(total_incl) - SUM(total_tax) for revenue, COUNT(DISTINCT doc_number) for transactions,
 	 * COUNT(DISTINCT customer) for unique clients
+	 * ✅ NEW: Calculates GP from BranchCategoryAggregations (sums totalCost per store)
 	 * Matches SQL: SELECT store, SUM(total_incl) - SUM(total_tax) AS total_sum FROM tblsalesheader WHERE doc_type IN (1, 2) GROUP BY store
 	 */
 	async generateSalesPerStore(params: PerformanceFiltersDto): Promise<SalesPerStoreDto[]> {
@@ -216,7 +217,10 @@ export class PerformanceDashboardGenerator {
 		// ✅ Get branch aggregations from tblsalesheader (same query structure)
 		const branchAggregations = await this.erpDataService.getBranchAggregations(filters);
 		
-		return this.calculateSalesPerStoreFromAggregations(branchAggregations);
+		// ✅ Get branch category aggregations to calculate GP (cost data from tblsaleslines)
+		const branchCategoryAggregations = await this.erpDataService.getBranchCategoryAggregations(filters);
+		
+		return this.calculateSalesPerStoreFromAggregations(branchAggregations, branchCategoryAggregations);
 	}
 
 	/**
@@ -572,30 +576,34 @@ export class PerformanceDashboardGenerator {
 	 * ✅ REVISED: Generate sales by category chart using category aggregations (tblsaleslines.incl_line_total - tax)
 	 * This matches the user's SQL query: SELECT line.category, SUM(line.incl_line_total) - SUM(tax) as totalRevenue
 	 * Revenue is exclusive of tax
-	 * Returns only top 5 categories
+	 * ✅ FIXED: Calculates total from ALL categories, but only shows top 5 in legend
 	 */
 	private async generateSalesByCategoryChart(data: PerformanceData[], params: PerformanceFiltersDto) {
 		// Build ERP query filters
 		const filters = this.buildErpFilters(params);
 		
 		// ✅ Get revenue from category aggregations (uses tblsaleslines.incl_line_total - tax, exclusive of tax)
+		// ✅ Get ALL categories (no limit) - data and calculations reflect whole scope
 		const categoryAggregations = await this.erpDataService.getCategoryAggregations(filters);
 		
-		// Sort by revenue descending and take top 5
-		const sortedCategories = categoryAggregations
+		// Map and sort ALL categories
+		const allCategories = categoryAggregations
 			.map(agg => ({
 				category: agg.category || 'Uncategorized',
 				revenue: typeof agg.totalRevenue === 'number' ? agg.totalRevenue : parseFloat(String(agg.totalRevenue || 0)),
 			}))
-			.sort((a, b) => b.revenue - a.revenue) // Sort by revenue descending
-			.slice(0, 5); // ✅ Return only top 5 categories
+			.sort((a, b) => b.revenue - a.revenue); // Sort by revenue descending
 
-		const chartData: PieChartDataPoint[] = sortedCategories.map((item) => ({
+		// ✅ Calculate total from ALL categories (whole scope)
+		const total = allCategories.reduce((sum, item) => sum + item.revenue, 0);
+
+		// ✅ Only show top 5 in legend/chart, but total reflects all data
+		const topCategories = allCategories.slice(0, 5);
+
+		const chartData: PieChartDataPoint[] = topCategories.map((item) => ({
 			label: item.category,
 			value: item.revenue,
 		}));
-
-		const total = chartData.reduce((sum, item) => sum + item.value, 0);
 
 		return { data: chartData, total };
 	}
@@ -605,6 +613,7 @@ export class PerformanceDashboardGenerator {
 	 * 
 	 * ✅ REVISED: Uses branch aggregations from tblsalesheader grouped by store
 	 * ✅ Uses branch names from mapping (not codes)
+	 * ✅ FIXED: Calculates total from ALL branches, but only shows top 10 in legend
 	 */
 	private async generateBranchPerformanceChart(data: PerformanceData[], params: PerformanceFiltersDto) {
 		// Import branch name mapping
@@ -614,10 +623,11 @@ export class PerformanceDashboardGenerator {
 		const filters = this.buildErpFilters(params);
 		
 		// ✅ Get branch aggregations directly from tblsalesheader (SUM(total_incl) - SUM(total_tax) grouped by store)
+		// ✅ Get ALL branches (no limit) - data and calculations reflect whole scope
 		const branchAggregations = await this.erpDataService.getBranchAggregations(filters);
 		
-		// Map branch aggregations to chart data using branch name mapping
-		const sortedBranches = branchAggregations
+		// Map ALL branch aggregations to chart data using branch name mapping
+		const allBranches = branchAggregations
 			.map((agg) => {
 				const storeCode = String(agg.store || '').trim().padStart(3, '0');
 				const branchName = getBranchName(storeCode); // ✅ Use branch name from mapping
@@ -631,17 +641,19 @@ export class PerformanceDashboardGenerator {
 					target: 0, // Target not available from aggregations, can be calculated separately if needed
 				};
 			})
-			.sort((a, b) => b.value - a.value)
-			.slice(0, 10); // Top 10 branches
+			.sort((a, b) => b.value - a.value);
+
+		// ✅ Only show top 10 in legend/chart, but calculations reflect all data
+		const topBranches = allBranches.slice(0, 10);
 
 		const averageTarget =
-			sortedBranches.length > 0
-				? sortedBranches.reduce((sum, item) => sum + item.target, 0) / sortedBranches.length
+			allBranches.length > 0
+				? allBranches.reduce((sum, item) => sum + item.target, 0) / allBranches.length
 				: 0;
 
-		this.logger.debug(`Branch performance chart generated with ${sortedBranches.length} branches (using names from tblsalesheader aggregations)`);
+		this.logger.debug(`Branch performance chart generated with ${topBranches.length} branches displayed (${allBranches.length} total branches, using names from tblsalesheader aggregations)`);
 
-		return { data: sortedBranches, averageTarget };
+		return { data: topBranches, averageTarget };
 	}
 
 	/**
@@ -650,17 +662,18 @@ export class PerformanceDashboardGenerator {
 	 * ✅ REVISED: Uses product aggregations from tblsaleslines grouped by description
 	 * ✅ Revenue calculation: SUM(incl_line_total) - SUM(tax)
 	 * ✅ Filters: item_code != '.', type = 'I' (inventory items)
-	 * ✅ Limits to top 10 best selling products
+	 * ✅ FIXED: Gets ALL products, calculates total from ALL, but only shows top 10 in legend
 	 */
 	private async generateTopProductsChart(data: PerformanceData[], params: PerformanceFiltersDto) {
 		// Build ERP query filters
 		const filters = this.buildErpFilters(params);
 		
 		// ✅ Get product aggregations directly from tblsaleslines (SUM(incl_line_total) - SUM(tax) grouped by description)
-		const productAggregations = await this.erpDataService.getProductAggregations(filters, 10); // Top 10 products
+		// ✅ Get ALL products (use high limit to get all) - data and calculations reflect whole scope
+		const productAggregations = await this.erpDataService.getProductAggregations(filters, 10000); // Get all products
 		
-		// Map product aggregations to chart data using product description
-		const chartData: BarChartDataPoint[] = productAggregations
+		// Map ALL product aggregations to chart data using product description
+		const allProducts = productAggregations
 			.map((agg) => {
 				const revenue = typeof agg.totalRevenue === 'number' 
 					? agg.totalRevenue 
@@ -672,13 +685,17 @@ export class PerformanceDashboardGenerator {
 					value: revenue,
 				};
 			})
-			.sort((a, b) => b.value - a.value); // Already sorted by query, but ensure it's sorted
+			.sort((a, b) => b.value - a.value); // Sort by revenue descending
 
-		const total = chartData.reduce((sum, item) => sum + item.value, 0);
+		// ✅ Calculate total from ALL products (whole scope)
+		const total = allProducts.reduce((sum, item) => sum + item.value, 0);
 
-		this.logger.debug(`Top products chart generated with ${chartData.length} products (using product aggregations, top 10)`);
+		// ✅ Only show top 10 in legend/chart, but total reflects all data
+		const topProducts = allProducts.slice(0, 10);
 
-		return { data: chartData, total };
+		this.logger.debug(`Top products chart generated with ${topProducts.length} products displayed (${allProducts.length} total products, using product aggregations)`);
+
+		return { data: topProducts, total };
 	}
 
 	/**
@@ -729,6 +746,7 @@ export class PerformanceDashboardGenerator {
 	 * ✅ REVISED: Now uses getSalesPersonAggregations from ERP service
 	 * Groups by sales_code and calculates SUM(total_incl) - SUM(total_tax) for revenue
 	 * Uses sales_code mapping to show actual sales person names instead of codes
+	 * ✅ FIXED: Calculates total from ALL salespeople, but only shows top 10 in legend
 	 */
 	private async generateSalesBySalespersonChart(params: PerformanceFiltersDto) {
 		// Import sales code mapping
@@ -737,21 +755,24 @@ export class PerformanceDashboardGenerator {
 		// Build ERP query filters using buildErpFilters helper
 		const filters = this.buildErpFilters(params);
 
-		// Get sales person aggregations from ERP service
+		// ✅ Get sales person aggregations from ERP service
+		// ✅ Get ALL salespeople (no limit) - data and calculations reflect whole scope
 		const aggregations = await this.erpDataService.getSalesPersonAggregations(filters);
 
-		// Convert to chart data format
-		const chartData: BarChartDataPoint[] = aggregations
+		// Convert ALL aggregations to chart data format
+		const allSalespeople = aggregations
 			.map((agg) => ({
 				label: getSalesPersonName(agg.salesCode), // ✅ Use actual sales person name from mapping
 				value: agg.totalRevenue, // Use revenue as primary value for bar chart
 			}))
-			.sort((a, b) => b.value - a.value)
-			.slice(0, 10); // Top 10 salespeople
+			.sort((a, b) => b.value - a.value);
 
-		this.logger.debug(`Sales by salesperson chart generated with ${chartData.length} salespeople (using ERP aggregations)`);
+		// ✅ Only show top 10 in legend/chart, but calculations reflect all data
+		const topSalespeople = allSalespeople.slice(0, 10);
 
-		return { data: chartData };
+		this.logger.debug(`Sales by salesperson chart generated with ${topSalespeople.length} salespeople displayed (${allSalespeople.length} total salespeople, using ERP aggregations)`);
+
+		return { data: topSalespeople };
 	}
 
 	/**
@@ -987,8 +1008,9 @@ export class PerformanceDashboardGenerator {
 	 * Step 1: Get total revenue per store from tblsalesheader: SUM(total_incl) - SUM(total_tax) GROUP BY store
 	 * Step 2: Use tblsaleslines only for category distribution/breakdown
 	 * Step 3: Scale category revenues proportionally to match header totals exactly
-	 * ✅ Matches daily sales calculation - no cost deductions, no GP calculations
-	 * This ensures totals match exactly with header table while showing category breakdowns
+	 * ✅ NEW: Calculate GP from totalCost in BranchCategoryAggregation (cost_price * quantity from tblsaleslines)
+	 * GP = Revenue - Cost, GP% = (GP / Revenue) * 100
+	 * This ensures totals match exactly with header table while showing category breakdowns with GP
 	 */
 	private calculateBranchCategoryPerformanceFromAggregations(
 		branchAggregations: BranchAggregation[],
@@ -1062,13 +1084,18 @@ export class PerformanceDashboardGenerator {
 
 			const categories: Record<string, CategoryPerformanceDto> = {};
 			let totalLinesRevenue = 0; // Sum of all category revenues from lines (for scaling)
+			let totalLinesCost = 0; // Sum of all category costs from lines (for GP calculation)
 			const categoryRevenues: Map<string, number> = new Map();
+			const categoryCosts: Map<string, number> = new Map();
 
-			// First pass: collect category data and calculate total lines revenue
+			// First pass: collect category data and calculate total lines revenue and cost
 			branchInfo.categories.forEach((agg, categoryKey) => {
 				const revenue = typeof agg.totalRevenue === 'number' 
 					? agg.totalRevenue 
 					: parseFloat(String(agg.totalRevenue || 0));
+				const cost = typeof agg.totalCost === 'number'
+					? agg.totalCost
+					: parseFloat(String(agg.totalCost || 0));
 				const basketCount = typeof agg.transactionCount === 'number' 
 					? agg.transactionCount 
 					: parseInt(String(agg.transactionCount || 0), 10);
@@ -1077,17 +1104,28 @@ export class PerformanceDashboardGenerator {
 					: parseInt(String(agg.uniqueCustomers || 0), 10);
 
 				categoryRevenues.set(categoryKey, revenue);
+				categoryCosts.set(categoryKey, cost);
 				totalLinesRevenue += revenue;
+				totalLinesCost += cost;
 			});
 
 			// Second pass: scale category revenues proportionally to match header total
 			const scaleFactor = totalLinesRevenue > 0 ? storeTotal.totalRevenue / totalLinesRevenue : 1;
 			let totalBasketCount = 0;
 			let totalUniqueClients = 0;
+			let totalGP = 0; // ✅ Total GP for branch (summed across categories)
 
 			branchInfo.categories.forEach((agg, categoryKey) => {
 				const originalRevenue = categoryRevenues.get(categoryKey) || 0;
+				const originalCost = categoryCosts.get(categoryKey) || 0;
 				const scaledRevenue = originalRevenue * scaleFactor; // ✅ Scale to match header total
+				// ✅ Scale cost proportionally to maintain GP% consistency
+				const scaledCost = originalCost * scaleFactor;
+				// ✅ Calculate GP: Revenue - Cost
+				const gp = scaledRevenue - scaledCost;
+				// ✅ Calculate GP%: (GP / Revenue) * 100
+				const gpPercentage = scaledRevenue > 0 ? (gp / scaledRevenue) * 100 : 0;
+				
 				const basketCount = typeof agg.transactionCount === 'number' 
 					? agg.transactionCount 
 					: parseInt(String(agg.transactionCount || 0), 10);
@@ -1101,13 +1139,17 @@ export class PerformanceDashboardGenerator {
 					basketValue: basketCount > 0 ? scaledRevenue / basketCount : 0,
 					clientsQty: uniqueCustomers, // ✅ Unique clients from lines
 					salesR: scaledRevenue, // ✅ Scaled revenue to match header total
-					gpR: 0, // ✅ GP removed - matches daily sales calculation
-					gpPercentage: 0, // ✅ GP% removed - matches daily sales calculation
+					gpR: gp, // ✅ GP calculated from scaled revenue and cost
+					gpPercentage: gpPercentage, // ✅ GP% calculated
 				};
 
 				totalBasketCount += basketCount;
 				totalUniqueClients += uniqueCustomers;
+				totalGP += gp; // ✅ Accumulate GP across categories
 			});
+
+			// ✅ Calculate total GP% for branch
+			const totalGPPercentage = storeTotal.totalRevenue > 0 ? (totalGP / storeTotal.totalRevenue) * 100 : 0;
 
 			performance.push({
 				branchId,
@@ -1121,8 +1163,8 @@ export class PerformanceDashboardGenerator {
 						: 0,
 					clientsQty: storeTotal.uniqueCustomers, // ✅ Use header unique customers
 					salesR: storeTotal.totalRevenue, // ✅ Use header total revenue (authoritative)
-					gpR: 0, // ✅ GP removed - matches daily sales calculation
-					gpPercentage: 0, // ✅ GP% removed - matches daily sales calculation
+					gpR: totalGP, // ✅ Total GP for branch (summed across categories)
+					gpPercentage: totalGPPercentage, // ✅ Total GP% for branch
 				},
 			});
 		});
@@ -1230,14 +1272,28 @@ export class PerformanceDashboardGenerator {
 	 * Revenue = SUM(total_incl) - SUM(total_tax) from tblsalesheader
 	 * Transaction count = COUNT(DISTINCT doc_number)
 	 * Unique clients = COUNT(DISTINCT customer)
-	 * 
-	 * Note: GP and totalItemsSold are not available in header table, so we set them to 0
+	 * ✅ NEW: GP calculated from BranchCategoryAggregations by summing totalCost per store
+	 * GP = Revenue - Cost, GP% = (GP / Revenue) * 100
 	 */
-	private calculateSalesPerStoreFromAggregations(aggregations: BranchAggregation[]): SalesPerStoreDto[] {
+	private calculateSalesPerStoreFromAggregations(
+		aggregations: BranchAggregation[],
+		branchCategoryAggregations: BranchCategoryAggregation[]
+	): SalesPerStoreDto[] {
 		if (aggregations.length === 0) return [];
 
 		// Import branch name mapping
 		const { getBranchName } = require('../../erp/config/category-mapping.config');
+
+		// ✅ Calculate total cost per store from BranchCategoryAggregations
+		const storeCosts = new Map<string, number>();
+		branchCategoryAggregations.forEach((agg) => {
+			const storeCode = String(agg.store || '').trim().padStart(3, '0');
+			const cost = typeof agg.totalCost === 'number' 
+				? agg.totalCost 
+				: parseFloat(String(agg.totalCost || 0));
+			const currentCost = storeCosts.get(storeCode) || 0;
+			storeCosts.set(storeCode, currentCost + cost);
+		});
 
 		const salesPerStore: SalesPerStoreDto[] = [];
 
@@ -1247,6 +1303,11 @@ export class PerformanceDashboardGenerator {
 			const revenue = typeof agg.totalRevenue === 'number' ? agg.totalRevenue : parseFloat(String(agg.totalRevenue || 0));
 			const transactionCount = typeof agg.transactionCount === 'number' ? agg.transactionCount : parseInt(String(agg.transactionCount || 0), 10);
 			const uniqueCustomers = typeof agg.uniqueCustomers === 'number' ? agg.uniqueCustomers : parseInt(String(agg.uniqueCustomers || 0), 10);
+			
+			// ✅ Calculate GP from cost data
+			const totalCost = storeCosts.get(storeCode) || 0;
+			const grossProfit = revenue - totalCost; // ✅ GP = Revenue - Cost
+			const grossProfitPercentage = revenue > 0 ? (grossProfit / revenue) * 100 : 0; // ✅ GP% = (GP / Revenue) * 100
 
 			salesPerStore.push({
 				storeId: branchId,
@@ -1256,8 +1317,8 @@ export class PerformanceDashboardGenerator {
 				averageTransactionValue: transactionCount > 0 ? revenue / transactionCount : 0,
 				totalItemsSold: 0, // Not available in header table
 				uniqueClients: uniqueCustomers, // ✅ Unique clients from aggregations
-				grossProfit: 0, // GP not available in header table
-				grossProfitPercentage: 0, // GP% not available without GP
+				grossProfit: grossProfit, // ✅ GP calculated from BranchCategoryAggregations
+				grossProfitPercentage: grossProfitPercentage, // ✅ GP% calculated
 			});
 		});
 
