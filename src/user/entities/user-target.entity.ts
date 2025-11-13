@@ -261,6 +261,12 @@ export class UserTarget {
 	})
 	recurrenceCount: number;
 
+	@Column({ 
+		nullable: true,
+		comment: 'ERP sales rep code (sales_code) for linking to ERP data'
+	})
+	erpSalesRepCode: string;
+
 	// Monthly target history tracking
 	@Column({
 		type: 'json',

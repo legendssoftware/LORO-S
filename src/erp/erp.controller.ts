@@ -8,6 +8,8 @@ import { RoleGuard } from '../guards/role.guard';
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
+import { UserService } from '../user/user.service';
+import { NotFoundException, BadRequestException } from '@nestjs/common';
 
 /**
  * ERP Controller
@@ -39,12 +41,14 @@ export class ErpController {
 		'cache/warm': 'low',
 		'cache/refresh': 'low',
 		'cache/clear': 'low',
+		'profile/sales': 'high',
 	};
 
 	constructor(
 		private readonly erpHealthIndicator: ErpHealthIndicator,
 		private readonly erpCacheWarmerService: ErpCacheWarmerService,
 		private readonly erpDataService: ErpDataService,
+		private readonly userService: UserService,
 	) {}
 
 	/**
@@ -461,6 +465,170 @@ export class ErpController {
 				};
 			}
 		}, 'cache/health');
+	}
+
+	/**
+	 * Get profile sales data for logged-in user
+	 * 
+	 * ✅ CRITICAL: Always returns sales data for CURRENT MONTH (not target period)
+	 * Filters ERP sales data by user's ERP sales rep code
+	 * Returns totalRevenue, transactionCount, uniqueCustomers for current month only
+	 */
+	@Get('profile/sales')
+	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER, AccessLevel.USER)
+	@ApiOperation({ summary: 'Get user-specific sales data from ERP for current month' })
+	@ApiResponse({ status: 200, description: 'User sales data for current month' })
+	@ApiResponse({ status: 404, description: 'User target or ERP code not found' })
+	async getProfileSales(@Req() request: AuthenticatedRequest) {
+		const userId = request.user?.uid;
+		const orgId = this.getOrgId(request);
+		const operationId = 'profile-sales';
+		
+		this.logger.log(`[${operationId}] Getting profile sales for user ${userId}, org ${orgId}`);
+		
+		return this.executeWithThrottling(operationId, async () => {
+			try {
+				if (!userId) {
+					throw new BadRequestException('User ID not found in request');
+				}
+
+				// Get user's target to extract ERP code and date range
+				const userTargetResult = await this.userService.getUserTarget(userId, orgId);
+				
+				if (!userTargetResult?.userTarget) {
+					throw new NotFoundException(`No targets found for user ${userId}`);
+				}
+
+				const userTarget = userTargetResult.userTarget;
+				// Try to get erpSalesRepCode from multiple possible locations:
+				// 1. Top level of response object
+				// 2. From personalTargets object
+				const erpSalesRepCode = userTarget.erpSalesRepCode || 
+					(userTarget.personalTargets as any)?.erpSalesRepCode || 
+					null;
+
+				this.logger.log(`[${operationId}] 🔍 ERP Sales Rep Code lookup for user ${userId}:`);
+				this.logger.debug(`[${operationId}]    Checking userTarget.erpSalesRepCode: ${userTarget.erpSalesRepCode || '❌ not found'}`);
+				this.logger.debug(`[${operationId}]    Checking personalTargets.erpSalesRepCode: ${(userTarget.personalTargets as any)?.erpSalesRepCode || '❌ not found'}`);
+				
+				if (erpSalesRepCode) {
+					this.logger.log(`[${operationId}] ✅ Found ERP Sales Rep Code: "${erpSalesRepCode}"`);
+				} else {
+					this.logger.warn(`[${operationId}] ⚠️  No ERP Sales Rep Code found for user ${userId}`);
+					this.logger.warn(`[${operationId}]    💡 Action required: Set erpSalesRepCode in user_targets table for user ${userId}`);
+					return {
+						success: false,
+						message: 'ERP sales rep code not configured for this user',
+						data: null,
+						userId,
+						orgId,
+					};
+				}
+
+				// ✅ Use period dates from user_targets entity (single source of truth)
+				// Get dates from personalTargets (which comes from user_targets.periodStartDate and periodEndDate)
+				const personalTargets = userTarget.personalTargets as any;
+				const periodStartDateRaw = personalTargets?.periodStartDate;
+				const periodEndDateRaw = personalTargets?.periodEndDate;
+
+				if (!periodStartDateRaw || !periodEndDateRaw) {
+					this.logger.warn(`[${operationId}] ⚠️  No period dates found in user target for user ${userId}`);
+					this.logger.warn(`[${operationId}]    💡 Target period dates (periodStartDate/periodEndDate) must be set in user_targets table`);
+					return {
+						success: false,
+						message: 'Target period dates not configured. Please set periodStartDate and periodEndDate in user targets.',
+						data: null,
+						userId,
+						orgId,
+					};
+				}
+
+				// Format dates to YYYY-MM-DD format
+				const periodStartDate = new Date(periodStartDateRaw).toISOString().split('T')[0];
+				const periodEndDate = new Date(periodEndDateRaw).toISOString().split('T')[0];
+				
+				this.logger.log(`[${operationId}] 📅 Using Target Period Dates from user_targets:`);
+				this.logger.log(`[${operationId}]    📅 Period Start: ${periodStartDate} (from user_targets.periodStartDate)`);
+				this.logger.log(`[${operationId}]    📅 Period End: ${periodEndDate} (from user_targets.periodEndDate)`);
+				this.logger.log(`[${operationId}] 🔍 Fetching sales from tblsalesheader WHERE sales_code = "${erpSalesRepCode}" AND sale_date BETWEEN '${periodStartDate}' AND '${periodEndDate}'`);
+
+				// ✅ CRITICAL: Call getSalesPersonAggregations with salesPersonId filter
+				// This queries tblsalesheader WHERE sales_code = erpSalesRepCode
+				// Returns ONLY sales headers made by this specific sales person (like CEB01)
+				// Same method used in performance dashboard "Sales Per Salesperson" chart
+				const salesData = await this.erpDataService.getSalesPersonAggregations({
+					startDate: periodStartDate,
+					endDate: periodEndDate,
+					salesPersonId: erpSalesRepCode, // ✅ Filters: header.sales_code IN (erpSalesRepCode)
+				});
+
+				this.logger.log(`[${operationId}] 📦 Query Result: ${salesData.length} sales record(s) found for code "${erpSalesRepCode}"`);
+
+				// ✅ When salesPersonId filter is applied, query filters header.sales_code IN (erpSalesRepCode)
+				// This means salesData should contain ONLY this user's sales (or be empty)
+				// Find exact match to ensure we have the right data
+				const userSalesData = salesData.find(agg => 
+					agg.salesCode?.toUpperCase() === erpSalesRepCode.toUpperCase()
+				);
+
+				if (!userSalesData || salesData.length === 0) {
+					this.logger.warn(`[${operationId}] ⚠️  No sales found for ERP code "${erpSalesRepCode}" in period ${periodStartDate} → ${periodEndDate}`);
+					this.logger.log(`[${operationId}]    💡 No records found in tblsalesheader WHERE sales_code = "${erpSalesRepCode}"`);
+					this.logger.log(`[${operationId}]    📊 Returning zero values:`);
+					this.logger.log(`[${operationId}]       💰 Revenue: R0 | 📝 Transactions: 0 | 👥 Customers: 0`);
+					
+					return {
+						success: true,
+						message: 'No sales data found for this period',
+						data: {
+							totalRevenue: 0,
+							transactionCount: 0,
+							uniqueCustomers: 0,
+							salesCode: erpSalesRepCode,
+							salesName: erpSalesRepCode, // Will be populated if sales exist via getSalesPersonNames
+						},
+						periodStartDate,
+						periodEndDate,
+						userId,
+						orgId,
+					};
+				}
+
+				// ✅ Return ONLY this user's sales data
+				// salesName is already populated by getSalesPersonAggregations → getSalesPersonNames → tblsalesman.Description
+				this.logger.log(`[${operationId}] ✅ Sales Data Retrieved Successfully:`);
+				this.logger.log(`[${operationId}]    👤 Sales Person: ${userSalesData.salesName || userSalesData.salesCode} (${userSalesData.salesCode})`);
+				this.logger.log(`[${operationId}]    💰 Total Revenue: R${(userSalesData.totalRevenue || 0).toLocaleString('en-ZA')}`);
+				this.logger.log(`[${operationId}]    📝 Transactions: ${userSalesData.transactionCount || 0}`);
+				this.logger.log(`[${operationId}]    👥 Unique Customers: ${userSalesData.uniqueCustomers || 0}`);
+				this.logger.log(`[${operationId}]    📅 Period: ${periodStartDate} → ${periodEndDate}`);
+
+				// ✅ Return ONLY this user's sales data (already filtered by salesPersonId in getSalesPersonAggregations)
+				// The salesName is already populated by getSalesPersonAggregations using getSalesPersonNames
+				return {
+					success: true,
+					data: {
+						totalRevenue: userSalesData.totalRevenue || 0,
+						transactionCount: userSalesData.transactionCount || 0,
+						uniqueCustomers: userSalesData.uniqueCustomers || 0,
+						salesCode: userSalesData.salesCode,
+						salesName: userSalesData.salesName || userSalesData.salesCode, // ✅ Name from tblsalesman table
+					},
+					periodStartDate,
+					periodEndDate,
+					userId,
+					orgId,
+				};
+			} catch (error) {
+				this.logger.error(`[${operationId}] Error getting profile sales for user ${userId}: ${error.message}`);
+				return {
+					success: false,
+					error: error.message,
+					userId,
+					orgId,
+				};
+			}
+		}, 'profile/sales');
 	}
 }
 

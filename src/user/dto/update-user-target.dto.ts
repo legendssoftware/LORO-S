@@ -279,4 +279,13 @@ export class UpdateUserTargetDto {
     required: false
   })
   totalCost?: number;
+
+  @IsOptional()
+  @IsString()
+  @ApiProperty({
+    description: 'ERP sales rep code (sales_code) for linking to ERP data',
+    example: 'SAL001',
+    required: false
+  })
+  erpSalesRepCode?: string;
 } 

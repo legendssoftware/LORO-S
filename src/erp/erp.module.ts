@@ -15,6 +15,7 @@ import { ErpCacheWarmerService } from './services/erp-cache-warmer.service';
 import { ErpTargetsService } from './services/erp-targets.service';
 import { ErpHealthIndicator } from './erp.health';
 import { ErpController } from './erp.controller';
+import { UserModule } from '../user/user.module';
 
 /**
  * ERP Module
@@ -46,6 +47,8 @@ import { ErpController } from './erp.controller';
 		}),
 		// Licensing module for license validation in AuthGuard
 		LicensingModule,
+		// User module for accessing user targets
+		UserModule,
 	],
 	controllers: [ErpController],
 	providers: [

@@ -2423,6 +2423,7 @@ export class UserService {
 					'userTarget.cellPhoneAllowance',
 					'userTarget.carMaintenance',
 					'userTarget.cgicCosts',
+					'userTarget.erpSalesRepCode',
 				])
 				.where('user.uid = :userId AND user.isDeleted = :isDeleted', { userId, isDeleted: false });
 
@@ -2461,11 +2462,22 @@ export class UserService {
 			}
 
 			// Initialize response object - always return data even if user has no targets
+			const erpSalesRepCode = user.userTarget?.erpSalesRepCode || null;
+			
+			// Log ERP sales rep code for debugging
+			if (erpSalesRepCode) {
+				this.logger.log(`[getUserTarget] ✅ ERP Sales Rep Code found for user ${userId}: "${erpSalesRepCode}"`);
+			} else {
+				this.logger.warn(`[getUserTarget] ⚠️  No ERP Sales Rep Code configured for user ${userId} in user_targets table`);
+			}
+			
 			let response: any = {
 				userId: userId,
 				hasPersonalTargets: !!user.userTarget,
 				managedBranches: [],
 				managedStaff: [],
+				// Include erpSalesRepCode at top level for easy access
+				erpSalesRepCode: erpSalesRepCode,
 			};
 
 			// Add personal targets if they exist with enhanced format
@@ -2501,14 +2513,60 @@ export class UserService {
 						const periodEnd = new Date(user.userTarget.periodEndDate);
 						const currentDate = new Date();
 						
-						// Calculate total working days in the target period using simple business days
-						const totalWorkingDays = this.calculateSimpleBusinessDays(periodStart, periodEnd);
+						// ✅ Get organization hours to calculate working days accurately
+						let totalWorkingDays = 0;
+						let workingDaysElapsed = 0;
+						const organizationRef = user.organisation?.ref;
 						
-						// Calculate working days elapsed so far
-						const workingDaysElapsed = this.calculateSimpleBusinessDays(
-							periodStart, 
-							new Date(Math.min(currentDate.getTime(), periodEnd.getTime()))
-						);
+						this.logger.log(`[getUserTarget] 📊 Calculating sales rate analysis for user ${userId}`);
+						this.logger.log(`[getUserTarget]   📅 Period: ${periodStart.toISOString().split('T')[0]} → ${periodEnd.toISOString().split('T')[0]}`);
+						this.logger.log(`[getUserTarget]   📍 Current Date: ${currentDate.toISOString().split('T')[0]}`);
+						this.logger.log(`[getUserTarget]   💰 Sales: R${user.userTarget.currentSalesAmount?.toLocaleString('en-ZA') || 0} / R${user.userTarget.targetSalesAmount?.toLocaleString('en-ZA') || 0} target`);
+						this.logger.log(`[getUserTarget]   🏢 Organization: ${organizationRef || 'N/A'}`);
+						
+						if (organizationRef) {
+							try {
+								// Try to get organization hours for accurate working days calculation
+								const orgHours = await this.organisationHoursService.findDefault(organizationRef);
+								if (orgHours) {
+									this.logger.log(`[getUserTarget]   ✅ Using organization hours configuration for accurate working days`);
+									
+									// Calculate total working days using organization schedule
+									totalWorkingDays = this.calculateWorkingDaysWithSchedule(periodStart, periodEnd, orgHours);
+									
+									// Calculate working days elapsed so far
+									const elapsedEndDate = new Date(Math.min(currentDate.getTime(), periodEnd.getTime()));
+									workingDaysElapsed = this.calculateWorkingDaysWithSchedule(periodStart, elapsedEndDate, orgHours);
+									
+									this.logger.log(`[getUserTarget]   📆 Working Days: ${workingDaysElapsed} elapsed / ${totalWorkingDays} total (org-hours)`);
+								} else {
+									this.logger.warn(`[getUserTarget]   ⚠️  Organization hours not found, using simple business days (Mon-Sat)`);
+									totalWorkingDays = this.calculateSimpleBusinessDays(periodStart, periodEnd);
+									workingDaysElapsed = this.calculateSimpleBusinessDays(
+										periodStart, 
+										new Date(Math.min(currentDate.getTime(), periodEnd.getTime()))
+									);
+									this.logger.log(`[getUserTarget]   📆 Working Days: ${workingDaysElapsed} elapsed / ${totalWorkingDays} total (simple)`);
+								}
+							} catch (error) {
+								this.logger.warn(`[getUserTarget]   ⚠️  Error fetching organization hours: ${error.message}`);
+								this.logger.warn(`[getUserTarget]   🔄 Falling back to simple business days calculation`);
+								totalWorkingDays = this.calculateSimpleBusinessDays(periodStart, periodEnd);
+								workingDaysElapsed = this.calculateSimpleBusinessDays(
+									periodStart, 
+									new Date(Math.min(currentDate.getTime(), periodEnd.getTime()))
+								);
+								this.logger.log(`[getUserTarget]   📆 Working Days: ${workingDaysElapsed} elapsed / ${totalWorkingDays} total (fallback)`);
+							}
+						} else {
+							this.logger.warn(`[getUserTarget]   ⚠️  No organization reference available, using simple business days`);
+							totalWorkingDays = this.calculateSimpleBusinessDays(periodStart, periodEnd);
+							workingDaysElapsed = this.calculateSimpleBusinessDays(
+								periodStart, 
+								new Date(Math.min(currentDate.getTime(), periodEnd.getTime()))
+							);
+							this.logger.log(`[getUserTarget]   📆 Working Days: ${workingDaysElapsed} elapsed / ${totalWorkingDays} total (no-org)`);
+						}
 						
 						// Calculate actual sales rate based on days elapsed (more accurate)
 						const actualSalesRate = workingDaysElapsed > 0 ? 
@@ -2517,6 +2575,10 @@ export class UserService {
 						// Calculate required sales rate to meet target over the full period
 						const requiredSalesRate = totalWorkingDays > 0 ? 
 							Math.round(user.userTarget.targetSalesAmount / totalWorkingDays) : 0;
+						
+						this.logger.log(`[getUserTarget]   📈 Daily Sales Rate Calculation:`);
+						this.logger.log(`[getUserTarget]      ✅ Actual Rate: R${actualSalesRate.toLocaleString('en-ZA')}/day (R${user.userTarget.currentSalesAmount?.toLocaleString('en-ZA') || 0} ÷ ${workingDaysElapsed} days)`);
+						this.logger.log(`[getUserTarget]      🎯 Required Rate: R${requiredSalesRate.toLocaleString('en-ZA')}/day (R${user.userTarget.targetSalesAmount?.toLocaleString('en-ZA') || 0} ÷ ${totalWorkingDays} days)`);
 						
 						// Calculate remaining amount 
 						const remainingSalesAmount = Math.max(0, user.userTarget.targetSalesAmount - user.userTarget.currentSalesAmount);
@@ -2575,8 +2637,18 @@ export class UserService {
 							projectedFinalAmount: projectedFinalAmount > 0 ? Math.round(projectedFinalAmount) : null,
 							isOverdue
 						};
+						
+						this.logger.log(`[getUserTarget]   ✅ Sales Rate Analysis Complete:`);
+						this.logger.log(`[getUserTarget]      💵 Daily Rate Needed: R${dailyRateNeeded.toLocaleString('en-ZA')}/day`);
+						this.logger.log(`[getUserTarget]      📊 Remaining: R${remainingSalesAmount.toLocaleString('en-ZA')} (${((remainingSalesAmount / user.userTarget.targetSalesAmount) * 100).toFixed(1)}% of target)`);
+						this.logger.log(`[getUserTarget]      📈 Status: ${achievabilityStatus.toUpperCase()} ${isOverdue ? '⚠️ OVERDUE' : ''}`);
+						if (projectedFinalAmount > 0) {
+							this.logger.log(`[getUserTarget]      🔮 Projected Final: R${Math.round(projectedFinalAmount).toLocaleString('en-ZA')} (${((projectedFinalAmount / user.userTarget.targetSalesAmount) * 100).toFixed(1)}% of target)`);
+						}
 					} catch (error) {
-						this.logger.warn(`Failed to calculate sales rate analysis for user ${userId}: ${error.message}`);
+						this.logger.error(`[getUserTarget] ❌ Failed to calculate sales rate analysis for user ${userId}`);
+						this.logger.error(`[getUserTarget]    Error: ${error.message}`);
+						this.logger.debug(`[getUserTarget]    Stack: ${error.stack}`);
 					}
 				}
 
@@ -2672,6 +2744,8 @@ export class UserService {
 					// History tracking - monthly target performance history
 					// Ensure history is always an array (transformer + fallback should handle parsing)
 					history: Array.isArray(user.userTarget.history) ? user.userTarget.history : [],
+					// ERP Sales Rep Code for linking to ERP data
+					erpSalesRepCode: user.userTarget.erpSalesRepCode || null,
 				};
 
 				// Log history being added to response
