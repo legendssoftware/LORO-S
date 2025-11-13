@@ -43,6 +43,7 @@ export enum Currency {
     INR = 'INR', // Indian Rupee
     BWP = 'BWP', // Botswana Pula
     ZMW = 'ZMW', // Zambian Kwacha
+    ZWL = 'ZiG', // Zimbabwean Gold
     MZN = 'MZN', // Mozambican Metical
     NGN = 'NGN', // Nigerian Naira
     KES = 'KES', // Kenyan Shilling
