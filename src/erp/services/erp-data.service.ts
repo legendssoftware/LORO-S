@@ -596,6 +596,266 @@ export class ErpDataService implements OnModuleInit {
 	}
 
 	/**
+	 * ✅ PRE-FILTERING: Build base cache key (without customer category filters)
+	 * Used for pre-grouped data cache that can be filtered in memory
+	 */
+	private buildBaseCacheKey(dataType: string, filters: ErpQueryFilters, docTypes?: string[]): string {
+		const salesPersonKey = filters.salesPersonId 
+			? (Array.isArray(filters.salesPersonId) ? filters.salesPersonId.sort().join('-') : filters.salesPersonId)
+			: 'all';
+		
+		return [
+			'erp',
+			'v2',
+			'pre_grouped', // Mark as pre-grouped data
+			dataType,
+			filters.startDate,
+			filters.endDate,
+			filters.storeCode || 'all',
+			filters.category || 'all',
+			salesPersonKey,
+			docTypes ? docTypes.join('-') : 'all',
+		].join(':');
+	}
+
+	/**
+	 * ✅ PRE-FILTERING: Get customer codes by category (cached)
+	 * Pre-filters customers before JOIN to improve query performance
+	 */
+	private async getCustomerCodesByCategory(
+		categories: string[],
+		operationId: string,
+	): Promise<string[]> {
+		const cacheKey = `customer_codes_by_category:${categories.sort().join('-')}`;
+		
+		// Check cache first
+		const cached = await this.cacheManager.get<string[]>(cacheKey);
+		if (cached) {
+			this.logger.debug(`[${operationId}] Customer codes cache HIT: ${cached.length} codes`);
+			return cached;
+		}
+		
+		// Query database
+		const customers = await this.customersRepo
+			.createQueryBuilder('customer')
+			.select('customer.Code', 'code')
+			.where('customer.Category IN (:...categories)', { categories })
+			.andWhere('customer.Code IS NOT NULL')
+			.andWhere('customer.Code != :empty', { empty: '' })
+			.getRawMany();
+		
+		const codes = customers.map(c => c.code).filter(Boolean);
+		
+		// Cache for 1 hour (category assignments don't change often)
+		await this.cacheManager.set(cacheKey, codes, 3600);
+		
+		this.logger.debug(`[${operationId}] Customer codes cache MISS: ${codes.length} codes`);
+		return codes;
+	}
+
+	/**
+	 * ✅ PRE-FILTERING: Get pre-grouped sales headers by customer category
+	 * Groups sales data by customer category and caches it for fast filtering
+	 */
+	private async getPreGroupedSalesHeaders(
+		filters: ErpQueryFilters,
+		operationId: string,
+	): Promise<Map<string, TblSalesHeader[]>> {
+		const baseCacheKey = this.buildBaseCacheKey('headers', filters, ['1']);
+		
+		// Check if pre-grouped data is cached
+		const cached = await this.cacheManager.get<Map<string, TblSalesHeader[]>>(baseCacheKey);
+		if (cached) {
+			this.logger.log(`[${operationId}] ✅ Pre-grouped cache HIT - Using cached grouped data`);
+			return cached;
+		}
+		
+		this.logger.log(`[${operationId}] Pre-grouped cache MISS - Building grouped data from database...`);
+		
+		// Query all sales headers (without customer category filters)
+		const query = this.salesHeaderRepo
+			.createQueryBuilder('header')
+			.where('header.sale_date BETWEEN :startDate AND :endDate', {
+				startDate: filters.startDate,
+				endDate: filters.endDate,
+			})
+			.andWhere('header.doc_type = :docType', { docType: 1 });
+		
+		if (filters.storeCode) {
+			query.andWhere('header.store = :store', { store: filters.storeCode });
+		}
+		
+		if (filters.salesPersonId) {
+			const salesPersonIds = Array.isArray(filters.salesPersonId) 
+				? filters.salesPersonId 
+				: [filters.salesPersonId];
+			query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
+		}
+		
+		const headers = await query.getMany();
+		
+		// Get customer categories for each header
+		const customerCodes = [...new Set(headers.map(h => h.customer).filter(Boolean))];
+		const customerMap = new Map<string, string>();
+		
+		if (customerCodes.length > 0) {
+			const customers = await this.customersRepo
+				.createQueryBuilder('customer')
+				.select('customer.Code', 'code')
+				.addSelect('customer.Category', 'category')
+				.where('customer.Code IN (:...codes)', { codes: customerCodes })
+				.getRawMany();
+			
+			for (const cust of customers) {
+				customerMap.set(cust.code, cust.category || 'NULL');
+			}
+		}
+		
+		// Group by customer category
+		const grouped = new Map<string, TblSalesHeader[]>();
+		
+		for (const header of headers) {
+			const category = customerMap.get(header.customer) || 'NULL';
+			if (!grouped.has(category)) {
+				grouped.set(category, []);
+			}
+			grouped.get(category)!.push(header);
+		}
+		
+		this.logger.log(`[${operationId}] Pre-grouped ${headers.length} headers into ${grouped.size} categories`);
+		
+		// Cache grouped data (4 hour TTL)
+		await this.cacheManager.set(baseCacheKey, grouped, this.CACHE_TTL);
+		
+		return grouped;
+	}
+
+	/**
+	 * ✅ PRE-FILTERING: Get pre-grouped sales lines by customer category
+	 * Groups sales lines by customer category and caches it for fast filtering
+	 */
+	private async getPreGroupedSalesLines(
+		filters: ErpQueryFilters,
+		includeDocTypes: string[],
+		operationId: string,
+	): Promise<Map<string, TblSalesLines[]>> {
+		const baseCacheKey = this.buildBaseCacheKey('lines', filters, includeDocTypes);
+		
+		// Check if pre-grouped data is cached
+		const cached = await this.cacheManager.get<Map<string, TblSalesLines[]>>(baseCacheKey);
+		if (cached) {
+			this.logger.log(`[${operationId}] ✅ Pre-grouped cache HIT - Using cached grouped data`);
+			return cached;
+		}
+		
+		this.logger.log(`[${operationId}] Pre-grouped cache MISS - Building grouped data from database...`);
+		
+		// Query all sales lines (without customer category filters)
+		const query = this.salesLinesRepo
+			.createQueryBuilder('line')
+			.where('line.sale_date BETWEEN :startDate AND :endDate', {
+				startDate: filters.startDate,
+				endDate: filters.endDate,
+			})
+			.andWhere('line.doc_type IN (:...docTypes)', { docTypes: includeDocTypes });
+		
+		if (filters.storeCode) {
+			query.andWhere('line.store = :store', { store: filters.storeCode });
+		}
+		
+		if (filters.category) {
+			query.andWhere('line.category = :category', { category: filters.category });
+		}
+		
+		if (filters.salesPersonId) {
+			const salesPersonIds = Array.isArray(filters.salesPersonId) 
+				? filters.salesPersonId 
+				: [filters.salesPersonId];
+			query.andWhere('line.rep_code IN (:...salesPersonIds)', { salesPersonIds });
+		}
+		
+		query.andWhere('line.item_code IS NOT NULL');
+		query.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' });
+		
+		const lines = await query.getMany();
+		
+		// Get customer categories for each line
+		const customerCodes = [...new Set(lines.map(l => l.customer).filter(Boolean))];
+		const customerMap = new Map<string, string>();
+		
+		if (customerCodes.length > 0) {
+			const customers = await this.customersRepo
+				.createQueryBuilder('customer')
+				.select('customer.Code', 'code')
+				.addSelect('customer.Category', 'category')
+				.where('customer.Code IN (:...codes)', { codes: customerCodes })
+				.getRawMany();
+			
+			for (const cust of customers) {
+				customerMap.set(cust.code, cust.category || 'NULL');
+			}
+		}
+		
+		// Group by customer category
+		const grouped = new Map<string, TblSalesLines[]>();
+		
+		for (const line of lines) {
+			const category = customerMap.get(line.customer) || 'NULL';
+			if (!grouped.has(category)) {
+				grouped.set(category, []);
+			}
+			grouped.get(category)!.push(line);
+		}
+		
+		this.logger.log(`[${operationId}] Pre-grouped ${lines.length} lines into ${grouped.size} categories`);
+		
+		// Cache grouped data (4 hour TTL)
+		await this.cacheManager.set(baseCacheKey, grouped, this.CACHE_TTL);
+		
+		return grouped;
+	}
+
+	/**
+	 * ✅ PRE-FILTERING: Filter pre-grouped data by customer category
+	 * Filters in-memory grouped data instead of querying database
+	 */
+	private filterPreGroupedData<T>(
+		grouped: Map<string, T[]>,
+		filters: ErpQueryFilters,
+		operationId: string,
+	): T[] {
+		let results: T[] = [];
+		
+		if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
+			// Include only specified categories
+			for (const category of filters.includeCustomerCategories) {
+				const categoryData = grouped.get(category) || [];
+				results.push(...categoryData);
+			}
+			this.logger.log(`[${operationId}] ✅ Pre-filtered: Included ${filters.includeCustomerCategories.length} categories, ${results.length} records`);
+		} else if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
+			// Exclude specified categories
+			for (const [category, data] of grouped.entries()) {
+				if (!filters.excludeCustomerCategories.includes(category) && category !== 'NULL') {
+					results.push(...data);
+				}
+			}
+			// Include NULL category (customers without category)
+			if (grouped.has('NULL')) {
+				results.push(...grouped.get('NULL')!);
+			}
+			this.logger.log(`[${operationId}] ✅ Pre-filtered: Excluded ${filters.excludeCustomerCategories.length} categories, ${results.length} records`);
+		} else {
+			// No category filter - return all
+			for (const data of grouped.values()) {
+				results.push(...data);
+			}
+		}
+		
+		return results;
+	}
+
+	/**
 	 * ✅ PHASE 2: Calculate date range in days
 	 */
 	private calculateDateRangeDays(startDate: string, endDate: string): number {
@@ -675,6 +935,29 @@ export class ErpDataService implements OnModuleInit {
 		const startTime = Date.now();
 
 		try {
+			// ✅ PRE-FILTERING: Check if customer category filters are present
+			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
+				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
+			
+			if (hasCustomerCategoryFilters) {
+				// ✅ PRE-FILTERING: Try to use pre-grouped cache first
+				try {
+					const grouped = await this.getPreGroupedSalesHeaders(filters, operationId);
+					const filteredResults = this.filterPreGroupedData(grouped, filters, operationId);
+					
+					const duration = Date.now() - startTime;
+					this.logger.log(`[${operationId}] ✅ Pre-filtered cache used - Retrieved ${filteredResults.length} headers (${duration}ms)`);
+					
+					// Cache the filtered results for future requests
+					await this.cacheManager.set(cacheKey, filteredResults, this.CACHE_TTL);
+					
+					return filteredResults;
+				} catch (preFilterError) {
+					this.logger.warn(`[${operationId}] Pre-filtering failed, falling back to DB query: ${preFilterError.message}`);
+					// Fall through to existing DB query
+				}
+			}
+			
 			// ✅ Skip cache when exclusion filters are present - always recalculate from DB
 			const hasExclusionFilters = filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0;
 			
@@ -918,6 +1201,29 @@ export class ErpDataService implements OnModuleInit {
 		const startTime = Date.now();
 
 		try {
+			// ✅ PRE-FILTERING: Check if customer category filters are present
+			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
+				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
+			
+			if (hasCustomerCategoryFilters) {
+				// ✅ PRE-FILTERING: Try to use pre-grouped cache first
+				try {
+					const grouped = await this.getPreGroupedSalesLines(filters, includeDocTypes, operationId);
+					const filteredResults = this.filterPreGroupedData(grouped, filters, operationId);
+					
+					const duration = Date.now() - startTime;
+					this.logger.log(`[${operationId}] ✅ Pre-filtered cache used - Retrieved ${filteredResults.length} lines (${duration}ms)`);
+					
+					// Cache the filtered results for future requests
+					await this.cacheManager.set(cacheKey, filteredResults, this.CACHE_TTL);
+					
+					return filteredResults;
+				} catch (preFilterError) {
+					this.logger.warn(`[${operationId}] Pre-filtering failed, falling back to DB query: ${preFilterError.message}`);
+					// Fall through to existing DB query
+				}
+			}
+			
 			// ✅ Skip cache when exclusion filters are present - always recalculate from DB
 			const hasExclusionFilters = filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0;
 			
