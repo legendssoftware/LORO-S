@@ -928,11 +928,13 @@ export class IotService {
 			const targetOpenTimeMinutes = openHour * 60 + openMinute;
 			const targetCloseTimeMinutes = closeHour * 60 + closeMinute;
 
-			// 5-minute tolerance constant
+			// 5-minute tolerance constant for late openings/closings
 			const TOLERANCE_MINUTES = 5;
+			// Extended tolerance for early openings (devices can open early, that's acceptable)
+			const EARLY_OPENING_TOLERANCE_MINUTES = 60; // Allow up to 1 hour early
 
-			// Get latest 10 records
-			const recordsToCheck = records.slice(0, 10);
+			// Get latest 30 records for better representation (increased from 10)
+			const recordsToCheck = records.slice(0, 30);
 
 			// Track records with time data
 			let opensOnTimeCount = 0;
@@ -944,7 +946,7 @@ export class IotService {
 			const orgTimezone = orgHours.timezone || TimezoneUtil.AFRICA_JOHANNESBURG;
 
 			recordsToCheck.forEach((record) => {
-				// Check open time with 5-minute tolerance
+				// Check open time - early openings are acceptable, only late openings are penalized
 				if (record.openTime) {
 					recordsWithOpenTime++;
 					let openMinutes: number | null = null;
@@ -959,16 +961,24 @@ export class IotService {
 						const openDateOrg = TimezoneUtil.toOrganizationTime(openDate, orgTimezone);
 						openMinutes = openDateOrg.getHours() * 60 + openDateOrg.getMinutes();
 
-						// On-time if within 5 minutes of target (before or after)
-						if (openMinutes !== null && Math.abs(openMinutes - targetOpenTimeMinutes) <= TOLERANCE_MINUTES) {
-							opensOnTimeCount++;
+						// On-time if:
+						// 1. Opens early (before target time) - up to EARLY_OPENING_TOLERANCE_MINUTES early is acceptable
+						// 2. Opens on time (within TOLERANCE_MINUTES of target)
+						// 3. Opens slightly late (within TOLERANCE_MINUTES after target)
+						// Only penalize if opens more than TOLERANCE_MINUTES late
+						if (openMinutes !== null) {
+							const timeDiff = openMinutes - targetOpenTimeMinutes;
+							// Accept if: early (up to 1 hour) OR on-time/late (within 5 minutes)
+							if (timeDiff <= TOLERANCE_MINUTES && timeDiff >= -EARLY_OPENING_TOLERANCE_MINUTES) {
+								opensOnTimeCount++;
+							}
 						}
 					} catch (error) {
 						this.logger.warn(`Failed to parse open time for device ${device.deviceID}: ${error.message}`);
 					}
 				}
 
-				// Check close time with 5-minute tolerance
+				// Check close time - early closings are penalized, on-time or slightly late is acceptable
 				if (record.closeTime) {
 					recordsWithCloseTime++;
 					let closeMinutes: number | null = null;
@@ -982,9 +992,16 @@ export class IotService {
 						const closeDateOrg = TimezoneUtil.toOrganizationTime(closeDate, orgTimezone);
 						closeMinutes = closeDateOrg.getHours() * 60 + closeDateOrg.getMinutes();
 
-						// On-time if within 5 minutes of target (before or after)
-						if (closeMinutes !== null && Math.abs(closeMinutes - targetCloseTimeMinutes) <= TOLERANCE_MINUTES) {
-							closesOnTimeCount++;
+						// On-time if:
+						// 1. Closes on time (within TOLERANCE_MINUTES of target)
+						// 2. Closes late (any time after target is acceptable)
+						// Penalize if closes more than TOLERANCE_MINUTES early
+						if (closeMinutes !== null) {
+							const timeDiff = closeMinutes - targetCloseTimeMinutes;
+							// Accept if: closes on-time or late (timeDiff >= -5 means not more than 5 min early)
+							if (timeDiff >= -TOLERANCE_MINUTES) {
+								closesOnTimeCount++;
+							}
 						}
 					} catch (error) {
 						this.logger.warn(`Failed to parse close time for device ${device.deviceID}: ${error.message}`);
@@ -1001,8 +1018,10 @@ export class IotService {
 				: 0;
 
 			// Determine punctuality flags
-			const opensOnTime = opensOnTimePercentage >= 80;
-			const closesOnTime = closesOnTimePercentage >= 80;
+			// Lowered threshold to 70% to account for the more lenient early-opening logic
+			// Devices that consistently open early (which is acceptable) should still pass
+			const opensOnTime = opensOnTimePercentage >= 70;
+			const closesOnTime = closesOnTimePercentage >= 70;
 
 			// Calculate composite score
 			// Use type assertion for extended analytics properties that may exist but aren't in the strict type
@@ -1016,7 +1035,7 @@ export class IotService {
 					? ((device.analytics.onTimeCount || 0) / device.analytics.totalCount) * 100
 					: punctualityScore;
 
-			const totalDays = Math.max(recordsToCheck.length, 10);
+			const totalDays = Math.max(recordsToCheck.length, 30);
 			const absentDays = analytics?.daysAbsent || device.analytics?.daysAbsent || 0;
 			const uptimePercentage = ((totalDays - absentDays) / totalDays) * 100;
 

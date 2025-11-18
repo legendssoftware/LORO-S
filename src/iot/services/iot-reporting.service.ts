@@ -235,7 +235,7 @@ export class IoTReportingService {
 			const expectedOpenTime = (openHour * 60 + openMinute) * 60; // Convert to seconds
 			const expectedCloseTime = (closeHour * 60 + closeMinute) * 60; // Convert to seconds
 
-			// 5-minute tolerance
+			// 5-minute tolerance for late openings/closings
 			const TOLERANCE_SECONDS = 5 * 60;
 
 			let onTimeOpenings = 0;
@@ -251,11 +251,15 @@ export class IoTReportingService {
 				if (record.openTime) {
 					const openDate = new Date(record.openTime as unknown as Date);
 					const actualOpenTime = openDate.getHours() * 3600 + openDate.getMinutes() * 60;
+					const timeDiff = actualOpenTime - expectedOpenTime;
 
-					if (Math.abs(actualOpenTime - expectedOpenTime) <= TOLERANCE_SECONDS) {
-						// Within 5 minutes tolerance
+					// Accept if: early (any time before target) OR on-time/late (within 5 minutes)
+					// Only penalize if opens more than 5 minutes late
+					if (timeDiff <= TOLERANCE_SECONDS) {
+						// On-time, slightly late (within 5 min), or early (any time before target)
 						onTimeOpenings++;
 					} else {
+						// More than 5 minutes late
 						lateOpenings++;
 					}
 				}
@@ -263,9 +267,11 @@ export class IoTReportingService {
 				if (record.closeTime) {
 					const closeDate = new Date(record.closeTime as unknown as Date);
 					const actualCloseTime = closeDate.getHours() * 3600 + closeDate.getMinutes() * 60;
+					const timeDiff = actualCloseTime - expectedCloseTime;
 
-					if (Math.abs(actualCloseTime - expectedCloseTime) <= TOLERANCE_SECONDS) {
-						// Within 5 minutes tolerance
+					// Accept if: closes on-time or late (not more than 5 min early)
+					// Penalize if closes more than 5 minutes early
+					if (timeDiff >= -TOLERANCE_SECONDS) {
 						onTimeClosings++;
 					} else {
 						earlyClosings++;
@@ -734,7 +740,9 @@ export class IoTReportingService {
 		const openDate = new Date(openTime);
 		const actualOpenTime = openDate.getHours() * 3600 + openDate.getMinutes() * 60;
 		const TOLERANCE_SECONDS = 5 * 60;
-		return Math.abs(actualOpenTime - expectedOpenTime) > TOLERANCE_SECONDS && actualOpenTime > expectedOpenTime;
+		// Only consider it late if it's more than 5 minutes after the expected time
+		// Early openings are acceptable
+		return actualOpenTime > expectedOpenTime + TOLERANCE_SECONDS;
 	}
 
 	private checkEarlyClosing(closeTime?: Date, orgHours?: any): boolean {
@@ -744,7 +752,9 @@ export class IoTReportingService {
 		const closeDate = new Date(closeTime);
 		const actualCloseTime = closeDate.getHours() * 3600 + closeDate.getMinutes() * 60;
 		const TOLERANCE_SECONDS = 5 * 60;
-		return Math.abs(actualCloseTime - expectedCloseTime) > TOLERANCE_SECONDS && actualCloseTime < expectedCloseTime;
+		// Only consider it early if it's more than 5 minutes before the expected time
+		// Late closings are acceptable
+		return actualCloseTime < expectedCloseTime - TOLERANCE_SECONDS;
 	}
 
 	private calculateLateMinutes(openTime?: Date): number | undefined {
