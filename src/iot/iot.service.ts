@@ -931,16 +931,36 @@ export class IotService {
 			// 5-minute tolerance constant for late openings/closings
 			const TOLERANCE_MINUTES = 5;
 
-			// Get latest 30 records for better representation (increased from 10)
-			const recordsToCheck = records.slice(0, 30);
-
 			// Get organization timezone
 			const orgTimezone = orgHours.timezone || TimezoneUtil.AFRICA_JOHANNESBURG;
+
+			// Use recent records (last 14 days) for better representation of current performance
+			// Sort records by createdAt descending to get most recent first
+			const sortedRecords = [...records].sort((a, b) => 
+				new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+			);
+			
+			// Get records from last 14 days, or up to 30 records, whichever is more
+			const fourteenDaysAgo = new Date();
+			fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
+			const recentRecords = sortedRecords.filter(r => 
+				new Date(r.createdAt) >= fourteenDaysAgo
+			).slice(0, 30);
+			
+			// Fallback to latest 30 records if no recent records
+			const recordsToCheck = recentRecords.length > 0 ? recentRecords : sortedRecords.slice(0, 30);
 
 			// Morning opening window: 5:00am to 10:00am (300 to 600 minutes)
 			// Only evaluate morning openings for "opens on time" metric
 			const MORNING_OPENING_START = 5 * 60; // 5:00am
 			const MORNING_OPENING_END = 10 * 60; // 10:00am
+
+			// Helper function to extract hours/minutes from organization timezone
+			const getMinutesSinceMidnight = (date: Date, timezone: string): number => {
+				const orgDate = TimezoneUtil.toOrganizationTime(date, timezone);
+				// Extract hours/minutes from the UTC Date (which represents org local time)
+				return orgDate.getUTCHours() * 60 + orgDate.getUTCMinutes();
+			};
 
 			// Group records by date and extract first opening and last closing per day
 			const dailyOpenings = new Map<string, { time: Date; minutes: number }>();
@@ -955,7 +975,7 @@ export class IotService {
 							: (record.openTime as unknown as Date);
 						
 						const openDateOrg = TimezoneUtil.toOrganizationTime(openDate, orgTimezone);
-						const openMinutes = openDateOrg.getHours() * 60 + openDateOrg.getMinutes();
+						const openMinutes = getMinutesSinceMidnight(openDate, orgTimezone);
 						
 						// Only consider morning openings (5am-10am) for opening time calculation
 						if (openMinutes >= MORNING_OPENING_START && openMinutes <= MORNING_OPENING_END) {
@@ -979,7 +999,7 @@ export class IotService {
 							: (record.closeTime as unknown as Date);
 						
 						const closeDateOrg = TimezoneUtil.toOrganizationTime(closeDate, orgTimezone);
-						const closeMinutes = closeDateOrg.getHours() * 60 + closeDateOrg.getMinutes();
+						const closeMinutes = getMinutesSinceMidnight(closeDate, orgTimezone);
 						const dateKey = closeDateOrg.toISOString().split('T')[0]; // YYYY-MM-DD
 						
 						// Keep only the latest closing for each day
@@ -1031,12 +1051,27 @@ export class IotService {
 			let closesOnTimeCount = 0;
 			let recordsWithCloseTime = dailyClosings.size;
 
-			dailyClosings.forEach(({ minutes: closeMinutes }) => {
+			// Debug logging for closing times
+			const closingDetails: Array<{ date: string; time: string; minutes: number; timeDiff: number; accepted: boolean }> = [];
+
+			dailyClosings.forEach(({ minutes: closeMinutes }, dateKey) => {
 				const timeDiff = closeMinutes - targetCloseTimeMinutes;
 				// Accept if: closes on-time or late (timeDiff >= -5 means not more than 5 min early)
-				if (timeDiff >= -TOLERANCE_MINUTES) {
+				const accepted = timeDiff >= -TOLERANCE_MINUTES;
+				if (accepted) {
 					closesOnTimeCount++;
 				}
+				
+				// Store details for debugging
+				const hours = Math.floor(closeMinutes / 60);
+				const mins = closeMinutes % 60;
+				closingDetails.push({
+					date: dateKey,
+					time: `${hours}:${mins.toString().padStart(2, '0')}`,
+					minutes: closeMinutes,
+					timeDiff,
+					accepted,
+				});
 			});
 
 			// Calculate percentages based on records that actually have time data
@@ -1047,24 +1082,51 @@ export class IotService {
 				? (closesOnTimeCount / recordsWithCloseTime) * 100
 				: 0;
 
-			// Log opening details for debugging
-			if (openingDetails.length > 0) {
-				this.logger.debug(
-					`[${device.deviceID}] Opening analysis: ${opensOnTimeCount}/${recordsWithOpenTime} on-time (${opensOnTimePercentage.toFixed(1)}%), ` +
-					`target=${targetOpenTimeMinutes}min (${Math.floor(targetOpenTimeMinutes / 60)}:${(targetOpenTimeMinutes % 60).toString().padStart(2, '0')}), ` +
-					`details=${JSON.stringify(openingDetails.slice(0, 5))}`
-				);
-			}
-
 			// Determine punctuality flags
-			// For devices with few records (1-3 days), be more lenient - require only 50%
-			// For devices with more records, use 70% threshold
-			// This ensures devices with consistent early openings are marked correctly
-			const openingThreshold = recordsWithOpenTime <= 3 ? 50 : 70;
-			const closingThreshold = recordsWithCloseTime <= 3 ? 50 : 70;
+			// Use 50% threshold for all devices to be more lenient and account for early openings
+			// Early openings (before expected time) are acceptable and count as "on time"
+			const openingThreshold = 50;
+			const closingThreshold = 50;
 			
 			const opensOnTime = opensOnTimePercentage >= openingThreshold;
 			const closesOnTime = closesOnTimePercentage >= closingThreshold;
+
+			// Enhanced logging for debugging opening times
+			if (openingDetails.length > 0) {
+				const acceptedCount = openingDetails.filter(d => d.accepted).length;
+				const rejectedCount = openingDetails.filter(d => !d.accepted).length;
+				const earlyOpenings = openingDetails.filter(d => d.timeDiff < 0).length;
+				const lateOpenings = openingDetails.filter(d => d.timeDiff > TOLERANCE_MINUTES).length;
+				
+				this.logger.debug(
+					`[${device.deviceID}] Opening analysis: ${opensOnTimeCount}/${recordsWithOpenTime} on-time (${opensOnTimePercentage.toFixed(1)}%), ` +
+					`threshold=${openingThreshold}%, ` +
+					`opensOnTime=${opensOnTime}, ` +
+					`target=${targetOpenTimeMinutes}min (${Math.floor(targetOpenTimeMinutes / 60)}:${(targetOpenTimeMinutes % 60).toString().padStart(2, '0')}), ` +
+					`accepted=${acceptedCount}, rejected=${rejectedCount}, early=${earlyOpenings}, late=${lateOpenings}, ` +
+					`details=${JSON.stringify(openingDetails.slice(0, 5))}`
+				);
+			} else {
+				this.logger.warn(
+					`[${device.deviceID}] No opening records found in morning window (5am-10am) for performance calculation`
+				);
+			}
+			
+			// Enhanced logging for closing times
+			if (closingDetails.length > 0) {
+				const acceptedCount = closingDetails.filter(d => d.accepted).length;
+				const rejectedCount = closingDetails.filter(d => !d.accepted).length;
+				const earlyClosings = closingDetails.filter(d => d.timeDiff < -TOLERANCE_MINUTES).length;
+				
+				this.logger.debug(
+					`[${device.deviceID}] Closing analysis: ${closesOnTimeCount}/${recordsWithCloseTime} on-time (${closesOnTimePercentage.toFixed(1)}%), ` +
+					`threshold=${closingThreshold}%, ` +
+					`closesOnTime=${closesOnTime}, ` +
+					`target=${targetCloseTimeMinutes}min (${Math.floor(targetCloseTimeMinutes / 60)}:${(targetCloseTimeMinutes % 60).toString().padStart(2, '0')}), ` +
+					`accepted=${acceptedCount}, rejected=${rejectedCount}, early=${earlyClosings}, ` +
+					`details=${JSON.stringify(closingDetails.slice(0, 5))}`
+				);
+			}
 
 			// Calculate composite score
 			// Use type assertion for extended analytics properties that may exist but aren't in the strict type
