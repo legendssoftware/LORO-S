@@ -996,12 +996,29 @@ export class IotService {
 			let opensOnTimeCount = 0;
 			let recordsWithOpenTime = dailyOpenings.size;
 
-			dailyOpenings.forEach(({ minutes: openMinutes }) => {
+			// Debug logging for opening times
+			const openingDetails: Array<{ date: string; time: string; minutes: number; timeDiff: number; accepted: boolean }> = [];
+
+			dailyOpenings.forEach((value, dateKey) => {
+				const { minutes: openMinutes } = value;
 				const timeDiff = openMinutes - targetOpenTimeMinutes;
 				// Accept if: early (timeDiff < 0) OR on-time/late (timeDiff <= 5 minutes)
-				if (timeDiff <= TOLERANCE_MINUTES) {
+				// This means: accept anything that's not more than 5 minutes late
+				const accepted = timeDiff <= TOLERANCE_MINUTES;
+				if (accepted) {
 					opensOnTimeCount++;
 				}
+				
+				// Store details for debugging
+				const hours = Math.floor(openMinutes / 60);
+				const mins = openMinutes % 60;
+				openingDetails.push({
+					date: dateKey,
+					time: `${hours}:${mins.toString().padStart(2, '0')}`,
+					minutes: openMinutes,
+					timeDiff,
+					accepted,
+				});
 			});
 
 			// Evaluate closing times using last closing per day
@@ -1024,11 +1041,24 @@ export class IotService {
 				? (closesOnTimeCount / recordsWithCloseTime) * 100
 				: 0;
 
+			// Log opening details for debugging
+			if (openingDetails.length > 0) {
+				this.logger.debug(
+					`[${device.deviceID}] Opening analysis: ${opensOnTimeCount}/${recordsWithOpenTime} on-time (${opensOnTimePercentage.toFixed(1)}%), ` +
+					`target=${targetOpenTimeMinutes}min (${Math.floor(targetOpenTimeMinutes / 60)}:${(targetOpenTimeMinutes % 60).toString().padStart(2, '0')}), ` +
+					`details=${JSON.stringify(openingDetails.slice(0, 5))}`
+				);
+			}
+
 			// Determine punctuality flags
-			// Using 70% threshold - now evaluating only morning openings (one per day)
-			// This gives a more accurate representation of daily opening punctuality
-			const opensOnTime = opensOnTimePercentage >= 70;
-			const closesOnTime = closesOnTimePercentage >= 70;
+			// For devices with few records (1-3 days), be more lenient - require only 50%
+			// For devices with more records, use 70% threshold
+			// This ensures devices with consistent early openings are marked correctly
+			const openingThreshold = recordsWithOpenTime <= 3 ? 50 : 70;
+			const closingThreshold = recordsWithCloseTime <= 3 ? 50 : 70;
+			
+			const opensOnTime = opensOnTimePercentage >= openingThreshold;
+			const closesOnTime = closesOnTimePercentage >= closingThreshold;
 
 			// Calculate composite score
 			// Use type assertion for extended analytics properties that may exist but aren't in the strict type
