@@ -903,22 +903,33 @@ export class IotService {
 		latestCloseTime: string | null;
 	}> {
 		try {
-			// Get organization hours
+			// Get organization hours - REQUIRED, no defaults
 			const orgRef = String(device.orgID);
 			const orgHoursArr = await this.organisationHoursService.findAll(orgRef).catch(() => []);
 			const orgHours = Array.isArray(orgHoursArr) && orgHoursArr.length > 0 ? orgHoursArr[0] : null;
 
-			// Default target times if no organization hours configured
-			let targetOpenTimeMinutes = 7.5 * 60; // 7:30 AM default
-			let targetCloseTimeMinutes = 17 * 60; // 5:00 PM default
-
-			if (orgHours) {
-				// Parse organization open/close times
-				const [openHour, openMinute] = (orgHours.openTime || '07:30').split(':').map(Number);
-				const [closeHour, closeMinute] = (orgHours.closeTime || '17:00').split(':').map(Number);
-				targetOpenTimeMinutes = openHour * 60 + openMinute;
-				targetCloseTimeMinutes = closeHour * 60 + closeMinute;
+			if (!orgHours) {
+				this.logger.warn(`No organization hours configured for org ${orgRef}, cannot calculate performance`);
+				return {
+					opensOnTime: false,
+					opensOnTimePercentage: 0,
+					closesOnTime: false,
+					closesOnTimePercentage: 0,
+					score: 1,
+					note: 'Organization hours not configured',
+					latestOpenTime: null,
+					latestCloseTime: null,
+				};
 			}
+
+			// Parse organization open/close times from entity
+			const [openHour, openMinute] = orgHours.openTime.split(':').map(Number);
+			const [closeHour, closeMinute] = orgHours.closeTime.split(':').map(Number);
+			const targetOpenTimeMinutes = openHour * 60 + openMinute;
+			const targetCloseTimeMinutes = closeHour * 60 + closeMinute;
+
+			// 5-minute tolerance constant
+			const TOLERANCE_MINUTES = 5;
 
 			// Get latest 10 records
 			const recordsToCheck = records.slice(0, 10);
@@ -930,10 +941,10 @@ export class IotService {
 			let recordsWithCloseTime = 0;
 
 			// Get organization timezone
-			const orgTimezone = orgHours?.timezone || TimezoneUtil.AFRICA_JOHANNESBURG;
+			const orgTimezone = orgHours.timezone || TimezoneUtil.AFRICA_JOHANNESBURG;
 
 			recordsToCheck.forEach((record) => {
-				// Check open time
+				// Check open time with 5-minute tolerance
 				if (record.openTime) {
 					recordsWithOpenTime++;
 					let openMinutes: number | null = null;
@@ -948,7 +959,8 @@ export class IotService {
 						const openDateOrg = TimezoneUtil.toOrganizationTime(openDate, orgTimezone);
 						openMinutes = openDateOrg.getHours() * 60 + openDateOrg.getMinutes();
 
-						if (openMinutes !== null && openMinutes <= targetOpenTimeMinutes) {
+						// On-time if within 5 minutes of target (before or after)
+						if (openMinutes !== null && Math.abs(openMinutes - targetOpenTimeMinutes) <= TOLERANCE_MINUTES) {
 							opensOnTimeCount++;
 						}
 					} catch (error) {
@@ -956,7 +968,7 @@ export class IotService {
 					}
 				}
 
-				// Check close time
+				// Check close time with 5-minute tolerance
 				if (record.closeTime) {
 					recordsWithCloseTime++;
 					let closeMinutes: number | null = null;
@@ -970,7 +982,8 @@ export class IotService {
 						const closeDateOrg = TimezoneUtil.toOrganizationTime(closeDate, orgTimezone);
 						closeMinutes = closeDateOrg.getHours() * 60 + closeDateOrg.getMinutes();
 
-						if (closeMinutes !== null && closeMinutes >= targetCloseTimeMinutes) {
+						// On-time if within 5 minutes of target (before or after)
+						if (closeMinutes !== null && Math.abs(closeMinutes - targetCloseTimeMinutes) <= TOLERANCE_MINUTES) {
 							closesOnTimeCount++;
 						}
 					} catch (error) {
@@ -2077,11 +2090,13 @@ export class IotService {
 
 				minutesFromSchedule = eventTimeMinutes - openTimeMinutes;
 
-				if (minutesFromSchedule > 15) {
-					// More than 15 minutes late
+				// 5-minute tolerance
+				const TOLERANCE_MINUTES = 5;
+				if (minutesFromSchedule > TOLERANCE_MINUTES) {
+					// More than 5 minutes late
 					attendanceStatus = 'LATE';
-				} else if (minutesFromSchedule < -30) {
-					// More than 30 minutes early
+				} else if (minutesFromSchedule < -TOLERANCE_MINUTES) {
+					// More than 5 minutes early
 					attendanceStatus = 'EARLY';
 				} else {
 					attendanceStatus = 'ON_TIME';

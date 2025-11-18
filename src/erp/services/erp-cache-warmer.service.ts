@@ -6,8 +6,13 @@ import { ErpQueryFilters } from '../interfaces/erp-data.interface';
 /**
  * ERP Cache Warmer Service
  * 
- * Pre-caches common date ranges (Today, Last 7 Days, Last 30 Days)
+ * Pre-caches common date ranges (Today, Last 7 Days, Last 30 Days, Today to 1 Month Back)
  * using parallel query execution for optimal performance.
+ * 
+ * Strategy:
+ * - Cache TTL: 10 minutes (reduced from 4 hours for faster updates)
+ * - Today's data refreshed every 5 minutes
+ * - Full cache warming every 10 minutes
  */
 @Injectable()
 export class ErpCacheWarmerService implements OnModuleInit {
@@ -34,9 +39,12 @@ export class ErpCacheWarmerService implements OnModuleInit {
 
 	async onModuleInit() {
 		this.logger.log('ERP Cache Warmer: Initializing...');
+		this.logger.log('📅 Cache warming strategy: Today to 1 month back');
+		this.logger.log('⏱️  Today refresh interval: Every 5 minutes');
+		this.logger.log('⏱️  Full cache warm interval: Every 10 minutes');
 		setTimeout(() => {
 			this.warmCommonDateRanges().catch((error) => {
-				this.logger.error(`Cache warming failed: ${error.message}`);
+				this.logger.error(`Initial cache warming failed: ${error.message}`);
 			});
 		}, 5000);
 		this.startIntervalCacheWarming();
@@ -52,14 +60,45 @@ export class ErpCacheWarmerService implements OnModuleInit {
 	}
 
 	private startIntervalCacheWarming() {
-		const intervalMs = 5 * 60 * 1000; // 5 minutes (increased from 2.5)
+		// Refresh today's data every 5 minutes
+		const todayRefreshIntervalMs = 5 * 60 * 1000; // 5 minutes
+		setInterval(async () => {
+			try {
+				await this.refreshTodayData();
+			} catch (error) {
+				this.logger.error(`Today's data refresh failed: ${error.message}`);
+			}
+		}, todayRefreshIntervalMs);
+
+		// Full cache warming every 10 minutes (matches cache TTL)
+		const fullWarmIntervalMs = 10 * 60 * 1000; // 10 minutes
 		setInterval(async () => {
 			try {
 				await this.warmCommonDateRanges();
 			} catch (error) {
 				this.logger.error(`Interval cache warming failed: ${error.message}`);
 			}
-		}, intervalMs);
+		}, fullWarmIntervalMs);
+	}
+
+	/**
+	 * Refresh only today's data (faster than full cache warming)
+	 * Called every 5 minutes to keep today's numbers fresh
+	 */
+	private async refreshTodayData(): Promise<void> {
+		const today = this.formatDate(new Date());
+		const filters: ErpQueryFilters = { startDate: today, endDate: today };
+		const startTime = Date.now();
+
+		try {
+			this.logger.log(`🔄 Refreshing today's data (${today})...`);
+			await this.warmAllChartData(filters);
+			const duration = Date.now() - startTime;
+			this.logger.log(`✅ Today's data refreshed in ${(duration / 1000).toFixed(1)}s`);
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.warn(`❌ Today's data refresh failed (${(duration / 1000).toFixed(1)}s): ${error.message}`);
+		}
 	}
 
 	async warmCommonDateRanges(): Promise<void> {
@@ -131,7 +170,7 @@ export class ErpCacheWarmerService implements OnModuleInit {
 	}
 
 	/**
-	 * Get common date ranges for caching: Today, Last 7 Days, Last 30 Days
+	 * Get common date ranges for caching: Today, Last 7 Days, Last 30 Days, Today to 1 Month Back
 	 */
 	private getCommonDateRanges(referenceDate: Date): Array<{
 		label: string;
@@ -163,6 +202,15 @@ export class ErpCacheWarmerService implements OnModuleInit {
 		ranges.push({
 			label: 'Last 30 Days',
 			startDate: this.formatDate(last30Days),
+			endDate: today,
+		});
+
+		// Today to 1 month back (for initial cache warming)
+		const oneMonthBack = new Date(referenceDate);
+		oneMonthBack.setMonth(oneMonthBack.getMonth() - 1);
+		ranges.push({
+			label: 'Today to 1 Month Back',
+			startDate: this.formatDate(oneMonthBack),
 			endDate: today,
 		});
 

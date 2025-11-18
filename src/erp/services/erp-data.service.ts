@@ -48,9 +48,10 @@ import { getBranchName } from '../config/category-mapping.config';
  *    - Connection pool monitoring
  * 
  * 4. **Aggressive Caching Strategy**
- *    - 4-hour TTL for all queries
+ *    - 10-minute TTL for all queries (reduced from 4 hours for faster updates)
  *    - Cache-first approach reduces database load
  *    - Individual cache keys for different query combinations
+ *    - Today's data refreshed every 5 minutes for real-time accuracy
  * 
  * 5. **Extended Timeouts for Remote Servers**
  *    - 90 seconds for headers queries
@@ -80,7 +81,7 @@ import { getBranchName } from '../config/category-mapping.config';
 @Injectable()
 export class ErpDataService implements OnModuleInit {
 	private readonly logger = new Logger(ErpDataService.name);
-	private readonly CACHE_TTL = 14400; // 4 hours in seconds (increased from 1 hour)
+	private readonly CACHE_TTL = 600; // 10 minutes in seconds (reduced from 4 hours for faster updates)
 	
 	// ✅ Circuit Breaker State (More resilient for remote servers)
 	private circuitBreakerState: 'CLOSED' | 'OPEN' | 'HALF_OPEN' = 'CLOSED';
@@ -146,7 +147,7 @@ export class ErpDataService implements OnModuleInit {
 			this.logger.log(`[${operationId}]   Database: ${database || 'NOT SET'}`);
 			this.logger.log(`[${operationId}]   User: ${user || 'NOT SET'}`);
 			this.logger.log(`[${operationId}]   Connection Pool Size: ${connectionLimit}`);
-			this.logger.log(`[${operationId}]   Cache TTL: ${this.CACHE_TTL}s`);
+			this.logger.log(`[${operationId}]   Cache TTL: ${this.CACHE_TTL}s (10 minutes)`);
 			this.logger.log(`[${operationId}]   Query Timeout: 120s (default, adaptive)`);
 			this.logger.log(`[${operationId}]   Max Retries: Network=${this.MAX_RETRIES_NETWORK}, SQL=${this.MAX_RETRIES_SQL}, Default=${this.MAX_RETRIES_DEFAULT}`);
 			this.logger.log(`[${operationId}]   Circuit Breaker Threshold: ${this.FAILURE_THRESHOLD} failures`);
@@ -724,7 +725,7 @@ export class ErpDataService implements OnModuleInit {
 		
 		this.logger.log(`[${operationId}] Pre-grouped ${headers.length} headers into ${grouped.size} categories`);
 		
-		// Cache grouped data (4 hour TTL)
+		// Cache grouped data (10 minute TTL)
 		await this.cacheManager.set(baseCacheKey, grouped, this.CACHE_TTL);
 		
 		return grouped;
@@ -809,7 +810,7 @@ export class ErpDataService implements OnModuleInit {
 		
 		this.logger.log(`[${operationId}] Pre-grouped ${lines.length} lines into ${grouped.size} categories`);
 		
-		// Cache grouped data (4 hour TTL)
+		// Cache grouped data (10 minute TTL)
 		await this.cacheManager.set(baseCacheKey, grouped, this.CACHE_TTL);
 		
 		return grouped;
@@ -3599,7 +3600,7 @@ export class ErpDataService implements OnModuleInit {
 
 			const name = salesman?.Description || salesCode;
 			
-			// Cache the result (4-hour TTL like other ERP queries)
+			// Cache the result (10-minute TTL like other ERP queries)
 			await this.cacheManager.set(cacheKey, name, this.CACHE_TTL);
 			
 			return name;

@@ -1,11 +1,10 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between, MoreThan, LessThan, In } from 'typeorm';
-import { ConfigService } from '@nestjs/config';
+import { Repository, Between, In } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 
 import { Device, DeviceRecords } from '../entities/iot.entity';
-import { DeviceStatus, DeviceType } from '../../lib/enums/iot';
+import { DeviceStatus } from '../../lib/enums/iot';
 import {
 	DeviceMonitoringReport,
 	DeviceReportSummary,
@@ -18,6 +17,7 @@ import {
 	DeviceWorkingHours,
 } from '../../lib/interfaces/iot.interface';
 import { DeviceReportOptions, IoTServiceResponse } from '../../lib/types/iot.types';
+import { OrganisationHoursService } from '../../organisation/services/organisation-hours.service';
 
 /**
  * IoT Device Reporting Service
@@ -34,8 +34,8 @@ export class IoTReportingService {
 		private readonly deviceRepository: Repository<Device>,
 		@InjectRepository(DeviceRecords)
 		private readonly deviceRecordsRepository: Repository<DeviceRecords>,
-		private readonly configService: ConfigService,
 		private readonly eventEmitter: EventEmitter2,
+		private readonly organisationHoursService: OrganisationHoursService,
 	) {}
 
 	/**
@@ -72,7 +72,7 @@ export class IoTReportingService {
 			// Generate report sections
 			const summary = await this.generateMorningSummary(devices, todayRecords);
 			const deviceBreakdown = await this.generateDeviceBreakdown(devices, todayRecords, 'morning');
-			const alerts = this.generateMorningAlerts(devices, todayRecords);
+			const alerts = await this.generateMorningAlerts(devices, todayRecords);
 			const insights = this.generateMorningInsights(devices, todayRecords);
 			const recommendations = this.generateMorningRecommendations(devices, todayRecords, summary);
 
@@ -147,7 +147,7 @@ export class IoTReportingService {
 
 			const summary = await this.generateEveningSummary(devices, todayRecords);
 			const deviceBreakdown = await this.generateDeviceBreakdown(devices, todayRecords, 'evening');
-			const alerts = this.generateEveningAlerts(devices, todayRecords);
+			const alerts = await this.generateEveningAlerts(devices, todayRecords);
 			const insights = this.generateEveningInsights(devices, todayRecords);
 			const recommendations = this.generateEveningRecommendations(devices, todayRecords, summary);
 
@@ -220,9 +220,23 @@ export class IoTReportingService {
 				order: { createdAt: 'ASC' },
 			});
 
-			// Expected times (can be configurable per device)
-			const expectedOpenTime = 8 * 3600; // 8:00 AM in seconds
-			const expectedCloseTime = 17 * 3600; // 5:00 PM in seconds
+			// Get organization hours
+			const orgRef = String(device.orgID);
+			const orgHoursArr = await this.organisationHoursService.findAll(orgRef).catch(() => []);
+			const orgHours = Array.isArray(orgHoursArr) && orgHoursArr.length > 0 ? orgHoursArr[0] : null;
+
+			if (!orgHours) {
+				throw new NotFoundException(`Organization hours not configured for device ${deviceId}`);
+			}
+
+			// Parse organization open/close times
+			const [openHour, openMinute] = orgHours.openTime.split(':').map(Number);
+			const [closeHour, closeMinute] = orgHours.closeTime.split(':').map(Number);
+			const expectedOpenTime = (openHour * 60 + openMinute) * 60; // Convert to seconds
+			const expectedCloseTime = (closeHour * 60 + closeMinute) * 60; // Convert to seconds
+
+			// 5-minute tolerance
+			const TOLERANCE_SECONDS = 5 * 60;
 
 			let onTimeOpenings = 0;
 			let lateOpenings = 0;
@@ -238,8 +252,8 @@ export class IoTReportingService {
 					const openDate = new Date(record.openTime as unknown as Date);
 					const actualOpenTime = openDate.getHours() * 3600 + openDate.getMinutes() * 60;
 
-					if (actualOpenTime <= expectedOpenTime + 15 * 60) {
-						// 15 minutes tolerance
+					if (Math.abs(actualOpenTime - expectedOpenTime) <= TOLERANCE_SECONDS) {
+						// Within 5 minutes tolerance
 						onTimeOpenings++;
 					} else {
 						lateOpenings++;
@@ -250,8 +264,8 @@ export class IoTReportingService {
 					const closeDate = new Date(record.closeTime as unknown as Date);
 					const actualCloseTime = closeDate.getHours() * 3600 + closeDate.getMinutes() * 60;
 
-					if (actualCloseTime >= expectedCloseTime - 15 * 60) {
-						// 15 minutes tolerance
+					if (Math.abs(actualCloseTime - expectedCloseTime) <= TOLERANCE_SECONDS) {
+						// Within 5 minutes tolerance
 						onTimeClosings++;
 					} else {
 						earlyClosings++;
@@ -352,12 +366,18 @@ export class IoTReportingService {
 		const offlineDevices = totalDevices - onlineDevices;
 
 		const todayOpenEvents = records.filter((r) => r.openTime).length;
-		const expectedOpenTime = 8 * 3600; // 8:00 AM
+		// Use organization hours if available, otherwise default
+		const orgRef = devices[0]?.orgID ? String(devices[0].orgID) : null;
+		const orgHoursArr = orgRef ? await this.organisationHoursService.findAll(orgRef).catch(() => []) : [];
+		const orgHours = Array.isArray(orgHoursArr) && orgHoursArr.length > 0 ? orgHoursArr[0] : null;
+		const [openHour, openMinute] = orgHours?.openTime ? orgHours.openTime.split(':').map(Number) : [8, 0];
+		const expectedOpenTime = (openHour * 60 + openMinute) * 60;
+		const TOLERANCE_SECONDS = 5 * 60;
 		const lateOpenings = records.filter((r) => {
 			if (!r.openTime) return false;
 			const openDate = new Date(r.openTime as unknown as Date);
 			const actualOpen = openDate.getHours() * 3600 + openDate.getMinutes() * 60;
-			return actualOpen > expectedOpenTime + 15 * 60; // 15 min tolerance
+			return Math.abs(actualOpen - expectedOpenTime) > TOLERANCE_SECONDS && actualOpen > expectedOpenTime;
 		}).length;
 
 		const punctualityRate = todayOpenEvents > 0 ? ((todayOpenEvents - lateOpenings) / todayOpenEvents) * 100 : 0;
@@ -386,12 +406,18 @@ export class IoTReportingService {
 		const offlineDevices = totalDevices - onlineDevices;
 
 		const todayCloseEvents = records.filter((r) => r.closeTime).length;
-		const expectedCloseTime = 17 * 3600; // 5:00 PM
+		// Use organization hours if available, otherwise default
+		const orgRef = devices[0]?.orgID ? String(devices[0].orgID) : null;
+		const orgHoursArr = orgRef ? await this.organisationHoursService.findAll(orgRef).catch(() => []) : [];
+		const orgHours = Array.isArray(orgHoursArr) && orgHoursArr.length > 0 ? orgHoursArr[0] : null;
+		const [closeHour, closeMinute] = orgHours?.closeTime ? orgHours.closeTime.split(':').map(Number) : [17, 0];
+		const expectedCloseTime = (closeHour * 60 + closeMinute) * 60;
+		const TOLERANCE_SECONDS = 5 * 60;
 		const earlyClosings = records.filter((r) => {
 			if (!r.closeTime) return false;
 			const closeDate = new Date(r.closeTime as unknown as Date);
 			const actualClose = closeDate.getHours() * 3600 + closeDate.getMinutes() * 60;
-			return actualClose < expectedCloseTime - 15 * 60; // 15 min tolerance
+			return Math.abs(actualClose - expectedCloseTime) > TOLERANCE_SECONDS && actualClose < expectedCloseTime;
 		}).length;
 
 		const totalWorkingHours = records.reduce((total, record) => {
@@ -443,6 +469,11 @@ export class IoTReportingService {
 		for (const [branchId, branchDevices] of Object.entries(branchGroups)) {
 			const branchRecords = records.filter((r) => branchDevices.some((d) => d.id === r.deviceId));
 
+			// Get organization hours for this branch (all devices in branch share same org)
+			const orgRef = branchDevices[0]?.orgID ? String(branchDevices[0].orgID) : null;
+			const orgHoursArr = orgRef ? await this.organisationHoursService.findAll(orgRef).catch(() => []) : [];
+			const orgHours = Array.isArray(orgHoursArr) && orgHoursArr.length > 0 ? orgHoursArr[0] : null;
+
 			const deviceReportDevices: DeviceReportDevice[] = branchDevices.map((device) => {
 				const deviceRecords = branchRecords.filter((r) => r.deviceId === device.id);
 				const latestRecord = deviceRecords.sort(
@@ -473,8 +504,8 @@ export class IoTReportingService {
 					todayCloseTime: todayRecord?.closeTime
 						? (todayRecord.closeTime as unknown as Date).toISOString()
 						: undefined,
-					isLateOpening: this.checkLateOpening(todayRecord?.openTime as unknown as Date | undefined),
-					isEarlyClosing: this.checkEarlyClosing(todayRecord?.closeTime as unknown as Date | undefined),
+					isLateOpening: this.checkLateOpening(todayRecord?.openTime as unknown as Date | undefined, orgHours),
+					isEarlyClosing: this.checkEarlyClosing(todayRecord?.closeTime as unknown as Date | undefined, orgHours),
 					lateMinutes: this.calculateLateMinutes(todayRecord?.openTime as unknown as Date | undefined),
 					efficiency: this.calculateDeviceEfficiency(device),
 					uptime: device.currentStatus === DeviceStatus.ONLINE ? 100 : 0,
@@ -501,7 +532,7 @@ export class IoTReportingService {
 		return breakdown;
 	}
 
-	private generateMorningAlerts(devices: Device[], records: DeviceRecords[]): DeviceAlerts {
+	private async generateMorningAlerts(devices: Device[], records: DeviceRecords[]): Promise<DeviceAlerts> {
 		const alerts: DeviceAlerts = {
 			critical: [],
 			warning: [],
@@ -525,7 +556,11 @@ export class IoTReportingService {
 			alerts.warning.push(`${maintenanceDevices.length} device(s) are in maintenance mode`);
 		}
 
-		const lateDevices = records.filter((r) => this.checkLateOpening(r.openTime));
+		// Get org hours for late opening check
+		const orgRef = devices[0]?.orgID ? String(devices[0].orgID) : null;
+		const orgHoursArr = orgRef ? await this.organisationHoursService.findAll(orgRef).catch(() => []) : [];
+		const orgHours = Array.isArray(orgHoursArr) && orgHoursArr.length > 0 ? orgHoursArr[0] : null;
+		const lateDevices = records.filter((r) => this.checkLateOpening(r.openTime, orgHours));
 		if (lateDevices.length > 0) {
 			alerts.warning.push(`${lateDevices.length} device(s) opened late this morning`);
 		}
@@ -540,7 +575,7 @@ export class IoTReportingService {
 		return alerts;
 	}
 
-	private generateEveningAlerts(devices: Device[], records: DeviceRecords[]): DeviceAlerts {
+	private async generateEveningAlerts(devices: Device[], records: DeviceRecords[]): Promise<DeviceAlerts> {
 		const alerts: DeviceAlerts = {
 			critical: [],
 			warning: [],
@@ -553,8 +588,11 @@ export class IoTReportingService {
 			alerts.critical.push(`${offlineDevices.length} device(s) went offline during the day`);
 		}
 
-		// Warning alerts
-		const earlyClosedDevices = records.filter((r) => this.checkEarlyClosing(r.closeTime));
+		// Warning alerts - get org hours for early closing check
+		const orgRef = devices[0]?.orgID ? String(devices[0].orgID) : null;
+		const orgHoursArr = orgRef ? await this.organisationHoursService.findAll(orgRef).catch(() => []) : [];
+		const orgHours = Array.isArray(orgHoursArr) && orgHoursArr.length > 0 ? orgHoursArr[0] : null;
+		const earlyClosedDevices = records.filter((r) => this.checkEarlyClosing(r.closeTime, orgHours));
 		if (earlyClosedDevices.length > 0) {
 			alerts.warning.push(`${earlyClosedDevices.length} device(s) closed early today`);
 		}
@@ -689,20 +727,24 @@ export class IoTReportingService {
 
 	// Helper methods for calculations
 
-	private checkLateOpening(openTime?: Date): boolean {
+	private checkLateOpening(openTime?: Date, orgHours?: any): boolean {
 		if (!openTime) return false;
-		const expectedOpenTime = 8 * 3600; // 8:00 AM
+		const [openHour, openMinute] = orgHours?.openTime ? orgHours.openTime.split(':').map(Number) : [8, 0];
+		const expectedOpenTime = (openHour * 60 + openMinute) * 60;
 		const openDate = new Date(openTime);
 		const actualOpenTime = openDate.getHours() * 3600 + openDate.getMinutes() * 60;
-		return actualOpenTime > expectedOpenTime + 15 * 60; // 15 minutes tolerance
+		const TOLERANCE_SECONDS = 5 * 60;
+		return Math.abs(actualOpenTime - expectedOpenTime) > TOLERANCE_SECONDS && actualOpenTime > expectedOpenTime;
 	}
 
-	private checkEarlyClosing(closeTime?: Date): boolean {
+	private checkEarlyClosing(closeTime?: Date, orgHours?: any): boolean {
 		if (!closeTime) return false;
-		const expectedCloseTime = 17 * 3600; // 5:00 PM
+		const [closeHour, closeMinute] = orgHours?.closeTime ? orgHours.closeTime.split(':').map(Number) : [17, 0];
+		const expectedCloseTime = (closeHour * 60 + closeMinute) * 60;
 		const closeDate = new Date(closeTime);
 		const actualCloseTime = closeDate.getHours() * 3600 + closeDate.getMinutes() * 60;
-		return actualCloseTime < expectedCloseTime - 15 * 60; // 15 minutes tolerance
+		const TOLERANCE_SECONDS = 5 * 60;
+		return Math.abs(actualCloseTime - expectedCloseTime) > TOLERANCE_SECONDS && actualCloseTime < expectedCloseTime;
 	}
 
 	private calculateLateMinutes(openTime?: Date): number | undefined {
