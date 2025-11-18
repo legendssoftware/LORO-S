@@ -934,42 +934,36 @@ export class IotService {
 			// Get latest 30 records for better representation (increased from 10)
 			const recordsToCheck = records.slice(0, 30);
 
-			// Track records with time data
-			let opensOnTimeCount = 0;
-			let closesOnTimeCount = 0;
-			let recordsWithOpenTime = 0;
-			let recordsWithCloseTime = 0;
-
 			// Get organization timezone
 			const orgTimezone = orgHours.timezone || TimezoneUtil.AFRICA_JOHANNESBURG;
 
-			recordsToCheck.forEach((record) => {
-				// Check open time - early openings are acceptable, only late openings are penalized
-				if (record.openTime) {
-					recordsWithOpenTime++;
-					let openMinutes: number | null = null;
+			// Morning opening window: 5:00am to 10:00am (300 to 600 minutes)
+			// Only evaluate morning openings for "opens on time" metric
+			const MORNING_OPENING_START = 5 * 60; // 5:00am
+			const MORNING_OPENING_END = 10 * 60; // 10:00am
 
-					// Convert to organization timezone and extract minutes
+			// Group records by date and extract first opening and last closing per day
+			const dailyOpenings = new Map<string, { time: Date; minutes: number }>();
+			const dailyClosings = new Map<string, { time: Date; minutes: number }>();
+
+			recordsToCheck.forEach((record) => {
+				// Process opening times - only consider morning openings (5am-10am)
+				if (record.openTime) {
 					try {
 						const openDate = typeof record.openTime === 'string'
 							? new Date(record.openTime)
 							: (record.openTime as unknown as Date);
 						
-						// Convert to organization timezone
 						const openDateOrg = TimezoneUtil.toOrganizationTime(openDate, orgTimezone);
-						openMinutes = openDateOrg.getHours() * 60 + openDateOrg.getMinutes();
-
-						// On-time if:
-						// 1. Opens early (ANY time before target) - early openings are always acceptable
-						// 2. Opens on time (within TOLERANCE_MINUTES of target)
-						// 3. Opens slightly late (within TOLERANCE_MINUTES after target)
-						// Only penalize if opens more than TOLERANCE_MINUTES late
-						if (openMinutes !== null) {
-							const timeDiff = openMinutes - targetOpenTimeMinutes;
-							// Accept if: early (timeDiff < 0) OR on-time/late (timeDiff <= 5 minutes)
-							// This means: accept anything that's not more than 5 minutes late
-							if (timeDiff <= TOLERANCE_MINUTES) {
-								opensOnTimeCount++;
+						const openMinutes = openDateOrg.getHours() * 60 + openDateOrg.getMinutes();
+						
+						// Only consider morning openings (5am-10am) for opening time calculation
+						if (openMinutes >= MORNING_OPENING_START && openMinutes <= MORNING_OPENING_END) {
+							const dateKey = openDateOrg.toISOString().split('T')[0]; // YYYY-MM-DD
+							
+							// Keep only the earliest opening for each day
+							if (!dailyOpenings.has(dateKey) || openMinutes < dailyOpenings.get(dateKey)!.minutes) {
+								dailyOpenings.set(dateKey, { time: openDateOrg, minutes: openMinutes });
 							}
 						}
 					} catch (error) {
@@ -977,34 +971,48 @@ export class IotService {
 					}
 				}
 
-				// Check close time - early closings are penalized, on-time or slightly late is acceptable
+				// Process closing times - use last closing of each day
 				if (record.closeTime) {
-					recordsWithCloseTime++;
-					let closeMinutes: number | null = null;
-
 					try {
 						const closeDate = typeof record.closeTime === 'string'
 							? new Date(record.closeTime)
 							: (record.closeTime as unknown as Date);
 						
-						// Convert to organization timezone
 						const closeDateOrg = TimezoneUtil.toOrganizationTime(closeDate, orgTimezone);
-						closeMinutes = closeDateOrg.getHours() * 60 + closeDateOrg.getMinutes();
-
-						// On-time if:
-						// 1. Closes on time (within TOLERANCE_MINUTES of target)
-						// 2. Closes late (any time after target is acceptable)
-						// Penalize if closes more than TOLERANCE_MINUTES early
-						if (closeMinutes !== null) {
-							const timeDiff = closeMinutes - targetCloseTimeMinutes;
-							// Accept if: closes on-time or late (timeDiff >= -5 means not more than 5 min early)
-							if (timeDiff >= -TOLERANCE_MINUTES) {
-								closesOnTimeCount++;
-							}
+						const closeMinutes = closeDateOrg.getHours() * 60 + closeDateOrg.getMinutes();
+						const dateKey = closeDateOrg.toISOString().split('T')[0]; // YYYY-MM-DD
+						
+						// Keep only the latest closing for each day
+						if (!dailyClosings.has(dateKey) || closeMinutes > dailyClosings.get(dateKey)!.minutes) {
+							dailyClosings.set(dateKey, { time: closeDateOrg, minutes: closeMinutes });
 						}
 					} catch (error) {
 						this.logger.warn(`Failed to parse close time for device ${device.deviceID}: ${error.message}`);
 					}
+				}
+			});
+
+			// Evaluate opening times using first opening per day
+			let opensOnTimeCount = 0;
+			let recordsWithOpenTime = dailyOpenings.size;
+
+			dailyOpenings.forEach(({ minutes: openMinutes }) => {
+				const timeDiff = openMinutes - targetOpenTimeMinutes;
+				// Accept if: early (timeDiff < 0) OR on-time/late (timeDiff <= 5 minutes)
+				if (timeDiff <= TOLERANCE_MINUTES) {
+					opensOnTimeCount++;
+				}
+			});
+
+			// Evaluate closing times using last closing per day
+			let closesOnTimeCount = 0;
+			let recordsWithCloseTime = dailyClosings.size;
+
+			dailyClosings.forEach(({ minutes: closeMinutes }) => {
+				const timeDiff = closeMinutes - targetCloseTimeMinutes;
+				// Accept if: closes on-time or late (timeDiff >= -5 means not more than 5 min early)
+				if (timeDiff >= -TOLERANCE_MINUTES) {
+					closesOnTimeCount++;
 				}
 			});
 
@@ -1017,8 +1025,8 @@ export class IotService {
 				: 0;
 
 			// Determine punctuality flags
-			// Lowered threshold to 70% to account for the more lenient early-opening logic
-			// Devices that consistently open early (which is acceptable) should still pass
+			// Using 70% threshold - now evaluating only morning openings (one per day)
+			// This gives a more accurate representation of daily opening punctuality
 			const opensOnTime = opensOnTimePercentage >= 70;
 			const closesOnTime = closesOnTimePercentage >= 70;
 

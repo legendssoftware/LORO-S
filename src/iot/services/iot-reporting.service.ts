@@ -245,40 +245,67 @@ export class IoTReportingService {
 			let totalEvents = 0;
 			let totalUptime = 0;
 
+			// Morning opening window: 5:00am to 10:00am
+			// Only evaluate morning openings for opening time calculation
+			const MORNING_OPENING_START_SECONDS = 5 * 3600; // 5:00am
+			const MORNING_OPENING_END_SECONDS = 10 * 3600; // 10:00am
+
+			// Group records by date and extract first opening and last closing per day
+			const dailyOpenings = new Map<string, number>();
+			const dailyClosings = new Map<string, number>();
+
 			for (const record of records) {
 				totalEvents++;
 
 				if (record.openTime) {
 					const openDate = new Date(record.openTime as unknown as Date);
 					const actualOpenTime = openDate.getHours() * 3600 + openDate.getMinutes() * 60;
-					const timeDiff = actualOpenTime - expectedOpenTime;
-
-					// Accept if: early (any time before target) OR on-time/late (within 5 minutes)
-					// Only penalize if opens more than 5 minutes late
-					if (timeDiff <= TOLERANCE_SECONDS) {
-						// On-time, slightly late (within 5 min), or early (any time before target)
-						onTimeOpenings++;
-					} else {
-						// More than 5 minutes late
-						lateOpenings++;
+					
+					// Only consider morning openings (5am-10am) for opening time calculation
+					if (actualOpenTime >= MORNING_OPENING_START_SECONDS && actualOpenTime <= MORNING_OPENING_END_SECONDS) {
+						const dateKey = openDate.toISOString().split('T')[0]; // YYYY-MM-DD
+						
+						// Keep only the earliest opening for each day
+						if (!dailyOpenings.has(dateKey) || actualOpenTime < dailyOpenings.get(dateKey)!) {
+							dailyOpenings.set(dateKey, actualOpenTime);
+						}
 					}
 				}
 
 				if (record.closeTime) {
 					const closeDate = new Date(record.closeTime as unknown as Date);
 					const actualCloseTime = closeDate.getHours() * 3600 + closeDate.getMinutes() * 60;
-					const timeDiff = actualCloseTime - expectedCloseTime;
-
-					// Accept if: closes on-time or late (not more than 5 min early)
-					// Penalize if closes more than 5 minutes early
-					if (timeDiff >= -TOLERANCE_SECONDS) {
-						onTimeClosings++;
-					} else {
-						earlyClosings++;
+					const dateKey = closeDate.toISOString().split('T')[0]; // YYYY-MM-DD
+					
+					// Keep only the latest closing for each day
+					if (!dailyClosings.has(dateKey) || actualCloseTime > dailyClosings.get(dateKey)!) {
+						dailyClosings.set(dateKey, actualCloseTime);
 					}
 				}
+			}
 
-				// Calculate uptime for this record
+			// Evaluate opening times using first opening per day
+			dailyOpenings.forEach((actualOpenTime) => {
+				const timeDiff = actualOpenTime - expectedOpenTime;
+				if (timeDiff <= TOLERANCE_SECONDS) {
+					onTimeOpenings++;
+				} else {
+					lateOpenings++;
+				}
+			});
+
+			// Evaluate closing times using last closing per day
+			dailyClosings.forEach((actualCloseTime) => {
+				const timeDiff = actualCloseTime - expectedCloseTime;
+				if (timeDiff >= -TOLERANCE_SECONDS) {
+					onTimeClosings++;
+				} else {
+					earlyClosings++;
+				}
+			});
+
+			// Calculate uptime using all records (not just daily summaries)
+			for (const record of records) {
 				if (record.openTime && record.closeTime) {
 					const openMs = (record.openTime as unknown as Date).getTime();
 					const closeMs = (record.closeTime as unknown as Date).getTime();
@@ -286,8 +313,10 @@ export class IoTReportingService {
 				}
 			}
 
-			const openTimePunctuality = totalEvents > 0 ? (onTimeOpenings / totalEvents) * 100 : 0;
-			const closeTimePunctuality = totalEvents > 0 ? (onTimeClosings / totalEvents) * 100 : 0;
+			const totalDaysWithOpenings = dailyOpenings.size;
+			const totalDaysWithClosings = dailyClosings.size;
+			const openTimePunctuality = totalDaysWithOpenings > 0 ? (onTimeOpenings / totalDaysWithOpenings) * 100 : 0;
+			const closeTimePunctuality = totalDaysWithClosings > 0 ? (onTimeClosings / totalDaysWithClosings) * 100 : 0;
 			const uptimePercentage = totalEvents > 0 ? (totalUptime / (totalEvents * 9 * 3600)) * 100 : 0; // Assuming 9-hour days
 			const efficiencyScore = (openTimePunctuality + closeTimePunctuality + uptimePercentage) / 3;
 			const reliabilityScore = ((totalEvents - lateOpenings - earlyClosings) / Math.max(totalEvents, 1)) * 100;
