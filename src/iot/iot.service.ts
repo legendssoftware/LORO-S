@@ -1002,8 +1002,14 @@ export class IotService {
 			dailyOpenings.forEach((value, dateKey) => {
 				const { minutes: openMinutes } = value;
 				const timeDiff = openMinutes - targetOpenTimeMinutes;
-				// Accept if: early (timeDiff < 0) OR on-time/late (timeDiff <= 5 minutes)
-				// This means: accept anything that's not more than 5 minutes late
+				// Accept if: opens early (timeDiff < 0) OR on-time/slightly late (0 <= timeDiff <= 5)
+				// Reject if: opens more than 5 minutes late (timeDiff > 5)
+				// Since we're filtering to morning window (5am-10am), early openings are acceptable
+				// Condition: timeDiff <= 5 means:
+				//   - timeDiff = -33 (33 min early) → -33 <= 5 → TRUE → ACCEPTED ✓
+				//   - timeDiff = 0 (on time) → 0 <= 5 → TRUE → ACCEPTED ✓
+				//   - timeDiff = 5 (5 min late) → 5 <= 5 → TRUE → ACCEPTED ✓
+				//   - timeDiff = 6 (6 min late) → 6 <= 5 → FALSE → REJECTED ✓
 				const accepted = timeDiff <= TOLERANCE_MINUTES;
 				if (accepted) {
 					opensOnTimeCount++;
