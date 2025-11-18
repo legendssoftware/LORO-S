@@ -930,8 +930,6 @@ export class IotService {
 
 			// 5-minute tolerance constant for late openings/closings
 			const TOLERANCE_MINUTES = 5;
-			// Extended tolerance for early openings (devices can open early, that's acceptable)
-			const EARLY_OPENING_TOLERANCE_MINUTES = 60; // Allow up to 1 hour early
 
 			// Get latest 30 records for better representation (increased from 10)
 			const recordsToCheck = records.slice(0, 30);
@@ -962,14 +960,15 @@ export class IotService {
 						openMinutes = openDateOrg.getHours() * 60 + openDateOrg.getMinutes();
 
 						// On-time if:
-						// 1. Opens early (before target time) - up to EARLY_OPENING_TOLERANCE_MINUTES early is acceptable
+						// 1. Opens early (ANY time before target) - early openings are always acceptable
 						// 2. Opens on time (within TOLERANCE_MINUTES of target)
 						// 3. Opens slightly late (within TOLERANCE_MINUTES after target)
 						// Only penalize if opens more than TOLERANCE_MINUTES late
 						if (openMinutes !== null) {
 							const timeDiff = openMinutes - targetOpenTimeMinutes;
-							// Accept if: early (up to 1 hour) OR on-time/late (within 5 minutes)
-							if (timeDiff <= TOLERANCE_MINUTES && timeDiff >= -EARLY_OPENING_TOLERANCE_MINUTES) {
+							// Accept if: early (timeDiff < 0) OR on-time/late (timeDiff <= 5 minutes)
+							// This means: accept anything that's not more than 5 minutes late
+							if (timeDiff <= TOLERANCE_MINUTES) {
 								opensOnTimeCount++;
 							}
 						}
@@ -1306,13 +1305,13 @@ export class IotService {
 				`🔌 [${requestId}] Fetched device IDs: ${JSON.stringify(deviceIds)}`,
 			);
 
-		// Limit records to latest 10 for each device and calculate performance metrics
+		// Limit records to latest 30 for each device and calculate performance metrics
 		const processedDevices = await Promise.all(
 			devices.map(async (device) => {
 				const sortedRecords = device.records
 					? device.records
 							.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-							.slice(0, 10)
+							.slice(0, 30)
 					: [];
 
 				// Calculate performance metrics using organization hours
