@@ -2954,7 +2954,6 @@ export class UserService {
 				});
 
 				response.managedStaff = staffWithTargets;
-				this.logger.debug(`Final managed staff response: ${JSON.stringify(staffWithTargets.map(s => ({ uid: s.uid, fullName: s.fullName, hasTargets: s.hasTargets })))}`);
 			} else {
 				this.logger.debug(`User ${userId} has no managed staff or managedStaff is empty`);
 			}

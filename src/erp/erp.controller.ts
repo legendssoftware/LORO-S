@@ -831,5 +831,451 @@ export class ErpController {
 			}
 		}, 'user-sales');
 	}
+
+	/**
+	 * Get commission data per product for logged-in user
+	 * 
+	 * Returns sales per product with commission calculations:
+	 * - Items (item name)
+	 * - Units Sold (quantity)
+	 * - Commission % (commission_per)
+	 * - Total Sales (incl_line_total)
+	 * - Total Commission (calculated from commission_per)
+	 * 
+	 * Uses target period dates from user_targets table
+	 */
+	@Get('profile/commissions')
+	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER, AccessLevel.USER)
+	@ApiOperation({ summary: 'Get commission data per product for logged-in user' })
+	@ApiResponse({ status: 200, description: 'Commission data per product' })
+	@ApiResponse({ status: 404, description: 'User target or ERP code not found' })
+	async getProfileCommissions(@Req() request: AuthenticatedRequest) {
+		const userId = request.user?.uid;
+		const orgId = this.getOrgId(request);
+		const operationId = 'profile-commissions';
+		
+		this.logger.log(`[${operationId}] Getting commission data for user ${userId}, org ${orgId}`);
+		
+		return this.executeWithThrottling(operationId, async () => {
+			try {
+				if (!userId) {
+					throw new BadRequestException('User ID not found in request');
+				}
+
+				// Get user's target to extract ERP code and date range
+				const userTargetResult = await this.userService.getUserTarget(userId, orgId);
+				
+				if (!userTargetResult?.userTarget) {
+					throw new NotFoundException(`No targets found for user ${userId}`);
+				}
+
+				const userTarget = userTargetResult.userTarget;
+				const erpSalesRepCode = userTarget.erpSalesRepCode || 
+					(userTarget.personalTargets as any)?.erpSalesRepCode || 
+					null;
+
+				if (!erpSalesRepCode) {
+					this.logger.warn(`[${operationId}] ⚠️  No ERP Sales Rep Code found for user ${userId}`);
+					return {
+						success: false,
+						message: 'ERP sales rep code not configured for this user',
+						data: [],
+						userId,
+						orgId,
+					};
+				}
+
+				// Get period dates from user_targets
+				const personalTargets = userTarget.personalTargets as any;
+				const periodStartDateRaw = personalTargets?.periodStartDate;
+				const periodEndDateRaw = personalTargets?.periodEndDate;
+
+				if (!periodStartDateRaw || !periodEndDateRaw) {
+					this.logger.warn(`[${operationId}] ⚠️  No period dates found in user target for user ${userId}`);
+					return {
+						success: false,
+						message: 'Target period dates not configured',
+						data: [],
+						userId,
+						orgId,
+					};
+				}
+
+				// Format dates to YYYY-MM-DD format
+				const periodStartDate = new Date(periodStartDateRaw).toISOString().split('T')[0];
+				const periodEndDate = new Date(periodEndDateRaw).toISOString().split('T')[0];
+				
+				this.logger.log(`[${operationId}] 📅 Fetching commission data for period: ${periodStartDate} → ${periodEndDate}`);
+				this.logger.log(`[${operationId}] 🔍 Filtering by rep_code: ${erpSalesRepCode}`);
+
+				// Fetch sales lines filtered by rep_code
+				const salesLines = await this.erpDataService.getSalesLinesByDateRange({
+					startDate: periodStartDate,
+					endDate: periodEndDate,
+					salesPersonId: erpSalesRepCode, // Filters by rep_code
+				}, ['1']); // Only Tax Invoices (doc_type = 1)
+
+				if (!salesLines || salesLines.length === 0) {
+					this.logger.log(`[${operationId}] No sales lines found for rep_code ${erpSalesRepCode}`);
+					return {
+						success: true,
+						data: [],
+						periodStartDate,
+						periodEndDate,
+						userId,
+						orgId,
+					};
+				}
+
+				// Group by item_code and calculate commission data
+				const commissionMap = new Map<string, {
+					itemCode: string;
+					itemName: string;
+					unitsSold: number;
+					commissionPercent: number;
+					totalSales: number;
+					totalCommission: number;
+				}>();
+
+				for (const line of salesLines) {
+					const itemCode = line.item_code || 'UNKNOWN';
+					const itemName = line.description || itemCode;
+					const quantity = parseFloat(String(line.quantity || 0));
+					const inclLineTotal = parseFloat(String(line.incl_line_total || 0));
+					const commissionPer = parseFloat(String(line.commission_per || 0));
+					
+					// Calculate commission amount
+					const commissionAmount = (inclLineTotal * commissionPer) / 100;
+
+					if (commissionMap.has(itemCode)) {
+						const existing = commissionMap.get(itemCode)!;
+						existing.unitsSold += quantity;
+						existing.totalSales += inclLineTotal;
+						existing.totalCommission += commissionAmount;
+						// Use the highest commission % if multiple exist (or average - you can adjust this logic)
+						if (commissionPer > existing.commissionPercent) {
+							existing.commissionPercent = commissionPer;
+						}
+					} else {
+						commissionMap.set(itemCode, {
+							itemCode,
+							itemName,
+							unitsSold: quantity,
+							commissionPercent: commissionPer,
+							totalSales: inclLineTotal,
+							totalCommission: commissionAmount,
+						});
+					}
+				}
+
+				// Convert map to array and sort by total sales (descending)
+				const commissionData = Array.from(commissionMap.values())
+					.sort((a, b) => b.totalSales - a.totalSales);
+
+				this.logger.log(`[${operationId}] ✅ Generated commission data for ${commissionData.length} products`);
+
+				return {
+					success: true,
+					data: commissionData,
+					periodStartDate,
+					periodEndDate,
+					userId,
+					orgId,
+				};
+			} catch (error) {
+				this.logger.error(`[${operationId}] Error getting commission data for user ${userId}: ${error.message}`);
+				return {
+					success: false,
+					error: error.message,
+					data: [],
+					userId,
+					orgId,
+				};
+			}
+		}, 'profile/commissions');
+	}
+
+	/**
+	 * Get sales by category for logged-in user
+	 * Filters ERP sales data by user's ERP sales rep code and groups by category
+	 */
+	@Get('profile/sales-by-category')
+	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER, AccessLevel.USER)
+	@ApiOperation({ summary: 'Get sales by category for logged-in user' })
+	@ApiResponse({ status: 200, description: 'Sales data grouped by category' })
+	@ApiResponse({ status: 404, description: 'User target or ERP code not found' })
+	async getProfileSalesByCategory(@Req() request: AuthenticatedRequest) {
+		const userId = request.user?.uid;
+		const orgId = this.getOrgId(request);
+		const operationId = 'profile-sales-by-category';
+		
+		this.logger.log(`[${operationId}] Getting sales by category for user ${userId}, org ${orgId}`);
+		
+		return this.executeWithThrottling(operationId, async () => {
+			try {
+				if (!userId) {
+					throw new BadRequestException('User ID not found in request');
+				}
+
+				// Get user's target to extract ERP code and date range
+				const userTargetResult = await this.userService.getUserTarget(userId, orgId);
+				
+				if (!userTargetResult?.userTarget) {
+					throw new NotFoundException(`No targets found for user ${userId}`);
+				}
+
+				const userTarget = userTargetResult.userTarget;
+				const erpSalesRepCode = userTarget.erpSalesRepCode || 
+					(userTarget.personalTargets as any)?.erpSalesRepCode || 
+					null;
+
+				if (!erpSalesRepCode) {
+					this.logger.warn(`[${operationId}] ⚠️  No ERP Sales Rep Code found for user ${userId}`);
+					return {
+						success: false,
+						message: 'ERP sales rep code not configured for this user',
+						data: [],
+						userId,
+						orgId,
+					};
+				}
+
+				// Get period dates from user_targets
+				const personalTargets = userTarget.personalTargets as any;
+				const periodStartDateRaw = personalTargets?.periodStartDate;
+				const periodEndDateRaw = personalTargets?.periodEndDate;
+
+				if (!periodStartDateRaw || !periodEndDateRaw) {
+					this.logger.warn(`[${operationId}] ⚠️  No period dates found in user target for user ${userId}`);
+					return {
+						success: false,
+						message: 'Target period dates not configured',
+						data: [],
+						userId,
+						orgId,
+					};
+				}
+
+				// Format dates to YYYY-MM-DD format
+				const periodStartDate = new Date(periodStartDateRaw).toISOString().split('T')[0];
+				const periodEndDate = new Date(periodEndDateRaw).toISOString().split('T')[0];
+				
+				this.logger.log(`[${operationId}] 📅 Fetching sales by category for period: ${periodStartDate} → ${periodEndDate}`);
+				this.logger.log(`[${operationId}] 🔍 Filtering by rep_code: ${erpSalesRepCode}`);
+
+				// Get category aggregations filtered by sales person
+				const categoryData = await this.erpDataService.getCategoryAggregations({
+					startDate: periodStartDate,
+					endDate: periodEndDate,
+					salesPersonId: erpSalesRepCode, // Filters by rep_code
+				});
+
+				if (!categoryData || categoryData.length === 0) {
+					this.logger.log(`[${operationId}] No category data found for rep_code ${erpSalesRepCode}`);
+					return {
+						success: true,
+						data: [],
+						periodStartDate,
+						periodEndDate,
+						userId,
+						orgId,
+					};
+				}
+
+				// Transform to chart format
+				const salesByCategory = categoryData.map(item => ({
+					label: item.category || 'Unknown',
+					value: parseFloat(String(item.totalRevenue || 0)),
+					color: undefined, // Will be assigned by chart component
+				}));
+
+				this.logger.log(`[${operationId}] ✅ Generated sales by category data for ${salesByCategory.length} categories`);
+
+				return {
+					success: true,
+					data: salesByCategory,
+					total: salesByCategory.reduce((sum, item) => sum + item.value, 0),
+					periodStartDate,
+					periodEndDate,
+					userId,
+					orgId,
+				};
+			} catch (error) {
+				this.logger.error(`[${operationId}] Error getting sales by category for user ${userId}: ${error.message}`);
+				return {
+					success: false,
+					error: error.message,
+					data: [],
+					userId,
+					orgId,
+				};
+			}
+		}, 'profile/sales-by-category');
+	}
+
+	/**
+	 * Get commission breakdown by category for logged-in user
+	 * Groups commission data by category instead of product
+	 */
+	@Get('profile/commissions-by-category')
+	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER, AccessLevel.USER)
+	@ApiOperation({ summary: 'Get commission breakdown by category for logged-in user' })
+	@ApiResponse({ status: 200, description: 'Commission data grouped by category' })
+	@ApiResponse({ status: 404, description: 'User target or ERP code not found' })
+	async getProfileCommissionsByCategory(@Req() request: AuthenticatedRequest) {
+		const userId = request.user?.uid;
+		const orgId = this.getOrgId(request);
+		const operationId = 'profile-commissions-by-category';
+		
+		this.logger.log(`[${operationId}] Getting commission breakdown by category for user ${userId}, org ${orgId}`);
+		
+		return this.executeWithThrottling(operationId, async () => {
+			try {
+				if (!userId) {
+					throw new BadRequestException('User ID not found in request');
+				}
+
+				// Get user's target to extract ERP code and date range
+				const userTargetResult = await this.userService.getUserTarget(userId, orgId);
+				
+				if (!userTargetResult?.userTarget) {
+					throw new NotFoundException(`No targets found for user ${userId}`);
+				}
+
+				const userTarget = userTargetResult.userTarget;
+				const erpSalesRepCode = userTarget.erpSalesRepCode || 
+					(userTarget.personalTargets as any)?.erpSalesRepCode || 
+					null;
+
+				if (!erpSalesRepCode) {
+					this.logger.warn(`[${operationId}] ⚠️  No ERP Sales Rep Code found for user ${userId}`);
+					return {
+						success: false,
+						message: 'ERP sales rep code not configured for this user',
+						data: [],
+						userId,
+						orgId,
+					};
+				}
+
+				// Get period dates from user_targets
+				const personalTargets = userTarget.personalTargets as any;
+				const periodStartDateRaw = personalTargets?.periodStartDate;
+				const periodEndDateRaw = personalTargets?.periodEndDate;
+
+				if (!periodStartDateRaw || !periodEndDateRaw) {
+					this.logger.warn(`[${operationId}] ⚠️  No period dates found in user target for user ${userId}`);
+					return {
+						success: false,
+						message: 'Target period dates not configured',
+						data: [],
+						userId,
+						orgId,
+					};
+				}
+
+				// Format dates to YYYY-MM-DD format
+				const periodStartDate = new Date(periodStartDateRaw).toISOString().split('T')[0];
+				const periodEndDate = new Date(periodEndDateRaw).toISOString().split('T')[0];
+				
+				this.logger.log(`[${operationId}] 📅 Fetching commission breakdown by category for period: ${periodStartDate} → ${periodEndDate}`);
+				this.logger.log(`[${operationId}] 🔍 Filtering by rep_code: ${erpSalesRepCode}`);
+
+				// Fetch sales lines filtered by rep_code
+				const salesLines = await this.erpDataService.getSalesLinesByDateRange({
+					startDate: periodStartDate,
+					endDate: periodEndDate,
+					salesPersonId: erpSalesRepCode, // Filters by rep_code
+				}, ['1']); // Only Tax Invoices (doc_type = 1)
+
+				if (!salesLines || salesLines.length === 0) {
+					this.logger.log(`[${operationId}] No sales lines found for rep_code ${erpSalesRepCode}`);
+					return {
+						success: true,
+						data: [],
+						periodStartDate,
+						periodEndDate,
+						userId,
+						orgId,
+					};
+				}
+
+				// Group by category and calculate commission data
+				const commissionMap = new Map<string, {
+					category: string;
+					unitsSold: number;
+					totalSales: number;
+					totalCommission: number;
+					commissionPercentages: number[];
+				}>();
+
+				for (const line of salesLines) {
+					const category = line.category || 'Unknown';
+					const quantity = parseFloat(String(line.quantity || 0));
+					const inclLineTotal = parseFloat(String(line.incl_line_total || 0));
+					const commissionPer = parseFloat(String(line.commission_per || 0));
+					
+					// Calculate commission amount
+					const commissionAmount = (inclLineTotal * commissionPer) / 100;
+
+					if (commissionMap.has(category)) {
+						const existing = commissionMap.get(category)!;
+						existing.unitsSold += quantity;
+						existing.totalSales += inclLineTotal;
+						existing.totalCommission += commissionAmount;
+						if (commissionPer > 0) {
+							existing.commissionPercentages.push(commissionPer);
+						}
+					} else {
+						commissionMap.set(category, {
+							category,
+							unitsSold: quantity,
+							totalSales: inclLineTotal,
+							totalCommission: commissionAmount,
+							commissionPercentages: commissionPer > 0 ? [commissionPer] : [],
+						});
+					}
+				}
+
+				// Convert map to array and calculate average commission percentage, then sort by total commission (descending)
+				const commissionData = Array.from(commissionMap.values())
+					.map(item => {
+						// Calculate average commission percentage
+						const avgCommissionPercent = item.commissionPercentages.length > 0
+							? item.commissionPercentages.reduce((sum, p) => sum + p, 0) / item.commissionPercentages.length
+							: 0;
+						
+						return {
+							category: item.category,
+							unitsSold: item.unitsSold,
+							commissionPercent: avgCommissionPercent,
+							totalSales: item.totalSales,
+							totalCommission: item.totalCommission,
+						};
+					})
+					.sort((a, b) => b.totalCommission - a.totalCommission);
+
+				this.logger.log(`[${operationId}] ✅ Generated commission breakdown by category for ${commissionData.length} categories`);
+
+				return {
+					success: true,
+					data: commissionData,
+					periodStartDate,
+					periodEndDate,
+					userId,
+					orgId,
+				};
+			} catch (error) {
+				this.logger.error(`[${operationId}] Error getting commission breakdown by category for user ${userId}: ${error.message}`);
+				return {
+					success: false,
+					error: error.message,
+					data: [],
+					userId,
+					orgId,
+				};
+			}
+		}, 'profile/commissions-by-category');
+	}
 }
 

@@ -2215,6 +2215,15 @@ export class ErpDataService implements OnModuleInit {
 				query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
 			}
 
+			// ✅ Sales person filtering: Use rep_code directly from tblsaleslines
+			if (filters.salesPersonId) {
+				const salesPersonIds = Array.isArray(filters.salesPersonId) 
+					? filters.salesPersonId 
+					: [filters.salesPersonId];
+				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
+				query.andWhere('line.rep_code IN (:...salesPersonIds)', { salesPersonIds });
+			}
+
 			query.groupBy('line.category');
 
 			const results = await query.getRawMany();

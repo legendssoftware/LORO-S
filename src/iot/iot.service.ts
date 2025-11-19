@@ -935,20 +935,33 @@ export class IotService {
 			const orgTimezone = orgHours.timezone || TimezoneUtil.AFRICA_JOHANNESBURG;
 
 			// Use recent records (last 14 days) for better representation of current performance
-			// Sort records by createdAt descending to get most recent first
-			const sortedRecords = [...records].sort((a, b) => 
-				new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-			);
+			// Sort records by opening/closing time descending to get most recent first
+			const sortedRecords = [...records].sort((a, b) => {
+				// Use openTime or closeTime for sorting, fallback to createdAt
+				const aTime = a.openTime || a.closeTime || a.createdAt;
+				const bTime = b.openTime || b.closeTime || b.createdAt;
+				return new Date(bTime).getTime() - new Date(aTime).getTime();
+			});
 			
-			// Get records from last 14 days, or up to 30 records, whichever is more
+			// Get records from last 14 days based on actual opening/closing dates
+			// This ensures we're looking at recent performance, not just when records were created
 			const fourteenDaysAgo = new Date();
+			fourteenDaysAgo.setHours(0, 0, 0, 0);
 			fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
-			const recentRecords = sortedRecords.filter(r => 
-				new Date(r.createdAt) >= fourteenDaysAgo
-			).slice(0, 30);
+			
+			const recentRecords = sortedRecords.filter(r => {
+				// Use openTime or closeTime date for filtering, fallback to createdAt
+				const recordDate = r.openTime || r.closeTime || r.createdAt;
+				return new Date(recordDate) >= fourteenDaysAgo;
+			}).slice(0, 30);
 			
 			// Fallback to latest 30 records if no recent records
 			const recordsToCheck = recentRecords.length > 0 ? recentRecords : sortedRecords.slice(0, 30);
+			
+			this.logger.debug(
+				`[${device.deviceID}] Using ${recordsToCheck.length} records for performance calculation ` +
+				`(${recentRecords.length} from last 14 days, ${sortedRecords.length} total available)`
+			);
 
 			// Morning opening window: 5:00am to 10:00am (300 to 600 minutes)
 			// Only evaluate morning openings for "opens on time" metric
@@ -1090,6 +1103,14 @@ export class IotService {
 			
 			const opensOnTime = opensOnTimePercentage >= openingThreshold;
 			const closesOnTime = closesOnTimePercentage >= closingThreshold;
+			
+			// Log the final decision for debugging
+			this.logger.log(
+				`[${device.deviceID}] Performance calculation result: ` +
+				`opensOnTime=${opensOnTime} (${opensOnTimePercentage.toFixed(1)}% >= ${openingThreshold}%), ` +
+				`closesOnTime=${closesOnTime} (${closesOnTimePercentage.toFixed(1)}% >= ${closingThreshold}%), ` +
+				`recordsWithOpenTime=${recordsWithOpenTime}, recordsWithCloseTime=${recordsWithCloseTime}`
+			);
 
 			// Enhanced logging for debugging opening times
 			if (openingDetails.length > 0) {
@@ -1260,7 +1281,7 @@ export class IotService {
 				}
 			}
 
-			return {
+			const result = {
 				opensOnTime,
 				opensOnTimePercentage,
 				closesOnTime,
@@ -1270,6 +1291,13 @@ export class IotService {
 				latestOpenTime,
 				latestCloseTime,
 			};
+			
+			// Log the final result being returned
+			this.logger.debug(
+				`[${device.deviceID}] Returning performance metrics: ${JSON.stringify(result)}`
+			);
+			
+			return result;
 		} catch (error) {
 			this.logger.error(`Failed to calculate device performance metrics: ${error.message}`, error.stack);
 			// Return default values on error
@@ -1422,6 +1450,14 @@ export class IotService {
 
 				// Calculate performance metrics using organization hours
 				const performanceMetrics = await this.calculateDevicePerformanceMetrics(device, sortedRecords);
+				
+				// Log the performance metrics being attached
+				this.logger.debug(
+					`[${device.deviceID}] Attaching performance: opensOnTime=${performanceMetrics.opensOnTime}, ` +
+					`opensOnTimePercentage=${performanceMetrics.opensOnTimePercentage.toFixed(1)}%, ` +
+					`closesOnTime=${performanceMetrics.closesOnTime}, ` +
+					`closesOnTimePercentage=${performanceMetrics.closesOnTimePercentage.toFixed(1)}%`
+				);
 
 				return {
 					...device,
