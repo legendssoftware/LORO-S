@@ -1848,6 +1848,23 @@ export class IotService {
 
 				if (hasOpen && hasClose) {
 					// Latest record complete → create a new record
+					// But first check if the new record has both open and close times that are too close
+					if (openDateOrg && closeDateOrg) {
+						const timeDifferenceMs = closeDateOrg.getTime() - openDateOrg.getTime();
+						const timeDifferenceMinutes = timeDifferenceMs / (1000 * 60);
+						
+						if (timeDifferenceMinutes < 5) {
+							this.logger.warn(
+								`⚠️ Discarding new record: Open and close times too close (${timeDifferenceMinutes.toFixed(2)} minutes) - ` +
+								`Device ID: ${recordDto.deviceId}. Open: ${openDateOrg.toISOString()}, Close: ${closeDateOrg.toISOString()}`,
+							);
+							return {
+								message: `Record discarded: open and close times are too close (${timeDifferenceMinutes.toFixed(2)} minutes apart)`,
+								record: undefined,
+							};
+						}
+					}
+					
 					record = this.deviceRecordsRepository.create({
 						openTime: openDateOrg,
 						closeTime: closeDateOrg,
@@ -1861,6 +1878,35 @@ export class IotService {
 						existingRecord.openTime = openDateOrg;
 					}
 					if (!hasClose && closeDateOrg) {
+						// Check if setting close time would make the record invalid (too close times)
+						if (existingRecord.openTime && closeDateOrg) {
+							const openTime = typeof existingRecord.openTime === 'string'
+								? new Date(existingRecord.openTime)
+								: (existingRecord.openTime as unknown as Date);
+							const timeDifferenceMs = closeDateOrg.getTime() - openTime.getTime();
+							const timeDifferenceMinutes = timeDifferenceMs / (1000 * 60);
+							
+							// If open and close are within 5 minutes, delete the record instead of updating
+							if (timeDifferenceMinutes < 5) {
+								this.logger.warn(
+									`⚠️ Discarding record: Open and close times too close (${timeDifferenceMinutes.toFixed(2)} minutes) - ` +
+									`Device ID: ${recordDto.deviceId}, Record ID: ${existingRecord.id}. ` +
+									`Open: ${openTime.toISOString()}, Close: ${closeDateOrg.toISOString()}`,
+								);
+								
+								// Delete the record entirely
+								await this.deviceRecordsRepository.remove(existingRecord);
+								
+								this.logger.log(
+									`🗑️ Deleted record (ID: ${existingRecord.id}) due to open/close within 5 minutes - Device ID: ${recordDto.deviceId}`,
+								);
+								
+								return {
+									message: `Record discarded: open and close times are too close (${timeDifferenceMinutes.toFixed(2)} minutes apart)`,
+									record: undefined,
+								};
+							}
+						}
 						// Only set close if we have an open or explicitly provided
 						existingRecord.closeTime = closeDateOrg;
 					}
@@ -1870,6 +1916,23 @@ export class IotService {
 				}
 			} else {
 				// No record today → create new
+				// Check if both open and close times are provided and too close
+				if (openDateOrg && closeDateOrg) {
+					const timeDifferenceMs = closeDateOrg.getTime() - openDateOrg.getTime();
+					const timeDifferenceMinutes = timeDifferenceMs / (1000 * 60);
+					
+					if (timeDifferenceMinutes < 5) {
+						this.logger.warn(
+							`⚠️ Discarding new record: Open and close times too close (${timeDifferenceMinutes.toFixed(2)} minutes) - ` +
+							`Device ID: ${recordDto.deviceId}. Open: ${openDateOrg.toISOString()}, Close: ${closeDateOrg.toISOString()}`,
+						);
+						return {
+							message: `Record discarded: open and close times are too close (${timeDifferenceMinutes.toFixed(2)} minutes apart)`,
+							record: undefined,
+						};
+					}
+				}
+				
 				record = this.deviceRecordsRepository.create({
 					openTime: openDateOrg,
 					closeTime: closeDateOrg,
@@ -1879,20 +1942,27 @@ export class IotService {
 				this.logger.log(`Created new record (first of day) for device ID: ${recordDto.deviceId}`);
 			}
 
-			// Update device analytics
-			await this.updateDeviceAnalyticsFromRecord(device, record, recordDto);
+			// Update device analytics only if record was successfully created/updated
+			if (record) {
+				await this.updateDeviceAnalyticsFromRecord(device, record, recordDto);
+				await this.invalidateRecordCache(record);
 
-			await this.invalidateRecordCache(record);
-
-			return {
-				message: existingRecord ? 'Record updated successfully' : 'Record created successfully',
-				record: {
-					id: record.id,
-					openTime: record.openTime,
-					closeTime: record.closeTime,
-					createdAt: record.createdAt,
-				},
-			};
+				return {
+					message: existingRecord ? 'Record updated successfully' : 'Record created successfully',
+					record: {
+						id: record.id,
+						openTime: record.openTime,
+						closeTime: record.closeTime,
+						createdAt: record.createdAt,
+					},
+				};
+			} else {
+				// Record was discarded - return success message without record
+				return {
+					message: 'Record discarded: open and close times are too close',
+					record: undefined,
+				};
+			}
 		} catch (error) {
 			this.logger.error(`Failed to create/update record: ${error.message}`, error.stack);
 			if (error instanceof NotFoundException) {
@@ -1948,27 +2018,47 @@ export class IotService {
 			// 3. Smart daily record management
 			const recordResult = await this.smartRecordManagement(timeEventDto, device, queryRunner);
 
-			// 4. Advanced analytics update (includes business hours analysis)
-			await this.updateAdvancedAnalytics(
-				device,
-				timeEventDto,
-				recordResult.action,
-				queryRunner,
-				businessHoursAnalysis,
-			);
+			// If record was deleted due to open/close times being too close, skip analytics and notifications
+			if (recordResult.action === 'deleted' && recordResult.reason === 'open_close_too_close') {
+				this.logger.log(
+					`⏭️ Skipping analytics and notifications for discarded record - Device: ${timeEventDto.deviceID}`,
+				);
+				// Still invalidate device cache since we modified records
+				await this.invalidateDeviceCache(device);
+			} else {
+				// 4. Advanced analytics update (includes business hours analysis)
+				await this.updateAdvancedAnalytics(
+					device,
+					timeEventDto,
+					recordResult.action,
+					queryRunner,
+					businessHoursAnalysis,
+				);
 
-			// 5. Real-time notifications
-			await this.processRealTimeNotifications(device, timeEventDto, recordResult);
+				// 5. Real-time notifications
+				await this.processRealTimeNotifications(device, timeEventDto, recordResult);
+			}
 
 			// 6. Commit transaction
 			await queryRunner.commitTransaction();
 
-			// 6. Post-processing activities
-			await this.performPostEventActivities(device, timeEventDto, recordResult, startTime);
+			// 6. Post-processing activities (skip if record was deleted)
+			if (recordResult.action !== 'deleted' || recordResult.reason !== 'open_close_too_close') {
+				await this.performPostEventActivities(device, timeEventDto, recordResult, startTime);
+			}
 
 			const processingTime = Date.now() - startTime;
 
 			// Create comprehensive success message with business context
+			if (recordResult.action === 'deleted' && recordResult.reason === 'open_close_too_close') {
+				this.logger.log(
+					`✅ Time event processed successfully (record discarded) in ${processingTime}ms for device: ${timeEventDto.deviceID}`,
+				);
+				return {
+					message: 'Time event processed successfully - record discarded due to open/close times being too close',
+				};
+			}
+
 			const attendanceContext =
 				businessHoursAnalysis.attendanceStatus === 'ON_TIME'
 					? 'On-time arrival detected'
@@ -2406,6 +2496,33 @@ export class IotService {
 			});
 
 			if (openRecordWithoutClose) {
+				// Check if open and close times are too close (less than 5 minutes apart)
+				const openTime = typeof openRecordWithoutClose.openTime === 'string'
+					? new Date(openRecordWithoutClose.openTime)
+					: (openRecordWithoutClose.openTime as unknown as Date);
+				const closeTime = eventDateOrg;
+				
+				const timeDifferenceMs = closeTime.getTime() - openTime.getTime();
+				const timeDifferenceMinutes = timeDifferenceMs / (1000 * 60);
+				
+				// If open and close are within 5 minutes, delete the record instead of updating
+				if (timeDifferenceMinutes < 5) {
+					this.logger.warn(
+						`⚠️ Discarding record: Open and close times too close (${timeDifferenceMinutes.toFixed(2)} minutes) - ` +
+						`Device: ${device.deviceID}, Record ID: ${openRecordWithoutClose.id}. ` +
+						`Open: ${openTime.toISOString()}, Close: ${closeTime.toISOString()}`,
+					);
+					
+					// Delete the record entirely
+					await queryRunner.manager.remove(openRecordWithoutClose);
+					
+					this.logger.log(
+						`🗑️ Deleted record (ID: ${openRecordWithoutClose.id}) due to open/close within 5 minutes - Device: ${device.deviceID}`,
+					);
+					
+					return { record: null, action: 'deleted', existingRecord: true, reason: 'open_close_too_close' };
+				}
+				
 				// Found an open record without close - update it with the close time
 				openRecordWithoutClose.closeTime = eventDateOrg;
 				openRecordWithoutClose.updatedAt = new Date();
