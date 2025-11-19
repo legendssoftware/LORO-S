@@ -833,6 +833,206 @@ export class ErpController {
 	}
 
 	/**
+	 * Get commission breakdown by category for a specific user (for team members)
+	 * Groups commission data by commission percentage instead of category
+	 */
+	@Get('user/:userId/commissions-by-category')
+	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER, AccessLevel.USER)
+	@ApiOperation({ summary: 'Get commission breakdown by category for a specific user (for team members)' })
+	@ApiParam({ name: 'userId', type: Number, description: 'User ID to fetch commission breakdown for' })
+	@ApiResponse({ status: 200, description: 'Commission breakdown by category data' })
+	@ApiResponse({ status: 404, description: 'User target or ERP code not found' })
+	async getUserCommissionsByCategory(
+		@Req() request: AuthenticatedRequest,
+		@Param('userId', ParseIntPipe) targetUserId: number,
+	) {
+		const currentUserId = request.user?.uid;
+		const orgId = this.getOrgId(request);
+		const operationId = 'user-commissions-by-category';
+		
+		this.logger.log(`[${operationId}] Getting commission breakdown by category for user ${targetUserId} (requested by ${currentUserId}), org ${orgId}`);
+		
+		return this.executeWithThrottling(operationId, async () => {
+			try {
+				if (!targetUserId) {
+					throw new BadRequestException('User ID parameter is required');
+				}
+
+				// Verify that the current user has access to view this user's commission data
+				const currentUserTargetResult = await this.userService.getUserTarget(currentUserId, orgId);
+				const currentUserTarget = currentUserTargetResult?.userTarget;
+				const managedStaff = currentUserTarget?.managedStaff || [];
+				
+				const isManagedStaff = managedStaff.some((staff: any) => staff.uid === targetUserId);
+				const isSelf = currentUserId === targetUserId;
+				const isElevated = request.user?.accessLevel === AccessLevel.ADMIN || 
+					request.user?.accessLevel === AccessLevel.OWNER || 
+					request.user?.accessLevel === AccessLevel.MANAGER;
+
+				if (!isSelf && !isManagedStaff && !isElevated) {
+					throw new NotFoundException(`You do not have permission to view commission data for user ${targetUserId}`);
+				}
+
+				// Get target user's target to extract ERP code and date range
+				const userTargetResult = await this.userService.getUserTarget(targetUserId, orgId);
+				
+				if (!userTargetResult?.userTarget) {
+					throw new NotFoundException(`No targets found for user ${targetUserId}`);
+				}
+
+				const userTarget = userTargetResult.userTarget;
+				const erpSalesRepCode = userTarget.erpSalesRepCode || 
+					(userTarget.personalTargets as any)?.erpSalesRepCode || 
+					null;
+
+				if (!erpSalesRepCode) {
+					this.logger.warn(`[${operationId}] ⚠️  No ERP Sales Rep Code found for user ${targetUserId}`);
+					return {
+						success: false,
+						message: 'ERP sales rep code not configured for this user',
+						data: [],
+						userId: targetUserId,
+						orgId,
+					};
+				}
+
+				// Get period dates from user_targets
+				const personalTargets = userTarget.personalTargets as any;
+				const periodStartDateRaw = personalTargets?.periodStartDate;
+				const periodEndDateRaw = personalTargets?.periodEndDate;
+
+				if (!periodStartDateRaw || !periodEndDateRaw) {
+					this.logger.warn(`[${operationId}] ⚠️  No period dates found in user target for user ${targetUserId}`);
+					return {
+						success: false,
+						message: 'Target period dates not configured',
+						data: [],
+						userId: targetUserId,
+						orgId,
+					};
+				}
+
+				// Format dates to YYYY-MM-DD format
+				const periodStartDate = new Date(periodStartDateRaw).toISOString().split('T')[0];
+				const periodEndDate = new Date(periodEndDateRaw).toISOString().split('T')[0];
+				
+				this.logger.log(`[${operationId}] 📅 Fetching commission breakdown by category for period: ${periodStartDate} → ${periodEndDate}`);
+				this.logger.log(`[${operationId}] 🔍 Filtering by rep_code: ${erpSalesRepCode}`);
+
+				// Fetch sales lines filtered by rep_code
+				const salesLines = await this.erpDataService.getSalesLinesByDateRange({
+					startDate: periodStartDate,
+					endDate: periodEndDate,
+					salesPersonId: erpSalesRepCode, // Filters by rep_code
+				}, ['1']); // Only Tax Invoices (doc_type = 1)
+
+				if (!salesLines || salesLines.length === 0) {
+					this.logger.log(`[${operationId}] No sales lines found for rep_code ${erpSalesRepCode}`);
+					return {
+						success: true,
+						data: [],
+						periodStartDate,
+						periodEndDate,
+						userId: targetUserId,
+						orgId,
+					};
+				}
+
+				// Helper function to normalize commission percentage (round to 2 decimals for grouping)
+				const normalizeCommissionPercent = (percent: number): number => {
+					return Math.round(percent * 100) / 100;
+				};
+
+				// Helper function to map commission percentage to group name dynamically
+				// Maps known percentages to specific names, others get generic names
+				const getCommissionGroupName = (commissionPercent: number): string => {
+					const normalized = normalizeCommissionPercent(commissionPercent);
+					
+					// Map to group names based on specific commission percentages (with tolerance for floating point)
+					if (Math.abs(normalized - 0.5) < 0.01) {
+						return 'Rhinolite & 6.4/6.5mm';
+					} else if (Math.abs(normalized - 3.0) < 0.01) {
+						return 'Fuse & BitLite';
+					} else if (Math.abs(normalized - 1.5) < 0.01) {
+						return 'Other Drywall Products';
+					}
+					
+					// For any other commission percentage, use the percentage as the name
+					// This makes it dynamic - if percentages change (e.g., 0.4%), they'll still be grouped
+					return `${normalized.toFixed(2)}% Commission`;
+				};
+
+				// Group by commission percentage (normalized) and calculate commission data
+				const commissionMap = new Map<number, {
+					commissionPercent: number;
+					totalSales: number;
+					totalCommission: number;
+				}>();
+
+				for (const line of salesLines) {
+					const inclLineTotal = parseFloat(String(line.incl_line_total || 0));
+					const commissionPer = parseFloat(String(line.commission_per || 0));
+					
+					if (commissionPer <= 0) {
+						continue; // Skip items with no commission
+					}
+					
+					const normalizedPercent = normalizeCommissionPercent(commissionPer);
+					
+					// Calculate commission amount
+					const commissionAmount = (inclLineTotal * commissionPer) / 100;
+
+					if (commissionMap.has(normalizedPercent)) {
+						const existing = commissionMap.get(normalizedPercent)!;
+						existing.totalSales += inclLineTotal;
+						existing.totalCommission += commissionAmount;
+					} else {
+						commissionMap.set(normalizedPercent, {
+							commissionPercent: normalizedPercent,
+							totalSales: inclLineTotal,
+							totalCommission: commissionAmount,
+						});
+					}
+				}
+
+				// Convert map to array, map to group names, and sort by total commission (descending)
+				const commissionData = Array.from(commissionMap.values())
+					.map(item => {
+						const groupName = getCommissionGroupName(item.commissionPercent);
+						
+						return {
+							category: groupName,
+							commissionPercent: item.commissionPercent,
+							totalSales: item.totalSales,
+							totalCommission: item.totalCommission,
+						};
+					})
+					.sort((a, b) => b.totalCommission - a.totalCommission);
+
+				this.logger.log(`[${operationId}] ✅ Generated commission breakdown by commission percentage for ${commissionData.length} groups`);
+
+				return {
+					success: true,
+					data: commissionData,
+					periodStartDate,
+					periodEndDate,
+					userId: targetUserId,
+					orgId,
+				};
+			} catch (error) {
+				this.logger.error(`[${operationId}] Error getting commission breakdown by category for user ${targetUserId}: ${error.message}`);
+				return {
+					success: false,
+					error: error.message,
+					data: [],
+					userId: targetUserId,
+					orgId,
+				};
+			}
+		}, 'user-commissions-by-category');
+	}
+
+	/**
 	 * Get commission data per product for logged-in user
 	 * 
 	 * Returns sales per product with commission calculations:
@@ -1200,62 +1400,78 @@ export class ErpController {
 					};
 				}
 
-				// Group by category and calculate commission data
-				const commissionMap = new Map<string, {
-					category: string;
-					unitsSold: number;
+				// Helper function to normalize commission percentage (round to 2 decimals for grouping)
+				const normalizeCommissionPercent = (percent: number): number => {
+					return Math.round(percent * 100) / 100;
+				};
+
+				// Helper function to map commission percentage to group name dynamically
+				// Maps known percentages to specific names, others get generic names
+				const getCommissionGroupName = (commissionPercent: number): string => {
+					const normalized = normalizeCommissionPercent(commissionPercent);
+					
+					// Map to group names based on specific commission percentages (with tolerance for floating point)
+					if (Math.abs(normalized - 0.5) < 0.01) {
+						return 'Rhinolite & 6.4/6.5mm';
+					} else if (Math.abs(normalized - 3.0) < 0.01) {
+						return 'Fuse & BitLite';
+					} else if (Math.abs(normalized - 1.5) < 0.01) {
+						return 'Other Drywall Products';
+					}
+					
+					// For any other commission percentage, use the percentage as the name
+					// This makes it dynamic - if percentages change (e.g., 0.4%), they'll still be grouped
+					return `${normalized.toFixed(2)}% Commission`;
+				};
+
+				// Group by commission percentage (normalized) and calculate commission data
+				const commissionMap = new Map<number, {
+					commissionPercent: number;
 					totalSales: number;
 					totalCommission: number;
-					commissionPercentages: number[];
 				}>();
 
 				for (const line of salesLines) {
-					const category = line.category || 'Unknown';
-					const quantity = parseFloat(String(line.quantity || 0));
 					const inclLineTotal = parseFloat(String(line.incl_line_total || 0));
 					const commissionPer = parseFloat(String(line.commission_per || 0));
+					
+					if (commissionPer <= 0) {
+						continue; // Skip items with no commission
+					}
+					
+					const normalizedPercent = normalizeCommissionPercent(commissionPer);
 					
 					// Calculate commission amount
 					const commissionAmount = (inclLineTotal * commissionPer) / 100;
 
-					if (commissionMap.has(category)) {
-						const existing = commissionMap.get(category)!;
-						existing.unitsSold += quantity;
+					if (commissionMap.has(normalizedPercent)) {
+						const existing = commissionMap.get(normalizedPercent)!;
 						existing.totalSales += inclLineTotal;
 						existing.totalCommission += commissionAmount;
-						if (commissionPer > 0) {
-							existing.commissionPercentages.push(commissionPer);
-						}
 					} else {
-						commissionMap.set(category, {
-							category,
-							unitsSold: quantity,
+						commissionMap.set(normalizedPercent, {
+							commissionPercent: normalizedPercent,
 							totalSales: inclLineTotal,
 							totalCommission: commissionAmount,
-							commissionPercentages: commissionPer > 0 ? [commissionPer] : [],
 						});
 					}
 				}
 
-				// Convert map to array and calculate average commission percentage, then sort by total commission (descending)
+				// Convert map to array, map to group names, and sort by total commission (descending)
 				const commissionData = Array.from(commissionMap.values())
 					.map(item => {
-						// Calculate average commission percentage
-						const avgCommissionPercent = item.commissionPercentages.length > 0
-							? item.commissionPercentages.reduce((sum, p) => sum + p, 0) / item.commissionPercentages.length
-							: 0;
+						const groupName = getCommissionGroupName(item.commissionPercent);
 						
 						return {
-							category: item.category,
-							unitsSold: item.unitsSold,
-							commissionPercent: avgCommissionPercent,
+							category: groupName,
+							commissionPercent: item.commissionPercent,
 							totalSales: item.totalSales,
 							totalCommission: item.totalCommission,
 						};
 					})
 					.sort((a, b) => b.totalCommission - a.totalCommission);
 
-				this.logger.log(`[${operationId}] ✅ Generated commission breakdown by category for ${commissionData.length} categories`);
+				this.logger.log(`[${operationId}] ✅ Generated commission breakdown by commission percentage for ${commissionData.length} groups`);
 
 				return {
 					success: true,
