@@ -2365,10 +2365,112 @@ export class UserService {
 			if (cachedTarget) {
 				this.logger.debug(`User target cache hit for user: ${userId}`);
 				
+				// TEMPORARY: Return zeros for all user-specific data while logic is being revised
+				const cachedResponse = cachedTarget as any;
+				if (cachedResponse.personalTargets) {
+					// Zero out all current values in personal targets
+					if (cachedResponse.personalTargets.sales) cachedResponse.personalTargets.sales.current = 0;
+					if (cachedResponse.personalTargets.quotations) cachedResponse.personalTargets.quotations.current = 0;
+					if (cachedResponse.personalTargets.hours) cachedResponse.personalTargets.hours.current = 0;
+					if (cachedResponse.personalTargets.newClients) cachedResponse.personalTargets.newClients.current = 0;
+					if (cachedResponse.personalTargets.newLeads) cachedResponse.personalTargets.newLeads.current = 0;
+					if (cachedResponse.personalTargets.checkIns) cachedResponse.personalTargets.checkIns.current = 0;
+					if (cachedResponse.personalTargets.calls) cachedResponse.personalTargets.calls.current = 0;
+					// Update remaining and progress
+					if (cachedResponse.personalTargets.sales) {
+						cachedResponse.personalTargets.sales.remaining = cachedResponse.personalTargets.sales.target || 0;
+						cachedResponse.personalTargets.sales.progress = 0;
+					}
+					if (cachedResponse.personalTargets.quotations) {
+						cachedResponse.personalTargets.quotations.remaining = cachedResponse.personalTargets.quotations.target || 0;
+						cachedResponse.personalTargets.quotations.progress = 0;
+					}
+					if (cachedResponse.personalTargets.hours) {
+						cachedResponse.personalTargets.hours.remaining = cachedResponse.personalTargets.hours.target || 0;
+						cachedResponse.personalTargets.hours.progress = 0;
+					}
+					if (cachedResponse.personalTargets.newClients) {
+						cachedResponse.personalTargets.newClients.remaining = cachedResponse.personalTargets.newClients.target || 0;
+						cachedResponse.personalTargets.newClients.progress = 0;
+					}
+					if (cachedResponse.personalTargets.newLeads) {
+						cachedResponse.personalTargets.newLeads.remaining = cachedResponse.personalTargets.newLeads.target || 0;
+						cachedResponse.personalTargets.newLeads.progress = 0;
+					}
+					if (cachedResponse.personalTargets.checkIns) {
+						cachedResponse.personalTargets.checkIns.remaining = cachedResponse.personalTargets.checkIns.target || 0;
+						cachedResponse.personalTargets.checkIns.progress = 0;
+					}
+					if (cachedResponse.personalTargets.calls) {
+						cachedResponse.personalTargets.calls.remaining = cachedResponse.personalTargets.calls.target || 0;
+						cachedResponse.personalTargets.calls.progress = 0;
+					}
+					// Zero out cost breakdown and clear history
+					cachedResponse.personalTargets.baseSalary = 0;
+					cachedResponse.personalTargets.carInstalment = 0;
+					cachedResponse.personalTargets.carInsurance = 0;
+					cachedResponse.personalTargets.fuel = 0;
+					cachedResponse.personalTargets.cellPhoneAllowance = 0;
+					cachedResponse.personalTargets.carMaintenance = 0;
+					cachedResponse.personalTargets.cgicCosts = 0;
+					cachedResponse.personalTargets.history = [];
+					cachedResponse.personalTargets.salesRateAnalysis = null;
+				}
+				// Zero out managed staff targets
+				if (cachedResponse.managedStaff && Array.isArray(cachedResponse.managedStaff)) {
+					cachedResponse.managedStaff.forEach((staff: any) => {
+						if (staff.targets) {
+							if (staff.targets.sales) {
+								staff.targets.sales.current = 0;
+								staff.targets.sales.remaining = staff.targets.sales.target || 0;
+								staff.targets.sales.progress = 0;
+							}
+							if (staff.targets.quotations) {
+								staff.targets.quotations.current = 0;
+								staff.targets.quotations.remaining = staff.targets.quotations.target || 0;
+								staff.targets.quotations.progress = 0;
+							}
+							if (staff.targets.hours) {
+								staff.targets.hours.current = 0;
+								staff.targets.hours.remaining = staff.targets.hours.target || 0;
+								staff.targets.hours.progress = 0;
+							}
+							if (staff.targets.newClients) {
+								staff.targets.newClients.current = 0;
+								staff.targets.newClients.remaining = staff.targets.newClients.target || 0;
+								staff.targets.newClients.progress = 0;
+							}
+							if (staff.targets.newLeads) {
+								staff.targets.newLeads.current = 0;
+								staff.targets.newLeads.remaining = staff.targets.newLeads.target || 0;
+								staff.targets.newLeads.progress = 0;
+							}
+							if (staff.targets.checkIns) {
+								staff.targets.checkIns.current = 0;
+								staff.targets.checkIns.remaining = staff.targets.checkIns.target || 0;
+								staff.targets.checkIns.progress = 0;
+							}
+							if (staff.targets.calls) {
+								staff.targets.calls.current = 0;
+								staff.targets.calls.remaining = staff.targets.calls.target || 0;
+								staff.targets.calls.progress = 0;
+							}
+							// Zero out cost breakdown
+							staff.targets.baseSalary = 0;
+							staff.targets.carInstalment = 0;
+							staff.targets.carInsurance = 0;
+							staff.targets.fuel = 0;
+							staff.targets.cellPhoneAllowance = 0;
+							staff.targets.carMaintenance = 0;
+							staff.targets.cgicCosts = 0;
+						}
+					});
+				}
+				
 				const executionTime = Date.now() - startTime;
-				this.logger.log(`User target retrieved from cache for user: ${userId} in ${executionTime}ms`);
+				this.logger.log(`User target retrieved from cache for user: ${userId} in ${executionTime}ms (zeros applied)`);
 				return {
-					userTarget: cachedTarget as UserTarget,
+					userTarget: cachedResponse,
 					message: process.env.SUCCESS_MESSAGE,
 				};
 			}
@@ -2652,76 +2754,70 @@ export class UserService {
 					}
 				}
 
+				// TEMPORARY: Return zeros for all user-specific data while logic is being revised
 				response.personalTargets = {
 					uid: user.userTarget.uid,
-					// Sales targets
+					// Sales targets - returning zeros
 					sales: {
 						name: 'Sales',
 						target: user.userTarget.targetSalesAmount,
-						current: user.userTarget.currentSalesAmount,
-						remaining: Math.max(0, user.userTarget.targetSalesAmount - user.userTarget.currentSalesAmount),
-						progress: user.userTarget.targetSalesAmount > 0 ?
-							Math.round((user.userTarget.currentSalesAmount / user.userTarget.targetSalesAmount) * 100) : 0,
+						current: 0,
+						remaining: user.userTarget.targetSalesAmount || 0,
+						progress: 0,
 						currency: user.userTarget.targetCurrency
 					},
-					// Quotations targets
+					// Quotations targets - returning zeros
 					quotations: {
 						name: 'Quotations',
 						target: user.userTarget.targetQuotationsAmount,
-						current: user.userTarget.currentQuotationsAmount,
-						remaining: Math.max(0, user.userTarget.targetQuotationsAmount - user.userTarget.currentQuotationsAmount),
-						progress: user.userTarget.targetQuotationsAmount > 0 ?
-							Math.round((user.userTarget.currentQuotationsAmount / user.userTarget.targetQuotationsAmount) * 100) : 0,
+						current: 0,
+						remaining: user.userTarget.targetQuotationsAmount || 0,
+						progress: 0,
 						currency: user.userTarget.targetCurrency
 					},
-					// Hours worked targets
+					// Hours worked targets - returning zeros
 					hours: {
 						name: 'Hours Worked',
 						target: user.userTarget.targetHoursWorked,
-						current: user.userTarget.currentHoursWorked,
-						remaining: Math.max(0, user.userTarget.targetHoursWorked - user.userTarget.currentHoursWorked),
-						progress: user.userTarget.targetHoursWorked > 0 ?
-							Math.round((user.userTarget.currentHoursWorked / user.userTarget.targetHoursWorked) * 100) : 0,
+						current: 0,
+						remaining: user.userTarget.targetHoursWorked || 0,
+						progress: 0,
 						unit: 'hours'
 					},
-					// New clients targets
+					// New clients targets - returning zeros
 					newClients: {
 						name: 'New Clients',
 						target: user.userTarget.targetNewClients,
-						current: user.userTarget.currentNewClients,
-						remaining: Math.max(0, user.userTarget.targetNewClients - user.userTarget.currentNewClients),
-						progress: user.userTarget.targetNewClients > 0 ?
-							Math.round((user.userTarget.currentNewClients / user.userTarget.targetNewClients) * 100) : 0,
+						current: 0,
+						remaining: user.userTarget.targetNewClients || 0,
+						progress: 0,
 						unit: 'clients'
 					},
-					// New leads targets
+					// New leads targets - returning zeros
 					newLeads: {
 						name: 'New Leads',
 						target: user.userTarget.targetNewLeads,
-						current: user.userTarget.currentNewLeads,
-						remaining: Math.max(0, user.userTarget.targetNewLeads - user.userTarget.currentNewLeads),
-						progress: user.userTarget.targetNewLeads > 0 ?
-							Math.round((user.userTarget.currentNewLeads / user.userTarget.targetNewLeads) * 100) : 0,
+						current: 0,
+						remaining: user.userTarget.targetNewLeads || 0,
+						progress: 0,
 						unit: 'leads'
 					},
-					// Check-ins targets
+					// Check-ins targets - returning zeros
 					checkIns: {
 						name: 'Check Ins',
 						target: user.userTarget.targetCheckIns,
-						current: user.userTarget.currentCheckIns,
-						remaining: Math.max(0, user.userTarget.targetCheckIns - user.userTarget.currentCheckIns),
-						progress: user.userTarget.targetCheckIns > 0 ?
-							Math.round((user.userTarget.currentCheckIns / user.userTarget.targetCheckIns) * 100) : 0,
+						current: 0,
+						remaining: user.userTarget.targetCheckIns || 0,
+						progress: 0,
 						unit: 'check-ins'
 					},
-					// Calls targets
+					// Calls targets - returning zeros
 					calls: {
 						name: 'Calls',
 						target: user.userTarget.targetCalls,
-						current: user.userTarget.currentCalls,
-						remaining: Math.max(0, user.userTarget.targetCalls - user.userTarget.currentCalls),
-						progress: user.userTarget.targetCalls > 0 ?
-							Math.round((user.userTarget.currentCalls / user.userTarget.targetCalls) * 100) : 0,
+						current: 0,
+						remaining: user.userTarget.targetCalls || 0,
+						progress: 0,
 						unit: 'calls'
 					},
 					// Period information
@@ -2729,21 +2825,20 @@ export class UserService {
 					periodStartDate: user.userTarget.periodStartDate,
 					periodEndDate: user.userTarget.periodEndDate,
 					workingDaysRemaining: workingDaysRemaining, // New field for working days remaining
-					salesRateAnalysis: salesRateAnalysis, // New field for sales rate analysis
+					salesRateAnalysis: null, // Returning null instead of actual analysis
 					targetCurrency: user.userTarget.targetCurrency,
 					createdAt: user.userTarget.createdAt,
 					updatedAt: user.userTarget.updatedAt,
-					// Cost breakdown fields
-					baseSalary: user.userTarget.baseSalary || 0,
-					carInstalment: user.userTarget.carInstalment || 0,
-					carInsurance: user.userTarget.carInsurance || 0,
-					fuel: user.userTarget.fuel || 0,
-					cellPhoneAllowance: user.userTarget.cellPhoneAllowance || 0,
-					carMaintenance: user.userTarget.carMaintenance || 0,
-					cgicCosts: user.userTarget.cgicCosts || 0,
-					// History tracking - monthly target performance history
-					// Ensure history is always an array (transformer + fallback should handle parsing)
-					history: Array.isArray(user.userTarget.history) ? user.userTarget.history : [],
+					// Cost breakdown fields - returning zeros
+					baseSalary: 0,
+					carInstalment: 0,
+					carInsurance: 0,
+					fuel: 0,
+					cellPhoneAllowance: 0,
+					carMaintenance: 0,
+					cgicCosts: 0,
+					// History tracking - returning empty array
+					history: [],
 					// ERP Sales Rep Code for linking to ERP data
 					erpSalesRepCode: user.userTarget.erpSalesRepCode || null,
 				};
@@ -2852,77 +2947,71 @@ export class UserService {
 				this.logger.debug(`Managed staff details: ${JSON.stringify(managedStaffDetails.map(s => ({ uid: s.uid, name: s.name, email: s.email, orgRef: s.organisationRef, branchUid: s.branch?.uid })))}`);
 
 				// Process managed staff targets with progress calculations and remaining amounts
+				// TEMPORARY: Return zeros for all staff-specific data while logic is being revised
 				const staffWithTargets = managedStaffDetails.map((staff) => {
 					const staffTargetData = staff.userTarget ? {
 						uid: staff.userTarget.uid,
-						// Sales targets
+						// Sales targets - returning zeros
 						sales: {
 							name: 'Sales',
 							target: staff.userTarget.targetSalesAmount,
-							current: staff.userTarget.currentSalesAmount,
-							remaining: Math.max(0, staff.userTarget.targetSalesAmount - staff.userTarget.currentSalesAmount),
-							progress: staff.userTarget.targetSalesAmount > 0 ?
-							Math.round((staff.userTarget.currentSalesAmount / staff.userTarget.targetSalesAmount) * 100) : 0,
+							current: 0,
+							remaining: staff.userTarget.targetSalesAmount || 0,
+							progress: 0,
 							currency: staff.userTarget.targetCurrency
 						},
-						// Quotations targets
+						// Quotations targets - returning zeros
 						quotations: {
 							name: 'Quotations',
 							target: staff.userTarget.targetQuotationsAmount,
-							current: staff.userTarget.currentQuotationsAmount,
-							remaining: Math.max(0, staff.userTarget.targetQuotationsAmount - staff.userTarget.currentQuotationsAmount),
-							progress: staff.userTarget.targetQuotationsAmount > 0 ?
-							Math.round((staff.userTarget.currentQuotationsAmount / staff.userTarget.targetQuotationsAmount) * 100) : 0,
+							current: 0,
+							remaining: staff.userTarget.targetQuotationsAmount || 0,
+							progress: 0,
 							currency: staff.userTarget.targetCurrency
 						},
-						// Hours worked targets
+						// Hours worked targets - returning zeros
 						hours: {
 							name: 'Hours Worked',
 							target: staff.userTarget.targetHoursWorked,
-							current: staff.userTarget.currentHoursWorked,
-							remaining: Math.max(0, staff.userTarget.targetHoursWorked - staff.userTarget.currentHoursWorked),
-							progress: staff.userTarget.targetHoursWorked > 0 ?
-							Math.round((staff.userTarget.currentHoursWorked / staff.userTarget.targetHoursWorked) * 100) : 0,
+							current: 0,
+							remaining: staff.userTarget.targetHoursWorked || 0,
+							progress: 0,
 							unit: 'hours'
 						},
-						// New clients targets
+						// New clients targets - returning zeros
 						newClients: {
 							name: 'New Clients',
 							target: staff.userTarget.targetNewClients,
-							current: staff.userTarget.currentNewClients,
-							remaining: Math.max(0, staff.userTarget.targetNewClients - staff.userTarget.currentNewClients),
-							progress: staff.userTarget.targetNewClients > 0 ?
-							Math.round((staff.userTarget.currentNewClients / staff.userTarget.targetNewClients) * 100) : 0,
+							current: 0,
+							remaining: staff.userTarget.targetNewClients || 0,
+							progress: 0,
 							unit: 'clients'
 						},
-						// New leads targets
+						// New leads targets - returning zeros
 						newLeads: {
 							name: 'New Leads',
 							target: staff.userTarget.targetNewLeads,
-							current: staff.userTarget.currentNewLeads,
-							remaining: Math.max(0, staff.userTarget.targetNewLeads - staff.userTarget.currentNewLeads),
-							progress: staff.userTarget.targetNewLeads > 0 ?
-							Math.round((staff.userTarget.currentNewLeads / staff.userTarget.targetNewLeads) * 100) : 0,
+							current: 0,
+							remaining: staff.userTarget.targetNewLeads || 0,
+							progress: 0,
 							unit: 'leads'
 						},
-						// Check-ins targets
+						// Check-ins targets - returning zeros
 						checkIns: {
 							name: 'Check Ins',
 							target: staff.userTarget.targetCheckIns,
-							current: staff.userTarget.currentCheckIns,
-							remaining: Math.max(0, staff.userTarget.targetCheckIns - staff.userTarget.currentCheckIns),
-							progress: staff.userTarget.targetCheckIns > 0 ?
-							Math.round((staff.userTarget.currentCheckIns / staff.userTarget.targetCheckIns) * 100) : 0,
+							current: 0,
+							remaining: staff.userTarget.targetCheckIns || 0,
+							progress: 0,
 							unit: 'check-ins'
 						},
-						// Calls targets
+						// Calls targets - returning zeros
 						calls: {
 							name: 'Calls',
 							target: staff.userTarget.targetCalls,
-							current: staff.userTarget.currentCalls,
-							remaining: Math.max(0, staff.userTarget.targetCalls - staff.userTarget.currentCalls),
-							progress: staff.userTarget.targetCalls > 0 ?
-							Math.round((staff.userTarget.currentCalls / staff.userTarget.targetCalls) * 100) : 0,
+							current: 0,
+							remaining: staff.userTarget.targetCalls || 0,
+							progress: 0,
 							unit: 'calls'
 						},
 						// Period information
@@ -2930,14 +3019,14 @@ export class UserService {
 						periodStartDate: staff.userTarget.periodStartDate,
 						periodEndDate: staff.userTarget.periodEndDate,
 						targetCurrency: staff.userTarget.targetCurrency,
-						// Cost breakdown fields - same as user-target.entity.ts
-						baseSalary: staff.userTarget.baseSalary || 0,
-						carInstalment: staff.userTarget.carInstalment || 0,
-						carInsurance: staff.userTarget.carInsurance || 0,
-						fuel: staff.userTarget.fuel || 0,
-						cellPhoneAllowance: staff.userTarget.cellPhoneAllowance || 0,
-						carMaintenance: staff.userTarget.carMaintenance || 0,
-						cgicCosts: staff.userTarget.cgicCosts || 0,
+						// Cost breakdown fields - returning zeros
+						baseSalary: 0,
+						carInstalment: 0,
+						carInsurance: 0,
+						fuel: 0,
+						cellPhoneAllowance: 0,
+						carMaintenance: 0,
+						cgicCosts: 0,
 					} : null;
 
 					return {
