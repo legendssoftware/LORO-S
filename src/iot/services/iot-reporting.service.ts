@@ -249,12 +249,9 @@ export class IoTReportingService {
 			let totalEvents = 0;
 			let totalUptime = 0;
 
-			// Morning opening window: 5:00am to 10:00am
-			// Only evaluate morning openings for opening time calculation
-			const MORNING_OPENING_START_SECONDS = 5 * 3600; // 5:00am
-			const MORNING_OPENING_END_SECONDS = 10 * 3600; // 10:00am
-
 			// Group records by date and extract first opening and last closing per day
+			// IMPORTANT: We evaluate ALL opening times regardless of hour - early openings (before org open time) 
+			// are treated as acceptable and count as "on time"
 			const dailyOpenings = new Map<string, number>();
 			const dailyClosings = new Map<string, number>();
 
@@ -267,16 +264,15 @@ export class IoTReportingService {
 					const openMinutes = TimezoneUtil.getMinutesSinceMidnight(openDate, orgTimezone);
 					const actualOpenTime = openMinutes * 60; // Convert to seconds
 					
-					// Only consider morning openings (5am-10am) for opening time calculation
-					if (actualOpenTime >= MORNING_OPENING_START_SECONDS && actualOpenTime <= MORNING_OPENING_END_SECONDS) {
-						// Get date key in organization timezone
-						const openDateOrg = TimezoneUtil.toOrganizationTime(openDate, orgTimezone);
-						const dateKey = openDateOrg.toISOString().split('T')[0]; // YYYY-MM-DD
-						
-						// Keep only the earliest opening for each day
-						if (!dailyOpenings.has(dateKey) || actualOpenTime < dailyOpenings.get(dateKey)!) {
-							dailyOpenings.set(dateKey, actualOpenTime);
-						}
+					// Process all opening times - no time window filter
+					// Early openings are acceptable and will be evaluated against org open time
+					// Get date key in organization timezone
+					const openDateOrg = TimezoneUtil.toOrganizationTime(openDate, orgTimezone);
+					const dateKey = openDateOrg.toISOString().split('T')[0]; // YYYY-MM-DD
+					
+					// Keep only the earliest opening for each day
+					if (!dailyOpenings.has(dateKey) || actualOpenTime < dailyOpenings.get(dateKey)!) {
+						dailyOpenings.set(dateKey, actualOpenTime);
 					}
 				}
 
@@ -297,6 +293,11 @@ export class IoTReportingService {
 			}
 
 			// Evaluate opening times using first opening per day
+			// Early openings (before org open time) are always acceptable - they count as "on time"
+			// Condition: timeDiff <= TOLERANCE_SECONDS accepts:
+			//   - Early openings (timeDiff < 0) → ACCEPTED ✓
+			//   - On-time/slightly late (0 <= timeDiff <= 5 min) → ACCEPTED ✓
+			//   - More than 5 min late (timeDiff > 5 min) → REJECTED ✗
 			dailyOpenings.forEach((actualOpenTime) => {
 				const timeDiff = actualOpenTime - expectedOpenTime;
 				if (timeDiff <= TOLERANCE_SECONDS) {

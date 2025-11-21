@@ -946,15 +946,30 @@ export class IotService {
 			});
 			
 			// Get records from last 7 days only based on actual opening/closing dates
-			// This ensures we're looking at recent performance, not just when records were created
-			const sevenDaysAgo = new Date();
-			sevenDaysAgo.setHours(0, 0, 0, 0);
-			sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+			// CRITICAL FIX: Use organization timezone for date filtering, not UTC
+			// Calculate "7 days ago" in organization timezone
+			const nowInOrgTimezone = TimezoneUtil.toOrganizationTime(new Date(), orgTimezone);
+			const sevenDaysAgoInOrgTimezone = new Date(nowInOrgTimezone);
+			sevenDaysAgoInOrgTimezone.setUTCDate(sevenDaysAgoInOrgTimezone.getUTCDate() - 7);
+			sevenDaysAgoInOrgTimezone.setUTCHours(0, 0, 0, 0);
 			
+			// Filter records using organization timezone dates
 			const recentRecords = sortedRecords.filter(r => {
 				// Use openTime or closeTime date for filtering, fallback to createdAt
 				const recordDate = r.openTime || r.closeTime || r.createdAt;
-				return new Date(recordDate) >= sevenDaysAgo;
+				if (!recordDate) return false;
+				
+				// Convert record date to organization timezone for date comparison
+				const recordDateObj = typeof recordDate === 'string' 
+					? new Date(recordDate) 
+					: (recordDate as unknown as Date);
+				const recordDateInOrgTimezone = TimezoneUtil.toOrganizationTime(recordDateObj, orgTimezone);
+				
+				// Compare dates (YYYY-MM-DD) in organization timezone
+				const recordDateKey = recordDateInOrgTimezone.toISOString().split('T')[0];
+				const sevenDaysAgoKey = sevenDaysAgoInOrgTimezone.toISOString().split('T')[0];
+				
+				return recordDateKey >= sevenDaysAgoKey;
 			});
 			
 			// Use only last 7 days records - no fallback to older records
@@ -962,13 +977,8 @@ export class IotService {
 			
 			this.logger.debug(
 				`[${device.deviceID}] Using ${recordsToCheck.length} records for performance calculation ` +
-				`(from last 7 days only, ${sortedRecords.length} total available)`
+				`(from last 7 days in ${orgTimezone} timezone, ${sortedRecords.length} total available)`
 			);
-
-			// Morning opening window: 5:00am to 10:00am (300 to 600 minutes)
-			// Only evaluate morning openings for "opens on time" metric
-			const MORNING_OPENING_START = 5 * 60; // 5:00am
-			const MORNING_OPENING_END = 10 * 60; // 10:00am
 
 			// Helper function to extract hours/minutes from organization timezone
 			const getMinutesSinceMidnight = (date: Date, timezone: string): number => {
@@ -981,12 +991,15 @@ export class IotService {
 			// This ensures we only use the earliest open and latest close for each day, ignoring intermediate events
 			// This is critical for accurate performance metrics - a store that opens at 5:00 AM should not show 8:00 AM
 			// as the opening time even if that's when a manager arrived later
+			// IMPORTANT: We evaluate ALL opening times regardless of hour - early openings (before org open time) 
+			// are treated as acceptable and count as "on time"
 			// Store original dates (UTC) so we can format them properly later
 			const dailyOpenings = new Map<string, { time: Date; minutes: number }>();
 			const dailyClosings = new Map<string, { time: Date; minutes: number }>();
 
 			recordsToCheck.forEach((record) => {
-				// Process opening times - only consider morning openings (5am-10am)
+				// Process opening times - evaluate ALL openings regardless of time
+				// Early openings (before org open time) are acceptable and will be counted as "on time"
 				if (record.openTime) {
 					try {
 						const openDate = typeof record.openTime === 'string'
@@ -996,15 +1009,14 @@ export class IotService {
 						const openDateOrg = TimezoneUtil.toOrganizationTime(openDate, orgTimezone);
 						const openMinutes = getMinutesSinceMidnight(openDate, orgTimezone);
 						
-						// Only consider morning openings (5am-10am) for opening time calculation
-						if (openMinutes >= MORNING_OPENING_START && openMinutes <= MORNING_OPENING_END) {
-							const dateKey = openDateOrg.toISOString().split('T')[0]; // YYYY-MM-DD
-							
-							// Keep only the earliest opening for each day
-							// Store original date (UTC) so formatInOrganizationTime can convert it properly
-							if (!dailyOpenings.has(dateKey) || openMinutes < dailyOpenings.get(dateKey)!.minutes) {
-								dailyOpenings.set(dateKey, { time: openDate, minutes: openMinutes });
-							}
+						// Process all opening times - no time window filter
+						// Early openings are acceptable and will be evaluated against org open time
+						const dateKey = openDateOrg.toISOString().split('T')[0]; // YYYY-MM-DD
+						
+						// Keep only the earliest opening for each day
+						// Store original date (UTC) so formatInOrganizationTime can convert it properly
+						if (!dailyOpenings.has(dateKey) || openMinutes < dailyOpenings.get(dateKey)!.minutes) {
+							dailyOpenings.set(dateKey, { time: openDate, minutes: openMinutes });
 						}
 					} catch (error) {
 						this.logger.warn(`Failed to parse open time for device ${device.deviceID}: ${error.message}`);
@@ -1034,8 +1046,9 @@ export class IotService {
 			});
 
 			// Evaluate opening times using first opening per day
+			// FIX: Use available days (1-7) instead of hard-coded 7 days
 			let opensOnTimeCount = 0;
-			let recordsWithOpenTime = dailyOpenings.size;
+			const availableDaysWithOpenings = dailyOpenings.size; // Can be 0 to 7
 
 			// Debug logging for opening times
 			const openingDetails: Array<{ date: string; time: string; minutes: number; timeDiff: number; accepted: boolean }> = [];
@@ -1045,7 +1058,7 @@ export class IotService {
 				const timeDiff = openMinutes - targetOpenTimeMinutes;
 				// Accept if: opens early (timeDiff < 0) OR on-time/slightly late (0 <= timeDiff <= 5)
 				// Reject if: opens more than 5 minutes late (timeDiff > 5)
-				// Since we're filtering to morning window (5am-10am), early openings are acceptable
+				// Early openings (before org open time) are always acceptable - they count as "on time"
 				// Condition: timeDiff <= 5 means:
 				//   - timeDiff = -33 (33 min early) → -33 <= 5 → TRUE → ACCEPTED ✓
 				//   - timeDiff = 0 (on time) → 0 <= 5 → TRUE → ACCEPTED ✓
@@ -1069,8 +1082,9 @@ export class IotService {
 			});
 
 			// Evaluate closing times using last closing per day
+			// FIX: Use available days (1-7) instead of hard-coded 7 days
 			let closesOnTimeCount = 0;
-			let recordsWithCloseTime = dailyClosings.size;
+			const availableDaysWithClosings = dailyClosings.size; // Can be 0 to 7
 
 			// Debug logging for closing times
 			const closingDetails: Array<{ date: string; time: string; minutes: number; timeDiff: number; accepted: boolean }> = [];
@@ -1095,12 +1109,14 @@ export class IotService {
 				});
 			});
 
-			// Calculate percentages based on records that actually have time data
-			const opensOnTimePercentage = recordsWithOpenTime > 0
-				? (opensOnTimeCount / recordsWithOpenTime) * 100
+			// FIX: Calculate percentages using available days (not hard-coded 7)
+			// Rule: onTimeRate = (numberOfOnTimeDays / availableDays) × 100
+			// availableDays can be 1 to 7 (or 0 if no data)
+			const opensOnTimePercentage = availableDaysWithOpenings > 0
+				? (opensOnTimeCount / availableDaysWithOpenings) * 100
 				: 0;
-			const closesOnTimePercentage = recordsWithCloseTime > 0
-				? (closesOnTimeCount / recordsWithCloseTime) * 100
+			const closesOnTimePercentage = availableDaysWithClosings > 0
+				? (closesOnTimeCount / availableDaysWithClosings) * 100
 				: 0;
 
 			// Determine punctuality flags
@@ -1117,7 +1133,7 @@ export class IotService {
 				`[${device.deviceID}] Performance calculation result: ` +
 				`opensOnTime=${opensOnTime} (${opensOnTimePercentage.toFixed(1)}% >= ${openingThreshold}%), ` +
 				`closesOnTime=${closesOnTime} (${closesOnTimePercentage.toFixed(1)}% >= ${closingThreshold}%), ` +
-				`recordsWithOpenTime=${recordsWithOpenTime}, recordsWithCloseTime=${recordsWithCloseTime}`
+				`availableDaysWithOpenings=${availableDaysWithOpenings}, availableDaysWithClosings=${availableDaysWithClosings}`
 			);
 
 			// Enhanced logging for debugging opening times
@@ -1128,7 +1144,7 @@ export class IotService {
 				const lateOpenings = openingDetails.filter(d => d.timeDiff > TOLERANCE_MINUTES).length;
 				
 				this.logger.debug(
-					`[${device.deviceID}] Opening analysis: ${opensOnTimeCount}/${recordsWithOpenTime} on-time (${opensOnTimePercentage.toFixed(1)}%), ` +
+					`[${device.deviceID}] Opening analysis: ${opensOnTimeCount}/${availableDaysWithOpenings} on-time days (${opensOnTimePercentage.toFixed(1)}%), ` +
 					`threshold=${openingThreshold}%, ` +
 					`opensOnTime=${opensOnTime}, ` +
 					`target=${targetOpenTimeMinutes}min (${Math.floor(targetOpenTimeMinutes / 60)}:${(targetOpenTimeMinutes % 60).toString().padStart(2, '0')}), ` +
@@ -1137,7 +1153,7 @@ export class IotService {
 				);
 			} else {
 				this.logger.warn(
-					`[${device.deviceID}] No opening records found in morning window (5am-10am) for performance calculation`
+					`[${device.deviceID}] No opening records found in last 7 days (${orgTimezone} timezone) for performance calculation`
 				);
 			}
 			
@@ -1148,12 +1164,16 @@ export class IotService {
 				const earlyClosings = closingDetails.filter(d => d.timeDiff < -TOLERANCE_MINUTES).length;
 				
 				this.logger.debug(
-					`[${device.deviceID}] Closing analysis: ${closesOnTimeCount}/${recordsWithCloseTime} on-time (${closesOnTimePercentage.toFixed(1)}%), ` +
+					`[${device.deviceID}] Closing analysis: ${closesOnTimeCount}/${availableDaysWithClosings} on-time days (${closesOnTimePercentage.toFixed(1)}%), ` +
 					`threshold=${closingThreshold}%, ` +
 					`closesOnTime=${closesOnTime}, ` +
 					`target=${targetCloseTimeMinutes}min (${Math.floor(targetCloseTimeMinutes / 60)}:${(targetCloseTimeMinutes % 60).toString().padStart(2, '0')}), ` +
 					`accepted=${acceptedCount}, rejected=${rejectedCount}, early=${earlyClosings}, ` +
 					`details=${JSON.stringify(closingDetails.slice(0, 5))}`
+				);
+			} else {
+				this.logger.warn(
+					`[${device.deviceID}] No closing records found in last 7 days (${orgTimezone} timezone) for performance calculation`
 				);
 			}
 
@@ -1199,8 +1219,11 @@ export class IotService {
 			}
 
 			// Generate note based on performance
+			// FIX: Handle "No data yet" case when there are no available days
 			let note = '';
-			if (score === 5) {
+			if (availableDaysWithOpenings === 0 && availableDaysWithClosings === 0) {
+				note = 'No data yet';
+			} else if (score === 5) {
 				const notes = ['Consistently punctual', 'Very reliable', 'Excellent performance', 'Outstanding reliability'];
 				note = notes[Math.floor(Math.random() * notes.length)];
 			} else if (score === 4) {
