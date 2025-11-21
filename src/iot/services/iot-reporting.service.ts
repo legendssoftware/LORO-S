@@ -18,6 +18,7 @@ import {
 } from '../../lib/interfaces/iot.interface';
 import { DeviceReportOptions, IoTServiceResponse } from '../../lib/types/iot.types';
 import { OrganisationHoursService } from '../../organisation/services/organisation-hours.service';
+import { TimezoneUtil } from '../../lib/utils/timezone.util';
 
 /**
  * IoT Device Reporting Service
@@ -229,6 +230,9 @@ export class IoTReportingService {
 				throw new NotFoundException(`Organization hours not configured for device ${deviceId}`);
 			}
 
+			// Get organization timezone
+			const orgTimezone = orgHours.timezone || TimezoneUtil.AFRICA_JOHANNESBURG;
+
 			// Parse organization open/close times
 			const [openHour, openMinute] = orgHours.openTime.split(':').map(Number);
 			const [closeHour, closeMinute] = orgHours.closeTime.split(':').map(Number);
@@ -259,11 +263,15 @@ export class IoTReportingService {
 
 				if (record.openTime) {
 					const openDate = new Date(record.openTime as unknown as Date);
-					const actualOpenTime = openDate.getHours() * 3600 + openDate.getMinutes() * 60;
+					// Use TimezoneUtil to get minutes since midnight in organization timezone
+					const openMinutes = TimezoneUtil.getMinutesSinceMidnight(openDate, orgTimezone);
+					const actualOpenTime = openMinutes * 60; // Convert to seconds
 					
 					// Only consider morning openings (5am-10am) for opening time calculation
 					if (actualOpenTime >= MORNING_OPENING_START_SECONDS && actualOpenTime <= MORNING_OPENING_END_SECONDS) {
-						const dateKey = openDate.toISOString().split('T')[0]; // YYYY-MM-DD
+						// Get date key in organization timezone
+						const openDateOrg = TimezoneUtil.toOrganizationTime(openDate, orgTimezone);
+						const dateKey = openDateOrg.toISOString().split('T')[0]; // YYYY-MM-DD
 						
 						// Keep only the earliest opening for each day
 						if (!dailyOpenings.has(dateKey) || actualOpenTime < dailyOpenings.get(dateKey)!) {
@@ -274,8 +282,12 @@ export class IoTReportingService {
 
 				if (record.closeTime) {
 					const closeDate = new Date(record.closeTime as unknown as Date);
-					const actualCloseTime = closeDate.getHours() * 3600 + closeDate.getMinutes() * 60;
-					const dateKey = closeDate.toISOString().split('T')[0]; // YYYY-MM-DD
+					// Use TimezoneUtil to get minutes since midnight in organization timezone
+					const closeMinutes = TimezoneUtil.getMinutesSinceMidnight(closeDate, orgTimezone);
+					const actualCloseTime = closeMinutes * 60; // Convert to seconds
+					// Get date key in organization timezone
+					const closeDateOrg = TimezoneUtil.toOrganizationTime(closeDate, orgTimezone);
+					const dateKey = closeDateOrg.toISOString().split('T')[0]; // YYYY-MM-DD
 					
 					// Keep only the latest closing for each day
 					if (!dailyClosings.has(dateKey) || actualCloseTime > dailyClosings.get(dateKey)!) {
@@ -405,13 +417,16 @@ export class IoTReportingService {
 		const orgRef = devices[0]?.orgID ? String(devices[0].orgID) : null;
 		const orgHoursArr = orgRef ? await this.organisationHoursService.findAll(orgRef).catch(() => []) : [];
 		const orgHours = Array.isArray(orgHoursArr) && orgHoursArr.length > 0 ? orgHoursArr[0] : null;
+		const orgTimezone = orgHours?.timezone || TimezoneUtil.AFRICA_JOHANNESBURG;
 		const [openHour, openMinute] = orgHours?.openTime ? orgHours.openTime.split(':').map(Number) : [8, 0];
 		const expectedOpenTime = (openHour * 60 + openMinute) * 60;
 		const TOLERANCE_SECONDS = 5 * 60;
 		const lateOpenings = records.filter((r) => {
 			if (!r.openTime) return false;
 			const openDate = new Date(r.openTime as unknown as Date);
-			const actualOpen = openDate.getHours() * 3600 + openDate.getMinutes() * 60;
+			// Use TimezoneUtil to get minutes since midnight in organization timezone
+			const openMinutes = TimezoneUtil.getMinutesSinceMidnight(openDate, orgTimezone);
+			const actualOpen = openMinutes * 60; // Convert to seconds
 			return Math.abs(actualOpen - expectedOpenTime) > TOLERANCE_SECONDS && actualOpen > expectedOpenTime;
 		}).length;
 
@@ -445,13 +460,16 @@ export class IoTReportingService {
 		const orgRef = devices[0]?.orgID ? String(devices[0].orgID) : null;
 		const orgHoursArr = orgRef ? await this.organisationHoursService.findAll(orgRef).catch(() => []) : [];
 		const orgHours = Array.isArray(orgHoursArr) && orgHoursArr.length > 0 ? orgHoursArr[0] : null;
+		const orgTimezone = orgHours?.timezone || TimezoneUtil.AFRICA_JOHANNESBURG;
 		const [closeHour, closeMinute] = orgHours?.closeTime ? orgHours.closeTime.split(':').map(Number) : [17, 0];
 		const expectedCloseTime = (closeHour * 60 + closeMinute) * 60;
 		const TOLERANCE_SECONDS = 5 * 60;
 		const earlyClosings = records.filter((r) => {
 			if (!r.closeTime) return false;
 			const closeDate = new Date(r.closeTime as unknown as Date);
-			const actualClose = closeDate.getHours() * 3600 + closeDate.getMinutes() * 60;
+			// Use TimezoneUtil to get minutes since midnight in organization timezone
+			const closeMinutes = TimezoneUtil.getMinutesSinceMidnight(closeDate, orgTimezone);
+			const actualClose = closeMinutes * 60; // Convert to seconds
 			return Math.abs(actualClose - expectedCloseTime) > TOLERANCE_SECONDS && actualClose < expectedCloseTime;
 		}).length;
 
@@ -541,7 +559,7 @@ export class IoTReportingService {
 						: undefined,
 					isLateOpening: this.checkLateOpening(todayRecord?.openTime as unknown as Date | undefined, orgHours),
 					isEarlyClosing: this.checkEarlyClosing(todayRecord?.closeTime as unknown as Date | undefined, orgHours),
-					lateMinutes: this.calculateLateMinutes(todayRecord?.openTime as unknown as Date | undefined),
+					lateMinutes: this.calculateLateMinutes(todayRecord?.openTime as unknown as Date | undefined, orgHours),
 					efficiency: this.calculateDeviceEfficiency(device),
 					uptime: device.currentStatus === DeviceStatus.ONLINE ? 100 : 0,
 					eventCount: deviceRecords.length,
@@ -764,10 +782,13 @@ export class IoTReportingService {
 
 	private checkLateOpening(openTime?: Date, orgHours?: any): boolean {
 		if (!openTime) return false;
+		const orgTimezone = orgHours?.timezone || TimezoneUtil.AFRICA_JOHANNESBURG;
 		const [openHour, openMinute] = orgHours?.openTime ? orgHours.openTime.split(':').map(Number) : [8, 0];
 		const expectedOpenTime = (openHour * 60 + openMinute) * 60;
 		const openDate = new Date(openTime);
-		const actualOpenTime = openDate.getHours() * 3600 + openDate.getMinutes() * 60;
+		// Use TimezoneUtil to get minutes since midnight in organization timezone
+		const openMinutes = TimezoneUtil.getMinutesSinceMidnight(openDate, orgTimezone);
+		const actualOpenTime = openMinutes * 60; // Convert to seconds
 		const TOLERANCE_SECONDS = 5 * 60;
 		// Only consider it late if it's more than 5 minutes after the expected time
 		// Early openings are acceptable
@@ -776,21 +797,28 @@ export class IoTReportingService {
 
 	private checkEarlyClosing(closeTime?: Date, orgHours?: any): boolean {
 		if (!closeTime) return false;
+		const orgTimezone = orgHours?.timezone || TimezoneUtil.AFRICA_JOHANNESBURG;
 		const [closeHour, closeMinute] = orgHours?.closeTime ? orgHours.closeTime.split(':').map(Number) : [17, 0];
 		const expectedCloseTime = (closeHour * 60 + closeMinute) * 60;
 		const closeDate = new Date(closeTime);
-		const actualCloseTime = closeDate.getHours() * 3600 + closeDate.getMinutes() * 60;
+		// Use TimezoneUtil to get minutes since midnight in organization timezone
+		const closeMinutes = TimezoneUtil.getMinutesSinceMidnight(closeDate, orgTimezone);
+		const actualCloseTime = closeMinutes * 60; // Convert to seconds
 		const TOLERANCE_SECONDS = 5 * 60;
 		// Only consider it early if it's more than 5 minutes before the expected time
 		// Late closings are acceptable
 		return actualCloseTime < expectedCloseTime - TOLERANCE_SECONDS;
 	}
 
-	private calculateLateMinutes(openTime?: Date): number | undefined {
+	private calculateLateMinutes(openTime?: Date, orgHours?: any): number | undefined {
 		if (!openTime) return undefined;
-		const expectedOpenTime = 8 * 3600; // 8:00 AM
+		const orgTimezone = orgHours?.timezone || TimezoneUtil.AFRICA_JOHANNESBURG;
+		const [openHour, openMinute] = orgHours?.openTime ? orgHours.openTime.split(':').map(Number) : [8, 0];
+		const expectedOpenTime = (openHour * 60 + openMinute) * 60;
 		const openDate = new Date(openTime);
-		const actualOpenTime = openDate.getHours() * 3600 + openDate.getMinutes() * 60;
+		// Use TimezoneUtil to get minutes since midnight in organization timezone
+		const openMinutes = TimezoneUtil.getMinutesSinceMidnight(openDate, orgTimezone);
+		const actualOpenTime = openMinutes * 60; // Convert to seconds
 		const diffSeconds = actualOpenTime - expectedOpenTime;
 		return diffSeconds > 0 ? Math.round(diffSeconds / 60) : 0;
 	}

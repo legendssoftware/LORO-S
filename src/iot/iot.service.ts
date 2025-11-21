@@ -8,7 +8,7 @@ import {
 	ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource, Between, Not, IsNull, QueryFailedError, In } from 'typeorm';
+import { Repository, DataSource, Between, Not, IsNull, QueryFailedError, In, MoreThanOrEqual } from 'typeorm';
 import { Cache } from 'cache-manager';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -421,8 +421,10 @@ export class IotService {
 				return false; // If no business hours defined, assume always during business hours
 			}
 
-			const eventHour = eventDate.getHours();
-			const eventMinute = eventDate.getMinutes();
+			// eventDate is already converted using TimezoneUtil.toOrganizationTime
+			// which returns a UTC Date representing org local time, so use getUTCHours/getUTCMinutes
+			const eventHour = eventDate.getUTCHours();
+			const eventMinute = eventDate.getUTCMinutes();
 			const eventTimeInMinutes = eventHour * 60 + eventMinute;
 
 			// Parse start time
@@ -934,7 +936,7 @@ export class IotService {
 			// Get organization timezone
 			const orgTimezone = orgHours.timezone || TimezoneUtil.AFRICA_JOHANNESBURG;
 
-			// Use recent records (last 14 days) for better representation of current performance
+			// Use recent records (last 7 days only) for better representation of current performance
 			// Sort records by opening/closing time descending to get most recent first
 			const sortedRecords = [...records].sort((a, b) => {
 				// Use openTime or closeTime for sorting, fallback to createdAt
@@ -943,24 +945,24 @@ export class IotService {
 				return new Date(bTime).getTime() - new Date(aTime).getTime();
 			});
 			
-			// Get records from last 14 days based on actual opening/closing dates
+			// Get records from last 7 days only based on actual opening/closing dates
 			// This ensures we're looking at recent performance, not just when records were created
-			const fourteenDaysAgo = new Date();
-			fourteenDaysAgo.setHours(0, 0, 0, 0);
-			fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
+			const sevenDaysAgo = new Date();
+			sevenDaysAgo.setHours(0, 0, 0, 0);
+			sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 			
 			const recentRecords = sortedRecords.filter(r => {
 				// Use openTime or closeTime date for filtering, fallback to createdAt
 				const recordDate = r.openTime || r.closeTime || r.createdAt;
-				return new Date(recordDate) >= fourteenDaysAgo;
-			}).slice(0, 30);
+				return new Date(recordDate) >= sevenDaysAgo;
+			});
 			
-			// Fallback to latest 30 records if no recent records
-			const recordsToCheck = recentRecords.length > 0 ? recentRecords : sortedRecords.slice(0, 30);
+			// Use only last 7 days records - no fallback to older records
+			const recordsToCheck = recentRecords;
 			
 			this.logger.debug(
 				`[${device.deviceID}] Using ${recordsToCheck.length} records for performance calculation ` +
-				`(${recentRecords.length} from last 14 days, ${sortedRecords.length} total available)`
+				`(from last 7 days only, ${sortedRecords.length} total available)`
 			);
 
 			// Morning opening window: 5:00am to 10:00am (300 to 600 minutes)
@@ -975,7 +977,11 @@ export class IotService {
 				return orgDate.getUTCHours() * 60 + orgDate.getUTCMinutes();
 			};
 
-			// Group records by date and extract first opening and last closing per day
+			// DAILY AGGREGATION: Group records by date and extract first opening and last closing per day
+			// This ensures we only use the earliest open and latest close for each day, ignoring intermediate events
+			// This is critical for accurate performance metrics - a store that opens at 5:00 AM should not show 8:00 AM
+			// as the opening time even if that's when a manager arrived later
+			// Store original dates (UTC) so we can format them properly later
 			const dailyOpenings = new Map<string, { time: Date; minutes: number }>();
 			const dailyClosings = new Map<string, { time: Date; minutes: number }>();
 
@@ -995,8 +1001,9 @@ export class IotService {
 							const dateKey = openDateOrg.toISOString().split('T')[0]; // YYYY-MM-DD
 							
 							// Keep only the earliest opening for each day
+							// Store original date (UTC) so formatInOrganizationTime can convert it properly
 							if (!dailyOpenings.has(dateKey) || openMinutes < dailyOpenings.get(dateKey)!.minutes) {
-								dailyOpenings.set(dateKey, { time: openDateOrg, minutes: openMinutes });
+								dailyOpenings.set(dateKey, { time: openDate, minutes: openMinutes });
 							}
 						}
 					} catch (error) {
@@ -1016,8 +1023,9 @@ export class IotService {
 						const dateKey = closeDateOrg.toISOString().split('T')[0]; // YYYY-MM-DD
 						
 						// Keep only the latest closing for each day
+						// Store original date (UTC) so formatInOrganizationTime can convert it properly
 						if (!dailyClosings.has(dateKey) || closeMinutes > dailyClosings.get(dateKey)!.minutes) {
-							dailyClosings.set(dateKey, { time: closeDateOrg, minutes: closeMinutes });
+							dailyClosings.set(dateKey, { time: closeDate, minutes: closeMinutes });
 						}
 					} catch (error) {
 						this.logger.warn(`Failed to parse close time for device ${device.deviceID}: ${error.message}`);
@@ -1240,45 +1248,55 @@ export class IotService {
 				note += ' (Connection issue)';
 			}
 
-			// Format latest times
-			const latestRecord = records.length > 0 ? records[0] : null;
+			// Format latest times using earliest open and latest close from aggregated daily records
+			// CRITICAL: Only show TODAY's open/close times. If store opened today but hasn't closed, closeTime = null
+			// Get today's date in organization timezone for comparison
+			const todayOrg = TimezoneUtil.toOrganizationTime(new Date(), orgTimezone);
+			const todayKey = todayOrg.toISOString().split('T')[0]; // YYYY-MM-DD in org timezone
+			
 			let latestOpenTime: string | null = null;
 			let latestCloseTime: string | null = null;
 
-			if (latestRecord) {
-				if (latestRecord.openTime) {
-					try {
-						const openDate = typeof latestRecord.openTime === 'string'
-							? new Date(latestRecord.openTime)
-							: (latestRecord.openTime as unknown as Date);
-						const openDateOrg = TimezoneUtil.toOrganizationTime(openDate, orgTimezone);
-						const hours = openDateOrg.getHours();
-						const minutes = openDateOrg.getMinutes();
-						const period = hours >= 12 ? 'pm' : 'am';
-						const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
-						const paddedMinutes = minutes.toString().padStart(2, '0');
-						latestOpenTime = `${displayHours}:${paddedMinutes}${period}`;
-					} catch (error) {
-						latestOpenTime = null;
-					}
+			// Get TODAY's earliest open (if exists)
+			if (dailyOpenings.has(todayKey)) {
+				const todayOpening = dailyOpenings.get(todayKey)!;
+				try {
+					// Database times are stored as UTC dates representing org local time
+					// Extract UTC hours/minutes directly (they represent org local time)
+					const openingDate = todayOpening.time;
+					const hours = openingDate.getUTCHours();
+					const minutes = openingDate.getUTCMinutes();
+					const period = hours >= 12 ? 'pm' : 'am';
+					const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+					const paddedMinutes = minutes.toString().padStart(2, '0');
+					latestOpenTime = `${displayHours}:${paddedMinutes}${period}`;
+				} catch (error) {
+					this.logger.warn(`Failed to format latest open time: ${error.message}`);
+					latestOpenTime = null;
 				}
+			}
 
-				if (latestRecord.closeTime) {
-					try {
-						const closeDate = typeof latestRecord.closeTime === 'string'
-							? new Date(latestRecord.closeTime)
-							: (latestRecord.closeTime as unknown as Date);
-						const closeDateOrg = TimezoneUtil.toOrganizationTime(closeDate, orgTimezone);
-						const hours = closeDateOrg.getHours();
-						const minutes = closeDateOrg.getMinutes();
-						const period = hours >= 12 ? 'pm' : 'am';
-						const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
-						const paddedMinutes = minutes.toString().padStart(2, '0');
-						latestCloseTime = `${displayHours}:${paddedMinutes}${period}`;
-					} catch (error) {
-						latestCloseTime = null;
-					}
+			// Get TODAY's latest close (ONLY if it exists AND matches today's open date)
+			// If store opened today but hasn't closed, closeTime must be null
+			if (dailyOpenings.has(todayKey) && dailyClosings.has(todayKey)) {
+				const todayClosing = dailyClosings.get(todayKey)!;
+				try {
+					// Database times are stored as UTC dates representing org local time
+					// Extract UTC hours/minutes directly (they represent org local time)
+					const closingDate = todayClosing.time;
+					const hours = closingDate.getUTCHours();
+					const minutes = closingDate.getUTCMinutes();
+					const period = hours >= 12 ? 'pm' : 'am';
+					const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+					const paddedMinutes = minutes.toString().padStart(2, '0');
+					latestCloseTime = `${displayHours}:${paddedMinutes}${period}`;
+				} catch (error) {
+					this.logger.warn(`Failed to format latest close time: ${error.message}`);
+					latestCloseTime = null;
 				}
+			} else {
+				// Store opened today but hasn't closed yet, OR no open today
+				latestCloseTime = null;
 			}
 
 			const result = {
@@ -1440,11 +1458,17 @@ export class IotService {
 			);
 
 		// Limit records to latest 30 for each device and calculate performance metrics
+		// IMPORTANT: Sort by openTime/closeTime (actual event times) not createdAt to get most recent events
 		const processedDevices = await Promise.all(
 			devices.map(async (device) => {
 				const sortedRecords = device.records
 					? device.records
-							.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+							.sort((a, b) => {
+								// Sort by actual event time (openTime or closeTime), fallback to createdAt
+								const aTime = a.openTime || a.closeTime || a.createdAt;
+								const bTime = b.openTime || b.closeTime || b.createdAt;
+								return new Date(bTime).getTime() - new Date(aTime).getTime();
+							})
 							.slice(0, 30)
 					: [];
 
@@ -2018,12 +2042,15 @@ export class IotService {
 			// 3. Smart daily record management
 			const recordResult = await this.smartRecordManagement(timeEventDto, device, queryRunner);
 
-			// If record was deleted due to open/close times being too close, skip analytics and notifications
-			if (recordResult.action === 'deleted' && recordResult.reason === 'open_close_too_close') {
+			// If record was deleted or debounced, skip analytics and notifications
+			if (
+				(recordResult.action === 'deleted' && recordResult.reason === 'open_close_too_close') ||
+				(recordResult.action === 'debounced' && recordResult.reason === 'duplicate_within_5min')
+			) {
 				this.logger.log(
-					`⏭️ Skipping analytics and notifications for discarded record - Device: ${timeEventDto.deviceID}`,
+					`⏭️ Skipping analytics and notifications for ${recordResult.action} record - Device: ${timeEventDto.deviceID}`,
 				);
-				// Still invalidate device cache since we modified records
+				// Still invalidate device cache since we may have modified records
 				await this.invalidateDeviceCache(device);
 			} else {
 				// 4. Advanced analytics update (includes business hours analysis)
@@ -2483,6 +2510,61 @@ export class IotService {
 		const tomorrow = new Date(today);
 		tomorrow.setDate(tomorrow.getDate() + 1);
 
+		// DEBOUNCING: Check for recent events of the same type within 5 minutes
+		const DEBOUNCE_MINUTES = 5;
+		const debounceThreshold = new Date(eventDateOrg.getTime() - DEBOUNCE_MINUTES * 60 * 1000);
+		
+		// Check for recent events of the same type
+		let recentSameTypeEvent: DeviceRecords | null = null;
+		
+		if (timeEventDto.eventType === 'open') {
+			// For open events, check for recent open times
+			const recentRecords = await queryRunner.manager.find(DeviceRecords, {
+				where: {
+					deviceId: device.id,
+					openTime: Not(IsNull()),
+					updatedAt: MoreThanOrEqual(debounceThreshold),
+				},
+				order: { updatedAt: 'DESC' },
+				take: 1,
+			});
+			recentSameTypeEvent = recentRecords.length > 0 ? recentRecords[0] : null;
+		} else {
+			// For close events, check for recent close times
+			const recentRecords = await queryRunner.manager.find(DeviceRecords, {
+				where: {
+					deviceId: device.id,
+					closeTime: Not(IsNull()),
+					updatedAt: MoreThanOrEqual(debounceThreshold),
+				},
+				order: { updatedAt: 'DESC' },
+				take: 1,
+			});
+			recentSameTypeEvent = recentRecords.length > 0 ? recentRecords[0] : null;
+		}
+
+		if (recentSameTypeEvent) {
+			const recentTime = timeEventDto.eventType === 'open'
+				? (typeof recentSameTypeEvent.openTime === 'string'
+					? new Date(recentSameTypeEvent.openTime)
+					: (recentSameTypeEvent.openTime as unknown as Date))
+				: (typeof recentSameTypeEvent.closeTime === 'string'
+					? new Date(recentSameTypeEvent.closeTime)
+					: (recentSameTypeEvent.closeTime as unknown as Date));
+			
+			const timeDifferenceMs = eventDateOrg.getTime() - recentTime.getTime();
+			const timeDifferenceMinutes = Math.abs(timeDifferenceMs / (1000 * 60));
+			
+			if (timeDifferenceMinutes < DEBOUNCE_MINUTES) {
+				this.logger.log(
+					`⏭️ Debouncing ${timeEventDto.eventType} event: Ignoring duplicate event within ${timeDifferenceMinutes.toFixed(2)} minutes - ` +
+					`Device: ${device.deviceID}, Last event: ${recentTime.toISOString()}, Current: ${eventDateOrg.toISOString()}`,
+				);
+				
+				return { record: null, action: 'debounced', existingRecord: true, reason: 'duplicate_within_5min' };
+			}
+		}
+
 		// For close events, first check for any existing open record without a close
 		if (timeEventDto.eventType === 'close') {
 			// Look for the most recent record with an open time but no close time (ordered by updatedAt)
@@ -2756,28 +2838,108 @@ export class IotService {
 
 	/**
 	 * Process real-time notifications based on business rules
+	 * Only sends notifications for first open and final close of the day (after debouncing)
 	 */
 	private async processRealTimeNotifications(
 		device: Device,
 		timeEventDto: DeviceTimeRecordDto,
 		recordResult: any,
 	): Promise<void> {
+		// Skip notifications if record was debounced or deleted
+		if (recordResult.action === 'debounced' || recordResult.action === 'deleted') {
+			this.logger.log(
+				`⏭️ Skipping notifications for ${recordResult.action} event - Device: ${device.deviceID}`,
+			);
+			return;
+		}
+
 		const orgRef = String(device.orgID);
 		const orgHoursArr = await this.organisationHoursService.findAll(orgRef).catch(() => []);
 		const orgTimezone =
 			(Array.isArray(orgHoursArr) && orgHoursArr[0]?.timezone) || TimezoneUtil.AFRICA_JOHANNESBURG;
 		const eventDate = TimezoneUtil.toOrganizationTime(new Date(timeEventDto.timestamp * 1000), orgTimezone);
-		const hour = eventDate.getHours();
+		
+		// Get start and end of today in organization timezone
+		const todayStart = new Date(eventDate);
+		todayStart.setHours(0, 0, 0, 0);
+		const todayEnd = new Date(eventDate);
+		todayEnd.setHours(23, 59, 59, 999);
 
-		// Send notification to admin users for all device open/close events
+		// Check if this is the first open or final close of the day
+		let isFirstOpen = false;
+		let isFinalClose = false;
+
+		if (timeEventDto.eventType === 'open') {
+			// Check if this is the earliest open event today
+			const todayOpenRecords = await this.deviceRecordsRepository.find({
+				where: {
+					deviceId: device.id,
+					openTime: Between(todayStart, todayEnd),
+				},
+				order: { openTime: 'ASC' },
+			});
+
+			if (todayOpenRecords.length > 0) {
+				const earliestOpen = todayOpenRecords[0];
+				const currentOpenTime = eventDate;
+				const earliestOpenTime = typeof earliestOpen.openTime === 'string'
+					? new Date(earliestOpen.openTime)
+					: (earliestOpen.openTime as unknown as Date);
+				
+				// Check if current event is the earliest (within 1 minute tolerance for timing)
+				const timeDiff = Math.abs(currentOpenTime.getTime() - earliestOpenTime.getTime());
+				isFirstOpen = timeDiff < 60000; // Within 1 minute
+			} else {
+				isFirstOpen = true; // This is the first open record today
+			}
+		} else {
+			// Check if this is the latest close event today
+			const todayCloseRecords = await this.deviceRecordsRepository.find({
+				where: {
+					deviceId: device.id,
+					closeTime: Between(todayStart, todayEnd),
+				},
+				order: { closeTime: 'DESC' },
+			});
+
+			if (todayCloseRecords.length > 0) {
+				const latestClose = todayCloseRecords[0];
+				const currentCloseTime = eventDate;
+				const latestCloseTime = typeof latestClose.closeTime === 'string'
+					? new Date(latestClose.closeTime)
+					: (latestClose.closeTime as unknown as Date);
+				
+				// Check if current event is the latest (within 1 minute tolerance for timing)
+				const timeDiff = Math.abs(currentCloseTime.getTime() - latestCloseTime.getTime());
+				isFinalClose = timeDiff < 60000; // Within 1 minute
+			} else {
+				isFinalClose = true; // This is the first close record today
+			}
+		}
+
+		// Only send notifications for first open or final close
+		if ((timeEventDto.eventType === 'open' && !isFirstOpen) || 
+			(timeEventDto.eventType === 'close' && !isFinalClose)) {
+			this.logger.log(
+				`⏭️ Skipping notification: Not first open/final close - Device: ${device.deviceID}, ` +
+				`Event: ${timeEventDto.eventType}, IsFirstOpen: ${isFirstOpen}, IsFinalClose: ${isFinalClose}`,
+			);
+			return;
+		}
+
+		// Send notification to admin users for first open/final close events only
 		try {
-			await this.sendDeviceNotificationToAdmins(device, timeEventDto, eventDate);
+			await this.sendDeviceNotificationToAdmins(device, timeEventDto, eventDate, isFirstOpen, isFinalClose);
 		} catch (error) {
 			this.logger.warn(`⚠️ Failed to send admin notifications: ${error.message}`);
 		}
 
-		// Late arrival notifications
-		if (timeEventDto.eventType === 'open' && hour > 10) {
+		// eventDate is already converted using TimezoneUtil.toOrganizationTime
+		// which returns a UTC Date representing org local time, so use getUTCHours/getUTCMinutes
+		const hour = eventDate.getUTCHours();
+
+		// Late arrival notifications (only for first open)
+		if (timeEventDto.eventType === 'open' && isFirstOpen && hour > 10) {
 			this.eventEmitter.emit('attendance.alert', {
 				type: 'LATE_ARRIVAL',
 				deviceId: device.id,
@@ -2786,13 +2948,13 @@ export class IotService {
 				branchId: device.branchID,
 				timestamp: eventDate,
 				severity: 'warning',
-				message: `Late arrival detected at ${device.devicLocation} at ${hour}:${eventDate.getMinutes()}`,
+				message: `Late arrival detected at ${device.devicLocation} at ${hour}:${eventDate.getUTCMinutes()}`,
 			});
 		}
 
-		// Weekend work notifications
+		// Weekend work notifications (only for first open)
 		const dayOfWeek = eventDate.getDay();
-		if ((dayOfWeek === 0 || dayOfWeek === 6) && timeEventDto.eventType === 'open') {
+		if ((dayOfWeek === 0 || dayOfWeek === 6) && timeEventDto.eventType === 'open' && isFirstOpen) {
 			this.eventEmitter.emit('attendance.alert', {
 				type: 'WEEKEND_WORK',
 				deviceId: device.id,
@@ -2814,6 +2976,8 @@ export class IotService {
 		device: Device,
 		timeEventDto: DeviceTimeRecordDto,
 		eventDate: Date,
+		isFirstOpen: boolean = true,
+		isFinalClose: boolean = true,
 	): Promise<void> {
 		try {
 			this.logger.log(`📢 [sendDeviceNotification] Sending device ${timeEventDto.eventType} notification for org ${device.orgID}`);
@@ -2859,24 +3023,54 @@ export class IotService {
 			const businessHoursInfo = await this.getBusinessHoursInfo(device.orgID, eventDate);
 			const isAfterHours = !businessHoursInfo.isWorkingDay || this.isAfterBusinessHours(eventDate, businessHoursInfo);
 
+			// Format time for display
+			// eventDate is already converted using TimezoneUtil.toOrganizationTime
+			// which returns a UTC Date representing org local time, so use getUTCHours/getUTCMinutes
+			const hours = eventDate.getUTCHours();
+			const minutes = eventDate.getUTCMinutes();
+			const period = hours >= 12 ? 'pm' : 'am';
+			const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+			const formattedTime = `${displayHours}:${minutes.toString().padStart(2, '0')}${period}`;
+
+			// Calculate timing context (early/late/on-time) for first open
+			let timingContext = '';
+			if (timeEventDto.eventType === 'open' && isFirstOpen && businessHoursInfo.startTime) {
+				try {
+					const [targetHour, targetMinute] = businessHoursInfo.startTime.split(':').map(Number);
+					const targetMinutes = targetHour * 60 + targetMinute;
+					const eventMinutes = hours * 60 + minutes;
+					const diffMinutes = eventMinutes - targetMinutes;
+
+					if (diffMinutes < -5) {
+						timingContext = ` (${Math.abs(diffMinutes)} mins early)`;
+					} else if (diffMinutes > 5) {
+						timingContext = ` (${diffMinutes} mins late)`;
+					} else {
+						timingContext = ' (on time)';
+					}
+				} catch (error) {
+					// Ignore timing calculation errors
+				}
+			}
+
 			if (timeEventDto.eventType === 'open') {
 				if (isAfterHours) {
 					notificationEvent = NotificationEvent.IOT_DEVICE_AFTER_HOURS_ACCESS;
 					priority = NotificationPriority.HIGH;
-					enhancedMessage = `🌙 ${locationName} Just Opened a few seconds ago (After Hours)`;
+					enhancedMessage = `🌙 ${locationName} opened at ${formattedTime}${timingContext} (After Hours)`;
 				} else {
 					notificationEvent = NotificationEvent.IOT_DEVICE_OPENED;
 					priority = NotificationPriority.NORMAL;
-					enhancedMessage = `🚪 ${locationName} Just Opened a few seconds ago`;
+					enhancedMessage = `🚪 ${locationName} opened at ${formattedTime}${timingContext}`;
 				}
 			} else if (timeEventDto.eventType === 'close') {
 				notificationEvent = NotificationEvent.IOT_DEVICE_CLOSED;
 				priority = NotificationPriority.LOW;
-				enhancedMessage = `🔒 ${locationName} Just Closed a few seconds ago`;
+				enhancedMessage = `🔒 ${locationName} closed at ${formattedTime}`;
 			} else {
 				notificationEvent = NotificationEvent.IOT_DEVICE_OPENED; // Default fallback
 				priority = NotificationPriority.NORMAL;
-				enhancedMessage = `🔔 ${locationName} Just ${timeEventDto.eventType}ed a few seconds ago`;
+				enhancedMessage = `🔔 ${locationName} ${timeEventDto.eventType}ed at ${formattedTime}`;
 			}
 
 			// Send enhanced push notifications using the attendance service pattern
