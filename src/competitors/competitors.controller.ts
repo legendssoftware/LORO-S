@@ -54,7 +54,6 @@ import { CompetitorStatus } from '../lib/enums/competitor.enums';
 @Controller('competitors')
 @ApiConsumes('application/json')
 @ApiProduces('application/json')
-// @EnterpriseOnly('competitors')
 @ApiUnauthorizedResponse({ 
 	description: '🔒 Unauthorized - Authentication required',
 	schema: {
