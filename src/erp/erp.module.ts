@@ -15,6 +15,7 @@ import { ErpCacheWarmerService } from './services/erp-cache-warmer.service';
 import { ErpTargetsService } from './services/erp-targets.service';
 import { ErpHealthIndicator } from './erp.health';
 import { ErpController } from './erp.controller';
+import { ErpConnectionManagerService } from './services/erp-connection-manager.service';
 import { UserModule } from '../user/user.module';
 
 /**
@@ -52,6 +53,7 @@ import { UserModule } from '../user/user.module';
 	],
 	controllers: [ErpController],
 	providers: [
+		ErpConnectionManagerService,
 		ErpDataService,
 		ErpTransformerService,
 		ErpCacheWarmerService,
@@ -59,6 +61,7 @@ import { UserModule } from '../user/user.module';
 		ErpHealthIndicator,
 	],
 	exports: [
+		ErpConnectionManagerService,
 		ErpDataService,
 		ErpTransformerService,
 		ErpCacheWarmerService,

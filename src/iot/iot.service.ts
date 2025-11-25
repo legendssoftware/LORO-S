@@ -1137,40 +1137,28 @@ export class IotService {
 			);
 
 			// Enhanced logging for debugging opening times
+			// ✅ Reduced logging: Only log summary, not detailed analysis
 			if (openingDetails.length > 0) {
-				const acceptedCount = openingDetails.filter(d => d.accepted).length;
-				const rejectedCount = openingDetails.filter(d => !d.accepted).length;
-				const earlyOpenings = openingDetails.filter(d => d.timeDiff < 0).length;
-				const lateOpenings = openingDetails.filter(d => d.timeDiff > TOLERANCE_MINUTES).length;
-				
-				this.logger.debug(
-					`[${device.deviceID}] Opening analysis: ${opensOnTimeCount}/${availableDaysWithOpenings} on-time days (${opensOnTimePercentage.toFixed(1)}%), ` +
-					`threshold=${openingThreshold}%, ` +
-					`opensOnTime=${opensOnTime}, ` +
-					`target=${targetOpenTimeMinutes}min (${Math.floor(targetOpenTimeMinutes / 60)}:${(targetOpenTimeMinutes % 60).toString().padStart(2, '0')}), ` +
-					`accepted=${acceptedCount}, rejected=${rejectedCount}, early=${earlyOpenings}, late=${lateOpenings}, ` +
-					`details=${JSON.stringify(openingDetails.slice(0, 5))}`
-				);
+				// Only log if there's an issue or in development mode
+				if (!opensOnTime || process.env.NODE_ENV === 'development') {
+					this.logger.debug(
+						`[${device.deviceID}] Opening: ${opensOnTimeCount}/${availableDaysWithOpenings} on-time (${opensOnTimePercentage.toFixed(1)}%)`
+					);
+				}
 			} else {
 				this.logger.warn(
 					`[${device.deviceID}] No opening records found in last 7 days (${orgTimezone} timezone) for performance calculation`
 				);
 			}
 			
-			// Enhanced logging for closing times
+			// ✅ Reduced logging: Only log summary, not detailed analysis
 			if (closingDetails.length > 0) {
-				const acceptedCount = closingDetails.filter(d => d.accepted).length;
-				const rejectedCount = closingDetails.filter(d => !d.accepted).length;
-				const earlyClosings = closingDetails.filter(d => d.timeDiff < -TOLERANCE_MINUTES).length;
-				
-				this.logger.debug(
-					`[${device.deviceID}] Closing analysis: ${closesOnTimeCount}/${availableDaysWithClosings} on-time days (${closesOnTimePercentage.toFixed(1)}%), ` +
-					`threshold=${closingThreshold}%, ` +
-					`closesOnTime=${closesOnTime}, ` +
-					`target=${targetCloseTimeMinutes}min (${Math.floor(targetCloseTimeMinutes / 60)}:${(targetCloseTimeMinutes % 60).toString().padStart(2, '0')}), ` +
-					`accepted=${acceptedCount}, rejected=${rejectedCount}, early=${earlyClosings}, ` +
-					`details=${JSON.stringify(closingDetails.slice(0, 5))}`
-				);
+				// Only log if there's an issue or in development mode
+				if (!closesOnTime || process.env.NODE_ENV === 'development') {
+					this.logger.debug(
+						`[${device.deviceID}] Closing: ${closesOnTimeCount}/${availableDaysWithClosings} on-time (${closesOnTimePercentage.toFixed(1)}%)`
+					);
+				}
 			} else {
 				this.logger.warn(
 					`[${device.deviceID}] No closing records found in last 7 days (${orgTimezone} timezone) for performance calculation`
@@ -1333,10 +1321,12 @@ export class IotService {
 				latestCloseTime,
 			};
 			
-			// Log the final result being returned
-			this.logger.debug(
-				`[${device.deviceID}] Returning performance metrics: ${JSON.stringify(result)}`
-			);
+			// ✅ Reduced logging: Only log summary in development mode
+			if (process.env.NODE_ENV === 'development') {
+				this.logger.debug(
+					`[${device.deviceID}] Performance: opens=${result.opensOnTimePercentage.toFixed(1)}%, closes=${result.closesOnTimePercentage.toFixed(1)}%`
+				);
+			}
 			
 			return result;
 		} catch (error) {
@@ -1498,13 +1488,8 @@ export class IotService {
 				// Calculate performance metrics using organization hours
 				const performanceMetrics = await this.calculateDevicePerformanceMetrics(device, sortedRecords);
 				
-				// Log the performance metrics being attached
-				this.logger.debug(
-					`[${device.deviceID}] Attaching performance: opensOnTime=${performanceMetrics.opensOnTime}, ` +
-					`opensOnTimePercentage=${performanceMetrics.opensOnTimePercentage.toFixed(1)}%, ` +
-					`closesOnTime=${performanceMetrics.closesOnTime}, ` +
-					`closesOnTimePercentage=${performanceMetrics.closesOnTimePercentage.toFixed(1)}%`
-				);
+				// ✅ Reduced logging: Only log summary, removed verbose debug
+				// Performance metrics are already logged in calculateDevicePerformanceMetrics
 
 				return {
 					...device,

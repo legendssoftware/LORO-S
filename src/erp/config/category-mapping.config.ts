@@ -188,15 +188,20 @@ export const STORE_NAME_MAPPING: Record<string, string> = {
 
 /**
  * Country to Store Code Mapping
- * Only South Africa is active
+ * Active countries: SA, Zambia (ZAM), Mozambique (MOZ)
+ * Store codes are dynamically fetched from each country's database
+ * This mapping is used for validation and filtering
  */
 export const COUNTRY_STORE_MAPPING: Record<string, string[]> = {
 	'SA': ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012', '013', '014', '015', '016', '017', '018', '019', '020', '021', '022', '023'],
+	'ZAM': [], // Zambia store codes - dynamically loaded from bit_zambia database
+	'MOZ': [], // Mozambique store codes - dynamically loaded from bit_mozambique database
 };
 
 /**
  * Store Code to Country Mapping
- * All stores are in South Africa
+ * Maps store codes to their country
+ * Note: Zambia and Mozambique store codes are determined dynamically from their respective databases
  */
 export const STORE_COUNTRY_MAPPING: Record<string, string> = {
 	// South Africa - All active stores
@@ -205,6 +210,7 @@ export const STORE_COUNTRY_MAPPING: Record<string, string> = {
 	'011': 'SA', '012': 'SA', '013': 'SA', '014': 'SA', '015': 'SA',
 	'016': 'SA', '017': 'SA', '018': 'SA', '019': 'SA', '020': 'SA',
 	'021': 'SA', '022': 'SA', '023': 'SA',
+	// Zambia and Mozambique stores are determined dynamically from their respective databases
 };
 
 /**

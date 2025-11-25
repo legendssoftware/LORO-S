@@ -2122,14 +2122,46 @@ export class ReportsService implements OnModuleInit {
 	}
 
 	/**
+	 * Convert country name to country code
+	 * Maps country names like "South Africa", "Botswana" to codes like "SA", "BOT"
+	 */
+	private getCountryCodeFromName(countryName?: string): string {
+		if (!countryName) return 'SA'; // Default to SA
+		
+		const normalized = countryName.trim().toLowerCase();
+		const countryMap: Record<string, string> = {
+			'south africa': 'SA',
+			'sa': 'SA',
+			'botswana': 'BOT',
+			'bot': 'BOT',
+			'zimbabwe': 'ZW',
+			'zw': 'ZW',
+			'zambia': 'ZAM',
+			'zam': 'ZAM',
+			'mozambique': 'MOZ',
+			'moz': 'MOZ',
+		};
+		
+		return countryMap[normalized] || 'SA'; // Default to SA if not found
+	}
+
+	/**
 	 * Convert request params to filter format
 	 */
 	private convertParamsToFilters(params: any): any {
+		// Extract and map country code
+		const countryCode = this.getCountryCodeFromName(params.country);
+		
+		// ✅ Log country code conversion for debugging
+		this.logger.log(`🌍 Country filter conversion: "${params.country || 'not specified'}" → "${countryCode}"`);
+		
 		return {
 			organisationId: params.organisationId,
 			branchId: params.branchId,
 			startDate: params.startDate,
 			endDate: params.endDate,
+			country: params.country, // Keep original country name for backward compatibility
+			countryCode: countryCode, // Add country code for database switching
 			location: params.county || params.province || params.city || params.suburb ? {
 				county: params.county,
 				province: params.province,

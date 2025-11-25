@@ -1,6 +1,6 @@
 import { Injectable, Logger, Inject, OnModuleInit } from '@nestjs/common';
 import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { Repository, DataSource, EntityTarget } from 'typeorm';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { TblSalesHeader } from '../entities/tblsalesheader.entity';
@@ -8,6 +8,7 @@ import { TblSalesLines } from '../entities/tblsaleslines.entity';
 import { TblCustomers } from '../entities/tblcustomers.entity';
 import { TblCustomerCategories } from '../entities/tblcustomercategories.entity';
 import { TblSalesman } from '../entities/tblsalesman.entity';
+import { ErpConnectionManagerService } from './erp-connection-manager.service';
 import {
 	DailyAggregation,
 	BranchAggregation,
@@ -124,6 +125,7 @@ export class ErpDataService implements OnModuleInit {
 		@Inject(CACHE_MANAGER)
 		private cacheManager: Cache,
 		private readonly configService: ConfigService,
+		private readonly connectionManager: ErpConnectionManagerService,
 	) {}
 
 	/**
@@ -182,7 +184,9 @@ export class ErpDataService implements OnModuleInit {
 	private async testDatabaseConnection(operationId: string): Promise<void> {
 		for (let attempt = 1; attempt <= 3; attempt++) {
 			try {
-				await this.salesLinesRepo.count({ take: 1 });
+				// Use default connection for health check
+				const salesLinesRepo = await this.getRepositoryForCountry(TblSalesLines, 'SA');
+				await salesLinesRepo.count({ take: 1 });
 				if (attempt > 1) {
 					this.logger.log(`[${operationId}] Connection test succeeded on attempt ${attempt}`);
 				}
@@ -566,9 +570,20 @@ export class ErpDataService implements OnModuleInit {
 	}
 
 	/**
-	 * Build cache key with all filtering dimensions
+	 * Get repository for a specific country
 	 */
-	private buildCacheKey(dataType: string, filters: ErpQueryFilters, docTypes?: string[]): string {
+	private async getRepositoryForCountry<T>(
+		entity: EntityTarget<T>,
+		countryCode: string = 'SA',
+	): Promise<Repository<T>> {
+		const connection = await this.connectionManager.getConnection(countryCode);
+		return connection.getRepository(entity);
+	}
+
+	/**
+	 * Build cache key with all filtering dimensions (including country code)
+	 */
+	private buildCacheKey(dataType: string, filters: ErpQueryFilters, docTypes?: string[], countryCode: string = 'SA'): string {
 		const salesPersonKey = filters.salesPersonId 
 			? (Array.isArray(filters.salesPersonId) ? filters.salesPersonId.sort().join('-') : filters.salesPersonId)
 			: 'all';
@@ -584,6 +599,7 @@ export class ErpDataService implements OnModuleInit {
 		return [
 			'erp',
 			'v2', // Version for cache busting
+			countryCode, // ✅ Include country code in cache key
 			dataType,
 			filters.startDate,
 			filters.endDate,
@@ -916,18 +932,24 @@ export class ErpDataService implements OnModuleInit {
 	 * ✅ PHASE 2: Supports date range chunking for large ranges (>60 days)
 	 * 
 	 * Sales Person Filtering: Uses tblsalesheader.sales_code field
+	 * ✅ Country Support: Accepts optional countryCode parameter (defaults to 'SA')
 	 */
-	async getSalesHeadersByDateRange(filters: ErpQueryFilters): Promise<TblSalesHeader[]> {
+	async getSalesHeadersByDateRange(filters: ErpQueryFilters, countryCode: string = 'SA'): Promise<TblSalesHeader[]> {
 		const operationId = this.generateOperationId('GET_HEADERS');
 		const dateRangeDays = this.calculateDateRangeDays(filters.startDate, filters.endDate);
+		
+		// ✅ Log country switching
+		if (countryCode !== 'SA') {
+			this.logger.log(`[${operationId}] 🌍 Country switch: Using database for ${countryCode}`);
+		}
 		
 		// ✅ PHASE 2: Use chunking for large date ranges (>60 days)
 		if (dateRangeDays > 60) {
 			this.logger.log(`[${operationId}] Large date range detected (${dateRangeDays} days) - using chunking`);
-			return await this.getSalesHeadersBatched(filters);
+			return await this.getSalesHeadersBatched(filters, countryCode);
 		}
 		
-		const cacheKey = this.buildCacheKey('headers', filters, ['1']);
+		const cacheKey = this.buildCacheKey('headers', filters, ['1'], countryCode);
 
 		this.logger.log(`[${operationId}] Starting getSalesHeadersByDateRange operation`);
 		this.logger.log(`[${operationId}] Filters: ${JSON.stringify(filters)}`);
@@ -983,11 +1005,14 @@ export class ErpDataService implements OnModuleInit {
 			// ✅ Execute with circuit breaker and timeout protection (adaptive timeout)
 			const results = await this.executeQueryWithProtection(
 				async () => {
+					// ✅ Get repository for country
+					const salesHeaderRepo = await this.getRepositoryForCountry(TblSalesHeader, countryCode);
+					
 					// Check if customer category filters are needed
 					const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
 						(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
 
-					const query = this.salesHeaderRepo
+					const query = salesHeaderRepo
 						.createQueryBuilder('header');
 
 					// Add LEFT JOIN for customer category filtering if needed
@@ -1079,7 +1104,7 @@ export class ErpDataService implements OnModuleInit {
 	 * Processes date range in chunks and combines results
 	 * Note: This method bypasses chunking check to avoid infinite recursion
 	 */
-	private async getSalesHeadersBatched(filters: ErpQueryFilters): Promise<TblSalesHeader[]> {
+	private async getSalesHeadersBatched(filters: ErpQueryFilters, countryCode: string = 'SA'): Promise<TblSalesHeader[]> {
 		const operationId = this.generateOperationId('GET_HEADERS_BATCHED');
 		const chunks = this.splitDateRange(filters.startDate, filters.endDate, 30);
 		
@@ -1098,7 +1123,7 @@ export class ErpDataService implements OnModuleInit {
 			};
 			
 			// Directly call the internal query method to avoid chunking check recursion
-			const chunkCacheKey = this.buildCacheKey('headers', chunkFilters, ['1']);
+			const chunkCacheKey = this.buildCacheKey('headers', chunkFilters, ['1'], countryCode);
 			
 			// ✅ Skip cache when exclusion filters are present - always recalculate from DB
 			const hasExclusionFilters = chunkFilters.excludeCustomerCategories && chunkFilters.excludeCustomerCategories.length > 0;
@@ -1115,11 +1140,14 @@ export class ErpDataService implements OnModuleInit {
 				const chunkDateRangeDays = this.calculateDateRangeDays(chunkFilters.startDate, chunkFilters.endDate);
 				const chunkResults = await this.executeQueryWithProtection(
 					async () => {
+						// ✅ Get repository for country
+						const salesHeaderRepo = await this.getRepositoryForCountry(TblSalesHeader, countryCode);
+						
 						// Check if customer category filters are needed
 						const hasCustomerCategoryFilters = (chunkFilters.includeCustomerCategories && chunkFilters.includeCustomerCategories.length > 0) ||
 							(chunkFilters.excludeCustomerCategories && chunkFilters.excludeCustomerCategories.length > 0);
 
-						const query = this.salesHeaderRepo
+						const query = salesHeaderRepo
 							.createQueryBuilder('header');
 
 						// Add LEFT JOIN for customer category filtering if needed
@@ -1174,25 +1202,33 @@ export class ErpDataService implements OnModuleInit {
 	 *
 	 * @param filters - Query filters
 	 * @param includeDocTypes - Document types to include (defaults to Tax Invoices only)
+	 * @param countryCode - Country code for database switching (defaults to 'SA')
 	 * @returns Sales lines matching criteria
 	 * ✅ PHASE 2: Supports date range chunking for large ranges (>60 days)
 	 * 
 	 * Sales Person Filtering: Uses tblsaleslines.rep_code field directly (not joined with header)
+	 * ✅ Country Support: Accepts optional countryCode parameter (defaults to 'SA')
 	 */
 	async getSalesLinesByDateRange(
 		filters: ErpQueryFilters,
 		includeDocTypes: string[] = ['1'], // Default: Tax Invoices only
+		countryCode: string = 'SA',
 	): Promise<TblSalesLines[]> {
 		const operationId = this.generateOperationId('GET_LINES');
 		const dateRangeDays = this.calculateDateRangeDays(filters.startDate, filters.endDate);
 		
+		// ✅ Log country switching
+		if (countryCode !== 'SA') {
+			this.logger.log(`[${operationId}] 🌍 Country switch: Using database for ${countryCode}`);
+		}
+		
 		// ✅ PHASE 2: Use chunking for large date ranges (>60 days)
 		if (dateRangeDays > 60) {
 			this.logger.log(`[${operationId}] Large date range detected (${dateRangeDays} days) - using chunking`);
-			return await this.getSalesLinesBatched(filters, includeDocTypes);
+			return await this.getSalesLinesBatched(filters, includeDocTypes, countryCode);
 		}
 		
-		const cacheKey = this.buildCacheKey('lines', filters, includeDocTypes);
+		const cacheKey = this.buildCacheKey('lines', filters, includeDocTypes, countryCode);
 
 		this.logger.log(`[${operationId}] Starting getSalesLinesByDateRange operation`);
 		this.logger.log(`[${operationId}] Filters: ${JSON.stringify(filters)}`);
@@ -1247,11 +1283,14 @@ export class ErpDataService implements OnModuleInit {
 			// ✅ Execute with circuit breaker and timeout protection (adaptive timeout)
 			const results = await this.executeQueryWithProtection(
 				async () => {
+					// ✅ Get repository for country
+					const salesLinesRepo = await this.getRepositoryForCountry(TblSalesLines, countryCode);
+					
 					// Check if customer category filters are needed
 					const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
 						(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
 
-					const query = this.salesLinesRepo
+					const query = salesLinesRepo
 						.createQueryBuilder('line');
 
 					// Add LEFT JOIN for customer category filtering if needed
@@ -1358,6 +1397,7 @@ export class ErpDataService implements OnModuleInit {
 	private async getSalesLinesBatched(
 		filters: ErpQueryFilters,
 		includeDocTypes: string[],
+		countryCode: string = 'SA',
 	): Promise<TblSalesLines[]> {
 		const operationId = this.generateOperationId('GET_LINES_BATCHED');
 		const chunks = this.splitDateRange(filters.startDate, filters.endDate, 30);
@@ -1377,7 +1417,7 @@ export class ErpDataService implements OnModuleInit {
 			};
 			
 			// Directly call the internal query method to avoid chunking check recursion
-			const chunkCacheKey = this.buildCacheKey('lines', chunkFilters, includeDocTypes);
+			const chunkCacheKey = this.buildCacheKey('lines', chunkFilters, includeDocTypes, countryCode);
 			
 			// ✅ Skip cache when exclusion filters are present - always recalculate from DB
 			const hasExclusionFilters = chunkFilters.excludeCustomerCategories && chunkFilters.excludeCustomerCategories.length > 0;
@@ -1394,11 +1434,14 @@ export class ErpDataService implements OnModuleInit {
 				const chunkDateRangeDays = this.calculateDateRangeDays(chunkFilters.startDate, chunkFilters.endDate);
 				const chunkResults = await this.executeQueryWithProtection(
 					async () => {
+						// ✅ Get repository for country
+						const salesLinesRepo = await this.getRepositoryForCountry(TblSalesLines, countryCode);
+						
 						// Check if customer category filters are needed
 						const hasCustomerCategoryFilters = (chunkFilters.includeCustomerCategories && chunkFilters.includeCustomerCategories.length > 0) ||
 							(chunkFilters.excludeCustomerCategories && chunkFilters.excludeCustomerCategories.length > 0);
 
-						const query = this.salesLinesRepo
+						const query = salesLinesRepo
 							.createQueryBuilder('line');
 
 						// Add LEFT JOIN for customer category filtering if needed
@@ -1479,22 +1522,30 @@ export class ErpDataService implements OnModuleInit {
 	 * 
 	 * @param filters - Query filters (supports customerCategoryCode and customerCategoryDescription filters)
 	 * @param includeDocTypes - Document types to include (default: ['1'] for Tax Invoices)
+	 * @param countryCode - Country code for database switching (defaults to 'SA')
 	 * @returns Sales lines with customer category code and description
+	 * ✅ Country Support: Accepts optional countryCode parameter (defaults to 'SA')
 	 */
 	async getSalesLinesWithCustomerCategories(
 		filters: ErpQueryFilters,
 		includeDocTypes: string[] = ['1'], // Default: Tax Invoices only
+		countryCode: string = 'SA',
 	): Promise<TblSalesLinesWithCategory[]> {
 		const operationId = this.generateOperationId('GET_LINES_WITH_CATEGORY');
 		const dateRangeDays = this.calculateDateRangeDays(filters.startDate, filters.endDate);
 		
+		// ✅ Log country switching
+		if (countryCode !== 'SA') {
+			this.logger.log(`[${operationId}] 🌍 Country switch: Using database for ${countryCode}`);
+		}
+		
 		// ✅ PHASE 2: Use chunking for large date ranges (>60 days)
 		if (dateRangeDays > 60) {
 			this.logger.log(`[${operationId}] Large date range detected (${dateRangeDays} days) - using chunking`);
-			return await this.getSalesLinesWithCustomerCategoriesBatched(filters, includeDocTypes);
+			return await this.getSalesLinesWithCustomerCategoriesBatched(filters, includeDocTypes, countryCode);
 		}
 		
-		const cacheKey = this.buildCacheKey('lines_with_category', filters, includeDocTypes);
+		const cacheKey = this.buildCacheKey('lines_with_category', filters, includeDocTypes, countryCode);
 
 		this.logger.log(`[${operationId}] Starting getSalesLinesWithCustomerCategories operation`);
 		this.logger.log(`[${operationId}] Filters: ${JSON.stringify(filters)}`);
@@ -1526,10 +1577,13 @@ export class ErpDataService implements OnModuleInit {
 			// ✅ Execute with circuit breaker and timeout protection (adaptive timeout)
 			const results = await this.executeQueryWithProtection(
 				async () => {
-					// Get all column names from the entity metadata for explicit selection
-					const lineColumns = this.salesLinesRepo.metadata.columns.map(col => `line.${col.databaseName} as line_${col.propertyName}`);
+					// ✅ Get repository for country
+					const salesLinesRepo = await this.getRepositoryForCountry(TblSalesLines, countryCode);
 					
-					const query = this.salesLinesRepo
+					// Get all column names from the entity metadata for explicit selection
+					const lineColumns = salesLinesRepo.metadata.columns.map(col => `line.${col.databaseName} as line_${col.propertyName}`);
+					
+					const query = salesLinesRepo
 						.createQueryBuilder('line')
 						.leftJoin('tblcustomers', 'customer', 'line.customer = customer.Code')
 						.leftJoin('tblcustomercategories', 'category', 'customer.Category = category.cust_cat_code')
@@ -1603,7 +1657,7 @@ export class ErpDataService implements OnModuleInit {
 						};
 						
 						// Map all line fields (remove 'line_' prefix from aliases)
-						this.salesLinesRepo.metadata.columns.forEach(col => {
+						salesLinesRepo.metadata.columns.forEach(col => {
 							const aliasKey = `line_${col.propertyName}`;
 							if (row[aliasKey] !== undefined) {
 								mappedRow[col.propertyName] = row[aliasKey];
@@ -1678,6 +1732,7 @@ export class ErpDataService implements OnModuleInit {
 	private async getSalesLinesWithCustomerCategoriesBatched(
 		filters: ErpQueryFilters,
 		includeDocTypes: string[],
+		countryCode: string = 'SA',
 	): Promise<TblSalesLinesWithCategory[]> {
 		const operationId = this.generateOperationId('GET_LINES_WITH_CATEGORY_BATCHED');
 		const chunks = this.splitDateRange(filters.startDate, filters.endDate, 30);
@@ -1697,7 +1752,7 @@ export class ErpDataService implements OnModuleInit {
 			};
 			
 			// Recursively call the main method (it will skip chunking check since chunks are small)
-			const chunkResults = await this.getSalesLinesWithCustomerCategories(chunkFilters, includeDocTypes);
+			const chunkResults = await this.getSalesLinesWithCustomerCategories(chunkFilters, includeDocTypes, countryCode);
 			allResults.push(...chunkResults);
 		}
 		
@@ -1712,10 +1767,16 @@ export class ErpDataService implements OnModuleInit {
 	 * Uses doc_type IN (1, 2) - Tax Invoices and Credit Notes
 	 * 
 	 * Sales Person Filtering: Uses tblsalesheader.sales_code field
+	 * ✅ Country Support: Accepts optional countryCode parameter (defaults to 'SA')
 	 */
-	async getDailyAggregations(filters: ErpQueryFilters): Promise<DailyAggregation[]> {
+	async getDailyAggregations(filters: ErpQueryFilters, countryCode: string = 'SA'): Promise<DailyAggregation[]> {
 		const operationId = this.generateOperationId('GET_DAILY_AGG');
-		const cacheKey = this.buildCacheKey('daily_agg', filters);
+		const cacheKey = this.buildCacheKey('daily_agg', filters, undefined, countryCode);
+		
+		// ✅ Log country switching
+		if (countryCode !== 'SA') {
+			this.logger.log(`[${operationId}] 🌍 Country switch: Using database for ${countryCode}`);
+		}
 
 		this.logger.log(`[${operationId}] Starting getDailyAggregations operation`);
 		this.logger.log(`[${operationId}] Filters: ${JSON.stringify(filters)}`);
@@ -1751,7 +1812,10 @@ export class ErpDataService implements OnModuleInit {
 			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
 				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
 
-			const query = this.salesHeaderRepo
+			// ✅ Get repository for country
+			const salesHeaderRepo = await this.getRepositoryForCountry(TblSalesHeader, countryCode);
+			
+			const query = salesHeaderRepo
 				.createQueryBuilder('header');
 
 			// Add LEFT JOINs for customer category filtering if needed
@@ -1863,10 +1927,16 @@ export class ErpDataService implements OnModuleInit {
 	 * Revenue calculation: SUM(total_incl) - SUM(total_tax) grouped by store
 	 * Processes Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2)
 	 * Sales Person Filtering: Uses tblsalesheader.sales_code field
+	 * ✅ Country Support: Accepts optional countryCode parameter (defaults to 'SA')
 	 */
-	async getBranchAggregations(filters: ErpQueryFilters): Promise<BranchAggregation[]> {
+	async getBranchAggregations(filters: ErpQueryFilters, countryCode: string = 'SA'): Promise<BranchAggregation[]> {
 		const operationId = this.generateOperationId('GET_BRANCH_AGG');
-		const cacheKey = this.buildCacheKey('branch_agg', filters);
+		const cacheKey = this.buildCacheKey('branch_agg', filters, undefined, countryCode);
+		
+		// ✅ Log country switching
+		if (countryCode !== 'SA') {
+			this.logger.log(`[${operationId}] 🌍 Country switch: Using database for ${countryCode}`);
+		}
 
 		this.logger.log(`[${operationId}] Starting getBranchAggregations operation`);
 		this.logger.log(`[${operationId}] Date range: ${filters.startDate} to ${filters.endDate}`);
@@ -1903,7 +1973,10 @@ export class ErpDataService implements OnModuleInit {
 			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
 				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
 
-			const query = this.salesHeaderRepo
+			// ✅ Get repository for country
+			const salesHeaderRepo = await this.getRepositoryForCountry(TblSalesHeader, countryCode);
+			
+			const query = salesHeaderRepo
 				.createQueryBuilder('header');
 
 			// Add LEFT JOINs for customer category filtering if needed
@@ -1990,10 +2063,16 @@ export class ErpDataService implements OnModuleInit {
 	 * Revenue calculation: SUM(total_incl) - SUM(total_tax) grouped by sales_code
 	 * Processes Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2)
 	 * Groups by sales_code to show how much each sales rep sold
+	 * ✅ Country Support: Accepts optional countryCode parameter (defaults to 'SA')
 	 */
-	async getSalesPersonAggregations(filters: ErpQueryFilters): Promise<SalesPersonAggregation[]> {
+	async getSalesPersonAggregations(filters: ErpQueryFilters, countryCode: string = 'SA'): Promise<SalesPersonAggregation[]> {
 		const operationId = this.generateOperationId('GET_SALES_PERSON_AGG');
-		const cacheKey = this.buildCacheKey('sales_person_agg', filters);
+		const cacheKey = this.buildCacheKey('sales_person_agg', filters, undefined, countryCode);
+		
+		// ✅ Log country switching
+		if (countryCode !== 'SA') {
+			this.logger.log(`[${operationId}] 🌍 Country switch: Using database for ${countryCode}`);
+		}
 
 		this.logger.log(`[${operationId}] Starting getSalesPersonAggregations operation`);
 		this.logger.log(`[${operationId}] Date range: ${filters.startDate} to ${filters.endDate}`);
@@ -2030,7 +2109,10 @@ export class ErpDataService implements OnModuleInit {
 			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
 				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
 
-			const query = this.salesHeaderRepo
+			// ✅ Get repository for country
+			const salesHeaderRepo = await this.getRepositoryForCountry(TblSalesHeader, countryCode);
+			
+			const query = salesHeaderRepo
 				.createQueryBuilder('header');
 
 			// Add LEFT JOINs for customer category filtering if needed
@@ -2107,7 +2189,7 @@ export class ErpDataService implements OnModuleInit {
 
 			// ✅ Get sales rep names from tblsalesman table
 			const salesCodes = processedResults.map(r => r.salesCode).filter(Boolean);
-			const nameMap = await this.getSalesPersonNames(salesCodes);
+			const nameMap = await this.getSalesPersonNames(salesCodes, countryCode);
 			
 			// Add names to results
 			const resultsWithNames = processedResults.map(result => ({
@@ -2141,10 +2223,16 @@ export class ErpDataService implements OnModuleInit {
 	 * Get category aggregations - optimized query
 	 * 
 	 * Sales Person Filtering: Uses tblsaleslines.rep_code field directly
+	 * ✅ Country Support: Accepts optional countryCode parameter (defaults to 'SA')
 	 */
-	async getCategoryAggregations(filters: ErpQueryFilters): Promise<CategoryAggregation[]> {
+	async getCategoryAggregations(filters: ErpQueryFilters, countryCode: string = 'SA'): Promise<CategoryAggregation[]> {
 		const operationId = this.generateOperationId('GET_CATEGORY_AGG');
-		const cacheKey = this.buildCacheKey('category_agg', filters);
+		const cacheKey = this.buildCacheKey('category_agg', filters, undefined, countryCode);
+		
+		// ✅ Log country switching
+		if (countryCode !== 'SA') {
+			this.logger.log(`[${operationId}] 🌍 Country switch: Using database for ${countryCode}`);
+		}
 
 		this.logger.log(`[${operationId}] Starting getCategoryAggregations operation`);
 		this.logger.log(`[${operationId}] Filters: ${JSON.stringify(filters)}`);
@@ -2181,7 +2269,10 @@ export class ErpDataService implements OnModuleInit {
 			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
 				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
 
-			const query = this.salesLinesRepo
+			// ✅ Get repository for country
+			const salesLinesRepo = await this.getRepositoryForCountry(TblSalesLines, countryCode);
+			
+			const query = salesLinesRepo
 				.createQueryBuilder('line');
 
 			// Add LEFT JOINs for customer category filtering if needed
@@ -2261,10 +2352,16 @@ export class ErpDataService implements OnModuleInit {
 	 * Revenue calculation: SUM(incl_line_total) - SUM(tax) grouped by store and category
 	 * Processes Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2)
 	 * This provides Branch X Category performance metrics
+	 * ✅ Country Support: Accepts optional countryCode parameter (defaults to 'SA')
 	 */
-	async getBranchCategoryAggregations(filters: ErpQueryFilters): Promise<BranchCategoryAggregation[]> {
+	async getBranchCategoryAggregations(filters: ErpQueryFilters, countryCode: string = 'SA'): Promise<BranchCategoryAggregation[]> {
 		const operationId = this.generateOperationId('GET_BRANCH_CATEGORY_AGG');
-		const cacheKey = this.buildCacheKey('branch_category_agg', filters);
+		const cacheKey = this.buildCacheKey('branch_category_agg', filters, undefined, countryCode);
+		
+		// ✅ Log country switching
+		if (countryCode !== 'SA') {
+			this.logger.log(`[${operationId}] 🌍 Country switch: Using database for ${countryCode}`);
+		}
 
 		this.logger.log(`[${operationId}] Starting getBranchCategoryAggregations operation`);
 		this.logger.log(`[${operationId}] Date range: ${filters.startDate} to ${filters.endDate}`);
@@ -2301,7 +2398,10 @@ export class ErpDataService implements OnModuleInit {
 			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
 				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
 
-			const query = this.salesLinesRepo
+			// ✅ Get repository for country
+			const salesLinesRepo = await this.getRepositoryForCountry(TblSalesLines, countryCode);
+			
+			const query = salesLinesRepo
 				.createQueryBuilder('line');
 
 			// Add LEFT JOINs for customer category filtering if needed
@@ -2413,10 +2513,16 @@ export class ErpDataService implements OnModuleInit {
 	 * ✅ REVISED: Uses SUM(incl_line_total) - SUM(tax) for revenue calculation
 	 * Filters: item_code != '.', type = 'I' (inventory items), groups by description
 	 * Sales Person Filtering: Uses tblsaleslines.rep_code field directly
+	 * ✅ Country Support: Accepts optional countryCode parameter (defaults to 'SA')
 	 */
-	async getProductAggregations(filters: ErpQueryFilters, limit: number = 50): Promise<ProductAggregation[]> {
+	async getProductAggregations(filters: ErpQueryFilters, limit: number = 50, countryCode: string = 'SA'): Promise<ProductAggregation[]> {
 		const operationId = this.generateOperationId('GET_PRODUCT_AGG');
-		const cacheKey = this.buildCacheKey('product_agg', filters) + `:${limit}`;
+		const cacheKey = this.buildCacheKey('product_agg', filters, undefined, countryCode) + `:${limit}`;
+		
+		// ✅ Log country switching
+		if (countryCode !== 'SA') {
+			this.logger.log(`[${operationId}] 🌍 Country switch: Using database for ${countryCode}`);
+		}
 
 		this.logger.log(`[${operationId}] Starting getProductAggregations operation`);
 		this.logger.log(`[${operationId}] Filters: ${JSON.stringify(filters)}, Limit: ${limit}`);
@@ -2452,7 +2558,10 @@ export class ErpDataService implements OnModuleInit {
 			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
 				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
 
-			const query = this.salesLinesRepo
+			// ✅ Get repository for country
+			const salesLinesRepo = await this.getRepositoryForCountry(TblSalesLines, countryCode);
+			
+			const query = salesLinesRepo
 				.createQueryBuilder('line');
 
 			// Add LEFT JOINs for customer category filtering if needed
@@ -2772,11 +2881,13 @@ export class ErpDataService implements OnModuleInit {
 	 * ✅ REVISED: Uses tblsalesheader table with SUM(total_incl) - SUM(total_tax) formula
 	 *
 	 * @param filters - Query filters (date range, store, etc.)
+	 * @param countryCode - Country code for database switching (defaults to 'SA')
 	 * @returns Hourly sales data aggregated by hour
 	 * 
 	 * Sales Person Filtering: Uses tblsalesheader.sales_code field
+	 * ✅ Country Support: Accepts optional countryCode parameter (defaults to 'SA')
 	 */
-	async getHourlySalesPattern(filters: ErpQueryFilters): Promise<
+	async getHourlySalesPattern(filters: ErpQueryFilters, countryCode: string = 'SA'): Promise<
 		Array<{
 			hour: number;
 			transactionCount: number;
@@ -2785,7 +2896,12 @@ export class ErpDataService implements OnModuleInit {
 		}>
 	> {
 		const operationId = this.generateOperationId('GET_HOURLY_SALES');
-		const cacheKey = this.buildCacheKey('hourly_sales', filters, ['1', '2']); // Tax Invoices (1) AND Credit Notes (2)
+		const cacheKey = this.buildCacheKey('hourly_sales', filters, ['1', '2'], countryCode); // Tax Invoices (1) AND Credit Notes (2)
+		
+		// ✅ Log country switching
+		if (countryCode !== 'SA') {
+			this.logger.log(`[${operationId}] 🌍 Country switch: Using database for ${countryCode}`);
+		}
 
 		this.logger.log(`[${operationId}] Getting hourly sales pattern for ${filters.startDate} to ${filters.endDate}`);
 
@@ -2816,7 +2932,10 @@ export class ErpDataService implements OnModuleInit {
 			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
 				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
 
-			const query = this.salesHeaderRepo
+			// ✅ Get repository for country
+			const salesHeaderRepo = await this.getRepositoryForCountry(TblSalesHeader, countryCode);
+			
+			const query = salesHeaderRepo
 				.createQueryBuilder('header');
 
 			// Add LEFT JOINs for customer category filtering if needed
@@ -2914,11 +3033,13 @@ export class ErpDataService implements OnModuleInit {
 	 * - All payment methods scaled to match tax-excluded revenue total
 	 * 
 	 * @param filters - Query filters (date range, store, etc.)
+	 * @param countryCode - Country code for database switching (defaults to 'SA')
 	 * @returns Array of payment type aggregations (tax-excluded amounts)
 	 * 
 	 * Sales Person Filtering: Uses tblsalesheader.sales_code field
+	 * ✅ Country Support: Accepts optional countryCode parameter (defaults to 'SA')
 	 */
-	async getPaymentTypeAggregations(filters: ErpQueryFilters): Promise<
+	async getPaymentTypeAggregations(filters: ErpQueryFilters, countryCode: string = 'SA'): Promise<
 		Array<{
 			paymentType: string;
 			totalAmount: number;
@@ -2926,7 +3047,12 @@ export class ErpDataService implements OnModuleInit {
 		}>
 	> {
 		const operationId = this.generateOperationId('GET_PAYMENT_TYPES');
-		const cacheKey = this.buildCacheKey('payment_types', filters, ['1', '2']); // Tax Invoices (1) AND Credit Notes (2)
+		const cacheKey = this.buildCacheKey('payment_types', filters, ['1', '2'], countryCode); // Tax Invoices (1) AND Credit Notes (2)
+		
+		// ✅ Log country switching
+		if (countryCode !== 'SA') {
+			this.logger.log(`[${operationId}] 🌍 Country switch: Using database for ${countryCode}`);
+		}
 
 		this.logger.log(`[${operationId}] Getting payment type aggregations for ${filters.startDate} to ${filters.endDate}`);
 
@@ -2959,7 +3085,10 @@ export class ErpDataService implements OnModuleInit {
 		const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
 			(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
 
-		let query = this.salesHeaderRepo
+		// ✅ Get repository for country
+		const salesHeaderRepo = await this.getRepositoryForCountry(TblSalesHeader, countryCode);
+		
+		let query = salesHeaderRepo
 			.createQueryBuilder('header');
 
 		// Add LEFT JOINs for customer category filtering if needed
@@ -3108,11 +3237,13 @@ export class ErpDataService implements OnModuleInit {
 	 * - Conversion rate percentage
 	 * 
 	 * @param filters - Query filters (date range, store, etc.)
+	 * @param countryCode - Country code for database switching (defaults to 'SA')
 	 * @returns Conversion rate data
 	 * 
 	 * Sales Person Filtering: Uses tblsalesheader.sales_code field
+	 * ✅ Country Support: Accepts optional countryCode parameter (defaults to 'SA')
 	 */
-	async getConversionRateData(filters: ErpQueryFilters): Promise<{
+	async getConversionRateData(filters: ErpQueryFilters, countryCode: string = 'SA'): Promise<{
 		totalQuotations: number;
 		totalQuotationValue: number;
 		convertedInvoices: number;
@@ -3120,7 +3251,12 @@ export class ErpDataService implements OnModuleInit {
 		conversionRate: number;
 	}> {
 		const operationId = this.generateOperationId('GET_CONVERSION');
-		const cacheKey = this.buildCacheKey('conversion_rate', filters);
+		const cacheKey = this.buildCacheKey('conversion_rate', filters, undefined, countryCode);
+		
+		// ✅ Log country switching
+		if (countryCode !== 'SA') {
+			this.logger.log(`[${operationId}] 🌍 Country switch: Using database for ${countryCode}`);
+		}
 
 		this.logger.log(`[${operationId}] Getting conversion rate data for ${filters.startDate} to ${filters.endDate}`);
 
@@ -3150,8 +3286,11 @@ export class ErpDataService implements OnModuleInit {
 			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
 				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
 
+			// ✅ Get repository for country
+			const salesHeaderRepo = await this.getRepositoryForCountry(TblSalesHeader, countryCode);
+
 			// Query 1: Get quotations (doc_type = 3)
-			let quotationsQuery = this.salesHeaderRepo
+			let quotationsQuery = salesHeaderRepo
 				.createQueryBuilder('header');
 
 			// Add LEFT JOINs for customer category filtering if needed
@@ -3191,7 +3330,7 @@ export class ErpDataService implements OnModuleInit {
 			}
 
 			// Query 2: Get converted invoices (doc_type = 1 with invoice_used = 1)
-			let invoicesQuery = this.salesHeaderRepo
+			let invoicesQuery = salesHeaderRepo
 				.createQueryBuilder('header');
 
 			// Add LEFT JOINs for customer category filtering if needed
@@ -3295,18 +3434,25 @@ export class ErpDataService implements OnModuleInit {
 	 * - And any other doc_types that exist
 	 * 
 	 * @param filters - Query filters (date range, store, etc.)
+	 * @param countryCode - Country code for database switching (defaults to 'SA')
 	 * @returns Document type breakdown data
 	 * 
 	 * Sales Person Filtering: Uses tblsalesheader.sales_code field
+	 * ✅ Country Support: Accepts optional countryCode parameter (defaults to 'SA')
 	 */
-	async getDocumentTypeBreakdown(filters: ErpQueryFilters): Promise<Array<{
+	async getDocumentTypeBreakdown(filters: ErpQueryFilters, countryCode: string = 'SA'): Promise<Array<{
 		docType: number;
 		docTypeLabel: string;
 		count: number;
 		totalValue: number;
 	}>> {
 		const operationId = this.generateOperationId('GET_DOC_TYPE_BREAKDOWN');
-		const cacheKey = this.buildCacheKey('doc_type_breakdown', filters);
+		const cacheKey = this.buildCacheKey('doc_type_breakdown', filters, undefined, countryCode);
+		
+		// ✅ Log country switching
+		if (countryCode !== 'SA') {
+			this.logger.log(`[${operationId}] 🌍 Country switch: Using database for ${countryCode}`);
+		}
 
 		this.logger.log(`[${operationId}] Getting document type breakdown for ${filters.startDate} to ${filters.endDate}`);
 
@@ -3336,8 +3482,11 @@ export class ErpDataService implements OnModuleInit {
 			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
 				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
 
+			// ✅ Get repository for country
+			const salesHeaderRepo = await this.getRepositoryForCountry(TblSalesHeader, countryCode);
+
 			// Query to get breakdown by doc_type
-			let query = this.salesHeaderRepo
+			let query = salesHeaderRepo
 				.createQueryBuilder('header');
 
 			// Add LEFT JOINs for customer category filtering if needed
@@ -3437,7 +3586,7 @@ export class ErpDataService implements OnModuleInit {
 	 * @param filters - Query filters for date range
 	 * @returns Master data for populating filter dropdowns
 	 */
-	async getMasterDataForFilters(filters: ErpQueryFilters): Promise<{
+	async getMasterDataForFilters(filters: ErpQueryFilters, countryCode: string = 'SA'): Promise<{
 		branches: Array<{ id: string; name: string }>;
 		products: Array<{ id: string; name: string }>;
 		salespeople: Array<{ id: string; name: string }>;
@@ -3445,7 +3594,12 @@ export class ErpDataService implements OnModuleInit {
 		customerCategories: Array<{ id: string; name: string }>;
 	}> {
 		const operationId = this.generateOperationId('GET_MASTER_DATA');
-		const cacheKey = this.buildCacheKey('master_data', filters);
+		const cacheKey = this.buildCacheKey('master_data', filters, undefined, countryCode);
+		
+		// ✅ Log country switching
+		if (countryCode !== 'SA') {
+			this.logger.log(`[${operationId}] 🌍 Country switch: Using database for ${countryCode}`);
+		}
 
 		this.logger.log(`[${operationId}] Getting master data for filters`);
 
@@ -3474,31 +3628,31 @@ export class ErpDataService implements OnModuleInit {
 			// ✅ PHASE 3: Sequential execution with individual step timing
 			this.logger.log(`[${operationId}] Step 1/4: Getting branches...`);
 			const step1Start = Date.now();
-			const branches = await this.getUniqueBranches(filters);
+			const branches = await this.getUniqueBranches(filters, countryCode);
 			const step1Duration = Date.now() - step1Start;
 			this.logger.log(`[${operationId}] Step 1 completed in ${step1Duration}ms (${branches.length} records)`);
 			
 			this.logger.log(`[${operationId}] Step 2/4: Getting products...`);
 			const step2Start = Date.now();
-			const products = await this.getUniqueProducts(filters);
+			const products = await this.getUniqueProducts(filters, countryCode);
 			const step2Duration = Date.now() - step2Start;
 			this.logger.log(`[${operationId}] Step 2 completed in ${step2Duration}ms (${products.length} records)`);
 			
 			this.logger.log(`[${operationId}] Step 3/4: Getting salespeople...`);
 			const step3Start = Date.now();
-			const salespeople = await this.getUniqueSalespeople(filters);
+			const salespeople = await this.getUniqueSalespeople(filters, countryCode);
 			const step3Duration = Date.now() - step3Start;
 			this.logger.log(`[${operationId}] Step 3 completed in ${step3Duration}ms (${salespeople.length} records)`);
 			
 			this.logger.log(`[${operationId}] Step 4/5: Getting payment methods...`);
 			const step4Start = Date.now();
-			const paymentMethods = await this.getUniquePaymentMethods(filters);
+			const paymentMethods = await this.getUniquePaymentMethods(filters, countryCode);
 			const step4Duration = Date.now() - step4Start;
 			this.logger.log(`[${operationId}] Step 4 completed in ${step4Duration}ms (${paymentMethods.length} records)`);
 
 			this.logger.log(`[${operationId}] Step 5/5: Getting customer categories...`);
 			const step5Start = Date.now();
-			const customerCategories = await this.getUniqueCustomerCategories(filters);
+			const customerCategories = await this.getUniqueCustomerCategories(filters, countryCode);
 			const step5Duration = Date.now() - step5Start;
 			this.logger.log(`[${operationId}] Step 5 completed in ${step5Duration}ms (${customerCategories.length} records)`);
 
@@ -3533,9 +3687,11 @@ export class ErpDataService implements OnModuleInit {
 	/**
 	 * Get unique branches from sales data
 	 * Returns branches with aliases from STORE_NAME_MAPPING
+	 * ✅ Country Support: Accepts optional countryCode parameter (defaults to 'SA')
 	 */
-	private async getUniqueBranches(filters: ErpQueryFilters): Promise<Array<{ id: string; name: string }>> {
-		const query = this.salesLinesRepo
+	private async getUniqueBranches(filters: ErpQueryFilters, countryCode: string = 'SA'): Promise<Array<{ id: string; name: string }>> {
+		const salesLinesRepo = await this.getRepositoryForCountry(TblSalesLines, countryCode);
+		const query = salesLinesRepo
 			.createQueryBuilder('line')
 			.select('DISTINCT line.store', 'store')
 			.where('line.sale_date BETWEEN :startDate AND :endDate', {
@@ -3557,9 +3713,11 @@ export class ErpDataService implements OnModuleInit {
 
 	/**
 	 * Get unique products from sales data
+	 * ✅ Country Support: Accepts optional countryCode parameter (defaults to 'SA')
 	 */
-	private async getUniqueProducts(filters: ErpQueryFilters): Promise<Array<{ id: string; name: string }>> {
-		const query = this.salesLinesRepo
+	private async getUniqueProducts(filters: ErpQueryFilters, countryCode: string = 'SA'): Promise<Array<{ id: string; name: string }>> {
+		const salesLinesRepo = await this.getRepositoryForCountry(TblSalesLines, countryCode);
+		const query = salesLinesRepo
 			.createQueryBuilder('line')
 			.select([
 				'DISTINCT line.item_code as itemCode',
@@ -3586,14 +3744,15 @@ export class ErpDataService implements OnModuleInit {
 	/**
 	 * Get sales person name from tblsalesman table by sales code
 	 * Uses caching to avoid repeated database queries
+	 * ✅ Country Support: Accepts optional countryCode parameter (defaults to 'SA')
 	 */
-	private async getSalesPersonName(salesCode: string | null | undefined): Promise<string> {
+	private async getSalesPersonName(salesCode: string | null | undefined, countryCode: string = 'SA'): Promise<string> {
 		if (!salesCode || salesCode.trim() === '') {
 			return 'Unknown Sales Person';
 		}
 
 		const normalizedCode = salesCode.trim().toUpperCase();
-		const cacheKey = `sales_rep_name:${normalizedCode}`;
+		const cacheKey = `sales_rep_name:${normalizedCode}:${countryCode}`;
 
 		// Check cache first
 		const cached = await this.cacheManager.get<string>(cacheKey);
@@ -3602,7 +3761,8 @@ export class ErpDataService implements OnModuleInit {
 		}
 
 		try {
-			const salesman = await this.salesmanRepo.findOne({
+			const salesmanRepo = await this.getRepositoryForCountry(TblSalesman, countryCode);
+			const salesman = await salesmanRepo.findOne({
 				where: { Code: normalizedCode },
 				select: ['Code', 'Description'],
 			});
@@ -3622,8 +3782,9 @@ export class ErpDataService implements OnModuleInit {
 	/**
 	 * Batch get sales person names for multiple codes
 	 * More efficient than individual lookups
+	 * ✅ Country Support: Accepts optional countryCode parameter (defaults to 'SA')
 	 */
-	private async getSalesPersonNames(salesCodes: string[]): Promise<Map<string, string>> {
+	private async getSalesPersonNames(salesCodes: string[], countryCode: string = 'SA'): Promise<Map<string, string>> {
 		const nameMap = new Map<string, string>();
 		const codesToLookup: string[] = [];
 
@@ -3645,7 +3806,10 @@ export class ErpDataService implements OnModuleInit {
 		// Batch lookup remaining codes
 		if (codesToLookup.length > 0) {
 			try {
-				const salesmen = await this.salesmanRepo.find({
+				// ✅ Get repository for country
+				const salesmanRepo = await this.getRepositoryForCountry(TblSalesman, countryCode);
+				
+				const salesmen = await salesmanRepo.find({
 					where: codesToLookup.map(code => ({ Code: code })),
 					select: ['Code', 'Description'],
 				});
@@ -3690,13 +3854,18 @@ export class ErpDataService implements OnModuleInit {
 	 * Uses tblsalesheader.sales_code field (header-level sales person codes)
 	 * Joins with tblsalesman to get actual names
 	 * Note: For line-level rep codes, use tblsaleslines.rep_code
+	 * ✅ Country Support: Accepts optional countryCode parameter (defaults to 'SA')
 	 */
-	private async getUniqueSalespeople(filters: ErpQueryFilters): Promise<Array<{ id: string; name: string }>> {
-		const query = this.salesHeaderRepo
+	private async getUniqueSalespeople(filters: ErpQueryFilters, countryCode: string = 'SA'): Promise<Array<{ id: string; name: string }>> {
+		const salesHeaderRepo = await this.getRepositoryForCountry(TblSalesHeader, countryCode);
+		const query = salesHeaderRepo
 			.createQueryBuilder('header')
 			.leftJoin('tblsalesman', 'salesman', 'header.sales_code = salesman.Code')
-			.select('DISTINCT header.sales_code', 'salesCode')
-			.addSelect('salesman.Description', 'salesName')
+			.select([
+				'header.sales_code as salesCode',
+				'salesman.Description as salesName',
+			])
+			.distinct(true)
 			.where('header.sale_date BETWEEN :startDate AND :endDate', {
 				startDate: filters.startDate,
 				endDate: filters.endDate,
@@ -3716,11 +3885,13 @@ export class ErpDataService implements OnModuleInit {
 
 	/**
 	 * Get unique payment methods from sales header data
+	 * ✅ Country Support: Accepts optional countryCode parameter (defaults to 'SA')
 	 */
-	private async getUniquePaymentMethods(filters: ErpQueryFilters): Promise<Array<{ id: string; name: string }>> {
+	private async getUniquePaymentMethods(filters: ErpQueryFilters, countryCode: string = 'SA'): Promise<Array<{ id: string; name: string }>> {
 		// Query to get which payment methods have non-zero values
 		// ✅ REVISED: Cash calculation subtracts change_amnt (cash received minus change given)
-		const query = this.salesHeaderRepo
+		const salesHeaderRepo = await this.getRepositoryForCountry(TblSalesHeader, countryCode);
+		const query = salesHeaderRepo
 			.createQueryBuilder('header')
 			.select([
 				'CAST(SUM(CAST(header.cash AS DECIMAL(19,3))) - SUM(CAST(header.change_amnt AS DECIMAL(19,3))) AS DECIMAL(19,2)) as cash', // ✅ Cash minus change
@@ -3769,9 +3940,11 @@ export class ErpDataService implements OnModuleInit {
 	/**
 	 * Get unique customer categories from sales data
 	 * Uses LEFT JOIN to get customer categories from tblcustomers and tblcustomercategories
+	 * ✅ Country Support: Accepts optional countryCode parameter (defaults to 'SA')
 	 */
-	private async getUniqueCustomerCategories(filters: ErpQueryFilters): Promise<Array<{ id: string; name: string }>> {
-		const query = this.salesLinesRepo
+	private async getUniqueCustomerCategories(filters: ErpQueryFilters, countryCode: string = 'SA'): Promise<Array<{ id: string; name: string }>> {
+		const salesLinesRepo = await this.getRepositoryForCountry(TblSalesLines, countryCode);
+		const query = salesLinesRepo
 			.createQueryBuilder('line')
 			.leftJoin('tblcustomers', 'customer', 'line.customer = customer.Code')
 			.leftJoin('tblcustomercategories', 'category', 'customer.Category = category.cust_cat_code')

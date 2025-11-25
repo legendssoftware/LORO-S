@@ -78,7 +78,9 @@ export class PerformanceDashboardGenerator {
 	 * Generate complete performance dashboard data (includes charts + tables)
 	 */
 	async generate(params: PerformanceFiltersDto): Promise<PerformanceDashboardDataDto> {
-		this.logger.log(`Generating performance dashboard for org ${params.organisationId}`);
+		const countryCode = this.getCountryCode(params);
+		this.logger.log(`🌍 Generating performance dashboard for org ${params.organisationId}`);
+		this.logger.log(`🌍 Country: ${params.country || 'not specified'} → Code: ${countryCode}`);
 		this.logger.log(`Date range: ${params.startDate} to ${params.endDate}`);
 
 		try {
@@ -167,9 +169,10 @@ export class PerformanceDashboardGenerator {
 
 		// Build ERP query filters
 		const filters = this.buildErpFilters(params);
+		const countryCode = this.getCountryCode(params);
 		
 		// ✅ Get daily aggregations from tblsalesheader (same as revenue trend)
-		const dailyAggregations = await this.erpDataService.getDailyAggregations(filters);
+		const dailyAggregations = await this.erpDataService.getDailyAggregations(filters, countryCode);
 		
 		return this.calculateDailySalesPerformanceFromAggregations(dailyAggregations);
 	}
@@ -187,11 +190,12 @@ export class PerformanceDashboardGenerator {
 
 		// Build ERP query filters
 		const filters = this.buildErpFilters(params);
+		const countryCode = this.getCountryCode(params);
 		
 		// ✅ Get branch × category aggregations from tblsaleslines ONLY
 		// Uses: SUM(incl_line_total) - SUM(tax) grouped by store, category
 		// This matches Sales by Category chart query (R823,481.96)
-		const branchCategoryAggregations = await this.erpDataService.getBranchCategoryAggregations(filters);
+		const branchCategoryAggregations = await this.erpDataService.getBranchCategoryAggregations(filters, countryCode);
 		
 		// ✅ Calculate performance directly from sales lines (no scaling)
 		return this.calculateBranchCategoryPerformanceFromAggregations(branchCategoryAggregations);
@@ -211,12 +215,13 @@ export class PerformanceDashboardGenerator {
 
 		// Build ERP query filters
 		const filters = this.buildErpFilters(params);
+		const countryCode = this.getCountryCode(params);
 		
 		// ✅ Get branch aggregations from tblsalesheader (same query structure)
-		const branchAggregations = await this.erpDataService.getBranchAggregations(filters);
+		const branchAggregations = await this.erpDataService.getBranchAggregations(filters, countryCode);
 		
 		// ✅ Get branch category aggregations to calculate GP (cost data from tblsaleslines)
-		const branchCategoryAggregations = await this.erpDataService.getBranchCategoryAggregations(filters);
+		const branchCategoryAggregations = await this.erpDataService.getBranchCategoryAggregations(filters, countryCode);
 		
 		return this.calculateSalesPerStoreFromAggregations(branchAggregations, branchCategoryAggregations);
 	}
@@ -234,8 +239,9 @@ export class PerformanceDashboardGenerator {
 		this.logger.log(`Getting master data for filters`);
 
 		const filters = this.buildErpFilters(params);
+		const countryCode = this.getCountryCode(params);
 
-		return await this.erpDataService.getMasterDataForFilters(filters);
+		return await this.erpDataService.getMasterDataForFilters(filters, countryCode);
 	}
 
 	// ===================================================================
@@ -251,6 +257,7 @@ export class PerformanceDashboardGenerator {
 		try {
 			// Build ERP query filters
 			const filters = this.buildErpFilters(params);
+			const countryCode = this.getCountryCode(params);
 
 			this.logger.log(`Fetching ERP performance data for ${filters.startDate} to ${filters.endDate}`);
 
@@ -262,7 +269,7 @@ export class PerformanceDashboardGenerator {
 			if (hasCustomerCategoryFilters) {
 				// Use method with customer category JOINs when filtering by customer categories
 				this.logger.log(`Using customer category filtering - include: ${filters.includeCustomerCategories?.join(',') || 'none'}, exclude: ${filters.excludeCustomerCategories?.join(',') || 'none'}`);
-				const salesLinesWithCategories = await this.erpDataService.getSalesLinesWithCustomerCategories(filters);
+				const salesLinesWithCategories = await this.erpDataService.getSalesLinesWithCustomerCategories(filters, ['1'], countryCode);
 				// Convert to regular sales lines format (remove category fields for compatibility)
 				salesLines = salesLinesWithCategories.map(line => {
 					const { customer_category_code, customer_category_description, ...rest } = line;
@@ -270,34 +277,16 @@ export class PerformanceDashboardGenerator {
 				});
 			} else {
 				// Use standard method when no customer category filtering
-				salesLines = await this.erpDataService.getSalesLinesByDateRange(filters);
+				salesLines = await this.erpDataService.getSalesLinesByDateRange(filters, ['1'], countryCode);
 			}
 			
 			// ✅ Get headers to access sales_code for sales person mapping
-			const headers = await this.erpDataService.getSalesHeadersByDateRange(filters);
+			const headers = await this.erpDataService.getSalesHeadersByDateRange(filters, countryCode);
 			this.logger.log(`Fetched ${headers.length} sales headers for sales_code mapping`);
 			
-			// Filter by country if specified
-			if (params.country) {
-				const { getStoreCodesForCountry, getCountryFromStoreCode } = require('../../erp/config/category-mapping.config');
-				const countryStoreCodes = getStoreCodesForCountry(params.country);
-				if (countryStoreCodes.length > 0) {
-					salesLines = salesLines.filter(line => {
-						const storeCode = String(line.store || '').padStart(3, '0');
-						return countryStoreCodes.includes(storeCode);
-					});
-					// Also filter headers by country
-					const filteredHeaders = headers.filter(header => {
-						const storeCode = String(header.store || '').padStart(3, '0');
-						return countryStoreCodes.includes(storeCode);
-					});
-					this.logger.log(`Filtered to ${salesLines.length} sales lines and ${filteredHeaders.length} headers for country ${params.country}`);
-					// Use filtered headers
-					const performanceData = this.erpTransformerService.transformToPerformanceDataList(salesLines, filteredHeaders);
-					this.logger.log(`Transformed ${performanceData.length} performance data records from ERP`);
-					return performanceData;
-				}
-			}
+			// ✅ REMOVED: Redundant country filtering - database switching via countryCode handles this
+			// The countryCode parameter ensures we're querying the correct database
+			// No need to filter by store codes here since the database switch already isolates the data
 			
 			// Transform to performance data format with headers for sales_code mapping
 			const performanceData = this.erpTransformerService.transformToPerformanceDataList(salesLines, headers);
@@ -321,27 +310,16 @@ export class PerformanceDashboardGenerator {
 		try {
 			// Build ERP query filters
 			const filters = this.buildErpFilters(params);
+			const countryCode = this.getCountryCode(params);
 
 			this.logger.log(`Fetching ERP sales transactions for ${filters.startDate} to ${filters.endDate}`);
 
 			// Get sales lines from ERP
-			let salesLines = await this.erpDataService.getSalesLinesByDateRange(filters);
-			
-			// Filter by country if specified
-			if (params.country) {
-				const { getStoreCodesForCountry } = require('../../erp/config/category-mapping.config');
-				const countryStoreCodes = getStoreCodesForCountry(params.country);
-				if (countryStoreCodes.length > 0) {
-					salesLines = salesLines.filter(line => {
-						const storeCode = String(line.store || '').padStart(3, '0');
-						return countryStoreCodes.includes(storeCode);
-					});
-					this.logger.log(`Filtered to ${salesLines.length} sales lines for country ${params.country}`);
-				}
-			}
+			// ✅ REMOVED: Redundant country filtering - database switching via countryCode handles this
+			const salesLines = await this.erpDataService.getSalesLinesByDateRange(filters, ['1'], countryCode);
 			
 			// Get headers if needed
-			const headers = await this.erpDataService.getSalesHeadersByDateRange(filters);
+			const headers = await this.erpDataService.getSalesHeadersByDateRange(filters, countryCode);
 			
 			// Transform to sales transaction format
 			const transactions = this.erpTransformerService.transformToSalesTransactions(salesLines, headers);
@@ -380,9 +358,10 @@ export class PerformanceDashboardGenerator {
 	): Promise<PerformanceSummaryDto> {
 		// Build ERP query filters
 		const filters = this.buildErpFilters(params);
+		const countryCode = this.getCountryCode(params);
 		
 		// ✅ Get revenue from daily aggregations (uses tblsalesheader.total_incl - total_tax, exclusive of tax)
-		const dailyAggregations = await this.erpDataService.getDailyAggregations(filters);
+		const dailyAggregations = await this.erpDataService.getDailyAggregations(filters, countryCode);
 		
 		// Log filter details for debugging
 		if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
@@ -408,7 +387,7 @@ export class PerformanceDashboardGenerator {
 		
 		// ✅ Get category aggregations to calculate cost and GP (from tblsaleslines)
 		// This gives us totalSalesExVatAndCost (matches Sales by Category chart: R823,481.96)
-		const categoryAggregations = await this.erpDataService.getCategoryAggregations(filters);
+		const categoryAggregations = await this.erpDataService.getCategoryAggregations(filters, countryCode);
 		
 		// Calculate total sales ex VAT and costings from sales lines
 		const totalSalesExVatAndCost = categoryAggregations.reduce((sum, agg) => {
@@ -506,9 +485,10 @@ export class PerformanceDashboardGenerator {
 	private async generateRevenueTrendChart(data: PerformanceData[], params: PerformanceFiltersDto) {
 		// Build ERP query filters
 		const filters = this.buildErpFilters(params);
+		const countryCode = this.getCountryCode(params);
 		
 		// ✅ Get revenue from daily aggregations (uses tblsalesheader.total_incl - total_tax, exclusive of tax)
-		const dailyAggregations = await this.erpDataService.getDailyAggregations(filters);
+		const dailyAggregations = await this.erpDataService.getDailyAggregations(filters, countryCode);
 		
 		// Aggregate revenue by date (sum across all stores for each date)
 		const aggregated = dailyAggregations.reduce((acc, agg) => {
@@ -579,9 +559,10 @@ export class PerformanceDashboardGenerator {
 		try {
 			// Build ERP query filters
 			const filters = this.buildErpFilters(params);
+			const countryCode = this.getCountryCode(params);
 
 			// ✅ Get real hourly sales data from ERP
-			const hourlyData = await this.erpDataService.getHourlySalesPattern(filters);
+			const hourlyData = await this.erpDataService.getHourlySalesPattern(filters, countryCode);
 			
 			// Get current hour to avoid showing future hours
 			const currentHour = new Date().getHours();
@@ -637,10 +618,11 @@ export class PerformanceDashboardGenerator {
 	private async generateSalesByCategoryChart(data: PerformanceData[], params: PerformanceFiltersDto) {
 		// Build ERP query filters
 		const filters = this.buildErpFilters(params);
+		const countryCode = this.getCountryCode(params);
 		
 		// ✅ Get revenue from category aggregations (uses tblsaleslines.incl_line_total - tax, exclusive of tax)
 		// ✅ Get ALL categories (no limit) - data and calculations reflect whole scope
-		const categoryAggregations = await this.erpDataService.getCategoryAggregations(filters);
+		const categoryAggregations = await this.erpDataService.getCategoryAggregations(filters, countryCode);
 		
 		// Map and sort ALL categories
 		const allCategories = categoryAggregations
@@ -675,10 +657,11 @@ export class PerformanceDashboardGenerator {
 		
 		// Build ERP query filters
 		const filters = this.buildErpFilters(params);
+		const countryCode = this.getCountryCode(params);
 		
 		// ✅ Get branch aggregations directly from tblsalesheader (SUM(total_incl) - SUM(total_tax) grouped by store)
 		// ✅ Get ALL branches (no limit) - data and calculations reflect whole scope
-		const branchAggregations = await this.erpDataService.getBranchAggregations(filters);
+		const branchAggregations = await this.erpDataService.getBranchAggregations(filters, countryCode);
 		
 		// Map ALL branch aggregations to chart data using branch name mapping
 		const allBranches = branchAggregations
@@ -719,10 +702,11 @@ export class PerformanceDashboardGenerator {
 	private async generateTopProductsChart(data: PerformanceData[], params: PerformanceFiltersDto) {
 		// Build ERP query filters
 		const filters = this.buildErpFilters(params);
+		const countryCode = this.getCountryCode(params);
 		
 		// ✅ Get product aggregations directly from tblsaleslines (SUM(incl_line_total) - SUM(tax) grouped by description)
 		// ✅ Get ALL products (use high limit to get all) - data and calculations reflect whole scope
-		const productAggregations = await this.erpDataService.getProductAggregations(filters, 10000); // Get all products
+		const productAggregations = await this.erpDataService.getProductAggregations(filters, 10000, countryCode); // Get all products
 		
 		// Map ALL product aggregations to chart data using product description
 		const allProducts = productAggregations
@@ -801,11 +785,12 @@ export class PerformanceDashboardGenerator {
 	private async generateSalesBySalespersonChart(params: PerformanceFiltersDto) {
 		// Build ERP query filters using buildErpFilters helper
 		const filters = this.buildErpFilters(params);
+		const countryCode = this.getCountryCode(params);
 
 		// ✅ Get sales person aggregations from ERP service
 		// ✅ Get ALL salespeople (no limit) - data and calculations reflect whole scope
 		// ✅ Sales rep names are now included in aggregations from tblsalesman table
-		const aggregations = await this.erpDataService.getSalesPersonAggregations(filters);
+		const aggregations = await this.erpDataService.getSalesPersonAggregations(filters, countryCode);
 
 		// Convert ALL aggregations to chart data format
 		const allSalespeople = aggregations
@@ -836,9 +821,10 @@ export class PerformanceDashboardGenerator {
 		try {
 			// Build ERP query filters
 			const filters = this.buildErpFilters(params);
+			const countryCode = this.getCountryCode(params);
 
 			// ✅ Get document type breakdown from ERP
-			const docTypeBreakdown = await this.erpDataService.getDocumentTypeBreakdown(filters);
+			const docTypeBreakdown = await this.erpDataService.getDocumentTypeBreakdown(filters, countryCode);
 			
 			this.logger.log(`📊 Document Type Breakdown Retrieved:`);
 			docTypeBreakdown.forEach((item) => {
@@ -903,9 +889,10 @@ export class PerformanceDashboardGenerator {
 		try {
 			// Build ERP query filters
 			const filters = this.buildErpFilters(params);
+			const countryCode = this.getCountryCode(params);
 
 			// ✅ Get real payment type data from ERP
-			const paymentTypes = await this.erpDataService.getPaymentTypeAggregations(filters);
+			const paymentTypes = await this.erpDataService.getPaymentTypeAggregations(filters, countryCode);
 			
 			// Define colors for different payment types
 			const colorMap: Record<string, string> = {
@@ -1467,6 +1454,9 @@ export class PerformanceDashboardGenerator {
 	/**
 	 * Build ERP query filters from PerformanceFiltersDto
 	 * Centralizes filter mapping logic
+	 * 
+	 * ✅ FIXED: Country and branch filters now work together
+	 * ✅ FIXED: Branch IDs (B015) are converted to store codes (015)
 	 */
 	private buildErpFilters(params: PerformanceFiltersDto): ErpQueryFilters {
 		const filters: ErpQueryFilters = {
@@ -1474,27 +1464,33 @@ export class PerformanceDashboardGenerator {
 			endDate: params.endDate || this.getDefaultEndDate(),
 		};
 
-		// Map country filter - if country is specified, filter by store codes for that country
-		if (params.country) {
-			const { getStoreCodesForCountry } = require('../../erp/config/category-mapping.config');
-			const storeCodes = getStoreCodesForCountry(params.country);
-			if (storeCodes.length > 0) {
-				// If country filter is set, use store codes for that country
-				// Note: This will override branchId/branchIds if country is specified
-				// For now, we'll handle country filtering at the data level
-				// Store codes will be filtered in the data retrieval layer
+		// ✅ FIXED: Convert branch ID to store code (B015 → 015)
+		// Helper function to convert branch ID to store code
+		const convertBranchIdToStoreCode = (branchId: string | number): string => {
+			const branchIdStr = String(branchId).trim();
+			// If it starts with 'B', remove it (B015 → 015)
+			if (branchIdStr.startsWith('B')) {
+				return branchIdStr.substring(1).padStart(3, '0');
 			}
+			// Otherwise, pad to 3 digits (15 → 015)
+			return branchIdStr.padStart(3, '0');
+		};
+
+		// ✅ FIXED: Map branch filter (works WITH country filter, not instead of)
+		// Country filter switches database, branch filter narrows within that database
+		if (params.branchId) {
+			filters.storeCode = convertBranchIdToStoreCode(params.branchId);
+			this.logger.debug(`Branch filter: ${params.branchId} → store code: ${filters.storeCode}`);
+		} else if (params.branchIds && params.branchIds.length > 0) {
+			// If multiple branches selected, use first one for now
+			// TODO: Support multiple branch filtering if needed
+			filters.storeCode = convertBranchIdToStoreCode(params.branchIds[0]);
+			this.logger.debug(`Branch filter (multiple): ${params.branchIds[0]} → store code: ${filters.storeCode}`);
 		}
 
-		// Map branch filter (only if country filter is not set)
-		if (!params.country) {
-			if (params.branchId) {
-				filters.storeCode = params.branchId.toString();
-			} else if (params.branchIds && params.branchIds.length > 0) {
-				// If multiple branches, use first one (or handle differently based on requirements)
-				filters.storeCode = params.branchIds[0];
-			}
-		}
+		// Note: Country filtering is handled via countryCode parameter passed to ERP service methods
+		// Database switching happens automatically via ErpConnectionManagerService
+		// No need to filter by store codes here - the database switch handles it
 
 		// Map category filter
 		if (params.category) {
@@ -1520,6 +1516,22 @@ export class PerformanceDashboardGenerator {
 		}
 
 		return filters;
+	}
+
+	/**
+	 * Get country code from params (extracted from country name in Reports Service)
+	 * 
+	 * ✅ FIXED: Properly extracts countryCode from params
+	 * Country codes: SA (default), ZAM, MOZ, BOT, ZW, MAL
+	 */
+	private getCountryCode(params: PerformanceFiltersDto): string {
+		// countryCode is set by Reports Service convertParamsToFilters
+		const countryCode = (params as any).countryCode || 'SA';
+		
+		// Log country code for debugging
+		this.logger.debug(`🌍 Country code extracted: ${countryCode} (from country: ${params.country || 'not specified'})`);
+		
+		return countryCode;
 	}
 
 	/**

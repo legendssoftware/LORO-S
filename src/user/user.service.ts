@@ -2914,7 +2914,8 @@ export class UserService {
 					}
 				});
 				
-				this.logger.debug(`All users check (including deleted): ${JSON.stringify(allUsersCheck.map(u => ({ uid: u.uid, name: u.name, email: u.email, isDeleted: u.isDeleted, orgRef: u.organisationRef })))}`);
+				// ✅ Reduced logging: Only log count, not full array
+				this.logger.debug(`Found ${allUsersCheck.length} users (including deleted)`);
 
 				// Now fetch managed staff with relaxed access control - they might be in different orgs/branches
 				const managedStaffDetails = await this.userRepository.find({
@@ -2944,7 +2945,10 @@ export class UserService {
 				});
 
 				this.logger.debug(`Found ${managedStaffDetails.length} active managed staff members`);
-				this.logger.debug(`Managed staff details: ${JSON.stringify(managedStaffDetails.map(s => ({ uid: s.uid, name: s.name, email: s.email, orgRef: s.organisationRef, branchUid: s.branch?.uid })))}`);
+				// ✅ Reduced logging: Only log UIDs if count is small or in development
+				if (managedStaffDetails.length < 10 || process.env.NODE_ENV === 'development') {
+					this.logger.debug(`Managed staff UIDs: ${managedStaffDetails.map(s => s.uid).join(', ')}`);
+				}
 
 				// Process managed staff targets with progress calculations and remaining amounts
 				// TEMPORARY: Return zeros for all staff-specific data while logic is being revised
