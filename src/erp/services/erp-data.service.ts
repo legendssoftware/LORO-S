@@ -1337,6 +1337,8 @@ export class ErpDataService implements OnModuleInit {
 					// ✅ Data quality filters - using gross amounts (incl_line_total) without discount subtraction
 					query.andWhere('line.item_code IS NOT NULL');
 					query.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' });
+					// ✅ CRITICAL: Only inventory items (type = 'I') - matches sales query
+					query.andWhere('line.type = :type', { type: 'I' });
 
 					return await query.getMany();
 				},
@@ -2102,59 +2104,66 @@ export class ErpDataService implements OnModuleInit {
 			const queryStart = Date.now();
 			const dateRangeDays = this.calculateDateRangeDays(filters.startDate, filters.endDate);
 			
-			// ✅ REVISED: Use tblsalesheader instead of tblsaleslines
-			// Sum total_incl - total_tax for revenue (exclusive of tax), grouped by sales_code
-			// Matches SQL: SELECT sales_code, SUM(total_incl) - SUM(total_tax) AS total_sum FROM tblsalesheader WHERE doc_type IN (1, 2) GROUP BY sales_code
+			// ✅ REVISED: Use tblsaleslines with JOIN to tblsalesman (matches user's SQL query exactly)
+			// Matches SQL: SELECT m.Description as rep, SUM(incl_line_total - tax) as total 
+			//              FROM tblsaleslines AS s JOIN tblsalesman AS m ON s.rep_code = m.code
+			//              WHERE doc_type IN (1, 2) AND s.type = 'I'
+			//              GROUP BY s.rep_code
 			// ✅ Add customer category filtering when needed
 			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
 				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
 
-			// ✅ Get repository for country
-			const salesHeaderRepo = await this.getRepositoryForCountry(TblSalesHeader, countryCode);
+			// ✅ Get repository for country - use tblsaleslines instead of tblsalesheader
+			const salesLinesRepo = await this.getRepositoryForCountry(TblSalesLines, countryCode);
 			
-			const query = salesHeaderRepo
-				.createQueryBuilder('header');
+			const query = salesLinesRepo
+				.createQueryBuilder('line')
+				// ✅ LEFT JOIN with tblsalesman to get rep name (no filtering by crm_uid)
+				.leftJoin('tblsalesman', 'salesman', 'line.rep_code = salesman.Code');
 
 			// Add LEFT JOINs for customer category filtering if needed
 			if (hasCustomerCategoryFilters) {
-				query.leftJoin('tblcustomers', 'customer', 'header.customer = customer.Code');
+				query.leftJoin('tblcustomers', 'customer', 'line.customer = customer.Code');
 			}
 
 			query.select([
-				'header.sales_code as salesCode',
-				'SUM(header.total_incl) - SUM(header.total_tax) as totalRevenue', // ✅ Subtract tax: matches SQL query exactly
-				'CAST(0 AS DECIMAL(19,2)) as totalCost', // Cost not available in header table
-				'COUNT(DISTINCT header.doc_number) as transactionCount',
-				'COUNT(DISTINCT header.customer) as uniqueCustomers',
-				'0 as totalQuantity', // Quantity not available in header table (integer)
+				'line.rep_code as salesCode',
+				'salesman.Description as salesName',
+				'SUM(line.incl_line_total - line.tax) as totalRevenue', // ✅ Exact match: SUM(incl_line_total - tax)
+				'CAST(0 AS DECIMAL(19,2)) as totalCost', // Cost not available in lines table
+				'COUNT(DISTINCT line.doc_number) as transactionCount',
+				'COUNT(DISTINCT line.customer) as uniqueCustomers',
+				'SUM(line.quantity) as totalQuantity', // Quantity available in lines table
 			])
-				.where('header.sale_date BETWEEN :startDate AND :endDate', {
+				.where('line.sale_date BETWEEN :startDate AND :endDate', {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
 				})
 				// ✅ CRITICAL: Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2) for revenue calculations
-				.andWhere('header.doc_type IN (:...docTypes)', { docTypes: [1, 2] })
-				.andWhere('header.sale_date >= :minDate', { minDate: '2020-01-01' })
-				.andWhere('header.sales_code IS NOT NULL')
-				.andWhere('header.sales_code != :empty', { empty: '' })
-				.groupBy('header.sales_code')
+				.andWhere('line.doc_type IN (:...docTypes)', { docTypes: [1, 2] })
+				// ✅ CRITICAL: Only inventory items (type = 'I') - matches user's SQL query
+				.andWhere('line.type = :type', { type: 'I' })
+				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' })
+				.andWhere('line.rep_code IS NOT NULL')
+				.andWhere('line.rep_code != :empty', { empty: '' })
+				.andWhere('line.item_code IS NOT NULL') // Data quality filter
+				.groupBy('line.rep_code')
 				.orderBy('totalRevenue', 'DESC')
 				.limit(10000); // ✅ PHASE 2: Max 10k records per aggregation
 
 			if (filters.storeCode) {
 				this.logger.debug(`[${operationId}] Filtering by store: ${filters.storeCode}`);
-				query.andWhere('header.store = :store', { store: filters.storeCode });
+				query.andWhere('line.store = :store', { store: filters.storeCode });
 			}
 
-			// Note: We don't filter by salesPersonId here since we're grouping by sales_code
-			// If salesPersonId filter is provided, it would limit results to only those sales people
+			// Filter by salesPersonId using rep_code from tblsaleslines
 			if (filters.salesPersonId) {
 				const salesPersonIds = Array.isArray(filters.salesPersonId) 
 					? filters.salesPersonId 
 					: [filters.salesPersonId];
 				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
-				// Use sales_code from tblsalesheader for header queries
-				query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
+				// Use rep_code from tblsaleslines
+				query.andWhere('line.rep_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
 
 			// ✅ Customer category filtering for aggregations
@@ -2178,24 +2187,19 @@ export class ErpDataService implements OnModuleInit {
 			this.logSlowQuery(operationId, queryDuration, dateRangeDays, filters.startDate, filters.endDate);
 
 			// Process results to ensure correct types
+			// ✅ salesName is already included from the JOIN, so we don't need to fetch it separately
 			const processedResults = results.map((row) => ({
 				salesCode: row.salesCode || 'UNKNOWN',
+				salesName: row.salesName || row.salesCode || 'UNKNOWN', // ✅ Already included from JOIN
 				totalRevenue: parseFloat(row.totalRevenue) || 0,
-				totalCost: 0, // Not available from header table
+				totalCost: 0, // Not available from lines table
 				transactionCount: parseInt(row.transactionCount, 10) || 0,
 				uniqueCustomers: parseInt(row.uniqueCustomers, 10) || 0,
-				totalQuantity: 0, // Not available from header table
+				totalQuantity: parseFloat(row.totalQuantity) || 0, // ✅ Available from lines table
 			}));
 
-			// ✅ Get sales rep names from tblsalesman table
-			const salesCodes = processedResults.map(r => r.salesCode).filter(Boolean);
-			const nameMap = await this.getSalesPersonNames(salesCodes, countryCode);
-			
-			// Add names to results
-			const resultsWithNames = processedResults.map(result => ({
-				...result,
-				salesName: nameMap.get(result.salesCode.toUpperCase()) || result.salesCode,
-			}));
+			// ✅ Sales rep names are already included from the JOIN, no need to fetch separately
+			const resultsWithNames = processedResults;
 
 			this.logger.log(`[${operationId}] Aggregation query completed in ${queryDuration}ms`);
 			this.logger.log(`[${operationId}] Computed ${resultsWithNames.length} sales person aggregations`);

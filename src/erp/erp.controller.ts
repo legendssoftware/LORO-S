@@ -563,11 +563,12 @@ export class ErpController {
 				this.logger.log(`[${operationId}] 📅 Using Target Period Dates from user_targets:`);
 				this.logger.log(`[${operationId}]    📅 Period Start: ${periodStartDate} (from user_targets.periodStartDate)`);
 				this.logger.log(`[${operationId}]    📅 Period End: ${periodEndDate} (from user_targets.periodEndDate)`);
-				this.logger.log(`[${operationId}] 🔍 Fetching sales from tblsalesheader WHERE sales_code = "${erpSalesRepCode}" AND sale_date BETWEEN '${periodStartDate}' AND '${periodEndDate}'`);
+				this.logger.log(`[${operationId}] 🔍 Fetching sales from tblsaleslines WHERE rep_code = "${erpSalesRepCode}" AND sale_date BETWEEN '${periodStartDate}' AND '${periodEndDate}' AND doc_type IN (1,2) AND type = 'I'`);
 
 				// ✅ CRITICAL: Call getSalesPersonAggregations with salesPersonId filter
-				// This queries tblsalesheader WHERE sales_code = erpSalesRepCode
-				// Returns ONLY sales headers made by this specific sales person (like CEB01)
+				// This queries tblsaleslines WHERE rep_code = erpSalesRepCode AND type = 'I' AND doc_type IN (1,2)
+				// JOINs with tblsalesman to get rep names
+				// Returns ONLY sales lines made by this specific sales person (like CEB01)
 				// Same method used in performance dashboard "Sales Per Salesperson" chart
 				const salesData = await this.erpDataService.getSalesPersonAggregations({
 					startDate: periodStartDate,
@@ -586,7 +587,7 @@ export class ErpController {
 
 				if (!userSalesData || salesData.length === 0) {
 					this.logger.warn(`[${operationId}] ⚠️  No sales found for ERP code "${erpSalesRepCode}" in period ${periodStartDate} → ${periodEndDate}`);
-					this.logger.log(`[${operationId}]    💡 No records found in tblsalesheader WHERE sales_code = "${erpSalesRepCode}"`);
+					this.logger.log(`[${operationId}]    💡 No records found in tblsaleslines WHERE rep_code = "${erpSalesRepCode}" AND doc_type IN (1,2) AND type = 'I'`);
 					this.logger.log(`[${operationId}]    📊 Returning zero values:`);
 					this.logger.log(`[${operationId}]       💰 Revenue: R0 | 📝 Transactions: 0 | 👥 Customers: 0`);
 					
@@ -759,9 +760,10 @@ export class ErpController {
 				this.logger.log(`[${operationId}] 📅 Using Target Period Dates from user_targets:`);
 				this.logger.log(`[${operationId}]    📅 Period Start: ${periodStartDate} (from user_targets.periodStartDate)`);
 				this.logger.log(`[${operationId}]    📅 Period End: ${periodEndDate} (from user_targets.periodEndDate)`);
-				this.logger.log(`[${operationId}] 🔍 Fetching sales from tblsalesheader WHERE sales_code = "${erpSalesRepCode}" AND sale_date BETWEEN '${periodStartDate}' AND '${periodEndDate}'`);
+				this.logger.log(`[${operationId}] 🔍 Fetching sales from tblsaleslines WHERE rep_code = "${erpSalesRepCode}" AND sale_date BETWEEN '${periodStartDate}' AND '${periodEndDate}' AND doc_type IN (1,2) AND type = 'I'`);
 
 				// ✅ Call getSalesPersonAggregations with salesPersonId filter
+				// Queries tblsaleslines JOIN tblsalesman WHERE rep_code = erpSalesRepCode AND type = 'I' AND doc_type IN (1,2)
 				const salesData = await this.erpDataService.getSalesPersonAggregations({
 					startDate: periodStartDate,
 					endDate: periodEndDate,
@@ -777,7 +779,7 @@ export class ErpController {
 
 				if (!userSalesData || salesData.length === 0) {
 					this.logger.warn(`[${operationId}] ⚠️  No sales found for ERP code "${erpSalesRepCode}" in period ${periodStartDate} → ${periodEndDate}`);
-					this.logger.log(`[${operationId}]    💡 No records found in tblsalesheader WHERE sales_code = "${erpSalesRepCode}"`);
+					this.logger.log(`[${operationId}]    💡 No records found in tblsaleslines WHERE rep_code = "${erpSalesRepCode}" AND doc_type IN (1,2) AND type = 'I'`);
 					this.logger.log(`[${operationId}]    📊 Returning zero values:`);
 					this.logger.log(`[${operationId}]       💰 Revenue: R0 | 📝 Transactions: 0 | 👥 Customers: 0`);
 					
@@ -924,7 +926,7 @@ export class ErpController {
 					startDate: periodStartDate,
 					endDate: periodEndDate,
 					salesPersonId: erpSalesRepCode, // Filters by rep_code
-				}, ['1']); // Only Tax Invoices (doc_type = 1)
+				}, ['1', '2']); // Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2)
 
 				if (!salesLines || salesLines.length === 0) {
 					this.logger.log(`[${operationId}] No sales lines found for rep_code ${erpSalesRepCode}`);
@@ -970,7 +972,10 @@ export class ErpController {
 				}>();
 
 				for (const line of salesLines) {
+					// ✅ Use incl_line_total - tax to match sales revenue calculation
+					const tax = parseFloat(String(line.tax || 0));
 					const inclLineTotal = parseFloat(String(line.incl_line_total || 0));
+					const netSales = inclLineTotal - tax; // ✅ Match sales query: SUM(incl_line_total - tax)
 					const commissionPer = parseFloat(String(line.commission_per || 0));
 					
 					if (commissionPer <= 0) {
@@ -979,17 +984,17 @@ export class ErpController {
 					
 					const normalizedPercent = normalizeCommissionPercent(commissionPer);
 					
-					// Calculate commission amount
-					const commissionAmount = (inclLineTotal * commissionPer) / 100;
+					// Calculate commission amount based on net sales (excl tax)
+					const commissionAmount = (netSales * commissionPer) / 100;
 
 					if (commissionMap.has(normalizedPercent)) {
 						const existing = commissionMap.get(normalizedPercent)!;
-						existing.totalSales += inclLineTotal;
+						existing.totalSales += netSales; // ✅ Use net sales (excl tax)
 						existing.totalCommission += commissionAmount;
 					} else {
 						commissionMap.set(normalizedPercent, {
 							commissionPercent: normalizedPercent,
-							totalSales: inclLineTotal,
+							totalSales: netSales, // ✅ Use net sales (excl tax)
 							totalCommission: commissionAmount,
 						});
 					}
@@ -1113,7 +1118,7 @@ export class ErpController {
 					startDate: periodStartDate,
 					endDate: periodEndDate,
 					salesPersonId: erpSalesRepCode, // Filters by rep_code
-				}, ['1']); // Only Tax Invoices (doc_type = 1)
+				}, ['1', '2']); // Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2)
 
 				if (!salesLines || salesLines.length === 0) {
 					this.logger.log(`[${operationId}] No sales lines found for rep_code ${erpSalesRepCode}`);
@@ -1141,16 +1146,19 @@ export class ErpController {
 					const itemCode = line.item_code || 'UNKNOWN';
 					const itemName = line.description || itemCode;
 					const quantity = parseFloat(String(line.quantity || 0));
+					// ✅ Use incl_line_total - tax to match sales revenue calculation
+					const tax = parseFloat(String(line.tax || 0));
 					const inclLineTotal = parseFloat(String(line.incl_line_total || 0));
+					const netSales = inclLineTotal - tax; // ✅ Match sales query: SUM(incl_line_total - tax)
 					const commissionPer = parseFloat(String(line.commission_per || 0));
 					
-					// Calculate commission amount
-					const commissionAmount = (inclLineTotal * commissionPer) / 100;
+					// Calculate commission amount based on net sales (excl tax)
+					const commissionAmount = (netSales * commissionPer) / 100;
 
 					if (commissionMap.has(itemCode)) {
 						const existing = commissionMap.get(itemCode)!;
 						existing.unitsSold += quantity;
-						existing.totalSales += inclLineTotal;
+						existing.totalSales += netSales; // ✅ Use net sales (excl tax)
 						existing.totalCommission += commissionAmount;
 						// Use the highest commission % if multiple exist (or average - you can adjust this logic)
 						if (commissionPer > existing.commissionPercent) {
@@ -1162,7 +1170,7 @@ export class ErpController {
 							itemName,
 							unitsSold: quantity,
 							commissionPercent: commissionPer,
-							totalSales: inclLineTotal,
+							totalSales: netSales, // ✅ Use net sales (excl tax)
 							totalCommission: commissionAmount,
 						});
 					}
@@ -1386,7 +1394,7 @@ export class ErpController {
 					startDate: periodStartDate,
 					endDate: periodEndDate,
 					salesPersonId: erpSalesRepCode, // Filters by rep_code
-				}, ['1']); // Only Tax Invoices (doc_type = 1)
+				}, ['1', '2']); // Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2)
 
 				if (!salesLines || salesLines.length === 0) {
 					this.logger.log(`[${operationId}] No sales lines found for rep_code ${erpSalesRepCode}`);
@@ -1432,7 +1440,10 @@ export class ErpController {
 				}>();
 
 				for (const line of salesLines) {
+					// ✅ Use incl_line_total - tax to match sales revenue calculation
+					const tax = parseFloat(String(line.tax || 0));
 					const inclLineTotal = parseFloat(String(line.incl_line_total || 0));
+					const netSales = inclLineTotal - tax; // ✅ Match sales query: SUM(incl_line_total - tax)
 					const commissionPer = parseFloat(String(line.commission_per || 0));
 					
 					if (commissionPer <= 0) {
@@ -1441,17 +1452,17 @@ export class ErpController {
 					
 					const normalizedPercent = normalizeCommissionPercent(commissionPer);
 					
-					// Calculate commission amount
-					const commissionAmount = (inclLineTotal * commissionPer) / 100;
+					// Calculate commission amount based on net sales (excl tax)
+					const commissionAmount = (netSales * commissionPer) / 100;
 
 					if (commissionMap.has(normalizedPercent)) {
 						const existing = commissionMap.get(normalizedPercent)!;
-						existing.totalSales += inclLineTotal;
+						existing.totalSales += netSales; // ✅ Use net sales (excl tax)
 						existing.totalCommission += commissionAmount;
 					} else {
 						commissionMap.set(normalizedPercent, {
 							commissionPercent: normalizedPercent,
-							totalSales: inclLineTotal,
+							totalSales: netSales, // ✅ Use net sales (excl tax)
 							totalCommission: commissionAmount,
 						});
 					}
