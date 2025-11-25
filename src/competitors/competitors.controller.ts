@@ -28,7 +28,6 @@ import {
 	ApiConflictResponse,
 	ApiUnprocessableEntityResponse,
 	ApiInternalServerErrorResponse,
-	ApiServiceUnavailableResponse,
 	ApiConsumes,
 	ApiProduces,
 	ApiBody,
@@ -44,7 +43,6 @@ import { AuthGuard } from '../guards/auth.guard';
 import { RoleGuard } from '../guards/role.guard';
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
-import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
 import { PaginatedResponse } from '../lib/interfaces/paginated-response.interface';
 import { CompetitorStatus } from '../lib/enums/competitor.enums';
 
