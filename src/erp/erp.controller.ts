@@ -952,7 +952,7 @@ export class ErpController {
 					
 					// Map to group names based on specific commission percentages (with tolerance for floating point)
 					if (Math.abs(normalized - 0.5) < 0.01) {
-						return 'Rhinolite & 6.4/6.5mm';
+						return 'Rhinolite & 6.4mm';
 					} else if (Math.abs(normalized - 3.0) < 0.01) {
 						return 'Fuse & BitLite';
 					} else if (Math.abs(normalized - 1.5) < 0.01) {
@@ -1420,7 +1420,7 @@ export class ErpController {
 					
 					// Map to group names based on specific commission percentages (with tolerance for floating point)
 					if (Math.abs(normalized - 0.5) < 0.01) {
-						return 'Rhinolite & 6.4/6.5mm';
+						return 'Rhinolite & 6.4mm';
 					} else if (Math.abs(normalized - 3.0) < 0.01) {
 						return 'Fuse & BitLite';
 					} else if (Math.abs(normalized - 1.5) < 0.01) {
