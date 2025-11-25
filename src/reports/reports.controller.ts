@@ -438,7 +438,7 @@ All filters apply to ALL data sections:
 - Single network call from mobile app
 		`,
 	})
-	@ApiQuery({ name: 'organisationId', required: true, type: Number })
+	@ApiQuery({ name: 'organisationId', required: false, type: Number, description: 'Organization ID (defaults to user organization from JWT token)' })
 	@ApiQuery({ name: 'branchId', required: false, type: Number })
 	@ApiQuery({ name: 'startDate', required: false, type: String, description: 'YYYY-MM-DD format' })
 	@ApiQuery({ name: 'endDate', required: false, type: String, description: 'YYYY-MM-DD format' })
@@ -459,22 +459,30 @@ All filters apply to ALL data sections:
 		@Query(new ValidationPipe({ transform: true })) filters: PerformanceFiltersDto,
 		@Query('skipCache') skipCache?: string
 	) {
-		this.logger.log(`🚀 Getting UNIFIED performance data for org ${filters.organisationId}`);
-
-		// Validate organization access - normalize to numbers for comparison
+		// Extract organization ID from JWT token (same pattern as user.controller.ts)
 		const userOrgIdRaw = request.user?.org?.uid || request.user?.organisationRef;
 		const userOrgId = userOrgIdRaw ? Number(userOrgIdRaw) : null;
-		const requestedOrgId = filters.organisationId ? Number(filters.organisationId) : null;
 		
-		this.logger.debug(`Authorization check - User org: ${userOrgId} (raw: ${userOrgIdRaw}), Requested org: ${requestedOrgId} (raw: ${filters.organisationId})`);
+		// Use organisationId from query params if provided, otherwise use user's org from JWT token
+		const requestedOrgId = filters.organisationId ? Number(filters.organisationId) : userOrgId;
+		
+		// Set organisationId in filters if not provided (for downstream processing)
+		if (!filters.organisationId && userOrgId) {
+			filters.organisationId = userOrgId;
+		}
+		
+		this.logger.log(`🚀 Getting UNIFIED performance data for org ${requestedOrgId} (from ${filters.organisationId ? 'query param' : 'JWT token'})`);
+
+		// Validate organization access - normalize to numbers for comparison
+		this.logger.debug(`Authorization check - User org: ${userOrgId} (raw: ${userOrgIdRaw}), Requested org: ${requestedOrgId}`);
 		
 		if (!userOrgId) {
 			this.logger.error(`User ${request.user.uid} has no organization ID`);
-			throw new BadRequestException('User organization ID not found');
+			throw new BadRequestException('User organization ID not found in JWT token');
 		}
 		
 		if (!requestedOrgId) {
-			this.logger.error(`No organization ID provided in request`);
+			this.logger.error(`No organization ID available (neither in query params nor JWT token)`);
 			throw new BadRequestException('Organization ID is required');
 		}
 		
@@ -531,7 +539,7 @@ Comprehensive performance analytics with advanced filtering and data visualizati
 - Organization ID is required
 		`,
 	})
-	@ApiQuery({ name: 'organisationId', required: true, type: Number })
+	@ApiQuery({ name: 'organisationId', required: false, type: Number, description: 'Organization ID (defaults to user organization from JWT token)' })
 	@ApiQuery({ name: 'branchId', required: false, type: Number })
 	@ApiQuery({ name: 'startDate', required: false, type: String, description: 'YYYY-MM-DD format' })
 	@ApiQuery({ name: 'endDate', required: false, type: String, description: 'YYYY-MM-DD format' })
@@ -554,7 +562,19 @@ Comprehensive performance analytics with advanced filtering and data visualizati
 		@Query(new ValidationPipe({ transform: true })) filters: PerformanceFiltersDto,
 		@Query('skipCache') skipCache?: string
 	) {
-		this.logger.log(`Getting performance dashboard for org ${filters.organisationId}`);
+		// Extract organization ID from JWT token (same pattern as user.controller.ts)
+		const userOrgIdRaw = request.user?.org?.uid || request.user?.organisationRef;
+		const userOrgId = userOrgIdRaw ? Number(userOrgIdRaw) : null;
+		
+		// Use organisationId from query params if provided, otherwise use user's org from JWT token
+		const requestedOrgId = filters.organisationId ? Number(filters.organisationId) : userOrgId;
+		
+		// Set organisationId in filters if not provided (for downstream processing)
+		if (!filters.organisationId && userOrgId) {
+			filters.organisationId = userOrgId;
+		}
+		
+		this.logger.log(`Getting performance dashboard for org ${requestedOrgId} (from ${filters.organisationId ? 'query param' : 'JWT token'})`);
 		
 		// Log customer category filters if present
 		if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
@@ -565,19 +585,15 @@ Comprehensive performance analytics with advanced filtering and data visualizati
 		}
 
 		// Validate organization access - normalize to numbers for comparison
-		const userOrgIdRaw = request.user?.org?.uid || request.user?.organisationRef;
-		const userOrgId = userOrgIdRaw ? Number(userOrgIdRaw) : null;
-		const requestedOrgId = filters.organisationId ? Number(filters.organisationId) : null;
-		
-		this.logger.debug(`Authorization check - User org: ${userOrgId} (raw: ${userOrgIdRaw}), Requested org: ${requestedOrgId} (raw: ${filters.organisationId})`);
+		this.logger.debug(`Authorization check - User org: ${userOrgId} (raw: ${userOrgIdRaw}), Requested org: ${requestedOrgId}`);
 		
 		if (!userOrgId) {
 			this.logger.error(`User ${request.user.uid} has no organization ID`);
-			throw new BadRequestException('User organization ID not found');
+			throw new BadRequestException('User organization ID not found in JWT token');
 		}
 		
 		if (!requestedOrgId) {
-			this.logger.error(`No organization ID provided in request`);
+			this.logger.error(`No organization ID available (neither in query params nor JWT token)`);
 			throw new BadRequestException('Organization ID is required');
 		}
 		

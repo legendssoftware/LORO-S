@@ -851,17 +851,24 @@ export class ErpDataService implements OnModuleInit {
 			}
 			this.logger.log(`[${operationId}] ✅ Pre-filtered: Included ${filters.includeCustomerCategories.length} categories, ${results.length} records`);
 		} else if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
-			// Exclude specified categories
+			// ✅ FIXED: Exclude specified categories - properly remove sales from excluded categories
+			const excludedCounts = new Map<string, number>();
 			for (const [category, data] of grouped.entries()) {
-				if (!filters.excludeCustomerCategories.includes(category) && category !== 'NULL') {
+				if (filters.excludeCustomerCategories.includes(category)) {
+					// This category is excluded - skip it
+					excludedCounts.set(category, data.length);
+					this.logger.log(`[${operationId}] 🚫 Excluding category "${category}": ${data.length} records removed`);
+				} else {
+					// This category is NOT in exclusion list - include it
 					results.push(...data);
 				}
 			}
-			// Include NULL category (customers without category)
+			// Include NULL category (customers without category) - these should be included when excluding other categories
 			if (grouped.has('NULL')) {
 				results.push(...grouped.get('NULL')!);
 			}
-			this.logger.log(`[${operationId}] ✅ Pre-filtered: Excluded ${filters.excludeCustomerCategories.length} categories, ${results.length} records`);
+			const totalExcluded = Array.from(excludedCounts.values()).reduce((sum, count) => sum + count, 0);
+			this.logger.log(`[${operationId}] ✅ Pre-filtered: Excluded ${filters.excludeCustomerCategories.length} categories (${totalExcluded} records removed), ${results.length} records remaining`);
 		} else {
 			// No category filter - return all
 			for (const data of grouped.values()) {
@@ -1008,17 +1015,8 @@ export class ErpDataService implements OnModuleInit {
 					// ✅ Get repository for country
 					const salesHeaderRepo = await this.getRepositoryForCountry(TblSalesHeader, countryCode);
 					
-					// Check if customer category filters are needed
-					const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
-						(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
-
 					const query = salesHeaderRepo
 						.createQueryBuilder('header');
-
-					// Add LEFT JOIN for customer category filtering if needed
-					if (hasCustomerCategoryFilters) {
-						query.leftJoin('tblcustomers', 'customer', 'header.customer = customer.Code');
-					}
 
 					query.where('header.sale_date BETWEEN :startDate AND :endDate', {
 						startDate: filters.startDate,
@@ -1041,13 +1039,21 @@ export class ErpDataService implements OnModuleInit {
 						query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
 					}
 
-					// ✅ Customer category filtering
+					// ✅ Customer category filtering using EXISTS to prevent row multiplication
 					if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
-						this.logger.debug(`[${operationId}] Including customer categories: ${filters.includeCustomerCategories.join(', ')}`);
-						query.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: filters.includeCustomerCategories });
+						this.logger.log(`[${operationId}] ✅ INCLUDING customer categories: ${filters.includeCustomerCategories.join(', ')}`);
+						query.andWhere(
+							`EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = header.customer AND customer.Category IN (:...includeCustomerCategories))`,
+							{ includeCustomerCategories: filters.includeCustomerCategories }
+						);
 					} else if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
-						this.logger.debug(`[${operationId}] Excluding customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
-						query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
+						this.logger.log(`[${operationId}] 🚫 EXCLUDING customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
+						this.logger.log(`[${operationId}] Filter logic: Removing sales lines where customer.Category IN (${filters.excludeCustomerCategories.join(', ')})`);
+						// ✅ FIXED: Use NOT EXISTS to exclude categories without row multiplication
+						query.andWhere(
+							`(header.customer IS NULL OR NOT EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = header.customer AND customer.Category IN (:...excludeCustomerCategories)))`,
+							{ excludeCustomerCategories: filters.excludeCustomerCategories }
+						);
 					}
 
 					return await query.getMany();
@@ -1143,17 +1149,8 @@ export class ErpDataService implements OnModuleInit {
 						// ✅ Get repository for country
 						const salesHeaderRepo = await this.getRepositoryForCountry(TblSalesHeader, countryCode);
 						
-						// Check if customer category filters are needed
-						const hasCustomerCategoryFilters = (chunkFilters.includeCustomerCategories && chunkFilters.includeCustomerCategories.length > 0) ||
-							(chunkFilters.excludeCustomerCategories && chunkFilters.excludeCustomerCategories.length > 0);
-
 						const query = salesHeaderRepo
 							.createQueryBuilder('header');
-
-						// Add LEFT JOIN for customer category filtering if needed
-						if (hasCustomerCategoryFilters) {
-							query.leftJoin('tblcustomers', 'customer', 'header.customer = customer.Code');
-						}
 
 						query.where('header.sale_date BETWEEN :startDate AND :endDate', {
 							startDate: chunkFilters.startDate,
@@ -1173,11 +1170,17 @@ export class ErpDataService implements OnModuleInit {
 							query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
 						}
 
-						// ✅ Customer category filtering
+						// ✅ Customer category filtering using EXISTS to prevent row multiplication
 						if (chunkFilters.includeCustomerCategories && chunkFilters.includeCustomerCategories.length > 0) {
-							query.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: chunkFilters.includeCustomerCategories });
+							query.andWhere(
+								`EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = header.customer AND customer.Category IN (:...includeCustomerCategories))`,
+								{ includeCustomerCategories: chunkFilters.includeCustomerCategories }
+							);
 						} else if (chunkFilters.excludeCustomerCategories && chunkFilters.excludeCustomerCategories.length > 0) {
-							query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: chunkFilters.excludeCustomerCategories });
+							query.andWhere(
+								`(header.customer IS NULL OR NOT EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = header.customer AND customer.Category IN (:...excludeCustomerCategories)))`,
+								{ excludeCustomerCategories: chunkFilters.excludeCustomerCategories }
+							);
 						}
 
 						return await query.getMany();
@@ -1286,17 +1289,8 @@ export class ErpDataService implements OnModuleInit {
 					// ✅ Get repository for country
 					const salesLinesRepo = await this.getRepositoryForCountry(TblSalesLines, countryCode);
 					
-					// Check if customer category filters are needed
-					const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
-						(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
-
 					const query = salesLinesRepo
 						.createQueryBuilder('line');
-
-					// Add LEFT JOIN for customer category filtering if needed
-					if (hasCustomerCategoryFilters) {
-						query.leftJoin('tblcustomers', 'customer', 'line.customer = customer.Code');
-					}
 
 					query.where('line.sale_date BETWEEN :startDate AND :endDate', {
 						startDate: filters.startDate,
@@ -1325,13 +1319,21 @@ export class ErpDataService implements OnModuleInit {
 						query.andWhere('line.rep_code IN (:...salesPersonIds)', { salesPersonIds });
 					}
 
-					// ✅ Customer category filtering
+					// ✅ Customer category filtering using EXISTS to prevent row multiplication
 					if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
-						this.logger.debug(`[${operationId}] Including customer categories: ${filters.includeCustomerCategories.join(', ')}`);
-						query.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: filters.includeCustomerCategories });
+						this.logger.log(`[${operationId}] ✅ INCLUDING customer categories: ${filters.includeCustomerCategories.join(', ')}`);
+						query.andWhere(
+							`EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = line.customer AND customer.Category IN (:...includeCustomerCategories))`,
+							{ includeCustomerCategories: filters.includeCustomerCategories }
+						);
 					} else if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
-						this.logger.debug(`[${operationId}] Excluding customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
-						query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
+						this.logger.log(`[${operationId}] 🚫 EXCLUDING customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
+						this.logger.log(`[${operationId}] Filter logic: Removing sales lines where customer.Category IN (${filters.excludeCustomerCategories.join(', ')})`);
+						// ✅ FIXED: Use NOT EXISTS to exclude categories without row multiplication
+						query.andWhere(
+							`(line.customer IS NULL OR NOT EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = line.customer AND customer.Category IN (:...excludeCustomerCategories)))`,
+							{ excludeCustomerCategories: filters.excludeCustomerCategories }
+						);
 					}
 
 					// ✅ Data quality filters - using gross amounts (incl_line_total) without discount subtraction
@@ -1439,17 +1441,8 @@ export class ErpDataService implements OnModuleInit {
 						// ✅ Get repository for country
 						const salesLinesRepo = await this.getRepositoryForCountry(TblSalesLines, countryCode);
 						
-						// Check if customer category filters are needed
-						const hasCustomerCategoryFilters = (chunkFilters.includeCustomerCategories && chunkFilters.includeCustomerCategories.length > 0) ||
-							(chunkFilters.excludeCustomerCategories && chunkFilters.excludeCustomerCategories.length > 0);
-
 						const query = salesLinesRepo
 							.createQueryBuilder('line');
-
-						// Add LEFT JOIN for customer category filtering if needed
-						if (hasCustomerCategoryFilters) {
-							query.leftJoin('tblcustomers', 'customer', 'line.customer = customer.Code');
-						}
 
 						query.where('line.sale_date BETWEEN :startDate AND :endDate', {
 							startDate: chunkFilters.startDate,
@@ -1473,11 +1466,17 @@ export class ErpDataService implements OnModuleInit {
 							query.andWhere('line.rep_code IN (:...salesPersonIds)', { salesPersonIds });
 						}
 
-						// ✅ Customer category filtering
+						// ✅ Customer category filtering using EXISTS to prevent row multiplication
 						if (chunkFilters.includeCustomerCategories && chunkFilters.includeCustomerCategories.length > 0) {
-							query.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: chunkFilters.includeCustomerCategories });
+							query.andWhere(
+								`EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = line.customer AND customer.Category IN (:...includeCustomerCategories))`,
+								{ includeCustomerCategories: chunkFilters.includeCustomerCategories }
+							);
 						} else if (chunkFilters.excludeCustomerCategories && chunkFilters.excludeCustomerCategories.length > 0) {
-							query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: chunkFilters.excludeCustomerCategories });
+							query.andWhere(
+								`(line.customer IS NULL OR NOT EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = line.customer AND customer.Category IN (:...excludeCustomerCategories)))`,
+								{ excludeCustomerCategories: chunkFilters.excludeCustomerCategories }
+							);
 						}
 
 						query.andWhere('line.item_code IS NOT NULL');
@@ -1640,7 +1639,9 @@ export class ErpDataService implements OnModuleInit {
 					// ✅ Exclude customer categories (NOT IN filter)
 					if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
 						this.logger.log(`[${operationId}] 🚫 EXCLUDING customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
-						this.logger.log(`[${operationId}] Filter logic: Excluding sales where customer.Category IN (${filters.excludeCustomerCategories.join(', ')})`);
+						this.logger.log(`[${operationId}] Filter logic: Removing sales lines where customer.Category IN (${filters.excludeCustomerCategories.join(', ')})`);
+						// ✅ FIXED: Properly exclude sales lines where customer category is in exclusion list
+						// Include NULL categories (customers without category assignment) but exclude specified categories
 						query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
 					}
 
@@ -1810,20 +1811,13 @@ export class ErpDataService implements OnModuleInit {
 			
 			// ✅ REVISED: Use tblsalesheader instead of tblsaleslines
 			// Sum total_incl - total_tax for revenue (exclusive of tax), count transactions and customers
-			// ✅ Add customer category filtering when needed
-			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
-				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
+			// ✅ FIXED: Use EXISTS instead of LEFT JOIN to prevent row multiplication
 
 			// ✅ Get repository for country
 			const salesHeaderRepo = await this.getRepositoryForCountry(TblSalesHeader, countryCode);
 			
 			const query = salesHeaderRepo
 				.createQueryBuilder('header');
-
-			// Add LEFT JOINs for customer category filtering if needed
-			if (hasCustomerCategoryFilters) {
-				query.leftJoin('tblcustomers', 'customer', 'header.customer = customer.Code');
-			}
 
 			query.select([
 				'DATE(header.sale_date) as date',
@@ -1859,16 +1853,24 @@ export class ErpDataService implements OnModuleInit {
 				query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
 
-			// ✅ Customer category filtering for aggregations
+			// ✅ Customer category filtering using EXISTS to prevent row multiplication
 			if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
 				this.logger.log(`[${operationId}] ✅ INCLUDING customer categories: ${filters.includeCustomerCategories.join(', ')}`);
-				query.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: filters.includeCustomerCategories });
+				query.andWhere(
+					`EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = header.customer AND customer.Category IN (:...includeCustomerCategories))`,
+					{ includeCustomerCategories: filters.includeCustomerCategories }
+				);
 			}
 
 			if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
 				this.logger.log(`[${operationId}] 🚫 EXCLUDING customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
-				this.logger.log(`[${operationId}] Filter logic: Excluding headers where customer.Category IN (${filters.excludeCustomerCategories.join(', ')})`);
-				query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
+				this.logger.log(`[${operationId}] Filter logic: Excluding sales where customer.Category IN (${filters.excludeCustomerCategories.join(', ')})`);
+				// ✅ FIXED: Use NOT EXISTS to exclude categories without row multiplication
+				// Include NULL customers and customers without matching excluded categories
+				query.andWhere(
+					`(header.customer IS NULL OR NOT EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = header.customer AND customer.Category IN (:...excludeCustomerCategories)))`,
+					{ excludeCustomerCategories: filters.excludeCustomerCategories }
+				);
 			}
 
 			const results = await query.getRawMany();
@@ -1971,20 +1973,13 @@ export class ErpDataService implements OnModuleInit {
 			// ✅ REVISED: Use tblsalesheader instead of tblsaleslines
 			// Sum total_incl - total_tax for revenue (exclusive of tax), grouped by store
 			// Matches SQL: SELECT store, SUM(total_incl) - SUM(total_tax) AS total_sum FROM tblsalesheader WHERE doc_type IN (1, 2) GROUP BY store
-			// ✅ Add customer category filtering when needed
-			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
-				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
+			// ✅ FIXED: Use EXISTS instead of LEFT JOIN to prevent row multiplication
 
 			// ✅ Get repository for country
 			const salesHeaderRepo = await this.getRepositoryForCountry(TblSalesHeader, countryCode);
 			
 			const query = salesHeaderRepo
 				.createQueryBuilder('header');
-
-			// Add LEFT JOINs for customer category filtering if needed
-			if (hasCustomerCategoryFilters) {
-				query.leftJoin('tblcustomers', 'customer', 'header.customer = customer.Code');
-			}
 
 			query.select([
 				'header.store as store',
@@ -2019,15 +2014,23 @@ export class ErpDataService implements OnModuleInit {
 				query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
 
-			// ✅ Customer category filtering for aggregations
+			// ✅ Customer category filtering using EXISTS to prevent row multiplication
 			if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
-				this.logger.debug(`[${operationId}] Including customer categories: ${filters.includeCustomerCategories.join(', ')}`);
-				query.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: filters.includeCustomerCategories });
+				this.logger.log(`[${operationId}] ✅ INCLUDING customer categories: ${filters.includeCustomerCategories.join(', ')}`);
+				query.andWhere(
+					`EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = header.customer AND customer.Category IN (:...includeCustomerCategories))`,
+					{ includeCustomerCategories: filters.includeCustomerCategories }
+				);
 			}
 
 			if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
-				this.logger.debug(`[${operationId}] Excluding customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
-				query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
+				this.logger.log(`[${operationId}] 🚫 EXCLUDING customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
+				this.logger.log(`[${operationId}] Filter logic: Removing sales where customer.Category IN (${filters.excludeCustomerCategories.join(', ')})`);
+				// ✅ FIXED: Use NOT EXISTS to exclude categories without row multiplication
+				query.andWhere(
+					`(header.customer IS NULL OR NOT EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = header.customer AND customer.Category IN (:...excludeCustomerCategories)))`,
+					{ excludeCustomerCategories: filters.excludeCustomerCategories }
+				);
 			}
 
 			const results = await query.getRawMany();
@@ -2109,9 +2112,7 @@ export class ErpDataService implements OnModuleInit {
 			//              FROM tblsaleslines AS s JOIN tblsalesman AS m ON s.rep_code = m.code
 			//              WHERE doc_type IN (1, 2) AND s.type = 'I'
 			//              GROUP BY s.rep_code
-			// ✅ Add customer category filtering when needed
-			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
-				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
+			// ✅ FIXED: Use EXISTS instead of LEFT JOIN for customer category filtering to prevent row multiplication
 
 			// ✅ Get repository for country - use tblsaleslines instead of tblsalesheader
 			const salesLinesRepo = await this.getRepositoryForCountry(TblSalesLines, countryCode);
@@ -2120,11 +2121,6 @@ export class ErpDataService implements OnModuleInit {
 				.createQueryBuilder('line')
 				// ✅ LEFT JOIN with tblsalesman to get rep name (no filtering by crm_uid)
 				.leftJoin('tblsalesman', 'salesman', 'line.rep_code = salesman.Code');
-
-			// Add LEFT JOINs for customer category filtering if needed
-			if (hasCustomerCategoryFilters) {
-				query.leftJoin('tblcustomers', 'customer', 'line.customer = customer.Code');
-			}
 
 			query.select([
 				'line.rep_code as salesCode',
@@ -2166,13 +2162,21 @@ export class ErpDataService implements OnModuleInit {
 				query.andWhere('line.rep_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
 
-			// ✅ Customer category filtering for aggregations
+			// ✅ Customer category filtering using EXISTS to prevent row multiplication
 			if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
-				this.logger.debug(`[${operationId}] Including customer categories: ${filters.includeCustomerCategories.join(', ')}`);
-				query.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: filters.includeCustomerCategories });
+				this.logger.log(`[${operationId}] ✅ INCLUDING customer categories: ${filters.includeCustomerCategories.join(', ')}`);
+				query.andWhere(
+					`EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = line.customer AND customer.Category IN (:...includeCustomerCategories))`,
+					{ includeCustomerCategories: filters.includeCustomerCategories }
+				);
 			} else if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
-				this.logger.debug(`[${operationId}] Excluding customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
-				query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
+				this.logger.log(`[${operationId}] 🚫 EXCLUDING customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
+				this.logger.log(`[${operationId}] Filter logic: Removing sales where customer.Category IN (${filters.excludeCustomerCategories.join(', ')})`);
+				// ✅ FIXED: Use NOT EXISTS to exclude categories without row multiplication
+				query.andWhere(
+					`(line.customer IS NULL OR NOT EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = line.customer AND customer.Category IN (:...excludeCustomerCategories)))`,
+					{ excludeCustomerCategories: filters.excludeCustomerCategories }
+				);
 			}
 
 			const results = await this.executeQueryWithProtection(
@@ -2269,20 +2273,13 @@ export class ErpDataService implements OnModuleInit {
 			// ✅ Sales by category - aggregated across all stores (totals per category)
 			// ✅ Revenue excludes tax: SUM(incl_line_total) - SUM(tax)
 			// ✅ Query matches: SELECT line.category, SUM(line.incl_line_total) - SUM(tax) as totalRevenue, ...
-			// ✅ Add customer category filtering when needed
-			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
-				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
+			// ✅ FIXED: Use EXISTS instead of LEFT JOIN to prevent row multiplication
 
 			// ✅ Get repository for country
 			const salesLinesRepo = await this.getRepositoryForCountry(TblSalesLines, countryCode);
 			
 			const query = salesLinesRepo
 				.createQueryBuilder('line');
-
-			// Add LEFT JOINs for customer category filtering if needed
-			if (hasCustomerCategoryFilters) {
-				query.leftJoin('tblcustomers', 'customer', 'line.customer = customer.Code');
-			}
 
 			query.select([
 				'line.category as category',
@@ -2299,15 +2296,23 @@ export class ErpDataService implements OnModuleInit {
 				.andWhere('line.type = :type', { type: 'I' })
 				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' });
 
-			// ✅ Customer category filtering for aggregations
+			// ✅ Customer category filtering using EXISTS to prevent row multiplication
 			if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
-				this.logger.debug(`[${operationId}] Including customer categories: ${filters.includeCustomerCategories.join(', ')}`);
-				query.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: filters.includeCustomerCategories });
+				this.logger.log(`[${operationId}] ✅ INCLUDING customer categories: ${filters.includeCustomerCategories.join(', ')}`);
+				query.andWhere(
+					`EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = line.customer AND customer.Category IN (:...includeCustomerCategories))`,
+					{ includeCustomerCategories: filters.includeCustomerCategories }
+				);
 			}
 
 			if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
-				this.logger.debug(`[${operationId}] Excluding customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
-				query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
+				this.logger.log(`[${operationId}] 🚫 EXCLUDING customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
+				this.logger.log(`[${operationId}] Filter logic: Removing sales where customer.Category IN (${filters.excludeCustomerCategories.join(', ')})`);
+				// ✅ FIXED: Use NOT EXISTS to exclude categories without row multiplication
+				query.andWhere(
+					`(line.customer IS NULL OR NOT EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = line.customer AND customer.Category IN (:...excludeCustomerCategories)))`,
+					{ excludeCustomerCategories: filters.excludeCustomerCategories }
+				);
 			}
 
 			// ✅ Sales person filtering: Use rep_code directly from tblsaleslines
@@ -2398,20 +2403,13 @@ export class ErpDataService implements OnModuleInit {
 			// ✅ Branch × Category aggregation: Uses tblsaleslines grouped by store and category
 			// Revenue calculation: SUM(incl_line_total) - SUM(tax) grouped by store, category
 			// Matches SQL: SELECT store, category, SUM(incl_line_total) - SUM(tax) AS totalRevenue, ... FROM tblsaleslines WHERE doc_type IN (1, 2) GROUP BY store, category
-			// ✅ Add customer category filtering when needed
-			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
-				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
+			// ✅ FIXED: Use EXISTS instead of LEFT JOIN to prevent row multiplication
 
 			// ✅ Get repository for country
 			const salesLinesRepo = await this.getRepositoryForCountry(TblSalesLines, countryCode);
 			
 			const query = salesLinesRepo
 				.createQueryBuilder('line');
-
-			// Add LEFT JOINs for customer category filtering if needed
-			if (hasCustomerCategoryFilters) {
-				query.leftJoin('tblcustomers', 'customer', 'line.customer = customer.Code');
-			}
 
 			query.select([
 				'line.store as store',
@@ -2452,15 +2450,23 @@ export class ErpDataService implements OnModuleInit {
 				query.andWhere('line.rep_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
 
-			// ✅ Customer category filtering for aggregations
+			// ✅ Customer category filtering using EXISTS to prevent row multiplication
 			if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
-				this.logger.debug(`[${operationId}] Including customer categories: ${filters.includeCustomerCategories.join(', ')}`);
-				query.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: filters.includeCustomerCategories });
+				this.logger.log(`[${operationId}] ✅ INCLUDING customer categories: ${filters.includeCustomerCategories.join(', ')}`);
+				query.andWhere(
+					`EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = line.customer AND customer.Category IN (:...includeCustomerCategories))`,
+					{ includeCustomerCategories: filters.includeCustomerCategories }
+				);
 			}
 
 			if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
-				this.logger.debug(`[${operationId}] Excluding customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
-				query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
+				this.logger.log(`[${operationId}] 🚫 EXCLUDING customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
+				this.logger.log(`[${operationId}] Filter logic: Removing sales where customer.Category IN (${filters.excludeCustomerCategories.join(', ')})`);
+				// ✅ FIXED: Use NOT EXISTS to exclude categories without row multiplication
+				query.andWhere(
+					`(line.customer IS NULL OR NOT EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = line.customer AND customer.Category IN (:...excludeCustomerCategories)))`,
+					{ excludeCustomerCategories: filters.excludeCustomerCategories }
+				);
 			}
 
 			query.groupBy('line.store, line.category')
@@ -2558,20 +2564,13 @@ export class ErpDataService implements OnModuleInit {
 			
 			// ✅ REVISED: Use SUM(incl_line_total) - SUM(tax) for revenue, filter item_code != '.', type = 'I', group by description
 			// Matches SQL: SELECT SUM(incl_line_total) - SUM(tax) as totalRevenue FROM tblsaleslines WHERE item_code != '.' AND type = 'I' GROUP BY description
-			// ✅ Add customer category filtering when needed
-			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
-				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
+			// ✅ FIXED: Use EXISTS instead of LEFT JOIN to prevent row multiplication
 
 			// ✅ Get repository for country
 			const salesLinesRepo = await this.getRepositoryForCountry(TblSalesLines, countryCode);
 			
 			const query = salesLinesRepo
 				.createQueryBuilder('line');
-
-			// Add LEFT JOINs for customer category filtering if needed
-			if (hasCustomerCategoryFilters) {
-				query.leftJoin('tblcustomers', 'customer', 'line.customer = customer.Code');
-			}
 
 			query.select([
 				'line.item_code as itemCode',
@@ -2616,13 +2615,21 @@ export class ErpDataService implements OnModuleInit {
 				query.andWhere('line.rep_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
 
-			// ✅ Customer category filtering for aggregations
+			// ✅ Customer category filtering using EXISTS to prevent row multiplication
 			if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
-				this.logger.debug(`[${operationId}] Including customer categories: ${filters.includeCustomerCategories.join(', ')}`);
-				query.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: filters.includeCustomerCategories });
+				this.logger.log(`[${operationId}] ✅ INCLUDING customer categories: ${filters.includeCustomerCategories.join(', ')}`);
+				query.andWhere(
+					`EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = line.customer AND customer.Category IN (:...includeCustomerCategories))`,
+					{ includeCustomerCategories: filters.includeCustomerCategories }
+				);
 			} else if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
-				this.logger.debug(`[${operationId}] Excluding customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
-				query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
+				this.logger.log(`[${operationId}] 🚫 EXCLUDING customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
+				this.logger.log(`[${operationId}] Filter logic: Removing sales where customer.Category IN (${filters.excludeCustomerCategories.join(', ')})`);
+				// ✅ FIXED: Use NOT EXISTS to exclude categories without row multiplication
+				query.andWhere(
+					`(line.customer IS NULL OR NOT EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = line.customer AND customer.Category IN (:...excludeCustomerCategories)))`,
+					{ excludeCustomerCategories: filters.excludeCustomerCategories }
+				);
 			}
 
 			const results = await query.getRawMany();
@@ -2932,20 +2939,13 @@ export class ErpDataService implements OnModuleInit {
 			const queryStart = Date.now();
 
 			// ✅ REVISED: Uses tblsalesheader with SUM(total_incl) - SUM(total_tax) formula
-			// ✅ Add customer category filtering when needed
-			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
-				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
+			// ✅ FIXED: Use EXISTS instead of LEFT JOIN to prevent row multiplication
 
 			// ✅ Get repository for country
 			const salesHeaderRepo = await this.getRepositoryForCountry(TblSalesHeader, countryCode);
 			
 			const query = salesHeaderRepo
 				.createQueryBuilder('header');
-
-			// Add LEFT JOINs for customer category filtering if needed
-			if (hasCustomerCategoryFilters) {
-				query.leftJoin('tblcustomers', 'customer', 'header.customer = customer.Code');
-			}
 
 			query.select([
 				'HOUR(header.sale_time) as hour',
@@ -2976,13 +2976,19 @@ export class ErpDataService implements OnModuleInit {
 				query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
 
-			// ✅ Customer category filtering
+			// ✅ Customer category filtering using EXISTS to prevent row multiplication
 			if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
 				this.logger.debug(`[${operationId}] Including customer categories: ${filters.includeCustomerCategories.join(', ')}`);
-				query.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: filters.includeCustomerCategories });
+				query.andWhere(
+					`EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = header.customer AND customer.Category IN (:...includeCustomerCategories))`,
+					{ includeCustomerCategories: filters.includeCustomerCategories }
+				);
 			} else if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
 				this.logger.debug(`[${operationId}] Excluding customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
-				query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
+				query.andWhere(
+					`(header.customer IS NULL OR NOT EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = header.customer AND customer.Category IN (:...excludeCustomerCategories)))`,
+					{ excludeCustomerCategories: filters.excludeCustomerCategories }
+				);
 			}
 
 			const results = await query.getRawMany();
@@ -3085,20 +3091,13 @@ export class ErpDataService implements OnModuleInit {
 		// Build base query
 		// ✅ REVISED: Use tax exclusion approach - calculate payment methods proportionally based on SUM(total_incl) - SUM(total_tax)
 		// This matches the base query: SELECT SUM(total_incl) - SUM(total_tax) AS total_sum FROM tblsalesheader WHERE doc_type IN (1, 2)
-		// ✅ Add customer category filtering when needed
-		const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
-			(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
+		// ✅ FIXED: Use EXISTS instead of LEFT JOIN to prevent row multiplication
 
 		// ✅ Get repository for country
 		const salesHeaderRepo = await this.getRepositoryForCountry(TblSalesHeader, countryCode);
 		
 		let query = salesHeaderRepo
 			.createQueryBuilder('header');
-
-		// Add LEFT JOINs for customer category filtering if needed
-		if (hasCustomerCategoryFilters) {
-			query.leftJoin('tblcustomers', 'customer', 'header.customer = customer.Code');
-		}
 
 		query.select([
 			'CAST(SUM(CAST(header.total_incl AS DECIMAL(19,3))) - SUM(CAST(header.total_tax AS DECIMAL(19,3))) AS DECIMAL(19,2)) as taxExcludedTotal', // ✅ Tax-excluded total
@@ -3136,13 +3135,21 @@ export class ErpDataService implements OnModuleInit {
 				query = query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
 
-			// ✅ Customer category filtering
+			// ✅ Customer category filtering using EXISTS to prevent row multiplication
 			if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
-				this.logger.debug(`[${operationId}] Including customer categories: ${filters.includeCustomerCategories.join(', ')}`);
-				query = query.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: filters.includeCustomerCategories });
+				this.logger.log(`[${operationId}] ✅ INCLUDING customer categories: ${filters.includeCustomerCategories.join(', ')}`);
+				query = query.andWhere(
+					`EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = header.customer AND customer.Category IN (:...includeCustomerCategories))`,
+					{ includeCustomerCategories: filters.includeCustomerCategories }
+				);
 			} else if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
-				this.logger.debug(`[${operationId}] Excluding customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
-				query = query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
+				this.logger.log(`[${operationId}] 🚫 EXCLUDING customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
+				this.logger.log(`[${operationId}] Filter logic: Removing sales where customer.Category IN (${filters.excludeCustomerCategories.join(', ')})`);
+				// ✅ FIXED: Use NOT EXISTS to exclude categories without row multiplication
+				query = query.andWhere(
+					`(header.customer IS NULL OR NOT EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = header.customer AND customer.Category IN (:...excludeCustomerCategories)))`,
+					{ excludeCustomerCategories: filters.excludeCustomerCategories }
+				);
 			}
 
 			const results = await query.getRawOne();
@@ -3294,13 +3301,9 @@ export class ErpDataService implements OnModuleInit {
 			const salesHeaderRepo = await this.getRepositoryForCountry(TblSalesHeader, countryCode);
 
 			// Query 1: Get quotations (doc_type = 3)
+			// ✅ FIXED: Use EXISTS instead of LEFT JOIN to prevent row multiplication
 			let quotationsQuery = salesHeaderRepo
 				.createQueryBuilder('header');
-
-			// Add LEFT JOINs for customer category filtering if needed
-			if (hasCustomerCategoryFilters) {
-				quotationsQuery.leftJoin('tblcustomers', 'customer', 'header.customer = customer.Code');
-			}
 
 			quotationsQuery.select([
 				'COUNT(*) as totalQuotations',
@@ -3326,21 +3329,23 @@ export class ErpDataService implements OnModuleInit {
 				quotationsQuery = quotationsQuery.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
 
-			// ✅ Customer category filtering for quotations
+			// ✅ Customer category filtering using EXISTS to prevent row multiplication
 			if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
-				quotationsQuery = quotationsQuery.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: filters.includeCustomerCategories });
+				quotationsQuery = quotationsQuery.andWhere(
+					`EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = header.customer AND customer.Category IN (:...includeCustomerCategories))`,
+					{ includeCustomerCategories: filters.includeCustomerCategories }
+				);
 			} else if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
-				quotationsQuery = quotationsQuery.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
+				quotationsQuery = quotationsQuery.andWhere(
+					`(header.customer IS NULL OR NOT EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = header.customer AND customer.Category IN (:...excludeCustomerCategories)))`,
+					{ excludeCustomerCategories: filters.excludeCustomerCategories }
+				);
 			}
 
 			// Query 2: Get converted invoices (doc_type = 1 with invoice_used = 1)
+			// ✅ FIXED: Use EXISTS instead of LEFT JOIN to prevent row multiplication
 			let invoicesQuery = salesHeaderRepo
 				.createQueryBuilder('header');
-
-			// Add LEFT JOINs for customer category filtering if needed
-			if (hasCustomerCategoryFilters) {
-				invoicesQuery.leftJoin('tblcustomers', 'customer', 'header.customer = customer.Code');
-			}
 
 			invoicesQuery.select([
 				'COUNT(*) as convertedInvoices',
@@ -3367,11 +3372,17 @@ export class ErpDataService implements OnModuleInit {
 				invoicesQuery = invoicesQuery.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
 
-			// ✅ Customer category filtering for invoices
+			// ✅ Customer category filtering using EXISTS to prevent row multiplication
 			if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
-				invoicesQuery = invoicesQuery.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: filters.includeCustomerCategories });
+				invoicesQuery = invoicesQuery.andWhere(
+					`EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = header.customer AND customer.Category IN (:...includeCustomerCategories))`,
+					{ includeCustomerCategories: filters.includeCustomerCategories }
+				);
 			} else if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
-				invoicesQuery = invoicesQuery.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
+				invoicesQuery = invoicesQuery.andWhere(
+					`(header.customer IS NULL OR NOT EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = header.customer AND customer.Category IN (:...excludeCustomerCategories)))`,
+					{ excludeCustomerCategories: filters.excludeCustomerCategories }
+				);
 			}
 
 			// ✅ PHASE 3: Sequential execution with individual step timing
@@ -3482,9 +3493,7 @@ export class ErpDataService implements OnModuleInit {
 
 			const queryStart = Date.now();
 
-			// ✅ Add customer category filtering when needed
-			const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
-				(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
+			// ✅ FIXED: Use EXISTS instead of LEFT JOIN to prevent row multiplication
 
 			// ✅ Get repository for country
 			const salesHeaderRepo = await this.getRepositoryForCountry(TblSalesHeader, countryCode);
@@ -3492,11 +3501,6 @@ export class ErpDataService implements OnModuleInit {
 			// Query to get breakdown by doc_type
 			let query = salesHeaderRepo
 				.createQueryBuilder('header');
-
-			// Add LEFT JOINs for customer category filtering if needed
-			if (hasCustomerCategoryFilters) {
-				query.leftJoin('tblcustomers', 'customer', 'header.customer = customer.Code');
-			}
 
 			query.select([
 				'header.doc_type as docType',
@@ -3524,13 +3528,21 @@ export class ErpDataService implements OnModuleInit {
 				query = query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
 			}
 
-			// ✅ Customer category filtering
+			// ✅ Customer category filtering using EXISTS to prevent row multiplication
 			if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
-				this.logger.debug(`[${operationId}] Including customer categories: ${filters.includeCustomerCategories.join(', ')}`);
-				query = query.andWhere('customer.Category IN (:...includeCustomerCategories)', { includeCustomerCategories: filters.includeCustomerCategories });
+				this.logger.log(`[${operationId}] ✅ INCLUDING customer categories: ${filters.includeCustomerCategories.join(', ')}`);
+				query = query.andWhere(
+					`EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = header.customer AND customer.Category IN (:...includeCustomerCategories))`,
+					{ includeCustomerCategories: filters.includeCustomerCategories }
+				);
 			} else if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
-				this.logger.debug(`[${operationId}] Excluding customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
-				query = query.andWhere('(customer.Category IS NULL OR customer.Category NOT IN (:...excludeCustomerCategories))', { excludeCustomerCategories: filters.excludeCustomerCategories });
+				this.logger.log(`[${operationId}] 🚫 EXCLUDING customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
+				this.logger.log(`[${operationId}] Filter logic: Removing sales where customer.Category IN (${filters.excludeCustomerCategories.join(', ')})`);
+				// ✅ FIXED: Use NOT EXISTS to exclude categories without row multiplication
+				query = query.andWhere(
+					`(header.customer IS NULL OR NOT EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = header.customer AND customer.Category IN (:...excludeCustomerCategories)))`,
+					{ excludeCustomerCategories: filters.excludeCustomerCategories }
+				);
 			}
 
 			const results = await query.getRawMany();
