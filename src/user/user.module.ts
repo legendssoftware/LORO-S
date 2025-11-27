@@ -18,6 +18,7 @@ import { Order } from '../shop/entities/order.entity';
 import { Client } from 'src/clients/entities/client.entity';
 import { Lead } from 'src/leads/entities/lead.entity';
 import { Branch } from '../branch/entities/branch.entity';
+import { Device } from '../iot/entities/iot.entity';
 
 @Module({
 	imports: [
@@ -33,6 +34,7 @@ import { Branch } from '../branch/entities/branch.entity';
 			CheckIn,
 			UserTarget,
 			Branch,
+			Device,
 		]),
 		OrganisationModule,
 		BranchModule,

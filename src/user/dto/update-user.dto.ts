@@ -467,4 +467,14 @@ export class UpdateUserDto extends PartialType(CreateUserDto) {
 		required: false
 	})
 	managedStaff?: number[];
+
+	@IsOptional()
+	@IsNumber({}, { each: true })
+	@ApiProperty({
+		description: 'Array of IoT device IDs (doors) that this user manages',
+		example: [1, 2, 3],
+		type: [Number],
+		required: false
+	})
+	managedDoors?: number[];
 }

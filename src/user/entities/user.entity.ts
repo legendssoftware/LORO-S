@@ -228,4 +228,7 @@ export class User {
 		shiftAutoEnd?: boolean;
 		[key: string]: any;
 	} | null;
+
+	@Column({ type: 'json', nullable: true })
+	managedDoors: number[] | null;
 }

@@ -65,6 +65,7 @@ import { UnifiedNotificationService } from '../lib/services/unified-notification
 import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
 import { Branch } from '../branch/entities/branch.entity';
 import { OrganisationHoursService } from '../organisation/services/organisation-hours.service';
+import { Device } from '../iot/entities/iot.entity';
 
 @Injectable()
 export class UserService {
@@ -97,6 +98,8 @@ export class UserService {
 		@InjectRepository(Branch)
 		private branchRepository: Repository<Branch>,
 		private readonly organisationHoursService: OrganisationHoursService,
+		@InjectRepository(Device)
+		private deviceRepository: Repository<Device>,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
 		this.logger.log('UserService initialized with cache TTL: ' + this.CACHE_TTL + 'ms');
@@ -633,6 +636,50 @@ export class UserService {
 	private excludePassword(user: User): Omit<User, 'password'> {
 		const { password, ...userWithoutPassword } = user;
 		return userWithoutPassword;
+	}
+
+	/**
+	 * Validate managedDoors array - ensure all device IDs exist and belong to user's organization
+	 */
+	private async validateManagedDoors(deviceIds: number[], orgRef?: string): Promise<void> {
+		if (!deviceIds || deviceIds.length === 0) {
+			return; // Empty array is valid
+		}
+
+		// Get all devices with these IDs
+		const devices = await this.deviceRepository.find({
+			where: {
+				id: In(deviceIds),
+				isDeleted: false,
+			},
+			select: ['id', 'orgID', 'deviceID'],
+		});
+
+		// Check if all requested devices exist
+		const foundIds = new Set(devices.map(d => d.id));
+		const missingIds = deviceIds.filter(id => !foundIds.has(id));
+		
+		if (missingIds.length > 0) {
+			throw new BadRequestException(
+				`Invalid device IDs in managedDoors: [${missingIds.join(', ')}]. These devices do not exist or have been deleted.`
+			);
+		}
+
+		// If orgRef provided, validate devices belong to organization
+		if (orgRef) {
+			const orgId = parseInt(orgRef, 10);
+			if (!isNaN(orgId)) {
+				const invalidDevices = devices.filter(d => d.orgID !== orgId);
+				if (invalidDevices.length > 0) {
+					const invalidIds = invalidDevices.map(d => d.id);
+					throw new BadRequestException(
+						`Device IDs [${invalidIds.join(', ')}] do not belong to your organization.`
+					);
+				}
+			}
+		}
+
+		this.logger.debug(`✅ Validated ${deviceIds.length} managed doors successfully`);
 	}
 
 	/**
@@ -1842,6 +1889,12 @@ export class UserService {
 					);
 					changes.assignedClients = true;
 				}
+			}
+
+			// Validate managedDoors if provided
+			if (updateUserDto.managedDoors !== undefined) {
+				await this.validateManagedDoors(updateUserDto.managedDoors, existingUser.organisationRef || orgId?.toString());
+				this.logger.debug(`[USER_UPDATE] Managed doors validated: [${updateUserDto.managedDoors.join(', ')}]`);
 			}
 
 			this.logger.debug('[USER_UPDATE] Updating user in database');

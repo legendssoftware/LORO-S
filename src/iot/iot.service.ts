@@ -32,6 +32,7 @@ import { User } from '../user/entities/user.entity';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { NotificationEvent, NotificationPriority, NotificationChannel } from '../lib/types/unified-notification.types';
 import { Branch } from '../branch/entities/branch.entity';
+import { Attendance } from '../attendance/entities/attendance.entity';
 
 export interface PaginatedResponse<T> {
 	data: T[];
@@ -63,6 +64,17 @@ interface AnalyticsFilters {
 	endDate?: Date;
 }
 
+interface DoorUserComparison {
+	userId: number;
+	userName: string;
+	userSurname: string;
+	doorOpenTime: string | null; // ISO string format
+	userClockInTime: string | null; // ISO string format
+	timeDifferenceMinutes: number | null; // positive = door opened after user clocked in, negative = door opened before
+	isEarly: boolean; // door opened before user clocked in (morning)
+	isLate: boolean; // door opened after user clocked in (morning)
+}
+
 @Injectable()
 export class IotService {
 	private readonly logger = new Logger(IotService.name);
@@ -78,6 +90,8 @@ export class IotService {
 		private userRepository: Repository<User>,
 		@InjectRepository(Branch)
 		private branchRepository: Repository<Branch>,
+		@InjectRepository(Attendance)
+		private attendanceRepository: Repository<Attendance>,
 		@Inject(CACHE_MANAGER)
 		private cacheManager: Cache,
 		private readonly eventEmitter: EventEmitter2,
@@ -888,6 +902,115 @@ export class IotService {
 	}
 
 	/**
+	 * Get door-user comparisons for a device
+	 * Compares door open times with user clock-in times for users who manage this door
+	 */
+	private async getDoorUserComparisons(device: Device): Promise<DoorUserComparison[]> {
+		try {
+			// Find users who have this device in their managedDoors
+			const users = await this.userRepository.find({
+				where: {
+					organisationRef: device.orgID.toString(),
+					isDeleted: false,
+				},
+				select: ['uid', 'name', 'surname', 'managedDoors'],
+			});
+
+			// Filter users who manage this device
+			const managingUsers = users.filter(
+				user => user.managedDoors && Array.isArray(user.managedDoors) && user.managedDoors.includes(device.id)
+			);
+
+			if (managingUsers.length === 0) {
+				return [];
+			}
+
+			// Get today's date range in organization timezone
+			const orgRef = String(device.orgID);
+			const orgHoursArr = await this.organisationHoursService.findAll(orgRef).catch(() => []);
+			const orgTimezone =
+				(Array.isArray(orgHoursArr) && orgHoursArr[0]?.timezone) || TimezoneUtil.AFRICA_JOHANNESBURG;
+			
+			const today = new Date();
+			const todayOrg = TimezoneUtil.toOrganizationTime(today, orgTimezone);
+			const startOfDay = new Date(todayOrg);
+			startOfDay.setUTCHours(0, 0, 0, 0);
+			const endOfDay = new Date(todayOrg);
+			endOfDay.setUTCHours(23, 59, 59, 999);
+
+			// Get today's attendance records for managing users
+			const userIds = managingUsers.map(u => u.uid);
+			const todayAttendance = await this.attendanceRepository.find({
+				where: {
+					owner: { uid: In(userIds) },
+					checkIn: Between(startOfDay, endOfDay),
+				},
+				relations: ['owner'],
+				order: { checkIn: 'ASC' },
+			});
+
+			// Get today's door open time (earliest open record)
+			const todayRecords = device.records?.filter(r => {
+				if (!r.openTime) return false;
+				const recordDate = typeof r.openTime === 'string' ? new Date(r.openTime) : (r.openTime as unknown as Date);
+				const recordDateOrg = TimezoneUtil.toOrganizationTime(recordDate, orgTimezone);
+				const recordDateKey = recordDateOrg.toISOString().split('T')[0];
+				const todayKey = todayOrg.toISOString().split('T')[0];
+				return recordDateKey === todayKey;
+			}) || [];
+
+			const doorOpenTime = todayRecords.length > 0 && todayRecords[0].openTime
+				? (typeof todayRecords[0].openTime === 'string' 
+					? new Date(todayRecords[0].openTime) 
+					: (todayRecords[0].openTime as unknown as Date))
+				: null;
+
+			// Create comparisons for each managing user
+			const comparisons: DoorUserComparison[] = managingUsers.map(user => {
+				const userAttendance = todayAttendance.find(a => a.owner?.uid === user.uid);
+				const userClockInTime = userAttendance?.checkIn || null;
+
+				let timeDifferenceMinutes: number | null = null;
+				let isEarly = false;
+				let isLate = false;
+
+				if (doorOpenTime && userClockInTime) {
+					// Convert both to organization timezone for accurate comparison
+					const doorOpenOrg = TimezoneUtil.toOrganizationTime(doorOpenTime, orgTimezone);
+					const clockInOrg = TimezoneUtil.toOrganizationTime(userClockInTime, orgTimezone);
+					
+					// Calculate difference in minutes (doorOpenTime - userClockInTime)
+					timeDifferenceMinutes = Math.round((doorOpenOrg.getTime() - clockInOrg.getTime()) / (1000 * 60));
+					
+					// Morning logic: no tolerance - before = early (good), after = late (bad)
+					isEarly = timeDifferenceMinutes < 0; // Door opened before user clocked in
+					isLate = timeDifferenceMinutes > 0; // Door opened after user clocked in
+				}
+
+				// Format times for API response (convert Date to ISO string)
+				const doorOpenTimeStr = doorOpenTime ? doorOpenTime.toISOString() : null;
+				const userClockInTimeStr = userClockInTime ? userClockInTime.toISOString() : null;
+
+				return {
+					userId: user.uid,
+					userName: user.name,
+					userSurname: user.surname,
+					doorOpenTime: doorOpenTimeStr,
+					userClockInTime: userClockInTimeStr,
+					timeDifferenceMinutes,
+					isEarly,
+					isLate,
+				};
+			});
+
+			return comparisons;
+		} catch (error) {
+			this.logger.error(`Failed to get door-user comparisons for device ${device.deviceID}: ${error.message}`);
+			return [];
+		}
+	}
+
+	/**
 	 * Calculate device performance metrics using organization hours
 	 * This replaces the client-side calculation with server-side logic
 	 */
@@ -903,6 +1026,7 @@ export class IotService {
 		note: string;
 		latestOpenTime: string | null;
 		latestCloseTime: string | null;
+		doorUserComparisons?: DoorUserComparison[];
 	}> {
 		try {
 			// Get organization hours - REQUIRED, no defaults
@@ -1310,6 +1434,9 @@ export class IotService {
 				latestCloseTime = null;
 			}
 
+			// Get door-user comparisons
+			const doorUserComparisons = await this.getDoorUserComparisons(device);
+
 			const result = {
 				opensOnTime,
 				opensOnTimePercentage,
@@ -1319,6 +1446,7 @@ export class IotService {
 				note,
 				latestOpenTime,
 				latestCloseTime,
+				doorUserComparisons,
 			};
 			
 			// ✅ Reduced logging: Only log summary in development mode
@@ -1341,6 +1469,7 @@ export class IotService {
 				note: 'Error calculating performance',
 				latestOpenTime: null,
 				latestCloseTime: null,
+				doorUserComparisons: [],
 			};
 		}
 	}
@@ -1485,7 +1614,7 @@ export class IotService {
 							.slice(0, 30)
 					: [];
 
-				// Calculate performance metrics using organization hours
+				// Calculate performance metrics using organization hours (includes doorUserComparisons)
 				const performanceMetrics = await this.calculateDevicePerformanceMetrics(device, sortedRecords);
 				
 				// ✅ Reduced logging: Only log summary, removed verbose debug
