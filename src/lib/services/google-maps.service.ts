@@ -287,12 +287,39 @@ export class GoogleMapsService implements OnModuleInit {
   // ======================================================
 
   /**
+   * Round coordinates to 4 decimal places (≈11m accuracy) for caching and deduplication
+   */
+  private roundCoordinatesForCache(coordinates: Coordinates): Coordinates {
+    return {
+      latitude: Math.round(coordinates.latitude * 10000) / 10000,
+      longitude: Math.round(coordinates.longitude * 10000) / 10000,
+    };
+  }
+
+  /**
    * Generate cache key with prefix and hash for complex objects
+   * Now uses rounded coordinates for better cache hit rates
    */
   private generateCacheKey(prefix: string, data: any): string {
+    // Round coordinates if present to improve cache hit rate
+    const processedData = { ...data };
+    if (processedData.coordinates && typeof processedData.coordinates.latitude === 'number') {
+      processedData.coordinates = this.roundCoordinatesForCache(processedData.coordinates);
+    }
+    if (processedData.start && typeof processedData.start.latitude === 'number') {
+      processedData.start = this.roundCoordinatesForCache(processedData.start);
+    }
+    if (processedData.end && typeof processedData.end.latitude === 'number') {
+      processedData.end = this.roundCoordinatesForCache(processedData.end);
+    }
+    if (typeof processedData.lat === 'number' && typeof processedData.lng === 'number') {
+      processedData.lat = Math.round(processedData.lat * 10000) / 10000;
+      processedData.lng = Math.round(processedData.lng * 10000) / 10000;
+    }
+
     const hash = require('crypto')
       .createHash('md5')
-      .update(JSON.stringify(data))
+      .update(JSON.stringify(processedData))
       .digest('hex');
     return `${this.CACHE_PREFIX}${prefix}:${hash}`;
   }
@@ -531,7 +558,7 @@ export class GoogleMapsService implements OnModuleInit {
       // Validate and sanitize input
       const sanitizedAddress = this.validateAndSanitizeAddress(address);
       
-      // Check cache first
+      // Check cache first with extended TTL for addresses (24 hours)
       const cacheKey = this.generateCacheKey('geocode', { address: sanitizedAddress, ...options });
       const cachedResult = await this.getCacheWithMetrics<GeocodingResult>(cacheKey);
       
@@ -561,8 +588,9 @@ export class GoogleMapsService implements OnModuleInit {
         });
       }, `Geocoding for "${sanitizedAddress}"`);
       
-      // Cache the result
-      await this.setCacheWithMetrics(cacheKey, result);
+      // Cache the result for 24 hours (addresses don't change frequently)
+      const CACHE_TTL_24H = 86400; // 24 hours in seconds
+      await this.setCacheWithMetrics(cacheKey, result, CACHE_TTL_24H);
       
       this.logger.debug(`[${operationId}] Geocoding completed successfully for address: ${sanitizedAddress}`);
       return result;
@@ -590,8 +618,11 @@ export class GoogleMapsService implements OnModuleInit {
       // Validate coordinates
       const validatedCoords = this.validateCoordinates(coordinates);
       
-      // Check cache first
-      const cacheKey = this.generateCacheKey('reverse-geocode', { coordinates: validatedCoords, ...options });
+      // Use rounded coordinates for cache key (4 decimal places ≈ 11m accuracy)
+      const roundedCoords = this.roundCoordinatesForCache(validatedCoords);
+      
+      // Check cache first with extended TTL for addresses (24 hours)
+      const cacheKey = this.generateCacheKey('reverse-geocode', { coordinates: roundedCoords, ...options });
       const cachedResult = await this.getCacheWithMetrics<GeocodingResult>(cacheKey);
       
       if (cachedResult) {
@@ -620,8 +651,9 @@ export class GoogleMapsService implements OnModuleInit {
         });
       }, `Reverse geocoding for coordinates`);
       
-      // Cache the result
-      await this.setCacheWithMetrics(cacheKey, result);
+      // Cache the result for 24 hours (addresses don't change frequently)
+      const CACHE_TTL_24H = 86400; // 24 hours in seconds
+      await this.setCacheWithMetrics(cacheKey, result, CACHE_TTL_24H);
       
       this.logger.debug(`[${operationId}] Reverse geocoding completed successfully`);
       return result;
@@ -766,6 +798,20 @@ export class GoogleMapsService implements OnModuleInit {
       if (destinations.length > 25) {
         throw new BadRequestException('Maximum 25 destinations allowed for route optimization');
       }
+
+      // Skip optimization for routes with < 3 destinations (no optimization needed)
+      if (destinations.length < 3) {
+        this.logger.debug(`[${operationId}] Skipping optimization for ${destinations.length} destinations (< 3 threshold)`);
+        return await this.planRoute(origin, returnToOrigin ? origin : destinations[destinations.length - 1], 
+          destinations.slice(0, -1).map(dest => ({ location: dest })), options);
+      }
+
+      // Use greedy algorithm by default for routes with < 10 waypoints to reduce costs
+      const USE_GREEDY_THRESHOLD = 10;
+      if (algorithm === 'google' && destinations.length < USE_GREEDY_THRESHOLD) {
+        this.logger.debug(`[${operationId}] Using greedy algorithm for ${destinations.length} destinations (< ${USE_GREEDY_THRESHOLD} threshold) to reduce API costs`);
+        algorithm = 'greedy';
+      }
       
       // Check cache first
       const cacheKey = this.generateCacheKey('optimize-route', {
@@ -824,19 +870,20 @@ export class GoogleMapsService implements OnModuleInit {
       const response = await this.client.directions({
         params: {
           origin: originStr,
-            destination: destination!,
+          destination: destination!,
           waypoints: waypoints.length > 0 ? waypoints : undefined,
           optimize: true,
           mode: options.travelMode || TravelMode.driving,
           avoid: this.buildAvoidanceArray(options),
           transit_routing_preference: options.routingPreference,
-            transit_mode: options.transitMode,
+          transit_mode: options.transitMode,
           units: options.unitSystem,
-            departure_time: options.departureTime?.getTime(),
-            arrival_time: options.arrivalTime?.getTime(),
-            language: options.language,
-            region: options.region,
-            alternatives: options.alternatives,
+          departure_time: options.departureTime?.getTime(),
+          arrival_time: options.arrivalTime?.getTime(),
+          language: options.language,
+          region: options.region,
+          // Removed alternatives to reduce cost
+          alternatives: false,
           key: this.apiKey,
         },
       });
@@ -1159,16 +1206,17 @@ export class GoogleMapsService implements OnModuleInit {
           origin: originStr,
           destination: destinationStr,
           waypoints: formattedWaypoints.length > 0 ? formattedWaypoints : undefined,
-              alternatives: options.alternatives ?? true,
+          // Removed alternatives to reduce cost - only get one route unless explicitly requested
+          alternatives: options.alternatives ?? false,
           mode: options.travelMode || TravelMode.driving,
           avoid: this.buildAvoidanceArray(options),
           transit_routing_preference: options.routingPreference,
-              transit_mode: options.transitMode,
+          transit_mode: options.transitMode,
           units: options.unitSystem,
-              departure_time: options.departureTime?.getTime(),
-              arrival_time: options.arrivalTime?.getTime(),
-              language: options.language,
-              region: options.region,
+          departure_time: options.departureTime?.getTime(),
+          arrival_time: options.arrivalTime?.getTime(),
+          language: options.language,
+          region: options.region,
           key: this.apiKey,
         },
       });
@@ -1338,10 +1386,22 @@ export class GoogleMapsService implements OnModuleInit {
 
   /**
    * Get route distance between two points using Google Maps Directions API
+   * Now uses haversine distance for small gaps (< 2km) to reduce API costs
    */
   async getRouteDistance(start: Coordinates, end: Coordinates): Promise<number> {
     const operationId = `route-distance-${Date.now()}`;
-    this.logger.debug(`[${operationId}] Getting route distance from ${start.latitude},${start.longitude} to ${end.latitude},${end.longitude}`);
+    
+    // Calculate haversine distance first
+    const haversineDistance = this.calculateDistance(start, end);
+    const DISTANCE_THRESHOLD_KM = 2; // Use Directions API only for gaps > 2km
+
+    this.logger.debug(`[${operationId}] Getting route distance from ${start.latitude},${start.longitude} to ${end.latitude},${end.longitude} (haversine: ${haversineDistance.toFixed(2)}km)`);
+
+    // For small distances, use haversine instead of expensive Directions API
+    if (haversineDistance < DISTANCE_THRESHOLD_KM) {
+      this.logger.debug(`[${operationId}] Using haversine distance for small gap (${haversineDistance.toFixed(2)}km < ${DISTANCE_THRESHOLD_KM}km threshold)`);
+      return haversineDistance;
+    }
 
     try {
       // Check cache first
@@ -1361,6 +1421,7 @@ export class GoogleMapsService implements OnModuleInit {
               destination: `${end.latitude},${end.longitude}`,
               mode: TravelMode.driving,
               key: this.apiKey,
+              // Removed alternatives to reduce cost - only get one route
             },
           });
 
@@ -1383,9 +1444,9 @@ export class GoogleMapsService implements OnModuleInit {
       return result;
 
     } catch (error) {
-      this.logger.warn(`[${operationId}] Route distance calculation failed: ${error.message}. Using direct distance as fallback.`);
-      // Fallback to direct distance
-      return this.calculateDistance(start, end);
+      this.logger.warn(`[${operationId}] Route distance calculation failed: ${error.message}. Using haversine distance as fallback.`);
+      // Fallback to haversine distance
+      return haversineDistance;
     }
   }
 
@@ -1470,15 +1531,19 @@ export class GoogleMapsService implements OnModuleInit {
       }
     }
 
-    // Process gaps with route API
+    // Process gaps - getRouteDistance now uses haversine for small gaps automatically
     for (const gap of gapAnalysis.gaps) {
       try {
         const gapDistance = await this.getRouteDistance(gap.startPoint, gap.endPoint);
         totalDistance += gapDistance;
         
+        // Determine method based on distance
+        const haversineDist = this.calculateDistance(gap.startPoint, gap.endPoint);
+        const method = haversineDist < 2 ? 'haversine' : 'route-api';
+        
         segments.push({
           distance: gapDistance,
-          method: 'route-api',
+          method: method as any,
           startPoint: gap.startPoint,
           endPoint: gap.endPoint
         });
@@ -1956,7 +2021,55 @@ export class GoogleMapsService implements OnModuleInit {
   }
 
   /**
+   * Group nearby stops together to reduce geocoding API calls
+   * Groups stops within 100m radius
+   */
+  private groupNearbyStops(
+    stops: Array<{ latitude: number; longitude: number; [key: string]: any }>,
+    radiusKm: number = 0.1 // 100 meters
+  ): Array<{ representative: any; members: any[] }> {
+    if (stops.length === 0) {
+      return [];
+    }
+
+    const groups: Array<{ representative: any; members: any[] }> = [];
+    const processed = new Set<number>();
+
+    for (let i = 0; i < stops.length; i++) {
+      if (processed.has(i)) continue;
+
+      const currentStop = stops[i];
+      const members: any[] = [currentStop];
+      processed.add(i);
+
+      // Find all stops within radius
+      for (let j = i + 1; j < stops.length; j++) {
+        if (processed.has(j)) continue;
+
+        const otherStop = stops[j];
+        const distance = this.calculateDistance(
+          { latitude: currentStop.latitude, longitude: currentStop.longitude },
+          { latitude: otherStop.latitude, longitude: otherStop.longitude }
+        );
+
+        if (distance <= radiusKm) {
+          members.push(otherStop);
+          processed.add(j);
+        }
+      }
+
+      groups.push({
+        representative: currentStop,
+        members,
+      });
+    }
+
+    return groups;
+  }
+
+  /**
    * Detect stops in GPS tracking data
+   * Now optimized to group nearby stops and cache geocoding results
    */
   private async detectStops(
     points: Array<{
@@ -2019,15 +2132,6 @@ export class GoogleMapsService implements OnModuleInit {
             const pointWithAddress = currentStop.points.find((p: any) => p.address);
             if (pointWithAddress) {
               address = pointWithAddress.address;
-            } else if (geocodeStops) {
-              // Geocode the stop location
-              try {
-                const geocodingResult = await this.reverseGeocode({ latitude: centerLat, longitude: centerLng });
-                address = geocodingResult.formattedAddress;
-              } catch (error) {
-                this.logger.warn(`Failed to geocode stop location: ${error.message}`);
-                address = `${centerLat.toFixed(6)}, ${centerLng.toFixed(6)}`;
-              }
             }
 
             stops.push({
@@ -2039,6 +2143,7 @@ export class GoogleMapsService implements OnModuleInit {
               durationMinutes: Math.round(stopDurationMinutes),
               durationFormatted: this.formatDuration(stopDurationMinutes),
               pointsCount: currentStop.points.length,
+              needsGeocoding: !address || address === 'Unknown Location',
             });
           }
 
@@ -2065,14 +2170,6 @@ export class GoogleMapsService implements OnModuleInit {
         const pointWithAddress = currentStop.points.find((p: any) => p.address);
         if (pointWithAddress) {
           address = pointWithAddress.address;
-        } else if (geocodeStops) {
-          try {
-            const geocodingResult = await this.reverseGeocode({ latitude: centerLat, longitude: centerLng });
-            address = geocodingResult.formattedAddress;
-          } catch (error) {
-            this.logger.warn(`Failed to geocode stop location: ${error.message}`);
-            address = `${centerLat.toFixed(6)}, ${centerLng.toFixed(6)}`;
-          }
         }
 
         stops.push({
@@ -2084,8 +2181,65 @@ export class GoogleMapsService implements OnModuleInit {
           durationMinutes: Math.round(stopDurationMinutes),
           durationFormatted: this.formatDuration(stopDurationMinutes),
           pointsCount: currentStop.points.length,
+          needsGeocoding: !address || address === 'Unknown Location',
         });
       }
+    }
+
+    // Group nearby stops and geocode only if needed
+    if (geocodeStops && stops.length > 0) {
+      const stopsNeedingGeocoding = stops.filter(s => s.needsGeocoding);
+      
+      if (stopsNeedingGeocoding.length > 0) {
+        // Group nearby stops to reduce API calls
+        const stopGroups = this.groupNearbyStops(stopsNeedingGeocoding, 0.1); // 100m radius
+        this.logger.debug(`Grouped ${stopsNeedingGeocoding.length} stops needing geocoding into ${stopGroups.length} groups`);
+
+        // Geocode grouped stops
+        for (const group of stopGroups) {
+          const centerLat = group.representative.latitude;
+          const centerLng = group.representative.longitude;
+
+          try {
+            // Use rounded coordinates for caching
+            const roundedLat = Math.round(centerLat * 10000) / 10000;
+            const roundedLng = Math.round(centerLng * 10000) / 10000;
+            const cacheKey = this.generateCacheKey('stop-geocode', { lat: roundedLat, lng: roundedLng });
+            
+            // Check cache first
+            const cachedAddress = await this.getCacheWithMetrics<string>(cacheKey);
+            let address: string;
+
+            if (cachedAddress) {
+              address = cachedAddress;
+              this.logger.debug(`Cache hit for stop geocoding at ${roundedLat}, ${roundedLng}`);
+            } else {
+              // Geocode only the representative stop
+              const geocodingResult = await this.reverseGeocode({ latitude: centerLat, longitude: centerLng });
+              address = geocodingResult.formattedAddress;
+              
+              // Cache for 24 hours
+              await this.setCacheWithMetrics(cacheKey, address, 86400);
+            }
+
+            // Apply address to all members of the group
+            for (const member of group.members) {
+              member.address = address;
+              delete member.needsGeocoding;
+            }
+          } catch (error) {
+            this.logger.warn(`Failed to geocode stop location: ${error.message}`);
+            const fallbackAddress = `${centerLat.toFixed(6)}, ${centerLng.toFixed(6)}`;
+            for (const member of group.members) {
+              member.address = fallbackAddress;
+              delete member.needsGeocoding;
+            }
+          }
+        }
+      }
+
+      // Clean up needsGeocoding flag from all stops
+      stops.forEach(stop => delete stop.needsGeocoding);
     }
 
     return stops;

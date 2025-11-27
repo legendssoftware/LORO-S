@@ -973,7 +973,78 @@ export class TrackingService {
 	}
 
 	/**
+	 * Round coordinates to 4 decimal places (≈11m accuracy) for caching and deduplication
+	 * @param latitude - Latitude coordinate
+	 * @param longitude - Longitude coordinate
+	 * @returns Rounded coordinates
+	 */
+	private roundCoordinates(latitude: number, longitude: number): { lat: number; lng: number } {
+		return {
+			lat: Math.round(latitude * 10000) / 10000,
+			lng: Math.round(longitude * 10000) / 10000,
+		};
+	}
+
+	/**
+	 * Group nearby coordinates together to reduce geocoding API calls
+	 * Groups points within 50-100m radius (approximately 0.0005-0.001 degrees)
+	 * @param points - Array of tracking points to group
+	 * @param radiusDegrees - Radius in degrees (default 0.0008 ≈ 89m)
+	 * @returns Array of coordinate groups with representative points
+	 */
+	private groupNearbyCoordinates(
+		points: Tracking[],
+		radiusDegrees: number = 0.0008
+	): Array<{ representative: Tracking; members: Tracking[] }> {
+		if (points.length === 0) {
+			return [];
+		}
+
+		const groups: Array<{ representative: Tracking; members: Tracking[] }> = [];
+		const processed = new Set<number>();
+
+		for (let i = 0; i < points.length; i++) {
+			if (processed.has(i)) continue;
+
+			const currentPoint = points[i];
+			const members: Tracking[] = [currentPoint];
+			processed.add(i);
+
+			// Find all points within radius
+			for (let j = i + 1; j < points.length; j++) {
+				if (processed.has(j)) continue;
+
+				const otherPoint = points[j];
+				const distance = LocationUtils.calculateDistance(
+					currentPoint.latitude,
+					currentPoint.longitude,
+					otherPoint.latitude,
+					otherPoint.longitude
+				);
+
+				// Convert km to degrees (rough approximation: 1 degree ≈ 111 km)
+				const distanceDegrees = distance / 111;
+
+				if (distanceDegrees <= radiusDegrees) {
+					members.push(otherPoint);
+					processed.add(j);
+				}
+			}
+
+			// Use the first point as representative (or could use center point)
+			groups.push({
+				representative: currentPoint,
+				members,
+			});
+		}
+
+		this.logger.debug(`Grouped ${points.length} points into ${groups.length} coordinate groups`);
+		return groups;
+	}
+
+	/**
 	 * Geocode tracking points that don't have addresses
+	 * Now uses coordinate grouping and deduplication to reduce API calls
 	 * @param trackingPoints - Array of tracking points to geocode
 	 * @returns Updated tracking points with addresses
 	 */
@@ -982,83 +1053,124 @@ export class TrackingService {
 			return trackingPoints;
 		}
 
-		const pointsToGeocode = trackingPoints.filter(point => !point.address && point.latitude && point.longitude);
-		
+		// Filter points that need geocoding and apply lazy geocoding strategy
+		// Only geocode points that are > 5 minutes apart or significant stops
+		const pointsToGeocode = trackingPoints.filter((point, index) => {
+			if (point.address || !point.latitude || !point.longitude) {
+				return false;
+			}
+
+			// Skip points that are too close together (< 10m apart)
+			if (index > 0) {
+				const prevPoint = trackingPoints[index - 1];
+				const distance = LocationUtils.calculateDistance(
+					prevPoint.latitude,
+					prevPoint.longitude,
+					point.latitude,
+					point.longitude
+				);
+
+				// Skip if < 10m apart (≈ 0.00009 degrees)
+				if (distance < 0.01) {
+					return false;
+				}
+
+				// Only geocode if > 5 minutes apart
+				const timeDiff = new Date(point.createdAt).getTime() - new Date(prevPoint.createdAt).getTime();
+				const timeDiffMinutes = timeDiff / (1000 * 60);
+				if (timeDiffMinutes < 5) {
+					return false;
+				}
+			}
+
+			return true;
+		});
+
 		if (pointsToGeocode.length === 0) {
-			this.logger.debug('No tracking points need geocoding');
+			this.logger.debug('No tracking points need geocoding after filtering');
 			return trackingPoints;
 		}
 
-		this.logger.debug(`Geocoding ${pointsToGeocode.length} tracking points`);
+		this.logger.debug(`Geocoding ${pointsToGeocode.length} tracking points (filtered from ${trackingPoints.length} total)`);
 
-		// Process in batches to avoid hitting API rate limits
+		// Group nearby coordinates to reduce API calls
+		const coordinateGroups = this.groupNearbyCoordinates(pointsToGeocode, 0.0008); // ~89m radius
+		this.logger.debug(`Grouped into ${coordinateGroups.length} groups for geocoding`);
+
+		// Process groups in batches
 		const BATCH_SIZE = 5;
 		const BATCH_DELAY = 1000; // 1 second delay between batches
-		const MAX_CONSECUTIVE_FAILURES = 3; // Stop geocoding after 3 consecutive failures
+		const MAX_CONSECUTIVE_FAILURES = 3;
 		let consecutiveFailures = 0;
 		let totalProcessed = 0;
 		let totalSuccessful = 0;
 		let totalFailed = 0;
 
-		for (let i = 0; i < pointsToGeocode.length; i += BATCH_SIZE) {
-			// Check if we've hit the failure threshold
+		for (let i = 0; i < coordinateGroups.length; i += BATCH_SIZE) {
 			if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-				this.logger.warn(`Stopping geocoding after ${consecutiveFailures} consecutive failures. Skipping remaining ${pointsToGeocode.length - totalProcessed} points.`);
+				this.logger.warn(`Stopping geocoding after ${consecutiveFailures} consecutive failures. Skipping remaining ${coordinateGroups.length - totalProcessed} groups.`);
 				break;
 			}
 
-			const batch = pointsToGeocode.slice(i, i + BATCH_SIZE);
+			const batch = coordinateGroups.slice(i, i + BATCH_SIZE);
 			let batchFailures = 0;
-			
-			const geocodingPromises = batch.map(async (point) => {
-				const { address, error } = await this.getAddressFromCoordinates(point.latitude, point.longitude);
-				
+
+			const geocodingPromises = batch.map(async (group) => {
+				// Geocode only the representative point
+				const { address, error } = await this.getAddressFromCoordinates(
+					group.representative.latitude,
+					group.representative.longitude
+				);
+
 				if (address) {
-					point.address = address;
-					point.addressDecodingError = null;
-					
-					// Update in database for future use
-					try {
-						await this.trackingRepository.update(point.uid, { 
-							address, 
-							addressDecodingError: null 
-						});
-					} catch (updateError) {
-						this.logger.warn(`Failed to update address for tracking point ${point.uid}: ${updateError.message}`);
+					// Apply address to all members of the group
+					for (const member of group.members) {
+						member.address = address;
+						member.addressDecodingError = null;
+
+						// Update in database
+						try {
+							await this.trackingRepository.update(member.uid, {
+								address,
+								addressDecodingError: null,
+							});
+						} catch (updateError) {
+							this.logger.warn(`Failed to update address for tracking point ${member.uid}: ${updateError.message}`);
+						}
 					}
-					
-					totalSuccessful++;
-					consecutiveFailures = 0; // Reset failure counter on success
+
+					totalSuccessful += group.members.length;
+					consecutiveFailures = 0;
 				} else if (error) {
-					point.addressDecodingError = error;
-					this.logger.warn(`Geocoding failed for point ${point.uid}: ${error}`);
+					// Apply error to all members
+					for (const member of group.members) {
+						member.addressDecodingError = error;
+					}
+					this.logger.warn(`Geocoding failed for group representative ${group.representative.uid}: ${error}`);
 					batchFailures++;
-					totalFailed++;
+					totalFailed += group.members.length;
 					consecutiveFailures++;
 				}
-				
+
 				totalProcessed++;
-				return point;
+				return group;
 			});
 
 			await Promise.allSettled(geocodingPromises);
-			
-			// If entire batch failed, increment consecutive failures
+
 			if (batchFailures === batch.length) {
 				consecutiveFailures += batchFailures;
 			}
-			
-			// Add delay between batches to respect API rate limits
-			if (i + BATCH_SIZE < pointsToGeocode.length && consecutiveFailures < MAX_CONSECUTIVE_FAILURES) {
+
+			if (i + BATCH_SIZE < coordinateGroups.length && consecutiveFailures < MAX_CONSECUTIVE_FAILURES) {
 				await new Promise(resolve => setTimeout(resolve, BATCH_DELAY));
 			}
 		}
 
-		// Log final results
 		if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-			this.logger.warn(`Geocoding stopped early due to ${consecutiveFailures} consecutive failures. Processed: ${totalProcessed}/${pointsToGeocode.length}, Successful: ${totalSuccessful}, Failed: ${totalFailed}`);
+			this.logger.warn(`Geocoding stopped early due to ${consecutiveFailures} consecutive failures. Processed: ${totalProcessed}/${coordinateGroups.length} groups, Successful: ${totalSuccessful} points, Failed: ${totalFailed} points`);
 		} else {
-			this.logger.debug(`Completed geocoding for ${pointsToGeocode.length} tracking points. Successful: ${totalSuccessful}, Failed: ${totalFailed}`);
+			this.logger.debug(`Completed geocoding: ${totalProcessed} groups processed, ${totalSuccessful} points geocoded successfully, ${totalFailed} failed`);
 		}
 
 		return trackingPoints;
@@ -1105,8 +1217,20 @@ export class TrackingService {
 		latitude: number,
 		longitude: number,
 	): Promise<{ address: string | null; error?: string }> {
+		// Use rounded coordinates for caching (4 decimal places ≈ 11m accuracy)
+		const rounded = this.roundCoordinates(latitude, longitude);
+		const cacheKey = this.getCacheKey(`geocode_${rounded.lat}_${rounded.lng}`);
+
+		// Check cache first with extended TTL (24 hours for addresses)
+		const cachedAddress = await this.cacheManager.get<string>(cacheKey);
+		if (cachedAddress) {
+			this.logger.debug(`Cache hit for coordinates ${rounded.lat}, ${rounded.lng}`);
+			return { address: cachedAddress };
+		}
+
 		const MAX_RETRIES = 3;
 		const RETRY_DELAY = 1000; // 1 second
+		const CACHE_TTL_24H = 86400000; // 24 hours in milliseconds
 
 		for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
 			try {
@@ -1137,9 +1261,12 @@ export class TrackingService {
 				}
 
 				if (response.data.results && response.data.results.length > 0) {
-					return {
-						address: response.data.results[0].formatted_address,
-					};
+					const address = response.data.results[0].formatted_address;
+					
+					// Cache the result for 24 hours
+					await this.cacheManager.set(cacheKey, address, CACHE_TTL_24H);
+					
+					return { address };
 				}
 
 				return {
