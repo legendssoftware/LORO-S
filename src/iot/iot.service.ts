@@ -970,26 +970,31 @@ export class IotService {
 				const userAttendance = todayAttendance.find(a => a.owner?.uid === user.uid);
 				const userClockInTime = userAttendance?.checkIn || null;
 
+				// IMPORTANT: Door open time is already stored in organization timezone format in database
+				// Do NOT convert it using timezone.util.ts - use as-is
+				// Only user clock-in time needs timezone conversion from UTC to organization timezone
+				const clockInOrg = userClockInTime ? TimezoneUtil.toOrganizationTime(userClockInTime, orgTimezone) : null;
+
 				let timeDifferenceMinutes: number | null = null;
 				let isEarly = false;
 				let isLate = false;
 
-				if (doorOpenTime && userClockInTime) {
-					// Convert both to organization timezone for accurate comparison
-					const doorOpenOrg = TimezoneUtil.toOrganizationTime(doorOpenTime, orgTimezone);
-					const clockInOrg = TimezoneUtil.toOrganizationTime(userClockInTime, orgTimezone);
-					
+				if (doorOpenTime && clockInOrg) {
 					// Calculate difference in minutes (doorOpenTime - userClockInTime)
-					timeDifferenceMinutes = Math.round((doorOpenOrg.getTime() - clockInOrg.getTime()) / (1000 * 60));
+					// Door open time is already in org timezone format (stored that way), so use as-is
+					// User clock-in is converted to org timezone for comparison
+					timeDifferenceMinutes = Math.round((doorOpenTime.getTime() - clockInOrg.getTime()) / (1000 * 60));
 					
 					// Morning logic: no tolerance - before = early (good), after = late (bad)
 					isEarly = timeDifferenceMinutes < 0; // Door opened before user clocked in
 					isLate = timeDifferenceMinutes > 0; // Door opened after user clocked in
 				}
 
-				// Format times for API response (convert Date to ISO string)
+				// Format times for API response
+				// Door open time: use as-is from database (already in org timezone format, NOT converted)
+				// User clock-in time: use converted organization timezone time
 				const doorOpenTimeStr = doorOpenTime ? doorOpenTime.toISOString() : null;
-				const userClockInTimeStr = userClockInTime ? userClockInTime.toISOString() : null;
+				const userClockInTimeStr = clockInOrg ? clockInOrg.toISOString() : null;
 
 				return {
 					userId: user.uid,
