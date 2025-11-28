@@ -42,6 +42,7 @@ export class ErpController {
 		'cache/refresh': 'low',
 		'cache/clear': 'low',
 		'profile/sales': 'high',
+		'team/targets': 'high', // Bulk endpoint for team management - high priority
 	};
 
 	constructor(
@@ -1319,6 +1320,498 @@ export class ErpController {
 				};
 			}
 		}, 'profile/sales-by-category');
+	}
+
+	/**
+	 * Get targets and sales data for all team members (bulk endpoint)
+	 * 
+	 * ✅ BULK ENDPOINT: Returns targets, sales data, and commission breakdowns for all managed staff
+	 * This endpoint consolidates multiple API calls into a single request for better performance.
+	 * 
+	 * Returns:
+	 * - User target data (from user_targets table)
+	 * - ERP sales data (totalRevenue, transactionCount, uniqueCustomers)
+	 * - Commission breakdown by category for each team member
+	 * - Team summary statistics
+	 * 
+	 * Use this endpoint instead of making individual calls to:
+	 * - GET /erp/user/:userId/sales
+	 * - GET /erp/user/:userId/commissions-by-category
+	 * 
+	 * @returns Consolidated team targets and sales data
+	 */
+	@Get('team/targets')
+	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER)
+	@ApiOperation({ 
+		summary: 'Get targets and sales data for all team members (bulk endpoint)',
+		description: `
+Returns consolidated targets, sales data, and commission breakdowns for all managed staff members in a single request.
+
+**Performance Benefits:**
+- Reduces API calls from N+1 to 1 (where N = number of team members)
+- Batch fetches sales data efficiently using single ERP query
+- Leverages existing caching mechanisms
+
+**Response Structure:**
+- \`teamMembers\`: Array of team member data including:
+  - User information (uid, fullName, email, avatar, branchName)
+  - Target data (sales targets, progress, remaining amounts)
+  - ERP sales data (totalRevenue, transactionCount, uniqueCustomers)
+  - Commission breakdown by category
+- \`summary\`: Team-wide aggregated statistics
+- \`periodDates\`: Target period dates used for calculations
+
+**Access Control:**
+- Only returns data for users managed by the requesting user
+- Requires MANAGER, ADMIN, or OWNER access level
+- Respects organization and branch-level access controls
+
+**Example Use Case:**
+Mobile team tab can replace multiple individual API calls with this single bulk endpoint.
+		`
+	})
+	@ApiResponse({ 
+		status: 200, 
+		description: 'Team targets and sales data retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				success: { type: 'boolean', example: true },
+				data: {
+					type: 'object',
+					properties: {
+						teamMembers: {
+							type: 'array',
+							items: {
+								type: 'object',
+								properties: {
+									userId: { type: 'number', example: 123 },
+									fullName: { type: 'string', example: 'John Doe' },
+									email: { type: 'string', example: 'john.doe@example.com' },
+									avatar: { type: 'string', nullable: true },
+									branchName: { type: 'string', nullable: true, example: 'Cape Town Branch' },
+									branchUid: { type: 'number', nullable: true },
+									hasTargets: { type: 'boolean', example: true },
+									targets: {
+										type: 'object',
+										properties: {
+											sales: {
+												type: 'object',
+												properties: {
+													target: { type: 'number', example: 50000 },
+													current: { type: 'number', example: 35000 },
+													remaining: { type: 'number', example: 15000 },
+													progress: { type: 'number', example: 70 },
+													currency: { type: 'string', example: 'ZAR' }
+												}
+											}
+										}
+									},
+									sales: {
+										type: 'object',
+										properties: {
+											totalRevenue: { type: 'number', example: 35000 },
+											transactionCount: { type: 'number', example: 45 },
+											uniqueCustomers: { type: 'number', example: 12 },
+											salesCode: { type: 'string', example: 'CEB01' },
+											salesName: { type: 'string', example: 'John Doe' }
+										},
+										nullable: true
+									},
+									commissionsByCategory: {
+										type: 'array',
+										items: {
+											type: 'object',
+											properties: {
+												category: { type: 'string', example: 'Rhinolite & 6.4mm' },
+												commissionPercent: { type: 'number', example: 0.5 },
+												totalSales: { type: 'number', example: 20000 },
+												totalCommission: { type: 'number', example: 100 }
+											}
+										}
+									}
+								}
+							}
+						},
+						summary: {
+							type: 'object',
+							properties: {
+								totalTarget: { type: 'number', example: 200000 },
+								totalAchieved: { type: 'number', example: 150000 },
+								teamSize: { type: 'number', example: 5 },
+								currency: { type: 'string', example: 'ZAR' }
+							}
+						},
+						periodStartDate: { type: 'string', example: '2024-01-01' },
+						periodEndDate: { type: 'string', example: '2024-01-31' }
+					}
+				},
+				orgId: { type: 'number', example: 1 }
+			}
+		}
+	})
+	@ApiResponse({ 
+		status: 404, 
+		description: 'No targets found for requesting user or no managed staff',
+		schema: {
+			type: 'object',
+			properties: {
+				success: { type: 'boolean', example: false },
+				message: { type: 'string', example: 'No targets found for user or no managed staff' },
+				data: { type: 'object', nullable: true },
+				orgId: { type: 'number' }
+			}
+		}
+	})
+	async getTeamTargets(@Req() request: AuthenticatedRequest) {
+		const userId = request.user?.uid;
+		const orgId = this.getOrgId(request);
+		const operationId = 'team-targets';
+		
+		this.logger.log(`[${operationId}] Getting team targets for user ${userId}, org ${orgId}`);
+		
+		return this.executeWithThrottling(operationId, async () => {
+			try {
+				if (!userId) {
+					throw new BadRequestException('User ID not found in request');
+				}
+
+				// Get current user's targets to extract managed staff and period dates
+				const userTargetResult = await this.userService.getUserTarget(userId, orgId);
+				
+				if (!userTargetResult?.userTarget) {
+					throw new NotFoundException(`No targets found for user ${userId}`);
+				}
+
+				const userTarget = userTargetResult.userTarget;
+				const managedStaff = userTarget.managedStaff || [];
+
+				if (!managedStaff || managedStaff.length === 0) {
+					this.logger.log(`[${operationId}] No managed staff found for user ${userId}`);
+					return {
+						success: true,
+						data: {
+							teamMembers: [],
+							summary: {
+								totalTarget: 0,
+								totalAchieved: 0,
+								teamSize: 0,
+								currency: 'ZAR',
+							},
+							periodStartDate: null,
+							periodEndDate: null,
+						},
+						orgId,
+					};
+				}
+
+				// Get period dates from current user's personal targets (single source of truth)
+				const personalTargets = userTarget.personalTargets as any;
+				const periodStartDateRaw = personalTargets?.periodStartDate;
+				const periodEndDateRaw = personalTargets?.periodEndDate;
+
+				if (!periodStartDateRaw || !periodEndDateRaw) {
+					this.logger.warn(`[${operationId}] ⚠️  No period dates found in user target for user ${userId}`);
+					return {
+						success: false,
+						message: 'Target period dates not configured. Please set periodStartDate and periodEndDate in user targets.',
+						data: {
+							teamMembers: [],
+							summary: {
+								totalTarget: 0,
+								totalAchieved: 0,
+								teamSize: managedStaff.length,
+								currency: 'ZAR',
+							},
+							periodStartDate: null,
+							periodEndDate: null,
+						},
+						orgId,
+					};
+				}
+
+				// Format dates to YYYY-MM-DD format
+				const periodStartDate = new Date(periodStartDateRaw).toISOString().split('T')[0];
+				const periodEndDate = new Date(periodEndDateRaw).toISOString().split('T')[0];
+				
+				this.logger.log(`[${operationId}] 📅 Using Target Period Dates: ${periodStartDate} → ${periodEndDate}`);
+				this.logger.log(`[${operationId}] 👥 Processing ${managedStaff.length} team members`);
+
+				// Extract ERP codes from managed staff (filter out inactive users and those without ERP codes)
+				const staffWithErpCodes: Array<{
+					staff: any;
+					erpSalesRepCode: string;
+					userId: number;
+				}> = [];
+
+				for (const staff of managedStaff) {
+					// Check if user is active
+					const staffUserResult = await this.userService.findOne(staff.uid, orgId);
+					if (!staffUserResult?.user || staffUserResult.user.status !== 'active') {
+						this.logger.debug(`[${operationId}] ⚠️  Skipping inactive user ${staff.uid} (status: ${staffUserResult?.user?.status || 'not found'})`);
+						continue;
+					}
+
+					// Get staff member's target to extract ERP code
+					const staffTargetResult = await this.userService.getUserTarget(staff.uid, orgId);
+					if (!staffTargetResult?.userTarget) {
+						this.logger.debug(`[${operationId}] ⚠️  No targets found for staff member ${staff.uid}`);
+						continue;
+					}
+
+					const staffTarget = staffTargetResult.userTarget;
+					const erpSalesRepCode = staffTarget.erpSalesRepCode || 
+						(staffTarget.personalTargets as any)?.erpSalesRepCode || 
+						null;
+
+					if (erpSalesRepCode) {
+						staffWithErpCodes.push({
+							staff,
+							erpSalesRepCode,
+							userId: staff.uid,
+						});
+					} else {
+						this.logger.debug(`[${operationId}] ⚠️  No ERP Sales Rep Code found for staff member ${staff.uid}`);
+					}
+				}
+
+				this.logger.log(`[${operationId}] ✅ Found ${staffWithErpCodes.length} team members with ERP codes`);
+
+				// Batch fetch sales data for all team members at once
+				const salesPersonIds = staffWithErpCodes.map(item => item.erpSalesRepCode);
+				let salesData: any[] = [];
+				
+				if (salesPersonIds.length > 0) {
+					this.logger.log(`[${operationId}] 📊 Batch fetching sales data for ${salesPersonIds.length} sales persons...`);
+					salesData = await this.erpDataService.getSalesPersonAggregations({
+						startDate: periodStartDate,
+						endDate: periodEndDate,
+						salesPersonId: salesPersonIds, // ✅ Batch fetch with array
+					});
+					this.logger.log(`[${operationId}] ✅ Retrieved ${salesData.length} sales records`);
+				}
+
+				// Create a map of ERP code -> sales data for quick lookup
+				const salesDataMap = new Map<string, any>();
+				for (const salesRecord of salesData) {
+					const code = salesRecord.salesCode?.toUpperCase();
+					if (code) {
+						salesDataMap.set(code, salesRecord);
+					}
+				}
+
+				// Batch fetch commission breakdowns for all team members
+				// Fetch all sales lines for all team members, then group by user
+				let allSalesLines: any[] = [];
+				
+				if (salesPersonIds.length > 0) {
+					this.logger.log(`[${operationId}] 📊 Batch fetching sales lines for commission breakdowns...`);
+					allSalesLines = await this.erpDataService.getSalesLinesByDateRange({
+						startDate: periodStartDate,
+						endDate: periodEndDate,
+						salesPersonId: salesPersonIds, // ✅ Batch fetch with array
+					}, ['1', '2']); // Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2)
+					this.logger.log(`[${operationId}] ✅ Retrieved ${allSalesLines.length} sales lines`);
+				}
+
+				// Group sales lines by rep_code (ERP code) for commission calculations
+				const salesLinesByRepCode = new Map<string, any[]>();
+				for (const line of allSalesLines) {
+					const repCode = line.rep_code?.toUpperCase();
+					if (repCode) {
+						if (!salesLinesByRepCode.has(repCode)) {
+							salesLinesByRepCode.set(repCode, []);
+						}
+						salesLinesByRepCode.get(repCode)!.push(line);
+					}
+				}
+
+				// Helper function to normalize commission percentage
+				const normalizeCommissionPercent = (percent: number): number => {
+					return Math.round(percent * 100) / 100;
+				};
+
+				// Helper function to map commission percentage to group name
+				const getCommissionGroupName = (commissionPercent: number): string => {
+					const normalized = normalizeCommissionPercent(commissionPercent);
+					
+					if (Math.abs(normalized - 0.5) < 0.01) {
+						return 'Rhinolite & 6.4mm';
+					} else if (Math.abs(normalized - 3.0) < 0.01) {
+						return 'Fuse & BitLite';
+					} else if (Math.abs(normalized - 1.5) < 0.01) {
+						return 'Other Drywall Products';
+					}
+					
+					return `${normalized.toFixed(2)}% Commission`;
+				};
+
+				// Process commission breakdowns for each team member
+				const commissionsByRepCode = new Map<string, any[]>();
+				
+				for (const [repCode, lines] of salesLinesByRepCode.entries()) {
+					const commissionMap = new Map<number, {
+						commissionPercent: number;
+						totalSales: number;
+						totalCommission: number;
+					}>();
+
+					for (const line of lines) {
+						const tax = parseFloat(String(line.tax || 0));
+						const inclLineTotal = parseFloat(String(line.incl_line_total || 0));
+						const netSales = inclLineTotal - tax;
+						const commissionPer = parseFloat(String(line.commission_per || 0));
+						
+						if (commissionPer <= 0) {
+							continue;
+						}
+						
+						const normalizedPercent = normalizeCommissionPercent(commissionPer);
+						const commissionAmount = (netSales * commissionPer) / 100;
+
+						if (commissionMap.has(normalizedPercent)) {
+							const existing = commissionMap.get(normalizedPercent)!;
+							existing.totalSales += netSales;
+							existing.totalCommission += commissionAmount;
+						} else {
+							commissionMap.set(normalizedPercent, {
+								commissionPercent: normalizedPercent,
+								totalSales: netSales,
+								totalCommission: commissionAmount,
+							});
+						}
+					}
+
+					// Convert to array and sort
+					const commissionData = Array.from(commissionMap.values())
+						.map(item => ({
+							category: getCommissionGroupName(item.commissionPercent),
+							commissionPercent: item.commissionPercent,
+							totalSales: item.totalSales,
+							totalCommission: item.totalCommission,
+						}))
+						.sort((a, b) => b.totalCommission - a.totalCommission);
+
+					commissionsByRepCode.set(repCode, commissionData);
+				}
+
+				// Build response: merge staff data with sales and commission data
+				const teamMembers = managedStaff.map((staff) => {
+					const staffWithCode = staffWithErpCodes.find(item => item.userId === staff.uid);
+					
+					if (!staffWithCode) {
+						// Staff member without ERP code or inactive
+						return {
+							userId: staff.uid,
+							fullName: staff.fullName,
+							email: staff.email,
+							avatar: staff.avatar,
+							branchName: staff.branchName,
+							branchUid: staff.branchUid,
+							hasTargets: staff.hasTargets,
+							targets: staff.targets,
+							sales: null, // No ERP data available
+							commissionsByCategory: [],
+						};
+					}
+
+					const erpCode = staffWithCode.erpSalesRepCode.toUpperCase();
+					const salesRecord = salesDataMap.get(erpCode);
+					const commissionData = commissionsByRepCode.get(erpCode) || [];
+
+					// Update sales target with ERP data
+					let updatedTargets = { ...staff.targets };
+					if (updatedTargets?.sales && salesRecord) {
+						const currentSalesAmount = salesRecord.totalRevenue || 0;
+						updatedTargets = {
+							...updatedTargets,
+							sales: {
+								...updatedTargets.sales,
+								current: currentSalesAmount,
+								progress: updatedTargets.sales.target 
+									? Math.min(100, Math.round((currentSalesAmount / updatedTargets.sales.target) * 100))
+									: 0,
+								remaining: updatedTargets.sales.target 
+									? Math.max(0, updatedTargets.sales.target - currentSalesAmount)
+									: 0,
+							},
+						};
+					}
+
+					return {
+						userId: staff.uid,
+						fullName: staff.fullName,
+						email: staff.email,
+						avatar: staff.avatar,
+						branchName: staff.branchName,
+						branchUid: staff.branchUid,
+						hasTargets: staff.hasTargets,
+						targets: updatedTargets,
+						sales: salesRecord ? {
+							totalRevenue: salesRecord.totalRevenue || 0,
+							transactionCount: salesRecord.transactionCount || 0,
+							uniqueCustomers: salesRecord.uniqueCustomers || 0,
+							salesCode: salesRecord.salesCode,
+							salesName: salesRecord.salesName || salesRecord.salesCode,
+						} : null,
+						commissionsByCategory: commissionData,
+					};
+				});
+
+				// Calculate team summary
+				const summary = teamMembers.reduce(
+					(acc, member) => {
+						if (member.hasTargets && member.targets?.sales) {
+							acc.totalTarget += member.targets.sales.target || 0;
+							acc.totalAchieved += member.targets.sales.current || 0;
+							acc.currency = member.targets.sales.currency || 'ZAR';
+						}
+						return acc;
+					},
+					{
+						totalTarget: 0,
+						totalAchieved: 0,
+						teamSize: teamMembers.length,
+						currency: 'ZAR',
+					}
+				);
+
+				this.logger.log(`[${operationId}] ✅ Team Targets Retrieved Successfully:`);
+				this.logger.log(`[${operationId}]    👥 Team Size: ${summary.teamSize} members`);
+				this.logger.log(`[${operationId}]    💰 Total Target: R${summary.totalTarget.toLocaleString('en-ZA')}`);
+				this.logger.log(`[${operationId}]    📊 Total Achieved: R${summary.totalAchieved.toLocaleString('en-ZA')}`);
+				this.logger.log(`[${operationId}]    📅 Period: ${periodStartDate} → ${periodEndDate}`);
+
+				return {
+					success: true,
+					data: {
+						teamMembers,
+						summary,
+						periodStartDate,
+						periodEndDate,
+					},
+					orgId,
+				};
+			} catch (error) {
+				this.logger.error(`[${operationId}] Error getting team targets for user ${userId}: ${error.message}`);
+				return {
+					success: false,
+					error: error.message,
+					data: {
+						teamMembers: [],
+						summary: {
+							totalTarget: 0,
+							totalAchieved: 0,
+							teamSize: 0,
+							currency: 'ZAR',
+						},
+						periodStartDate: null,
+						periodEndDate: null,
+					},
+					orgId,
+				};
+			}
+		}, 'team/targets');
 	}
 
 	/**
