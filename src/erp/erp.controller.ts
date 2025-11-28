@@ -1344,7 +1344,7 @@ export class ErpController {
 	 */
 	@Get('team/targets')
 	@UseInterceptors(CacheInterceptor)
-	@CacheTTL(300) // Cache for 5 minutes (300 seconds) - balances freshness with performance
+	@CacheTTL(300) // Cache for 5 minutes
 	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER)
 	@ApiOperation({ 
 		summary: 'Get targets and sales data for all team members (bulk endpoint)',
