@@ -10,6 +10,7 @@ import { AccessLevel } from '../lib/enums/user.enums';
 import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
 import { UserService } from '../user/user.service';
 import { NotFoundException, BadRequestException } from '@nestjs/common';
+import { startOfMonth, endOfMonth } from 'date-fns';
 
 /**
  * ERP Controller
@@ -1352,6 +1353,11 @@ Returns consolidated targets, sales data, and commission breakdowns for all mana
 - Batch fetches sales data efficiently using single ERP query
 - Leverages existing caching mechanisms
 
+**Date Range:**
+- If period dates are configured in user_targets, uses those dates
+- If not configured, automatically uses **current month** to fetch latest values
+- No dates required - endpoint works out of the box with latest data
+
 **Response Structure:**
 - \`teamMembers\`: Array of team member data including:
   - User information (uid, fullName, email, avatar, branchName)
@@ -1359,7 +1365,8 @@ Returns consolidated targets, sales data, and commission breakdowns for all mana
   - ERP sales data (totalRevenue, transactionCount, uniqueCustomers)
   - Commission breakdown by category
 - \`summary\`: Team-wide aggregated statistics
-- \`periodDates\`: Target period dates used for calculations
+- \`periodStartDate\` / \`periodEndDate\`: Dates used for calculations
+- \`usingDefaultDates\`: Boolean indicating if current month was used as default
 
 **Access Control:**
 - Only returns data for users managed by the requesting user
@@ -1368,6 +1375,7 @@ Returns consolidated targets, sales data, and commission breakdowns for all mana
 
 **Example Use Case:**
 Mobile team tab can replace multiple individual API calls with this single bulk endpoint.
+Returns latest sales data for all sales reps without requiring date configuration.
 		`
 	})
 	@ApiResponse({ 
@@ -1443,7 +1451,8 @@ Mobile team tab can replace multiple individual API calls with this single bulk 
 							}
 						},
 						periodStartDate: { type: 'string', example: '2024-01-01' },
-						periodEndDate: { type: 'string', example: '2024-01-31' }
+						periodEndDate: { type: 'string', example: '2024-01-31' },
+						usingDefaultDates: { type: 'boolean', example: false, description: 'True if current month was used as default (no dates configured)' }
 					}
 				},
 				orgId: { type: 'number', example: 1 }
@@ -1506,33 +1515,29 @@ Mobile team tab can replace multiple individual API calls with this single bulk 
 				}
 
 				// Get period dates from current user's personal targets (single source of truth)
+				// If not configured, use current month as default to fetch latest values
 				const personalTargets = userTarget.personalTargets as any;
 				const periodStartDateRaw = personalTargets?.periodStartDate;
 				const periodEndDateRaw = personalTargets?.periodEndDate;
 
-				if (!periodStartDateRaw || !periodEndDateRaw) {
-					this.logger.warn(`[${operationId}] ⚠️  No period dates found in user target for user ${userId}`);
-					return {
-						success: false,
-						message: 'Target period dates not configured. Please set periodStartDate and periodEndDate in user targets.',
-						data: {
-							teamMembers: [],
-							summary: {
-								totalTarget: 0,
-								totalAchieved: 0,
-								teamSize: managedStaff.length,
-								currency: 'ZAR',
-							},
-							periodStartDate: null,
-							periodEndDate: null,
-						},
-						orgId,
-					};
-				}
+				let periodStartDate: string;
+				let periodEndDate: string;
+				let usingDefaultDates = false;
 
-				// Format dates to YYYY-MM-DD format
-				const periodStartDate = new Date(periodStartDateRaw).toISOString().split('T')[0];
-				const periodEndDate = new Date(periodEndDateRaw).toISOString().split('T')[0];
+				if (!periodStartDateRaw || !periodEndDateRaw) {
+					// ✅ Use current month as default to get latest values for all sales reps
+					const now = new Date();
+					const monthStart = startOfMonth(now);
+					const monthEnd = endOfMonth(now);
+					periodStartDate = monthStart.toISOString().split('T')[0];
+					periodEndDate = monthEnd.toISOString().split('T')[0];
+					usingDefaultDates = true;
+					this.logger.log(`[${operationId}] ⚠️  No period dates configured, using current month as default: ${periodStartDate} → ${periodEndDate}`);
+				} else {
+					// Format dates to YYYY-MM-DD format
+					periodStartDate = new Date(periodStartDateRaw).toISOString().split('T')[0];
+					periodEndDate = new Date(periodEndDateRaw).toISOString().split('T')[0];
+				}
 				
 				this.logger.log(`[${operationId}] 📅 Using Target Period Dates: ${periodStartDate} → ${periodEndDate}`);
 				this.logger.log(`[${operationId}] 👥 Processing ${managedStaff.length} team members`);
@@ -1789,6 +1794,7 @@ Mobile team tab can replace multiple individual API calls with this single bulk 
 						summary,
 						periodStartDate,
 						periodEndDate,
+						usingDefaultDates, // Indicate if we used default dates
 					},
 					orgId,
 				};
