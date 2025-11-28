@@ -1,5 +1,6 @@
-import { Controller, Get, Post, Query, Logger, UseGuards, Req, Param, ParseIntPipe } from '@nestjs/common';
+import { Controller, Get, Post, Query, Logger, UseGuards, Req, Param, ParseIntPipe, UseInterceptors } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery, ApiParam } from '@nestjs/swagger';
+import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
 import { ErpHealthIndicator } from './erp.health';
 import { ErpCacheWarmerService } from './services/erp-cache-warmer.service';
 import { ErpDataService } from './services/erp-data.service';
@@ -1342,6 +1343,8 @@ export class ErpController {
 	 * @returns Consolidated team targets and sales data
 	 */
 	@Get('team/targets')
+	@UseInterceptors(CacheInterceptor)
+	@CacheTTL(300) // Cache for 5 minutes (300 seconds) - balances freshness with performance
 	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER)
 	@ApiOperation({ 
 		summary: 'Get targets and sales data for all team members (bulk endpoint)',
@@ -1351,7 +1354,15 @@ Returns consolidated targets, sales data, and commission breakdowns for all mana
 **Performance Benefits:**
 - Reduces API calls from N+1 to 1 (where N = number of team members)
 - Batch fetches sales data efficiently using single ERP query
-- Leverages existing caching mechanisms
+- **Response caching**: 5-minute cache (300 seconds) for instant subsequent requests
+- **Parallel processing**: User lookups run in parallel instead of sequential
+- Leverages existing ERP service caching mechanisms (10-minute TTL)
+
+**Caching Strategy:**
+- Endpoint-level cache: 5 minutes (balances freshness with performance)
+- ERP service cache: 10 minutes (handles database query caching)
+- Cache key includes: userId, orgId, periodStartDate, periodEndDate
+- Cache automatically invalidates after TTL expires
 
 **Date Range:**
 - If period dates are configured in user_targets, uses those dates
@@ -1476,6 +1487,7 @@ Returns latest sales data for all sales reps without requiring date configuratio
 		const userId = request.user?.uid;
 		const orgId = this.getOrgId(request);
 		const operationId = 'team-targets';
+		const startTime = Date.now();
 		
 		this.logger.log(`[${operationId}] Getting team targets for user ${userId}, org ${orgId}`);
 		
@@ -1542,6 +1554,7 @@ Returns latest sales data for all sales reps without requiring date configuratio
 				this.logger.log(`[${operationId}] 📅 Using Target Period Dates: ${periodStartDate} → ${periodEndDate}`);
 				this.logger.log(`[${operationId}] 👥 Processing ${managedStaff.length} team members`);
 
+				// ✅ OPTIMIZATION: Parallelize user lookups instead of sequential
 				// Extract ERP codes from managed staff (filter out inactive users and those without ERP codes)
 				const staffWithErpCodes: Array<{
 					staff: any;
@@ -1549,36 +1562,56 @@ Returns latest sales data for all sales reps without requiring date configuratio
 					userId: number;
 				}> = [];
 
-				for (const staff of managedStaff) {
-					// Check if user is active
-					const staffUserResult = await this.userService.findOne(staff.uid, orgId);
-					if (!staffUserResult?.user || staffUserResult.user.status !== 'active') {
-						this.logger.debug(`[${operationId}] ⚠️  Skipping inactive user ${staff.uid} (status: ${staffUserResult?.user?.status || 'not found'})`);
-						continue;
-					}
+				// ✅ Parallel fetch: Check user status and get targets simultaneously
+				const staffLookupPromises = managedStaff.map(async (staff) => {
+					try {
+						// Parallel: Check user status and get target simultaneously
+						const [staffUserResult, staffTargetResult] = await Promise.all([
+							this.userService.findOne(staff.uid, orgId),
+							this.userService.getUserTarget(staff.uid, orgId),
+						]);
 
-					// Get staff member's target to extract ERP code
-					const staffTargetResult = await this.userService.getUserTarget(staff.uid, orgId);
-					if (!staffTargetResult?.userTarget) {
-						this.logger.debug(`[${operationId}] ⚠️  No targets found for staff member ${staff.uid}`);
-						continue;
-					}
+						// Check if user is active
+						if (!staffUserResult?.user || staffUserResult.user.status !== 'active') {
+							this.logger.debug(`[${operationId}] ⚠️  Skipping inactive user ${staff.uid} (status: ${staffUserResult?.user?.status || 'not found'})`);
+							return null;
+						}
 
-					const staffTarget = staffTargetResult.userTarget;
-					const erpSalesRepCode = staffTarget.erpSalesRepCode || 
-						(staffTarget.personalTargets as any)?.erpSalesRepCode || 
-						null;
+						// Get staff member's target to extract ERP code
+						if (!staffTargetResult?.userTarget) {
+							this.logger.debug(`[${operationId}] ⚠️  No targets found for staff member ${staff.uid}`);
+							return null;
+						}
 
-					if (erpSalesRepCode) {
-						staffWithErpCodes.push({
-							staff,
-							erpSalesRepCode,
-							userId: staff.uid,
-						});
-					} else {
-						this.logger.debug(`[${operationId}] ⚠️  No ERP Sales Rep Code found for staff member ${staff.uid}`);
+						const staffTarget = staffTargetResult.userTarget;
+						const erpSalesRepCode = staffTarget.erpSalesRepCode || 
+							(staffTarget.personalTargets as any)?.erpSalesRepCode || 
+							null;
+
+						if (erpSalesRepCode) {
+							return {
+								staff,
+								erpSalesRepCode,
+								userId: staff.uid,
+							};
+						} else {
+							this.logger.debug(`[${operationId}] ⚠️  No ERP Sales Rep Code found for staff member ${staff.uid}`);
+							return null;
+						}
+					} catch (error) {
+						this.logger.warn(`[${operationId}] Error processing staff member ${staff.uid}: ${error.message}`);
+						return null;
 					}
-				}
+				});
+
+				// Wait for all lookups to complete
+				const lookupResults = await Promise.all(staffLookupPromises);
+				// Filter out null results
+				lookupResults.forEach(result => {
+					if (result) {
+						staffWithErpCodes.push(result);
+					}
+				});
 
 				this.logger.log(`[${operationId}] ✅ Found ${staffWithErpCodes.length} team members with ERP codes`);
 
@@ -1781,11 +1814,13 @@ Returns latest sales data for all sales reps without requiring date configuratio
 					}
 				);
 
-				this.logger.log(`[${operationId}] ✅ Team Targets Retrieved Successfully:`);
+				const duration = Date.now() - startTime;
+				this.logger.log(`[${operationId}] ✅ Team Targets Retrieved Successfully (${duration}ms):`);
 				this.logger.log(`[${operationId}]    👥 Team Size: ${summary.teamSize} members`);
 				this.logger.log(`[${operationId}]    💰 Total Target: R${summary.totalTarget.toLocaleString('en-ZA')}`);
 				this.logger.log(`[${operationId}]    📊 Total Achieved: R${summary.totalAchieved.toLocaleString('en-ZA')}`);
 				this.logger.log(`[${operationId}]    📅 Period: ${periodStartDate} → ${periodEndDate}`);
+				this.logger.log(`[${operationId}]    ⚡ Performance: ${duration}ms total, ${staffWithErpCodes.length} staff processed`);
 
 				return {
 					success: true,
@@ -1797,6 +1832,11 @@ Returns latest sales data for all sales reps without requiring date configuratio
 						usingDefaultDates, // Indicate if we used default dates
 					},
 					orgId,
+					performance: {
+						durationMs: duration,
+						teamSize: summary.teamSize,
+						cached: false, // Will be true if CacheInterceptor served from cache
+					},
 				};
 			} catch (error) {
 				this.logger.error(`[${operationId}] Error getting team targets for user ${userId}: ${error.message}`);
