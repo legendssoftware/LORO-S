@@ -232,6 +232,13 @@ export class PerformanceMetadataDto {
 	organizationTimezone: string;
 
 	@ApiProperty({ 
+		description: 'Country code for the selected country',
+		required: false,
+		example: 'SA'
+	})
+	countryCode?: string;
+
+	@ApiProperty({ 
 		description: 'Whether data was served from cache',
 		required: false
 	})
