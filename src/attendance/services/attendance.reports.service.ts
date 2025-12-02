@@ -672,16 +672,16 @@ export class AttendanceReportsService {
 							name: user.branch.name || 'Unknown Branch',
 					  }
 					: undefined,
-				lateMinutes: lateInfo.lateMinutes,
-				earlyMinutes: undefined,
-				checkInTime: primaryAttendance.checkIn ? format(primaryAttendance.checkIn, 'HH:mm') : undefined,
-				lateStatus: this.determineLateStatus(lateInfo.lateMinutes),
-			};
+			lateMinutes: lateInfo.lateMinutes,
+			earlyMinutes: undefined,
+			checkInTime: primaryAttendance.checkIn ? await this.formatTimeInOrganizationTimezone(primaryAttendance.checkIn, organizationId, 'HH:mm') : undefined,
+			lateStatus: this.determineLateStatus(lateInfo.lateMinutes),
+		};
 
-			// Add overtime indicator if applicable
-			if (isOvertime) {
-				employee.checkInTime = `${employee.checkInTime} (OT: ${totalHours}h)`;
-			}
+		// Add overtime indicator if applicable
+		if (isOvertime) {
+			employee.checkInTime = `${employee.checkInTime} (OT: ${totalHours}h)`;
+		}
 
 			presentEmployees.push(employee);
 		}
@@ -1087,13 +1087,13 @@ export class AttendanceReportsService {
 							uid: owner.branch.uid,
 							name: owner.branch.name || 'Unknown Branch',
 					  }
-					: undefined,
-				lateMinutes: lateInfo.lateMinutes,
-				earlyMinutes: undefined,
-				checkInTime: attendance.checkIn ? format(attendance.checkIn, 'HH:mm') : undefined,
-				lateStatus: this.determineLateStatus(lateInfo.lateMinutes),
-			});
-		}
+			: undefined,
+			lateMinutes: lateInfo.lateMinutes,
+			earlyMinutes: undefined,
+			checkInTime: attendance.checkIn ? await this.formatTimeInOrganizationTimezone(attendance.checkIn, organizationId, 'HH:mm') : undefined,
+			lateStatus: this.determineLateStatus(lateInfo.lateMinutes),
+		});
+	}
 
 		// Create absent employees list - only count those expected to work today
 		const presentUserIds = new Set(todayAttendance.map((att) => att.owner?.uid));
@@ -2031,16 +2031,16 @@ export class AttendanceReportsService {
 							name: user.branch.name || 'Unknown Branch',
 					  }
 					: undefined,
-				lateMinutes: lateMinutes > 0 ? lateMinutes : undefined,
-				earlyMinutes: earlyMinutes > 0 ? earlyMinutes : undefined,
-				checkInTime: primaryAttendance.checkIn ? format(primaryAttendance.checkIn, 'HH:mm') : undefined,
-				lateStatus,
-			};
+			lateMinutes: lateMinutes > 0 ? lateMinutes : undefined,
+			earlyMinutes: earlyMinutes > 0 ? earlyMinutes : undefined,
+			checkInTime: primaryAttendance.checkIn ? await this.formatTimeInOrganizationTimezone(primaryAttendance.checkIn, organizationId, 'HH:mm') : undefined,
+			lateStatus,
+		};
 
-			// Add overtime indicator if applicable
-			if (isOvertime) {
-				consolidatedUser.checkInTime = `${consolidatedUser.checkInTime} (OT: ${totalHours}h)`;
-			}
+		// Add overtime indicator if applicable
+		if (isOvertime) {
+			consolidatedUser.checkInTime = `${consolidatedUser.checkInTime} (OT: ${totalHours}h)`;
+		}
 
 			if (!workingDayInfo.startTime) {
 				onTimeArrivals.push(consolidatedUser);
@@ -3135,7 +3135,7 @@ export class AttendanceReportsService {
 							name: owner.branch.name || 'Unknown Branch',
 					  }
 					: undefined,
-				checkInTime: attendance.checkIn ? format(attendance.checkIn, 'HH:mm') : undefined,
+				checkInTime: attendance.checkIn ? await this.formatTimeInOrganizationTimezone(attendance.checkIn, organizationId, 'HH:mm') : undefined,
 				lateMinutes: lateInfo.lateMinutes,
 				lateStatus: this.determineLateStatus(lateInfo.lateMinutes),
 			};
@@ -3318,7 +3318,7 @@ export class AttendanceReportsService {
 
 			if (attendance) {
 				// Present employee
-				employeeData.checkInTime = attendance.checkIn ? format(attendance.checkIn, 'HH:mm') : undefined;
+				employeeData.checkInTime = attendance.checkIn ? await this.formatTimeInOrganizationTimezone(attendance.checkIn, organizationId, 'HH:mm') : undefined;
 				branch.presentEmployees.push(employeeData);
 
 				// Calculate hours worked using organization hours
@@ -3870,7 +3870,7 @@ export class AttendanceReportsService {
 							name: user.branch.name || 'Unknown Branch',
 					  }
 					: undefined,
-				checkInTime: primaryAttendance.checkIn ? format(primaryAttendance.checkIn, 'HH:mm') : undefined,
+				checkInTime: primaryAttendance.checkIn ? await this.formatTimeInOrganizationTimezone(primaryAttendance.checkIn, organizationId, 'HH:mm') : undefined,
 				lateMinutes: lateInfo.lateMinutes,
 				lateStatus: this.determineLateStatus(lateInfo.lateMinutes),
 			};

@@ -56,6 +56,10 @@ export class AttendanceService {
 	private readonly CACHE_PREFIX = 'attendance:';
 	private readonly CACHE_TTL: number;
 	private readonly activeCalculations = new Set<number>();
+	
+	// Validation constants for external machine consolidations
+	private readonly MIN_SHIFT_DURATION_MINUTES = 30; // Minimum 30 minutes between check-in and check-out
+	private readonly MAX_TIME_DIFF_MINUTES = 5; // Maximum 5 minutes difference for "too close" validation (likely duplicate)
 
 	constructor(
 		@InjectRepository(Attendance)
@@ -614,6 +618,7 @@ export class AttendanceService {
 		checkInDto: CreateCheckInDto,
 		orgId?: number,
 		branchId?: number,
+		skipAutoClose: boolean = false,
 	): Promise<{ message: string; data?: any }> {
 		this.logger.log(`Check-in attempt for user ${checkInDto.owner.uid}, orgId: ${orgId}, branchId: ${branchId}`);
 		this.logger.debug(`Check-in data: ${JSON.stringify(checkInDto)}`);
@@ -698,17 +703,61 @@ export class AttendanceService {
 				};
 			}
 			
-			// Different day - proceed with auto-close
+			// Different day - handle auto-close based on skipAutoClose flag
+			if (skipAutoClose) {
+				// External machine consolidation - don't auto-close, return error
+				this.logger.warn(
+					`External machine check-in blocked: User ${checkInDto.owner.uid} already has active shift from different day. ` +
+					`External machines cannot auto-close shifts.`
+				);
+				
+				const checkInTime = await this.formatTimeInOrganizationTimezone(
+					new Date(existingShift.checkIn),
+					orgId
+				);
+				
+				return {
+					message: `Cannot process external machine check-in: User already has an active shift (started at ${checkInTime}). ` +
+							 `Please manually close the existing shift first. External machines cannot auto-close shifts.`,
+					data: {
+						error: 'ACTIVE_SHIFT_EXISTS',
+						existingShift: {
+							id: existingShift.uid,
+							checkInTime: existingShift.checkIn,
+							status: existingShift.status,
+						},
+						success: false
+					}
+				};
+			}
+			
+			// Different day - proceed with auto-close (only for manual check-ins, not external machines)
 			this.logger.warn(
 				`User ${checkInDto.owner.uid} has shift from different day - auto-closing previous shift`
 			);
 			
 			try {
-				// Pass true for skipPreferenceCheck since user is actively starting a new shift
-				// User's active action to start a new shift should override their shiftAutoEnd preference
-				// The preference only applies to scheduled/automated shift closures, not when user actively checks in
-				// Pass the new check-in time as the close time for the old shift
-				await this.autoCloseExistingShift(existingShift, orgId, true, new Date(checkInDto.checkIn));
+				// For auto-close from different day, use organization close time (16:30), NOT new check-in time
+				// This prevents creating shifts with wrong durations (e.g., 23+ hour shifts)
+				const orgCloseTime = TimezoneUtil.parseTimeInOrganization(
+					'16:30',
+					existingShiftDate,
+					orgTimezone
+				);
+				
+				// Ensure close time is on the same day as the existing shift's check-in
+				// If it's before check-in time, it means we need the next day's close time
+				if (orgCloseTime <= existingShiftDate) {
+					const nextDayCloseTime = TimezoneUtil.addMinutesInOrganizationTime(
+						orgCloseTime,
+						24 * 60,
+						orgTimezone
+					);
+					await this.autoCloseExistingShift(existingShift, orgId, true, nextDayCloseTime);
+				} else {
+					await this.autoCloseExistingShift(existingShift, orgId, true, orgCloseTime);
+				}
+				
 				this.logger.log(`Successfully auto-closed existing shift from different day for user ${checkInDto.owner.uid}`);
 			} catch (error) {
 				this.logger.error(
@@ -1120,15 +1169,27 @@ export class AttendanceService {
 			}
 
 			// Use ACTUAL worked time (not expected time) - cap at expected hours, rest goes to overtime
-			const durationMinutes = Math.min(actualWorkMinutes, expectedWorkMinutes);
-			const overtimeMinutes = Math.max(0, actualWorkMinutes - expectedWorkMinutes);
+			// For auto-closed shifts, ensure duration never exceeds 8 hours (07:30-16:30 with 1 hour lunch = 8 hours)
+			// This prevents saving wrong durations like 9h 30m or 23+ hour shifts
+			const MAX_AUTO_CLOSE_DURATION = 480; // 8 hours = 480 minutes (07:30-16:30 with 1 hour lunch)
+			const durationMinutes = Math.min(actualWorkMinutes, expectedWorkMinutes, MAX_AUTO_CLOSE_DURATION);
+			const overtimeMinutes = Math.max(0, actualWorkMinutes - durationMinutes);
+
+			// Validate duration to prevent saving suspiciously long shifts
+			if (actualWorkMinutes > MAX_AUTO_CLOSE_DURATION * 1.5) { // More than 12 hours
+				this.logger.warn(
+					`Suspicious auto-close duration detected: ${actualWorkMinutes} minutes (${(actualWorkMinutes/60).toFixed(1)} hours). ` +
+					`Capping at ${MAX_AUTO_CLOSE_DURATION} minutes (8 hours). ` +
+					`Check-in: ${checkInTime.toISOString()}, Check-out: ${checkOutTime.toISOString()}`
+				);
+			}
 
 			const duration = TimeCalculatorUtil.formatDuration(durationMinutes);
 			const overtimeDuration = TimeCalculatorUtil.formatDuration(overtimeMinutes);
 
 			this.logger.debug(
 				`Auto-close calculated - Actual worked: ${actualWorkMinutes} min, Expected: ${expectedWorkMinutes} min, ` +
-				`Duration: ${duration} (${durationMinutes} min), Overtime: ${overtimeDuration} (${overtimeMinutes} min)`
+				`Capped Duration: ${duration} (${durationMinutes} min), Overtime: ${overtimeDuration} (${overtimeMinutes} min)`
 			);
 
 			// Update the existing shift
@@ -1192,9 +1253,10 @@ export class AttendanceService {
 				// Use default expected work minutes for fallback
 				const fallbackExpectedWorkMinutes = TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES;
 				
-				// Use ACTUAL worked time (not expected time) - cap at expected work hours
-				const fallbackDurationMinutes = Math.min(fallbackActualWorkMinutes, fallbackExpectedWorkMinutes);
-				const fallbackOvertimeMinutes = Math.max(0, fallbackActualWorkMinutes - fallbackExpectedWorkMinutes);
+				// For fallback auto-close, also cap at 8 hours to prevent wrong durations
+				const FALLBACK_MAX_DURATION = 480; // 8 hours
+				const fallbackDurationMinutes = Math.min(fallbackActualWorkMinutes, fallbackExpectedWorkMinutes, FALLBACK_MAX_DURATION);
+				const fallbackOvertimeMinutes = Math.max(0, fallbackActualWorkMinutes - fallbackDurationMinutes);
 
 				const fallbackDuration = TimeCalculatorUtil.formatDuration(fallbackDurationMinutes);
 				const fallbackOvertimeDuration = TimeCalculatorUtil.formatDuration(fallbackOvertimeMinutes);
@@ -5855,6 +5917,164 @@ export class AttendanceService {
 	}
 
 	/**
+	 * Validate external machine record before processing
+	 * Prevents invalid records from being saved to the database
+	 * 
+	 * @param record - The record to validate (check-in or check-out)
+	 * @param mode - Consolidation mode (IN or OUT)
+	 * @param orgId - Organization ID for timezone and date validation
+	 * @returns Validation result with error message if invalid
+	 */
+	private async validateExternalMachineRecord(
+		record: CreateCheckInDto | CreateCheckOutDto,
+		mode: ConsolidateMode,
+		orgId?: number,
+	): Promise<{ valid: boolean; error?: string }> {
+		try {
+			// Get organization timezone for accurate date/time comparisons
+			const orgTimezone = await this.getOrganizationTimezone(orgId);
+			
+			// Cast record to access both checkIn and checkOut properties
+			const recordAny = record as any;
+			
+			// Validation 1: Check if record has both checkIn and checkOut (shouldn't happen in normal flow)
+			if (recordAny.checkIn && recordAny.checkOut) {
+				const checkInTime = new Date(recordAny.checkIn);
+				const checkOutTime = new Date(recordAny.checkOut);
+				
+				// Convert to organization timezone for comparison
+				const checkInOrgTime = TimezoneUtil.toOrganizationTime(checkInTime, orgTimezone);
+				const checkOutOrgTime = TimezoneUtil.toOrganizationTime(checkOutTime, orgTimezone);
+				
+				// Check if times are too close (within 5 minutes) - likely a duplicate or error
+				const timeDiffMinutes = Math.abs(differenceInMinutes(checkOutOrgTime, checkInOrgTime));
+				if (timeDiffMinutes <= this.MAX_TIME_DIFF_MINUTES) {
+					return {
+						valid: false,
+						error: `Check-in and check-out times are too close (${timeDiffMinutes} minutes apart). ` +
+							   `This appears to be a duplicate or invalid record. Times must be at least ${this.MAX_TIME_DIFF_MINUTES + 1} minutes apart.`
+					};
+				}
+				
+				// Check if check-out is before check-in
+				if (checkOutOrgTime <= checkInOrgTime) {
+					return {
+						valid: false,
+						error: `Check-out time (${checkOutOrgTime.toISOString()}) must be after check-in time (${checkInOrgTime.toISOString()})`
+					};
+				}
+				
+				// Check minimum duration (must be at least 30 minutes)
+				if (timeDiffMinutes < this.MIN_SHIFT_DURATION_MINUTES) {
+					return {
+						valid: false,
+						error: `Shift duration too short: ${timeDiffMinutes} minutes. ` +
+							   `Minimum required duration is ${this.MIN_SHIFT_DURATION_MINUTES} minutes.`
+					};
+				}
+			}
+			
+			// Validation 2: For check-in records, check if user already has a record for this day
+			// This prevents overwriting existing records from external machines
+			if (mode === ConsolidateMode.IN && recordAny.checkIn) {
+				const checkInTime = new Date(recordAny.checkIn);
+				const checkInOrgTime = TimezoneUtil.toOrganizationTime(checkInTime, orgTimezone);
+				
+				// Get the calendar date in organization timezone (YYYY-MM-DD)
+				const checkInDate = new Date(
+					checkInOrgTime.getFullYear(),
+					checkInOrgTime.getMonth(),
+					checkInOrgTime.getDate()
+				);
+				
+				// Check if user already has an attendance record for this day
+				const existingRecords = await this.attendanceRepository.find({
+					where: {
+						owner: recordAny.owner,
+						organisation: orgId ? { uid: orgId } : undefined,
+						checkIn: Not(IsNull()),
+					},
+					relations: ['owner'],
+					order: {
+						checkIn: 'DESC',
+					},
+				});
+				
+				// Check each existing record to see if it's on the same calendar day
+				for (const existingRecord of existingRecords) {
+					const existingCheckInTime = new Date(existingRecord.checkIn);
+					const existingCheckInOrgTime = TimezoneUtil.toOrganizationTime(existingCheckInTime, orgTimezone);
+					const existingCheckInDate = new Date(
+						existingCheckInOrgTime.getFullYear(),
+						existingCheckInOrgTime.getMonth(),
+						existingCheckInOrgTime.getDate()
+					);
+					
+					// Check if it's the same calendar day
+					if (
+						checkInDate.getFullYear() === existingCheckInDate.getFullYear() &&
+						checkInDate.getMonth() === existingCheckInDate.getMonth() &&
+						checkInDate.getDate() === existingCheckInDate.getDate()
+					) {
+						const dateStr = checkInDate.toISOString().split('T')[0];
+						return {
+							valid: false,
+							error: `User already has an attendance record for this day (${dateStr}). ` +
+								   `Skipping external machine record to prevent overwriting existing data. ` +
+								   `Existing record ID: ${existingRecord.uid}, Check-in: ${existingCheckInOrgTime.toISOString()}`
+						};
+					}
+				}
+			}
+			
+			// Validation 3: For check-out records, validate minimum time since check-in
+			if (mode === ConsolidateMode.OUT && recordAny.checkOut) {
+				// Find the active shift for this user
+				const activeShift = await this.attendanceRepository.findOne({
+					where: {
+						owner: recordAny.owner,
+						status: AttendanceStatus.PRESENT,
+						checkIn: Not(IsNull()),
+						checkOut: IsNull(),
+						organisation: orgId ? { uid: orgId } : undefined,
+					},
+					order: {
+						checkIn: 'DESC',
+					},
+				});
+				
+				if (activeShift) {
+					const checkInTime = new Date(activeShift.checkIn);
+					const checkOutTime = new Date(recordAny.checkOut);
+					
+					const checkInOrgTime = TimezoneUtil.toOrganizationTime(checkInTime, orgTimezone);
+					const checkOutOrgTime = TimezoneUtil.toOrganizationTime(checkOutTime, orgTimezone);
+					
+					// Calculate duration
+					const durationMinutes = differenceInMinutes(checkOutOrgTime, checkInOrgTime);
+					
+					// Validate minimum duration
+					if (durationMinutes < this.MIN_SHIFT_DURATION_MINUTES) {
+						return {
+							valid: false,
+							error: `Check-out time is too close to check-in time: ${durationMinutes} minutes. ` +
+								   `Minimum required duration is ${this.MIN_SHIFT_DURATION_MINUTES} minutes.`
+						};
+					}
+				}
+			}
+			
+			return { valid: true };
+		} catch (error) {
+			this.logger.error(`Error validating external machine record: ${error.message}`, error.stack);
+			return {
+				valid: false,
+				error: `Validation error: ${error.message}`
+			};
+		}
+	}
+
+	/**
 	 * ## 📦 Consolidate Attendance Records
 	 *
 	 * Process bulk attendance records from external systems (ERP, other time-tracking systems).
@@ -5867,6 +6087,7 @@ export class AttendanceService {
 	 * - Transaction support for data integrity
 	 * - Individual error handling without failing the entire batch
 	 * - Support for both check-in and check-out modes
+	 * - Validation to prevent invalid or duplicate records
 	 *
 	 * @param consolidateDto - Consolidation request containing mode and records array
 	 * @param orgId - Organization ID for filtering
@@ -5926,14 +6147,31 @@ export class AttendanceService {
 			this.logger.debug(`${recordLog} Processing ${consolidateDto.mode} record for user ${record.owner?.uid}`);
 
 			try {
+				// VALIDATION: Validate external machine record before processing
+				// This prevents invalid records, duplicates, and overwriting existing data
+				const validation = await this.validateExternalMachineRecord(record, consolidateDto.mode, orgId);
+				if (!validation.valid) {
+					throw new Error(validation.error || 'Record validation failed');
+				}
+
 				let result: any;
 				let attendanceId: number | undefined;
 				let message: string;
 
 				if (consolidateDto.mode === ConsolidateMode.IN) {
-					// Process as check-in
+					// Process as check-in from external machine
 					const checkInRecord = record as CreateCheckInDto;
-					result = await this.checkIn(checkInRecord, orgId, branchId);
+					
+					// Mark as external machine clocking in checkInNotes
+					const sourcePrefix = consolidateDto.sourceSystem 
+						? `[External Machine: ${consolidateDto.sourceSystem}] ` 
+						: '[External Machine] ';
+					const existingNotes = checkInRecord.checkInNotes || '';
+					checkInRecord.checkInNotes = sourcePrefix + (existingNotes || 'Morning clocking from external machine');
+					
+					// Pass skipAutoClose=true to prevent auto-closing existing shifts
+					// External machines should never auto-close user shifts
+					result = await this.checkIn(checkInRecord, orgId, branchId, true);
 
 					// Check if the result indicates an error (data is null)
 					if (!result.data) {
