@@ -1741,13 +1741,13 @@ Returns latest sales data for all sales reps without requiring date configuratio
 						// Staff member without ERP code or inactive
 						return {
 							userId: staff.uid,
-							fullName: staff.fullName,
-							email: staff.email,
-							avatar: staff.avatar,
-							branchName: staff.branchName,
-							branchUid: staff.branchUid,
-							hasTargets: staff.hasTargets,
-							targets: staff.targets,
+							fullName: staff.fullName || null,
+							email: staff.email || null,
+							avatar: staff.avatar || null,
+							branchName: staff.branchName || null,
+							branchUid: staff.branchUid || null,
+							hasTargets: staff.hasTargets || false,
+							targets: staff.targets || null,
 							sales: null, // No ERP data available
 							commissionsByCategory: [],
 						};
@@ -1757,10 +1757,12 @@ Returns latest sales data for all sales reps without requiring date configuratio
 					const salesRecord = salesDataMap.get(erpCode);
 					const commissionData = commissionsByRepCode.get(erpCode) || [];
 
-					// Update sales target with ERP data
-					let updatedTargets = { ...staff.targets };
+					// ✅ FIX: Safely handle null/undefined targets and update with ERP data
+					let updatedTargets = staff.targets ? { ...staff.targets } : null;
+					const currentSalesAmount = salesRecord?.totalRevenue || 0;
+					
 					if (updatedTargets?.sales && salesRecord) {
-						const currentSalesAmount = salesRecord.totalRevenue || 0;
+						// Update existing sales target with ERP data
 						updatedTargets = {
 							...updatedTargets,
 							sales: {
@@ -1774,36 +1776,73 @@ Returns latest sales data for all sales reps without requiring date configuratio
 									: 0,
 							},
 						};
+					} else if (salesRecord && updatedTargets && !updatedTargets.sales) {
+						// ✅ FIX: Create sales target structure if it doesn't exist but we have sales data
+						updatedTargets = {
+							...updatedTargets,
+							sales: {
+								name: 'Sales',
+								target: 0, // No target configured
+								current: currentSalesAmount,
+								remaining: 0,
+								progress: 0,
+								currency: updatedTargets.targetCurrency || 'ZAR',
+							},
+						};
+					} else if (salesRecord && !updatedTargets) {
+						// ✅ FIX: Create targets object if it doesn't exist but we have sales data
+						updatedTargets = {
+							sales: {
+								name: 'Sales',
+								target: 0,
+								current: currentSalesAmount,
+								remaining: 0,
+								progress: 0,
+								currency: 'ZAR',
+							},
+						};
 					}
 
 					return {
 						userId: staff.uid,
-						fullName: staff.fullName,
-						email: staff.email,
-						avatar: staff.avatar,
-						branchName: staff.branchName,
-						branchUid: staff.branchUid,
-						hasTargets: staff.hasTargets,
-						targets: updatedTargets,
+						fullName: staff.fullName || null,
+						email: staff.email || null,
+						avatar: staff.avatar || null,
+						branchName: staff.branchName || null,
+						branchUid: staff.branchUid || null,
+						hasTargets: staff.hasTargets || false,
+						targets: updatedTargets || staff.targets || null,
 						sales: salesRecord ? {
 							totalRevenue: salesRecord.totalRevenue || 0,
 							transactionCount: salesRecord.transactionCount || 0,
 							uniqueCustomers: salesRecord.uniqueCustomers || 0,
-							salesCode: salesRecord.salesCode,
-							salesName: salesRecord.salesName || salesRecord.salesCode,
+							salesCode: salesRecord.salesCode || erpCode,
+							salesName: salesRecord.salesName || salesRecord.salesCode || erpCode,
 						} : null,
 						commissionsByCategory: commissionData,
 					};
 				});
 
-				// Calculate team summary
+				// ✅ FIX: Calculate team summary using updated target values and ERP sales data
 				const summary = teamMembers.reduce(
 					(acc, member) => {
-						if (member.hasTargets && member.targets?.sales) {
-							acc.totalTarget += member.targets.sales.target || 0;
-							acc.totalAchieved += member.targets.sales.current || 0;
-							acc.currency = member.targets.sales.currency || 'ZAR';
+						const salesTarget = member.targets?.sales;
+						
+						if (salesTarget) {
+							// Use target from configured targets
+							acc.totalTarget += salesTarget.target || 0;
+							
+							// ✅ FIX: Use updated current value from ERP data
+							// Priority: updated targets.current (from ERP) > sales.totalRevenue > original current (0)
+							const currentSales = salesTarget.current || member.sales?.totalRevenue || 0;
+							acc.totalAchieved += currentSales;
+							acc.currency = salesTarget.currency || acc.currency || 'ZAR';
+						} else if (member.sales?.totalRevenue) {
+							// ✅ FIX: Include sales data even if no targets configured
+							acc.totalAchieved += member.sales.totalRevenue || 0;
+							acc.currency = acc.currency || 'ZAR';
 						}
+						
 						return acc;
 					},
 					{
@@ -1814,13 +1853,26 @@ Returns latest sales data for all sales reps without requiring date configuratio
 					}
 				);
 
+				// ✅ Enhanced logging for debugging null/0 values
+				const membersWithTargets = teamMembers.filter(m => m.hasTargets && m.targets?.sales).length;
+				const membersWithSales = teamMembers.filter(m => m.sales?.totalRevenue).length;
+				const membersWithBoth = teamMembers.filter(m => m.hasTargets && m.targets?.sales && m.sales?.totalRevenue).length;
+				
 				const duration = Date.now() - startTime;
 				this.logger.log(`[${operationId}] ✅ Team Targets Retrieved Successfully (${duration}ms):`);
 				this.logger.log(`[${operationId}]    👥 Team Size: ${summary.teamSize} members`);
+				this.logger.log(`[${operationId}]    📋 Members with targets: ${membersWithTargets}`);
+				this.logger.log(`[${operationId}]    📊 Members with sales data: ${membersWithSales}`);
+				this.logger.log(`[${operationId}]    ✅ Members with both: ${membersWithBoth}`);
 				this.logger.log(`[${operationId}]    💰 Total Target: R${summary.totalTarget.toLocaleString('en-ZA')}`);
 				this.logger.log(`[${operationId}]    📊 Total Achieved: R${summary.totalAchieved.toLocaleString('en-ZA')}`);
 				this.logger.log(`[${operationId}]    📅 Period: ${periodStartDate} → ${periodEndDate}`);
 				this.logger.log(`[${operationId}]    ⚡ Performance: ${duration}ms total, ${staffWithErpCodes.length} staff processed`);
+				
+				// Log warning if summary is 0 but we have sales data
+				if (summary.totalAchieved === 0 && membersWithSales > 0) {
+					this.logger.warn(`[${operationId}] ⚠️  WARNING: Total achieved is 0 but ${membersWithSales} members have sales data. Check target configuration.`);
+				}
 
 				return {
 					success: true,
