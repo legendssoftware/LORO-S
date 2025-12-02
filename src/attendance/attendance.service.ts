@@ -1096,6 +1096,17 @@ export class AttendanceService {
 				`Auto-close work session: net work minutes: ${workSession.netWorkMinutes}, break minutes: ${breakMinutes}`
 			);
 
+			// Validate and calculate actual worked time (ensure we use real time, not expected time)
+			let actualWorkMinutes = workSession?.netWorkMinutes;
+			if (typeof actualWorkMinutes !== 'number' || isNaN(actualWorkMinutes) || actualWorkMinutes < 0) {
+				this.logger.warn(
+					`Invalid workSession.netWorkMinutes (${actualWorkMinutes}). Calculating from actual time difference. ` +
+					`Check-in: ${checkInTime.toISOString()}, Check-out: ${checkOutTime.toISOString()}`
+				);
+				const totalMinutes = differenceInMinutes(checkOutTime, checkInTime);
+				actualWorkMinutes = Math.max(0, totalMinutes - breakMinutes);
+			}
+
 			// Get expected work minutes from organization hours
 			let expectedWorkMinutes = TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES;
 			if (orgId) {
@@ -1108,16 +1119,16 @@ export class AttendanceService {
 				}
 			}
 
-			// Cap duration at expected work hours, rest goes to overtime
-			const durationMinutes = Math.min(workSession.netWorkMinutes, expectedWorkMinutes);
-			const overtimeMinutes = Math.max(0, workSession.netWorkMinutes - expectedWorkMinutes);
+			// Use ACTUAL worked time (not expected time) - cap at expected hours, rest goes to overtime
+			const durationMinutes = Math.min(actualWorkMinutes, expectedWorkMinutes);
+			const overtimeMinutes = Math.max(0, actualWorkMinutes - expectedWorkMinutes);
 
 			const duration = TimeCalculatorUtil.formatDuration(durationMinutes);
 			const overtimeDuration = TimeCalculatorUtil.formatDuration(overtimeMinutes);
 
 			this.logger.debug(
-				`Auto-close calculated - Duration: ${duration} (${durationMinutes} min), ` +
-				`Overtime: ${overtimeDuration} (${overtimeMinutes} min)`
+				`Auto-close calculated - Actual worked: ${actualWorkMinutes} min, Expected: ${expectedWorkMinutes} min, ` +
+				`Duration: ${duration} (${durationMinutes} min), Overtime: ${overtimeDuration} (${overtimeMinutes} min)`
 			);
 
 			// Update the existing shift
@@ -1168,18 +1179,29 @@ export class AttendanceService {
 					organizationHours,
 				);
 
+				// Validate and calculate actual worked time for fallback
+				let fallbackActualWorkMinutes = fallbackWorkSession?.netWorkMinutes;
+				if (typeof fallbackActualWorkMinutes !== 'number' || isNaN(fallbackActualWorkMinutes) || fallbackActualWorkMinutes < 0) {
+					this.logger.warn(
+						`Invalid fallback workSession.netWorkMinutes (${fallbackActualWorkMinutes}). Calculating from actual time difference.`
+					);
+					const fallbackTotalMinutes = differenceInMinutes(fallbackCheckOutTime, fallbackCheckInTime);
+					fallbackActualWorkMinutes = Math.max(0, fallbackTotalMinutes - fallbackBreakMinutes);
+				}
+
 				// Use default expected work minutes for fallback
 				const fallbackExpectedWorkMinutes = TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES;
 				
-				// Cap duration at expected work hours
-				const fallbackDurationMinutes = Math.min(fallbackWorkSession.netWorkMinutes, fallbackExpectedWorkMinutes);
-				const fallbackOvertimeMinutes = Math.max(0, fallbackWorkSession.netWorkMinutes - fallbackExpectedWorkMinutes);
+				// Use ACTUAL worked time (not expected time) - cap at expected work hours
+				const fallbackDurationMinutes = Math.min(fallbackActualWorkMinutes, fallbackExpectedWorkMinutes);
+				const fallbackOvertimeMinutes = Math.max(0, fallbackActualWorkMinutes - fallbackExpectedWorkMinutes);
 
 				const fallbackDuration = TimeCalculatorUtil.formatDuration(fallbackDurationMinutes);
 				const fallbackOvertimeDuration = TimeCalculatorUtil.formatDuration(fallbackOvertimeMinutes);
 
 				this.logger.debug(
-					`Fallback auto-close - Duration: ${fallbackDuration}, Overtime: ${fallbackOvertimeDuration}`
+					`Fallback auto-close - Actual worked: ${fallbackActualWorkMinutes} min, Expected: ${fallbackExpectedWorkMinutes} min, ` +
+					`Duration: ${fallbackDuration}, Overtime: ${fallbackOvertimeDuration}`
 				);
 
 				existingShift.checkOut = closeTime;
