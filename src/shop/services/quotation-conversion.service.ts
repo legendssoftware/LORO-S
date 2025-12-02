@@ -50,6 +50,7 @@ export class QuotationConversionService {
 		await queryRunner.startTransaction();
 
 		try {
+			// === CRITICAL PATH ===
 			// Build query with org and branch filters
 			const quotationQueryBuilder = queryRunner.manager
 				.createQueryBuilder(Quotation, 'quotation')
@@ -80,9 +81,6 @@ export class QuotationConversionService {
 				queryRunner.manager,
 			);
 
-			// Update product analytics for each item
-			await this.updateProductAnalytics(order, quotation, queryRunner.manager);
-
 			// Mark quotation as converted
 			await queryRunner.manager.update(Quotation, quotation.uid, {
 				isConverted: true,
@@ -91,21 +89,48 @@ export class QuotationConversionService {
 				status: OrderStatus.IN_FULFILLMENT,
 			});
 
-			// Send notifications
-			this.sendNotifications(quotation, order);
-
-			// Trigger user target recalculation after successful conversion
-			this.eventEmitter.emit('user.target.update.required', {
-				userId: quotation.placedBy.uid,
-			});
-
 			await queryRunner.commitTransaction();
 
-			return {
+			// === EARLY RETURN ===
+			const immediateResponse = {
 				success: true,
 				message: `Quotation ${quotation.quotationNumber} successfully converted to order ${order.orderNumber}`,
 				order,
 			};
+
+			// === POST-RESPONSE PROCESSING ===
+			setImmediate(async () => {
+				const asyncOperationId = `QUOTATION_CONVERSION_ASYNC_${quotationId}_${Date.now()}`;
+				this.logger.log(`[${asyncOperationId}] Starting async post-conversion processing for quotation ${quotation.quotationNumber}`);
+
+				try {
+					// Reload order with relations for analytics
+					const fullOrder = await this.orderRepository.findOne({
+						where: { uid: order.uid },
+						relations: ['orderItems', 'orderItems.product'],
+					});
+
+					if (fullOrder) {
+						// Update product analytics for each item
+						await this.updateProductAnalytics(fullOrder, quotation);
+
+						// Send notifications
+						this.sendNotifications(quotation, fullOrder);
+
+						// Trigger user target recalculation after successful conversion
+						this.eventEmitter.emit('user.target.update.required', {
+							userId: quotation.placedBy.uid,
+						});
+
+						this.logger.log(`[${asyncOperationId}] Async post-conversion processing completed successfully`);
+					}
+				} catch (error) {
+					this.logger.error(`[${asyncOperationId}] Error in async post-conversion processing: ${error.message}`, error.stack);
+					// Don't throw - user already has success response
+				}
+			});
+
+			return immediateResponse;
 		} catch (error) {
 			this.logger.error(`Error converting quotation ${quotationId} to order: ${error.message}`, error.stack);
 			await queryRunner.rollbackTransaction();
@@ -226,7 +251,6 @@ export class QuotationConversionService {
 	private async updateProductAnalytics(
 		order: Order,
 		quotation: Quotation,
-		entityManager: EntityManager,
 	): Promise<void> {
 		for (const item of order.orderItems) {
 			const productId = item.product.uid;
