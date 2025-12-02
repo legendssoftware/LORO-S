@@ -437,6 +437,23 @@ export class PerformanceDashboardDataDto {
 	@ApiProperty({ description: 'Applied filters', required: false })
 	filters?: any;
 
+	@ApiProperty({ 
+		type: 'object',
+		description: 'Currency information for the selected country',
+		properties: {
+			code: { type: 'string', example: 'ZAR' },
+			symbol: { type: 'string', example: 'R' },
+			locale: { type: 'string', example: 'en-ZA' },
+			name: { type: 'string', example: 'South African Rand' },
+		}
+	})
+	currency?: {
+		code: string;
+		symbol: string;
+		locale: string;
+		name: string;
+	};
+
 	@ApiProperty({ type: PerformanceMetadataDto })
 	metadata: PerformanceMetadataDto;
 }

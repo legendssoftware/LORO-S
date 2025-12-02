@@ -23,6 +23,7 @@ import {
 	BranchAggregation,
 	BranchCategoryAggregation,
 } from '../../erp/interfaces/erp-data.interface';
+import { getCurrencyForCountry } from '../../erp/utils/currency.util';
 
 /**
  * ========================================================================
@@ -83,6 +84,10 @@ export class PerformanceDashboardGenerator {
 		this.logger.log(`🌍 Country: ${params.country || 'not specified'} → Code: ${countryCode}`);
 		this.logger.log(`Date range: ${params.startDate} to ${params.endDate}`);
 
+		// Get currency for country
+		const currency = getCurrencyForCountry(countryCode);
+		this.logger.log(`💰 Currency: ${currency.code} (${currency.symbol}) - ${currency.name}`);
+
 		try {
 			// Get ERP data
 			const rawData = await this.getPerformanceData(params);
@@ -142,12 +147,19 @@ export class PerformanceDashboardGenerator {
 				salesPerStore,
 				masterData,
 				totalUniqueClients, // ✅ Add total unique clients to response
+				currency: {
+					code: currency.code,
+					symbol: currency.symbol,
+					locale: currency.locale,
+					name: currency.name,
+				},
 				filters: params,
 				metadata: {
 					lastUpdated: new Date().toISOString(),
 					dataQuality: 'excellent',
 					recordCount: rawData.length,
 					organizationTimezone: 'Africa/Johannesburg', // TODO: Get from organization settings
+					countryCode, // Include country code in metadata
 				},
 			};
 		} catch (error) {
