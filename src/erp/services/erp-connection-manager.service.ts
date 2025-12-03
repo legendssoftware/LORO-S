@@ -6,6 +6,7 @@ import { TblSalesLines } from '../entities/tblsaleslines.entity';
 import { TblCustomers } from '../entities/tblcustomers.entity';
 import { TblCustomerCategories } from '../entities/tblcustomercategories.entity';
 import { TblSalesman } from '../entities/tblsalesman.entity';
+import { TblMultistore } from '../entities/tblmultistore.entity';
 
 /**
  * Country to database name mapping
@@ -135,7 +136,7 @@ export class ErpConnectionManagerService implements OnModuleInit {
 			username,
 			password,
 			database: databaseName,
-			entities: [TblSalesHeader, TblSalesLines, TblCustomers, TblCustomerCategories, TblSalesman],
+			entities: [TblSalesHeader, TblSalesLines, TblCustomers, TblCustomerCategories, TblSalesman, TblMultistore],
 			synchronize: false, // CRITICAL: Never sync with ERP database
 			logging: false,
 			extra: {

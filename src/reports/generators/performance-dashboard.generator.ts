@@ -210,7 +210,7 @@ export class PerformanceDashboardGenerator {
 		const branchCategoryAggregations = await this.erpDataService.getBranchCategoryAggregations(filters, countryCode);
 		
 		// ✅ Calculate performance directly from sales lines (no scaling)
-		return this.calculateBranchCategoryPerformanceFromAggregations(branchCategoryAggregations);
+		return await this.calculateBranchCategoryPerformanceFromAggregations(branchCategoryAggregations, countryCode);
 	}
 
 	/**
@@ -235,7 +235,7 @@ export class PerformanceDashboardGenerator {
 		// ✅ Get branch category aggregations to calculate GP (cost data from tblsaleslines)
 		const branchCategoryAggregations = await this.erpDataService.getBranchCategoryAggregations(filters, countryCode);
 		
-		return this.calculateSalesPerStoreFromAggregations(branchAggregations, branchCategoryAggregations);
+		return await this.calculateSalesPerStoreFromAggregations(branchAggregations, branchCategoryAggregations, countryCode);
 	}
 
 	/**
@@ -664,9 +664,6 @@ export class PerformanceDashboardGenerator {
 	 * ✅ FIXED: Calculates total from ALL branches, but only shows top 10 in legend
 	 */
 	private async generateBranchPerformanceChart(data: PerformanceData[], params: PerformanceFiltersDto) {
-		// Import branch name mapping
-		const { getBranchName } = require('../../erp/config/category-mapping.config');
-		
 		// Build ERP query filters
 		const filters = this.buildErpFilters(params);
 		const countryCode = this.getCountryCode(params);
@@ -675,11 +672,15 @@ export class PerformanceDashboardGenerator {
 		// ✅ Get ALL branches (no limit) - data and calculations reflect whole scope
 		const branchAggregations = await this.erpDataService.getBranchAggregations(filters, countryCode);
 		
-		// Map ALL branch aggregations to chart data using branch name mapping
+		// Get all store codes and fetch branch names from database
+		const storeCodes = branchAggregations.map(agg => String(agg.store || '').trim().padStart(3, '0'));
+		const branchNamesMap = await this.erpDataService.getBranchNamesFromDatabase(storeCodes, countryCode);
+		
+		// Map ALL branch aggregations to chart data using branch names from database
 		const allBranches = branchAggregations
 			.map((agg) => {
 				const storeCode = String(agg.store || '').trim().padStart(3, '0');
-				const branchName = getBranchName(storeCode); // ✅ Use branch name from mapping
+				const branchName = branchNamesMap.get(storeCode) || storeCode; // ✅ Use branch name from database
 				const revenue = typeof agg.totalRevenue === 'number' 
 					? agg.totalRevenue 
 					: parseFloat(String(agg.totalRevenue || 0));
@@ -1059,15 +1060,17 @@ export class PerformanceDashboardGenerator {
 	 * 
 	 * This ensures Branch × Category matches Sales by Category total (R823,481.96)
 	 */
-	private calculateBranchCategoryPerformanceFromAggregations(
-		categoryAggregations: BranchCategoryAggregation[]
-	): BranchCategoryPerformanceDto[] {
+	private async calculateBranchCategoryPerformanceFromAggregations(
+		categoryAggregations: BranchCategoryAggregation[],
+		countryCode: string = 'SA'
+	): Promise<BranchCategoryPerformanceDto[]> {
 		if (categoryAggregations.length === 0) return [];
 
-		// Import branch name mapping
-		const { getBranchName } = require('../../erp/config/category-mapping.config');
+		// Step 1: Get all store codes and fetch branch names from database
+		const storeCodes = categoryAggregations.map(agg => String(agg.store || '').trim().padStart(3, '0'));
+		const branchNamesMap = await this.erpDataService.getBranchNamesFromDatabase(storeCodes, countryCode);
 
-		// Step 1: Group category aggregations by branch (store)
+		// Step 2: Group category aggregations by branch (store)
 		const branchData = new Map<string, {
 			branchName: string;
 			categories: Map<string, BranchCategoryAggregation>;
@@ -1080,7 +1083,7 @@ export class PerformanceDashboardGenerator {
 
 			if (!branchData.has(branchId)) {
 				branchData.set(branchId, {
-					branchName: getBranchName(storeCode), // ✅ Use branch name from mapping
+					branchName: branchNamesMap.get(storeCode) || storeCode, // ✅ Use branch name from database
 					categories: new Map(),
 				});
 			}
@@ -1282,14 +1285,16 @@ export class PerformanceDashboardGenerator {
 	 * ✅ NEW: GP calculated from BranchCategoryAggregations by summing totalCost per store
 	 * GP = Revenue - Cost, GP% = (GP / Revenue) * 100
 	 */
-	private calculateSalesPerStoreFromAggregations(
+	private async calculateSalesPerStoreFromAggregations(
 		aggregations: BranchAggregation[],
-		branchCategoryAggregations: BranchCategoryAggregation[]
-	): SalesPerStoreDto[] {
+		branchCategoryAggregations: BranchCategoryAggregation[],
+		countryCode: string = 'SA'
+	): Promise<SalesPerStoreDto[]> {
 		if (aggregations.length === 0) return [];
 
-		// Import branch name mapping
-		const { getBranchName } = require('../../erp/config/category-mapping.config');
+		// Get all store codes and fetch branch names from database
+		const storeCodes = aggregations.map(agg => String(agg.store || '').trim().padStart(3, '0'));
+		const branchNamesMap = await this.erpDataService.getBranchNamesFromDatabase(storeCodes, countryCode);
 
 		// ✅ Calculate total cost per store from BranchCategoryAggregations
 		const storeCosts = new Map<string, number>();
@@ -1318,7 +1323,7 @@ export class PerformanceDashboardGenerator {
 
 			salesPerStore.push({
 				storeId: branchId,
-				storeName: getBranchName(storeCode), // ✅ Use branch name from mapping
+				storeName: branchNamesMap.get(storeCode) || storeCode, // ✅ Use branch name from database
 				totalRevenue: revenue, // ✅ Revenue from aggregations (same as base query)
 				transactionCount, // ✅ Transaction count from aggregations
 				averageTransactionValue: transactionCount > 0 ? revenue / transactionCount : 0,

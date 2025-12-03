@@ -8,6 +8,7 @@ import { TblSalesLines } from '../entities/tblsaleslines.entity';
 import { TblCustomers } from '../entities/tblcustomers.entity';
 import { TblCustomerCategories } from '../entities/tblcustomercategories.entity';
 import { TblSalesman } from '../entities/tblsalesman.entity';
+import { TblMultistore } from '../entities/tblmultistore.entity';
 import { ErpConnectionManagerService } from './erp-connection-manager.service';
 import {
 	DailyAggregation,
@@ -3721,9 +3722,13 @@ export class ErpDataService implements OnModuleInit {
 
 		const results = await query.getRawMany();
 		
+		// Get branch names from database for all stores
+		const storeCodes = results.map(row => row.store);
+		const branchNamesMap = await this.getBranchNamesFromDatabase(storeCodes, countryCode);
+		
 		return results.map((row) => ({
 			id: row.store,
-			name: getBranchName(row.store), // Use alias from mapping
+			name: branchNamesMap.get(row.store?.trim().padStart(3, '0')) || row.store || 'Unknown Branch',
 		}));
 	}
 
@@ -3793,6 +3798,138 @@ export class ErpDataService implements OnModuleInit {
 			this.logger.warn(`Failed to lookup sales rep name for code ${normalizedCode}: ${error.message}`);
 			return salesCode; // Fallback to code if lookup fails
 		}
+	}
+
+	/**
+	 * Get branch name from tblmultistore table by store code
+	 * Uses caching to avoid repeated database queries
+	 * ✅ Country Support: Fetches from the correct country database
+	 * 
+	 * @param storeCode - The store code (e.g., '001', '002')
+	 * @param countryCode - The country code (e.g., 'SA', 'MOZ', 'ZAM')
+	 * @returns The branch name (description field) or store code as fallback
+	 */
+	async getBranchNameFromDatabase(storeCode: string | null | undefined, countryCode: string = 'SA'): Promise<string> {
+		if (!storeCode || storeCode.trim() === '') {
+			return 'Unknown Branch';
+		}
+
+		const normalizedCode = storeCode.trim().padStart(3, '0');
+		const cacheKey = `branch_name:${normalizedCode}:${countryCode}`;
+
+		// Check cache first
+		const cached = await this.cacheManager.get<string>(cacheKey);
+		if (cached) {
+			return cached;
+		}
+
+		try {
+			const multistoreRepo = await this.getRepositoryForCountry(TblMultistore, countryCode);
+			const store = await multistoreRepo.findOne({
+				where: { code: normalizedCode },
+				select: ['code', 'description', 'alias'],
+			});
+
+			// Use alias field, fallback to description, then to store code
+			const name = store?.alias || store?.description || normalizedCode;
+			
+			// Cache the result (10-minute TTL like other ERP queries)
+			await this.cacheManager.set(cacheKey, name, this.CACHE_TTL);
+			
+			return name;
+		} catch (error) {
+			this.logger.warn(`Failed to lookup branch name for code ${normalizedCode} in country ${countryCode}: ${error.message}`);
+			// Fallback to hardcoded mapping for SA if database lookup fails
+			if (countryCode === 'SA') {
+				const { STORE_NAME_MAPPING } = require('../config/category-mapping.config');
+				return STORE_NAME_MAPPING[normalizedCode] || normalizedCode;
+			}
+			return normalizedCode; // Fallback to code if lookup fails
+		}
+	}
+
+	/**
+	 * Batch get branch names for multiple store codes
+	 * More efficient than individual lookups
+	 * ✅ Country Support: Fetches from the correct country database
+	 */
+	async getBranchNamesFromDatabase(storeCodes: string[], countryCode: string = 'SA'): Promise<Map<string, string>> {
+		const nameMap = new Map<string, string>();
+		const codesToLookup: string[] = [];
+
+		// Check cache for each code
+		for (const code of storeCodes) {
+			if (!code || code.trim() === '') continue;
+			
+			const normalizedCode = code.trim().padStart(3, '0');
+			const cacheKey = `branch_name:${normalizedCode}:${countryCode}`;
+			
+			const cached = await this.cacheManager.get<string>(cacheKey);
+			if (cached) {
+				nameMap.set(normalizedCode, cached);
+			} else {
+				codesToLookup.push(normalizedCode);
+			}
+		}
+
+		// Batch lookup remaining codes
+		if (codesToLookup.length > 0) {
+			try {
+				const multistoreRepo = await this.getRepositoryForCountry(TblMultistore, countryCode);
+				
+				const stores = await multistoreRepo.find({
+					where: codesToLookup.map(code => ({ code })),
+					select: ['code', 'description', 'alias'],
+				});
+
+				// Add to map and cache
+				for (const store of stores) {
+					const code = store.code?.trim().padStart(3, '0');
+					if (code) {
+						const name = store.alias || store.description || code;
+						nameMap.set(code, name);
+						
+						// Cache the result
+						const cacheKey = `branch_name:${code}:${countryCode}`;
+						await this.cacheManager.set(cacheKey, name, this.CACHE_TTL);
+					}
+				}
+
+				// For codes not found in database, use fallback
+				for (const code of codesToLookup) {
+					if (!nameMap.has(code)) {
+						// Fallback to hardcoded mapping for SA
+						if (countryCode === 'SA') {
+							const { STORE_NAME_MAPPING } = require('../config/category-mapping.config');
+							const fallbackName = STORE_NAME_MAPPING[code] || code;
+							nameMap.set(code, fallbackName);
+						} else {
+							nameMap.set(code, code);
+						}
+					}
+				}
+			} catch (error) {
+				this.logger.warn(`Failed to batch lookup branch names for country ${countryCode}: ${error.message}`);
+				// Fallback to hardcoded mapping for SA
+				if (countryCode === 'SA') {
+					const { STORE_NAME_MAPPING } = require('../config/category-mapping.config');
+					for (const code of codesToLookup) {
+						if (!nameMap.has(code)) {
+							nameMap.set(code, STORE_NAME_MAPPING[code] || code);
+						}
+					}
+				} else {
+					// For other countries, just use the code
+					for (const code of codesToLookup) {
+						if (!nameMap.has(code)) {
+							nameMap.set(code, code);
+						}
+					}
+				}
+			}
+		}
+
+		return nameMap;
 	}
 
 	/**

@@ -36,7 +36,6 @@ import { OrganizationHoursService } from '../attendance/services/organization.ho
 import { AttendanceService } from '../attendance/attendance.service';
 import { ErpDataService } from '../erp/services/erp-data.service';
 import { getCurrencyForCountry } from '../erp/utils/currency.util';
-import { getBranchName } from '../erp/config/category-mapping.config';
 import { ConsolidatedIncomeStatementDto, ConsolidatedIncomeStatementResponseDto, ConsolidatedBranchDataDto } from './dto/performance-dashboard.dto';
 
 // Utilities
@@ -2379,19 +2378,38 @@ export class ReportsService implements OnModuleInit {
 					// Get branch aggregations for this country
 					const branchAggregations = await this.erpDataService.getBranchAggregations(filters, country.code);
 					
+					// Get branch category aggregations to calculate GP (cost data from tblsaleslines)
+					const branchCategoryAggregations = await this.erpDataService.getBranchCategoryAggregations(filters, country.code);
+					
+					// Calculate total cost per store from BranchCategoryAggregations
+					const storeCosts = new Map<string, number>();
+					branchCategoryAggregations.forEach((agg) => {
+						const storeCode = String(agg.store || '').trim().padStart(3, '0');
+						const cost = typeof agg.totalCost === 'number' 
+							? agg.totalCost 
+							: parseFloat(String(agg.totalCost || 0));
+						const currentCost = storeCosts.get(storeCode) || 0;
+						storeCosts.set(storeCode, currentCost + cost);
+					});
+					
 					// Get currency info for this country
 					const currency = getCurrencyForCountry(country.code);
 					
+					// Get branch names from database
+					const storeCodes = branchAggregations.map(agg => String(agg.store || '').trim().padStart(3, '0'));
+					const branchNamesMap = await this.erpDataService.getBranchNamesFromDatabase(storeCodes, country.code);
+					
 			// Map branch aggregations to branch data
 			const branches: ConsolidatedBranchDataDto[] = (branchAggregations || []).map((agg) => {
+				const storeCode = String(agg?.store || '').trim().padStart(3, '0');
 				const revenue = Number(agg?.totalRevenue) || 0;
-				const cost = Number(agg?.totalCost) || 0;
-				const grossProfit = revenue - cost;
-				const grossProfitPercentage = revenue > 0 ? (grossProfit / revenue) * 100 : 0;
+				const totalCost = storeCosts.get(storeCode) || 0;
+				const grossProfit = revenue - totalCost; // ✅ GP = Revenue - Cost
+				const grossProfitPercentage = revenue > 0 ? (grossProfit / revenue) * 100 : 0; // ✅ GP% = (GP / Revenue) * 100
 				
 				return {
 					branchId: String(agg?.store || ''),
-					branchName: getBranchName(agg?.store) || String(agg?.store || 'Unknown'),
+					branchName: branchNamesMap.get(storeCode) || String(agg?.store || 'Unknown'),
 					totalRevenue: revenue,
 					transactionCount: Number(agg?.transactionCount) || 0,
 					grossProfit: grossProfit,
