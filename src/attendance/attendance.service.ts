@@ -276,6 +276,12 @@ export class AttendanceService {
 		try {
 			if (!record) return record;
 
+			// Skip timezone conversion for external machine records
+			if (record.checkInNotes && record.checkInNotes.includes('[External Machine: LEGEND_PEOPLE] Morning Clock Ins]')) {
+				this.logger.debug(`Skipping timezone conversion for external machine record ${record.uid}`);
+				return record;
+			}
+
 			// Get organization timezone or use user's timezone from preferences
 			let timezone = 'Africa/Johannesburg'; // Default fallback
 			
@@ -468,6 +474,11 @@ export class AttendanceService {
 				if (result.data && result.data.presentUsers && Array.isArray(result.data.presentUsers)) {
 					const timezone = await this.getOrganizationTimezone(organizationId);
 					for (const user of result.data.presentUsers) {
+						// Skip timezone conversion for external machine records
+						if (user.checkInNotes && user.checkInNotes.includes('[External Machine: LEGEND_PEOPLE] Morning Clock Ins]')) {
+							this.logger.debug(`Skipping timezone conversion for external machine user ${user.uid}`);
+							continue;
+						}
 						if (user.checkInTime) {
 							const originalTime = new Date(user.checkInTime);
 							user.checkInTime = TimezoneUtil.toOrganizationTime(originalTime, timezone);
@@ -4388,6 +4399,17 @@ export class AttendanceService {
 				lateArrivalsCount: number;
 				earlyDeparturesCount: number;
 			};
+			distanceAnalytics: {
+				totalDistance: {
+					allTime: number; // in kilometers
+					thisMonth: number;
+					thisWeek: number;
+					today: number;
+				};
+				averageDistancePerShift: number; // in kilometers
+				longestDistance: number; // in kilometers
+				shortestDistance: number; // in kilometers
+			};
 		};
 	}> {
 		try {
@@ -4550,6 +4572,37 @@ export class AttendanceService {
 			const shortestBreak =
 				allTimeBreaks.breakDurations.length > 0 ? Math.min(...allTimeBreaks.breakDurations) : 0;
 
+			// ===== DISTANCE ANALYTICS =====
+			const calculateDistanceAnalytics = (records: Attendance[]) => {
+				let totalDistanceKm = 0;
+				const distances: number[] = [];
+
+				records.forEach((record) => {
+					const distance = record.distanceTravelledKm || 0;
+					if (distance > 0) {
+						totalDistanceKm += distance;
+						distances.push(distance);
+					}
+				});
+
+				return {
+					totalDistanceKm,
+					distances,
+				};
+			};
+
+			const allTimeDistance = calculateDistanceAnalytics(allAttendance);
+			const monthDistance = calculateDistanceAnalytics(monthAttendance);
+			const weekDistance = calculateDistanceAnalytics(weekAttendance);
+			const todayDistance = calculateDistanceAnalytics(todayAttendance);
+
+			const completedShiftsWithDistance = allAttendance.filter((record) => record.checkOut && record.distanceTravelledKm && record.distanceTravelledKm > 0);
+			const averageDistancePerShift = completedShiftsWithDistance.length > 0
+				? allTimeDistance.totalDistanceKm / completedShiftsWithDistance.length
+				: 0;
+			const longestDistance = allTimeDistance.distances.length > 0 ? Math.max(...allTimeDistance.distances) : 0;
+			const shortestDistance = allTimeDistance.distances.length > 0 ? Math.min(...allTimeDistance.distances) : 0;
+
 		// ===== ENHANCED TIMING PATTERNS =====
 		// Get organization timezone for proper conversion
 		const timezone = await this.getOrganizationTimezone(organizationId);
@@ -4679,6 +4732,17 @@ export class AttendanceService {
 					lateArrivalsCount,
 					earlyDeparturesCount,
 				},
+				distanceAnalytics: {
+					totalDistance: {
+						allTime: Math.round(allTimeDistance.totalDistanceKm * 100) / 100,
+						thisMonth: Math.round(monthDistance.totalDistanceKm * 100) / 100,
+						thisWeek: Math.round(weekDistance.totalDistanceKm * 100) / 100,
+						today: Math.round(todayDistance.totalDistanceKm * 100) / 100,
+					},
+					averageDistancePerShift: Math.round(averageDistancePerShift * 100) / 100,
+					longestDistance: Math.round(longestDistance * 100) / 100,
+					shortestDistance: Math.round(shortestDistance * 100) / 100,
+				},
 			};
 
 			return {
@@ -4720,6 +4784,12 @@ export class AttendanceService {
 						shiftCompletionRate: 0,
 						lateArrivalsCount: 0,
 						earlyDeparturesCount: 0,
+					},
+					distanceAnalytics: {
+						totalDistance: { allTime: 0, thisMonth: 0, thisWeek: 0, today: 0 },
+						averageDistancePerShift: 0,
+						longestDistance: 0,
+						shortestDistance: 0,
 					},
 				},
 			};

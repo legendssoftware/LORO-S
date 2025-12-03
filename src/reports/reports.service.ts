@@ -958,11 +958,26 @@ export class ReportsService implements OnModuleInit {
 			if (attendanceId) {
 				try {
 					this.logger.debug(`Linking attendance record ${attendanceId} to report ${savedReport.uid}`);
+					
+					// Extract distance from report GPS data
+					let distanceKm = 0;
+					if (savedReport.gpsData?.tripSummary?.totalDistanceKm !== undefined) {
+						distanceKm = savedReport.gpsData.tripSummary.totalDistanceKm;
+					} else if (reportData?.details?.location?.totalDistanceKm !== undefined) {
+						distanceKm = reportData.details.location.totalDistanceKm;
+					} else if (reportData?.details?.location?.tripMetrics?.totalDistanceKm !== undefined) {
+						distanceKm = reportData.details.location.tripMetrics.totalDistanceKm;
+					}
+					
+					// Update attendance with both dailyReport link and distance
 					await this.attendanceRepository.update(
 						{ uid: attendanceId },
-						{ dailyReport: savedReport }
+						{ 
+							dailyReport: savedReport,
+							distanceTravelledKm: distanceKm
+						}
 					);
-					this.logger.log(`Successfully linked attendance ${attendanceId} to daily report ${savedReport.uid}`);
+					this.logger.log(`Successfully linked attendance ${attendanceId} to daily report ${savedReport.uid} with distance ${distanceKm.toFixed(2)} km`);
 				} catch (linkingError) {
 					this.logger.error(`Failed to link attendance ${attendanceId} to report ${savedReport.uid}: ${linkingError.message}`);
 					// Don't fail the report generation if linking fails

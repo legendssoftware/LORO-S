@@ -95,6 +95,9 @@ export class Attendance {
 	@Column({ type: 'text', nullable: true })
 	breakNotes: string;
 
+	@Column({ type: 'decimal', precision: 10, scale: 2, nullable: true, default: 0 })
+	distanceTravelledKm: number; // Distance travelled in kilometers for this shift
+
 	@Column({ type: 'timestamp', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
 	createdAt: Date;
 
