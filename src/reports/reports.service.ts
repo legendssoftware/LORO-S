@@ -35,8 +35,11 @@ import { CommunicationService } from '../communication/communication.service';
 import { OrganizationHoursService } from '../attendance/services/organization.hours.service';
 import { AttendanceService } from '../attendance/attendance.service';
 import { ErpDataService } from '../erp/services/erp-data.service';
+import { ErpConnectionManagerService } from '../erp/services/erp-connection-manager.service';
 import { getCurrencyForCountry } from '../erp/utils/currency.util';
-import { ConsolidatedIncomeStatementDto, ConsolidatedIncomeStatementResponseDto, ConsolidatedBranchDataDto } from './dto/performance-dashboard.dto';
+import { ConsolidatedIncomeStatementDto, ConsolidatedIncomeStatementResponseDto, ConsolidatedBranchDataDto, ExchangeRateDto } from './dto/performance-dashboard.dto';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 
 // Utilities
 import { TimezoneUtil } from '../lib/utils/timezone.util';
@@ -103,6 +106,8 @@ export class ReportsService implements OnModuleInit {
 		private taskRepository: Repository<Task>,
 		@InjectRepository(Quotation)
 		private quotationRepository: Repository<Quotation>,
+		@InjectDataSource()
+		private dataSource: DataSource,
 		private mainReportGenerator: MainReportGenerator,
 		private quotationReportGenerator: QuotationReportGenerator,
 		private userDailyReportGenerator: UserDailyReportGenerator,
@@ -119,6 +124,7 @@ export class ReportsService implements OnModuleInit {
 		private readonly performanceDashboardGenerator: PerformanceDashboardGenerator,
 		@Inject(forwardRef(() => ErpDataService))
 		private readonly erpDataService: ErpDataService,
+		private readonly erpConnectionManager: ErpConnectionManagerService,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 300;
 		this.logger.log(`Reports service initialized with cache TTL: ${this.CACHE_TTL}s`);
@@ -2468,6 +2474,9 @@ export class ReportsService implements OnModuleInit {
 			const totalCountries = dataWithBranches.length;
 			const totalBranches = dataWithBranches.reduce((sum, country) => sum + (country.branchCount || 0), 0);
 
+			// Fetch exchange rates for the date range (use endDate as reference)
+			const exchangeRates = await this.getExchangeRates(endDate);
+
 			this.logger.log(`[${operationId}] ✅ Consolidated income statement generated: ${totalCountries} countries, ${totalBranches} branches`);
 
 			const response: ConsolidatedIncomeStatementResponseDto = {
@@ -2476,6 +2485,7 @@ export class ReportsService implements OnModuleInit {
 				endDate,
 				totalCountries,
 				totalBranches,
+				exchangeRates,
 			};
 
 			return response;
@@ -2483,6 +2493,69 @@ export class ReportsService implements OnModuleInit {
 			this.logger.error(`[${operationId}] ❌ Error generating consolidated income statement: ${error?.message || 'Unknown error'}`);
 			this.logger.error(`[${operationId}] Error stack: ${error?.stack || 'No stack trace'}`);
 			throw error;
+		}
+	}
+
+	/**
+	 * Get exchange rates for currency conversion to ZAR
+	 * Fetches rates from bit_consolidated.tblforex_history for the given date
+	 * If no date is provided, uses today's date
+	 */
+	private async getExchangeRates(date?: string): Promise<ExchangeRateDto[]> {
+		const operationId = 'GET-EXCHANGE-RATES';
+		
+		// Default to today's date if no date provided
+		let queryDate: string;
+		if (!date || date.trim() === '') {
+			const today = new Date();
+			queryDate = today.toISOString().split('T')[0]; // Format as YYYY-MM-DD
+			this.logger.log(`[${operationId}] No date provided, using today's date: ${queryDate}`);
+		} else {
+			queryDate = date.trim();
+			this.logger.log(`[${operationId}] Fetching exchange rates for date: ${queryDate}`);
+		}
+
+		try {
+			// Get consolidated database connection
+			const consolidatedDataSource = await this.erpConnectionManager.getConsolidatedConnection();
+			this.logger.debug(`[${operationId}] ✅ Connected to consolidated database (bit_consolidated)`);
+
+			// Query forex rates for the exact date
+			// Use CAST to ensure rate is returned as string to preserve exact decimal precision
+			const query = `
+				SELECT forex_code, CAST(rate AS CHAR) as rate
+				FROM tblforex_history
+				WHERE forex_date = ?
+				AND forex_code IN ('BWP', 'ZMW', 'MZN', 'ZWL', 'USD', 'EUR')
+				ORDER BY forex_code
+			`;
+			
+			this.logger.debug(`[${operationId}] Executing query with date parameter: ${queryDate}`);
+			const queryStartTime = Date.now();
+			const results = await consolidatedDataSource.query(query, [queryDate]);
+			const queryDuration = Date.now() - queryStartTime;
+
+			this.logger.log(`[${operationId}] ✅ Query executed in ${queryDuration}ms, fetched ${results.length} rows for date ${queryDate}`);
+			
+			// Convert to DTO format - no rounding, use exact values from database
+			// Parse as number but preserve all decimal places
+			const exchangeRates: ExchangeRateDto[] = results.map((row: any) => {
+				// Convert string to number without any rounding - preserves all decimal places
+				const rate = Number(row.rate); // Number() preserves precision better than parseFloat for exact decimals
+				this.logger.debug(`[${operationId}] Rate for ${row.forex_code}: ${rate} (raw: ${row.rate})`);
+				return {
+					code: row.forex_code,
+					rate: rate, // Exact value from database, no rounding
+				};
+			});
+
+			this.logger.log(`[${operationId}] ✅ Successfully fetched ${exchangeRates.length} exchange rates for date ${queryDate}`);
+			return exchangeRates;
+		} catch (error: any) {
+			this.logger.error(`[${operationId}] ❌ Failed to fetch exchange rates for date ${queryDate}: ${error?.message || 'Unknown error'}`);
+			this.logger.error(`[${operationId}] Error stack: ${error?.stack || 'No stack trace'}`);
+			// Return empty array if fetch fails - conversion will be skipped
+			return [];
 		}
 	}
 }

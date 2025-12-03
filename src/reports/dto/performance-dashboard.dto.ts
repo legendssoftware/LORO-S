@@ -526,6 +526,14 @@ export class ConsolidatedIncomeStatementDto {
 	branchCount?: number;
 }
 
+export class ExchangeRateDto {
+	@ApiProperty({ description: 'Currency code (ZAR, BWP, ZMW, MZN, ZWL)' })
+	code: string;
+
+	@ApiProperty({ description: 'Exchange rate to ZAR' })
+	rate: number;
+}
+
 export class ConsolidatedIncomeStatementResponseDto {
 	@ApiProperty({ 
 		type: [ConsolidatedIncomeStatementDto],
@@ -544,5 +552,12 @@ export class ConsolidatedIncomeStatementResponseDto {
 
 	@ApiProperty({ description: 'Total number of branches across all countries' })
 	totalBranches: number;
+
+	@ApiProperty({ 
+		type: [ExchangeRateDto],
+		description: 'Exchange rates for currency conversion to ZAR',
+		required: false
+	})
+	exchangeRates?: ExchangeRateDto[];
 }
 

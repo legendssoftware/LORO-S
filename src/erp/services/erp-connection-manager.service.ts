@@ -7,6 +7,7 @@ import { TblCustomers } from '../entities/tblcustomers.entity';
 import { TblCustomerCategories } from '../entities/tblcustomercategories.entity';
 import { TblSalesman } from '../entities/tblsalesman.entity';
 import { TblMultistore } from '../entities/tblmultistore.entity';
+import { TblForexHistory } from '../entities/tblforex-history.entity';
 
 /**
  * Country to database name mapping
@@ -34,6 +35,8 @@ export class ErpConnectionManagerService implements OnModuleInit {
 	private readonly connections: Map<string, DataSource> = new Map();
 	private readonly connectionPromises: Map<string, Promise<DataSource>> = new Map();
 	private defaultConnection: DataSource | null = null;
+	private consolidatedConnection: DataSource | null = null;
+	private consolidatedConnectionPromise: Promise<DataSource> | null = null;
 	private readonly DEFAULT_COUNTRY = 'SA';
 
 	constructor(private readonly configService: ConfigService) {}
@@ -219,6 +222,91 @@ export class ErpConnectionManagerService implements OnModuleInit {
 	}
 
 	/**
+	 * Get consolidated database connection for forex/exchange rate queries
+	 * Connects to bit_consolidated database
+	 */
+	async getConsolidatedConnection(): Promise<DataSource> {
+		const operationId = 'GET-CONSOLIDATED';
+		
+		if (this.consolidatedConnection?.isInitialized) {
+			return this.consolidatedConnection;
+		}
+
+		if (this.consolidatedConnectionPromise) {
+			return this.consolidatedConnectionPromise;
+		}
+
+		this.consolidatedConnectionPromise = this.createConsolidatedConnection();
+		
+		try {
+			const connection = await this.consolidatedConnectionPromise;
+			this.consolidatedConnection = connection;
+			this.consolidatedConnectionPromise = null;
+			return connection;
+		} catch (error) {
+			this.consolidatedConnectionPromise = null;
+			throw error;
+		}
+	}
+
+	/**
+	 * Create consolidated database connection
+	 */
+	private async createConsolidatedConnection(): Promise<DataSource> {
+		const operationId = 'CREATE-CONSOLIDATED';
+		const databaseName = 'bit_consolidated';
+
+		this.logger.log(`[${operationId}] Creating consolidated database connection → ${databaseName}`);
+
+		const host = this.configService.get<string>('ERP_DATABASE_HOST') || '41.77.30.252';
+		const port = parseInt(this.configService.get<string>('ERP_DATABASE_PORT') || '3306', 10);
+		const username = this.configService.get<string>('ERP_DATABASE_USER') || 'root';
+		const password = this.configService.get<string>('ERP_DATABASE_PASSWORD') || 'Legend1501';
+
+		const options: DataSourceOptions = {
+			type: 'mysql',
+			host,
+			port,
+			username,
+			password,
+			database: databaseName,
+			entities: [TblForexHistory],
+			synchronize: false,
+			logging: false,
+			extra: {
+				connectionLimit: parseInt(this.configService.get<string>('ERP_DB_CONNECTION_LIMIT') || '75', 10),
+				connectTimeout: parseInt(this.configService.get<string>('ERP_DB_CONNECT_TIMEOUT') || '10000', 10),
+				acquireTimeout: parseInt(this.configService.get<string>('ERP_DB_ACQUIRE_TIMEOUT') || '30000', 10),
+				timeout: parseInt(this.configService.get<string>('ERP_DB_QUERY_TIMEOUT') || '90000', 10),
+				idleTimeout: parseInt(this.configService.get<string>('ERP_DB_IDLE_TIMEOUT') || '600000', 10),
+				waitForConnections: true,
+				queueLimit: 0,
+				keepAliveInitialDelay: 0,
+				enableKeepAlive: true,
+				dateStrings: false,
+				ssl: this.configService.get<string>('NODE_ENV') === 'production' ? { rejectUnauthorized: false } : false,
+				supportBigNumbers: true,
+				bigNumberStrings: false,
+				charset: 'utf8mb4',
+				timezone: 'Z',
+				multipleStatements: false,
+				typeCast: true,
+			},
+		};
+
+		const dataSource = new DataSource(options);
+
+		try {
+			await dataSource.initialize();
+			this.logger.log(`[${operationId}] ✅ Consolidated database connection created → ${databaseName}`);
+			return dataSource;
+		} catch (error) {
+			this.logger.error(`[${operationId}] ❌ Failed to create consolidated connection: ${error.message}`);
+			throw error;
+		}
+	}
+
+	/**
 	 * Get all active connections
 	 */
 	getActiveConnections(): Map<string, DataSource> {
@@ -243,9 +331,20 @@ export class ErpConnectionManagerService implements OnModuleInit {
 			}
 		});
 
+		// Close consolidated connection
+		if (this.consolidatedConnection?.isInitialized) {
+			try {
+				await this.consolidatedConnection.destroy();
+				this.logger.log(`[${operationId}] ✅ Closed consolidated database connection`);
+			} catch (error) {
+				this.logger.error(`[${operationId}] ❌ Failed to close consolidated connection: ${error.message}`);
+			}
+		}
+
 		await Promise.all(closePromises);
 		this.connections.clear();
 		this.defaultConnection = null;
+		this.consolidatedConnection = null;
 		this.logger.log(`[${operationId}] ✅ All connections closed`);
 	}
 }
