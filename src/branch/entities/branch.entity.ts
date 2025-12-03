@@ -152,4 +152,7 @@ export class Branch {
 
 	@OneToMany(() => Project, (project) => project?.branch, { nullable: true })
 	projects: Project[];
+
+	@Column({ nullable: false, default: 'SA' })
+	country: string;
 }

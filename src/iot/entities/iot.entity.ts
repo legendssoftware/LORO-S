@@ -5,15 +5,26 @@ import { Organisation } from '../../organisation/entities/organisation.entity';
 
 @Entity('device')
 @Index(['deviceID'])
+@Index(['orgID'])
+@Index(['branchID'])
 @Index(['createdAt'])
 @Index(['updatedAt'])
 export class Device {
 	@PrimaryGeneratedColumn()
 	id: number;
 
+	@Column({ nullable: false })
+	orgID: number;
+
+	@Column({ nullable: false })
+	branchID: number;
+
 	@ManyToOne(() => Branch, { nullable: true })
-	@JoinColumn({ name: 'branchId' })
+	@JoinColumn({ name: 'branchUid' })
 	branch: Branch;
+
+	@Column({ nullable: true })
+	branchUid: number;
 
 	@Column({ nullable: false})
 	deviceID: string;
@@ -61,7 +72,6 @@ export class Device {
 	records: DeviceRecords[];
 
 	@ManyToOne(() => Organisation, { nullable: true })
-	@JoinColumn({ name: 'orgId' })
 	organisation: Organisation;
 }
 

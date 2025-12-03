@@ -465,3 +465,84 @@ export class PerformanceDashboardDataDto {
 	metadata: PerformanceMetadataDto;
 }
 
+// ===================================================================
+// CONSOLIDATED INCOME STATEMENT
+// ===================================================================
+
+export class ConsolidatedBranchDataDto {
+	@ApiProperty({ description: 'Branch/store ID' })
+	branchId: string;
+
+	@ApiProperty({ description: 'Branch/store name' })
+	branchName: string;
+
+	@ApiProperty({ description: 'Total revenue for this branch' })
+	totalRevenue: number;
+
+	@ApiProperty({ description: 'Number of transactions', required: false })
+	transactionCount?: number;
+
+	@ApiProperty({ description: 'Gross profit', required: false })
+	grossProfit?: number;
+
+	@ApiProperty({ description: 'Gross profit percentage', required: false })
+	grossProfitPercentage?: number;
+}
+
+export class ConsolidatedIncomeStatementDto {
+	@ApiProperty({ description: 'Country code (SA, BOT, ZAM, MOZ, ZW)' })
+	countryCode: string;
+
+	@ApiProperty({ description: 'Full country name' })
+	countryName: string;
+
+	@ApiProperty({ 
+		type: 'object',
+		description: 'Currency information for the country',
+		properties: {
+			code: { type: 'string', example: 'ZAR' },
+			symbol: { type: 'string', example: 'R' },
+			locale: { type: 'string', example: 'en-ZA' },
+			name: { type: 'string', example: 'South African Rand' },
+		}
+	})
+	currency: {
+		code: string;
+		symbol: string;
+		locale: string;
+		name: string;
+	};
+
+	@ApiProperty({ 
+		type: [ConsolidatedBranchDataDto],
+		description: 'Branches and their sales data for this country'
+	})
+	branches: ConsolidatedBranchDataDto[];
+
+	@ApiProperty({ description: 'Total revenue across all branches in this country' })
+	totalRevenue: number;
+
+	@ApiProperty({ description: 'Total number of branches', required: false })
+	branchCount?: number;
+}
+
+export class ConsolidatedIncomeStatementResponseDto {
+	@ApiProperty({ 
+		type: [ConsolidatedIncomeStatementDto],
+		description: 'Consolidated income statement data by country'
+	})
+	data: ConsolidatedIncomeStatementDto[];
+
+	@ApiProperty({ description: 'Date range start' })
+	startDate: string;
+
+	@ApiProperty({ description: 'Date range end' })
+	endDate: string;
+
+	@ApiProperty({ description: 'Total number of countries' })
+	totalCountries: number;
+
+	@ApiProperty({ description: 'Total number of branches across all countries' })
+	totalBranches: number;
+}
+

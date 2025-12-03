@@ -4578,7 +4578,10 @@ export class AttendanceService {
 				const distances: number[] = [];
 
 				records.forEach((record) => {
-					const distance = record.distanceTravelledKm || 0;
+					// Prioritize GPS data from daily report
+					const distance = record.dailyReport?.gpsData?.tripSummary?.totalDistanceKm 
+						|| record.distanceTravelledKm 
+						|| 0;
 					if (distance > 0) {
 						totalDistanceKm += distance;
 						distances.push(distance);
@@ -4596,7 +4599,12 @@ export class AttendanceService {
 			const weekDistance = calculateDistanceAnalytics(weekAttendance);
 			const todayDistance = calculateDistanceAnalytics(todayAttendance);
 
-			const completedShiftsWithDistance = allAttendance.filter((record) => record.checkOut && record.distanceTravelledKm && record.distanceTravelledKm > 0);
+			const completedShiftsWithDistance = allAttendance.filter((record) => {
+				const distance = record.dailyReport?.gpsData?.tripSummary?.totalDistanceKm 
+					|| record.distanceTravelledKm 
+					|| 0;
+				return record.checkOut && distance > 0;
+			});
 			const averageDistancePerShift = completedShiftsWithDistance.length > 0
 				? allTimeDistance.totalDistanceKm / completedShiftsWithDistance.length
 				: 0;

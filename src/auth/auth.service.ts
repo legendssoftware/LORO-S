@@ -270,10 +270,10 @@ export class AuthService {
 					branch: restOfUser?.branch?.uid ? { uid: restOfUser?.branch.uid } : undefined,
 				};
 
-				this.logger.debug(`Generating access and refresh tokens for user: ${username}`);
-				this.logger.debug(`Token payload prepared with platform: ${platform}, role: ${tokenRole}`);
-				const accessToken = await this.jwtService.signAsync(payload, { expiresIn: `8h` });
-				const refreshToken = await this.jwtService.signAsync(payload, { expiresIn: `7d` });
+			this.logger.debug(`Generating access and refresh tokens for user: ${username}`);
+			this.logger.debug(`Token payload prepared with platform: ${platform}, role: ${tokenRole}`);
+			const accessToken = await this.jwtService.signAsync(payload, { expiresIn: `2h` });
+			const refreshToken = await this.jwtService.signAsync(payload, { expiresIn: `7d` });
 				this.logger.debug(`JWT tokens generated successfully for user: ${username}`);
 
 				this.logger.log(`User sign in successful: ${username}`);
@@ -432,9 +432,9 @@ export class AuthService {
 				branch: restOfUser?.branch?.uid ? { uid: restOfUser.branch.uid } : undefined,
 			};
 
-			this.logger.debug(`Generating tokens for user without organization: ${username}`);
-			const accessToken = await this.jwtService.signAsync(payload, { expiresIn: `8h` });
-			const refreshToken = await this.jwtService.signAsync(payload, { expiresIn: `7d` });
+		this.logger.debug(`Generating tokens for user without organization: ${username}`);
+		const accessToken = await this.jwtService.signAsync(payload, { expiresIn: `2h` });
+		const refreshToken = await this.jwtService.signAsync(payload, { expiresIn: `1d` });
 
 			this.logger.log(`User sign in successful (no org): ${username}`);
 

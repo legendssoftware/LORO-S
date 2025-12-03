@@ -86,8 +86,8 @@ export class OrganizationHoursService {
 		}
 
 		// Check regular schedule
-		const schedule = orgHours.weeklySchedule;
-		const isWorkingDay = schedule[dayOfWeek.toLowerCase() as keyof typeof schedule];
+		const weeklySchedule = orgHours.weeklySchedule;
+		const isWorkingDay = weeklySchedule[dayOfWeek.toLowerCase() as keyof typeof weeklySchedule];
 
 		if (!isWorkingDay) {
 			return {
@@ -98,6 +98,20 @@ export class OrganizationHoursService {
 			};
 		}
 
+		// Check if per-day schedule exists and has times for this day
+		const daySchedule = orgHours.schedule?.[dayOfWeek.toLowerCase() as keyof typeof orgHours.schedule];
+		if (daySchedule && !daySchedule.closed && daySchedule.start && daySchedule.end) {
+			const startMinutes = TimeCalculatorUtil.timeToMinutes(daySchedule.start);
+			const endMinutes = TimeCalculatorUtil.timeToMinutes(daySchedule.end);
+			return {
+				isWorkingDay: true,
+				startTime: daySchedule.start,
+				endTime: daySchedule.end,
+				expectedWorkMinutes: Math.max(0, endMinutes - startMinutes),
+			};
+		}
+
+		// Fall back to global openTime/closeTime
 		const startMinutes = TimeCalculatorUtil.timeToMinutes(orgHours.openTime);
 		const endMinutes = TimeCalculatorUtil.timeToMinutes(orgHours.closeTime);
 

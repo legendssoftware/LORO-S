@@ -16,6 +16,7 @@ import { AuthGuard } from '../guards/auth.guard';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { Roles } from '../decorators/role.decorator';
 import { PerformanceFiltersDto } from './dto/performance-filters.dto';
+import { ConsolidatedIncomeStatementResponseDto } from './dto/performance-dashboard.dto';
 
 @ApiBearerAuth('JWT-auth')
 @ApiTags('📊 Reports')
@@ -615,6 +616,91 @@ Comprehensive performance analytics with advanced filtering and data visualizati
 			...filters,
 			skipCache: skipCache === 'true' || skipCache === '1',
 		});
+	}
+
+	@Get('performance/consolidated-income-statement')
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.USER)
+	@ApiOperation({
+		summary: '🌍 Get Consolidated Income Statement',
+		description: `
+# Consolidated Income Statement
+
+Aggregates sales data from all branches across all countries (SA, BOT, ZAM, MOZ, ZW).
+
+## 📊 **What You Get**
+- **Country-level aggregation**: Sales data grouped by country
+- **Branch-level details**: Individual branch sales within each country
+- **Multi-currency support**: Each country's data in its native currency
+- **Real-time calculations**: All aggregations done server-side
+
+## 🌍 **Supported Countries**
+- **South Africa (SA)**: ZAR (R)
+- **Botswana (BOT)**: BWP (P)
+- **Zambia (ZAM)**: ZMW (ZK)
+- **Mozambique (MOZ)**: MZN (MT)
+- **Zimbabwe (ZW)**: ZWL (ZiG)
+
+## 📈 **Data Structure**
+Each country includes:
+- Country code and name
+- Currency information (code, symbol, locale, name)
+- List of branches with sales data
+- Total revenue for the country
+- Branch count
+
+Each branch includes:
+- Branch ID and name
+- Total revenue
+- Transaction count
+- Gross profit and percentage
+
+## 🔒 **Authorization**
+- Available to ADMIN, MANAGER, OWNER, and USER roles
+- No organization filter required (shows all countries)
+
+## ⚡ **Performance**
+- Parallel data fetching across all countries
+- Server-side aggregation for optimal performance
+- Uses cache warmer pattern when available
+		`,
+	})
+	@ApiQuery({ name: 'startDate', required: true, type: String, description: 'Start date in YYYY-MM-DD format' })
+	@ApiQuery({ name: 'endDate', required: true, type: String, description: 'End date in YYYY-MM-DD format' })
+	@ApiOkResponse({ type: ConsolidatedIncomeStatementResponseDto, description: 'Consolidated income statement data' })
+	async getConsolidatedIncomeStatement(
+		@Query('startDate') startDate: string,
+		@Query('endDate') endDate: string
+	) {
+		if (!startDate || !endDate) {
+			throw new BadRequestException('startDate and endDate are required');
+		}
+
+		// Validate date format
+		const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+		if (!dateRegex.test(startDate) || !dateRegex.test(endDate)) {
+			throw new BadRequestException('Dates must be in YYYY-MM-DD format');
+		}
+
+		try {
+			const data = await this.reportsService.getConsolidatedIncomeStatement(startDate, endDate);
+			return {
+				success: true,
+				data: data,
+				message: 'Consolidated income statement retrieved successfully',
+				timestamp: new Date().toISOString(),
+			};
+		} catch (error: any) {
+			this.logger.error(`Error getting consolidated income statement: ${error?.message || 'Unknown error'}`);
+			this.logger.error(`Error stack: ${error?.stack || 'No stack trace'}`);
+			return {
+				success: false,
+				error: {
+					code: 'CONSOLIDATED_INCOME_STATEMENT_ERROR',
+					details: error?.message || 'Failed to generate consolidated income statement',
+				},
+				timestamp: new Date().toISOString(),
+			};
+		}
 	}
 
 	// ======================================================

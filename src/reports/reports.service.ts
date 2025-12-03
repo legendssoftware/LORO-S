@@ -35,6 +35,9 @@ import { CommunicationService } from '../communication/communication.service';
 import { OrganizationHoursService } from '../attendance/services/organization.hours.service';
 import { AttendanceService } from '../attendance/attendance.service';
 import { ErpDataService } from '../erp/services/erp-data.service';
+import { getCurrencyForCountry } from '../erp/utils/currency.util';
+import { getBranchName } from '../erp/config/category-mapping.config';
+import { ConsolidatedIncomeStatementDto, ConsolidatedIncomeStatementResponseDto, ConsolidatedBranchDataDto } from './dto/performance-dashboard.dto';
 
 // Utilities
 import { TimezoneUtil } from '../lib/utils/timezone.util';
@@ -2338,6 +2341,129 @@ export class ReportsService implements OnModuleInit {
 			};
 		} catch (error) {
 			this.logger.error(`Error getting user daily reports: ${error.message}`, error.stack);
+			throw error;
+		}
+	}
+
+	/**
+	 * Get consolidated income statement across all countries
+	 * Aggregates sales data from all branches across SA, BOT, ZAM, MOZ, ZW
+	 * All calculations done server-side
+	 */
+	async getConsolidatedIncomeStatement(startDate: string, endDate: string): Promise<ConsolidatedIncomeStatementResponseDto> {
+		const operationId = `consolidated_income_${Date.now()}`;
+		this.logger.log(`[${operationId}] Starting consolidated income statement generation`);
+		this.logger.log(`[${operationId}] Date range: ${startDate} to ${endDate}`);
+
+		try {
+			// Supported countries
+			const countries = [
+				{ code: 'SA', name: 'South Africa' },
+				{ code: 'BOT', name: 'Botswana' },
+				{ code: 'ZAM', name: 'Zambia' },
+				{ code: 'MOZ', name: 'Mozambique' },
+				{ code: 'ZW', name: 'Zimbabwe' },
+			];
+
+			// Build filters for ERP queries
+			const filters = {
+				startDate,
+				endDate,
+			};
+
+			// Fetch data for all countries in parallel
+			const countryPromises = countries.map(async (country) => {
+				try {
+					this.logger.log(`[${operationId}] Fetching data for ${country.name} (${country.code})`);
+					
+					// Get branch aggregations for this country
+					const branchAggregations = await this.erpDataService.getBranchAggregations(filters, country.code);
+					
+					// Get currency info for this country
+					const currency = getCurrencyForCountry(country.code);
+					
+			// Map branch aggregations to branch data
+			const branches: ConsolidatedBranchDataDto[] = (branchAggregations || []).map((agg) => {
+				const revenue = Number(agg?.totalRevenue) || 0;
+				const cost = Number(agg?.totalCost) || 0;
+				const grossProfit = revenue - cost;
+				const grossProfitPercentage = revenue > 0 ? (grossProfit / revenue) * 100 : 0;
+				
+				return {
+					branchId: String(agg?.store || ''),
+					branchName: getBranchName(agg?.store) || String(agg?.store || 'Unknown'),
+					totalRevenue: revenue,
+					transactionCount: Number(agg?.transactionCount) || 0,
+					grossProfit: grossProfit,
+					grossProfitPercentage: grossProfitPercentage,
+				};
+			});
+
+					// Calculate total revenue for this country
+					const totalRevenue = branches.reduce((sum, branch) => sum + branch.totalRevenue, 0);
+
+					const countryData: ConsolidatedIncomeStatementDto = {
+						countryCode: country.code,
+						countryName: country.name,
+						currency: {
+							code: currency.code,
+							symbol: currency.symbol,
+							locale: currency.locale,
+							name: currency.name,
+						},
+						branches,
+						totalRevenue,
+						branchCount: branches.length,
+					};
+
+					this.logger.log(`[${operationId}] ✅ ${country.name}: ${branches.length} branches, ${currency.symbol}${totalRevenue.toFixed(2)}`);
+					
+					return countryData;
+				} catch (error: any) {
+					this.logger.error(`[${operationId}] ❌ Error fetching data for ${country.name}: ${error?.message || 'Unknown error'}`);
+					this.logger.error(`[${operationId}] Error stack: ${error?.stack || 'No stack trace'}`);
+					// Return empty data for this country instead of failing completely
+					const currency = getCurrencyForCountry(country.code);
+					return {
+						countryCode: country.code,
+						countryName: country.name,
+						currency: {
+							code: currency.code,
+							symbol: currency.symbol,
+							locale: currency.locale,
+							name: currency.name,
+						},
+						branches: [],
+						totalRevenue: 0,
+						branchCount: 0,
+					} as ConsolidatedIncomeStatementDto;
+				}
+			});
+
+			// Wait for all countries to complete
+			const countryData = await Promise.all(countryPromises);
+
+			// Filter out countries with no data (optional - you might want to show all countries)
+			const dataWithBranches = countryData.filter((country) => country.branches.length > 0);
+
+			// Calculate totals
+			const totalCountries = dataWithBranches.length;
+			const totalBranches = dataWithBranches.reduce((sum, country) => sum + (country.branchCount || 0), 0);
+
+			this.logger.log(`[${operationId}] ✅ Consolidated income statement generated: ${totalCountries} countries, ${totalBranches} branches`);
+
+			const response: ConsolidatedIncomeStatementResponseDto = {
+				data: dataWithBranches,
+				startDate,
+				endDate,
+				totalCountries,
+				totalBranches,
+			};
+
+			return response;
+		} catch (error: any) {
+			this.logger.error(`[${operationId}] ❌ Error generating consolidated income statement: ${error?.message || 'Unknown error'}`);
+			this.logger.error(`[${operationId}] Error stack: ${error?.stack || 'No stack trace'}`);
 			throw error;
 		}
 	}
