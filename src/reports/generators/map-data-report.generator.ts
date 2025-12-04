@@ -184,8 +184,24 @@ export class MapDataReportGenerator {
 
 			this.logger.log(`Found ${recentAttendance.length} recent attendance records (last 7 days)`);
 
+			// Helper function to reverse geocode coordinates with fallback
+			const geocodeLocation = async (latitude: number, longitude: number, fallback: string): Promise<string> => {
+				if (!latitude || !longitude) return fallback;
+				try {
+					const geocodingResult = await this.googleMapsService.reverseGeocode({
+						latitude: Number(latitude),
+						longitude: Number(longitude)
+					});
+					return geocodingResult.formattedAddress || fallback;
+				} catch (error) {
+					this.logger.debug(`Failed to geocode location ${latitude}, ${longitude}: ${error.message}`);
+					return fallback;
+				}
+			};
+
 			// Process active attendance (check-ins)
-			const workers = activeAttendance
+			const workers = await Promise.all(
+				activeAttendance
 				.filter((a) => {
 					const hasLocation = a.checkInLatitude && a.checkInLongitude;
 					if (!hasLocation) {
@@ -193,8 +209,16 @@ export class MapDataReportGenerator {
 					}
 					return hasLocation;
 				})
-				.map((a) => {
+					.map(async (a) => {
 					this.logger.debug(`Mapping active worker data for ${a.owner?.name} (${a.owner?.uid})`);
+						
+						// Reverse geocode check-in location
+						const address = await geocodeLocation(
+							Number(a.checkInLatitude),
+							Number(a.checkInLongitude),
+							a.checkInNotes || 'Unknown Location'
+						);
+
 					return {
 						id: `attendance-${a.uid}`,
 						name: a.owner?.name || 'Unknown Worker',
@@ -206,9 +230,10 @@ export class MapDataReportGenerator {
 						checkInTime: a.checkIn?.toISOString(),
 						checkOutTime: a.checkOut?.toISOString(),
 						duration: a.duration,
-						// image: a.owner?.profile?.avatarUrl || undefined, // Removed - profile doesn't exist
+							image: a.owner?.photoURL || a.owner?.avatar || undefined,
+							phone: a.owner?.phone || undefined,
 						location: {
-							address: a.checkInNotes || 'Unknown Location',
+								address: address,
 							imageUrl: undefined,
 						},
 						schedule: {
@@ -248,17 +273,33 @@ export class MapDataReportGenerator {
 								uid: a.branch.uid,
 								name: a.branch.name
 							} : null
-						}
-					};
-				});
+							},
+							owner: a.owner ? {
+								uid: a.owner.uid,
+								name: a.owner.name,
+								phone: a.owner.phone,
+								photoURL: a.owner.photoURL || a.owner.avatar
+							} : null
+						};
+					})
+			);
 			
 			allMarkers.push(...workers);
 
 			// Process shift start markers
-			const shiftStartMarkers = recentAttendance
+			const shiftStartMarkers = await Promise.all(
+				recentAttendance
 				.filter((a) => a.checkInLatitude && a.checkInLongitude && 
 					a.checkIn >= yesterdayStart && !a.checkOut)
-				.map((a) => ({
+					.map(async (a) => {
+						// Reverse geocode the check-in location
+						const address = await geocodeLocation(
+							Number(a.checkInLatitude),
+							Number(a.checkInLongitude),
+							a.checkInNotes || 'Shift Start Location'
+						);
+
+						return {
 					id: `shift-start-${a.uid}`,
 					name: `${a.owner?.name || 'Unknown'} - Shift Start`,
 					position: [Number(a.checkInLatitude), Number(a.checkInLongitude)] as [number, number],
@@ -267,9 +308,10 @@ export class MapDataReportGenerator {
 					markerType: 'shift-start',
 					status: 'Shift Started',
 					timestamp: a.checkIn?.toISOString(),
-					// image: a.owner?.profile?.avatarUrl || undefined, // Removed - profile doesn't exist
+							image: a.owner?.photoURL || a.owner?.avatar || undefined,
+							phone: a.owner?.phone || undefined,
 					location: {
-						address: a.checkInNotes || 'Shift Start Location',
+								address: address,
 						imageUrl: undefined,
 					},
 					attendanceData: {
@@ -277,15 +319,32 @@ export class MapDataReportGenerator {
 						status: a.status,
 						checkInTime: a.checkIn,
 						branch: a.branch ? { uid: a.branch.uid, name: a.branch.name } : null
-					}
-				}));
+							},
+							owner: a.owner ? {
+								uid: a.owner.uid,
+								name: a.owner.name,
+								phone: a.owner.phone,
+								photoURL: a.owner.photoURL || a.owner.avatar
+							} : null
+						};
+					})
+			);
 
 			allMarkers.push(...shiftStartMarkers);
 
 			// Process shift end markers
-			const shiftEndMarkers = recentAttendance
+			const shiftEndMarkers = await Promise.all(
+				recentAttendance
 				.filter((a) => a.checkOutLatitude && a.checkOutLongitude && a.checkOut)
-				.map((a) => ({
+					.map(async (a) => {
+						// Reverse geocode the check-out location
+						const address = await geocodeLocation(
+							Number(a.checkOutLatitude),
+							Number(a.checkOutLongitude),
+							a.checkOutNotes || 'Shift End Location'
+						);
+
+						return {
 					id: `shift-end-${a.uid}`,
 					name: `${a.owner?.name || 'Unknown'} - Shift End`,
 					position: [Number(a.checkOutLatitude), Number(a.checkOutLongitude)] as [number, number],
@@ -295,9 +354,10 @@ export class MapDataReportGenerator {
 					status: 'Shift Ended',
 					timestamp: a.checkOut?.toISOString(),
 					duration: a.duration,
-					// image: a.owner?.profile?.avatarUrl || undefined, // Removed - profile doesn't exist
+							image: a.owner?.photoURL || a.owner?.avatar || undefined,
+							phone: a.owner?.phone || undefined,
 					location: {
-						address: a.checkOutNotes || 'Shift End Location',
+								address: address,
 						imageUrl: undefined,
 					},
 					attendanceData: {
@@ -307,15 +367,32 @@ export class MapDataReportGenerator {
 						checkOutTime: a.checkOut,
 						duration: a.duration,
 						branch: a.branch ? { uid: a.branch.uid, name: a.branch.name } : null
-					}
-				}));
+							},
+							owner: a.owner ? {
+								uid: a.owner.uid,
+								name: a.owner.name,
+								phone: a.owner.phone,
+								photoURL: a.owner.photoURL || a.owner.avatar
+							} : null
+						};
+					})
+			);
 
 			allMarkers.push(...shiftEndMarkers);
 
 			// Process break start markers
-			const breakStartMarkers = recentAttendance
+			const breakStartMarkers = await Promise.all(
+				recentAttendance
 				.filter((a) => a.breakLatitude && a.breakLongitude && a.breakStartTime && !a.breakEndTime)
-				.map((a) => ({
+					.map(async (a) => {
+						// Reverse geocode the break location
+						const address = await geocodeLocation(
+							Number(a.breakLatitude),
+							Number(a.breakLongitude),
+							a.breakNotes || 'Break Location'
+						);
+
+						return {
 					id: `break-start-${a.uid}`,
 					name: `${a.owner?.name || 'Unknown'} - Break Start`,
 					position: [Number(a.breakLatitude), Number(a.breakLongitude)] as [number, number],
@@ -324,9 +401,10 @@ export class MapDataReportGenerator {
 					markerType: 'break-start',
 					status: 'On Break',
 					timestamp: a.breakStartTime?.toISOString(),
-					// image: a.owner?.profile?.avatarUrl || undefined, // Removed - profile doesn't exist
+							image: a.owner?.photoURL || a.owner?.avatar || undefined,
+							phone: a.owner?.phone || undefined,
 					location: {
-						address: a.breakNotes || 'Break Location',
+								address: address,
 						imageUrl: undefined,
 					},
 					attendanceData: {
@@ -335,38 +413,64 @@ export class MapDataReportGenerator {
 						breakCount: a.breakCount,
 						breakNotes: a.breakNotes,
 						branch: a.branch ? { uid: a.branch.uid, name: a.branch.name } : null
-					}
-				}));
+							},
+							owner: a.owner ? {
+								uid: a.owner.uid,
+								name: a.owner.name,
+								phone: a.owner.phone,
+								photoURL: a.owner.photoURL || a.owner.avatar
+							} : null
+						};
+					})
+			);
 
 			allMarkers.push(...breakStartMarkers);
 
 			// Process break end markers
-			const breakEndMarkers = recentAttendance
-				.filter((a) => a.breakLatitude && a.breakLongitude && a.breakEndTime)
-				.map((a) => ({
-					id: `break-end-${a.uid}`,
-					name: `${a.owner?.name || 'Unknown'} - Break End`,
-					position: [Number(a.breakLatitude), Number(a.breakLongitude)] as [number, number],
-					latitude: Number(a.breakLatitude),
-					longitude: Number(a.breakLongitude),
-					markerType: 'break-end',
-					status: 'Break Ended',
-					timestamp: a.breakEndTime?.toISOString(),
-					totalBreakTime: a.totalBreakTime,
-					// image: a.owner?.profile?.avatarUrl || undefined, // Removed - profile doesn't exist
-					location: {
-						address: a.breakNotes || 'Break End Location',
-						imageUrl: undefined,
-					},
-					attendanceData: {
-						uid: a.uid,
-						breakStartTime: a.breakStartTime,
-						breakEndTime: a.breakEndTime,
-						totalBreakTime: a.totalBreakTime,
-						breakDetails: a.breakDetails,
-						branch: a.branch ? { uid: a.branch.uid, name: a.branch.name } : null
-					}
-				}));
+			const breakEndMarkers = await Promise.all(
+				recentAttendance
+					.filter((a) => a.breakLatitude && a.breakLongitude && a.breakEndTime)
+					.map(async (a) => {
+						// Reverse geocode the break end location
+						const address = await geocodeLocation(
+							Number(a.breakLatitude),
+							Number(a.breakLongitude),
+							a.breakNotes || 'Break End Location'
+						);
+
+						return {
+							id: `break-end-${a.uid}`,
+							name: `${a.owner?.name || 'Unknown'} - Break End`,
+							position: [Number(a.breakLatitude), Number(a.breakLongitude)] as [number, number],
+							latitude: Number(a.breakLatitude),
+							longitude: Number(a.breakLongitude),
+							markerType: 'break-end',
+							status: 'Break Ended',
+							timestamp: a.breakEndTime?.toISOString(),
+							totalBreakTime: a.totalBreakTime,
+							image: a.owner?.photoURL || a.owner?.avatar || undefined,
+							phone: a.owner?.phone || undefined,
+							location: {
+								address: address,
+								imageUrl: undefined,
+							},
+							attendanceData: {
+								uid: a.uid,
+								breakStartTime: a.breakStartTime,
+								breakEndTime: a.breakEndTime,
+								totalBreakTime: a.totalBreakTime,
+								breakDetails: a.breakDetails,
+								branch: a.branch ? { uid: a.branch.uid, name: a.branch.name } : null
+							},
+							owner: a.owner ? {
+								uid: a.owner.uid,
+								name: a.owner.name,
+								phone: a.owner.phone,
+								photoURL: a.owner.photoURL || a.owner.avatar
+							} : null
+						};
+					})
+			);
 
 			allMarkers.push(...breakEndMarkers);
 			
