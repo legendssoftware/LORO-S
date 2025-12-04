@@ -177,6 +177,75 @@ export class TrackingService {
 	}
 
 	/**
+	 * Check if user has exceeded the rate limit for tracking points
+	 * Limits users to 2 tracking points per minute
+	 * @param userId - User ID to check
+	 * @returns Object with isAllowed flag and remaining points
+	 */
+	private async checkRateLimit(userId: number): Promise<{ isAllowed: boolean; remaining: number; resetAt: Date }> {
+		const RATE_LIMIT_KEY = `rate_limit:${userId}`;
+		const MAX_POINTS_PER_MINUTE = 2;
+		const WINDOW_MS = 60 * 1000; // 1 minute in milliseconds
+
+		try {
+			const cached = await this.cacheManager.get<{ count: number; resetAt: number }>(RATE_LIMIT_KEY);
+			const now = Date.now();
+
+			if (!cached) {
+				// First request in the window
+				await this.cacheManager.set(RATE_LIMIT_KEY, { count: 1, resetAt: now + WINDOW_MS }, WINDOW_MS);
+				return {
+					isAllowed: true,
+					remaining: MAX_POINTS_PER_MINUTE - 1,
+					resetAt: new Date(now + WINDOW_MS),
+				};
+			}
+
+			// Check if window has expired
+			if (now >= cached.resetAt) {
+				// Window expired, start new window
+				await this.cacheManager.set(RATE_LIMIT_KEY, { count: 1, resetAt: now + WINDOW_MS }, WINDOW_MS);
+				return {
+					isAllowed: true,
+					remaining: MAX_POINTS_PER_MINUTE - 1,
+					resetAt: new Date(now + WINDOW_MS),
+				};
+			}
+
+			// Check if limit exceeded
+			if (cached.count >= MAX_POINTS_PER_MINUTE) {
+				const remaining = 0;
+				const resetAt = new Date(cached.resetAt);
+				this.logger.warn(`Rate limit exceeded for user ${userId}. Limit: ${MAX_POINTS_PER_MINUTE} points per minute. Reset at: ${resetAt.toISOString()}`);
+				return {
+					isAllowed: false,
+					remaining,
+					resetAt,
+				};
+			}
+
+			// Increment count
+			const newCount = cached.count + 1;
+			const ttl = cached.resetAt - now;
+			await this.cacheManager.set(RATE_LIMIT_KEY, { count: newCount, resetAt: cached.resetAt }, ttl);
+
+			return {
+				isAllowed: true,
+				remaining: MAX_POINTS_PER_MINUTE - newCount,
+				resetAt: new Date(cached.resetAt),
+			};
+		} catch (error) {
+			this.logger.error(`Error checking rate limit for user ${userId}: ${error.message}`);
+			// On error, allow the request but log it
+			return {
+				isAllowed: true,
+				remaining: MAX_POINTS_PER_MINUTE - 1,
+				resetAt: new Date(Date.now() + WINDOW_MS),
+			};
+		}
+	}
+
+	/**
 	 * Clear tracking cache for specific keys
 	 * @param trackingId - Optional tracking ID to clear
 	 * @param userId - Optional user ID to clear
@@ -323,6 +392,17 @@ export class TrackingService {
 			if (!ownerId) {
 				throw new BadRequestException('Owner ID is required for tracking');
 			}
+
+			// Check rate limit: maximum 2 points per minute per user
+			const rateLimitCheck = await this.checkRateLimit(ownerId);
+			if (!rateLimitCheck.isAllowed) {
+				this.logger.warn(`Rate limit exceeded for user ${ownerId}. Request rejected. Reset at: ${rateLimitCheck.resetAt.toISOString()}`);
+				throw new BadRequestException(
+					`Rate limit exceeded. Maximum 2 tracking points per minute allowed. Please wait until ${rateLimitCheck.resetAt.toISOString()} before sending more points.`
+				);
+			}
+
+			this.logger.debug(`Rate limit check passed for user ${ownerId}. Remaining: ${rateLimitCheck.remaining} points. Reset at: ${rateLimitCheck.resetAt.toISOString()}`);
 
 			// Validate user exists and has access
 			const userExists = await this.userRepository.findOne({

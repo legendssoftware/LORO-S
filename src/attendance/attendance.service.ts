@@ -4666,11 +4666,11 @@ export class AttendanceService {
 			}
 
 			// ===== ENHANCED OVERTIME ANALYTICS =====
-			// Calculate overtime analytics for all periods
-			const overtimeAnalyticsAllTime = await this.calculateOvertimeAnalytics(allAttendance, organizationId);
-			const overtimeAnalyticsToday = await this.calculateOvertimeAnalytics(todayAttendance, organizationId);
-			const overtimeAnalyticsThisWeek = await this.calculateOvertimeAnalytics(weekAttendance, organizationId);
-			const overtimeAnalyticsThisMonth = await this.calculateOvertimeAnalytics(monthAttendance, organizationId);
+			// Calculate overtime analytics for all periods (no date exclusions for single-user metrics)
+			const overtimeAnalyticsAllTime = await this.calculateOvertimeAnalytics(allAttendance, organizationId, []);
+			const overtimeAnalyticsToday = await this.calculateOvertimeAnalytics(todayAttendance, organizationId, []);
+			const overtimeAnalyticsThisWeek = await this.calculateOvertimeAnalytics(weekAttendance, organizationId, []);
+			const overtimeAnalyticsThisMonth = await this.calculateOvertimeAnalytics(monthAttendance, organizationId, []);
 
 			// Format response
 			const metrics = {
@@ -4805,14 +4805,254 @@ export class AttendanceService {
 	}
 
 	/**
+	 * Get monthly attendance metrics for all users in the organization
+	 * @param year - Year for metrics (defaults to current year)
+	 * @param month - Month for metrics (1-12, defaults to current month)
+	 * @param excludeOvertimeDates - Array of dates (YYYY-MM-DD) to exclude from overtime calculation
+	 * @param orgId - Organization ID to filter by
+	 * @param branchId - Branch ID to filter by
+	 * @param userAccessLevel - User's access level for branch filtering
+	 * @returns Monthly metrics for all users with summary and per-user breakdown
+	 */
+	public async getMonthlyMetricsForAllUsers(
+		year?: number,
+		month?: number,
+		excludeOvertimeDates?: string[],
+		orgId?: number,
+		branchId?: number,
+		userAccessLevel?: string,
+	): Promise<{
+		message: string;
+		data: {
+			period: {
+				year: number;
+				month: number;
+				startDate: string;
+				endDate: string;
+			};
+			summary: {
+				totalUsers: number;
+				totalShifts: number;
+				totalHours: number;
+				totalOvertimeHours: number;
+				averageHoursPerUser: number;
+			};
+			userMetrics: Array<{
+				userId: number;
+				userName: string;
+				totalShifts: number;
+				totalHours: number;
+				overtimeHours: number;
+				checkIns: Attendance[];
+			}>;
+		};
+	}> {
+		try {
+			// Default to current year/month if not provided
+			const now = new Date();
+			const targetYear = year || now.getFullYear();
+			const targetMonth = month || now.getMonth() + 1;
+
+			// Validate month
+			if (targetMonth < 1 || targetMonth > 12) {
+				throw new BadRequestException('Month must be between 1 and 12');
+			}
+
+			// Calculate month start/end dates
+			const monthStart = startOfMonth(new Date(targetYear, targetMonth - 1, 1));
+			const monthEnd = endOfMonth(new Date(targetYear, targetMonth - 1, 1));
+
+			this.logger.log(
+				`Fetching monthly metrics for ${targetYear}-${targetMonth}, orgId: ${orgId}, branchId: ${branchId}`,
+			);
+
+			// Get effective branch ID based on user role
+			const effectiveBranchId = this.getEffectiveBranchId(branchId, userAccessLevel);
+
+			// Build user query filters
+			const userWhereConditions: any = {
+				isDeleted: false,
+			};
+
+			// Apply organization filtering
+			if (orgId) {
+				userWhereConditions.organisation = { uid: orgId };
+			} else {
+				throw new BadRequestException('Organization ID is required');
+			}
+
+			// Apply branch filtering if provided (and user is not admin/owner/developer)
+			if (effectiveBranchId) {
+				userWhereConditions.branch = { uid: effectiveBranchId };
+			}
+
+			// Query all users matching filters
+			const users = await this.userRepository.find({
+				where: userWhereConditions,
+				relations: ['organisation', 'branch'],
+				select: ['uid', 'name', 'surname', 'username', 'email'],
+			});
+
+			if (!users || users.length === 0) {
+				this.logger.warn('No users found for the specified criteria');
+				return {
+					message: 'No users found',
+					data: {
+						period: {
+							year: targetYear,
+							month: targetMonth,
+							startDate: monthStart.toISOString().split('T')[0],
+							endDate: monthEnd.toISOString().split('T')[0],
+						},
+						summary: {
+							totalUsers: 0,
+							totalShifts: 0,
+							totalHours: 0,
+							totalOvertimeHours: 0,
+							averageHoursPerUser: 0,
+						},
+						userMetrics: [],
+					},
+				};
+			}
+
+			// Helper function to calculate total hours (same pattern as getUserAttendanceMetrics)
+			const calculateTotalHours = (records: Attendance[]): number => {
+				return records.reduce((total, record) => {
+					if (record.checkIn && record.checkOut) {
+						const breakMinutes = TimeCalculatorUtil.calculateTotalBreakMinutes(
+							record.breakDetails,
+							record.totalBreakTime,
+						);
+						const totalMinutes = differenceInMinutes(new Date(record.checkOut), new Date(record.checkIn));
+						const workMinutes = Math.max(0, totalMinutes - breakMinutes);
+						return (
+							total + TimeCalculatorUtil.minutesToHours(workMinutes, TimeCalculatorUtil.PRECISION.HOURS)
+						);
+					}
+					return total;
+				}, 0);
+			};
+
+			// Process each user
+			const userMetrics: Array<{
+				userId: number;
+				userName: string;
+				totalShifts: number;
+				totalHours: number;
+				overtimeHours: number;
+				checkIns: Attendance[];
+			}> = [];
+
+			for (const user of users) {
+				try {
+					// Build attendance query filters
+					const attendanceWhereConditions: any = {
+						owner: { uid: user.uid },
+						checkIn: Between(monthStart, monthEnd),
+					};
+
+					// Apply organization filter
+					if (orgId) {
+						attendanceWhereConditions.organisation = { uid: orgId };
+					}
+
+					// Query attendance records for this user in the month
+					const attendanceRecords = await this.attendanceRepository.find({
+						where: attendanceWhereConditions,
+						relations: [
+							'owner',
+							'owner.branch',
+							'owner.organisation',
+							'organisation',
+							'branch',
+							'dailyReport',
+						],
+						order: {
+							checkIn: 'ASC',
+						},
+					});
+
+					// Calculate metrics for this user
+					const totalShifts = attendanceRecords.length;
+					const totalHours = calculateTotalHours(attendanceRecords);
+
+					// Calculate overtime using modified method with excluded dates
+					const overtimeAnalytics = await this.calculateOvertimeAnalytics(
+						attendanceRecords,
+						orgId,
+						excludeOvertimeDates || [],
+					);
+					const overtimeHours = overtimeAnalytics.totalOvertimeHours;
+
+					// Construct user name
+					const fullName = `${user.name || ''} ${user.surname || ''}`.trim();
+					const userName = fullName || user.username || 'Unknown User';
+
+					userMetrics.push({
+						userId: user.uid,
+						userName,
+						totalShifts,
+						totalHours: Math.round(totalHours * 10) / 10,
+						overtimeHours: Math.round(overtimeHours * 10) / 10,
+						checkIns: attendanceRecords,
+					});
+				} catch (error) {
+					this.logger.warn(
+						`Error processing metrics for user ${user.uid}: ${error.message}`,
+					);
+					// Continue with next user
+					continue;
+				}
+			}
+
+			// Calculate summary metrics
+			const totalUsers = userMetrics.length;
+			const totalShifts = userMetrics.reduce((sum, user) => sum + user.totalShifts, 0);
+			const totalHours = userMetrics.reduce((sum, user) => sum + user.totalHours, 0);
+			const totalOvertimeHours = userMetrics.reduce((sum, user) => sum + user.overtimeHours, 0);
+			const averageHoursPerUser = totalUsers > 0 ? Math.round((totalHours / totalUsers) * 10) / 10 : 0;
+
+			const response = {
+				message: process.env.SUCCESS_MESSAGE || 'Success',
+				data: {
+					period: {
+						year: targetYear,
+						month: targetMonth,
+						startDate: monthStart.toISOString().split('T')[0],
+						endDate: monthEnd.toISOString().split('T')[0],
+					},
+					summary: {
+						totalUsers,
+						totalShifts,
+						totalHours: Math.round(totalHours * 10) / 10,
+						totalOvertimeHours: Math.round(totalOvertimeHours * 10) / 10,
+						averageHoursPerUser,
+					},
+					userMetrics,
+				},
+			};
+
+			// Apply timezone conversion to attendance records
+			const responseWithTimezone = await this.ensureTimezoneConversion(response, orgId);
+			return responseWithTimezone;
+		} catch (error) {
+			this.logger.error(`Error retrieving monthly metrics for all users: ${error.message}`, error.stack);
+			throw new BadRequestException(`Failed to retrieve monthly metrics: ${error.message}`);
+		}
+	}
+
+	/**
 	 * Calculate comprehensive overtime analytics for attendance records
 	 * @param records - Attendance records to analyze
 	 * @param organizationId - Organization ID for overtime calculation
+	 * @param excludeOvertimeDates - Optional array of dates (YYYY-MM-DD) to exclude from overtime calculation
 	 * @returns Overtime analytics object
 	 */
 	private async calculateOvertimeAnalytics(
 		records: Attendance[],
 		organizationId?: number,
+		excludeOvertimeDates?: string[],
 	): Promise<{
 		totalOvertimeHours: number;
 		averageOvertimePerShift: number;
@@ -4851,28 +5091,59 @@ export class AttendanceService {
 					);
 					const workMinutes = Math.max(0, totalMinutes - breakMinutes);
 
+					// Check if this date should exclude overtime
+					const shiftDate = new Date(shift.checkIn).toISOString().split('T')[0]; // YYYY-MM-DD format
+					const isExcludedDate = excludeOvertimeDates?.includes(shiftDate) || false;
+
 					// Calculate overtime using organization hours (same logic as checkOut)
 					let overtimeMinutes = 0;
 					if (organizationId) {
 						try {
-							const overtimeInfo = await this.organizationHoursService.calculateOvertime(
-								organizationId,
-								new Date(shift.checkIn),
-								workMinutes,
-							);
-							overtimeMinutes = overtimeInfo.overtimeMinutes || 0;
+							if (isExcludedDate) {
+								// For excluded dates: cap at org max hours if exceeded, otherwise leave as-is
+								const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(
+									organizationId,
+									new Date(shift.checkIn),
+								);
+								const standardWorkMinutes = workingDayInfo.expectedWorkMinutes || TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES;
+								// Cap work minutes at expected work minutes, but don't count as overtime
+								const cappedWorkMinutes = Math.min(workMinutes, standardWorkMinutes);
+								// No overtime for excluded dates
+								overtimeMinutes = 0;
+								this.logger.debug(
+									`Shift ${shift.uid} on excluded date ${shiftDate}: workMinutes=${workMinutes}, capped=${cappedWorkMinutes}, overtime=0`,
+								);
+							} else {
+								// Normal overtime calculation for non-excluded dates
+								const overtimeInfo = await this.organizationHoursService.calculateOvertime(
+									organizationId,
+									new Date(shift.checkIn),
+									workMinutes,
+								);
+								overtimeMinutes = overtimeInfo.overtimeMinutes || 0;
+							}
 						} catch (error) {
 							this.logger.warn(
 								`Error calculating overtime for shift ${shift.uid}, using fallback: ${error.message}`,
 							);
 							// Fallback to default 8 hours
 							const standardMinutes = TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES;
-							overtimeMinutes = Math.max(0, workMinutes - standardMinutes);
+							if (isExcludedDate) {
+								// For excluded dates, cap but don't count overtime
+								overtimeMinutes = 0;
+							} else {
+								overtimeMinutes = Math.max(0, workMinutes - standardMinutes);
+							}
 						}
 					} else {
 						// Fallback to default 8 hours if no organization ID
 						const standardMinutes = TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES;
-						overtimeMinutes = Math.max(0, workMinutes - standardMinutes);
+						if (isExcludedDate) {
+							// For excluded dates, cap but don't count overtime
+							overtimeMinutes = 0;
+						} else {
+							overtimeMinutes = Math.max(0, workMinutes - standardMinutes);
+						}
 					}
 
 					if (overtimeMinutes > 0) {

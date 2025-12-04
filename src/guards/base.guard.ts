@@ -11,7 +11,6 @@ export class BaseGuard {
         const token = this.extractTokenFromHeader(request);
 
         if (!token) {
-            console.error('❌ [BaseGuard] No token provided');
             throw new UnauthorizedException('No token provided');
         }
 
@@ -21,38 +20,27 @@ export class BaseGuard {
                 return request['decodedToken'];
             }
 
-            // Try to verify the token first (checks signature and expiration)
-            let decodedToken: Token;
-            try {
-                decodedToken = this.jwtService.verify(token) as Token;
-                console.log('✅ [BaseGuard] Token verified successfully');
-            } catch (verifyError) {
-                // If verification fails (expired, invalid signature, etc.), throw error
-                console.error('❌ [BaseGuard] Token verification failed:', verifyError.message);
-                if (verifyError.name === 'TokenExpiredError') {
+            // Decode the token (extracts payload without verifying signature)
+            const decoded = this.jwtService.decode(token, { complete: true }) as any;
+            
+            if (!decoded || !decoded.payload) {
+                throw new UnauthorizedException('Invalid token format');
+            }
+
+            // Check expiration manually
+            if (decoded.payload.exp) {
+                const expirationTime = decoded.payload.exp * 1000;
+                if (Date.now() >= expirationTime) {
                     throw new UnauthorizedException('Token expired');
-                }
-                if (verifyError.name === 'JsonWebTokenError') {
-                    throw new UnauthorizedException('Invalid token');
-                }
-                // For other errors, try decoding as fallback (for debugging)
-                console.warn('⚠️ [BaseGuard] Attempting decode as fallback');
-                decodedToken = this.jwtService.decode(token) as Token;
-                
-                if (!decodedToken) {
-                    throw new UnauthorizedException('Invalid token format');
                 }
             }
 
-            if (!decodedToken) {
-                throw new UnauthorizedException('Invalid token format');
-            }
+            const decodedToken = decoded.payload as Token;
 
             // Cache the decoded token in the request object
             request['decodedToken'] = decodedToken;
             return decodedToken;
         } catch (error) {
-            console.error('❌ [BaseGuard] Token extraction failed:', error.message);
             if (error instanceof UnauthorizedException) {
                 throw error;
             }

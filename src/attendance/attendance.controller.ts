@@ -36,6 +36,7 @@ import { CurrentUser } from '../decorators/current-user.decorator';
 import { User } from '../user/entities/user.entity';
 import { OvertimeReminderService } from './services/overtime.reminder.service';
 import { UserService } from '../user/user.service';
+import { MonthlyMetricsQueryDto } from './dto/monthly-metrics.dto';
 
 // Reusable Schema Definitions for Swagger Documentation
 export class UserProfileSchema {
@@ -3574,6 +3575,226 @@ Retrieves detailed attendance analytics for a specific user including historical
 	})
 	getUserAttendanceMetrics(@Param('uid') uid: number) {
 		return this.attendanceService.getUserAttendanceMetrics(uid);
+	}
+
+	@Post('metrics/monthly')
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.HR)
+	@ApiOperation({
+		summary: '📊 Get monthly attendance metrics for all users',
+		description: `
+# Monthly Attendance Metrics for All Users
+
+Retrieves comprehensive monthly attendance metrics for all users in the organization, including check-ins, total hours, and overtime calculations with optional date exclusions.
+
+## 🎯 **Key Features**
+- **Organization-Wide View**: Complete monthly metrics across all users
+- **Overtime Exclusion**: Optionally exclude specific dates from overtime calculation
+- **Flexible Filtering**: Filter by organization, branch, and access level
+- **Detailed Breakdown**: Per-user metrics with complete check-in records
+
+## 📅 **Date Exclusion for Overtime**
+When dates are provided in \`excludeOvertimeDates\`:
+- Hours exceeding organization maximum work hours are capped at the maximum
+- Hours below the maximum are left unchanged
+- No overtime is calculated for these dates
+- Useful for special events, holidays, or policy exceptions
+
+## 📊 **Metrics Included**
+- Total shifts and hours for the month
+- Overtime hours (excluding specified dates)
+- Per-user breakdown with individual check-ins
+- Average hours per user
+- Complete attendance records for analysis
+
+## 🔍 **Use Cases**
+- Monthly payroll processing
+- Attendance compliance reporting
+- Performance analysis across teams
+- Overtime management and budgeting
+- Special event attendance tracking
+
+## 📋 **Example Scenarios**
+
+### Scenario 1: Standard Monthly Report
+Get metrics for current month without any exclusions:
+\`\`\`json
+{
+  "year": 2024,
+  "month": 3
+}
+\`\`\`
+
+### Scenario 2: Company Event Days
+Exclude company event days from overtime calculation:
+\`\`\`json
+{
+  "year": 2024,
+  "month": 3,
+  "excludeOvertimeDates": ["2024-03-15", "2024-03-20"]
+}
+\`\`\`
+On these dates, if an employee worked 10 hours but org max is 8 hours, only 8 hours will be counted (no overtime).
+
+### Scenario 3: Branch-Specific Metrics
+Get metrics for a specific branch:
+\`\`\`json
+{
+  "year": 2024,
+  "month": 3,
+  "branchId": 5
+}
+\`\`\`
+
+### Scenario 4: Holiday Period
+Exclude holiday dates where overtime policies don't apply:
+\`\`\`json
+{
+  "year": 2024,
+  "month": 12,
+  "excludeOvertimeDates": ["2024-12-24", "2024-12-25", "2024-12-31"]
+}
+\`\`\`
+		`,
+	})
+	@ApiBody({
+		type: MonthlyMetricsQueryDto,
+		description: 'Query parameters for monthly metrics',
+		examples: {
+			currentMonth: {
+				summary: 'Current Month (Default)',
+				description: 'Get metrics for current month without date exclusions',
+				value: {},
+			},
+			specificMonth: {
+				summary: 'Specific Month',
+				description: 'Get metrics for March 2024',
+				value: {
+					year: 2024,
+					month: 3,
+				},
+			},
+			withExclusions: {
+				summary: 'With Overtime Exclusions',
+				description: 'Exclude specific dates from overtime calculation (e.g., company events)',
+				value: {
+					year: 2024,
+					month: 3,
+					excludeOvertimeDates: ['2024-03-15', '2024-03-20', '2024-03-25'],
+					branchId: 5,
+				},
+			},
+			branchFilter: {
+				summary: 'Branch-Specific',
+				description: 'Get metrics for a specific branch',
+				value: {
+					year: 2024,
+					month: 3,
+					branchId: 5,
+				},
+			},
+			holidayPeriod: {
+				summary: 'Holiday Period',
+				description: 'Exclude holiday dates from overtime calculation',
+				value: {
+					year: 2024,
+					month: 12,
+					excludeOvertimeDates: ['2024-12-24', '2024-12-25', '2024-12-31'],
+				},
+			},
+		},
+	})
+	@ApiOkResponse({
+		description: '✅ Monthly metrics retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Success' },
+				data: {
+					type: 'object',
+					description: 'Monthly metrics data',
+					properties: {
+						period: {
+							type: 'object',
+							description: 'Period information',
+							properties: {
+								year: { type: 'number', example: 2024 },
+								month: { type: 'number', example: 3 },
+								startDate: { type: 'string', format: 'date', example: '2024-03-01' },
+								endDate: { type: 'string', format: 'date', example: '2024-03-31' },
+							},
+						},
+						summary: {
+							type: 'object',
+							description: 'Summary metrics across all users',
+							properties: {
+								totalUsers: { type: 'number', example: 25, description: 'Total number of users' },
+								totalShifts: { type: 'number', example: 520, description: 'Total shifts worked' },
+								totalHours: { type: 'number', example: 4160.5, description: 'Total hours worked' },
+								totalOvertimeHours: {
+									type: 'number',
+									example: 120.5,
+									description: 'Total overtime hours (excluding specified dates)',
+								},
+								averageHoursPerUser: {
+									type: 'number',
+									example: 166.4,
+									description: 'Average hours per user',
+								},
+							},
+						},
+						userMetrics: {
+							type: 'array',
+							description: 'Per-user metrics breakdown',
+							items: {
+								type: 'object',
+								properties: {
+									userId: { type: 'number', example: 45 },
+									userName: { type: 'string', example: 'John Doe' },
+									totalShifts: { type: 'number', example: 22 },
+									totalHours: { type: 'number', example: 176.0 },
+									overtimeHours: { type: 'number', example: 8.5 },
+									checkIns: {
+										type: 'array',
+										description: 'All check-in records for this user in the month',
+										items: { type: 'object' },
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	@ApiBadRequestResponse({
+		description: '❌ Bad Request - Invalid parameters',
+		schema: {
+			type: 'object',
+			properties: {
+				message: {
+					type: 'string',
+					example: 'Month must be between 1 and 12',
+				},
+				error: { type: 'string', example: 'Bad Request' },
+				statusCode: { type: 'number', example: 400 },
+			},
+		},
+	})
+	async getMonthlyMetricsForAllUsers(
+		@Body() queryDto: MonthlyMetricsQueryDto,
+		@Req() req: AuthenticatedRequest,
+	) {
+		const orgId = queryDto.orgId || req.user?.org?.uid || req.user?.organisationRef;
+		const userAccessLevel = req.user?.accessLevel;
+
+		return this.attendanceService.getMonthlyMetricsForAllUsers(
+			queryDto.year,
+			queryDto.month,
+			queryDto.excludeOvertimeDates,
+			orgId,
+			queryDto.branchId,
+			userAccessLevel,
+		);
 	}
 
 	@Get('report')
