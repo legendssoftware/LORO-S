@@ -32,8 +32,9 @@ export class ErpTransformerService {
 			// Convert to number to ensure JavaScript numeric operations work correctly
 			const revenue = parseFloat(String(line.incl_line_total || 0));
 			
-			// Calculate cost
-			const cost = parseFloat(String(line.cost_price || 0)) * parseFloat(String(line.quantity || 0));
+			// ✅ FIXED: Credit notes (doc_type = 2) should have negative cost to match negative revenue
+			const baseCost = parseFloat(String(line.cost_price || 0)) * parseFloat(String(line.quantity || 0));
+			const cost = Number(line.doc_type) === 2 ? -baseCost : baseCost;
 			
 			// Calculate gross profit
 			const grossProfit = revenue - cost;
@@ -118,7 +119,11 @@ export class ErpTransformerService {
 			// Use gross amount (incl_line_total) - discount already applied to selling price
 			// Convert to number to ensure JavaScript numeric operations work correctly
 			const revenue = parseFloat(String(line.incl_line_total || 0));
-			const cost = parseFloat(String(line.cost_price || 0)) * parseFloat(String(line.quantity || 0));
+			
+			// ✅ FIXED: Credit notes (doc_type = 2) should have negative cost to match negative revenue
+			const baseCost = parseFloat(String(line.cost_price || 0)) * parseFloat(String(line.quantity || 0));
+			const cost = Number(line.doc_type) === 2 ? -baseCost : baseCost;
+			
 			const grossProfit = revenue - cost;
 			
 			// ✅ FIXED: Target should be set at the daily/period level, not line-item level
@@ -344,7 +349,11 @@ export class ErpTransformerService {
 			// Use gross amount (incl_line_total) - discount already applied to selling price
 			// Convert to number to ensure JavaScript numeric operations work correctly
 			const revenue = parseFloat(String(line.incl_line_total || 0));
-			const cost = parseFloat(String(line.cost_price || 0)) * parseFloat(String(line.quantity || 0));
+			
+			// ✅ FIXED: Credit notes (doc_type = 2) should have negative cost to match negative revenue
+			const baseCost = parseFloat(String(line.cost_price || 0)) * parseFloat(String(line.quantity || 0));
+			const cost = Number(line.doc_type) === 2 ? -baseCost : baseCost;
+			
 			const gp = revenue - cost;
 
 			totalRevenue += revenue;

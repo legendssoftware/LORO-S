@@ -2285,7 +2285,8 @@ export class ErpDataService implements OnModuleInit {
 			query.select([
 				'line.category as category',
 				'SUM(line.incl_line_total) - SUM(line.tax) as totalRevenue',
-				'SUM(line.cost_price * line.quantity) as totalCost',
+				// ✅ FIXED: Credit notes (doc_type = 2) should have negative cost to match negative revenue
+				'SUM(CASE WHEN line.doc_type = 2 THEN -(line.cost_price * line.quantity) ELSE line.cost_price * line.quantity END) as totalCost',
 				'SUM(line.quantity) as totalQuantity',
 			])
 				.where('line.sale_date BETWEEN :startDate AND :endDate', {
@@ -2416,7 +2417,8 @@ export class ErpDataService implements OnModuleInit {
 				'line.store as store',
 				'line.category as category',
 				'SUM(line.incl_line_total) - SUM(line.tax) as totalRevenue', // ✅ Subtract tax: matches SQL query exactly
-				'SUM(line.cost_price * line.quantity) as totalCost',
+				// ✅ FIXED: Credit notes (doc_type = 2) should have negative cost to match negative revenue
+				'SUM(CASE WHEN line.doc_type = 2 THEN -(line.cost_price * line.quantity) ELSE line.cost_price * line.quantity END) as totalCost',
 				'COUNT(DISTINCT line.doc_number) as transactionCount',
 				'COUNT(DISTINCT line.customer) as uniqueCustomers',
 				'SUM(line.quantity) as totalQuantity',
@@ -2578,7 +2580,8 @@ export class ErpDataService implements OnModuleInit {
 				'line.description as description',
 				'line.category as category',
 				'SUM(line.incl_line_total) - SUM(line.tax) as totalRevenue', // ✅ Subtract tax: matches SQL query exactly
-				'SUM(line.cost_price * line.quantity) as totalCost',
+				// ✅ FIXED: Credit notes (doc_type = 2) should have negative cost to match negative revenue
+				'SUM(CASE WHEN line.doc_type = 2 THEN -(line.cost_price * line.quantity) ELSE line.cost_price * line.quantity END) as totalCost',
 				'SUM(line.quantity) as totalQuantity',
 				'COUNT(DISTINCT line.doc_number) as transactionCount',
 			])
