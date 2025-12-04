@@ -18,6 +18,7 @@ type ModuleName =
 	| 'news'
 	| 'notifications'
 	| 'organisation'
+	| 'payslips'
 	| 'products'
 	| 'reports'
 	| 'resellers'

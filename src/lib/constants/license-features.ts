@@ -2,6 +2,8 @@ import { SubscriptionPlan } from '../enums/license.enums';
 
 // Temporary constant for enforcing enterprise-only access
 export const ENTERPRISE_ONLY_FEATURES = {
+    // Approvals
+    'approvals.access': true,
     // Assets
     'assets.access': true,
     // Claims
@@ -42,6 +44,10 @@ export const ENTERPRISE_ONLY_FEATURES = {
     'tracking.access': true,
     // Users
     'users.access': true,
+    // Warnings
+    'warnings.access': true,
+    // Payslips
+    'payslips.access': true,
 };
 
 const STARTER_FEATURES = {
@@ -69,6 +75,10 @@ const STARTER_FEATURES = {
     'notifications.basic': true,
     'organisation.basic': true,
     'users.basic': true,
+    // Payslips
+    'payslips.basic': true,
+    // Approvals
+    'approvals.basic': true,
 };
 
 const PROFESSIONAL_FEATURES = {
@@ -98,6 +108,10 @@ const PROFESSIONAL_FEATURES = {
     'notifications.advanced': true,
     'organisation.advanced': true,
     'users.advanced': true,
+    // Payslips
+    'payslips.advanced': true,
+    // Approvals
+    'approvals.advanced': true,
 };
 
 const BUSINESS_FEATURES = {
@@ -132,6 +146,8 @@ const BUSINESS_FEATURES = {
     'shop.premium': true,
     'tasks.premium': true,
     'users.premium': true,
+    'payslips.premium': true,
+    'approvals.premium': true,
 };
 
 const ENTERPRISE_FEATURES = {
@@ -159,6 +175,8 @@ const ENTERPRISE_FEATURES = {
     'tasks.enterprise': true,
     'tracking.enterprise': true,
     'users.enterprise': true,
+    'payslips.enterprise': true,
+    'approvals.enterprise': true,
 };
 
 export const PLAN_FEATURES = {

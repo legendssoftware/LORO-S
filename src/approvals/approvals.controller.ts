@@ -12,6 +12,7 @@ import {
     HttpCode,
     HttpStatus,
     ParseIntPipe,
+    Logger,
 } from '@nestjs/common';
 import { ApprovalsService } from './approvals.service';
 import { CreateApprovalDto } from './dto/create-approval.dto';
@@ -41,15 +42,16 @@ import {
 } from '@nestjs/swagger';
 import { RoleGuard } from '../guards/role.guard';
 import { AuthGuard } from '../guards/auth.guard';
+import { FeatureGuard } from '../guards/feature.guard';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { Roles } from '../decorators/role.decorator';
-import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
+import { RequireFeature } from '../decorators/require-feature.decorator';
 
 @ApiBearerAuth('JWT-auth')
 @ApiTags('✅ Approvals')
 @Controller('approvals')
-@UseGuards(AuthGuard, RoleGuard)
-@EnterpriseOnly('approvals')
+@UseGuards(AuthGuard, RoleGuard, FeatureGuard)
+@RequireFeature('approvals.basic')
 @ApiConsumes('application/json')
 @ApiProduces('application/json')
 @ApiUnauthorizedResponse({ 
@@ -64,7 +66,33 @@ import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
     }
 })
 export class ApprovalsController {
+    private readonly logger = new Logger(ApprovalsController.name);
+
     constructor(private readonly approvalsService: ApprovalsService) {}
+
+    /**
+     * Determines access scope for the authenticated user
+     * @param user - Authenticated user object
+     * @returns Access scope with orgId and branchId (null for org-wide access)
+     */
+    private getAccessScope(user: any) {
+        const isElevatedUser = [
+            AccessLevel.ADMIN,
+            AccessLevel.OWNER,
+            AccessLevel.MANAGER,
+            AccessLevel.DEVELOPER,
+            AccessLevel.SUPPORT,
+        ].includes(user?.role || user?.accessLevel);
+
+        const orgId = user?.org?.uid || user?.organisationRef;
+        const branchId = isElevatedUser ? null : user?.branch?.uid;
+
+        return {
+            orgId,
+            branchId,
+            isElevated: isElevatedUser,
+        };
+    }
 
     // Create new approval request
     @Post()
@@ -405,7 +433,15 @@ Submit a new approval request for organizational workflow processing with compre
 
     // Get all approvals with filtering and pagination
     @Get()
-    @Roles(AccessLevel.MANAGER)
+    @Roles(
+        AccessLevel.ADMIN,
+        AccessLevel.MANAGER,
+        AccessLevel.SUPPORT,
+        AccessLevel.DEVELOPER,
+        AccessLevel.USER,
+        AccessLevel.OWNER,
+        AccessLevel.TECHNICIAN,
+    )
     @ApiOperation({ 
         summary: '📋 Get all approvals with advanced filtering',
         description: `
@@ -597,6 +633,22 @@ Retrieve a comprehensive, paginated list of approval requests with advanced filt
         }
     })
     findAll(@Query() query: ApprovalQueryDto, @Req() req: AuthenticatedRequest) {
+        this.logger.debug(`Finding all approvals with filters: ${JSON.stringify(query)}`);
+        const accessScope = this.getAccessScope(req.user);
+        
+        this.logger.debug('🔍 DEBUG findAll route:', {
+            requestingUser: {
+                uid: req.user?.uid,
+                accessLevel: req.user?.accessLevel || req.user?.role,
+                isElevated: accessScope.isElevated,
+            },
+            accessScope: {
+                orgId: accessScope.orgId,
+                branchId: accessScope.branchId,
+                orgWideAccess: accessScope.branchId === null,
+            },
+        });
+
         return this.approvalsService.findAll(query, req.user);
     }
 
@@ -744,6 +796,22 @@ Retrieve all approval requests that require immediate action from the currently 
         }
     })
     getPendingApprovals(@Req() req: AuthenticatedRequest) {
+        this.logger.debug(`Getting pending approvals for user ${req.user?.uid}`);
+        const accessScope = this.getAccessScope(req.user);
+        
+        this.logger.debug('🔍 DEBUG getPendingApprovals route:', {
+            requestingUser: {
+                uid: req.user?.uid,
+                accessLevel: req.user?.accessLevel || req.user?.role,
+                isElevated: accessScope.isElevated,
+            },
+            accessScope: {
+                orgId: accessScope.orgId,
+                branchId: accessScope.branchId,
+                orgWideAccess: accessScope.branchId === null,
+            },
+        });
+
         return this.approvalsService.getPendingApprovals(req.user);
     }
 
@@ -902,6 +970,22 @@ Retrieve all approval requests that were submitted by the currently authenticate
         }
     })
     getMyRequests(@Query() query: ApprovalQueryDto, @Req() req: AuthenticatedRequest) {
+        this.logger.debug(`Getting my requests for user ${req.user?.uid}`);
+        const accessScope = this.getAccessScope(req.user);
+        
+        this.logger.debug('🔍 DEBUG getMyRequests route:', {
+            requestingUser: {
+                uid: req.user?.uid,
+                accessLevel: req.user?.accessLevel || req.user?.role,
+                isElevated: accessScope.isElevated,
+            },
+            accessScope: {
+                orgId: accessScope.orgId,
+                branchId: accessScope.branchId,
+                orgWideAccess: accessScope.branchId === null,
+            },
+        });
+
         return this.approvalsService.getMyRequests(query, req.user);
     }
 

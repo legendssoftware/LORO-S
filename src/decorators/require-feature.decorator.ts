@@ -17,6 +17,7 @@ type ModuleFeature =
     | `news.${string}`
     | `notifications.${string}`
     | `organisation.${string}`
+    | `payslips.${string}`
     | `products.${string}`
     | `reports.${string}`
     | `resellers.${string}`

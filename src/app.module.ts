@@ -108,6 +108,7 @@ import { TblSalesHeader } from './erp/entities/tblsalesheader.entity';
 import { TblSalesLines } from './erp/entities/tblsaleslines.entity';
 import { TblCustomers } from './erp/entities/tblcustomers.entity';
 import { TblCustomerCategories } from './erp/entities/tblcustomercategories.entity';
+import { PayslipsModule } from './payslips/payslips.module';
 
 
 @Module({
@@ -333,6 +334,7 @@ import { TblCustomerCategories } from './erp/entities/tblcustomercategories.enti
 		BulkEmailModule,
 		SalesTipsModule,
 		ErpModule,
+		PayslipsModule,
 	],
 	controllers: [],
 	providers: [
