@@ -268,10 +268,7 @@ export class TrackingService {
 
 			for (const key of keysToDelete) {
 				await this.cacheManager.del(key);
-				this.logger.debug(`Cleared cache key: ${key}`);
 			}
-
-			this.logger.debug(`Cleared ${keysToDelete.length} tracking cache keys`);
 		} catch (error) {
 			this.logger.error('Error clearing tracking cache:', error.message);
 		}

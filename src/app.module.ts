@@ -101,7 +101,7 @@ import { Project } from './shop/entities/project.entity';
 import { MapModule } from './map/map.module';
 import { IotModule } from './iot/iot.module';
 import { BulkEmailModule } from './bulk-email/bulk-email.module';
-import { Device, DeviceRecords } from './iot/entities/iot.entity';
+import { Device, DeviceRecords, DeviceLogs } from './iot/entities/iot.entity';
 import { SalesTipsModule } from './sales-tips/sales-tips.module';
 import { ErpModule } from './erp/erp.module';
 import { TblSalesHeader } from './erp/entities/tblsalesheader.entity';
@@ -195,6 +195,7 @@ import { PayslipsModule } from './payslips/payslips.module';
 					Project,
 					Device,
 					DeviceRecords,
+					DeviceLogs,
 				],
 				synchronize: true,
 				logging: false,

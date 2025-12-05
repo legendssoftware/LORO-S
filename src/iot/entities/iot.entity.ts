@@ -114,16 +114,16 @@ export class DeviceLogs {
 	@PrimaryGeneratedColumn()
 	id: number;
 
-	@Column({ nullable: true })
+	@Column({ name: 'device_id', nullable: true })
 	deviceId: number;
 
-	@Column({ nullable: false })
+	@Column({ name: 'device_identifier', nullable: false })
 	deviceID: string;
 
-	@Column({ nullable: true })
+	@Column({ name: 'org_id', nullable: true })
 	orgID: number;
 
-	@Column({ nullable: true })
+	@Column({ name: 'branch_id', nullable: true })
 	branchID: number;
 
 	@Column({ nullable: false })
@@ -157,6 +157,6 @@ export class DeviceLogs {
 	createdAt: Date;
 
 	@ManyToOne(() => Device, { nullable: true })
-	@JoinColumn({ name: 'deviceId' })
+	@JoinColumn({ name: 'device_id' })
 	device: Device;
 }
