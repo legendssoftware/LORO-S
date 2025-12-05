@@ -22,6 +22,9 @@ export class QuotationItem {
     @Column({ nullable: true, default: 'item' })
     purchaseMode: string;
 
+    @Column({ nullable: true, type: 'int', default: 1 })
+    itemsPerUnit: number;
+
     @Column({ nullable: true, type: 'text' })
     notes: string;
 
