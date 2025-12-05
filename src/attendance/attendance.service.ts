@@ -247,7 +247,6 @@ export class AttendanceService {
 		try {
 			const organizationHours = await this.organizationHoursService.getOrganizationHours(organizationId);
 			const timezone = organizationHours?.timezone || TimezoneUtil.getSafeTimezone();
-			this.logger.debug(`Organization ${organizationId} timezone: ${timezone}`);
 			return timezone;
 		} catch (error) {
 			this.logger.warn(`Error getting timezone for org ${organizationId}, using default:`, error);
@@ -299,8 +298,6 @@ export class AttendanceService {
 				timezone = record.owner.preferences.timezone;
 			}
 
-			this.logger.debug(`Converting attendance record ${record.uid} to timezone: ${timezone}`);
-
 			// Convert all date fields to organization timezone
 			const convertedRecord = { ...record };
 
@@ -308,13 +305,11 @@ export class AttendanceService {
 			if (convertedRecord.checkIn) {
 				const originalTime = new Date(convertedRecord.checkIn);
 				convertedRecord.checkIn = TimezoneUtil.toOrganizationTime(originalTime, timezone);
-				this.logger.debug(`CheckIn converted from ${originalTime.toISOString()} to ${convertedRecord.checkIn.toISOString()}`);
 			}
 
 			if (convertedRecord.checkOut) {
 				const originalTime = new Date(convertedRecord.checkOut);
 				convertedRecord.checkOut = TimezoneUtil.toOrganizationTime(originalTime, timezone);
-				this.logger.debug(`CheckOut converted from ${originalTime.toISOString()} to ${convertedRecord.checkOut.toISOString()}`);
 			}
 
 			if (convertedRecord.breakStartTime) {
@@ -425,9 +420,6 @@ export class AttendanceService {
 		try {
 			if (!data) return data;
 
-			// Log timezone conversion for debugging
-			this.logger.debug(`[ensureTimezoneConversion] Processing data for organization: ${organizationId}`);
-
 			// Handle single attendance record
 			if (data.uid && data.checkIn) {
 				return await this.convertAttendanceRecordTimezone(data as Attendance, organizationId);
@@ -482,12 +474,10 @@ export class AttendanceService {
 						if (user.checkInTime) {
 							const originalTime = new Date(user.checkInTime);
 							user.checkInTime = TimezoneUtil.toOrganizationTime(originalTime, timezone);
-							this.logger.debug(`PresentUser checkInTime converted from ${originalTime.toISOString()} to ${user.checkInTime.toISOString()}`);
 						}
 						if (user.checkOutTime) {
 							const originalTime = new Date(user.checkOutTime);
 							user.checkOutTime = TimezoneUtil.toOrganizationTime(originalTime, timezone);
-							this.logger.debug(`PresentUser checkOutTime converted from ${originalTime.toISOString()} to ${user.checkOutTime.toISOString()}`);
 						}
 					}
 				}

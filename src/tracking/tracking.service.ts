@@ -310,7 +310,6 @@ export class TrackingService {
 
 		try {
 			// Validate input data
-			this.logger.debug('Validating tracking data');
 			if (!createTrackingDto.owner) {
 				throw new BadRequestException('User ID is required for tracking');
 			}
@@ -321,7 +320,6 @@ export class TrackingService {
 
 			// If the data comes in the new format with coords object (from mobile app)
 			if ((!latitude || !longitude) && createTrackingDto['coords']) {
-				this.logger.debug('Extracting coordinates from coords object');
 				const coords = createTrackingDto['coords'] as any;
 				latitude = coords.latitude;
 				longitude = coords.longitude;
@@ -380,10 +378,7 @@ export class TrackingService {
 				};
 			}
 
-			this.logger.debug(`Processing coordinates: ${latitude}, ${longitude} with accuracy: ${createTrackingDto.accuracy || 'unknown'}m`);
-
 			// Skip geocoding during creation for performance - will be done during retrieval
-			this.logger.debug('Skipping geocoding during creation for optimal performance');
 			const address = null;
 			const geocodingError = null;
 
@@ -401,8 +396,6 @@ export class TrackingService {
 					`Rate limit exceeded. Maximum 2 tracking points per minute allowed. Please wait until ${rateLimitCheck.resetAt.toISOString()} before sending more points.`
 				);
 			}
-
-			this.logger.debug(`Rate limit check passed for user ${ownerId}. Remaining: ${rateLimitCheck.remaining} points. Reset at: ${rateLimitCheck.resetAt.toISOString()}`);
 
 			// Validate user exists and has access
 			const userExists = await this.userRepository.findOne({
@@ -431,15 +424,12 @@ export class TrackingService {
 			// Add branch and organization if provided (with validation)
 			if (branchId) {
 				trackingData.branch = { uid: Number(branchId) } as any;
-				this.logger.debug(`Adding branch filter: ${branchId}`);
 			}
 
 			if (orgId) {
 				trackingData.organisation = { uid: Number(orgId) } as any;
-				this.logger.debug(`Adding organization filter: ${orgId}`);
 			}
 
-			this.logger.debug('Creating tracking entity in database');
 			const tracking = this.trackingRepository.create(trackingData);
 			await this.trackingRepository.save(tracking);
 

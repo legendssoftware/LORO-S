@@ -10,7 +10,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 
 import { IotService } from './iot.service';
 import { IotController } from './iot.controller';
-import { Device, DeviceRecords } from './entities/iot.entity';
+import { Device, DeviceRecords, DeviceLogs } from './entities/iot.entity';
 import { User } from '../user/entities/user.entity';
 import { Branch } from '../branch/entities/branch.entity';
 import { Attendance } from '../attendance/entities/attendance.entity';
@@ -25,7 +25,7 @@ import { IoTReportingService } from './services/iot-reporting.service';
 @Module({
   imports: [
     // TypeORM for entity management
-    TypeOrmModule.forFeature([Device, DeviceRecords, User, Branch, Attendance]),
+    TypeOrmModule.forFeature([Device, DeviceRecords, DeviceLogs, User, Branch, Attendance]),
     
     // Cache module for performance optimization
     CacheModule.register({

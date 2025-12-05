@@ -103,3 +103,60 @@ export class DeviceRecords {
 	@Column({ nullable: false, default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
 	updatedAt: Date;
 }
+
+@Entity('device_logs')
+@Index(['deviceId'])
+@Index(['deviceID'])
+@Index(['orgID'])
+@Index(['createdAt'])
+@Index(['eventType'])
+export class DeviceLogs {
+	@PrimaryGeneratedColumn()
+	id: number;
+
+	@Column({ nullable: true })
+	deviceId: number;
+
+	@Column({ nullable: false })
+	deviceID: string;
+
+	@Column({ nullable: true })
+	orgID: number;
+
+	@Column({ nullable: true })
+	branchID: number;
+
+	@Column({ nullable: false })
+	eventType: string; // 'open' or 'close'
+
+	@Column({ nullable: false })
+	ipAddress: string;
+
+	@Column({ nullable: true, type: 'varchar', length: 500 })
+	userAgent: string;
+
+	@Column({ nullable: true, type: 'json' })
+	networkInfo: {
+		ipAddress?: string;
+		port?: number;
+		headers?: Record<string, string>;
+		userAgent?: string;
+		referer?: string;
+	};
+
+	@Column({ nullable: false })
+	queryTimeMs: number; // Time taken for the query
+
+	@Column({ nullable: false })
+	timestamp: Date; // Event timestamp
+
+	@Column({ nullable: true, type: 'json' })
+	metadata: Record<string, any>;
+
+	@Column({ nullable: false, default: () => 'CURRENT_TIMESTAMP' })
+	createdAt: Date;
+
+	@ManyToOne(() => Device, { nullable: true })
+	@JoinColumn({ name: 'deviceId' })
+	device: Device;
+}

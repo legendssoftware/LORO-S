@@ -49,6 +49,7 @@ import {
 	UpdateDeviceAnalyticsDto,
 } from './dto/update-iot.dto';
 import { isPublic } from '../decorators/public.decorator';
+import { Request } from 'express';
 
 @ApiBearerAuth('JWT-auth')
 @ApiTags('🤖 IoT Devices & Time Tracking')
@@ -1642,6 +1643,7 @@ Successful requests return:
 		@Param('location') location: string,
 		@Param('ipAddress') ipAddress: string,
 		@Param('metadata') metadata: string,
+		@Req() req: Request,
 	) {
 		// This POST method creates/updates device records based on URL parameters
 		// Validate required parameters
@@ -1679,7 +1681,32 @@ Successful requests return:
 			metadata: metadata === 'null' ? undefined : this.parseUrlMetadata(metadata),
 		};
 
-		return this.iotService.recordTimeEvent(timeEventData);
+		// Extract network info from request
+		const networkInfo = {
+			ipAddress: this.extractIpAddress(req),
+			userAgent: req.get('User-Agent') || 'Unknown',
+			headers: {
+				'user-agent': req.get('User-Agent'),
+				'referer': req.get('Referer'),
+				'x-forwarded-for': req.get('X-Forwarded-For'),
+				'x-real-ip': req.get('X-Real-IP'),
+			},
+			referer: req.get('Referer'),
+		};
+
+		return this.iotService.recordTimeEvent(timeEventData, networkInfo);
+	}
+
+	private extractIpAddress(req: Request): string {
+		return (
+			req.headers['x-forwarded-for']?.toString().split(',')[0].trim() ||
+			req.headers['x-real-ip']?.toString() ||
+			req.connection?.remoteAddress ||
+			req.socket?.remoteAddress ||
+			(req.connection as any)?.socket?.remoteAddress ||
+			req.ip ||
+			'Unknown'
+		) as string;
 	}
 
 	@Get('records')

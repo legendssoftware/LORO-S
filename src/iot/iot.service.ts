@@ -13,7 +13,7 @@ import { Cache } from 'cache-manager';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import { Device, DeviceRecords } from './entities/iot.entity';
+import { Device, DeviceRecords, DeviceLogs } from './entities/iot.entity';
 import { DeviceType, DeviceStatus } from '../lib/enums/iot';
 import { DevicePerformanceMetrics } from '../lib/interfaces/iot.interface';
 import { DeviceReportOptions } from '../lib/types/iot.types';
@@ -86,6 +86,8 @@ export class IotService {
 		private deviceRepository: Repository<Device>,
 		@InjectRepository(DeviceRecords)
 		private deviceRecordsRepository: Repository<DeviceRecords>,
+		@InjectRepository(DeviceLogs)
+		private deviceLogsRepository: Repository<DeviceLogs>,
 		@InjectRepository(User)
 		private userRepository: Repository<User>,
 		@InjectRepository(Branch)
@@ -102,7 +104,7 @@ export class IotService {
 		private readonly unifiedNotificationService: UnifiedNotificationService,
 	) {
 		this.CACHE_TTL = parseInt(this.configService.get<string>('CACHE_TTL', '300'));
-		this.logger.log('🤖 IoT Service initialized successfully with comprehensive reporting capabilities');
+		this.logger.log('🤖 IoT Service initialized');
 	}
 
 	/**
@@ -114,12 +116,7 @@ export class IotService {
 
 	private async invalidateDeviceCache(device: Device) {
 		try {
-			this.logger.debug(`🧹 Invalidating cache for device: ${device.deviceID} (org: ${device.orgID}, branch: ${device.branchID})`);
-
-			// Get all cache keys from store (like user service pattern)
 			const keys = await this.cacheManager.store.keys();
-
-			// Keys to clear
 			const keysToDelete = [];
 
 			// Add device-specific keys
@@ -140,16 +137,13 @@ export class IotService {
 				this.getCacheKey('devices:all'),
 			);
 
-			// Clear ALL device list caches that match the orgId (critical for device list updates)
-			// The cache key format is: iot:devices:{"filters":{"orgId":2,"branchId":null},"page":"1","limit":"100"}
+			// Clear ALL device list caches that match the orgId
 			const orgIdStr = device.orgID.toString();
 			const branchIdStr = device.branchID?.toString() || '';
 			
 			const deviceListCaches = keys.filter(
 				(key) => {
-					// Match device list cache keys that contain this orgId
 					if (key.startsWith(`${this.CACHE_PREFIX}devices:`)) {
-						// Check if the key contains the orgId in the filters
 						return key.includes(`"orgId":${orgIdStr}`) || 
 						       key.includes(`"orgId":"${orgIdStr}"`) ||
 						       key.includes(`orgId:${orgIdStr}`) ||
@@ -170,19 +164,8 @@ export class IotService {
 			);
 			keysToDelete.push(...relatedCaches);
 
-			// Remove duplicates and clear all caches
 			const uniqueKeys = [...new Set(keysToDelete)];
-			
-			// Log which cache keys are being cleared for debugging
-			this.logger.debug(`🗑️ Clearing ${uniqueKeys.length} cache keys for device ${device.deviceID}:`, {
-				deviceListCaches: deviceListCaches.length,
-				relatedCaches: relatedCaches.length,
-				sampleKeys: uniqueKeys.slice(0, 5),
-			});
-			
 			await Promise.all(uniqueKeys.map((key) => this.cacheManager.del(key)));
-
-			this.logger.log(`🗑️ Cache invalidated for device ${device.deviceID}. Cleared ${uniqueKeys.length} cache keys`);
 
 			// Emit event for other services that might be caching device data
 			this.eventEmitter.emit('iot.devices.cache.invalidate', {
@@ -193,7 +176,7 @@ export class IotService {
 				keys: uniqueKeys,
 			});
 		} catch (error) {
-			this.logger.error(`❌ Error invalidating device cache for device ${device.deviceID}:`, error.message);
+			this.logger.error(`Error invalidating device cache: ${error.message}`);
 		}
 	}
 
@@ -205,16 +188,10 @@ export class IotService {
 			});
 
 			if (!device) {
-				this.logger.warn(`⚠️ Device not found for record ${record.id}, cannot invalidate cache`);
 				return;
 			}
 
-			this.logger.debug(`🧹 Invalidating record cache for device ${device.deviceID} (org: ${device.orgID}, branch: ${device.branchID})`);
-
-			// Get all cache keys from store (like user service pattern)
 			const keys = await this.cacheManager.store.keys();
-
-			// Keys to clear
 			const keysToDelete = [];
 
 			// Add record-specific keys
@@ -257,11 +234,8 @@ export class IotService {
 			);
 			keysToDelete.push(...relatedCaches);
 
-			// Remove duplicates and clear all caches
 			const uniqueKeys = [...new Set(keysToDelete)];
 			await Promise.all(uniqueKeys.map((key) => this.cacheManager.del(key)));
-
-			this.logger.debug(`🗑️ Record cache invalidated for device ${device.deviceID}. Cleared ${uniqueKeys.length} cache keys`);
 
 			// Emit event for other services that might be caching record data
 			this.eventEmitter.emit('iot.records.cache.invalidate', {
@@ -273,7 +247,7 @@ export class IotService {
 				keys: uniqueKeys,
 			});
 		} catch (error) {
-			this.logger.error(`❌ Error invalidating record cache for record ${record.id}:`, error.message);
+			this.logger.error(`Error invalidating record cache: ${error.message}`);
 		}
 	}
 
@@ -283,12 +257,8 @@ export class IotService {
 	 */
 	async invalidateAllIoTCaches(): Promise<void> {
 		try {
-			this.logger.log(`🧹 Starting comprehensive IoT cache invalidation`);
-
-			// Get all cache keys from store
 			const keys = await this.cacheManager.store.keys();
 
-			// Filter all IoT-related cache keys
 			const iotCacheKeys = keys.filter(
 				(key) =>
 					key.startsWith(`${this.CACHE_PREFIX}`) ||
@@ -299,18 +269,76 @@ export class IotService {
 					key.includes('business_hours'),
 			);
 
-			// Clear all IoT caches in parallel
 			await Promise.all(iotCacheKeys.map((key) => this.cacheManager.del(key)));
 
-			this.logger.log(`🗑️ Comprehensive IoT cache invalidation completed. Cleared ${iotCacheKeys.length} cache keys`);
-
-			// Emit event for system-wide cache invalidation
 			this.eventEmitter.emit('iot.cache.invalidate.all', {
 				clearedKeys: iotCacheKeys.length,
 				timestamp: new Date(),
 			});
 		} catch (error) {
-			this.logger.error(`❌ Error during comprehensive IoT cache invalidation:`, error.message);
+			this.logger.error(`Error during comprehensive IoT cache invalidation: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Save device log with key information
+	 * This method saves logs for both successful and failed operations
+	 */
+	private async saveDeviceLog(
+		device: Device | null,
+		timeEventDto: DeviceTimeRecordDto,
+		queryTimeMs: number,
+		networkInfo?: {
+			ipAddress?: string;
+			port?: number;
+			headers?: Record<string, string>;
+			userAgent?: string;
+			referer?: string;
+		},
+		errorInfo?: {
+			success: boolean;
+			errorType?: string;
+			errorMessage?: string;
+			errorDetails?: any;
+		},
+	): Promise<void> {
+		try {
+			// If device is null (e.g., validation failure before device lookup), use minimal info
+			const deviceId = device?.id || 0;
+			const deviceID = device?.deviceID || timeEventDto.deviceID || 'Unknown';
+			const orgID = device?.orgID || 0;
+			const branchID = device?.branchID || null;
+			const devicePort = device?.devicePort || null;
+
+			const deviceLog = this.deviceLogsRepository.create({
+				deviceId,
+				deviceID,
+				orgID,
+				branchID,
+				eventType: timeEventDto.eventType,
+				ipAddress: timeEventDto.ipAddress || networkInfo?.ipAddress || 'Unknown',
+				userAgent: networkInfo?.userAgent || 'Unknown',
+				networkInfo: {
+					ipAddress: timeEventDto.ipAddress || networkInfo?.ipAddress,
+					port: devicePort,
+					headers: networkInfo?.headers,
+					userAgent: networkInfo?.userAgent,
+					referer: networkInfo?.referer,
+				},
+				queryTimeMs,
+				timestamp: new Date(timeEventDto.timestamp * 1000),
+				metadata: {
+					...(timeEventDto.metadata || {}),
+					success: errorInfo?.success ?? true,
+					errorType: errorInfo?.errorType,
+					errorMessage: errorInfo?.errorMessage,
+					errorDetails: errorInfo?.errorDetails,
+				},
+			});
+
+			await this.deviceLogsRepository.save(deviceLog);
+		} catch (error) {
+			this.logger.warn(`Failed to save device log: ${error.message}`);
 		}
 	}
 
@@ -1511,42 +1539,19 @@ export class IotService {
 		limit: number = 10,
 	): Promise<PaginatedResponse<Device>> {
 		const startTime = Date.now();
-		const requestId = `findAllDevices_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-		this.logger.log(
-			`🔌 [${requestId}] Starting IoT devices fetch with filters: ${JSON.stringify(
-				filters,
-			)}, page: ${page}, limit: ${limit}`,
-		);
 
 		try {
 			// Input validation
-			if (page < 1) {
-				this.logger.warn(`🔌 [${requestId}] Invalid page number: ${page}, defaulting to 1`);
-				page = 1;
-			}
-			if (limit < 1 || limit > 100) {
-				this.logger.warn(`🔌 [${requestId}] Invalid limit: ${limit}, defaulting to 10`);
-				limit = 10;
-			}
+			if (page < 1) page = 1;
+			if (limit < 1 || limit > 100) limit = 10;
 
 			const cacheKey = this.getCacheKey(`devices:${JSON.stringify({ filters, page, limit })}`);
-			this.logger.debug(`🔌 [${requestId}] Checking cache with key: ${cacheKey}`);
-
 			const cached = await this.cacheManager.get<PaginatedResponse<Device>>(cacheKey);
 
 			if (cached) {
-				const cacheHitTime = Date.now() - startTime;
-				this.logger.log(`🔌 [${requestId}] ✅ Cache hit! Returning cached devices data in ${cacheHitTime}ms`);
-				this.logger.debug(
-					`🔌 [${requestId}] Cache data summary: ${cached.data?.length || 0} devices, total: ${
-						cached.total
-					}, pages: ${cached.totalPages}`,
-				);
+				this.logger.log(`Cache hit: ${cached.data?.length || 0} devices`);
 				return cached;
 			}
-
-			this.logger.debug(`🔌 [${requestId}] Cache miss. Building database query...`);
 
 		const queryBuilder = this.deviceRepository
 			.createQueryBuilder('device')
@@ -1556,88 +1561,45 @@ export class IotService {
 			.where('device.isDeleted = :isDeleted', { isDeleted: false })
 			.orderBy('device.createdAt', 'DESC');
 
-			this.logger.debug(`🔌 [${requestId}] Base query created with relations`);
-
-			// Apply filters with detailed logging
-			let appliedFilters = 0;
-
+			// Apply filters
 			if (filters.orgId) {
 				queryBuilder.andWhere('device.orgID = :orgId', { orgId: filters.orgId });
-				this.logger.debug(`🔌 [${requestId}] Applied orgId filter: ${filters.orgId}`);
-				appliedFilters++;
 			}
-
 			if (filters.branchId) {
 				queryBuilder.andWhere('device.branchID = :branchId', { branchId: filters.branchId });
-				this.logger.debug(`🔌 [${requestId}] Applied branchId filter: ${filters.branchId}`);
-				appliedFilters++;
 			}
-
 			if (filters.deviceType) {
 				queryBuilder.andWhere('device.deviceType = :deviceType', { deviceType: filters.deviceType });
-				this.logger.debug(`🔌 [${requestId}] Applied deviceType filter: ${filters.deviceType}`);
-				appliedFilters++;
 			}
-
 			if (filters.status) {
 				queryBuilder.andWhere('device.currentStatus = :status', { status: filters.status });
-				this.logger.debug(`🔌 [${requestId}] Applied status filter: ${filters.status}`);
-				appliedFilters++;
 			}
 
-			this.logger.log(`🔌 [${requestId}] Applied ${appliedFilters} filters to query`);
-
-			// Get total count - use a separate query builder without joins to get accurate count
-			const countStartTime = Date.now();
+			// Get total count
 			const countQueryBuilder = this.deviceRepository
 				.createQueryBuilder('device')
 				.where('device.isDeleted = :isDeleted', { isDeleted: false });
 			
-			// Apply same filters to count query
-			if (filters.orgId) {
-				countQueryBuilder.andWhere('device.orgID = :orgId', { orgId: filters.orgId });
-			}
-			if (filters.branchId) {
-				countQueryBuilder.andWhere('device.branchID = :branchId', { branchId: filters.branchId });
-			}
-			if (filters.deviceType) {
-				countQueryBuilder.andWhere('device.deviceType = :deviceType', { deviceType: filters.deviceType });
-			}
-			if (filters.status) {
-				countQueryBuilder.andWhere('device.currentStatus = :status', { status: filters.status });
-			}
+			if (filters.orgId) countQueryBuilder.andWhere('device.orgID = :orgId', { orgId: filters.orgId });
+			if (filters.branchId) countQueryBuilder.andWhere('device.branchID = :branchId', { branchId: filters.branchId });
+			if (filters.deviceType) countQueryBuilder.andWhere('device.deviceType = :deviceType', { deviceType: filters.deviceType });
+			if (filters.status) countQueryBuilder.andWhere('device.currentStatus = :status', { status: filters.status });
 			
 			const total = await countQueryBuilder.getCount();
-			const countTime = Date.now() - countStartTime;
-			this.logger.debug(`🔌 [${requestId}] Count query completed: ${total} devices found in ${countTime}ms`);
 
 			// Apply pagination
 			const offset = (page - 1) * limit;
 			queryBuilder.skip(offset).take(limit);
-			this.logger.debug(`🔌 [${requestId}] Applied pagination: offset=${offset}, limit=${limit}`);
 
 			// Execute main query
-			const queryStartTime = Date.now();
 			const devices = await queryBuilder.getMany();
-			const queryTime = Date.now() - queryStartTime;
-			this.logger.debug(
-				`🔌 [${requestId}] Main query completed: ${devices.length} devices fetched in ${queryTime}ms`,
-			);
-
-			// Log all device IDs for debugging missing devices issue
-			const deviceIds = devices.map(d => ({ id: d.id, deviceID: d.deviceID, branchID: d.branchID }));
-			this.logger.debug(
-				`🔌 [${requestId}] Fetched device IDs: ${JSON.stringify(deviceIds)}`,
-			);
 
 		// Limit records to latest 30 for each device and calculate performance metrics
-		// IMPORTANT: Sort by openTime/closeTime (actual event times) not createdAt to get most recent events
 		const processedDevices = await Promise.all(
 			devices.map(async (device) => {
 				const sortedRecords = device.records
 					? device.records
 							.sort((a, b) => {
-								// Sort by actual event time (openTime or closeTime), fallback to createdAt
 								const aTime = a.openTime || a.closeTime || a.createdAt;
 								const bTime = b.openTime || b.closeTime || b.createdAt;
 								return new Date(bTime).getTime() - new Date(aTime).getTime();
@@ -1645,11 +1607,7 @@ export class IotService {
 							.slice(0, 30)
 					: [];
 
-				// Calculate performance metrics using organization hours (includes doorUserComparisons)
 				const performanceMetrics = await this.calculateDevicePerformanceMetrics(device, sortedRecords);
-				
-				// ✅ Reduced logging: Only log summary, removed verbose debug
-				// Performance metrics are already logged in calculateDevicePerformanceMetrics
 
 				return {
 					...device,
@@ -1658,20 +1616,6 @@ export class IotService {
 				};
 			})
 		);
-
-			// Log device details for debugging
-			if (processedDevices.length > 0) {
-				this.logger.debug(
-					`🔌 [${requestId}] Sample device data: ID=${processedDevices[0].id}, deviceID=${processedDevices[0].deviceID}, type=${processedDevices[0].deviceType}, status=${processedDevices[0].currentStatus}, records=${processedDevices[0].records.length}`,
-				);
-			}
-			
-			// Log discrepancy if total count doesn't match fetched devices
-			if (total !== devices.length) {
-				this.logger.warn(
-					`🔌 [${requestId}] ⚠️ Count mismatch: total=${total}, fetched=${devices.length}. This may indicate a query issue.`,
-				);
-			}
 
 			const result: PaginatedResponse<Device> = {
 				data: processedDevices,
@@ -1682,26 +1626,13 @@ export class IotService {
 			};
 
 			// Cache the result
-			const cacheStartTime = Date.now();
 			await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);
-			const cacheTime = Date.now() - cacheStartTime;
-			this.logger.debug(`🔌 [${requestId}] Result cached in ${cacheTime}ms with TTL: ${this.CACHE_TTL}ms`);
 
-			const totalTime = Date.now() - startTime;
-			this.logger.log(
-				`🔌 [${requestId}] ✅ Successfully fetched ${processedDevices.length} devices (${total} total) in ${totalTime}ms`,
-			);
+			this.logger.log(`Fetched ${processedDevices.length} devices (${total} total) in ${Date.now() - startTime}ms`);
 
 			return result;
 		} catch (error) {
-			const errorTime = Date.now() - startTime;
-			this.logger.error(`🔌 [${requestId}] ❌ Failed to fetch devices after ${errorTime}ms: ${error.message}`, {
-				filters,
-				page,
-				limit,
-				stack: error.stack,
-				requestId,
-			});
+			this.logger.error(`Failed to fetch devices: ${error.message}`);
 			throw new BadRequestException(`Failed to fetch devices: ${error.message}`);
 		}
 	}
@@ -2172,23 +2103,40 @@ export class IotService {
 	 */
 	async recordTimeEvent(
 		timeEventDto: DeviceTimeRecordDto,
+		networkInfo?: {
+			ipAddress?: string;
+			port?: number;
+			headers?: Record<string, string>;
+			userAgent?: string;
+			referer?: string;
+		},
 	): Promise<{ message: string; record?: Partial<DeviceRecords>; eventProcessing?: any }> {
 		const startTime = Date.now();
-		const eventId = `${timeEventDto.deviceID}-${timeEventDto.eventType}-${timeEventDto.timestamp}`;
+		let device: Device | null = null;
+		let queryRunner: any = null;
 
-		this.logger.log(
-			`⏰ Processing ${timeEventDto.eventType} event for device: ${timeEventDto.deviceID} at timestamp: ${timeEventDto.timestamp}`,
-		);
+		this.logger.log(`Processing ${timeEventDto.eventType} event for device: ${timeEventDto.deviceID}`);
 
 		// Comprehensive validation first
 		try {
 			await this.validateTimeEvent(timeEventDto);
 		} catch (validationError) {
-			this.logger.warn(`⚠️ Time event validation failed: ${validationError.message}`, {
-				deviceID: timeEventDto.deviceID,
-				eventType: timeEventDto.eventType,
-				timestamp: timeEventDto.timestamp,
-			});
+			const queryTimeMs = Date.now() - startTime;
+			this.logger.warn(`Time event validation failed: ${validationError.message}`);
+			
+			// Save log for validation failure
+			await this.saveDeviceLog(
+				null,
+				timeEventDto,
+				queryTimeMs,
+				networkInfo,
+				{
+					success: false,
+					errorType: 'VALIDATION_ERROR',
+					errorMessage: validationError.message,
+					errorDetails: validationError instanceof BadRequestException ? validationError.getResponse() : undefined,
+				}
+			);
 			
 			return {
 				message: validationError.message || 'Time event validation failed',
@@ -2196,13 +2144,13 @@ export class IotService {
 		}
 
 		// Start transaction for atomic operations
-		const queryRunner = this.dataSource.createQueryRunner();
+		queryRunner = this.dataSource.createQueryRunner();
 		await queryRunner.connect();
 		await queryRunner.startTransaction();
 
 		try {
 			// 1. Device validation and retrieval
-			const device = await this.getAndValidateDevice(timeEventDto.deviceID, queryRunner);
+			device = await this.getAndValidateDevice(timeEventDto.deviceID, queryRunner);
 
 			// 2. Business hours validation and analysis
 			const businessHoursAnalysis = await this.validateBusinessHours(timeEventDto, device);
@@ -2210,15 +2158,20 @@ export class IotService {
 			// 3. Smart daily record management
 			const recordResult = await this.smartRecordManagement(timeEventDto, device, queryRunner);
 
+			// Calculate query time
+			const queryTimeMs = Date.now() - startTime;
+
 			// If record was deleted or debounced, skip analytics and notifications
 			if (
 				(recordResult.action === 'deleted' && recordResult.reason === 'open_close_too_close') ||
 				(recordResult.action === 'debounced' && recordResult.reason === 'duplicate_within_5min')
 			) {
-				this.logger.log(
-					`⏭️ Skipping analytics and notifications for ${recordResult.action} record - Device: ${timeEventDto.deviceID}`,
-				);
-				// Still invalidate device cache since we may have modified records
+				// Still save log even if record was debounced/deleted
+				await this.saveDeviceLog(device, timeEventDto, queryTimeMs, networkInfo, {
+					success: true,
+					errorType: recordResult.action === 'deleted' ? 'RECORD_DELETED' : 'RECORD_DEBOUNCED',
+					errorMessage: recordResult.reason,
+				});
 				await this.invalidateDeviceCache(device);
 			} else {
 				// 4. Advanced analytics update (includes business hours analysis)
@@ -2232,56 +2185,69 @@ export class IotService {
 
 				// 5. Real-time notifications
 				await this.processRealTimeNotifications(device, timeEventDto, recordResult);
+
+				// Save device log for successful operation
+				await this.saveDeviceLog(device, timeEventDto, queryTimeMs, networkInfo, {
+					success: true,
+				});
 			}
 
 			// 6. Commit transaction
 			await queryRunner.commitTransaction();
 
-			// 6. Post-processing activities (skip if record was deleted)
+			// 7. Post-processing activities (skip if record was deleted)
 			if (recordResult.action !== 'deleted' || recordResult.reason !== 'open_close_too_close') {
 				await this.performPostEventActivities(device, timeEventDto, recordResult, startTime);
 			}
 
 			const processingTime = Date.now() - startTime;
 
-			// Create comprehensive success message with business context
+			// Create comprehensive success message
 			if (recordResult.action === 'deleted' && recordResult.reason === 'open_close_too_close') {
-				this.logger.log(
-					`✅ Time event processed successfully (record discarded) in ${processingTime}ms for device: ${timeEventDto.deviceID}`,
-				);
 				return {
 					message: 'Time event processed successfully - record discarded due to open/close times being too close',
 				};
 			}
 
-			const attendanceContext =
-				businessHoursAnalysis.attendanceStatus === 'ON_TIME'
-					? 'On-time arrival detected'
-					: businessHoursAnalysis.attendanceStatus === 'LATE'
-					? 'Late arrival detected'
-					: businessHoursAnalysis.attendanceStatus === 'EARLY'
-					? 'Early arrival detected'
-					: 'Outside business hours detected';
-
-			this.logger.log(
-				`✅ Time event processed successfully in ${processingTime}ms for device: ${timeEventDto.deviceID} - ${attendanceContext}`,
-			);
+			this.logger.log(`Time event processed successfully in ${processingTime}ms for device: ${timeEventDto.deviceID}`);
 
 			return {
 				message: process.env.SUCCESS_MESSAGE || 'Time event processed successfully',
 			};
 		} catch (error) {
 			await queryRunner.rollbackTransaction();
+			const queryTimeMs = Date.now() - startTime;
 
 			// Handle NotFoundException for device not found
 			if (error instanceof NotFoundException) {
-				this.logger.warn(`⚠️ Device not found: ${error.message}`, {
-					deviceID: timeEventDto.deviceID,
-					eventType: timeEventDto.eventType,
-					timestamp: timeEventDto.timestamp,
-					duration: Date.now() - startTime,
-				});
-
+				this.logger.warn(`Device not found: ${error.message}`);
+				
+				// Try to get device info for logging (might fail, but we'll handle it)
+				try {
+					const deviceForLog = await this.deviceRepository.findOne({
+						where: { deviceID: timeEventDto.deviceID, isDeleted: false },
+						select: ['id', 'deviceID', 'orgID', 'branchID', 'devicePort'],
+					});
+					device = deviceForLog;
+				} catch (lookupError) {
+					// Device doesn't exist, use null
+					device = null;
+				}
+				
+				// Save log for device not found error
+				await this.saveDeviceLog(
+					device,
+					timeEventDto,
+					queryTimeMs,
+					networkInfo,
+					{
+						success: false,
+						errorType: 'DEVICE_NOT_FOUND',
+						errorMessage: error.message,
+						errorDetails: error instanceof NotFoundException ? error.getResponse() : undefined,
+					}
+				);
+				
 				return {
 					message: `Device with ID '${timeEventDto.deviceID}' not found. Please ensure the device is registered in the system.`,
 				};
@@ -2289,13 +2255,22 @@ export class IotService {
 
 			// Handle BadRequestException for validation errors
 			if (error instanceof BadRequestException) {
-				this.logger.warn(`⚠️ Bad request: ${error.message}`, {
-					deviceID: timeEventDto.deviceID,
-					eventType: timeEventDto.eventType,
-					timestamp: timeEventDto.timestamp,
-					duration: Date.now() - startTime,
-				});
-
+				this.logger.warn(`Bad request: ${error.message}`);
+				
+				// Save log for bad request error
+				await this.saveDeviceLog(
+					device,
+					timeEventDto,
+					queryTimeMs,
+					networkInfo,
+					{
+						success: false,
+						errorType: 'BAD_REQUEST',
+						errorMessage: error.message,
+						errorDetails: error.getResponse(),
+					}
+				);
+				
 				return {
 					message: error.message || 'Invalid request. Please check your input and try again.',
 				};
@@ -2303,33 +2278,54 @@ export class IotService {
 
 			// Handle ConflictException for business rule violations
 			if (error instanceof ConflictException) {
-				this.logger.warn(`⚠️ Conflict detected: ${error.message}`, {
-					deviceID: timeEventDto.deviceID,
-					eventType: timeEventDto.eventType,
-					timestamp: timeEventDto.timestamp,
-					duration: Date.now() - startTime,
-				});
-
+				this.logger.warn(`Conflict detected: ${error.message}`);
+				
+				// Save log for conflict error
+				await this.saveDeviceLog(
+					device,
+					timeEventDto,
+					queryTimeMs,
+					networkInfo,
+					{
+						success: false,
+						errorType: 'CONFLICT',
+						errorMessage: error.message,
+						errorDetails: error.getResponse(),
+					}
+				);
+				
 				return {
 					message: error.message || 'Operation conflict detected. Please try again.',
 				};
 			}
 
 			// Log unexpected errors
-			this.logger.error(`❌ Failed to process time event: ${error.message}`, {
-				deviceID: timeEventDto.deviceID,
-				eventType: timeEventDto.eventType,
-				timestamp: timeEventDto.timestamp,
-				eventId,
-				duration: Date.now() - startTime,
-				stack: error.stack,
-			});
+			this.logger.error(`Failed to process time event: ${error.message}`);
+			
+			// Save log for unexpected error
+			await this.saveDeviceLog(
+				device,
+				timeEventDto,
+				queryTimeMs,
+				networkInfo,
+				{
+					success: false,
+					errorType: 'UNEXPECTED_ERROR',
+					errorMessage: error.message,
+					errorDetails: {
+						name: error.name,
+						stack: error.stack,
+					},
+				}
+			);
 
 			return {
 				message: 'Failed to process time event due to system error. Please try again later.',
 			};
 		} finally {
-			await queryRunner.release();
+			if (queryRunner) {
+				await queryRunner.release();
+			}
 		}
 	}
 
@@ -4049,60 +4045,31 @@ export class IotService {
 	 * Analytics and Reporting
 	 */
 	async getDeviceAnalytics(id: number): Promise<{ analytics: any | null; message: string }> {
-		const startTime = Date.now();
-		const requestId = `getDeviceAnalytics_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-		this.logger.log(`📊 [${requestId}] Starting analytics fetch for device ID: ${id}`);
-
 		try {
-			// Input validation
 			if (!id || id <= 0) {
-				this.logger.warn(`📊 [${requestId}] Invalid device ID: ${id}`);
 				return { analytics: null, message: 'Invalid device ID' };
 			}
 
 			const cacheKey = this.getCacheKey(`analytics:device:${id}`);
-			this.logger.debug(`📊 [${requestId}] Checking cache with key: ${cacheKey}`);
-
 			const cached = await this.cacheManager.get(cacheKey);
 
 			if (cached) {
-				const cacheHitTime = Date.now() - startTime;
-				this.logger.log(
-					`📊 [${requestId}] ✅ Cache hit! Returning cached analytics for device ID: ${id} in ${cacheHitTime}ms`,
-				);
 				return { analytics: cached, message: 'Analytics retrieved successfully' };
 			}
 
-			this.logger.debug(`📊 [${requestId}] Cache miss. Fetching device data from database...`);
-
-			const queryStartTime = Date.now();
 			const device = await this.deviceRepository.findOne({
 				where: { id, isDeleted: false },
 				relations: ['records'],
 			});
-			const queryTime = Date.now() - queryStartTime;
-
-			this.logger.debug(`📊 [${requestId}] Device query completed in ${queryTime}ms`);
 
 			if (!device) {
-				this.logger.warn(`📊 [${requestId}] Device not found with ID: ${id}`);
 				return { analytics: null, message: 'Device not found' };
 			}
 
-			this.logger.debug(
-				`📊 [${requestId}] Device found: ${device.deviceID}, type: ${device.deviceType}, status: ${device.currentStatus}`,
-			);
-
 			// Calculate additional analytics
 			const totalRecords = device.records.length;
-			const recentRecords = device.records.slice(0, 30); // Last 30 records
+			const recentRecords = device.records.slice(0, 30);
 
-			this.logger.debug(
-				`📊 [${requestId}] Processing analytics: ${totalRecords} total records, ${recentRecords.length} recent records`,
-			);
-
-			const analyticsStartTime = Date.now();
 			const analytics = {
 				...device.analytics,
 				totalRecords,
@@ -4112,9 +4079,6 @@ export class IotService {
 					closeTime: record.closeTime,
 					date: record.createdAt,
 				})),
-				averageOpenTime: this.calculateAverageOpenTime(recentRecords),
-				deviceUptime: this.calculateDeviceUptime(device),
-				// Additional calculated metrics
 				deviceInfo: {
 					id: device.id,
 					deviceID: device.deviceID,
@@ -4126,35 +4090,12 @@ export class IotService {
 					branchID: device.branchID,
 				},
 			};
-			const analyticsTime = Date.now() - analyticsStartTime;
 
-			this.logger.debug(
-				`📊 [${requestId}] Analytics calculated in ${analyticsTime}ms: uptime=${analytics.deviceUptime}%, avgOpenTime=${analytics.averageOpenTime}h`,
-			);
-
-			// Cache the result
-			const cacheStartTime = Date.now();
 			await this.cacheManager.set(cacheKey, analytics, this.CACHE_TTL);
-			const cacheTime = Date.now() - cacheStartTime;
-
-			this.logger.debug(`📊 [${requestId}] Analytics cached in ${cacheTime}ms with TTL: ${this.CACHE_TTL}ms`);
-
-			const totalTime = Date.now() - startTime;
-			this.logger.log(
-				`📊 [${requestId}] ✅ Successfully retrieved analytics for device ${device.deviceID} in ${totalTime}ms`,
-			);
 
 			return { analytics, message: 'Analytics retrieved successfully' };
 		} catch (error) {
-			const errorTime = Date.now() - startTime;
-			this.logger.error(
-				`📊 [${requestId}] ❌ Failed to get device analytics for ID ${id} after ${errorTime}ms: ${error.message}`,
-				{
-					deviceId: id,
-					stack: error.stack,
-					requestId,
-				},
-			);
+			this.logger.error(`Failed to get device analytics: ${error.message}`);
 			throw new BadRequestException(`Failed to get device analytics: ${error.message}`);
 		}
 	}
@@ -4194,8 +4135,6 @@ export class IotService {
 
 			const summary = {
 				totalDevices: devices.length,
-				devicesByStatus: this.groupDevicesByStatus(devices),
-				devicesByType: this.groupDevicesByType(devices),
 				totalRecords: devices.reduce((sum, device) => sum + device.records.length, 0),
 				totalOpenEvents: devices.reduce((sum, device) => sum + device.analytics.openCount, 0),
 				totalCloseEvents: devices.reduce((sum, device) => sum + device.analytics.closeCount, 0),
