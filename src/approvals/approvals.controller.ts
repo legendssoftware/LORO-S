@@ -989,6 +989,65 @@ Retrieve all approval requests that were submitted by the currently authenticate
         return this.approvalsService.getMyRequests(query, req.user);
     }
 
+    // Get comprehensive approval history for a specific user (matching warnings pattern)
+    @Get('user/:ref')
+    @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER, AccessLevel.OWNER, AccessLevel.USER)
+    @ApiOperation({ 
+        summary: '👤 Get comprehensive approval history for a specific user',
+        description: 'Retrieve complete approval history for a specific user with analytics and patterns, matching the warnings pattern for consistency.'
+    })
+    @ApiParam({
+        name: 'ref',
+        description: 'User ID to retrieve approval history for',
+        example: 123,
+        schema: { type: 'number' }
+    })
+    @ApiOkResponse({
+        description: '✅ User approval history retrieved successfully',
+        schema: {
+            type: 'object',
+            properties: {
+                success: { type: 'boolean', example: true },
+                data: {
+                    type: 'object',
+                    properties: {
+                        employee: {
+                            type: 'object',
+                            properties: {
+                                uid: { type: 'number', example: 123 },
+                                name: { type: 'string', example: 'John' },
+                                surname: { type: 'string', example: 'Doe' },
+                                email: { type: 'string', example: 'john.doe@company.com' }
+                            }
+                        },
+                        approvals: {
+                            type: 'array',
+                            items: { type: 'object' }
+                        },
+                        analytics: {
+                            type: 'object',
+                            properties: {
+                                summary: {
+                                    type: 'object',
+                                    properties: {
+                                        totalApprovals: { type: 'number', example: 15 },
+                                        pendingApprovals: { type: 'number', example: 2 },
+                                        approvedApprovals: { type: 'number', example: 10 },
+                                        rejectedApprovals: { type: 'number', example: 3 }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                message: { type: 'string', example: 'User approval history retrieved successfully' }
+            }
+        }
+    })
+    getUserApprovals(@Param('ref') ref: string) {
+        return this.approvalsService.getUserApprovals(+ref);
+    }
+
     // Get approval statistics/dashboard data
     @Get('stats')
     @Roles(AccessLevel.MANAGER)

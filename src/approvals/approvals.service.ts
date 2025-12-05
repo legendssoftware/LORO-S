@@ -937,6 +937,119 @@ export class ApprovalsService {
         }
     }
 
+    // Get comprehensive approval history for a specific user (matching warnings pattern)
+    async getUserApprovals(userId: number): Promise<{ 
+        success: boolean; 
+        data: { 
+            employee: any; 
+            approvals: Approval[]; 
+            analytics: any 
+        }; 
+        message: string 
+    }> {
+        try {
+            const cacheKey = this.getCacheKey(`user_${userId}`);
+            const cachedResult = await this.cacheManager.get<{ success: boolean; data: any; message: string }>(cacheKey);
+
+            if (cachedResult) {
+                return cachedResult;
+            }
+
+            // Get user details
+            const user = await this.userRepository.findOne({
+                where: { uid: userId },
+                relations: ['organisation', 'branch'],
+            });
+
+            if (!user) {
+                return {
+                    success: false,
+                    data: {
+                        employee: { uid: userId },
+                        approvals: [],
+                        analytics: {
+                            summary: {
+                                totalApprovals: 0,
+                                pendingApprovals: 0,
+                                approvedApprovals: 0,
+                                rejectedApprovals: 0,
+                            },
+                        },
+                    },
+                    message: 'User not found',
+                };
+            }
+
+            // Get all approvals for this user
+            const approvals = await this.approvalRepository.find({
+                where: {
+                    requesterUid: userId,
+                },
+                relations: ['requester', 'approver', 'delegatedTo', 'organisation', 'branch'],
+                order: {
+                    createdAt: 'DESC',
+                },
+            });
+
+            // Calculate analytics
+            const analytics = {
+                summary: {
+                    totalApprovals: approvals.length,
+                    pendingApprovals: approvals.filter(a => a.status === ApprovalStatus.PENDING).length,
+                    approvedApprovals: approvals.filter(a => a.status === ApprovalStatus.APPROVED).length,
+                    rejectedApprovals: approvals.filter(a => a.status === ApprovalStatus.REJECTED).length,
+                    draftApprovals: approvals.filter(a => a.status === ApprovalStatus.DRAFT).length,
+                    withdrawnApprovals: approvals.filter(a => a.status === ApprovalStatus.WITHDRAWN).length,
+                },
+                byType: approvals.reduce((acc, approval) => {
+                    acc[approval.type] = (acc[approval.type] || 0) + 1;
+                    return acc;
+                }, {} as Record<string, number>),
+                byStatus: approvals.reduce((acc, approval) => {
+                    acc[approval.status] = (acc[approval.status] || 0) + 1;
+                    return acc;
+                }, {} as Record<string, number>),
+            };
+
+            const result = {
+                success: true,
+                data: {
+                    employee: {
+                        uid: user.uid,
+                        name: user.name,
+                        surname: user.surname,
+                        email: user.email,
+                        departmentId: user.departmentId,
+                    },
+                    approvals,
+                    analytics,
+                },
+                message: approvals.length > 0 ? 'Approvals found' : 'No approvals found',
+            };
+
+            await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);
+            return result;
+        } catch (error) {
+            this.logger.error(`Error retrieving user approvals: ${error.message}`, error.stack);
+            return {
+                success: false,
+                data: {
+                    employee: { uid: userId },
+                    approvals: [],
+                    analytics: {
+                        summary: {
+                            totalApprovals: 0,
+                            pendingApprovals: 0,
+                            approvedApprovals: 0,
+                            rejectedApprovals: 0,
+                        },
+                    },
+                },
+                message: error?.message || 'Error retrieving user approvals',
+            };
+        }
+    }
+
     // Get approval statistics
     async getStats(user: RequestUser) {
         const startTime = Date.now();

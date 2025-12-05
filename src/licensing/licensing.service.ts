@@ -153,20 +153,16 @@ export class LicensingService {
 	}
 
 	async findOne(ref: string): Promise<License> {
-		try {
-			const license = await this.licenseRepository.findOne({
-				where: { uid: Number(ref) },
-				relations: ['organisation'],
-			});
+		const license = await this.licenseRepository.findOne({
+			where: { uid: Number(ref) },
+			relations: ['organisation'],
+		});
 
-			if (!license) {
-				throw new NotFoundException(`License with ID ${ref} not found`);
-			}
-
-			return license;
-		} catch (error) {
-			console.log(error);
+		if (!license) {
+			throw new NotFoundException(`License with ID ${ref} not found`);
 		}
+
+		return license;
 	}
 
 	async findByOrganisation(organisationRef: string): Promise<License[]> {
@@ -269,6 +265,13 @@ export class LicensingService {
 			
 			return isValid;
 		} catch (error) {
+			// Handle NotFoundException specifically
+			if (error instanceof NotFoundException) {
+				this.logger.warn(`License with ID ${ref} not found during validation`);
+				const cacheKey = `${this.LICENSE_CACHE_KEY_PREFIX}${ref}`;
+				await this.cacheManager.set(cacheKey, false, this.LICENSE_CACHE_TTL);
+				return false;
+			}
 			Logger.error(`Error validating license ${ref}`, error);
 			return false;
 		}
