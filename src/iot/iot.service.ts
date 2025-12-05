@@ -1255,7 +1255,36 @@ export class IotService {
 			const closingThreshold = 50;
 			
 			const opensOnTime = opensOnTimePercentage >= openingThreshold;
-			const closesOnTime = closesOnTimePercentage >= closingThreshold;
+			let closesOnTime = closesOnTimePercentage >= closingThreshold;
+			
+			// REVISED LOGIC: If shop opened late today and hasn't closed by 8pm, mark closesOnTime as false
+			// Get today's date in organization timezone for comparison
+			const todayOrg = TimezoneUtil.toOrganizationTime(new Date(), orgTimezone);
+			const todayKey = todayOrg.toISOString().split('T')[0]; // YYYY-MM-DD in org timezone
+			
+			// Check if shop opened late today
+			let todayOpenedLate = false;
+			if (dailyOpenings.has(todayKey)) {
+				const todayOpening = dailyOpenings.get(todayKey)!;
+				const todayOpenMinutes = todayOpening.minutes;
+				// Check if shop opened late today (after target open time + tolerance)
+				todayOpenedLate = todayOpenMinutes > (targetOpenTimeMinutes + TOLERANCE_MINUTES);
+			}
+			
+			// Check if shop hasn't closed today
+			const hasNotClosedToday = dailyOpenings.has(todayKey) && !dailyClosings.has(todayKey);
+			
+			// Get current time in organization timezone
+			const currentMinutes = getMinutesSinceMidnight(todayOrg, orgTimezone);
+			const eightPMMinutes = 20 * 60; // 8pm = 20:00 = 1200 minutes
+			
+			// If shop opened late today, hasn't closed yet, and it's past 8pm, mark as closes late
+			if (todayOpenedLate && hasNotClosedToday && currentMinutes >= eightPMMinutes) {
+				closesOnTime = false;
+				this.logger.debug(
+					`[${device.deviceID}] REVISED LOGIC: Shop opened late today (${todayOpenedLate}) and hasn't closed by 8pm (current: ${currentMinutes} >= ${eightPMMinutes}), setting closesOnTime=false`
+				);
+			}
 			
 			// Log the final decision for debugging
 			this.logger.log(
@@ -1390,10 +1419,7 @@ export class IotService {
 
 			// Format latest times using earliest open and latest close from aggregated daily records
 			// CRITICAL: Only show TODAY's open/close times. If store opened today but hasn't closed, closeTime = null
-			// Get today's date in organization timezone for comparison
-			const todayOrg = TimezoneUtil.toOrganizationTime(new Date(), orgTimezone);
-			const todayKey = todayOrg.toISOString().split('T')[0]; // YYYY-MM-DD in org timezone
-			
+			// Get today's date in organization timezone for comparison (reuse from above)
 			let latestOpenTime: string | null = null;
 			let latestCloseTime: string | null = null;
 
