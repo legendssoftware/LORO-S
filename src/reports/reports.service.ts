@@ -2682,25 +2682,43 @@ export class ReportsService implements OnModuleInit {
 				})(),
 				// Get attendance streak from attendance metrics (matches /attendance/metrics/:uid endpoint)
 				this.attendanceService.getUserAttendanceMetrics(userId),
-				// Get latest 2 leads for today using leads service
+				// Get latest 2 leads for today using leads service - ONLY TODAY'S DATA
 				this.leadsService.leadsByUser(userId, orgId, branchId).then(result => {
-					// Filter leads created today and take latest 2
+					if (!result?.leads || result.leads.length === 0) {
+						return { leads: [] };
+					}
+					// Filter leads created TODAY ONLY - ensure date comparison is precise
+					// Normalize today's date range to start of day for comparison
+					const todayStartNormalized = new Date(startOfDay.getFullYear(), startOfDay.getMonth(), startOfDay.getDate());
 					const todayLeads = result.leads
 						.filter(lead => {
+							if (!lead.createdAt) return false;
 							const leadDate = new Date(lead.createdAt);
-							return leadDate >= startOfDay && leadDate <= endOfDay;
+							// Normalize lead date to start of day for accurate comparison
+							const leadDateNormalized = new Date(leadDate.getFullYear(), leadDate.getMonth(), leadDate.getDate());
+							// Only return leads created today (not yesterday, not tomorrow)
+							return leadDateNormalized.getTime() === todayStartNormalized.getTime();
 						})
 						.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
 						.slice(0, 2);
 					return { leads: todayLeads };
 				}),
-				// Get latest 2 tasks for today using tasks service
+				// Get latest 2 tasks for today using tasks service - ONLY TODAY'S DATA
 				this.tasksService.tasksByUser(userId, orgId, branchId).then(result => {
-					// Filter tasks created today and take latest 2
+					if (!result?.tasks || result.tasks.length === 0) {
+						return { tasks: [] };
+					}
+					// Filter tasks created TODAY ONLY - ensure date comparison is precise
+					// Normalize today's date range to start of day for comparison
+					const todayStartNormalized = new Date(startOfDay.getFullYear(), startOfDay.getMonth(), startOfDay.getDate());
 					const todayTasks = result.tasks
 						.filter(task => {
+							if (!task.createdAt) return false;
 							const taskDate = new Date(task.createdAt);
-							return taskDate >= startOfDay && taskDate <= endOfDay;
+							// Normalize task date to start of day for accurate comparison
+							const taskDateNormalized = new Date(taskDate.getFullYear(), taskDate.getMonth(), taskDate.getDate());
+							// Only return tasks created today (not yesterday, not tomorrow)
+							return taskDateNormalized.getTime() === todayStartNormalized.getTime();
 						})
 						.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
 						.slice(0, 2);

@@ -3577,6 +3577,81 @@ Retrieves detailed attendance analytics for a specific user including historical
 		return this.attendanceService.getUserAttendanceMetrics(uid);
 	}
 
+	@Get('streak/current-week')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.SUPPORT,
+		AccessLevel.DEVELOPER,
+		AccessLevel.USER,
+		AccessLevel.OWNER,
+		AccessLevel.TECHNICIAN,
+	)
+	@ApiOperation({
+		summary: '🔥 Get current week attendance streak',
+		description: `
+# Current Week Attendance Streak
+
+Retrieves the attendance streak for the current week (Monday to Saturday) for the authenticated user.
+Returns streak count and daily status (attended/missed/future) for each day of the week.
+
+## Features
+- **Current Week Only**: Only counts attendance records from the current week (Mon-Sat)
+- **Check-in Without Check-out**: Counts PRESENT status (checked in but not checked out) as attended
+- **Daily Status**: Shows attended (green), missed (red), or future (gray) for each day
+- **User-Specific**: Automatically uses the authenticated user's ID from the token
+		`,
+	})
+	@ApiOkResponse({
+		description: '✅ Current week attendance streak retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				streak: {
+					type: 'number',
+					example: 3,
+					description: 'Number of days with attendance records in the current week',
+				},
+				weekDays: {
+					type: 'array',
+					description: 'Array of week days (Mon-Sat) with their attendance status',
+					items: {
+						type: 'object',
+						properties: {
+							date: {
+								type: 'string',
+								format: 'date-time',
+								example: '2025-12-08T00:00:00.000Z',
+								description: 'Date of the day',
+							},
+							dayLabel: {
+								type: 'string',
+								example: 'Mo',
+								description: 'Abbreviated day label (Mo, Tu, We, Th, Fr, Sa)',
+							},
+							status: {
+								type: 'string',
+								enum: ['attended', 'missed', 'future'],
+								example: 'attended',
+								description: 'Attendance status for the day',
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	@ApiUnauthorizedResponse({
+		description: '🔒 Unauthorized - Authentication required',
+	})
+	getCurrentWeekAttendanceStreak(@Req() req: AuthenticatedRequest) {
+		const userId = req.user?.uid;
+		if (!userId) {
+			throw new BadRequestException('User ID not found in token');
+		}
+		return this.attendanceService.getCurrentWeekAttendanceStreak(userId);
+	}
+
 	@Post('metrics/monthly')
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.HR)
 	@ApiOperation({

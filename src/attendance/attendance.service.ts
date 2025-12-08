@@ -22,6 +22,8 @@ import {
 	format,
 	parseISO,
 	subMonths,
+	startOfWeek,
+	addDays,
 } from 'date-fns';
 import { UserService } from '../user/user.service';
 import { RewardsService } from '../rewards/rewards.service';
@@ -5491,6 +5493,98 @@ export class AttendanceService {
 		}
 
 		return streak;
+	}
+
+	/**
+	 * Calculate current week attendance streak and week days status
+	 * Returns streak count and week days (Mon-Sat) with attended/missed/future status
+	 */
+	public async getCurrentWeekAttendanceStreak(userId: number): Promise<{
+		streak: number;
+		weekDays: Array<{
+			date: string;
+			dayLabel: string;
+			status: 'attended' | 'missed' | 'future';
+		}>;
+	}> {
+		const today = new Date();
+		const weekStart = startOfWeek(today, { weekStartsOn: 1 }); // Monday = 1
+		
+		// Get week days (Monday to Saturday)
+		const weekDays: Date[] = [];
+		for (let i = 0; i < 6; i++) {
+			weekDays.push(addDays(weekStart, i));
+		}
+		
+		const todayStart = startOfDay(today);
+		const weekStartDate = startOfDay(weekDays[0]);
+		const weekEndDate = startOfDay(weekDays[weekDays.length - 1]);
+		
+		// Get all attendance records for the current week
+		const currentWeekRecords = await this.attendanceRepository.find({
+			where: {
+				owner: { uid: userId },
+				checkIn: Between(weekStartDate, endOfDay(weekEndDate)),
+			},
+			order: {
+				checkIn: 'ASC',
+			},
+		});
+		
+		// Get unique days with attendance records
+		const daysWithRecords = new Set<string>();
+		
+		currentWeekRecords.forEach((record) => {
+			if (!record.checkIn) return;
+			
+			const checkInDate = startOfDay(new Date(record.checkIn));
+			const dateKey = format(checkInDate, 'yyyy-MM-dd');
+			
+			// Count as attended if:
+			// 1. Status is PRESENT (checked in but not checked out)
+			// 2. Status is COMPLETED (checked in and checked out)
+			// 3. Status is ON_BREAK (currently working, on break)
+			const isAttended = record.status === AttendanceStatus.PRESENT 
+				|| record.status === AttendanceStatus.COMPLETED 
+				|| record.status === AttendanceStatus.ON_BREAK;
+			
+			if (isAttended) {
+				daysWithRecords.add(dateKey);
+			}
+		});
+		
+		// Create week days array with status
+		const weekDaysWithStatus = weekDays.map((date) => {
+			const dayLabel = format(date, 'EEE').substring(0, 2); // Mon, Tue, etc.
+			const dateStart = startOfDay(date);
+			const dateKey = format(dateStart, 'yyyy-MM-dd');
+			
+			// Check if date is in the future
+			if (dateStart > todayStart) {
+				return {
+					date: date.toISOString(),
+					dayLabel,
+					status: 'future' as const,
+				};
+			}
+			
+			// Check if user attended on this day
+			const attended = daysWithRecords.has(dateKey);
+			
+			return {
+				date: date.toISOString(),
+				dayLabel,
+				status: attended ? ('attended' as const) : ('missed' as const),
+			};
+		});
+		
+		// Calculate streak as count of days with attendance records in current week
+		const streak = daysWithRecords.size;
+		
+		return {
+			streak,
+			weekDays: weekDaysWithStatus,
+		};
 	}
 
 	/**

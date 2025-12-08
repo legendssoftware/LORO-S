@@ -987,10 +987,17 @@ export class IotService {
 				return recordDateKey === todayKey;
 			}) || [];
 
-			const doorOpenTime = todayRecords.length > 0 && todayRecords[0].openTime
-				? (typeof todayRecords[0].openTime === 'string' 
-					? new Date(todayRecords[0].openTime) 
-					: (todayRecords[0].openTime as unknown as Date))
+			// Sort records by openTime to get the earliest (first) open time of the day
+			const sortedTodayRecords = todayRecords.sort((a, b) => {
+				const aTime = typeof a.openTime === 'string' ? new Date(a.openTime) : (a.openTime as unknown as Date);
+				const bTime = typeof b.openTime === 'string' ? new Date(b.openTime) : (b.openTime as unknown as Date);
+				return aTime.getTime() - bTime.getTime(); // Sort ascending (earliest first)
+			});
+
+			const doorOpenTime = sortedTodayRecords.length > 0 && sortedTodayRecords[0].openTime
+				? (typeof sortedTodayRecords[0].openTime === 'string' 
+					? new Date(sortedTodayRecords[0].openTime) 
+					: (sortedTodayRecords[0].openTime as unknown as Date))
 				: null;
 
 			// Create comparisons for each managing user
