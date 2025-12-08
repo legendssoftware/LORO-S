@@ -775,7 +775,7 @@ export class CheckInsService {
 			const whereCondition: any = {};
 
 			if (organizationUid) {
-				whereCondition.organization = { uid: organizationUid };
+				whereCondition.organisation = { uid: organizationUid };
 			}
 
 			const checkIns = await this.checkInRepository.find({
@@ -783,7 +783,7 @@ export class CheckInsService {
 				order: {
 					checkInTime: 'DESC',
 				},
-				relations: ['owner', 'client', 'branch', 'organization'],
+				relations: ['owner', 'client', 'branch', 'organisation'],
 			});
 
 			const response = {
@@ -809,7 +809,7 @@ export class CheckInsService {
 			};
 
 			if (organizationUid) {
-				whereCondition.organization = { uid: organizationUid };
+				whereCondition.organisation = { uid: organizationUid };
 			}
 
 			const checkIns = await this.checkInRepository.find({
@@ -817,7 +817,7 @@ export class CheckInsService {
 				order: {
 					checkInTime: 'DESC',
 				},
-				relations: ['owner', 'client', 'branch'],
+				relations: ['owner', 'client', 'branch', 'organisation'],
 			});
 
 			if (!checkIns || checkIns.length === 0) {
