@@ -8,12 +8,14 @@ import { UnifiedNotificationService } from '../lib/services/unified-notification
 import { ExpoPushService } from '../lib/services/expo-push.service';
 import { Notification } from '../notifications/entities/notification.entity';
 import { CommunicationModule } from '../communication/communication.module';
+import { LicensingModule } from '../licensing/licensing.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([User, Notification]),
     ScheduleModule.forRoot(),
     forwardRef(() => CommunicationModule), // Import CommunicationModule for CommunicationService
+    LicensingModule, // Import LicensingModule for LicensingService (required by AuthGuard)
   ],
   controllers: [SalesTipsController],
   providers: [SalesTipsService, UnifiedNotificationService, ExpoPushService],
