@@ -58,4 +58,13 @@ export class CreateCheckInDto {
         required: false
     })
     client?: { uid: number };
+
+    @IsOptional()
+    @IsString()
+    @ApiProperty({
+        description: 'Notes for the check-in',
+        example: 'Customer requested follow-up',
+        required: false
+    })
+    notes?: string;
 }

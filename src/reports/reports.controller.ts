@@ -901,4 +901,144 @@ Access all your personal morning and evening attendance reports.
 			limit: limit ? parseInt(limit, 10) : 50,
 		});
 	}
+
+	// ======================================================
+	// HIGHLIGHTS ENDPOINT FOR MOBILE APP
+	// ======================================================
+
+	@Get('user/:userId/highlights')
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.USER)
+	@ApiOperation({
+		summary: '📱 Get User Highlights Data',
+		description: `
+# User Highlights Data for Mobile App
+
+Returns all highlights data in one concise API call for the mobile app.
+
+## 📊 **What You Get**
+- **User Targets**: Target data from user_targets table
+- **Revenue Card**: Revenue data using ERP service route (same as /erp/profile/sales endpoint)
+- **Attendance Streak**: Current attendance streak from attendance service (same as /attendance/metrics/:uid endpoint)
+- **Latest Leads**: Latest 2 leads created today for the user (from leads service)
+- **Latest Tasks**: Latest 2 tasks created today for the user (from tasks service)
+- **Latest Leave**: Most recent leave request for the user
+
+## 🔒 **Authorization**
+- Users can access their own highlights
+- Elevated users (ADMIN, MANAGER, OWNER) can access any user's highlights within their organization
+- Organization ID is extracted from authenticated user context
+		`,
+	})
+	@ApiParam({
+		name: 'userId',
+		description: 'User ID to get highlights for',
+		type: 'number',
+		example: 123,
+	})
+	@ApiQuery({
+		name: 'branchId',
+		required: false,
+		type: Number,
+		description: 'Branch ID to filter data (optional)',
+	})
+	@ApiOkResponse({
+		description: 'Highlights data retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				targets: {
+					type: 'object',
+					description: 'User targets data from user_targets table',
+					nullable: true,
+				},
+				revenueCard: {
+					type: 'object',
+					description: 'Revenue card data from ERP service (matches /erp/profile/sales endpoint)',
+					nullable: true,
+					properties: {
+						totalRevenue: { type: 'number', example: 50000 },
+						transactionCount: { type: 'number', example: 45 },
+						uniqueCustomers: { type: 'number', example: 12 },
+						salesCode: { type: 'string', example: 'CEB01' },
+						salesName: { type: 'string', example: 'John Doe' },
+					},
+				},
+				attendanceStreak: {
+					type: 'number',
+					example: 5,
+					description: 'Current attendance streak in days (from /attendance/metrics/:uid endpoint)',
+				},
+				leads: {
+					type: 'array',
+					description: 'Latest 2 leads created today (from leads service)',
+					items: { type: 'object' },
+				},
+				tasks: {
+					type: 'array',
+					description: 'Latest 2 tasks created today (from tasks service)',
+					items: { type: 'object' },
+				},
+				leave: {
+					type: 'object',
+					description: 'Most recent leave request',
+					nullable: true,
+				},
+				generatedAt: {
+					type: 'string',
+					format: 'date-time',
+					description: 'Timestamp when highlights were generated',
+				},
+			},
+		},
+	})
+	@ApiBadRequestResponse({
+		description: 'Bad Request - Invalid parameters',
+	})
+	async getUserHighlights(
+		@Req() request: AuthenticatedRequest,
+		@Param('userId') userId: string,
+		@Query('branchId') queryBranchId?: string
+	) {
+		const parsedUserId = parseInt(userId, 10);
+		this.logger.log(`Getting highlights for user ${parsedUserId}`);
+
+		// Extract organization ID from authenticated user context
+		const orgId = request.user?.org?.uid || request.user?.organisationRef;
+		const branchId = queryBranchId ? parseInt(queryBranchId, 10) : undefined;
+
+		this.logger.debug(`Resolved parameters - orgId: ${orgId}, branchId: ${branchId}`);
+
+		if (!orgId) {
+			this.logger.error('Organization ID is required for highlights');
+			throw new BadRequestException('Organization ID is required');
+		}
+
+		// Validate numeric parameters
+		if (isNaN(parsedUserId)) {
+			this.logger.error(`Invalid user ID: ${userId}`);
+			throw new BadRequestException('User ID must be a valid number');
+		}
+
+		if (queryBranchId && isNaN(branchId)) {
+			this.logger.error(`Invalid branch ID: ${queryBranchId}`);
+			throw new BadRequestException('Branch ID must be a valid number');
+		}
+
+		// Use the same access scope pattern as user controller
+		const accessScope = this.getAccessScope(request.user);
+
+		// Check access permissions
+		// Users can access their own highlights OR elevated users can access any user's highlights
+		const isSelfAccess = parsedUserId === request.user.uid;
+		const hasAccess = isSelfAccess || accessScope.isElevated;
+
+		if (!hasAccess) {
+			this.logger.warn(`User ${request.user.uid} (level: ${request.user.accessLevel}) attempted to access user ${parsedUserId} highlights without permission`);
+			throw new BadRequestException(`Access denied to requested user highlights. You can only access your own highlights (UID: ${request.user.uid})`);
+		}
+
+		this.logger.log(`Fetching highlights for user ${parsedUserId} in org ${orgId}${branchId ? `, branch ${branchId}` : ''}`);
+
+		return this.reportsService.getUserHighlights(parsedUserId, orgId, branchId);
+	}
 }

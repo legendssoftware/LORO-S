@@ -27,7 +27,7 @@
 import * as bcrypt from 'bcrypt';
 import { In, Repository, LessThanOrEqual, Not } from 'typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { format, addDays, addMonths } from 'date-fns';
+import { format, addDays, addMonths, startOfMonth } from 'date-fns';
 import { User } from './entities/user.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -309,7 +309,8 @@ export class UserService {
 		let workingDays = 0;
 		const currentDate = new Date(startDate);
 
-		while (currentDate < endDate) {
+		// Fix: Include end date by using <= instead of <
+		while (currentDate <= endDate) {
 			const dayOfWeek = currentDate.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
 			
 			// Count Monday (1) through Saturday (6), exclude Sunday (0)
@@ -7614,8 +7615,10 @@ export class UserService {
 		this.logger.log(`Processing recurrence for user ${target.user?.uid} - Target ${target.uid}`);
 		
 		// 1️⃣ Archive current period to history
+		// Fix: Use period end date instead of current date for accurate month tracking
+		const periodEndDate = target.periodEndDate || new Date();
 		const historyEntry = {
-			date: format(new Date(), 'yyyy-MM'),
+			date: format(periodEndDate, 'yyyy-MM'),
 			targetSalesAmount: target.targetSalesAmount,
 			achievedSalesAmount: target.currentSalesAmount,
 			targetQuotationsAmount: target.targetQuotationsAmount,
@@ -7673,6 +7676,9 @@ export class UserService {
 		target.periodStartDate = this.calculateNextPeriodStart(oldEndDate, target.recurringInterval);
 		target.periodEndDate = this.calculateNextPeriodEnd(target.periodStartDate, target.recurringInterval);
 		
+		// Fix: Update targetPeriod to reflect the new month (e.g., "2024-12" for December)
+		target.targetPeriod = format(target.periodStartDate, 'yyyy-MM');
+		
 		// 6️⃣ Update recurrence metadata
 		target.lastRecurrenceDate = new Date();
 		target.nextRecurrenceDate = this.calculateNextRecurrenceDate(
@@ -7713,7 +7719,10 @@ export class UserService {
 			case 'weekly':
 				return addDays(endDate, 7);
 			case 'monthly':
-				return addMonths(endDate, 1);
+				// Fix: For monthly intervals, trigger on the first day of the next month
+				// This ensures Nov->Dec transition happens on Dec 1st, not after period ends
+				const nextMonth = addMonths(endDate, 1);
+				return startOfMonth(nextMonth);
 			default:
 				throw new Error(`Invalid recurring interval: ${interval}`);
 		}

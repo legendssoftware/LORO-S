@@ -1087,9 +1087,6 @@ export class IotService {
 			const targetOpenTimeMinutes = openHour * 60 + openMinute;
 			const targetCloseTimeMinutes = closeHour * 60 + closeMinute;
 
-			// 5-minute tolerance constant for late openings/closings
-			const TOLERANCE_MINUTES = 5;
-
 			// Get organization timezone
 			const orgTimezone = orgHours.timezone || TimezoneUtil.AFRICA_JOHANNESBURG;
 
@@ -1213,15 +1210,10 @@ export class IotService {
 			dailyOpenings.forEach((value, dateKey) => {
 				const { minutes: openMinutes } = value;
 				const timeDiff = openMinutes - targetOpenTimeMinutes;
-				// Accept if: opens early (timeDiff < 0) OR on-time/slightly late (0 <= timeDiff <= 5)
-				// Reject if: opens more than 5 minutes late (timeDiff > 5)
+				// Accept if: opens early (timeDiff < 0) OR exactly on-time (timeDiff === 0)
+				// Reject if: opens late (timeDiff > 0)
 				// Early openings (before org open time) are always acceptable - they count as "on time"
-				// Condition: timeDiff <= 5 means:
-				//   - timeDiff = -33 (33 min early) → -33 <= 5 → TRUE → ACCEPTED ✓
-				//   - timeDiff = 0 (on time) → 0 <= 5 → TRUE → ACCEPTED ✓
-				//   - timeDiff = 5 (5 min late) → 5 <= 5 → TRUE → ACCEPTED ✓
-				//   - timeDiff = 6 (6 min late) → 6 <= 5 → FALSE → REJECTED ✓
-				const accepted = timeDiff <= TOLERANCE_MINUTES;
+				const accepted = timeDiff <= 0;
 				if (accepted) {
 					opensOnTimeCount++;
 				}
@@ -1248,8 +1240,8 @@ export class IotService {
 
 			dailyClosings.forEach(({ minutes: closeMinutes }, dateKey) => {
 				const timeDiff = closeMinutes - targetCloseTimeMinutes;
-				// Accept if: closes on-time or late (timeDiff >= -5 means not more than 5 min early)
-				const accepted = timeDiff >= -TOLERANCE_MINUTES;
+				// Accept if: closes on-time or late (timeDiff >= 0 means not early)
+				const accepted = timeDiff >= 0;
 				if (accepted) {
 					closesOnTimeCount++;
 				}
@@ -1295,8 +1287,8 @@ export class IotService {
 			if (dailyOpenings.has(todayKey)) {
 				const todayOpening = dailyOpenings.get(todayKey)!;
 				const todayOpenMinutes = todayOpening.minutes;
-				// Check if shop opened late today (after target open time + tolerance)
-				todayOpenedLate = todayOpenMinutes > (targetOpenTimeMinutes + TOLERANCE_MINUTES);
+				// Check if shop opened late today (after target open time)
+				todayOpenedLate = todayOpenMinutes > targetOpenTimeMinutes;
 			}
 			
 			// Check if shop hasn't closed today
@@ -1917,19 +1909,120 @@ export class IotService {
 	}
 
 	/**
+	 * Check for duplicate records within a time window (prevents duplicates within same day)
+	 * @param deviceId - Device ID to check
+	 * @param openTime - Open time to check (if provided)
+	 * @param closeTime - Close time to check (if provided)
+	 * @param today - Start of today's date
+	 * @param tomorrow - Start of tomorrow's date
+	 * @param queryRunner - Optional query runner for transaction context
+	 * @param timeWindowMinutes - Time window in minutes to consider duplicates (default: 2 minutes)
+	 * @returns Existing duplicate record if found, null otherwise
+	 */
+	private async checkForDuplicateRecord(
+		deviceId: number,
+		openTime: Date | null,
+		closeTime: Date | null,
+		today: Date,
+		tomorrow: Date,
+		queryRunner?: any,
+		timeWindowMinutes: number = 2,
+	): Promise<DeviceRecords | null> {
+		const repository = queryRunner?.manager?.getRepository(DeviceRecords) || this.deviceRecordsRepository;
+		
+		// Get all records for today for this device
+		const todayRecords = await repository.find({
+			where: {
+				deviceId: deviceId,
+				createdAt: Between(today, tomorrow),
+			},
+			order: { createdAt: 'DESC' },
+		});
+
+		if (todayRecords.length === 0) {
+			return null;
+		}
+
+		// Check each record for duplicates based on time proximity
+		for (const record of todayRecords) {
+			const recordOpenTime = record.openTime
+				? typeof record.openTime === 'string'
+					? new Date(record.openTime)
+					: (record.openTime as unknown as Date)
+				: null;
+			const recordCloseTime = record.closeTime
+				? typeof record.closeTime === 'string'
+					? new Date(record.closeTime)
+					: (record.closeTime as unknown as Date)
+				: null;
+
+			// Check open time duplicates
+			if (openTime && recordOpenTime) {
+				const timeDiffMs = Math.abs(openTime.getTime() - recordOpenTime.getTime());
+				const timeDiffMinutes = timeDiffMs / (1000 * 60);
+				
+				if (timeDiffMinutes <= timeWindowMinutes) {
+					this.logger.warn(
+						`⚠️ Duplicate open time detected: Existing record ID ${record.id} has openTime ${recordOpenTime.toISOString()} ` +
+						`within ${timeDiffMinutes.toFixed(2)} minutes of new openTime ${openTime.toISOString()} for device ${deviceId}`,
+					);
+					return record;
+				}
+			}
+
+			// Check close time duplicates
+			if (closeTime && recordCloseTime) {
+				const timeDiffMs = Math.abs(closeTime.getTime() - recordCloseTime.getTime());
+				const timeDiffMinutes = timeDiffMs / (1000 * 60);
+				
+				if (timeDiffMinutes <= timeWindowMinutes) {
+					this.logger.warn(
+						`⚠️ Duplicate close time detected: Existing record ID ${record.id} has closeTime ${recordCloseTime.toISOString()} ` +
+						`within ${timeDiffMinutes.toFixed(2)} minutes of new closeTime ${closeTime.toISOString()} for device ${deviceId}`,
+					);
+					return record;
+				}
+			}
+
+			// Check if both open and close times match (complete duplicate)
+			if (openTime && closeTime && recordOpenTime && recordCloseTime) {
+				const openDiffMs = Math.abs(openTime.getTime() - recordOpenTime.getTime());
+				const closeDiffMs = Math.abs(closeTime.getTime() - recordCloseTime.getTime());
+				const openDiffMinutes = openDiffMs / (1000 * 60);
+				const closeDiffMinutes = closeDiffMs / (1000 * 60);
+				
+				if (openDiffMinutes <= timeWindowMinutes && closeDiffMinutes <= timeWindowMinutes) {
+					this.logger.warn(
+						`⚠️ Complete duplicate record detected: Existing record ID ${record.id} matches both open and close times ` +
+						`within ${timeWindowMinutes} minutes for device ${deviceId}`,
+					);
+					return record;
+				}
+			}
+		}
+
+		return null;
+	}
+
+	/**
 	 * Device Records Management - The core logic for open/close time tracking
 	 */
 	async createOrUpdateRecord(
 		recordDto: CreateDeviceRecordDto,
 	): Promise<{ message: string; record?: Partial<DeviceRecords> }> {
+		const queryRunner = this.dataSource.createQueryRunner();
+		await queryRunner.connect();
+		await queryRunner.startTransaction();
+
 		try {
 			this.logger.log(`Creating/updating record for device ID: ${recordDto.deviceId}`);
 
-			const device = await this.deviceRepository.findOne({
+			const device = await queryRunner.manager.findOne(Device, {
 				where: { id: recordDto.deviceId, isDeleted: false },
 			});
 
 			if (!device) {
+				await queryRunner.rollbackTransaction();
 				throw new NotFoundException('Device not found');
 			}
 
@@ -1955,7 +2048,34 @@ export class IotService {
 			const tomorrow = new Date(today);
 			tomorrow.setDate(tomorrow.getDate() + 1);
 
-			let existingRecord = await this.deviceRecordsRepository.findOne({
+			// Check for duplicate records before proceeding
+			const duplicateRecord = await this.checkForDuplicateRecord(
+				device.id,
+				openDateOrg,
+				closeDateOrg,
+				today,
+				tomorrow,
+				queryRunner,
+				2, // 2 minute window for duplicates
+			);
+
+			if (duplicateRecord) {
+				await queryRunner.rollbackTransaction();
+				this.logger.log(
+					`⏭️ Skipping duplicate record creation: Record ID ${duplicateRecord.id} already exists with similar timestamps for device ${recordDto.deviceId}`,
+				);
+				return {
+					message: `Duplicate record detected: A similar record (ID: ${duplicateRecord.id}) already exists for today`,
+					record: {
+						id: duplicateRecord.id,
+						openTime: duplicateRecord.openTime,
+						closeTime: duplicateRecord.closeTime,
+						createdAt: duplicateRecord.createdAt,
+					},
+				};
+			}
+
+			let existingRecord = await queryRunner.manager.findOne(DeviceRecords, {
 				where: {
 					deviceId: device.id,
 					createdAt: Between(today, tomorrow),
@@ -1988,12 +2108,12 @@ export class IotService {
 						}
 					}
 					
-					record = this.deviceRecordsRepository.create({
+					record = queryRunner.manager.create(DeviceRecords, {
 						openTime: openDateOrg,
 						closeTime: closeDateOrg,
 						deviceId: device.id,
 					});
-					record = await this.deviceRecordsRepository.save(record);
+					record = await queryRunner.manager.save(record);
 					this.logger.log(`Created new record (latest complete) for device ID: ${recordDto.deviceId}`);
 				} else {
 					// Update only missing parts on the latest record
@@ -2018,12 +2138,13 @@ export class IotService {
 								);
 								
 								// Delete the record entirely
-								await this.deviceRecordsRepository.remove(existingRecord);
+								await queryRunner.manager.remove(existingRecord);
 								
 								this.logger.log(
 									`🗑️ Deleted record (ID: ${existingRecord.id}) due to open/close within 5 minutes - Device ID: ${recordDto.deviceId}`,
 								);
 								
+								await queryRunner.rollbackTransaction();
 								return {
 									message: `Record discarded: open and close times are too close (${timeDifferenceMinutes.toFixed(2)} minutes apart)`,
 									record: undefined,
@@ -2034,7 +2155,7 @@ export class IotService {
 						existingRecord.closeTime = closeDateOrg;
 					}
 					existingRecord.updatedAt = new Date();
-					record = await this.deviceRecordsRepository.save(existingRecord);
+					record = await queryRunner.manager.save(existingRecord);
 					this.logger.log(`Updated incomplete record for device ID: ${recordDto.deviceId}`);
 				}
 			} else {
@@ -2049,6 +2170,7 @@ export class IotService {
 							`⚠️ Discarding new record: Open and close times too close (${timeDifferenceMinutes.toFixed(2)} minutes) - ` +
 							`Device ID: ${recordDto.deviceId}. Open: ${openDateOrg.toISOString()}, Close: ${closeDateOrg.toISOString()}`,
 						);
+						await queryRunner.rollbackTransaction();
 						return {
 							message: `Record discarded: open and close times are too close (${timeDifferenceMinutes.toFixed(2)} minutes apart)`,
 							record: undefined,
@@ -2056,14 +2178,17 @@ export class IotService {
 					}
 				}
 				
-				record = this.deviceRecordsRepository.create({
+				record = queryRunner.manager.create(DeviceRecords, {
 					openTime: openDateOrg,
 					closeTime: closeDateOrg,
 					deviceId: device.id,
 				});
-				record = await this.deviceRecordsRepository.save(record);
+				record = await queryRunner.manager.save(record);
 				this.logger.log(`Created new record (first of day) for device ID: ${recordDto.deviceId}`);
 			}
+
+			// Commit transaction before updating analytics and cache
+			await queryRunner.commitTransaction();
 
 			// Update device analytics only if record was successfully created/updated
 			if (record) {
@@ -2087,11 +2212,14 @@ export class IotService {
 				};
 			}
 		} catch (error) {
+			await queryRunner.rollbackTransaction();
 			this.logger.error(`Failed to create/update record: ${error.message}`, error.stack);
 			if (error instanceof NotFoundException) {
 				throw error;
 			}
 			throw new BadRequestException('Failed to create/update record');
+		} finally {
+			await queryRunner.release();
 		}
 	}
 
@@ -2795,6 +2923,32 @@ export class IotService {
 			}
 		}
 
+		// Check for duplicate records before proceeding (only for open events at this point)
+		if (timeEventDto.eventType === 'open') {
+			const duplicateRecord = await this.checkForDuplicateRecord(
+				device.id,
+				eventDateOrg,
+				null, // No close time for open events
+				today,
+				tomorrow,
+				queryRunner,
+				2, // 2 minute window for duplicates
+			);
+
+			if (duplicateRecord) {
+				this.logger.log(
+					`⏭️ Skipping duplicate open event: Record ID ${duplicateRecord.id} already exists with similar openTime ` +
+					`for device ${device.deviceID}`,
+				);
+				return { 
+					record: duplicateRecord, 
+					action: 'skipped', 
+					existingRecord: true,
+					reason: 'duplicate_open_time',
+				};
+			}
+		}
+
 		// Find the latest record for today (if any)
 		let existingRecord = await queryRunner.manager.findOne(DeviceRecords, {
 			where: {
@@ -2835,6 +2989,26 @@ export class IotService {
 						this.logger.log(`📝 Set open time on incomplete record - Device: ${device.deviceID}`);
 					} else {
 						// Already has open without close → start a new record
+						// But first check if this would be a duplicate
+						const existingOpenTime = typeof existingRecord.openTime === 'string'
+							? new Date(existingRecord.openTime)
+							: (existingRecord.openTime as unknown as Date);
+						const timeDiffMs = Math.abs(eventDateOrg.getTime() - existingOpenTime.getTime());
+						const timeDiffMinutes = timeDiffMs / (1000 * 60);
+						
+						if (timeDiffMinutes <= 2) {
+							this.logger.log(
+								`⏭️ Skipping duplicate open event: Existing record ID ${existingRecord.id} has openTime ` +
+								`within ${timeDiffMinutes.toFixed(2)} minutes for device ${device.deviceID}`,
+							);
+							return { 
+								record: existingRecord, 
+								action: 'skipped', 
+								existingRecord: true,
+								reason: 'duplicate_open_time',
+							};
+						}
+						
 						action = 'created';
 						const recordData = {
 							openTime: eventDateOrg,

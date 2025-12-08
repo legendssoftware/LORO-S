@@ -40,6 +40,10 @@ import { getCurrencyForCountry } from '../erp/utils/currency.util';
 import { ConsolidatedIncomeStatementDto, ConsolidatedIncomeStatementResponseDto, ConsolidatedBranchDataDto, ExchangeRateDto } from './dto/performance-dashboard.dto';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
+import { UserService } from '../user/user.service';
+import { LeadsService } from '../leads/leads.service';
+import { TasksService } from '../tasks/tasks.service';
+import { LeaveService } from '../leave/leave.service';
 
 // Utilities
 import { TimezoneUtil } from '../lib/utils/timezone.util';
@@ -125,6 +129,12 @@ export class ReportsService implements OnModuleInit {
 		@Inject(forwardRef(() => ErpDataService))
 		private readonly erpDataService: ErpDataService,
 		private readonly erpConnectionManager: ErpConnectionManagerService,
+		private readonly userService: UserService,
+		@Inject(forwardRef(() => LeadsService))
+		private readonly leadsService: LeadsService,
+		private readonly tasksService: TasksService,
+		@Inject(forwardRef(() => LeaveService))
+		private readonly leaveService: LeaveService,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 300;
 		this.logger.log(`Reports service initialized with cache TTL: ${this.CACHE_TTL}s`);
@@ -2556,6 +2566,202 @@ export class ReportsService implements OnModuleInit {
 			this.logger.error(`[${operationId}] Error stack: ${error?.stack || 'No stack trace'}`);
 			// Return empty array if fetch fails - conversion will be skipped
 			return [];
+		}
+	}
+
+	/**
+	 * Get user highlights data for mobile app
+	 * Returns targets, attendance streak, latest leads, tasks, and leave in one concise response
+	 */
+	async getUserHighlights(userId: number, orgId: number, branchId?: number): Promise<any> {
+		const operationId = `highlights-${userId}-${Date.now()}`;
+		this.logger.log(`[${operationId}] Getting highlights data for user ${userId}, org ${orgId}`);
+
+		try {
+			// Get today's date range in organization timezone
+			const orgTimezone = await this.getOrganizationTimezone(orgId);
+			const orgCurrentTime = TimezoneUtil.getCurrentOrganizationTime(orgTimezone);
+			const startOfDay = new Date(orgCurrentTime);
+			startOfDay.setHours(0, 0, 0, 0);
+			const endOfDay = new Date(orgCurrentTime);
+			endOfDay.setHours(23, 59, 59, 999);
+
+			// Fetch all data in parallel for better performance
+			const [
+				userTargetResult,
+				revenueCardResult,
+				attendanceMetrics,
+				leadsResult,
+				tasksResult,
+				leaveResult,
+			] = await Promise.allSettled([
+				// Get user targets to extract ERP code and period dates (needed for revenue card)
+				this.userService.getUserTarget(userId, orgId),
+				// Get revenue card data using ERP service (same as /erp/profile/sales endpoint)
+				(async () => {
+					try {
+						// Get user target to extract ERP code and date range
+						const userTargetResult = await this.userService.getUserTarget(userId, orgId);
+						
+						if (!userTargetResult?.userTarget) {
+							this.logger.warn(`[${operationId}] No targets found for user ${userId}, skipping revenue card`);
+							return { success: false, data: null };
+						}
+
+						const userTarget = userTargetResult.userTarget;
+						// Try to get erpSalesRepCode from multiple possible locations
+						const erpSalesRepCode = userTarget.erpSalesRepCode || 
+							(userTarget.personalTargets as any)?.erpSalesRepCode || 
+							null;
+
+						if (!erpSalesRepCode) {
+							this.logger.warn(`[${operationId}] No ERP Sales Rep Code found for user ${userId}`);
+							return { success: false, data: null };
+						}
+
+						// Get period dates from user_targets entity (single source of truth)
+						const personalTargets = userTarget.personalTargets as any;
+						const periodStartDateRaw = personalTargets?.periodStartDate;
+						const periodEndDateRaw = personalTargets?.periodEndDate;
+
+						if (!periodStartDateRaw || !periodEndDateRaw) {
+							this.logger.warn(`[${operationId}] No period dates found in user target for user ${userId}`);
+							return { success: false, data: null };
+						}
+
+						// Format dates to YYYY-MM-DD format
+						const periodStartDate = new Date(periodStartDateRaw).toISOString().split('T')[0];
+						const periodEndDate = new Date(periodEndDateRaw).toISOString().split('T')[0];
+
+						// Call ERP service same way as /erp/profile/sales endpoint
+						// This queries tblsaleslines WHERE rep_code = erpSalesRepCode AND type = 'I' AND doc_type IN (1,2)
+						const salesData = await this.erpDataService.getSalesPersonAggregations({
+							startDate: periodStartDate,
+							endDate: periodEndDate,
+							salesPersonId: erpSalesRepCode,
+						});
+
+						// Find exact match to ensure we have the right data
+						const userSalesData = salesData.find(agg => 
+							agg.salesCode?.toUpperCase() === erpSalesRepCode.toUpperCase()
+						);
+
+						if (!userSalesData || salesData.length === 0) {
+							this.logger.debug(`[${operationId}] No sales found for ERP code "${erpSalesRepCode}" in period ${periodStartDate} → ${periodEndDate}`);
+							return {
+								success: true,
+								data: {
+									totalRevenue: 0,
+									transactionCount: 0,
+									uniqueCustomers: 0,
+									salesCode: erpSalesRepCode,
+									salesName: erpSalesRepCode,
+								},
+								periodStartDate,
+								periodEndDate,
+							};
+						}
+
+						// Return sales data matching /erp/profile/sales format
+						return {
+							success: true,
+							data: {
+								totalRevenue: userSalesData.totalRevenue || 0,
+								transactionCount: userSalesData.transactionCount || 0,
+								uniqueCustomers: userSalesData.uniqueCustomers || 0,
+								salesCode: userSalesData.salesCode,
+								salesName: userSalesData.salesName || userSalesData.salesCode,
+							},
+							periodStartDate,
+							periodEndDate,
+						};
+					} catch (error) {
+						this.logger.error(`[${operationId}] Error getting revenue card data: ${error.message}`);
+						return { success: false, data: null, error: error.message };
+					}
+				})(),
+				// Get attendance streak from attendance metrics (matches /attendance/metrics/:uid endpoint)
+				this.attendanceService.getUserAttendanceMetrics(userId),
+				// Get latest 2 leads for today using leads service
+				this.leadsService.leadsByUser(userId, orgId, branchId).then(result => {
+					// Filter leads created today and take latest 2
+					const todayLeads = result.leads
+						.filter(lead => {
+							const leadDate = new Date(lead.createdAt);
+							return leadDate >= startOfDay && leadDate <= endOfDay;
+						})
+						.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+						.slice(0, 2);
+					return { leads: todayLeads };
+				}),
+				// Get latest 2 tasks for today using tasks service
+				this.tasksService.tasksByUser(userId, orgId, branchId).then(result => {
+					// Filter tasks created today and take latest 2
+					const todayTasks = result.tasks
+						.filter(task => {
+							const taskDate = new Date(task.createdAt);
+							return taskDate >= startOfDay && taskDate <= endOfDay;
+						})
+						.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+						.slice(0, 2);
+					return { tasks: todayTasks };
+				}),
+				// Get latest leave for user
+				this.leaveService.leavesByUser(userId, orgId, branchId, userId).then(result => {
+					// Get the most recent leave
+					const latestLeave = result.leaves
+						.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] || null;
+					return { leave: latestLeave };
+				}),
+			]);
+
+			// Extract results with error handling
+			const targets = userTargetResult.status === 'fulfilled' ? userTargetResult.value?.userTarget || null : null;
+			const revenueCard = revenueCardResult.status === 'fulfilled' && revenueCardResult.value?.success 
+				? revenueCardResult.value.data 
+				: null;
+			const attendanceStreak = attendanceMetrics.status === 'fulfilled' 
+				? attendanceMetrics.value?.metrics?.attendanceStreak || 0 
+				: 0;
+			const leads = leadsResult.status === 'fulfilled' ? leadsResult.value?.leads || [] : [];
+			const tasks = tasksResult.status === 'fulfilled' ? tasksResult.value?.tasks || [] : [];
+			const leave = leaveResult.status === 'fulfilled' ? leaveResult.value?.leave || null : null;
+
+			// Log any errors
+			if (userTargetResult.status === 'rejected') {
+				this.logger.warn(`[${operationId}] Failed to fetch user targets: ${userTargetResult.reason?.message}`);
+			}
+			if (revenueCardResult.status === 'rejected') {
+				this.logger.warn(`[${operationId}] Failed to fetch revenue card: ${revenueCardResult.reason?.message}`);
+			}
+			if (attendanceMetrics.status === 'rejected') {
+				this.logger.warn(`[${operationId}] Failed to fetch attendance streak: ${attendanceMetrics.reason?.message}`);
+			}
+			if (leadsResult.status === 'rejected') {
+				this.logger.warn(`[${operationId}] Failed to fetch leads: ${leadsResult.reason?.message}`);
+			}
+			if (tasksResult.status === 'rejected') {
+				this.logger.warn(`[${operationId}] Failed to fetch tasks: ${tasksResult.reason?.message}`);
+			}
+			if (leaveResult.status === 'rejected') {
+				this.logger.warn(`[${operationId}] Failed to fetch leave: ${leaveResult.reason?.message}`);
+			}
+
+			const highlights = {
+				targets,
+				revenueCard, // Revenue card data from ERP service (matches /erp/profile/sales)
+				attendanceStreak, // From /attendance/metrics/:uid endpoint
+				leads, // Latest 2 leads from leads service
+				tasks, // Latest 2 tasks from tasks service
+				leave,
+				generatedAt: new Date().toISOString(),
+			};
+
+			this.logger.log(`[${operationId}] ✅ Highlights data retrieved successfully`);
+			return highlights;
+		} catch (error) {
+			this.logger.error(`[${operationId}] ❌ Error getting highlights: ${error.message}`, error.stack);
+			throw error;
 		}
 	}
 }

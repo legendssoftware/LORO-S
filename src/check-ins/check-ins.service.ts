@@ -556,13 +556,26 @@ export class CheckInsService {
 
 			// Core operation: Update check-in record with check-out data (without fullAddress - will be updated later)
 			this.logger.debug(`[${operationId}] Updating check-in record with check-out data`);
-			await this.checkInRepository.update(checkIn.uid, {
+			const updateData: any = {
 				checkOutTime: createCheckOutDto?.checkOutTime,
 				checkOutPhoto: createCheckOutDto?.checkOutPhoto,
 				checkOutLocation: createCheckOutDto?.checkOutLocation,
 				duration: duration,
 				// fullAddress will be updated in post-response processing
-			});
+			};
+
+			// Add optional fields if provided
+			if (createCheckOutDto?.notes !== undefined) {
+				updateData.notes = createCheckOutDto.notes;
+			}
+			if (createCheckOutDto?.resolution !== undefined) {
+				updateData.resolution = createCheckOutDto.resolution;
+			}
+			if (createCheckOutDto?.client?.uid !== undefined) {
+				updateData.client = { uid: createCheckOutDto.client.uid };
+			}
+
+			await this.checkInRepository.update(checkIn.uid, updateData);
 
 			// ============================================================
 			// EARLY RETURN: Respond to client immediately after successful update
@@ -929,6 +942,65 @@ export class CheckInsService {
 			);
 			return {
 				message: error?.message || 'Failed to update check-out photo',
+			};
+		}
+	}
+
+	/**
+	 * Update visit details (client, notes, resolution) after check-out
+	 */
+	async updateVisitDetails(
+		checkInId: number,
+		clientId?: number,
+		notes?: string,
+		resolution?: string,
+		orgId?: number,
+		branchId?: number,
+	): Promise<{ message: string }> {
+		const operationId = `update_visit_details_${Date.now()}`;
+		const startTime = Date.now();
+		this.logger.log(`[${operationId}] Updating visit details for check-in: ${checkInId}`);
+
+		try {
+			// Find check-in record
+			const checkIn = await this.checkInRepository.findOne({
+				where: { uid: checkInId },
+			});
+
+			if (!checkIn) {
+				this.logger.error(`[${operationId}] Check-in not found: ${checkInId}`);
+				throw new NotFoundException('Check-in not found');
+			}
+
+			// Build update data
+			const updateData: any = {};
+			if (clientId !== undefined) {
+				updateData.client = { uid: clientId };
+			}
+			if (notes !== undefined) {
+				updateData.notes = notes;
+			}
+			if (resolution !== undefined) {
+				updateData.resolution = resolution;
+			}
+
+			// Update visit details
+			await this.checkInRepository.update(checkInId, updateData);
+
+			const duration = Date.now() - startTime;
+			this.logger.log(`✅ [${operationId}] Visit details updated successfully in ${duration}ms`);
+
+			return {
+				message: process.env.SUCCESS_MESSAGE || 'Visit details updated successfully',
+			};
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(
+				`❌ [${operationId}] Failed to update visit details after ${duration}ms: ${error.message}`,
+				error.stack,
+			);
+			return {
+				message: error?.message || 'Failed to update visit details',
 			};
 		}
 	}

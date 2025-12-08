@@ -81,6 +81,9 @@ export class Device {
 @Index(['closeTime'])
 @Index(['createdAt'])
 @Index(['updatedAt'])
+// Note: For additional duplicate prevention at database level, consider adding:
+// @Index(['deviceId', 'openTime'], { unique: true, where: 'openTime IS NOT NULL' })
+// This would require a database migration to implement
 export class DeviceRecords {
 	@PrimaryGeneratedColumn()
 	id: number;

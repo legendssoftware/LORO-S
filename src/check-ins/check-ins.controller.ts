@@ -4,6 +4,7 @@ import { CreateCheckInDto } from './dto/create-check-in.dto';
 import { CreateCheckOutDto } from './dto/create-check-out.dto';
 import { UpdateCheckInPhotoDto } from './dto/update-check-in-photo.dto';
 import { UpdateCheckOutPhotoDto } from './dto/update-check-out-photo.dto';
+import { UpdateVisitDetailsDto } from './dto/update-visit-details.dto';
 import { Request } from 'express';
 
 interface AuthenticatedRequest extends Request {
@@ -335,5 +336,39 @@ export class CheckInsController {
 		const orgId = req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.checkInsService.updateCheckOutPhoto(updateDto.checkInId, updateDto.photoUrl, orgId, branchId);
+	}
+
+	@Patch('visit-details')
+	@ApiOperation({
+		summary: 'Update visit details',
+		description: 'Updates visit details (client, notes, resolution) after check-out',
+	})
+	@ApiBody({ type: UpdateVisitDetailsDto })
+	@ApiOkResponse({
+		description: 'Visit details updated successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Success' },
+			},
+		},
+	})
+	@ApiBadRequestResponse({
+		description: 'Bad Request - Invalid data provided',
+	})
+	@ApiNotFoundResponse({
+		description: 'Check-in not found',
+	})
+	updateVisitDetails(@Body() updateDto: UpdateVisitDetailsDto, @Req() req: AuthenticatedRequest) {
+		const orgId = req.user?.organisationRef;
+		const branchId = req.user?.branch?.uid;
+		return this.checkInsService.updateVisitDetails(
+			updateDto.checkInId,
+			updateDto.client?.uid,
+			updateDto.notes,
+			updateDto.resolution,
+			orgId,
+			branchId,
+		);
 	}
 }

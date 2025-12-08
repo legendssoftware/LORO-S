@@ -56,6 +56,8 @@ import { Tracking } from '../tracking/entities/tracking.entity';
 import { GoogleMapsService } from '../lib/services/google-maps.service';
 import { TrackingService } from '../tracking/tracking.service';
 import { ErpModule } from '../erp/erp.module';
+import { LeadsModule } from '../leads/leads.module';
+import { LeaveModule } from '../leave/leave.module';
 
 @Module({
 	imports: [
@@ -122,6 +124,8 @@ import { ErpModule } from '../erp/erp.module';
 		CommunicationModule,
 		RewardsModule,
 		forwardRef(() => AttendanceModule),
+		forwardRef(() => LeadsModule),
+		forwardRef(() => LeaveModule),
 	],
 	controllers: [ReportsController],
 	providers: [

@@ -5434,14 +5434,34 @@ export class AttendanceService {
 
 	/**
 	 * Calculate the current attendance streak for a user
+	 * Includes today's record if present and marks user as present
 	 */
 	private async calculateAttendanceStreak(userId: number): Promise<number> {
 		let streak = 0;
 		const today = new Date();
 		today.setHours(0, 0, 0, 0);
+		const tomorrow = new Date(today);
+		tomorrow.setDate(today.getDate() + 1);
 
-		// Check last 60 days for streak calculation
-		for (let i = 0; i < 60; i++) {
+		// First, check if user has attendance today (i = 0)
+		// If present today, mark as present and add to streak count
+		const todayAttendance = await this.attendanceRepository.findOne({
+			where: {
+				owner: { uid: userId },
+				checkIn: Between(today, tomorrow),
+			},
+		});
+
+		// If user has attendance today, count it and mark as present
+		if (todayAttendance) {
+			streak++;
+		} else {
+			// If no attendance today, streak is broken
+			return 0;
+		}
+
+		// Check previous days for streak calculation (starting from yesterday)
+		for (let i = 1; i < 60; i++) {
 			const checkDate = new Date(today);
 			checkDate.setDate(today.getDate() - i);
 
@@ -5464,8 +5484,8 @@ export class AttendanceService {
 
 			if (hasAttendance) {
 				streak++;
-			} else if (i > 0) {
-				// Don't break on today if no attendance yet
+			} else {
+				// Streak broken, stop counting
 				break;
 			}
 		}

@@ -41,6 +41,9 @@ export class CheckIn {
 	@Column({ type: 'text', nullable: true })
 	notes: string;
 
+	@Column({ type: 'text', nullable: true })
+	resolution: string;
+
 	@CreateDateColumn()
 	createdAt: Date;
 
