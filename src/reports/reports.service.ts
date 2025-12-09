@@ -2258,9 +2258,9 @@ export class ReportsService implements OnModuleInit {
 					reportType: reportType.toLowerCase() 
 				});
 			} else {
-				// Only show MORNING and EVENING reports
+				// Include MORNING, EVENING, and USER_DAILY reports (end-of-day reports with GPS data)
 				queryBuilder.andWhere('report.reportType IN (:...reportTypes)', {
-					reportTypes: ['morning', 'evening']
+					reportTypes: ['morning', 'evening', 'user_daily']
 				});
 			}
 
@@ -2326,9 +2326,9 @@ export class ReportsService implements OnModuleInit {
 					reportType: reportType.toLowerCase() 
 				});
 			} else {
-				// Only show MORNING and EVENING reports
+				// Include MORNING, EVENING, and USER_DAILY reports (end-of-day reports with GPS data)
 				queryBuilder.andWhere('report.reportType IN (:...reportTypes)', {
-					reportTypes: ['morning', 'evening']
+					reportTypes: ['morning', 'evening', 'user_daily']
 				});
 			}
 
@@ -2342,21 +2342,39 @@ export class ReportsService implements OnModuleInit {
 				.take(limit)
 				.getMany();
 
-			this.logger.log(`Found ${reports.length} daily reports for user ${userId} (total: ${total})`);
+		this.logger.log(`Found ${reports.length} daily reports for user ${userId} (total: ${total})`);
 
-			return {
-				message: 'Daily reports retrieved successfully',
-				reports,
-				pagination: {
-					total,
-					page,
-					limit,
-					totalPages: Math.ceil(total / limit),
-				},
-			};
+		return {
+			message: 'Daily reports retrieved successfully',
+			reports,
+			pagination: {
+				total,
+				page,
+				limit,
+				totalPages: Math.ceil(total / limit),
+			},
+		};
+	} catch (error) {
+		this.logger.error(`Error getting user daily reports: ${error.message}`, error.stack);
+		throw error;
+	}
+	}
+
+	/**
+	 * Get user's organization information for authorization checks
+	 * @param userId - User ID to get organization for
+	 * @returns User entity with organization data
+	 */
+	async getUserOrganization(userId: number): Promise<User | null> {
+		try {
+			const user = await this.userRepository.findOne({
+				where: { uid: userId },
+				relations: ['organisation'],
+			});
+			return user;
 		} catch (error) {
-			this.logger.error(`Error getting user daily reports: ${error.message}`, error.stack);
-			throw error;
+			this.logger.error(`Error getting user organization for user ${userId}: ${error.message}`);
+			return null;
 		}
 	}
 

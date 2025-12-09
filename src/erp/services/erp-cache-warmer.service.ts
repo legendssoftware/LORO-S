@@ -12,7 +12,7 @@ import { ErpQueryFilters } from '../interfaces/erp-data.interface';
  * Strategy:
  * - Cache TTL: 10 minutes (reduced from 4 hours for faster updates)
  * - Today's data refreshed every 5 minutes
- * - Full cache warming every 10 minutes
+ * - Full cache warming every 20 minutes
  */
 @Injectable()
 export class ErpCacheWarmerService implements OnModuleInit {
@@ -41,7 +41,7 @@ export class ErpCacheWarmerService implements OnModuleInit {
 		this.logger.log('ERP Cache Warmer: Initializing...');
 		this.logger.log('📅 Cache warming strategy: Today to 1 month back');
 		this.logger.log('⏱️  Today refresh interval: Every 5 minutes');
-		this.logger.log('⏱️  Full cache warm interval: Every 10 minutes');
+		this.logger.log('⏱️  Full cache warm interval: Every 20 minutes');
 		setTimeout(() => {
 			this.warmCommonDateRanges().catch((error) => {
 				this.logger.error(`Initial cache warming failed: ${error.message}`);
@@ -70,8 +70,8 @@ export class ErpCacheWarmerService implements OnModuleInit {
 			}
 		}, todayRefreshIntervalMs);
 
-		// Full cache warming every 10 minutes (matches cache TTL)
-		const fullWarmIntervalMs = 10 * 60 * 1000; // 10 minutes
+		// Full cache warming every 20 minutes
+		const fullWarmIntervalMs = 20 * 60 * 1000; // 20 minutes
 		setInterval(async () => {
 			try {
 				await this.warmCommonDateRanges();

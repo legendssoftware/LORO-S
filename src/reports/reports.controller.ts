@@ -17,6 +17,7 @@ import { AccessLevel } from '../lib/enums/user.enums';
 import { Roles } from '../decorators/role.decorator';
 import { PerformanceFiltersDto } from './dto/performance-filters.dto';
 import { ConsolidatedIncomeStatementResponseDto } from './dto/performance-dashboard.dto';
+import { ClientJwtAuthGuard } from 'src/guards/client-jwt-auth.guard';
 
 @ApiBearerAuth('JWT-auth')
 @ApiTags('📊 Reports')
@@ -34,14 +35,19 @@ export class ReportsController {
 	 * @returns Access scope with orgId and branchId (null for org-wide access)
 	 */
 	private getAccessScope(user: any) {
+		// Normalize accessLevel for comparison (handle case differences)
+		const normalizedAccessLevel = user?.accessLevel?.toLowerCase()?.trim();
+		
 		const isElevatedUser = [
-			AccessLevel.ADMIN,
-			AccessLevel.OWNER,
-			AccessLevel.MANAGER,
-			AccessLevel.DEVELOPER,
-			AccessLevel.SUPPORT,
-			AccessLevel.HR, // HR has elevated access to reports
-		].includes(user?.accessLevel);
+			AccessLevel.ADMIN.toLowerCase(),
+			AccessLevel.OWNER.toLowerCase(),
+			AccessLevel.MANAGER.toLowerCase(),
+			AccessLevel.DEVELOPER.toLowerCase(),
+			AccessLevel.SUPPORT.toLowerCase(),
+			AccessLevel.HR.toLowerCase(), // HR has elevated access to reports
+			AccessLevel.SUPERVISOR.toLowerCase(), // Supervisor has elevated access to reports
+			AccessLevel.EXECUTIVE.toLowerCase(), // Executive has elevated access to reports
+		].includes(normalizedAccessLevel);
 
 		const orgId = user?.org?.uid || user?.organisationRef;
 		const branchId = isElevatedUser ? null : user?.branch?.uid; // null = org-wide access for elevated users
@@ -52,6 +58,7 @@ export class ReportsController {
 			isElevated: isElevatedUser,
 		};
 	}
+
 
 	// Get Map Data endpoint
 	@Get('map')
@@ -708,7 +715,7 @@ Each branch includes:
 	// ======================================================
 
 	@Get('organization/:organisationRef/daily-reports')
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.HR)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.HR, AccessLevel.SUPERVISOR, AccessLevel.EXECUTIVE)
 	@ApiOperation({
 		summary: '📄 Get Organization Daily Reports',
 		description: `
@@ -811,7 +818,7 @@ Access all morning and evening attendance reports for your organization.
 	}
 
 	@Get('user/:userId/daily-reports')
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.HR, AccessLevel.USER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.HR, AccessLevel.USER, AccessLevel.SUPERVISOR, AccessLevel.EXECUTIVE)
 	@ApiOperation({
 		summary: '📄 Get User Personal Daily Reports',
 		description: `
@@ -885,14 +892,7 @@ Access all your personal morning and evening attendance reports.
 		});
 
 		// Check access permissions
-		// Users can access their own reports OR elevated users can access any user's reports
-		const isSelfAccess = parsedUserId === request.user.uid;
-		const hasAccess = isSelfAccess || accessScope.isElevated;
-
-		if (!hasAccess) {
-			this.logger.warn(`User ${request.user.uid} (level: ${request.user.accessLevel}) attempted to access user ${parsedUserId} reports without permission`);
-			throw new BadRequestException(`Access denied to requested user reports. You can only access your own reports (UID: ${request.user.uid})`);
-		}
+		// Users can access their own reports OR elevated users can access reports for users in their organization
 
 		return this.reportsService.getUserDailyReports({
 			userId: parsedUserId,
