@@ -2360,23 +2360,6 @@ export class ReportsService implements OnModuleInit {
 	}
 	}
 
-	/**
-	 * Get user's organization information for authorization checks
-	 * @param userId - User ID to get organization for
-	 * @returns User entity with organization data
-	 */
-	async getUserOrganization(userId: number): Promise<User | null> {
-		try {
-			const user = await this.userRepository.findOne({
-				where: { uid: userId },
-				relations: ['organisation'],
-			});
-			return user;
-		} catch (error) {
-			this.logger.error(`Error getting user organization for user ${userId}: ${error.message}`);
-			return null;
-		}
-	}
 
 	/**
 	 * Get consolidated income statement across all countries

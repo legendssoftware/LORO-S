@@ -82,6 +82,7 @@ export enum Language {
 	VENDA = 've',
 	NDEBELE = 'nr',
 	PEDI = 'nso',
+	PORTUGUESE = 'pt',
 }
 
 export enum NotificationFrequency {
