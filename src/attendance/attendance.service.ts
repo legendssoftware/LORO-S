@@ -1171,18 +1171,18 @@ export class AttendanceService {
 				}
 			}
 
-			// Use ACTUAL worked time (not expected time) - cap at expected hours, rest goes to overtime
-			// For auto-closed shifts, ensure duration never exceeds 8 hours (07:30-16:30 with 1 hour lunch = 8 hours)
-			// This prevents saving wrong durations like 9h 30m or 23+ hour shifts
-			const MAX_AUTO_CLOSE_DURATION = 480; // 8 hours = 480 minutes (07:30-16:30 with 1 hour lunch)
-			const durationMinutes = Math.min(actualWorkMinutes, expectedWorkMinutes, MAX_AUTO_CLOSE_DURATION);
+			// Use ACTUAL worked time (not expected time) - cap at expected hours from organization, rest goes to overtime
+			// Calculate worked hours from organization start time to close time
+			// Use a reasonable maximum cap (16 hours) to prevent obviously wrong data, but allow shifts that exceed normal time
+			const MAX_REASONABLE_DURATION = 960; // 16 hours = 960 minutes - prevents obviously wrong data
+			const durationMinutes = Math.min(actualWorkMinutes, expectedWorkMinutes, MAX_REASONABLE_DURATION);
 			const overtimeMinutes = Math.max(0, actualWorkMinutes - durationMinutes);
 
 			// Validate duration to prevent saving suspiciously long shifts
-			if (actualWorkMinutes > MAX_AUTO_CLOSE_DURATION * 1.5) { // More than 12 hours
+			if (actualWorkMinutes > MAX_REASONABLE_DURATION) {
 				this.logger.warn(
 					`Suspicious auto-close duration detected: ${actualWorkMinutes} minutes (${(actualWorkMinutes/60).toFixed(1)} hours). ` +
-					`Capping at ${MAX_AUTO_CLOSE_DURATION} minutes (8 hours). ` +
+					`Capping at ${MAX_REASONABLE_DURATION} minutes (16 hours). ` +
 					`Check-in: ${checkInTime.toISOString()}, Check-out: ${checkOutTime.toISOString()}`
 				);
 			}
@@ -1253,12 +1253,21 @@ export class AttendanceService {
 					fallbackActualWorkMinutes = Math.max(0, fallbackTotalMinutes - fallbackBreakMinutes);
 				}
 
-				// Use default expected work minutes for fallback
-				const fallbackExpectedWorkMinutes = TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES;
+				// Get expected work minutes from organization hours for fallback
+				let fallbackExpectedWorkMinutes = TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES;
+				if (orgId) {
+					try {
+						const fallbackWorkingDayInfo = await this.organizationHoursService.getWorkingDayInfo(orgId, fallbackCheckInTime);
+						fallbackExpectedWorkMinutes = fallbackWorkingDayInfo.expectedWorkMinutes || fallbackExpectedWorkMinutes;
+						this.logger.debug(`Fallback expected work minutes: ${fallbackExpectedWorkMinutes}`);
+					} catch (error) {
+						this.logger.warn(`Failed to get expected work minutes for fallback, using default: ${fallbackExpectedWorkMinutes}`);
+					}
+				}
 				
-				// For fallback auto-close, also cap at 8 hours to prevent wrong durations
-				const FALLBACK_MAX_DURATION = 480; // 8 hours
-				const fallbackDurationMinutes = Math.min(fallbackActualWorkMinutes, fallbackExpectedWorkMinutes, FALLBACK_MAX_DURATION);
+				// Use organization's expected work minutes, with a reasonable maximum cap to prevent wrong durations
+				const FALLBACK_MAX_REASONABLE_DURATION = 960; // 16 hours - prevents obviously wrong data
+				const fallbackDurationMinutes = Math.min(fallbackActualWorkMinutes, fallbackExpectedWorkMinutes, FALLBACK_MAX_REASONABLE_DURATION);
 				const fallbackOvertimeMinutes = Math.max(0, fallbackActualWorkMinutes - fallbackDurationMinutes);
 
 				const fallbackDuration = TimeCalculatorUtil.formatDuration(fallbackDurationMinutes);

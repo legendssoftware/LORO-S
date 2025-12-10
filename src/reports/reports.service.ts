@@ -2360,6 +2360,86 @@ export class ReportsService implements OnModuleInit {
 	}
 	}
 
+	/**
+	 * Get all user_daily reports for all users in an organization, grouped by user
+	 * Used for trip summary display
+	 */
+	async getAllUsersDailyReportsForOrg(params: {
+		organisationRef: string;
+		branchId?: number;
+		page?: number;
+		limit?: number;
+	}): Promise<any> {
+		this.logger.log(`Getting all users daily reports for org ${params.organisationRef}`);
+
+		try {
+			const { organisationRef, branchId, page = 1, limit = 1000 } = params;
+
+			// Build query to fetch all user_daily reports for the organization
+			const queryBuilder = this.reportRepository
+				.createQueryBuilder('report')
+				.leftJoinAndSelect('report.owner', 'owner')
+				.leftJoinAndSelect('report.organisation', 'organisation')
+				.leftJoinAndSelect('report.branch', 'branch')
+				.where('organisation.ref = :organisationRef', { organisationRef })
+				.andWhere('report.reportType = :reportType', { reportType: 'user_daily' });
+
+			// Filter by branch if specified
+			if (branchId) {
+				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
+			}
+
+			// Get all reports (no pagination for grouping)
+			const allReports = await queryBuilder
+				.orderBy('report.generatedAt', 'DESC')
+				.getMany();
+
+			this.logger.log(`Found ${allReports.length} user_daily reports for org ${organisationRef}`);
+
+			// Group reports by user
+			const reportsByUser = allReports.reduce((acc, report) => {
+				const userId = report.owner?.uid;
+				if (!userId) return acc;
+
+				if (!acc[userId]) {
+					acc[userId] = {
+						user: {
+							uid: report.owner.uid,
+							name: report.owner.name,
+							surname: report.owner.surname,
+							email: report.owner.email,
+							photoURL: report.owner.photoURL,
+						},
+						reports: [],
+					};
+				}
+
+				acc[userId].reports.push(report);
+				return acc;
+			}, {} as Record<number, { user: any; reports: any[] }>);
+
+			// Convert to array and apply pagination
+			const userReportsArray = Object.values(reportsByUser);
+			const total = userReportsArray.length;
+			const paginatedResults = userReportsArray
+				.slice((page - 1) * limit, page * limit);
+
+			return {
+				message: 'All users daily reports retrieved successfully',
+				userReports: paginatedResults,
+				pagination: {
+					total,
+					page,
+					limit,
+					totalPages: Math.ceil(total / limit),
+				},
+			};
+		} catch (error) {
+			this.logger.error(`Error getting all users daily reports: ${error.message}`, error.stack);
+			throw error;
+		}
+	}
+
 
 	/**
 	 * Get consolidated income statement across all countries
