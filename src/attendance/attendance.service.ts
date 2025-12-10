@@ -62,6 +62,11 @@ export class AttendanceService {
 	// Validation constants for external machine consolidations
 	private readonly MIN_SHIFT_DURATION_MINUTES = 30; // Minimum 30 minutes between check-in and check-out
 	private readonly MAX_TIME_DIFF_MINUTES = 5; // Maximum 5 minutes difference for "too close" validation (likely duplicate)
+	
+	// Duration and time constants
+	private readonly MAX_REASONABLE_DURATION_MINUTES = 960; // 16 hours - prevents obviously wrong data
+	private readonly FALLBACK_OPEN_TIME = '07:00'; // Fallback opening time when org hours unavailable
+	private readonly FALLBACK_CLOSE_TIME = '16:30'; // Fallback closing time when org hours unavailable
 
 	constructor(
 		@InjectRepository(Attendance)
@@ -141,7 +146,7 @@ export class AttendanceService {
 
 			// Get organization timezone
 			const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
-			const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
+			const organizationTimezone = organizationHours?.timezone || TimezoneUtil.getSafeTimezone();
 
 			// Parse the expected start time in organization's timezone
 			const expectedStartTime = TimezoneUtil.parseTimeInOrganization(
@@ -150,8 +155,8 @@ export class AttendanceService {
 				organizationTimezone
 			);
 
-			// Calculate late minutes with grace period (15 minutes)
-			const gracePeriodMinutes = 15;
+			// Calculate late minutes with grace period
+			const gracePeriodMinutes = TimeCalculatorUtil.DEFAULT_WORK.PUNCTUALITY_GRACE_MINUTES;
 			const graceEndTime = TimezoneUtil.addMinutesInOrganizationTime(
 				expectedStartTime,
 				gracePeriodMinutes,
@@ -187,7 +192,7 @@ export class AttendanceService {
 
 			// Get organization timezone
 			const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
-			const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
+			const organizationTimezone = organizationHours?.timezone || TimezoneUtil.getSafeTimezone();
 
 			// Parse the expected start time in organization's timezone
 			const expectedStartTime = TimezoneUtil.parseTimeInOrganization(
@@ -196,8 +201,8 @@ export class AttendanceService {
 				organizationTimezone
 			);
 
-			// Calculate grace period (15 minutes)
-			const gracePeriodMinutes = 15;
+			// Calculate grace period
+			const gracePeriodMinutes = TimeCalculatorUtil.DEFAULT_WORK.PUNCTUALITY_GRACE_MINUTES;
 			const graceEndTime = TimezoneUtil.addMinutesInOrganizationTime(
 				expectedStartTime,
 				gracePeriodMinutes,
@@ -1173,16 +1178,14 @@ export class AttendanceService {
 
 			// Use ACTUAL worked time (not expected time) - cap at expected hours from organization, rest goes to overtime
 			// Calculate worked hours from organization start time to close time
-			// Use a reasonable maximum cap (16 hours) to prevent obviously wrong data, but allow shifts that exceed normal time
-			const MAX_REASONABLE_DURATION = 960; // 16 hours = 960 minutes - prevents obviously wrong data
-			const durationMinutes = Math.min(actualWorkMinutes, expectedWorkMinutes, MAX_REASONABLE_DURATION);
+			const durationMinutes = Math.min(actualWorkMinutes, expectedWorkMinutes, this.MAX_REASONABLE_DURATION_MINUTES);
 			const overtimeMinutes = Math.max(0, actualWorkMinutes - durationMinutes);
 
 			// Validate duration to prevent saving suspiciously long shifts
-			if (actualWorkMinutes > MAX_REASONABLE_DURATION) {
+			if (actualWorkMinutes > this.MAX_REASONABLE_DURATION_MINUTES) {
 				this.logger.warn(
 					`Suspicious auto-close duration detected: ${actualWorkMinutes} minutes (${(actualWorkMinutes/60).toFixed(1)} hours). ` +
-					`Capping at ${MAX_REASONABLE_DURATION} minutes (16 hours). ` +
+					`Capping at ${this.MAX_REASONABLE_DURATION_MINUTES} minutes (16 hours). ` +
 					`Check-in: ${checkInTime.toISOString()}, Check-out: ${checkOutTime.toISOString()}`
 				);
 			}
@@ -1220,9 +1223,9 @@ export class AttendanceService {
 		} catch (error) {
 			this.logger.error(`Error auto-closing existing shift for user ${userId}: ${error.message}`);
 
-			// Fallback: still try to close the shift with default time (4:30 PM in org timezone)
+			// Fallback: still try to close the shift with default time in org timezone
 			try {
-				closeTime = TimezoneUtil.parseTimeInOrganization('16:30', checkInDate, organizationTimezone);
+				closeTime = TimezoneUtil.parseTimeInOrganization(this.FALLBACK_CLOSE_TIME, checkInDate, organizationTimezone);
 
 				// Calculate duration and overtime for fallback auto-close
 				const fallbackCheckInTime = new Date(existingShift.checkIn);
@@ -1266,8 +1269,7 @@ export class AttendanceService {
 				}
 				
 				// Use organization's expected work minutes, with a reasonable maximum cap to prevent wrong durations
-				const FALLBACK_MAX_REASONABLE_DURATION = 960; // 16 hours - prevents obviously wrong data
-				const fallbackDurationMinutes = Math.min(fallbackActualWorkMinutes, fallbackExpectedWorkMinutes, FALLBACK_MAX_REASONABLE_DURATION);
+				const fallbackDurationMinutes = Math.min(fallbackActualWorkMinutes, fallbackExpectedWorkMinutes, this.MAX_REASONABLE_DURATION_MINUTES);
 				const fallbackOvertimeMinutes = Math.max(0, fallbackActualWorkMinutes - fallbackDurationMinutes);
 
 				const fallbackDuration = TimeCalculatorUtil.formatDuration(fallbackDurationMinutes);
@@ -2023,8 +2025,8 @@ export class AttendanceService {
 					const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
 					const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(orgId, new Date());
 					expectedShiftTime =
-						expectedShiftTime || workingDayInfo.startTime || organizationHours?.openTime || '09:00';
-					expectedEndTime = workingDayInfo.endTime || organizationHours?.closeTime || '17:00';
+						expectedShiftTime || workingDayInfo.startTime || organizationHours?.openTime || this.FALLBACK_OPEN_TIME;
+					expectedEndTime = workingDayInfo.endTime || organizationHours?.closeTime || this.FALLBACK_CLOSE_TIME;
 				} catch (error) {
 					this.logger.warn(
 						`[${operationId}] Could not get organization hours for org ${orgId}:`,

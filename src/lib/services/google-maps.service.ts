@@ -1969,7 +1969,9 @@ export class GoogleMapsService implements OnModuleInit {
     // Calculate speed metrics using filtered points
     const { movingTimeMinutes, maxSpeedKmh } = this.calculateSpeedMetrics(pointsToAnalyze);
     const stoppedTimeMinutes = totalTimeMinutes - movingTimeMinutes;
-    const averageSpeedKmh = totalTimeMinutes > 0 ? (totalDistanceKm / (totalTimeMinutes / 60)) : 0;
+    // FIX: Use movingTimeMinutes instead of totalTimeMinutes for average speed calculation
+    // Average speed should only consider time when actually moving, not stopped time
+    const averageSpeedKmh = movingTimeMinutes > 0 ? (totalDistanceKm / (movingTimeMinutes / 60)) : 0;
 
     // Calculate time spent by location using filtered points
     const timeSpentByLocation = await this.calculateTimeSpentByLocation(pointsToAnalyze, stops);
@@ -2255,6 +2257,8 @@ export class GoogleMapsService implements OnModuleInit {
   }>): { movingTimeMinutes: number; maxSpeedKmh: number } {
     let movingTimeMinutes = 0;
     let maxSpeedKmh = 0;
+    const MIN_MOVING_SPEED_KMH = 2; // Only count time when moving faster than 2 km/h (walking speed threshold)
+    const MAX_REASONABLE_SPEED_KMH = 200; // Cap at reasonable maximum
 
     for (let i = 1; i < points.length; i++) {
       const prevPoint = points[i - 1];
@@ -2266,13 +2270,16 @@ export class GoogleMapsService implements OnModuleInit {
       );
       
       const timeDiffHours = (new Date(currentPoint.createdAt).getTime() - new Date(prevPoint.createdAt).getTime()) / (1000 * 60 * 60);
+      const timeDiffMinutes = timeDiffHours * 60;
       
       if (timeDiffHours > 0 && distance > 0.005) { // More than 5 meters movement
         const speedKmh = distance / timeDiffHours;
         
-        if (speedKmh <= 200) { // Reasonable speed limit
+        // Only count time when actually moving (above walking speed threshold)
+        // This prevents GPS drift and noise from being counted as movement
+        if (speedKmh >= MIN_MOVING_SPEED_KMH && speedKmh <= MAX_REASONABLE_SPEED_KMH) {
           maxSpeedKmh = Math.max(maxSpeedKmh, speedKmh);
-          movingTimeMinutes += timeDiffHours * 60;
+          movingTimeMinutes += timeDiffMinutes;
         }
       }
     }

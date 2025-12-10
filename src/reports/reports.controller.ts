@@ -848,13 +848,13 @@ Access all your personal morning and evening attendance reports.
 		type: 'number',
 		example: 123,
 	})
-	@ApiQuery({ name: 'reportType', required: false, enum: ['MORNING', 'EVENING'], description: 'Filter by report type' })
+	@ApiQuery({ name: 'reportType', required: false, enum: ['MORNING', 'EVENING', 'USER_DAILY'], description: 'Filter by report type' })
 	@ApiQuery({ name: 'page', required: false, type: Number, description: 'Page number (default: 1)' })
 	@ApiQuery({ name: 'limit', required: false, type: Number, description: 'Items per page (default: 50)' })
 	async getUserDailyReports(
 		@Req() request: AuthenticatedRequest,
 		@Param('userId') userId: string,
-		@Query('reportType') reportType?: 'MORNING' | 'EVENING',
+		@Query('reportType') reportType?: 'MORNING' | 'EVENING' | 'USER_DAILY',
 		@Query('page') page?: string,
 		@Query('limit') limit?: string
 	) {

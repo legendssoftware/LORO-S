@@ -967,6 +967,42 @@ export class ReportsService implements OnModuleInit {
 			newReport.owner = user;
 			newReport.organisation = user.organisation;
 
+			// Extract and save GPS data to report entity gpsData column
+			// This ensures GPS data is available for trip summary retrieval
+			if (reportData?.details?.location) {
+				const locationData = reportData.details.location;
+				const tripSummary = locationData.tripMetrics || locationData.trackingData?.tripSummary;
+				
+				if (tripSummary || locationData.stops) {
+					newReport.gpsData = {
+						tripSummary: tripSummary ? {
+							totalDistanceKm: tripSummary.totalDistanceKm || 0,
+							totalTimeMinutes: tripSummary.totalTimeMinutes || 0,
+							averageSpeedKmh: tripSummary.averageSpeedKmh || 0,
+							movingTimeMinutes: tripSummary.movingTimeMinutes || 0,
+							stoppedTimeMinutes: tripSummary.stoppedTimeMinutes || 0,
+							numberOfStops: tripSummary.numberOfStops || 0,
+							maxSpeedKmh: tripSummary.maxSpeedKmh || 0,
+						} : undefined,
+						stops: locationData.stops || undefined,
+						timeSpentByLocation: locationData.locationAnalysis?.timeSpentByLocation || undefined,
+						averageTimePerLocationFormatted: locationData.locationAnalysis?.averageTimePerLocationFormatted || undefined,
+						locationAnalysis: locationData.locationAnalysis || undefined,
+						geocodingStatus: locationData.geocodingStatus || undefined,
+					};
+					
+					// Also set totalDistanceKm and totalStops for quick access
+					if (tripSummary?.totalDistanceKm !== undefined) {
+						newReport.totalDistanceKm = tripSummary.totalDistanceKm;
+					}
+					if (tripSummary?.numberOfStops !== undefined) {
+						newReport.totalStops = tripSummary.numberOfStops;
+					}
+					
+					this.logger.debug(`GPS data extracted and prepared for report: Distance=${tripSummary?.totalDistanceKm || 0}km, Stops=${tripSummary?.numberOfStops || 0}`);
+				}
+			}
+
 			// Save the report
 			const savedReport = await this.reportRepository.save(newReport);
 			this.logger.log(`Comprehensive daily report saved with ID: ${savedReport.uid} for user ${userId}`);
@@ -2303,7 +2339,7 @@ export class ReportsService implements OnModuleInit {
 	 */
 	async getUserDailyReports(params: {
 		userId: number;
-		reportType?: 'MORNING' | 'EVENING';
+		reportType?: 'MORNING' | 'EVENING' | 'USER_DAILY';
 		page?: number;
 		limit?: number;
 	}): Promise<any> {
@@ -2313,6 +2349,7 @@ export class ReportsService implements OnModuleInit {
 			const { userId, reportType, page = 1, limit = 50 } = params;
 
 			// Build query - fetch ALL reports
+			// TypeORM's getMany() automatically selects all columns including nullable JSON columns
 			const queryBuilder = this.reportRepository
 				.createQueryBuilder('report')
 				.leftJoinAndSelect('report.owner', 'owner')
@@ -2343,6 +2380,36 @@ export class ReportsService implements OnModuleInit {
 				.getMany();
 
 		this.logger.log(`Found ${reports.length} daily reports for user ${userId} (total: ${total})`);
+
+		// Enhanced logging to debug GPS data retrieval
+		reports.forEach((report, index) => {
+			const hasGpsData = 'gpsData' in report && report.gpsData !== null && report.gpsData !== undefined;
+			this.logger.log(`[Report ${index + 1}] ID: ${report.uid}, Type: ${report.reportType}, gpsData: ${hasGpsData ? 'EXISTS' : report.gpsData === null ? 'NULL' : 'UNDEFINED'}`);
+			
+			if (report.gpsData) {
+				this.logger.log(`[Report ${index + 1}] GPS Data:`, {
+					hasTripSummary: !!report.gpsData.tripSummary,
+					tripSummaryKeys: report.gpsData.tripSummary ? Object.keys(report.gpsData.tripSummary) : [],
+					hasStops: !!report.gpsData.stops,
+					stopsCount: report.gpsData.stops?.length || 0,
+				});
+			} else {
+				// Verify if data exists in DB but wasn't loaded
+				this.reportRepository
+					.createQueryBuilder('r')
+					.select('r.gpsData', 'gpsData')
+					.where('r.uid = :uid', { uid: report.uid })
+					.getRawOne()
+					.then((raw) => {
+						if (raw && raw.gpsData) {
+							this.logger.warn(`[Report ${index + 1}] ⚠️ gpsData EXISTS in DB but wasn't loaded! Value: ${JSON.stringify(raw.gpsData).substring(0, 100)}`);
+						} else {
+							this.logger.debug(`[Report ${index + 1}] gpsData is NULL in database`);
+						}
+					})
+					.catch((err) => this.logger.error(`[Report ${index + 1}] DB check error:`, err.message));
+			}
+		});
 
 		return {
 			message: 'Daily reports retrieved successfully',
