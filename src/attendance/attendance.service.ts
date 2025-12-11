@@ -24,6 +24,8 @@ import {
 	subMonths,
 	startOfWeek,
 	addDays,
+	getDaysInMonth,
+	getDay,
 } from 'date-fns';
 import { UserService } from '../user/user.service';
 import { RewardsService } from '../rewards/rewards.service';
@@ -6858,6 +6860,173 @@ export class AttendanceService {
 		} catch (error) {
 			this.logger.error(`[${operationId}] Error sending user records: ${error.message}`, error.stack);
 			throw new Error(`Failed to send attendance records: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Get monthly attendance calendar with calculated days and status
+	 * @param ref - User reference ID
+	 * @param year - Year (defaults to current year)
+	 * @param month - Month (1-12, defaults to current month)
+	 * @returns Monthly calendar data with days and attendance status
+	 */
+	public async getMonthlyAttendanceCalendar(
+		ref: number,
+		year?: number,
+		month?: number,
+	): Promise<{
+		month: number;
+		year: number;
+		monthName: string;
+		days: Array<{
+			date: string;
+			dayNumber: number;
+			dayOfWeek: number;
+			status: 'attended' | 'missed' | 'future';
+			attendanceRecord?: Attendance;
+		}>;
+		firstDayOfWeek: number;
+		totalDays: number;
+	}> {
+		try {
+			const now = new Date();
+			const targetYear = year || now.getFullYear();
+			const targetMonth = month || now.getMonth() + 1;
+
+			// Validate month
+			if (targetMonth < 1 || targetMonth > 12) {
+				throw new BadRequestException('Month must be between 1 and 12');
+			}
+
+			// Create date for the first day of the target month
+			const monthStart = startOfMonth(new Date(targetYear, targetMonth - 1, 1));
+			const monthEnd = endOfMonth(monthStart);
+			const today = startOfDay(now);
+
+			// Get first day of week (0 = Sunday, 1 = Monday, etc.)
+			const firstDayOfWeek = getDay(monthStart);
+
+			// Get total days in month
+			const totalDays = getDaysInMonth(monthStart);
+
+			// Get organization timezone for accurate date filtering
+			const user = await this.userRepository.findOne({
+				where: { uid: ref },
+				relations: ['organisation'],
+			});
+
+			if (!user) {
+				throw new NotFoundException(`User with ref ${ref} not found`);
+			}
+
+			const orgId = user.organisation?.uid;
+			const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
+			const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
+
+			// Convert month start/end to organization timezone
+			const startOfPeriod = TimezoneUtil.toOrganizationTime(startOfDay(monthStart), organizationTimezone);
+			const endOfPeriod = TimezoneUtil.toOrganizationTime(endOfDay(monthEnd), organizationTimezone);
+
+			// Fetch all attendance records for the user in this month
+			const attendanceRecords = await this.attendanceRepository.find({
+				where: {
+					owner: { uid: ref },
+					checkIn: Between(startOfPeriod, endOfPeriod),
+				},
+				relations: ['owner', 'branch', 'organisation'],
+				order: {
+					checkIn: 'ASC',
+				},
+			});
+
+			// Create a map of dates with attendance records
+			const attendanceByDate = new Map<string, Attendance>();
+			attendanceRecords.forEach((record) => {
+				if (!record.checkIn) return;
+
+				const checkInDate = startOfDay(new Date(record.checkIn));
+				const dateKey = format(checkInDate, 'yyyy-MM-dd');
+
+				// Count as attended if status is PRESENT, COMPLETED, or ON_BREAK
+				const isAttended =
+					record.status === AttendanceStatus.PRESENT ||
+					record.status === AttendanceStatus.COMPLETED ||
+					record.status === AttendanceStatus.ON_BREAK;
+
+				if (isAttended) {
+					// If multiple records for same day, keep the first one
+					if (!attendanceByDate.has(dateKey)) {
+						attendanceByDate.set(dateKey, record);
+					}
+				}
+			});
+
+			// Generate array of all days in the month
+			const days: Array<{
+				date: string;
+				dayNumber: number;
+				dayOfWeek: number;
+				status: 'attended' | 'missed' | 'future';
+				attendanceRecord?: Attendance;
+			}> = [];
+
+			for (let dayNum = 1; dayNum <= totalDays; dayNum++) {
+				const currentDate = new Date(targetYear, targetMonth - 1, dayNum);
+				const dateStart = startOfDay(currentDate);
+				const dateKey = format(dateStart, 'yyyy-MM-dd');
+				const dayOfWeek = getDay(currentDate); // 0 = Sunday, 1 = Monday, etc.
+
+				// Determine status
+				let status: 'attended' | 'missed' | 'future';
+				if (dateStart > today) {
+					status = 'future';
+				} else if (attendanceByDate.has(dateKey)) {
+					// If there's attendance, mark as attended (even on Sunday)
+					status = 'attended';
+				} else {
+					// For Sundays (dayOfWeek === 0), they are not considered "missed" 
+					// as no work is expected. The client will handle showing them as amber.
+					// For other days, mark as missed if no attendance
+					status = 'missed';
+				}
+
+				days.push({
+					date: dateKey,
+					dayNumber: dayNum,
+					dayOfWeek,
+					status,
+					attendanceRecord: attendanceByDate.get(dateKey),
+				});
+			}
+
+			// Get month name
+			const monthNames = [
+				'January',
+				'February',
+				'March',
+				'April',
+				'May',
+				'June',
+				'July',
+				'August',
+				'September',
+				'October',
+				'November',
+				'December',
+			];
+			const monthName = monthNames[targetMonth - 1];
+
+			return {
+				month: targetMonth,
+				year: targetYear,
+				monthName,
+				days,
+				firstDayOfWeek,
+				totalDays,
+			};
+		} catch (error) {
+			this.logger.error(`Error getting monthly attendance calendar: ${error.message}`, error.stack);
+			throw error;
 		}
 	}
 }

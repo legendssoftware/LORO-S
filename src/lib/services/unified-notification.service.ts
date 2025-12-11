@@ -1262,19 +1262,33 @@ export class UnifiedNotificationService {
 		}
 
 		try {
-			const messages: ExpoPushMessage[] = pushRecipients.map((recipient) => ({
-				to: recipient.pushToken!,
-				title: data.title,
-				body: data.message,
-				data: {
-					...data.data,
-					recipientId: recipient.userId,
-				},
-				sound: data.push?.silent ? false : data.push?.sound || 'default',
-				badge: data.push?.badge || 1,
-				priority: this.mapPriorityToExpo(data.priority),
-				channelId: data.channel,
-			}));
+			const messages: ExpoPushMessage[] = pushRecipients.map((recipient) => {
+				const message: ExpoPushMessage = {
+					to: recipient.pushToken!,
+					title: data.title,
+					body: data.message,
+					data: {
+						...data.data,
+						recipientId: recipient.userId,
+					},
+					badge: data.push?.badge || 1,
+					priority: this.mapPriorityToExpo(data.priority),
+					channelId: data.channel,
+				};
+
+				// Only include sound field if it's a string (not boolean false)
+				// Expo API expects sound to be a string or omitted, not boolean
+				if (data.push?.silent) {
+					// For silent notifications, omit the sound field entirely
+				} else if (data.push?.sound && typeof data.push.sound === 'string') {
+					message.sound = data.push.sound;
+				} else if (!data.push?.silent) {
+					// Default sound only if not silent
+					message.sound = 'default';
+				}
+
+				return message;
+			});
 
 			const tickets = await this.expoPushService.sendPushNotifications(messages);
 

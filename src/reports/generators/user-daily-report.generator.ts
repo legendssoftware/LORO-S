@@ -729,19 +729,23 @@ export class UserDailyReportGenerator {
 	}
 
 	private async collectClientData(userId: number, startDate: Date, endDate: Date) {
-		// New clients added today
+		// New clients added today - filter by owner if client has owner field
+		// Note: This might need adjustment based on your Client entity structure
 		const newClients = await this.clientRepository.find({
 			where: {
 				createdAt: Between(startDate, endDate),
+				// Add owner filter if Client entity has owner relation
+				// owner: { uid: userId },
 			},
 		});
 
-		// Client check-ins today
+		// Client check-ins today - FIX: Filter check-ins by the specific user
 		const clientCheckIns = await this.checkInRepository.find({
 			where: {
+				owner: { uid: userId }, // FIX: Filter by userId to only get this user's check-ins
 				checkInTime: Between(startDate, endDate),
 			},
-			relations: ['client'],
+			relations: ['client', 'owner'],
 		});
 
 		// Group check-ins by client

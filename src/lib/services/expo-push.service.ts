@@ -658,7 +658,7 @@ export class ExpoPushService {
 				title: 'Connection Test',
 				body: 'Testing push notification connectivity',
 				data: { type: 'connectivity_test' },
-				sound: false, // Silent test
+				// Don't include sound field for silent notifications - Expo expects string or omitted
 				badge: 0,
 				priority: 'default',
 			};

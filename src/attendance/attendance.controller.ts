@@ -2155,6 +2155,118 @@ Retrieves comprehensive attendance records for a specific user with detailed ana
 		return this.attendanceService.checkInsByUser(ref, orgId, branchId, userAccessLevel);
 	}
 
+	@Get('user/:ref/monthly')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.SUPPORT,
+		AccessLevel.DEVELOPER,
+		AccessLevel.USER,
+		AccessLevel.OWNER,
+		AccessLevel.TECHNICIAN,
+	)
+	@ApiOperation({
+		summary: '📅 Get monthly attendance calendar',
+		description: `
+# Monthly Attendance Calendar
+
+Retrieves a monthly attendance calendar for a specific user with all days of the month and their attendance status (attended/missed/future).
+
+## 📊 **Calendar Data**
+- **All Days**: Complete list of all days in the specified month
+- **Status Indicators**: Each day marked as attended, missed, or future
+- **Date Information**: Day number, day of week, and full date for each day
+- **Attendance Records**: Full attendance record data for attended days
+
+## 🎯 **Use Cases**
+- **Monthly Overview**: View complete month attendance at a glance
+- **Calendar Display**: Render monthly calendar grid with attendance status
+- **Analytics**: Analyze monthly attendance patterns and trends
+- **Reporting**: Generate monthly attendance reports
+		`,
+	})
+	@ApiParam({
+		name: 'ref',
+		description: 'User ID to retrieve monthly attendance calendar for',
+		type: 'number',
+		example: 45,
+	})
+	@ApiQuery({
+		name: 'year',
+		required: false,
+		type: 'number',
+		description: 'Year (YYYY format). Defaults to current year if not specified.',
+		example: 2024,
+	})
+	@ApiQuery({
+		name: 'month',
+		required: false,
+		type: 'number',
+		description: 'Month (1-12). Defaults to current month if not specified.',
+		example: 3,
+	})
+	@ApiOkResponse({
+		description: '✅ Monthly attendance calendar retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				month: { type: 'number', example: 3, description: 'Month number (1-12)' },
+				year: { type: 'number', example: 2024, description: 'Year' },
+				monthName: { type: 'string', example: 'March', description: 'Full month name' },
+				firstDayOfWeek: {
+					type: 'number',
+					example: 5,
+					description: 'Day of week the month starts on (0=Sunday, 1=Monday, etc.)',
+				},
+				totalDays: { type: 'number', example: 31, description: 'Total days in the month' },
+				days: {
+					type: 'array',
+					description: 'Array of all days in the month with attendance status',
+					items: {
+						type: 'object',
+						properties: {
+							date: { type: 'string', example: '2024-03-01', description: 'Date in YYYY-MM-DD format' },
+							dayNumber: { type: 'number', example: 1, description: 'Day of month (1-31)' },
+							dayOfWeek: {
+								type: 'number',
+								example: 5,
+								description: 'Day of week (0=Sunday, 1=Monday, etc.)',
+							},
+							status: {
+								type: 'string',
+								enum: ['attended', 'missed', 'future'],
+								example: 'attended',
+								description: 'Attendance status for the day',
+							},
+							attendanceRecord: {
+								type: 'object',
+								nullable: true,
+								description: 'Attendance record if status is attended',
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	@ApiNotFoundResponse({
+		description: '❌ User not found',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'User with ref 45 not found' },
+				statusCode: { type: 'number', example: 404 },
+			},
+		},
+	})
+	getMonthlyAttendanceCalendar(
+		@Param('ref') ref: number,
+		@Query('year') year?: number,
+		@Query('month') month?: number,
+	) {
+		return this.attendanceService.getMonthlyAttendanceCalendar(ref, year, month);
+	}
+
 	@Get('status/:ref')
 	@Roles(
 		AccessLevel.ADMIN,

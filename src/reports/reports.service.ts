@@ -971,18 +971,33 @@ export class ReportsService implements OnModuleInit {
 			// This ensures GPS data is available for trip summary retrieval
 			if (reportData?.details?.location) {
 				const locationData = reportData.details.location;
-				const tripSummary = locationData.tripMetrics || locationData.trackingData?.tripSummary;
 				
-				if (tripSummary || locationData.stops) {
+				// Check multiple possible paths for tripSummary - prioritize trackingData.tripSummary
+				const tripSummary = 
+					locationData.trackingData?.tripSummary || 
+					locationData.tripMetrics || 
+					locationData.tripSummary ||
+					null;
+				
+				// Check if we have GPS data (tripSummary with meaningful data OR stops)
+				const hasGpsData = tripSummary && (
+					(tripSummary.totalDistanceKm !== undefined && tripSummary.totalDistanceKm > 0) || 
+					(tripSummary.numberOfStops !== undefined && tripSummary.numberOfStops > 0) ||
+					(tripSummary.totalTimeMinutes !== undefined && tripSummary.totalTimeMinutes > 0)
+				) || (locationData.stops && Array.isArray(locationData.stops) && locationData.stops.length > 0);
+				
+				if (hasGpsData) {
+					this.logger.debug(`Extracting GPS data for report - tripSummary found: ${!!tripSummary}, stops: ${locationData.stops?.length || 0}`);
+					
 					newReport.gpsData = {
 						tripSummary: tripSummary ? {
-							totalDistanceKm: tripSummary.totalDistanceKm || 0,
-							totalTimeMinutes: tripSummary.totalTimeMinutes || 0,
-							averageSpeedKmh: tripSummary.averageSpeedKmh || 0,
-							movingTimeMinutes: tripSummary.movingTimeMinutes || 0,
-							stoppedTimeMinutes: tripSummary.stoppedTimeMinutes || 0,
-							numberOfStops: tripSummary.numberOfStops || 0,
-							maxSpeedKmh: tripSummary.maxSpeedKmh || 0,
+							totalDistanceKm: tripSummary.totalDistanceKm ?? 0,
+							totalTimeMinutes: tripSummary.totalTimeMinutes ?? 0,
+							averageSpeedKmh: tripSummary.averageSpeedKmh ?? 0,
+							movingTimeMinutes: tripSummary.movingTimeMinutes ?? 0,
+							stoppedTimeMinutes: tripSummary.stoppedTimeMinutes ?? 0,
+							numberOfStops: tripSummary.numberOfStops ?? 0,
+							maxSpeedKmh: tripSummary.maxSpeedKmh ?? 0,
 						} : undefined,
 						stops: locationData.stops || undefined,
 						timeSpentByLocation: locationData.locationAnalysis?.timeSpentByLocation || undefined,
@@ -999,8 +1014,12 @@ export class ReportsService implements OnModuleInit {
 						newReport.totalStops = tripSummary.numberOfStops;
 					}
 					
-					this.logger.debug(`GPS data extracted and prepared for report: Distance=${tripSummary?.totalDistanceKm || 0}km, Stops=${tripSummary?.numberOfStops || 0}`);
+					this.logger.log(`✅ GPS data extracted and saved to report gpsData column: Distance=${tripSummary?.totalDistanceKm || 0}km, Stops=${tripSummary?.numberOfStops || 0}`);
+				} else {
+					this.logger.warn(`⚠️ No GPS data found in location data for report - tripSummary: ${!!tripSummary}, stops: ${locationData.stops?.length || 0}`);
 				}
+			} else {
+				this.logger.warn(`⚠️ No location data found in reportData.details.location`);
 			}
 
 			// Save the report
