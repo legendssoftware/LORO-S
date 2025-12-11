@@ -118,7 +118,7 @@ import { PayslipsModule } from './payslips/payslips.module';
 		}),
 		CacheModule.register({
 			ttl: parseInt(process.env.CACHE_EXPIRATION_TIME || '600', 10) * 1000, // 10 minutes default
-			max: parseInt(process.env.CACHE_MAX_ITEMS || '500000', 10) || 500000, // 500K items for high load
+			max: parseInt(process.env.CACHE_MAX_ITEMS || '50000', 10) || 50000, // Reduced from 500K to 50K items to prevent memory issues
 			isGlobal: true,
 		}),
 		EventEmitterModule.forRoot(),

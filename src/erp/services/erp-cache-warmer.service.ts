@@ -42,11 +42,13 @@ export class ErpCacheWarmerService implements OnModuleInit {
 		this.logger.log('📅 Cache warming strategy: Today to 1 month back');
 		this.logger.log('⏱️  Today refresh interval: Every 5 minutes');
 		this.logger.log('⏱️  Full cache warm interval: Every 20 minutes');
+		// Defer initial cache warming to allow app to fully start and avoid memory pressure during startup
+		// Increased from 5 seconds to 30 seconds to prevent OOM errors
 		setTimeout(() => {
 			this.warmCommonDateRanges().catch((error) => {
 				this.logger.error(`Initial cache warming failed: ${error.message}`);
 			});
-		}, 5000);
+		}, 30000); // 30 seconds delay to allow app to fully initialize
 		this.startIntervalCacheWarming();
 	}
 
