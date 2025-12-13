@@ -721,6 +721,13 @@ export class UserService {
 				this.logger.debug(`[USER_CREATION] Generated user reference: ${createUserDto.userref}`);
 			}
 
+			// Set default profile picture if not provided
+			const DEFAULT_PROFILE_PICTURE_URL = 'https://cdn-icons-png.flaticon.com/128/1144/1144709.png';
+			if (!createUserDto.photoURL) {
+				createUserDto.photoURL = DEFAULT_PROFILE_PICTURE_URL;
+				this.logger.debug('[USER_CREATION] Using default profile picture');
+			}
+
 			// Create the user entity with proper relationship setting
 			const user = this.userRepository.create({
 				...createUserDto,

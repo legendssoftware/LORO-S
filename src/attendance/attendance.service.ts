@@ -3869,27 +3869,23 @@ export class AttendanceService {
 				},
 			});
 
-		// Calculate hours from completed shifts (duration + overtime = total actual work time)
+		// Calculate hours from completed shifts - only count regular hours (duration), exclude overtime
+		// Regular hours are capped at organization's expected work hours per day
 		const completedHours = attendanceRecords.reduce((total, record) => {
-			let totalWorkHours = 0;
+			let regularWorkHours = 0;
 			
-			// Parse duration (capped at expected hours)
+			// Parse duration (capped at expected hours - this is regular work time)
 			if (record?.duration) {
 				const [hours, minutes] = record.duration.split(' ');
 				const hoursValue = parseFloat(hours.replace('h', ''));
 				const minutesValue = parseFloat(minutes.replace('m', '')) / 60;
-				totalWorkHours += hoursValue + minutesValue;
+				regularWorkHours += hoursValue + minutesValue;
 			}
 			
-			// Parse overtime (hours beyond expected)
-			if (record?.overtime) {
-				const [overtimeHours, overtimeMinutes] = record.overtime.split(' ');
-				const overtimeHoursValue = parseFloat(overtimeHours.replace('h', ''));
-				const overtimeMinutesValue = parseFloat(overtimeMinutes.replace('m', '')) / 60;
-				totalWorkHours += overtimeHoursValue + overtimeMinutesValue;
-			}
+			// Do NOT add overtime - overtime is separate and should not be counted in total hours
+			// Total hours should only reflect hours within work hours
 			
-			return total + totalWorkHours;
+			return total + regularWorkHours;
 		}, 0);
 
 			// Get today's attendance hours
@@ -4464,9 +4460,10 @@ export class AttendanceService {
 			startOfWeek.setHours(0, 0, 0, 0);
 			const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-			// Get all attendance records for the user
+			// Get all attendance records for the user with relations for distance calculation
 			const allAttendance = await this.attendanceRepository.find({
 				where: { owner: { uid: userId } },
+				relations: ['dailyReport'], // Load dailyReport relation for GPS distance data
 				order: { checkIn: 'ASC' },
 			});
 
@@ -4475,35 +4472,74 @@ export class AttendanceService {
 			const weekAttendance = allAttendance.filter((record) => new Date(record.checkIn) >= startOfWeek);
 			const monthAttendance = allAttendance.filter((record) => new Date(record.checkIn) >= startOfMonth);
 
-			// Enhanced helper function using our new utilities
-			const calculateTotalHours = (records: Attendance[]): number => {
-				return records.reduce((total, record) => {
+			// Enhanced helper function to calculate regular hours (capped at organization work hours)
+			const calculateRegularHours = async (records: Attendance[], orgId?: number): Promise<number> => {
+				if (!orgId) {
+					// Fallback: calculate regular hours using default 8 hours cap
+					return records.reduce((total, record) => {
+						if (record.checkIn && record.checkOut) {
+							const breakMinutes = TimeCalculatorUtil.calculateTotalBreakMinutes(
+								record.breakDetails,
+								record.totalBreakTime,
+							);
+							const totalMinutes = differenceInMinutes(new Date(record.checkOut), new Date(record.checkIn));
+							const workMinutes = Math.max(0, totalMinutes - breakMinutes);
+							const regularMinutes = Math.min(workMinutes, TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES);
+							return total + TimeCalculatorUtil.minutesToHours(regularMinutes, TimeCalculatorUtil.PRECISION.HOURS);
+						}
+						return total;
+					}, 0);
+				}
+
+				// Calculate regular hours per shift based on organization hours
+				let totalRegularHours = 0;
+				for (const record of records) {
 					if (record.checkIn && record.checkOut) {
-						const breakMinutes = TimeCalculatorUtil.calculateTotalBreakMinutes(
-							record.breakDetails,
-							record.totalBreakTime,
-						);
-						const totalMinutes = differenceInMinutes(new Date(record.checkOut), new Date(record.checkIn));
-						const workMinutes = Math.max(0, totalMinutes - breakMinutes);
-						return (
-							total + TimeCalculatorUtil.minutesToHours(workMinutes, TimeCalculatorUtil.PRECISION.HOURS)
-						);
+						try {
+							const breakMinutes = TimeCalculatorUtil.calculateTotalBreakMinutes(
+								record.breakDetails,
+								record.totalBreakTime,
+							);
+							const totalMinutes = differenceInMinutes(new Date(record.checkOut), new Date(record.checkIn));
+							const workMinutes = Math.max(0, totalMinutes - breakMinutes);
+
+							// Get organization expected work minutes for this day
+							const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(
+								orgId,
+								new Date(record.checkIn),
+							);
+
+							// Cap regular hours at organization's expected work minutes
+							const regularMinutes = Math.min(workMinutes, workingDayInfo.expectedWorkMinutes);
+							totalRegularHours += TimeCalculatorUtil.minutesToHours(regularMinutes, TimeCalculatorUtil.PRECISION.HOURS);
+						} catch (error) {
+							this.logger.warn(`Error calculating regular hours for record ${record.uid}: ${error.message}`);
+							// Fallback to default
+							const breakMinutes = TimeCalculatorUtil.calculateTotalBreakMinutes(
+								record.breakDetails,
+								record.totalBreakTime,
+							);
+							const totalMinutes = differenceInMinutes(new Date(record.checkOut), new Date(record.checkIn));
+							const workMinutes = Math.max(0, totalMinutes - breakMinutes);
+							const regularMinutes = Math.min(workMinutes, TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES);
+							totalRegularHours += TimeCalculatorUtil.minutesToHours(regularMinutes, TimeCalculatorUtil.PRECISION.HOURS);
+						}
 					}
-					return total;
-				}, 0);
+				}
+				return totalRegularHours;
 			};
 
-			// Calculate hours for each period
-			const totalHoursAllTime = calculateTotalHours(allAttendance);
-			const totalHoursThisMonth = calculateTotalHours(monthAttendance);
-			const totalHoursThisWeek = calculateTotalHours(weekAttendance);
-			const totalHoursToday = calculateTotalHours(todayAttendance);
+			// Calculate regular hours for each period (capped at organization work hours)
+			const regularHoursAllTime = await calculateRegularHours(allAttendance, organizationId);
+			const regularHoursToday = await calculateRegularHours(todayAttendance, organizationId);
+			const regularHoursThisWeek = await calculateRegularHours(weekAttendance, organizationId);
+			const regularHoursThisMonth = await calculateRegularHours(monthAttendance, organizationId);
 
 			// Calculate average hours per day (based on days since first attendance)
 			const daysSinceFirst = firstAttendance
 				? Math.max(1, Math.ceil(differenceInMinutes(now, new Date(firstAttendance.checkIn)) / (24 * 60)))
 				: 1;
-			const averageHoursPerDay = totalHoursAllTime / daysSinceFirst;
+			const averageHoursPerDay = regularHoursAllTime / daysSinceFirst;
 
 			// Calculate attendance streak (consecutive days with attendance)
 			let attendanceStreak = 0;
@@ -4578,16 +4614,26 @@ export class AttendanceService {
 				allTimeBreaks.breakDurations.length > 0 ? Math.min(...allTimeBreaks.breakDurations) : 0;
 
 			// ===== DISTANCE ANALYTICS =====
+			// Enhanced distance calculation function that ensures consistency
 			const calculateDistanceAnalytics = (records: Attendance[]) => {
 				let totalDistanceKm = 0;
 				const distances: number[] = [];
 
 				records.forEach((record) => {
-					// Prioritize GPS data from daily report
-					const distance = record.dailyReport?.gpsData?.tripSummary?.totalDistanceKm 
-						|| record.distanceTravelledKm 
-						|| 0;
-					if (distance > 0) {
+					// Get distance from multiple sources, prioritizing GPS data
+					let distance = 0;
+					
+					// Try GPS data from daily report first
+					if (record.dailyReport?.gpsData?.tripSummary?.totalDistanceKm) {
+						distance = Number(record.dailyReport.gpsData.tripSummary.totalDistanceKm) || 0;
+					}
+					// Fallback to direct distance field
+					else if (record.distanceTravelledKm) {
+						distance = Number(record.distanceTravelledKm) || 0;
+					}
+
+					// Only count valid positive distances
+					if (distance > 0 && !isNaN(distance)) {
 						totalDistanceKm += distance;
 						distances.push(distance);
 					}
@@ -4599,22 +4645,46 @@ export class AttendanceService {
 				};
 			};
 
+			// Calculate distance analytics for all periods
 			const allTimeDistance = calculateDistanceAnalytics(allAttendance);
 			const monthDistance = calculateDistanceAnalytics(monthAttendance);
 			const weekDistance = calculateDistanceAnalytics(weekAttendance);
 			const todayDistance = calculateDistanceAnalytics(todayAttendance);
 
+			// Get completed shifts with distance for average calculation
 			const completedShiftsWithDistance = allAttendance.filter((record) => {
-				const distance = record.dailyReport?.gpsData?.tripSummary?.totalDistanceKm 
-					|| record.distanceTravelledKm 
-					|| 0;
-				return record.checkOut && distance > 0;
+				let distance = 0;
+				if (record.dailyReport?.gpsData?.tripSummary?.totalDistanceKm) {
+					distance = Number(record.dailyReport.gpsData.tripSummary.totalDistanceKm) || 0;
+				} else if (record.distanceTravelledKm) {
+					distance = Number(record.distanceTravelledKm) || 0;
+				}
+				return record.checkOut && distance > 0 && !isNaN(distance);
 			});
+
+			// Calculate average, longest, and shortest distances
+			// Ensure longestDistance is calculated from the same dataset as totalDistanceKm
 			const averageDistancePerShift = completedShiftsWithDistance.length > 0
 				? allTimeDistance.totalDistanceKm / completedShiftsWithDistance.length
 				: 0;
-			const longestDistance = allTimeDistance.distances.length > 0 ? Math.max(...allTimeDistance.distances) : 0;
-			const shortestDistance = allTimeDistance.distances.length > 0 ? Math.min(...allTimeDistance.distances) : 0;
+			
+			// Longest and shortest should be from allTimeDistance.distances to ensure consistency
+			const longestDistance = allTimeDistance.distances.length > 0 
+				? Math.max(...allTimeDistance.distances) 
+				: 0;
+			const shortestDistance = allTimeDistance.distances.length > 0 
+				? Math.min(...allTimeDistance.distances) 
+				: 0;
+
+			// Validation: If longestDistance exists, totalDistanceKm should be at least that value
+			if (longestDistance > 0 && allTimeDistance.totalDistanceKm < longestDistance) {
+				this.logger.warn(
+					`Distance calculation inconsistency detected: longestDistance=${longestDistance}km but totalDistanceKm=${allTimeDistance.totalDistanceKm}km. ` +
+					`Recalculating totalDistanceKm from distances array.`
+				);
+				// Recalculate totalDistanceKm from distances array as fallback
+				allTimeDistance.totalDistanceKm = allTimeDistance.distances.reduce((sum, dist) => sum + dist, 0);
+			}
 
 		// ===== ENHANCED TIMING PATTERNS =====
 		// Get organization timezone for proper conversion
@@ -4697,10 +4767,10 @@ export class AttendanceService {
 						: null,
 				},
 				totalHours: {
-					allTime: Math.round(totalHoursAllTime * 10) / 10,
-					thisMonth: Math.round(totalHoursThisMonth * 10) / 10,
-					thisWeek: Math.round(totalHoursThisWeek * 10) / 10,
-					today: Math.round(totalHoursToday * 10) / 10,
+					allTime: Math.round(regularHoursAllTime * 10) / 10,
+					thisMonth: Math.round(regularHoursThisMonth * 10) / 10,
+					thisWeek: Math.round(regularHoursThisWeek * 10) / 10,
+					today: Math.round(regularHoursToday * 10) / 10,
 				},
 				totalShifts: {
 					allTime: allAttendance.length,
@@ -4921,22 +4991,61 @@ export class AttendanceService {
 				};
 			}
 
-			// Helper function to calculate total hours (same pattern as getUserAttendanceMetrics)
-			const calculateTotalHours = (records: Attendance[]): number => {
-				return records.reduce((total, record) => {
+			// Enhanced helper function to calculate regular hours (capped at organization work hours)
+			const calculateRegularHours = async (records: Attendance[], orgId?: number): Promise<number> => {
+				if (!orgId) {
+					// Fallback: calculate regular hours using default 8 hours cap
+					return records.reduce((total, record) => {
+						if (record.checkIn && record.checkOut) {
+							const breakMinutes = TimeCalculatorUtil.calculateTotalBreakMinutes(
+								record.breakDetails,
+								record.totalBreakTime,
+							);
+							const totalMinutes = differenceInMinutes(new Date(record.checkOut), new Date(record.checkIn));
+							const workMinutes = Math.max(0, totalMinutes - breakMinutes);
+							const regularMinutes = Math.min(workMinutes, TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES);
+							return total + TimeCalculatorUtil.minutesToHours(regularMinutes, TimeCalculatorUtil.PRECISION.HOURS);
+						}
+						return total;
+					}, 0);
+				}
+
+				// Calculate regular hours per shift based on organization hours
+				let totalRegularHours = 0;
+				for (const record of records) {
 					if (record.checkIn && record.checkOut) {
-						const breakMinutes = TimeCalculatorUtil.calculateTotalBreakMinutes(
-							record.breakDetails,
-							record.totalBreakTime,
-						);
-						const totalMinutes = differenceInMinutes(new Date(record.checkOut), new Date(record.checkIn));
-						const workMinutes = Math.max(0, totalMinutes - breakMinutes);
-						return (
-							total + TimeCalculatorUtil.minutesToHours(workMinutes, TimeCalculatorUtil.PRECISION.HOURS)
-						);
+						try {
+							const breakMinutes = TimeCalculatorUtil.calculateTotalBreakMinutes(
+								record.breakDetails,
+								record.totalBreakTime,
+							);
+							const totalMinutes = differenceInMinutes(new Date(record.checkOut), new Date(record.checkIn));
+							const workMinutes = Math.max(0, totalMinutes - breakMinutes);
+
+							// Get organization expected work minutes for this day
+							const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(
+								orgId,
+								new Date(record.checkIn),
+							);
+
+							// Cap regular hours at organization's expected work minutes
+							const regularMinutes = Math.min(workMinutes, workingDayInfo.expectedWorkMinutes);
+							totalRegularHours += TimeCalculatorUtil.minutesToHours(regularMinutes, TimeCalculatorUtil.PRECISION.HOURS);
+						} catch (error) {
+							this.logger.warn(`Error calculating regular hours for record ${record.uid}: ${error.message}`);
+							// Fallback to default
+							const breakMinutes = TimeCalculatorUtil.calculateTotalBreakMinutes(
+								record.breakDetails,
+								record.totalBreakTime,
+							);
+							const totalMinutes = differenceInMinutes(new Date(record.checkOut), new Date(record.checkIn));
+							const workMinutes = Math.max(0, totalMinutes - breakMinutes);
+							const regularMinutes = Math.min(workMinutes, TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES);
+							totalRegularHours += TimeCalculatorUtil.minutesToHours(regularMinutes, TimeCalculatorUtil.PRECISION.HOURS);
+						}
 					}
-					return total;
-				}, 0);
+				}
+				return totalRegularHours;
 			};
 
 			// Process each user
@@ -4980,7 +5089,7 @@ export class AttendanceService {
 
 					// Calculate metrics for this user
 					const totalShifts = attendanceRecords.length;
-					const totalHours = calculateTotalHours(attendanceRecords);
+					const totalHours = await calculateRegularHours(attendanceRecords, orgId);
 
 					// Calculate overtime using modified method with excluded dates
 					const overtimeAnalytics = await this.calculateOvertimeAnalytics(

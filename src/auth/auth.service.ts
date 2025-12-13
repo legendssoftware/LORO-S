@@ -622,7 +622,7 @@ export class AuthService {
 			name: username,
 			surname: '',
 			phone: '',
-			photoURL: `https://ui-avatars.com/api/?name=${username}&background=805adc&color=fff`,
+			photoURL: 'https://cdn-icons-png.flaticon.com/128/1144/1144709.png', // Use default profile picture
 			accessLevel: AccessLevel.USER,
 			userref: `USR${Date.now()}`,
 		});

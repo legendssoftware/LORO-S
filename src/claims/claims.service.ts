@@ -356,6 +356,8 @@ export class ClaimsService {
 		limit: number = 25,
 		orgId?: number,
 		branchId?: number,
+		userId?: number,
+		userAccessLevel?: string,
 	): Promise<PaginatedResponse<Claim>> {
 		const startTime = Date.now();
 		this.logger.log(`🔍 [ClaimsService] Finding claims with filters: page=${page}, limit=${limit}, orgId=${orgId}, branchId=${branchId}`, {
@@ -366,7 +368,10 @@ export class ClaimsService {
 		});
 
 		try {
-			this.logger.debug(`🏗️ [ClaimsService] Building query for claims in org: ${orgId || 'all'}, branch: ${branchId || 'all'}`);
+			// Check if user is admin or owner - they can view all claims
+			const isAdminOrOwner = userAccessLevel?.toLowerCase() === 'admin' || userAccessLevel?.toLowerCase() === 'owner';
+			
+			this.logger.debug(`🏗️ [ClaimsService] Building query for claims in org: ${orgId || 'all'}, branch: ${branchId || 'all'}, user: ${userId}, accessLevel: ${userAccessLevel}, canViewAll: ${isAdminOrOwner}`);
 
 			const queryBuilder = this.claimsRepository
 				.createQueryBuilder('claim')
@@ -374,6 +379,12 @@ export class ClaimsService {
 				.leftJoinAndSelect('claim.branch', 'branch')
 				.leftJoinAndSelect('claim.organisation', 'organisation')
 				.where('claim.isDeleted = :isDeleted', { isDeleted: false });
+
+			// If user is not admin/owner, only show their own claims
+			if (!isAdminOrOwner && userId) {
+				this.logger.debug(`🔒 [ClaimsService] Restricting claims to user ${userId} only`);
+				queryBuilder.andWhere('owner.uid = :userId', { userId });
+			}
 
 			if (filters?.status) {
 				this.logger.debug(`📊 [ClaimsService] Adding status filter: ${filters.status}`);
@@ -461,12 +472,17 @@ export class ClaimsService {
 		ref: number,
 		orgId?: number,
 		branchId?: number,
+		userId?: number,
+		userAccessLevel?: string,
 	): Promise<{ message: string; claim: Claim | null; stats: any }> {
 		const startTime = Date.now();
-		this.logger.log(`🔍 [ClaimsService] Finding claim with ID: ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
+		this.logger.log(`🔍 [ClaimsService] Finding claim with ID: ${ref}, orgId: ${orgId}, branchId: ${branchId}, user: ${userId}, accessLevel: ${userAccessLevel}`);
 
 		try {
-			this.logger.debug(`🏗️ [ClaimsService] Building query for claim ${ref} in org: ${orgId || 'all'}, branch: ${branchId || 'all'}`);
+			// Check if user is admin or owner - they can view any claim
+			const isAdminOrOwner = userAccessLevel?.toLowerCase() === 'admin' || userAccessLevel?.toLowerCase() === 'owner';
+			
+			this.logger.debug(`🏗️ [ClaimsService] Building query for claim ${ref} in org: ${orgId || 'all'}, branch: ${branchId || 'all'}, canViewAll: ${isAdminOrOwner}`);
 
 			const queryBuilder = this.claimsRepository
 				.createQueryBuilder('claim')
@@ -475,6 +491,12 @@ export class ClaimsService {
 				.leftJoinAndSelect('claim.branch', 'branch')
 				.where('claim.uid = :ref', { ref })
 				.andWhere('claim.isDeleted = :isDeleted', { isDeleted: false });
+
+			// If user is not admin/owner, only allow viewing their own claims
+			if (!isAdminOrOwner && userId) {
+				this.logger.debug(`🔒 [ClaimsService] Restricting claim access to owner only`);
+				queryBuilder.andWhere('owner.uid = :userId', { userId });
+			}
 
 			// Add organization filter if provided
 			if (orgId) {
@@ -492,6 +514,11 @@ export class ClaimsService {
 			const claim = await queryBuilder.getOne();
 
 			if (!claim) {
+				// If user is not admin/owner and claim exists but doesn't belong to them, return unauthorized
+				if (!isAdminOrOwner && userId) {
+					this.logger.warn(`🚫 [ClaimsService] User ${userId} attempted to access claim ${ref} that doesn't belong to them`);
+					throw new NotFoundException('Claim not found or access denied');
+				}
 				this.logger.warn(`⚠️ [ClaimsService] Claim ${ref} not found in organization ${orgId}`);
 				throw new NotFoundException(process.env.SEARCH_ERROR_MESSAGE);
 			}
@@ -545,6 +572,8 @@ export class ClaimsService {
 		ref: number,
 		orgId?: number,
 		branchId?: number,
+		requestingUserId?: number,
+		userAccessLevel?: string,
 	): Promise<{
 		message: string;
 		claims: Claim[];
@@ -557,9 +586,18 @@ export class ClaimsService {
 		};
 	}> {
 		const startTime = Date.now();
-		this.logger.log(`🔍 [ClaimsService] Finding claims for user ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
+		this.logger.log(`🔍 [ClaimsService] Finding claims for user ${ref}, orgId: ${orgId}, branchId: ${branchId}, requestingUser: ${requestingUserId}, accessLevel: ${userAccessLevel}`);
 
 		try {
+			// Check if requesting user is admin or owner - they can view any user's claims
+			const isAdminOrOwner = userAccessLevel?.toLowerCase() === 'admin' || userAccessLevel?.toLowerCase() === 'owner';
+			
+			// If user is not admin/owner, they can only view their own claims
+			if (!isAdminOrOwner && requestingUserId && requestingUserId !== ref) {
+				this.logger.warn(`🚫 [ClaimsService] User ${requestingUserId} attempted to access claims for user ${ref}`);
+				throw new NotFoundException('Access denied: You can only view your own claims');
+			}
+
 			this.logger.debug(`🏗️ [ClaimsService] Building query for user ${ref} claims in org: ${orgId || 'all'}, branch: ${branchId || 'all'}`);
 
 			const queryBuilder = this.claimsRepository
@@ -692,13 +730,15 @@ export class ClaimsService {
 		updateClaimDto: UpdateClaimDto,
 		orgId?: number,
 		branchId?: number,
+		userId?: number,
+		userAccessLevel?: string,
 	): Promise<{ message: string }> {
 		const startTime = Date.now();
-		this.logger.log(`🔄 [ClaimsService] Updating claim ${ref} with status: ${updateClaimDto.status}, orgId: ${orgId}, branchId: ${branchId}`);
+		this.logger.log(`🔄 [ClaimsService] Updating claim ${ref} with status: ${updateClaimDto.status}, orgId: ${orgId}, branchId: ${branchId}, user: ${userId}, accessLevel: ${userAccessLevel}`);
 
 		try {
-			// First verify the claim belongs to the org/branch
-			const claimResult = await this.findOne(ref, orgId, branchId);
+			// First verify the claim exists and user has access
+			const claimResult = await this.findOne(ref, orgId, branchId, userId, userAccessLevel);
 
 			if (!claimResult || !claimResult.claim) {
 				throw new NotFoundException('Claim not found in your organization');
@@ -880,12 +920,12 @@ export class ClaimsService {
 		}
 	}
 
-	async remove(ref: number, orgId?: number, branchId?: number): Promise<{ message: string }> {
-		this.logger.log(`🗑️ [ClaimsService] Removing claim ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
+	async remove(ref: number, orgId?: number, branchId?: number, userId?: number, userAccessLevel?: string): Promise<{ message: string }> {
+		this.logger.log(`🗑️ [ClaimsService] Removing claim ${ref}, orgId: ${orgId}, branchId: ${branchId}, user: ${userId}, accessLevel: ${userAccessLevel}`);
 
 		try {
-			// First verify the claim belongs to the org/branch
-			const claimResult = await this.findOne(ref, orgId, branchId);
+			// First verify the claim exists and user has access
+			const claimResult = await this.findOne(ref, orgId, branchId, userId, userAccessLevel);
 
 			if (!claimResult || !claimResult.claim) {
 				throw new NotFoundException('Claim not found in your organization');
@@ -914,10 +954,13 @@ export class ClaimsService {
 		}
 	}
 
-	async restore(ref: number, orgId?: number, branchId?: number): Promise<{ message: string }> {
-		this.logger.log(`♻️ [ClaimsService] Restoring claim ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
+	async restore(ref: number, orgId?: number, branchId?: number, userId?: number, userAccessLevel?: string): Promise<{ message: string }> {
+		this.logger.log(`♻️ [ClaimsService] Restoring claim ${ref}, orgId: ${orgId}, branchId: ${branchId}, user: ${userId}, accessLevel: ${userAccessLevel}`);
 
 		try {
+			// Check if user is admin or owner - they can restore any claim
+			const isAdminOrOwner = userAccessLevel?.toLowerCase() === 'admin' || userAccessLevel?.toLowerCase() === 'owner';
+			
 			// First find the claim with isDeleted=true
 			const queryBuilder = this.claimsRepository
 				.createQueryBuilder('claim')
@@ -937,9 +980,19 @@ export class ClaimsService {
 				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
 			}
 
+			// If user is not admin/owner, only allow restoring their own claims
+			if (!isAdminOrOwner && userId) {
+				this.logger.debug(`🔒 [ClaimsService] Restricting restore to owner only`);
+				queryBuilder.andWhere('owner.uid = :userId', { userId });
+			}
+
 			const claim = await queryBuilder.getOne();
 
 			if (!claim) {
+				if (!isAdminOrOwner && userId) {
+					this.logger.warn(`🚫 [ClaimsService] User ${userId} attempted to restore claim ${ref} that doesn't belong to them`);
+					throw new NotFoundException('Claim not found or access denied');
+				}
 				throw new NotFoundException('Claim not found in your organization or is not deleted');
 			}
 

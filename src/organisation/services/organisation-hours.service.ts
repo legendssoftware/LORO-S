@@ -21,24 +21,31 @@ export class OrganisationHoursService {
     ) {}
 
     private readonly CACHE_PREFIX = 'org_hours';
+    private readonly DEFAULT_CACHE_TTL = 3600; // 1 hour
+    
+    // Enhanced cache key generators
     private getHoursAllCacheKey(orgRef: string): string {
         return `${this.CACHE_PREFIX}:all:${orgRef}`;
     }
     private getHoursOneCacheKey(orgRef: string, hoursRef: string): string {
         return `${this.CACHE_PREFIX}:${orgRef}:${hoursRef}`;
     }
+    private getHoursDefaultCacheKey(orgRef: string): string {
+        return `${this.CACHE_PREFIX}:default:${orgRef}`;
+    }
+    private getHoursByOrgIdCacheKey(orgId: number): string {
+        return `${this.CACHE_PREFIX}:orgId:${orgId}`;
+    }
 
-    // Default cache TTL (in seconds)
-    private readonly DEFAULT_CACHE_TTL = 3600; // 1 hour
-
-    private async clearHoursCache(orgRef: string, hoursRef?: string): Promise<void> {
-        // Always clear the "all hours" cache for this org
-        await this.cacheManager.del(this.getHoursAllCacheKey(orgRef));
-        
-        // If a specific hours ref is provided, clear that cache too
-        if (hoursRef) {
-            await this.cacheManager.del(this.getHoursOneCacheKey(orgRef, hoursRef));
-        }
+    // Enhanced cache invalidation
+    private async clearHoursCache(orgRef: string, hoursRef?: string, orgId?: number): Promise<void> {
+        // Clear all related cache keys
+        await Promise.all([
+            this.cacheManager.del(this.getHoursAllCacheKey(orgRef)),
+            hoursRef ? this.cacheManager.del(this.getHoursOneCacheKey(orgRef, hoursRef)) : Promise.resolve(),
+            this.cacheManager.del(this.getHoursDefaultCacheKey(orgRef)),
+            orgId ? this.cacheManager.del(this.getHoursByOrgIdCacheKey(orgId)) : Promise.resolve(),
+        ]);
     }
 
     async create(orgRef: string, dto: CreateOrganisationHoursDto): Promise<OrganisationHours> {
@@ -59,7 +66,7 @@ export class OrganisationHoursService {
         const savedHours = await this.hoursRepository.save(hours);
         
         // Clear cache after creating
-        await this.clearHoursCache(orgRef);
+        await this.clearHoursCache(orgRef, undefined, savedHours.organisationUid);
         
         return savedHours;
     }
@@ -88,26 +95,59 @@ export class OrganisationHoursService {
     }
 
     async findDefault(orgRef: string): Promise<OrganisationHours | null> {
-        // Try to get from cache first
-        const cacheKey = `${this.CACHE_PREFIX}:default:${orgRef}`;
+        const cacheKey = this.getHoursDefaultCacheKey(orgRef);
         const cachedHours = await this.cacheManager.get<OrganisationHours>(cacheKey);
         
         if (cachedHours) {
             return cachedHours;
         }
 
-        // If not in cache, fetch from database - get the first/default hours for the organization
         const hours = await this.hoursRepository.findOne({
             where: { organisation: { ref: orgRef }, isDeleted: false },
             relations: ['organisation'],
-            order: { createdAt: 'ASC' }, // Get the first created (default) hours
+            order: { createdAt: 'ASC' },
         });
 
         if (hours) {
-            // Store in cache
-            await this.cacheManager.set(cacheKey, hours, {
-                ttl: this.DEFAULT_CACHE_TTL
-            });
+            await this.cacheManager.set(cacheKey, hours, { ttl: this.DEFAULT_CACHE_TTL });
+            // Also cache by orgId for faster lookups
+            if (hours.organisationUid) {
+                await this.cacheManager.set(
+                    this.getHoursByOrgIdCacheKey(hours.organisationUid),
+                    hours,
+                    { ttl: this.DEFAULT_CACHE_TTL }
+                );
+            }
+        }
+
+        return hours;
+    }
+
+    // Add method to get hours by organization ID (for attendance service)
+    async findDefaultByOrgId(orgId: number): Promise<OrganisationHours | null> {
+        const cacheKey = this.getHoursByOrgIdCacheKey(orgId);
+        const cachedHours = await this.cacheManager.get<OrganisationHours>(cacheKey);
+        
+        if (cachedHours) {
+            return cachedHours;
+        }
+
+        const hours = await this.hoursRepository.findOne({
+            where: { organisationUid: orgId, isDeleted: false },
+            relations: ['organisation'],
+            order: { createdAt: 'ASC' },
+        });
+
+        if (hours) {
+            await this.cacheManager.set(cacheKey, hours, { ttl: this.DEFAULT_CACHE_TTL });
+            // Also cache by orgRef
+            if (hours.organisation?.ref) {
+                await this.cacheManager.set(
+                    this.getHoursDefaultCacheKey(hours.organisation.ref),
+                    hours,
+                    { ttl: this.DEFAULT_CACHE_TTL }
+                );
+            }
         }
 
         return hours;
@@ -146,8 +186,8 @@ export class OrganisationHoursService {
         const updatedHours = this.hoursRepository.merge(hours, dto);
         const savedHours = await this.hoursRepository.save(updatedHours);
         
-        // Clear cache after updating
-        await this.clearHoursCache(orgRef, hoursRef);
+        // Clear cache after updating - pass orgId for comprehensive cache clearing
+        await this.clearHoursCache(orgRef, hoursRef, savedHours.organisationUid);
         
         return savedHours;
     }
@@ -173,7 +213,7 @@ export class OrganisationHoursService {
             const savedHours = await this.hoursRepository.save(updatedHours);
             
             // Clear cache after updating
-            await this.clearHoursCache(orgRef, existingHours.ref);
+            await this.clearHoursCache(orgRef, existingHours.ref, savedHours.organisationUid);
             
             return savedHours;
         } else {
@@ -187,7 +227,7 @@ export class OrganisationHoursService {
             const savedHours = await this.hoursRepository.save(hours);
             
             // Clear cache after creating
-            await this.clearHoursCache(orgRef);
+            await this.clearHoursCache(orgRef, undefined, savedHours.organisationUid);
             
             return savedHours;
         }
@@ -198,7 +238,7 @@ export class OrganisationHoursService {
         await this.hoursRepository.update(hours.ref, { isDeleted: true });
         
         // Clear cache after removing
-        await this.clearHoursCache(orgRef, hoursRef);
+        await this.clearHoursCache(orgRef, hoursRef, hours.organisationUid);
     }
 
     /**

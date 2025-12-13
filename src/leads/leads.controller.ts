@@ -309,7 +309,9 @@ export class LeadsController {
 	findOne(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
-		return this.leadsService.findOne(ref, Number(orgId), branchId);
+		const userId = req.user?.uid;
+		const userAccessLevel = req.user?.role;
+		return this.leadsService.findOne(ref, Number(orgId), branchId, userId, userAccessLevel);
 	}
 
 	@Get('for/:ref')
@@ -361,7 +363,9 @@ export class LeadsController {
 	leadsByUser(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
-		return this.leadsService.leadsByUser(ref, Number(orgId), branchId);
+		const requestingUserId = req.user?.uid;
+		const userAccessLevel = req.user?.role;
+		return this.leadsService.leadsByUser(ref, Number(orgId), branchId, requestingUserId, userAccessLevel);
 	}
 
 	@Patch(':ref')

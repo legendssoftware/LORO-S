@@ -135,7 +135,9 @@ export class ClaimsController {
   findAll(@Req() req: AuthenticatedRequest) {
     const orgId = req.user?.org?.uid || req.user?.organisationRef;
     const branchId = req.user?.branch?.uid;
-    return this.claimsService.findAll({}, 1, 25, orgId, branchId);
+    const userId = req.user?.uid;
+    const userAccessLevel = req.user?.accessLevel || req.user?.role;
+    return this.claimsService.findAll({}, 1, 25, orgId, branchId, userId, userAccessLevel);
   }
 
   @Get(':ref')
@@ -201,7 +203,9 @@ export class ClaimsController {
   findOne(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
     const orgId = req.user?.org?.uid || req.user?.organisationRef;
     const branchId = req.user?.branch?.uid;
-    return this.claimsService.findOne(ref, orgId, branchId);
+    const userId = req.user?.uid;
+    const userAccessLevel = req.user?.accessLevel || req.user?.role;
+    return this.claimsService.findOne(ref, orgId, branchId, userId, userAccessLevel);
   }
 
   @Patch(':ref')
@@ -239,7 +243,9 @@ export class ClaimsController {
   update(@Param('ref') ref: number, @Body() updateClaimDto: UpdateClaimDto, @Req() req: AuthenticatedRequest) {
     const orgId = req.user?.org?.uid || req.user?.organisationRef;
     const branchId = req.user?.branch?.uid;
-    return this.claimsService.update(ref, updateClaimDto, orgId, branchId);
+    const userId = req.user?.uid;
+    const userAccessLevel = req.user?.accessLevel || req.user?.role;
+    return this.claimsService.update(ref, updateClaimDto, orgId, branchId, userId, userAccessLevel);
   }
 
   @Patch('restore/:ref')
@@ -341,7 +347,9 @@ export class ClaimsController {
   claimsByUser(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
     const orgId = req.user?.org?.uid || req.user?.organisationRef;
     const branchId = req.user?.branch?.uid;
-    return this.claimsService.claimsByUser(ref, orgId, branchId);
+    const requestingUserId = req.user?.uid;
+    const userAccessLevel = req.user?.accessLevel || req.user?.role;
+    return this.claimsService.claimsByUser(ref, orgId, branchId, requestingUserId, userAccessLevel);
   }
 
   @Delete(':ref')
@@ -377,6 +385,8 @@ export class ClaimsController {
   remove(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
     const orgId = req.user?.org?.uid || req.user?.organisationRef;
     const branchId = req.user?.branch?.uid;
-    return this.claimsService.remove(ref, orgId, branchId);
+    const userId = req.user?.uid;
+    const userAccessLevel = req.user?.accessLevel || req.user?.role;
+    return this.claimsService.remove(ref, orgId, branchId, userId, userAccessLevel);
   }
 }

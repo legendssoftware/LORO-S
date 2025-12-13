@@ -282,10 +282,10 @@ export class LeadsService {
 			}
 
 			// Determine if user has elevated access (can see all leads)
+			// Only ADMIN and OWNER can view all leads
 			const hasElevatedAccess = [
 				AccessLevel.ADMIN,
 				AccessLevel.OWNER,
-				AccessLevel.DEVELOPER,
 			].includes(userAccessLevel as AccessLevel);
 
 			this.logger.debug(`🏗️ [LeadsService] Building query with filters for org: ${orgId}, branch: ${branchId || 'all'}, elevated: ${hasElevatedAccess}`);
@@ -407,9 +407,11 @@ export class LeadsService {
 		ref: number,
 		orgId?: number,
 		branchId?: number,
+		userId?: number,
+		userAccessLevel?: string,
 	): Promise<{ lead: Lead | null; message: string; stats: any }> {
 		const startTime = Date.now();
-		this.logger.log(`🔍 [LeadsService] Finding lead with ID: ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
+		this.logger.log(`🔍 [LeadsService] Finding lead with ID: ${ref}, orgId: ${orgId}, branchId: ${branchId}, userId: ${userId}, role: ${userAccessLevel}`);
 
 		try {
 			if (!orgId) {
@@ -442,6 +444,23 @@ export class LeadsService {
 					message: process.env.NOT_FOUND_MESSAGE,
 					stats: null,
 				};
+			}
+
+			// Access control: Regular users can only view leads they own or are assigned to
+			// ADMIN and OWNER can view all leads
+			const hasElevatedAccess = [
+				AccessLevel.ADMIN,
+				AccessLevel.OWNER,
+			].includes(userAccessLevel as AccessLevel);
+
+			if (!hasElevatedAccess && userId) {
+				const isOwner = lead.ownerUid === userId;
+				const isAssigned = lead.assignees?.some((assignee) => assignee.uid === userId) || false;
+				
+				if (!isOwner && !isAssigned) {
+					this.logger.warn(`⚠️ [LeadsService] User ${userId} attempted to access lead ${ref} without permission`);
+					throw new NotFoundException('Lead not found or access denied');
+				}
 			}
 
 			this.logger.debug(`🔗 [LeadsService] Populating relations for lead ${ref}`);
@@ -488,9 +507,11 @@ export class LeadsService {
 		ref: number,
 		orgId?: number,
 		branchId?: number,
+		requestingUserId?: number,
+		userAccessLevel?: string,
 	): Promise<{ message: string; leads: Lead[]; stats: any }> {
 		const startTime = Date.now();
-		this.logger.log(`🔍 [LeadsService] Getting leads for user: ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
+		this.logger.log(`🔍 [LeadsService] Getting leads for user: ${ref}, orgId: ${orgId}, branchId: ${branchId}, requestingUserId: ${requestingUserId}, role: ${userAccessLevel}`);
 
 		try {
 			if (!orgId) {
@@ -498,24 +519,40 @@ export class LeadsService {
 				throw new BadRequestException('Organization ID is required');
 			}
 
-			this.logger.debug(`🏗️ [LeadsService] Building query for user ${ref} leads in org: ${orgId}, branch: ${branchId || 'all'}`);
+			// Access control: Users can only view their own leads unless they are ADMIN or OWNER
+			const hasElevatedAccess = [
+				AccessLevel.ADMIN,
+				AccessLevel.OWNER,
+			].includes(userAccessLevel as AccessLevel);
 
-			const whereClause: any = {
-				owner: { uid: ref },
-				isDeleted: false,
-				organisation: { uid: orgId },
-			};
-
-			if (branchId) {
-				whereClause.branch = { uid: branchId };
+			if (!hasElevatedAccess && requestingUserId && ref !== requestingUserId) {
+				this.logger.warn(`⚠️ [LeadsService] User ${requestingUserId} attempted to access leads for user ${ref} without permission`);
+				throw new BadRequestException('You can only view your own leads');
 			}
 
-		this.logger.debug(`💾 [LeadsService] Executing database query for user ${ref} leads`);
-		const leads = await this.leadsRepository.find({
-			where: whereClause,
-			relations: ['owner', 'organisation', 'branch'],
-			order: { leadScore: 'DESC', updatedAt: 'DESC' }, // Order by score and recency
-		});
+			this.logger.debug(`🏗️ [LeadsService] Building query for user ${ref} leads in org: ${orgId}, branch: ${branchId || 'all'}`);
+
+			// Build query to get leads owned by user OR assigned to user
+			const queryBuilder = this.leadsRepository
+				.createQueryBuilder('lead')
+				.leftJoinAndSelect('lead.owner', 'owner')
+				.leftJoinAndSelect('lead.branch', 'branch')
+				.leftJoinAndSelect('lead.organisation', 'organisation')
+				.where('lead.isDeleted = :isDeleted', { isDeleted: false })
+				.andWhere('organisation.uid = :orgId', { orgId })
+				.andWhere('(lead.ownerUid = :userId OR CAST(lead.assignees AS jsonb) @> CAST(:userIdJson AS jsonb))', {
+					userId: ref,
+					userIdJson: JSON.stringify([{ uid: ref }])
+				});
+
+			if (branchId) {
+				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
+			}
+
+			queryBuilder.orderBy('lead.leadScore', 'DESC').addOrderBy('lead.updatedAt', 'DESC');
+
+			this.logger.debug(`💾 [LeadsService] Executing database query for user ${ref} leads`);
+			const leads = await queryBuilder.getMany();
 
 		// Handle empty results gracefully - return empty array instead of throwing error
 		if (!leads || leads.length === 0) {
