@@ -353,7 +353,16 @@ class LegacyDbMigrator {
 		this.licenseRepo = this.pgDataSource.getRepository(License);
 		this.licenseUsageRepo = this.pgDataSource.getRepository(LicenseUsage);
 		this.licenseEventRepo = this.pgDataSource.getRepository(LicenseEvent);
-		this.licenseAuditRepo = this.pgDataSource.getRepository(LicenseAudit);
+		try {
+			this.licenseAuditRepo = this.pgDataSource.getRepository(LicenseAudit);
+		} catch (error: any) {
+			if (error.name === 'EntityMetadataNotFoundError') {
+				console.warn('⚠️  LicenseAudit entity not registered in DataSource, skipping repository initialization');
+				this.licenseAuditRepo = null;
+			} else {
+				throw error;
+			}
+		}
 		this.attendanceRepo = this.pgDataSource.getRepository(Attendance);
 		this.claimRepo = this.pgDataSource.getRepository(Claim);
 		this.checkInRepo = this.pgDataSource.getRepository(CheckIn);
@@ -416,15 +425,22 @@ class LegacyDbMigrator {
 
 		try {
 			// Import in dependency order
+			// Note: Clear tables before importing to avoid duplicates
 			if (this.shouldImport('orgs')) {
+				await this.clearTable(this.orgRepo, 'Organisations', Organisation);
 				await this.importOrganisations();
 			}
 
 			if (this.shouldImport('branches')) {
+				await this.clearTable(this.branchRepo, 'Branches', Branch);
 				await this.importBranches();
 			}
 
 			if (this.shouldImport('users')) {
+				await this.clearTable(this.userTargetRepo, 'User Targets', UserTarget);
+				await this.clearTable(this.userEmploymentRepo, 'User Employment Profiles', UserEmployeementProfile);
+				await this.clearTable(this.userProfileRepo, 'User Profiles', UserProfile);
+				await this.clearTable(this.userRepo, 'Users', User);
 				await this.importUsers();
 				await this.importUserProfiles();
 				await this.importUserEmploymentProfiles();
@@ -434,111 +450,155 @@ class LegacyDbMigrator {
 			if (this.shouldImport('devices')) {
 				// Clear device records and logs before importing devices
 				await this.clearDeviceRecordsAndLogs();
+				await this.clearTable(this.deviceRepo, 'Devices', Device);
 				await this.importDevices();
-				// Device records and logs import removed - not importing tracking data
+				// Device records import - now enabled for full data migration
+				if (this.shouldImport('devicerecords')) {
+					await this.clearTable(this.deviceRecordsRepo, 'Device Records', DeviceRecords);
+					await this.importDeviceRecords();
+				}
 			}
 
 			if (this.shouldImport('licenses')) {
+				await this.clearTable(this.licenseAuditRepo, 'License Audit', LicenseAudit);
+				await this.clearTable(this.licenseEventRepo, 'License Events', LicenseEvent);
+				await this.clearTable(this.licenseUsageRepo, 'License Usage', LicenseUsage);
+				await this.clearTable(this.licenseRepo, 'Licenses', License);
 				await this.importLicenses();
 			}
 
 			// Organisation settings (after orgs)
 			if (this.shouldImport('orgs')) {
+				await this.clearTable(this.orgHoursRepo, 'Organisation Hours', OrganisationHours);
+				await this.clearTable(this.orgAppearanceRepo, 'Organisation Appearance', OrganisationAppearance);
+				await this.clearTable(this.orgSettingsRepo, 'Organisation Settings', OrganisationSettings);
 				await this.importOrganisationSettings();
 				await this.importOrganisationAppearance();
 				await this.importOrganisationHours();
 			}
 
-			// Reports import skipped - will import full data later
-			// if (this.shouldImport('reports')) {
-			// 	await this.importReports();
-			// }
+			// Reports import - now enabled for full data migration
+			if (this.shouldImport('reports')) {
+				await this.clearTable(this.reportRepo, 'Reports', Report);
+				await this.importReports();
+			}
 
 			// Core transactional data
-			// Attendance import skipped - will import full data later
-			// if (this.shouldImport('attendance')) {
-			// 	await this.importAttendance();
-			// }
+			// Attendance import - now enabled for full data migration
+			if (this.shouldImport('attendance')) {
+				// Clear attendance records before importing to avoid duplicates
+				await this.clearAttendanceRecords();
+				await this.importAttendance();
+			}
 			if (this.shouldImport('claims')) {
+				await this.clearTable(this.claimRepo, 'Claims', Claim);
 				await this.importClaims();
 			}
 			if (this.shouldImport('checkins')) {
+				await this.clearTable(this.checkInRepo, 'Check-ins', CheckIn);
 				await this.importCheckIns();
 			}
 
 			// Sales & business
 			if (this.shouldImport('leads')) {
+				await this.clearTable(this.leadRepo, 'Leads', Lead);
 				await this.importLeads();
 			}
 			if (this.shouldImport('quotations')) {
+				await this.clearTable(this.quotationItemRepo, 'Quotation Items', QuotationItem);
+				await this.clearTable(this.quotationRepo, 'Quotations', Quotation);
 				await this.importQuotations();
 				await this.importQuotationItems();
 			}
 			if (this.shouldImport('orders')) {
+				await this.clearTable(this.orderItemRepo, 'Order Items', OrderItem);
+				await this.clearTable(this.orderRepo, 'Orders', Order);
 				await this.importOrders();
 				await this.importOrderItems();
 			}
 
 			// Tasks & activities
 			if (this.shouldImport('tasks')) {
+				await this.clearTable(this.subTaskRepo, 'Subtasks', SubTask);
+				await this.clearTable(this.taskRepo, 'Tasks', Task);
 				await this.importTasks();
 				await this.importSubtasks();
 			}
 
 			// Communication & interactions
 			if (this.shouldImport('interactions')) {
+				await this.clearTable(this.interactionRepo, 'Interactions', Interaction);
 				await this.importInteractions();
 			}
 			if (this.shouldImport('notifications')) {
+				await this.clearTable(this.notificationRepo, 'Notifications', Notification);
 				await this.importNotifications();
 			}
 			if (this.shouldImport('journals')) {
+				await this.clearTable(this.journalRepo, 'Journals', Journal);
 				await this.importJournals();
 			}
 
 			// HR & management
 			if (this.shouldImport('leave')) {
+				await this.clearTable(this.leaveRepo, 'Leave', Leave);
 				await this.importLeave();
 			}
 			if (this.shouldImport('warnings')) {
+				await this.clearTable(this.warningRepo, 'Warnings', Warning);
 				await this.importWarnings();
 			}
 
 			// Documents & files
 			if (this.shouldImport('docs')) {
+				await this.clearTable(this.docRepo, 'Docs', Doc);
 				await this.importDocs();
 			}
 
 			// Other modules
 			if (this.shouldImport('assets')) {
+				await this.clearTable(this.assetRepo, 'Assets', Asset);
 				await this.importAssets();
 			}
 			if (this.shouldImport('news')) {
+				await this.clearTable(this.newsRepo, 'News', News);
 				await this.importNews();
 			}
 			if (this.shouldImport('feedback')) {
+				await this.clearTable(this.feedbackRepo, 'Feedback', Feedback);
 				await this.importFeedback();
 			}
 			if (this.shouldImport('competitors')) {
+				await this.clearTable(this.competitorRepo, 'Competitors', Competitor);
 				await this.importCompetitors();
 			}
 			if (this.shouldImport('resellers')) {
+				await this.clearTable(this.resellerRepo, 'Resellers', Reseller);
 				await this.importResellers();
 			}
 			if (this.shouldImport('banners')) {
+				await this.clearTable(this.bannersRepo, 'Banners', Banners);
 				await this.importBanners();
 			}
 			if (this.shouldImport('projects')) {
+				await this.clearTable(this.projectRepo, 'Projects', Project);
 				await this.importProjects();
 			}
 
 			// User rewards (after users are imported)
 			if (this.shouldImport('users')) {
+				await this.clearTable(this.userRewardsRepo, 'User Rewards', UserRewards);
 				await this.importUserRewards();
 			}
 
 			// Large tables moved to end for performance
-			// Tracking & location import removed - not importing tracking data
+			// Tracking import - SKIPPED (GPS records import disabled)
+			// if (this.shouldImport('tracking')) {
+			// 	await this.clearTable(this.geofenceEventRepo, 'Geofence Events', GeofenceEvent);
+			// 	await this.clearTable(this.geofenceRepo, 'Geofences', Geofence);
+			// 	await this.clearTable(this.trackingRepo, 'Tracking', Tracking);
+			// 	await this.importTracking();
+			// }
 
 			const duration = ((Date.now() - startTime) / 1000).toFixed(2);
 			this.printStats(duration);
@@ -619,7 +679,7 @@ class LegacyDbMigrator {
 	private async importBranches() {
 		console.log('\n📦 Importing Branches...');
 		
-		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM branch WHERE isDeleted = 0');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM branch');
 		const branches = rows as any[];
 		this.stats.branches.total = branches.length;
 
@@ -770,7 +830,7 @@ class LegacyDbMigrator {
 	private async importUsers() {
 		console.log('\n📦 Importing Users...');
 		
-		const [rows] = await this.executeWithRetry<any>('SELECT * FROM users WHERE isDeleted = 0');
+		const [rows] = await this.executeWithRetry<any>('SELECT * FROM users');
 		const users = rows;
 		this.stats.users.total = users.length;
 
@@ -1328,7 +1388,7 @@ class LegacyDbMigrator {
 	private async importDevices() {
 		console.log('\n📦 Importing Devices...');
 		
-		const [rows] = await this.executeWithRetry<any>('SELECT * FROM device WHERE isDeleted = 0');
+		const [rows] = await this.executeWithRetry<any>('SELECT * FROM device');
 		const devices = rows;
 		this.stats.devices.total = devices.length;
 
@@ -1424,23 +1484,13 @@ class LegacyDbMigrator {
 		}
 
 		try {
-			// Clear device records using bulk delete for better performance
-			const deviceRecordsDeleted = await this.deviceRecordsRepo!
-				.createQueryBuilder()
-				.delete()
-				.from(DeviceRecords)
-				.execute();
-			
-			console.log(`  ✅ Cleared ${deviceRecordsDeleted.affected || 0} device records`);
-
-			// Clear device logs using bulk delete for better performance
-			const deviceLogsDeleted = await this.deviceLogsRepo!
-				.createQueryBuilder()
-				.delete()
-				.from(DeviceLogs)
-				.execute();
-			
-			console.log(`  ✅ Cleared ${deviceLogsDeleted.affected || 0} device logs`);
+			// Use clearTable with CASCADE to handle foreign key dependencies
+			if (this.deviceLogsRepo) {
+				await this.clearTable(this.deviceLogsRepo, 'Device Logs', DeviceLogs);
+			}
+			if (this.deviceRecordsRepo) {
+				await this.clearTable(this.deviceRecordsRepo, 'Device Records', DeviceRecords);
+			}
 			
 			console.log('✅ Device Records and Logs cleared\n');
 		} catch (error: any) {
@@ -1519,7 +1569,7 @@ class LegacyDbMigrator {
 		console.log('\n📦 Importing Licenses...');
 		
 		// Use retry logic for MySQL query
-		const [rows] = await this.executeWithRetry<any>('SELECT * FROM licenses WHERE isDeleted = 0');
+		const [rows] = await this.executeWithRetry<any>('SELECT * FROM licenses');
 		const licenses = rows;
 		this.stats.licenses.total = licenses.length;
 
@@ -1822,12 +1872,71 @@ class LegacyDbMigrator {
 		}
 	}
 
+	/**
+	 * Generic helper to clear table before import to avoid duplicates
+	 * Uses TRUNCATE CASCADE to handle foreign key dependencies automatically
+	 */
+	private async clearTable<T>(
+		repo: Repository<T> | null,
+		entityName: string,
+		EntityClass: any
+	): Promise<void> {
+		if (!repo) {
+			console.warn(`  ⚠️  Repository for ${entityName} not available, skipping clear`);
+			return;
+		}
+
+		console.log(`\n🧹 Clearing ${entityName}...`);
+		
+		if (this.dryRun) {
+			console.log(`  ⏭️  DRY RUN - Would clear ${entityName}`);
+			return;
+		}
+
+		try {
+			// Get table name from entity metadata
+			let metadata;
+			try {
+				metadata = this.pgDataSource!.getMetadata(EntityClass);
+			} catch (metadataError: any) {
+				// Entity not registered in DataSource - skip clearing
+				if (metadataError.name === 'EntityMetadataNotFoundError') {
+					console.warn(`  ⚠️  Entity ${entityName} not registered in DataSource, skipping clear`);
+					return;
+				}
+				throw metadataError;
+			}
+			
+			const tableName = metadata.tableName;
+			
+			// Use TRUNCATE CASCADE RESTART IDENTITY to:
+			// 1. Delete all dependent rows in child tables (CASCADE)
+			// 2. Reset auto-increment sequences to start from 1 (RESTART IDENTITY)
+			await this.pgDataSource!.query(`TRUNCATE TABLE "${tableName}" RESTART IDENTITY CASCADE`);
+			
+			console.log(`  ✅ Cleared ${entityName} records and reset sequences (with CASCADE)`);
+		} catch (error: any) {
+			// If it's a table not found error, skip gracefully
+			if (error.code === '42P01' || error.message?.includes('does not exist')) {
+				console.warn(`  ⚠️  Table for ${entityName} does not exist, skipping clear`);
+				return;
+			}
+			console.error(`  ❌ Error clearing ${entityName}: ${error.message}`);
+			throw error;
+		}
+	}
+
+	private async clearAttendanceRecords() {
+		await this.clearTable(this.attendanceRepo, 'Attendance', Attendance);
+	}
+
 	private async importAttendance() {
 		console.log('\n📦 Importing Attendance...');
+		// Import ALL attendance records - no date filtering
 		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM attendance');
 		const records = rows as any[];
 		this.stats.attendance.total = records.length;
-		console.log(`Found ${records.length} attendance records`);
+		console.log(`Found ${records.length} attendance records (importing all records)`);
 
 		for (const record of records) {
 			try {
@@ -1844,6 +1953,21 @@ class LegacyDbMigrator {
 
 				if (!ownerUid) {
 					this.stats.attendance.skipped++;
+					continue;
+				}
+
+				// Check for duplicate attendance record (same owner and checkIn time)
+				const checkInTime = record.checkIn || record.createdAt || new Date();
+				const existing = await this.attendanceRepo!.findOne({
+					where: {
+						owner: { uid: ownerUid } as User,
+						checkIn: checkInTime,
+					}
+				});
+
+				if (existing) {
+					this.stats.attendance.skipped++;
+					if (this.verbose) console.log(`  ⏭️  Skipped duplicate attendance: owner ${ownerUid}, checkIn: ${checkInTime}`);
 					continue;
 				}
 
@@ -1897,7 +2021,7 @@ class LegacyDbMigrator {
 
 	private async importClaims() {
 		console.log('\n📦 Importing Claims...');
-		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM claim WHERE isDeleted = 0 OR isDeleted IS NULL');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM claim');
 		const records = rows as any[];
 		this.stats.claims.total = records.length;
 		console.log(`Found ${records.length} claims`);
@@ -1915,6 +2039,22 @@ class LegacyDbMigrator {
 
 				if (!ownerUid) {
 					this.stats.claims.skipped++;
+					continue;
+				}
+
+				// Check for duplicate claim (same owner, amount, and verifiedAt/createdAt)
+				const verifiedAt = record.verifiedAt || record.createdAt || new Date();
+				const existing = await this.claimRepo!.findOne({
+					where: {
+						owner: { uid: ownerUid } as User,
+						amount: record.amount || '0',
+						verifiedAt: verifiedAt,
+					}
+				});
+
+				if (existing) {
+					this.stats.claims.skipped++;
+					if (this.verbose) console.log(`  ⏭️  Skipped duplicate claim: owner ${ownerUid}, amount: ${record.amount}, verifiedAt: ${verifiedAt}`);
 					continue;
 				}
 
@@ -1976,6 +2116,21 @@ class LegacyDbMigrator {
 					continue;
 				}
 
+				// Check for duplicate check-in (same owner and checkInTime)
+				const checkInTime = record.checkInTime || record.createdAt || new Date();
+				const existing = await this.checkInRepo!.findOne({
+					where: {
+						owner: { uid: ownerUid } as User,
+						checkInTime: checkInTime,
+					}
+				});
+
+				if (existing) {
+					this.stats.checkIns.skipped++;
+					if (this.verbose) console.log(`  ⏭️  Skipped duplicate check-in: owner ${ownerUid}, checkInTime: ${checkInTime}`);
+					continue;
+				}
+
 				const fullAddress = this.parseJSON(record.fullAddress, null);
 
 				const newRecord = this.checkInRepo!.create({
@@ -2006,7 +2161,7 @@ class LegacyDbMigrator {
 
 	private async importLeads() {
 		console.log('\n📦 Importing Leads...');
-		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM leads WHERE isDeleted = 0 OR isDeleted IS NULL');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM leads');
 		const records = rows as any[];
 		this.stats.leads.total = records.length;
 		console.log(`Found ${records.length} leads`);
@@ -2024,6 +2179,33 @@ class LegacyDbMigrator {
 
 				if (!ownerUid || !orgUid) {
 					this.stats.leads.skipped++;
+					continue;
+				}
+
+				// Check for duplicate lead (by email or name+companyName)
+				let existing = null;
+				if (record.email) {
+					existing = await this.leadRepo!.findOne({
+						where: {
+							email: record.email,
+							organisation: { uid: orgUid } as Organisation,
+						}
+					});
+				}
+				if (!existing && record.name && record.companyName) {
+					existing = await this.leadRepo!.findOne({
+						where: {
+							name: record.name,
+							companyName: record.companyName,
+							organisation: { uid: orgUid } as Organisation,
+						}
+					});
+				}
+
+				if (existing) {
+					this.leadMapping[record.uid] = existing.uid;
+					this.stats.leads.skipped++;
+					if (this.verbose) console.log(`  ⏭️  Skipped duplicate lead: ${record.email || record.name} (${record.companyName})`);
 					continue;
 				}
 
@@ -2108,8 +2290,24 @@ class LegacyDbMigrator {
 					continue;
 				}
 
+				// Check for duplicate quotation (by quotationNumber or ref)
+				const quotationNumber = record.quotationNumber || `QT-${Date.now()}-${record.uid}`;
+				const existing = await this.quotationRepo!.findOne({
+					where: {
+						quotationNumber: quotationNumber,
+						organisation: { uid: orgUid } as Organisation,
+					}
+				});
+
+				if (existing) {
+					this.quotationMapping[record.uid] = existing.uid;
+					this.stats.quotations.skipped++;
+					if (this.verbose) console.log(`  ⏭️  Skipped duplicate quotation: ${quotationNumber}`);
+					continue;
+				}
+
 				const newRecord = this.quotationRepo!.create({
-					quotationNumber: record.quotationNumber || `QT-${Date.now()}-${record.uid}`,
+					quotationNumber: quotationNumber,
 					totalAmount: record.totalAmount || 0,
 					totalItems: record.totalItems || 0,
 					status: record.status || 'DRAFT',
@@ -2209,8 +2407,24 @@ class LegacyDbMigrator {
 					continue;
 				}
 
+				// Check for duplicate order (by orderNumber)
+				const orderNumber = record.orderNumber || `ORD-${Date.now()}-${record.uid}`;
+				const existing = await this.orderRepo!.findOne({
+					where: {
+						orderNumber: orderNumber,
+						organisation: { uid: orgUid } as Organisation,
+					}
+				});
+
+				if (existing) {
+					this.orderMapping[record.uid] = existing.uid;
+					this.stats.orders.skipped++;
+					if (this.verbose) console.log(`  ⏭️  Skipped duplicate order: ${orderNumber}`);
+					continue;
+				}
+
 				const newRecord = this.orderRepo!.create({
-					orderNumber: record.orderNumber || `ORD-${Date.now()}-${record.uid}`,
+					orderNumber: orderNumber,
 					totalAmount: record.totalAmount || 0,
 					totalItems: record.totalItems || 0,
 					status: record.status || 'IN_FULFILLMENT',
@@ -2305,6 +2519,36 @@ class LegacyDbMigrator {
 					continue;
 				}
 
+				// Check for duplicate task (by title+creator+createdAt)
+				let existing = null;
+				if (record.title) {
+					const createdAt = record.createdAt || new Date();
+					existing = await this.taskRepo!.findOne({
+						where: {
+							title: record.title,
+							creator: { uid: creatorUid } as User,
+							organisation: { uid: orgUid } as Organisation,
+						},
+						order: { createdAt: 'DESC' }
+					});
+					
+					// If found, check if createdAt is within 1 minute (likely duplicate)
+					if (existing) {
+						const recordTime = new Date(createdAt).getTime();
+						const existingTime = new Date(existing.createdAt || 0).getTime();
+						if (Math.abs(recordTime - existingTime) > 60000) {
+							existing = null; // Not a duplicate if more than 1 minute apart
+						}
+					}
+				}
+
+				if (existing) {
+					this.taskMapping[record.uid] = existing.uid;
+					this.stats.tasks.skipped++;
+					if (this.verbose) console.log(`  ⏭️  Skipped duplicate task: ${record.title}`);
+					continue;
+				}
+
 				const assignees = this.parseJSON(record.assignees, []).map((a: any) => ({
 					uid: this.mapUid(a.uid || a, this.userMapping)
 				})).filter((a: any) => a.uid);
@@ -2350,7 +2594,7 @@ class LegacyDbMigrator {
 
 	private async importSubtasks() {
 		console.log('\n📦 Importing Subtasks...');
-		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM subtask WHERE isDeleted = 0 OR isDeleted IS NULL');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM subtask');
 		const records = rows as any[];
 		this.stats.subtasks.total = records.length;
 		console.log(`Found ${records.length} subtasks`);
@@ -2388,7 +2632,7 @@ class LegacyDbMigrator {
 
 	private async importInteractions() {
 		console.log('\n📦 Importing Interactions...');
-		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM interactions WHERE isDeleted = 0 OR isDeleted IS NULL');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM interactions');
 		const records = rows as any[];
 		this.stats.interactions.total = records.length;
 		console.log(`Found ${records.length} interactions`);
@@ -2479,7 +2723,7 @@ class LegacyDbMigrator {
 
 	private async importJournals() {
 		console.log('\n📦 Importing Journals...');
-		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM journal WHERE isDeleted = 0 OR isDeleted IS NULL');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM journal');
 		const records = rows as any[];
 		this.stats.journals.total = records.length;
 		console.log(`Found ${records.length} journals`);
@@ -2676,12 +2920,29 @@ class LegacyDbMigrator {
 					continue;
 				}
 
+				// Check for duplicate leave (by owner, startDate, endDate)
+				const startDate = record.startDate || new Date();
+				const endDate = record.endDate || new Date();
+				const existing = await this.leaveRepo!.findOne({
+					where: {
+						owner: { uid: ownerUid } as User,
+						startDate: startDate,
+						endDate: endDate,
+					}
+				});
+
+				if (existing) {
+					this.stats.leave.skipped++;
+					if (this.verbose) console.log(`  ⏭️  Skipped duplicate leave: owner ${ownerUid}, startDate: ${startDate}, endDate: ${endDate}`);
+					continue;
+				}
+
 				const attachments = this.parseJSON(record.attachments, []);
 
 				const newRecord = this.leaveRepo!.create({
 					leaveType: record.leaveType || 'ANNUAL',
-					startDate: record.startDate || new Date(),
-					endDate: record.endDate || new Date(),
+					startDate: startDate,
+					endDate: endDate,
 					duration: record.duration || 0,
 					motivation: record.motivation || null,
 					status: record.status || 'PENDING',
@@ -2730,10 +2991,26 @@ class LegacyDbMigrator {
 					continue;
 				}
 
+				// Check for duplicate warning (by owner, reason, expiresAt)
+				const expiresAt = record.expiresAt || new Date();
+				const existing = await this.warningRepo!.findOne({
+					where: {
+						owner: { uid: ownerUid } as User,
+						reason: record.reason || '',
+						expiresAt: expiresAt,
+					}
+				});
+
+				if (existing) {
+					this.stats.warnings.skipped++;
+					if (this.verbose) console.log(`  ⏭️  Skipped duplicate warning: owner ${ownerUid}, reason: ${record.reason}`);
+					continue;
+				}
+
 				const newRecord = this.warningRepo!.create({
 					reason: record.reason || '',
 					severity: record.severity || 'LOW',
-					expiresAt: record.expiresAt || new Date(),
+					expiresAt: expiresAt,
 					isExpired: record.isExpired || false,
 					status: record.status || 'ACTIVE',
 					owner: { uid: ownerUid } as User,
@@ -2751,32 +3028,15 @@ class LegacyDbMigrator {
 	}
 
 	private async importTracking() {
-		console.log('\n📦 Importing Tracking (past 2 days to today - processing in batches)...');
+		console.log('\n📦 Importing Tracking (all data - processing in batches)...');
 		
-		// Calculate past 2 days to today dates
-		const now = new Date();
-		const pastTwoDaysStart = new Date(now);
-		pastTwoDaysStart.setDate(now.getDate() - 2);
-		pastTwoDaysStart.setHours(0, 0, 0, 0); // Start of day 2 days ago
-		
-		const todayEnd = new Date(now);
-		todayEnd.setHours(23, 59, 59, 999); // End of today
-		
-		// Format dates for MySQL (YYYY-MM-DD HH:MM:SS)
-		const startDate = pastTwoDaysStart.toISOString().slice(0, 19).replace('T', ' ');
-		const endDate = todayEnd.toISOString().slice(0, 19).replace('T', ' ');
-		
-		console.log(`📅 Filtering tracking records from ${startDate} to ${endDate} (past 2 days to today)`);
-		
-		// Import only tracking records from the past 2 days to today
-		// Use createdAt as primary filter (standard field used throughout the code)
+		// Import ALL tracking records (no date filtering)
+		// Use createdAt as primary ordering (standard field used throughout the code)
 		// Also check timestamp field as fallback for records where createdAt might be NULL
 		const query = `SELECT * FROM tracking 
-			WHERE (
-				(createdAt IS NOT NULL AND createdAt >= '${startDate}' AND createdAt <= '${endDate}')
-				OR (createdAt IS NULL AND timestamp IS NOT NULL AND FROM_UNIXTIME(timestamp / 1000) >= '${startDate}' AND FROM_UNIXTIME(timestamp / 1000) <= '${endDate}')
-			)
 			ORDER BY COALESCE(createdAt, FROM_UNIXTIME(timestamp / 1000)) ASC`;
+		
+		console.log(`📅 Importing all tracking records (no date filter)`);
 		
 		const [rows] = await this.mysqlConnection!.execute(query);
 		const records = rows as any[];
@@ -2977,7 +3237,7 @@ class LegacyDbMigrator {
 	// Simplified imports for remaining entities - following same pattern
 	private async importAssets() {
 		console.log('\n📦 Importing Assets...');
-		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM asset WHERE isDeleted = 0 OR isDeleted IS NULL');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM asset');
 		const records = rows as any[];
 		this.stats.assets.total = records.length;
 		console.log(`Found ${records.length} assets`);
@@ -3024,7 +3284,7 @@ class LegacyDbMigrator {
 
 	private async importNews() {
 		console.log('\n📦 Importing News...');
-		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM news WHERE isDeleted = 0 OR isDeleted IS NULL');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM news');
 		const records = rows as any[];
 		this.stats.news.total = records.length;
 		console.log(`Found ${records.length} news items`);
@@ -3121,7 +3381,7 @@ class LegacyDbMigrator {
 
 	private async importCompetitors() {
 		console.log('\n📦 Importing Competitors...');
-		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM competitor WHERE isDeleted = 0 OR isDeleted IS NULL');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM competitor');
 		const records = rows as any[];
 		this.stats.competitors.total = records.length;
 		console.log(`Found ${records.length} competitors`);
@@ -3225,7 +3485,7 @@ class LegacyDbMigrator {
 
 	private async importResellers() {
 		console.log('\n📦 Importing Resellers...');
-		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM reseller WHERE isDeleted = 0 OR isDeleted IS NULL');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM reseller');
 		const records = rows as any[];
 		this.stats.resellers.total = records.length;
 		console.log(`Found ${records.length} resellers`);
@@ -3464,7 +3724,7 @@ class LegacyDbMigrator {
 
 	private async importOrganisationHours() {
 		console.log('\n📦 Importing Organisation Hours...');
-		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM organisation_hours WHERE isDeleted = 0 OR isDeleted IS NULL');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM organisation_hours');
 		const records = rows as any[];
 		this.stats.orgHours.total = records.length;
 		console.log(`Found ${records.length} organisation hours`);

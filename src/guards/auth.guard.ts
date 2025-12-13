@@ -35,11 +35,7 @@ export class AuthGuard extends BaseGuard implements CanActivate {
 			if (!request['licenseValidated']) {
 				this.logger.debug(`[AuthGuard] License validation not cached, validating license: ${decodedToken.licenseId} for org: ${decodedToken.organisationRef}`);
 				try {
-					const validationStartTime = Date.now();
 					const isLicenseValid = await this.licensingService.validateLicense(decodedToken.licenseId);
-					const validationDuration = Date.now() - validationStartTime;
-					
-					this.logger.debug(`[AuthGuard] License validation completed in ${validationDuration}ms - licenseId: ${decodedToken.licenseId}, valid: ${isLicenseValid}`);
 					
 					if (!isLicenseValid) {
 						this.logger.warn(`[AuthGuard] License validation failed - licenseId: ${decodedToken.licenseId}, orgRef: ${decodedToken.organisationRef}, userId: ${decodedToken.uid}`);
@@ -48,14 +44,12 @@ export class AuthGuard extends BaseGuard implements CanActivate {
 
 					// Cache the license validation result
 					request['licenseValidated'] = true;
-					this.logger.debug(`[AuthGuard] License validation cached for request - licenseId: ${decodedToken.licenseId}`);
 
 					// Attach organization info to the request
 					if (!request['organization']) {
 						request['organization'] = {
 							ref: decodedToken.organisationRef,
 						};
-						this.logger.debug(`[AuthGuard] Organization info attached to request - orgRef: ${decodedToken.organisationRef}`);
 					}
 				} catch (error) {
 					// If it's already an UnauthorizedException, rethrow it
@@ -84,16 +78,13 @@ export class AuthGuard extends BaseGuard implements CanActivate {
 		// Attach branch info to the request if available
 		if (decodedToken.branch && !request['branch']) {
 			request['branch'] = decodedToken.branch;
-			this.logger.debug(`[AuthGuard] Branch info attached to request - branch: ${decodedToken.branch}`);
 		}
 
 		// Attach user info to request if not already attached
 		if (!request['user']) {
 			request['user'] = decodedToken;
-			this.logger.debug(`[AuthGuard] User info attached to request - userId: ${decodedToken.uid}, role: ${decodedToken.role}`);
 		}
 
-		this.logger.debug(`[AuthGuard] Guard activation successful for ${method} ${path || url} - userId: ${decodedToken.uid}, orgRef: ${decodedToken.organisationRef || 'N/A'}, licenseId: ${decodedToken.licenseId || 'N/A'}`);
 		return true;
 	}
 }

@@ -407,6 +407,11 @@ export class TrackingService {
 			// Create a new object without the owner property
 			const { owner, ...trackingDataWithoutOwner } = createTrackingDto;
 
+			// Convert timestamp to integer if provided (PostgreSQL bigint doesn't accept decimals)
+			if (trackingDataWithoutOwner.timestamp !== undefined && trackingDataWithoutOwner.timestamp !== null) {
+				trackingDataWithoutOwner.timestamp = Math.floor(trackingDataWithoutOwner.timestamp);
+			}
+
 			// Create tracking entity with all available data
 			const trackingData: DeepPartial<Tracking> = {
 				...trackingDataWithoutOwner,
@@ -1537,7 +1542,13 @@ export class TrackingService {
 
 	async update(ref: number, updateTrackingDto: UpdateTrackingDto) {
 		try {
-			await this.trackingRepository.update(ref, updateTrackingDto as unknown as DeepPartial<Tracking>);
+			// Convert timestamp to integer if provided (PostgreSQL bigint doesn't accept decimals)
+			const updateData = { ...updateTrackingDto };
+			if (updateData.timestamp !== undefined && updateData.timestamp !== null) {
+				updateData.timestamp = Math.floor(updateData.timestamp);
+			}
+
+			await this.trackingRepository.update(ref, updateData as unknown as DeepPartial<Tracking>);
 
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,

@@ -2409,7 +2409,6 @@ export class UserService {
 		branchId?: number,
 	): Promise<{ userTarget: any; message: string }> {
 		const startTime = Date.now();
-		this.logger.log(`Getting user target for user: ${userId}`);
 
 		try {
 			const cacheKey = this.getCacheKey(`target_${userId}`);

@@ -2356,21 +2356,6 @@ Retrieves comprehensive performance targets for a specific user with detailed pr
 	): Promise<{ userTarget: UserTarget | null; message: string }> {
 		const accessScope = this.getAccessScope(req.user);
 
-		// 🔍 DEBUG: Log the access decision
-		console.log('🔍 DEBUG getUserTarget route:', {
-			gettingTargetForUser: ref,
-			requestingUser: {
-				uid: req.user?.uid,
-				accessLevel: req.user?.accessLevel,
-				isElevated: accessScope.isElevated,
-			},
-			accessScope: {
-				orgId: accessScope.orgId,
-				branchId: accessScope.branchId,
-				orgWideAccess: accessScope.branchId === null,
-			},
-		});
-
 		return this.userService.getUserTarget(ref, accessScope.orgId, accessScope.branchId);
 	}
 

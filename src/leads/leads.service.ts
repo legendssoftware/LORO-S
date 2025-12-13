@@ -309,7 +309,7 @@ export class LeadsService {
 				this.logger.debug(`👤 [LeadsService] Applying user-level access filter for user: ${userId}`);
 				// User can see leads where they are the owner OR where they are in the assignees array
 				queryBuilder.andWhere(
-					'(lead.ownerUid = :userId OR lead.assignees @> CAST(:userIdJson AS jsonb))',
+					'(lead.ownerUid = :userId OR CAST(lead.assignees AS jsonb) @> CAST(:userIdJson AS jsonb))',
 					{ 
 						userId,
 						userIdJson: JSON.stringify([{ uid: userId }])
