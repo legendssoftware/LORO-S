@@ -1,4 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, ManyToOne, JoinColumn, Index } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
 import { User } from '../../user/entities/user.entity';
 import { Organisation } from '../../organisation/entities/organisation.entity';
 import { Branch } from '../../branch/entities/branch.entity';
@@ -26,10 +26,6 @@ export enum UsageEventType {
 }
 
 @Entity('usage_events')
-@Index(['organisationId', 'createdAt'])
-@Index(['userId', 'createdAt'])
-@Index(['endpoint', 'createdAt'])
-@Index(['status', 'createdAt'])
 export class UsageEvent {
 	@PrimaryGeneratedColumn()
 	id: number;

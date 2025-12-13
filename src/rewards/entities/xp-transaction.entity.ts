@@ -1,10 +1,7 @@
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, Index } from 'typeorm';
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { UserRewards } from './user-rewards.entity';
 
 @Entity('xp_transaction')
-@Index(['userRewards', 'timestamp']) // User XP history
-@Index(['action', 'timestamp']) // Action-based XP tracking
-@Index(['timestamp']) // Date-based sorting
 export class XPTransaction {
     @PrimaryGeneratedColumn()
     uid: number;

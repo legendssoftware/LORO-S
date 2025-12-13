@@ -1,4 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn, Index, Unique } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn, Unique } from 'typeorm';
 import { User } from '../../user/entities/user.entity';
 import { Organisation } from '../../organisation/entities/organisation.entity';
 import { Branch } from '../../branch/entities/branch.entity';
@@ -12,8 +12,6 @@ export enum SummaryPeriod {
 
 @Entity('usage_summaries')
 @Unique(['organisationId', 'userId', 'period', 'periodStart', 'endpoint'])
-@Index(['organisationId', 'period', 'periodStart'])
-@Index(['userId', 'period', 'periodStart'])
 export class UsageSummary {
 	@PrimaryGeneratedColumn()
 	id: number;

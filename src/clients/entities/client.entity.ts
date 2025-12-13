@@ -3,7 +3,7 @@ import { Lead } from '../../leads/entities/lead.entity';
 import { User } from '../../user/entities/user.entity';
 import { Quotation } from '../../shop/entities/quotation.entity';
 import { Task } from '../../tasks/entities/task.entity';
-import { Column, Entity, OneToMany, ManyToOne, PrimaryGeneratedColumn, OneToOne, Index } from 'typeorm';
+import { Column, Entity, OneToMany, ManyToOne, PrimaryGeneratedColumn, OneToOne } from 'typeorm';
 import { CheckIn } from '../../check-ins/entities/check-in.entity';
 import { Organisation } from 'src/organisation/entities/organisation.entity';
 import { Branch } from 'src/branch/entities/branch.entity';
@@ -22,17 +22,6 @@ import { ClientCommunicationSchedule } from './client-communication-schedule.ent
 import { Project } from '../../shop/entities/project.entity';
 
 @Entity('client')
-@Index(['email']) // Unique customer lookups
-@Index(['phone']) // Contact-based searches
-@Index(['name']) // Name-based searches
-@Index(['status', 'isDeleted']) // Active client filtering
-@Index(['priceTier', 'status']) // Pricing tier management
-@Index(['lastVisitDate']) // Visit scheduling
-@Index(['nextContactDate']) // Contact scheduling
-@Index(['acquisitionChannel', 'acquisitionDate']) // Marketing analysis
-@Index(['industry', 'companySize']) // Market segmentation
-@Index(['latitude', 'longitude', 'enableGeofence']) // Location-based queries
-@Index(['createdAt']) // Date-based reporting
 export class Client {
 	@PrimaryGeneratedColumn()
 	uid: number;

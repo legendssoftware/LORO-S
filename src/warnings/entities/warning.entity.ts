@@ -1,4 +1,4 @@
-import { Column, CreateDateColumn, Entity, ManyToOne, PrimaryGeneratedColumn, UpdateDateColumn, Index } from 'typeorm';
+import { Column, CreateDateColumn, Entity, ManyToOne, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
 import { User } from '../../user/entities/user.entity';
 import { ApiProperty } from '@nestjs/swagger';
 
@@ -15,11 +15,6 @@ export enum WarningStatus {
 }
 
 @Entity()
-@Index(['owner', 'status']) // User warning queries
-@Index(['issuedBy', 'issuedAt']) // Issued warnings tracking
-@Index(['severity', 'status']) // Severity-based filtering
-@Index(['status', 'expiresAt']) // Warning expiry management
-@Index(['issuedAt']) // Date-based sorting
 export class Warning {
 	@ApiProperty({
 		description: 'Unique identifier for the warning',
@@ -74,7 +69,7 @@ export class Warning {
 		description: 'Date when the warning expires',
 		example: '2023-11-15T10:30:00Z',
 	})
-	@Column({ type: 'datetime' })
+	@Column({ type: 'timestamp' })
 	expiresAt: Date;
 
 	@ApiProperty({

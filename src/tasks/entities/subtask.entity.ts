@@ -1,11 +1,8 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, Index } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne } from 'typeorm';
 import { Task } from './task.entity';
 import { SubTaskStatus } from '../../lib/enums/status.enums';
 
 @Entity('subtask')
-@Index(['task', 'status']) // Task subtasks filtering
-@Index(['status', 'isDeleted']) // Subtask status queries
-@Index(['createdAt']) // Date-based sorting
 export class SubTask {
     @PrimaryGeneratedColumn()
     uid: number;

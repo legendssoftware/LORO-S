@@ -2,15 +2,9 @@ import { Product } from '../../products/entities/product.entity';
 import { ResellerStatus } from '../../lib/enums/product.enums';
 import { Organisation } from 'src/organisation/entities/organisation.entity';
 import { Branch } from 'src/branch/entities/branch.entity';
-import { Column, Entity, PrimaryGeneratedColumn, OneToMany, ManyToOne, Index } from 'typeorm';
+import { Column, Entity, PrimaryGeneratedColumn, OneToMany, ManyToOne } from 'typeorm';
 
 @Entity('reseller')
-@Index(['name'])
-@Index(['email'])
-@Index(['phone'])
-@Index(['status', 'isDeleted'])
-@Index(['organisation', 'branch', 'status'])
-@Index(['createdAt'])
 export class Reseller {
 	@PrimaryGeneratedColumn()
 	uid: number;

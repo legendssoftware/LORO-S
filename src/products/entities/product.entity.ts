@@ -4,20 +4,9 @@ import { QuotationItem } from '../../shop/entities/quotation-item.entity';
 import { Reseller } from '../../resellers/entities/reseller.entity';
 import { Branch } from 'src/branch/entities/branch.entity';
 import { ProductAnalytics } from './product-analytics.entity';
-import { Column, Entity, OneToMany, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, BeforeInsert, AfterInsert, ManyToOne, getRepository, OneToOne, Index } from 'typeorm';
+import { Column, Entity, OneToMany, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, BeforeInsert, AfterInsert, ManyToOne, getRepository, OneToOne } from 'typeorm';
 
 @Entity('product')
-@Index(['name']) // Product search
-@Index(['sku']) // SKU lookups
-@Index(['category', 'status']) // Category filtering
-@Index(['status', 'isDeleted']) // Active product filtering
-@Index(['price']) // Price-based queries
-@Index(['stockQuantity', 'reorderPoint']) // Inventory management
-@Index(['isOnPromotion', 'promotionStartDate', 'promotionEndDate']) // Promotion queries
-@Index(['barcode']) // Barcode scanning
-@Index(['brand', 'category']) // Brand categorization
-@Index(['reseller', 'status']) // Reseller product management
-@Index(['palletAvailable']) // Palette availability filtering
 export class Product {
     @PrimaryGeneratedColumn()
     uid: number;

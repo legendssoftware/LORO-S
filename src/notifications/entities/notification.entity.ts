@@ -1,15 +1,10 @@
 import { User } from "../../user/entities/user.entity";
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, Index } from "typeorm";
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn } from "typeorm";
 import { NotificationType, NotificationStatus, NotificationPriority } from "../../lib/enums/notification.enums";
 import { Branch } from "src/branch/entities/branch.entity";
 import { Organisation } from "src/organisation/entities/organisation.entity";
 
 @Entity('notification')
-@Index(['owner', 'status']) // User notification queries
-@Index(['type', 'status']) // Notification type filtering
-@Index(['status', 'createdAt']) // Unread notifications
-@Index(['priority', 'createdAt']) // Priority-based notifications
-@Index(['organisation', 'branch', 'createdAt']) // Regional notifications
 export class Notification {
     @PrimaryGeneratedColumn()
     uid: number;

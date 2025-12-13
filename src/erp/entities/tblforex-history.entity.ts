@@ -1,11 +1,10 @@
-import { Entity, Column, PrimaryGeneratedColumn, Index } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn } from 'typeorm';
 
 /**
  * Forex History Entity
  * Maps to tblforex_history table in bit_consolidated database
  */
 @Entity('tblforex_history', { database: 'bit_consolidated' })
-@Index('idx_forex_date_code', ['forex_date', 'forex_code'])
 export class TblForexHistory {
 	@PrimaryGeneratedColumn()
 	id: number;

@@ -1,14 +1,9 @@
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, DeleteDateColumn, ManyToOne, JoinColumn, Index } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, DeleteDateColumn, ManyToOne, JoinColumn } from 'typeorm';
 import { User } from '../../user/entities/user.entity';
 import { Branch } from 'src/branch/entities/branch.entity';
 import { Organisation } from 'src/organisation/entities/organisation.entity';
 
 @Entity()
-@Index(['owner', 'timestamp']) // User location history
-@Index(['latitude', 'longitude', 'timestamp']) // Geographic queries
-@Index(['timestamp']) // Time-based location queries
-@Index(['organisation', 'branch', 'timestamp']) // Regional tracking
-@Index(['createdAt']) // Date-based sorting
 export class Tracking {
     @PrimaryGeneratedColumn()
     uid: number;

@@ -1,4 +1,4 @@
-import { Entity, Column, PrimaryGeneratedColumn, Index } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn } from 'typeorm';
 
 /**
  * ERP Sales Lines Entity
@@ -8,7 +8,6 @@ import { Entity, Column, PrimaryGeneratedColumn, Index } from 'typeorm';
  * Index: idx_saleslines_store_customer_date already exists in database
  */
 @Entity('tblsaleslines')
-@Index('idx_saleslines_store_customer_date', ['store', 'customer', 'sale_date', 'doc_type'])
 export class TblSalesLines {
 	@PrimaryGeneratedColumn()
 	ID: number;

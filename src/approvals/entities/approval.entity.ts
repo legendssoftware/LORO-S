@@ -7,7 +7,6 @@ import {
     ManyToOne,
     OneToMany,
     JoinColumn,
-    Index,
     BeforeInsert,
     BeforeUpdate
 } from 'typeorm';
@@ -28,19 +27,6 @@ import { ApprovalHistory } from './approval-history.entity';
 import { ApprovalSignature } from './approval-signature.entity';
 
 @Entity('approvals')
-@Index(['status', 'isDeleted']) // Status filtering
-@Index(['type', 'status']) // Type-based approval queries
-@Index(['priority', 'status']) // Priority management
-@Index(['requesterUid', 'status']) // User's approval requests
-@Index(['approverUid', 'status']) // Approver's pending approvals
-@Index(['organisationRef', 'branchUid', 'status']) // Organization/branch scoping
-@Index(['deadline', 'status']) // Deadline management
-@Index(['submittedAt', 'status']) // Submission tracking
-@Index(['completedAt', 'status']) // Completion analytics
-@Index(['createdAt']) // Date-based reporting
-@Index(['entityId', 'entityType']) // Related entity lookups
-@Index(['isUrgent', 'priority']) // Urgent approvals
-@Index(['flowType', 'status']) // Approval flow management
 export class Approval {
     @PrimaryGeneratedColumn()
     uid: number;

@@ -1,14 +1,10 @@
 import { Organisation } from '../../organisation/entities/organisation.entity';
-import { Column, CreateDateColumn, Entity, ManyToOne, PrimaryGeneratedColumn, Index } from 'typeorm';
+import { Column, CreateDateColumn, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { Branch } from '../../branch/entities/branch.entity';
 import { User } from '../../user/entities/user.entity';
 import { ReportType } from '../constants/report-types.enum';
 
 @Entity('reports')
-@Index(['owner', 'generatedAt']) // User report queries
-@Index(['reportType', 'generatedAt']) // Report type filtering
-@Index(['organisation', 'branch', 'generatedAt']) // Regional reports
-@Index(['generatedAt']) // Date-based sorting
 export class Report {
 	@PrimaryGeneratedColumn()
 	uid: number;

@@ -1,12 +1,8 @@
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn } from 'typeorm';
 import { Order } from './order.entity';
 import { Product } from '../../products/entities/product.entity';
 
 @Entity('order_item')
-@Index(['order'])
-@Index(['product'])
-@Index(['isShipped'])
-@Index(['order', 'product'])
 export class OrderItem {
 	@PrimaryGeneratedColumn()
 	uid: number;

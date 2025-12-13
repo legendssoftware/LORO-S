@@ -6,7 +6,6 @@ import {
 	UpdateDateColumn,
 	ManyToOne,
 	JoinColumn,
-	Index,
 } from 'typeorm';
 import { User } from '../../user/entities/user.entity';
 import { Lead } from '../../leads/entities/lead.entity';
@@ -17,12 +16,6 @@ import { Branch } from 'src/branch/entities/branch.entity';
 import { Quotation } from '../../shop/entities/quotation.entity';
 
 @Entity('interactions')
-@Index(['client', 'createdAt']) // Client interaction history
-@Index(['lead', 'createdAt']) // Lead interaction tracking
-@Index(['createdBy', 'createdAt']) // User activity tracking
-@Index(['type', 'createdAt']) // Interaction type analysis
-@Index(['organisation', 'branch', 'createdAt']) // Regional interaction reports
-@Index(['isDeleted', 'createdAt']) // Active interactions
 export class Interaction {
 	@PrimaryGeneratedColumn()
 	uid: number;

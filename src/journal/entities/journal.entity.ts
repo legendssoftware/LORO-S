@@ -1,16 +1,10 @@
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, Index } from 'typeorm';
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { User } from '../../user/entities/user.entity';
 import { Branch } from '../../branch/entities/branch.entity';
 import { Organisation } from 'src/organisation/entities/organisation.entity';
 import { JournalStatus, JournalType, InspectionRating, InspectionFormData } from 'src/lib/enums/journal.enums';
 
 @Entity('journal')
-@Index(['owner', 'timestamp']) // User journal entries
-@Index(['clientRef', 'timestamp']) // Client journal history
-@Index(['status', 'isDeleted']) // Journal status filtering
-@Index(['organisation', 'branch', 'timestamp']) // Regional journal reports
-@Index(['type', 'createdAt']) // Type-based filtering
-@Index(['createdAt']) // Date-based sorting
 export class Journal {
     @PrimaryGeneratedColumn()
     uid: number;

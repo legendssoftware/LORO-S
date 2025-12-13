@@ -1,12 +1,8 @@
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, Index } from 'typeorm';
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { UserRewards } from './user-rewards.entity';
 import { AchievementCategory } from '../../lib/enums/rewards.enum';
 
 @Entity('achievement')
-@Index(['userRewards'])
-@Index(['category'])
-@Index(['isRepeatable'])
-@Index(['createdAt'])
 export class Achievement {
     @PrimaryGeneratedColumn()
     uid: number;

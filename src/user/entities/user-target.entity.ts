@@ -1,11 +1,7 @@
 import { User } from './user.entity'; // Adjusted path assuming it's in the same directory
-import { Entity, Column, PrimaryGeneratedColumn, OneToOne, CreateDateColumn, UpdateDateColumn, Index, BeforeInsert, BeforeUpdate } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, OneToOne, CreateDateColumn, UpdateDateColumn, BeforeInsert, BeforeUpdate } from 'typeorm';
 
 @Entity('user_targets')
-@Index(['targetPeriod', 'periodStartDate', 'periodEndDate']) // Period-based filtering
-@Index(['periodStartDate', 'periodEndDate']) // Date range queries
-@Index(['updatedAt']) // Recent updates tracking
-@Index(['isRecurring', 'nextRecurrenceDate']) // For cron job queries
 export class UserTarget {
 	@PrimaryGeneratedColumn()
 	uid: number;

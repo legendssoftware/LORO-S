@@ -1,12 +1,8 @@
 import { Branch } from 'src/branch/entities/branch.entity';
 import { Organisation } from 'src/organisation/entities/organisation.entity';
-import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, Index } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, ManyToOne } from 'typeorm';
 
 @Entity('communication_logs')
-@Index(['emailType', 'createdAt']) // Email type tracking
-@Index(['messageId']) // Message tracking
-@Index(['organisation', 'branch', 'createdAt']) // Regional communication logs
-@Index(['createdAt']) // Date-based sorting
 export class CommunicationLog {
 	@PrimaryGeneratedColumn('uuid')
 	uid: string;

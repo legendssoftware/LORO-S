@@ -6,7 +6,6 @@ import {
 	JoinColumn,
 	CreateDateColumn,
 	UpdateDateColumn,
-	Index,
 } from 'typeorm';
 import { Client } from '../../clients/entities/client.entity';
 import { Organisation } from '../../organisation/entities/organisation.entity';
@@ -15,13 +14,6 @@ import { Task } from '../../tasks/entities/task.entity';
 import { FeedbackStatus, FeedbackType } from '../../lib/enums/feedback.enums';
 
 @Entity('feedback')
-@Index(['type', 'status'])
-@Index(['client', 'status'])
-@Index(['task', 'status'])
-@Index(['status', 'isDeleted'])
-@Index(['organisation', 'branch', 'createdAt'])
-@Index(['rating'])
-@Index(['createdAt'])
 export class Feedback {
 	@PrimaryGeneratedColumn()
 	uid: number;

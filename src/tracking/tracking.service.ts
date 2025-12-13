@@ -93,8 +93,8 @@ export class TrackingService {
 	 */
 	private getVirtualLocationFilters(): any {
 		return {
-			latitude: Raw(alias => `ABS(${alias}) NOT LIKE '%122%'`),
-			longitude: Raw(alias => `ABS(${alias}) NOT LIKE '%122%'`),
+			latitude: Raw(alias => `CAST(ABS(${alias}) AS TEXT) NOT LIKE '%122%'`),
+			longitude: Raw(alias => `CAST(ABS(${alias}) AS TEXT) NOT LIKE '%122%'`),
 		};
 	}
 

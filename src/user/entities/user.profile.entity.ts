@@ -1,11 +1,8 @@
 import { Gender } from "../../lib/enums/gender.enums";
 import { User } from "./user.entity";
-import { Column, Entity, OneToOne, PrimaryGeneratedColumn, Index } from "typeorm";
+import { Column, Entity, OneToOne, PrimaryGeneratedColumn } from "typeorm";
 
 @Entity('user_profile')
-@Index(['gender', 'currentAge'])
-@Index(['dateOfBirth'])
-@Index(['city', 'country'])
 export class UserProfile {
     @PrimaryGeneratedColumn()
     uid: number;

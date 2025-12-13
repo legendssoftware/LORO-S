@@ -11,7 +11,6 @@ import {
 	BeforeUpdate,
 	ManyToOne,
 	OneToMany,
-	Index,
 } from 'typeorm';
 import { Organisation } from '../../organisation/entities/organisation.entity';
 import { Branch } from '../../branch/entities/branch.entity';
@@ -20,13 +19,6 @@ import { Route } from './route.entity';
 import { TaskFlag } from './task-flag.entity';
 
 @Entity('tasks')
-@Index(['status', 'isDeleted']) // Task status filtering
-@Index(['priority', 'status']) // Priority-based queries
-@Index(['taskType', 'status']) // Task type filtering
-@Index(['deadline', 'isOverdue']) // Deadline management
-@Index(['completionDate', 'status']) // Completion tracking
-@Index(['jobStatus', 'isDeleted']) // Job management
-@Index(['createdAt']) // Date-based reporting
 export class Task {
 	@PrimaryGeneratedColumn()
 	uid: number;
@@ -52,13 +44,13 @@ export class Task {
 	@Column({ type: 'int', default: 0 })
 	progress: number;
 
-	@Column({ type: 'datetime', nullable: true })
+	@Column({ type: 'timestamp', nullable: true })
 	deadline: Date;
 
-	@Column({ type: 'datetime', nullable: true })
+	@Column({ type: 'timestamp', nullable: true })
 	repetitionDeadline: Date;
 
-	@Column({ type: 'datetime', nullable: true })
+	@Column({ type: 'timestamp', nullable: true })
 	completionDate: Date;
 
 	@Column({ type: 'boolean', default: false })
@@ -79,10 +71,10 @@ export class Task {
 	@Column({ type: 'json', nullable: true })
 	attachments?: string[];
 
-	@Column({ type: 'datetime', nullable: true })
+	@Column({ type: 'timestamp', nullable: true })
 	jobStartTime?: Date;
 
-	@Column({ type: 'datetime', nullable: true })
+	@Column({ type: 'timestamp', nullable: true })
 	jobEndTime?: Date;
 
 	@Column({ type: 'int', nullable: true })

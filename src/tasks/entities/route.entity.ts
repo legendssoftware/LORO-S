@@ -1,4 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn, UpdateDateColumn } from 'typeorm';
 import { Task } from './task.entity';
 import { User } from '../../user/entities/user.entity';
 import { Branch } from '../../branch/entities/branch.entity';
@@ -44,11 +44,6 @@ export interface RouteLeg {
 }
 
 @Entity('routes')
-@Index(['assignee', 'plannedDate']) // User route queries
-@Index(['task', 'isDeleted']) // Task route tracking
-@Index(['plannedDate', 'isDeleted']) // Date-based route planning
-@Index(['branch', 'plannedDate']) // Branch route management
-@Index(['isOptimized', 'plannedDate']) // Route optimization tracking
 export class Route {
   @PrimaryGeneratedColumn()
   uid: number;

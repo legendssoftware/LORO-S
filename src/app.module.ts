@@ -122,17 +122,69 @@ import { PayslipsModule } from './payslips/payslips.module';
 			isGlobal: true,
 		}),
 		EventEmitterModule.forRoot(),
-		// Main application database connection
+		// Main application database connection (PostgreSQL)
 		TypeOrmModule.forRootAsync({
 			imports: [ConfigModule],
-			useFactory: (configService: ConfigService) => ({
-				type: 'mysql',
-				host: configService.get<string>('DATABASE_HOST'),
-				port: parseInt(configService.get<string>('DATABASE_PORT'), 10) || 3306,
-				username: configService.get<string>('DATABASE_USER'),
-				password: configService.get<string>('DATABASE_PASSWORD'),
-				database: configService.get<string>('DATABASE_NAME'),
-				entities: [
+			useFactory: (configService: ConfigService) => {
+				// Prioritize PG_DB_* env vars, fallback to DATABASE_* for backward compatibility
+				let host = configService.get<string>('PG_DB_HOST') || configService.get<string>('DATABASE_HOST');
+				let port = parseInt(configService.get<string>('PG_DB_PORT') || configService.get<string>('DATABASE_PORT') || '5432', 10);
+				let username = configService.get<string>('PG_DB_USERNAME') || configService.get<string>('DATABASE_USER');
+				let password = configService.get<string>('PG_DB_PASSWORD') || configService.get<string>('DATABASE_PASSWORD');
+				let database = configService.get<string>('PG_DB_NAME') || configService.get<string>('DATABASE_NAME');
+				
+				// Parse connection string if PG_DB_HOST contains a full PostgreSQL URL
+				if (host && (host.startsWith('postgresql://') || host.startsWith('postgres://'))) {
+					try {
+						const url = new URL(host);
+						// Extract hostname (remove port if present in hostname)
+						const hostname = url.hostname;
+						// Extract port from URL or use default
+						const urlPort = url.port ? parseInt(url.port, 10) : 5432;
+						// Extract username and password from URL
+						const urlUsername = url.username || username;
+						const urlPassword = url.password || password;
+						// Extract database name from pathname (remove leading slash)
+						const urlDatabase = url.pathname ? url.pathname.slice(1) : database;
+						
+						// Use parsed values, but allow env vars to override if they're explicitly set
+						host = hostname;
+						if (!configService.get<string>('PG_DB_PORT') && !configService.get<string>('DATABASE_PORT')) {
+							port = urlPort;
+						}
+						if (!configService.get<string>('PG_DB_USERNAME') && !configService.get<string>('DATABASE_USER')) {
+							username = urlUsername;
+						}
+						if (!configService.get<string>('PG_DB_PASSWORD') && !configService.get<string>('DATABASE_PASSWORD')) {
+							password = urlPassword;
+						}
+						if (!configService.get<string>('PG_DB_NAME') && !configService.get<string>('DATABASE_NAME')) {
+							database = urlDatabase;
+						}
+					} catch (error) {
+						console.error('Failed to parse PostgreSQL connection string:', error);
+						// Fall back to using host as-is if parsing fails
+					}
+				}
+				
+				const isProduction = configService.get<string>('NODE_ENV') === 'production';
+				
+				// Detect if connecting to Render PostgreSQL (host contains 'dpg-' or 'render.com')
+				// Or if connecting to localhost/127.0.0.1 (disable SSL)
+				const isLocalhost = host === 'localhost' || host === '127.0.0.1' || host?.startsWith('192.168.') || host?.startsWith('10.');
+				const isRender = host?.includes('dpg-') || host?.includes('render.com');
+				
+				// Enable SSL only for Render PostgreSQL, not for localhost
+				const enableSSL = isRender && !isLocalhost;
+				
+				return {
+					type: 'postgres',
+					host,
+					port,
+					username,
+					password,
+					database,
+					entities: [
 					User,
 					UserTarget,
 					UserProfile,
@@ -149,7 +201,6 @@ import { PayslipsModule } from './payslips/payslips.module';
 					Asset,
 					Tracking,
 					Notification,
-					Task,
 					Client,
 					ClientAuth,
 					Product,
@@ -184,7 +235,6 @@ import { PayslipsModule } from './payslips/payslips.module';
 					Reward,
 					Order,
 					OrderItem,
-					Report,
 					Interaction,
 					Leave,
 					Warning,
@@ -197,44 +247,18 @@ import { PayslipsModule } from './payslips/payslips.module';
 					DeviceRecords,
 					DeviceLogs,
 				],
-				synchronize: true,
-				logging: false,
-				extra: {
-					connectionLimit: parseInt(configService.get<string>('DB_CONNECTION_LIMIT') || '20', 10), // Increased connection limit
-					
-					// ✅ Connection timeout - fail fast if can't connect (10 seconds)
-					connectTimeout: parseInt(configService.get<string>('DB_CONNECT_TIMEOUT') || '10000', 10),
-					
-					// ✅ Connection acquisition timeout - max wait for available connection (30 seconds)
-					acquireTimeout: parseInt(configService.get<string>('DB_ACQUIRE_TIMEOUT') || '30000', 10),
-					
-					// ✅ Query execution timeout - prevent runaway queries (60 seconds)
-					timeout: parseInt(configService.get<string>('DB_QUERY_TIMEOUT') || '60000', 10),
-					
-					// ✅ Idle timeout - release idle connections (5 minutes)
-					idleTimeout: parseInt(configService.get<string>('DB_IDLE_TIMEOUT') || '300000', 10),
-					
-					// ✅ Connection validation and stability
-					waitForConnections: true, // Queue requests instead of failing immediately
-					queueLimit: 0, // No queue limit - let queries wait rather than fail
-					
-					dateStrings: false,
-					ssl: configService.get<string>('NODE_ENV') === 'production' ? { rejectUnauthorized: false } : false,
-					// Additional MySQL optimizations for high load
-					supportBigNumbers: true,
-					bigNumberStrings: false,
-					charset: 'utf8mb4',
-					timezone: 'Z',
-					multipleStatements: false,
-					typeCast: true,
-					// Additional connection stability settings
-					keepAliveInitialDelay: 0,
-					enableKeepAlive: true,
-				},
-				retryAttempts: 10,
-				retryDelay: 1000,
-				autoLoadEntities: false,
-			}),
+					synchronize: !isProduction, // Only synchronize in development
+					logging: false,
+					extra: {
+						max: parseInt(configService.get<string>('DB_CONNECTION_LIMIT') || '20', 10),
+						// Enable SSL only for Render PostgreSQL, disable for localhost
+						ssl: enableSSL ? { rejectUnauthorized: false } : false,
+					},
+					retryAttempts: 10,
+					retryDelay: 1000,
+					autoLoadEntities: false,
+				};
+			},
 			inject: [ConfigService],
 		}),
 		// ERP database connection (second database)
@@ -262,12 +286,6 @@ import { PayslipsModule } from './payslips/payslips.module';
 					// ✅ Connection timeout - fail fast if can't connect (10 seconds)
 					connectTimeout: parseInt(configService.get<string>('ERP_DB_CONNECT_TIMEOUT') || '10000', 10),
 					
-					// ✅ Connection acquisition timeout - max wait for available connection (30 seconds)
-					acquireTimeout: parseInt(configService.get<string>('ERP_DB_ACQUIRE_TIMEOUT') || '30000', 10),
-					
-					// ✅ Query execution timeout - prevent runaway queries (90 seconds for large aggregations)
-					timeout: parseInt(configService.get<string>('ERP_DB_QUERY_TIMEOUT') || '90000', 10),
-					
 					// ✅ Idle timeout - release idle connections (10 minutes)
 					idleTimeout: parseInt(configService.get<string>('ERP_DB_IDLE_TIMEOUT') || '600000', 10),
 					
@@ -286,10 +304,6 @@ import { PayslipsModule } from './payslips/payslips.module';
 					timezone: 'Z',
 					multipleStatements: false,
 					typeCast: true,
-					
-					// ✅ Connection pool behavior
-					connectionPoolSize: parseInt(configService.get<string>('ERP_DB_CONNECTION_LIMIT') || '75', 10),
-					maxQueryExecutionTime: parseInt(configService.get<string>('ERP_DB_QUERY_TIMEOUT') || '90000', 10),
 				},
 				retryAttempts: 10,
 				retryDelay: 1000,

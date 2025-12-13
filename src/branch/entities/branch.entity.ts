@@ -1,6 +1,6 @@
 import { Organisation } from '../../organisation/entities/organisation.entity';
 import { GeneralStatus } from '../../lib/enums/status.enums';
-import { Column, Entity, ManyToOne, OneToMany, PrimaryGeneratedColumn, Index } from 'typeorm';
+import { Column, Entity, ManyToOne, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
 import { Tracking } from '../../tracking/entities/tracking.entity';
 import { News } from '../../news/entities/news.entity';
 import { Lead } from '../../leads/entities/lead.entity';
@@ -26,13 +26,6 @@ import { Leave } from 'src/leave/entities/leave.entity';
 import { Project } from 'src/shop/entities/project.entity';
 
 @Entity('branch')
-@Index(['organisation', 'status']) // Organisation branch queries
-@Index(['name', 'organisation']) // Branch lookup within org
-@Index(['email']) // Contact lookups
-@Index(['phone']) // Contact lookups
-@Index(['ref']) // Reference lookups
-@Index(['status', 'isDeleted']) // Active branch filtering
-@Index(['createdAt']) // Date-based sorting
 export class Branch {
 	@PrimaryGeneratedColumn()
 	uid: number;

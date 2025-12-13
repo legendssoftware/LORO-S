@@ -9,18 +9,10 @@ import {
 	CreateDateColumn,
 	UpdateDateColumn,
 	DeleteDateColumn,
-	Index,
 } from 'typeorm';
 import { LeaveType, LeaveStatus, HalfDayPeriod } from '../../lib/enums/leave.enums';
 
 @Entity('leave')
-@Index(['owner', 'status']) // User leave queries
-@Index(['status', 'startDate']) // Leave status management
-@Index(['leaveType', 'status']) // Leave type filtering
-@Index(['startDate', 'endDate']) // Date range queries
-@Index(['organisation', 'branch', 'startDate']) // Regional leave reports
-@Index(['approvedBy', 'approvedAt']) // Approval tracking
-@Index(['createdAt']) // Date-based sorting
 export class Leave {
 	@PrimaryGeneratedColumn()
 	uid: number;

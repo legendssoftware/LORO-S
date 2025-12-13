@@ -12,20 +12,12 @@ import {
 	UpdateDateColumn,
 	ManyToOne,
 	OneToMany,
-	Index,
 } from 'typeorm';
 import { Order } from './order.entity';
 import { Interaction } from '../../interactions/entities/interaction.entity';
 import { Project } from './project.entity';
 
 @Entity('quotation')
-@Index(['quotationNumber']) // Unique quotation lookups
-@Index(['status', 'quotationDate']) // Quotation management
-@Index(['client', 'status']) // Customer quotation history
-@Index(['placedBy', 'quotationDate']) // Sales rep performance
-@Index(['isConverted', 'convertedAt']) // Conversion tracking
-@Index(['validUntil', 'status']) // Expiry management
-@Index(['organisation', 'branch', 'quotationDate']) // Regional reporting
 export class Quotation {
 	@PrimaryGeneratedColumn()
 	uid: number;

@@ -1,11 +1,8 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn, UpdateDateColumn } from 'typeorm';
 import { TaskFlag } from './task-flag.entity';
 import { TaskFlagItemStatus } from '../../lib/enums/task.enums';
 
 @Entity('task_flag_items')
-@Index(['taskFlag', 'status'])
-@Index(['status', 'isDeleted'])
-@Index(['createdAt'])
 export class TaskFlagItem {
     @PrimaryGeneratedColumn()
     uid: number;

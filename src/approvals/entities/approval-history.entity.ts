@@ -4,18 +4,13 @@ import {
     PrimaryGeneratedColumn,
     CreateDateColumn,
     ManyToOne,
-    JoinColumn,
-    Index
+    JoinColumn
 } from 'typeorm';
 import { Approval } from './approval.entity';
 import { User } from '../../user/entities/user.entity';
 import { ApprovalAction, ApprovalStatus } from '../../lib/enums/approval.enums';
 
 @Entity('approval_history')
-@Index(['approvalUid', 'createdAt']) // Approval history queries
-@Index(['actionBy', 'action']) // User action tracking
-@Index(['toStatus', 'createdAt']) // Status change analytics
-@Index(['createdAt']) // Timeline queries
 export class ApprovalHistory {
     @PrimaryGeneratedColumn()
     uid: number;

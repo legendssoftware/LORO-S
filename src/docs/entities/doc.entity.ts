@@ -1,17 +1,10 @@
 import { Organisation } from 'src/organisation/entities/organisation.entity';
 import { Branch } from '../../branch/entities/branch.entity';
 import { User } from '../../user/entities/user.entity';
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, Index } from 'typeorm';
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { DocType } from '../../lib/enums/doc.enums';
 
 @Entity('docs')
-@Index(['owner', 'isActive']) // User document queries
-@Index(['fileType', 'isActive']) // File type filtering
-@Index(['docType', 'isActive']) // Document type filtering
-@Index(['isPublic', 'isActive']) // Public document access
-@Index(['organisation', 'branch', 'createdAt']) // Regional document management
-@Index(['lastAccessedAt']) // Access pattern tracking
-@Index(['createdAt']) // Date-based sorting
 export class Doc {
     @PrimaryGeneratedColumn()
     uid: number;

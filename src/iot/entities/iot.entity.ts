@@ -1,14 +1,9 @@
-import { Column, Entity, Index, JoinColumn, ManyToOne, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, JoinColumn, ManyToOne, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
 import { DeviceStatus, DeviceType } from '../../lib/enums/iot';
 import { Branch } from '../../branch/entities/branch.entity';
 import { Organisation } from '../../organisation/entities/organisation.entity';
 
 @Entity('device')
-@Index(['deviceID'])
-@Index(['orgID'])
-@Index(['branchID'])
-@Index(['createdAt'])
-@Index(['updatedAt'])
 export class Device {
 	@PrimaryGeneratedColumn()
 	id: number;
@@ -76,14 +71,6 @@ export class Device {
 }
 
 @Entity('device_records')
-@Index(['deviceId'])
-@Index(['openTime'])
-@Index(['closeTime'])
-@Index(['createdAt'])
-@Index(['updatedAt'])
-// Note: For additional duplicate prevention at database level, consider adding:
-// @Index(['deviceId', 'openTime'], { unique: true, where: 'openTime IS NOT NULL' })
-// This would require a database migration to implement
 export class DeviceRecords {
 	@PrimaryGeneratedColumn()
 	id: number;
@@ -108,11 +95,6 @@ export class DeviceRecords {
 }
 
 @Entity('device_logs')
-@Index(['deviceId'])
-@Index(['deviceID'])
-@Index(['orgID'])
-@Index(['createdAt'])
-@Index(['eventType'])
 export class DeviceLogs {
 	@PrimaryGeneratedColumn()
 	id: number;

@@ -1,11 +1,7 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, Index } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne } from 'typeorm';
 import { Client } from './client.entity';
 
 @Entity('client_auth')
-@Index(['email'])
-@Index(['client', 'isActive'])
-@Index(['isActive', 'isDeleted'])
-@Index(['lastLogin'])
 export class ClientAuth {
 	@PrimaryGeneratedColumn()
 	uid: number;

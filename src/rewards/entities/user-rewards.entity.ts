@@ -1,14 +1,10 @@
-import { Column, Entity, JoinColumn, ManyToOne, OneToMany, PrimaryGeneratedColumn, Index } from 'typeorm';
+import { Column, Entity, JoinColumn, ManyToOne, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
 import { User } from '../../user/entities/user.entity';
 import { Achievement } from './achievement.entity';
 import { UnlockedItem } from './unlocked-item.entity';
 import { XPTransaction } from './xp-transaction.entity';
 
 @Entity()
-@Index(['owner'])
-@Index(['level', 'rank'])
-@Index(['totalXP'])
-@Index(['lastAction'])
 export class UserRewards {
     @PrimaryGeneratedColumn()
     uid: number;

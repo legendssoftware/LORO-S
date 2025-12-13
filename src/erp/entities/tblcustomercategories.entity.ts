@@ -1,4 +1,4 @@
-import { Entity, Column, PrimaryGeneratedColumn, Index } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn } from 'typeorm';
 
 /**
  * ERP Customer Categories Entity
@@ -8,7 +8,6 @@ import { Entity, Column, PrimaryGeneratedColumn, Index } from 'typeorm';
  * Index: idx_customercategories_catcode already exists in database
  */
 @Entity('tblcustomercategories')
-@Index('idx_customercategories_catcode', ['cust_cat_code'])
 export class TblCustomerCategories {
 	@PrimaryGeneratedColumn()
 	ID: number;

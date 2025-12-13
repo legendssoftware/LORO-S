@@ -4,18 +4,13 @@ import {
     PrimaryGeneratedColumn,
     CreateDateColumn,
     ManyToOne,
-    JoinColumn,
-    Index
+    JoinColumn
 } from 'typeorm';
 import { Approval } from './approval.entity';
 import { User } from '../../user/entities/user.entity';
 import { SignatureType } from '../../lib/enums/approval.enums';
 
 @Entity('approval_signatures')
-@Index(['approvalUid', 'createdAt']) // Approval signature queries
-@Index(['signerUid', 'signatureType']) // Signer tracking
-@Index(['isValid', 'createdAt']) // Valid signature queries
-@Index(['certificateId']) // Certificate lookups
 export class ApprovalSignature {
     @PrimaryGeneratedColumn()
     uid: number;

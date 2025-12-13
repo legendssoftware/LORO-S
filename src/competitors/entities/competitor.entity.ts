@@ -2,7 +2,7 @@ import { Organisation } from 'src/organisation/entities/organisation.entity';
 import { User } from 'src/user/entities/user.entity';
 import { Branch } from 'src/branch/entities/branch.entity';
 import { CompetitorStatus, GeofenceType } from 'src/lib/enums/competitor.enums';
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn } from 'typeorm';
 
 @Entity('competitor')
 export class Competitor {
@@ -10,7 +10,6 @@ export class Competitor {
 	uid: number;
 
 	@Column({ type: 'varchar', length: 255 })
-	@Index()
 	name: string;
 
 	@Column({ type: 'text', nullable: true })
@@ -52,7 +51,6 @@ export class Competitor {
 	logoUrl: string;
 
 	@Column({ type: 'enum', enum: CompetitorStatus, default: CompetitorStatus.ACTIVE })
-	@Index()
 	status: CompetitorStatus;
 
 	@Column({ type: 'decimal', precision: 5, scale: 2, nullable: true })
@@ -62,7 +60,6 @@ export class Competitor {
 	estimatedAnnualRevenue: number;
 
 	@Column({ type: 'varchar', length: 100, nullable: true })
-	@Index()
 	industry: string;
 
 	@Column({ type: 'simple-array', nullable: true })
@@ -78,7 +75,6 @@ export class Competitor {
 	estimatedEmployeeCount: number;
 
 	@Column({ type: 'int', default: 0 })
-	@Index()
 	threatLevel: number;
 
 	@Column({ type: 'int', default: 0 })
@@ -99,7 +95,6 @@ export class Competitor {
 	marketingStrategy: string;
 
 	@Column({ type: 'boolean', default: false })
-	@Index()
 	isDirect: boolean;
 
 	@Column({ type: 'date', nullable: true })
@@ -128,11 +123,9 @@ export class Competitor {
 	};
 
 	@Column({ default: false })
-	@Index()
 	isDeleted: boolean;
 
 	@Column({ nullable: true, unique: true })
-	@Index()
 	competitorRef: string;
 
 	@Column({ type: 'enum', enum: GeofenceType, default: GeofenceType.NONE })
@@ -152,11 +145,9 @@ export class Competitor {
 
 	// Relations
 	@ManyToOne(() => Organisation, { nullable: true })
-	@Index()
 	organisation: Organisation;
 
 	@ManyToOne(() => Branch, { nullable: true })
-	@Index()
 	branch: Branch;
 
 	@ManyToOne(() => User, { nullable: true })

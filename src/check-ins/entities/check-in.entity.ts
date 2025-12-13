@@ -2,14 +2,10 @@ import { Organisation } from 'src/organisation/entities/organisation.entity';
 import { Branch } from '../../branch/entities/branch.entity';
 import { Client } from '../../clients/entities/client.entity';
 import { User } from '../../user/entities/user.entity';
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, Index, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn } from 'typeorm';
 import { Address } from 'src/lib/interfaces/address.interface';
 
 @Entity('check-ins')
-@Index(['owner', 'checkInTime']) // User check-in history
-@Index(['client', 'checkInTime']) // Client visit tracking
-@Index(['checkInTime', 'checkOutTime']) // Visit duration queries
-@Index(['organisation', 'branch', 'checkInTime']) // Regional check-in reports
 export class CheckIn {
 	@PrimaryGeneratedColumn()
 	uid: number;

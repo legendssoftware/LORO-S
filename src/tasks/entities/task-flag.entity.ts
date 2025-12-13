@@ -1,4 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn, UpdateDateColumn, OneToMany, Index } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn, UpdateDateColumn, OneToMany } from 'typeorm';
 import { Task } from './task.entity';
 import { User } from 'src/user/entities/user.entity';
 import { TaskFlagStatus } from '../../lib/enums/task.enums';
@@ -7,11 +7,6 @@ import { ApiProperty } from '@nestjs/swagger';
 import { IsArray, IsOptional } from 'class-validator';
 
 @Entity('task_flags')
-@Index(['task', 'status'])
-@Index(['status', 'isDeleted'])
-@Index(['createdBy', 'createdAt'])
-@Index(['deadline', 'status'])
-@Index(['createdAt'])
 export class TaskFlag {
     @PrimaryGeneratedColumn()
     uid: number;
@@ -25,7 +20,7 @@ export class TaskFlag {
     @Column({ type: 'enum', enum: TaskFlagStatus, default: TaskFlagStatus.OPEN })
     status: TaskFlagStatus;
 
-    @Column({ type: 'datetime', nullable: true })
+    @Column({ type: 'timestamp', nullable: true })
     deadline: Date;
 
     @CreateDateColumn()

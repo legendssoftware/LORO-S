@@ -1,13 +1,9 @@
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, Index } from 'typeorm';
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { UserRewards } from './user-rewards.entity';
 import { ItemRarity } from '../../lib/enums/rewards.enum';
 import { ItemType } from '../../lib/enums/rewards.enum';
 
 @Entity('unlocked_item')
-@Index(['userRewards'])
-@Index(['type', 'rarity'])
-@Index(['requiredLevel'])
-@Index(['unlockedAt'])
 export class UnlockedItem {
     @PrimaryGeneratedColumn()
     uid: number;

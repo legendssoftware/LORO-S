@@ -1,0 +1,3651 @@
+#!/usr/bin/env node
+
+/**
+ * MySQL to PostgreSQL Migration Script
+ * 
+ * Migrates data from legacy MySQL database to PostgreSQL database.
+ * Supports configurable PostgreSQL connection URL for reusability.
+ * 
+ * Usage:
+ *   npm run migrate:legacy-db
+ *   npm run migrate:legacy-db -- --pg-url postgresql://user:pass@host:port/dbname
+ *   npm run migrate:legacy-db -- --dry-run
+ *   npm run migrate:legacy-db -- --only orgs,branches,users
+ */
+
+import * as mysql from 'mysql2/promise';
+import * as yargs from 'yargs';
+import { hideBin } from 'yargs/helpers';
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from '../app.module';
+import { DataSource, DeepPartial } from 'typeorm';
+import { ConfigService } from '@nestjs/config';
+import { Repository } from 'typeorm';
+import { Organisation } from '../organisation/entities/organisation.entity';
+import { Branch } from '../branch/entities/branch.entity';
+import { User } from '../user/entities/user.entity';
+import { UserProfile } from '../user/entities/user.profile.entity';
+import { UserEmployeementProfile } from '../user/entities/user.employeement.profile.entity';
+import { UserTarget } from '../user/entities/user-target.entity';
+import { Device, DeviceRecords, DeviceLogs } from '../iot/entities/iot.entity';
+import { License } from '../licensing/entities/license.entity';
+import { LicenseUsage } from '../licensing/entities/license-usage.entity';
+import { LicenseEvent } from '../licensing/entities/license-event.entity';
+import { LicenseAudit } from '../licensing/entities/license-audit.entity';
+import { Attendance } from '../attendance/entities/attendance.entity';
+import { Claim } from '../claims/entities/claim.entity';
+import { CheckIn } from '../check-ins/entities/check-in.entity';
+import { Lead } from '../leads/entities/lead.entity';
+import { Quotation } from '../shop/entities/quotation.entity';
+import { QuotationItem } from '../shop/entities/quotation-item.entity';
+import { Order } from '../shop/entities/order.entity';
+import { OrderItem } from '../shop/entities/order-item.entity';
+import { Task } from '../tasks/entities/task.entity';
+import { SubTask } from '../tasks/entities/subtask.entity';
+import { Route } from '../tasks/entities/route.entity';
+import { TaskFlag } from '../tasks/entities/task-flag.entity';
+import { TaskFlagItem } from '../tasks/entities/task-flag-item.entity';
+import { Interaction } from '../interactions/entities/interaction.entity';
+import { Notification } from '../notifications/entities/notification.entity';
+import { CommunicationLog } from '../communication/entities/communication-log.entity';
+import { Journal } from '../journal/entities/journal.entity';
+import { Report } from '../reports/entities/report.entity';
+import { Leave } from '../leave/entities/leave.entity';
+import { Warning } from '../warnings/entities/warning.entity';
+import { Tracking } from '../tracking/entities/tracking.entity';
+import { Geofence } from '../tracking/entities/geofence.entity';
+import { GeofenceEvent } from '../tracking/entities/geofence-event.entity';
+import { Doc } from '../docs/entities/doc.entity';
+import { Asset } from '../assets/entities/asset.entity';
+import { News } from '../news/entities/news.entity';
+import { Feedback } from '../feedback/entities/feedback.entity';
+import { Competitor } from '../competitors/entities/competitor.entity';
+import { Reseller } from '../resellers/entities/reseller.entity';
+import { Banners } from '../shop/entities/banners.entity';
+import { Project } from '../shop/entities/project.entity';
+import { Approval } from '../approvals/entities/approval.entity';
+import { ApprovalHistory } from '../approvals/entities/approval-history.entity';
+import { ApprovalSignature } from '../approvals/entities/approval-signature.entity';
+import { UserRewards } from '../rewards/entities/user-rewards.entity';
+import { Achievement } from '../rewards/entities/achievement.entity';
+import { UnlockedItem } from '../rewards/entities/unlocked-item.entity';
+import { XPTransaction } from '../rewards/entities/xp-transaction.entity';
+import { Reward } from '../rewards/entities/reward.entity';
+import { OrganisationSettings } from '../organisation/entities/organisation-settings.entity';
+import { OrganisationAppearance } from '../organisation/entities/organisation-appearance.entity';
+import { OrganisationHours } from '../organisation/entities/organisation-hours.entity';
+import { Payslip } from '../payslips/entities/payslip.entity';
+import { UsageEvent } from '../usage-tracking/entities/usage-event.entity';
+import { UsageSummary } from '../usage-tracking/entities/usage-summary.entity';
+import { GeneralStatus } from '../lib/enums/status.enums';
+import { AccessLevel } from '../lib/enums/user.enums';
+import { DeviceType, DeviceStatus } from '../lib/enums/iot';
+import { LicenseType, SubscriptionPlan, LicenseStatus, BillingCycle } from '../lib/enums/license.enums';
+import { AttendanceStatus } from '../lib/enums/attendance.enums';
+
+interface ScriptArguments {
+	'pg-url'?: string;
+	'dry-run'?: boolean;
+	only?: string;
+	verbose?: boolean;
+}
+
+interface UidMapping {
+	[oldUid: number]: number;
+}
+
+interface IdMapping {
+	[oldId: number]: number;
+}
+
+class MigrationStats {
+	organisations = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	branches = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	users = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	userProfiles = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	userEmploymentProfiles = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	userTargets = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	devices = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	deviceRecords = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	deviceLogs = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	licenses = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	licenseUsage = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	licenseEvents = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	licenseAudit = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	attendance = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	claims = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	checkIns = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	leads = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	quotations = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	quotationItems = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	orders = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	orderItems = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	tasks = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	subtasks = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	routes = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	taskFlags = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	taskFlagItems = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	interactions = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	notifications = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	communicationLogs = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	journals = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	reports = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	leave = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	warnings = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	tracking = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	geofences = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	geofenceEvents = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	docs = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	assets = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	news = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	feedback = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	competitors = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	resellers = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	banners = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	projects = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	approvals = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	approvalHistory = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	approvalSignatures = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	userRewards = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	achievements = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	unlockedItems = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	xpTransactions = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	rewards = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	orgSettings = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	orgAppearance = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	orgHours = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	payslips = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	usageEvents = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+	usageSummary = { total: 0, imported: 0, skipped: 0, errors: 0, duplicates: 0, updated: 0 };
+}
+
+/**
+ * Legacy Database Migrator
+ * 
+ * IMPORTANT DATA PRESERVATION RULES:
+ * 1. All SELECT queries use SELECT * to import ALL columns from MySQL
+ * 2. Use preserveField() and preserveFieldWithFallback() helpers to avoid losing data
+ * 3. Never use || operator for defaults - it replaces falsy values (0, '', false)
+ * 4. Use ?? operator or preserveField() to preserve 0, empty strings, and false values
+ * 5. parseAndMapNumberArray preserves all valid numbers including 0
+ * 6. JSON fields are parsed but original structure is preserved
+ * 7. All foreign key arrays preserve mapped values, skip only unmapped ones
+ */
+class LegacyDbMigrator {
+	private mysqlConnection: mysql.Connection | null = null;
+	private pgDataSource: DataSource | null = null;
+	private app: any = null;
+	private configService: ConfigService | null = null;
+	
+	// Repositories
+	private orgRepo: Repository<Organisation> | null = null;
+	private branchRepo: Repository<Branch> | null = null;
+	private userRepo: Repository<User> | null = null;
+	private userProfileRepo: Repository<UserProfile> | null = null;
+	private userEmploymentRepo: Repository<UserEmployeementProfile> | null = null;
+	private userTargetRepo: Repository<UserTarget> | null = null;
+	private deviceRepo: Repository<Device> | null = null;
+	private deviceRecordsRepo: Repository<DeviceRecords> | null = null;
+	private deviceLogsRepo: Repository<DeviceLogs> | null = null;
+	private licenseRepo: Repository<License> | null = null;
+	private licenseUsageRepo: Repository<LicenseUsage> | null = null;
+	private licenseEventRepo: Repository<LicenseEvent> | null = null;
+	private licenseAuditRepo: Repository<LicenseAudit> | null = null;
+	private attendanceRepo: Repository<Attendance> | null = null;
+	private claimRepo: Repository<Claim> | null = null;
+	private checkInRepo: Repository<CheckIn> | null = null;
+	private leadRepo: Repository<Lead> | null = null;
+	private quotationRepo: Repository<Quotation> | null = null;
+	private quotationItemRepo: Repository<QuotationItem> | null = null;
+	private orderRepo: Repository<Order> | null = null;
+	private orderItemRepo: Repository<OrderItem> | null = null;
+	private taskRepo: Repository<Task> | null = null;
+	private subTaskRepo: Repository<SubTask> | null = null;
+	private routeRepo: Repository<Route> | null = null;
+	private taskFlagRepo: Repository<TaskFlag> | null = null;
+	private taskFlagItemRepo: Repository<TaskFlagItem> | null = null;
+	private interactionRepo: Repository<Interaction> | null = null;
+	private notificationRepo: Repository<Notification> | null = null;
+	private communicationLogRepo: Repository<CommunicationLog> | null = null;
+	private journalRepo: Repository<Journal> | null = null;
+	private reportRepo: Repository<Report> | null = null;
+	private leaveRepo: Repository<Leave> | null = null;
+	private warningRepo: Repository<Warning> | null = null;
+	private trackingRepo: Repository<Tracking> | null = null;
+	private geofenceRepo: Repository<Geofence> | null = null;
+	private geofenceEventRepo: Repository<GeofenceEvent> | null = null;
+	private docRepo: Repository<Doc> | null = null;
+	private assetRepo: Repository<Asset> | null = null;
+	private newsRepo: Repository<News> | null = null;
+	private feedbackRepo: Repository<Feedback> | null = null;
+	private competitorRepo: Repository<Competitor> | null = null;
+	private resellerRepo: Repository<Reseller> | null = null;
+	private bannersRepo: Repository<Banners> | null = null;
+	private projectRepo: Repository<Project> | null = null;
+	private approvalRepo: Repository<Approval> | null = null;
+	private approvalHistoryRepo: Repository<ApprovalHistory> | null = null;
+	private approvalSignatureRepo: Repository<ApprovalSignature> | null = null;
+	private userRewardsRepo: Repository<UserRewards> | null = null;
+	private achievementRepo: Repository<Achievement> | null = null;
+	private unlockedItemRepo: Repository<UnlockedItem> | null = null;
+	private xpTransactionRepo: Repository<XPTransaction> | null = null;
+	private rewardRepo: Repository<Reward> | null = null;
+	private orgSettingsRepo: Repository<OrganisationSettings> | null = null;
+	private orgAppearanceRepo: Repository<OrganisationAppearance> | null = null;
+	private orgHoursRepo: Repository<OrganisationHours> | null = null;
+	private payslipRepo: Repository<Payslip> | null = null;
+	private usageEventRepo: Repository<UsageEvent> | null = null;
+	private usageSummaryRepo: Repository<UsageSummary> | null = null;
+	
+	// Mappings
+	private orgMapping: UidMapping = {};
+	private branchMapping: UidMapping = {};
+	private userMapping: UidMapping = {};
+	private deviceMapping: IdMapping = {};
+	private licenseMapping: UidMapping = {};
+	private leadMapping: UidMapping = {};
+	private quotationMapping: UidMapping = {};
+	private orderMapping: UidMapping = {};
+	private taskMapping: UidMapping = {};
+	private taskFlagMapping: UidMapping = {};
+	private approvalMapping: UidMapping = {};
+	private geofenceMapping: UidMapping = {};
+	private projectMapping: UidMapping = {};
+	private reportMapping: UidMapping = {};
+	
+	private stats = new MigrationStats();
+	private dryRun = false;
+	private onlyEntities: string[] = [];
+	private verbose = false;
+
+	async initialize(pgUrl?: string) {
+		console.log('🔧 Initializing connections...\n');
+		
+		// Initialize MySQL connection
+		await this.initMySQL();
+		
+		// Initialize PostgreSQL via NestJS app
+		await this.initPostgreSQL(pgUrl);
+		
+		console.log('✅ All connections initialized\n');
+	}
+
+	private async initMySQL() {
+		const host = process.env.DATABASE_HOST;
+		const port = parseInt(process.env.DATABASE_PORT || '3306', 10);
+		const user = process.env.DATABASE_USER;
+		const password = process.env.DATABASE_PASSWORD;
+		const database = process.env.DATABASE_NAME;
+
+		if (!host || !user || !password || !database) {
+			throw new Error('Missing MySQL connection details. Required: DATABASE_HOST, DATABASE_USER, DATABASE_PASSWORD, DATABASE_NAME');
+		}
+
+		console.log(`📊 Connecting to MySQL: ${host}:${port}/${database}`);
+		this.mysqlConnection = await mysql.createConnection({
+			host,
+			port,
+			user,
+			password,
+			database,
+			multipleStatements: false,
+			connectTimeout: 60000, // 60 seconds connection timeout
+			// MySQL2 connection options - avoid invalid options that cause warnings
+			enableKeepAlive: true,
+			keepAliveInitialDelay: 0,
+		});
+		console.log('✅ MySQL connected\n');
+	}
+
+	private async initPostgreSQL(pgUrl?: string) {
+		// Bootstrap NestJS app to get repositories
+		console.log('📊 Initializing NestJS app for PostgreSQL...');
+		this.app = await NestFactory.createApplicationContext(AppModule, {
+			logger: false,
+		});
+		
+		this.configService = this.app.get(ConfigService);
+		this.pgDataSource = this.app.get(DataSource);
+
+		// Override PostgreSQL connection if URL provided
+		if (pgUrl) {
+			console.log(`📊 Overriding PostgreSQL connection with provided URL`);
+			const url = new URL(pgUrl);
+			const host = url.hostname;
+			const port = parseInt(url.port || '5432', 10);
+			const username = url.username;
+			const password = url.password;
+			const database = url.pathname.slice(1); // Remove leading /
+
+			// Store reference to original DataSource for cleanup
+			const originalDataSource = this.pgDataSource;
+
+			// Create new DataSource with override
+			const newDataSource = new DataSource({
+				type: 'postgres',
+				host,
+				port,
+				username,
+				password,
+				database,
+				entities: this.pgDataSource.options.entities,
+				synchronize: false,
+				logging: false,
+			});
+
+			await newDataSource.initialize();
+			
+			// Don't destroy original - NestJS will handle it
+			// Just replace our reference
+			this.pgDataSource = newDataSource;
+		}
+
+		// Get repositories
+		this.orgRepo = this.pgDataSource.getRepository(Organisation);
+		this.branchRepo = this.pgDataSource.getRepository(Branch);
+		this.userRepo = this.pgDataSource.getRepository(User);
+		this.userProfileRepo = this.pgDataSource.getRepository(UserProfile);
+		this.userEmploymentRepo = this.pgDataSource.getRepository(UserEmployeementProfile);
+		this.userTargetRepo = this.pgDataSource.getRepository(UserTarget);
+		this.deviceRepo = this.pgDataSource.getRepository(Device);
+		this.deviceRecordsRepo = this.pgDataSource.getRepository(DeviceRecords);
+		this.deviceLogsRepo = this.pgDataSource.getRepository(DeviceLogs);
+		this.licenseRepo = this.pgDataSource.getRepository(License);
+		this.licenseUsageRepo = this.pgDataSource.getRepository(LicenseUsage);
+		this.licenseEventRepo = this.pgDataSource.getRepository(LicenseEvent);
+		this.licenseAuditRepo = this.pgDataSource.getRepository(LicenseAudit);
+		this.attendanceRepo = this.pgDataSource.getRepository(Attendance);
+		this.claimRepo = this.pgDataSource.getRepository(Claim);
+		this.checkInRepo = this.pgDataSource.getRepository(CheckIn);
+		this.leadRepo = this.pgDataSource.getRepository(Lead);
+		this.quotationRepo = this.pgDataSource.getRepository(Quotation);
+		this.quotationItemRepo = this.pgDataSource.getRepository(QuotationItem);
+		this.orderRepo = this.pgDataSource.getRepository(Order);
+		this.orderItemRepo = this.pgDataSource.getRepository(OrderItem);
+		this.taskRepo = this.pgDataSource.getRepository(Task);
+		this.subTaskRepo = this.pgDataSource.getRepository(SubTask);
+		this.routeRepo = this.pgDataSource.getRepository(Route);
+		this.taskFlagRepo = this.pgDataSource.getRepository(TaskFlag);
+		this.taskFlagItemRepo = this.pgDataSource.getRepository(TaskFlagItem);
+		this.interactionRepo = this.pgDataSource.getRepository(Interaction);
+		this.notificationRepo = this.pgDataSource.getRepository(Notification);
+		this.communicationLogRepo = this.pgDataSource.getRepository(CommunicationLog);
+		this.journalRepo = this.pgDataSource.getRepository(Journal);
+		this.reportRepo = this.pgDataSource.getRepository(Report);
+		this.leaveRepo = this.pgDataSource.getRepository(Leave);
+		this.warningRepo = this.pgDataSource.getRepository(Warning);
+		this.trackingRepo = this.pgDataSource.getRepository(Tracking);
+		this.geofenceRepo = this.pgDataSource.getRepository(Geofence);
+		this.geofenceEventRepo = this.pgDataSource.getRepository(GeofenceEvent);
+		this.docRepo = this.pgDataSource.getRepository(Doc);
+		this.assetRepo = this.pgDataSource.getRepository(Asset);
+		this.newsRepo = this.pgDataSource.getRepository(News);
+		this.feedbackRepo = this.pgDataSource.getRepository(Feedback);
+		this.competitorRepo = this.pgDataSource.getRepository(Competitor);
+		this.resellerRepo = this.pgDataSource.getRepository(Reseller);
+		this.bannersRepo = this.pgDataSource.getRepository(Banners);
+		this.projectRepo = this.pgDataSource.getRepository(Project);
+		this.approvalRepo = this.pgDataSource.getRepository(Approval);
+		this.approvalHistoryRepo = this.pgDataSource.getRepository(ApprovalHistory);
+		this.approvalSignatureRepo = this.pgDataSource.getRepository(ApprovalSignature);
+		this.userRewardsRepo = this.pgDataSource.getRepository(UserRewards);
+		this.achievementRepo = this.pgDataSource.getRepository(Achievement);
+		this.unlockedItemRepo = this.pgDataSource.getRepository(UnlockedItem);
+		this.xpTransactionRepo = this.pgDataSource.getRepository(XPTransaction);
+		this.rewardRepo = this.pgDataSource.getRepository(Reward);
+		this.orgSettingsRepo = this.pgDataSource.getRepository(OrganisationSettings);
+		this.orgAppearanceRepo = this.pgDataSource.getRepository(OrganisationAppearance);
+		this.orgHoursRepo = this.pgDataSource.getRepository(OrganisationHours);
+		this.payslipRepo = this.pgDataSource.getRepository(Payslip);
+		this.usageEventRepo = this.pgDataSource.getRepository(UsageEvent);
+		this.usageSummaryRepo = this.pgDataSource.getRepository(UsageSummary);
+
+		console.log('✅ PostgreSQL connected via NestJS\n');
+	}
+
+	async migrate(options: ScriptArguments) {
+		this.dryRun = options['dry-run'] || false;
+		this.verbose = options.verbose || false;
+		this.onlyEntities = options.only ? options.only.split(',').map(e => e.trim()) : [];
+
+		if (this.dryRun) {
+			console.log('🔍 DRY RUN MODE - No data will be written\n');
+		}
+
+		const startTime = Date.now();
+
+		try {
+			// Import in dependency order
+			if (this.shouldImport('orgs')) {
+				await this.importOrganisations();
+			}
+
+			if (this.shouldImport('branches')) {
+				await this.importBranches();
+			}
+
+			if (this.shouldImport('users')) {
+				await this.importUsers();
+				await this.importUserProfiles();
+				await this.importUserEmploymentProfiles();
+				await this.importUserTargets();
+			}
+
+			if (this.shouldImport('devices')) {
+				// Clear device records and logs before importing devices
+				await this.clearDeviceRecordsAndLogs();
+				await this.importDevices();
+				// Device records and logs import removed - not importing tracking data
+			}
+
+			if (this.shouldImport('licenses')) {
+				await this.importLicenses();
+			}
+
+			// Organisation settings (after orgs)
+			if (this.shouldImport('orgs')) {
+				await this.importOrganisationSettings();
+				await this.importOrganisationAppearance();
+				await this.importOrganisationHours();
+			}
+
+			// Reports import skipped - will import full data later
+			// if (this.shouldImport('reports')) {
+			// 	await this.importReports();
+			// }
+
+			// Core transactional data
+			// Attendance import skipped - will import full data later
+			// if (this.shouldImport('attendance')) {
+			// 	await this.importAttendance();
+			// }
+			if (this.shouldImport('claims')) {
+				await this.importClaims();
+			}
+			if (this.shouldImport('checkins')) {
+				await this.importCheckIns();
+			}
+
+			// Sales & business
+			if (this.shouldImport('leads')) {
+				await this.importLeads();
+			}
+			if (this.shouldImport('quotations')) {
+				await this.importQuotations();
+				await this.importQuotationItems();
+			}
+			if (this.shouldImport('orders')) {
+				await this.importOrders();
+				await this.importOrderItems();
+			}
+
+			// Tasks & activities
+			if (this.shouldImport('tasks')) {
+				await this.importTasks();
+				await this.importSubtasks();
+			}
+
+			// Communication & interactions
+			if (this.shouldImport('interactions')) {
+				await this.importInteractions();
+			}
+			if (this.shouldImport('notifications')) {
+				await this.importNotifications();
+			}
+			if (this.shouldImport('journals')) {
+				await this.importJournals();
+			}
+
+			// HR & management
+			if (this.shouldImport('leave')) {
+				await this.importLeave();
+			}
+			if (this.shouldImport('warnings')) {
+				await this.importWarnings();
+			}
+
+			// Documents & files
+			if (this.shouldImport('docs')) {
+				await this.importDocs();
+			}
+
+			// Other modules
+			if (this.shouldImport('assets')) {
+				await this.importAssets();
+			}
+			if (this.shouldImport('news')) {
+				await this.importNews();
+			}
+			if (this.shouldImport('feedback')) {
+				await this.importFeedback();
+			}
+			if (this.shouldImport('competitors')) {
+				await this.importCompetitors();
+			}
+			if (this.shouldImport('resellers')) {
+				await this.importResellers();
+			}
+			if (this.shouldImport('banners')) {
+				await this.importBanners();
+			}
+			if (this.shouldImport('projects')) {
+				await this.importProjects();
+			}
+
+			// User rewards (after users are imported)
+			if (this.shouldImport('users')) {
+				await this.importUserRewards();
+			}
+
+			// Large tables moved to end for performance
+			// Tracking & location import removed - not importing tracking data
+
+			const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+			this.printStats(duration);
+
+		} catch (error) {
+			console.error('\n❌ Migration failed:', error);
+			throw error;
+		}
+	}
+
+	private shouldImport(entity: string): boolean {
+		if (this.onlyEntities.length === 0) return true;
+		return this.onlyEntities.includes(entity);
+	}
+
+	private async importOrganisations() {
+		console.log('\n📦 Importing Organisations...');
+		
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM organisation WHERE isDeleted = 0');
+		const orgs = rows as any[];
+		this.stats.organisations.total = orgs.length;
+
+		console.log(`Found ${orgs.length} organisations`);
+
+		for (const org of orgs) {
+			try {
+				if (this.dryRun) {
+					this.stats.organisations.imported++;
+					continue;
+				}
+
+				// Check if already exists
+				const existing = await this.orgRepo!.findOne({ where: { ref: org.ref } });
+				if (existing) {
+					this.orgMapping[org.uid] = existing.uid;
+					this.stats.organisations.skipped++;
+					if (this.verbose) console.log(`  ⏭️  Skipped existing org: ${org.name} (${org.ref})`);
+					continue;
+				}
+
+				// Parse address JSON
+				let address = { street: '', suburb: '', city: '', state: '', country: '', postalCode: '' };
+				if (org.address) {
+					try {
+						address = typeof org.address === 'string' ? JSON.parse(org.address) : org.address;
+					} catch (e) {
+						console.warn(`  ⚠️  Invalid address JSON for org ${org.uid}, using defaults`);
+					}
+				}
+
+				const newOrg = this.orgRepo!.create({
+					name: org.name || 'Unknown Organisation',
+					email: org.email || `org${org.uid}@example.com`,
+					phone: org.phone || '',
+					website: org.website || '',
+					logo: org.logo || '',
+					address,
+					status: (org.status as GeneralStatus) || GeneralStatus.ACTIVE,
+					ref: org.ref || `ORG${org.uid}`,
+					alias: org.alias || null,
+					isDeleted: false,
+				});
+
+				const saved = await this.orgRepo!.save(newOrg);
+				this.orgMapping[org.uid] = saved.uid;
+				this.stats.organisations.imported++;
+
+				if (this.verbose) console.log(`  ✅ Imported: ${saved.name} (${saved.ref})`);
+			} catch (error: any) {
+				this.stats.organisations.errors++;
+				console.error(`  ❌ Error importing org ${org.uid}: ${error.message}`);
+			}
+		}
+
+		console.log(`✅ Organisations: ${this.stats.organisations.imported} imported, ${this.stats.organisations.skipped} skipped, ${this.stats.organisations.errors} errors\n`);
+	}
+
+	private async importBranches() {
+		console.log('\n📦 Importing Branches...');
+		
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM branch WHERE isDeleted = 0');
+		const branches = rows as any[];
+		this.stats.branches.total = branches.length;
+
+		console.log(`Found ${branches.length} branches`);
+		
+		// Debug: Find organisation reference column by inspecting first branch
+		let orgColumnName: string | null = null;
+		if (branches.length > 0) {
+			const sampleBranch = branches[0];
+			const allKeys = Object.keys(sampleBranch);
+			
+			// Try to find organisation-related column
+			const possibleNames = [
+				'organisationRef', 'organisationUid', 'organisation_id', 'organisationId',
+				'orgRef', 'orgUid', 'org_id', 'orgId', 'organisationRef'
+			];
+			
+			for (const name of possibleNames) {
+				if (sampleBranch[name] !== undefined && sampleBranch[name] !== null) {
+					orgColumnName = name;
+					break;
+				}
+			}
+			
+			// If not found, search case-insensitively
+			if (!orgColumnName) {
+				for (const key of allKeys) {
+					const lowerKey = key.toLowerCase();
+					if ((lowerKey.includes('org') || lowerKey.includes('organisation')) && 
+						!lowerKey.includes('name') && !lowerKey.includes('email')) {
+						orgColumnName = key;
+						break;
+					}
+				}
+			}
+			
+			if (orgColumnName) {
+				console.log(`  🔍 Found organisation column: ${orgColumnName}`);
+			} else {
+				console.warn(`  ⚠️  Could not find organisation column. Available keys: ${allKeys.slice(0, 10).join(', ')}...`);
+				if (this.verbose) {
+					console.log(`  🔍 All branch keys:`, allKeys);
+				}
+			}
+		}
+
+		for (const branch of branches) {
+			try {
+				if (this.dryRun) {
+					this.stats.branches.imported++;
+					continue;
+				}
+
+				// Check if already exists
+				const existing = await this.branchRepo!.findOne({ where: { ref: branch.ref } });
+				if (existing) {
+					this.branchMapping[branch.uid] = existing.uid;
+					this.stats.branches.skipped++;
+					if (this.verbose) console.log(`  ⏭️  Skipped existing branch: ${branch.name} (${branch.ref})`);
+					continue;
+				}
+
+				// Map organisation - use detected column name or try common variations
+				const orgRef = orgColumnName 
+					? branch[orgColumnName]
+					: (branch.organisationRef || branch.organisationUid || branch.organisation_id || branch.organisationId || branch.orgUid || branch.org_id);
+				let orgUid: number | undefined;
+				
+				if (orgRef !== undefined && orgRef !== null) {
+					// Try as number first
+					const orgRefNum = typeof orgRef === 'number' ? orgRef : parseInt(String(orgRef), 10);
+					orgUid = this.orgMapping[orgRefNum] || this.orgMapping[orgRef as any];
+				}
+				
+				// If still not found, try to find by organisation relation if it exists
+				if (!orgUid && branch.organisation) {
+					const orgRefFromRelation = typeof branch.organisation === 'object' 
+						? (branch.organisation.uid || branch.organisation.ref)
+						: branch.organisation;
+					if (orgRefFromRelation) {
+						const orgRefNum = typeof orgRefFromRelation === 'number' ? orgRefFromRelation : parseInt(String(orgRefFromRelation), 10);
+						orgUid = this.orgMapping[orgRefNum] || this.orgMapping[orgRefFromRelation as any];
+					}
+				}
+				
+				// If still not found and we have orgs, use the first one as fallback
+				if (!orgUid && Object.keys(this.orgMapping).length > 0) {
+					const firstOrgUid = Object.values(this.orgMapping)[0];
+					if (this.verbose) console.warn(`  ⚠️  Branch ${branch.uid} has no organisation mapping, using first org ${firstOrgUid} as fallback`);
+					orgUid = firstOrgUid;
+				}
+				
+				if (!orgUid) {
+					this.stats.branches.skipped++;
+					console.warn(`  ⚠️  Skipped branch ${branch.uid}: organisation not found (orgRef: ${orgRef}, available orgs: ${Object.keys(this.orgMapping).length})`);
+					if (this.verbose) {
+						console.log(`  🔍 Debug - branch data:`, {
+							uid: branch.uid,
+							name: branch.name,
+							organisationRef: branch.organisationRef,
+							organisationUid: branch.organisationUid,
+							organisation_id: branch.organisation_id,
+							organisation: branch.organisation,
+						});
+					}
+					continue;
+				}
+
+				// Parse address JSON
+				let address = { street: '', suburb: '', city: '', state: '', country: '', postalCode: '' };
+				if (branch.address) {
+					try {
+						address = typeof branch.address === 'string' ? JSON.parse(branch.address) : branch.address;
+					} catch (e) {
+						console.warn(`  ⚠️  Invalid address JSON for branch ${branch.uid}, using defaults`);
+					}
+				}
+
+				const newBranch = this.branchRepo!.create({
+					name: branch.name || 'Unknown Branch',
+					email: branch.email || `branch${branch.uid}@example.com`,
+					phone: branch.phone || '',
+					contactPerson: branch.contactPerson || '',
+					ref: branch.ref || `BRN${branch.uid}`,
+					address,
+					website: branch.website || '',
+					status: (branch.status as GeneralStatus) || GeneralStatus.ACTIVE,
+					alias: branch.alias || null,
+					country: branch.country || 'SA',
+					isDeleted: false,
+					organisation: { uid: orgUid } as Organisation,
+				});
+
+				const saved = await this.branchRepo!.save(newBranch);
+				this.branchMapping[branch.uid] = saved.uid;
+				this.stats.branches.imported++;
+
+				if (this.verbose) console.log(`  ✅ Imported: ${saved.name} (${saved.ref})`);
+			} catch (error: any) {
+				this.stats.branches.errors++;
+				console.error(`  ❌ Error importing branch ${branch.uid}: ${error.message}`);
+			}
+		}
+
+		console.log(`✅ Branches: ${this.stats.branches.imported} imported, ${this.stats.branches.skipped} skipped, ${this.stats.branches.errors} errors\n`);
+	}
+
+	private async importUsers() {
+		console.log('\n📦 Importing Users...');
+		
+		const [rows] = await this.executeWithRetry<any>('SELECT * FROM users WHERE isDeleted = 0');
+		const users = rows;
+		this.stats.users.total = users.length;
+
+		console.log(`Found ${users.length} users`);
+
+		for (let i = 0; i < users.length; i++) {
+			const user = users[i];
+			const progress = `${i + 1}/${users.length}`;
+			
+			try {
+				if (this.dryRun) {
+					this.stats.users.imported++;
+					if ((i + 1) % 100 === 0 || i === users.length - 1) {
+						process.stdout.write(`\r  Processing: ${progress}`);
+					}
+					continue;
+				}
+
+				// Check if already exists
+				const existing = await this.userRepo!.findOne({ where: { email: user.email } });
+				if (existing) {
+					// Check if we should update (compare updatedAt)
+					const shouldUpdate = user.updatedAt && existing.updatedAt && 
+						new Date(user.updatedAt) > new Date(existing.updatedAt);
+					
+					if (shouldUpdate) {
+						// Update existing user with latest data
+						existing.name = user.name || existing.name;
+						existing.surname = user.surname || existing.surname;
+						existing.phone = user.phone || existing.phone;
+						existing.photoURL = user.photoURL || existing.photoURL;
+						existing.avatar = user.avatar || existing.avatar;
+						existing.status = user.status || existing.status;
+						await this.userRepo!.save(existing);
+						this.stats.users.updated++;
+					} else {
+						this.stats.users.duplicates++;
+					}
+					
+					this.userMapping[user.uid] = existing.uid;
+					if ((i + 1) % 100 === 0 || i === users.length - 1) {
+						process.stdout.write(`\r  Processing: ${progress}`);
+					}
+					continue;
+				}
+
+				// Map organisation and branch
+				const orgRef = user.organisationRef ? String(user.organisationRef) : null;
+				const orgUid = orgRef ? (this.orgMapping[parseInt(orgRef, 10)] || this.orgMapping[orgRef as any]) : null;
+				
+				const branchUid = user.branchUid ? this.branchMapping[user.branchUid] : null;
+
+				// Map managedBranches - ensure proper number array
+				const managedBranches = this.parseAndMapNumberArray(
+					user.managedBranches,
+					this.branchMapping,
+					'managedBranches',
+					user.uid,
+					true
+				);
+
+				// Map managedStaff - ensure proper number array
+				const managedStaff = this.parseAndMapNumberArray(
+					user.managedStaff,
+					this.userMapping,
+					'managedStaff',
+					user.uid,
+					true
+				);
+
+				// Map managedDoors (device IDs) - ensure proper number array
+				const managedDoors = this.parseAndMapNumberArray(
+					user.managedDoors || user.managed_doors || user.doors || user.deviceIds,
+					this.deviceMapping,
+					'managedDoors',
+					user.uid,
+					true
+				);
+
+				// Map assignedClientIds - if clients are being migrated
+				const assignedClientIds = this.parseAndMapNumberArray(
+					user.assignedClientIds || user.assigned_client_ids || user.assignedClients || user.clientIds,
+					{}, // TODO: Add clientMapping if clients are migrated
+					'assignedClientIds',
+					user.uid,
+					true
+				);
+
+				// Parse preferences if exists, otherwise use defaults
+				let preferences: any = {
+					theme: 'light' as const,
+					language: 'en',
+					notifications: true,
+					shiftAutoEnd: false,
+				};
+				
+				if (user.preferences) {
+					try {
+						const parsedPrefs = typeof user.preferences === 'string' 
+							? JSON.parse(user.preferences) 
+							: user.preferences;
+						if (parsedPrefs && typeof parsedPrefs === 'object' && !Array.isArray(parsedPrefs)) {
+							preferences = { ...preferences, ...parsedPrefs };
+						}
+					} catch (e) {
+						// Use defaults on error
+					}
+				}
+
+				// Preserve ALL fields from MySQL - use fallbacks only when truly missing
+				const newUser: User = this.userRepo!.create({
+					username: this.preserveFieldWithFallback(user.username, user.email?.split('@')[0] || `user${user.uid}`),
+					password: this.preserveFieldWithFallback(user.password, '$2b$10$defaultpasswordhash'),
+					name: this.preserveFieldWithFallback(user.name, ''),
+					surname: this.preserveFieldWithFallback(user.surname, ''),
+					email: this.preserveFieldWithFallback(user.email, `user${user.uid}@example.com`),
+					phone: this.preserveField(user.phone),
+					photoURL: this.preserveField(user.photoURL),
+					avatar: this.preserveField(user.avatar),
+					role: this.preserveFieldWithFallback(user.role, 'user'),
+					status: this.preserveFieldWithFallback(user.status, 'active'),
+					departmentId: this.preserveField(user.departmentId),
+					accessLevel: (user.accessLevel as AccessLevel) || AccessLevel.USER,
+					organisationRef: orgUid ? String(orgUid) : null,
+					hrID: this.preserveField(user.hrID),
+					managedBranches: managedBranches,
+					managedStaff: managedStaff,
+					managedDoors: managedDoors,
+					assignedClientIds: assignedClientIds,
+					preferences,
+					// Preserve additional fields that might exist in MySQL but not explicitly mapped
+					...(user.businesscardURL && { businesscardURL: user.businesscardURL }),
+					...(user.verificationToken && { verificationToken: user.verificationToken }),
+					...(user.resetToken && { resetToken: user.resetToken }),
+					...(user.tokenExpires && { tokenExpires: user.tokenExpires }),
+					...(user.expoPushToken && { expoPushToken: user.expoPushToken }),
+					...(user.deviceId && { deviceId: user.deviceId }),
+					...(user.platform && { platform: user.platform }),
+					...(user.pushTokenUpdatedAt && { pushTokenUpdatedAt: user.pushTokenUpdatedAt }),
+					...(orgUid && { organisation: { uid: orgUid } as Organisation }),
+					...(branchUid && { branch: { uid: branchUid } as Branch }),
+				} as DeepPartial<User>);
+
+				const saved: User = await this.userRepo!.save(newUser);
+				this.userMapping[user.uid] = saved.uid;
+				this.stats.users.imported++;
+
+				if ((i + 1) % 100 === 0 || i === users.length - 1) {
+					process.stdout.write(`\r  Processing: ${progress}`);
+				}
+			} catch (error: any) {
+				this.stats.users.errors++;
+				console.error(`\n  ❌ Error importing user ${user.uid}: ${error.message}`);
+			}
+		}
+
+		console.log(`\n✅ Users: ${this.stats.users.imported} imported, ${this.stats.users.skipped} skipped, ${this.stats.users.duplicates} duplicates, ${this.stats.users.updated} updated, ${this.stats.users.errors} errors`);
+	}
+
+	private async importUserProfiles() {
+		console.log('\n📦 Importing User Profiles...');
+		
+		const [rows] = await this.executeWithRetry<any>('SELECT * FROM user_profile');
+		const profiles = rows;
+		this.stats.userProfiles.total = profiles.length;
+
+		console.log(`Found ${profiles.length} user profiles`);
+
+		for (const profile of profiles) {
+			try {
+				const newUserId = this.userMapping[profile.owner];
+				if (!newUserId) {
+					this.stats.userProfiles.skipped++;
+					if (this.verbose) console.log(`  ⏭️  Skipped profile: user ${profile.owner} not found`);
+					continue;
+				}
+
+				if (this.dryRun) {
+					this.stats.userProfiles.imported++;
+					continue;
+				}
+
+				// Check if profile already exists
+				const existing = await this.userProfileRepo!.findOne({ 
+					where: { owner: { uid: newUserId } as User } 
+				});
+				if (existing) {
+					this.stats.userProfiles.skipped++;
+					continue;
+				}
+
+				const newProfile = this.userProfileRepo!.create({
+					height: profile.height || null,
+					weight: profile.weight || null,
+					hairColor: profile.hairColor || null,
+					eyeColor: profile.eyeColor || null,
+					gender: profile.gender || null,
+					ethnicity: profile.ethnicity || null,
+					bodyType: profile.bodyType || null,
+					smokingHabits: profile.smokingHabits || null,
+					drinkingHabits: profile.drinkingHabits || null,
+					dateOfBirth: profile.dateOfBirth || null,
+					address: profile.address || null,
+					city: profile.city || null,
+					country: profile.country || null,
+					zipCode: profile.zipCode || null,
+					aboutMe: profile.aboutMe || null,
+					socialMedia: profile.socialMedia || null,
+					currentAge: profile.currentAge || null,
+					maritalStatus: profile.maritalStatus || null,
+					numberDependents: profile.numberDependents || null,
+					shoeSize: profile.shoeSize || null,
+					shirtSize: profile.shirtSize || null,
+					pantsSize: profile.pantsSize || null,
+					dressSize: profile.dressSize || null,
+					coatSize: profile.coatSize || null,
+					owner: { uid: newUserId } as User,
+				});
+
+				await this.userProfileRepo!.save(newProfile);
+				this.stats.userProfiles.imported++;
+
+				if (this.verbose) console.log(`  ✅ Imported profile for user ${newUserId}`);
+			} catch (error: any) {
+				this.stats.userProfiles.errors++;
+				console.error(`  ❌ Error importing profile ${profile.uid}: ${error.message}`);
+			}
+		}
+
+		console.log(`✅ User Profiles: ${this.stats.userProfiles.imported} imported, ${this.stats.userProfiles.skipped} skipped, ${this.stats.userProfiles.errors} errors\n`);
+	}
+
+	private async importUserEmploymentProfiles() {
+		console.log('\n📦 Importing User Employment Profiles...');
+		
+		const [rows] = await this.executeWithRetry<any>('SELECT * FROM user_employeement_profile');
+		const profiles = rows;
+		this.stats.userEmploymentProfiles.total = profiles.length;
+
+		console.log(`Found ${profiles.length} employment profiles`);
+
+		for (const profile of profiles) {
+			try {
+				const newUserId = this.userMapping[profile.owner];
+				if (!newUserId) {
+					this.stats.userEmploymentProfiles.skipped++;
+					if (this.verbose) console.log(`  ⏭️  Skipped employment profile: user ${profile.owner} not found`);
+					continue;
+				}
+
+				if (this.dryRun) {
+					this.stats.userEmploymentProfiles.imported++;
+					continue;
+				}
+
+				// Check if profile already exists
+				const existing = await this.userEmploymentRepo!.findOne({ 
+					where: { owner: { uid: newUserId } as User } 
+				});
+				if (existing) {
+					this.stats.userEmploymentProfiles.skipped++;
+					continue;
+				}
+
+				const newProfile = this.userEmploymentRepo!.create({
+					startDate: profile.startDate || null,
+					endDate: profile.endDate || null,
+					branchref: profile.branchref || null,
+					department: profile.department || null,
+					position: profile.position || null,
+					email: profile.email || null,
+					contactNumber: profile.contactNumber || null,
+					isCurrentlyEmployed: profile.isCurrentlyEmployed !== undefined ? profile.isCurrentlyEmployed : true,
+					owner: { uid: newUserId } as User,
+				});
+
+				await this.userEmploymentRepo!.save(newProfile);
+				this.stats.userEmploymentProfiles.imported++;
+
+				if (this.verbose) console.log(`  ✅ Imported employment profile for user ${newUserId}`);
+			} catch (error: any) {
+				this.stats.userEmploymentProfiles.errors++;
+				console.error(`  ❌ Error importing employment profile ${profile.uid}: ${error.message}`);
+			}
+		}
+
+		console.log(`✅ User Employment Profiles: ${this.stats.userEmploymentProfiles.imported} imported, ${this.stats.userEmploymentProfiles.skipped} skipped, ${this.stats.userEmploymentProfiles.errors} errors\n`);
+	}
+
+	private async importUserTargets() {
+		console.log('\n📦 Importing User Targets...');
+		
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM user_targets');
+		const targets = rows as any[];
+		this.stats.userTargets.total = targets.length;
+
+		console.log(`Found ${targets.length} user targets`);
+
+		for (let i = 0; i < targets.length; i++) {
+			const target = targets[i];
+			const progress = `${i + 1}/${targets.length}`;
+			
+			try {
+				// Map user - try multiple field names
+				const oldUserId = target.user || target.owner || target.ownerUid || target.owner_id || target.user_id;
+				const newUserId = oldUserId ? this.userMapping[oldUserId] : null;
+				
+				if (!newUserId) {
+					this.stats.userTargets.skipped++;
+					if ((i + 1) % 100 === 0 || i === targets.length - 1) {
+						process.stdout.write(`\r  Processing: ${progress}`);
+					}
+					continue;
+				}
+
+				if (this.dryRun) {
+					this.stats.userTargets.imported++;
+					if ((i + 1) % 100 === 0 || i === targets.length - 1) {
+						process.stdout.write(`\r  Processing: ${progress}`);
+					}
+					continue;
+				}
+
+				// Check if target already exists - use ownerUID for proper linking
+				const existing = await this.userTargetRepo!.findOne({ 
+					where: { user: { uid: newUserId } as User },
+					relations: ['user']
+				});
+				
+				if (existing) {
+					// Check if we should update (compare updatedAt)
+					const shouldUpdate = target.updatedAt && existing.updatedAt && 
+						new Date(target.updatedAt) > new Date(existing.updatedAt);
+					
+					if (shouldUpdate) {
+						// Update existing target with latest data
+						existing.targetSalesAmount = target.targetSalesAmount ?? existing.targetSalesAmount;
+						existing.currentSalesAmount = target.currentSalesAmount ?? existing.currentSalesAmount;
+						existing.targetQuotationsAmount = target.targetQuotationsAmount ?? existing.targetQuotationsAmount;
+						existing.currentQuotationsAmount = target.currentQuotationsAmount ?? existing.currentQuotationsAmount;
+						existing.targetPeriod = target.targetPeriod ?? existing.targetPeriod;
+						await this.userTargetRepo!.save(existing);
+						this.stats.userTargets.updated++;
+					} else {
+						this.stats.userTargets.duplicates++;
+					}
+					
+					if ((i + 1) % 100 === 0 || i === targets.length - 1) {
+						process.stdout.write(`\r  Processing: ${progress}`);
+					}
+					continue;
+				}
+
+				// Parse history JSON
+				let history: any[] = [];
+				if (target.history) {
+					try {
+						history = typeof target.history === 'string' ? JSON.parse(target.history) : target.history;
+						if (!Array.isArray(history)) history = [];
+					} catch (e) {
+						console.warn(`  ⚠️  Invalid history JSON for target ${target.uid}`);
+					}
+				}
+
+				const newTarget = this.userTargetRepo!.create({
+					targetSalesAmount: target.targetSalesAmount || null,
+					currentSalesAmount: target.currentSalesAmount || null,
+					targetQuotationsAmount: target.targetQuotationsAmount || null,
+					currentQuotationsAmount: target.currentQuotationsAmount || null,
+					currentOrdersAmount: target.currentOrdersAmount || null,
+					targetCurrency: target.targetCurrency || 'ZAR',
+					targetHoursWorked: target.targetHoursWorked || null,
+					currentHoursWorked: target.currentHoursWorked || null,
+					targetNewClients: target.targetNewClients || null,
+					currentNewClients: target.currentNewClients || null,
+					targetNewLeads: target.targetNewLeads || null,
+					currentNewLeads: target.currentNewLeads || null,
+					targetCheckIns: target.targetCheckIns || null,
+					currentCheckIns: target.currentCheckIns || null,
+					targetCalls: target.targetCalls || null,
+					currentCalls: target.currentCalls || null,
+					baseSalary: target.baseSalary || null,
+					carInstalment: target.carInstalment || null,
+					carInsurance: target.carInsurance || null,
+					fuel: target.fuel || null,
+					cellPhoneAllowance: target.cellPhoneAllowance || null,
+					carMaintenance: target.carMaintenance || null,
+					cgicCosts: target.cgicCosts || null,
+					totalCost: target.totalCost || null,
+					targetPeriod: target.targetPeriod || null,
+					periodStartDate: target.periodStartDate || null,
+					periodEndDate: target.periodEndDate || null,
+					lastCalculatedAt: target.lastCalculatedAt || null,
+					isRecurring: target.isRecurring !== undefined ? target.isRecurring : true,
+					recurringInterval: target.recurringInterval || 'monthly',
+					carryForwardUnfulfilled: target.carryForwardUnfulfilled || false,
+					nextRecurrenceDate: target.nextRecurrenceDate || null,
+					lastRecurrenceDate: target.lastRecurrenceDate || null,
+					recurrenceCount: target.recurrenceCount || 0,
+					erpSalesRepCode: target.erpSalesRepCode || null,
+					history,
+					user: { uid: newUserId } as User,
+				});
+
+				await this.userTargetRepo!.save(newTarget);
+				this.stats.userTargets.imported++;
+
+				if ((i + 1) % 100 === 0 || i === targets.length - 1) {
+					process.stdout.write(`\r  Processing: ${progress}`);
+				}
+			} catch (error: any) {
+				this.stats.userTargets.errors++;
+				console.error(`\n  ❌ Error importing target ${target.uid}: ${error.message}`);
+			}
+		}
+
+		console.log(`\n✅ User Targets: ${this.stats.userTargets.imported} imported, ${this.stats.userTargets.skipped} skipped, ${this.stats.userTargets.duplicates} duplicates, ${this.stats.userTargets.updated} updated, ${this.stats.userTargets.errors} errors`);
+	}
+
+	private async importUserRewards() {
+		console.log('\n📦 Importing User Rewards...');
+		
+		try {
+			const [rows] = await this.mysqlConnection!.execute('SELECT * FROM user_rewards');
+			const rewards = rows as any[];
+			this.stats.userRewards.total = rewards.length;
+
+			console.log(`Found ${rewards.length} user rewards`);
+
+			for (let i = 0; i < rewards.length; i++) {
+				const reward = rewards[i];
+				const progress = `${i + 1}/${rewards.length}`;
+				
+				try {
+					// Map user - try multiple field names for owner reference
+					const oldUserId = reward.owner || reward.ownerUid || reward.owner_id || reward.user || reward.user_id;
+					const newUserId = oldUserId ? this.userMapping[oldUserId] : null;
+					
+					if (!newUserId) {
+						this.stats.userRewards.skipped++;
+						if ((i + 1) % 100 === 0 || i === rewards.length - 1) {
+							process.stdout.write(`\r  Processing: ${progress}`);
+						}
+						continue;
+					}
+
+					if (this.dryRun) {
+						this.stats.userRewards.imported++;
+						if ((i + 1) % 100 === 0 || i === rewards.length - 1) {
+							process.stdout.write(`\r  Processing: ${progress}`);
+						}
+						continue;
+					}
+
+					// Check if reward already exists - ensure proper linking via ownerUID
+					const existing = await this.userRewardsRepo!.findOne({ 
+						where: { owner: { uid: newUserId } as User },
+						relations: ['owner']
+					});
+					
+					if (existing) {
+						// Check if we should update (compare updatedAt)
+						const shouldUpdate = reward.updatedAt && existing.updatedAt && 
+							new Date(reward.updatedAt) > new Date(existing.updatedAt);
+						
+						if (shouldUpdate) {
+							// Update existing reward with latest data
+							existing.currentXP = reward.currentXP ?? existing.currentXP;
+							existing.totalXP = reward.totalXP ?? existing.totalXP;
+							existing.level = reward.level ?? existing.level;
+							existing.rank = reward.rank ?? existing.rank;
+							if (reward.xpBreakdown) {
+								try {
+									const breakdown = typeof reward.xpBreakdown === 'string' 
+										? JSON.parse(reward.xpBreakdown) 
+										: reward.xpBreakdown;
+									if (breakdown && typeof breakdown === 'object') {
+										existing.xpBreakdown = breakdown;
+									}
+								} catch (e) {
+									// Keep existing breakdown on parse error
+								}
+							}
+							await this.userRewardsRepo!.save(existing);
+							this.stats.userRewards.updated++;
+						} else {
+							this.stats.userRewards.duplicates++;
+						}
+						
+						if ((i + 1) % 100 === 0 || i === rewards.length - 1) {
+							process.stdout.write(`\r  Processing: ${progress}`);
+						}
+						continue;
+					}
+
+					// Parse xpBreakdown JSON
+					let xpBreakdown = {
+						tasks: 0,
+						leads: 0,
+						sales: 0,
+						attendance: 0,
+						collaboration: 0,
+						login: 0,
+						other: 0,
+					};
+					if (reward.xpBreakdown) {
+						try {
+							const parsed = typeof reward.xpBreakdown === 'string' 
+								? JSON.parse(reward.xpBreakdown) 
+								: reward.xpBreakdown;
+							if (parsed && typeof parsed === 'object') {
+								xpBreakdown = { ...xpBreakdown, ...parsed };
+							}
+						} catch (e) {
+							// Use defaults on error
+						}
+					}
+
+					const newReward = this.userRewardsRepo!.create({
+						currentXP: reward.currentXP || 0,
+						totalXP: reward.totalXP || 0,
+						level: reward.level || 1,
+						rank: reward.rank || 'ROOKIE',
+						xpBreakdown,
+						lastAction: reward.lastAction || reward.updatedAt || reward.createdAt || new Date(),
+						createdAt: reward.createdAt || new Date(),
+						updatedAt: reward.updatedAt || new Date(),
+						owner: { uid: newUserId } as User, // Proper linking via ownerUID
+					});
+
+					await this.userRewardsRepo!.save(newReward);
+					this.stats.userRewards.imported++;
+
+					if ((i + 1) % 100 === 0 || i === rewards.length - 1) {
+						process.stdout.write(`\r  Processing: ${progress}`);
+					}
+				} catch (error: any) {
+					this.stats.userRewards.errors++;
+					console.error(`\n  ❌ Error importing user reward ${reward.uid}: ${error.message}`);
+				}
+			}
+
+			console.log(`\n✅ User Rewards: ${this.stats.userRewards.imported} imported, ${this.stats.userRewards.skipped} skipped, ${this.stats.userRewards.duplicates} duplicates, ${this.stats.userRewards.updated} updated, ${this.stats.userRewards.errors} errors`);
+		} catch (error: any) {
+			if (error.code === 'ER_NO_SUCH_TABLE') {
+				console.log(`⚠️  Table 'user_rewards' does not exist, skipping...`);
+				this.stats.userRewards.total = 0;
+				console.log(`✅ User Rewards: 0 imported, 0 skipped, 0 errors\n`);
+			} else {
+				throw error;
+			}
+		}
+	}
+
+	private async importDevices() {
+		console.log('\n📦 Importing Devices...');
+		
+		const [rows] = await this.executeWithRetry<any>('SELECT * FROM device WHERE isDeleted = 0');
+		const devices = rows;
+		this.stats.devices.total = devices.length;
+
+		console.log(`Found ${devices.length} devices`);
+
+		for (const device of devices) {
+			try {
+				if (this.dryRun) {
+					this.stats.devices.imported++;
+					continue;
+				}
+
+				// Check if already exists by deviceID (unique identifier)
+				const deviceID = device.deviceID || `DEVICE${device.id}`;
+				const existing = await this.deviceRepo!.findOne({ 
+					where: { deviceID, isDeleted: false } 
+				});
+				
+				if (existing) {
+					this.deviceMapping[device.id] = existing.id;
+					this.stats.devices.skipped++;
+					if (this.verbose) console.log(`  ⏭️  Skipped existing device: ${deviceID}`);
+					continue;
+				}
+
+				// Map organisation and branch
+				const orgUid = this.orgMapping[device.orgID];
+				const branchUid = this.branchMapping[device.branchID];
+				
+				if (!orgUid || !branchUid) {
+					this.stats.devices.skipped++;
+					console.warn(`  ⚠️  Skipped device ${device.id}: org ${device.orgID} or branch ${device.branchID} not found`);
+					continue;
+				}
+
+				// Parse analytics JSON
+				let analytics = {
+					openCount: 0,
+					closeCount: 0,
+					totalCount: 0,
+					lastOpenAt: null as Date | null,
+					lastCloseAt: null as Date | null,
+					onTimeCount: 0,
+					lateCount: 0,
+					daysAbsent: 0,
+				};
+				if (device.analytics) {
+					try {
+						const parsed = typeof device.analytics === 'string' ? JSON.parse(device.analytics) : device.analytics;
+						analytics = { ...analytics, ...parsed };
+					} catch (e) {
+						console.warn(`  ⚠️  Invalid analytics JSON for device ${device.id}, using defaults`);
+					}
+				}
+
+				const newDevice = this.deviceRepo!.create({
+					orgID: orgUid,
+					branchID: device.branchID,
+					branchUid,
+					deviceID: device.deviceID || `DEVICE${device.id}`,
+					deviceType: (device.deviceType as DeviceType) || DeviceType.DOOR_SENSOR,
+					deviceIP: device.deviceIP || '0.0.0.0',
+					devicePort: device.devicePort || 80,
+					devicLocation: device.devicLocation || '',
+					deviceTag: device.deviceTag || '',
+					currentStatus: (device.currentStatus as DeviceStatus) || DeviceStatus.ONLINE,
+					isDeleted: false,
+					analytics,
+					organisation: { uid: orgUid } as Organisation,
+					branch: { uid: branchUid } as Branch,
+				});
+
+				const saved = await this.deviceRepo!.save(newDevice);
+				this.deviceMapping[device.id] = saved.id;
+				this.stats.devices.imported++;
+
+				if (this.verbose) console.log(`  ✅ Imported: ${saved.deviceID} (${saved.id})`);
+			} catch (error: any) {
+				this.stats.devices.errors++;
+				console.error(`  ❌ Error importing device ${device.id}: ${error.message}`);
+			}
+		}
+
+		console.log(`✅ Devices: ${this.stats.devices.imported} imported, ${this.stats.devices.skipped} skipped, ${this.stats.devices.errors} errors\n`);
+	}
+
+	private async clearDeviceRecordsAndLogs() {
+		console.log('\n🧹 Clearing Device Records and Logs...');
+		
+		if (this.dryRun) {
+			console.log('  ⏭️  DRY RUN - Would clear device records and logs');
+			return;
+		}
+
+		try {
+			// Clear device records using bulk delete for better performance
+			const deviceRecordsDeleted = await this.deviceRecordsRepo!
+				.createQueryBuilder()
+				.delete()
+				.from(DeviceRecords)
+				.execute();
+			
+			console.log(`  ✅ Cleared ${deviceRecordsDeleted.affected || 0} device records`);
+
+			// Clear device logs using bulk delete for better performance
+			const deviceLogsDeleted = await this.deviceLogsRepo!
+				.createQueryBuilder()
+				.delete()
+				.from(DeviceLogs)
+				.execute();
+			
+			console.log(`  ✅ Cleared ${deviceLogsDeleted.affected || 0} device logs`);
+			
+			console.log('✅ Device Records and Logs cleared\n');
+		} catch (error: any) {
+			console.error(`  ❌ Error clearing device records and logs: ${error.message}`);
+			throw error;
+		}
+	}
+
+	private async importDeviceRecords() {
+		console.log('\n📦 Importing Device Records...');
+		
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM device_records');
+		const records = rows as any[];
+		this.stats.deviceRecords.total = records.length;
+
+		console.log(`Found ${records.length} device records`);
+
+		for (const record of records) {
+			try {
+				// Handle both camelCase and snake_case column names from MySQL
+				const oldDeviceId = record.deviceId || record.device_id;
+				const newDeviceId = oldDeviceId ? this.deviceMapping[oldDeviceId] : null;
+				
+				if (!newDeviceId) {
+					this.stats.deviceRecords.skipped++;
+					if (this.verbose) console.log(`  ⏭️  Skipped record: device ${oldDeviceId} not found`);
+					continue;
+				}
+
+				if (this.dryRun) {
+					this.stats.deviceRecords.imported++;
+					continue;
+				}
+
+				// Check for duplicate record (same device, openTime, and closeTime)
+				const openTime = record.openTime || null;
+				const closeTime = record.closeTime || null;
+				
+				const existing = await this.deviceRecordsRepo!.findOne({
+					where: {
+						deviceId: newDeviceId,
+						openTime: openTime,
+						closeTime: closeTime,
+					}
+				});
+				
+				if (existing) {
+					this.stats.deviceRecords.skipped++;
+					if (this.verbose) console.log(`  ⏭️  Skipped duplicate record: device ${newDeviceId}, openTime: ${openTime}, closeTime: ${closeTime}`);
+					continue;
+				}
+
+				const newRecord = this.deviceRecordsRepo!.create({
+					openTime: openTime,
+					closeTime: closeTime,
+					deviceId: newDeviceId,
+					device: { id: newDeviceId } as Device,
+				});
+
+				await this.deviceRecordsRepo!.save(newRecord);
+				this.stats.deviceRecords.imported++;
+
+				if (this.verbose && this.stats.deviceRecords.imported % 100 === 0) {
+					console.log(`  📊 Imported ${this.stats.deviceRecords.imported} records...`);
+				}
+			} catch (error: any) {
+				this.stats.deviceRecords.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing record ${record.id}: ${error.message}`);
+			}
+		}
+
+		console.log(`✅ Device Records: ${this.stats.deviceRecords.imported} imported, ${this.stats.deviceRecords.skipped} skipped, ${this.stats.deviceRecords.errors} errors\n`);
+	}
+
+	private async importLicenses() {
+		console.log('\n📦 Importing Licenses...');
+		
+		// Use retry logic for MySQL query
+		const [rows] = await this.executeWithRetry<any>('SELECT * FROM licenses WHERE isDeleted = 0');
+		const licenses = rows;
+		this.stats.licenses.total = licenses.length;
+
+		console.log(`Found ${licenses.length} licenses`);
+
+		for (const license of licenses) {
+			try {
+				if (this.dryRun) {
+					this.stats.licenses.imported++;
+					continue;
+				}
+
+				// Check if already exists by licenseKey (primary duplicate check)
+				const existing = await this.licenseRepo!.findOne({ 
+					where: { licenseKey: license.licenseKey } 
+				});
+				
+				if (existing) {
+					this.licenseMapping[license.uid] = existing.uid;
+					this.stats.licenses.skipped++;
+					if (this.verbose) console.log(`  ⏭️  Skipped existing license: ${license.licenseKey}`);
+					continue;
+				}
+				
+				// Additional check: if licenseKey is missing, check by organisation and type to avoid duplicates
+				if (!license.licenseKey) {
+					const orgRef = license.organisationRef || license.organisationUid || license.organisation_id;
+					const orgUid = orgRef ? (this.orgMapping[orgRef] || this.orgMapping[parseInt(String(orgRef), 10)]) : null;
+					
+					if (orgUid) {
+						const existingByOrg = await this.licenseRepo!.findOne({
+							where: {
+								organisation: { uid: orgUid } as Organisation,
+								type: (license.type as LicenseType) || LicenseType.PERPETUAL,
+							}
+						});
+						
+						if (existingByOrg) {
+							this.licenseMapping[license.uid] = existingByOrg.uid;
+							this.stats.licenses.skipped++;
+							if (this.verbose) console.log(`  ⏭️  Skipped duplicate license for org ${orgUid}`);
+							continue;
+						}
+					}
+				}
+
+				// Map organisation
+				const orgRef = license.organisationRef || license.organisationUid || license.organisation_id;
+				const orgUid = orgRef ? (this.orgMapping[orgRef] || this.orgMapping[parseInt(String(orgRef), 10)]) : null;
+				
+				if (!orgUid) {
+					this.stats.licenses.skipped++;
+					console.warn(`  ⚠️  Skipped license ${license.uid}: organisation ${orgRef} not found`);
+					continue;
+				}
+
+				// Parse features JSON
+				let features: Record<string, boolean> = {};
+				if (license.features) {
+					try {
+						features = typeof license.features === 'string' ? JSON.parse(license.features) : license.features;
+						if (typeof features !== 'object' || Array.isArray(features)) {
+							features = {};
+						}
+					} catch (e) {
+						console.warn(`  ⚠️  Invalid features JSON for license ${license.uid}, using empty object`);
+					}
+				}
+
+				// Map enum values with defaults
+				const type = (license.type as LicenseType) || LicenseType.PERPETUAL;
+				const plan = (license.plan as SubscriptionPlan) || SubscriptionPlan.STARTER;
+				const status = (license.status as LicenseStatus) || LicenseStatus.ACTIVE;
+				const billingCycle = (license.billingCycle as BillingCycle) || BillingCycle.MONTHLY;
+
+				const newLicense = this.licenseRepo!.create({
+					licenseKey: license.licenseKey || `LIC-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+					type,
+					plan,
+					status,
+					billingCycle,
+					validUntil: license.validUntil || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // Default 1 year
+					lastValidated: license.lastValidated || null,
+					maxUsers: license.maxUsers || 10,
+					maxBranches: license.maxBranches || 1,
+					storageLimit: license.storageLimit || 1024, // Default 1GB
+					apiCallLimit: license.apiCallLimit || 10000,
+					integrationLimit: license.integrationLimit || 5,
+					features,
+					price: license.price || 0,
+					organisationRef: orgUid,
+					hasPendingPayments: license.hasPendingPayments || false,
+					organisation: { uid: orgUid } as Organisation,
+					isDeleted: false,
+				});
+
+				const saved = await this.licenseRepo!.save(newLicense);
+				this.licenseMapping[license.uid] = saved.uid;
+				this.stats.licenses.imported++;
+
+				if (this.verbose) console.log(`  ✅ Imported: ${saved.licenseKey} (${saved.plan})`);
+			} catch (error: any) {
+				this.stats.licenses.errors++;
+				console.error(`  ❌ Error importing license ${license.uid}: ${error.message}`);
+			}
+		}
+
+		console.log(`✅ Licenses: ${this.stats.licenses.imported} imported, ${this.stats.licenses.skipped} skipped, ${this.stats.licenses.errors} errors\n`);
+	}
+
+	// Helper method to execute MySQL queries with retry logic
+	private async executeWithRetry<T = any>(
+		query: string,
+		params?: any[],
+		maxRetries: number = 3,
+		retryDelay: number = 2000
+	): Promise<[T[], any]> {
+		let lastError: any;
+		let currentRetryDelay = retryDelay;
+		
+		for (let attempt = 1; attempt <= maxRetries; attempt++) {
+			try {
+				const result = await Promise.race([
+					this.mysqlConnection!.execute(query, params),
+					new Promise<never>((_, reject) => 
+						setTimeout(() => reject(new Error('Query timeout after 60 seconds')), 60000)
+					)
+				]);
+				return result as [T[], any];
+			} catch (error: any) {
+				lastError = error;
+				// Check for various timeout indicators
+				const isTimeout = 
+					error.code === 'ETIMEDOUT' || 
+					error.errno === -60 || // macOS timeout error code
+					error.message?.includes('timeout') ||
+					error.message?.includes('ETIMEDOUT') ||
+					error.message?.includes('timed out');
+				
+				if (isTimeout && attempt < maxRetries) {
+					console.warn(`  ⚠️  Query timeout (attempt ${attempt}/${maxRetries}), retrying in ${currentRetryDelay}ms...`);
+					await new Promise(resolve => setTimeout(resolve, currentRetryDelay));
+					// Exponential backoff
+					currentRetryDelay = Math.min(currentRetryDelay * 1.5, 30000); // Cap at 30 seconds
+					continue;
+				}
+				
+				// If not a timeout or last attempt, throw immediately
+				if (!isTimeout || attempt === maxRetries) {
+					throw error;
+				}
+			}
+		}
+		
+		throw lastError;
+	}
+
+	// Helper method to safely map UIDs
+	private mapUid(oldUid: number | string | null | undefined, mapping: UidMapping): number | null {
+		if (!oldUid) return null;
+		const uid = typeof oldUid === 'number' ? oldUid : parseInt(String(oldUid), 10);
+		return mapping[uid] || null;
+	}
+
+	// Helper method to parse JSON safely
+	private parseJSON<T>(value: any, defaultValue: T): T {
+		if (!value) return defaultValue;
+		try {
+			const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+			return parsed as T;
+		} catch {
+			return defaultValue;
+		}
+	}
+
+	// Helper method to preserve field value - returns actual value or null, never defaults
+	// This ensures we import ALL data from MySQL, including nulls and empty strings
+	private preserveField<T>(value: any, defaultValue: T | null = null): T | null {
+		// Preserve null and undefined as-is
+		if (value === null || value === undefined) {
+			return defaultValue;
+		}
+		// Preserve empty strings, 0, false as-is (don't use || operator)
+		return value as T;
+	}
+
+	// Helper method to preserve field with fallback only if truly missing
+	private preserveFieldWithFallback<T>(value: any, fallback: T): T {
+		// Only use fallback if value is null, undefined, or empty string
+		if (value === null || value === undefined || value === '') {
+			return fallback;
+		}
+		return value as T;
+	}
+
+	// Helper method to parse and map JSON array fields (for number arrays)
+	private parseAndMapNumberArray(
+		value: any,
+		mapping: UidMapping | IdMapping,
+		fieldName: string,
+		entityUid: number,
+		allowEmpty: boolean = true
+	): number[] | null {
+		if (!value) return allowEmpty ? null : [];
+		
+		try {
+			let parsed: any;
+			
+			// Handle different input formats from MySQL
+			if (typeof value === 'string') {
+				const trimmed = value.trim();
+				if (!trimmed) return allowEmpty ? null : [];
+				
+				// Try JSON parse first
+				try {
+					parsed = JSON.parse(trimmed);
+				} catch {
+					// If JSON parse fails, try comma-separated string
+					if (trimmed.includes(',')) {
+						// Split and preserve all values, including empty ones for logging
+						parsed = trimmed.split(',').map((v: string) => {
+							const trimmedVal = v.trim();
+							// Preserve the value even if empty for debugging
+							return trimmedVal === '' ? null : trimmedVal;
+						}).filter((v: any) => v !== null); // Only filter out null, not falsy values
+					} else if (trimmed) {
+						// Single value - preserve as-is
+						parsed = [trimmed];
+					} else {
+						return allowEmpty ? null : [];
+					}
+				}
+			} else if (Array.isArray(value)) {
+				parsed = value;
+			} else if (typeof value === 'number') {
+				// Single number value
+				parsed = [value];
+			} else {
+				if (this.verbose) {
+					console.warn(`  ⚠️  ${fieldName} has unexpected type for entity ${entityUid}: ${typeof value}`);
+				}
+				return allowEmpty ? null : [];
+			}
+
+			// Ensure it's an array
+			if (!Array.isArray(parsed)) {
+				if (this.verbose) {
+					console.warn(`  ⚠️  ${fieldName} is not an array for entity ${entityUid}, got: ${typeof parsed}`);
+				}
+				return allowEmpty ? null : [];
+			}
+
+			// Map old UIDs to new UIDs and ensure all values are numbers
+			// IMPORTANT: Preserve all valid values, including 0
+			const mapped: number[] = [];
+			for (const item of parsed) {
+				// Preserve the original value first
+				let numUid: number | null = null;
+				
+				if (typeof item === 'string') {
+					const trimmed = item.trim();
+					// Don't filter out empty strings here - check if it's a valid number
+					if (trimmed === '' || trimmed === 'null' || trimmed === 'undefined') {
+						continue; // Skip empty/invalid string values
+					}
+					const parsedNum = parseInt(trimmed, 10);
+					if (!isNaN(parsedNum)) {
+						numUid = parsedNum;
+					}
+				} else if (typeof item === 'number') {
+					// Preserve all numbers including 0
+					numUid = item;
+				} else if (item === null || item === undefined) {
+					continue; // Skip null/undefined
+				}
+				
+				if (numUid === null || isNaN(numUid)) {
+					if (this.verbose) {
+						console.warn(`  ⚠️  Invalid ${fieldName} value for entity ${entityUid}: ${item} (type: ${typeof item})`);
+					}
+					continue;
+				}
+				
+				// Map to new UID - preserve 0 values
+				const newUid = mapping[numUid];
+				if (newUid !== undefined && newUid !== null && typeof newUid === 'number') {
+					mapped.push(newUid);
+				} else if (this.verbose) {
+					console.warn(`  ⚠️  ${fieldName} UID ${numUid} not found in mapping for entity ${entityUid} (will be skipped)`);
+				}
+			}
+
+			// Return null for empty arrays if allowEmpty is true, otherwise return empty array
+			return mapped.length > 0 ? mapped : (allowEmpty ? null : []);
+		} catch (e: any) {
+			if (this.verbose) {
+				console.warn(`  ⚠️  Error parsing ${fieldName} for entity ${entityUid}: ${e.message}`);
+			}
+			return allowEmpty ? null : [];
+		}
+	}
+
+	private async importAttendance() {
+		console.log('\n📦 Importing Attendance...');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM attendance');
+		const records = rows as any[];
+		this.stats.attendance.total = records.length;
+		console.log(`Found ${records.length} attendance records`);
+
+		for (const record of records) {
+			try {
+				if (this.dryRun) {
+					this.stats.attendance.imported++;
+					continue;
+				}
+
+				const ownerUid = this.mapUid(record.owner || record.ownerUid || record.owner_id, this.userMapping);
+				const orgUid = this.mapUid(record.organisationRef || record.organisationUid || record.organisation_id, this.orgMapping);
+				const branchUid = this.mapUid(record.branchUid || record.branch_id, this.branchMapping);
+				const verifiedByUid = this.mapUid(record.verifiedBy || record.verifiedByUid || record.verifiedBy_id, this.userMapping);
+				const dailyReportUid = this.mapUid(record.dailyReport || record.dailyReportUid || record.dailyReport_id || record.reportUid || record.report_id, this.reportMapping);
+
+				if (!ownerUid) {
+					this.stats.attendance.skipped++;
+					continue;
+				}
+
+				// Preserve ALL fields from MySQL - parse JSON fields but preserve all other data as-is
+				const placesOfInterest = this.parseJSON(record.placesOfInterest, null);
+				const breakDetails = this.parseJSON(record.breakDetails, []);
+
+				const newRecord: Attendance = this.attendanceRepo!.create({
+					status: (record.status as AttendanceStatus) || AttendanceStatus.PRESENT,
+					checkIn: record.checkIn || record.createdAt || new Date(), // Date fields need special handling
+					checkOut: this.preserveField(record.checkOut),
+					duration: this.preserveField(record.duration),
+					overtime: this.preserveField(record.overtime),
+					earlyMinutes: this.preserveField(record.earlyMinutes) ?? 0, // Use ?? to preserve 0
+					lateMinutes: this.preserveField(record.lateMinutes) ?? 0,
+					checkInLatitude: this.preserveField(record.checkInLatitude),
+					checkInLongitude: this.preserveField(record.checkInLongitude),
+					checkOutLatitude: this.preserveField(record.checkOutLatitude),
+					checkOutLongitude: this.preserveField(record.checkOutLongitude),
+					placesOfInterest, // Already parsed JSON
+					checkInNotes: this.preserveField(record.checkInNotes),
+					checkOutNotes: this.preserveField(record.checkOutNotes),
+					breakStartTime: this.preserveField(record.breakStartTime),
+					breakEndTime: this.preserveField(record.breakEndTime),
+					totalBreakTime: this.preserveField(record.totalBreakTime),
+					breakCount: this.preserveField(record.breakCount) ?? 0,
+					breakDetails, // Already parsed JSON
+					breakLatitude: this.preserveField(record.breakLatitude),
+					breakLongitude: this.preserveField(record.breakLongitude),
+					breakNotes: this.preserveField(record.breakNotes),
+					distanceTravelledKm: this.preserveField(record.distanceTravelledKm) ?? 0,
+					createdAt: this.preserveField(record.createdAt) || new Date(),
+					updatedAt: this.preserveField(record.updatedAt) || new Date(),
+					verifiedAt: this.preserveField(record.verifiedAt),
+					owner: { uid: ownerUid } as User,
+					...(orgUid && { organisation: { uid: orgUid } as Organisation }),
+					...(branchUid && { branch: { uid: branchUid } as Branch }),
+					...(verifiedByUid && { verifiedBy: { uid: verifiedByUid } as User }),
+					...(dailyReportUid && { dailyReport: { uid: dailyReportUid } as Report }),
+				} as unknown as DeepPartial<Attendance>);
+
+				await this.attendanceRepo!.save(newRecord);
+				this.stats.attendance.imported++;
+			} catch (error: any) {
+				this.stats.attendance.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing attendance ${record.uid}: ${error.message}`);
+			}
+		}
+		console.log(`✅ Attendance: ${this.stats.attendance.imported} imported, ${this.stats.attendance.skipped} skipped, ${this.stats.attendance.errors} errors\n`);
+	}
+
+	private async importClaims() {
+		console.log('\n📦 Importing Claims...');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM claim WHERE isDeleted = 0 OR isDeleted IS NULL');
+		const records = rows as any[];
+		this.stats.claims.total = records.length;
+		console.log(`Found ${records.length} claims`);
+
+		for (const record of records) {
+			try {
+				if (this.dryRun) {
+					this.stats.claims.imported++;
+					continue;
+				}
+
+				const ownerUid = this.mapUid(record.owner || record.ownerUid || record.owner_id, this.userMapping);
+				const orgUid = this.mapUid(record.organisationRef || record.organisationUid, this.orgMapping);
+				const branchUid = this.mapUid(record.branchUid || record.branch_id, this.branchMapping);
+
+				if (!ownerUid) {
+					this.stats.claims.skipped++;
+					continue;
+				}
+
+				const newRecord = this.claimRepo!.create({
+					amount: record.amount || '0',
+					documentUrl: record.documentUrl || null,
+					verifiedAt: record.verifiedAt || record.createdAt || new Date(),
+					comments: record.comments || null,
+					status: record.status || 'PENDING',
+					category: record.category || 'GENERAL',
+					currency: record.currency || 'ZAR',
+					owner: { uid: ownerUid } as User,
+					...(orgUid && { organisation: { uid: orgUid } as Organisation }),
+					...(branchUid && { branch: { uid: branchUid } as Branch }),
+					isDeleted: false,
+				});
+
+				await this.claimRepo!.save(newRecord);
+				this.stats.claims.imported++;
+			} catch (error: any) {
+				this.stats.claims.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing claim ${record.uid}: ${error.message}`);
+			}
+		}
+		console.log(`✅ Claims: ${this.stats.claims.imported} imported, ${this.stats.claims.skipped} skipped, ${this.stats.claims.errors} errors\n`);
+	}
+
+	private async importCheckIns() {
+		console.log('\n📦 Importing Check-ins...');
+		let records: any[];
+		try {
+			const [rows] = await this.mysqlConnection!.execute('SELECT * FROM check_ins');
+			records = rows as any[];
+			this.stats.checkIns.total = records.length;
+			console.log(`Found ${records.length} check-ins`);
+		} catch (error: any) {
+			if (error.code === 'ER_NO_SUCH_TABLE') {
+				console.log(`⚠️  Table 'check_ins' does not exist, skipping...`);
+				this.stats.checkIns.total = 0;
+				console.log(`✅ Check-ins: 0 imported, 0 skipped, 0 errors\n`);
+				return;
+			}
+			throw error;
+		}
+
+		for (const record of records) {
+			try {
+				if (this.dryRun) {
+					this.stats.checkIns.imported++;
+					continue;
+				}
+
+				const ownerUid = this.mapUid(record.owner || record.ownerUid || record.owner_id, this.userMapping);
+				const orgUid = this.mapUid(record.organisationRef || record.organisationUid, this.orgMapping);
+				const branchUid = this.mapUid(record.branchUid || record.branch_id, this.branchMapping);
+
+				if (!ownerUid) {
+					this.stats.checkIns.skipped++;
+					continue;
+				}
+
+				const fullAddress = this.parseJSON(record.fullAddress, null);
+
+				const newRecord = this.checkInRepo!.create({
+					checkInTime: record.checkInTime || record.createdAt || new Date(),
+					checkInPhoto: record.checkInPhoto || '',
+					checkInLocation: record.checkInLocation || '',
+					checkOutTime: record.checkOutTime || null,
+					checkOutPhoto: record.checkOutPhoto || null,
+					checkOutLocation: record.checkOutLocation || null,
+					duration: record.duration || null,
+					fullAddress,
+					notes: record.notes || null,
+					resolution: record.resolution || null,
+					owner: { uid: ownerUid } as User,
+					...(orgUid && { organisation: { uid: orgUid } as Organisation }),
+					...(branchUid && { branch: { uid: branchUid } as Branch }),
+				});
+
+				await this.checkInRepo!.save(newRecord);
+				this.stats.checkIns.imported++;
+			} catch (error: any) {
+				this.stats.checkIns.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing check-in ${record.uid}: ${error.message}`);
+			}
+		}
+		console.log(`✅ Check-ins: ${this.stats.checkIns.imported} imported, ${this.stats.checkIns.skipped} skipped, ${this.stats.checkIns.errors} errors\n`);
+	}
+
+	private async importLeads() {
+		console.log('\n📦 Importing Leads...');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM leads WHERE isDeleted = 0 OR isDeleted IS NULL');
+		const records = rows as any[];
+		this.stats.leads.total = records.length;
+		console.log(`Found ${records.length} leads`);
+
+		for (const record of records) {
+			try {
+				if (this.dryRun) {
+					this.stats.leads.imported++;
+					continue;
+				}
+
+				const ownerUid = this.mapUid(record.ownerUid || record.owner_id, this.userMapping);
+				const orgUid = this.mapUid(record.organisationUid || record.organisation_id, this.orgMapping);
+				const branchUid = this.mapUid(record.branchUid || record.branch_id, this.branchMapping);
+
+				if (!ownerUid || !orgUid) {
+					this.stats.leads.skipped++;
+					continue;
+				}
+
+				const scoringData = this.parseJSON(record.scoringData, null);
+				const activityData = this.parseJSON(record.activityData, null);
+				const bantQualification = this.parseJSON(record.bantQualification, null);
+				const sourceTracking = this.parseJSON(record.sourceTracking, null);
+				const competitorData = this.parseJSON(record.competitorData, null);
+				const customFields = this.parseJSON(record.customFields, null);
+				const changeHistory = this.parseJSON(record.changeHistory, []);
+				const assignees = this.parseJSON(record.assignees, []).map((a: any) => ({
+					uid: this.mapUid(a.uid || a, this.userMapping)
+				})).filter((a: any) => a.uid);
+
+				const newRecord = this.leadRepo!.create({
+					name: record.name || null,
+					companyName: record.companyName || null,
+					email: record.email || null,
+					phone: record.phone || null,
+					category: record.category || 'OTHER',
+					status: record.status || 'NEW',
+					intent: record.intent || null,
+					temperature: record.temperature || null,
+					source: record.source || null,
+					lifecycleStage: record.lifecycleStage || null,
+					businessSize: record.businessSize || null,
+					industry: record.industry || null,
+					decisionMakerRole: record.decisionMakerRole || null,
+					preferredCommunication: record.preferredCommunication || record.communicationPreference || null,
+					priority: record.priority || null,
+					budgetRange: record.budgetRange || null,
+					purchaseTimeline: record.purchaseTimeline || record.timeline || null,
+					notes: record.notes || null,
+					scoringData,
+					activityData,
+					bantQualification,
+					sourceTracking,
+					competitorData,
+					customFields,
+					changeHistory,
+					assignees,
+					ownerUid,
+					organisationUid: orgUid,
+					branchUid: branchUid || null,
+					owner: { uid: ownerUid } as User,
+					organisation: { uid: orgUid } as Organisation,
+					...(branchUid && { branch: { uid: branchUid } as Branch }),
+				});
+
+				const saved: Lead = await this.leadRepo!.save(newRecord);
+				this.leadMapping[record.uid] = saved.uid;
+				this.stats.leads.imported++;
+			} catch (error: any) {
+				this.stats.leads.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing lead ${record.uid}: ${error.message}`);
+			}
+		}
+		console.log(`✅ Leads: ${this.stats.leads.imported} imported, ${this.stats.leads.skipped} skipped, ${this.stats.leads.errors} errors\n`);
+	}
+
+	private async importQuotations() {
+		console.log('\n📦 Importing Quotations...');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM quotation');
+		const records = rows as any[];
+		this.stats.quotations.total = records.length;
+		console.log(`Found ${records.length} quotations`);
+
+		for (const record of records) {
+			try {
+				if (this.dryRun) {
+					this.stats.quotations.imported++;
+					continue;
+				}
+
+				const placedByUid = this.mapUid(record.placedBy || record.placedById || record.placedByUid, this.userMapping);
+				const orgUid = this.mapUid(record.organisationRef || record.organisationUid, this.orgMapping);
+				const branchUid = this.mapUid(record.branchUid || record.branch_id, this.branchMapping);
+				// Skip client mapping - clients excluded
+
+				if (!placedByUid || !orgUid) {
+					this.stats.quotations.skipped++;
+					continue;
+				}
+
+				const newRecord = this.quotationRepo!.create({
+					quotationNumber: record.quotationNumber || `QT-${Date.now()}-${record.uid}`,
+					totalAmount: record.totalAmount || 0,
+					totalItems: record.totalItems || 0,
+					status: record.status || 'DRAFT',
+					quotationDate: record.quotationDate || record.createdAt || new Date(),
+					shippingMethod: record.shippingMethod || null,
+					notes: record.notes || null,
+					shippingInstructions: record.shippingInstructions || null,
+					packagingRequirements: record.packagingRequirements || null,
+					priceListType: record.priceListType || null,
+					title: record.title || null,
+					description: record.description || null,
+					promoCode: record.promoCode || null,
+					resellerCommission: record.resellerCommission || null,
+					validUntil: record.validUntil || null,
+					reviewToken: record.reviewToken || null,
+					reviewUrl: record.reviewUrl || null,
+					pdfURL: record.pdfURL || null,
+					currency: record.currency || 'ZAR',
+					placedBy: { uid: placedByUid } as User,
+					...(orgUid && { organisation: { uid: orgUid } as Organisation }),
+					...(branchUid && { branch: { uid: branchUid } as Branch }),
+				});
+
+				const saved = await this.quotationRepo!.save(newRecord);
+				this.quotationMapping[record.uid] = saved.uid;
+				this.stats.quotations.imported++;
+			} catch (error: any) {
+				this.stats.quotations.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing quotation ${record.uid}: ${error.message}`);
+			}
+		}
+		console.log(`✅ Quotations: ${this.stats.quotations.imported} imported, ${this.stats.quotations.skipped} skipped, ${this.stats.quotations.errors} errors\n`);
+	}
+
+	private async importQuotationItems() {
+		console.log('\n📦 Importing Quotation Items...');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM quotation_item');
+		const records = rows as any[];
+		this.stats.quotationItems.total = records.length;
+		console.log(`Found ${records.length} quotation items`);
+
+		for (const record of records) {
+			try {
+				const quotationUid = this.mapUid(record.quotation || record.quotationId || record.quotation_id, this.quotationMapping);
+				if (!quotationUid) {
+					this.stats.quotationItems.skipped++;
+					continue;
+				}
+
+				if (this.dryRun) {
+					this.stats.quotationItems.imported++;
+					continue;
+				}
+
+				// Skip product reference - products excluded
+				const newRecord = this.quotationItemRepo!.create({
+					quantity: record.quantity || 1,
+					totalPrice: record.totalPrice || 0,
+					unitPrice: record.unitPrice || 0,
+					purchaseMode: record.purchaseMode || 'item',
+					itemsPerUnit: record.itemsPerUnit || 1,
+					notes: record.notes || null,
+					quotation: { uid: quotationUid } as Quotation,
+				});
+
+				await this.quotationItemRepo!.save(newRecord);
+				this.stats.quotationItems.imported++;
+			} catch (error: any) {
+				this.stats.quotationItems.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing quotation item ${record.uid}: ${error.message}`);
+			}
+		}
+		console.log(`✅ Quotation Items: ${this.stats.quotationItems.imported} imported, ${this.stats.quotationItems.skipped} skipped, ${this.stats.quotationItems.errors} errors\n`);
+	}
+
+	private async importOrders() {
+		console.log('\n📦 Importing Orders...');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM `order`');
+		const records = rows as any[];
+		this.stats.orders.total = records.length;
+		console.log(`Found ${records.length} orders`);
+
+		for (const record of records) {
+			try {
+				if (this.dryRun) {
+					this.stats.orders.imported++;
+					continue;
+				}
+
+				const placedByUid = this.mapUid(record.placedBy || record.placedById || record.placedByUid, this.userMapping);
+				const orgUid = this.mapUid(record.organisationRef || record.organisationUid, this.orgMapping);
+				const branchUid = this.mapUid(record.branchUid || record.branch_id, this.branchMapping);
+				const quotationId = this.mapUid(record.quotationId || record.quotation_id, this.quotationMapping);
+
+				if (!placedByUid || !orgUid) {
+					this.stats.orders.skipped++;
+					continue;
+				}
+
+				const newRecord = this.orderRepo!.create({
+					orderNumber: record.orderNumber || `ORD-${Date.now()}-${record.uid}`,
+					totalAmount: record.totalAmount || 0,
+					totalItems: record.totalItems || 0,
+					status: record.status || 'IN_FULFILLMENT',
+					orderDate: record.orderDate || record.createdAt || new Date(),
+					shippingMethod: record.shippingMethod || null,
+					notes: record.notes || null,
+					shippingInstructions: record.shippingInstructions || null,
+					packagingRequirements: record.packagingRequirements || null,
+					resellerCommission: record.resellerCommission || null,
+					quotationId: quotationId || null,
+					placedBy: { uid: placedByUid } as User,
+					...(orgUid && { organisation: { uid: orgUid } as Organisation }),
+					...(branchUid && { branch: { uid: branchUid } as Branch }),
+					...(quotationId && { quotation: { uid: quotationId } as Quotation }),
+				});
+
+				const saved = await this.orderRepo!.save(newRecord);
+				this.orderMapping[record.uid] = saved.uid;
+				this.stats.orders.imported++;
+			} catch (error: any) {
+				this.stats.orders.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing order ${record.uid}: ${error.message}`);
+			}
+		}
+		console.log(`✅ Orders: ${this.stats.orders.imported} imported, ${this.stats.orders.skipped} skipped, ${this.stats.orders.errors} errors\n`);
+	}
+
+	private async importOrderItems() {
+		console.log('\n📦 Importing Order Items...');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM order_item');
+		const records = rows as any[];
+		this.stats.orderItems.total = records.length;
+		console.log(`Found ${records.length} order items`);
+
+		for (const record of records) {
+			try {
+				const orderUid = this.mapUid(record.order || record.orderId || record.order_id, this.orderMapping);
+				if (!orderUid) {
+					this.stats.orderItems.skipped++;
+					continue;
+				}
+
+				if (this.dryRun) {
+					this.stats.orderItems.imported++;
+					continue;
+				}
+
+				// Skip product reference - products excluded
+				const newRecord = this.orderItemRepo!.create({
+					quantity: record.quantity || 1,
+					unitPrice: record.unitPrice || 0,
+					totalPrice: record.totalPrice || 0,
+					notes: record.notes || null,
+					isShipped: record.isShipped || false,
+					serialNumber: record.serialNumber || null,
+					order: { uid: orderUid } as Order,
+				});
+
+				await this.orderItemRepo!.save(newRecord);
+				this.stats.orderItems.imported++;
+			} catch (error: any) {
+				this.stats.orderItems.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing order item ${record.uid}: ${error.message}`);
+			}
+		}
+		console.log(`✅ Order Items: ${this.stats.orderItems.imported} imported, ${this.stats.orderItems.skipped} skipped, ${this.stats.orderItems.errors} errors\n`);
+	}
+
+	// Batch import methods for remaining entities - simplified implementations
+	// These follow the same pattern: read from MySQL, map foreign keys, create entities
+
+	private async importTasks() {
+		console.log('\n📦 Importing Tasks...');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM tasks WHERE isDeleted = 0 OR isDeleted IS NULL');
+		const records = rows as any[];
+		this.stats.tasks.total = records.length;
+		console.log(`Found ${records.length} tasks`);
+
+		for (const record of records) {
+			try {
+				if (this.dryRun) {
+					this.stats.tasks.imported++;
+					continue;
+				}
+
+				const creatorUid = this.mapUid(record.creator || record.creatorUid || record.creator_id, this.userMapping);
+				const orgUid = this.mapUid(record.organisationRef || record.organisationUid, this.orgMapping);
+				const branchUid = this.mapUid(record.branchUid || record.branch_id, this.branchMapping);
+
+				if (!creatorUid || !orgUid) {
+					this.stats.tasks.skipped++;
+					continue;
+				}
+
+				const assignees = this.parseJSON(record.assignees, []).map((a: any) => ({
+					uid: this.mapUid(a.uid || a, this.userMapping)
+				})).filter((a: any) => a.uid);
+				const clients = this.parseJSON(record.clients, []); // Skip client mapping
+				const attachments = this.parseJSON(record.attachments, []);
+
+				const newRecord = this.taskRepo!.create({
+					title: record.title || '',
+					description: record.description || '',
+					status: record.status || 'PENDING',
+					taskType: record.taskType || 'OTHER',
+					priority: record.priority || 'MEDIUM',
+					repetitionType: record.repetitionType || 'NONE',
+					progress: record.progress || 0,
+					deadline: record.deadline || null,
+					repetitionDeadline: record.repetitionDeadline || null,
+					completionDate: record.completionDate || null,
+					isOverdue: record.isOverdue || false,
+					targetCategory: record.targetCategory || null,
+					attachments,
+					jobStartTime: record.jobStartTime || null,
+					jobEndTime: record.jobEndTime || null,
+					jobDuration: record.jobDuration || null,
+					jobStatus: record.jobStatus || 'QUEUED',
+					assignees,
+					clients,
+					isDeleted: false,
+					creator: { uid: creatorUid } as User,
+					organisation: { uid: orgUid } as Organisation,
+					...(branchUid && { branch: { uid: branchUid } as Branch }),
+				});
+
+				const saved = await this.taskRepo!.save(newRecord);
+				this.taskMapping[record.uid] = saved.uid;
+				this.stats.tasks.imported++;
+			} catch (error: any) {
+				this.stats.tasks.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing task ${record.uid}: ${error.message}`);
+			}
+		}
+		console.log(`✅ Tasks: ${this.stats.tasks.imported} imported, ${this.stats.tasks.skipped} skipped, ${this.stats.tasks.errors} errors\n`);
+	}
+
+	private async importSubtasks() {
+		console.log('\n📦 Importing Subtasks...');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM subtask WHERE isDeleted = 0 OR isDeleted IS NULL');
+		const records = rows as any[];
+		this.stats.subtasks.total = records.length;
+		console.log(`Found ${records.length} subtasks`);
+
+		for (const record of records) {
+			try {
+				const taskUid = this.mapUid(record.task || record.taskId || record.task_id, this.taskMapping);
+				if (!taskUid) {
+					this.stats.subtasks.skipped++;
+					continue;
+				}
+
+				if (this.dryRun) {
+					this.stats.subtasks.imported++;
+					continue;
+				}
+
+				const newRecord = this.subTaskRepo!.create({
+					title: record.title || '',
+					description: record.description || '',
+					status: record.status || 'PENDING',
+					isDeleted: false,
+					task: { uid: taskUid } as Task,
+				});
+
+				await this.subTaskRepo!.save(newRecord);
+				this.stats.subtasks.imported++;
+			} catch (error: any) {
+				this.stats.subtasks.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing subtask ${record.uid}: ${error.message}`);
+			}
+		}
+		console.log(`✅ Subtasks: ${this.stats.subtasks.imported} imported, ${this.stats.subtasks.skipped} skipped, ${this.stats.subtasks.errors} errors\n`);
+	}
+
+	private async importInteractions() {
+		console.log('\n📦 Importing Interactions...');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM interactions WHERE isDeleted = 0 OR isDeleted IS NULL');
+		const records = rows as any[];
+		this.stats.interactions.total = records.length;
+		console.log(`Found ${records.length} interactions`);
+
+		for (const record of records) {
+			try {
+				if (this.dryRun) {
+					this.stats.interactions.imported++;
+					continue;
+				}
+
+				const createdByUid = this.mapUid(record.createdBy || record.createdById, this.userMapping);
+				const orgUid = this.mapUid(record.organisationRef || record.organisationUid, this.orgMapping);
+				const branchUid = this.mapUid(record.branchUid || record.branch_id, this.branchMapping);
+				const leadUid = this.mapUid(record.lead || record.leadId || record.lead_id, this.leadMapping);
+				const quotationUid = this.mapUid(record.quotation || record.quotationId, this.quotationMapping);
+
+				if (!createdByUid || !orgUid) {
+					this.stats.interactions.skipped++;
+					continue;
+				}
+
+				const newRecord = this.interactionRepo!.create({
+					message: record.message || '',
+					attachmentUrl: record.attachmentUrl || null,
+					type: record.type || 'MESSAGE',
+					isDeleted: false,
+					createdBy: { uid: createdByUid } as User,
+					organisation: { uid: orgUid } as Organisation,
+					...(branchUid && { branch: { uid: branchUid } as Branch }),
+					...(leadUid && { lead: { uid: leadUid } as Lead }),
+					...(quotationUid && { quotation: { uid: quotationUid } as Quotation }),
+				});
+
+				await this.interactionRepo!.save(newRecord);
+				this.stats.interactions.imported++;
+			} catch (error: any) {
+				this.stats.interactions.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing interaction ${record.uid}: ${error.message}`);
+			}
+		}
+		console.log(`✅ Interactions: ${this.stats.interactions.imported} imported, ${this.stats.interactions.skipped} skipped, ${this.stats.interactions.errors} errors\n`);
+	}
+
+	private async importNotifications() {
+		console.log('\n📦 Importing Notifications...');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM notification');
+		const records = rows as any[];
+		this.stats.notifications.total = records.length;
+		console.log(`Found ${records.length} notifications`);
+
+		for (const record of records) {
+			try {
+				if (this.dryRun) {
+					this.stats.notifications.imported++;
+					continue;
+				}
+
+				const ownerUid = this.mapUid(record.owner || record.ownerUid || record.owner_id, this.userMapping);
+				const orgUid = this.mapUid(record.organisationRef || record.organisationUid, this.orgMapping);
+				const branchUid = this.mapUid(record.branchUid || record.branch_id, this.branchMapping);
+
+				if (!ownerUid || !orgUid) {
+					this.stats.notifications.skipped++;
+					continue;
+				}
+
+				const newRecord = this.notificationRepo!.create({
+					type: record.type || 'USER',
+					title: record.title || '',
+					message: record.message || '',
+					status: record.status || 'UNREAD',
+					priority: record.priority || 'MEDIUM',
+					owner: { uid: ownerUid } as User,
+					organisation: { uid: orgUid } as Organisation,
+					...(branchUid && { branch: { uid: branchUid } as Branch }),
+				});
+
+				await this.notificationRepo!.save(newRecord);
+				this.stats.notifications.imported++;
+			} catch (error: any) {
+				this.stats.notifications.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing notification ${record.uid}: ${error.message}`);
+			}
+		}
+		console.log(`✅ Notifications: ${this.stats.notifications.imported} imported, ${this.stats.notifications.skipped} skipped, ${this.stats.notifications.errors} errors\n`);
+	}
+
+	private async importJournals() {
+		console.log('\n📦 Importing Journals...');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM journal WHERE isDeleted = 0 OR isDeleted IS NULL');
+		const records = rows as any[];
+		this.stats.journals.total = records.length;
+		console.log(`Found ${records.length} journals`);
+
+		for (const record of records) {
+			try {
+				if (this.dryRun) {
+					this.stats.journals.imported++;
+					continue;
+				}
+
+				const ownerUid = this.mapUid(record.owner || record.ownerUid || record.owner_id, this.userMapping);
+				const orgUid = this.mapUid(record.organisationRef || record.organisationUid, this.orgMapping);
+				const branchUid = this.mapUid(record.branchUid || record.branch_id, this.branchMapping);
+
+				if (!ownerUid || !orgUid) {
+					this.stats.journals.skipped++;
+					continue;
+				}
+
+				const attachments = this.parseJSON(record.attachments, []);
+				const metadata = this.parseJSON(record.metadata, null);
+
+				const newRecord = this.journalRepo!.create({
+					title: record.title || null,
+					description: record.description || record.content || null,
+					type: record.type || 'GENERAL',
+					status: record.status || 'PENDING_REVIEW',
+					clientRef: record.clientRef || null,
+					fileURL: record.fileURL || null,
+					comments: record.comments || null,
+					inspectionData: this.parseJSON(record.inspectionData, null),
+					totalScore: record.totalScore || null,
+					maxScore: record.maxScore || null,
+					percentage: record.percentage || null,
+					overallRating: record.overallRating || null,
+					inspectorComments: record.inspectorComments || null,
+					storeManagerSignature: record.storeManagerSignature || null,
+					qcInspectorSignature: record.qcInspectorSignature || null,
+					inspectionDate: record.inspectionDate || null,
+					inspectionLocation: record.inspectionLocation || null,
+					attachments,
+					metadata,
+					timestamp: record.timestamp || record.createdAt || new Date(),
+					isDeleted: false,
+					owner: { uid: ownerUid } as User,
+					organisation: { uid: orgUid } as Organisation,
+					...(branchUid && { branch: { uid: branchUid } as Branch }),
+				});
+
+				await this.journalRepo!.save(newRecord);
+				this.stats.journals.imported++;
+			} catch (error: any) {
+				this.stats.journals.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing journal ${record.uid}: ${error.message}`);
+			}
+		}
+		console.log(`✅ Journals: ${this.stats.journals.imported} imported, ${this.stats.journals.skipped} skipped, ${this.stats.journals.errors} errors\n`);
+	}
+
+	private async importReports() {
+		console.log('\n📦 Importing Reports (large dataset - processing in batches)...');
+		
+		// First, get total count without ordering to avoid sort memory issues
+		const [countRows] = await this.mysqlConnection!.execute('SELECT COUNT(*) as total FROM reports');
+		const totalCount = Number((countRows as any[])[0]?.total || 0);
+		this.stats.reports.total = totalCount;
+		console.log(`Found ${totalCount} reports`);
+
+		const batchSize = 500;
+		let offset = 0;
+		
+		while (offset < totalCount) {
+			// Fetch batch without ORDER BY to avoid sort memory issues
+			// Note: MySQL2 doesn't support placeholders for LIMIT/OFFSET, so we use string interpolation
+			const [rows] = await this.mysqlConnection!.execute(
+				`SELECT * FROM reports LIMIT ${batchSize} OFFSET ${offset}`
+			);
+			const batch = rows as any[];
+			
+			if (batch.length === 0) break;
+			
+			const progress = `${Math.min(offset + batch.length, totalCount)}/${totalCount}`;
+			process.stdout.write(`\r  Processing batch: ${progress}`);
+
+			for (const record of batch) {
+			try {
+				if (this.dryRun) {
+					this.stats.reports.imported++;
+					continue;
+				}
+
+				const ownerUid = this.mapUid(record.owner || record.ownerUid || record.owner_id, this.userMapping);
+				const orgUid = this.mapUid(record.organisationRef || record.organisationUid, this.orgMapping);
+				const branchUid = this.mapUid(record.branchUid || record.branch_id, this.branchMapping);
+
+				if (!ownerUid || !orgUid) {
+					this.stats.reports.skipped++;
+					continue;
+				}
+
+					// Check for duplicates based on name, owner, and generatedAt
+					const generatedAt = record.generatedAt || record.createdAt || new Date();
+					const existing = await this.reportRepo!.findOne({
+						where: {
+							name: record.name || '',
+							owner: { uid: ownerUid } as User,
+						},
+						order: { generatedAt: 'DESC' }
+					});
+
+					if (existing) {
+						const recordTime = new Date(generatedAt).getTime();
+						const existingTime = new Date(existing.generatedAt || 0).getTime();
+						
+						// If same name and within 1 minute, consider duplicate
+						if (Math.abs(recordTime - existingTime) < 60000) {
+							this.stats.reports.duplicates++;
+							continue;
+						}
+						
+						// Update if new report is newer
+						if (recordTime > existingTime) {
+							existing.description = record.description ?? existing.description;
+							existing.reportData = this.parseJSON(record.reportData, existing.reportData);
+							existing.filters = this.parseJSON(record.filters, existing.filters);
+							existing.gpsData = this.parseJSON(record.gpsData, existing.gpsData);
+							await this.reportRepo!.save(existing);
+							this.stats.reports.updated++;
+							continue;
+						}
+					}
+
+				const filters = this.parseJSON(record.filters, {});
+				const reportData = this.parseJSON(record.reportData, {});
+				const gpsData = this.parseJSON(record.gpsData, null);
+
+				const newRecord = this.reportRepo!.create({
+					name: record.name || '',
+					description: record.description || null,
+					reportType: record.reportType || 'MAIN',
+					filters,
+						generatedAt,
+					reportData,
+					notes: record.notes || null,
+					gpsData,
+					totalDistanceKm: record.totalDistanceKm || null,
+					totalStops: record.totalStops || null,
+					owner: { uid: ownerUid } as User,
+					organisation: { uid: orgUid } as Organisation,
+					...(branchUid && { branch: { uid: branchUid } as Branch }),
+				});
+
+				const savedReport = await this.reportRepo!.save(newRecord);
+				// Build report mapping for linking to attendance records
+				if (record.uid && savedReport.uid) {
+					this.reportMapping[record.uid] = savedReport.uid;
+				}
+				this.stats.reports.imported++;
+			} catch (error: any) {
+				this.stats.reports.errors++;
+					if (this.verbose && this.stats.reports.errors <= 10) {
+						console.error(`\n  ❌ Error importing report ${record.uid}: ${error.message}`);
+			}
+		}
+			}
+			
+			offset += batchSize;
+		}
+		console.log(`\n✅ Reports: ${this.stats.reports.imported} imported, ${this.stats.reports.skipped} skipped, ${this.stats.reports.duplicates} duplicates, ${this.stats.reports.updated} updated, ${this.stats.reports.errors} errors`);
+	}
+
+	private async importLeave() {
+		console.log('\n📦 Importing Leave...');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM `leave`');
+		const records = rows as any[];
+		this.stats.leave.total = records.length;
+		console.log(`Found ${records.length} leave records`);
+
+		for (const record of records) {
+			try {
+				if (this.dryRun) {
+					this.stats.leave.imported++;
+					continue;
+				}
+
+				const ownerUid = this.mapUid(record.owner || record.ownerUid || record.owner_id, this.userMapping);
+				const orgUid = this.mapUid(record.organisationRef || record.organisationUid, this.orgMapping);
+				const branchUid = this.mapUid(record.branchUid || record.branch_id, this.branchMapping);
+				const approvedByUid = this.mapUid(record.approvedBy || record.approvedById, this.userMapping);
+
+				if (!ownerUid || !orgUid) {
+					this.stats.leave.skipped++;
+					continue;
+				}
+
+				const attachments = this.parseJSON(record.attachments, []);
+
+				const newRecord = this.leaveRepo!.create({
+					leaveType: record.leaveType || 'ANNUAL',
+					startDate: record.startDate || new Date(),
+					endDate: record.endDate || new Date(),
+					duration: record.duration || 0,
+					motivation: record.motivation || null,
+					status: record.status || 'PENDING',
+					comments: record.comments || null,
+					isHalfDay: record.isHalfDay || false,
+					halfDayPeriod: record.halfDayPeriod || null,
+					attachments,
+					approvedAt: record.approvedAt || null,
+					rejectedAt: record.rejectedAt || null,
+					rejectionReason: record.rejectionReason || null,
+					owner: { uid: ownerUid } as User,
+					...(approvedByUid && { approvedBy: { uid: approvedByUid } as User }),
+					organisation: { uid: orgUid } as Organisation,
+					...(branchUid && { branch: { uid: branchUid } as Branch }),
+				});
+
+				await this.leaveRepo!.save(newRecord);
+				this.stats.leave.imported++;
+			} catch (error: any) {
+				this.stats.leave.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing leave ${record.uid}: ${error.message}`);
+			}
+		}
+		console.log(`✅ Leave: ${this.stats.leave.imported} imported, ${this.stats.leave.skipped} skipped, ${this.stats.leave.errors} errors\n`);
+	}
+
+	private async importWarnings() {
+		console.log('\n📦 Importing Warnings...');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM warning');
+		const records = rows as any[];
+		this.stats.warnings.total = records.length;
+		console.log(`Found ${records.length} warnings`);
+
+		for (const record of records) {
+			try {
+				if (this.dryRun) {
+					this.stats.warnings.imported++;
+					continue;
+				}
+
+				const ownerUid = this.mapUid(record.owner || record.ownerUid || record.owner_id, this.userMapping);
+				const issuedByUid = this.mapUid(record.issuedBy || record.issuedById, this.userMapping);
+
+				if (!ownerUid || !issuedByUid) {
+					this.stats.warnings.skipped++;
+					continue;
+				}
+
+				const newRecord = this.warningRepo!.create({
+					reason: record.reason || '',
+					severity: record.severity || 'LOW',
+					expiresAt: record.expiresAt || new Date(),
+					isExpired: record.isExpired || false,
+					status: record.status || 'ACTIVE',
+					owner: { uid: ownerUid } as User,
+					issuedBy: { uid: issuedByUid } as User,
+				});
+
+				await this.warningRepo!.save(newRecord);
+				this.stats.warnings.imported++;
+			} catch (error: any) {
+				this.stats.warnings.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing warning ${record.uid}: ${error.message}`);
+			}
+		}
+		console.log(`✅ Warnings: ${this.stats.warnings.imported} imported, ${this.stats.warnings.skipped} skipped, ${this.stats.warnings.errors} errors\n`);
+	}
+
+	private async importTracking() {
+		console.log('\n📦 Importing Tracking (past 2 days to today - processing in batches)...');
+		
+		// Calculate past 2 days to today dates
+		const now = new Date();
+		const pastTwoDaysStart = new Date(now);
+		pastTwoDaysStart.setDate(now.getDate() - 2);
+		pastTwoDaysStart.setHours(0, 0, 0, 0); // Start of day 2 days ago
+		
+		const todayEnd = new Date(now);
+		todayEnd.setHours(23, 59, 59, 999); // End of today
+		
+		// Format dates for MySQL (YYYY-MM-DD HH:MM:SS)
+		const startDate = pastTwoDaysStart.toISOString().slice(0, 19).replace('T', ' ');
+		const endDate = todayEnd.toISOString().slice(0, 19).replace('T', ' ');
+		
+		console.log(`📅 Filtering tracking records from ${startDate} to ${endDate} (past 2 days to today)`);
+		
+		// Import only tracking records from the past 2 days to today
+		// Use createdAt as primary filter (standard field used throughout the code)
+		// Also check timestamp field as fallback for records where createdAt might be NULL
+		const query = `SELECT * FROM tracking 
+			WHERE (
+				(createdAt IS NOT NULL AND createdAt >= '${startDate}' AND createdAt <= '${endDate}')
+				OR (createdAt IS NULL AND timestamp IS NOT NULL AND FROM_UNIXTIME(timestamp / 1000) >= '${startDate}' AND FROM_UNIXTIME(timestamp / 1000) <= '${endDate}')
+			)
+			ORDER BY COALESCE(createdAt, FROM_UNIXTIME(timestamp / 1000)) ASC`;
+		
+		const [rows] = await this.mysqlConnection!.execute(query);
+		const records = rows as any[];
+		this.stats.tracking.total = records.length;
+		console.log(`Found ${records.length} tracking records for the past 2 days to today`);
+
+		const batchSize = 1000;
+		for (let i = 0; i < records.length; i += batchSize) {
+			const batch = records.slice(i, i + batchSize);
+			const progress = `${Math.min(i + batchSize, records.length)}/${records.length}`;
+			process.stdout.write(`\r  Processing batch: ${progress}`);
+
+			for (const record of batch) {
+			try {
+				if (this.dryRun) {
+					this.stats.tracking.imported++;
+					continue;
+				}
+
+				const ownerUid = this.mapUid(record.owner_id || record.ownerUid || record.owner, this.userMapping);
+				const orgUid = this.mapUid(record.organisationRef || record.organisationUid || record.organisation_id, this.orgMapping);
+				const branchUid = this.mapUid(record.branchUid || record.branch_id, this.branchMapping);
+
+				if (!ownerUid) {
+					this.stats.tracking.skipped++;
+					continue;
+				}
+
+					// Check for duplicates based on owner, lat, lng, and timestamp
+					const existing = await this.trackingRepo!.findOne({
+						where: {
+							owner: { uid: ownerUid } as User,
+							latitude: record.latitude || 0,
+							longitude: record.longitude || 0,
+						},
+						order: { createdAt: 'DESC' }
+					});
+
+					if (existing && record.createdAt) {
+						const recordTime = new Date(record.createdAt).getTime();
+						const existingTime = new Date(existing.createdAt || 0).getTime();
+						
+						// If records are within 1 second and same location, consider duplicate
+						if (Math.abs(recordTime - existingTime) < 1000) {
+							this.stats.tracking.duplicates++;
+							continue;
+						}
+						
+						// Update if new record is newer
+						if (recordTime > existingTime) {
+							existing.address = this.preserveField(record.address) ?? existing.address;
+							existing.notes = this.preserveField(record.notes) ?? existing.notes;
+							existing.distance = this.preserveField(record.distance) ?? existing.distance;
+							existing.duration = this.preserveField(record.duration) ?? existing.duration;
+							existing.accuracy = this.preserveField(record.accuracy) ?? existing.accuracy;
+							existing.altitude = this.preserveField(record.altitude) ?? existing.altitude;
+							existing.altitudeAccuracy = this.preserveField(record.altitudeAccuracy) ?? existing.altitudeAccuracy;
+							existing.heading = this.preserveField(record.heading) ?? existing.heading;
+							existing.speed = this.preserveField(record.speed) ?? existing.speed;
+							existing.timestamp = this.preserveField(record.timestamp) ?? existing.timestamp;
+							existing.batteryLevel = this.preserveField(record.batteryLevel) ?? existing.batteryLevel;
+							existing.batteryState = this.preserveField(record.batteryState) ?? existing.batteryState;
+							existing.brand = this.preserveField(record.brand) ?? existing.brand;
+							existing.manufacturer = this.preserveField(record.manufacturer) ?? existing.manufacturer;
+							existing.modelID = this.preserveField(record.modelID) ?? existing.modelID;
+							existing.modelName = this.preserveField(record.modelName) ?? existing.modelName;
+							existing.osName = this.preserveField(record.osName) ?? existing.osName;
+							existing.osVersion = this.preserveField(record.osVersion) ?? existing.osVersion;
+							existing.network = this.parseJSON(record.network, existing.network);
+							existing.addressDecodingError = this.preserveField(record.addressDecodingError) ?? existing.addressDecodingError;
+							existing.rawLocation = this.preserveField(record.rawLocation) ?? existing.rawLocation;
+							existing.metadata = this.parseJSON(record.metadata, existing.metadata);
+							existing.updatedAt = this.preserveField(record.updatedAt) || new Date();
+							existing.deletedAt = this.preserveField(record.deletedAt);
+							existing.deletedBy = this.preserveField(record.deletedBy);
+							if (orgUid) existing.organisation = { uid: orgUid } as Organisation;
+							if (branchUid) existing.branch = { uid: branchUid } as Branch;
+							await this.trackingRepo!.save(existing);
+							this.stats.tracking.updated++;
+							continue;
+						}
+					}
+
+				// Parse JSON fields
+				const network = this.parseJSON(record.network, null);
+				const metadata = this.parseJSON(record.metadata, null);
+
+				const trackingData: DeepPartial<Tracking> = {
+					latitude: record.latitude || 0,
+					longitude: record.longitude || 0,
+					address: this.preserveField(record.address),
+					notes: this.preserveField(record.notes),
+					distance: this.preserveField(record.distance),
+					duration: this.preserveField(record.duration),
+					accuracy: this.preserveField(record.accuracy),
+					altitude: this.preserveField(record.altitude),
+					altitudeAccuracy: this.preserveField(record.altitudeAccuracy),
+					heading: this.preserveField(record.heading),
+					speed: this.preserveField(record.speed),
+					timestamp: this.preserveField(record.timestamp),
+					batteryLevel: this.preserveField(record.batteryLevel),
+					batteryState: this.preserveField(record.batteryState),
+					brand: this.preserveField(record.brand),
+					manufacturer: this.preserveField(record.manufacturer),
+					modelID: this.preserveField(record.modelID),
+					modelName: this.preserveField(record.modelName),
+					osName: this.preserveField(record.osName),
+					osVersion: this.preserveField(record.osVersion),
+					network, // Already parsed JSON
+					addressDecodingError: this.preserveField(record.addressDecodingError),
+					rawLocation: this.preserveField(record.rawLocation),
+					metadata, // Already parsed JSON
+					createdAt: this.preserveField(record.createdAt) || new Date(),
+					updatedAt: this.preserveField(record.updatedAt) || new Date(),
+					deletedAt: this.preserveField(record.deletedAt),
+					deletedBy: this.preserveField(record.deletedBy),
+					owner: { uid: ownerUid } as User,
+				};
+
+				if (orgUid) {
+					trackingData.organisation = { uid: orgUid } as Organisation;
+				}
+				if (branchUid) {
+					trackingData.branch = { uid: branchUid } as Branch;
+				}
+
+				const newRecord = this.trackingRepo!.create(trackingData);
+
+				await this.trackingRepo!.save(newRecord);
+				this.stats.tracking.imported++;
+			} catch (error: any) {
+				this.stats.tracking.errors++;
+					if (this.verbose && this.stats.tracking.errors <= 10) {
+						console.error(`\n  ❌ Error importing tracking ${record.uid}: ${error.message}`);
+			}
+		}
+			}
+		}
+		console.log(`\n✅ Tracking: ${this.stats.tracking.imported} imported, ${this.stats.tracking.skipped} skipped, ${this.stats.tracking.duplicates} duplicates, ${this.stats.tracking.updated} updated, ${this.stats.tracking.errors} errors`);
+	}
+
+	private async importDocs() {
+		console.log('\n📦 Importing Docs...');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM docs WHERE isActive = 1 OR isActive IS NULL');
+		const records = rows as any[];
+		this.stats.docs.total = records.length;
+		console.log(`Found ${records.length} docs`);
+
+		for (const record of records) {
+			try {
+				if (this.dryRun) {
+					this.stats.docs.imported++;
+					continue;
+				}
+
+				const ownerUid = this.mapUid(record.owner || record.ownerUid || record.owner_id, this.userMapping);
+				const orgUid = this.mapUid(record.organisationRef || record.organisationUid, this.orgMapping);
+				const branchUid = this.mapUid(record.branchUid || record.branch_id, this.branchMapping);
+
+				if (!ownerUid || !orgUid) {
+					this.stats.docs.skipped++;
+					continue;
+				}
+
+				const metadata = this.parseJSON(record.metadata, null);
+				const sharedWith = record.sharedWith ? (typeof record.sharedWith === 'string' ? record.sharedWith.split(',') : record.sharedWith) : [];
+
+				const newRecord = this.docRepo!.create({
+					title: record.title || '',
+					content: record.content || '',
+					description: record.description || null,
+					fileType: record.fileType || '',
+					docType: record.docType || null,
+					fileSize: record.fileSize || 0,
+					url: record.url || '',
+					metadata,
+					isActive: record.isActive !== undefined ? record.isActive : true,
+					mimeType: record.mimeType || null,
+					extension: record.extension || null,
+					sharedWith,
+					isPublic: record.isPublic || false,
+					lastAccessedAt: record.lastAccessedAt || null,
+					owner: { uid: ownerUid } as User,
+					organisation: { uid: orgUid } as Organisation,
+					...(branchUid && { branch: { uid: branchUid } as Branch }),
+				});
+
+				await this.docRepo!.save(newRecord);
+				this.stats.docs.imported++;
+			} catch (error: any) {
+				this.stats.docs.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing doc ${record.uid}: ${error.message}`);
+			}
+		}
+		console.log(`✅ Docs: ${this.stats.docs.imported} imported, ${this.stats.docs.skipped} skipped, ${this.stats.docs.errors} errors\n`);
+	}
+
+	// Simplified imports for remaining entities - following same pattern
+	private async importAssets() {
+		console.log('\n📦 Importing Assets...');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM asset WHERE isDeleted = 0 OR isDeleted IS NULL');
+		const records = rows as any[];
+		this.stats.assets.total = records.length;
+		console.log(`Found ${records.length} assets`);
+
+		for (const record of records) {
+			try {
+				if (this.dryRun) {
+					this.stats.assets.imported++;
+					continue;
+				}
+
+				const ownerUid = this.mapUid(record.owner || record.ownerUid, this.userMapping);
+				const orgUid = this.mapUid(record.organisationRef || record.organisationUid, this.orgMapping);
+				const branchUid = this.mapUid(record.branchUid || record.branch_id, this.branchMapping);
+
+				if (!ownerUid || !orgUid) {
+					this.stats.assets.skipped++;
+					continue;
+				}
+
+				const newRecord = this.assetRepo!.create({
+					brand: record.brand || record.name || '',
+					serialNumber: record.serialNumber || '',
+					modelNumber: record.modelNumber || '',
+					purchaseDate: record.purchaseDate || new Date(),
+					hasInsurance: record.hasInsurance !== undefined ? record.hasInsurance : false,
+					insuranceProvider: record.insuranceProvider || '',
+					insuranceExpiryDate: record.insuranceExpiryDate || new Date(),
+					isDeleted: false,
+					owner: { uid: ownerUid } as User,
+					org: { uid: orgUid } as Organisation,
+					...(branchUid && { branch: { uid: branchUid } as Branch }),
+				});
+
+				await this.assetRepo!.save(newRecord);
+				this.stats.assets.imported++;
+			} catch (error: any) {
+				this.stats.assets.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing asset ${record.uid}: ${error.message}`);
+			}
+		}
+		console.log(`✅ Assets: ${this.stats.assets.imported} imported, ${this.stats.assets.skipped} skipped, ${this.stats.assets.errors} errors\n`);
+	}
+
+	private async importNews() {
+		console.log('\n📦 Importing News...');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM news WHERE isDeleted = 0 OR isDeleted IS NULL');
+		const records = rows as any[];
+		this.stats.news.total = records.length;
+		console.log(`Found ${records.length} news items`);
+
+		for (const record of records) {
+			try {
+				if (this.dryRun) {
+					this.stats.news.imported++;
+					continue;
+				}
+
+				const authorUid = this.mapUid(record.author || record.authorUid, this.userMapping);
+				const orgUid = this.mapUid(record.organisationRef || record.organisationUid, this.orgMapping);
+				const branchUid = this.mapUid(record.branchUid || record.branch_id, this.branchMapping);
+
+				if (!authorUid || !orgUid) {
+					this.stats.news.skipped++;
+					continue;
+				}
+
+				const newRecord = this.newsRepo!.create({
+					title: record.title || '',
+					subtitle: record.subtitle || '',
+					content: record.content || '',
+					attachments: record.attachments || '',
+					coverImage: record.coverImage || record.imageUrl || '',
+					thumbnail: record.thumbnail || record.imageUrl || '',
+					publishingDate: record.publishingDate || record.publishedAt || record.createdAt || new Date(),
+					status: record.status || 'ACTIVE',
+					category: record.category || null,
+					shareLink: record.shareLink || null,
+					isDeleted: false,
+					author: { uid: authorUid } as User,
+					organisation: { uid: orgUid } as Organisation,
+					...(branchUid && { branch: { uid: branchUid } as Branch }),
+				});
+
+				await this.newsRepo!.save(newRecord);
+				this.stats.news.imported++;
+			} catch (error: any) {
+				this.stats.news.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing news ${record.uid}: ${error.message}`);
+			}
+		}
+		console.log(`✅ News: ${this.stats.news.imported} imported, ${this.stats.news.skipped} skipped, ${this.stats.news.errors} errors\n`);
+	}
+
+	private async importFeedback() {
+		console.log('\n📦 Importing Feedback...');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM feedback');
+		const records = rows as any[];
+		this.stats.feedback.total = records.length;
+		console.log(`Found ${records.length} feedback items`);
+
+		for (const record of records) {
+			try {
+				if (this.dryRun) {
+					this.stats.feedback.imported++;
+					continue;
+				}
+
+				const orgUid = this.mapUid(record.organisation_uid || record.organisationUid, this.orgMapping);
+				const branchUid = this.mapUid(record.branch_uid || record.branchUid, this.branchMapping);
+				const taskUid = this.mapUid(record.task_uid || record.taskUid, this.taskMapping);
+
+				const attachments = record.attachments ? (typeof record.attachments === 'string' ? record.attachments.split(',') : record.attachments) : [];
+
+				const newRecord = this.feedbackRepo!.create({
+					type: record.type || 'GENERAL',
+					title: record.title || '',
+					comments: record.comments || record.comment || '',
+					attachments,
+					rating: record.rating || null,
+					status: record.status || 'NEW',
+					token: record.token || null,
+					responseText: record.responseText || null,
+					respondedBy: record.respondedBy || null,
+					respondedAt: record.respondedAt || null,
+					isDeleted: false,
+					...(orgUid && { organisation: { uid: orgUid } as Organisation }),
+					...(branchUid && { branch: { uid: branchUid } as Branch }),
+					...(taskUid && { task: { uid: taskUid } as Task }),
+				});
+
+				await this.feedbackRepo!.save(newRecord);
+				this.stats.feedback.imported++;
+			} catch (error: any) {
+				this.stats.feedback.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing feedback ${record.uid}: ${error.message}`);
+			}
+		}
+		console.log(`✅ Feedback: ${this.stats.feedback.imported} imported, ${this.stats.feedback.skipped} skipped, ${this.stats.feedback.errors} errors\n`);
+	}
+
+	private async importCompetitors() {
+		console.log('\n📦 Importing Competitors...');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM competitor WHERE isDeleted = 0 OR isDeleted IS NULL');
+		const records = rows as any[];
+		this.stats.competitors.total = records.length;
+		console.log(`Found ${records.length} competitors`);
+
+		for (const record of records) {
+			try {
+				if (this.dryRun) {
+					this.stats.competitors.imported++;
+					continue;
+				}
+
+				const orgUid = this.mapUid(record.organisationRef || record.organisationUid, this.orgMapping);
+				if (!orgUid) {
+					this.stats.competitors.skipped++;
+					continue;
+				}
+
+				const address = this.parseJSON(record.address, {
+					street: '', suburb: '', city: '', state: '', country: '', postalCode: ''
+				});
+				const keyProducts = record.keyProducts ? (typeof record.keyProducts === 'string' ? record.keyProducts.split(',') : record.keyProducts) : [];
+				const keyStrengths = record.keyStrengths || record.strengths ? (typeof (record.keyStrengths || record.strengths) === 'string' ? (record.keyStrengths || record.strengths).split(',') : (record.keyStrengths || record.strengths)) : [];
+				const keyWeaknesses = record.keyWeaknesses || record.weaknesses ? (typeof (record.keyWeaknesses || record.weaknesses) === 'string' ? (record.keyWeaknesses || record.weaknesses).split(',') : (record.keyWeaknesses || record.weaknesses)) : [];
+				const pricingData = this.parseJSON(record.pricingData, null);
+				const socialMedia = this.parseJSON(record.socialMedia, null);
+				const owners = this.parseJSON(record.owners, null);
+				const managers = this.parseJSON(record.managers, null);
+				const purchaseManagers = this.parseJSON(record.purchaseManagers, null);
+				const accountManagers = this.parseJSON(record.accountManagers, null);
+				const franchiseHoneyPot = this.parseJSON(record.franchiseHoneyPot, null);
+
+				const newRecord = this.competitorRepo!.create({
+					name: record.name || '',
+					description: record.description || null,
+					website: record.website || null,
+					landingPage: record.landingPage || null,
+					contactEmail: record.contactEmail || null,
+					contactPhone: record.contactPhone || null,
+					address,
+					alias: record.alias || null,
+					latitude: record.latitude || null,
+					longitude: record.longitude || null,
+					logoUrl: record.logoUrl || null,
+					status: record.status || 'ACTIVE',
+					marketSharePercentage: record.marketSharePercentage || record.marketShare || null,
+					estimatedAnnualRevenue: record.estimatedAnnualRevenue || null,
+					industry: record.industry || null,
+					keyProducts,
+					keyStrengths,
+					keyWeaknesses,
+					estimatedEmployeeCount: record.estimatedEmployeeCount || null,
+					threatLevel: record.threatLevel || 0,
+					competitiveAdvantage: record.competitiveAdvantage || 0,
+					pricingData,
+					businessStrategy: record.businessStrategy || null,
+					marketingStrategy: record.marketingStrategy || null,
+					isDirect: record.isDirect || false,
+					foundedDate: record.foundedDate || null,
+					socialMedia,
+					isDeleted: false,
+					competitorRef: record.competitorRef || null,
+					geofenceType: record.geofenceType || 'NONE',
+					geofenceRadius: record.geofenceRadius || 500,
+					enableGeofence: record.enableGeofence || false,
+					accountName: record.accountName || null,
+					BDM: record.BDM || null,
+					LegalEntity: record.LegalEntity || null,
+					TradingName: record.TradingName || null,
+					MemberLevel: record.MemberLevel || null,
+					MemberShips: record.MemberShips || null,
+					brandStatus: record.brandStatus || null,
+					bank: record.bank || null,
+					owners,
+					managers,
+					purchaseManagers,
+					accountManagers,
+					companyRegNumber: record.companyRegNumber || null,
+					vatNumber: record.vatNumber || null,
+					CRO: record.CRO || null,
+					franchiseEmail: record.franchiseEmail || null,
+					franchisePhone: record.franchisePhone || null,
+					franchiseHoneyPot,
+					onlineVisibilityMKTG: record.onlineVisibilityMKTG || 0,
+					onlineVisibilitySEO: record.onlineVisibilitySEO || 0,
+					onlineVisibilitySocial: record.onlineVisibilitySocial || 0,
+					hasLoyaltyProgram: record.hasLoyaltyProgram || false,
+					hasRewardsProgram: record.hasRewardsProgram || false,
+					hasReferralProgram: record.hasReferralProgram || false,
+					organisation: { uid: orgUid } as Organisation,
+				});
+
+				await this.competitorRepo!.save(newRecord);
+				this.stats.competitors.imported++;
+			} catch (error: any) {
+				this.stats.competitors.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing competitor ${record.uid}: ${error.message}`);
+			}
+		}
+		console.log(`✅ Competitors: ${this.stats.competitors.imported} imported, ${this.stats.competitors.skipped} skipped, ${this.stats.competitors.errors} errors\n`);
+	}
+
+	private async importResellers() {
+		console.log('\n📦 Importing Resellers...');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM reseller WHERE isDeleted = 0 OR isDeleted IS NULL');
+		const records = rows as any[];
+		this.stats.resellers.total = records.length;
+		console.log(`Found ${records.length} resellers`);
+
+		for (const record of records) {
+			try {
+				if (this.dryRun) {
+					this.stats.resellers.imported++;
+					continue;
+				}
+
+				const orgUid = this.mapUid(record.organisationRef || record.organisationUid, this.orgMapping);
+				const branchUid = this.mapUid(record.branchUid || record.branch_id, this.branchMapping);
+				if (!orgUid) {
+					this.stats.resellers.skipped++;
+					continue;
+				}
+
+				const address = this.parseJSON(record.address, {
+					street: '', city: '', state: '', country: '', postalCode: ''
+				});
+
+				const newRecord = this.resellerRepo!.create({
+					name: record.name || '',
+					description: record.description || '',
+					logo: record.logo || '',
+					website: record.website || '',
+					status: record.status || 'ACTIVE',
+					contactPerson: record.contactPerson || '',
+					phone: record.phone || '',
+					email: record.email || '',
+					address,
+					isDeleted: false,
+					organisation: { uid: orgUid } as Organisation,
+					...(branchUid && { branch: { uid: branchUid } as Branch }),
+				});
+
+				await this.resellerRepo!.save(newRecord);
+				this.stats.resellers.imported++;
+			} catch (error: any) {
+				this.stats.resellers.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing reseller ${record.uid}: ${error.message}`);
+			}
+		}
+		console.log(`✅ Resellers: ${this.stats.resellers.imported} imported, ${this.stats.resellers.skipped} skipped, ${this.stats.resellers.errors} errors\n`);
+	}
+
+	private async importBanners() {
+		console.log('\n📦 Importing Banners...');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM banners');
+		const records = rows as any[];
+		this.stats.banners.total = records.length;
+		console.log(`Found ${records.length} banners`);
+
+		for (const record of records) {
+			try {
+				if (this.dryRun) {
+					this.stats.banners.imported++;
+					continue;
+				}
+
+				const orgUid = this.mapUid(record.organisationRef || record.organisationUid, this.orgMapping);
+				const branchUid = this.mapUid(record.branchUid || record.branch_id, this.branchMapping);
+				if (!orgUid) {
+					this.stats.banners.skipped++;
+					continue;
+				}
+
+				const newRecord = this.bannersRepo!.create({
+					title: record.title || '',
+					subtitle: record.subtitle || '',
+					description: record.description || '',
+					image: record.image || record.imageUrl || '',
+					category: record.category || 'NEWS',
+					organisation: { uid: orgUid } as Organisation,
+					...(branchUid && { branch: { uid: branchUid } as Branch }),
+				});
+
+				await this.bannersRepo!.save(newRecord);
+				this.stats.banners.imported++;
+			} catch (error: any) {
+				this.stats.banners.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing banner ${record.uid}: ${error.message}`);
+			}
+		}
+		console.log(`✅ Banners: ${this.stats.banners.imported} imported, ${this.stats.banners.skipped} skipped, ${this.stats.banners.errors} errors\n`);
+	}
+
+	private async importProjects() {
+		console.log('\n📦 Importing Projects...');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM project WHERE isDeleted = 0 OR isDeleted IS NULL');
+		const records = rows as any[];
+		this.stats.projects.total = records.length;
+		console.log(`Found ${records.length} projects`);
+
+		for (const record of records) {
+			try {
+				if (this.dryRun) {
+					this.stats.projects.imported++;
+					continue;
+				}
+
+				const orgUid = this.mapUid(record.organisationRef || record.organisationUid, this.orgMapping);
+				const branchUid = this.mapUid(record.branchUid || record.branch_id, this.branchMapping);
+
+				if (!orgUid) {
+					this.stats.projects.skipped++;
+					continue;
+				}
+
+				const newRecord = this.projectRepo!.create({
+					name: record.name || '',
+					description: record.description || null,
+					status: record.status || 'ACTIVE',
+					startDate: record.startDate || null,
+					endDate: record.endDate || null,
+					budget: record.budget || null,
+					organisation: { uid: orgUid } as Organisation,
+					...(branchUid && { branch: { uid: branchUid } as Branch }),
+				});
+
+				const saved = await this.projectRepo!.save(newRecord);
+				this.projectMapping[record.uid] = saved.uid;
+				this.stats.projects.imported++;
+			} catch (error: any) {
+				this.stats.projects.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing project ${record.uid}: ${error.message}`);
+			}
+		}
+		console.log(`✅ Projects: ${this.stats.projects.imported} imported, ${this.stats.projects.skipped} skipped, ${this.stats.projects.errors} errors\n`);
+	}
+
+	private async importOrganisationSettings() {
+		console.log('\n📦 Importing Organisation Settings...');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM organisation_settings');
+		const records = rows as any[];
+		this.stats.orgSettings.total = records.length;
+		console.log(`Found ${records.length} organisation settings`);
+
+		for (const record of records) {
+			try {
+				if (this.dryRun) {
+					this.stats.orgSettings.imported++;
+					continue;
+				}
+
+				const orgUid = this.mapUid(record.organisationUid || record.organisation_id, this.orgMapping);
+				if (!orgUid) {
+					this.stats.orgSettings.skipped++;
+					continue;
+				}
+
+				const contact = this.parseJSON(record.contact, null);
+				const regional = this.parseJSON(record.regional, null);
+				const branding = this.parseJSON(record.branding, null);
+				const business = this.parseJSON(record.business, null);
+				const notifications = this.parseJSON(record.notifications, null);
+				const preferences = this.parseJSON(record.preferences, null);
+				const socialLinks = this.parseJSON(record.socialLinks, null);
+				const performance = this.parseJSON(record.performance, null);
+
+				const newRecord = this.orgSettingsRepo!.create({
+					contact,
+					regional,
+					branding,
+					business,
+					notifications,
+					preferences,
+					geofenceDefaultRadius: record.geofenceDefaultRadius || 500,
+					geofenceEnabledByDefault: record.geofenceEnabledByDefault || false,
+					geofenceDefaultNotificationType: record.geofenceDefaultNotificationType || 'NOTIFY',
+					geofenceMaxRadius: record.geofenceMaxRadius || 5000,
+					geofenceMinRadius: record.geofenceMinRadius || 100,
+					isDeleted: false,
+					sendTaskNotifications: record.sendTaskNotifications || false,
+					feedbackTokenExpiryDays: record.feedbackTokenExpiryDays || 30,
+					socialLinks,
+					performance,
+					organisationUid: orgUid,
+					organisation: { uid: orgUid } as Organisation,
+				});
+
+				await this.orgSettingsRepo!.save(newRecord);
+				this.stats.orgSettings.imported++;
+			} catch (error: any) {
+				this.stats.orgSettings.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing org settings ${record.uid}: ${error.message}`);
+			}
+		}
+		console.log(`✅ Organisation Settings: ${this.stats.orgSettings.imported} imported, ${this.stats.orgSettings.skipped} skipped, ${this.stats.orgSettings.errors} errors\n`);
+	}
+
+	private async importOrganisationAppearance() {
+		console.log('\n📦 Importing Organisation Appearance...');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM organisation_appearance');
+		const records = rows as any[];
+		this.stats.orgAppearance.total = records.length;
+		console.log(`Found ${records.length} organisation appearance records`);
+
+		for (const record of records) {
+			try {
+				if (this.dryRun) {
+					this.stats.orgAppearance.imported++;
+					continue;
+				}
+
+				const orgUid = this.mapUid(record.organisationUid || record.organisation_id, this.orgMapping);
+				if (!orgUid) {
+					this.stats.orgAppearance.skipped++;
+					continue;
+				}
+
+				const newRecord = this.orgAppearanceRepo!.create({
+					ref: record.ref || `ORG-${orgUid}`,
+					primaryColor: record.primaryColor || null,
+					secondaryColor: record.secondaryColor || null,
+					accentColor: record.accentColor || null,
+					errorColor: record.errorColor || null,
+					successColor: record.successColor || null,
+					logoUrl: record.logoUrl || null,
+					logoAltText: record.logoAltText || null,
+					isDeleted: false,
+					organisationUid: orgUid,
+					organisation: { uid: orgUid } as Organisation,
+				});
+
+				await this.orgAppearanceRepo!.save(newRecord);
+				this.stats.orgAppearance.imported++;
+			} catch (error: any) {
+				this.stats.orgAppearance.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing org appearance ${record.uid}: ${error.message}`);
+			}
+		}
+		console.log(`✅ Organisation Appearance: ${this.stats.orgAppearance.imported} imported, ${this.stats.orgAppearance.skipped} skipped, ${this.stats.orgAppearance.errors} errors\n`);
+	}
+
+	private async importOrganisationHours() {
+		console.log('\n📦 Importing Organisation Hours...');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM organisation_hours WHERE isDeleted = 0 OR isDeleted IS NULL');
+		const records = rows as any[];
+		this.stats.orgHours.total = records.length;
+		console.log(`Found ${records.length} organisation hours`);
+
+		for (const record of records) {
+			try {
+				if (this.dryRun) {
+					this.stats.orgHours.imported++;
+					continue;
+				}
+
+				const orgUid = this.mapUid(record.organisationUid || record.organisation_id, this.orgMapping);
+				if (!orgUid) {
+					this.stats.orgHours.skipped++;
+					continue;
+				}
+
+				const weeklySchedule = this.parseJSON(record.weeklySchedule, {
+					monday: true, tuesday: true, wednesday: true, thursday: true,
+					friday: true, saturday: false, sunday: false
+				});
+				const schedule = this.parseJSON(record.schedule, null);
+				const specialHours = this.parseJSON(record.specialHours, null);
+
+				const newRecord = this.orgHoursRepo!.create({
+					ref: record.ref || `ORG-${orgUid}`,
+					openTime: record.openTime || '09:00:00',
+					closeTime: record.closeTime || '17:00:00',
+					weeklySchedule,
+					schedule,
+					timezone: record.timezone || null,
+					holidayMode: record.holidayMode || false,
+					holidayUntil: record.holidayUntil || null,
+					specialHours,
+					isDeleted: false,
+					organisationUid: orgUid,
+					organisation: { uid: orgUid } as Organisation,
+				});
+
+				await this.orgHoursRepo!.save(newRecord);
+				this.stats.orgHours.imported++;
+			} catch (error: any) {
+				this.stats.orgHours.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing org hours ${record.uid}: ${error.message}`);
+			}
+		}
+		console.log(`✅ Organisation Hours: ${this.stats.orgHours.imported} imported, ${this.stats.orgHours.skipped} skipped, ${this.stats.orgHours.errors} errors\n`);
+	}
+
+	private printStats(duration: string) {
+		console.log('\n' + '='.repeat(60));
+		console.log('📊 MIGRATION SUMMARY');
+		console.log('='.repeat(60));
+		console.log(`⏱️  Duration: ${duration}s\n`);
+		
+		const printEntityStats = (name: string, stats: any) => {
+			console.log(`${name}:`);
+			console.log(`  Total: ${stats.total}, Imported: ${stats.imported}, Skipped: ${stats.skipped}, Duplicates: ${stats.duplicates || 0}, Updated: ${stats.updated || 0}, Errors: ${stats.errors}`);
+		};
+		
+		printEntityStats('Organisations', this.stats.organisations);
+		
+		printEntityStats('Branches', this.stats.branches);
+		printEntityStats('Users', this.stats.users);
+		printEntityStats('User Profiles', this.stats.userProfiles);
+		printEntityStats('User Employment Profiles', this.stats.userEmploymentProfiles);
+		printEntityStats('User Targets', this.stats.userTargets);
+		printEntityStats('User Rewards', this.stats.userRewards);
+		
+		printEntityStats('Devices', this.stats.devices);
+		printEntityStats('Device Records', this.stats.deviceRecords);
+		printEntityStats('Licenses', this.stats.licenses);
+		printEntityStats('Attendance', this.stats.attendance);
+		printEntityStats('Claims', this.stats.claims);
+		printEntityStats('Check-ins', this.stats.checkIns);
+		printEntityStats('Leads', this.stats.leads);
+		printEntityStats('Quotations', this.stats.quotations);
+		printEntityStats('Quotation Items', this.stats.quotationItems);
+		printEntityStats('Orders', this.stats.orders);
+		printEntityStats('Order Items', this.stats.orderItems);
+		printEntityStats('Tasks', this.stats.tasks);
+		printEntityStats('Subtasks', this.stats.subtasks);
+		printEntityStats('Interactions', this.stats.interactions);
+		printEntityStats('Notifications', this.stats.notifications);
+		printEntityStats('Journals', this.stats.journals);
+		printEntityStats('Reports', this.stats.reports);
+		printEntityStats('Leave', this.stats.leave);
+		printEntityStats('Warnings', this.stats.warnings);
+		printEntityStats('Tracking', this.stats.tracking);
+		printEntityStats('Docs', this.stats.docs);
+		printEntityStats('Assets', this.stats.assets);
+		printEntityStats('News', this.stats.news);
+		printEntityStats('Feedback', this.stats.feedback);
+		printEntityStats('Competitors', this.stats.competitors);
+		printEntityStats('Resellers', this.stats.resellers);
+		printEntityStats('Banners', this.stats.banners);
+		printEntityStats('Projects', this.stats.projects);
+		printEntityStats('Organisation Settings', this.stats.orgSettings);
+		printEntityStats('Organisation Appearance', this.stats.orgAppearance);
+		printEntityStats('Organisation Hours', this.stats.orgHours);
+		
+		console.log('\n' + '='.repeat(60));
+	}
+
+	async cleanup() {
+		console.log('\n🧹 Cleaning up connections...');
+		
+		if (this.mysqlConnection) {
+			await this.mysqlConnection.end();
+			console.log('✅ MySQL connection closed');
+		}
+		
+		// Destroy custom DataSource first if we created one (pgUrl override)
+		// Check if we have a custom DataSource by seeing if pgUrl was provided
+		const hasCustomDataSource = process.argv.some(arg => arg.includes('--pg-url'));
+		if (hasCustomDataSource && this.pgDataSource && this.pgDataSource.isInitialized) {
+			try {
+				await this.pgDataSource.destroy();
+				console.log('✅ Custom PostgreSQL connection closed');
+			} catch (error: any) {
+				// Ignore cleanup errors
+				console.warn('⚠️  Warning during custom DataSource cleanup:', error.message);
+			}
+		}
+		
+		// Close NestJS app last - it will handle its own DataSource cleanup
+		if (this.app) {
+			try {
+				await this.app.close();
+				console.log('✅ NestJS app closed');
+			} catch (error: any) {
+				// Ignore cleanup errors - they're not critical
+				// This often happens when DataSource is already destroyed
+				if (!error.message?.includes('DataSource')) {
+					console.warn('⚠️  Warning during app cleanup:', error.message);
+				}
+			}
+		}
+	}
+}
+
+async function main() {
+	const argv = yargs(hideBin(process.argv))
+		.options({
+			'pg-url': {
+				type: 'string',
+				describe: 'PostgreSQL connection URL (postgresql://user:pass@host:port/dbname)',
+			},
+			'dry-run': {
+				type: 'boolean',
+				default: false,
+				describe: 'Preview migration without writing data',
+			},
+			only: {
+				type: 'string',
+				describe: 'Import only specific entities (comma-separated: orgs,branches,users,devices,licenses)',
+			},
+			verbose: {
+				type: 'boolean',
+				default: false,
+				describe: 'Show detailed progress',
+			},
+		})
+		.help()
+		.parseSync() as ScriptArguments;
+
+	const migrator = new LegacyDbMigrator();
+
+	try {
+		await migrator.initialize(argv['pg-url']);
+		await migrator.migrate(argv);
+	} catch (error) {
+		console.error('\n❌ Migration failed:', error);
+		process.exit(1);
+	} finally {
+		await migrator.cleanup();
+	}
+}
+
+main().catch((error) => {
+	console.error('Fatal error:', error);
+	process.exit(1);
+});
+

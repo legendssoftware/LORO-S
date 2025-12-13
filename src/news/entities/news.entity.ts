@@ -3,15 +3,9 @@ import { Branch } from '../../branch/entities/branch.entity';
 import { NewsCategory } from '../../lib/enums/news.enums';
 import { GeneralStatus } from '../../lib/enums/status.enums';
 import { User } from '../../user/entities/user.entity';
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, Index } from 'typeorm';
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 
 @Entity('news')
-@Index(['status', 'isDeleted']) // Status-based filtering
-@Index(['category', 'status']) // Category filtering
-@Index(['author', 'publishingDate']) // Author publication history
-@Index(['publishingDate', 'status']) // Publication date management
-@Index(['organisation', 'branch', 'publishingDate']) // Regional news distribution
-@Index(['createdAt']) // Date-based sorting
 export class News {
 	@PrimaryGeneratedColumn()
 	uid: number;

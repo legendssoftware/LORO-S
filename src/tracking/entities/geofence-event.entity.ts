@@ -1,4 +1,4 @@
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, ManyToOne, JoinColumn, Index } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
 import { ApiProperty } from '@nestjs/swagger';
 import { User } from '../../user/entities/user.entity';
 import { Geofence } from './geofence.entity';
@@ -15,10 +15,6 @@ export enum GeofenceEventType {
  * Geofence event entity for tracking when users enter or exit geofence areas
  */
 @Entity('geofence_events')
-@Index(['user', 'eventType', 'createdAt']) // User geofence activity
-@Index(['geofence', 'eventType', 'createdAt']) // Geofence activity tracking
-@Index(['eventType', 'createdAt']) // Event type analysis
-@Index(['createdAt']) // Date-based sorting
 export class GeofenceEvent {
   @ApiProperty({ description: 'Unique identifier for the geofence event' })
   @PrimaryGeneratedColumn()

@@ -6,7 +6,6 @@ import {
 	UpdateDateColumn,
 	ManyToOne,
 	OneToMany,
-	Index,
 } from 'typeorm';
 import { Client } from '../../clients/entities/client.entity';
 import { User } from '../../user/entities/user.entity';
@@ -16,15 +15,6 @@ import { Branch } from '../../branch/entities/branch.entity';
 import { ProjectType, ProjectStatus, ProjectPriority } from '../../lib/enums/project.enums';
 
 @Entity('project')
-@Index(['client', 'status']) // Client project queries
-@Index(['assignedUser', 'status']) // User project queries
-@Index(['status', 'isDeleted']) // Active project filtering
-@Index(['type', 'status']) // Project type filtering
-@Index(['priority', 'status']) // Priority-based queries
-@Index(['startDate', 'endDate']) // Date range queries
-@Index(['organisation', 'branch', 'createdAt']) // Regional project reports
-@Index(['budget', 'currentSpent']) // Budget-based queries
-@Index(['createdAt']) // Date-based sorting
 export class Project {
 	@PrimaryGeneratedColumn()
 	uid: number;

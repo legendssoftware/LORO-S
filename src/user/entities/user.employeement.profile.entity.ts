@@ -1,11 +1,7 @@
 import { User } from "./user.entity";
-import { Column, CreateDateColumn, Entity, OneToOne, PrimaryGeneratedColumn, UpdateDateColumn, Index } from "typeorm";
+import { Column, CreateDateColumn, Entity, OneToOne, PrimaryGeneratedColumn, UpdateDateColumn } from "typeorm";
 
 @Entity('user_employeement_profile')
-@Index(['isCurrentlyEmployed']) // Employment status filtering
-@Index(['department', 'position']) // Department and position filtering
-@Index(['branchref', 'isCurrentlyEmployed']) // Branch employment tracking
-@Index(['startDate', 'endDate']) // Employment period queries
 export class UserEmployeementProfile {
     @PrimaryGeneratedColumn()
     uid: string;

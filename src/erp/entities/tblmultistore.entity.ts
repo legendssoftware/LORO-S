@@ -1,4 +1,4 @@
-import { Entity, Column, PrimaryGeneratedColumn, Index } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn } from 'typeorm';
 
 /**
  * ERP Multistore Entity
@@ -8,7 +8,6 @@ import { Entity, Column, PrimaryGeneratedColumn, Index } from 'typeorm';
  * This table contains store/branch information for each country
  */
 @Entity('tblmultistore')
-@Index('idx_multistore_code', ['code'])
 export class TblMultistore {
 	@PrimaryGeneratedColumn()
 	id: number;

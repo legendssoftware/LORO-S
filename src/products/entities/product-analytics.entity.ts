@@ -1,15 +1,7 @@
 import { Product } from './product.entity';
-import { Column, Entity, JoinColumn, OneToOne, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
+import { Column, Entity, JoinColumn, OneToOne, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn } from 'typeorm';
 
 @Entity('product_analytics')
-@Index(['product']) // Product analytics queries
-@Index(['totalUnitsSold']) // Sales volume tracking
-@Index(['totalRevenue']) // Revenue analysis
-@Index(['profitMargin']) // Profitability analysis
-@Index(['stockTurnoverRate']) // Inventory performance
-@Index(['conversionRate']) // Conversion tracking
-@Index(['lastSaleDate']) // Recent sales activity
-@Index(['updatedAt']) // Analytics freshness
 export class ProductAnalytics {
     @PrimaryGeneratedColumn()
     uid: number;

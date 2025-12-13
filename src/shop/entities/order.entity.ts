@@ -14,16 +14,9 @@ import {
 	ManyToOne,
 	OneToMany,
 	JoinColumn,
-	Index,
 } from 'typeorm';
 
 @Entity('order')
-@Index(['orderNumber']) // Unique order lookups
-@Index(['status', 'orderDate']) // Order management
-@Index(['isPaid', 'paidAt']) // Payment tracking
-@Index(['status', 'shippedAt']) // Shipping management
-@Index(['quotationId', 'status']) // Quote-to-order tracking
-@Index(['orderDate']) // Date-based reporting
 export class Order {
 	@PrimaryGeneratedColumn()
 	uid: number;

@@ -1,13 +1,10 @@
 import {
     DeleteDateColumn,
     PrimaryGeneratedColumn,
-    Index,
     BeforeUpdate,
     Column,
 } from 'typeorm';
 
-@Index(['createdAt', 'updatedAt'])
-@Index(['isDeleted'])
 export abstract class BaseEntity {
     @PrimaryGeneratedColumn()
     uid: number;
@@ -15,7 +12,7 @@ export abstract class BaseEntity {
     @Column({ type: 'timestamp', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
     createdAt: Date;
 
-    @Column({ type: 'timestamp', nullable: false, onUpdate: 'CURRENT_TIMESTAMP', default: () => 'CURRENT_TIMESTAMP' })
+    @Column({ type: 'timestamp', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
     updatedAt: Date;
 
     @DeleteDateColumn({
@@ -24,7 +21,6 @@ export abstract class BaseEntity {
     })
     deletedAt?: Date;
 
-    @Index()
     @Column({ default: false })
     isDeleted: boolean;
 

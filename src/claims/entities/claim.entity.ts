@@ -1,17 +1,10 @@
 import { User } from '../../user/entities/user.entity';
 import { Branch } from '../../branch/entities/branch.entity';
 import { ClaimCategory, ClaimStatus, Currency } from '../../lib/enums/finance.enums';
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, Index } from 'typeorm';
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { Organisation } from 'src/organisation/entities/organisation.entity';
 
 @Entity('claim')
-@Index(['owner', 'status']) // User claim queries
-@Index(['status', 'isDeleted']) // Status-based filtering
-@Index(['category', 'status']) // Category filtering
-@Index(['organisation', 'branch', 'createdAt']) // Regional claim reports
-@Index(['verifiedBy', 'verifiedAt']) // Verification tracking
-@Index(['createdAt']) // Date-based sorting
-@Index(['amount']) // Amount-based queries
 export class Claim {
 	@PrimaryGeneratedColumn()
 	uid: number;

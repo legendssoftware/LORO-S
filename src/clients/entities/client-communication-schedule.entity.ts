@@ -1,4 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn, UpdateDateColumn, Index, JoinColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn, UpdateDateColumn, JoinColumn } from 'typeorm';
 import { Client } from './client.entity';
 import { User } from '../../user/entities/user.entity';
 import { CommunicationFrequency, CommunicationType } from '../../lib/enums/client.enums';
@@ -6,9 +6,6 @@ import { Organisation } from '../../organisation/entities/organisation.entity';
 import { Branch } from '../../branch/entities/branch.entity';
 
 @Entity('client_communication_schedules')
-@Index(['client', 'isActive', 'isDeleted']) // Composite index for efficient queries
-@Index(['assignedTo', 'isActive']) // Index for user-specific queries
-@Index(['nextScheduledDate', 'isActive']) // Index for scheduling queries
 export class ClientCommunicationSchedule {
     @PrimaryGeneratedColumn()
     uid: number;

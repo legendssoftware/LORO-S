@@ -1,4 +1,4 @@
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn, Index } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
 import { ApiProperty } from '@nestjs/swagger';
 import { Organisation } from '../../organisation/entities/organisation.entity';
 import { User } from '../../user/entities/user.entity';
@@ -7,10 +7,6 @@ import { User } from '../../user/entities/user.entity';
  * Geofence entity for storing geofence areas
  */
 @Entity('geofences')
-@Index(['organisation', 'isActive']) // Organization geofence queries
-@Index(['latitude', 'longitude']) // Location-based queries
-@Index(['isActive', 'deletedAt']) // Active geofence filtering
-@Index(['createdAt']) // Date-based sorting
 export class Geofence {
   @ApiProperty({ description: 'Unique identifier for the geofence area' })
   @PrimaryGeneratedColumn()

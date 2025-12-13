@@ -7,7 +7,6 @@ import {
 	ManyToOne,
 	JoinColumn,
 	OneToMany,
-	Index,
 } from 'typeorm';
 import { User } from '../../user/entities/user.entity';
 import { Branch } from '../../branch/entities/branch.entity';
@@ -129,18 +128,6 @@ export interface CompetitorData {
 }
 
 @Entity('leads')
-@Index(['status', 'isDeleted']) // Lead pipeline management
-@Index(['category', 'status']) // Lead categorization
-@Index(['email', 'phone']) // Contact deduplication
-@Index(['ownerUid', 'status']) // Sales rep leads
-@Index(['organisationUid', 'branchUid', 'status']) // Regional lead management
-@Index(['createdAt']) // Lead generation tracking
-@Index(['latitude', 'longitude']) // Location-based leads
-@Index(['intent', 'temperature']) // Lead qualification
-@Index(['leadScore', 'priority']) // Lead scoring and priority
-@Index(['industry', 'businessSize']) // Industry analysis
-@Index(['lifecycleStage', 'status']) // Lead nurturing
-@Index(['lastContactDate', 'nextFollowUpDate']) // Follow-up management
 export class Lead {
 	@PrimaryGeneratedColumn()
 	uid: number;

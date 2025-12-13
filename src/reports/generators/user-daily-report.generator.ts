@@ -550,14 +550,15 @@ export class UserDailyReportGenerator {
 	}
 
 	private async collectTaskMetrics(userId: number, startDate: Date, endDate: Date) {
-		// Tasks completed today
-		const completedTasks = await this.taskRepository.find({
-			where: {
-				status: TaskStatus.COMPLETED,
-				completionDate: Between(startDate, endDate),
-				assignees: { uid: userId },
-			},
-		});
+		// Tasks completed today - use QueryBuilder for JSON array field
+		const completedTasksQuery = this.taskRepository
+			.createQueryBuilder('task')
+			.where('task.status = :status', { status: TaskStatus.COMPLETED })
+			.andWhere('task.completionDate BETWEEN :startDate AND :endDate', { startDate, endDate })
+			.andWhere('task.assignees @> CAST(:userIdJson AS jsonb)', { 
+				userIdJson: JSON.stringify([{ uid: userId }])
+			});
+		const completedTasks = await completedTasksQuery.getMany();
 
 		// Tasks created today
 		const createdTasks = await this.taskRepository.find({
@@ -574,21 +575,25 @@ export class UserDailyReportGenerator {
 		const dayAfterTomorrow = new Date(tomorrow);
 		dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 1);
 
-		const dueTomorrow = await this.taskRepository.find({
-			where: {
-				deadline: Between(tomorrow, dayAfterTomorrow),
-				assignees: { uid: userId },
-				status: Not(In([TaskStatus.COMPLETED, TaskStatus.CANCELLED])),
-			},
-		});
+		const dueTomorrowQuery = this.taskRepository
+			.createQueryBuilder('task')
+			.where('task.deadline BETWEEN :tomorrow AND :dayAfterTomorrow', { tomorrow, dayAfterTomorrow })
+			.andWhere('task.assignees @> CAST(:userIdJson AS jsonb)', { 
+				userIdJson: JSON.stringify([{ uid: userId }])
+			})
+			.andWhere('task.status NOT IN (:...statuses)', { 
+				statuses: [TaskStatus.COMPLETED, TaskStatus.CANCELLED]
+			});
+		const dueTomorrow = await dueTomorrowQuery.getMany();
 
-		// Overdue tasks
-		const overdueTasks = await this.taskRepository.find({
-			where: {
-				status: TaskStatus.OVERDUE,
-				assignees: { uid: userId },
-			},
-		});
+		// Overdue tasks - use QueryBuilder for JSON array field
+		const overdueTasksQuery = this.taskRepository
+			.createQueryBuilder('task')
+			.where('task.status = :status', { status: TaskStatus.OVERDUE })
+			.andWhere('task.assignees @> CAST(:userIdJson AS jsonb)', { 
+				userIdJson: JSON.stringify([{ uid: userId }])
+			});
+		const overdueTasks = await overdueTasksQuery.getMany();
 
 		// Map tasks to simplified format
 		const completedTasksList = completedTasks.map((task) => ({
@@ -1528,13 +1533,17 @@ export class UserDailyReportGenerator {
 	private async collectProductivityInsights(userId: number, startDate: Date, endDate: Date) {
 		try {
 			// Calculate peak productivity hours based on task completion times
-			const completedTasks = await this.taskRepository.find({
-				where: {
-					status: TaskStatus.COMPLETED,
-					completionDate: Between(subDays(startDate, 30), endDate),
-					assignees: { uid: userId },
-				},
-			});
+			const completedTasksQuery = this.taskRepository
+				.createQueryBuilder('task')
+				.where('task.status = :status', { status: TaskStatus.COMPLETED })
+				.andWhere('task.completionDate BETWEEN :startDate AND :endDate', { 
+					startDate: subDays(startDate, 30), 
+					endDate 
+				})
+				.andWhere('task.assignees @> CAST(:userIdJson AS jsonb)', { 
+					userIdJson: JSON.stringify([{ uid: userId }])
+				});
+			const completedTasks = await completedTasksQuery.getMany();
 
 			const hourlyProductivity = new Array(24).fill(0);
 			completedTasks.forEach(task => {

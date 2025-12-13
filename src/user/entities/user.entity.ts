@@ -28,7 +28,6 @@ import {
 	JoinColumn,
 	OneToOne,
 	OneToMany,
-	Index,
 } from 'typeorm';
 import { Journal } from 'src/journal/entities/journal.entity';
 import { Route } from 'src/tasks/entities/route.entity';
@@ -38,15 +37,6 @@ import { Warning } from 'src/warnings/entities/warning.entity';
 import { ClientCommunicationSchedule } from '../../clients/entities/client-communication-schedule.entity';
 
 @Entity('users')
-@Index(['email']) // Login & unique lookups
-@Index(['username']) // Login & unique lookups
-@Index(['status', 'isDeleted']) // Active user filtering
-@Index(['role', 'status']) // Role-based access queries
-@Index(['organisationRef', 'status']) // Organization filtering
-@Index(['accessLevel', 'isDeleted']) // Permission-based queries
-@Index(['resetToken']) // Password reset lookups
-@Index(['verificationToken']) // Email verification
-@Index(['createdAt']) // Date-based sorting/reporting
 export class User {
 	@PrimaryGeneratedColumn()
 	uid: number;

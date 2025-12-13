@@ -139,7 +139,7 @@ export class TblSalesHeader {
 	@Column({ type: 'int', default: 0, nullable: true })
 	delivery_status: number;
 
-	@Column({ type: 'datetime', nullable: true })
+	@Column({ type: 'timestamp', nullable: true })
 	delivery_date: Date;
 
 	@Column({ type: 'decimal', precision: 19, scale: 3, default: 0.0, nullable: true })

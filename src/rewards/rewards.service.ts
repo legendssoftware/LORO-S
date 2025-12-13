@@ -1,9 +1,10 @@
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
+import { Repository, DataSource } from 'typeorm';
 import { CreateRewardDto } from './dto/create-reward.dto';
 import { UserRewards } from './entities/user-rewards.entity';
 import { XPTransaction } from './entities/xp-transaction.entity';
+import { User } from '../user/entities/user.entity';
 import { LEVELS, RANKS } from '../lib/constants/constants';
 
 @Injectable()
@@ -14,7 +15,9 @@ export class RewardsService {
     @InjectRepository(UserRewards)
     private userRewardsRepository: Repository<UserRewards>,
     @InjectRepository(XPTransaction)
-    private xpTransactionRepository: Repository<XPTransaction>
+    private xpTransactionRepository: Repository<XPTransaction>,
+    @InjectDataSource()
+    private dataSource: DataSource
   ) { }
 
   async awardXP(createRewardDto: CreateRewardDto, orgId?: number, branchId?: number) {
@@ -51,10 +54,21 @@ export class RewardsService {
         this.logger.log(`${logPrefix} - No existing rewards record found, creating new one`);
         
         // Verify user exists in the organization before creating rewards
-        const userExists = await this.userRewardsRepository.manager.query(
-          `SELECT u.uid FROM users u WHERE u.uid = ? AND u.organisationRef = ? ${branchId ? 'AND u.branchUid = ?' : ''}`,
-          branchId ? [createRewardDto.owner, orgId, branchId] : [createRewardDto.owner, orgId]
-        );
+        // Use TypeORM query builder to handle column mapping correctly
+        const userRepository = this.dataSource.getRepository(User);
+        const queryBuilder = userRepository
+          .createQueryBuilder('u')
+          .select('u.uid')
+          .where('u.uid = :userId', { userId: createRewardDto.owner })
+          .andWhere('u.organisationRef = :orgRef', { orgRef: orgId.toString() });
+
+        if (branchId) {
+          queryBuilder
+            .leftJoin('u.branch', 'branch')
+            .andWhere('branch.uid = :branchId', { branchId });
+        }
+
+        const userExists = await queryBuilder.getRawMany();
 
         this.logger.log(`${logPrefix} - User verification query result:`, userExists);
 
@@ -222,7 +236,11 @@ export class RewardsService {
 
       if (!userRewards) {
         this.logger.warn(`${logPrefix} - No rewards found for user ${reference} in org ${orgId}`);
-        throw new NotFoundException(process.env.NOT_FOUND_MESSAGE || 'User rewards not found');
+        // Return a proper response instead of throwing an error
+        return {
+          message: process.env.NOT_FOUND_MESSAGE || 'User rewards not found',
+          rewards: null
+        };
       }
 
       this.logger.log(`${logPrefix} - Found rewards record with UID: ${userRewards.uid}`);
