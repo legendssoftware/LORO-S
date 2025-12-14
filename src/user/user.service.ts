@@ -132,7 +132,6 @@ export class UserService {
 			return TimezoneUtil.getSafeTimezone();
 		}
 	}
-
 	/**
 	 * Format time in user's organization timezone
 	 * @param date - Date to format
