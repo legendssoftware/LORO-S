@@ -65,6 +65,7 @@ import { Journal } from '../journal/entities/journal.entity';
 import { Report } from '../reports/entities/report.entity';
 import { Leave } from '../leave/entities/leave.entity';
 import { Warning } from '../warnings/entities/warning.entity';
+import { Tracking } from '../tracking/entities/tracking.entity';
 import { Geofence } from '../tracking/entities/geofence.entity';
 import { GeofenceEvent } from '../tracking/entities/geofence-event.entity';
 import { Doc } from '../docs/entities/doc.entity';
@@ -74,6 +75,10 @@ import { Feedback } from '../feedback/entities/feedback.entity';
 import { Competitor } from '../competitors/entities/competitor.entity';
 import { Reseller } from '../resellers/entities/reseller.entity';
 import { Product } from '../products/entities/product.entity';
+import { ProductAnalytics } from '../products/entities/product-analytics.entity';
+import { Client } from '../clients/entities/client.entity';
+import { ClientAuth } from '../clients/entities/client.auth.entity';
+import { ClientCommunicationSchedule } from '../clients/entities/client-communication-schedule.entity';
 import { Banners } from '../shop/entities/banners.entity';
 import { Project } from '../shop/entities/project.entity';
 import { Approval } from '../approvals/entities/approval.entity';
@@ -618,8 +623,9 @@ class LegacyDbMigrator {
 				Device, DeviceRecords, DeviceLogs, License, LicenseUsage, LicenseEvent, LicenseAudit,
 				Attendance, Claim, CheckIn, Lead, Quotation, QuotationItem, Order, OrderItem,
 				Task, SubTask, Route, TaskFlag, TaskFlagItem, Interaction, Notification,
-				CommunicationLog, Journal, Report, Leave, Warning, Geofence, GeofenceEvent,
-				Doc, Asset, News, Feedback, Competitor, Reseller, Product, Banners, Project,
+				CommunicationLog, Journal, Report, Leave, Warning, Tracking, Geofence, GeofenceEvent,
+				Doc, Asset, News, Feedback, Competitor, Reseller, Product, ProductAnalytics,
+				Client, ClientAuth, ClientCommunicationSchedule, Banners, Project,
 				Approval, ApprovalHistory, ApprovalSignature, UserRewards, Achievement,
 				UnlockedItem, XPTransaction, Reward, OrganisationSettings, OrganisationAppearance,
 				OrganisationHours, Payslip, UsageEvent, UsageSummary,
