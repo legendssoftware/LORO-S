@@ -1137,35 +1137,237 @@ class LegacyDbMigrator {
 			}
 
 			console.log(`\n📦 Copying ${entityName}...`);
-			const entities = await sourceRepo.find();
-			const total = entities.length;
+			
+			// Get table name from metadata
+			const metadata = sourceRepo.metadata;
+			const tableName = metadata.tableName;
+			
+			// Use raw query to get ALL columns including foreign keys
+			// This ensures foreign key columns (ownerUid, organisationUid, etc.) are preserved exactly as-is
+			const sourceDataSource = sourceRepo.manager.connection;
+			const rawRecords = await sourceDataSource.query(`SELECT * FROM "${tableName}"`);
+			
+			const total = rawRecords.length;
 			let imported = 0;
 			let skipped = 0;
 			let errors = 0;
 
 			// Process in batches for better performance
 			const batchSize = 100;
-			for (let i = 0; i < entities.length; i += batchSize) {
-				const batch = entities.slice(i, i + batchSize);
+			for (let i = 0; i < rawRecords.length; i += batchSize) {
+				const batch = rawRecords.slice(i, i + batchSize);
+				
 				try {
-					// Copy entities as-is, preserving all fields including IDs
-					const entityDataArray = batch.map(entity => ({ ...entity } as any));
+					// Reconstruct entities from raw data, preserving all columns and foreign keys
+					const entityDataArray = batch.map((raw: any) => {
+						const entityData: any = {};
+						
+						// Copy all scalar columns
+						// PostgreSQL returns column names, check all possible variations
+						metadata.columns.forEach(column => {
+							const columnName = column.databaseName || column.propertyName;
+							const propertyName = column.propertyName;
+							
+							// Try multiple naming patterns (PostgreSQL might return lowercase, TypeORM uses exact names)
+							const possibleKeys = [
+								columnName,                    // Exact database name
+								columnName.toLowerCase(),      // Lowercase version
+								propertyName,                  // Property name
+								propertyName.toLowerCase(),    // Lowercase property
+							];
+							
+							// Also check all keys in raw data for fuzzy matching
+							const rawKeys = Object.keys(raw);
+							for (const key of rawKeys) {
+								if (key.toLowerCase() === columnName.toLowerCase() || 
+								    key.toLowerCase() === propertyName.toLowerCase()) {
+									entityData[propertyName] = raw[key];
+									break;
+								}
+							}
+							
+							// Fallback: try exact matches
+							for (const key of possibleKeys) {
+								if (raw[key] !== undefined) {
+									entityData[propertyName] = raw[key];
+									break;
+								}
+							}
+						});
+						
+						// Handle relationships by finding foreign key columns and setting them properly
+						metadata.relations.forEach(relation => {
+							const foreignKey = relation.joinColumns?.[0];
+							if (foreignKey) {
+								const fkColumnName = foreignKey.databaseName || foreignKey.propertyName;
+								// Try multiple possible column name patterns
+								const possibleKeys = [
+									fkColumnName,
+									`${relation.propertyName}Uid`,
+									`${relation.propertyName}_id`,
+									`${relation.propertyName}Id`,
+									`${relation.propertyName}Ref`,
+									`${relation.propertyName.toLowerCase()}Uid`,
+									`${relation.propertyName.toLowerCase()}_id`,
+								];
+								
+								let found = false;
+								const relationName = relation.propertyName;
+								
+								// First try exact matches
+								for (const key of possibleKeys) {
+									if (raw[key] !== undefined && raw[key] !== null) {
+										entityData[relationName] = { uid: raw[key] };
+										found = true;
+										if (this.verbose && i === 0 && batch.indexOf(raw) === 0) {
+											console.log(`  🔗 Found ${relationName} foreign key: ${key} = ${raw[key]}`);
+										}
+										break;
+									}
+								}
+								
+								// If not found, try fuzzy matching on all keys
+								if (!found) {
+									const rawKeys = Object.keys(raw);
+									for (const key of rawKeys) {
+										const keyLower = key.toLowerCase();
+										if ((keyLower.includes(relationName.toLowerCase()) && 
+										     (keyLower.includes('uid') || keyLower.includes('id') || keyLower.includes('ref'))) ||
+										    keyLower === fkColumnName.toLowerCase()) {
+											if (raw[key] !== undefined && raw[key] !== null) {
+												entityData[relationName] = { uid: raw[key] };
+												found = true;
+												if (this.verbose && i === 0 && batch.indexOf(raw) === 0) {
+													console.log(`  🔗 Found ${relationName} foreign key (fuzzy): ${key} = ${raw[key]}`);
+												}
+												break;
+											}
+										}
+									}
+								}
+								
+								// If still not found, try to get it from the relation object if it exists
+								if (!found && raw[relationName]) {
+									const relObj = raw[relationName];
+									if (relObj && typeof relObj === 'object' && relObj.uid) {
+										entityData[relationName] = { uid: relObj.uid };
+										if (this.verbose && i === 0 && batch.indexOf(raw) === 0) {
+											console.log(`  🔗 Found ${relationName} from relation object: uid = ${relObj.uid}`);
+										}
+									}
+								}
+							}
+						});
+						
+						return entityData;
+					});
+					
 					await targetRepo.save(entityDataArray);
 					imported += batch.length;
 					if (this.verbose && (i + batchSize) % 500 === 0) {
 						console.log(`  ✓ Imported ${imported}/${total} ${entityName}`);
 					}
 				} catch (error: any) {
-					// If batch save fails, try individual saves
-					for (const entity of batch) {
+					// If batch save fails, try individual saves with explicit foreign key handling
+					for (const raw of batch) {
 						try {
-							const entityData = { ...entity } as any;
+							const entityData: any = {};
+							
+							// Copy all scalar columns
+							metadata.columns.forEach(column => {
+								const columnName = column.databaseName || column.propertyName;
+								const propertyName = column.propertyName;
+								
+								// Try multiple naming patterns
+								const possibleKeys = [
+									columnName,
+									columnName.toLowerCase(),
+									propertyName,
+									propertyName.toLowerCase(),
+								];
+								
+								// Check all keys in raw data for fuzzy matching
+								const rawKeys = Object.keys(raw);
+								for (const key of rawKeys) {
+									if (key.toLowerCase() === columnName.toLowerCase() || 
+									    key.toLowerCase() === propertyName.toLowerCase()) {
+										entityData[propertyName] = raw[key];
+										break;
+									}
+								}
+								
+								// Fallback: try exact matches
+								for (const key of possibleKeys) {
+									if (raw[key] !== undefined) {
+										entityData[propertyName] = raw[key];
+										break;
+									}
+								}
+							});
+							
+							// Handle relationships
+							metadata.relations.forEach(relation => {
+								const foreignKey = relation.joinColumns?.[0];
+								if (foreignKey) {
+									const fkColumnName = foreignKey.databaseName || foreignKey.propertyName;
+									const relationName = relation.propertyName;
+									
+									const possibleKeys = [
+										fkColumnName,
+										fkColumnName.toLowerCase(),
+										`${relationName}Uid`,
+										`${relationName}_id`,
+										`${relationName}Id`,
+										`${relationName}Ref`,
+										`${relationName.toLowerCase()}Uid`,
+										`${relationName.toLowerCase()}_id`,
+										`${relationName.toLowerCase()}id`,
+									];
+									
+									let found = false;
+									
+									// Try exact matches
+									for (const key of possibleKeys) {
+										if (raw[key] !== undefined && raw[key] !== null) {
+											entityData[relationName] = { uid: raw[key] };
+											found = true;
+											break;
+										}
+									}
+									
+									// If not found, try fuzzy matching
+									if (!found) {
+										const rawKeys = Object.keys(raw);
+										for (const key of rawKeys) {
+											const keyLower = key.toLowerCase();
+											if ((keyLower.includes(relationName.toLowerCase()) && 
+											     (keyLower.includes('uid') || keyLower.includes('id') || keyLower.includes('ref'))) ||
+											    keyLower === fkColumnName.toLowerCase()) {
+												if (raw[key] !== undefined && raw[key] !== null) {
+													entityData[relationName] = { uid: raw[key] };
+													found = true;
+													break;
+												}
+											}
+										}
+									}
+									
+									// If still not found, try relation object
+									if (!found && raw[relationName]) {
+										const relObj = raw[relationName];
+										if (relObj && typeof relObj === 'object' && relObj.uid) {
+											entityData[relationName] = { uid: relObj.uid };
+										}
+									}
+								}
+							});
+							
 							await targetRepo.save(entityData);
 							imported++;
 						} catch (individualError: any) {
 							errors++;
 							if (this.verbose && errors <= 10) {
-								console.error(`  ❌ Error copying ${entityName}: ${individualError.message}`);
+								console.error(`  ❌ Error copying ${entityName} (uid: ${raw.uid || 'unknown'}): ${individualError.message}`);
 							}
 						}
 					}
@@ -1476,13 +1678,15 @@ class LegacyDbMigrator {
 					true
 				);
 
-				// Map managedDoors (device IDs) - ensure proper number array
+				// Map managedDoors (device IDs) - preserve original values even if device mappings don't exist
+				// This ensures all data is copied as-is from MySQL
 				const managedDoors = this.parseAndMapNumberArray(
 					user.managedDoors || user.managed_doors || user.doors || user.deviceIds,
 					this.deviceMapping,
 					'managedDoors',
 					user.uid,
-					true
+					true,
+					true // preserveOriginalIfNoMapping = true to copy all data as-is
 				);
 
 				// Map assignedClientIds - if clients are being migrated
@@ -1716,11 +1920,20 @@ class LegacyDbMigrator {
 			const progress = `${i + 1}/${targets.length}`;
 			
 			try {
-				// Map user - try multiple field names
-				const oldUserId = target.user || target.owner || target.ownerUid || target.owner_id || target.user_id;
+				// Map user - try multiple field names including userTargetUid
+				// Check all possible column names that might exist in MySQL
+				const oldUserId = target.userTargetUid || target.user || target.owner || target.ownerUid || target.owner_id || target.user_id || target.userUid || target.userId;
+				
+				if (!oldUserId && this.verbose) {
+					console.warn(`  ⚠️  UserTarget ${target.uid} has no user reference. Available fields: ${Object.keys(target).join(', ')}`);
+				}
+				
 				const newUserId = oldUserId ? this.userMapping[oldUserId] : null;
 				
 				if (!newUserId) {
+					if (oldUserId && this.verbose) {
+						console.warn(`  ⚠️  UserTarget ${target.uid} references user ${oldUserId} which was not found in userMapping`);
+					}
 					this.stats.userTargets.skipped++;
 					if ((i + 1) % 100 === 0 || i === targets.length - 1) {
 						process.stdout.write(`\r  Processing: ${progress}`);
@@ -1777,45 +1990,50 @@ class LegacyDbMigrator {
 					}
 				}
 
+				// Create UserTarget with ALL fields from MySQL, preserving original values
+				// The relationship to User is established via user: { uid: newUserId }
+				// This ensures all row data is copied as-is from MySQL
 				const newTarget = this.userTargetRepo!.create({
-					targetSalesAmount: target.targetSalesAmount || null,
-					currentSalesAmount: target.currentSalesAmount || null,
-					targetQuotationsAmount: target.targetQuotationsAmount || null,
-					currentQuotationsAmount: target.currentQuotationsAmount || null,
-					currentOrdersAmount: target.currentOrdersAmount || null,
+					targetSalesAmount: target.targetSalesAmount ?? null,
+					currentSalesAmount: target.currentSalesAmount ?? null,
+					targetQuotationsAmount: target.targetQuotationsAmount ?? null,
+					currentQuotationsAmount: target.currentQuotationsAmount ?? null,
+					currentOrdersAmount: target.currentOrdersAmount ?? null,
 					targetCurrency: target.targetCurrency || 'ZAR',
-					targetHoursWorked: target.targetHoursWorked || null,
-					currentHoursWorked: target.currentHoursWorked || null,
-					targetNewClients: target.targetNewClients || null,
-					currentNewClients: target.currentNewClients || null,
-					targetNewLeads: target.targetNewLeads || null,
-					currentNewLeads: target.currentNewLeads || null,
-					targetCheckIns: target.targetCheckIns || null,
-					currentCheckIns: target.currentCheckIns || null,
-					targetCalls: target.targetCalls || null,
-					currentCalls: target.currentCalls || null,
-					baseSalary: target.baseSalary || null,
-					carInstalment: target.carInstalment || null,
-					carInsurance: target.carInsurance || null,
-					fuel: target.fuel || null,
-					cellPhoneAllowance: target.cellPhoneAllowance || null,
-					carMaintenance: target.carMaintenance || null,
-					cgicCosts: target.cgicCosts || null,
-					totalCost: target.totalCost || null,
-					targetPeriod: target.targetPeriod || null,
-					periodStartDate: target.periodStartDate || null,
-					periodEndDate: target.periodEndDate || null,
-					lastCalculatedAt: target.lastCalculatedAt || null,
+					targetHoursWorked: target.targetHoursWorked ?? null,
+					currentHoursWorked: target.currentHoursWorked ?? null,
+					targetNewClients: target.targetNewClients ?? null,
+					currentNewClients: target.currentNewClients ?? null,
+					targetNewLeads: target.targetNewLeads ?? null,
+					currentNewLeads: target.currentNewLeads ?? null,
+					targetCheckIns: target.targetCheckIns ?? null,
+					currentCheckIns: target.currentCheckIns ?? null,
+					targetCalls: target.targetCalls ?? null,
+					currentCalls: target.currentCalls ?? null,
+					baseSalary: target.baseSalary ?? null,
+					carInstalment: target.carInstalment ?? null,
+					carInsurance: target.carInsurance ?? null,
+					fuel: target.fuel ?? null,
+					cellPhoneAllowance: target.cellPhoneAllowance ?? null,
+					carMaintenance: target.carMaintenance ?? null,
+					cgicCosts: target.cgicCosts ?? null,
+					totalCost: target.totalCost ?? null,
+					targetPeriod: target.targetPeriod ?? null,
+					periodStartDate: target.periodStartDate ?? null,
+					periodEndDate: target.periodEndDate ?? null,
+					lastCalculatedAt: target.lastCalculatedAt ?? null,
 					isRecurring: target.isRecurring !== undefined ? target.isRecurring : true,
 					recurringInterval: target.recurringInterval || 'monthly',
-					carryForwardUnfulfilled: target.carryForwardUnfulfilled || false,
-					nextRecurrenceDate: target.nextRecurrenceDate || null,
-					lastRecurrenceDate: target.lastRecurrenceDate || null,
-					recurrenceCount: target.recurrenceCount || 0,
-					erpSalesRepCode: target.erpSalesRepCode || null,
+					carryForwardUnfulfilled: target.carryForwardUnfulfilled !== undefined ? target.carryForwardUnfulfilled : false,
+					nextRecurrenceDate: target.nextRecurrenceDate ?? null,
+					lastRecurrenceDate: target.lastRecurrenceDate ?? null,
+					recurrenceCount: target.recurrenceCount ?? 0,
+					erpSalesRepCode: target.erpSalesRepCode ?? null,
 					history,
+					// Establish relationship to User using mapped UID
+					// This will set the foreign key column in user_targets table
 					user: { uid: newUserId } as User,
-				});
+				} as DeepPartial<UserTarget>);
 
 				await this.userTargetRepo!.save(newTarget);
 				this.stats.userTargets.imported++;
@@ -2415,7 +2633,8 @@ class LegacyDbMigrator {
 		mapping: UidMapping | IdMapping,
 		fieldName: string,
 		entityUid: number,
-		allowEmpty: boolean = true
+		allowEmpty: boolean = true,
+		preserveOriginalIfNoMapping: boolean = false
 	): number[] | null {
 		if (!value) return allowEmpty ? null : [];
 		
@@ -2501,8 +2720,17 @@ class LegacyDbMigrator {
 				const newUid = mapping[numUid];
 				if (newUid !== undefined && newUid !== null && typeof newUid === 'number') {
 					mapped.push(newUid);
-				} else if (this.verbose) {
-					console.warn(`  ⚠️  ${fieldName} UID ${numUid} not found in mapping for entity ${entityUid} (will be skipped)`);
+				} else {
+					// If preserveOriginalIfNoMapping is true, keep the original value even if no mapping exists
+					// This ensures all data is copied as-is from MySQL
+					if (preserveOriginalIfNoMapping) {
+						mapped.push(numUid);
+						if (this.verbose) {
+							console.warn(`  ⚠️  ${fieldName} UID ${numUid} not found in mapping for entity ${entityUid} (preserving original value)`);
+						}
+					} else if (this.verbose) {
+						console.warn(`  ⚠️  ${fieldName} UID ${numUid} not found in mapping for entity ${entityUid} (will be skipped)`);
+					}
 				}
 			}
 
