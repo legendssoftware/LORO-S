@@ -426,6 +426,30 @@ class LegacyDbMigrator {
 			const password = url.password;
 			const database = url.pathname.slice(1); // Remove leading /
 
+			// Check for SSL mode in URL parameters
+			const sslMode = url.searchParams.get('sslmode');
+			
+			// Detect if connecting to localhost or private network
+			const isLocalhost = host === 'localhost' 
+				|| host === '127.0.0.1' 
+				|| host?.startsWith('192.168.') 
+				|| host?.startsWith('10.');
+			const isRender = host?.includes('dpg-') || host?.includes('render.com');
+			
+			// Determine SSL configuration
+			// If sslmode is explicitly set in URL, respect it; otherwise enable for remote connections
+			let enableSSL = false;
+			if (sslMode === 'require' || sslMode === 'prefer' || sslMode === 'verify-ca' || sslMode === 'verify-full') {
+				enableSSL = true;
+			} else if (sslMode === 'disable') {
+				enableSSL = false;
+			} else {
+				// Default: enable SSL for remote connections
+				enableSSL = !isLocalhost || isRender;
+			}
+
+			console.log(`🔐 SSL Configuration: ${enableSSL ? 'ENABLED' : 'DISABLED'} (host: ${host}, sslmode: ${sslMode || 'not specified'})`);
+
 			// Store reference to original DataSource for cleanup
 			const originalDataSource = this.pgDataSource;
 
@@ -440,6 +464,9 @@ class LegacyDbMigrator {
 				entities: this.pgDataSource.options.entities,
 				synchronize: false,
 				logging: false,
+				extra: {
+					ssl: enableSSL ? { rejectUnauthorized: false } : false,
+				},
 			});
 
 			await newDataSource.initialize();
@@ -482,8 +509,22 @@ class LegacyDbMigrator {
 				throw new Error('Missing required REMOTE_PG_DB_HOST environment variables. Please set REMOTE_PG_DB_HOST, REMOTE_PG_DB_USERNAME, REMOTE_PG_DB_PASSWORD, and REMOTE_PG_DB_NAME');
 			}
 
-			const isLocalhost = finalHost === 'localhost' || finalHost === '127.0.0.1';
-			const enableSSL = !isLocalhost; // Enable SSL for remote connections
+			// Detect if connecting to localhost or private network (disable SSL)
+			// Match the logic from app.module.ts for consistency
+			const isLocalhost = finalHost === 'localhost' 
+				|| finalHost === '127.0.0.1' 
+				|| finalHost?.startsWith('192.168.') 
+				|| finalHost?.startsWith('10.');
+			
+			// Detect if connecting to Render PostgreSQL (common remote host)
+			const isRender = finalHost?.includes('dpg-') || finalHost?.includes('render.com');
+			
+			// For local-to-remote migration, we're connecting to a remote database
+			// Enable SSL for all remote connections (most remote databases require SSL/TLS)
+			// Only disable SSL if explicitly connecting to localhost/private network
+			const enableSSL = !isLocalhost;
+
+			console.log(`🔐 SSL Configuration: ${enableSSL ? 'ENABLED' : 'DISABLED'} (host: ${finalHost}, isLocalhost: ${isLocalhost}, isRender: ${isRender})`);
 
 			// Create new DataSource with remote connection
 			const newDataSource = new DataSource({
@@ -756,11 +797,11 @@ class LegacyDbMigrator {
 				await this.clearDeviceRecordsAndLogs();
 				await this.clearTable(this.deviceRepo, 'Devices', Device);
 				await this.importDevices();
-				// Device records import - now enabled for full data migration
-				if (this.shouldImport('devicerecords')) {
-					await this.clearTable(this.deviceRecordsRepo, 'Device Records', DeviceRecords);
-					await this.importDeviceRecords();
-				}
+				// Device records import - SKIPPED per user request
+				// if (this.shouldImport('devicerecords')) {
+				// 	await this.clearTable(this.deviceRecordsRepo, 'Device Records', DeviceRecords);
+				// 	await this.importDeviceRecords();
+				// }
 			}
 
 			if (this.shouldImport('licenses')) {
@@ -781,11 +822,11 @@ class LegacyDbMigrator {
 				await this.importOrganisationHours();
 			}
 
-			// Reports import - now enabled for full data migration
-			if (this.shouldImport('reports')) {
-				await this.clearTable(this.reportRepo, 'Reports', Report);
-				await this.importReports();
-			}
+			// Reports import - SKIPPED per user request
+			// if (this.shouldImport('reports')) {
+			// 	await this.clearTable(this.reportRepo, 'Reports', Report);
+			// 	await this.importReports();
+			// }
 
 			// Core transactional data
 			// Attendance import - now enabled for full data migration
@@ -960,10 +1001,11 @@ class LegacyDbMigrator {
 				await this.clearDeviceRecordsAndLogs();
 				await this.clearTable(this.deviceRepo, 'Devices', Device);
 				await this.copyEntities(this.deviceSourceRepo!, this.deviceRepo!, 'Devices');
-				if (this.shouldImport('devicerecords')) {
-					await this.clearTable(this.deviceRecordsRepo, 'Device Records', DeviceRecords);
-					await this.copyEntities(this.deviceRecordsSourceRepo!, this.deviceRecordsRepo!, 'Device Records');
-				}
+				// Device records import - SKIPPED per user request
+				// if (this.shouldImport('devicerecords')) {
+				// 	await this.clearTable(this.deviceRecordsRepo, 'Device Records', DeviceRecords);
+				// 	await this.copyEntities(this.deviceRecordsSourceRepo!, this.deviceRecordsRepo!, 'Device Records');
+				// }
 			}
 
 			if (this.shouldImport('licenses')) {
@@ -996,14 +1038,15 @@ class LegacyDbMigrator {
 				await this.copyEntities(this.orgHoursSourceRepo!, this.orgHoursRepo!, 'Organisation Hours');
 			}
 
-			if (this.shouldImport('reports')) {
-				await this.clearTable(this.reportRepo, 'Reports', Report);
-				await this.copyEntities(this.reportSourceRepo!, this.reportRepo!, 'Reports');
-			}
+			// Reports import - SKIPPED per user request
+			// if (this.shouldImport('reports')) {
+			// 	await this.clearTable(this.reportRepo, 'Reports', Report);
+			// 	await this.copyEntities(this.reportSourceRepo!, this.reportRepo!, 'Reports');
+			// }
 
 			if (this.shouldImport('attendance')) {
 				await this.clearAttendanceRecords();
-				await this.copyEntities(this.attendanceSourceRepo!, this.attendanceRepo!, 'Attendance');
+				await this.copyAttendanceWithDateFilter();
 			}
 
 			if (this.shouldImport('claims')) {
@@ -1382,6 +1425,243 @@ class LegacyDbMigrator {
 				return;
 			}
 			// Re-throw other errors
+			throw error;
+		}
+	}
+
+	private async copyAttendanceWithDateFilter(): Promise<void> {
+		try {
+			if (this.dryRun) {
+				console.log(`[DRY RUN] Would copy attendance records from November 25, 2025 to today`);
+				return;
+			}
+
+			console.log(`\n📦 Copying Attendance (filtered: November 25, 2025 to today)...`);
+			
+			// Get table name from metadata
+			const metadata = this.attendanceSourceRepo!.metadata;
+			const tableName = metadata.tableName;
+			
+			// Filter attendance records from November 25, 2025 till today
+			const startDate = new Date('2025-11-25T00:00:00.000Z');
+			const endDate = new Date(); // Today
+			
+			// Use raw query with date filtering
+			// Filter by checkIn date or createdAt date (whichever is available)
+			const sourceDataSource = this.attendanceSourceRepo!.manager.connection;
+			const rawRecords = await sourceDataSource.query(
+				`SELECT * FROM "${tableName}" WHERE (("checkIn" >= $1 AND "checkIn" <= $2) OR ("checkIn" IS NULL AND "createdAt" >= $1 AND "createdAt" <= $2))`,
+				[startDate.toISOString(), endDate.toISOString()]
+			);
+			
+			const total = rawRecords.length;
+			let imported = 0;
+			let skipped = 0;
+			let errors = 0;
+
+			console.log(`Found ${total} attendance records (filtered from November 25, 2025 to today)`);
+
+			// Process in batches for better performance
+			const batchSize = 100;
+			for (let i = 0; i < rawRecords.length; i += batchSize) {
+				const batch = rawRecords.slice(i, i + batchSize);
+				
+				try {
+					// Reconstruct entities from raw data, preserving all columns and foreign keys
+					const entityDataArray = batch.map((raw: any) => {
+						const entityData: any = {};
+						
+						// Copy all scalar columns
+						metadata.columns.forEach(column => {
+							const columnName = column.databaseName || column.propertyName;
+							const propertyName = column.propertyName;
+							
+							const possibleKeys = [
+								columnName,
+								columnName.toLowerCase(),
+								propertyName,
+								propertyName.toLowerCase(),
+							];
+							
+							const rawKeys = Object.keys(raw);
+							for (const key of rawKeys) {
+								if (key.toLowerCase() === columnName.toLowerCase() || 
+								    key.toLowerCase() === propertyName.toLowerCase()) {
+									entityData[propertyName] = raw[key];
+									break;
+								}
+							}
+							
+							for (const key of possibleKeys) {
+								if (raw[key] !== undefined) {
+									entityData[propertyName] = raw[key];
+									break;
+								}
+							}
+						});
+						
+						// Handle relationships
+						metadata.relations.forEach(relation => {
+							const foreignKey = relation.joinColumns?.[0];
+							if (foreignKey) {
+								const fkColumnName = foreignKey.databaseName || foreignKey.propertyName;
+								const possibleKeys = [
+									fkColumnName,
+									`${relation.propertyName}Uid`,
+									`${relation.propertyName}_id`,
+									`${relation.propertyName}Id`,
+									`${relation.propertyName}Ref`,
+									`${relation.propertyName.toLowerCase()}Uid`,
+									`${relation.propertyName.toLowerCase()}_id`,
+								];
+								
+								let found = false;
+								const relationName = relation.propertyName;
+								
+								for (const key of possibleKeys) {
+									if (raw[key] !== undefined && raw[key] !== null) {
+										entityData[relationName] = { uid: raw[key] };
+										found = true;
+										break;
+									}
+								}
+								
+								if (!found) {
+									const rawKeys = Object.keys(raw);
+									for (const key of rawKeys) {
+										const keyLower = key.toLowerCase();
+										if ((keyLower.includes(relationName.toLowerCase()) && 
+										     (keyLower.includes('uid') || keyLower.includes('id') || keyLower.includes('ref'))) ||
+										    keyLower === fkColumnName.toLowerCase()) {
+											if (raw[key] !== undefined && raw[key] !== null) {
+												entityData[relationName] = { uid: raw[key] };
+												found = true;
+												break;
+											}
+										}
+									}
+								}
+								
+								if (!found && raw[relationName]) {
+									const relObj = raw[relationName];
+									if (relObj && typeof relObj === 'object' && relObj.uid) {
+										entityData[relationName] = { uid: relObj.uid };
+									}
+								}
+							}
+						});
+						
+						return entityData;
+					});
+					
+					await this.attendanceRepo!.save(entityDataArray);
+					imported += batch.length;
+					if (this.verbose && (i + batchSize) % 500 === 0) {
+						console.log(`  ✓ Imported ${imported}/${total} Attendance`);
+					}
+				} catch (error: any) {
+					// If batch save fails, try individual saves
+					for (const raw of batch) {
+						try {
+							const entityData: any = {};
+							
+							metadata.columns.forEach(column => {
+								const columnName = column.databaseName || column.propertyName;
+								const propertyName = column.propertyName;
+								
+								const possibleKeys = [
+									columnName,
+									columnName.toLowerCase(),
+									propertyName,
+									propertyName.toLowerCase(),
+								];
+								
+								const rawKeys = Object.keys(raw);
+								for (const key of rawKeys) {
+									if (key.toLowerCase() === columnName.toLowerCase() || 
+									    key.toLowerCase() === propertyName.toLowerCase()) {
+										entityData[propertyName] = raw[key];
+										break;
+									}
+								}
+								
+								for (const key of possibleKeys) {
+									if (raw[key] !== undefined) {
+										entityData[propertyName] = raw[key];
+										break;
+									}
+								}
+							});
+							
+							metadata.relations.forEach(relation => {
+								const foreignKey = relation.joinColumns?.[0];
+								if (foreignKey) {
+									const fkColumnName = foreignKey.databaseName || foreignKey.propertyName;
+									const relationName = relation.propertyName;
+									
+									const possibleKeys = [
+										fkColumnName,
+										fkColumnName.toLowerCase(),
+										`${relationName}Uid`,
+										`${relationName}_id`,
+										`${relationName}Id`,
+										`${relationName}Ref`,
+										`${relationName.toLowerCase()}Uid`,
+										`${relationName.toLowerCase()}_id`,
+									];
+									
+									let found = false;
+									for (const key of possibleKeys) {
+										if (raw[key] !== undefined && raw[key] !== null) {
+											entityData[relationName] = { uid: raw[key] };
+											found = true;
+											break;
+										}
+									}
+									
+									if (!found) {
+										const rawKeys = Object.keys(raw);
+										for (const key of rawKeys) {
+											const keyLower = key.toLowerCase();
+											if ((keyLower.includes(relationName.toLowerCase()) && 
+											     (keyLower.includes('uid') || keyLower.includes('id') || keyLower.includes('ref'))) ||
+											    keyLower === fkColumnName.toLowerCase()) {
+												if (raw[key] !== undefined && raw[key] !== null) {
+													entityData[relationName] = { uid: raw[key] };
+													found = true;
+													break;
+												}
+											}
+										}
+									}
+									
+									if (!found && raw[relationName]) {
+										const relObj = raw[relationName];
+										if (relObj && typeof relObj === 'object' && relObj.uid) {
+											entityData[relationName] = { uid: relObj.uid };
+										}
+									}
+								}
+							});
+							
+							await this.attendanceRepo!.save(entityData);
+							imported++;
+						} catch (individualError: any) {
+							errors++;
+							if (this.verbose && errors <= 10) {
+								console.error(`  ❌ Error copying Attendance (uid: ${raw.uid || 'unknown'}): ${individualError.message}`);
+							}
+						}
+					}
+				}
+			}
+
+			console.log(`✅ Attendance: ${imported} copied, ${skipped} skipped, ${errors} errors`);
+		} catch (error: any) {
+			if (error.code === '42P01' || error.message?.includes('does not exist') || error.message?.includes('relation')) {
+				console.log(`  ⚠️  Attendance table does not exist, skipping...`);
+				return;
+			}
 			throw error;
 		}
 	}
@@ -2804,11 +3084,17 @@ class LegacyDbMigrator {
 
 	private async importAttendance() {
 		console.log('\n📦 Importing Attendance...');
-		// Import ALL attendance records - no date filtering
-		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM attendance');
+		// Import attendance records from November 25, 2025 till today only
+		const startDate = new Date('2025-11-25T00:00:00.000Z');
+		const endDate = new Date(); // Today
+		// Filter by checkIn date if available, otherwise use createdAt
+		const [rows] = await this.mysqlConnection!.execute(
+			'SELECT * FROM attendance WHERE ((checkIn >= ? AND checkIn <= ?) OR (checkIn IS NULL AND createdAt >= ? AND createdAt <= ?))',
+			[startDate, endDate, startDate, endDate]
+		);
 		const records = rows as any[];
 		this.stats.attendance.total = records.length;
-		console.log(`Found ${records.length} attendance records (importing all records)`);
+		console.log(`Found ${records.length} attendance records (importing records from November 25, 2025 to today)`);
 
 		for (const record of records) {
 			try {
