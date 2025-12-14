@@ -967,10 +967,16 @@ class LegacyDbMigrator {
 			}
 
 			if (this.shouldImport('licenses')) {
-				if (this.licenseAuditRepo) {
-					await this.clearTable(this.licenseAuditRepo, 'License Audit', LicenseAudit);
-					if (this.licenseAuditSourceRepo) {
+				if (this.licenseAuditRepo && this.licenseAuditSourceRepo) {
+					try {
+						await this.clearTable(this.licenseAuditRepo, 'License Audit', LicenseAudit);
 						await this.copyEntities(this.licenseAuditSourceRepo, this.licenseAuditRepo, 'License Audit');
+					} catch (error: any) {
+						if (error.code === '42P01' || error.message?.includes('does not exist') || error.message?.includes('relation')) {
+							console.log(`  ⚠️  License Audit table does not exist in target database, skipping...`);
+						} else {
+							throw error;
+						}
 					}
 				}
 				await this.clearTable(this.licenseEventRepo, 'License Events', LicenseEvent);
@@ -1123,49 +1129,59 @@ class LegacyDbMigrator {
 		targetRepo: Repository<T>,
 		entityName: string
 	): Promise<void> {
-		if (this.dryRun) {
-			const count = await sourceRepo.count();
-			console.log(`[DRY RUN] Would copy ${count} ${entityName} records`);
-			return;
-		}
+		try {
+			if (this.dryRun) {
+				const count = await sourceRepo.count();
+				console.log(`[DRY RUN] Would copy ${count} ${entityName} records`);
+				return;
+			}
 
-		console.log(`\n📦 Copying ${entityName}...`);
-		const entities = await sourceRepo.find();
-		const total = entities.length;
-		let imported = 0;
-		let skipped = 0;
-		let errors = 0;
+			console.log(`\n📦 Copying ${entityName}...`);
+			const entities = await sourceRepo.find();
+			const total = entities.length;
+			let imported = 0;
+			let skipped = 0;
+			let errors = 0;
 
-		// Process in batches for better performance
-		const batchSize = 100;
-		for (let i = 0; i < entities.length; i += batchSize) {
-			const batch = entities.slice(i, i + batchSize);
-			try {
-				// Copy entities as-is, preserving all fields including IDs
-				const entityDataArray = batch.map(entity => ({ ...entity } as any));
-				await targetRepo.save(entityDataArray);
-				imported += batch.length;
-				if (this.verbose && (i + batchSize) % 500 === 0) {
-					console.log(`  ✓ Imported ${imported}/${total} ${entityName}`);
-				}
-			} catch (error: any) {
-				// If batch save fails, try individual saves
-				for (const entity of batch) {
-					try {
-						const entityData = { ...entity } as any;
-						await targetRepo.save(entityData);
-						imported++;
-					} catch (individualError: any) {
-						errors++;
-						if (this.verbose && errors <= 10) {
-							console.error(`  ❌ Error copying ${entityName}: ${individualError.message}`);
+			// Process in batches for better performance
+			const batchSize = 100;
+			for (let i = 0; i < entities.length; i += batchSize) {
+				const batch = entities.slice(i, i + batchSize);
+				try {
+					// Copy entities as-is, preserving all fields including IDs
+					const entityDataArray = batch.map(entity => ({ ...entity } as any));
+					await targetRepo.save(entityDataArray);
+					imported += batch.length;
+					if (this.verbose && (i + batchSize) % 500 === 0) {
+						console.log(`  ✓ Imported ${imported}/${total} ${entityName}`);
+					}
+				} catch (error: any) {
+					// If batch save fails, try individual saves
+					for (const entity of batch) {
+						try {
+							const entityData = { ...entity } as any;
+							await targetRepo.save(entityData);
+							imported++;
+						} catch (individualError: any) {
+							errors++;
+							if (this.verbose && errors <= 10) {
+								console.error(`  ❌ Error copying ${entityName}: ${individualError.message}`);
+							}
 						}
 					}
 				}
 			}
-		}
 
-		console.log(`✅ ${entityName}: ${imported} copied, ${skipped} skipped, ${errors} errors`);
+			console.log(`✅ ${entityName}: ${imported} copied, ${skipped} skipped, ${errors} errors`);
+		} catch (error: any) {
+			// Handle table not found errors gracefully
+			if (error.code === '42P01' || error.message?.includes('does not exist') || error.message?.includes('relation')) {
+				console.log(`  ⚠️  ${entityName} table does not exist, skipping...`);
+				return;
+			}
+			// Re-throw other errors
+			throw error;
+		}
 	}
 
 	private shouldImport(entity: string): boolean {
