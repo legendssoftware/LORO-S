@@ -1,16 +1,26 @@
 #!/usr/bin/env node
 
 /**
- * MySQL to PostgreSQL Migration Script
+ * Database Migration Script - Two-Step Migration Process
  * 
- * Migrates data from legacy MySQL database to PostgreSQL database.
- * Supports configurable PostgreSQL connection URL for reusability.
+ * Supports two migration steps:
+ * 1. MySQL to Local PostgreSQL: Migrates data from remote MySQL to local PostgreSQL
+ * 2. Local PostgreSQL to Remote PostgreSQL: Migrates data from local PostgreSQL to remote PostgreSQL
+ * 
+ * Step 2 skips tracking-related entities (tracking, geofence events) as requested.
  * 
  * Usage:
- *   npm run migrate:legacy-db
- *   npm run migrate:legacy-db -- --pg-url postgresql://user:pass@host:port/dbname
- *   npm run migrate:legacy-db -- --dry-run
- *   npm run migrate:legacy-db -- --only orgs,branches,users
+ *   # Step 1: MySQL to Local PostgreSQL
+ *   npm run migrate:legacy-db -- --step mysql-to-local
+ *   
+ *   # Step 2: Local PostgreSQL to Remote PostgreSQL
+ *   npm run migrate:legacy-db -- --step local-to-remote --pg-url postgresql://user:pass@host:port/dbname
+ *   
+ *   # Dry run
+ *   npm run migrate:legacy-db -- --step local-to-remote --dry-run
+ *   
+ *   # Import only specific entities
+ *   npm run migrate:legacy-db -- --step local-to-remote --only orgs,branches,users
  */
 
 import * as mysql from 'mysql2/promise';
@@ -52,7 +62,6 @@ import { Journal } from '../journal/entities/journal.entity';
 import { Report } from '../reports/entities/report.entity';
 import { Leave } from '../leave/entities/leave.entity';
 import { Warning } from '../warnings/entities/warning.entity';
-import { Tracking } from '../tracking/entities/tracking.entity';
 import { Geofence } from '../tracking/entities/geofence.entity';
 import { GeofenceEvent } from '../tracking/entities/geofence-event.entity';
 import { Doc } from '../docs/entities/doc.entity';
@@ -88,6 +97,7 @@ interface ScriptArguments {
 	'dry-run'?: boolean;
 	only?: string;
 	verbose?: boolean;
+	step?: 'mysql-to-local' | 'local-to-remote';
 }
 
 interface UidMapping {
@@ -174,10 +184,11 @@ class MigrationStats {
 class LegacyDbMigrator {
 	private mysqlConnection: mysql.Connection | null = null;
 	private pgDataSource: DataSource | null = null;
+	private pgSourceDataSource: DataSource | null = null;
 	private app: any = null;
 	private configService: ConfigService | null = null;
 	
-	// Repositories
+	// Target Repositories (for writing)
 	private orgRepo: Repository<Organisation> | null = null;
 	private branchRepo: Repository<Branch> | null = null;
 	private userRepo: Repository<User> | null = null;
@@ -211,7 +222,7 @@ class LegacyDbMigrator {
 	private reportRepo: Repository<Report> | null = null;
 	private leaveRepo: Repository<Leave> | null = null;
 	private warningRepo: Repository<Warning> | null = null;
-	private trackingRepo: Repository<Tracking> | null = null;
+	private trackingRepo: Repository<any> | null = null;
 	private geofenceRepo: Repository<Geofence> | null = null;
 	private geofenceEventRepo: Repository<GeofenceEvent> | null = null;
 	private docRepo: Repository<Doc> | null = null;
@@ -237,6 +248,65 @@ class LegacyDbMigrator {
 	private usageEventRepo: Repository<UsageEvent> | null = null;
 	private usageSummaryRepo: Repository<UsageSummary> | null = null;
 	
+	// Source Repositories (for reading from local PostgreSQL)
+	private orgSourceRepo: Repository<Organisation> | null = null;
+	private branchSourceRepo: Repository<Branch> | null = null;
+	private userSourceRepo: Repository<User> | null = null;
+	private userProfileSourceRepo: Repository<UserProfile> | null = null;
+	private userEmploymentSourceRepo: Repository<UserEmployeementProfile> | null = null;
+	private userTargetSourceRepo: Repository<UserTarget> | null = null;
+	private deviceSourceRepo: Repository<Device> | null = null;
+	private deviceRecordsSourceRepo: Repository<DeviceRecords> | null = null;
+	private deviceLogsSourceRepo: Repository<DeviceLogs> | null = null;
+	private licenseSourceRepo: Repository<License> | null = null;
+	private licenseUsageSourceRepo: Repository<LicenseUsage> | null = null;
+	private licenseEventSourceRepo: Repository<LicenseEvent> | null = null;
+	private licenseAuditSourceRepo: Repository<LicenseAudit> | null = null;
+	private attendanceSourceRepo: Repository<Attendance> | null = null;
+	private claimSourceRepo: Repository<Claim> | null = null;
+	private checkInSourceRepo: Repository<CheckIn> | null = null;
+	private leadSourceRepo: Repository<Lead> | null = null;
+	private quotationSourceRepo: Repository<Quotation> | null = null;
+	private quotationItemSourceRepo: Repository<QuotationItem> | null = null;
+	private orderSourceRepo: Repository<Order> | null = null;
+	private orderItemSourceRepo: Repository<OrderItem> | null = null;
+	private taskSourceRepo: Repository<Task> | null = null;
+	private subTaskSourceRepo: Repository<SubTask> | null = null;
+	private routeSourceRepo: Repository<Route> | null = null;
+	private taskFlagSourceRepo: Repository<TaskFlag> | null = null;
+	private taskFlagItemSourceRepo: Repository<TaskFlagItem> | null = null;
+	private interactionSourceRepo: Repository<Interaction> | null = null;
+	private notificationSourceRepo: Repository<Notification> | null = null;
+	private communicationLogSourceRepo: Repository<CommunicationLog> | null = null;
+	private journalSourceRepo: Repository<Journal> | null = null;
+	private reportSourceRepo: Repository<Report> | null = null;
+	private leaveSourceRepo: Repository<Leave> | null = null;
+	private warningSourceRepo: Repository<Warning> | null = null;
+	private geofenceSourceRepo: Repository<Geofence> | null = null;
+	private geofenceEventSourceRepo: Repository<GeofenceEvent> | null = null;
+	private docSourceRepo: Repository<Doc> | null = null;
+	private assetSourceRepo: Repository<Asset> | null = null;
+	private newsSourceRepo: Repository<News> | null = null;
+	private feedbackSourceRepo: Repository<Feedback> | null = null;
+	private competitorSourceRepo: Repository<Competitor> | null = null;
+	private resellerSourceRepo: Repository<Reseller> | null = null;
+	private bannersSourceRepo: Repository<Banners> | null = null;
+	private projectSourceRepo: Repository<Project> | null = null;
+	private approvalSourceRepo: Repository<Approval> | null = null;
+	private approvalHistorySourceRepo: Repository<ApprovalHistory> | null = null;
+	private approvalSignatureSourceRepo: Repository<ApprovalSignature> | null = null;
+	private userRewardsSourceRepo: Repository<UserRewards> | null = null;
+	private achievementSourceRepo: Repository<Achievement> | null = null;
+	private unlockedItemSourceRepo: Repository<UnlockedItem> | null = null;
+	private xpTransactionSourceRepo: Repository<XPTransaction> | null = null;
+	private rewardSourceRepo: Repository<Reward> | null = null;
+	private orgSettingsSourceRepo: Repository<OrganisationSettings> | null = null;
+	private orgAppearanceSourceRepo: Repository<OrganisationAppearance> | null = null;
+	private orgHoursSourceRepo: Repository<OrganisationHours> | null = null;
+	private payslipSourceRepo: Repository<Payslip> | null = null;
+	private usageEventSourceRepo: Repository<UsageEvent> | null = null;
+	private usageSummarySourceRepo: Repository<UsageSummary> | null = null;
+	
 	// Mappings
 	private orgMapping: UidMapping = {};
 	private branchMapping: UidMapping = {};
@@ -258,14 +328,20 @@ class LegacyDbMigrator {
 	private onlyEntities: string[] = [];
 	private verbose = false;
 
-	async initialize(pgUrl?: string) {
+	async initialize(step?: 'mysql-to-local' | 'local-to-remote', pgUrl?: string) {
 		console.log('🔧 Initializing connections...\n');
 		
-		// Initialize MySQL connection
-		await this.initMySQL();
+		const migrationStep = step || 'mysql-to-local';
 		
-		// Initialize PostgreSQL via NestJS app
-		await this.initPostgreSQL(pgUrl);
+		if (migrationStep === 'mysql-to-local') {
+			// Step 1: MySQL to Local PostgreSQL
+			await this.initMySQL();
+			await this.initPostgreSQL(pgUrl);
+		} else if (migrationStep === 'local-to-remote') {
+			// Step 2: Local PostgreSQL to Remote PostgreSQL
+			await this.initPostgreSQLSource();
+			await this.initPostgreSQL(pgUrl);
+		}
 		
 		console.log('✅ All connections initialized\n');
 	}
@@ -295,6 +371,30 @@ class LegacyDbMigrator {
 			keepAliveInitialDelay: 0,
 		});
 		console.log('✅ MySQL connected\n');
+	}
+
+	private async reconnectMySQL() {
+		// #region agent log
+		fetch('http://127.0.0.1:7242/ingest/0ce50f7b-4196-43a5-93ca-ac3c9cf1f6b2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'migrate-legacy-db.ts:297',message:'Reconnecting MySQL',data:{hadConnection:!!this.mysqlConnection},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+		// #endregion
+		
+		try {
+			if (this.mysqlConnection) {
+				try {
+					await this.mysqlConnection.end();
+				} catch (e) {
+					// Ignore errors when closing already closed connection
+				}
+			}
+		} catch (e) {
+			// Ignore errors
+		}
+		
+		await this.initMySQL();
+		
+		// #region agent log
+		fetch('http://127.0.0.1:7242/ingest/0ce50f7b-4196-43a5-93ca-ac3c9cf1f6b2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'migrate-legacy-db.ts:310',message:'MySQL reconnected',data:{hasConnection:!!this.mysqlConnection},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+		// #endregion
 	}
 
 	private async initPostgreSQL(pgUrl?: string) {
@@ -383,7 +483,7 @@ class LegacyDbMigrator {
 		this.reportRepo = this.pgDataSource.getRepository(Report);
 		this.leaveRepo = this.pgDataSource.getRepository(Leave);
 		this.warningRepo = this.pgDataSource.getRepository(Warning);
-		this.trackingRepo = this.pgDataSource.getRepository(Tracking);
+		// this.trackingRepo = this.pgDataSource.getRepository(Tracking); // Tracking import skipped
 		this.geofenceRepo = this.pgDataSource.getRepository(Geofence);
 		this.geofenceEventRepo = this.pgDataSource.getRepository(GeofenceEvent);
 		this.docRepo = this.pgDataSource.getRepository(Doc);
@@ -412,10 +512,147 @@ class LegacyDbMigrator {
 		console.log('✅ PostgreSQL connected via NestJS\n');
 	}
 
+	private async initPostgreSQLSource() {
+		// Initialize local PostgreSQL connection (source)
+		console.log('📊 Connecting to local PostgreSQL (source)...');
+		
+		const host = process.env.PG_DB_HOST || 'localhost';
+		const port = parseInt(process.env.PG_DB_PORT || '5432', 10);
+		const username = process.env.PG_DB_USERNAME || 'brandonnkawu';
+		const password = process.env.PG_DB_PASSWORD || 'Umzingeli@2026';
+		const database = process.env.PG_DB_NAME || 'sana';
+
+		// Parse connection string if PG_DB_HOST contains a full PostgreSQL URL
+		let finalHost = host;
+		let finalPort = port;
+		let finalUsername = username;
+		let finalPassword = password;
+		let finalDatabase = database;
+
+		if (host && (host.startsWith('postgresql://') || host.startsWith('postgres://'))) {
+			try {
+				const url = new URL(host);
+				finalHost = url.hostname;
+				finalPort = url.port ? parseInt(url.port, 10) : 5432;
+				finalUsername = url.username || username;
+				finalPassword = url.password || password;
+				finalDatabase = url.pathname ? url.pathname.slice(1) : database;
+			} catch (error) {
+				console.error('Failed to parse PostgreSQL connection string:', error);
+			}
+		}
+
+		const isLocalhost = finalHost === 'localhost' || finalHost === '127.0.0.1';
+		const enableSSL = false; // Disable SSL for localhost
+
+		this.pgSourceDataSource = new DataSource({
+			type: 'postgres',
+			host: finalHost,
+			port: finalPort,
+			username: finalUsername,
+			password: finalPassword,
+			database: finalDatabase,
+			entities: [
+				Organisation, Branch, User, UserProfile, UserEmployeementProfile, UserTarget,
+				Device, DeviceRecords, DeviceLogs, License, LicenseUsage, LicenseEvent, LicenseAudit,
+				Attendance, Claim, CheckIn, Lead, Quotation, QuotationItem, Order, OrderItem,
+				Task, SubTask, Route, TaskFlag, TaskFlagItem, Interaction, Notification,
+				CommunicationLog, Journal, Report, Leave, Warning, Geofence, GeofenceEvent,
+				Doc, Asset, News, Feedback, Competitor, Reseller, Banners, Project,
+				Approval, ApprovalHistory, ApprovalSignature, UserRewards, Achievement,
+				UnlockedItem, XPTransaction, Reward, OrganisationSettings, OrganisationAppearance,
+				OrganisationHours, Payslip, UsageEvent, UsageSummary,
+			],
+			synchronize: false,
+			logging: false,
+			extra: {
+				ssl: enableSSL ? { rejectUnauthorized: false } : false,
+			},
+		});
+
+		await this.pgSourceDataSource.initialize();
+		console.log(`✅ Connected to local PostgreSQL: ${finalHost}:${finalPort}/${finalDatabase}\n`);
+
+		// Initialize source repositories
+		this.orgSourceRepo = this.pgSourceDataSource.getRepository(Organisation);
+		this.branchSourceRepo = this.pgSourceDataSource.getRepository(Branch);
+		this.userSourceRepo = this.pgSourceDataSource.getRepository(User);
+		this.userProfileSourceRepo = this.pgSourceDataSource.getRepository(UserProfile);
+		this.userEmploymentSourceRepo = this.pgSourceDataSource.getRepository(UserEmployeementProfile);
+		this.userTargetSourceRepo = this.pgSourceDataSource.getRepository(UserTarget);
+		this.deviceSourceRepo = this.pgSourceDataSource.getRepository(Device);
+		this.deviceRecordsSourceRepo = this.pgSourceDataSource.getRepository(DeviceRecords);
+		this.deviceLogsSourceRepo = this.pgSourceDataSource.getRepository(DeviceLogs);
+		this.licenseSourceRepo = this.pgSourceDataSource.getRepository(License);
+		this.licenseUsageSourceRepo = this.pgSourceDataSource.getRepository(LicenseUsage);
+		this.licenseEventSourceRepo = this.pgSourceDataSource.getRepository(LicenseEvent);
+		try {
+			this.licenseAuditSourceRepo = this.pgSourceDataSource.getRepository(LicenseAudit);
+		} catch (error: any) {
+			if (error.name === 'EntityMetadataNotFoundError') {
+				console.warn('⚠️  LicenseAudit entity not registered in source DataSource, skipping repository initialization');
+				this.licenseAuditSourceRepo = null;
+			} else {
+				throw error;
+			}
+		}
+		this.attendanceSourceRepo = this.pgSourceDataSource.getRepository(Attendance);
+		this.claimSourceRepo = this.pgSourceDataSource.getRepository(Claim);
+		this.checkInSourceRepo = this.pgSourceDataSource.getRepository(CheckIn);
+		this.leadSourceRepo = this.pgSourceDataSource.getRepository(Lead);
+		this.quotationSourceRepo = this.pgSourceDataSource.getRepository(Quotation);
+		this.quotationItemSourceRepo = this.pgSourceDataSource.getRepository(QuotationItem);
+		this.orderSourceRepo = this.pgSourceDataSource.getRepository(Order);
+		this.orderItemSourceRepo = this.pgSourceDataSource.getRepository(OrderItem);
+		this.taskSourceRepo = this.pgSourceDataSource.getRepository(Task);
+		this.subTaskSourceRepo = this.pgSourceDataSource.getRepository(SubTask);
+		this.routeSourceRepo = this.pgSourceDataSource.getRepository(Route);
+		this.taskFlagSourceRepo = this.pgSourceDataSource.getRepository(TaskFlag);
+		this.taskFlagItemSourceRepo = this.pgSourceDataSource.getRepository(TaskFlagItem);
+		this.interactionSourceRepo = this.pgSourceDataSource.getRepository(Interaction);
+		this.notificationSourceRepo = this.pgSourceDataSource.getRepository(Notification);
+		this.communicationLogSourceRepo = this.pgSourceDataSource.getRepository(CommunicationLog);
+		this.journalSourceRepo = this.pgSourceDataSource.getRepository(Journal);
+		this.reportSourceRepo = this.pgSourceDataSource.getRepository(Report);
+		this.leaveSourceRepo = this.pgSourceDataSource.getRepository(Leave);
+		this.warningSourceRepo = this.pgSourceDataSource.getRepository(Warning);
+		this.geofenceSourceRepo = this.pgSourceDataSource.getRepository(Geofence);
+		this.geofenceEventSourceRepo = this.pgSourceDataSource.getRepository(GeofenceEvent);
+		this.docSourceRepo = this.pgSourceDataSource.getRepository(Doc);
+		this.assetSourceRepo = this.pgSourceDataSource.getRepository(Asset);
+		this.newsSourceRepo = this.pgSourceDataSource.getRepository(News);
+		this.feedbackSourceRepo = this.pgSourceDataSource.getRepository(Feedback);
+		this.competitorSourceRepo = this.pgSourceDataSource.getRepository(Competitor);
+		this.resellerSourceRepo = this.pgSourceDataSource.getRepository(Reseller);
+		this.bannersSourceRepo = this.pgSourceDataSource.getRepository(Banners);
+		this.projectSourceRepo = this.pgSourceDataSource.getRepository(Project);
+		this.approvalSourceRepo = this.pgSourceDataSource.getRepository(Approval);
+		this.approvalHistorySourceRepo = this.pgSourceDataSource.getRepository(ApprovalHistory);
+		this.approvalSignatureSourceRepo = this.pgSourceDataSource.getRepository(ApprovalSignature);
+		this.userRewardsSourceRepo = this.pgSourceDataSource.getRepository(UserRewards);
+		this.achievementSourceRepo = this.pgSourceDataSource.getRepository(Achievement);
+		this.unlockedItemSourceRepo = this.pgSourceDataSource.getRepository(UnlockedItem);
+		this.xpTransactionSourceRepo = this.pgSourceDataSource.getRepository(XPTransaction);
+		this.rewardSourceRepo = this.pgSourceDataSource.getRepository(Reward);
+		this.orgSettingsSourceRepo = this.pgSourceDataSource.getRepository(OrganisationSettings);
+		this.orgAppearanceSourceRepo = this.pgSourceDataSource.getRepository(OrganisationAppearance);
+		this.orgHoursSourceRepo = this.pgSourceDataSource.getRepository(OrganisationHours);
+		this.payslipSourceRepo = this.pgSourceDataSource.getRepository(Payslip);
+		this.usageEventSourceRepo = this.pgSourceDataSource.getRepository(UsageEvent);
+		this.usageSummarySourceRepo = this.pgSourceDataSource.getRepository(UsageSummary);
+	}
+
 	async migrate(options: ScriptArguments) {
 		this.dryRun = options['dry-run'] || false;
 		this.verbose = options.verbose || false;
 		this.onlyEntities = options.only ? options.only.split(',').map(e => e.trim()) : [];
+
+		const step = options.step || 'mysql-to-local';
+
+		if (step === 'local-to-remote') {
+			await this.migrateFromPostgreSQL(options);
+			return;
+		}
 
 		if (this.dryRun) {
 			console.log('🔍 DRY RUN MODE - No data will be written\n');
@@ -607,6 +844,261 @@ class LegacyDbMigrator {
 			console.error('\n❌ Migration failed:', error);
 			throw error;
 		}
+	}
+
+	private async migrateFromPostgreSQL(options: ScriptArguments) {
+		this.dryRun = options['dry-run'] || false;
+		this.verbose = options.verbose || false;
+		this.onlyEntities = options.only ? options.only.split(',').map(e => e.trim()) : [];
+
+		if (this.dryRun) {
+			console.log('🔍 DRY RUN MODE - No data will be written\n');
+		}
+
+		if (!this.pgSourceDataSource || !this.pgDataSource) {
+			throw new Error('Both source and target PostgreSQL connections must be initialized');
+		}
+
+		console.log('🚀 Starting PostgreSQL-to-PostgreSQL migration (local to remote)...\n');
+		console.log('⚠️  Skipping tracking-related entities\n');
+
+		const startTime = Date.now();
+
+		try {
+			// Import in dependency order - copy data as-is from source to target
+			// Skip tracking-related entities (tracking, geofence events)
+
+			if (this.shouldImport('orgs')) {
+				await this.clearTable(this.orgRepo, 'Organisations', Organisation);
+				await this.copyEntities(this.orgSourceRepo!, this.orgRepo!, 'Organisations');
+			}
+
+			if (this.shouldImport('branches')) {
+				await this.clearTable(this.branchRepo, 'Branches', Branch);
+				await this.copyEntities(this.branchSourceRepo!, this.branchRepo!, 'Branches');
+			}
+
+			if (this.shouldImport('users')) {
+				await this.clearTable(this.userTargetRepo, 'User Targets', UserTarget);
+				await this.clearTable(this.userEmploymentRepo, 'User Employment Profiles', UserEmployeementProfile);
+				await this.clearTable(this.userProfileRepo, 'User Profiles', UserProfile);
+				await this.clearTable(this.userRepo, 'Users', User);
+				await this.copyEntities(this.userSourceRepo!, this.userRepo!, 'Users');
+				await this.copyEntities(this.userProfileSourceRepo!, this.userProfileRepo!, 'User Profiles');
+				await this.copyEntities(this.userEmploymentSourceRepo!, this.userEmploymentRepo!, 'User Employment Profiles');
+				await this.copyEntities(this.userTargetSourceRepo!, this.userTargetRepo!, 'User Targets');
+			}
+
+			if (this.shouldImport('devices')) {
+				await this.clearDeviceRecordsAndLogs();
+				await this.clearTable(this.deviceRepo, 'Devices', Device);
+				await this.copyEntities(this.deviceSourceRepo!, this.deviceRepo!, 'Devices');
+				if (this.shouldImport('devicerecords')) {
+					await this.clearTable(this.deviceRecordsRepo, 'Device Records', DeviceRecords);
+					await this.copyEntities(this.deviceRecordsSourceRepo!, this.deviceRecordsRepo!, 'Device Records');
+				}
+			}
+
+			if (this.shouldImport('licenses')) {
+				if (this.licenseAuditRepo) {
+					await this.clearTable(this.licenseAuditRepo, 'License Audit', LicenseAudit);
+					if (this.licenseAuditSourceRepo) {
+						await this.copyEntities(this.licenseAuditSourceRepo, this.licenseAuditRepo, 'License Audit');
+					}
+				}
+				await this.clearTable(this.licenseEventRepo, 'License Events', LicenseEvent);
+				await this.clearTable(this.licenseUsageRepo, 'License Usage', LicenseUsage);
+				await this.clearTable(this.licenseRepo, 'Licenses', License);
+				await this.copyEntities(this.licenseSourceRepo!, this.licenseRepo!, 'Licenses');
+				await this.copyEntities(this.licenseUsageSourceRepo!, this.licenseUsageRepo!, 'License Usage');
+				await this.copyEntities(this.licenseEventSourceRepo!, this.licenseEventRepo!, 'License Events');
+			}
+
+			if (this.shouldImport('orgs')) {
+				await this.clearTable(this.orgHoursRepo, 'Organisation Hours', OrganisationHours);
+				await this.clearTable(this.orgAppearanceRepo, 'Organisation Appearance', OrganisationAppearance);
+				await this.clearTable(this.orgSettingsRepo, 'Organisation Settings', OrganisationSettings);
+				await this.copyEntities(this.orgSettingsSourceRepo!, this.orgSettingsRepo!, 'Organisation Settings');
+				await this.copyEntities(this.orgAppearanceSourceRepo!, this.orgAppearanceRepo!, 'Organisation Appearance');
+				await this.copyEntities(this.orgHoursSourceRepo!, this.orgHoursRepo!, 'Organisation Hours');
+			}
+
+			if (this.shouldImport('reports')) {
+				await this.clearTable(this.reportRepo, 'Reports', Report);
+				await this.copyEntities(this.reportSourceRepo!, this.reportRepo!, 'Reports');
+			}
+
+			if (this.shouldImport('attendance')) {
+				await this.clearAttendanceRecords();
+				await this.copyEntities(this.attendanceSourceRepo!, this.attendanceRepo!, 'Attendance');
+			}
+
+			if (this.shouldImport('claims')) {
+				await this.clearTable(this.claimRepo, 'Claims', Claim);
+				await this.copyEntities(this.claimSourceRepo!, this.claimRepo!, 'Claims');
+			}
+
+			if (this.shouldImport('checkins')) {
+				await this.clearTable(this.checkInRepo, 'Check-ins', CheckIn);
+				await this.copyEntities(this.checkInSourceRepo!, this.checkInRepo!, 'Check-ins');
+			}
+
+			if (this.shouldImport('leads')) {
+				await this.clearTable(this.leadRepo, 'Leads', Lead);
+				await this.copyEntities(this.leadSourceRepo!, this.leadRepo!, 'Leads');
+			}
+
+			if (this.shouldImport('quotations')) {
+				await this.clearTable(this.quotationItemRepo, 'Quotation Items', QuotationItem);
+				await this.clearTable(this.quotationRepo, 'Quotations', Quotation);
+				await this.copyEntities(this.quotationSourceRepo!, this.quotationRepo!, 'Quotations');
+				await this.copyEntities(this.quotationItemSourceRepo!, this.quotationItemRepo!, 'Quotation Items');
+			}
+
+			if (this.shouldImport('orders')) {
+				await this.clearTable(this.orderItemRepo, 'Order Items', OrderItem);
+				await this.clearTable(this.orderRepo, 'Orders', Order);
+				await this.copyEntities(this.orderSourceRepo!, this.orderRepo!, 'Orders');
+				await this.copyEntities(this.orderItemSourceRepo!, this.orderItemRepo!, 'Order Items');
+			}
+
+			if (this.shouldImport('tasks')) {
+				await this.clearTable(this.subTaskRepo, 'Subtasks', SubTask);
+				await this.clearTable(this.taskRepo, 'Tasks', Task);
+				await this.copyEntities(this.taskSourceRepo!, this.taskRepo!, 'Tasks');
+				await this.copyEntities(this.subTaskSourceRepo!, this.subTaskRepo!, 'Subtasks');
+			}
+
+			if (this.shouldImport('interactions')) {
+				await this.clearTable(this.interactionRepo, 'Interactions', Interaction);
+				await this.copyEntities(this.interactionSourceRepo!, this.interactionRepo!, 'Interactions');
+			}
+
+			if (this.shouldImport('notifications')) {
+				await this.clearTable(this.notificationRepo, 'Notifications', Notification);
+				await this.copyEntities(this.notificationSourceRepo!, this.notificationRepo!, 'Notifications');
+			}
+
+			if (this.shouldImport('journals')) {
+				await this.clearTable(this.journalRepo, 'Journals', Journal);
+				await this.copyEntities(this.journalSourceRepo!, this.journalRepo!, 'Journals');
+			}
+
+			if (this.shouldImport('leave')) {
+				await this.clearTable(this.leaveRepo, 'Leave', Leave);
+				await this.copyEntities(this.leaveSourceRepo!, this.leaveRepo!, 'Leave');
+			}
+
+			if (this.shouldImport('warnings')) {
+				await this.clearTable(this.warningRepo, 'Warnings', Warning);
+				await this.copyEntities(this.warningSourceRepo!, this.warningRepo!, 'Warnings');
+			}
+
+			if (this.shouldImport('docs')) {
+				await this.clearTable(this.docRepo, 'Docs', Doc);
+				await this.copyEntities(this.docSourceRepo!, this.docRepo!, 'Docs');
+			}
+
+			if (this.shouldImport('assets')) {
+				await this.clearTable(this.assetRepo, 'Assets', Asset);
+				await this.copyEntities(this.assetSourceRepo!, this.assetRepo!, 'Assets');
+			}
+
+			if (this.shouldImport('news')) {
+				await this.clearTable(this.newsRepo, 'News', News);
+				await this.copyEntities(this.newsSourceRepo!, this.newsRepo!, 'News');
+			}
+
+			if (this.shouldImport('feedback')) {
+				await this.clearTable(this.feedbackRepo, 'Feedback', Feedback);
+				await this.copyEntities(this.feedbackSourceRepo!, this.feedbackRepo!, 'Feedback');
+			}
+
+			if (this.shouldImport('competitors')) {
+				await this.clearTable(this.competitorRepo, 'Competitors', Competitor);
+				await this.copyEntities(this.competitorSourceRepo!, this.competitorRepo!, 'Competitors');
+			}
+
+			if (this.shouldImport('resellers')) {
+				await this.clearTable(this.resellerRepo, 'Resellers', Reseller);
+				await this.copyEntities(this.resellerSourceRepo!, this.resellerRepo!, 'Resellers');
+			}
+
+			if (this.shouldImport('banners')) {
+				await this.clearTable(this.bannersRepo, 'Banners', Banners);
+				await this.copyEntities(this.bannersSourceRepo!, this.bannersRepo!, 'Banners');
+			}
+
+			if (this.shouldImport('projects')) {
+				await this.clearTable(this.projectRepo, 'Projects', Project);
+				await this.copyEntities(this.projectSourceRepo!, this.projectRepo!, 'Projects');
+			}
+
+			if (this.shouldImport('users')) {
+				await this.clearTable(this.userRewardsRepo, 'User Rewards', UserRewards);
+				await this.copyEntities(this.userRewardsSourceRepo!, this.userRewardsRepo!, 'User Rewards');
+			}
+
+			// Skip tracking-related entities (tracking, geofence events)
+			// These are intentionally skipped as per user request
+
+			const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+			this.printStats(duration);
+
+		} catch (error) {
+			console.error('\n❌ PostgreSQL-to-PostgreSQL migration failed:', error);
+			throw error;
+		}
+	}
+
+	private async copyEntities<T>(
+		sourceRepo: Repository<T>,
+		targetRepo: Repository<T>,
+		entityName: string
+	): Promise<void> {
+		if (this.dryRun) {
+			const count = await sourceRepo.count();
+			console.log(`[DRY RUN] Would copy ${count} ${entityName} records`);
+			return;
+		}
+
+		console.log(`\n📦 Copying ${entityName}...`);
+		const entities = await sourceRepo.find();
+		const total = entities.length;
+		let imported = 0;
+		let skipped = 0;
+		let errors = 0;
+
+		// Process in batches for better performance
+		const batchSize = 100;
+		for (let i = 0; i < entities.length; i += batchSize) {
+			const batch = entities.slice(i, i + batchSize);
+			try {
+				// Copy entities as-is, preserving all fields including IDs
+				const entityDataArray = batch.map(entity => ({ ...entity } as any));
+				await targetRepo.save(entityDataArray);
+				imported += batch.length;
+				if (this.verbose && (i + batchSize) % 500 === 0) {
+					console.log(`  ✓ Imported ${imported}/${total} ${entityName}`);
+				}
+			} catch (error: any) {
+				// If batch save fails, try individual saves
+				for (const entity of batch) {
+					try {
+						const entityData = { ...entity } as any;
+						await targetRepo.save(entityData);
+						imported++;
+					} catch (individualError: any) {
+						errors++;
+						if (this.verbose && errors <= 10) {
+							console.error(`  ❌ Error copying ${entityName}: ${individualError.message}`);
+						}
+					}
+				}
+			}
+		}
+
+		console.log(`✅ ${entityName}: ${imported} copied, ${skipped} skipped, ${errors} errors`);
 	}
 
 	private shouldImport(entity: string): boolean {
@@ -948,8 +1440,8 @@ class LegacyDbMigrator {
 					surname: this.preserveFieldWithFallback(user.surname, ''),
 					email: this.preserveFieldWithFallback(user.email, `user${user.uid}@example.com`),
 					phone: this.preserveField(user.phone),
-					photoURL: this.preserveField(user.photoURL),
-					avatar: this.preserveField(user.avatar),
+					photoURL: 'https://cdn-icons-png.flaticon.com/128/1144/1144709.png',
+					avatar: 'https://cdn-icons-png.flaticon.com/128/1144/1144709.png',
 					role: this.preserveFieldWithFallback(user.role, 'user'),
 					status: this.preserveFieldWithFallback(user.status, 'active'),
 					departmentId: this.preserveField(user.departmentId),
@@ -1107,8 +1599,15 @@ class LegacyDbMigrator {
 					owner: { uid: newUserId } as User,
 				});
 
-				await this.userEmploymentRepo!.save(newProfile);
+				const savedProfile = await this.userEmploymentRepo!.save(newProfile);
 				this.stats.userEmploymentProfiles.imported++;
+
+				// Link the employment profile back to the user
+				const user = await this.userRepo!.findOne({ where: { uid: newUserId } });
+				if (user) {
+					user.userEmployeementProfile = savedProfile;
+					await this.userRepo!.save(user);
+				}
 
 				if (this.verbose) console.log(`  ✅ Imported employment profile for user ${newUserId}`);
 			} catch (error: any) {
@@ -1361,8 +1860,15 @@ class LegacyDbMigrator {
 						owner: { uid: newUserId } as User, // Proper linking via ownerUID
 					});
 
-					await this.userRewardsRepo!.save(newReward);
+					const savedReward = await this.userRewardsRepo!.save(newReward);
 					this.stats.userRewards.imported++;
+
+					// Link the rewards back to the user
+					const user = await this.userRepo!.findOne({ where: { uid: newUserId } });
+					if (user) {
+						user.rewards = savedReward;
+						await this.userRepo!.save(user);
+					}
 
 					if ((i + 1) % 100 === 0 || i === rewards.length - 1) {
 						process.stdout.write(`\r  Processing: ${progress}`);
@@ -1690,17 +2196,47 @@ class LegacyDbMigrator {
 		let lastError: any;
 		let currentRetryDelay = retryDelay;
 		
+		// #region agent log
+		fetch('http://127.0.0.1:7242/ingest/0ce50f7b-4196-43a5-93ca-ac3c9cf1f6b2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'migrate-legacy-db.ts:1683',message:'executeWithRetry entry',data:{query:query.substring(0,50),maxRetries,hasConnection:!!this.mysqlConnection},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+		// #endregion
+		
 		for (let attempt = 1; attempt <= maxRetries; attempt++) {
 			try {
+				// Check connection state before executing
+				if (!this.mysqlConnection) {
+					// #region agent log
+					fetch('http://127.0.0.1:7242/ingest/0ce50f7b-4196-43a5-93ca-ac3c9cf1f6b2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'migrate-legacy-db.ts:1693',message:'Connection is null, reconnecting',data:{attempt},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+					// #endregion
+					await this.reconnectMySQL();
+				}
+				
+				// #region agent log
+				const connState = this.mysqlConnection ? (this.mysqlConnection as any).state : 'null';
+				fetch('http://127.0.0.1:7242/ingest/0ce50f7b-4196-43a5-93ca-ac3c9cf1f6b2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'migrate-legacy-db.ts:1700',message:'Before query execution',data:{attempt,connState,hasConnection:!!this.mysqlConnection},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+				// #endregion
+				
+				const queryStartTime = Date.now();
 				const result = await Promise.race([
 					this.mysqlConnection!.execute(query, params),
 					new Promise<never>((_, reject) => 
 						setTimeout(() => reject(new Error('Query timeout after 60 seconds')), 60000)
 					)
 				]);
+				
+				// #region agent log
+				fetch('http://127.0.0.1:7242/ingest/0ce50f7b-4196-43a5-93ca-ac3c9cf1f6b2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'migrate-legacy-db.ts:1700',message:'Query succeeded',data:{attempt,duration:Date.now()-queryStartTime},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+				// #endregion
+				
 				return result as [T[], any];
 			} catch (error: any) {
 				lastError = error;
+				
+				// #region agent log
+				const connStateAfterError = this.mysqlConnection ? (this.mysqlConnection as any).state : 'null';
+				const isClosed = error.message?.includes('closed state') || connStateAfterError === 'closed' || connStateAfterError === 'disconnected';
+				fetch('http://127.0.0.1:7242/ingest/0ce50f7b-4196-43a5-93ca-ac3c9cf1f6b2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'migrate-legacy-db.ts:1702',message:'Query error caught',data:{attempt,errorMsg:error.message,errorCode:error.code,connStateAfterError,isClosed,hasConnection:!!this.mysqlConnection},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+				// #endregion
+				
 				// Check for various timeout indicators
 				const isTimeout = 
 					error.code === 'ETIMEDOUT' || 
@@ -1708,6 +2244,31 @@ class LegacyDbMigrator {
 					error.message?.includes('timeout') ||
 					error.message?.includes('ETIMEDOUT') ||
 					error.message?.includes('timed out');
+				
+				// Check if connection is closed - mysql2 throws "Can't add new command when connection is in closed state"
+				const connectionClosed = error.message?.includes('closed state') || 
+					error.message?.includes('connection is closed') ||
+					error.message?.includes('Cannot enqueue') ||
+					(this.mysqlConnection && (this.mysqlConnection as any).state === 'closed') ||
+					(this.mysqlConnection && (this.mysqlConnection as any).state === 'disconnected');
+				
+				// #region agent log
+				fetch('http://127.0.0.1:7242/ingest/0ce50f7b-4196-43a5-93ca-ac3c9cf1f6b2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'migrate-legacy-db.ts:1711',message:'Error analysis',data:{attempt,isTimeout,connectionClosed,willRetry:isTimeout && attempt < maxRetries && !connectionClosed},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+				// #endregion
+				
+				// If connection is closed, always try to reconnect (regardless of timeout)
+				if (connectionClosed && attempt < maxRetries) {
+					// #region agent log
+					fetch('http://127.0.0.1:7242/ingest/0ce50f7b-4196-43a5-93ca-ac3c9cf1f6b2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'migrate-legacy-db.ts:1725',message:'Connection closed detected, attempting reconnect',data:{attempt,isTimeout},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+					// #endregion
+					
+					console.warn(`  ⚠️  Connection closed (attempt ${attempt}/${maxRetries}), reconnecting...`);
+					await this.reconnectMySQL();
+					await new Promise(resolve => setTimeout(resolve, currentRetryDelay));
+					// Exponential backoff
+					currentRetryDelay = Math.min(currentRetryDelay * 1.5, 30000); // Cap at 30 seconds
+					continue;
+				}
 				
 				if (isTimeout && attempt < maxRetries) {
 					console.warn(`  ⚠️  Query timeout (attempt ${attempt}/${maxRetries}), retrying in ${currentRetryDelay}ms...`);
@@ -3124,7 +3685,7 @@ class LegacyDbMigrator {
 				const network = this.parseJSON(record.network, null);
 				const metadata = this.parseJSON(record.metadata, null);
 
-				const trackingData: DeepPartial<Tracking> = {
+				const trackingData: DeepPartial<any> = {
 					latitude: record.latitude || 0,
 					longitude: record.longitude || 0,
 					address: this.preserveField(record.address),
@@ -3837,6 +4398,16 @@ class LegacyDbMigrator {
 			console.log('✅ MySQL connection closed');
 		}
 		
+		// Clean up source PostgreSQL DataSource if initialized
+		if (this.pgSourceDataSource && this.pgSourceDataSource.isInitialized) {
+			try {
+				await this.pgSourceDataSource.destroy();
+				console.log('✅ Source PostgreSQL connection closed');
+			} catch (error: any) {
+				console.warn('⚠️  Warning during source DataSource cleanup:', error.message);
+			}
+		}
+		
 		// Destroy custom DataSource first if we created one (pgUrl override)
 		// Check if we have a custom DataSource by seeing if pgUrl was provided
 		const hasCustomDataSource = process.argv.some(arg => arg.includes('--pg-url'));
@@ -3871,7 +4442,12 @@ async function main() {
 		.options({
 			'pg-url': {
 				type: 'string',
-				describe: 'PostgreSQL connection URL (postgresql://user:pass@host:port/dbname)',
+				describe: 'PostgreSQL connection URL (postgresql://user:pass@host:port/dbname) - target database',
+			},
+			step: {
+				type: 'string',
+				choices: ['mysql-to-local', 'local-to-remote'],
+				describe: 'Migration step: mysql-to-local (MySQL to local PostgreSQL) or local-to-remote (local PostgreSQL to remote PostgreSQL)',
 			},
 			'dry-run': {
 				type: 'boolean',
@@ -3894,7 +4470,7 @@ async function main() {
 	const migrator = new LegacyDbMigrator();
 
 	try {
-		await migrator.initialize(argv['pg-url']);
+		await migrator.initialize(argv.step, argv['pg-url']);
 		await migrator.migrate(argv);
 	} catch (error) {
 		console.error('\n❌ Migration failed:', error);

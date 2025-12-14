@@ -247,7 +247,7 @@ import { PayslipsModule } from './payslips/payslips.module';
 					DeviceRecords,
 					DeviceLogs,
 				],
-					synchronize: !isProduction, // Only synchronize in development
+					synchronize: true,
 					logging: false,
 					extra: {
 						max: parseInt(configService.get<string>('DB_CONNECTION_LIMIT') || '20', 10),
