@@ -73,6 +73,7 @@ import { News } from '../news/entities/news.entity';
 import { Feedback } from '../feedback/entities/feedback.entity';
 import { Competitor } from '../competitors/entities/competitor.entity';
 import { Reseller } from '../resellers/entities/reseller.entity';
+import { Product } from '../products/entities/product.entity';
 import { Banners } from '../shop/entities/banners.entity';
 import { Project } from '../shop/entities/project.entity';
 import { Approval } from '../approvals/entities/approval.entity';
@@ -618,7 +619,7 @@ class LegacyDbMigrator {
 				Attendance, Claim, CheckIn, Lead, Quotation, QuotationItem, Order, OrderItem,
 				Task, SubTask, Route, TaskFlag, TaskFlagItem, Interaction, Notification,
 				CommunicationLog, Journal, Report, Leave, Warning, Geofence, GeofenceEvent,
-				Doc, Asset, News, Feedback, Competitor, Reseller, Banners, Project,
+				Doc, Asset, News, Feedback, Competitor, Reseller, Product, Banners, Project,
 				Approval, ApprovalHistory, ApprovalSignature, UserRewards, Achievement,
 				UnlockedItem, XPTransaction, Reward, OrganisationSettings, OrganisationAppearance,
 				OrganisationHours, Payslip, UsageEvent, UsageSummary,
