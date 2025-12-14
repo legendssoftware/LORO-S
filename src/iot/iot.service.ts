@@ -159,10 +159,17 @@ export class IotService {
 				(key) =>
 					key.startsWith(`${this.CACHE_PREFIX}records:`) ||
 					key.startsWith(`${this.CACHE_PREFIX}analytics:`) ||
+					key.startsWith(`${this.CACHE_PREFIX}record:today:`) ||
+					key.startsWith(`${this.CACHE_PREFIX}record:latest:`) ||
+					key.startsWith(`${this.CACHE_PREFIX}record:open:`) ||
+					key.startsWith(`${this.CACHE_PREFIX}record:recent:`) ||
 					key.includes(device.deviceID) ||
 					(key.includes(orgIdStr) && (key.includes('device') || key.includes('record')))
 			);
 			keysToDelete.push(...relatedCaches);
+			
+			// Also invalidate record caches for this device
+			await this.invalidateRecordCaches(device.id);
 
 			const uniqueKeys = [...new Set(keysToDelete)];
 			await Promise.all(uniqueKeys.map((key) => this.cacheManager.del(key)));
@@ -190,6 +197,15 @@ export class IotService {
 			if (!device) {
 				return;
 			}
+
+			// Get date key for today's record caches
+			const recordDate = record.createdAt instanceof Date 
+				? record.createdAt 
+				: new Date(record.createdAt);
+			const dateKey = recordDate.toISOString().split('T')[0];
+
+			// Invalidate record-related caches
+			await this.invalidateRecordCaches(device.id, dateKey);
 
 			const keys = await this.cacheManager.store.keys();
 			const keysToDelete = [];
@@ -277,6 +293,243 @@ export class IotService {
 			});
 		} catch (error) {
 			this.logger.error(`Error during comprehensive IoT cache invalidation: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Get today's records for a device from cache or DB
+	 * @param deviceId - Device ID
+	 * @param today - Start of today's date
+	 * @param tomorrow - Start of tomorrow's date
+	 * @param queryRunner - Optional query runner for transaction context
+	 * @returns Array of today's records
+	 */
+	private async getTodayRecords(
+		deviceId: number,
+		today: Date,
+		tomorrow: Date,
+		queryRunner?: any,
+	): Promise<DeviceRecords[]> {
+		// Create cache key with date to ensure daily cache invalidation
+		const dateKey = today.toISOString().split('T')[0]; // YYYY-MM-DD
+		const cacheKey = this.getCacheKey(`records:today:${deviceId}:${dateKey}`);
+		
+		// Try cache first
+		const cachedRecords = await this.cacheManager.get<DeviceRecords[]>(cacheKey);
+		if (cachedRecords) {
+			this.logger.debug(`💾 Cache hit for today's records: device ${deviceId}, date ${dateKey}`);
+			return cachedRecords;
+		}
+
+		// Cache miss - fetch from DB
+		const repository = queryRunner?.manager?.getRepository(DeviceRecords) || this.deviceRecordsRepository;
+		const todayRecords = await repository.find({
+			where: {
+				deviceId: deviceId,
+				createdAt: Between(today, tomorrow),
+			},
+			order: { createdAt: 'DESC' },
+		});
+
+		// Cache for future requests (cache until end of day + buffer)
+		const now = new Date();
+		const endOfDay = new Date(today);
+		endOfDay.setHours(23, 59, 59, 999);
+		const ttlMs = Math.max(endOfDay.getTime() - now.getTime() + 60000, 60000); // At least 1 minute
+		const ttlSeconds = Math.ceil(ttlMs / 1000);
+		
+		await this.cacheManager.set(cacheKey, todayRecords, ttlSeconds);
+		this.logger.debug(`💾 Cached today's records: device ${deviceId}, date ${dateKey}, count: ${todayRecords.length}`);
+		
+		return todayRecords;
+	}
+
+	/**
+	 * Get latest record for a device from cache or DB
+	 * @param deviceId - Device ID
+	 * @param today - Start of today's date
+	 * @param tomorrow - Start of tomorrow's date
+	 * @param queryRunner - Optional query runner for transaction context
+	 * @returns Latest record or null
+	 */
+	private async getLatestRecord(
+		deviceId: number,
+		today: Date,
+		tomorrow: Date,
+		queryRunner?: any,
+	): Promise<DeviceRecords | null> {
+		// Create cache key with date
+		const dateKey = today.toISOString().split('T')[0];
+		const cacheKey = this.getCacheKey(`record:latest:${deviceId}:${dateKey}`);
+		
+		// Try cache first
+		const cachedRecord = await this.cacheManager.get<DeviceRecords>(cacheKey);
+		if (cachedRecord !== undefined && cachedRecord !== null) {
+			this.logger.debug(`💾 Cache hit for latest record: device ${deviceId}, date ${dateKey}`);
+			return cachedRecord;
+		}
+
+		// Cache miss - fetch from DB
+		const repository = queryRunner?.manager?.getRepository(DeviceRecords) || this.deviceRecordsRepository;
+		const latestRecord = await repository.findOne({
+			where: {
+				deviceId: deviceId,
+				createdAt: Between(today, tomorrow),
+			},
+			order: { createdAt: 'DESC' },
+		});
+
+		// Cache the result (even if null) until end of day
+		const now = new Date();
+		const endOfDay = new Date(today);
+		endOfDay.setHours(23, 59, 59, 999);
+		const ttlMs = Math.max(endOfDay.getTime() - now.getTime() + 60000, 60000);
+		const ttlSeconds = Math.ceil(ttlMs / 1000);
+		
+		await this.cacheManager.set(cacheKey, latestRecord, ttlSeconds);
+		this.logger.debug(`💾 Cached latest record: device ${deviceId}, date ${dateKey}, recordId: ${latestRecord?.id || 'null'}`);
+		
+		return latestRecord;
+	}
+
+	/**
+	 * Get open record without close from cache or DB
+	 * @param deviceId - Device ID
+	 * @param queryRunner - Optional query runner for transaction context
+	 * @returns Open record without close or null
+	 */
+	private async getOpenRecordWithoutClose(
+		deviceId: number,
+		queryRunner?: any,
+	): Promise<DeviceRecords | null> {
+		const cacheKey = this.getCacheKey(`record:open:no-close:${deviceId}`);
+		
+		// Try cache first
+		const cachedRecord = await this.cacheManager.get<DeviceRecords>(cacheKey);
+		if (cachedRecord !== undefined) {
+			this.logger.debug(`💾 Cache hit for open record without close: device ${deviceId}`);
+			// Verify it's still valid (not closed)
+			if (cachedRecord && !cachedRecord.closeTime) {
+				return cachedRecord;
+			}
+			// If cached record has close time, it's stale - remove from cache
+			await this.cacheManager.del(cacheKey);
+		}
+
+		// Cache miss or stale - fetch from DB
+		const repository = queryRunner?.manager?.getRepository(DeviceRecords) || this.deviceRecordsRepository;
+		const openRecord = await repository.findOne({
+			where: {
+				deviceId: deviceId,
+				openTime: Not(IsNull()),
+				closeTime: IsNull(),
+			},
+			order: { updatedAt: 'DESC' },
+		});
+
+		// Cache for 5 minutes (short TTL since this changes frequently)
+		await this.cacheManager.set(cacheKey, openRecord, 300);
+		this.logger.debug(`💾 Cached open record without close: device ${deviceId}, recordId: ${openRecord?.id || 'null'}`);
+		
+		return openRecord;
+	}
+
+	/**
+	 * Get recent events for debouncing from cache or DB
+	 * @param deviceId - Device ID
+	 * @param eventType - Event type ('open' or 'close')
+	 * @param debounceThreshold - Threshold date for recent events
+	 * @param queryRunner - Optional query runner for transaction context
+	 * @returns Recent event or null
+	 */
+	private async getRecentEvent(
+		deviceId: number,
+		eventType: 'open' | 'close',
+		debounceThreshold: Date,
+		queryRunner?: any,
+	): Promise<DeviceRecords | null> {
+		// Cache key includes threshold timestamp (rounded to minute) for better cache hits
+		const thresholdKey = Math.floor(debounceThreshold.getTime() / 60000); // Round to minute
+		const cacheKey = this.getCacheKey(`record:recent:${deviceId}:${eventType}:${thresholdKey}`);
+		
+		// Try cache first
+		const cachedRecord = await this.cacheManager.get<DeviceRecords>(cacheKey);
+		if (cachedRecord !== undefined) {
+			this.logger.debug(`💾 Cache hit for recent ${eventType} event: device ${deviceId}`);
+			return cachedRecord;
+		}
+
+		// Cache miss - fetch from DB
+		const repository = queryRunner?.manager?.getRepository(DeviceRecords) || this.deviceRecordsRepository;
+		const whereCondition: any = {
+			deviceId: deviceId,
+			updatedAt: MoreThanOrEqual(debounceThreshold),
+		};
+		
+		if (eventType === 'open') {
+			whereCondition.openTime = Not(IsNull());
+		} else {
+			whereCondition.closeTime = Not(IsNull());
+		}
+
+		const recentRecords = await repository.find({
+			where: whereCondition,
+			order: { updatedAt: 'DESC' },
+			take: 1,
+		});
+
+		const recentEvent = recentRecords.length > 0 ? recentRecords[0] : null;
+
+		// Cache for 5 minutes (short TTL for debouncing checks)
+		await this.cacheManager.set(cacheKey, recentEvent, 300);
+		this.logger.debug(`💾 Cached recent ${eventType} event: device ${deviceId}, recordId: ${recentEvent?.id || 'null'}`);
+		
+		return recentEvent;
+	}
+
+	/**
+	 * Invalidate record-related caches for a device
+	 * @param deviceId - Device ID
+	 * @param dateKey - Optional date key (YYYY-MM-DD), if not provided, invalidates all dates
+	 */
+	private async invalidateRecordCaches(deviceId: number, dateKey?: string): Promise<void> {
+		try {
+			const keys = await this.cacheManager.store.keys();
+			const keysToDelete: string[] = [];
+
+			if (dateKey) {
+				// Invalidate specific date caches
+				keysToDelete.push(
+					this.getCacheKey(`records:today:${deviceId}:${dateKey}`),
+					this.getCacheKey(`record:latest:${deviceId}:${dateKey}`),
+				);
+			} else {
+				// Invalidate all date caches for this device
+				const deviceRecordCaches = keys.filter(
+					(key) =>
+						key.startsWith(this.getCacheKey(`records:today:${deviceId}:`)) ||
+						key.startsWith(this.getCacheKey(`record:latest:${deviceId}:`)),
+				);
+				keysToDelete.push(...deviceRecordCaches);
+			}
+
+			// Always invalidate open record cache (since it changes frequently)
+			keysToDelete.push(
+				this.getCacheKey(`record:open:no-close:${deviceId}`),
+			);
+
+			// Invalidate recent event caches
+			const recentEventCaches = keys.filter(
+				(key) => key.startsWith(this.getCacheKey(`record:recent:${deviceId}:`)),
+			);
+			keysToDelete.push(...recentEventCaches);
+
+			const uniqueKeys = [...new Set(keysToDelete)];
+			await Promise.all(uniqueKeys.map((key) => this.cacheManager.del(key)));
+			
+			this.logger.debug(`💾 Invalidated ${uniqueKeys.length} record caches for device ${deviceId}`);
+		} catch (error) {
+			this.logger.error(`Error invalidating record caches: ${error.message}`);
 		}
 	}
 
@@ -1935,16 +2188,8 @@ export class IotService {
 		queryRunner?: any,
 		timeWindowMinutes: number = 2,
 	): Promise<DeviceRecords | null> {
-		const repository = queryRunner?.manager?.getRepository(DeviceRecords) || this.deviceRecordsRepository;
-		
-		// Get all records for today for this device
-		const todayRecords = await repository.find({
-			where: {
-				deviceId: deviceId,
-				createdAt: Between(today, tomorrow),
-			},
-			order: { createdAt: 'DESC' },
-		});
+		// Use cached today's records instead of querying DB
+		const todayRecords = await this.getTodayRecords(deviceId, today, tomorrow, queryRunner);
 
 		if (todayRecords.length === 0) {
 			return null;
@@ -2082,13 +2327,8 @@ export class IotService {
 				};
 			}
 
-			let existingRecord = await queryRunner.manager.findOne(DeviceRecords, {
-				where: {
-					deviceId: device.id,
-					createdAt: Between(today, tomorrow),
-				},
-				order: { createdAt: 'DESC' },
-			});
+			// Use cache to get latest record
+			let existingRecord = await this.getLatestRecord(device.id, today, tomorrow, queryRunner);
 
 			let record: DeviceRecords;
 
@@ -2147,6 +2387,10 @@ export class IotService {
 								// Delete the record entirely
 								await queryRunner.manager.remove(existingRecord);
 								
+								// Invalidate caches after deletion
+								const dateKey = today.toISOString().split('T')[0];
+								await this.invalidateRecordCaches(device.id, dateKey);
+								
 								this.logger.log(
 									`🗑️ Deleted record (ID: ${existingRecord.id}) due to open/close within 5 minutes - Device ID: ${recordDto.deviceId}`,
 								);
@@ -2163,6 +2407,11 @@ export class IotService {
 					}
 					existingRecord.updatedAt = new Date();
 					record = await queryRunner.manager.save(existingRecord);
+					
+					// Invalidate caches after update
+					const dateKey = today.toISOString().split('T')[0];
+					await this.invalidateRecordCaches(device.id, dateKey);
+					
 					this.logger.log(`Updated incomplete record for device ID: ${recordDto.deviceId}`);
 				}
 			} else {
@@ -2191,6 +2440,11 @@ export class IotService {
 					deviceId: device.id,
 				});
 				record = await queryRunner.manager.save(record);
+				
+				// Invalidate caches after creation
+				const dateKey = today.toISOString().split('T')[0];
+				await this.invalidateRecordCaches(device.id, dateKey);
+				
 				this.logger.log(`Created new record (first of day) for device ID: ${recordDto.deviceId}`);
 			}
 
@@ -2813,34 +3067,13 @@ export class IotService {
 		const DEBOUNCE_MINUTES = 5;
 		const debounceThreshold = new Date(eventDateOrg.getTime() - DEBOUNCE_MINUTES * 60 * 1000);
 		
-		// Check for recent events of the same type
-		let recentSameTypeEvent: DeviceRecords | null = null;
-		
-		if (timeEventDto.eventType === 'open') {
-			// For open events, check for recent open times
-			const recentRecords = await queryRunner.manager.find(DeviceRecords, {
-				where: {
-					deviceId: device.id,
-					openTime: Not(IsNull()),
-					updatedAt: MoreThanOrEqual(debounceThreshold),
-				},
-				order: { updatedAt: 'DESC' },
-				take: 1,
-			});
-			recentSameTypeEvent = recentRecords.length > 0 ? recentRecords[0] : null;
-		} else {
-			// For close events, check for recent close times
-			const recentRecords = await queryRunner.manager.find(DeviceRecords, {
-				where: {
-					deviceId: device.id,
-					closeTime: Not(IsNull()),
-					updatedAt: MoreThanOrEqual(debounceThreshold),
-				},
-				order: { updatedAt: 'DESC' },
-				take: 1,
-			});
-			recentSameTypeEvent = recentRecords.length > 0 ? recentRecords[0] : null;
-		}
+		// Check for recent events of the same type using cache
+		const recentSameTypeEvent = await this.getRecentEvent(
+			device.id,
+			timeEventDto.eventType,
+			debounceThreshold,
+			queryRunner,
+		);
 
 		if (recentSameTypeEvent) {
 			const recentTime = timeEventDto.eventType === 'open'
@@ -2897,6 +3130,10 @@ export class IotService {
 					// Delete the record entirely
 					await queryRunner.manager.remove(openRecordWithoutClose);
 					
+					// Invalidate caches after deletion
+					const dateKey = today.toISOString().split('T')[0];
+					await this.invalidateRecordCaches(device.id, dateKey);
+					
 					this.logger.log(
 						`🗑️ Deleted record (ID: ${openRecordWithoutClose.id}) due to open/close within 5 minutes - Device: ${device.deviceID}`,
 					);
@@ -2908,6 +3145,10 @@ export class IotService {
 				openRecordWithoutClose.closeTime = eventDateOrg;
 				openRecordWithoutClose.updatedAt = new Date();
 				const record = await queryRunner.manager.save(openRecordWithoutClose);
+				
+				// Invalidate caches after update
+				const dateKey = today.toISOString().split('T')[0];
+				await this.invalidateRecordCaches(device.id, dateKey);
 				
 				this.logger.log(
 					`📝 ✅ Updated existing open record (ID: ${openRecordWithoutClose.id}) with close time - Device: ${device.deviceID}`,
@@ -2956,14 +3197,8 @@ export class IotService {
 			}
 		}
 
-		// Find the latest record for today (if any)
-		let existingRecord = await queryRunner.manager.findOne(DeviceRecords, {
-			where: {
-				deviceId: device.id,
-				createdAt: Between(today, tomorrow),
-			},
-			order: { createdAt: 'DESC' },
-		});
+		// Find the latest record for today (if any) using cache
+		let existingRecord = await this.getLatestRecord(device.id, today, tomorrow, queryRunner);
 
 		let record: DeviceRecords;
 		let action: string;
@@ -2984,6 +3219,11 @@ export class IotService {
 				};
 				record = queryRunner.manager.create(DeviceRecords, recordData);
 				record = await queryRunner.manager.save(record);
+				
+				// Invalidate caches after creation
+				const dateKey = today.toISOString().split('T')[0];
+				await this.invalidateRecordCaches(device.id, dateKey);
+				
 				this.logger.log(
 					`📝 Created new record (latest complete) with ${timeEventDto.eventType} - Device: ${device.deviceID}`,
 				);
@@ -3026,6 +3266,11 @@ export class IotService {
 						};
 						record = queryRunner.manager.create(DeviceRecords, recordData);
 						record = await queryRunner.manager.save(record);
+						
+						// Invalidate caches after creation
+						const dateKey = today.toISOString().split('T')[0];
+						await this.invalidateRecordCaches(device.id, dateKey);
+						
 						this.logger.log(`📝 Created new record (conflicting open) - Device: ${device.deviceID}`);
 						return { record, action, existingRecord: !!existingRecord };
 					}
@@ -3033,6 +3278,10 @@ export class IotService {
 
 				existingRecord.updatedAt = new Date();
 				record = await queryRunner.manager.save(existingRecord);
+				
+				// Invalidate caches after update
+				const dateKey = today.toISOString().split('T')[0];
+				await this.invalidateRecordCaches(device.id, dateKey);
 			}
 		} else {
 			// No record for today → create new with the incoming event (only for open events now)
@@ -3046,6 +3295,11 @@ export class IotService {
 			};
 			record = queryRunner.manager.create(DeviceRecords, recordData);
 			record = await queryRunner.manager.save(record);
+			
+			// Invalidate caches after creation
+			const dateKey = today.toISOString().split('T')[0];
+			await this.invalidateRecordCaches(device.id, dateKey);
+			
 			this.logger.log(
 				`📝 Created first record of day with ${timeEventDto.eventType} - Device: ${device.deviceID}`,
 			);
