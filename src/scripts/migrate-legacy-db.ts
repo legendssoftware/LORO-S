@@ -13,7 +13,10 @@
  *   # Step 1: MySQL to Local PostgreSQL
  *   npm run migrate:legacy-db -- --step mysql-to-local
  *   
- *   # Step 2: Local PostgreSQL to Remote PostgreSQL
+ *   # Step 2: Local PostgreSQL to Remote PostgreSQL (uses REMOTE_PG_DB_HOST env vars)
+ *   npm run migrate:legacy-db -- --step local-to-remote
+ *   
+ *   # Or override with custom URL
  *   npm run migrate:legacy-db -- --step local-to-remote --pg-url postgresql://user:pass@host:port/dbname
  *   
  *   # Dry run
@@ -336,11 +339,11 @@ class LegacyDbMigrator {
 		if (migrationStep === 'mysql-to-local') {
 			// Step 1: MySQL to Local PostgreSQL
 			await this.initMySQL();
-			await this.initPostgreSQL(pgUrl);
+			await this.initPostgreSQL(migrationStep, pgUrl);
 		} else if (migrationStep === 'local-to-remote') {
 			// Step 2: Local PostgreSQL to Remote PostgreSQL
 			await this.initPostgreSQLSource();
-			await this.initPostgreSQL(pgUrl);
+			await this.initPostgreSQL(migrationStep, pgUrl);
 		}
 		
 		console.log('✅ All connections initialized\n');
@@ -397,7 +400,7 @@ class LegacyDbMigrator {
 		// #endregion
 	}
 
-	private async initPostgreSQL(pgUrl?: string) {
+	private async initPostgreSQL(step?: 'mysql-to-local' | 'local-to-remote', pgUrl?: string) {
 		// Bootstrap NestJS app to get repositories
 		console.log('📊 Initializing NestJS app for PostgreSQL...');
 		this.app = await NestFactory.createApplicationContext(AppModule, {
@@ -407,7 +410,7 @@ class LegacyDbMigrator {
 		this.configService = this.app.get(ConfigService);
 		this.pgDataSource = this.app.get(DataSource);
 
-		// Override PostgreSQL connection if URL provided
+		// Override PostgreSQL connection if URL provided or if local-to-remote step with REMOTE_PG_DB_HOST env vars
 		if (pgUrl) {
 			console.log(`📊 Overriding PostgreSQL connection with provided URL`);
 			const url = new URL(pgUrl);
@@ -438,6 +441,63 @@ class LegacyDbMigrator {
 			// Don't destroy original - NestJS will handle it
 			// Just replace our reference
 			this.pgDataSource = newDataSource;
+		} else if (step === 'local-to-remote') {
+			// Use REMOTE_PG_DB_HOST env vars for local-to-remote migration
+			console.log('📊 Using REMOTE_PG_DB_HOST environment variables for remote PostgreSQL connection');
+			
+			const host = process.env.REMOTE_PG_DB_HOST || '';
+			const port = parseInt(process.env.REMOTE_PG_DB_PORT || '5432', 10);
+			const username = process.env.REMOTE_PG_DB_USERNAME || '';
+			const password = process.env.REMOTE_PG_DB_PASSWORD || '';
+			const database = process.env.REMOTE_PG_DB_NAME || '';
+
+			// Parse connection string if REMOTE_PG_DB_HOST contains a full PostgreSQL URL
+			let finalHost = host;
+			let finalPort = port;
+			let finalUsername = username;
+			let finalPassword = password;
+			let finalDatabase = database;
+
+			if (host && (host.startsWith('postgresql://') || host.startsWith('postgres://'))) {
+				try {
+					const url = new URL(host);
+					finalHost = url.hostname;
+					finalPort = url.port ? parseInt(url.port, 10) : 5432;
+					finalUsername = url.username || username;
+					finalPassword = url.password || password;
+					finalDatabase = url.pathname ? url.pathname.slice(1) : database;
+				} catch (error) {
+					console.error('Failed to parse REMOTE_PG_DB_HOST connection string:', error);
+					throw error;
+				}
+			}
+
+			if (!finalHost || !finalUsername || !finalPassword || !finalDatabase) {
+				throw new Error('Missing required REMOTE_PG_DB_HOST environment variables. Please set REMOTE_PG_DB_HOST, REMOTE_PG_DB_USERNAME, REMOTE_PG_DB_PASSWORD, and REMOTE_PG_DB_NAME');
+			}
+
+			const isLocalhost = finalHost === 'localhost' || finalHost === '127.0.0.1';
+			const enableSSL = !isLocalhost; // Enable SSL for remote connections
+
+			// Create new DataSource with remote connection
+			const newDataSource = new DataSource({
+				type: 'postgres',
+				host: finalHost,
+				port: finalPort,
+				username: finalUsername,
+				password: finalPassword,
+				database: finalDatabase,
+				entities: this.pgDataSource.options.entities,
+				synchronize: false,
+				logging: false,
+				extra: {
+					ssl: enableSSL ? { rejectUnauthorized: false } : false,
+				},
+			});
+
+			await newDataSource.initialize();
+			this.pgDataSource = newDataSource;
+			console.log(`✅ Connected to remote PostgreSQL: ${finalHost}:${finalPort}/${finalDatabase}\n`);
 		}
 
 		// Get repositories
