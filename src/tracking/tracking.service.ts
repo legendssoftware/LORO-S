@@ -426,6 +426,27 @@ export class TrackingService {
 				trackingDataWithoutOwner.timestamp = Math.floor(trackingDataWithoutOwner.timestamp);
 			}
 
+			// Convert batteryLevel to integer if provided (PostgreSQL int doesn't accept decimals)
+			// Handle both decimal format (0.0-1.0) and percentage format (0-100)
+			if (trackingDataWithoutOwner.batteryLevel !== undefined && trackingDataWithoutOwner.batteryLevel !== null) {
+				let batteryLevel = trackingDataWithoutOwner.batteryLevel;
+				// If value is between 0 and 1, assume it's a decimal percentage and convert to 0-100
+				if (batteryLevel > 0 && batteryLevel < 1) {
+					batteryLevel = Math.round(batteryLevel * 100);
+				} else {
+					batteryLevel = Math.round(batteryLevel);
+				}
+				// Ensure it's within valid range (-1 to 100)
+				if (batteryLevel < -1) batteryLevel = -1;
+				if (batteryLevel > 100) batteryLevel = 100;
+				trackingDataWithoutOwner.batteryLevel = batteryLevel;
+			}
+
+			// Convert batteryState to integer if provided (PostgreSQL int doesn't accept decimals)
+			if (trackingDataWithoutOwner.batteryState !== undefined && trackingDataWithoutOwner.batteryState !== null) {
+				trackingDataWithoutOwner.batteryState = Math.round(trackingDataWithoutOwner.batteryState);
+			}
+
 			// Create tracking entity with all available data
 			const trackingData: DeepPartial<Tracking> = {
 				...trackingDataWithoutOwner,

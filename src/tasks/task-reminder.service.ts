@@ -112,7 +112,7 @@ export class TaskReminderService {
 					status: Not(In([TaskStatus.COMPLETED, TaskStatus.CANCELLED])),
 					isDeleted: false,
 				},
-						relations: ['creator', 'assignees', 'organisation'],
+						relations: ['creator', 'organisation'],
 			});
 
 					if (tasksToday.length === 0) {
@@ -192,7 +192,7 @@ export class TaskReminderService {
 						isDeleted: false,
 					},
 				],
-						relations: ['creator', 'assignees', 'organisation'],
+						relations: ['creator', 'organisation'],
 				order: { deadline: 'ASC' },
 			});
 
