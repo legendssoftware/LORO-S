@@ -377,6 +377,40 @@ export class ErpDataService implements OnModuleInit {
 	 */
 	private isRetryableError(error: any): boolean {
 		const errorMessage = error.message?.toLowerCase() || '';
+		const errorCode = error.code?.toLowerCase() || '';
+		const errorName = error.name?.toLowerCase() || '';
+		
+		// Check error code first (most reliable)
+		const retryableErrorCodes = [
+			'econnreset',
+			'etimedout',
+			'econnrefused',
+			'ehostunreach',
+			'enetunreach',
+			'econnaborted',
+			'epipe',
+			'eai_again',
+			'enotfound',
+			'protonoack',
+			'protocol_connection_lost',
+			'er_connection_lost',
+			'er_net_packet_too_large',
+			'er_net_read_error_from_pipe',
+			'er_net_fcntl_error',
+			'er_net_packets_out_of_order',
+			'er_net_uncompress_error',
+			'er_net_read_interrupted',
+			'er_net_error_on_write',
+			'er_net_read_error',
+		];
+		
+		// Check error name (for TypeORM/MySQL driver errors)
+		const retryableErrorNames = [
+			'queryrunnererror',
+			'queryfailederror',
+			'connectionerror',
+			'timeouterror',
+		];
 		
 		// Retryable: Network issues, timeouts, connection problems
 		const retryablePatterns = [
@@ -390,6 +424,17 @@ export class ErpDataService implements OnModuleInit {
 			'connection lost',
 			'too many connections',
 			'connection pool',
+			'network error',
+			'networkerror',
+			'_handlenetworkerror',
+			'_handlefatalerror',
+			'connection closed',
+			'connection is closed',
+			'broken pipe',
+			'read econnreset',
+			'write econnreset',
+			'query runner',
+			'queryrunner',
 		];
 		
 		// Non-retryable: SQL errors, authentication issues
@@ -399,14 +444,31 @@ export class ErpDataService implements OnModuleInit {
 			'unknown column',
 			'unknown table',
 			'foreign key constraint',
+			'er_access_denied',
+			'er_bad_db_error',
+			'er_no_such_table',
+			'er_bad_field_error',
 		];
 		
+		// Check error code first (most reliable indicator)
+		if (retryableErrorCodes.some(code => errorCode.includes(code))) {
+			return true;
+		}
+		
+		// Check error name
+		if (retryableErrorNames.some(name => errorName.includes(name))) {
+			// But verify it's not a SQL syntax error
+			if (!nonRetryablePatterns.some(pattern => errorMessage.includes(pattern))) {
+				return true;
+			}
+		}
+		
 		// Check if error is non-retryable
-		if (nonRetryablePatterns.some(pattern => errorMessage.includes(pattern))) {
+		if (nonRetryablePatterns.some(pattern => errorMessage.includes(pattern) || errorCode.includes(pattern))) {
 			return false;
 		}
 		
-		// Check if error is retryable
+		// Check if error is retryable by message
 		return retryablePatterns.some(pattern => errorMessage.includes(pattern));
 	}
 
@@ -542,6 +604,18 @@ export class ErpDataService implements OnModuleInit {
 			} catch (error) {
 				lastError = error;
 				
+				// ✅ Enhanced error logging - capture all available error details
+				const errorDetails: any = {
+					message: error.message || 'Unknown error',
+					code: error.code || 'N/A',
+					name: error.name || error.constructor?.name || 'Unknown',
+					errno: (error as any).errno || 'N/A',
+					sqlState: (error as any).sqlState || 'N/A',
+					sqlMessage: (error as any).sqlMessage || 'N/A',
+					sql: (error as any).sql || 'N/A',
+					fatal: (error as any).fatal !== undefined ? (error as any).fatal : 'N/A',
+				};
+				
 				// Update max retries based on error type
 				maxRetries = this.getMaxRetries(error);
 				
@@ -549,17 +623,70 @@ export class ErpDataService implements OnModuleInit {
 				const isLastAttempt = attempt >= maxRetries;
 				const shouldRetry = this.isRetryableError(error) && !isLastAttempt;
 				
+				// Log error details for network errors
+				if (this.isRetryableError(error)) {
+					this.logger.warn(
+						`[${operationId}] Network/connection error detected (attempt ${attempt}/${maxRetries}): ${errorDetails.message}`,
+					);
+					this.logger.warn(
+						`[${operationId}] Error Details: Code=${errorDetails.code}, Name=${errorDetails.name}, Errno=${errorDetails.errno}, Fatal=${errorDetails.fatal}`,
+					);
+					
+					// Log connection pool state for network errors
+					const poolInfo = this.getConnectionPoolInfo();
+					this.logger.warn(
+						`[${operationId}] Connection Pool State: ${JSON.stringify(poolInfo)}`,
+					);
+					
+					// Log full error object for debugging (truncated if too large)
+					const errorString = JSON.stringify(errorDetails, null, 2);
+					if (errorString.length > 1000) {
+						this.logger.warn(`[${operationId}] Error Details (truncated): ${errorString.substring(0, 1000)}...`);
+					} else {
+						this.logger.warn(`[${operationId}] Error Details: ${errorString}`);
+					}
+				}
+				
 				if (shouldRetry) {
 					const delay = this.calculateRetryDelay(attempt);
 					this.logger.warn(
-						`[${operationId}] Query attempt ${attempt} failed: ${error.message}. Retrying in ${delay}ms... (max retries: ${maxRetries})`,
+						`[${operationId}] Query attempt ${attempt} failed: ${errorDetails.message}. Retrying in ${delay}ms... (max retries: ${maxRetries})`,
 					);
-					await new Promise(resolve => setTimeout(resolve, delay));
+					
+					// For network errors, add a small delay before retry to allow connection pool to recover
+					if (this.isRetryableError(error)) {
+						await new Promise(resolve => setTimeout(resolve, Math.min(delay, 2000)));
+					} else {
+						await new Promise(resolve => setTimeout(resolve, delay));
+					}
 				} else {
-					// Final failure - record it
+					// Final failure - record it with enhanced logging
 					this.logger.error(
-						`[${operationId}] Query failed after ${attempt} attempt(s): ${error.message}`,
+						`[${operationId}] Query failed after ${attempt} attempt(s): ${errorDetails.message}`,
 					);
+					this.logger.error(
+						`[${operationId}] Error Details: Code=${errorDetails.code}, Name=${errorDetails.name}, Errno=${errorDetails.errno}, SQLState=${errorDetails.sqlState}, Fatal=${errorDetails.fatal}`,
+					);
+					if (errorDetails.sqlMessage !== 'N/A') {
+						this.logger.error(`[${operationId}] SQL Message: ${errorDetails.sqlMessage}`);
+					}
+					if (errorDetails.sql !== 'N/A' && errorDetails.sql.length < 500) {
+						this.logger.error(`[${operationId}] SQL Query: ${errorDetails.sql}`);
+					}
+					
+					// Log full error object for debugging
+					const errorString = JSON.stringify(errorDetails, null, 2);
+					if (errorString.length > 2000) {
+						this.logger.error(`[${operationId}] Full Error Details (truncated): ${errorString.substring(0, 2000)}...`);
+					} else {
+						this.logger.error(`[${operationId}] Full Error Details: ${errorString}`);
+					}
+					
+					// Log stack trace if available
+					if (error.stack) {
+						this.logger.error(`[${operationId}] Stack Trace: ${error.stack}`);
+					}
+					
 					this.recordFailure(operationId, error);
 					throw error;
 				}
@@ -571,14 +698,41 @@ export class ErpDataService implements OnModuleInit {
 	}
 
 	/**
-	 * Get repository for a specific country
+	 * Get repository for a specific country with connection health verification
 	 */
 	private async getRepositoryForCountry<T>(
 		entity: EntityTarget<T>,
 		countryCode: string = 'SA',
 	): Promise<Repository<T>> {
-		const connection = await this.connectionManager.getConnection(countryCode);
-		return connection.getRepository(entity);
+		try {
+			const connection = await this.connectionManager.getConnection(countryCode);
+			
+			// ✅ Verify connection is healthy before using it
+			if (!connection.isInitialized) {
+				this.logger.warn(`[CONN-HEALTH] Connection for ${countryCode} is not initialized, attempting recovery...`);
+				// Connection manager will handle reconnection
+				const recoveredConnection = await this.connectionManager.getConnection(countryCode);
+				return recoveredConnection.getRepository(entity);
+			}
+			
+			// ✅ Quick health check: try to run a simple query to verify connection is alive
+			try {
+				await connection.query('SELECT 1');
+			} catch (healthCheckError) {
+				this.logger.warn(
+					`[CONN-HEALTH] Connection health check failed for ${countryCode}: ${healthCheckError.message}. Connection may be stale.`,
+				);
+				// Don't throw here - let the actual query handle the error with retry logic
+				// The connection might still work for the actual query
+			}
+			
+			return connection.getRepository(entity);
+		} catch (error) {
+			this.logger.error(
+				`[CONN-HEALTH] Failed to get repository for ${countryCode}: ${error.message}`,
+			);
+			throw error;
+		}
 	}
 
 	/**
@@ -1083,10 +1237,27 @@ export class ErpDataService implements OnModuleInit {
 			const duration = Date.now() - startTime;
 			
 			// ✅ Enhanced error diagnostics for remote debugging
+			const errorDetails: any = {
+				message: error.message || 'Unknown error',
+				code: error.code || 'N/A',
+				name: error.name || error.constructor?.name || 'Unknown',
+				errno: (error as any).errno || 'N/A',
+				sqlState: (error as any).sqlState || 'N/A',
+				sqlMessage: (error as any).sqlMessage || 'N/A',
+				sql: (error as any).sql || 'N/A',
+				fatal: (error as any).fatal !== undefined ? (error as any).fatal : 'N/A',
+			};
+			
 			this.logger.error(`[${operationId}] ❌ Error fetching sales headers (${duration}ms)`);
-			this.logger.error(`[${operationId}] Error Type: ${error.constructor?.name || 'Unknown'}`);
-			this.logger.error(`[${operationId}] Error Message: ${error.message}`);
-			this.logger.error(`[${operationId}] Error Code: ${error.code || 'N/A'}`);
+			this.logger.error(`[${operationId}] Error Type: ${errorDetails.name}`);
+			this.logger.error(`[${operationId}] Error Message: ${errorDetails.message}`);
+			this.logger.error(`[${operationId}] Error Code: ${errorDetails.code}, Errno: ${errorDetails.errno}, SQLState: ${errorDetails.sqlState}`);
+			if (errorDetails.sqlMessage !== 'N/A') {
+				this.logger.error(`[${operationId}] MySQL SQL Message: ${errorDetails.sqlMessage}`);
+			}
+			if (errorDetails.fatal !== 'N/A') {
+				this.logger.error(`[${operationId}] Fatal Error: ${errorDetails.fatal}`);
+			}
 			
 			// Log connection state
 			const poolInfo = this.getConnectionPoolInfo();
@@ -1099,9 +1270,20 @@ export class ErpDataService implements OnModuleInit {
 				startDate: filters.startDate,
 				endDate: filters.endDate,
 				storeCode: filters.storeCode || 'all',
+				countryCode: countryCode,
 			})}`);
 			
-			this.logger.error(`[${operationId}] Stack Trace: ${error.stack}`);
+			// Log full error details
+			const errorString = JSON.stringify(errorDetails, null, 2);
+			if (errorString.length > 2000) {
+				this.logger.error(`[${operationId}] Full Error Details (truncated): ${errorString.substring(0, 2000)}...`);
+			} else {
+				this.logger.error(`[${operationId}] Full Error Details: ${errorString}`);
+			}
+			
+			if (error.stack) {
+				this.logger.error(`[${operationId}] Stack Trace: ${error.stack}`);
+			}
 			throw error;
 		}
 	}
@@ -1369,15 +1551,36 @@ export class ErpDataService implements OnModuleInit {
 			const duration = Date.now() - startTime;
 			
 			// ✅ Enhanced error diagnostics for remote debugging
+			const errorDetails: any = {
+				message: error.message || 'Unknown error',
+				code: error.code || 'N/A',
+				name: error.name || error.constructor?.name || 'Unknown',
+				errno: (error as any).errno || 'N/A',
+				sqlState: (error as any).sqlState || 'N/A',
+				sqlMessage: (error as any).sqlMessage || 'N/A',
+				sql: (error as any).sql || 'N/A',
+				fatal: (error as any).fatal !== undefined ? (error as any).fatal : 'N/A',
+			};
+			
 			this.logger.error(`[${operationId}] ❌ Error fetching sales lines (${duration}ms)`);
-			this.logger.error(`[${operationId}] Error Type: ${error.constructor?.name || 'Unknown'}`);
-			this.logger.error(`[${operationId}] Error Message: ${error.message}`);
-			this.logger.error(`[${operationId}] Error Code: ${error.code || 'N/A'}`);
+			this.logger.error(`[${operationId}] Error Type: ${errorDetails.name}`);
+			this.logger.error(`[${operationId}] Error Message: ${errorDetails.message}`);
+			this.logger.error(`[${operationId}] Error Code: ${errorDetails.code}, Errno: ${errorDetails.errno}, SQLState: ${errorDetails.sqlState}`);
+			this.logger.error(`[${operationId}] Is Retryable: ${this.isRetryableError(error)}`);
+			
+			if (errorDetails.sqlMessage !== 'N/A') {
+				this.logger.error(`[${operationId}] MySQL SQL Message: ${errorDetails.sqlMessage}`);
+			}
+			if (errorDetails.fatal !== 'N/A') {
+				this.logger.error(`[${operationId}] Fatal Error: ${errorDetails.fatal}`);
+			}
 			
 			// Log connection state
 			const poolInfo = this.getConnectionPoolInfo();
 			this.logger.error(`[${operationId}] Connection Pool State: ${JSON.stringify(poolInfo)}`);
 			this.logger.error(`[${operationId}] Circuit Breaker State: ${this.circuitBreakerState}`);
+			this.logger.error(`[${operationId}] Failure Count: ${this.failureCount}/${this.FAILURE_THRESHOLD}`);
+			this.logger.error(`[${operationId}] Network Failures: ${this.networkFailureCount}/${this.NETWORK_FAILURE_THRESHOLD}`);
 			this.logger.error(`[${operationId}] Active Queries: ${this.activeQueries}/${this.MAX_CONCURRENT_QUERIES}`);
 			
 			// Log query parameters
@@ -1387,9 +1590,20 @@ export class ErpDataService implements OnModuleInit {
 				storeCode: filters.storeCode || 'all',
 				category: filters.category || 'all',
 				docTypes: includeDocTypes,
+				countryCode: countryCode,
 			})}`);
 			
-			this.logger.error(`[${operationId}] Stack Trace: ${error.stack}`);
+			// Log full error details
+			const errorString = JSON.stringify(errorDetails, null, 2);
+			if (errorString.length > 2000) {
+				this.logger.error(`[${operationId}] Full Error Details (truncated): ${errorString.substring(0, 2000)}...`);
+			} else {
+				this.logger.error(`[${operationId}] Full Error Details: ${errorString}`);
+			}
+			
+			if (error.stack) {
+				this.logger.error(`[${operationId}] Stack Trace: ${error.stack}`);
+			}
 			throw error;
 		}
 	}
@@ -1810,71 +2024,79 @@ export class ErpDataService implements OnModuleInit {
 			const queryStart = Date.now();
 			const dateRangeDays = this.calculateDateRangeDays(filters.startDate, filters.endDate);
 			
-			// ✅ REVISED: Use tblsalesheader instead of tblsaleslines
-			// Sum total_incl - total_tax for revenue (exclusive of tax), count transactions and customers
-			// ✅ FIXED: Use EXISTS instead of LEFT JOIN to prevent row multiplication
+			// ✅ Execute with circuit breaker and timeout protection (adaptive timeout)
+			const results = await this.executeQueryWithProtection(
+				async () => {
+					// ✅ REVISED: Use tblsalesheader instead of tblsaleslines
+					// Sum total_incl - total_tax for revenue (exclusive of tax), count transactions and customers
+					// ✅ FIXED: Use EXISTS instead of LEFT JOIN to prevent row multiplication
 
-			// ✅ Get repository for country
-			const salesHeaderRepo = await this.getRepositoryForCountry(TblSalesHeader, countryCode);
-			
-			const query = salesHeaderRepo
-				.createQueryBuilder('header');
+					// ✅ Get repository for country
+					const salesHeaderRepo = await this.getRepositoryForCountry(TblSalesHeader, countryCode);
+					
+					const query = salesHeaderRepo
+						.createQueryBuilder('header');
 
-			query.select([
-				'DATE(header.sale_date) as date',
-				'header.store as store',
-				'SUM(header.total_incl) - SUM(header.total_tax) as totalRevenue', // ✅ Subtract tax: matches SQL query exactly
-				'CAST(0 AS DECIMAL(19,2)) as totalCost', // Cost not available in header table
-				'COUNT(DISTINCT header.doc_number) as transactionCount',
-				'COUNT(DISTINCT header.customer) as uniqueCustomers',
-				'0 as totalQuantity', // Quantity not available in header table (integer)
-			])
-				.where('header.sale_date BETWEEN :startDate AND :endDate', {
-					startDate: filters.startDate,
-					endDate: filters.endDate,
-				})
-				// ✅ CRITICAL: Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2) for revenue calculations
-				.andWhere('header.doc_type IN (:...docTypes)', { docTypes: [1, 2] })
-				.andWhere('header.sale_date >= :minDate', { minDate: '2020-01-01' })
-				.groupBy('DATE(header.sale_date), header.store')
-				.orderBy('DATE(header.sale_date)', 'ASC')
-				.limit(10000); // ✅ PHASE 2: Max 10k records per aggregation
+					query.select([
+						'DATE(header.sale_date) as date',
+						'header.store as store',
+						'SUM(header.total_incl) - SUM(header.total_tax) as totalRevenue', // ✅ Subtract tax: matches SQL query exactly
+						'CAST(0 AS DECIMAL(19,2)) as totalCost', // Cost not available in header table
+						'COUNT(DISTINCT header.doc_number) as transactionCount',
+						'COUNT(DISTINCT header.customer) as uniqueCustomers',
+						'0 as totalQuantity', // Quantity not available in header table (integer)
+					])
+						.where('header.sale_date BETWEEN :startDate AND :endDate', {
+							startDate: filters.startDate,
+							endDate: filters.endDate,
+						})
+						// ✅ CRITICAL: Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2) for revenue calculations
+						.andWhere('header.doc_type IN (:...docTypes)', { docTypes: [1, 2] })
+						.andWhere('header.sale_date >= :minDate', { minDate: '2020-01-01' })
+						.groupBy('DATE(header.sale_date), header.store')
+						.orderBy('DATE(header.sale_date)', 'ASC')
+						.limit(10000); // ✅ PHASE 2: Max 10k records per aggregation
 
-			if (filters.storeCode) {
-				this.logger.debug(`[${operationId}] Filtering by store: ${filters.storeCode}`);
-				query.andWhere('header.store = :store', { store: filters.storeCode });
-			}
+					if (filters.storeCode) {
+						this.logger.debug(`[${operationId}] Filtering by store: ${filters.storeCode}`);
+						query.andWhere('header.store = :store', { store: filters.storeCode });
+					}
 
-			if (filters.salesPersonId) {
-				const salesPersonIds = Array.isArray(filters.salesPersonId) 
-					? filters.salesPersonId 
-					: [filters.salesPersonId];
-				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
-				// Use sales_code from tblsalesheader for header queries
-				query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
-			}
+					if (filters.salesPersonId) {
+						const salesPersonIds = Array.isArray(filters.salesPersonId) 
+							? filters.salesPersonId 
+							: [filters.salesPersonId];
+						this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
+						// Use sales_code from tblsalesheader for header queries
+						query.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds });
+					}
 
-			// ✅ Customer category filtering using EXISTS to prevent row multiplication
-			if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
-				this.logger.log(`[${operationId}] ✅ INCLUDING customer categories: ${filters.includeCustomerCategories.join(', ')}`);
-				query.andWhere(
-					`EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = header.customer AND customer.Category IN (:...includeCustomerCategories))`,
-					{ includeCustomerCategories: filters.includeCustomerCategories }
-				);
-			}
+					// ✅ Customer category filtering using EXISTS to prevent row multiplication
+					if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
+						this.logger.log(`[${operationId}] ✅ INCLUDING customer categories: ${filters.includeCustomerCategories.join(', ')}`);
+						query.andWhere(
+							`EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = header.customer AND customer.Category IN (:...includeCustomerCategories))`,
+							{ includeCustomerCategories: filters.includeCustomerCategories }
+						);
+					}
 
-			if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
-				this.logger.log(`[${operationId}] 🚫 EXCLUDING customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
-				this.logger.log(`[${operationId}] Filter logic: Excluding sales where customer.Category IN (${filters.excludeCustomerCategories.join(', ')})`);
-				// ✅ FIXED: Use NOT EXISTS to exclude categories without row multiplication
-				// Include NULL customers and customers without matching excluded categories
-				query.andWhere(
-					`(header.customer IS NULL OR NOT EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = header.customer AND customer.Category IN (:...excludeCustomerCategories)))`,
-					{ excludeCustomerCategories: filters.excludeCustomerCategories }
-				);
-			}
+					if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
+						this.logger.log(`[${operationId}] 🚫 EXCLUDING customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
+						this.logger.log(`[${operationId}] Filter logic: Excluding sales where customer.Category IN (${filters.excludeCustomerCategories.join(', ')})`);
+						// ✅ FIXED: Use NOT EXISTS to exclude categories without row multiplication
+						// Include NULL customers and customers without matching excluded categories
+						query.andWhere(
+							`(header.customer IS NULL OR NOT EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = header.customer AND customer.Category IN (:...excludeCustomerCategories)))`,
+							{ excludeCustomerCategories: filters.excludeCustomerCategories }
+						);
+					}
 
-			const results = await query.getRawMany();
+					return await query.getRawMany();
+				},
+				operationId,
+				120000, // 120 second base timeout for aggregations
+				dateRangeDays, // Pass date range for adaptive timeout
+			);
 			const queryDuration = Date.now() - queryStart;
 			
 			// Log detailed results for debugging exclusion filters
@@ -1915,11 +2137,27 @@ export class ErpDataService implements OnModuleInit {
 		} catch (error) {
 			const duration = Date.now() - startTime;
 			
-			// ✅ Enhanced error diagnostics
+			// ✅ Enhanced error diagnostics with MySQL error codes
 			this.logger.error(`[${operationId}] ❌ Error computing daily aggregations (${duration}ms)`);
-			this.logger.error(`[${operationId}] Error: ${error.message}`);
+			this.logger.error(`[${operationId}] Error Type: ${error.constructor?.name || 'Unknown'}`);
+			this.logger.error(`[${operationId}] Error Message: ${error.message}`);
+			this.logger.error(`[${operationId}] Error Code: ${error.code || 'N/A'}`);
+			this.logger.error(`[${operationId}] Error Name: ${error.name || 'N/A'}`);
+			this.logger.error(`[${operationId}] Is Retryable: ${this.isRetryableError(error)}`);
 			this.logger.error(`[${operationId}] Circuit Breaker: ${this.circuitBreakerState}`);
 			this.logger.error(`[${operationId}] Connection Pool: ${JSON.stringify(this.getConnectionPoolInfo())}`);
+			
+			// Log MySQL-specific error details if available
+			if (error.errno) {
+				this.logger.error(`[${operationId}] MySQL Error Number: ${error.errno}`);
+			}
+			if (error.sqlState) {
+				this.logger.error(`[${operationId}] MySQL SQL State: ${error.sqlState}`);
+			}
+			if (error.sqlMessage) {
+				this.logger.error(`[${operationId}] MySQL SQL Message: ${error.sqlMessage}`);
+			}
+			
 			this.logger.error(`[${operationId}] Stack: ${error.stack}`);
 			throw error;
 		}
@@ -2736,12 +2974,27 @@ export class ErpDataService implements OnModuleInit {
 			this.logger.error(`[${operationId}] Error Type: ${error.constructor?.name || 'Unknown'}`);
 			this.logger.error(`[${operationId}] Error Message: ${error.message}`);
 			this.logger.error(`[${operationId}] Error Code: ${error.code || 'N/A'}`);
+			this.logger.error(`[${operationId}] Error Name: ${error.name || 'N/A'}`);
+			this.logger.error(`[${operationId}] Is Retryable: ${this.isRetryableError(error)}`);
+			
+			// Log MySQL-specific error details if available
+			if (error.errno) {
+				this.logger.error(`[${operationId}] MySQL Error Number: ${error.errno}`);
+			}
+			if (error.sqlState) {
+				this.logger.error(`[${operationId}] MySQL SQL State: ${error.sqlState}`);
+			}
+			if (error.sqlMessage) {
+				this.logger.error(`[${operationId}] MySQL SQL Message: ${error.sqlMessage}`);
+			}
 			
 			// Log system state
 			const poolInfo = this.getConnectionPoolInfo();
 			this.logger.error(`[${operationId}] System State:`);
 			this.logger.error(`[${operationId}]   Circuit Breaker: ${this.circuitBreakerState}`);
 			this.logger.error(`[${operationId}]   Failure Count: ${this.failureCount}/${this.FAILURE_THRESHOLD}`);
+			this.logger.error(`[${operationId}]   Network Failures: ${this.networkFailureCount}/${this.NETWORK_FAILURE_THRESHOLD}`);
+			this.logger.error(`[${operationId}]   SQL Failures: ${this.sqlFailureCount}/${this.SQL_FAILURE_THRESHOLD}`);
 			this.logger.error(`[${operationId}]   Active Queries: ${this.activeQueries}/${this.MAX_CONCURRENT_QUERIES}`);
 			this.logger.error(`[${operationId}]   Connection Pool: ${JSON.stringify(poolInfo)}`);
 			

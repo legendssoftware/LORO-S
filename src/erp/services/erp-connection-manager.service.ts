@@ -78,18 +78,35 @@ export class ErpConnectionManagerService implements OnModuleInit {
 	/**
 	 * Get or create connection for country
 	 * Returns cached connection if available, otherwise creates new one
+	 * ✅ Enhanced with connection health verification and automatic recovery
 	 */
 	async getConnection(countryCode: string): Promise<DataSource> {
 		// Normalize country code
 		const normalizedCountry = this.normalizeCountryCode(countryCode);
 
-		// Return cached connection if available
+		// Return cached connection if available and healthy
 		if (this.connections.has(normalizedCountry)) {
 			const connection = this.connections.get(normalizedCountry)!;
 			if (connection.isInitialized) {
-				return connection;
+				// ✅ Verify connection is actually working (not just initialized)
+				try {
+					await connection.query('SELECT 1');
+					return connection;
+				} catch (healthError) {
+					// Connection is stale, remove it and recreate
+					this.logger.warn(
+						`[${normalizedCountry}] Cached connection is stale (${healthError.message}), recreating...`,
+					);
+					try {
+						await connection.destroy();
+					} catch (destroyError) {
+						// Ignore destroy errors
+					}
+					this.connections.delete(normalizedCountry);
+				}
 			} else {
 				// Connection was closed, remove from cache and recreate
+				this.logger.debug(`[${normalizedCountry}] Cached connection is closed, removing from cache...`);
 				this.connections.delete(normalizedCountry);
 			}
 		}
@@ -110,6 +127,9 @@ export class ErpConnectionManagerService implements OnModuleInit {
 			return connection;
 		} catch (error) {
 			this.connectionPromises.delete(normalizedCountry);
+			this.logger.error(
+				`[${normalizedCountry}] Failed to create connection: ${error.message}`,
+			);
 			throw error;
 		}
 	}

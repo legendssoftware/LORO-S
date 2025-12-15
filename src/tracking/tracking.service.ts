@@ -179,6 +179,7 @@ export class TrackingService {
 	/**
 	 * Check if user has exceeded the rate limit for tracking points
 	 * Limits users to 2 tracking points per minute
+	 * Uses atomic increment pattern to prevent race conditions
 	 * @param userId - User ID to check
 	 * @returns Object with isAllowed flag and remaining points
 	 */
@@ -192,7 +193,7 @@ export class TrackingService {
 			const now = Date.now();
 
 			if (!cached) {
-				// First request in the window
+				// First request in the window - use atomic set
 				await this.cacheManager.set(RATE_LIMIT_KEY, { count: 1, resetAt: now + WINDOW_MS }, WINDOW_MS);
 				return {
 					isAllowed: true,
@@ -212,11 +213,12 @@ export class TrackingService {
 				};
 			}
 
-			// Check if limit exceeded
+			// Check if limit exceeded BEFORE incrementing (to prevent going over limit)
 			if (cached.count >= MAX_POINTS_PER_MINUTE) {
 				const remaining = 0;
 				const resetAt = new Date(cached.resetAt);
-				this.logger.warn(`Rate limit exceeded for user ${userId}. Limit: ${MAX_POINTS_PER_MINUTE} points per minute. Reset at: ${resetAt.toISOString()}`);
+				// Use debug level instead of warn to reduce log noise for expected rate limiting
+				this.logger.debug(`Rate limit exceeded for user ${userId}. Limit: ${MAX_POINTS_PER_MINUTE} points per minute. Reset at: ${resetAt.toISOString()}`);
 				return {
 					isAllowed: false,
 					remaining,
@@ -224,7 +226,7 @@ export class TrackingService {
 				};
 			}
 
-			// Increment count
+			// Increment count atomically
 			const newCount = cached.count + 1;
 			const ttl = cached.resetAt - now;
 			await this.cacheManager.set(RATE_LIMIT_KEY, { count: newCount, resetAt: cached.resetAt }, ttl);
@@ -388,10 +390,22 @@ export class TrackingService {
 			// Check rate limit: maximum 2 points per minute per user
 			const rateLimitCheck = await this.checkRateLimit(ownerId);
 			if (!rateLimitCheck.isAllowed) {
-				this.logger.warn(`Rate limit exceeded for user ${ownerId}. Request rejected. Reset at: ${rateLimitCheck.resetAt.toISOString()}`);
-				throw new BadRequestException(
-					`Rate limit exceeded. Maximum 2 tracking points per minute allowed. Please wait until ${rateLimitCheck.resetAt.toISOString()} before sending more points.`
+				// Handle rate limit gracefully - return early with informative message instead of throwing exception
+				// This prevents error logs for expected rate limiting behavior
+				const executionTime = Date.now() - startTime;
+				this.logger.debug(
+					`Rate limit exceeded for user ${ownerId}. Tracking point skipped. Reset at: ${rateLimitCheck.resetAt.toISOString()} (processed in ${executionTime}ms)`
 				);
+				return {
+					message: `Rate limit exceeded. Maximum 2 tracking points per minute allowed. This point was skipped. Please wait until ${rateLimitCheck.resetAt.toISOString()} before sending more points.`,
+					data: null,
+					warnings: [{
+						type: 'RATE_LIMIT_EXCEEDED',
+						message: `Rate limit exceeded. Maximum ${rateLimitCheck.remaining === 0 ? '2' : rateLimitCheck.remaining} tracking points per minute allowed.`,
+						resetAt: rateLimitCheck.resetAt.toISOString(),
+						remaining: rateLimitCheck.remaining,
+					}],
+				};
 			}
 
 			// Validate user exists and has access

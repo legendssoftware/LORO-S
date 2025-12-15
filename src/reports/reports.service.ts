@@ -23,6 +23,7 @@ import { ReportParamsDto } from './dto/report-params.dto';
 import { EmailType } from '../lib/enums/email.enums';
 import { ClaimStatus } from '../lib/enums/finance.enums';
 import { OrderStatus } from '../lib/enums/status.enums';
+import { AccessLevel } from '../lib/enums/user.enums';
 
 // Services and Generators
 import { MainReportGenerator } from './generators/main-report.generator';
@@ -1255,7 +1256,7 @@ export class ReportsService implements OnModuleInit {
 				.where('user.email IS NOT NULL')
 				.andWhere('user.isDeleted = false')
 				.andWhere('user.accessLevel IN (:...levels)', { 
-					levels: ['ADMIN', 'MANAGER', 'OWNER', 'HR'] 
+					levels: [AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.HR] 
 				});
 			
 			const recipients = await recipientsQuery.getMany();
