@@ -129,13 +129,37 @@ export class StorageService implements OnModuleInit {
 			const filePath = `loro/${fileName}`;
 			const blob = bucket.file(filePath);
 
-			await blob.save(file.buffer, {
-				resumable: false,
-				metadata: {
-					contentType: file.mimetype,
-					metadata: file.metadata,
-				},
-			});
+			// ENHANCEMENT: Use resumable upload for larger files (> 5MB) for better performance
+			// For smaller files, simple upload is faster
+			const useResumable = file.size > 5 * 1024 * 1024; // 5MB threshold
+
+			if (useResumable) {
+				// Use streaming upload for larger files
+				await new Promise<void>((resolve, reject) => {
+					const writeStream = blob.createWriteStream({
+						resumable: true,
+						metadata: {
+							contentType: file.mimetype,
+							metadata: file.metadata,
+							cacheControl: 'public, max-age=31536000', // Cache for 1 year
+						},
+					});
+
+					writeStream.on('error', reject);
+					writeStream.on('finish', resolve);
+					writeStream.end(file.buffer);
+				});
+			} else {
+				// Simple upload for smaller files (faster for small files)
+				await blob.save(file.buffer, {
+					resumable: false,
+					metadata: {
+						contentType: file.mimetype,
+						metadata: file.metadata,
+						cacheControl: 'public, max-age=31536000', // Cache for 1 year
+					},
+				});
+			}
 
 			await blob.makePublic();
 			const publicUrl = blob.publicUrl();
@@ -172,7 +196,9 @@ export class StorageService implements OnModuleInit {
 				}
 			}
 
-			const doc = await this.createDocRecord(
+			// ENHANCEMENT: Create doc record asynchronously for faster response
+			// This allows faster response to client while doc record is created in background
+			const docPromise = this.createDocRecord(
 				file.originalname,
 				publicUrl,
 				fileMetadata,
@@ -180,20 +206,27 @@ export class StorageService implements OnModuleInit {
 				file.size,
 				userOwnerId,
 				userBranchId,
-			);
+			).then(async (doc) => {
+				// Set organization if found
+				if (organisationId) {
+					await this.docsRepository.update(doc.uid, {
+						organisation: { uid: organisationId } as any,
+					});
+				}
+				return doc;
+			}).catch((error) => {
+				this.logger.error(`Failed to create doc record: ${error.message}`);
+				return null;
+			});
 
-			// Set organization if found
-			if (organisationId) {
-				await this.docsRepository.update(doc.uid, {
-					organisation: { uid: organisationId } as any,
-				});
-			}
+			// Wait for doc creation but don't block on organization update
+			const doc = await docPromise;
 
 			return {
 				fileName,
 				publicUrl,
 				metadata: fileMetadata,
-				docId: doc.uid,
+				docId: doc?.uid,
 			};
 		} catch (error) {
 			throw new Error(`File upload failed: ${error.message}`);

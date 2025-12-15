@@ -114,7 +114,7 @@ export class AttendanceService {
 		if (!userAccessLevel) {
 			return false;
 		}
-		const elevatedRoles = [AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.DEVELOPER];
+		const elevatedRoles = [AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.DEVELOPER, AccessLevel.TECHNICIAN];
 		return elevatedRoles.includes(userAccessLevel.toLowerCase() as AccessLevel);
 	}
 
@@ -3598,9 +3598,18 @@ export class AttendanceService {
 		orgId?: number,
 		branchId?: number,
 		userAccessLevel?: string,
+		requestingUserId?: number,
 	): Promise<{ message: string; checkIns: Attendance[]; user: any }> {
 		// Get effective branch ID based on user role
 		const effectiveBranchId = this.getEffectiveBranchId(branchId, userAccessLevel);
+		const canViewAll = this.shouldSeeAllBranches(userAccessLevel);
+		
+		// If user is not admin/owner/developer/technician, they can only view their own attendance
+		if (!canViewAll && requestingUserId && requestingUserId !== ref) {
+			this.logger.warn(`🚫 [AttendanceService] User ${requestingUserId} attempted to access attendance for user ${ref}`);
+			throw new NotFoundException('Access denied: You can only view your own attendance records');
+		}
+		
 		try {
 			const whereConditions: any = {
 				owner: { uid: ref },

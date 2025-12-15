@@ -43,6 +43,15 @@ export class Claim {
 	@Column({ type: 'enum', enum: Currency, nullable: true, default: Currency.ZAR })
 	currency: Currency;
 
+	@Column({ type: 'varchar', nullable: true, unique: true })
+	claimRef: string;
+
+	@Column({ type: 'varchar', nullable: true, unique: true })
+	shareToken: string;
+
+	@Column({ type: 'timestamp', nullable: true })
+	shareTokenExpiresAt: Date;
+
 	@ManyToOne(() => User, (user) => user?.userClaims)
 	owner: User;
 

@@ -1300,8 +1300,12 @@ export class UnifiedNotificationService {
 				.filter(Boolean);
 
 			// Handle invalid tokens by clearing them from user records
+			// Check for both InvalidCredentials and BadDeviceToken errors
 			const invalidTokenErrors = tickets
-				.filter((t) => t.status === 'error' && t.message?.includes('InvalidCredentials'))
+				.filter((t) => 
+					t.status === 'error' && 
+					(t.message?.includes('InvalidCredentials') || t.message?.includes('BadDeviceToken'))
+				)
 				.map((t, index) => pushRecipients[index]?.userId)
 				.filter(Boolean);
 
@@ -1309,6 +1313,14 @@ export class UnifiedNotificationService {
 				this.logger.warn(`🧹 Cleaning up ${invalidTokenErrors.length} invalid push tokens`);
 				await this.cleanupInvalidTokens(invalidTokenErrors);
 			}
+
+			// Create mapping of ticketId -> userId for receipt checking
+			const ticketToUserMap = new Map<string, number>();
+			tickets.forEach((ticket, index) => {
+				if (ticket.id && pushRecipients[index]?.userId) {
+					ticketToUserMap.set(ticket.id, pushRecipients[index].userId);
+				}
+			});
 
 			// Check receipts for successful tickets (optional - can be done async)
 			const successfulTickets = tickets
@@ -1320,7 +1332,7 @@ export class UnifiedNotificationService {
 				// Check receipts asynchronously without blocking the response
 				setTimeout(async () => {
 					try {
-						await this.checkAndLogReceipts(successfulTickets);
+						await this.checkAndLogReceipts(successfulTickets, ticketToUserMap);
 					} catch (error) {
 						this.logger.error('Failed to check notification receipts:', error);
 					}
@@ -1350,14 +1362,19 @@ export class UnifiedNotificationService {
 
 	/**
 	 * Check receipts and log delivery status
+	 * Also handles BadDeviceToken errors by cleaning up invalid tokens
 	 */
-	private async checkAndLogReceipts(ticketIds: string[]): Promise<void> {
+	private async checkAndLogReceipts(
+		ticketIds: string[], 
+		ticketToUserMap?: Map<string, number>
+	): Promise<void> {
 		try {
 			const receipts = await this.expoPushService.checkPushReceipts(ticketIds);
 
 			let deliveredCount = 0;
 			let failedCount = 0;
 			const failedReasons: string[] = [];
+			const invalidTokenUserIds: number[] = [];
 
 			receipts.forEach((receipt, ticketId) => {
 				if (receipt.status === 'ok') {
@@ -1367,6 +1384,19 @@ export class UnifiedNotificationService {
 					if (receipt.message) {
 						failedReasons.push(receipt.message);
 					}
+
+					// Check for BadDeviceToken or InvalidCredentials errors and collect user IDs
+					if (
+						ticketToUserMap &&
+						receipt.message &&
+						(receipt.message.includes('BadDeviceToken') || 
+						 receipt.message.includes('InvalidCredentials'))
+					) {
+						const userId = ticketToUserMap.get(ticketId);
+						if (userId) {
+							invalidTokenUserIds.push(userId);
+						}
+					}
 				}
 			});
 
@@ -1374,6 +1404,12 @@ export class UnifiedNotificationService {
 
 			if (failedReasons.length > 0) {
 				this.logger.warn('📨 Failed delivery reasons:', failedReasons);
+			}
+
+			// Clean up invalid tokens found in receipts
+			if (invalidTokenUserIds.length > 0) {
+				this.logger.warn(`🧹 Cleaning up ${invalidTokenUserIds.length} invalid push tokens from receipt errors`);
+				await this.cleanupInvalidTokens(invalidTokenUserIds);
 			}
 		} catch (error) {
 			this.logger.error('Failed to check delivery receipts:', error);

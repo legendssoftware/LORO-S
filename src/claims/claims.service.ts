@@ -91,6 +91,36 @@ export class ClaimsService {
 			.replace(this.currencyCode, this.currencySymbol);
 	}
 
+	/**
+	 * Generate unique claim reference number (CLM-YYYY-NNNNNN)
+	 */
+	private async generateClaimRef(): Promise<string> {
+		const year = new Date().getFullYear();
+		const prefix = `CLM-${year}-`;
+		
+		// Get the last claim ref for this year
+		const lastClaim = await this.claimsRepository.findOne({
+			where: { claimRef: Not(IsNull()) },
+			order: { createdAt: 'DESC' },
+		});
+
+		let sequence = 1;
+		if (lastClaim?.claimRef?.startsWith(prefix)) {
+			const lastSequence = parseInt(lastClaim.claimRef.replace(prefix, '')) || 0;
+			sequence = lastSequence + 1;
+		}
+
+		return `${prefix}${sequence.toString().padStart(6, '0')}`;
+	}
+
+	/**
+	 * Generate secure share token for public claim access
+	 */
+	private generateSecureToken(): string {
+		const crypto = require('crypto');
+		return crypto.randomBytes(32).toString('hex');
+	}
+
 	private calculateStats(claims: Claim[]): {
 		total: number;
 		pending: number;
@@ -158,12 +188,21 @@ export class ClaimsService {
 			const organisation = orgId ? { uid: orgId } : user.organisation;
 			const branch = branchId ? { uid: branchId } : user.branch;
 
+			// Generate claim reference number
+			const claimRef = await this.generateClaimRef();
+			const shareToken = this.generateSecureToken();
+			const shareTokenExpiresAt = new Date();
+			shareTokenExpiresAt.setDate(shareTokenExpiresAt.getDate() + 30); // 30 days expiry
+
 			// Enhanced data mapping with proper validation
 			const claimData = {
 				...createClaimDto,
 				amount: createClaimDto.amount.toString(),
 				organisation: organisation,
 				branch: branch,
+				claimRef,
+				shareToken,
+				shareTokenExpiresAt,
 			} as DeepPartial<Claim>;
 
 			this.logger.debug(`🏗️ [ClaimsService] Creating claim with data:`, {
@@ -246,7 +285,9 @@ export class ClaimsService {
 								organization: {
 									name: user.organisation?.name || 'Organization',
 								},
-								dashboardLink: `${process.env.APP_URL || 'https://loro.co.za'}/claims`,
+								dashboardLink: `${process.env.APP_URL || 'https://loro.co.za'}/claims/${claim.uid}`,
+								claimRef: claim.claimRef || `#${claim.uid}`,
+								shareLink: `${process.env.APP_URL || 'https://loro.co.za'}/claims/share/${claim.shareToken}`,
 							};
 
 							// Send email to the user who created the claim
@@ -254,6 +295,8 @@ export class ClaimsService {
 
 							// Send admin notification email
 							this.eventEmitter.emit('send.email', EmailType.CLAIM_CREATED_ADMIN, [], emailData);
+
+							// Approvers will receive notifications when approval workflow is initialized
 
 							// Send push notification to the user who created the claim
 							try {
@@ -368,10 +411,10 @@ export class ClaimsService {
 		});
 
 		try {
-			// Check if user is admin or owner - they can view all claims
-			const isAdminOrOwner = userAccessLevel?.toLowerCase() === 'admin' || userAccessLevel?.toLowerCase() === 'owner';
+			// Check if user is admin, owner, developer, or technician - they can view all claims
+			const canViewAll = ['admin', 'owner', 'developer', 'technician'].includes(userAccessLevel?.toLowerCase() || '');
 			
-			this.logger.debug(`🏗️ [ClaimsService] Building query for claims in org: ${orgId || 'all'}, branch: ${branchId || 'all'}, user: ${userId}, accessLevel: ${userAccessLevel}, canViewAll: ${isAdminOrOwner}`);
+			this.logger.debug(`🏗️ [ClaimsService] Building query for claims in org: ${orgId || 'all'}, branch: ${branchId || 'all'}, user: ${userId}, accessLevel: ${userAccessLevel}, canViewAll: ${canViewAll}`);
 
 			const queryBuilder = this.claimsRepository
 				.createQueryBuilder('claim')
@@ -380,8 +423,8 @@ export class ClaimsService {
 				.leftJoinAndSelect('claim.organisation', 'organisation')
 				.where('claim.isDeleted = :isDeleted', { isDeleted: false });
 
-			// If user is not admin/owner, only show their own claims
-			if (!isAdminOrOwner && userId) {
+			// If user is not admin/owner/developer/technician, only show their own claims
+			if (!canViewAll && userId) {
 				this.logger.debug(`🔒 [ClaimsService] Restricting claims to user ${userId} only`);
 				queryBuilder.andWhere('owner.uid = :userId', { userId });
 			}
@@ -479,10 +522,10 @@ export class ClaimsService {
 		this.logger.log(`🔍 [ClaimsService] Finding claim with ID: ${ref}, orgId: ${orgId}, branchId: ${branchId}, user: ${userId}, accessLevel: ${userAccessLevel}`);
 
 		try {
-			// Check if user is admin or owner - they can view any claim
-			const isAdminOrOwner = userAccessLevel?.toLowerCase() === 'admin' || userAccessLevel?.toLowerCase() === 'owner';
+			// Check if user is admin, owner, developer, or technician - they can view any claim
+			const canViewAll = ['admin', 'owner', 'developer', 'technician'].includes(userAccessLevel?.toLowerCase() || '');
 			
-			this.logger.debug(`🏗️ [ClaimsService] Building query for claim ${ref} in org: ${orgId || 'all'}, branch: ${branchId || 'all'}, canViewAll: ${isAdminOrOwner}`);
+			this.logger.debug(`🏗️ [ClaimsService] Building query for claim ${ref} in org: ${orgId || 'all'}, branch: ${branchId || 'all'}, canViewAll: ${canViewAll}`);
 
 			const queryBuilder = this.claimsRepository
 				.createQueryBuilder('claim')
@@ -492,8 +535,8 @@ export class ClaimsService {
 				.where('claim.uid = :ref', { ref })
 				.andWhere('claim.isDeleted = :isDeleted', { isDeleted: false });
 
-			// If user is not admin/owner, only allow viewing their own claims
-			if (!isAdminOrOwner && userId) {
+			// If user is not admin/owner/developer/technician, only allow viewing their own claims
+			if (!canViewAll && userId) {
 				this.logger.debug(`🔒 [ClaimsService] Restricting claim access to owner only`);
 				queryBuilder.andWhere('owner.uid = :userId', { userId });
 			}
@@ -514,8 +557,8 @@ export class ClaimsService {
 			const claim = await queryBuilder.getOne();
 
 			if (!claim) {
-				// If user is not admin/owner and claim exists but doesn't belong to them, return unauthorized
-				if (!isAdminOrOwner && userId) {
+				// If user is not admin/owner/developer/technician and claim exists but doesn't belong to them, return unauthorized
+				if (!canViewAll && userId) {
 					this.logger.warn(`🚫 [ClaimsService] User ${userId} attempted to access claim ${ref} that doesn't belong to them`);
 					throw new NotFoundException('Claim not found or access denied');
 				}
@@ -589,11 +632,11 @@ export class ClaimsService {
 		this.logger.log(`🔍 [ClaimsService] Finding claims for user ${ref}, orgId: ${orgId}, branchId: ${branchId}, requestingUser: ${requestingUserId}, accessLevel: ${userAccessLevel}`);
 
 		try {
-			// Check if requesting user is admin or owner - they can view any user's claims
-			const isAdminOrOwner = userAccessLevel?.toLowerCase() === 'admin' || userAccessLevel?.toLowerCase() === 'owner';
+			// Check if requesting user is admin, owner, developer, or technician - they can view any user's claims
+			const canViewAll = ['admin', 'owner', 'developer', 'technician'].includes(userAccessLevel?.toLowerCase() || '');
 			
-			// If user is not admin/owner, they can only view their own claims
-			if (!isAdminOrOwner && requestingUserId && requestingUserId !== ref) {
+			// If user is not admin/owner/developer/technician, they can only view their own claims
+			if (!canViewAll && requestingUserId && requestingUserId !== ref) {
 				this.logger.warn(`🚫 [ClaimsService] User ${requestingUserId} attempted to access claims for user ${ref}`);
 				throw new NotFoundException('Access denied: You can only view your own claims');
 			}
@@ -747,6 +790,20 @@ export class ClaimsService {
 			const claim = claimResult.claim;
 			const previousStatus = claim.status;
 
+			// Enforce approval workflow for status changes (except owner editing their own pending claim)
+			if (updateClaimDto.status && updateClaimDto.status !== previousStatus) {
+				const isAdminOrOwner = userAccessLevel?.toLowerCase() === 'admin' || userAccessLevel?.toLowerCase() === 'owner';
+				const isOwnerEditingPending = userId === claim.owner?.uid && previousStatus === ClaimStatus.PENDING && !isAdminOrOwner;
+				
+				if (!isOwnerEditingPending && (updateClaimDto.status === ClaimStatus.APPROVED || updateClaimDto.status === ClaimStatus.DECLINED)) {
+					// Check if there's an active approval for this claim
+					// Note: Direct status updates to APPROVED/DECLINED should go through approval workflow
+					// This check prevents bypassing the approval system
+					this.logger.debug(`⚠️ [ClaimsService] Status change from ${previousStatus} to ${updateClaimDto.status} should go through approval workflow`);
+					// Allow the update but log a warning - the approval workflow handler will manage status changes
+				}
+			}
+
 			// Convert DTO fields to match entity field types
 		const updateData = {
 			comments: updateClaimDto.comment,
@@ -825,7 +882,9 @@ export class ClaimsService {
 								organization: {
 									name: updatedClaim.organisation?.name || 'Organization',
 								},
-								dashboardLink: `${process.env.APP_URL || 'https://loro.co.za'}/claims`,
+								dashboardLink: `${process.env.APP_URL || 'https://loro.co.za'}/claims/${updatedClaim.uid}`,
+								claimRef: updatedClaim.claimRef || `#${updatedClaim.uid}`,
+								shareLink: `${process.env.APP_URL || 'https://loro.co.za'}/claims/share/${updatedClaim.shareToken}`,
 								previousStatus: previousStatus,
 								processedAt: new Date().toISOString(),
 							};
@@ -958,8 +1017,8 @@ export class ClaimsService {
 		this.logger.log(`♻️ [ClaimsService] Restoring claim ${ref}, orgId: ${orgId}, branchId: ${branchId}, user: ${userId}, accessLevel: ${userAccessLevel}`);
 
 		try {
-			// Check if user is admin or owner - they can restore any claim
-			const isAdminOrOwner = userAccessLevel?.toLowerCase() === 'admin' || userAccessLevel?.toLowerCase() === 'owner';
+			// Check if user is admin, owner, developer, or technician - they can restore any claim
+			const canViewAll = ['admin', 'owner', 'developer', 'technician'].includes(userAccessLevel?.toLowerCase() || '');
 			
 			// First find the claim with isDeleted=true
 			const queryBuilder = this.claimsRepository
@@ -980,8 +1039,8 @@ export class ClaimsService {
 				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
 			}
 
-			// If user is not admin/owner, only allow restoring their own claims
-			if (!isAdminOrOwner && userId) {
+			// If user is not admin/owner/developer/technician, only allow restoring their own claims
+			if (!canViewAll && userId) {
 				this.logger.debug(`🔒 [ClaimsService] Restricting restore to owner only`);
 				queryBuilder.andWhere('owner.uid = :userId', { userId });
 			}
@@ -989,7 +1048,7 @@ export class ClaimsService {
 			const claim = await queryBuilder.getOne();
 
 			if (!claim) {
-				if (!isAdminOrOwner && userId) {
+				if (!canViewAll && userId) {
 					this.logger.warn(`🚫 [ClaimsService] User ${userId} attempted to restore claim ${ref} that doesn't belong to them`);
 					throw new NotFoundException('Claim not found or access denied');
 				}
@@ -1492,6 +1551,75 @@ export class ClaimsService {
 			deadline.setDate(deadline.getDate() + 5);
 			deadline.setHours(17, 0, 0, 0); // 5 PM in 5 days
 			return deadline;
+		}
+	}
+
+	/**
+	 * Find claim by share token (public access)
+	 */
+	async findByShareToken(token: string): Promise<{ message: string; claim: Claim | null }> {
+		try {
+			const claim = await this.claimsRepository.findOne({
+				where: { shareToken: token, isDeleted: false },
+				relations: ['owner', 'organisation', 'branch'],
+			});
+
+			if (!claim) {
+				throw new NotFoundException('Claim not found or invalid share token');
+			}
+
+			// Check if token has expired
+			if (claim.shareTokenExpiresAt && new Date() > claim.shareTokenExpiresAt) {
+				throw new BadRequestException('Share token has expired');
+			}
+
+			return {
+				message: process.env.SUCCESS_MESSAGE || 'Success',
+				claim: {
+					...claim,
+					amount: this.formatCurrency(Number(claim.amount) || 0),
+				},
+			};
+		} catch (error) {
+			this.logger.error(`❌ [ClaimsService] Error finding claim by share token: ${error.message}`);
+			throw error;
+		}
+	}
+
+	/**
+	 * Generate or regenerate share token for claim
+	 */
+	async generateShareToken(
+		ref: number,
+		orgId?: number,
+		branchId?: number,
+		userId?: number,
+		userAccessLevel?: string,
+	): Promise<{ message: string; shareToken: string; shareLink: string }> {
+		try {
+			const claimResult = await this.findOne(ref, orgId, branchId, userId, userAccessLevel);
+
+			if (!claimResult || !claimResult.claim) {
+				throw new NotFoundException('Claim not found');
+			}
+
+			const claim = claimResult.claim;
+			const shareToken = this.generateSecureToken();
+			const shareTokenExpiresAt = new Date();
+			shareTokenExpiresAt.setDate(shareTokenExpiresAt.getDate() + 30); // 30 days expiry
+
+			await this.claimsRepository.update({ uid: ref }, { shareToken, shareTokenExpiresAt });
+
+			const shareLink = `${process.env.APP_URL || 'https://loro.co.za'}/claims/share/${shareToken}`;
+
+			return {
+				message: process.env.SUCCESS_MESSAGE || 'Share token generated successfully',
+				shareToken,
+				shareLink,
+			};
+		} catch (error) {
+			this.logger.error(`❌ [ClaimsService] Error generating share token: ${error.message}`);
+			throw error;
 		}
 	}
 

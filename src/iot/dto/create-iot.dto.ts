@@ -17,7 +17,7 @@ import {
   IsEmail,
   Matches
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { DeviceType, DeviceStatus } from '../../lib/enums/iot';
 import { DeviceAnalytics, DeviceTimeEvent } from '../../lib/interfaces/iot.interface';
@@ -86,6 +86,21 @@ export class CreateDeviceDto {
     example: DeviceType.DOOR_SENSOR,
     default: DeviceType.DOOR_SENSOR
   })
+  @Transform(({ value }) => {
+    // Handle both enum keys (DOOR_SENSOR) and enum values (door_sensor)
+    if (typeof value === 'string') {
+      // Convert uppercase enum key to lowercase enum value
+      const upperValue = value.toUpperCase();
+      if (upperValue in DeviceType) {
+        return DeviceType[upperValue as keyof typeof DeviceType];
+      }
+      // If already lowercase, check if it's a valid enum value
+      if (Object.values(DeviceType).includes(value as DeviceType)) {
+        return value;
+      }
+    }
+    return value;
+  })
   @IsEnum(DeviceType, { message: 'Device type must be a valid enum value' })
   @IsOptional()
   deviceType?: DeviceType;
@@ -138,6 +153,21 @@ export class CreateDeviceDto {
     enum: DeviceStatus,
     example: DeviceStatus.ONLINE,
     default: DeviceStatus.OFFLINE
+  })
+  @Transform(({ value }) => {
+    // Handle both enum keys (ONLINE) and enum values (online)
+    if (typeof value === 'string') {
+      // Convert uppercase enum key to lowercase enum value
+      const upperValue = value.toUpperCase();
+      if (upperValue in DeviceStatus) {
+        return DeviceStatus[upperValue as keyof typeof DeviceStatus];
+      }
+      // If already lowercase, check if it's a valid enum value
+      if (Object.values(DeviceStatus).includes(value as DeviceStatus)) {
+        return value;
+      }
+    }
+    return value;
   })
   @IsEnum(DeviceStatus, { message: 'Device status must be a valid enum value' })
   @IsOptional()

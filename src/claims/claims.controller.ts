@@ -352,6 +352,71 @@ export class ClaimsController {
     return this.claimsService.claimsByUser(ref, orgId, branchId, requestingUserId, userAccessLevel);
   }
 
+  @Get('share/:token')
+  @ApiOperation({ 
+    summary: 'Get claim by share token (public access)',
+    description: 'Retrieves a claim using a public share token. No authentication required.'
+  })
+  @ApiParam({ 
+    name: 'token', 
+    description: 'Share token for public access',
+    type: 'string',
+    example: 'abc123def456...'
+  })
+  @ApiOkResponse({ 
+    description: 'Claim found',
+    schema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', example: 'Success' },
+        claim: { type: 'object' }
+      }
+    }
+  })
+  @ApiNotFoundResponse({ description: 'Claim not found or token expired' })
+  getByShareToken(@Param('token') token: string) {
+    return this.claimsService.findByShareToken(token);
+  }
+
+  @Post(':ref/generate-share-token')
+ @Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.SUPPORT,
+		AccessLevel.DEVELOPER,
+		AccessLevel.USER,
+		AccessLevel.OWNER,
+		AccessLevel.TECHNICIAN,
+	)
+  @ApiOperation({ 
+    summary: 'Generate or regenerate share token for claim',
+    description: 'Creates a new share token for public access to a claim.'
+  })
+  @ApiParam({ 
+    name: 'ref', 
+    description: 'Claim UID (not reference code)',
+    type: 'number',
+    example: 1
+  })
+  @ApiOkResponse({ 
+    description: 'Share token generated successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', example: 'Success' },
+        shareToken: { type: 'string' },
+        shareLink: { type: 'string' }
+      }
+    }
+  })
+  generateShareToken(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
+    const orgId = req.user?.org?.uid || req.user?.organisationRef;
+    const branchId = req.user?.branch?.uid;
+    const userId = req.user?.uid;
+    const userAccessLevel = req.user?.accessLevel || req.user?.role;
+    return this.claimsService.generateShareToken(ref, orgId, branchId, userId, userAccessLevel);
+  }
+
   @Delete(':ref')
  @Roles(
 		AccessLevel.ADMIN,

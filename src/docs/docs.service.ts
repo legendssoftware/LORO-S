@@ -72,7 +72,106 @@ export class DocsService {
 	}
 
 	/**
+	 * 🎨 Optimize image: resize, compress, convert to WebP
+	 * Only processes if file is an image, returns original if not an image or optimization fails
+	 */
+	private async optimizeImageIfNeeded(
+		buffer: Buffer,
+		mimetype: string,
+		originalname: string,
+	): Promise<{ buffer: Buffer; mimetype: string; originalname: string; originalSize: number; optimizedSize: number }> {
+		// Only optimize images
+		if (!mimetype?.startsWith('image/')) {
+			return {
+				buffer,
+				mimetype,
+				originalname,
+				originalSize: buffer.length,
+				optimizedSize: buffer.length,
+			};
+		}
+
+		try {
+			const originalSize = buffer.length;
+			const sharp = require('sharp');
+
+			let pipeline = sharp(buffer);
+
+			// Get image metadata
+			const metadata = await pipeline.metadata();
+			const { width, height, format } = metadata;
+
+			// OPTIMIZATION 1: Resize if too large (max 2048px on longest side)
+			const MAX_DIMENSION = 2048;
+			if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+				pipeline = pipeline.resize(MAX_DIMENSION, MAX_DIMENSION, {
+					fit: 'inside',
+					withoutEnlargement: true,
+				});
+				this.logger.debug(`📐 [optimizeImageIfNeeded] Resizing from ${width}x${height} to max ${MAX_DIMENSION}px`);
+			}
+
+			// OPTIMIZATION 2: Convert to WebP for better compression (except if already WebP or very small)
+			let outputFormat = 'webp';
+			let outputMimetype = 'image/webp';
+			let outputName = originalname.replace(/\.[^.]+$/, '.webp');
+
+			// If already WebP or very small (< 100KB), keep original format but optimize
+			if (format === 'webp' || originalSize < 100000) {
+				outputFormat = format || 'jpeg';
+				outputMimetype = mimetype;
+				outputName = originalname;
+			}
+
+			// Apply compression based on format
+			if (outputFormat === 'webp') {
+				pipeline = pipeline.webp({
+					quality: 85, // High quality but compressed
+					effort: 4, // Balance between compression and speed
+					smartSubsample: true,
+				});
+			} else if (outputFormat === 'jpeg' || outputFormat === 'jpg') {
+				pipeline = pipeline.jpeg({
+					quality: 85,
+					progressive: true,
+					mojpegg: true,
+				});
+			} else if (outputFormat === 'png') {
+				pipeline = pipeline.png({
+					quality: 85,
+					compressionLevel: 9,
+				});
+			}
+
+			const optimizedBuffer = await pipeline.toBuffer();
+			const optimizedSize = optimizedBuffer.length;
+			const compressionRatio = ((originalSize - optimizedSize) / originalSize * 100).toFixed(1);
+
+			this.logger.debug(`📉 [optimizeImageIfNeeded] Optimized: ${originalSize} → ${optimizedSize} bytes (${compressionRatio}% reduction)`);
+
+			return {
+				buffer: optimizedBuffer,
+				mimetype: outputMimetype,
+				originalname: outputName,
+				originalSize,
+				optimizedSize,
+			};
+		} catch (error) {
+			// If optimization fails, return original
+			this.logger.warn(`⚠️ [optimizeImageIfNeeded] Optimization failed, using original: ${error.message}`);
+			return {
+				buffer,
+				mimetype,
+				originalname,
+				originalSize: buffer.length,
+				optimizedSize: buffer.length,
+			};
+		}
+	}
+
+	/**
 	 * 📤 Upload a single file with comprehensive validation and logging
+	 * ENHANCED: Automatically optimizes images before upload
 	 * @param file - Multer file object
 	 * @param type - Optional file type categorization
 	 * @param ownerId - File owner user ID
@@ -106,17 +205,33 @@ export class DocsService {
 
 			this.logger.debug(`📤 [uploadFile] Upload context - Owner: ${ownerId}, Branch: ${branchId}, Type: ${type || 'auto'}`);
 
+			// ENHANCEMENT: Optimize image if it's an image file
+			const optimizationResult = await this.optimizeImageIfNeeded(
+				file.buffer,
+				file.mimetype,
+				file.originalname,
+			);
+
+			// Log optimization results if image was optimized
+			if (optimizationResult.originalSize !== optimizationResult.optimizedSize) {
+				const compressionRatio = ((optimizationResult.originalSize - optimizationResult.optimizedSize) / optimizationResult.originalSize * 100).toFixed(1);
+				this.logger.log(`📉 [uploadFile] Image optimized: ${optimizationResult.originalSize} → ${optimizationResult.optimizedSize} bytes (${compressionRatio}% reduction)`);
+			}
+
 			// Core operation: Upload to storage and create doc record
 			const result = await this.storageService.upload(
 				{
-					buffer: file.buffer,
-					mimetype: file.mimetype,
-					originalname: file.originalname,
-					size: file.size,
+					buffer: optimizationResult.buffer,
+					mimetype: optimizationResult.mimetype,
+					originalname: optimizationResult.originalname,
+					size: optimizationResult.optimizedSize,
 					metadata: {
 						type,
 						uploadedBy: ownerId?.toString(),
 						branch: branchId?.toString(),
+						originalSize: optimizationResult.originalSize.toString(),
+						optimizedSize: optimizationResult.optimizedSize.toString(),
+						wasOptimized: (optimizationResult.originalSize !== optimizationResult.optimizedSize).toString(),
 					},
 				},
 				undefined,
@@ -133,6 +248,12 @@ export class DocsService {
 			const response = {
 				message: 'File uploaded successfully',
 				...result,
+				// Include optimization info if image was optimized
+				...(optimizationResult.originalSize !== optimizationResult.optimizedSize && {
+					originalSize: optimizationResult.originalSize,
+					optimizedSize: optimizationResult.optimizedSize,
+					compressionRatio: parseFloat(((optimizationResult.originalSize - optimizationResult.optimizedSize) / optimizationResult.originalSize * 100).toFixed(1)),
+				}),
 			};
 
 			// ============================================================
@@ -159,12 +280,14 @@ export class DocsService {
 					try {
 						this.eventEmitter.emit('docs.file.uploaded', {
 							fileName: file.originalname,
-							fileSize: file.size,
-							mimeType: file.mimetype,
+							fileSize: optimizationResult.optimizedSize,
+							originalSize: optimizationResult.originalSize,
+							mimeType: optimizationResult.mimetype,
 							type,
 							ownerId,
 							branchId,
 							uploadUrl: result.publicUrl,
+							wasOptimized: optimizationResult.originalSize !== optimizationResult.optimizedSize,
 							timestamp: new Date(),
 						});
 						this.logger.debug(`✅ [uploadFile] Upload event emitted successfully`);
@@ -685,19 +808,35 @@ export class DocsService {
 						throw new Error(`Invalid file type: ${file.mimetype} for specified type: ${fileType}`);
 					}
 
+					// ENHANCEMENT: Optimize image if it's an image file
+					const optimizationResult = await this.optimizeImageIfNeeded(
+						file.buffer,
+						file.mimetype,
+						file.originalname,
+					);
+
+					// Log optimization if occurred
+					if (optimizationResult.originalSize !== optimizationResult.optimizedSize) {
+						const compressionRatio = ((optimizationResult.originalSize - optimizationResult.optimizedSize) / optimizationResult.originalSize * 100).toFixed(1);
+						this.logger.debug(`📉 [uploadBulkFiles] File ${i + 1} optimized: ${compressionRatio}% reduction`);
+					}
+
 					// Upload file to storage
 					const uploadResult = await this.storageService.upload(
 						{
-							buffer: file.buffer,
-							mimetype: file.mimetype,
-							originalname: file.originalname,
-							size: file.size,
+							buffer: optimizationResult.buffer,
+							mimetype: optimizationResult.mimetype,
+							originalname: optimizationResult.originalname,
+							size: optimizationResult.optimizedSize,
 							metadata: {
 								type: fileType,
 								uploadedBy: ownerId?.toString(),
 								branch: bulkUploadDto.branchId?.toString(),
 								bulkUpload: 'true',
-								uploadIndex: i.toString()
+								uploadIndex: i.toString(),
+								originalSize: optimizationResult.originalSize.toString(),
+								optimizedSize: optimizationResult.optimizedSize.toString(),
+								wasOptimized: (optimizationResult.originalSize !== optimizationResult.optimizedSize).toString(),
 							},
 						},
 						undefined,
@@ -708,10 +847,10 @@ export class DocsService {
 					// Create document record if requested
 					if (bulkUploadDto.createDocumentRecords && queryRunner) {
 						const docData = {
-							title: file.originalname,
+							title: optimizationResult.originalname,
 							url: uploadResult.publicUrl,
-							mimeType: file.mimetype,
-							fileSize: file.size,
+							mimeType: optimizationResult.mimetype,
+							fileSize: optimizationResult.optimizedSize,
 							fileType: fileType || 'document',
 							content: `Bulk uploaded file: ${file.originalname}`,
 							description: bulkUploadDto.documentMetadata?.description || `Bulk uploaded file: ${file.originalname}`,
@@ -731,16 +870,16 @@ export class DocsService {
 					}
 
 					// Track type summary
-					const detectedType = fileType || this.detectFileType(file.mimetype);
+					const detectedType = fileType || this.detectFileType(optimizationResult.mimetype);
 					typeSummary[detectedType] = (typeSummary[detectedType] || 0) + 1;
-					totalSize += file.size;
+					totalSize += optimizationResult.optimizedSize;
 
 					results.push({
 						success: true,
 						index: i,
-						fileName: file.originalname,
-						fileSize: file.size,
-						mimeType: file.mimetype,
+						fileName: optimizationResult.originalname,
+						fileSize: optimizationResult.optimizedSize,
+						mimeType: optimizationResult.mimetype,
 						url: uploadResult.publicUrl,
 						type: detectedType,
 						uploadedAt: new Date().toISOString()

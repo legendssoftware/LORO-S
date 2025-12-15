@@ -14,13 +14,10 @@ export class AuthGuard extends BaseGuard implements CanActivate {
 	async canActivate(context: ExecutionContext): Promise<boolean> {
 		const request = context.switchToHttp().getRequest();
 		const { method, url, path } = request;
-		
-		this.logger.debug(`[AuthGuard] Guard activated for ${method} ${path || url}`);
 
 		let decodedToken;
 		try {
 			decodedToken = this.extractAndValidateToken(request);
-			this.logger.debug(`[AuthGuard] Token extracted and validated for user: ${decodedToken.uid}, role: ${decodedToken.role}`);
 		} catch (error) {
 			this.logger.error(`[AuthGuard] Token extraction/validation failed for ${method} ${path || url}:`, error);
 			throw error;
@@ -28,12 +25,9 @@ export class AuthGuard extends BaseGuard implements CanActivate {
 
 		// Check license if user belongs to an organization
 		if (decodedToken.organisationRef && decodedToken.licenseId) {
-			this.logger.debug(`[AuthGuard] Organization and license found - orgRef: ${decodedToken.organisationRef}, licenseId: ${decodedToken.licenseId}`);
-			
 			// Check if license validation is cached in the request object first
 			// This prevents multiple validations within the same request
 			if (!request['licenseValidated']) {
-				this.logger.debug(`[AuthGuard] License validation not cached, validating license: ${decodedToken.licenseId} for org: ${decodedToken.organisationRef}`);
 				try {
 					const isLicenseValid = await this.licensingService.validateLicense(decodedToken.licenseId);
 					
@@ -62,8 +56,6 @@ export class AuthGuard extends BaseGuard implements CanActivate {
 					this.logger.error(`[AuthGuard] Error stack:`, error instanceof Error ? error.stack : 'No stack trace available');
 					throw new UnauthorizedException("Unable to validate license. Please contact your administrator.");
 				}
-			} else {
-				this.logger.debug(`[AuthGuard] License validation already cached, skipping validation - licenseId: ${decodedToken.licenseId}`);
 			}
 		} else {
 			this.logger.warn(`[AuthGuard] Token missing organization or license info for ${method} ${path || url}:`, {

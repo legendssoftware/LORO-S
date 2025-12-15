@@ -1367,6 +1367,8 @@ export interface EmailVerifiedEmailData extends BaseEmailData {
 
 // Claims related email data
 export interface ClaimEmailData extends BaseEmailData {
+	claimRef?: string;
+	shareLink?: string;
 	claimId: number;
 	amount: string;
 	category: string;

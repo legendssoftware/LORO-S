@@ -2152,7 +2152,8 @@ Retrieves comprehensive attendance records for a specific user with detailed ana
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		const userAccessLevel = req.user?.accessLevel;
-		return this.attendanceService.checkInsByUser(ref, orgId, branchId, userAccessLevel);
+		const requestingUserId = req.user?.uid;
+		return this.attendanceService.checkInsByUser(ref, orgId, branchId, userAccessLevel, requestingUserId);
 	}
 
 	@Get('user/:ref/monthly')

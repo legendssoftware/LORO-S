@@ -743,9 +743,43 @@ export class IotService {
 	 */
 	async createDevice(createDeviceDto: CreateDeviceDto): Promise<{ message: string; device?: Partial<Device> }> {
 		const startTime = Date.now();
+		
+		// Log incoming data for debugging
 		this.logger.log(
 			`🤖 Creating device with ID: ${createDeviceDto.deviceID} for org: ${createDeviceDto.orgID}, branch: ${createDeviceDto.branchID}`,
 		);
+		this.logger.debug(
+			`📥 Incoming device data: ${JSON.stringify({
+				deviceID: createDeviceDto.deviceID,
+				deviceType: createDeviceDto.deviceType,
+				currentStatus: createDeviceDto.currentStatus,
+				deviceIP: createDeviceDto.deviceIP,
+				devicePort: createDeviceDto.devicePort,
+			})}`,
+		);
+
+		// Transform enum values if needed (fallback if ValidationPipe transform doesn't work)
+		let transformedDeviceType = createDeviceDto.deviceType;
+		if (typeof transformedDeviceType === 'string') {
+			const upperValue = transformedDeviceType.toUpperCase();
+			if (upperValue in DeviceType) {
+				transformedDeviceType = DeviceType[upperValue as keyof typeof DeviceType];
+				this.logger.debug(
+					`🔄 Transformed deviceType from "${createDeviceDto.deviceType}" to "${transformedDeviceType}"`,
+				);
+			}
+		}
+
+		let transformedStatus = createDeviceDto.currentStatus;
+		if (typeof transformedStatus === 'string') {
+			const upperValue = transformedStatus.toUpperCase();
+			if (upperValue in DeviceStatus) {
+				transformedStatus = DeviceStatus[upperValue as keyof typeof DeviceStatus];
+				this.logger.debug(
+					`🔄 Transformed currentStatus from "${createDeviceDto.currentStatus}" to "${transformedStatus}"`,
+				);
+			}
+		}
 
 		// Start transaction for data consistency
 		const queryRunner = this.dataSource.createQueryRunner();
@@ -791,13 +825,24 @@ export class IotService {
 				...createDeviceDto,
 				branchID: branchUid, // Ensure branchID is set to branch's uid
 				branchUid: branchUid, // Set branchUid to branch's uid
-				deviceType: createDeviceDto.deviceType || DeviceType.DOOR_SENSOR,
-				currentStatus: createDeviceDto.currentStatus || DeviceStatus.ONLINE,
+				deviceType: transformedDeviceType || DeviceType.DOOR_SENSOR,
+				currentStatus: transformedStatus || DeviceStatus.ONLINE,
 				analytics: createDeviceDto.analytics || defaultAnalytics,
 				createdAt: new Date(),
 				updatedAt: new Date(),
 				isDeleted: false,
 			};
+
+			// Log the final device data before saving
+			this.logger.debug(
+				`💾 Final device data to save: ${JSON.stringify({
+					deviceID: deviceData.deviceID,
+					deviceType: deviceData.deviceType,
+					currentStatus: deviceData.currentStatus,
+					branchID: deviceData.branchID,
+					branchUid: deviceData.branchUid,
+				})}`,
+			);
 
 			const device = queryRunner.manager.create(Device, deviceData);
 			const savedDevice = await queryRunner.manager.save(device);
@@ -836,14 +881,24 @@ export class IotService {
 		} catch (error) {
 			// Rollback transaction on error
 			await queryRunner.rollbackTransaction();
-
-			this.logger.error(`❌ Failed to create device: ${error.message}`, {
+			
+			// Enhanced error logging
+			const errorDetails = {
 				deviceID: createDeviceDto.deviceID,
 				orgID: createDeviceDto.orgID,
 				branchID: createDeviceDto.branchID,
+				deviceType: createDeviceDto.deviceType,
+				transformedDeviceType: transformedDeviceType,
+				currentStatus: createDeviceDto.currentStatus,
+				transformedStatus: transformedStatus,
 				duration: Date.now() - startTime,
-				stack: error.stack,
-			});
+				errorMessage: error instanceof Error ? error.message : String(error),
+				errorName: error instanceof Error ? error.name : 'UnknownError',
+				stack: error instanceof Error ? error.stack : undefined,
+			};
+			
+			this.logger.error(`❌ Failed to create device: ${errorDetails.errorMessage}`);
+			this.logger.error(`📋 Error details: ${JSON.stringify(errorDetails, null, 2)}`);
 
 			// Handle specific error types
 			if (

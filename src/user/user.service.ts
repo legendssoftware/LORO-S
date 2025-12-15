@@ -2418,11 +2418,9 @@ export class UserService {
 
 		try {
 			const cacheKey = this.getCacheKey(`target_${userId}`);
-			this.logger.debug(`Checking cache for user target: ${userId}`);
 			const cachedTarget = await this.cacheManager.get(cacheKey);
 
 			if (cachedTarget) {
-				this.logger.debug(`User target cache hit for user: ${userId}`);
 				
 				// TEMPORARY: Return zeros for all user-specific data while logic is being revised
 				const cachedResponse = cachedTarget as any;
