@@ -91,14 +91,38 @@ export class TimeCalculatorUtil {
     // Prefer breakDetails for accuracy
     if (breakDetails && breakDetails.length > 0) {
       return breakDetails.reduce((total, breakItem) => {
-        if (breakItem.startTime && breakItem.endTime) {
-          const breakMs = differenceInMilliseconds(
-            new Date(breakItem.endTime), 
-            new Date(breakItem.startTime)
-          );
-          return total + Math.round(breakMs / 60000); // Convert ms to minutes
+        try {
+          // Check if both startTime and endTime exist and are not null
+          if (!breakItem.startTime || !breakItem.endTime) {
+            return total;
+          }
+
+          // Convert to Date objects if they aren't already
+          const startDate = breakItem.startTime instanceof Date 
+            ? breakItem.startTime 
+            : new Date(breakItem.startTime);
+          const endDate = breakItem.endTime instanceof Date 
+            ? breakItem.endTime 
+            : new Date(breakItem.endTime);
+
+          // Validate that dates are valid
+          if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+            return total;
+          }
+
+          // Calculate break duration
+          const breakMs = differenceInMilliseconds(endDate, startDate);
+          
+          // Only add positive break durations (endTime should be after startTime)
+          if (breakMs > 0) {
+            return total + Math.round(breakMs / 60000); // Convert ms to minutes
+          }
+          
+          return total;
+        } catch (error) {
+          // If any error occurs, skip this break item and continue
+          return total;
         }
-        return total;
       }, 0);
     }
 
