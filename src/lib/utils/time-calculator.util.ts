@@ -61,7 +61,7 @@ export class TimeCalculatorUtil {
   static calculateWorkSession(
     checkIn: Date,
     checkOut: Date,
-    breakDetails?: BreakDetail[],
+    breakDetails?: BreakDetail[] | string | null,
     totalBreakTime?: string,
     orgHours?: OrganisationHours
   ): WorkSession {
@@ -87,10 +87,29 @@ export class TimeCalculatorUtil {
   /**
    * Calculate break time with multiple format support and precision
    */
-  static calculateTotalBreakMinutes(breakDetails?: BreakDetail[], totalBreakTime?: string): number {
-    // Prefer breakDetails for accuracy
-    if (breakDetails && breakDetails.length > 0) {
-      return breakDetails.reduce((total, breakItem) => {
+  static calculateTotalBreakMinutes(breakDetails?: BreakDetail[] | string | null, totalBreakTime?: string): number {
+    // Handle case where breakDetails might be a JSON string (from simple-json column)
+    let parsedBreakDetails: BreakDetail[] | undefined;
+    
+    if (breakDetails) {
+      if (typeof breakDetails === 'string') {
+        try {
+          parsedBreakDetails = JSON.parse(breakDetails);
+        } catch (error) {
+          // If parsing fails, treat as invalid and fall through to totalBreakTime
+          parsedBreakDetails = undefined;
+        }
+      } else if (Array.isArray(breakDetails)) {
+        parsedBreakDetails = breakDetails;
+      } else {
+        // If it's an object but not an array, try to convert it
+        parsedBreakDetails = undefined;
+      }
+    }
+
+    // Prefer breakDetails for accuracy (only if it's a valid array)
+    if (parsedBreakDetails && Array.isArray(parsedBreakDetails) && parsedBreakDetails.length > 0) {
+      return parsedBreakDetails.reduce((total, breakItem) => {
         try {
           // Check if both startTime and endTime exist and are not null
           if (!breakItem.startTime || !breakItem.endTime) {
@@ -343,7 +362,7 @@ export class TimeCalculatorUtil {
   static splitMultiDayShift(
     checkIn: Date,
     checkOut: Date | null,
-    breakDetails?: BreakDetail[],
+    breakDetails?: BreakDetail[] | string | null,
     totalBreakTime?: string
   ): SplitShiftResult {
     const startTime = new Date(checkIn);
