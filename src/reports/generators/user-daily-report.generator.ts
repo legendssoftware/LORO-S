@@ -24,6 +24,7 @@ import { OrganisationHoursService } from '../../organisation/services/organisati
 import { ReportUtils } from '../utils/report-utils';
 import { TimezoneUtil } from '../../lib/utils/timezone.util';
 import { OrganizationHoursService } from '../../attendance/services/organization.hours.service';
+import { BreakDetail } from '../../lib/interfaces/break-detail.interface';
 
 @Injectable()
 export class UserDailyReportGenerator {
@@ -521,9 +522,32 @@ export class UserDailyReportGenerator {
 		let breakDetails = [];
 
 		for (const record of attendanceRecords) {
-			if (record.breakDetails && record.breakDetails.length > 0) {
+			if (!record.breakDetails) {
+				continue;
+			}
+
+			// Handle case where breakDetails might be a JSON string (from simple-json column)
+			let parsedBreakDetails: BreakDetail[] = [];
+			
+			if (typeof record.breakDetails === 'string') {
+				try {
+					const parsed = JSON.parse(record.breakDetails);
+					parsedBreakDetails = Array.isArray(parsed) ? parsed : [];
+				} catch (error) {
+					this.logger.warn(`Failed to parse breakDetails JSON string for record ${record.uid}: ${error.message}`);
+					continue;
+				}
+			} else if (Array.isArray(record.breakDetails)) {
+				parsedBreakDetails = record.breakDetails;
+			} else {
+				// If it's neither a string nor an array, skip this record
+				this.logger.warn(`breakDetails is not an array or string for record ${record.uid}, type: ${typeof record.breakDetails}`);
+				continue;
+			}
+
+			if (parsedBreakDetails.length > 0) {
 				const formattedBreaks = await Promise.all(
-					record.breakDetails
+					parsedBreakDetails
 						.map(async (breakItem) => {
 							if (!breakItem.startTime || !breakItem.endTime) return null;
 
