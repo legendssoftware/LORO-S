@@ -94,7 +94,9 @@ export class TimeCalculatorUtil {
     if (breakDetails) {
       if (typeof breakDetails === 'string') {
         try {
-          parsedBreakDetails = JSON.parse(breakDetails);
+          const parsed = JSON.parse(breakDetails);
+          // Ensure parsed result is an array
+          parsedBreakDetails = Array.isArray(parsed) ? parsed : undefined;
         } catch (error) {
           // If parsing fails, treat as invalid and fall through to totalBreakTime
           parsedBreakDetails = undefined;
@@ -102,7 +104,7 @@ export class TimeCalculatorUtil {
       } else if (Array.isArray(breakDetails)) {
         parsedBreakDetails = breakDetails;
       } else {
-        // If it's an object but not an array, try to convert it
+        // If it's an object but not an array, treat as invalid
         parsedBreakDetails = undefined;
       }
     }
@@ -111,18 +113,38 @@ export class TimeCalculatorUtil {
     if (parsedBreakDetails && Array.isArray(parsedBreakDetails) && parsedBreakDetails.length > 0) {
       return parsedBreakDetails.reduce((total, breakItem) => {
         try {
+          // Ensure breakItem is an object before accessing properties
+          if (!breakItem || typeof breakItem !== 'object') {
+            return total;
+          }
+
           // Check if both startTime and endTime exist and are not null
           if (!breakItem.startTime || !breakItem.endTime) {
             return total;
           }
 
           // Convert to Date objects if they aren't already
-          const startDate = breakItem.startTime instanceof Date 
-            ? breakItem.startTime 
-            : new Date(breakItem.startTime);
-          const endDate = breakItem.endTime instanceof Date 
-            ? breakItem.endTime 
-            : new Date(breakItem.endTime);
+          // Wrap in try-catch to handle invalid date strings
+          let startDate: Date;
+          let endDate: Date;
+          
+          try {
+            startDate = breakItem.startTime instanceof Date 
+              ? breakItem.startTime 
+              : new Date(breakItem.startTime);
+          } catch (error) {
+            // Invalid startTime, skip this break item
+            return total;
+          }
+          
+          try {
+            endDate = breakItem.endTime instanceof Date 
+              ? breakItem.endTime 
+              : new Date(breakItem.endTime);
+          } catch (error) {
+            // Invalid endTime, skip this break item
+            return total;
+          }
 
           // Validate that dates are valid
           if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
