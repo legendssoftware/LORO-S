@@ -1,7 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThanOrEqual, IsNull, In, Not } from 'typeorm';
 import { startOfDay, subDays } from 'date-fns';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
+import { ConfigService } from '@nestjs/config';
 import { Attendance } from '../../attendance/entities/attendance.entity';
 import { AttendanceStatus } from '../../lib/enums/attendance.enums';
 import { Client } from '../../clients/entities/client.entity';
@@ -15,6 +18,7 @@ import { Task } from '../../tasks/entities/task.entity';
 import { Journal } from '../../journal/entities/journal.entity';
 import { Lead } from '../../leads/entities/lead.entity';
 import { Tracking } from '../../tracking/entities/tracking.entity';
+import { Claim } from '../../claims/entities/claim.entity';
 import { GoogleMapsService } from '../../lib/services/google-maps.service';
 import { TrackingService } from '../../tracking/tracking.service';
 
@@ -30,6 +34,9 @@ interface MapDataRequestParams {
 @Injectable()
 export class MapDataReportGenerator {
 	private readonly logger = new Logger(MapDataReportGenerator.name);
+	private readonly CACHE_PREFIX = 'mapdata:';
+	private readonly CACHE_TTL: number;
+	private readonly GEOCODE_CACHE_TTL = 86400000; // 24 hours
 
 	constructor(
 		@InjectRepository(Attendance)
@@ -54,11 +61,45 @@ export class MapDataReportGenerator {
 		private leadRepository: Repository<Lead>,
 		@InjectRepository(Tracking)
 		private trackingRepository: Repository<Tracking>,
+		@InjectRepository(Claim)
+		private claimRepository: Repository<Claim>,
+		@Inject(CACHE_MANAGER)
+		private cacheManager: Cache,
+		private readonly configService: ConfigService,
 		private googleMapsService: GoogleMapsService,
 		private trackingService: TrackingService,
-	) {}
+	) {
+		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 300;
+		this.logger.log(`MapDataReportGenerator initialized with cache TTL: ${this.CACHE_TTL}ms`);
+	}
+
+	private getCacheKey(organisationId: number, branchId?: number, userId?: number): string {
+		return `${this.CACHE_PREFIX}org${organisationId}_${branchId || 'all'}_${userId || 'all'}`;
+	}
+
+	private async getCachedGeocode(latitude: number, longitude: number): Promise<string | null> {
+		const roundedLat = Math.round(latitude * 10000) / 10000;
+		const roundedLng = Math.round(longitude * 10000) / 10000;
+		const cacheKey = `geocode:${roundedLat}_${roundedLng}`;
+		return await this.cacheManager.get<string>(cacheKey);
+	}
+
+	private async setCachedGeocode(latitude: number, longitude: number, address: string): Promise<void> {
+		const roundedLat = Math.round(latitude * 10000) / 10000;
+		const roundedLng = Math.round(longitude * 10000) / 10000;
+		const cacheKey = `geocode:${roundedLat}_${roundedLng}`;
+		await this.cacheManager.set(cacheKey, address, this.GEOCODE_CACHE_TTL);
+	}
 
 	async generate(params: MapDataRequestParams): Promise<Record<string, any>> {
+		const cacheKey = this.getCacheKey(params.organisationId, params.branchId, params.userId);
+		
+		const cached = await this.cacheManager.get<Record<string, any>>(cacheKey);
+		if (cached) {
+			this.logger.debug(`Cache hit for map data: ${cacheKey}`);
+			return cached;
+		}
+
 		const startTime = new Date();
 		this.logger.log(`Starting map data generation for organisation ${params.organisationId}${params.branchId ? `, branch ${params.branchId}` : ''}${params.userId ? `, user ${params.userId}` : ''}`);
 		
@@ -147,15 +188,22 @@ export class MapDataReportGenerator {
 			
 			this.logger.debug(`Date range for queries: Today start: ${todayStart.toISOString()}, Yesterday start: ${yesterdayStart.toISOString()}`);
 
-			// ---------- COMPREHENSIVE MARKER DATA COLLECTION ----------
-			const allMarkers: any[] = [];
-
-			// ---------- ATTENDANCE DATA (Check-ins, Shift Start/End, Breaks) ----------
-			this.logger.debug('Fetching comprehensive attendance records');
-			
-			// Active attendance (current check-ins) - Enhanced query
-			this.logger.debug(`Fetching active attendance for org ${organisationId}, branch ${branchId || 'all'}`);
-			const activeAttendance = await this.attendanceRepository.find({
+			// ---------- PARALLEL DATA FETCHING ----------
+			this.logger.debug('Fetching all data in parallel');
+			const [
+				activeAttendance,
+				recentAttendance,
+				clients,
+				competitors,
+				quotationsRaw,
+				leads,
+				journals,
+				checkIns,
+				tasks,
+				claims,
+			] = await Promise.all([
+				// Active attendance
+				this.attendanceRepository.find({
 				where: {
 					organisation: { uid: organisationId },
 					...(branchId ? { branch: { uid: branchId } } : {}),
@@ -164,40 +212,166 @@ export class MapDataReportGenerator {
 					// checkIn: MoreThanOrEqual(todayStart), // Removed - was too restrictive
 					checkOut: IsNull(), // Still present (not checked out)
 				},
-				relations: ['owner', 'branch', 'organisation'], // Removed 'owner.profile' - doesn't exist
-			});
-
-			this.logger.log(`Found ${activeAttendance.length} active attendance records (currently checked in)`);
-
-			// Recent attendance (for shift start/end tracking) - Enhanced query
-			const recentAttendance = await this.attendanceRepository.find({
+				relations: ['owner', 'branch', 'organisation'],
+				}),
+				// Recent attendance
+				this.attendanceRepository.find({
 				where: {
 					organisation: { uid: organisationId },
 					...(branchId ? { branch: { uid: branchId } } : {}),
-					// Expand to last 7 days for better data coverage
 					checkIn: MoreThanOrEqual(subDays(new Date(), 7)),
 				},
-				relations: ['owner', 'branch', 'organisation'], // Removed 'owner.profile' - doesn't exist
+					relations: ['owner', 'branch', 'organisation'],
 				order: { checkIn: 'DESC' },
-				take: 100, // Increased from 50
-			});
+					take: 100,
+				}),
+				// Clients
+				this.clientRepository.find({
+					where: {
+						organisation: { uid: organisationId },
+						...(branchId ? { branch: { uid: branchId } } : {}),
+						latitude: Not(IsNull()),
+						longitude: Not(IsNull()),
+					},
+					relations: ['assignedSalesRep'],
+					select: [
+						'uid', 'name', 'latitude', 'longitude', 'address', 'status',
+						'contactPerson', 'email', 'phone', 'alternativePhone', 'website',
+						'logo', 'description', 'industry', 'companySize', 'annualRevenue',
+						'creditLimit', 'outstandingBalance', 'lifetimeValue', 'priceTier',
+						'riskLevel', 'satisfactionScore', 'npsScore', 'preferredContactMethod',
+						'preferredPaymentMethod', 'paymentTerms', 'discountPercentage',
+						'lastVisitDate', 'nextContactDate', 'acquisitionChannel', 'acquisitionDate',
+						'birthday', 'anniversaryDate', 'tags', 'visibleCategories',
+						'socialMedia', 'customFields', 'geofenceType', 'geofenceRadius',
+						'enableGeofence', 'createdAt', 'updatedAt'
+					],
+				}),
+				// Competitors
+				this.competitorRepository.find({
+					where: {
+						organisation: { uid: organisationId },
+						...(branchId ? { branch: { uid: branchId } } : {}),
+						latitude: Not(IsNull()),
+						longitude: Not(IsNull()),
+					},
+					relations: ['createdBy'],
+					select: [
+						'uid', 'name', 'latitude', 'longitude', 'address', 'status',
+						'description', 'website', 'contactEmail', 'contactPhone', 'logoUrl',
+						'industry', 'marketSharePercentage', 'estimatedAnnualRevenue',
+						'estimatedEmployeeCount', 'threatLevel', 'competitiveAdvantage',
+						'isDirect', 'foundedDate', 'keyProducts', 'keyStrengths', 'keyWeaknesses',
+						'pricingData', 'businessStrategy', 'marketingStrategy', 'socialMedia',
+						'competitorRef', 'geofenceType', 'geofenceRadius', 'enableGeofence',
+						'createdAt', 'updatedAt'
+					],
+				}),
+				// Quotations
+				this.quotationRepository.find({
+					where: {
+						organisation: { uid: organisationId },
+						...(branchId ? { branch: { uid: branchId } } : {}),
+					},
+					relations: ['client', 'branch', 'organisation'],
+					select: ['uid', 'totalAmount', 'status', 'quotationNumber', 'createdAt'],
+					take: 1000,
+				}),
+				// Leads
+				this.leadRepository.find({
+					where: {
+						organisationUid: organisationId,
+						...(branchId ? { branchUid: branchId } : {}),
+						isDeleted: false,
+					},
+					relations: ['owner', 'client', 'interactions'],
+					select: [
+						'uid', 'name', 'companyName', 'email', 'phone', 'latitude', 'longitude',
+						'category', 'notes', 'status', 'image', 'attachments', 'intent',
+						'userQualityRating', 'temperature', 'source', 'priority', 'lifecycleStage',
+						'jobTitle', 'decisionMakerRole', 'industry', 'businessSize', 'budgetRange',
+						'purchaseTimeline', 'preferredCommunication', 'timezone', 'bestContactTime',
+						'leadScore', 'lastContactDate', 'nextFollowUpDate', 'totalInteractions',
+						'averageResponseTime', 'daysSinceLastResponse', 'painPoints', 'estimatedValue',
+						'competitorInfo', 'referralSource', 'campaignName', 'landingPage',
+						'utmSource', 'utmMedium', 'utmCampaign', 'utmTerm', 'utmContent',
+						'scoringData', 'activityData', 'bantQualification', 'sourceTracking',
+						'competitorData', 'customFields', 'createdAt', 'updatedAt', 'assignees',
+						'changeHistory'
+					],
+				}),
+				// Journals
+				this.journalRepository.find({
+					where: {
+						organisation: { uid: organisationId },
+						...(branchId ? { branch: { uid: branchId } } : {}),
+						isDeleted: false,
+						createdAt: MoreThanOrEqual(subDays(new Date(), 30)),
+					},
+					relations: ['owner', 'branch', 'organisation'],
+					order: { createdAt: 'DESC' },
+					take: 200,
+				}),
+				// CheckIns
+				this.checkInRepository.find({
+					where: {
+						organisation: { uid: organisationId },
+						...(branchId ? { branch: { uid: branchId } } : {}),
+					},
+					relations: ['owner', 'client', 'branch', 'organisation'],
+					take: 200,
+				}),
+				// Tasks
+				this.taskRepository.find({
+					where: {
+						organisation: { uid: organisationId },
+						...(branchId ? { branch: { uid: branchId } } : {}),
+						updatedAt: MoreThanOrEqual(subDays(new Date(), 30)),
+					},
+					relations: ['creator', 'branch', 'organisation'],
+					order: { updatedAt: 'DESC' },
+					take: 200,
+				}),
+				// Claims
+				this.claimRepository.find({
+					where: {
+						organisation: { uid: organisationId },
+						...(branchId ? { branch: { uid: branchId } } : {}),
+						isDeleted: false,
+					},
+					relations: ['owner', 'branch', 'organisation'],
+					order: { createdAt: 'DESC' },
+					take: 200,
+				}),
+			]);
 
-			this.logger.log(`Found ${recentAttendance.length} recent attendance records (last 7 days)`);
+			this.logger.log(`Fetched: ${activeAttendance.length} active, ${recentAttendance.length} recent attendance, ${clients.length} clients, ${competitors.length} competitors, ${quotationsRaw.length} quotations, ${leads.length} leads, ${journals.length} journals, ${checkIns.length} checkIns, ${tasks.length} tasks, ${claims.length} claims`);
 
-			// Helper function to reverse geocode coordinates with fallback
+			// Helper function to reverse geocode coordinates with caching
 			const geocodeLocation = async (latitude: number, longitude: number, fallback: string): Promise<string> => {
 				if (!latitude || !longitude) return fallback;
+				
+				const cachedAddress = await this.getCachedGeocode(latitude, longitude);
+				if (cachedAddress) {
+					return cachedAddress;
+				}
+
 				try {
 					const geocodingResult = await this.googleMapsService.reverseGeocode({
 						latitude: Number(latitude),
 						longitude: Number(longitude)
 					});
-					return geocodingResult.formattedAddress || fallback;
+					const address = geocodingResult.formattedAddress || fallback;
+					await this.setCachedGeocode(latitude, longitude, address);
+					return address;
 				} catch (error) {
 					this.logger.debug(`Failed to geocode location ${latitude}, ${longitude}: ${error.message}`);
 					return fallback;
 				}
 			};
+
+			// Initialize allMarkers array to collect all markers
+			const allMarkers: any[] = [];
 
 			// Process active attendance (check-ins)
 			const workers = await Promise.all(
@@ -477,32 +651,12 @@ export class MapDataReportGenerator {
 			this.logger.log(`Processed ${workers.length} workers, ${shiftStartMarkers.length} shift starts, ${shiftEndMarkers.length} shift ends, ${breakStartMarkers.length} break starts, ${breakEndMarkers.length} break ends`);
 
 			// ---------- CLIENTS (Enhanced with comprehensive data) ----------
-			this.logger.debug('Fetching client data with location information');
-			const clients = await this.clientRepository.find({
-				where: {
-					organisation: { uid: organisationId },
-					...(branchId ? { branch: { uid: branchId } } : {}),
-					latitude: Not(IsNull()),
-					longitude: Not(IsNull()),
-				},
-				relations: ['assignedSalesRep'],
-				select: [
-					'uid', 'name', 'latitude', 'longitude', 'address', 'status',
-					'contactPerson', 'email', 'phone', 'alternativePhone', 'website',
-					'logo', 'description', 'industry', 'companySize', 'annualRevenue',
-					'creditLimit', 'outstandingBalance', 'lifetimeValue', 'priceTier',
-					'riskLevel', 'satisfactionScore', 'npsScore', 'preferredContactMethod',
-					'preferredPaymentMethod', 'paymentTerms', 'discountPercentage',
-					'lastVisitDate', 'nextContactDate', 'acquisitionChannel', 'acquisitionDate',
-					'birthday', 'anniversaryDate', 'tags', 'visibleCategories',
-					'socialMedia', 'customFields', 'geofenceType', 'geofenceRadius',
-					'enableGeofence', 'createdAt', 'updatedAt'
-				],
-			});
+			this.logger.debug('Processing client data with location information');
+			// Note: clients are already fetched in Promise.all above, filtering for location data
+			const clientsWithLocation = clients.filter(c => c.latitude && c.longitude);
+			this.logger.log(`Found ${clientsWithLocation.length} clients with location data out of ${clients.length} total`);
 
-			this.logger.log(`Found ${clients.length} clients with location data`);
-
-			const clientMarkers = clients.map((c) => {
+			const clientMarkers = clientsWithLocation.map((c) => {
 				this.logger.debug(`Mapping client data for ${c.name} (${c.uid})`);
 				return {
 					id: c.uid,
@@ -567,32 +721,8 @@ export class MapDataReportGenerator {
 			this.logger.log(`Processed ${clientMarkers.length} client markers`);
 
 			// ---------- LEADS (Comprehensive lead tracking with status and stages) ----------
-			this.logger.debug('Fetching comprehensive leads data with location information');
-			const leads = await this.leadRepository.find({
-				where: {
-					organisationUid: organisationId,
-					...(branchId ? { branchUid: branchId } : {}),
-					isDeleted: false,
-					// Remove restrictive date filter to get all leads
-					// createdAt: MoreThanOrEqual(subDays(new Date(), 30)), // Removed - was too restrictive
-				},
-				relations: ['owner', 'client', 'interactions'],
-				select: [
-					'uid', 'name', 'companyName', 'email', 'phone', 'latitude', 'longitude',
-					'category', 'notes', 'status', 'image', 'attachments', 'intent',
-					'userQualityRating', 'temperature', 'source', 'priority', 'lifecycleStage',
-					'jobTitle', 'decisionMakerRole', 'industry', 'businessSize', 'budgetRange',
-					'purchaseTimeline', 'preferredCommunication', 'timezone', 'bestContactTime',
-					'leadScore', 'lastContactDate', 'nextFollowUpDate', 'totalInteractions',
-					'averageResponseTime', 'daysSinceLastResponse', 'painPoints', 'estimatedValue',
-					'competitorInfo', 'referralSource', 'campaignName', 'landingPage',
-					'utmSource', 'utmMedium', 'utmCampaign', 'utmTerm', 'utmContent',
-					'scoringData', 'activityData', 'bantQualification', 'sourceTracking',
-					'competitorData', 'customFields', 'createdAt', 'updatedAt', 'assignees',
-					'changeHistory'
-				],
-			});
-
+			this.logger.debug('Processing comprehensive leads data with location information');
+			// Note: leads are already fetched in Promise.all above
 			this.logger.log(`Found ${leads.length} leads total for organization ${organisationId}`);
 
 			// Filter leads with location data
@@ -687,38 +817,8 @@ export class MapDataReportGenerator {
 			this.logger.log(`Processed ${leadMarkers.length} lead markers`);
 
 			// ---------- COMPETITORS (Enhanced with comprehensive data) ----------
-			this.logger.debug('Fetching competitor data with location information');
-			
-			// First, get total competitor count for debugging
-			const totalCompetitorCount = await this.competitorRepository.count({
-				where: {
-					organisation: { uid: organisationId },
-					...(branchId ? { branch: { uid: branchId } } : {}),
-				}
-			});
-			this.logger.log(`📊 Total competitors in DB for org ${organisationId}: ${totalCompetitorCount}`);
-			
-			const competitors = await this.competitorRepository.find({
-				where: {
-					organisation: { uid: organisationId },
-					...(branchId ? { branch: { uid: branchId } } : {}),
-					// Remove overly restrictive location filter - let's get all competitors first
-					// latitude: Not(IsNull()),
-					// longitude: Not(IsNull()),
-				},
-				relations: ['createdBy'],
-				select: [
-					'uid', 'name', 'latitude', 'longitude', 'address', 'status',
-					'description', 'website', 'contactEmail', 'contactPhone', 'logoUrl',
-					'industry', 'marketSharePercentage', 'estimatedAnnualRevenue',
-					'estimatedEmployeeCount', 'threatLevel', 'competitiveAdvantage',
-					'isDirect', 'foundedDate', 'keyProducts', 'keyStrengths', 'keyWeaknesses',
-					'pricingData', 'businessStrategy', 'marketingStrategy', 'socialMedia',
-					'competitorRef', 'geofenceType', 'geofenceRadius', 'enableGeofence',
-					'createdAt', 'updatedAt'
-				],
-			});
-
+			this.logger.debug('Processing competitor data with location information');
+			// Note: competitors are already fetched in Promise.all above
 			this.logger.log(`Found ${competitors.length} competitors total for organization ${organisationId}`);
 
 			// Filter competitors with valid location data and map them
@@ -779,21 +879,9 @@ export class MapDataReportGenerator {
 			this.logger.log(`Processed ${competitorMarkers.length} competitor markers`);
 
 			// ---------- JOURNAL ENTRIES (Enhanced to include more records) ----------
-			this.logger.debug('Fetching comprehensive journal entries with expanded date range');
-			const journals = await this.journalRepository.find({
-				where: {
-					organisation: { uid: organisationId },
-					...(branchId ? { branch: { uid: branchId } } : {}),
-					isDeleted: false,
-					// Expand date range to get more journal entries
-					createdAt: MoreThanOrEqual(subDays(new Date(), 30)), // Last 30 days instead of just yesterday
-				},
-				relations: ['owner', 'branch', 'organisation'],
-				order: { createdAt: 'DESC' },
-				take: 200, // Increased from 100
-			});
-
-			this.logger.log(`Found ${journals.length} journal entries from last 30 days`);
+			this.logger.debug('Processing comprehensive journal entries');
+			// Note: journals are already fetched in Promise.all above
+			this.logger.log(`Found ${journals.length} journal entries`);
 
 			// Map journal entries to markers by trying to get location from clientRef
 			const journalMarkers: any[] = [];
@@ -861,18 +949,8 @@ export class MapDataReportGenerator {
 			this.logger.log(`Processed ${journalMarkers.length} journal markers with valid locations`);
 
 			// ---------- CHECK-IN LOCATIONS (Enhanced client visits - NOTE: Using simplified approach) ----------
-			this.logger.debug('Fetching check-in data (Note: CheckIn entity has limited location data)');
-			const checkIns = await this.checkInRepository.find({
-				where: {
-					organisation: { uid: organisationId }, // Correct relation name
-					...(branchId ? { branch: { uid: branchId } } : {}),
-					// Note: CheckIn entity doesn't have createdAt field, so we remove date filter for now
-				},
-				relations: ['owner', 'client', 'branch', 'organisation'],
-				// Note: CheckIn entity doesn't have createdAt field, so we can't order by it
-				take: 200,
-			});
-
+			this.logger.debug('Processing check-in data (Note: CheckIn entity has limited location data)');
+			// Note: checkIns are already fetched in Promise.all above
 			this.logger.log(`Found ${checkIns.length} check-ins total (Note: CheckIn entity has no geolocation fields)`);
 
 			// Note: CheckIn entity doesn't have latitude/longitude fields, so we'll try to use client location
@@ -929,20 +1007,9 @@ export class MapDataReportGenerator {
 			this.logger.log(`Processed ${checkInMarkers.length} check-in markers with valid locations`);
 
 			// ---------- TASKS (Enhanced task assignments and completions) ----------
-			this.logger.debug('Fetching comprehensive task data with expanded date range');
-			const tasks = await this.taskRepository.find({
-				where: {
-					organisation: { uid: organisationId },
-					...(branchId ? { branch: { uid: branchId } } : {}),
-					// Expand date range to get more tasks
-					updatedAt: MoreThanOrEqual(subDays(new Date(), 30)), // Last 30 days instead of just yesterday
-				},
-				relations: ['creator', 'branch', 'organisation'], // Task has creator not createdBy, no direct client/assignedTo relations
-				order: { updatedAt: 'DESC' },
-				take: 200, // Increased from 100
-			});
-
-			this.logger.log(`Found ${tasks.length} tasks updated in last 30 days`);
+			this.logger.debug('Processing comprehensive task data');
+			// Note: tasks are already fetched in Promise.all above
+			this.logger.log(`Found ${tasks.length} tasks`);
 
 			// Note: Tasks have clients as JSON array, need to find associated client locations
 			const taskMarkers: any[] = [];
@@ -1009,49 +1076,12 @@ export class MapDataReportGenerator {
 			}
 
 			allMarkers.push(...taskMarkers);
-			
 			this.logger.log(`Processed ${taskMarkers.length} task markers with valid client locations`);
 
-			// ---------- QUOTATIONS (Enhanced to include more records) ----------
-			this.logger.debug('Fetching quotations data with expanded date range');
-			
-			// First, get total quotation count for debugging
-			const totalQuotationCountAll = await this.quotationRepository.count({
-				where: {
-					organisation: { uid: organisationId },
-					...(branchId ? { branch: { uid: branchId } } : {}),
-				}
-			});
-			this.logger.log(`📊 Total quotations in DB for org ${organisationId}: ${totalQuotationCountAll}`);
-			
-			const quotationsRaw = await this.quotationRepository.find({
-				where: {
-					organisation: { uid: organisationId }, // Use correct relation
-					...(branchId ? { branch: { uid: branchId } } : {}), // Use correct relation
-					// Expand date range to get ALL quotations for now to debug the issue
-					// createdAt: MoreThanOrEqual(subDays(new Date(), 90)), // Remove date restriction temporarily
-				},
-				relations: ['client', 'branch', 'organisation'],
-				select: ['uid', 'totalAmount', 'status', 'quotationNumber', 'createdAt'],
-				take: 1000, // Limit to avoid performance issues but get more data
-			});
-
-			this.logger.log(`Found ${quotationsRaw.length} quotations total for organization ${organisationId}`);
-			
-			// Filter quotations by client location availability and log detailed info
-			const quotationsWithClients = quotationsRaw.filter(q => q.client);
-			const quotationsWithoutClients = quotationsRaw.filter(q => !q.client);
-			
-			this.logger.log(`Quotations breakdown: ${quotationsWithClients.length} with clients, ${quotationsWithoutClients.length} without clients`);
-			
-			const quotationsWithLocation = quotationsWithClients.filter(q => q.client?.latitude && q.client?.longitude);
-			const quotationsWithoutLocation = quotationsWithClients.filter(q => !q.client?.latitude || !q.client?.longitude);
-			
-			this.logger.log(`Quotations with clients: ${quotationsWithLocation.length} with location data, ${quotationsWithoutLocation.length} without location data`);
-			
-			const quotations = quotationsWithLocation.map((q) => {
-					this.logger.debug(`Mapping quotation data for ${q.quotationNumber || q.uid} - client: ${q.client.name}`);
-					return {
+			// ---------- QUOTATIONS ----------
+			this.logger.debug('Processing quotations data');
+			const quotationsWithLocation = quotationsRaw.filter(q => q.client?.latitude && q.client?.longitude);
+			const quotations = quotationsWithLocation.map((q) => ({
 						id: q.uid,
 						quotationNumber: (q as any).quotationNumber || q.uid.toString(),
 						clientName: q.client.name,
@@ -1063,14 +1093,63 @@ export class MapDataReportGenerator {
 						quotationDate: q.createdAt,
 						validUntil: (q as any).expiryDate,
 						markerType: 'quotation',
-						placedBy: 'System', // Default value
-						isConverted: false, // Default value
-					};
-				});
-
+				placedBy: 'System',
+				isConverted: false,
+			}));
 			allMarkers.push(...quotations);
-				
 			this.logger.log(`Processed ${quotations.length} quotations with valid client locations`);
+
+			// ---------- CLAIMS ----------
+			this.logger.debug('Processing claims data');
+			const claimMarkers: any[] = [];
+			for (const claim of claims) {
+				try {
+					if (claim.owner?.uid) {
+						const ownerAttendance = await this.attendanceRepository.findOne({
+							where: { owner: { uid: claim.owner.uid } },
+							order: { checkIn: 'DESC' },
+							select: ['checkInLatitude', 'checkInLongitude', 'checkInNotes'],
+						});
+
+						if (ownerAttendance?.checkInLatitude && ownerAttendance?.checkInLongitude) {
+							const address = await geocodeLocation(
+								Number(ownerAttendance.checkInLatitude),
+								Number(ownerAttendance.checkInLongitude),
+								ownerAttendance.checkInNotes || 'Claim Location'
+							);
+
+							claimMarkers.push({
+								id: `claim-${claim.uid}`,
+								name: `Claim - ${claim.claimRef || claim.uid}`,
+								position: [Number(ownerAttendance.checkInLatitude), Number(ownerAttendance.checkInLongitude)] as [number, number],
+								latitude: Number(ownerAttendance.checkInLatitude),
+								longitude: Number(ownerAttendance.checkInLongitude),
+								markerType: 'claim',
+								status: claim.status,
+								amount: claim.amount,
+								location: { address },
+								claimData: {
+									uid: claim.uid,
+									claimRef: claim.claimRef,
+									amount: claim.amount,
+									status: claim.status,
+									category: claim.category,
+									currency: claim.currency,
+									createdAt: claim.createdAt,
+								},
+								owner: claim.owner ? {
+									uid: claim.owner.uid,
+									name: (claim.owner as any).name
+								} : null,
+							});
+						}
+					}
+				} catch (error) {
+					this.logger.debug(`Error processing claim ${claim.uid}: ${error.message}`);
+				}
+			}
+			allMarkers.push(...claimMarkers);
+			this.logger.log(`Processed ${claimMarkers.length} claim markers`);
 
 			// ---------- EVENTS (Recent activities) ----------
 			this.logger.debug('Generating events data from recent activities');
@@ -1115,9 +1194,7 @@ export class MapDataReportGenerator {
 
 			const orgRegions: Array<{ name: string; center: { lat: number; lng: number }; zoom: number }> = [];
 
-			// Performance logging
-			const endTime = new Date();
-			const executionTime = endTime.getTime() - startTime.getTime();
+			// Performance logging (removed duplicate)
 
 			// Debug: Log the composition of allMarkers before filtering
 			const markerTypeCounts = allMarkers.reduce((acc, marker) => {
@@ -1143,6 +1220,7 @@ export class MapDataReportGenerator {
 				shiftEnds: allMarkers.filter(m => m.markerType === 'shift-end'),
 				breakStarts: allMarkers.filter(m => m.markerType === 'break-start'),
 				breakEnds: allMarkers.filter(m => m.markerType === 'break-end'),
+				claims: allMarkers.filter(m => m.markerType === 'claim'),
 			};
 			
 			// Debug: Log the filtered marker counts
@@ -1308,14 +1386,13 @@ export class MapDataReportGenerator {
 				}
 			}
 			
+			const executionTime = new Date().getTime() - startTime.getTime();
+			
 			const finalData = {
-				// Individual arrays for backward compatibility
 				workers: markersByType.workers,
 				clients: markersByType.clients,
 				competitors: markersByType.competitors,
 				quotations: markersByType.quotations,
-				
-				// New comprehensive data arrays
 				leads: markersByType.leads,
 				journals: markersByType.journals,
 				tasks: markersByType.tasks,
@@ -1324,24 +1401,15 @@ export class MapDataReportGenerator {
 				shiftEnds: markersByType.shiftEnds,
 				breakStarts: markersByType.breakStarts,
 				breakEnds: markersByType.breakEnds,
-				
-				// All markers combined for comprehensive filtering
+				claims: markersByType.claims,
 				allMarkers: allMarkers,
-				
-				// Events data
 				events,
-				
-				// Map configuration
 				mapConfig: {
 					defaultCenter,
 					orgRegions,
 				},
-				
-				// Enhanced GPS Analysis Data
 				gpsAnalysis: enhancedGpsAnalysis,
 				routeOptimizations: routeOptimizations,
-				
-				// Enhanced data matching client expectations
 				analytics: {
 					totalMarkers: allMarkers.length,
 					markerBreakdown: markersByType,
@@ -1351,7 +1419,10 @@ export class MapDataReportGenerator {
 			};
 			
 			this.logger.log(`Map data generation completed successfully in ${executionTime}ms`);
-			this.logger.log(`Summary - Total markers: ${allMarkers.length}, Workers: ${markersByType.workers.length}, Clients: ${markersByType.clients.length}, Competitors: ${markersByType.competitors.length}, Quotations: ${markersByType.quotations.length}, Leads: ${markersByType.leads.length}, Journals: ${markersByType.journals.length}, Tasks: ${markersByType.tasks.length}, Check-ins: ${markersByType.checkIns.length}, Events: ${events.length}`);
+			this.logger.log(`Summary - Total markers: ${allMarkers.length}, Claims: ${markersByType.claims.length}`);
+			
+			await this.cacheManager.set(cacheKey, finalData, this.CACHE_TTL);
+			this.logger.log(`Map data cached: ${cacheKey}`);
 			
 			return finalData;
 		} catch (error) {
@@ -1564,6 +1635,61 @@ export class MapDataReportGenerator {
 					});
 				}
 			});
+
+			this.logger.debug('Fetching recent shift starts and ends for events');
+			// Recent shift starts and ends from attendance records
+			const recentAttendance = await this.attendanceRepository.find({
+				where: {
+					organisation: { uid: organisationId },
+					...(branchId ? { branch: { uid: branchId } } : {}),
+					checkIn: MoreThanOrEqual(yesterdayStart),
+				},
+				relations: ['owner', 'branch', 'organisation'],
+				order: { checkIn: 'DESC' },
+				take: 50,
+			});
+
+			// Add shift-start events
+			recentAttendance
+				.filter((a) => a.checkInLatitude && a.checkInLongitude && a.checkIn)
+				.forEach((a) => {
+					events.push({
+						id: `shift-start-${a.uid}`,
+						type: 'shift-start',
+						title: `Shift Started - ${a.owner?.name || 'Worker'}`,
+						time: a.checkIn ? this.formatEventTime(a.checkIn) : 'Unknown time',
+						timestamp: a.checkIn ? a.checkIn.toISOString() : new Date().toISOString(),
+						user: a.owner?.name || 'Unknown User',
+						userName: a.owner?.name || 'Unknown User',
+						location: {
+							lat: Number(a.checkInLatitude),
+							lng: Number(a.checkInLongitude),
+							address: a.checkInNotes || 'Shift Start Location',
+						},
+						details: `Shift started at ${a.checkInNotes || 'location'}`,
+					});
+				});
+
+			// Add shift-end events
+			recentAttendance
+				.filter((a) => a.checkOutLatitude && a.checkOutLongitude && a.checkOut)
+				.forEach((a) => {
+					events.push({
+						id: `shift-end-${a.uid}`,
+						type: 'shift-end',
+						title: `Shift Ended - ${a.owner?.name || 'Worker'}`,
+						time: a.checkOut ? this.formatEventTime(a.checkOut) : 'Unknown time',
+						timestamp: a.checkOut ? a.checkOut.toISOString() : new Date().toISOString(),
+						user: a.owner?.name || 'Unknown User',
+						userName: a.owner?.name || 'Unknown User',
+						location: {
+							lat: Number(a.checkOutLatitude),
+							lng: Number(a.checkOutLongitude),
+							address: a.checkOutNotes || 'Shift End Location',
+						},
+						details: `Shift ended at ${a.checkOutNotes || 'location'}`,
+					});
+				});
 
 			// Sort events by timestamp (most recent first)
 			events.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());

@@ -158,4 +158,26 @@ export class MapController {
 			throw new BadRequestException('Failed to retrieve map data. Please try again.');
 		}
 	}
+
+	@Get('trip-history/:userId')
+	@ApiOperation({ summary: 'Get sales rep trip history with routing' })
+	@ApiParam({ name: 'userId', type: Number })
+	@ApiQuery({ name: 'startDate', required: false, type: String })
+	@ApiQuery({ name: 'endDate', required: false, type: String })
+	async getTripHistory(
+		@Param('userId') userId: string,
+		@Query('startDate') startDate?: string,
+		@Query('endDate') endDate?: string,
+	) {
+		const userIdNum = parseInt(userId, 10);
+		if (isNaN(userIdNum)) {
+			throw new BadRequestException('Invalid user ID');
+		}
+
+		return this.mapService.getTripHistory({
+			userId: userIdNum,
+			startDate: startDate ? new Date(startDate) : undefined,
+			endDate: endDate ? new Date(endDate) : undefined,
+		});
+	}
 }

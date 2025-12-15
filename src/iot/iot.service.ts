@@ -536,6 +536,7 @@ export class IotService {
 	/**
 	 * Save device log with key information
 	 * This method saves logs for both successful and failed operations
+	 * IMPORTANT: Only saves logs when device exists to avoid foreign key constraint violations
 	 */
 	private async saveDeviceLog(
 		device: Device | null,
@@ -556,12 +557,17 @@ export class IotService {
 		},
 	): Promise<void> {
 		try {
-			// If device is null (e.g., validation failure before device lookup), use minimal info
-			const deviceId = device?.id || 0;
-			const deviceID = device?.deviceID || timeEventDto.deviceID || 'Unknown';
-			const orgID = device?.orgID || 0;
-			const branchID = device?.branchID || null;
-			const devicePort = device?.devicePort || null;
+			// Skip saving log if device is null to avoid foreign key constraint violation
+			if (!device || !device.id) {
+				this.logger.debug(`Skipping device log save: device is null or has no ID`);
+				return;
+			}
+
+			const deviceId = device.id;
+			const deviceID = device.deviceID || timeEventDto.deviceID || 'Unknown';
+			const orgID = device.orgID || 0;
+			const branchID = device.branchID || null;
+			const devicePort = device.devicePort || null;
 
 			const deviceLog = this.deviceLogsRepository.create({
 				deviceId,
@@ -2568,23 +2574,9 @@ export class IotService {
 			const queryTimeMs = Date.now() - startTime;
 			this.logger.warn(`Time event validation failed: ${validationError.message}`);
 			
-			// Save log for validation failure
-			await this.saveDeviceLog(
-				null,
-				timeEventDto,
-				queryTimeMs,
-				networkInfo,
-				{
-					success: false,
-					errorType: 'VALIDATION_ERROR',
-					errorMessage: validationError.message,
-					errorDetails: validationError instanceof BadRequestException ? validationError.getResponse() : undefined,
-				}
-			);
-			
-			return {
-				message: validationError.message || 'Time event validation failed',
-			};
+			// Don't save log when device is null to avoid foreign key constraint violation
+			// Re-throw the exception so NestJS can return proper HTTP status code (400)
+			throw validationError;
 		}
 
 		// Start transaction for atomic operations
@@ -2678,53 +2670,79 @@ export class IotService {
 					device = null;
 				}
 				
-				// Save log for device not found error
-				await this.saveDeviceLog(
-					device,
-					timeEventDto,
-					queryTimeMs,
-					networkInfo,
-					{
-						success: false,
-						errorType: 'DEVICE_NOT_FOUND',
-						errorMessage: error.message,
-						errorDetails: error instanceof NotFoundException ? error.getResponse() : undefined,
-					}
-				);
+				// Save log for device not found error (only if device exists)
+				if (device) {
+					await this.saveDeviceLog(
+						device,
+						timeEventDto,
+						queryTimeMs,
+						networkInfo,
+						{
+							success: false,
+							errorType: 'DEVICE_NOT_FOUND',
+							errorMessage: error.message,
+							errorDetails: error instanceof NotFoundException ? error.getResponse() : undefined,
+						}
+					);
+				}
 				
-				return {
-					message: `Device with ID '${timeEventDto.deviceID}' not found. Please ensure the device is registered in the system.`,
-				};
+				// Re-throw the exception so NestJS can return proper HTTP status code (404)
+				throw error;
 			}
 
 			// Handle BadRequestException for validation errors
 			if (error instanceof BadRequestException) {
 				this.logger.warn(`Bad request: ${error.message}`);
 				
-				// Save log for bad request error
-				await this.saveDeviceLog(
-					device,
-					timeEventDto,
-					queryTimeMs,
-					networkInfo,
-					{
-						success: false,
-						errorType: 'BAD_REQUEST',
-						errorMessage: error.message,
-						errorDetails: error.getResponse(),
-					}
-				);
+				// Save log for bad request error (only if device exists)
+				if (device) {
+					await this.saveDeviceLog(
+						device,
+						timeEventDto,
+						queryTimeMs,
+						networkInfo,
+						{
+							success: false,
+							errorType: 'BAD_REQUEST',
+							errorMessage: error.message,
+							errorDetails: error.getResponse(),
+						}
+					);
+				}
 				
-				return {
-					message: error.message || 'Invalid request. Please check your input and try again.',
-				};
+				// Re-throw the exception so NestJS can return proper HTTP status code (400)
+				throw error;
 			}
 
 			// Handle ConflictException for business rule violations
 			if (error instanceof ConflictException) {
 				this.logger.warn(`Conflict detected: ${error.message}`);
 				
-				// Save log for conflict error
+				// Save log for conflict error (only if device exists)
+				if (device) {
+					await this.saveDeviceLog(
+						device,
+						timeEventDto,
+						queryTimeMs,
+						networkInfo,
+						{
+							success: false,
+							errorType: 'CONFLICT',
+							errorMessage: error.message,
+							errorDetails: error.getResponse(),
+						}
+					);
+				}
+				
+				// Re-throw the exception so NestJS can return proper HTTP status code (409)
+				throw error;
+			}
+
+			// Log unexpected errors
+			this.logger.error(`Failed to process time event: ${error.message}`);
+			
+			// Save log for unexpected error (only if device exists)
+			if (device) {
 				await this.saveDeviceLog(
 					device,
 					timeEventDto,
@@ -2732,40 +2750,18 @@ export class IotService {
 					networkInfo,
 					{
 						success: false,
-						errorType: 'CONFLICT',
+						errorType: 'UNEXPECTED_ERROR',
 						errorMessage: error.message,
-						errorDetails: error.getResponse(),
+						errorDetails: {
+							name: error.name,
+							stack: error.stack,
+						},
 					}
 				);
-				
-				return {
-					message: error.message || 'Operation conflict detected. Please try again.',
-				};
 			}
 
-			// Log unexpected errors
-			this.logger.error(`Failed to process time event: ${error.message}`);
-			
-			// Save log for unexpected error
-			await this.saveDeviceLog(
-				device,
-				timeEventDto,
-				queryTimeMs,
-				networkInfo,
-				{
-					success: false,
-					errorType: 'UNEXPECTED_ERROR',
-					errorMessage: error.message,
-					errorDetails: {
-						name: error.name,
-						stack: error.stack,
-					},
-				}
-			);
-
-			return {
-				message: 'Failed to process time event due to system error. Please try again later.',
-			};
+			// Re-throw unexpected errors so NestJS can return proper HTTP status code (500)
+			throw error;
 		} finally {
 			if (queryRunner) {
 				await queryRunner.release();

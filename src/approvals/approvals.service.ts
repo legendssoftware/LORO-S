@@ -525,14 +525,16 @@ export class ApprovalsService {
         
 
             // Create approval entity
-            const { supportingDocuments, ...approvalData } = createApprovalDto;
+            const { supportingDocuments, autoSubmit, ...approvalData } = createApprovalDto;
             const approval = this.approvalRepository.create({
                 ...approvalData,
                 requesterUid: user.uid,
                 organisationRef: user.organisationRef?.toString() || '',
                 branchUid: user.branch?.uid,
                 requestSource: 'web',
-                status: ApprovalStatus.DRAFT,
+                // If autoSubmit is true, create as PENDING; otherwise create as DRAFT
+                status: autoSubmit ? ApprovalStatus.PENDING : ApprovalStatus.DRAFT,
+                submittedAt: autoSubmit ? new Date() : undefined,
                 supportingDocuments: supportingDocuments?.map(doc => doc.url) || []
             });
 
@@ -563,24 +565,26 @@ export class ApprovalsService {
             const savedApproval = await this.approvalRepository.save(approval);
 
             // Create initial history entry
+            const initialStatus = autoSubmit ? ApprovalStatus.PENDING : ApprovalStatus.DRAFT;
             await this.createHistoryEntry(
                 savedApproval.uid,
-                ApprovalAction.SUBMIT,
+                autoSubmit ? ApprovalAction.SUBMIT : ApprovalAction.SUBMIT,
                 null,
-                ApprovalStatus.DRAFT,
+                initialStatus,
                 user.uid,
-                'Approval request created'
+                autoSubmit ? 'Approval request created and auto-submitted' : 'Approval request created'
             );
 
             // Clear relevant caches
             await this.invalidateApprovalCache(savedApproval);
 
-            // Send creation notification email
-            this.logger.debug(`📧 [create] Sending creation notification emails`);
-            await this.sendApprovalNotification(savedApproval, 'created');
+            // Send notification email (use 'submitted' if auto-submitted, otherwise 'created')
+            const notificationType = autoSubmit ? 'submitted' : 'created';
+            this.logger.debug(`📧 [create] Sending ${notificationType} notification emails`);
+            await this.sendApprovalNotification(savedApproval, notificationType);
 
             // Send push notifications
-            this.logger.debug(`📱 [create] Sending creation push notifications`);
+            this.logger.debug(`📱 [create] Sending ${notificationType} push notifications`);
             try {
                 const recipients = [];
                 if (savedApproval.approverUid) {
@@ -588,14 +592,17 @@ export class ApprovalsService {
                 }
                 
                 if (recipients.length > 0) {
+                    const pushEvent = autoSubmit ? 'APPROVAL_SUBMITTED' : 'APPROVAL_CREATED';
                     await this.sendApprovalPushNotification(
                         savedApproval,
-                        'APPROVAL_CREATED',
+                        pushEvent,
                         recipients,
                         {
-                            action: 'created',
+                            action: autoSubmit ? 'submitted' : 'created',
                             requesterName: fullUser.name,
-                            message: `New approval request from ${fullUser.name}: ${savedApproval.title}`,
+                            message: autoSubmit 
+                                ? `Approval request submitted for your review: ${savedApproval.title}`
+                                : `New approval request from ${fullUser.name}: ${savedApproval.title}`,
                         }
                     );
                 }

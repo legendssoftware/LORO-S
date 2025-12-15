@@ -101,14 +101,17 @@ export class DocsService {
 			const metadata = await pipeline.metadata();
 			const { width, height, format } = metadata;
 
-			// OPTIMIZATION 1: Resize if too large (max 2048px on longest side)
-			const MAX_DIMENSION = 2048;
+			// OPTIMIZATION 1: More aggressive resizing
+			const MAX_DIMENSION = 1920;
+			const MOBILE_MAX_DIMENSION = 1280;
+			
 			if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
-				pipeline = pipeline.resize(MAX_DIMENSION, MAX_DIMENSION, {
+				const targetDimension = originalSize > 2 * 1024 * 1024 ? MOBILE_MAX_DIMENSION : MAX_DIMENSION;
+				pipeline = pipeline.resize(targetDimension, targetDimension, {
 					fit: 'inside',
 					withoutEnlargement: true,
 				});
-				this.logger.debug(`📐 [optimizeImageIfNeeded] Resizing from ${width}x${height} to max ${MAX_DIMENSION}px`);
+				this.logger.debug(`📐 [optimizeImageIfNeeded] Resizing from ${width}x${height} to max ${targetDimension}px`);
 			}
 
 			// OPTIMIZATION 2: Convert to WebP for better compression (except if already WebP or very small)
@@ -116,38 +119,62 @@ export class DocsService {
 			let outputMimetype = 'image/webp';
 			let outputName = originalname.replace(/\.[^.]+$/, '.webp');
 
-			// If already WebP or very small (< 100KB), keep original format but optimize
-			if (format === 'webp' || originalSize < 100000) {
+			// If already WebP or very small (< 20KB), keep original format but optimize
+			if (format === 'webp' || originalSize < 20000) {
 				outputFormat = format || 'jpeg';
 				outputMimetype = mimetype;
 				outputName = originalname;
 			}
 
+			// OPTIMIZATION 3: Adaptive quality based on file size
+			const getQuality = (size: number): number => {
+				if (size > 2 * 1024 * 1024) return 70; // Large files: lower quality
+				if (size > 500 * 1024) return 75; // Medium files
+				return 80; // Small files: higher quality
+			};
+
+			const quality = getQuality(originalSize);
+
 			// Apply compression based on format
 			if (outputFormat === 'webp') {
 				pipeline = pipeline.webp({
-					quality: 85, // High quality but compressed
-					effort: 4, // Balance between compression and speed
+					quality: quality,
+					effort: 6, // Increased for better compression
 					smartSubsample: true,
+					lossless: false,
 				});
 			} else if (outputFormat === 'jpeg' || outputFormat === 'jpg') {
 				pipeline = pipeline.jpeg({
-					quality: 85,
+					quality: quality,
 					progressive: true,
 					mojpegg: true,
+					optimiseScans: true,
 				});
 			} else if (outputFormat === 'png') {
 				pipeline = pipeline.png({
-					quality: 85,
 					compressionLevel: 9,
+					adaptiveFiltering: true,
+					palette: true,
 				});
 			}
 
 			const optimizedBuffer = await pipeline.toBuffer();
 			const optimizedSize = optimizedBuffer.length;
-			const compressionRatio = ((originalSize - optimizedSize) / originalSize * 100).toFixed(1);
+			
+			// Safety check: if optimization increased size, use original
+			if (optimizedSize >= originalSize) {
+				this.logger.warn(`⚠️ [optimizeImageIfNeeded] Optimization increased size, using original`);
+				return {
+					buffer,
+					mimetype,
+					originalname,
+					originalSize,
+					optimizedSize: originalSize,
+				};
+			}
 
-			this.logger.debug(`📉 [optimizeImageIfNeeded] Optimized: ${originalSize} → ${optimizedSize} bytes (${compressionRatio}% reduction)`);
+			const compressionRatio = ((originalSize - optimizedSize) / originalSize * 100).toFixed(1);
+			this.logger.debug(`📉 [optimizeImageIfNeeded] Optimized: ${originalSize} → ${optimizedSize} bytes (${compressionRatio}% reduction) with quality ${quality}`);
 
 			return {
 				buffer: optimizedBuffer,
@@ -158,7 +185,7 @@ export class DocsService {
 			};
 		} catch (error) {
 			// If optimization fails, return original
-			this.logger.warn(`⚠️ [optimizeImageIfNeeded] Optimization failed, using original: ${error.message}`);
+			this.logger.error(`❌ [optimizeImageIfNeeded] Optimization failed, using original: ${error.message}`, error.stack);
 			return {
 				buffer,
 				mimetype,

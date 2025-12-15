@@ -1488,6 +1488,7 @@ export class ClaimsService {
 				organisationRef: requester.organisationRef,
 				branchUid: requester.branch?.uid,
 				requesterUid: requester.uid, // Add the missing requesterUid field
+				autoSubmit: true, // Auto-submit to PENDING status when created from claims service
 				metadata: {
 					claimId: claim.uid,
 					claimCategory: claim.category,

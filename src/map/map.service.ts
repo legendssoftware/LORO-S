@@ -1,7 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThanOrEqual, IsNull, In, Not } from 'typeorm';
+import { Repository, MoreThanOrEqual, IsNull, In, Not, Between } from 'typeorm';
 import { startOfDay } from 'date-fns';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
+import { ConfigService } from '@nestjs/config';
 import { CreateMapDto } from './dto/create-map.dto';
 import { UpdateMapDto } from './dto/update-map.dto';
 import { Attendance } from '../attendance/entities/attendance.entity';
@@ -12,16 +15,20 @@ import { Quotation } from '../shop/entities/quotation.entity';
 import { Branch } from '../branch/entities/branch.entity';
 import { Organisation } from '../organisation/entities/organisation.entity';
 import { GeneralStatus } from '../lib/enums/status.enums';
+import { Tracking } from '../tracking/entities/tracking.entity';
+import { GoogleMapsService } from '../lib/services/google-maps.service';
 
 interface MapDataRequestParams {
 	organisationId: number;
 	branchId?: number;
-	userId?: number; // Add user context for authorization
+	userId?: number;
 }
 
 @Injectable()
 export class MapService {
 	private readonly logger = new Logger(MapService.name);
+	private readonly CACHE_PREFIX = 'map:';
+	private readonly CACHE_TTL: number;
 
 	constructor(
 		@InjectRepository(Attendance)
@@ -36,9 +43,32 @@ export class MapService {
 		private branchRepository: Repository<Branch>,
 		@InjectRepository(Organisation)
 		private organisationRepository: Repository<Organisation>,
-	) {}
+		@InjectRepository(Tracking)
+		private trackingRepository: Repository<Tracking>,
+		@Inject(CACHE_MANAGER)
+		private cacheManager: Cache,
+		private readonly configService: ConfigService,
+		private readonly googleMapsService: GoogleMapsService,
+	) {
+		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 300;
+		this.logger.log(`MapService initialized with cache TTL: ${this.CACHE_TTL}ms`);
+	}
+
+	private getCacheKey(organisationId: number, branchId?: number, userId?: number): string {
+		return `${this.CACHE_PREFIX}org${organisationId}_${branchId || 'all'}_${userId || 'all'}`;
+	}
 
 	async generateMapData(params: MapDataRequestParams): Promise<Record<string, any>> {
+		const cacheKey = this.getCacheKey(params.organisationId, params.branchId, params.userId);
+		
+		const cached = await this.cacheManager.get<Record<string, any>>(cacheKey);
+		if (cached) {
+			this.logger.debug(`Cache hit for map data: ${cacheKey}`);
+			return cached;
+		}
+
+		this.logger.debug(`Cache miss for map data: ${cacheKey}`);
+		
 		try {
 			const { organisationId, branchId, userId } = params;
 			
@@ -301,7 +331,7 @@ export class MapService {
 
 			const orgRegions: Array<{ name: string; center: { lat: number; lng: number }; zoom: number }> = [];
 
-			return {
+			const result = {
 				workers,
 				clients: clientMarkers,
 				competitors: competitorMarkers,
@@ -311,6 +341,11 @@ export class MapService {
 					orgRegions,
 				},
 			};
+
+			await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);
+			this.logger.log(`Map data cached: ${cacheKey}`);
+			
+			return result;
 		} catch (error) {
 			// Log the error with context
 			this.logger.error(
@@ -329,6 +364,59 @@ export class MapService {
 			
 			// Generic error for other cases
 			throw new Error('Failed to generate map data. Please try again later.');
+		}
+	}
+
+	async getTripHistory(params: {
+		userId: number;
+		startDate?: Date;
+		endDate?: Date;
+	}): Promise<any> {
+		const cacheKey = `trip-history:${params.userId}_${params.startDate?.toISOString() || 'today'}_${params.endDate?.toISOString() || 'today'}`;
+		
+		const cached = await this.cacheManager.get(cacheKey);
+		if (cached) {
+			this.logger.debug(`Cache hit for trip history: ${cacheKey}`);
+			return cached;
+		}
+
+		const startDate = params.startDate || startOfDay(new Date());
+		const endDate = params.endDate || new Date();
+
+		const trackingPoints = await this.trackingRepository.find({
+			where: {
+				owner: { uid: params.userId },
+				createdAt: Between(startDate, endDate),
+			},
+			order: { createdAt: 'ASC' },
+			relations: ['owner'],
+		});
+
+		if (trackingPoints.length < 2) {
+			return { route: null, points: trackingPoints, totalDistance: 0, totalDuration: 0 };
+		}
+
+		try {
+			const route = await this.googleMapsService.planRoute(
+				{ latitude: trackingPoints[0].latitude, longitude: trackingPoints[0].longitude },
+				{ latitude: trackingPoints[trackingPoints.length - 1].latitude, longitude: trackingPoints[trackingPoints.length - 1].longitude },
+				trackingPoints.slice(1, -1).map(tp => ({
+					location: { latitude: tp.latitude, longitude: tp.longitude },
+				})),
+			);
+
+			const result = {
+				route,
+				points: trackingPoints,
+				totalDistance: route.totalDistance,
+				totalDuration: route.totalDuration,
+			};
+
+			await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);
+			return result;
+		} catch (error) {
+			this.logger.error(`Error generating trip route: ${error.message}`);
+			return { route: null, points: trackingPoints, totalDistance: 0, totalDuration: 0 };
 		}
 	}
 }

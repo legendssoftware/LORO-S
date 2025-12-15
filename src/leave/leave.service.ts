@@ -990,6 +990,7 @@ export class LeaveService {
 				pushNotificationsEnabled: true,
 				organisationRef: requester.organisationRef,
 				branchUid: requester.branch?.uid,
+				autoSubmit: true, // Auto-submit to PENDING status when created from leave service
 				metadata: {
 					leaveId: leave.uid,
 					leaveType: leave.leaveType,

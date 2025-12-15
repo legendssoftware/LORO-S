@@ -393,4 +393,12 @@ export class CreateApprovalDto {
     @IsOptional()
     @IsObject()
     geolocation?: { latitude: number; longitude: number; accuracy?: number };
+
+    @ApiPropertyOptional({
+        description: 'Automatically submit approval as PENDING instead of creating as DRAFT. Used when approvals are created from other services (leave, claims, etc.)',
+        default: false
+    })
+    @IsOptional()
+    @IsBoolean()
+    autoSubmit?: boolean;
 }
