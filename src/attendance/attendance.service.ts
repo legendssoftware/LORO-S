@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException, Logger, BadRequestException, Inject, forwardRef } from '@nestjs/common';
-import { IsNull, MoreThanOrEqual, Not, Repository, LessThanOrEqual, Between, In, LessThan } from 'typeorm';
+import { IsNull, MoreThanOrEqual, Not, Repository, LessThanOrEqual, Between, In, LessThan, QueryFailedError } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
@@ -38,6 +38,7 @@ import { UnifiedNotificationService } from '../lib/services/unified-notification
 import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
 import { TimezoneUtil } from '../lib/utils/timezone.util';
 import { Organisation } from 'src/organisation/entities/organisation.entity';
+import { Branch } from '../branch/entities/branch.entity';
 
 // Import our enhanced calculation services
 import { TimeCalculatorUtil } from '../lib/utils/time-calculator.util';
@@ -77,6 +78,8 @@ export class AttendanceService {
 		private userRepository: Repository<User>,
 		@InjectRepository(Organisation)
 		private organisationRepository: Repository<Organisation>,
+		@InjectRepository(Branch)
+		private branchRepository: Repository<Branch>,
 		private userService: UserService,
 		private rewardsService: RewardsService,
 		private readonly eventEmitter: EventEmitter2,
@@ -797,6 +800,50 @@ export class AttendanceService {
 			}
 		}
 
+		// Validate branch belongs to organisation before saving
+		if (orgId && branchId) {
+			this.logger.debug(`Validating branch ${branchId} belongs to organisation ${orgId}`);
+			const branch = await this.branchRepository.findOne({
+				where: { uid: branchId },
+				relations: ['organisation'],
+			});
+
+			if (!branch) {
+				this.logger.error(`Branch with ID ${branchId} does not exist`);
+				throw new NotFoundException(`Branch with ID ${branchId} does not exist`);
+			}
+
+			if (branch.organisation?.uid !== orgId) {
+				this.logger.error(
+					`Branch ${branchId} does not belong to organisation ${orgId}. Branch belongs to organisation ${branch.organisation?.uid || 'none'}`
+				);
+				throw new BadRequestException(
+					`Branch ${branchId} does not belong to organisation ${orgId}. ` +
+					`Branch belongs to organisation ${branch.organisation?.uid || 'none'}`
+				);
+			}
+		}
+
+		// Validate organisation exists
+		if (orgId) {
+			const organisation = await this.organisationRepository.findOne({
+				where: { uid: orgId },
+			});
+			if (!organisation) {
+				this.logger.error(`Organisation with ID ${orgId} does not exist`);
+				throw new NotFoundException(`Organisation with ID ${orgId} does not exist`);
+			}
+		}
+
+		// Validate user exists
+		const user = await this.userRepository.findOne({
+			where: { uid: checkInDto.owner.uid },
+		});
+		if (!user) {
+			this.logger.error(`User with ID ${checkInDto.owner.uid} does not exist`);
+			throw new NotFoundException(`User with ID ${checkInDto.owner.uid} does not exist`);
+		}
+
 		// Enhanced data mapping - save record first WITHOUT location processing
 		// Location processing will happen asynchronously after response is sent
 		const attendanceData = {
@@ -988,13 +1035,42 @@ export class AttendanceService {
 		} catch (error) {
 			this.logger.error(`Check-in failed for user: ${checkInDto.owner?.uid}`, error.stack);
 
-			// Enhanced error response mapping
-			const errorResponse = {
-				message: error?.message || 'Check-in failed',
-				data: null,
-			};
+			// Handle foreign key constraint violations with proper error messages
+			if (error instanceof QueryFailedError && error.message.includes('foreign key constraint')) {
+				const constraintName = error.message.match(/constraint "([^"]+)"/)?.[1] || 'unknown';
+				this.logger.error(`Foreign key constraint violation: ${constraintName}`, error.message);
+				
+				// Re-throw as BadRequestException with clear message
+				if (error.message.includes('branch')) {
+					throw new BadRequestException(
+						`Invalid branch or organisation relationship. ` +
+						`Please ensure the branch belongs to the specified organisation.`
+					);
+				} else if (error.message.includes('organisation')) {
+					throw new BadRequestException(
+						`Invalid organisation reference. ` +
+						`Please ensure the organisation exists and is valid.`
+					);
+				} else if (error.message.includes('owner')) {
+					throw new BadRequestException(
+						`Invalid user reference. ` +
+						`Please ensure the user exists and is valid.`
+					);
+				} else {
+					throw new BadRequestException(
+						`Database constraint violation: ${constraintName}. ` +
+						`Please verify all referenced entities exist and relationships are valid.`
+					);
+				}
+			}
 
-			return errorResponse;
+			// Re-throw HTTP exceptions (BadRequestException, NotFoundException, etc.)
+			if (error instanceof BadRequestException || error instanceof NotFoundException) {
+				throw error;
+			}
+
+			// For other errors, throw as BadRequestException with error message
+			throw new BadRequestException(error?.message || 'Check-in failed. Please try again.');
 		}
 	}
 

@@ -23,7 +23,7 @@
  *   npm run migrate:legacy-db -- --step local-to-remote --dry-run
  *   
  *   # Import only specific entities
- *   npm run migrate:legacy-db -- --step local-to-remote --only orgs,branches,users
+ *   npm run migrate:legacy-db -- --step local-to-remote --only orgs,branches,users,usertargets
  */
 
 import * as mysql from 'mysql2/promise';
@@ -1155,6 +1155,13 @@ class LegacyDbMigrator {
 				await this.copyEntities(this.userRewardsSourceRepo!, this.userRewardsRepo!, 'User Rewards');
 			}
 
+			// User Targets can be migrated independently (after users are migrated)
+			// Note: Users must be migrated first for foreign key relationships to work
+			if (this.shouldImport('usertargets')) {
+				await this.clearTable(this.userTargetRepo, 'User Targets', UserTarget);
+				await this.copyEntities(this.userTargetSourceRepo!, this.userTargetRepo!, 'User Targets');
+			}
+
 			// Skip tracking-related entities (tracking, geofence events)
 			// These are intentionally skipped as per user request
 
@@ -1173,6 +1180,15 @@ class LegacyDbMigrator {
 		entityName: string
 	): Promise<void> {
 		try {
+			// Verify source repository is initialized
+			if (!sourceRepo) {
+				throw new Error(`Source repository for ${entityName} is not initialized`);
+			}
+			
+			if (!sourceRepo.manager?.connection?.isInitialized) {
+				throw new Error(`Source database connection for ${entityName} is not initialized`);
+			}
+			
 			if (this.dryRun) {
 				const count = await sourceRepo.count();
 				console.log(`[DRY RUN] Would copy ${count} ${entityName} records`);
@@ -1185,12 +1201,89 @@ class LegacyDbMigrator {
 			const metadata = sourceRepo.metadata;
 			const tableName = metadata.tableName;
 			
+			console.log(`  🔍 Querying table: ${tableName}`);
+			const sourceOptions: any = sourceRepo.manager.connection.options;
+			console.log(`  🔍 Source database: ${sourceOptions.database || sourceOptions.name || 'unknown'}`);
+			console.log(`  🔍 Source host: ${sourceOptions.host || 'unknown'}`);
+			
+			// First, try to get a count to verify the table exists and has data
+			try {
+				const countResult = await sourceRepo.manager.connection.query(`SELECT COUNT(*) as count FROM "${tableName}"`);
+				const count = parseInt(countResult[0]?.count || '0', 10);
+				console.log(`  📊 Record count from COUNT query: ${count}`);
+			} catch (countError: any) {
+				console.log(`  ⚠️  COUNT query failed: ${countError.message}`);
+				// Try lowercase
+				try {
+					const countResult = await sourceRepo.manager.connection.query(`SELECT COUNT(*) as count FROM ${tableName.toLowerCase()}`);
+					const count = parseInt(countResult[0]?.count || '0', 10);
+					console.log(`  📊 Record count (lowercase): ${count}`);
+				} catch (e) {
+					console.log(`  ⚠️  COUNT query (lowercase) also failed: ${e.message}`);
+				}
+			}
+			
 			// Use raw query to get ALL columns including foreign keys
 			// This ensures foreign key columns (ownerUid, organisationUid, etc.) are preserved exactly as-is
 			const sourceDataSource = sourceRepo.manager.connection;
-			const rawRecords = await sourceDataSource.query(`SELECT * FROM "${tableName}"`);
+			
+			// Try both quoted and unquoted table names (PostgreSQL is case-sensitive with quotes)
+			let rawRecords: any[] = [];
+			try {
+				rawRecords = await sourceDataSource.query(`SELECT * FROM "${tableName}"`);
+			} catch (error: any) {
+				// If quoted name fails, try lowercase unquoted (PostgreSQL default)
+				if (error.code === '42P01' || error.message?.includes('does not exist')) {
+					console.log(`  ⚠️  Table "${tableName}" not found, trying lowercase: ${tableName.toLowerCase()}`);
+					try {
+						rawRecords = await sourceDataSource.query(`SELECT * FROM ${tableName.toLowerCase()}`);
+					} catch (error2: any) {
+						// Try with schema if needed
+						console.log(`  ⚠️  Trying with public schema: public."${tableName}"`);
+						try {
+							rawRecords = await sourceDataSource.query(`SELECT * FROM public."${tableName}"`);
+						} catch (error3: any) {
+							// Last resort: use TypeORM's find() method
+							console.log(`  ⚠️  Raw query failed, trying TypeORM find() method...`);
+							const entities = await sourceRepo.find();
+							// Convert entities to raw format for processing
+							rawRecords = entities.map((entity: any) => {
+								const raw: any = {};
+								metadata.columns.forEach(column => {
+									const propertyName = column.propertyName;
+									raw[column.databaseName || propertyName] = entity[propertyName];
+								});
+								// Add foreign keys
+								metadata.relations.forEach(relation => {
+									const foreignKey = relation.joinColumns?.[0];
+									if (foreignKey && entity[relation.propertyName]) {
+										const fkValue = entity[relation.propertyName]?.uid || entity[relation.propertyName];
+										raw[foreignKey.databaseName || foreignKey.propertyName] = fkValue;
+									}
+								});
+								return raw;
+							});
+						}
+					}
+				} else {
+					throw error;
+				}
+			}
 			
 			const total = rawRecords.length;
+			console.log(`  📊 Found ${total} records in source table`);
+			
+			if (total === 0) {
+				console.log(`  ⚠️  WARNING: No records found in source table "${tableName}"`);
+				console.log(`  💡 Tip: Verify the table exists and has data in the source database`);
+				const sourceOptions2: any = sourceRepo.manager.connection.options;
+				console.log(`  💡 Source DB: ${sourceOptions2.database || sourceOptions2.name || 'unknown'}`);
+				console.log(`  💡 Source Host: ${sourceOptions2.host || 'unknown'}`);
+			} else if (total > 0 && this.verbose) {
+				// Show sample of first record keys for debugging
+				console.log(`  🔍 Sample record keys: ${Object.keys(rawRecords[0]).slice(0, 10).join(', ')}...`);
+			}
+			
 			let imported = 0;
 			let skipped = 0;
 			let errors = 0;
@@ -5053,7 +5146,7 @@ async function main() {
 			},
 			only: {
 				type: 'string',
-				describe: 'Import only specific entities (comma-separated: orgs,branches,users,devices,licenses)',
+				describe: 'Import only specific entities (comma-separated: orgs,branches,users,usertargets,devices,licenses)',
 			},
 			verbose: {
 				type: 'boolean',
