@@ -25,6 +25,7 @@ import { ConsolidateAttendanceDto } from './dto/consolidate-attendance.dto';
 import { OrganizationReportQueryDto } from './dto/organization.report.query.dto';
 import { UserMetricsResponseDto } from './dto/user-metrics-response.dto';
 import { RequestReportDto } from './dto/request.report.dto';
+import { BulkClockInDto } from './dto/bulk-clock-in.dto';
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { AuthGuard } from '../guards/auth.guard';
@@ -5990,5 +5991,186 @@ Manually triggers the overtime policy check system to identify employees working
 			branchId,
 			userAccessLevel,
 		);
+	}
+
+	@Post('bulk-clock-in')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.OWNER,
+		AccessLevel.DEVELOPER,
+	)
+	@ApiOperation({
+		summary: '🔄 Bulk clock-in all users for specified dates',
+		description: `
+# Bulk Clock-In System
+
+Bulk clock-in system that creates attendance records for all users in an organization for specified dates.
+
+## 📋 **Features**
+- **Multiple Dates**: Clock in users for multiple dates at once
+- **Half-Day Support**: Mark specific dates as half-days
+- **Custom Hours**: Override organization hours for specific dates
+- **Organization Hours**: Automatically uses organization's configured hours
+- **Full Logging**: Comprehensive logging for debugging and audit trails
+- **Skip Existing**: Option to skip users who already have records for dates
+
+## 📅 **Date Configuration**
+- **Dates Array**: Array of dates in YYYY-MM-DD format
+- **Half-Day Dates**: Optional array of dates that should be half-days
+- **Custom Hours**: Optional array of custom hours per date (overrides org hours)
+
+## ⚙️ **How It Works**
+1. Fetches all active users in the organization (optionally filtered by branch)
+2. For each date:
+   - Gets organization hours for that date
+   - Calculates check-in and check-out times
+   - If half-day, calculates half-day checkout time
+   - Creates full attendance records (check-in + check-out) for each user
+3. Returns detailed summary with success/failure counts
+
+## 🔒 **Security**
+- Requires ADMIN, MANAGER, OWNER, or DEVELOPER access level
+- Respects organization and branch boundaries
+- Only processes active, non-deleted users
+
+## 📊 **Response**
+Returns detailed summary including:
+- Total records created
+- Total records skipped
+- Errors per user/date
+- Processing details for each date
+		`,
+	})
+	@ApiBody({
+		type: BulkClockInDto,
+		description: 'Bulk clock-in configuration',
+		examples: {
+			example1: {
+				summary: 'Basic bulk clock-in',
+				value: {
+					dates: ['2024-03-01', '2024-03-02', '2024-03-03'],
+					halfDayDates: ['2024-03-02'],
+					skipExisting: false,
+				},
+			},
+			example2: {
+				summary: 'Bulk clock-in with custom hours',
+				value: {
+					dates: ['2024-03-01', '2024-03-02'],
+					halfDayDates: ['2024-03-02'],
+					customHours: [
+						{
+							date: '2024-03-01',
+							checkIn: '08:00',
+							checkOut: '17:00',
+						},
+					],
+					branchId: 1,
+					skipExisting: true,
+				},
+			},
+		},
+	})
+	@ApiOkResponse({
+		description: 'Bulk clock-in completed successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: {
+					type: 'string',
+					example: 'Bulk clock-in completed. Created 45 attendance records across 3 dates.',
+				},
+				summary: {
+					type: 'object',
+					properties: {
+						totalDates: { type: 'number', example: 3 },
+						totalUsers: { type: 'number', example: 15 },
+						totalRecordsCreated: { type: 'number', example: 45 },
+						totalRecordsSkipped: { type: 'number', example: 0 },
+						datesProcessed: {
+							type: 'array',
+							items: { type: 'string' },
+							example: ['2024-03-01', '2024-03-02', '2024-03-03'],
+						},
+						errors: {
+							type: 'array',
+							items: {
+								type: 'object',
+								properties: {
+									date: { type: 'string', example: '2024-03-01' },
+									userId: { type: 'number', example: 123 },
+									error: { type: 'string', example: 'User has no branch assigned' },
+								},
+							},
+						},
+					},
+				},
+				details: {
+					type: 'array',
+					items: {
+						type: 'object',
+						properties: {
+							date: { type: 'string', example: '2024-03-01' },
+							usersProcessed: { type: 'number', example: 15 },
+							recordsCreated: { type: 'number', example: 15 },
+							recordsSkipped: { type: 'number', example: 0 },
+							halfDay: { type: 'boolean', example: false },
+							checkInTime: { type: 'string', example: '09:00' },
+							checkOutTime: { type: 'string', example: '17:00' },
+						},
+					},
+				},
+			},
+		},
+	})
+	@ApiBadRequestResponse({
+		description: 'Invalid request parameters',
+		schema: {
+			type: 'object',
+			properties: {
+				message: {
+					type: 'string',
+					example: 'Bulk clock-in failed: Invalid date format: 2024-13-01',
+				},
+				error: { type: 'string', example: 'Bad Request' },
+				statusCode: { type: 'number', example: 400 },
+			},
+		},
+	})
+	@ApiForbiddenResponse({
+		description: 'Insufficient permissions - requires ADMIN, MANAGER, OWNER, or DEVELOPER access',
+	})
+	async bulkClockIn(
+		@Body() bulkClockInDto: BulkClockInDto,
+		@Req() req: AuthenticatedRequest,
+	): Promise<{
+		message: string;
+		summary: {
+			totalDates: number;
+			totalUsers: number;
+			totalRecordsCreated: number;
+			totalRecordsSkipped: number;
+			datesProcessed: string[];
+			errors: Array<{ date: string; userId: number; error: string }>;
+		};
+		details: Array<{
+			date: string;
+			usersProcessed: number;
+			recordsCreated: number;
+			recordsSkipped: number;
+			halfDay: boolean;
+			checkInTime: string;
+			checkOutTime: string;
+		}>;
+	}> {
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
+		const branchId = bulkClockInDto.branchId || req.user?.branch?.uid;
+
+		if (!orgId) {
+			throw new BadRequestException('Organization ID is required');
+		}
+
+		return this.attendanceService.bulkClockIn(bulkClockInDto, orgId, branchId);
 	}
 }

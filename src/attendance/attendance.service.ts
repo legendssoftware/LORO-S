@@ -11,6 +11,7 @@ import { CreateBreakDto } from './dto/create.attendance.break.dto';
 import { ConsolidateAttendanceDto, ConsolidateMode } from './dto/consolidate-attendance.dto';
 import { OrganizationReportQueryDto } from './dto/organization.report.query.dto';
 import { UserMetricsResponseDto } from './dto/user-metrics-response.dto';
+import { BulkClockInDto } from './dto/bulk-clock-in.dto';
 import { isToday } from 'date-fns';
 import {
 	differenceInMinutes,
@@ -7250,6 +7251,413 @@ export class AttendanceService {
 		} catch (error) {
 			this.logger.error(`Error getting monthly attendance calendar: ${error.message}`, error.stack);
 			throw error;
+		}
+	}
+
+	/**
+	 * Bulk clock-in all users for specified dates
+	 * Creates full attendance records using organization hours
+	 * Supports half-day configuration and custom hours per date
+	 */
+	public async bulkClockIn(
+		bulkClockInDto: BulkClockInDto,
+		orgId: number,
+		branchId?: number,
+	): Promise<{
+		message: string;
+		summary: {
+			totalDates: number;
+			totalUsers: number;
+			totalRecordsCreated: number;
+			totalRecordsSkipped: number;
+			datesProcessed: string[];
+			errors: Array<{ date: string; userId: number; error: string }>;
+		};
+		details: Array<{
+			date: string;
+			usersProcessed: number;
+			recordsCreated: number;
+			recordsSkipped: number;
+			halfDay: boolean;
+			checkInTime: string;
+			checkOutTime: string;
+		}>;
+	}> {
+		const startTime = Date.now();
+		this.logger.log(`🚀 BULK CLOCK-IN STARTED - Org: ${orgId}, Branch: ${branchId || 'ALL'}, Dates: ${bulkClockInDto.dates.join(', ')}`);
+		this.logger.log(`📋 Configuration: Half-day dates: ${bulkClockInDto.halfDayDates?.join(', ') || 'NONE'}, Custom hours: ${bulkClockInDto.customHours?.length || 0} dates`);
+		
+		const errors: Array<{ date: string; userId: number; error: string }> = [];
+		let totalRecordsCreated = 0;
+		let totalRecordsSkipped = 0;
+		const details: Array<{
+			date: string;
+			usersProcessed: number;
+			recordsCreated: number;
+			recordsSkipped: number;
+			halfDay: boolean;
+			checkInTime: string;
+			checkOutTime: string;
+		}> = [];
+
+		try {
+			// Step 1: Get ALL users for the organization (fetch all pages)
+			this.logger.log(`📞 Fetching ALL users for organization ${orgId}${branchId ? ` and branch ${branchId}` : ''}`);
+			let allUsers: any[] = [];
+			let page = 1;
+			const pageSize = 1000;
+			let hasMore = true;
+
+			while (hasMore) {
+				const usersResponse = await this.userService.findAll(
+					{
+						orgId,
+						branchId: branchId,
+					},
+					page,
+					pageSize,
+				);
+
+				const pageUsers = usersResponse.data || [];
+				allUsers = allUsers.concat(pageUsers);
+				
+				this.logger.log(`📄 Page ${page}: Found ${pageUsers.length} users (Total so far: ${allUsers.length})`);
+				
+				hasMore = pageUsers.length === pageSize;
+				page++;
+			}
+
+			this.logger.log(`✅ Found ${allUsers.length} total users to process`);
+
+			if (allUsers.length === 0) {
+				this.logger.warn(`⚠️ No users found for organization ${orgId}`);
+				return {
+					message: 'No users found for bulk clock-in',
+					summary: {
+						totalDates: bulkClockInDto.dates.length,
+						totalUsers: 0,
+						totalRecordsCreated: 0,
+						totalRecordsSkipped: 0,
+						datesProcessed: [],
+						errors: [],
+					},
+					details: [],
+				};
+			}
+
+			// Filter out deleted and inactive users
+			const activeUsers = allUsers.filter(
+				(user) => !user.isDeleted && user.status !== 'INACTIVE',
+			);
+			this.logger.log(`✅ ${activeUsers.length} active users after filtering`);
+
+			// Step 1.5: Close ALL existing open shifts for ALL users BEFORE processing dates
+			this.logger.log(`\n🔒 STEP 1.5: Closing ALL existing open shifts for all users...`);
+			const orgHours = await this.organizationHoursService.getOrganizationHours(orgId);
+			const orgTimezone = orgHours?.timezone || TimezoneUtil.getSafeTimezone();
+			let closedShiftsCount = 0;
+			let failedClosuresCount = 0;
+
+			for (const user of activeUsers) {
+				try {
+					// Find all open shifts for this user
+					const openShifts = await this.attendanceRepository.find({
+						where: {
+							owner: { uid: user.uid },
+							status: AttendanceStatus.PRESENT,
+							checkIn: Not(IsNull()),
+							checkOut: IsNull(),
+							organisation: { uid: orgId },
+						},
+						relations: ['owner'],
+					});
+
+					for (const openShift of openShifts) {
+						try {
+							const userBranchId = user.branch?.uid || branchId;
+							if (!userBranchId) {
+								this.logger.warn(`⚠️ User ${user.uid} has no branch - skipping shift closure`);
+								continue;
+							}
+
+							// Get the check-in date in org timezone to determine close time
+							const checkInDateOrg = TimezoneUtil.toOrganizationTime(
+								new Date(openShift.checkIn),
+								orgTimezone
+							);
+							
+							// Get working day info for the check-in date
+							const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(
+								orgId,
+								checkInDateOrg
+							);
+							
+							let closeTime: Date;
+							
+							if (workingDayInfo.isWorkingDay && workingDayInfo.endTime) {
+								// Parse the end time for the check-in date
+								closeTime = TimezoneUtil.parseTimeInOrganization(
+									workingDayInfo.endTime,
+									checkInDateOrg,
+									orgTimezone
+								);
+							} else {
+								// If not a working day, use check-in time + 1 minute (to satisfy validation)
+								const checkInTime = new Date(openShift.checkIn);
+								closeTime = new Date(checkInTime.getTime() + 60 * 1000); // Add 1 minute
+							}
+							
+							// Ensure close time is after check-in time
+							const checkInTime = new Date(openShift.checkIn);
+							if (closeTime <= checkInTime) {
+								closeTime = new Date(checkInTime.getTime() + 60 * 1000); // Add 1 minute minimum
+							}
+							
+							// Create check-out DTO
+							const closeOutDto: CreateCheckOutDto = {
+								checkOut: closeTime,
+								owner: { uid: user.uid },
+								checkOutNotes: `Auto-closed by bulk clock-in process`,
+							};
+							
+							// Close the shift
+							await this.checkOut(closeOutDto, orgId, userBranchId);
+							closedShiftsCount++;
+							this.logger.debug(`✅ Closed open shift ${openShift.uid} for user ${user.uid}`);
+						} catch (closeError) {
+							failedClosuresCount++;
+							const errorMsg = closeError instanceof Error ? closeError.message : String(closeError);
+							this.logger.error(`❌ Failed to close shift ${openShift.uid} for user ${user.uid}: ${errorMsg}`);
+						}
+					}
+				} catch (userError) {
+					this.logger.error(`❌ Error processing user ${user.uid} for shift closure: ${userError.message}`);
+				}
+			}
+
+			this.logger.log(`✅ Closed ${closedShiftsCount} open shifts, ${failedClosuresCount} failed closures`);
+
+			// Step 2: Get organization hours and timezone (already fetched above, but log it)
+			this.logger.log(`⏰ Organization timezone: ${orgTimezone}`);
+
+			// Step 3: Process each date
+			// Identify the last date - users should remain checked in (no check-out)
+			const sortedDates = [...bulkClockInDto.dates].sort();
+			const lastDate = sortedDates[sortedDates.length - 1];
+			this.logger.log(`📌 Last date identified: ${lastDate} - users will remain checked in (no check-out)`);
+			
+			for (const dateStr of bulkClockInDto.dates) {
+				this.logger.log(`\n📅 PROCESSING DATE: ${dateStr}`);
+				const dateStartTime = Date.now();
+				const isLastDate = dateStr === lastDate;
+
+				try {
+					// Parse date
+					const targetDate = parseISO(dateStr);
+					if (isNaN(targetDate.getTime())) {
+						throw new Error(`Invalid date format: ${dateStr}. Expected YYYY-MM-DD`);
+					}
+
+					// Check if it's a half day
+					const isHalfDay = bulkClockInDto.halfDayDates?.includes(dateStr) || false;
+					this.logger.log(`📊 Half-day: ${isHalfDay ? 'YES' : 'NO'}`);
+
+					// Get custom hours for this date if provided
+					const customHours = bulkClockInDto.customHours?.find((ch) => ch.date === dateStr);
+					let checkInTime: string;
+					let checkOutTime: string;
+
+					if (customHours) {
+						// Use custom hours
+						checkInTime = customHours.checkIn;
+						checkOutTime = customHours.checkOut;
+						this.logger.log(`⏰ Using custom hours - Check-in: ${checkInTime}, Check-out: ${checkOutTime}`);
+					} else {
+						// Get organization hours for this date
+						const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(orgId, targetDate);
+						
+						if (!workingDayInfo.isWorkingDay || !workingDayInfo.startTime || !workingDayInfo.endTime) {
+							this.logger.warn(`⚠️ Date ${dateStr} is not a working day. Skipping.`);
+							details.push({
+								date: dateStr,
+								usersProcessed: 0,
+								recordsCreated: 0,
+								recordsSkipped: 0,
+								halfDay: false,
+								checkInTime: 'N/A',
+								checkOutTime: 'N/A',
+							});
+							continue;
+						}
+
+						checkInTime = workingDayInfo.startTime;
+						let endTime = workingDayInfo.endTime;
+
+						// If half day, calculate half-day checkout time
+						if (isHalfDay) {
+							const startMinutes = TimeCalculatorUtil.timeToMinutes(checkInTime);
+							const endMinutes = TimeCalculatorUtil.timeToMinutes(endTime);
+							const halfDayMinutes = Math.floor((endMinutes - startMinutes) / 2);
+							const halfDayEndMinutes = startMinutes + halfDayMinutes;
+							// Convert minutes back to HH:mm format
+							const hours = Math.floor(halfDayEndMinutes / 60);
+							const minutes = halfDayEndMinutes % 60;
+							checkOutTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+							this.logger.log(`⏰ Half-day calculated - Check-in: ${checkInTime}, Check-out: ${checkOutTime} (${halfDayMinutes} minutes)`);
+						} else {
+							checkOutTime = endTime;
+							this.logger.log(`⏰ Using org hours - Check-in: ${checkInTime}, Check-out: ${checkOutTime}`);
+						}
+					}
+
+					// Create Date objects for check-in and check-out
+					const checkInDate = TimezoneUtil.parseTimeInOrganization(checkInTime, targetDate, orgTimezone);
+					const checkOutDate = TimezoneUtil.parseTimeInOrganization(checkOutTime, targetDate, orgTimezone);
+
+					// Ensure check-out is after check-in
+					if (checkOutDate <= checkInDate) {
+						throw new Error(`Check-out time (${checkOutTime}) must be after check-in time (${checkInTime})`);
+					}
+
+					this.logger.log(`📅 Date: ${dateStr}, Check-in: ${checkInDate.toISOString()}, Check-out: ${checkOutDate.toISOString()}`);
+
+					// Step 4: Process each user
+					let recordsCreated = 0;
+					let recordsSkipped = 0;
+
+					for (const user of activeUsers) {
+						try {
+							// Check if record already exists (if skipExisting is true)
+							if (bulkClockInDto.skipExisting) {
+								const existingRecord = await this.attendanceRepository.findOne({
+									where: {
+										owner: { uid: user.uid },
+										organisation: { uid: orgId },
+										checkIn: Between(startOfDay(checkInDate), endOfDay(checkInDate)),
+									},
+								});
+
+								if (existingRecord) {
+									this.logger.debug(`⏭️ Skipping user ${user.uid} (${user.name} ${user.surname}) - record already exists for ${dateStr}`);
+									recordsSkipped++;
+									continue;
+								}
+							}
+
+							// Get user's branch - use fallback to branchId from request if user has no branch
+							const userBranchId = user.branch?.uid || branchId;
+							if (!userBranchId) {
+								this.logger.warn(`⚠️ User ${user.uid} has no branch assigned and no branchId provided. Skipping.`);
+								errors.push({
+									date: dateStr,
+									userId: user.uid,
+									error: 'User has no branch assigned',
+								});
+								continue;
+							}
+
+							// Create check-in DTO
+							const checkInDto: CreateCheckInDto = {
+								checkIn: checkInDate,
+								owner: { uid: user.uid },
+								branch: { uid: userBranchId },
+								status: AttendanceStatus.PRESENT,
+								checkInNotes: `Bulk clock-in for ${dateStr}${isHalfDay ? ' (Half-day)' : ''}`,
+							};
+
+							// Perform check-in - use skipAutoClose=false to allow auto-closing any remaining shifts
+							this.logger.debug(`✅ Checking in user ${user.uid} (${user.name} ${user.surname}) for ${dateStr}`);
+							const checkInResult = await this.checkIn(checkInDto, orgId, userBranchId, false);
+
+							if (!checkInResult.data || checkInResult.data.error) {
+								throw new Error(checkInResult.message || 'Check-in failed');
+							}
+
+							const attendanceId = checkInResult.data.uid;
+
+							// Only check out if this is NOT the last date (users remain checked in on last date)
+							if (!isLastDate) {
+								// Create check-out DTO
+								const checkOutDto: CreateCheckOutDto = {
+									checkOut: checkOutDate,
+									owner: { uid: user.uid },
+									checkOutNotes: `Bulk clock-out for ${dateStr}${isHalfDay ? ' (Half-day)' : ''}`,
+								};
+
+								// Perform check-out
+								this.logger.debug(`✅ Checking out user ${user.uid} (${user.name} ${user.surname}) for ${dateStr}`);
+								const checkOutResult = await this.checkOut(checkOutDto, orgId, userBranchId);
+
+								if (!checkOutResult.data || checkOutResult.data.error) {
+									throw new Error(checkOutResult.message || 'Check-out failed');
+								}
+
+								this.logger.debug(`✅ Successfully created completed attendance record for user ${user.uid} on ${dateStr}`);
+							} else {
+								this.logger.debug(`✅ Successfully created open attendance record for user ${user.uid} on ${dateStr} (last date - remains checked in)`);
+							}
+
+							recordsCreated++;
+
+						} catch (userError) {
+							const errorMsg = userError instanceof Error ? userError.message : String(userError);
+							this.logger.error(`❌ Error processing user ${user.uid} for date ${dateStr}: ${errorMsg}`);
+							errors.push({
+								date: dateStr,
+								userId: user.uid,
+								error: errorMsg,
+							});
+						}
+					}
+
+					totalRecordsCreated += recordsCreated;
+					totalRecordsSkipped += recordsSkipped;
+
+					const dateProcessingTime = Date.now() - dateStartTime;
+					this.logger.log(`✅ Date ${dateStr} completed: ${recordsCreated} created, ${recordsSkipped} skipped in ${dateProcessingTime}ms`);
+
+					details.push({
+						date: dateStr,
+						usersProcessed: activeUsers.length,
+						recordsCreated,
+						recordsSkipped,
+						halfDay: isHalfDay,
+						checkInTime,
+						checkOutTime,
+					});
+
+				} catch (dateError) {
+					const errorMsg = dateError instanceof Error ? dateError.message : String(dateError);
+					this.logger.error(`❌ Error processing date ${dateStr}: ${errorMsg}`);
+					errors.push({
+						date: dateStr,
+						userId: 0,
+						error: errorMsg,
+					});
+				}
+			}
+
+			const totalTime = Date.now() - startTime;
+			this.logger.log(`\n🎉 BULK CLOCK-IN COMPLETED in ${totalTime}ms`);
+			this.logger.log(`📊 Summary: ${totalRecordsCreated} records created, ${totalRecordsSkipped} skipped, ${errors.length} errors`);
+
+			return {
+				message: `Bulk clock-in completed. Created ${totalRecordsCreated} attendance records across ${bulkClockInDto.dates.length} dates.`,
+				summary: {
+					totalDates: bulkClockInDto.dates.length,
+					totalUsers: activeUsers.length,
+					totalRecordsCreated,
+					totalRecordsSkipped,
+					datesProcessed: bulkClockInDto.dates,
+					errors,
+				},
+				details,
+			};
+
+		} catch (error) {
+			const errorMsg = error instanceof Error ? error.message : String(error);
+			this.logger.error(`💥 BULK CLOCK-IN FAILED: ${errorMsg}`, error instanceof Error ? error.stack : '');
+			throw new BadRequestException(`Bulk clock-in failed: ${errorMsg}`);
 		}
 	}
 }

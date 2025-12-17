@@ -336,6 +336,7 @@ class LegacyDbMigrator {
 	private dryRun = false;
 	private onlyEntities: string[] = [];
 	private verbose = false;
+	private pendingManagedStaffUpdates: Map<number, any> = new Map();
 
 	async initialize(step?: 'mysql-to-local' | 'local-to-remote', pgUrl?: string) {
 		console.log('🔧 Initializing connections...\n');
@@ -454,6 +455,16 @@ class LegacyDbMigrator {
 			const originalDataSource = this.pgDataSource;
 
 			// Create new DataSource with override
+			// Ensure LicenseAudit is included in entities
+			const sourceEntities = this.pgDataSource.options.entities;
+			let entities: any = sourceEntities;
+			// If entities is an array, ensure LicenseAudit is included
+			if (Array.isArray(sourceEntities)) {
+				entities = [...sourceEntities];
+				if (!entities.includes(LicenseAudit)) {
+					entities.push(LicenseAudit);
+				}
+			}
 			const newDataSource = new DataSource({
 				type: 'postgres',
 				host,
@@ -461,7 +472,7 @@ class LegacyDbMigrator {
 				username,
 				password,
 				database,
-				entities: this.pgDataSource.options.entities,
+				entities: entities,
 				synchronize: false,
 				logging: false,
 				extra: {
@@ -527,6 +538,16 @@ class LegacyDbMigrator {
 			console.log(`🔐 SSL Configuration: ${enableSSL ? 'ENABLED' : 'DISABLED'} (host: ${finalHost}, isLocalhost: ${isLocalhost}, isRender: ${isRender})`);
 
 			// Create new DataSource with remote connection
+			// Ensure LicenseAudit is included in entities
+			const sourceEntities = this.pgDataSource.options.entities;
+			let entities: any = sourceEntities;
+			// If entities is an array, ensure LicenseAudit is included
+			if (Array.isArray(sourceEntities)) {
+				entities = [...sourceEntities];
+				if (!entities.includes(LicenseAudit)) {
+					entities.push(LicenseAudit);
+				}
+			}
 			const newDataSource = new DataSource({
 				type: 'postgres',
 				host: finalHost,
@@ -534,7 +555,7 @@ class LegacyDbMigrator {
 				username: finalUsername,
 				password: finalPassword,
 				database: finalDatabase,
-				entities: this.pgDataSource.options.entities,
+				entities: entities,
 				synchronize: false,
 				logging: false,
 				extra: {
@@ -829,32 +850,35 @@ class LegacyDbMigrator {
 			// }
 
 			// Core transactional data
-			// Attendance import - now enabled for full data migration
+			// Attendance import - December only
 			if (this.shouldImport('attendance')) {
 				// Clear attendance records before importing to avoid duplicates
 				await this.clearAttendanceRecords();
 				await this.importAttendance();
 			}
-			if (this.shouldImport('claims')) {
-				await this.clearTable(this.claimRepo, 'Claims', Claim);
-				await this.importClaims();
-			}
+			// Claims import - SKIPPED per user request
+			// if (this.shouldImport('claims')) {
+			// 	await this.clearTable(this.claimRepo, 'Claims', Claim);
+			// 	await this.importClaims();
+			// }
 			if (this.shouldImport('checkins')) {
 				await this.clearTable(this.checkInRepo, 'Check-ins', CheckIn);
 				await this.importCheckIns();
 			}
 
 			// Sales & business
-			if (this.shouldImport('leads')) {
-				await this.clearTable(this.leadRepo, 'Leads', Lead);
-				await this.importLeads();
-			}
-			if (this.shouldImport('quotations')) {
-				await this.clearTable(this.quotationItemRepo, 'Quotation Items', QuotationItem);
-				await this.clearTable(this.quotationRepo, 'Quotations', Quotation);
-				await this.importQuotations();
-				await this.importQuotationItems();
-			}
+			// Leads import - SKIPPED per user request
+			// if (this.shouldImport('leads')) {
+			// 	await this.clearTable(this.leadRepo, 'Leads', Lead);
+			// 	await this.importLeads();
+			// }
+			// Quotations import - SKIPPED per user request
+			// if (this.shouldImport('quotations')) {
+			// 	await this.clearTable(this.quotationItemRepo, 'Quotation Items', QuotationItem);
+			// 	await this.clearTable(this.quotationRepo, 'Quotations', Quotation);
+			// 	await this.importQuotations();
+			// 	await this.importQuotationItems();
+			// }
 			if (this.shouldImport('orders')) {
 				await this.clearTable(this.orderItemRepo, 'Order Items', OrderItem);
 				await this.clearTable(this.orderRepo, 'Orders', Order);
@@ -862,61 +886,66 @@ class LegacyDbMigrator {
 				await this.importOrderItems();
 			}
 
-			// Tasks & activities
-			if (this.shouldImport('tasks')) {
-				await this.clearTable(this.subTaskRepo, 'Subtasks', SubTask);
-				await this.clearTable(this.taskRepo, 'Tasks', Task);
-				await this.importTasks();
-				await this.importSubtasks();
-			}
+			// Tasks & activities - SKIPPED per user request
+			// if (this.shouldImport('tasks')) {
+			// 	await this.clearTable(this.subTaskRepo, 'Subtasks', SubTask);
+			// 	await this.clearTable(this.taskRepo, 'Tasks', Task);
+			// 	await this.importTasks();
+			// 	await this.importSubtasks();
+			// }
 
-			// Communication & interactions
-			if (this.shouldImport('interactions')) {
-				await this.clearTable(this.interactionRepo, 'Interactions', Interaction);
-				await this.importInteractions();
-			}
-			if (this.shouldImport('notifications')) {
-				await this.clearTable(this.notificationRepo, 'Notifications', Notification);
-				await this.importNotifications();
-			}
+			// Communication & interactions - SKIPPED per user request
+			// if (this.shouldImport('interactions')) {
+			// 	await this.clearTable(this.interactionRepo, 'Interactions', Interaction);
+			// 	await this.importInteractions();
+			// }
+			// Notifications import - SKIPPED per user request
+			// if (this.shouldImport('notifications')) {
+			// 	await this.clearTable(this.notificationRepo, 'Notifications', Notification);
+			// 	await this.importNotifications();
+			// }
 			if (this.shouldImport('journals')) {
 				await this.clearTable(this.journalRepo, 'Journals', Journal);
 				await this.importJournals();
 			}
 
 			// HR & management
-			if (this.shouldImport('leave')) {
-				await this.clearTable(this.leaveRepo, 'Leave', Leave);
-				await this.importLeave();
-			}
-			if (this.shouldImport('warnings')) {
-				await this.clearTable(this.warningRepo, 'Warnings', Warning);
-				await this.importWarnings();
-			}
+			// Leave import - SKIPPED per user request
+			// if (this.shouldImport('leave')) {
+			// 	await this.clearTable(this.leaveRepo, 'Leave', Leave);
+			// 	await this.importLeave();
+			// }
+			// Warnings import - SKIPPED per user request
+			// if (this.shouldImport('warnings')) {
+			// 	await this.clearTable(this.warningRepo, 'Warnings', Warning);
+			// 	await this.importWarnings();
+			// }
 
-			// Documents & files
-			if (this.shouldImport('docs')) {
-				await this.clearTable(this.docRepo, 'Docs', Doc);
-				await this.importDocs();
-			}
+			// Documents & files - SKIPPED per user request
+			// if (this.shouldImport('docs')) {
+			// 	await this.clearTable(this.docRepo, 'Docs', Doc);
+			// 	await this.importDocs();
+			// }
 
 			// Other modules
 			if (this.shouldImport('assets')) {
 				await this.clearTable(this.assetRepo, 'Assets', Asset);
 				await this.importAssets();
 			}
-			if (this.shouldImport('news')) {
-				await this.clearTable(this.newsRepo, 'News', News);
-				await this.importNews();
-			}
+			// News import - SKIPPED per user request
+			// if (this.shouldImport('news')) {
+			// 	await this.clearTable(this.newsRepo, 'News', News);
+			// 	await this.importNews();
+			// }
 			if (this.shouldImport('feedback')) {
 				await this.clearTable(this.feedbackRepo, 'Feedback', Feedback);
 				await this.importFeedback();
 			}
-			if (this.shouldImport('competitors')) {
-				await this.clearTable(this.competitorRepo, 'Competitors', Competitor);
-				await this.importCompetitors();
-			}
+			// Competitors import - SKIPPED per user request
+			// if (this.shouldImport('competitors')) {
+			// 	await this.clearTable(this.competitorRepo, 'Competitors', Competitor);
+			// 	await this.importCompetitors();
+			// }
 			if (this.shouldImport('resellers')) {
 				await this.clearTable(this.resellerRepo, 'Resellers', Reseller);
 				await this.importResellers();
@@ -931,9 +960,15 @@ class LegacyDbMigrator {
 			}
 
 			// User rewards (after users are imported)
+			// Note: UserRewards is imported, but Reward entity import is skipped
 			if (this.shouldImport('users')) {
 				await this.clearTable(this.userRewardsRepo, 'User Rewards', UserRewards);
 				await this.importUserRewards();
+			}
+
+			// Post-process user relationships after all entities are imported
+			if (this.shouldImport('users')) {
+				await this.postProcessUserRelationships();
 			}
 
 			// Large tables moved to end for performance
@@ -1049,27 +1084,30 @@ class LegacyDbMigrator {
 				await this.copyAttendanceWithDateFilter();
 			}
 
-			if (this.shouldImport('claims')) {
-				await this.clearTable(this.claimRepo, 'Claims', Claim);
-				await this.copyEntities(this.claimSourceRepo!, this.claimRepo!, 'Claims');
-			}
+			// Claims import - SKIPPED per user request
+			// if (this.shouldImport('claims')) {
+			// 	await this.clearTable(this.claimRepo, 'Claims', Claim);
+			// 	await this.copyEntities(this.claimSourceRepo!, this.claimRepo!, 'Claims');
+			// }
 
 			if (this.shouldImport('checkins')) {
 				await this.clearTable(this.checkInRepo, 'Check-ins', CheckIn);
 				await this.copyEntities(this.checkInSourceRepo!, this.checkInRepo!, 'Check-ins');
 			}
 
-			if (this.shouldImport('leads')) {
-				await this.clearTable(this.leadRepo, 'Leads', Lead);
-				await this.copyEntities(this.leadSourceRepo!, this.leadRepo!, 'Leads');
-			}
+			// Leads import - SKIPPED per user request
+			// if (this.shouldImport('leads')) {
+			// 	await this.clearTable(this.leadRepo, 'Leads', Lead);
+			// 	await this.copyEntities(this.leadSourceRepo!, this.leadRepo!, 'Leads');
+			// }
 
-			if (this.shouldImport('quotations')) {
-				await this.clearTable(this.quotationItemRepo, 'Quotation Items', QuotationItem);
-				await this.clearTable(this.quotationRepo, 'Quotations', Quotation);
-				await this.copyEntities(this.quotationSourceRepo!, this.quotationRepo!, 'Quotations');
-				await this.copyEntities(this.quotationItemSourceRepo!, this.quotationItemRepo!, 'Quotation Items');
-			}
+			// Quotations import - SKIPPED per user request
+			// if (this.shouldImport('quotations')) {
+			// 	await this.clearTable(this.quotationItemRepo, 'Quotation Items', QuotationItem);
+			// 	await this.clearTable(this.quotationRepo, 'Quotations', Quotation);
+			// 	await this.copyEntities(this.quotationSourceRepo!, this.quotationRepo!, 'Quotations');
+			// 	await this.copyEntities(this.quotationItemSourceRepo!, this.quotationItemRepo!, 'Quotation Items');
+			// }
 
 			if (this.shouldImport('orders')) {
 				await this.clearTable(this.orderItemRepo, 'Order Items', OrderItem);
@@ -1078,62 +1116,70 @@ class LegacyDbMigrator {
 				await this.copyEntities(this.orderItemSourceRepo!, this.orderItemRepo!, 'Order Items');
 			}
 
-			if (this.shouldImport('tasks')) {
-				await this.clearTable(this.subTaskRepo, 'Subtasks', SubTask);
-				await this.clearTable(this.taskRepo, 'Tasks', Task);
-				await this.copyEntities(this.taskSourceRepo!, this.taskRepo!, 'Tasks');
-				await this.copyEntities(this.subTaskSourceRepo!, this.subTaskRepo!, 'Subtasks');
-			}
+			// Tasks import - SKIPPED per user request
+			// if (this.shouldImport('tasks')) {
+			// 	await this.clearTable(this.subTaskRepo, 'Subtasks', SubTask);
+			// 	await this.clearTable(this.taskRepo, 'Tasks', Task);
+			// 	await this.copyEntities(this.taskSourceRepo!, this.taskRepo!, 'Tasks');
+			// 	await this.copyEntities(this.subTaskSourceRepo!, this.subTaskRepo!, 'Subtasks');
+			// }
 
-			if (this.shouldImport('interactions')) {
-				await this.clearTable(this.interactionRepo, 'Interactions', Interaction);
-				await this.copyEntities(this.interactionSourceRepo!, this.interactionRepo!, 'Interactions');
-			}
+			// Interactions import - SKIPPED per user request
+			// if (this.shouldImport('interactions')) {
+			// 	await this.clearTable(this.interactionRepo, 'Interactions', Interaction);
+			// 	await this.copyEntities(this.interactionSourceRepo!, this.interactionRepo!, 'Interactions');
+			// }
 
-			if (this.shouldImport('notifications')) {
-				await this.clearTable(this.notificationRepo, 'Notifications', Notification);
-				await this.copyEntities(this.notificationSourceRepo!, this.notificationRepo!, 'Notifications');
-			}
+			// Notifications import - SKIPPED per user request
+			// if (this.shouldImport('notifications')) {
+			// 	await this.clearTable(this.notificationRepo, 'Notifications', Notification);
+			// 	await this.copyEntities(this.notificationSourceRepo!, this.notificationRepo!, 'Notifications');
+			// }
 
 			if (this.shouldImport('journals')) {
 				await this.clearTable(this.journalRepo, 'Journals', Journal);
 				await this.copyEntities(this.journalSourceRepo!, this.journalRepo!, 'Journals');
 			}
 
-			if (this.shouldImport('leave')) {
-				await this.clearTable(this.leaveRepo, 'Leave', Leave);
-				await this.copyEntities(this.leaveSourceRepo!, this.leaveRepo!, 'Leave');
-			}
+			// Leave import - SKIPPED per user request
+			// if (this.shouldImport('leave')) {
+			// 	await this.clearTable(this.leaveRepo, 'Leave', Leave);
+			// 	await this.copyEntities(this.leaveSourceRepo!, this.leaveRepo!, 'Leave');
+			// }
 
-			if (this.shouldImport('warnings')) {
-				await this.clearTable(this.warningRepo, 'Warnings', Warning);
-				await this.copyEntities(this.warningSourceRepo!, this.warningRepo!, 'Warnings');
-			}
+			// Warnings import - SKIPPED per user request
+			// if (this.shouldImport('warnings')) {
+			// 	await this.clearTable(this.warningRepo, 'Warnings', Warning);
+			// 	await this.copyEntities(this.warningSourceRepo!, this.warningRepo!, 'Warnings');
+			// }
 
-			if (this.shouldImport('docs')) {
-				await this.clearTable(this.docRepo, 'Docs', Doc);
-				await this.copyEntities(this.docSourceRepo!, this.docRepo!, 'Docs');
-			}
+			// Docs import - SKIPPED per user request
+			// if (this.shouldImport('docs')) {
+			// 	await this.clearTable(this.docRepo, 'Docs', Doc);
+			// 	await this.copyEntities(this.docSourceRepo!, this.docRepo!, 'Docs');
+			// }
 
 			if (this.shouldImport('assets')) {
 				await this.clearTable(this.assetRepo, 'Assets', Asset);
 				await this.copyEntities(this.assetSourceRepo!, this.assetRepo!, 'Assets');
 			}
 
-			if (this.shouldImport('news')) {
-				await this.clearTable(this.newsRepo, 'News', News);
-				await this.copyEntities(this.newsSourceRepo!, this.newsRepo!, 'News');
-			}
+			// News import - SKIPPED per user request
+			// if (this.shouldImport('news')) {
+			// 	await this.clearTable(this.newsRepo, 'News', News);
+			// 	await this.copyEntities(this.newsSourceRepo!, this.newsRepo!, 'News');
+			// }
 
 			if (this.shouldImport('feedback')) {
 				await this.clearTable(this.feedbackRepo, 'Feedback', Feedback);
 				await this.copyEntities(this.feedbackSourceRepo!, this.feedbackRepo!, 'Feedback');
 			}
 
-			if (this.shouldImport('competitors')) {
-				await this.clearTable(this.competitorRepo, 'Competitors', Competitor);
-				await this.copyEntities(this.competitorSourceRepo!, this.competitorRepo!, 'Competitors');
-			}
+			// Competitors import - SKIPPED per user request
+			// if (this.shouldImport('competitors')) {
+			// 	await this.clearTable(this.competitorRepo, 'Competitors', Competitor);
+			// 	await this.copyEntities(this.competitorSourceRepo!, this.competitorRepo!, 'Competitors');
+			// }
 
 			if (this.shouldImport('resellers')) {
 				await this.clearTable(this.resellerRepo, 'Resellers', Reseller);
@@ -1153,6 +1199,11 @@ class LegacyDbMigrator {
 			if (this.shouldImport('users')) {
 				await this.clearTable(this.userRewardsRepo, 'User Rewards', UserRewards);
 				await this.copyEntities(this.userRewardsSourceRepo!, this.userRewardsRepo!, 'User Rewards');
+			}
+
+			// Post-process user relationships after all entities are imported
+			if (this.shouldImport('users')) {
+				await this.postProcessUserRelationships();
 			}
 
 			// User Targets can be migrated independently (after users are migrated)
@@ -1525,19 +1576,19 @@ class LegacyDbMigrator {
 	private async copyAttendanceWithDateFilter(): Promise<void> {
 		try {
 			if (this.dryRun) {
-				console.log(`[DRY RUN] Would copy attendance records from November 25, 2025 to today`);
+				console.log(`[DRY RUN] Would copy attendance records for December 2024 only`);
 				return;
 			}
 
-			console.log(`\n📦 Copying Attendance (filtered: November 25, 2025 to today)...`);
+			console.log(`\n📦 Copying Attendance (filtered: December 2024 only)...`);
 			
 			// Get table name from metadata
 			const metadata = this.attendanceSourceRepo!.metadata;
 			const tableName = metadata.tableName;
 			
-			// Filter attendance records from November 25, 2025 till today
-			const startDate = new Date('2025-11-25T00:00:00.000Z');
-			const endDate = new Date(); // Today
+			// Filter attendance records for December 2024 only
+			const startDate = new Date('2024-12-01T00:00:00.000Z');
+			const endDate = new Date('2024-12-31T23:59:59.999Z');
 			
 			// Use raw query with date filtering
 			// Filter by checkIn date or createdAt date (whichever is available)
@@ -1552,7 +1603,7 @@ class LegacyDbMigrator {
 			let skipped = 0;
 			let errors = 0;
 
-			console.log(`Found ${total} attendance records (filtered from November 25, 2025 to today)`);
+			console.log(`Found ${total} attendance records (filtered for December 2024 only)`);
 
 			// Process in batches for better performance
 			const batchSize = 100;
@@ -1754,6 +1805,258 @@ class LegacyDbMigrator {
 			if (error.code === '42P01' || error.message?.includes('does not exist') || error.message?.includes('relation')) {
 				console.log(`  ⚠️  Attendance table does not exist, skipping...`);
 				return;
+			}
+			throw error;
+		}
+	}
+
+	/**
+	 * Create default attendance records for all users
+	 * - Past Saturday: 7 AM to 2 PM
+	 * - Monday: 7 AM to 4:30 PM
+	 * - Skip Tuesday
+	 * - Today (Wednesday): Check-in between 6:30 AM and 6:55 AM (no check-out)
+	 */
+	private async createDefaultAttendanceRecords(): Promise<void> {
+		try {
+			if (this.dryRun) {
+				console.log(`[DRY RUN] Would create default attendance records for all users`);
+				return;
+			}
+
+			console.log(`\n📦 Creating default attendance records for all users...`);
+
+			// Get all users from target database with relations
+			const users = await this.userRepo!.find({
+				where: { isDeleted: false },
+				relations: ['organisation', 'branch'],
+			});
+
+			if (users.length === 0) {
+				console.log(`  ⚠️  No users found, skipping attendance record creation`);
+				return;
+			}
+
+			console.log(`  Found ${users.length} users`);
+
+			// Calculate dates
+			const today = new Date();
+			today.setHours(0, 0, 0, 0);
+			const dayOfWeek = today.getDay(); // 0 = Sunday, 6 = Saturday
+
+			// Find past Saturday (most recent Saturday before today)
+			const pastSaturday = new Date(today);
+			if (dayOfWeek === 0) {
+				// If today is Sunday, Saturday was yesterday
+				pastSaturday.setDate(today.getDate() - 1);
+			} else if (dayOfWeek === 6) {
+				// If today is Saturday, use today
+				// pastSaturday is already today
+			} else {
+				// Otherwise, go back to the most recent Saturday
+				pastSaturday.setDate(today.getDate() - (dayOfWeek + 1));
+			}
+
+			// Find Monday (most recent Monday)
+			const monday = new Date(today);
+			if (dayOfWeek === 0) {
+				// If today is Sunday, Monday was 6 days ago
+				monday.setDate(today.getDate() - 6);
+			} else if (dayOfWeek === 1) {
+				// If today is Monday, use today
+				// monday is already today
+			} else {
+				// Otherwise, go back to the most recent Monday
+				monday.setDate(today.getDate() - (dayOfWeek - 1));
+			}
+
+			console.log(`  📅 Past Saturday: ${pastSaturday.toDateString()}`);
+			console.log(`  📅 Monday: ${monday.toDateString()}`);
+			console.log(`  📅 Today: ${today.toDateString()} (Day of week: ${dayOfWeek})`);
+
+			// Dummy location coordinates (Johannesburg area)
+			const baseLat = -26.2041;
+			const baseLng = 28.0473;
+
+			let created = 0;
+			let skipped = 0;
+			let errors = 0;
+
+			// Helper function to check if attendance record exists for a specific date
+			const hasAttendanceForDate = async (userId: number, targetDate: Date): Promise<boolean> => {
+				try {
+					const startOfDay = new Date(targetDate);
+					startOfDay.setHours(0, 0, 0, 0);
+					const endOfDay = new Date(targetDate);
+					endOfDay.setHours(23, 59, 59, 999);
+
+					const existing = await this.attendanceRepo!.find({
+						where: {
+							owner: { uid: userId } as User,
+						},
+					});
+
+					// Check if any record exists for this date
+					return existing.some(record => {
+						const recordDate = new Date(record.checkIn);
+						recordDate.setHours(0, 0, 0, 0);
+						return recordDate.getTime() === startOfDay.getTime();
+					});
+				} catch (error: any) {
+					console.error(`  ⚠️  Error checking attendance for date: ${error.message}`);
+					return false;
+				}
+			};
+
+			// Helper function to create attendance record
+			const createAttendanceRecord = async (
+				user: User,
+				checkIn: Date,
+				checkOut: Date | null,
+				duration: string | null,
+				notes: string
+			): Promise<boolean> => {
+				try {
+					const dummyLat = baseLat + (Math.random() * 0.1 - 0.05);
+					const dummyLng = baseLng + (Math.random() * 0.1 - 0.05);
+
+					const record = this.attendanceRepo!.create({
+						status: AttendanceStatus.PRESENT,
+						checkIn: checkIn,
+						checkOut: checkOut,
+						duration: duration,
+						checkInLatitude: dummyLat,
+						checkInLongitude: dummyLng,
+						checkOutLatitude: checkOut ? dummyLat + 0.001 : null,
+						checkOutLongitude: checkOut ? dummyLng + 0.001 : null,
+						checkInNotes: notes,
+						owner: { uid: user.uid } as User,
+						organisation: { uid: user.organisation!.uid } as Organisation,
+						...(user.branch && { branch: { uid: user.branch.uid } as Branch }),
+					});
+
+					await this.attendanceRepo!.save(record);
+					return true;
+				} catch (error: any) {
+					console.error(`  ❌ Error saving attendance record: ${error.message}`);
+					if (this.verbose) {
+						console.error(`  Stack: ${error.stack}`);
+					}
+					return false;
+				}
+			};
+
+			for (const user of users) {
+				try {
+					// Skip if user has no organisation
+					if (!user.organisation) {
+						if (this.verbose) console.log(`  ⏭️  Skipping user ${user.uid}: no organisation`);
+						skipped += 3; // Count all three records as skipped
+						continue;
+					}
+
+					// 1. Create Saturday attendance (7 AM to 2 PM)
+					const satCheckIn = new Date(pastSaturday);
+					satCheckIn.setHours(7, 0, 0, 0);
+					const satCheckOut = new Date(pastSaturday);
+					satCheckOut.setHours(14, 0, 0, 0);
+
+					const hasSat = await hasAttendanceForDate(user.uid, pastSaturday);
+					if (!hasSat) {
+						const success = await createAttendanceRecord(
+							user,
+							satCheckIn,
+							satCheckOut,
+							'07:00:00',
+							'Auto-generated attendance record - Saturday'
+						);
+						if (success) {
+							created++;
+							if (this.verbose) console.log(`  ✅ Created Saturday attendance for user ${user.uid}`);
+						} else {
+							errors++;
+						}
+					} else {
+						skipped++;
+						if (this.verbose) console.log(`  ⏭️  Skipped Saturday attendance for user ${user.uid} (already exists)`);
+					}
+
+					// 2. Create Monday attendance (7 AM to 4:30 PM)
+					const monCheckIn = new Date(monday);
+					monCheckIn.setHours(7, 0, 0, 0);
+					const monCheckOut = new Date(monday);
+					monCheckOut.setHours(16, 30, 0, 0);
+
+					const hasMon = await hasAttendanceForDate(user.uid, monday);
+					if (!hasMon) {
+						const success = await createAttendanceRecord(
+							user,
+							monCheckIn,
+							monCheckOut,
+							'09:30:00',
+							'Auto-generated attendance record - Monday'
+						);
+						if (success) {
+							created++;
+							if (this.verbose) console.log(`  ✅ Created Monday attendance for user ${user.uid}`);
+						} else {
+							errors++;
+						}
+					} else {
+						skipped++;
+						if (this.verbose) console.log(`  ⏭️  Skipped Monday attendance for user ${user.uid} (already exists)`);
+					}
+
+					// 3. Create today's attendance (if today is Wednesday) - check-in only
+					if (dayOfWeek === 3) { // Wednesday
+						// Random check-in time between 6:30 AM and 6:55 AM
+						const randomMinutes = Math.floor(Math.random() * 26); // 0-25 minutes
+						const randomSeconds = Math.floor(Math.random() * 60); // 0-59 seconds
+						const todayCheckIn = new Date(today);
+						todayCheckIn.setHours(6, 30 + randomMinutes, randomSeconds, 0);
+
+						const hasToday = await hasAttendanceForDate(user.uid, today);
+						if (!hasToday) {
+							const success = await createAttendanceRecord(
+								user,
+								todayCheckIn,
+								null,
+								null,
+								'Auto-generated attendance record - currently working'
+							);
+							if (success) {
+								created++;
+								if (this.verbose) {
+									console.log(`  ✅ Created today's attendance for user ${user.uid} (check-in: ${todayCheckIn.toLocaleTimeString()})`);
+								}
+							} else {
+								errors++;
+							}
+						} else {
+							skipped++;
+							if (this.verbose) console.log(`  ⏭️  Skipped today's attendance for user ${user.uid} (already exists)`);
+						}
+					}
+
+					// Progress logging
+					if ((created + skipped + errors) % 50 === 0) {
+						console.log(`  📊 Progress: ${created} created, ${skipped} skipped, ${errors} errors`);
+					}
+
+				} catch (error: any) {
+					errors++;
+					console.error(`  ❌ Error processing user ${user.uid}: ${error.message}`);
+					if (this.verbose) {
+						console.error(`  Stack: ${error.stack}`);
+					}
+				}
+			}
+
+			console.log(`✅ Default Attendance Records: ${created} created, ${skipped} skipped, ${errors} errors`);
+		} catch (error: any) {
+			console.error(`  ❌ Error in createDefaultAttendanceRecords: ${error.message}`);
+			if (this.verbose) {
+				console.error(`  Stack: ${error.stack}`);
 			}
 			throw error;
 		}
@@ -2014,6 +2317,12 @@ class LegacyDbMigrator {
 						existing.photoURL = user.photoURL || existing.photoURL;
 						existing.avatar = user.avatar || existing.avatar;
 						existing.status = user.status || existing.status;
+						
+						// Store managedStaff for post-processing
+						if (user.managedStaff) {
+							this.pendingManagedStaffUpdates.set(existing.uid, user.managedStaff);
+						}
+						
 						await this.userRepo!.save(existing);
 						this.stats.users.updated++;
 					} else {
@@ -2042,14 +2351,9 @@ class LegacyDbMigrator {
 					true
 				);
 
-				// Map managedStaff - ensure proper number array
-				const managedStaff = this.parseAndMapNumberArray(
-					user.managedStaff,
-					this.userMapping,
-					'managedStaff',
-					user.uid,
-					true
-				);
+				// Map managedStaff - skip in first pass (circular dependency), will be updated in post-processing
+				// Store original for later processing
+				const originalManagedStaff = user.managedStaff;
 
 				// Map managedDoors (device IDs) - preserve original values even if device mappings don't exist
 				// This ensures all data is copied as-is from MySQL
@@ -2109,7 +2413,7 @@ class LegacyDbMigrator {
 					organisationRef: orgUid ? String(orgUid) : null,
 					hrID: this.preserveField(user.hrID),
 					managedBranches: managedBranches,
-					managedStaff: managedStaff,
+					managedStaff: null, // Will be set in post-processing after all users are imported
 					managedDoors: managedDoors,
 					assignedClientIds: assignedClientIds,
 					preferences,
@@ -2128,6 +2432,12 @@ class LegacyDbMigrator {
 
 				const saved: User = await this.userRepo!.save(newUser);
 				this.userMapping[user.uid] = saved.uid;
+				
+				// Store original managedStaff for post-processing
+				if (originalManagedStaff) {
+					this.pendingManagedStaffUpdates.set(saved.uid, originalManagedStaff);
+				}
+				
 				this.stats.users.imported++;
 
 				if ((i + 1) % 100 === 0 || i === users.length - 1) {
@@ -2421,6 +2731,138 @@ class LegacyDbMigrator {
 		}
 
 		console.log(`\n✅ User Targets: ${this.stats.userTargets.imported} imported, ${this.stats.userTargets.skipped} skipped, ${this.stats.userTargets.duplicates} duplicates, ${this.stats.userTargets.updated} updated, ${this.stats.userTargets.errors} errors`);
+	}
+
+	/**
+	 * Post-process user relationships after all entities are imported
+	 * - Updates managedDoors with device mappings
+	 * - Updates managedStaff with user mappings (handles circular dependencies)
+	 * - Verifies managedBranches mappings
+	 * - Links UserTarget, UserProfile, UserEmploymentProfile, UserRewards back to User
+	 */
+	private async postProcessUserRelationships(): Promise<void> {
+		console.log('\n🔗 Post-processing user relationships...');
+		
+		if (this.dryRun) {
+			console.log('[DRY RUN] Would update user relationships');
+			return;
+		}
+
+		const users = await this.userRepo!.find({
+			relations: ['userTarget', 'userProfile', 'userEmployeementProfile', 'rewards']
+		});
+
+		let updated = 0;
+		for (const user of users) {
+			let needsUpdate = false;
+			const updates: any = {};
+
+			// 1. Update managedDoors with device mappings (devices are now imported)
+			if (user.managedDoors && user.managedDoors.length > 0 && Object.keys(this.deviceMapping).length > 0) {
+				const mappedDoors = user.managedDoors
+					.map((oldDeviceId: number) => this.deviceMapping[oldDeviceId] || oldDeviceId)
+					.filter((id: number) => id !== null && id !== undefined);
+				
+				if (JSON.stringify(mappedDoors) !== JSON.stringify(user.managedDoors)) {
+					updates.managedDoors = mappedDoors;
+					needsUpdate = true;
+				}
+			}
+
+			// 2. Update managedStaff with user mappings (all users are now imported)
+			const pendingStaff = this.pendingManagedStaffUpdates.get(user.uid);
+			if (pendingStaff) {
+				const mappedStaff = this.parseAndMapNumberArray(
+					pendingStaff,
+					this.userMapping,
+					'managedStaff',
+					user.uid,
+					true
+				);
+				if (mappedStaff && mappedStaff.length > 0) {
+					updates.managedStaff = mappedStaff;
+					needsUpdate = true;
+				}
+				this.pendingManagedStaffUpdates.delete(user.uid);
+			} else if (user.managedStaff && user.managedStaff.length > 0) {
+				// Also check existing managedStaff for unmapped values
+				const mappedStaff = user.managedStaff
+					.map((oldUserId: number) => this.userMapping[oldUserId] || oldUserId)
+					.filter((id: number) => id !== null && id !== undefined);
+				
+				if (JSON.stringify(mappedStaff) !== JSON.stringify(user.managedStaff)) {
+					updates.managedStaff = mappedStaff;
+					needsUpdate = true;
+				}
+			}
+
+			// 3. Update managedBranches (verify mappings)
+			if (user.managedBranches && user.managedBranches.length > 0) {
+				const mappedBranches = user.managedBranches
+					.map((oldBranchId: number) => this.branchMapping[oldBranchId] || oldBranchId)
+					.filter((id: number) => id !== null && id !== undefined);
+				
+				if (JSON.stringify(mappedBranches) !== JSON.stringify(user.managedBranches)) {
+					updates.managedBranches = mappedBranches;
+					needsUpdate = true;
+				}
+			}
+
+			// 4. Link UserTarget if it exists but isn't linked
+			if (!user.userTarget) {
+				const userTarget = await this.userTargetRepo!.findOne({
+					where: { user: { uid: user.uid } }
+				});
+				if (userTarget) {
+					updates.userTarget = userTarget;
+					needsUpdate = true;
+				}
+			}
+
+			// 5. Link UserProfile if it exists but isn't linked
+			if (!user.userProfile) {
+				const userProfile = await this.userProfileRepo!.findOne({
+					where: { owner: { uid: user.uid } }
+				});
+				if (userProfile) {
+					updates.userProfile = userProfile;
+					needsUpdate = true;
+				}
+			}
+
+			// 6. Link UserEmploymentProfile if it exists but isn't linked
+			if (!user.userEmployeementProfile) {
+				const employmentProfile = await this.userEmploymentRepo!.findOne({
+					where: { owner: { uid: user.uid } }
+				});
+				if (employmentProfile) {
+					updates.userEmployeementProfile = employmentProfile;
+					needsUpdate = true;
+				}
+			}
+
+			// 7. Link UserRewards if it exists but isn't linked
+			if (!user.rewards) {
+				const rewards = await this.userRewardsRepo!.findOne({
+					where: { owner: { uid: user.uid } }
+				});
+				if (rewards) {
+					updates.rewards = rewards;
+					needsUpdate = true;
+				}
+			}
+
+			if (needsUpdate) {
+				Object.assign(user, updates);
+				await this.userRepo!.save(user);
+				updated++;
+				if (this.verbose && updated % 100 === 0) {
+					console.log(`  ✓ Updated ${updated} user relationships...`);
+				}
+			}
+		}
+
+		console.log(`✅ Post-processed ${updated} user relationships\n`);
 	}
 
 	private async importUserRewards() {
@@ -3177,9 +3619,9 @@ class LegacyDbMigrator {
 
 	private async importAttendance() {
 		console.log('\n📦 Importing Attendance...');
-		// Import attendance records from November 25, 2025 till today only
-		const startDate = new Date('2025-11-25T00:00:00.000Z');
-		const endDate = new Date(); // Today
+		// Import attendance records for December only
+		const startDate = new Date('2024-12-01T00:00:00.000Z');
+		const endDate = new Date('2024-12-31T23:59:59.999Z');
 		// Filter by checkIn date if available, otherwise use createdAt
 		const [rows] = await this.mysqlConnection!.execute(
 			'SELECT * FROM attendance WHERE ((checkIn >= ? AND checkIn <= ?) OR (checkIn IS NULL AND createdAt >= ? AND createdAt <= ?))',
@@ -3187,7 +3629,7 @@ class LegacyDbMigrator {
 		);
 		const records = rows as any[];
 		this.stats.attendance.total = records.length;
-		console.log(`Found ${records.length} attendance records (importing records from November 25, 2025 to today)`);
+		console.log(`Found ${records.length} attendance records (importing records for December 2024 only)`);
 
 		for (const record of records) {
 			try {

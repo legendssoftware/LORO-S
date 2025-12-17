@@ -1319,6 +1319,7 @@ export class UserService {
 			const queryBuilder = this.userRepository
 				.createQueryBuilder('user')
 				.leftJoinAndSelect('user.organisation', 'organisation')
+				.leftJoinAndSelect('user.branch', 'branch')
 				.leftJoin('user.userTarget', 'userTarget')
 				.addSelect([
 					'userTarget.uid',
