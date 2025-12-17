@@ -1427,23 +1427,52 @@ export class AttendanceService {
 				};
 			}
 
-			this.logger.debug(`Active shift found for user: ${checkOutDto.owner?.uid}, shift ID: ${activeShift.uid}`);
+		this.logger.debug(`Active shift found for user: ${checkOutDto.owner?.uid}, shift ID: ${activeShift.uid}`);
 
-			const checkOutTime = checkOutDto.checkOut ? new Date(checkOutDto.checkOut) : new Date();
-			const checkInTime = new Date(activeShift.checkIn);
+		const checkOutTime = checkOutDto.checkOut ? new Date(checkOutDto.checkOut) : new Date();
+		const checkInTime = new Date(activeShift.checkIn);
 
-			// Validate check-out time is after check-in time
-			if (checkOutTime <= checkInTime) {
-				throw new BadRequestException('Check-out time must be after check-in time');
-			}
-
-			this.logger.debug(
-				`Calculating work duration: check-in at ${checkInTime.toISOString()}, check-out at ${checkOutTime.toISOString()}`,
+		// Get organization timezone for accurate date comparison
+		const organizationId = activeShift.owner?.organisation?.uid || orgId;
+		const orgTimezone = await this.getOrganizationTimezone(organizationId);
+		
+		// Convert both dates to organization timezone for comparison
+		const checkInDateOrg = TimezoneUtil.toOrganizationTime(checkInTime, orgTimezone);
+		const checkOutDateOrg = TimezoneUtil.toOrganizationTime(checkOutTime, orgTimezone);
+		
+		// Check if both dates are on the same calendar day in organization timezone
+		const isSameCalendarDay = 
+			checkInDateOrg.getFullYear() === checkOutDateOrg.getFullYear() &&
+			checkInDateOrg.getMonth() === checkOutDateOrg.getMonth() &&
+			checkInDateOrg.getDate() === checkOutDateOrg.getDate();
+		
+		// Validate check-out time is after check-in time
+		// Only enforce this validation if dates are on the same calendar day
+		// If dates are on different days, allow check-out (user is closing a shift from a previous day)
+		if (isSameCalendarDay && checkOutTime <= checkInTime) {
+			this.logger.error(
+				`Check-out validation failed - Same day check-out must be after check-in. ` +
+				`Check-in: ${checkInTime.toISOString()} (${checkInDateOrg.toISOString()} org time), ` +
+				`Check-out: ${checkOutTime.toISOString()} (${checkOutDateOrg.toISOString()} org time)`
 			);
+			throw new BadRequestException('Check-out time must be after check-in time');
+		}
+		
+		if (!isSameCalendarDay) {
+			this.logger.debug(
+				`Check-out is on different calendar day than check-in - allowing check-out. ` +
+				`Check-in: ${checkInDateOrg.toISOString()} (${checkInDateOrg.getDate()}/${checkInDateOrg.getMonth() + 1}/${checkInDateOrg.getFullYear()}), ` +
+				`Check-out: ${checkOutDateOrg.toISOString()} (${checkOutDateOrg.getDate()}/${checkOutDateOrg.getMonth() + 1}/${checkOutDateOrg.getFullYear()})`
+			);
+		}
 
-			// Enhanced calculation using our new utilities
-			const organizationId = activeShift.owner?.organisation?.uid;
-			this.logger.debug(`Processing time calculations for organization: ${organizationId}`);
+		this.logger.debug(
+			`Calculating work duration: check-in at ${checkInTime.toISOString()}, check-out at ${checkOutTime.toISOString()}`,
+		);
+
+		// Enhanced calculation using our new utilities
+		// organizationId already defined above during validation
+		this.logger.debug(`Processing time calculations for organization: ${organizationId}`);
 
 			const breakMinutes = TimeCalculatorUtil.calculateTotalBreakMinutes(
 				activeShift.breakDetails,
