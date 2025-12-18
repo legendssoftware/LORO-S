@@ -55,18 +55,19 @@ export class TimezoneUtil {
   }
 
   /**
-   * Convert server time to organization timezone
+   * Convert server time (UTC/stored time) to organization timezone for display
+   * This adds the timezone offset so that stored times display correctly in local time
    */
   static toOrganizationTime(serverDate: Date, organizationTimezone?: string): Date {
     const safeTimezone = this.getSafeTimezone(organizationTimezone);
     
     try {
       if (!isValid(serverDate)) {
-        return new Date(); // Return current time as fallback
+        return new Date();
       }
 
-      // Format the UTC date in the target timezone
-      const orgFormatter = new Intl.DateTimeFormat('en-ZA', {
+      // Format the date in the target timezone to get the local representation
+      const formatter = new Intl.DateTimeFormat('en-ZA', {
         timeZone: safeTimezone,
         year: 'numeric',
         month: '2-digit',
@@ -74,26 +75,24 @@ export class TimezoneUtil {
         hour: '2-digit',
         minute: '2-digit',
         second: '2-digit',
-        hour12: false
+        hour12: false,
       });
-      
-      const orgParts = orgFormatter.formatToParts(serverDate);
-      
-      // Extract the formatted parts
-      const year = parseInt(orgParts.find(p => p.type === 'year')?.value || '0');
-      const month = parseInt(orgParts.find(p => p.type === 'month')?.value || '1') - 1; // Month is 0-indexed
-      const day = parseInt(orgParts.find(p => p.type === 'day')?.value || '1');
-      const hour = parseInt(orgParts.find(p => p.type === 'hour')?.value || '0');
-      const minute = parseInt(orgParts.find(p => p.type === 'minute')?.value || '0');
-      const second = parseInt(orgParts.find(p => p.type === 'second')?.value || '0');
-      
-      // Create a UTC date object representing the local time in the organization timezone
-      // This is what we want: the time that shows in the organization's timezone, but as a UTC date
-      const orgDate = new Date(Date.UTC(year, month, day, hour, minute, second));
-      
-      return orgDate;
+
+      const parts = formatter.formatToParts(serverDate);
+      const getPart = (type: string) => parts.find(p => p.type === type)?.value || '00';
+
+      // Build a new Date representing what the time "looks like" in the target timezone
+      const year = parseInt(getPart('year'), 10);
+      const month = parseInt(getPart('month'), 10) - 1; // JS months are 0-indexed
+      const day = parseInt(getPart('day'), 10);
+      const hour = parseInt(getPart('hour'), 10);
+      const minute = parseInt(getPart('minute'), 10);
+      const second = parseInt(getPart('second'), 10);
+
+      return new Date(year, month, day, hour, minute, second);
     } catch (error) {
-      return serverDate; // Fallback to original date
+      // Fallback: return original date if conversion fails
+      return serverDate;
     }
   }
 
@@ -154,7 +153,7 @@ export class TimezoneUtil {
   }
 
   /**
-   * Format time in organization timezone
+   * Format time in organization timezone for display
    */
   static formatInOrganizationTime(
     date: Date, 
@@ -164,27 +163,17 @@ export class TimezoneUtil {
     const safeTimezone = this.getSafeTimezone(organizationTimezone);
     
     try {
-      // For simple time formats, use Intl.DateTimeFormat directly to avoid double timezone conversion
-      if (formatString === 'h:mm a' || formatString === 'HH:mm' || formatString === 'h:mm A') {
-        const is12Hour = formatString.includes('a') || formatString.includes('A');
-        const formatter = new Intl.DateTimeFormat('en-US', {
-          timeZone: safeTimezone,
-          hour: 'numeric',
-          minute: '2-digit',
-          hour12: is12Hour,
-        });
-        
-        const formatted = formatter.format(date);
-        return formatted;
+      if (!isValid(date)) {
+        return format(new Date(), formatString);
       }
-      
-      // For other formats, use the existing method but be more careful
+
       // Convert to organization timezone first
-      const orgDate = this.toOrganizationTime(date, organizationTimezone);
-      // Then format using date-fns
+      const orgDate = this.toOrganizationTime(date, safeTimezone);
+      
+      // Format the converted date
       return format(orgDate, formatString);
     } catch (error) {
-      return format(date, formatString); // Fallback without timezone
+      return format(date, formatString);
     }
   }
 

@@ -801,28 +801,54 @@ export class AttendanceService {
 			}
 		}
 
-		// Validate branch belongs to organisation before saving
-		if (orgId && branchId) {
-			this.logger.debug(`Validating branch ${branchId} belongs to organisation ${orgId}`);
-			const branch = await this.branchRepository.findOne({
-				where: { uid: branchId },
-				relations: ['organisation'],
-			});
+		// Validate branch belongs to organisation - auto-correct if mismatch
+		if (orgId) {
+			let validBranchId = branchId;
+			let needsBranchCorrection = false;
 
-			if (!branch) {
-				this.logger.error(`Branch with ID ${branchId} does not exist`);
-				throw new NotFoundException(`Branch with ID ${branchId} does not exist`);
+			if (branchId) {
+				this.logger.debug(`Validating branch ${branchId} belongs to organisation ${orgId}`);
+				const branch = await this.branchRepository.findOne({
+					where: { uid: branchId },
+					relations: ['organisation'],
+				});
+
+				if (!branch || branch.organisation?.uid !== orgId) {
+					this.logger.warn(
+						`Branch ${branchId} invalid for organisation ${orgId}. ` +
+						`${!branch ? 'Branch does not exist' : `Branch belongs to org ${branch.organisation?.uid}`}. Auto-correcting...`
+					);
+					needsBranchCorrection = true;
+				}
+			} else {
+				needsBranchCorrection = true;
 			}
 
-			if (branch.organisation?.uid !== orgId) {
-				this.logger.error(
-					`Branch ${branchId} does not belong to organisation ${orgId}. Branch belongs to organisation ${branch.organisation?.uid || 'none'}`
-				);
-				throw new BadRequestException(
-					`Branch ${branchId} does not belong to organisation ${orgId}. ` +
-					`Branch belongs to organisation ${branch.organisation?.uid || 'none'}`
-				);
+			// Auto-correct: get user's assigned branch or fallback to first org branch
+			if (needsBranchCorrection) {
+				const userWithBranch = await this.userRepository.findOne({
+					where: { uid: checkInDto.owner.uid },
+					relations: ['branch', 'branch.organisation'],
+				});
+
+				if (userWithBranch?.branch?.uid && userWithBranch.branch.organisation?.uid === orgId) {
+					validBranchId = userWithBranch.branch.uid;
+					this.logger.log(`Auto-corrected to user's branch: ${validBranchId} (was: ${branchId})`);
+				} else {
+					const orgBranch = await this.branchRepository.findOne({
+						where: { organisation: { uid: orgId } },
+					});
+					if (orgBranch) {
+						validBranchId = orgBranch.uid;
+						this.logger.log(`Auto-corrected to org's first branch: ${validBranchId} (was: ${branchId})`);
+					} else {
+						this.logger.error(`No valid branch found for organisation ${orgId}`);
+						throw new BadRequestException(`No valid branch found for organisation ${orgId}`);
+					}
+				}
 			}
+
+			branchId = validBranchId;
 		}
 
 		// Validate organisation exists
@@ -849,6 +875,7 @@ export class AttendanceService {
 		// Location processing will happen asynchronously after response is sent
 		const attendanceData = {
 			...checkInDto,
+			checkIn: new Date(checkInDto.checkIn),
 			status: checkInDto.status || AttendanceStatus.PRESENT,
 			organisation: orgId ? { uid: orgId } : undefined,
 			branch: branchId ? { uid: branchId } : undefined,
@@ -7302,7 +7329,9 @@ export class AttendanceService {
 
 		try {
 			// Step 1: Get ALL users for the organization (fetch all pages)
-			this.logger.log(`📞 Fetching ALL users for organization ${orgId}${branchId ? ` and branch ${branchId}` : ''}`);
+			// Skip branch filtering - fetch ALL users regardless of branch restrictions
+			// Only filter by branch if explicitly provided in DTO
+			this.logger.log(`📞 Fetching ALL users for organization ${orgId}${bulkClockInDto.branchId ? ` (filtered by branch ${bulkClockInDto.branchId})` : ' (NO BRANCH FILTER - ALL BRANCHES)'}`);
 			let allUsers: any[] = [];
 			let page = 1;
 			const pageSize = 1000;
@@ -7312,7 +7341,8 @@ export class AttendanceService {
 				const usersResponse = await this.userService.findAll(
 					{
 						orgId,
-						branchId: branchId,
+						// Only include branchId filter if explicitly provided in DTO
+						...(bulkClockInDto.branchId && { branchId: bulkClockInDto.branchId }),
 					},
 					page,
 					pageSize,
@@ -7440,11 +7470,11 @@ export class AttendanceService {
 			// Step 2: Get organization hours and timezone (already fetched above, but log it)
 			this.logger.log(`⏰ Organization timezone: ${orgTimezone}`);
 
-			// Step 3: Process each date
+					// Step 3: Process each date
 			// Identify the last date - users should remain checked in (no check-out)
 			const sortedDates = [...bulkClockInDto.dates].sort();
 			const lastDate = sortedDates[sortedDates.length - 1];
-			this.logger.log(`📌 Last date identified: ${lastDate} - users will remain checked in (no check-out)`);
+			this.logger.log(`📌 Last date identified: ${lastDate} - users will remain checked in (no check-out, status PRESENT)`);
 			
 			for (const dateStr of bulkClockInDto.dates) {
 				this.logger.log(`\n📅 PROCESSING DATE: ${dateStr}`);
@@ -7461,65 +7491,102 @@ export class AttendanceService {
 					// Check if it's a half day
 					const isHalfDay = bulkClockInDto.halfDayDates?.includes(dateStr) || false;
 					this.logger.log(`📊 Half-day: ${isHalfDay ? 'YES' : 'NO'}`);
+					this.logger.log(`📌 Is last date: ${isLastDate ? 'YES - will remain checked in (PRESENT status)' : 'NO - will be completed'}`);
 
 					// Get custom hours for this date if provided
 					const customHours = bulkClockInDto.customHours?.find((ch) => ch.date === dateStr);
 					let checkInTime: string;
-					let checkOutTime: string;
+					let checkOutTime: string | null = null;
 
-					if (customHours) {
-						// Use custom hours
-						checkInTime = customHours.checkIn;
-						checkOutTime = customHours.checkOut;
-						this.logger.log(`⏰ Using custom hours - Check-in: ${checkInTime}, Check-out: ${checkOutTime}`);
-					} else {
-						// Get organization hours for this date
-						const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(orgId, targetDate);
-						
-						if (!workingDayInfo.isWorkingDay || !workingDayInfo.startTime || !workingDayInfo.endTime) {
-							this.logger.warn(`⚠️ Date ${dateStr} is not a working day. Skipping.`);
-							details.push({
-								date: dateStr,
-								usersProcessed: 0,
-								recordsCreated: 0,
-								recordsSkipped: 0,
-								halfDay: false,
-								checkInTime: 'N/A',
-								checkOutTime: 'N/A',
-							});
-							continue;
-						}
-
-						checkInTime = workingDayInfo.startTime;
-						let endTime = workingDayInfo.endTime;
-
-						// If half day, calculate half-day checkout time
-						if (isHalfDay) {
-							const startMinutes = TimeCalculatorUtil.timeToMinutes(checkInTime);
-							const endMinutes = TimeCalculatorUtil.timeToMinutes(endTime);
-							const halfDayMinutes = Math.floor((endMinutes - startMinutes) / 2);
-							const halfDayEndMinutes = startMinutes + halfDayMinutes;
-							// Convert minutes back to HH:mm format
-							const hours = Math.floor(halfDayEndMinutes / 60);
-							const minutes = halfDayEndMinutes % 60;
-							checkOutTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
-							this.logger.log(`⏰ Half-day calculated - Check-in: ${checkInTime}, Check-out: ${checkOutTime} (${halfDayMinutes} minutes)`);
+					// Only calculate check-out time if this is NOT the last date
+					if (!isLastDate) {
+						if (customHours) {
+							// Use custom hours
+							checkInTime = customHours.checkIn;
+							checkOutTime = customHours.checkOut;
+							this.logger.log(`⏰ Using custom hours - Check-in: ${checkInTime}, Check-out: ${checkOutTime}`);
 						} else {
-							checkOutTime = endTime;
-							this.logger.log(`⏰ Using org hours - Check-in: ${checkInTime}, Check-out: ${checkOutTime}`);
+							// Get organization hours for this date
+							const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(orgId, targetDate);
+							
+							if (!workingDayInfo.isWorkingDay || !workingDayInfo.startTime || !workingDayInfo.endTime) {
+								this.logger.warn(`⚠️ Date ${dateStr} is not a working day. Skipping.`);
+								details.push({
+									date: dateStr,
+									usersProcessed: 0,
+									recordsCreated: 0,
+									recordsSkipped: 0,
+									halfDay: false,
+									checkInTime: 'N/A',
+									checkOutTime: 'N/A',
+								});
+								continue;
+							}
+
+							checkInTime = workingDayInfo.startTime;
+							let endTime = workingDayInfo.endTime;
+
+							// If half day, calculate half-day checkout time
+							if (isHalfDay) {
+								const startMinutes = TimeCalculatorUtil.timeToMinutes(checkInTime);
+								const endMinutes = TimeCalculatorUtil.timeToMinutes(endTime);
+								const halfDayMinutes = Math.floor((endMinutes - startMinutes) / 2);
+								const halfDayEndMinutes = startMinutes + halfDayMinutes;
+								// Convert minutes back to HH:mm format
+								const hours = Math.floor(halfDayEndMinutes / 60);
+								const minutes = halfDayEndMinutes % 60;
+								checkOutTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+								this.logger.log(`⏰ Half-day calculated - Check-in: ${checkInTime}, Check-out: ${checkOutTime} (${halfDayMinutes} minutes)`);
+							} else {
+								checkOutTime = endTime;
+								this.logger.log(`⏰ Using org hours - Check-in: ${checkInTime}, Check-out: ${checkOutTime}`);
+							}
+						}
+					} else {
+						// Last date - only get check-in time
+						if (customHours) {
+							checkInTime = customHours.checkIn;
+							this.logger.log(`⏰ Using custom hours - Check-in: ${checkInTime} (last date - no check-out)`);
+						} else {
+							// Get organization hours for this date
+							const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(orgId, targetDate);
+							
+							if (!workingDayInfo.isWorkingDay || !workingDayInfo.startTime) {
+								this.logger.warn(`⚠️ Date ${dateStr} is not a working day. Skipping.`);
+								details.push({
+									date: dateStr,
+									usersProcessed: 0,
+									recordsCreated: 0,
+									recordsSkipped: 0,
+									halfDay: false,
+									checkInTime: 'N/A',
+									checkOutTime: 'N/A',
+								});
+								continue;
+							}
+
+							checkInTime = workingDayInfo.startTime;
+							this.logger.log(`⏰ Using org hours - Check-in: ${checkInTime} (last date - no check-out)`);
 						}
 					}
 
-					// Create Date objects for check-in and check-out
+					// Create Date object for check-in
 					const checkInDate = TimezoneUtil.parseTimeInOrganization(checkInTime, targetDate, orgTimezone);
-					const checkOutDate = TimezoneUtil.parseTimeInOrganization(checkOutTime, targetDate, orgTimezone);
+					
+					// Only create check-out date if this is NOT the last date
+					let checkOutDate: Date | null = null;
+					if (!isLastDate && checkOutTime) {
+						checkOutDate = TimezoneUtil.parseTimeInOrganization(checkOutTime, targetDate, orgTimezone);
 
-					// Ensure check-out is after check-in
-					if (checkOutDate <= checkInDate) {
-						throw new Error(`Check-out time (${checkOutTime}) must be after check-in time (${checkInTime})`);
+						// Ensure check-out is after check-in
+						if (checkOutDate <= checkInDate) {
+							throw new Error(`Check-out time (${checkOutTime}) must be after check-in time (${checkInTime})`);
+						}
+
+						this.logger.log(`📅 Date: ${dateStr}, Check-in: ${checkInDate.toISOString()}, Check-out: ${checkOutDate.toISOString()}`);
+					} else {
+						this.logger.log(`📅 Date: ${dateStr}, Check-in: ${checkInDate.toISOString()} (last date - no check-out, status PRESENT)`);
 					}
-
-					this.logger.log(`📅 Date: ${dateStr}, Check-in: ${checkInDate.toISOString()}, Check-out: ${checkOutDate.toISOString()}`);
 
 					// Step 4: Process each user
 					let recordsCreated = 0;
@@ -7544,23 +7611,18 @@ export class AttendanceService {
 								}
 							}
 
-							// Get user's branch - use fallback to branchId from request if user has no branch
-							const userBranchId = user.branch?.uid || branchId;
-							if (!userBranchId) {
-								this.logger.warn(`⚠️ User ${user.uid} has no branch assigned and no branchId provided. Skipping.`);
-								errors.push({
-									date: dateStr,
-									userId: user.uid,
-									error: 'User has no branch assigned',
-								});
-								continue;
-							}
+							// Get user's branch - use user's own branch, allow null/undefined
+							// Don't skip users without branch - process all users
+							const userBranchId = user.branch?.uid;
 
 							// Create check-in DTO
+							// Note: checkIn method uses branchId parameter (userBranchId) which can be undefined
+							// The branch field in DTO is required by type but will be overridden by checkIn method's branchId parameter
 							const checkInDto: CreateCheckInDto = {
 								checkIn: checkInDate,
 								owner: { uid: user.uid },
-								branch: { uid: userBranchId },
+								// Provide branch if available (will be overridden by branchId parameter in checkIn method)
+								branch: userBranchId ? { uid: userBranchId } : { uid: 0 },
 								status: AttendanceStatus.PRESENT,
 								checkInNotes: `Bulk clock-in for ${dateStr}${isHalfDay ? ' (Half-day)' : ''}`,
 							};
@@ -7575,8 +7637,8 @@ export class AttendanceService {
 
 							const attendanceId = checkInResult.data.uid;
 
-							// Only check out if this is NOT the last date (users remain checked in on last date)
-							if (!isLastDate) {
+							// Only check out if this is NOT the last date (users remain checked in on last date with status PRESENT)
+							if (!isLastDate && checkOutDate) {
 								// Create check-out DTO
 								const checkOutDto: CreateCheckOutDto = {
 									checkOut: checkOutDate,
@@ -7594,7 +7656,7 @@ export class AttendanceService {
 
 								this.logger.debug(`✅ Successfully created completed attendance record for user ${user.uid} on ${dateStr}`);
 							} else {
-								this.logger.debug(`✅ Successfully created open attendance record for user ${user.uid} on ${dateStr} (last date - remains checked in)`);
+								this.logger.debug(`✅ Successfully created open attendance record for user ${user.uid} on ${dateStr} (last date - remains checked in with status PRESENT)`);
 							}
 
 							recordsCreated++;
@@ -7623,7 +7685,7 @@ export class AttendanceService {
 						recordsSkipped,
 						halfDay: isHalfDay,
 						checkInTime,
-						checkOutTime,
+						checkOutTime: isLastDate ? 'IN PROGRESS' : (checkOutTime || 'N/A'),
 					});
 
 				} catch (dateError) {

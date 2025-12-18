@@ -1081,7 +1081,7 @@ class LegacyDbMigrator {
 
 			if (this.shouldImport('attendance')) {
 				await this.clearAttendanceRecords();
-				await this.copyAttendanceWithDateFilter();
+				await this.copyEntities(this.attendanceSourceRepo!, this.attendanceRepo!, 'Attendance');
 			}
 
 			// Claims import - SKIPPED per user request

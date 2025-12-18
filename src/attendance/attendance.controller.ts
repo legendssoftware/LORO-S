@@ -6165,12 +6165,14 @@ Returns detailed summary including:
 		}>;
 	}> {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = bulkClockInDto.branchId || req.user?.branch?.uid;
+		// Only use branchId from DTO if explicitly provided - don't use user's branch to fetch ALL users
+		const branchId = bulkClockInDto.branchId;
 
 		if (!orgId) {
 			throw new BadRequestException('Organization ID is required');
 		}
 
-		return this.attendanceService.bulkClockIn(bulkClockInDto, orgId, branchId);
+		// Pass undefined for branchId to fetch ALL users regardless of branch restrictions
+		return this.attendanceService.bulkClockIn(bulkClockInDto, orgId, undefined);
 	}
 }
