@@ -26,7 +26,7 @@ import {
 } from './dto/update-iot.dto';
 import { IoTReportingService } from './services/iot-reporting.service';
 import { OrganisationHoursService } from '../organisation/services/organisation-hours.service';
-import { TimezoneUtil } from '../lib/utils/timezone.util';
+import { toZonedTime, formatInTimeZone } from 'date-fns-tz';
 import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
 import { User } from '../user/entities/user.entity';
 import { AccessLevel } from '../lib/enums/user.enums';
@@ -722,7 +722,7 @@ export class IotService {
 				return false; // If no business hours defined, assume always during business hours
 			}
 
-			// eventDate is already converted using TimezoneUtil.toOrganizationTime
+			// eventDate is already converted using toZonedTime
 			// which returns a UTC Date representing org local time, so use getUTCHours/getUTCMinutes
 			const eventHour = eventDate.getUTCHours();
 			const eventMinute = eventDate.getUTCMinutes();
@@ -1271,10 +1271,10 @@ export class IotService {
 			const orgRef = String(device.orgID);
 			const orgHoursArr = await this.organisationHoursService.findAll(orgRef).catch(() => []);
 			const orgTimezone =
-				(Array.isArray(orgHoursArr) && orgHoursArr[0]?.timezone) || TimezoneUtil.AFRICA_JOHANNESBURG;
+				(Array.isArray(orgHoursArr) && orgHoursArr[0]?.timezone) || 'Africa/Johannesburg';
 			
 			const today = new Date();
-			const todayOrg = TimezoneUtil.toOrganizationTime(today, orgTimezone);
+			const todayOrg = toZonedTime(today, orgTimezone);
 			const startOfDay = new Date(todayOrg);
 			startOfDay.setUTCHours(0, 0, 0, 0);
 			const endOfDay = new Date(todayOrg);
@@ -1295,7 +1295,7 @@ export class IotService {
 			const todayRecords = device.records?.filter(r => {
 				if (!r.openTime) return false;
 				const recordDate = typeof r.openTime === 'string' ? new Date(r.openTime) : (r.openTime as unknown as Date);
-				const recordDateOrg = TimezoneUtil.toOrganizationTime(recordDate, orgTimezone);
+				const recordDateOrg = toZonedTime(recordDate, orgTimezone);
 				const recordDateKey = recordDateOrg.toISOString().split('T')[0];
 				const todayKey = todayOrg.toISOString().split('T')[0];
 				return recordDateKey === todayKey;
@@ -1322,7 +1322,7 @@ export class IotService {
 				// IMPORTANT: Door open time is already stored in organization timezone format in database
 				// Do NOT convert it using timezone.util.ts - use as-is
 				// Only user clock-in time needs timezone conversion from UTC to organization timezone
-				const clockInOrg = userClockInTime ? TimezoneUtil.toOrganizationTime(userClockInTime, orgTimezone) : null;
+				const clockInOrg = userClockInTime ? toZonedTime(userClockInTime, orgTimezone) : null;
 
 				let timeDifferenceMinutes: number | null = null;
 				let isEarly = false;
@@ -1409,7 +1409,7 @@ export class IotService {
 			const targetCloseTimeMinutes = closeHour * 60 + closeMinute;
 
 			// Get organization timezone
-			const orgTimezone = orgHours.timezone || TimezoneUtil.AFRICA_JOHANNESBURG;
+			const orgTimezone = orgHours.timezone || 'Africa/Johannesburg';
 
 			// Use recent records (last 7 days only) for better representation of current performance
 			// Sort records by opening/closing time descending to get most recent first
@@ -1423,7 +1423,7 @@ export class IotService {
 			// Get records from last 7 days only based on actual opening/closing dates
 			// CRITICAL FIX: Use organization timezone for date filtering, not UTC
 			// Calculate "7 days ago" in organization timezone
-			const nowInOrgTimezone = TimezoneUtil.toOrganizationTime(new Date(), orgTimezone);
+			const nowInOrgTimezone = toZonedTime(new Date(), orgTimezone);
 			const sevenDaysAgoInOrgTimezone = new Date(nowInOrgTimezone);
 			sevenDaysAgoInOrgTimezone.setUTCDate(sevenDaysAgoInOrgTimezone.getUTCDate() - 7);
 			sevenDaysAgoInOrgTimezone.setUTCHours(0, 0, 0, 0);
@@ -1438,7 +1438,7 @@ export class IotService {
 				const recordDateObj = typeof recordDate === 'string' 
 					? new Date(recordDate) 
 					: (recordDate as unknown as Date);
-				const recordDateInOrgTimezone = TimezoneUtil.toOrganizationTime(recordDateObj, orgTimezone);
+				const recordDateInOrgTimezone = toZonedTime(recordDateObj, orgTimezone);
 				
 				// Compare dates (YYYY-MM-DD) in organization timezone
 				const recordDateKey = recordDateInOrgTimezone.toISOString().split('T')[0];
@@ -1457,9 +1457,9 @@ export class IotService {
 
 			// Helper function to extract hours/minutes from organization timezone
 			const getMinutesSinceMidnight = (date: Date, timezone: string): number => {
-				const orgDate = TimezoneUtil.toOrganizationTime(date, timezone);
-				// Extract hours/minutes from the UTC Date (which represents org local time)
-				return orgDate.getUTCHours() * 60 + orgDate.getUTCMinutes();
+				const orgDate = toZonedTime(date, timezone);
+				// Extract hours/minutes from the zoned time
+				return orgDate.getHours() * 60 + orgDate.getMinutes();
 			};
 
 			// DAILY AGGREGATION: Group records by date and extract first opening and last closing per day
@@ -1481,7 +1481,7 @@ export class IotService {
 							? new Date(record.openTime)
 							: (record.openTime as unknown as Date);
 						
-						const openDateOrg = TimezoneUtil.toOrganizationTime(openDate, orgTimezone);
+						const openDateOrg = toZonedTime(openDate, orgTimezone);
 						const openMinutes = getMinutesSinceMidnight(openDate, orgTimezone);
 						
 						// Process all opening times - no time window filter
@@ -1505,7 +1505,7 @@ export class IotService {
 							? new Date(record.closeTime)
 							: (record.closeTime as unknown as Date);
 						
-						const closeDateOrg = TimezoneUtil.toOrganizationTime(closeDate, orgTimezone);
+						const closeDateOrg = toZonedTime(closeDate, orgTimezone);
 						const closeMinutes = getMinutesSinceMidnight(closeDate, orgTimezone);
 						const dateKey = closeDateOrg.toISOString().split('T')[0]; // YYYY-MM-DD
 						
@@ -1600,7 +1600,7 @@ export class IotService {
 			
 			// REVISED LOGIC: If shop opened late today and hasn't closed by 8pm, mark closesOnTime as false
 			// Get today's date in organization timezone for comparison
-			const todayOrg = TimezoneUtil.toOrganizationTime(new Date(), orgTimezone);
+			const todayOrg = toZonedTime(new Date(), orgTimezone);
 			const todayKey = todayOrg.toISOString().split('T')[0]; // YYYY-MM-DD in org timezone
 			
 			// Check if shop opened late today
@@ -2343,16 +2343,16 @@ export class IotService {
 			const orgRef = String(device.orgID);
 			const orgHoursArr = await this.organisationHoursService.findAll(orgRef).catch(() => []);
 			const orgTimezone =
-				(Array.isArray(orgHoursArr) && orgHoursArr[0]?.timezone) || TimezoneUtil.AFRICA_JOHANNESBURG;
+				(Array.isArray(orgHoursArr) && orgHoursArr[0]?.timezone) || 'Africa/Johannesburg';
 
 			// Convert incoming epoch seconds to organization-local Date values
 			const openDateOrg =
 				typeof recordDto.openTime === 'number' && recordDto.openTime > 0
-					? TimezoneUtil.toOrganizationTime(new Date(recordDto.openTime * 1000), orgTimezone)
+					? toZonedTime(new Date(recordDto.openTime * 1000), orgTimezone)
 					: null;
 			const closeDateOrg =
 				typeof recordDto.closeTime === 'number' && recordDto.closeTime > 0
-					? TimezoneUtil.toOrganizationTime(new Date(recordDto.closeTime * 1000), orgTimezone)
+					? toZonedTime(new Date(recordDto.closeTime * 1000), orgTimezone)
 					: null;
 
 			// Find latest record for today (if any)
@@ -2901,8 +2901,8 @@ export class IotService {
 
 			// Convert timestamp to organization timezone
 			const eventDateUTC = new Date(timeEventDto.timestamp * 1000);
-			const timezone = organizationHours.timezone || TimezoneUtil.AFRICA_JOHANNESBURG;
-			const eventDate = TimezoneUtil.toOrganizationTime(eventDateUTC, timezone);
+			const timezone = organizationHours.timezone || 'Africa/Johannesburg';
+			const eventDate = toZonedTime(eventDateUTC, timezone);
 			const eventTimeString = eventDate.toLocaleTimeString('en-ZA', {
 				hour12: false,
 				hour: '2-digit',
@@ -2963,11 +2963,21 @@ export class IotService {
 
 			if (isWorkingDay && timeEventDto.eventType === 'open') {
 				// Parse times for comparison in org timezone
-				const openDate = TimezoneUtil.parseTimeInOrganization(dayOpenTime, eventDate, timezone);
-				const closeDate = TimezoneUtil.parseTimeInOrganization(dayCloseTime, eventDate, timezone);
-				const openTimeMinutes = TimezoneUtil.getMinutesSinceMidnight(openDate, timezone);
-				const closeTimeMinutes = TimezoneUtil.getMinutesSinceMidnight(closeDate, timezone);
-				const eventTimeMinutes = TimezoneUtil.getMinutesSinceMidnight(eventDate, timezone);
+				// Parse time strings (HH:mm) and combine with eventDate in org timezone
+				const parseTimeInOrg = (timeString: string, baseDate: Date, tz: string): Date => {
+					const [hours, minutes] = timeString.split(':').map(Number);
+					const zonedBase = toZonedTime(baseDate, tz);
+					zonedBase.setHours(hours, minutes, 0, 0);
+					return zonedBase;
+				};
+				const getMinutesSinceMidnight = (date: Date): number => {
+					return date.getHours() * 60 + date.getMinutes();
+				};
+				const openDate = parseTimeInOrg(dayOpenTime, eventDate, timezone);
+				const closeDate = parseTimeInOrg(dayCloseTime, eventDate, timezone);
+				const openTimeMinutes = getMinutesSinceMidnight(openDate);
+				const closeTimeMinutes = getMinutesSinceMidnight(closeDate);
+				const eventTimeMinutes = getMinutesSinceMidnight(eventDate);
 
 				minutesFromSchedule = eventTimeMinutes - openTimeMinutes;
 
@@ -3105,10 +3115,10 @@ export class IotService {
 		const orgRef = String(device.orgID);
 		const orgHoursArr = await this.organisationHoursService.findAll(orgRef).catch(() => []);
 		const orgTimezone =
-			(Array.isArray(orgHoursArr) && orgHoursArr[0]?.timezone) || TimezoneUtil.AFRICA_JOHANNESBURG;
+			(Array.isArray(orgHoursArr) && orgHoursArr[0]?.timezone) || 'Africa/Johannesburg';
 
 		// Convert incoming epoch seconds to organization-local Date
-		const eventDateOrg = TimezoneUtil.toOrganizationTime(new Date(timeEventDto.timestamp * 1000), orgTimezone);
+		const eventDateOrg = toZonedTime(new Date(timeEventDto.timestamp * 1000), orgTimezone);
 		const today = new Date(eventDateOrg);
 		today.setHours(0, 0, 0, 0);
 		const tomorrow = new Date(today);
@@ -3379,8 +3389,8 @@ export class IotService {
 			const orgRef = String(device.orgID);
 			const orgHoursArr = await this.organisationHoursService.findAll(orgRef).catch(() => []);
 			const orgTimezone =
-				(Array.isArray(orgHoursArr) && orgHoursArr[0]?.timezone) || TimezoneUtil.AFRICA_JOHANNESBURG;
-			analytics.lastOpenAt = TimezoneUtil.toOrganizationTime(
+				(Array.isArray(orgHoursArr) && orgHoursArr[0]?.timezone) || 'Africa/Johannesburg';
+			analytics.lastOpenAt = toZonedTime(
 				new Date(timeEventDto.timestamp * 1000),
 				orgTimezone,
 			);
@@ -3389,8 +3399,8 @@ export class IotService {
 			const orgRef = String(device.orgID);
 			const orgHoursArr = await this.organisationHoursService.findAll(orgRef).catch(() => []);
 			const orgTimezone =
-				(Array.isArray(orgHoursArr) && orgHoursArr[0]?.timezone) || TimezoneUtil.AFRICA_JOHANNESBURG;
-			analytics.lastCloseAt = TimezoneUtil.toOrganizationTime(
+				(Array.isArray(orgHoursArr) && orgHoursArr[0]?.timezone) || 'Africa/Johannesburg';
+			analytics.lastCloseAt = toZonedTime(
 				new Date(timeEventDto.timestamp * 1000),
 				orgTimezone,
 			);
@@ -3409,8 +3419,8 @@ export class IotService {
 		const orgHoursArrForStats = await this.organisationHoursService.findAll(orgRefForStats).catch(() => []);
 		const orgTimezoneForStats =
 			(Array.isArray(orgHoursArrForStats) && orgHoursArrForStats[0]?.timezone) ||
-			TimezoneUtil.AFRICA_JOHANNESBURG;
-		const eventDate = TimezoneUtil.toOrganizationTime(new Date(timeEventDto.timestamp * 1000), orgTimezoneForStats);
+			'Africa/Johannesburg';
+		const eventDate = toZonedTime(new Date(timeEventDto.timestamp * 1000), orgTimezoneForStats);
 		const dayName = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][
 			eventDate.getDay()
 		];
@@ -3465,9 +3475,9 @@ export class IotService {
 			const orgHoursArrForCheck = await this.organisationHoursService.findAll(orgRefForCheck).catch(() => []);
 			const orgTimezoneForCheck =
 				(Array.isArray(orgHoursArrForCheck) && orgHoursArrForCheck[0]?.timezone) ||
-				TimezoneUtil.AFRICA_JOHANNESBURG;
+				'Africa/Johannesburg';
 			extendedAnalytics.lastBusinessHoursCheck = {
-				timestamp: TimezoneUtil.toOrganizationTime(
+				timestamp: toZonedTime(
 					new Date(timeEventDto.timestamp * 1000),
 					orgTimezoneForCheck,
 				),
@@ -3506,8 +3516,8 @@ export class IotService {
 		const orgRef = String(device.orgID);
 		const orgHoursArr = await this.organisationHoursService.findAll(orgRef).catch(() => []);
 		const orgTimezone =
-			(Array.isArray(orgHoursArr) && orgHoursArr[0]?.timezone) || TimezoneUtil.AFRICA_JOHANNESBURG;
-		const eventDate = TimezoneUtil.toOrganizationTime(new Date(timeEventDto.timestamp * 1000), orgTimezone);
+			(Array.isArray(orgHoursArr) && orgHoursArr[0]?.timezone) || 'Africa/Johannesburg';
+		const eventDate = toZonedTime(new Date(timeEventDto.timestamp * 1000), orgTimezone);
 		
 		// Get start and end of today in organization timezone
 		const todayStart = new Date(eventDate);
@@ -3584,7 +3594,7 @@ export class IotService {
 			this.logger.warn(`⚠️ Failed to send admin notifications: ${error.message}`);
 		}
 
-		// eventDate is already converted using TimezoneUtil.toOrganizationTime
+			// eventDate is already converted using toZonedTime
 		// which returns a UTC Date representing org local time, so use getUTCHours/getUTCMinutes
 		const hour = eventDate.getUTCHours();
 
@@ -3674,7 +3684,7 @@ export class IotService {
 			const isAfterHours = !businessHoursInfo.isWorkingDay || this.isAfterBusinessHours(eventDate, businessHoursInfo);
 
 			// Format time for display
-			// eventDate is already converted using TimezoneUtil.toOrganizationTime
+			// eventDate is already converted using toZonedTime
 			// which returns a UTC Date representing org local time, so use getUTCHours/getUTCMinutes
 			const hours = eventDate.getUTCHours();
 			const minutes = eventDate.getUTCMinutes();
@@ -3799,8 +3809,8 @@ export class IotService {
 		const orgRef = String(device.orgID);
 		const orgHoursArr = await this.organisationHoursService.findAll(orgRef).catch(() => []);
 		const orgTimezone =
-			(Array.isArray(orgHoursArr) && orgHoursArr[0]?.timezone) || TimezoneUtil.AFRICA_JOHANNESBURG;
-		const eventDate = TimezoneUtil.toOrganizationTime(new Date(timeEventDto.timestamp * 1000), orgTimezone);
+			(Array.isArray(orgHoursArr) && orgHoursArr[0]?.timezone) || 'Africa/Johannesburg';
+		const eventDate = toZonedTime(new Date(timeEventDto.timestamp * 1000), orgTimezone);
 		this.eventEmitter.emit('device.time.event', {
 			deviceId: device.id,
 			deviceID: device.deviceID,

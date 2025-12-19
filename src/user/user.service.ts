@@ -57,7 +57,7 @@ import { EmailType } from '../lib/enums/email.enums';
 import { NewUserWelcomeData } from '../lib/types/email-templates.types';
 import { ExternalTargetUpdateDto, TargetUpdateMode } from './dto/external-target-update.dto';
 import { formatDateSafely } from '../lib/utils/date.utils';
-import { TimezoneUtil } from '../lib/utils/timezone.util';
+import { formatInTimeZone } from 'date-fns-tz';
 import { BulkCreateUserDto, BulkCreateUserResponse, BulkUserResult } from './dto/bulk-create-user.dto';
 import { BulkUpdateUserDto, BulkUpdateUserResponse, BulkUpdateUserResult } from './dto/bulk-update-user.dto';
 import { DataSource } from 'typeorm';
@@ -121,15 +121,15 @@ export class UserService {
 	 */
 	private async getOrganizationTimezone(user: User): Promise<string> {
 		if (!user?.organisation?.uid) {
-			return TimezoneUtil.getSafeTimezone();
+			return 'Africa/Johannesburg';
 		}
 
 		try {
 			const organizationHours = await this.organisationHoursService.findDefault(String(user.organisation.uid));
-			return organizationHours?.timezone || TimezoneUtil.getSafeTimezone();
+			return organizationHours?.timezone || 'Africa/Johannesburg';
 		} catch (error) {
 			this.logger.warn(`Error getting timezone for user ${user.uid} org ${user.organisation?.uid}, using default:`, error);
-			return TimezoneUtil.getSafeTimezone();
+			return 'Africa/Johannesburg';
 		}
 	}
 	/**
@@ -141,7 +141,7 @@ export class UserService {
 	 */
 	private async formatTimeInUserTimezone(date: Date, user: User, format: string = 'PPPp'): Promise<string> {
 		const timezone = await this.getOrganizationTimezone(user);
-		return TimezoneUtil.formatInOrganizationTime(date, format, timezone);
+		return formatInTimeZone(date, timezone, format);
 	}
 
 	/**

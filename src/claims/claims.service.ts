@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Logger, Inject, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger, Inject, BadRequestException, UnauthorizedException, ForbiddenException } from '@nestjs/common';
 import { CreateClaimDto } from './dto/create-claim.dto';
 import { UpdateClaimDto } from './dto/update-claim.dto';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -31,6 +31,8 @@ import { UnifiedNotificationService } from '../lib/services/unified-notification
 import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
+import { DataSource } from 'typeorm';
+import { Approval } from '../approvals/entities/approval.entity';
 
 @Injectable()
 export class ClaimsService {
@@ -52,6 +54,7 @@ export class ClaimsService {
 		private readonly approvalsService: ApprovalsService,
 		private readonly unifiedNotificationService: UnifiedNotificationService,
 		@Inject(CACHE_MANAGER) private cacheManager: Cache,
+		private readonly dataSource: DataSource,
 	) {
 		this.CACHE_TTL = parseInt(process.env.CACHE_TTL || '300000', 10); // 5 minutes default
 		this.currencyLocale = this.configService.get<string>('CURRENCY_LOCALE', 'en-ZA');
@@ -214,175 +217,190 @@ export class ClaimsService {
 			});
 
 			// ============================================================
-			// CRITICAL PATH: Save claim to database (must complete before response)
+			// TRANSACTIONAL PATH: Save claim and create approval atomically
 			// ============================================================
-			this.logger.debug(`💾 [ClaimsService] Saving claim to database`);
-			const claim = await this.claimsRepository.save(claimData);
+			let claim: Claim;
+			let approvalCreated = false;
 
-			if (!claim) {
-				this.logger.error(`❌ [ClaimsService] Failed to create claim - database returned null`);
-				throw new NotFoundException(process.env.CREATE_ERROR_MESSAGE || 'Failed to create claim');
-			}
+			try {
+				// Use transaction to ensure atomicity
+				await this.dataSource.manager.transaction(async (transactionalEntityManager) => {
+					// 1. Save claim to database
+					this.logger.debug(`💾 [ClaimsService] Saving claim to database within transaction`);
+					claim = await transactionalEntityManager.save(Claim, claimData);
 
-			this.logger.debug(`✅ [ClaimsService] Claim created successfully with ID: ${claim.uid}`);
+					if (!claim) {
+						this.logger.error(`❌ [ClaimsService] Failed to create claim - database returned null`);
+						throw new NotFoundException(process.env.CREATE_ERROR_MESSAGE || 'Failed to create claim');
+					}
 
-			// Invalidate cache after creation (fast operation, safe to await)
-			this.invalidateClaimsCache(claim);
-			this.logger.debug(`🧹 [ClaimsService] Claims cache invalidated after claim creation`);
+					this.logger.debug(`✅ [ClaimsService] Claim created successfully with ID: ${claim.uid}`);
 
-			// ============================================================
-			// EARLY RETURN: Respond to client immediately after successful save
-			// ============================================================
-			const response = {
-				message: process.env.SUCCESS_MESSAGE || 'Claim created successfully',
-			};
-
-			const duration = Date.now() - startTime;
-			this.logger.log(`✅ [ClaimsService] Claim created successfully for user: ${createClaimDto.owner} in ${duration}ms - returning response to client`);
-
-			// ============================================================
-			// POST-RESPONSE PROCESSING: Execute non-critical operations asynchronously
-			// These operations run after the response is sent, without blocking the client
-			// ============================================================
-			setImmediate(async () => {
-				try {
-					this.logger.debug(`🔄 [ClaimsService] Starting post-response processing for claim: ${claim.uid}`);
-
-					// 1. Initialize approval workflow for the claim
+					// 2. Create approval workflow synchronously within transaction
 					try {
-						this.logger.debug(`🔄 [ClaimsService] Initializing approval workflow for claim ${claim.uid}`);
-						await this.initializeClaimApprovalWorkflow(claim, user);
-						this.logger.debug(`✅ [ClaimsService] Approval workflow initialized successfully for claim: ${claim.uid}`);
+						this.logger.debug(`🔄 [ClaimsService] Creating approval workflow for claim ${claim.uid} within transaction`);
+						await this.initializeClaimApprovalWorkflowTransactional(claim, user, transactionalEntityManager);
+						approvalCreated = true;
+						this.logger.debug(`✅ [ClaimsService] Approval workflow created successfully for claim: ${claim.uid}`);
 					} catch (approvalError) {
 						this.logger.error(
-							`❌ [ClaimsService] Failed to initialize approval workflow for claim: ${claim.uid}`,
+							`❌ [ClaimsService] Failed to create approval workflow for claim: ${claim.uid}`,
 							approvalError.stack,
 						);
-						// Don't fail post-processing if approval workflow fails
-					}
-
-					// 2. Send email notifications
-					try {
-						if (user.email) {
-							this.logger.debug(`📧 [ClaimsService] Preparing email notification for claim ${claim.uid}`);
-							const emailData: ClaimEmailData = {
-								name: user.name || user.email,
-								claimId: claim.uid,
-								amount: this.formatCurrency(Number(claim.amount) || 0),
-								category: claim.category || 'General',
-								status: claim.status || ClaimStatus.PENDING,
-								comments: claim.comments || '',
-								submittedDate: claim.createdAt.toISOString().split('T')[0],
-								submittedBy: {
-									name: user.name || user.email,
-									email: user.email,
-								},
-								branch: user.branch
-									? {
-											name: user.branch.name,
-									  }
-									: undefined,
-								organization: {
-									name: user.organisation?.name || 'Organization',
-								},
-								dashboardLink: `${process.env.APP_URL || 'https://loro.co.za'}/claims/${claim.uid}`,
-								claimRef: claim.claimRef || `#${claim.uid}`,
-								shareLink: `${process.env.APP_URL || 'https://loro.co.za'}/claims/share/${claim.shareToken}`,
-							};
-
-							// Send email to the user who created the claim
-							this.eventEmitter.emit('send.email', EmailType.CLAIM_CREATED, [user.email], emailData);
-
-							// Send admin notification email
-							this.eventEmitter.emit('send.email', EmailType.CLAIM_CREATED_ADMIN, [], emailData);
-
-							// Approvers will receive notifications when approval workflow is initialized
-
-							// Send push notification to the user who created the claim
-							try {
-								this.logger.debug(`📱 [ClaimsService] Sending push notification for claim ${claim.uid}`);
-								await this.unifiedNotificationService.sendTemplatedNotification(
-									NotificationEvent.CLAIM_CREATED,
-									[user.uid],
-									{
-										userName: user.name || user.email,
-										claimCategory: claim.category || 'General',
-										claimAmount: this.formatCurrency(Number(claim.amount) || 0),
-										claimId: claim.uid,
-										status: claim.status || ClaimStatus.PENDING,
-									},
-									{
-										priority: NotificationPriority.NORMAL,
-									},
-								);
-								this.logger.debug(`✅ [ClaimsService] Claim creation push notification sent to user: ${user.email}`);
-							} catch (notificationError) {
-								this.logger.error(`❌ [ClaimsService] Failed to send claim creation push notification:`, notificationError.message);
-							}
+						// Transaction will rollback both claim and approval if this throws
+						// Check if we should allow claim creation without approval (configurable)
+						const allowClaimWithoutApproval = this.configService.get<boolean>('ALLOW_CLAIM_WITHOUT_APPROVAL', false);
+						if (!allowClaimWithoutApproval) {
+							throw approvalError; // Rollback transaction
 						}
-					} catch (emailError) {
-						this.logger.error(`❌ [ClaimsService] Error sending claim creation email:`, emailError.message);
+						// Otherwise, log error but continue (approvalCreated remains false)
 					}
+				});
 
-					// 3. Send internal notification for admins/managers
-					this.logger.debug(`📢 [ClaimsService] Sending internal notification for new claim ${claim.uid}`);
-					const notification = {
-						type: NotificationType.USER,
-						title: 'New Claim',
-						message: `A new claim has been created by ${user.name || user.email}`,
-						status: NotificationStatus.UNREAD,
-						owner: claim?.owner,
-					};
+				// Invalidate cache after successful transaction
+				this.invalidateClaimsCache(claim);
+				this.logger.debug(`🧹 [ClaimsService] Claims cache invalidated after claim creation`);
 
-					const recipients = [AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.SUPERVISOR];
+				// ============================================================
+				// EARLY RETURN: Respond to client immediately after successful save
+				// ============================================================
+				const response = {
+					message: process.env.SUCCESS_MESSAGE || 'Claim created successfully',
+				};
 
-					this.eventEmitter.emit('send.notification', notification, recipients);
+				const duration = Date.now() - startTime;
+				this.logger.log(`✅ [ClaimsService] Claim created successfully for user: ${createClaimDto.owner} in ${duration}ms - returning response to client`);
 
-					// 4. Award XP for creating a claim
+				// ============================================================
+				// POST-RESPONSE PROCESSING: Execute non-critical operations asynchronously
+				// ============================================================
+				setImmediate(async () => {
 					try {
-						this.logger.debug(`🏆 [ClaimsService] Awarding XP for claim creation to user: ${createClaimDto.owner}`);
-						await this.rewardsService.awardXP(
-							{
-								owner: createClaimDto.owner,
-								amount: XP_VALUES.CLAIM,
-								action: XP_VALUES_TYPES.CLAIM,
-								source: {
-									id: String(createClaimDto.owner),
-									type: XP_VALUES_TYPES.CLAIM,
-									details: 'Claim reward',
+						this.logger.debug(`🔄 [ClaimsService] Starting post-response processing for claim: ${claim.uid}`);
+
+						// 1. Send email notifications (existing code from lines 264-325)
+						try {
+							if (user.email) {
+								this.logger.debug(`📧 [ClaimsService] Preparing email notification for claim ${claim.uid}`);
+								const emailData: ClaimEmailData = {
+									name: user.name || user.email,
+									claimId: claim.uid,
+									amount: this.formatCurrency(Number(claim.amount) || 0),
+									category: claim.category || 'General',
+									status: claim.status || ClaimStatus.PENDING,
+									comments: claim.comments || '',
+									submittedDate: claim.createdAt.toISOString().split('T')[0],
+									submittedBy: {
+										name: user.name || user.email,
+										email: user.email,
+									},
+									branch: user.branch
+										? {
+												name: user.branch.name,
+										  }
+										: undefined,
+									organization: {
+										name: user.organisation?.name || 'Organization',
+									},
+									dashboardLink: `${process.env.APP_URL || 'https://loro.co.za'}/claims/${claim.uid}`,
+									claimRef: claim.claimRef || `#${claim.uid}`,
+									shareLink: `${process.env.APP_URL || 'https://loro.co.za'}/claims/share/${claim.shareToken}`,
+								};
+
+								// Send email to the user who created the claim
+								this.eventEmitter.emit('send.email', EmailType.CLAIM_CREATED, [user.email], emailData);
+
+								// Send admin notification email
+								this.eventEmitter.emit('send.email', EmailType.CLAIM_CREATED_ADMIN, [], emailData);
+
+								// Approvers will receive notifications when approval workflow is initialized
+
+								// Send push notification to the user who created the claim
+								try {
+									this.logger.debug(`📱 [ClaimsService] Sending push notification for claim ${claim.uid}`);
+									await this.unifiedNotificationService.sendTemplatedNotification(
+										NotificationEvent.CLAIM_CREATED,
+										[user.uid],
+										{
+											userName: user.name || user.email,
+											claimCategory: claim.category || 'General',
+											claimAmount: this.formatCurrency(Number(claim.amount) || 0),
+											claimId: claim.uid,
+											status: claim.status || ClaimStatus.PENDING,
+										},
+										{
+											priority: NotificationPriority.NORMAL,
+										},
+									);
+									this.logger.debug(`✅ [ClaimsService] Claim creation push notification sent to user: ${user.email}`);
+								} catch (notificationError) {
+									this.logger.error(`❌ [ClaimsService] Failed to send claim creation push notification:`, notificationError.message);
+								}
+							}
+						} catch (emailError) {
+							this.logger.error(`❌ [ClaimsService] Error sending claim creation email:`, emailError.message);
+						}
+
+						// 2. Send internal notification for status changes
+						this.logger.debug(`📢 [ClaimsService] Sending internal notification for new claim ${claim.uid}`);
+						const notification = {
+							type: NotificationType.USER,
+							title: 'New Claim',
+							message: `A new claim has been created by ${user.name || user.email}`,
+							status: NotificationStatus.UNREAD,
+							owner: claim?.owner,
+						};
+
+						const recipients = [AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.SUPERVISOR];
+
+						this.eventEmitter.emit('send.notification', notification, recipients);
+
+						// 3. Award XP for creating a claim
+						try {
+							this.logger.debug(`🏆 [ClaimsService] Awarding XP for claim creation to user: ${createClaimDto.owner}`);
+							await this.rewardsService.awardXP(
+								{
+									owner: createClaimDto.owner,
+									amount: XP_VALUES.CLAIM,
+									action: XP_VALUES_TYPES.CLAIM,
+									source: {
+										id: String(createClaimDto.owner),
+										type: XP_VALUES_TYPES.CLAIM,
+										details: 'Claim reward',
+									},
 								},
-							},
-							orgId,
-							branchId,
-						);
-						this.logger.debug(`✅ [ClaimsService] XP awarded successfully for claim creation to user: ${createClaimDto.owner}`);
-					} catch (xpError) {
+								orgId,
+								branchId,
+							);
+							this.logger.debug(`✅ [ClaimsService] XP awarded successfully for claim creation to user: ${createClaimDto.owner}`);
+						} catch (xpError) {
+							this.logger.error(
+								`❌ [ClaimsService] Failed to award XP for claim creation to user: ${createClaimDto.owner}`,
+								xpError.stack,
+							);
+							// Don't fail post-processing if XP award fails
+						}
+
+						this.logger.debug(`✅ [ClaimsService] Post-response processing completed for claim: ${claim.uid}`);
+					} catch (backgroundError) {
+						// Log errors but don't affect user experience since response already sent
 						this.logger.error(
-							`❌ [ClaimsService] Failed to award XP for claim creation to user: ${createClaimDto.owner}`,
-							xpError.stack,
+							`❌ [ClaimsService] Background processing failed for claim ${claim.uid}: ${backgroundError.message}`,
+							backgroundError.stack
 						);
-						// Don't fail post-processing if XP award fails
 					}
+				});
 
-					this.logger.debug(`✅ [ClaimsService] Post-response processing completed for claim: ${claim.uid}`);
-				} catch (backgroundError) {
-					// Log errors but don't affect user experience since response already sent
-					this.logger.error(
-						`❌ [ClaimsService] Background processing failed for claim ${claim.uid}: ${backgroundError.message}`,
-						backgroundError.stack
-					);
-				}
-			});
-
-			return response;
+				return response;
+			} catch (error) {
+				const duration = Date.now() - startTime;
+				this.logger.error(`❌ [ClaimsService] Error creating claim after ${duration}ms: ${error.message}`, error.stack);
+				throw error; // Re-throw to let NestJS handle HTTP status codes
+			}
 		} catch (error) {
 			const duration = Date.now() - startTime;
 			this.logger.error(`❌ [ClaimsService] Error creating claim after ${duration}ms: ${error.message}`, error.stack);
-			const response = {
-				message: error?.message,
-			};
-
-			return response;
+			throw error;
 		}
 	}
 
@@ -411,8 +429,14 @@ export class ClaimsService {
 		});
 
 		try {
-			// Check if user is admin, owner, developer, or technician - they can view all claims
-			const canViewAll = ['admin', 'owner', 'developer', 'technician'].includes(userAccessLevel?.toLowerCase() || '');
+			// Validate user context
+			if (!userId && !userAccessLevel) {
+				this.logger.warn(`⚠️ [ClaimsService] No user context provided for claims retrieval`);
+				throw new UnauthorizedException('User authentication required');
+			}
+
+			// Check if user has elevated permissions
+			const canViewAll = this.canViewAllClaims(userAccessLevel);
 			
 			this.logger.debug(`🏗️ [ClaimsService] Building query for claims in org: ${orgId || 'all'}, branch: ${branchId || 'all'}, user: ${userId}, accessLevel: ${userAccessLevel}, canViewAll: ${canViewAll}`);
 
@@ -423,10 +447,14 @@ export class ClaimsService {
 				.leftJoinAndSelect('claim.organisation', 'organisation')
 				.where('claim.isDeleted = :isDeleted', { isDeleted: false });
 
-			// If user is not admin/owner/developer/technician, only show their own claims
+			// Apply RBAC: Regular users can only see their own claims
 			if (!canViewAll && userId) {
 				this.logger.debug(`🔒 [ClaimsService] Restricting claims to user ${userId} only`);
 				queryBuilder.andWhere('owner.uid = :userId', { userId });
+			} else if (!canViewAll && !userId) {
+				// No userId and not elevated role - deny access
+				this.logger.warn(`🚫 [ClaimsService] Access denied: No userId provided for non-elevated user`);
+				throw new ForbiddenException('Insufficient permissions to view claims');
 			}
 
 			if (filters?.status) {
@@ -1526,6 +1554,110 @@ export class ClaimsService {
 	}
 
 	/**
+	 * Initialize approval workflow for claim requests within a transaction
+	 * This ensures atomicity between claim and approval creation
+	 */
+	private async initializeClaimApprovalWorkflowTransactional(
+		claim: Claim,
+		requester: User,
+		transactionalEntityManager: any,
+	): Promise<void> {
+		try {
+			this.logger.log(`🔄 [ClaimsService] Initializing approval workflow for claim ${claim.uid} (transactional)`);
+
+			// Determine approval priority based on claim amount and category
+			let priority = ApprovalPriority.MEDIUM;
+			const amount = parseFloat(claim.amount) || 0;
+
+			if (amount > 100000) {
+				priority = ApprovalPriority.CRITICAL;
+			} else if (amount > 50000) {
+				priority = ApprovalPriority.HIGH;
+			} else if (amount < 1000) {
+				priority = ApprovalPriority.LOW;
+			}
+
+			// Special priority for certain categories
+			if (claim.category === ClaimCategory.ANNOUNCEMENT) {
+				priority = ApprovalPriority.HIGH;
+			}
+
+			// Calculate approval deadline based on amount and priority
+			const deadline = this.calculateClaimApprovalDeadline(amount, priority);
+
+			// Create approval request DTO
+			const approvalDto = {
+				title: `${claim.category || 'General'} Claim - ${this.formatCurrency(amount)}`,
+				description: `${requester.name || requester.email} has submitted a ${
+					claim.category || 'general'
+				} claim for ${this.formatCurrency(amount)}. ${claim.comments ? 'Details: ' + claim.comments : ''}`,
+				type: ApprovalType.EXPENSE_CLAIM,
+				priority: priority,
+				flowType: ApprovalFlow.SEQUENTIAL,
+				entityId: claim.uid,
+				entityType: 'claim',
+				amount: amount,
+				currency: this.currencyCode,
+				deadline: deadline.toISOString(),
+				requiresSignature: amount > 10000,
+				isUrgent: priority === ApprovalPriority.CRITICAL || priority === ApprovalPriority.HIGH,
+				notificationFrequency: NotificationFrequency.IMMEDIATE,
+				emailNotificationsEnabled: true,
+				pushNotificationsEnabled: true,
+				organisationRef: requester.organisationRef,
+				branchUid: requester.branch?.uid,
+				requesterUid: requester.uid,
+				autoSubmit: true,
+				metadata: {
+					claimId: claim.uid,
+					claimCategory: claim.category,
+					claimAmount: amount,
+					currency: this.currencyCode,
+					documentUrl: claim.documentUrl,
+					requesterName: requester.name,
+					requesterEmail: requester.email,
+					branchName: claim.branch?.name,
+					submittedAt: claim.createdAt,
+				},
+				customFields: {
+					tags: ['expense-claim', claim.category?.toLowerCase() || 'general'],
+				},
+			};
+
+			// Create approval using transactional entity manager
+			// Note: We need to use the ApprovalsService but with the transactional context
+			// Since ApprovalsService.create() uses its own repository, we'll need to create directly
+			// or modify ApprovalsService to accept an optional transactional manager
+			
+			// For now, create approval directly using transactional manager
+			const approval = transactionalEntityManager.create(Approval, {
+				...approvalDto,
+				requesterUid: requester.uid,
+				organisationRef: requester.organisationRef?.toString() || '',
+				branchUid: requester.branch?.uid,
+				requestSource: 'web',
+				status: ApprovalStatus.PENDING,
+				submittedAt: new Date(),
+			});
+
+			const savedApproval = await transactionalEntityManager.save(Approval, approval);
+
+			this.logger.log(
+				`✅ [ClaimsService] Approval workflow initialized: approval ${savedApproval.uid} for claim ${claim.uid}`,
+			);
+
+			// Note: Approval routing and notifications will be handled asynchronously after transaction commits
+			// This ensures transaction completes quickly while maintaining data consistency
+		} catch (error) {
+			this.logger.error(
+				`❌ [ClaimsService] Error initializing approval workflow for claim: ${claim.uid}`,
+				error.message,
+			);
+			throw error; // Re-throw to trigger transaction rollback
+		}
+	}
+
+	/**
 	 * Calculate appropriate deadline for claim approval based on amount and priority
 	 */
 	private calculateClaimApprovalDeadline(amount: number, priority: ApprovalPriority): Date {
@@ -1813,5 +1945,27 @@ export class ClaimsService {
 		} catch (error) {
 			this.logger.error(`❌ [ClaimsService] Error handling approval action:`, error.message);
 		}
+	}
+
+	/**
+	 * Check if user has elevated permissions to view all claims
+	 * @param userAccessLevel - User's access level/role
+	 * @returns true if user can view all claims, false otherwise
+	 */
+	private canViewAllClaims(userAccessLevel?: string): boolean {
+		if (!userAccessLevel) {
+			return false;
+		}
+		
+		const elevatedRoles = [
+			AccessLevel.ADMIN.toLowerCase(),
+			AccessLevel.OWNER.toLowerCase(),
+			AccessLevel.MANAGER.toLowerCase(),
+			AccessLevel.DEVELOPER.toLowerCase(),
+			AccessLevel.TECHNICIAN.toLowerCase(),
+			AccessLevel.SUPERVISOR.toLowerCase(),
+		];
+		
+		return elevatedRoles.includes(userAccessLevel.toLowerCase());
 	}
 }

@@ -40,7 +40,7 @@ export class CommunicationLog {
 		to: string[];
 	};
 
-	@Column({ type: 'timestamp', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
+	@Column({ type: 'timestamptz', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
 	createdAt: Date;
 
 	@ManyToOne(() => Branch, (branch) => branch?.communicationLogs)

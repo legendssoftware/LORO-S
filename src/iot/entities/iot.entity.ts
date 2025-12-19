@@ -42,10 +42,10 @@ export class Device {
 	@Column({ nullable: false, type: 'enum', enum: DeviceStatus, default: DeviceStatus.ONLINE })
 	currentStatus: DeviceStatus;
 
-	@Column({ nullable: false, default: () => 'CURRENT_TIMESTAMP' })
+	@Column({ type: 'timestamptz', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
 	createdAt: Date;
 
-	@Column({ nullable: false, default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
+	@Column({ type: 'timestamptz', nullable: false, default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
 	updatedAt: Date;
 
 	@Column({ nullable: false, default: false })
@@ -75,10 +75,10 @@ export class DeviceRecords {
 	@PrimaryGeneratedColumn()
 	id: number;
 
-	@Column({ nullable: true })
+	@Column({ type: 'timestamptz', nullable: true })
 	openTime: Date;
 
-	@Column({ nullable: true })
+	@Column({ type: 'timestamptz', nullable: true })
 	closeTime: Date;
 
 	@Column({ nullable: false })
@@ -87,10 +87,10 @@ export class DeviceRecords {
 	@ManyToOne(() => Device, (device) => device.records)
 	device: Device;
 
-	@Column({ nullable: false, default: () => 'CURRENT_TIMESTAMP' })
+	@Column({ type: 'timestamptz', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
 	createdAt: Date;
 
-	@Column({ nullable: false, default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
+	@Column({ type: 'timestamptz', nullable: false, default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
 	updatedAt: Date;
 }
 
@@ -132,13 +132,13 @@ export class DeviceLogs {
 	@Column({ nullable: false })
 	queryTimeMs: number; // Time taken for the query
 
-	@Column({ nullable: false })
+	@Column({ type: 'timestamptz', nullable: false })
 	timestamp: Date; // Event timestamp
 
 	@Column({ nullable: true, type: 'json' })
 	metadata: Record<string, any>;
 
-	@Column({ nullable: false, default: () => 'CURRENT_TIMESTAMP' })
+	@Column({ type: 'timestamptz', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
 	createdAt: Date;
 
 	@ManyToOne(() => Device, { nullable: true })

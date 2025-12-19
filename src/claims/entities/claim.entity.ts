@@ -15,16 +15,16 @@ export class Claim {
 	@Column({ type: 'varchar', nullable: true })
 	documentUrl: string;
 
-	@Column({ type: 'timestamp', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
+	@Column({ type: 'timestamptz', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
 	verifiedAt: Date;
 
-	@Column({ type: 'timestamp', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
+	@Column({ type: 'timestamptz', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
 	createdAt: Date;
 
-	@Column({ type: 'timestamp', nullable: false, onUpdate: 'CURRENT_TIMESTAMP', default: () => 'CURRENT_TIMESTAMP' })
+	@Column({ type: 'timestamptz', nullable: false, onUpdate: 'CURRENT_TIMESTAMP', default: () => 'CURRENT_TIMESTAMP' })
 	updatedAt: Date;
 
-	@Column({ type: 'timestamp', nullable: true })
+	@Column({ type: 'timestamptz', nullable: true })
 	deletedAt: Date;
 
 	@Column({ type: 'varchar', nullable: true, length: 5000 })
@@ -49,7 +49,7 @@ export class Claim {
 	@Column({ type: 'varchar', nullable: true, unique: true })
 	shareToken: string;
 
-	@Column({ type: 'timestamp', nullable: true })
+	@Column({ type: 'timestamptz', nullable: true })
 	shareTokenExpiresAt: Date;
 
 	@ManyToOne(() => User, (user) => user?.userClaims)

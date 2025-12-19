@@ -232,7 +232,13 @@ export class ClientCommunicationScheduleService {
             if (updateDto.communicationType) schedule.communicationType = updateDto.communicationType;
             if (updateDto.frequency) schedule.frequency = updateDto.frequency;
             if (updateDto.customFrequencyDays) schedule.customFrequencyDays = updateDto.customFrequencyDays;
-            if (updateDto.preferredTime) schedule.preferredTime = updateDto.preferredTime;
+            if (updateDto.preferredTime) {
+                // Convert string time (HH:mm) to Date object
+                const [hours, minutes] = updateDto.preferredTime.split(':').map(Number);
+                const timeDate = new Date();
+                timeDate.setHours(hours, minutes, 0, 0);
+                schedule.preferredTime = timeDate;
+            }
             if (updateDto.preferredDays) schedule.preferredDays = updateDto.preferredDays;
             if (updateDto.nextScheduledDate) schedule.nextScheduledDate = new Date(updateDto.nextScheduledDate);
             if (updateDto.isActive !== undefined) schedule.isActive = updateDto.isActive;
@@ -410,7 +416,12 @@ export class ClientCommunicationScheduleService {
 
         // Set preferred time if specified
         if (schedule.preferredTime) {
-            const [hours, minutes] = schedule.preferredTime.split(':').map(Number);
+            // Convert Date to hours/minutes
+            const preferredTimeDate = schedule.preferredTime instanceof Date 
+                ? schedule.preferredTime 
+                : new Date(schedule.preferredTime);
+            const hours = preferredTimeDate.getHours();
+            const minutes = preferredTimeDate.getMinutes();
             nextDate = setHours(setMinutes(nextDate, minutes), hours);
         } else {
             // Default to 9 AM

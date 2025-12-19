@@ -2,7 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { OrganisationHours } from '../../organisation/entities/organisation-hours.entity';
-import { TimezoneUtil } from '../utils/timezone.util';
+import { formatInTimeZone, toZonedTime, fromZonedTime } from 'date-fns-tz';
+import { format } from 'date-fns';
 
 export interface OrganizationTimezoneInfo {
 	timezone: string;
@@ -59,18 +60,26 @@ export class OrganizationTimezoneService {
 				return this.getDefaultTimezoneInfo();
 			}
 
-			const timezone = TimezoneUtil.getOrganizationTimezone(orgHours);
+			const timezone = orgHours.timezone || 'Africa/Johannesburg';
 			const isWorkingDay = await this.isWorkingDay(orgHours);
+
+			// Convert Date objects to HH:mm strings
+			const openTimeStr = orgHours.openTime instanceof Date 
+				? format(orgHours.openTime, 'HH:mm:ss') 
+				: String(orgHours.openTime);
+			const closeTimeStr = orgHours.closeTime instanceof Date 
+				? format(orgHours.closeTime, 'HH:mm:ss') 
+				: String(orgHours.closeTime);
 
 			const result: OrganizationTimezoneInfo = {
 				timezone,
-				openTime: orgHours.openTime,
-				closeTime: orgHours.closeTime,
+				openTime: openTimeStr,
+				closeTime: closeTimeStr,
 				isWorkingDay,
 				workingDayInfo: isWorkingDay
 					? {
-							startTime: orgHours.openTime,
-							endTime: orgHours.closeTime,
+							startTime: openTimeStr,
+							endTime: closeTimeStr,
 					  }
 					: undefined,
 			};
@@ -92,15 +101,15 @@ export class OrganizationTimezoneService {
 			const timezoneInfo = await this.getOrganizationTimezoneInfo(organizationId);
 			this.logger.debug(`Using timezone: ${timezoneInfo.timezone} for org ${organizationId}`);
 
-			const convertedTime = TimezoneUtil.toOrganizationTime(serverTime, timezoneInfo.timezone);
+			const convertedTime = toZonedTime(serverTime, timezoneInfo.timezone);
 			this.logger.debug(`Converted time: ${convertedTime.toISOString()} (diff: ${convertedTime.getTime() - serverTime.getTime()}ms)`);
 
 			return {
 				originalTime: serverTime,
 				convertedTime,
 				timezone: timezoneInfo.timezone,
-				formattedTime: TimezoneUtil.formatInOrganizationTime(serverTime, 'HH:mm:ss', timezoneInfo.timezone),
-				formattedDate: TimezoneUtil.formatInOrganizationTime(serverTime, 'yyyy-MM-dd', timezoneInfo.timezone),
+				formattedTime: formatInTimeZone(serverTime, timezoneInfo.timezone, 'HH:mm:ss'),
+				formattedDate: formatInTimeZone(serverTime, timezoneInfo.timezone, 'yyyy-MM-dd'),
 			};
 		} catch (error) {
 			this.logger.error(`Error converting time for organization ${organizationId}:`, error);
@@ -141,7 +150,7 @@ export class OrganizationTimezoneService {
 			const timezoneInfo = await this.getOrganizationTimezoneInfo(organizationId);
 			this.logger.debug(`Using timezone: ${timezoneInfo.timezone} for conversion FROM org time`);
 
-			const convertedTime = TimezoneUtil.fromOrganizationTime(orgTime, timezoneInfo.timezone);
+			const convertedTime = fromZonedTime(orgTime, timezoneInfo.timezone);
 			this.logger.debug(`Converted FROM org time: ${convertedTime.toISOString()} (diff: ${convertedTime.getTime() - orgTime.getTime()}ms)`);
 
 			return {
@@ -177,7 +186,7 @@ export class OrganizationTimezoneService {
 	async formatTimeInOrganization(time: Date, formatPattern: string, organizationId: number): Promise<string> {
 		try {
 			const timezoneInfo = await this.getOrganizationTimezoneInfo(organizationId);
-			return TimezoneUtil.formatInOrganizationTime(time, formatPattern, timezoneInfo.timezone);
+			return formatInTimeZone(time, timezoneInfo.timezone, formatPattern);
 		} catch (error) {
 			this.logger.error(`Error formatting time for organization ${organizationId}:`, error);
 			return time.toISOString();
@@ -196,9 +205,9 @@ export class OrganizationTimezoneService {
 			}
 
 			const now = currentTime || new Date();
-			const orgTime = TimezoneUtil.toOrganizationTime(now, timezoneInfo.timezone);
+			const orgTime = toZonedTime(now, timezoneInfo.timezone);
 
-			const currentMinutes = TimezoneUtil.getMinutesSinceMidnight(orgTime, timezoneInfo.timezone);
+			const currentMinutes = orgTime.getHours() * 60 + orgTime.getMinutes();
 			const startMinutes = this.timeToMinutes(timezoneInfo.workingDayInfo.startTime);
 			const endMinutes = this.timeToMinutes(timezoneInfo.workingDayInfo.endTime);
 
@@ -257,7 +266,7 @@ export class OrganizationTimezoneService {
 	 */
 	private getDefaultTimezoneInfo(): OrganizationTimezoneInfo {
 		return {
-			timezone: TimezoneUtil.DEFAULT_TIMEZONE,
+			timezone: 'UTC',
 			openTime: '09:00:00',
 			closeTime: '17:00:00',
 			isWorkingDay: true,
@@ -278,7 +287,8 @@ export class OrganizationTimezoneService {
 	): Promise<void> {
 		try {
 			const timezoneInfo = await this.getOrganizationTimezoneInfo(organizationId);
-			TimezoneUtil.logTimezoneInfo(serverTime, timezoneInfo.timezone, label);
+			// Logging removed - method kept for API compatibility
+			this.logger.debug(`[${label}] Server time: ${serverTime.toISOString()}, Timezone: ${timezoneInfo.timezone}`);
 		} catch (error) {
 			this.logger.error(`Error logging timezone conversion for org ${organizationId}:`, error);
 		}

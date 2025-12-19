@@ -20,7 +20,7 @@ export class ProductAnalytics {
     @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
     totalRevenue: number;
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamptz', nullable: true })
     lastSaleDate: Date;
 
     @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
@@ -36,7 +36,7 @@ export class ProductAnalytics {
     @Column({ type: 'int', default: 0 })
     unitsPurchased: number;
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamptz', nullable: true })
     lastPurchaseDate: Date;
 
     @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
@@ -99,9 +99,9 @@ export class ProductAnalytics {
     }[];
 
     // Timestamps
-    @CreateDateColumn()
+    @CreateDateColumn({ type: 'timestamptz' })
     createdAt: Date;
 
-    @UpdateDateColumn()
+    @UpdateDateColumn({ type: 'timestamptz' })
     updatedAt: Date;
 }

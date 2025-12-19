@@ -67,7 +67,7 @@ export class Journal {
     @Column({ type: 'varchar', nullable: true })
     qcInspectorSignature?: string;
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamptz', nullable: true })
     inspectionDate?: Date;
 
     @Column({ type: 'varchar', nullable: true })
@@ -79,18 +79,18 @@ export class Journal {
     @Column({ type: 'json', nullable: true })
     metadata?: Record<string, any>; // Additional flexible data
 
-    @Column({ type: 'timestamp', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
+    @Column({ type: 'timestamptz', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
     timestamp: Date;
 
     @Column({
-        type: 'timestamp',
+        type: 'timestamptz',
         nullable: false,
         default: () => 'CURRENT_TIMESTAMP'
     })
     createdAt: Date;
 
     @Column({
-        type: 'timestamp',
+        type: 'timestamptz',
         nullable: false,
         default: () => 'CURRENT_TIMESTAMP',
         onUpdate: 'CURRENT_TIMESTAMP'

@@ -18,7 +18,7 @@ export class ClientPasswordReset {
     @Column({ default: false })
     isUsed: boolean;
 
-    @Column({ type: 'timestamp', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
+    @Column({ type: 'timestamptz', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
     createdAt: Date;
     
     @ManyToOne(() => ClientAuth, { nullable: true })

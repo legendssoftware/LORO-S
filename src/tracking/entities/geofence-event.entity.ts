@@ -63,6 +63,6 @@ export class GeofenceEvent {
   deviceInfo?: Record<string, any>;
 
   @ApiProperty({ description: 'Creation timestamp (when the event occurred)' })
-  @CreateDateColumn()
+  @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 } 

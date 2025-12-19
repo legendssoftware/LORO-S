@@ -55,10 +55,10 @@ export class Organisation {
 	@Column({ nullable: false })
 	logo: string;
 
-	@Column({ nullable: false, default: () => 'CURRENT_TIMESTAMP' })
+	@Column({ type: 'timestamptz', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
 	createdAt: Date;
 
-	@Column({ nullable: false, default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
+	@Column({ type: 'timestamptz', nullable: false, default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
 	updatedAt: Date;
 
 	@Column({ nullable: false, default: GeneralStatus.ACTIVE })

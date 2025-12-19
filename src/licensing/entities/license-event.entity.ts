@@ -42,6 +42,6 @@ export class LicenseEvent {
     @Column({ nullable: true })
     userAgent: string;
 
-    @CreateDateColumn()
+    @CreateDateColumn({ type: 'timestamptz' })
     timestamp: Date;
 } 

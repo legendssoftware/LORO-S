@@ -18,11 +18,11 @@ export class OrganisationHours {
 	@Column({ unique: true, nullable: false })
 	ref: string;
 
-	@Column({ type: 'time' })
-	openTime: string;
+	@Column({ type: 'timestamptz' })
+	openTime: Date;
 
-	@Column({ type: 'time' })
-	closeTime: string;
+	@Column({ type: 'timestamptz' })
+	closeTime: Date;
 
 	@Column({ type: 'json' })
 	weeklySchedule: {
@@ -52,7 +52,7 @@ export class OrganisationHours {
 	@Column({ type: 'boolean', default: false })
 	holidayMode: boolean;
 
-	@Column({ type: 'timestamp', nullable: true })
+	@Column({ type: 'timestamptz', nullable: true })
 	holidayUntil?: Date;
 
 	@Column({ type: 'json', nullable: true })
@@ -66,10 +66,10 @@ export class OrganisationHours {
 	@Column({ default: false })
 	isDeleted: boolean;
 
-	@Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+	@Column({ type: 'timestamptz', default: () => 'CURRENT_TIMESTAMP' })
 	createdAt: Date;
 
-	@Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
+	@Column({ type: 'timestamptz', default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
 	updatedAt: Date;
 
 	@ManyToOne(() => Organisation, (organisation) => organisation.hours)

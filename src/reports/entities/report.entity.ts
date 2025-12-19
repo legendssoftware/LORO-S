@@ -25,7 +25,7 @@ export class Report {
 	@Column({ type: 'json', nullable: true })
 	filters: Record<string, any>;
 
-	@CreateDateColumn()
+	@CreateDateColumn({ type: 'timestamptz' })
 	generatedAt: Date;
 
 	@Column({ type: 'json' })

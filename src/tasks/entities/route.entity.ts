@@ -70,16 +70,16 @@ export class Route {
   @Column('float')
   totalDuration: number; // in seconds
 
-  @Column({ type: 'timestamp' })
+  @Column({ type: 'timestamptz' })
   plannedDate: Date;
 
   @Column({ default: false })
   isOptimized: boolean;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ type: 'timestamptz' })
   updatedAt: Date;
 
   @Column({ default: false })

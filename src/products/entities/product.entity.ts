@@ -71,10 +71,10 @@ export class Product {
     @Column({ type: 'varchar', nullable: true })
     packageDetails: string;
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamptz', nullable: true })
     promotionStartDate: Date;
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamptz', nullable: true })
     promotionEndDate: Date;
 
     @Column({ type: 'varchar', default: 'unit' })
@@ -124,10 +124,10 @@ export class Product {
     @Column({ type: 'boolean', default: false })
     palletOnPromotion: boolean;
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamptz', nullable: true })
     palletPromotionStartDate: Date;
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamptz', nullable: true })
     palletPromotionEndDate: Date;
 
     @Column({ type: 'text', nullable: true })
@@ -206,10 +206,10 @@ export class Product {
     @Column({ type: 'int', nullable: true })
     bulkDiscountMinQty: number;
 
-    @CreateDateColumn()
+	@CreateDateColumn({ type: 'timestamptz' })
     createdAt: Date;
 
-    @UpdateDateColumn()
+    @UpdateDateColumn({ type: 'timestamptz' })
     updatedAt: Date;
 
     @OneToMany(() => QuotationItem, quotationItem => quotationItem?.product)

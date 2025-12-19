@@ -9,14 +9,14 @@ export abstract class BaseEntity {
     @PrimaryGeneratedColumn()
     uid: number;
 
-    @Column({ type: 'timestamp', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
+    @Column({ type: 'timestamptz', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
     createdAt: Date;
 
-    @Column({ type: 'timestamp', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
+    @Column({ type: 'timestamptz', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
     updatedAt: Date;
 
     @DeleteDateColumn({
-        type: 'timestamp',
+        type: 'timestamptz',
         nullable: true,
     })
     deletedAt?: Date;

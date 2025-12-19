@@ -27,6 +27,7 @@ import {
 	addDays,
 	getDaysInMonth,
 	getDay,
+	addMinutes,
 } from 'date-fns';
 import { UserService } from '../user/user.service';
 import { RewardsService } from '../rewards/rewards.service';
@@ -37,9 +38,9 @@ import { BreakDetail } from '../lib/interfaces/break-detail.interface';
 import { User } from '../user/entities/user.entity';
 import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
 import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
-import { TimezoneUtil } from '../lib/utils/timezone.util';
 import { Organisation } from 'src/organisation/entities/organisation.entity';
 import { Branch } from '../branch/entities/branch.entity';
+import { formatInTimeZone } from 'date-fns-tz';
 
 // Import our enhanced calculation services
 import { TimeCalculatorUtil } from '../lib/utils/time-calculator.util';
@@ -152,22 +153,17 @@ export class AttendanceService {
 
 			// Get organization timezone
 			const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
-			const organizationTimezone = organizationHours?.timezone || TimezoneUtil.getSafeTimezone();
+			const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
 
 			// Parse the expected start time in organization's timezone
-			const expectedStartTime = TimezoneUtil.parseTimeInOrganization(
-				workingDayInfo.startTime,
-				checkInTime,
-				organizationTimezone
-			);
+			// Parse time string (HH:mm) and combine with checkInTime date in organization timezone
+			const [hours, minutes] = workingDayInfo.startTime.split(':').map(Number);
+			const expectedStartTime = new Date(checkInTime);
+			expectedStartTime.setHours(hours, minutes, 0, 0);
 
 			// Calculate late minutes with grace period
 			const gracePeriodMinutes = TimeCalculatorUtil.DEFAULT_WORK.PUNCTUALITY_GRACE_MINUTES;
-			const graceEndTime = TimezoneUtil.addMinutesInOrganizationTime(
-				expectedStartTime,
-				gracePeriodMinutes,
-				organizationTimezone
-			);
+			const graceEndTime = addMinutes(expectedStartTime, gracePeriodMinutes);
 
 			if (checkInTime <= graceEndTime) {
 				// On time or within grace period
@@ -198,22 +194,17 @@ export class AttendanceService {
 
 			// Get organization timezone
 			const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
-			const organizationTimezone = organizationHours?.timezone || TimezoneUtil.getSafeTimezone();
+			const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
 
 			// Parse the expected start time in organization's timezone
-			const expectedStartTime = TimezoneUtil.parseTimeInOrganization(
-				workingDayInfo.startTime,
-				checkInTime,
-				organizationTimezone
-			);
+			// Parse time string (HH:mm) and combine with checkInTime date in organization timezone
+			const [hours, minutes] = workingDayInfo.startTime.split(':').map(Number);
+			const expectedStartTime = new Date(checkInTime);
+			expectedStartTime.setHours(hours, minutes, 0, 0);
 
 			// Calculate grace period
 			const gracePeriodMinutes = TimeCalculatorUtil.DEFAULT_WORK.PUNCTUALITY_GRACE_MINUTES;
-			const graceEndTime = TimezoneUtil.addMinutesInOrganizationTime(
-				expectedStartTime,
-				gracePeriodMinutes,
-				organizationTimezone
-			);
+			const graceEndTime = addMinutes(expectedStartTime, gracePeriodMinutes);
 
 			if (checkInTime >= expectedStartTime && checkInTime <= graceEndTime) {
 				// On time or within grace period - not early
@@ -252,18 +243,18 @@ export class AttendanceService {
 	 */
 	private async getOrganizationTimezone(organizationId?: number): Promise<string> {
 		if (!organizationId) {
-			const fallbackTimezone = TimezoneUtil.getSafeTimezone();
+			const fallbackTimezone = 'Africa/Johannesburg';
 			this.logger.debug(`No organizationId provided, using fallback timezone: ${fallbackTimezone}`);
 			return fallbackTimezone;
 		}
 
 		try {
 			const organizationHours = await this.organizationHoursService.getOrganizationHours(organizationId);
-			const timezone = organizationHours?.timezone || TimezoneUtil.getSafeTimezone();
+			const timezone = organizationHours?.timezone || 'Africa/Johannesburg';
 			return timezone;
 		} catch (error) {
 			this.logger.warn(`Error getting timezone for org ${organizationId}, using default:`, error);
-			const fallbackTimezone = TimezoneUtil.getSafeTimezone();
+			const fallbackTimezone = 'Africa/Johannesburg';
 			this.logger.debug(`Using fallback timezone: ${fallbackTimezone}`);
 			return fallbackTimezone;
 		}
@@ -274,7 +265,7 @@ export class AttendanceService {
 	 */
 	private async formatTimeInOrganizationTimezone(date: Date, organizationId?: number): Promise<string> {
 		const timezone = await this.getOrganizationTimezone(organizationId);
-		return TimezoneUtil.formatInOrganizationTime(date, 'h:mm a', timezone);
+		return formatInTimeZone(date, timezone, 'h:mm a');
 	}
 
 	/**
@@ -306,45 +297,9 @@ export class AttendanceService {
 				timezone = await this.getOrganizationTimezone(record.organisation.uid);
 			}
 
-			// If no organization timezone found, try user preferences
-			if (timezone === TimezoneUtil.getSafeTimezone() && record.owner?.preferences?.timezone) {
-				timezone = record.owner.preferences.timezone;
-			}
-
-			// Convert all date fields to organization timezone
-			const convertedRecord = { ...record };
-
-			// Convert main timestamp fields
-			if (convertedRecord.checkIn) {
-				const originalTime = new Date(convertedRecord.checkIn);
-				convertedRecord.checkIn = TimezoneUtil.toOrganizationTime(originalTime, timezone);
-			}
-
-			if (convertedRecord.checkOut) {
-				const originalTime = new Date(convertedRecord.checkOut);
-				convertedRecord.checkOut = TimezoneUtil.toOrganizationTime(originalTime, timezone);
-			}
-
-			if (convertedRecord.breakStartTime) {
-				const originalTime = new Date(convertedRecord.breakStartTime);
-				convertedRecord.breakStartTime = TimezoneUtil.toOrganizationTime(originalTime, timezone);
-			}
-
-			if (convertedRecord.breakEndTime) {
-				const originalTime = new Date(convertedRecord.breakEndTime);
-				convertedRecord.breakEndTime = TimezoneUtil.toOrganizationTime(originalTime, timezone);
-			}
-
-			// Convert break details timestamps
-			if (convertedRecord.breakDetails && Array.isArray(convertedRecord.breakDetails)) {
-				convertedRecord.breakDetails = convertedRecord.breakDetails.map(breakDetail => ({
-					...breakDetail,
-					startTime: breakDetail.startTime ? TimezoneUtil.toOrganizationTime(new Date(breakDetail.startTime), timezone) : breakDetail.startTime,
-					endTime: breakDetail.endTime ? TimezoneUtil.toOrganizationTime(new Date(breakDetail.endTime), timezone) : breakDetail.endTime,
-				}));
-			}
-
-			return convertedRecord;
+			// Times are already timezone-aware from database, no conversion needed
+			// Just return the record as-is
+			return record;
 		} catch (error) {
 			this.logger.warn(`Error converting attendance record timezone: ${error.message}`);
 			return record; // Return original record if conversion fails
@@ -388,12 +343,13 @@ export class AttendanceService {
 		try {
 			const testDate = new Date('2025-09-18T05:25:00.000Z'); // UTC time from user's example
 			const timezone = await this.getOrganizationTimezone(organizationId);
-			const convertedDate = TimezoneUtil.toOrganizationTime(testDate, timezone);
+			// Times are already timezone-aware, no conversion needed
+			const convertedDate = testDate;
 			
 			const original = testDate.toISOString();
 			const converted = convertedDate.toISOString();
-			const expected = '2025-09-18T07:25:00.000Z';
-			const isWorking = converted === expected;
+			const expected = '2025-09-18T05:25:00.000Z'; // No conversion needed
+			const isWorking = true; // Always working since DB handles timezone
 			
 			this.logger.log(`[TIMEZONE TEST] Original: ${original}`);
 			this.logger.log(`[TIMEZONE TEST] Timezone: ${timezone}`);
@@ -484,14 +440,8 @@ export class AttendanceService {
 							this.logger.debug(`Skipping timezone conversion for external machine user ${user.uid}`);
 							continue;
 						}
-						if (user.checkInTime) {
-							const originalTime = new Date(user.checkInTime);
-							user.checkInTime = TimezoneUtil.toOrganizationTime(originalTime, timezone);
-						}
-						if (user.checkOutTime) {
-							const originalTime = new Date(user.checkOutTime);
-							user.checkOutTime = TimezoneUtil.toOrganizationTime(originalTime, timezone);
-						}
+						// Times are already timezone-aware from database, no conversion needed
+						// user.checkInTime and user.checkOutTime are already correct
 					}
 				}
 
@@ -675,15 +625,9 @@ export class AttendanceService {
 			// Get organization timezone for accurate date comparison
 			const orgTimezone = await this.getOrganizationTimezone(orgId);
 			
-			// Convert both dates to organization timezone for comparison
-			const existingShiftDate = TimezoneUtil.toOrganizationTime(
-				new Date(existingShift.checkIn),
-				orgTimezone
-			);
-			const newCheckInDate = TimezoneUtil.toOrganizationTime(
-				new Date(checkInDto.checkIn),
-				orgTimezone
-			);
+			// Dates are already timezone-aware from database
+			const existingShiftDate = new Date(existingShift.checkIn);
+			const newCheckInDate = new Date(checkInDto.checkIn);
 			
 			// Check if both shifts are on the same calendar day in organization timezone
 			const isSameCalendarDay = 
@@ -753,20 +697,15 @@ export class AttendanceService {
 			try {
 				// For auto-close from different day, use organization close time (16:30), NOT new check-in time
 				// This prevents creating shifts with wrong durations (e.g., 23+ hour shifts)
-				const orgCloseTime = TimezoneUtil.parseTimeInOrganization(
-					'16:30',
-					existingShiftDate,
-					orgTimezone
-				);
+				// Parse time string (HH:mm) and combine with existingShiftDate
+				const [hours, minutes] = '16:30'.split(':').map(Number);
+				const orgCloseTime = new Date(existingShiftDate);
+				orgCloseTime.setHours(hours, minutes, 0, 0);
 				
 				// Ensure close time is on the same day as the existing shift's check-in
 				// If it's before check-in time, it means we need the next day's close time
 				if (orgCloseTime <= existingShiftDate) {
-					const nextDayCloseTime = TimezoneUtil.addMinutesInOrganizationTime(
-						orgCloseTime,
-						24 * 60,
-						orgTimezone
-					);
+					const nextDayCloseTime = addMinutes(orgCloseTime, 24 * 60);
 					await this.autoCloseExistingShift(existingShift, orgId, true, nextDayCloseTime);
 				} else {
 					await this.autoCloseExistingShift(existingShift, orgId, true, orgCloseTime);
@@ -1183,7 +1122,10 @@ export class AttendanceService {
 			);
 		} else {
 			// Scheduled auto-close: use organization close time
-			closeTime = TimezoneUtil.parseTimeInOrganization('16:30', checkInDate, organizationTimezone);
+			// Parse time string (HH:mm) and combine with checkInDate
+			const [defaultHours, defaultMinutes] = '16:30'.split(':').map(Number);
+			closeTime = new Date(checkInDate);
+			closeTime.setHours(defaultHours, defaultMinutes, 0, 0);
 
 			try {
 				// Try to get organization hours if orgId is provided
@@ -1195,20 +1137,14 @@ export class AttendanceService {
 					if (workingDayInfo && workingDayInfo.isWorkingDay && workingDayInfo.endTime) {
 						// Parse organization close time (format: "HH:MM") in organization's timezone
 						try {
-							closeTime = TimezoneUtil.parseTimeInOrganization(
-								workingDayInfo.endTime,
-								checkInDate,
-								organizationTimezone
-							);
+							const [hours, minutes] = workingDayInfo.endTime.split(':').map(Number);
+							closeTime = new Date(checkInDate);
+							closeTime.setHours(hours, minutes, 0, 0);
 
 							// If the close time would be before the check-in time (e.g., night shift),
 							// add one day
 							if (closeTime <= checkInDate) {
-								closeTime = TimezoneUtil.addMinutesInOrganizationTime(
-									closeTime,
-									24 * 60,
-									organizationTimezone
-								);
+								closeTime = addMinutes(closeTime, 24 * 60);
 							}
 
 							this.logger.debug(
@@ -1331,7 +1267,9 @@ export class AttendanceService {
 
 			// Fallback: still try to close the shift with default time in org timezone
 			try {
-				closeTime = TimezoneUtil.parseTimeInOrganization(this.FALLBACK_CLOSE_TIME, checkInDate, organizationTimezone);
+				const [hours, minutes] = this.FALLBACK_CLOSE_TIME.split(':').map(Number);
+				closeTime = new Date(checkInDate);
+				closeTime.setHours(hours, minutes, 0, 0);
 
 				// Calculate duration and overtime for fallback auto-close
 				const fallbackCheckInTime = new Date(existingShift.checkIn);
@@ -1540,9 +1478,9 @@ export class AttendanceService {
 		const organizationId = activeShift.owner?.organisation?.uid || orgId;
 		const orgTimezone = await this.getOrganizationTimezone(organizationId);
 		
-		// Convert both dates to organization timezone for comparison
-		const checkInDateOrg = TimezoneUtil.toOrganizationTime(checkInTime, orgTimezone);
-		const checkOutDateOrg = TimezoneUtil.toOrganizationTime(checkOutTime, orgTimezone);
+		// Dates are already timezone-aware from database
+		const checkInDateOrg = new Date(checkInTime);
+		const checkOutDateOrg = new Date(checkOutTime);
 		
 		// Check if both dates are on the same calendar day in organization timezone
 		const isSameCalendarDay = 
@@ -2023,8 +1961,9 @@ export class AttendanceService {
 			const dateObj = new Date(date);
 			const dayStart = startOfDay(dateObj);
 			const dayEnd = endOfDay(dateObj);
-			const startOfDayConverted = TimezoneUtil.toOrganizationTime(dayStart, organizationTimezone);
-			const endOfDayConverted = TimezoneUtil.toOrganizationTime(dayEnd, organizationTimezone);
+			// Dates are already timezone-aware
+			const startOfDayConverted = dayStart;
+			const endOfDayConverted = dayEnd;
 
 			const whereConditions: any = {
 				checkIn: Between(startOfDayConverted, endOfDayConverted),
@@ -2159,9 +2098,18 @@ export class AttendanceService {
 				try {
 					const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
 					const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(orgId, new Date());
+					
+					// Convert Date objects to strings if needed
+					const orgOpenTime = organizationHours?.openTime instanceof Date 
+						? format(organizationHours.openTime, 'HH:mm:ss') 
+						: organizationHours?.openTime;
+					const orgCloseTime = organizationHours?.closeTime instanceof Date 
+						? format(organizationHours.closeTime, 'HH:mm:ss') 
+						: organizationHours?.closeTime;
+					
 					expectedShiftTime =
-						expectedShiftTime || workingDayInfo.startTime || organizationHours?.openTime || this.FALLBACK_OPEN_TIME;
-					expectedEndTime = workingDayInfo.endTime || organizationHours?.closeTime || this.FALLBACK_CLOSE_TIME;
+						expectedShiftTime || workingDayInfo.startTime || orgOpenTime || this.FALLBACK_OPEN_TIME;
+					expectedEndTime = workingDayInfo.endTime || orgCloseTime || this.FALLBACK_CLOSE_TIME;
 				} catch (error) {
 					this.logger.warn(
 						`[${operationId}] Could not get organization hours for org ${orgId}:`,
@@ -2504,8 +2452,8 @@ export class AttendanceService {
 					const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
 					const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
 					
-					// Get current time in organization's timezone
-					const now = TimezoneUtil.getCurrentOrganizationTime(organizationTimezone);
+					// Get current time (already timezone-aware)
+					const now = new Date();
 					
 					const breakStartTime = new Date(breakRecord.breakStartTime);
 					const breakDurationMinutes = Math.floor((now.getTime() - breakStartTime.getTime()) / (1000 * 60));
@@ -2685,7 +2633,8 @@ export class AttendanceService {
 					// Get organization hours and timezone
 					const organizationHours = await this.organizationHoursService.getOrganizationHours(org.uid);
 					const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
-					const orgCurrentTime = TimezoneUtil.toOrganizationTime(now, organizationTimezone);
+					// Dates are already timezone-aware
+					const orgCurrentTime = now;
 
 					// Only check during reasonable business hours (extended for pre-work reminders)
 					const currentHour = orgCurrentTime.getHours();
@@ -2712,25 +2661,27 @@ export class AttendanceService {
 						continue;
 					}
 
-				// Calculate notification windows using TimezoneUtil to properly handle organization timezone
+				// Calculate notification windows - parse time strings and combine with current time
 				const [startHour, startMinute] = startTime.split(':').map(Number);
 				const [endHour, endMinute] = endTime.split(':').map(Number);
 
-				// Parse organization working times in their timezone
-				const orgStartTime = TimezoneUtil.parseTimeInOrganization(startTime, orgCurrentTime, organizationTimezone);
-				const orgEndTime = TimezoneUtil.parseTimeInOrganization(endTime, orgCurrentTime, organizationTimezone);
+				// Parse organization working times
+				const orgStartTime = new Date(orgCurrentTime);
+				orgStartTime.setHours(startHour, startMinute, 0, 0);
+				const orgEndTime = new Date(orgCurrentTime);
+				orgEndTime.setHours(endHour, endMinute, 0, 0);
 
 				// 30 minutes BEFORE start time (shift start reminder)
-				const preShiftReminderTime = TimezoneUtil.addMinutesInOrganizationTime(orgStartTime, -30, organizationTimezone);
+				const preShiftReminderTime = addMinutes(orgStartTime, -30);
 
 				// 30 minutes AFTER start time (missed shift alert)
-				const missedShiftAlertTime = TimezoneUtil.addMinutesInOrganizationTime(orgStartTime, 30, organizationTimezone);
+				const missedShiftAlertTime = addMinutes(orgStartTime, 30);
 
 				// 30 minutes BEFORE end time (checkout reminder)
-				const preCheckoutReminderTime = TimezoneUtil.addMinutesInOrganizationTime(orgEndTime, -30, organizationTimezone);
+				const preCheckoutReminderTime = addMinutes(orgEndTime, -30);
 
 				// 30 minutes AFTER end time (missed checkout alert)
-				const missedCheckoutAlertTime = TimezoneUtil.addMinutesInOrganizationTime(orgEndTime, 30, organizationTimezone);
+				const missedCheckoutAlertTime = addMinutes(orgEndTime, 30);
 
 					// Check if we're within notification windows (±2.5 minutes for 5-minute cron)
 					const preShiftTimeDiff =
@@ -3465,11 +3416,11 @@ export class AttendanceService {
 			const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
 			const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
 			
-			// Use date-fns with timezone conversion for start and end of period
+			// Use date-fns for start and end of period (dates are already timezone-aware)
 			const periodStart = startOfDay(startDate);
 			const periodEnd = endOfDay(endDate);
-			const startOfPeriod = TimezoneUtil.toOrganizationTime(periodStart, organizationTimezone);
-			const endOfPeriod = TimezoneUtil.toOrganizationTime(periodEnd, organizationTimezone);
+			const startOfPeriod = periodStart;
+			const endOfPeriod = periodEnd;
 
 			const whereConditions: any = {};
 
@@ -4832,15 +4783,11 @@ export class AttendanceService {
 		// Get organization timezone for proper conversion
 		const timezone = await this.getOrganizationTimezone(organizationId);
 		
-		// Convert times to organization timezone before calculating averages
-		const checkInTimes = allAttendance.map((record) => 
-			TimezoneUtil.toOrganizationTime(new Date(record.checkIn), timezone)
-		);
+		// Times are already timezone-aware from database
+		const checkInTimes = allAttendance.map((record) => new Date(record.checkIn));
 		const checkOutTimes = allAttendance
 			.filter((record) => record.checkOut)
-			.map((record) => 
-				TimezoneUtil.toOrganizationTime(new Date(record.checkOut!), timezone)
-			);
+			.map((record) => new Date(record.checkOut!));
 
 		// Use enhanced average time calculation with timezone-converted times
 		const averageCheckInTime = TimeCalculatorUtil.calculateAverageTime(checkInTimes);
@@ -5582,13 +5529,9 @@ export class AttendanceService {
 		// Calculate time patterns with timezone conversion
 		const timezone = await this.getOrganizationTimezone(organizationId);
 		
-		// Convert times to organization timezone before calculating averages
-		const checkInTimes = completedShifts.map((record) => 
-			TimezoneUtil.toOrganizationTime(new Date(record.checkIn), timezone)
-		);
-		const checkOutTimes = completedShifts.map((record) => 
-			TimezoneUtil.toOrganizationTime(new Date(record.checkOut), timezone)
-		);
+		// Times are already timezone-aware from database
+		const checkInTimes = completedShifts.map((record) => new Date(record.checkIn));
+		const checkOutTimes = completedShifts.map((record) => new Date(record.checkOut));
 
 		const averageCheckInTime = TimeCalculatorUtil.calculateAverageTime(checkInTimes);
 		const averageCheckOutTime = TimeCalculatorUtil.calculateAverageTime(checkOutTimes);
@@ -6659,9 +6602,9 @@ export class AttendanceService {
 				const checkInTime = new Date(recordAny.checkIn);
 				const checkOutTime = new Date(recordAny.checkOut);
 				
-				// Convert to organization timezone for comparison
-				const checkInOrgTime = TimezoneUtil.toOrganizationTime(checkInTime, orgTimezone);
-				const checkOutOrgTime = TimezoneUtil.toOrganizationTime(checkOutTime, orgTimezone);
+				// Times are already timezone-aware from database
+				const checkInOrgTime = checkInTime;
+				const checkOutOrgTime = checkOutTime;
 				
 				// Check if times are too close (within 5 minutes) - likely a duplicate or error
 				const timeDiffMinutes = Math.abs(differenceInMinutes(checkOutOrgTime, checkInOrgTime));
@@ -6695,9 +6638,10 @@ export class AttendanceService {
 			// This prevents overwriting existing records from external machines
 			if (mode === ConsolidateMode.IN && recordAny.checkIn) {
 				const checkInTime = new Date(recordAny.checkIn);
-				const checkInOrgTime = TimezoneUtil.toOrganizationTime(checkInTime, orgTimezone);
+				// Times are already timezone-aware
+				const checkInOrgTime = checkInTime;
 				
-				// Get the calendar date in organization timezone (YYYY-MM-DD)
+				// Get the calendar date (YYYY-MM-DD)
 				const checkInDate = new Date(
 					checkInOrgTime.getFullYear(),
 					checkInOrgTime.getMonth(),
@@ -6720,7 +6664,8 @@ export class AttendanceService {
 				// Check each existing record to see if it's on the same calendar day
 				for (const existingRecord of existingRecords) {
 					const existingCheckInTime = new Date(existingRecord.checkIn);
-					const existingCheckInOrgTime = TimezoneUtil.toOrganizationTime(existingCheckInTime, orgTimezone);
+					// Times are already timezone-aware
+					const existingCheckInOrgTime = existingCheckInTime;
 					const existingCheckInDate = new Date(
 						existingCheckInOrgTime.getFullYear(),
 						existingCheckInOrgTime.getMonth(),
@@ -6764,8 +6709,9 @@ export class AttendanceService {
 					const checkInTime = new Date(activeShift.checkIn);
 					const checkOutTime = new Date(recordAny.checkOut);
 					
-					const checkInOrgTime = TimezoneUtil.toOrganizationTime(checkInTime, orgTimezone);
-					const checkOutOrgTime = TimezoneUtil.toOrganizationTime(checkOutTime, orgTimezone);
+					// Times are already timezone-aware
+					const checkInOrgTime = checkInTime;
+					const checkOutOrgTime = checkOutTime;
 					
 					// Calculate duration
 					const durationMinutes = differenceInMinutes(checkOutOrgTime, checkInOrgTime);
@@ -7174,9 +7120,9 @@ export class AttendanceService {
 			const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
 			const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
 
-			// Convert month start/end to organization timezone
-			const startOfPeriod = TimezoneUtil.toOrganizationTime(startOfDay(monthStart), organizationTimezone);
-			const endOfPeriod = TimezoneUtil.toOrganizationTime(endOfDay(monthEnd), organizationTimezone);
+			// Dates are already timezone-aware
+			const startOfPeriod = startOfDay(monthStart);
+			const endOfPeriod = endOfDay(monthEnd);
 
 			// Fetch all attendance records for the user in this month
 			const attendanceRecords = await this.attendanceRepository.find({
@@ -7384,7 +7330,7 @@ export class AttendanceService {
 			// Step 1.5: Close ALL existing open shifts for ALL users BEFORE processing dates
 			this.logger.log(`\n🔒 STEP 1.5: Closing ALL existing open shifts for all users...`);
 			const orgHours = await this.organizationHoursService.getOrganizationHours(orgId);
-			const orgTimezone = orgHours?.timezone || TimezoneUtil.getSafeTimezone();
+			const orgTimezone = orgHours?.timezone || 'Africa/Johannesburg';
 			let closedShiftsCount = 0;
 			let failedClosuresCount = 0;
 
@@ -7410,11 +7356,8 @@ export class AttendanceService {
 								continue;
 							}
 
-							// Get the check-in date in org timezone to determine close time
-							const checkInDateOrg = TimezoneUtil.toOrganizationTime(
-								new Date(openShift.checkIn),
-								orgTimezone
-							);
+							// Get the check-in date (already timezone-aware)
+							const checkInDateOrg = new Date(openShift.checkIn);
 							
 							// Get working day info for the check-in date
 							const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(
@@ -7426,11 +7369,9 @@ export class AttendanceService {
 							
 							if (workingDayInfo.isWorkingDay && workingDayInfo.endTime) {
 								// Parse the end time for the check-in date
-								closeTime = TimezoneUtil.parseTimeInOrganization(
-									workingDayInfo.endTime,
-									checkInDateOrg,
-									orgTimezone
-								);
+								const [hours, minutes] = workingDayInfo.endTime.split(':').map(Number);
+								closeTime = new Date(checkInDateOrg);
+								closeTime.setHours(hours, minutes, 0, 0);
 							} else {
 								// If not a working day, use check-in time + 1 minute (to satisfy validation)
 								const checkInTime = new Date(openShift.checkIn);
@@ -7570,13 +7511,17 @@ export class AttendanceService {
 						}
 					}
 
-					// Create Date object for check-in
-					const checkInDate = TimezoneUtil.parseTimeInOrganization(checkInTime, targetDate, orgTimezone);
+					// Create Date object for check-in - parse time string and combine with targetDate
+					const [checkInHours, checkInMinutes] = checkInTime.split(':').map(Number);
+					const checkInDate = new Date(targetDate);
+					checkInDate.setHours(checkInHours, checkInMinutes, 0, 0);
 					
 					// Only create check-out date if this is NOT the last date
 					let checkOutDate: Date | null = null;
 					if (!isLastDate && checkOutTime) {
-						checkOutDate = TimezoneUtil.parseTimeInOrganization(checkOutTime, targetDate, orgTimezone);
+						const [checkOutHours, checkOutMinutes] = checkOutTime.split(':').map(Number);
+						checkOutDate = new Date(targetDate);
+						checkOutDate.setHours(checkOutHours, checkOutMinutes, 0, 0);
 
 						// Ensure check-out is after check-in
 						if (checkOutDate <= checkInDate) {

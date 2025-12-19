@@ -77,10 +77,10 @@ export class User {
 	@Column({ nullable: true })
 	departmentId: number;
 
-	@CreateDateColumn()
+	@CreateDateColumn({ type: 'timestamptz' })
 	createdAt: Date;
 
-	@UpdateDateColumn()
+	@UpdateDateColumn({ type: 'timestamptz' })
 	updatedAt: Date;
 
 	@Column({ type: 'enum', enum: AccessLevel })
@@ -102,7 +102,7 @@ export class User {
 	@Column({ nullable: true })
 	resetToken: string;
 
-	@Column({ type: 'timestamp', nullable: true })
+	@Column({ type: 'timestamptz', nullable: true })
 	tokenExpires: Date;
 
 	@Column({ type: 'json', nullable: true })
@@ -201,7 +201,7 @@ export class User {
 	@Column({ nullable: true })
 	platform: string; // 'ios' | 'android'
 
-	@Column({ type: 'timestamp', nullable: true })
+	@Column({ type: 'timestamptz', nullable: true })
 	pushTokenUpdatedAt: Date;
 
 	@OneToMany(() => ClientCommunicationSchedule, (schedule) => schedule.assignedTo, { nullable: true })

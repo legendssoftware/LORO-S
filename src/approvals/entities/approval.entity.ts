@@ -132,28 +132,28 @@ export class Approval {
     rejectedCount: number; // Current number of rejections
 
     // Timing & Deadlines
-    @CreateDateColumn()
+    @CreateDateColumn({ type: 'timestamptz' })
     createdAt: Date;
 
-    @UpdateDateColumn()
+    @UpdateDateColumn({ type: 'timestamptz' })
     updatedAt: Date;
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamptz', nullable: true })
     submittedAt: Date;
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamptz', nullable: true })
     deadline: Date;
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamptz', nullable: true })
     approvedAt: Date;
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamptz', nullable: true })
     rejectedAt: Date;
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamptz', nullable: true })
     completedAt: Date;
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamptz', nullable: true })
     signedAt: Date;
 
     @Column({ type: 'boolean', default: false })
@@ -218,7 +218,7 @@ export class Approval {
     @Column({ type: 'enum', enum: NotificationFrequency, default: NotificationFrequency.IMMEDIATE })
     notificationFrequency: NotificationFrequency;
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamptz', nullable: true })
     lastNotificationSent: Date;
 
     @Column({ type: 'int', default: 0 })
@@ -234,7 +234,7 @@ export class Approval {
     @Column({ type: 'boolean', default: false })
     isEscalated: boolean;
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamptz', nullable: true })
     escalatedAt: Date;
 
     @Column({ type: 'int', nullable: true })
@@ -275,7 +275,7 @@ export class Approval {
     @Column({ type: 'boolean', default: false })
     isArchived: boolean;
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamptz', nullable: true })
     archivedAt: Date;
 
     @Column({ type: 'int', nullable: true })

@@ -22,7 +22,7 @@ import { XPTransaction } from '../../rewards/entities/xp-transaction.entity';
 import { UserTarget } from '../../user/entities/user-target.entity';
 import { OrganisationHoursService } from '../../organisation/services/organisation-hours.service';
 import { ReportUtils } from '../utils/report-utils';
-import { TimezoneUtil } from '../../lib/utils/timezone.util';
+import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
 import { OrganizationHoursService } from '../../attendance/services/organization.hours.service';
 import { BreakDetail } from '../../lib/interfaces/break-detail.interface';
 
@@ -71,15 +71,15 @@ export class UserDailyReportGenerator {
 	 */
 	private async getOrganizationTimezone(organizationId?: number): Promise<string> {
 		if (!organizationId) {
-			return TimezoneUtil.getSafeTimezone();
+			return 'Africa/Johannesburg';
 		}
 
 		try {
 			const organizationHours = await this.organizationHoursService.getOrganizationHours(organizationId);
-			return organizationHours?.timezone || TimezoneUtil.getSafeTimezone();
+			return organizationHours?.timezone || 'Africa/Johannesburg';
 		} catch (error) {
 			this.logger.warn(`Error getting timezone for org ${organizationId}, using default:`, error);
-			return TimezoneUtil.getSafeTimezone();
+			return 'Africa/Johannesburg';
 		}
 	}
 
@@ -90,7 +90,7 @@ export class UserDailyReportGenerator {
 		if (!date) return 'N/A';
 		
 		const timezone = await this.getOrganizationTimezone(organizationId);
-		return TimezoneUtil.formatInOrganizationTime(date, format, timezone);
+		return formatInTimeZone(date, timezone, format);
 	}
 
 	/**
@@ -100,7 +100,7 @@ export class UserDailyReportGenerator {
 		if (!date) return 'N/A';
 		
 		const timezone = await this.getOrganizationTimezone(organizationId);
-		return TimezoneUtil.formatInOrganizationTime(date, format, timezone);
+		return formatInTimeZone(date, timezone, format);
 	}
 
 	/**
@@ -108,7 +108,7 @@ export class UserDailyReportGenerator {
 	 */
 	private async toOrganizationTime(serverDate: Date, organizationId?: number): Promise<Date> {
 		const timezone = await this.getOrganizationTimezone(organizationId);
-		return TimezoneUtil.toOrganizationTime(serverDate, timezone);
+		return toZonedTime(serverDate, timezone);
 	}
 
 	private parseGrowthPercentage(growthStr: string): number {

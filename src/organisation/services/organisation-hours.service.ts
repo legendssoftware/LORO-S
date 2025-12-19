@@ -9,6 +9,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { Inject } from '@nestjs/common';
+import { format } from 'date-fns';
 
 @Injectable()
 export class OrganisationHoursService {
@@ -333,11 +334,19 @@ export class OrganisationHoursService {
                 };
             }
 
+            // Convert Date objects to HH:mm strings
+            const openTimeStr = hours.openTime instanceof Date 
+                ? format(hours.openTime, 'HH:mm:ss') 
+                : String(hours.openTime);
+            const closeTimeStr = hours.closeTime instanceof Date 
+                ? format(hours.closeTime, 'HH:mm:ss') 
+                : String(hours.closeTime);
+            
             // Check if within operating hours
             const isWithinHours = this.isTimeWithinRange(
                 currentTime,
-                hours.openTime,
-                hours.closeTime
+                openTimeStr,
+                closeTimeStr
             );
 
             return {
@@ -346,9 +355,9 @@ export class OrganisationHoursService {
                 isHolidayMode: false,
                 reason: isWithinHours 
                     ? 'Within operating hours' 
-                    : `Outside operating hours (${hours.openTime} - ${hours.closeTime})`,
-                scheduledOpen: hours.openTime,
-                scheduledClose: hours.closeTime,
+                    : `Outside operating hours (${openTimeStr} - ${closeTimeStr})`,
+                scheduledOpen: openTimeStr,
+                scheduledClose: closeTimeStr,
                 dayOfWeek,
             };
 

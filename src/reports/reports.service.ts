@@ -47,7 +47,7 @@ import { TasksService } from '../tasks/tasks.service';
 import { LeaveService } from '../leave/leave.service';
 
 // Utilities
-import { TimezoneUtil } from '../lib/utils/timezone.util';
+import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
 
 /**
  * ========================================================================
@@ -150,15 +150,15 @@ export class ReportsService implements OnModuleInit {
 	 */
 	private async getOrganizationTimezone(organizationId?: number): Promise<string> {
 		if (!organizationId) {
-			return TimezoneUtil.getSafeTimezone();
+			return 'Africa/Johannesburg';
 		}
 
 		try {
 			const organizationHours = await this.organizationHoursService.getOrganizationHours(organizationId);
-			return organizationHours?.timezone || TimezoneUtil.getSafeTimezone();
+			return organizationHours?.timezone || 'Africa/Johannesburg';
 		} catch (error) {
 			this.logger.warn(`Error getting timezone for org ${organizationId}, using default:`, error);
-			return TimezoneUtil.getSafeTimezone();
+			return 'Africa/Johannesburg';
 		}
 	}
 
@@ -167,7 +167,7 @@ export class ReportsService implements OnModuleInit {
 	 */
 	private async getCurrentOrganizationTime(organizationId?: number): Promise<Date> {
 		const timezone = await this.getOrganizationTimezone(organizationId);
-		return TimezoneUtil.getCurrentOrganizationTime(timezone);
+		return toZonedTime(new Date(), timezone);
 	}
 
 	/**
@@ -175,7 +175,7 @@ export class ReportsService implements OnModuleInit {
 	 */
 	private async toOrganizationTime(serverDate: Date, organizationId?: number): Promise<Date> {
 		const timezone = await this.getOrganizationTimezone(organizationId);
-		return TimezoneUtil.toOrganizationTime(serverDate, timezone);
+		return toZonedTime(serverDate, timezone);
 	}
 
 	onModuleInit() {
@@ -559,7 +559,7 @@ export class ReportsService implements OnModuleInit {
 		try {
 			// Get organization timezone for proper date handling
 			const orgTimezone = await this.getOrganizationTimezone(organizationId);
-			const orgCurrentTime = TimezoneUtil.getCurrentOrganizationTime(orgTimezone);
+			const orgCurrentTime = toZonedTime(new Date(), orgTimezone);
 			
 			// Set up today's date range in organization timezone
 			const startOfDay = new Date(orgCurrentTime);
@@ -611,7 +611,7 @@ export class ReportsService implements OnModuleInit {
 		try {
 			// Get organization timezone for proper date handling
 			const orgTimezone = await this.getOrganizationTimezone(organizationId);
-			const orgCurrentTime = TimezoneUtil.getCurrentOrganizationTime(orgTimezone);
+			const orgCurrentTime = toZonedTime(new Date(), orgTimezone);
 			
 			// Set up today's date range in organization timezone
 			const startOfDay = new Date(orgCurrentTime);
@@ -887,7 +887,7 @@ export class ReportsService implements OnModuleInit {
 
 			// Get organization timezone for proper date handling
 			const orgTimezone = await this.getOrganizationTimezone(user.organisation?.uid);
-			const orgCurrentTime = TimezoneUtil.getCurrentOrganizationTime(orgTimezone);
+			const orgCurrentTime = toZonedTime(new Date(), orgTimezone);
 			
 			// Get comprehensive attendance metrics for the user
 			let attendanceMetrics = null;
@@ -945,7 +945,7 @@ export class ReportsService implements OnModuleInit {
 				...reportData.emailData,
 				name: user.name,
 				email: user.email,
-				date: TimezoneUtil.formatInOrganizationTime(orgCurrentTime, 'yyyy-MM-dd', orgTimezone),
+				date: formatInTimeZone(orgCurrentTime, orgTimezone, 'yyyy-MM-dd'),
 				organizationTimezone: orgTimezone,
 				comprehensiveMetrics: {
 					attendanceMetrics,
@@ -956,7 +956,7 @@ export class ReportsService implements OnModuleInit {
 
 			// Create a new report record
 			const newReport = new Report();
-			newReport.name = `Daily Report - ${user.name} - ${TimezoneUtil.formatInOrganizationTime(orgCurrentTime, 'yyyy-MM-dd', orgTimezone)}`;
+			newReport.name = `Daily Report - ${user.name} - ${formatInTimeZone(orgCurrentTime, orgTimezone, 'yyyy-MM-dd')}`;
 			newReport.description = `Comprehensive daily activity report for ${user.name}`;
 			newReport.reportType = ReportType.USER_DAILY;
 			newReport.filters = enhancedParams.filters;
@@ -1271,10 +1271,10 @@ export class ReportsService implements OnModuleInit {
 			const formattedEmailData = {
 				...emailData,
 				organizationTimezone: orgTimezone,
-				reportGeneratedAt: TimezoneUtil.formatInOrganizationTime(
+				reportGeneratedAt: formatInTimeZone(
 					new Date(), 
-					'yyyy-MM-dd HH:mm:ss', 
-					orgTimezone
+					orgTimezone,
+					'yyyy-MM-dd HH:mm:ss'
 				),
 				granularity,
 			};
@@ -1340,18 +1340,18 @@ export class ReportsService implements OnModuleInit {
 
 			// Format attendance times in organization timezone
 			if (emailData.metrics.attendance.checkInTime) {
-				emailData.metrics.attendance.checkInTimeFormatted = TimezoneUtil.formatInOrganizationTime(
+				emailData.metrics.attendance.checkInTimeFormatted = formatInTimeZone(
 					new Date(emailData.metrics.attendance.checkInTime),
-					'HH:mm',
-					orgTimezone
+					orgTimezone,
+					'HH:mm'
 				);
 			}
 
 			if (emailData.metrics.attendance.checkOutTime) {
-				emailData.metrics.attendance.checkOutTimeFormatted = TimezoneUtil.formatInOrganizationTime(
+				emailData.metrics.attendance.checkOutTimeFormatted = formatInTimeZone(
 					new Date(emailData.metrics.attendance.checkOutTime),
-					'HH:mm',
-					orgTimezone
+					orgTimezone,
+					'HH:mm'
 				);
 			}
 
@@ -1374,10 +1374,10 @@ export class ReportsService implements OnModuleInit {
 			const formattedEmailData = {
 				...emailData,
 				organizationTimezone: orgTimezone,
-				reportGeneratedAt: TimezoneUtil.formatInOrganizationTime(
+				reportGeneratedAt: formatInTimeZone(
 					new Date(), 
-					'yyyy-MM-dd HH:mm:ss', 
-					orgTimezone
+					orgTimezone,
+					'yyyy-MM-dd HH:mm:ss'
 				),
 				userName: user.name,
 				userEmail: user.email,
@@ -1497,7 +1497,7 @@ export class ReportsService implements OnModuleInit {
 
 			// Get today's date range in organization timezone
 			const orgTimezone = await this.getOrganizationTimezone(organizationId);
-			const orgCurrentTime = TimezoneUtil.getCurrentOrganizationTime(orgTimezone);
+			const orgCurrentTime = toZonedTime(new Date(), orgTimezone);
 			const startOfDay = new Date(orgCurrentTime);
 			startOfDay.setHours(0, 0, 0, 0);
 			const endOfDay = new Date(orgCurrentTime);
@@ -2748,7 +2748,7 @@ export class ReportsService implements OnModuleInit {
 		try {
 			// Get today's date range in organization timezone
 			const orgTimezone = await this.getOrganizationTimezone(orgId);
-			const orgCurrentTime = TimezoneUtil.getCurrentOrganizationTime(orgTimezone);
+			const orgCurrentTime = toZonedTime(new Date(), orgTimezone);
 			const startOfDay = new Date(orgCurrentTime);
 			startOfDay.setHours(0, 0, 0, 0);
 			const endOfDay = new Date(orgCurrentTime);

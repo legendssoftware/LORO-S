@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Req, UnauthorizedException } from '@nestjs/common';
 import { ClaimsService } from './claims.service';
 import { CreateClaimDto } from './dto/create-claim.dto';
 import { UpdateClaimDto } from './dto/update-claim.dto';
@@ -91,7 +91,7 @@ export class ClaimsController {
 	)
   @ApiOperation({ 
     summary: 'Get all claims',
-    description: 'Retrieves all claims. Accessible by all authenticated users.'
+    description: 'Retrieves all claims with role-based filtering. Admins/managers see all claims; regular users see only their own.'
   })
   @ApiOkResponse({ 
     description: 'List of all claims',
@@ -137,6 +137,11 @@ export class ClaimsController {
     const branchId = req.user?.branch?.uid;
     const userId = req.user?.uid;
     const userAccessLevel = req.user?.accessLevel || req.user?.role;
+    
+    if (!userId && !userAccessLevel) {
+      throw new UnauthorizedException('User authentication required');
+    }
+    
     return this.claimsService.findAll({}, 1, 25, orgId, branchId, userId, userAccessLevel);
   }
 

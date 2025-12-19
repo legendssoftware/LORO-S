@@ -45,10 +45,10 @@ export class UsageSummary {
 	})
 	period: SummaryPeriod;
 
-	@Column({ name: 'period_start', type: 'timestamp' })
+	@Column({ name: 'period_start', type: 'timestamptz' })
 	periodStart: Date;
 
-	@Column({ name: 'period_end', type: 'timestamp' })
+	@Column({ name: 'period_end', type: 'timestamptz' })
 	periodEnd: Date;
 
 	// Endpoint or feature being tracked
@@ -125,7 +125,7 @@ export class UsageSummary {
 	@Column({ name: 'peak_requests_per_hour', default: 0 })
 	peakRequestsPerHour: number;
 
-	@Column({ name: 'peak_hour', type: 'timestamp', nullable: true })
+	@Column({ name: 'peak_hour', type: 'timestamptz', nullable: true })
 	peakHour?: Date;
 
 	// Timestamps
@@ -135,6 +135,6 @@ export class UsageSummary {
 	@UpdateDateColumn({ name: 'updated_at' })
 	updatedAt: Date;
 
-	@Column({ name: 'last_aggregated_at', type: 'timestamp', nullable: true })
+	@Column({ name: 'last_aggregated_at', type: 'timestamptz', nullable: true })
 	lastAggregatedAt?: Date;
 }

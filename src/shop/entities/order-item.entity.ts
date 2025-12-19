@@ -31,9 +31,9 @@ export class OrderItem {
 	@Column({ nullable: true })
 	serialNumber: string;
 
-	@CreateDateColumn()
+	@CreateDateColumn({ type: 'timestamptz' })
 	createdAt: Date;
 
-	@UpdateDateColumn()
+	@UpdateDateColumn({ type: 'timestamptz' })
 	updatedAt: Date;
 } 

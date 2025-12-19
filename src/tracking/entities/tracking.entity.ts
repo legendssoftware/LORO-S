@@ -30,13 +30,13 @@ export class Tracking {
     @JoinColumn({ name: 'owner_id' })
     owner: User;
 
-    @CreateDateColumn()
+    @CreateDateColumn({ type: 'timestamptz' })
     createdAt: Date;
 
-    @UpdateDateColumn()
+    @UpdateDateColumn({ type: 'timestamptz' })
     updatedAt: Date;
 
-    @DeleteDateColumn()
+    @DeleteDateColumn({ type: 'timestamptz' })
     deletedAt: Date;
 
     @Column({ nullable: true })

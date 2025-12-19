@@ -29,6 +29,6 @@ export class LicenseUsage {
     @Column({ type: 'json', nullable: true })
     metadata: Record<string, any>;
 
-    @Column({ type: 'timestamp', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
+    @Column({ type: 'timestamptz', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
     timestamp: Date;
 } 

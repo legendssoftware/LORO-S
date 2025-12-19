@@ -34,7 +34,7 @@ export class Quotation {
 	@Column({ type: 'enum', enum: OrderStatus, default: OrderStatus.DRAFT })
 	status: OrderStatus;
 
-	@Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+	@Column({ type: 'timestamptz', default: () => 'CURRENT_TIMESTAMP' })
 	quotationDate: Date;
 
 	@ManyToOne(() => User, { eager: true })
@@ -76,13 +76,13 @@ export class Quotation {
 	@Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
 	resellerCommission: number;
 
-	@CreateDateColumn()
+	@CreateDateColumn({ type: 'timestamptz' })
 	createdAt: Date;
 
-	@UpdateDateColumn()
+	@UpdateDateColumn({ type: 'timestamptz' })
 	updatedAt: Date;
 
-	@Column({ type: 'timestamp', nullable: true })
+	@Column({ type: 'timestamptz', nullable: true })
 	validUntil: Date;
 
 	@Column({ nullable: true })
@@ -102,7 +102,7 @@ export class Quotation {
 	@Column({ default: false })
 	isConverted: boolean;
 
-	@Column({ type: 'timestamp', nullable: true })
+	@Column({ type: 'timestamptz', nullable: true })
 	convertedAt: Date;
 
 	@Column({ nullable: true })

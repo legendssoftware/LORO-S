@@ -17,7 +17,7 @@ import { AccessLevel } from '../../lib/enums/user.enums';
 import { EmailType } from '../../lib/enums/email.enums';
 import { AccountStatus } from '../../lib/enums/status.enums';
 import { TimeCalculatorUtil } from '../../lib/utils/time-calculator.util';
-import { TimezoneUtil } from '../../lib/utils/timezone.util';
+import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
 import {
 	PunctualityBreakdown,
 	BranchPunctuality,
@@ -60,10 +60,62 @@ export class AttendanceReportsService {
 	 */
 	private async formatTimeInOrganizationTimezone(date: Date, organizationId?: number, format: string = 'h:mm a'): Promise<string> {
 		if (!date) return 'N/A';
-		if (!organizationId) return TimezoneUtil.formatInOrganizationTime(date, format, TimezoneUtil.getSafeTimezone());
+		if (!organizationId) return formatInTimeZone(date, 'Africa/Johannesburg', format);
 		
 		const timezone = await this.getOrganizationTimezone(organizationId);
-		return TimezoneUtil.formatInOrganizationTime(date, format, timezone);
+		return formatInTimeZone(date, timezone, format);
+	}
+
+	/**
+	 * Check if current time is within report sending window for organization
+	 */
+	private isWithinReportWindow(
+		organizationStartTime: string,
+		organizationEndTime: string,
+		offsetMinutes: number,
+		windowMinutes: number,
+		organizationTimezone?: string,
+		currentTime?: Date
+	): {
+		isTimeForMorningReport: boolean;
+		isTimeForEveningReport: boolean;
+		organizationCurrentTime: Date;
+		morningReportTime: Date;
+		eveningReportTime: Date;
+	} {
+		const now = currentTime || new Date();
+		const orgCurrentTime = toZonedTime(now, organizationTimezone || 'Africa/Johannesburg');
+		
+		// Parse organization times in their timezone
+		const parseTimeInOrg = (timeString: string, baseDate: Date, tz: string): Date => {
+			const [hours, minutes] = timeString.split(':').map(Number);
+			const zonedBase = toZonedTime(baseDate, tz);
+			zonedBase.setHours(hours, minutes, 0, 0);
+			return zonedBase;
+		};
+		
+		const morningReportTime = parseTimeInOrg(organizationStartTime, orgCurrentTime, organizationTimezone || 'Africa/Johannesburg');
+		morningReportTime.setMinutes(morningReportTime.getMinutes() + offsetMinutes);
+		
+		const eveningReportTime = parseTimeInOrg(organizationEndTime, orgCurrentTime, organizationTimezone || 'Africa/Johannesburg');
+		eveningReportTime.setMinutes(eveningReportTime.getMinutes() + offsetMinutes);
+		
+		// Check if we're within the window for each report
+		const isWithinMinutes = (time1: Date, time2: Date, windowMinutes: number): boolean => {
+			const diff = Math.abs(time1.getTime() - time2.getTime());
+			return diff <= windowMinutes * 60 * 1000;
+		};
+		
+		const isTimeForMorningReport = isWithinMinutes(orgCurrentTime, morningReportTime, windowMinutes);
+		const isTimeForEveningReport = isWithinMinutes(orgCurrentTime, eveningReportTime, windowMinutes);
+		
+		return {
+			isTimeForMorningReport,
+			isTimeForEveningReport,
+			organizationCurrentTime: orgCurrentTime,
+			morningReportTime,
+			eveningReportTime,
+		};
 	}
 
 	constructor(
@@ -104,10 +156,10 @@ export class AttendanceReportsService {
 			}
 
 			// Final fallback to default
-			return TimezoneUtil.getSafeTimezone();
+			return 'Africa/Johannesburg';
 		} catch (error) {
 			this.logger.warn(`Error getting timezone for org ${organizationId}, using default:`, error);
-			return TimezoneUtil.getSafeTimezone();
+			return 'Africa/Johannesburg';
 		}
 	}
 
@@ -116,7 +168,7 @@ export class AttendanceReportsService {
 	 */
 	private async convertTimeToOrgTimezone(date: Date, organizationId: number): Promise<string> {
 		const timezone = await this.getOrganizationTimezone(organizationId);
-		return TimezoneUtil.formatInOrganizationTime(date, 'HH:mm zzz', timezone);
+		return formatInTimeZone(date, timezone, 'HH:mm zzz');
 	}
 
 	/**
@@ -144,7 +196,7 @@ export class AttendanceReportsService {
 				try {
 					// Get organization timezone using the new helper method
 					const organizationTimezone = await this.getOrganizationTimezone(org.uid);
-					const orgCurrentTime = TimezoneUtil.toOrganizationTime(now, organizationTimezone);
+					const orgCurrentTime = toZonedTime(now, organizationTimezone);
 					const orgCurrentHour = orgCurrentTime.getHours();
 
 					// Only process organizations during reasonable business hours in their timezone (5 AM - 11 PM)
@@ -152,19 +204,13 @@ export class AttendanceReportsService {
 						this.logger.debug(
 							`Skipping organization ${org.uid} (${
 								org.name
-							}) - quiet hours in ${TimezoneUtil.getSafeTimezone(
-								organizationTimezone,
-							)} (${orgCurrentHour}:00)`,
+							}) - quiet hours in ${organizationTimezone || 'Africa/Johannesburg'} (${orgCurrentHour}:00)`,
 						);
 						skippedOrgs.push({
 							id: org.uid,
 							name: org.name,
-							timezone: TimezoneUtil.getSafeTimezone(organizationTimezone),
-							localTime: TimezoneUtil.formatInOrganizationTime(
-								orgCurrentTime,
-								'HH:mm',
-								organizationTimezone,
-							),
+							timezone: organizationTimezone || 'Africa/Johannesburg',
+							localTime: formatInTimeZone(orgCurrentTime, organizationTimezone, 'HH:mm'),
 						});
 						return;
 					}
@@ -172,18 +218,14 @@ export class AttendanceReportsService {
 					this.logger.debug(
 						`Processing reports for organization ${org.uid} (${
 							org.name
-						}) - Local time: ${TimezoneUtil.formatInOrganizationTime(
-							orgCurrentTime,
-							'HH:mm zzz',
-							organizationTimezone,
-						)}`,
+						}) - Local time: ${formatInTimeZone(orgCurrentTime, organizationTimezone, 'HH:mm zzz')}`,
 					);
 
 					processedOrgs.push({
 						id: org.uid,
 						name: org.name,
-						timezone: TimezoneUtil.getSafeTimezone(organizationTimezone),
-						localTime: TimezoneUtil.formatInOrganizationTime(orgCurrentTime, 'HH:mm', organizationTimezone),
+						timezone: organizationTimezone || 'Africa/Johannesburg',
+						localTime: formatInTimeZone(orgCurrentTime, organizationTimezone, 'HH:mm'),
 					});
 
 					await Promise.all([
@@ -231,7 +273,7 @@ export class AttendanceReportsService {
 			const organizationTimezone = organizationHours?.timezone;
 
 			// Convert current time to organization timezone
-			const orgCurrentTime = TimezoneUtil.toOrganizationTime(currentTime, organizationTimezone);
+			const orgCurrentTime = toZonedTime(currentTime, organizationTimezone);
 
 			// Get working day info using organization timezone
 			const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(
@@ -243,13 +285,13 @@ export class AttendanceReportsService {
 				this.logger.debug(
 					`⏭️  Skipping morning report for org ${organization.uid} (${
 						organization.name
-					}) - not a working day or no start time in ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`,
+					}) - not a working day or no start time in ${organizationTimezone || 'Africa/Johannesburg'}`,
 				);
 				return; // Skip non-working days
 			}
 
 			// Check if we're within the morning report window (30 minutes after start time)
-			const reportWindow = TimezoneUtil.isWithinReportWindow(
+			const reportWindow = this.isWithinReportWindow(
 				workingDayInfo.startTime,
 				workingDayInfo.endTime || '17:00',
 				30, // 30 minutes after start time
@@ -262,13 +304,9 @@ export class AttendanceReportsService {
 				this.logger.debug(
 					`⏰ Not time for morning report for org ${organization.uid} (${
 						organization.name
-					}) yet - Current: ${TimezoneUtil.formatInOrganizationTime(
-						orgCurrentTime,
-						'HH:mm',
-						organizationTimezone,
-					)}, Report time: ${reportWindow.morningReportTime
+					}) yet - Current: ${formatInTimeZone(orgCurrentTime, organizationTimezone, 'HH:mm')}, Report time: ${reportWindow.morningReportTime
 						.toTimeString()
-						.substring(0, 5)} in ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`,
+						.substring(0, 5)} in ${organizationTimezone || 'Africa/Johannesburg'}`,
 				);
 				return; // Not time for morning report yet
 			}
@@ -281,7 +319,7 @@ export class AttendanceReportsService {
 				this.logger.debug(
 					`✅ Morning report already sent today for org ${organization.uid} (${
 						organization.name
-					}) on ${format(orgToday, 'yyyy-MM-dd')} in ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`,
+					}) on ${format(orgToday, 'yyyy-MM-dd')} in ${organizationTimezone || 'Africa/Johannesburg'}`,
 				);
 				return;
 			}
@@ -292,11 +330,7 @@ export class AttendanceReportsService {
 
 			// Enhanced timezone-aware logging
 			const serverTime = currentTime.toISOString();
-			const orgTimeFormatted = TimezoneUtil.formatInOrganizationTime(
-				orgCurrentTime,
-				'HH:mm zzz',
-				organizationTimezone,
-			);
+			const orgTimeFormatted = formatInTimeZone(orgCurrentTime, organizationTimezone, 'HH:mm zzz');
 			const workTimeFormatted = `${workingDayInfo.startTime} (30min after: ${reportWindow.morningReportTime
 				.toTimeString()
 				.substring(0, 5)})`;
@@ -305,7 +339,7 @@ export class AttendanceReportsService {
 			this.logger.log(`  🕐 Server time: ${serverTime}`);
 			this.logger.log(`  🌍 Organization time: ${orgTimeFormatted}`);
 			this.logger.log(`  ⏰ Work start time: ${workTimeFormatted}`);
-			this.logger.log(`  🗺️  Timezone: ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`);
+			this.logger.log(`  🗺️  Timezone: ${organizationTimezone || 'Africa/Johannesburg'}`);
 			this.logger.log(
 				`  📊 Report window: ${reportWindow.morningReportTime.toTimeString().substring(0, 5)} (10min window)`,
 			);
@@ -323,7 +357,7 @@ export class AttendanceReportsService {
 			const organizationTimezone = organizationHours?.timezone;
 
 			// Convert current time to organization timezone
-			const orgCurrentTime = TimezoneUtil.toOrganizationTime(currentTime, organizationTimezone);
+			const orgCurrentTime = toZonedTime(currentTime, organizationTimezone);
 
 			// Get working day info using organization timezone
 			const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(
@@ -335,13 +369,13 @@ export class AttendanceReportsService {
 				this.logger.debug(
 					`⏭️  Skipping evening report for org ${organization.uid} (${
 						organization.name
-					}) - not a working day or no end time in ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`,
+					}) - not a working day or no end time in ${organizationTimezone || 'Africa/Johannesburg'}`,
 				);
 				return; // Skip non-working days
 			}
 
 			// Check if we're within the evening report window (30 minutes after end time)
-			const reportWindow = TimezoneUtil.isWithinReportWindow(
+			const reportWindow = this.isWithinReportWindow(
 				workingDayInfo.startTime || '07:30',
 				workingDayInfo.endTime,
 				30, // 30 minutes after end time
@@ -354,13 +388,13 @@ export class AttendanceReportsService {
 				this.logger.debug(
 					`⏰ Not time for evening report for org ${organization.uid} (${
 						organization.name
-					}) yet - Current: ${TimezoneUtil.formatInOrganizationTime(
+					}) yet - Current: ${formatInTimeZone(
 						orgCurrentTime,
+						organizationTimezone || 'Africa/Johannesburg',
 						'HH:mm',
-						organizationTimezone,
 					)}, Report time: ${reportWindow.eveningReportTime
 						.toTimeString()
-						.substring(0, 5)} in ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`,
+						.substring(0, 5)} in ${organizationTimezone || 'Africa/Johannesburg'}`,
 				);
 				return; // Not time for evening report yet
 			}
@@ -373,7 +407,7 @@ export class AttendanceReportsService {
 				this.logger.debug(
 					`✅ Evening report already sent today for org ${organization.uid} (${
 						organization.name
-					}) on ${format(orgToday, 'yyyy-MM-dd')} in ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`,
+					}) on ${format(orgToday, 'yyyy-MM-dd')} in ${organizationTimezone || 'Africa/Johannesburg'}`,
 				);
 				return;
 			}
@@ -384,11 +418,7 @@ export class AttendanceReportsService {
 
 			// Enhanced timezone-aware logging
 			const serverTime = currentTime.toISOString();
-			const orgTimeFormatted = TimezoneUtil.formatInOrganizationTime(
-				orgCurrentTime,
-				'HH:mm zzz',
-				organizationTimezone,
-			);
+			const orgTimeFormatted = formatInTimeZone(orgCurrentTime, organizationTimezone, 'HH:mm zzz');
 			const workTimeFormatted = `${workingDayInfo.endTime} (30min after: ${reportWindow.eveningReportTime
 				.toTimeString()
 				.substring(0, 5)})`;
@@ -397,7 +427,7 @@ export class AttendanceReportsService {
 			this.logger.log(`  🕐 Server time: ${serverTime}`);
 			this.logger.log(`  🌍 Organization time: ${orgTimeFormatted}`);
 			this.logger.log(`  ⏰ Work end time: ${workTimeFormatted}`);
-			this.logger.log(`  🗺️  Timezone: ${TimezoneUtil.getSafeTimezone(organizationTimezone)}`);
+			this.logger.log(`  🗺️  Timezone: ${organizationTimezone || 'Africa/Johannesburg'}`);
 			this.logger.log(
 				`  📊 Report window: ${reportWindow.eveningReportTime.toTimeString().substring(0, 5)} (10min window)`,
 			);
@@ -552,7 +582,7 @@ export class AttendanceReportsService {
 		const organizationTimezone = await this.getOrganizationTimezone(organizationId);
 
 		// Use organization timezone for "today" calculations
-		const today = TimezoneUtil.getCurrentOrganizationTime(organizationTimezone);
+		const today = toZonedTime(new Date(), organizationTimezone);
 		const startOfToday = startOfDay(today);
 		const endOfToday = endOfDay(today);
 
@@ -832,7 +862,7 @@ export class AttendanceReportsService {
 			targetPerformance,
 			insights,
 			recommendations,
-			generatedAt: TimezoneUtil.formatInOrganizationTime(today, 'yyyy-MM-dd HH:mm:ss', organizationTimezone),
+			generatedAt: formatInTimeZone(today, organizationTimezone, 'yyyy-MM-dd HH:mm:ss'),
 			dashboardUrl: process.env.APP_URL || 'https://loro.co.za',
 			hasEmployees: totalEmployees > 0,
 			latenessSummary,
@@ -856,7 +886,7 @@ export class AttendanceReportsService {
 		const organizationTimezone = await this.getOrganizationTimezone(organizationId);
 
 		// Use organization timezone for "today" calculations
-		const today = TimezoneUtil.getCurrentOrganizationTime(organizationTimezone);
+		const today = toZonedTime(new Date(), organizationTimezone);
 		const startOfToday = startOfDay(today);
 		const endOfToday = endOfDay(today);
 
@@ -1696,7 +1726,7 @@ export class AttendanceReportsService {
 					  ]
 					: null,
 			tomorrowActions,
-			generatedAt: TimezoneUtil.formatInOrganizationTime(today, 'PPpp', organizationTimezone),
+			generatedAt: formatInTimeZone(today, organizationTimezone, 'PPpp'),
 			dashboardUrl: process.env.DASHBOARD_URL || 'https://dashboard.loro.com',
 			socialLinks: organizationSettings?.socialLinks || null,
 			// Enhanced analytics data (integrated from user-daily-report.generator.ts)

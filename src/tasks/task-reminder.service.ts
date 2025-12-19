@@ -11,7 +11,7 @@ import { NotificationEvent, NotificationPriority } from '../lib/types/unified-no
 import { TaskStatus, TaskPriority } from '../lib/enums/task.enums';
 import { AccountStatus } from '../lib/enums/status.enums';
 import { OrganizationHoursService } from '../attendance/services/organization.hours.service';
-import { TimezoneUtil } from '../lib/utils/timezone.util';
+import { toZonedTime } from 'date-fns-tz';
 
 @Injectable()
 export class TaskReminderService {
@@ -87,7 +87,7 @@ export class TaskReminderService {
 					const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
 
 					// Get current time in organization timezone
-					const orgCurrentTime = TimezoneUtil.getCurrentOrganizationTime(organizationTimezone);
+					const orgCurrentTime = toZonedTime(new Date(), organizationTimezone);
 					const currentHour = orgCurrentTime.getHours();
 					const currentMinute = orgCurrentTime.getMinutes();
 
@@ -101,8 +101,8 @@ export class TaskReminderService {
 					// Get start and end of today in organization timezone
 					const dayStart = startOfDay(orgCurrentTime);
 					const dayEnd = endOfDay(orgCurrentTime);
-					const todayStart = TimezoneUtil.toOrganizationTime(dayStart, organizationTimezone);
-					const todayEnd = TimezoneUtil.toOrganizationTime(dayEnd, organizationTimezone);
+					const todayStart = toZonedTime(dayStart, organizationTimezone);
+					const todayEnd = toZonedTime(dayEnd, organizationTimezone);
 
 					// Get all tasks due today in this organization that are not completed or cancelled
 			const tasksToday = await this.taskRepository.find({
@@ -161,7 +161,7 @@ export class TaskReminderService {
 					const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
 
 					// Get current time in organization timezone
-					const orgCurrentTime = TimezoneUtil.getCurrentOrganizationTime(organizationTimezone);
+					const orgCurrentTime = toZonedTime(new Date(), organizationTimezone);
 					const currentHour = orgCurrentTime.getHours();
 					const currentMinute = orgCurrentTime.getMinutes();
 

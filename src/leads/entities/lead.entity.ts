@@ -222,10 +222,10 @@ export class Lead {
 	@Column({ type: 'int', default: 0, comment: 'Calculated lead score: 0-100' })
 	leadScore: number;
 
-	@Column({ type: 'timestamp', nullable: true })
+	@Column({ type: 'timestamptz', nullable: true })
 	lastContactDate: Date;
 
-	@Column({ type: 'timestamp', nullable: true })
+	@Column({ type: 'timestamptz', nullable: true })
 	nextFollowUpDate: Date;
 
 	@Column({ type: 'int', default: 0 })
@@ -291,10 +291,10 @@ export class Lead {
 	@Column({ type: 'json', nullable: true })
 	customFields: Record<string, any>; // Flexible field for org-specific data
 
-	@CreateDateColumn()
+	@CreateDateColumn({ type: 'timestamptz' })
 	createdAt: Date;
 
-	@UpdateDateColumn()
+	@UpdateDateColumn({ type: 'timestamptz' })
 	updatedAt: Date;
 
 	@ManyToOne(() => User, { onDelete: 'SET NULL' })

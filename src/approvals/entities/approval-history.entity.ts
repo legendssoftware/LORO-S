@@ -44,7 +44,7 @@ export class ApprovalHistory {
     @Column({ type: 'text', nullable: true })
     reason: string;
 
-    @CreateDateColumn()
+    @CreateDateColumn({ type: 'timestamptz' })
     createdAt: Date;
 
     // Audit information
@@ -77,7 +77,7 @@ export class ApprovalHistory {
     @Column({ type: 'int', nullable: true })
     escalationLevel: number; // If this was an escalation action
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamptz', nullable: true })
     scheduledFor: Date; // If this was a scheduled action
 
     @Column({ type: 'int', nullable: true })

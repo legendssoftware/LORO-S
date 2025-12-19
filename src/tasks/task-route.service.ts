@@ -16,7 +16,7 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { Inject } from '@nestjs/common';
 import { OrganizationHoursService } from '../attendance/services/organization.hours.service';
-import { TimezoneUtil } from '../lib/utils/timezone.util';
+import { toZonedTime } from 'date-fns-tz';
 
 @Injectable()
 export class TaskRouteService {
@@ -305,8 +305,8 @@ export class TaskRouteService {
 		// Calculate start and end of day in organization timezone
 		const dayStart = dateFnsStartOfDay(date);
 		const dayEnd = dateFnsEndOfDay(date);
-		const startOfDay = TimezoneUtil.toOrganizationTime(dayStart, organizationTimezone);
-		const endOfDay = TimezoneUtil.toOrganizationTime(dayEnd, organizationTimezone);
+		const startOfDay = toZonedTime(dayStart, organizationTimezone);
+		const endOfDay = toZonedTime(dayEnd, organizationTimezone);
 
 		// Build the where clause
 		const where: any = {

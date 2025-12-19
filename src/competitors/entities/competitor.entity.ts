@@ -137,10 +137,10 @@ export class Competitor {
 	@Column({ type: 'boolean', default: false })
 	enableGeofence: boolean;
 
-	@CreateDateColumn()
+	@CreateDateColumn({ type: 'timestamptz' })
 	createdAt: Date;
 
-	@UpdateDateColumn()
+	@UpdateDateColumn({ type: 'timestamptz' })
 	updatedAt: Date;
 
 	// Relations

@@ -44,13 +44,13 @@ export class Task {
 	@Column({ type: 'int', default: 0 })
 	progress: number;
 
-	@Column({ type: 'timestamp', nullable: true })
+	@Column({ type: 'timestamptz', nullable: true })
 	deadline: Date;
 
-	@Column({ type: 'timestamp', nullable: true })
+	@Column({ type: 'timestamptz', nullable: true })
 	repetitionDeadline: Date;
 
-	@Column({ type: 'timestamp', nullable: true })
+	@Column({ type: 'timestamptz', nullable: true })
 	completionDate: Date;
 
 	@Column({ type: 'boolean', default: false })
@@ -59,10 +59,10 @@ export class Task {
 	@Column({ type: 'varchar', length: 255, nullable: true })
 	targetCategory: string;
 
-	@CreateDateColumn()
+	@CreateDateColumn({ type: 'timestamptz' })
 	createdAt: Date;
 
-	@UpdateDateColumn()
+	@UpdateDateColumn({ type: 'timestamptz' })
 	updatedAt: Date;
 
 	@Column({ type: 'boolean', default: false })
@@ -71,10 +71,10 @@ export class Task {
 	@Column({ type: 'json', nullable: true })
 	attachments?: string[];
 
-	@Column({ type: 'timestamp', nullable: true })
+	@Column({ type: 'timestamptz', nullable: true })
 	jobStartTime?: Date;
 
-	@Column({ type: 'timestamp', nullable: true })
+	@Column({ type: 'timestamptz', nullable: true })
 	jobEndTime?: Date;
 
 	@Column({ type: 'int', nullable: true })

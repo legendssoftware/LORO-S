@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { OrganisationHours } from '../../organisation/entities/organisation-hours.entity';
 import { TimeCalculatorUtil } from '../../lib/utils/time-calculator.util';
+import { format } from 'date-fns';
 
 export interface WorkingDayInfo {
 	isWorkingDay: boolean;
@@ -112,13 +113,21 @@ export class OrganizationHoursService {
 		}
 
 		// Fall back to global openTime/closeTime
-		const startMinutes = TimeCalculatorUtil.timeToMinutes(orgHours.openTime);
-		const endMinutes = TimeCalculatorUtil.timeToMinutes(orgHours.closeTime);
+		// Convert Date objects to HH:mm strings
+		const openTimeStr = orgHours.openTime instanceof Date 
+			? format(orgHours.openTime, 'HH:mm:ss') 
+			: String(orgHours.openTime);
+		const closeTimeStr = orgHours.closeTime instanceof Date 
+			? format(orgHours.closeTime, 'HH:mm:ss') 
+			: String(orgHours.closeTime);
+		
+		const startMinutes = TimeCalculatorUtil.timeToMinutes(openTimeStr);
+		const endMinutes = TimeCalculatorUtil.timeToMinutes(closeTimeStr);
 
 		return {
 			isWorkingDay: true,
-			startTime: orgHours.openTime,
-			endTime: orgHours.closeTime,
+			startTime: openTimeStr,
+			endTime: closeTimeStr,
 			expectedWorkMinutes: Math.max(0, endMinutes - startMinutes),
 		};
 	}
@@ -232,13 +241,21 @@ export class OrganizationHoursService {
 			};
 		}
 
-		const startMinutes = TimeCalculatorUtil.timeToMinutes(orgHours.openTime);
-		const endMinutes = TimeCalculatorUtil.timeToMinutes(orgHours.closeTime);
+		// Convert Date objects to HH:mm strings
+		const openTimeStr = orgHours.openTime instanceof Date 
+			? format(orgHours.openTime, 'HH:mm:ss') 
+			: String(orgHours.openTime);
+		const closeTimeStr = orgHours.closeTime instanceof Date 
+			? format(orgHours.closeTime, 'HH:mm:ss') 
+			: String(orgHours.closeTime);
+		
+		const startMinutes = TimeCalculatorUtil.timeToMinutes(openTimeStr);
+		const endMinutes = TimeCalculatorUtil.timeToMinutes(closeTimeStr);
 		const dailyMinutes = Math.max(0, endMinutes - startMinutes);
 
 		return {
-			startTime: orgHours.openTime,
-			endTime: orgHours.closeTime,
+			startTime: openTimeStr,
+			endTime: closeTimeStr,
 			expectedDailyHours: TimeCalculatorUtil.minutesToHours(dailyMinutes, 1),
 		};
 	}
@@ -359,11 +376,19 @@ export class OrganizationHoursService {
 				};
 			}
 
+			// Convert Date objects to HH:mm strings
+			const openTimeStr = hours.openTime instanceof Date 
+				? format(hours.openTime, 'HH:mm:ss') 
+				: String(hours.openTime);
+			const closeTimeStr = hours.closeTime instanceof Date 
+				? format(hours.closeTime, 'HH:mm:ss') 
+				: String(hours.closeTime);
+			
 			// Check if within operating hours
 			const isWithinHours = this.isTimeWithinRange(
 				currentTime,
-				hours.openTime,
-				hours.closeTime
+				openTimeStr,
+				closeTimeStr
 			);
 
 			return {
@@ -372,9 +397,9 @@ export class OrganizationHoursService {
 				isHolidayMode: false,
 				reason: isWithinHours 
 					? 'Within operating hours' 
-					: `Outside operating hours (${hours.openTime} - ${hours.closeTime})`,
-				scheduledOpen: hours.openTime,
-				scheduledClose: hours.closeTime,
+					: `Outside operating hours (${openTimeStr} - ${closeTimeStr})`,
+				scheduledOpen: openTimeStr,
+				scheduledClose: closeTimeStr,
 				dayOfWeek,
 			};
 

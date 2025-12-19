@@ -19,22 +19,22 @@ export class ClientCommunicationSchedule {
     @Column({ type: 'int', nullable: true })
     customFrequencyDays: number; // For custom frequency - how many days between communications
 
-    @Column({ type: 'time', nullable: true })
-    preferredTime: string; // Preferred time of day (e.g., "09:00", "14:30")
+    @Column({ type: 'timestamptz', nullable: true })
+    preferredTime: Date; // Preferred time of day with timezone
 
     @Column({ type: 'json', nullable: true })
     preferredDays: number[]; // Array of day numbers (0=Sunday, 1=Monday, etc.)
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamptz', nullable: true })
     nextScheduledDate: Date;
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamptz', nullable: true })
     lastCompletedDate: Date;
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamptz', nullable: true })
     firstVisitDate: Date; // Track when the first visit was made
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamptz', nullable: true })
     lastVisitDate: Date; // Track the most recent completed visit
 
     @Column({ type: 'int', default: 0 })
@@ -49,10 +49,10 @@ export class ClientCommunicationSchedule {
     @Column({ type: 'json', nullable: true })
     metadata: Record<string, any>; // For storing additional schedule-specific data
 
-    @CreateDateColumn()
+    @CreateDateColumn({ type: 'timestamptz' })
     createdAt: Date;
 
-    @UpdateDateColumn()
+    @UpdateDateColumn({ type: 'timestamptz' })
     updatedAt: Date;
 
     @Column({ type: 'boolean', default: false })

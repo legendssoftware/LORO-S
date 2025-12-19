@@ -232,7 +232,10 @@ export class TimeCalculatorUtil {
     }
 
     const checkInMinutes = this.timeToMinutes(format(checkInTime, 'HH:mm'));
-    const expectedStartMinutes = this.timeToMinutes(workingHours.startTime);
+    const startTimeStr = workingHours.startTime instanceof Date 
+      ? format(workingHours.startTime, 'HH:mm') 
+      : workingHours.startTime || this.DEFAULT_WORK.START_TIME;
+    const expectedStartMinutes = this.timeToMinutes(startTimeStr);
     const graceMinutes = this.DEFAULT_WORK.PUNCTUALITY_GRACE_MINUTES;
 
     const isLate = checkInMinutes > (expectedStartMinutes + graceMinutes);
@@ -243,7 +246,10 @@ export class TimeCalculatorUtil {
 
     if (checkOutTime && workingHours.endTime) {
       const checkOutMinutes = this.timeToMinutes(format(checkOutTime, 'HH:mm'));
-      const expectedEndMinutes = this.timeToMinutes(workingHours.endTime);
+      const endTimeStr = workingHours.endTime instanceof Date 
+        ? format(workingHours.endTime, 'HH:mm') 
+        : workingHours.endTime || this.DEFAULT_WORK.END_TIME;
+      const expectedEndMinutes = this.timeToMinutes(endTimeStr);
       
       isEarly = checkOutMinutes < expectedEndMinutes;
       earlyMinutes = isEarly ? expectedEndMinutes - checkOutMinutes : 0;
@@ -288,8 +294,16 @@ export class TimeCalculatorUtil {
       return this.DEFAULT_WORK.STANDARD_MINUTES;
     }
 
-    const startMinutes = this.timeToMinutes(orgHours.openTime);
-    const endMinutes = this.timeToMinutes(orgHours.closeTime);
+    // Convert Date objects to HH:mm strings
+    const openTimeStr = orgHours.openTime instanceof Date 
+      ? format(orgHours.openTime, 'HH:mm:ss') 
+      : String(orgHours.openTime);
+    const closeTimeStr = orgHours.closeTime instanceof Date 
+      ? format(orgHours.closeTime, 'HH:mm:ss') 
+      : String(orgHours.closeTime);
+    
+    const startMinutes = this.timeToMinutes(openTimeStr);
+    const endMinutes = this.timeToMinutes(closeTimeStr);
     
     return Math.max(0, endMinutes - startMinutes);
   }

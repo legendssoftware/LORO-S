@@ -20,13 +20,13 @@ export class TaskFlag {
     @Column({ type: 'enum', enum: TaskFlagStatus, default: TaskFlagStatus.OPEN })
     status: TaskFlagStatus;
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamptz', nullable: true })
     deadline: Date;
 
-    @CreateDateColumn()
+    @CreateDateColumn({ type: 'timestamptz' })
     createdAt: Date;
 
-    @UpdateDateColumn()
+    @UpdateDateColumn({ type: 'timestamptz' })
     updatedAt: Date;
 
     @Column({ type: 'boolean', default: false })

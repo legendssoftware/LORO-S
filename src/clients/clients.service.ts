@@ -2592,7 +2592,12 @@ export class ClientsService {
 
 		// Set preferred time if specified
 		if (schedule.preferredTime) {
-			const [hours, minutes] = schedule.preferredTime.split(':').map(Number);
+			// Convert Date to hours/minutes
+			const preferredTimeDate = schedule.preferredTime instanceof Date 
+				? schedule.preferredTime 
+				: new Date(schedule.preferredTime);
+			const hours = preferredTimeDate.getHours();
+			const minutes = preferredTimeDate.getMinutes();
 			nextDate = setHours(setMinutes(nextDate, minutes), hours);
 		} else {
 			// Default to 9 AM
@@ -2969,7 +2974,9 @@ export class ClientsService {
 			communication: {
 				type: schedule.communicationType.replace(/_/g, ' ').toUpperCase(),
 				scheduledDate: format(schedule.nextScheduledDate, 'MMMM dd, yyyy'),
-				scheduledTime: schedule.preferredTime,
+				scheduledTime: schedule.preferredTime instanceof Date 
+					? format(schedule.preferredTime, 'HH:mm:ss') 
+					: String(schedule.preferredTime),
 				frequency: schedule.frequency.replace(/_/g, ' ').toLowerCase(),
 				notes: schedule.notes,
 				lastCompletedDate: schedule.lastCompletedDate ? format(schedule.lastCompletedDate, 'MMMM dd, yyyy') : undefined,

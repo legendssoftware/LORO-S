@@ -10,6 +10,7 @@ import { EmailType } from '../../lib/enums/email.enums';
 import { OvertimeReminderData } from '../../lib/types/email-templates.types';
 import { UnifiedNotificationService } from '../../lib/services/unified-notification.service';
 import { NotificationEvent, NotificationPriority } from '../../lib/types/unified-notification.types';
+import { format } from 'date-fns';
 
 @Injectable()
 export class OvertimeReminderService {
@@ -180,7 +181,11 @@ export class OvertimeReminderService {
 	private calculateOvertimeWindow(orgHours: OrganisationHours, currentTime: Date) {
 		try {
 			const today = new Date();
-			const [closeHour, closeMinute] = orgHours.closeTime.split(':').map(Number);
+			// Convert Date to string if needed
+			const closeTimeStr = orgHours.closeTime instanceof Date 
+				? format(orgHours.closeTime, 'HH:mm:ss') 
+				: String(orgHours.closeTime);
+			const [closeHour, closeMinute] = closeTimeStr.split(':').map(Number);
 			
 			const closeTimeToday = new Date(
 				today.getFullYear(),
@@ -308,7 +313,9 @@ export class OvertimeReminderService {
 					minute: '2-digit',
 					hour12: true,
 				}),
-				organizationCloseTime: this.formatTime(orgHours.closeTime),
+				organizationCloseTime: this.formatTime(orgHours.closeTime instanceof Date 
+					? format(orgHours.closeTime, 'HH:mm:ss') 
+					: String(orgHours.closeTime)),
 				currentTime: currentTime.toLocaleTimeString('en-ZA', {
 					hour: '2-digit',
 					minute: '2-digit',

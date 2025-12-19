@@ -33,7 +33,7 @@ export class Order {
 	@Column({ type: 'enum', enum: OrderStatus, default: OrderStatus.IN_FULFILLMENT })
 	status: OrderStatus;
 
-	@Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+	@Column({ type: 'timestamptz', default: () => 'CURRENT_TIMESTAMP' })
 	orderDate: Date;
 
 	@ManyToOne(() => User, { eager: true })
@@ -63,10 +63,10 @@ export class Order {
 	@Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
 	resellerCommission: number;
 
-	@CreateDateColumn()
+	@CreateDateColumn({ type: 'timestamptz' })
 	createdAt: Date;
 
-	@UpdateDateColumn()
+	@UpdateDateColumn({ type: 'timestamptz' })
 	updatedAt: Date;
 
 	// Original quotation reference
@@ -84,7 +84,7 @@ export class Order {
 	@Column({ default: false })
 	isPaid: boolean;
 
-	@Column({ type: 'timestamp', nullable: true })
+	@Column({ type: 'timestamptz', nullable: true })
 	paidAt: Date;
 
 	@Column({ nullable: true })
@@ -103,10 +103,10 @@ export class Order {
 	@Column({ nullable: true })
 	carrier: string;
 
-	@Column({ type: 'timestamp', nullable: true })
+	@Column({ type: 'timestamptz', nullable: true })
 	shippedAt: Date;
 
-	@Column({ type: 'timestamp', nullable: true })
+	@Column({ type: 'timestamptz', nullable: true })
 	deliveredAt: Date;
 
 	// Relations

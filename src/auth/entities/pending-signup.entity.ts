@@ -17,6 +17,6 @@ export class PendingSignup {
     @Column({ default: false })
     isVerified: boolean;
 
-    @Column({ type: 'timestamp', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
+    @Column({ type: 'timestamptz', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
     createdAt: Date;
 } 

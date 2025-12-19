@@ -32,10 +32,10 @@ export class Interaction {
 	@Column({ type: 'boolean', default: false })
 	isDeleted: boolean;
 
-	@CreateDateColumn()
+	@CreateDateColumn({ type: 'timestamptz' })
 	createdAt: Date;
 
-	@UpdateDateColumn()
+	@UpdateDateColumn({ type: 'timestamptz' })
 	updatedAt: Date;
 
 	@ManyToOne(() => User, { onDelete: 'CASCADE' })

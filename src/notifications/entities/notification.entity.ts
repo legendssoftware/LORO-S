@@ -21,10 +21,10 @@ export class Notification {
     @Column({ nullable: false, type: 'enum', enum: NotificationStatus, default: NotificationStatus.UNREAD })
     status: NotificationStatus;
 
-    @Column({ nullable: false, default: () => 'CURRENT_TIMESTAMP', type: 'timestamp' })
+    @Column({ nullable: false, default: () => 'CURRENT_TIMESTAMP', type: 'timestamptz' })
     createdAt: Date;
 
-    @Column({ nullable: false, default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP', type: 'timestamp' })
+    @Column({ nullable: false, default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP', type: 'timestamptz' })
     updatedAt: Date;
 
     // Relations

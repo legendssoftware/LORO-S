@@ -16,10 +16,10 @@ export class TaskFlagItem {
     @Column({ type: 'enum', enum: TaskFlagItemStatus, default: TaskFlagItemStatus.PENDING })
     status: TaskFlagItemStatus;
 
-    @CreateDateColumn()
+    @CreateDateColumn({ type: 'timestamptz' })
     createdAt: Date;
 
-    @UpdateDateColumn()
+    @UpdateDateColumn({ type: 'timestamptz' })
     updatedAt: Date;
 
     @Column({ type: 'boolean', default: false })

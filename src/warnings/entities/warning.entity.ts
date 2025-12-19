@@ -62,14 +62,14 @@ export class Warning {
 		description: 'Date when the warning was issued',
 		example: '2023-05-15T10:30:00Z',
 	})
-	@CreateDateColumn()
+	@CreateDateColumn({ type: 'timestamptz' })
 	issuedAt: Date;
 
 	@ApiProperty({
 		description: 'Date when the warning expires',
 		example: '2023-11-15T10:30:00Z',
 	})
-	@Column({ type: 'timestamp' })
+	@Column({ type: 'timestamptz' })
 	expiresAt: Date;
 
 	@ApiProperty({
@@ -83,14 +83,14 @@ export class Warning {
 		description: 'Date when the warning record was created',
 		example: '2023-05-15T10:30:00Z',
 	})
-	@CreateDateColumn()
+	@CreateDateColumn({ type: 'timestamptz' })
 	createdAt: Date;
 
 	@ApiProperty({
 		description: 'Date when the warning record was last updated',
 		example: '2023-05-15T10:30:00Z',
 	})
-	@UpdateDateColumn()
+	@UpdateDateColumn({ type: 'timestamptz' })
 	updatedAt: Date;
 
 	@ApiProperty({ 

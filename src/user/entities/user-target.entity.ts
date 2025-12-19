@@ -213,7 +213,7 @@ export class UserTarget {
 	@Column({ type: 'date', nullable: true })
 	periodEndDate: Date;
 
-	@Column({ type: 'timestamp', nullable: true })
+	@Column({ type: 'timestamptz', nullable: true })
 	lastCalculatedAt: Date;
 
 	// 🔄 Recurring Target Configuration
@@ -237,14 +237,14 @@ export class UserTarget {
 	carryForwardUnfulfilled: boolean;
 
 	@Column({ 
-		type: 'timestamp', 
+		type: 'timestamptz', 
 		nullable: true,
 		comment: 'Calculated date when next recurrence should happen'
 	})
 	nextRecurrenceDate: Date;
 
 	@Column({ 
-		type: 'timestamp', 
+		type: 'timestamptz', 
 		nullable: true,
 		comment: 'When the last recurrence was processed'
 	})
@@ -316,10 +316,10 @@ export class UserTarget {
 		lastUpdated: string; // ISO timestamp when this record was created/updated
 	}[];
 
-	@CreateDateColumn()
+	@CreateDateColumn({ type: 'timestamptz' })
 	createdAt: Date;
 
-	@UpdateDateColumn()
+	@UpdateDateColumn({ type: 'timestamptz' })
 	updatedAt: Date;
 
 	@OneToOne(() => User, (user) => user.userTarget)

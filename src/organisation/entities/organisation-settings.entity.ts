@@ -118,10 +118,10 @@ export class OrganisationSettings {
 		growthTargetPercentage?: number; // Target growth percentage over historical average (default: 20)
 	};
 
-	@Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+	@Column({ type: 'timestamptz', default: () => 'CURRENT_TIMESTAMP' })
 	createdAt: Date;
 
-	@Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
+	@Column({ type: 'timestamptz', default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
 	updatedAt: Date;
 
 	@OneToOne(() => Organisation, (organisation) => organisation.settings)

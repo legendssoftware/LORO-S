@@ -70,10 +70,10 @@ export class Client {
 	@Column({ type: 'varchar', nullable: true })
 	gpsCoordinates: string;
 
-	@Column({ type: 'timestamp', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
+	@Column({ type: 'timestamptz', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
 	createdAt: Date;
 
-	@Column({ type: 'timestamp', nullable: false, default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
+	@Column({ type: 'timestamptz', nullable: false, default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
 	updatedAt: Date;
 
 	@Column({ nullable: false, default: GeneralStatus.ACTIVE })
@@ -102,11 +102,11 @@ export class Client {
 	preferredContactMethod: ClientContactPreference;
 
 	// CRM Enhancement: Last visit/interaction date
-	@Column({ type: 'timestamp', nullable: true })
+	@Column({ type: 'timestamptz', nullable: true })
 	lastVisitDate: Date;
 
 	// CRM Enhancement: Next scheduled contact date
-	@Column({ type: 'timestamp', nullable: true })
+	@Column({ type: 'timestamptz', nullable: true })
 	nextContactDate: Date;
 
 	// CRM Enhancement: Store/Product categories this client can access

@@ -67,7 +67,7 @@ import { Leave } from '../leave/entities/leave.entity';
 import { Warning } from '../warnings/entities/warning.entity';
 import { Tracking } from '../tracking/entities/tracking.entity';
 import { Geofence } from '../tracking/entities/geofence.entity';
-import { GeofenceEvent } from '../tracking/entities/geofence-event.entity';
+import { GeofenceEvent, GeofenceEventType } from '../tracking/entities/geofence-event.entity';
 import { Doc } from '../docs/entities/doc.entity';
 import { Asset } from '../assets/entities/asset.entity';
 import { News } from '../news/entities/news.entity';
@@ -106,7 +106,7 @@ interface ScriptArguments {
 	'dry-run'?: boolean;
 	only?: string;
 	verbose?: boolean;
-	step?: 'mysql-to-local' | 'local-to-remote';
+	step?: 'mysql-to-local' | 'local-to-remote' | 'remote-to-local';
 }
 
 interface UidMapping {
@@ -338,7 +338,7 @@ class LegacyDbMigrator {
 	private verbose = false;
 	private pendingManagedStaffUpdates: Map<number, any> = new Map();
 
-	async initialize(step?: 'mysql-to-local' | 'local-to-remote', pgUrl?: string) {
+	async initialize(step?: 'mysql-to-local' | 'local-to-remote' | 'remote-to-local', pgUrl?: string) {
 		console.log('🔧 Initializing connections...\n');
 		
 		const migrationStep = step || 'mysql-to-local';
@@ -351,6 +351,12 @@ class LegacyDbMigrator {
 			// Step 2: Local PostgreSQL to Remote PostgreSQL
 			await this.initPostgreSQLSource();
 			await this.initPostgreSQL(migrationStep, pgUrl);
+		} else if (migrationStep === 'remote-to-local') {
+			// Step 3: Remote PostgreSQL to Local PostgreSQL
+			// Source = remote (via --pg-url or REMOTE_PG_DB_* env vars)
+			// Target = local PostgreSQL
+			await this.initPostgreSQLRemoteSource(pgUrl);
+			await this.initPostgreSQLLocalTarget();
 		}
 		
 		console.log('✅ All connections initialized\n');
@@ -771,6 +777,294 @@ class LegacyDbMigrator {
 		this.usageSummarySourceRepo = this.pgSourceDataSource.getRepository(UsageSummary);
 	}
 
+	private async initPostgreSQLRemoteSource(pgUrl?: string) {
+		// Initialize remote PostgreSQL connection (source for reading)
+		console.log('📊 Connecting to remote PostgreSQL (source)...');
+		
+		let host = '';
+		let port = 5432;
+		let username = '';
+		let password = '';
+		let database = '';
+		let enableSSL = true;
+
+		if (pgUrl) {
+			// Parse from provided URL
+			const url = new URL(pgUrl);
+			host = url.hostname;
+			port = parseInt(url.port || '5432', 10);
+			username = url.username;
+			password = url.password;
+			database = url.pathname.slice(1);
+			
+			const sslMode = url.searchParams.get('sslmode');
+			if (sslMode === 'disable') {
+				enableSSL = false;
+			}
+		} else {
+			// Use REMOTE_PG_DB_* environment variables
+			host = process.env.REMOTE_PG_DB_HOST || '';
+			port = parseInt(process.env.REMOTE_PG_DB_PORT || '5432', 10);
+			username = process.env.REMOTE_PG_DB_USERNAME || '';
+			password = process.env.REMOTE_PG_DB_PASSWORD || '';
+			database = process.env.REMOTE_PG_DB_NAME || '';
+
+			// Parse if REMOTE_PG_DB_HOST is a full URL
+			if (host && (host.startsWith('postgresql://') || host.startsWith('postgres://'))) {
+				try {
+					const url = new URL(host);
+					host = url.hostname;
+					port = url.port ? parseInt(url.port, 10) : 5432;
+					username = url.username || username;
+					password = url.password || password;
+					database = url.pathname ? url.pathname.slice(1) : database;
+				} catch (error) {
+					console.error('Failed to parse REMOTE_PG_DB_HOST connection string:', error);
+					throw error;
+				}
+			}
+		}
+
+		if (!host || !username || !password || !database) {
+			throw new Error('Missing remote PostgreSQL connection details. Provide --pg-url or set REMOTE_PG_DB_HOST, REMOTE_PG_DB_USERNAME, REMOTE_PG_DB_PASSWORD, and REMOTE_PG_DB_NAME');
+		}
+
+		// Detect localhost to disable SSL
+		const isLocalhost = host === 'localhost' || host === '127.0.0.1' || host?.startsWith('192.168.') || host?.startsWith('10.');
+		if (isLocalhost) {
+			enableSSL = false;
+		}
+
+		console.log(`🔐 SSL Configuration: ${enableSSL ? 'ENABLED' : 'DISABLED'} (host: ${host})`);
+
+		this.pgSourceDataSource = new DataSource({
+			type: 'postgres',
+			host,
+			port,
+			username,
+			password,
+			database,
+			entities: [
+				Organisation, Branch, User, UserProfile, UserEmployeementProfile, UserTarget,
+				Device, DeviceRecords, DeviceLogs, License, LicenseUsage, LicenseEvent, LicenseAudit,
+				Attendance, Claim, CheckIn, Lead, Quotation, QuotationItem, Order, OrderItem,
+				Task, SubTask, Route, TaskFlag, TaskFlagItem, Interaction, Notification,
+				CommunicationLog, Journal, Report, Leave, Warning, Tracking, Geofence, GeofenceEvent,
+				Doc, Asset, News, Feedback, Competitor, Reseller, Product, ProductAnalytics,
+				Client, ClientAuth, ClientCommunicationSchedule, Banners, Project,
+				Approval, ApprovalHistory, ApprovalSignature, UserRewards, Achievement,
+				UnlockedItem, XPTransaction, Reward, OrganisationSettings, OrganisationAppearance,
+				OrganisationHours, Payslip, UsageEvent, UsageSummary,
+			],
+			synchronize: false,
+			logging: false,
+			extra: {
+				ssl: enableSSL ? { rejectUnauthorized: false } : false,
+			},
+		});
+
+		await this.pgSourceDataSource.initialize();
+		console.log(`✅ Connected to remote PostgreSQL (source): ${host}:${port}/${database}\n`);
+
+		// Initialize source repositories (for reading from remote)
+		this.orgSourceRepo = this.pgSourceDataSource.getRepository(Organisation);
+		this.branchSourceRepo = this.pgSourceDataSource.getRepository(Branch);
+		this.userSourceRepo = this.pgSourceDataSource.getRepository(User);
+		this.userProfileSourceRepo = this.pgSourceDataSource.getRepository(UserProfile);
+		this.userEmploymentSourceRepo = this.pgSourceDataSource.getRepository(UserEmployeementProfile);
+		this.userTargetSourceRepo = this.pgSourceDataSource.getRepository(UserTarget);
+		this.deviceSourceRepo = this.pgSourceDataSource.getRepository(Device);
+		this.deviceRecordsSourceRepo = this.pgSourceDataSource.getRepository(DeviceRecords);
+		this.deviceLogsSourceRepo = this.pgSourceDataSource.getRepository(DeviceLogs);
+		this.licenseSourceRepo = this.pgSourceDataSource.getRepository(License);
+		this.licenseUsageSourceRepo = this.pgSourceDataSource.getRepository(LicenseUsage);
+		this.licenseEventSourceRepo = this.pgSourceDataSource.getRepository(LicenseEvent);
+		try {
+			this.licenseAuditSourceRepo = this.pgSourceDataSource.getRepository(LicenseAudit);
+		} catch (error: any) {
+			if (error.name === 'EntityMetadataNotFoundError') {
+				console.warn('⚠️  LicenseAudit entity not registered in source DataSource, skipping');
+				this.licenseAuditSourceRepo = null;
+			} else {
+				throw error;
+			}
+		}
+		this.attendanceSourceRepo = this.pgSourceDataSource.getRepository(Attendance);
+		this.claimSourceRepo = this.pgSourceDataSource.getRepository(Claim);
+		this.checkInSourceRepo = this.pgSourceDataSource.getRepository(CheckIn);
+		this.leadSourceRepo = this.pgSourceDataSource.getRepository(Lead);
+		this.quotationSourceRepo = this.pgSourceDataSource.getRepository(Quotation);
+		this.quotationItemSourceRepo = this.pgSourceDataSource.getRepository(QuotationItem);
+		this.orderSourceRepo = this.pgSourceDataSource.getRepository(Order);
+		this.orderItemSourceRepo = this.pgSourceDataSource.getRepository(OrderItem);
+		this.taskSourceRepo = this.pgSourceDataSource.getRepository(Task);
+		this.subTaskSourceRepo = this.pgSourceDataSource.getRepository(SubTask);
+		this.routeSourceRepo = this.pgSourceDataSource.getRepository(Route);
+		this.taskFlagSourceRepo = this.pgSourceDataSource.getRepository(TaskFlag);
+		this.taskFlagItemSourceRepo = this.pgSourceDataSource.getRepository(TaskFlagItem);
+		this.interactionSourceRepo = this.pgSourceDataSource.getRepository(Interaction);
+		this.notificationSourceRepo = this.pgSourceDataSource.getRepository(Notification);
+		this.communicationLogSourceRepo = this.pgSourceDataSource.getRepository(CommunicationLog);
+		this.journalSourceRepo = this.pgSourceDataSource.getRepository(Journal);
+		this.reportSourceRepo = this.pgSourceDataSource.getRepository(Report);
+		this.leaveSourceRepo = this.pgSourceDataSource.getRepository(Leave);
+		this.warningSourceRepo = this.pgSourceDataSource.getRepository(Warning);
+		this.geofenceSourceRepo = this.pgSourceDataSource.getRepository(Geofence);
+		this.geofenceEventSourceRepo = this.pgSourceDataSource.getRepository(GeofenceEvent);
+		this.docSourceRepo = this.pgSourceDataSource.getRepository(Doc);
+		this.assetSourceRepo = this.pgSourceDataSource.getRepository(Asset);
+		this.newsSourceRepo = this.pgSourceDataSource.getRepository(News);
+		this.feedbackSourceRepo = this.pgSourceDataSource.getRepository(Feedback);
+		this.competitorSourceRepo = this.pgSourceDataSource.getRepository(Competitor);
+		this.resellerSourceRepo = this.pgSourceDataSource.getRepository(Reseller);
+		this.bannersSourceRepo = this.pgSourceDataSource.getRepository(Banners);
+		this.projectSourceRepo = this.pgSourceDataSource.getRepository(Project);
+		this.approvalSourceRepo = this.pgSourceDataSource.getRepository(Approval);
+		this.approvalHistorySourceRepo = this.pgSourceDataSource.getRepository(ApprovalHistory);
+		this.approvalSignatureSourceRepo = this.pgSourceDataSource.getRepository(ApprovalSignature);
+		this.userRewardsSourceRepo = this.pgSourceDataSource.getRepository(UserRewards);
+		this.achievementSourceRepo = this.pgSourceDataSource.getRepository(Achievement);
+		this.unlockedItemSourceRepo = this.pgSourceDataSource.getRepository(UnlockedItem);
+		this.xpTransactionSourceRepo = this.pgSourceDataSource.getRepository(XPTransaction);
+		this.rewardSourceRepo = this.pgSourceDataSource.getRepository(Reward);
+		this.orgSettingsSourceRepo = this.pgSourceDataSource.getRepository(OrganisationSettings);
+		this.orgAppearanceSourceRepo = this.pgSourceDataSource.getRepository(OrganisationAppearance);
+		this.orgHoursSourceRepo = this.pgSourceDataSource.getRepository(OrganisationHours);
+		this.payslipSourceRepo = this.pgSourceDataSource.getRepository(Payslip);
+		this.usageEventSourceRepo = this.pgSourceDataSource.getRepository(UsageEvent);
+		this.usageSummarySourceRepo = this.pgSourceDataSource.getRepository(UsageSummary);
+	}
+
+	private async initPostgreSQLLocalTarget() {
+		// Initialize local PostgreSQL connection (target for writing)
+		console.log('📊 Connecting to local PostgreSQL (target)...');
+		
+		const host = process.env.PG_DB_HOST || 'localhost';
+		const port = parseInt(process.env.PG_DB_PORT || '5432', 10);
+		const username = process.env.PG_DB_USERNAME || 'brandonnkawu';
+		const password = process.env.PG_DB_PASSWORD || 'Umzingeli@2026';
+		const database = process.env.PG_DB_NAME || 'sana';
+
+		// Parse connection string if PG_DB_HOST contains a full PostgreSQL URL
+		let finalHost = host;
+		let finalPort = port;
+		let finalUsername = username;
+		let finalPassword = password;
+		let finalDatabase = database;
+
+		if (host && (host.startsWith('postgresql://') || host.startsWith('postgres://'))) {
+			try {
+				const url = new URL(host);
+				finalHost = url.hostname;
+				finalPort = url.port ? parseInt(url.port, 10) : 5432;
+				finalUsername = url.username || username;
+				finalPassword = url.password || password;
+				finalDatabase = url.pathname ? url.pathname.slice(1) : database;
+			} catch (error) {
+				console.error('Failed to parse PostgreSQL connection string:', error);
+			}
+		}
+
+		const enableSSL = false; // Disable SSL for localhost
+
+		this.pgDataSource = new DataSource({
+			type: 'postgres',
+			host: finalHost,
+			port: finalPort,
+			username: finalUsername,
+			password: finalPassword,
+			database: finalDatabase,
+			entities: [
+				Organisation, Branch, User, UserProfile, UserEmployeementProfile, UserTarget,
+				Device, DeviceRecords, DeviceLogs, License, LicenseUsage, LicenseEvent, LicenseAudit,
+				Attendance, Claim, CheckIn, Lead, Quotation, QuotationItem, Order, OrderItem,
+				Task, SubTask, Route, TaskFlag, TaskFlagItem, Interaction, Notification,
+				CommunicationLog, Journal, Report, Leave, Warning, Tracking, Geofence, GeofenceEvent,
+				Doc, Asset, News, Feedback, Competitor, Reseller, Product, ProductAnalytics,
+				Client, ClientAuth, ClientCommunicationSchedule, Banners, Project,
+				Approval, ApprovalHistory, ApprovalSignature, UserRewards, Achievement,
+				UnlockedItem, XPTransaction, Reward, OrganisationSettings, OrganisationAppearance,
+				OrganisationHours, Payslip, UsageEvent, UsageSummary,
+			],
+			synchronize: false,
+			logging: false,
+			extra: {
+				ssl: enableSSL ? { rejectUnauthorized: false } : false,
+			},
+		});
+
+		await this.pgDataSource.initialize();
+		console.log(`✅ Connected to local PostgreSQL (target): ${finalHost}:${finalPort}/${finalDatabase}\n`);
+
+		// Initialize target repositories (for writing to local)
+		this.orgRepo = this.pgDataSource.getRepository(Organisation);
+		this.branchRepo = this.pgDataSource.getRepository(Branch);
+		this.userRepo = this.pgDataSource.getRepository(User);
+		this.userProfileRepo = this.pgDataSource.getRepository(UserProfile);
+		this.userEmploymentRepo = this.pgDataSource.getRepository(UserEmployeementProfile);
+		this.userTargetRepo = this.pgDataSource.getRepository(UserTarget);
+		this.deviceRepo = this.pgDataSource.getRepository(Device);
+		this.deviceRecordsRepo = this.pgDataSource.getRepository(DeviceRecords);
+		this.deviceLogsRepo = this.pgDataSource.getRepository(DeviceLogs);
+		this.licenseRepo = this.pgDataSource.getRepository(License);
+		this.licenseUsageRepo = this.pgDataSource.getRepository(LicenseUsage);
+		this.licenseEventRepo = this.pgDataSource.getRepository(LicenseEvent);
+		try {
+			this.licenseAuditRepo = this.pgDataSource.getRepository(LicenseAudit);
+		} catch (error: any) {
+			if (error.name === 'EntityMetadataNotFoundError') {
+				console.warn('⚠️  LicenseAudit entity not registered in target DataSource, skipping');
+				this.licenseAuditRepo = null;
+			} else {
+				throw error;
+			}
+		}
+		this.attendanceRepo = this.pgDataSource.getRepository(Attendance);
+		this.claimRepo = this.pgDataSource.getRepository(Claim);
+		this.checkInRepo = this.pgDataSource.getRepository(CheckIn);
+		this.leadRepo = this.pgDataSource.getRepository(Lead);
+		this.quotationRepo = this.pgDataSource.getRepository(Quotation);
+		this.quotationItemRepo = this.pgDataSource.getRepository(QuotationItem);
+		this.orderRepo = this.pgDataSource.getRepository(Order);
+		this.orderItemRepo = this.pgDataSource.getRepository(OrderItem);
+		this.taskRepo = this.pgDataSource.getRepository(Task);
+		this.subTaskRepo = this.pgDataSource.getRepository(SubTask);
+		this.routeRepo = this.pgDataSource.getRepository(Route);
+		this.taskFlagRepo = this.pgDataSource.getRepository(TaskFlag);
+		this.taskFlagItemRepo = this.pgDataSource.getRepository(TaskFlagItem);
+		this.interactionRepo = this.pgDataSource.getRepository(Interaction);
+		this.notificationRepo = this.pgDataSource.getRepository(Notification);
+		this.communicationLogRepo = this.pgDataSource.getRepository(CommunicationLog);
+		this.journalRepo = this.pgDataSource.getRepository(Journal);
+		this.reportRepo = this.pgDataSource.getRepository(Report);
+		this.leaveRepo = this.pgDataSource.getRepository(Leave);
+		this.warningRepo = this.pgDataSource.getRepository(Warning);
+		this.geofenceRepo = this.pgDataSource.getRepository(Geofence);
+		this.geofenceEventRepo = this.pgDataSource.getRepository(GeofenceEvent);
+		this.docRepo = this.pgDataSource.getRepository(Doc);
+		this.assetRepo = this.pgDataSource.getRepository(Asset);
+		this.newsRepo = this.pgDataSource.getRepository(News);
+		this.feedbackRepo = this.pgDataSource.getRepository(Feedback);
+		this.competitorRepo = this.pgDataSource.getRepository(Competitor);
+		this.resellerRepo = this.pgDataSource.getRepository(Reseller);
+		this.bannersRepo = this.pgDataSource.getRepository(Banners);
+		this.projectRepo = this.pgDataSource.getRepository(Project);
+		this.approvalRepo = this.pgDataSource.getRepository(Approval);
+		this.approvalHistoryRepo = this.pgDataSource.getRepository(ApprovalHistory);
+		this.approvalSignatureRepo = this.pgDataSource.getRepository(ApprovalSignature);
+		this.userRewardsRepo = this.pgDataSource.getRepository(UserRewards);
+		this.achievementRepo = this.pgDataSource.getRepository(Achievement);
+		this.unlockedItemRepo = this.pgDataSource.getRepository(UnlockedItem);
+		this.xpTransactionRepo = this.pgDataSource.getRepository(XPTransaction);
+		this.rewardRepo = this.pgDataSource.getRepository(Reward);
+		this.orgSettingsRepo = this.pgDataSource.getRepository(OrganisationSettings);
+		this.orgAppearanceRepo = this.pgDataSource.getRepository(OrganisationAppearance);
+		this.orgHoursRepo = this.pgDataSource.getRepository(OrganisationHours);
+		this.payslipRepo = this.pgDataSource.getRepository(Payslip);
+		this.usageEventRepo = this.pgDataSource.getRepository(UsageEvent);
+		this.usageSummaryRepo = this.pgDataSource.getRepository(UsageSummary);
+	}
+
 	async migrate(options: ScriptArguments) {
 		this.dryRun = options['dry-run'] || false;
 		this.verbose = options.verbose || false;
@@ -778,7 +1072,7 @@ class LegacyDbMigrator {
 
 		const step = options.step || 'mysql-to-local';
 
-		if (step === 'local-to-remote') {
+		if (step === 'local-to-remote' || step === 'remote-to-local') {
 			await this.migrateFromPostgreSQL(options);
 			return;
 		}
@@ -843,14 +1137,14 @@ class LegacyDbMigrator {
 				await this.importOrganisationHours();
 			}
 
-			// Reports import - SKIPPED per user request
-			// if (this.shouldImport('reports')) {
-			// 	await this.clearTable(this.reportRepo, 'Reports', Report);
-			// 	await this.importReports();
-			// }
+			// Reports import - all records
+			if (this.shouldImport('reports')) {
+				await this.clearTable(this.reportRepo, 'Reports', Report);
+				await this.importReports();
+			}
 
 			// Core transactional data
-			// Attendance import - December only
+			// Attendance import - all records
 			if (this.shouldImport('attendance')) {
 				// Clear attendance records before importing to avoid duplicates
 				await this.clearAttendanceRecords();
@@ -972,13 +1266,15 @@ class LegacyDbMigrator {
 			}
 
 			// Large tables moved to end for performance
-			// Tracking import - SKIPPED (GPS records import disabled)
-			// if (this.shouldImport('tracking')) {
-			// 	await this.clearTable(this.geofenceEventRepo, 'Geofence Events', GeofenceEvent);
-			// 	await this.clearTable(this.geofenceRepo, 'Geofences', Geofence);
-			// 	await this.clearTable(this.trackingRepo, 'Tracking', Tracking);
-			// 	await this.importTracking();
-			// }
+			// Tracking import - all records
+			if (this.shouldImport('tracking')) {
+				await this.clearTable(this.geofenceEventRepo, 'Geofence Events', GeofenceEvent);
+				await this.clearTable(this.geofenceRepo, 'Geofences', Geofence);
+				await this.clearTable(this.trackingRepo, 'Tracking', Tracking);
+				await this.importGeofences();
+				await this.importGeofenceEvents();
+				await this.importTracking();
+			}
 
 			const duration = ((Date.now() - startTime) / 1000).toFixed(2);
 			this.printStats(duration);
@@ -1002,8 +1298,16 @@ class LegacyDbMigrator {
 			throw new Error('Both source and target PostgreSQL connections must be initialized');
 		}
 
-		console.log('🚀 Starting PostgreSQL-to-PostgreSQL migration (local to remote)...\n');
-		console.log('⚠️  Skipping tracking-related entities\n');
+		const step = options.step || 'local-to-remote';
+		const isRemoteToLocal = step === 'remote-to-local';
+
+		if (isRemoteToLocal) {
+			console.log('🚀 Starting PostgreSQL-to-PostgreSQL migration (remote to local)...\n');
+			console.log('✅ Importing ALL data including previously skipped entities\n');
+		} else {
+			console.log('🚀 Starting PostgreSQL-to-PostgreSQL migration (local to remote)...\n');
+			console.log('⚠️  Skipping tracking-related entities\n');
+		}
 
 		const startTime = Date.now();
 
@@ -1036,11 +1340,11 @@ class LegacyDbMigrator {
 				await this.clearDeviceRecordsAndLogs();
 				await this.clearTable(this.deviceRepo, 'Devices', Device);
 				await this.copyEntities(this.deviceSourceRepo!, this.deviceRepo!, 'Devices');
-				// Device records import - SKIPPED per user request
-				// if (this.shouldImport('devicerecords')) {
-				// 	await this.clearTable(this.deviceRecordsRepo, 'Device Records', DeviceRecords);
-				// 	await this.copyEntities(this.deviceRecordsSourceRepo!, this.deviceRecordsRepo!, 'Device Records');
-				// }
+				// Device records import - Enabled for remote-to-local migration
+				if (isRemoteToLocal) {
+					await this.clearTable(this.deviceRecordsRepo, 'Device Records', DeviceRecords);
+					await this.copyEntities(this.deviceRecordsSourceRepo!, this.deviceRecordsRepo!, 'Device Records');
+				}
 			}
 
 			if (this.shouldImport('licenses')) {
@@ -1073,41 +1377,41 @@ class LegacyDbMigrator {
 				await this.copyEntities(this.orgHoursSourceRepo!, this.orgHoursRepo!, 'Organisation Hours');
 			}
 
-			// Reports import - SKIPPED per user request
-			// if (this.shouldImport('reports')) {
-			// 	await this.clearTable(this.reportRepo, 'Reports', Report);
-			// 	await this.copyEntities(this.reportSourceRepo!, this.reportRepo!, 'Reports');
-			// }
+			// Reports import - Enabled for remote-to-local migration
+			if (isRemoteToLocal) {
+				await this.clearTable(this.reportRepo, 'Reports', Report);
+				await this.copyEntities(this.reportSourceRepo!, this.reportRepo!, 'Reports');
+			}
 
 			if (this.shouldImport('attendance')) {
 				await this.clearAttendanceRecords();
 				await this.copyEntities(this.attendanceSourceRepo!, this.attendanceRepo!, 'Attendance');
 			}
 
-			// Claims import - SKIPPED per user request
-			// if (this.shouldImport('claims')) {
-			// 	await this.clearTable(this.claimRepo, 'Claims', Claim);
-			// 	await this.copyEntities(this.claimSourceRepo!, this.claimRepo!, 'Claims');
-			// }
+			// Claims import - Enabled for remote-to-local migration
+			if (isRemoteToLocal) {
+				await this.clearTable(this.claimRepo, 'Claims', Claim);
+				await this.copyEntities(this.claimSourceRepo!, this.claimRepo!, 'Claims');
+			}
 
 			if (this.shouldImport('checkins')) {
 				await this.clearTable(this.checkInRepo, 'Check-ins', CheckIn);
 				await this.copyEntities(this.checkInSourceRepo!, this.checkInRepo!, 'Check-ins');
 			}
 
-			// Leads import - SKIPPED per user request
-			// if (this.shouldImport('leads')) {
-			// 	await this.clearTable(this.leadRepo, 'Leads', Lead);
-			// 	await this.copyEntities(this.leadSourceRepo!, this.leadRepo!, 'Leads');
-			// }
+			// Leads import - Enabled for remote-to-local migration
+			if (isRemoteToLocal) {
+				await this.clearTable(this.leadRepo, 'Leads', Lead);
+				await this.copyEntities(this.leadSourceRepo!, this.leadRepo!, 'Leads');
+			}
 
-			// Quotations import - SKIPPED per user request
-			// if (this.shouldImport('quotations')) {
-			// 	await this.clearTable(this.quotationItemRepo, 'Quotation Items', QuotationItem);
-			// 	await this.clearTable(this.quotationRepo, 'Quotations', Quotation);
-			// 	await this.copyEntities(this.quotationSourceRepo!, this.quotationRepo!, 'Quotations');
-			// 	await this.copyEntities(this.quotationItemSourceRepo!, this.quotationItemRepo!, 'Quotation Items');
-			// }
+			// Quotations import - Enabled for remote-to-local migration
+			if (isRemoteToLocal) {
+				await this.clearTable(this.quotationItemRepo, 'Quotation Items', QuotationItem);
+				await this.clearTable(this.quotationRepo, 'Quotations', Quotation);
+				await this.copyEntities(this.quotationSourceRepo!, this.quotationRepo!, 'Quotations');
+				await this.copyEntities(this.quotationItemSourceRepo!, this.quotationItemRepo!, 'Quotation Items');
+			}
 
 			if (this.shouldImport('orders')) {
 				await this.clearTable(this.orderItemRepo, 'Order Items', OrderItem);
@@ -1116,70 +1420,70 @@ class LegacyDbMigrator {
 				await this.copyEntities(this.orderItemSourceRepo!, this.orderItemRepo!, 'Order Items');
 			}
 
-			// Tasks import - SKIPPED per user request
-			// if (this.shouldImport('tasks')) {
-			// 	await this.clearTable(this.subTaskRepo, 'Subtasks', SubTask);
-			// 	await this.clearTable(this.taskRepo, 'Tasks', Task);
-			// 	await this.copyEntities(this.taskSourceRepo!, this.taskRepo!, 'Tasks');
-			// 	await this.copyEntities(this.subTaskSourceRepo!, this.subTaskRepo!, 'Subtasks');
-			// }
+			// Tasks import - Enabled for remote-to-local migration
+			if (isRemoteToLocal) {
+				await this.clearTable(this.subTaskRepo, 'Subtasks', SubTask);
+				await this.clearTable(this.taskRepo, 'Tasks', Task);
+				await this.copyEntities(this.taskSourceRepo!, this.taskRepo!, 'Tasks');
+				await this.copyEntities(this.subTaskSourceRepo!, this.subTaskRepo!, 'Subtasks');
+			}
 
-			// Interactions import - SKIPPED per user request
-			// if (this.shouldImport('interactions')) {
-			// 	await this.clearTable(this.interactionRepo, 'Interactions', Interaction);
-			// 	await this.copyEntities(this.interactionSourceRepo!, this.interactionRepo!, 'Interactions');
-			// }
+			// Interactions import - Enabled for remote-to-local migration
+			if (isRemoteToLocal) {
+				await this.clearTable(this.interactionRepo, 'Interactions', Interaction);
+				await this.copyEntities(this.interactionSourceRepo!, this.interactionRepo!, 'Interactions');
+			}
 
-			// Notifications import - SKIPPED per user request
-			// if (this.shouldImport('notifications')) {
-			// 	await this.clearTable(this.notificationRepo, 'Notifications', Notification);
-			// 	await this.copyEntities(this.notificationSourceRepo!, this.notificationRepo!, 'Notifications');
-			// }
+			// Notifications import - Enabled for remote-to-local migration
+			if (isRemoteToLocal) {
+				await this.clearTable(this.notificationRepo, 'Notifications', Notification);
+				await this.copyEntities(this.notificationSourceRepo!, this.notificationRepo!, 'Notifications');
+			}
 
 			if (this.shouldImport('journals')) {
 				await this.clearTable(this.journalRepo, 'Journals', Journal);
 				await this.copyEntities(this.journalSourceRepo!, this.journalRepo!, 'Journals');
 			}
 
-			// Leave import - SKIPPED per user request
-			// if (this.shouldImport('leave')) {
-			// 	await this.clearTable(this.leaveRepo, 'Leave', Leave);
-			// 	await this.copyEntities(this.leaveSourceRepo!, this.leaveRepo!, 'Leave');
-			// }
+			// Leave import - Enabled for remote-to-local migration
+			if (isRemoteToLocal) {
+				await this.clearTable(this.leaveRepo, 'Leave', Leave);
+				await this.copyEntities(this.leaveSourceRepo!, this.leaveRepo!, 'Leave');
+			}
 
-			// Warnings import - SKIPPED per user request
-			// if (this.shouldImport('warnings')) {
-			// 	await this.clearTable(this.warningRepo, 'Warnings', Warning);
-			// 	await this.copyEntities(this.warningSourceRepo!, this.warningRepo!, 'Warnings');
-			// }
+			// Warnings import - Enabled for remote-to-local migration
+			if (isRemoteToLocal) {
+				await this.clearTable(this.warningRepo, 'Warnings', Warning);
+				await this.copyEntities(this.warningSourceRepo!, this.warningRepo!, 'Warnings');
+			}
 
-			// Docs import - SKIPPED per user request
-			// if (this.shouldImport('docs')) {
-			// 	await this.clearTable(this.docRepo, 'Docs', Doc);
-			// 	await this.copyEntities(this.docSourceRepo!, this.docRepo!, 'Docs');
-			// }
+			// Docs import - Enabled for remote-to-local migration
+			if (isRemoteToLocal) {
+				await this.clearTable(this.docRepo, 'Docs', Doc);
+				await this.copyEntities(this.docSourceRepo!, this.docRepo!, 'Docs');
+			}
 
 			if (this.shouldImport('assets')) {
 				await this.clearTable(this.assetRepo, 'Assets', Asset);
 				await this.copyEntities(this.assetSourceRepo!, this.assetRepo!, 'Assets');
 			}
 
-			// News import - SKIPPED per user request
-			// if (this.shouldImport('news')) {
-			// 	await this.clearTable(this.newsRepo, 'News', News);
-			// 	await this.copyEntities(this.newsSourceRepo!, this.newsRepo!, 'News');
-			// }
+			// News import - Enabled for remote-to-local migration
+			if (isRemoteToLocal) {
+				await this.clearTable(this.newsRepo, 'News', News);
+				await this.copyEntities(this.newsSourceRepo!, this.newsRepo!, 'News');
+			}
 
 			if (this.shouldImport('feedback')) {
 				await this.clearTable(this.feedbackRepo, 'Feedback', Feedback);
 				await this.copyEntities(this.feedbackSourceRepo!, this.feedbackRepo!, 'Feedback');
 			}
 
-			// Competitors import - SKIPPED per user request
-			// if (this.shouldImport('competitors')) {
-			// 	await this.clearTable(this.competitorRepo, 'Competitors', Competitor);
-			// 	await this.copyEntities(this.competitorSourceRepo!, this.competitorRepo!, 'Competitors');
-			// }
+			// Competitors import - Enabled for remote-to-local migration
+			if (isRemoteToLocal) {
+				await this.clearTable(this.competitorRepo, 'Competitors', Competitor);
+				await this.copyEntities(this.competitorSourceRepo!, this.competitorRepo!, 'Competitors');
+			}
 
 			if (this.shouldImport('resellers')) {
 				await this.clearTable(this.resellerRepo, 'Resellers', Reseller);
@@ -2603,15 +2907,23 @@ class LegacyDbMigrator {
 			const progress = `${i + 1}/${targets.length}`;
 			
 			try {
-				// Map user - try multiple field names including userTargetUid
+				// Map user - try multiple field names including userTargetUid and uid
 				// Check all possible column names that might exist in MySQL
-				const oldUserId = target.userTargetUid || target.user || target.owner || target.ownerUid || target.owner_id || target.user_id || target.userUid || target.userId;
+				const oldUserId = target.userTargetUid || target.user || target.owner || target.ownerUid || target.owner_id || target.user_id || target.userUid || target.userId || target.uid;
 				
 				if (!oldUserId && this.verbose) {
 					console.warn(`  ⚠️  UserTarget ${target.uid} has no user reference. Available fields: ${Object.keys(target).join(', ')}`);
 				}
 				
-				const newUserId = oldUserId ? this.userMapping[oldUserId] : null;
+				let newUserId = oldUserId ? this.userMapping[oldUserId] : null;
+				
+				// If no mapping found, try using target.uid directly as it might be the user uid
+				if (!newUserId && target.uid) {
+					const directUserMapping = this.userMapping[target.uid];
+					if (directUserMapping) {
+						newUserId = directUserMapping;
+					}
+				}
 				
 				if (!newUserId) {
 					if (oldUserId && this.verbose) {
@@ -3619,17 +3931,13 @@ class LegacyDbMigrator {
 
 	private async importAttendance() {
 		console.log('\n📦 Importing Attendance...');
-		// Import attendance records for December only
-		const startDate = new Date('2024-12-01T00:00:00.000Z');
-		const endDate = new Date('2024-12-31T23:59:59.999Z');
-		// Filter by checkIn date if available, otherwise use createdAt
+		// Import ALL attendance records (no date filter)
 		const [rows] = await this.mysqlConnection!.execute(
-			'SELECT * FROM attendance WHERE ((checkIn >= ? AND checkIn <= ?) OR (checkIn IS NULL AND createdAt >= ? AND createdAt <= ?))',
-			[startDate, endDate, startDate, endDate]
+			'SELECT * FROM attendance'
 		);
 		const records = rows as any[];
 		this.stats.attendance.total = records.length;
-		console.log(`Found ${records.length} attendance records (importing records for December 2024 only)`);
+		console.log(`Found ${records.length} attendance records`);
 
 		for (const record of records) {
 			try {
@@ -4734,7 +5042,7 @@ class LegacyDbMigrator {
 		const [rows] = await this.mysqlConnection!.execute(query);
 		const records = rows as any[];
 		this.stats.tracking.total = records.length;
-		console.log(`Found ${records.length} tracking records for the past 2 days to today`);
+		console.log(`Found ${records.length} tracking records`);
 
 		const batchSize = 1000;
 		for (let i = 0; i < records.length; i += batchSize) {
@@ -4869,6 +5177,143 @@ class LegacyDbMigrator {
 			}
 		}
 		console.log(`\n✅ Tracking: ${this.stats.tracking.imported} imported, ${this.stats.tracking.skipped} skipped, ${this.stats.tracking.duplicates} duplicates, ${this.stats.tracking.updated} updated, ${this.stats.tracking.errors} errors`);
+	}
+
+	private async importGeofences() {
+		console.log('\n📦 Importing Geofences...');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM geofences');
+		const records = rows as any[];
+		this.stats.geofences.total = records.length;
+		console.log(`Found ${records.length} geofences`);
+
+		for (const record of records) {
+			try {
+				if (this.dryRun) {
+					this.stats.geofences.imported++;
+					continue;
+				}
+
+				const orgUid = this.mapUid(record.organisationRef || record.organisationUid || record.organisation_id, this.orgMapping);
+				const createdByUid = this.mapUid(record.createdById || record.createdBy || record.createdByUid, this.userMapping);
+				const updatedByUid = this.mapUid(record.updatedById || record.updatedBy || record.updatedByUid, this.userMapping);
+				const deletedByUid = this.mapUid(record.deletedById || record.deletedBy || record.deletedByUid, this.userMapping);
+
+				if (!orgUid) {
+					this.stats.geofences.skipped++;
+					continue;
+				}
+
+				// Check for duplicates based on name and organisation
+				const existing = await this.geofenceRepo!.findOne({
+					where: {
+						name: record.name || '',
+						organisation: { uid: orgUid } as Organisation,
+					}
+				});
+
+				if (existing) {
+					this.stats.geofences.duplicates++;
+					continue;
+				}
+
+				const newRecord = this.geofenceRepo!.create({
+					name: record.name || '',
+					description: this.preserveField(record.description),
+					latitude: record.latitude || 0,
+					longitude: record.longitude || 0,
+					radius: record.radius || 0,
+					isActive: record.isActive !== undefined ? record.isActive : true,
+					organisation: { uid: orgUid } as unknown as Organisation,
+					...(createdByUid && { createdById: String(createdByUid) }),
+					...(updatedByUid && { updatedById: String(updatedByUid) }),
+					...(deletedByUid && { deletedById: String(deletedByUid) }),
+					deletedAt: this.preserveField(record.deletedAt),
+				} as unknown as DeepPartial<Geofence>);
+
+				const savedGeofence = await this.geofenceRepo!.save(newRecord);
+				// Build geofence mapping for linking to geofence events
+				if (record.uid && savedGeofence.uid) {
+					this.geofenceMapping[record.uid] = savedGeofence.uid as any;
+				}
+				this.stats.geofences.imported++;
+			} catch (error: any) {
+				this.stats.geofences.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing geofence ${record.uid}: ${error.message}`);
+			}
+		}
+		console.log(`✅ Geofences: ${this.stats.geofences.imported} imported, ${this.stats.geofences.skipped} skipped, ${this.stats.geofences.duplicates} duplicates, ${this.stats.geofences.errors} errors\n`);
+	}
+
+	private async importGeofenceEvents() {
+		console.log('\n📦 Importing Geofence Events...');
+		const [rows] = await this.mysqlConnection!.execute('SELECT * FROM geofence_events');
+		const records = rows as any[];
+		this.stats.geofenceEvents.total = records.length;
+		console.log(`Found ${records.length} geofence events`);
+
+		for (const record of records) {
+			try {
+				if (this.dryRun) {
+					this.stats.geofenceEvents.imported++;
+					continue;
+				}
+
+				const userUid = this.mapUid(record.userId || record.user_id || record.userUid || record.user, this.userMapping);
+				const geofenceUid = this.mapUid(record.geofenceId || record.geofence_id || record.geofenceUid || record.geofence, this.geofenceMapping);
+
+				if (!userUid || !geofenceUid) {
+					this.stats.geofenceEvents.skipped++;
+					continue;
+				}
+
+				// Check for duplicates based on user, geofence, eventType, and createdAt
+				const eventTime = record.createdAt || new Date();
+				const eventType = (record.eventType === 'enter' || record.eventType === 'exit') 
+					? (record.eventType === 'enter' ? GeofenceEventType.ENTER : GeofenceEventType.EXIT)
+					: GeofenceEventType.ENTER;
+				
+				const existing = await this.geofenceEventRepo!.findOne({
+					where: {
+						user: { uid: userUid } as unknown as User,
+						geofence: { uid: geofenceUid } as unknown as Geofence,
+						eventType: eventType,
+					},
+					order: { createdAt: 'DESC' }
+				});
+
+				if (existing) {
+					const recordTime = new Date(eventTime).getTime();
+					const existingTime = new Date(existing.createdAt || 0).getTime();
+					
+					// If records are within 1 minute, consider duplicate
+					if (Math.abs(recordTime - existingTime) < 60000) {
+						this.stats.geofenceEvents.duplicates++;
+						continue;
+					}
+				}
+
+				const deviceInfo = this.parseJSON(record.deviceInfo, null);
+
+				const newRecord = this.geofenceEventRepo!.create({
+					eventType: eventType,
+					user: { uid: userUid } as unknown as User,
+					userId: String(userUid),
+					geofence: { uid: geofenceUid } as unknown as Geofence,
+					geofenceId: String(geofenceUid),
+					latitude: record.latitude || 0,
+					longitude: record.longitude || 0,
+					accuracy: this.preserveField(record.accuracy),
+					deviceInfo,
+				} as unknown as DeepPartial<GeofenceEvent>);
+
+				await this.geofenceEventRepo!.save(newRecord);
+				this.stats.geofenceEvents.imported++;
+			} catch (error: any) {
+				this.stats.geofenceEvents.errors++;
+				if (this.verbose) console.error(`  ❌ Error importing geofence event ${record.uid}: ${error.message}`);
+			}
+		}
+		console.log(`✅ Geofence Events: ${this.stats.geofenceEvents.imported} imported, ${this.stats.geofenceEvents.skipped} skipped, ${this.stats.geofenceEvents.duplicates} duplicates, ${this.stats.geofenceEvents.errors} errors\n`);
 	}
 
 	private async importDocs() {
@@ -5507,6 +5952,8 @@ class LegacyDbMigrator {
 		printEntityStats('Leave', this.stats.leave);
 		printEntityStats('Warnings', this.stats.warnings);
 		printEntityStats('Tracking', this.stats.tracking);
+		printEntityStats('Geofences', this.stats.geofences);
+		printEntityStats('Geofence Events', this.stats.geofenceEvents);
 		printEntityStats('Docs', this.stats.docs);
 		printEntityStats('Assets', this.stats.assets);
 		printEntityStats('News', this.stats.news);
@@ -5578,8 +6025,8 @@ async function main() {
 			},
 			step: {
 				type: 'string',
-				choices: ['mysql-to-local', 'local-to-remote'],
-				describe: 'Migration step: mysql-to-local (MySQL to local PostgreSQL) or local-to-remote (local PostgreSQL to remote PostgreSQL)',
+				choices: ['mysql-to-local', 'local-to-remote', 'remote-to-local'],
+				describe: 'Migration step: mysql-to-local (MySQL to local PostgreSQL), local-to-remote (local PostgreSQL to remote PostgreSQL), or remote-to-local (remote PostgreSQL to local PostgreSQL - imports ALL data)',
 			},
 			'dry-run': {
 				type: 'boolean',

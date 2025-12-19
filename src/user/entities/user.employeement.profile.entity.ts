@@ -12,10 +12,10 @@ export class UserEmployeementProfile {
     @Column({ nullable: true })
     endDate: Date;
 
-    @CreateDateColumn()
+    @CreateDateColumn({ type: 'timestamptz' })
     createdAt: Date;
 
-    @UpdateDateColumn()
+    @UpdateDateColumn({ type: 'timestamptz' })
     updatedAt: Date;
 
     @Column({ nullable: true })

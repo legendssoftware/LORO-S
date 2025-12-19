@@ -10,7 +10,7 @@ export class CheckIn {
 	@PrimaryGeneratedColumn()
 	uid: number;
 
-	@Column({ type: 'varchar', nullable: false })
+	@Column({ type: 'timestamptz', nullable: false })
 	checkInTime: Date;
 
 	@Column({ type: 'varchar', nullable: false })
@@ -19,7 +19,7 @@ export class CheckIn {
 	@Column({ type: 'varchar', nullable: false })
 	checkInLocation: string;
 
-	@Column({ type: 'varchar', nullable: true })
+	@Column({ type: 'timestamptz', nullable: true })
 	checkOutTime: Date;
 
 	@Column({ type: 'varchar', nullable: true })
@@ -40,10 +40,10 @@ export class CheckIn {
 	@Column({ type: 'text', nullable: true })
 	resolution: string;
 
-	@CreateDateColumn()
+	@CreateDateColumn({ type: 'timestamptz' })
 	createdAt: Date;
 
-	@UpdateDateColumn()
+	@UpdateDateColumn({ type: 'timestamptz' })
 	updatedAt: Date;
 
 	// Relations

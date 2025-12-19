@@ -38,10 +38,10 @@ export class ApprovalSignature {
     @Column({ type: 'varchar', length: 1000, nullable: true })
     signatureData: string; // Base64 encoded signature data or hash
 
-    @CreateDateColumn()
+    @CreateDateColumn({ type: 'timestamptz' })
     createdAt: Date;
 
-    @Column({ type: 'timestamp', nullable: false })
+    @Column({ type: 'timestamptz', nullable: false })
     signedAt: Date;
 
     // Digital Certificate Information (for advanced digital signatures)
@@ -54,10 +54,10 @@ export class ApprovalSignature {
     @Column({ type: 'varchar', length: 500, nullable: true })
     certificateSubject: string;
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamptz', nullable: true })
     certificateValidFrom: Date;
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamptz', nullable: true })
     certificateValidTo: Date;
 
     @Column({ type: 'varchar', length: 100, nullable: true })
@@ -89,7 +89,7 @@ export class ApprovalSignature {
     @Column({ type: 'boolean', default: true })
     isValid: boolean;
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamptz', nullable: true })
     validatedAt: Date;
 
     @Column({ type: 'varchar', length: 255, nullable: true })
@@ -101,7 +101,7 @@ export class ApprovalSignature {
     @Column({ type: 'boolean', default: false })
     isRevoked: boolean;
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamptz', nullable: true })
     revokedAt: Date;
 
     @Column({ type: 'varchar', length: 255, nullable: true })
@@ -133,7 +133,7 @@ export class ApprovalSignature {
     @Column({ type: 'int', nullable: true })
     witnessUid: number;
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamptz', nullable: true })
     witnessedAt: Date;
 
     // Technical Metadata

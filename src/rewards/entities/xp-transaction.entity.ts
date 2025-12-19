@@ -22,6 +22,6 @@ export class XPTransaction {
         details: any;
     };
 
-    @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+    @Column({ type: 'timestamptz', default: () => 'CURRENT_TIMESTAMP' })
     timestamp: Date;
 } 

@@ -39,6 +39,6 @@ export class UnlockedItem {
     @ManyToOne(() => UserRewards, userRewards => userRewards.inventory)
     userRewards: UserRewards;
 
-    @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+    @Column({ type: 'timestamptz', default: () => 'CURRENT_TIMESTAMP' })
     unlockedAt: Date;
 } 
