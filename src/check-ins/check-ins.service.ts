@@ -107,6 +107,7 @@ export class CheckInsService {
 			this.logger.debug(`[${operationId}] Creating check-in record with enhanced data mapping`);
 			const checkInData = {
 				...createCheckInDto,
+				checkInTime: createCheckInDto.checkInTime ? new Date(createCheckInDto.checkInTime) : new Date(),
 				organization: {
 					uid: orgId, // Use the validated orgId instead of user's org
 				},

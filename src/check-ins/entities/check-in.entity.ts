@@ -10,7 +10,7 @@ export class CheckIn {
 	@PrimaryGeneratedColumn()
 	uid: number;
 
-	@Column({ type: 'timestamptz', nullable: false })
+	@Column({ type: 'timestamptz', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
 	checkInTime: Date;
 
 	@Column({ type: 'varchar', nullable: false })

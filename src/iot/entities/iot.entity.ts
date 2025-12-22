@@ -132,7 +132,7 @@ export class DeviceLogs {
 	@Column({ nullable: false })
 	queryTimeMs: number; // Time taken for the query
 
-	@Column({ type: 'timestamptz', nullable: false })
+	@Column({ type: 'timestamptz', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
 	timestamp: Date; // Event timestamp
 
 	@Column({ nullable: true, type: 'json' })

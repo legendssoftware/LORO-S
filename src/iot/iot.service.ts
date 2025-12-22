@@ -569,6 +569,11 @@ export class IotService {
 			const branchID = device.branchID || null;
 			const devicePort = device.devicePort || null;
 
+			// Ensure timestamp is always provided - use timeEventDto.timestamp or fallback to current time
+			const eventTimestamp = timeEventDto.timestamp && timeEventDto.timestamp > 0
+				? new Date(timeEventDto.timestamp * 1000)
+				: new Date();
+
 			const deviceLog = this.deviceLogsRepository.create({
 				deviceId,
 				deviceID,
@@ -585,7 +590,7 @@ export class IotService {
 					referer: networkInfo?.referer,
 				},
 				queryTimeMs,
-				timestamp: new Date(timeEventDto.timestamp * 1000),
+				timestamp: eventTimestamp,
 				metadata: {
 					...(timeEventDto.metadata || {}),
 					success: errorInfo?.success ?? true,

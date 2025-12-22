@@ -19,7 +19,7 @@ export class Attendance {
 	})
 	status: AttendanceStatus;
 
-	@Column({ type: 'timestamptz', nullable: false })
+	@Column({ type: 'timestamptz', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
 	checkIn: Date;
 
 	@Column({ type: 'timestamptz', nullable: true })

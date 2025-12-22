@@ -41,8 +41,8 @@ export class ApprovalSignature {
     @CreateDateColumn({ type: 'timestamptz' })
     createdAt: Date;
 
-    @Column({ type: 'timestamptz', nullable: false })
-    signedAt: Date;
+	@Column({ type: 'timestamptz', nullable: false, default: () => 'CURRENT_TIMESTAMP' })
+	signedAt: Date;
 
     // Digital Certificate Information (for advanced digital signatures)
     @Column({ type: 'varchar', length: 255, nullable: true })
