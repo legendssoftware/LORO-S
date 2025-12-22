@@ -1306,14 +1306,14 @@ class LegacyDbMigrator {
 			console.log('✅ Importing ALL data including previously skipped entities\n');
 		} else {
 			console.log('🚀 Starting PostgreSQL-to-PostgreSQL migration (local to remote)...\n');
-			console.log('⚠️  Skipping tracking-related entities\n');
+			console.log('⚠️  Skipping tracking, attendance records, and reports\n');
 		}
 
 		const startTime = Date.now();
 
 		try {
 			// Import in dependency order - copy data as-is from source to target
-			// Skip tracking-related entities (tracking, geofence events)
+			// Skip tracking-related entities (tracking, geofence events), attendance records, and reports for local-to-remote migration
 
 			if (this.shouldImport('orgs')) {
 				await this.clearTable(this.orgRepo, 'Organisations', Organisation);
@@ -1377,16 +1377,18 @@ class LegacyDbMigrator {
 				await this.copyEntities(this.orgHoursSourceRepo!, this.orgHoursRepo!, 'Organisation Hours');
 			}
 
-			// Reports import - Enabled for remote-to-local migration
-			if (isRemoteToLocal) {
-				await this.clearTable(this.reportRepo, 'Reports', Report);
-				await this.copyEntities(this.reportSourceRepo!, this.reportRepo!, 'Reports');
-			}
+		// Reports import - Enabled for remote-to-local migration
+		if (isRemoteToLocal) {
+			await this.clearTable(this.reportRepo, 'Reports', Report);
+			await this.copyEntities(this.reportSourceRepo!, this.reportRepo!, 'Reports');
+		}
 
-			if (this.shouldImport('attendance')) {
-				await this.clearAttendanceRecords();
-				await this.copyEntities(this.attendanceSourceRepo!, this.attendanceRepo!, 'Attendance');
-			}
+		// Attendance import - Enabled for remote-to-local migration only
+		// Skipped for local-to-remote migration
+		if (isRemoteToLocal && this.shouldImport('attendance')) {
+			await this.clearAttendanceRecords();
+			await this.copyEntities(this.attendanceSourceRepo!, this.attendanceRepo!, 'Attendance');
+		}
 
 			// Claims import - Enabled for remote-to-local migration
 			if (isRemoteToLocal) {
@@ -1517,8 +1519,8 @@ class LegacyDbMigrator {
 				await this.copyEntities(this.userTargetSourceRepo!, this.userTargetRepo!, 'User Targets');
 			}
 
-			// Skip tracking-related entities (tracking, geofence events)
-			// These are intentionally skipped as per user request
+			// Skip tracking-related entities (tracking, geofence events), attendance records, and reports
+			// These are intentionally skipped for local-to-remote migration as per user request
 
 			const duration = ((Date.now() - startTime) / 1000).toFixed(2);
 			this.printStats(duration);

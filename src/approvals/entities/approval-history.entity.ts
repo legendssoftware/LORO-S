@@ -69,7 +69,7 @@ export class ApprovalHistory {
         url: string;
         fileSize: number;
         mimeType: string;
-    }>; // Files attached to this action
+    }>;
 
     @Column({ type: 'boolean', default: false })
     isSystemAction: boolean; // True for automated actions

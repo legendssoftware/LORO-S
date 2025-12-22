@@ -323,7 +323,6 @@ export class UserTarget {
 	updatedAt: Date;
 
 	@OneToOne(() => User, (user) => user.userTarget)
-	@JoinColumn({ name: 'userUid' })
 	user: User;
 
 	/**

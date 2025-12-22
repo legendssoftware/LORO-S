@@ -1,4 +1,4 @@
-import { Column, Entity, JoinColumn, ManyToOne, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, JoinColumn, OneToOne, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
 import { User } from '../../user/entities/user.entity';
 import { Achievement } from './achievement.entity';
 import { UnlockedItem } from './unlocked-item.entity';
@@ -9,7 +9,8 @@ export class UserRewards {
     @PrimaryGeneratedColumn()
     uid: number;
 
-    @ManyToOne(() => User, user => user?.rewards)
+    @OneToOne(() => User, user => user?.rewards)
+    @JoinColumn({ name: 'ownerUid' })
     owner: User;
 
     @Column({ default: 0 })
