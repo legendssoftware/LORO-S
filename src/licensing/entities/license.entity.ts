@@ -36,8 +36,8 @@ export class License extends BaseEntity {
     })
     billingCycle: BillingCycle;
 
-    @Column({ type: 'timestamptz' })
-    validUntil: Date;
+    @Column({ type: 'timestamptz', nullable: true })
+    validUntil?: Date;
 
     @Column({ type: 'timestamptz', nullable: true })
     lastValidated?: Date;

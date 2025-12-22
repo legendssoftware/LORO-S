@@ -45,11 +45,11 @@ export class UsageSummary {
 	})
 	period: SummaryPeriod;
 
-	@Column({ name: 'period_start', type: 'timestamptz' })
-	periodStart: Date;
+	@Column({ name: 'period_start', type: 'timestamptz', nullable: true })
+	periodStart?: Date;
 
-	@Column({ name: 'period_end', type: 'timestamptz' })
-	periodEnd: Date;
+	@Column({ name: 'period_end', type: 'timestamptz', nullable: true })
+	periodEnd?: Date;
 
 	// Endpoint or feature being tracked
 	@Column({ length: 255, nullable: true })

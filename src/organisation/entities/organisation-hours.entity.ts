@@ -18,11 +18,11 @@ export class OrganisationHours {
 	@Column({ unique: true, nullable: false })
 	ref: string;
 
-	@Column({ type: 'timestamptz' })
-	openTime: Date;
+	@Column({ type: 'timestamptz', nullable: true })
+	openTime?: Date;
 
-	@Column({ type: 'timestamptz' })
-	closeTime: Date;
+	@Column({ type: 'timestamptz', nullable: true })
+	closeTime?: Date;
 
 	@Column({ type: 'json' })
 	weeklySchedule: {
