@@ -624,6 +624,93 @@ export class TrackingController {
 		};
 	}
 
+	@Post('batch')
+	@isPublic()
+	@ApiOperation({
+		summary: 'Create multiple tracking records in a single request',
+		description: 'Creates multiple GPS tracking records efficiently. Maximum 100 points per batch.',
+	})
+	@ApiBody({
+		schema: {
+			type: 'object',
+			properties: {
+				points: {
+					type: 'array',
+					items: { type: 'object' },
+					description: 'Array of tracking points (max 100)',
+					maxItems: 100,
+				},
+			},
+			required: ['points'],
+		},
+	})
+	@ApiCreatedResponse({
+		description: 'Batch tracking records created successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Batch created successfully' },
+				successful: { type: 'number', example: 95 },
+				failed: { type: 'number', example: 5 },
+				total: { type: 'number', example: 100 },
+			},
+		},
+	})
+	@ApiBadRequestResponse({ description: 'Invalid batch data or exceeds maximum size' })
+	async createBatch(@Body() batchDto: { points: CreateTrackingDto[] }, @Req() req: Request) {
+		if (!batchDto.points || !Array.isArray(batchDto.points)) {
+			return {
+				message: 'Points array is required',
+				successful: 0,
+				failed: 0,
+				total: 0,
+			};
+		}
+
+		if (batchDto.points.length > 100) {
+			return {
+				message: 'Maximum 100 points allowed per batch',
+				successful: 0,
+				failed: batchDto.points.length,
+				total: batchDto.points.length,
+			};
+		}
+
+		if (batchDto.points.length === 0) {
+			return {
+				message: 'At least one point is required',
+				successful: 0,
+				failed: 0,
+				total: 0,
+			};
+		}
+
+		// Extract branch and org from token if available
+		let branchId = null;
+		let orgId = null;
+
+		try {
+			const authHeader = req.headers.authorization;
+			if (authHeader && authHeader.startsWith('Bearer ')) {
+				const token = authHeader.substring(7);
+				const decodedToken = this.jwtService.decode(token);
+				
+				if (decodedToken) {
+					if (decodedToken['branch'] && decodedToken['branch'].uid) {
+						branchId = decodedToken['branch'].uid;
+					}
+					if (decodedToken['organisationRef']) {
+						orgId = decodedToken['organisationRef'];
+					}
+				}
+			}
+		} catch (error) {
+			// Silent fail - use defaults
+		}
+
+		return this.trackingService.createBatch(batchDto.points, branchId, orgId);
+	}
+
 	// ======================================================
 	// NEW COMPREHENSIVE TRACKING ENDPOINTS
 	// ======================================================

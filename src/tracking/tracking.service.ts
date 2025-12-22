@@ -500,6 +500,96 @@ export class TrackingService {
 	}
 
 	/**
+	 * Create multiple tracking points in a single batch operation
+	 * Processes points efficiently with transaction support and detailed results
+	 * @param points - Array of tracking points to create
+	 * @param branchId - Optional branch ID for scoping
+	 * @param orgId - Optional organization ID for scoping
+	 * @returns Batch creation results with success/failure counts
+	 */
+	async createBatch(
+		points: CreateTrackingDto[],
+		branchId?: string | number | null,
+		orgId?: string | number | null
+	): Promise<{
+		message: string;
+		successful: number;
+		failed: number;
+		total: number;
+		results?: Array<{ success: boolean; point?: any; error?: string }>;
+	}> {
+		const startTime = Date.now();
+		this.logger.log(`Creating batch of ${points.length} tracking points`);
+
+		if (!points || points.length === 0) {
+			return {
+				message: 'No points provided',
+				successful: 0,
+				failed: 0,
+				total: 0,
+			};
+		}
+
+		if (points.length > 100) {
+			return {
+				message: 'Maximum 100 points allowed per batch',
+				successful: 0,
+				failed: points.length,
+				total: points.length,
+			};
+		}
+
+		let successful = 0;
+		let failed = 0;
+		const results: Array<{ success: boolean; point?: any; error?: string }> = [];
+
+		// Process points in chunks of 50 for better performance
+		const CHUNK_SIZE = 50;
+		const chunks: CreateTrackingDto[][] = [];
+
+		for (let i = 0; i < points.length; i += CHUNK_SIZE) {
+			chunks.push(points.slice(i, i + CHUNK_SIZE));
+		}
+
+		for (const chunk of chunks) {
+			const chunkResults = await Promise.allSettled(
+				chunk.map(point => this.create(point, branchId, orgId))
+			);
+
+			chunkResults.forEach((result, index) => {
+				if (result.status === 'fulfilled' && result.value.data) {
+					successful++;
+					results.push({
+						success: true,
+						point: result.value.data,
+					});
+				} else {
+					failed++;
+					results.push({
+						success: false,
+						error: result.status === 'rejected' 
+							? result.reason?.message || 'Unknown error'
+							: result.value?.message || 'Failed to create point',
+					});
+				}
+			});
+		}
+
+		const executionTime = Date.now() - startTime;
+		this.logger.log(
+			`Batch creation completed: ${successful} successful, ${failed} failed in ${executionTime}ms`
+		);
+
+		return {
+			message: process.env.SUCCESS_MESSAGE || 'Batch created successfully',
+			successful,
+			failed,
+			total: points.length,
+			results,
+		};
+	}
+
+	/**
 	 * Get tracking points for a specific user within a timeframe
 	 * Supports various timeframe options: today, yesterday, this_week, last_week, this_month, last_month, or custom date range
 	 * @param userId - User ID to get tracking points for

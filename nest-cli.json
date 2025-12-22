@@ -14,5 +14,11 @@
         "outDir": "dist"
       }
     ]
+  },
+  "_comment": {
+    "developer": "Brandon Nhlanhla Nkawu",
+    "company": "Legend Systems",
+    "email": "brandon@legendsystems.co.za",
+    "description": "LORO Enterprise Backend Service - NestJS CLI configuration"
   }
 }

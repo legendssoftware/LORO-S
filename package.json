@@ -1,10 +1,15 @@
 {
   "name": "server",
   "version": "0.0.1",
-  "description": "",
-  "author": "Brandon Nhlanhla Nkawu",
+  "description": "LORO Enterprise Backend Service - NestJS API for location tracking, geofencing, and business management",
+  "author": {
+    "name": "Brandon Nhlanhla Nkawu",
+    "email": "brandon@legendsystems.co.za",
+    "url": "https://github.com/Brandon-Online01"
+  },
+  "company": "Legend Systems",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "PROPRIETARY",
   "scripts": {
     "build": "nest build",
     "start": "NODE_OPTIONS='--max-old-space-size=8192' nest start",

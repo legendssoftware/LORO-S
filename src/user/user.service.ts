@@ -72,6 +72,7 @@ export class UserService {
 	private readonly logger = new Logger(UserService.name);
 	private readonly CACHE_PREFIX = 'users:';
 	private readonly CACHE_TTL: number;
+	private readonly TARGET_CACHE_TTL: number; // Longer TTL for targets (less volatile)
 	private readonly activeCalculations = new Map<number, Promise<void>>();
 
 	constructor(
@@ -102,7 +103,8 @@ export class UserService {
 		private deviceRepository: Repository<Device>,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
-		this.logger.log('UserService initialized with cache TTL: ' + this.CACHE_TTL + 'ms');
+		this.TARGET_CACHE_TTL = this.configService.get<number>('TARGET_CACHE_EXPIRATION_TIME') || 60; // 60 seconds for targets
+		this.logger.log('UserService initialized with cache TTL: ' + this.CACHE_TTL + 's, target cache TTL: ' + this.TARGET_CACHE_TTL + 's');
 	}
 
 	/**
@@ -112,6 +114,46 @@ export class UserService {
 	 */
 	private getCacheKey(key: string | number): string {
 		return `${this.CACHE_PREFIX}${key}`;
+	}
+
+	/**
+	 * Build query builder with standard user relationships for PostgreSQL compatibility
+	 * Uses explicit leftJoinAndSelect instead of relations array for better performance and reliability
+	 * @param queryBuilder - The query builder to enhance
+	 * @param includeTarget - Whether to include userTarget relationship
+	 * @param includeProfile - Whether to include userProfile relationship
+	 * @param includeEmploymentProfile - Whether to include userEmployeementProfile relationship
+	 * @param includeRewards - Whether to include rewards relationship
+	 * @returns Enhanced query builder with relationships loaded
+	 */
+	private buildUserQueryWithRelations(
+		queryBuilder: any,
+		includeTarget: boolean = false,
+		includeProfile: boolean = false,
+		includeEmploymentProfile: boolean = false,
+		includeRewards: boolean = false,
+	): any {
+		queryBuilder
+			.leftJoinAndSelect('user.organisation', 'organisation')
+			.leftJoinAndSelect('user.branch', 'branch');
+
+		if (includeTarget) {
+			queryBuilder.leftJoinAndSelect('user.userTarget', 'userTarget');
+		}
+
+		if (includeProfile) {
+			queryBuilder.leftJoinAndSelect('user.userProfile', 'userProfile');
+		}
+
+		if (includeEmploymentProfile) {
+			queryBuilder.leftJoinAndSelect('user.userEmployeementProfile', 'userEmployeementProfile');
+		}
+
+		if (includeRewards) {
+			queryBuilder.leftJoinAndSelect('user.rewards', 'rewards');
+		}
+
+		return queryBuilder;
 	}
 
 	/**
@@ -429,10 +471,12 @@ export class UserService {
 		try {
 			this.logger.log(`Starting comprehensive data audit for user: ${userId}`);
 
-			const user = await this.userRepository.findOne({
-				where: { uid: userId, isDeleted: false },
-				relations: ['userTarget'],
-			});
+			const user = await this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.userTarget', 'userTarget')
+				.where('user.uid = :userId', { userId })
+				.andWhere('user.isDeleted = :isDeleted', { isDeleted: false })
+				.getOne();
 
 			if (!user?.userTarget) {
 				return {
@@ -1068,10 +1112,13 @@ export class UserService {
 					);
 
 					// First find the user to ensure it exists
-					const existingUser = await queryRunner.manager.findOne(User, {
-						where: { uid: ref, isDeleted: false },
-						relations: ['organisation', 'branch'],
-					});
+					const existingUser = await queryRunner.manager
+						.createQueryBuilder(User, 'user')
+						.leftJoinAndSelect('user.organisation', 'organisation')
+						.leftJoinAndSelect('user.branch', 'branch')
+						.where('user.uid = :ref', { ref })
+						.andWhere('user.isDeleted = :isDeleted', { isDeleted: false })
+						.getOne();
 
 					if (!existingUser) {
 						throw new Error(`User with ID ${ref} not found`);
@@ -1152,10 +1199,12 @@ export class UserService {
 					if (hasSignificantChanges && bulkUpdateUserDto.sendNotificationEmails !== false) {
 						try {
 							// Get updated user for email
-							const updatedUser = await queryRunner.manager.findOne(User, {
-								where: { uid: ref },
-								relations: ['organisation', 'branch'],
-							});
+							const updatedUser = await queryRunner.manager
+								.createQueryBuilder(User, 'user')
+								.leftJoinAndSelect('user.organisation', 'organisation')
+								.leftJoinAndSelect('user.branch', 'branch')
+								.where('user.uid = :ref', { ref })
+								.getOne();
 
 							if (updatedUser) {
 								await this.sendComprehensiveUserUpdateEmail(
@@ -1619,21 +1668,15 @@ export class UserService {
 
 		try {
 			this.logger.debug(`Querying database for active user: ${searchParameter}`);
-			const user = await this.userRepository.findOne({
-				where: [
-					{
-						username: searchParameter,
-						isDeleted: false,
-						status: AccountStatus.ACTIVE,
-					},
-					{
-						email: searchParameter,
-						isDeleted: false,
-						status: AccountStatus.ACTIVE,
-					},
-				],
-				relations: ['branch', 'rewards', 'organisation'],
-			});
+			const user = await this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.branch', 'branch')
+				.leftJoinAndSelect('user.rewards', 'rewards')
+				.leftJoinAndSelect('user.organisation', 'organisation')
+				.where('user.isDeleted = :isDeleted', { isDeleted: false })
+				.andWhere('user.status = :status', { status: AccountStatus.ACTIVE })
+				.andWhere('(user.username = :searchParameter OR user.email = :searchParameter)', { searchParameter })
+				.getOne();
 
 			if (!user) {
 				const executionTime = Date.now() - startTime;
@@ -1679,10 +1722,15 @@ export class UserService {
 
 		try {
 			this.logger.debug(`Querying database for user with UID: ${searchParameter}`);
-			const user = await this.userRepository.findOne({
-				where: [{ uid: searchParameter, isDeleted: false }],
-				relations: ['branch', 'rewards', 'userTarget', 'organisation'],
-			});
+			const user = await this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.branch', 'branch')
+				.leftJoinAndSelect('user.rewards', 'rewards')
+				.leftJoinAndSelect('user.userTarget', 'userTarget')
+				.leftJoinAndSelect('user.organisation', 'organisation')
+				.where('user.uid = :searchParameter', { searchParameter })
+				.andWhere('user.isDeleted = :isDeleted', { isDeleted: false })
+				.getOne();
 
 			if (!user) {
 				const executionTime = Date.now() - startTime;
@@ -1824,10 +1872,13 @@ export class UserService {
 
 		try {
 			this.logger.debug(`[USER_UPDATE] Fetching current user data for comparison`);
-			const existingUser = await this.userRepository.findOne({
-				where: { uid: ref, isDeleted: false },
-				relations: ['branch', 'organisation'],
-			});
+			const existingUser = await this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.branch', 'branch')
+				.leftJoinAndSelect('user.organisation', 'organisation')
+				.where('user.uid = :ref', { ref })
+				.andWhere('user.isDeleted = :isDeleted', { isDeleted: false })
+				.getOne();
 
 			if (!existingUser) {
 				throw new NotFoundException('User not found');
@@ -1908,10 +1959,12 @@ export class UserService {
 			this.logger.debug('[USER_UPDATE] Updating user in database');
 			await this.userRepository.update({ uid: ref }, updateUserDto);
 
-			const updatedUser = await this.userRepository.findOne({
-				where: { uid: ref },
-				relations: ['branch', 'organisation'],
-			});
+			const updatedUser = await this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.branch', 'branch')
+				.leftJoinAndSelect('user.organisation', 'organisation')
+				.where('user.uid = :ref', { ref })
+				.getOne();
 
 			if (!updatedUser) {
 				throw new NotFoundException('User not found after update');
@@ -2081,10 +2134,12 @@ export class UserService {
 			}
 
 			this.logger.debug(`Finding user ${ref} for deletion with scope conditions`);
-			const user = await this.userRepository.findOne({
-				where: whereConditions,
-				relations: ['organisation', 'branch'],
-			});
+			const user = await this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.organisation', 'organisation')
+				.leftJoinAndSelect('user.branch', 'branch')
+				.where(whereConditions)
+				.getOne();
 
 			if (!user) {
 				this.logger.warn(`User ${ref} not found for deletion`);
@@ -2216,11 +2271,13 @@ export class UserService {
 			}
 
 			this.logger.debug(`Finding deleted user ${ref} for restoration`);
-			const user = await this.userRepository.findOne({
-				where: whereConditions,
-				relations: ['organisation', 'branch'],
-				withDeleted: true, // Include soft-deleted entries
-			});
+			const user = await this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.organisation', 'organisation')
+				.leftJoinAndSelect('user.branch', 'branch')
+				.withDeleted()
+				.where(whereConditions)
+				.getOne();
 
 			if (!user) {
 				this.logger.warn(`Deleted user ${ref} not found for restoration`);
@@ -2293,10 +2350,12 @@ export class UserService {
 		this.logger.log(`Marking email as verified for user: ${uid}`);
 
 		try {
-			const user = await this.userRepository.findOne({
-				where: { uid },
-				relations: ['organisation', 'branch'],
-			});
+			const user = await this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.organisation', 'organisation')
+				.leftJoinAndSelect('user.branch', 'branch')
+				.where('user.uid = :uid', { uid })
+				.getOne();
 
 			if (user) {
 				this.logger.debug(`Activating user account: ${user.email} (${uid})`);
@@ -2336,10 +2395,12 @@ export class UserService {
 		this.logger.log(`Setting password for user: ${uid}`);
 
 		try {
-			const user = await this.userRepository.findOne({
-				where: { uid },
-				relations: ['organisation', 'branch'],
-			});
+			const user = await this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.organisation', 'organisation')
+				.leftJoinAndSelect('user.branch', 'branch')
+				.where('user.uid = :uid', { uid })
+				.getOne();
 
 			if (user) {
 				this.logger.debug(`Hashing password for user: ${user.email} (${uid})`);
@@ -2536,10 +2597,11 @@ export class UserService {
 			this.logger.debug(`Cache miss for user target: ${userId}, querying database with access control`);
 			
 			// First, let's directly query the user_targets table through the user relationship to see what's actually stored
-			const userForDirectQuery = await this.userRepository.findOne({
-				where: { uid: userId },
-				relations: ['userTarget'],
-			});
+			const userForDirectQuery = await this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.userTarget', 'userTarget')
+				.where('user.uid = :userId', { userId })
+				.getOne();
 			
 			if (userForDirectQuery?.userTarget) {
 				this.logger.debug(`Direct database query completed for user target: ${userId}`);
@@ -2982,7 +3044,6 @@ export class UserService {
 						isDeleted: false
 						// Removed org/branch restrictions since managed staff can be cross-organizational
 					},
-					relations: ['userTarget', 'organisation', 'branch'],
 					select: {
 						uid: true,
 						name: true,
@@ -3110,7 +3171,7 @@ export class UserService {
 			}
 
 			this.logger.debug(`Caching user target for user: ${userId}`);
-			await this.cacheManager.set(cacheKey, response, this.CACHE_TTL);
+			await this.cacheManager.set(cacheKey, response, this.TARGET_CACHE_TTL);
 
 			const executionTime = Date.now() - startTime;
 			this.logger.log(`User target retrieved from database for user: ${userId} in ${executionTime}ms`);
@@ -3168,10 +3229,23 @@ export class UserService {
 				whereConditions.branch = { uid: branchId };
 			}
 
-			const user = await this.userRepository.findOne({
-				where: whereConditions,
-				relations: ['userTarget', 'organisation', 'branch'],
-			});
+			const queryBuilder = this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.userTarget', 'userTarget')
+				.leftJoinAndSelect('user.organisation', 'organisation')
+				.leftJoinAndSelect('user.branch', 'branch')
+				.where('user.uid = :userId', { userId })
+				.andWhere('user.isDeleted = :isDeleted', { isDeleted: false });
+
+			if (orgId) {
+				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+			}
+
+			if (branchId !== null && branchId !== undefined) {
+				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
+			}
+
+			const user = await queryBuilder.getOne();
 
 			if (!user) {
 				this.logger.warn(`User ${userId} not found for target setting or access denied`);
@@ -3383,10 +3457,23 @@ export class UserService {
 				whereConditions.branch = { uid: branchId };
 			}
 
-			const user = await this.userRepository.findOne({
-				where: whereConditions,
-				relations: ['userTarget', 'organisation', 'branch'],
-			});
+			const queryBuilder = this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.userTarget', 'userTarget')
+				.leftJoinAndSelect('user.organisation', 'organisation')
+				.leftJoinAndSelect('user.branch', 'branch')
+				.where('user.uid = :userId', { userId })
+				.andWhere('user.isDeleted = :isDeleted', { isDeleted: false });
+
+			if (orgId) {
+				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+			}
+
+			if (branchId !== null && branchId !== undefined) {
+				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
+			}
+
+			const user = await queryBuilder.getOne();
 
 			if (!user) {
 				this.logger.warn(`User ${userId} not found for target update or access denied`);
@@ -3639,10 +3726,23 @@ export class UserService {
 				whereConditions.branch = { uid: branchId };
 			}
 
-			const user = await this.userRepository.findOne({
-				where: whereConditions,
-				relations: ['userTarget', 'organisation', 'branch'],
-			});
+			const queryBuilder = this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.userTarget', 'userTarget')
+				.leftJoinAndSelect('user.organisation', 'organisation')
+				.leftJoinAndSelect('user.branch', 'branch')
+				.where('user.uid = :userId', { userId })
+				.andWhere('user.isDeleted = :isDeleted', { isDeleted: false });
+
+			if (orgId) {
+				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+			}
+
+			if (branchId !== null && branchId !== undefined) {
+				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
+			}
+
+			const user = await queryBuilder.getOne();
 
 			if (!user) {
 				this.logger.warn(`User ${userId} not found for target deletion or access denied`);
@@ -3750,10 +3850,12 @@ export class UserService {
 		try {
 			// Load user and target data
 			this.logger.debug(`[${calculationId}] Finding user and target data for user: ${userId}`);
-			const user = await this.userRepository.findOne({
-				where: { uid: userId, isDeleted: false },
-				relations: ['userTarget'],
-			});
+			const user = await this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.userTarget', 'userTarget')
+				.where('user.uid = :userId', { userId })
+				.andWhere('user.isDeleted = :isDeleted', { isDeleted: false })
+				.getOne();
 
 			if (!user) {
 				this.logger.warn(`[${calculationId}] User ${userId} not found for target calculation`);
@@ -4677,10 +4779,12 @@ export class UserService {
 
 					// Get updated user for cache invalidation
 					this.logger.debug(`🔄 [ERP_UPDATE] Fetching updated user for cache invalidation, user: ${userId}`);
-					const updatedUser = await this.userRepository.findOne({
-						where: { uid: userId },
-						relations: ['organisation', 'branch'],
-					});
+					const updatedUser = await this.userRepository
+						.createQueryBuilder('user')
+						.leftJoinAndSelect('user.organisation', 'organisation')
+						.leftJoinAndSelect('user.branch', 'branch')
+						.where('user.uid = :userId', { userId })
+						.getOne();
 
 					if (updatedUser) {
 						// Invalidate cache
@@ -4982,15 +5086,23 @@ export class UserService {
 		try {
 			// Validate user exists and has targets
 			this.logger.debug(`👤 [ERP_VALIDATION] Checking user existence for user: ${userId}`);
-			const user = await this.userRepository.findOne({
-				where: {
-					uid: userId,
-					isDeleted: false,
-					...(orgId && { organisation: { uid: orgId } }),
-					...(branchId && { branch: { uid: branchId } }),
-				},
-				relations: ['userTarget', 'organisation', 'branch'],
-			});
+			const queryBuilder = this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.userTarget', 'userTarget')
+				.leftJoinAndSelect('user.organisation', 'organisation')
+				.leftJoinAndSelect('user.branch', 'branch')
+				.where('user.uid = :userId', { userId })
+				.andWhere('user.isDeleted = :isDeleted', { isDeleted: false });
+
+			if (orgId) {
+				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+			}
+
+			if (branchId) {
+				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
+			}
+
+			const user = await queryBuilder.getOne();
 
 			if (!user) {
 				this.logger.error(
@@ -5422,10 +5534,13 @@ export class UserService {
 		},
 	): Promise<void> {
 		try {
-			const user = await this.userRepository.findOne({
-				where: { uid: userId, isDeleted: false },
-				relations: ['organisation', 'branch'],
-			});
+			const user = await this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.organisation', 'organisation')
+				.leftJoinAndSelect('user.branch', 'branch')
+				.where('user.uid = :userId', { userId })
+				.andWhere('user.isDeleted = :isDeleted', { isDeleted: false })
+				.getOne();
 
 			if (!user) {
 				this.logger.error(`User ${userId} not found for target achievement email`);
@@ -5516,10 +5631,13 @@ export class UserService {
 		},
 	): Promise<void> {
 		try {
-			const user = await this.userRepository.findOne({
-				where: { uid: userId, isDeleted: false },
-				relations: ['organisation', 'branch'],
-			});
+			const user = await this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.organisation', 'organisation')
+				.leftJoinAndSelect('user.branch', 'branch')
+				.where('user.uid = :userId', { userId })
+				.andWhere('user.isDeleted = :isDeleted', { isDeleted: false })
+				.getOne();
 
 			if (!user) {
 				this.logger.error(`User ${userId} not found for target milestone email`);
@@ -5627,10 +5745,13 @@ export class UserService {
 		},
 	): Promise<void> {
 		try {
-			const user = await this.userRepository.findOne({
-				where: { uid: userId, isDeleted: false },
-				relations: ['organisation', 'branch'],
-			});
+			const user = await this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.organisation', 'organisation')
+				.leftJoinAndSelect('user.branch', 'branch')
+				.where('user.uid = :userId', { userId })
+				.andWhere('user.isDeleted = :isDeleted', { isDeleted: false })
+				.getOne();
 
 			if (!user) {
 				this.logger.error(`User ${userId} not found for target deadline reminder email`);
@@ -5693,10 +5814,13 @@ export class UserService {
 		},
 	): Promise<void> {
 		try {
-			const user = await this.userRepository.findOne({
-				where: { uid: userId, isDeleted: false },
-				relations: ['organisation', 'branch'],
-			});
+			const user = await this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.organisation', 'organisation')
+				.leftJoinAndSelect('user.branch', 'branch')
+				.where('user.uid = :userId', { userId })
+				.andWhere('user.isDeleted = :isDeleted', { isDeleted: false })
+				.getOne();
 
 			if (!user) {
 				this.logger.error(`User ${userId} not found for performance alert email`);
@@ -5752,10 +5876,13 @@ export class UserService {
 		},
 	): Promise<void> {
 		try {
-			const user = await this.userRepository.findOne({
-				where: { uid: userId, isDeleted: false },
-				relations: ['organisation', 'branch'],
-			});
+			const user = await this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.organisation', 'organisation')
+				.leftJoinAndSelect('user.branch', 'branch')
+				.where('user.uid = :userId', { userId })
+				.andWhere('user.isDeleted = :isDeleted', { isDeleted: false })
+				.getOne();
 
 			if (!user) {
 				this.logger.error(`User ${userId} not found for ERP update confirmation email`);
@@ -5826,10 +5953,13 @@ export class UserService {
 		},
 	): Promise<void> {
 		try {
-			const user = await this.userRepository.findOne({
-				where: { uid: userId, isDeleted: false },
-				relations: ['organisation', 'branch'],
-			});
+			const user = await this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.organisation', 'organisation')
+				.leftJoinAndSelect('user.branch', 'branch')
+				.where('user.uid = :userId', { userId })
+				.andWhere('user.isDeleted = :isDeleted', { isDeleted: false })
+				.getOne();
 
 			if (!user) {
 				this.logger.error(`User ${userId} not found for period summary email`);
@@ -5884,10 +6014,13 @@ export class UserService {
 			// Get user details with timeout
 			this.logger.debug(`👤 [ERP_NOTIFICATION] Fetching user details for push notification user: ${userId}`);
 			const user = await Promise.race([
-				this.userRepository.findOne({
-					where: { uid: userId },
-					relations: ['userTarget', 'organisation', 'branch'],
-				}),
+				this.userRepository
+					.createQueryBuilder('user')
+					.leftJoinAndSelect('user.userTarget', 'userTarget')
+					.leftJoinAndSelect('user.organisation', 'organisation')
+					.leftJoinAndSelect('user.branch', 'branch')
+					.where('user.uid = :userId', { userId })
+					.getOne(),
 				new Promise<never>((_, reject) =>
 					setTimeout(() => reject(new Error('User query timeout for push notification')), 3000),
 				),
@@ -6039,10 +6172,13 @@ export class UserService {
 
 			// Get user details with timeout
 			const user = await Promise.race([
-				this.userRepository.findOne({
-					where: { uid: userId },
-					relations: ['userTarget', 'organisation', 'branch'],
-				}),
+				this.userRepository
+					.createQueryBuilder('user')
+					.leftJoinAndSelect('user.userTarget', 'userTarget')
+					.leftJoinAndSelect('user.organisation', 'organisation')
+					.leftJoinAndSelect('user.branch', 'branch')
+					.where('user.uid = :userId', { userId })
+					.getOne(),
 				new Promise<never>((_, reject) =>
 					setTimeout(() => reject(new Error('User query timeout for contribution notification')), 5000),
 				),
@@ -6307,10 +6443,12 @@ export class UserService {
 				whereConditions.branch = { uid: branchId };
 			}
 
-			const user = await this.userRepository.findOne({
-				where: whereConditions,
-				relations: ['organisation', 'branch'],
-			});
+			const user = await this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.organisation', 'organisation')
+				.leftJoinAndSelect('user.branch', 'branch')
+				.where(whereConditions)
+				.getOne();
 
 			if (!user) {
 				this.logger.warn(`User ${userId} not found for adding assigned clients`);
@@ -6385,10 +6523,12 @@ export class UserService {
 				whereConditions.branch = { uid: branchId };
 			}
 
-			const user = await this.userRepository.findOne({
-				where: whereConditions,
-				relations: ['organisation', 'branch'],
-			});
+			const user = await this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.organisation', 'organisation')
+				.leftJoinAndSelect('user.branch', 'branch')
+				.where(whereConditions)
+				.getOne();
 
 			if (!user) {
 				this.logger.warn(`User ${userId} not found for removing assigned clients`);
@@ -6527,10 +6667,12 @@ export class UserService {
 				whereConditions.branch = { uid: branchId };
 			}
 
-			const user = await this.userRepository.findOne({
-				where: whereConditions,
-				relations: ['organisation', 'branch'],
-			});
+			const user = await this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.organisation', 'organisation')
+				.leftJoinAndSelect('user.branch', 'branch')
+				.where(whereConditions)
+				.getOne();
 
 			if (!user) {
 				this.logger.warn(`User ${userId} not found for setting assigned clients`);
@@ -7443,19 +7585,22 @@ export class UserService {
 
 		try {
 			// Find the user with access control and load organization relation for timezone
-			const user = await this.userRepository.findOne({
-				where: {
-					uid: userId,
-					isDeleted: false,
-					...(accessScope.isElevated
-						? {}
-						: {
-								organisation: { uid: accessScope.orgId },
-								...(accessScope.branchId ? { branch: { uid: accessScope.branchId } } : {}),
-						  }),
-				},
-				relations: ['organisation', 'branch'],
-			});
+			const queryBuilder = this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.organisation', 'organisation')
+				.leftJoinAndSelect('user.branch', 'branch')
+				.where('user.uid = :userId', { userId })
+				.andWhere('user.isDeleted = :isDeleted', { isDeleted: false });
+
+			if (accessScope.orgId) {
+				queryBuilder.andWhere('organisation.uid = :orgId', { orgId: accessScope.orgId });
+			}
+
+			if (accessScope.branchId) {
+				queryBuilder.andWhere('branch.uid = :branchId', { branchId: accessScope.branchId });
+			}
+
+			const user = await queryBuilder.getOne();
 
 			if (!user) {
 				this.logger.warn(`❌ [${operationId}] User not found or access denied for preference update`, {
@@ -7565,13 +7710,14 @@ export class UserService {
 			const now = new Date();
 			
 			// Find all recurring targets where nextRecurrenceDate has passed
-			const targetsToRecur = await this.userTargetRepository.find({
-				where: {
-					isRecurring: true,
-					nextRecurrenceDate: LessThanOrEqual(now)
-				},
-				relations: ['user', 'user.organisation', 'user.branch']
-			});
+			const targetsToRecur = await this.userTargetRepository
+				.createQueryBuilder('target')
+				.leftJoinAndSelect('target.user', 'user')
+				.leftJoinAndSelect('user.organisation', 'organisation')
+				.leftJoinAndSelect('user.branch', 'branch')
+				.where('target.isRecurring = :isRecurring', { isRecurring: true })
+				.andWhere('target.nextRecurrenceDate <= :now', { now })
+				.getMany();
 			
 			this.logger.log(`Found ${targetsToRecur.length} targets ready for recurrence`);
 			

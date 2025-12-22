@@ -112,13 +112,13 @@ export class User {
 	managedStaff: number[];
 
 	@OneToOne(() => UserProfile, (userProfile) => userProfile?.owner, { nullable: true })
-	@JoinColumn()
+	@JoinColumn({ name: 'userProfileUid' })
 	userProfile: UserProfile;
 
 	@OneToOne(() => UserEmployeementProfile, (userEmployeementProfile) => userEmployeementProfile?.owner, {
 		nullable: true,
 	})
-	@JoinColumn()
+	@JoinColumn({ name: 'userEmployeementProfileUid' })
 	userEmployeementProfile: UserEmployeementProfile;
 
 	@OneToMany(() => Attendance, (attendance) => attendance.owner)
@@ -151,8 +151,12 @@ export class User {
 	@OneToMany(() => Notification, (notification) => notification?.owner, { nullable: true })
 	notifications: Notification[];
 
-	@ManyToOne(() => Branch, (branch) => branch?.users)
+	@ManyToOne(() => Branch, (branch) => branch?.users, { nullable: true })
+	@JoinColumn({ name: 'branchUid' })
 	branch: Branch;
+
+	@Column({ type: 'int', nullable: true })
+	branchUid: number;
 
 	@OneToMany(() => Client, (client) => client?.assignedSalesRep, { nullable: true })
 	clients: Client[];
@@ -168,7 +172,7 @@ export class User {
 	rewards: UserRewards;
 
 	@OneToOne(() => UserTarget, (userTarget) => userTarget.user, { nullable: true, cascade: true })
-	@JoinColumn()
+	@JoinColumn({ name: 'userTargetUid' })
 	userTarget: UserTarget;
 
 	@OneToMany(() => Journal, (journal) => journal.owner)

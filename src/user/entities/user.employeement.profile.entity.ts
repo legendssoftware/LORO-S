@@ -1,5 +1,5 @@
 import { User } from "./user.entity";
-import { Column, CreateDateColumn, Entity, OneToOne, PrimaryGeneratedColumn, UpdateDateColumn } from "typeorm";
+import { Column, CreateDateColumn, Entity, OneToOne, PrimaryGeneratedColumn, UpdateDateColumn, JoinColumn } from "typeorm";
 
 @Entity('user_employeement_profile')
 export class UserEmployeementProfile {
@@ -38,5 +38,6 @@ export class UserEmployeementProfile {
 
     //relationships
     @OneToOne(() => User, (user) => user?.userEmployeementProfile)
+    @JoinColumn({ name: 'ownerUid' })
     owner: User;
 }

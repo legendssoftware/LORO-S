@@ -5,5 +5,11 @@
         "projectId": "dc97762c-3f69-4c78-b484-9f4120c8031e"
       }
     }
+  },
+  "_comment": {
+    "developer": "Brandon Nhlanhla Nkawu",
+    "company": "Legend Systems",
+    "email": "brandon@legendsystems.co.za",
+    "description": "Super App Server - NestJS API configuration"
   }
 }

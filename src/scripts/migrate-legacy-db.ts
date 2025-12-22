@@ -2957,10 +2957,11 @@ class LegacyDbMigrator {
 					
 					if (shouldUpdate) {
 						// Update existing target with latest data
-						existing.targetSalesAmount = target.targetSalesAmount ?? existing.targetSalesAmount;
-						existing.currentSalesAmount = target.currentSalesAmount ?? existing.currentSalesAmount;
-						existing.targetQuotationsAmount = target.targetQuotationsAmount ?? existing.targetQuotationsAmount;
-						existing.currentQuotationsAmount = target.currentQuotationsAmount ?? existing.currentQuotationsAmount;
+						// Parse decimal fields to handle malformed MySQL values
+						existing.targetSalesAmount = this.parseDecimal(target.targetSalesAmount) ?? existing.targetSalesAmount;
+						existing.currentSalesAmount = this.parseDecimal(target.currentSalesAmount) ?? existing.currentSalesAmount;
+						existing.targetQuotationsAmount = this.parseDecimal(target.targetQuotationsAmount) ?? existing.targetQuotationsAmount;
+						existing.currentQuotationsAmount = this.parseDecimal(target.currentQuotationsAmount) ?? existing.currentQuotationsAmount;
 						existing.targetPeriod = target.targetPeriod ?? existing.targetPeriod;
 						await this.userTargetRepo!.save(existing);
 						this.stats.userTargets.updated++;
@@ -2988,12 +2989,13 @@ class LegacyDbMigrator {
 				// Create UserTarget with ALL fields from MySQL, preserving original values
 				// The relationship to User is established via user: { uid: newUserId }
 				// This ensures all row data is copied as-is from MySQL
+				// Parse decimal fields to handle malformed MySQL values
 				const newTarget = this.userTargetRepo!.create({
-					targetSalesAmount: target.targetSalesAmount ?? null,
-					currentSalesAmount: target.currentSalesAmount ?? null,
-					targetQuotationsAmount: target.targetQuotationsAmount ?? null,
-					currentQuotationsAmount: target.currentQuotationsAmount ?? null,
-					currentOrdersAmount: target.currentOrdersAmount ?? null,
+					targetSalesAmount: this.parseDecimal(target.targetSalesAmount),
+					currentSalesAmount: this.parseDecimal(target.currentSalesAmount),
+					targetQuotationsAmount: this.parseDecimal(target.targetQuotationsAmount),
+					currentQuotationsAmount: this.parseDecimal(target.currentQuotationsAmount),
+					currentOrdersAmount: this.parseDecimal(target.currentOrdersAmount),
 					targetCurrency: target.targetCurrency || 'ZAR',
 					targetHoursWorked: target.targetHoursWorked ?? null,
 					currentHoursWorked: target.currentHoursWorked ?? null,
@@ -3005,14 +3007,14 @@ class LegacyDbMigrator {
 					currentCheckIns: target.currentCheckIns ?? null,
 					targetCalls: target.targetCalls ?? null,
 					currentCalls: target.currentCalls ?? null,
-					baseSalary: target.baseSalary ?? null,
-					carInstalment: target.carInstalment ?? null,
-					carInsurance: target.carInsurance ?? null,
-					fuel: target.fuel ?? null,
-					cellPhoneAllowance: target.cellPhoneAllowance ?? null,
-					carMaintenance: target.carMaintenance ?? null,
-					cgicCosts: target.cgicCosts ?? null,
-					totalCost: target.totalCost ?? null,
+					baseSalary: this.parseDecimal(target.baseSalary),
+					carInstalment: this.parseDecimal(target.carInstalment),
+					carInsurance: this.parseDecimal(target.carInsurance),
+					fuel: this.parseDecimal(target.fuel),
+					cellPhoneAllowance: this.parseDecimal(target.cellPhoneAllowance),
+					carMaintenance: this.parseDecimal(target.carMaintenance),
+					cgicCosts: this.parseDecimal(target.cgicCosts),
+					totalCost: this.parseDecimal(target.totalCost),
 					targetPeriod: target.targetPeriod ?? null,
 					periodStartDate: target.periodStartDate ?? null,
 					periodEndDate: target.periodEndDate ?? null,
@@ -3752,6 +3754,79 @@ class LegacyDbMigrator {
 			return fallback;
 		}
 		return value as T;
+	}
+
+	// Helper method to safely parse decimal/numeric values from MySQL
+	// Handles malformed strings with multiple decimal points or invalid formats
+	private parseDecimal(value: any): number | null {
+		if (value === null || value === undefined || value === '') {
+			return null;
+		}
+
+		// If already a number, return it
+		if (typeof value === 'number') {
+			return isNaN(value) ? null : value;
+		}
+
+		// Convert to string and clean it
+		const str = String(value).trim();
+		if (!str || str === 'null' || str === 'undefined') {
+			return null;
+		}
+
+		// Handle malformed strings with multiple decimal points
+		// Example: "024300.001700.002340.00250.00550.00112.00"
+		// This appears to be concatenated values - extract the first valid number
+		if (str.includes('.')) {
+			const parts = str.split('.');
+			// If there are multiple decimal points, take the first part as integer
+			// and the second part as decimal (if it exists)
+			if (parts.length > 2) {
+				// Malformed: "024300.001700.002340" -> take "024300" and first 2 digits of "001700"
+				const integerPart = parts[0] || '0';
+				const decimalPart = parts[1] || '0';
+				// Remove leading zeros from integer part, but keep at least one zero if all zeros
+				const cleanedInteger = integerPart.replace(/^0+/, '') || '0';
+				// Limit decimal part to 2 digits for scale: 2 (decimal(15,2))
+				const limitedDecimal = decimalPart.substring(0, 2).padEnd(2, '0');
+				const cleaned = `${cleanedInteger}.${limitedDecimal}`;
+				const parsed = parseFloat(cleaned);
+				// Return 0 if all parts were zeros, otherwise return parsed value or null
+				if (isNaN(parsed)) {
+					// Check if all parts are zeros
+					const allZeros = parts.every(part => !part || part.replace(/0/g, '').length === 0);
+					return allZeros ? 0 : null;
+				}
+				return parsed;
+			}
+		}
+
+		// Try to parse as float
+		const parsed = parseFloat(str);
+		if (isNaN(parsed)) {
+			// If parsing fails, try to extract any numeric digits
+			// Remove all non-numeric characters except decimal point
+			const digitsOnly = str.replace(/[^\d.]/g, '');
+			if (digitsOnly && digitsOnly !== '.') {
+				// Handle multiple decimal points by taking first part
+				if ((digitsOnly.match(/\./g) || []).length > 1) {
+					const firstDecimalIndex = digitsOnly.indexOf('.');
+					const integerPart = digitsOnly.substring(0, firstDecimalIndex) || '0';
+					const afterDecimal = digitsOnly.substring(firstDecimalIndex + 1);
+					// Take first 2 digits after decimal
+					const decimalPart = afterDecimal.substring(0, 2).padEnd(2, '0');
+					const cleanedInteger = integerPart.replace(/^0+/, '') || '0';
+					const cleaned = `${cleanedInteger}.${decimalPart}`;
+					const fallbackParsed = parseFloat(cleaned);
+					return isNaN(fallbackParsed) ? null : fallbackParsed;
+				}
+				const fallbackParsed = parseFloat(digitsOnly);
+				return isNaN(fallbackParsed) ? null : fallbackParsed;
+			}
+			return null;
+		}
+
+		return parsed;
 	}
 
 	// Helper method to parse and map JSON array fields (for number arrays)

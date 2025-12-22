@@ -1,5 +1,5 @@
 import { User } from './user.entity'; // Adjusted path assuming it's in the same directory
-import { Entity, Column, PrimaryGeneratedColumn, OneToOne, CreateDateColumn, UpdateDateColumn, BeforeInsert, BeforeUpdate } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, OneToOne, CreateDateColumn, UpdateDateColumn, BeforeInsert, BeforeUpdate, JoinColumn } from 'typeorm';
 
 @Entity('user_targets')
 export class UserTarget {
@@ -323,6 +323,7 @@ export class UserTarget {
 	updatedAt: Date;
 
 	@OneToOne(() => User, (user) => user.userTarget)
+	@JoinColumn({ name: 'userUid' })
 	user: User;
 
 	/**
