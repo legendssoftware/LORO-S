@@ -786,20 +786,10 @@ export class ClientAuthService {
 			this.logger.error(`Client refresh token failed`, error.stack);
 			if (error?.name === 'TokenExpiredError') {
 				this.logger.warn(`Client refresh token has expired`);
-				return {
-					message: 'Refresh token has expired',
-					accessToken: null,
-					refreshToken: null,
-					profileData: null,
-				};
+				throw new UnauthorizedException('Token has expired');
 			}
 
-			return {
-				message: error?.message || 'Failed to refresh token',
-				accessToken: null,
-				refreshToken: null,
-				profileData: null,
-			};
+			throw new UnauthorizedException(error?.message || 'Failed to refresh token');
 		}
 	}
 }

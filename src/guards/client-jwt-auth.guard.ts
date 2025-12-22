@@ -67,6 +67,10 @@ export class ClientJwtAuthGuard implements CanActivate {
 			request.user = payload;
 			return true;
 		} catch (error) {
+			// Check if it's a token expiration error
+			if (error?.name === 'TokenExpiredError') {
+				throw new UnauthorizedException('Token has expired');
+			}
 			throw new UnauthorizedException('Invalid access token');
 		}
 	}

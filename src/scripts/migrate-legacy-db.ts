@@ -1,20 +1,22 @@
 #!/usr/bin/env node
 
 /**
- * Database Migration Script - Two-Step Migration Process
+ * Database Migration Script - Multi-Step Migration Process
  * 
- * Supports two migration steps:
+ * Supports three migration steps:
  * 1. MySQL to Local PostgreSQL: Migrates data from remote MySQL to local PostgreSQL
- * 2. Local PostgreSQL to Remote PostgreSQL: Migrates data from local PostgreSQL to remote PostgreSQL
- * 
- * Step 2 skips tracking-related entities (tracking, geofence events) as requested.
+ * 2. Local PostgreSQL to Remote PostgreSQL: Migrates minimal data (orgs, users, branches, licenses) for creating a small live version
+ * 3. Remote PostgreSQL to Local PostgreSQL: Imports ALL data from ALL tables as-is with no changes, preserving relationships
  * 
  * Usage:
  *   # Step 1: MySQL to Local PostgreSQL
  *   npm run migrate:legacy-db -- --step mysql-to-local
  *   
- *   # Step 2: Local PostgreSQL to Remote PostgreSQL (uses REMOTE_PG_DB_HOST env vars)
+ *   # Step 2: Local PostgreSQL to Remote PostgreSQL (minimal data - orgs, users, branches, licenses)
  *   npm run migrate:legacy-db -- --step local-to-remote
+ *   
+ *   # Step 3: Remote PostgreSQL to Local PostgreSQL (ALL data from ALL tables)
+ *   npm run migrate:legacy-db -- --step remote-to-local --pg-url postgresql://user:pass@host:port/dbname
  *   
  *   # Or override with custom URL
  *   npm run migrate:legacy-db -- --step local-to-remote --pg-url postgresql://user:pass@host:port/dbname
@@ -291,6 +293,7 @@ class LegacyDbMigrator {
 	private reportSourceRepo: Repository<Report> | null = null;
 	private leaveSourceRepo: Repository<Leave> | null = null;
 	private warningSourceRepo: Repository<Warning> | null = null;
+	private trackingSourceRepo: Repository<Tracking> | null = null;
 	private geofenceSourceRepo: Repository<Geofence> | null = null;
 	private geofenceEventSourceRepo: Repository<GeofenceEvent> | null = null;
 	private docSourceRepo: Repository<Doc> | null = null;
@@ -617,7 +620,7 @@ class LegacyDbMigrator {
 		this.reportRepo = this.pgDataSource.getRepository(Report);
 		this.leaveRepo = this.pgDataSource.getRepository(Leave);
 		this.warningRepo = this.pgDataSource.getRepository(Warning);
-		// this.trackingRepo = this.pgDataSource.getRepository(Tracking); // Tracking import skipped
+		this.trackingRepo = this.pgDataSource.getRepository(Tracking);
 		this.geofenceRepo = this.pgDataSource.getRepository(Geofence);
 		this.geofenceEventRepo = this.pgDataSource.getRepository(GeofenceEvent);
 		this.docRepo = this.pgDataSource.getRepository(Doc);
@@ -751,6 +754,7 @@ class LegacyDbMigrator {
 		this.reportSourceRepo = this.pgSourceDataSource.getRepository(Report);
 		this.leaveSourceRepo = this.pgSourceDataSource.getRepository(Leave);
 		this.warningSourceRepo = this.pgSourceDataSource.getRepository(Warning);
+		this.trackingSourceRepo = this.pgSourceDataSource.getRepository(Tracking);
 		this.geofenceSourceRepo = this.pgSourceDataSource.getRepository(Geofence);
 		this.geofenceEventSourceRepo = this.pgSourceDataSource.getRepository(GeofenceEvent);
 		this.docSourceRepo = this.pgSourceDataSource.getRepository(Doc);
@@ -909,6 +913,7 @@ class LegacyDbMigrator {
 		this.reportSourceRepo = this.pgSourceDataSource.getRepository(Report);
 		this.leaveSourceRepo = this.pgSourceDataSource.getRepository(Leave);
 		this.warningSourceRepo = this.pgSourceDataSource.getRepository(Warning);
+		this.trackingSourceRepo = this.pgSourceDataSource.getRepository(Tracking);
 		this.geofenceSourceRepo = this.pgSourceDataSource.getRepository(Geofence);
 		this.geofenceEventSourceRepo = this.pgSourceDataSource.getRepository(GeofenceEvent);
 		this.docSourceRepo = this.pgSourceDataSource.getRepository(Doc);
@@ -1303,28 +1308,32 @@ class LegacyDbMigrator {
 
 		if (isRemoteToLocal) {
 			console.log('🚀 Starting PostgreSQL-to-PostgreSQL migration (remote to local)...\n');
-			console.log('✅ Importing ALL data including previously skipped entities\n');
+			console.log('✅ Importing ALL data from ALL tables - rows imported as-is with no changes\n');
 		} else {
 			console.log('🚀 Starting PostgreSQL-to-PostgreSQL migration (local to remote)...\n');
-			console.log('⚠️  Skipping tracking, attendance records, and reports\n');
+			console.log('⚠️  Minimal data migration: Only importing orgs, users, branches, and licenses\n');
 		}
 
 		const startTime = Date.now();
 
 		try {
 			// Import in dependency order - copy data as-is from source to target
-			// Skip tracking-related entities (tracking, geofence events), attendance records, and reports for local-to-remote migration
+			// For remote-to-local: Import ALL tables
+			// For local-to-remote: Only import orgs, users, branches, and licenses (minimal data)
 
+			// Organizations - always imported
 			if (this.shouldImport('orgs')) {
 				await this.clearTable(this.orgRepo, 'Organisations', Organisation);
 				await this.copyEntities(this.orgSourceRepo!, this.orgRepo!, 'Organisations');
 			}
 
+			// Branches - imported for both remote-to-local and local-to-remote
 			if (this.shouldImport('branches')) {
 				await this.clearTable(this.branchRepo, 'Branches', Branch);
 				await this.copyEntities(this.branchSourceRepo!, this.branchRepo!, 'Branches');
 			}
 
+			// Users and user-related data - imported for both remote-to-local and local-to-remote
 			if (this.shouldImport('users')) {
 				await this.clearTable(this.userTargetRepo, 'User Targets', UserTarget);
 				await this.clearTable(this.userEmploymentRepo, 'User Employment Profiles', UserEmployeementProfile);
@@ -1336,17 +1345,18 @@ class LegacyDbMigrator {
 				await this.copyEntities(this.userTargetSourceRepo!, this.userTargetRepo!, 'User Targets');
 			}
 
-			if (this.shouldImport('devices')) {
+			// Devices - only imported for remote-to-local
+			if (isRemoteToLocal && this.shouldImport('devices')) {
 				await this.clearDeviceRecordsAndLogs();
 				await this.clearTable(this.deviceRepo, 'Devices', Device);
 				await this.copyEntities(this.deviceSourceRepo!, this.deviceRepo!, 'Devices');
-				// Device records import - Enabled for remote-to-local migration
-				if (isRemoteToLocal) {
-					await this.clearTable(this.deviceRecordsRepo, 'Device Records', DeviceRecords);
-					await this.copyEntities(this.deviceRecordsSourceRepo!, this.deviceRecordsRepo!, 'Device Records');
-				}
+				await this.clearTable(this.deviceRecordsRepo, 'Device Records', DeviceRecords);
+				await this.copyEntities(this.deviceRecordsSourceRepo!, this.deviceRecordsRepo!, 'Device Records');
+				await this.clearTable(this.deviceLogsRepo, 'Device Logs', DeviceLogs);
+				await this.copyEntities(this.deviceLogsSourceRepo!, this.deviceLogsRepo!, 'Device Logs');
 			}
 
+			// Licenses - imported for both remote-to-local and local-to-remote
 			if (this.shouldImport('licenses')) {
 				if (this.licenseAuditRepo && this.licenseAuditSourceRepo) {
 					try {
@@ -1368,6 +1378,7 @@ class LegacyDbMigrator {
 				await this.copyEntities(this.licenseEventSourceRepo!, this.licenseEventRepo!, 'License Events');
 			}
 
+			// Organization settings - imported for both remote-to-local and local-to-remote
 			if (this.shouldImport('orgs')) {
 				await this.clearTable(this.orgHoursRepo, 'Organisation Hours', OrganisationHours);
 				await this.clearTable(this.orgAppearanceRepo, 'Organisation Appearance', OrganisationAppearance);
@@ -1377,44 +1388,58 @@ class LegacyDbMigrator {
 				await this.copyEntities(this.orgHoursSourceRepo!, this.orgHoursRepo!, 'Organisation Hours');
 			}
 
-		// Reports import - Enabled for remote-to-local migration
-		if (isRemoteToLocal) {
-			await this.clearTable(this.reportRepo, 'Reports', Report);
-			await this.copyEntities(this.reportSourceRepo!, this.reportRepo!, 'Reports');
-		}
+			// For local-to-remote: Only import orgs, users, branches, and licenses - stop here
+			if (!isRemoteToLocal) {
+				// Post-process user relationships
+				if (this.shouldImport('users')) {
+					await this.postProcessUserRelationships();
+				}
+				const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+				this.printStats(duration);
+				return;
+			}
 
-		// Attendance import - Enabled for remote-to-local migration only
-		// Skipped for local-to-remote migration
-		if (isRemoteToLocal && this.shouldImport('attendance')) {
-			await this.clearAttendanceRecords();
-			await this.copyEntities(this.attendanceSourceRepo!, this.attendanceRepo!, 'Attendance');
-		}
+			// ===== REMOTE-TO-LOCAL: Import ALL remaining tables =====
 
-			// Claims import - Enabled for remote-to-local migration
-			if (isRemoteToLocal) {
+			// Reports
+			if (this.shouldImport('reports')) {
+				await this.clearTable(this.reportRepo, 'Reports', Report);
+				await this.copyEntities(this.reportSourceRepo!, this.reportRepo!, 'Reports');
+			}
+
+			// Attendance
+			if (this.shouldImport('attendance')) {
+				await this.clearAttendanceRecords();
+				await this.copyEntities(this.attendanceSourceRepo!, this.attendanceRepo!, 'Attendance');
+			}
+
+			// Claims
+			if (this.shouldImport('claims')) {
 				await this.clearTable(this.claimRepo, 'Claims', Claim);
 				await this.copyEntities(this.claimSourceRepo!, this.claimRepo!, 'Claims');
 			}
 
+			// Check-ins
 			if (this.shouldImport('checkins')) {
 				await this.clearTable(this.checkInRepo, 'Check-ins', CheckIn);
 				await this.copyEntities(this.checkInSourceRepo!, this.checkInRepo!, 'Check-ins');
 			}
 
-			// Leads import - Enabled for remote-to-local migration
-			if (isRemoteToLocal) {
+			// Leads
+			if (this.shouldImport('leads')) {
 				await this.clearTable(this.leadRepo, 'Leads', Lead);
 				await this.copyEntities(this.leadSourceRepo!, this.leadRepo!, 'Leads');
 			}
 
-			// Quotations import - Enabled for remote-to-local migration
-			if (isRemoteToLocal) {
+			// Quotations
+			if (this.shouldImport('quotations')) {
 				await this.clearTable(this.quotationItemRepo, 'Quotation Items', QuotationItem);
 				await this.clearTable(this.quotationRepo, 'Quotations', Quotation);
 				await this.copyEntities(this.quotationSourceRepo!, this.quotationRepo!, 'Quotations');
 				await this.copyEntities(this.quotationItemSourceRepo!, this.quotationItemRepo!, 'Quotation Items');
 			}
 
+			// Orders
 			if (this.shouldImport('orders')) {
 				await this.clearTable(this.orderItemRepo, 'Order Items', OrderItem);
 				await this.clearTable(this.orderRepo, 'Orders', Order);
@@ -1422,105 +1447,180 @@ class LegacyDbMigrator {
 				await this.copyEntities(this.orderItemSourceRepo!, this.orderItemRepo!, 'Order Items');
 			}
 
-			// Tasks import - Enabled for remote-to-local migration
-			if (isRemoteToLocal) {
+			// Tasks
+			if (this.shouldImport('tasks')) {
 				await this.clearTable(this.subTaskRepo, 'Subtasks', SubTask);
 				await this.clearTable(this.taskRepo, 'Tasks', Task);
 				await this.copyEntities(this.taskSourceRepo!, this.taskRepo!, 'Tasks');
 				await this.copyEntities(this.subTaskSourceRepo!, this.subTaskRepo!, 'Subtasks');
 			}
 
-			// Interactions import - Enabled for remote-to-local migration
-			if (isRemoteToLocal) {
+			// Routes
+			if (this.shouldImport('routes')) {
+				await this.clearTable(this.routeRepo, 'Routes', Route);
+				await this.copyEntities(this.routeSourceRepo!, this.routeRepo!, 'Routes');
+			}
+
+			// Task Flags
+			if (this.shouldImport('taskflags')) {
+				await this.clearTable(this.taskFlagItemRepo, 'Task Flag Items', TaskFlagItem);
+				await this.clearTable(this.taskFlagRepo, 'Task Flags', TaskFlag);
+				await this.copyEntities(this.taskFlagSourceRepo!, this.taskFlagRepo!, 'Task Flags');
+				await this.copyEntities(this.taskFlagItemSourceRepo!, this.taskFlagItemRepo!, 'Task Flag Items');
+			}
+
+			// Interactions
+			if (this.shouldImport('interactions')) {
 				await this.clearTable(this.interactionRepo, 'Interactions', Interaction);
 				await this.copyEntities(this.interactionSourceRepo!, this.interactionRepo!, 'Interactions');
 			}
 
-			// Notifications import - Enabled for remote-to-local migration
-			if (isRemoteToLocal) {
+			// Notifications
+			if (this.shouldImport('notifications')) {
 				await this.clearTable(this.notificationRepo, 'Notifications', Notification);
 				await this.copyEntities(this.notificationSourceRepo!, this.notificationRepo!, 'Notifications');
 			}
 
+			// Communication Logs
+			if (this.shouldImport('communicationlogs')) {
+				await this.clearTable(this.communicationLogRepo, 'Communication Logs', CommunicationLog);
+				await this.copyEntities(this.communicationLogSourceRepo!, this.communicationLogRepo!, 'Communication Logs');
+			}
+
+			// Journals
 			if (this.shouldImport('journals')) {
 				await this.clearTable(this.journalRepo, 'Journals', Journal);
 				await this.copyEntities(this.journalSourceRepo!, this.journalRepo!, 'Journals');
 			}
 
-			// Leave import - Enabled for remote-to-local migration
-			if (isRemoteToLocal) {
+			// Leave
+			if (this.shouldImport('leave')) {
 				await this.clearTable(this.leaveRepo, 'Leave', Leave);
 				await this.copyEntities(this.leaveSourceRepo!, this.leaveRepo!, 'Leave');
 			}
 
-			// Warnings import - Enabled for remote-to-local migration
-			if (isRemoteToLocal) {
+			// Warnings
+			if (this.shouldImport('warnings')) {
 				await this.clearTable(this.warningRepo, 'Warnings', Warning);
 				await this.copyEntities(this.warningSourceRepo!, this.warningRepo!, 'Warnings');
 			}
 
-			// Docs import - Enabled for remote-to-local migration
-			if (isRemoteToLocal) {
+			// Tracking
+			if (this.shouldImport('tracking')) {
+				await this.clearTable(this.trackingRepo, 'Tracking', Tracking);
+				await this.copyEntities(this.trackingSourceRepo!, this.trackingRepo!, 'Tracking');
+			}
+
+			// Geofences
+			if (this.shouldImport('geofences')) {
+				await this.clearTable(this.geofenceRepo, 'Geofences', Geofence);
+				await this.copyEntities(this.geofenceSourceRepo!, this.geofenceRepo!, 'Geofences');
+			}
+
+			// Geofence Events
+			if (this.shouldImport('geofenceevents')) {
+				await this.clearTable(this.geofenceEventRepo, 'Geofence Events', GeofenceEvent);
+				await this.copyEntities(this.geofenceEventSourceRepo!, this.geofenceEventRepo!, 'Geofence Events');
+			}
+
+			// Docs
+			if (this.shouldImport('docs')) {
 				await this.clearTable(this.docRepo, 'Docs', Doc);
 				await this.copyEntities(this.docSourceRepo!, this.docRepo!, 'Docs');
 			}
 
+			// Assets
 			if (this.shouldImport('assets')) {
 				await this.clearTable(this.assetRepo, 'Assets', Asset);
 				await this.copyEntities(this.assetSourceRepo!, this.assetRepo!, 'Assets');
 			}
 
-			// News import - Enabled for remote-to-local migration
-			if (isRemoteToLocal) {
+			// News
+			if (this.shouldImport('news')) {
 				await this.clearTable(this.newsRepo, 'News', News);
 				await this.copyEntities(this.newsSourceRepo!, this.newsRepo!, 'News');
 			}
 
+			// Feedback
 			if (this.shouldImport('feedback')) {
 				await this.clearTable(this.feedbackRepo, 'Feedback', Feedback);
 				await this.copyEntities(this.feedbackSourceRepo!, this.feedbackRepo!, 'Feedback');
 			}
 
-			// Competitors import - Enabled for remote-to-local migration
-			if (isRemoteToLocal) {
+			// Competitors
+			if (this.shouldImport('competitors')) {
 				await this.clearTable(this.competitorRepo, 'Competitors', Competitor);
 				await this.copyEntities(this.competitorSourceRepo!, this.competitorRepo!, 'Competitors');
 			}
 
+			// Resellers
 			if (this.shouldImport('resellers')) {
 				await this.clearTable(this.resellerRepo, 'Resellers', Reseller);
 				await this.copyEntities(this.resellerSourceRepo!, this.resellerRepo!, 'Resellers');
 			}
 
+			// Banners
 			if (this.shouldImport('banners')) {
 				await this.clearTable(this.bannersRepo, 'Banners', Banners);
 				await this.copyEntities(this.bannersSourceRepo!, this.bannersRepo!, 'Banners');
 			}
 
+			// Projects
 			if (this.shouldImport('projects')) {
 				await this.clearTable(this.projectRepo, 'Projects', Project);
 				await this.copyEntities(this.projectSourceRepo!, this.projectRepo!, 'Projects');
 			}
 
+			// Approvals
+			if (this.shouldImport('approvals')) {
+				await this.clearTable(this.approvalSignatureRepo, 'Approval Signatures', ApprovalSignature);
+				await this.clearTable(this.approvalHistoryRepo, 'Approval History', ApprovalHistory);
+				await this.clearTable(this.approvalRepo, 'Approvals', Approval);
+				await this.copyEntities(this.approvalSourceRepo!, this.approvalRepo!, 'Approvals');
+				await this.copyEntities(this.approvalHistorySourceRepo!, this.approvalHistoryRepo!, 'Approval History');
+				await this.copyEntities(this.approvalSignatureSourceRepo!, this.approvalSignatureRepo!, 'Approval Signatures');
+			}
+
+			// User Rewards
 			if (this.shouldImport('users')) {
 				await this.clearTable(this.userRewardsRepo, 'User Rewards', UserRewards);
 				await this.copyEntities(this.userRewardsSourceRepo!, this.userRewardsRepo!, 'User Rewards');
+			}
+
+			// Rewards system
+			if (this.shouldImport('rewards')) {
+				await this.clearTable(this.xpTransactionRepo, 'XP Transactions', XPTransaction);
+				await this.clearTable(this.unlockedItemRepo, 'Unlocked Items', UnlockedItem);
+				await this.clearTable(this.achievementRepo, 'Achievements', Achievement);
+				await this.clearTable(this.rewardRepo, 'Rewards', Reward);
+				await this.copyEntities(this.rewardSourceRepo!, this.rewardRepo!, 'Rewards');
+				await this.copyEntities(this.achievementSourceRepo!, this.achievementRepo!, 'Achievements');
+				await this.copyEntities(this.unlockedItemSourceRepo!, this.unlockedItemRepo!, 'Unlocked Items');
+				await this.copyEntities(this.xpTransactionSourceRepo!, this.xpTransactionRepo!, 'XP Transactions');
+			}
+
+			// Payslips
+			if (this.shouldImport('payslips')) {
+				await this.clearTable(this.payslipRepo, 'Payslips', Payslip);
+				await this.copyEntities(this.payslipSourceRepo!, this.payslipRepo!, 'Payslips');
+			}
+
+			// Usage Events
+			if (this.shouldImport('usageevents')) {
+				await this.clearTable(this.usageEventRepo, 'Usage Events', UsageEvent);
+				await this.copyEntities(this.usageEventSourceRepo!, this.usageEventRepo!, 'Usage Events');
+			}
+
+			// Usage Summary
+			if (this.shouldImport('usagesummary')) {
+				await this.clearTable(this.usageSummaryRepo, 'Usage Summary', UsageSummary);
+				await this.copyEntities(this.usageSummarySourceRepo!, this.usageSummaryRepo!, 'Usage Summary');
 			}
 
 			// Post-process user relationships after all entities are imported
 			if (this.shouldImport('users')) {
 				await this.postProcessUserRelationships();
 			}
-
-			// User Targets can be migrated independently (after users are migrated)
-			// Note: Users must be migrated first for foreign key relationships to work
-			if (this.shouldImport('usertargets')) {
-				await this.clearTable(this.userTargetRepo, 'User Targets', UserTarget);
-				await this.copyEntities(this.userTargetSourceRepo!, this.userTargetRepo!, 'User Targets');
-			}
-
-			// Skip tracking-related entities (tracking, geofence events), attendance records, and reports
-			// These are intentionally skipped for local-to-remote migration as per user request
 
 			const duration = ((Date.now() - startTime) / 1000).toFixed(2);
 			this.printStats(duration);

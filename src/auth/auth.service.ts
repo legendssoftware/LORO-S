@@ -1088,7 +1088,7 @@ export class AuthService {
 					);
 					// Don't fail the token expiration if notification fails
 				}
-				throw new HttpException('Refresh token has expired', HttpStatus.UNAUTHORIZED);
+				throw new UnauthorizedException('Token has expired');
 			}
 			throw new HttpException(error.message || 'Failed to refresh token', error.status || HttpStatus.BAD_REQUEST);
 		}
