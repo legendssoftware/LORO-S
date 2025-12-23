@@ -1,5 +1,5 @@
 import { Organisation } from '../../organisation/entities/organisation.entity';
-import { Column, CreateDateColumn, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, CreateDateColumn, Entity, ManyToOne, PrimaryGeneratedColumn, JoinColumn } from 'typeorm';
 import { Branch } from '../../branch/entities/branch.entity';
 import { User } from '../../user/entities/user.entity';
 import { ReportType } from '../constants/report-types.enum';
@@ -77,11 +77,23 @@ export class Report {
 	totalStops: number;
 
 	@ManyToOne(() => Organisation, (organisation) => organisation.reports)
+	@JoinColumn({ name: 'organisationUid' })
 	organisation: Organisation;
 
+	@Column({ nullable: true })
+	organisationUid: number;
+
 	@ManyToOne(() => Branch, (branch) => branch.reports)
+	@JoinColumn({ name: 'branchUid' })
 	branch: Branch;
 
+	@Column({ nullable: true })
+	branchUid: number;
+
 	@ManyToOne(() => User, (user) => user.reports)
+	@JoinColumn({ name: 'ownerUid' })
 	owner: User;
+
+	@Column({ nullable: true })
+	ownerUid: number;
 }

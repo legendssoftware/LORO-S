@@ -1,6 +1,6 @@
 import { Branch } from 'src/branch/entities/branch.entity';
 import { Organisation } from 'src/organisation/entities/organisation.entity';
-import { Entity, Column, PrimaryGeneratedColumn, ManyToOne } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, JoinColumn } from 'typeorm';
 
 @Entity('communication_logs')
 export class CommunicationLog {
@@ -44,8 +44,16 @@ export class CommunicationLog {
 	createdAt: Date;
 
 	@ManyToOne(() => Branch, (branch) => branch?.communicationLogs)
+	@JoinColumn({ name: 'branchUid' })
 	branch: Branch;
 
+	@Column({ nullable: true })
+	branchUid: number;
+
 	@ManyToOne(() => Organisation, (organisation) => organisation?.communicationLogs)
+	@JoinColumn({ name: 'organisationUid' })
 	organisation: Organisation;
+
+	@Column({ nullable: true })
+	organisationUid: number;
 }

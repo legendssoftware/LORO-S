@@ -1,5 +1,5 @@
 import { User } from "../../user/entities/user.entity";
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn } from "typeorm";
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, JoinColumn } from "typeorm";
 import { NotificationType, NotificationStatus, NotificationPriority } from "../../lib/enums/notification.enums";
 import { Branch } from "src/branch/entities/branch.entity";
 import { Organisation } from "src/organisation/entities/organisation.entity";
@@ -29,13 +29,25 @@ export class Notification {
 
     // Relations
     @ManyToOne(() => User, user => user?.notifications)
+    @JoinColumn({ name: 'ownerUid' })
     owner: User;
 
+    @Column({ nullable: true })
+    ownerUid: number;
+
     @ManyToOne(() => Organisation, organisation => organisation?.notifications)
+    @JoinColumn({ name: 'organisationUid' })
     organisation: Organisation;
 
+    @Column({ nullable: true })
+    organisationUid: number;
+
     @ManyToOne(() => Branch, branch => branch?.notifications)
+    @JoinColumn({ name: 'branchUid' })
     branch: Branch;
+
+    @Column({ nullable: true })
+    branchUid: number;
 
     @Column({ nullable: true, type: 'enum', enum: NotificationPriority, default: NotificationPriority.MEDIUM })
     priority: NotificationPriority;

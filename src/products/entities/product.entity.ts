@@ -4,7 +4,7 @@ import { QuotationItem } from '../../shop/entities/quotation-item.entity';
 import { Reseller } from '../../resellers/entities/reseller.entity';
 import { Branch } from 'src/branch/entities/branch.entity';
 import { ProductAnalytics } from './product-analytics.entity';
-import { Column, Entity, OneToMany, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, BeforeInsert, AfterInsert, ManyToOne, getRepository, OneToOne } from 'typeorm';
+import { Column, Entity, OneToMany, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, BeforeInsert, AfterInsert, ManyToOne, getRepository, OneToOne, JoinColumn } from 'typeorm';
 
 @Entity('product')
 export class Product {
@@ -223,10 +223,18 @@ export class Product {
 
     // Relations
     @ManyToOne(() => Organisation, (organisation) => organisation?.products, { nullable: true })
+    @JoinColumn({ name: 'organisationUid' })
     organisation: Organisation;
 
+    @Column({ nullable: true })
+    organisationUid: number;
+
     @ManyToOne(() => Branch, (branch) => branch?.products, { nullable: true })
+    @JoinColumn({ name: 'branchUid' })
     branch: Branch;
+
+    @Column({ nullable: true })
+    branchUid: number;
 
     @OneToOne(() => ProductAnalytics, analytics => analytics?.product, { cascade: true })
     analytics: ProductAnalytics;

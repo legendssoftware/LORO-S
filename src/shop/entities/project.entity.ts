@@ -6,6 +6,7 @@ import {
 	UpdateDateColumn,
 	ManyToOne,
 	OneToMany,
+	JoinColumn,
 } from 'typeorm';
 import { Client } from '../../clients/entities/client.entity';
 import { User } from '../../user/entities/user.entity';
@@ -108,17 +109,33 @@ export class Project {
 
 	// Relations
 	@ManyToOne(() => Client, (client) => client.projects, { nullable: false, eager: true })
+	@JoinColumn({ name: 'clientUid' })
 	client: Client;
 
+	@Column({ nullable: false })
+	clientUid: number;
+
 	@ManyToOne(() => User, (user) => user.projects, { nullable: false, eager: true })
+	@JoinColumn({ name: 'assignedUserUid' })
 	assignedUser: User;
+
+	@Column({ nullable: false })
+	assignedUserUid: number;
 
 	@OneToMany(() => Quotation, (quotation) => quotation.project, { nullable: true })
 	quotations: Quotation[];
 
 	@ManyToOne(() => Organisation, (organisation) => organisation.projects, { nullable: true })
+	@JoinColumn({ name: 'organisationUid' })
 	organisation: Organisation;
 
+	@Column({ nullable: true })
+	organisationUid: number;
+
 	@ManyToOne(() => Branch, (branch) => branch.projects, { nullable: true })
+	@JoinColumn({ name: 'branchUid' })
 	branch: Branch;
+
+	@Column({ nullable: true })
+	branchUid: number;
 } 

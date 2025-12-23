@@ -1,7 +1,7 @@
 import { Organisation } from 'src/organisation/entities/organisation.entity';
 import { Branch } from '../../branch/entities/branch.entity';
 import { User } from '../../user/entities/user.entity';
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, JoinColumn } from 'typeorm';
 import { DocType } from '../../lib/enums/doc.enums';
 
 @Entity('docs')
@@ -59,11 +59,23 @@ export class Doc {
 
     // relations
     @ManyToOne(() => User, (user) => user?.userDocs)
+    @JoinColumn({ name: 'ownerUid' })
     owner: User;
 
+    @Column({ nullable: true })
+    ownerUid: number;
+
     @ManyToOne(() => Branch, (branch) => branch?.docs)
+    @JoinColumn({ name: 'branchUid' })
     branch: Branch;
 
+    @Column({ nullable: true })
+    branchUid: number;
+
     @ManyToOne(() => Organisation, (organisation) => organisation?.docs)
-    organisation: Organisation; 
+    @JoinColumn({ name: 'organisationUid' })
+    organisation: Organisation;
+
+    @Column({ nullable: true })
+    organisationUid: number; 
 }

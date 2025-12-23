@@ -3,7 +3,7 @@ import { Lead } from '../../leads/entities/lead.entity';
 import { User } from '../../user/entities/user.entity';
 import { Quotation } from '../../shop/entities/quotation.entity';
 import { Task } from '../../tasks/entities/task.entity';
-import { Column, Entity, OneToMany, ManyToOne, PrimaryGeneratedColumn, OneToOne } from 'typeorm';
+import { Column, Entity, OneToMany, ManyToOne, PrimaryGeneratedColumn, OneToOne, JoinColumn } from 'typeorm';
 import { CheckIn } from '../../check-ins/entities/check-in.entity';
 import { Organisation } from 'src/organisation/entities/organisation.entity';
 import { Branch } from 'src/branch/entities/branch.entity';
@@ -204,7 +204,11 @@ export class Client {
 	};
 	// Relations
 	@ManyToOne(() => User, (user) => user?.clients, { nullable: true })
+	@JoinColumn({ name: 'assignedSalesRepUid' })
 	assignedSalesRep: User;
+
+	@Column({ nullable: true })
+	assignedSalesRepUid: number;
 
 	@OneToMany(() => Lead, (lead) => lead?.client, { nullable: true })
 	leads: Lead[];
@@ -222,10 +226,18 @@ export class Client {
 	type: ClientType;
 
 	@ManyToOne(() => Organisation, (organisation) => organisation?.clients, { nullable: true })
+	@JoinColumn({ name: 'organisationUid' })
 	organisation: Organisation;
 
+	@Column({ nullable: true })
+	organisationUid: number;
+
 	@ManyToOne(() => Branch, (branch) => branch?.clients, { nullable: true })
+	@JoinColumn({ name: 'branchUid' })
 	branch: Branch;
+
+	@Column({ nullable: true })
+	branchUid: number;
 
 	@Column({ type: 'enum', enum: GeofenceType, default: GeofenceType.NONE })
 	geofenceType: GeofenceType;

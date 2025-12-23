@@ -12,6 +12,7 @@ import {
 	UpdateDateColumn,
 	ManyToOne,
 	OneToMany,
+	JoinColumn,
 } from 'typeorm';
 import { Order } from './order.entity';
 import { Interaction } from '../../interactions/entities/interaction.entity';
@@ -113,14 +114,26 @@ export class Quotation {
 
 	// Relations
 	@ManyToOne(() => Branch, (branch) => branch?.quotations, { nullable: true })
+	@JoinColumn({ name: 'branchUid' })
 	branch: Branch;
 
+	@Column({ nullable: true })
+	branchUid: number;
+
 	@ManyToOne(() => Organisation, (organisation) => organisation?.quotations, { nullable: true })
+	@JoinColumn({ name: 'organisationUid' })
 	organisation: Organisation;
+
+	@Column({ nullable: true })
+	organisationUid: number;
 
 	@OneToMany(() => Interaction, (interaction) => interaction.quotation)
 	interactions: Interaction[];
 
 	@ManyToOne(() => Project, (project) => project.quotations, { nullable: true })
+	@JoinColumn({ name: 'projectUid' })
 	project: Project;
+
+	@Column({ nullable: true })
+	projectUid: number;
 }

@@ -1,7 +1,7 @@
 import { Organisation } from 'src/organisation/entities/organisation.entity';
 import { Branch } from '../../branch/entities/branch.entity';
 import { User } from '../../user/entities/user.entity';
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, JoinColumn } from 'typeorm';
 
 @Entity('asset')
 export class Asset {
@@ -36,11 +36,23 @@ export class Asset {
 	isDeleted: boolean;
 
 	@ManyToOne(() => User, (user) => user?.assets)
+	@JoinColumn({ name: 'ownerUid' })
 	owner: User;
 
+	@Column({ nullable: true })
+	ownerUid: number;
+
 	@ManyToOne(() => Organisation, (organisation) => organisation?.assets, { nullable: true })
+	@JoinColumn({ name: 'organisationUid' })
 	org: Organisation;
 
+	@Column({ nullable: true })
+	organisationUid: number;
+
 	@ManyToOne(() => Branch, (branch) => branch?.assets, { nullable: true })
+	@JoinColumn({ name: 'branchUid' })
 	branch: Branch;
+
+	@Column({ nullable: true })
+	branchUid: number;
 }

@@ -105,16 +105,32 @@ export class Attendance {
 
 	// Relations
 	@ManyToOne(() => User, (user) => user?.attendance)
+	@JoinColumn({ name: 'ownerUid' })
 	owner: User;
 
+	@Column({ nullable: true })
+	ownerUid: number;
+
 	@ManyToOne(() => User, (user) => user?.attendance, { nullable: true })
+	@JoinColumn({ name: 'verifiedByUid' })
 	verifiedBy: User;
 
+	@Column({ nullable: true })
+	verifiedByUid: number;
+
 	@ManyToOne(() => Organisation, (organisation) => organisation?.attendances, { nullable: true })
+	@JoinColumn({ name: 'organisationUid' })
 	organisation: Organisation;
 
+	@Column({ nullable: true })
+	organisationUid: number;
+
 	@ManyToOne(() => Branch, (branch) => branch?.attendances, { nullable: true })
+	@JoinColumn({ name: 'branchUid' })
 	branch: Branch;
+
+	@Column({ nullable: true })
+	branchUid: number;
 
 	// Relationship to the daily report generated for this attendance record
 	@OneToOne(() => Report, { nullable: true })

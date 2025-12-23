@@ -1,4 +1,4 @@
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, JoinColumn } from 'typeorm';
 import { User } from '../../user/entities/user.entity';
 import { Branch } from '../../branch/entities/branch.entity';
 import { Organisation } from 'src/organisation/entities/organisation.entity';
@@ -101,11 +101,23 @@ export class Journal {
     isDeleted: boolean;
 
     @ManyToOne(() => User, user => user.journals)
+    @JoinColumn({ name: 'ownerUid' })
     owner: User;
 
+    @Column({ nullable: true })
+    ownerUid: number;
+
     @ManyToOne(() => Branch, (branch) => branch?.journals)
+    @JoinColumn({ name: 'branchUid' })
     branch: Branch;
 
+    @Column({ nullable: true })
+    branchUid: number;
+
     @ManyToOne(() => Organisation, (organisation) => organisation?.journals)
-    organisation: Organisation; 
+    @JoinColumn({ name: 'organisationUid' })
+    organisation: Organisation;
+
+    @Column({ nullable: true })
+    organisationUid: number; 
 }

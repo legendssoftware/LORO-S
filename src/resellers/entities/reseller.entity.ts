@@ -2,7 +2,7 @@ import { Product } from '../../products/entities/product.entity';
 import { ResellerStatus } from '../../lib/enums/product.enums';
 import { Organisation } from 'src/organisation/entities/organisation.entity';
 import { Branch } from 'src/branch/entities/branch.entity';
-import { Column, Entity, PrimaryGeneratedColumn, OneToMany, ManyToOne } from 'typeorm';
+import { Column, Entity, PrimaryGeneratedColumn, OneToMany, ManyToOne, JoinColumn } from 'typeorm';
 
 @Entity('reseller')
 export class Reseller {
@@ -63,8 +63,16 @@ export class Reseller {
 	products: Product[];
 
 	@ManyToOne(() => Organisation, (organisation) => organisation?.resellers, { nullable: true })
+	@JoinColumn({ name: 'organisationUid' })
 	organisation: Organisation;
 
+	@Column({ nullable: true })
+	organisationUid: number;
+
 	@ManyToOne(() => Branch, (branch) => branch?.resellers, { nullable: true })
+	@JoinColumn({ name: 'branchUid' })
 	branch: Branch;
+
+	@Column({ nullable: true })
+	branchUid: number;
 }

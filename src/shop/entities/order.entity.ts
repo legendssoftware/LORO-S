@@ -111,8 +111,16 @@ export class Order {
 
 	// Relations
 	@ManyToOne(() => Branch, (branch) => branch?.orders, { nullable: true })
+	@JoinColumn({ name: 'branchUid' })
 	branch: Branch;
 
+	@Column({ nullable: true })
+	branchUid: number;
+
 	@ManyToOne(() => Organisation, (organisation) => organisation?.orders, { nullable: true })
+	@JoinColumn({ name: 'organisationUid' })
 	organisation: Organisation;
+
+	@Column({ nullable: true })
+	organisationUid: number;
 }

@@ -2,7 +2,7 @@ import { Organisation } from 'src/organisation/entities/organisation.entity';
 import { Branch } from '../../branch/entities/branch.entity';
 import { Client } from '../../clients/entities/client.entity';
 import { User } from '../../user/entities/user.entity';
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, JoinColumn } from 'typeorm';
 import { Address } from 'src/lib/interfaces/address.interface';
 
 @Entity('check-ins')
@@ -48,14 +48,30 @@ export class CheckIn {
 
 	// Relations
 	@ManyToOne(() => User, (user) => user?.checkIns)
+	@JoinColumn({ name: 'ownerUid' })
 	owner: User;
 
+	@Column({ nullable: true })
+	ownerUid: number;
+
 	@ManyToOne(() => Organisation, (organisation) => organisation?.assets, { nullable: true })
+	@JoinColumn({ name: 'organisationUid' })
 	organisation: Organisation;
 
+	@Column({ nullable: true })
+	organisationUid: number;
+
 	@ManyToOne(() => Branch, (branch) => branch?.assets, { nullable: true })
+	@JoinColumn({ name: 'branchUid' })
 	branch: Branch;
+
+	@Column({ nullable: true })
+	branchUid: number;
     
 	@ManyToOne(() => Client, (client) => client?.checkIns, { nullable: true })
+	@JoinColumn({ name: 'clientUid' })
 	client: Client;
+
+	@Column({ nullable: true })
+	clientUid: number;
 }

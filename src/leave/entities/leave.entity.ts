@@ -9,6 +9,7 @@ import {
 	CreateDateColumn,
 	UpdateDateColumn,
 	DeleteDateColumn,
+	JoinColumn,
 } from 'typeorm';
 import { LeaveType, LeaveStatus, HalfDayPeriod } from '../../lib/enums/leave.enums';
 
@@ -18,7 +19,11 @@ export class Leave {
 	uid: number;
 
 	@ManyToOne(() => User, { onDelete: 'SET NULL', nullable: true })
+	@JoinColumn({ name: 'ownerUid' })
 	owner?: User;
+
+	@Column({ nullable: true })
+	ownerUid?: number;
 
 	@Column({
 		type: 'enum',
@@ -46,7 +51,11 @@ export class Leave {
 	status: LeaveStatus;
 
 	@ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
+	@JoinColumn({ name: 'approvedByUid' })
 	approvedBy?: User;
+
+	@Column({ nullable: true })
+	approvedByUid?: number;
 
 	@Column({ type: 'text', nullable: true })
 	comments?: string;
@@ -65,10 +74,18 @@ export class Leave {
 	attachments?: string[];
 
 	@ManyToOne(() => Organisation, { nullable: true, onDelete: 'SET NULL' })
+	@JoinColumn({ name: 'organisationUid' })
 	organisation?: Organisation;
 
+	@Column({ nullable: true })
+	organisationUid?: number;
+
 	@ManyToOne(() => Branch, { nullable: true, onDelete: 'SET NULL' })
+	@JoinColumn({ name: 'branchUid' })
 	branch?: Branch;
+
+	@Column({ nullable: true })
+	branchUid?: number;
 
 	@Column({ type: 'timestamptz', nullable: true })
 	approvedAt?: Date;

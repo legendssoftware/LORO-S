@@ -3,7 +3,7 @@ import { Branch } from '../../branch/entities/branch.entity';
 import { NewsCategory } from '../../lib/enums/news.enums';
 import { GeneralStatus } from '../../lib/enums/status.enums';
 import { User } from '../../user/entities/user.entity';
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, JoinColumn } from 'typeorm';
 
 @Entity('news')
 export class News {
@@ -35,7 +35,11 @@ export class News {
 	status: GeneralStatus;
 
 	@ManyToOne(() => User, (user) => user?.articles)
+	@JoinColumn({ name: 'authorUid' })
 	author: User;
+
+	@Column({ nullable: true })
+	authorUid: number;
 
 	@Column({
 		nullable: false,
@@ -61,8 +65,16 @@ export class News {
 
 	// Relations
 	@ManyToOne(() => Branch, (branch) => branch?.news)
+	@JoinColumn({ name: 'branchUid' })
 	branch: Branch;
 
+	@Column({ nullable: true })
+	branchUid: number;
+
 	@ManyToOne(() => Organisation, (organisation) => organisation?.news)
+	@JoinColumn({ name: 'organisationUid' })
 	organisation: Organisation;
+
+	@Column({ nullable: true })
+	organisationUid: number;
 }

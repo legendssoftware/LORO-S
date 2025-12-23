@@ -1,7 +1,7 @@
 import { User } from '../../user/entities/user.entity';
 import { Branch } from '../../branch/entities/branch.entity';
 import { ClaimCategory, ClaimStatus, Currency } from '../../lib/enums/finance.enums';
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, JoinColumn } from 'typeorm';
 import { Organisation } from 'src/organisation/entities/organisation.entity';
 
 @Entity('claim')
@@ -53,14 +53,30 @@ export class Claim {
 	shareTokenExpiresAt: Date;
 
 	@ManyToOne(() => User, (user) => user?.userClaims)
+	@JoinColumn({ name: 'ownerUid' })
 	owner: User;
 
+	@Column({ nullable: true })
+	ownerUid: number;
+
 	@ManyToOne(() => User, (user) => user?.userClaims)
+	@JoinColumn({ name: 'verifiedByUid' })
 	verifiedBy: User;
 
+	@Column({ nullable: true })
+	verifiedByUid: number;
+
 	@ManyToOne(() => Organisation, (organisation) => organisation?.assets, { nullable: true })
+	@JoinColumn({ name: 'organisationUid' })
 	organisation: Organisation;
 
+	@Column({ nullable: true })
+	organisationUid: number;
+
 	@ManyToOne(() => Branch, (branch) => branch?.assets, { nullable: true })
+	@JoinColumn({ name: 'branchUid' })
 	branch: Branch;
+
+	@Column({ nullable: true })
+	branchUid: number;
 }

@@ -11,6 +11,7 @@ import {
 	BeforeUpdate,
 	ManyToOne,
 	OneToMany,
+	JoinColumn,
 } from 'typeorm';
 import { Organisation } from '../../organisation/entities/organisation.entity';
 import { Branch } from '../../branch/entities/branch.entity';
@@ -85,7 +86,11 @@ export class Task {
 
 	// Relations
 	@ManyToOne(() => User, (user) => user?.tasks)
+	@JoinColumn({ name: 'creatorUid' })
 	creator: User;
+
+	@Column({ nullable: true })
+	creatorUid: number;
 
 	@Column({ type: 'json', nullable: true })
 	assignees: { uid: number }[];
@@ -103,10 +108,18 @@ export class Task {
 	flags: TaskFlag[]; 
 
 	@ManyToOne(() => Organisation, (organisation) => organisation.tasks)
+	@JoinColumn({ name: 'organisationUid' })
 	organisation: Organisation;
 
+	@Column({ nullable: true })
+	organisationUid: number;
+
 	@ManyToOne(() => Branch, (branch) => branch.tasks)
+	@JoinColumn({ name: 'branchUid' })
 	branch: Branch;
+
+	@Column({ nullable: true })
+	branchUid: number;
 
 	@BeforeInsert()
 	setInitialStatus() {

@@ -39,26 +39,44 @@ export class Interaction {
 	updatedAt: Date;
 
 	@ManyToOne(() => User, { onDelete: 'CASCADE' })
-	@JoinColumn()
+	@JoinColumn({ name: 'createdByUid' })
 	createdBy: User;
 
+	@Column({ nullable: true })
+	createdByUid: number;
+
 	@ManyToOne(() => Organisation, { onDelete: 'CASCADE' })
-	@JoinColumn()
+	@JoinColumn({ name: 'organisationUid' })
 	organisation: Organisation;
 
+	@Column({ nullable: true })
+	organisationUid: number;
+
 	@ManyToOne(() => Branch, { onDelete: 'CASCADE' })
-	@JoinColumn()
+	@JoinColumn({ name: 'branchUid' })
 	branch: Branch;
 
+	@Column({ nullable: true })
+	branchUid: number;
+
 	@ManyToOne(() => Lead, (lead) => lead.interactions, { nullable: true })
-	@JoinColumn()
+	@JoinColumn({ name: 'leadUid' })
 	lead: Lead;
 
+	@Column({ nullable: true })
+	leadUid: number;
+
 	@ManyToOne(() => Client, (client) => client.interactions, { nullable: true })
-	@JoinColumn()
+	@JoinColumn({ name: 'clientUid' })
 	client: Client;
 
+	@Column({ nullable: true })
+	clientUid: number;
+
 	@ManyToOne(() => Quotation, (quotation) => quotation.interactions, { nullable: true })
-	@JoinColumn()
+	@JoinColumn({ name: 'quotationUid' })
 	quotation: Quotation;
+
+	@Column({ nullable: true })
+	quotationUid: number;
 }

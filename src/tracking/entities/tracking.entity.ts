@@ -30,6 +30,9 @@ export class Tracking {
     @JoinColumn({ name: 'owner_id' })
     owner: User;
 
+    @Column({ nullable: true })
+    owner_id: number;
+
     @CreateDateColumn({ type: 'timestamptz' })
     createdAt: Date;
 
@@ -43,10 +46,18 @@ export class Tracking {
     deletedBy: string;
 
     @ManyToOne(() => Branch, (branch) => branch?.trackings, { nullable: true })
+    @JoinColumn({ name: 'branchUid' })
     branch: Branch;
 
+    @Column({ nullable: true })
+    branchUid: number;
+
     @ManyToOne(() => Organisation, (organisation) => organisation?.trackings, { nullable: true })
+    @JoinColumn({ name: 'organisationUid' })
     organisation: Organisation;
+
+    @Column({ nullable: true })
+    organisationUid: number;
 
     @Column({ type: 'float', nullable: true })
     accuracy: number;
