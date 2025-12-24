@@ -981,27 +981,31 @@ export class ShopService {
 					// Send quotation copy to client if recipientEmail is provided
 					const emailRecipient = quotationData?.recipientEmail || clientData?.client?.email;
 					if (quotationData?.recipientEmail && pdfUrl) {
-						this.eventEmitter.emit('send.email', EmailType.NEW_QUOTATION_CLIENT, [emailRecipient], {
-							name: clientName,
-							quotationId: savedQuotation?.quotationNumber,
-							pdfUrl: pdfUrl,
-							reviewUrl: savedQuotation.reviewUrl,
-							total: Number(savedQuotation?.totalAmount),
-							currency: orgCurrency.code,
-							quotationItems: quotationData?.items?.map((item) => {
-								const product = products.flat().find((p) => p.uid === item.uid);
-								return {
-									quantity: Number(item?.quantity),
-									product: {
-										name: product?.name || 'Unknown Product',
-										code: product?.productRef || 'N/A',
-									},
-									totalPrice: Number(item?.totalPrice),
-									purchaseMode: item?.purchaseMode || 'item',
-									itemsPerUnit: Number(item?.itemsPerUnit || 1),
-								};
-							}),
-						}).catch(err => this.logger.error(`Failed to send quotation email: ${err.message}`, err.stack));
+						try {
+							this.eventEmitter.emit('send.email', EmailType.NEW_QUOTATION_CLIENT, [emailRecipient], {
+								name: clientName,
+								quotationId: savedQuotation?.quotationNumber,
+								pdfUrl: pdfUrl,
+								reviewUrl: savedQuotation.reviewUrl,
+								total: Number(savedQuotation?.totalAmount),
+								currency: orgCurrency.code,
+								quotationItems: quotationData?.items?.map((item) => {
+									const product = products.flat().find((p) => p.uid === item.uid);
+									return {
+										quantity: Number(item?.quantity),
+										product: {
+											name: product?.name || 'Unknown Product',
+											code: product?.productRef || 'N/A',
+										},
+										totalPrice: Number(item?.totalPrice),
+										purchaseMode: item?.purchaseMode || 'item',
+										itemsPerUnit: Number(item?.itemsPerUnit || 1),
+									};
+								}),
+							});
+						} catch (err) {
+							this.logger.error(`Failed to send quotation email: ${err.message}`, err.stack);
+						}
 					}
 				}
 
