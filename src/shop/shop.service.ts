@@ -894,7 +894,7 @@ export class ShopService {
 				totalAmount: Number(quotationData?.totalAmount),
 				placedBy: { uid: quotationData?.owner?.uid },
 				client: { uid: quotationData?.client?.uid },
-				status: OrderStatus.DRAFT,
+				status: OrderStatus.PENDING_INTERNAL,
 				quotationDate: new Date(),
 				createdAt: new Date(),
 				updatedAt: new Date(),
@@ -967,7 +967,7 @@ export class ShopService {
 				// First get the full quotation with all relations for PDF generation
 				const fullQuotation = await this.quotationRepository.findOne({
 					where: { uid: savedQuotation.uid },
-					relations: ['client', 'quotationItems', 'quotationItems.product', 'organisation', 'branch', 'project'],
+					relations: ['placedBy', 'client', 'quotationItems', 'quotationItems.product', 'organisation', 'branch', 'project'],
 				});
 
 				if (fullQuotation) {
@@ -977,34 +977,64 @@ export class ShopService {
 					if (pdfUrl) {
 						await this.quotationRepository.update(savedQuotation.uid, { pdfURL: pdfUrl });
 					}
-				}
 
-				// Update analytics for each product
-				for (const item of quotationData.items) {
-					const product = products.flat().find((p) => p.uid === item.uid);
-					if (product) {
-						// Record view and cart add with enhanced tracking
-						await this.productsService.recordView(
-							product.uid, 
-							quotationData.owner?.uid, 
-							orgId, 
-							branchId
-						);
-						await this.productsService.recordCartAdd(
-							product.uid, 
-							item.quantity,
-							quotationData.owner?.uid, 
-							orgId, 
-							branchId
-						);
-
-						// Update stock history
-						await this.productsService.updateStockHistory(product.uid, item.quantity, 'out');
-
-						// Calculate updated performance metrics
-						await this.productsService.calculateProductPerformance(product.uid);
+					// Send quotation copy to client if recipientEmail is provided
+					const emailRecipient = quotationData?.recipientEmail || clientData?.client?.email;
+					if (quotationData?.recipientEmail && pdfUrl) {
+						this.eventEmitter.emit('send.email', EmailType.NEW_QUOTATION_CLIENT, [emailRecipient], {
+							name: clientName,
+							quotationId: savedQuotation?.quotationNumber,
+							pdfUrl: pdfUrl,
+							reviewUrl: savedQuotation.reviewUrl,
+							total: Number(savedQuotation?.totalAmount),
+							currency: orgCurrency.code,
+							quotationItems: quotationData?.items?.map((item) => {
+								const product = products.flat().find((p) => p.uid === item.uid);
+								return {
+									quantity: Number(item?.quantity),
+									product: {
+										name: product?.name || 'Unknown Product',
+										code: product?.productRef || 'N/A',
+									},
+									totalPrice: Number(item?.totalPrice),
+									purchaseMode: item?.purchaseMode || 'item',
+									itemsPerUnit: Number(item?.itemsPerUnit || 1),
+								};
+							}),
+						}).catch(err => this.logger.error(`Failed to send quotation email: ${err.message}`, err.stack));
 					}
 				}
+
+				// Process analytics asynchronously without blocking (fire-and-forget)
+				Promise.all(quotationData.items.map(async (item) => {
+					const product = products.flat().find((p) => p.uid === item.uid);
+					if (product) {
+						try {
+							// Record view and cart add with enhanced tracking
+							await this.productsService.recordView(
+								product.uid, 
+								quotationData.owner?.uid, 
+								orgId, 
+								branchId
+							);
+							await this.productsService.recordCartAdd(
+								product.uid, 
+								item.quantity,
+								quotationData.owner?.uid, 
+								orgId, 
+								branchId
+							);
+
+							// Update stock history
+							await this.productsService.updateStockHistory(product.uid, item.quantity, 'out');
+
+							// Calculate updated performance metrics
+							await this.productsService.calculateProductPerformance(product.uid);
+						} catch (analyticsError) {
+							this.logger.error(`Analytics processing error for product ${product.uid}: ${analyticsError.message}`, analyticsError.stack);
+						}
+					}
+				})).catch(err => this.logger.error('Batch analytics processing error', err.stack));
 
 				// Emit quotation creation event for real-time analytics
 				this.eventEmitter.emit('quotation.created', {
