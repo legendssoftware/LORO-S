@@ -27,7 +27,8 @@
     "cleanup:tokens": "ts-node -r tsconfig-paths/register src/scripts/cleanup-duplicate-tokens.ts",
     "cleanup:tokens:auto": "ts-node -r tsconfig-paths/register src/scripts/cleanup-duplicate-tokens.ts --auto",
     "test:erp-connection": "node test-erp-connection.js",
-    "fetch:remote-data": "ts-node -r tsconfig-paths/register src/scripts/fetch-remote-data.ts"
+    "fetch:remote-data": "ts-node -r tsconfig-paths/register src/scripts/fetch-remote-data.ts",
+    "migrate:local-to-remote": "ts-node -r tsconfig-paths/register src/scripts/migrate-local-to-remote.ts"
   },
   "dependencies": {
     "@apollo/server": "^4.11.2",
