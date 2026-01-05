@@ -1,4 +1,4 @@
-import { BadRequestException, HttpException, HttpStatus, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import {
 	SignInInput,
 	SignUpInput,
@@ -11,8 +11,16 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { UserService } from '../user/user.service';
-import { SignInResponse, SignUpResponse } from '../lib/types/auth';
-import { ProfileData } from '../lib/types/auth';
+import {
+	SignInResponse,
+	SignUpResponse,
+	RefreshTokenResponse,
+	VerifyEmailResponse,
+	SetPasswordResponse,
+	ForgotPasswordResponse,
+	ResetPasswordResponse,
+	ProfileData,
+} from '../lib/types/auth';
 import { RewardsService } from '../rewards/rewards.service';
 import { XP_VALUES, XP_VALUES_TYPES } from 'src/lib/constants/constants';
 import { EmailType } from '../lib/enums/email.enums';
@@ -61,7 +69,7 @@ export class AuthService {
 		this.logger.log(`Getting login usage for user: ${userId}`);
 		// TODO: Import and inject UsageTrackingService, then implement:
 		// return await this.usageTrackingService.getUserDailyLoginStats(userId);
-		
+
 		// Temporary placeholder - replace with actual implementation
 		return {
 			successful: 0,
@@ -72,9 +80,13 @@ export class AuthService {
 	}
 
 	private excludePassword(user: any): Omit<typeof user, 'password'> {
-		this.logger.debug(`Excluding password from user object for user: ${user?.email || user?.username || 'unknown'}`);
+		this.logger.debug(
+			`Excluding password from user object for user: ${user?.email || user?.username || 'unknown'}`,
+		);
 		const { password, ...userWithoutPassword } = user;
-		this.logger.debug(`Password successfully excluded from user object for: ${user?.email || user?.username || 'unknown'}`);
+		this.logger.debug(
+			`Password successfully excluded from user object for: ${user?.email || user?.username || 'unknown'}`,
+		);
 		return userWithoutPassword;
 	}
 
@@ -116,29 +128,30 @@ export class AuthService {
 								});
 
 								this.logger.debug(`Sending failed login push notification to user: ${username}`);
-							await this.unifiedNotificationService.sendTemplatedNotification(
-								NotificationEvent.AUTH_LOGIN_FAILED,
-								[userByEmail.user.uid],
-								{
-									message: `🚨 Security Alert: Failed login attempt detected on your account on ${attemptDate} at ${attemptTime}. If this wasn't you, please secure your account immediately.`,
-									userName: userByEmail.user.name || username,
-									attemptTime,
-									attemptDate,
-									ipAddress: requestData?.ipAddress || 'Unknown',
-									location: requestData?.location || 'Unknown',
-									deviceType: requestData?.deviceType || 'Unknown',
-									browser: requestData?.browser || 'Unknown',
-									securityTip: 'Change your password immediately if you suspect unauthorized access',
-									timestamp: new Date().toISOString(),
-								},
-								{
-									priority: NotificationPriority.HIGH,
-									customData: {
-										screen: '/profile',
-										action: 'view_security',
+								await this.unifiedNotificationService.sendTemplatedNotification(
+									NotificationEvent.AUTH_LOGIN_FAILED,
+									[userByEmail.user.uid],
+									{
+										message: `🚨 Security Alert: Failed login attempt detected on your account on ${attemptDate} at ${attemptTime}. If this wasn't you, please secure your account immediately.`,
+										userName: userByEmail.user.name || username,
+										attemptTime,
+										attemptDate,
+										ipAddress: requestData?.ipAddress || 'Unknown',
+										location: requestData?.location || 'Unknown',
+										deviceType: requestData?.deviceType || 'Unknown',
+										browser: requestData?.browser || 'Unknown',
+										securityTip:
+											'Change your password immediately if you suspect unauthorized access',
+										timestamp: new Date().toISOString(),
 									},
-								},
-							);
+									{
+										priority: NotificationPriority.HIGH,
+										customData: {
+											screen: '/profile',
+											action: 'view_security',
+										},
+									},
+								);
 								this.logger.debug(`Failed login push notification sent to user: ${username}`);
 							} catch (notificationError) {
 								this.logger.warn(
@@ -151,7 +164,12 @@ export class AuthService {
 						this.logger.error('Failed to send failed login notification:', error);
 					}
 				});
-				throw new BadRequestException('Invalid credentials provided');
+				return {
+					message: 'Invalid credentials provided',
+					accessToken: null,
+					refreshToken: null,
+					profileData: null,
+				};
 			}
 
 			const { password: userPassword } = authProfile?.user;
@@ -177,29 +195,29 @@ export class AuthService {
 						});
 
 						this.logger.debug(`Sending failed login push notification for invalid password: ${username}`);
-					await this.unifiedNotificationService.sendTemplatedNotification(
-						NotificationEvent.AUTH_LOGIN_FAILED,
-						[authProfile.user.uid],
-						{
-							message: `🚨 Security Alert: Failed login attempt detected on your account on ${attemptDate} at ${attemptTime}. If this wasn't you, please secure your account immediately.`,
-							userName: authProfile.user.name || authProfile.user.email,
-							attemptTime,
-							attemptDate,
-							ipAddress: requestData?.ipAddress || 'Unknown',
-							location: requestData?.location || 'Unknown',
-							deviceType: requestData?.deviceType || 'Unknown',
-							browser: requestData?.browser || 'Unknown',
-							securityTip: 'Change your password immediately if you suspect unauthorized access',
-							timestamp: new Date().toISOString(),
-						},
-						{
-							priority: NotificationPriority.HIGH,
-							customData: {
-								screen: '/profile',
-								action: 'view_security',
+						await this.unifiedNotificationService.sendTemplatedNotification(
+							NotificationEvent.AUTH_LOGIN_FAILED,
+							[authProfile.user.uid],
+							{
+								message: `🚨 Security Alert: Failed login attempt detected on your account on ${attemptDate} at ${attemptTime}. If this wasn't you, please secure your account immediately.`,
+								userName: authProfile.user.name || authProfile.user.email,
+								attemptTime,
+								attemptDate,
+								ipAddress: requestData?.ipAddress || 'Unknown',
+								location: requestData?.location || 'Unknown',
+								deviceType: requestData?.deviceType || 'Unknown',
+								browser: requestData?.browser || 'Unknown',
+								securityTip: 'Change your password immediately if you suspect unauthorized access',
+								timestamp: new Date().toISOString(),
 							},
-						},
-					);
+							{
+								priority: NotificationPriority.HIGH,
+								customData: {
+									screen: '/profile',
+									action: 'view_security',
+								},
+							},
+						);
 						this.logger.debug(`Failed login push notification sent for invalid password: ${username}`);
 					} catch (error) {
 						this.logger.error('Failed to send failed login push notification:', error);
@@ -222,18 +240,25 @@ export class AuthService {
 				this.logger.debug(`Checking organization license for user: ${username}, orgRef: ${organisationRef}`);
 				const licenses = await this.licensingService.findByOrganisation(organisationRef);
 				this.logger.debug(`Found ${licenses.length} licenses for organization: ${organisationRef}`);
-				
+
 				const activeLicense = licenses.find((license) =>
 					this.licensingService.validateLicense(String(license?.uid)),
 				);
 
 				if (!activeLicense) {
-					this.logger.warn(`No active license found for organization: ${organisationRef}, licenses checked: ${licenses.length}`);
-					throw new UnauthorizedException(
-						"Your organization's license has expired. Please contact your administrator.",
+					this.logger.warn(
+						`No active license found for organization: ${organisationRef}, licenses checked: ${licenses.length}`,
 					);
+					return {
+						message: "Your organization's license has expired. Please contact your administrator.",
+						accessToken: null,
+						refreshToken: null,
+						profileData: null,
+					};
 				}
-				this.logger.debug(`Active license found for organization: ${organisationRef}, licenseId: ${activeLicense.uid}`);
+				this.logger.debug(
+					`Active license found for organization: ${organisationRef}, licenseId: ${activeLicense.uid}`,
+				);
 
 				// Add license info to profile data
 				const platform = this.platformService.getPrimaryPlatform(activeLicense?.features || {});
@@ -270,10 +295,10 @@ export class AuthService {
 					branch: restOfUser?.branch?.uid ? { uid: restOfUser?.branch.uid } : undefined,
 				};
 
-			this.logger.debug(`Generating access and refresh tokens for user: ${username}`);
-			this.logger.debug(`Token payload prepared with platform: ${platform}, role: ${tokenRole}`);
-			const accessToken = await this.jwtService.signAsync(payload, { expiresIn: `2h` });
-			const refreshToken = await this.jwtService.signAsync(payload, { expiresIn: `7d` });
+				this.logger.debug(`Generating access and refresh tokens for user: ${username}`);
+				this.logger.debug(`Token payload prepared with platform: ${platform}, role: ${tokenRole}`);
+				const accessToken = await this.jwtService.signAsync(payload, { expiresIn: `2h` });
+				const refreshToken = await this.jwtService.signAsync(payload, { expiresIn: `7d` });
 				this.logger.debug(`JWT tokens generated successfully for user: ${username}`);
 
 				this.logger.log(`User sign in successful: ${username}`);
@@ -302,11 +327,16 @@ export class AuthService {
 								},
 							};
 
-							this.logger.debug(`Awarding XP for daily login to user: ${username}, amount: ${XP_VALUES.DAILY_LOGIN}`);
+							this.logger.debug(
+								`Awarding XP for daily login to user: ${username}, amount: ${XP_VALUES.DAILY_LOGIN}`,
+							);
 							await this.rewardsService.awardXP(gainedXP, organisationRef, restOfUser?.branch?.uid);
 							this.logger.debug(`XP awarded successfully for daily login to user: ${username}`);
 						} catch (xpError) {
-							this.logger.error(`Failed to award XP for daily login to user ${username}:`, xpError.message);
+							this.logger.error(
+								`Failed to award XP for daily login to user ${username}:`,
+								xpError.message,
+							);
 						}
 
 						// Send successful login push notification
@@ -324,28 +354,28 @@ export class AuthService {
 							});
 
 							this.logger.debug(`Sending successful login push notification to user: ${username}`);
-						await this.unifiedNotificationService.sendTemplatedNotification(
-							NotificationEvent.AUTH_LOGIN_SUCCESS,
-							[authProfile.user.uid],
-							{
-								message: `Welcome back, ${profileData.name}! Successfully signed in on ${loginDate} at ${loginTime}.`,
-								userName: profileData.name,
-								loginTime,
-								loginDate,
-								ipAddress: requestData?.ipAddress || 'Unknown',
-								location: requestData?.location || 'Unknown',
-								deviceType: requestData?.deviceType || 'Unknown',
-								browser: requestData?.browser || 'Unknown',
-								timestamp: new Date().toISOString(),
-							},
-							{
-								priority: NotificationPriority.LOW,
-								customData: {
-									screen: '/home',
-									action: 'view_dashboard',
+							await this.unifiedNotificationService.sendTemplatedNotification(
+								NotificationEvent.AUTH_LOGIN_SUCCESS,
+								[authProfile.user.uid],
+								{
+									message: `Welcome back, ${profileData.name}! Successfully signed in on ${loginDate} at ${loginTime}.`,
+									userName: profileData.name,
+									loginTime,
+									loginDate,
+									ipAddress: requestData?.ipAddress || 'Unknown',
+									location: requestData?.location || 'Unknown',
+									deviceType: requestData?.deviceType || 'Unknown',
+									browser: requestData?.browser || 'Unknown',
+									timestamp: new Date().toISOString(),
 								},
-							},
-						);
+								{
+									priority: NotificationPriority.LOW,
+									customData: {
+										screen: '/home',
+										action: 'view_dashboard',
+									},
+								},
+							);
 							this.logger.debug(`Successful login push notification sent to user: ${username}`);
 						} catch (notificationError) {
 							this.logger.warn(
@@ -354,44 +384,48 @@ export class AuthService {
 							);
 						}
 
-					// Send Sales Tip of the Day push notification
-					try {
-						this.logger.log(`💡 [SalesTip] Fetching sales tip of the day for user: ${username}`);
-						const salesTip = this.salesTipsService.getTipByDate();
-						
-						if (salesTip) {
-							this.logger.log(`💡 [SalesTip] Sending sales tip "${salesTip.title}" to user ${username} (ID: ${salesTip.id}, Category: ${salesTip.category})`);
-						await this.unifiedNotificationService.sendTemplatedNotification(
-							NotificationEvent.SALES_TIP_OF_THE_DAY,
-							[authProfile.user.uid],
-							{
-								message: `💡 Sales Tip: ${salesTip.title} - ${salesTip.content}`,
-								title: salesTip.title,
-								content: salesTip.content,
-								category: salesTip.category,
-								tipId: salesTip.id.toString(),
-								timestamp: new Date().toISOString(),
-							},
-							{
-								priority: NotificationPriority.LOW,
-								sendEmail: false,
-								customData: {
-									screen: '/home',
-									action: 'view_tip',
-								},
-							},
-						);
-							this.logger.log(`✅ [SalesTip] Sales tip #${salesTip.id} "${salesTip.title}" sent successfully to user: ${username}`);
-						} else {
-							this.logger.warn(`⚠️ [SalesTip] No sales tip found for today for user: ${username}`);
+						// Send Sales Tip of the Day push notification
+						try {
+							this.logger.log(`💡 [SalesTip] Fetching sales tip of the day for user: ${username}`);
+							const salesTip = this.salesTipsService.getTipByDate();
+
+							if (salesTip) {
+								this.logger.log(
+									`💡 [SalesTip] Sending sales tip "${salesTip.title}" to user ${username} (ID: ${salesTip.id}, Category: ${salesTip.category})`,
+								);
+								await this.unifiedNotificationService.sendTemplatedNotification(
+									NotificationEvent.SALES_TIP_OF_THE_DAY,
+									[authProfile.user.uid],
+									{
+										message: `💡 Sales Tip: ${salesTip.title} - ${salesTip.content}`,
+										title: salesTip.title,
+										content: salesTip.content,
+										category: salesTip.category,
+										tipId: salesTip.id.toString(),
+										timestamp: new Date().toISOString(),
+									},
+									{
+										priority: NotificationPriority.LOW,
+										sendEmail: false,
+										customData: {
+											screen: '/home',
+											action: 'view_tip',
+										},
+									},
+								);
+								this.logger.log(
+									`✅ [SalesTip] Sales tip #${salesTip.id} "${salesTip.title}" sent successfully to user: ${username}`,
+								);
+							} else {
+								this.logger.warn(`⚠️ [SalesTip] No sales tip found for today for user: ${username}`);
+							}
+						} catch (salesTipError) {
+							this.logger.error(
+								`❌ [SalesTip] Failed to send sales tip of the day to user ${username}:`,
+								salesTipError.stack || salesTipError.message,
+							);
+							// Don't fail login if sales tip fails
 						}
-					} catch (salesTipError) {
-						this.logger.error(
-							`❌ [SalesTip] Failed to send sales tip of the day to user ${username}:`,
-							salesTipError.stack || salesTipError.message,
-						);
-						// Don't fail login if sales tip fails
-					}
 
 						// Check device registration for push notifications (async, don't block login)
 						try {
@@ -402,11 +436,16 @@ export class AuthService {
 								...requestData,
 							});
 						} catch (deviceError) {
-							this.logger.warn(`Failed to check device registration for user ${username}:`, deviceError.message);
+							this.logger.warn(
+								`Failed to check device registration for user ${username}:`,
+								deviceError.message,
+							);
 						}
-
 					} catch (backgroundError) {
-						this.logger.error(`Background sign-in tasks failed for user ${username}:`, backgroundError.message);
+						this.logger.error(
+							`Background sign-in tasks failed for user ${username}:`,
+							backgroundError.message,
+						);
 						// Don't affect user experience
 					}
 				});
@@ -432,9 +471,9 @@ export class AuthService {
 				branch: restOfUser?.branch?.uid ? { uid: restOfUser.branch.uid } : undefined,
 			};
 
-		this.logger.debug(`Generating tokens for user without organization: ${username}`);
-		const accessToken = await this.jwtService.signAsync(payload, { expiresIn: `2h` });
-		const refreshToken = await this.jwtService.signAsync(payload, { expiresIn: `1d` });
+			this.logger.debug(`Generating tokens for user without organization: ${username}`);
+			const accessToken = await this.jwtService.signAsync(payload, { expiresIn: `2h` });
+			const refreshToken = await this.jwtService.signAsync(payload, { expiresIn: `1d` });
 
 			this.logger.log(`User sign in successful (no org): ${username}`);
 
@@ -444,7 +483,7 @@ export class AuthService {
 				deviceId,
 				platform,
 				...requestData,
-			}).catch(error => {
+			}).catch((error) => {
 				this.logger.warn(`Failed to check device registration for user ${username}:`, error.message);
 			});
 
@@ -456,14 +495,12 @@ export class AuthService {
 			};
 		} catch (error) {
 			this.logger.error(`Sign in failed for user: ${signInInput.username}`, error.stack);
-			const response = {
-				message: error?.message,
+			return {
+				message: error?.message || 'Sign in failed. Please try again.',
 				accessToken: null,
 				refreshToken: null,
 				profileData: null,
 			};
-
-			return response;
 		}
 	}
 
@@ -477,7 +514,9 @@ export class AuthService {
 			const existingUser = await this.userService.findOneByEmail(email);
 			if (existingUser?.user) {
 				this.logger.warn(`Sign up failed - email already exists: ${email}`);
-				throw new BadRequestException('Email already taken, please try another one.');
+				return {
+					message: 'Email already taken, please try another one.',
+				};
 			}
 
 			// Check for existing pending signup
@@ -521,12 +560,12 @@ export class AuthService {
 		} catch (error) {
 			this.logger.error(`Sign up failed for email: ${signUpInput.email}`, error.stack);
 			return {
-				message: error?.message,
+				message: error?.message || 'Sign up failed. Please try again.',
 			};
 		}
 	}
 
-	async verifyEmail(verifyEmailInput: VerifyEmailInput, requestData?: any) {
+	async verifyEmail(verifyEmailInput: VerifyEmailInput, requestData?: any): Promise<VerifyEmailResponse> {
 		this.logger.log(`Email verification attempt with token: ${verifyEmailInput.token.substring(0, 10)}...`);
 		try {
 			const { token } = verifyEmailInput;
@@ -535,18 +574,24 @@ export class AuthService {
 
 			if (!pendingSignup) {
 				this.logger.warn(`Invalid verification token provided`);
-				throw new BadRequestException('Invalid verification token');
+				return {
+					message: 'Invalid verification token',
+				};
 			}
 
 			if (pendingSignup.tokenExpires < new Date()) {
 				this.logger.warn(`Verification token expired for email: ${pendingSignup.email}`);
 				await this.pendingSignupService.delete(pendingSignup.uid);
-				throw new BadRequestException('Verification token has expired. Please sign up again.');
+				return {
+					message: 'Verification token has expired. Please sign up again.',
+				};
 			}
 
 			if (pendingSignup.isVerified) {
 				this.logger.warn(`Email already verified for: ${pendingSignup.email}`);
-				throw new BadRequestException('Email already verified. Please proceed to set your password.');
+				return {
+					message: 'Email already verified. Please proceed to set your password.',
+				};
 			}
 
 			this.logger.debug(`Marking email as verified for: ${pendingSignup.email}`);
@@ -577,17 +622,17 @@ export class AuthService {
 			return {
 				message: 'Email verified successfully. You can now set your password.',
 				email: pendingSignup.email,
+				status: 'success',
 			};
 		} catch (error) {
 			this.logger.error(`Email verification failed`, error.stack);
-			throw new HttpException(
-				error.message || 'Email verification failed',
-				error.status || HttpStatus.BAD_REQUEST,
-			);
+			return {
+				message: error?.message || 'Email verification failed. Please try again.',
+			};
 		}
 	}
 
-	async setPassword(setPasswordInput: SetPasswordInput) {
+	async setPassword(setPasswordInput: SetPasswordInput): Promise<SetPasswordResponse> {
 		this.logger.log(`Set password attempt with token: ${setPasswordInput.token.substring(0, 10)}...`);
 		try {
 			const { token, password } = setPasswordInput;
@@ -596,104 +641,112 @@ export class AuthService {
 
 			if (!pendingSignup) {
 				this.logger.warn(`Invalid token provided for password setting`);
-				throw new BadRequestException('Invalid token');
+				return {
+					message: 'Invalid token',
+				};
 			}
 
 			if (!pendingSignup.isVerified) {
 				this.logger.warn(`Email not verified for password setting: ${pendingSignup.email}`);
-				throw new BadRequestException('Email not verified. Please verify your email first.');
+				return {
+					message: 'Email not verified. Please verify your email first.',
+				};
 			}
 
 			if (pendingSignup.tokenExpires < new Date()) {
 				this.logger.warn(`Token expired for password setting: ${pendingSignup.email}`);
 				await this.pendingSignupService.delete(pendingSignup.uid);
-				throw new BadRequestException('Token has expired. Please sign up again.');
+				return {
+					message: 'Token has expired. Please sign up again.',
+				};
 			}
 
-					// Create the actual user account
-		this.logger.debug(`Creating user account for: ${pendingSignup.email}`);
-		const username = pendingSignup.email.split('@')[0].toLowerCase();
-		const hashedPassword = await bcrypt.hash(password, 10);
+			// Create the actual user account
+			this.logger.debug(`Creating user account for: ${pendingSignup.email}`);
+			const username = pendingSignup.email.split('@')[0].toLowerCase();
+			const hashedPassword = await bcrypt.hash(password, 10);
 
-		await this.userService.create({
-			email: pendingSignup.email,
-			username,
-			password: hashedPassword,
-			name: username,
-			surname: '',
-			phone: '',
-			photoURL: 'https://cdn-icons-png.flaticon.com/128/1144/1144709.png', // Use default profile picture
-			accessLevel: AccessLevel.USER,
-			userref: `USR${Date.now()}`,
-		});
+			await this.userService.create({
+				email: pendingSignup.email,
+				username,
+				password: hashedPassword,
+				name: username,
+				surname: '',
+				phone: '',
+				photoURL: 'https://cdn-icons-png.flaticon.com/128/1144/1144709.png', // Use default profile picture
+				accessLevel: AccessLevel.USER,
+				userref: `USR${Date.now()}`,
+			});
 
-		// Get the created user for notifications
-		const createdUserResult = await this.userService.findOneByEmail(pendingSignup.email);
-		if (!createdUserResult?.user) {
-			this.logger.error(`Failed to find created user: ${pendingSignup.email}`);
-			throw new BadRequestException('User creation failed');
-		}
-		const createdUser = createdUserResult.user;
+			// Get the created user for notifications
+			const createdUserResult = await this.userService.findOneByEmail(pendingSignup.email);
+			if (!createdUserResult?.user) {
+				this.logger.error(`Failed to find created user: ${pendingSignup.email}`);
+				return {
+					message: 'User creation failed. Please try again.',
+				};
+			}
+			const createdUser = createdUserResult.user;
 
-		// Delete the pending signup
-		this.logger.debug(`Deleting pending signup record for: ${pendingSignup.email}`);
-		await this.pendingSignupService.delete(pendingSignup.uid);
+			// Delete the pending signup
+			this.logger.debug(`Deleting pending signup record for: ${pendingSignup.email}`);
+			await this.pendingSignupService.delete(pendingSignup.uid);
 
 			// Get the web and mobile app links from environment variables
 			const webAppLink = `${process.env.WEBSITE_DOMAIN}/sign-in` || '/sign-in';
 			const mobileAppLink = `${process.env.WEBSITE_DOMAIN}/mobile-app` || null;
 
-					// Send welcome email to the new user
-		this.logger.debug(`Sending welcome email to new user: ${pendingSignup.email}`);
-		this.eventEmitter.emit('send.email', EmailType.SIGNUP, [pendingSignup.email], {
-			name: username,
-			webAppLink: webAppLink,
-			mobileAppLink: mobileAppLink,
-		});
-
-		// Send password set success push notification
-		try {
-			const setupTime = new Date().toLocaleTimeString('en-ZA', {
-				hour: '2-digit',
-				minute: '2-digit',
-				hour12: true,
-			});
-			const setupDate = new Date().toLocaleDateString('en-ZA', {
-				weekday: 'long',
-				year: 'numeric',
-				month: 'long',
-				day: 'numeric',
+			// Send welcome email to the new user
+			this.logger.debug(`Sending welcome email to new user: ${pendingSignup.email}`);
+			this.eventEmitter.emit('send.email', EmailType.SIGNUP, [pendingSignup.email], {
+				name: username,
+				webAppLink: webAppLink,
+				mobileAppLink: mobileAppLink,
 			});
 
-			this.logger.debug(`Sending password setup success push notification to: ${pendingSignup.email}`);
-			await this.unifiedNotificationService.sendTemplatedNotification(
-				NotificationEvent.AUTH_PASSWORD_SET_SUCCESS,
-				[createdUser.uid],
-				{
-					message: `🎉 Welcome to Loro! Your password has been set successfully on ${setupDate} at ${setupTime}. Your account is now ready to use.`,
-					userName: username,
-					setupTime,
-					setupDate,
-					webAppLink,
-					mobileAppLink,
-					timestamp: new Date().toISOString(),
-				},
-				{
-					priority: NotificationPriority.NORMAL,
-					customData: {
-						screen: '/profile',
-						action: 'view_profile',
+			// Send password set success push notification
+			try {
+				const setupTime = new Date().toLocaleTimeString('en-ZA', {
+					hour: '2-digit',
+					minute: '2-digit',
+					hour12: true,
+				});
+				const setupDate = new Date().toLocaleDateString('en-ZA', {
+					weekday: 'long',
+					year: 'numeric',
+					month: 'long',
+					day: 'numeric',
+				});
+
+				this.logger.debug(`Sending password setup success push notification to: ${pendingSignup.email}`);
+				await this.unifiedNotificationService.sendTemplatedNotification(
+					NotificationEvent.AUTH_PASSWORD_SET_SUCCESS,
+					[createdUser.uid],
+					{
+						message: `🎉 Welcome to Loro! Your password has been set successfully on ${setupDate} at ${setupTime}. Your account is now ready to use.`,
+						userName: username,
+						setupTime,
+						setupDate,
+						webAppLink,
+						mobileAppLink,
+						timestamp: new Date().toISOString(),
 					},
-				},
-			);
-			this.logger.debug(`Password setup success push notification sent to: ${pendingSignup.email}`);
-		} catch (notificationError) {
-			this.logger.warn(
-				`Failed to send password setup success push notification to ${pendingSignup.email}:`,
-				notificationError.message,
-			);
-			// Don't fail account creation if notification fails
-		}
+					{
+						priority: NotificationPriority.NORMAL,
+						customData: {
+							screen: '/profile',
+							action: 'view_profile',
+						},
+					},
+				);
+				this.logger.debug(`Password setup success push notification sent to: ${pendingSignup.email}`);
+			} catch (notificationError) {
+				this.logger.warn(
+					`Failed to send password setup success push notification to ${pendingSignup.email}:`,
+					notificationError.message,
+				);
+				// Don't fail account creation if notification fails
+			}
 
 			// Notify admin users about the new user registration
 			this.logger.debug(`Notifying admin users about new user registration: ${pendingSignup.email}`);
@@ -714,22 +767,19 @@ export class AuthService {
 			}
 
 			this.logger.log(`Account created successfully for: ${pendingSignup.email}`);
-			const response = {
+			return {
 				status: 'success',
 				message: 'Account created successfully. You can now sign in.',
 			};
-
-			return response;
 		} catch (error) {
 			this.logger.error(`Failed to create account`, error.stack);
-			throw new HttpException(
-				error.message || 'Failed to create account',
-				error.status || HttpStatus.BAD_REQUEST,
-			);
+			return {
+				message: error?.message || 'Failed to create account. Please try again.',
+			};
 		}
 	}
 
-	async forgotPassword(forgotPasswordInput: ForgotPasswordInput) {
+	async forgotPassword(forgotPasswordInput: ForgotPasswordInput): Promise<ForgotPasswordResponse> {
 		this.logger.log(`Forgot password request for email: ${forgotPasswordInput.email}`);
 		try {
 			const { email } = forgotPasswordInput;
@@ -746,77 +796,83 @@ export class AuthService {
 				};
 			}
 
-		// Generate reset token and mobile deep link URL
-		this.logger.debug(`Generating reset token for user: ${email}`);
-		const resetToken = await this.generateSecureToken();
-		// Create mobile app deep link for password reset
-		const mobileDeepLink = `loro://new-password?token=${resetToken}`;
-		// Fallback web URL for email clients that don't support deep links
-		const webResetUrl = `${process.env.WEBSITE_DOMAIN || process.env.SIGNUP_DOMAIN}/new-password?token=${resetToken}`;
-		this.logger.debug(`Mobile deep link generated: loro://new-password?token=[TOKEN]`);
-		this.logger.debug(`Web fallback URL generated: ${webResetUrl.substring(0, webResetUrl.lastIndexOf('/') + 1)}[TOKEN]`);
+			// Generate reset token and mobile deep link URL
+			this.logger.debug(`Generating reset token for user: ${email}`);
+			const resetToken = await this.generateSecureToken();
+			// Create mobile app deep link for password reset
+			const mobileDeepLink = `loro://new-password?token=${resetToken}`;
+			// Fallback web URL for email clients that don't support deep links
+			const webResetUrl = `${
+				process.env.WEBSITE_DOMAIN || process.env.SIGNUP_DOMAIN
+			}/new-password?token=${resetToken}`;
+			this.logger.debug(`Mobile deep link generated: loro://new-password?token=[TOKEN]`);
+			this.logger.debug(
+				`Web fallback URL generated: ${webResetUrl.substring(0, webResetUrl.lastIndexOf('/') + 1)}[TOKEN]`,
+			);
 
 			// Create password reset record (this will handle rate limiting and duplicates)
 			this.logger.debug(`Creating password reset record for: ${email}`);
 			await this.passwordResetService.create(email, resetToken);
 			this.logger.debug(`Password reset record created successfully for: ${email}`);
 
-					// Send password reset email with mobile deep link and web fallback
-		this.logger.debug(`Sending password reset email to: ${email}`);
-		this.eventEmitter.emit('send.email', EmailType.PASSWORD_RESET_REQUEST, [email], {
-			name: existingUser.user.name || email.split('@')[0],
-			userEmail: email,
-			requestTime: new Date().toLocaleString(),
-			resetLink: mobileDeepLink, // Primary mobile deep link
-			webResetLink: webResetUrl, // Fallback web URL
-			mobileDeepLink: mobileDeepLink, // Explicit mobile deep link for email template
-			expiryHours: 24,
-			supportEmail: process.env.SUPPORT_EMAIL || 'support@loro.africa',
-			dashboardUrl: `${process.env.WEBSITE_DOMAIN || process.env.SIGNUP_DOMAIN || 'https://dashboard.loro.co.za'}/dashboard`,
-		});
-
-		// Send password reset push notification
-		try {
-			const requestTime = new Date().toLocaleTimeString('en-ZA', {
-				hour: '2-digit',
-				minute: '2-digit',
-				hour12: true,
-			});
-			const requestDate = new Date().toLocaleDateString('en-ZA', {
-				weekday: 'long',
-				year: 'numeric',
-				month: 'long',
-				day: 'numeric',
+			// Send password reset email with mobile deep link and web fallback
+			this.logger.debug(`Sending password reset email to: ${email}`);
+			this.eventEmitter.emit('send.email', EmailType.PASSWORD_RESET_REQUEST, [email], {
+				name: existingUser.user.name || email.split('@')[0],
+				userEmail: email,
+				requestTime: new Date().toLocaleString(),
+				resetLink: mobileDeepLink, // Primary mobile deep link
+				webResetLink: webResetUrl, // Fallback web URL
+				mobileDeepLink: mobileDeepLink, // Explicit mobile deep link for email template
+				expiryHours: 24,
+				supportEmail: process.env.SUPPORT_EMAIL || 'support@loro.africa',
+				dashboardUrl: `${
+					process.env.WEBSITE_DOMAIN || process.env.SIGNUP_DOMAIN || 'https://dashboard.loro.co.za'
+				}/dashboard`,
 			});
 
-			this.logger.debug(`Sending password reset push notification to: ${email}`);
-			await this.unifiedNotificationService.sendTemplatedNotification(
-				NotificationEvent.AUTH_PASSWORD_RESET_REQUEST,
-				[existingUser.user.uid],
-				{
-					message: `🔐 Password reset requested for your account on ${requestDate} at ${requestTime}. Check your email for reset instructions. If this wasn't you, please contact support immediately.`,
-					userName: existingUser.user.name || email.split('@')[0],
-					requestTime,
-					requestDate,
-					expiryHours: 24,
-					timestamp: new Date().toISOString(),
-				},
-				{
-					priority: NotificationPriority.HIGH,
-					customData: {
-						screen: '/auth/reset-password',
-						action: 'reset_password',
+			// Send password reset push notification
+			try {
+				const requestTime = new Date().toLocaleTimeString('en-ZA', {
+					hour: '2-digit',
+					minute: '2-digit',
+					hour12: true,
+				});
+				const requestDate = new Date().toLocaleDateString('en-ZA', {
+					weekday: 'long',
+					year: 'numeric',
+					month: 'long',
+					day: 'numeric',
+				});
+
+				this.logger.debug(`Sending password reset push notification to: ${email}`);
+				await this.unifiedNotificationService.sendTemplatedNotification(
+					NotificationEvent.AUTH_PASSWORD_RESET_REQUEST,
+					[existingUser.user.uid],
+					{
+						message: `🔐 Password reset requested for your account on ${requestDate} at ${requestTime}. Check your email for reset instructions. If this wasn't you, please contact support immediately.`,
+						userName: existingUser.user.name || email.split('@')[0],
+						requestTime,
+						requestDate,
+						expiryHours: 24,
+						timestamp: new Date().toISOString(),
 					},
-				},
-			);
-			this.logger.debug(`Password reset push notification sent to: ${email}`);
-		} catch (notificationError) {
-			this.logger.warn(
-				`Failed to send password reset push notification to ${email}:`,
-				notificationError.message,
-			);
-			// Don't fail the password reset if notification fails
-		}
+					{
+						priority: NotificationPriority.HIGH,
+						customData: {
+							screen: '/auth/reset-password',
+							action: 'reset_password',
+						},
+					},
+				);
+				this.logger.debug(`Password reset push notification sent to: ${email}`);
+			} catch (notificationError) {
+				this.logger.warn(
+					`Failed to send password reset push notification to ${email}:`,
+					notificationError.message,
+				);
+				// Don't fail the password reset if notification fails
+			}
 
 			this.logger.log(`Password reset request processed successfully for: ${email}`);
 			return {
@@ -830,16 +886,14 @@ export class AuthService {
 					message: error.message,
 				};
 			}
-			
-			// Handle other errors
-			throw new HttpException(
-				error.message || 'Failed to process password reset request',
-				error.status || HttpStatus.INTERNAL_SERVER_ERROR,
-			);
+
+			return {
+				message: error?.message || 'Failed to process password reset request. Please try again.',
+			};
 		}
 	}
 
-	async resetPassword(resetPasswordInput: ResetPasswordInput) {
+	async resetPassword(resetPasswordInput: ResetPasswordInput): Promise<ResetPasswordResponse> {
 		this.logger.log(`Reset password attempt with token: ${resetPasswordInput.token.substring(0, 10)}...`);
 		try {
 			const { token, password } = resetPasswordInput;
@@ -849,18 +903,24 @@ export class AuthService {
 			const resetRecord = await this.passwordResetService.findByToken(token);
 			if (!resetRecord) {
 				this.logger.warn(`Invalid or expired reset token provided`);
-				throw new BadRequestException('Invalid or expired reset token.');
+				return {
+					message: 'Invalid or expired reset token.',
+				};
 			}
 
 			if (resetRecord.tokenExpires < new Date()) {
 				this.logger.warn(`Reset token expired for email: ${resetRecord.email}`);
 				await this.passwordResetService.delete(resetRecord.uid);
-				throw new BadRequestException('Reset token has expired. Please request a new one.');
+				return {
+					message: 'Reset token has expired. Please request a new one.',
+				};
 			}
 
 			if (resetRecord.isUsed) {
 				this.logger.warn(`Reset token already used for email: ${resetRecord.email}`);
-				throw new BadRequestException('This reset token has already been used.');
+				return {
+					message: 'This reset token has already been used.',
+				};
 			}
 
 			// Find user
@@ -868,7 +928,9 @@ export class AuthService {
 			const user = await this.userService.findOneByEmail(resetRecord.email);
 			if (!user?.user) {
 				this.logger.error(`User not found for password reset: ${resetRecord.email}`);
-				throw new BadRequestException('User not found.');
+				return {
+					message: 'User not found.',
+				};
 			}
 
 			// Hash new password
@@ -883,54 +945,54 @@ export class AuthService {
 			this.logger.debug(`Marking reset token as used for: ${resetRecord.email}`);
 			await this.passwordResetService.markAsUsed(resetRecord.uid);
 
-					// Send confirmation email
-		this.logger.debug(`Sending password changed confirmation email to: ${resetRecord.email}`);
-		this.eventEmitter.emit('send.email', EmailType.PASSWORD_CHANGED, [resetRecord.email], {
-			name: user.user.name || resetRecord.email.split('@')[0],
-			changeTime: new Date().toLocaleString(),
-		});
-
-		// Send password changed push notification
-		try {
-			const changeTime = new Date().toLocaleTimeString('en-ZA', {
-				hour: '2-digit',
-				minute: '2-digit',
-				hour12: true,
-			});
-			const changeDate = new Date().toLocaleDateString('en-ZA', {
-				weekday: 'long',
-				year: 'numeric',
-				month: 'long',
-				day: 'numeric',
+			// Send confirmation email
+			this.logger.debug(`Sending password changed confirmation email to: ${resetRecord.email}`);
+			this.eventEmitter.emit('send.email', EmailType.PASSWORD_CHANGED, [resetRecord.email], {
+				name: user.user.name || resetRecord.email.split('@')[0],
+				changeTime: new Date().toLocaleString(),
 			});
 
-			this.logger.debug(`Sending password changed push notification to: ${resetRecord.email}`);
-			await this.unifiedNotificationService.sendTemplatedNotification(
-				NotificationEvent.AUTH_PASSWORD_CHANGED,
-				[user.user.uid],
-				{
-					message: `🔐 Password updated successfully! Your password was changed on ${changeDate} at ${changeTime}. If this wasn't you, please contact support immediately.`,
-					userName: user.user.name || resetRecord.email.split('@')[0],
-					changeTime,
-					changeDate,
-					timestamp: new Date().toISOString(),
-				},
-				{
-					priority: NotificationPriority.HIGH,
-					customData: {
-						screen: '/profile',
-						action: 'view_security',
+			// Send password changed push notification
+			try {
+				const changeTime = new Date().toLocaleTimeString('en-ZA', {
+					hour: '2-digit',
+					minute: '2-digit',
+					hour12: true,
+				});
+				const changeDate = new Date().toLocaleDateString('en-ZA', {
+					weekday: 'long',
+					year: 'numeric',
+					month: 'long',
+					day: 'numeric',
+				});
+
+				this.logger.debug(`Sending password changed push notification to: ${resetRecord.email}`);
+				await this.unifiedNotificationService.sendTemplatedNotification(
+					NotificationEvent.AUTH_PASSWORD_CHANGED,
+					[user.user.uid],
+					{
+						message: `🔐 Password updated successfully! Your password was changed on ${changeDate} at ${changeTime}. If this wasn't you, please contact support immediately.`,
+						userName: user.user.name || resetRecord.email.split('@')[0],
+						changeTime,
+						changeDate,
+						timestamp: new Date().toISOString(),
 					},
-				},
-			);
-			this.logger.debug(`Password changed push notification sent to: ${resetRecord.email}`);
-		} catch (notificationError) {
-			this.logger.warn(
-				`Failed to send password changed push notification to ${resetRecord.email}:`,
-				notificationError.message,
-			);
-			// Don't fail password reset if notification fails
-		}
+					{
+						priority: NotificationPriority.HIGH,
+						customData: {
+							screen: '/profile',
+							action: 'view_security',
+						},
+					},
+				);
+				this.logger.debug(`Password changed push notification sent to: ${resetRecord.email}`);
+			} catch (notificationError) {
+				this.logger.warn(
+					`Failed to send password changed push notification to ${resetRecord.email}:`,
+					notificationError.message,
+				);
+				// Don't fail password reset if notification fails
+			}
 
 			this.logger.log(`Password reset successful for: ${resetRecord.email}`);
 			return {
@@ -938,14 +1000,13 @@ export class AuthService {
 			};
 		} catch (error) {
 			this.logger.error(`Password reset failed`, error.stack);
-			throw new HttpException(
-				error.message || 'Failed to reset password',
-				error.status || HttpStatus.INTERNAL_SERVER_ERROR,
-			);
+			return {
+				message: error?.message || 'Failed to reset password. Please try again.',
+			};
 		}
 	}
 
-	async refreshToken(token: string) {
+	async refreshToken(token: string): Promise<RefreshTokenResponse> {
 		this.logger.log(`Refresh token attempt`);
 		try {
 			this.logger.debug(`Verifying refresh token`);
@@ -953,7 +1014,12 @@ export class AuthService {
 
 			if (!payload) {
 				this.logger.warn(`Invalid refresh token payload`);
-				throw new BadRequestException('Invalid refresh token');
+				return {
+					message: 'Invalid refresh token',
+					accessToken: null,
+					refreshToken: null,
+					profileData: null,
+				};
 			}
 
 			this.logger.debug(`Finding user by UID: ${payload?.uid}`);
@@ -961,27 +1027,43 @@ export class AuthService {
 
 			if (!authProfile?.user) {
 				this.logger.warn(`User not found for refresh token, UID: ${payload?.uid}`);
-				throw new BadRequestException('User not found');
+				return {
+					message: 'User not found',
+					accessToken: null,
+					refreshToken: null,
+					profileData: null,
+				};
 			}
 
 			// Check organization license if user belongs to an organization
 			if (authProfile.user.organisationRef) {
-				this.logger.debug(`Checking organization license for refresh token, orgRef: ${authProfile.user.organisationRef}`);
+				this.logger.debug(
+					`Checking organization license for refresh token, orgRef: ${authProfile.user.organisationRef}`,
+				);
 				const licenses = await this.licensingService.findByOrganisation(authProfile.user.organisationRef);
-				this.logger.debug(`Found ${licenses.length} licenses for organization during refresh: ${authProfile.user.organisationRef}`);
-				
+				this.logger.debug(
+					`Found ${licenses.length} licenses for organization during refresh: ${authProfile.user.organisationRef}`,
+				);
+
 				const activeLicense = licenses.find((license) =>
 					this.licensingService.validateLicense(String(license?.uid)),
 				);
 
 				if (!activeLicense) {
-					this.logger.warn(`No active license found for organization during refresh: ${authProfile.user.organisationRef}, licenses checked: ${licenses.length}`);
-					throw new UnauthorizedException(
-						"Your organization's license has expired. Please contact your administrator.",
+					this.logger.warn(
+						`No active license found for organization during refresh: ${authProfile.user.organisationRef}, licenses checked: ${licenses.length}`,
 					);
+					return {
+						message: "Your organization's license has expired. Please contact your administrator.",
+						accessToken: null,
+						refreshToken: null,
+						profileData: null,
+					};
 				}
 
-				this.logger.debug(`Active license found for organization during refresh: ${authProfile.user.organisationRef}, licenseId: ${activeLicense.uid}`);
+				this.logger.debug(
+					`Active license found for organization during refresh: ${authProfile.user.organisationRef}, licenseId: ${activeLicense.uid}`,
+				);
 				const platform = this.platformService.getPrimaryPlatform(activeLicense?.features || {});
 
 				const newPayload = {
@@ -1000,11 +1082,20 @@ export class AuthService {
 					expiresIn: `${process.env.JWT_ACCESS_EXPIRES_IN}`,
 				});
 
+				const refreshToken = await this.jwtService.signAsync(newPayload, {
+					expiresIn: `${process.env.JWT_REFRESH_EXPIRES_IN || '7d'}`,
+				});
+
 				this.logger.log(`Access token refreshed successfully for user: ${authProfile.user.email}`);
+				const { uid, accessLevel, name, organisationRef, ...restOfUser } = authProfile.user;
 				return {
 					accessToken,
+					refreshToken,
 					profileData: {
-						...authProfile?.user,
+						uid: uid.toString(),
+						accessLevel,
+						name,
+						organisationRef,
 						platform,
 						licenseInfo: {
 							licenseId: String(activeLicense?.uid),
@@ -1012,6 +1103,13 @@ export class AuthService {
 							status: activeLicense?.status,
 							features: activeLicense?.features,
 						},
+						...restOfUser,
+						branch: restOfUser?.branch?.uid
+							? {
+									uid: restOfUser.branch.uid.toString(),
+									name: restOfUser.branch.name,
+							  }
+							: undefined,
 					},
 					message: 'Access token refreshed successfully',
 				};
@@ -1031,12 +1129,29 @@ export class AuthService {
 				expiresIn: `${process.env.JWT_ACCESS_EXPIRES_IN}`,
 			});
 
-			this.logger.log(`Access token refreshed successfully for user without organization: ${authProfile.user.email}`);
+			const refreshToken = await this.jwtService.signAsync(newPayload, {
+				expiresIn: `${process.env.JWT_REFRESH_EXPIRES_IN || '7d'}`,
+			});
+
+			this.logger.log(
+				`Access token refreshed successfully for user without organization: ${authProfile.user.email}`,
+			);
+			const { uid, accessLevel, name, ...restOfUser } = authProfile.user;
 			return {
 				accessToken,
+				refreshToken,
 				profileData: {
-					...authProfile?.user,
+					uid: uid.toString(),
+					accessLevel,
+					name,
 					platform: 'all',
+					...restOfUser,
+					branch: restOfUser?.branch?.uid
+						? {
+								uid: restOfUser.branch.uid.toString(),
+								name: restOfUser.branch.name,
+						  }
+						: undefined,
 				},
 				message: 'Access token refreshed successfully',
 			};
@@ -1082,15 +1197,22 @@ export class AuthService {
 						this.logger.debug(`Token expired push notification sent to user: ${decodedToken.uid}`);
 					}
 				} catch (notificationError) {
-					this.logger.warn(
-						`Failed to send token expired push notification:`,
-						notificationError.message,
-					);
+					this.logger.warn(`Failed to send token expired push notification:`, notificationError.message);
 					// Don't fail the token expiration if notification fails
 				}
-				throw new UnauthorizedException('Token has expired');
+				return {
+					message: 'Token has expired. Please sign in again.',
+					accessToken: null,
+					refreshToken: null,
+					profileData: null,
+				};
 			}
-			throw new HttpException(error.message || 'Failed to refresh token', error.status || HttpStatus.BAD_REQUEST);
+			return {
+				message: error?.message || 'Failed to refresh token. Please try again.',
+				accessToken: null,
+				refreshToken: null,
+				profileData: null,
+			};
 		}
 	}
 
@@ -1100,10 +1222,13 @@ export class AuthService {
 	 */
 	private async checkAndUpdateDeviceRegistration(user: any, requestData?: any): Promise<void> {
 		// Extract correlation ID from request data for tracking
-		const correlationId = requestData?.correlationId || `device-reg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-		
+		const correlationId =
+			requestData?.correlationId || `device-reg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
 		try {
-			this.logger.log(`🔍 [${correlationId}] [DeviceRegistration] Starting device registration check for user: ${user.email}`);
+			this.logger.log(
+				`🔍 [${correlationId}] [DeviceRegistration] Starting device registration check for user: ${user.email}`,
+			);
 
 			// Extract device info from request data
 			const deviceToken = requestData?.expoPushToken || requestData?.pushToken;
@@ -1111,14 +1236,18 @@ export class AuthService {
 			// Ensure we use the actual device platform, not user platform
 			const devicePlatform = requestData?.platform;
 			const userAgent = requestData?.userAgent || '';
-			
+
 			// Determine platform with better detection logic
 			let platform = devicePlatform;
 			if (!platform || platform === 'all') {
 				// Fallback to user agent detection
 				if (userAgent.toLowerCase().includes('android')) {
 					platform = 'android';
-				} else if (userAgent.toLowerCase().includes('ios') || userAgent.toLowerCase().includes('iphone') || userAgent.toLowerCase().includes('ipad')) {
+				} else if (
+					userAgent.toLowerCase().includes('ios') ||
+					userAgent.toLowerCase().includes('iphone') ||
+					userAgent.toLowerCase().includes('ipad')
+				) {
 					platform = 'ios';
 				} else {
 					// Default based on device ID pattern if available
@@ -1158,10 +1287,15 @@ export class AuthService {
 			// Handle case where no device token is provided
 			if (!deviceToken) {
 				// Check if this is a mobile app that will register separately
-				const isMobileApp = userAgent?.includes('Expo') || userAgent?.includes('okhttp') || 
-								   platform === 'android' || platform === 'ios';
-				
-				this.logger.log(`🔍 [${correlationId}] [DeviceRegistration] No device token in sign-in request - analyzing situation for user: ${user.email}`);
+				const isMobileApp =
+					userAgent?.includes('Expo') ||
+					userAgent?.includes('okhttp') ||
+					platform === 'android' ||
+					platform === 'ios';
+
+				this.logger.log(
+					`🔍 [${correlationId}] [DeviceRegistration] No device token in sign-in request - analyzing situation for user: ${user.email}`,
+				);
 				this.logger.debug(`📱 [${correlationId}] [DeviceRegistration] Token analysis:`, {
 					isMobileApp,
 					hasCurrentToken: currentRegistration.hasToken,
@@ -1169,76 +1303,104 @@ export class AuthService {
 					recommendedAction: currentRegistration.recommendAction,
 					userAgent: userAgent ? userAgent.substring(0, 50) + '...' : 'NOT_PROVIDED',
 					detectedPlatform: platform,
-					correlationId
+					correlationId,
 				});
-				
+
 				if (isMobileApp) {
-					this.logger.log(`📱 [${correlationId}] [DeviceRegistration] Mobile app detected - expecting post-login registration attempts for user: ${user.email}`);
-					this.logger.log(`⏳ [${correlationId}] [DeviceRegistration] Mobile app ${user.email} should retry registration after sign-in with device token`);
+					this.logger.log(
+						`📱 [${correlationId}] [DeviceRegistration] Mobile app detected - expecting post-login registration attempts for user: ${user.email}`,
+					);
+					this.logger.log(
+						`⏳ [${correlationId}] [DeviceRegistration] Mobile app ${user.email} should retry registration after sign-in with device token`,
+					);
 				} else {
-					this.logger.warn(`⚠️ [${correlationId}] [DeviceRegistration] Web/unknown client without token for user: ${user.email}`);
+					this.logger.warn(
+						`⚠️ [${correlationId}] [DeviceRegistration] Web/unknown client without token for user: ${user.email}`,
+					);
 				}
-				
+
 				if (!currentRegistration.hasToken) {
 					if (isMobileApp) {
-						this.logger.log(`🟡 [${correlationId}] [DeviceRegistration] Mobile user ${user.email} has NO stored push token - post-login registration REQUIRED`);
+						this.logger.log(
+							`🟡 [${correlationId}] [DeviceRegistration] Mobile user ${user.email} has NO stored push token - post-login registration REQUIRED`,
+						);
 					} else {
-						this.logger.log(`🔴 [${correlationId}] [DeviceRegistration] User ${user.email} has NO push token registered - notifications DISABLED until device registers`);
+						this.logger.log(
+							`🔴 [${correlationId}] [DeviceRegistration] User ${user.email} has NO push token registered - notifications DISABLED until device registers`,
+						);
 					}
 				} else if (!currentRegistration.tokenValid) {
-					this.logger.warn(`🔴 [${correlationId}] [DeviceRegistration] User ${user.email} has INVALID stored push token - re-registration REQUIRED`);
+					this.logger.warn(
+						`🔴 [${correlationId}] [DeviceRegistration] User ${user.email} has INVALID stored push token - re-registration REQUIRED`,
+					);
 				} else {
-					this.logger.log(`✅ [${correlationId}] [DeviceRegistration] User ${user.email} has valid stored token - notifications should work`);
+					this.logger.log(
+						`✅ [${correlationId}] [DeviceRegistration] User ${user.email} has valid stored token - notifications should work`,
+					);
 				}
-				
+
 				// Add a clear indication that post-login registration is expected
 				if (isMobileApp && !currentRegistration.hasToken) {
-					this.logger.log(`📋 [${correlationId}] [DeviceRegistration] EXPECTATION: Mobile client should make 1-3 registration attempts after this sign-in for user: ${user.email}`);
+					this.logger.log(
+						`📋 [${correlationId}] [DeviceRegistration] EXPECTATION: Mobile client should make 1-3 registration attempts after this sign-in for user: ${user.email}`,
+					);
 				}
-				
+
 				return;
 			}
 
 			// Check if device registration is needed
-			this.logger.debug(`🔍 [${correlationId}] [DeviceRegistration] Checking registration status with provided token...`);
+			this.logger.debug(
+				`🔍 [${correlationId}] [DeviceRegistration] Checking registration status with provided token...`,
+			);
 			const registrationStatus = await this.expoPushService.checkDeviceRegistrationStatus(
 				user,
 				deviceToken,
 				deviceId,
-				platform
+				platform,
 			);
 
-			this.logger.log(`📊 [${correlationId}] [DeviceRegistration] Registration check results for user ${user.email}:`, {
-				needsRegistration: registrationStatus.needsRegistration,
-				reason: registrationStatus.reason,
-				hasServerToken: !!registrationStatus.serverToken,
-				isValidFormat: registrationStatus.isValidFormat,
-				tokensMatch: registrationStatus.tokensMatch,
-				correlationId,
-			});
+			this.logger.log(
+				`📊 [${correlationId}] [DeviceRegistration] Registration check results for user ${user.email}:`,
+				{
+					needsRegistration: registrationStatus.needsRegistration,
+					reason: registrationStatus.reason,
+					hasServerToken: !!registrationStatus.serverToken,
+					isValidFormat: registrationStatus.isValidFormat,
+					tokensMatch: registrationStatus.tokensMatch,
+					correlationId,
+				},
+			);
 
 			// Initialize registration tracking variables
 			let registrationSuccess = false;
 			let lastError: any = null;
-			
+
 			// If registration is needed, we should update the user's token immediately with retry logic
 			if (registrationStatus.needsRegistration) {
-				this.logger.log(`🔄 [${correlationId}] [DeviceRegistration] Device registration needed for user ${user.email}: ${registrationStatus.reason}`);
+				this.logger.log(
+					`🔄 [${correlationId}] [DeviceRegistration] Device registration needed for user ${user.email}: ${registrationStatus.reason}`,
+				);
 
 				// Retry device registration up to 3 times
 				for (let attempt = 1; attempt <= 3; attempt++) {
 					try {
-						this.logger.log(`📱 [${correlationId}] [DeviceRegistration] Registration attempt ${attempt}/3 for user ${user.email}`);
-						this.logger.debug(`📱 [${correlationId}] [DeviceRegistration] Attempt ${attempt} device data:`, {
-							tokenLength: deviceToken?.length || 0,
-							tokenPrefix: deviceToken ? deviceToken.substring(0, 30) + '...' : 'NO_TOKEN_PROVIDED',
-							deviceId: deviceId || 'NO_DEVICE_ID',
-							platform: platform || 'NO_PLATFORM',
-							userId: user.uid,
-							userEmail: user.email,
-							attempt,
-							correlationId
-						});
+						this.logger.log(
+							`📱 [${correlationId}] [DeviceRegistration] Registration attempt ${attempt}/3 for user ${user.email}`,
+						);
+						this.logger.debug(
+							`📱 [${correlationId}] [DeviceRegistration] Attempt ${attempt} device data:`,
+							{
+								tokenLength: deviceToken?.length || 0,
+								tokenPrefix: deviceToken ? deviceToken.substring(0, 30) + '...' : 'NO_TOKEN_PROVIDED',
+								deviceId: deviceId || 'NO_DEVICE_ID',
+								platform: platform || 'NO_PLATFORM',
+								userId: user.uid,
+								userEmail: user.email,
+								attempt,
+								correlationId,
+							},
+						);
 
 						// Update user's push token directly in the database
 						await this.userService.updateDeviceRegistration(user.uid, {
@@ -1248,79 +1410,117 @@ export class AuthService {
 							pushTokenUpdatedAt: new Date(),
 						});
 
-						this.logger.log(`✅ [${correlationId}] [DeviceRegistration] Successfully updated device registration for user ${user.email} on attempt ${attempt}`);
-						
+						this.logger.log(
+							`✅ [${correlationId}] [DeviceRegistration] Successfully updated device registration for user ${user.email} on attempt ${attempt}`,
+						);
+
 						// Update the user object in memory to reflect the changes for consistent status reporting
 						user.expoPushToken = deviceToken;
 						user.deviceId = deviceId;
 						user.platform = platform;
 						user.pushTokenUpdatedAt = new Date();
-						
+
 						registrationSuccess = true;
 						break; // Exit retry loop on success
-
 					} catch (updateError) {
 						lastError = updateError;
-						this.logger.warn(`⚠️ [${correlationId}] [DeviceRegistration] Registration attempt ${attempt}/3 failed for user ${user.email}:`, updateError.message);
-						
+						this.logger.warn(
+							`⚠️ [${correlationId}] [DeviceRegistration] Registration attempt ${attempt}/3 failed for user ${user.email}:`,
+							updateError.message,
+						);
+
 						// Wait before retry (exponential backoff)
 						if (attempt < 3) {
 							const delay = Math.min(500 * Math.pow(2, attempt - 1), 2000); // 500ms, 1s, 2s max
-							this.logger.debug(`⏳ [${correlationId}] [DeviceRegistration] Waiting ${delay}ms before retry attempt ${attempt + 1} for user ${user.email}`);
-							await new Promise(resolve => setTimeout(resolve, delay));
+							this.logger.debug(
+								`⏳ [${correlationId}] [DeviceRegistration] Waiting ${delay}ms before retry attempt ${
+									attempt + 1
+								} for user ${user.email}`,
+							);
+							await new Promise((resolve) => setTimeout(resolve, delay));
 						}
 					}
 				}
 
 				// Handle final result
 				if (registrationSuccess) {
-					this.logger.log(`🎉 [${correlationId}] [DeviceRegistration] Device registration completed successfully after retry attempts for user ${user.email}`);
-					
+					this.logger.log(
+						`🎉 [${correlationId}] [DeviceRegistration] Device registration completed successfully after retry attempts for user ${user.email}`,
+					);
+
 					// Optionally verify the token works
 					try {
 						const verificationResult = await this.expoPushService.verifyTokenDelivery(deviceToken);
 						if (verificationResult.canReceive) {
-							this.logger.log(`✅ [${correlationId}] [DeviceRegistration] Push token verified working for user ${user.email}`);
+							this.logger.log(
+								`✅ [${correlationId}] [DeviceRegistration] Push token verified working for user ${user.email}`,
+							);
 						} else {
-							this.logger.warn(`⚠️ [${correlationId}] [DeviceRegistration] Push token verification failed for user ${user.email}: ${verificationResult.error}`);
+							this.logger.warn(
+								`⚠️ [${correlationId}] [DeviceRegistration] Push token verification failed for user ${user.email}: ${verificationResult.error}`,
+							);
 						}
 					} catch (verifyError) {
-						this.logger.warn(`⚠️ [${correlationId}] [DeviceRegistration] Could not verify token delivery: ${verifyError.message}`);
+						this.logger.warn(
+							`⚠️ [${correlationId}] [DeviceRegistration] Could not verify token delivery: ${verifyError.message}`,
+						);
 					}
 				} else {
-					this.logger.error(`❌ [${correlationId}] [DeviceRegistration] All 3 registration attempts failed for user ${user.email}. Last error:`, lastError?.message);
-					this.logger.error(`💔 [${correlationId}] [DeviceRegistration] User ${user.email} will not receive push notifications until device re-registers`);
+					this.logger.error(
+						`❌ [${correlationId}] [DeviceRegistration] All 3 registration attempts failed for user ${user.email}. Last error:`,
+						lastError?.message,
+					);
+					this.logger.error(
+						`💔 [${correlationId}] [DeviceRegistration] User ${user.email} will not receive push notifications until device re-registers`,
+					);
 					return; // Exit early if all attempts failed
 				}
 			} else {
-				this.logger.log(`✅ [${correlationId}] [DeviceRegistration] Device registration is current for user: ${user.email}`);
+				this.logger.log(
+					`✅ [${correlationId}] [DeviceRegistration] Device registration is current for user: ${user.email}`,
+				);
 				registrationSuccess = true; // No registration needed means it's already successful
 			}
 
 			// Final status check with updated user object
 			const finalSummary = this.expoPushService.getDeviceRegistrationSummary(user);
-			this.logger.log(`📋 [${correlationId}] [DeviceRegistration] Final registration summary for user ${user.email}:`, {
-				hasToken: finalSummary.hasToken,
-				tokenValid: finalSummary.tokenValid,
-				recommendAction: finalSummary.recommendAction,
-				deviceInfo: finalSummary.deviceInfo,
-				registrationAttemptsMade: registrationStatus.needsRegistration ? (registrationSuccess ? 'SUCCESS_AFTER_RETRIES' : 'FAILED_ALL_ATTEMPTS') : 'NO_ATTEMPTS_NEEDED',
-				correlationId,
-			});
+			this.logger.log(
+				`📋 [${correlationId}] [DeviceRegistration] Final registration summary for user ${user.email}:`,
+				{
+					hasToken: finalSummary.hasToken,
+					tokenValid: finalSummary.tokenValid,
+					recommendAction: finalSummary.recommendAction,
+					deviceInfo: finalSummary.deviceInfo,
+					registrationAttemptsMade: registrationStatus.needsRegistration
+						? registrationSuccess
+							? 'SUCCESS_AFTER_RETRIES'
+							: 'FAILED_ALL_ATTEMPTS'
+						: 'NO_ATTEMPTS_NEEDED',
+					correlationId,
+				},
+			);
 
 			// Log completion summary
 			if (registrationStatus.needsRegistration) {
-				this.logger.log(`🏁 [${correlationId}] [DeviceRegistration] Device registration process completed for ${user.email} - Outcome: ${registrationSuccess ? 'SUCCESS' : 'FAILED'}`);
+				this.logger.log(
+					`🏁 [${correlationId}] [DeviceRegistration] Device registration process completed for ${
+						user.email
+					} - Outcome: ${registrationSuccess ? 'SUCCESS' : 'FAILED'}`,
+				);
 			} else {
-				this.logger.log(`🏁 [${correlationId}] [DeviceRegistration] Device registration check completed for ${user.email} - No registration needed`);
+				this.logger.log(
+					`🏁 [${correlationId}] [DeviceRegistration] Device registration check completed for ${user.email} - No registration needed`,
+				);
 			}
-
 		} catch (error) {
-			this.logger.error(`❌ [${correlationId}] [DeviceRegistration] Failed to check device registration for user ${user.email}:`, {
-				error: error.message,
-				stack: error.stack,
-				correlationId,
-			});
+			this.logger.error(
+				`❌ [${correlationId}] [DeviceRegistration] Failed to check device registration for user ${user.email}:`,
+				{
+					error: error.message,
+					stack: error.stack,
+					correlationId,
+				},
+			);
 			// Don't throw error as this should not block sign-in
 		}
 	}

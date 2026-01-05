@@ -2590,8 +2590,11 @@ export class IotService {
 		await queryRunner.startTransaction();
 
 		try {
-			// 1. Device validation and retrieval
-			device = await this.getAndValidateDevice(timeEventDto.deviceID, queryRunner);
+			// 1. Device validation and retrieval (with auto-registration)
+			device = await this.getAndValidateDevice(timeEventDto.deviceID, queryRunner, {
+				timeEventDto,
+				networkInfo,
+			});
 
 			// 2. Business hours validation and analysis
 			const businessHoursAnalysis = await this.validateBusinessHours(timeEventDto, device);
@@ -3059,48 +3062,120 @@ export class IotService {
 	}
 
 	/**
-	 * Get and validate device with comprehensive checks
+	 * Auto-register a new device when it sends its first time event
+	 * Devices are assigned to org 2, branch 2 by default
 	 */
-	private async getAndValidateDevice(deviceID: string, queryRunner: any): Promise<Device> {
-		// Try cache first for performance
+	private async autoRegisterDevice(
+		timeEventDto: DeviceTimeRecordDto,
+		networkInfo: { ipAddress?: string; userAgent?: string } | undefined,
+		queryRunner: any,
+	): Promise<Device> {
+		this.logger.log(`🆕 [autoRegisterDevice] Auto-registering device: ${timeEventDto.deviceID}`);
+
+		// Default org and branch for auto-registered devices
+		const DEFAULT_ORG_ID = 2;
+		const DEFAULT_BRANCH_ID = 2;
+
+		// Verify branch exists
+		const branch = await queryRunner.manager.findOne(Branch, {
+			where: { uid: DEFAULT_BRANCH_ID, isDeleted: false },
+		});
+
+		if (!branch) {
+			throw new BadRequestException({
+				message: `Cannot auto-register: Default branch ${DEFAULT_BRANCH_ID} not found`,
+				deviceID: timeEventDto.deviceID,
+			});
+		}
+
+		// Build device data from request
+		const deviceData = {
+			deviceID: timeEventDto.deviceID,
+			deviceType: DeviceType.DOOR_SENSOR,
+			currentStatus: DeviceStatus.ONLINE,
+			deviceIP: timeEventDto.ipAddress || networkInfo?.ipAddress || '0.0.0.0',
+			devicePort: 8080,
+			devicLocation: timeEventDto.location || 'Auto-registered',
+			deviceTag: timeEventDto.deviceID,
+			orgID: DEFAULT_ORG_ID,
+			branchID: DEFAULT_BRANCH_ID,
+			branchUid: DEFAULT_BRANCH_ID,
+			analytics: this.initializeDeviceAnalytics(),
+			createdAt: new Date(),
+			updatedAt: new Date(),
+			isDeleted: false,
+		};
+
+		const device = queryRunner.manager.create(Device, deviceData);
+		const savedDevice = await queryRunner.manager.save(device);
+
+		// Cache the new device
+		await this.cacheManager.set(
+			this.getCacheKey(`device:deviceId:${timeEventDto.deviceID}`),
+			savedDevice,
+			this.CACHE_TTL,
+		);
+
+		this.logger.log(
+			`✅ [autoRegisterDevice] Device registered: ID=${savedDevice.id}, deviceID=${timeEventDto.deviceID}`,
+		);
+
+		this.eventEmitter.emit('device.auto_registered', {
+			deviceId: savedDevice.id,
+			deviceID: savedDevice.deviceID,
+			orgId: DEFAULT_ORG_ID,
+			branchId: DEFAULT_BRANCH_ID,
+			timestamp: new Date(),
+		});
+
+		return savedDevice;
+	}
+
+	/**
+	 * Get and validate device - auto-registers if device doesn't exist
+	 */
+	private async getAndValidateDevice(
+		deviceID: string,
+		queryRunner: any,
+		autoRegContext?: { timeEventDto: DeviceTimeRecordDto; networkInfo?: { ipAddress?: string; userAgent?: string } },
+	): Promise<Device> {
 		const cacheKey = this.getCacheKey(`device:deviceId:${deviceID}`);
 		let device = await this.cacheManager.get<Device>(cacheKey);
 
 		if (!device) {
-			// Fetch from database with full details
 			device = await queryRunner.manager.findOne(Device, {
 				where: { deviceID, isDeleted: false },
 				relations: ['records'],
 			});
 
 			if (device) {
-				// Cache for future requests
 				await this.cacheManager.set(cacheKey, device, this.CACHE_TTL);
 			}
 		}
 
+		// Device not found - auto-register if context provided
 		if (!device) {
-			throw new NotFoundException({
-				message: `Device with ID '${deviceID}' not found`,
-				deviceID,
-				suggestions: [
-					'Verify the device ID is correct and exists',
-					'Check if the device has been registered in the system',
-					'Ensure the device has not been deactivated',
-					'Confirm the device belongs to your organization',
-				],
-			});
+			if (autoRegContext?.timeEventDto) {
+				device = await this.autoRegisterDevice(
+					autoRegContext.timeEventDto,
+					autoRegContext.networkInfo,
+					queryRunner,
+				);
+			} else {
+				throw new NotFoundException({
+					message: `Device with ID '${deviceID}' not found`,
+					deviceID,
+				});
+			}
 		}
 
-		// Auto-update device status if offline
+		// Update status if offline
 		if (device.currentStatus === DeviceStatus.OFFLINE) {
-			this.logger.log(`📡 Device ${deviceID} coming online - updating status`);
-
+			this.logger.log(`📡 Device ${deviceID} coming online`);
 			await queryRunner.manager.update(Device, device.id, {
 				currentStatus: DeviceStatus.ONLINE,
 				updatedAt: new Date(),
 			});
-
 			device.currentStatus = DeviceStatus.ONLINE;
 			await this.cacheManager.set(cacheKey, device, this.CACHE_TTL);
 		}

@@ -3541,6 +3541,7 @@ export class AttendanceService {
 		orgId?: number,
 		branchId?: number,
 		userAccessLevel?: string,
+		requestingUserId?: number,
 	): Promise<{
 		message: string;
 		startTime: string;
@@ -3553,6 +3554,12 @@ export class AttendanceService {
 	}> {
 		// Get effective branch ID based on user role
 		const effectiveBranchId = this.getEffectiveBranchId(branchId, userAccessLevel);
+		
+		// If user is querying their own status, don't apply branch filtering
+		// Branch filtering should only apply to list queries, not individual user queries
+		// This ensures users can always see their own records regardless of branch changes
+		const isOwnStatus = requestingUserId && requestingUserId === ref;
+		
 		try {
 			const whereConditions: any = {
 				owner: {
@@ -3565,9 +3572,15 @@ export class AttendanceService {
 				whereConditions.organisation = { uid: orgId };
 			}
 
-			// Apply branch filtering if provided (and user is not admin/owner/developer)
-			if (effectiveBranchId) {
+			// Only apply branch filtering if:
+			// 1. User is NOT querying their own status (admins viewing others)
+			// 2. AND effectiveBranchId is set
+			// 3. AND user doesn't have elevated access (already handled by getEffectiveBranchId)
+			if (!isOwnStatus && effectiveBranchId) {
 				whereConditions.branch = { uid: effectiveBranchId };
+				this.logger.debug(`Applied branch filter: ${effectiveBranchId} for user ${ref} (viewed by ${requestingUserId})`);
+			} else if (isOwnStatus) {
+				this.logger.debug(`User ${ref} viewing own status - skipping branch filter to ensure all records are visible`);
 			} else if (userAccessLevel) {
 				this.logger.debug(`User ${userAccessLevel} can see all branches - no branch filter applied`);
 			}
@@ -3694,6 +3707,10 @@ export class AttendanceService {
 			throw new NotFoundException('Access denied: You can only view your own attendance records');
 		}
 		
+		// If user is querying their own records, don't apply branch filtering
+		// This ensures users can always see their own records regardless of branch changes
+		const isOwnRecords = requestingUserId && requestingUserId === ref;
+		
 		try {
 			const whereConditions: any = {
 				owner: { uid: ref },
@@ -3704,12 +3721,18 @@ export class AttendanceService {
 				whereConditions.organisation = { uid: orgId };
 			}
 
-		// Apply branch filtering if provided (and user is not admin/owner/developer)
-		if (effectiveBranchId) {
-			whereConditions.branch = { uid: effectiveBranchId };
-		} else if (userAccessLevel) {
-			this.logger.debug(`User ${userAccessLevel} can see all branches - no branch filter applied`);
-		}
+			// Only apply branch filtering if:
+			// 1. User is NOT querying their own records (admins viewing others)
+			// 2. AND effectiveBranchId is set
+			// 3. AND user doesn't have elevated access (already handled by getEffectiveBranchId)
+			if (!isOwnRecords && effectiveBranchId) {
+				whereConditions.branch = { uid: effectiveBranchId };
+				this.logger.debug(`Applied branch filter: ${effectiveBranchId} for user ${ref} (viewed by ${requestingUserId})`);
+			} else if (isOwnRecords) {
+				this.logger.debug(`User ${ref} viewing own records - skipping branch filter to ensure all records are visible`);
+			} else if (userAccessLevel) {
+				this.logger.debug(`User ${userAccessLevel} can see all branches - no branch filter applied`);
+			}
 
 		const checkIns = await this.attendanceRepository.find({
 			where: whereConditions,

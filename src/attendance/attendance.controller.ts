@@ -2577,7 +2577,8 @@ Retrieves the current attendance status for a specific user with live updates, s
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		const userAccessLevel = req.user?.accessLevel;
-		return this.attendanceService.checkInsByStatus(ref, orgId, branchId, userAccessLevel);
+		const requestingUserId = req.user?.uid;
+		return this.attendanceService.checkInsByStatus(ref, orgId, branchId, userAccessLevel, requestingUserId);
 	}
 
 	@Get('branch/:ref')

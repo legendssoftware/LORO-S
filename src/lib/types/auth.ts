@@ -33,3 +33,29 @@ export interface SignUpResponse {
 	message: string;
 	status?: string;
 }
+
+export interface RefreshTokenResponse {
+	message: string;
+	accessToken: string | null;
+	refreshToken: string | null;
+	profileData: ProfileData | null;
+}
+
+export interface VerifyEmailResponse {
+	message: string;
+	email?: string;
+	status?: string;
+}
+
+export interface SetPasswordResponse {
+	message: string;
+	status?: string;
+}
+
+export interface ForgotPasswordResponse {
+	message: string;
+}
+
+export interface ResetPasswordResponse {
+	message: string;
+}
