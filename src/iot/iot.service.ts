@@ -2499,8 +2499,8 @@ export class IotService {
 			}) as keyof typeof organizationHours.weeklySchedule;
 
 			// Determine business hours for the event day
-			let dayOpenTime = organizationHours.openTime;
-			let dayCloseTime = organizationHours.closeTime;
+			let dayOpenTime = organizationHours.openTime || '07:00';
+			let dayCloseTime = organizationHours.closeTime || '16:30';
 			let isWorkingDay = true;
 
 			// Check if organization has detailed schedule
@@ -2509,8 +2509,8 @@ export class IotService {
 				if (daySchedule.closed) {
 					isWorkingDay = false;
 				} else {
-					dayOpenTime = daySchedule.start;
-					dayCloseTime = daySchedule.end;
+					dayOpenTime = daySchedule.start || dayOpenTime;
+					dayCloseTime = daySchedule.end || dayCloseTime;
 				}
 			} else if (organizationHours.weeklySchedule && organizationHours.weeklySchedule[dayOfWeek] === false) {
 				isWorkingDay = false;
@@ -2537,8 +2537,8 @@ export class IotService {
 				if (specialHours.openTime === '00:00' && specialHours.closeTime === '00:00') {
 					isWorkingDay = false;
 				} else {
-					dayOpenTime = specialHours.openTime;
-					dayCloseTime = specialHours.closeTime;
+					dayOpenTime = specialHours.openTime || dayOpenTime;
+					dayCloseTime = specialHours.closeTime || dayCloseTime;
 				}
 			}
 
@@ -2551,6 +2551,12 @@ export class IotService {
 				// Parse times for comparison in org timezone
 				// Parse time strings (HH:mm) and combine with eventDate in org timezone
 				const parseTimeInOrg = (timeString: string, baseDate: Date, tz: string): Date => {
+					// Ensure timeString is a valid string before splitting
+					if (!timeString || typeof timeString !== 'string') {
+						this.logger.warn(`⚠️ Invalid timeString provided to parseTimeInOrg: ${timeString}, using default 07:00`);
+						timeString = '07:00';
+					}
+
 					const [hours, minutes] = timeString.split(':').map(Number);
 					const zonedBase = toZonedTime(baseDate, tz);
 					zonedBase.setHours(hours, minutes, 0, 0);
