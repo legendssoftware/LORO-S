@@ -1453,7 +1453,8 @@ export class AttendanceService {
 					checkIn: Not(IsNull()),
 					checkOut: IsNull(),
 					organisation: orgId ? { uid: orgId } : undefined,
-					branch: branchId ? { uid: branchId } : undefined,
+					// Don't filter by branch - users should be able to check out their own shifts
+					// regardless of branch changes, consistent with checkIn behavior
 				},
 				relations: ['owner', 'owner.organisation'],
 				order: {

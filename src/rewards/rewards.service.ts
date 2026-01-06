@@ -33,15 +33,11 @@ export class RewardsService {
         throw new BadRequestException('Organization ID is required');
       }
 
-      // Build where clause for organization and branch filtering
+      // Build where clause - don't filter by branch as XP rewards are user-specific
+      // Users should be able to access their rewards regardless of branch changes
       const whereClause: any = {
         owner: { uid: createRewardDto.owner },
       };
-
-      if (branchId) {
-        this.logger.log(`${logPrefix} - Adding branch filter: branchId=${branchId}`);
-        whereClause.owner.branch = { uid: branchId };
-      }
 
       this.logger.log(`${logPrefix} - Query whereClause:`, JSON.stringify(whereClause, null, 2));
 
@@ -55,18 +51,13 @@ export class RewardsService {
         
         // Verify user exists in the organization before creating rewards
         // Use TypeORM query builder to handle column mapping correctly
+        // Don't filter by branch - users should be able to receive XP regardless of branch changes
         const userRepository = this.dataSource.getRepository(User);
         const queryBuilder = userRepository
           .createQueryBuilder('u')
           .select('u.uid')
           .where('u.uid = :userId', { userId: createRewardDto.owner })
           .andWhere('u.organisationRef = :orgRef', { orgRef: orgId.toString() });
-
-        if (branchId) {
-          queryBuilder
-            .leftJoin('u.branch', 'branch')
-            .andWhere('branch.uid = :branchId', { branchId });
-        }
 
         const userExists = await queryBuilder.getRawMany();
 
