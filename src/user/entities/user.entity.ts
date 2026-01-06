@@ -96,6 +96,9 @@ export class User {
 	@Column({ type: 'int', nullable: true })
 	hrID: number;
 
+	@Column({ unique: true, nullable: true })
+	userref: string;
+
 	@Column({ nullable: true })
 	verificationToken: string;
 

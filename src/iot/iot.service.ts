@@ -27,6 +27,7 @@ import {
 import { IoTReportingService } from './services/iot-reporting.service';
 import { OrganisationHoursService } from '../organisation/services/organisation-hours.service';
 import { toZonedTime, formatInTimeZone } from 'date-fns-tz';
+import { format } from 'date-fns';
 import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
 import { User } from '../user/entities/user.entity';
 import { AccessLevel } from '../lib/enums/user.enums';
@@ -1370,486 +1371,68 @@ export class IotService {
 	}
 
 	/**
-	 * Calculate device performance metrics using organization hours
-	 * This replaces the client-side calculation with server-side logic
+	 * Safely extract time string from organization hours
+	 * Handles Date objects, strings, schedule property, and null/undefined values
 	 */
-	private async calculateDevicePerformanceMetrics(
-		device: Device,
-		records: DeviceRecords[],
-	): Promise<{
-		opensOnTime: boolean;
-		opensOnTimePercentage: number;
-		closesOnTime: boolean;
-		closesOnTimePercentage: number;
-		score: number;
-		note: string;
-		latestOpenTime: string | null;
-		latestCloseTime: string | null;
-		doorUserComparisons?: DoorUserComparison[];
-	}> {
+	private extractTimeString(
+		orgHours: any,
+		timeType: 'open' | 'close',
+		dayOfWeek?: number, // 0 = Sunday, 1 = Monday, etc.
+		defaultTime: string = '09:00'
+	): string {
 		try {
-			// Get organization hours - REQUIRED, no defaults
-			const orgRef = String(device.orgID);
-			const orgHoursArr = await this.organisationHoursService.findAll(orgRef).catch(() => []);
-			const orgHours = Array.isArray(orgHoursArr) && orgHoursArr.length > 0 ? orgHoursArr[0] : null;
-
-			if (!orgHours) {
-				this.logger.warn(`No organization hours configured for org ${orgRef}, cannot calculate performance`);
-				return {
-					opensOnTime: false,
-					opensOnTimePercentage: 0,
-					closesOnTime: false,
-					closesOnTimePercentage: 0,
-					score: 1,
-					note: 'Organization hours not configured',
-					latestOpenTime: null,
-					latestCloseTime: null,
-				};
-			}
-
-			// Parse organization open/close times from entity
-			const [openHour, openMinute] = orgHours.openTime.split(':').map(Number);
-			const [closeHour, closeMinute] = orgHours.closeTime.split(':').map(Number);
-			const targetOpenTimeMinutes = openHour * 60 + openMinute;
-			const targetCloseTimeMinutes = closeHour * 60 + closeMinute;
-
-			// Get organization timezone
-			const orgTimezone = orgHours.timezone || 'Africa/Johannesburg';
-
-			// Use recent records (last 7 days only) for better representation of current performance
-			// Sort records by opening/closing time descending to get most recent first
-			const sortedRecords = [...records].sort((a, b) => {
-				// Use openTime or closeTime for sorting, fallback to createdAt
-				const aTime = a.openTime || a.closeTime || a.createdAt;
-				const bTime = b.openTime || b.closeTime || b.createdAt;
-				return new Date(bTime).getTime() - new Date(aTime).getTime();
-			});
-			
-			// Get records from last 7 days only based on actual opening/closing dates
-			// CRITICAL FIX: Use organization timezone for date filtering, not UTC
-			// Calculate "7 days ago" in organization timezone
-			const nowInOrgTimezone = toZonedTime(new Date(), orgTimezone);
-			const sevenDaysAgoInOrgTimezone = new Date(nowInOrgTimezone);
-			sevenDaysAgoInOrgTimezone.setUTCDate(sevenDaysAgoInOrgTimezone.getUTCDate() - 7);
-			sevenDaysAgoInOrgTimezone.setUTCHours(0, 0, 0, 0);
-			
-			// Filter records using organization timezone dates
-			const recentRecords = sortedRecords.filter(r => {
-				// Use openTime or closeTime date for filtering, fallback to createdAt
-				const recordDate = r.openTime || r.closeTime || r.createdAt;
-				if (!recordDate) return false;
+			// First, try to get from schedule if day-specific times are available
+			if (dayOfWeek !== undefined && orgHours?.schedule) {
+				const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+				const dayName = dayNames[dayOfWeek];
+				const daySchedule = orgHours.schedule[dayName];
 				
-				// Convert record date to organization timezone for date comparison
-				const recordDateObj = typeof recordDate === 'string' 
-					? new Date(recordDate) 
-					: (recordDate as unknown as Date);
-				const recordDateInOrgTimezone = toZonedTime(recordDateObj, orgTimezone);
-				
-				// Compare dates (YYYY-MM-DD) in organization timezone
-				const recordDateKey = recordDateInOrgTimezone.toISOString().split('T')[0];
-				const sevenDaysAgoKey = sevenDaysAgoInOrgTimezone.toISOString().split('T')[0];
-				
-				return recordDateKey >= sevenDaysAgoKey;
-			});
-			
-			// Use only last 7 days records - no fallback to older records
-			const recordsToCheck = recentRecords;
-			
-			this.logger.debug(
-				`[${device.deviceID}] Using ${recordsToCheck.length} records for performance calculation ` +
-				`(from last 7 days in ${orgTimezone} timezone, ${sortedRecords.length} total available)`
-			);
-
-			// Helper function to extract hours/minutes from organization timezone
-			const getMinutesSinceMidnight = (date: Date, timezone: string): number => {
-				const orgDate = toZonedTime(date, timezone);
-				// Extract hours/minutes from the zoned time
-				return orgDate.getHours() * 60 + orgDate.getMinutes();
-			};
-
-			// DAILY AGGREGATION: Group records by date and extract first opening and last closing per day
-			// This ensures we only use the earliest open and latest close for each day, ignoring intermediate events
-			// This is critical for accurate performance metrics - a store that opens at 5:00 AM should not show 8:00 AM
-			// as the opening time even if that's when a manager arrived later
-			// IMPORTANT: We evaluate ALL opening times regardless of hour - early openings (before org open time) 
-			// are treated as acceptable and count as "on time"
-			// Store original dates (UTC) so we can format them properly later
-			const dailyOpenings = new Map<string, { time: Date; minutes: number }>();
-			const dailyClosings = new Map<string, { time: Date; minutes: number }>();
-
-			recordsToCheck.forEach((record) => {
-				// Process opening times - evaluate ALL openings regardless of time
-				// Early openings (before org open time) are acceptable and will be counted as "on time"
-				if (record.openTime) {
-					try {
-						const openDate = typeof record.openTime === 'string'
-							? new Date(record.openTime)
-							: (record.openTime as unknown as Date);
-						
-						const openDateOrg = toZonedTime(openDate, orgTimezone);
-						const openMinutes = getMinutesSinceMidnight(openDate, orgTimezone);
-						
-						// Process all opening times - no time window filter
-						// Early openings are acceptable and will be evaluated against org open time
-						const dateKey = openDateOrg.toISOString().split('T')[0]; // YYYY-MM-DD
-						
-						// Keep only the earliest opening for each day
-						// Store original date (UTC) so formatInOrganizationTime can convert it properly
-						if (!dailyOpenings.has(dateKey) || openMinutes < dailyOpenings.get(dateKey)!.minutes) {
-							dailyOpenings.set(dateKey, { time: openDate, minutes: openMinutes });
-						}
-					} catch (error) {
-						this.logger.warn(`Failed to parse open time for device ${device.deviceID}: ${error.message}`);
+				if (daySchedule && !daySchedule.closed) {
+					const timeValue = timeType === 'open' ? daySchedule.start : daySchedule.end;
+					if (timeValue && typeof timeValue === 'string' && /^\d{1,2}:\d{2}$/.test(timeValue)) {
+						return timeValue;
 					}
 				}
+			}
 
-				// Process closing times - use last closing of each day
-				if (record.closeTime) {
-					try {
-						const closeDate = typeof record.closeTime === 'string'
-							? new Date(record.closeTime)
-							: (record.closeTime as unknown as Date);
-						
-						const closeDateOrg = toZonedTime(closeDate, orgTimezone);
-						const closeMinutes = getMinutesSinceMidnight(closeDate, orgTimezone);
-						const dateKey = closeDateOrg.toISOString().split('T')[0]; // YYYY-MM-DD
-						
-						// Keep only the latest closing for each day
-						// Store original date (UTC) so formatInOrganizationTime can convert it properly
-						if (!dailyClosings.has(dateKey) || closeMinutes > dailyClosings.get(dateKey)!.minutes) {
-							dailyClosings.set(dateKey, { time: closeDate, minutes: closeMinutes });
-						}
-					} catch (error) {
-						this.logger.warn(`Failed to parse close time for device ${device.deviceID}: ${error.message}`);
+			// Try to get from default openTime/closeTime property
+			const timeProperty = timeType === 'open' ? 'openTime' : 'closeTime';
+			const timeValue = orgHours?.[timeProperty];
+
+			// Handle Date objects - convert to HH:mm format
+			if (timeValue instanceof Date) {
+				return format(timeValue, 'HH:mm');
+			}
+
+			// Handle string values - validate format
+			if (typeof timeValue === 'string') {
+				// Check if it's already in HH:mm format
+				if (/^\d{1,2}:\d{2}$/.test(timeValue)) {
+					return timeValue;
+				}
+				// Try to parse as ISO date string and extract time
+				try {
+					const dateObj = new Date(timeValue);
+					if (!isNaN(dateObj.getTime())) {
+						return format(dateObj, 'HH:mm');
 					}
+				} catch (e) {
+					// Not a valid date string, continue to default
 				}
-			});
-
-			// Evaluate opening times using first opening per day
-			// FIX: Use available days (1-7) instead of hard-coded 7 days
-			let opensOnTimeCount = 0;
-			const availableDaysWithOpenings = dailyOpenings.size; // Can be 0 to 7
-
-			// Debug logging for opening times
-			const openingDetails: Array<{ date: string; time: string; minutes: number; timeDiff: number; accepted: boolean }> = [];
-
-			dailyOpenings.forEach((value, dateKey) => {
-				const { minutes: openMinutes } = value;
-				const timeDiff = openMinutes - targetOpenTimeMinutes;
-				// Accept if: opens early (timeDiff < 0) OR exactly on-time (timeDiff === 0)
-				// Reject if: opens late (timeDiff > 0)
-				// Early openings (before org open time) are always acceptable - they count as "on time"
-				const accepted = timeDiff <= 0;
-				if (accepted) {
-					opensOnTimeCount++;
-				}
-				
-				// Store details for debugging
-				const hours = Math.floor(openMinutes / 60);
-				const mins = openMinutes % 60;
-				openingDetails.push({
-					date: dateKey,
-					time: `${hours}:${mins.toString().padStart(2, '0')}`,
-					minutes: openMinutes,
-					timeDiff,
-					accepted,
-				});
-			});
-
-			// Evaluate closing times using last closing per day
-			// FIX: Use available days (1-7) instead of hard-coded 7 days
-			let closesOnTimeCount = 0;
-			const availableDaysWithClosings = dailyClosings.size; // Can be 0 to 7
-
-			// Debug logging for closing times
-			const closingDetails: Array<{ date: string; time: string; minutes: number; timeDiff: number; accepted: boolean }> = [];
-
-			dailyClosings.forEach(({ minutes: closeMinutes }, dateKey) => {
-				const timeDiff = closeMinutes - targetCloseTimeMinutes;
-				// Accept if: closes on-time or late (timeDiff >= 0 means not early)
-				const accepted = timeDiff >= 0;
-				if (accepted) {
-					closesOnTimeCount++;
-				}
-				
-				// Store details for debugging
-				const hours = Math.floor(closeMinutes / 60);
-				const mins = closeMinutes % 60;
-				closingDetails.push({
-					date: dateKey,
-					time: `${hours}:${mins.toString().padStart(2, '0')}`,
-					minutes: closeMinutes,
-					timeDiff,
-					accepted,
-				});
-			});
-
-			// FIX: Calculate percentages using available days (not hard-coded 7)
-			// Rule: onTimeRate = (numberOfOnTimeDays / availableDays) × 100
-			// availableDays can be 1 to 7 (or 0 if no data)
-			const opensOnTimePercentage = availableDaysWithOpenings > 0
-				? (opensOnTimeCount / availableDaysWithOpenings) * 100
-				: 0;
-			const closesOnTimePercentage = availableDaysWithClosings > 0
-				? (closesOnTimeCount / availableDaysWithClosings) * 100
-				: 0;
-
-			// Determine punctuality flags
-			// Use 50% threshold for all devices to be more lenient and account for early openings
-			// Early openings (before expected time) are acceptable and count as "on time"
-			const openingThreshold = 50;
-			const closingThreshold = 50;
-			
-			const opensOnTime = opensOnTimePercentage >= openingThreshold;
-			let closesOnTime = closesOnTimePercentage >= closingThreshold;
-			
-			// REVISED LOGIC: If shop opened late today and hasn't closed by 8pm, mark closesOnTime as false
-			// Get today's date in organization timezone for comparison
-			const todayOrg = toZonedTime(new Date(), orgTimezone);
-			const todayKey = todayOrg.toISOString().split('T')[0]; // YYYY-MM-DD in org timezone
-			
-			// Check if shop opened late today
-			let todayOpenedLate = false;
-			if (dailyOpenings.has(todayKey)) {
-				const todayOpening = dailyOpenings.get(todayKey)!;
-				const todayOpenMinutes = todayOpening.minutes;
-				// Check if shop opened late today (after target open time)
-				todayOpenedLate = todayOpenMinutes > targetOpenTimeMinutes;
 			}
-			
-			// Check if shop hasn't closed today
-			const hasNotClosedToday = dailyOpenings.has(todayKey) && !dailyClosings.has(todayKey);
-			
-			// Get current time in organization timezone
-			const currentMinutes = getMinutesSinceMidnight(todayOrg, orgTimezone);
-			const eightPMMinutes = 20 * 60; // 8pm = 20:00 = 1200 minutes
-			
-			// If shop opened late today, hasn't closed yet, and it's past 8pm, mark as closes late
-			if (todayOpenedLate && hasNotClosedToday && currentMinutes >= eightPMMinutes) {
-				closesOnTime = false;
-				this.logger.debug(
-					`[${device.deviceID}] REVISED LOGIC: Shop opened late today (${todayOpenedLate}) and hasn't closed by 8pm (current: ${currentMinutes} >= ${eightPMMinutes}), setting closesOnTime=false`
-				);
-			}
-			
-			// Log the final decision for debugging
-			this.logger.log(
-				`[${device.deviceID}] Performance calculation result: ` +
-				`opensOnTime=${opensOnTime} (${opensOnTimePercentage.toFixed(1)}% >= ${openingThreshold}%), ` +
-				`closesOnTime=${closesOnTime} (${closesOnTimePercentage.toFixed(1)}% >= ${closingThreshold}%), ` +
-				`availableDaysWithOpenings=${availableDaysWithOpenings}, availableDaysWithClosings=${availableDaysWithClosings}`
+
+			// Fallback to default time
+			this.logger.warn(
+				`Could not extract ${timeType} time from org hours, using default: ${defaultTime}. ` +
+				`Time value type: ${typeof timeValue}, value: ${timeValue}`
 			);
-
-			// Enhanced logging for debugging opening times
-			// ✅ Reduced logging: Only log summary, not detailed analysis
-			if (openingDetails.length > 0) {
-				// Only log if there's an issue or in development mode
-				if (!opensOnTime || process.env.NODE_ENV === 'development') {
-					this.logger.debug(
-						`[${device.deviceID}] Opening: ${opensOnTimeCount}/${availableDaysWithOpenings} on-time (${opensOnTimePercentage.toFixed(1)}%)`
-					);
-				}
-			} else {
-				this.logger.warn(
-					`[${device.deviceID}] No opening records found in last 7 days (${orgTimezone} timezone) for performance calculation`
-				);
-			}
-			
-			// ✅ Reduced logging: Only log summary, not detailed analysis
-			if (closingDetails.length > 0) {
-				// Only log if there's an issue or in development mode
-				if (!closesOnTime || process.env.NODE_ENV === 'development') {
-					this.logger.debug(
-						`[${device.deviceID}] Closing: ${closesOnTimeCount}/${availableDaysWithClosings} on-time (${closesOnTimePercentage.toFixed(1)}%)`
-					);
-				}
-			} else {
-				this.logger.warn(
-					`[${device.deviceID}] No closing records found in last 7 days (${orgTimezone} timezone) for performance calculation`
-				);
-			}
-
-			// Calculate composite score
-			// Use type assertion for extended analytics properties that may exist but aren't in the strict type
-			const analytics = device.analytics as any;
-			const punctualityScore = analytics?.punctualityRate
-				? analytics.punctualityRate * 100
-				: (opensOnTimePercentage + closesOnTimePercentage) / 2;
-
-			const efficiencyScore =
-				device.analytics?.totalCount > 0
-					? ((device.analytics.onTimeCount || 0) / device.analytics.totalCount) * 100
-					: punctualityScore;
-
-			const totalDays = Math.max(recordsToCheck.length, 30);
-			const absentDays = analytics?.daysAbsent || device.analytics?.daysAbsent || 0;
-			const uptimePercentage = ((totalDays - absentDays) / totalDays) * 100;
-
-			let statusWeight = 0;
-			if (device.currentStatus === 'online') statusWeight = 100;
-			else if (device.currentStatus === 'maintenance') statusWeight = 70;
-			else if (device.currentStatus === 'offline') statusWeight = 30;
-			else statusWeight = 50;
-
-			const compositePercentage =
-				efficiencyScore * 0.3 + uptimePercentage * 0.2 + punctualityScore * 0.3 + statusWeight * 0.2;
-
-			// Calculate base score
-			let score = 1;
-			if (compositePercentage >= 90) score = 5;
-			else if (compositePercentage >= 80) score = 4;
-			else if (compositePercentage >= 70) score = 3;
-			else if (compositePercentage >= 60) score = 2;
-			else score = 1;
-
-			// Cap score based on punctuality - can't be excellent if not opening/closing on time
-			if (score === 5 && (!opensOnTime || !closesOnTime)) {
-				score = 4; // Downgrade to "Very Good" if punctuality is not perfect
-			}
-			if (score === 4 && !opensOnTime && !closesOnTime) {
-				score = 3; // Downgrade to "Average" if both punctuality metrics are poor
-			}
-
-			// Generate note based on performance
-			// FIX: Handle "No data yet" case when there are no available days
-			let note = '';
-			if (availableDaysWithOpenings === 0 && availableDaysWithClosings === 0) {
-				note = 'No data yet';
-			} else if (score === 5) {
-				const notes = ['Consistently punctual', 'Very reliable', 'Excellent performance', 'Outstanding reliability'];
-				note = notes[Math.floor(Math.random() * notes.length)];
-			} else if (score === 4) {
-				const notes = ['Highly dependable', 'Very good performance', 'Mostly punctual'];
-				note = notes[Math.floor(Math.random() * notes.length)];
-			} else if (score === 3) {
-				if (!opensOnTime && closesOnTime) {
-					note = 'Opens late some days';
-				} else if (opensOnTime && !closesOnTime) {
-					note = 'Closes too early sometimes';
-				} else if (!opensOnTime && !closesOnTime) {
-					note = 'Opens late and closes early';
-				} else {
-					const notes = ['Generally reliable', 'Average performance', 'Acceptable reliability'];
-					note = notes[Math.floor(Math.random() * notes.length)];
-				}
-			} else if (score === 2) {
-				if (!opensOnTime && !closesOnTime) {
-					note = 'Opens late and closes early';
-				} else if (!opensOnTime) {
-					note = 'Frequently opens late';
-				} else if (!closesOnTime) {
-					note = 'Frequently closes too early';
-				} else {
-					note = 'Poor punctuality';
-				}
-			} else {
-				if (!opensOnTime && !closesOnTime) {
-					note = 'Rarely on schedule';
-				} else if (!opensOnTime) {
-					note = 'Consistently opens late';
-				} else if (!closesOnTime) {
-					note = 'Consistently closes too early';
-				} else {
-					note = 'Rarely on schedule';
-				}
-			}
-
-			// Add contextual notes based on device status
-			if (device.currentStatus === 'maintenance') {
-				note += ' (Under maintenance)';
-			} else if (device.currentStatus === 'offline') {
-				note += ' (Device offline)';
-			} else if (device.currentStatus === 'disconnected') {
-				note += ' (Connection issue)';
-			}
-
-			// Format latest times using earliest open and latest close from aggregated daily records
-			// CRITICAL: Only show TODAY's open/close times. If store opened today but hasn't closed, closeTime = null
-			// Get today's date in organization timezone for comparison (reuse from above)
-			let latestOpenTime: string | null = null;
-			let latestCloseTime: string | null = null;
-
-			// Get TODAY's earliest open (if exists)
-			if (dailyOpenings.has(todayKey)) {
-				const todayOpening = dailyOpenings.get(todayKey)!;
-				try {
-					// Database times are stored as UTC dates representing org local time
-					// Extract UTC hours/minutes directly (they represent org local time)
-					const openingDate = todayOpening.time;
-					const hours = openingDate.getUTCHours();
-					const minutes = openingDate.getUTCMinutes();
-					const period = hours >= 12 ? 'pm' : 'am';
-					const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
-					const paddedMinutes = minutes.toString().padStart(2, '0');
-					latestOpenTime = `${displayHours}:${paddedMinutes}${period}`;
-				} catch (error) {
-					this.logger.warn(`Failed to format latest open time: ${error.message}`);
-					latestOpenTime = null;
-				}
-			}
-
-			// Get TODAY's latest close (ONLY if it exists AND matches today's open date)
-			// If store opened today but hasn't closed, closeTime must be null
-			if (dailyOpenings.has(todayKey) && dailyClosings.has(todayKey)) {
-				const todayClosing = dailyClosings.get(todayKey)!;
-				try {
-					// Database times are stored as UTC dates representing org local time
-					// Extract UTC hours/minutes directly (they represent org local time)
-					const closingDate = todayClosing.time;
-					const hours = closingDate.getUTCHours();
-					const minutes = closingDate.getUTCMinutes();
-					const period = hours >= 12 ? 'pm' : 'am';
-					const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
-					const paddedMinutes = minutes.toString().padStart(2, '0');
-					latestCloseTime = `${displayHours}:${paddedMinutes}${period}`;
-				} catch (error) {
-					this.logger.warn(`Failed to format latest close time: ${error.message}`);
-					latestCloseTime = null;
-				}
-			} else {
-				// Store opened today but hasn't closed yet, OR no open today
-				latestCloseTime = null;
-			}
-
-			// Get door-user comparisons
-			const doorUserComparisons = await this.getDoorUserComparisons(device);
-
-			const result = {
-				opensOnTime,
-				opensOnTimePercentage,
-				closesOnTime,
-				closesOnTimePercentage,
-				score,
-				note,
-				latestOpenTime,
-				latestCloseTime,
-				doorUserComparisons,
-			};
-			
-			// ✅ Reduced logging: Only log summary in development mode
-			if (process.env.NODE_ENV === 'development') {
-				this.logger.debug(
-					`[${device.deviceID}] Performance: opens=${result.opensOnTimePercentage.toFixed(1)}%, closes=${result.closesOnTimePercentage.toFixed(1)}%`
-				);
-			}
-			
-			return result;
+			return defaultTime;
 		} catch (error) {
-			this.logger.error(`Failed to calculate device performance metrics: ${error.message}`, error.stack);
-			// Return default values on error
-			return {
-				opensOnTime: false,
-				opensOnTimePercentage: 0,
-				closesOnTime: false,
-				closesOnTimePercentage: 0,
-				score: 1,
-				note: 'Error calculating performance',
-				latestOpenTime: null,
-				latestCloseTime: null,
-				doorUserComparisons: [],
-			};
+			this.logger.error(`Error extracting ${timeType} time: ${error.message}`);
+			return defaultTime;
 		}
 	}
+
 
 	async findAllDevices(
 		filters: DeviceFilters = {},
@@ -1912,28 +1495,23 @@ export class IotService {
 			// Execute main query
 			const devices = await queryBuilder.getMany();
 
-		// Limit records to latest 30 for each device and calculate performance metrics
-		const processedDevices = await Promise.all(
-			devices.map(async (device) => {
-				const sortedRecords = device.records
-					? device.records
-							.sort((a, b) => {
-								const aTime = a.openTime || a.closeTime || a.createdAt;
-								const bTime = b.openTime || b.closeTime || b.createdAt;
-								return new Date(bTime).getTime() - new Date(aTime).getTime();
-							})
-							.slice(0, 30)
-					: [];
+		// Limit records to latest 30 for each device
+		const processedDevices = devices.map((device) => {
+			const sortedRecords = device.records
+				? device.records
+						.sort((a, b) => {
+							const aTime = a.openTime || a.closeTime || a.createdAt;
+							const bTime = b.openTime || b.closeTime || b.createdAt;
+							return new Date(bTime).getTime() - new Date(aTime).getTime();
+						})
+						.slice(0, 30)
+				: [];
 
-				const performanceMetrics = await this.calculateDevicePerformanceMetrics(device, sortedRecords);
-
-				return {
-					...device,
-					records: sortedRecords,
-					performance: performanceMetrics,
-				};
-			})
-		);
+			return {
+				...device,
+				records: sortedRecords,
+			};
+		});
 
 			const result: PaginatedResponse<Device> = {
 				data: processedDevices,
@@ -3964,8 +3542,9 @@ export class IotService {
 				return;
 			}
 
-			// Parse close time (e.g., "17:30")
-			const closeTimeParts = (orgHours.closeTime || "17:00").split(':');
+			// Parse close time (e.g., "17:30") - safely extract time string
+			const closeTimeString = this.extractTimeString(orgHours, 'close', undefined, '17:00');
+			const closeTimeParts = closeTimeString.split(':');
 			const closeHour = parseInt(closeTimeParts[0], 10);
 			const closeMinute = parseInt(closeTimeParts[1] || '0', 10);
 			

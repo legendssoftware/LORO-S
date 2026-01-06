@@ -389,7 +389,6 @@ Creates a new user account in the system with full profile management and employ
 		},
 	})
 	create(@Body() createUserDto: CreateUserDto, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
-		console.log(req, 'full request body');
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.userService.create(createUserDto, orgId, branchId);

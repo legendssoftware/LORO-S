@@ -25,7 +25,7 @@
  */
 
 import * as bcrypt from 'bcrypt';
-import { In, Repository, LessThanOrEqual, Not } from 'typeorm';
+import { In, Repository, LessThanOrEqual, Not, QueryFailedError } from 'typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { format, addDays, addMonths, startOfMonth } from 'date-fns';
 import { User } from './entities/user.entity';
@@ -34,7 +34,7 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { CreateUserPreferencesDto } from './dto/create-user-preferences.dto';
 import { UpdateUserPreferencesDto } from './dto/update-user-preferences.dto';
-import { BadRequestException, Injectable, NotFoundException, Inject, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Inject, Logger, ConflictException } from '@nestjs/common';
 import { NewSignUp } from '../lib/types/user';
 import { AccountStatus } from '../lib/enums/status.enums';
 import { PaginatedResponse } from '../lib/interfaces/product.interfaces';
@@ -736,39 +736,66 @@ export class UserService {
 	 */
 	async create(createUserDto: CreateUserDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
 		const startTime = Date.now();
-		this.logger.log(
-			`[USER_CREATION] Starting user creation process for: ${createUserDto.email} ${
-				orgId ? `in org: ${orgId}` : ''
-			} ${branchId ? `in branch: ${branchId}` : ''}`,
-		);
+		this.logger.log(`[USER_CREATION] Starting user creation for: ${createUserDto.email}`);
 
-		try {
-			// Organization and branch validation is handled by TypeORM relationship integrity
-			// This follows the same pattern as the assets service
-			if (orgId) {
-				this.logger.debug(`[USER_CREATION] Organization ID provided: ${orgId}`);
-			}
-			if (branchId) {
-				this.logger.debug(`[USER_CREATION] Branch ID provided: ${branchId}`);
+		const maxRetries = 3;
+		let attempt = 0;
+		const originalUserref = createUserDto.userref;
+
+		while (attempt < maxRetries) {
+			try {
+				// Reset userref if it was cleared for retry
+				if (!createUserDto.userref && originalUserref) {
+					createUserDto.userref = originalUserref;
 			}
 
 			// Hash password if provided
 			if (createUserDto.password) {
-				this.logger.debug('[USER_CREATION] Hashing user password');
 				createUserDto.password = await bcrypt.hash(createUserDto.password, 10);
 			}
 
-			// Generate user reference if not provided
+				// Generate user reference if not provided, with collision check
 			if (!createUserDto.userref) {
-				createUserDto.userref = `USR${Math.floor(100000 + Math.random() * 900000)}`;
-				this.logger.debug(`[USER_CREATION] Generated user reference: ${createUserDto.userref}`);
+					let userref: string;
+					let userrefAttempts = 0;
+					const maxUserrefAttempts = 10;
+					
+					do {
+						userref = `USR${Math.floor(100000 + Math.random() * 900000)}`;
+						userrefAttempts++;
+						
+						// Check if userref already exists
+						const existingUser = await this.userRepository.findOne({
+							where: { userref },
+							select: ['uid'],
+						});
+						
+						if (!existingUser) {
+							break;
+						}
+						
+						if (userrefAttempts >= maxUserrefAttempts) {
+							throw new Error('Failed to generate unique user reference after multiple attempts');
+						}
+					} while (true);
+					
+					createUserDto.userref = userref;
+				} else {
+					// Check if provided userref already exists
+					const existingUser = await this.userRepository.findOne({
+						where: { userref: createUserDto.userref },
+						select: ['uid'],
+					});
+					
+					if (existingUser) {
+						throw new ConflictException(`User reference '${createUserDto.userref}' already exists`);
+					}
 			}
 
 			// Set default profile picture if not provided
 			const DEFAULT_PROFILE_PICTURE_URL = 'https://cdn-icons-png.flaticon.com/128/1144/1144709.png';
 			if (!createUserDto.photoURL) {
 				createUserDto.photoURL = DEFAULT_PROFILE_PICTURE_URL;
-				this.logger.debug('[USER_CREATION] Using default profile picture');
 			}
 
 			// Create the user entity with proper relationship setting
@@ -783,34 +810,26 @@ export class UserService {
 				}),
 			});
 
-			this.logger.debug('[USER_CREATION] Saving user to database');
 			const savedUser = await this.userRepository.save(user);
 
 			if (!savedUser) {
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
 			}
 
-			this.logger.log(
-				`[USER_CREATION] User created successfully: ${savedUser.uid} (${savedUser.email}) with role: ${savedUser.accessLevel}`,
-			);
+				this.logger.log(`[USER_CREATION] User created successfully: ${savedUser.uid} (${savedUser.email})`);
 
 			// Invalidate cache after creation
 			await this.invalidateUserCache(savedUser);
 
 			// Send welcome and creation notification emails
-			this.logger.debug('[USER_CREATION] Sending welcome and notification emails');
 			const emailPromises = [this.sendWelcomeEmail(savedUser)];
 
 			// Check if user has assigned clients for client assignment notification
 			if (createUserDto.assignedClientIds && createUserDto.assignedClientIds.length > 0) {
-				this.logger.debug(
-					`[USER_CREATION] User has ${createUserDto.assignedClientIds.length} assigned clients, sending comprehensive notification`,
-				);
 				emailPromises.push(
 					this.sendUserCreationWithClientsNotificationEmail(savedUser, createUserDto.assignedClientIds),
 				);
 			} else {
-				this.logger.debug('[USER_CREATION] User has no assigned clients, sending standard notification');
 				emailPromises.push(this.sendUserCreationNotificationEmail(savedUser));
 			}
 
@@ -829,38 +848,129 @@ export class UserService {
 						priority: NotificationPriority.HIGH,
 					},
 				);
-				this.logger.debug('[USER_CREATION] User creation push notification sent successfully');
 			} catch (notificationError) {
-				this.logger.warn(
-					`Failed to send user creation push notification to ${savedUser.uid}:`,
-					notificationError.message,
-				);
+					this.logger.warn(`Failed to send push notification to user ${savedUser.uid}`);
 			}
 
 			await Promise.all(emailPromises);
 
 			const executionTime = Date.now() - startTime;
-			this.logger.log(
-				`[USER_CREATION] User creation completed successfully in ${executionTime}ms for user: ${savedUser.email}`,
-			);
+				this.logger.log(`[USER_CREATION] Completed in ${executionTime}ms for: ${savedUser.email}`);
 
-			const response = {
+				return {
 				message: process.env.SUCCESS_MESSAGE,
 			};
-
-			return response;
 		} catch (error) {
+				attempt++;
 			const executionTime = Date.now() - startTime;
-			this.logger.error(
-				`[USER_CREATION] Failed to create user: ${createUserDto.email} after ${executionTime}ms. Error: ${error.message}`,
-				error.stack,
+				
+				// Handle QueryFailedError specifically for primary key violations
+				if (error instanceof QueryFailedError) {
+					const errorMessage = error.message.toLowerCase();
+					
+					// Check if it's a primary key constraint violation
+					if (errorMessage.includes('duplicate key') && errorMessage.includes('pk_')) {
+						this.logger.warn(`[USER_CREATION] Primary key violation (attempt ${attempt}/${maxRetries})`);
+						
+						// If it's the first attempt, try to fix the sequence
+						if (attempt === 1) {
+							try {
+								await this.syncUserSequence();
+								this.logger.log('[USER_CREATION] Sequence synchronized, retrying');
+								continue; // Retry the operation
+							} catch (syncError) {
+								this.logger.error(`[USER_CREATION] Failed to sync sequence: ${syncError.message}`);
+							}
+						}
+						
+						// If we've exhausted retries, throw a user-friendly error
+						if (attempt >= maxRetries) {
+							this.logger.error(`[USER_CREATION] Failed after ${maxRetries} attempts`);
+							throw new ConflictException(
+								'Failed to create user due to database constraint violation. Please try again or contact support.',
+							);
+						}
+						
+						// Wait before retrying (exponential backoff)
+						await new Promise(resolve => setTimeout(resolve, 100 * attempt));
+						continue;
+					}
+					
+					// Handle unique constraint violations (email, username, userref)
+					if (errorMessage.includes('duplicate key') || errorMessage.includes('unique constraint')) {
+						if (errorMessage.includes('email') || errorMessage.includes('users_email_key')) {
+							throw new ConflictException(`User with email '${createUserDto.email}' already exists`);
+						}
+						if (errorMessage.includes('username') || errorMessage.includes('users_username_key')) {
+							throw new ConflictException(`Username '${createUserDto.username}' is already taken`);
+						}
+						if (errorMessage.includes('userref')) {
+							// Regenerate userref and retry if not on last attempt
+							if (attempt < maxRetries) {
+								this.logger.warn(`[USER_CREATION] Userref collision, regenerating (attempt ${attempt})`);
+								createUserDto.userref = undefined; // Will be regenerated in next attempt
+								await new Promise(resolve => setTimeout(resolve, 50 * attempt));
+								continue;
+							}
+							throw new ConflictException(`User reference '${createUserDto.userref}' already exists`);
+						}
+					}
+					
+					// Handle foreign key constraint violations
+					if (errorMessage.includes('foreign key constraint')) {
+						const constraintName = error.message.match(/constraint "([^"]+)"/)?.[1] || 'unknown';
+						if (errorMessage.includes('organisation') || errorMessage.includes('organization')) {
+							throw new BadRequestException(`Invalid organization reference. Please ensure the organization exists.`);
+						}
+						if (errorMessage.includes('branch')) {
+							throw new BadRequestException(`Invalid branch reference. Please ensure the branch exists and belongs to the specified organization.`);
+						}
+						throw new BadRequestException(`Database constraint violation: ${constraintName}. Please verify all referenced entities exist.`);
+					}
+				}
+				
+				// Re-throw HTTP exceptions (ConflictException, BadRequestException, etc.)
+				if (error instanceof ConflictException || error instanceof BadRequestException || error instanceof NotFoundException) {
+					throw error;
+				}
+				
+				// Log and throw for other errors
+				this.logger.error(`[USER_CREATION] Failed after ${executionTime}ms: ${error.message}`);
+
+				return {
+					message: error?.message || 'Failed to create user. Please try again.',
+				};
+			}
+		}
+		
+		throw new Error('Failed to create user after maximum retry attempts');
+	}
+
+	/**
+	 * Synchronize the user sequence with the current max uid
+	 * This fixes cases where the sequence is out of sync with actual data
+	 */
+	private async syncUserSequence(): Promise<void> {
+		try {
+			// Get the current max uid from the database
+			const result = await this.userRepository
+				.createQueryBuilder('user')
+				.select('MAX(user.uid)', 'maxUid')
+				.getRawOne();
+			
+			const maxUid = result?.maxUid || 0;
+			const nextUid = maxUid + 1;
+			
+			// Reset the sequence to the next available uid
+			await this.dataSource.query(
+				`SELECT setval('users_uid_seq', $1, false)`,
+				[nextUid]
 			);
-
-			const response = {
-				message: error?.message,
-			};
-
-			return response;
+			
+			this.logger.log(`[USER_CREATION] Sequence synced: maxUid=${maxUid}, nextUid=${nextUid}`);
+		} catch (error) {
+			this.logger.error(`[USER_CREATION] Error syncing sequence: ${error.message}`);
+			throw error;
 		}
 	}
 
@@ -1361,10 +1471,8 @@ export class UserService {
 		limit: number = Number(process.env.DEFAULT_PAGE_LIMIT),
 	): Promise<PaginatedResponse<Omit<User, 'password'>>> {
 		const startTime = Date.now();
-		this.logger.log(`Fetching users with filters applied, page: ${page}, limit: ${limit}`);
 
 		try {
-			this.logger.debug('Building query with filters and pagination');
 			const queryBuilder = this.userRepository
 				.createQueryBuilder('user')
 				.leftJoinAndSelect('user.organisation', 'organisation')
@@ -1398,7 +1506,6 @@ export class UserService {
 
 			// Apply organization filter if provided
 			if (filters?.orgId) {
-				this.logger.debug(`Applying organization filter: ${filters.orgId}`);
 				queryBuilder.andWhere('organisation.uid = :orgId', { orgId: filters.orgId });
 			}
 
@@ -1455,7 +1562,6 @@ export class UserService {
 			}
 
 			const executionTime = Date.now() - startTime;
-			this.logger.log(`Successfully fetched ${users.length} users out of ${total} total in ${executionTime}ms`);
 
 			return {
 				data: await Promise.all(users.map((user) => this.excludePasswordAndPopulateClients(user))),
@@ -3017,7 +3123,6 @@ export class UserService {
 
 			// Fetch managed staff with their targets
 			if(user?.managedStaff?.length) {
-				this.logger.debug(`Fetching managed staff for user ${userId}: ${JSON.stringify(user.managedStaff)}`);
 				
 				// First, let's check if these users exist at all (without access control filters)
 				const allUsersCheck = await this.userRepository.find({
@@ -3436,7 +3541,6 @@ export class UserService {
 	): Promise<{ message: string }> {
 		const startTime = Date.now();
 		this.logger.log(`Updating user target for user: ${userId}`);
-		this.logger.debug(`Update DTO received:`, JSON.stringify(updateUserTargetDto, null, 2));
 
 		try {
 			this.logger.debug(`Finding user ${userId} for target update with access control`);
@@ -3485,14 +3589,12 @@ export class UserService {
 				throw new NotFoundException(`No targets found for user with ID ${userId}`);
 			}
 
-			this.logger.debug(`Current user target data:`, JSON.stringify(user.userTarget, null, 2));
 
 			// Only include defined values from the DTO
 			const filteredUpdateDto = Object.fromEntries(
 				Object.entries(updateUserTargetDto).filter(([_, value]) => value !== undefined && value !== null),
 			);
 
-			this.logger.debug(`Filtered update data:`, JSON.stringify(filteredUpdateDto, null, 2));
 
 			// Handle dates separately if they exist
 			const updatedUserTarget = {
@@ -3550,7 +3652,6 @@ export class UserService {
 				updatedUserTarget.carryForwardUnfulfilled = updateUserTargetDto.carryForwardUnfulfilled;
 			}
 
-			this.logger.debug(`Final target data to save:`, JSON.stringify(updatedUserTarget, null, 2));
 
 			// Update the user target properties
 			Object.assign(user.userTarget, updatedUserTarget);
@@ -4051,7 +4152,6 @@ export class UserService {
 			// Apply incremental updates only if we have new records
 			if (hasNewRecords) {
 				this.logger.log(`[${calculationId}] Applying incremental updates for user ${userId}:`);
-				this.logger.log(`[${calculationId}] Updates: ${JSON.stringify(incrementalUpdates, null, 2)}`);
 
 				// Apply all incremental updates
 				Object.assign(userTarget, incrementalUpdates);
@@ -4392,7 +4492,7 @@ export class UserService {
 		userRole?: string;
 	}): Promise<{ invitedCount: number; totalUsers: number; excludedCount: number }> {
 		const startTime = Date.now();
-		this.logger.log(`Re-inviting all users with scope: ${JSON.stringify(scope)}`);
+		this.logger.log(`Re-inviting all users`);
 
 		try {
 			this.logger.debug('Building query for eligible users');
@@ -4472,7 +4572,7 @@ export class UserService {
 		},
 	): Promise<{ userId: string; email: string }> {
 		const startTime = Date.now();
-		this.logger.log(`Re-inviting specific user: ${userId} with scope: ${JSON.stringify(scope)}`);
+		this.logger.log(`Re-inviting user: ${userId}`);
 
 		try {
 			this.logger.debug(`Building query for user ${userId} with scope restrictions`);

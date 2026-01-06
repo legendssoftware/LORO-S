@@ -94,40 +94,48 @@ export class ShopService {
 	}
 
 	/**
-	 * Clear shop-related caches
+	 * Clear shop-related caches - Optimized with Set for O(1) lookups and parallel deletion
 	 */
 	private async clearShopCache(quotationId?: number, clientId?: number): Promise<void> {
 		try {
-			const keys = await this.cacheManager.store.keys();
-			const keysToDelete = [];
+			// Use Set for O(1) lookups instead of array filtering
+			const keysToDelete = new Set<string>();
 
 			// Clear specific quotation cache if provided
 			if (quotationId) {
-				keysToDelete.push(this.getQuotationCacheKey(quotationId));
+				keysToDelete.add(this.getQuotationCacheKey(quotationId));
 			}
 
 			// Clear client-related quotation caches
 			if (clientId) {
-				keysToDelete.push(this.getClientQuotationsCacheKey(clientId));
+				keysToDelete.add(this.getClientQuotationsCacheKey(clientId));
 			}
 
-			// Clear all pagination and filtered quotation list caches
-			const quotationListCaches = keys.filter(
-				(key) =>
-					key.startsWith('quotations_page') || // Pagination caches
-					key.startsWith('shop:all') || // All quotations cache
-					key.startsWith('quotations:list:') || // List caches
-					key.startsWith('quotations:stats:') || // Stats caches
-					key.startsWith('products_page') || // Product pagination caches
-					key.startsWith('banners_page') || // Banner caches
-					key.includes('_limit'), // Filtered caches
-			);
-			keysToDelete.push(...quotationListCaches);
+			// Get all keys once
+			const allKeys = await this.cacheManager.store.keys();
+			
+			// Batch filter keys more efficiently with patterns
+			const patterns = [
+				'quotations_page',
+				'shop:all',
+				'quotations:list:',
+				'quotations:stats:',
+				'products_page',
+				'banners_page',
+			];
+			
+			patterns.forEach(pattern => {
+				allKeys.forEach(key => {
+					if (key.startsWith(pattern) || key.includes('_limit')) {
+						keysToDelete.add(key);
+					}
+				});
+			});
 
-			// Clear all caches
-			if (keysToDelete.length > 0) {
-				await Promise.all(keysToDelete.map((key) => this.cacheManager.del(key)));
-				this.logger.log(`Cleared ${keysToDelete.length} shop cache keys`);
+			// Parallel deletion for speed
+			if (keysToDelete.size > 0) {
+				await Promise.all(Array.from(keysToDelete).map(key => this.cacheManager.del(key)));
+				this.logger.log(`Cleared ${keysToDelete.size} shop cache keys`);
 			}
 		} catch (error) {
 			this.logger.error('Failed to clear shop cache', error.stack);
@@ -950,6 +958,7 @@ export class ShopService {
 		// All non-critical operations will continue asynchronously
 		const immediateResponse = {
 			message: process.env.SUCCESS_MESSAGE,
+			quotationId: savedQuotation?.quotationNumber,
 		};
 
 		// Process all non-critical operations asynchronously after responding to user
@@ -958,6 +967,53 @@ export class ShopService {
 			this.logger.log(`[${asyncOperationId}] Starting async post-quotation processing for ${savedQuotation.quotationNumber}`);
 
 			try {
+				// Helper function to map quotation items with palette details
+				const mapQuotationItems = (items: any[]) => {
+					return items.map((item) => {
+						const product = products.flat().find((p) => p.uid === item.uid);
+						const purchaseMode = item?.purchaseMode || 'item';
+						const itemsPerUnit = Number(item?.itemsPerUnit || 1);
+						const quantity = Number(item?.quantity);
+						
+						const baseItem = {
+							quantity: quantity,
+							product: {
+								uid: item?.uid,
+								name: product?.name || 'Unknown Product',
+								code: product?.productRef || 'N/A',
+								sku: purchaseMode === 'palette' ? (product?.palletSku || product?.sku) : product?.sku,
+							},
+							totalPrice: Number(item?.totalPrice),
+							unitPrice: Number(item?.unitPrice || product?.price || 0),
+							purchaseMode: purchaseMode,
+							itemsPerUnit: itemsPerUnit,
+							actualItems: quantity * itemsPerUnit,
+						};
+
+						// Add palette-specific details if purchasing by palette
+						if (purchaseMode === 'palette' && product?.palletAvailable) {
+							return {
+								...baseItem,
+								paletteBreakdown: {
+									pallets: quantity,
+									itemsPerPallet: itemsPerUnit,
+									totalItems: quantity * itemsPerUnit,
+									palletPrice: product?.palletPrice || 0,
+									palletSalePrice: product?.palletSalePrice || null,
+									pricePerItem: itemsPerUnit > 0 ? (product?.palletPrice || 0) / itemsPerUnit : 0,
+									itemsPerPack: product?.itemsPerPack || 1,
+									packsPerPallet: product?.packsPerPallet || 1,
+									palletSku: product?.palletSku || product?.sku,
+									palletBarcode: product?.palletBarcode || null,
+									onPromotion: product?.palletOnPromotion || false,
+								}
+							};
+						}
+
+						return baseItem;
+					});
+				};
+
 				// Trigger recalculation of user targets for the owner after a new quotation (checkout)
 				if (quotationData?.owner?.uid && this.eventEmitter) {
 					this.eventEmitter.emit('user.target.update.required', { userId: quotationData.owner.uid });
@@ -989,19 +1045,7 @@ export class ShopService {
 								reviewUrl: savedQuotation.reviewUrl,
 								total: Number(savedQuotation?.totalAmount),
 								currency: orgCurrency.code,
-								quotationItems: quotationData?.items?.map((item) => {
-									const product = products.flat().find((p) => p.uid === item.uid);
-									return {
-										quantity: Number(item?.quantity),
-										product: {
-											name: product?.name || 'Unknown Product',
-											code: product?.productRef || 'N/A',
-										},
-										totalPrice: Number(item?.totalPrice),
-										purchaseMode: item?.purchaseMode || 'item',
-										itemsPerUnit: Number(item?.itemsPerUnit || 1),
-									};
-								}),
+								quotationItems: mapQuotationItems(quotationData?.items || []),
 							});
 						} catch (err) {
 							this.logger.error(`Failed to send quotation email: ${err.message}`, err.stack);
@@ -1136,24 +1180,7 @@ export class ShopService {
 					reviewUrl: savedQuotation.reviewUrl,
 					customerType: clientData?.client?.type || 'standard', // Assuming client type exists, add a fallback
 					priority: 'high', // Add default priority for internal notification
-					quotationItems: quotationData?.items?.map((item) => {
-						const product = products.flat().find((p) => p.uid === item.uid);
-						const purchaseMode = item?.purchaseMode || 'item';
-						const itemsPerUnit = Number(item?.itemsPerUnit || 1);
-						
-						return {
-							quantity: Number(item?.quantity),
-							product: {
-								uid: item?.uid,
-								name: product?.name || 'Unknown Product',
-								code: product?.productRef || 'N/A',
-							},
-							totalPrice: Number(item?.totalPrice),
-							purchaseMode: purchaseMode,
-							itemsPerUnit: itemsPerUnit,
-							actualItems: Number(item?.quantity) * itemsPerUnit, // Total individual items
-						};
-					}),
+					quotationItems: mapQuotationItems(quotationData?.items || []),
 				};
 
 				// Only send internal notification and order acknowledgment to client
@@ -1161,6 +1188,27 @@ export class ShopService {
 
 				// Notify internal team about new quotation
 				this.eventEmitter.emit('send.email', EmailType.NEW_QUOTATION_INTERNAL, [internalEmail], baseConfig);
+
+				// Send to sales rep (the person who created the quotation)
+				if (quotationData?.owner?.uid) {
+					try {
+						const salesRep = await this.userRepository.findOne({ 
+							where: { uid: quotationData.owner.uid },
+							select: ['uid', 'email', 'name']
+						});
+						
+						if (salesRep?.email) {
+							this.eventEmitter.emit('send.email', EmailType.NEW_QUOTATION_SALES_REP, [salesRep.email], {
+								...baseConfig,
+								salesRepName: salesRep.name || 'Sales Representative',
+								quotationItems: mapQuotationItems(quotationData?.items || []),
+							});
+							this.logger.log(`[${asyncOperationId}] Sales rep notification sent to ${salesRep.email}`);
+						}
+					} catch (salesRepError) {
+						this.logger.warn(`[${asyncOperationId}] Failed to send sales rep notification: ${salesRepError.message}`);
+					}
+				}
 
 				// Notify resellers about products in the quotation
 				resellerEmails?.forEach((email) => {
@@ -1521,6 +1569,51 @@ export class ShopService {
 					this.shopGateway.emitNewQuotation(enhancedBlankQuotationData);
 				}
 
+				// Helper function to map blank quotation items with palette details
+				const mapBlankQuotationItems = (items: any[]) => {
+					return items.map((item) => {
+						const product = productMap.get(item.product?.uid);
+						const purchaseMode = item.purchaseMode || 'item';
+						const itemsPerUnit = item.itemsPerUnit || 1;
+						const quantity = item.quantity;
+						
+						const baseItem: any = {
+							quantity: quantity,
+							product: {
+								uid: item.product?.uid,
+								name: item.product?.name || 'Unknown Product',
+								code: item.product?.productRef || item.product?.sku || 'N/A',
+								sku: purchaseMode === 'palette' ? (product?.palletSku || product?.sku) : (product?.sku || 'N/A'),
+							},
+							unitPrice: item.unitPrice,
+							totalPrice: item.totalPrice,
+							notes: item.notes,
+							purchaseMode: purchaseMode,
+							itemsPerUnit: itemsPerUnit,
+							actualItems: quantity * itemsPerUnit,
+						};
+
+						// Add palette-specific details if purchasing by palette
+						if (purchaseMode === 'palette' && product?.palletAvailable) {
+							baseItem.paletteBreakdown = {
+								pallets: quantity,
+								itemsPerPallet: itemsPerUnit,
+								totalItems: quantity * itemsPerUnit,
+								palletPrice: product?.palletPrice || 0,
+								palletSalePrice: product?.palletSalePrice || null,
+								pricePerItem: itemsPerUnit > 0 ? (product?.palletPrice || 0) / itemsPerUnit : 0,
+								itemsPerPack: product?.itemsPerPack || 1,
+								packsPerPallet: product?.packsPerPallet || 1,
+								palletSku: product?.palletSku || product?.sku,
+								palletBarcode: product?.palletBarcode || null,
+								onPromotion: product?.palletOnPromotion || false,
+							};
+						}
+
+						return baseItem;
+					});
+				};
+
 				// Prepare email data for blank quotation
 				const emailData = {
 					name: clientName,
@@ -1534,20 +1627,7 @@ export class ShopService {
 					description: blankQuotationData?.description || 'Price list quotation for your review',
 					customerType: clientData?.client?.type || 'standard', // Add customer type like regular quotation
 					priority: 'medium', // Add priority for blank quotations
-					quotationItems: quotationItems.map((item) => ({
-						quantity: item.quantity,
-						product: {
-							uid: item.product.uid,
-							name: item.product.name,
-							code: item.product.productRef || item.product.sku,
-						},
-						unitPrice: item.unitPrice,
-						totalPrice: item.totalPrice,
-						notes: item.notes,
-						purchaseMode: item.purchaseMode,
-						itemsPerUnit: item.itemsPerUnit,
-						actualItems: item.quantity * item.itemsPerUnit,
-					})),
+					quotationItems: mapBlankQuotationItems(quotationItems),
 					pdfURL: fullQuotation?.pdfURL,
 				};
 
@@ -3272,14 +3352,37 @@ export class ShopService {
 					const quantity = Number(item?.quantity) || 1;
 					const totalPrice = Number(item?.totalPrice) || 0;
 					const unitPrice = quantity > 0 ? totalPrice / quantity : totalPrice;
+					const purchaseMode = item?.purchaseMode || 'item';
+					const itemsPerUnit = Number(item?.itemsPerUnit || 1);
 
-					// Comprehensive item validation
-					const validatedItem = {
+					// Comprehensive item validation with palette support
+					const validatedItem: any = {
 						itemCode: item?.product?.productRef || item?.product?.sku || `ITEM-${item?.product?.uid || i + 1}`,
 						description: item?.product?.name || 'Product name not available',
 						quantity: quantity,
 						unitPrice: unitPrice,
+						purchaseMode: purchaseMode,
+						itemsPerUnit: itemsPerUnit,
 					};
+
+					// Add palette-specific information if purchasing by palette
+					if (purchaseMode === 'palette' && item?.product?.palletAvailable) {
+						const product = item.product;
+						validatedItem.paletteInfo = {
+							itemsPerPack: product.itemsPerPack || 1,
+							packsPerPallet: product.packsPerPallet || 1,
+							totalIndividualItems: quantity * itemsPerUnit,
+							palletSku: product.palletSku || product.sku,
+							palletBarcode: product.palletBarcode || null,
+							palletPrice: product.palletPrice || 0,
+							palletSalePrice: product.palletSalePrice || null,
+							onPromotion: product.palletOnPromotion || false,
+						};
+						// Update item code to use palette SKU if available
+						if (product.palletSku) {
+							validatedItem.itemCode = product.palletSku;
+						}
+					}
 
 					// Additional validation
 					if (quantity <= 0) {
