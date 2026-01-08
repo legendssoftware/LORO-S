@@ -1433,6 +1433,258 @@ export class IotService {
 		}
 	}
 
+	/**
+	 * Get today's organization hours (checking special hours, schedule, or default)
+	 */
+	private getTodayOrgHours(orgHours: any): { openMinutes: number | null; closeMinutes: number | null } {
+		if (!orgHours) {
+			return { openMinutes: null, closeMinutes: null };
+		}
+
+		const today = new Date();
+		const todayKey = today.toISOString().split('T')[0]; // YYYY-MM-DD
+		const dayOfWeek = today.getDay();
+
+		// Check special hours first
+		if (orgHours.specialHours) {
+			const specialHour = orgHours.specialHours.find((sh: any) => sh.date === todayKey);
+			if (specialHour) {
+				const openTime = specialHour.openTime || '09:00';
+				const closeTime = specialHour.closeTime || '17:00';
+				const [openH, openM] = openTime.split(':').map(Number);
+				const [closeH, closeM] = closeTime.split(':').map(Number);
+				return {
+					openMinutes: openH * 60 + openM,
+					closeMinutes: closeH * 60 + closeM,
+				};
+			}
+		}
+
+		// Check day-specific schedule
+		if (orgHours.schedule) {
+			const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+			const dayName = dayNames[dayOfWeek];
+			const daySchedule = orgHours.schedule[dayName];
+
+			if (daySchedule && !daySchedule.closed) {
+				const openTime = daySchedule.start || '09:00';
+				const closeTime = daySchedule.end || '17:00';
+				const [openH, openM] = openTime.split(':').map(Number);
+				const [closeH, closeM] = closeTime.split(':').map(Number);
+				return {
+					openMinutes: openH * 60 + openM,
+					closeMinutes: closeH * 60 + closeM,
+				};
+			}
+		}
+
+		// Fall back to default open/close times
+		const openTime = this.extractTimeString(orgHours, 'open', dayOfWeek, '09:00');
+		const closeTime = this.extractTimeString(orgHours, 'close', dayOfWeek, '17:00');
+		const [openH, openM] = openTime.split(':').map(Number);
+		const [closeH, closeM] = closeTime.split(':').map(Number);
+		return {
+			openMinutes: openH * 60 + openM,
+			closeMinutes: closeH * 60 + closeM,
+		};
+	}
+
+	/**
+	 * Calculate device performance metrics
+	 */
+	private async calculateDevicePerformance(device: Device): Promise<{
+		opensOnTime: boolean;
+		closesOnTime: boolean | null;
+		score: number | '-';
+		note: string;
+		latestOpenTime: string | null;
+		latestCloseTime: string | null;
+		opensEmoji: '✅' | '❌' | '-';
+		closesEmoji: '✅' | '❌' | '-';
+	}> {
+		try {
+			// Get organization hours
+			const orgRef = String(device.orgID);
+			const orgHoursArr = await this.organisationHoursService.findAll(orgRef).catch(() => []);
+			const orgHours = Array.isArray(orgHoursArr) && orgHoursArr.length > 0 ? orgHoursArr[0] : null;
+			const orgTimezone = orgHours?.timezone || 'Africa/Johannesburg';
+
+			// Get today's date range in organization timezone
+			const today = new Date();
+			const todayOrg = toZonedTime(today, orgTimezone);
+			const todayKey = todayOrg.toISOString().split('T')[0];
+
+			// Get today's records
+			const todayRecords = device.records?.filter(r => {
+				if (!r.openTime) return false;
+				const recordDate = typeof r.openTime === 'string' ? new Date(r.openTime) : (r.openTime as unknown as Date);
+				const recordDateOrg = toZonedTime(recordDate, orgTimezone);
+				const recordDateKey = recordDateOrg.toISOString().split('T')[0];
+				return recordDateKey === todayKey;
+			}) || [];
+
+			// Get latest open and close times
+			const sortedRecords = todayRecords.sort((a, b) => {
+				const aTime = typeof a.openTime === 'string' ? new Date(a.openTime) : (a.openTime as unknown as Date);
+				const bTime = typeof b.openTime === 'string' ? new Date(b.openTime) : (b.openTime as unknown as Date);
+				return bTime.getTime() - aTime.getTime();
+			});
+
+			const latestOpenRecord = sortedRecords.find(r => r.openTime);
+			const latestCloseRecord = sortedRecords.find(r => r.closeTime && r.openTime);
+
+			const latestOpenTime = latestOpenRecord?.openTime
+				? (typeof latestOpenRecord.openTime === 'string'
+					? latestOpenRecord.openTime
+					: (latestOpenRecord.openTime as unknown as Date).toISOString())
+				: null;
+
+			// Only include close time if it's from today
+			let latestCloseTime: string | null = null;
+			if (latestCloseRecord?.closeTime) {
+				const closeDate = typeof latestCloseRecord.closeTime === 'string'
+					? new Date(latestCloseRecord.closeTime)
+					: (latestCloseRecord.closeTime as unknown as Date);
+				const closeDateOrg = toZonedTime(closeDate, orgTimezone);
+				const closeDateKey = closeDateOrg.toISOString().split('T')[0];
+				if (closeDateKey === todayKey) {
+					latestCloseTime = typeof latestCloseRecord.closeTime === 'string'
+						? latestCloseRecord.closeTime
+						: (latestCloseRecord.closeTime as unknown as Date).toISOString();
+				}
+			}
+
+			// If no data, return placeholder
+			if (!latestOpenTime && !latestCloseTime) {
+				return {
+					opensOnTime: false,
+					closesOnTime: null,
+					score: '-',
+					note: 'No data yet',
+					latestOpenTime: null,
+					latestCloseTime: null,
+					opensEmoji: '-',
+					closesEmoji: '-',
+				};
+			}
+
+			// Get organization hours for today
+			const { openMinutes: targetOpenMinutes, closeMinutes: targetCloseMinutes } = this.getTodayOrgHours(orgHours);
+
+			if (targetOpenMinutes === null || targetCloseMinutes === null) {
+				return {
+					opensOnTime: false,
+					closesOnTime: null,
+					score: '-',
+					note: 'No organization hours configured',
+					latestOpenTime,
+					latestCloseTime,
+					opensEmoji: '-',
+					closesEmoji: '-',
+				};
+			}
+
+			// Calculate opensOnTime
+			let opensOnTime = false;
+			let opensEmoji: '✅' | '❌' | '-' = '-';
+			if (latestOpenTime) {
+				const openDate = new Date(latestOpenTime);
+				const openDateOrg = toZonedTime(openDate, orgTimezone);
+				const openMinutes = openDateOrg.getUTCHours() * 60 + openDateOrg.getUTCMinutes();
+				opensOnTime = openMinutes <= targetOpenMinutes; // Early or on-time is OK
+				opensEmoji = opensOnTime ? '✅' : '❌';
+			}
+
+			// Calculate closesOnTime
+			let closesOnTime: boolean | null = null;
+			let closesEmoji: '✅' | '❌' | '-' = '-';
+			if (latestCloseTime) {
+				const closeDate = new Date(latestCloseTime);
+				const closeDateOrg = toZonedTime(closeDate, orgTimezone);
+				const closeMinutes = closeDateOrg.getUTCHours() * 60 + closeDateOrg.getUTCMinutes();
+				closesOnTime = closeMinutes >= targetCloseMinutes; // On-time or late is OK
+				closesEmoji = closesOnTime ? '✅' : '❌';
+			} else if (!opensOnTime) {
+				// If opened late and hasn't closed by 8pm, mark as closes late
+				const now = new Date();
+				const nowOrg = toZonedTime(now, orgTimezone);
+				const currentMinutes = nowOrg.getUTCHours() * 60 + nowOrg.getUTCMinutes();
+				const eightPMMinutes = 20 * 60; // 8pm = 20:00
+				if (currentMinutes >= eightPMMinutes) {
+					closesOnTime = false;
+					closesEmoji = '❌';
+				}
+			}
+
+			// Calculate score
+			let score: number | '-' = 1;
+			if (opensOnTime && closesOnTime === true) {
+				score = 5;
+			} else if (opensOnTime && closesOnTime === null) {
+				score = 4;
+			} else if (opensOnTime && closesOnTime === false) {
+				score = 3;
+			} else if (!opensOnTime && closesOnTime === true) {
+				score = 3;
+			} else if (!opensOnTime && closesOnTime === null) {
+				score = 2;
+			} else if (!opensOnTime && closesOnTime === false) {
+				score = 1;
+			}
+
+			// Generate note
+			let note = '';
+			if (score === 5) {
+				note = 'Opens and closes on time';
+			} else if (score === 4) {
+				note = 'Opens on time';
+			} else if (score === 3) {
+				if (!opensOnTime && closesOnTime === true) {
+					note = 'Opens late';
+				} else if (opensOnTime && closesOnTime === false) {
+					note = 'Closes early';
+				} else {
+					note = 'Average performance';
+				}
+			} else if (score === 2) {
+				note = 'Opens late';
+			} else {
+				if (!opensOnTime && closesOnTime === false) {
+					note = 'Opens late and closes early';
+				} else if (!opensOnTime) {
+					note = 'Opens late';
+				} else if (closesOnTime === false) {
+					note = 'Closes early';
+				} else {
+					note = 'Poor performance';
+				}
+			}
+
+			return {
+				opensOnTime,
+				closesOnTime,
+				score,
+				note,
+				latestOpenTime,
+				latestCloseTime,
+				opensEmoji,
+				closesEmoji,
+			};
+		} catch (error) {
+			this.logger.error(`Failed to calculate device performance: ${error.message}`);
+			return {
+				opensOnTime: false,
+				closesOnTime: null,
+				score: '-',
+				note: 'Error calculating performance',
+				latestOpenTime: null,
+				latestCloseTime: null,
+				opensEmoji: '-',
+				closesEmoji: '-',
+			};
+		}
+	}
+
 
 	async findAllDevices(
 		filters: DeviceFilters = {},
@@ -1495,8 +1747,8 @@ export class IotService {
 			// Execute main query
 			const devices = await queryBuilder.getMany();
 
-		// Limit records to latest 30 for each device
-		const processedDevices = devices.map((device) => {
+		// Limit records to latest 30 for each device and enrich with performance data
+		const processedDevices = await Promise.all(devices.map(async (device) => {
 			const sortedRecords = device.records
 				? device.records
 						.sort((a, b) => {
@@ -1507,11 +1759,26 @@ export class IotService {
 						.slice(0, 30)
 				: [];
 
+			// Calculate performance metrics
+			const performance = await this.calculateDevicePerformance(device);
+			
+			// Get door-user comparisons
+			const doorUserComparisons = await this.getDoorUserComparisons(device);
+
 			return {
 				...device,
 				records: sortedRecords,
+				opensOnTime: performance.opensOnTime,
+				closesOnTime: performance.closesOnTime,
+				score: performance.score,
+				note: performance.note,
+				latestOpenTime: performance.latestOpenTime,
+				latestCloseTime: performance.latestCloseTime,
+				opensEmoji: performance.opensEmoji,
+				closesEmoji: performance.closesEmoji,
+				doorUserComparisons,
 			};
-		});
+		}));
 
 			const result: PaginatedResponse<Device> = {
 				data: processedDevices,
@@ -1572,13 +1839,30 @@ export class IotService {
 			this.logger.log(`✅ [findOneDevice] Device found - ID: ${device.id}, deviceID: ${device.deviceID}, org: ${device.orgID}, branch: ${device.branchID}`);
 
 			// Limit records to latest 10
+			const sortedRecords = device.records 
+				? device.records
+					.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+					.slice(0, 10)
+				: [];
+
+			// Calculate performance metrics
+			const performance = await this.calculateDevicePerformance(device);
+			
+			// Get door-user comparisons
+			const doorUserComparisons = await this.getDoorUserComparisons(device);
+
 			const processedDevice = {
 				...device,
-				records: device.records 
-					? device.records
-						.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-						.slice(0, 10)
-					: []
+				records: sortedRecords,
+				opensOnTime: performance.opensOnTime,
+				closesOnTime: performance.closesOnTime,
+				score: performance.score,
+				note: performance.note,
+				latestOpenTime: performance.latestOpenTime,
+				latestCloseTime: performance.latestCloseTime,
+				opensEmoji: performance.opensEmoji,
+				closesEmoji: performance.closesEmoji,
+				doorUserComparisons,
 			};
 
 			await this.cacheManager.set(cacheKey, processedDevice, this.CACHE_TTL);
