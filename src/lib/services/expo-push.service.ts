@@ -211,13 +211,31 @@ export class ExpoPushService {
 					.filter(([_, receipt]: [string, any]) => receipt.status === 'error')
 					.slice(0, 5); // Show first 5 errors
 				
-				this.logger.warn(`❌ Failed receipt details:`, {
-					errors: failedReceipts.map(([ticketId, receipt]: [string, any]) => ({
-						ticketId,
-						message: receipt.message || 'Unknown error',
-						details: receipt.details || 'No additional details'
-					}))
+				// Filter out BadDeviceToken errors from detailed logging (they're handled by cleanup)
+				const nonTokenErrors = failedReceipts.filter(([_, receipt]: [string, any]) => {
+					const message = receipt.message || '';
+					return !message.includes('BadDeviceToken') && !message.includes('InvalidCredentials');
 				});
+				
+				if (nonTokenErrors.length > 0) {
+					this.logger.warn(`❌ Failed receipt details:`, {
+						errors: nonTokenErrors.map(([ticketId, receipt]: [string, any]) => ({
+							ticketId,
+							message: receipt.message || 'Unknown error',
+							details: receipt.details || 'No additional details'
+						}))
+					});
+				}
+				
+				// Log BadDeviceToken errors at debug level (cleanup handles them)
+				const tokenErrors = failedReceipts.filter(([_, receipt]: [string, any]) => {
+					const message = receipt.message || '';
+					return message.includes('BadDeviceToken') || message.includes('InvalidCredentials');
+				});
+				
+				if (tokenErrors.length > 0) {
+					this.logger.debug(`📱 ${tokenErrors.length} invalid device token(s) detected - will be cleaned up automatically`);
+				}
 			}
 			
 			return new Map(Object.entries(receipts));

@@ -1273,39 +1273,53 @@ export class IotService {
 				return [];
 			}
 
-			// Get today's date range in organization timezone
+			// Get organization hours and timezone
 			const orgRef = String(device.orgID);
 			const orgHoursArr = await this.organisationHoursService.findAll(orgRef).catch(() => []);
-			const orgTimezone =
-				(Array.isArray(orgHoursArr) && orgHoursArr[0]?.timezone) || 'Africa/Johannesburg';
+			const orgHours = Array.isArray(orgHoursArr) && orgHoursArr.length > 0 ? orgHoursArr[0] : null;
+			const orgTimezone = orgHours?.timezone || 'Africa/Johannesburg';
 			
+			// Get today's date in organization timezone
 			const today = new Date();
 			const todayOrg = toZonedTime(today, orgTimezone);
+			
+			// Create date range using organization hours (start at 00:00, end at 23:59:59.999 in org timezone)
 			const startOfDay = new Date(todayOrg);
 			startOfDay.setUTCHours(0, 0, 0, 0);
 			const endOfDay = new Date(todayOrg);
 			endOfDay.setUTCHours(23, 59, 59, 999);
 
-			// Get today's attendance records for managing users
+			// Ensure device records are fully loaded
+			let deviceRecords = device.records;
+			if (!deviceRecords || deviceRecords.length === 0) {
+				const deviceWithRecords = await this.deviceRepository.findOne({
+					where: { id: device.id },
+					relations: ['records'],
+				});
+				deviceRecords = deviceWithRecords?.records || [];
+			}
+
+			// Get today's attendance records for managing users with organization filter
 			const userIds = managingUsers.map(u => u.uid);
 			const todayAttendance = await this.attendanceRepository.find({
 				where: {
 					owner: { uid: In(userIds) },
+					organisation: { uid: device.orgID },
 					checkIn: Between(startOfDay, endOfDay),
 				},
-				relations: ['owner'],
+				relations: ['owner', 'owner.branch', 'owner.organisation'],
 				order: { checkIn: 'ASC' },
 			});
 
 			// Get today's door open time (earliest open record)
-			const todayRecords = device.records?.filter(r => {
+			const todayRecords = deviceRecords.filter(r => {
 				if (!r.openTime) return false;
 				const recordDate = typeof r.openTime === 'string' ? new Date(r.openTime) : (r.openTime as unknown as Date);
 				const recordDateOrg = toZonedTime(recordDate, orgTimezone);
 				const recordDateKey = recordDateOrg.toISOString().split('T')[0];
 				const todayKey = todayOrg.toISOString().split('T')[0];
 				return recordDateKey === todayKey;
-			}) || [];
+			});
 
 			// Sort records by openTime to get the earliest (first) open time of the day
 			const sortedTodayRecords = todayRecords.sort((a, b) => {
@@ -1365,7 +1379,7 @@ export class IotService {
 
 			return comparisons;
 		} catch (error) {
-			this.logger.error(`Failed to get door-user comparisons for device ${device.deviceID}: ${error.message}`);
+			this.logger.error(`Failed to get door-user comparisons for device ${device.deviceID}: ${error.message}`, error.stack);
 			return [];
 		}
 	}
@@ -1759,15 +1773,22 @@ export class IotService {
 						.slice(0, 30)
 				: [];
 
-			// Calculate performance metrics
+			// Calculate performance metrics (uses device.records directly)
 			const performance = await this.calculateDevicePerformance(device);
 			
-			// Get door-user comparisons
-			const doorUserComparisons = await this.getDoorUserComparisons(device);
+			// Create device object with all records for door-user comparisons
+			// getDoorUserComparisons needs all records to find today's records
+			const deviceWithAllRecords = {
+				...device,
+				records: device.records || [], // Use all records, not limited ones
+			};
+			
+			// Get door-user comparisons (needs all records to find today's records)
+			const doorUserComparisons = await this.getDoorUserComparisons(deviceWithAllRecords);
 
 			return {
 				...device,
-				records: sortedRecords,
+				records: sortedRecords, // Return limited records for response
 				opensOnTime: performance.opensOnTime,
 				closesOnTime: performance.closesOnTime,
 				score: performance.score,
@@ -1838,22 +1859,28 @@ export class IotService {
 
 			this.logger.log(`✅ [findOneDevice] Device found - ID: ${device.id}, deviceID: ${device.deviceID}, org: ${device.orgID}, branch: ${device.branchID}`);
 
-			// Limit records to latest 10
+			// Limit records to latest 10 for response
 			const sortedRecords = device.records 
 				? device.records
 					.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
 					.slice(0, 10)
 				: [];
 
-			// Calculate performance metrics
+			// Calculate performance metrics (uses device.records directly)
 			const performance = await this.calculateDevicePerformance(device);
 			
-			// Get door-user comparisons
-			const doorUserComparisons = await this.getDoorUserComparisons(device);
+			// Create device object with all records for door-user comparisons
+			const deviceWithAllRecords = {
+				...device,
+				records: device.records || [], // Use all records, not limited ones
+			};
+			
+			// Get door-user comparisons (needs all records to find today's records)
+			const doorUserComparisons = await this.getDoorUserComparisons(deviceWithAllRecords);
 
 			const processedDevice = {
 				...device,
-				records: sortedRecords,
+				records: sortedRecords, // Return limited records for response
 				opensOnTime: performance.opensOnTime,
 				closesOnTime: performance.closesOnTime,
 				score: performance.score,
@@ -2782,9 +2809,38 @@ export class IotService {
 				weekday: 'long',
 			}) as keyof typeof organizationHours.weeklySchedule;
 
+			// Helper function to convert time value to HH:mm string
+			const normalizeTimeString = (timeValue: any, defaultTime: string = '07:00'): string => {
+				if (!timeValue) return defaultTime;
+				
+				// Handle Date objects - convert to HH:mm format
+				if (timeValue instanceof Date) {
+					return format(timeValue, 'HH:mm');
+				}
+				
+				// Handle string values
+				if (typeof timeValue === 'string') {
+					// Check if it's already in HH:mm format
+					if (/^\d{1,2}:\d{2}$/.test(timeValue)) {
+						return timeValue;
+					}
+					// Try to parse as ISO date string and extract time
+					try {
+						const dateObj = new Date(timeValue);
+						if (!isNaN(dateObj.getTime())) {
+							return format(dateObj, 'HH:mm');
+						}
+					} catch (e) {
+						// Not a valid date string, continue to default
+					}
+				}
+				
+				return defaultTime;
+			};
+
 			// Determine business hours for the event day
-			let dayOpenTime = organizationHours.openTime || '07:00';
-			let dayCloseTime = organizationHours.closeTime || '16:30';
+			let dayOpenTime = normalizeTimeString(organizationHours.openTime, '07:00');
+			let dayCloseTime = normalizeTimeString(organizationHours.closeTime, '16:30');
 			let isWorkingDay = true;
 
 			// Check if organization has detailed schedule
@@ -2793,8 +2849,8 @@ export class IotService {
 				if (daySchedule.closed) {
 					isWorkingDay = false;
 				} else {
-					dayOpenTime = daySchedule.start || dayOpenTime;
-					dayCloseTime = daySchedule.end || dayCloseTime;
+					dayOpenTime = normalizeTimeString(daySchedule.start, dayOpenTime);
+					dayCloseTime = normalizeTimeString(daySchedule.end, dayCloseTime);
 				}
 			} else if (organizationHours.weeklySchedule && organizationHours.weeklySchedule[dayOfWeek] === false) {
 				isWorkingDay = false;
@@ -2821,8 +2877,8 @@ export class IotService {
 				if (specialHours.openTime === '00:00' && specialHours.closeTime === '00:00') {
 					isWorkingDay = false;
 				} else {
-					dayOpenTime = specialHours.openTime || dayOpenTime;
-					dayCloseTime = specialHours.closeTime || dayCloseTime;
+					dayOpenTime = normalizeTimeString(specialHours.openTime, dayOpenTime);
+					dayCloseTime = normalizeTimeString(specialHours.closeTime, dayCloseTime);
 				}
 			}
 
@@ -2835,8 +2891,8 @@ export class IotService {
 				// Parse times for comparison in org timezone
 				// Parse time strings (HH:mm) and combine with eventDate in org timezone
 				const parseTimeInOrg = (timeString: string, baseDate: Date, tz: string): Date => {
-					// Ensure timeString is a valid string before splitting
-					if (!timeString || typeof timeString !== 'string') {
+					// Ensure timeString is a valid HH:mm string
+					if (!timeString || typeof timeString !== 'string' || !/^\d{1,2}:\d{2}$/.test(timeString)) {
 						this.logger.warn(`⚠️ Invalid timeString provided to parseTimeInOrg: ${timeString}, using default 07:00`);
 						timeString = '07:00';
 					}

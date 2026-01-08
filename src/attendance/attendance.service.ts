@@ -6834,6 +6834,19 @@ export class AttendanceService {
 			this.logger.debug(`${recordLog} Processing ${consolidateDto.mode} record for user ${record.owner?.uid}`);
 
 			try {
+				// VALIDATION: Check if user exists before processing
+				if (!record.owner?.uid) {
+					throw new Error('User ID is required for attendance record');
+				}
+
+				const userExists = await this.userRepository.findOne({
+					where: { uid: record.owner.uid },
+				});
+
+				if (!userExists) {
+					throw new Error(`User with ID ${record.owner.uid} does not exist`);
+				}
+
 				// VALIDATION: Validate external machine record before processing
 				// This prevents invalid records, duplicates, and overwriting existing data
 				const validation = await this.validateExternalMachineRecord(record, consolidateDto.mode, orgId);
