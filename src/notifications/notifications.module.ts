@@ -4,6 +4,7 @@ import { NotificationsController } from './notifications.controller';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Notification } from './entities/notification.entity';
 import { User } from '../user/entities/user.entity';
+import { ClientAuth } from '../clients/entities/client.auth.entity';
 import { RewardsModule } from '../rewards/rewards.module';
 import { OrderNotificationsService } from './order-notifications.service';
 import { LicensingModule } from '../licensing/licensing.module';
@@ -14,7 +15,7 @@ import { CommunicationModule } from '../communication/communication.module';
 @Module({
   imports: [
     LicensingModule,
-    TypeOrmModule.forFeature([Notification, User]),
+    TypeOrmModule.forFeature([Notification, User, ClientAuth]),
     RewardsModule,
     forwardRef(() => CommunicationModule)
   ],

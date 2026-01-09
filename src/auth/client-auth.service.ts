@@ -16,6 +16,9 @@ import { PlatformService } from '../lib/services/platform.service';
 @Injectable()
 export class ClientAuthService {
 	private readonly logger = new Logger(ClientAuthService.name);
+	// Request deduplication: key = `${email}:${requestId}`, value = timestamp
+	private readonly requestCache = new Map<string, number>();
+	private readonly REQUEST_DEDUP_WINDOW_MS = 2000; // 2 seconds
 
 	constructor(
 		private jwtService: JwtService,
@@ -49,6 +52,34 @@ export class ClientAuthService {
 
 		try {
 			const { email, password } = signInInput;
+			
+			// Request deduplication: prevent duplicate sign-in attempts within a short window
+			const requestId = `${email}:${requestData?.ipAddress || 'unknown'}:${Date.now()}`;
+			const cacheKey = `${email}:${requestData?.ipAddress || 'unknown'}`;
+			const now = Date.now();
+			const lastRequest = this.requestCache.get(cacheKey);
+			
+			if (lastRequest && (now - lastRequest) < this.REQUEST_DEDUP_WINDOW_MS) {
+				this.logger.warn(`Duplicate sign-in request detected for ${email} from ${requestData?.ipAddress || 'unknown'} (within ${this.REQUEST_DEDUP_WINDOW_MS}ms window)`);
+				return {
+					message: 'Please wait before trying again',
+					accessToken: null,
+					refreshToken: null,
+					profileData: null,
+				};
+			}
+			
+			// Update cache
+			this.requestCache.set(cacheKey, now);
+			
+			// Clean up old entries (older than 1 minute)
+			if (this.requestCache.size > 1000) {
+				for (const [key, timestamp] of this.requestCache.entries()) {
+					if (now - timestamp > 60000) {
+						this.requestCache.delete(key);
+					}
+				}
+			}
 
 			this.logger.debug(`Finding client auth record for email: ${email}`);
 			const clientAuth = await this.clientAuthRepository.findOne({
@@ -58,31 +89,8 @@ export class ClientAuthService {
 
 			if (!clientAuth) {
 				this.logger.warn(`Client not found for authentication: ${email}`);
-				// Send failed login email for unknown client email
-				try {
-					this.logger.debug(`Sending failed login notification email for unknown client: ${email}`);
-					this.eventEmitter.emit('send.email', EmailType.CLIENT_FAILED_LOGIN_ATTEMPT, [email], {
-						name: email.split('@')[0],
-						loginTime: new Date().toLocaleString(),
-						ipAddress: requestData?.ipAddress || 'Unknown',
-						location: requestData?.location || 'Unknown',
-						country: requestData?.country || 'Unknown',
-						deviceType: requestData?.deviceType || 'Unknown',
-						browser: requestData?.browser || 'Unknown',
-						operatingSystem: requestData?.operatingSystem || 'Unknown',
-						userAgent: requestData?.userAgent || 'Unknown',
-						suspicious: true,
-						securityTips: [
-							'Contact us immediately if you suspect unauthorized access',
-							'Ensure you are using the correct client portal URL',
-							'Use strong, unique passwords for your client portal',
-						],
-					});
-				} catch (error) {
-					this.logger.error('Failed to send client failed login notification email:', error.stack);
-				}
-
-							return {
+				// Email sending disabled for login-related actions
+				return {
 					message: 'Invalid credentials provided',
 					accessToken: null,
 					refreshToken: null,
@@ -95,31 +103,8 @@ export class ClientAuthService {
 
 			if (!isPasswordValid) {
 				this.logger.warn(`Invalid password attempt for client: ${email}`);
-				// Send failed login email for incorrect password
-				try {
-					this.logger.debug(`Sending failed login notification email for invalid password: ${email}`);
-					this.eventEmitter.emit('send.email', EmailType.CLIENT_FAILED_LOGIN_ATTEMPT, [clientAuth.email], {
-						name: clientAuth.email.split('@')[0],
-						loginTime: new Date().toLocaleString(),
-						ipAddress: requestData?.ipAddress || 'Unknown',
-						location: requestData?.location || 'Unknown',
-						country: requestData?.country || 'Unknown',
-						deviceType: requestData?.deviceType || 'Unknown',
-						browser: requestData?.browser || 'Unknown',
-						operatingSystem: requestData?.operatingSystem || 'Unknown',
-						userAgent: requestData?.userAgent || 'Unknown',
-						suspicious: true,
-						securityTips: [
-							'Contact us immediately if you suspect unauthorized access',
-							'Change your password if you are concerned about security',
-							'Use strong, unique passwords for your client portal',
-						],
-					});
-				} catch (error) {
-					this.logger.error('Failed to send client failed login notification email:', error.stack);
-				}
-
-							return {
+				// Email sending disabled for login-related actions
+				return {
 					message: 'Invalid credentials provided',
 					accessToken: null,
 					refreshToken: null,
@@ -133,30 +118,7 @@ export class ClientAuthService {
 			await this.clientAuthRepository.save(clientAuth);
 			this.logger.debug(`Last login timestamp updated successfully for client: ${email}`);
 
-			// Send client login notification email
-			try {
-				this.logger.debug(`Sending successful login notification email to client: ${email}`);
-				this.eventEmitter.emit('send.email', EmailType.CLIENT_LOGIN_NOTIFICATION, [clientAuth.email], {
-					name: clientAuth.client?.name || clientAuth.email.split('@')[0],
-					loginTime: new Date().toLocaleString(),
-					ipAddress: requestData?.ipAddress || 'Unknown',
-					location: requestData?.location || 'Unknown',
-					country: requestData?.country || 'Unknown',
-					deviceType: requestData?.deviceType || 'Unknown',
-					browser: requestData?.browser || 'Unknown',
-					operatingSystem: requestData?.operatingSystem || 'Unknown',
-					userAgent: requestData?.userAgent || 'Unknown',
-					suspicious: false, // You can implement logic to detect suspicious logins
-					securityTips: [
-						'Always log out from shared devices',
-						'Use strong, unique passwords',
-						'Contact support if you notice suspicious activity',
-					],
-				});
-			} catch (error) {
-				// Don't fail login if email fails
-				this.logger.error('Failed to send client login notification email:', error.stack);
-			}
+			// Email sending disabled for login-related actions
 
 						// Check organization license if client belongs to an organization
 			if (clientAuth.client?.organisation) {

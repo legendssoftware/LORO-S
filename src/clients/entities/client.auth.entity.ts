@@ -27,6 +27,18 @@ export class ClientAuth {
 	@Column({ nullable: false, default: false })
 	isDeleted: boolean;
 
+	@Column({ nullable: true })
+	expoPushToken: string;
+
+	@Column({ nullable: true })
+	deviceId: string;
+
+	@Column({ nullable: true })
+	platform: string; // 'ios' | 'android'
+
+	@Column({ type: 'timestamptz', nullable: true })
+	pushTokenUpdatedAt: Date;
+
 	@ManyToOne(() => Client, (client) => client?.portalCredentials, { nullable: false })
 	client: Client;
 }

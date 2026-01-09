@@ -45,6 +45,7 @@ export class NotificationsController {
 		AccessLevel.USER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
+		AccessLevel.CLIENT,
 	)
 	@ApiOperation({ summary: 'Register user push token for notifications' })
 	@ApiBody({ type: RegisterPushTokenDto })
@@ -67,7 +68,7 @@ export class NotificationsController {
 		},
 	})
 	registerPushToken(@Body() registerTokenDto: RegisterPushTokenDto, @Req() req: AuthenticatedRequest) {
-		return this.notificationsService.registerPushToken(req.user.uid, registerTokenDto);
+		return this.notificationsService.registerPushToken(req.user.uid, registerTokenDto, req.user.role);
 	}
 
 	@Post('verify-token')
@@ -79,6 +80,7 @@ export class NotificationsController {
 		AccessLevel.USER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
+		AccessLevel.CLIENT,
 	)
 	@ApiOperation({ summary: 'Verify and sync push token status' })
 	@ApiBody({
@@ -99,7 +101,7 @@ export class NotificationsController {
 		},
 	})
 	verifyPushToken(@Body() registerTokenDto: RegisterPushTokenDto, @Req() req: AuthenticatedRequest) {
-		return this.notificationsService.verifyPushToken(req.user.uid, registerTokenDto);
+		return this.notificationsService.verifyPushToken(req.user.uid, registerTokenDto, req.user.role);
 	}
 
 	@Get()

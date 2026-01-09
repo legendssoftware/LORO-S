@@ -6,6 +6,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Not, In } from 'typeorm';
 import { Notification } from './entities/notification.entity';
 import { User } from '../user/entities/user.entity';
+import { ClientAuth } from '../clients/entities/client.auth.entity';
+import { AccessLevel } from '../lib/enums/user.enums';
 import { NotificationResponse } from '../lib/types/notification';
 import { formatDistanceToNow } from 'date-fns';
 import { NotificationStatus } from '../lib/enums/notification.enums';
@@ -21,6 +23,8 @@ export class NotificationsService {
 		private readonly notificationRepository: Repository<Notification>,
 		@InjectRepository(User)
 		private readonly userRepository: Repository<User>,
+		@InjectRepository(ClientAuth)
+		private readonly clientAuthRepository: Repository<ClientAuth>,
 		private readonly rewardsService: RewardsService,
 		private readonly expoPushService: ExpoPushService,
 	) {}
@@ -261,10 +265,14 @@ export class NotificationsService {
 		}
 	}
 
-	async registerPushToken(userId: number, registerTokenDto: RegisterPushTokenDto): Promise<{ message: string }> {
+	async registerPushToken(userId: number, registerTokenDto: RegisterPushTokenDto, role?: string): Promise<{ message: string }> {
 		try {
+			const isClient = role === AccessLevel.CLIENT || role?.toLowerCase() === 'client';
+			
 			console.log('🚀 [NotificationService] Starting push token registration', {
 				userId,
+				role: role || 'user',
+				isClient,
 				tokenPrefix: registerTokenDto.token ? registerTokenDto.token.substring(0, 30) : 'null',
 				tokenLength: registerTokenDto.token?.length || 0,
 				deviceId: registerTokenDto.deviceId,
@@ -289,6 +297,98 @@ export class NotificationsService {
 				});
 			}
 
+			// Handle clients differently
+			if (isClient) {
+				const existingClientAuth = await this.clientAuthRepository.findOne({ 
+					where: { uid: userId },
+					relations: ['client']
+				});
+				
+				if (!existingClientAuth) {
+					console.error('❌ [NotificationService] Client auth not found', { userId });
+					throw new NotFoundException('Client not found');
+				}
+
+				console.log('📊 [NotificationService] Existing client auth token info:', {
+					userId,
+					currentToken: existingClientAuth.expoPushToken ? `${existingClientAuth.expoPushToken.substring(0, 30)}...` : 'null',
+					currentDeviceId: existingClientAuth.deviceId,
+					currentPlatform: existingClientAuth.platform,
+					lastUpdated: existingClientAuth.pushTokenUpdatedAt,
+				});
+
+				// Check if this is a duplicate registration
+				const isSameToken = existingClientAuth.expoPushToken === registerTokenDto.token;
+				const isSameDevice = existingClientAuth.deviceId === registerTokenDto.deviceId;
+				const isSamePlatform = existingClientAuth.platform === registerTokenDto.platform;
+				const isRecent = existingClientAuth.pushTokenUpdatedAt && 
+								 (Date.now() - new Date(existingClientAuth.pushTokenUpdatedAt).getTime()) < 10000; // 10 seconds
+
+				if (isSameToken && isSameDevice && isSamePlatform && isRecent) {
+					console.log('⏭️ [NotificationService] Duplicate registration detected - same token, device, and platform updated recently', {
+						userId,
+						timeSinceLastUpdate: existingClientAuth.pushTokenUpdatedAt ? 
+							Date.now() - new Date(existingClientAuth.pushTokenUpdatedAt).getTime() : 'N/A'
+					});
+					return { message: 'Push token already registered (duplicate request)' };
+				}
+
+				// Check for duplicate tokens across client auths
+				console.log('🔍 [NotificationService] Checking for duplicate tokens across client auths...');
+				const conflictingClientAuths = await this.clientAuthRepository.find({
+					where: {
+						expoPushToken: registerTokenDto.token,
+						uid: Not(userId),
+					},
+				});
+
+				if (conflictingClientAuths.length > 0) {
+					console.log(`🔧 [NotificationService] Token conflict resolved - clearing token from ${conflictingClientAuths.length} other client auth(s)`, {
+						clearedClientAuthIds: conflictingClientAuths.map(ca => ca.uid),
+						clearedEmails: conflictingClientAuths.map(ca => ca.email),
+					});
+					
+					// Clear tokens from conflicting client auths
+					await this.clientAuthRepository.update(
+						{ uid: In(conflictingClientAuths.map(ca => ca.uid)) },
+						{
+							expoPushToken: null,
+							deviceId: null,
+							platform: null,
+							pushTokenUpdatedAt: null,
+						}
+					);
+				}
+
+				console.log('💾 [NotificationService] Updating client auth with new token...');
+				const updateResult = await this.clientAuthRepository.update(userId, {
+					expoPushToken: registerTokenDto.token,
+					deviceId: registerTokenDto.deviceId,
+					platform: registerTokenDto.platform,
+					pushTokenUpdatedAt: new Date(),
+				});
+
+				console.log('✅ [NotificationService] Client auth update result:', {
+					affected: updateResult.affected,
+					raw: updateResult.raw,
+				});
+
+				// Verify the update was successful
+				const updatedClientAuth = await this.clientAuthRepository.findOne({ where: { uid: userId } });
+				console.log('🔍 [NotificationService] Post-update verification:', {
+					userId,
+					newToken: updatedClientAuth?.expoPushToken ? `${updatedClientAuth.expoPushToken.substring(0, 30)}...` : 'null',
+					newDeviceId: updatedClientAuth?.deviceId,
+					newPlatform: updatedClientAuth?.platform,
+					newTimestamp: updatedClientAuth?.pushTokenUpdatedAt,
+					tokensMatch: updatedClientAuth?.expoPushToken === registerTokenDto.token,
+				});
+
+				console.log('✅ [NotificationService] Push token registered successfully for client', { userId });
+				return { message: 'Push token registered successfully' };
+			}
+
+			// Original user handling code
 			// Check if user exists first
 			const existingUser = await this.userRepository.findOne({ where: { uid: userId } });
 			if (!existingUser) {
@@ -372,7 +472,7 @@ export class NotificationsService {
 	/**
 	 * Verify and sync push token status
 	 */
-	async verifyPushToken(userId: number, registerTokenDto: RegisterPushTokenDto): Promise<{
+	async verifyPushToken(userId: number, registerTokenDto: RegisterPushTokenDto, role?: string): Promise<{
 		isValid: boolean;
 		needsUpdate: boolean;
 		message: string;
@@ -380,8 +480,12 @@ export class NotificationsService {
 		lastUpdated: string | null;
 	}> {
 		try {
+			const isClient = role === AccessLevel.CLIENT || role?.toLowerCase() === 'client';
+			
 			console.log('🔍 [NotificationService] Starting token verification', {
 				userId,
+				role: role || 'user',
+				isClient,
 				deviceTokenPrefix: registerTokenDto.token ? registerTokenDto.token.substring(0, 30) : 'null',
 				deviceTokenLength: registerTokenDto.token?.length || 0,
 				deviceId: registerTokenDto.deviceId,
@@ -389,6 +493,71 @@ export class NotificationsService {
 				timestamp: new Date().toISOString(),
 			});
 
+			// Handle clients differently
+			if (isClient) {
+				const clientAuth = await this.clientAuthRepository.findOne({ where: { uid: userId } });
+				
+				if (!clientAuth) {
+					console.error('❌ [NotificationService] Client auth not found during verification', { userId });
+					throw new NotFoundException('Client not found');
+				}
+
+				const serverToken = clientAuth.expoPushToken;
+				const deviceToken = registerTokenDto.token;
+				const lastUpdated = clientAuth.pushTokenUpdatedAt ? clientAuth.pushTokenUpdatedAt.toISOString() : null;
+
+				console.log('📊 [NotificationService] Client auth token comparison data:', {
+					userId,
+					serverToken: serverToken ? `${serverToken.substring(0, 30)}...` : 'null',
+					deviceToken: deviceToken ? `${deviceToken.substring(0, 30)}...` : 'null',
+					serverTokenLength: serverToken?.length || 0,
+					deviceTokenLength: deviceToken?.length || 0,
+					lastUpdated,
+					deviceId: clientAuth.deviceId,
+					platform: clientAuth.platform,
+				});
+
+				// Check if tokens match
+				const tokensMatch = serverToken === deviceToken;
+				console.log('🔍 [NotificationService] Token match analysis:', {
+					tokensMatch,
+					serverTokenExists: !!serverToken,
+					deviceTokenExists: !!deviceToken,
+				});
+				
+				// Check if server token is valid format
+				const serverTokenValid = serverToken ? this.expoPushService.isValidExpoPushToken(serverToken) : false;
+				console.log('🔍 [NotificationService] Server token validation:', {
+					serverTokenValid,
+					serverTokenFormat: serverToken ? 'ExponentPushToken format' : 'null',
+				});
+				
+				// Check if device token is valid format
+				const deviceTokenValid = this.expoPushService.isValidExpoPushToken(deviceToken);
+				console.log('🔍 [NotificationService] Device token validation:', {
+					deviceTokenValid,
+					deviceTokenFormat: deviceToken ? 'ExponentPushToken format' : 'null',
+				});
+
+				// Determine if update is needed
+				const needsUpdate = !tokensMatch || !serverTokenValid || !serverToken;
+				console.log('📊 [NotificationService] Update decision logic:', {
+					needsUpdate,
+					reason: !tokensMatch ? 'Tokens do not match' : !serverTokenValid ? 'Server token invalid format' : 'No server token',
+				});
+
+				return {
+					isValid: tokensMatch && serverTokenValid && !!serverToken,
+					needsUpdate,
+					message: needsUpdate 
+						? 'Token needs to be updated on server' 
+						: 'Token is valid and up to date',
+					serverToken,
+					lastUpdated,
+				};
+			}
+
+			// Original user handling code
 			const user = await this.userRepository.findOne({ where: { uid: userId } });
 			
 			if (!user) {

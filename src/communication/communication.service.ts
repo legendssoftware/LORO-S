@@ -208,6 +208,9 @@ import { MonthlyUnattendedLeadsReportData } from '../lib/types/email-templates.t
 export class CommunicationService {
 	private readonly logger = new Logger(CommunicationService.name);
 	private readonly emailService: nodemailer.Transporter;
+	// Deduplication cache: key = `${emailType}:${recipient}:${dataHash}`, value = timestamp
+	private readonly emailDeduplicationCache = new Map<string, number>();
+	private readonly DEDUPLICATION_WINDOW_MS = 5000; // 5 seconds
 
 	constructor(
 		private readonly configService: ConfigService,
@@ -386,6 +389,69 @@ export class CommunicationService {
 	}
 
 	/**
+	 * Generate a simple hash of email data for deduplication
+	 * @param data - Email template data
+	 * @returns Hash string
+	 */
+	private hashEmailData(data: any): string {
+		try {
+			// Create a stable hash from key data fields that identify the email content
+			// EXCLUDE time-based fields like loginTime, changeTime, etc. to ensure stable hashing
+			const keyFields = ['name', 'ipAddress', 'email', 'resetLink', 'token'];
+			const hashData: any = {};
+			
+			if (data) {
+				for (const key of keyFields) {
+					if (data[key] !== undefined) {
+						hashData[key] = data[key];
+					}
+				}
+				// Include other non-time fields for better uniqueness
+				if (data.deviceType) hashData.deviceType = data.deviceType;
+				if (data.browser) hashData.browser = data.browser;
+				if (data.operatingSystem) hashData.operatingSystem = data.operatingSystem;
+			}
+			
+			// Simple hash: JSON string length + first few chars of key values
+			const jsonStr = JSON.stringify(hashData);
+			return `${jsonStr.length}_${jsonStr.substring(0, 50)}`;
+		} catch {
+			return 'unknown';
+		}
+	}
+
+	/**
+	 * Check if this email should be deduplicated
+	 * @param emailType - Type of email
+	 * @param recipient - Recipient email
+	 * @param dataHash - Hash of email data
+	 * @returns True if email should be skipped (duplicate)
+	 */
+	private shouldDeduplicateEmail(emailType: EmailType, recipient: string, dataHash: string): boolean {
+		const now = Date.now();
+		const cacheKey = `${emailType}:${recipient}:${dataHash}`;
+		const lastSent = this.emailDeduplicationCache.get(cacheKey);
+		
+		if (lastSent && (now - lastSent) < this.DEDUPLICATION_WINDOW_MS) {
+			return true; // Duplicate detected
+		}
+		
+		// Update cache
+		this.emailDeduplicationCache.set(cacheKey, now);
+		
+		// Clean up old entries (older than 1 minute)
+		if (this.emailDeduplicationCache.size > 1000) {
+			for (const [key, timestamp] of this.emailDeduplicationCache.entries()) {
+				if (now - timestamp > 60000) {
+					this.emailDeduplicationCache.delete(key);
+				}
+			}
+		}
+		
+		return false;
+	}
+
+	/**
 	 * Send email based on event trigger with comprehensive logging and error handling
 	 * @param emailType - Type of email to send
 	 * @param recipientsEmails - Array of recipient email addresses
@@ -402,6 +468,26 @@ export class CommunicationService {
 		this.logger.debug(`[${operationId}] Email data keys: ${data ? Object.keys(data).join(', ') : 'No data provided'}`);
 		
 		try {
+			// Deduplication check for failed login attempts and other security emails
+			if (emailType === EmailType.CLIENT_FAILED_LOGIN_ATTEMPT || emailType === EmailType.FAILED_LOGIN_ATTEMPT) {
+				const dataHash = this.hashEmailData(data);
+				for (const recipient of recipientsEmails) {
+					if (this.shouldDeduplicateEmail(emailType, recipient, dataHash)) {
+						this.logger.warn(`[${operationId}] Duplicate email detected and skipped for ${emailType} to ${recipient} (within ${this.DEDUPLICATION_WINDOW_MS}ms window)`);
+						return {
+							accepted: [],
+							rejected: [],
+							messageId: null,
+							messageSize: null,
+							envelopeTime: null,
+							messageTime: null,
+							response: 'Duplicate email skipped',
+							envelope: null,
+						};
+					}
+				}
+			}
+			
 			// Validate recipients
 			this.logger.debug(`[${operationId}] Validating recipients...`);
 			if (!recipientsEmails || recipientsEmails.length === 0) {

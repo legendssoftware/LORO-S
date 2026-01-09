@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BulkEmailService } from './bulk-email.service';
-import { CommunicationService } from '../communication/communication.service';
+import { CommunicationModule } from '../communication/communication.module';
 import { CommunicationLog } from '../communication/entities/communication-log.entity';
 import { ShopModule } from '../shop/shop.module';
 import { LeadsModule } from '../leads/leads.module';
@@ -15,6 +15,7 @@ import { UserModule } from '../user/user.module';
 @Module({
 	imports: [
 		TypeOrmModule.forFeature([CommunicationLog]),
+		CommunicationModule, // Import CommunicationModule instead of providing CommunicationService
 		UserModule,
 		ShopModule,
 		LeadsModule,
@@ -26,7 +27,7 @@ import { UserModule } from '../user/user.module';
 	],
 	providers: [
 		BulkEmailService,
-		CommunicationService,
+		// Removed CommunicationService - it's already provided by CommunicationModule
 	],
 	exports: [BulkEmailService],
 })
