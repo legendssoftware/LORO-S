@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards, Headers, Req } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards, Headers, Req, UseInterceptors, UploadedFile, ParseFilePipe, MaxFileSizeValidator } from '@nestjs/common';
 import { LeadsService } from './leads.service';
 import { CreateLeadDto } from './dto/create-lead.dto';
 import { UpdateLeadDto } from './dto/update-lead.dto';
@@ -13,7 +13,9 @@ import {
 	ApiNotFoundResponse,
 	ApiUnauthorizedResponse,
 	ApiQuery,
+	ApiConsumes,
 } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
@@ -23,6 +25,8 @@ import { Lead } from './entities/lead.entity';
 import { AuthGuard } from '../guards/auth.guard';
 import { RoleGuard } from '../guards/role.guard';
 import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
+import { RepetitionType } from '../lib/enums/task.enums';
+import { CsvFileValidator } from './validators/csv-file.validator';
 
 @ApiTags('🎯 Leads')
 @Controller('leads')
@@ -486,6 +490,112 @@ export class LeadsController {
 		const branchId = req.user?.branch?.uid;
 		const userId = req.user?.uid;
 		return this.leadsService.reactivate(ref, Number(orgId), branchId, userId);
+	}
+
+	@Post('import-csv')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.SUPPORT,
+		AccessLevel.DEVELOPER,
+		AccessLevel.USER,
+		AccessLevel.OWNER,
+		AccessLevel.TECHNICIAN,
+	)
+	@UseInterceptors(FileInterceptor('file'))
+	@ApiConsumes('multipart/form-data')
+	@ApiOperation({
+		summary: 'Import leads from CSV file',
+		description: 'Uploads a CSV file and imports leads, assigning them evenly to sales reps with recurring follow-up tasks',
+	})
+	@ApiQuery({
+		name: 'followUpInterval',
+		enum: RepetitionType,
+		required: false,
+		description: 'Follow-up interval for recurring tasks (DAILY, WEEKLY, MONTHLY)',
+		example: RepetitionType.WEEKLY,
+	})
+	@ApiQuery({
+		name: 'followUpDuration',
+		type: Number,
+		required: false,
+		description: 'Duration in days for recurring follow-ups',
+		example: 90,
+	})
+	@ApiQuery({
+		name: 'assignedUserIds',
+		type: String,
+		required: false,
+		description: 'Comma-separated list of user IDs to assign leads to. If not provided, leads will be assigned to all active sales reps.',
+		example: '12,13,15',
+	})
+	@ApiOkResponse({
+		description: 'Leads imported successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				success: { type: 'boolean' },
+				imported: { type: 'number' },
+				failed: { type: 'number' },
+				errors: {
+					type: 'array',
+					items: {
+						type: 'object',
+						properties: {
+							row: { type: 'number' },
+							error: { type: 'string' },
+						},
+					},
+				},
+				assignments: {
+					type: 'array',
+					items: {
+						type: 'object',
+						properties: {
+							leadId: { type: 'number' },
+							userId: { type: 'number' },
+							userName: { type: 'string' },
+						},
+					},
+				},
+			},
+		},
+	})
+	@ApiBadRequestResponse({
+		description: 'Bad Request - Invalid file or missing required fields',
+	})
+	async importLeadsFromCSV(
+		@UploadedFile(
+			new ParseFilePipe({
+				validators: [
+					new MaxFileSizeValidator({ maxSize: 5 * 1024 * 1024 }), // 5MB
+					new CsvFileValidator({}),
+				],
+				errorHttpStatusCode: 400,
+			}),
+		)
+		file: Express.Multer.File,
+		@Req() req: AuthenticatedRequest,
+		@Query('followUpInterval') followUpInterval: RepetitionType = RepetitionType.WEEKLY,
+		@Query('followUpDuration') followUpDuration: number = 90,
+		@Query('assignedUserIds') assignedUserIds?: string,
+	) {
+		const orgId = req.user?.organisationRef;
+		const branchId = req.user?.branch?.uid;
+		
+		// Parse assigned user IDs from comma-separated string
+		const userIds = assignedUserIds
+			? assignedUserIds.split(',').map((id) => Number(id.trim())).filter((id) => !isNaN(id))
+			: undefined;
+
+		return this.leadsService.importLeadsFromCSV(
+			file,
+			Number(orgId),
+			branchId,
+			followUpInterval,
+			Number(followUpDuration),
+			userIds,
+		);
 	}
 
 	@Delete(':ref')

@@ -74,7 +74,10 @@ export class TaskRouteService {
 
 	@OnEvent('task.created')
 	async handleTaskCreated(payload: { task: Task }) {
-		await this.planRouteForTask(payload?.task);
+		if (!payload?.task) {
+			return;
+		}
+		await this.planRouteForTask(payload.task);
 	}
 
 	@OnEvent('task.updated')
@@ -102,6 +105,11 @@ export class TaskRouteService {
 
 	private async planRouteForTask(task: Task, retryCount = 0) {
 		const MAX_RETRIES = 3;
+		
+		if (!task) {
+			return;
+		}
+
 		const assignees = task.assignees || [];
 		const clients = task.clients || [];
 
@@ -325,7 +333,7 @@ export class TaskRouteService {
 
 		const tasks = await this.taskRepository.find({
 			where,
-			relations: ['assignees', 'clients', 'branch'],
+			relations: ['branch'], // Removed 'assignees' and 'clients' - they are JSON columns, not relations
 		});
 
 		const routes: Route[] = [];

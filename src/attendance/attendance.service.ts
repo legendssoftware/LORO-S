@@ -40,7 +40,7 @@ import { UnifiedNotificationService } from '../lib/services/unified-notification
 import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
 import { Organisation } from 'src/organisation/entities/organisation.entity';
 import { Branch } from '../branch/entities/branch.entity';
-import { formatInTimeZone } from 'date-fns-tz';
+import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
 
 // Import our enhanced calculation services
 import { TimeCalculatorUtil } from '../lib/utils/time-calculator.util';
@@ -297,9 +297,32 @@ export class AttendanceService {
 				timezone = await this.getOrganizationTimezone(record.organisation.uid);
 			}
 
-			// Times are already timezone-aware from database, no conversion needed
-			// Just return the record as-is
-			return record;
+			// Convert Date objects to timezone-aware Date objects
+			const convertedRecord = { ...record };
+			
+			if (convertedRecord.checkIn) {
+				convertedRecord.checkIn = toZonedTime(convertedRecord.checkIn, timezone);
+			}
+			if (convertedRecord.checkOut) {
+				convertedRecord.checkOut = toZonedTime(convertedRecord.checkOut, timezone);
+			}
+			if (convertedRecord.breakStartTime) {
+				convertedRecord.breakStartTime = toZonedTime(convertedRecord.breakStartTime, timezone);
+			}
+			if (convertedRecord.breakEndTime) {
+				convertedRecord.breakEndTime = toZonedTime(convertedRecord.breakEndTime, timezone);
+			}
+			if (convertedRecord.createdAt) {
+				convertedRecord.createdAt = toZonedTime(convertedRecord.createdAt, timezone);
+			}
+			if (convertedRecord.updatedAt) {
+				convertedRecord.updatedAt = toZonedTime(convertedRecord.updatedAt, timezone);
+			}
+			if (convertedRecord.verifiedAt) {
+				convertedRecord.verifiedAt = toZonedTime(convertedRecord.verifiedAt, timezone);
+			}
+
+			return convertedRecord;
 		} catch (error) {
 			this.logger.warn(`Error converting attendance record timezone: ${error.message}`);
 			return record; // Return original record if conversion fails
@@ -3269,6 +3292,7 @@ export class AttendanceService {
 			const presentUsersMap = new Map<number, any>();
 			const presentUserIds = new Set<number>();
 
+			const timezone = await this.getOrganizationTimezone(orgId);
 			todayAttendanceWithTimezone?.forEach((attendance) => {
 				if (attendance.owner && !presentUsersMap.has(attendance.owner.uid)) {
 					const user = attendance.owner;
@@ -3285,8 +3309,8 @@ export class AttendanceService {
 						branchId: user.branch?.uid || null,
 						branchName: user.branch?.name || 'N/A',
 						accessLevel: user.accessLevel || 'USER',
-						checkInTime: attendance.checkIn, // Now in correct timezone
-						checkOutTime: attendance.checkOut || null, // Now in correct timezone
+						checkInTime: attendance.checkIn ? formatInTimeZone(attendance.checkIn, timezone, 'yyyy-MM-dd HH:mm:ss') : null,
+						checkOutTime: attendance.checkOut ? formatInTimeZone(attendance.checkOut, timezone, 'yyyy-MM-dd HH:mm:ss') : null,
 						status: attendance.status || 'present',
 						workingHours: attendance.checkOut
 							? (
@@ -3654,13 +3678,14 @@ export class AttendanceService {
 		}
 
 			// Apply timezone conversion to the attendance record using enhanced method
+			const timezone = await this.getOrganizationTimezone(orgId);
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,
-				startTime: `${checkIn.checkIn}`,
-				endTime: `${checkIn.checkOut}`,
-				createdAt: `${checkIn.createdAt}`,
-				updatedAt: `${checkIn.updatedAt}`,
-				verifiedAt: `${checkIn.verifiedAt}`,
+				startTime: checkIn.checkIn ? formatInTimeZone(checkIn.checkIn, timezone, 'yyyy-MM-dd HH:mm:ss') : null,
+				endTime: checkIn.checkOut ? formatInTimeZone(checkIn.checkOut, timezone, 'yyyy-MM-dd HH:mm:ss') : null,
+				createdAt: checkIn.createdAt ? formatInTimeZone(checkIn.createdAt, timezone, 'yyyy-MM-dd HH:mm:ss') : null,
+				updatedAt: checkIn.updatedAt ? formatInTimeZone(checkIn.updatedAt, timezone, 'yyyy-MM-dd HH:mm:ss') : null,
+				verifiedAt: checkIn.verifiedAt ? formatInTimeZone(checkIn.verifiedAt, timezone, 'yyyy-MM-dd HH:mm:ss') : null,
 				nextAction,
 				isLatestCheckIn,
 				checkedIn,

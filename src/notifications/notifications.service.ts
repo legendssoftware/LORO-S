@@ -396,14 +396,6 @@ export class NotificationsService {
 				throw new NotFoundException('User not found');
 			}
 
-			console.log('📊 [NotificationService] Existing user token info:', {
-				userId,
-				currentToken: existingUser.expoPushToken ? `${existingUser.expoPushToken.substring(0, 30)}...` : 'null',
-				currentDeviceId: existingUser.deviceId,
-				currentPlatform: existingUser.platform,
-				lastUpdated: existingUser.pushTokenUpdatedAt,
-			});
-
 			// Check if this is a duplicate registration
 			const isSameToken = existingUser.expoPushToken === registerTokenDto.token;
 			const isSameDevice = existingUser.deviceId === registerTokenDto.deviceId;
@@ -447,16 +439,7 @@ export class NotificationsService {
 
 			// Verify the update was successful
 			const updatedUser = await this.userRepository.findOne({ where: { uid: userId } });
-			console.log('🔍 [NotificationService] Post-update verification:', {
-				userId,
-				newToken: updatedUser?.expoPushToken ? `${updatedUser.expoPushToken.substring(0, 30)}...` : 'null',
-				newDeviceId: updatedUser?.deviceId,
-				newPlatform: updatedUser?.platform,
-				newTimestamp: updatedUser?.pushTokenUpdatedAt,
-				tokensMatch: updatedUser?.expoPushToken === registerTokenDto.token,
-			});
 
-			console.log('✅ [NotificationService] Push token registered successfully', { userId });
 			return { message: 'Push token registered successfully' };
 		} catch (error) {
 			console.error('❌ [NotificationService] Failed to register push token:', {

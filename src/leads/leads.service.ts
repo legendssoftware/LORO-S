@@ -9,7 +9,7 @@ import { UpdateLeadDto } from './dto/update-lead.dto';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { endOfDay } from 'date-fns';
-import { startOfDay } from 'date-fns';
+import { startOfDay, addDays } from 'date-fns';
 import { NotificationStatus, NotificationType } from '../lib/enums/notification.enums';
 import { LeadStatus, LeadTemperature, LeadLifecycleStage, LeadPriority } from '../lib/enums/lead.enums';
 import { RewardsService } from '../rewards/rewards.service';
@@ -30,8 +30,10 @@ import { Interaction } from '../interactions/entities/interaction.entity';
 import { AccountStatus } from '../lib/enums/status.enums';
 import { Task } from '../tasks/entities/task.entity';
 import { TasksService } from '../tasks/tasks.service';
-import { TaskType, TaskPriority } from '../lib/enums/task.enums';
+import { TaskType, TaskPriority, RepetitionType } from '../lib/enums/task.enums';
 import { formatDateSafely } from '../lib/utils/date.utils';
+import { parseCSV, ParsedLeadRow } from './utils/csv-parser.util';
+import { CreateTaskDto } from '../tasks/dto/create-task.dto';
 
 @Injectable()
 export class LeadsService {
@@ -139,22 +141,10 @@ export class LeadsService {
 		orgId?: number,
 		branchId?: number,
 	): Promise<{ message: string; data: Lead | null }> {
-		const startTime = Date.now();
-		this.logger.log(`🔄 [LeadsService] Creating lead for org: ${orgId}, branch: ${branchId}, owner: ${createLeadDto.owner}, assigneeCount: ${createLeadDto.assignees?.length || 0}`);
-
 		try {
 			if (!orgId) {
-				this.logger.warn(`❌ [LeadsService] Organization ID is required for lead creation`);
 				throw new BadRequestException('Organization ID is required');
 			}
-
-			this.logger.debug(`📝 [LeadsService] Creating lead entity with data:`, {
-				owner: createLeadDto.owner,
-				orgId,
-				branchId,
-				hasAssignees: !!createLeadDto.assignees?.length,
-				assigneeCount: createLeadDto.assignees?.length || 0
-			});
 
 			// Create the lead entity
 			const lead = this.leadsRepository.create(createLeadDto as unknown as Lead);
@@ -174,33 +164,26 @@ export class LeadsService {
 			// Handle assignees if provided
 			if (createLeadDto.assignees?.length) {
 				lead.assignees = createLeadDto.assignees.map((assignee) => ({ uid: assignee.uid }));
-				this.logger.debug(`👥 [LeadsService] Assigned ${createLeadDto.assignees.length} assignees to lead`);
 			} else {
 				lead.assignees = [];
-				this.logger.debug(`👥 [LeadsService] No assignees provided for lead`);
 			}
 
 			// Set intelligent defaults for new leads
-			this.logger.debug(`🧠 [LeadsService] Setting intelligent defaults for lead`);
 			await this.setIntelligentDefaults(lead);
 
 			// ============================================================
 			// CRITICAL PATH: Save lead to database (must complete before response)
 			// ============================================================
-			this.logger.debug(`💾 [LeadsService] Saving lead to database`);
 			const savedLead = await this.leadsRepository.save(lead);
 
 			if (!savedLead) {
-				this.logger.error(`❌ [LeadsService] Failed to save lead - database returned null`);
 				throw new NotFoundException(process.env.CREATE_ERROR_MESSAGE || 'Failed to create lead');
 			}
 
-			this.logger.debug(`🔗 [LeadsService] Populating lead relations for lead: ${savedLead.uid}`);
 			// Populate the lead with full relation data for response
 			const populatedLead = await this.populateLeadRelations(savedLead);
 
-			// Clear caches after successful lead creation (fast operation, safe to await)
-			this.logger.debug(`🧹 [LeadsService] Clearing lead caches after creation`);
+			// Clear caches after successful lead creation
 			await this.clearLeadCache(savedLead.uid, savedLead.ownerUid);
 
 			// ============================================================
@@ -211,26 +194,17 @@ export class LeadsService {
 				data: populatedLead,
 			};
 
-			const duration = Date.now() - startTime;
-			this.logger.log(`✅ [LeadsService] Successfully created lead ${savedLead.uid} in ${duration}ms - returning response to client`);
-
 			// ============================================================
 			// POST-RESPONSE PROCESSING: Execute non-critical operations asynchronously
 			// These operations run after the response is sent, without blocking the client
 			// ============================================================
 			setImmediate(async () => {
 				try {
-					this.logger.debug(`🔄 [LeadsService] Starting post-response processing for lead: ${savedLead.uid}`);
-					
 					// EVENT-DRIVEN AUTOMATION: Post-creation actions
-					// These include: XP awards, notifications, lead scoring, target checks, CRM sync, etc.
 					await this.handleLeadCreatedEvents(populatedLead);
-					
-					this.logger.debug(`✅ [LeadsService] Post-response processing completed for lead: ${savedLead.uid}`);
 				} catch (backgroundError) {
-					// Log errors but don't affect user experience since response already sent
 					this.logger.error(
-						`❌ [LeadsService] Background processing failed for lead ${savedLead.uid}: ${backgroundError.message}`,
+						`Background processing failed for lead ${savedLead.uid}: ${backgroundError.message}`,
 						backgroundError.stack
 					);
 				}
@@ -238,14 +212,188 @@ export class LeadsService {
 
 			return response;
 		} catch (error) {
-			const duration = Date.now() - startTime;
-			this.logger.error(`❌ [LeadsService] Error creating lead after ${duration}ms: ${error.message}`, error.stack);
-			const response = {
+			this.logger.error(`Error creating lead: ${error.message}`, error.stack);
+			return {
 				message: error?.message,
 				data: null,
 			};
+		}
+	}
 
-			return response;
+	/**
+	 * Import leads from CSV file with round-robin assignment to sales reps
+	 */
+	async importLeadsFromCSV(
+		file: Express.Multer.File,
+		orgId: number,
+		branchId: number,
+		followUpInterval: RepetitionType,
+		followUpDuration: number,
+		assignedUserIds?: number[],
+	): Promise<{
+		success: boolean;
+		imported: number;
+		failed: number;
+		errors: Array<{ row: number; error: string }>;
+		assignments: Array<{ leadId: number; userId: number; userName: string }>;
+	}> {
+		const startTime = Date.now();
+		this.logger.log(`📥 Starting CSV import for org: ${orgId}, branch: ${branchId}`);
+
+		const result = {
+			success: false,
+			imported: 0,
+			failed: 0,
+			errors: [] as Array<{ row: number; error: string }>,
+			assignments: [] as Array<{ leadId: number; userId: number; userName: string }>,
+		};
+
+		try {
+			if (!orgId) {
+				throw new BadRequestException('Organization ID is required');
+			}
+
+			// Parse CSV
+			const { leads, errors: parseErrors } = parseCSV(file.buffer);
+			result.errors.push(...parseErrors);
+
+			if (leads.length === 0) {
+				return {
+					...result,
+					success: false,
+					errors: result.errors.length > 0 ? result.errors : [{ row: 0, error: 'No valid leads found in CSV' }],
+				};
+			}
+
+			// Get active sales reps for the organization/branch
+			const whereClause: any = {
+				organisation: { uid: orgId },
+				...(branchId && { branch: { uid: branchId } }),
+				status: AccountStatus.ACTIVE,
+				isDeleted: false,
+			};
+
+			if (assignedUserIds && assignedUserIds.length > 0) {
+				whereClause.uid = In(assignedUserIds);
+			}
+
+			const salesReps = await this.userRepository.find({
+				where: whereClause,
+				select: ['uid', 'name', 'surname', 'email'],
+			});
+
+			if (salesReps.length === 0) {
+				const errorMessage = assignedUserIds && assignedUserIds.length > 0
+					? 'No active sales reps found for the selected users. Please ensure the selected users are active sales reps.'
+					: 'No active sales reps found in the organization. Please add sales reps before importing leads.';
+				return {
+					...result,
+					success: false,
+					errors: [{ row: 0, error: errorMessage }],
+				};
+			}
+
+			// Round-robin assignment
+			const assignments = new Map<number, ParsedLeadRow[]>();
+			salesReps.forEach((rep) => assignments.set(rep.uid, []));
+
+			leads.forEach((lead, index) => {
+				const repIndex = index % salesReps.length;
+				const repId = salesReps[repIndex].uid;
+				assignments.get(repId)!.push(lead);
+			});
+
+			// Process each lead
+			for (let i = 0; i < leads.length; i++) {
+				const leadData = leads[i];
+				const repIndex = i % salesReps.length;
+				const assignedRep = salesReps[repIndex];
+
+				try {
+					// Create lead DTO
+					const createLeadDto: CreateLeadDto = {
+						name: leadData.name,
+						email: leadData.email,
+						phone: leadData.phone,
+						companyName: leadData.companyName,
+						notes: leadData.notes,
+						estimatedValue: leadData.estimatedValue,
+						source: leadData.source,
+						industry: leadData.industry,
+						budgetRange: leadData.budgetRange,
+						jobTitle: leadData.jobTitle,
+						owner: { uid: assignedRep.uid },
+						branch: { uid: branchId },
+						assignees: [{ uid: assignedRep.uid }],
+						status: LeadStatus.PENDING,
+					};
+
+					// Create lead
+					const createResult = await this.create(createLeadDto, orgId, branchId);
+					
+					if (!createResult.data) {
+						result.failed++;
+						result.errors.push({
+							row: i + 2,
+							error: `Failed to create lead: ${createResult.message}`,
+						});
+						continue;
+					}
+
+					const createdLead = createResult.data;
+					result.imported++;
+					result.assignments.push({
+						leadId: createdLead.uid,
+						userId: assignedRep.uid,
+						userName: `${assignedRep.name || ''} ${assignedRep.surname || ''}`.trim() || assignedRep.email,
+					});
+
+					// Create recurring follow-up task
+					try {
+						const nextFollowUpDate = createdLead.nextFollowUpDate || this.calculateNextFollowUpDate(
+							createdLead.temperature || LeadTemperature.COLD,
+							createdLead.priority || LeadPriority.MEDIUM,
+						);
+
+					const taskDto: CreateTaskDto = {
+						title: `Follow up on lead: ${createdLead.name || `Lead #${createdLead.uid}`}`,
+						description: `Follow up with ${createdLead.name || 'lead'} from ${createdLead.companyName || 'company'}. ${createdLead.notes ? `\n\nNotes: ${createdLead.notes}` : ''}`,
+						taskType: TaskType.FOLLOW_UP,
+						priority: TaskPriority.MEDIUM,
+						deadline: nextFollowUpDate,
+						repetitionType: followUpInterval,
+						repetitionDeadline: addDays(new Date(), followUpDuration),
+						assignees: [{ uid: assignedRep.uid }],
+						creators: [{ uid: assignedRep.uid }],
+						client: [],
+					};
+
+						await this.tasksService.create(taskDto, orgId, branchId);
+					} catch (taskError: any) {
+						this.logger.warn(`Failed to create follow-up task for lead ${createdLead.uid}: ${taskError.message}`);
+					}
+				} catch (error: any) {
+					result.failed++;
+					result.errors.push({
+						row: i + 2,
+						error: error.message || 'Failed to process lead',
+					});
+				}
+			}
+
+			result.success = result.imported > 0;
+			const duration = Date.now() - startTime;
+			this.logger.log(`✅ CSV import completed: ${result.imported} imported, ${result.failed} failed (${duration}ms)`);
+
+			return result;
+		} catch (error: any) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`❌ CSV import failed: ${error.message} (${duration}ms)`, error.stack);
+			return {
+				...result,
+				success: false,
+				errors: [{ row: 0, error: error.message || 'CSV import failed' }],
+			};
 		}
 	}
 
@@ -2279,8 +2427,6 @@ export class LeadsService {
 					lead.branch?.uid
 				);
 			}
-
-			this.logger.log(`Lead creation events completed for lead ${lead.uid}`);
 		} catch (error) {
 			this.logger.error(
 				`Failed to handle lead creation events for lead ${lead.uid}: ${error.message}`,

@@ -24,22 +24,19 @@ export class RewardsService {
     const logPrefix = `[awardXP] Awarding ${createRewardDto.amount}XP to user ${createRewardDto.owner}`;
     
     try {
-      this.logger.log(`${logPrefix} - Starting awardXP process`);
-      this.logger.log(`${logPrefix} - Action: ${createRewardDto.action}, Source: ${createRewardDto.source.type}`);
-      this.logger.log(`${logPrefix} - Organization: ${orgId}, Branch: ${branchId}`);
-      
+      if (!createRewardDto.owner) {
+        this.logger.warn(`Skipping XP award - user ID is undefined for action: ${createRewardDto.action}`);
+        return;
+      }
+
       if (!orgId) {
-        this.logger.error(`${logPrefix} - Missing organization ID`);
         throw new BadRequestException('Organization ID is required');
       }
 
       // Build where clause - don't filter by branch as XP rewards are user-specific
-      // Users should be able to access their rewards regardless of branch changes
       const whereClause: any = {
         owner: { uid: createRewardDto.owner },
       };
-
-      this.logger.log(`${logPrefix} - Query whereClause:`, JSON.stringify(whereClause, null, 2));
 
       let userRewards = await this.userRewardsRepository.findOne({
         where: whereClause,
@@ -101,11 +98,9 @@ export class RewardsService {
       });
 
       await this.xpTransactionRepository.save(transaction);
-      this.logger.log(`${logPrefix} - Saved XP transaction with ID: ${transaction.uid}`);
 
       // Update XP breakdown
       const category = this.mapSourceTypeToCategory(createRewardDto.source.type);
-      this.logger.log(`${logPrefix} - Mapping source type '${createRewardDto.source.type}' to category '${category}'`);
       
       // Ensure xpBreakdown has all required fields (for backwards compatibility)
       const requiredFields = ['tasks', 'leads', 'sales', 'attendance', 'collaboration', 'login', 'other'];
@@ -122,22 +117,19 @@ export class RewardsService {
       // Check for level up
       const newLevel = this.calculateLevel(userRewards.totalXP);
       if (newLevel > userRewards.level) {
-        this.logger.log(`${logPrefix} - Level up detected! Old level: ${userRewards.level}, New level: ${newLevel}`);
+        this.logger.log(`Level up! User ${createRewardDto.owner}: ${userRewards.level} → ${newLevel} (${userRewards.rank} → ${this.calculateRank(newLevel)})`);
         userRewards.level = newLevel;
         userRewards.rank = this.calculateRank(newLevel);
-        this.logger.log(`${logPrefix} - New rank: ${userRewards.rank}`);
       }
 
       await this.userRewardsRepository.save(userRewards);
-      this.logger.log(`${logPrefix} - Successfully saved updated rewards`);
 
       return {
         message: process.env.SUCCESS_MESSAGE,
         rewards: userRewards
       };
     } catch (error) {
-      this.logger.error(`${logPrefix} - Error occurred:`, error.message);
-      this.logger.error(`${logPrefix} - Error stack:`, error.stack);
+      this.logger.error(`Failed to award XP: ${error.message}`, error.stack);
       
       return {
         message: error?.message,

@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards, Req, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards, Req, Query, UnauthorizedException } from '@nestjs/common';
 import { ShopService } from './shop.service';
 import { ProjectsService } from './projects.service';
 import { AuthGuard } from '../guards/auth.guard';
@@ -4020,6 +4020,7 @@ Remove quotations from their current project assignments.
 		AccessLevel.SUPERVISOR,
 		AccessLevel.USER,
 		AccessLevel.TECHNICIAN,
+		AccessLevel.CLIENT,
 	)
 	@ApiOperation({
 		summary: '👥 Get projects by client',
@@ -4095,6 +4096,14 @@ Retrieve all projects for a specific client with complete project details.
 	async getProjectsByClient(@Param('clientId') clientId: number, @Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
+		const userRole = req.user?.role || req.user?.accessLevel;
+		const userId = req.user?.uid;
+
+		// Security check: If user is a CLIENT, they can only access their own projects
+		if (userRole === AccessLevel.CLIENT && userId && Number(userId) !== Number(clientId)) {
+			throw new UnauthorizedException('You can only access your own projects');
+		}
+
 		return this.projectsService.getProjectsByClient(clientId, orgId, branchId);
 	}
 

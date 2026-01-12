@@ -417,25 +417,19 @@ export class TasksService {
 	}
 
 	async create(createTaskDto: CreateTaskDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
-		this.logger.log(`Creating task: ${createTaskDto.title}, orgId: ${orgId}, branchId: ${branchId}`);
-
 		try {
 			// === CRITICAL PATH - Operations before response ===
 			
 			// Enhanced validation
-			this.logger.debug('Validating task creation data');
 			if (!orgId) {
-				this.logger.warn('Organization ID is required for task creation');
 				throw new BadRequestException('Organization ID is required');
 			}
 
 			if (!createTaskDto.title || createTaskDto.title.trim() === '') {
-				this.logger.warn('Task title is required');
 				throw new BadRequestException('Task title is required');
 			}
 
 			// Creating the task from the DTOs
-			this.logger.debug('Creating task entity from DTO');
 			const task = new Task();
 
 			// Map DTO fields to task
@@ -452,7 +446,6 @@ export class TasksService {
 				: null;
 
 			// Handle assignees with enhanced validation
-			this.logger.debug(`Processing ${createTaskDto.assignees?.length || 0} assignees`);
 			if (createTaskDto.assignees?.length) {
 				// Validate assignees belong to the same organization
 				const assigneeIds = createTaskDto.assignees.map((assignee) => assignee.uid);
@@ -469,14 +462,11 @@ export class TasksService {
 				}
 
 				task.assignees = validAssignees.map((assignee) => ({ uid: assignee.uid }));
-				this.logger.debug(`Assigned ${validAssignees.length} valid assignees to task`);
 			} else {
 				task.assignees = [];
-				this.logger.debug('No assignees specified for task');
 			}
 
 			// Handle clients with organization filtering
-			this.logger.debug(`Processing ${createTaskDto.client?.length || 0} clients`);
 			if (createTaskDto.client?.length) {
 				// Validate clients belong to the same organization
 				const clientIds = createTaskDto.client.map((client) => client.uid);
@@ -493,14 +483,11 @@ export class TasksService {
 				}
 
 				task.clients = validClients.map((client) => ({ uid: client.uid }));
-				this.logger.debug(`Assigned ${validClients.length} valid clients to task`);
 			} else {
 				task.clients = [];
-				this.logger.debug('No clients specified for task');
 			}
 
 			// Set creator with validation
-			this.logger.debug('Processing task creator');
 			if (createTaskDto.creators?.[0]) {
 				const creator = await this.userRepository.findOne({
 					where: { uid: createTaskDto.creators[0].uid },
@@ -514,36 +501,47 @@ export class TasksService {
 						throw new BadRequestException('Creator must belong to the same organization');
 					}
 					task.creator = creator;
-					this.logger.debug(`Set creator to user: ${creator.uid}`);
 				} else {
 					this.logger.warn(`Creator with ID ${createTaskDto.creators[0].uid} not found`);
+					// Fallback: use first assignee as creator if available
+					if (task.assignees?.[0]) {
+						const fallbackCreator = await this.userRepository.findOne({
+							where: { uid: task.assignees[0].uid },
+						});
+						if (fallbackCreator) {
+							task.creator = fallbackCreator;
+						}
+					}
+				}
+			} else {
+				// If no creator specified, use first assignee as creator
+				if (task.assignees?.[0]) {
+					const fallbackCreator = await this.userRepository.findOne({
+						where: { uid: task.assignees[0].uid },
+					});
+					if (fallbackCreator) {
+						task.creator = fallbackCreator;
+					}
 				}
 			}
 
-			// Set organization and branch with enhanced validation
-			this.logger.debug(`Setting organization: ${orgId}, branch: ${branchId}`);
+			// Set organization and branch
 			if (orgId) {
 				const organisation = { uid: orgId } as Organisation;
 				task.organisation = organisation;
-				this.logger.debug(`Task organization set to: ${orgId}`);
 			}
 
 			if (branchId) {
 				const branch = { uid: branchId } as Branch;
 				task.branch = branch;
-				this.logger.debug(`Task branch set to: ${branchId}`);
 			}
 
-			// Save the task with enhanced logging
-			this.logger.debug('Saving task to database');
+			// Save the task
 			const savedTask = await this.taskRepository.save(task);
 
 			if (!savedTask) {
-				this.logger.error('Failed to save task - database returned null');
 				throw new BadRequestException('Failed to create task');
 			}
-
-			this.logger.log(`Task created successfully with ID: ${savedTask.uid}`);
 
 			// === EARLY RETURN: Respond to user immediately with success ===
 			// All non-critical operations will continue asynchronously
@@ -552,15 +550,10 @@ export class TasksService {
 			// === POST-RESPONSE PROCESSING ===
 			// Process all non-critical operations asynchronously after responding to user
 			setImmediate(async () => {
-				const asyncOperationId = `TASK_ASYNC_${savedTask.uid}_${Date.now()}`;
-				this.logger.log(`[${asyncOperationId}] Starting async post-task processing for task: ${savedTask.title}`);
-
 				try {
 					// 1. Create subtasks if provided
 					if (createTaskDto.subtasks && createTaskDto.subtasks.length > 0) {
-						this.logger.debug(`[${asyncOperationId}] Creating ${createTaskDto.subtasks.length} subtasks`);
-						const subtasks = createTaskDto.subtasks.map((subtaskDto, index) => {
-							this.logger.debug(`[${asyncOperationId}] Creating subtask ${index + 1}: ${subtaskDto.title}`);
+						const subtasks = createTaskDto.subtasks.map((subtaskDto) => {
 							const subtask = new SubTask();
 							subtask.title = subtaskDto.title;
 							subtask.description = subtaskDto.description || '';
@@ -571,23 +564,15 @@ export class TasksService {
 
 						try {
 							await this.subtaskRepository.save(subtasks);
-							this.logger.log(`[${asyncOperationId}] ✅ Successfully created ${subtasks.length} subtasks`);
 						} catch (subtaskError) {
-							this.logger.error(`[${asyncOperationId}] Failed to create subtasks: ${subtaskError.message}`);
-							// Don't throw - user already has success response
+							this.logger.error(`Failed to create subtasks: ${subtaskError.message}`);
 						}
-					} else {
-						this.logger.debug(`[${asyncOperationId}] No subtasks to create`);
 					}
 
 					// 2. Send push notifications to assignees
 					if (savedTask?.assignees?.length > 0) {
-						this.logger.debug(`[${asyncOperationId}] Sending notifications to ${savedTask.assignees.length} assignees`);
 						try {
 							const assigneeIds = savedTask.assignees.map((assignee) => assignee.uid);
-							this.logger.debug(`[${asyncOperationId}] Assignee IDs: ${assigneeIds.join(', ')}`);
-
-							// Filter out inactive users
 							const activeAssigneeIds = await this.filterActiveUsers(assigneeIds);
 
 							if (activeAssigneeIds.length > 0) {
@@ -611,77 +596,58 @@ export class TasksService {
 										},
 									},
 								);
-								this.logger.log(`[${asyncOperationId}] ✅ Task assignment push notifications sent to ${activeAssigneeIds.length} assignees`);
-							} else {
-								this.logger.debug(`[${asyncOperationId}] No active assignees to notify`);
 							}
 						} catch (notificationError) {
-							this.logger.error(`[${asyncOperationId}] Failed to send task assignment push notifications: ${notificationError.message}`);
-							// Don't throw - user already has success response
+							this.logger.error(`Failed to send task notifications: ${notificationError.message}`);
 						}
-					} else {
-						this.logger.debug(`[${asyncOperationId}] No assignees to notify`);
 					}
 
 					// 3. Create repeating tasks if needed
 					if (task.repetitionType !== RepetitionType.NONE && task.repetitionDeadline && task.deadline) {
-						this.logger.debug(`[${asyncOperationId}] Creating repeating tasks for repetition type: ${task.repetitionType}`);
 						try {
 							await this.createRepeatingTasks(savedTask, createTaskDto);
-							this.logger.log(`[${asyncOperationId}] ✅ Repeating tasks created successfully`);
 						} catch (repeatError) {
-							this.logger.error(`[${asyncOperationId}] Failed to create repeating tasks: ${repeatError.message}`);
-							// Don't throw - user already has success response
+							this.logger.error(`Failed to create repeating tasks: ${repeatError.message}`);
 						}
-					} else {
-						this.logger.debug(`[${asyncOperationId}] No repeating tasks to create`);
 					}
 
 					// 4. Check for flags and update task status if needed
 					try {
 						await this.checkFlagsAndUpdateTaskStatus(savedTask.uid);
-						this.logger.debug(`[${asyncOperationId}] Flag checking completed`);
 					} catch (flagError) {
-						this.logger.error(`[${asyncOperationId}] Failed to check flags: ${flagError.message}`);
-						// Don't throw - user already has success response
+						this.logger.error(`Failed to check flags: ${flagError.message}`);
 					}
 
 					// 5. Clear cache
 					try {
 						await this.clearTaskCache();
-						this.logger.debug(`[${asyncOperationId}] Task cache cleared`);
 					} catch (cacheError) {
-						this.logger.error(`[${asyncOperationId}] Failed to clear cache: ${cacheError.message}`);
-						// Don't throw - user already has success response
+						this.logger.error(`Failed to clear cache: ${cacheError.message}`);
 					}
 
 					// 6. Emit task creation event for external integrations
 					try {
-						this.eventEmitter.emit('task.created', {
-							taskId: savedTask.uid,
-							title: savedTask.title,
-							description: savedTask.description,
-							priority: savedTask.priority,
-							deadline: savedTask.deadline,
-							taskType: savedTask.taskType,
-							assignees: savedTask.assignees,
-							clients: savedTask.clients,
-							creator: savedTask.creator,
-							orgId,
-							branchId,
-							timestamp: new Date(),
+						// Fetch full task with relations for event handlers
+						// Note: assignees and clients are JSON columns, not relations
+						const taskWithRelations = await this.taskRepository.findOne({
+							where: { uid: savedTask.uid },
+							relations: ['creator', 'organisation', 'branch'], // Removed 'assignees' and 'clients' - they are JSON columns
 						});
-						this.logger.debug(`[${asyncOperationId}] Task creation event emitted`);
+
+						if (taskWithRelations) {
+							// Populate assignees and clients using the helper method
+							const populatedTask = await this.populateTaskRelations(taskWithRelations);
+							
+							this.eventEmitter.emit('task.created', {
+								task: populatedTask,
+							});
+						}
 					} catch (eventError) {
-						this.logger.error(`[${asyncOperationId}] Failed to emit task creation event: ${eventError.message}`);
-						// Don't throw - user already has success response
+						this.logger.error(`Failed to emit task creation event: ${eventError.message}`);
 					}
 
-					this.logger.log(`[${asyncOperationId}] Async post-task processing completed successfully`);
-
 				} catch (error) {
-					this.logger.error(`[${asyncOperationId}] Error in async post-task processing: ${error.message}`, error.stack);
-					// Don't throw - user already has success response
+					this.logger.error(`Error in async post-task processing: ${error.message}`, error.stack);
 				}
 			});
 
@@ -1364,7 +1330,7 @@ export class TasksService {
 		try {
 			const task = await this.taskRepository.findOne({
 				where: { uid: ref },
-				relations: ['assignees', 'creator', 'subtasks', 'organisation'],
+				relations: ['creator', 'subtasks', 'organisation'], // Removed 'assignees' - it's a JSON column, not a relation
 			});
 
 			if (!task) {
@@ -1395,7 +1361,7 @@ export class TasksService {
 
 				// Send push notifications to creator and assignees for task completion
 				try {
-					const creatorId = task.creator && task.creator[0] ? task.creator[0].uid : null;
+					const creatorId = task.creator?.uid || null;
 					const assigneeIds = task.assignees?.map((assignee) => assignee.uid) || [];
 					const allRecipientIds = [creatorId, ...assigneeIds].filter(Boolean);
 
@@ -1440,7 +1406,7 @@ export class TasksService {
 					owner: null,
 				};
 
-				const recipients = [task.creator[0]?.uid, ...(task.assignees?.map((assignee) => assignee.uid) || [])];
+				const recipients = [task.creator?.uid, ...(task.assignees?.map((assignee) => assignee.uid) || [])].filter(Boolean);
 				const uniqueRecipients = [...new Set(recipients)];
 
 				// Filter out inactive users before sending internal notifications
