@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { CacheModule } from '@nestjs/cache-manager';
@@ -50,7 +50,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     BranchModule,
     CommunicationModule,
     LicensingModule,
-    ShopModule,
+    forwardRef(() => ShopModule),
     NotificationsModule
   ],
   controllers: [ApprovalsController],

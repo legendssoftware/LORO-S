@@ -6,6 +6,7 @@ import { Repository } from 'typeorm';
 import { ClientAuth } from '../clients/entities/client.auth.entity';
 import { ClientPasswordReset } from './entities/client-password-reset.entity';
 import { ClientSignInInput, ClientForgotPasswordInput, ClientResetPasswordInput } from './dto/client-auth.dto';
+import { ClientPasswordChangeDto } from '../clients/dto/client-password-change.dto';
 import { BadRequestException, HttpException, HttpStatus, Injectable, UnauthorizedException, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { EmailType } from '../lib/enums/email.enums';

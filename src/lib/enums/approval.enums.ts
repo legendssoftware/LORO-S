@@ -38,6 +38,7 @@ export enum ApprovalType {
 
     // 💼 Client & Sales Approvals
     CLIENT_REGISTRATION = 'client_registration', // New client registration
+    CLIENT_PROFILE_UPDATE = 'client_profile_update', // Client profile update approval
     DISCOUNT_REQUEST = 'discount_request',    // Sales discount approval
     CREDIT_LIMIT = 'credit_limit',            // Credit limit increase
     PAYMENT_TERMS = 'payment_terms',          // Payment terms modification

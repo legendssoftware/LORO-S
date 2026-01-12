@@ -13,6 +13,14 @@ import {
     ClientForgotPasswordInput, 
     ClientResetPasswordInput 
 } from './dto/client-auth.dto';
+import { ClientPasswordChangeDto } from '../clients/dto/client-password-change.dto';
+import { AuthGuard } from '../guards/auth.guard';
+import { RoleGuard } from '../guards/role.guard';
+import { Roles } from '../decorators/role.decorator';
+import { AccessLevel } from '../lib/enums/user.enums';
+import { UseGuards } from '@nestjs/common';
+import { Patch } from '@nestjs/common';
+import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
 import { 
     ApiOperation, 
     ApiTags, 

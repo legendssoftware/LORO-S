@@ -17,6 +17,7 @@ import { TasksModule } from '../tasks/tasks.module';
 import { AttendanceModule } from '../attendance/attendance.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ApprovalsModule } from '../approvals/approvals.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { ScheduleModule } from '@nestjs/schedule';
     TasksModule,
     forwardRef(() => AttendanceModule),
     NotificationsModule,
+    forwardRef(() => ApprovalsModule),
     ScheduleModule.forRoot(),
   ],
   controllers: [ClientsController],

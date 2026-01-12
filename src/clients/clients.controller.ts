@@ -5,6 +5,7 @@ import { UpdateClientDto } from './dto/update-client.dto';
 import { BulkCreateClientDto, BulkCreateClientResponse } from './dto/bulk-create-client.dto';
 import { BulkUpdateClientDto, BulkUpdateClientResponse } from './dto/bulk-update-client.dto';
 import { UpdateCommunicationScheduleDto } from './dto/communication-schedule.dto';
+import { CreditLimitExtensionDto } from './dto/credit-limit-extension.dto';
 import {
 	ApiOperation,
 	ApiQuery,
@@ -2955,6 +2956,88 @@ Clients can update the following information:
 		}
 
 		return this.clientsService.updateClientProfile(clientAuthId, updateClientDto, organisationRef);
+	}
+
+	@Post('profile/credit-limit-extension')
+	@Roles(AccessLevel.CLIENT)
+	@ApiOperation({
+		summary: '💳 Request Credit Limit Extension',
+		description: `
+# Request Credit Limit Extension
+
+Allows clients to request an increase in their credit limit through an approval workflow.
+
+## 🔐 **Security & Permissions**
+- **Client-Only Access**: Restricted to CLIENT role
+- **Self-Service**: Clients can only request extensions for their own account
+- **Approval Required**: All requests require approval from organization managers/admins
+
+## 📋 **Use Cases**
+- **Business Growth**: Request higher credit limit due to increased order volume
+- **Seasonal Needs**: Request temporary credit limit increase for peak seasons
+- **Project Funding**: Request extension for large project orders
+- **Payment Terms**: Request extension to accommodate longer payment cycles
+
+## 🔧 **Approval Process**
+1. Client submits request with requested limit and optional reason
+2. Request validated (must be greater than current limit)
+3. Approval request created and routed to financial approvers
+4. Approvers review and approve/reject request
+5. Client notified of decision
+6. Credit limit updated automatically upon approval
+
+## ⚠️ **Validation Rules**
+- Requested limit must be greater than current limit
+- Reason is optional but recommended for faster approval
+- All requests are logged for audit purposes
+		`,
+	})
+	@ApiBody({
+		type: CreditLimitExtensionDto,
+		description: 'Credit limit extension request data',
+	})
+	@ApiCreatedResponse({
+		description: '✅ Credit limit extension request submitted successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Credit limit extension request submitted for approval' },
+				data: {
+					type: 'object',
+					properties: {
+						approvalId: { type: 'number', example: 123 },
+						approvalReference: { type: 'string', example: 'APP-2024-001' },
+						status: { type: 'string', example: 'pending' },
+						clientId: { type: 'number', example: 456 },
+						currentLimit: { type: 'number', example: 50000 },
+						requestedLimit: { type: 'number', example: 100000 },
+						increaseAmount: { type: 'number', example: 50000 },
+						submittedAt: { type: 'string', format: 'date-time' },
+					},
+				},
+			},
+		},
+	})
+	@ApiBadRequestResponse({
+		description: '❌ Bad Request - Invalid data or validation errors',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Requested limit must be greater than current limit' },
+				error: { type: 'string', example: 'Bad Request' },
+				statusCode: { type: 'number', example: 400 },
+			},
+		},
+	})
+	requestCreditLimitExtension(@Body() creditLimitDto: CreditLimitExtensionDto, @Req() req: AuthenticatedRequest): Promise<{ message: string; data?: any }> {
+		const clientAuthId = req.user?.uid;
+		const organisationRef = req.user?.organisationRef;
+
+		if (!clientAuthId) {
+			throw new Error('Client authentication ID not found in token');
+		}
+
+		return this.clientsService.requestCreditLimitExtension(clientAuthId, creditLimitDto, organisationRef);
 	}
 
 	@Post('test-task-generation')

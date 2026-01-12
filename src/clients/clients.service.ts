@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, Inject, BadRequestException, Logger } from '@nestjs/common';
 import { CreateClientDto } from './dto/create-client.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
+import { CreditLimitExtensionDto } from './dto/credit-limit-extension.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Client } from './entities/client.entity';
 import { ClientAuth } from './entities/client.auth.entity';
@@ -31,6 +32,9 @@ import { BulkCreateClientDto, BulkCreateClientResponse, BulkClientResult } from 
 import { BulkUpdateClientDto, BulkUpdateClientResponse, BulkUpdateClientResult } from './dto/bulk-update-client.dto';
 import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
 import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
+import { ApprovalsService } from '../approvals/approvals.service';
+import { ApprovalType, ApprovalStatus, ApprovalPriority, ApprovalFlow } from '../lib/enums/approval.enums';
+import { OnEvent } from '@nestjs/event-emitter';
 
 @Injectable()
 export class ClientsService {
@@ -61,6 +65,7 @@ export class ClientsService {
 		private readonly tasksService: TasksService,
 		private readonly dataSource: DataSource,
 		private readonly unifiedNotificationService: UnifiedNotificationService,
+		private readonly approvalsService: ApprovalsService,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
 
@@ -79,6 +84,7 @@ export class ClientsService {
 		this.logger.debug(`Communication Schedule Service: ${!!this.communicationScheduleService}`);
 		this.logger.debug(`Tasks Service: ${!!this.tasksService}`);
 		this.logger.debug(`Data Source: ${!!this.dataSource}`);
+		this.logger.debug(`Approvals Service: ${!!this.approvalsService}`);
 	}
 
 	/**
@@ -3083,33 +3089,18 @@ export class ClientsService {
 	}
 
 	/**
-	 * Updates a client's profile through the client portal with comprehensive validation and processing.
+	 * Updates a client's profile through the client portal with approval workflow.
 	 * 
-	 * This method is specifically for clients updating their own profile information and includes:
-	 * - Permission validation to ensure clients can only update allowed fields
-	 * - Logo processing with fallback generation
-	 * - Communication schedule management
-	 * - Conditional email notifications based on notifyClient flag
-	 * - Admin notifications for profile changes
-	 * - Cache invalidation for data consistency
+	 * This method creates an approval request instead of directly updating the profile.
+	 * Changes are applied only after approval by organization managers/admins.
 	 *
 	 * @param clientAuthId - The ClientAuth.uid from the JWT token
-	 * @param updateClientDto - The data to update the client with including notifyClient flag
+	 * @param updateClientDto - The data to update the client with
 	 * @param organisationRef - The organization reference from JWT token
-	 * @returns Promise<{ message: string; data?: any }> - Success/error message with updated data
+	 * @returns Promise<{ message: string; data?: any }> - Success message with approval details
 	 * 
 	 * @throws NotFoundException - When client profile is not found
 	 * @throws BadRequestException - When organization mismatch or invalid fields provided
-	 * 
-	 * @example
-	 * ```typescript
-	 * const result = await clientsService.updateClientProfile(123, {
-	 *   name: 'Updated Company Name',
-	 *   phone: '+27 11 987 6543',
-	 *   description: 'Updated company description',
-	 *   notifyClient: false // Skip email notifications
-	 * }, 1);
-	 * ```
 	 */
 	async updateClientProfile(
 		clientAuthId: number,
@@ -3117,7 +3108,7 @@ export class ClientsService {
 		organisationRef?: number,
 	): Promise<{ message: string; data?: any }> {
 		const startTime = Date.now();
-		this.logger.log(`[CLIENT_PROFILE_UPDATE] Starting profile update for clientAuthId: ${clientAuthId} in org: ${organisationRef}`);
+		this.logger.log(`[CLIENT_PROFILE_UPDATE] Starting profile update approval request for clientAuthId: ${clientAuthId} in org: ${organisationRef}`);
 		this.logger.debug(`[CLIENT_PROFILE_UPDATE] Update payload: ${JSON.stringify({ ...updateClientDto, notifyClient: updateClientDto.notifyClient ?? true }, null, 2)}`);
 
 		try {
@@ -3147,7 +3138,7 @@ export class ClientsService {
 				'priceTier', 'acquisitionChannel', 'acquisitionDate', 'riskLevel',
 				'paymentTerms', 'type', 'status', 'isDeleted', 'createdAt', 'updatedAt',
 				'hasPortalAccess', 'portalCredentials', 'quotations', 'checkIns', 'tasks',
-				'leads', 'interactions', 'gpsCoordinates'
+				'leads', 'interactions', 'gpsCoordinates', 'notifyClient'
 			];
 
 			// Process logo if provided (generate fallback if needed)
@@ -3159,7 +3150,7 @@ export class ClientsService {
 			}
 
 			// Create a sanitized update object with only allowed fields
-			const allowedUpdateData: Partial<UpdateClientDto> = {};
+			const proposedUpdateData: Partial<UpdateClientDto> = {};
 			const updatedFields: string[] = [];
 			
 			// List of fields clients are allowed to update
@@ -3171,48 +3162,174 @@ export class ClientsService {
 
 			for (const [key, value] of Object.entries(updateClientDto)) {
 				if (key === 'notifyClient') {
-					// Skip notifyClient as it's not part of the entity
 					continue;
 				} else if (key === 'logo' && processedLogo) {
-					// Use the processed logo
-					allowedUpdateData[key] = processedLogo;
+					proposedUpdateData[key] = processedLogo;
 					updatedFields.push(key);
 				} else if (allowedFields.includes(key) && value !== undefined) {
-					allowedUpdateData[key] = value;
+					proposedUpdateData[key] = value;
 					updatedFields.push(key);
 				} else if (restrictedFields.includes(key)) {
 					this.logger.warn(`[CLIENT_PROFILE_UPDATE] Attempt to update restricted field: ${key}`);
-					// Don't throw an error, just skip restricted fields
 				}
 			}
 
-			if (Object.keys(allowedUpdateData).length === 0) {
+			if (Object.keys(proposedUpdateData).length === 0) {
 				this.logger.warn(`[CLIENT_PROFILE_UPDATE] No valid fields to update for client ${client.uid}`);
 				throw new BadRequestException('No valid fields provided for update');
 			}
 
-			this.logger.debug(`[CLIENT_PROFILE_UPDATE] Updating fields: ${updatedFields.join(', ')} for client ${client.uid}`);
+			this.logger.debug(`[CLIENT_PROFILE_UPDATE] Requesting approval for fields: ${updatedFields.join(', ')} for client ${client.uid}`);
 
-			// 4. Update the client profile
+			// 4. Get current client data for comparison
+			const currentClientData = {
+				name: client.name,
+				contactPerson: client.contactPerson,
+				email: client.email,
+				phone: client.phone,
+				alternativePhone: client.alternativePhone,
+				website: client.website,
+				logo: client.logo,
+				description: client.description,
+				address: client.address,
+				category: client.category,
+				preferredContactMethod: client.preferredContactMethod,
+				tags: client.tags,
+				industry: client.industry,
+				companySize: client.companySize,
+				preferredLanguage: client.preferredLanguage,
+				socialMedia: client.socialMedia,
+				customFields: client.customFields,
+			};
+
+			// 5. Find an organization admin/manager user for approval routing
+			// ApprovalsService requires a User entity for routing, so we use an org admin
+			const orgAdmin = await this.userRepository.findOne({
+				where: {
+					organisationRef: client.organisation?.uid?.toString(),
+					accessLevel: In([AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER]),
+					isDeleted: false,
+				},
+				relations: ['organisation', 'branch'],
+				order: { uid: 'ASC' },
+			});
+
+			if (!orgAdmin) {
+				this.logger.error(`[CLIENT_PROFILE_UPDATE] No admin/manager found for organization ${client.organisation?.uid}`);
+				throw new BadRequestException('No administrator found in organization to process approval');
+			}
+
+			// 6. Create approval request
+			const approvalDto = {
+				title: `Client Profile Update - ${client.name}`,
+				description: `Client ${client.name} (${clientAuth.email}) has requested to update their profile information. Fields to be updated: ${updatedFields.join(', ')}`,
+				type: ApprovalType.CLIENT_PROFILE_UPDATE,
+				priority: ApprovalPriority.MEDIUM,
+				flowType: ApprovalFlow.SINGLE_APPROVER,
+				entityType: 'client_profile',
+				entityId: client.uid,
+				entityData: {
+					clientAuthId: clientAuth.uid,
+					clientId: client.uid,
+					clientName: client.name,
+					clientEmail: clientAuth.email,
+					currentData: currentClientData,
+					proposedData: proposedUpdateData,
+					updatedFields,
+					organisationRef: client.organisation?.uid,
+					branchUid: client.branch?.uid,
+				},
+				autoSubmit: true,
+				metadata: {
+					clientAuthId: clientAuth.uid,
+					clientId: client.uid,
+					clientName: client.name,
+					clientEmail: clientAuth.email,
+					updatedFields,
+				},
+				customFields: {
+					tags: ['client-profile-update', 'client-portal'],
+				},
+			};
+
+			// Create approval using org admin as requester (for routing purposes)
+			// The actual client info is stored in entityData
+			const approval = await this.approvalsService.create(approvalDto, {
+				uid: orgAdmin.uid,
+				role: orgAdmin.accessLevel,
+				accessLevel: orgAdmin.accessLevel,
+				organisationRef: orgAdmin.organisationRef,
+				branch: orgAdmin.branch,
+			} as any);
+
+			// 7. Send notification emails
+			await this.sendClientProfileUpdateApprovalNotifications(client, clientAuth, updatedFields, approval);
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`[CLIENT_PROFILE_UPDATE] Successfully created approval request ${approval.uid} for client ${client.uid} in ${executionTime}ms`);
+
+			return {
+				message: 'Profile update request submitted for approval',
+				data: {
+					approvalId: approval.uid,
+					approvalReference: approval.approvalReference,
+					status: approval.status,
+					clientId: client.uid,
+					updatedFields,
+					submittedAt: new Date().toISOString(),
+				},
+			};
+		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`[CLIENT_PROFILE_UPDATE] Failed to create approval request for clientAuthId ${clientAuthId} after ${executionTime}ms. Error: ${error.message}`);
+			throw error;
+		}
+	}
+
+	/**
+	 * Applies approved client profile changes to the actual client record.
+	 * This method is called by the approval event listener when an approval is approved.
+	 * 
+	 * @param approvalData - The approval entity data containing current and proposed changes
+	 * @returns Promise<void>
+	 */
+	private async applyClientProfileChanges(approvalData: any): Promise<void> {
+		const startTime = Date.now();
+		this.logger.log(`[CLIENT_PROFILE_UPDATE] Applying approved profile changes for client ${approvalData.clientId}`);
+
+		try {
+			const { clientId, proposedData, updatedFields } = approvalData;
+
+			// Get the client
+			const client = await this.clientsRepository.findOne({
+				where: { uid: clientId },
+				relations: ['organisation', 'branch'],
+			});
+
+			if (!client) {
+				this.logger.error(`[CLIENT_PROFILE_UPDATE] Client ${clientId} not found when applying changes`);
+				throw new NotFoundException('Client not found');
+			}
+
+			// Apply the proposed changes
 			const updateResult = await this.clientsRepository.update(
-				{ uid: client.uid },
-				allowedUpdateData as unknown as DeepPartial<Client>
+				{ uid: clientId },
+				proposedData as unknown as DeepPartial<Client>
 			);
 
 			if (updateResult.affected === 0) {
-				throw new BadRequestException('Failed to update client profile');
+				this.logger.warn(`[CLIENT_PROFILE_UPDATE] No rows affected when applying changes for client ${clientId}`);
 			}
 
-			// 4.1 Handle communication schedules if provided
-			if (updateClientDto.communicationSchedules && updateClientDto.communicationSchedules.length > 0) {
-				this.logger.debug(`[CLIENT_PROFILE_UPDATE] Updating communication schedules for client ${client.uid}`);
+			// Handle communication schedules if provided
+			if (proposedData.communicationSchedules && proposedData.communicationSchedules.length > 0) {
+				this.logger.debug(`[CLIENT_PROFILE_UPDATE] Updating communication schedules for client ${clientId}`);
 				
 				try {
-					// Get existing schedules
 					const existingSchedules = await this.communicationScheduleService.getClientSchedules(
-						client.uid,
+						clientId,
 						{ page: 1, limit: 100 },
-						organisationRef,
+						client.organisation?.uid,
 						client.branch?.uid
 					);
 					
@@ -3221,77 +3338,539 @@ export class ClientsService {
 						await this.communicationScheduleService.updateSchedule(
 							schedule.uid,
 							{ isActive: false },
-							organisationRef,
+							client.organisation?.uid,
 							client.branch?.uid
 						);
 					}
 					
 					// Create new schedules
-					for (const scheduleDto of updateClientDto.communicationSchedules) {
+					for (const scheduleDto of proposedData.communicationSchedules) {
 						try {
 							await this.communicationScheduleService.createSchedule(
-								client.uid,
+								clientId,
 								scheduleDto,
-								organisationRef,
+								client.organisation?.uid,
 								client.branch?.uid
 							);
 						} catch (scheduleError) {
-							this.logger.error(`[CLIENT_PROFILE_UPDATE] Failed to create communication schedule for client ${client.uid}: ${scheduleError.message}`);
-							// Continue with other schedules even if one fails
+							this.logger.error(`[CLIENT_PROFILE_UPDATE] Failed to create communication schedule: ${scheduleError.message}`);
 						}
 					}
-					
-					// Add to updated fields for notification
-					if (!updatedFields.includes('communicationSchedules')) {
-						updatedFields.push('communicationSchedules');
-					}
 				} catch (error) {
-					this.logger.error(`[CLIENT_PROFILE_UPDATE] Failed to update communication schedules for client ${client.uid}: ${error.message}`);
-					// Don't throw error - other profile updates were successful
+					this.logger.error(`[CLIENT_PROFILE_UPDATE] Failed to update communication schedules: ${error.message}`);
 				}
 			}
 
-			// 5. Invalidate cache
+			// Invalidate cache
 			await this.invalidateClientCache(client);
 
-			// 6. Get updated client data for emails
-			const updatedClient = await this.clientsRepository.findOne({
-				where: { uid: client.uid },
-				relations: ['organisation', 'branch'],
+			// Send confirmation email
+			const clientAuth = await this.clientAuthRepository.findOne({
+				where: { uid: approvalData.clientAuthId },
 			});
 
-			if (!updatedClient) {
-				throw new NotFoundException('Updated client not found');
-			}
-
-			// 7. Send email notifications (based on notifyClient flag)
-			const shouldNotifyClient = updateClientDto.notifyClient !== false; // Default to true if not specified
-			this.logger.debug(`[CLIENT_PROFILE_UPDATE] Email notification setting - notifyClient: ${shouldNotifyClient}`);
-
-			if (shouldNotifyClient) {
-				this.logger.debug(`[CLIENT_PROFILE_UPDATE] Sending profile update notifications for client ${client.uid}`);
-			await this.sendClientProfileUpdateNotifications(updatedClient, updatedFields, clientAuth.email);
-			} else {
-				this.logger.log(`[CLIENT_PROFILE_UPDATE] Email notifications skipped for client ${client.uid} due to notifyClient=false`);
+			if (clientAuth) {
+				await this.sendClientProfileUpdateConfirmationEmails(client, clientAuth, updatedFields);
 			}
 
 			const executionTime = Date.now() - startTime;
-			this.logger.log(`[CLIENT_PROFILE_UPDATE] Successfully updated client profile ${client.uid} in ${executionTime}ms`);
+			this.logger.log(`[CLIENT_PROFILE_UPDATE] Successfully applied profile changes for client ${clientId} in ${executionTime}ms`);
+				} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`[CLIENT_PROFILE_UPDATE] Failed to apply profile changes after ${executionTime}ms. Error: ${error.message}`);
+			throw error;
+		}
+	}
+
+	/**
+	 * Event listener for approval workflow actions.
+	 * Handles CLIENT_PROFILE_UPDATE approval decisions and applies changes when approved.
+	 * 
+	 * @param payload - The approval action payload
+	 */
+	@OnEvent('approval.action.performed')
+	async handleClientProfileApprovalAction(payload: any): Promise<void> {
+		try {
+			this.logger.log(`[CLIENT_PROFILE_UPDATE] Handling approval action: ${payload.action} for approval ${payload.approvalId}`);
+
+			// Check if this approval is for a client profile update
+			if (payload.type !== ApprovalType.CLIENT_PROFILE_UPDATE) {
+				return; // Not a client profile update, ignore
+			}
+
+			// Get the user who performed the action for approval lookup
+			const actionUser = await this.userRepository.findOne({
+				where: { uid: payload.actionBy },
+			});
+
+			if (!actionUser) {
+				this.logger.error(`[CLIENT_PROFILE_UPDATE] Action user ${payload.actionBy} not found for approval ${payload.approvalId}`);
+				return;
+			}
+
+			// Find the approval to get the entity information
+			const approval = await this.approvalsService.findOne(payload.approvalId, actionUser as any);
+			if (!approval || approval.entityType !== 'client_profile') {
+				this.logger.log(`[CLIENT_PROFILE_UPDATE] Approval ${payload.approvalId} is not for a client profile update`);
+				return;
+			}
+
+			// Handle different approval actions
+			if (payload.action === 'approve' && (payload.toStatus === ApprovalStatus.APPROVED || payload.toStatus === ApprovalStatus.CONDITIONALLY_APPROVED)) {
+				this.logger.log(`[CLIENT_PROFILE_UPDATE] Approval ${payload.approvalId} approved, applying profile changes`);
+				await this.applyClientProfileChanges(approval.entityData);
+			} else if (payload.action === 'reject' || payload.action === 'decline') {
+				this.logger.log(`[CLIENT_PROFILE_UPDATE] Approval ${payload.approvalId} rejected, notifying client`);
+				// Send rejection email
+				const clientAuth = await this.clientAuthRepository.findOne({
+					where: { uid: approval.entityData?.clientAuthId },
+					relations: ['client'],
+				});
+				if (clientAuth && clientAuth.client) {
+					await this.sendClientProfileUpdateRejectionEmail(clientAuth.client, clientAuth, approval.entityData?.updatedFields || []);
+				}
+			}
+		} catch (error) {
+			this.logger.error(`[CLIENT_PROFILE_UPDATE] Error handling approval action: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Sends email notifications to organization managers/admins when a client requests a profile update.
+	 * 
+	 * @param client - The client requesting the update
+	 * @param clientAuth - The client auth record
+	 * @param updatedFields - List of fields being updated
+	 * @param approval - The approval record
+	 */
+	private async sendClientProfileUpdateApprovalNotifications(
+		client: Client,
+		clientAuth: ClientAuth,
+		updatedFields: string[],
+		approval: any,
+	): Promise<void> {
+		try {
+			this.logger.debug(`[CLIENT_PROFILE_UPDATE] Sending approval request notifications for client ${client.uid}`);
+
+			// Find organization managers/admins
+			const managers = await this.userRepository.find({
+				where: {
+					organisationRef: client.organisation?.uid?.toString(),
+					accessLevel: In([AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER]),
+					isDeleted: false,
+				},
+			});
+
+			if (managers.length === 0) {
+				this.logger.warn(`[CLIENT_PROFILE_UPDATE] No managers found for organization ${client.organisation?.uid}`);
+				return;
+			}
+
+			// Send notifications to each manager
+			for (const manager of managers) {
+				try {
+					this.eventEmitter.emit('send.email', EmailType.APPROVAL_CREATED, [manager.email], {
+						approvalTitle: approval.title,
+						approvalReference: approval.approvalReference,
+						approvalLink: `${process.env.FRONTEND_URL || 'https://app.loro.co.za'}/approvals/${approval.uid}`,
+						requesterName: client.name,
+						requesterEmail: clientAuth.email,
+						updatedFields: updatedFields.join(', '),
+						message: `Client ${client.name} has requested to update their profile. Please review and approve or reject the changes.`,
+					});
+				} catch (emailError) {
+					this.logger.error(`[CLIENT_PROFILE_UPDATE] Failed to send email to manager ${manager.email}: ${emailError.message}`);
+				}
+			}
+
+			this.logger.log(`[CLIENT_PROFILE_UPDATE] Sent approval request notifications to ${managers.length} managers`);
+		} catch (error) {
+			this.logger.error(`[CLIENT_PROFILE_UPDATE] Error sending approval notifications: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Sends confirmation email to client when their profile update is approved.
+	 * 
+	 * @param client - The updated client
+	 * @param clientAuth - The client auth record
+	 * @param updatedFields - List of fields that were updated
+	 */
+	private async sendClientProfileUpdateConfirmationEmails(
+		client: Client,
+		clientAuth: ClientAuth,
+		updatedFields: string[],
+	): Promise<void> {
+		try {
+			this.logger.debug(`[CLIENT_PROFILE_UPDATE] Sending confirmation email to client ${clientAuth.email}`);
+
+			this.eventEmitter.emit('send.email', EmailType.APPROVAL_APPROVED, [clientAuth.email], {
+				clientName: client.name,
+				updatedFields: updatedFields.join(', '),
+				message: `Your profile update request has been approved. The following fields have been updated: ${updatedFields.join(', ')}`,
+			});
+
+			this.logger.log(`[CLIENT_PROFILE_UPDATE] Sent confirmation email to client ${clientAuth.email}`);
+		} catch (error) {
+			this.logger.error(`[CLIENT_PROFILE_UPDATE] Error sending confirmation email: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Sends rejection email to client when their profile update is rejected.
+	 * 
+	 * @param client - The client
+	 * @param clientAuth - The client auth record
+	 * @param updatedFields - List of fields that were rejected
+	 */
+	private async sendClientProfileUpdateRejectionEmail(
+		client: Client,
+		clientAuth: ClientAuth,
+		updatedFields: string[],
+	): Promise<void> {
+		try {
+			this.logger.debug(`[CLIENT_PROFILE_UPDATE] Sending rejection email to client ${clientAuth.email}`);
+
+			this.eventEmitter.emit('send.email', EmailType.APPROVAL_REJECTED, [clientAuth.email], {
+				clientName: client.name,
+				updatedFields: updatedFields.join(', '),
+				message: `Your profile update request has been rejected. Please contact your account manager for more information.`,
+			});
+
+			this.logger.log(`[CLIENT_PROFILE_UPDATE] Sent rejection email to client ${clientAuth.email}`);
+		} catch (error) {
+			this.logger.error(`[CLIENT_PROFILE_UPDATE] Error sending rejection email: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Requests a credit limit extension for a client through the approval workflow.
+	 * 
+	 * @param clientAuthId - The ClientAuth.uid from the JWT token
+	 * @param creditLimitDto - The credit limit extension request data
+	 * @param organisationRef - The organization reference from JWT token
+	 * @returns Promise<{ message: string; data?: any }> - Success message with approval details
+	 * 
+	 * @throws NotFoundException - When client profile is not found
+	 * @throws BadRequestException - When requested limit is not greater than current limit
+	 */
+	async requestCreditLimitExtension(
+		clientAuthId: number,
+		creditLimitDto: CreditLimitExtensionDto,
+		organisationRef?: number,
+	): Promise<{ message: string; data?: any }> {
+		const startTime = Date.now();
+		this.logger.log(`[CREDIT_LIMIT_EXTENSION] Starting credit limit extension request for clientAuthId: ${clientAuthId}`);
+
+		try {
+			// 1. Find the ClientAuth record and related Client
+			const clientAuth = await this.clientAuthRepository.findOne({
+				where: { uid: clientAuthId, isDeleted: false },
+				relations: ['client', 'client.organisation', 'client.branch'],
+			});
+
+			if (!clientAuth || !clientAuth.client) {
+				this.logger.warn(`[CREDIT_LIMIT_EXTENSION] ClientAuth or Client not found for ID: ${clientAuthId}`);
+				throw new NotFoundException('Client profile not found');
+			}
+
+			const client = clientAuth.client;
+
+			// 2. Validate organization membership
+			if (organisationRef && client.organisation?.uid !== organisationRef) {
+				this.logger.warn(`[CREDIT_LIMIT_EXTENSION] Organization mismatch for client ${client.uid}`);
+				throw new BadRequestException('Client does not belong to the specified organization');
+			}
+
+			// 3. Validate requested limit > current limit
+			const currentLimit = Number(client.creditLimit) || 0;
+			if (creditLimitDto.requestedLimit <= currentLimit) {
+				this.logger.warn(`[CREDIT_LIMIT_EXTENSION] Requested limit ${creditLimitDto.requestedLimit} not greater than current limit ${currentLimit}`);
+				throw new BadRequestException(`Requested limit must be greater than current limit of ${currentLimit}`);
+			}
+
+			// 4. Find an organization admin/manager user for approval routing
+			const orgAdmin = await this.userRepository.findOne({
+				where: {
+					organisationRef: client.organisation?.uid?.toString(),
+					accessLevel: In([AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER]),
+					isDeleted: false,
+				},
+				relations: ['organisation', 'branch'],
+				order: { uid: 'ASC' },
+			});
+
+			if (!orgAdmin) {
+				this.logger.error(`[CREDIT_LIMIT_EXTENSION] No admin/manager found for organization ${client.organisation?.uid}`);
+				throw new BadRequestException('No administrator found in organization to process approval');
+			}
+
+			// 5. Calculate increase amount
+			const increaseAmount = creditLimitDto.requestedLimit - currentLimit;
+
+			// 6. Create approval request
+			const approvalDto = {
+				title: `Credit Limit Extension - ${client.name}`,
+				description: `Client ${client.name} (${clientAuth.email}) has requested a credit limit extension from ${currentLimit} to ${creditLimitDto.requestedLimit}. ${creditLimitDto.reason ? `Reason: ${creditLimitDto.reason}` : ''}`,
+				type: ApprovalType.CREDIT_LIMIT,
+				priority: ApprovalPriority.HIGH,
+				flowType: ApprovalFlow.SINGLE_APPROVER,
+				entityType: 'client_credit_limit',
+				entityId: client.uid,
+				amount: creditLimitDto.requestedLimit,
+				currency: 'ZAR',
+				entityData: {
+					clientAuthId: clientAuth.uid,
+					clientId: client.uid,
+					clientName: client.name,
+					clientEmail: clientAuth.email,
+					currentLimit,
+					requestedLimit: creditLimitDto.requestedLimit,
+					increaseAmount,
+					reason: creditLimitDto.reason,
+					organisationRef: client.organisation?.uid,
+					branchUid: client.branch?.uid,
+				},
+				autoSubmit: true,
+				metadata: {
+					clientAuthId: clientAuth.uid,
+					clientId: client.uid,
+					clientName: client.name,
+					currentLimit,
+					requestedLimit: creditLimitDto.requestedLimit,
+					increaseAmount,
+				},
+				customFields: {
+					tags: ['credit-limit-extension', 'client-portal', 'financial'],
+				},
+			};
+
+			// Create approval using org admin as requester (for routing purposes)
+			const approval = await this.approvalsService.create(approvalDto, {
+				uid: orgAdmin.uid,
+				role: orgAdmin.accessLevel,
+				accessLevel: orgAdmin.accessLevel,
+				organisationRef: orgAdmin.organisationRef,
+				branch: orgAdmin.branch,
+			} as any);
+
+			// 7. Send notification emails
+			await this.sendCreditLimitExtensionNotifications(client, clientAuth, currentLimit, creditLimitDto.requestedLimit, approval);
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`[CREDIT_LIMIT_EXTENSION] Successfully created approval request ${approval.uid} for client ${client.uid} in ${executionTime}ms`);
 
 			return {
-				message: 'Client profile updated successfully',
+				message: 'Credit limit extension request submitted for approval',
 				data: {
+					approvalId: approval.uid,
+					approvalReference: approval.approvalReference,
+					status: approval.status,
 					clientId: client.uid,
-					updatedFields,
-					lastUpdated: new Date().toISOString(),
+					currentLimit,
+					requestedLimit: creditLimitDto.requestedLimit,
+					increaseAmount,
+					submittedAt: new Date().toISOString(),
 				},
 			};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
-			this.logger.error(`[CLIENT_PROFILE_UPDATE] Failed to update client profile for clientAuthId ${clientAuthId} after ${executionTime}ms. Error: ${error.message}`);
-			return {
-				message: error?.message || 'Failed to update client profile',
-			};
+			this.logger.error(`[CREDIT_LIMIT_EXTENSION] Failed to create approval request for clientAuthId ${clientAuthId} after ${executionTime}ms. Error: ${error.message}`);
+			throw error;
+		}
+	}
+
+	/**
+	 * Event listener for credit limit approval actions.
+	 * Handles CREDIT_LIMIT approval decisions and updates credit limit when approved.
+	 * 
+	 * @param payload - The approval action payload
+	 */
+	@OnEvent('approval.action.performed')
+	async handleCreditLimitApproval(payload: any): Promise<void> {
+		try {
+			this.logger.log(`[CREDIT_LIMIT_EXTENSION] Handling approval action: ${payload.action} for approval ${payload.approvalId}`);
+
+			// Check if this approval is for a credit limit extension
+			if (payload.type !== ApprovalType.CREDIT_LIMIT) {
+				return; // Not a credit limit approval, ignore
+			}
+
+			// Get the user who performed the action for approval lookup
+			const actionUser = await this.userRepository.findOne({
+				where: { uid: payload.actionBy },
+			});
+
+			if (!actionUser) {
+				this.logger.error(`[CREDIT_LIMIT_EXTENSION] Action user ${payload.actionBy} not found for approval ${payload.approvalId}`);
+				return;
+			}
+
+			// Find the approval to get the entity information
+			const approval = await this.approvalsService.findOne(payload.approvalId, actionUser as any);
+			if (!approval || approval.entityType !== 'client_credit_limit') {
+				this.logger.log(`[CREDIT_LIMIT_EXTENSION] Approval ${payload.approvalId} is not for a credit limit extension`);
+				return;
+			}
+
+			// Handle different approval actions
+			if (payload.action === 'approve' && (payload.toStatus === ApprovalStatus.APPROVED || payload.toStatus === ApprovalStatus.CONDITIONALLY_APPROVED)) {
+				this.logger.log(`[CREDIT_LIMIT_EXTENSION] Approval ${payload.approvalId} approved, updating credit limit`);
+				
+				const { clientId, requestedLimit } = approval.entityData;
+				
+				// Update credit limit
+				await this.clientsRepository.update(
+					{ uid: clientId },
+					{ creditLimit: requestedLimit } as DeepPartial<Client>
+				);
+
+				// Invalidate cache
+				const client = await this.clientsRepository.findOne({ where: { uid: clientId } });
+				if (client) {
+					await this.invalidateClientCache(client);
+				}
+
+				// Send confirmation email
+				const clientAuth = await this.clientAuthRepository.findOne({
+					where: { uid: approval.entityData?.clientAuthId },
+					relations: ['client'],
+				});
+
+				if (clientAuth && clientAuth.client) {
+					await this.sendCreditLimitExtensionConfirmation(clientAuth.client, clientAuth, approval.entityData?.currentLimit || 0, requestedLimit);
+				}
+			} else if (payload.action === 'reject' || payload.action === 'decline') {
+				this.logger.log(`[CREDIT_LIMIT_EXTENSION] Approval ${payload.approvalId} rejected, notifying client`);
+				
+				// Send rejection email
+				const clientAuth = await this.clientAuthRepository.findOne({
+					where: { uid: approval.entityData?.clientAuthId },
+					relations: ['client'],
+				});
+
+				if (clientAuth && clientAuth.client) {
+					await this.sendCreditLimitExtensionRejection(clientAuth.client, clientAuth, approval.entityData?.requestedLimit || 0);
+				}
+			}
+		} catch (error) {
+			this.logger.error(`[CREDIT_LIMIT_EXTENSION] Error handling approval action: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Sends email notifications to financial approvers when a client requests a credit limit extension.
+	 * 
+	 * @param client - The client requesting the extension
+	 * @param clientAuth - The client auth record
+	 * @param currentLimit - Current credit limit
+	 * @param requestedLimit - Requested credit limit
+	 * @param approval - The approval record
+	 */
+	private async sendCreditLimitExtensionNotifications(
+		client: Client,
+		clientAuth: ClientAuth,
+		currentLimit: number,
+		requestedLimit: number,
+		approval: any,
+	): Promise<void> {
+		try {
+			this.logger.debug(`[CREDIT_LIMIT_EXTENSION] Sending approval request notifications for client ${client.uid}`);
+
+			// Find organization managers/admins (financial approvers)
+			const managers = await this.userRepository.find({
+				where: {
+					organisationRef: client.organisation?.uid?.toString(),
+					accessLevel: In([AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER]),
+					isDeleted: false,
+				},
+			});
+
+			if (managers.length === 0) {
+				this.logger.warn(`[CREDIT_LIMIT_EXTENSION] No managers found for organization ${client.organisation?.uid}`);
+				return;
+			}
+
+			// Send notifications to each manager
+			for (const manager of managers) {
+				try {
+					this.eventEmitter.emit('send.email', EmailType.APPROVAL_CREATED, [manager.email], {
+						approvalTitle: approval.title,
+						approvalReference: approval.approvalReference,
+						approvalLink: `${process.env.FRONTEND_URL || 'https://app.loro.co.za'}/approvals/${approval.uid}`,
+						requesterName: client.name,
+						requesterEmail: clientAuth.email,
+						currentLimit,
+						requestedLimit,
+						increaseAmount: requestedLimit - currentLimit,
+						message: `Client ${client.name} has requested a credit limit extension from ${currentLimit} to ${requestedLimit}. Please review and approve or reject the request.`,
+					});
+				} catch (emailError) {
+					this.logger.error(`[CREDIT_LIMIT_EXTENSION] Failed to send email to manager ${manager.email}: ${emailError.message}`);
+				}
+			}
+
+			this.logger.log(`[CREDIT_LIMIT_EXTENSION] Sent approval request notifications to ${managers.length} managers`);
+		} catch (error) {
+			this.logger.error(`[CREDIT_LIMIT_EXTENSION] Error sending approval notifications: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Sends confirmation email to client when their credit limit extension is approved.
+	 * 
+	 * @param client - The client
+	 * @param clientAuth - The client auth record
+	 * @param oldLimit - Previous credit limit
+	 * @param newLimit - New credit limit
+	 */
+	private async sendCreditLimitExtensionConfirmation(
+		client: Client,
+		clientAuth: ClientAuth,
+		oldLimit: number,
+		newLimit: number,
+	): Promise<void> {
+		try {
+			this.logger.debug(`[CREDIT_LIMIT_EXTENSION] Sending confirmation email to client ${clientAuth.email}`);
+
+			this.eventEmitter.emit('send.email', EmailType.APPROVAL_APPROVED, [clientAuth.email], {
+				clientName: client.name,
+				oldLimit,
+				newLimit,
+				increaseAmount: newLimit - oldLimit,
+				message: `Your credit limit extension request has been approved. Your new credit limit is ${newLimit}.`,
+			});
+
+			this.logger.log(`[CREDIT_LIMIT_EXTENSION] Sent confirmation email to client ${clientAuth.email}`);
+		} catch (error) {
+			this.logger.error(`[CREDIT_LIMIT_EXTENSION] Error sending confirmation email: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Sends rejection email to client when their credit limit extension is rejected.
+	 * 
+	 * @param client - The client
+	 * @param clientAuth - The client auth record
+	 * @param requestedLimit - The requested credit limit that was rejected
+	 */
+	private async sendCreditLimitExtensionRejection(
+		client: Client,
+		clientAuth: ClientAuth,
+		requestedLimit: number,
+	): Promise<void> {
+		try {
+			this.logger.debug(`[CREDIT_LIMIT_EXTENSION] Sending rejection email to client ${clientAuth.email}`);
+
+			this.eventEmitter.emit('send.email', EmailType.APPROVAL_REJECTED, [clientAuth.email], {
+				clientName: client.name,
+				requestedLimit,
+				message: `Your credit limit extension request to ${requestedLimit} has been rejected. Please contact your account manager for more information.`,
+			});
+
+			this.logger.log(`[CREDIT_LIMIT_EXTENSION] Sent rejection email to client ${clientAuth.email}`);
+		} catch (error) {
+			this.logger.error(`[CREDIT_LIMIT_EXTENSION] Error sending rejection email: ${error.message}`);
 		}
 	}
 

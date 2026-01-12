@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { ShopService } from './shop.service';
 import { ProjectsService } from './projects.service';
 import { ShopController } from './shop.controller';
@@ -42,7 +42,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 			Branch
 		]),
 		ProductsModule,
-		ClientsModule,
+		forwardRef(() => ClientsModule),
 		LicensingModule,
 		UserModule,
 		OrganisationModule,

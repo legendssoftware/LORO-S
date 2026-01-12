@@ -32,7 +32,7 @@ export class AuthGuard extends BaseGuard implements CanActivate {
 					const isLicenseValid = await this.licensingService.validateLicense(decodedToken.licenseId);
 					
 					if (!isLicenseValid) {
-						this.logger.warn(`[AuthGuard] License validation failed - licenseId: ${decodedToken.licenseId}, orgRef: ${decodedToken.organisationRef}, userId: ${decodedToken.uid}`);
+						this.logger.warn(`[AuthGuard] License validation failed - userId: ${decodedToken.uid}`);
 						throw new UnauthorizedException("Your organization's license has expired or is invalid. Please contact your administrator.");
 					}
 
@@ -48,12 +48,11 @@ export class AuthGuard extends BaseGuard implements CanActivate {
 				} catch (error) {
 					// If it's already an UnauthorizedException, rethrow it
 					if (error instanceof UnauthorizedException) {
-						this.logger.error(`[AuthGuard] UnauthorizedException during license validation - licenseId: ${decodedToken.licenseId}, orgRef: ${decodedToken.organisationRef}, userId: ${decodedToken.uid}, error: ${error.message}`);
+						this.logger.error(`[AuthGuard] UnauthorizedException during license validation - userId: ${decodedToken.uid}, error: ${error.message}`);
 						throw error;
 					}
 					// For other errors, log and throw a generic error
-					this.logger.error(`[AuthGuard] Unexpected error validating license ${decodedToken.licenseId} for org ${decodedToken.organisationRef}, userId ${decodedToken.uid}:`, error);
-					this.logger.error(`[AuthGuard] Error stack:`, error instanceof Error ? error.stack : 'No stack trace available');
+					this.logger.error(`[AuthGuard] Unexpected error validating license - userId: ${decodedToken.uid}:`, error instanceof Error ? error.message : 'Unknown error');
 					throw new UnauthorizedException("Unable to validate license. Please contact your administrator.");
 				}
 			}
@@ -63,7 +62,6 @@ export class AuthGuard extends BaseGuard implements CanActivate {
 				hasLicenseId: !!decodedToken.licenseId,
 				userId: decodedToken.uid,
 				role: decodedToken.role,
-				email: decodedToken.email || 'N/A',
 			});
 		}
 

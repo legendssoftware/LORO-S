@@ -215,10 +215,8 @@ export class NotificationsService {
 
 			if (usersWithToken.length > 0) {
 				console.warn(`🔴 [NotificationService] [TokenConflict] Detected ${usersWithToken.length} users with duplicate token`, {
-					token: token.substring(0, 30) + '...',
 					currentUserId: userId,
 					conflictingUserIds: usersWithToken.map(u => u.uid),
-					conflictingUserEmails: usersWithToken.map(u => u.email),
 				});
 
 				// Clear the token from all conflicting users
@@ -234,11 +232,7 @@ export class NotificationsService {
 				);
 
 				console.log(`✅ [NotificationService] [TokenConflict] Cleared duplicate token from ${usersWithToken.length} users`, {
-					clearedUsers: usersWithToken.map(u => ({
-						uid: u.uid,
-						email: u.email,
-						name: `${u.name || ''} ${u.surname || ''}`.trim()
-					})),
+					clearedUserIds: usersWithToken.map(u => u.uid),
 					newOwnerUserId: userId
 				});
 
@@ -249,7 +243,6 @@ export class NotificationsService {
 			}
 
 			console.log(`✅ [NotificationService] [TokenUniqueness] No duplicate tokens found - token is unique`, {
-				token: token.substring(0, 30) + '...',
 				userId
 			});
 
@@ -257,7 +250,6 @@ export class NotificationsService {
 		} catch (error) {
 			console.error('❌ [NotificationService] [TokenUniqueness] Failed to ensure token uniqueness:', {
 				userId,
-				token: token.substring(0, 30) + '...',
 				error: error instanceof Error ? error.message : 'Unknown error',
 			});
 			// Don't throw - allow registration to proceed even if uniqueness check fails
@@ -273,28 +265,19 @@ export class NotificationsService {
 				userId,
 				role: role || 'user',
 				isClient,
-				tokenPrefix: registerTokenDto.token ? registerTokenDto.token.substring(0, 30) : 'null',
-				tokenLength: registerTokenDto.token?.length || 0,
 				deviceId: registerTokenDto.deviceId,
 				platform: registerTokenDto.platform,
 				timestamp: new Date().toISOString(),
-				isProductionToken: registerTokenDto.token?.includes('ExponentPushToken'),
-				tokenFormat: registerTokenDto.token?.startsWith('ExponentPushToken[') ? 'VALID_FORMAT' : 'INVALID_FORMAT',
 			});
 
 			// Validate token format
 			const isValidToken = this.expoPushService.isValidExpoPushToken(registerTokenDto.token);
 			console.log('🔍 [NotificationService] Token validation:', {
 				isValidToken,
-				startsWithCorrectPrefix: registerTokenDto.token?.startsWith('ExponentPushToken['),
-				tokenType: typeof registerTokenDto.token,
 			});
 
 			if (!isValidToken) {
-				console.warn('⚠️ [NotificationService] Invalid token format detected', {
-					token: registerTokenDto.token,
-					expected: 'ExponentPushToken[...]',
-				});
+				console.warn('⚠️ [NotificationService] Invalid token format detected');
 			}
 
 			// Handle clients differently
@@ -311,7 +294,6 @@ export class NotificationsService {
 
 				console.log('📊 [NotificationService] Existing client auth token info:', {
 					userId,
-					currentToken: existingClientAuth.expoPushToken ? `${existingClientAuth.expoPushToken.substring(0, 30)}...` : 'null',
 					currentDeviceId: existingClientAuth.deviceId,
 					currentPlatform: existingClientAuth.platform,
 					lastUpdated: existingClientAuth.pushTokenUpdatedAt,
@@ -345,7 +327,6 @@ export class NotificationsService {
 				if (conflictingClientAuths.length > 0) {
 					console.log(`🔧 [NotificationService] Token conflict resolved - clearing token from ${conflictingClientAuths.length} other client auth(s)`, {
 						clearedClientAuthIds: conflictingClientAuths.map(ca => ca.uid),
-						clearedEmails: conflictingClientAuths.map(ca => ca.email),
 					});
 					
 					// Clear tokens from conflicting client auths
@@ -377,11 +358,9 @@ export class NotificationsService {
 				const updatedClientAuth = await this.clientAuthRepository.findOne({ where: { uid: userId } });
 				console.log('🔍 [NotificationService] Post-update verification:', {
 					userId,
-					newToken: updatedClientAuth?.expoPushToken ? `${updatedClientAuth.expoPushToken.substring(0, 30)}...` : 'null',
 					newDeviceId: updatedClientAuth?.deviceId,
 					newPlatform: updatedClientAuth?.platform,
 					newTimestamp: updatedClientAuth?.pushTokenUpdatedAt,
-					tokensMatch: updatedClientAuth?.expoPushToken === registerTokenDto.token,
 				});
 
 				console.log('✅ [NotificationService] Push token registered successfully for client', { userId });
@@ -420,7 +399,6 @@ export class NotificationsService {
 			if (uniquenessCheck.conflictingUsers > 0) {
 				console.log(`🔧 [NotificationService] Token conflict resolved - cleared token from ${uniquenessCheck.conflictingUsers} other user(s)`, {
 					clearedUserIds: uniquenessCheck.clearedUsers.map(u => u.uid),
-					clearedUserEmails: uniquenessCheck.clearedUsers.map(u => u.email),
 				});
 			}
 
@@ -446,7 +424,6 @@ export class NotificationsService {
 				userId,
 				error: error instanceof Error ? error.message : 'Unknown error',
 				errorName: error instanceof Error ? error.name : 'Unknown',
-				stack: error instanceof Error ? error.stack?.substring(0, 500) : 'No stack',
 			});
 			throw new BadRequestException(`Failed to register push token: ${error instanceof Error ? error.message : 'Unknown error'}`);
 		}
@@ -469,8 +446,6 @@ export class NotificationsService {
 				userId,
 				role: role || 'user',
 				isClient,
-				deviceTokenPrefix: registerTokenDto.token ? registerTokenDto.token.substring(0, 30) : 'null',
-				deviceTokenLength: registerTokenDto.token?.length || 0,
 				deviceId: registerTokenDto.deviceId,
 				platform: registerTokenDto.platform,
 				timestamp: new Date().toISOString(),
@@ -491,8 +466,6 @@ export class NotificationsService {
 
 				console.log('📊 [NotificationService] Client auth token comparison data:', {
 					userId,
-					serverToken: serverToken ? `${serverToken.substring(0, 30)}...` : 'null',
-					deviceToken: deviceToken ? `${deviceToken.substring(0, 30)}...` : 'null',
 					serverTokenLength: serverToken?.length || 0,
 					deviceTokenLength: deviceToken?.length || 0,
 					lastUpdated,
@@ -554,8 +527,6 @@ export class NotificationsService {
 
 			console.log('📊 [NotificationService] Token comparison data:', {
 				userId,
-				serverToken: serverToken ? `${serverToken.substring(0, 30)}...` : 'null',
-				deviceToken: deviceToken ? `${deviceToken.substring(0, 30)}...` : 'null',
 				serverTokenLength: serverToken?.length || 0,
 				deviceTokenLength: deviceToken?.length || 0,
 				lastUpdated,
@@ -620,7 +591,6 @@ export class NotificationsService {
 					lastUpdated: new Date().toISOString(),
 				};
 
-				console.log('📊 [NotificationService] Auto-update response:', response);
 				return response;
 			}
 
@@ -637,14 +607,12 @@ export class NotificationsService {
 				lastUpdated,
 			};
 
-			console.log('📊 [NotificationService] Verification response:', response);
 			return response;
 		} catch (error) {
 			console.error('❌ [NotificationService] Token verification failed:', {
 				userId,
 				error: error instanceof Error ? error.message : 'Unknown error',
 				errorName: error instanceof Error ? error.name : 'Unknown',
-				stack: error instanceof Error ? error.stack?.substring(0, 500) : 'No stack',
 			});
 			throw new BadRequestException(`Failed to verify push token: ${error.message}`);
 		}
@@ -676,7 +644,6 @@ export class NotificationsService {
 				}
 			}
 
-			console.log('messages', messages);
 
 			if (messages.length > 0) {
 				await this.expoPushService.sendPushNotifications(messages);
