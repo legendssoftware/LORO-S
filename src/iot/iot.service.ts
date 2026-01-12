@@ -1346,8 +1346,8 @@ export class IotService {
 				return aTime.getTime() - bTime.getTime(); // Sort ascending (earliest first)
 			});
 
-			// Door open time: use as-is from database (already in correct format, NOT converted)
-			const doorOpenTime = sortedTodayRecords.length > 0 && sortedTodayRecords[0].openTime
+			// Door open time: use raw time for display, but convert for comparison
+			const doorOpenTimeRaw = sortedTodayRecords.length > 0 && sortedTodayRecords[0].openTime
 				? (typeof sortedTodayRecords[0].openTime === 'string' 
 					? new Date(sortedTodayRecords[0].openTime) 
 					: (sortedTodayRecords[0].openTime as unknown as Date))
@@ -1358,27 +1358,29 @@ export class IotService {
 				const userAttendance = todayAttendance.find(a => a.owner?.uid === user.uid);
 				const userClockInTime = userAttendance?.checkIn || null;
 
-				// Convert user clock-in time to organization timezone
+				// Convert both times to organization timezone for accurate comparison
+				const doorOpenTimeOrg = doorOpenTimeRaw ? toZonedTime(doorOpenTimeRaw, orgTimezone) : null;
 				const clockInOrg = userClockInTime ? toZonedTime(userClockInTime, orgTimezone) : null;
 
 				let timeDifferenceMinutes: number | null = null;
 				let isEarly = false;
 				let isLate = false;
 
-				if (doorOpenTime && clockInOrg) {
+				if (doorOpenTimeOrg && clockInOrg) {
 					// Calculate difference in minutes (doorOpenTime - userClockInTime)
-					// Door open time is used as-is, user clock-in is converted to org timezone
-					timeDifferenceMinutes = Math.round((doorOpenTime.getTime() - clockInOrg.getTime()) / (1000 * 60));
+					// Both times are now in org timezone for accurate comparison
+					timeDifferenceMinutes = Math.round((doorOpenTimeOrg.getTime() - clockInOrg.getTime()) / (1000 * 60));
 					
-					// Morning logic: no tolerance - before = early (good), after = late (bad)
+					// Morning logic: negative = door opened before user clocked in (good/early)
+					// positive = door opened after user clocked in (bad/late)
 					isEarly = timeDifferenceMinutes < 0; // Door opened before user clocked in
 					isLate = timeDifferenceMinutes > 0; // Door opened after user clocked in
 				}
 
 				// Format times for API response
-				// Door open time: use as-is (already correct format), but format for mobile app compatibility
+				// Door open time: use raw time (as-is) for display - don't convert
 				// User clock-in time: format converted organization timezone time
-				const doorOpenTimeStr = doorOpenTime ? doorOpenTime.toISOString() : null;
+				const doorOpenTimeStr = doorOpenTimeRaw ? doorOpenTimeRaw.toISOString() : null;
 				const userClockInTimeStr = this.formatTimeAsLocalISO(clockInOrg);
 
 				return {

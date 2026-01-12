@@ -181,6 +181,10 @@ export class Client {
 	@Column({ type: 'json', nullable: true })
 	customFields: Record<string, any>;
 
+	// CRM Enhancement: Client preferences/settings
+	@Column({ type: 'json', nullable: true })
+	preferences: Record<string, any>;
+
 	@Column({ type: 'simple-json', nullable: true })
 	socialMedia: {
 		linkedin?: string;

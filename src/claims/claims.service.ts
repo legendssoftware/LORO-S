@@ -169,27 +169,30 @@ export class ClaimsService {
 				throw new BadRequestException('Valid claim amount is required');
 			}
 
-			// Get user with organization and branch info
+			// Get user with organization and branch info - Use QueryBuilder for proper relations
 			this.logger.debug(`👤 [ClaimsService] Fetching user details for claim creation: ${createClaimDto.owner}`);
-			const user = await this.userRepository.findOne({
-				where: { uid: createClaimDto.owner },
-				relations: ['organisation', 'branch'],
-			});
+			const user = await this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.organisation', 'organisation')
+				.leftJoinAndSelect('user.branch', 'branch')
+				.where('user.uid = :userId', { userId: Number(createClaimDto.owner) })
+				.andWhere('user.isDeleted = :isDeleted', { isDeleted: false })
+				.getOne();
 
 			if (!user) {
 				this.logger.warn(`⚠️ [ClaimsService] User not found for claim creation: ${createClaimDto.owner}`);
-				throw new NotFoundException('User not found');
+				throw new NotFoundException(`User with ID ${createClaimDto.owner} not found`);
 			}
 
 			// Enhanced organization filtering - CRITICAL: Only allow claims for user's organization
-			if (orgId && user.organisation && user.organisation.uid !== orgId) {
+			if (orgId && user.organisation && Number(user.organisation.uid) !== Number(orgId)) {
 				this.logger.warn(`❌ [ClaimsService] User ${user.uid} attempting to create claim for different organization ${orgId}`);
 				throw new BadRequestException('Cannot create claim for different organization');
 			}
 
 			// Use the passed orgId and branchId if present, otherwise use user's
-			const organisation = orgId ? { uid: orgId } : user.organisation;
-			const branch = branchId ? { uid: branchId } : user.branch;
+			const organisation = orgId ? { uid: Number(orgId) } : (user.organisation ? { uid: Number(user.organisation.uid) } : null);
+			const branch = branchId ? { uid: Number(branchId) } : (user.branch ? { uid: Number(user.branch.uid) } : null);
 
 			// Generate claim reference number
 			const claimRef = await this.generateClaimRef();
@@ -197,12 +200,15 @@ export class ClaimsService {
 			const shareTokenExpiresAt = new Date();
 			shareTokenExpiresAt.setDate(shareTokenExpiresAt.getDate() + 30); // 30 days expiry
 
-			// Enhanced data mapping with proper validation
+			// Enhanced data mapping with proper validation - set UIDs explicitly
 			const claimData = {
 				...createClaimDto,
 				amount: createClaimDto.amount.toString(),
 				organisation: organisation,
 				branch: branch,
+				ownerUid: Number(user.uid), // Set ownerUid explicitly
+				organisationUid: organisation ? Number(organisation.uid) : null,
+				branchUid: branch ? Number(branch.uid) : null,
 				claimRef,
 				shareToken,
 				shareTokenExpiresAt,
@@ -392,16 +398,23 @@ export class ClaimsService {
 				});
 
 				return response;
-			} catch (error) {
-				const duration = Date.now() - startTime;
-				this.logger.error(`❌ [ClaimsService] Error creating claim after ${duration}ms: ${error.message}`, error.stack);
-				throw error; // Re-throw to let NestJS handle HTTP status codes
-			}
 		} catch (error) {
 			const duration = Date.now() - startTime;
 			this.logger.error(`❌ [ClaimsService] Error creating claim after ${duration}ms: ${error.message}`, error.stack);
+			// Re-throw with proper error handling
+			if (error instanceof NotFoundException || error instanceof BadRequestException) {
+				throw error;
+			}
+			throw new BadRequestException(error.message || 'Failed to create claim');
+		}
+	} catch (error) {
+		const duration = Date.now() - startTime;
+		this.logger.error(`❌ [ClaimsService] Error creating claim after ${duration}ms: ${error.message}`, error.stack);
+		if (error instanceof NotFoundException || error instanceof BadRequestException) {
 			throw error;
 		}
+		throw new BadRequestException(error.message || 'Failed to create claim');
+	}
 	}
 
 	async findAll(
@@ -447,10 +460,10 @@ export class ClaimsService {
 				.leftJoinAndSelect('claim.organisation', 'organisation')
 				.where('claim.isDeleted = :isDeleted', { isDeleted: false });
 
-			// Apply RBAC: Regular users can only see their own claims
+			// Apply RBAC: Regular users can only see their own claims - use ownerUid directly
 			if (!canViewAll && userId) {
 				this.logger.debug(`🔒 [ClaimsService] Restricting claims to user ${userId} only`);
-				queryBuilder.andWhere('owner.uid = :userId', { userId });
+				queryBuilder.andWhere('claim.ownerUid = :userId', { userId: Number(userId) });
 			} else if (!canViewAll && !userId) {
 				// No userId and not elevated role - deny access
 				this.logger.warn(`🚫 [ClaimsService] Access denied: No userId provided for non-elevated user`);
@@ -499,9 +512,18 @@ export class ClaimsService {
 			this.logger.debug(`💾 [ClaimsService] Executing query for claims with pagination: offset=${(page - 1) * limit}, limit=${limit}`);
 			const [claims, total] = await queryBuilder.getManyAndCount();
 
-			if (!claims) {
+			if (!claims || claims.length === 0) {
 				this.logger.warn(`⚠️ [ClaimsService] No claims found for the given criteria`);
-				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
+				return {
+					data: [],
+					meta: {
+						total: 0,
+						page,
+						limit,
+						totalPages: 0,
+					},
+					message: process.env.SUCCESS_MESSAGE || 'No claims found',
+				};
 			}
 
 			this.logger.debug(`🔗 [ClaimsService] Formatting ${claims.length} claims with currency`);
@@ -526,6 +548,10 @@ export class ClaimsService {
 		} catch (error) {
 			const duration = Date.now() - startTime;
 			this.logger.error(`❌ [ClaimsService] Error retrieving claims after ${duration}ms: ${error.message}`, error.stack);
+			// Return proper error response
+			if (error instanceof UnauthorizedException || error instanceof ForbiddenException) {
+				throw error;
+			}
 			return {
 				data: [],
 				meta: {
@@ -534,7 +560,7 @@ export class ClaimsService {
 					limit,
 					totalPages: 0,
 				},
-				message: error?.message,
+				message: error?.message || 'Failed to retrieve claims',
 			};
 		}
 	}
@@ -563,22 +589,22 @@ export class ClaimsService {
 				.where('claim.uid = :ref', { ref })
 				.andWhere('claim.isDeleted = :isDeleted', { isDeleted: false });
 
-			// If user is not admin/owner/developer/technician, only allow viewing their own claims
+			// If user is not admin/owner/developer/technician, only allow viewing their own claims - use ownerUid directly
 			if (!canViewAll && userId) {
 				this.logger.debug(`🔒 [ClaimsService] Restricting claim access to owner only`);
-				queryBuilder.andWhere('owner.uid = :userId', { userId });
+				queryBuilder.andWhere('claim.ownerUid = :userId', { userId: Number(userId) });
 			}
 
-			// Add organization filter if provided
+			// Add organization filter if provided - use organisationUid directly
 			if (orgId) {
 				this.logger.debug(`🏢 [ClaimsService] Adding organization filter: ${orgId}`);
-				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+				queryBuilder.andWhere('claim.organisationUid = :orgId', { orgId: Number(orgId) });
 			}
 
-			// Add branch filter if provided
+			// Add branch filter if provided - use branchUid directly
 			if (branchId) {
 				this.logger.debug(`🏢 [ClaimsService] Adding branch filter: ${branchId}`);
-				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
+				queryBuilder.andWhere('claim.branchUid = :branchId', { branchId: Number(branchId) });
 			}
 
 			this.logger.debug(`💾 [ClaimsService] Executing database query for claim ${ref}`);
@@ -599,16 +625,16 @@ export class ClaimsService {
 				.createQueryBuilder('claim')
 				.leftJoinAndSelect('claim.organisation', 'organisation');
 
-			// Add organization filter if provided
+			// Add organization filter if provided - use organisationUid directly
 			if (orgId) {
-				allClaimsQuery.andWhere('organisation.uid = :orgId', { orgId });
+				allClaimsQuery.andWhere('claim.organisationUid = :orgId', { orgId: Number(orgId) });
 			}
 
-			// Add branch filter if provided
+			// Add branch filter if provided - use branchUid directly
 			if (branchId && claim.branch) {
 				allClaimsQuery
 					.leftJoinAndSelect('claim.branch', 'branch')
-					.andWhere('branch.uid = :branchId', { branchId });
+					.andWhere('claim.branchUid = :branchId', { branchId: Number(branchId) });
 			}
 
 			const allClaims = await allClaimsQuery.getMany();
@@ -631,8 +657,12 @@ export class ClaimsService {
 		} catch (error) {
 			const duration = Date.now() - startTime;
 			this.logger.error(`❌ [ClaimsService] Error finding claim ${ref} after ${duration}ms: ${error.message}`, error.stack);
+			// Return proper error response
+			if (error instanceof NotFoundException) {
+				throw error;
+			}
 			return {
-				message: error?.message,
+				message: error?.message || 'Failed to retrieve claim',
 				claim: null,
 				stats: null,
 			};
@@ -676,27 +706,37 @@ export class ClaimsService {
 				.leftJoinAndSelect('claim.owner', 'owner')
 				.leftJoinAndSelect('claim.organisation', 'organisation')
 				.leftJoinAndSelect('claim.branch', 'branch')
-				.where('owner.uid = :ref', { ref })
+				.where('claim.ownerUid = :ref', { ref: Number(ref) }) // Use ownerUid directly
 				.andWhere('claim.isDeleted = :isDeleted', { isDeleted: false });
 
-			// Add organization filter if provided
+			// Add organization filter if provided - use organisationUid directly
 			if (orgId) {
 				this.logger.debug(`🏢 [ClaimsService] Adding organization filter: ${orgId}`);
-				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+				queryBuilder.andWhere('claim.organisationUid = :orgId', { orgId: Number(orgId) });
 			}
 
-			// Add branch filter if provided
+			// Add branch filter if provided - use branchUid directly
 			if (branchId) {
 				this.logger.debug(`🏢 [ClaimsService] Adding branch filter: ${branchId}`);
-				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
+				queryBuilder.andWhere('claim.branchUid = :branchId', { branchId: Number(branchId) });
 			}
 
 			this.logger.debug(`💾 [ClaimsService] Executing database query for user ${ref} claims`);
 			const claims = await queryBuilder.getMany();
 
-			if (!claims) {
+			if (!claims || claims.length === 0) {
 				this.logger.warn(`⚠️ [ClaimsService] No claims found for user ${ref} in organization ${orgId}`);
-				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
+				return {
+					message: process.env.SUCCESS_MESSAGE || 'No claims found',
+					claims: [],
+					stats: {
+						total: 0,
+						pending: 0,
+						approved: 0,
+						declined: 0,
+						paid: 0,
+					},
+				};
 			}
 
 			this.logger.debug(`🔗 [ClaimsService] Formatting ${claims.length} user claims with currency`);
@@ -719,10 +759,20 @@ export class ClaimsService {
 		} catch (error) {
 			const duration = Date.now() - startTime;
 			this.logger.error(`❌ [ClaimsService] Error retrieving claims for user ${ref} after ${duration}ms: ${error.message}`, error.stack);
+			// Return proper error response
+			if (error instanceof NotFoundException) {
+				throw error;
+			}
 			return {
 				message: `could not get claims by user - ${error?.message}`,
-				claims: null,
-				stats: null,
+				claims: [],
+				stats: {
+					total: 0,
+					pending: 0,
+					approved: 0,
+					declined: 0,
+					paid: 0,
+				},
 			};
 		}
 	}

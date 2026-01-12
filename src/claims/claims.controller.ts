@@ -76,6 +76,15 @@ export class ClaimsController {
   create(@Body() createClaimDto: CreateClaimDto, @Req() req: AuthenticatedRequest) {
     const orgId = req.user?.org?.uid || req.user?.organisationRef;
     const branchId = req.user?.branch?.uid;
+    const userId = req.user?.uid;
+    
+    if (!userId) {
+      throw new UnauthorizedException('User authentication required');
+    }
+    
+    // Override owner with authenticated user ID for security
+    createClaimDto.owner = userId;
+    
     return this.claimsService.create(createClaimDto, orgId, branchId);
   }
 
@@ -286,7 +295,14 @@ export class ClaimsController {
   restore(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
     const orgId = req.user?.org?.uid || req.user?.organisationRef;
     const branchId = req.user?.branch?.uid;
-    return this.claimsService.restore(ref, orgId, branchId);
+    const userId = req.user?.uid;
+    const userAccessLevel = req.user?.accessLevel || req.user?.role;
+    
+    if (!userId) {
+      throw new UnauthorizedException('User authentication required');
+    }
+    
+    return this.claimsService.restore(ref, orgId, branchId, userId, userAccessLevel);
   }
 
   @Get('for/:ref')
