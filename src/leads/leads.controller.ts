@@ -90,7 +90,7 @@ export class LeadsController {
 		},
 	})
 	create(@Body() createLeadDto: CreateLeadDto, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.organisationRef;
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.leadsService.create(createLeadDto, Number(orgId), branchId);
 	}
@@ -190,10 +190,10 @@ export class LeadsController {
 		@Query('priority') priority?: LeadPriority,
 		@Query('source') source?: LeadSource,
 	): Promise<PaginatedResponse<Lead>> {
-		const orgId = req.user?.organisationRef;
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		const userId = req.user?.uid;
-		const userAccessLevel = req.user?.role;
+		const userAccessLevel = req.user?.accessLevel || req.user?.role;
 
 		const filters = {
 			...(status && { status }),
@@ -216,7 +216,7 @@ export class LeadsController {
 			limit ? Number(limit) : 25,
 			Number(orgId),
 			branchId,
-			userId,
+			Number(userId),
 			userAccessLevel,
 		);
 	}
@@ -311,11 +311,11 @@ export class LeadsController {
 		},
 	})
 	findOne(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.organisationRef;
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		const userId = req.user?.uid;
-		const userAccessLevel = req.user?.role;
-		return this.leadsService.findOne(ref, Number(orgId), branchId, userId, userAccessLevel);
+		const userAccessLevel = req.user?.accessLevel || req.user?.role;
+		return this.leadsService.findOne(ref, Number(orgId), branchId, Number(userId), userAccessLevel);
 	}
 
 	@Get('for/:ref')
@@ -365,11 +365,11 @@ export class LeadsController {
 		},
 	})
 	leadsByUser(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.organisationRef;
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		const requestingUserId = req.user?.uid;
-		const userAccessLevel = req.user?.role;
-		return this.leadsService.leadsByUser(ref, Number(orgId), branchId, requestingUserId, userAccessLevel);
+		const userAccessLevel = req.user?.accessLevel || req.user?.role;
+		return this.leadsService.leadsByUser(Number(ref), Number(orgId), branchId, Number(requestingUserId), userAccessLevel);
 	}
 
 	@Patch(':ref')
@@ -407,10 +407,10 @@ export class LeadsController {
 		},
 	})
 	update(@Param('ref') ref: number, @Body() updateLeadDto: UpdateLeadDto, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.organisationRef;
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		const userId = req.user?.uid;
-		return this.leadsService.update(ref, updateLeadDto, Number(orgId), branchId, userId);
+		return this.leadsService.update(ref, updateLeadDto, Number(orgId), branchId, Number(userId));
 	}
 
 	@Patch(':ref/restore')
@@ -447,7 +447,7 @@ export class LeadsController {
 		},
 	})
 	restore(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.organisationRef;
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.leadsService.restore(ref, Number(orgId), branchId);
 	}
@@ -486,10 +486,10 @@ export class LeadsController {
 		},
 	})
 	reactivate(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.organisationRef;
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		const userId = req.user?.uid;
-		return this.leadsService.reactivate(ref, Number(orgId), branchId, userId);
+		return this.leadsService.reactivate(ref, Number(orgId), branchId, Number(userId));
 	}
 
 	@Post('import-csv')
@@ -580,7 +580,7 @@ export class LeadsController {
 		@Query('followUpDuration') followUpDuration: number = 90,
 		@Query('assignedUserIds') assignedUserIds?: string,
 	) {
-		const orgId = req.user?.organisationRef;
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		
 		// Parse assigned user IDs from comma-separated string
@@ -632,7 +632,7 @@ export class LeadsController {
 		},
 	})
 	remove(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.organisationRef;
+		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.leadsService.remove(ref, Number(orgId), branchId);
 	}

@@ -153,12 +153,20 @@ export class LeadsService {
 			if (orgId) {
 				const organisation = { uid: orgId } as Organisation;
 				lead.organisation = organisation;
+				lead.organisationUid = orgId; // Explicitly set the foreign key
 			}
 
 			// Set branch if provided
 			if (branchId) {
 				const branch = { uid: branchId } as Branch;
 				lead.branch = branch;
+				lead.branchUid = branchId; // Explicitly set the foreign key
+			}
+
+			// Set owner and ownerUid explicitly
+			if (createLeadDto.owner?.uid) {
+				lead.owner = { uid: createLeadDto.owner.uid } as User;
+				lead.ownerUid = createLeadDto.owner.uid; // Explicitly set the foreign key
 			}
 
 			// Handle assignees if provided
@@ -178,6 +186,13 @@ export class LeadsService {
 
 			if (!savedLead) {
 				throw new NotFoundException(process.env.CREATE_ERROR_MESSAGE || 'Failed to create lead');
+			}
+
+			// Ensure ownerUid is set after save (TypeORM should handle this, but verify)
+			if (!savedLead.ownerUid && createLeadDto.owner?.uid) {
+				this.logger.warn(`⚠️ [LeadsService] ownerUid not set after save for lead ${savedLead.uid}, updating manually`);
+				await this.leadsRepository.update(savedLead.uid, { ownerUid: createLeadDto.owner.uid });
+				savedLead.ownerUid = createLeadDto.owner.uid;
 			}
 
 			// Populate the lead with full relation data for response
@@ -602,11 +617,26 @@ export class LeadsService {
 			].includes(userAccessLevel as AccessLevel);
 
 			if (!hasElevatedAccess && userId) {
-				const isOwner = lead.ownerUid === userId;
-				const isAssigned = lead.assignees?.some((assignee) => assignee.uid === userId) || false;
+				// Check ownership - try both ownerUid field and populated owner relation
+				const isOwner = lead.ownerUid === userId || lead.owner?.uid === userId;
+				
+				// Check if user is assigned - handle both object format { uid: number } and populated User objects
+				let isAssigned = false;
+				if (lead.assignees && Array.isArray(lead.assignees) && lead.assignees.length > 0) {
+					isAssigned = lead.assignees.some((assignee: any) => {
+						// Handle both { uid: number } format and populated User objects
+						if (typeof assignee === 'object' && assignee !== null) {
+							return assignee.uid === userId;
+						}
+						return assignee === userId;
+					});
+				}
 				
 				if (!isOwner && !isAssigned) {
-					this.logger.warn(`⚠️ [LeadsService] User ${userId} attempted to access lead ${ref} without permission`);
+					this.logger.warn(
+						`⚠️ [LeadsService] User ${userId} attempted to access lead ${ref} without permission. ` +
+						`Lead ownerUid: ${lead.ownerUid}, owner.uid: ${lead.owner?.uid}, assignees: ${JSON.stringify(lead.assignees)}`
+					);
 					throw new NotFoundException('Lead not found or access denied');
 				}
 			}
@@ -673,12 +703,16 @@ export class LeadsService {
 				AccessLevel.OWNER,
 			].includes(userAccessLevel as AccessLevel);
 
-			if (!hasElevatedAccess && requestingUserId && ref !== requestingUserId) {
-				this.logger.warn(`⚠️ [LeadsService] User ${requestingUserId} attempted to access leads for user ${ref} without permission`);
+			// Ensure both values are numbers for comparison (defensive programming)
+			const refUserId = Number(ref);
+			const requestingUserIdNum = Number(requestingUserId);
+
+			if (!hasElevatedAccess && requestingUserIdNum && refUserId !== requestingUserIdNum) {
+				this.logger.warn(`⚠️ [LeadsService] User ${requestingUserIdNum} attempted to access leads for user ${refUserId} without permission`);
 				throw new BadRequestException('You can only view your own leads');
 			}
 
-			this.logger.debug(`🏗️ [LeadsService] Building query for user ${ref} leads in org: ${orgId}, branch: ${branchId || 'all'}`);
+			this.logger.debug(`🏗️ [LeadsService] Building query for user ${refUserId} leads in org: ${orgId}, branch: ${branchId || 'all'}`);
 
 			// Build query to get leads owned by user OR assigned to user
 			const queryBuilder = this.leadsRepository
@@ -689,8 +723,8 @@ export class LeadsService {
 				.where('lead.isDeleted = :isDeleted', { isDeleted: false })
 				.andWhere('organisation.uid = :orgId', { orgId })
 				.andWhere('(lead.ownerUid = :userId OR CAST(lead.assignees AS jsonb) @> CAST(:userIdJson AS jsonb))', {
-					userId: ref,
-					userIdJson: JSON.stringify([{ uid: ref }])
+					userId: refUserId,
+					userIdJson: JSON.stringify([{ uid: refUserId }])
 				});
 
 			if (branchId) {
@@ -699,14 +733,14 @@ export class LeadsService {
 
 			queryBuilder.orderBy('lead.leadScore', 'DESC').addOrderBy('lead.updatedAt', 'DESC');
 
-			this.logger.debug(`💾 [LeadsService] Executing database query for user ${ref} leads`);
+			this.logger.debug(`💾 [LeadsService] Executing database query for user ${refUserId} leads`);
 			const leads = await queryBuilder.getMany();
 
 		// Handle empty results gracefully - return empty array instead of throwing error
 		if (!leads || leads.length === 0) {
-			this.logger.warn(`⚠️ [LeadsService] No leads found for user ${ref} in organization ${orgId}`);
+			this.logger.warn(`⚠️ [LeadsService] No leads found for user ${refUserId} in organization ${orgId}`);
 			const duration = Date.now() - startTime;
-			this.logger.log(`✅ [LeadsService] Successfully retrieved 0 leads for user ${ref} in ${duration}ms`);
+			this.logger.log(`✅ [LeadsService] Successfully retrieved 0 leads for user ${refUserId} in ${duration}ms`);
 			
 			return {
 				message: 'No leads found for this user',
@@ -738,12 +772,13 @@ export class LeadsService {
 			};
 
 			const duration = Date.now() - startTime;
-			this.logger.log(`✅ [LeadsService] Successfully retrieved ${leads.length} leads for user ${ref} in ${duration}ms`);
+			this.logger.log(`✅ [LeadsService] Successfully retrieved ${leads.length} leads for user ${refUserId} in ${duration}ms`);
 
 			return response;
 		} catch (error) {
 			const duration = Date.now() - startTime;
-			this.logger.error(`❌ [LeadsService] Error getting leads for user ${ref} after ${duration}ms: ${error.message}`, error.stack);
+			const refUserId = Number(ref);
+			this.logger.error(`❌ [LeadsService] Error getting leads for user ${refUserId} after ${duration}ms: ${error.message}`, error.stack);
 			const response = {
 				message: `could not get leads by user - ${error?.message}`,
 				leads: null,
