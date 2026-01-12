@@ -1250,6 +1250,24 @@ export class IotService {
 	}
 
 	/**
+	 * Format time as ISO string where UTC hours = local hours
+	 * This ensures mobile app can read UTC hours/minutes as if they were local time
+	 */
+	private formatTimeAsLocalISO(date: Date | null): string | null {
+		if (!date) return null;
+		// Get local time components from the zoned date
+		const year = date.getFullYear();
+		const month = String(date.getMonth() + 1).padStart(2, '0');
+		const day = String(date.getDate()).padStart(2, '0');
+		const hours = String(date.getHours()).padStart(2, '0');
+		const minutes = String(date.getMinutes()).padStart(2, '0');
+		const seconds = String(date.getSeconds()).padStart(2, '0');
+		const milliseconds = String(date.getMilliseconds()).padStart(3, '0');
+		// Create ISO string where UTC = local time
+		return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}.${milliseconds}Z`;
+	}
+
+	/**
 	 * Get door-user comparisons for a device
 	 * Compares door open times with user clock-in times for users who manage this door
 	 */
@@ -1328,6 +1346,7 @@ export class IotService {
 				return aTime.getTime() - bTime.getTime(); // Sort ascending (earliest first)
 			});
 
+			// Door open time: use as-is from database (already in correct format, NOT converted)
 			const doorOpenTime = sortedTodayRecords.length > 0 && sortedTodayRecords[0].openTime
 				? (typeof sortedTodayRecords[0].openTime === 'string' 
 					? new Date(sortedTodayRecords[0].openTime) 
@@ -1339,9 +1358,7 @@ export class IotService {
 				const userAttendance = todayAttendance.find(a => a.owner?.uid === user.uid);
 				const userClockInTime = userAttendance?.checkIn || null;
 
-				// IMPORTANT: Door open time is already stored in organization timezone format in database
-				// Do NOT convert it using timezone.util.ts - use as-is
-				// Only user clock-in time needs timezone conversion from UTC to organization timezone
+				// Convert user clock-in time to organization timezone
 				const clockInOrg = userClockInTime ? toZonedTime(userClockInTime, orgTimezone) : null;
 
 				let timeDifferenceMinutes: number | null = null;
@@ -1350,8 +1367,7 @@ export class IotService {
 
 				if (doorOpenTime && clockInOrg) {
 					// Calculate difference in minutes (doorOpenTime - userClockInTime)
-					// Door open time is already in org timezone format (stored that way), so use as-is
-					// User clock-in is converted to org timezone for comparison
+					// Door open time is used as-is, user clock-in is converted to org timezone
 					timeDifferenceMinutes = Math.round((doorOpenTime.getTime() - clockInOrg.getTime()) / (1000 * 60));
 					
 					// Morning logic: no tolerance - before = early (good), after = late (bad)
@@ -1360,10 +1376,10 @@ export class IotService {
 				}
 
 				// Format times for API response
-				// Door open time: use as-is from database (already in org timezone format, NOT converted)
-				// User clock-in time: use converted organization timezone time
+				// Door open time: use as-is (already correct format), but format for mobile app compatibility
+				// User clock-in time: format converted organization timezone time
 				const doorOpenTimeStr = doorOpenTime ? doorOpenTime.toISOString() : null;
-				const userClockInTimeStr = clockInOrg ? clockInOrg.toISOString() : null;
+				const userClockInTimeStr = this.formatTimeAsLocalISO(clockInOrg);
 
 				return {
 					userId: user.uid,
@@ -1547,6 +1563,7 @@ export class IotService {
 			const latestOpenRecord = sortedRecords.find(r => r.openTime);
 			const latestCloseRecord = sortedRecords.find(r => r.closeTime && r.openTime);
 
+			// Door open time: use as-is from database (already in correct format, NOT converted)
 			const latestOpenTime = latestOpenRecord?.openTime
 				? (typeof latestOpenRecord.openTime === 'string'
 					? latestOpenRecord.openTime
@@ -1562,6 +1579,7 @@ export class IotService {
 				const closeDateOrg = toZonedTime(closeDate, orgTimezone);
 				const closeDateKey = closeDateOrg.toISOString().split('T')[0];
 				if (closeDateKey === todayKey) {
+					// Door close time: use as-is from database (already in correct format, NOT converted)
 					latestCloseTime = typeof latestCloseRecord.closeTime === 'string'
 						? latestCloseRecord.closeTime
 						: (latestCloseRecord.closeTime as unknown as Date).toISOString();
