@@ -91,9 +91,10 @@ export class CreateLeadDto {
 	longitude?: number;
 
 	@IsOptional()
-	@IsString()
+	@IsEnum(LeadStatus)
 	@ApiProperty({
 		description: 'Status of the lead',
+		enum: LeadStatus,
 		example: LeadStatus.PENDING,
 	})
 	status?: LeadStatus;
