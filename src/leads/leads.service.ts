@@ -325,22 +325,64 @@ export class LeadsService {
 				const assignedRep = salesReps[repIndex];
 
 				try {
-					// Create lead DTO
+					// Create lead DTO with all parsed fields
 					const createLeadDto: CreateLeadDto = {
+						// Basic fields
 						name: leadData.name,
 						email: leadData.email,
 						phone: leadData.phone,
 						companyName: leadData.companyName,
 						notes: leadData.notes,
-						estimatedValue: leadData.estimatedValue,
+						image: leadData.image,
+						attachments: leadData.attachments,
+						latitude: leadData.latitude,
+						longitude: leadData.longitude,
+						category: leadData.category,
+						status: leadData.status || LeadStatus.PENDING,
+
+						// Enhanced qualification fields
+						intent: leadData.intent,
+						userQualityRating: leadData.userQualityRating,
+						temperature: leadData.temperature,
 						source: leadData.source,
-						industry: leadData.industry,
-						budgetRange: leadData.budgetRange,
+						priority: leadData.priority,
+						lifecycleStage: leadData.lifecycleStage,
+
+						// Company/demographic information
 						jobTitle: leadData.jobTitle,
+						decisionMakerRole: leadData.decisionMakerRole,
+						industry: leadData.industry,
+						businessSize: leadData.businessSize,
+						budgetRange: leadData.budgetRange,
+						purchaseTimeline: leadData.purchaseTimeline,
+
+						// Communication preferences
+						preferredCommunication: leadData.preferredCommunication,
+						timezone: leadData.timezone,
+						bestContactTime: leadData.bestContactTime,
+
+						// Business context
+						painPoints: leadData.painPoints,
+						estimatedValue: leadData.estimatedValue,
+						competitorInfo: leadData.competitorInfo,
+						referralSource: leadData.referralSource,
+
+						// Campaign and source tracking
+						campaignName: leadData.campaignName,
+						landingPage: leadData.landingPage,
+						utmSource: leadData.utmSource,
+						utmMedium: leadData.utmMedium,
+						utmCampaign: leadData.utmCampaign,
+						utmTerm: leadData.utmTerm,
+						utmContent: leadData.utmContent,
+
+						// Custom fields
+						customFields: leadData.customFields,
+
+						// Assignment fields (set by system)
 						owner: { uid: assignedRep.uid },
 						branch: { uid: branchId },
 						assignees: [{ uid: assignedRep.uid }],
-						status: LeadStatus.PENDING,
 					};
 
 					// Create lead
@@ -365,9 +407,11 @@ export class LeadsService {
 
 					// Create recurring follow-up task
 					try {
+						const leadTemperature = createdLead.temperature || LeadTemperature.COLD;
+						const leadPriority = createdLead.priority ?? LeadPriority.MEDIUM;
 						const nextFollowUpDate = createdLead.nextFollowUpDate || this.calculateNextFollowUpDate(
-							createdLead.temperature || LeadTemperature.COLD,
-							createdLead.priority || LeadPriority.MEDIUM,
+							leadTemperature,
+							leadPriority,
 						);
 
 					const taskDto: CreateTaskDto = {
@@ -2707,7 +2751,7 @@ export class LeadsService {
 
 		this.logger.debug(
 			`Next follow-up calculated: ${nextBusinessDay.toISOString()} ` +
-			`(Temperature: ${temperature}, Priority: ${priority}, Days: ${followUpDays})`
+			`(Temperature: ${temperature}, Priority: ${priority || 'MEDIUM'}, Days: ${followUpDays})`
 		);
 
 		return nextBusinessDay;

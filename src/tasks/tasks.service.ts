@@ -346,9 +346,14 @@ export class TasksService {
 			}
 		}
 
-		// Emit event for task creation
+		// Emit event for task creation with both formats for compatibility
+		const creatorId = savedTask.creator?.uid;
 		this.eventEmitter.emit('task.created', {
-			task: savedTask,
+			taskId: savedTask.uid.toString(),
+			userId: creatorId,
+			orgId: savedTask.organisation?.uid,
+			branchId: savedTask.branch?.uid,
+			task: savedTask, // Legacy format for TaskRouteService
 			isRecurring: true,
 			sequenceNumber,
 			totalTasks,
@@ -638,8 +643,14 @@ export class TasksService {
 							// Populate assignees and clients using the helper method
 							const populatedTask = await this.populateTaskRelations(taskWithRelations);
 							
+							// Emit task.created event with both formats for compatibility
+							const creatorId = populatedTask.creator?.uid;
 							this.eventEmitter.emit('task.created', {
-								task: populatedTask,
+								taskId: populatedTask.uid.toString(),
+								userId: creatorId,
+								orgId: populatedTask.organisation?.uid,
+								branchId: populatedTask.branch?.uid,
+								task: populatedTask, // Legacy format for TaskRouteService
 							});
 						}
 					} catch (eventError) {

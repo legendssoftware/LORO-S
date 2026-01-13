@@ -8,16 +8,40 @@ export class RewardsSubscriber {
     constructor(private readonly rewardsService: RewardsService) { }
 
     @OnEvent('task.created')
-    handleTaskCreated(payload: { taskId: string; userId: number; orgId?: number; branchId?: number }) {
-        this.rewardsService.awardXP({
-            owner: payload.userId,
-            action: 'CREATE_TASK',
-            amount: XP_VALUES.CREATE_TASK,
-            source: {
-                id: payload.taskId,
-                type: 'task'
+    handleTaskCreated(payload: { taskId?: string; userId?: number; orgId?: number; branchId?: number; task?: any }) {
+        // Handle new format: { taskId, userId, orgId, branchId }
+        if (payload.userId && payload.taskId) {
+            this.rewardsService.awardXP({
+                owner: payload.userId,
+                action: 'CREATE_TASK',
+                amount: XP_VALUES.CREATE_TASK,
+                source: {
+                    id: payload.taskId,
+                    type: 'task'
+                }
+            }, payload.orgId, payload.branchId);
+            return;
+        }
+        
+        // Handle legacy format: { task: Task }
+        if (payload.task) {
+            const creatorId = payload.task.creator?.uid || payload.task.creator?.[0]?.uid;
+            const taskId = payload.task.uid?.toString();
+            const orgId = payload.task.organisation?.uid || payload.task.organisationRef;
+            const branchId = payload.task.branch?.uid;
+            
+            if (creatorId && taskId) {
+                this.rewardsService.awardXP({
+                    owner: creatorId,
+                    action: 'CREATE_TASK',
+                    amount: XP_VALUES.CREATE_TASK,
+                    source: {
+                        id: taskId,
+                        type: 'task'
+                    }
+                }, orgId, branchId);
             }
-        }, payload.orgId, payload.branchId);
+        }
     }
 
     @OnEvent('task.completed')

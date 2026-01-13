@@ -1,7 +1,8 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsEmail, IsNotEmpty, IsNumber, IsObject, IsOptional, IsString, IsArray, IsEnum, IsInt, Min, Max, IsDecimal } from 'class-validator';
 import { 
-	LeadStatus, 
+	LeadStatus,
+	LeadCategory,
 	LeadIntent, 
 	LeadTemperature, 
 	LeadSource, 
@@ -98,6 +99,15 @@ export class CreateLeadDto {
 		example: LeadStatus.PENDING,
 	})
 	status?: LeadStatus;
+
+	@IsOptional()
+	@IsEnum(LeadCategory)
+	@ApiProperty({
+		description: 'Category of the lead',
+		enum: LeadCategory,
+		example: LeadCategory.BUSINESS,
+	})
+	category?: LeadCategory;
 
 	@IsOptional()
 	@IsString()
