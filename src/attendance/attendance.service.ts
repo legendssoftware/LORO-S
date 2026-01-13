@@ -3283,17 +3283,13 @@ export class AttendanceService {
 
 			this.logger.debug(`[${operationId}] Found ${todayAttendance.length} attendance records for today`);
 
-			// Apply timezone conversion to today's attendance records first
-			const todayAttendanceWithTimezone = await this.convertAttendanceRecordsTimezone(todayAttendance, orgId);
-
-			this.logger.debug(`[${operationId}] Applied timezone conversion to ${todayAttendanceWithTimezone.length} attendance records`);
-
-			// Build present users list with enhanced data (no duplicates) using timezone-converted data
+			// Build present users list with enhanced data (no duplicates)
+			// Note: We format times directly from UTC dates using formatInTimeZone to avoid double conversion
 			const presentUsersMap = new Map<number, any>();
 			const presentUserIds = new Set<number>();
 
 			const timezone = await this.getOrganizationTimezone(orgId);
-			todayAttendanceWithTimezone?.forEach((attendance) => {
+			todayAttendance?.forEach((attendance) => {
 				if (attendance.owner && !presentUsersMap.has(attendance.owner.uid)) {
 					const user = attendance.owner;
 					const userProfile = user.userProfile || null;
@@ -3399,8 +3395,7 @@ export class AttendanceService {
 			`[${operationId}] Daily attendance overview generated: ${presentUsers.length} present, ${absentUsers.length} absent, ${attendanceRate}% rate`,
 		);
 
-		// Timezone conversion already applied to attendance records at line 2566
-		// No need for second conversion to avoid double timezone shift
+		// Times are formatted directly from UTC dates using formatInTimeZone to avoid double conversion
 		return response;
 		} catch (error) {
 			this.logger.error(`[${operationId}] Error generating daily attendance overview:`, error.stack);
