@@ -540,16 +540,28 @@ export class ShopService {
 				},
 			});
 
-			return {
+			const finalResponse = {
 				categories: uniqueCategories,
 				message: process.env.SUCCESS_MESSAGE,
 			};
+
+			this.logger.log(`[${operationId}] ✅ FINAL CATEGORIES RESPONSE:`, {
+				response: finalResponse,
+				categoriesCount: uniqueCategories.length,
+				categories: uniqueCategories,
+				orgId,
+				branchId,
+			});
+
+			return finalResponse;
 		} catch (error) {
 			this.logger.error(`[${operationId}] Error fetching categories: ${error?.message}`, error?.stack);
-			return {
+			const errorResponse = {
 				categories: [],
 				message: error?.message || 'Error fetching categories',
 			};
+			this.logger.log(`[${operationId}] ❌ ERROR RESPONSE:`, errorResponse);
+			return errorResponse;
 		}
 	}
 
@@ -875,16 +887,34 @@ export class ShopService {
 				throw new Error('Client is required');
 			}
 
+			// Validate that the user (placedBy) exists before creating quotation
+			const ownerUser = await this.userRepository.findOne({
+				where: { uid: quotationData.owner.uid },
+				select: ['uid']
+			});
+
+			if (!ownerUser) {
+				this.logger.error(`User with ID ${quotationData.owner.uid} not found`);
+				throw new NotFoundException(`User with ID ${quotationData.owner.uid} not found`);
+			}
+
 			// Get organization-specific currency settings
 			const orgCurrency = await this.getOrgCurrency(orgId);
 
-			const clientData = await this.clientsService?.findOne(Number(quotationData?.client?.uid));
+			// Pass orgId and branchId for proper scoping
+			const clientData = await this.clientsService?.findOne(
+				Number(quotationData?.client?.uid),
+				orgId,
+				branchId
+			);
 
-			if (!clientData) {
-				throw new NotFoundException(process.env.CLIENT_NOT_FOUND_MESSAGE);
+			// Properly check if clientData and client exist
+			if (!clientData || !clientData.client) {
+				this.logger.error(`Client not found: ${quotationData?.client?.uid} for orgId: ${orgId}, branchId: ${branchId}`);
+				throw new NotFoundException(process.env.CLIENT_NOT_FOUND_MESSAGE || 'Client not found');
 			}
 
-			const { name: clientName } = clientData?.client;
+			const { name: clientName } = clientData.client;
 			const internalEmail = this.configService.get<string>('INTERNAL_BROADCAST_EMAIL');
 
 			const productPromises = quotationData?.items?.map((item) =>
@@ -1363,18 +1393,35 @@ export class ShopService {
 
 			this.logger.log(`[createBlankQuotation] Validating request - Items: ${blankQuotationData.items.length}, Owner: ${blankQuotationData.owner.uid}, Client: ${blankQuotationData.client.uid}`);
 
+			// Validate that the user (placedBy) exists before creating quotation
+			const ownerUser = await this.userRepository.findOne({
+				where: { uid: blankQuotationData.owner.uid },
+				select: ['uid']
+			});
+
+			if (!ownerUser) {
+				this.logger.error(`[createBlankQuotation] User not found: ${blankQuotationData.owner.uid}`);
+				throw new NotFoundException(`User with ID ${blankQuotationData.owner.uid} not found`);
+			}
+
 			// Get organization-specific currency settings
 			const orgCurrency = await this.getOrgCurrency(orgId);
 			this.logger.log(`[createBlankQuotation] Organization currency: ${orgCurrency.code}`);
 
-			const clientData = await this.clientsService?.findOne(Number(blankQuotationData?.client?.uid));
+			// Pass orgId and branchId for proper scoping
+			const clientData = await this.clientsService?.findOne(
+				Number(blankQuotationData?.client?.uid),
+				orgId,
+				branchId
+			);
 
-			if (!clientData) {
-				this.logger.error(`[createBlankQuotation] Client not found: ${blankQuotationData?.client?.uid}`);
-				throw new NotFoundException(process.env.CLIENT_NOT_FOUND_MESSAGE);
+			// Properly check if clientData and client exist
+			if (!clientData || !clientData.client) {
+				this.logger.error(`[createBlankQuotation] Client not found: ${blankQuotationData?.client?.uid} for orgId: ${orgId}, branchId: ${branchId}`);
+				throw new NotFoundException(process.env.CLIENT_NOT_FOUND_MESSAGE || 'Client not found');
 			}
 
-			const { name: clientName, email: clientEmail } = clientData?.client;
+			const { name: clientName, email: clientEmail } = clientData.client;
 			const internalEmail = this.configService.get<string>('INTERNAL_BROADCAST_EMAIL');
 			this.logger.log(`[createBlankQuotation] Client found: ${clientName} (${clientEmail})`);
 
@@ -1944,16 +1991,34 @@ export class ShopService {
 				},
 			});
 
-			return {
+			const finalResponse = {
 				banners,
 				message: process.env.SUCCESS_MESSAGE,
 			};
+
+			this.logger.log(`[${operationId}] ✅ FINAL BANNERS RESPONSE:`, {
+				response: finalResponse,
+				bannersCount: banners.length,
+				banners: banners.map(b => ({
+					uid: b.uid,
+					title: b.title,
+					subtitle: b.subtitle,
+					image: b.image,
+					category: b.category,
+				})),
+				orgId,
+				branchId,
+			});
+
+			return finalResponse;
 		} catch (error) {
 			this.logger.error(`[${operationId}] Error fetching banners: ${error?.message}`, error?.stack);
-			return {
+			const errorResponse = {
 				banners: [],
 				message: error?.message || 'Error fetching banners',
 			};
+			this.logger.log(`[${operationId}] ❌ ERROR RESPONSE:`, errorResponse);
+			return errorResponse;
 		}
 	}
 
