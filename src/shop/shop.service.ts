@@ -30,7 +30,7 @@ import { QuotationTemplateData } from '../pdf-generation/interfaces/pdf-template
 import { Project } from './entities/project.entity';
 import { ProjectsService } from './projects.service';
 import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
-import { NotificationPriority } from '../lib/types/unified-notification.types';
+import { NotificationPriority, NotificationEvent } from '../lib/types/unified-notification.types';
 import { User } from 'src/user/entities/user.entity';
 
 @Injectable()
@@ -481,29 +481,44 @@ export class ShopService {
 		this.logger.log(`[${operationId}] Fetching categories for orgId: ${orgId}, branchId: ${branchId}`);
 
 		try {
-			// Build query with optional org and branch filters
-			const query = this.productRepository.createQueryBuilder('product');
-
-			// Only add filters if values are provided
-			if (orgId) {
-				query.andWhere('product.organisationUid = :orgId', { orgId });
-				this.logger.debug(`[${operationId}] Applied organization filter: ${orgId}`);
+			// REQUIRE orgId - categories should always be organization-specific
+			if (!orgId) {
+				this.logger.warn(`[${operationId}] No orgId provided - cannot fetch categories`);
+				return {
+					categories: [],
+					message: 'Organization ID is required to fetch categories',
+				};
 			}
 
+			this.logger.debug(`[${operationId}] Query params - orgId: ${orgId}, branchId: ${branchId}`);
+
+			// Build query with org filter (required)
+			const query = this.productRepository.createQueryBuilder('product')
+				.where('product.isDeleted = :isDeleted', { isDeleted: false })
+				.andWhere('product.organisationUid = :orgId', { orgId });
+
+			this.logger.debug(`[${operationId}] Applied organization filter: ${orgId}`);
+
+			// BRANCH VISIBILITY LOGIC:
+			// - If branchId is provided: show products where branch is NULL (org-wide) OR matches the branchId
+			// - If branchId is NOT provided: show all products in the org (both with and without branches)
 			if (branchId) {
-				query.andWhere('product.branchUid = :branchId', { branchId });
-				this.logger.debug(`[${operationId}] Applied branch filter: ${branchId}`);
+				query.andWhere('(product.branchUid IS NULL OR product.branchUid = :branchId)', { branchId });
+				this.logger.debug(`[${operationId}] Applied branch filter: ${branchId} - showing org-wide products (no branch) and branch-specific products`);
 			}
 
 			const allProducts = await query.getMany();
-			this.logger.debug(`[${operationId}] Found ${allProducts?.length || 0} products for category extraction`);
+			this.logger.debug(`[${operationId}] Query executed - found ${allProducts.length} products`);
+			if (allProducts.length > 0) {
+				this.logger.debug(`[${operationId}] Sample product: ${JSON.stringify({ uid: allProducts[0].uid, category: allProducts[0].category, orgUid: allProducts[0].organisationUid })}`);
+			}
 
-			// Return empty categories array if no products found instead of throwing error
+			// Return empty categories array if no products found
 			if (!allProducts || allProducts?.length === 0) {
-				this.logger.warn(`[${operationId}] No products found for the specified criteria`);
+				this.logger.warn(`[${operationId}] No products found for orgId: ${orgId}${branchId ? `, branchId: ${branchId}` : ''}`);
 				return {
 					categories: [],
-					message: 'No products found',
+					message: `No products found for organization ${orgId}${branchId ? ` and branch ${branchId}` : ''}`,
 				};
 			}
 
@@ -511,19 +526,30 @@ export class ShopService {
 			const uniqueCategories = [...new Set(categories)].filter(Boolean); // Filter out null/undefined values
 			this.logger.log(`[${operationId}] Extracted ${uniqueCategories.length} unique categories: ${uniqueCategories.join(', ')}`);
 
-			const response = {
+			// Clear logging for debugging
+			this.logger.log(`[${operationId}] 📦 CATEGORIES RESPONSE BEING SENT TO CLIENT:`, {
+				categoriesArray: uniqueCategories,
+				categoriesCount: uniqueCategories.length,
+				categoriesList: uniqueCategories.join(', ') || 'No categories',
+				orgId,
+				branchId,
+				totalProducts: allProducts.length,
+				responseStructure: {
+					categories: uniqueCategories,
+					message: process.env.SUCCESS_MESSAGE,
+				},
+			});
+
+			return {
 				categories: uniqueCategories,
 				message: process.env.SUCCESS_MESSAGE,
 			};
-
-			return response;
 		} catch (error) {
-			const response = {
-				message: error?.message || 'Error fetching categories',
+			this.logger.error(`[${operationId}] Error fetching categories: ${error?.message}`, error?.stack);
+			return {
 				categories: [],
+				message: error?.message || 'Error fetching categories',
 			};
-
-			return response;
 		}
 	}
 
@@ -1171,6 +1197,72 @@ export class ShopService {
 					this.shopGateway.emitNewQuotation(enhancedQuotationData);
 				}
 
+				// Send push notifications for quotation creation
+				try {
+					const recipients: number[] = [];
+
+					// Add sales rep (placedBy user) if exists
+					if (quotationData?.owner?.uid) {
+						recipients.push(quotationData.owner.uid);
+					}
+
+					// Add organization admins for internal notifications
+					if (orgId) {
+						const orgAdmins = await this.getOrganizationAdmins(orgId);
+						orgAdmins.forEach(admin => {
+							if (admin.uid && !recipients.includes(admin.uid)) {
+								recipients.push(admin.uid);
+							}
+						});
+					}
+
+					// Try to find client user account by email for push notification
+					if (clientData?.client?.email) {
+						const clientUser = await this.userRepository.findOne({
+							where: { 
+								email: clientData.client.email,
+								accessLevel: AccessLevel.CLIENT
+							},
+							select: ['uid']
+						});
+						
+						if (clientUser?.uid && !recipients.includes(clientUser.uid)) {
+							recipients.push(clientUser.uid);
+						}
+					}
+
+					// Send push notifications if we have recipients
+					if (recipients.length > 0) {
+						await this.unifiedNotificationService.sendTemplatedNotification(
+							NotificationEvent.QUOTATION_CREATED,
+							recipients,
+							{
+								quotationRef: savedQuotation.quotationNumber,
+								clientName: clientName,
+								quotationId: savedQuotation.uid,
+								totalAmount: Number(savedQuotation.totalAmount),
+								currency: orgCurrency.code,
+								itemCount: savedQuotation.totalItems,
+							},
+							{
+								priority: NotificationPriority.HIGH,
+								customData: {
+									quotationId: savedQuotation.uid,
+									quotationNumber: savedQuotation.quotationNumber,
+									screen: '/sales',
+									action: 'view_quotation',
+									type: 'quotation_created',
+								},
+							}
+						);
+
+						this.logger.log(`[${asyncOperationId}] Push notifications sent for quotation ${savedQuotation.quotationNumber} to ${recipients.length} recipients`);
+					}
+				} catch (pushError) {
+					this.logger.error(`[${asyncOperationId}] Failed to send push notifications for quotation ${savedQuotation.quotationNumber}: ${pushError.message}`, pushError.stack);
+					// Don't fail the process if push notifications fail
+				}
+
 				const baseConfig: QuotationInternalData = {
 					name: clientName,
 					quotationId: savedQuotation?.quotationNumber,
@@ -1569,6 +1661,73 @@ export class ShopService {
 					this.shopGateway.emitNewQuotation(enhancedBlankQuotationData);
 				}
 
+				// Send push notifications for blank quotation creation
+				try {
+					const recipients: number[] = [];
+
+					// Add sales rep (placedBy user) if exists
+					if (blankQuotationData?.owner?.uid) {
+						recipients.push(blankQuotationData.owner.uid);
+					}
+
+					// Add organization admins for internal notifications
+					if (orgId) {
+						const orgAdmins = await this.getOrganizationAdmins(orgId);
+						orgAdmins.forEach(admin => {
+							if (admin.uid && !recipients.includes(admin.uid)) {
+								recipients.push(admin.uid);
+							}
+						});
+					}
+
+					// Try to find client user account by email for push notification
+					if (clientEmail) {
+						const clientUser = await this.userRepository.findOne({
+							where: { 
+								email: clientEmail,
+								accessLevel: AccessLevel.CLIENT
+							},
+							select: ['uid']
+						});
+						
+						if (clientUser?.uid && !recipients.includes(clientUser.uid)) {
+							recipients.push(clientUser.uid);
+						}
+					}
+
+					// Send push notifications if we have recipients
+					if (recipients.length > 0) {
+						await this.unifiedNotificationService.sendTemplatedNotification(
+							NotificationEvent.QUOTATION_CREATED,
+							recipients,
+							{
+								quotationRef: savedQuotation.quotationNumber,
+								clientName: clientName,
+								quotationId: savedQuotation.uid,
+								totalAmount: Number(savedQuotation.totalAmount),
+								currency: orgCurrency.code,
+								itemCount: savedQuotation.totalItems,
+								isBlankQuotation: true,
+							},
+							{
+								priority: NotificationPriority.HIGH,
+								customData: {
+									quotationId: savedQuotation.uid,
+									quotationNumber: savedQuotation.quotationNumber,
+									screen: '/sales',
+									action: 'view_quotation',
+									type: 'blank_quotation_created',
+								},
+							}
+						);
+
+						this.logger.log(`[${asyncOperationId}] Push notifications sent for blank quotation ${savedQuotation.quotationNumber} to ${recipients.length} recipients`);
+					}
+				} catch (pushError) {
+					this.logger.error(`[${asyncOperationId}] Failed to send push notifications for blank quotation ${savedQuotation.quotationNumber}: ${pushError.message}`, pushError.stack);
+					// Don't fail the process if push notifications fail
+				}
+
 				// Helper function to map blank quotation items with palette details
 				const mapBlankQuotationItems = (items: any[]) => {
 					return items.map((item) => {
@@ -1736,27 +1895,64 @@ export class ShopService {
 	}
 
 	async getBanner(orgId?: number, branchId?: number): Promise<{ banners: Banners[]; message: string }> {
+		const operationId = `getBanner_${Date.now()}`;
+		this.logger.log(`[${operationId}] 🎨 Fetching banners for orgId: ${orgId}, branchId: ${branchId}`);
+
 		try {
 			const query = this.bannersRepository.createQueryBuilder('banner');
 
+			// Always filter by organization if provided
 			if (orgId) {
 				query.andWhere('banner.organisationUid = :orgId', { orgId });
+				this.logger.debug(`[${operationId}] Applied organization filter: ${orgId}`);
+			} else {
+				this.logger.warn(`[${operationId}] No orgId provided - fetching all banners`);
 			}
 
+			// BRANCH VISIBILITY LOGIC (same as products):
+			// - If branchId is provided: show banners where branch is NULL (org-wide) OR matches the branchId
+			// - If branchId is NOT provided: show all banners in the org (both with and without branches)
 			if (branchId) {
-				query.andWhere('banner.branchUid = :branchId', { branchId });
+				query.andWhere('(banner.branchUid IS NULL OR banner.branchUid = :branchId)', { branchId });
+				this.logger.debug(`[${operationId}] Applied branch filter: ${branchId} - showing org-wide banners (no branch) and branch-specific banners`);
 			}
 
 			const banners = await query.getMany();
+			this.logger.debug(`[${operationId}] Query executed - found ${banners.length} banners`);
+
+			if (banners.length > 0) {
+				this.logger.debug(`[${operationId}] Sample banner: ${JSON.stringify({ uid: banners[0].uid, title: banners[0].title, orgUid: banners[0].organisationUid, branchUid: banners[0].branchUid })}`);
+			}
+
+			// Clear logging for debugging
+			this.logger.log(`[${operationId}] 🎨 BANNERS RESPONSE BEING SENT TO CLIENT:`, {
+				bannersArray: banners.map(b => ({
+					uid: b.uid,
+					title: b.title,
+					subtitle: b.subtitle,
+					image: b.image,
+					category: b.category,
+					organisationUid: b.organisationUid,
+					branchUid: b.branchUid,
+				})),
+				bannersCount: banners.length,
+				orgId,
+				branchId,
+				responseStructure: {
+					banners: banners,
+					message: process.env.SUCCESS_MESSAGE,
+				},
+			});
 
 			return {
 				banners,
 				message: process.env.SUCCESS_MESSAGE,
 			};
 		} catch (error) {
+			this.logger.error(`[${operationId}] Error fetching banners: ${error?.message}`, error?.stack);
 			return {
 				banners: [],
-				message: error?.message,
+				message: error?.message || 'Error fetching banners',
 			};
 		}
 	}
@@ -2104,7 +2300,8 @@ export class ShopService {
 		queryBuilder
 			.leftJoinAndSelect('quotation.quotationItems', 'quotationItems')
 			.leftJoinAndSelect('quotationItems.product', 'product')
-			.leftJoinAndSelect('quotation.client', 'client');
+			.leftJoinAndSelect('quotation.client', 'client')
+			.leftJoinAndSelect('quotation.placedBy', 'placedBy');
 
 		const quotation = await queryBuilder.getOne();
 
@@ -2278,8 +2475,99 @@ export class ShopService {
 						this.eventEmitter.emit('send.email', emailType, [quotation.client.email], emailData);
 					}
 
-					// Log push notification limitation for external clients
-					this.logger.debug(`Quotation ${quotation.quotationNumber} status update sent to client ${quotation.client.email} - push notifications not available for external clients`);
+					// Send push notifications for client-visible statuses
+					try {
+						// Map OrderStatus to NotificationEvent
+						let notificationEvent: NotificationEvent;
+						let notificationPriority = NotificationPriority.NORMAL;
+						
+						switch (status) {
+							case OrderStatus.PENDING_CLIENT:
+								notificationEvent = NotificationEvent.QUOTATION_READY_FOR_REVIEW;
+								notificationPriority = NotificationPriority.HIGH;
+								break;
+							case OrderStatus.APPROVED:
+								notificationEvent = NotificationEvent.QUOTATION_APPROVED;
+								notificationPriority = NotificationPriority.HIGH;
+								break;
+							case OrderStatus.REJECTED:
+								notificationEvent = NotificationEvent.QUOTATION_REJECTED;
+								notificationPriority = NotificationPriority.HIGH;
+								break;
+							case OrderStatus.SOURCING:
+							case OrderStatus.PACKING:
+							case OrderStatus.IN_FULFILLMENT:
+							case OrderStatus.PAID:
+							case OrderStatus.OUTFORDELIVERY:
+							case OrderStatus.DELIVERED:
+							case OrderStatus.RETURNED:
+							case OrderStatus.COMPLETED:
+								notificationEvent = NotificationEvent.QUOTATION_STATUS_UPDATED;
+								notificationPriority = NotificationPriority.NORMAL;
+								break;
+							default:
+								notificationEvent = NotificationEvent.QUOTATION_STATUS_UPDATED;
+						}
+
+						// Prepare notification recipients
+						const recipients: number[] = [];
+
+						// Add sales rep (placedBy user) if exists
+						if (quotation.placedBy?.uid) {
+							recipients.push(quotation.placedBy.uid);
+						}
+
+						// Try to find client user account by email
+						if (quotation.client?.email) {
+							const clientUser = await this.userRepository.findOne({
+								where: { 
+									email: quotation.client.email,
+									accessLevel: AccessLevel.CLIENT
+								},
+								select: ['uid']
+							});
+							
+							if (clientUser?.uid) {
+								recipients.push(clientUser.uid);
+							}
+						}
+
+						// Send push notifications if we have recipients
+						if (recipients.length > 0) {
+							const statusDisplayName = status.replace(/_/g, ' ').toLowerCase()
+								.split(' ')
+								.map(word => word.charAt(0).toUpperCase() + word.slice(1))
+								.join(' ');
+
+							await this.unifiedNotificationService.sendTemplatedNotification(
+								notificationEvent,
+								recipients,
+								{
+									quotationRef: quotation.quotationNumber,
+									clientName: quotation.client?.name || quotation.client?.email?.split('@')[0] || 'Customer',
+									newStatus: statusDisplayName,
+									quotationId: quotation.uid,
+									totalAmount: Number(quotation.totalAmount),
+									currency: quotation.currency || this.currencyCode,
+								},
+								{
+									priority: notificationPriority,
+									customData: {
+										quotationId: quotation.uid,
+										quotationNumber: quotation.quotationNumber,
+										screen: '/sales',
+										action: 'view_quotation',
+										type: 'quotation_status_update',
+									},
+								}
+							);
+
+							this.logger.log(`Push notifications sent for quotation ${quotation.quotationNumber} status change to ${status} for ${recipients.length} recipients`);
+						}
+					} catch (pushError) {
+						this.logger.error(`Failed to send push notifications for quotation ${quotation.quotationNumber}: ${pushError.message}`, pushError.stack);
+						// Don't fail the status update if push notifications fail
+					}
 				}
 
 				// Also notify internal team about the status change via WebSocket with enhanced data

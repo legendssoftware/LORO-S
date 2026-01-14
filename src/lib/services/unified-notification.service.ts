@@ -937,7 +937,7 @@ export class UnifiedNotificationService {
 			{
 				event: NotificationEvent.LEAD_DAILY_SUMMARY,
 				title: '🎯 Daily Lead Summary',
-				messageTemplate: 'You have {leadsCount} leads requiring follow-up today',
+				messageTemplate: 'You have {totalLeads} leads requiring follow-up today',
 				priority: NotificationPriority.NORMAL,
 				channel: NotificationChannel.REMINDERS,
 				defaultData: { screen: '/home/leads', action: 'view_leads' },

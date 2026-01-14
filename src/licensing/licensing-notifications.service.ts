@@ -51,6 +51,10 @@ export class LicensingNotificationsService {
             const expiringLicenses = await this.licensingService.findExpiringLicenses(threshold);
 
             for (const license of expiringLicenses) {
+                // Skip licenses without expiry date (perpetual licenses)
+                if (!license.validUntil) {
+                    continue;
+                }
                 const daysRemaining = Math.ceil((license.validUntil.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
                 await this.sendExpirationNotification(license, daysRemaining);
             }
@@ -65,6 +69,10 @@ export class LicensingNotificationsService {
         const gracePeriodLicenses = licenses.filter(license => license.status === LicenseStatus.GRACE_PERIOD);
 
         for (const license of gracePeriodLicenses) {
+            // Skip licenses without expiry date (perpetual licenses shouldn't be in grace period)
+            if (!license.validUntil) {
+                continue;
+            }
             const daysRemaining = Math.ceil((license.validUntil.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
             if (daysRemaining <= 0) {
                 await this.licensingService.update(String(license.uid), { status: LicenseStatus.EXPIRED });

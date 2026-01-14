@@ -759,9 +759,14 @@ export class ProductsService {
 	 * 📃 Get paginated list of products
 	 * @param page - Page number (default: 1)
 	 * @param limit - Items per page (default: env.DEFAULT_PAGE_LIMIT)
-	 * @param orgId - Organization ID filter (optional)
+	 * @param orgId - Organization ID filter (REQUIRED - all products must belong to an org)
 	 * @param branchId - Branch ID filter (optional)
 	 * @returns Promise with paginated product data
+	 * 
+	 * BRANCH VISIBILITY LOGIC:
+	 * - Products WITHOUT a branch assigned (branchUid IS NULL) are visible to ALL users in the organization
+	 * - Products WITH a branch assigned (branchUid IS NOT NULL) are ONLY visible to users from that specific branch
+	 * - This ensures org-wide products are accessible to everyone, while branch-specific products remain restricted
 	 */
 	async products(
 		page: number = 1,
@@ -810,16 +815,18 @@ export class ProductsService {
 				.leftJoin('product.analytics', 'analytics')
 				.where('product.isDeleted = :isDeleted', { isDeleted: false });
 
-			// Filter by organization if provided
+			// Filter by organization - REQUIRED to ensure products belong to the org
 			if (orgId) {
 				this.logger.debug(`🏢 [products] Filtering by organization ID: ${orgId}`);
 				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
 			}
 
-			// Filter by branch if provided
+			// BRANCH VISIBILITY LOGIC:
+			// - If branchId is provided: show products where branch is NULL (org-wide) OR matches the branchId
+			// - If branchId is NOT provided: show all products in the org (both with and without branches)
 			if (branchId) {
-				this.logger.debug(`🏪 [products] Filtering by branch ID: ${branchId}`);
-				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
+				this.logger.debug(`🏪 [products] Filtering by branch ID: ${branchId} - showing org-wide products (no branch) and branch-specific products`);
+				queryBuilder.andWhere('(branch.uid IS NULL OR branch.uid = :branchId)', { branchId });
 			}
 
 			// Add pagination
@@ -876,10 +883,14 @@ export class ProductsService {
 	/**
 	 * 🔍 Get a specific product by reference ID
 	 * @param ref - Product reference ID
-	 * @param orgId - Organization ID filter (optional)
+	 * @param orgId - Organization ID filter (REQUIRED)
 	 * @param branchId - Branch ID filter (optional)
 	 * @param userId - User ID for analytics tracking (optional)
 	 * @returns Promise with product data or null
+	 * 
+	 * BRANCH VISIBILITY LOGIC:
+	 * - Products WITHOUT a branch assigned (branchUid IS NULL) are visible to ALL users in the organization
+	 * - Products WITH a branch assigned (branchUid IS NOT NULL) are ONLY visible to users from that specific branch
 	 */
 	async getProductByref(
 		ref: number,
@@ -936,10 +947,12 @@ export class ProductsService {
 				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
 			}
 
-			// Add branch filter if provided
+			// BRANCH VISIBILITY LOGIC:
+			// - If branchId is provided: show products where branch is NULL (org-wide) OR matches the branchId
+			// - If branchId is NOT provided: show all products in the org (both with and without branches)
 			if (branchId) {
-				this.logger.debug(`🏪 [getProductByref] Adding branch filter: ${branchId}`);
-				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
+				this.logger.debug(`🏪 [getProductByref] Adding branch filter: ${branchId} - showing org-wide products (no branch) and branch-specific products`);
+				queryBuilder.andWhere('(branch.uid IS NULL OR branch.uid = :branchId)', { branchId });
 			}
 
 			this.logger.debug(`🔍 [getProductByref] Executing query for product ID: ${ref}`);
@@ -983,9 +996,13 @@ export class ProductsService {
 	 * @param searchTerm - Search term to match against product fields
 	 * @param page - Page number (default: 1)
 	 * @param limit - Items per page (default: 10)
-	 * @param orgId - Organization ID filter (optional)
+	 * @param orgId - Organization ID filter (REQUIRED)
 	 * @param branchId - Branch ID filter (optional)
 	 * @returns Promise with paginated search results
+	 * 
+	 * BRANCH VISIBILITY LOGIC:
+	 * - Products WITHOUT a branch assigned (branchUid IS NULL) are visible to ALL users in the organization
+	 * - Products WITH a branch assigned (branchUid IS NOT NULL) are ONLY visible to users from that specific branch
 	 */
 	async productsBySearchTerm(
 		searchTerm: string,
@@ -1040,10 +1057,12 @@ export class ProductsService {
 				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
 			}
 
-			// Filter by branch if provided
+			// BRANCH VISIBILITY LOGIC:
+			// - If branchId is provided: show products where branch is NULL (org-wide) OR matches the branchId
+			// - If branchId is NOT provided: show all products in the org (both with and without branches)
 			if (branchId) {
-				this.logger.debug(`🏪 [productsBySearchTerm] Adding branch filter: ${branchId}`);
-				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
+				this.logger.debug(`🏪 [productsBySearchTerm] Adding branch filter: ${branchId} - showing org-wide products (no branch) and branch-specific products`);
+				queryBuilder.andWhere('(branch.uid IS NULL OR branch.uid = :branchId)', { branchId });
 			}
 
 			// Apply search term - could be category, name, or description
@@ -1110,9 +1129,13 @@ export class ProductsService {
 	 * @param page - Page number (default: 1)
 	 * @param limit - Items per page (default: 20)
 	 * @param search - Additional search term (optional)
-	 * @param orgId - Organization ID filter (optional)
+	 * @param orgId - Organization ID filter (REQUIRED)
 	 * @param branchId - Branch ID filter (optional)
 	 * @returns Promise with paginated category products
+	 * 
+	 * BRANCH VISIBILITY LOGIC:
+	 * - Products WITHOUT a branch assigned (branchUid IS NULL) are visible to ALL users in the organization
+	 * - Products WITH a branch assigned (branchUid IS NOT NULL) are ONLY visible to users from that specific branch
 	 */
 	async productsByCategory(
 		category: string,
@@ -1169,10 +1192,12 @@ export class ProductsService {
 				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
 			}
 
-			// Filter by branch if provided
+			// BRANCH VISIBILITY LOGIC:
+			// - If branchId is provided: show products where branch is NULL (org-wide) OR matches the branchId
+			// - If branchId is NOT provided: show all products in the org (both with and without branches)
 			if (branchId) {
-				this.logger.debug(`🏪 [productsByCategory] Adding branch filter: ${branchId}`);
-				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
+				this.logger.debug(`🏪 [productsByCategory] Adding branch filter: ${branchId} - showing org-wide products (no branch) and branch-specific products`);
+				queryBuilder.andWhere('(branch.uid IS NULL OR branch.uid = :branchId)', { branchId });
 			}
 
 			// Filter by category (exact match or partial match)

@@ -236,29 +236,32 @@ export class LicensingService {
 			license.lastValidated = now;
 			await this.licenseRepository.save(license);
 
-			let isValid = false;
+		let isValid = false;
 
-			if (license.status === LicenseStatus.SUSPENDED) {
-				isValid = false;
-			} else if (now > license.validUntil) {
-				const gracePeriodEnd = new Date(
-					license.validUntil.getTime() + this.GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000,
-				);
+		if (license.status === LicenseStatus.SUSPENDED) {
+			isValid = false;
+		} else if (license.validUntil && now > license.validUntil) {
+			// Only check expiry if validUntil is set (not null for perpetual licenses)
+			const gracePeriodEnd = new Date(
+				license.validUntil.getTime() + this.GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000,
+			);
 
-				if (now <= gracePeriodEnd) {
-					license.status = LicenseStatus.GRACE_PERIOD;
-					await this.licenseRepository.save(license);
-					isValid = true;
-				} else {
-					license.status = LicenseStatus.EXPIRED;
-					await this.licenseRepository.save(license);
-					isValid = false;
-				}
-			} else if (license.status === LicenseStatus.TRIAL) {
-				isValid = now <= license.validUntil;
+			if (now <= gracePeriodEnd) {
+				license.status = LicenseStatus.GRACE_PERIOD;
+				await this.licenseRepository.save(license);
+				isValid = true;
 			} else {
-				isValid = license.status === LicenseStatus.ACTIVE;
+				license.status = LicenseStatus.EXPIRED;
+				await this.licenseRepository.save(license);
+				isValid = false;
 			}
+		} else if (license.status === LicenseStatus.TRIAL) {
+			// For trial licenses, validUntil must be set
+			isValid = license.validUntil ? now <= license.validUntil : false;
+		} else {
+			// For perpetual licenses (validUntil is null) or active licenses with future expiry
+			isValid = license.status === LicenseStatus.ACTIVE;
+		}
 
 			// Cache the result
 			await this.cacheManager.set(cacheKey, isValid, this.LICENSE_CACHE_TTL);
@@ -330,6 +333,13 @@ export class LicensingService {
 		try {
 			const license = await this.findOne(ref);
 			const now = new Date();
+
+			// Cannot renew perpetual licenses (validUntil is null)
+			if (!license.validUntil) {
+				throw new BadRequestException(
+					'Cannot renew a perpetual license. Perpetual licenses do not expire.',
+				);
+			}
 
 			const renewalStart = new Date(
 				license.validUntil.getTime() - this.RENEWAL_WINDOW_DAYS * 24 * 60 * 60 * 1000,

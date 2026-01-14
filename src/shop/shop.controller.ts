@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards, Req, Query, UnauthorizedException } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards, Req, Query, UnauthorizedException, Logger } from '@nestjs/common';
 import { ShopService } from './shop.service';
 import { ProjectsService } from './projects.service';
 import { AuthGuard } from '../guards/auth.guard';
@@ -38,6 +38,8 @@ import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.in
 @EnterpriseOnly('shop')
 @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid credentials or missing token' })
 export class ShopController {
+	private readonly logger = new Logger(ShopController.name);
+
 	constructor(
 		private readonly shopService: ShopService,
 		private readonly projectsService: ProjectsService,
@@ -545,7 +547,10 @@ Retrieves a comprehensive list of all available product categories with hierarch
 	categories(@Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
-		return this.shopService.categories(orgId, branchId);
+		this.logger.log(`📦 [ShopController] categories endpoint called - orgId: ${orgId}, branchId: ${branchId}`);
+		const result = this.shopService.categories(orgId, branchId);
+		this.logger.log(`📦 [ShopController] categories response prepared - categories count: ${(result as any)?.categories?.length || 0}`);
+		return result;
 	}
 
 	@Get('specials')
@@ -1865,7 +1870,10 @@ Retrieves comprehensive banner information for shop promotional displays with ad
 	getBanner(@Req() req: AuthenticatedRequest) {
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
-		return this.shopService.getBanner(orgId, branchId);
+		this.logger.log(`🎨 [ShopController] getBanner endpoint called - orgId: ${orgId}, branchId: ${branchId}`);
+		const result = this.shopService.getBanner(orgId, branchId);
+		this.logger.log(`🎨 [ShopController] getBanner response prepared - banners count: ${(result as any)?.banners?.length || 0}`);
+		return result;
 	}
 
 	@Post('banner')

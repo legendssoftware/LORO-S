@@ -71,24 +71,40 @@ export class ExpoPushService {
 			}
 
 			const result = await response.json();
-			this.logger.log(`✅ Sent ${messages.length} push notification(s) to Expo`);
+			const tickets = result.data || [];
 
-			// Log any errors from the response with detailed information
-			if (result.data) {
-				const errors = result.data.filter((ticket: ExpoPushTicket) => ticket.status === 'error');
-				if (errors.length > 0) {
-					this.logger.error(`❌ ${errors.length}/${messages.length} push notifications failed:`, {
-						errors: errors.map((error, index) => ({
-							index,
-							token: messages[index]?.to?.substring(0, 30) + '...',
-							message: error.message || 'Unknown error',
-							details: error.details || 'No additional details'
-						}))
-					});
-				}
+			// Check for errors BEFORE logging success
+			const errors = tickets.filter((ticket: ExpoPushTicket) => ticket.status === 'error');
+			const successCount = tickets.filter((ticket: ExpoPushTicket) => ticket.status === 'ok').length;
+
+			if (errors.length > 0) {
+				this.logger.error(`❌ ${errors.length}/${messages.length} push notifications failed:`, {
+					errors: tickets
+						.map((ticket: ExpoPushTicket, index: number) => {
+							if (ticket.status === 'error') {
+								return {
+									index,
+									token: messages[index]?.to?.substring(0, 30) + '...',
+									message: ticket.message || 'Unknown error',
+									details: ticket.details || 'No additional details'
+								};
+							}
+							return null;
+						})
+						.filter(Boolean)
+				});
 			}
 
-			return result.data || [];
+			// Log accurate summary
+			if (successCount > 0 && errors.length === 0) {
+				this.logger.log(`✅ Sent ${successCount} push notification(s) to Expo`);
+			} else if (successCount > 0 && errors.length > 0) {
+				this.logger.warn(`⚠️ Sent ${successCount} push notification(s) to Expo, ${errors.length} failed`);
+			} else if (errors.length === messages.length) {
+				this.logger.error(`❌ All ${messages.length} push notification(s) failed`);
+			}
+
+			return tickets;
 		} catch (error) {
 			this.logger.error('❌ Failed to send push notifications:', {
 				error: error.message,
