@@ -559,5 +559,11 @@ export class ConsolidatedIncomeStatementResponseDto {
 		required: false
 	})
 	exchangeRates?: ExchangeRateDto[];
+
+	@ApiProperty({ 
+		description: 'Grand total revenue in ZAR (sum of all branches converted to ZAR)',
+		example: 760031.26
+	})
+	grandTotalZAR: number;
 }
 

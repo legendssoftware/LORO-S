@@ -2164,6 +2164,161 @@ export class ErpDataService implements OnModuleInit {
 	}
 
 	/**
+	 * Get daily aggregations from sales lines - includes cost data for GP calculation
+	 * 
+	 * ✅ NEW: Queries tblsaleslines instead of tblsalesheader to get cost data
+	 * Uses SUM(incl_line_total) - SUM(tax) for revenue, SUM(cost_price * quantity) for cost
+	 * Processes Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2)
+	 * Groups by DATE(sale_date) and store
+	 * 
+	 * Sales Person Filtering: Uses tblsaleslines.rep_code field
+	 * ✅ Country Support: Accepts optional countryCode parameter (defaults to 'SA')
+	 */
+	async getDailyAggregationsFromSalesLines(filters: ErpQueryFilters, countryCode: string = 'SA'): Promise<DailyAggregation[]> {
+		const operationId = this.generateOperationId('GET_DAILY_AGG_LINES');
+		const cacheKey = this.buildCacheKey('daily_agg_lines', filters, undefined, countryCode);
+		
+		// ✅ Log country switching
+		if (countryCode !== 'SA') {
+			this.logger.log(`[${operationId}] 🌍 Country switch: Using database for ${countryCode}`);
+		}
+
+		this.logger.log(`[${operationId}] Starting getDailyAggregationsFromSalesLines operation`);
+		this.logger.log(`[${operationId}] Filters: ${JSON.stringify(filters)}`);
+
+		const startTime = Date.now();
+
+		try {
+			// ✅ Skip cache when exclusion filters are present - always recalculate from DB
+			const hasExclusionFilters = filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0;
+			
+			if (!hasExclusionFilters) {
+				// Check cache first (only when no exclusion filters)
+				const cached = await this.cacheManager.get<DailyAggregation[]>(cacheKey);
+				if (cached) {
+					const duration = Date.now() - startTime;
+					this.logger.log(
+						`[${operationId}] ✅ Cache HIT - Retrieved ${cached.length} aggregations (${duration}ms)`,
+					);
+					return cached;
+				}
+			} else {
+				this.logger.log(`[${operationId}] ⚠️ Cache BYPASSED - Exclusion filters detected, recalculating from database...`);
+			}
+
+			this.logger.log(`[${operationId}] Cache MISS - Computing daily aggregations from sales lines...`);
+
+			const queryStart = Date.now();
+			const dateRangeDays = this.calculateDateRangeDays(filters.startDate, filters.endDate);
+			
+			// ✅ Get repository for country
+			const salesLinesRepo = await this.getRepositoryForCountry(TblSalesLines, countryCode);
+			
+			const query = salesLinesRepo
+				.createQueryBuilder('line');
+
+			query.select([
+				'DATE(line.sale_date) as date',
+				'line.store as store',
+				'SUM(line.incl_line_total) - SUM(line.tax) as totalRevenue', // ✅ Subtract tax
+				// ✅ FIXED: Credit notes (doc_type = 2) should have negative cost to match negative revenue
+				'SUM(CASE WHEN line.doc_type = 2 THEN -(line.cost_price * line.quantity) ELSE line.cost_price * line.quantity END) as totalCost',
+				'COUNT(DISTINCT line.doc_number) as transactionCount',
+				'COUNT(DISTINCT line.customer) as uniqueCustomers',
+				'SUM(line.quantity) as totalQuantity',
+			])
+				.where('line.sale_date BETWEEN :startDate AND :endDate', {
+					startDate: filters.startDate,
+					endDate: filters.endDate,
+				})
+				// ✅ CRITICAL: Tax Invoices (doc_type = 1) AND Credit Notes (doc_type = 2) for revenue calculations
+				.andWhere('line.doc_type IN (:...docTypes)', { docTypes: ['1', '2'] })
+				.andWhere('line.item_code IS NOT NULL')
+				.andWhere('line.item_code != :excludeItemCode', { excludeItemCode: '.' })
+				.andWhere('line.type = :itemType', { itemType: 'I' })
+				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' })
+				.groupBy('DATE(line.sale_date), line.store')
+				.orderBy('DATE(line.sale_date)', 'ASC')
+				.limit(10000); // ✅ PHASE 2: Max 10k records per aggregation
+
+			if (filters.storeCode) {
+				this.logger.debug(`[${operationId}] Filtering by store: ${filters.storeCode}`);
+				query.andWhere('line.store = :store', { store: filters.storeCode });
+			}
+
+			if (filters.salesPersonId) {
+				const salesPersonIds = Array.isArray(filters.salesPersonId) 
+					? filters.salesPersonId 
+					: [filters.salesPersonId];
+				this.logger.debug(`[${operationId}] Filtering by sales person(s): ${salesPersonIds.join(', ')}`);
+				// Use rep_code from tblsaleslines
+				query.andWhere('line.rep_code IN (:...salesPersonIds)', { salesPersonIds });
+			}
+
+			// ✅ Customer category filtering using EXISTS to prevent row multiplication
+			if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
+				this.logger.log(`[${operationId}] ✅ INCLUDING customer categories: ${filters.includeCustomerCategories.join(', ')}`);
+				query.andWhere(
+					`EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = line.customer AND customer.Category IN (:...includeCustomerCategories))`,
+					{ includeCustomerCategories: filters.includeCustomerCategories }
+				);
+			}
+
+			if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
+				this.logger.log(`[${operationId}] 🚫 EXCLUDING customer categories: ${filters.excludeCustomerCategories.join(', ')}`);
+				this.logger.log(`[${operationId}] Filter logic: Excluding sales where customer.Category IN (${filters.excludeCustomerCategories.join(', ')})`);
+				// ✅ FIXED: Use NOT EXISTS to exclude categories without row multiplication
+				query.andWhere(
+					`(line.customer IS NULL OR NOT EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = line.customer AND customer.Category IN (:...excludeCustomerCategories)))`,
+					{ excludeCustomerCategories: filters.excludeCustomerCategories }
+				);
+			}
+
+			const results = await this.executeQueryWithProtection(
+				async () => query.getRawMany(),
+				operationId,
+				120000, // 120 second base timeout for aggregations
+				dateRangeDays, // Pass date range for adaptive timeout
+			);
+			const queryDuration = Date.now() - queryStart;
+			
+			// ✅ PHASE 2: Log slow query warning
+			this.logSlowQuery(operationId, queryDuration, dateRangeDays, filters.startDate, filters.endDate);
+
+			// Process results to ensure correct types
+			const processedResults = results.map((row) => ({
+				date: row.date,
+				store: row.store,
+				totalRevenue: parseFloat(row.totalRevenue) || 0,
+				totalCost: parseFloat(row.totalCost) || 0, // ✅ Cost data from sales lines
+				transactionCount: parseInt(row.transactionCount, 10) || 0,
+				uniqueCustomers: parseInt(row.uniqueCustomers, 10) || 0,
+				totalQuantity: parseFloat(row.totalQuantity) || 0,
+			}));
+
+			this.logger.log(`[${operationId}] Aggregation query completed in ${queryDuration}ms`);
+			this.logger.log(`[${operationId}] Computed ${processedResults.length} daily aggregations from sales lines`);
+
+			// Cache results
+			await this.cacheManager.set(cacheKey, processedResults, this.CACHE_TTL);
+
+			const totalDuration = Date.now() - startTime;
+			this.logger.log(`[${operationId}] ✅ Operation completed successfully (${totalDuration}ms)`);
+			return processedResults;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			
+			// ✅ Enhanced error diagnostics
+			this.logger.error(`[${operationId}] ❌ Error computing daily aggregations from sales lines (${duration}ms)`);
+			this.logger.error(`[${operationId}] Error: ${error.message}`);
+			this.logger.error(`[${operationId}] Circuit Breaker: ${this.circuitBreakerState}`);
+			this.logger.error(`[${operationId}] Connection Pool: ${JSON.stringify(this.getConnectionPoolInfo())}`);
+			this.logger.error(`[${operationId}] Stack: ${error.stack}`);
+			throw error;
+		}
+	}
+
+	/**
 	 * Get branch aggregations - optimized query
 	 * 
 	 * ✅ REVISED: Uses tblsalesheader instead of tblsaleslines

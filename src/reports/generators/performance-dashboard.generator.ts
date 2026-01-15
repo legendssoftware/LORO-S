@@ -116,10 +116,16 @@ export class PerformanceDashboardGenerator {
 			this.logger.log('Starting sequential query execution for table data...');
 			
 			this.logger.log('Step 1/4: Generating daily sales performance...');
-			const dailySalesPerformance = await this.generateDailySalesPerformance(params);
+			// Use consolidated daily sales performance (all countries, ZAR) when no country filter is set
+			const dailySalesPerformance = !params.country || params.country === 'ALL' 
+				? await this.generateConsolidatedDailySalesPerformance(params)
+				: await this.generateDailySalesPerformance(params);
 			
 			this.logger.log('Step 2/4: Generating branch-category performance...');
-			const branchCategoryPerformance = await this.generateBranchCategoryPerformance(params);
+			// Use consolidated branch-category performance (all countries, ZAR) when no country filter is set
+			const branchCategoryPerformance = !params.country || params.country === 'ALL' 
+				? await this.generateConsolidatedBranchCategoryPerformance(params)
+				: await this.generateBranchCategoryPerformance(params);
 			
 			this.logger.log('Step 3/4: Generating sales per store...');
 			// Use consolidated sales per store (all countries, ZAR) when no country filter is set
@@ -179,22 +185,131 @@ export class PerformanceDashboardGenerator {
 	/**
 	 * Generate daily sales performance data
 	 * 
-	 * ✅ REVISED: Now uses daily aggregations from tblsalesheader (same as revenue trend)
-	 * Uses SUM(total_incl) - SUM(total_tax) for revenue, COUNT(DISTINCT doc_number) for transactions,
-	 * COUNT(DISTINCT customer) for unique clients
-	 * This ensures consistency with revenue trend chart data
+	 * ✅ REVISED: Now uses daily aggregations from tblsaleslines (includes cost data for GP calculation)
+	 * Uses SUM(incl_line_total) - SUM(tax) for revenue, SUM(cost_price * quantity) for cost,
+	 * COUNT(DISTINCT doc_number) for transactions, COUNT(DISTINCT customer) for unique clients
 	 */
 	async generateDailySalesPerformance(params: PerformanceFiltersDto): Promise<DailySalesPerformanceDto[]> {
 		this.logger.log(`Generating daily sales performance for org ${params.organisationId}`);
 
 		// Build ERP query filters
 		const filters = this.buildErpFilters(params);
-		const countryCode = this.getCountryCode(params);
+		const countryCode = this.getCountryCode(params) || 'SA';
 		
-		// ✅ Get daily aggregations from tblsalesheader (same as revenue trend)
-		const dailyAggregations = await this.erpDataService.getDailyAggregations(filters, countryCode);
+		// ✅ Get daily aggregations from tblsaleslines (includes cost data for GP)
+		const dailyAggregations = await this.erpDataService.getDailyAggregationsFromSalesLines(filters, countryCode);
 		
 		return this.calculateDailySalesPerformanceFromAggregations(dailyAggregations);
+	}
+
+	/**
+	 * Generate consolidated daily sales performance across all countries with ZAR conversion
+	 * Fetches data from all countries, converts all currency values to ZAR using exchange rates
+	 */
+	async generateConsolidatedDailySalesPerformance(params: PerformanceFiltersDto): Promise<DailySalesPerformanceDto[]> {
+		this.logger.log(`Generating consolidated daily sales performance for org ${params.organisationId} (all countries, ZAR)`);
+
+		// Supported countries
+		const countries = [
+			{ code: 'SA', name: 'South Africa' },
+			{ code: 'BOT', name: 'Botswana' },
+			{ code: 'ZAM', name: 'Zambia' },
+			{ code: 'MOZ', name: 'Mozambique' },
+			{ code: 'ZW', name: 'Zimbabwe' },
+		];
+
+		// Build filters for ERP queries
+		const filters = this.buildErpFilters(params);
+
+		// Fetch exchange rates for currency conversion (use endDate as reference)
+		const exchangeRates = await this.getExchangeRates(params.endDate);
+		const exchangeRateMap = new Map<string, number>();
+		exchangeRates.forEach(rate => {
+			exchangeRateMap.set(rate.code, rate.rate);
+		});
+
+		// Fetch data for all countries in parallel
+		const countryPromises = countries.map(async (country) => {
+			try {
+				this.logger.log(`Fetching daily sales performance for ${country.name} (${country.code})`);
+				
+				// Get daily aggregations from sales lines (includes cost data)
+				const dailyAggregations = await this.erpDataService.getDailyAggregationsFromSalesLines(filters, country.code);
+				
+				// Get currency info for this country
+				const currency = getCurrencyForCountry(country.code);
+				
+				// Get exchange rate for this country's currency to ZAR
+				const exchangeRate = currency.code === 'ZAR' ? 1 : (exchangeRateMap.get(currency.code) || 1);
+				
+				this.logger.log(`${country.name}: ${dailyAggregations.length} daily aggregations, exchange rate ${currency.code} to ZAR: ${exchangeRate}`);
+
+				// Calculate daily sales performance for this country
+				const countryDailySales = this.calculateDailySalesPerformanceFromAggregations(dailyAggregations);
+
+				// Convert all values to ZAR
+				if (currency.code === 'ZAR' || exchangeRate === 1) {
+					return countryDailySales;
+				}
+
+				// Divide by exchange rate to convert FROM foreign currency TO ZAR
+				return countryDailySales.map(day => ({
+					...day,
+					salesR: day.salesR / exchangeRate,
+					basketValue: day.basketValue / exchangeRate,
+					gpR: day.gpR / exchangeRate,
+					// Note: gpPercentage doesn't need conversion (it's a percentage)
+				}));
+			} catch (error: any) {
+				this.logger.error(`Error fetching daily sales performance for ${country.name}: ${error?.message || 'Unknown error'}`);
+				// Return empty array for this country instead of failing completely
+				return [];
+			}
+		});
+
+		// Wait for all countries to complete
+		const allCountryDailySales = await Promise.all(countryPromises);
+
+		// Flatten and combine all daily sales from all countries
+		const consolidatedDailySales = allCountryDailySales.flat();
+
+		// Group by date and sum across all countries
+		const dailyData = new Map<string, DailySalesPerformanceDto>();
+		
+		consolidatedDailySales.forEach((day) => {
+			const date = day.date;
+			if (!dailyData.has(date)) {
+				dailyData.set(date, {
+					date,
+					dayOfWeek: day.dayOfWeek,
+					basketCount: 0,
+					basketValue: 0,
+					clientsQty: 0,
+					salesR: 0,
+					gpR: 0,
+					gpPercentage: 0,
+				});
+			}
+			const dayData = dailyData.get(date)!;
+			dayData.basketCount += day.basketCount;
+			dayData.clientsQty += day.clientsQty;
+			dayData.salesR += day.salesR;
+			dayData.gpR += day.gpR;
+		});
+
+		// Calculate basket value and GP percentage for each day
+		const result: DailySalesPerformanceDto[] = Array.from(dailyData.values()).map(day => ({
+			...day,
+			basketValue: day.basketCount > 0 ? day.salesR / day.basketCount : 0,
+			gpPercentage: day.salesR > 0 ? (day.gpR / day.salesR) * 100 : 0,
+		}));
+
+		// Sort by date
+		const sortedResult = result.sort((a, b) => a.date.localeCompare(b.date));
+
+		this.logger.log(`✅ Consolidated daily sales performance generated: ${sortedResult.length} days across ${countries.length} countries (all in ZAR)`);
+
+		return sortedResult;
 	}
 
 	/**
@@ -210,7 +325,7 @@ export class PerformanceDashboardGenerator {
 
 		// Build ERP query filters
 		const filters = this.buildErpFilters(params);
-		const countryCode = this.getCountryCode(params);
+		const countryCode = this.getCountryCode(params) || 'SA';
 		
 		// ✅ Get branch × category aggregations from tblsaleslines ONLY
 		// Uses: SUM(incl_line_total) - SUM(tax) grouped by store, category
@@ -219,6 +334,114 @@ export class PerformanceDashboardGenerator {
 		
 		// ✅ Calculate performance directly from sales lines (no scaling)
 		return await this.calculateBranchCategoryPerformanceFromAggregations(branchCategoryAggregations, countryCode);
+	}
+
+	/**
+	 * Generate consolidated branch × category performance across all countries with ZAR conversion
+	 * Fetches data from all countries, converts all currency values to ZAR using exchange rates
+	 * All branches from all countries are combined into a single list with values in ZAR
+	 */
+	async generateConsolidatedBranchCategoryPerformance(params: PerformanceFiltersDto): Promise<BranchCategoryPerformanceDto[]> {
+		this.logger.log(`Generating consolidated branch-category performance for org ${params.organisationId} (all countries, ZAR)`);
+
+		// Supported countries
+		const countries = [
+			{ code: 'SA', name: 'South Africa' },
+			{ code: 'BOT', name: 'Botswana' },
+			{ code: 'ZAM', name: 'Zambia' },
+			{ code: 'MOZ', name: 'Mozambique' },
+			{ code: 'ZW', name: 'Zimbabwe' },
+		];
+
+		// Build filters for ERP queries
+		const filters = this.buildErpFilters(params);
+
+		// Fetch exchange rates for currency conversion (use endDate as reference)
+		const exchangeRates = await this.getExchangeRates(params.endDate);
+		const exchangeRateMap = new Map<string, number>();
+		exchangeRates.forEach(rate => {
+			exchangeRateMap.set(rate.code, rate.rate);
+		});
+
+		// Fetch data for all countries in parallel
+		const countryPromises = countries.map(async (country) => {
+			try {
+				this.logger.log(`Fetching branch-category performance for ${country.name} (${country.code})`);
+				
+				// Get branch category aggregations for this country
+				const branchCategoryAggregations = await this.erpDataService.getBranchCategoryAggregations(filters, country.code);
+				
+				// Get currency info for this country
+				const currency = getCurrencyForCountry(country.code);
+				
+				// Get exchange rate for this country's currency to ZAR
+				// Note: Exchange rates are stored as "1 ZAR = X foreign currency", so we divide to convert TO ZAR
+				const exchangeRate = currency.code === 'ZAR' ? 1 : (exchangeRateMap.get(currency.code) || 1);
+				
+				this.logger.log(`${country.name}: ${branchCategoryAggregations.length} branch-category aggregations, exchange rate ${currency.code} to ZAR: ${exchangeRate}`);
+
+				// Calculate branch category performance for this country
+				const countryBranchCategoryPerformance = await this.calculateBranchCategoryPerformanceFromAggregations(
+					branchCategoryAggregations,
+					country.code
+				);
+
+				// Convert all currency values to ZAR
+				// If rate is 1 (ZAR) or not found, no conversion needed
+				if (currency.code === 'ZAR' || exchangeRate === 1) {
+					return countryBranchCategoryPerformance;
+				}
+
+				// Divide by exchange rate to convert FROM foreign currency TO ZAR
+				// (Rate represents "1 ZAR = X foreign currency", so divide to get ZAR)
+				return countryBranchCategoryPerformance.map(branch => {
+					// Convert branch totals
+					const convertedTotal = {
+						...branch.total,
+						salesR: branch.total.salesR / exchangeRate,
+						gpR: branch.total.gpR / exchangeRate,
+						basketValue: branch.total.basketValue / exchangeRate,
+						// Note: gpPercentage, basketCount, and clientsQty don't need conversion (they're percentages or counts)
+					};
+
+					// Convert category values
+					const convertedCategories: Record<string, CategoryPerformanceDto> = {};
+					Object.keys(branch.categories).forEach(categoryKey => {
+						const category = branch.categories[categoryKey];
+						convertedCategories[categoryKey] = {
+							...category,
+							salesR: category.salesR / exchangeRate,
+							gpR: category.gpR / exchangeRate,
+							basketValue: category.basketValue / exchangeRate,
+							// Note: gpPercentage, basketCount, and clientsQty don't need conversion
+						};
+					});
+
+					return {
+						...branch,
+						total: convertedTotal,
+						categories: convertedCategories,
+					};
+				});
+			} catch (error: any) {
+				this.logger.error(`Error fetching branch-category performance for ${country.name}: ${error?.message || 'Unknown error'}`);
+				// Return empty array for this country instead of failing completely
+				return [];
+			}
+		});
+
+		// Wait for all countries to complete
+		const allCountryBranchCategoryPerformance = await Promise.all(countryPromises);
+
+		// Flatten and combine all branch category performance from all countries
+		const consolidatedBranchCategoryPerformance = allCountryBranchCategoryPerformance.flat();
+
+		// Sort by revenue (descending)
+		const sortedBranchCategoryPerformance = consolidatedBranchCategoryPerformance.sort((a, b) => b.total.salesR - a.total.salesR);
+
+		this.logger.log(`✅ Consolidated branch-category performance generated: ${sortedBranchCategoryPerformance.length} branches across ${countries.length} countries (all in ZAR)`);
+
+		return sortedBranchCategoryPerformance;
 	}
 
 	/**
@@ -235,7 +458,7 @@ export class PerformanceDashboardGenerator {
 
 		// Build ERP query filters
 		const filters = this.buildErpFilters(params);
-		const countryCode = this.getCountryCode(params);
+		const countryCode = this.getCountryCode(params) || 'SA';
 		
 		// ✅ Get branch aggregations from tblsalesheader (same query structure)
 		const branchAggregations = await this.erpDataService.getBranchAggregations(filters, countryCode);
@@ -1097,18 +1320,19 @@ export class PerformanceDashboardGenerator {
 	// ===================================================================
 
 	/**
-	 * ✅ REVISED: Calculate daily sales performance from daily aggregations (tblsalesheader)
-	 * Uses the same data source as revenue trend chart for consistency
-	 * Revenue = SUM(total_incl) - SUM(total_tax) from tblsalesheader
+	 * ✅ REVISED: Calculate daily sales performance from daily aggregations (tblsaleslines)
+	 * Uses sales lines aggregations which include cost data for GP calculation
+	 * Revenue = SUM(incl_line_total) - SUM(tax) from tblsaleslines
+	 * Cost = SUM(cost_price * quantity) with credit note handling
+	 * GP = Revenue - Cost
 	 * Transaction count = COUNT(DISTINCT doc_number)
 	 * Unique clients = COUNT(DISTINCT customer)
-	 * 
-	 * Note: GP (gross profit) is not available in header table, so we calculate it as 0 or fetch from transactions if needed
 	 */
 	private calculateDailySalesPerformanceFromAggregations(aggregations: DailyAggregation[]): DailySalesPerformanceDto[] {
 		// Group aggregations by date (sum across all stores for each date)
 		const dailyData = new Map<string, {
 			revenue: number;
+			cost: number;
 			transactionCount: number;
 			uniqueCustomers: number;
 		}>();
@@ -1116,14 +1340,16 @@ export class PerformanceDashboardGenerator {
 		aggregations.forEach((agg) => {
 			const date = typeof agg.date === 'string' ? agg.date : new Date(agg.date).toISOString().split('T')[0];
 			if (!dailyData.has(date)) {
-				dailyData.set(date, { revenue: 0, transactionCount: 0, uniqueCustomers: 0 });
+				dailyData.set(date, { revenue: 0, cost: 0, transactionCount: 0, uniqueCustomers: 0 });
 			}
 			const dayData = dailyData.get(date)!;
 			const revenue = typeof agg.totalRevenue === 'number' ? agg.totalRevenue : parseFloat(String(agg.totalRevenue || 0));
+			const cost = typeof agg.totalCost === 'number' ? agg.totalCost : parseFloat(String(agg.totalCost || 0));
 			const transactionCount = typeof agg.transactionCount === 'number' ? agg.transactionCount : parseInt(String(agg.transactionCount || 0), 10);
 			const uniqueCustomers = typeof agg.uniqueCustomers === 'number' ? agg.uniqueCustomers : parseInt(String(agg.uniqueCustomers || 0), 10);
 			
 			dayData.revenue += revenue;
+			dayData.cost += cost;
 			dayData.transactionCount += transactionCount;
 			// For unique customers: Since aggregations are grouped by date AND store,
 			// each store has its own COUNT(DISTINCT customer). When aggregating across stores,
@@ -1139,6 +1365,8 @@ export class PerformanceDashboardGenerator {
 			const dateObj = new Date(date);
 			const basketCount = dayData.transactionCount;
 			const basketValue = basketCount > 0 ? dayData.revenue / basketCount : 0;
+			const gpR = dayData.revenue - dayData.cost;
+			const gpPercentage = dayData.revenue > 0 ? (gpR / dayData.revenue) * 100 : 0;
 
 			performance.push({
 				date,
@@ -1146,9 +1374,9 @@ export class PerformanceDashboardGenerator {
 				basketCount, // ✅ Transaction count from aggregations
 				basketValue,
 				clientsQty: dayData.uniqueCustomers, // ✅ Unique clients from aggregations
-				salesR: dayData.revenue, // ✅ Revenue from aggregations (same as revenue trend)
-				gpR: 0, // GP not available in header table - set to 0 or calculate separately if needed
-				gpPercentage: 0, // GP% not available without GP
+				salesR: dayData.revenue, // ✅ Revenue from aggregations
+				gpR, // ✅ GP calculated from revenue - cost
+				gpPercentage, // ✅ GP percentage calculated
 			});
 		});
 
@@ -1689,14 +1917,16 @@ export class PerformanceDashboardGenerator {
 	 * Get country code from params (extracted from country name in Reports Service)
 	 * 
 	 * ✅ FIXED: Properly extracts countryCode from params
+	 * Returns undefined when country is not specified to preserve consolidated view
 	 * Country codes: SA (default), ZAM, MOZ, BOT, ZW, MAL
 	 */
-	private getCountryCode(params: PerformanceFiltersDto): string {
+	private getCountryCode(params: PerformanceFiltersDto): string | undefined {
 		// countryCode is set by Reports Service convertParamsToFilters
-		const countryCode = (params as any).countryCode || 'SA';
+		// Preserve undefined for consolidated view (all countries)
+		const countryCode = (params as any).countryCode;
 		
 		// Log country code for debugging
-		this.logger.debug(`🌍 Country code extracted: ${countryCode} (from country: ${params.country || 'not specified'})`);
+		this.logger.debug(`🌍 Country code extracted: ${countryCode || 'undefined (consolidated)'} (from country: ${params.country || 'not specified'})`);
 		
 		return countryCode;
 	}

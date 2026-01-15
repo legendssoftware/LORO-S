@@ -2213,9 +2213,10 @@ export class ReportsService implements OnModuleInit {
 	/**
 	 * Convert country name to country code
 	 * Maps country names like "South Africa", "Botswana" to codes like "SA", "BOT"
+	 * Returns undefined when countryName is undefined to preserve consolidated view
 	 */
-	private getCountryCodeFromName(countryName?: string): string {
-		if (!countryName) return 'SA'; // Default to SA
+	private getCountryCodeFromName(countryName?: string): string | undefined {
+		if (!countryName) return undefined; // Preserve undefined for consolidated view
 		
 		const normalized = countryName.trim().toLowerCase();
 		const countryMap: Record<string, string> = {
@@ -2655,7 +2656,29 @@ export class ReportsService implements OnModuleInit {
 			// Fetch exchange rates for the date range (use endDate as reference)
 			const exchangeRates = await this.getExchangeRates(endDate);
 
+			// Build exchange rate map for currency conversion
+			const exchangeRateMap = new Map<string, number>();
+			exchangeRates.forEach(rate => {
+				exchangeRateMap.set(rate.code, rate.rate);
+			});
+
+			// Calculate grand total by converting each branch's revenue to ZAR first, then summing
+			// This ensures the grand total is the sum of ALL individual branch sales converted to ZAR
+			let grandTotalZAR = 0;
+			dataWithBranches.forEach(country => {
+				const currency = getCurrencyForCountry(country.countryCode);
+				// Exchange rate represents "1 ZAR = X foreign currency", so divide to convert TO ZAR
+				const exchangeRate = currency.code === 'ZAR' ? 1 : (exchangeRateMap.get(currency.code) || 1);
+				
+				country.branches.forEach(branch => {
+					// Convert each branch's revenue to ZAR before summing
+					const branchRevenueZAR = branch.totalRevenue / exchangeRate;
+					grandTotalZAR += branchRevenueZAR;
+				});
+			});
+
 			this.logger.log(`[${operationId}] ✅ Consolidated income statement generated: ${totalCountries} countries, ${totalBranches} branches`);
+			this.logger.log(`[${operationId}] ✅ Grand Total ZAR calculated: R${grandTotalZAR.toFixed(2)}`);
 
 			const response: ConsolidatedIncomeStatementResponseDto = {
 				data: dataWithBranches,
@@ -2664,6 +2687,7 @@ export class ReportsService implements OnModuleInit {
 				totalCountries,
 				totalBranches,
 				exchangeRates,
+				grandTotalZAR,
 			};
 
 			return response;
