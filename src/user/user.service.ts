@@ -3135,112 +3135,101 @@ export class UserService {
 				// ✅ Reduced logging: Only log count, not full array
 				this.logger.debug(`Found ${allUsersCheck.length} users (including deleted)`);
 
-				// Now fetch managed staff with relaxed access control - they might be in different orgs/branches
-				const managedStaffDetails = await this.userRepository.find({
-					where: {
-						uid: In(user.managedStaff),
-						isDeleted: false
-						// Removed org/branch restrictions since managed staff can be cross-organizational
-					},
-					select: {
-						uid: true,
-						name: true,
-						surname: true,
-						email: true,
-						avatar: true,
-						organisationRef: true,
-						userTarget: true,
-						organisation: {
-							uid: true,
-							name: true
-						},
-						branch: {
-							uid: true,
-							name: true
-						}
-					}
-				});
+				// ✅ FIX: Use QueryBuilder with proper leftJoinAndSelect to load userTarget relation
+				const managedStaffQueryBuilder = this.userRepository
+					.createQueryBuilder('user')
+					.leftJoinAndSelect('user.userTarget', 'userTarget')
+					.leftJoinAndSelect('user.organisation', 'organisation')
+					.leftJoinAndSelect('user.branch', 'branch')
+					.where('user.uid IN (:...uids)', { uids: user.managedStaff })
+					.andWhere('user.isDeleted = :isDeleted', { isDeleted: false });
+
+				const managedStaffDetails = await managedStaffQueryBuilder.getMany();
 
 				this.logger.debug(`Found ${managedStaffDetails.length} active managed staff members`);
-				// ✅ Reduced logging: Only log UIDs if count is small or in development
 				if (managedStaffDetails.length < 10 || process.env.NODE_ENV === 'development') {
 					this.logger.debug(`Managed staff UIDs: ${managedStaffDetails.map(s => s.uid).join(', ')}`);
 				}
 
-				// Process managed staff targets with progress calculations and remaining amounts
-				// TEMPORARY: Return zeros for all staff-specific data while logic is being revised
+				// ✅ FIX: Use ACTUAL current values from userTarget instead of zeros
 				const staffWithTargets = managedStaffDetails.map((staff) => {
+					// Log raw userTarget data for debugging
+					if (staff.userTarget) {
+						this.logger.debug(`[getUserTarget] Staff ${staff.uid} (${staff.name} ${staff.surname}):`);
+						this.logger.debug(`  - Sales: current=${staff.userTarget.currentSalesAmount || 0}, target=${staff.userTarget.targetSalesAmount || 0}`);
+						this.logger.debug(`  - Quotations: current=${staff.userTarget.currentQuotationsAmount || 0}, target=${staff.userTarget.targetQuotationsAmount || 0}`);
+					}
+
+					const calculateProgress = (current: number, target: number) => {
+						return target && target > 0 ? Math.min(100, Math.round((current / target) * 100)) : 0;
+					};
+
+					const calculateRemaining = (current: number, target: number) => {
+						return Math.max(0, target - current);
+					};
+
 					const staffTargetData = staff.userTarget ? {
 						uid: staff.userTarget.uid,
-						// Sales targets - returning zeros
 						sales: {
 							name: 'Sales',
-							target: staff.userTarget.targetSalesAmount,
-							current: 0,
-							remaining: staff.userTarget.targetSalesAmount || 0,
-							progress: 0,
+							target: staff.userTarget.targetSalesAmount || 0,
+							current: staff.userTarget.currentSalesAmount || 0,
+							remaining: calculateRemaining(staff.userTarget.currentSalesAmount || 0, staff.userTarget.targetSalesAmount || 0),
+							progress: calculateProgress(staff.userTarget.currentSalesAmount || 0, staff.userTarget.targetSalesAmount || 0),
 							currency: staff.userTarget.targetCurrency
 						},
-						// Quotations targets - returning zeros
 						quotations: {
 							name: 'Quotations',
-							target: staff.userTarget.targetQuotationsAmount,
-							current: 0,
-							remaining: staff.userTarget.targetQuotationsAmount || 0,
-							progress: 0,
+							target: staff.userTarget.targetQuotationsAmount || 0,
+							current: staff.userTarget.currentQuotationsAmount || 0,
+							remaining: calculateRemaining(staff.userTarget.currentQuotationsAmount || 0, staff.userTarget.targetQuotationsAmount || 0),
+							progress: calculateProgress(staff.userTarget.currentQuotationsAmount || 0, staff.userTarget.targetQuotationsAmount || 0),
 							currency: staff.userTarget.targetCurrency
 						},
-						// Hours worked targets - returning zeros
 						hours: {
 							name: 'Hours Worked',
-							target: staff.userTarget.targetHoursWorked,
-							current: 0,
-							remaining: staff.userTarget.targetHoursWorked || 0,
-							progress: 0,
+							target: staff.userTarget.targetHoursWorked || 0,
+							current: staff.userTarget.currentHoursWorked || 0,
+							remaining: calculateRemaining(staff.userTarget.currentHoursWorked || 0, staff.userTarget.targetHoursWorked || 0),
+							progress: calculateProgress(staff.userTarget.currentHoursWorked || 0, staff.userTarget.targetHoursWorked || 0),
 							unit: 'hours'
 						},
-						// New clients targets - returning zeros
 						newClients: {
 							name: 'New Clients',
-							target: staff.userTarget.targetNewClients,
-							current: 0,
-							remaining: staff.userTarget.targetNewClients || 0,
-							progress: 0,
+							target: staff.userTarget.targetNewClients || 0,
+							current: staff.userTarget.currentNewClients || 0,
+							remaining: calculateRemaining(staff.userTarget.currentNewClients || 0, staff.userTarget.targetNewClients || 0),
+							progress: calculateProgress(staff.userTarget.currentNewClients || 0, staff.userTarget.targetNewClients || 0),
 							unit: 'clients'
 						},
-						// New leads targets - returning zeros
 						newLeads: {
 							name: 'New Leads',
-							target: staff.userTarget.targetNewLeads,
-							current: 0,
-							remaining: staff.userTarget.targetNewLeads || 0,
-							progress: 0,
+							target: staff.userTarget.targetNewLeads || 0,
+							current: staff.userTarget.currentNewLeads || 0,
+							remaining: calculateRemaining(staff.userTarget.currentNewLeads || 0, staff.userTarget.targetNewLeads || 0),
+							progress: calculateProgress(staff.userTarget.currentNewLeads || 0, staff.userTarget.targetNewLeads || 0),
 							unit: 'leads'
 						},
-						// Check-ins targets - returning zeros
 						checkIns: {
 							name: 'Check Ins',
-							target: staff.userTarget.targetCheckIns,
-							current: 0,
-							remaining: staff.userTarget.targetCheckIns || 0,
-							progress: 0,
+							target: staff.userTarget.targetCheckIns || 0,
+							current: staff.userTarget.currentCheckIns || 0,
+							remaining: calculateRemaining(staff.userTarget.currentCheckIns || 0, staff.userTarget.targetCheckIns || 0),
+							progress: calculateProgress(staff.userTarget.currentCheckIns || 0, staff.userTarget.targetCheckIns || 0),
 							unit: 'check-ins'
 						},
-						// Calls targets - returning zeros
 						calls: {
 							name: 'Calls',
-							target: staff.userTarget.targetCalls,
-							current: 0,
-							remaining: staff.userTarget.targetCalls || 0,
-							progress: 0,
+							target: staff.userTarget.targetCalls || 0,
+							current: staff.userTarget.currentCalls || 0,
+							remaining: calculateRemaining(staff.userTarget.currentCalls || 0, staff.userTarget.targetCalls || 0),
+							progress: calculateProgress(staff.userTarget.currentCalls || 0, staff.userTarget.targetCalls || 0),
 							unit: 'calls'
 						},
-						// Period information
 						targetPeriod: staff.userTarget.targetPeriod,
 						periodStartDate: staff.userTarget.periodStartDate,
 						periodEndDate: staff.userTarget.periodEndDate,
 						targetCurrency: staff.userTarget.targetCurrency,
-						// Cost breakdown fields - returning actual values from userTarget
 						baseSalary: staff.userTarget.baseSalary || 0,
 						carInstalment: staff.userTarget.carInstalment || 0,
 						carInsurance: staff.userTarget.carInsurance || 0,
@@ -3262,6 +3251,12 @@ export class UserService {
 						targets: staffTargetData,
 					};
 				});
+
+				// Log final response for debugging
+				this.logger.log(`[getUserTarget] Managed staff response for user ${userId}: ${staffWithTargets.length} members, ${staffWithTargets.filter(s => s.hasTargets).length} with targets`);
+				if (staffWithTargets.length > 0 && staffWithTargets[0].targets?.sales) {
+					this.logger.debug(`[getUserTarget] Sample: Staff ${staffWithTargets[0].uid} - Sales: ${staffWithTargets[0].targets.sales.current}/${staffWithTargets[0].targets.sales.target} (${staffWithTargets[0].targets.sales.progress}%)`);
+				}
 
 				response.managedStaff = staffWithTargets;
 			} else {
