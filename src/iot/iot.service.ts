@@ -1592,24 +1592,38 @@ export class IotService {
 				return recordDateKey === todayKey;
 			}) || [];
 
-			// Get latest open and close times
-			const sortedRecords = todayRecords.sort((a, b) => {
+			// Get FIRST (earliest) open time and LAST (latest) close time of the day
+			// Sort by openTime ASCENDING to get the earliest open event
+			const sortedByOpenTime = todayRecords.sort((a, b) => {
 				const aTime = typeof a.openTime === 'string' ? new Date(a.openTime) : (a.openTime as unknown as Date);
 				const bTime = typeof b.openTime === 'string' ? new Date(b.openTime) : (b.openTime as unknown as Date);
-				return bTime.getTime() - aTime.getTime();
+				return aTime.getTime() - bTime.getTime(); // ASCENDING - earliest first
 			});
 
-			const latestOpenRecord = sortedRecords.find(r => r.openTime);
-			const latestCloseRecord = sortedRecords.find(r => r.closeTime && r.openTime);
+			const earliestOpenRecord = sortedByOpenTime.find(r => r.openTime);
 
-			// Door open time: use as-is from database (already in correct format, NOT converted)
-			const latestOpenTime = latestOpenRecord?.openTime
-				? (typeof latestOpenRecord.openTime === 'string'
-					? latestOpenRecord.openTime
-					: (latestOpenRecord.openTime as unknown as Date).toISOString())
+			// Find the record with the latest close time (explicitly find maximum)
+			const recordsWithCloseTime = todayRecords.filter(r => r.closeTime && r.openTime);
+			const latestCloseRecord = recordsWithCloseTime.length > 0
+				? recordsWithCloseTime.reduce((latest, current) => {
+					const latestTime = typeof latest.closeTime === 'string'
+						? new Date(latest.closeTime)
+						: (latest.closeTime as unknown as Date);
+					const currentTime = typeof current.closeTime === 'string'
+						? new Date(current.closeTime)
+						: (current.closeTime as unknown as Date);
+					return currentTime.getTime() > latestTime.getTime() ? current : latest;
+				})
 				: null;
 
-			// Only include close time if it's from today
+			// Door open time: use FIRST (earliest) open time of the day - as-is from database (already in correct format, NOT converted)
+			const latestOpenTime = earliestOpenRecord?.openTime
+				? (typeof earliestOpenRecord.openTime === 'string'
+					? earliestOpenRecord.openTime
+					: (earliestOpenRecord.openTime as unknown as Date).toISOString())
+				: null;
+
+			// Door close time: use LAST (latest) close time of the day - only include if it's from today
 			let latestCloseTime: string | null = null;
 			if (latestCloseRecord?.closeTime) {
 				const closeDate = typeof latestCloseRecord.closeTime === 'string'
