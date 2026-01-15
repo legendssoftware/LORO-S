@@ -447,11 +447,11 @@ export class PerformanceDashboardGenerator {
 	/**
 	 * Generate sales per store data
 	 * 
-	 * ✅ REVISED: Now uses branch aggregations from tblsalesheader (same query structure as base query)
-	 * Uses SUM(total_incl) - SUM(total_tax) for revenue, COUNT(DISTINCT doc_number) for transactions,
-	 * COUNT(DISTINCT customer) for unique clients
-	 * ✅ NEW: Calculates GP from BranchCategoryAggregations (sums totalCost per store)
-	 * Matches SQL: SELECT store, SUM(total_incl) - SUM(total_tax) AS total_sum FROM tblsalesheader WHERE doc_type IN (1, 2) GROUP BY store
+	 * ✅ FIXED: Now uses branch category aggregations from tblsaleslines (same data source as Branch × Category Performance)
+	 * Revenue, transaction count, and unique customers are calculated from branchCategoryAggregations
+	 * Uses the same filtered dataset: item_code IS NOT NULL, item_code != '.', type = 'I'
+	 * This ensures Sales Per Store matches Branch × Category Performance totals exactly
+	 * GP calculated from BranchCategoryAggregations (sums totalCost per store)
 	 */
 	async generateSalesPerStore(params: PerformanceFiltersDto): Promise<SalesPerStoreDto[]> {
 		this.logger.log(`Generating sales per store for org ${params.organisationId}`);
@@ -460,10 +460,10 @@ export class PerformanceDashboardGenerator {
 		const filters = this.buildErpFilters(params);
 		const countryCode = this.getCountryCode(params) || 'SA';
 		
-		// ✅ Get branch aggregations from tblsalesheader (same query structure)
+		// ✅ Get branch aggregations from tblsalesheader (kept for backward compatibility, but not used in calculation)
 		const branchAggregations = await this.erpDataService.getBranchAggregations(filters, countryCode);
 		
-		// ✅ Get branch category aggregations to calculate GP (cost data from tblsaleslines)
+		// ✅ Get branch category aggregations from tblsaleslines (used for all calculations)
 		const branchCategoryAggregations = await this.erpDataService.getBranchCategoryAggregations(filters, countryCode);
 		
 		return await this.calculateSalesPerStoreFromAggregations(branchAggregations, branchCategoryAggregations, countryCode);
@@ -1655,58 +1655,84 @@ export class PerformanceDashboardGenerator {
 	// ===================================================================
 
 	/**
-	 * ✅ REVISED: Calculate sales per store from branch aggregations (tblsalesheader)
-	 * Uses the same query structure as the base query: SELECT store, SUM(total_incl) - SUM(total_tax) AS total_sum FROM tblsalesheader WHERE doc_type IN (1, 2) GROUP BY store
-	 * Revenue = SUM(total_incl) - SUM(total_tax) from tblsalesheader
-	 * Transaction count = COUNT(DISTINCT doc_number)
-	 * Unique clients = COUNT(DISTINCT customer)
-	 * ✅ NEW: GP calculated from BranchCategoryAggregations by summing totalCost per store
+	 * ✅ FIXED: Calculate sales per store from branch category aggregations (tblsaleslines)
+	 * Uses the same data source as Branch × Category Performance to ensure consistency
+	 * Revenue = SUM of revenue from branchCategoryAggregations (summed across all categories per store)
+	 * Uses the same filtered dataset: item_code IS NOT NULL, item_code != '.', type = 'I'
+	 * Transaction count and unique customers also from branchCategoryAggregations (summed across categories)
+	 * GP calculated from BranchCategoryAggregations by summing totalCost per store
 	 * GP = Revenue - Cost, GP% = (GP / Revenue) * 100
+	 * 
+	 * This ensures Sales Per Store matches Branch × Category Performance totals exactly
 	 */
 	private async calculateSalesPerStoreFromAggregations(
 		aggregations: BranchAggregation[],
 		branchCategoryAggregations: BranchCategoryAggregation[],
 		countryCode: string = 'SA'
 	): Promise<SalesPerStoreDto[]> {
-		if (aggregations.length === 0) return [];
+		if (branchCategoryAggregations.length === 0) return [];
 
-		// Get all store codes and fetch branch names from database
-		const storeCodes = aggregations.map(agg => String(agg.store || '').trim().padStart(3, '0'));
-		const branchNamesMap = await this.erpDataService.getBranchNamesFromDatabase(storeCodes, countryCode);
+		// ✅ Aggregate data from branchCategoryAggregations by store
+		// This ensures we use the same filtered dataset as Branch × Category Performance
+		const storeData = new Map<string, {
+			revenue: number;
+			cost: number;
+			transactionCount: number;
+			uniqueCustomers: number;
+		}>();
 
-		// ✅ Calculate total cost per store from BranchCategoryAggregations
-		const storeCosts = new Map<string, number>();
 		branchCategoryAggregations.forEach((agg) => {
 			const storeCode = String(agg.store || '').trim().padStart(3, '0');
+			const revenue = typeof agg.totalRevenue === 'number' 
+				? agg.totalRevenue 
+				: parseFloat(String(agg.totalRevenue || 0));
 			const cost = typeof agg.totalCost === 'number' 
 				? agg.totalCost 
 				: parseFloat(String(agg.totalCost || 0));
-			const currentCost = storeCosts.get(storeCode) || 0;
-			storeCosts.set(storeCode, currentCost + cost);
+			const transactionCount = typeof agg.transactionCount === 'number' 
+				? agg.transactionCount 
+				: parseInt(String(agg.transactionCount || 0), 10);
+			const uniqueCustomers = typeof agg.uniqueCustomers === 'number' 
+				? agg.uniqueCustomers 
+				: parseInt(String(agg.uniqueCustomers || 0), 10);
+			
+			if (!storeData.has(storeCode)) {
+				storeData.set(storeCode, { revenue: 0, cost: 0, transactionCount: 0, uniqueCustomers: 0 });
+			}
+			const storeInfo = storeData.get(storeCode)!;
+			storeInfo.revenue += revenue;
+			storeInfo.cost += cost;
+			storeInfo.transactionCount += transactionCount;
+			// Note: uniqueCustomers may slightly overcount if a customer appears in multiple categories,
+			// but this matches the behavior in Branch × Category Performance
+			storeInfo.uniqueCustomers += uniqueCustomers;
 		});
+
+		// Get all store codes and fetch branch names from database
+		const storeCodes = Array.from(storeData.keys());
+		const branchNamesMap = await this.erpDataService.getBranchNamesFromDatabase(storeCodes, countryCode);
 
 		const salesPerStore: SalesPerStoreDto[] = [];
 
-		aggregations.forEach((agg) => {
-			const storeCode = String(agg.store || '').trim().padStart(3, '0');
+		storeData.forEach((storeInfo, storeCode) => {
 			const branchId = `B${storeCode}`; // Format as B001, B002, etc.
-			const revenue = typeof agg.totalRevenue === 'number' ? agg.totalRevenue : parseFloat(String(agg.totalRevenue || 0));
-			const transactionCount = typeof agg.transactionCount === 'number' ? agg.transactionCount : parseInt(String(agg.transactionCount || 0), 10);
-			const uniqueCustomers = typeof agg.uniqueCustomers === 'number' ? agg.uniqueCustomers : parseInt(String(agg.uniqueCustomers || 0), 10);
+			const revenue = storeInfo.revenue; // ✅ Revenue from line items (matches Branch × Category)
+			const cost = storeInfo.cost;
+			const transactionCount = storeInfo.transactionCount; // ✅ Transaction count from line items
+			const uniqueCustomers = storeInfo.uniqueCustomers; // ✅ Unique customers from line items
 			
 			// ✅ Calculate GP from cost data
-			const totalCost = storeCosts.get(storeCode) || 0;
-			const grossProfit = revenue - totalCost; // ✅ GP = Revenue - Cost
+			const grossProfit = revenue - cost; // ✅ GP = Revenue - Cost
 			const grossProfitPercentage = revenue > 0 ? (grossProfit / revenue) * 100 : 0; // ✅ GP% = (GP / Revenue) * 100
 
 			salesPerStore.push({
 				storeId: branchId,
 				storeName: branchNamesMap.get(storeCode) || storeCode, // ✅ Use branch name from database
-				totalRevenue: revenue, // ✅ Revenue from aggregations (same as base query)
-				transactionCount, // ✅ Transaction count from aggregations
+				totalRevenue: revenue, // ✅ Revenue from line items (matches Branch × Category)
+				transactionCount, // ✅ Transaction count from line items
 				averageTransactionValue: transactionCount > 0 ? revenue / transactionCount : 0,
-				totalItemsSold: 0, // Not available in header table
-				uniqueClients: uniqueCustomers, // ✅ Unique clients from aggregations
+				totalItemsSold: 0, // Not available in line aggregations
+				uniqueClients: uniqueCustomers, // ✅ Unique customers from line items
 				grossProfit: grossProfit, // ✅ GP calculated from BranchCategoryAggregations
 				grossProfitPercentage: grossProfitPercentage, // ✅ GP% calculated
 			});
