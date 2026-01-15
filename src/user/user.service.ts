@@ -2630,16 +2630,9 @@ export class UserService {
 						cachedResponse.personalTargets.calls.remaining = cachedResponse.personalTargets.calls.target || 0;
 						cachedResponse.personalTargets.calls.progress = 0;
 					}
-					// Zero out cost breakdown and clear history
-					cachedResponse.personalTargets.baseSalary = 0;
-					cachedResponse.personalTargets.carInstalment = 0;
-					cachedResponse.personalTargets.carInsurance = 0;
-					cachedResponse.personalTargets.fuel = 0;
-					cachedResponse.personalTargets.cellPhoneAllowance = 0;
-					cachedResponse.personalTargets.carMaintenance = 0;
-					cachedResponse.personalTargets.cgicCosts = 0;
-					cachedResponse.personalTargets.history = [];
-					cachedResponse.personalTargets.salesRateAnalysis = null;
+					// Preserve cost breakdown and history from cache (don't zero them out)
+					// Cost fields and history are already in cache, no need to modify
+					// salesRateAnalysis is calculated dynamically, so keep it as-is
 				}
 				// Zero out managed staff targets
 				if (cachedResponse.managedStaff && Array.isArray(cachedResponse.managedStaff)) {
@@ -3051,20 +3044,20 @@ export class UserService {
 					periodStartDate: user.userTarget.periodStartDate,
 					periodEndDate: user.userTarget.periodEndDate,
 					workingDaysRemaining: workingDaysRemaining, // New field for working days remaining
-					salesRateAnalysis: null, // Returning null instead of actual analysis
+					salesRateAnalysis: salesRateAnalysis, // Use calculated analysis instead of null
 					targetCurrency: user.userTarget.targetCurrency,
 					createdAt: user.userTarget.createdAt,
 					updatedAt: user.userTarget.updatedAt,
-					// Cost breakdown fields - returning zeros
-					baseSalary: 0,
-					carInstalment: 0,
-					carInsurance: 0,
-					fuel: 0,
-					cellPhoneAllowance: 0,
-					carMaintenance: 0,
-					cgicCosts: 0,
-					// History tracking - returning empty array
-					history: [],
+					// Cost breakdown fields - use actual values from database
+					baseSalary: user.userTarget.baseSalary || 0,
+					carInstalment: user.userTarget.carInstalment || 0,
+					carInsurance: user.userTarget.carInsurance || 0,
+					fuel: user.userTarget.fuel || 0,
+					cellPhoneAllowance: user.userTarget.cellPhoneAllowance || 0,
+					carMaintenance: user.userTarget.carMaintenance || 0,
+					cgicCosts: user.userTarget.cgicCosts || 0,
+					// History tracking - use actual history from database
+					history: user.userTarget.history || [],
 					// ERP Sales Rep Code for linking to ERP data
 					erpSalesRepCode: user.userTarget.erpSalesRepCode || null,
 				};

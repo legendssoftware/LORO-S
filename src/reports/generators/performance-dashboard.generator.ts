@@ -16,6 +16,7 @@ import {
 import { ErpDataService } from '../../erp/services/erp-data.service';
 import { ErpTransformerService } from '../../erp/services/erp-transformer.service';
 import { ErpTargetsService } from '../../erp/services/erp-targets.service';
+import { ErpConnectionManagerService } from '../../erp/services/erp-connection-manager.service';
 import { 
 	ErpQueryFilters, 
 	SalesTransaction as ErpSalesTransaction,
@@ -24,6 +25,7 @@ import {
 	BranchCategoryAggregation,
 } from '../../erp/interfaces/erp-data.interface';
 import { getCurrencyForCountry } from '../../erp/utils/currency.util';
+import { ExchangeRateDto } from '../dto/performance-dashboard.dto';
 
 /**
  * ========================================================================
@@ -70,6 +72,7 @@ export class PerformanceDashboardGenerator {
 		private readonly erpDataService: ErpDataService,
 		private readonly erpTransformerService: ErpTransformerService,
 		private readonly erpTargetsService: ErpTargetsService,
+		private readonly erpConnectionManager: ErpConnectionManagerService,
 	) {
 		this.logger.log('PerformanceDashboardGenerator initialized with ERP services');
 	}
@@ -84,8 +87,10 @@ export class PerformanceDashboardGenerator {
 		this.logger.log(`🌍 Country: ${params.country || 'not specified'} → Code: ${countryCode}`);
 		this.logger.log(`Date range: ${params.startDate} to ${params.endDate}`);
 
-		// Get currency for country
-		const currency = getCurrencyForCountry(countryCode);
+		// Get currency for country (use ZAR for consolidated/all countries view)
+		const currency = !params.country || params.country === 'ALL'
+			? getCurrencyForCountry('SA') // ZAR for consolidated view
+			: getCurrencyForCountry(countryCode);
 		this.logger.log(`💰 Currency: ${currency.code} (${currency.symbol}) - ${currency.name}`);
 
 		try {
@@ -117,7 +122,10 @@ export class PerformanceDashboardGenerator {
 			const branchCategoryPerformance = await this.generateBranchCategoryPerformance(params);
 			
 			this.logger.log('Step 3/4: Generating sales per store...');
-			const salesPerStore = await this.generateSalesPerStore(params);
+			// Use consolidated sales per store (all countries, ZAR) when no country filter is set
+			const salesPerStore = !params.country || params.country === 'ALL' 
+				? await this.generateConsolidatedSalesPerStore(params)
+				: await this.generateSalesPerStore(params);
 			
 			this.logger.log('Step 4/4: Getting master data...');
 			const masterData = await this.getMasterData(params);
@@ -236,6 +244,148 @@ export class PerformanceDashboardGenerator {
 		const branchCategoryAggregations = await this.erpDataService.getBranchCategoryAggregations(filters, countryCode);
 		
 		return await this.calculateSalesPerStoreFromAggregations(branchAggregations, branchCategoryAggregations, countryCode);
+	}
+
+	/**
+	 * Generate consolidated sales per store across all countries with ZAR conversion
+	 * Fetches data from all countries, converts all currency values to ZAR using exchange rates
+	 */
+	async generateConsolidatedSalesPerStore(params: PerformanceFiltersDto): Promise<SalesPerStoreDto[]> {
+		this.logger.log(`Generating consolidated sales per store for org ${params.organisationId} (all countries, ZAR)`);
+
+		// Supported countries
+		const countries = [
+			{ code: 'SA', name: 'South Africa' },
+			{ code: 'BOT', name: 'Botswana' },
+			{ code: 'ZAM', name: 'Zambia' },
+			{ code: 'MOZ', name: 'Mozambique' },
+			{ code: 'ZW', name: 'Zimbabwe' },
+		];
+
+		// Build filters for ERP queries
+		const filters = this.buildErpFilters(params);
+
+		// Fetch exchange rates for currency conversion (use endDate as reference)
+		const exchangeRates = await this.getExchangeRates(params.endDate);
+		const exchangeRateMap = new Map<string, number>();
+		exchangeRates.forEach(rate => {
+			exchangeRateMap.set(rate.code, rate.rate);
+		});
+
+		// Fetch data for all countries in parallel
+		const countryPromises = countries.map(async (country) => {
+			try {
+				this.logger.log(`Fetching sales per store for ${country.name} (${country.code})`);
+				
+				// Get branch aggregations for this country
+				const branchAggregations = await this.erpDataService.getBranchAggregations(filters, country.code);
+				
+				// Get branch category aggregations to calculate GP
+				const branchCategoryAggregations = await this.erpDataService.getBranchCategoryAggregations(filters, country.code);
+				
+				// Get currency info for this country
+				const currency = getCurrencyForCountry(country.code);
+				
+				// Get exchange rate for this country's currency to ZAR
+				// Note: Exchange rates are stored as "1 ZAR = X foreign currency", so we divide to convert TO ZAR
+				const exchangeRate = currency.code === 'ZAR' ? 1 : (exchangeRateMap.get(currency.code) || 1);
+				
+				this.logger.log(`${country.name}: ${branchAggregations.length} branches, exchange rate ${currency.code} to ZAR: ${exchangeRate}`);
+
+				// Calculate sales per store for this country
+				const countrySalesPerStore = await this.calculateSalesPerStoreFromAggregations(
+					branchAggregations,
+					branchCategoryAggregations,
+					country.code
+				);
+
+				// Convert all values to ZAR
+				// If rate is 1 (ZAR) or not found, no conversion needed
+				if (currency.code === 'ZAR' || exchangeRate === 1) {
+					return countrySalesPerStore;
+				}
+
+				// Divide by exchange rate to convert FROM foreign currency TO ZAR
+				// (Rate represents "1 ZAR = X foreign currency", so divide to get ZAR)
+				return countrySalesPerStore.map(store => ({
+					...store,
+					totalRevenue: store.totalRevenue / exchangeRate,
+					averageTransactionValue: store.averageTransactionValue / exchangeRate,
+					grossProfit: store.grossProfit / exchangeRate,
+					// Note: grossProfitPercentage doesn't need conversion (it's a percentage)
+				}));
+			} catch (error: any) {
+				this.logger.error(`Error fetching sales per store for ${country.name}: ${error?.message || 'Unknown error'}`);
+				// Return empty array for this country instead of failing completely
+				return [];
+			}
+		});
+
+		// Wait for all countries to complete
+		const allCountrySalesPerStore = await Promise.all(countryPromises);
+
+		// Flatten and combine all sales per store from all countries
+		const consolidatedSalesPerStore = allCountrySalesPerStore.flat();
+
+		// Sort by revenue (descending)
+		const sortedSalesPerStore = consolidatedSalesPerStore.sort((a, b) => b.totalRevenue - a.totalRevenue);
+
+		this.logger.log(`✅ Consolidated sales per store generated: ${sortedSalesPerStore.length} stores across ${countries.length} countries (all in ZAR)`);
+
+		return sortedSalesPerStore;
+	}
+
+	/**
+	 * Get exchange rates for currency conversion to ZAR
+	 * Fetches rates from bit_consolidated.tblforex_history for the given date
+	 */
+	private async getExchangeRates(date?: string): Promise<ExchangeRateDto[]> {
+		const operationId = 'GET-EXCHANGE-RATES';
+		
+		// Default to today's date if no date provided
+		let queryDate: string;
+		if (!date || date.trim() === '') {
+			const today = new Date();
+			queryDate = today.toISOString().split('T')[0]; // Format as YYYY-MM-DD
+			this.logger.log(`[${operationId}] No date provided, using today's date: ${queryDate}`);
+		} else {
+			queryDate = date.trim();
+			this.logger.log(`[${operationId}] Fetching exchange rates for date: ${queryDate}`);
+		}
+
+		try {
+			// Get consolidated database connection
+			const consolidatedDataSource = await this.erpConnectionManager.getConsolidatedConnection();
+			this.logger.debug(`[${operationId}] ✅ Connected to consolidated database (bit_consolidated)`);
+
+			// Query forex rates for the exact date
+			const query = `
+				SELECT forex_code, CAST(rate AS CHAR) as rate
+				FROM tblforex_history
+				WHERE forex_date = ?
+				AND forex_code IN ('BWP', 'ZMW', 'MZN', 'ZWL', 'USD', 'EUR')
+				ORDER BY forex_code
+			`;
+			
+			this.logger.debug(`[${operationId}] Executing query with date parameter: ${queryDate}`);
+			const results = await consolidatedDataSource.query(query, [queryDate]);
+
+			// Convert to DTO format
+			const exchangeRates: ExchangeRateDto[] = results.map((row: any) => {
+				const rate = Number(row.rate);
+				return {
+					code: row.forex_code,
+					rate: rate,
+				};
+			});
+
+			this.logger.log(`[${operationId}] ✅ Successfully fetched ${exchangeRates.length} exchange rates for date ${queryDate}`);
+			return exchangeRates;
+		} catch (error: any) {
+			this.logger.error(`[${operationId}] ❌ Error fetching exchange rates: ${error?.message || 'Unknown error'}`);
+			// Return empty array on error - conversion will use rate of 1 (no conversion)
+			return [];
+		}
 	}
 
 	/**

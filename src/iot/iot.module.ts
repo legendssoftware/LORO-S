@@ -7,6 +7,7 @@ import { AuthModule } from '../auth/auth.module';
 import { LicensingModule } from '../licensing/licensing.module';
 import { OrganisationModule } from '../organisation/organisation.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { ErpModule } from '../erp/erp.module';
 
 import { IotService } from './iot.service';
 import { IotController } from './iot.controller';
@@ -50,6 +51,9 @@ import { IoTReportingService } from './services/iot-reporting.service';
     
     // Notifications module for push notifications to admin users
     NotificationsModule,
+    
+    // ERP module for branch name normalization
+    ErpModule,
   ],
   controllers: [IotController],
   providers: [

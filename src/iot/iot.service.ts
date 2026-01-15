@@ -34,6 +34,7 @@ import { AccessLevel } from '../lib/enums/user.enums';
 import { NotificationEvent, NotificationPriority, NotificationChannel } from '../lib/types/unified-notification.types';
 import { Branch } from '../branch/entities/branch.entity';
 import { Attendance } from '../attendance/entities/attendance.entity';
+import { ErpDataService } from '../erp/services/erp-data.service';
 
 export interface PaginatedResponse<T> {
 	data: T[];
@@ -103,6 +104,7 @@ export class IotService {
 		private readonly iotReportingService: IoTReportingService,
 		private readonly organisationHoursService: OrganisationHoursService,
 		private readonly unifiedNotificationService: UnifiedNotificationService,
+		private readonly erpDataService: ErpDataService,
 	) {
 		this.CACHE_TTL = parseInt(this.configService.get<string>('CACHE_TTL', '300'));
 		this.logger.log('🤖 IoT Service initialized');
@@ -113,6 +115,41 @@ export class IotService {
 	 */
 	private getCacheKey(key: string | number): string {
 		return `${this.CACHE_PREFIX}${key}`;
+	}
+
+	/**
+	 * Normalize branch name using ErpDataService to match ERP format
+	 * Tries to extract store code from branch.ref or branch.name
+	 */
+	private async normalizeBranchName(branch: Branch | null | undefined, countryCode: string = 'SA'): Promise<string | null> {
+		if (!branch) return null;
+
+		// Try to extract store code from branch.ref (if it looks like a store code: 3 digits)
+		let storeCode: string | null = null;
+		if (branch.ref && /^\d{3}$/.test(branch.ref.trim())) {
+			storeCode = branch.ref.trim();
+		} else if (branch.name) {
+			// Try to extract store code from branch name (e.g., "001 - Branch Name" or "Branch 001")
+			const storeCodeMatch = branch.name.match(/\b(\d{3})\b/);
+			if (storeCodeMatch) {
+				storeCode = storeCodeMatch[1];
+			}
+		}
+
+		// If we found a store code, normalize using ErpDataService
+		if (storeCode) {
+			try {
+				const normalizedName = await this.erpDataService.getBranchNameFromDatabase(storeCode, countryCode);
+				return normalizedName;
+			} catch (error) {
+				this.logger.warn(`Failed to normalize branch name for store code ${storeCode}: ${error.message}`);
+				// Fallback to original branch name
+				return branch.name;
+			}
+		}
+
+		// Fallback to original branch name if no store code found
+		return branch.name;
 	}
 
 	private async invalidateDeviceCache(device: Device) {
@@ -1806,8 +1843,17 @@ export class IotService {
 			// Get door-user comparisons (needs all records to find today's records)
 			const doorUserComparisons = await this.getDoorUserComparisons(deviceWithAllRecords);
 
+			// Normalize branch name using ErpDataService
+			const countryCode = device.branch?.country || 'SA';
+			const normalizedBranchName = await this.normalizeBranchName(device.branch, countryCode);
+			const normalizedBranch = device.branch ? {
+				...device.branch,
+				name: normalizedBranchName || device.branch.name,
+			} : device.branch;
+
 			return {
 				...device,
+				branch: normalizedBranch,
 				records: sortedRecords, // Return limited records for response
 				opensOnTime: performance.opensOnTime,
 				closesOnTime: performance.closesOnTime,
@@ -1898,8 +1944,17 @@ export class IotService {
 			// Get door-user comparisons (needs all records to find today's records)
 			const doorUserComparisons = await this.getDoorUserComparisons(deviceWithAllRecords);
 
+			// Normalize branch name using ErpDataService
+			const countryCode = device.branch?.country || 'SA';
+			const normalizedBranchName = await this.normalizeBranchName(device.branch, countryCode);
+			const normalizedBranch = device.branch ? {
+				...device.branch,
+				name: normalizedBranchName || device.branch.name,
+			} : device.branch;
+
 			const processedDevice = {
 				...device,
+				branch: normalizedBranch,
 				records: sortedRecords, // Return limited records for response
 				opensOnTime: performance.opensOnTime,
 				closesOnTime: performance.closesOnTime,
@@ -3718,6 +3773,7 @@ export class IotService {
 
 			// Calculate timing context (early/late/on-time) for first open
 			let timingContext = '';
+			let timingStatus: 'ON_TIME' | 'LATE' | 'EARLY' | null = null;
 			if (timeEventDto.eventType === 'open' && isFirstOpen && businessHoursInfo.startTime) {
 				try {
 					const [targetHour, targetMinute] = businessHoursInfo.startTime.split(':').map(Number);
@@ -3727,10 +3783,13 @@ export class IotService {
 
 					if (diffMinutes < -5) {
 						timingContext = ` (${Math.abs(diffMinutes)} mins early)`;
+						timingStatus = 'EARLY';
 					} else if (diffMinutes > 5) {
 						timingContext = ` (${diffMinutes} mins late)`;
+						timingStatus = 'LATE';
 					} else {
 						timingContext = ' (on time)';
+						timingStatus = 'ON_TIME';
 					}
 				} catch (error) {
 					// Ignore timing calculation errors
@@ -3790,6 +3849,7 @@ export class IotService {
 							action: 'view_device',
 							notificationEvent: notificationEvent,
 							isSecurityAlert: isAfterHours,
+							timingStatus: timingStatus, // ON_TIME, LATE, or EARLY for door open events
 						},
 					},
 				);
