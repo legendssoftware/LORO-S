@@ -389,7 +389,11 @@ export class PerformanceDashboardGenerator {
 				// Convert all currency values to ZAR
 				// If rate is 1 (ZAR) or not found, no conversion needed
 				if (currency.code === 'ZAR' || exchangeRate === 1) {
-					return countryBranchCategoryPerformance;
+					// Still tag with country code even if no conversion needed
+					return countryBranchCategoryPerformance.map(branch => ({
+						...branch,
+						countryCode: country.code, // ✅ Tag with country code
+					}));
 				}
 
 				// Divide by exchange rate to convert FROM foreign currency TO ZAR
@@ -419,6 +423,7 @@ export class PerformanceDashboardGenerator {
 
 					return {
 						...branch,
+						countryCode: country.code, // ✅ Tag with country code
 						total: convertedTotal,
 						categories: convertedCategories,
 					};
@@ -525,13 +530,18 @@ export class PerformanceDashboardGenerator {
 				// Convert all values to ZAR
 				// If rate is 1 (ZAR) or not found, no conversion needed
 				if (currency.code === 'ZAR' || exchangeRate === 1) {
-					return countrySalesPerStore;
+					// Still tag with country code even if no conversion needed
+					return countrySalesPerStore.map(store => ({
+						...store,
+						countryCode: country.code, // ✅ Tag with country code
+					}));
 				}
 
 				// Divide by exchange rate to convert FROM foreign currency TO ZAR
 				// (Rate represents "1 ZAR = X foreign currency", so divide to get ZAR)
 				return countrySalesPerStore.map(store => ({
 					...store,
+					countryCode: country.code, // ✅ Tag with country code
 					totalRevenue: store.totalRevenue / exchangeRate,
 					averageTransactionValue: store.averageTransactionValue / exchangeRate,
 					grossProfit: store.grossProfit / exchangeRate,
@@ -1542,6 +1552,7 @@ export class PerformanceDashboardGenerator {
 			performance.push({
 				branchId,
 				branchName: branchInfo.branchName,
+				countryCode: countryCode, // ✅ Add country code
 				categories,
 				total: {
 					categoryName: 'Total',
@@ -1728,6 +1739,7 @@ export class PerformanceDashboardGenerator {
 			salesPerStore.push({
 				storeId: branchId,
 				storeName: branchNamesMap.get(storeCode) || storeCode, // ✅ Use branch name from database
+				countryCode: countryCode, // ✅ Add country code
 				totalRevenue: revenue, // ✅ Revenue from line items (matches Branch × Category)
 				transactionCount, // ✅ Transaction count from line items
 				averageTransactionValue: transactionCount > 0 ? revenue / transactionCount : 0,

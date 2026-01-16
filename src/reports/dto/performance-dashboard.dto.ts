@@ -316,6 +316,13 @@ export class BranchCategoryPerformanceDto {
 	branchName: string;
 
 	@ApiProperty({ 
+		description: 'Country code for this branch (SA, BOT, ZAM, MOZ, ZW)',
+		required: false,
+		example: 'SA'
+	})
+	countryCode?: string;
+
+	@ApiProperty({ 
 		description: 'Performance by category',
 		type: 'object',
 		additionalProperties: { type: 'object' }
@@ -339,6 +346,13 @@ export class SalesPerStoreDto {
 
 	@ApiProperty({ description: 'Store/Branch name' })
 	storeName: string;
+
+	@ApiProperty({ 
+		description: 'Country code for this branch (SA, BOT, ZAM, MOZ, ZW)',
+		required: false,
+		example: 'SA'
+	})
+	countryCode?: string;
 
 	@ApiProperty({ description: 'Total revenue' })
 	totalRevenue: number;
