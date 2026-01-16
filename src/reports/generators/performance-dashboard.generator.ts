@@ -327,13 +327,34 @@ export class PerformanceDashboardGenerator {
 		const filters = this.buildErpFilters(params);
 		const countryCode = this.getCountryCode(params) || 'SA';
 		
+		// ✅ LOG: Track countryCode for debugging
+		this.logger.log(`🏷️ [BranchCategoryPerformance] Country: ${params.country || 'not specified'} → countryCode: ${countryCode}`);
+		
 		// ✅ Get branch × category aggregations from tblsaleslines ONLY
 		// Uses: SUM(incl_line_total) - SUM(tax) grouped by store, category
 		// This matches Sales by Category chart query (R823,481.96)
 		const branchCategoryAggregations = await this.erpDataService.getBranchCategoryAggregations(filters, countryCode);
 		
+		this.logger.log(`🏷️ [BranchCategoryPerformance] Fetched ${branchCategoryAggregations.length} aggregations for country ${countryCode}`);
+		
 		// ✅ Calculate performance directly from sales lines (no scaling)
-		return await this.calculateBranchCategoryPerformanceFromAggregations(branchCategoryAggregations, countryCode);
+		const result = await this.calculateBranchCategoryPerformanceFromAggregations(branchCategoryAggregations, countryCode);
+		
+		// ✅ LOG: Verify countryCode is set on all branches
+		const branchesWithCountryCode = result.filter(b => b.countryCode === countryCode).length;
+		const branchesWithoutCountryCode = result.filter(b => !b.countryCode || b.countryCode !== countryCode).length;
+		this.logger.log(`🏷️ [BranchCategoryPerformance] Result: ${result.length} branches, ${branchesWithCountryCode} tagged with countryCode ${countryCode}, ${branchesWithoutCountryCode} missing/incorrect`);
+		
+		// ✅ WARN: Log branches with incorrect countryCode
+		if (branchesWithoutCountryCode > 0) {
+			result.forEach(branch => {
+				if (!branch.countryCode || branch.countryCode !== countryCode) {
+					this.logger.warn(`⚠️ [BranchCategoryPerformance] Branch ${branch.branchId} (${branch.branchName}) has countryCode: ${branch.countryCode || 'undefined'}, expected: ${countryCode}`);
+				}
+			});
+		}
+		
+		return result;
 	}
 
 	/**
@@ -465,13 +486,34 @@ export class PerformanceDashboardGenerator {
 		const filters = this.buildErpFilters(params);
 		const countryCode = this.getCountryCode(params) || 'SA';
 		
+		// ✅ LOG: Track countryCode for debugging
+		this.logger.log(`🏷️ [SalesPerStore] Country: ${params.country || 'not specified'} → countryCode: ${countryCode}`);
+		
 		// ✅ Get branch aggregations from tblsalesheader (kept for backward compatibility, but not used in calculation)
 		const branchAggregations = await this.erpDataService.getBranchAggregations(filters, countryCode);
 		
 		// ✅ Get branch category aggregations from tblsaleslines (used for all calculations)
 		const branchCategoryAggregations = await this.erpDataService.getBranchCategoryAggregations(filters, countryCode);
 		
-		return await this.calculateSalesPerStoreFromAggregations(branchAggregations, branchCategoryAggregations, countryCode);
+		this.logger.log(`🏷️ [SalesPerStore] Fetched ${branchCategoryAggregations.length} aggregations for country ${countryCode}`);
+		
+		const result = await this.calculateSalesPerStoreFromAggregations(branchAggregations, branchCategoryAggregations, countryCode);
+		
+		// ✅ LOG: Verify countryCode is set on all stores
+		const storesWithCountryCode = result.filter(s => s.countryCode === countryCode).length;
+		const storesWithoutCountryCode = result.filter(s => !s.countryCode || s.countryCode !== countryCode).length;
+		this.logger.log(`🏷️ [SalesPerStore] Result: ${result.length} stores, ${storesWithCountryCode} tagged with countryCode ${countryCode}, ${storesWithoutCountryCode} missing/incorrect`);
+		
+		// ✅ WARN: Log stores with incorrect countryCode
+		if (storesWithoutCountryCode > 0) {
+			result.forEach(store => {
+				if (!store.countryCode || store.countryCode !== countryCode) {
+					this.logger.warn(`⚠️ [SalesPerStore] Store ${store.storeId} (${store.storeName}) has countryCode: ${store.countryCode || 'undefined'}, expected: ${countryCode}`);
+				}
+			});
+		}
+		
+		return result;
 	}
 
 	/**
@@ -531,22 +573,39 @@ export class PerformanceDashboardGenerator {
 				// If rate is 1 (ZAR) or not found, no conversion needed
 				if (currency.code === 'ZAR' || exchangeRate === 1) {
 					// Still tag with country code even if no conversion needed
-					return countrySalesPerStore.map(store => ({
+					const taggedStores = countrySalesPerStore.map(store => ({
 						...store,
 						countryCode: country.code, // ✅ Tag with country code
 					}));
+					
+					// ✅ LOG: Verify all stores are tagged correctly
+					this.logger.log(`🏷️ [ConsolidatedSalesPerStore] ${country.name}: Tagged ${taggedStores.length} stores with countryCode ${country.code}`);
+					
+					return taggedStores;
 				}
 
 				// Divide by exchange rate to convert FROM foreign currency TO ZAR
 				// (Rate represents "1 ZAR = X foreign currency", so divide to get ZAR)
-				return countrySalesPerStore.map(store => ({
-					...store,
-					countryCode: country.code, // ✅ Tag with country code
-					totalRevenue: store.totalRevenue / exchangeRate,
-					averageTransactionValue: store.averageTransactionValue / exchangeRate,
-					grossProfit: store.grossProfit / exchangeRate,
-					// Note: grossProfitPercentage doesn't need conversion (it's a percentage)
-				}));
+				const taggedStores = countrySalesPerStore.map(store => {
+					const taggedStore = {
+						...store,
+						countryCode: country.code, // ✅ Tag with country code
+						totalRevenue: store.totalRevenue / exchangeRate,
+						averageTransactionValue: store.averageTransactionValue / exchangeRate,
+						grossProfit: store.grossProfit / exchangeRate,
+						// Note: grossProfitPercentage doesn't need conversion (it's a percentage)
+					};
+					
+					// ✅ LOG: Verify store is tagged correctly
+					this.logger.debug(`🏷️ [ConsolidatedSalesPerStore] Tagged store ${taggedStore.storeId} (${taggedStore.storeName}) with countryCode ${country.code}`);
+					
+					return taggedStore;
+				});
+				
+				// ✅ LOG: Verify all stores are tagged correctly
+				this.logger.log(`🏷️ [ConsolidatedSalesPerStore] ${country.name}: Tagged ${taggedStores.length} stores with countryCode ${country.code}`);
+				
+				return taggedStores;
 			} catch (error: any) {
 				this.logger.error(`Error fetching sales per store for ${country.name}: ${error?.message || 'Unknown error'}`);
 				// Return empty array for this country instead of failing completely
@@ -1454,9 +1513,15 @@ export class PerformanceDashboardGenerator {
 	): Promise<BranchCategoryPerformanceDto[]> {
 		if (categoryAggregations.length === 0) return [];
 
+		// ✅ LOG: Track countryCode at calculation level
+		this.logger.debug(`🏷️ [calculateBranchCategoryPerformance] Processing ${categoryAggregations.length} aggregations with countryCode: ${countryCode}`);
+
 		// Step 1: Get all store codes and fetch branch names from database
 		const storeCodes = categoryAggregations.map(agg => String(agg.store || '').trim().padStart(3, '0'));
 		const branchNamesMap = await this.erpDataService.getBranchNamesFromDatabase(storeCodes, countryCode);
+		
+		// ✅ LOG: Verify branch names were fetched for correct country
+		this.logger.debug(`🏷️ [calculateBranchCategoryPerformance] Fetched ${branchNamesMap.size} branch names from country ${countryCode} database`);
 
 		// Step 2: Group category aggregations by branch (store)
 		const branchData = new Map<string, {
@@ -1549,10 +1614,13 @@ export class PerformanceDashboardGenerator {
 					: parseInt(String(agg.uniqueCustomers || 0), 10));
 			}, 0);
 
+			// ✅ LOG: Log each branch being created with its countryCode
+			this.logger.debug(`🏷️ [calculateBranchCategoryPerformance] Creating branch: ${branchId} (${branchInfo.branchName}) with countryCode: ${countryCode}`);
+			
 			performance.push({
 				branchId,
 				branchName: branchInfo.branchName,
-				countryCode: countryCode, // ✅ Add country code
+				countryCode: countryCode, // ✅ Tag with country code at root level
 				categories,
 				total: {
 					categoryName: 'Total',
@@ -1682,6 +1750,9 @@ export class PerformanceDashboardGenerator {
 		countryCode: string = 'SA'
 	): Promise<SalesPerStoreDto[]> {
 		if (branchCategoryAggregations.length === 0) return [];
+		
+		// ✅ LOG: Track countryCode at calculation level
+		this.logger.debug(`🏷️ [calculateSalesPerStore] Processing ${branchCategoryAggregations.length} aggregations with countryCode: ${countryCode}`);
 
 		// ✅ Aggregate data from branchCategoryAggregations by store
 		// This ensures we use the same filtered dataset as Branch × Category Performance
@@ -1722,6 +1793,9 @@ export class PerformanceDashboardGenerator {
 		// Get all store codes and fetch branch names from database
 		const storeCodes = Array.from(storeData.keys());
 		const branchNamesMap = await this.erpDataService.getBranchNamesFromDatabase(storeCodes, countryCode);
+		
+		// ✅ LOG: Verify branch names were fetched for correct country
+		this.logger.debug(`🏷️ [calculateSalesPerStore] Fetched ${branchNamesMap.size} branch names from country ${countryCode} database`);
 
 		const salesPerStore: SalesPerStoreDto[] = [];
 
@@ -1736,10 +1810,15 @@ export class PerformanceDashboardGenerator {
 			const grossProfit = revenue - cost; // ✅ GP = Revenue - Cost
 			const grossProfitPercentage = revenue > 0 ? (grossProfit / revenue) * 100 : 0; // ✅ GP% = (GP / Revenue) * 100
 
+			const storeName = branchNamesMap.get(storeCode) || storeCode;
+			
+			// ✅ LOG: Log each store being created with its countryCode
+			this.logger.debug(`🏷️ [calculateSalesPerStore] Creating store: ${branchId} (${storeName}) with countryCode: ${countryCode}`);
+
 			salesPerStore.push({
 				storeId: branchId,
-				storeName: branchNamesMap.get(storeCode) || storeCode, // ✅ Use branch name from database
-				countryCode: countryCode, // ✅ Add country code
+				storeName: storeName, // ✅ Use branch name from database
+				countryCode: countryCode, // ✅ Tag with country code at root level
 				totalRevenue: revenue, // ✅ Revenue from line items (matches Branch × Category)
 				transactionCount, // ✅ Transaction count from line items
 				averageTransactionValue: transactionCount > 0 ? revenue / transactionCount : 0,
@@ -1963,8 +2042,13 @@ export class PerformanceDashboardGenerator {
 		// Preserve undefined for consolidated view (all countries)
 		const countryCode = (params as any).countryCode;
 		
-		// Log country code for debugging
-		this.logger.debug(`🌍 Country code extracted: ${countryCode || 'undefined (consolidated)'} (from country: ${params.country || 'not specified'})`);
+		// ✅ LOG: Enhanced logging for debugging country code issues
+		this.logger.log(`🌍 [getCountryCode] Country: "${params.country || 'not specified'}" → countryCode: "${countryCode || 'undefined (consolidated)'}"`);
+		
+		// ✅ WARN: If country is specified but countryCode is undefined, log a warning
+		if (params.country && params.country !== 'ALL' && !countryCode) {
+			this.logger.warn(`⚠️ [getCountryCode] Country "${params.country}" specified but countryCode is undefined! This may cause incorrect country tagging.`);
+		}
 		
 		return countryCode;
 	}
