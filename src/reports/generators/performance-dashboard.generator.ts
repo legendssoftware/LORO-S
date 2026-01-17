@@ -918,6 +918,9 @@ export class PerformanceDashboardGenerator {
 		// ✅ REVISED: Sales by category chart now uses category aggregations (async) - top 5 only
 		const salesByCategory = await this.generateSalesByCategoryChart(data, params);
 		
+		// ✅ NEW: GP trend chart showing gross profit over time
+		const gpTrend = await this.generateGPTrendChart(data, params);
+		
 		return {
 			revenueTrend,
 			hourlySales,
@@ -928,6 +931,7 @@ export class PerformanceDashboardGenerator {
 			salesBySalesperson: await this.generateSalesBySalespersonChart(params),
 			conversionRate,
 			customerComposition,
+			gpTrend,
 		};
 	}
 
@@ -1000,6 +1004,44 @@ export class PerformanceDashboardGenerator {
 				: 0;
 
 		return { data: chartData, targetValue };
+	}
+
+	/**
+	 * ✅ NEW: Generate GP trend chart using daily sales performance data
+	 * Shows gross profit over time
+	 */
+	private async generateGPTrendChart(data: PerformanceData[], params: PerformanceFiltersDto) {
+		try {
+			// Use the daily sales performance data which already has GP calculated
+			const dailySalesPerformance = await this.generateDailySalesPerformance(params);
+			
+			// Convert to chart data format
+			const sortedData = dailySalesPerformance
+				.map((day) => ({
+					date: day.date,
+					gp: day.gpR || 0,
+				}))
+				.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+			
+			// Sample data for chart (max 7 points for UI clarity)
+			const sampledData =
+				sortedData.length <= 7
+					? sortedData
+					: sortedData.filter((_, index) => index % Math.ceil(sortedData.length / 7) === 0).slice(0, 7);
+			
+			const chartData: LineChartDataPoint[] = sampledData.map((item) => ({
+				label: new Date(item.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+				value: item.gp,
+				dataPointText: this.formatValue(item.gp, 1),
+			}));
+			
+			return { data: chartData, targetValue: undefined };
+		} catch (error) {
+			this.logger.error(`Error generating GP trend chart: ${error.message}`);
+			this.logger.error(`Stack: ${error.stack}`);
+			// Return empty data on error
+			return { data: [], targetValue: undefined };
+		}
 	}
 
 	/**

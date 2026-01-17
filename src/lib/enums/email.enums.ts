@@ -171,4 +171,8 @@ export enum EmailType {
 	APPROVAL_WITHDRAWN = 'approval_withdrawn',
 	APPROVAL_ARCHIVED = 'approval_archived',
 	APPROVAL_DELETED = 'approval_deleted',
+	// Loyalty program related emails
+	LOYALTY_WELCOME = 'loyalty_welcome',
+	LOYALTY_TIER_UPGRADE = 'loyalty_tier_upgrade',
+	LOYALTY_REWARD_CLAIMED = 'loyalty_reward_claimed',
 }

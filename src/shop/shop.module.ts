@@ -20,11 +20,14 @@ import { Client } from '../clients/entities/client.entity';
 import { User } from '../user/entities/user.entity';
 import { Organisation } from '../organisation/entities/organisation.entity';
 import { Branch } from '../branch/entities/branch.entity';
+import { ClientAuth } from '../clients/entities/client.auth.entity';
 import { LicensingModule } from '../licensing/licensing.module';
 import { UserModule } from '../user/user.module';
 import { OrganisationModule } from '../organisation/organisation.module';
 import { PdfGenerationModule } from '../pdf-generation/pdf-generation.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { LibModule } from '../lib/lib.module';
+import { QuotationPdfListener } from './listeners/quotation-pdf.listener';
 
 @Module({
 	imports: [
@@ -37,6 +40,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 			Product,
 			Project,
 			Client,
+			ClientAuth,
 			User,
 			Organisation,
 			Branch
@@ -48,9 +52,17 @@ import { NotificationsModule } from '../notifications/notifications.module';
 		OrganisationModule,
 		PdfGenerationModule,
 		NotificationsModule,
+		LibModule,
 	],
 	controllers: [ShopController, QuotationConversionController],
-	providers: [ShopService, ProjectsService, ShopGateway, BannersService, QuotationConversionService],
+	providers: [
+		ShopService,
+		ProjectsService,
+		ShopGateway,
+		BannersService,
+		QuotationConversionService,
+		QuotationPdfListener,
+	],
 	exports: [
 		ShopService, 
 		ShopGateway,

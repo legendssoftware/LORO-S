@@ -1,6 +1,7 @@
 import { Client } from '../../clients/entities/client.entity';
 import { QuotationItem } from './quotation-item.entity';
 import { OrderStatus } from '../../lib/enums/status.enums';
+import { DocumentType } from '../../lib/enums/document.enums';
 import { User } from '../../user/entities/user.entity';
 import { Organisation } from '../../organisation/entities/organisation.entity';
 import { Branch } from '../../branch/entities/branch.entity';
@@ -35,11 +36,20 @@ export class Quotation {
 	@Column({ type: 'enum', enum: OrderStatus, default: OrderStatus.DRAFT })
 	status: OrderStatus;
 
+	@Column({ type: 'enum', enum: DocumentType, default: DocumentType.QUOTATION })
+	documentType: DocumentType;
+
 	@Column({ type: 'timestamptz', default: () => 'CURRENT_TIMESTAMP' })
 	quotationDate: Date;
 
-	@ManyToOne(() => User, { eager: true })
+	@ManyToOne(() => User, { eager: true, nullable: true })
 	placedBy: User;
+
+	@Column({ default: false })
+	isClientPlaced: boolean;
+
+	@Column({ nullable: true })
+	placedByClientName: string;
 
 	@ManyToOne(() => Client, { eager: true })
 	client: Client;
@@ -136,4 +146,13 @@ export class Quotation {
 
 	@Column({ nullable: true })
 	projectUid: number;
+
+	@Column({ nullable: true })
+	deliveryMethod: string; // 'collect' or 'deliver'
+
+	@Column({ type: 'text', nullable: true })
+	deliveryAddress: string;
+
+	@Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
+	settlementDiscount: number;
 }

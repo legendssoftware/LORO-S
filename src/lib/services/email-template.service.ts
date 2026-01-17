@@ -95,6 +95,9 @@ import {
 	ClientVisitOverdueData,
 	ClientVisitWeeklyReportData,
 	ApprovalEmailData,
+	LoyaltyWelcomeData,
+	LoyaltyTierUpgradeData,
+	LoyaltyRewardClaimedData,
 } from '../types/email-templates.types';
 
 class EmailTemplateService {
@@ -871,6 +874,19 @@ class EmailTemplateService {
 
 	clientVisitWeeklyReport(data: ClientVisitWeeklyReportData): string {
 		return this.renderTemplate('client/visit-weekly-report.hbs', data);
+	}
+
+	// Loyalty Templates
+	loyaltyWelcome(data: LoyaltyWelcomeData): string {
+		return this.renderTemplate('loyalty/welcome.hbs', data);
+	}
+
+	loyaltyTierUpgrade(data: LoyaltyTierUpgradeData): string {
+		return this.renderTemplate('loyalty/tier-upgrade.hbs', data);
+	}
+
+	loyaltyRewardClaimed(data: LoyaltyRewardClaimedData): string {
+		return this.renderTemplate('loyalty/reward-claimed.hbs', data);
 	}
 
 	// Approval Templates

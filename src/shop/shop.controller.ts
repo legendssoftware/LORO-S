@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards, Req, Query, UnauthorizedException, Logger } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, UseGuards, Req, Query, UnauthorizedException, Logger } from '@nestjs/common';
 import { ShopService } from './shop.service';
 import { ProjectsService } from './projects.service';
 import { AuthGuard } from '../guards/auth.guard';
@@ -876,6 +876,37 @@ Creates comprehensive quotations from shopping cart data with advanced pricing, 
 		const orgId = req.user?.org?.uid || req.user?.organisationRef;
 		const branchId = req.user?.branch?.uid;
 		return this.shopService.createQuotation(quotationData, orgId, branchId);
+	}
+
+	@Put('quotation/:id/client')
+	@Roles(
+		AccessLevel.CLIENT,
+	)
+	@ApiOperation({
+		summary: '✏️ Update quotation for client',
+		description: 'Allows clients to edit their quotations before major stages (SOURCING/PACKING/IN_FULFILLMENT)',
+	})
+	@ApiParam({
+		name: 'id',
+		description: 'Quotation ID',
+		type: Number,
+	})
+	@ApiOkResponse({
+		description: '✅ Quotation updated successfully',
+	})
+	@ApiBadRequestResponse({
+		description: '❌ Bad Request - Cannot edit quotation in current status',
+	})
+	async updateQuotationForClient(
+		@Param('id') quotationId: number,
+		@Body() quotationData: CheckoutDto,
+		@Req() req: AuthenticatedRequest,
+	) {
+		const clientId = req.user?.uid;
+		if (!clientId) {
+			throw new UnauthorizedException('Client ID not found');
+		}
+		return this.shopService.updateQuotationForClient(quotationId, quotationData, clientId);
 	}
 
 	@Post('blank-quotation')

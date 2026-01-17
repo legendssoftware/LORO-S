@@ -53,7 +53,7 @@ export class RewardsSubscriber {
             source: {
                 id: payload.taskId,
                 type: 'task',
-                details: { completedEarly: payload.completedEarly }
+                details: JSON.stringify({ completedEarly: payload.completedEarly })
             }
         }, payload.orgId, payload.branchId);
     }

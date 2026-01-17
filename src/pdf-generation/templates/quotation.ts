@@ -88,18 +88,87 @@ function drawBoxWithTitle(
 /**
  * Add items table to the PDF
  */
+/**
+ * Truncate text with ellipsis if it exceeds max length
+ */
+function truncateText(text: string, maxLength: number): string {
+	if (!text || text.length <= maxLength) return text || '';
+	return text.substring(0, maxLength - 3) + '...';
+}
+
+/**
+ * Calculate optimal column widths based on content
+ */
+function calculateColumnWidths(
+	doc: any,
+	items: any[],
+	tableWidth: number,
+): { itemCode: number; description: number; quantity: number; unitPrice: number; total: number } {
+	// Minimum widths
+	const minItemCode = 60;
+	const minQuantity = 70;
+	const minUnitPrice = 80;
+	const minTotal = 80;
+	const minDescription = 150;
+
+	// Calculate max content widths
+	let maxItemCodeWidth = minItemCode;
+	let maxDescriptionWidth = minDescription;
+	let maxQuantityWidth = minQuantity;
+	let maxUnitPriceWidth = minUnitPrice;
+	let maxTotalWidth = minTotal;
+
+	items.forEach((item) => {
+		const itemCodeText = item.itemCode || '-';
+		const descriptionText = item.description || '';
+		const quantityText = item.quantity?.toString() || '0';
+		const unitPriceText = formatCurrency(item.unitPrice || 0, 'ZAR');
+		const totalText = formatCurrency((item.quantity || 0) * (item.unitPrice || 0), 'ZAR');
+
+		maxItemCodeWidth = Math.max(maxItemCodeWidth, doc.widthOfString(itemCodeText) + 10);
+		maxDescriptionWidth = Math.max(maxDescriptionWidth, doc.widthOfString(descriptionText.substring(0, 50)) + 10);
+		maxQuantityWidth = Math.max(maxQuantityWidth, doc.widthOfString(quantityText) + 10);
+		maxUnitPriceWidth = Math.max(maxUnitPriceWidth, doc.widthOfString(unitPriceText) + 10);
+		maxTotalWidth = Math.max(maxTotalWidth, doc.widthOfString(totalText) + 10);
+	});
+
+	// Calculate fixed columns total
+	const fixedColumnsWidth = maxItemCodeWidth + maxQuantityWidth + maxUnitPriceWidth + maxTotalWidth + 20; // 20 for padding
+	const availableWidth = tableWidth - fixedColumnsWidth;
+
+	// Description gets remaining space, but with min/max constraints
+	const descriptionWidth = Math.max(minDescription, Math.min(availableWidth, maxDescriptionWidth));
+
+	// Adjust if description is too wide
+	const totalFixed = maxItemCodeWidth + descriptionWidth + maxQuantityWidth + maxUnitPriceWidth + maxTotalWidth + 20;
+	if (totalFixed > tableWidth) {
+		// Reduce description width proportionally
+		const scaleFactor = (tableWidth - 20) / totalFixed;
+		return {
+			itemCode: Math.floor(maxItemCodeWidth * scaleFactor),
+			description: Math.floor(descriptionWidth * scaleFactor),
+			quantity: Math.floor(maxQuantityWidth * scaleFactor),
+			unitPrice: Math.floor(maxUnitPriceWidth * scaleFactor),
+			total: Math.floor(maxTotalWidth * scaleFactor),
+		};
+	}
+
+	return {
+		itemCode: maxItemCodeWidth,
+		description: descriptionWidth,
+		quantity: maxQuantityWidth,
+		unitPrice: maxUnitPriceWidth,
+		total: maxTotalWidth,
+	};
+}
+
 function addItemsTable(doc: any, data: QuotationTemplateData, startY: number): number {
 	let currentY = startY;
 	const tableStartX = PAGE_MARGIN;
 	const tableWidth = doc.page.width - 2 * PAGE_MARGIN;
 
-	const colWidths = {
-		itemCode: 60,
-		description: tableWidth - 60 - 80 - 80 - 80 - 20, // Adjusted for new columns, ensure it fits
-		quantity: 80,
-		unitPrice: 80,
-		total: 80,
-	};
+	// Calculate optimal column widths based on content
+	const colWidths = calculateColumnWidths(doc, data.items || [], tableWidth);
 
 	// Table headers
 	doc.fillColor(COLOR_TEXT_HEADER).fontSize(FONT_SIZE_NORMAL).font(FONT_BOLD);
@@ -133,76 +202,108 @@ function addItemsTable(doc: any, data: QuotationTemplateData, startY: number): n
 	// Table rows
 	doc.font(FONT_REGULAR).fillColor(COLOR_TEXT_NORMAL);
 
+	const drawTableHeader = (y: number) => {
+		doc.fillColor(COLOR_TEXT_HEADER).fontSize(FONT_SIZE_NORMAL).font(FONT_BOLD);
+		let headerX = tableStartX;
+		doc.rect(tableStartX, y, tableWidth, FONT_SIZE_NORMAL + BOX_PADDING).fill(COLOR_TABLE_HEADER_BG);
+		doc.fillColor(COLOR_TEXT_HEADER);
+		doc.text('Item Code', headerX + BOX_PADDING / 2, y + BOX_PADDING / 2);
+		headerX += colWidths.itemCode;
+		doc.text('Product Name', headerX + BOX_PADDING / 2, y + BOX_PADDING / 2);
+		headerX += colWidths.description;
+		doc.text('Quantity', headerX + BOX_PADDING / 2, y + BOX_PADDING / 2, {
+			width: colWidths.quantity - BOX_PADDING,
+			align: 'right',
+		});
+		headerX += colWidths.quantity;
+		doc.text('Unit Price', headerX + BOX_PADDING / 2, y + BOX_PADDING / 2, {
+			width: colWidths.unitPrice - BOX_PADDING,
+			align: 'right',
+		});
+		headerX += colWidths.unitPrice;
+		doc.text('Total', headerX + BOX_PADDING / 2, y + BOX_PADDING / 2, {
+			width: colWidths.total - BOX_PADDING,
+			align: 'right',
+		});
+		doc.font(FONT_REGULAR).fillColor(COLOR_TEXT_NORMAL);
+		return y + FONT_SIZE_NORMAL + BOX_PADDING + BOX_PADDING / 2;
+	};
+
 	data.items.forEach((item) => {
+		// Prepare text with smart truncation and wrapping
+		const itemCodeText = truncateText(item.itemCode || '-', 15);
+		const descriptionText = item.description || '';
+		const quantityText = item.quantity?.toString() || '0';
+		const unitPriceText = formatCurrency(item.unitPrice || 0, data.currency || 'ZAR');
+		const totalText = formatCurrency((item.quantity || 0) * (item.unitPrice || 0), data.currency || 'ZAR');
+
+		// Calculate height for multi-line description
+		const descriptionWidth = colWidths.description - BOX_PADDING;
+		const descriptionHeight = doc.heightOfString(descriptionText, {
+			width: descriptionWidth,
+			ellipsis: true, // Enable ellipsis for overflow
+		});
+
+		// Calculate row height (ensure minimum height for readability)
 		const itemRowHeight = Math.max(
-			FONT_SIZE_NORMAL + BOX_PADDING,
-			doc.heightOfString(item.description, { width: colWidths.description - BOX_PADDING }) + BOX_PADDING,
+			FONT_SIZE_NORMAL + BOX_PADDING * 2,
+			descriptionHeight + BOX_PADDING,
 		);
 
+		// Check for page break
 		if (currentY + itemRowHeight > doc.page.height - PAGE_MARGIN - 50) {
-			// Check for page break (50 for footer)
 			doc.addPage();
 			currentY = PAGE_MARGIN;
-			// Redraw header on new page
-			doc.fillColor(COLOR_TEXT_HEADER).fontSize(FONT_SIZE_NORMAL).font(FONT_BOLD);
-			currentX = tableStartX;
-			doc.rect(tableStartX, currentY, tableWidth, FONT_SIZE_NORMAL + BOX_PADDING).fill(COLOR_TABLE_HEADER_BG);
-			doc.fillColor(COLOR_TEXT_HEADER);
-			doc.text('Item Code', currentX + BOX_PADDING / 2, currentY + BOX_PADDING / 2);
-			currentX += colWidths.itemCode;
-			doc.text('Product Name', currentX + BOX_PADDING / 2, currentY + BOX_PADDING / 2);
-			currentX += colWidths.description;
-			doc.text('Quantity', currentX + BOX_PADDING / 2, currentY + BOX_PADDING / 2, {
-				width: colWidths.quantity - BOX_PADDING,
-				align: 'right',
-			});
-			currentX += colWidths.quantity;
-			doc.text('Unit Price', currentX + BOX_PADDING / 2, currentY + BOX_PADDING / 2, {
-				width: colWidths.unitPrice - BOX_PADDING,
-				align: 'right',
-			});
-			currentX += colWidths.unitPrice;
-			doc.text('Total', currentX + BOX_PADDING / 2, currentY + BOX_PADDING / 2, {
-				width: colWidths.total - BOX_PADDING,
-				align: 'right',
-			});
-			currentY += FONT_SIZE_NORMAL + BOX_PADDING + BOX_PADDING / 2;
-			doc.font(FONT_REGULAR).fillColor(COLOR_TEXT_NORMAL);
+			currentY = drawTableHeader(currentY);
 		}
 
+		// Draw row content
 		currentX = tableStartX;
-		doc.text(item.itemCode || '-', currentX + BOX_PADDING / 2, currentY + BOX_PADDING / 2, {
+
+		// Item Code
+		doc.text(itemCodeText, currentX + BOX_PADDING / 2, currentY + BOX_PADDING / 2, {
 			width: colWidths.itemCode - BOX_PADDING,
+			ellipsis: true,
 		});
 		currentX += colWidths.itemCode;
-		doc.text(item.description, currentX + BOX_PADDING / 2, currentY + BOX_PADDING / 2, {
-			width: colWidths.description - BOX_PADDING,
+
+		// Description with multi-line support and wrapping
+		const descriptionY = currentY + BOX_PADDING / 2;
+		doc.text(descriptionText, currentX + BOX_PADDING / 2, descriptionY, {
+			width: descriptionWidth,
+			ellipsis: true, // Add ellipsis if text is too long
+			lineGap: 2, // Small gap between lines
 		});
 		currentX += colWidths.description;
-		doc.text(item.quantity.toString(), currentX + BOX_PADDING / 2, currentY + BOX_PADDING / 2, {
+
+		// Quantity (right-aligned)
+		doc.text(quantityText, currentX + BOX_PADDING / 2, currentY + BOX_PADDING / 2, {
 			width: colWidths.quantity - BOX_PADDING,
 			align: 'right',
 		});
 		currentX += colWidths.quantity;
-		doc.text(
-			formatCurrency(item.unitPrice, data.currency),
-			currentX + BOX_PADDING / 2,
-			currentY + BOX_PADDING / 2,
-			{ width: colWidths.unitPrice - BOX_PADDING, align: 'right' },
-		);
-		currentX += colWidths.unitPrice;
-		doc.text(
-			formatCurrency(item.quantity * item.unitPrice, data.currency),
-			currentX + BOX_PADDING / 2,
-			currentY + BOX_PADDING / 2,
-			{ width: colWidths.total - BOX_PADDING, align: 'right' },
-		);
 
+		// Unit Price (right-aligned)
+		doc.text(unitPriceText, currentX + BOX_PADDING / 2, currentY + BOX_PADDING / 2, {
+			width: colWidths.unitPrice - BOX_PADDING,
+			align: 'right',
+		});
+		currentX += colWidths.unitPrice;
+
+		// Total (right-aligned)
+		doc.text(totalText, currentX + BOX_PADDING / 2, currentY + BOX_PADDING / 2, {
+			width: colWidths.total - BOX_PADDING,
+			align: 'right',
+		});
+
+		// Move to next row
 		currentY += itemRowHeight;
+
+		// Draw horizontal line separator
 		doc.moveTo(tableStartX, currentY)
 			.lineTo(tableStartX + tableWidth, currentY)
 			.strokeColor(COLOR_LINE)
-			.stroke(); // Horizontal line after each item
+			.stroke();
 	});
 
 	return currentY + BOX_PADDING;

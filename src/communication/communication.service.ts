@@ -60,6 +60,8 @@ import { NewUserAdminNotification, NewUserWelcome, UserReInvitation, UserPrefere
 import { LeadConvertedClient, LeadConvertedCreator, LeadReminder, LeadAssignedToUser, MonthlyUnattendedLeadsReport } from '../lib/templates/emails';
 // Client auth templates
 import { ClientPasswordReset, ClientPasswordChanged, ClientAccountCreated, ClientCommunicationReminder } from '../lib/templates/emails';
+// Loyalty templates
+import { LoyaltyWelcome, LoyaltyTierUpgrade, LoyaltyRewardClaimed } from '../lib/templates/emails';
 // Warning templates
 import { WarningIssued, WarningUpdated, WarningExpired } from '../lib/templates/emails';
 // Leave templates
@@ -146,6 +148,9 @@ import {
 	BulkAnnouncementEmailData,
 	ClientCommunicationReminderData,
 	ApprovalEmailData,
+	LoyaltyWelcomeData,
+	LoyaltyTierUpgradeData,
+	LoyaltyRewardClaimedData,
 } from '../lib/types/email-templates.types';
 import {
 	TaskFlagCreated,
@@ -1402,6 +1407,21 @@ export class CommunicationService {
 				return {
 					subject: 'Approval Deleted',
 					body: ApprovalDeleted(data as ApprovalEmailData),
+				};
+			case EmailType.LOYALTY_WELCOME:
+				return {
+					subject: 'Welcome to Our Loyalty Program!',
+					body: LoyaltyWelcome(data as LoyaltyWelcomeData),
+				};
+			case EmailType.LOYALTY_TIER_UPGRADE:
+				return {
+					subject: 'Congratulations! You\'ve Upgraded Your Tier!',
+					body: LoyaltyTierUpgrade(data as LoyaltyTierUpgradeData),
+				};
+			case EmailType.LOYALTY_REWARD_CLAIMED:
+				return {
+					subject: 'Your Reward is Ready!',
+					body: LoyaltyRewardClaimed(data as LoyaltyRewardClaimedData),
 				};
 			default:
 				const caseTime = Date.now() - caseStartTime;

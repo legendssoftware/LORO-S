@@ -199,6 +199,9 @@ export class PerformanceChartsDto {
 
 	@ApiProperty({ type: PieChartResponseDto, description: 'Customer type composition' })
 	customerComposition: PieChartResponseDto;
+
+	@ApiProperty({ type: LineChartResponseDto, description: 'Gross profit trend over time' })
+	gpTrend: LineChartResponseDto;
 }
 
 // ===================================================================

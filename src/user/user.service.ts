@@ -512,11 +512,12 @@ export class UserService {
 			const startDate = userTarget.periodStartDate;
 			const endDate = new Date();
 
-			// Count actual quotations
+			// Count actual quotations (exclude client-placed orders)
 			const actualQuotationsAmount = await this.quotationRepository
 				.createQueryBuilder('quotation')
 				.select('SUM(quotation.totalAmount)', 'total')
 				.where('quotation.placedBy = :userId', { userId })
+				.andWhere('quotation.isClientPlaced = :isClientPlaced', { isClientPlaced: false })
 				.andWhere('quotation.createdAt BETWEEN :startDate AND :endDate', { startDate, endDate })
 				.andWhere('quotation.status IN (:...statuses)', {
 					statuses: ['DRAFT', 'PENDING_INTERNAL', 'PENDING_CLIENT', 'NEGOTIATION', 'APPROVED', 'REJECTED', 'SOURCING', 'PACKING']
@@ -4013,6 +4014,7 @@ export class UserService {
 			const newQuotations = await this.quotationRepository.find({
 				where: {
 					placedBy: { uid: userId },
+					isClientPlaced: false, // Exclude client-placed orders from sales commission
 					status: In(quotationStatuses),
 					createdAt: Between(calculationStartDate, calculationEndDate),
 				},
@@ -4039,6 +4041,7 @@ export class UserService {
 			const newCompletedQuotations = await this.quotationRepository.find({
 				where: {
 					placedBy: { uid: userId },
+					isClientPlaced: false, // Exclude client-placed orders from sales commission
 					status: OrderStatus.COMPLETED,
 					createdAt: Between(calculationStartDate, calculationEndDate),
 				},

@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Welcome to {{organizationName}} Loyalty Program!</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f8f9fa;
+        }
+        .container {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+            font-weight: 600;
+        }
+        .welcome-icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+        .content {
+            padding: 30px;
+        }
+        .card-info {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            border-radius: 8px;
+            padding: 25px;
+            margin: 20px 0;
+            text-align: center;
+        }
+        .card-number {
+            font-size: 24px;
+            font-weight: bold;
+            letter-spacing: 2px;
+            margin: 10px 0;
+        }
+        .points-display {
+            font-size: 32px;
+            font-weight: bold;
+            margin: 15px 0;
+        }
+        .tier-badge {
+            display: inline-block;
+            background-color: rgba(255,255,255,0.2);
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 600;
+            margin-top: 10px;
+        }
+        .info-section {
+            background-color: #f8f9fa;
+            border-radius: 6px;
+            padding: 20px;
+            margin: 20px 0;
+            border-left: 4px solid #0d6efd;
+        }
+        .info-section h3 {
+            color: #495057;
+            margin-top: 0;
+            margin-bottom: 15px;
+        }
+        .features-list {
+            list-style: none;
+            padding: 0;
+            margin: 15px 0;
+        }
+        .features-list li {
+            padding: 8px 0;
+            color: #495057;
+            display: flex;
+            align-items: center;
+        }
+        .features-list li::before {
+            content: "🎁";
+            margin-right: 10px;
+            font-size: 18px;
+        }
+        .cta-button {
+            display: inline-block;
+            background-color: #0d6efd;
+            color: white;
+            padding: 15px 30px;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: 500;
+            margin: 20px 0;
+            transition: background-color 0.3s;
+        }
+        .cta-button:hover {
+            background-color: #0b5ed7;
+        }
+        .secondary-button {
+            background-color: #6c757d;
+            margin-left: 10px;
+        }
+        .secondary-button:hover {
+            background-color: #5a6268;
+        }
+        .footer {
+            background-color: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+            color: #6c757d;
+            font-size: 14px;
+        }
+        @media (max-width: 600px) {
+            body {
+                padding: 10px;
+            }
+            .header {
+                padding: 20px;
+            }
+            .header h1 {
+                font-size: 24px;
+            }
+            .content {
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="welcome-icon">🎉</div>
+            <h1>Welcome to {{organizationName}} Loyalty Program!</h1>
+            <p>Start earning rewards with every purchase</p>
+        </div>
+
+        <div class="content">
+            <p>Dear {{clientName}},</p>
+            
+            <p>We're thrilled to welcome you to our loyalty program! You're now part of an exclusive community where every purchase earns you points that can be redeemed for amazing rewards.</p>
+
+            <div class="card-info">
+                <div style="font-size: 14px; opacity: 0.9;">Your Loyalty Card Number</div>
+                <div class="card-number">{{cardNumber}}</div>
+                <div class="points-display">{{welcomePoints}} Points</div>
+                <div class="tier-badge">{{tier}} Member</div>
+            </div>
+
+            <div class="info-section">
+                <h3>🎁 How It Works</h3>
+                <ul class="features-list">
+                    <li><strong>Earn Points:</strong> Get points with every purchase</li>
+                    <li><strong>Level Up:</strong> Reach higher tiers for better rewards</li>
+                    <li><strong>Redeem Rewards:</strong> Use your points for discounts and special offers</li>
+                    <li><strong>Exclusive Access:</strong> Unlock member-only deals and promotions</li>
+                </ul>
+            </div>
+
+            <div style="text-align: center; margin: 30px 0;">
+                <a href="{{completeProfileLink}}" class="cta-button">Complete Your Profile</a>
+                <a href="{{viewRewardsLink}}" class="cta-button secondary-button">View Rewards</a>
+            </div>
+
+            <div class="info-section">
+                <h3>💡 Pro Tip</h3>
+                <p>Complete your profile to earn bonus points and unlock personalized offers tailored just for you!</p>
+            </div>
+
+            <p>Thank you for being a valued customer. We can't wait to reward you!</p>
+            
+            <p>Best regards,<br>
+            The {{organizationName}} Team</p>
+        </div>
+
+        <div class="footer">
+            <p>This email was sent to {{clientEmail}} because you enrolled in our loyalty program.</p>
+            <p>If you have any questions, please contact us at <a href="mailto:{{supportEmail}}">{{supportEmail}}</a></p>
+        </div>
+    </div>
+</body>
+</html>

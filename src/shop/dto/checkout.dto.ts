@@ -134,4 +134,40 @@ export class CheckoutDto {
 		required: false,
 	})
 	project?: { uid: number };
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Document type (quotation, order, purchase, refund, credit_note, invoice)',
+		example: 'quotation',
+		required: false,
+	})
+	documentType?: string;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Delivery method (collect or deliver)',
+		example: 'collect',
+		required: false,
+	})
+	deliveryMethod?: string;
+
+	@IsString()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Delivery address if delivery method is deliver',
+		example: '123 Main St, City, Country',
+		required: false,
+	})
+	deliveryAddress?: string;
+
+	@IsNumber()
+	@IsOptional()
+	@ApiProperty({
+		description: 'Settlement discount amount',
+		example: 0,
+		required: false,
+	})
+	settlementDiscount?: number;
 }

@@ -14,6 +14,7 @@ import { ProductStatus } from '../lib/enums/product.enums';
 import { Product } from '../products/entities/product.entity';
 import { startOfDay, endOfDay } from 'date-fns';
 import { OrderStatus } from '../lib/enums/status.enums';
+import { DocumentType } from '../lib/enums/document.enums';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { ConfigService } from '@nestjs/config';
 import { EmailType } from '../lib/enums/email.enums';
@@ -32,6 +33,10 @@ import { ProjectsService } from './projects.service';
 import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
 import { NotificationPriority, NotificationEvent } from '../lib/types/unified-notification.types';
 import { User } from 'src/user/entities/user.entity';
+import { ClientAuth } from '../clients/entities/client.auth.entity';
+import { EventQueueService, EventPriority } from '../lib/services/event-queue.service';
+import { EventRetryService } from '../lib/services/event-retry.service';
+import { roundCurrency, calculateTotal } from '../lib/utils/currency.utils';
 
 @Injectable()
 export class ShopService {
@@ -54,6 +59,8 @@ export class ShopService {
 		private projectRepository: Repository<Project>,
 		@InjectRepository(User)
 		private userRepository: Repository<User>,
+		@InjectRepository(ClientAuth)
+		private clientAuthRepository: Repository<ClientAuth>,
 		@Inject(CACHE_MANAGER)
 		private cacheManager: Cache,	
 		private readonly configService: ConfigService,
@@ -65,6 +72,8 @@ export class ShopService {
 		private readonly pdfGenerationService: PdfGenerationService,
 		private readonly projectsService: ProjectsService,
 		private readonly unifiedNotificationService: UnifiedNotificationService,
+		private readonly eventQueue: EventQueueService,
+		private readonly eventRetry: EventRetryService,
 	) {
 		this.currencyLocale = this.configService.get<string>('CURRENCY_LOCALE') || 'en-ZA';
 		this.currencyCode = this.configService.get<string>('CURRENCY_CODE') || 'ZAR';
@@ -147,6 +156,45 @@ export class ShopService {
 	 * @param orgId The organization ID to fetch settings for
 	 * @returns Object containing the currency code, symbol, and locale
 	 */
+	/**
+	 * Calculate settlement discount based on payment terms
+	 * @param totalAmount - Total amount before discount
+	 * @param paymentTerms - Payment terms string (e.g., "Net 15", "Net 30", "Due on Receipt")
+	 * @returns Settlement discount amount
+	 */
+	private calculateSettlementDiscount(totalAmount: number, paymentTerms?: string): number {
+		if (!paymentTerms || !totalAmount || totalAmount <= 0) {
+			return 0;
+		}
+
+		const termsLower = paymentTerms.toLowerCase();
+		
+		// Early payment discounts based on terms
+		// Net 15 or less: 3% discount
+		// Net 30: 2% discount
+		// Net 45: 1% discount
+		// Net 60+: 0.5% discount
+		// Due on Receipt: 5% discount
+		// Cash on Delivery: 3% discount
+		
+		let discountPercentage = 0;
+		
+		if (termsLower.includes('due on receipt') || termsLower.includes('cod') || termsLower.includes('cash on delivery')) {
+			discountPercentage = 0.05; // 5%
+		} else if (termsLower.includes('net 15') || termsLower.includes('net 10') || termsLower.includes('net 7')) {
+			discountPercentage = 0.03; // 3%
+		} else if (termsLower.includes('net 30')) {
+			discountPercentage = 0.02; // 2%
+		} else if (termsLower.includes('net 45')) {
+			discountPercentage = 0.01; // 1%
+		} else if (termsLower.includes('net 60') || termsLower.includes('net 90')) {
+			discountPercentage = 0.005; // 0.5%
+		}
+
+		const discount = totalAmount * discountPercentage;
+		return roundCurrency(discount);
+	}
+
 	private async getOrgCurrency(orgId: number): Promise<{ code: string; symbol: string; locale: string }> {
 		// Return defaults if no orgId provided
 		if (!orgId) {
@@ -308,6 +356,45 @@ export class ShopService {
 			this.logger.error(`Error fetching org admins for org ${orgId}:`, error.message);
 			return [];
 		}
+	}
+
+	/**
+	 * Resolve owner user ID for quotation placement
+	 * Returns null for client-placed orders to avoid sales commission
+	 * Handles both User (sales rep) and ClientAuth (client placing order) cases
+	 */
+	private async resolveOwnerUserId(
+		ownerUid: number | undefined,
+		client: any,
+		orgId: number
+	): Promise<{ userId: number | null; isClientPlaced: boolean; clientContactName: string }> {
+		// Try to find as User first (sales rep placing order)
+		if (ownerUid) {
+			const ownerUser = await this.userRepository.findOne({
+				where: { uid: ownerUid },
+				select: ['uid']
+			});
+
+			if (ownerUser) {
+				// This is a sales rep placing the order
+				this.logger.log(`Order placed by sales rep User ID: ${ownerUid}`);
+				return {
+					userId: ownerUser.uid,
+					isClientPlaced: false,
+					clientContactName: client.contactPerson || client.name
+				};
+			}
+		}
+
+		// Client-placed order: return null for userId to avoid sales commission
+		// Use client's contact person name
+		const contactName = client.contactPerson || client.name;
+		this.logger.log(`Client-placed order detected. Using contact person: ${contactName}`);
+		return {
+			userId: null,
+			isClientPlaced: true,
+			clientContactName: contactName
+		};
 	}
 
 	/**
@@ -522,23 +609,12 @@ export class ShopService {
 				};
 			}
 
-			const categories = allProducts.map((product) => product?.category);
-			const uniqueCategories = [...new Set(categories)].filter(Boolean); // Filter out null/undefined values
+			// Extract categories and filter out null/undefined/empty values
+			const categories = allProducts
+				.map((product) => product?.category)
+				.filter((cat) => cat && typeof cat === 'string' && cat.trim() !== '');
+			const uniqueCategories = [...new Set(categories)]; // Remove duplicates
 			this.logger.log(`[${operationId}] Extracted ${uniqueCategories.length} unique categories: ${uniqueCategories.join(', ')}`);
-
-			// Clear logging for debugging
-			this.logger.log(`[${operationId}] 📦 CATEGORIES RESPONSE BEING SENT TO CLIENT:`, {
-				categoriesArray: uniqueCategories,
-				categoriesCount: uniqueCategories.length,
-				categoriesList: uniqueCategories.join(', ') || 'No categories',
-				orgId,
-				branchId,
-				totalProducts: allProducts.length,
-				responseStructure: {
-					categories: uniqueCategories,
-					message: process.env.SUCCESS_MESSAGE,
-				},
-			});
 
 			const finalResponse = {
 				categories: uniqueCategories,
@@ -879,42 +955,41 @@ export class ShopService {
 				throw new Error('Quotation items are required');
 			}
 
-			if (!quotationData?.owner?.uid) {
-				throw new Error('Owner is required');
-			}
-
 			if (!quotationData?.client?.uid) {
 				throw new Error('Client is required');
 			}
 
-			// Validate that the user (placedBy) exists before creating quotation
-			const ownerUser = await this.userRepository.findOne({
-				where: { uid: quotationData.owner.uid },
-				select: ['uid']
-			});
-
-			if (!ownerUser) {
-				this.logger.error(`User with ID ${quotationData.owner.uid} not found`);
-				throw new NotFoundException(`User with ID ${quotationData.owner.uid} not found`);
-			}
-
-			// Get organization-specific currency settings
-			const orgCurrency = await this.getOrgCurrency(orgId);
-
-			// Pass orgId and branchId for proper scoping
+			// Get client data first to resolve organization
 			const clientData = await this.clientsService?.findOne(
 				Number(quotationData?.client?.uid),
 				orgId,
 				branchId
 			);
 
-			// Properly check if clientData and client exist
 			if (!clientData || !clientData.client) {
 				this.logger.error(`Client not found: ${quotationData?.client?.uid} for orgId: ${orgId}, branchId: ${branchId}`);
 				throw new NotFoundException(process.env.CLIENT_NOT_FOUND_MESSAGE || 'Client not found');
 			}
 
-			const { name: clientName } = clientData.client;
+			const client = clientData.client;
+			const { name: clientName } = client;
+
+			// Resolve organization from client (not from user)
+			const resolvedOrgId = client.organisationUid || orgId;
+			const resolvedBranchId = client.branchUid || branchId;
+
+			// Resolve owner user ID (handles client-placed orders)
+			const ownerInfo = await this.resolveOwnerUserId(
+				quotationData?.owner?.uid,
+				client,
+				resolvedOrgId
+			);
+			const placedByUserId = ownerInfo.userId; // null for client-placed orders
+			const isClientPlaced = ownerInfo.isClientPlaced;
+			const placedByClientName = ownerInfo.clientContactName;
+
+			// Get organization-specific currency settings
+			const orgCurrency = await this.getOrgCurrency(resolvedOrgId);
 			const internalEmail = this.configService.get<string>('INTERNAL_BROADCAST_EMAIL');
 
 			const productPromises = quotationData?.items?.map((item) =>
@@ -952,26 +1027,43 @@ export class ShopService {
 			const frontendUrl = this.configService.get<string>('FRONTEND_URL') || 'http://loro.co.za/review-quotation';
 			const reviewUrl = `${frontendUrl}?token=${reviewToken}`;
 
+			// Calculate settlement discount based on payment terms
+			const baseTotalAmount = roundCurrency(quotationData?.totalAmount);
+			let settlementDiscount = quotationData?.settlementDiscount;
+			if (!settlementDiscount && client.paymentTerms) {
+				settlementDiscount = this.calculateSettlementDiscount(baseTotalAmount, client.paymentTerms);
+			}
+			settlementDiscount = roundCurrency(settlementDiscount || 0);
+			
+			// Apply settlement discount to total amount
+			const finalTotalAmount = roundCurrency(baseTotalAmount - settlementDiscount);
+			
 			const newQuotation = {
 				quotationNumber: `QUO-${Date.now()}`,
 				totalItems: Number(quotationData?.totalItems),
-				totalAmount: Number(quotationData?.totalAmount),
-				placedBy: { uid: quotationData?.owner?.uid },
+				totalAmount: finalTotalAmount,
+				placedBy: placedByUserId ? { uid: placedByUserId } : null, // null for client-placed orders
+				isClientPlaced: isClientPlaced,
+				placedByClientName: placedByClientName,
 				client: { uid: quotationData?.client?.uid },
 				status: OrderStatus.PENDING_INTERNAL,
+				documentType: (quotationData?.documentType as DocumentType) || DocumentType.QUOTATION,
 				quotationDate: new Date(),
 				createdAt: new Date(),
 				updatedAt: new Date(),
 				reviewToken: reviewToken,
 				reviewUrl: reviewUrl,
 				promoCode: quotationData?.promoCode,
+				deliveryMethod: quotationData?.deliveryMethod,
+				deliveryAddress: quotationData?.deliveryAddress,
+				settlementDiscount: settlementDiscount,
 				// Store currency code with the quotation
 				currency: orgCurrency.code,
 				quotationItems: quotationData?.items?.map((item) => {
 					const product = products.flat().find((p) => p.uid === item.uid);
 					// Use the pricing from the frontend which already calculated palette vs item pricing
-					const unitPrice = Number(item?.unitPrice || product?.price || 0);
-					const totalPrice = Number(item?.totalPrice || (item?.quantity * unitPrice));
+					const unitPrice = roundCurrency(item?.unitPrice || product?.price || 0);
+					const totalPrice = roundCurrency(item?.totalPrice || (item?.quantity * unitPrice));
 					
 					return {
 						quantity: Number(item?.quantity),
@@ -990,22 +1082,25 @@ export class ShopService {
 						updatedAt: new Date(),
 					};
 				}),
-				// Assign organisation and branch as relation objects if IDs exist
-				...(orgId && { organisation: { uid: orgId } }), // Assumes relation name is 'organisation' and expects { uid: ... }
-				...(branchId && { branch: { uid: branchId } }),
+				// Assign organisation and branch from CLIENT (not from user)
+				...(resolvedOrgId && { organisation: { uid: resolvedOrgId } }),
+				...(resolvedBranchId && { branch: { uid: resolvedBranchId } }),
 				// Assign project if provided
 				...(quotationData?.project?.uid && { project: { uid: quotationData.project.uid } }),
 			};
 
 			// Add organization and branch if available - DIRECT COLUMN VALUES
-			if (orgId) {
-				// Store as direct column value instead of relation to ensure it's saved properly
-				newQuotation['organisationUid'] = orgId;
+			if (resolvedOrgId) {
+				newQuotation['organisationUid'] = resolvedOrgId;
 			}
 
-			if (branchId) {
-				// Store as direct column value instead of relation to ensure it's saved properly
-				newQuotation['branchUid'] = branchId;
+			if (resolvedBranchId) {
+				newQuotation['branchUid'] = resolvedBranchId;
+			}
+
+			// Explicitly set clientUid to ensure quotations are not skipped when fetching
+			if (quotationData?.client?.uid) {
+				newQuotation['clientUid'] = quotationData.client.uid;
 			}
 
 		const savedQuotation = await this.quotationRepository.save(newQuotation);
@@ -1070,44 +1165,42 @@ export class ShopService {
 					});
 				};
 
-				// Trigger recalculation of user targets for the owner after a new quotation (checkout)
-				if (quotationData?.owner?.uid && this.eventEmitter) {
-					this.eventEmitter.emit('user.target.update.required', { userId: quotationData.owner.uid });
+				// Trigger recalculation of user targets ONLY if placed by sales rep (not client-placed)
+				// Use event queue for reliability
+				if (placedByUserId && !isClientPlaced) {
+					await this.eventQueue.queueEvent(
+						'user.target.update.required',
+						{ userId: placedByUserId },
+						EventPriority.NORMAL,
+					);
 				}
 
-				// Generate PDF for the quotation
-				// First get the full quotation with all relations for PDF generation
-				const fullQuotation = await this.quotationRepository.findOne({
-					where: { uid: savedQuotation.uid },
-					relations: ['placedBy', 'client', 'quotationItems', 'quotationItems.product', 'organisation', 'branch', 'project'],
-				});
+				// Generate PDF for the quotation using event queue (critical operation)
+				// Queue PDF generation with high priority for faster processing and reliability
+				const pdfGenerationData = {
+					quotationId: savedQuotation.uid,
+					quotationNumber: savedQuotation.quotationNumber,
+					recipientEmail: quotationData?.recipientEmail || clientData?.client?.email,
+					clientName: clientName,
+					reviewUrl: savedQuotation.reviewUrl,
+					totalAmount: Number(savedQuotation?.totalAmount),
+					currency: orgCurrency.code,
+					quotationItems: mapQuotationItems(quotationData?.items || []),
+				};
 
-				if (fullQuotation) {
-					const pdfUrl = await this.generateQuotationPDF(fullQuotation);
+				// Queue PDF generation - will be processed by event listener with retry mechanism
+				await this.eventQueue.queueEvent(
+					'quotation.pdf.generate',
+					pdfGenerationData,
+					EventPriority.HIGH,
+					{
+						maxAttempts: 3,
+						retryDelay: 2000,
+					},
+				);
 
-					// If PDF was generated successfully, update the quotation record
-					if (pdfUrl) {
-						await this.quotationRepository.update(savedQuotation.uid, { pdfURL: pdfUrl });
-					}
-
-					// Send quotation copy to client if recipientEmail is provided
-					const emailRecipient = quotationData?.recipientEmail || clientData?.client?.email;
-					if (quotationData?.recipientEmail && pdfUrl) {
-						try {
-							this.eventEmitter.emit('send.email', EmailType.NEW_QUOTATION_CLIENT, [emailRecipient], {
-								name: clientName,
-								quotationId: savedQuotation?.quotationNumber,
-								pdfUrl: pdfUrl,
-								reviewUrl: savedQuotation.reviewUrl,
-								total: Number(savedQuotation?.totalAmount),
-								currency: orgCurrency.code,
-								quotationItems: mapQuotationItems(quotationData?.items || []),
-							});
-						} catch (err) {
-							this.logger.error(`Failed to send quotation email: ${err.message}`, err.stack);
-						}
-					}
-				}
+				// Also emit immediately for backward compatibility (event queue will handle retries)
+				this.eventEmitter.emit('quotation.pdf.generate', pdfGenerationData);
 
 				// Process analytics asynchronously without blocking (fire-and-forget)
 				Promise.all(quotationData.items.map(async (item) => {
@@ -1117,16 +1210,16 @@ export class ShopService {
 							// Record view and cart add with enhanced tracking
 							await this.productsService.recordView(
 								product.uid, 
-								quotationData.owner?.uid, 
-								orgId, 
-								branchId
+								placedByUserId, 
+								resolvedOrgId, 
+								resolvedBranchId
 							);
 							await this.productsService.recordCartAdd(
 								product.uid, 
 								item.quantity,
-								quotationData.owner?.uid, 
-								orgId, 
-								branchId
+								placedByUserId, 
+								resolvedOrgId, 
+								resolvedBranchId
 							);
 
 							// Update stock history
@@ -1146,9 +1239,11 @@ export class ShopService {
 					amount: savedQuotation.totalAmount,
 					itemCount: savedQuotation.totalItems,
 					clientId: quotationData.client.uid,
-					ownerId: quotationData.owner.uid,
-					orgId,
-					branchId,
+					ownerId: placedByUserId,
+					isClientPlaced: isClientPlaced,
+					placedByClientName: placedByClientName,
+					orgId: resolvedOrgId,
+					branchId: resolvedBranchId,
 					timestamp: new Date(),
 					items: quotationData.items.map(item => ({
 						productId: item.uid,
@@ -1174,12 +1269,16 @@ export class ShopService {
 							averageItemValue: fullQuotationForSocket.totalItems > 0 
 								? Number(fullQuotationForSocket.totalAmount) / fullQuotationForSocket.totalItems 
 								: 0,
-							createdByUser: {
+							createdByUser: fullQuotationForSocket.isClientPlaced ? {
+								name: fullQuotationForSocket.placedByClientName,
+								isClientPlaced: true,
+							} : {
 								uid: fullQuotationForSocket.placedBy?.uid,
 								name: fullQuotationForSocket.placedBy?.name,
 								email: fullQuotationForSocket.placedBy?.email,
 								branch: fullQuotationForSocket.placedBy?.branch?.name,
 								organisation: fullQuotationForSocket.organisation?.name,
+								isClientPlaced: false,
 							},
 							clientInfo: {
 								uid: fullQuotationForSocket.client?.uid,
@@ -1218,8 +1317,8 @@ export class ShopService {
 							eventType: 'QUOTATION_CREATED',
 							timestamp: new Date().toISOString(),
 							source: 'shop_service',
-							orgId,
-							branchId,
+							orgId: resolvedOrgId,
+							branchId: resolvedBranchId,
 							isBlankQuotation: false,
 						}
 					};
@@ -1231,14 +1330,14 @@ export class ShopService {
 				try {
 					const recipients: number[] = [];
 
-					// Add sales rep (placedBy user) if exists
-					if (quotationData?.owner?.uid) {
-						recipients.push(quotationData.owner.uid);
+					// Add sales rep (placedBy user) if exists and not client-placed
+					if (placedByUserId && !isClientPlaced) {
+						recipients.push(placedByUserId);
 					}
 
 					// Add organization admins for internal notifications
-					if (orgId) {
-						const orgAdmins = await this.getOrganizationAdmins(orgId);
+					if (resolvedOrgId) {
+						const orgAdmins = await this.getOrganizationAdmins(resolvedOrgId);
 						orgAdmins.forEach(admin => {
 							if (admin.uid && !recipients.includes(admin.uid)) {
 								recipients.push(admin.uid);
@@ -1311,11 +1410,11 @@ export class ShopService {
 				// Notify internal team about new quotation
 				this.eventEmitter.emit('send.email', EmailType.NEW_QUOTATION_INTERNAL, [internalEmail], baseConfig);
 
-				// Send to sales rep (the person who created the quotation)
-				if (quotationData?.owner?.uid) {
+				// Send to sales rep (the person who created the quotation) - only if not client-placed
+				if (placedByUserId && !isClientPlaced) {
 					try {
 						const salesRep = await this.userRepository.findOne({ 
-							where: { uid: quotationData.owner.uid },
+							where: { uid: placedByUserId },
 							select: ['uid', 'email', 'name']
 						});
 						
@@ -1329,6 +1428,30 @@ export class ShopService {
 						}
 					} catch (salesRepError) {
 						this.logger.warn(`[${asyncOperationId}] Failed to send sales rep notification: ${salesRepError.message}`);
+					}
+				} else if (isClientPlaced) {
+					// For client-placed orders, notify assigned sales rep for service commission (not sales commission)
+					if (client.assignedSalesRep?.uid) {
+						try {
+							const salesRep = await this.userRepository.findOne({ 
+								where: { uid: client.assignedSalesRep.uid },
+								select: ['uid', 'email', 'name']
+							});
+							
+							if (salesRep?.email) {
+								this.eventEmitter.emit('send.email', EmailType.NEW_QUOTATION_SALES_REP, [salesRep.email], {
+									...baseConfig,
+									salesRepName: salesRep.name || 'Sales Representative',
+									quotationItems: mapQuotationItems(quotationData?.items || []),
+									isClientPlaced: true,
+									placedByClientName: placedByClientName,
+									note: 'This order was placed directly by the client. Service commission applies, not sales commission.',
+								});
+								this.logger.log(`[${asyncOperationId}] Service commission notification sent to assigned sales rep ${salesRep.email} for client-placed order`);
+							}
+						} catch (salesRepError) {
+							this.logger.warn(`[${asyncOperationId}] Failed to send service commission notification: ${salesRepError.message}`);
+						}
 					}
 				}
 
@@ -1351,6 +1474,11 @@ export class ShopService {
 
 				// Clear caches after successful quotation creation
 				await this.clearShopCache(savedQuotation.uid, quotationData.client?.uid);
+
+				// Update project cost if quotation is associated with a project
+				if (quotationData?.project?.uid) {
+					await this.updateProjectCostsFromQuotation(savedQuotation.uid, resolvedOrgId, resolvedBranchId);
+				}
 
 				this.logger.log(`[${asyncOperationId}] Async post-quotation processing completed successfully`);
 			} catch (error) {
@@ -1381,47 +1509,44 @@ export class ShopService {
 				throw new Error('Blank quotation items are required');
 			}
 
-			if (!blankQuotationData?.owner?.uid) {
-				this.logger.error('[createBlankQuotation] No owner provided');
-				throw new Error('Owner is required');
-			}
-
 			if (!blankQuotationData?.client?.uid) {
 				this.logger.error('[createBlankQuotation] No client provided');
 				throw new Error('Client is required');
 			}
 
-			this.logger.log(`[createBlankQuotation] Validating request - Items: ${blankQuotationData.items.length}, Owner: ${blankQuotationData.owner.uid}, Client: ${blankQuotationData.client.uid}`);
-
-			// Validate that the user (placedBy) exists before creating quotation
-			const ownerUser = await this.userRepository.findOne({
-				where: { uid: blankQuotationData.owner.uid },
-				select: ['uid']
-			});
-
-			if (!ownerUser) {
-				this.logger.error(`[createBlankQuotation] User not found: ${blankQuotationData.owner.uid}`);
-				throw new NotFoundException(`User with ID ${blankQuotationData.owner.uid} not found`);
-			}
-
-			// Get organization-specific currency settings
-			const orgCurrency = await this.getOrgCurrency(orgId);
-			this.logger.log(`[createBlankQuotation] Organization currency: ${orgCurrency.code}`);
-
-			// Pass orgId and branchId for proper scoping
+			// Get client data first to resolve organization
 			const clientData = await this.clientsService?.findOne(
 				Number(blankQuotationData?.client?.uid),
 				orgId,
 				branchId
 			);
 
-			// Properly check if clientData and client exist
 			if (!clientData || !clientData.client) {
 				this.logger.error(`[createBlankQuotation] Client not found: ${blankQuotationData?.client?.uid} for orgId: ${orgId}, branchId: ${branchId}`);
 				throw new NotFoundException(process.env.CLIENT_NOT_FOUND_MESSAGE || 'Client not found');
 			}
 
-			const { name: clientName, email: clientEmail } = clientData.client;
+			const client = clientData.client;
+			const { name: clientName, email: clientEmail } = client;
+
+			// Resolve organization from client (not from user)
+			const resolvedOrgId = client.organisationUid || orgId;
+			const resolvedBranchId = client.branchUid || branchId;
+
+			// Resolve owner user ID (handles client-placed orders)
+			const ownerInfo = await this.resolveOwnerUserId(
+				blankQuotationData?.owner?.uid,
+				client,
+				resolvedOrgId
+			);
+			const placedByUserId = ownerInfo.userId; // null for client-placed orders
+			const isClientPlaced = ownerInfo.isClientPlaced;
+			const placedByClientName = ownerInfo.clientContactName;
+
+			// Get organization-specific currency settings
+			const orgCurrency = await this.getOrgCurrency(resolvedOrgId);
+			this.logger.log(`[createBlankQuotation] Organization currency: ${orgCurrency.code}`);
+			this.logger.log(`[createBlankQuotation] Validating request - Items: ${blankQuotationData.items.length}, Owner: ${placedByUserId}, Client: ${blankQuotationData.client.uid}`);
 			const internalEmail = this.configService.get<string>('INTERNAL_BROADCAST_EMAIL');
 			this.logger.log(`[createBlankQuotation] Client found: ${clientName} (${clientEmail})`);
 
@@ -1482,9 +1607,9 @@ export class ShopService {
 					
 					// Calculate price based on price list type
 					let unitPrice = this.calculatePriceByType(product, blankQuotationData.priceListType);
-					let itemTotalPrice = unitPrice * quantity;
+					let itemTotalPrice = roundCurrency(unitPrice * quantity);
 
-					totalAmount += itemTotalPrice;
+					totalAmount = roundCurrency(totalAmount + itemTotalPrice);
 					totalItems += quantity;
 
 					this.logger.log(`[createBlankQuotation] Item ${product?.name}: ${quantity} x ${unitPrice} = ${itemTotalPrice}`);
@@ -1517,7 +1642,9 @@ export class ShopService {
 				quotationNumber: quotationNumber,
 				totalItems: totalItems,
 				totalAmount: totalAmount,
-				placedBy: { uid: blankQuotationData?.owner?.uid },
+				placedBy: placedByUserId ? { uid: placedByUserId } : null, // null for client-placed orders
+				isClientPlaced: isClientPlaced,
+				placedByClientName: placedByClientName,
 				client: { uid: blankQuotationData?.client?.uid },
 				status: OrderStatus.DRAFT,
 				quotationDate: new Date(),
@@ -1532,9 +1659,11 @@ export class ShopService {
 				priceListType: blankQuotationData.priceListType,
 				isBlankQuotation: true,
 				quotationItems: quotationItems,
-				// Store org and branch associations
-				...(orgId && { organisationUid: orgId }),
-				...(branchId && { branchUid: branchId }),
+				// Store org and branch associations from CLIENT
+				...(resolvedOrgId && { organisationUid: resolvedOrgId }),
+				...(resolvedBranchId && { branchUid: resolvedBranchId }),
+				// Explicitly set clientUid to ensure quotations are not skipped when fetching
+				...(blankQuotationData?.client?.uid && { clientUid: blankQuotationData.client.uid }),
 			};
 
 		this.logger.log(`[createBlankQuotation] Saving quotation to database`);
@@ -1554,28 +1683,60 @@ export class ShopService {
 			this.logger.log(`[${asyncOperationId}] Starting async post-blank-quotation processing for ${savedQuotation.quotationNumber}`);
 
 			try {
-				// Trigger recalculation of user targets for the owner (same as regular quotation)
-				if (blankQuotationData?.owner?.uid && this.eventEmitter) {
-					this.logger.log(`[${asyncOperationId}] Triggering target update for user: ${blankQuotationData.owner.uid}`);
-					this.eventEmitter.emit('user.target.update.required', { userId: blankQuotationData.owner.uid });
+				// Trigger recalculation of user targets ONLY if placed by sales rep (not client-placed)
+				// Use event queue for reliability
+				if (placedByUserId && !isClientPlaced) {
+					this.logger.log(`[${asyncOperationId}] Triggering target update for user: ${placedByUserId}`);
+					await this.eventQueue.queueEvent(
+						'user.target.update.required',
+						{ userId: placedByUserId },
+						EventPriority.NORMAL,
+					);
 				}
 
-				// Generate PDF for the quotation
-				this.logger.log(`[${asyncOperationId}] Generating PDF for quotation`);
-				const fullQuotation = await this.quotationRepository.findOne({
-					where: { uid: savedQuotation.uid },
-					relations: ['client', 'quotationItems', 'quotationItems.product', 'organisation', 'branch', 'project'],
-				});
+				// Generate PDF for the quotation using event queue (critical operation)
+				const blankPdfData = {
+					quotationId: savedQuotation.uid,
+					quotationNumber: savedQuotation.quotationNumber,
+					recipientEmail: blankQuotationData?.recipientEmail || clientData?.client?.email,
+					clientName: clientData?.client?.name || 'Client',
+					reviewUrl: savedQuotation.reviewUrl,
+					totalAmount: Number(savedQuotation?.totalAmount),
+					currency: orgCurrency.code,
+					quotationItems: blankQuotationData.items
+						.filter((item) => item.included !== false)
+						.map((item) => {
+							const product = productMap.get(item.uid);
+							const quantity = Number(item.quantity);
+							const unitPrice = product ? this.calculatePriceByType(product, blankQuotationData.priceListType) : 0;
+							const totalPrice = unitPrice * quantity;
+							return {
+								quantity: quantity,
+								product: {
+									uid: item.uid,
+									name: product?.name || 'Unknown Product',
+									code: product?.productRef || 'N/A',
+									sku: product?.sku || 'N/A',
+								},
+								totalPrice: totalPrice,
+								unitPrice: unitPrice,
+							};
+						}),
+				};
 
-				if (fullQuotation) {
-					const pdfUrl = await this.generateQuotationPDF(fullQuotation);
-					if (pdfUrl) {
-						this.logger.log(`[${asyncOperationId}] PDF generated successfully: ${pdfUrl}`);
-						await this.quotationRepository.update(savedQuotation.uid, { pdfURL: pdfUrl });
-					} else {
-						this.logger.warn(`[${asyncOperationId}] Failed to generate PDF`);
-					}
-				}
+				// Queue PDF generation with high priority
+				await this.eventQueue.queueEvent(
+					'quotation.pdf.generate',
+					blankPdfData,
+					EventPriority.HIGH,
+					{
+						maxAttempts: 3,
+						retryDelay: 2000,
+					},
+				);
+
+				// Also emit immediately for backward compatibility
+				this.eventEmitter.emit('quotation.pdf.generate', blankPdfData);
 
 				// Update analytics for each product (same as regular quotation)
 				this.logger.log(`[${asyncOperationId}] Updating product analytics for ${blankQuotationData.items.length} items`);
@@ -1586,16 +1747,16 @@ export class ShopService {
 							// Record view and cart add with enhanced tracking
 							await this.productsService.recordView(
 								product.uid,
-								blankQuotationData.owner?.uid,
-								orgId,
-								branchId
+								placedByUserId,
+								resolvedOrgId,
+								resolvedBranchId
 							);
 							await this.productsService.recordCartAdd(
 								product.uid,
 								item.quantity,
-								blankQuotationData.owner?.uid,
-								orgId,
-								branchId
+								placedByUserId,
+								resolvedOrgId,
+								resolvedBranchId
 							);
 
 							// Update stock history
@@ -1617,11 +1778,13 @@ export class ShopService {
 					amount: savedQuotation.totalAmount,
 					itemCount: savedQuotation.totalItems,
 					clientId: blankQuotationData.client.uid,
-					ownerId: blankQuotationData.owner.uid,
+					ownerId: placedByUserId,
+					isClientPlaced: isClientPlaced,
+					placedByClientName: placedByClientName,
 					isBlankQuotation: true,
 					priceListType: blankQuotationData.priceListType,
-					orgId,
-					branchId,
+					orgId: resolvedOrgId,
+					branchId: resolvedBranchId,
 					timestamp: new Date(),
 					items: quotationItems.map(item => ({
 						productId: item.product.uid,
@@ -1648,12 +1811,16 @@ export class ShopService {
 							averageItemValue: fullBlankQuotationForSocket.totalItems > 0 
 								? Number(fullBlankQuotationForSocket.totalAmount) / fullBlankQuotationForSocket.totalItems 
 								: 0,
-							createdByUser: {
+							createdByUser: fullBlankQuotationForSocket.isClientPlaced ? {
+								name: fullBlankQuotationForSocket.placedByClientName,
+								isClientPlaced: true,
+							} : {
 								uid: fullBlankQuotationForSocket.placedBy?.uid,
 								name: fullBlankQuotationForSocket.placedBy?.name,
 								email: fullBlankQuotationForSocket.placedBy?.email,
 								branch: fullBlankQuotationForSocket.placedBy?.branch?.name,
 								organisation: fullBlankQuotationForSocket.organisation?.name,
+								isClientPlaced: false,
 							},
 							clientInfo: {
 								uid: fullBlankQuotationForSocket.client?.uid,
@@ -1699,8 +1866,8 @@ export class ShopService {
 							eventType: 'BLANK_QUOTATION_CREATED',
 							timestamp: new Date().toISOString(),
 							source: 'shop_service',
-							orgId,
-							branchId,
+							orgId: resolvedOrgId,
+							branchId: resolvedBranchId,
 							isBlankQuotation: true,
 						}
 					};
@@ -1712,14 +1879,14 @@ export class ShopService {
 				try {
 					const recipients: number[] = [];
 
-					// Add sales rep (placedBy user) if exists
-					if (blankQuotationData?.owner?.uid) {
-						recipients.push(blankQuotationData.owner.uid);
+					// Add sales rep (placedBy user) if exists and not client-placed
+					if (placedByUserId && !isClientPlaced) {
+						recipients.push(placedByUserId);
 					}
 
 					// Add organization admins for internal notifications
-					if (orgId) {
-						const orgAdmins = await this.getOrganizationAdmins(orgId);
+					if (resolvedOrgId) {
+						const orgAdmins = await this.getOrganizationAdmins(resolvedOrgId);
 						orgAdmins.forEach(admin => {
 							if (admin.uid && !recipients.includes(admin.uid)) {
 								recipients.push(admin.uid);
@@ -1834,7 +2001,7 @@ export class ShopService {
 					customerType: clientData?.client?.type || 'standard', // Add customer type like regular quotation
 					priority: 'medium', // Add priority for blank quotations
 					quotationItems: mapBlankQuotationItems(quotationItems),
-					pdfURL: fullQuotation?.pdfURL,
+					pdfURL: savedQuotation?.pdfURL,
 				};
 
 				// Send email to recipient if provided, otherwise to client
@@ -1971,41 +2138,16 @@ export class ShopService {
 				this.logger.debug(`[${operationId}] Sample banner: ${JSON.stringify({ uid: banners[0].uid, title: banners[0].title, orgUid: banners[0].organisationUid, branchUid: banners[0].branchUid })}`);
 			}
 
-			// Clear logging for debugging
-			this.logger.log(`[${operationId}] 🎨 BANNERS RESPONSE BEING SENT TO CLIENT:`, {
-				bannersArray: banners.map(b => ({
-					uid: b.uid,
-					title: b.title,
-					subtitle: b.subtitle,
-					image: b.image,
-					category: b.category,
-					organisationUid: b.organisationUid,
-					branchUid: b.branchUid,
-				})),
-				bannersCount: banners.length,
-				orgId,
-				branchId,
-				responseStructure: {
-					banners: banners,
-					message: process.env.SUCCESS_MESSAGE,
-				},
-			});
+			// Ensure banners is always an array (even if empty)
+			const validBanners = Array.isArray(banners) ? banners : [];
 
 			const finalResponse = {
-				banners,
+				banners: validBanners,
 				message: process.env.SUCCESS_MESSAGE,
 			};
 
 			this.logger.log(`[${operationId}] ✅ FINAL BANNERS RESPONSE:`, {
-				response: finalResponse,
-				bannersCount: banners.length,
-				banners: banners.map(b => ({
-					uid: b.uid,
-					title: b.title,
-					subtitle: b.subtitle,
-					image: b.image,
-					category: b.category,
-				})),
+				bannersCount: validBanners.length,
 				orgId,
 				branchId,
 			});
@@ -2100,14 +2242,14 @@ export class ShopService {
 
 	async getAllQuotations(orgId?: number, branchId?: number, userId?: number, userRole?: AccessLevel): Promise<{ quotations: Quotation[]; message: string }> {
 		try {
-					const query = this.quotationRepository
-			.createQueryBuilder('quotation')
-			.leftJoinAndSelect('quotation.client', 'client')
-			.leftJoinAndSelect('quotation.placedBy', 'placedBy')
-			.leftJoinAndSelect('quotation.quotationItems', 'quotationItems')
-			.leftJoinAndSelect('quotationItems.product', 'product')
-			.leftJoinAndSelect('quotation.project', 'project')
-			.orderBy('quotation.createdAt', 'DESC');
+			const query = this.quotationRepository
+				.createQueryBuilder('quotation')
+				.leftJoinAndSelect('quotation.client', 'client')
+				.leftJoinAndSelect('quotation.placedBy', 'placedBy')
+				.leftJoinAndSelect('quotation.quotationItems', 'quotationItems')
+				.leftJoinAndSelect('quotationItems.product', 'product')
+				.leftJoinAndSelect('quotation.project', 'project')
+				.orderBy('quotation.createdAt', 'DESC');
 
 			// Add filtering by org and branch
 			if (orgId) {
@@ -2119,12 +2261,37 @@ export class ShopService {
 			}
 
 			// Role-based filtering: Only ADMIN, OWNER, DEVELOPER, MANAGER can see all quotations
-			// Other users can only see their own quotations
+			// CLIENT users see quotations where they are the client (not placedBy, since client-placed orders have placedBy = null)
+			// Other users can only see their own quotations (placedBy.uid = userId)
 			const privilegedRoles = [AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.DEVELOPER, AccessLevel.MANAGER];
 			const isPrivilegedUser = privilegedRoles.includes(userRole);
 			
 			if (!isPrivilegedUser && userId) {
-				query.andWhere('placedBy.uid = :userId', { userId });
+				if (userRole === AccessLevel.CLIENT) {
+					// For clients, resolve the Client UID from ClientAuth UID
+					const clientAuth = await this.clientAuthRepository.findOne({
+						where: { uid: userId },
+						relations: ['client'],
+					});
+
+					if (clientAuth?.client?.uid) {
+						const clientUid = clientAuth.client.uid;
+						this.logger.log(`[getAllQuotations] Client user ${userId} resolved to client UID ${clientUid}`);
+						// Filter by client.uid to show all quotations for this client
+						// This includes both client-placed orders (isClientPlaced=true) and sales-rep-placed orders
+						query.andWhere('client.uid = :clientUid', { clientUid });
+					} else {
+						this.logger.warn(`[getAllQuotations] ClientAuth ${userId} not found or has no associated client`);
+						// Return empty array if client not found
+						return {
+							quotations: [],
+							message: 'Client not found',
+						};
+					}
+				} else {
+					// For non-client users, filter by placedBy.uid
+					query.andWhere('placedBy.uid = :userId', { userId });
+				}
 			}
 
 			const quotations = await query.getMany();
@@ -2134,9 +2301,10 @@ export class ShopService {
 				message: process.env.SUCCESS_MESSAGE,
 			};
 		} catch (error) {
+			this.logger.error(`[getAllQuotations] Error fetching quotations: ${error?.message}`, error?.stack);
 			return {
 				quotations: [],
-				message: error?.message,
+				message: error?.message || 'Failed to fetch quotations',
 			};
 		}
 	}
@@ -2336,6 +2504,128 @@ export class ShopService {
 
 		product.sku = await this.ensureUniqueSKU(product);
 		return this.productRepository.save(product);
+	}
+
+	/**
+	 * Check if quotation can be edited (before major stages)
+	 */
+	private canEditQuotation(status: OrderStatus): boolean {
+		const nonEditableStatuses = [
+			OrderStatus.SOURCING,
+			OrderStatus.PACKING,
+			OrderStatus.IN_FULFILLMENT,
+			OrderStatus.PAID,
+			OrderStatus.OUTFORDELIVERY,
+			OrderStatus.DELIVERED,
+			OrderStatus.COMPLETED,
+			OrderStatus.CANCELLED,
+		];
+		return !nonEditableStatuses.includes(status);
+	}
+
+	/**
+	 * Update quotation for client (client-scoped editing)
+	 */
+	async updateQuotationForClient(
+		quotationId: number,
+		quotationData: CheckoutDto,
+		clientId: number,
+	): Promise<{ success: boolean; message: string }> {
+		try {
+			// Find quotation and verify it belongs to the client
+			const quotation = await this.quotationRepository.findOne({
+				where: { uid: quotationId },
+				relations: ['client', 'quotationItems', 'quotationItems.product'],
+			});
+
+			if (!quotation) {
+				return { success: false, message: 'Quotation not found' };
+			}
+
+			// Verify quotation belongs to client
+			if (quotation.client?.uid !== clientId) {
+				return { success: false, message: 'Unauthorized: Quotation does not belong to this client' };
+			}
+
+			// Check if quotation can be edited
+			if (!this.canEditQuotation(quotation.status)) {
+				return {
+					success: false,
+					message: `Cannot edit quotation in ${quotation.status} status. Editing is only allowed before SOURCING, PACKING, or IN_FULFILLMENT stages.`,
+				};
+			}
+
+			// Validate items
+			if (!quotationData?.items?.length) {
+				return { success: false, message: 'Quotation items are required' };
+			}
+
+			// Get products
+			const productPromises = quotationData.items.map((item) =>
+				this.productRepository.find({ where: { uid: item?.uid }, relations: ['reseller'] }),
+			);
+			const products = await Promise.all(productPromises);
+
+			// Get organization currency
+			const orgCurrency = await this.getOrgCurrency(quotation.organisationUid);
+
+			// Calculate new totals
+			const newTotalAmount = calculateTotal(quotationData.items.map(item => item?.totalPrice || 0));
+			const newTotalItems = quotationData.items.reduce(
+				(sum, item) => sum + Number(item?.quantity || 0) * Number(item?.itemsPerUnit || 1),
+				0,
+			);
+
+			// Update quotation items (delete old, create new)
+			await this.quotationRepository.manager.transaction(async (transactionalEntityManager) => {
+				// Delete existing items
+				await transactionalEntityManager.delete('quotation_item', { quotation: { uid: quotationId } });
+
+				// Create new items
+				const newItems = quotationData.items.map((item) => {
+					const product = products.flat().find((p) => p.uid === item.uid);
+					const unitPrice = roundCurrency(item?.unitPrice || product?.price || 0);
+					const totalPrice = roundCurrency(item?.totalPrice || item?.quantity * unitPrice);
+
+					return transactionalEntityManager.create('quotation_item', {
+						quantity: Number(item?.quantity),
+						product: { uid: item?.uid },
+						quotation: { uid: quotationId },
+						unitPrice,
+						totalPrice,
+						purchaseMode: item?.purchaseMode || 'item',
+						itemsPerUnit: Number(item?.itemsPerUnit || 1),
+						createdAt: new Date(),
+						updatedAt: new Date(),
+					});
+				});
+
+				await transactionalEntityManager.save('quotation_item', newItems);
+
+				// Update quotation totals
+				await transactionalEntityManager.update('quotation', quotationId, {
+					totalAmount: newTotalAmount,
+					totalItems: newTotalItems,
+					updatedAt: new Date(),
+					promoCode: quotationData?.promoCode || quotation.promoCode,
+					...(quotationData?.project?.uid && { project: { uid: quotationData.project.uid } }),
+				});
+			});
+
+			// Clear cache
+			await this.clearShopCache(quotationId, clientId);
+
+			return {
+				success: true,
+				message: 'Quotation updated successfully',
+			};
+		} catch (error) {
+			this.logger.error(`Failed to update quotation ${quotationId} for client ${clientId}:`, error.stack);
+			return {
+				success: false,
+				message: error?.message || 'Failed to update quotation',
+			};
+		}
 	}
 
 	async updateQuotationStatus(
@@ -3562,8 +3852,8 @@ export class ShopService {
 					eventType: 'QUOTATION_SENT_TO_CLIENT',
 					timestamp: new Date().toISOString(),
 					source: 'shop_service',
-					orgId,
-					branchId,
+					orgId: orgId,
+					branchId: branchId,
 				}
 			};
 

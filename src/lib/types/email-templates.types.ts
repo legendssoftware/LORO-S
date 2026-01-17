@@ -2203,6 +2203,47 @@ export interface AppUpdateNotificationData extends BaseEmailData {
 }
 
 // Approval Templates
+export interface LoyaltyWelcomeData extends BaseEmailData {
+	clientName: string;
+	clientEmail: string;
+	organizationName: string;
+	cardNumber: string;
+	welcomePoints: number;
+	tier: string;
+	completeProfileLink: string;
+	viewRewardsLink: string;
+	supportEmail: string;
+}
+
+export interface LoyaltyTierUpgradeData extends BaseEmailData {
+	clientName: string;
+	clientEmail: string;
+	organizationName: string;
+	oldTier: string;
+	newTier: string;
+	totalPoints: number;
+	multiplier?: number;
+	higherMultiplier?: boolean;
+	birthdayRewards?: boolean;
+	viewRewardsLink: string;
+	supportEmail: string;
+}
+
+export interface LoyaltyRewardClaimedData extends BaseEmailData {
+	clientName: string;
+	clientEmail: string;
+	organizationName: string;
+	rewardName: string;
+	voucherCode: string;
+	pointsSpent: number;
+	remainingPoints: number;
+	discountAmount?: number;
+	discountPercentage?: number;
+	expiresAt?: string;
+	viewRewardsLink: string;
+	supportEmail: string;
+}
+
 export interface ApprovalEmailData extends BaseEmailData {
 	approvalReference: string;
 	title: string;
@@ -2404,6 +2445,9 @@ export interface EmailDataMap {
     [EmailType.APPROVAL_WITHDRAWN]: ApprovalEmailData;
     [EmailType.APPROVAL_ARCHIVED]: ApprovalEmailData;
     [EmailType.APPROVAL_DELETED]: ApprovalEmailData;
+    [EmailType.LOYALTY_WELCOME]: LoyaltyWelcomeData;
+    [EmailType.LOYALTY_TIER_UPGRADE]: LoyaltyTierUpgradeData;
+    [EmailType.LOYALTY_REWARD_CLAIMED]: LoyaltyRewardClaimedData;
 }
 
 export type EmailTemplateData<T extends EmailType> = T extends keyof EmailDataMap ? EmailDataMap[T] : never;

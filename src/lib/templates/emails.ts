@@ -91,6 +91,9 @@ import {
 	AttendanceBreakStartedData,
 	AttendanceBreakEndedData,
 	AttendanceRecordsRequestData,
+	LoyaltyWelcomeData,
+	LoyaltyTierUpgradeData,
+	LoyaltyRewardClaimedData,
 } from '../types/email-templates.types';
 
 // Auth Templates
@@ -547,6 +550,19 @@ export const ClientProfileUpdateAdmin = (data: ClientProfileUpdateAdminData): st
 // Client Communication Templates
 export const ClientCommunicationReminder = (data: ClientCommunicationReminderData): string => {
 	return emailTemplateService.clientCommunicationReminder(data);
+};
+
+// Loyalty Templates
+export const LoyaltyWelcome = (data: LoyaltyWelcomeData): string => {
+	return emailTemplateService.loyaltyWelcome(data);
+};
+
+export const LoyaltyTierUpgrade = (data: LoyaltyTierUpgradeData): string => {
+	return emailTemplateService.loyaltyTierUpgrade(data);
+};
+
+export const LoyaltyRewardClaimed = (data: LoyaltyRewardClaimedData): string => {
+	return emailTemplateService.loyaltyRewardClaimed(data);
 };
 
 // Client Visit Templates
