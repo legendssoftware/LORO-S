@@ -146,4 +146,7 @@ export class Organisation {
 
 	@OneToMany(() => Project, (project) => project?.organisation, { nullable: true })
 	projects: Project[];
+
+	@Column({ unique: true, nullable: true })
+	clerkOrgId: string; // If using Clerk Organizations
 }

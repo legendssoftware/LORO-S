@@ -228,4 +228,10 @@ export class User {
 
 	@Column({ type: 'json', nullable: true })
 	managedDoors: number[] | null;
+
+	@Column({ unique: true, nullable: true })
+	clerkUserId: string; // Clerk user ID
+
+	@Column({ type: 'timestamptz', nullable: true })
+	clerkLastSyncedAt: Date; // Track last sync time
 }

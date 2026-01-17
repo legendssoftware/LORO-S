@@ -32,6 +32,7 @@
   },
   "dependencies": {
     "@apollo/server": "^4.11.2",
+    "@clerk/backend": "^2.29.3",
     "@google-cloud/storage": "^7.14.0",
     "@googlemaps/google-maps-services-js": "^3.4.0",
     "@nestjs/apollo": "^12.2.1",

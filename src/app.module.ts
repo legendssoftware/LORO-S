@@ -110,6 +110,7 @@ import { TblCustomers } from './erp/entities/tblcustomers.entity';
 import { TblCustomerCategories } from './erp/entities/tblcustomercategories.entity';
 import { ErpImporterModule } from './erp-importer/erp-importer.module';
 import { PayslipsModule } from './payslips/payslips.module';
+import { ClerkModule } from './clerk/clerk.module';
 
 
 @Module({
@@ -352,6 +353,7 @@ import { PayslipsModule } from './payslips/payslips.module';
 		ErpModule,
 		ErpImporterModule,
 		PayslipsModule,
+		ClerkModule,
 	],
 	controllers: [],
 	providers: [
