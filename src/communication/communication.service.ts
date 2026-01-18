@@ -229,23 +229,18 @@ export class CommunicationService {
 		this.logger.log(`[${operationId}] Initializing CommunicationService...`);
 		
 		try {
-			// Load and validate SMTP configuration
-			this.logger.debug(`[${operationId}] Loading SMTP configuration from environment...`);
 			const configStartTime = Date.now();
-			
-		const smtpHost = this.configService.get<string>('SMTP_HOST');
-		const smtpPort = this.configService.get<number>('SMTP_PORT');
-		const smtpUser = this.configService.get<string>('SMTP_USER');
+			// Load and validate SMTP configuration
+			const smtpHost = this.configService.get<string>('SMTP_HOST');
+			const smtpPort = this.configService.get<number>('SMTP_PORT');
+			const smtpUser = this.configService.get<string>('SMTP_USER');
 			const smtpPass = this.configService.get<string>('SMTP_PASS');
 			const smtpFrom = this.configService.get<string>('SMTP_FROM');
 			const emailFromName = this.configService.get<string>('EMAIL_FROM_NAME');
-			
 			const configTime = Date.now() - configStartTime;
-			this.logger.debug(`[${operationId}] SMTP configuration loaded in ${configTime}ms`);
 			
-			// Validate required configuration
-			this.logger.debug(`[${operationId}] Validating SMTP configuration...`);
 			const validationStartTime = Date.now();
+			// Validate required configuration
 			
 			if (!smtpHost) {
 				this.logger.error(`[${operationId}] SMTP_HOST is not configured`);
@@ -270,19 +265,11 @@ export class CommunicationService {
 			if (!smtpFrom) {
 				this.logger.warn(`[${operationId}] SMTP_FROM is not configured - emails may have missing sender`);
 			}
-			
 			const validationTime = Date.now() - validationStartTime;
-			this.logger.debug(`[${operationId}] SMTP configuration validation completed in ${validationTime}ms`);
 			
-			// Log configuration details (without sensitive data)
-			this.logger.debug(`[${operationId}] SMTP Configuration - Host: ${smtpHost}, Port: ${smtpPort}, User: ${smtpUser}, From: ${smtpFrom}, FromName: ${emailFromName || 'Not set'}`);
-			this.logger.debug(`[${operationId}] SMTP Security - Secure: ${smtpPort === 465}, TLS rejection: disabled`);
-			
-			// Create email transporter
-			this.logger.debug(`[${operationId}] Creating email transporter...`);
 			const transporterStartTime = Date.now();
-		
-		this.emailService = nodemailer.createTransport({
+			// Create email transporter
+			this.emailService = nodemailer.createTransport({
 			host: smtpHost,
 			port: smtpPort,
 			secure: smtpPort === 465,
@@ -294,18 +281,13 @@ export class CommunicationService {
 				rejectUnauthorized: false,
 			},
 		});
-		
 			const transporterTime = Date.now() - transporterStartTime;
-			this.logger.debug(`[${operationId}] Email transporter created in ${transporterTime}ms`);
-			
+		
 			// Test transporter connection (optional - can be commented out in production)
-			this.logger.debug(`[${operationId}] Testing SMTP connection...`);
-			const connectionTestStartTime = Date.now();
-			
 			// Note: We don't await this to avoid blocking initialization
+			const connectionTestStartTime = Date.now();
 			this.emailService.verify().then(() => {
-				const connectionTestTime = Date.now() - connectionTestStartTime;
-				this.logger.log(`[${operationId}] SMTP connection verified successfully in ${connectionTestTime}ms`);
+				this.logger.log(`[${operationId}] SMTP connection verified successfully`);
 			}).catch((error) => {
 				const connectionTestTime = Date.now() - connectionTestStartTime;
 				this.logger.warn(`[${operationId}] SMTP connection verification failed after ${connectionTestTime}ms: ${error.message}`);

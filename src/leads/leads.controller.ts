@@ -15,6 +15,7 @@ import {
 	ApiQuery,
 	ApiConsumes,
 } from '@nestjs/swagger';
+import { getDynamicDate, getDynamicDateTime, getFutureDate, getPastDate, createApiDescription } from '../lib/utils/swagger-helpers';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
@@ -48,7 +49,15 @@ export class LeadsController {
 	)
 	@ApiOperation({
 		summary: 'Create a new lead',
-		description: 'Creates a new lead with the provided details',
+		description: createApiDescription(
+			'Creates a new sales lead with comprehensive tracking and management capabilities.',
+			'The service method `LeadsService.create()` processes lead creation, validates data, assigns sales representatives, calculates lead score, sets up follow-up tasks, and returns the created lead with its reference.',
+			'LeadsService',
+			'create',
+			'creates a new lead, validates data, assigns sales reps, and calculates lead score',
+			'an object containing the created lead data, lead reference, and assignment information',
+			['Data validation', 'Sales rep assignment', 'Lead scoring', 'Follow-up task creation'],
+		),
 	})
 	@ApiBody({ type: CreateLeadDto })
 	@ApiCreatedResponse({

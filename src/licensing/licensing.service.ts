@@ -148,7 +148,7 @@ export class LicensingService {
 				order: { createdAt: 'DESC' },
 			});
 		} catch (error) {
-			console.log(error);
+			// Silent fail
 		}
 	}
 
@@ -173,7 +173,7 @@ export class LicensingService {
 				order: { validUntil: 'DESC' },
 			});
 		} catch (error) {
-			console.log(error);
+			// Silent fail
 		}
 	}
 
@@ -215,7 +215,7 @@ export class LicensingService {
 
 			return updated;
 		} catch (error) {
-			console.log(error);
+			// Silent fail
 		}
 	}
 
@@ -325,7 +325,7 @@ export class LicensingService {
 
 			return isWithinLimit;
 		} catch (error) {
-			console.log(error);
+			// Silent fail
 		}
 	}
 
@@ -456,7 +456,7 @@ export class LicensingService {
 				relations: ['organisation'],
 			});
 		} catch (error) {
-			console.log(error);
+			// Silent fail
 		}
 	}
 }

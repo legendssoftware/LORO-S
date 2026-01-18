@@ -1,6 +1,7 @@
 import { JournalService } from './journal.service';
 import { CreateJournalDto } from './dto/create-journal.dto';
 import { ApiOperation, ApiTags, ApiParam, ApiBody, ApiOkResponse, ApiCreatedResponse, ApiBadRequestResponse, ApiNotFoundResponse, ApiUnauthorizedResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { getDynamicDate, getDynamicDateTime, getFutureDate, getPastDate, createApiDescription } from '../lib/utils/swagger-helpers';
 import { RoleGuard } from '../guards/role.guard';
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
@@ -21,7 +22,16 @@ export class JournalController {
   @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
   @ApiOperation({ 
     summary: '📝 Create a new journal entry',
-    description: `
+    description: createApiDescription(
+      'Creates a new journal entry in the system with full content management and organizational tracking capabilities.',
+      'The service method `JournalService.create()` processes journal creation, validates required fields (owner, type), assigns organization and branch context, handles transactions for data consistency, manages cache invalidation, awards XP rewards, and returns success confirmation.',
+      'JournalService',
+      'create',
+      'creates a new journal entry with validation, transaction handling, and reward integration',
+      'a success message confirming journal creation',
+      ['Field validation', 'Organization and branch assignment', 'Transaction management', 'Cache invalidation', 'XP reward integration'],
+    ) + `
+
 # Create Comprehensive Journal Entry
 
 Creates a new journal entry in the system with full content management and organizational tracking capabilities.
@@ -107,7 +117,16 @@ Creates a new journal entry in the system with full content management and organ
   @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
   @ApiOperation({ 
     summary: '📊 Retrieve all journal entries',
-    description: `
+    description: createApiDescription(
+      'Retrieves journal entries with advanced filtering, pagination, and performance optimization capabilities.',
+      'The service method `JournalService.findAll()` processes query filters, applies organization and branch scoping, handles pagination, performs optimized database queries with relationships, manages caching, calculates statistics, and returns paginated journal results.',
+      'JournalService',
+      'findAll',
+      'retrieves journals with filtering, pagination, and organization scoping',
+      'a paginated response containing journals array, metadata, and statistics',
+      ['Filter processing', 'Organization scoping', 'Pagination', 'Cache management', 'Statistics calculation'],
+    ) + `
+
 # Comprehensive Journal Entry Retrieval
 
 Retrieves journal entries with advanced filtering, pagination, and performance optimization capabilities.
@@ -221,7 +240,15 @@ Retrieves journal entries with advanced filtering, pagination, and performance o
   @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
   @ApiOperation({ 
     summary: 'Get a journal entry by reference code',
-    description: 'Retrieves a specific journal entry by its reference code. Requires ADMIN, MANAGER, or SUPPORT role.'
+    description: createApiDescription(
+      'Retrieves a specific journal entry by its reference code with complete relationship data.',
+      'The service method `JournalService.findOne()` validates the journal reference, applies organization and branch filters, loads related entities (owner, branch, organisation), handles caching, and returns the complete journal details.',
+      'JournalService',
+      'findOne',
+      'retrieves a single journal entry by reference with full relationship data',
+      'an object containing the journal details with related entities',
+      ['Reference validation', 'Organization scoping', 'Relationship loading', 'Cache management'],
+    ),
   })
   @ApiParam({ 
     name: 'ref', 
@@ -345,7 +372,15 @@ Retrieves journal entries with advanced filtering, pagination, and performance o
   @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
   @ApiOperation({ 
     summary: 'Update a journal entry by reference code',
-    description: 'Updates a specific journal entry by its reference code. Requires ADMIN, MANAGER, or SUPPORT role.'
+    description: createApiDescription(
+      'Updates a specific journal entry by its reference code with validation and cache management.',
+      'The service method `JournalService.update()` validates the journal reference, applies organization and branch filters, updates journal fields, handles transactions, invalidates cache, and returns success confirmation.',
+      'JournalService',
+      'update',
+      'updates a journal entry with validation, transaction handling, and cache invalidation',
+      'a success message confirming the update',
+      ['Reference validation', 'Organization scoping', 'Field updates', 'Transaction management', 'Cache invalidation'],
+    ),
   })
   @ApiParam({ 
     name: 'ref', 
@@ -403,7 +438,15 @@ Retrieves journal entries with advanced filtering, pagination, and performance o
   @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER, AccessLevel.OWNER, AccessLevel.TECHNICIAN, AccessLevel.DEVELOPER)
   @ApiOperation({ 
     summary: 'Delete a journal entry by reference code',
-    description: 'Performs a soft delete on a journal entry. Requires ADMIN, MANAGER, or SUPPORT role.'
+    description: createApiDescription(
+      'Performs a soft delete on a journal entry by setting the isDeleted flag.',
+      'The service method `JournalService.remove()` validates the journal reference, applies organization and branch filters, performs soft delete, invalidates cache, and returns success confirmation.',
+      'JournalService',
+      'remove',
+      'performs soft delete on a journal entry with validation and cache invalidation',
+      'a success message confirming the deletion',
+      ['Reference validation', 'Organization scoping', 'Soft delete', 'Cache invalidation'],
+    ),
   })
   @ApiParam({ 
     name: 'ref', 
@@ -433,7 +476,16 @@ Retrieves journal entries with advanced filtering, pagination, and performance o
   @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
   @ApiOperation({ 
     summary: '🔍 Create comprehensive inspection journal',
-    description: `
+    description: createApiDescription(
+      'Creates detailed inspection journals with comprehensive scoring, validation, and compliance tracking capabilities.',
+      'The service method `JournalService.createInspection()` processes inspection creation, validates inspection data structure, calculates scores and percentages, determines overall rating, assigns organization and branch context, handles transactions, manages cache invalidation, awards XP rewards, and returns success confirmation with inspection details.',
+      'JournalService',
+      'createInspection',
+      'creates an inspection journal with scoring, validation, and reward integration',
+      'a success message with inspection details including scores and rating',
+      ['Inspection data validation', 'Score calculation', 'Rating determination', 'Organization assignment', 'Transaction management', 'Cache invalidation', 'XP reward integration'],
+    ) + `
+
 # Advanced Inspection Journal Creation
 
 Creates detailed inspection journals with comprehensive scoring, validation, and compliance tracking capabilities.

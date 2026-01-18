@@ -217,7 +217,6 @@ export class PdfGenerationService {
 				doc.on('data', (chunk) => {
 					chunks.push(chunk);
 					totalSize += chunk.length;
-					this.logger.debug(`[generatePdfFromTemplate] PDF chunk received - Size: ${chunk.length}, Total: ${totalSize}`);
 				});
 
 				doc.on('end', () => {

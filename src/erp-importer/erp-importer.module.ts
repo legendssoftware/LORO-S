@@ -8,11 +8,13 @@ import { ErpImporterScheduler } from './erp-importer.scheduler';
 import { ErpProductImporterService } from './services/erp-product-importer.service';
 import { ErpClientImporterService } from './services/erp-client-importer.service';
 import { ErpModule } from '../erp/erp.module';
+import { LicensingModule } from '../licensing/licensing.module';
 
 @Module({
 	imports: [
 		TypeOrmModule.forFeature([Product, Client]),
 		ErpModule, // Provides ErpConnectionManagerService
+		LicensingModule, // Provides LicensingService for AuthGuard
 	],
 	controllers: [ErpImporterController],
 	providers: [

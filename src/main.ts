@@ -26,7 +26,8 @@ async function bootstrap() {
 	});
 
 	const config = new DocumentBuilder()
-		.setTitle('LORO')
+		.setTitle('LORO API')
+		.setVersion('1.0.0')
 		.setDescription(
 			`
 **LORO** is a comprehensive enterprise management platform that revolutionizes how businesses manage their workforce, operations, and client relationships through cutting-edge technology and intelligent automation.
@@ -42,9 +43,29 @@ LORO combines **GPS tracking**, **AI-powered analytics**, **real-time communicat
 - **Scalable Architecture**: From startups to enterprise-level organizations
 - **Mobile-First Design**: Native mobile apps with offline capabilities
 
+## 📚 API Documentation Features
+
+Each endpoint includes comprehensive documentation with:
+- **Multi-language Examples**: Code examples in Node.js, C#, C++, C, and Postman
+- **Service Method Documentation**: Detailed explanations of underlying service methods and their return values
+- **Dynamic Examples**: All date examples use the current year (${new Date().getFullYear()}) for relevance
+- **Response Structures**: Complete response schemas with example data
+- **Error Handling**: Detailed error response documentation
+
+## 🔧 Integration Examples
+
+All endpoints provide code examples for:
+- **Node.js**: Using axios or fetch
+- **C# (.NET)**: Using HttpClient
+- **C++**: Using libcurl
+- **C**: Using libcurl
+- **Postman**: Ready-to-import collection examples
+
 **🔔 Need Help?** Our expert support team is ready to assist with your integration. Contact us at [api-support@loro.co.za](mailto:api-support@loro.co.za) for personalized assistance.
 `,
 		)
+		.setContact('LORO Support', 'https://loro.co.za', 'api-support@loro.co.za')
+		.setLicense('PROPRIETARY', 'https://loro.co.za/license')
 		// === AUTHENTICATION & USER MANAGEMENT ===
 		.addTag('👥 Users', 'User Management - User accounts, profiles, roles, and permissions management')
 		.addTag('📋 Licensing', 'License Management - Subscription tiers, usage tracking, and license validation')
@@ -957,13 +978,37 @@ socket.on("disconnect", (reason) => {
 			persistAuthorization: true,
 			tagsSorter: 'alpha',
 			operationsSorter: 'alpha',
-			docExpansion: 'none',
+			docExpansion: 'list',
 			filter: true,
 			showRequestDuration: true,
 			showCommonExtensions: true,
-			defaultModelsExpandDepth: 1,
-			defaultModelExpandDepth: 1,
+			defaultModelsExpandDepth: 2,
+			defaultModelExpandDepth: 2,
 			displayRequestDuration: true,
+			tryItOutEnabled: true,
+			requestSnippetsEnabled: true,
+			requestSnippets: {
+				generators: {
+					curl_bash: {
+						title: 'cURL (bash)',
+					},
+					curl_powershell: {
+						title: 'cURL (PowerShell)',
+					},
+					node: {
+						title: 'Node.js',
+					},
+					csharp: {
+						title: 'C#',
+					},
+					php: {
+						title: 'PHP',
+					},
+					python: {
+						title: 'Python',
+					},
+				},
+			},
 		},
 		customSiteTitle: 'LORO API Documentation',
 		customCss: `

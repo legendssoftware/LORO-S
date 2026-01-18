@@ -569,7 +569,6 @@ export class UserService {
 	 */
 	private async invalidateUserCache(user: User) {
 		try {
-			this.logger.debug(`Invalidating cache for user: ${user.uid} (${user.email})`);
 
 			// Get all cache keys
 			const keys = await this.cacheManager.store.keys();
@@ -614,7 +613,6 @@ export class UserService {
 			// Clear all caches
 			await Promise.all(keysToDelete.map((key) => this.cacheManager.del(key)));
 
-			this.logger.debug(`Cache invalidated for user ${user.uid}. Cleared ${keysToDelete.length} cache keys`);
 
 			// Emit event for other services that might be caching user data
 			this.eventEmitter.emit('users.cache.invalidate', {
@@ -724,7 +722,6 @@ export class UserService {
 			}
 		}
 
-		this.logger.debug(`✅ Validated ${deviceIds.length} managed doors successfully`);
 	}
 
 	/**
@@ -1001,11 +998,6 @@ export class UserService {
 				const userData = bulkCreateUserDto.users[i];
 
 				try {
-					this.logger.debug(
-						`👤 [createBulkUsers] Processing user ${i + 1}/${bulkCreateUserDto.users.length}: ${
-							userData.username
-						} (${userData.email})`,
-					);
 
 					// Check if username already exists
 					const existingUsername = await queryRunner.manager.findOne(User, {
@@ -1027,9 +1019,6 @@ export class UserService {
 					let finalPassword = userData.password;
 					if (!finalPassword && bulkCreateUserDto.autoGeneratePasswords) {
 						finalPassword = this.generateRandomPassword();
-						this.logger.debug(
-							`🔐 [createBulkUsers] Auto-generated password for user: ${userData.username}`,
-						);
 					}
 
 					if (!finalPassword) {
@@ -1072,11 +1061,6 @@ export class UserService {
 
 					successCount++;
 					createdUserIds.push(savedUser.uid);
-					this.logger.debug(
-						`✅ [createBulkUsers] User ${i + 1} created successfully: ${userData.username} (ID: ${
-							savedUser.uid
-						})`,
-					);
 				} catch (userError) {
 					const errorMessage = `User ${i + 1} (${userData.username || userData.email}): ${userError.message}`;
 					this.logger.error(`❌ [createBulkUsers] ${errorMessage}`, userError.stack);
@@ -1107,7 +1091,6 @@ export class UserService {
 
 				// Send welcome emails if requested
 				if (bulkCreateUserDto.sendWelcomeEmails !== false && successCount > 0) {
-					this.logger.debug(`📧 [createBulkUsers] Sending welcome emails to ${successCount} created users`);
 
 					for (const result of results) {
 						if (result.success && result.user) {
@@ -1235,9 +1218,6 @@ export class UserService {
 						throw new Error(`User with ID ${ref} not found`);
 					}
 
-					this.logger.debug(
-						`✅ [updateBulkUsers] User found: ${existingUser.username} (${existingUser.email})`,
-					);
 
 					// Track original values for change detection
 					const originalValues = {
@@ -1250,9 +1230,6 @@ export class UserService {
 
 					// Validate assigned client IDs if provided and validation is enabled
 					if (data.assignedClientIds && bulkUpdateUserDto.validateClientIds !== false) {
-						this.logger.debug(
-							`🔍 [updateBulkUsers] Validating ${data.assignedClientIds.length} assigned client IDs for user ${ref}`,
-						);
 
 						const existingClients = await queryRunner.manager.find(Client, {
 							where: { uid: In(data.assignedClientIds), isDeleted: false },
@@ -1269,7 +1246,6 @@ export class UserService {
 					// Hash password if being updated
 					let updateData = { ...data };
 					if (data.password) {
-						this.logger.debug(`🔐 [updateBulkUsers] Hashing new password for user ${ref}`);
 						updateData.password = await bcrypt.hash(data.password, 10);
 					}
 
@@ -1300,11 +1276,6 @@ export class UserService {
 
 					successCount++;
 					updatedUserIds.push(ref);
-					this.logger.debug(
-						`✅ [updateBulkUsers] User ${i + 1} updated successfully: ${
-							existingUser.username
-						} (ID: ${ref}), Fields: ${updatedFields.join(', ')}`,
-					);
 
 					// Send notification email for significant changes if enabled
 					if (hasSignificantChanges && bulkUpdateUserDto.sendNotificationEmails !== false) {
@@ -1515,34 +1486,27 @@ export class UserService {
 			// - If userBranchId is set: regular user restricted to their branch
 			// - If specific branchId filter provided: override user's default branch
 			if (filters?.userBranchId !== null && filters?.userBranchId !== undefined && !filters?.branchId) {
-				this.logger.debug(`Applying user branch filter for regular user: ${filters.userBranchId}`);
 				queryBuilder.andWhere('branch.uid = :userBranchId', { userBranchId: filters.userBranchId });
 			} else if (filters?.userBranchId === null) {
-				this.logger.debug('Elevated user detected - skipping branch filter for org-wide access');
 			}
 
 			if (filters?.status) {
-				this.logger.debug(`Applying status filter: ${filters.status}`);
 				queryBuilder.andWhere('user.status = :status', { status: filters.status });
 			}
 
 			if (filters?.accessLevel) {
-				this.logger.debug(`Applying access level filter: ${filters.accessLevel}`);
 				queryBuilder.andWhere('user.accessLevel = :accessLevel', { accessLevel: filters.accessLevel });
 			}
 
 			if (filters?.branchId) {
-				this.logger.debug(`Applying branch filter: ${filters.branchId}`);
 				queryBuilder.andWhere('branch.uid = :branchId', { branchId: filters.branchId });
 			}
 
 			if (filters?.organisationId) {
-				this.logger.debug(`Applying organisation filter: ${filters.organisationId}`);
 				queryBuilder.andWhere('organisation.uid = :organisationId', { organisationId: filters.organisationId });
 			}
 
 			if (filters?.search) {
-				this.logger.debug(`Applying search filter: ${filters.search}`);
 				queryBuilder.andWhere(
 					'(LOWER(user.name) LIKE LOWER(:search) OR LOWER(user.surname) LIKE LOWER(:search) OR LOWER(user.email) LIKE LOWER(:search) OR LOWER(user.username) LIKE LOWER(:search))',
 					{ search: `%${filters.search}%` },
@@ -1555,7 +1519,6 @@ export class UserService {
 				.take(limit)
 				.orderBy('user.createdAt', 'DESC');
 
-			this.logger.debug('Executing query to fetch users');
 			const [users, total] = await queryBuilder.getManyAndCount();
 
 			if (!users) {
@@ -1613,11 +1576,9 @@ export class UserService {
 
 		try {
 			const cacheKey = this.getCacheKey(searchParameter);
-			this.logger.debug(`Checking cache for user: ${searchParameter}`);
 			const cachedUser = await this.cacheManager.get<User>(cacheKey);
 
 			if (cachedUser) {
-				this.logger.debug(`Cache hit for user: ${searchParameter}`);
 
 				// If org/branch filters are provided, verify cached user belongs to them
 				if (orgId && cachedUser.organisation?.uid !== orgId) {
@@ -1638,7 +1599,6 @@ export class UserService {
 				};
 			}
 
-			this.logger.debug(`Cache miss for user: ${searchParameter}, querying database`);
 
 			// Build where conditions
 			const whereConditions: any = {
@@ -1697,7 +1657,6 @@ export class UserService {
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
 			}
 
-			this.logger.debug(`User ${searchParameter} found in database, caching result`);
 			// Cache the user data
 			await this.cacheManager.set(cacheKey, user, this.CACHE_TTL);
 
@@ -1731,7 +1690,6 @@ export class UserService {
 		this.logger.log(`Finding user by email: ${email}`);
 
 		try {
-			this.logger.debug(`Querying database for user with email: ${email}`);
 			const user = await this.userRepository.findOne({ where: { email } });
 
 			if (!user) {
@@ -1774,7 +1732,6 @@ export class UserService {
 		this.logger.log(`Finding user for authentication: ${searchParameter}`);
 
 		try {
-			this.logger.debug(`Querying database for active user: ${searchParameter}`);
 			const user = await this.userRepository
 				.createQueryBuilder('user')
 				.leftJoinAndSelect('user.branch', 'branch')
@@ -1828,7 +1785,6 @@ export class UserService {
 		this.logger.log(`Finding user by UID: ${searchParameter}`);
 
 		try {
-			this.logger.debug(`Querying database for user with UID: ${searchParameter}`);
 			const user = await this.userRepository
 				.createQueryBuilder('user')
 				.leftJoinAndSelect('user.branch', 'branch')
@@ -1880,7 +1836,6 @@ export class UserService {
 		this.logger.log(`Getting users by role for ${recipients.length} recipients`);
 
 		try {
-			this.logger.debug(`Querying database for users with emails: ${recipients.join(', ')}`);
 			const users = await this.userRepository.find({
 				where: { email: In(recipients) },
 			});
@@ -1919,7 +1874,6 @@ export class UserService {
 		this.logger.log(`Finding all admin users`);
 
 		try {
-			this.logger.debug(`Querying database for active admin users`);
 			const users = await this.userRepository.find({
 				where: {
 					accessLevel: AccessLevel.ADMIN,
@@ -1978,7 +1932,6 @@ export class UserService {
 		);
 
 		try {
-			this.logger.debug(`[USER_UPDATE] Fetching current user data for comparison`);
 			const existingUser = await this.userRepository
 				.createQueryBuilder('user')
 				.leftJoinAndSelect('user.branch', 'branch')
@@ -2006,7 +1959,6 @@ export class UserService {
 
 			// Check for password change
 			if (updateUserDto.password) {
-				this.logger.debug(`[USER_UPDATE] Password change detected for user: ${existingUser.email}`);
 				updateUserDto.password = await bcrypt.hash(updateUserDto.password, 10);
 				changes.password = true;
 			}
@@ -2029,7 +1981,6 @@ export class UserService {
 
 			// Check for profile changes
 			if (updateUserDto.name || updateUserDto.surname || updateUserDto.email || updateUserDto.phone) {
-				this.logger.debug(`[USER_UPDATE] Profile information change detected for user: ${existingUser.email}`);
 				changes.profile = true;
 			}
 
@@ -2060,10 +2011,8 @@ export class UserService {
 			// Validate managedDoors if provided
 			if (updateUserDto.managedDoors !== undefined) {
 				await this.validateManagedDoors(updateUserDto.managedDoors, existingUser.organisationRef || orgId?.toString());
-				this.logger.debug(`[USER_UPDATE] Managed doors validated: [${updateUserDto.managedDoors.join(', ')}]`);
 			}
 
-			this.logger.debug('[USER_UPDATE] Updating user in database');
 			await this.userRepository.update({ uid: ref }, updateUserDto);
 
 			const updatedUser = await this.userRepository
@@ -2091,7 +2040,6 @@ export class UserService {
 
 			if (hasSignificantChanges || hasMultipleChanges) {
 				// Send comprehensive user update email
-				this.logger.debug(`[USER_UPDATE] Sending comprehensive update notification to: ${updatedUser.email}`);
 				emailPromises.push(
 					this.sendComprehensiveUserUpdateEmail(
 						updatedUser,
@@ -2104,12 +2052,10 @@ export class UserService {
 			} else {
 				// Send individual emails for single changes
 				if (changes.password) {
-					this.logger.debug(`[USER_UPDATE] Sending password update notification to: ${updatedUser.email}`);
 					emailPromises.push(this.sendPasswordUpdateNotificationEmail(updatedUser));
 				}
 
 				if (changes.profile) {
-					this.logger.debug(`[USER_UPDATE] Sending profile update notification to: ${updatedUser.email}`);
 					emailPromises.push(this.sendProfileUpdateNotificationEmail(updatedUser));
 				}
 			}
@@ -2127,7 +2073,6 @@ export class UserService {
 							priority: NotificationPriority.HIGH,
 						},
 					);
-					this.logger.debug('[USER_UPDATE] Password reset push notification sent');
 				}
 
 				if (changes.role) {
@@ -2143,7 +2088,6 @@ export class UserService {
 							priority: NotificationPriority.HIGH,
 						},
 					);
-					this.logger.debug('[USER_UPDATE] Role change push notification sent');
 				}
 
 				if (changes.status) {
@@ -2159,7 +2103,6 @@ export class UserService {
 							priority: NotificationPriority.HIGH,
 						},
 					);
-					this.logger.debug('[USER_UPDATE] Status change push notification sent');
 				}
 
 				if (changes.profile || (hasMultipleChanges && !changes.password && !changes.role && !changes.status)) {
@@ -2174,7 +2117,6 @@ export class UserService {
 							priority: NotificationPriority.NORMAL,
 						},
 					);
-					this.logger.debug('[USER_UPDATE] General update push notification sent');
 				}
 			} catch (notificationError) {
 				this.logger.warn(
@@ -2288,11 +2230,9 @@ export class UserService {
 
 		try {
 			if (userData?.password) {
-				this.logger.debug(`Hashing password for pending user: ${userData.email}`);
 				userData.password = await bcrypt.hash(userData.password, 10);
 			}
 
-			this.logger.debug(`Saving pending user to database: ${userData.email}`);
 			const user = await this.userRepository.save({
 				...userData,
 				status: userData?.status as AccountStatus,
@@ -2301,9 +2241,6 @@ export class UserService {
 			// Invalidate cache after creating pending user
 			await this.invalidateUserCache(user);
 
-			this.logger.debug(
-				`Scheduling cleanup for pending user: ${userData.email} (expires: ${userData?.tokenExpires})`,
-			);
 			this.schedulePendingUserCleanup(userData?.email, userData?.tokenExpires);
 
 			const executionTime = Date.now() - startTime;
@@ -2324,12 +2261,8 @@ export class UserService {
 	 */
 	private schedulePendingUserCleanup(email: string, expiryDate: Date): void {
 		const timeUntilExpiry = expiryDate.getTime() - Date.now();
-		this.logger.debug(
-			`Scheduling cleanup for pending user: ${email} in ${timeUntilExpiry}ms (expires: ${expiryDate.toISOString()})`,
-		);
 
 		setTimeout(async () => {
-			this.logger.debug(`Executing scheduled cleanup for pending user: ${email}`);
 
 			try {
 				const user = await this.userRepository.findOne({ where: { email } });
@@ -2339,7 +2272,6 @@ export class UserService {
 					await this.userRepository.update({ email }, { isDeleted: true });
 					this.logger.log(`Expired pending user cleaned up successfully: ${email}`);
 				} else {
-					this.logger.debug(`No cleanup needed for user: ${email} - either not found or status changed`);
 				}
 			} catch (error) {
 				this.logger.error(`Error during scheduled cleanup for pending user ${email}:`, error.message);
@@ -2377,7 +2309,6 @@ export class UserService {
 				whereConditions.branch = { uid: branchId };
 			}
 
-			this.logger.debug(`Finding deleted user ${ref} for restoration`);
 			const user = await this.userRepository
 				.createQueryBuilder('user')
 				.leftJoinAndSelect('user.organisation', 'organisation')
@@ -2426,7 +2357,6 @@ export class UserService {
 		this.logger.log(`Finding user by verification token`);
 
 		try {
-			this.logger.debug(`Querying database for user with verification token`);
 			const user = await this.userRepository.findOne({
 				where: { verificationToken: token, isDeleted: false },
 			});
@@ -2510,10 +2440,8 @@ export class UserService {
 				.getOne();
 
 			if (user) {
-				this.logger.debug(`Hashing password for user: ${user.email} (${uid})`);
 				const hashedPassword = await bcrypt.hash(password, 10);
 
-				this.logger.debug(`Updating password and activating account for user: ${user.email} (${uid})`);
 				await this.userRepository.update(
 					{ uid },
 					{
@@ -2551,10 +2479,8 @@ export class UserService {
 		this.logger.log(`Updating password for user: ${uid}`);
 
 		try {
-			this.logger.debug(`Hashing new password for user: ${uid}`);
 			const hashedPassword = await bcrypt.hash(password, 10);
 
-			this.logger.debug(`Updating password in database for user: ${uid}`);
 			await this.userRepository.update(uid, {
 				password: hashedPassword,
 				updatedAt: new Date(),
@@ -2694,7 +2620,6 @@ export class UserService {
 				};
 			}
 
-			this.logger.debug(`Cache miss for user target: ${userId}, querying database with access control`);
 			
 			// First, let's directly query the user_targets table through the user relationship to see what's actually stored
 			const userForDirectQuery = await this.userRepository
@@ -2751,15 +2676,12 @@ export class UserService {
 
 			// Apply access control filters
 			if (orgId) {
-				this.logger.debug(`Applying organization filter: ${orgId}`);
 				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
 			}
 
 			if (branchId !== null && branchId !== undefined) {
-				this.logger.debug(`Applying branch filter: ${branchId}`);
 				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
 			} else if (branchId === null) {
-				this.logger.debug('Elevated user detected - skipping branch filter for org-wide access');
 			}
 
 			const user = await queryBuilder.getOne();
@@ -3305,7 +3227,6 @@ export class UserService {
 		this.logger.log(`Setting user target for user: ${userId}`);
 
 		try {
-			this.logger.debug(`Finding user ${userId} for target setting with access control`);
 
 			// Build where conditions for access control
 			const whereConditions: any = {
@@ -3348,7 +3269,6 @@ export class UserService {
 
 			// If user already has targets, update them
 			if (user.userTarget) {
-				this.logger.debug(`User ${userId} already has targets, updating existing targets`);
 				await this.updateUserTarget(userId, createUserTargetDto, orgId, branchId);
 
 				const executionTime = Date.now() - startTime;
@@ -3359,7 +3279,6 @@ export class UserService {
 				};
 			}
 
-		this.logger.debug(`Creating new user target for user: ${userId}`);
 		// Create a new user target
 		const userTarget = new UserTarget();
 
@@ -3396,10 +3315,6 @@ export class UserService {
 				recurringInterval
 			);
 			
-			this.logger.debug(
-				`Recurring target configured: ${recurringInterval}, ` +
-				`next recurrence: ${userTarget.nextRecurrenceDate}`
-			);
 		} else {
 			// Explicitly set to false if user disabled it
 			userTarget.isRecurring = false;
@@ -3490,7 +3405,6 @@ export class UserService {
 						priority: NotificationPriority.HIGH,
 					},
 				);
-				this.logger.debug(`Target set push notification sent to user: ${userId}`);
 			} catch (notificationError) {
 				this.logger.warn(
 					`Failed to send target set push notification to user ${userId}:`,
@@ -3532,7 +3446,6 @@ export class UserService {
 		this.logger.log(`Updating user target for user: ${userId}`);
 
 		try {
-			this.logger.debug(`Finding user ${userId} for target update with access control`);
 
 			// Build where conditions for access control
 			const whereConditions: any = {
@@ -3798,7 +3711,6 @@ export class UserService {
 		this.logger.log(`Deleting user target for user: ${userId}`);
 
 		try {
-			this.logger.debug(`Finding user ${userId} for target deletion with access control`);
 
 			// Build where conditions for access control
 			const whereConditions: any = {
@@ -3847,7 +3759,6 @@ export class UserService {
 				};
 			}
 
-			this.logger.debug(`Removing target for user: ${userId}`);
 			// Set the target to null
 			user.userTarget = null;
 			await this.userRepository.save(user);
@@ -3911,7 +3822,6 @@ export class UserService {
 
 		// Atomic race condition protection using promises
 		if (this.activeCalculations.has(userId)) {
-			this.logger.debug(`Target calculation already in progress for user: ${userId}, awaiting completion`);
 			await this.activeCalculations.get(userId);
 			return;
 		}
@@ -3939,7 +3849,6 @@ export class UserService {
 
 		try {
 			// Load user and target data
-			this.logger.debug(`[${calculationId}] Finding user and target data for user: ${userId}`);
 			const user = await this.userRepository
 				.createQueryBuilder('user')
 				.leftJoinAndSelect('user.userTarget', 'userTarget')
@@ -4000,7 +3909,6 @@ export class UserService {
 			let incrementalUpdates: any = {};
 
 			// --- Calculate NEW quotations since last calculation ---
-			this.logger.debug(`[${calculationId}] Calculating NEW quotations amount for user: ${userId} since ${calculationStartDate}`);
 			const quotationStatuses = [
 				OrderStatus.DRAFT,
 				OrderStatus.PENDING_INTERNAL,
@@ -4023,7 +3931,6 @@ export class UserService {
 			// Calculate incremental quotations amount with detailed logging
 			const newQuotationsAmount = newQuotations.reduce((sum, q) => {
 				const amount = this.safeParseNumber(q.totalAmount);
-				this.logger.debug(`[${calculationId}] Found quotation ID ${q.uid} with amount: ${amount}`);
 				return sum + amount;
 			}, 0);
 
@@ -4031,13 +3938,9 @@ export class UserService {
 				hasNewRecords = true;
 				const currentQuotations = this.safeParseNumber(userTarget.currentQuotationsAmount);
 				incrementalUpdates.currentQuotationsAmount = currentQuotations + newQuotationsAmount;
-				this.logger.debug(
-					`[${calculationId}] NEW quotations: ${newQuotationsAmount}, existing: ${currentQuotations}, total will be: ${incrementalUpdates.currentQuotationsAmount}`,
-				);
 			}
 
 			// --- Calculate NEW completed orders since last calculation ---
-			this.logger.debug(`[${calculationId}] Calculating NEW orders amount for user: ${userId} since ${calculationStartDate}`);
 			const newCompletedQuotations = await this.quotationRepository.find({
 				where: {
 					placedBy: { uid: userId },
@@ -4050,7 +3953,6 @@ export class UserService {
 			// Calculate incremental orders amount with detailed logging
 			const newOrdersAmount = newCompletedQuotations.reduce((sum, q) => {
 				const amount = this.safeParseNumber(q.totalAmount);
-				this.logger.debug(`[${calculationId}] Found completed order ID ${q.uid} with amount: ${amount}`);
 				return sum + amount;
 			}, 0);
 
@@ -4058,13 +3960,9 @@ export class UserService {
 				hasNewRecords = true;
 				const currentOrders = this.safeParseNumber(userTarget.currentOrdersAmount);
 				incrementalUpdates.currentOrdersAmount = currentOrders + newOrdersAmount;
-				this.logger.debug(
-					`[${calculationId}] NEW orders: ${newOrdersAmount}, existing: ${currentOrders}, total will be: ${incrementalUpdates.currentOrdersAmount}`,
-				);
 			}
 
 			// --- Calculate NEW leads since last calculation ---
-			this.logger.debug(`[${calculationId}] Calculating NEW leads count for user: ${userId} since ${calculationStartDate}`);
 			const newLeadsCount = await this.leadRepository.count({
 				where: {
 					owner: { uid: userId },
@@ -4076,13 +3974,9 @@ export class UserService {
 				hasNewRecords = true;
 				const currentLeads = this.safeParseNumber(userTarget.currentNewLeads);
 				incrementalUpdates.currentNewLeads = currentLeads + newLeadsCount;
-				this.logger.debug(
-					`[${calculationId}] NEW leads: ${newLeadsCount}, existing: ${currentLeads}, total will be: ${incrementalUpdates.currentNewLeads}`,
-				);
 			}
 
 			// --- Calculate NEW clients since last calculation ---
-			this.logger.debug(`[${calculationId}] Calculating NEW clients count for user: ${userId} since ${calculationStartDate}`);
 			const newClientsCount = await this.clientRepository.count({
 				where: {
 					assignedSalesRep: { uid: userId },
@@ -4094,13 +3988,9 @@ export class UserService {
 				hasNewRecords = true;
 				const currentClients = this.safeParseNumber(userTarget.currentNewClients);
 				incrementalUpdates.currentNewClients = currentClients + newClientsCount;
-				this.logger.debug(
-					`[${calculationId}] NEW clients: ${newClientsCount}, existing: ${currentClients}, total will be: ${incrementalUpdates.currentNewClients}`,
-				);
 			}
 
 			// --- Calculate NEW check-ins since last calculation ---
-			this.logger.debug(`[${calculationId}] Calculating NEW check-ins count for user: ${userId} since ${calculationStartDate}`);
 			const newCheckInsCount = await this.checkInRepository.count({
 				where: {
 					owner: { uid: userId },
@@ -4112,9 +4002,6 @@ export class UserService {
 				hasNewRecords = true;
 				const currentCheckIns = this.safeParseNumber(userTarget.currentCheckIns);
 				incrementalUpdates.currentCheckIns = currentCheckIns + newCheckInsCount;
-				this.logger.debug(
-					`[${calculationId}] NEW check-ins: ${newCheckInsCount}, existing: ${currentCheckIns}, total will be: ${incrementalUpdates.currentCheckIns}`,
-				);
 			}
 
 			// Check if we should skip the update
@@ -4128,14 +4015,8 @@ export class UserService {
 					(userTarget.currentCheckIns || 0) > 0;
 
 				if (hasExistingValues) {
-					this.logger.debug(
-						`[${calculationId}] No new records found for user ${userId} and existing values present - skipping update to preserve ERP/external values`,
-					);
 					return;
 				} else {
-					this.logger.debug(
-						`[${calculationId}] No new records found for user ${userId} and no existing values - skipping update to prevent resetting targets to zero`,
-					);
 					return;
 				}
 			}
@@ -4151,13 +4032,7 @@ export class UserService {
 				const quotationsAmount = this.safeParseNumber(userTarget.currentQuotationsAmount);
 				const ordersAmount = this.safeParseNumber(userTarget.currentOrdersAmount);
 				
-				this.logger.debug(`[${calculationId}] Sales calculation components:`);
-				this.logger.debug(`[${calculationId}] - Quotations amount: ${quotationsAmount} (parsed from ${userTarget.currentQuotationsAmount})`);
-				this.logger.debug(`[${calculationId}] - Orders amount: ${ordersAmount} (parsed from ${userTarget.currentOrdersAmount})`);
-				
 				userTarget.currentSalesAmount = quotationsAmount + ordersAmount;
-				
-				this.logger.debug(`[${calculationId}] Final sales amount: ${userTarget.currentSalesAmount}`);
 
 				// Additional validation for sales amount calculation
 				if (userTarget.currentSalesAmount !== (quotationsAmount + ordersAmount)) {
@@ -4169,7 +4044,6 @@ export class UserService {
 			(userTarget as any).lastCalculatedAt = calculationEndDate;
 
 			// Enhanced validation with detailed logging
-			this.logger.debug(`[${calculationId}] Validating calculated values before save...`);
 			if (!this.validateCalculatedValues(userTarget)) {
 				this.logger.error(`[${calculationId}] VALIDATION FAILED for user ${userId}:`);
 				this.logger.error(`[${calculationId}] - Sales amount: ${userTarget.currentSalesAmount}`);
@@ -4180,7 +4054,6 @@ export class UserService {
 			}
 
 			// Save the updated target (via user cascade)
-			this.logger.debug(`[${calculationId}] Saving updated targets for user: ${userId}`);
 			await this.userRepository.save(user);
 
 			// Check for target achievements after saving (only if we had updates)
@@ -4566,7 +4439,6 @@ export class UserService {
 		this.logger.log(`Re-inviting user: ${userId}`);
 
 		try {
-			this.logger.debug(`Building query for user ${userId} with scope restrictions`);
 			const queryBuilder = this.userRepository
 				.createQueryBuilder('user')
 				.leftJoinAndSelect('user.branch', 'branch')
@@ -4576,17 +4448,14 @@ export class UserService {
 
 			// Apply organization filter if provided
 			if (scope?.orgId) {
-				this.logger.debug(`Applying organization scope filter: ${scope.orgId}`);
 				queryBuilder.andWhere('organisation.uid = :orgId', { orgId: parseInt(scope.orgId) });
 			}
 
 			// Apply branch filter if provided
 			if (scope?.branchId) {
-				this.logger.debug(`Applying branch scope filter: ${scope.branchId}`);
 				queryBuilder.andWhere('branch.uid = :branchId', { branchId: parseInt(scope.branchId) });
 			}
 
-			this.logger.debug(`Executing query to find user ${userId}`);
 			const user = await queryBuilder.getOne();
 
 			if (!user) {
@@ -4604,7 +4473,6 @@ export class UserService {
 				throw new Error('User cannot be re-invited due to account status');
 			}
 
-			this.logger.debug(`Sending re-invitation email to user: ${user.email} (${userId})`);
 			// Send re-invitation email
 			await this.sendReInvitationEmail(user);
 
@@ -4628,7 +4496,6 @@ export class UserService {
 	 */
 	private async sendReInvitationEmail(user: User): Promise<void> {
 		const startTime = Date.now();
-		this.logger.debug(`Preparing re-invitation email for user: ${user.email} (${user.uid})`);
 
 		try {
 			// Prepare re-invitation email data

@@ -22,6 +22,7 @@ import {
 	ApiBearerAuth,
 	ApiQuery,
 } from '@nestjs/swagger';
+import { getDynamicDate, getDynamicDateTime, getFutureDate, getPastDate, createApiDescription } from '../lib/utils/swagger-helpers';
 import { Roles } from '../decorators/role.decorator';
 import { RoleGuard } from '../guards/role.guard';
 import { AuthGuard } from '../guards/auth.guard';
@@ -55,7 +56,7 @@ import { LeaveStatus, LeaveType } from '../lib/enums/leave.enums';
 			message: { type: 'string', example: 'Leave management service temporarily unavailable' },
 			error: { type: 'string', example: 'Internal Server Error' },
 			statusCode: { type: 'number', example: 500 },
-			timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+			timestamp: { type: 'string', format: 'date-time', example: getDynamicDateTime() },
 			path: { type: 'string', example: '/leave' }
 		}
 	}
@@ -137,8 +138,8 @@ Creates comprehensive leave requests with automated approval workflows and polic
 				description: 'Standard vacation leave request',
 				value: {
 					leaveType: 'ANNUAL',
-					startDate: '2024-07-15',
-					endDate: '2024-07-29',
+					startDate: getFutureDate(14),
+					endDate: getFutureDate(28),
 					reason: 'Summer vacation with family',
 					isHalfDay: false,
 					emergencyContact: {
@@ -154,8 +155,8 @@ Creates comprehensive leave requests with automated approval workflows and polic
 				description: 'Medical leave with documentation',
 				value: {
 					leaveType: 'SICK',
-					startDate: '2024-02-10',
-					endDate: '2024-02-12',
+					startDate: getFutureDate(7),
+					endDate: getFutureDate(9),
 					reason: 'Medical procedure recovery',
 					isHalfDay: false,
 					medicalCertificate: true,
@@ -167,11 +168,11 @@ Creates comprehensive leave requests with automated approval workflows and polic
 				description: 'Maternity leave with extended duration',
 				value: {
 					leaveType: 'MATERNITY',
-					startDate: '2024-05-01',
-					endDate: '2024-08-31',
+					startDate: getFutureDate(30),
+					endDate: getFutureDate(120),
 					reason: 'Maternity leave for newborn care',
 					isHalfDay: false,
-					expectedReturnDate: '2024-09-01',
+					expectedReturnDate: getFutureDate(121),
 					coveringManager: 'Sarah Johnson',
 					transitionPlan: 'Detailed handover document attached'
 				}
@@ -181,8 +182,8 @@ Creates comprehensive leave requests with automated approval workflows and polic
 				description: 'Half day leave for routine appointment',
 				value: {
 					leaveType: 'SICK',
-					startDate: '2024-03-15',
-					endDate: '2024-03-15',
+					startDate: getFutureDate(10),
+					endDate: getFutureDate(10),
 					reason: 'Routine medical checkup',
 					isHalfDay: true,
 					halfDayPeriod: 'MORNING',
@@ -202,18 +203,18 @@ Creates comprehensive leave requests with automated approval workflows and polic
 					type: 'object',
 					properties: {
 						uid: { type: 'number', example: 12345 },
-						leaveRef: { type: 'string', example: 'LV-2024-001' },
+						leaveRef: { type: 'string', example: `LV-${new Date().getFullYear()}-001` },
 						leaveType: { type: 'string', enum: Object.values(LeaveType), example: 'ANNUAL' },
 						status: { type: 'string', enum: Object.values(LeaveStatus), example: 'PENDING' },
-						startDate: { type: 'string', format: 'date', example: '2024-07-15' },
-						endDate: { type: 'string', format: 'date', example: '2024-07-29' },
+						startDate: { type: 'string', format: 'date', example: getFutureDate(14) },
+						endDate: { type: 'string', format: 'date', example: getFutureDate(28) },
 						duration: { type: 'number', example: 14 },
 						remainingBalance: { type: 'number', example: 21 },
 						approvalWorkflow: {
 							type: 'object',
 							properties: {
 								nextApprover: { type: 'string', example: 'John Manager' },
-								expectedApprovalDate: { type: 'string', format: 'date', example: '2024-07-10' },
+								expectedApprovalDate: { type: 'string', format: 'date', example: getFutureDate(10) },
 								approvalSteps: { type: 'number', example: 2 }
 							}
 						},
@@ -226,7 +227,7 @@ Creates comprehensive leave requests with automated approval workflows and polic
 								'Team notification scheduled'
 							]
 						},
-						createdAt: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' }
+						createdAt: { type: 'string', format: 'date-time', example: getDynamicDateTime() }
 					}
 				}
 			}
@@ -295,7 +296,7 @@ Creates comprehensive leave requests with automated approval workflows and polic
 						type: 'object',
 						properties: {
 							type: { type: 'string', example: 'EXISTING_LEAVE' },
-							date: { type: 'string', format: 'date', example: '2024-07-20' },
+							date: { type: 'string', format: 'date', example: getFutureDate(20) },
 							description: { type: 'string', example: 'Overlaps with approved sick leave' }
 						}
 					}
@@ -418,14 +419,14 @@ Provides comprehensive leave request retrieval with advanced filtering, sorting,
 		type: String, 
 		required: false, 
 		description: 'Filter by leave start date (ISO format: YYYY-MM-DD)',
-		example: '2024-01-01'
+		example: getPastDate(365)
 	})
 	@ApiQuery({ 
 		name: 'endDate', 
 		type: String, 
 		required: false, 
 		description: 'Filter by leave end date (ISO format: YYYY-MM-DD)',
-		example: '2024-12-31'
+		example: getFutureDate(365)
 	})
 	@ApiQuery({ 
 		name: 'isApproved', 
@@ -460,16 +461,16 @@ Provides comprehensive leave request retrieval with advanced filtering, sorting,
 						type: 'object',
 						properties: {
 							uid: { type: 'number', example: 12345 },
-							leaveRef: { type: 'string', example: 'LV-2024-001' },
+							leaveRef: { type: 'string', example: `LV-${new Date().getFullYear()}-001` },
 							leaveType: { type: 'string', enum: Object.values(LeaveType), example: 'ANNUAL' },
-							startDate: { type: 'string', format: 'date', example: '2024-07-15' },
-							endDate: { type: 'string', format: 'date', example: '2024-07-29' },
+							startDate: { type: 'string', format: 'date', example: getFutureDate(14) },
+							endDate: { type: 'string', format: 'date', example: getFutureDate(28) },
 							duration: { type: 'number', example: 14 },
 							status: { type: 'string', enum: Object.values(LeaveStatus), example: 'APPROVED' },
 							isHalfDay: { type: 'boolean', example: false },
 							reason: { type: 'string', example: 'Summer vacation with family' },
-							appliedDate: { type: 'string', format: 'date-time', example: '2024-06-01T10:00:00Z' },
-							approvedDate: { type: 'string', format: 'date-time', example: '2024-06-02T14:30:00Z' },
+							appliedDate: { type: 'string', format: 'date-time', example: getPastDate(30) },
+							approvedDate: { type: 'string', format: 'date-time', example: getPastDate(29) },
 							employee: {
 								type: 'object',
 								properties: {
@@ -677,16 +678,16 @@ Provides comprehensive information about a specific leave request including appr
 					type: 'object',
 					properties: {
 						uid: { type: 'number', example: 12345 },
-						leaveRef: { type: 'string', example: 'LV-2024-001' },
+						leaveRef: { type: 'string', example: `LV-${new Date().getFullYear()}-001` },
 						leaveType: { type: 'string', enum: Object.values(LeaveType), example: 'ANNUAL' },
-						startDate: { type: 'string', format: 'date', example: '2024-07-15' },
-						endDate: { type: 'string', format: 'date', example: '2024-07-29' },
+						startDate: { type: 'string', format: 'date', example: getFutureDate(14) },
+						endDate: { type: 'string', format: 'date', example: getFutureDate(28) },
 						duration: { type: 'number', example: 14 },
 						status: { type: 'string', enum: Object.values(LeaveStatus), example: 'APPROVED' },
 						isHalfDay: { type: 'boolean', example: false },
 						reason: { type: 'string', example: 'Summer vacation with family' },
-						appliedDate: { type: 'string', format: 'date-time', example: '2024-06-01T10:00:00Z' },
-						approvedDate: { type: 'string', format: 'date-time', example: '2024-06-02T14:30:00Z' },
+						appliedDate: { type: 'string', format: 'date-time', example: getPastDate(30) },
+						approvedDate: { type: 'string', format: 'date-time', example: getPastDate(29) },
 						employee: {
 							type: 'object',
 							properties: {
@@ -723,7 +724,7 @@ Provides comprehensive information about a specific leave request including appr
 									},
 									status: { type: 'string', example: 'APPROVED' },
 									decision: { type: 'string', example: 'Approved with conditions' },
-									processedDate: { type: 'string', format: 'date-time', example: '2024-06-02T14:30:00Z' },
+									processedDate: { type: 'string', format: 'date-time', example: getPastDate(29) },
 									comments: { type: 'string', example: 'Approved. Ensure handover is complete.' }
 								}
 							}
@@ -736,7 +737,7 @@ Provides comprehensive information about a specific leave request including appr
 									uid: { type: 'number', example: 456 },
 									fileName: { type: 'string', example: 'medical_certificate.pdf' },
 									fileType: { type: 'string', example: 'MEDICAL_CERTIFICATE' },
-									uploadDate: { type: 'string', format: 'date-time', example: '2024-06-01T10:15:00Z' },
+									uploadDate: { type: 'string', format: 'date-time', example: getPastDate(30) },
 									fileSize: { type: 'number', example: 2048576 }
 								}
 							}
@@ -946,15 +947,15 @@ Provides comprehensive leave history, analytics, and balance information for a s
 								type: 'object',
 								properties: {
 									uid: { type: 'number', example: 12345 },
-									leaveRef: { type: 'string', example: 'LV-2024-001' },
+									leaveRef: { type: 'string', example: `LV-${new Date().getFullYear()}-001` },
 									leaveType: { type: 'string', enum: Object.values(LeaveType), example: 'ANNUAL' },
-									startDate: { type: 'string', format: 'date', example: '2024-07-15' },
-									endDate: { type: 'string', format: 'date', example: '2024-07-29' },
+									startDate: { type: 'string', format: 'date', example: getFutureDate(14) },
+									endDate: { type: 'string', format: 'date', example: getFutureDate(28) },
 									duration: { type: 'number', example: 14 },
 									status: { type: 'string', enum: Object.values(LeaveStatus), example: 'APPROVED' },
 									isHalfDay: { type: 'boolean', example: false },
-									appliedDate: { type: 'string', format: 'date-time', example: '2024-06-01T10:00:00Z' },
-									approvedDate: { type: 'string', format: 'date-time', example: '2024-06-02T14:30:00Z' },
+									appliedDate: { type: 'string', format: 'date-time', example: getPastDate(30) },
+									approvedDate: { type: 'string', format: 'date-time', example: getPastDate(29) },
 									approver: {
 										type: 'object',
 										properties: {
@@ -1004,8 +1005,8 @@ Provides comprehensive leave history, analytics, and balance information for a s
 								properties: {
 									uid: { type: 'number', example: 12346 },
 									leaveType: { type: 'string', example: 'ANNUAL' },
-									startDate: { type: 'string', format: 'date', example: '2024-12-20' },
-									endDate: { type: 'string', format: 'date', example: '2025-01-02' },
+									startDate: { type: 'string', format: 'date', example: getFutureDate(30) },
+									endDate: { type: 'string', format: 'date', example: getFutureDate(44) },
 									duration: { type: 'number', example: 10 },
 									status: { type: 'string', example: 'APPROVED' }
 								}
@@ -1112,8 +1113,8 @@ Enables comprehensive updates to existing leave requests while maintaining audit
 				summary: '📅 Date Adjustment',
 				description: 'Modify leave dates due to work commitments',
 				value: {
-					startDate: '2024-07-20',
-					endDate: '2024-08-02',
+					startDate: getFutureDate(20),
+					endDate: getFutureDate(33),
 					reason: 'Summer vacation - dates adjusted due to project deadline',
 					notificationNote: 'Updated dates to accommodate critical project delivery'
 				}
@@ -1124,7 +1125,7 @@ Enables comprehensive updates to existing leave requests while maintaining audit
 				value: {
 					isHalfDay: true,
 					halfDayPeriod: 'AFTERNOON',
-					endDate: '2024-03-15',
+					endDate: getFutureDate(10),
 					reason: 'Medical appointment - changed to half day as procedure is shorter than expected'
 				}
 			},
@@ -1142,8 +1143,8 @@ Enables comprehensive updates to existing leave requests while maintaining audit
 				summary: '🚨 Emergency Modification',
 				description: 'Emergency change due to family circumstances',
 				value: {
-					startDate: '2024-02-10',
-					endDate: '2024-02-14',
+					startDate: getFutureDate(7),
+					endDate: getFutureDate(11),
 					leaveType: 'COMPASSIONATE',
 					reason: 'Family emergency - bereavement',
 					urgentChange: true,
@@ -1166,7 +1167,7 @@ Enables comprehensive updates to existing leave requests while maintaining audit
 					type: 'object',
 					properties: {
 						uid: { type: 'number', example: 12345 },
-						leaveRef: { type: 'string', example: 'LV-2024-001' },
+						leaveRef: { type: 'string', example: `LV-${new Date().getFullYear()}-001` },
 						status: { type: 'string', example: 'PENDING_REAPPROVAL' },
 						modifiedFields: {
 							type: 'array',
@@ -1176,15 +1177,15 @@ Enables comprehensive updates to existing leave requests while maintaining audit
 						previousValues: {
 							type: 'object',
 							properties: {
-								startDate: { type: 'string', format: 'date', example: '2024-07-15' },
-								endDate: { type: 'string', format: 'date', example: '2024-07-29' }
+								startDate: { type: 'string', format: 'date', example: getFutureDate(14) },
+								endDate: { type: 'string', format: 'date', example: getFutureDate(28) }
 							}
 						},
 						currentValues: {
 							type: 'object',
 							properties: {
-								startDate: { type: 'string', format: 'date', example: '2024-07-20' },
-								endDate: { type: 'string', format: 'date', example: '2024-08-02' }
+								startDate: { type: 'string', format: 'date', example: getFutureDate(20) },
+								endDate: { type: 'string', format: 'date', example: getFutureDate(33) }
 							}
 						},
 						workflowImpact: {
@@ -1196,7 +1197,7 @@ Enables comprehensive updates to existing leave requests while maintaining audit
 								requiresReapproval: { type: 'boolean', example: true }
 							}
 						},
-						updatedAt: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+						updatedAt: { type: 'string', format: 'date-time', example: getDynamicDateTime() },
 						updatedBy: { type: 'string', example: 'John Doe' }
 					}
 				}
@@ -1353,7 +1354,7 @@ Processes leave request approvals with comprehensive workflow management and not
 				effectiveDate: {
 					type: 'string',
 					format: 'date',
-					example: '2024-07-15',
+					example: getFutureDate(14),
 					description: 'Effective date if different from request start date'
 				},
 				urgentApproval: {
@@ -1374,9 +1375,9 @@ Processes leave request approvals with comprehensive workflow management and not
 					type: 'object',
 					properties: {
 						uid: { type: 'number', example: 12345 },
-						leaveRef: { type: 'string', example: 'LV-2024-001' },
+						leaveRef: { type: 'string', example: `LV-${new Date().getFullYear()}-001` },
 						status: { type: 'string', example: 'APPROVED' },
-						approvedDate: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+						approvedDate: { type: 'string', format: 'date-time', example: getDynamicDateTime() },
 						approver: {
 							type: 'object',
 							properties: {
@@ -1583,9 +1584,9 @@ Processes leave request rejections with comprehensive feedback and alternative s
 					type: 'object',
 					properties: {
 						uid: { type: 'number', example: 12345 },
-						leaveRef: { type: 'string', example: 'LV-2024-001' },
+						leaveRef: { type: 'string', example: `LV-${new Date().getFullYear()}-001` },
 						status: { type: 'string', example: 'REJECTED' },
-						rejectedDate: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+						rejectedDate: { type: 'string', format: 'date-time', example: getDynamicDateTime() },
 						rejectedBy: {
 							type: 'object',
 							properties: {
@@ -1768,9 +1769,9 @@ Enables flexible cancellation of leave requests with proper workflow management 
 					type: 'object',
 					properties: {
 						uid: { type: 'number', example: 12345 },
-						leaveRef: { type: 'string', example: 'LV-2024-001' },
+						leaveRef: { type: 'string', example: `LV-${new Date().getFullYear()}-001` },
 						status: { type: 'string', example: 'CANCELLED' },
-						cancelledDate: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+						cancelledDate: { type: 'string', format: 'date-time', example: getDynamicDateTime() },
 						cancelledBy: {
 							type: 'object',
 							properties: {
@@ -1913,7 +1914,7 @@ Provides secure and auditable removal of leave requests with comprehensive safet
 			properties: {
 				deletionReason: { 
 					type: 'string', 
-					example: 'Duplicate request created by error - original request LV-2024-002 is valid',
+					example: `Duplicate request created by error - original request LV-${new Date().getFullYear()}-002 is valid`,
 					description: 'Mandatory detailed reason for deletion'
 				},
 				confirmDeletion: {
@@ -1944,9 +1945,9 @@ Provides secure and auditable removal of leave requests with comprehensive safet
 				data: {
 					type: 'object',
 					properties: {
-						deletedRef: { type: 'string', example: 'LV-2024-001' },
+						deletedRef: { type: 'string', example: `LV-${new Date().getFullYear()}-001` },
 						deletedUid: { type: 'number', example: 12345 },
-						deletionDate: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+						deletionDate: { type: 'string', format: 'date-time', example: getDynamicDateTime() },
 						deletedBy: {
 							type: 'object',
 							properties: {
@@ -1959,7 +1960,7 @@ Provides secure and auditable removal of leave requests with comprehensive safet
 						deletionDetails: {
 							type: 'object',
 							properties: {
-								reason: { type: 'string', example: 'Duplicate request created by error - original request LV-2024-002 is valid' },
+								reason: { type: 'string', example: `Duplicate request created by error - original request LV-${new Date().getFullYear()}-002 is valid` },
 								softDelete: { type: 'boolean', example: true },
 								auditPreserved: { type: 'boolean', example: true },
 								recoverable: { type: 'boolean', example: true }
@@ -1970,8 +1971,8 @@ Provides secure and auditable removal of leave requests with comprehensive safet
 							properties: {
 								employeeName: { type: 'string', example: 'John Doe' },
 								leaveType: { type: 'string', example: 'ANNUAL' },
-								startDate: { type: 'string', format: 'date', example: '2024-07-15' },
-								endDate: { type: 'string', format: 'date', example: '2024-07-29' },
+								startDate: { type: 'string', format: 'date', example: getFutureDate(14) },
+								endDate: { type: 'string', format: 'date', example: getFutureDate(28) },
 								duration: { type: 'number', example: 14 },
 								status: { type: 'string', example: 'PENDING' }
 							}
@@ -1981,7 +1982,7 @@ Provides secure and auditable removal of leave requests with comprehensive safet
 							properties: {
 								recoveryPeriod: { type: 'string', example: '30 days' },
 								recoveryProcess: { type: 'string', example: 'Contact admin with reference ID for recovery' },
-								auditTrailId: { type: 'string', example: 'AUD-DEL-2023-12-001' }
+								auditTrailId: { type: 'string', example: `AUD-DEL-${getDynamicDate().replace(/-/g, '-')}` }
 							}
 						}
 					}

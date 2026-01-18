@@ -79,14 +79,6 @@ export class BranchService {
 			// Create org-specific cache key
 			const cacheKey = `${this.ALL_BRANCHES_CACHE_KEY}:org:${orgId}${effectiveBranchId ? `:branch:${effectiveBranchId}` : ':all'}`;
 			
-			console.log('🔍 DEBUG findAll branches:', {
-				orgId,
-				originalBranchId: branchId,
-				isElevatedUser,
-				effectiveBranchId,
-				orgWideAccess: effectiveBranchId === null
-			});
-			
 			// Try to get from cache first
 			const cachedBranches = await this.cacheManager.get<Branch[]>(cacheKey);
 			

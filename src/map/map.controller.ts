@@ -11,12 +11,13 @@ import {
 	ForbiddenException,
 	NotFoundException,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiQuery, ApiParam } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiQuery, ApiParam, ApiBadRequestResponse, ApiForbiddenResponse, ApiNotFoundResponse, ApiInternalServerErrorResponse, ApiOkResponse } from '@nestjs/swagger';
 import { MapService } from './map.service';
 import { CreateMapDto } from './dto/create-map.dto';
 import { UpdateMapDto } from './dto/update-map.dto';
+import { getDynamicDate, getDynamicDateTime, getPastDate, createApiDescription } from '../lib/utils/swagger-helpers';
 
-@ApiTags('Map')
+@ApiTags('🗺️ Map')
 @Controller('map')
 export class MapController {
 	constructor(private readonly mapService: MapService) {}
@@ -27,73 +28,165 @@ export class MapController {
 	 */
 	@Get('data')
 	@ApiOperation({
-		summary: 'Get map data for organization',
-		description:
-			'Retrieves comprehensive map data including workers, clients, competitors, and quotations for a specific organization and optional branch',
+		summary: '🗺️ Get comprehensive map data for organization',
+		description: createApiDescription(
+			'Retrieves comprehensive map data including workers, clients, competitors, and quotations for a specific organization and optional branch. Provides real-time location data for visualization and route planning.',
+			'The service method `MapService.generateMapData()` queries checked-in workers, client locations, competitor data, recent quotations, organization configuration, and returns aggregated map data with caching for performance.',
+			'MapService',
+			'generateMapData',
+			'aggregates map data from multiple sources including workers, clients, competitors, and quotations',
+			'an object containing workers, clients, competitors, quotations, and map configuration',
+			['Worker location tracking', 'Client location aggregation', 'Competitor data retrieval', 'Quotation location mapping', 'Caching']
+		),
 	})
 	@ApiQuery({
 		name: 'organisationId',
 		description: 'Organization ID (required)',
 		type: Number,
 		required: true,
+		example: 12345
 	})
 	@ApiQuery({
 		name: 'branchId',
 		description: 'Branch ID (optional - filters data to specific branch)',
 		type: Number,
 		required: false,
+		example: 67890
 	})
 	@ApiQuery({
 		name: 'userId',
 		description: 'User ID for authorization context (optional)',
 		type: Number,
 		required: false,
+		example: 11111
 	})
-	@ApiResponse({
-		status: 200,
-		description: 'Map data retrieved successfully',
+	@ApiOkResponse({
+		description: '✅ Map data retrieved successfully',
 		schema: {
 			type: 'object',
 			properties: {
-				workers: {
-					type: 'array',
-					description: 'Currently checked-in employees with location data',
-				},
-				clients: {
-					type: 'array',
-					description: 'Client locations with comprehensive data',
-				},
-				competitors: {
-					type: 'array',
-					description: 'Competitor locations with market intelligence',
-				},
-				quotations: {
-					type: 'array',
-					description: 'Recent quotations with client locations',
-				},
-				mapConfig: {
+				success: { type: 'boolean', example: true },
+				data: {
 					type: 'object',
 					properties: {
-						defaultCenter: {
+						workers: {
+							type: 'array',
+							description: 'Currently checked-in employees with location data',
+							items: {
+								type: 'object',
+								properties: {
+									uid: { type: 'number', example: 12345 },
+									name: { type: 'string', example: 'John Doe' },
+									latitude: { type: 'number', example: -25.7479 },
+									longitude: { type: 'number', example: 28.2293 },
+									status: { type: 'string', example: 'CHECKED_IN' }
+								}
+							}
+						},
+						clients: {
+							type: 'array',
+							description: 'Client locations with comprehensive data',
+							items: {
+								type: 'object',
+								properties: {
+									uid: { type: 'number', example: 54321 },
+									name: { type: 'string', example: 'ABC Corporation' },
+									latitude: { type: 'number', example: -25.7479 },
+									longitude: { type: 'number', example: 28.2293 },
+									address: { type: 'string', example: '123 Main St' }
+								}
+							}
+						},
+						competitors: {
+							type: 'array',
+							description: 'Competitor locations with market intelligence',
+							items: {
+								type: 'object',
+								properties: {
+									uid: { type: 'number', example: 98765 },
+									name: { type: 'string', example: 'Competitor Inc' },
+									latitude: { type: 'number', example: -25.7479 },
+									longitude: { type: 'number', example: 28.2293 }
+								}
+							}
+						},
+						quotations: {
+							type: 'array',
+							description: 'Recent quotations with client locations',
+							items: {
+								type: 'object',
+								properties: {
+									uid: { type: 'number', example: 11111 },
+									clientRef: { type: 'number', example: 54321 },
+									latitude: { type: 'number', example: -25.7479 },
+									longitude: { type: 'number', example: 28.2293 },
+									status: { type: 'string', example: 'PENDING' }
+								}
+							}
+						},
+						mapConfig: {
 							type: 'object',
 							properties: {
-								lat: { type: 'number' },
-								lng: { type: 'number' },
+								defaultCenter: {
+									type: 'object',
+									properties: {
+										lat: { type: 'number', example: -25.7479 },
+										lng: { type: 'number', example: 28.2293 },
+									},
+								},
+								orgRegions: {
+									type: 'array',
+									description: 'Organization-specific map regions',
+									items: { type: 'object' }
+								},
 							},
 						},
-						orgRegions: {
-							type: 'array',
-							description: 'Organization-specific map regions',
-						},
-					},
+					}
 				},
+				timestamp: { type: 'string', format: 'date-time', example: getDynamicDateTime() }
 			},
 		},
 	})
-	@ApiResponse({ status: 400, description: 'Bad request - Invalid parameters' })
-	@ApiResponse({ status: 403, description: 'Forbidden - Access denied' })
-	@ApiResponse({ status: 404, description: 'Not found - Organization or branch not found' })
-	@ApiResponse({ status: 500, description: 'Internal server error' })
+	@ApiBadRequestResponse({
+		description: '❌ Bad request - Invalid parameters',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Organisation ID is required' },
+				statusCode: { type: 'number', example: 400 }
+			}
+		}
+	})
+	@ApiForbiddenResponse({
+		description: '🚫 Forbidden - Access denied',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Access denied' },
+				statusCode: { type: 'number', example: 403 }
+			}
+		}
+	})
+	@ApiNotFoundResponse({
+		description: '❌ Not found - Organization or branch not found',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Organization not found' },
+				statusCode: { type: 'number', example: 404 }
+			}
+		}
+	})
+	@ApiInternalServerErrorResponse({
+		description: '💥 Internal server error',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Failed to retrieve map data. Please try again.' },
+				statusCode: { type: 'number', example: 500 }
+			}
+		}
+	})
 	async getMapData(
 		@Query('organisationId') organisationId: string,
 		@Query('branchId') branchId?: string,
@@ -160,10 +253,88 @@ export class MapController {
 	}
 
 	@Get('trip-history/:userId')
-	@ApiOperation({ summary: 'Get sales rep trip history with routing' })
-	@ApiParam({ name: 'userId', type: Number })
-	@ApiQuery({ name: 'startDate', required: false, type: String })
-	@ApiQuery({ name: 'endDate', required: false, type: String })
+	@ApiOperation({
+		summary: '🚗 Get sales rep trip history with routing',
+		description: createApiDescription(
+			'Retrieves trip history for a sales representative including tracking points, route planning, distance calculations, and duration analysis. Uses Google Maps API for route optimization.',
+			'The service method `MapService.getTripHistory()` queries tracking points for the user within date range, calculates route using Google Maps API, computes total distance and duration, caches results, and returns trip history with route data.',
+			'MapService',
+			'getTripHistory',
+			'retrieves tracking points, plans route using Google Maps, calculates distance and duration',
+			'an object containing route, tracking points, total distance, and total duration',
+			['Tracking point retrieval', 'Route planning', 'Distance calculation', 'Duration analysis', 'Caching']
+		),
+	})
+	@ApiParam({
+		name: 'userId',
+		description: 'Sales representative user ID',
+		type: Number,
+		example: 12345
+	})
+	@ApiQuery({
+		name: 'startDate',
+		description: 'Start date for trip history (ISO format: YYYY-MM-DD). Defaults to today if not provided.',
+		required: false,
+		type: String,
+		example: getPastDate(7)
+	})
+	@ApiQuery({
+		name: 'endDate',
+		description: 'End date for trip history (ISO format: YYYY-MM-DD). Defaults to today if not provided.',
+		required: false,
+		type: String,
+		example: getDynamicDate()
+	})
+	@ApiOkResponse({
+		description: '✅ Trip history retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				route: {
+					type: 'object',
+					properties: {
+						totalDistance: { type: 'number', example: 45.5, description: 'Total distance in kilometers' },
+						totalDuration: { type: 'number', example: 3600, description: 'Total duration in seconds' },
+						waypoints: {
+							type: 'array',
+							items: {
+								type: 'object',
+								properties: {
+									latitude: { type: 'number', example: -25.7479 },
+									longitude: { type: 'number', example: 28.2293 }
+								}
+							}
+						}
+					}
+				},
+				points: {
+					type: 'array',
+					description: 'Tracking points for the trip',
+					items: {
+						type: 'object',
+						properties: {
+							uid: { type: 'number', example: 11111 },
+							latitude: { type: 'number', example: -25.7479 },
+							longitude: { type: 'number', example: 28.2293 },
+							createdAt: { type: 'string', format: 'date-time', example: getDynamicDateTime() }
+						}
+					}
+				},
+				totalDistance: { type: 'number', example: 45.5, description: 'Total distance in kilometers' },
+				totalDuration: { type: 'number', example: 3600, description: 'Total duration in seconds' }
+			}
+		}
+	})
+	@ApiBadRequestResponse({
+		description: '❌ Bad request - Invalid user ID or date format',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Invalid user ID' },
+				statusCode: { type: 'number', example: 400 }
+			}
+		}
+	})
 	async getTripHistory(
 		@Param('userId') userId: string,
 		@Query('startDate') startDate?: string,

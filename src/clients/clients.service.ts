@@ -68,23 +68,6 @@ export class ClientsService {
 		private readonly approvalsService: ApprovalsService,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
-
-		this.logger.log('ClientsService initialized with cache TTL: ' + this.CACHE_TTL + ' minutes');
-		this.logger.debug(`ClientsService initialized with dependencies:`);
-		this.logger.debug(`Client Repository: ${!!this.clientsRepository}`);
-		this.logger.debug(`Client Auth Repository: ${!!this.clientAuthRepository}`);
-		this.logger.debug(`Organisation Repository: ${!!this.organisationRepository}`);
-		this.logger.debug(`Organisation Settings Repository: ${!!this.organisationSettingsRepository}`);
-		this.logger.debug(`User Repository: ${!!this.userRepository}`);
-		this.logger.debug(`Schedule Repository: ${!!this.scheduleRepository}`);
-		this.logger.debug(`Task Repository: ${!!this.taskRepository}`);
-		this.logger.debug(`Cache Manager: ${!!this.cacheManager}`);
-		this.logger.debug(`Config Service: ${!!this.configService}`);
-		this.logger.debug(`Event Emitter: ${!!this.eventEmitter}`);
-		this.logger.debug(`Communication Schedule Service: ${!!this.communicationScheduleService}`);
-		this.logger.debug(`Tasks Service: ${!!this.tasksService}`);
-		this.logger.debug(`Data Source: ${!!this.dataSource}`);
-		this.logger.debug(`Approvals Service: ${!!this.approvalsService}`);
 	}
 
 	/**
@@ -142,7 +125,6 @@ export class ClientsService {
 			await this.cacheManager.set(key, data, ttl || this.CACHE_TTL);
 			const cacheTime = Date.now() - cacheStart;
 			
-			this.logger.debug(`[CACHE_SET] Successfully cached data with key: ${key} in ${cacheTime}ms`);
 			return true;
 		} catch (error) {
 			this.logger.error(`[CACHE_SET] Failed to cache data with key ${key}: ${error.message}`);
@@ -216,7 +198,6 @@ export class ClientsService {
 			`&bold=true` +
 			`&font-size=0.6`;
 
-		this.logger.debug(`[LOGO_FALLBACK] Generated fallback logo for "${clientName}": ${avatarUrl}`);
 		
 		return avatarUrl;
 	}
@@ -234,7 +215,6 @@ export class ClientsService {
 		if (logoUrl && logoUrl.trim()) {
 			try {
 				new URL(logoUrl); // This will throw if URL is invalid
-				this.logger.debug(`[LOGO_PROCESSING] Using provided logo URL: ${logoUrl}`);
 				return logoUrl.trim();
 			} catch (error) {
 				this.logger.warn(`[LOGO_PROCESSING] Invalid logo URL provided: ${logoUrl}, generating fallback`);
@@ -243,7 +223,6 @@ export class ClientsService {
 
 		// Generate fallback logo using client name
 		const fallbackLogo = this.generateFallbackLogo(clientName || 'Client');
-		this.logger.debug(`[LOGO_PROCESSING] Generated fallback logo: ${fallbackLogo}`);
 		
 		return fallbackLogo;
 	}
@@ -372,14 +351,12 @@ export class ClientsService {
 
 	private async invalidateClientCache(client: Client): Promise<void> {
 		const startTime = Date.now();
-		this.logger.debug(`[CACHE_INVALIDATION] Starting cache invalidation for client ${client.uid} (${client.name})`);
 
 		try {
 			// Get all cache keys with error handling
 			let keys: string[] = [];
 			try {
 				keys = await this.cacheManager.store.keys();
-				this.logger.debug(`[CACHE_INVALIDATION] Retrieved ${keys.length} cache keys for evaluation`);
 			} catch (keyRetrievalError) {
 				this.logger.error(`[CACHE_INVALIDATION] Failed to retrieve cache keys: ${keyRetrievalError.message}`);
 				// Continue with manual key construction as fallback
@@ -397,7 +374,6 @@ export class ClientsService {
 				`${this.CACHE_PREFIX}stats`,
 			];
 			keysToDelete.push(...clientSpecificKeys);
-			this.logger.debug(`[CACHE_INVALIDATION] Added ${clientSpecificKeys.length} client-specific cache keys`);
 
 			// Add organization and branch specific keys
 			if (client.organisation?.uid) {

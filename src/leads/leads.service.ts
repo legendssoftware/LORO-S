@@ -507,13 +507,11 @@ export class LeadsService {
 
 			// Add branch filter if provided
 			if (branchId) {
-				this.logger.debug(`🏢 [LeadsService] Adding branch filter: ${branchId}`);
 				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
 			}
 
 			// Access control: Regular users can only see their own leads or leads they're assigned to
 			if (!hasElevatedAccess && userId) {
-				this.logger.debug(`👤 [LeadsService] Applying user-level access filter for user: ${userId}`);
 				// User can see leads where they are the owner OR where they are in the assignees array
 				queryBuilder.andWhere(
 					'(lead.ownerUid = :userId OR CAST(lead.assignees AS jsonb) @> CAST(:userIdJson AS jsonb))',
@@ -525,27 +523,22 @@ export class LeadsService {
 			}
 
 			if (filters?.status) {
-				this.logger.debug(`📊 [LeadsService] Adding status filter: ${filters.status}`);
 				queryBuilder.andWhere('lead.status = :status', { status: filters.status });
 			}
 
 			if (filters?.temperature) {
-				this.logger.debug(`🌡️ [LeadsService] Adding temperature filter: ${filters.temperature}`);
 				queryBuilder.andWhere('lead.temperature = :temperature', { temperature: filters.temperature });
 			}
 
 			if (filters?.minScore !== undefined) {
-				this.logger.debug(`📈 [LeadsService] Adding minimum score filter: ${filters.minScore}`);
 				queryBuilder.andWhere('lead.leadScore >= :minScore', { minScore: filters.minScore });
 			}
 
 			if (filters?.maxScore !== undefined) {
-				this.logger.debug(`📉 [LeadsService] Adding maximum score filter: ${filters.maxScore}`);
 				queryBuilder.andWhere('lead.leadScore <= :maxScore', { maxScore: filters.maxScore });
 			}
 
 			if (filters?.startDate && filters?.endDate) {
-				this.logger.debug(`📅 [LeadsService] Adding date range filter: ${filters.startDate.toISOString()} to ${filters.endDate.toISOString()}`);
 				queryBuilder.andWhere('lead.createdAt BETWEEN :startDate AND :endDate', {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
@@ -553,7 +546,6 @@ export class LeadsService {
 			}
 
 			if (filters?.search) {
-				this.logger.debug(`🔍 [LeadsService] Adding search filter: "${filters.search}"`);
 				queryBuilder.andWhere(
 					'(lead.name ILIKE :search OR lead.email ILIKE :search OR lead.phone ILIKE :search OR lead.companyName ILIKE :search OR owner.name ILIKE :search OR owner.surname ILIKE :search)',
 					{ search: `%${filters.search}%` },

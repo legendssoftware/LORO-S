@@ -50,6 +50,7 @@ import {
 } from './dto/update-iot.dto';
 import { isPublic } from '../decorators/public.decorator';
 import { Request } from 'express';
+import { getDynamicDate, getDynamicDateTime, getFutureDate, getPastDate, createApiDescription } from '../lib/utils/swagger-helpers';
 
 @ApiBearerAuth('JWT-auth')
 @ApiTags('🤖 IoT Devices & Time Tracking')
@@ -355,7 +356,7 @@ Register new IoT devices in your organization with comprehensive configuration a
 				message: { type: 'string', example: 'Failed to create device due to system error' },
 				error: { type: 'string', example: 'Internal Server Error' },
 				statusCode: { type: 'number', example: 500 },
-				timestamp: { type: 'string', format: 'date-time', example: '2024-01-15T10:00:00Z' },
+				timestamp: { type: 'string', format: 'date-time', example: getDynamicDateTime() },
 				path: { type: 'string', example: '/iot/devices' },
 			},
 		},
@@ -903,19 +904,19 @@ Successful requests return:
 						recordDate: {
 							type: 'string',
 							format: 'date',
-							example: '2023-01-05',
+							example: getDynamicDate(),
 							description: 'Date of the record (YYYY-MM-DD format)',
 						},
 						createdAt: {
 							type: 'string',
 							format: 'date-time',
-							example: '2023-01-05T08:00:00.000Z',
+							example: getDynamicDateTime(undefined, undefined, 8),
 							description: 'Record creation timestamp',
 						},
 						updatedAt: {
 							type: 'string',
 							format: 'date-time',
-							example: '2023-01-05T17:00:00.000Z',
+							example: getDynamicDateTime(undefined, undefined, 17),
 							description: 'Last record update timestamp',
 						},
 						metadata: {
@@ -1073,7 +1074,7 @@ Successful requests return:
 						lastSeen: {
 							type: 'string',
 							format: 'date-time',
-							example: '2023-01-05T08:00:00.000Z',
+							example: getDynamicDateTime(undefined, undefined, 8),
 							description: 'Last communication timestamp',
 						},
 						organization: {
@@ -1134,7 +1135,7 @@ Successful requests return:
 						cacheUpdates: {
 							type: 'array',
 							items: { type: 'string' },
-							example: ['device_analytics_789', 'daily_report_20230105'],
+							example: ['device_analytics_789', `daily_report_${getDynamicDate().replace(/-/g, '')}`],
 							description: 'Cache keys updated during processing',
 						},
 						notificationsSent: {
@@ -1215,7 +1216,7 @@ Successful requests return:
 				timestamp: {
 					type: 'string',
 					format: 'date-time',
-					example: '2023-01-05T08:00:00.000Z',
+					example: getDynamicDateTime(undefined, undefined, 8),
 					description: 'When the error occurred',
 				},
 				path: {
@@ -1302,7 +1303,7 @@ Successful requests return:
 				timestamp: {
 					type: 'string',
 					format: 'date-time',
-					example: '2023-01-05T08:00:00.000Z',
+					example: getDynamicDateTime(undefined, undefined, 8),
 					description: 'When the error occurred',
 				},
 				path: {
@@ -1477,7 +1478,7 @@ Successful requests return:
 							id: 123,
 							timestamp: 1672905600,
 							eventType: 'open',
-							recordedAt: '2023-01-05T08:00:00.000Z',
+							recordedAt: getDynamicDateTime(undefined, undefined, 8),
 						},
 						attemptedEvent: {
 							timestamp: 1672905600,
@@ -1588,7 +1589,7 @@ Successful requests return:
 						},
 						errorId: {
 							type: 'string',
-							example: 'ERR_20230105_080001_ABC123',
+							example: `ERR_${getDynamicDate().replace(/-/g, '')}_080001_ABC123`,
 							description: 'Unique error identifier for tracking',
 						},
 					},
@@ -1628,7 +1629,7 @@ Successful requests return:
 				timestamp: {
 					type: 'string',
 					format: 'date-time',
-					example: '2023-01-05T08:00:00.000Z',
+					example: getDynamicDateTime(undefined, undefined, 8),
 					description: 'When the error occurred',
 				},
 			},
@@ -1936,7 +1937,7 @@ Reports are automatically sent to administrators and owners:
 				data: {
 					type: 'object',
 					properties: {
-						reportDate: { type: 'string', example: '2025-01-04' },
+						reportDate: { type: 'string', example: getDynamicDate() },
 						generatedAt: { type: 'string', format: 'date-time' },
 						organizationId: { type: 'number', example: 123 },
 						summary: {
@@ -2087,7 +2088,7 @@ Reports are automatically sent to administrators and owners:
 				data: {
 					type: 'object',
 					properties: {
-						reportDate: { type: 'string', example: '2025-01-04' },
+						reportDate: { type: 'string', example: getDynamicDate() },
 						generatedAt: { type: 'string', format: 'date-time' },
 						organizationId: { type: 'number', example: 123 },
 						summary: {

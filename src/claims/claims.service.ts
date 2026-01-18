@@ -60,15 +60,6 @@ export class ClaimsService {
 		this.currencyLocale = this.configService.get<string>('CURRENCY_LOCALE', 'en-ZA');
 		this.currencyCode = this.configService.get<string>('CURRENCY_CODE', 'USD');
 		this.currencySymbol = this.configService.get<string>('CURRENCY_SYMBOL', '$');
-
-		this.logger.log('ClaimsService initialized with cache TTL: ' + this.CACHE_TTL + 'ms');
-		this.logger.debug(`ClaimsService initialized with currency: ${this.currencyCode} (${this.currencySymbol})`);
-		this.logger.debug(`Currency locale: ${this.currencyLocale}`);
-		this.logger.debug(`Rewards Service: ${!!this.rewardsService}`);
-		this.logger.debug(`Event Emitter: ${!!this.eventEmitter}`);
-		this.logger.debug(`Approvals Service: ${!!this.approvalsService}`);
-		this.logger.debug(`Unified Notification Service: ${!!this.unifiedNotificationService}`);
-		this.logger.debug(`Cache Manager: ${!!this.cacheManager}`);
 	}
 
 	// Helper method to invalidate claims cache
@@ -158,7 +149,6 @@ export class ClaimsService {
 
 		try {
 			// Validate input data
-			this.logger.debug(`📝 [ClaimsService] Validating claim creation data for user: ${createClaimDto.owner}`);
 			if (!createClaimDto.owner) {
 				this.logger.warn(`❌ [ClaimsService] User ID is required for claim creation`);
 				throw new BadRequestException('User ID is required for claim creation');
@@ -170,7 +160,6 @@ export class ClaimsService {
 			}
 
 			// Get user with organization and branch info - Use QueryBuilder for proper relations
-			this.logger.debug(`👤 [ClaimsService] Fetching user details for claim creation: ${createClaimDto.owner}`);
 			const user = await this.userRepository
 				.createQueryBuilder('user')
 				.leftJoinAndSelect('user.organisation', 'organisation')
@@ -214,14 +203,6 @@ export class ClaimsService {
 				shareTokenExpiresAt,
 			} as DeepPartial<Claim>;
 
-			this.logger.debug(`🏗️ [ClaimsService] Creating claim with data:`, {
-				owner: createClaimDto.owner,
-				organisation: orgId || user.organisation?.uid,
-				branch: branchId || user.branch?.uid,
-				amount: createClaimDto.amount,
-				category: createClaimDto.category,
-			});
-
 			// ============================================================
 			// TRANSACTIONAL PATH: Save claim and create approval atomically
 			// ============================================================
@@ -232,7 +213,6 @@ export class ClaimsService {
 				// Use transaction to ensure atomicity
 				await this.dataSource.manager.transaction(async (transactionalEntityManager) => {
 					// 1. Save claim to database
-					this.logger.debug(`💾 [ClaimsService] Saving claim to database within transaction`);
 					claim = await transactionalEntityManager.save(Claim, claimData);
 
 					if (!claim) {
@@ -240,14 +220,10 @@ export class ClaimsService {
 						throw new NotFoundException(process.env.CREATE_ERROR_MESSAGE || 'Failed to create claim');
 					}
 
-					this.logger.debug(`✅ [ClaimsService] Claim created successfully with ID: ${claim.uid}`);
-
 					// 2. Create approval workflow synchronously within transaction
 					try {
-						this.logger.debug(`🔄 [ClaimsService] Creating approval workflow for claim ${claim.uid} within transaction`);
 						await this.initializeClaimApprovalWorkflowTransactional(claim, user, transactionalEntityManager);
 						approvalCreated = true;
-						this.logger.debug(`✅ [ClaimsService] Approval workflow created successfully for claim: ${claim.uid}`);
 					} catch (approvalError) {
 						this.logger.error(
 							`❌ [ClaimsService] Failed to create approval workflow for claim: ${claim.uid}`,
@@ -265,7 +241,6 @@ export class ClaimsService {
 
 				// Invalidate cache after successful transaction
 				this.invalidateClaimsCache(claim);
-				this.logger.debug(`🧹 [ClaimsService] Claims cache invalidated after claim creation`);
 
 				// ============================================================
 				// EARLY RETURN: Respond to client immediately after successful save
@@ -282,12 +257,9 @@ export class ClaimsService {
 				// ============================================================
 				setImmediate(async () => {
 					try {
-						this.logger.debug(`🔄 [ClaimsService] Starting post-response processing for claim: ${claim.uid}`);
-
 						// 1. Send email notifications (existing code from lines 264-325)
 						try {
 							if (user.email) {
-								this.logger.debug(`📧 [ClaimsService] Preparing email notification for claim ${claim.uid}`);
 								const emailData: ClaimEmailData = {
 									name: user.name || user.email,
 									claimId: claim.uid,
@@ -323,7 +295,6 @@ export class ClaimsService {
 
 								// Send push notification to the user who created the claim
 								try {
-									this.logger.debug(`📱 [ClaimsService] Sending push notification for claim ${claim.uid}`);
 									await this.unifiedNotificationService.sendTemplatedNotification(
 										NotificationEvent.CLAIM_CREATED,
 										[user.uid],
@@ -338,7 +309,6 @@ export class ClaimsService {
 											priority: NotificationPriority.NORMAL,
 										},
 									);
-									this.logger.debug(`✅ [ClaimsService] Claim creation push notification sent to user: ${user.email}`);
 								} catch (notificationError) {
 									this.logger.error(`❌ [ClaimsService] Failed to send claim creation push notification:`, notificationError.message);
 								}
@@ -348,7 +318,6 @@ export class ClaimsService {
 						}
 
 						// 2. Send internal notification for status changes
-						this.logger.debug(`📢 [ClaimsService] Sending internal notification for new claim ${claim.uid}`);
 						const notification = {
 							type: NotificationType.USER,
 							title: 'New Claim',
@@ -363,7 +332,6 @@ export class ClaimsService {
 
 						// 3. Award XP for creating a claim
 						try {
-							this.logger.debug(`🏆 [ClaimsService] Awarding XP for claim creation to user: ${createClaimDto.owner}`);
 							await this.rewardsService.awardXP(
 								{
 									owner: createClaimDto.owner,
@@ -378,7 +346,6 @@ export class ClaimsService {
 								orgId,
 								branchId,
 							);
-							this.logger.debug(`✅ [ClaimsService] XP awarded successfully for claim creation to user: ${createClaimDto.owner}`);
 						} catch (xpError) {
 							this.logger.error(
 								`❌ [ClaimsService] Failed to award XP for claim creation to user: ${createClaimDto.owner}`,
@@ -386,8 +353,6 @@ export class ClaimsService {
 							);
 							// Don't fail post-processing if XP award fails
 						}
-
-						this.logger.debug(`✅ [ClaimsService] Post-response processing completed for claim: ${claim.uid}`);
 					} catch (backgroundError) {
 						// Log errors but don't affect user experience since response already sent
 						this.logger.error(
@@ -450,8 +415,6 @@ export class ClaimsService {
 
 			// Check if user has elevated permissions
 			const canViewAll = this.canViewAllClaims(userAccessLevel);
-			
-			this.logger.debug(`🏗️ [ClaimsService] Building query for claims in org: ${orgId || 'all'}, branch: ${branchId || 'all'}, user: ${userId}, accessLevel: ${userAccessLevel}, canViewAll: ${canViewAll}`);
 
 			const queryBuilder = this.claimsRepository
 				.createQueryBuilder('claim')
@@ -462,7 +425,6 @@ export class ClaimsService {
 
 			// Apply RBAC: Regular users can only see their own claims - use ownerUid directly
 			if (!canViewAll && userId) {
-				this.logger.debug(`🔒 [ClaimsService] Restricting claims to user ${userId} only`);
 				queryBuilder.andWhere('claim.ownerUid = :userId', { userId: Number(userId) });
 			} else if (!canViewAll && !userId) {
 				// No userId and not elevated role - deny access
@@ -471,12 +433,10 @@ export class ClaimsService {
 			}
 
 			if (filters?.status) {
-				this.logger.debug(`📊 [ClaimsService] Adding status filter: ${filters.status}`);
 				queryBuilder.andWhere('claim.status = :status', { status: filters.status });
 			}
 
 			if (filters?.startDate && filters?.endDate) {
-				this.logger.debug(`📅 [ClaimsService] Adding date range filter: ${filters.startDate.toISOString()} to ${filters.endDate.toISOString()}`);
 				queryBuilder.andWhere('claim.createdAt BETWEEN :startDate AND :endDate', {
 					startDate: filters.startDate,
 					endDate: filters.endDate,
@@ -484,7 +444,6 @@ export class ClaimsService {
 			}
 
 			if (filters?.search) {
-				this.logger.debug(`🔍 [ClaimsService] Adding search filter: "${filters.search}"`);
 				queryBuilder.andWhere(
 					'(owner.name ILIKE :search OR owner.surname ILIKE :search OR claim.amount ILIKE :search OR claim.category ILIKE :search)',
 					{ search: `%${filters.search}%` },
@@ -493,13 +452,11 @@ export class ClaimsService {
 
 			// Add organization filter if provided
 			if (orgId) {
-				this.logger.debug(`🏢 [ClaimsService] Adding organization filter: ${orgId}`);
 				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
 			}
 
 			// Add branch filter if provided
 			if (branchId) {
-				this.logger.debug(`🏢 [ClaimsService] Adding branch filter: ${branchId}`);
 				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
 			}
 
@@ -509,7 +466,6 @@ export class ClaimsService {
 				.take(limit)
 				.orderBy('claim.createdAt', 'DESC');
 
-			this.logger.debug(`💾 [ClaimsService] Executing query for claims with pagination: offset=${(page - 1) * limit}, limit=${limit}`);
 			const [claims, total] = await queryBuilder.getManyAndCount();
 
 			if (!claims || claims.length === 0) {
@@ -526,7 +482,6 @@ export class ClaimsService {
 				};
 			}
 
-			this.logger.debug(`🔗 [ClaimsService] Formatting ${claims.length} claims with currency`);
 			const formattedClaims = claims?.map((claim) => ({
 				...claim,
 				amount: this.formatCurrency(Number(claim?.amount) || 0),
@@ -578,8 +533,6 @@ export class ClaimsService {
 		try {
 			// Check if user is admin, owner, developer, or technician - they can view any claim
 			const canViewAll = ['admin', 'owner', 'developer', 'technician'].includes(userAccessLevel?.toLowerCase() || '');
-			
-			this.logger.debug(`🏗️ [ClaimsService] Building query for claim ${ref} in org: ${orgId || 'all'}, branch: ${branchId || 'all'}, canViewAll: ${canViewAll}`);
 
 			const queryBuilder = this.claimsRepository
 				.createQueryBuilder('claim')
@@ -591,23 +544,19 @@ export class ClaimsService {
 
 			// If user is not admin/owner/developer/technician, only allow viewing their own claims - use ownerUid directly
 			if (!canViewAll && userId) {
-				this.logger.debug(`🔒 [ClaimsService] Restricting claim access to owner only`);
 				queryBuilder.andWhere('claim.ownerUid = :userId', { userId: Number(userId) });
 			}
 
 			// Add organization filter if provided - use organisationUid directly
 			if (orgId) {
-				this.logger.debug(`🏢 [ClaimsService] Adding organization filter: ${orgId}`);
 				queryBuilder.andWhere('claim.organisationUid = :orgId', { orgId: Number(orgId) });
 			}
 
 			// Add branch filter if provided - use branchUid directly
 			if (branchId) {
-				this.logger.debug(`🏢 [ClaimsService] Adding branch filter: ${branchId}`);
 				queryBuilder.andWhere('claim.branchUid = :branchId', { branchId: Number(branchId) });
 			}
 
-			this.logger.debug(`💾 [ClaimsService] Executing database query for claim ${ref}`);
 			const claim = await queryBuilder.getOne();
 
 			if (!claim) {
@@ -620,7 +569,6 @@ export class ClaimsService {
 				throw new NotFoundException(process.env.SEARCH_ERROR_MESSAGE);
 			}
 
-			this.logger.debug(`📊 [ClaimsService] Calculating organization stats for claim ${ref}`);
 			const allClaimsQuery = this.claimsRepository
 				.createQueryBuilder('claim')
 				.leftJoinAndSelect('claim.organisation', 'organisation');
@@ -640,7 +588,6 @@ export class ClaimsService {
 			const allClaims = await allClaimsQuery.getMany();
 			const stats = this.calculateStats(allClaims);
 
-			this.logger.debug(`🔗 [ClaimsService] Formatting claim ${ref} with currency`);
 			const formattedClaim = {
 				...claim,
 				amount: this.formatCurrency(Number(claim?.amount) || 0),
@@ -699,8 +646,6 @@ export class ClaimsService {
 				throw new NotFoundException('Access denied: You can only view your own claims');
 			}
 
-			this.logger.debug(`🏗️ [ClaimsService] Building query for user ${ref} claims in org: ${orgId || 'all'}, branch: ${branchId || 'all'}`);
-
 			const queryBuilder = this.claimsRepository
 				.createQueryBuilder('claim')
 				.leftJoinAndSelect('claim.owner', 'owner')
@@ -711,17 +656,14 @@ export class ClaimsService {
 
 			// Add organization filter if provided - use organisationUid directly
 			if (orgId) {
-				this.logger.debug(`🏢 [ClaimsService] Adding organization filter: ${orgId}`);
 				queryBuilder.andWhere('claim.organisationUid = :orgId', { orgId: Number(orgId) });
 			}
 
 			// Add branch filter if provided - use branchUid directly
 			if (branchId) {
-				this.logger.debug(`🏢 [ClaimsService] Adding branch filter: ${branchId}`);
 				queryBuilder.andWhere('claim.branchUid = :branchId', { branchId: Number(branchId) });
 			}
 
-			this.logger.debug(`💾 [ClaimsService] Executing database query for user ${ref} claims`);
 			const claims = await queryBuilder.getMany();
 
 			if (!claims || claims.length === 0) {
@@ -739,13 +681,11 @@ export class ClaimsService {
 				};
 			}
 
-			this.logger.debug(`🔗 [ClaimsService] Formatting ${claims.length} user claims with currency`);
 			const formattedClaims = claims?.map((claim) => ({
 				...claim,
 				amount: this.formatCurrency(Number(claim?.amount) || 0),
 			}));
 
-			this.logger.debug(`📊 [ClaimsService] Calculating stats for ${claims.length} user claims`);
 			const stats = this.calculateStats(claims);
 
 			const duration = Date.now() - startTime;
@@ -792,7 +732,6 @@ export class ClaimsService {
 		this.logger.log(`📅 [ClaimsService] Getting claims for date: ${dateStr}`);
 
 		try {
-			this.logger.debug(`💾 [ClaimsService] Executing database query for claims on date: ${dateStr}`);
 			const claims = await this.claimsRepository.find({
 				where: { createdAt: Between(startOfDay(date), endOfDay(date)) },
 			});
@@ -802,7 +741,6 @@ export class ClaimsService {
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
 			}
 
-			this.logger.debug(`📊 [ClaimsService] Grouping ${claims.length} claims by status`);
 			// Group claims by status
 			const groupedClaims = {
 				pending: claims.filter((claim) => claim.status === ClaimStatus.PENDING),
@@ -811,7 +749,6 @@ export class ClaimsService {
 				paid: claims.filter((claim) => claim.status === ClaimStatus.PAID),
 			};
 
-			this.logger.debug(`💰 [ClaimsService] Calculating total value for ${claims.length} claims`);
 			const totalValue = claims?.reduce((sum, claim) => sum + (Number(claim?.amount) || 0), 0);
 
 			const duration = Date.now() - startTime;
@@ -877,7 +814,6 @@ export class ClaimsService {
 					// Check if there's an active approval for this claim
 					// Note: Direct status updates to APPROVED/DECLINED should go through approval workflow
 					// This check prevents bypassing the approval system
-					this.logger.debug(`⚠️ [ClaimsService] Status change from ${previousStatus} to ${updateClaimDto.status} should go through approval workflow`);
 					// Allow the update but log a warning - the approval workflow handler will manage status changes
 				}
 			}
@@ -924,8 +860,6 @@ export class ClaimsService {
 			// ============================================================
 			setImmediate(async () => {
 				try {
-					this.logger.debug(`🔄 [ClaimsService] Starting post-response processing for claim update: ${ref}`);
-
 					// Get the updated claim with all relations for post-processing
 					const updatedClaim = await this.claimsRepository.findOne({
 						where: { uid: ref },
@@ -994,7 +928,6 @@ export class ClaimsService {
 
 							// Send email to the claim owner
 							this.eventEmitter.emit('send.email', emailType, [updatedClaim.owner.email], baseEmailData);
-							this.logger.debug(`📧 [ClaimsService] Sent status update email for claim ${ref}`);
 						}
 					} catch (emailError) {
 						this.logger.error(`❌ [ClaimsService] Error sending claim status update email:`, emailError.message);
@@ -1012,7 +945,6 @@ export class ClaimsService {
 					const recipients = [AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.SUPERVISOR];
 
 					this.eventEmitter.emit('send.notification', notification, recipients);
-					this.logger.debug(`📢 [ClaimsService] Sent internal notification for claim ${ref}`);
 
 					// 3. Award XP for claim update
 					try {
@@ -1030,12 +962,9 @@ export class ClaimsService {
 							orgId,
 							branchId,
 						);
-						this.logger.debug(`🏆 [ClaimsService] Awarded XP for claim update to user: ${claim.owner.uid}`);
 					} catch (xpError) {
 						this.logger.error(`❌ [ClaimsService] Failed to award XP for claim update:`, xpError.message);
 					}
-
-					this.logger.debug(`✅ [ClaimsService] Post-response processing completed for claim: ${ref}`);
 				} catch (backgroundError) {
 					// Log errors but don't affect user experience since response already sent
 					this.logger.error(
@@ -1119,7 +1048,6 @@ export class ClaimsService {
 
 			// If user is not admin/owner/developer/technician, only allow restoring their own claims
 			if (!canViewAll && userId) {
-				this.logger.debug(`🔒 [ClaimsService] Restricting restore to owner only`);
 				queryBuilder.andWhere('owner.uid = :userId', { userId });
 			}
 

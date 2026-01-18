@@ -10,8 +10,7 @@ export class PayslipsService {
 	constructor(private readonly docsService: DocsService) {}
 
 	async create(createPayslipDto: CreatePayslipDto, orgId?: number, branchId?: number) {
-		this.logger.log(`Creating payslip for user ${createPayslipDto.user?.uid}`);
-		this.logger.debug('Create payslip payload:', {
+		this.logger.log(`Creating payslip for user ${createPayslipDto.user?.uid}`, {
 			userId: createPayslipDto.user?.uid,
 			period: createPayslipDto.period,
 			orgId,
@@ -40,8 +39,7 @@ export class PayslipsService {
 		page: number = 1,
 		limit: number = 10,
 	) {
-		this.logger.log(`Finding all payslips with filters: ${JSON.stringify(filters)}`);
-		this.logger.debug('FindAll payslips params:', {
+		this.logger.log(`Finding all payslips with filters: ${JSON.stringify(filters)}`, {
 			filters,
 			page,
 			limit,
@@ -61,8 +59,7 @@ export class PayslipsService {
 	}
 
 	async findByUser(userRef: number, orgId?: number, branchId?: number) {
-		this.logger.log(`Finding payslips for user ${userRef}`);
-		this.logger.debug('FindByUser payslips params:', {
+		this.logger.log(`Finding payslips for user ${userRef}`, {
 			userRef,
 			orgId,
 			branchId,
@@ -76,8 +73,7 @@ export class PayslipsService {
 	}
 
 	async findOne(id: number, orgId?: number, branchId?: number) {
-		this.logger.log(`Finding payslip ${id}`);
-		this.logger.debug('FindOne payslip params:', {
+		this.logger.log(`Finding payslip ${id}`, {
 			id,
 			orgId,
 			branchId,
@@ -98,8 +94,7 @@ export class PayslipsService {
 	}
 
 	async update(id: number, updatePayslipDto: UpdatePayslipDto, orgId?: number, branchId?: number) {
-		this.logger.log(`Updating payslip ${id}`);
-		this.logger.debug('Update payslip params:', {
+		this.logger.log(`Updating payslip ${id}`, {
 			id,
 			updatePayslipDto,
 			orgId,
@@ -113,8 +108,7 @@ export class PayslipsService {
 	}
 
 	async remove(id: number, orgId?: number, branchId?: number) {
-		this.logger.log(`Removing payslip ${id}`);
-		this.logger.debug('Remove payslip params:', {
+		this.logger.log(`Removing payslip ${id}`, {
 			id,
 			orgId,
 			branchId,
@@ -127,8 +121,7 @@ export class PayslipsService {
 	}
 
 	async getDocumentDownloadUrl(id: number, orgId?: number, branchId?: number) {
-		this.logger.log(`Getting document download URL for payslip ${id}`);
-		this.logger.debug('GetDocumentDownloadUrl params:', {
+		this.logger.log(`Getting document download URL for payslip ${id}`, {
 			id,
 			orgId,
 			branchId,
@@ -145,7 +138,6 @@ export class PayslipsService {
 
 		// Check if payslip has documentRef (reference to docs table)
 		if (payslip.documentRef) {
-			this.logger.debug(`Payslip ${id} has documentRef: ${payslip.documentRef}, getting signed URL`);
 			try {
 				const docResult = await this.docsService.getDownloadUrl(payslip.documentRef);
 				return {
@@ -162,7 +154,6 @@ export class PayslipsService {
 
 		// Fallback to direct documentUrl if available
 		if (payslip.documentUrl) {
-			this.logger.debug(`Payslip ${id} has direct documentUrl: ${payslip.documentUrl}`);
 			return {
 				message: 'Download URL generated successfully',
 				url: payslip.documentUrl,

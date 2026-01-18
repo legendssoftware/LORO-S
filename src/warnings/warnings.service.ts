@@ -111,7 +111,7 @@ export class WarningsService {
 						dashboardLink: `${this.configService.get('FRONTEND_URL')}/warnings/${savedWarning.uid}`,
 					});
 				} catch (emailError) {
-					console.error('Failed to send warning email:', emailError);
+					// Silent fail - email notification is non-critical
 					// Don't throw error, continue with warning creation
 				}
 			}
@@ -341,8 +341,7 @@ export class WarningsService {
 								},
 							);
 						} catch (emailError) {
-							console.error('Failed to send warning expiration email:', emailError);
-							// Don't throw error, continue with warning update
+							// Silent fail - email notification is non-critical
 						}
 					}
 				}
@@ -374,8 +373,7 @@ export class WarningsService {
 						dashboardLink: `${this.configService.get('FRONTEND_URL')}/warnings/${warning.uid}`,
 					});
 				} catch (emailError) {
-					console.error('Failed to send warning update email:', emailError);
-					// Don't throw error, continue with warning update
+					// Silent fail - email notification is non-critical
 				}
 			}
 
@@ -421,8 +419,7 @@ export class WarningsService {
 						dashboardLink: `${this.configService.get('FRONTEND_URL')}/warnings`,
 					});
 				} catch (emailError) {
-					console.error('Failed to send warning removal email:', emailError);
-					// Don't throw error, continue with warning deletion
+					// Silent fail - email notification is non-critical
 				}
 			}
 
@@ -478,11 +475,7 @@ export class WarningsService {
 							dashboardLink: `${this.configService.get('FRONTEND_URL')}/warnings/${warning.uid}`,
 						});
 					} catch (emailError) {
-						console.error(
-							`Failed to send warning expiration email for warning ${warning.uid}:`,
-							emailError,
-						);
-						// Continue with other warnings
+						// Silent fail - email notification is non-critical
 					}
 				}
 			}
@@ -490,7 +483,7 @@ export class WarningsService {
 			// Clear all warning caches
 			await this.clearWarningCache();
 		} catch (error) {
-			console.error('Error checking expired warnings:', error);
+			// Silent fail - background operation
 		}
 	}
 

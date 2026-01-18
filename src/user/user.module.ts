@@ -1,7 +1,9 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
 import { UserService } from './user.service';
 import { UserController } from './user.controller';
+import { UserAuthController } from './user-auth.controller';
+import { UserAuthService } from './user-auth.service';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { User } from './entities/user.entity';
 import { UserProfile } from './entities/user.profile.entity';
@@ -19,6 +21,7 @@ import { Client } from 'src/clients/entities/client.entity';
 import { Lead } from 'src/leads/entities/lead.entity';
 import { Branch } from '../branch/entities/branch.entity';
 import { Device } from '../iot/entities/iot.entity';
+import { ClerkModule } from '../clerk/clerk.module';
 
 @Module({
 	imports: [
@@ -41,9 +44,10 @@ import { Device } from '../iot/entities/iot.entity';
 		LicensingModule,
 		RewardsModule,
 		NotificationsModule,
+		forwardRef(() => ClerkModule),
 	],
-	controllers: [UserController],
-	providers: [UserService],
-	exports: [UserService, TypeOrmModule],
+	controllers: [UserController, UserAuthController],
+	providers: [UserService, UserAuthService],
+	exports: [UserService, UserAuthService, TypeOrmModule],
 })
 export class UserModule {}

@@ -40,6 +40,7 @@ import {
     ApiProduces,
     ApiQuery
 } from '@nestjs/swagger';
+import { getDynamicDate, getDynamicDateTime, getFutureDate, getPastDate, createApiDescription, generateCodeExamples } from '../lib/utils/swagger-helpers';
 import { RoleGuard } from '../guards/role.guard';
 import { AuthGuard } from '../guards/auth.guard';
 import { FeatureGuard } from '../guards/feature.guard';
@@ -99,10 +100,17 @@ export class ApprovalsController {
     @Roles(AccessLevel.USER)
     @ApiOperation({ 
         summary: '➕ Create new approval request',
-        description: `
-# Create Approval Request
+        description: createApiDescription(
+            'Submit a new approval request for organizational workflow processing with comprehensive tracking and notification capabilities.',
+            'Creates a new approval request in the system. The service method `ApprovalsService.create()` processes the request, validates data, assigns approvers based on workflow rules, sends notifications to stakeholders, and returns the created approval with its reference number.',
+            'ApprovalsService',
+            'create',
+            'creates a new approval request, validates data, assigns approvers, and sends notifications',
+            'an object containing the created approval data, approval reference, status, and notification details',
+            ['Workflow routing', 'Approver assignment', 'Email notifications', 'Audit trail creation'],
+        ) + `
 
-Submit a new approval request for organizational workflow processing with comprehensive tracking and notification capabilities.
+## 📋 **Use Cases**
 
 ## 📋 **Use Cases**
 - **Leave Requests**: Time off, vacation, sick leave, personal days
@@ -149,9 +157,9 @@ Submit a new approval request for organizational workflow processing with compre
                     description: 'Requesting 10 days annual leave for family vacation to Europe',
                     type: 'leave_request',
                     priority: 'medium',
-                    deadline: '2024-01-15',
+                    deadline: getFutureDate(7),
                     entityType: 'leave_application',
-                    entityId: 'LEAVE-2024-001',
+                    entityId: `LEAVE-${new Date().getFullYear()}-001`,
                     supportingDocuments: [
                         {
                             url: 'https://docs.loro.co.za/leaves/flight-conf-12345.pdf',
@@ -162,8 +170,8 @@ Submit a new approval request for organizational workflow processing with compre
                     amount: 0,
                     requiresSignature: false,
                     leaveType: 'annual_leave',
-                    startDate: '2024-01-20',
-                    endDate: '2024-01-30',
+                    startDate: getFutureDate(14),
+                    endDate: getFutureDate(24),
                     totalDays: 10
                 }
             },
@@ -175,9 +183,9 @@ Submit a new approval request for organizational workflow processing with compre
                     description: 'Purchase of 5 Dell Latitude laptops for new engineering team members',
                     type: 'purchase_order',
                     priority: 'high',
-                    deadline: '2024-01-20',
+                    deadline: getFutureDate(14),
                     entityType: 'purchase_order',
-                    entityId: 'PO-2024-0156',
+                    entityId: `PO-${new Date().getFullYear()}-0156`,
                     amount: 15000.00,
                     currency: 'ZAR',
                     supportingDocuments: [
@@ -201,9 +209,9 @@ Submit a new approval request for organizational workflow processing with compre
                     description: 'Reimbursement for lunch and transportation expenses during client presentation',
                     type: 'expense_claim',
                     priority: 'medium',
-                    deadline: '2024-01-10',
+                    deadline: getFutureDate(3),
                     entityType: 'expense_claim',
-                    entityId: 'EXP-2024-0045',
+                    entityId: `EXP-${new Date().getFullYear()}-0045`,
                     amount: 1250.00,
                     currency: 'ZAR',
                     supportingDocuments: [
@@ -220,7 +228,7 @@ Submit a new approval request for organizational workflow processing with compre
                     ],
                     requiresSignature: false,
                     expenseCategory: 'client_entertainment',
-                    expenseDate: '2023-12-15',
+                    expenseDate: getPastDate(15),
                     clientName: 'ABC Manufacturing'
                 }
             },
@@ -228,13 +236,13 @@ Submit a new approval request for organizational workflow processing with compre
                 summary: '💰 Budget Allocation Request',
                 description: 'Example of creating a budget approval request',
                 value: {
-                    title: 'Q1 Marketing Budget Increase',
-                    description: 'Requesting additional budget allocation for digital marketing campaigns in Q1 2024',
+                    title: `Q1 Marketing Budget Increase`,
+                    description: `Requesting additional budget allocation for digital marketing campaigns in Q1 ${new Date().getFullYear()}`,
                     type: 'budget_request',
                     priority: 'urgent',
-                    deadline: '2023-12-31',
+                    deadline: getFutureDate(5),
                     entityType: 'budget_request',
-                    entityId: 'BUD-2024-Q1-001',
+                    entityId: `BUD-${new Date().getFullYear()}-Q1-001`,
                     amount: 50000.00,
                     currency: 'ZAR',
                     supportingDocuments: [
@@ -246,7 +254,7 @@ Submit a new approval request for organizational workflow processing with compre
                     ],
                     requiresSignature: true,
                     department: 'Marketing',
-                    fiscalYear: '2024',
+                    fiscalYear: String(new Date().getFullYear()),
                     businessJustification: 'Projected 25% increase in lead generation and conversion rates',
                     expectedROI: 2.5
                 }
@@ -259,9 +267,9 @@ Submit a new approval request for organizational workflow processing with compre
                     description: 'Planned database server upgrade to improve performance and security',
                     type: 'system_change',
                     priority: 'urgent',
-                    deadline: '2024-01-03',
+                    deadline: getFutureDate(2),
                     entityType: 'system_change',
-                    entityId: 'SYS-2024-0012',
+                    entityId: `SYS-${new Date().getFullYear()}-0012`,
                     amount: 0,
                     supportingDocuments: [
                         {
@@ -273,7 +281,7 @@ Submit a new approval request for organizational workflow processing with compre
                     requiresSignature: true,
                     changeType: 'infrastructure_upgrade',
                     impactLevel: 'high',
-                    maintenanceWindow: '2024-01-06 02:00-04:00 UTC',
+                    maintenanceWindow: `${getFutureDate(5)} 02:00-04:00 UTC`,
                     businessImpact: '15-minute service interruption expected'
                 }
             },
@@ -285,9 +293,9 @@ Submit a new approval request for organizational workflow processing with compre
                     description: 'Advanced AWS cloud architecture and DevOps certification program',
                     type: 'training_request',
                     priority: 'medium',
-                    deadline: '2024-01-25',
+                    deadline: getFutureDate(21),
                     entityType: 'training_request',
-                    entityId: 'TRAIN-2024-0089',
+                    entityId: `TRAIN-${new Date().getFullYear()}-0089`,
                     amount: 8500.00,
                     currency: 'ZAR',
                     supportingDocuments: [
@@ -320,8 +328,8 @@ Submit a new approval request for organizational workflow processing with compre
                         status: { type: 'string', example: 'DRAFT' },
                         approvalReference: { type: 'string', example: 'LEA-KBGT6-H4P' },
                         priority: { type: 'string', example: 'MEDIUM' },
-                        createdAt: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
-                        deadline: { type: 'string', format: 'date', example: '2024-01-15' }
+                        createdAt: { type: 'string', format: 'date-time', example: getDynamicDateTime() },
+                        deadline: { type: 'string', format: 'date', example: getFutureDate(7) }
                     }
                 },
                 message: { type: 'string', example: 'Approval request created successfully' },
@@ -422,7 +430,7 @@ Submit a new approval request for organizational workflow processing with compre
                 message: { type: 'string', example: 'Failed to create approval request due to system error' },
                 error: { type: 'string', example: 'Internal Server Error' },
                 statusCode: { type: 'number', example: 500 },
-                timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+                timestamp: { type: 'string', format: 'date-time', example: getDynamicDateTime() },
                 path: { type: 'string', example: '/approvals' }
             }
         }
@@ -444,7 +452,16 @@ Submit a new approval request for organizational workflow processing with compre
     )
     @ApiOperation({ 
         summary: '📋 Get all approvals with advanced filtering',
-        description: `
+        description: createApiDescription(
+            'Retrieve a comprehensive, paginated list of approval requests with advanced filtering and search capabilities.',
+            'The service method `ApprovalsService.findAll()` retrieves approvals based on query parameters, applies filters, pagination, and access control. It returns a paginated list with metadata including pending counts, overdue counts, and total values.',
+            'ApprovalsService',
+            'findAll',
+            'retrieves approvals with filtering, pagination, and access control',
+            'a paginated response object containing approval data, pagination metadata, metrics, and applied filters',
+            ['Access control', 'Filtering and search', 'Pagination', 'Metrics calculation'],
+        ) + `
+
 # List All Approvals
 
 Retrieve a comprehensive, paginated list of approval requests with advanced filtering and search capabilities.
@@ -627,7 +644,7 @@ Retrieve a comprehensive, paginated list of approval requests with advanced filt
                 message: { type: 'string', example: 'Failed to retrieve approvals due to database error' },
                 error: { type: 'string', example: 'Internal Server Error' },
                 statusCode: { type: 'number', example: 500 },
-                timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+                timestamp: { type: 'string', format: 'date-time', example: getDynamicDateTime() },
                 path: { type: 'string', example: '/approvals' }
             }
         }
@@ -790,7 +807,7 @@ Retrieve all approval requests that require immediate action from the currently 
                 message: { type: 'string', example: 'Failed to retrieve pending approvals due to system error' },
                 error: { type: 'string', example: 'Internal Server Error' },
                 statusCode: { type: 'number', example: 500 },
-                timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+                timestamp: { type: 'string', format: 'date-time', example: getDynamicDateTime() },
                 path: { type: 'string', example: '/approvals/pending' }
             }
         }
@@ -3183,7 +3200,7 @@ Retrieve all digital signatures associated with a specific approval, providing c
                                     faceRecognitionHash: { type: 'string', example: 'SHA256:1234567890ABCDEF...' },
                                     voicePrintHash: { type: 'string', example: null },
                                     retinaScanHash: { type: 'string', example: null },
-                                    timestamp: { type: 'string', format: 'date-time', example: '2024-03-20T15:29:58Z' }
+                                    timestamp: { type: 'string', format: 'date-time', example: getDynamicDateTime(undefined, undefined, 15, 30) }
                                 }
                             },
                             legalCompliance: {

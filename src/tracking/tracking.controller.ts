@@ -14,6 +14,7 @@ import {
 	ApiNotFoundResponse,
 	ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { getDynamicDateTime, createApiDescription } from '../lib/utils/swagger-helpers';
 import { Roles } from '../decorators/role.decorator';
 import { isPublic } from '../decorators/public.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
@@ -38,8 +39,15 @@ export class TrackingController {
 	@isPublic()
 	@ApiOperation({
 		summary: 'Create a new tracking record',
-		description:
+		description: createApiDescription(
 			'Creates a new GPS tracking record with the provided data. This endpoint is public and does not require authentication.',
+			'The service method `TrackingService.create()` processes GPS tracking data, validates coordinates, stores location data, and returns the created tracking record.',
+			'TrackingService',
+			'create',
+			'creates a new GPS tracking record, validates coordinates, and stores location data',
+			'an object containing the created tracking record data',
+			['Coordinate validation', 'Location storage', 'Timestamp handling'],
+		),
 	})
 	@ApiBody({ type: CreateTrackingDto })
 	@ApiCreatedResponse({

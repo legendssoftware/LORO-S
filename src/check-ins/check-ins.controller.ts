@@ -22,6 +22,7 @@ import {
 	ApiNotFoundResponse,
 	ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { getDynamicDateTime, createApiDescription } from '../lib/utils/swagger-helpers';
 import { AuthGuard } from '../guards/auth.guard';
 import { RoleGuard } from '../guards/role.guard';
 
@@ -35,7 +36,15 @@ export class CheckInsController {
 	@Get()
 	@ApiOperation({
 		summary: 'Get all check-ins',
-		description: 'Retrieves all check-in records, optionally filtered by organization',
+		description: createApiDescription(
+			'Retrieves all check-in records, optionally filtered by organization.',
+			'The service method `CheckInsService.findAll()` retrieves check-ins based on query parameters, applies filters, and returns a list of check-in records with client and location information.',
+			'CheckInsService',
+			'findAll',
+			'retrieves check-ins with filtering and organization scope',
+			'an array of check-in records with client and location details',
+			['Organization filtering', 'Date range filtering', 'Client filtering'],
+		),
 	})
 	@ApiOkResponse({
 		description: 'Check-ins retrieved successfully',

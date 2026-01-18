@@ -96,14 +96,6 @@ export class AttendanceService {
 		private readonly googleMapsService: GoogleMapsService,
 	) {
 		this.CACHE_TTL = parseInt(process.env.CACHE_TTL || '300000', 10); // 5 minutes default
-		this.logger.log('AttendanceService initialized with cache TTL: ' + this.CACHE_TTL + 'ms');
-		this.logger.debug('AttendanceService initialized with all dependencies and enhanced calculation services');
-		this.logger.debug(`Organization Hours Service: ${!!this.organizationHoursService}`);
-		this.logger.debug(`Attendance Calculator Service: ${!!this.attendanceCalculatorService}`);
-		this.logger.debug(`Unified Notification Service: ${!!this.unifiedNotificationService}`);
-		this.logger.debug(`Rewards Service: ${!!this.rewardsService}`);
-		this.logger.debug(`Event Emitter: ${!!this.eventEmitter}`);
-		this.logger.debug(`Cache Manager: ${!!this.cacheManager}`);
 	}
 
 	// ======================================================

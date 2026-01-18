@@ -66,6 +66,9 @@ export class Device {
 	@OneToMany(() => DeviceRecords, (records) => records.device)
 	records: DeviceRecords[];
 
+	@OneToMany(() => DeviceLogs, (logs) => logs.device)
+	logs: DeviceLogs[];
+
 	@ManyToOne(() => Organisation, { nullable: true })
 	organisation: Organisation;
 }

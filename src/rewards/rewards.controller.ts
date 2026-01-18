@@ -18,6 +18,7 @@ import {
 	ApiUnauthorizedResponse,
 	ApiInternalServerErrorResponse,
 } from '@nestjs/swagger';
+import { getDynamicDate, getDynamicDateTime, createApiDescription } from '../lib/utils/swagger-helpers';
 import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
 
 @ApiTags('🏆 Rewards')
@@ -40,7 +41,15 @@ export class RewardsController {
 	)
 	@ApiOperation({
 		summary: 'Award XP to a user',
-		description: 'Awards experience points to a specific user. Requires ADMIN or MANAGER role.',
+		description: createApiDescription(
+			'Awards experience points to a specific user. Requires ADMIN or MANAGER role.',
+			'The service method `RewardsService.awardXP()` processes XP award, validates user, updates user XP total, checks for level ups, and returns the updated reward information.',
+			'RewardsService',
+			'awardXP',
+			'awards XP to a user, validates data, updates totals, and checks for level ups',
+			'an object containing the updated XP total, level information, and reward details',
+			['XP calculation', 'Level up detection', 'User validation', 'Reward tracking'],
+		),
 	})
 	@ApiBody({ type: CreateRewardDto })
 	@ApiCreatedResponse({
@@ -87,9 +96,16 @@ export class RewardsController {
 		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({
-		summary: 'Get user rewards',
-		description:
-			'Retrieves all rewards and statistics for a specific user. Accessible by ADMIN, MANAGER, and the user themselves.',
+		summary: '📊 Get user rewards statistics',
+		description: createApiDescription(
+			'Retrieves comprehensive rewards statistics and XP information for a specific user including XP totals, level information, reward history, and statistics.',
+			'The service method `RewardsService.getUserStats()` processes user reference, calculates XP totals, determines current level, retrieves reward history, and returns comprehensive statistics.',
+			'RewardsService',
+			'getUserStats',
+			'retrieves user reward statistics, calculates XP totals, and determines level',
+			'an object containing XP totals, level information, reward history, and statistics',
+			['XP calculation', 'Level determination', 'History retrieval', 'Statistics aggregation']
+		),
 	})
 	@ApiParam({
 		name: 'reference',

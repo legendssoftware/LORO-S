@@ -14,6 +14,7 @@ import {
 	ApiUnauthorizedResponse,
 	ApiQuery,
 } from '@nestjs/swagger';
+import { getDynamicDate, getDynamicDateTime, getFutureDate, getPastDate, createApiDescription } from '../lib/utils/swagger-helpers';
 import { Roles } from '../decorators/role.decorator';
 import { RoleGuard } from '../guards/role.guard';
 import { AuthGuard } from '../guards/auth.guard';
@@ -49,7 +50,15 @@ export class TasksController {
 	)
 	@ApiOperation({
 		summary: 'Create a new task',
-		description: 'Creates a new task with the provided details including assignees, clients, and subtasks',
+		description: createApiDescription(
+			'Creates a new task with the provided details including assignees, clients, and subtasks.',
+			'The service method `TasksService.create()` processes task creation, validates data, assigns users, creates subtasks, sets up notifications, and returns the created task with its reference.',
+			'TasksService',
+			'create',
+			'creates a new task, validates data, assigns users, and sets up notifications',
+			'an object containing the created task data, task reference, and assignment information',
+			['User assignment', 'Subtask creation', 'Notification setup', 'Validation'],
+		),
 	})
 	@ApiBody({ type: CreateTaskDto })
 	@ApiCreatedResponse({
@@ -89,8 +98,15 @@ export class TasksController {
 	)
 	@ApiOperation({
 		summary: 'Get all tasks',
-		description:
-			'Retrieves a paginated list of all tasks with optional filtering by status, priority, assignee, client, date range, and overdue status',
+		description: createApiDescription(
+			'Retrieves a paginated list of all tasks with optional filtering by status, priority, assignee, client, date range, and overdue status.',
+			'The service method `TasksService.findAll()` retrieves tasks based on query parameters, applies filters, pagination, and access control. Returns a paginated list with task details and metadata.',
+			'TasksService',
+			'findAll',
+			'retrieves tasks with filtering, pagination, and access control',
+			'a paginated response object containing task data, pagination metadata, and applied filters',
+			['Filtering', 'Pagination', 'Access control', 'Overdue detection'],
+		),
 	})
 	@ApiQuery({ name: 'status', enum: TaskStatus, required: false, description: 'Filter by task status' })
 	@ApiQuery({ name: 'priority', enum: TaskPriority, required: false, description: 'Filter by task priority' })

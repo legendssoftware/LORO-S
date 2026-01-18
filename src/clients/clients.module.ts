@@ -1,6 +1,8 @@
 import { forwardRef, Module } from '@nestjs/common';
 import { ClientsService } from './clients.service';
 import { ClientsController } from './clients.controller';
+import { ClientAuthController } from './client-auth.controller';
+import { ClientAuthService } from './client-auth.service';
 import { ClientCommunicationScheduleService } from './services/client-communication-schedule.service';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Client } from './entities/client.entity';
@@ -18,6 +20,7 @@ import { AttendanceModule } from '../attendance/attendance.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ApprovalsModule } from '../approvals/approvals.module';
+import { ClerkModule } from '../clerk/clerk.module';
 
 @Module({
   imports: [
@@ -30,9 +33,10 @@ import { ApprovalsModule } from '../approvals/approvals.module';
     NotificationsModule,
     forwardRef(() => ApprovalsModule),
     ScheduleModule.forRoot(),
+    ClerkModule,
   ],
-  controllers: [ClientsController],
-  providers: [ClientsService, ClientCommunicationScheduleService],
-  exports: [ClientsService, ClientCommunicationScheduleService, TypeOrmModule]
+  controllers: [ClientsController, ClientAuthController],
+  providers: [ClientsService, ClientAuthService, ClientCommunicationScheduleService],
+  exports: [ClientsService, ClientAuthService, ClientCommunicationScheduleService, TypeOrmModule]
 })
 export class ClientsModule { }

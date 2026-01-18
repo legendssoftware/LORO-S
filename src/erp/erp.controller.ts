@@ -1,5 +1,6 @@
 import { Controller, Get, Post, Query, Logger, UseGuards, Req, Param, ParseIntPipe, UseInterceptors } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery, ApiParam } from '@nestjs/swagger';
+import { getDynamicDate, getDynamicDateTime, createApiDescription } from '../lib/utils/swagger-helpers';
 import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
 import { ErpHealthIndicator } from './erp.health';
 import { ErpCacheWarmerService } from './services/erp-cache-warmer.service';
@@ -287,8 +288,8 @@ export class ErpController {
 	@Post('cache/clear')
 	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER)
 	@ApiOperation({ summary: 'Clear cache for specific date range' })
-	@ApiQuery({ name: 'startDate', required: false, example: '2024-01-01' })
-	@ApiQuery({ name: 'endDate', required: false, example: '2024-01-31' })
+	@ApiQuery({ name: 'startDate', required: false, example: getDynamicDate(1, 1) })
+	@ApiQuery({ name: 'endDate', required: false, example: getDynamicDate(1, 31) })
 	@ApiResponse({ status: 200, description: 'Cache cleared' })
 	async clearCache(
 		@Req() request: AuthenticatedRequest,
@@ -417,8 +418,8 @@ export class ErpController {
 	@Get('cache/health')
 	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER)
 	@ApiOperation({ summary: 'Check cache health for a date range' })
-	@ApiQuery({ name: 'startDate', required: true, example: '2024-01-01' })
-	@ApiQuery({ name: 'endDate', required: true, example: '2024-01-31' })
+	@ApiQuery({ name: 'startDate', required: true, example: getDynamicDate(1, 1) })
+	@ApiQuery({ name: 'endDate', required: true, example: getDynamicDate(1, 31) })
 	@ApiQuery({ name: 'storeCode', required: false })
 	@ApiQuery({ name: 'category', required: false })
 	@ApiResponse({ status: 200, description: 'Cache health status' })
@@ -1461,8 +1462,8 @@ Returns latest sales data for all sales reps without requiring date configuratio
 								currency: { type: 'string', example: 'ZAR' }
 							}
 						},
-						periodStartDate: { type: 'string', example: '2024-01-01' },
-						periodEndDate: { type: 'string', example: '2024-01-31' },
+						periodStartDate: { type: 'string', example: getDynamicDate(1, 1) },
+						periodEndDate: { type: 'string', example: getDynamicDate(1, 31) },
 						usingDefaultDates: { type: 'boolean', example: false, description: 'True if current month was used as default (no dates configured)' }
 					}
 				},

@@ -26,6 +26,7 @@ import {
 	ApiConsumes,
 	ApiProduces,
 } from '@nestjs/swagger';
+import { getDynamicDate, getDynamicDateTime, getFutureDate, getPastDate, createApiDescription } from '../lib/utils/swagger-helpers';
 import { AuthGuard } from '../guards/auth.guard';
 import { RoleGuard } from '../guards/role.guard';
 import { AccessLevel } from '../lib/enums/user.enums';
@@ -161,7 +162,7 @@ Creates a new client record in the system with comprehensive business relationsh
 					discountPercentage: 15,
 					riskLevel: 'LOW',
 					acquisitionChannel: 'REFERRAL',
-					acquisitionDate: '2023-12-01',
+					acquisitionDate: getPastDate(30),
 					address: {
 						street: '123 Business Park Drive',
 						suburb: 'Pretoria South Africa',
@@ -402,7 +403,7 @@ Creates a new client record in the system with comprehensive business relationsh
 					companySize: 150,
 					annualRevenue: 25000000,
 					acquisitionChannel: 'REFERRAL',
-					acquisitionDate: '2023-01-15',
+					acquisitionDate: getPastDate(365),
 					tags: ['High Value', 'Tech Partner', 'Strategic Account'],
 					socialProfiles: {
 						linkedin: 'https://linkedin.com/company/loro-corp',
@@ -492,7 +493,7 @@ Creates a new client record in the system with comprehensive business relationsh
 				message: { type: 'string', example: 'Failed to create client due to system error' },
 				error: { type: 'string', example: 'Internal Server Error' },
 				statusCode: { type: 'number', example: 500 },
-				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+				timestamp: { type: 'string', format: 'date-time', example: getDynamicDateTime() },
 				path: { type: 'string', example: '/clients' },
 			},
 		},
@@ -2942,7 +2943,7 @@ Clients can update the following information:
 				message: { type: 'string', example: 'Failed to update client profile due to system error' },
 				error: { type: 'string', example: 'Internal Server Error' },
 				statusCode: { type: 'number', example: 500 },
-				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+				timestamp: { type: 'string', format: 'date-time', example: getDynamicDateTime() },
 			},
 		},
 	})

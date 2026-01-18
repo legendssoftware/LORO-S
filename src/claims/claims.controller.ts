@@ -3,6 +3,7 @@ import { ClaimsService } from './claims.service';
 import { CreateClaimDto } from './dto/create-claim.dto';
 import { UpdateClaimDto } from './dto/update-claim.dto';
 import { ApiOperation, ApiTags, ApiParam, ApiBody, ApiOkResponse, ApiCreatedResponse, ApiBadRequestResponse, ApiNotFoundResponse, ApiUnauthorizedResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { getDynamicDateTime, createApiDescription } from '../lib/utils/swagger-helpers';
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { RoleGuard } from '../guards/role.guard';
@@ -31,7 +32,15 @@ export class ClaimsController {
 	)
   @ApiOperation({ 
     summary: 'Create a new claim',
-    description: 'Creates a new claim with the provided data. Accessible by all authenticated users.'
+    description: createApiDescription(
+      'Creates a new claim with the provided data. Accessible by all authenticated users.',
+      'The service method `ClaimsService.create()` processes claim creation, validates data, generates claim reference, handles attachments, and returns the created claim with its reference.',
+      'ClaimsService',
+      'create',
+      'creates a new claim, validates data, generates reference, and handles attachments',
+      'an object containing the created claim data, claim reference, and status',
+      ['Data validation', 'Reference generation', 'Attachment handling', 'Status management'],
+    ),
   })
   @ApiBody({ type: CreateClaimDto })
   @ApiCreatedResponse({ 

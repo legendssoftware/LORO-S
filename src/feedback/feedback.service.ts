@@ -190,7 +190,7 @@ export class FeedbackService {
                   tokenExpiryDays = orgSettings.feedbackTokenExpiryDays;
                 }
               } catch (error) {
-                console.error('Error fetching organization settings:', error);
+                // Silent fail - using default token expiry
               }
             }
             
@@ -200,7 +200,6 @@ export class FeedbackService {
           }
         } catch (error) {
           // If token decoding fails, just continue without it
-          console.error('Failed to decode feedback token:', error);
         }
       }
       

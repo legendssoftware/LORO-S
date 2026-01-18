@@ -3,7 +3,6 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
 import { User } from './user/entities/user.entity';
 import { CommunicationModule } from './communication/communication.module';
@@ -60,8 +59,6 @@ import { UnlockedItem } from './rewards/entities/unlocked-item.entity';
 import { XPTransaction } from './rewards/entities/xp-transaction.entity';
 import { CacheModule } from '@nestjs/cache-manager';
 import { Report } from './reports/entities/report.entity';
-import { PendingSignup } from './auth/entities/pending-signup.entity';
-import { PasswordReset } from './auth/entities/password-reset.entity';
 import { License } from './licensing/entities/license.entity';
 import { LicenseUsage } from './licensing/entities/license-usage.entity';
 import { LicenseEvent } from './licensing/entities/license-event.entity';
@@ -111,6 +108,7 @@ import { TblCustomerCategories } from './erp/entities/tblcustomercategories.enti
 import { ErpImporterModule } from './erp-importer/erp-importer.module';
 import { PayslipsModule } from './payslips/payslips.module';
 import { ClerkModule } from './clerk/clerk.module';
+import { JwtModule } from '@nestjs/jwt';
 
 
 @Module({
@@ -124,6 +122,17 @@ import { ClerkModule } from './clerk/clerk.module';
 			isGlobal: true,
 		}),
 		EventEmitterModule.forRoot(),
+		// JWT Module for token validation (required by RoleGuard and BaseGuard)
+		// Made global so all modules can use AuthGuard without importing JwtModule
+		JwtModule.registerAsync({
+			global: true,
+			imports: [ConfigModule],
+			useFactory: (configService: ConfigService) => ({
+				secret: configService.get<string>('JWT_SECRET') || 'K9HXmP$2vL5nR8qY3wZ7jB4cF6hN9kM@pT2xS5vA8dG4jE7mQ9nU',
+				signOptions: { expiresIn: '8h' },
+			}),
+			inject: [ConfigService],
+		}),
 		// Main application database connection (PostgreSQL)
 		TypeOrmModule.forRootAsync({
 			imports: [ConfigModule],
@@ -222,8 +231,6 @@ import { ClerkModule } from './clerk/clerk.module';
 					UnlockedItem,
 					XPTransaction,
 					Report,
-					PendingSignup,
-					PasswordReset,
 					License,
 					LicenseUsage,
 					LicenseEvent,
@@ -315,7 +322,6 @@ import { ClerkModule } from './clerk/clerk.module';
 		}),
 		AssetsModule,
 		AttendanceModule,
-		AuthModule,
 		BranchModule,
 		ClaimsModule,
 		ClientsModule,

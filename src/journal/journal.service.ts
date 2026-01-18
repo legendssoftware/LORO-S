@@ -107,7 +107,6 @@ export class JournalService {
 				await this.cacheManager.del(key);
 			}
 
-			this.logger.debug(`Cache invalidated for journal: ${journal.uid}`);
 		} catch (error) {
 			this.logger.warn(`Failed to invalidate cache for journal ${journal.uid}: ${error.message}`);
 		}
@@ -166,7 +165,6 @@ export class JournalService {
 				orgId ? `in org: ${orgId}` : ''
 			} ${branchId ? `in branch: ${branchId}` : ''} with type: ${createJournalDto.type || 'GENERAL'}`
 		);
-		this.logger.debug(`Create journal DTO: ${JSON.stringify(createJournalDto, null, 2)}`);
 
 		try {
 			// Validate required fields
@@ -181,8 +179,6 @@ export class JournalService {
 				organisation: orgId ? { uid: orgId } : undefined,
 				branch: branchId ? { uid: branchId } : undefined,
 			};
-
-			this.logger.debug(`Journal data to save: ${JSON.stringify(journalData, null, 2)}`);
 
 			// Use transaction for data consistency
 			const journal = await this.dataSource.transaction(async manager => {
@@ -288,8 +284,6 @@ export class JournalService {
 		try {
 			// Check cache first
 			const cacheKey = this.getListCacheKey(filters, page, limit, orgId, branchId);
-			this.logger.debug(`Checking cache for journals list: ${cacheKey}`);
-			
 			const cachedResult = await this.cacheManager.get<PaginatedResponse<Journal>>(cacheKey);
 			
 			if (cachedResult) {
@@ -297,8 +291,6 @@ export class JournalService {
 				this.logger.log(`Journals retrieved from cache in ${executionTime}ms - Found: ${cachedResult.meta.total} journals`);
 				return cachedResult;
 			}
-
-			this.logger.debug('Cache miss for journals list, querying database');
 
 			const queryBuilder = this.journalRepository
 				.createQueryBuilder('journal')
@@ -357,7 +349,7 @@ export class JournalService {
 			this.logger.log(`Database query completed in ${executionTime}ms - Found: ${total} journals`);
 
 			if (!journals || journals.length === 0) {
-				this.logger.debug('No journals found matching criteria');
+				// No journals found
 			}
 
 			const result: PaginatedResponse<Journal> = {
@@ -374,7 +366,6 @@ export class JournalService {
 			// Cache the result
 			try {
 				await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);
-				this.logger.debug(`Journals list cached with key: ${cacheKey}`);
 			} catch (cacheError) {
 				this.logger.warn(`Failed to cache journals list: ${cacheError.message}`);
 			}
@@ -423,8 +414,6 @@ export class JournalService {
 			const cachedJournal = await this.cacheManager.get<Journal>(cacheKey);
 
 			if (cachedJournal) {
-				this.logger.debug(`Cache hit for journal: ${ref}`);
-
 				// If org/branch filters are provided, verify cached journal belongs to them
 				if (orgId && cachedJournal.organisation?.uid !== orgId) {
 					this.logger.warn(`Journal ${ref} found in cache but doesn't belong to org ${orgId}`);
@@ -451,7 +440,6 @@ export class JournalService {
 				let stats = await this.cacheManager.get(statsKey);
 				
 				if (!stats) {
-					this.logger.debug('Cache miss for stats, calculating...');
 					const statsQueryBuilder = this.journalRepository
 						.createQueryBuilder('journal')
 						.leftJoinAndSelect('journal.organisation', 'organisation')
@@ -478,8 +466,6 @@ export class JournalService {
 					stats,
 				};
 			}
-
-			this.logger.debug(`Cache miss for journal: ${ref}, querying database`);
 
 			const queryBuilder = this.journalRepository
 				.createQueryBuilder('journal')

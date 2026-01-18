@@ -39,6 +39,12 @@ export class ClientAuth {
 	@Column({ type: 'timestamptz', nullable: true })
 	pushTokenUpdatedAt: Date;
 
+	@Column({ unique: true, nullable: true })
+	clerkUserId: string; // Clerk user ID
+
+	@Column({ type: 'timestamptz', nullable: true })
+	clerkLastSyncedAt: Date; // Track last sync time
+
 	@ManyToOne(() => Client, (client) => client?.portalCredentials, { nullable: false })
 	client: Client;
 }

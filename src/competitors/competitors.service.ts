@@ -48,17 +48,6 @@ export class CompetitorsService {
 		private readonly dataSource: DataSource,
 	) {
 		this.CACHE_TTL = +this.configService.get<number>('CACHE_EXPIRATION_TIME', 300);
-
-		this.logger.log('CompetitorsService initialized with cache TTL: ' + this.CACHE_TTL + ' seconds');
-		this.logger.debug(`CompetitorsService initialized with dependencies:`);
-		this.logger.debug(`Competitor Repository: ${!!this.competitorRepository}`);
-		this.logger.debug(`User Repository: ${!!this.userRepository}`);
-		this.logger.debug(`Organisation Repository: ${!!this.organisationRepository}`);
-		this.logger.debug(`Branch Repository: ${!!this.branchRepository}`);
-		this.logger.debug(`Organisation Settings Repository: ${!!this.organisationSettingsRepository}`);
-		this.logger.debug(`Cache Manager: ${!!this.cacheManager}`);
-		this.logger.debug(`Config Service: ${!!this.configService}`);
-		this.logger.debug(`Data Source: ${!!this.dataSource}`);
 	}
 
 	// Helper method to get organization settings
@@ -103,7 +92,6 @@ export class CompetitorsService {
 
 		try {
 			// Enhanced validation
-			this.logger.debug('Validating competitor creation data');
 			if (!creator?.uid) {
 				this.logger.error('Creator information is required for competitor creation');
 				throw new BadRequestException('Creator information is required');
@@ -118,8 +106,6 @@ export class CompetitorsService {
 				this.logger.error(`User ${creator.uid} attempting to create competitor in different organization ${validatedOrgId}`);
 				throw new BadRequestException('Cannot create competitor in different organization');
 			}
-
-			this.logger.debug(`Validated orgId: ${validatedOrgId}, branchId: ${validatedBranchId}`);
 
 			// Validate required fields first
 			if (!createCompetitorDto.name || createCompetitorDto.name.trim() === '') {
@@ -249,12 +235,9 @@ export class CompetitorsService {
 		const validatedOrgId = this.validateNumericParam(orgId);
 		const validatedBranchId = this.validateNumericParam(branchId);
 
-		console.log(createCompetitorDtos?.length);
 		// Split the input into smaller chunks to avoid entity too large errors
 		const CHUNK_SIZE = 10; // Process 10 competitors at a time
 		const chunks = [];
-
-		console.log(chunks);
 
 		for (let i = 0; i < createCompetitorDtos.length; i += CHUNK_SIZE) {
 			chunks.push(createCompetitorDtos.slice(i, i + CHUNK_SIZE));
@@ -305,12 +288,6 @@ export class CompetitorsService {
 						const globalIndex = chunkIndex * CHUNK_SIZE + i; // Calculate global index for error reporting
 
 						try {
-							this.logger.debug(
-								`Processing competitor ${globalIndex + 1}/${createCompetitorDtos.length}: ${
-									createCompetitorDto.name || 'Unknown'
-								}`,
-							);
-
 							// Validate required fields first
 							if (!createCompetitorDto.name || createCompetitorDto.name.trim() === '') {
 								throw new BadRequestException('Name field is required and cannot be empty');
@@ -403,14 +380,8 @@ export class CompetitorsService {
 								newCompetitor.geofenceType = GeofenceType.NONE;
 							}
 
-							this.logger.debug(
-								`About to save competitor: ${newCompetitor.name} with ref: ${newCompetitor.competitorRef}`,
-							);
-
 							// Save the new competitor using the query runner
 							const savedCompetitor = await queryRunner.manager.save(Competitor, newCompetitor);
-
-							this.logger.debug(`Saved competitor with ID: ${savedCompetitor.uid}`);
 
 							// Ensure we have the complete saved competitor with all relations
 							const completeCompetitor = await queryRunner.manager.findOne(Competitor, {
@@ -541,8 +512,6 @@ export class CompetitorsService {
 				const competitorData = bulkCreateCompetitorDto.competitors[i];
 				
 				try {
-					this.logger.debug(`🏆 [createBulkCompetitors] Processing competitor ${i + 1}/${bulkCreateCompetitorDto.competitors.length}: ${competitorData.name}`);
-					
 					// Check if name already exists
 					const existingCompetitor = await queryRunner.manager.findOne(Competitor, { 
 						where: { name: competitorData.name, isDeleted: false } 
@@ -553,7 +522,6 @@ export class CompetitorsService {
 
 					// Validate URLs if required
 					if (bulkCreateCompetitorDto.validateUrls && competitorData.website) {
-						this.logger.debug(`🌐 [createBulkCompetitors] Validating URLs for competitor: ${competitorData.name}`);
 						// Here you could add URL validation logic
 						urlsValidated++;
 					}
@@ -561,7 +529,6 @@ export class CompetitorsService {
 					// Auto-calculate threat level if enabled
 					let finalThreatLevel = competitorData.threatLevel;
 					if (bulkCreateCompetitorDto.autoCalculateThreat && !finalThreatLevel) {
-						this.logger.debug(`🎯 [createBulkCompetitors] Auto-calculating threat level for competitor: ${competitorData.name}`);
 						// Logic to calculate threat level based on market data, revenue, etc.
 						finalThreatLevel = this.calculateThreatLevel(competitorData);
 						threatLevelsCalculated++;
@@ -570,7 +537,6 @@ export class CompetitorsService {
 					// Set up geofencing if enabled
 					let geofenceEnabled = false;
 					if (bulkCreateCompetitorDto.enableGeofencing && competitorData.latitude && competitorData.longitude) {
-						this.logger.debug(`📍 [createBulkCompetitors] Setting up geofencing for competitor: ${competitorData.name}`);
 						geofenceEnabled = true;
 						geofencesEnabled++;
 					}
@@ -601,7 +567,6 @@ export class CompetitorsService {
 					
 					successCount++;
 					createdCompetitorIds.push(savedCompetitor.uid);
-					this.logger.debug(`✅ [createBulkCompetitors] Competitor ${i + 1} created successfully: ${competitorData.name} (ID: ${savedCompetitor.uid})`);
 					
 				} catch (competitorError) {
 					const errorMessage = `Competitor ${i + 1} (${competitorData.name}): ${competitorError.message}`;
@@ -722,11 +687,8 @@ export class CompetitorsService {
 						throw new Error(`Competitor with ID ${ref} not found`);
 					}
 
-					this.logger.debug(`✅ [updateBulkCompetitors] Competitor found: ${existingCompetitor.name}`);
-
 					// Validate URLs if they are being updated and validation is enabled
 					if (data.website && bulkUpdateCompetitorDto.validateUrls !== false) {
-						this.logger.debug(`🌐 [updateBulkCompetitors] Validating URL for competitor ${ref}`);
 						// Here you could add URL validation logic
 						urlsValidated++;
 					}
@@ -734,7 +696,6 @@ export class CompetitorsService {
 					// Recalculate threat level if enabled and relevant data is being updated
 					if (bulkUpdateCompetitorDto.recalculateThreatLevels && 
 						(data.estimatedAnnualRevenue || data.marketSharePercentage || data.competitiveAdvantage)) {
-						this.logger.debug(`🎯 [updateBulkCompetitors] Recalculating threat level for competitor ${ref}`);
 						data.threatLevel = this.calculateThreatLevel({ ...existingCompetitor, ...data });
 						threatLevelsRecalculated++;
 					}
@@ -742,7 +703,6 @@ export class CompetitorsService {
 					// Update geofencing if location data changes
 					if (bulkUpdateCompetitorDto.updateGeofencing && 
 						(data.latitude || data.longitude || data.geofenceRadius)) {
-						this.logger.debug(`📍 [updateBulkCompetitors] Updating geofencing for competitor ${ref}`);
 						geofencesUpdated++;
 					}
 
@@ -766,7 +726,6 @@ export class CompetitorsService {
 					
 					successCount++;
 					updatedCompetitorIds.push(ref);
-					this.logger.debug(`✅ [updateBulkCompetitors] Competitor ${i + 1} updated successfully: ${existingCompetitor.name} (ID: ${ref}), Fields: ${updatedFields.join(', ')}`);
 					
 				} catch (competitorError) {
 					const errorMessage = `Competitor ID ${ref}: ${competitorError.message}`;

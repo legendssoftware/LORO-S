@@ -32,6 +32,7 @@ import {
 	ApiProduces,
 	ApiBody,
 } from '@nestjs/swagger';
+import { getDynamicDate, getDynamicDateTime, getPastDateTime, createApiDescription } from '../lib/utils/swagger-helpers';
 import { CompetitorsService } from './competitors.service';
 import { CreateCompetitorDto } from './dto/create-competitor.dto';
 import { UpdateCompetitorDto } from './dto/update-competitor.dto';
@@ -96,7 +97,16 @@ export class CompetitorsController {
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER)
 	@ApiOperation({ 
 		summary: '➕ Create a new competitor',
-		description: `
+		description: createApiDescription(
+			'Creates a comprehensive competitor profile with detailed intelligence tracking capabilities.',
+			'The service method `CompetitorsService.create()` processes competitor creation, validates business data, generates competitor references, assesses threat levels, validates geographic coordinates, and returns the created competitor with full intelligence data.',
+			'CompetitorsService',
+			'create',
+			'creates a competitor profile, validates data, generates references, and assesses threat levels',
+			'an object containing the created competitor data, competitor reference, and intelligence metrics',
+			['Data validation', 'Reference generation', 'Threat assessment', 'Geographic validation']
+		) + `
+
 # Create Competitor Profile
 
 Creates a comprehensive competitor profile with detailed intelligence tracking capabilities.
@@ -222,7 +232,7 @@ Creates a comprehensive competitor profile with detailed intelligence tracking c
 							type: 'object',
 							properties: {
 								uid: { type: 'number', example: 12345 },
-								competitorRef: { type: 'string', example: 'COMP-2023-001' },
+								competitorRef: { type: 'string', example: `COMP-${new Date().getFullYear()}-001` },
 								name: { type: 'string', example: 'BuildCorp Hardware' },
 								description: { type: 'string', example: 'Large retail hardware chain with 50+ locations nationwide' },
 								industry: { type: 'string', example: 'Hardware & Building Supplies' },
@@ -241,7 +251,7 @@ Creates a comprehensive competitor profile with detailed intelligence tracking c
 										postalCode: { type: 'string', example: '1685' }
 									}
 								},
-								createdAt: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' }
+								createdAt: { type: 'string', format: 'date-time', example: getDynamicDateTime() }
 							}
 						}
 					}
@@ -308,7 +318,7 @@ Creates a comprehensive competitor profile with detailed intelligence tracking c
 				message: { type: 'string', example: 'Failed to create competitor due to system error' },
 				error: { type: 'string', example: 'Internal Server Error' },
 				statusCode: { type: 'number', example: 500 },
-				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+				timestamp: { type: 'string', format: 'date-time', example: getDynamicDateTime() },
 				path: { type: 'string', example: '/competitors' }
 			}
 		}
@@ -436,7 +446,7 @@ Creates multiple competitor profiles simultaneously with transaction safety and 
 										description: 'Created competitor object (if successful)',
 										properties: {
 											uid: { type: 'number', example: 12345 },
-											competitorRef: { type: 'string', example: 'COMP-2023-001' },
+											competitorRef: { type: 'string', example: `COMP-${new Date().getFullYear()}-001` },
 											name: { type: 'string', example: 'RetailPro Hardware' }
 										}
 									},
@@ -947,7 +957,7 @@ Retrieves a complete competitive landscape overview with advanced filtering and 
 								type: 'object',
 								properties: {
 									uid: { type: 'number', example: 12345 },
-									competitorRef: { type: 'string', example: 'COMP-2023-001' },
+									competitorRef: { type: 'string', example: `COMP-${new Date().getFullYear()}-001` },
 									name: { type: 'string', example: 'BuildCorp Hardware' },
 									description: { type: 'string', example: 'Large retail hardware chain with 50+ locations' },
 									industry: { type: 'string', example: 'Hardware & Building Supplies' },
@@ -964,8 +974,8 @@ Retrieves a complete competitive landscape overview with advanced filtering and 
 											country: { type: 'string', example: 'South Africa' }
 										}
 									},
-									lastUpdated: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
-									createdAt: { type: 'string', format: 'date-time', example: '2023-11-01T10:00:00Z' }
+									lastUpdated: { type: 'string', format: 'date-time', example: getDynamicDateTime() },
+									createdAt: { type: 'string', format: 'date-time', example: getPastDateTime(30) }
 								}
 							}
 						},
@@ -1034,7 +1044,7 @@ Retrieves a complete competitive landscape overview with advanced filtering and 
 				message: { type: 'string', example: 'Failed to retrieve competitor intelligence due to system error' },
 				error: { type: 'string', example: 'Internal Server Error' },
 				statusCode: { type: 'number', example: 500 },
-				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+				timestamp: { type: 'string', format: 'date-time', example: getDynamicDateTime() },
 				path: { type: 'string', example: '/competitors' }
 			}
 		}
@@ -1245,7 +1255,7 @@ Provides deep analytical insights into your competitive landscape with actionabl
 				message: { type: 'string', example: 'Failed to generate competitor analytics due to system error' },
 				error: { type: 'string', example: 'Internal Server Error' },
 				statusCode: { type: 'number', example: 500 },
-				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+				timestamp: { type: 'string', format: 'date-time', example: getDynamicDateTime() },
 				path: { type: 'string', example: '/competitors/analytics' }
 			}
 		}
@@ -1440,7 +1450,7 @@ Retrieves competitors organized by threat level assessment for strategic priorit
 								type: 'object',
 								properties: {
 									uid: { type: 'number', example: 12345 },
-									competitorRef: { type: 'string', example: 'COMP-2023-001' },
+									competitorRef: { type: 'string', example: `COMP-${new Date().getFullYear()}-001` },
 									name: { type: 'string', example: 'Global Tools International' },
 									description: { type: 'string', example: 'Multinational tool manufacturer with local distribution' },
 									threatLevel: { type: 'number', example: 5 },
@@ -1568,7 +1578,7 @@ Advanced search functionality to quickly locate competitors using intelligent na
 								type: 'object',
 								properties: {
 									uid: { type: 'number', example: 12345 },
-									competitorRef: { type: 'string', example: 'COMP-2023-001' },
+									competitorRef: { type: 'string', example: `COMP-${new Date().getFullYear()}-001` },
 									name: { type: 'string', example: 'BuildCorp Hardware' },
 									description: { type: 'string', example: 'Large retail hardware chain with 50+ locations' },
 									industry: { type: 'string', example: 'Hardware & Building Supplies' },
@@ -1704,7 +1714,7 @@ Retrieves complete competitor intelligence profile with detailed analysis and ac
 							type: 'object',
 							properties: {
 								uid: { type: 'number', example: 12345 },
-								competitorRef: { type: 'string', example: 'COMP-2023-001' },
+								competitorRef: { type: 'string', example: `COMP-${new Date().getFullYear()}-001` },
 								name: { type: 'string', example: 'BuildCorp Hardware' },
 								description: { type: 'string', example: 'Large retail hardware chain with 50+ locations nationwide' },
 								industry: { type: 'string', example: 'Hardware & Building Supplies' },
@@ -1888,7 +1898,7 @@ Quick competitor profile retrieval using the system-generated reference code for
 							type: 'object',
 							properties: {
 								uid: { type: 'number', example: 12345 },
-								competitorRef: { type: 'string', example: 'COMP-2023-001' },
+								competitorRef: { type: 'string', example: `COMP-${new Date().getFullYear()}-001` },
 								name: { type: 'string', example: 'BuildCorp Hardware' },
 								description: { type: 'string', example: 'Large retail hardware chain' },
 								threatLevel: { type: 'number', example: 4 },
@@ -1998,7 +2008,7 @@ Updates competitor information while maintaining complete audit trail and intell
 							type: 'object',
 							properties: {
 								uid: { type: 'number', example: 12345 },
-								competitorRef: { type: 'string', example: 'COMP-2023-001' },
+								competitorRef: { type: 'string', example: `COMP-${new Date().getFullYear()}-001` },
 								name: { type: 'string', example: 'BuildCorp Hardware' },
 								threatLevel: { type: 'number', example: 5 },
 								updatedFields: {
@@ -2119,7 +2129,7 @@ Safely removes competitor from active intelligence while preserving data for pot
 							type: 'object',
 							properties: {
 								uid: { type: 'number', example: 12345 },
-								competitorRef: { type: 'string', example: 'COMP-2023-001' },
+								competitorRef: { type: 'string', example: `COMP-${new Date().getFullYear()}-001` },
 								name: { type: 'string', example: 'BuildCorp Hardware' },
 								status: { type: 'string', example: 'DELETED' },
 								deletedAt: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
@@ -2209,7 +2219,7 @@ Safely removes competitor from active intelligence while preserving data for pot
 							type: 'object',
 							properties: {
 								uid: { type: 'number', example: 12345 },
-								competitorRef: { type: 'string', example: 'COMP-2023-001' },
+								competitorRef: { type: 'string', example: `COMP-${new Date().getFullYear()}-001` },
 								name: { type: 'string', example: 'BuildCorp Hardware' },
 								permanentlyDeletedAt: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
 								deletedBy: { type: 'string', example: 'System Administrator' }
@@ -2325,7 +2335,7 @@ Provides competitor data optimized for geographic visualization and territorial 
 									status: { type: 'string', example: 'ACTIVE' },
 									website: { type: 'string', example: 'https://buildcorp.co.za' },
 									logoUrl: { type: 'string', example: 'https://cdn.buildcorp.co.za/logo.png' },
-									competitorRef: { type: 'string', example: 'COMP-2023-001' },
+									competitorRef: { type: 'string', example: `COMP-${new Date().getFullYear()}-001` },
 									address: {
 										type: 'object',
 										properties: {
@@ -2417,7 +2427,7 @@ Provides competitor data optimized for geographic visualization and territorial 
 				message: { type: 'string', example: 'Failed to generate map visualization data due to system error' },
 				error: { type: 'string', example: 'Internal Server Error' },
 				statusCode: { type: 'number', example: 500 },
-				timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+				timestamp: { type: 'string', format: 'date-time', example: getDynamicDateTime() },
 				path: { type: 'string', example: '/competitors/map-data' }
 			}
 		}

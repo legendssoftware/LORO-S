@@ -446,7 +446,6 @@ export class SalesTipsService {
 				const batchNumber = Math.floor(i / batchSize) + 1;
 				const totalBatches = Math.ceil(activeUsers.length / batchSize);
 				
-				this.logger.debug(`📤 [${operationId}] Processing batch ${batchNumber}/${totalBatches} (${batch.length} users)`);
 
 				// Send to each user in the batch
 				const batchPromises = batch.map(async (user) => {
@@ -473,7 +472,6 @@ export class SalesTipsService {
 							},
 						});
 						successCount++;
-						this.logger.debug(`✅ [${operationId}] Sent tip to user ${user.uid} (${user.name} ${user.surname})`);
 					} catch (error) {
 						failCount++;
 						this.logger.warn(`❌ [${operationId}] Failed to send tip to user ${user.uid}: ${error.message}`);

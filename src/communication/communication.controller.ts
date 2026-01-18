@@ -1,6 +1,7 @@
 import { Controller, Post, Body, Get } from '@nestjs/common';
 import { CommunicationService } from './communication.service';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBody, ApiOkResponse } from '@nestjs/swagger';
+import { getDynamicDateTime, getFutureDateTime, createApiDescription } from '../lib/utils/swagger-helpers';
 
 @ApiTags('📱 Communication')
 @Controller('communication')
@@ -10,6 +11,19 @@ export class CommunicationController {
 	) {}
 
 	@Post('send-app-update-notification')
+	@ApiOperation({
+		summary: 'Send app update notification',
+		description: createApiDescription(
+			'Sends app update notifications to specified users via email and push notifications.',
+			'The service method `CommunicationService.sendAppUpdateNotification()` processes the notification request, formats the update message, and sends notifications to all specified users.',
+			'CommunicationService',
+			'sendAppUpdateNotification',
+			'sends app update notifications to users via email and push',
+			'a confirmation object indicating successful notification delivery',
+			['Email notifications', 'Push notifications', 'User targeting'],
+		),
+	})
+	@ApiOkResponse({ description: 'Notifications sent successfully' })
 	async sendAppUpdateNotification(@Body() body: { userEmails: string[] }) {
 		// Example app update notification data
 		const appUpdateData = {
@@ -61,8 +75,8 @@ export class CommunicationController {
 			},
 			backupRecommendation: true,
 			maintenanceWindow: {
-				start: '2024-12-10T02:00:00Z',
-				end: '2024-12-10T04:00:00Z',
+				start: getFutureDateTime(30, 2, 0),
+				end: getFutureDateTime(30, 4, 0),
 				timezone: 'UTC'
 			},
 			contactInfo: {

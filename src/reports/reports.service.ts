@@ -221,7 +221,6 @@ export class ReportsService implements OnModuleInit {
 			});
 
 			this.logger.log(`[${operationId}] 📋 Found ${existingReports.length} total reports to update for user ${userId} on ${date.toISOString().split('T')[0]}`);
-			this.logger.debug(`[${operationId}] Report types found:`, existingReports.map(r => ({ uid: r.uid, type: r.reportType, generatedAt: r.generatedAt })));
 
 			if (existingReports.length === 0) {
 				this.logger.warn(`[${operationId}] ⚠️  No existing reports found for user ${userId} on ${date.toISOString().split('T')[0]}`);
@@ -235,7 +234,6 @@ export class ReportsService implements OnModuleInit {
 			// Update EACH AND EVERY report with the same recalculated GPS data
 			for (const report of existingReports) {
 				try {
-					this.logger.debug(`[${operationId}] 🔧 Processing report ${report.uid} (${report.reportType})`);
 					
 					const updatedReportData = this.mergeGpsDataIntoReport(report.reportData, recalculatedGpsData);
 					
@@ -265,7 +263,6 @@ export class ReportsService implements OnModuleInit {
 					if (updatedReport) {
 						updatedReports.push(updatedReport);
 						updateSuccessCount++;
-						this.logger.debug(`[${operationId}] ✅ Successfully updated report ${report.uid} (${report.reportType}) with recalculated GPS data`);
 					} else {
 						updateFailureCount++;
 						this.logger.warn(`[${operationId}] ❌ Failed to fetch updated report ${report.uid} after update`);
@@ -290,7 +287,6 @@ export class ReportsService implements OnModuleInit {
 				for (const cacheKey of cacheKeysToDelete) {
 					await this.cacheManager.del(cacheKey);
 				}
-				this.logger.debug(`[${operationId}] 🧹 Cleared ${cacheKeysToDelete.length} cache entries for user ${userId}`);
 			} catch (cacheError) {
 				this.logger.warn(`[${operationId}] ⚠️  Failed to clear cache:`, cacheError.message);
 			}
@@ -415,7 +411,6 @@ export class ReportsService implements OnModuleInit {
 			const orgResults = await Promise.allSettled(
 				organizations.map(async (org) => {
 					try {
-						this.logger.debug(`Processing end-of-day reports for organization ${org.uid} (${org.name})`);
 
 						// Generate comprehensive organization daily report
 						await this.generateComprehensiveOrgDailyReport(org.uid);
@@ -486,12 +481,10 @@ export class ReportsService implements OnModuleInit {
 			
 			for (let i = 0; i < organizations.length; i += batchSize) {
 				const batch = organizations.slice(i, i + batchSize);
-				this.logger.debug(`📦 Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(organizations.length / batchSize)} (${batch.length} organizations)`);
 				
 				const batchResults = await Promise.allSettled(
 					batch.map(async (org) => {
 						try {
-							this.logger.debug(`📈 Processing weekly report for organization ${org.uid} (${org.name})`);
 
 							// Get the previous week's date range (last Sunday to last Saturday)
 							const weekRange = this.getPreviousWeekDateRange();
@@ -530,7 +523,6 @@ export class ReportsService implements OnModuleInit {
 				totalSuccessful += batchSuccessful;
 				totalFailed += batchFailed;
 				
-				this.logger.debug(`📊 Batch ${Math.floor(i / batchSize) + 1} completed: ${batchSuccessful} successful, ${batchFailed} failed`);
 				
 				// Small delay between batches to reduce system load
 				if (i + batchSize < organizations.length) {
@@ -641,7 +633,6 @@ export class ReportsService implements OnModuleInit {
 						});
 
 						if (existingReport) {
-							this.logger.debug(`Daily report already exists for user ${user.uid}, skipping`);
 							return { userId: user.uid, success: false, reason: 'Already exists' };
 						}
 

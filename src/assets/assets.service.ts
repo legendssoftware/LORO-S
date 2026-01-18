@@ -62,7 +62,7 @@ export class AssetsService {
 					});
 				}
 			} catch (error) {
-				console.error('Failed to send asset assignment email:', error);
+				// Silent fail - email notification is non-critical
 			}
 		}
 
@@ -86,7 +86,7 @@ export class AssetsService {
 				dashboardLink: `${process.env.WEBSITE_DOMAIN}/assets/${asset.uid}`,
 			});
 		} catch (error) {
-			console.error('Failed to send asset creation admin notification:', error);
+			// Silent fail - email notification is non-critical
 		}
 
 		return { message: process.env.SUCCESS_MESSAGE };
@@ -294,7 +294,7 @@ export class AssetsService {
 				});
 			}
 		} catch (error) {
-			console.error('Failed to send asset update email:', error);
+			// Silent fail - email notification is non-critical
 		}
 
 		return { message: process.env.SUCCESS_MESSAGE };
@@ -346,7 +346,7 @@ export class AssetsService {
 					dashboardLink: `${process.env.WEBSITE_DOMAIN}/assets`,
 				});
 			} catch (error) {
-				console.error('Failed to send asset removal email:', error);
+				// Silent fail - email notification is non-critical
 			}
 		}
 
@@ -369,7 +369,7 @@ export class AssetsService {
 				dashboardLink: `${process.env.WEBSITE_DOMAIN}/assets`,
 			});
 		} catch (error) {
-			console.error('Failed to send asset deletion admin notification:', error);
+			// Silent fail - email notification is non-critical
 		}
 
 		return { message: process.env.SUCCESS_MESSAGE };
@@ -428,7 +428,7 @@ export class AssetsService {
 				});
 			}
 		} catch (error) {
-			console.error('Failed to send asset restoration email:', error);
+			// Silent fail - email notification is non-critical
 		}
 
 		return { message: process.env.SUCCESS_MESSAGE };

@@ -58,7 +58,6 @@ export class ApprovalsService {
         private readonly unifiedNotificationService: UnifiedNotificationService
     ) {
         this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 300000; // 5 minutes default
-        this.logger.log(`🚀 [ApprovalsService] Initialized with cache TTL: ${this.CACHE_TTL}ms`);
     }
 
     /**
@@ -88,7 +87,6 @@ export class ApprovalsService {
         }
 
         try {
-            this.logger.debug(`📱 [sendApprovalPushNotification] Sending ${event} notification for approval ${approval.uid} to ${recipientUserIds.length} users`);
 
             // Map approval event to notification priority
             let priority = NotificationPriority.NORMAL;
@@ -143,7 +141,6 @@ export class ApprovalsService {
                 }
             );
 
-            this.logger.debug(`✅ [sendApprovalPushNotification] ${event} notification sent for approval ${approval.uid}`);
         } catch (error) {
             this.logger.error(`❌ [sendApprovalPushNotification] Failed to send ${event} notification for approval ${approval.uid}:`, error.message);
             // Don't throw error - notifications are non-critical
@@ -157,7 +154,6 @@ export class ApprovalsService {
      */
     private async invalidateApprovalCache(approval: Approval): Promise<void> {
         try {
-            this.logger.debug(`🗑️ [invalidateApprovalCache] Invalidating cache for approval: ${approval.uid}`);
 
             // Get all cache keys
             const keys = await this.cacheManager.store.keys();
@@ -226,7 +222,6 @@ export class ApprovalsService {
             // Clear all caches
             await Promise.all(keysToDelete.map((key) => this.cacheManager.del(key)));
 
-            this.logger.debug(`✅ [invalidateApprovalCache] Cache invalidated for approval ${approval.uid}. Cleared ${keysToDelete.length} cache keys`);
 
             // Emit event for other services that might be caching approval data
             this.eventEmitter.emit('approvals.cache.invalidate', {
@@ -265,7 +260,6 @@ export class ApprovalsService {
                 ApprovalType.ROLE_CHANGE,
                 ApprovalType.DEPARTMENT_TRANSFER
             ].includes(approvalType)) {
-                this.logger.debug(`👥 [getApprovalRouting] HR routing for type: ${approvalType}`);
                 const hrUsers = await this.getHRUsers(requester.organisationRef);
                 hrUsers.forEach((hrUser, index) => {
                     approvers.push({
@@ -278,7 +272,6 @@ export class ApprovalsService {
 
             // Amount-based routing for financial approvals
             if (amount && amount > 0) {
-                this.logger.debug(`💰 [getApprovalRouting] Amount-based routing for: ${amount}`);
                 const financialApprovers = await this.getFinancialApprovers(amount, requester);
                 financialApprovers.forEach((approver, index) => {
                     approvers.push({
@@ -320,7 +313,6 @@ export class ApprovalsService {
      */
     private async getHRUsers(organisationRef: string): Promise<User[]> {
         try {
-            this.logger.debug(`👥 [getHRUsers] Finding HR users for organization: ${organisationRef}`);
             
             const hrUsers = await this.userRepository.find({
                 where: {
@@ -334,7 +326,6 @@ export class ApprovalsService {
                 },
             });
 
-            this.logger.debug(`✅ [getHRUsers] Found ${hrUsers.length} HR users`);
             return hrUsers;
         } catch (error) {
             this.logger.error(`❌ [getHRUsers] Error finding HR users:`, error.message);
@@ -353,7 +344,6 @@ export class ApprovalsService {
         requester: User,
     ): Promise<{ user: User; priority: number; reason: string }[]> {
         try {
-            this.logger.debug(`💰 [getFinancialApprovers] Finding approvers for amount: ${amount}`);
             
             const approvers: { user: User; priority: number; reason: string }[] = [];
 
@@ -396,7 +386,6 @@ export class ApprovalsService {
                 });
             });
 
-            this.logger.debug(`✅ [getFinancialApprovers] Found ${approvers.length} financial approvers`);
             return approvers;
         } catch (error) {
             this.logger.error(`❌ [getFinancialApprovers] Error finding financial approvers:`, error.message);
@@ -413,7 +402,6 @@ export class ApprovalsService {
         requester: User,
     ): Promise<{ approver: User; priority: number; reason: string }[]> {
         try {
-            this.logger.debug(`🏢 [getHierarchicalApprovers] Finding hierarchical approvers for user: ${requester.uid}`);
             
             const approvers: { approver: User; priority: number; reason: string }[] = [];
 
@@ -465,7 +453,6 @@ export class ApprovalsService {
                 }
             });
 
-            this.logger.debug(`✅ [getHierarchicalApprovers] Found ${approvers.length} hierarchical approvers`);
             return approvers;
         } catch (error) {
             this.logger.error(`❌ [getHierarchicalApprovers] Error finding hierarchical approvers:`, error.message);
@@ -506,7 +493,6 @@ export class ApprovalsService {
         this.logger.log(`🚀 [create] Creating new approval request by user ${user.uid}`);
         
         try {
-            this.logger.debug(`📋 [create] Approval data: ${JSON.stringify({ ...createApprovalDto, supportingDocuments: createApprovalDto.supportingDocuments?.length || 0 })}`);
 
             // Validate requester has permission to create this type of approval
             await this.validateCreatePermissions(createApprovalDto, user);
@@ -540,7 +526,6 @@ export class ApprovalsService {
 
             // Smart approval routing - determine best approver if not specified
             if (!approval.approverUid) {
-                this.logger.debug(`🎯 [create] No approver specified, using smart routing for type: ${approval.type}`);
                 const approvalRouting = await this.getApprovalRouting(
                     approval.type, 
                     approval.amount, 
@@ -561,7 +546,6 @@ export class ApprovalsService {
                 }
             }
 
-            this.logger.debug(`💾 [create] Saving approval to database`);
             const savedApproval = await this.approvalRepository.save(approval);
 
             // Create initial history entry
@@ -746,7 +730,6 @@ export class ApprovalsService {
             
             // Log detailed results for debugging
             approvals.forEach((approval, index) => {
-                this.logger.debug(`📋 [findAll] Approval ${index + 1}: ${approval.approvalReference} - ${approval.title} (${approval.status}) by ${approval.requester?.email || 'unknown'}`);
             });
 
             const totalPages = Math.ceil(total / limit);
@@ -837,7 +820,6 @@ export class ApprovalsService {
             
             // Log detailed results for debugging
             approvals.forEach((approval, index) => {
-                this.logger.debug(`⏳ [getPendingApprovals] Pending ${index + 1}: ${approval.approvalReference} - ${approval.title} (${approval.status}) - Priority: ${approval.priority} by ${approval.requester?.email || 'unknown'}`);
             });
 
             this.logger.log(`🎉 [getPendingApprovals] ============ PENDING APPROVALS SUCCESS ============`);

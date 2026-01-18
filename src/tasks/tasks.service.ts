@@ -70,19 +70,6 @@ export class TasksService {
 		private readonly unifiedNotificationService: UnifiedNotificationService,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
-
-		this.logger.log('TasksService initialized with cache TTL: ' + this.CACHE_TTL + ' minutes');
-		this.logger.debug(`TasksService initialized with dependencies:`);
-		this.logger.debug(`Event Emitter: ${!!this.eventEmitter}`);
-		this.logger.debug(`Client Repository: ${!!this.clientRepository}`);
-		this.logger.debug(`User Repository: ${!!this.userRepository}`);
-		this.logger.debug(`Cache Manager: ${!!this.cacheManager}`);
-		this.logger.debug(`Config Service: ${!!this.configService}`);
-		this.logger.debug(`Task Flag Repository: ${!!this.taskFlagRepository}`);
-		this.logger.debug(`Organisation Settings Repository: ${!!this.organisationSettingsRepository}`);
-		this.logger.debug(`Notifications Service: ${!!this.notificationsService}`);
-		this.logger.debug(`Unified Notification Service: ${!!this.unifiedNotificationService}`);
-		this.logger.debug(`Inactive user statuses: ${this.INACTIVE_USER_STATUSES.join(', ')}`);
 	}
 
 	/**
@@ -106,9 +93,6 @@ export class TasksService {
 		const activeUserIds = users.filter((user) => this.isUserActive(user)).map((user) => user.uid);
 
 		const filteredCount = userIds.length - activeUserIds.length;
-		if (filteredCount > 0) {
-			console.log(`🚫 Filtered out ${filteredCount} inactive users from task notifications`);
-		}
 
 		return activeUserIds;
 	}
@@ -416,8 +400,7 @@ export class TasksService {
 				await this.clearTaskCache(taskId);
 			}
 		} catch (error) {
-			// Log error but don't throw to avoid disrupting the main flow
-			console.error(`Error checking task flags for task ${taskId}:`, error.message);
+			// Silent fail - don't disrupt main flow
 		}
 	}
 
@@ -703,7 +686,6 @@ export class TasksService {
 			const cachedTask = await this.cacheManager.get<{ message: string; task: Task }>(cacheKey);
 
 			if (cachedTask) {
-				this.logger.debug(`Task ${ref} retrieved from cache`);
 				return cachedTask;
 			}
 
@@ -1404,8 +1386,7 @@ export class TasksService {
 
 					this.logger.log(`✅ Task completion push notifications sent to ${activeRecipientIds.length} assignees/creators`);
 				} catch (notificationError) {
-					// Log error but don't fail task completion
-					console.error('Failed to send task completion notifications:', notificationError.message);
+					// Silent fail - don't fail task completion
 				}
 
 				// Internal system notification for assignees and creator

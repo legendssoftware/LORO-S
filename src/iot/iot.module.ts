@@ -3,7 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { CacheModule } from '@nestjs/cache-manager';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ConfigModule } from '@nestjs/config';
-import { AuthModule } from '../auth/auth.module';
+import { ClerkModule } from '../clerk/clerk.module';
 import { LicensingModule } from '../licensing/licensing.module';
 import { OrganisationModule } from '../organisation/organisation.module';
 import { NotificationsModule } from '../notifications/notifications.module';
@@ -40,8 +40,8 @@ import { IoTReportingService } from './services/iot-reporting.service';
     // Config module for environment variables
     ConfigModule,
     
-    // Auth module for JWT service (required by AuthGuard)
-    AuthModule,
+    // Clerk module for authentication (replaces AuthModule)
+    ClerkModule,
     
     // Licensing module for LicensingService (required by AuthGuard)
     LicensingModule,

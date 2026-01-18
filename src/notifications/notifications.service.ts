@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { CreateNotificationDto } from './dto/create-notification.dto';
 import { UpdateNotificationDto } from './dto/update-notification.dto';
 import { RegisterPushTokenDto } from './dto/register-push-token.dto';
@@ -18,6 +18,8 @@ import { ExpoPushService, ExpoPushMessage } from '../lib/services/expo-push.serv
 
 @Injectable()
 export class NotificationsService {
+	private readonly logger = new Logger(NotificationsService.name);
+
 	constructor(
 		@InjectRepository(Notification)
 		private readonly notificationRepository: Repository<Notification>,
@@ -231,10 +233,6 @@ export class NotificationsService {
 					}
 				);
 
-				console.log(`✅ [NotificationService] [TokenConflict] Cleared duplicate token from ${usersWithToken.length} users`, {
-					clearedUserIds: usersWithToken.map(u => u.uid),
-					newOwnerUserId: userId
-				});
 
 				return { 
 					conflictingUsers: usersWithToken.length, 
@@ -242,16 +240,9 @@ export class NotificationsService {
 				};
 			}
 
-			console.log(`✅ [NotificationService] [TokenUniqueness] No duplicate tokens found - token is unique`, {
-				userId
-			});
 
 			return { conflictingUsers: 0, clearedUsers: [] };
 		} catch (error) {
-			console.error('❌ [NotificationService] [TokenUniqueness] Failed to ensure token uniqueness:', {
-				userId,
-				error: error instanceof Error ? error.message : 'Unknown error',
-			});
 			// Don't throw - allow registration to proceed even if uniqueness check fails
 			return { conflictingUsers: 0, clearedUsers: [] };
 		}
@@ -261,23 +252,11 @@ export class NotificationsService {
 		try {
 			const isClient = role === AccessLevel.CLIENT || role?.toLowerCase() === 'client';
 			
-			console.log('🚀 [NotificationService] Starting push token registration', {
-				userId,
-				role: role || 'user',
-				isClient,
-				deviceId: registerTokenDto.deviceId,
-				platform: registerTokenDto.platform,
-				timestamp: new Date().toISOString(),
-			});
-
 			// Validate token format
 			const isValidToken = this.expoPushService.isValidExpoPushToken(registerTokenDto.token);
-			console.log('🔍 [NotificationService] Token validation:', {
-				isValidToken,
-			});
 
 			if (!isValidToken) {
-				console.warn('⚠️ [NotificationService] Invalid token format detected');
+				this.logger.warn('⚠️ [NotificationService] Invalid token format detected');
 			}
 
 			// Handle clients differently
@@ -288,16 +267,9 @@ export class NotificationsService {
 				});
 				
 				if (!existingClientAuth) {
-					console.error('❌ [NotificationService] Client auth not found', { userId });
+					this.logger.error('❌ [NotificationService] Client auth not found', { userId });
 					throw new NotFoundException('Client not found');
 				}
-
-				console.log('📊 [NotificationService] Existing client auth token info:', {
-					userId,
-					currentDeviceId: existingClientAuth.deviceId,
-					currentPlatform: existingClientAuth.platform,
-					lastUpdated: existingClientAuth.pushTokenUpdatedAt,
-				});
 
 				// Check if this is a duplicate registration
 				const isSameToken = existingClientAuth.expoPushToken === registerTokenDto.token;
@@ -307,16 +279,10 @@ export class NotificationsService {
 								 (Date.now() - new Date(existingClientAuth.pushTokenUpdatedAt).getTime()) < 10000; // 10 seconds
 
 				if (isSameToken && isSameDevice && isSamePlatform && isRecent) {
-					console.log('⏭️ [NotificationService] Duplicate registration detected - same token, device, and platform updated recently', {
-						userId,
-						timeSinceLastUpdate: existingClientAuth.pushTokenUpdatedAt ? 
-							Date.now() - new Date(existingClientAuth.pushTokenUpdatedAt).getTime() : 'N/A'
-					});
 					return { message: 'Push token already registered (duplicate request)' };
 				}
 
 				// Check for duplicate tokens across client auths
-				console.log('🔍 [NotificationService] Checking for duplicate tokens across client auths...');
 				const conflictingClientAuths = await this.clientAuthRepository.find({
 					where: {
 						expoPushToken: registerTokenDto.token,

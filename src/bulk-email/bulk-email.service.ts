@@ -34,8 +34,6 @@ export class BulkEmailService {
 		const operationId = `BULK_EMAIL_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 		
 		this.logger.log(`[${operationId}] Starting bulk email operation`);
-		this.logger.debug(`[${operationId}] Input validation - Subject: "${input.content.subject}"`);
-		this.logger.debug(`[${operationId}] Dry run: ${input.sendOptions?.dryRun ? 'Yes' : 'No'}`);
 
 		try {
 			// Get recipients
@@ -54,8 +52,6 @@ export class BulkEmailService {
 					dryRun: input.sendOptions?.dryRun || false,
 				};
 			}
-
-			this.logger.log(`[${operationId}] Found ${recipients.length} recipients`);
 
 			// Handle dry run
 			if (input.sendOptions?.dryRun) {
@@ -87,7 +83,6 @@ export class BulkEmailService {
 			// Process recipients in batches
 			for (let i = 0; i < recipients.length; i += batchSize) {
 				const batch = recipients.slice(i, i + batchSize);
-				this.logger.debug(`[${operationId}] Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(recipients.length / batchSize)}`);
 
 				const batchPromises = batch.map(async (user) => {
 					const userOperationId = `${operationId}_USER_${user.uid}`;
@@ -177,8 +172,6 @@ export class BulkEmailService {
 	 * Get recipients based on filter criteria
 	 */
 	private async getRecipients(filter: BulkEmailInput['recipientFilter'], operationId: string): Promise<User[]> {
-		this.logger.debug(`[${operationId}] Building recipient query with filters`);
-		
 		let query = this.userRepository
 			.createQueryBuilder('user')
 			.where('user.isDeleted = :isDeleted', { isDeleted: false })
@@ -207,8 +200,6 @@ export class BulkEmailService {
 		}
 
 		const recipients = await query.getMany();
-		
-		this.logger.debug(`[${operationId}] Found ${recipients.length} recipients matching criteria`);
 		return recipients;
 	}
 
@@ -220,7 +211,6 @@ export class BulkEmailService {
 			return [];
 		}
 
-		this.logger.debug(`[${operationId}] Processing ${attachments.length} attachments`);
 		const processedAttachments = [];
 
 		for (const attachment of attachments) {
@@ -254,7 +244,6 @@ export class BulkEmailService {
 			}
 		}
 
-		this.logger.debug(`[${operationId}] Successfully processed ${processedAttachments.length}/${attachments.length} attachments`);
 		return processedAttachments;
 	}
 
@@ -267,8 +256,6 @@ export class BulkEmailService {
 		attachments: any[], 
 		operationId: string
 	): Promise<any> {
-		this.logger.debug(`[${operationId}] Sending email with ${attachments.length} attachments`);
-		
 		// Use the existing communication service's sendEmail method
 		// Note: The current sendEmail method doesn't support attachments directly,
 		// so we'll need to modify it or create a custom method
@@ -293,7 +280,6 @@ export class BulkEmailService {
 	 */
 	async loadEmailContentFromFile(filePath: string): Promise<BulkEmailContent> {
 		const operationId = `LOAD_FILE_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-		this.logger.debug(`[${operationId}] Loading email content from file: ${filePath}`);
 
 		try {
 			const fullPath = path.isAbsolute(filePath) ? filePath : path.join(process.cwd(), filePath);
@@ -328,7 +314,6 @@ export class BulkEmailService {
 				throw new Error('Email body is required');
 			}
 
-			this.logger.debug(`[${operationId}] Successfully loaded email content. Subject: "${content.subject}"`);
 			return content;
 
 		} catch (error) {

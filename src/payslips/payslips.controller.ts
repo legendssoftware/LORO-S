@@ -38,6 +38,7 @@ import {
 	ApiConsumes,
 	ApiProduces,
 } from '@nestjs/swagger';
+import { getDynamicDate, getDynamicDateTime, createApiDescription } from '../lib/utils/swagger-helpers';
 
 @ApiBearerAuth('JWT-auth')
 @ApiTags('💰 Payslips')
@@ -90,25 +91,15 @@ export class PayslipsController {
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER, AccessLevel.OWNER)
 	@ApiOperation({
 		summary: '➕ Create a new payslip',
-		description: `
-# Payslip Creation
-
-Creates a new payslip record for an employee with comprehensive payroll information and document management.
-
-## 📋 **Core Features**
-- **Employee Payroll**: Complete salary breakdown including gross pay, deductions, and net pay
-- **Period Management**: Pay period tracking with start and end dates
-- **Document Integration**: PDF generation and document reference management
-- **Status Tracking**: Payslip status workflow (GENERATED, SENT, VIEWED)
-- **Audit Trail**: Complete logging of payslip creation and modifications
-
-## 🎯 **Use Cases**
-- **Payroll Processing**: Generate payslips during payroll runs
-- **Employee Compensation**: Document employee salary and benefits
-- **HR Management**: Maintain payroll records for compliance
-- **Financial Reporting**: Track payroll expenses and deductions
-- **Employee Self-Service**: Provide payslip access to employees
-		`,
+		description: createApiDescription(
+			'Creates a new payslip record for an employee with comprehensive payroll information and document management.',
+			'The service method `PayslipsService.create()` validates employee data, calculates payroll amounts, generates document references, sets initial status, and returns the created payslip.',
+			'PayslipsService',
+			'create',
+			'creates a new payslip, validates employee data, calculates payroll amounts, and generates document references',
+			'a payslip object with complete payroll information and document reference',
+			['Employee validation', 'Payroll calculation', 'Document generation', 'Status management']
+		),
 	})
 	@ApiBody({ type: CreatePayslipDto, description: 'Payslip creation payload with employee payroll information' })
 	@ApiCreatedResponse({
@@ -141,18 +132,15 @@ Creates a new payslip record for an employee with comprehensive payroll informat
 	)
 	@ApiOperation({
 		summary: '📋 Get all payslips',
-		description: `
-# Payslip Directory
-
-Retrieves a comprehensive list of all payslips with advanced filtering and pagination capabilities.
-
-## 📊 **Response Features**
-- **Payslip Records**: Complete payslip information including payroll details
-- **Employee Information**: User details associated with each payslip
-- **Period Filtering**: Filter by pay period dates
-- **Status Tracking**: Filter by payslip status (GENERATED, SENT, VIEWED)
-- **Document Access**: Document references and download URLs
-		`,
+		description: createApiDescription(
+			'Retrieves a comprehensive list of all payslips with advanced filtering and pagination capabilities.',
+			'The service method `PayslipsService.findAll()` queries payslips from the database with filters, applies access control, paginates results, and returns the payslip list.',
+			'PayslipsService',
+			'findAll',
+			'queries payslips with filters, applies access control, and paginates results',
+			'a paginated list of payslip objects with employee information',
+			['Database query', 'Access control', 'Filtering', 'Pagination']
+		),
 	})
 	@ApiQuery({ name: 'page', description: 'Page number for pagination', required: false, type: Number })
 	@ApiQuery({ name: 'limit', description: 'Number of items per page', required: false, type: Number })
@@ -199,17 +187,15 @@ Retrieves a comprehensive list of all payslips with advanced filtering and pagin
 	)
 	@ApiOperation({
 		summary: '👤 Get payslips for a specific user',
-		description: `
-# User Payslip Retrieval
-
-Retrieves all payslips for a specific user with comprehensive payroll information and document access.
-
-## 🔒 **Access Control**
-- **Self-Service**: Users can view their own payslips
-- **Management Access**: Managers can view payslips for their team members
-- **HR Access**: HR and administrators can view all payslips
-- **Organization Boundaries**: Payslips are filtered by organization/branch
-		`,
+		description: createApiDescription(
+			'Retrieves all payslips for a specific user with comprehensive payroll information and document access.',
+			'The service method `PayslipsService.findByUser()` queries payslips for the user, validates access permissions, filters by organization/branch, and returns user payslips.',
+			'PayslipsService',
+			'findByUser',
+			'queries payslips for a specific user, validates access permissions, and filters by organization',
+			'an array of payslip objects for the user',
+			['User filtering', 'Access validation', 'Organization filtering']
+		),
 	})
 	@ApiParam({ name: 'ref', description: 'User reference code or unique identifier', type: 'number' })
 	@ApiOkResponse({ description: '✅ User payslips retrieved successfully' })
@@ -248,11 +234,15 @@ Retrieves all payslips for a specific user with comprehensive payroll informatio
 	)
 	@ApiOperation({
 		summary: '📄 Get payslip by ID',
-		description: `
-# Payslip Detail Retrieval
-
-Retrieves detailed information about a specific payslip by its unique identifier.
-		`,
+		description: createApiDescription(
+			'Retrieves detailed information about a specific payslip by its unique identifier.',
+			'The service method `PayslipsService.findOne()` queries the payslip by ID, validates access permissions, checks organization/branch boundaries, and returns complete payslip details.',
+			'PayslipsService',
+			'findOne',
+			'retrieves a payslip by ID, validates access permissions, and checks organization boundaries',
+			'a payslip object with complete details',
+			['ID lookup', 'Access validation', 'Organization filtering']
+		),
 	})
 	@ApiParam({ name: 'id', description: 'Payslip unique identifier', type: 'number' })
 	@ApiOkResponse({ description: '✅ Payslip retrieved successfully' })
@@ -267,11 +257,15 @@ Retrieves detailed information about a specific payslip by its unique identifier
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER, AccessLevel.OWNER)
 	@ApiOperation({
 		summary: '✏️ Update payslip information',
-		description: `
-# Payslip Update
-
-Updates an existing payslip's information with comprehensive validation and audit trail maintenance.
-		`,
+		description: createApiDescription(
+			'Updates an existing payslip\'s information with comprehensive validation and audit trail maintenance.',
+			'The service method `PayslipsService.update()` validates the payslip exists, applies updates, maintains audit trail, updates modification timestamp, and returns the updated payslip.',
+			'PayslipsService',
+			'update',
+			'updates payslip information, validates changes, and maintains audit trail',
+			'the updated payslip object',
+			['Payslip validation', 'Data update', 'Audit trail', 'Timestamp update']
+		),
 	})
 	@ApiParam({ name: 'id', description: 'Payslip unique identifier', type: 'number' })
 	@ApiBody({ type: UpdatePayslipDto, description: 'Payslip update payload - supports partial updates' })
@@ -307,11 +301,15 @@ Updates an existing payslip's information with comprehensive validation and audi
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER, AccessLevel.OWNER)
 	@ApiOperation({
 		summary: '🗑️ Delete a payslip',
-		description: `
-# Payslip Deletion
-
-Safely removes a payslip record with comprehensive cleanup and data preservation.
-		`,
+		description: createApiDescription(
+			'Safely removes a payslip record with comprehensive cleanup and data preservation.',
+			'The service method `PayslipsService.remove()` validates the payslip exists, checks permissions, performs soft delete, preserves audit trail, and returns deletion confirmation.',
+			'PayslipsService',
+			'remove',
+			'removes a payslip, performs soft delete, and preserves audit trail',
+			'a confirmation object indicating successful deletion',
+			['Soft delete', 'Permission check', 'Audit trail preservation']
+		),
 	})
 	@ApiParam({ name: 'id', description: 'Payslip unique identifier', type: 'number' })
 	@ApiOkResponse({ description: '✅ Payslip deleted successfully' })
@@ -350,20 +348,15 @@ Safely removes a payslip record with comprehensive cleanup and data preservation
 	)
 	@ApiOperation({
 		summary: '📥 Download payslip document',
-		description: `
-# Payslip Document Download
-
-Retrieves a secure download URL for a payslip PDF document. The URL is signed and time-limited for security.
-
-## 🔒 **Security Features**
-- **Signed URLs**: Time-limited download links for enhanced security
-- **Access Control**: Users can only download payslips they have permission to view
-- **Document Validation**: Ensures payslip document exists and is accessible
-- **Audit Trail**: All download requests are logged for compliance
-
-## 📋 **Response**
-Returns a signed download URL that can be used to download the payslip PDF directly.
-		`,
+		description: createApiDescription(
+			'Retrieves a secure download URL for a payslip PDF document. The URL is signed and time-limited for security.',
+			'The service method `PayslipsService.getDocumentDownloadUrl()` validates payslip exists, checks access permissions, generates signed URL with expiration, logs download request, and returns the download URL.',
+			'PayslipsService',
+			'getDocumentDownloadUrl',
+			'generates a signed download URL for payslip document with access validation',
+			'an object containing the signed download URL, filename, and mime type',
+			['Access validation', 'Signed URL generation', 'Download logging']
+		),
 	})
 	@ApiParam({ name: 'id', description: 'Payslip unique identifier', type: 'number' })
 	@ApiOkResponse({

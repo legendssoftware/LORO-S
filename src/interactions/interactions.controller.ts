@@ -32,6 +32,7 @@ import {
 	ApiNotFoundResponse,
 	ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { getDynamicDate, getDynamicDateTime, getFutureDate, getPastDate, createApiDescription } from '../lib/utils/swagger-helpers';
 
 @ApiBearerAuth('JWT-auth')
 @ApiTags('💭 Interactions')
@@ -45,7 +46,15 @@ export class InteractionsController {
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPERVISOR, AccessLevel.USER)
 	@ApiOperation({
 		summary: 'Create a new interaction',
-		description: 'Creates a new interaction with the provided details',
+		description: createApiDescription(
+			'Creates a new interaction with comprehensive tracking and relationship management.',
+			'The service method `InteractionsService.create()` processes interaction creation, validates relationships with leads/clients/quotations, assigns organization and branch context, handles caching, and returns the created interaction with success message.',
+			'InteractionsService',
+			'create',
+			'creates a new interaction, validates relationships, and assigns organizational context',
+			'an object containing the created interaction data and success message',
+			['Lead/client/quotation relationship validation', 'Organization and branch assignment', 'Cache management', 'User assignment'],
+		),
 	})
 	@ApiBody({ type: CreateInteractionDto })
 	@ApiCreatedResponse({
@@ -89,7 +98,15 @@ export class InteractionsController {
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPERVISOR, AccessLevel.USER)
 	@ApiOperation({
 		summary: 'Get all interactions',
-		description: 'Retrieves a list of all interactions with optional filtering',
+		description: createApiDescription(
+			'Retrieves a paginated list of all interactions with advanced filtering capabilities.',
+			'The service method `InteractionsService.findAll()` processes the query with filters, applies organization and branch scoping, handles pagination, performs database queries with relationships, manages caching, and returns paginated interaction results.',
+			'InteractionsService',
+			'findAll',
+			'retrieves interactions with filtering, pagination, and organization scoping',
+			'a paginated response containing interactions array, metadata, and total count',
+			['Search filtering', 'Date range filtering', 'Lead/client filtering', 'Pagination', 'Cache management'],
+		),
 	})
 	@ApiOkResponse({
 		description: 'Interactions retrieved successfully',
@@ -153,7 +170,15 @@ export class InteractionsController {
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPERVISOR, AccessLevel.USER)
 	@ApiOperation({
 		summary: 'Get interactions by lead',
-		description: 'Retrieves all interactions associated with a specific lead',
+		description: createApiDescription(
+			'Retrieves all interactions associated with a specific lead reference.',
+			'The service method `InteractionsService.findByLead()` validates the lead reference, applies organization and branch filters, queries interactions linked to the lead, handles caching, and returns the filtered interaction list.',
+			'InteractionsService',
+			'findByLead',
+			'retrieves interactions filtered by lead reference with organization scoping',
+			'an array of interactions associated with the specified lead',
+			['Lead validation', 'Organization scoping', 'Cache management'],
+		),
 	})
 	@ApiParam({ name: 'ref', description: 'Lead reference code', type: 'number' })
 	@ApiOkResponse({
@@ -196,7 +221,15 @@ export class InteractionsController {
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPERVISOR, AccessLevel.USER)
 	@ApiOperation({
 		summary: 'Get interactions by client',
-		description: 'Retrieves all interactions associated with a specific client',
+		description: createApiDescription(
+			'Retrieves all interactions associated with a specific client reference.',
+			'The service method `InteractionsService.findByClient()` validates the client reference, applies organization and branch filters, queries interactions linked to the client, handles caching, and returns the filtered interaction list.',
+			'InteractionsService',
+			'findByClient',
+			'retrieves interactions filtered by client reference with organization scoping',
+			'an array of interactions associated with the specified client',
+			['Client validation', 'Organization scoping', 'Cache management'],
+		),
 	})
 	@ApiParam({ name: 'ref', description: 'Client reference code', type: 'number' })
 	@ApiOkResponse({
@@ -239,7 +272,15 @@ export class InteractionsController {
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPERVISOR, AccessLevel.USER)
 	@ApiOperation({
 		summary: 'Get interactions by quotation',
-		description: 'Retrieves all interactions associated with a specific quotation',
+		description: createApiDescription(
+			'Retrieves all interactions associated with a specific quotation reference.',
+			'The service method `InteractionsService.findByQuotation()` validates the quotation reference, applies organization and branch filters, queries interactions linked to the quotation, handles caching, and returns the filtered interaction list.',
+			'InteractionsService',
+			'findByQuotation',
+			'retrieves interactions filtered by quotation reference with organization scoping',
+			'an array of interactions associated with the specified quotation',
+			['Quotation validation', 'Organization scoping', 'Cache management'],
+		),
 	})
 	@ApiParam({ name: 'ref', description: 'Quotation reference code', type: 'number' })
 	@ApiOkResponse({
@@ -282,7 +323,15 @@ export class InteractionsController {
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPERVISOR, AccessLevel.USER)
 	@ApiOperation({
 		summary: 'Get an interaction by reference code',
-		description: 'Retrieves detailed information about a specific interaction',
+		description: createApiDescription(
+			'Retrieves detailed information about a specific interaction by its reference code.',
+			'The service method `InteractionsService.findOne()` validates the interaction reference, applies organization and branch filters, loads related entities (lead, client, quotation, user), handles caching, and returns the complete interaction details.',
+			'InteractionsService',
+			'findOne',
+			'retrieves a single interaction by reference with full relationship data',
+			'an object containing the interaction details with related entities',
+			['Reference validation', 'Organization scoping', 'Relationship loading', 'Cache management'],
+		),
 	})
 	@ApiParam({ name: 'ref', description: 'Interaction reference code', type: 'number' })
 	@ApiOkResponse({
@@ -321,7 +370,15 @@ export class InteractionsController {
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPERVISOR, AccessLevel.USER)
 	@ApiOperation({
 		summary: 'Update an interaction',
-		description: 'Updates an existing interaction with the provided details',
+		description: createApiDescription(
+			'Updates an existing interaction with the provided details.',
+			'The service method `InteractionsService.update()` validates the interaction reference, applies organization and branch filters, updates interaction fields, invalidates cache, and returns success confirmation.',
+			'InteractionsService',
+			'update',
+			'updates an interaction with validation and cache invalidation',
+			'a success message confirming the update',
+			['Reference validation', 'Organization scoping', 'Field updates', 'Cache invalidation'],
+		),
 	})
 	@ApiParam({ name: 'ref', description: 'Interaction reference code', type: 'number' })
 	@ApiBody({ type: UpdateInteractionDto })
@@ -357,7 +414,15 @@ export class InteractionsController {
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPERVISOR)
 	@ApiOperation({
 		summary: 'Delete an interaction',
-		description: 'Marks an interaction as deleted (soft delete)',
+		description: createApiDescription(
+			'Marks an interaction as deleted using soft delete (sets isDeleted flag).',
+			'The service method `InteractionsService.remove()` validates the interaction reference, applies organization and branch filters, performs soft delete, invalidates cache, and returns success confirmation.',
+			'InteractionsService',
+			'remove',
+			'performs soft delete on an interaction with validation and cache invalidation',
+			'a success message confirming the deletion',
+			['Reference validation', 'Organization scoping', 'Soft delete', 'Cache invalidation'],
+		),
 	})
 	@ApiParam({ name: 'ref', description: 'Interaction reference code', type: 'number' })
 	@ApiOkResponse({

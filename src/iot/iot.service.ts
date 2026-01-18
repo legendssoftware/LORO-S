@@ -355,7 +355,6 @@ export class IotService {
 		// Try cache first
 		const cachedRecords = await this.cacheManager.get<DeviceRecords[]>(cacheKey);
 		if (cachedRecords) {
-			this.logger.debug(`💾 Cache hit for today's records: device ${deviceId}, date ${dateKey}`);
 			return cachedRecords;
 		}
 
@@ -377,7 +376,6 @@ export class IotService {
 		const ttlSeconds = Math.ceil(ttlMs / 1000);
 		
 		await this.cacheManager.set(cacheKey, todayRecords, ttlSeconds);
-		this.logger.debug(`💾 Cached today's records: device ${deviceId}, date ${dateKey}, count: ${todayRecords.length}`);
 		
 		return todayRecords;
 	}
@@ -403,7 +401,6 @@ export class IotService {
 		// Try cache first
 		const cachedRecord = await this.cacheManager.get<DeviceRecords>(cacheKey);
 		if (cachedRecord !== undefined && cachedRecord !== null) {
-			this.logger.debug(`💾 Cache hit for latest record: device ${deviceId}, date ${dateKey}`);
 			return cachedRecord;
 		}
 
@@ -425,7 +422,6 @@ export class IotService {
 		const ttlSeconds = Math.ceil(ttlMs / 1000);
 		
 		await this.cacheManager.set(cacheKey, latestRecord, ttlSeconds);
-		this.logger.debug(`💾 Cached latest record: device ${deviceId}, date ${dateKey}, recordId: ${latestRecord?.id || 'null'}`);
 		
 		return latestRecord;
 	}
@@ -445,7 +441,6 @@ export class IotService {
 		// Try cache first
 		const cachedRecord = await this.cacheManager.get<DeviceRecords>(cacheKey);
 		if (cachedRecord !== undefined) {
-			this.logger.debug(`💾 Cache hit for open record without close: device ${deviceId}`);
 			// Verify it's still valid (not closed)
 			if (cachedRecord && !cachedRecord.closeTime) {
 				return cachedRecord;
@@ -467,7 +462,6 @@ export class IotService {
 
 		// Cache for 5 minutes (short TTL since this changes frequently)
 		await this.cacheManager.set(cacheKey, openRecord, 300);
-		this.logger.debug(`💾 Cached open record without close: device ${deviceId}, recordId: ${openRecord?.id || 'null'}`);
 		
 		return openRecord;
 	}
@@ -493,7 +487,6 @@ export class IotService {
 		// Try cache first
 		const cachedRecord = await this.cacheManager.get<DeviceRecords>(cacheKey);
 		if (cachedRecord !== undefined) {
-			this.logger.debug(`💾 Cache hit for recent ${eventType} event: device ${deviceId}`);
 			return cachedRecord;
 		}
 
@@ -520,7 +513,6 @@ export class IotService {
 
 		// Cache for 5 minutes (short TTL for debouncing checks)
 		await this.cacheManager.set(cacheKey, recentEvent, 300);
-		this.logger.debug(`💾 Cached recent ${eventType} event: device ${deviceId}, recordId: ${recentEvent?.id || 'null'}`);
 		
 		return recentEvent;
 	}
@@ -565,7 +557,6 @@ export class IotService {
 			const uniqueKeys = [...new Set(keysToDelete)];
 			await Promise.all(uniqueKeys.map((key) => this.cacheManager.del(key)));
 			
-			this.logger.debug(`💾 Invalidated ${uniqueKeys.length} record caches for device ${deviceId}`);
 		} catch (error) {
 			this.logger.error(`Error invalidating record caches: ${error.message}`);
 		}
@@ -597,7 +588,6 @@ export class IotService {
 		try {
 			// Skip saving log if device is null to avoid foreign key constraint violation
 			if (!device || !device.id) {
-				this.logger.debug(`Skipping device log save: device is null or has no ID`);
 				return;
 			}
 
@@ -709,7 +699,6 @@ export class IotService {
 			// Check cache first
 			const cached = await this.cacheManager.get(cacheKey);
 			if (cached) {
-				this.logger.debug(`📦 Using cached business hours for org ${orgId} on ${dateKey}`);
 				return cached as any;
 			}
 
@@ -742,7 +731,6 @@ export class IotService {
 
 			// Cache for 1 hour (3600 seconds) since business hours don't change frequently
 			await this.cacheManager.set(cacheKey, result, 3600);
-			this.logger.debug(`💾 Cached business hours for org ${orgId} on ${dateKey}`);
 			
 			return result;
 		} catch (error) {
@@ -792,19 +780,11 @@ export class IotService {
 	 */
 	async createDevice(createDeviceDto: CreateDeviceDto): Promise<{ message: string; device?: Partial<Device> }> {
 		const startTime = Date.now();
+		const operationId = `create_device_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 		
 		// Log incoming data for debugging
 		this.logger.log(
 			`🤖 Creating device with ID: ${createDeviceDto.deviceID} for org: ${createDeviceDto.orgID}, branch: ${createDeviceDto.branchID}`,
-		);
-		this.logger.debug(
-			`📥 Incoming device data: ${JSON.stringify({
-				deviceID: createDeviceDto.deviceID,
-				deviceType: createDeviceDto.deviceType,
-				currentStatus: createDeviceDto.currentStatus,
-				deviceIP: createDeviceDto.deviceIP,
-				devicePort: createDeviceDto.devicePort,
-			})}`,
 		);
 
 		// Transform enum values if needed (fallback if ValidationPipe transform doesn't work)
@@ -813,9 +793,6 @@ export class IotService {
 			const upperValue = transformedDeviceType.toUpperCase();
 			if (upperValue in DeviceType) {
 				transformedDeviceType = DeviceType[upperValue as keyof typeof DeviceType];
-				this.logger.debug(
-					`🔄 Transformed deviceType from "${createDeviceDto.deviceType}" to "${transformedDeviceType}"`,
-				);
 			}
 		}
 
@@ -824,9 +801,6 @@ export class IotService {
 			const upperValue = transformedStatus.toUpperCase();
 			if (upperValue in DeviceStatus) {
 				transformedStatus = DeviceStatus[upperValue as keyof typeof DeviceStatus];
-				this.logger.debug(
-					`🔄 Transformed currentStatus from "${createDeviceDto.currentStatus}" to "${transformedStatus}"`,
-				);
 			}
 		}
 
@@ -882,16 +856,10 @@ export class IotService {
 				isDeleted: false,
 			};
 
-			// Log the final device data before saving
-			this.logger.debug(
-				`💾 Final device data to save: ${JSON.stringify({
-					deviceID: deviceData.deviceID,
-					deviceType: deviceData.deviceType,
-					currentStatus: deviceData.currentStatus,
-					branchID: deviceData.branchID,
-					branchUid: deviceData.branchUid,
-				})}`,
-			);
+			// Save device
+			this.logger.debug(`💾 [${operationId}] Preparing to save device`, {
+				branchUid: deviceData.branchUid,
+			});
 
 			const device = queryRunner.manager.create(Device, deviceData);
 			const savedDevice = await queryRunner.manager.save(device);
@@ -1096,9 +1064,6 @@ export class IotService {
 	 */
 	private async validateDeviceConnectivity(createDeviceDto: CreateDeviceDto): Promise<void> {
 		try {
-			this.logger.debug(
-				`🔍 Validating connectivity for ${createDeviceDto.deviceIP}:${createDeviceDto.devicePort}`,
-			);
 
 			// Here you would implement actual network connectivity validation
 			// For now, we'll simulate it
@@ -1210,7 +1175,6 @@ export class IotService {
 				this.cacheManager.set(deviceIdKey, device, this.CACHE_TTL),
 			]);
 
-			this.logger.debug(`💾 Cached device data for ${device.deviceID}`);
 		} catch (error) {
 			this.logger.warn(`⚠️ Failed to cache device data: ${error.message}`);
 		}
@@ -1791,13 +1755,13 @@ export class IotService {
 				return cached;
 			}
 
-		const queryBuilder = this.deviceRepository
-			.createQueryBuilder('device')
-			.leftJoinAndSelect('device.records', 'records')
-			.leftJoinAndSelect('device.branch', 'branch')
-			.leftJoinAndSelect('device.organisation', 'organisation')
-			.where('device.isDeleted = :isDeleted', { isDeleted: false })
-			.orderBy('device.createdAt', 'DESC');
+			const queryBuilder = this.deviceRepository
+				.createQueryBuilder('device')
+				.leftJoinAndSelect('device.records', 'records')
+				.leftJoinAndSelect('device.branch', 'branch')
+				.leftJoinAndSelect('device.organisation', 'organisation')
+				.where('device.isDeleted = :isDeleted', { isDeleted: false })
+				.orderBy('device.createdAt', 'DESC');
 
 			// Apply filters
 			if (filters.orgId) {
@@ -1832,8 +1796,8 @@ export class IotService {
 			// Execute main query
 			const devices = await queryBuilder.getMany();
 
-		// Limit records to latest 30 for each device and enrich with performance data
-		const processedDevices = await Promise.all(devices.map(async (device) => {
+			// Limit records to latest 30 for each device and enrich with performance data
+			const processedDevices = await Promise.all(devices.map(async (device) => {
 			const sortedRecords = device.records
 				? device.records
 						.sort((a, b) => {
@@ -1843,6 +1807,17 @@ export class IotService {
 						})
 						.slice(0, 30)
 				: [];
+
+			// Fetch error logs (latest 10) for this device
+			const errorLogs = await this.deviceLogsRepository
+				.createQueryBuilder('log')
+				.where('log.deviceId = :deviceId', { deviceId: device.id })
+				.andWhere(
+					'(log.metadata->>\'success\' = \'false\' OR log.metadata->>\'errorType\' IS NOT NULL OR log.metadata->>\'errorMessage\' IS NOT NULL)',
+				)
+				.orderBy('log.createdAt', 'DESC')
+				.limit(10)
+				.getMany();
 
 			// Calculate performance metrics (uses device.records directly)
 			const performance = await this.calculateDevicePerformance(device);
@@ -1869,6 +1844,7 @@ export class IotService {
 				...device,
 				branch: normalizedBranch,
 				records: sortedRecords, // Return limited records for response
+				errorLogs, // Include error logs (latest 10)
 				opensOnTime: performance.opensOnTime,
 				closesOnTime: performance.closesOnTime,
 				score: performance.score,
@@ -1879,7 +1855,7 @@ export class IotService {
 				closesEmoji: performance.closesEmoji,
 				doorUserComparisons,
 			};
-		}));
+			}));
 
 			const result: PaginatedResponse<Device> = {
 				data: processedDevices,
@@ -1928,7 +1904,7 @@ export class IotService {
 
 			const device = await this.deviceRepository.findOne({
 				where: whereClause,
-				relations: ['records'],
+				relations: ['records', 'branch', 'organisation'],
 				order: { records: { createdAt: 'DESC' } },
 			});
 
@@ -1938,6 +1914,17 @@ export class IotService {
 			}
 
 			this.logger.log(`✅ [findOneDevice] Device found - ID: ${device.id}, deviceID: ${device.deviceID}, org: ${device.orgID}, branch: ${device.branchID}`);
+
+			// Fetch error logs (latest 10) - logs where success is false or errorType/errorMessage exists
+			const errorLogs = await this.deviceLogsRepository
+				.createQueryBuilder('log')
+				.where('log.deviceId = :deviceId', { deviceId: device.id })
+				.andWhere(
+					'(log.metadata->>\'success\' = \'false\' OR log.metadata->>\'errorType\' IS NOT NULL OR log.metadata->>\'errorMessage\' IS NOT NULL)',
+				)
+				.orderBy('log.createdAt', 'DESC')
+				.limit(10)
+				.getMany();
 
 			// Limit records to latest 10 for response
 			const sortedRecords = device.records 
@@ -1970,6 +1957,7 @@ export class IotService {
 				...device,
 				branch: normalizedBranch,
 				records: sortedRecords, // Return limited records for response
+				errorLogs, // Include error logs (latest 10)
 				opensOnTime: performance.opensOnTime,
 				closesOnTime: performance.closesOnTime,
 				score: performance.score,
@@ -3935,7 +3923,6 @@ export class IotService {
 			this.invalidateRecordCache(recordResult.record),
 		]);
 		
-		this.logger.debug(`💾 Cache invalidation completed for device ${device.deviceID} after time event processing`);
 		
 		// Emit comprehensive cache invalidation event for real-time updates
 		this.eventEmitter.emit('iot.time.event.cache.cleared', {
@@ -4443,7 +4430,6 @@ export class IotService {
 				return cached;
 			}
 
-			this.logger.debug(`📊 [${requestId}] Cache miss. Building database query...`);
 
 			const queryBuilder = this.deviceRecordsRepository
 				.createQueryBuilder('record')

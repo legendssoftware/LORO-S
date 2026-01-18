@@ -63,11 +63,9 @@ export class MapService {
 		
 		const cached = await this.cacheManager.get<Record<string, any>>(cacheKey);
 		if (cached) {
-			this.logger.debug(`Cache hit for map data: ${cacheKey}`);
 			return cached;
 		}
 
-		this.logger.debug(`Cache miss for map data: ${cacheKey}`);
 		
 		try {
 			const { organisationId, branchId, userId } = params;
@@ -376,7 +374,6 @@ export class MapService {
 		
 		const cached = await this.cacheManager.get(cacheKey);
 		if (cached) {
-			this.logger.debug(`Cache hit for trip history: ${cacheKey}`);
 			return cached;
 		}
 

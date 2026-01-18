@@ -5,6 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { createClerkClient } from '@clerk/backend';
 import { User } from '../user/entities/user.entity';
 import { Organisation } from '../organisation/entities/organisation.entity';
+import { ClientAuth } from '../clients/entities/client.auth.entity';
 import { LicensingService } from '../licensing/licensing.service';
 
 @Injectable()
@@ -17,6 +18,8 @@ export class ClerkService {
 		private readonly userRepository: Repository<User>,
 		@InjectRepository(Organisation)
 		private readonly organisationRepository: Repository<Organisation>,
+		@InjectRepository(ClientAuth)
+		private readonly clientAuthRepository: Repository<ClientAuth>,
 		private readonly configService: ConfigService,
 		private readonly licensingService: LicensingService,
 	) {
@@ -42,8 +45,6 @@ export class ClerkService {
 		}
 
 		try {
-			this.logger.debug(`[${operationId}] Verifying Clerk token...`);
-			
 			const verification = await this.clerkClientInstance.verifyToken(token);
 			
 			if (!verification || !verification.sub) {
@@ -51,8 +52,6 @@ export class ClerkService {
 				throw new Error('Invalid token');
 			}
 
-			this.logger.debug(`[${operationId}] Token verified successfully - userId: ${verification.sub}`);
-			
 			return {
 				userId: verification.sub,
 				sessionId: verification.sid,
@@ -71,18 +70,10 @@ export class ClerkService {
 		const operationId = `GET_USER_${clerkUserId}_${Date.now()}`;
 		
 		try {
-			this.logger.debug(`[${operationId}] Looking up user by Clerk ID...`);
-			
 			const user = await this.userRepository.findOne({
 				where: { clerkUserId },
 				relations: ['organisation', 'branch'],
 			});
-
-			if (user) {
-				this.logger.debug(`[${operationId}] User found - uid: ${user.uid}, email: ${user.email}`);
-			} else {
-				this.logger.debug(`[${operationId}] User not found in database`);
-			}
 
 			return user;
 		} catch (error) {
@@ -104,8 +95,6 @@ export class ClerkService {
 		}
 
 		try {
-			this.logger.debug(`[${operationId}] Starting user sync from Clerk...`);
-			
 			const clerkUser = await this.clerkClientInstance.users.getUser(clerkUserId);
 			
 			if (!clerkUser) {
@@ -132,7 +121,6 @@ export class ClerkService {
 
 			if (user) {
 				// Update existing user
-				this.logger.debug(`[${operationId}] Updating existing user - uid: ${user.uid}`);
 				user.email = email;
 				user.name = firstName;
 				user.surname = lastName;
@@ -147,13 +135,11 @@ export class ClerkService {
 
 				if (existingUser) {
 					// Link existing user to Clerk
-					this.logger.debug(`[${operationId}] Linking existing user to Clerk - uid: ${existingUser.uid}`);
 					existingUser.clerkUserId = clerkUserId;
 					existingUser.clerkLastSyncedAt = new Date();
 					user = existingUser;
 				} else {
 					// Create new user
-					this.logger.debug(`[${operationId}] Creating new user from Clerk data`);
 					user = this.userRepository.create({
 						clerkUserId,
 						email,
@@ -190,8 +176,6 @@ export class ClerkService {
 		
 		setImmediate(async () => {
 			try {
-				this.logger.debug(`[${operationId}] Processing user.created webhook...`);
-				
 				await this.syncUserFromClerk(clerkUserId);
 				
 				this.logger.log(`[${operationId}] User created webhook processed successfully`);
@@ -211,8 +195,6 @@ export class ClerkService {
 		
 		setImmediate(async () => {
 			try {
-				this.logger.debug(`[${operationId}] Processing user.updated webhook...`);
-				
 				await this.syncUserFromClerk(clerkUserId);
 				
 				this.logger.log(`[${operationId}] User updated webhook processed successfully`);
@@ -232,8 +214,6 @@ export class ClerkService {
 		
 		setImmediate(async () => {
 			try {
-				this.logger.debug(`[${operationId}] Processing user.deleted webhook...`);
-				
 				const user = await this.userRepository.findOne({
 					where: { clerkUserId },
 				});
@@ -243,8 +223,6 @@ export class ClerkService {
 					user.clerkUserId = null; // Remove Clerk link
 					await this.userRepository.save(user);
 					this.logger.log(`[${operationId}] User marked as deleted - uid: ${user.uid}`);
-				} else {
-					this.logger.debug(`[${operationId}] User not found in database - already deleted`);
 				}
 			} catch (error) {
 				this.logger.error(`[${operationId}] Failed to process user.deleted webhook:`, error instanceof Error ? error.message : 'Unknown error');
@@ -262,8 +240,6 @@ export class ClerkService {
 		
 		setImmediate(async () => {
 			try {
-				this.logger.debug(`[${operationId}] Processing organizationMembership.created webhook...`);
-				
 				// Find user and organization
 				const user = await this.userRepository.findOne({
 					where: { clerkUserId },
@@ -284,8 +260,6 @@ export class ClerkService {
 					user.organisationRef = organisation.ref;
 					await this.userRepository.save(user);
 					this.logger.log(`[${operationId}] User linked to organization - uid: ${user.uid}, orgRef: ${organisation.ref}`);
-				} else {
-					this.logger.debug(`[${operationId}] Organization not found by Clerk org ID - skipping link`);
 				}
 			} catch (error) {
 				this.logger.error(`[${operationId}] Failed to process organizationMembership.created webhook:`, error instanceof Error ? error.message : 'Unknown error');
@@ -303,8 +277,6 @@ export class ClerkService {
 		
 		setImmediate(async () => {
 			try {
-				this.logger.debug(`[${operationId}] Processing organizationMembership.deleted webhook...`);
-				
 				const user = await this.userRepository.findOne({
 					where: { clerkUserId },
 				});
@@ -332,11 +304,96 @@ export class ClerkService {
 			try {
 				user.clerkLastSyncedAt = new Date();
 				await this.userRepository.save(user);
-				this.logger.debug(`[${operationId}] Sync timestamp updated`);
 			} catch (error) {
-				this.logger.debug(`[${operationId}] Failed to update sync timestamp:`, error instanceof Error ? error.message : 'Unknown error');
-				// Don't throw - this is background operation
+				// Silent fail - this is background operation
 			}
 		});
+	}
+
+	/**
+	 * Get client auth from database by Clerk user ID
+	 * Critical path - synchronous operation
+	 */
+	async getClientAuthByClerkId(clerkUserId: string): Promise<ClientAuth | null> {
+		const operationId = `GET_CLIENT_AUTH_${clerkUserId}_${Date.now()}`;
+		
+		try {
+			const clientAuth = await this.clientAuthRepository.findOne({
+				where: { clerkUserId },
+				relations: ['client', 'client.organisation', 'client.branch'],
+			});
+
+			return clientAuth;
+		} catch (error) {
+			this.logger.error(`[${operationId}] Failed to lookup client auth:`, error instanceof Error ? error.message : 'Unknown error');
+			throw error;
+		}
+	}
+
+	/**
+	 * Sync client auth from Clerk API to database
+	 * Async operation - non-blocking
+	 */
+	async syncClientAuthFromClerk(clerkUserId: string): Promise<ClientAuth | null> {
+		const operationId = `SYNC_CLIENT_AUTH_${clerkUserId}_${Date.now()}`;
+		
+		if (!this.clerkClientInstance) {
+			this.logger.warn(`[${operationId}] Clerk client not initialized - skipping sync`);
+			return null;
+		}
+
+		try {
+			const clerkUser = await this.clerkClientInstance.users.getUser(clerkUserId);
+			
+			if (!clerkUser) {
+				this.logger.warn(`[${operationId}] Client not found in Clerk`);
+				return null;
+			}
+
+			// Extract client data from Clerk user
+			const email = clerkUser.emailAddresses?.[0]?.emailAddress;
+
+			if (!email) {
+				this.logger.warn(`[${operationId}] Clerk user missing email - cannot sync`);
+				return null;
+			}
+
+			// Check if client auth already exists
+			let clientAuth = await this.clientAuthRepository.findOne({
+				where: { clerkUserId },
+				relations: ['client'],
+			});
+
+			if (clientAuth) {
+				// Update existing client auth
+				clientAuth.email = email;
+				clientAuth.clerkLastSyncedAt = new Date();
+			} else {
+				// Check if client auth exists by email (for migration)
+				const existingClientAuth = await this.clientAuthRepository.findOne({
+					where: { email },
+					relations: ['client'],
+				});
+
+				if (existingClientAuth) {
+					// Link existing client auth to Clerk
+					existingClientAuth.clerkUserId = clerkUserId;
+					existingClientAuth.clerkLastSyncedAt = new Date();
+					clientAuth = existingClientAuth;
+				} else {
+					this.logger.warn(`[${operationId}] Client auth not found by email - cannot create without client record`);
+					return null;
+				}
+			}
+
+			clientAuth = await this.clientAuthRepository.save(clientAuth);
+			this.logger.log(`[${operationId}] Client auth synced successfully - uid: ${clientAuth.uid}, email: ${clientAuth.email}`);
+
+			return clientAuth;
+		} catch (error) {
+			this.logger.error(`[${operationId}] Failed to sync client auth from Clerk:`, error instanceof Error ? error.message : 'Unknown error');
+			// Don't throw - this is async operation
+			return null;
+		}
 	}
 }

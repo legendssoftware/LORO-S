@@ -36,16 +36,6 @@ export class CheckInsService {
 		private readonly googleMapsService: GoogleMapsService,
 	) {
 		this.CACHE_TTL = parseInt(process.env.CACHE_TTL || '300000', 10); // 5 minutes default
-
-		this.logger.log('CheckInsService initialized with cache TTL: ' + this.CACHE_TTL + 'ms');
-		this.logger.debug(`CheckInsService initialized with dependencies:`);
-		this.logger.debug(`CheckIn Repository: ${!!this.checkInRepository}`);
-		this.logger.debug(`User Repository: ${!!this.userRepository}`);
-		this.logger.debug(`Client Repository: ${!!this.clientRepository}`);
-		this.logger.debug(`Rewards Service: ${!!this.rewardsService}`);
-		this.logger.debug(`Cache Manager: ${!!this.cacheManager}`);
-		this.logger.debug(`Unified Notification Service: ${!!this.unifiedNotificationService}`);
-		this.logger.debug(`Google Maps Service: ${!!this.googleMapsService}`);
 	}
 
 	async checkIn(createCheckInDto: CreateCheckInDto, orgId?: number, branchId?: number): Promise<{ message: string; checkInId?: number }> {
@@ -61,7 +51,6 @@ export class CheckInsService {
 			// ============================================================
 
 			// Enhanced validation
-			this.logger.debug(`[${operationId}] Validating check-in data`);
 			if (!createCheckInDto?.owner?.uid) {
 				this.logger.error(`[${operationId}] User ID is required for check-in`);
 				throw new BadRequestException('User ID is required for check-in');
@@ -73,9 +62,6 @@ export class CheckInsService {
 			}
 
 			// Validate user belongs to the organization
-			this.logger.debug(
-				`[${operationId}] Validating user ${createCheckInDto.owner.uid} belongs to organization ${orgId}`,
-			);
 			const user = await this.userRepository.findOne({
 				where: { uid: createCheckInDto.owner.uid },
 				relations: ['organisation', 'branch'],
@@ -93,9 +79,6 @@ export class CheckInsService {
 				throw new BadRequestException('User does not belong to the specified organization');
 			}
 
-			this.logger.debug(
-				`[${operationId}] User validated: ${user.email} (${user.name}) in organization: ${orgId}`,
-			);
 
 			// Validate branch information
 			if (!createCheckInDto?.branch?.uid) {

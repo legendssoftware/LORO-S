@@ -58,8 +58,6 @@ export class DocsService {
 
 			await Promise.all(keysToDelete.map((key) => this.cacheManager.del(key)));
 
-			this.logger.debug(`🗑️ [invalidateDocumentCache] Cleared ${keysToDelete.length} cache keys`);
-
 			// Emit cache invalidation event
 			this.eventEmitter.emit('docs.cache.invalidate', {
 				docId,
@@ -111,7 +109,6 @@ export class DocsService {
 					fit: 'inside',
 					withoutEnlargement: true,
 				});
-				this.logger.debug(`📐 [optimizeImageIfNeeded] Resizing from ${width}x${height} to max ${targetDimension}px`);
 			}
 
 			// OPTIMIZATION 2: Convert to WebP for better compression (except if already WebP or very small)
@@ -173,9 +170,6 @@ export class DocsService {
 				};
 			}
 
-			const compressionRatio = ((originalSize - optimizedSize) / originalSize * 100).toFixed(1);
-			this.logger.debug(`📉 [optimizeImageIfNeeded] Optimized: ${originalSize} → ${optimizedSize} bytes (${compressionRatio}% reduction) with quality ${quality}`);
-
 			return {
 				buffer: optimizedBuffer,
 				mimetype: outputMimetype,
@@ -223,14 +217,10 @@ export class DocsService {
 				throw new Error('Invalid file: File is empty');
 			}
 
-			this.logger.debug(`📤 [uploadFile] File validation passed - Name: ${file.originalname}, Size: ${file.size}, Type: ${file.mimetype}`);
-
 			// Validate file type if specified
 			if (type && !this.isValidFileType(file.mimetype, type)) {
 				throw new Error(`Invalid file type: ${file.mimetype} for specified type: ${type}`);
 			}
-
-			this.logger.debug(`📤 [uploadFile] Upload context - Owner: ${ownerId}, Branch: ${branchId}, Type: ${type || 'auto'}`);
 
 			// ENHANCEMENT: Optimize image if it's an image file
 			const optimizationResult = await this.optimizeImageIfNeeded(
@@ -289,12 +279,9 @@ export class DocsService {
 			// ============================================================
 			setImmediate(async () => {
 				try {
-					this.logger.debug(`🔄 [uploadFile] Starting post-response processing for file: ${file.originalname}`);
-
 					// 1. Invalidate caches (non-critical, can happen in background)
 					try {
 						await this.invalidateDocumentCache();
-						this.logger.debug(`✅ [uploadFile] Cache invalidated successfully`);
 					} catch (cacheError) {
 						this.logger.error(
 							`❌ [uploadFile] Failed to invalidate cache: ${cacheError.message}`,
@@ -317,7 +304,6 @@ export class DocsService {
 							wasOptimized: optimizationResult.originalSize !== optimizationResult.optimizedSize,
 							timestamp: new Date(),
 						});
-						this.logger.debug(`✅ [uploadFile] Upload event emitted successfully`);
 					} catch (eventError) {
 						this.logger.error(
 							`❌ [uploadFile] Failed to emit upload event: ${eventError.message}`,
@@ -325,8 +311,6 @@ export class DocsService {
 						);
 						// Don't fail post-processing if event emission fails
 					}
-
-					this.logger.debug(`✅ [uploadFile] Post-response processing completed for file: ${file.originalname}`);
 				} catch (backgroundError) {
 					// Log errors but don't affect user experience since response already sent
 					this.logger.error(

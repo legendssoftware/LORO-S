@@ -6,15 +6,14 @@ import { ClerkController } from './clerk.controller';
 import { ClerkAuthGuard } from './clerk.guard';
 import { User } from '../user/entities/user.entity';
 import { Organisation } from '../organisation/entities/organisation.entity';
-import { UserModule } from '../user/user.module';
+import { ClientAuth } from '../clients/entities/client.auth.entity';
 import { OrganisationModule } from '../organisation/organisation.module';
 import { LicensingModule } from '../licensing/licensing.module';
 
 @Module({
 	imports: [
 		ConfigModule,
-		TypeOrmModule.forFeature([User, Organisation]),
-		UserModule,
+		TypeOrmModule.forFeature([User, Organisation, ClientAuth]),
 		OrganisationModule,
 		LicensingModule,
 	],

@@ -13,6 +13,7 @@ import {
   ApiNotFoundResponse, 
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { getDynamicDate, getDynamicDateTime, createApiDescription } from '../lib/utils/swagger-helpers';
 import { RoleGuard } from '../guards/role.guard';
 import { AuthGuard } from '../guards/auth.guard';
 import { AccessLevel } from '../lib/enums/user.enums';
@@ -38,8 +39,16 @@ export class ResellersController {
 		AccessLevel.TECHNICIAN,
 	)
   @ApiOperation({ 
-    summary: 'Create a new reseller',
-    description: 'Creates a new reseller with the provided details including contact information and address'
+    summary: '➕ Create a new reseller',
+    description: createApiDescription(
+      'Creates a new reseller with comprehensive contact information and address details.',
+      'The service method `ResellersService.create()` processes reseller creation, validates contact information, stores address data, generates reseller references, and returns the created reseller record.',
+      'ResellersService',
+      'create',
+      'creates a reseller record, validates data, and generates references',
+      'an object containing the created reseller data and success confirmation',
+      ['Data validation', 'Reference generation', 'Address validation']
+    ),
   })
   @ApiBody({ type: CreateResellerDto })
   @ApiCreatedResponse({ 
@@ -75,8 +84,16 @@ export class ResellersController {
 		AccessLevel.TECHNICIAN,
 	)
   @ApiOperation({ 
-    summary: 'Get all resellers',
-    description: 'Retrieves a list of all resellers'
+    summary: '📋 Get all resellers',
+    description: createApiDescription(
+      'Retrieves a comprehensive list of all resellers with filtering and pagination capabilities.',
+      'The service method `ResellersService.findAll()` processes query parameters, applies organization scoping, handles pagination, and returns a list of reseller records.',
+      'ResellersService',
+      'findAll',
+      'retrieves resellers with filtering, pagination, and organization scoping',
+      'a paginated response containing reseller records and metadata',
+      ['Filtering', 'Pagination', 'Organization scoping']
+    ),
   })
   @ApiOkResponse({
     description: 'List of resellers retrieved successfully',
@@ -114,8 +131,16 @@ export class ResellersController {
 		AccessLevel.TECHNICIAN,
 	)
   @ApiOperation({ 
-    summary: 'Get a reseller by reference code',
-    description: 'Retrieves detailed information about a specific reseller'
+    summary: '🔍 Get a reseller by reference code',
+    description: createApiDescription(
+      'Retrieves detailed information about a specific reseller by reference code.',
+      'The service method `ResellersService.findOne()` locates the reseller record, validates access permissions, loads related data, and returns the complete reseller information.',
+      'ResellersService',
+      'findOne',
+      'retrieves a reseller record by reference and validates access permissions',
+      'an object containing the complete reseller data and related information',
+      ['Record retrieval', 'Access validation', 'Related data loading']
+    ),
   })
   @ApiParam({ name: 'ref', description: 'Reseller reference code or ID', type: 'number' })
   @ApiOkResponse({ 
@@ -161,8 +186,16 @@ export class ResellersController {
 		AccessLevel.TECHNICIAN,
 	)
   @ApiOperation({ 
-    summary: 'Update a reseller',
-    description: 'Updates an existing reseller with the provided information'
+    summary: '✏️ Update a reseller',
+    description: createApiDescription(
+      'Updates an existing reseller with new information or contact details.',
+      'The service method `ResellersService.update()` validates update permissions, processes field updates, validates address changes, and returns the updated reseller record.',
+      'ResellersService',
+      'update',
+      'updates reseller data, validates permissions, and processes field changes',
+      'an object containing the updated reseller data and change confirmation',
+      ['Permission validation', 'Field updates', 'Address validation']
+    ),
   })
   @ApiParam({ name: 'ref', description: 'Reseller reference code or ID', type: 'number' })
   @ApiBody({ type: UpdateResellerDto })
@@ -200,8 +233,16 @@ export class ResellersController {
   @Patch('restore/:ref')
   @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER)
   @ApiOperation({ 
-    summary: 'Restore a deleted reseller',
-    description: 'Restores a previously deleted reseller'
+    summary: '♻️ Restore a deleted reseller',
+    description: createApiDescription(
+      'Restores a previously soft-deleted reseller to active status.',
+      'The service method `ResellersService.restore()` validates restore permissions, removes the deleted flag, reactivates the reseller record, and returns restoration confirmation.',
+      'ResellersService',
+      'restore',
+      'restores a soft-deleted reseller and reactivates the record',
+      'a confirmation object indicating successful restoration',
+      ['Permission validation', 'Record reactivation', 'Status update']
+    ),
   })
   @ApiParam({ name: 'ref', description: 'Reseller reference code or ID', type: 'number' })
   @ApiOkResponse({ 
@@ -229,8 +270,16 @@ export class ResellersController {
   @Delete(':ref')
   @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER)
   @ApiOperation({ 
-    summary: 'Soft delete a reseller',
-    description: 'Marks a reseller as deleted without removing it from the database'
+    summary: '🗑️ Soft delete a reseller',
+    description: createApiDescription(
+      'Marks a reseller as deleted using soft delete without removing it from the database.',
+      'The service method `ResellersService.remove()` validates deletion permissions, performs soft delete by setting deletion flags, preserves data for recovery, and returns deletion confirmation.',
+      'ResellersService',
+      'remove',
+      'performs soft delete on a reseller with validation and data preservation',
+      'a confirmation object indicating successful deletion',
+      ['Permission validation', 'Soft delete', 'Data preservation']
+    ),
   })
   @ApiParam({ name: 'ref', description: 'Reseller reference code or ID', type: 'number' })
   @ApiOkResponse({ 

@@ -16,6 +16,7 @@ import {
 	ApiProperty,
 	ApiExtraModels,
 } from '@nestjs/swagger';
+import { getDynamicDate, getDynamicDateTime, getFutureDate, getPastDate, createApiDescription } from '../lib/utils/swagger-helpers';
 import { Controller, Post, Body, Param, Get, UseGuards, Query, UseInterceptors, Req, BadRequestException } from '@nestjs/common';
 import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
 import { CreateCheckInDto } from './dto/create.attendance.check.in.dto';
@@ -113,10 +114,10 @@ export class AttendanceWithUserProfileSchema {
 	@ApiProperty({ enum: ['PRESENT', 'COMPLETED', 'ON_BREAK'], example: 'COMPLETED' })
 	status: string;
 
-	@ApiProperty({ type: 'string', format: 'date-time', example: '2024-03-01T09:00:00Z' })
+	@ApiProperty({ type: 'string', format: 'date-time', example: getDynamicDateTime(undefined, undefined, 9, 0) })
 	checkIn: Date;
 
-	@ApiProperty({ type: 'string', format: 'date-time', example: '2024-03-01T17:30:00Z', nullable: true })
+	@ApiProperty({ type: 'string', format: 'date-time', example: getDynamicDateTime(undefined, undefined, 17, 30), nullable: true })
 	checkOut: Date;
 
 	@ApiProperty({ type: 'string', example: '8h 30m', nullable: true })

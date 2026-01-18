@@ -39,15 +39,6 @@ export class LeaveService {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
 
 		this.logger.log('LeaveService initialized with cache TTL: ' + this.CACHE_TTL + ' minutes');
-		this.logger.debug(`LeaveService initialized with dependencies:`);
-		this.logger.debug(`Leave Repository: ${!!this.leaveRepository}`);
-		this.logger.debug(`User Repository: ${!!this.userRepository}`);
-		this.logger.debug(`Cache Manager: ${!!this.cacheManager}`);
-		this.logger.debug(`Config Service: ${!!this.configService}`);
-		this.logger.debug(`Event Emitter: ${!!this.eventEmitter}`);
-		this.logger.debug(`Leave Email Service: ${!!this.leaveEmailService}`);
-		this.logger.debug(`Approvals Service: ${!!this.approvalsService}`);
-		this.logger.debug(`Unified Notification Service: ${!!this.unifiedNotificationService}`);
 	}
 
 	private getCacheKey(key: string | number): string {

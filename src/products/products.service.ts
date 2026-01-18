@@ -99,7 +99,6 @@ export class ProductsService {
 		try {
 			if (!products || products.length === 0) return;
 
-			this.logger.debug(`🗑️ [invalidateBulkProductCaches] Invalidating caches for ${products.length} products`);
 
 			// Get all cache keys
 			const keys = await this.cacheManager.store.keys();
@@ -159,7 +158,6 @@ export class ProductsService {
 			const keysArray = Array.from(keysToDelete);
 			await Promise.all(keysArray.map((key) => this.cacheManager.del(key)));
 
-			this.logger.debug(`🗑️ [invalidateBulkProductCaches] Cleared ${keysArray.length} cache keys`);
 
 			// Emit event for other services that might be caching product data
 			this.eventEmitter.emit('products.cache.bulk.invalidate', {
@@ -187,7 +185,6 @@ export class ProductsService {
 		this.logger.log(`🚀 [createProduct] Creating new product: ${createProductDto.name} for orgId: ${orgId}, branchId: ${branchId}`);
 		
 		try {
-			this.logger.debug(`📋 [createProduct] Product data: ${JSON.stringify(createProductDto)}`);
 			
 			// Create product with org and branch
 			const product = this.productRepository.create({
@@ -196,13 +193,11 @@ export class ProductsService {
 				...(branchId && { branch: { uid: branchId } }),
 			});
 
-			this.logger.debug(`💾 [createProduct] Saving product to database`);
 			const savedProduct = await this.productRepository.save(product);
 
 			this.logger.log(`✅ [createProduct] Product created successfully with ID: ${savedProduct.uid}`);
 
 			// Clear cache
-			this.logger.debug(`🗑️ [createProduct] Clearing product cache`);
 			await this.cacheManager.del(`${this.CACHE_PREFIX}all`);
 
 			this.logger.log(`🎉 [createProduct] Product creation completed: ${savedProduct.name} (ID: ${savedProduct.uid})`);
@@ -245,7 +240,6 @@ export class ProductsService {
 				const productData = bulkCreateProductDto.products[i];
 				
 				try {
-					this.logger.debug(`📝 [createBulkProducts] Processing product ${i + 1}/${bulkCreateProductDto.products.length}: ${productData.name}`);
 					
 					// Create product with org and branch association
 					const product = queryRunner.manager.create(Product, {
@@ -284,7 +278,6 @@ export class ProductsService {
 					});
 					
 					successCount++;
-					this.logger.debug(`✅ [createBulkProducts] Product ${i + 1} created successfully: ${productData.name} (ID: ${savedProduct.uid})`);
 					
 				} catch (productError) {
 					const errorMessage = `Product ${i + 1} (${productData.name || productData.sku}): ${productError.message}`;
@@ -310,7 +303,6 @@ export class ProductsService {
 				this.logger.log(`✅ [createBulkProducts] Transaction committed - ${successCount} products created successfully`);
 				
 				// Comprehensive cache invalidation after successful bulk creation
-				this.logger.debug(`🗑️ [createBulkProducts] Invalidating comprehensive product caches`);
 				await this.invalidateBulkProductCaches(results.filter(r => r.success).map(r => r.product));
 				
 				// Emit bulk creation event
@@ -377,7 +369,6 @@ export class ProductsService {
 		this.logger.log(`🔄 [updateProduct] Updating product ID: ${ref}`);
 		
 		try {
-			this.logger.debug(`📋 [updateProduct] Update data: ${JSON.stringify(updateProductDto)}`);
 			
 			// First find the product to ensure it exists
 			this.logger.debug(`🔍 [updateProduct] Finding product with ID: ${ref}`);

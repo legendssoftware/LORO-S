@@ -22,6 +22,7 @@ import {
   ApiConsumes,
   ApiProduces
 } from '@nestjs/swagger';
+import { getDynamicDate, getDynamicDateTime, getFutureDate, getPastDate, createApiDescription } from '../lib/utils/swagger-helpers';
 import { RoleGuard } from '../guards/role.guard';
 import { AuthGuard } from '../guards/auth.guard';
 import { AccessLevel } from '../lib/enums/user.enums';
@@ -64,7 +65,16 @@ export class AssetsController {
   )
   @ApiOperation({ 
     summary: '➕ Create a new asset',
-    description: `
+    description: createApiDescription(
+      'Creates a new asset in the system with comprehensive tracking capabilities.',
+      'The service method `AssetsService.create()` processes the asset creation, generates a unique asset reference, validates asset data, assigns the asset if specified, and returns the created asset with its reference number.',
+      'AssetsService',
+      'create',
+      'creates a new asset, generates asset reference, validates data, and handles assignment',
+      'an object containing the created asset data, asset reference, and status',
+      ['Asset reference generation', 'Data validation', 'Assignment handling', 'Location tracking'],
+    ) + `
+
 # Create Asset
 
 Creates a new asset in the system with comprehensive tracking capabilities.
@@ -104,10 +114,10 @@ Creates a new asset in the system with comprehensive tracking capabilities.
           type: 'LAPTOP',
           brand: 'Dell',
           model: 'Latitude 7420',
-          serialNumber: 'DL7420-2023-001',
-          purchaseDate: '2023-01-15',
+          serialNumber: `DL7420-${new Date().getFullYear()}-001`,
+          purchaseDate: getPastDate(30),
           purchasePrice: 1299.99,
-          warrantyExpiry: '2026-01-15',
+          warrantyExpiry: getFutureDate(1095),
           condition: 'NEW',
           location: 'IT Department',
           assignedToUserId: 42
@@ -117,17 +127,17 @@ Creates a new asset in the system with comprehensive tracking capabilities.
         summary: '🚗 Vehicle Fleet - Company Car',
         description: 'Example of creating a company vehicle asset',
         value: {
-          name: 'Toyota Camry 2023',
+          name: `Toyota Camry ${new Date().getFullYear()}`,
           description: 'Company sedan for sales team',
           category: 'VEHICLE',
           type: 'SEDAN',
           brand: 'Toyota',
           model: 'Camry',
-          serialNumber: 'TC2023-VIN123456',
+          serialNumber: `TC${new Date().getFullYear()}-VIN123456`,
           registrationNumber: 'ABC-123-GP',
-          purchaseDate: '2023-03-10',
+          purchaseDate: getPastDate(90),
           purchasePrice: 35000.00,
-          warrantyExpiry: '2026-03-10',
+          warrantyExpiry: getFutureDate(1095),
           condition: 'EXCELLENT',
           location: 'Main Office Parking',
           assignedToUserId: 15
@@ -145,11 +155,11 @@ Creates a new asset in the system with comprehensive tracking capabilities.
           type: 'object',
           properties: {
             uid: { type: 'number', example: 12345 },
-            assetRef: { type: 'string', example: 'AST-2023-001' },
+            assetRef: { type: 'string', example: `AST-${new Date().getFullYear()}-001` },
             name: { type: 'string', example: 'Dell Latitude 7420' },
             category: { type: 'string', example: 'IT_EQUIPMENT' },
             status: { type: 'string', example: 'ACTIVE' },
-            createdAt: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' }
+            createdAt: { type: 'string', format: 'date-time', example: getDynamicDateTime() }
           }
         }
       }
@@ -233,7 +243,7 @@ Creates a new asset in the system with comprehensive tracking capabilities.
         message: { type: 'string', example: 'Failed to create asset due to system error' },
         error: { type: 'string', example: 'Internal Server Error' },
         statusCode: { type: 'number', example: 500 },
-        timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+        timestamp: { type: 'string', format: 'date-time', example: getDynamicDateTime() },
         path: { type: 'string', example: '/assets' }
       }
     }
@@ -306,14 +316,14 @@ Retrieves a comprehensive list of all active assets in your organization.
                 type: 'object',
                 properties: {
                   uid: { type: 'number', example: 12345 },
-                  assetRef: { type: 'string', example: 'AST-2023-001' },
+                  assetRef: { type: 'string', example: `AST-${new Date().getFullYear()}-001` },
                   name: { type: 'string', example: 'Dell Latitude 7420' },
                   description: { type: 'string', example: 'Business laptop for software development' },
                   category: { type: 'string', example: 'IT_EQUIPMENT' },
                   type: { type: 'string', example: 'LAPTOP' },
                   brand: { type: 'string', example: 'Dell' },
                   model: { type: 'string', example: 'Latitude 7420' },
-                  serialNumber: { type: 'string', example: 'DL7420-2023-001' },
+                  serialNumber: { type: 'string', example: `DL7420-${new Date().getFullYear()}-001` },
                   condition: { type: 'string', example: 'EXCELLENT' },
                   status: { type: 'string', example: 'ASSIGNED' },
                   location: { type: 'string', example: 'IT Department' },
@@ -328,7 +338,7 @@ Retrieves a comprehensive list of all active assets in your organization.
                       email: { type: 'string', example: 'john.doe@loro.co.za' }
                     }
                   },
-                  createdAt: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+                  createdAt: { type: 'string', format: 'date-time', example: getDynamicDateTime() },
                   lastServiceDate: { type: 'string', format: 'date', example: '2023-11-15' }
                 }
               }
@@ -384,7 +394,7 @@ Retrieves a comprehensive list of all active assets in your organization.
         message: { type: 'string', example: 'Failed to retrieve assets due to database error' },
         error: { type: 'string', example: 'Internal Server Error' },
         statusCode: { type: 'number', example: 500 },
-        timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+        timestamp: { type: 'string', format: 'date-time', example: getDynamicDateTime() },
         path: { type: 'string', example: '/assets' }
       }
     }
@@ -463,14 +473,14 @@ Retrieves comprehensive information about a specific asset including its complet
               type: 'object',
               properties: {
                 uid: { type: 'number', example: 12345 },
-                assetRef: { type: 'string', example: 'AST-2023-001' },
+                assetRef: { type: 'string', example: `AST-${new Date().getFullYear()}-001` },
                 name: { type: 'string', example: 'Dell Latitude 7420' },
                 description: { type: 'string', example: 'Business laptop for software development' },
                 category: { type: 'string', example: 'IT_EQUIPMENT' },
                 type: { type: 'string', example: 'LAPTOP' },
                 brand: { type: 'string', example: 'Dell' },
                 model: { type: 'string', example: 'Latitude 7420' },
-                serialNumber: { type: 'string', example: 'DL7420-2023-001' },
+                serialNumber: { type: 'string', example: `DL7420-${new Date().getFullYear()}-001` },
                 condition: { type: 'string', example: 'EXCELLENT' },
                 status: { type: 'string', example: 'ASSIGNED' },
                 location: { type: 'string', example: 'IT Department' },
@@ -527,7 +537,7 @@ Retrieves comprehensive information about a specific asset including its complet
                     }
                   }
                 },
-                createdAt: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+                createdAt: { type: 'string', format: 'date-time', example: getDynamicDateTime() },
                 updatedAt: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' }
               }
             }
@@ -578,7 +588,7 @@ Retrieves comprehensive information about a specific asset including its complet
         message: { type: 'string', example: 'Failed to retrieve asset details due to system error' },
         error: { type: 'string', example: 'Internal Server Error' },
         statusCode: { type: 'number', example: 500 },
-        timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+        timestamp: { type: 'string', format: 'date-time', example: getDynamicDateTime() },
         path: { type: 'string', example: '/assets/12345' }
       }
     }
@@ -654,13 +664,13 @@ Advanced search functionality to quickly locate assets using various criteria.
                 type: 'object',
                 properties: {
                   uid: { type: 'number', example: 12345 },
-                  assetRef: { type: 'string', example: 'AST-2023-001' },
+                  assetRef: { type: 'string', example: `AST-${new Date().getFullYear()}-001` },
                   name: { type: 'string', example: 'Dell Latitude 7420' },
                   description: { type: 'string', example: 'Business laptop for software development' },
                   category: { type: 'string', example: 'IT_EQUIPMENT' },
                   brand: { type: 'string', example: 'Dell' },
                   model: { type: 'string', example: 'Latitude 7420' },
-                  serialNumber: { type: 'string', example: 'DL7420-2023-001' },
+                  serialNumber: { type: 'string', example: `DL7420-${new Date().getFullYear()}-001` },
                   condition: { type: 'string', example: 'EXCELLENT' },
                   status: { type: 'string', example: 'ASSIGNED' },
                   location: { type: 'string', example: 'IT Department' },
@@ -769,7 +779,7 @@ Advanced search functionality to quickly locate assets using various criteria.
         message: { type: 'string', example: 'Search service temporarily unavailable' },
         error: { type: 'string', example: 'Internal Server Error' },
         statusCode: { type: 'number', example: 500 },
-        timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+        timestamp: { type: 'string', format: 'date-time', example: getDynamicDateTime() },
         path: { type: 'string', example: '/assets/search/Dell+Latitude' }
       }
     }
@@ -856,13 +866,13 @@ Retrieves all assets currently assigned to a specific user, providing a comprehe
                 type: 'object',
                 properties: {
                   uid: { type: 'number', example: 12345 },
-                  assetRef: { type: 'string', example: 'AST-2023-001' },
+                  assetRef: { type: 'string', example: `AST-${new Date().getFullYear()}-001` },
                   name: { type: 'string', example: 'Dell Latitude 7420' },
                   description: { type: 'string', example: 'Business laptop for software development' },
                   category: { type: 'string', example: 'IT_EQUIPMENT' },
                   brand: { type: 'string', example: 'Dell' },
                   model: { type: 'string', example: 'Latitude 7420' },
-                  serialNumber: { type: 'string', example: 'DL7420-2023-001' },
+                  serialNumber: { type: 'string', example: `DL7420-${new Date().getFullYear()}-001` },
                   condition: { type: 'string', example: 'EXCELLENT' },
                   status: { type: 'string', example: 'ASSIGNED' },
                   location: { type: 'string', example: 'IT Department' },
@@ -965,7 +975,7 @@ Retrieves all assets currently assigned to a specific user, providing a comprehe
         message: { type: 'string', example: 'Failed to retrieve user assets due to system error' },
         error: { type: 'string', example: 'Internal Server Error' },
         statusCode: { type: 'number', example: 500 },
-        timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+        timestamp: { type: 'string', format: 'date-time', example: getDynamicDateTime() },
         path: { type: 'string', example: '/assets/for/42' }
       }
     }
@@ -1068,7 +1078,7 @@ Updates an existing asset with new information while maintaining complete audit 
               type: 'object',
               properties: {
                 uid: { type: 'number', example: 12345 },
-                assetRef: { type: 'string', example: 'AST-2023-001' },
+                assetRef: { type: 'string', example: `AST-${new Date().getFullYear()}-001` },
                 name: { type: 'string', example: 'Dell Latitude 7420' },
                 updatedFields: {
                   type: 'array',
@@ -1171,7 +1181,7 @@ Updates an existing asset with new information while maintaining complete audit 
         message: { type: 'string', example: 'Failed to update asset due to system error' },
         error: { type: 'string', example: 'Internal Server Error' },
         statusCode: { type: 'number', example: 500 },
-        timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+        timestamp: { type: 'string', format: 'date-time', example: getDynamicDateTime() },
         path: { type: 'string', example: '/assets/12345' }
       }
     }
@@ -1250,7 +1260,7 @@ Restores a previously deleted asset back to active status, maintaining data inte
               type: 'object',
               properties: {
                 uid: { type: 'number', example: 12345 },
-                assetRef: { type: 'string', example: 'AST-2023-001' },
+                assetRef: { type: 'string', example: `AST-${new Date().getFullYear()}-001` },
                 name: { type: 'string', example: 'Dell Latitude 7420' },
                 status: { type: 'string', example: 'AVAILABLE' },
                 previousStatus: { type: 'string', example: 'DELETED' },
@@ -1371,7 +1381,7 @@ Restores a previously deleted asset back to active status, maintaining data inte
         message: { type: 'string', example: 'Failed to restore asset due to system error' },
         error: { type: 'string', example: 'Internal Server Error' },
         statusCode: { type: 'number', example: 500 },
-        timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+        timestamp: { type: 'string', format: 'date-time', example: getDynamicDateTime() },
         path: { type: 'string', example: '/assets/restore/12345' }
       }
     }
@@ -1438,7 +1448,7 @@ Use the restore endpoint to recover accidentally deleted assets within the reten
               type: 'object',
               properties: {
                 uid: { type: 'number', example: 12345 },
-                assetRef: { type: 'string', example: 'AST-2023-001' },
+                assetRef: { type: 'string', example: `AST-${new Date().getFullYear()}-001` },
                 name: { type: 'string', example: 'Dell Latitude 7420' },
                 status: { type: 'string', example: 'DELETED' },
                 deletedAt: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
@@ -1538,7 +1548,7 @@ Use the restore endpoint to recover accidentally deleted assets within the reten
         message: { type: 'string', example: 'Failed to delete asset due to system error' },
         error: { type: 'string', example: 'Internal Server Error' },
         statusCode: { type: 'number', example: 500 },
-        timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z' },
+        timestamp: { type: 'string', format: 'date-time', example: getDynamicDateTime() },
         path: { type: 'string', example: '/assets/12345' }
       }
     }

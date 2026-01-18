@@ -306,7 +306,6 @@ export class ShopService {
 						data,
 						{ priority: NotificationPriority.NORMAL }
 					);
-					this.logger.debug(`[${operationId}] Notification sent to ${recipient}`);
 				} catch (error) {
 					this.logger.warn(`[${operationId}] Failed to send notification to ${recipient}:`, error.message);
 				}
@@ -317,7 +316,6 @@ export class ShopService {
 				try {
 					const orgAdmins = await this.getOrganizationAdmins(orgId);
 					if (orgAdmins.length > 0) {
-						this.logger.debug(`[${operationId}] Notifying ${orgAdmins.length} org admins about ${notificationType}`);
 						// Send admin notification
 						await this.unifiedNotificationService.sendTemplatedNotification(
 							'SHOP_ADMIN_NOTIFICATION' as any,
@@ -577,28 +575,21 @@ export class ShopService {
 				};
 			}
 
-			this.logger.debug(`[${operationId}] Query params - orgId: ${orgId}, branchId: ${branchId}`);
 
 			// Build query with org filter (required)
 			const query = this.productRepository.createQueryBuilder('product')
 				.where('product.isDeleted = :isDeleted', { isDeleted: false })
 				.andWhere('product.organisationUid = :orgId', { orgId });
 
-			this.logger.debug(`[${operationId}] Applied organization filter: ${orgId}`);
 
 			// BRANCH VISIBILITY LOGIC:
 			// - If branchId is provided: show products where branch is NULL (org-wide) OR matches the branchId
 			// - If branchId is NOT provided: show all products in the org (both with and without branches)
 			if (branchId) {
 				query.andWhere('(product.branchUid IS NULL OR product.branchUid = :branchId)', { branchId });
-				this.logger.debug(`[${operationId}] Applied branch filter: ${branchId} - showing org-wide products (no branch) and branch-specific products`);
 			}
 
 			const allProducts = await query.getMany();
-			this.logger.debug(`[${operationId}] Query executed - found ${allProducts.length} products`);
-			if (allProducts.length > 0) {
-				this.logger.debug(`[${operationId}] Sample product: ${JSON.stringify({ uid: allProducts[0].uid, category: allProducts[0].category, orgUid: allProducts[0].organisationUid })}`);
-			}
 
 			// Return empty categories array if no products found
 			if (!allProducts || allProducts?.length === 0) {
@@ -2118,7 +2109,6 @@ export class ShopService {
 			// Always filter by organization if provided
 			if (orgId) {
 				query.andWhere('banner.organisationUid = :orgId', { orgId });
-				this.logger.debug(`[${operationId}] Applied organization filter: ${orgId}`);
 			} else {
 				this.logger.warn(`[${operationId}] No orgId provided - fetching all banners`);
 			}
@@ -2128,15 +2118,9 @@ export class ShopService {
 			// - If branchId is NOT provided: show all banners in the org (both with and without branches)
 			if (branchId) {
 				query.andWhere('(banner.branchUid IS NULL OR banner.branchUid = :branchId)', { branchId });
-				this.logger.debug(`[${operationId}] Applied branch filter: ${branchId} - showing org-wide banners (no branch) and branch-specific banners`);
 			}
 
 			const banners = await query.getMany();
-			this.logger.debug(`[${operationId}] Query executed - found ${banners.length} banners`);
-
-			if (banners.length > 0) {
-				this.logger.debug(`[${operationId}] Sample banner: ${JSON.stringify({ uid: banners[0].uid, title: banners[0].title, orgUid: banners[0].organisationUid, branchUid: banners[0].branchUid })}`);
-			}
 
 			// Ensure banners is always an array (even if empty)
 			const validBanners = Array.isArray(banners) ? banners : [];
@@ -3811,7 +3795,6 @@ export class ShopService {
 			// Send push notification for quotation sent (if we have client user UID)
 			// Note: This would require the client to be a User entity with notifications enabled
 			// For now, we'll log this limitation
-			this.logger.debug(`Quotation ${updatedQuotation.quotationNumber} sent to client ${updatedQuotation.client.email} - push notifications not available for external clients`);
 
 			// Emit WebSocket event with enhanced data
 			const enhancedSendToClientData = {

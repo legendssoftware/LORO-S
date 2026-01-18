@@ -37,8 +37,6 @@ export class TrackingService {
 		this.geocodingApiKey = process.env.GOOGLE_MAPS_API_KEY || '';
 		this.CACHE_TTL = parseInt(process.env.CACHE_TTL || '300000', 10); // 5 minutes default
 		this.logger.log('TrackingService initialized with enhanced logging and caching capabilities');
-		this.logger.debug(`Geocoding API configured: ${!!this.geocodingApiKey}`);
-		this.logger.debug(`Cache TTL set to: ${this.CACHE_TTL}ms`);
 	}
 
 	// ======================================================
@@ -59,9 +57,6 @@ export class TrackingService {
 		// Check if either coordinate contains '122'
 		const hasVirtualMarker = latStr.includes('122') || lngStr.includes('122');
 		
-		if (hasVirtualMarker) {
-			this.logger.debug(`Virtual location detected: lat=${latitude}, lng=${longitude}`);
-		}
 		
 		return hasVirtualMarker;
 	}
@@ -80,9 +75,6 @@ export class TrackingService {
 		const ACCURACY_THRESHOLD_METERS = 20;
 		const isAcceptable = accuracy <= ACCURACY_THRESHOLD_METERS;
 		
-		if (!isAcceptable) {
-			this.logger.debug(`Low accuracy GPS point detected: ${accuracy}m (threshold: ${ACCURACY_THRESHOLD_METERS}m)`);
-		}
 		
 		return isAcceptable;
 	}
@@ -151,8 +143,9 @@ export class TrackingService {
 		const filteredCount = filteredPoints.length;
 		const inaccurateCount = originalCount - filteredCount;
 
-		this.logger.debug(`Accuracy filtering: ${originalCount} -> ${filteredCount} points. ` +
-			`Removed: ${inaccurateCount} (${noAccuracy} no accuracy, ${aboveThreshold} low accuracy)`);
+		this.logger.log(
+			`Removed: ${inaccurateCount} (${noAccuracy} no accuracy, ${aboveThreshold} low accuracy)`
+		);
 
 		return {
 			filteredPoints,
@@ -217,8 +210,6 @@ export class TrackingService {
 			if (cached.count >= MAX_POINTS_PER_MINUTE) {
 				const remaining = 0;
 				const resetAt = new Date(cached.resetAt);
-				// Use debug level instead of warn to reduce log noise for expected rate limiting
-				this.logger.debug(`Rate limit exceeded for user ${userId}. Limit: ${MAX_POINTS_PER_MINUTE} points per minute. Reset at: ${resetAt.toISOString()}`);
 				return {
 					isAllowed: false,
 					remaining,
@@ -353,7 +344,6 @@ export class TrackingService {
 
 			// Skip virtual locations (coordinates containing '122' indicate virtual/test locations)
 			if (this.isVirtualLocation(latitude, longitude)) {
-				this.logger.debug(`Skipping virtual location with coordinates: ${latitude}, ${longitude} for user: ${createTrackingDto.owner}`);
 				return {
 					message: 'Virtual location skipped - not recorded',
 					data: null,
@@ -364,7 +354,6 @@ export class TrackingService {
 			// Check GPS accuracy before processing
 			if (!this.isAcceptableAccuracy(createTrackingDto.accuracy)) {
 				const accuracyValue = createTrackingDto.accuracy || 'unknown';
-				this.logger.debug(`Skipping low accuracy GPS point: ${accuracyValue}m for user: ${createTrackingDto.owner} at ${latitude}, ${longitude}`);
 				return {
 					message: 'Low accuracy GPS point skipped - not recorded',
 					data: null,
@@ -393,9 +382,6 @@ export class TrackingService {
 				// Handle rate limit gracefully - return early with informative message instead of throwing exception
 				// This prevents error logs for expected rate limiting behavior
 				const executionTime = Date.now() - startTime;
-				this.logger.debug(
-					`Rate limit exceeded for user ${ownerId}. Tracking point skipped. Reset at: ${rateLimitCheck.resetAt.toISOString()} (processed in ${executionTime}ms)`
-				);
 				return {
 					message: `Rate limit exceeded. Maximum 2 tracking points per minute allowed. This point was skipped. Please wait until ${rateLimitCheck.resetAt.toISOString()} before sending more points.`,
 					data: null,
@@ -657,19 +643,16 @@ export class TrackingService {
 
 			// Calculate date range based on timeframe
 			const dateRange = this.calculateDateRange(timeframe, startDate, endDate);
-			this.logger.debug(`Calculated date range: ${dateRange.start.toISOString()} to ${dateRange.end.toISOString()}`);
 
 			// Check cache first
 			const cacheKey = this.getCacheKey(`user_${userId}_${timeframe}_${dateRange.start.getTime()}_${dateRange.end.getTime()}`);
 			const cachedResult = await this.cacheManager.get(cacheKey);
 
 			if (cachedResult) {
-				this.logger.debug(`Retrieved tracking data from cache for user: ${userId}`);
 				return cachedResult as any;
 			}
 
 			// Validate user exists
-			this.logger.debug(`Validating user exists: ${userId}`);
 			const user = await this.userRepository.findOne({
 				where: { uid: userId },
 				relations: ['organisation', 'branch'],
@@ -690,16 +673,12 @@ export class TrackingService {
 			// Add organization filter if provided
 			if (orgId) {
 				whereConditions.organisation = { uid: orgId };
-				this.logger.debug(`Added organization filter: ${orgId}`);
 			}
 
 			// Add branch filter if provided
 			if (branchId) {
 				whereConditions.branch = { uid: branchId };
-				this.logger.debug(`Added branch filter: ${branchId}`);
 			}
-
-		this.logger.debug('Querying tracking points from database with optimized fields');
 		const trackingPoints = await this.trackingRepository.find({
 			where: whereConditions,
 			select: [
@@ -710,8 +689,6 @@ export class TrackingService {
 			relations: ['owner'],
 			order: { timestamp: 'ASC' },
 		});
-
-			this.logger.debug(`Found ${trackingPoints.length} tracking points for user: ${userId}`);
 
 			// Try to geocode tracking points that don't have addresses
 			// This will now stop after 3 consecutive failures
@@ -842,7 +819,6 @@ export class TrackingService {
 			}
 
 			const dateRange = this.calculateDateRange(timeframe, startDate, endDate);
-			this.logger.debug(`Processing ${userIds.length} users for date range: ${dateRange.start.toISOString()} to ${dateRange.end.toISOString()}`);
 
 			const userDataPromises = userIds.map(userId => 
 				this.getTrackingPointsByUserAndTimeframe(userId, timeframe, startDate, endDate, orgId, branchId)
@@ -1235,7 +1211,6 @@ export class TrackingService {
 			});
 		}
 
-		this.logger.debug(`Grouped ${points.length} points into ${groups.length} coordinate groups`);
 		return groups;
 	}
 
@@ -1284,15 +1259,11 @@ export class TrackingService {
 		});
 
 		if (pointsToGeocode.length === 0) {
-			this.logger.debug('No tracking points need geocoding after filtering');
 			return trackingPoints;
 		}
 
-		this.logger.debug(`Geocoding ${pointsToGeocode.length} tracking points (filtered from ${trackingPoints.length} total)`);
-
 		// Group nearby coordinates to reduce API calls
 		const coordinateGroups = this.groupNearbyCoordinates(pointsToGeocode, 0.0008); // ~89m radius
-		this.logger.debug(`Grouped into ${coordinateGroups.length} groups for geocoding`);
 
 		// Process groups in batches
 		const BATCH_SIZE = 5;
@@ -1366,8 +1337,6 @@ export class TrackingService {
 
 		if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
 			this.logger.warn(`Geocoding stopped early due to ${consecutiveFailures} consecutive failures. Processed: ${totalProcessed}/${coordinateGroups.length} groups, Successful: ${totalSuccessful} points, Failed: ${totalFailed} points`);
-		} else {
-			this.logger.debug(`Completed geocoding: ${totalProcessed} groups processed, ${totalSuccessful} points geocoded successfully, ${totalFailed} failed`);
 		}
 
 		return trackingPoints;
@@ -1421,7 +1390,6 @@ export class TrackingService {
 		// Check cache first with extended TTL (24 hours for addresses)
 		const cachedAddress = await this.cacheManager.get<string>(cacheKey);
 		if (cachedAddress) {
-			this.logger.debug(`Cache hit for coordinates ${rounded.lat}, ${rounded.lng}`);
 			return { address: cachedAddress };
 		}
 
@@ -1844,7 +1812,6 @@ export class TrackingService {
 				totalDistanceKm = distanceResult.totalDistance;
 				distanceCalculationMethod = distanceResult.method;
 				
-				this.logger.debug(`Enhanced distance calculation: ${totalDistanceKm}km using ${distanceCalculationMethod} method (baseline: ${distanceResult.baselineDistance}km)`);
 				
 			} catch (error) {
 				this.logger.warn(`Enhanced distance calculation failed: ${error.message}. Falling back to traditional method.`);
@@ -1859,10 +1826,6 @@ export class TrackingService {
 		
 		const formattedDistance = LocationUtils.formatDistance(totalDistanceKm);
 		
-		// Log accuracy filtering results
-		if (accuracyFilter.inaccurateCount > 0) {
-			this.logger.debug(`Trip analysis: Filtered ${accuracyFilter.inaccurateCount}/${accuracyFilter.originalCount} points due to poor accuracy`);
-		}
 		
 		if (accuratePoints.length < 2) {
 			return {
@@ -2074,7 +2037,6 @@ export class TrackingService {
 		if (cacheKey) {
 			const cached = await this.cacheManager.get(cacheKey);
 			if (cached) {
-				this.logger.debug(`Retrieved enhanced tracking data from cache for user: ${userId}`);
 				return cached as any;
 			}
 		}
@@ -2144,7 +2106,6 @@ export class TrackingService {
 		// Cache the result for 1 hour
 		if (cacheKey) {
 			await this.cacheManager.set(cacheKey, result, 3600000);
-			this.logger.debug(`Cached enhanced tracking data for user: ${userId}`);
 		}
 
 		return result;
@@ -2379,10 +2340,6 @@ export class TrackingService {
 		const accuracyFilter = this.filterByAccuracy(trackingPoints);
 		const accuratePoints = accuracyFilter.filteredPoints;
 		
-		// Log accuracy filtering for stop detection
-		if (accuracyFilter.inaccurateCount > 0) {
-			this.logger.debug(`Stop detection: Filtered ${accuracyFilter.inaccurateCount}/${accuracyFilter.originalCount} points due to poor accuracy`);
-		}
 		
 		if (accuratePoints.length < 2) {
 			return {
@@ -2555,8 +2512,6 @@ export class TrackingService {
 			}
 
 			// Fetch ALL tracking points for the day (including virtual ones initially)
-			// This allows us to see what was filtered out
-			this.logger.debug('Fetching all tracking points for the day (including virtual locations)');
 			const allTrackingPoints = await this.trackingRepository.find({
 				where: {
 					owner: { uid: userId },
@@ -2569,7 +2524,6 @@ export class TrackingService {
 			});
 
 			const originalCount = allTrackingPoints.length;
-			this.logger.debug(`Found ${originalCount} total tracking points before filtering`);
 
 			if (originalCount === 0) {
 				return {
@@ -2588,8 +2542,6 @@ export class TrackingService {
 			const filteredTrackingPoints = this.filterVirtualLocations(allTrackingPoints);
 			const filteredCount = filteredTrackingPoints.length;
 			const virtualPointsRemoved = originalCount - filteredCount;
-
-			this.logger.debug(`Filtered out ${virtualPointsRemoved} virtual locations, ${filteredCount} valid points remaining`);
 
 			if (filteredCount === 0) {
 				return {

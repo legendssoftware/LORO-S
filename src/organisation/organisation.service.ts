@@ -57,7 +57,7 @@ export class OrganisationService {
 
 		try {
 			// Validate input data
-			this.logger.debug(`🔍 [${operationId}] Validating organization creation data`, {
+			this.logger.log(`🔍 [${operationId}] Validating organization creation input`, {
 				operationId,
 				validationChecks: {
 					hasName: !!createOrganisationDto.name,
@@ -69,7 +69,7 @@ export class OrganisationService {
 
 			// For organisation creation, we might not always have org scoping
 			// but we can still validate permissions based on the authenticated user
-			this.logger.debug(`🔐 [${operationId}] Processing organization creation with scope validation`, {
+			this.logger.log(`🔐 [${operationId}] Checking organization creation permissions`, {
 				operationId,
 				scope: {
 					orgId: orgId || 'none',
@@ -98,7 +98,7 @@ export class OrganisationService {
 			});
 
 			// Clear cache after creating a new organisation
-			this.logger.debug(`🗑️ [${operationId}] Clearing organization cache after creation`, {
+			this.logger.log(`🗑️ [${operationId}] Clearing organization cache after creation`, {
 				operationId,
 				cacheKeys: [this.ALL_ORGS_CACHE_KEY]
 			});
@@ -152,7 +152,7 @@ export class OrganisationService {
 			// Generate cache key that includes org/branch context
 			const contextCacheKey = `${this.ALL_ORGS_CACHE_KEY}_${orgId || 'global'}_${branchId || 'all'}`;
 			
-			this.logger.debug(`🔍 [${operationId}] Checking cache for organizations`, {
+			this.logger.log(`🔍 [${operationId}] Checking cache for organizations`, {
 				operationId,
 				cacheKey: contextCacheKey
 			});
@@ -175,7 +175,7 @@ export class OrganisationService {
 				};
 			}
 
-			this.logger.debug(`🔍 [${operationId}] Cache miss - querying database`, {
+			this.logger.log(`💾 [${operationId}] Cache miss - fetching from database`, {
 				operationId,
 				cacheKey: contextCacheKey
 			});
@@ -189,14 +189,14 @@ export class OrganisationService {
 			// If orgId is provided, scope to that organization
 			// This ensures users can only see their own organization
 			if (orgId) {
-				this.logger.debug(`🔐 [${operationId}] Applying organization scope filter`, {
+				this.logger.log(`🔐 [${operationId}] Applying organization-scoped filter`, {
 					operationId,
 					orgId,
 					filterType: 'organization_scoped'
 				});
 				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
 			} else {
-				this.logger.debug(`🌐 [${operationId}] No organization scope applied - global access`, {
+				this.logger.log(`🌐 [${operationId}] Using global access`, {
 					operationId,
 					accessType: 'global'
 				});
@@ -223,7 +223,7 @@ export class OrganisationService {
 				])
 				.getMany();
 
-			this.logger.debug(`📊 [${operationId}] Database query completed`, {
+			this.logger.log(`📊 [${operationId}] Organizations query completed`, {
 				operationId,
 				organizationCount: organisations?.length || 0,
 				branchCount: organisations?.reduce((total, org) => total + (org.branches?.length || 0), 0) || 0,
@@ -245,7 +245,7 @@ export class OrganisationService {
 			}
 
 			// Store in cache with context
-			this.logger.debug(`💾 [${operationId}] Storing organizations in cache`, {
+			this.logger.log(`💾 [${operationId}] Storing organizations in cache`, {
 				operationId,
 				cacheKey: contextCacheKey,
 				ttl: this.DEFAULT_CACHE_TTL,
@@ -303,7 +303,7 @@ export class OrganisationService {
 			// Generate context-aware cache key
 			const contextCacheKey = `${this.getOrgCacheKey(ref)}_${orgId || 'global'}_${branchId || 'all'}`;
 			
-			this.logger.debug(`🔍 [${operationId}] Checking cache for organization`, {
+			this.logger.log(`🔍 [${operationId}] Checking cache for organization`, {
 				operationId,
 				cacheKey: contextCacheKey,
 				organizationRef: ref
@@ -328,7 +328,7 @@ export class OrganisationService {
 				};
 			}
 
-			this.logger.debug(`🔍 [${operationId}] Cache miss - querying database with full relations`, {
+			this.logger.log(`💾 [${operationId}] Cache miss - fetching organization from database`, {
 				operationId,
 				organizationRef: ref,
 				relations: ['branches', 'settings', 'appearance', 'hours', 'assets', 'products', 'clients', 'users', 'resellers', 'leaves']
@@ -352,7 +352,7 @@ export class OrganisationService {
 
 			// Scope to authenticated user's organization
 			if (orgId) {
-				this.logger.debug(`🔐 [${operationId}] Applying organization scope filter`, {
+				this.logger.log(`🔐 [${operationId}] Applying organization-scoped filter`, {
 					operationId,
 					organizationRef: ref,
 					scopingOrgId: orgId,
@@ -360,7 +360,7 @@ export class OrganisationService {
 				});
 				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
 			} else {
-				this.logger.debug(`🌐 [${operationId}] No organization scope applied - global access`, {
+				this.logger.log(`🌐 [${operationId}] Using global access`, {
 					operationId,
 					organizationRef: ref,
 					accessType: 'global'
@@ -385,7 +385,7 @@ export class OrganisationService {
 			}
 
 			// Log comprehensive organization details
-			this.logger.debug(`📊 [${operationId}] Organization found with relations`, {
+			this.logger.log(`📊 [${operationId}] Organization found with relations`, {
 				operationId,
 				organizationId: organisation.uid,
 				organizationRef: organisation.ref,
@@ -407,7 +407,7 @@ export class OrganisationService {
 
 			// Check if organisation has no products
 			if (organisation.products && organisation.products.length === 0) {
-				this.logger.debug(`📦 [${operationId}] Organization has no products - adding helpful message`, {
+				this.logger.log(`📦 [${operationId}] Organization has no products`, {
 					operationId,
 					organizationId: organisation.uid,
 					productCount: 0
@@ -417,7 +417,7 @@ export class OrganisationService {
 			}
 
 			// Store in cache with context
-			this.logger.debug(`💾 [${operationId}] Storing organization in cache`, {
+			this.logger.log(`💾 [${operationId}] Storing organization in cache`, {
 				operationId,
 				cacheKey: contextCacheKey,
 				ttl: this.DEFAULT_CACHE_TTL,
@@ -484,7 +484,7 @@ export class OrganisationService {
 		try {
 			// First verify the organisation belongs to the authenticated user's org
 			if (orgId) {
-				this.logger.debug(`🔐 [${operationId}] Verifying organization ownership before update`, {
+				this.logger.debug(`🔍 [${operationId}] Verifying organization access`, {
 					operationId,
 					organizationRef: ref,
 					requiredOrgId: orgId
@@ -508,21 +508,21 @@ export class OrganisationService {
 					};
 				}
 
-				this.logger.debug(`✅ [${operationId}] Organization ownership verified`, {
+				this.logger.debug(`✅ [${operationId}] Organization access verified`, {
 					operationId,
 					organizationId: existingOrg.uid,
 					organizationRef: existingOrg.ref,
 					organizationName: existingOrg.name
 				});
 			} else {
-				this.logger.debug(`🌐 [${operationId}] No organization scope applied - global update access`, {
+				this.logger.debug(`🌐 [${operationId}] Global access - skipping organization verification`, {
 					operationId,
 					organizationRef: ref,
 					accessType: 'global'
 				});
 			}
 
-			this.logger.debug(`🔄 [${operationId}] Executing organization update`, {
+			this.logger.debug(`📝 [${operationId}] Preparing organization update`, {
 				operationId,
 				organizationRef: ref,
 				updateData: {
@@ -565,7 +565,7 @@ export class OrganisationService {
 			});
 
 			// Clear cache after updating
-			this.logger.debug(`🗑️ [${operationId}] Clearing organization cache after update`, {
+			this.logger.debug(`🗑️ [${operationId}] Clearing organization cache`, {
 				operationId,
 				organizationRef: ref,
 				cacheKeysToDelete: [this.getOrgCacheKey(ref), this.ALL_ORGS_CACHE_KEY]
@@ -622,7 +622,7 @@ export class OrganisationService {
 			
 			// Scope to authenticated user's organization
 			if (orgId) {
-				this.logger.debug(`🔐 [${operationId}] Applying organization scope for deletion`, {
+				this.logger.debug(`🔍 [${operationId}] Verifying organization access`, {
 					operationId,
 					organizationRef: ref,
 					requiredOrgId: orgId,
@@ -630,14 +630,14 @@ export class OrganisationService {
 				});
 				whereClause.uid = orgId;
 			} else {
-				this.logger.debug(`🌐 [${operationId}] No organization scope applied - global deletion access`, {
+				this.logger.debug(`🌐 [${operationId}] Global access - skipping organization verification`, {
 					operationId,
 					organizationRef: ref,
 					accessType: 'global'
 				});
 			}
 
-			this.logger.debug(`🔍 [${operationId}] Verifying organization exists and can be deleted`, {
+			this.logger.debug(`📝 [${operationId}] Preparing organization deletion`, {
 				operationId,
 				organizationRef: ref,
 				whereClause: whereClause
@@ -676,7 +676,7 @@ export class OrganisationService {
 				}
 			});
 
-			this.logger.debug(`🔄 [${operationId}] Executing soft deletion`, {
+			this.logger.debug(`🗑️ [${operationId}] Preparing soft deletion`, {
 				operationId,
 				organizationId: organisation.uid,
 				organizationRef: ref,
@@ -695,7 +695,7 @@ export class OrganisationService {
 			});
 
 			// Clear cache after removing
-			this.logger.debug(`🗑️ [${operationId}] Clearing organization cache after deletion`, {
+			this.logger.debug(`🗑️ [${operationId}] Clearing organization cache`, {
 				operationId,
 				organizationRef: ref,
 				cacheKeysToDelete: [this.getOrgCacheKey(ref), this.ALL_ORGS_CACHE_KEY]
@@ -752,7 +752,7 @@ export class OrganisationService {
 			
 			// Scope to authenticated user's organization
 			if (orgId) {
-				this.logger.debug(`🔐 [${operationId}] Applying organization scope for restoration`, {
+				this.logger.log(`🔍 [${operationId}] Applying organization-scoped filter`, {
 					operationId,
 					organizationRef: ref,
 					requiredOrgId: orgId,
@@ -760,14 +760,14 @@ export class OrganisationService {
 				});
 				whereClause.uid = orgId;
 			} else {
-				this.logger.debug(`🌐 [${operationId}] No organization scope applied - global restoration access`, {
+				this.logger.log(`🌐 [${operationId}] Using global access for restoration`, {
 					operationId,
 					organizationRef: ref,
 					accessType: 'global'
 				});
 			}
 
-			this.logger.debug(`🔍 [${operationId}] Searching for deleted organization to restore`, {
+			this.logger.log(`🔎 [${operationId}] Building restoration query`, {
 				operationId,
 				organizationRef: ref,
 				whereClause: whereClause,
@@ -812,7 +812,7 @@ export class OrganisationService {
 				}
 			});
 
-			this.logger.debug(`🔄 [${operationId}] Executing organization restoration`, {
+			this.logger.log(`🔄 [${operationId}] Preparing organization restoration`, {
 				operationId,
 				organizationId: organisation.uid,
 				organizationRef: ref,
@@ -841,7 +841,7 @@ export class OrganisationService {
 			});
 
 			// Clear cache after restoring
-			this.logger.debug(`🗑️ [${operationId}] Clearing organization cache after restoration`, {
+			this.logger.debug(`🗑️ [${operationId}] Clearing organization cache`, {
 				operationId,
 				organizationRef: ref,
 				cacheKeysToDelete: [this.getOrgCacheKey(ref), this.ALL_ORGS_CACHE_KEY]

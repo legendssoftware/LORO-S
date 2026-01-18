@@ -23,6 +23,7 @@ import {
 	ApiProduces,
 	ApiQuery
 } from '@nestjs/swagger';
+import { getDynamicDate, getDynamicDateTime, createApiDescription } from '../lib/utils/swagger-helpers';
 import { RoleGuard } from '../guards/role.guard';
 import { AuthGuard } from '../guards/auth.guard';
 import { AccessLevel } from '../lib/enums/user.enums';
@@ -122,7 +123,16 @@ export class BranchController {
 	)
 	@ApiOperation({
 		summary: '🏗️ Create a new branch',
-		description: `
+		description: createApiDescription(
+			'Establishes a new branch location within your organization with comprehensive setup capabilities.',
+			'The service method `BranchService.create()` processes branch creation, validates data, generates branch reference, assigns to organization, and returns the created branch with its reference.',
+			'BranchService',
+			'create',
+			'creates a new branch, validates data, generates reference, and assigns to organization',
+			'an object containing the created branch data, branch reference, and organization details',
+			['Data validation', 'Reference generation', 'Organization assignment', 'Location setup'],
+		) + `
+
 # Create Branch Location
 
 Establishes a new branch location within your organization with comprehensive setup capabilities.
@@ -268,8 +278,8 @@ Establishes a new branch location within your organization with comprehensive se
 						address: { type: 'string', example: '123 Main St, City, State 12345' },
 						refCode: { type: 'string', example: 'BR-DT-001' },
 						isActive: { type: 'boolean', example: true },
-						createdAt: { type: 'string', example: '2024-01-15T10:30:00Z' },
-						updatedAt: { type: 'string', example: '2024-01-15T10:30:00Z' }
+						createdAt: { type: 'string', example: getDynamicDateTime() },
+						updatedAt: { type: 'string', example: getDynamicDateTime() }
 					}
 				}
 			}
@@ -565,8 +575,8 @@ Retrieves comprehensive information about a specific branch including detailed a
 								monthlyTarget: { type: 'number', example: 150000.00 }
 							}
 						},
-						createdAt: { type: 'string', example: '2024-01-15T10:30:00Z' },
-						updatedAt: { type: 'string', example: '2024-01-15T10:30:00Z' }
+						createdAt: { type: 'string', example: getDynamicDateTime() },
+						updatedAt: { type: 'string', example: getDynamicDateTime() }
 					}
 				},
 				message: { type: 'string', example: 'Branch details retrieved successfully' }

@@ -66,14 +66,12 @@ export class UsageTrackingService {
 	 */
 	async recordUsageEvent(createUsageEventDto: CreateUsageEventDto): Promise<UsageEvent> {
 		const startTime = Date.now();
-		this.logger.debug(`[RECORD_USAGE] Recording usage event for endpoint: ${createUsageEventDto.endpoint}`);
 
 		try {
 			const usageEvent = this.usageEventRepository.create(createUsageEventDto);
 			const savedEvent = await this.usageEventRepository.save(usageEvent);
 
 			const executionTime = Date.now() - startTime;
-			this.logger.debug(`[RECORD_USAGE] Usage event recorded successfully: ${savedEvent.id} in ${executionTime}ms`);
 
 			return savedEvent;
 		} catch (error) {
@@ -88,7 +86,6 @@ export class UsageTrackingService {
 	 */
 	async recordUsageEventsBatch(events: CreateUsageEventDto[]): Promise<void> {
 		const startTime = Date.now();
-		this.logger.debug(`[RECORD_USAGE_BATCH] Recording ${events.length} usage events in batch`);
 
 		try {
 			const usageEvents = events.map(event => this.usageEventRepository.create(event));
@@ -108,7 +105,6 @@ export class UsageTrackingService {
 	 */
 	async getUsageEvents(query: UsageQueryDto): Promise<PaginatedResponse<UsageEvent>> {
 		const startTime = Date.now();
-		this.logger.debug(`[GET_USAGE_EVENTS] Querying usage events with filters: ${JSON.stringify(query)}`);
 
 		try {
 			const queryBuilder = this.usageEventRepository.createQueryBuilder('event');
@@ -336,7 +332,6 @@ export class UsageTrackingService {
 	}
 
 	private async aggregateForPeriod(period: SummaryPeriod, periodStart: Date, periodEnd: Date): Promise<void> {
-		this.logger.debug(`[AGGREGATE_PERIOD] Aggregating ${period} data for ${periodStart} to ${periodEnd}`);
 
 		// Get all unique combinations of org/user/endpoint for the period
 		const combinations = await this.usageEventRepository
@@ -576,9 +571,6 @@ export class UsageTrackingService {
 			});
 
 			const executionTime = Date.now() - startTime;
-			this.logger.debug(
-				`[GET_DAILY_LOGIN_COUNT] User ${userId} has ${loginCount} successful logins today (query took ${executionTime}ms)`,
-			);
 
 			return loginCount;
 		} catch (error) {
@@ -603,7 +595,6 @@ export class UsageTrackingService {
 		lastLoginAt: Date | null;
 	}> {
 		const startTime = Date.now();
-		this.logger.debug(`[GET_DAILY_LOGIN_STATS] Getting login stats for user ${userId}`);
 
 		try {
 			const today = startOfDay(new Date());
@@ -681,10 +672,6 @@ export class UsageTrackingService {
 				this.logger.warn(
 					`[CHECK_LOGIN_LIMIT] ⚠️ User ${userId} has EXCEEDED daily login limit: ${currentCount}/${maxLoginsPerDay} (check took ${executionTime}ms)`,
 				);
-			} else {
-				this.logger.debug(
-					`[CHECK_LOGIN_LIMIT] User ${userId} login count: ${currentCount}/${maxLoginsPerDay}, remaining: ${remainingLogins} (check took ${executionTime}ms)`,
-				);
 			}
 
 			return {
@@ -732,7 +719,6 @@ export class UsageTrackingService {
 		}>
 	> {
 		const startTime = Date.now();
-		this.logger.debug(`[GET_LOGIN_HISTORY] Fetching login history for user ${userId} from ${startDate} to ${endDate}`);
 
 		try {
 			const loginEvents = await this.usageEventRepository.find({
