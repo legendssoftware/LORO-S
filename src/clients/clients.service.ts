@@ -1416,10 +1416,34 @@ export class ClientsService {
 			}
 
 			this.logger.debug(`[CLIENT_FIND_ONE] Executing database query with relations`);
-			const client = await this.clientsRepository.findOne({
-				where,
-				relations: ['branch', 'organisation', 'assignedSalesRep', 'quotations', 'checkIns'],
-			});
+			// Use query builder to load all relationships including nested ones
+			const queryBuilder = this.clientsRepository
+				.createQueryBuilder('client')
+				.leftJoinAndSelect('client.branch', 'branch')
+				.leftJoinAndSelect('client.organisation', 'organisation')
+				.leftJoinAndSelect('client.assignedSalesRep', 'assignedSalesRep')
+				.leftJoinAndSelect('assignedSalesRep.userProfile', 'assignedSalesRepProfile')
+				.leftJoinAndSelect('assignedSalesRep.userEmployeementProfile', 'assignedSalesRepEmploymentProfile')
+				.leftJoinAndSelect('client.quotations', 'quotations')
+				.leftJoinAndSelect('quotations.orders', 'quotationOrders')
+				.leftJoinAndSelect('quotations.project', 'quotationProject')
+				.leftJoinAndSelect('client.projects', 'projects')
+				.leftJoinAndSelect('projects.quotations', 'projectQuotations')
+				.leftJoinAndSelect('client.checkIns', 'checkIns')
+				.where('client.uid = :ref', { ref })
+				.andWhere('client.isDeleted = :isDeleted', { isDeleted: false });
+			
+			// Add organization filter if provided
+			if (orgId) {
+				queryBuilder.andWhere('client.organisationUid = :orgId', { orgId });
+			}
+			
+			// Add branch filter if provided
+			if (branchId) {
+				queryBuilder.andWhere('client.branchUid = :branchId', { branchId });
+			}
+			
+			const client = await queryBuilder.getOne();
 
 			if (!client) {
 				this.logger.warn(`[CLIENT_FIND_ONE] Client not found: ${ref} in org: ${orgId}, branch: ${branchId}`);

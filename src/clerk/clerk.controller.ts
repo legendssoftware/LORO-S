@@ -90,38 +90,79 @@ export class ClerkController {
 		const eventType = payload.type;
 		const data = payload.data;
 
-		this.logger.debug(`[${operationId}] Processing webhook event - type: ${eventType}`);
+		this.logger.debug(`[${operationId}] Processing webhook event - type: ${eventType}`, {
+			eventId: payload.id,
+			userId: data.id || data.public_user_data?.user_id,
+			orgId: data.organization?.id,
+		});
 
-		switch (eventType) {
-			case 'user.created':
-				await this.clerkService.handleUserCreated(data.id, data);
-				break;
+		try {
+			switch (eventType) {
+				case 'user.created':
+					await this.clerkService.handleUserCreated(data.id, data);
+					this.logger.log(`[${operationId}] User created event processed - userId: ${data.id}`);
+					break;
 
-			case 'user.updated':
-				await this.clerkService.handleUserUpdated(data.id, data);
-				break;
+				case 'user.updated':
+					await this.clerkService.handleUserUpdated(data.id, data);
+					this.logger.log(`[${operationId}] User updated event processed - userId: ${data.id}`);
+					break;
 
-			case 'user.deleted':
-				await this.clerkService.handleUserDeleted(data.id);
-				break;
+				case 'user.deleted':
+					await this.clerkService.handleUserDeleted(data.id);
+					this.logger.log(`[${operationId}] User deleted event processed - userId: ${data.id}`);
+					break;
 
-			case 'organizationMembership.created':
-				await this.clerkService.handleOrganizationMembershipCreated(
-					data.organization.id,
-					data.public_user_data.user_id,
-					data.role,
-				);
-				break;
+				case 'organization.created':
+					// Handle organization creation if needed
+					this.logger.log(`[${operationId}] Organization created event received - orgId: ${data.id}`);
+					// You can add organization sync logic here if needed
+					break;
 
-			case 'organizationMembership.deleted':
-				await this.clerkService.handleOrganizationMembershipDeleted(
-					data.organization.id,
-					data.public_user_data.user_id,
-				);
-				break;
+				case 'organization.updated':
+					// Handle organization updates if needed
+					this.logger.log(`[${operationId}] Organization updated event received - orgId: ${data.id}`);
+					// You can add organization sync logic here if needed
+					break;
 
-			default:
-				this.logger.debug(`[${operationId}] Unhandled webhook event type: ${eventType}`);
+				case 'organizationMembership.created':
+					await this.clerkService.handleOrganizationMembershipCreated(
+						data.organization.id,
+						data.public_user_data.user_id,
+						data.role,
+					);
+					this.logger.log(`[${operationId}] Organization membership created - orgId: ${data.organization.id}, userId: ${data.public_user_data.user_id}`);
+					break;
+
+				case 'organizationMembership.deleted':
+					await this.clerkService.handleOrganizationMembershipDeleted(
+						data.organization.id,
+						data.public_user_data.user_id,
+					);
+					this.logger.log(`[${operationId}] Organization membership deleted - orgId: ${data.organization.id}, userId: ${data.public_user_data.user_id}`);
+					break;
+
+				case 'session.created':
+					// Handle session creation if needed (for analytics, etc.)
+					this.logger.debug(`[${operationId}] Session created event received - sessionId: ${data.id}`);
+					break;
+
+				case 'session.ended':
+					// Handle session end if needed (for analytics, etc.)
+					this.logger.debug(`[${operationId}] Session ended event received - sessionId: ${data.id}`);
+					break;
+
+				default:
+					this.logger.debug(`[${operationId}] Unhandled webhook event type: ${eventType}`);
+			}
+		} catch (error) {
+			this.logger.error(`[${operationId}] Error processing webhook event ${eventType}:`, {
+				error: error instanceof Error ? error.message : 'Unknown error',
+				stack: error instanceof Error ? error.stack : undefined,
+				eventType,
+				eventId: payload.id,
+			});
+			// Don't throw - webhook already acknowledged
 		}
 	}
 }

@@ -73,6 +73,24 @@ export class ClerkAuthGuard implements CanActivate {
 			throw new UnauthorizedException('User not found. Please contact support.');
 		}
 
+		// Async Processing: Get full Clerk user object for metadata access (non-blocking)
+		setImmediate(async () => {
+			try {
+				const clerkUser = await this.clerkService.getClerkUser(clerkUserId);
+				if (clerkUser) {
+					// Attach Clerk user metadata to request for potential use
+					request['clerkUser'] = {
+						publicMetadata: clerkUser.publicMetadata,
+						privateMetadata: clerkUser.privateMetadata,
+						emailAddresses: clerkUser.emailAddresses,
+					};
+				}
+			} catch (error) {
+				this.logger.debug(`[${operationId}] Failed to get Clerk user object:`, error instanceof Error ? error.message : 'Unknown error');
+				// Don't throw - this is background operation
+			}
+		});
+
 		// Critical Path: License validation (if applicable)
 		if (user.organisationRef) {
 			// Check if license validation is cached

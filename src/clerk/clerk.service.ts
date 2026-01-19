@@ -63,6 +63,88 @@ export class ClerkService {
 	}
 
 	/**
+	 * Get user from Clerk API by Clerk user ID
+	 * Returns full Clerk user object with metadata
+	 */
+	async getClerkUser(clerkUserId: string): Promise<any | null> {
+		const operationId = `GET_CLERK_USER_${clerkUserId}_${Date.now()}`;
+		
+		if (!this.clerkClientInstance) {
+			this.logger.warn(`[${operationId}] Clerk client not initialized - CLERK_SECRET_KEY missing`);
+			return null;
+		}
+
+		try {
+			const clerkUser = await this.clerkClientInstance.users.getUser(clerkUserId);
+			return clerkUser;
+		} catch (error) {
+			this.logger.error(`[${operationId}] Failed to get Clerk user:`, error instanceof Error ? error.message : 'Unknown error');
+			return null;
+		}
+	}
+
+	/**
+	 * Update user metadata in Clerk
+	 * Async operation - non-blocking
+	 */
+	async updateClerkUserMetadata(
+		clerkUserId: string,
+		updates: {
+			publicMetadata?: Record<string, any>;
+			privateMetadata?: Record<string, any>;
+		}
+	): Promise<void> {
+		const operationId = `UPDATE_METADATA_${clerkUserId}_${Date.now()}`;
+		
+		if (!this.clerkClientInstance) {
+			this.logger.warn(`[${operationId}] Clerk client not initialized - skipping metadata update`);
+			return;
+		}
+
+		setImmediate(async () => {
+			try {
+				await this.clerkClientInstance.users.updateUser(clerkUserId, updates);
+				this.logger.log(`[${operationId}] User metadata updated successfully`);
+			} catch (error) {
+				this.logger.error(`[${operationId}] Failed to update user metadata:`, error instanceof Error ? error.message : 'Unknown error');
+			}
+		});
+	}
+
+	/**
+	 * List users from Clerk API with pagination
+	 * Useful for admin operations and bulk sync
+	 */
+	async listClerkUsers(options?: {
+		limit?: number;
+		offset?: number;
+		orderBy?: string;
+	}): Promise<{ users: any[]; totalCount: number }> {
+		const operationId = `LIST_USERS_${Date.now()}`;
+		
+		if (!this.clerkClientInstance) {
+			this.logger.warn(`[${operationId}] Clerk client not initialized - CLERK_SECRET_KEY missing`);
+			return { users: [], totalCount: 0 };
+		}
+
+		try {
+			const result = await this.clerkClientInstance.users.getUserList({
+				limit: options?.limit || 10,
+				offset: options?.offset || 0,
+				orderBy: options?.orderBy || '-created_at',
+			});
+
+			return {
+				users: result.data || [],
+				totalCount: result.totalCount || 0,
+			};
+		} catch (error) {
+			this.logger.error(`[${operationId}] Failed to list Clerk users:`, error instanceof Error ? error.message : 'Unknown error');
+			return { users: [], totalCount: 0 };
+		}
+	}
+
+	/**
 	 * Get user from database by Clerk user ID
 	 * Critical path - synchronous operation
 	 */
@@ -107,7 +189,12 @@ export class ClerkService {
 			const firstName = clerkUser.firstName || '';
 			const lastName = clerkUser.lastName || '';
 			const username = clerkUser.username || email?.split('@')[0] || `user_${clerkUserId.substring(0, 8)}`;
-			const photoURL = clerkUser.imageUrl || null;
+			const DEFAULT_PROFILE_PICTURE_URL = 'https://cdn-icons-png.flaticon.com/128/1144/1144709.png';
+			const rawPhotoURL = clerkUser.imageUrl || null;
+			// Use default image for external users if photoURL is missing or is the example.com placeholder
+			const photoURL = (!rawPhotoURL || rawPhotoURL.includes('example.com')) 
+				? DEFAULT_PROFILE_PICTURE_URL 
+				: rawPhotoURL;
 
 			if (!email) {
 				this.logger.warn(`[${operationId}] Clerk user missing email - cannot sync`);
@@ -127,6 +214,19 @@ export class ClerkService {
 				user.username = username;
 				user.photoURL = photoURL;
 				user.clerkLastSyncedAt = new Date();
+
+				// Update Clerk metadata with internal user ID (async, non-blocking)
+				this.updateClerkUserMetadata(clerkUserId, {
+					publicMetadata: {
+						role: user.role,
+						internalId: user.uid,
+						accessLevel: user.accessLevel,
+					},
+					privateMetadata: {
+						syncStatus: 'synced',
+						lastSyncedAt: new Date().toISOString(),
+					},
+				});
 			} else {
 				// Check if user exists by email (for migration)
 				const existingUser = await this.userRepository.findOne({
@@ -138,6 +238,19 @@ export class ClerkService {
 					existingUser.clerkUserId = clerkUserId;
 					existingUser.clerkLastSyncedAt = new Date();
 					user = existingUser;
+
+					// Update Clerk metadata with internal user ID (async, non-blocking)
+					this.updateClerkUserMetadata(clerkUserId, {
+						publicMetadata: {
+							role: user.role,
+							internalId: user.uid,
+							accessLevel: user.accessLevel,
+						},
+						privateMetadata: {
+							syncStatus: 'synced',
+							lastSyncedAt: new Date().toISOString(),
+						},
+					});
 				} else {
 					// Create new user
 					user = this.userRepository.create({
@@ -153,10 +266,31 @@ export class ClerkService {
 						accessLevel: 'user' as any,
 						clerkLastSyncedAt: new Date(),
 					});
+
+					// Save user first to get uid
+					user = await this.userRepository.save(user);
+
+					// Update Clerk metadata with internal user ID (async, non-blocking)
+					this.updateClerkUserMetadata(clerkUserId, {
+						publicMetadata: {
+							role: user.role,
+							internalId: user.uid,
+							accessLevel: user.accessLevel,
+						},
+						privateMetadata: {
+							syncStatus: 'synced',
+							lastSyncedAt: new Date().toISOString(),
+						},
+					});
 				}
 			}
 
-			user = await this.userRepository.save(user);
+			// Only save if not already saved (for new users)
+			if (!user.uid) {
+				user = await this.userRepository.save(user);
+			} else {
+				user = await this.userRepository.save(user);
+			}
 			this.logger.log(`[${operationId}] User synced successfully - uid: ${user.uid}, email: ${user.email}`);
 
 			return user;
