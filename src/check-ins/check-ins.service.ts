@@ -59,16 +59,11 @@ export class CheckInsService {
 		return org?.uid ?? null;
 	}
 
-	async checkIn(createCheckInDto: CreateCheckInDto, orgId?: string, branchId?: number): Promise<{ message: string; checkInId?: number }> {
-		// Resolve Clerk org ID to numeric uid
-		const orgUid = orgId ? await this.resolveOrgId(orgId) : null;
-		if (orgId && !orgUid) {
-			throw new BadRequestException(`Organization not found for ID: ${orgId}`);
-		}
+	async checkIn(createCheckInDto: CreateCheckInDto, orgId?: string, branchId?: number, clerkUserId?: string): Promise<{ message: string; checkInId?: number }> {
 		const operationId = `checkin_${Date.now()}`;
 		const startTime = Date.now();
 		this.logger.log(
-			`[${operationId}] Check-in attempt for user: ${createCheckInDto.owner?.uid}, orgId: ${orgId}, orgUid: ${orgUid}, branchId: ${branchId}`,
+			`[${operationId}] Check-in attempt for user: ${createCheckInDto.owner?.uid}, orgId: ${orgId}, branchId: ${branchId}, clerkUserId: ${clerkUserId}`,
 		);
 
 		try {
@@ -82,7 +77,7 @@ export class CheckInsService {
 				throw new BadRequestException('User ID is required for check-in');
 			}
 
-			if (!orgUid) {
+			if (!orgId) {
 				this.logger.error(`[${operationId}] Organization ID is required for check-in`);
 				throw new BadRequestException('Organization ID is required');
 			}
@@ -98,32 +93,71 @@ export class CheckInsService {
 				throw new NotFoundException('User not found');
 			}
 
-			if (user.organisation?.uid !== orgUid) {
+			// Validate user belongs to the organization using Clerk org ID (organisationRef)
+			if (user.organisationRef && user.organisationRef !== orgId) {
 				this.logger.error(
-					`[${operationId}] User ${createCheckInDto.owner.uid} belongs to org ${user.organisation?.uid}, not ${orgUid}`,
+					`[${operationId}] User ${createCheckInDto.owner.uid} belongs to org ${user.organisationRef}, not ${orgId}`,
 				);
 				throw new BadRequestException('User does not belong to the specified organization');
 			}
 
+			// Resolve branch information from multiple sources (prefer DTO > parameter > user relation)
+			const resolvedBranchId = createCheckInDto?.branch?.uid || branchId || user.branch?.uid;
+			let branchSource = 'unknown';
+			if (createCheckInDto?.branch?.uid) {
+				branchSource = 'DTO';
+			} else if (branchId) {
+				branchSource = 'parameter';
+			} else if (user.branch?.uid) {
+				branchSource = 'user relation';
+			}
 
-			// Validate branch information
-			if (!createCheckInDto?.branch?.uid) {
-				this.logger.error(`[${operationId}] Branch information is required for check-in`);
-				throw new BadRequestException('Branch information is required');
+			// Log branch resolution (branch is optional)
+			if (resolvedBranchId) {
+				this.logger.debug(`[${operationId}] Branch resolved from ${branchSource}: ${resolvedBranchId}`);
+			} else {
+				this.logger.debug(`[${operationId}] No branch information provided - check-in will be saved without branch`);
 			}
 
 			// Enhanced data mapping with proper organization filtering
 			this.logger.debug(`[${operationId}] Creating check-in record with enhanced data mapping`);
-			const checkInData = {
+			
+			// Get clerkUserId - prefer from token, fallback to user's clerkUserId from database
+			const resolvedClerkUserId = clerkUserId || user.clerkUserId;
+			if (!resolvedClerkUserId) {
+				this.logger.error(`[${operationId}] No clerkUserId available - cannot set ownerClerkUserId`);
+				throw new BadRequestException('User Clerk ID is required for check-in');
+			}
+
+			const checkInData: any = {
 				...createCheckInDto,
 				checkInTime: createCheckInDto.checkInTime ? new Date(createCheckInDto.checkInTime) : new Date(),
-				organization: {
-					uid: orgUid, // Use the validated orgUid instead of user's org
-				},
-				branch: {
-					uid: branchId || createCheckInDto.branch.uid,
-				},
+				// Set owner relation using clerkUserId (not uid) to ensure ownerClerkUserId is set correctly
+				owner: {
+					clerkUserId: resolvedClerkUserId,
+				} as User,
+				ownerClerkUserId: resolvedClerkUserId, // Explicitly set the foreign key column
+				organisation: {
+					clerkOrgId: orgId, // Use Clerk org ID string for relation
+				} as Organisation,
+				organisationUid: orgId, // Clerk org ID string - key relationship identifier
 			};
+
+			// Log when setting ownerClerkUserId and organisationUid for debugging
+			this.logger.debug(`[${operationId}] Setting ownerClerkUserId: ${resolvedClerkUserId}`);
+			if (orgId) {
+				this.logger.debug(`[${operationId}] Setting organisationUid: ${orgId}`);
+			}
+
+			// Only set branch and branchUid if branchId is provided
+			if (resolvedBranchId) {
+				checkInData.branch = { uid: resolvedBranchId };
+				checkInData.branchUid = resolvedBranchId;
+			} else {
+				// Explicitly set to null for TypeORM (handles null better than undefined)
+				checkInData.branch = null;
+				checkInData.branchUid = null;
+			}
 
 			// Core operation: Save check-in to database
 			const checkIn = await this.checkInRepository.save(checkInData);
@@ -502,11 +536,12 @@ export class CheckInsService {
 		createCheckOutDto: CreateCheckOutDto,
 		orgId?: string,
 		branchId?: number,
+		clerkUserId?: string,
 	): Promise<{ message: string; duration?: string; checkInId?: number }> {
 		const operationId = `checkout_${Date.now()}`;
 		const startTime = Date.now();
 		this.logger.log(
-			`[${operationId}] Check-out attempt for user: ${createCheckOutDto.owner?.uid}, orgId: ${orgId}, branchId: ${branchId}`,
+			`[${operationId}] Check-out attempt for user: ${createCheckOutDto.owner?.uid}, orgId: ${orgId}, branchId: ${branchId}, clerkUserId: ${clerkUserId}`,
 		);
 
 		try {
@@ -566,6 +601,7 @@ export class CheckInsService {
 
 			// Core operation: Update check-in record with check-out data (without fullAddress - will be updated later)
 			this.logger.debug(`[${operationId}] Updating check-in record with check-out data`);
+
 			const updateData: any = {
 				checkOutTime: createCheckOutDto?.checkOutTime,
 				checkOutPhoto: createCheckOutDto?.checkOutPhoto,
@@ -573,6 +609,28 @@ export class CheckInsService {
 				duration: duration,
 				// fullAddress will be updated in post-response processing
 			};
+
+			// Preserve or set ownerClerkUserId and organisationUid
+			// Use existing values if present, otherwise set from parameters
+			if (checkIn.ownerClerkUserId) {
+				updateData.ownerClerkUserId = checkIn.ownerClerkUserId;
+				this.logger.debug(`[${operationId}] Preserving existing ownerClerkUserId: ${checkIn.ownerClerkUserId}`);
+			} else if (clerkUserId) {
+				updateData.ownerClerkUserId = clerkUserId;
+				this.logger.debug(`[${operationId}] Setting ownerClerkUserId from parameter: ${clerkUserId}`);
+			} else {
+				this.logger.warn(`[${operationId}] Warning: No ownerClerkUserId available - existing value is missing and clerkUserId not provided`);
+			}
+
+			if (checkIn.organisationUid) {
+				updateData.organisationUid = checkIn.organisationUid;
+				this.logger.debug(`[${operationId}] Preserving existing organisationUid: ${checkIn.organisationUid}`);
+			} else if (orgId) {
+				updateData.organisationUid = orgId;
+				this.logger.debug(`[${operationId}] Setting organisationUid from parameter: ${orgId}`);
+			} else {
+				this.logger.warn(`[${operationId}] Warning: No organisationUid available - existing value is missing and orgId not provided`);
+			}
 
 			// Add optional fields if provided
 			if (createCheckOutDto?.notes !== undefined) {
@@ -785,7 +843,8 @@ export class CheckInsService {
 			const whereCondition: any = {};
 
 			if (organizationUid) {
-				whereCondition.organisation = { uid: organizationUid };
+				// organisationUid is now a string (Clerk org ID), filter directly
+				whereCondition.organisationUid = organizationUid;
 			}
 
 			const checkIns = await this.checkInRepository.find({
@@ -819,7 +878,8 @@ export class CheckInsService {
 			};
 
 			if (organizationUid) {
-				whereCondition.organisation = { uid: organizationUid };
+				// organisationUid is now a string (Clerk org ID), filter directly
+				whereCondition.organisationUid = organizationUid;
 			}
 
 			const checkIns = await this.checkInRepository.find({
@@ -869,6 +929,7 @@ export class CheckInsService {
 		photoUrl: string,
 		orgId?: string,
 		branchId?: number,
+		clerkUserId?: string,
 	): Promise<{ message: string }> {
 		const operationId = `update_checkin_photo_${Date.now()}`;
 		const startTime = Date.now();
@@ -885,10 +946,31 @@ export class CheckInsService {
 				throw new NotFoundException('Check-in not found');
 			}
 
-			// Update photo URL
-			await this.checkInRepository.update(checkInId, {
+			// Build update data, preserving or setting ownerClerkUserId and organisationUid
+			const updateData: any = {
 				checkInPhoto: photoUrl,
-			});
+			};
+
+			// Preserve or set ownerClerkUserId
+			if (checkIn.ownerClerkUserId) {
+				updateData.ownerClerkUserId = checkIn.ownerClerkUserId;
+				this.logger.debug(`[${operationId}] Preserving existing ownerClerkUserId: ${checkIn.ownerClerkUserId}`);
+			} else if (clerkUserId) {
+				updateData.ownerClerkUserId = clerkUserId;
+				this.logger.debug(`[${operationId}] Setting ownerClerkUserId from parameter: ${clerkUserId}`);
+			}
+
+			// Preserve or set organisationUid
+			if (checkIn.organisationUid) {
+				updateData.organisationUid = checkIn.organisationUid;
+				this.logger.debug(`[${operationId}] Preserving existing organisationUid: ${checkIn.organisationUid}`);
+			} else if (orgId) {
+				updateData.organisationUid = orgId;
+				this.logger.debug(`[${operationId}] Setting organisationUid from parameter: ${orgId}`);
+			}
+
+			// Update photo URL and preserve/set relationship keys
+			await this.checkInRepository.update(checkInId, updateData);
 
 			const duration = Date.now() - startTime;
 			this.logger.log(`✅ [${operationId}] Check-in photo updated successfully in ${duration}ms`);
@@ -917,6 +999,7 @@ export class CheckInsService {
 		photoUrl: string,
 		orgId?: string,
 		branchId?: number,
+		clerkUserId?: string,
 	): Promise<{ message: string }> {
 		const operationId = `update_checkout_photo_${Date.now()}`;
 		const startTime = Date.now();
@@ -933,10 +1016,31 @@ export class CheckInsService {
 				throw new NotFoundException('Check-in not found');
 			}
 
-			// Update photo URL
-			await this.checkInRepository.update(checkInId, {
+			// Build update data, preserving or setting ownerClerkUserId and organisationUid
+			const updateData: any = {
 				checkOutPhoto: photoUrl,
-			});
+			};
+
+			// Preserve or set ownerClerkUserId
+			if (checkIn.ownerClerkUserId) {
+				updateData.ownerClerkUserId = checkIn.ownerClerkUserId;
+				this.logger.debug(`[${operationId}] Preserving existing ownerClerkUserId: ${checkIn.ownerClerkUserId}`);
+			} else if (clerkUserId) {
+				updateData.ownerClerkUserId = clerkUserId;
+				this.logger.debug(`[${operationId}] Setting ownerClerkUserId from parameter: ${clerkUserId}`);
+			}
+
+			// Preserve or set organisationUid
+			if (checkIn.organisationUid) {
+				updateData.organisationUid = checkIn.organisationUid;
+				this.logger.debug(`[${operationId}] Preserving existing organisationUid: ${checkIn.organisationUid}`);
+			} else if (orgId) {
+				updateData.organisationUid = orgId;
+				this.logger.debug(`[${operationId}] Setting organisationUid from parameter: ${orgId}`);
+			}
+
+			// Update photo URL and preserve/set relationship keys
+			await this.checkInRepository.update(checkInId, updateData);
 
 			const duration = Date.now() - startTime;
 			this.logger.log(`✅ [${operationId}] Check-out photo updated successfully in ${duration}ms`);
@@ -966,6 +1070,7 @@ export class CheckInsService {
 		resolution?: string,
 		orgId?: string,
 		branchId?: number,
+		clerkUserId?: string,
 	): Promise<{ message: string }> {
 		const operationId = `update_visit_details_${Date.now()}`;
 		const startTime = Date.now();
@@ -994,7 +1099,25 @@ export class CheckInsService {
 				updateData.resolution = resolution;
 			}
 
-			// Update visit details
+			// Preserve or set ownerClerkUserId
+			if (checkIn.ownerClerkUserId) {
+				updateData.ownerClerkUserId = checkIn.ownerClerkUserId;
+				this.logger.debug(`[${operationId}] Preserving existing ownerClerkUserId: ${checkIn.ownerClerkUserId}`);
+			} else if (clerkUserId) {
+				updateData.ownerClerkUserId = clerkUserId;
+				this.logger.debug(`[${operationId}] Setting ownerClerkUserId from parameter: ${clerkUserId}`);
+			}
+
+			// Preserve or set organisationUid
+			if (checkIn.organisationUid) {
+				updateData.organisationUid = checkIn.organisationUid;
+				this.logger.debug(`[${operationId}] Preserving existing organisationUid: ${checkIn.organisationUid}`);
+			} else if (orgId) {
+				updateData.organisationUid = orgId;
+				this.logger.debug(`[${operationId}] Setting organisationUid from parameter: ${orgId}`);
+			}
+
+			// Update visit details and preserve/set relationship keys
 			await this.checkInRepository.update(checkInId, updateData);
 
 			const duration = Date.now() - startTime;

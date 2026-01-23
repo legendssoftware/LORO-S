@@ -444,17 +444,73 @@ export class TrackingService {
 				owner: { uid: ownerId } as any,
 			};
 
-			// Add branch and organization if provided (with validation)
-			if (branchId) {
-				trackingData.branch = { uid: Number(branchId) } as any;
+			// Add branch and organization if provided (non-blocking - skip if user has no branch)
+			// Priority: Save the tracking record first, branch assignment is optional
+			// If user has no branch assigned, skip branch assignment - it will be handled separately later
+			const userHasBranch = userExists.branch && userExists.branch.uid;
+			
+			if (!userHasBranch) {
+				this.logger.debug(
+					`User ${ownerId} has no branch assigned. Saving tracking record without branch assignment. Branch will be auto-assigned later.`
+				);
+			}
+			
+			try {
+				// Only set branch if branchId is provided AND user has a branch assigned
+				if (branchId && userHasBranch) {
+					trackingData.branch = { uid: Number(branchId) } as any;
+					this.logger.debug(`Setting branch ${branchId} for tracking point`);
+				} else if (branchId && !userHasBranch) {
+					this.logger.warn(
+						`Skipping branch assignment for user ${ownerId}: branchId ${branchId} provided but user has no branch assigned. Tracking record will be saved without branch.`
+					);
+				}
+			} catch (branchError) {
+				// If branch assignment fails, log warning but continue without branch
+				this.logger.warn(
+					`Failed to assign branch ${branchId} for user ${ownerId}: ${branchError.message}. Continuing without branch assignment.`
+				);
 			}
 
-			if (orgId) {
-				trackingData.organisation = { uid: Number(orgId) } as any;
+			// Set organisation if provided (non-blocking)
+			try {
+				if (orgId) {
+					trackingData.organisation = { uid: Number(orgId) } as any;
+				}
+			} catch (orgError) {
+				// If organisation assignment fails, log warning but continue
+				this.logger.warn(
+					`Failed to assign organisation ${orgId} for user ${ownerId}: ${orgError.message}. Continuing without organisation assignment.`
+				);
 			}
 
-			const tracking = this.trackingRepository.create(trackingData);
-			await this.trackingRepository.save(tracking);
+			// Save the tracking record first (most important) - branch assignment is optional
+			// If save fails due to branch constraint, retry without branch
+			let tracking;
+			try {
+				tracking = this.trackingRepository.create(trackingData);
+				tracking = await this.trackingRepository.save(tracking);
+			} catch (saveError) {
+				// If save fails due to branch/organisation constraint, retry without them
+				if (saveError.message?.includes('branch') || saveError.message?.includes('foreign key') || saveError.code === '23503') {
+					this.logger.warn(
+						`Save failed due to branch/organisation constraint for user ${ownerId}. Retrying without branch/organisation assignment. Error: ${saveError.message}`
+					);
+					// Remove branch and organisation and retry
+					const trackingDataWithoutBranch = { ...trackingData };
+					delete trackingDataWithoutBranch.branch;
+					delete trackingDataWithoutBranch.branchUid;
+					delete trackingDataWithoutBranch.organisation;
+					delete trackingDataWithoutBranch.organisationUid;
+					
+					tracking = this.trackingRepository.create(trackingDataWithoutBranch);
+					tracking = await this.trackingRepository.save(tracking);
+					this.logger.log(`Tracking record saved successfully for user ${ownerId} without branch/organisation assignment`);
+				} else {
+					// Re-throw if it's a different error
+					throw saveError;
+				}
+			}
 
 			// Clear cache for this user
 			await this.clearTrackingCache(tracking.uid, ownerId);

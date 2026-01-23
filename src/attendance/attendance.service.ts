@@ -668,13 +668,23 @@ export class AttendanceService {
 				throw new BadRequestException('Check-in time is required');
 			}
 
+		// Look up user to get clerkUserId for query
+		const user = await this.userRepository.findOne({
+			where: { uid: checkInDto.owner.uid },
+			select: ['uid', 'clerkUserId'],
+		});
+
+		if (!user || !user.clerkUserId) {
+			throw new NotFoundException(`User with ID ${checkInDto.owner.uid} not found or missing Clerk user ID`);
+		}
+
 		// Check if user is already checked in - if so, check if same day or auto-close previous shift
-		this.logger.debug(`Checking for existing active shift for user: ${checkInDto.owner.uid}`);
+		this.logger.debug(`Checking for existing active shift for user: ${checkInDto.owner.uid} (Clerk ID: ${user.clerkUserId})`);
 		const existingShiftQuery = this.attendanceRepository
 			.createQueryBuilder('attendance')
 			.leftJoinAndSelect('attendance.owner', 'owner')
 			.leftJoinAndSelect('attendance.organisation', 'organisation')
-			.where('attendance.ownerUid = :ownerUid', { ownerUid: checkInDto.owner.uid })
+			.where('attendance.ownerClerkUserId = :ownerClerkUserId', { ownerClerkUserId: user.clerkUserId })
 			.andWhere('attendance.status = :status', { status: AttendanceStatus.PRESENT })
 			.andWhere('attendance.checkIn IS NOT NULL')
 			.andWhere('attendance.checkOut IS NULL');
@@ -807,81 +817,42 @@ export class AttendanceService {
 			}
 		}
 
-		// Validate branch belongs to organisation - auto-correct if mismatch
-		if (organisation) {
-			let validBranchId = branchId;
-			let needsBranchCorrection = false;
-
-			if (branchId) {
-				this.logger.debug(`Validating branch ${branchId} belongs to organisation ${orgId}`);
-				const branch = await this.branchRepository.findOne({
-					where: { uid: branchId },
-					relations: ['organisation'],
-				});
-
-				if (!branch || (branch.organisation?.clerkOrgId !== orgId && branch.organisation?.ref !== orgId)) {
-					this.logger.warn(
-						`Branch ${branchId} invalid for organisation ${orgId}. ` +
-						`${!branch ? 'Branch does not exist' : `Branch belongs to org ${branch.organisation?.clerkOrgId || branch.organisation?.ref || branch.organisation?.uid}`}. Auto-correcting...`
-					);
-					needsBranchCorrection = true;
-				}
-			} else {
-				needsBranchCorrection = true;
-			}
-
-			// Auto-correct: get user's assigned branch or fallback to first org branch
-			if (needsBranchCorrection) {
-				const userWithBranch = await this.userRepository.findOne({
-					where: { uid: checkInDto.owner.uid },
-					relations: ['branch', 'branch.organisation'],
-				});
-
-				if (userWithBranch?.branch?.uid && (userWithBranch.branch.organisation?.clerkOrgId === orgId || userWithBranch.branch.organisation?.ref === orgId)) {
-					validBranchId = userWithBranch.branch.uid;
-					this.logger.log(`Auto-corrected to user's branch: ${validBranchId} (was: ${branchId})`);
-				} else {
-					const orgBranch = await this.branchRepository
-						.createQueryBuilder('branch')
-						.leftJoinAndSelect('branch.organisation', 'organisation')
-						.where('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId })
-						.getOne();
-					if (orgBranch) {
-						validBranchId = orgBranch.uid;
-						this.logger.log(`Auto-corrected to org's first branch: ${validBranchId} (was: ${branchId})`);
-					} else {
-						this.logger.error(`No valid branch found for organisation ${orgId}`);
-						throw new BadRequestException(`No valid branch found for organisation ${orgId}`);
-					}
-				}
-			}
-
-			branchId = validBranchId;
-		}
-
-		// Validate user exists
-		const user = await this.userRepository.findOne({
-			where: { uid: checkInDto.owner.uid },
-		});
-		if (!user) {
-			this.logger.error(`User with ID ${checkInDto.owner.uid} does not exist`);
-			throw new NotFoundException(`User with ID ${checkInDto.owner.uid} does not exist`);
-		}
+		// User already validated above at line 672-679, no need to re-validate
 
 		// Enhanced data mapping - save record first WITHOUT location processing
 		// Location processing will happen asynchronously after response is sent
-		const attendanceData = {
-			...checkInDto,
+		// Destructure branch and owner from checkInDto to avoid conflicts
+		// owner uses clerkUserId (string) not uid (number) for the relation
+		const { branch: _, owner: __, ...restCheckInDto } = checkInDto;
+		
+		const attendanceData: any = {
+			...restCheckInDto,
 			checkIn: new Date(checkInDto.checkIn),
 			status: checkInDto.status || AttendanceStatus.PRESENT,
 			organisation: organisation || undefined,
-			branch: branchId ? { uid: branchId } : undefined,
 			placesOfInterest: null, // Will be updated asynchronously
 			earlyMinutes: earlyMinutes,
 			lateMinutes: lateMinutes,
+			ownerClerkUserId: user.clerkUserId, // Use Clerk user ID for the relation, not numeric uid
 		};
 
+		// Only set branch and branchUid if branchId is provided
+		if (branchId) {
+			attendanceData.branch = { uid: branchId };
+			attendanceData.branchUid = branchId;
+		} else {
+			// Explicitly set to null for TypeORM (handles null better than undefined)
+			attendanceData.branch = null;
+			attendanceData.branchUid = null;
+		}
+
+		// Explicitly remove uid if it exists to ensure INSERT instead of UPDATE
+		// This prevents TypeORM from trying to update an existing record
+		// This can happen if the data object was previously used or contains a uid from another source
+		delete attendanceData.uid;
+
 		this.logger.debug('Saving check-in record to database');
+		// Save the attendance record - TypeORM will INSERT since uid is not present
 		const checkIn = await this.attendanceRepository.save(attendanceData);
 
 		if (!checkIn) {

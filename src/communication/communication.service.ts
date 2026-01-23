@@ -172,6 +172,7 @@ import {
 	ClientFailedLoginAttempt,
 	EmailVerified,
 	ClaimCreated,
+	ClaimCreatedAdmin,
 	ClaimStatusUpdate,
 	ClaimApproved,
 	ClaimRejected,
@@ -1223,6 +1224,11 @@ export class CommunicationService {
 				return {
 					subject: 'New Claim Submitted',
 					body: ClaimCreated(data as ClaimEmailData),
+				};
+			case EmailType.CLAIM_CREATED_ADMIN:
+				return {
+					subject: 'New Claim Submission - Admin Notification',
+					body: ClaimCreatedAdmin(data as ClaimEmailData),
 				};
 			case EmailType.CLAIM_STATUS_UPDATE:
 				return {

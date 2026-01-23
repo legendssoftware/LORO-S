@@ -16,6 +16,7 @@ import { Task } from '../tasks/entities/task.entity';
 import { Organisation } from '../organisation/entities/organisation.entity';
 import { AttendanceModule } from '../attendance/attendance.module';
 import { ClerkModule } from '../clerk/clerk.module';
+import { OrganisationModule } from '../organisation/organisation.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { ClerkModule } from '../clerk/clerk.module';
     NotificationsModule,
     TasksModule,
     ClerkModule,
+    OrganisationModule,
     forwardRef(() => AttendanceModule)
   ],
   controllers: [LeadsController],

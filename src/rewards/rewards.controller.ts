@@ -141,34 +141,58 @@ export class RewardsController {
 	})
 	@ApiParam({
 		name: 'reference',
-		description: 'User reference code',
-		type: 'number',
-		example: 1,
+		description: 'User Clerk ID (string identifier)',
+		type: 'string',
+		example: 'user_38Q1H1gVq5AdRomEFRmOS7zhTNo',
 	})
 	@ApiOkResponse({
 		description: 'User rewards retrieved successfully',
 		schema: {
 			type: 'object',
 			properties: {
-				data: {
+				message: { type: 'string', example: 'Success' },
+				rewards: {
 					type: 'object',
 					properties: {
+						uid: { type: 'number', example: 1 },
+						currentXP: { type: 'number', example: 1250 },
 						totalXP: { type: 'number', example: 1250 },
 						level: { type: 'number', example: 5 },
-						nextLevelXP: { type: 'number', example: 2000 },
-						rewards: {
+						rank: { type: 'string', example: 'ROOKIE' },
+						xpBreakdown: {
+							type: 'object',
+							properties: {
+								tasks: { type: 'number', example: 500 },
+								leads: { type: 'number', example: 300 },
+								sales: { type: 'number', example: 200 },
+								attendance: { type: 'number', example: 150 },
+								collaboration: { type: 'number', example: 100 },
+								login: { type: 'number', example: 0 },
+								other: { type: 'number', example: 0 },
+							},
+						},
+						owner: {
+							type: 'object',
+							properties: {
+								uid: { type: 'number', example: 1 },
+								clerkUserId: { type: 'string', example: 'user_38Q1H1gVq5AdRomEFRmOS7zhTNo' },
+								name: { type: 'string', example: 'John' },
+								surname: { type: 'string', example: 'Doe' },
+							},
+						},
+						xpTransactions: {
 							type: 'array',
 							items: {
 								type: 'object',
 								properties: {
 									uid: { type: 'number', example: 1 },
-									xp: { type: 'number', example: 100 },
-									reason: { type: 'string', example: 'Completed project ahead of schedule' },
+									xpAmount: { type: 'number', example: 100 },
+									action: { type: 'string', example: 'task_completed' },
 									createdAt: { type: 'string', format: 'date-time' },
 								},
 							},
 						},
-						badges: {
+						achievements: {
 							type: 'array',
 							items: {
 								type: 'object',
@@ -182,19 +206,18 @@ export class RewardsController {
 						},
 					},
 				},
-				message: { type: 'string', example: 'Success' },
 			},
 		},
 	})
 	@ApiNotFoundResponse({ description: 'User not found' })
-	getUserRewards(@Param('reference') reference: number, @Req() req: AuthenticatedRequest) {
+	getUserRewards(@Param('reference') reference: string, @Req() req: AuthenticatedRequest) {
 		const orgId = getClerkOrgId(req);
 		if (!orgId) {
 			throw new BadRequestException('Organization context required');
 		}
 		const branchId = this.toNumber(req.user?.branch?.uid);
-		const requestingUserId = req.user?.uid;
-		return this.rewardsService.getUserRewards(reference, orgId, branchId, requestingUserId);
+		const requestingUserClerkId = req.user?.clerkUserId;
+		return this.rewardsService.getUserRewards(reference, orgId, branchId, requestingUserClerkId);
 	}
 
 	@Get('leaderboard')

@@ -1049,7 +1049,7 @@ Provides comprehensive leave history, analytics, and balance information for a s
 			}
 		}
 	})
-	leavesByUser(@Param('ref') ref: number, @Req() req?: AuthenticatedRequest) {
+	leavesByUser(@Param('ref') ref: string, @Req() req?: AuthenticatedRequest) {
 		const orgId = getClerkOrgId(req);
 		if (!orgId) {
 			throw new BadRequestException('Organization context required');

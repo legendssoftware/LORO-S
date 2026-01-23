@@ -96,7 +96,7 @@ export class Approval {
 
     // Organization & Branch Relations
     @ManyToOne(() => Organisation, { nullable: false })
-    @JoinColumn({ name: 'organisationRef' })
+    @JoinColumn({ name: 'organisationRef', referencedColumnName: 'clerkOrgId' })
     organisation: Organisation;
 
     @Column({ type: 'varchar', nullable: false })

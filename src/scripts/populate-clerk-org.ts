@@ -273,6 +273,7 @@ class ClerkOrgPopulator {
 				suburb: branchNumber === 1 ? 'Sandton' : 'Rosebank',
 			},
 			organisation: organisation, // Links to org via relation
+			organisationUid: organisation.clerkOrgId || organisation.ref, // Set Clerk org ID
 			status: GeneralStatus.ACTIVE,
 			isDeleted: false,
 			country: 'ZA',

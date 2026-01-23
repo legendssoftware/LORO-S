@@ -958,6 +958,10 @@ export class ReportsService implements OnModuleInit {
 			};
 			newReport.generatedAt = new Date();
 			newReport.owner = user;
+			// Explicitly set ownerClerkUserId to ensure proper linking
+			if (user.clerkUserId) {
+				newReport.ownerClerkUserId = user.clerkUserId;
+			}
 			newReport.organisation = user.organisation;
 
 			// Extract and save GPS data to report entity gpsData column
@@ -2762,6 +2766,16 @@ export class ReportsService implements OnModuleInit {
 		this.logger.log(`[${operationId}] Getting highlights data for user ${userId}, org ${orgId}`);
 
 		try {
+			// Look up user to get clerkUserId for leave service
+			const user = await this.userRepository.findOne({
+				where: { uid: userId },
+				select: ['uid', 'clerkUserId'],
+			});
+
+			if (!user || !user.clerkUserId) {
+				this.logger.warn(`[${operationId}] User ${userId} not found or missing Clerk user ID, skipping leave data`);
+			}
+
 			// Get today's date range in organization timezone
 			const orgTimezone = await this.getOrganizationTimezone(orgId);
 			const orgCurrentTime = toZonedTime(new Date(), orgTimezone);
@@ -2908,13 +2922,15 @@ export class ReportsService implements OnModuleInit {
 						.slice(0, 2);
 					return { tasks: todayTasks };
 				}),
-				// Get latest leave for user
-				this.leaveService.leavesByUser(userId, orgId ? String(orgId) : undefined, branchId, userId).then(result => {
-					// Get the most recent leave
-					const latestLeave = result.leaves
-						.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] || null;
-					return { leave: latestLeave };
-				}),
+				// Get latest leave for user - use clerkUserId if available, otherwise skip
+				user?.clerkUserId 
+					? this.leaveService.leavesByUser(user.clerkUserId, orgId ? String(orgId) : undefined, branchId, userId).then(result => {
+						// Get the most recent leave
+						const latestLeave = result.leaves
+							.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] || null;
+						return { leave: latestLeave };
+					})
+					: Promise.resolve({ leave: null }),
 			]);
 
 			// Extract results with error handling

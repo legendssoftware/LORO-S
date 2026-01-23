@@ -50,24 +50,25 @@ export class RewardsService {
         // Use TypeORM query builder to handle column mapping correctly
         // Don't filter by branch - users should be able to receive XP regardless of branch changes
         const userRepository = this.dataSource.getRepository(User);
-        const queryBuilder = userRepository
+        const user = await userRepository
           .createQueryBuilder('u')
-          .select('u.uid')
+          .select(['u.uid', 'u.clerkUserId'])
           .where('u.uid = :userId', { userId: createRewardDto.owner })
-          .andWhere('u.organisationRef = :orgRef', { orgRef: orgId });
+          .andWhere('u.organisationRef = :orgRef', { orgRef: orgId })
+          .getOne();
 
-        const userExists = await queryBuilder.getRawMany();
+        this.logger.log(`${logPrefix} - User verification query result:`, user ? { u_uid: user.uid, clerkUserId: user.clerkUserId } : null);
 
-        this.logger.log(`${logPrefix} - User verification query result:`, userExists);
-
-        if (!userExists || userExists.length === 0) {
-          this.logger.error(`${logPrefix} - User not found in organization ${orgId}`);
+        if (!user || !user.clerkUserId) {
+          this.logger.error(`${logPrefix} - User not found in organization ${orgId} or missing clerkUserId`);
           throw new NotFoundException('User not found in your organization');
         }
 
         this.logger.log(`${logPrefix} - Creating new rewards record for user`);
+        // Set both owner relation (with clerkUserId) and ownerClerkUserId explicitly
         userRewards = this.userRewardsRepository.create({
-          owner: { uid: createRewardDto.owner },
+          owner: { clerkUserId: user.clerkUserId } as User,
+          ownerClerkUserId: user.clerkUserId, // Explicitly set the foreign key
           xpBreakdown: {
             tasks: 0,
             leads: 0,
@@ -180,8 +181,8 @@ export class RewardsService {
     return 'ROOKIE';
   }
 
-  async getUserRewards(reference: number, orgId?: string, branchId?: number, requestingUserId?: number) {
-    const logPrefix = `[getUserRewards] User ${requestingUserId} requesting rewards for user ${reference}`;
+  async getUserRewards(reference: string, orgId?: string, branchId?: number, requestingUserClerkId?: string) {
+    const logPrefix = `[getUserRewards] User ${requestingUserClerkId} requesting rewards for user ${reference}`;
     
     try {
       this.logger.log(`${logPrefix} - Starting getUserRewards process`);
@@ -193,9 +194,10 @@ export class RewardsService {
       }
 
       // Build where clause for organization and branch filtering
+      // Use clerkUserId instead of uid since reference is a Clerk user ID string
       const whereClause: any = {
         owner: { 
-          uid: reference,
+          clerkUserId: reference,
           organisationRef: orgId
         }
       };
@@ -208,7 +210,8 @@ export class RewardsService {
       this.logger.log(`${logPrefix} - Query whereClause:`, JSON.stringify(whereClause, null, 2));
 
       // Check if user is requesting their own rewards or has admin permissions
-      const isOwnRewards = requestingUserId === reference;
+      // Compare clerkUserId strings instead of numeric uid
+      const isOwnRewards = requestingUserClerkId && requestingUserClerkId === reference;
       this.logger.log(`${logPrefix} - Is requesting own rewards: ${isOwnRewards}`);
 
       this.logger.log(`${logPrefix} - Executing database query...`);
@@ -246,7 +249,7 @@ export class RewardsService {
 
       // Additional security: users can only see their own rewards unless they're admin
       if (!isOwnRewards) {
-        this.logger.warn(`${logPrefix} - Cross-user access: User ${requestingUserId} accessing rewards for user ${reference}`);
+        this.logger.warn(`${logPrefix} - Cross-user access: User ${requestingUserClerkId} accessing rewards for user ${reference}`);
         // Here you could add additional role-based checks
         // For now, we'll allow it but you may want to restrict this
       }

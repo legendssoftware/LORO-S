@@ -34,6 +34,7 @@ import { TaskType, TaskPriority, RepetitionType } from '../lib/enums/task.enums'
 import { formatDateSafely } from '../lib/utils/date.utils';
 import { parseCSV, ParsedLeadRow } from './utils/csv-parser.util';
 import { CreateTaskDto } from '../tasks/dto/create-task.dto';
+import { OrganisationHoursService } from '../organisation/services/organisation-hours.service';
 
 @Injectable()
 export class LeadsService {
@@ -69,6 +70,7 @@ export class LeadsService {
 		private readonly unifiedNotificationService: UnifiedNotificationService,
 		private readonly leadScoringService: LeadScoringService,
 		private readonly tasksService: TasksService,
+		private readonly organisationHoursService: OrganisationHoursService,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
 	}
@@ -504,9 +506,10 @@ export class LeadsService {
 					try {
 						const leadTemperature = createdLead.temperature || LeadTemperature.COLD;
 						const leadPriority = createdLead.priority ?? LeadPriority.MEDIUM;
-						const nextFollowUpDate = createdLead.nextFollowUpDate || this.calculateNextFollowUpDate(
+						const nextFollowUpDate = createdLead.nextFollowUpDate || await this.calculateNextFollowUpDate(
 							leadTemperature,
 							leadPriority,
+							orgId, // Pass orgId for org hours check
 						);
 
 					const taskDto: CreateTaskDto = {
@@ -571,24 +574,6 @@ export class LeadsService {
 		const startTime = Date.now();
 		const operationId = `FIND_ALL_LEADS_${Date.now()}`;
 		
-		this.logger.log(`[${operationId}] ========== LeadsService.findAll() Called ==========`);
-		this.logger.log(`[${operationId}] Parameters received:`, {
-			page,
-			limit,
-			orgId,
-			branchId,
-			userId,
-			userAccessLevel,
-			filters: {
-				status: filters?.status,
-				search: filters?.search ? `${filters.search.substring(0, 50)}...` : undefined,
-				hasDateRange: !!(filters?.startDate && filters?.endDate),
-				temperature: filters?.temperature,
-				minScore: filters?.minScore,
-				maxScore: filters?.maxScore,
-			},
-		});
-
 		try {
 			if (!orgId) {
 				this.logger.error(`[${operationId}] ❌ Organization ID is missing!`, {
@@ -1729,13 +1714,21 @@ export class LeadsService {
 
 			this.logger.debug(`📝 [LeadsService] Adding reactivation history entry for lead ${ref}`);
 
+			// Calculate next follow-up date based on org hours
+			const orgRef = lead.organisation?.clerkOrgId || lead.organisation?.ref || orgId;
+			const nextFollowUpDate = await this.calculateNextFollowUpDate(
+				LeadTemperature.COLD,
+				LeadPriority.MEDIUM,
+				orgRef,
+			);
+
 			// Update lead status and add history
 			await this.leadsRepository.update(ref, {
 				status: newStatus,
 				changeHistory: changeHistoryArray,
 				temperature: LeadTemperature.COLD, // Reset temperature to cold for reactivated leads
 				priority: LeadPriority.MEDIUM, // Reset priority to medium
-				nextFollowUpDate: this.calculateNextFollowUpDate(LeadTemperature.COLD, LeadPriority.MEDIUM), // Set proper follow-up date
+				nextFollowUpDate, // Set proper follow-up date
 			});
 
 			// Recalculate lead score
@@ -2751,7 +2744,8 @@ export class LeadsService {
 
 		// Set initial next follow-up date based on temperature and priority
 		if (!lead.nextFollowUpDate) {
-			lead.nextFollowUpDate = this.calculateNextFollowUpDate(lead.temperature, lead.priority);
+			const orgRef = lead.organisation?.clerkOrgId || lead.organisation?.ref;
+			lead.nextFollowUpDate = await this.calculateNextFollowUpDate(lead.temperature, lead.priority, orgRef);
 		}
 
 		// Initialize scoring data
@@ -2784,9 +2778,11 @@ export class LeadsService {
 
 		// Auto-set next follow-up date based on temperature and priority
 		if (updates.temperature && updates.temperature !== lead.temperature) {
-			updates.nextFollowUpDate = this.calculateNextFollowUpDate(
+			const orgRef = lead.organisation?.clerkOrgId || lead.organisation?.ref;
+			updates.nextFollowUpDate = await this.calculateNextFollowUpDate(
 				updates.temperature,
-				updates.priority || lead.priority
+				updates.priority || lead.priority,
+				orgRef,
 			);
 		}
 
@@ -3073,38 +3069,90 @@ export class LeadsService {
 
 	/**
 	 * Calculate next follow-up date based on temperature, priority, and business days
-	 * Ensures proper timing and avoids weekends
+	 * Ensures proper timing and avoids weekends and non-working days based on org hours
+	 * The next follow-up date must be the next day if it's not a Sunday or if it's a work day based on the org hours
 	 */
-	private calculateNextFollowUpDate(temperature: LeadTemperature, priority?: LeadPriority): Date {
+	private async calculateNextFollowUpDate(
+		temperature: LeadTemperature,
+		priority?: LeadPriority,
+		orgRef?: string,
+	): Promise<Date> {
 		const now = new Date();
-		let followUpDays = this.getFollowUpDaysForTemperature(temperature);
-
-		// Adjust follow-up timing based on priority
-		if (priority === LeadPriority.HIGH || priority === LeadPriority.CRITICAL) {
-			followUpDays = Math.max(1, Math.floor(followUpDays / 2)); // Accelerate high-priority leads
-		}
-
-		// Calculate the target date
-		const targetDate = new Date(now);
-		targetDate.setDate(targetDate.getDate() + followUpDays);
-
-		// Ensure we land on a business day (Monday-Friday)
-		const nextBusinessDay = this.getNextBusinessDay(targetDate);
+		
+		// Start with next day (tomorrow)
+		const nextDay = new Date(now);
+		nextDay.setDate(nextDay.getDate() + 1);
+		
+		// Get the next working day based on org hours (or fallback to business day)
+		const nextWorkingDay = await this.getNextWorkingDayBasedOnOrgHours(nextDay, orgRef);
 
 		// Set appropriate follow-up time based on temperature and priority
 		const followUpTime = this.calculateFollowUpTime(temperature, priority);
-		nextBusinessDay.setHours(followUpTime.hours, followUpTime.minutes, 0, 0);
+		nextWorkingDay.setHours(followUpTime.hours, followUpTime.minutes, 0, 0);
 
 		this.logger.debug(
-			`Next follow-up calculated: ${nextBusinessDay.toISOString()} ` +
-			`(Temperature: ${temperature}, Priority: ${priority || 'MEDIUM'}, Days: ${followUpDays})`
+			`Next follow-up calculated: ${nextWorkingDay.toISOString()} ` +
+			`(Temperature: ${temperature}, Priority: ${priority || 'MEDIUM'}, OrgRef: ${orgRef || 'none'})`
 		);
 
-		return nextBusinessDay;
+		return nextWorkingDay;
 	}
 
 	/**
-	 * Get the next business day (Monday-Friday)
+	 * Get the next working day based on organization hours
+	 * If org hours are available, checks weeklySchedule to determine working days
+	 * Falls back to Monday-Friday if no org hours are configured
+	 */
+	private async getNextWorkingDayBasedOnOrgHours(date: Date, orgRef?: string): Promise<Date> {
+		const result = new Date(date);
+		const dayOfWeek = result.getDay();
+
+		// If it's Sunday (0), move to Monday
+		if (dayOfWeek === 0) {
+			result.setDate(result.getDate() + 1);
+		}
+
+		// If orgRef is provided, check organization hours
+		if (orgRef) {
+			try {
+				const orgHours = await this.organisationHoursService.findDefault(orgRef);
+				
+				if (orgHours && orgHours.weeklySchedule) {
+					// Check up to 7 days ahead to find the next working day
+					for (let i = 0; i < 7; i++) {
+						const checkDate = new Date(result);
+						checkDate.setDate(result.getDate() + i);
+						const checkDayOfWeek = checkDate.getDay();
+						
+						// Map day of week to schedule key
+						const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+						const dayName = dayNames[checkDayOfWeek] as keyof typeof orgHours.weeklySchedule;
+						
+						// If this day is a working day according to org hours, use it
+						if (orgHours.weeklySchedule[dayName]) {
+							result.setDate(result.getDate() + i);
+							return result;
+						}
+					}
+					// If no working day found in 7 days, fall back to next Monday
+					result.setDate(result.getDate() + (8 - dayOfWeek));
+					return result;
+				}
+			} catch (error) {
+				this.logger.warn(`Failed to get org hours for ${orgRef}: ${error.message}`);
+			}
+		}
+
+		// Fallback: Ensure we land on a business day (Monday-Friday)
+		if (dayOfWeek === 6) { // Saturday
+			result.setDate(result.getDate() + 2); // Move to Monday
+		}
+
+		return result;
+	}
+
+	/**
+	 * Get the next business day (Monday-Friday) - kept for backward compatibility
 	 */
 	private getNextBusinessDay(date: Date): Date {
 		const result = new Date(date);

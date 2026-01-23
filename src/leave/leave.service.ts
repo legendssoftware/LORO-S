@@ -489,7 +489,7 @@ export class LeaveService {
 	}
 
 	async leavesByUser(
-		ref: number,
+		ref: string,
 		orgId?: string,
 		branchId?: number,
 		userId?: number,
@@ -497,12 +497,23 @@ export class LeaveService {
 		this.logger.log(`🔍 [LeaveService] Finding leaves for user ${ref}, orgId: ${orgId}, branchId: ${branchId}, userId: ${userId}`);
 
 		try {
-			// Build query conditions
-			const where: any = { owner: { uid: ref } };
+			// Build query conditions - ref is Clerk user ID string
+			const where: any = { owner: { clerkUserId: ref } };
 
-			// Add org and branch filters if provided
+			// Add org filter if provided - resolve Clerk org ID to organisation entity
 			if (orgId) {
-				where.organisation = { uid: orgId };
+				// Find organisation by Clerk org ID
+				const organisation = await this.organisationRepository.findOne({
+					where: [
+						{ clerkOrgId: orgId },
+						{ ref: orgId }
+					],
+				});
+				
+				if (organisation) {
+					// Use the organisation's uid for the filter since Leave.organisationUid is integer
+					where.organisation = { uid: organisation.uid };
+				}
 			}
 
 			if (branchId) {

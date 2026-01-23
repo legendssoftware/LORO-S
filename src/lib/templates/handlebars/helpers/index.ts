@@ -66,21 +66,46 @@ Handlebars.registerHelper('formatDate', function(date: string | Date, format?: s
     });
 });
 
-// Currency formatting helper
-Handlebars.registerHelper('formatCurrency', function(amount: number, currency: string = 'USD') {
-    const numAmount = typeof amount === 'string' ? parseFloat(amount) : amount;
+// Currency formatting helper - uses correct locale based on currency (defaults to ZAR)
+Handlebars.registerHelper('formatCurrency', function(amount: number, currency: string = 'ZAR') {
+    let numAmount = typeof amount === 'string' ? parseFloat(amount) : amount;
     
     // Return 0 if not a valid number
     if (typeof numAmount !== 'number' || isNaN(numAmount) || !isFinite(numAmount)) {
-        return new Intl.NumberFormat('en-ZA', {
-            style: 'currency',
-            currency: currency,
-        }).format(0);
+        numAmount = 0;
     }
     
-    return new Intl.NumberFormat('en-ZA', {
+    // Map currency to appropriate locale
+    const currencyLocaleMap: Record<string, string> = {
+        'ZAR': 'en-ZA',
+        'USD': 'en-US',
+        'EUR': 'en-EU',
+        'GBP': 'en-GB',
+        'AUD': 'en-AU',
+        'CAD': 'en-CA',
+        'CHF': 'de-CH',
+        'JPY': 'ja-JP',
+        'CNY': 'zh-CN',
+        'INR': 'en-IN',
+        'BWP': 'en-BW',
+        'ZMW': 'en-ZM',
+        'ZWL': 'en-ZW',
+        'MZN': 'pt-MZ',
+        'NGN': 'en-NG',
+        'KES': 'en-KE',
+        'TZS': 'en-TZ',
+        'UGX': 'en-UG',
+        'ETB': 'am-ET',
+        'GHS': 'en-GH',
+    };
+    
+    const locale = currencyLocaleMap[currency?.toUpperCase() || 'ZAR'] || 'en-ZA';
+    
+    return new Intl.NumberFormat(locale, {
         style: 'currency',
-        currency: currency,
+        currency: currency?.toUpperCase() || 'ZAR',
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
     }).format(numAmount);
 });
 

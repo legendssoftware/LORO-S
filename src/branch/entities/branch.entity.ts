@@ -1,6 +1,6 @@
 import { Organisation } from '../../organisation/entities/organisation.entity';
 import { GeneralStatus } from '../../lib/enums/status.enums';
-import { Column, Entity, ManyToOne, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, ManyToOne, OneToMany, PrimaryGeneratedColumn, JoinColumn } from 'typeorm';
 import { Tracking } from '../../tracking/entities/tracking.entity';
 import { News } from '../../news/entities/news.entity';
 import { Lead } from '../../leads/entities/lead.entity';
@@ -75,7 +75,11 @@ export class Branch {
 
 	// Relations
 	@ManyToOne(() => Organisation, (organisation) => organisation?.branches, { nullable: true })
+	@JoinColumn({ name: 'organisationUid', referencedColumnName: 'clerkOrgId' })
 	organisation: Organisation;
+
+	@Column({ type: 'varchar', nullable: true })
+	organisationUid: string;
 
 	@OneToMany(() => Tracking, (tracking) => tracking?.branch, { nullable: true })
 	trackings: Tracking[];

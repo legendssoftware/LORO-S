@@ -220,34 +220,8 @@ export class LeadsController {
 		const tokenFromAuth = authHeader ? authHeader.split(' ')[1] : undefined;
 		const tokenValue = tokenHeader || tokenFromAuth;
 		
-		this.logger.log(`[LeadsController] [${operationId}] Token Information:`, {
-			hasAuthorizationHeader: !!authHeader,
-			hasTokenHeader: !!tokenHeader,
-			authorizationPreview: authHeader ? `${authHeader.substring(0, 30)}...` : 'NOT PROVIDED',
-			tokenHeaderPreview: tokenHeader ? `${tokenHeader.substring(0, 20)}...` : 'NOT PROVIDED',
-			tokenValuePreview: tokenValue ? `${tokenValue.substring(0, 20)}...` : 'NOT EXTRACTED',
-		});
-		
 		// Log guard status (if user exists, guards have passed)
 		const guardsPassed = !!req.user;
-		this.logger.log(`[LeadsController] [${operationId}] Guard Status:`, {
-			guardsPassed,
-			clerkAuthGuardPassed: guardsPassed,
-			roleGuardPassed: guardsPassed,
-		});
-		
-		// Log user info from request
-		this.logger.log(`[LeadsController] [${operationId}] Request User Object:`, {
-			hasUser: !!req.user,
-			clerkUserId: req.user?.clerkUserId,
-			uid: req.user?.uid,
-			accessLevel: req.user?.accessLevel,
-			role: req.user?.role,
-			organisationRef: getClerkOrgId(req),
-			orgUid: getClerkOrgId(req),
-			branchUid: req.user?.branch?.uid,
-			userKeys: req.user ? Object.keys(req.user) : [],
-		});
 		
 		const orgId = getClerkOrgId(req);
 		if (!orgId) {
@@ -256,28 +230,6 @@ export class LeadsController {
 		const branchId = req.user?.branch?.uid;
 		const userId = req.user?.uid; // Use numeric uid (ClerkAuthGuard provides this)
 		const userAccessLevel = req.user?.accessLevel || req.user?.role;
-		
-		this.logger.log(`[LeadsController] [${operationId}] Extracted Values:`, {
-			orgId,
-			branchId,
-			userId,
-			userAccessLevel,
-			role: req.user?.role,
-		});
-		
-		this.logger.log(`[LeadsController] [${operationId}] Query Parameters:`, {
-			page,
-			limit,
-			status,
-			search: search ? `${search.substring(0, 30)}...` : undefined,
-			startDate,
-			endDate,
-			temperature,
-			minScore,
-			maxScore,
-			priority,
-			source,
-		});
 
 		const filters = {
 			...(status && { status }),
@@ -309,23 +261,6 @@ export class LeadsController {
 			this.logger.log(`[LeadsController] [${operationId}] ========== GET /leads Request Completed ==========`);
 			return result;
 		} catch (error) {
-			// Log detailed error information
-			this.logger.error(`[LeadsController] [${operationId}] ❌ Error in findAll:`, {
-				message: error instanceof Error ? error.message : 'Unknown error',
-				stack: error instanceof Error ? error.stack : undefined,
-				errorName: error instanceof Error ? error.name : typeof error,
-				statusCode: error instanceof BadRequestException ? 400 :
-				           error instanceof ForbiddenException ? 403 :
-				           error instanceof NotFoundException ? 404 :
-				           error instanceof InternalServerErrorException ? 500 : undefined,
-				orgId,
-				branchId,
-				userId,
-				userAccessLevel,
-				role: req.user?.role,
-				licensePlan: req.user?.licensePlan,
-				guardsPassed: !!req.user,
-			});
 			this.logger.error(`[LeadsController] [${operationId}] ========== GET /leads Request Failed ==========`);
 			
 			// Re-throw the error - NestJS will handle HTTP exception formatting

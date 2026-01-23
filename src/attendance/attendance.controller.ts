@@ -17,7 +17,7 @@ import {
 	ApiExtraModels,
 } from '@nestjs/swagger';
 import { getDynamicDate, getDynamicDateTime, getFutureDate, getPastDate, createApiDescription } from '../lib/utils/swagger-helpers';
-import { Controller, Post, Body, Param, Get, UseGuards, Query, UseInterceptors, Req, BadRequestException } from '@nestjs/common';
+import { Controller, Post, Body, Param, Get, UseGuards, Query, UseInterceptors, Req, BadRequestException, NotFoundException } from '@nestjs/common';
 import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
 import { CreateCheckInDto } from './dto/create.attendance.check.in.dto';
 import { CreateCheckOutDto } from './dto/create.attendance.check.out.dto';
@@ -39,6 +39,7 @@ import { User } from '../user/entities/user.entity';
 import { OvertimeReminderService } from './services/overtime.reminder.service';
 import { UserService } from '../user/user.service';
 import { MonthlyMetricsQueryDto } from './dto/monthly-metrics.dto';
+import { ClerkService } from '../clerk/clerk.service';
 
 // Reusable Schema Definitions for Swagger Documentation
 export class UserProfileSchema {
@@ -195,6 +196,7 @@ export class AttendanceController {
 		private readonly attendanceReportsService: AttendanceReportsService,
 		private readonly overtimeReminderService: OvertimeReminderService,
 		private readonly userService: UserService,
+		private readonly clerkService: ClerkService,
 	) {}
 
 	/**
@@ -3506,29 +3508,29 @@ Retrieves detailed attendance analytics for a specific user including historical
 	@ApiParam({
 		name: 'uid',
 		description:
-			'User ID to retrieve comprehensive attendance metrics for. Returns detailed analytics across multiple time periods and performance dimensions.',
-		type: 'number',
+			'User ID to retrieve comprehensive attendance metrics for. Accepts either a numeric user ID (uid) or a Clerk user ID (string starting with "user_"). Returns detailed analytics across multiple time periods and performance dimensions.',
+		type: 'string',
 		example: 45,
 		examples: {
+			numericUid: {
+				summary: '🔢 Numeric User ID',
+				description: 'Get comprehensive metrics using numeric user ID',
+				value: 45,
+			},
+			clerkUserId: {
+				summary: '👤 Clerk User ID',
+				description: 'Get comprehensive metrics using Clerk user ID (string format)',
+				value: 'user_38Q1H1gVq5AdRomEFRmOS7zhTNo',
+			},
 			regularEmployee: {
-				summary: '👤 Regular Employee',
+				summary: '👤 Regular Employee (Numeric)',
 				description: 'Get comprehensive metrics for regular employee',
 				value: 45,
 			},
 			seniorManager: {
-				summary: '👨‍💼 Senior Manager',
+				summary: '👨‍💼 Senior Manager (Numeric)',
 				description: 'Get comprehensive metrics for senior manager',
 				value: 123,
-			},
-			newHire: {
-				summary: '🆕 New Hire',
-				description: 'Get comprehensive metrics for recently hired employee',
-				value: 789,
-			},
-			topPerformer: {
-				summary: '⭐ Top Performer',
-				description: 'Get comprehensive metrics for high-performing employee',
-				value: 156,
 			},
 		},
 	})
@@ -3726,8 +3728,38 @@ Retrieves detailed attendance analytics for a specific user including historical
 			},
 		},
 	})
-	getUserAttendanceMetrics(@Param('uid') uid: number) {
-		return this.attendanceService.getUserAttendanceMetrics(uid);
+	async getUserAttendanceMetrics(@Param('uid') uid: string | number) {
+		// Resolve user ID: if string (Clerk ID), look up numeric uid; if number, use directly
+		let numericUid: number;
+
+		if (typeof uid === 'string') {
+			// Check if it's a Clerk user ID (starts with "user_") or a numeric string
+			if (uid.startsWith('user_')) {
+				// It's a Clerk user ID - resolve to numeric uid
+				const user = await this.clerkService.getUserByClerkId(uid);
+				if (!user) {
+					throw new NotFoundException(`User with Clerk ID ${uid} not found`);
+				}
+				numericUid = user.uid;
+			} else {
+				// It's a numeric string - convert to number
+				const parsed = Number(uid);
+				if (isNaN(parsed) || !isFinite(parsed)) {
+					throw new BadRequestException(`Invalid user ID format: ${uid}`);
+				}
+				numericUid = parsed;
+			}
+		} else {
+			// It's already a number
+			numericUid = uid;
+		}
+
+		// Validate the numeric uid
+		if (!numericUid || numericUid <= 0) {
+			throw new BadRequestException('Invalid user ID provided');
+		}
+
+		return this.attendanceService.getUserAttendanceMetrics(numericUid);
 	}
 
 	@Get('streak/current-week')

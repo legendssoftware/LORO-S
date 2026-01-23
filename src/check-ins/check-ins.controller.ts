@@ -61,9 +61,11 @@ export class CheckInsController {
 							duration: { type: 'string', nullable: true },
 							checkInLocation: { type: 'string' },
 							checkOutLocation: { type: 'string', nullable: true },
+							ownerClerkUserId: { type: 'string', description: 'Clerk user ID (string identifier) - key relationship field' },
+							organisationUid: { type: 'number', description: 'Organization UID (number) - key relationship field' },
 							owner: { type: 'object' },
 							client: { type: 'object', nullable: true },
-							branch: { type: 'object' },
+							branch: { type: 'object', nullable: true },
 						},
 					},
 				},
@@ -97,9 +99,11 @@ export class CheckInsController {
 							duration: { type: 'string', nullable: true },
 							checkInLocation: { type: 'string' },
 							checkOutLocation: { type: 'string', nullable: true },
+							ownerClerkUserId: { type: 'string', description: 'Clerk user ID (string identifier) - key relationship field' },
+							organisationUid: { type: 'number', description: 'Organization UID (number) - key relationship field' },
 							owner: { type: 'object' },
 							client: { type: 'object', nullable: true },
-							branch: { type: 'object' },
+							branch: { type: 'object', nullable: true },
 						},
 					},
 				},
@@ -135,16 +139,24 @@ export class CheckInsController {
 			type: 'object',
 			properties: {
 				message: { type: 'string', example: 'Success' },
+				checkInId: { type: 'number', description: 'ID of the created check-in' },
 				checkIn: {
 					type: 'object',
 					properties: {
 						uid: { type: 'number' },
 						checkInTime: { type: 'string', format: 'date-time' },
+						ownerClerkUserId: { type: 'string', description: 'Clerk user ID (string identifier) - key relationship field' },
+						organisationUid: { type: 'number', description: 'Organization UID (number) - key relationship field' },
 						user: { type: 'object' },
 						client: { 
 							type: 'object',
 							nullable: true, 
 							description: 'Associated client, if any'
+						},
+						branch: {
+							type: 'object',
+							nullable: true,
+							description: 'Associated branch, if any'
 						},
 						// Other check-in properties
 					},
@@ -167,7 +179,8 @@ export class CheckInsController {
 			throw new BadRequestException('Organization context required');
 		}
 		const branchId = req.user?.branch?.uid;
-		return this.checkInsService.checkIn(createCheckInDto, orgId, branchId);
+		const clerkUserId = req.user?.clerkUserId;
+		return this.checkInsService.checkIn(createCheckInDto, orgId, branchId, clerkUserId);
 	}
 
 	@Get('status/:reference')
@@ -225,12 +238,16 @@ export class CheckInsController {
 			type: 'object',
 			properties: {
 				message: { type: 'string', example: 'Success' },
+				duration: { type: 'string', description: 'Duration of the check-in session' },
+				checkInId: { type: 'number', description: 'ID of the check-in record' },
 				checkOut: {
 					type: 'object',
 					properties: {
 						uid: { type: 'number' },
 						checkInTime: { type: 'string', format: 'date-time' },
 						checkOutTime: { type: 'string', format: 'date-time' },
+						ownerClerkUserId: { type: 'string', description: 'Clerk user ID (string identifier) - key relationship field' },
+						organisationUid: { type: 'number', description: 'Organization UID (number) - key relationship field' },
 						// Other check-out properties
 					},
 				},
@@ -261,7 +278,8 @@ export class CheckInsController {
 			throw new BadRequestException('Organization context required');
 		}
 		const branchId = req.user?.branch?.uid;
-		return this.checkInsService.checkOut(createCheckOutDto, orgId, branchId);
+		const clerkUserId = req.user?.clerkUserId;
+		return this.checkInsService.checkOut(createCheckOutDto, orgId, branchId, clerkUserId);
 	}
 
 	@Post('client/:clientId')
@@ -296,12 +314,13 @@ export class CheckInsController {
 			throw new BadRequestException('Organization context required');
 		}
 		const branchId = req.user?.branch?.uid;
+		const clerkUserId = req.user?.clerkUserId;
 		// Add client to the DTO
 		const checkInWithClient = {
 			...createCheckInDto,
 			client: { uid: clientId }
 		};
-		return this.checkInsService.checkIn(checkInWithClient, orgId, branchId);
+		return this.checkInsService.checkIn(checkInWithClient, orgId, branchId, clerkUserId);
 	}
 
 	@Patch('photo/check-in')
@@ -361,7 +380,8 @@ export class CheckInsController {
 			throw new BadRequestException('Organization context required');
 		}
 		const branchId = req.user?.branch?.uid;
-		return this.checkInsService.updateCheckOutPhoto(updateDto.checkInId, updateDto.photoUrl, orgId, branchId);
+		const clerkUserId = req.user?.clerkUserId;
+		return this.checkInsService.updateCheckOutPhoto(updateDto.checkInId, updateDto.photoUrl, orgId, branchId, clerkUserId);
 	}
 
 	@Patch('visit-details')
@@ -391,6 +411,7 @@ export class CheckInsController {
 			throw new BadRequestException('Organization context required');
 		}
 		const branchId = req.user?.branch?.uid;
+		const clerkUserId = req.user?.clerkUserId;
 		return this.checkInsService.updateVisitDetails(
 			updateDto.checkInId,
 			updateDto.client?.uid,
@@ -398,6 +419,7 @@ export class CheckInsController {
 			updateDto.resolution,
 			orgId,
 			branchId,
+			clerkUserId,
 		);
 	}
 }

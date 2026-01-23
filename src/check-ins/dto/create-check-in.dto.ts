@@ -38,15 +38,16 @@ export class CreateCheckInDto {
         uid: number;
     };
 
-    @IsNotEmpty()
+    @IsOptional()
     @IsObject()
     @ApiProperty({
         example: {
             uid: 1
         },
-        description: 'The branch reference code of the attendance check in'
+        description: 'The branch reference code of the attendance check in (optional)',
+        required: false
     })
-    branch: { uid: number };
+    branch?: { uid: number };
 
     @IsOptional()
     @IsObject()

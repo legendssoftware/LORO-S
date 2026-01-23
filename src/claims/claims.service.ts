@@ -3,11 +3,11 @@ import { CreateClaimDto } from './dto/create-claim.dto';
 import { UpdateClaimDto } from './dto/update-claim.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Claim } from './entities/claim.entity';
-import { IsNull, Repository, DeepPartial, Not, Between } from 'typeorm';
+import { IsNull, Repository, DeepPartial, Not, Between, In } from 'typeorm';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { endOfDay } from 'date-fns';
 import { startOfDay } from 'date-fns';
-import { ClaimCategory, ClaimStatus } from '../lib/enums/finance.enums';
+import { ClaimCategory, ClaimStatus, Currency } from '../lib/enums/finance.enums';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { NotificationStatus, NotificationType } from '../lib/enums/notification.enums';
 import { EmailType } from '../lib/enums/email.enums';
@@ -54,6 +54,8 @@ export class ClaimsService {
 		private userRepository: Repository<User>,
 		@InjectRepository(Organisation)
 		private organisationRepository: Repository<Organisation>,
+		@InjectRepository(Approval)
+		private approvalRepository: Repository<Approval>,
 		private readonly approvalsService: ApprovalsService,
 		private readonly unifiedNotificationService: UnifiedNotificationService,
 		@Inject(CACHE_MANAGER) private cacheManager: Cache,
@@ -83,6 +85,36 @@ export class ClaimsService {
 		return org?.uid ?? null;
 	}
 
+	/**
+	 * Get organization admins for notifications
+	 */
+	private async getOrganizationAdmins(orgId?: string): Promise<User[]> {
+		if (!orgId) {
+			return [];
+		}
+
+		try {
+			const orgUid = await this.resolveOrgId(orgId);
+			if (!orgUid) {
+				return [];
+			}
+
+			const admins = await this.userRepository.find({
+				where: {
+					organisation: { uid: orgUid },
+					accessLevel: In([AccessLevel.ADMIN, AccessLevel.OWNER]),
+					isDeleted: false,
+				},
+				select: ['uid', 'name', 'surname', 'email', 'accessLevel'],
+			});
+
+			return admins;
+		} catch (error) {
+			this.logger.error(`Error fetching organization admins for org ${orgId}: ${error.message}`);
+			return [];
+		}
+	}
+
 	// Helper method to invalidate claims cache
 	private invalidateClaimsCache(claim: Claim) {
 		// Emit events for cache invalidation
@@ -97,13 +129,112 @@ export class ClaimsService {
 		});
 	}
 
-	private formatCurrency(amount: number): string {
-		return new Intl.NumberFormat(this.currencyLocale, {
+	private formatCurrency(amount: number, currency?: Currency): string {
+		// If currency is provided, use it; otherwise fall back to default
+		const currencyCode = currency || this.currencyCode;
+		
+		// Map currency enum to currency code, symbol, and locale
+		let currencySymbol: string;
+		let locale: string;
+		
+		if (currency) {
+			switch (currency) {
+				case Currency.ZAR:
+					currencySymbol = 'R';
+					locale = 'en-ZA';
+					break;
+				case Currency.USD:
+					currencySymbol = '$';
+					locale = 'en-US';
+					break;
+				case Currency.EUR:
+					currencySymbol = '€';
+					locale = 'en-EU';
+					break;
+				case Currency.GBP:
+					currencySymbol = '£';
+					locale = 'en-GB';
+					break;
+				case Currency.AUD:
+					currencySymbol = 'A$';
+					locale = 'en-AU';
+					break;
+				case Currency.CAD:
+					currencySymbol = 'C$';
+					locale = 'en-CA';
+					break;
+				case Currency.CHF:
+					currencySymbol = 'CHF';
+					locale = 'de-CH';
+					break;
+				case Currency.JPY:
+					currencySymbol = '¥';
+					locale = 'ja-JP';
+					break;
+				case Currency.CNY:
+					currencySymbol = '¥';
+					locale = 'zh-CN';
+					break;
+				case Currency.INR:
+					currencySymbol = '₹';
+					locale = 'en-IN';
+					break;
+				case Currency.BWP:
+					currencySymbol = 'P';
+					locale = 'en-BW';
+					break;
+				case Currency.ZMW:
+					currencySymbol = 'ZK';
+					locale = 'en-ZM';
+					break;
+				case Currency.ZWL:
+					currencySymbol = 'ZiG';
+					locale = 'en-ZW';
+					break;
+				case Currency.MZN:
+					currencySymbol = 'MT';
+					locale = 'pt-MZ';
+					break;
+				case Currency.NGN:
+					currencySymbol = '₦';
+					locale = 'en-NG';
+					break;
+				case Currency.KES:
+					currencySymbol = 'KSh';
+					locale = 'en-KE';
+					break;
+				case Currency.TZS:
+					currencySymbol = 'TSh';
+					locale = 'en-TZ';
+					break;
+				case Currency.UGX:
+					currencySymbol = 'USh';
+					locale = 'en-UG';
+					break;
+				case Currency.ETB:
+					currencySymbol = 'Br';
+					locale = 'am-ET';
+					break;
+				case Currency.GHS:
+					currencySymbol = 'GH₵';
+					locale = 'en-GH';
+					break;
+				default:
+					currencySymbol = this.currencySymbol;
+					locale = this.currencyLocale;
+					break;
+			}
+		} else {
+			currencySymbol = this.currencySymbol;
+			locale = this.currencyLocale;
+		}
+		
+		return new Intl.NumberFormat(locale, {
 			style: 'currency',
-			currency: this.currencyCode,
+			currency: currencyCode,
 		})
 			.format(amount)
-			.replace(this.currencyCode, this.currencySymbol);
+			.replace(currencyCode, currencySymbol);
 	}
 
 	/**
@@ -216,9 +347,11 @@ export class ClaimsService {
 			shareTokenExpiresAt.setDate(shareTokenExpiresAt.getDate() + 30); // 30 days expiry
 
 			// Enhanced data mapping with proper validation - set UIDs explicitly
+			// Ensure currency defaults to ZAR if not provided
 			const claimData = {
 				...createClaimDto,
 				amount: createClaimDto.amount.toString(),
+				currency: createClaimDto.currency || Currency.ZAR, // Default to ZAR if not provided
 				organisation: organisation,
 				branch: branch,
 				ownerUid: Number(user.uid), // Set ownerUid explicitly
@@ -289,7 +422,7 @@ export class ClaimsService {
 								const emailData: ClaimEmailData = {
 									name: user.name || user.email,
 									claimId: claim.uid,
-									amount: this.formatCurrency(Number(claim.amount) || 0),
+									amount: this.formatCurrency(Number(claim.amount) || 0, claim.currency),
 									category: claim.category || 'General',
 									status: claim.status || ClaimStatus.PENDING,
 									comments: claim.comments || '',
@@ -314,8 +447,18 @@ export class ClaimsService {
 								// Send email to the user who created the claim
 								this.eventEmitter.emit('send.email', EmailType.CLAIM_CREATED, [user.email], emailData);
 
-								// Send admin notification email
-								this.eventEmitter.emit('send.email', EmailType.CLAIM_CREATED_ADMIN, [], emailData);
+								// Send admin notification email - only if there are admins
+								try {
+									const admins = await this.getOrganizationAdmins(orgId);
+									if (admins && admins.length > 0) {
+										const adminEmails = admins.map(admin => admin.email).filter(Boolean);
+										if (adminEmails.length > 0) {
+											this.eventEmitter.emit('send.email', EmailType.CLAIM_CREATED_ADMIN, adminEmails, emailData);
+										}
+									}
+								} catch (adminError) {
+									this.logger.error(`❌ [ClaimsService] Error getting organization admins for claim creation email:`, adminError.message);
+								}
 
 								// Approvers will receive notifications when approval workflow is initialized
 
@@ -327,7 +470,7 @@ export class ClaimsService {
 										{
 											userName: user.name || user.email,
 											claimCategory: claim.category || 'General',
-											claimAmount: this.formatCurrency(Number(claim.amount) || 0),
+											claimAmount: this.formatCurrency(Number(claim.amount) || 0, claim.currency),
 											claimId: claim.uid,
 											status: claim.status || ClaimStatus.PENDING,
 										},
@@ -439,6 +582,12 @@ export class ClaimsService {
 				throw new UnauthorizedException('User authentication required');
 			}
 
+			// Resolve Clerk org ID to numeric uid if provided
+			const orgUid = orgId ? await this.resolveOrgId(orgId) : null;
+			if (orgId && !orgUid) {
+				this.logger.warn(`⚠️ [ClaimsService] Organization not found for ID: ${orgId}`);
+			}
+
 			// Check if user has elevated permissions
 			const canViewAll = this.canViewAllClaims(userAccessLevel);
 
@@ -476,9 +625,9 @@ export class ClaimsService {
 				);
 			}
 
-			// Add organization filter if provided
-			if (orgId) {
-				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+			// Add organization filter if provided - use resolved numeric uid
+			if (orgUid) {
+				queryBuilder.andWhere('organisation.uid = :orgUid', { orgUid });
 			}
 
 			// Add branch filter if provided
@@ -510,7 +659,7 @@ export class ClaimsService {
 
 			const formattedClaims = claims?.map((claim) => ({
 				...claim,
-				amount: this.formatCurrency(Number(claim?.amount) || 0),
+				amount: this.formatCurrency(Number(claim?.amount) || 0, claim?.currency),
 			}));
 
 			const duration = Date.now() - startTime;
@@ -604,13 +753,13 @@ export class ClaimsService {
 				.createQueryBuilder('claim')
 				.leftJoinAndSelect('claim.organisation', 'organisation');
 
-			// Add organization filter if provided - use organisationUid directly
-			if (orgId) {
-				allClaimsQuery.andWhere('claim.organisationUid = :orgId', { orgId: Number(orgId) });
+			// Add organization filter if provided - use resolved numeric orgUid
+			if (orgUid) {
+				allClaimsQuery.andWhere('claim.organisationUid = :orgUid', { orgUid: Number(orgUid) });
 			}
 
 			// Add branch filter if provided - use branchUid directly
-			if (branchId && claim.branch) {
+			if (branchId !== undefined && branchId !== null && claim.branch) {
 				allClaimsQuery
 					.leftJoinAndSelect('claim.branch', 'branch')
 					.andWhere('claim.branchUid = :branchId', { branchId: Number(branchId) });
@@ -621,7 +770,7 @@ export class ClaimsService {
 
 			const formattedClaim = {
 				...claim,
-				amount: this.formatCurrency(Number(claim?.amount) || 0),
+				amount: this.formatCurrency(Number(claim?.amount) || 0, claim?.currency),
 			};
 
 			const duration = Date.now() - startTime;
@@ -907,13 +1056,32 @@ export class ClaimsService {
 						return;
 					}
 
+					// Update approval workflow when claim is updated (mirrors creation pattern)
+					try {
+						if (updatedClaim.owner) {
+							await this.updateClaimApprovalWorkflow(updatedClaim, updatedClaim.owner, {
+								amount: claim.amount,
+								category: claim.category,
+								comments: claim.comments,
+								currency: claim.currency,
+								documentUrl: claim.documentUrl,
+							});
+						}
+					} catch (approvalUpdateError) {
+						this.logger.error(
+							`❌ [ClaimsService] Error updating approval workflow for claim ${ref}:`,
+							approvalUpdateError.message,
+						);
+						// Don't fail claim update if approval update fails
+					}
+
 					// 1. Send email notification for status change
 					try {
 						if (updatedClaim.owner?.email) {
 							const baseEmailData: ClaimStatusUpdateEmailData = {
 								name: updatedClaim.owner.name || updatedClaim.owner.email,
 								claimId: updatedClaim.uid,
-								amount: this.formatCurrency(Number(updatedClaim.amount) || 0),
+								amount: this.formatCurrency(Number(updatedClaim.amount) || 0, updatedClaim.currency),
 								category: updatedClaim.category || 'General',
 								status: updatedClaim.status,
 								comments: updatedClaim.comments || '',
@@ -975,7 +1143,7 @@ export class ClaimsService {
 						title: 'Claim Updated',
 						message: `Claim #${updatedClaim?.uid} status changed to ${updateClaimDto.status || 'updated'}`,
 						status: NotificationStatus.UNREAD,
-						owner: claim.owner,
+						owner: updatedClaim.owner || claim.owner,
 					};
 
 					const recipients = [AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.SUPERVISOR];
@@ -984,20 +1152,25 @@ export class ClaimsService {
 
 					// 3. Award XP for claim update
 					try {
-						await this.rewardsService.awardXP(
-							{
-								owner: claim.owner.uid,
-								amount: XP_VALUES.CLAIM,
-								action: XP_VALUES_TYPES.CLAIM,
-								source: {
-									id: String(claim.owner.uid),
-									type: XP_VALUES_TYPES.CLAIM,
-									details: 'Claim reward',
+						const owner = updatedClaim.owner || claim.owner;
+						if (owner && owner.uid) {
+							await this.rewardsService.awardXP(
+								{
+									owner: owner.uid,
+									amount: XP_VALUES.CLAIM,
+									action: XP_VALUES_TYPES.CLAIM,
+									source: {
+										id: String(owner.uid),
+										type: XP_VALUES_TYPES.CLAIM,
+										details: 'Claim reward',
+									},
 								},
-							},
-							orgId,
-							branchId,
-						);
+								orgId,
+								branchId,
+							);
+						} else {
+							this.logger.warn(`⚠️ [ClaimsService] Cannot award XP: claim owner is null for claim ${ref}`);
+						}
 					} catch (xpError) {
 						this.logger.error(`❌ [ClaimsService] Failed to award XP for claim update:`, xpError.message);
 					}
@@ -1505,22 +1678,25 @@ export class ClaimsService {
 				priority = ApprovalPriority.HIGH;
 			}
 
-			// Calculate approval deadline based on amount and priority
-			const deadline = this.calculateClaimApprovalDeadline(amount, priority);
+			// Calculate approval deadline - always 7 days from claim creation
+			const deadline = this.calculateClaimApprovalDeadline(claim.createdAt);
+
+			// Use claim currency or default to ZAR if not set
+			const claimCurrency = claim.currency || Currency.ZAR;
 
 			// Create approval request
 			const approvalDto = {
-				title: `${claim.category || 'General'} Claim - ${this.formatCurrency(amount)}`,
+				title: `${claim.category || 'General'} Claim - ${this.formatCurrency(amount, claimCurrency)}`,
 				description: `${requester.name || requester.email} has submitted a ${
 					claim.category || 'general'
-				} claim for ${this.formatCurrency(amount)}. ${claim.comments ? 'Details: ' + claim.comments : ''}`,
+				} claim for ${this.formatCurrency(amount, claimCurrency)}. ${claim.comments ? 'Details: ' + claim.comments : ''}`,
 				type: ApprovalType.EXPENSE_CLAIM,
 				priority: priority,
 				flowType: ApprovalFlow.SEQUENTIAL, // Sequential approval for claims
 				entityId: claim.uid,
 				entityType: 'claim',
 				amount: amount,
-				currency: this.currencyCode,
+				currency: claimCurrency, // Use claim currency instead of default currencyCode
 				deadline: deadline.toISOString(),
 				requiresSignature: amount > 10000, // Require signature for high-value claims
 				isUrgent: priority === ApprovalPriority.CRITICAL || priority === ApprovalPriority.HIGH,
@@ -1535,7 +1711,7 @@ export class ClaimsService {
 					claimId: claim.uid,
 					claimCategory: claim.category,
 					claimAmount: amount,
-					currency: this.currencyCode,
+					currency: claimCurrency, // Use claim currency instead of default currencyCode
 					documentUrl: claim.documentUrl,
 					requesterName: requester.name,
 					requesterEmail: requester.email,
@@ -1596,22 +1772,25 @@ export class ClaimsService {
 				priority = ApprovalPriority.HIGH;
 			}
 
-			// Calculate approval deadline based on amount and priority
-			const deadline = this.calculateClaimApprovalDeadline(amount, priority);
+			// Calculate approval deadline - always 7 days from claim creation
+			const deadline = this.calculateClaimApprovalDeadline(claim.createdAt);
+
+			// Use claim currency or default to ZAR if not set
+			const claimCurrency = claim.currency || Currency.ZAR;
 
 			// Create approval request DTO
 			const approvalDto = {
-				title: `${claim.category || 'General'} Claim - ${this.formatCurrency(amount)}`,
+				title: `${claim.category || 'General'} Claim - ${this.formatCurrency(amount, claimCurrency)}`,
 				description: `${requester.name || requester.email} has submitted a ${
 					claim.category || 'general'
-				} claim for ${this.formatCurrency(amount)}. ${claim.comments ? 'Details: ' + claim.comments : ''}`,
+				} claim for ${this.formatCurrency(amount, claimCurrency)}. ${claim.comments ? 'Details: ' + claim.comments : ''}`,
 				type: ApprovalType.EXPENSE_CLAIM,
 				priority: priority,
 				flowType: ApprovalFlow.SEQUENTIAL,
 				entityId: claim.uid,
 				entityType: 'claim',
 				amount: amount,
-				currency: this.currencyCode,
+				currency: claimCurrency, // Use claim currency instead of default currencyCode
 				deadline: deadline.toISOString(),
 				requiresSignature: amount > 10000,
 				isUrgent: priority === ApprovalPriority.CRITICAL || priority === ApprovalPriority.HIGH,
@@ -1626,7 +1805,7 @@ export class ClaimsService {
 					claimId: claim.uid,
 					claimCategory: claim.category,
 					claimAmount: amount,
-					currency: this.currencyCode,
+					currency: claimCurrency, // Use claim currency instead of default currencyCode
 					documentUrl: claim.documentUrl,
 					requesterName: requester.name,
 					requesterEmail: requester.email,
@@ -1644,10 +1823,13 @@ export class ClaimsService {
 			// or modify ApprovalsService to accept an optional transactional manager
 			
 			// For now, create approval directly using transactional manager
+			// Get Clerk org ID from requester's organisationRef or organisation relation
+			const clerkOrgId = requester.organisationRef || requester.organisation?.clerkOrgId || requester.organisation?.ref || '';
+			
 			const approval = transactionalEntityManager.create(Approval, {
 				...approvalDto,
 				requesterUid: requester.uid,
-				organisationRef: requester.organisationRef?.toString() || '',
+				organisationRef: clerkOrgId,
 				branchUid: requester.branch?.uid,
 				requestSource: 'web',
 				status: ApprovalStatus.PENDING,
@@ -1672,32 +1854,137 @@ export class ClaimsService {
 	}
 
 	/**
-	 * Calculate appropriate deadline for claim approval based on amount and priority
+	 * Calculate appropriate deadline for claim approval
+	 * The deadline should always be seven days from the time of creation of the lead (claim creation date)
 	 */
-	private calculateClaimApprovalDeadline(amount: number, priority: ApprovalPriority): Date {
-		const now = new Date();
+	private calculateClaimApprovalDeadline(leadCreationDate: Date): Date {
+		// Always return 7 days from the lead/claim creation date
+		const deadline = new Date(leadCreationDate);
+		deadline.setDate(deadline.getDate() + 7);
+		deadline.setHours(17, 0, 0, 0); // 5 PM on the 7th day
+		return deadline;
+	}
 
-		if (priority === ApprovalPriority.CRITICAL) {
-			// Critical claims - 4 hours
-			return new Date(now.getTime() + 4 * 60 * 60 * 1000);
-		} else if (priority === ApprovalPriority.HIGH || amount > 50000) {
-			// High priority or high value - 1 business day
-			const deadline = new Date(now);
-			deadline.setDate(deadline.getDate() + 1);
-			deadline.setHours(17, 0, 0, 0); // 5 PM next day
-			return deadline;
-		} else if (priority === ApprovalPriority.MEDIUM) {
-			// Medium priority - 3 business days
-			const deadline = new Date(now);
-			deadline.setDate(deadline.getDate() + 3);
-			deadline.setHours(17, 0, 0, 0); // 5 PM in 3 days
-			return deadline;
-		} else {
-			// Low priority - 5 business days
-			const deadline = new Date(now);
-			deadline.setDate(deadline.getDate() + 5);
-			deadline.setHours(17, 0, 0, 0); // 5 PM in 5 days
-			return deadline;
+	/**
+	 * Find the approval associated with a claim
+	 */
+	private async findClaimApproval(claimUid: number): Promise<Approval | null> {
+		try {
+			const approval = await this.approvalRepository.findOne({
+				where: {
+					entityType: 'claim',
+					entityId: claimUid,
+				},
+				order: { createdAt: 'DESC' }, // Get most recent if multiple exist
+			});
+
+			return approval || null;
+		} catch (error) {
+			this.logger.error(`❌ [ClaimsService] Error finding approval for claim ${claimUid}:`, error.message);
+			return null;
+		}
+	}
+
+	/**
+	 * Update approval workflow when claim is updated
+	 * Mirrors the pattern of initializeClaimApprovalWorkflowTransactional() but for updates
+	 */
+	private async updateClaimApprovalWorkflow(
+		claim: Claim,
+		requester: User,
+		previousClaimData?: Partial<Claim>,
+	): Promise<void> {
+		try {
+			this.logger.log(`🔄 [ClaimsService] Updating approval workflow for claim ${claim.uid}`);
+
+			// Find existing approval
+			const approval = await this.findClaimApproval(claim.uid);
+			if (!approval) {
+				this.logger.warn(`⚠️ [ClaimsService] No approval found for claim ${claim.uid}`);
+				return;
+			}
+
+			// Check if approval can be modified
+			if (approval.status === ApprovalStatus.APPROVED || approval.status === ApprovalStatus.REJECTED) {
+				this.logger.log(
+					`ℹ️ [ClaimsService] Approval ${approval.uid} is ${approval.status}, skipping update`,
+				);
+				return;
+			}
+
+			// Recalculate priority based on updated claim amount and category (same logic as creation)
+			let priority = ApprovalPriority.MEDIUM;
+			const amount = parseFloat(claim.amount) || 0;
+
+			if (amount > 100000) {
+				priority = ApprovalPriority.CRITICAL;
+			} else if (amount > 50000) {
+				priority = ApprovalPriority.HIGH;
+			} else if (amount < 1000) {
+				priority = ApprovalPriority.LOW;
+			}
+
+			// Special priority for certain categories
+			if (claim.category === ClaimCategory.ANNOUNCEMENT) {
+				priority = ApprovalPriority.HIGH;
+			}
+
+			// Calculate approval deadline - always 7 days from claim creation
+			const deadline = this.calculateClaimApprovalDeadline(claim.createdAt);
+
+			// Use claim currency or default to ZAR if not set
+			const claimCurrency = claim.currency || Currency.ZAR;
+
+			// Prepare update data
+			const updateData: Partial<Approval> = {
+				title: `${claim.category || 'General'} Claim - ${this.formatCurrency(amount, claimCurrency)}`,
+				description: `${requester.name || requester.email} has submitted a ${
+					claim.category || 'general'
+				} claim for ${this.formatCurrency(amount, claimCurrency)}. ${claim.comments ? 'Details: ' + claim.comments : ''}`,
+				priority: priority,
+				amount: amount,
+				currency: claimCurrency,
+				deadline: deadline,
+				requiresSignature: amount > 10000,
+				isUrgent: priority === ApprovalPriority.CRITICAL || priority === ApprovalPriority.HIGH,
+				metadata: {
+					...approval.metadata,
+					claimId: claim.uid,
+					claimCategory: claim.category,
+					claimAmount: amount,
+					currency: claimCurrency,
+					documentUrl: claim.documentUrl,
+					requesterName: requester.name,
+					requesterEmail: requester.email,
+					branchName: claim.branch?.name,
+					submittedAt: claim.createdAt,
+					updatedAt: new Date(),
+				},
+				entityData: {
+					claimId: claim.uid,
+					claimCategory: claim.category,
+					claimAmount: amount,
+					currency: claimCurrency,
+					documentUrl: claim.documentUrl,
+					comments: claim.comments,
+					status: claim.status,
+				},
+			};
+
+			// Update approval
+			await this.approvalRepository.update({ uid: approval.uid }, updateData);
+
+			// Cache invalidation will be handled by the approval update flow if needed
+
+			this.logger.log(
+				`✅ [ClaimsService] Approval workflow updated: approval ${approval.uid} for claim ${claim.uid}`,
+			);
+		} catch (error) {
+			this.logger.error(
+				`❌ [ClaimsService] Error updating approval workflow for claim ${claim.uid}:`,
+				error.message,
+			);
+			// Don't throw - claim update should succeed even if approval update fails
 		}
 	}
 
@@ -1724,7 +2011,7 @@ export class ClaimsService {
 				message: process.env.SUCCESS_MESSAGE || 'Success',
 				claim: {
 					...claim,
-					amount: this.formatCurrency(Number(claim.amount) || 0),
+					amount: this.formatCurrency(Number(claim.amount) || 0, claim.currency),
 				},
 			};
 		} catch (error) {
@@ -1877,7 +2164,7 @@ export class ClaimsService {
 				const emailData: ClaimStatusUpdateEmailData = {
 					name: claim.owner.name || claim.owner.email,
 					claimId: claim.uid,
-					amount: this.formatCurrency(Number(claim.amount) || 0),
+					amount: this.formatCurrency(Number(claim.amount) || 0, claim.currency),
 					category: claim.category || 'General',
 					status: newStatus,
 					comments: updateFields.comments || '',
@@ -1939,7 +2226,7 @@ export class ClaimsService {
 						{
 							userName: claim.owner.name || claim.owner.email,
 							claimCategory: claim.category || 'General',
-							claimAmount: this.formatCurrency(Number(claim.amount) || 0),
+							claimAmount: this.formatCurrency(Number(claim.amount) || 0, claim.currency),
 							claimId: claim.uid,
 							newStatus: newStatus,
 							previousStatus: previousStatus,

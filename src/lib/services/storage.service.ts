@@ -71,12 +71,34 @@ export class StorageService implements OnModuleInit {
 		fileSize: number,
 		ownerId?: number,
 		branchId?: number,
+		organisationId?: number,
 	): Promise<Doc> {
 		// Get content type for content field
 		const contentType = mimeType.split('/')[0];
 
 		// Use docId for description if available
 		const description = metadata?.docId?.toString() || '';
+
+		// Get user's clerkUserId if ownerId is provided
+		// The Doc entity uses ownerClerkUserId (string) as the join column, not uid
+		let ownerClerkUserId: string | null = null;
+		if (ownerId) {
+			try {
+				const userRepo = this.connection.getRepository(User);
+				const user = await userRepo.findOne({
+					where: { uid: ownerId },
+					select: ['uid', 'clerkUserId'],
+				});
+
+				if (user?.clerkUserId) {
+					ownerClerkUserId = user.clerkUserId;
+				} else {
+					this.logger.warn(`User with uid ${ownerId} not found or missing clerkUserId`);
+				}
+			} catch (error) {
+				this.logger.error(`Error finding user for ownerId ${ownerId}: ${error.message}`);
+			}
+		}
 
 		const doc = this.docsRepository.create({
 			title: originalName,
@@ -90,8 +112,11 @@ export class StorageService implements OnModuleInit {
 			isActive: true,
 			isPublic: false,
 			description, // Use docId for description
-			owner: ownerId ? ({ uid: ownerId } as any) : null,
+			owner: ownerClerkUserId ? ({ clerkUserId: ownerClerkUserId } as User) : null,
+			ownerClerkUserId: ownerClerkUserId || null, // Explicitly set the foreign key column
 			branch: branchId ? ({ uid: branchId } as any) : null,
+			branchUid: branchId || null, // Explicitly set the foreign key column
+			organisationUid: organisationId || null,
 		});
 
 		return await this.docsRepository.save(doc);
@@ -206,20 +231,13 @@ export class StorageService implements OnModuleInit {
 				file.size,
 				userOwnerId,
 				userBranchId,
-			).then(async (doc) => {
-				// Set organization if found
-				if (organisationId) {
-					await this.docsRepository.update(doc.uid, {
-						organisation: { uid: organisationId } as any,
-					});
-				}
-				return doc;
-			}).catch((error) => {
+				organisationId,
+			).catch((error) => {
 				this.logger.error(`Failed to create doc record: ${error.message}`);
 				return null;
 			});
 
-			// Wait for doc creation but don't block on organization update
+			// Wait for doc creation (organisationUid is set during creation)
 			const doc = await docPromise;
 
 			return {
