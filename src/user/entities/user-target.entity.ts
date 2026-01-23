@@ -323,7 +323,11 @@ export class UserTarget {
 	updatedAt: Date;
 
 	@OneToOne(() => User, (user) => user.userTarget)
+	@JoinColumn({ name: 'userClerkUserId', referencedColumnName: 'clerkUserId' })
 	user: User;
+
+	@Column({ nullable: true })
+	userClerkUserId: string;
 
 	/**
 	 * Auto-calculate totalCost before insert

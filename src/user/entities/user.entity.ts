@@ -41,11 +41,8 @@ export class User {
 	@PrimaryGeneratedColumn()
 	uid: number;
 
-	@Column({ unique: true, nullable: false })
-	username: string;
-
-	@Column({ nullable: false })
-	password: string;
+	@Column({ unique: true, nullable: true })
+	username: string | null; // Optional - users synced with Clerk don't need username
 
 	@Column({ nullable: false })
 	name: string;
@@ -87,7 +84,7 @@ export class User {
 	accessLevel: AccessLevel;
 
 	@ManyToOne(() => Organisation, { onDelete: 'SET NULL', nullable: true })
-	@JoinColumn({ name: 'organisationRef' })
+	@JoinColumn({ name: 'organisationRef', referencedColumnName: 'clerkOrgId' })
 	organisation: Organisation;
 
 	@Column({ nullable: true })
@@ -115,13 +112,13 @@ export class User {
 	managedStaff: number[];
 
 	@OneToOne(() => UserProfile, (userProfile) => userProfile?.owner, { nullable: true })
-	@JoinColumn({ name: 'userProfileUid' })
+	@JoinColumn({ referencedColumnName: 'ownerClerkUserId' })
 	userProfile: UserProfile;
 
 	@OneToOne(() => UserEmployeementProfile, (userEmployeementProfile) => userEmployeementProfile?.owner, {
 		nullable: true,
 	})
-	@JoinColumn({ name: 'userEmployeementProfileUid' })
+	@JoinColumn({ referencedColumnName: 'ownerClerkUserId' })
 	userEmployeementProfile: UserEmployeementProfile;
 
 	@OneToMany(() => Attendance, (attendance) => attendance.owner)
@@ -175,7 +172,7 @@ export class User {
 	rewards: UserRewards;
 
 	@OneToOne(() => UserTarget, (userTarget) => userTarget.user, { nullable: true, cascade: true })
-	@JoinColumn({ name: 'userTargetUid' })
+	@JoinColumn({ referencedColumnName: 'userClerkUserId' })
 	userTarget: UserTarget;
 
 	@OneToMany(() => Journal, (journal) => journal.owner)
@@ -229,8 +226,8 @@ export class User {
 	@Column({ type: 'json', nullable: true })
 	managedDoors: number[] | null;
 
-	@Column({ unique: true, nullable: true })
-	clerkUserId: string; // Clerk user ID
+	@Column({ unique: true, nullable: false })
+	clerkUserId: string; // Clerk user ID - Primary identifier for user relationships
 
 	@Column({ type: 'timestamptz', nullable: true })
 	clerkLastSyncedAt: Date; // Track last sync time

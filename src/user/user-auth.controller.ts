@@ -42,7 +42,7 @@ export class UserAuthController {
 	@ApiUnauthorizedResponse({ description: 'Invalid or expired Clerk token' })
 	async syncClerk(@Body() syncDto: UserSyncClerkDto) {
 		const operationId = `USER_SYNC_CLERK_${Date.now()}`;
-		this.logger.log(`[${operationId}] User Clerk sync request`);
+		this.logger.debug(`[${operationId}] User sync request`);
 
 		try {
 			const result = await this.userAuthService.syncClerkSession(syncDto);

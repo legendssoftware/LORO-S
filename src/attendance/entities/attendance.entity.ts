@@ -105,18 +105,18 @@ export class Attendance {
 
 	// Relations
 	@ManyToOne(() => User, (user) => user?.attendance)
-	@JoinColumn({ name: 'ownerUid' })
+	@JoinColumn({ name: 'ownerClerkUserId', referencedColumnName: 'clerkUserId' })
 	owner: User;
 
 	@Column({ nullable: true })
-	ownerUid: number;
+	ownerClerkUserId: string;
 
 	@ManyToOne(() => User, (user) => user?.attendance, { nullable: true })
-	@JoinColumn({ name: 'verifiedByUid' })
+	@JoinColumn({ name: 'verifiedByClerkUserId', referencedColumnName: 'clerkUserId' })
 	verifiedBy: User;
 
 	@Column({ nullable: true })
-	verifiedByUid: number;
+	verifiedByClerkUserId: string;
 
 	@ManyToOne(() => Organisation, (organisation) => organisation?.attendances, { nullable: true })
 	@JoinColumn({ name: 'organisationUid' })

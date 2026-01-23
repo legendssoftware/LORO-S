@@ -180,15 +180,6 @@ export class UpdateUserDto extends PartialType(CreateUserDto) {
 	@IsOptional()
 	@IsString()
 	@ApiProperty({
-		description: 'Password for authentication',
-		example: 'newSecurePassword123',
-		required: false
-	})
-	password?: string;
-
-	@IsOptional()
-	@IsString()
-	@ApiProperty({
 		description: 'First name of the user',
 		example: 'Brandon',
 		required: false

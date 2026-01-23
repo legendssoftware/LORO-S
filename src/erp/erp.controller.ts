@@ -5,7 +5,7 @@ import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
 import { ErpHealthIndicator } from './erp.health';
 import { ErpCacheWarmerService } from './services/erp-cache-warmer.service';
 import { ErpDataService } from './services/erp-data.service';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { RoleGuard } from '../guards/role.guard';
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
@@ -22,7 +22,7 @@ import { startOfMonth, endOfMonth } from 'date-fns';
  */
 @ApiTags('📊 Reports')
 @Controller('erp')
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 @ApiBearerAuth()
 export class ErpController {
 	private readonly logger = new Logger(ErpController.name);
@@ -57,9 +57,14 @@ export class ErpController {
 
 	/**
 	 * Get organization ID from authenticated request
+	 * Returns Clerk organization ID (string) for relationship linking
 	 */
-	private getOrgId(request: AuthenticatedRequest): number | undefined {
-		return request.user?.org?.uid || request.user?.organisationRef;
+	private getOrgId(request: AuthenticatedRequest): string | undefined {
+		// Return Clerk org ID (organisationRef) which is used for relationships
+		const orgRef = request.user?.organisationRef;
+		if (!orgRef) return undefined;
+		// Ensure it's a string (Clerk org ID)
+		return typeof orgRef === 'string' ? orgRef : undefined;
 	}
 
 	/**
@@ -488,13 +493,16 @@ export class ErpController {
 		const orgId = this.getOrgId(request);
 		const operationId = 'profile-sales';
 		
-		this.logger.log(`[${operationId}] Getting profile sales for user ${userId}, org ${orgId}`);
+		// Validate user ID early
+		if (!userId) {
+			this.logger.error(`[${operationId}] User ID not found in request`);
+			throw new BadRequestException('User ID not found in request. Please ensure you are properly authenticated.');
+		}
+		
+		this.logger.log(`[${operationId}] Getting profile sales`);
 		
 		return this.executeWithThrottling(operationId, async () => {
 			try {
-				if (!userId) {
-					throw new BadRequestException('User ID not found in request');
-				}
 
 				// Get user's target to extract ERP code and date range
 				const userTargetResult = await this.userService.getUserTarget(userId, orgId);

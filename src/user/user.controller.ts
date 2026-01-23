@@ -1,7 +1,8 @@
 import { UserService } from './user.service';
 import { RoleGuard } from '../guards/role.guard';
 import { AccessLevel } from '../lib/enums/user.enums';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
+import { ClerkService } from '../clerk/clerk.service';
 import { Roles } from '../decorators/role.decorator';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -45,9 +46,12 @@ import {
 	Put,
 	ParseIntPipe,
 	Headers,
+	NotFoundException,
+	BadRequestException,
 } from '@nestjs/common';
 import { AccountStatus } from '../lib/enums/status.enums';
-import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
+import { AuthenticatedRequest, getClerkOrgId } from '../lib/interfaces/authenticated-request.interface';
+import { OrganisationService } from '../organisation/organisation.service';
 import { CreateUserTargetDto } from './dto/create-user-target.dto';
 import { UpdateUserTargetDto } from './dto/update-user-target.dto';
 import { ExternalTargetUpdateDto } from './dto/external-target-update.dto';
@@ -58,7 +62,7 @@ import { PaginatedResponse } from '../lib/interfaces/product.interfaces';
 @ApiBearerAuth('JWT-auth')
 @ApiTags('👥 Users')
 @Controller('user')
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 @ApiConsumes('application/json')
 @ApiProduces('application/json')
 @ApiUnauthorizedResponse({
@@ -111,7 +115,36 @@ import { PaginatedResponse } from '../lib/interfaces/product.interfaces';
  * - **PUT external-update**: Use negative increments to reduce totals (e.g., credit notes)
  */
 export class UserController {
-	constructor(private readonly userService: UserService) {}
+	constructor(
+		private readonly userService: UserService,
+		private readonly clerkService: ClerkService,
+		private readonly organisationService: OrganisationService,
+	) {}
+
+	private async resolveOrgUid(req: AuthenticatedRequest): Promise<number> {
+		const clerkOrgId = getClerkOrgId(req);
+		if (!clerkOrgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const uid = await this.organisationService.findUidByClerkId(clerkOrgId);
+		if (uid == null) {
+			throw new BadRequestException('Organization not found');
+		}
+		return uid;
+	}
+
+	/**
+	 * Safely converts a value to a number
+	 * @param value - Value to convert (string, number, or undefined)
+	 * @returns Number or undefined if conversion fails
+	 */
+	private toNumber(value: string | number | undefined): number | undefined {
+		if (value === undefined || value === null || value === '') {
+			return undefined;
+		}
+		const numValue = Number(value);
+		return isNaN(numValue) || !isFinite(numValue) ? undefined : numValue;
+	}
 
 	/**
 	 * Determines access scope for the authenticated user
@@ -389,9 +422,9 @@ Creates a new user account in the system with full profile management and employ
 			},
 		},
 	})
-	create(@Body() createUserDto: CreateUserDto, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+	async create(@Body() createUserDto: CreateUserDto, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.userService.create(createUserDto, orgId, branchId);
 	}
 
@@ -719,10 +752,10 @@ Users will be automatically associated with the authenticated user's organizatio
 	): Promise<BulkCreateUserResponse> {
 		// Automatically set orgId and branchId from authenticated user if not provided
 		if (!bulkCreateUserDto.orgId) {
-			bulkCreateUserDto.orgId = req.user?.org?.uid || req.user?.organisationRef;
+			bulkCreateUserDto.orgId = await this.resolveOrgUid(req);
 		}
 		if (!bulkCreateUserDto.branchId) {
-			bulkCreateUserDto.branchId = req.user?.branch?.uid;
+			bulkCreateUserDto.branchId = this.toNumber(req.user?.branch?.uid);
 		}
 
 		return this.userService.createBulkUsers(bulkCreateUserDto);
@@ -2203,9 +2236,9 @@ Retrieves comprehensive performance targets for a specific user with detailed pr
 	})
 	@ApiParam({
 		name: 'ref',
-		description: 'User ID - Must be a valid user identifier',
-		type: Number,
-		example: 123,
+		description: 'User ID or Clerk ID - Can be a numeric user ID (e.g., 123) or Clerk user ID (e.g., user_xxx)',
+		type: String,
+		example: '123',
 	})
 	@ApiOkResponse({
 		description: '✅ User performance targets retrieved successfully',
@@ -2350,13 +2383,32 @@ Retrieves comprehensive performance targets for a specific user with detailed pr
 			},
 		},
 	})
-	getUserTarget(
-		@Param('ref') ref: number,
+	async getUserTarget(
+		@Param('ref') ref: string,
 		@Req() req: AuthenticatedRequest,
 	): Promise<{ userTarget: UserTarget | null; message: string }> {
 		const accessScope = this.getAccessScope(req.user);
 
-		return this.userService.getUserTarget(ref, accessScope.orgId, accessScope.branchId);
+		// Check if ref is a Clerk ID (starts with "user_") or a numeric ID
+		let userId: number;
+		
+		if (ref.startsWith('user_')) {
+			// It's a Clerk ID, convert to database user ID
+			const dbUser = await this.clerkService.getUserByClerkId(ref);
+			if (!dbUser) {
+				throw new NotFoundException(`User with Clerk ID ${ref} not found`);
+			}
+			userId = dbUser.uid;
+		} else {
+			// It's a numeric ID
+			const parsedId = parseInt(ref, 10);
+			if (isNaN(parsedId)) {
+				throw new BadRequestException(`Invalid user ID format: ${ref}. Must be a number or Clerk ID (user_xxx)`);
+			}
+			userId = parsedId;
+		}
+
+		return this.userService.getUserTarget(userId, accessScope.orgId, accessScope.branchId);
 	}
 
 	@Post(':ref/target')
@@ -3463,7 +3515,10 @@ Updates specific preference settings for a user account with partial update supp
 	})
 	async reInviteAllUsers(@Req() req: AuthenticatedRequest) {
 		try {
-			const orgId = req.user?.org?.uid || req.user?.organisationRef;
+			const orgId = getClerkOrgId(req);
+			if (!orgId) {
+				throw new BadRequestException('Organization context required');
+			}
 			const branchId = req.user?.branch?.uid;
 
 			const scope = {
@@ -3699,7 +3754,10 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 	})
 	async reInviteUser(@Param('userId') userId: string, @Req() req: AuthenticatedRequest) {
 		try {
-			const orgId = req.user?.org?.uid || req.user?.organisationRef;
+			const orgId = getClerkOrgId(req);
+			if (!orgId) {
+				throw new BadRequestException('Organization context required');
+			}
 			const branchId = req.user?.branch?.uid;
 
 			const scope = {

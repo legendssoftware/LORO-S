@@ -154,7 +154,8 @@ export class ReportsService implements OnModuleInit {
 		}
 
 		try {
-			const organizationHours = await this.organizationHoursService.getOrganizationHours(organizationId);
+			const orgIdString = typeof organizationId === 'number' ? organizationId.toString() : organizationId;
+			const organizationHours = await this.organizationHoursService.getOrganizationHours(orgIdString);
 			return organizationHours?.timezone || 'Africa/Johannesburg';
 		} catch (error) {
 			this.logger.warn(`Error getting timezone for org ${organizationId}, using default:`, error);
@@ -894,7 +895,7 @@ export class ReportsService implements OnModuleInit {
 			let dailyOverview = null;
 			try {
 				const overviewResponse = await this.attendanceService.getDailyAttendanceOverview(
-					user.organisation?.uid,
+					user.organisation?.clerkOrgId || user.organisation?.ref,
 					undefined, // branchId
 					orgCurrentTime
 				);
@@ -2866,7 +2867,7 @@ export class ReportsService implements OnModuleInit {
 				// Get attendance streak from attendance metrics (matches /attendance/metrics/:uid endpoint)
 				this.attendanceService.getUserAttendanceMetrics(userId),
 				// Get latest 2 leads for today using leads service - ONLY TODAY'S DATA
-				this.leadsService.leadsByUser(userId, orgId, branchId).then(result => {
+				this.leadsService.leadsByUser(userId, orgId ? String(orgId) : undefined, branchId).then(result => {
 					if (!result?.leads || result.leads.length === 0) {
 						return { leads: [] };
 					}
@@ -2908,7 +2909,7 @@ export class ReportsService implements OnModuleInit {
 					return { tasks: todayTasks };
 				}),
 				// Get latest leave for user
-				this.leaveService.leavesByUser(userId, orgId, branchId, userId).then(result => {
+				this.leaveService.leavesByUser(userId, orgId ? String(orgId) : undefined, branchId, userId).then(result => {
 					// Get the most recent leave
 					const latestLeave = result.leaves
 						.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] || null;

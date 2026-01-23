@@ -22,7 +22,7 @@ export class UserAuthService {
 	 */
 	async syncClerkSession(syncDto: UserSyncClerkDto) {
 		const operationId = `SYNC_CLERK_${Date.now()}`;
-		this.logger.log(`[${operationId}] Processing Clerk sync for user`);
+		this.logger.debug(`[${operationId}] Processing Clerk sync`);
 
 		try {
 			// Verify Clerk token
@@ -39,14 +39,42 @@ export class UserAuthService {
 			}
 
 			if (!user) {
-				this.logger.warn(`[${operationId}] User not found for Clerk user: ${clerkUserId}`);
+				this.logger.warn(`[${operationId}] User not found`);
 				throw new NotFoundException('User account not found. Please contact support.');
 			}
 
 			// Ensure user is active
 			if (user.isDeleted || user.status !== AccountStatus.ACTIVE) {
-				this.logger.warn(`[${operationId}] User inactive or deleted: ${user.uid}`);
+				this.logger.warn(`[${operationId}] User inactive or deleted`);
 				throw new UnauthorizedException('Your account has been deactivated. Please contact support.');
+			}
+
+			// Check if org was recently synced (within last 5 seconds) to avoid redundant syncs
+			const recentSyncThreshold = 5000; // 5 seconds
+			const timeSinceLastSync = user.clerkLastSyncedAt 
+				? Date.now() - new Date(user.clerkLastSyncedAt).getTime()
+				: Infinity;
+
+			// Only sync organization membership if not recently synced or if user has no organisationRef
+			if (timeSinceLastSync > recentSyncThreshold || !user.organisationRef) {
+				this.logger.debug(`[${operationId}] Syncing organization membership for user`);
+				const orgSyncSuccess = await this.clerkService.syncUserOrganizationForUser(user, clerkUserId);
+				if (orgSyncSuccess) {
+					this.logger.debug(`[${operationId}] Organization membership synced successfully`);
+				} else {
+					this.logger.debug(`[${operationId}] Organization membership sync completed (user may not have org membership)`);
+				}
+			} else {
+				this.logger.debug(`[${operationId}] Skipping org sync - recently synced (${Math.round(timeSinceLastSync)}ms ago)`);
+			}
+
+			// Only check profiles if user was just created (no profiles exist yet)
+			// If user was recently synced, profiles likely already exist
+			if (timeSinceLastSync > recentSyncThreshold || !user.userProfile || !user.userEmployeementProfile) {
+				this.logger.debug(`[${operationId}] Ensuring user profiles exist`);
+				await this.clerkService.ensureUserProfilesForUser(user, clerkUserId);
+			} else {
+				this.logger.debug(`[${operationId}] Skipping profile check - recently synced`);
 			}
 
 			// Update device info if provided
@@ -62,17 +90,16 @@ export class UserAuthService {
 			user.clerkLastSyncedAt = new Date();
 			await this.userRepository.save(user);
 
-			// Reload user with relations if not already loaded
-			if (!user.organisation || !user.branch) {
-				user = await this.userRepository.findOne({
-					where: { uid: user.uid },
-					relations: ['organisation', 'branch'],
-				});
-			}
+			// Reload user with relations to ensure organisationRef is properly loaded after sync
+			user = await this.userRepository.findOne({
+				where: { clerkUserId: user.clerkUserId },
+				relations: ['organisation', 'branch'],
+			});
 
 			// Build profile data
 			const profileData = {
-				uid: user.uid,
+				clerkUserId: user.clerkUserId,
+				uid: user.uid, // Kept for backward compatibility
 				email: user.email,
 				name: user.name,
 				surname: user.surname,
@@ -91,7 +118,7 @@ export class UserAuthService {
 				} : null,
 			};
 
-			this.logger.log(`[${operationId}] User session synced successfully - uid: ${user.uid}`);
+			this.logger.log(`[${operationId}] User synced successfully`);
 
 			return {
 				profileData,

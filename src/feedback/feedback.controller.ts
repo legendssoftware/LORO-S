@@ -2,7 +2,7 @@ import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards, Re
 import { FeedbackService } from './feedback.service';
 import { CreateFeedbackDto } from './dto/create-feedback.dto';
 import { UpdateFeedbackDto } from './dto/update-feedback.dto';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { RoleGuard } from '../guards/role.guard';
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
@@ -147,7 +147,7 @@ export class FeedbackController {
 	}
 
 	@Get()
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER)
 	@ApiBearerAuth()
 	@ApiOperation({
@@ -266,7 +266,7 @@ export class FeedbackController {
 	}
 
 	@Get('stats')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER)
 	@ApiBearerAuth()
 	@ApiOperation({
@@ -324,7 +324,7 @@ export class FeedbackController {
 	}
 
 	@Get(':id')
-	@UseGuards(AuthGuard)
+	@UseGuards(ClerkAuthGuard)
 	@ApiBearerAuth()
 	@ApiOperation({
 		summary: '🔍 Get a single feedback by ID',
@@ -371,7 +371,7 @@ export class FeedbackController {
 	}
 
 	@Patch(':id')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER)
 	@ApiBearerAuth()
 	@ApiOperation({
@@ -432,7 +432,7 @@ export class FeedbackController {
 	}
 
 	@Delete(':id')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER)
 	@ApiBearerAuth()
 	@ApiOperation({

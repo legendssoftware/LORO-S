@@ -239,7 +239,7 @@ export class TimeCalculatorUtil {
     const graceMinutes = this.DEFAULT_WORK.PUNCTUALITY_GRACE_MINUTES;
 
     const isLate = checkInMinutes > (expectedStartMinutes + graceMinutes);
-    const lateMinutes = isLate ? checkInMinutes - expectedStartMinutes : 0;
+    const lateMinutes = isLate ? checkInMinutes - expectedStartMinutes - graceMinutes : 0;
 
     let isEarly = false;
     let earlyMinutes = 0;

@@ -12,6 +12,7 @@ import {
 	Patch,
 	Res,
 	NotFoundException,
+	BadRequestException,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { LoyaltyService } from './loyalty.service';
@@ -20,13 +21,13 @@ import { AwardLoyaltyPointsDto } from './dto/award-loyalty-points.dto';
 import { ClaimRewardDto } from './dto/claim-reward.dto';
 import { UpdateVirtualCardDto } from './dto/update-virtual-card.dto';
 import { CreateLoyaltyRewardDto } from './dto/create-loyalty-reward.dto';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { RoleGuard } from '../guards/role.guard';
-import { ClientJwtAuthGuard } from '../guards/client-jwt-auth.guard';
 import { LoyaltyApiKeyGuard } from '../guards/loyalty-api-key.guard';
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
-import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
+import { AuthenticatedRequest, getClerkOrgId } from '../lib/interfaces/authenticated-request.interface';
+import { OrganisationService } from '../organisation/organisation.service';
 import {
 	ApiOperation,
 	ApiTags,
@@ -46,7 +47,22 @@ import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
 @Controller('loyalty')
 @EnterpriseOnly('rewards')
 export class LoyaltyController {
-	constructor(private readonly loyaltyService: LoyaltyService) {}
+	constructor(
+		private readonly loyaltyService: LoyaltyService,
+		private readonly organisationService: OrganisationService,
+	) {}
+
+	private async resolveOrgUid(req: AuthenticatedRequest): Promise<number> {
+		const clerkOrgId = getClerkOrgId(req);
+		if (!clerkOrgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const uid = await this.organisationService.findUidByClerkId(clerkOrgId);
+		if (uid == null) {
+			throw new BadRequestException('Organization not found');
+		}
+		return uid;
+	}
 
 	// ========== PUBLIC ERP/POS ENDPOINTS ==========
 
@@ -138,7 +154,7 @@ export class LoyaltyController {
 	// ========== CLIENT AUTHENTICATED ENDPOINTS ==========
 
 	@Get('my-profile')
-	@UseGuards(ClientJwtAuthGuard)
+	@UseGuards(ClerkAuthGuard)
 	@ApiBearerAuth('JWT-auth')
 	@ApiOperation({
 		summary: 'Get own loyalty profile',
@@ -166,7 +182,7 @@ export class LoyaltyController {
 	}
 
 	@Get('rewards')
-	@UseGuards(ClientJwtAuthGuard)
+	@UseGuards(ClerkAuthGuard)
 	@ApiBearerAuth('JWT-auth')
 	@ApiOperation({
 		summary: 'Get available rewards',
@@ -183,7 +199,10 @@ export class LoyaltyController {
 		}
 
 		const profile = await this.loyaltyService.getProfileByClientId(clientId);
-		const orgId = req.user?.organisationRef ? (typeof req.user.organisationRef === 'string' ? parseInt(req.user.organisationRef) : req.user.organisationRef) : undefined;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
 
 		const rewards = await this.loyaltyService.getAvailableRewards(
@@ -199,7 +218,7 @@ export class LoyaltyController {
 	}
 
 	@Get('transactions')
-	@UseGuards(ClientJwtAuthGuard)
+	@UseGuards(ClerkAuthGuard)
 	@ApiBearerAuth('JWT-auth')
 	@ApiOperation({
 		summary: 'Get points transaction history',
@@ -227,7 +246,7 @@ export class LoyaltyController {
 	}
 
 	@Post('rewards/:rewardId/claim')
-	@UseGuards(ClientJwtAuthGuard)
+	@UseGuards(ClerkAuthGuard)
 	@ApiBearerAuth('JWT-auth')
 	@ApiOperation({
 		summary: 'Claim a reward',
@@ -264,7 +283,7 @@ export class LoyaltyController {
 	}
 
 	@Patch('virtual-card')
-	@UseGuards(ClientJwtAuthGuard)
+	@UseGuards(ClerkAuthGuard)
 	@ApiBearerAuth('JWT-auth')
 	@ApiOperation({
 		summary: 'Update virtual card customization',
@@ -293,7 +312,7 @@ export class LoyaltyController {
 	}
 
 	@Get('qr-code')
-	@UseGuards(ClientJwtAuthGuard)
+	@UseGuards(ClerkAuthGuard)
 	@ApiBearerAuth('JWT-auth')
 	@ApiOperation({
 		summary: 'Get QR code image',
@@ -333,7 +352,7 @@ export class LoyaltyController {
 	}
 
 	@Get('barcode')
-	@UseGuards(ClientJwtAuthGuard)
+	@UseGuards(ClerkAuthGuard)
 	@ApiBearerAuth('JWT-auth')
 	@ApiOperation({
 		summary: 'Get barcode image',
@@ -494,7 +513,7 @@ export class LoyaltyController {
 	// ========== ADMIN ENDPOINTS ==========
 
 	@Get('profiles')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER)
 	@ApiBearerAuth('JWT-auth')
 	@ApiOperation({
@@ -506,12 +525,12 @@ export class LoyaltyController {
 	})
 	@ApiUnauthorizedResponse({ description: 'Authentication required' })
 	async getAllProfiles(@Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.organisationRef ? (typeof req.user.organisationRef === 'string' ? parseInt(req.user.organisationRef) : req.user.organisationRef) : undefined;
+		const orgId = await this.resolveOrgUid(req);
 		const branchId = req.user?.branch?.uid;
 
 		const profiles = await this.loyaltyService['loyaltyProfileRepository'].find({
 			where: {
-				...(orgId && { organisationUid: orgId }),
+				...(orgId != null && { organisationUid: orgId }),
 				...(branchId && { branchUid: branchId }),
 			},
 			relations: ['client', 'virtualCard'],
@@ -524,7 +543,7 @@ export class LoyaltyController {
 	}
 
 	@Post('rewards')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER)
 	@ApiBearerAuth('JWT-auth')
 	@ApiOperation({
@@ -540,13 +559,13 @@ export class LoyaltyController {
 		@Body() dto: CreateLoyaltyRewardDto,
 		@Req() req: AuthenticatedRequest,
 	) {
-		const orgId = req.user?.organisationRef ? (typeof req.user.organisationRef === 'string' ? parseInt(req.user.organisationRef) : req.user.organisationRef) : undefined;
+		const orgId = await this.resolveOrgUid(req);
 		const branchId = req.user?.branch?.uid;
 
 		const reward = this.loyaltyService['rewardRepository'].create({
 			...dto,
-			organisationUid: orgId || dto.organisationUid,
-			branchUid: branchId || dto.branchUid,
+			organisationUid: orgId ?? dto.organisationUid,
+			branchUid: branchId ?? dto.branchUid,
 			validFrom: dto.validFrom ? new Date(dto.validFrom) : null,
 			validUntil: dto.validUntil ? new Date(dto.validUntil) : null,
 		});
@@ -560,7 +579,7 @@ export class LoyaltyController {
 	}
 
 	@Get('analytics')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER)
 	@ApiBearerAuth('JWT-auth')
 	@ApiOperation({
@@ -572,11 +591,11 @@ export class LoyaltyController {
 	})
 	@ApiUnauthorizedResponse({ description: 'Authentication required' })
 	async getAnalytics(@Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.organisationRef ? (typeof req.user.organisationRef === 'string' ? parseInt(req.user.organisationRef) : req.user.organisationRef) : undefined;
+		const orgId = await this.resolveOrgUid(req);
 		const branchId = req.user?.branch?.uid;
 
 		const whereConditions: any = {};
-		if (orgId) whereConditions.organisationUid = orgId;
+		if (orgId != null) whereConditions.organisationUid = orgId;
 		if (branchId) whereConditions.branchUid = branchId;
 
 		const [

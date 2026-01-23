@@ -64,7 +64,8 @@ export class MainReportGenerator {
 		}
 
 		try {
-			const organizationHours = await this.organizationHoursService.getOrganizationHours(organizationId);
+			const orgIdString = typeof organizationId === 'number' ? organizationId.toString() : organizationId;
+			const organizationHours = await this.organizationHoursService.getOrganizationHours(orgIdString);
 			return organizationHours?.timezone || TimezoneUtil.getSafeTimezone();
 		} catch (error) {
 			this.logger.warn(`Error getting timezone for org ${organizationId}, using default:`, error);

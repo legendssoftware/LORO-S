@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ClerkModule } from '../clerk/clerk.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { FeedbackService } from './feedback.service';
 import { FeedbackController } from './feedback.controller';
@@ -15,6 +16,7 @@ import { LicensingModule } from '../licensing/licensing.module';
 
 @Module({
 	imports: [
+		ClerkModule,
 		TypeOrmModule.forFeature([
 			Feedback,
 			Client,

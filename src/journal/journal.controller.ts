@@ -6,17 +6,30 @@ import { RoleGuard } from '../guards/role.guard';
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { UpdateJournalDto } from './dto/update-journal.dto';
-import { AuthGuard } from '../guards/auth.guard';
-import { Controller, Get, Post, Body, Param, UseGuards, Patch, Delete, Req } from '@nestjs/common';
-import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
+import { Controller, Get, Post, Body, Param, UseGuards, Patch, Delete, Req, BadRequestException } from '@nestjs/common';
+import { AuthenticatedRequest, getClerkOrgId } from '../lib/interfaces/authenticated-request.interface';
 
 @ApiTags('📝 Journal')
 @Controller('journal')
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 @ApiBearerAuth('JWT-auth')
 @ApiUnauthorizedResponse({ description: 'Unauthorized access due to invalid credentials or missing token' })
 export class JournalController {
   constructor(private readonly journalService: JournalService) { }
+
+  /**
+   * Safely converts a value to a number
+   * @param value - Value to convert (string, number, or undefined)
+   * @returns Number or undefined if conversion fails
+   */
+  private toNumber(value: string | number | undefined): number | undefined {
+    if (value === undefined || value === null || value === '') {
+      return undefined;
+    }
+    const numValue = Number(value);
+    return isNaN(numValue) || !isFinite(numValue) ? undefined : numValue;
+  }
 
   @Post()
   @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
@@ -108,8 +121,11 @@ Creates a new journal entry in the system with full content management and organ
   })
   @ApiBadRequestResponse({ description: 'Invalid input data provided' })
   create(@Body() createJournalDto: CreateJournalDto, @Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid || req.user?.organisationRef;
-    const branchId = req.user?.branch?.uid;
+    const orgId = getClerkOrgId(req);
+    if (!orgId) {
+      throw new BadRequestException('Organization context required');
+    }
+    const branchId = this.toNumber(req.user?.branch?.uid);
     return this.journalService.create(createJournalDto, orgId, branchId);
   }
 
@@ -231,8 +247,11 @@ Retrieves journal entries with advanced filtering, pagination, and performance o
     }
   })
   findAll(@Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid || req.user?.organisationRef;
-    const branchId = req.user?.branch?.uid;
+    const orgId = getClerkOrgId(req);
+    if (!orgId) {
+      throw new BadRequestException('Organization context required');
+    }
+    const branchId = this.toNumber(req.user?.branch?.uid);
     return this.journalService.findAll({}, 1, 25, orgId, branchId);
   }
 
@@ -292,13 +311,16 @@ Retrieves journal entries with advanced filtering, pagination, and performance o
   })
   @ApiNotFoundResponse({ description: 'Journal entry not found' })
   findOne(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid || req.user?.organisationRef;
-    const branchId = req.user?.branch?.uid;
+    const orgId = getClerkOrgId(req);
+    if (!orgId) {
+      throw new BadRequestException('Organization context required');
+    }
+    const branchId = this.toNumber(req.user?.branch?.uid);
     return this.journalService.findOne(ref, orgId, branchId);
   }
 
   @Get('for/:ref')
-  @UseGuards(AuthGuard, RoleGuard)
+  @UseGuards(ClerkAuthGuard, RoleGuard)
  @Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.MANAGER,
@@ -363,8 +385,11 @@ Retrieves journal entries with advanced filtering, pagination, and performance o
   })
   @ApiNotFoundResponse({ description: 'User not found or has no journal entries' })
   journalsByUser(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid || req.user?.organisationRef;
-    const branchId = req.user?.branch?.uid;
+    const orgId = getClerkOrgId(req);
+    if (!orgId) {
+      throw new BadRequestException('Organization context required');
+    }
+    const branchId = this.toNumber(req.user?.branch?.uid);
     return this.journalService.journalsByUser(ref, orgId, branchId);
   }
 
@@ -401,8 +426,11 @@ Retrieves journal entries with advanced filtering, pagination, and performance o
   @ApiNotFoundResponse({ description: 'Journal entry not found' })
   @ApiBadRequestResponse({ description: 'Invalid input data provided' })
   update(@Param('ref') ref: number, @Body() updateJournalDto: UpdateJournalDto, @Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid || req.user?.organisationRef;
-    const branchId = req.user?.branch?.uid;
+    const orgId = getClerkOrgId(req);
+    if (!orgId) {
+      throw new BadRequestException('Organization context required');
+    }
+    const branchId = this.toNumber(req.user?.branch?.uid);
     return this.journalService.update(ref, updateJournalDto, orgId, branchId);
   }
 
@@ -429,8 +457,11 @@ Retrieves journal entries with advanced filtering, pagination, and performance o
   })
   @ApiNotFoundResponse({ description: 'Journal entry not found' })
   restore(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid || req.user?.organisationRef;
-    const branchId = req.user?.branch?.uid;
+    const orgId = getClerkOrgId(req);
+    if (!orgId) {
+      throw new BadRequestException('Organization context required');
+    }
+    const branchId = this.toNumber(req.user?.branch?.uid);
     return this.journalService.restore(ref, orgId, branchId);
   }
 
@@ -465,8 +496,11 @@ Retrieves journal entries with advanced filtering, pagination, and performance o
   })
   @ApiNotFoundResponse({ description: 'Journal entry not found' })
   remove(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid || req.user?.organisationRef;
-    const branchId = req.user?.branch?.uid;
+    const orgId = getClerkOrgId(req);
+    if (!orgId) {
+      throw new BadRequestException('Organization context required');
+    }
+    const branchId = this.toNumber(req.user?.branch?.uid);
     return this.journalService.remove(ref, orgId, branchId);
   }
 
@@ -577,8 +611,11 @@ Creates detailed inspection journals with comprehensive scoring, validation, and
   })
   @ApiBadRequestResponse({ description: 'Invalid inspection data provided' })
   createInspection(@Body() createJournalDto: CreateJournalDto, @Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid || req.user?.organisationRef;
-    const branchId = req.user?.branch?.uid;
+    const orgId = getClerkOrgId(req);
+    if (!orgId) {
+      throw new BadRequestException('Organization context required');
+    }
+    const branchId = this.toNumber(req.user?.branch?.uid);
     return this.journalService.createInspection(createJournalDto, orgId, branchId);
   }
 
@@ -614,8 +651,11 @@ Creates detailed inspection journals with comprehensive scoring, validation, and
     }
   })
   getAllInspections(@Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid || req.user?.organisationRef;
-    const branchId = req.user?.branch?.uid;
+    const orgId = getClerkOrgId(req);
+    if (!orgId) {
+      throw new BadRequestException('Organization context required');
+    }
+    const branchId = this.toNumber(req.user?.branch?.uid);
     return this.journalService.getAllInspections(orgId, branchId);
   }
 
@@ -657,8 +697,11 @@ Creates detailed inspection journals with comprehensive scoring, validation, and
   })
   @ApiNotFoundResponse({ description: 'Inspection journal not found' })
   getInspectionDetail(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid || req.user?.organisationRef;
-    const branchId = req.user?.branch?.uid;
+    const orgId = getClerkOrgId(req);
+    if (!orgId) {
+      throw new BadRequestException('Organization context required');
+    }
+    const branchId = this.toNumber(req.user?.branch?.uid);
     return this.journalService.getInspectionDetail(ref, orgId, branchId);
   }
 
@@ -693,8 +736,11 @@ Creates detailed inspection journals with comprehensive scoring, validation, and
     }
   })
   getInspectionTemplates(@Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid || req.user?.organisationRef;
-    const branchId = req.user?.branch?.uid;
+    const orgId = getClerkOrgId(req);
+    if (!orgId) {
+      throw new BadRequestException('Organization context required');
+    }
+    const branchId = this.toNumber(req.user?.branch?.uid);
     return this.journalService.getInspectionTemplates(orgId, branchId);
   }
 
@@ -730,8 +776,11 @@ Creates detailed inspection journals with comprehensive scoring, validation, and
   })
   @ApiNotFoundResponse({ description: 'Inspection journal not found' })
   recalculateScore(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid || req.user?.organisationRef;
-    const branchId = req.user?.branch?.uid;
+    const orgId = getClerkOrgId(req);
+    if (!orgId) {
+      throw new BadRequestException('Organization context required');
+    }
+    const branchId = this.toNumber(req.user?.branch?.uid);
     return this.journalService.recalculateScore(ref, orgId, branchId);
   }
 }

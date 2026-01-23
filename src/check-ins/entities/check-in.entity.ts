@@ -48,11 +48,11 @@ export class CheckIn {
 
 	// Relations
 	@ManyToOne(() => User, (user) => user?.checkIns)
-	@JoinColumn({ name: 'ownerUid' })
+	@JoinColumn({ name: 'ownerClerkUserId', referencedColumnName: 'clerkUserId' })
 	owner: User;
 
 	@Column({ nullable: true })
-	ownerUid: number;
+	ownerClerkUserId: string;
 
 	@ManyToOne(() => Organisation, (organisation) => organisation?.assets, { nullable: true })
 	@JoinColumn({ name: 'organisationUid' })

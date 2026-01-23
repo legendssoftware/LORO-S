@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ClerkModule } from '../clerk/clerk.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { RewardsService } from './rewards.service';
 import { RewardsController } from './rewards.controller';
@@ -17,6 +18,7 @@ import { VirtualLoyaltyCard } from './entities/virtual-loyalty-card.entity';
 import { Client } from '../clients/entities/client.entity';
 import { User } from '../user/entities/user.entity';
 import { LicensingModule } from '../licensing/licensing.module';
+import { OrganisationModule } from '../organisation/organisation.module';
 import { CommunicationModule } from '../communication/communication.module';
 import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
 import { ExpoPushService } from '../lib/services/expo-push.service';
@@ -25,7 +27,9 @@ import { Doc } from '../docs/entities/doc.entity';
 
 @Module({
   imports: [
+		ClerkModule,
     LicensingModule,
+    OrganisationModule,
     CommunicationModule,
     TypeOrmModule.forFeature([
       UserRewards,

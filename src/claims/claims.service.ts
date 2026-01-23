@@ -17,6 +17,7 @@ import { XP_VALUES_TYPES } from '../lib/constants/constants';
 import { XP_VALUES } from '../lib/constants/constants';
 import { PaginatedResponse } from '../lib/interfaces/product.interfaces';
 import { User } from '../user/entities/user.entity';
+import { Organisation } from '../organisation/entities/organisation.entity';
 import { ApprovalsService } from '../approvals/approvals.service';
 import {
 	ApprovalType,
@@ -51,6 +52,8 @@ export class ClaimsService {
 		private readonly configService: ConfigService,
 		@InjectRepository(User)
 		private userRepository: Repository<User>,
+		@InjectRepository(Organisation)
+		private organisationRepository: Repository<Organisation>,
 		private readonly approvalsService: ApprovalsService,
 		private readonly unifiedNotificationService: UnifiedNotificationService,
 		@Inject(CACHE_MANAGER) private cacheManager: Cache,
@@ -60,6 +63,24 @@ export class ClaimsService {
 		this.currencyLocale = this.configService.get<string>('CURRENCY_LOCALE', 'en-ZA');
 		this.currencyCode = this.configService.get<string>('CURRENCY_CODE', 'USD');
 		this.currencySymbol = this.configService.get<string>('CURRENCY_SYMBOL', '$');
+	}
+
+	/**
+	 * Resolves Clerk org ID (string) to organisation numeric uid.
+	 * Looks up by clerkOrgId or ref. Returns null if not found.
+	 */
+	private async resolveOrgId(clerkOrgId?: string): Promise<number | null> {
+		if (!clerkOrgId) {
+			return null;
+		}
+		const org = await this.organisationRepository.findOne({
+			where: [
+				{ clerkOrgId, isDeleted: false },
+				{ ref: clerkOrgId, isDeleted: false },
+			],
+			select: ['uid'],
+		});
+		return org?.uid ?? null;
 	}
 
 	// Helper method to invalidate claims cache
@@ -143,9 +164,14 @@ export class ClaimsService {
 	 * This pattern ensures the client receives confirmation as soon as the core operation completes,
 	 * while background processes run without blocking the response.
 	 */
-	async create(createClaimDto: CreateClaimDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
+	async create(createClaimDto: CreateClaimDto, orgId?: string, branchId?: number): Promise<{ message: string }> {
+		// Resolve Clerk org ID to numeric uid
+		const orgUid = orgId ? await this.resolveOrgId(orgId) : null;
+		if (orgId && !orgUid) {
+			throw new BadRequestException(`Organization not found for ID: ${orgId}`);
+		}
 		const startTime = Date.now();
-		this.logger.log(`🔄 [ClaimsService] Creating claim for user: ${createClaimDto.owner}, orgId: ${orgId}, branchId: ${branchId}, amount: ${createClaimDto.amount}`);
+		this.logger.log(`🔄 [ClaimsService] Creating claim for user: ${createClaimDto.owner}, orgId: ${orgId}, orgUid: ${orgUid}, branchId: ${branchId}, amount: ${createClaimDto.amount}`);
 
 		try {
 			// Validate input data
@@ -174,13 +200,13 @@ export class ClaimsService {
 			}
 
 			// Enhanced organization filtering - CRITICAL: Only allow claims for user's organization
-			if (orgId && user.organisation && Number(user.organisation.uid) !== Number(orgId)) {
-				this.logger.warn(`❌ [ClaimsService] User ${user.uid} attempting to create claim for different organization ${orgId}`);
+			if (orgUid && user.organisation && Number(user.organisation.uid) !== Number(orgUid)) {
+				this.logger.warn(`❌ [ClaimsService] User ${user.uid} attempting to create claim for different organization ${orgUid}`);
 				throw new BadRequestException('Cannot create claim for different organization');
 			}
 
-			// Use the passed orgId and branchId if present, otherwise use user's
-			const organisation = orgId ? { uid: Number(orgId) } : (user.organisation ? { uid: Number(user.organisation.uid) } : null);
+			// Use the passed orgUid and branchId if present, otherwise use user's
+			const organisation = orgUid ? { uid: Number(orgUid) } : (user.organisation ? { uid: Number(user.organisation.uid) } : null);
 			const branch = branchId ? { uid: Number(branchId) } : (user.branch ? { uid: Number(user.branch.uid) } : null);
 
 			// Generate claim reference number
@@ -393,7 +419,7 @@ export class ClaimsService {
 		},
 		page: number = 1,
 		limit: number = 25,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 		userId?: number,
 		userAccessLevel?: string,
@@ -522,13 +548,18 @@ export class ClaimsService {
 
 	async findOne(
 		ref: number,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 		userId?: number,
 		userAccessLevel?: string,
 	): Promise<{ message: string; claim: Claim | null; stats: any }> {
+		// Resolve Clerk org ID to numeric uid
+		const orgUid = orgId ? await this.resolveOrgId(orgId) : null;
+		if (orgId && !orgUid) {
+			throw new BadRequestException(`Organization not found for ID: ${orgId}`);
+		}
 		const startTime = Date.now();
-		this.logger.log(`🔍 [ClaimsService] Finding claim with ID: ${ref}, orgId: ${orgId}, branchId: ${branchId}, user: ${userId}, accessLevel: ${userAccessLevel}`);
+		this.logger.log(`🔍 [ClaimsService] Finding claim with ID: ${ref}, orgId: ${orgId}, orgUid: ${orgUid}, branchId: ${branchId}, user: ${userId}, accessLevel: ${userAccessLevel}`);
 
 		try {
 			// Check if user is admin, owner, developer, or technician - they can view any claim
@@ -548,8 +579,8 @@ export class ClaimsService {
 			}
 
 			// Add organization filter if provided - use organisationUid directly
-			if (orgId) {
-				queryBuilder.andWhere('claim.organisationUid = :orgId', { orgId: Number(orgId) });
+			if (orgUid) {
+				queryBuilder.andWhere('claim.organisationUid = :orgUid', { orgUid: Number(orgUid) });
 			}
 
 			// Add branch filter if provided - use branchUid directly
@@ -618,7 +649,7 @@ export class ClaimsService {
 
 	public async claimsByUser(
 		ref: number,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 		requestingUserId?: number,
 		userAccessLevel?: string,
@@ -633,8 +664,13 @@ export class ClaimsService {
 			paid: number;
 		};
 	}> {
+		// Resolve Clerk org ID to numeric uid
+		const orgUid = orgId ? await this.resolveOrgId(orgId) : null;
+		if (orgId && !orgUid) {
+			throw new BadRequestException(`Organization not found for ID: ${orgId}`);
+		}
 		const startTime = Date.now();
-		this.logger.log(`🔍 [ClaimsService] Finding claims for user ${ref}, orgId: ${orgId}, branchId: ${branchId}, requestingUser: ${requestingUserId}, accessLevel: ${userAccessLevel}`);
+		this.logger.log(`🔍 [ClaimsService] Finding claims for user ${ref}, orgId: ${orgId}, orgUid: ${orgUid}, branchId: ${branchId}, requestingUser: ${requestingUserId}, accessLevel: ${userAccessLevel}`);
 
 		try {
 			// Check if requesting user is admin, owner, developer, or technician - they can view any user's claims
@@ -786,7 +822,7 @@ export class ClaimsService {
 	async update(
 		ref: number,
 		updateClaimDto: UpdateClaimDto,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 		userId?: number,
 		userAccessLevel?: string,
@@ -986,7 +1022,7 @@ export class ClaimsService {
 		}
 	}
 
-	async remove(ref: number, orgId?: number, branchId?: number, userId?: number, userAccessLevel?: string): Promise<{ message: string }> {
+	async remove(ref: number, orgId?: string, branchId?: number, userId?: number, userAccessLevel?: string): Promise<{ message: string }> {
 		this.logger.log(`🗑️ [ClaimsService] Removing claim ${ref}, orgId: ${orgId}, branchId: ${branchId}, user: ${userId}, accessLevel: ${userAccessLevel}`);
 
 		try {
@@ -1020,7 +1056,7 @@ export class ClaimsService {
 		}
 	}
 
-	async restore(ref: number, orgId?: number, branchId?: number, userId?: number, userAccessLevel?: string): Promise<{ message: string }> {
+	async restore(ref: number, orgId?: string, branchId?: number, userId?: number, userAccessLevel?: string): Promise<{ message: string }> {
 		this.logger.log(`♻️ [ClaimsService] Restoring claim ${ref}, orgId: ${orgId}, branchId: ${branchId}, user: ${userId}, accessLevel: ${userAccessLevel}`);
 
 		try {
@@ -1702,7 +1738,7 @@ export class ClaimsService {
 	 */
 	async generateShareToken(
 		ref: number,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 		userId?: number,
 		userAccessLevel?: string,

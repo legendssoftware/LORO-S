@@ -1,6 +1,6 @@
 import { Between, Repository, In, MoreThan } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Injectable, NotFoundException, BadRequestException, Logger, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException, InternalServerErrorException, Logger, Inject } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { Lead } from './entities/lead.entity';
@@ -58,6 +58,8 @@ export class LeadsService {
 		private interactionRepository: Repository<Interaction>,
 		@InjectRepository(Task)
 		private taskRepository: Repository<Task>,
+		@InjectRepository(Organisation)
+		private organisationRepository: Repository<Organisation>,
 		@Inject(CACHE_MANAGER)
 		private cacheManager: Cache,
 		private readonly eventEmitter: EventEmitter2,
@@ -71,6 +73,7 @@ export class LeadsService {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
 	}
 
+
 	/**
 	 * Generate cache key for leads
 	 */
@@ -81,14 +84,14 @@ export class LeadsService {
 	/**
 	 * Generate cache key for user leads
 	 */
-	private getUserLeadsCacheKey(userUid: number): string {
-		return `${this.CACHE_PREFIX}user:${userUid}`;
+	private getUserLeadsCacheKey(userClerkUserId: string): string {
+		return `${this.CACHE_PREFIX}user:${userClerkUserId}`;
 	}
 
 	/**
 	 * Clear lead-related caches
 	 */
-	private async clearLeadCache(leadId?: number, userUid?: number): Promise<void> {
+	private async clearLeadCache(leadId?: number, userClerkUserId?: string): Promise<void> {
 		try {
 			const keys = await this.cacheManager.store.keys();
 			const keysToDelete = [];
@@ -99,8 +102,8 @@ export class LeadsService {
 			}
 
 			// Clear user-related lead caches
-			if (userUid) {
-				keysToDelete.push(this.getUserLeadsCacheKey(userUid));
+			if (userClerkUserId) {
+				keysToDelete.push(this.getUserLeadsCacheKey(userClerkUserId));
 			}
 
 			// Clear all pagination and filtered lead list caches
@@ -138,23 +141,34 @@ export class LeadsService {
 	 */
 	async create(
 		createLeadDto: CreateLeadDto,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
+		currentUserClerkId?: string,
 	): Promise<{ message: string; data: Lead | null }> {
 		try {
 			if (!orgId) {
 				throw new BadRequestException('Organization ID is required');
 			}
 
+			// Find organisation by Clerk org ID
+			const organisation = await this.organisationRepository.findOne({
+				where: [
+					{ clerkOrgId: orgId },
+					{ ref: orgId }
+				],
+				select: ['uid'],
+			});
+
+			if (!organisation) {
+				throw new BadRequestException(`Organization not found for ID: ${orgId}`);
+			}
+
 			// Create the lead entity
 			const lead = this.leadsRepository.create(createLeadDto as unknown as Lead);
 
 			// Set organization
-			if (orgId) {
-				const organisation = { uid: orgId } as Organisation;
-				lead.organisation = organisation;
-				lead.organisationUid = orgId; // Explicitly set the foreign key
-			}
+			lead.organisation = organisation;
+			lead.organisationUid = organisation.uid; // Explicitly set the foreign key
 
 			// Set branch if provided
 			if (branchId) {
@@ -163,15 +177,39 @@ export class LeadsService {
 				lead.branchUid = branchId; // Explicitly set the foreign key
 			}
 
-			// Set owner and ownerUid explicitly
+			// Set owner and ownerClerkUserId explicitly
 			if (createLeadDto.owner?.uid) {
-				lead.owner = { uid: createLeadDto.owner.uid } as User;
-				lead.ownerUid = createLeadDto.owner.uid; // Explicitly set the foreign key
+				const ownerUser = await this.userRepository.findOne({
+					where: { uid: createLeadDto.owner.uid },
+					select: ['uid', 'clerkUserId'],
+				});
+				if (ownerUser?.clerkUserId) {
+					lead.owner = { clerkUserId: ownerUser.clerkUserId } as User;
+					lead.ownerClerkUserId = ownerUser.clerkUserId; // Explicitly set the foreign key
+				}
+			} else if (currentUserClerkId) {
+				// Fallback to current user's clerkUserId if owner not provided in DTO
+				// Find user by clerkUserId to get the uid for the owner relation
+				const currentUser = await this.userRepository.findOne({
+					where: { clerkUserId: currentUserClerkId },
+					select: ['uid', 'clerkUserId'],
+				});
+				if (currentUser) {
+					lead.owner = { clerkUserId: currentUserClerkId } as User;
+					lead.ownerClerkUserId = currentUserClerkId; // Explicitly set the foreign key
+				}
 			}
 
 			// Handle assignees if provided
 			if (createLeadDto.assignees?.length) {
-				lead.assignees = createLeadDto.assignees.map((assignee) => ({ uid: assignee.uid }));
+				const assigneeUids = createLeadDto.assignees.map((a) => a.uid);
+				const assigneeUsers = await this.userRepository.find({
+					where: { uid: In(assigneeUids) },
+					select: ['uid', 'clerkUserId'],
+				});
+				lead.assignees = assigneeUsers
+					.filter((u) => u.clerkUserId)
+					.map((user) => ({ clerkUserId: user.clerkUserId }));
 			} else {
 				lead.assignees = [];
 			}
@@ -185,21 +223,42 @@ export class LeadsService {
 			const savedLead = await this.leadsRepository.save(lead);
 
 			if (!savedLead) {
-				throw new NotFoundException(process.env.CREATE_ERROR_MESSAGE || 'Failed to create lead');
+				throw new InternalServerErrorException({
+					statusCode: 500,
+					message: 'Failed to create lead in the database',
+					error: 'Internal Server Error',
+					action: 'Please try again later or contact support if the problem persists',
+					cause: 'Database save operation returned null or undefined',
+				});
 			}
 
-			// Ensure ownerUid is set after save (TypeORM should handle this, but verify)
-			if (!savedLead.ownerUid && createLeadDto.owner?.uid) {
-				this.logger.warn(`⚠️ [LeadsService] ownerUid not set after save for lead ${savedLead.uid}, updating manually`);
-				await this.leadsRepository.update(savedLead.uid, { ownerUid: createLeadDto.owner.uid });
-				savedLead.ownerUid = createLeadDto.owner.uid;
+			// Ensure ownerClerkUserId is set after save (TypeORM should handle this, but verify)
+			if (!savedLead.ownerClerkUserId) {
+				let clerkUserIdToSet: string | undefined;
+				
+				if (createLeadDto.owner?.uid) {
+					const ownerUser = await this.userRepository.findOne({
+						where: { uid: createLeadDto.owner.uid },
+						select: ['uid', 'clerkUserId'],
+					});
+					clerkUserIdToSet = ownerUser?.clerkUserId;
+				} else if (currentUserClerkId) {
+					// Fallback to current user's clerkUserId
+					clerkUserIdToSet = currentUserClerkId;
+				}
+				
+				if (clerkUserIdToSet) {
+					this.logger.warn(`⚠️ [LeadsService] ownerClerkUserId not set after save for lead ${savedLead.uid}, updating manually`);
+					await this.leadsRepository.update(savedLead.uid, { ownerClerkUserId: clerkUserIdToSet });
+					savedLead.ownerClerkUserId = clerkUserIdToSet;
+				}
 			}
 
 			// Populate the lead with full relation data for response
 			const populatedLead = await this.populateLeadRelations(savedLead);
 
 			// Clear caches after successful lead creation
-			await this.clearLeadCache(savedLead.uid, savedLead.ownerUid);
+			await this.clearLeadCache(savedLead.uid, savedLead.ownerClerkUserId);
 
 			// ============================================================
 			// EARLY RETURN: Respond to client immediately after successful save
@@ -227,11 +286,28 @@ export class LeadsService {
 
 			return response;
 		} catch (error) {
-			this.logger.error(`Error creating lead: ${error.message}`, error.stack);
-			return {
-				message: error?.message,
-				data: null,
-			};
+			this.logger.error(`Error creating lead:`, {
+				message: error instanceof Error ? error.message : 'Unknown error',
+				stack: error instanceof Error ? error.stack : undefined,
+				errorName: error instanceof Error ? error.name : typeof error,
+			});
+			
+			// If it's already a NestJS HTTP exception, re-throw as-is
+			if (error instanceof BadRequestException || 
+			    error instanceof NotFoundException || 
+			    error instanceof ForbiddenException ||
+			    error instanceof InternalServerErrorException) {
+				throw error;
+			}
+			
+			// For unexpected errors, wrap with InternalServerErrorException
+			throw new InternalServerErrorException({
+				statusCode: 500,
+				message: 'An unexpected error occurred while creating the lead',
+				error: 'Internal Server Error',
+				action: 'Please try again later or contact support if the problem persists',
+				cause: error instanceof Error ? error.message : 'Unknown database or system error',
+			});
 		}
 	}
 
@@ -240,10 +316,10 @@ export class LeadsService {
 	 */
 	async importLeadsFromCSV(
 		file: Express.Multer.File,
-		orgId: number,
-		branchId: number,
 		followUpInterval: RepetitionType,
 		followUpDuration: number,
+		orgId?: string,
+		branchId?: number,
 		assignedUserIds?: number[],
 	): Promise<{
 		success: boolean;
@@ -265,7 +341,26 @@ export class LeadsService {
 
 		try {
 			if (!orgId) {
-				throw new BadRequestException('Organization ID is required');
+				throw new BadRequestException({
+					statusCode: 400,
+					message: 'Organization ID is required to import leads',
+					error: 'Bad Request',
+					action: 'Please ensure you are authenticated and your organization is properly configured',
+					cause: 'Organization ID was not provided in the request context',
+				});
+			}
+
+			// Find organisation by Clerk org ID for setting relations
+			const organisation = await this.organisationRepository.findOne({
+				where: [
+					{ clerkOrgId: orgId },
+					{ ref: orgId }
+				],
+				select: ['uid'],
+			});
+
+			if (!organisation) {
+				throw new BadRequestException(`Organization not found for ID: ${orgId}`);
 			}
 
 			// Parse CSV
@@ -282,7 +377,7 @@ export class LeadsService {
 
 			// Get active sales reps for the organization/branch
 			const whereClause: any = {
-				organisation: { uid: orgId },
+				organisation: { uid: organisation.uid },
 				...(branchId && { branch: { uid: branchId } }),
 				status: AccountStatus.ACTIVE,
 				isDeleted: false,
@@ -427,7 +522,7 @@ export class LeadsService {
 						client: [],
 					};
 
-						await this.tasksService.create(taskDto, orgId, branchId);
+						await this.tasksService.create(taskDto, organisation.uid, branchId);
 					} catch (taskError: any) {
 						this.logger.warn(`Failed to create follow-up task for lead ${createdLead.uid}: ${taskError.message}`);
 					}
@@ -468,25 +563,50 @@ export class LeadsService {
 		},
 		page: number = 1,
 		limit: number = 25,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 		userId?: number,
 		userAccessLevel?: string,
 	): Promise<PaginatedResponse<Lead>> {
 		const startTime = Date.now();
-		this.logger.log(`🔍 [LeadsService] Finding leads with filters: page=${page}, limit=${limit}, orgId=${orgId}, branchId=${branchId}, userId=${userId}, role=${userAccessLevel}, filters:`, {
-			status: filters?.status,
-			search: filters?.search ? `${filters.search.substring(0, 50)}...` : undefined,
-			hasDateRange: !!(filters?.startDate && filters?.endDate),
-			temperature: filters?.temperature,
-			scoreRange: filters?.minScore !== undefined || filters?.maxScore !== undefined ? `${filters?.minScore || 0}-${filters?.maxScore || '∞'}` : undefined
+		const operationId = `FIND_ALL_LEADS_${Date.now()}`;
+		
+		this.logger.log(`[${operationId}] ========== LeadsService.findAll() Called ==========`);
+		this.logger.log(`[${operationId}] Parameters received:`, {
+			page,
+			limit,
+			orgId,
+			branchId,
+			userId,
+			userAccessLevel,
+			filters: {
+				status: filters?.status,
+				search: filters?.search ? `${filters.search.substring(0, 50)}...` : undefined,
+				hasDateRange: !!(filters?.startDate && filters?.endDate),
+				temperature: filters?.temperature,
+				minScore: filters?.minScore,
+				maxScore: filters?.maxScore,
+			},
 		});
 
 		try {
 			if (!orgId) {
-				this.logger.warn(`❌ [LeadsService] Organization ID is required for lead retrieval`);
-				throw new BadRequestException('Organization ID is required');
+				this.logger.error(`[${operationId}] ❌ Organization ID is missing!`, {
+					orgId,
+					branchId,
+					userId,
+					userAccessLevel,
+				});
+				throw new BadRequestException({
+					statusCode: 400,
+					message: 'Organization ID is required to retrieve leads',
+					error: 'Bad Request',
+					action: 'Please ensure you are authenticated and your organization is properly configured',
+					cause: 'Organization ID was not provided in the request context',
+				});
 			}
+
+			this.logger.log(`[${operationId}] ✅ Organization ID validated: ${orgId}`);
 
 			// Determine if user has elevated access (can see all leads)
 			// Only ADMIN and OWNER can view all leads
@@ -503,7 +623,7 @@ export class LeadsService {
 				.leftJoinAndSelect('lead.branch', 'branch')
 				.leftJoinAndSelect('lead.organisation', 'organisation')
 				.where('lead.isDeleted = :isDeleted', { isDeleted: false })
-				.andWhere('organisation.uid = :orgId', { orgId });
+				.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 
 			// Add branch filter if provided
 			if (branchId) {
@@ -514,10 +634,10 @@ export class LeadsService {
 			if (!hasElevatedAccess && userId) {
 				// User can see leads where they are the owner OR where they are in the assignees array
 				queryBuilder.andWhere(
-					'(lead.ownerUid = :userId OR CAST(lead.assignees AS jsonb) @> CAST(:userIdJson AS jsonb))',
+					'(lead.ownerClerkUserId = :userId OR CAST(lead.assignees AS jsonb) @> CAST(:userIdJson AS jsonb))',
 					{ 
 						userId,
-						userIdJson: JSON.stringify([{ uid: userId }])
+						userIdJson: JSON.stringify([{ clerkUserId: userId }])
 					}
 				);
 			}
@@ -561,9 +681,20 @@ export class LeadsService {
 			this.logger.debug(`💾 [LeadsService] Executing query for leads with pagination: offset=${(page - 1) * limit}, limit=${limit}`);
 			const [leads, total] = await queryBuilder.getManyAndCount();
 
-			if (!leads) {
-				this.logger.warn(`⚠️ [LeadsService] No leads found for the given criteria`);
-				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
+			// Return empty array instead of throwing error when no leads found
+			// This is a valid state, not an error condition
+			if (!leads || leads.length === 0) {
+				this.logger.log(`[${operationId}] ℹ️ No leads found for the given criteria - returning empty result`);
+				return {
+					data: [],
+					meta: {
+						total: 0,
+						page,
+						limit,
+						totalPages: 0,
+					},
+					message: process.env.SUCCESS_MESSAGE || 'Success',
+				};
 			}
 
 			this.logger.debug(`🔗 [LeadsService] Populating relations for ${leads.length} leads`);
@@ -574,7 +705,8 @@ export class LeadsService {
 			const stats = this.calculateStats(leads);
 
 			const duration = Date.now() - startTime;
-			this.logger.log(`✅ [LeadsService] Successfully retrieved ${total} leads (${leads.length} on page ${page}) in ${duration}ms`);
+			this.logger.log(`[${operationId}] ✅ Successfully retrieved ${total} leads (${leads.length} on page ${page}) in ${duration}ms`);
+			this.logger.log(`[${operationId}] ========== LeadsService.findAll() Completed Successfully ==========`);
 
 			return {
 				data: populatedLeads,
@@ -588,23 +720,40 @@ export class LeadsService {
 			};
 		} catch (error) {
 			const duration = Date.now() - startTime;
-			this.logger.error(`❌ [LeadsService] Error retrieving leads after ${duration}ms: ${error.message}`, error.stack);
-			return {
-				data: [],
-				meta: {
-					total: 0,
-					page,
-					limit,
-					totalPages: 0,
-				},
-				message: error?.message,
-			};
+			this.logger.error(`[${operationId}] ❌ Error retrieving leads after ${duration}ms:`, {
+				message: error instanceof Error ? error.message : 'Unknown error',
+				stack: error instanceof Error ? error.stack : undefined,
+				errorName: error instanceof Error ? error.name : typeof error,
+				orgId,
+				branchId,
+				userId,
+				userAccessLevel,
+				page,
+				limit,
+			});
+			this.logger.error(`[${operationId}] ========== LeadsService.findAll() Failed ==========`);
+			
+			// If it's already a NestJS HTTP exception, re-throw as-is
+			if (error instanceof BadRequestException || 
+			    error instanceof NotFoundException || 
+			    error instanceof ForbiddenException) {
+				throw error;
+			}
+			
+			// For unexpected errors, wrap with InternalServerErrorException
+			throw new InternalServerErrorException({
+				statusCode: 500,
+				message: 'An unexpected error occurred while retrieving leads',
+				error: 'Internal Server Error',
+				action: 'Please try again later or contact support if the problem persists',
+				cause: error instanceof Error ? error.message : 'Unknown database or system error',
+			});
 		}
 	}
 
 	async findOne(
 		ref: number,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 		userId?: number,
 		userAccessLevel?: string,
@@ -615,15 +764,34 @@ export class LeadsService {
 		try {
 			if (!orgId) {
 				this.logger.warn(`❌ [LeadsService] Organization ID is required for lead retrieval`);
-				throw new BadRequestException('Organization ID is required');
+				throw new BadRequestException({
+					statusCode: 400,
+					message: 'Organization ID is required to retrieve lead details',
+					error: 'Bad Request',
+					action: 'Please ensure you are authenticated and your organization is properly configured',
+					cause: 'Organization ID was not provided in the request context',
+				});
 			}
 
 			this.logger.debug(`🏗️ [LeadsService] Building query for lead ${ref} in org: ${orgId}, branch: ${branchId || 'all'}`);
 
+			// Find organisation by Clerk org ID
+			const organisation = await this.organisationRepository.findOne({
+				where: [
+					{ clerkOrgId: orgId },
+					{ ref: orgId }
+				],
+				select: ['uid'],
+			});
+
+			if (!organisation) {
+				throw new BadRequestException(`Organization not found for ID: ${orgId}`);
+			}
+
 			const whereClause: any = {
 				uid: ref,
 				isDeleted: false,
-				organisation: { uid: orgId },
+				organisation: { uid: organisation.uid },
 			};
 
 			if (branchId) {
@@ -653,27 +821,55 @@ export class LeadsService {
 			].includes(userAccessLevel as AccessLevel);
 
 			if (!hasElevatedAccess && userId) {
-				// Check ownership - try both ownerUid field and populated owner relation
-				const isOwner = lead.ownerUid === userId || lead.owner?.uid === userId;
+				// Get user's clerkUserId for comparison
+				const user = await this.userRepository.findOne({
+					where: { uid: userId },
+					select: ['uid', 'clerkUserId'],
+				});
+
+				if (!user?.clerkUserId) {
+					this.logger.warn(`⚠️ [LeadsService] User ${userId} not found or missing clerkUserId`);
+					throw new NotFoundException({
+						statusCode: 404,
+						message: 'Lead not found or access denied',
+						error: 'Not Found',
+						action: 'Please verify the lead reference and ensure you have permission to access this lead',
+						cause: 'User not found in database or missing clerkUserId',
+					});
+				}
+
+				// Check ownership - compare ownerClerkUserId with user's clerkUserId
+				const isOwner = lead.ownerClerkUserId === user.clerkUserId || lead.owner?.uid === userId;
 				
-				// Check if user is assigned - handle both object format { uid: number } and populated User objects
+				// Check if user is assigned - assignees are stored as { clerkUserId: string }[]
 				let isAssigned = false;
 				if (lead.assignees && Array.isArray(lead.assignees) && lead.assignees.length > 0) {
 					isAssigned = lead.assignees.some((assignee: any) => {
-						// Handle both { uid: number } format and populated User objects
+						// Handle both { clerkUserId: string } format and populated User objects
 						if (typeof assignee === 'object' && assignee !== null) {
-							return assignee.uid === userId;
+							if ('clerkUserId' in assignee) {
+								return assignee.clerkUserId === user.clerkUserId;
+							}
+							if ('uid' in assignee) {
+								return assignee.uid === userId;
+							}
 						}
-						return assignee === userId;
+						return assignee === userId || assignee === user.clerkUserId;
 					});
 				}
 				
 				if (!isOwner && !isAssigned) {
 					this.logger.warn(
-						`⚠️ [LeadsService] User ${userId} attempted to access lead ${ref} without permission. ` +
-						`Lead ownerUid: ${lead.ownerUid}, owner.uid: ${lead.owner?.uid}, assignees: ${JSON.stringify(lead.assignees)}`
+						`⚠️ [LeadsService] User ${userId} (clerkUserId: ${user.clerkUserId}) attempted to access lead ${ref} without permission. ` +
+						`Lead ownerClerkUserId: ${lead.ownerClerkUserId}, owner.uid: ${lead.owner?.uid}, assignees: ${JSON.stringify(lead.assignees)}`
 					);
-					throw new NotFoundException('Lead not found or access denied');
+					throw new NotFoundException({
+						statusCode: 404,
+						message: 'Lead not found or access denied',
+						error: 'Not Found',
+						action: 'You can only access leads that you own or are assigned to. Contact an administrator if you need access',
+						cause: 'User does not have permission to view this lead',
+					});
 				}
 			}
 
@@ -689,7 +885,7 @@ export class LeadsService {
 			const allLeads = await this.leadsRepository.find({
 				where: {
 					isDeleted: false,
-					organisation: { uid: orgId },
+					organisation: { uid: organisation.uid },
 				},
 			});
 			const stats = this.calculateStats(allLeads);
@@ -706,20 +902,37 @@ export class LeadsService {
 			return response;
 		} catch (error) {
 			const duration = Date.now() - startTime;
-			this.logger.error(`❌ [LeadsService] Error finding lead ${ref} after ${duration}ms: ${error.message}`, error.stack);
-			const response = {
-				message: error?.message,
-				lead: null,
-				stats: null,
-			};
-
-			return response;
+			this.logger.error(`❌ [LeadsService] Error finding lead ${ref} after ${duration}ms:`, {
+				message: error instanceof Error ? error.message : 'Unknown error',
+				stack: error instanceof Error ? error.stack : undefined,
+				errorName: error instanceof Error ? error.name : typeof error,
+				ref,
+				orgId,
+				branchId,
+				userId,
+			});
+			
+			// If it's already a NestJS HTTP exception, re-throw as-is
+			if (error instanceof BadRequestException || 
+			    error instanceof NotFoundException || 
+			    error instanceof ForbiddenException) {
+				throw error;
+			}
+			
+			// For unexpected errors, wrap with InternalServerErrorException
+			throw new InternalServerErrorException({
+				statusCode: 500,
+				message: 'An unexpected error occurred while retrieving lead details',
+				error: 'Internal Server Error',
+				action: 'Please try again later or contact support if the problem persists',
+				cause: error instanceof Error ? error.message : 'Unknown database or system error',
+			});
 		}
 	}
 
 	public async leadsByUser(
 		ref: number,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 		requestingUserId?: number,
 		userAccessLevel?: string,
@@ -730,7 +943,13 @@ export class LeadsService {
 		try {
 			if (!orgId) {
 				this.logger.warn(`❌ [LeadsService] Organization ID is required for user leads retrieval`);
-				throw new BadRequestException('Organization ID is required');
+				throw new BadRequestException({
+					statusCode: 400,
+					message: 'Organization ID is required to retrieve user leads',
+					error: 'Bad Request',
+					action: 'Please ensure you are authenticated and your organization is properly configured',
+					cause: 'Organization ID was not provided in the request context',
+				});
 			}
 
 			// Access control: Users can only view their own leads unless they are ADMIN or OWNER
@@ -745,7 +964,13 @@ export class LeadsService {
 
 			if (!hasElevatedAccess && requestingUserIdNum && refUserId !== requestingUserIdNum) {
 				this.logger.warn(`⚠️ [LeadsService] User ${requestingUserIdNum} attempted to access leads for user ${refUserId} without permission`);
-				throw new BadRequestException('You can only view your own leads');
+				throw new ForbiddenException({
+					statusCode: 403,
+					message: 'You can only view your own leads',
+					error: 'Forbidden',
+					action: 'You do not have permission to view leads for other users. Only administrators and owners can view all leads',
+					cause: 'User attempted to access leads belonging to another user without elevated permissions',
+				});
 			}
 
 			this.logger.debug(`🏗️ [LeadsService] Building query for user ${refUserId} leads in org: ${orgId}, branch: ${branchId || 'all'}`);
@@ -757,10 +982,10 @@ export class LeadsService {
 				.leftJoinAndSelect('lead.branch', 'branch')
 				.leftJoinAndSelect('lead.organisation', 'organisation')
 				.where('lead.isDeleted = :isDeleted', { isDeleted: false })
-				.andWhere('organisation.uid = :orgId', { orgId })
-				.andWhere('(lead.ownerUid = :userId OR CAST(lead.assignees AS jsonb) @> CAST(:userIdJson AS jsonb))', {
+				.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId })
+				.andWhere('(lead.ownerClerkUserId = :userId OR CAST(lead.assignees AS jsonb) @> CAST(:userIdJson AS jsonb))', {
 					userId: refUserId,
-					userIdJson: JSON.stringify([{ uid: refUserId }])
+					userIdJson: JSON.stringify([{ clerkUserId: refUserId }])
 				});
 
 			if (branchId) {
@@ -841,7 +1066,7 @@ export class LeadsService {
 	async update(
 		ref: number,
 		updateLeadDto: UpdateLeadDto,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 		userId?: number, // Optionally pass userId performing the update
 	): Promise<{ message: string }> {
@@ -857,12 +1082,31 @@ export class LeadsService {
 		try {
 			if (!orgId) {
 				this.logger.warn(`❌ [LeadsService] Organization ID is required for lead update`);
-				throw new BadRequestException('Organization ID is required');
+				throw new BadRequestException({
+					statusCode: 400,
+					message: 'Organization ID is required to update a lead',
+					error: 'Bad Request',
+					action: 'Please ensure you are authenticated and your organization is properly configured',
+					cause: 'Organization ID was not provided in the request context',
+				});
+			}
+
+			// Find organisation by Clerk org ID
+			const organisation = await this.organisationRepository.findOne({
+				where: [
+					{ clerkOrgId: orgId },
+					{ ref: orgId }
+				],
+				select: ['uid'],
+			});
+
+			if (!organisation) {
+				throw new BadRequestException(`Organization not found for ID: ${orgId}`);
 			}
 
 			this.logger.debug(`🔍 [LeadsService] Finding lead ${ref} for update in org: ${orgId}, branch: ${branchId || 'all'}`);
 			const lead = await this.leadsRepository.findOne({
-				where: { uid: ref, organisation: { uid: orgId }, branch: { uid: branchId } },
+				where: { uid: ref, organisation: { uid: organisation.uid }, branch: { uid: branchId } },
 				relations: ['owner', 'organisation', 'branch', 'interactions'],
 			});
 
@@ -910,8 +1154,15 @@ export class LeadsService {
 
 			// Handle assignees update specifically
 			if (updateLeadDto.assignees) {
-				dataToSave.assignees = updateLeadDto.assignees.map((a) => ({ uid: a.uid }));
-				this.logger.debug(`👥 [LeadsService] Updating assignees: ${updateLeadDto.assignees.length} assignees`);
+				const assigneeUids = updateLeadDto.assignees.map((a) => a.uid);
+				const assigneeUsers = await this.userRepository.find({
+					where: { uid: In(assigneeUids) },
+					select: ['uid', 'clerkUserId'],
+				});
+				dataToSave.assignees = assigneeUsers
+					.filter((u) => u.clerkUserId)
+					.map((user) => ({ clerkUserId: user.clerkUserId }));
+				this.logger.debug(`👥 [LeadsService] Updating assignees: ${dataToSave.assignees.length} assignees`);
 			} else if (updateLeadDto.hasOwnProperty('assignees')) {
 				// If assignees key exists but is empty/null, clear it
 				dataToSave.assignees = [];
@@ -930,7 +1181,7 @@ export class LeadsService {
 
 			// Clear caches after successful lead update (fast operation, safe to await)
 			this.logger.debug(`🧹 [LeadsService] Clearing lead caches after update`);
-			await this.clearLeadCache(ref, lead.ownerUid);
+			await this.clearLeadCache(ref, lead.ownerClerkUserId);
 
 			// ============================================================
 			// EARLY RETURN: Respond to client immediately after successful update
@@ -991,9 +1242,28 @@ export class LeadsService {
 	/**
 	 * Check for lead target achievements and send notifications
 	 */
-	async checkLeadTargetAchievements(userId: number, orgId?: number, branchId?: number): Promise<void> {
+	async checkLeadTargetAchievements(userId: number, orgId?: string, branchId?: number): Promise<void> {
 		try {
 			this.logger.debug(`Checking lead target achievements for user: ${userId}`);
+
+			if (!orgId) {
+				this.logger.debug(`No orgId provided for lead target achievements check`);
+				return;
+			}
+
+			// Resolve orgId string to numeric uid if needed
+			// Find organisation by Clerk org ID
+			const organisation = await this.organisationRepository.findOne({
+				where: [
+					{ clerkOrgId: orgId },
+					{ ref: orgId }
+				],
+				select: ['uid'],
+			});
+
+			if (!organisation) {
+				throw new BadRequestException(`Organization not found for ID: ${orgId}`);
+			}
 
 			// Get user with target information
 			const user = await this.userRepository.findOne({
@@ -1018,7 +1288,7 @@ export class LeadsService {
 				owner: { uid: userId },
 				isDeleted: false,
 				createdAt: Between(userTarget.periodStartDate, userTarget.periodEndDate),
-				organisation: { uid: orgId },
+				organisation: { uid: organisation.uid },
 			};
 
 			if (branchId) {
@@ -1100,7 +1370,7 @@ export class LeadsService {
 	): Promise<void> {
 		try {
 			// Get organization admins
-			const admins = await this.getOrganizationAdmins(user.organisation?.uid);
+			const admins = await this.getOrganizationAdmins(user.organisation?.uid ? String(user.organisation.uid) : undefined);
 
 			if (admins.length === 0) {
 				this.logger.warn(`No admins found for organization: ${user.organisation?.uid}`);
@@ -1159,15 +1429,28 @@ export class LeadsService {
 	/**
 	 * Get organization admins for notifications
 	 */
-	private async getOrganizationAdmins(orgId?: number): Promise<User[]> {
+	private async getOrganizationAdmins(orgId?: string): Promise<User[]> {
 		if (!orgId) {
 			return [];
 		}
 
 		try {
+			// Find organisation by Clerk org ID
+			const organisation = await this.organisationRepository.findOne({
+				where: [
+					{ clerkOrgId: orgId },
+					{ ref: orgId }
+				],
+				select: ['uid'],
+			});
+
+			if (!organisation) {
+				throw new BadRequestException(`Organization not found for ID: ${orgId}`);
+			}
+
 			const admins = await this.userRepository.find({
 				where: {
-					organisation: { uid: orgId },
+					organisation: { uid: organisation.uid },
 					accessLevel: In([AccessLevel.ADMIN, AccessLevel.OWNER]),
 					isDeleted: false,
 					status: In([AccountStatus.ACTIVE]),
@@ -1207,14 +1490,34 @@ export class LeadsService {
 		return `${userName} has achieved their lead generation target by securing ${achievementData.currentValue} new leads (${achievementData.achievementPercentage}% of target). Their consistent prospecting efforts are contributing significantly to our sales pipeline.`;
 	}
 
-	async remove(ref: number, orgId?: number, branchId?: number): Promise<{ message: string }> {
+	async remove(ref: number, orgId?: string, branchId?: number): Promise<{ message: string }> {
 		const startTime = Date.now();
 		this.logger.log(`🗑️ [LeadsService] Removing lead: ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
 
 		try {
 			if (!orgId) {
 				this.logger.warn(`❌ [LeadsService] Organization ID is required for lead removal`);
-				throw new BadRequestException('Organization ID is required');
+				throw new BadRequestException({
+					statusCode: 400,
+					message: 'Organization ID is required to delete a lead',
+					error: 'Bad Request',
+					action: 'Please ensure you are authenticated and your organization is properly configured',
+					cause: 'Organization ID was not provided in the request context',
+				});
+			}
+
+			// Resolve orgId string to numeric uid if needed
+			// Find organisation by Clerk org ID
+			const organisation = await this.organisationRepository.findOne({
+				where: [
+					{ clerkOrgId: orgId },
+					{ ref: orgId }
+				],
+				select: ['uid'],
+			});
+
+			if (!organisation) {
+				throw new BadRequestException(`Organization not found for ID: ${orgId}`);
 			}
 
 			this.logger.debug(`🔍 [LeadsService] Finding lead ${ref} for removal in org: ${orgId}, branch: ${branchId || 'all'}`);
@@ -1222,7 +1525,7 @@ export class LeadsService {
 			const whereClause: any = {
 				uid: ref,
 				isDeleted: false,
-				organisation: { uid: orgId },
+				organisation: { uid: organisation.uid },
 			};
 
 			if (branchId) {
@@ -1246,7 +1549,7 @@ export class LeadsService {
 
 			// Clear caches after successful lead deletion
 			this.logger.debug(`🧹 [LeadsService] Clearing lead caches after removal`);
-			await this.clearLeadCache(lead.uid, lead.ownerUid);
+			await this.clearLeadCache(lead.uid, lead.ownerClerkUserId);
 
 			const duration = Date.now() - startTime;
 			this.logger.log(`✅ [LeadsService] Successfully removed lead ${ref} in ${duration}ms`);
@@ -1263,14 +1566,34 @@ export class LeadsService {
 		}
 	}
 
-	async restore(ref: number, orgId?: number, branchId?: number): Promise<{ message: string }> {
+	async restore(ref: number, orgId?: string, branchId?: number): Promise<{ message: string }> {
 		const startTime = Date.now();
 		this.logger.log(`♻️ [LeadsService] Restoring lead: ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
 
 		try {
 			if (!orgId) {
 				this.logger.warn(`❌ [LeadsService] Organization ID is required for lead restoration`);
-				throw new BadRequestException('Organization ID is required');
+				throw new BadRequestException({
+					statusCode: 400,
+					message: 'Organization ID is required to restore a lead',
+					error: 'Bad Request',
+					action: 'Please ensure you are authenticated and your organization is properly configured',
+					cause: 'Organization ID was not provided in the request context',
+				});
+			}
+
+			// Resolve orgId string to numeric uid if needed
+			// Find organisation by Clerk org ID
+			const organisation = await this.organisationRepository.findOne({
+				where: [
+					{ clerkOrgId: orgId },
+					{ ref: orgId }
+				],
+				select: ['uid'],
+			});
+
+			if (!organisation) {
+				throw new BadRequestException(`Organization not found for ID: ${orgId}`);
 			}
 
 			this.logger.debug(`🔍 [LeadsService] Finding deleted lead ${ref} for restoration in org: ${orgId}, branch: ${branchId || 'all'}`);
@@ -1278,7 +1601,7 @@ export class LeadsService {
 			const whereClause: any = {
 				uid: ref,
 				isDeleted: true,
-				organisation: { uid: orgId },
+				organisation: { uid: organisation.uid },
 			};
 
 			if (branchId) {
@@ -1319,14 +1642,34 @@ export class LeadsService {
 		}
 	}
 
-	async reactivate(ref: number, orgId?: number, branchId?: number, userId?: number): Promise<{ message: string }> {
+	async reactivate(ref: number, orgId?: string, branchId?: number, userId?: number): Promise<{ message: string }> {
 		const startTime = Date.now();
 		this.logger.log(`🔄 [LeadsService] Reactivating lead: ${ref}, orgId: ${orgId}, branchId: ${branchId}, userId: ${userId}`);
 
 		try {
 			if (!orgId) {
 				this.logger.warn(`❌ [LeadsService] Organization ID is required for lead reactivation`);
-				throw new BadRequestException('Organization ID is required');
+				throw new BadRequestException({
+					statusCode: 400,
+					message: 'Organization ID is required to reactivate a lead',
+					error: 'Bad Request',
+					action: 'Please ensure you are authenticated and your organization is properly configured',
+					cause: 'Organization ID was not provided in the request context',
+				});
+			}
+
+			// Resolve orgId string to numeric uid if needed
+			// Find organisation by Clerk org ID
+			const organisation = await this.organisationRepository.findOne({
+				where: [
+					{ clerkOrgId: orgId },
+					{ ref: orgId }
+				],
+				select: ['uid'],
+			});
+
+			if (!organisation) {
+				throw new BadRequestException(`Organization not found for ID: ${orgId}`);
 			}
 
 			this.logger.debug(`🔍 [LeadsService] Finding lead ${ref} for reactivation in org: ${orgId}, branch: ${branchId || 'all'}`);
@@ -1334,7 +1677,7 @@ export class LeadsService {
 			const whereClause: any = {
 				uid: ref,
 				isDeleted: false,
-				organisation: { uid: orgId },
+				organisation: { uid: organisation.uid },
 			};
 
 			if (branchId) {
@@ -1640,7 +1983,7 @@ export class LeadsService {
 
 					const result = await this.tasksService.create(
 						taskData,
-						lead.organisation?.uid,
+						lead.organisation?.uid || undefined,
 						lead.branch?.uid,
 					);
 
@@ -2309,12 +2652,23 @@ export class LeadsService {
 	 */
 	private async populateLeadRelations(lead: Lead): Promise<Lead> {
 		if (lead.assignees?.length > 0) {
-			const assigneeIds = lead.assignees.map((a) => a.uid);
-			const assigneeProfiles = await this.userRepository.find({
-				where: { uid: In(assigneeIds) },
-				select: ['uid', 'username', 'name', 'surname', 'email', 'phone', 'photoURL', 'accessLevel', 'status'],
-			});
-			lead.assignees = assigneeProfiles;
+			// Extract clerkUserId from assignees array
+			const assigneeClerkUserIds = lead.assignees
+				.map((a) => {
+					if (typeof a === 'object' && a !== null && 'clerkUserId' in a) {
+						return a.clerkUserId;
+					}
+					return null;
+				})
+				.filter((id): id is string => id !== null);
+			
+			if (assigneeClerkUserIds.length > 0) {
+				const assigneeProfiles = await this.userRepository.find({
+					where: { clerkUserId: In(assigneeClerkUserIds) },
+					select: ['uid', 'username', 'name', 'surname', 'email', 'phone', 'photoURL', 'accessLevel', 'status'],
+				});
+				lead.assignees = assigneeProfiles;
+			}
 		}
 
 		// Populate change history with user details
@@ -2474,7 +2828,7 @@ export class LeadsService {
 						type: XP_VALUES_TYPES.LEAD,
 						details: 'Lead created',
 					},
-				}, lead.organisation?.uid, lead.branch?.uid);
+				}, lead.organisation?.clerkOrgId || lead.organisation?.ref, lead.branch?.uid);
 			}
 
 			// 4. Send system notification
@@ -2494,7 +2848,7 @@ export class LeadsService {
 			if (lead.owner?.uid) {
 				await this.checkLeadTargetAchievements(
 					lead.owner.uid,
-					lead.organisation?.uid,
+					lead.organisation?.uid ? String(lead.organisation.uid) : undefined,
 					lead.branch?.uid
 				);
 			}
@@ -2590,7 +2944,7 @@ export class LeadsService {
 						type: 'lead_conversion',
 						details: 'Lead converted to customer',
 					},
-				}, lead.organisation?.uid, lead.branch?.uid);
+				}, lead.organisation?.clerkOrgId || lead.organisation?.ref, lead.branch?.uid);
 			}
 		}
 	}
@@ -2840,7 +3194,7 @@ export class LeadsService {
 		templateType: string,
 		customMessage?: string,
 		tone?: any,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<{
 		success: boolean;
@@ -2860,12 +3214,26 @@ export class LeadsService {
 				throw new BadRequestException('Organization ID is required');
 			}
 
+			// Resolve orgId string to numeric uid if needed
+			// Find organisation by Clerk org ID
+			const organisation = await this.organisationRepository.findOne({
+				where: [
+					{ clerkOrgId: orgId },
+					{ ref: orgId }
+				],
+				select: ['uid'],
+			});
+
+			if (!organisation) {
+				throw new BadRequestException(`Organization not found for ID: ${orgId}`);
+			}
+
 			// Get the lead with all related data
 			const lead = await this.leadsRepository.findOne({
 				where: {
 					uid: leadId,
 					isDeleted: false,
-					organisation: { uid: orgId },
+					organisation: { uid: organisation.uid },
 					...(branchId && { branch: { uid: branchId } }),
 				},
 				relations: ['owner', 'organisation', 'branch', 'interactions'],

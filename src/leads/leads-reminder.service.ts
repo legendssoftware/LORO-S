@@ -118,7 +118,8 @@ export class LeadsReminderService {
       for (const org of organizations) {
         try {
           // Get organization timezone
-          const organizationHours = await this.organizationHoursService.getOrganizationHours(org.uid);
+          const orgId = org.clerkOrgId || org.ref;
+          const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
           const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
 
           // Get current time in organization timezone
@@ -172,8 +173,8 @@ export class LeadsReminderService {
           const leadsByOwner = this.groupLeadsByOwner([...pendingLeads, ...staleLeads]);
 
           // Send consolidated notification to each user
-          for (const [ownerUid, leads] of Object.entries(leadsByOwner)) {
-            await this.sendConsolidatedLeadNotification(parseInt(ownerUid), leads, sevenDaysAgo);
+          for (const [ownerClerkUserId, leads] of Object.entries(leadsByOwner)) {
+            await this.sendConsolidatedLeadNotification(ownerClerkUserId, leads, sevenDaysAgo);
           }
 
           this.logger.log(`✅ Daily lead summary sent to ${Object.keys(leadsByOwner).length} users in org ${org.uid}`);
@@ -202,17 +203,17 @@ export class LeadsReminderService {
   /**
    * Groups leads by their owner
    */
-  private groupLeadsByOwner(leads: Lead[]): Record<number, Lead[]> {
-    const leadsByOwner: Record<number, Lead[]> = {};
+  private groupLeadsByOwner(leads: Lead[]): Record<string, Lead[]> {
+    const leadsByOwner: Record<string, Lead[]> = {};
 
     for (const lead of leads) {
-      if (!lead.ownerUid) continue;
+      if (!lead.ownerClerkUserId) continue;
 
-      if (!leadsByOwner[lead.ownerUid]) {
-        leadsByOwner[lead.ownerUid] = [];
+      if (!leadsByOwner[lead.ownerClerkUserId]) {
+        leadsByOwner[lead.ownerClerkUserId] = [];
       }
 
-      leadsByOwner[lead.ownerUid].push(lead);
+      leadsByOwner[lead.ownerClerkUserId].push(lead);
     }
 
     return leadsByOwner;
@@ -221,16 +222,25 @@ export class LeadsReminderService {
   /**
    * Send consolidated lead notification to a user
    */
-  private async sendConsolidatedLeadNotification(ownerUid: number, leads: Lead[], sevenDaysAgo: Date) {
+  private async sendConsolidatedLeadNotification(ownerClerkUserId: string, leads: Lead[], sevenDaysAgo: Date) {
+    let user: User | null = null;
     try {
-      // Check if user is active
-      const activeUsers = await this.filterActiveUsers([ownerUid]);
-      if (activeUsers.length === 0) {
-        this.logger.debug(`User ${ownerUid} is inactive, skipping notification`);
+      // Look up user by clerkUserId
+      user = await this.userRepository.findOne({
+        where: { clerkUserId: ownerClerkUserId },
+        select: ['uid', 'name', 'surname', 'email', 'status'],
+      });
+
+      if (!user) {
+        this.logger.debug(`User with clerkUserId ${ownerClerkUserId} not found, skipping notification`);
         return;
       }
 
-      const user = activeUsers[0];
+      // Check if user is active
+      if (!this.isUserActive(user)) {
+        this.logger.debug(`User ${user.uid} (clerkUserId: ${ownerClerkUserId}) is inactive, skipping notification`);
+        return;
+      }
       const now = new Date();
 
       // Categorize leads
@@ -261,13 +271,13 @@ export class LeadsReminderService {
 
       // Only send notification if there are actionable leads
       if (pendingLeads.length === 0 && staleLeads.length === 0) {
-        this.logger.debug(`No actionable leads for user ${ownerUid}, skipping notification`);
+        this.logger.debug(`No actionable leads for user ${user.uid} (clerkUserId: ${ownerClerkUserId}), skipping notification`);
         return;
       }
 
       await this.unifiedNotificationService.sendTemplatedNotification(
         NotificationEvent.LEAD_DAILY_SUMMARY,
-        [ownerUid],
+        [user.uid],
         {
           userName: user.name || 'Team Member',
           totalLeads: leads.length,
@@ -300,10 +310,10 @@ export class LeadsReminderService {
       );
 
       this.logger.debug(
-        `✅ Daily lead summary sent to user ${ownerUid}: ${leads.length} leads (${pendingLeads.length} pending, ${staleLeads.length} stale)`
+        `✅ Daily lead summary sent to user ${user.uid} (clerkUserId: ${ownerClerkUserId}): ${leads.length} leads (${pendingLeads.length} pending, ${staleLeads.length} stale)`
       );
     } catch (error) {
-      this.logger.error(`Error sending consolidated lead notification to user ${ownerUid}`, error.stack);
+      this.logger.error(`Error sending consolidated lead notification to user ${user?.uid || ownerClerkUserId} (clerkUserId: ${ownerClerkUserId})`, error.stack);
     }
   }
 } 

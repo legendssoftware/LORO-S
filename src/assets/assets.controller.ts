@@ -1,8 +1,9 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Req, BadRequestException } from '@nestjs/common';
 import { AssetsService } from './assets.service';
 import { CreateAssetDto } from './dto/create-asset.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
-import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
+import { AuthenticatedRequest, getClerkOrgId } from '../lib/interfaces/authenticated-request.interface';
+import { OrganisationService } from '../organisation/organisation.service';
 import { 
   ApiBearerAuth, 
   ApiOperation, 
@@ -24,7 +25,7 @@ import {
 } from '@nestjs/swagger';
 import { getDynamicDate, getDynamicDateTime, getFutureDate, getPastDate, createApiDescription } from '../lib/utils/swagger-helpers';
 import { RoleGuard } from '../guards/role.guard';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { Roles } from '../decorators/role.decorator';
 import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
@@ -33,7 +34,7 @@ import { Asset } from './entities/asset.entity';
 @ApiBearerAuth('JWT-auth')
 @ApiTags('📦 Assets')
 @Controller('assets')
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 @EnterpriseOnly('assets')
 @ApiConsumes('application/json')
 @ApiProduces('application/json')
@@ -50,8 +51,21 @@ import { Asset } from './entities/asset.entity';
 })
 export class AssetsController {
   constructor(
-    private readonly assetsService: AssetsService
+    private readonly assetsService: AssetsService,
+    private readonly organisationService: OrganisationService
   ) { }
+
+  private async resolveOrgUid(req: AuthenticatedRequest): Promise<number> {
+    const clerkOrgId = getClerkOrgId(req);
+    if (!clerkOrgId) {
+      throw new BadRequestException('Organization context required');
+    }
+    const uid = await this.organisationService.findUidByClerkId(clerkOrgId);
+    if (uid == null) {
+      throw new BadRequestException('Organization not found');
+    }
+    return uid;
+  }
 
   @Post()
   @Roles(
@@ -260,8 +274,8 @@ Creates a new asset in the system with comprehensive tracking capabilities.
       }
     }
   })
-  create(@Body() createAssetDto: CreateAssetDto, @Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid;
+  async create(@Body() createAssetDto: CreateAssetDto, @Req() req: AuthenticatedRequest) {
+    const orgId = await this.resolveOrgUid(req);
     const branchId = req.user?.branch?.uid;
     return this.assetsService.create(createAssetDto, orgId, branchId);
   }
@@ -411,8 +425,8 @@ Retrieves a comprehensive list of all active assets in your organization.
       }
     }
   })
-  findAll(@Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid;
+  async findAll(@Req() req: AuthenticatedRequest) {
+    const orgId = await this.resolveOrgUid(req);
     const branchId = req.user?.branch?.uid;
     return this.assetsService.findAll(orgId, branchId);
   }
@@ -593,8 +607,8 @@ Retrieves comprehensive information about a specific asset including its complet
       }
     }
   })
-  findOne(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid;
+  async findOne(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
+    const orgId = await this.resolveOrgUid(req);
     const branchId = req.user?.branch?.uid;
     return this.assetsService.findOne(ref, orgId, branchId);
   }
@@ -784,8 +798,8 @@ Advanced search functionality to quickly locate assets using various criteria.
       }
     }
   })
-  findBySearchTerm(@Param('query') query: string, @Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid;
+  async findBySearchTerm(@Param('query') query: string, @Req() req: AuthenticatedRequest) {
+    const orgId = await this.resolveOrgUid(req);
     const branchId = req.user?.branch?.uid;
     return this.assetsService.findBySearchTerm(query, orgId, branchId);
   }
@@ -980,8 +994,8 @@ Retrieves all assets currently assigned to a specific user, providing a comprehe
       }
     }
   })
-  assetsByUser(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid;
+  async assetsByUser(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
+    const orgId = await this.resolveOrgUid(req);
     const branchId = req.user?.branch?.uid;
     return this.assetsService.assetsByUser(ref, orgId, branchId);
   }
@@ -1186,8 +1200,8 @@ Updates an existing asset with new information while maintaining complete audit 
       }
     }
   })
-  update(@Param('ref') ref: number, @Body() updateAssetDto: UpdateAssetDto, @Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid;
+  async update(@Param('ref') ref: number, @Body() updateAssetDto: UpdateAssetDto, @Req() req: AuthenticatedRequest) {
+    const orgId = await this.resolveOrgUid(req);
     const branchId = req.user?.branch?.uid;
     return this.assetsService.update(ref, updateAssetDto, orgId, branchId);
   }
@@ -1553,8 +1567,8 @@ Use the restore endpoint to recover accidentally deleted assets within the reten
       }
     }
   })
-  remove(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid;
+  async remove(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
+    const orgId = await this.resolveOrgUid(req);
     const branchId = req.user?.branch?.uid;
     return this.assetsService.remove(ref, orgId, branchId);
   }

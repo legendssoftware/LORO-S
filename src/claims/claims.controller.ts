@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Req, UnauthorizedException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Req, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { ClaimsService } from './claims.service';
 import { CreateClaimDto } from './dto/create-claim.dto';
 import { UpdateClaimDto } from './dto/update-claim.dto';
@@ -7,18 +7,31 @@ import { getDynamicDateTime, createApiDescription } from '../lib/utils/swagger-h
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { RoleGuard } from '../guards/role.guard';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
-import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
+import { AuthenticatedRequest, getClerkOrgId } from '../lib/interfaces/authenticated-request.interface';
 
 @ApiTags('🪙 Claims')
 @Controller('claims') 
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 @EnterpriseOnly('claims')
 @ApiBearerAuth('JWT-auth')
 @ApiUnauthorizedResponse({ description: 'Unauthorized access due to invalid credentials or missing token' })
 export class ClaimsController {
   constructor(private readonly claimsService: ClaimsService) { }
+
+  /**
+   * Safely converts a value to a number
+   * @param value - Value to convert (string, number, or undefined)
+   * @returns Number or undefined if conversion fails
+   */
+  private toNumber(value: string | number | undefined): number | undefined {
+    if (value === undefined || value === null || value === '') {
+      return undefined;
+    }
+    const numValue = Number(value);
+    return isNaN(numValue) || !isFinite(numValue) ? undefined : numValue;
+  }
 
   @Post()
  @Roles(
@@ -83,8 +96,11 @@ export class ClaimsController {
   })
   @ApiBadRequestResponse({ description: 'Invalid input data provided' })
   create(@Body() createClaimDto: CreateClaimDto, @Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid || req.user?.organisationRef;
-    const branchId = req.user?.branch?.uid;
+    const orgId = getClerkOrgId(req);
+    if (!orgId) {
+      throw new BadRequestException('Organization context required');
+    }
+    const branchId = this.toNumber(req.user?.branch?.uid);
     const userId = req.user?.uid;
     
     if (!userId) {
@@ -151,8 +167,11 @@ export class ClaimsController {
     }
   })
   findAll(@Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid || req.user?.organisationRef;
-    const branchId = req.user?.branch?.uid;
+    const orgId = getClerkOrgId(req);
+    if (!orgId) {
+      throw new BadRequestException('Organization context required');
+    }
+    const branchId = this.toNumber(req.user?.branch?.uid);
     const userId = req.user?.uid;
     const userAccessLevel = req.user?.accessLevel || req.user?.role;
     
@@ -224,8 +243,11 @@ export class ClaimsController {
   })
   @ApiNotFoundResponse({ description: 'Claim not found' })
   findOne(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid || req.user?.organisationRef;
-    const branchId = req.user?.branch?.uid;
+    const orgId = getClerkOrgId(req);
+    if (!orgId) {
+      throw new BadRequestException('Organization context required');
+    }
+    const branchId = this.toNumber(req.user?.branch?.uid);
     const userId = req.user?.uid;
     const userAccessLevel = req.user?.accessLevel || req.user?.role;
     return this.claimsService.findOne(ref, orgId, branchId, userId, userAccessLevel);
@@ -264,8 +286,11 @@ export class ClaimsController {
   @ApiNotFoundResponse({ description: 'Claim not found' })
   @ApiBadRequestResponse({ description: 'Invalid input data provided' })
   update(@Param('ref') ref: number, @Body() updateClaimDto: UpdateClaimDto, @Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid || req.user?.organisationRef;
-    const branchId = req.user?.branch?.uid;
+    const orgId = getClerkOrgId(req);
+    if (!orgId) {
+      throw new BadRequestException('Organization context required');
+    }
+    const branchId = this.toNumber(req.user?.branch?.uid);
     const userId = req.user?.uid;
     const userAccessLevel = req.user?.accessLevel || req.user?.role;
     return this.claimsService.update(ref, updateClaimDto, orgId, branchId, userId, userAccessLevel);
@@ -302,8 +327,11 @@ export class ClaimsController {
   })
   @ApiNotFoundResponse({ description: 'Claim not found' })
   restore(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid || req.user?.organisationRef;
-    const branchId = req.user?.branch?.uid;
+    const orgId = getClerkOrgId(req);
+    if (!orgId) {
+      throw new BadRequestException('Organization context required');
+    }
+    const branchId = this.toNumber(req.user?.branch?.uid);
     const userId = req.user?.uid;
     const userAccessLevel = req.user?.accessLevel || req.user?.role;
     
@@ -375,8 +403,11 @@ export class ClaimsController {
   })
   @ApiNotFoundResponse({ description: 'User not found or has no claims' })
   claimsByUser(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid || req.user?.organisationRef;
-    const branchId = req.user?.branch?.uid;
+    const orgId = getClerkOrgId(req);
+    if (!orgId) {
+      throw new BadRequestException('Organization context required');
+    }
+    const branchId = this.toNumber(req.user?.branch?.uid);
     const requestingUserId = req.user?.uid;
     const userAccessLevel = req.user?.accessLevel || req.user?.role;
     return this.claimsService.claimsByUser(ref, orgId, branchId, requestingUserId, userAccessLevel);
@@ -440,8 +471,11 @@ export class ClaimsController {
     }
   })
   generateShareToken(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid || req.user?.organisationRef;
-    const branchId = req.user?.branch?.uid;
+    const orgId = getClerkOrgId(req);
+    if (!orgId) {
+      throw new BadRequestException('Organization context required');
+    }
+    const branchId = this.toNumber(req.user?.branch?.uid);
     const userId = req.user?.uid;
     const userAccessLevel = req.user?.accessLevel || req.user?.role;
     return this.claimsService.generateShareToken(ref, orgId, branchId, userId, userAccessLevel);
@@ -478,8 +512,11 @@ export class ClaimsController {
   })
   @ApiNotFoundResponse({ description: 'Claim not found' })
   remove(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-    const orgId = req.user?.org?.uid || req.user?.organisationRef;
-    const branchId = req.user?.branch?.uid;
+    const orgId = getClerkOrgId(req);
+    if (!orgId) {
+      throw new BadRequestException('Organization context required');
+    }
+    const branchId = this.toNumber(req.user?.branch?.uid);
     const userId = req.user?.uid;
     const userAccessLevel = req.user?.accessLevel || req.user?.role;
     return this.claimsService.remove(ref, orgId, branchId, userId, userAccessLevel);

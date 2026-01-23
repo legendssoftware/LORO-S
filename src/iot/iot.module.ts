@@ -43,7 +43,7 @@ import { IoTReportingService } from './services/iot-reporting.service';
     // Clerk module for authentication (replaces AuthModule)
     ClerkModule,
     
-    // Licensing module for LicensingService (required by AuthGuard)
+    // Licensing module for LicensingService
     LicensingModule,
     
     // Organisation module for business hours validation

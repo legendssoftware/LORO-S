@@ -91,9 +91,9 @@ export class Report {
 	branchUid: number;
 
 	@ManyToOne(() => User, (user) => user.reports)
-	@JoinColumn({ name: 'ownerUid' })
+	@JoinColumn({ name: 'ownerClerkUserId', referencedColumnName: 'clerkUserId' })
 	owner: User;
 
 	@Column({ nullable: true })
-	ownerUid: number;
+	ownerClerkUserId: string;
 }

@@ -3,12 +3,12 @@ import { ApiTags, ApiOperation, ApiOkResponse, ApiUnauthorizedResponse, ApiBeare
 import { SalesTipsService } from './sales-tips.service';
 import { CreateSalesTipDto } from './dto/create-sales-tip.dto';
 import { UpdateSalesTipDto } from './dto/update-sales-tip.dto';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { SalesTip } from './entities/sales-tip.entity';
 
 @ApiTags('💡 Sales Tips')
 @Controller('sales-tips')
-@UseGuards(AuthGuard)
+@UseGuards(ClerkAuthGuard)
 @ApiBearerAuth()
 @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid credentials or missing token' })
 export class SalesTipsController {

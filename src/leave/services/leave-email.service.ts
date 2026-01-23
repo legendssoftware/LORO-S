@@ -77,11 +77,11 @@ export class LeaveEmailService {
 	/**
 	 * Get delegated user information if delegation is set up
 	 */
-	private async getDelegatedUser(delegatedToUid?: number): Promise<User | null> {
-		if (!delegatedToUid) return null;
+	private async getDelegatedUser(delegatedToClerkUserId?: string): Promise<User | null> {
+		if (!delegatedToClerkUserId) return null;
 
 		return this.userRepository.findOne({
-			where: { uid: delegatedToUid },
+			where: { clerkUserId: delegatedToClerkUserId },
 			relations: ['organisation', 'branch'],
 		});
 	}
@@ -91,7 +91,7 @@ export class LeaveEmailService {
 	 */
 	async sendApplicationConfirmation(leave: Leave, applicant: User): Promise<void> {
 		try {
-			const delegatedUser = await this.getDelegatedUser(leave.delegatedToUid);
+			const delegatedUser = await this.getDelegatedUser(leave.delegatedToClerkUserId);
 
 			const emailData: LeaveApplicationConfirmationData = {
 				name: applicant.name || applicant.email,
@@ -108,7 +108,7 @@ export class LeaveEmailService {
 				tags: leave.tags,
 				isPaid: leave.isPaid,
 				paidAmount: leave.paidAmount,
-				isDelegated: !!leave.delegatedToUid,
+				isDelegated: !!leave.delegatedToClerkUserId,
 				delegatedToName: delegatedUser?.name,
 				isPublicHoliday: leave.isPublicHoliday,
 				createdAt: leave.createdAt.toISOString(),
@@ -138,7 +138,7 @@ export class LeaveEmailService {
 				return;
 			}
 
-			const delegatedUser = await this.getDelegatedUser(leave.delegatedToUid);
+			const delegatedUser = await this.getDelegatedUser(leave.delegatedToClerkUserId);
 
 			for (const approver of admins) {
 				const emailData: LeaveNewApplicationAdminData = {
@@ -159,7 +159,7 @@ export class LeaveEmailService {
 					tags: leave.tags,
 					isPaid: leave.isPaid,
 					paidAmount: leave.paidAmount,
-					isDelegated: !!leave.delegatedToUid,
+					isDelegated: !!leave.delegatedToClerkUserId,
 					delegatedToName: delegatedUser?.name,
 					isPublicHoliday: leave.isPublicHoliday,
 					attachments: leave.attachments,
@@ -205,7 +205,7 @@ export class LeaveEmailService {
 				comments: leave.comments,
 				rejectionReason: leave.rejectionReason,
 				cancellationReason: leave.cancellationReason,
-				isDelegated: !!leave.delegatedToUid,
+				isDelegated: !!leave.delegatedToClerkUserId,
 				returnDate: returnDate.toISOString(),
 				createdAt: leave.createdAt.toISOString(),
 			};
@@ -268,7 +268,7 @@ export class LeaveEmailService {
 					comments: leave.comments,
 					rejectionReason: leave.rejectionReason,
 					cancellationReason: leave.cancellationReason,
-					isDelegated: !!leave.delegatedToUid,
+					isDelegated: !!leave.delegatedToClerkUserId,
 					returnDate: returnDate.toISOString(),
 					createdAt: leave.createdAt.toISOString(),
 					pendingCount,

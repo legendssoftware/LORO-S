@@ -28,11 +28,33 @@ export class InteractionsService {
 		private leadRepository: Repository<Lead>,
 		@InjectRepository(Client)
 		private clientRepository: Repository<Client>,
+		@InjectRepository(Organisation)
+		private organisationRepository: Repository<Organisation>,
 		@Inject(CACHE_MANAGER)
 		private cacheManager: Cache,
 		private readonly configService: ConfigService,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
+	}
+
+	/**
+	 * Find organisation by Clerk org ID (string) or ref
+	 * Returns the organisation entity with its uid for database operations
+	 */
+	private async findOrganisationByClerkId(orgId?: string): Promise<Organisation | null> {
+		if (!orgId) {
+			return null;
+		}
+
+		const organisation = await this.organisationRepository.findOne({
+			where: [
+				{ clerkOrgId: orgId },
+				{ ref: orgId }
+			],
+			select: ['uid', 'clerkOrgId', 'ref'],
+		});
+
+		return organisation;
 	}
 
 	/**
@@ -177,13 +199,19 @@ export class InteractionsService {
 
 	async create(
 		createInteractionDto: CreateInteractionDto,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 		user?: number,
 	): Promise<{ message: string; data: Interaction | null }> {
 		try {
 			if (!orgId) {
 				throw new BadRequestException('Organization ID is required');
+			}
+
+			// Find organisation by Clerk org ID
+			const organisation = await this.findOrganisationByClerkId(orgId);
+			if (!organisation) {
+				throw new BadRequestException(`Organisation not found for ID: ${orgId}`);
 			}
 
 			// Check if at least one of leadUid, clientUid, or quotationUid is provided
@@ -199,10 +227,7 @@ export class InteractionsService {
 			interaction.createdBy = createInteractionDto.createdBy;
 
 			// Set organization
-			if (orgId) {
-				const organisation = { uid: orgId } as Organisation;
-				interaction.organisation = organisation;
-			}
+			interaction.organisation = organisation;
 
 			// Set branch if provided
 			if (branchId) {
@@ -298,12 +323,18 @@ export class InteractionsService {
 		},
 		page: number = 1,
 		limit: number = 25,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 ): Promise<PaginatedResponse<Interaction>> {
 		try {
 			if (!orgId) {
 				throw new BadRequestException('Organization ID is required');
+			}
+
+			// Find organisation by Clerk org ID
+			const organisation = await this.findOrganisationByClerkId(orgId);
+			if (!organisation) {
+				throw new BadRequestException(`Organisation not found for ID: ${orgId}`);
 			}
 
 			const queryBuilder = this.interactionRepository
@@ -314,7 +345,7 @@ export class InteractionsService {
 				.leftJoinAndSelect('interaction.branch', 'branch')
 				.leftJoinAndSelect('interaction.organisation', 'organisation')
 				.where('interaction.isDeleted = :isDeleted', { isDeleted: false })
-				.andWhere('organisation.uid = :orgId', { orgId });
+				.andWhere('organisation.uid = :orgId', { orgId: organisation.uid });
 
 			// Add branch filter if provided
 			if (branchId) {
@@ -380,7 +411,7 @@ export class InteractionsService {
 
 	async findOne(
 		uid: number,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<{ interaction: Interaction | null; message: string }> {
 		try {
@@ -423,7 +454,7 @@ export class InteractionsService {
 		}
 	}
 
-	async findByLead(leadUid: number, orgId?: number, branchId?: number): Promise<PaginatedResponse<Interaction>> {
+	async findByLead(leadUid: number, orgId?: string, branchId?: number): Promise<PaginatedResponse<Interaction>> {
 		try {
 			if (!orgId) {
 				throw new BadRequestException('Organization ID is required');
@@ -434,9 +465,10 @@ export class InteractionsService {
 				.leftJoinAndSelect('interaction.createdBy', 'createdBy')
 				.leftJoinAndSelect('interaction.lead', 'lead')
 				.leftJoinAndSelect('interaction.client', 'client')
+				.leftJoinAndSelect('interaction.organisation', 'organisation')
 				.where('interaction.isDeleted = :isDeleted', { isDeleted: false })
 				.andWhere('lead.uid = :leadUid', { leadUid })
-				.andWhere('interaction.organisation.uid = :orgId', { orgId });
+				.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 
 			if (branchId) {
 				queryBuilder.andWhere('interaction.branch.uid = :branchId', { branchId });
@@ -472,10 +504,16 @@ export class InteractionsService {
 		}
 	}
 
-	async findByClient(clientUid: number, orgId?: number, branchId?: number): Promise<PaginatedResponse<Interaction>> {
+	async findByClient(clientUid: number, orgId?: string, branchId?: number): Promise<PaginatedResponse<Interaction>> {
 		try {
 			if (!orgId) {
 				throw new BadRequestException('Organization ID is required');
+			}
+
+			// Find organisation by Clerk org ID
+			const organisation = await this.findOrganisationByClerkId(orgId);
+			if (!organisation) {
+				throw new BadRequestException(`Organisation not found for ID: ${orgId}`);
 			}
 
 			if (!clientUid) {
@@ -493,7 +531,7 @@ export class InteractionsService {
 			// Add organization filter
 			queryBuilder.leftJoinAndSelect('interaction.organisation', 'organisation').andWhere(
 				'organisation.uid = :orgId',
-				{ orgId },
+				{ orgId: organisation.uid },
 			);
 
 			// Add branch filter if provided
@@ -533,10 +571,16 @@ export class InteractionsService {
 		}
 	}
 
-	async findByQuotation(quotationUid: number, orgId?: number, branchId?: number): Promise<PaginatedResponse<Interaction>> {
+	async findByQuotation(quotationUid: number, orgId?: string, branchId?: number): Promise<PaginatedResponse<Interaction>> {
 		try {
 			if (!orgId) {
 				throw new BadRequestException('Organization ID is required');
+			}
+
+			// Find organisation by Clerk org ID
+			const organisation = await this.findOrganisationByClerkId(orgId);
+			if (!organisation) {
+				throw new BadRequestException(`Organisation not found for ID: ${orgId}`);
 			}
 
 			if (!quotationUid) {
@@ -553,7 +597,7 @@ export class InteractionsService {
 			// Add organization filter
 			queryBuilder.leftJoinAndSelect('interaction.organisation', 'organisation').andWhere(
 				'organisation.uid = :orgId',
-				{ orgId },
+				{ orgId: organisation.uid },
 			);
 
 			// Add branch filter if provided
@@ -596,7 +640,7 @@ export class InteractionsService {
 	async update(
 		uid: number,
 		updateInteractionDto: UpdateInteractionDto,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<{ message: string }> {
 		try {
@@ -654,7 +698,7 @@ export class InteractionsService {
 		}
 	}
 
-	async remove(uid: number, orgId?: number, branchId?: number): Promise<{ message: string }> {
+	async remove(uid: number, orgId?: string, branchId?: number): Promise<{ message: string }> {
 		try {
 			if (!orgId) {
 				throw new BadRequestException('Organization ID is required');

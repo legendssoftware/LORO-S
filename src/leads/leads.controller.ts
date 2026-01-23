@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards, Headers, Req, UseInterceptors, UploadedFile, ParseFilePipe, MaxFileSizeValidator } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards, Headers, Req, UseInterceptors, UploadedFile, ParseFilePipe, MaxFileSizeValidator, Logger, BadRequestException, NotFoundException, ForbiddenException, InternalServerErrorException } from '@nestjs/common';
 import { LeadsService } from './leads.service';
 import { CreateLeadDto } from './dto/create-lead.dto';
 import { UpdateLeadDto } from './dto/update-lead.dto';
@@ -12,6 +12,8 @@ import {
 	ApiBadRequestResponse,
 	ApiNotFoundResponse,
 	ApiUnauthorizedResponse,
+	ApiForbiddenResponse,
+	ApiInternalServerErrorResponse,
 	ApiQuery,
 	ApiConsumes,
 } from '@nestjs/swagger';
@@ -23,19 +25,22 @@ import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
 import { LeadStatus, LeadTemperature, LeadPriority, LeadSource } from '../lib/enums/lead.enums';
 import { PaginatedResponse } from '../lib/interfaces/paginated-response';
 import { Lead } from './entities/lead.entity';
-import { AuthGuard } from '../guards/auth.guard';
 import { RoleGuard } from '../guards/role.guard';
-import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
+import { AuthenticatedRequest, getClerkOrgId } from '../lib/interfaces/authenticated-request.interface';
 import { RepetitionType } from '../lib/enums/task.enums';
 import { CsvFileValidator } from './validators/csv-file.validator';
 
 @ApiTags('🎯 Leads')
 @Controller('leads')
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 @EnterpriseOnly('leads')
 @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid credentials or missing token' })
 export class LeadsController {
+	private readonly logger = new Logger(LeadsController.name);
+	
 	constructor(private readonly leadsService: LeadsService) {}
+
 
 	@Post()
 	@Roles(
@@ -99,9 +104,12 @@ export class LeadsController {
 		},
 	})
 	create(@Body() createLeadDto: CreateLeadDto, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
-		return this.leadsService.create(createLeadDto, Number(orgId), branchId);
+		return this.leadsService.create(createLeadDto, orgId, branchId, req.user?.clerkUserId);
 	}
 
 	@Get()
@@ -199,10 +207,77 @@ export class LeadsController {
 		@Query('priority') priority?: LeadPriority,
 		@Query('source') source?: LeadSource,
 	): Promise<PaginatedResponse<Lead>> {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
+		// Log request details for debugging 401 errors
+		const operationId = `GET_LEADS_${Date.now()}`;
+		
+		this.logger.log(`[LeadsController] [${operationId}] ========== GET /leads Request Started ==========`);
+		this.logger.log(`[LeadsController] [${operationId}] Request URL: ${req.url}`);
+		this.logger.log(`[LeadsController] [${operationId}] Request Method: ${req.method}`);
+		
+		// Extract token values for logging
+		const tokenHeader = Array.isArray(req.headers.token) ? req.headers.token[0] : req.headers.token;
+		const authHeader = Array.isArray(req.headers.authorization) ? req.headers.authorization[0] : req.headers.authorization;
+		const tokenFromAuth = authHeader ? authHeader.split(' ')[1] : undefined;
+		const tokenValue = tokenHeader || tokenFromAuth;
+		
+		this.logger.log(`[LeadsController] [${operationId}] Token Information:`, {
+			hasAuthorizationHeader: !!authHeader,
+			hasTokenHeader: !!tokenHeader,
+			authorizationPreview: authHeader ? `${authHeader.substring(0, 30)}...` : 'NOT PROVIDED',
+			tokenHeaderPreview: tokenHeader ? `${tokenHeader.substring(0, 20)}...` : 'NOT PROVIDED',
+			tokenValuePreview: tokenValue ? `${tokenValue.substring(0, 20)}...` : 'NOT EXTRACTED',
+		});
+		
+		// Log guard status (if user exists, guards have passed)
+		const guardsPassed = !!req.user;
+		this.logger.log(`[LeadsController] [${operationId}] Guard Status:`, {
+			guardsPassed,
+			clerkAuthGuardPassed: guardsPassed,
+			roleGuardPassed: guardsPassed,
+		});
+		
+		// Log user info from request
+		this.logger.log(`[LeadsController] [${operationId}] Request User Object:`, {
+			hasUser: !!req.user,
+			clerkUserId: req.user?.clerkUserId,
+			uid: req.user?.uid,
+			accessLevel: req.user?.accessLevel,
+			role: req.user?.role,
+			organisationRef: getClerkOrgId(req),
+			orgUid: getClerkOrgId(req),
+			branchUid: req.user?.branch?.uid,
+			userKeys: req.user ? Object.keys(req.user) : [],
+		});
+		
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
-		const userId = req.user?.uid;
+		const userId = req.user?.uid; // Use numeric uid (ClerkAuthGuard provides this)
 		const userAccessLevel = req.user?.accessLevel || req.user?.role;
+		
+		this.logger.log(`[LeadsController] [${operationId}] Extracted Values:`, {
+			orgId,
+			branchId,
+			userId,
+			userAccessLevel,
+			role: req.user?.role,
+		});
+		
+		this.logger.log(`[LeadsController] [${operationId}] Query Parameters:`, {
+			page,
+			limit,
+			status,
+			search: search ? `${search.substring(0, 30)}...` : undefined,
+			startDate,
+			endDate,
+			temperature,
+			minScore,
+			maxScore,
+			priority,
+			source,
+		});
 
 		const filters = {
 			...(status && { status }),
@@ -219,15 +294,45 @@ export class LeadsController {
 			...(source && { source }),
 		};
 
-		return this.leadsService.findAll(
-			filters,
-			page ? Number(page) : 1,
-			limit ? Number(limit) : 25,
-			Number(orgId),
-			branchId,
-			Number(userId),
-			userAccessLevel,
-		);
+		try {
+			const result = await this.leadsService.findAll(
+				filters,
+				page ? Number(page) : 1,
+				limit ? Number(limit) : 25,
+				orgId,
+				branchId,
+				Number(userId),
+				userAccessLevel,
+			);
+			
+			this.logger.log(`[LeadsController] [${operationId}] ✅ Request completed successfully. Total leads: ${result?.meta?.total || 0}`);
+			this.logger.log(`[LeadsController] [${operationId}] ========== GET /leads Request Completed ==========`);
+			return result;
+		} catch (error) {
+			// Log detailed error information
+			this.logger.error(`[LeadsController] [${operationId}] ❌ Error in findAll:`, {
+				message: error instanceof Error ? error.message : 'Unknown error',
+				stack: error instanceof Error ? error.stack : undefined,
+				errorName: error instanceof Error ? error.name : typeof error,
+				statusCode: error instanceof BadRequestException ? 400 :
+				           error instanceof ForbiddenException ? 403 :
+				           error instanceof NotFoundException ? 404 :
+				           error instanceof InternalServerErrorException ? 500 : undefined,
+				orgId,
+				branchId,
+				userId,
+				userAccessLevel,
+				role: req.user?.role,
+				licensePlan: req.user?.licensePlan,
+				guardsPassed: !!req.user,
+			});
+			this.logger.error(`[LeadsController] [${operationId}] ========== GET /leads Request Failed ==========`);
+			
+			// Re-throw the error - NestJS will handle HTTP exception formatting
+			// If it's already a properly formatted exception, it will be returned as-is
+			// Otherwise, NestJS will wrap it appropriately
+			throw error;
+		}
 	}
 
 	@Get(':ref')
@@ -320,11 +425,14 @@ export class LeadsController {
 		},
 	})
 	findOne(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
-		const userId = req.user?.uid;
+		const userId = req.user?.uid; // Use numeric uid (ClerkAuthGuard provides this)
 		const userAccessLevel = req.user?.accessLevel || req.user?.role;
-		return this.leadsService.findOne(ref, Number(orgId), branchId, Number(userId), userAccessLevel);
+		return this.leadsService.findOne(ref, orgId, branchId, Number(userId), userAccessLevel);
 	}
 
 	@Get('for/:ref')
@@ -374,11 +482,14 @@ export class LeadsController {
 		},
 	})
 	leadsByUser(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
-		const requestingUserId = req.user?.uid;
+		const requestingUserId = req.user?.uid; // Use numeric uid (ClerkAuthGuard provides this)
 		const userAccessLevel = req.user?.accessLevel || req.user?.role;
-		return this.leadsService.leadsByUser(Number(ref), Number(orgId), branchId, Number(requestingUserId), userAccessLevel);
+		return this.leadsService.leadsByUser(Number(ref), orgId, branchId, Number(requestingUserId), userAccessLevel);
 	}
 
 	@Patch(':ref')
@@ -416,10 +527,13 @@ export class LeadsController {
 		},
 	})
 	update(@Param('ref') ref: number, @Body() updateLeadDto: UpdateLeadDto, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
-		const userId = req.user?.uid;
-		return this.leadsService.update(ref, updateLeadDto, Number(orgId), branchId, Number(userId));
+		const userId = req.user?.uid; // Use numeric uid (ClerkAuthGuard provides this)
+		return this.leadsService.update(ref, updateLeadDto, orgId, branchId, Number(userId));
 	}
 
 	@Patch(':ref/restore')
@@ -456,9 +570,12 @@ export class LeadsController {
 		},
 	})
 	restore(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
-		return this.leadsService.restore(ref, Number(orgId), branchId);
+		return this.leadsService.restore(ref, orgId, branchId);
 	}
 
 	@Patch(':ref/reactivate')
@@ -495,10 +612,13 @@ export class LeadsController {
 		},
 	})
 	reactivate(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
-		const userId = req.user?.uid;
-		return this.leadsService.reactivate(ref, Number(orgId), branchId, Number(userId));
+		const userId = req.user?.uid; // Use numeric uid (ClerkAuthGuard provides this)
+		return this.leadsService.reactivate(ref, orgId, branchId, Number(userId));
 	}
 
 	@Post('import-csv')
@@ -589,7 +709,10 @@ export class LeadsController {
 		@Query('followUpDuration') followUpDuration: number = 90,
 		@Query('assignedUserIds') assignedUserIds?: string,
 	) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
 		
 		// Parse assigned user IDs from comma-separated string
@@ -599,10 +722,10 @@ export class LeadsController {
 
 		return this.leadsService.importLeadsFromCSV(
 			file,
-			Number(orgId),
-			branchId,
 			followUpInterval,
 			Number(followUpDuration),
+			orgId,
+			branchId,
 			userIds,
 		);
 	}
@@ -641,8 +764,11 @@ export class LeadsController {
 		},
 	})
 	remove(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
-		return this.leadsService.remove(ref, Number(orgId), branchId);
+		return this.leadsService.remove(ref, orgId, branchId);
 	}
 }

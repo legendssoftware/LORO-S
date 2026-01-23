@@ -12,10 +12,13 @@ import { LicensingModule } from '../licensing/licensing.module';
 import { ApprovalsModule } from '../approvals/approvals.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { User } from '../user/entities/user.entity';
+import { Organisation } from '../organisation/entities/organisation.entity';
+import { ClerkModule } from '../clerk/clerk.module';
 
 @Module({
 	imports: [
-		TypeOrmModule.forFeature([Claim, User]),
+		ClerkModule,
+		TypeOrmModule.forFeature([Claim, User, Organisation]),
 		ConfigModule,
 		RewardsModule,
 		LicensingModule,

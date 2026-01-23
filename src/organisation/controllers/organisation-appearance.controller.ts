@@ -4,14 +4,14 @@ import { OrganisationAppearanceService } from '../services/organisation-appearan
 import { CreateOrganisationAppearanceDto } from '../dto/create-organisation-appearance.dto';
 import { UpdateOrganisationAppearanceDto } from '../dto/update-organisation-appearance.dto';
 import { OrganisationAppearance } from '../entities/organisation-appearance.entity';
-import { AuthGuard } from '../../guards/auth.guard';
+import { ClerkAuthGuard } from '../../clerk/clerk.guard';
 import { RoleGuard } from '../../guards/role.guard';
 import { Roles } from '../../decorators/role.decorator';
 import { AccessLevel } from '../../lib/enums/user.enums';
 
 @ApiTags('🎨 Organisation Appearance')
 @Controller('organisations')
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 @ApiUnauthorizedResponse({ description: 'Unauthorized access due to invalid credentials or missing token' })
 export class OrganisationAppearanceController {
     constructor(private readonly appearanceService: OrganisationAppearanceService) {}

@@ -10,8 +10,11 @@ export class UserRewards {
     uid: number;
 
     @OneToOne(() => User, user => user?.rewards)
-    @JoinColumn({ name: 'ownerUid' })
+    @JoinColumn({ name: 'ownerClerkUserId', referencedColumnName: 'clerkUserId' })
     owner: User;
+
+    @Column({ nullable: true })
+    ownerClerkUserId: string;
 
     @Column({ default: 0 })
     currentXP: number;

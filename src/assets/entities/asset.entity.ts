@@ -36,11 +36,11 @@ export class Asset {
 	isDeleted: boolean;
 
 	@ManyToOne(() => User, (user) => user?.assets)
-	@JoinColumn({ name: 'ownerUid' })
+	@JoinColumn({ name: 'ownerClerkUserId', referencedColumnName: 'clerkUserId' })
 	owner: User;
 
 	@Column({ nullable: true })
-	ownerUid: number;
+	ownerClerkUserId: string;
 
 	@ManyToOne(() => Organisation, (organisation) => organisation?.assets, { nullable: true })
 	@JoinColumn({ name: 'organisationUid' })

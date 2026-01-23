@@ -59,11 +59,11 @@ export class Doc {
 
     // relations
     @ManyToOne(() => User, (user) => user?.userDocs)
-    @JoinColumn({ name: 'ownerUid' })
+    @JoinColumn({ name: 'ownerClerkUserId', referencedColumnName: 'clerkUserId' })
     owner: User;
 
     @Column({ nullable: true })
-    ownerUid: number;
+    ownerClerkUserId: string;
 
     @ManyToOne(() => Branch, (branch) => branch?.docs)
     @JoinColumn({ name: 'branchUid' })

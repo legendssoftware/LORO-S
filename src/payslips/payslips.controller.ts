@@ -15,7 +15,7 @@ import {
 import { PayslipsService } from './payslips.service';
 import { CreatePayslipDto } from './dto/create-payslip.dto';
 import { UpdatePayslipDto } from './dto/update-payslip.dto';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { RoleGuard } from '../guards/role.guard';
 import { FeatureGuard } from '../guards/feature.guard';
 import { Roles } from '../decorators/role.decorator';
@@ -43,7 +43,7 @@ import { getDynamicDate, getDynamicDateTime, createApiDescription } from '../lib
 @ApiBearerAuth('JWT-auth')
 @ApiTags('💰 Payslips')
 @Controller('payslips')
-@UseGuards(AuthGuard, RoleGuard, FeatureGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard, FeatureGuard)
 @RequireFeature('payslips.basic')
 @ApiConsumes('application/json')
 @ApiProduces('application/json')

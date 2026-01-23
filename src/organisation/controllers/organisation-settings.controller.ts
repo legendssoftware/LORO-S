@@ -4,7 +4,7 @@ import { OrganisationSettingsService } from '../services/organisation-settings.s
 import { CreateOrganisationSettingsDto } from '../dto/create-organisation-settings.dto';
 import { UpdateOrganisationSettingsDto } from '../dto/update-organisation-settings.dto';
 import { OrganisationSettings } from '../entities/organisation-settings.entity';
-import { AuthGuard } from '../../guards/auth.guard';
+import { ClerkAuthGuard } from '../../clerk/clerk.guard';
 import { RoleGuard } from '../../guards/role.guard';
 import { Roles } from '../../decorators/role.decorator';
 import { AccessLevel } from '../../lib/enums/user.enums';
@@ -12,7 +12,7 @@ import { AuthenticatedRequest } from '../../lib/interfaces/authenticated-request
 
 @ApiTags('🔧 Organisation Settings')
 @Controller('organisations')
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 @ApiUnauthorizedResponse({ description: 'Unauthorized access due to invalid credentials or missing token' })
 export class OrganisationSettingsController {
     constructor(private readonly settingsService: OrganisationSettingsService) {}

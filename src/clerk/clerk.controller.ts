@@ -90,38 +90,55 @@ export class ClerkController {
 		const eventType = payload.type;
 		const data = payload.data;
 
-		this.logger.debug(`[${operationId}] Processing webhook event - type: ${eventType}`, {
-			eventId: payload.id,
-			userId: data.id || data.public_user_data?.user_id,
-			orgId: data.organization?.id,
-		});
+		this.logger.debug(`[${operationId}] Processing webhook event - type: ${eventType}`);
 
 		try {
 			switch (eventType) {
 				case 'user.created':
+					// Validate required data for user.created event
+					if (!data || !data.id) {
+						this.logger.error(`[${operationId}] Invalid user.created event - missing user ID`, {
+							eventId: payload.id,
+							data: JSON.stringify(data),
+						});
+						return;
+					}
+
+					this.logger.log(`[${operationId}] Processing user.created event`);
+
 					await this.clerkService.handleUserCreated(data.id, data);
-					this.logger.log(`[${operationId}] User created event processed - userId: ${data.id}`);
+					this.logger.log(`[${operationId}] User created event processed successfully`);
 					break;
 
 				case 'user.updated':
 					await this.clerkService.handleUserUpdated(data.id, data);
-					this.logger.log(`[${operationId}] User updated event processed - userId: ${data.id}`);
+					this.logger.log(`[${operationId}] User updated event processed`);
 					break;
 
 				case 'user.deleted':
 					await this.clerkService.handleUserDeleted(data.id);
-					this.logger.log(`[${operationId}] User deleted event processed - userId: ${data.id}`);
+					this.logger.log(`[${operationId}] User deleted event processed`);
 					break;
 
 				case 'organization.created':
-					// Handle organization creation if needed
-					this.logger.log(`[${operationId}] Organization created event received - orgId: ${data.id}`);
-					// You can add organization sync logic here if needed
+					// Validate required data for organization.created event
+					if (!data || !data.id) {
+						this.logger.error(`[${operationId}] Invalid organization.created event - missing organization ID`, {
+							eventId: payload.id,
+							data: JSON.stringify(data),
+						});
+						return;
+					}
+
+					this.logger.log(`[${operationId}] Processing organization.created event`);
+
+					await this.clerkService.handleOrganizationCreated(data.id, data);
+					this.logger.log(`[${operationId}] Organization created event processed successfully`);
 					break;
 
 				case 'organization.updated':
 					// Handle organization updates if needed
-					this.logger.log(`[${operationId}] Organization updated event received - orgId: ${data.id}`);
+					this.logger.log(`[${operationId}] Organization updated event received`);
 					// You can add organization sync logic here if needed
 					break;
 
@@ -131,7 +148,7 @@ export class ClerkController {
 						data.public_user_data.user_id,
 						data.role,
 					);
-					this.logger.log(`[${operationId}] Organization membership created - orgId: ${data.organization.id}, userId: ${data.public_user_data.user_id}`);
+					this.logger.log(`[${operationId}] Organization membership created`);
 					break;
 
 				case 'organizationMembership.deleted':
@@ -139,7 +156,7 @@ export class ClerkController {
 						data.organization.id,
 						data.public_user_data.user_id,
 					);
-					this.logger.log(`[${operationId}] Organization membership deleted - orgId: ${data.organization.id}, userId: ${data.public_user_data.user_id}`);
+					this.logger.log(`[${operationId}] Organization membership deleted`);
 					break;
 
 				case 'session.created':

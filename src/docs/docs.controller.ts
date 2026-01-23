@@ -42,13 +42,13 @@ import { isPublic } from '../decorators/public.decorator';
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { RoleGuard } from '../guards/role.guard';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
 import { Logger } from '@nestjs/common';
 
 @ApiTags('💾 Documents & Files')
 @Controller('docs')
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 @EnterpriseOnly('claims')
 export class DocsController {
 	private readonly logger = new Logger(DocsController.name);
@@ -56,7 +56,7 @@ export class DocsController {
 	constructor(private readonly docsService: DocsService) {}
 
 	@Post()
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@isPublic()
 	@ApiOperation({
 		summary: '📄 Create a new document record',
@@ -274,7 +274,10 @@ Returns upload confirmation with file URL, metadata, and storage information.
 		try {
 			const ownerId = req.user?.uid;
 			const branchId = req.user?.branch?.uid;
-			const orgId = req.user?.org?.uid || req.user?.organisationRef;
+			const orgId = req?.tokenOrgId;
+			if (!orgId) {
+				throw new BadRequestException('Organization context required');
+			}
 
 			this.logger.debug(`📤 [uploadFile] Upload context - User: ${ownerId}, Org: ${orgId}, Branch: ${branchId}, Type: ${type || 'auto'}`);
 			
@@ -409,7 +412,7 @@ Returns deletion confirmation with cleanup details or error message if deletion 
 	}
 
 	@Get()
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.MANAGER,
@@ -531,7 +534,7 @@ Returns array of document objects with complete metadata including:
 	}
 
 	@Get('user/:ref')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.MANAGER,
@@ -658,7 +661,7 @@ Returns array of user's documents with:
 	}
 
 	@Get(':ref')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.MANAGER,
@@ -793,7 +796,7 @@ Returns complete document object with:
 	}
 
 	@Patch(':ref')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.MANAGER,
@@ -932,7 +935,7 @@ Returns update confirmation with modified document details or error if update fa
 	}
 
 	@Get('download/:ref')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.MANAGER,
@@ -1060,7 +1063,7 @@ Generated URLs are temporary and expire for security purposes.
 	}
 
 	@Post('bulk-upload')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.MANAGER,

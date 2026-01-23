@@ -53,18 +53,18 @@ export class Claim {
 	shareTokenExpiresAt: Date;
 
 	@ManyToOne(() => User, (user) => user?.userClaims)
-	@JoinColumn({ name: 'ownerUid' })
+	@JoinColumn({ name: 'ownerClerkUserId', referencedColumnName: 'clerkUserId' })
 	owner: User;
 
 	@Column({ nullable: true })
-	ownerUid: number;
+	ownerClerkUserId: string;
 
 	@ManyToOne(() => User, (user) => user?.userClaims)
-	@JoinColumn({ name: 'verifiedByUid' })
+	@JoinColumn({ name: 'verifiedByClerkUserId', referencedColumnName: 'clerkUserId' })
 	verifiedBy: User;
 
 	@Column({ nullable: true })
-	verifiedByUid: number;
+	verifiedByClerkUserId: string;
 
 	@ManyToOne(() => Organisation, (organisation) => organisation?.assets, { nullable: true })
 	@JoinColumn({ name: 'organisationUid' })

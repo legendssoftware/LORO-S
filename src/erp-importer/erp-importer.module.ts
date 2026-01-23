@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ClerkModule } from '../clerk/clerk.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Product } from '../products/entities/product.entity';
 import { Client } from '../clients/entities/client.entity';
@@ -12,6 +13,7 @@ import { LicensingModule } from '../licensing/licensing.module';
 
 @Module({
 	imports: [
+		ClerkModule,
 		TypeOrmModule.forFeature([Product, Client]),
 		ErpModule, // Provides ErpConnectionManagerService
 		LicensingModule, // Provides LicensingService for AuthGuard

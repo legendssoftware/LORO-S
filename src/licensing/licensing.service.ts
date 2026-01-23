@@ -11,21 +11,40 @@ import { EmailType } from '../lib/enums/email.enums';
 import * as crypto from 'crypto';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
+import { Organisation } from '../organisation/entities/organisation.entity';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class LicensingService {
 	private readonly GRACE_PERIOD_DAYS = 15;
 	private readonly RENEWAL_WINDOW_DAYS = 30;
 	private readonly LICENSE_CACHE_KEY_PREFIX = 'license_validation:';
-	private readonly LICENSE_CACHE_TTL = 3600; // 1 hour in seconds
+	private readonly LICENSE_CACHE_TTL = 3600; // 1 hour in seconds for validation
+	private readonly CACHE_PREFIX = 'licenses:';
+	private readonly CACHE_TTL: number; // Configurable TTL for general license caching
 
 	constructor(
 		@InjectRepository(License)
 		private readonly licenseRepository: Repository<License>,
+		@InjectRepository(Organisation)
+		private readonly organisationRepository: Repository<Organisation>,
 		private readonly eventEmitter: EventEmitter2,
 		@Inject(CACHE_MANAGER) private cacheManager: Cache,
 		private readonly logger: Logger,
-	) {}
+		private readonly configService: ConfigService,
+	) {
+		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
+		this.logger.log(`LicensingService initialized with cache TTL: ${this.CACHE_TTL}s`);
+	}
+
+	/**
+	 * Generate cache key with consistent prefix
+	 * @param key - The key identifier (ref, uid, organisationRef, etc.)
+	 * @returns Formatted cache key with prefix
+	 */
+	private getCacheKey(key: string | number): string {
+		return `${this.CACHE_PREFIX}${key}`;
+	}
 
 	private generateLicenseKey(): string {
 		return crypto.randomBytes(16).toString('hex').toUpperCase();
@@ -108,7 +127,7 @@ export class LicensingService {
 				features: planDefaults.features,
 				licenseKey: this.generateLicenseKey(),
 				status: createLicenseDto?.type === LicenseType.TRIAL ? LicenseStatus.TRIAL : LicenseStatus.ACTIVE,
-				organisationRef: Number(createLicenseDto.organisationRef),
+				organisationRef: String(createLicenseDto.organisationRef),
 			});
 
 			const created = await this.licenseRepository.save(license).then((result) => {
@@ -117,6 +136,11 @@ export class LicensingService {
 				}
 				return result;
 			});
+
+			// Invalidate organisation cache since a new license was created
+			if (created.uid) {
+				await this.invalidateLicenseCache(created.uid.toString(), created);
+			}
 
 			// Send email notification
 			await this.eventEmitter.emit('send.email', EmailType.LICENSE_CREATED, [created.organisation?.email], {
@@ -153,6 +177,15 @@ export class LicensingService {
 	}
 
 	async findOne(ref: string): Promise<License> {
+		// Check cache first
+		const cacheKey = this.getCacheKey(ref);
+		const cachedLicense = await this.cacheManager.get<License>(cacheKey);
+
+		if (cachedLicense) {
+			return cachedLicense;
+		}
+
+		// If not in cache, query database
 		const license = await this.licenseRepository.findOne({
 			where: { uid: Number(ref) },
 			relations: ['organisation'],
@@ -162,18 +195,72 @@ export class LicensingService {
 			throw new NotFoundException(`License with ID ${ref} not found`);
 		}
 
+		// Cache the result
+		await this.cacheManager.set(cacheKey, license, this.CACHE_TTL);
+
 		return license;
 	}
 
 	async findByOrganisation(organisationRef: string): Promise<License[]> {
 		try {
-			return this.licenseRepository.find({
-				where: { organisationRef: Number(organisationRef) },
+			// Check cache first
+			const cacheKey = `${this.CACHE_PREFIX}org:${organisationRef}`;
+			const cachedLicenses = await this.cacheManager.get<License[]>(cacheKey);
+
+			if (cachedLicenses) {
+				return cachedLicenses;
+			}
+
+			// organisationRef can be either a Clerk org ID (string like "org_...") or numeric uid
+			// First, try to find organization by clerkOrgId
+			let organisation = await this.organisationRepository.findOne({
+				where: { clerkOrgId: organisationRef },
+				select: ['uid'],
+			});
+
+			// If not found by clerkOrgId, try to find by ref (which might also be clerkOrgId)
+			if (!organisation) {
+				organisation = await this.organisationRepository.findOne({
+					where: { ref: organisationRef },
+					select: ['uid'],
+				});
+			}
+
+			// If still not found, try parsing as numeric uid (for backward compatibility)
+			if (!organisation) {
+				const numericUid = Number(organisationRef);
+				if (!isNaN(numericUid)) {
+					organisation = await this.organisationRepository.findOne({
+						where: { uid: numericUid },
+						select: ['uid'],
+					});
+				}
+			}
+
+			if (!organisation) {
+				this.logger.warn(`[findByOrganisation] Organization not found for ref: ${organisationRef}`);
+				// Cache empty result to avoid repeated queries
+				await this.cacheManager.set(cacheKey, [], this.CACHE_TTL);
+				return [];
+			}
+
+			// Query licenses using the organization's ref (which should match clerkOrgId)
+			// Use ref first, fallback to clerkOrgId if ref is different
+			const orgRef = organisation.ref || organisation.clerkOrgId;
+			const licenses = await this.licenseRepository.find({
+				where: { organisationRef: orgRef },
 				relations: ['organisation'],
 				order: { validUntil: 'DESC' },
 			});
+
+			// Cache the result
+			await this.cacheManager.set(cacheKey, licenses, this.CACHE_TTL);
+
+			return licenses;
 		} catch (error) {
-			// Silent fail
+			this.logger.error(`[findByOrganisation] Error finding licenses for organisation: ${organisationRef}`, error instanceof Error ? error.message : 'Unknown error');
+			// Return empty array on error to maintain consistent return type
+			return [];
 		}
 	}
 
@@ -193,8 +280,8 @@ export class LicensingService {
 
 			const updated = await this.licenseRepository.save(license);
 
-			// Invalidate cache
-			await this.invalidateLicenseCache(ref);
+			// Invalidate cache (pass license to avoid additional query)
+			await this.invalidateLicenseCache(ref, updated);
 
 			// Send email notification
 			await this.eventEmitter.emit('send.email', EmailType.LICENSE_UPDATED, [updated?.organisation?.email], {
@@ -280,10 +367,61 @@ export class LicensingService {
 		}
 	}
 
-	// Add a method to invalidate license cache when license is updated
-	async invalidateLicenseCache(ref: string): Promise<void> {
-		const cacheKey = `${this.LICENSE_CACHE_KEY_PREFIX}${ref}`;
-		await this.cacheManager.del(cacheKey);
+	/**
+	 * Comprehensive cache invalidation for license-related data
+	 * Clears all relevant cache entries when license data changes
+	 * @param ref - License reference (uid)
+	 * @param license - Optional license entity to avoid additional database query
+	 */
+	async invalidateLicenseCache(ref: string, license?: License): Promise<void> {
+		try {
+			// If license not provided, fetch it directly from repository (bypassing cache)
+			let licenseData = license;
+			if (!licenseData) {
+				licenseData = await this.licenseRepository.findOne({
+					where: { uid: Number(ref) },
+					relations: ['organisation'],
+				});
+			}
+
+			const keysToDelete: string[] = [];
+
+			// Delete license-specific cache
+			keysToDelete.push(this.getCacheKey(ref));
+
+			// Delete validation cache
+			keysToDelete.push(`${this.LICENSE_CACHE_KEY_PREFIX}${ref}`);
+
+			// Delete organisation-specific cache if license has organisation
+			if (licenseData?.organisation) {
+				// Try multiple possible organisationRef formats
+				if (licenseData.organisation.clerkOrgId) {
+					keysToDelete.push(`${this.CACHE_PREFIX}org:${licenseData.organisation.clerkOrgId}`);
+				}
+				if (licenseData.organisation.ref) {
+					keysToDelete.push(`${this.CACHE_PREFIX}org:${licenseData.organisation.ref}`);
+				}
+				if (licenseData.organisation.uid) {
+					keysToDelete.push(`${this.CACHE_PREFIX}org:${licenseData.organisation.uid}`);
+				}
+			}
+
+			// Also try with organisationRef from license if available
+			if (licenseData?.organisationRef) {
+				keysToDelete.push(`${this.CACHE_PREFIX}org:${licenseData.organisationRef}`);
+			}
+
+			// Clear all caches
+			await Promise.all(keysToDelete.map((key) => this.cacheManager.del(key)));
+
+			// Emit event for other services that might be caching license data
+			this.eventEmitter.emit('licenses.cache.invalidate', {
+				licenseId: ref,
+				keys: keysToDelete,
+			});
+		} catch (error) {
+			this.logger.error(`Error invalidating license cache for license ${ref}:`, error instanceof Error ? error.message : 'Unknown error');
+		}
 	}
 
 	async checkLimits(ref: string, metric: keyof License, currentValue: number): Promise<boolean> {

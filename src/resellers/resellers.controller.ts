@@ -15,14 +15,14 @@ import {
 } from '@nestjs/swagger';
 import { getDynamicDate, getDynamicDateTime, createApiDescription } from '../lib/utils/swagger-helpers';
 import { RoleGuard } from '../guards/role.guard';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { Roles } from '../decorators/role.decorator';
 import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
 
 @ApiTags('↗️ Resellers')
 @Controller('resellers')
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 @EnterpriseOnly('resellers')
 @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid credentials or missing token' })
 export class ResellersController {

@@ -1,4 +1,5 @@
 import { forwardRef, Module } from '@nestjs/common';
+import { ClerkModule } from '../clerk/clerk.module';
 import { TasksService } from './tasks.service';
 import { TasksController } from './tasks.controller';
 import { Task } from './entities/task.entity';
@@ -30,6 +31,7 @@ import { AttendanceModule } from '../attendance/attendance.module';
 
 @Module({
 	imports: [
+		ClerkModule,
 		LicensingModule,
 		TypeOrmModule.forFeature([
 			Task,

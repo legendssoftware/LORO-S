@@ -17,26 +17,44 @@ import {
 import { getDynamicDate, getDynamicDateTime, getFutureDate, getPastDate, createApiDescription } from '../lib/utils/swagger-helpers';
 import { Roles } from '../decorators/role.decorator';
 import { RoleGuard } from '../guards/role.guard';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { UpdateSubtaskDto } from './dto/update-subtask.dto';
 import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
 import { TaskStatus, TaskPriority } from '../lib/enums/task.enums';
 import { OptimizedRoute } from './interfaces/route.interface';
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, Request, ParseIntPipe } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, Req, ParseIntPipe, BadRequestException } from '@nestjs/common';
 import { CreateTaskFlagDto } from './dto/create-task-flag.dto';
 import { UpdateTaskFlagDto } from './dto/update-task-flag.dto';
 import { UpdateTaskFlagItemDto } from './dto/update-task-flag-item.dto';
 import { AddCommentDto } from './dto/add-comment.dto';
 import { TaskFlagStatus } from '../lib/enums/task.enums';
+import { AuthenticatedRequest, getClerkOrgId } from '../lib/interfaces/authenticated-request.interface';
+import { OrganisationService } from '../organisation/organisation.service';
 
 @ApiTags('🔧 Tasks')
 @Controller('tasks')
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 @EnterpriseOnly('tasks')
 @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid credentials or missing token' })
 export class TasksController {
-	constructor(private readonly tasksService: TasksService, private readonly taskRouteService: TaskRouteService) {}
+	constructor(
+		private readonly tasksService: TasksService,
+		private readonly taskRouteService: TaskRouteService,
+		private readonly organisationService: OrganisationService,
+	) {}
+
+	private async resolveOrgUid(req: AuthenticatedRequest): Promise<number> {
+		const clerkOrgId = getClerkOrgId(req);
+		if (!clerkOrgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const uid = await this.organisationService.findUidByClerkId(clerkOrgId);
+		if (uid == null) {
+			throw new BadRequestException('Organization not found');
+		}
+		return uid;
+	}
 
 	@Post()
 	@Roles(
@@ -79,10 +97,9 @@ export class TasksController {
 			},
 		},
 	})
-	create(@Body() createTaskDto: CreateTaskDto, @Request() req: any) {
-		const orgId = req.user?.org?.uid || req.user?.organisation?.uid || req.organization?.ref;
-		const branchId = req.user?.branch?.uid || req.branch?.uid;
-		
+	async create(@Body() createTaskDto: CreateTaskDto, @Req() req: AuthenticatedRequest) {
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = req.user?.branch?.uid;
 		return this.tasksService.create(createTaskDto, orgId, branchId);
 	}
 
@@ -161,7 +178,8 @@ export class TasksController {
 			},
 		},
 	})
-	findAll(
+	async findAll(
+		@Req() req: AuthenticatedRequest,
 		@Query('status') status?: string,
 		@Query('priority') priority?: string,
 		@Query('assigneeId') assigneeId?: string,
@@ -171,10 +189,9 @@ export class TasksController {
 		@Query('isOverdue') isOverdue?: string,
 		@Query('page') page?: string,
 		@Query('limit') limit?: string,
-		@Request() req?: any,
 	) {
-		const orgId = req.user?.org?.uid || req.user?.organisation?.uid || req.organization?.ref;
-		const branchId = req.user?.branch?.uid || req.branch?.uid;
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = req.user?.branch?.uid;
 
 		// Parse the filters
 		const filters: any = {};
@@ -240,10 +257,9 @@ export class TasksController {
 			},
 		},
 	})
-	findOne(@Param('ref', ParseIntPipe) ref: number, @Request() req?: any) {
-		const orgId = req.user?.org?.uid || req.user?.organisation?.uid || req.organization?.ref;
-		const branchId = req.user?.branch?.uid || req.branch?.uid;
-		
+	async findOne(@Param('ref', ParseIntPipe) ref: number, @Req() req: AuthenticatedRequest) {
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = req.user?.branch?.uid;
 		return this.tasksService.findOne(ref, orgId, branchId);
 	}
 
@@ -285,10 +301,9 @@ export class TasksController {
 			},
 		},
 	})
-	tasksByUser(@Param('ref', ParseIntPipe) ref: number, @Request() req?: any) {
-		const orgId = req.user?.org?.uid || req.user?.organisation?.uid || req.organization?.ref;
-		const branchId = req.user?.branch?.uid || req.branch?.uid;
-		
+	async tasksByUser(@Param('ref', ParseIntPipe) ref: number, @Req() req: AuthenticatedRequest) {
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = req.user?.branch?.uid;
 		return this.tasksService.tasksByUser(ref, orgId, branchId);
 	}
 
@@ -306,10 +321,9 @@ export class TasksController {
 		summary: 'Get subtask by reference code',
 		description: 'Retrieves detailed information about a specific subtask by its reference code',
 	})
-	findOneSubTask(@Param('ref', ParseIntPipe) ref: number, @Request() req?: any) {
-		const orgId = req.user?.org?.uid || req.user?.organisation?.uid || req.organization?.ref;
-		const branchId = req.user?.branch?.uid || req.branch?.uid;
-		
+	async findOneSubTask(@Param('ref', ParseIntPipe) ref: number, @Req() req: AuthenticatedRequest) {
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = req.user?.branch?.uid;
 		return this.tasksService.findOneSubTask(ref, orgId, branchId);
 	}
 
@@ -347,10 +361,9 @@ export class TasksController {
 			},
 		},
 	})
-	update(@Param('ref', ParseIntPipe) ref: number, @Body() updateTaskDto: UpdateTaskDto, @Request() req?: any) {
-		const orgId = req.user?.org?.uid || req.user?.organisation?.uid || req.organization?.ref;
-		const branchId = req.user?.branch?.uid || req.branch?.uid;
-		
+	async update(@Param('ref', ParseIntPipe) ref: number, @Body() updateTaskDto: UpdateTaskDto, @Req() req: AuthenticatedRequest) {
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = req.user?.branch?.uid;
 		return this.tasksService.update(ref, updateTaskDto, orgId, branchId);
 	}
 
@@ -508,10 +521,9 @@ export class TasksController {
 			},
 		},
 	})
-	remove(@Param('ref', ParseIntPipe) ref: number, @Request() req?: any) {
-		const orgId = req.user?.org?.uid || req.user?.organisation?.uid || req.organization?.ref;
-		const branchId = req.user?.branch?.uid || req.branch?.uid;
-		
+	async remove(@Param('ref', ParseIntPipe) ref: number, @Req() req: AuthenticatedRequest) {
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = req.user?.branch?.uid;
 		return this.tasksService.remove(ref, orgId, branchId);
 	}
 
@@ -529,11 +541,13 @@ export class TasksController {
 		summary: 'Get optimized task routes',
 		description: 'Retrieves optimized routes for field technicians based on task locations',
 	})
-	async getOptimizedRoutes(@Query('date') dateStr?: string, @Request() req?: any): Promise<OptimizedRoute[]> {
+	async getOptimizedRoutes(@Req() req: AuthenticatedRequest, @Query('date') dateStr?: string): Promise<OptimizedRoute[]> {
 		const date = dateStr ? new Date(dateStr) : new Date();
-		const orgId = req.user?.org?.uid || req.user?.organisation?.uid || req.organization?.ref;
-		const branchId = req.user?.branch?.uid || req.branch?.uid;
-		
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = req.user?.branch?.uid;
 		const routes = await this.taskRouteService.getRoutes(date, orgId, branchId);
 
 		return routes.map((route) => ({
@@ -565,13 +579,15 @@ export class TasksController {
 		description: 'Triggers the calculation of optimized routes for field technicians',
 	})
 	async calculateOptimizedRoutes(
+		@Req() req: AuthenticatedRequest,
 		@Query('date') dateStr?: string,
-		@Request() req?: any,
 	): Promise<{ message: string }> {
 		const date = dateStr ? new Date(dateStr) : new Date();
-		const orgId = req.user?.org?.uid || req.user?.organisation?.uid || req.organization?.ref;
-		const branchId = req.user?.branch?.uid || req.branch?.uid;
-		
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = req.user?.branch?.uid;
 		await this.taskRouteService.planRoutes(date, orgId, branchId);
 
 		return { message: 'Routes calculated successfully' };
@@ -638,12 +654,13 @@ export class TasksController {
 		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({ summary: 'Create task flag', description: 'Creates a new task flag for issue tracking' })
-	createTaskFlag(@Body() createTaskFlagDto: CreateTaskFlagDto, @Request() req: any) {
-		const orgId = req.user?.org?.uid || req.user?.organisation?.uid || req.organization?.ref;
-		const branchId = req.user?.branch?.uid || req.branch?.uid;
+	createTaskFlag(@Body() createTaskFlagDto: CreateTaskFlagDto, @Req() req: AuthenticatedRequest) {
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const userId = req.user?.uid;
-		
-		return this.tasksService.createTaskFlag(createTaskFlagDto, userId);
+		return this.tasksService.createTaskFlag(createTaskFlagDto, userId!);
 	}
 
 	@Post('flags/:flagId/comments')
@@ -671,9 +688,9 @@ export class TasksController {
 			},
 		},
 	})
-	addComment(@Param('flagId', ParseIntPipe) flagId: number, @Body() commentDto: AddCommentDto, @Request() req: any) {
+	addComment(@Param('flagId', ParseIntPipe) flagId: number, @Body() commentDto: AddCommentDto, @Req() req: AuthenticatedRequest) {
 		const userId = req.user?.uid;
-		return this.tasksService.addComment(flagId, commentDto, userId);
+		return this.tasksService.addComment(flagId, commentDto, userId!);
 	}
 
 	@Get('tasks/:taskId/flags')
@@ -816,7 +833,8 @@ export class TasksController {
 		required: false,
 		description: 'Number of records per page, defaults to 10',
 	})
-	getTaskFlagReports(
+	async getTaskFlagReports(
+		@Req() req: AuthenticatedRequest,
 		@Query('status') status?: TaskFlagStatus,
 		@Query('startDate') startDate?: string,
 		@Query('endDate') endDate?: string,
@@ -825,11 +843,10 @@ export class TasksController {
 		@Query('userId') userId?: number,
 		@Query('page') page?: string,
 		@Query('limit') limit?: string,
-		@Request() req?: any,
 	) {
-		const orgId = req.user?.org?.uid || req.user?.organisation?.uid || req.organization?.ref;
-		const branchId = req.user?.branch?.uid || req.branch?.uid;
-		
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = req.user?.branch?.uid;
+
 		const filters: any = {};
 		if (status) filters.status = status;
 		if (startDate) filters.startDate = new Date(startDate);
@@ -837,7 +854,7 @@ export class TasksController {
 		if (deadlineBefore) filters.deadlineBefore = new Date(deadlineBefore);
 		if (deadlineAfter) filters.deadlineAfter = new Date(deadlineAfter);
 		if (userId) filters.userId = Number(userId);
-		if (orgId) filters.organisationId = orgId;
+		if (orgId != null) filters.organisationRef = orgId;
 		if (branchId) filters.branchId = branchId;
 
 		return this.tasksService.getTaskFlagReports(

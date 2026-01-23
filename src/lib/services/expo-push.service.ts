@@ -462,15 +462,11 @@ export class ExpoPushService {
 	 */
 	isValidExpoPushToken(token: string): boolean {
 		if (!token) {
-			this.logger.debug('🔍 Token validation failed: Token is null or undefined');
 			return false;
 		}
 		
 		if (typeof token !== 'string') {
-			this.logger.warn(`🔍 Token validation failed: Expected string, got ${typeof token}`, {
-				tokenType: typeof token,
-				tokenValue: String(token).substring(0, 50)
-			});
+			this.logger.warn(`[ExpoPushService] Token validation failed: Expected string, got ${typeof token}`);
 			return false;
 		}
 		
@@ -478,24 +474,9 @@ export class ExpoPushService {
 		const expectedLength = 50; // Typical Expo token length
 		
 		if (!isValid) {
-			this.logger.warn('🔍 Token validation failed: Invalid format', {
-				tokenPrefix: token.substring(0, 20),
-				startsCorrectly: token.startsWith('ExponentPushToken['),
-				endsCorrectly: token.endsWith(']'),
-				length: token.length,
-				expectedFormat: 'ExponentPushToken[...]'
-			});
+			this.logger.warn(`[ExpoPushService] Token validation failed: Invalid format (length: ${token.length})`);
 		} else if (token.length < expectedLength - 10 || token.length > expectedLength + 20) {
-			this.logger.warn('🔍 Token validation warning: Unusual token length', {
-				tokenLength: token.length,
-				expectedRange: `${expectedLength - 10}-${expectedLength + 20}`,
-				tokenPrefix: token.substring(0, 30) + '...'
-			});
-		} else {
-			this.logger.debug('✅ Token validation passed', {
-				tokenPrefix: token.substring(0, 30) + '...',
-				length: token.length
-			});
+			this.logger.warn(`[ExpoPushService] Token validation warning: Unusual token length ${token.length} (expected: ${expectedLength - 10}-${expectedLength + 20})`);
 		}
 		
 		return isValid;

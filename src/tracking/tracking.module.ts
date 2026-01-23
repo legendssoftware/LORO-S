@@ -1,4 +1,5 @@
 import { Module, forwardRef } from '@nestjs/common';
+import { ClerkModule } from '../clerk/clerk.module';
 import { TrackingService } from './tracking.service';
 import { TrackingController } from './tracking.controller';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -17,6 +18,7 @@ import { LibModule } from '../lib/lib.module';
 
 @Module({
 	imports: [
+		ClerkModule,
 		LicensingModule,
 		OrganisationModule,
 		forwardRef(() => ReportsModule),

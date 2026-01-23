@@ -83,7 +83,8 @@ export class TaskReminderService {
 			for (const org of organizations) {
 				try {
 					// Get organization timezone
-					const organizationHours = await this.organizationHoursService.getOrganizationHours(org.uid);
+					const orgId = org.clerkOrgId || org.ref;
+					const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
 					const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
 
 					// Get current time in organization timezone
@@ -157,7 +158,8 @@ export class TaskReminderService {
 			for (const org of organizations) {
 				try {
 					// Get organization timezone
-					const organizationHours = await this.organizationHoursService.getOrganizationHours(org.uid);
+					const orgId = org.clerkOrgId || org.ref;
+					const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
 					const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
 
 					// Get current time in organization timezone

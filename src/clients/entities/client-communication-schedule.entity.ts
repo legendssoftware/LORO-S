@@ -67,11 +67,11 @@ export class ClientCommunicationSchedule {
     clientUid: number;
 
     @ManyToOne(() => User, (user) => user.clientCommunicationSchedules, { nullable: true, onDelete: 'SET NULL' })
-    @JoinColumn({ name: 'assignedToUid' })
+    @JoinColumn({ name: 'assignedToClerkUserId', referencedColumnName: 'clerkUserId' })
     assignedTo: User; // The user responsible for this communication
 
     @Column({ nullable: true })
-    assignedToUid: number;
+    assignedToClerkUserId: string;
 
     @ManyToOne(() => Organisation, { nullable: true, onDelete: 'CASCADE' })
     @JoinColumn({ name: 'organisationUid' })

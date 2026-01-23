@@ -15,14 +15,14 @@ import {
   ApiConsumes,
   ApiProduces
 } from '@nestjs/swagger';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { RoleGuard } from '../guards/role.guard';
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
 
 @ApiTags('⚙️ PDF Generation')
 @Controller('pdf-generation')
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 @ApiBearerAuth('JWT-auth')
 @ApiConsumes('application/json')
 @ApiProduces('application/json')

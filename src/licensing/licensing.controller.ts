@@ -14,7 +14,7 @@ import { getDynamicDate, getDynamicDateTime, getFutureDate, createApiDescription
 
 @ApiTags('📋 Licensing')
 @Controller('licensing')
-// @UseGuards(AuthGuard, RoleGuard, LicenseRateLimitGuard)
+// @UseGuards(ClerkAuthGuard, RoleGuard, LicenseRateLimitGuard)
 @UseFilters(LicenseExceptionFilter)
 export class LicensingController {
     constructor(

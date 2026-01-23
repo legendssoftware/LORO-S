@@ -1,4 +1,5 @@
 import { Module, forwardRef } from '@nestjs/common';
+import { ClerkModule } from '../clerk/clerk.module';
 import { ReportsService } from './reports.service';
 import { ReportsController } from './reports.controller';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -61,6 +62,7 @@ import { LeaveModule } from '../leave/leave.module';
 
 @Module({
 	imports: [
+		ClerkModule,
 		LicensingModule,
 		ConfigModule,
 		ErpModule,

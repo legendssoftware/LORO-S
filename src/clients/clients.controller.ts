@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, Req } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, Req, BadRequestException } from '@nestjs/common';
 import { ClientsService } from './clients.service';
 import { CreateClientDto } from './dto/create-client.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
@@ -27,7 +27,7 @@ import {
 	ApiProduces,
 } from '@nestjs/swagger';
 import { getDynamicDate, getDynamicDateTime, getFutureDate, getPastDate, createApiDescription } from '../lib/utils/swagger-helpers';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { RoleGuard } from '../guards/role.guard';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { Roles } from '../decorators/role.decorator';
@@ -35,13 +35,14 @@ import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
 import { Client } from './entities/client.entity';
 import { CheckIn } from '../check-ins/entities/check-in.entity';
 import { PaginatedResponse } from '../lib/interfaces/product.interfaces';
-import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
+import { AuthenticatedRequest, getClerkOrgId } from '../lib/interfaces/authenticated-request.interface';
 import { GeneralStatus } from '../lib/enums/status.enums';
+import { OrganisationService } from '../organisation/organisation.service';
 
 @ApiBearerAuth('JWT-auth')
 @ApiTags('💎 Clients')
 @Controller('clients')
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 // @EnterpriseOnly('clients') // Temporarily commented out to debug
 @ApiConsumes('application/json')
 @ApiProduces('application/json')
@@ -57,7 +58,23 @@ import { GeneralStatus } from '../lib/enums/status.enums';
 // 	},
 // }) // Temporarily commented out to debug
 export class ClientsController {
-	constructor(private readonly clientsService: ClientsService) {}
+	constructor(
+		private readonly clientsService: ClientsService,
+		private readonly organisationService: OrganisationService,
+	) {}
+
+	/**
+	 * Safely converts a value to a number
+	 * @param value - Value to convert (string, number, or undefined)
+	 * @returns Number or undefined if conversion fails
+	 */
+	private toNumber(value: string | number | undefined): number | undefined {
+		if (value === undefined || value === null || value === '') {
+			return undefined;
+		}
+		const numValue = Number(value);
+		return isNaN(numValue) || !isFinite(numValue) ? undefined : numValue;
+	}
 
 	@Post()
 	@Roles(
@@ -499,8 +516,11 @@ Creates a new client record in the system with comprehensive business relationsh
 		},
 	})
 	create(@Body() createClientDto: CreateClientDto, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.clientsService.create(createClientDto, orgId, branchId);
 	}
 
@@ -732,10 +752,19 @@ Returns detailed results including:
 	async createBulkClients(@Body() bulkCreateClientDto: BulkCreateClientDto, @Req() req: AuthenticatedRequest): Promise<BulkCreateClientResponse> {
 		// Automatically set orgId and branchId from authenticated user if not provided
 		if (!bulkCreateClientDto.orgId) {
-			bulkCreateClientDto.orgId = req.user?.org?.uid || req.user?.organisationRef;
+			const clerkOrgId = getClerkOrgId(req);
+			if (!clerkOrgId) {
+				throw new BadRequestException('Organization context required');
+			}
+			// Resolve Clerk org ID to numeric uid
+			const orgUid = await this.organisationService.findUidByClerkId(clerkOrgId);
+			if (!orgUid) {
+				throw new BadRequestException(`Organization not found for ID: ${clerkOrgId}`);
+			}
+			bulkCreateClientDto.orgId = orgUid;
 		}
 		if (!bulkCreateClientDto.branchId) {
-			bulkCreateClientDto.branchId = req.user?.branch?.uid;
+			bulkCreateClientDto.branchId = this.toNumber(req.user?.branch?.uid);
 		}
 		
 		return this.clientsService.createBulkClients(bulkCreateClientDto);
@@ -1224,8 +1253,11 @@ Retrieves a comprehensive list of all clients without user-specific filtering fo
 		@Query('status') status?: GeneralStatus,
 		@Query('search') search?: string,
 	): Promise<PaginatedResponse<Client>> {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		const filters = { status, search };
 
 		// For admin purposes, pass userId to enforce role-based filtering (only ADMIN/OWNER can bypass client filtering)
@@ -1542,8 +1574,11 @@ Retrieves a paginated list of clients with user-specific filtering and role-base
 		@Query('category') category?: string,
 		@Query('search') search?: string,
 	): Promise<PaginatedResponse<Client>> {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		const userId = req.user?.uid;
 		const filters = { status, category, search };
 
@@ -1792,8 +1827,11 @@ Retrieves comprehensive information about a specific client including all relate
 		}
 	})
 	findOne(@Param('ref') ref: number, @Req() req: AuthenticatedRequest): Promise<{ message: string; client: Client | null }> {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		const userId = req.user?.uid;
 		return this.clientsService.findOne(ref, orgId, branchId, userId);
 	}
@@ -2047,8 +2085,11 @@ When converting a lead to client (status = 'CONVERTED'):
 		},
 	})
 	update(@Param('ref') ref: number, @Body() updateClientDto: UpdateClientDto, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.clientsService.update(ref, updateClientDto, orgId, branchId);
 	}
 
@@ -2154,8 +2195,11 @@ Restores a previously soft-deleted client back to active status, recovering all 
 		},
 	})
 	restore(@Param('ref') ref: number, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.clientsService.restore(ref, orgId, branchId);
 	}
 
@@ -2266,8 +2310,11 @@ Marks a client as deleted without permanently removing data from the database, a
 		},
 	})
 	remove(@Param('ref') ref: number, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.clientsService.remove(ref, orgId, branchId);
 	}
 
@@ -2709,8 +2756,11 @@ Retrieves comprehensive check-in history with location data, visit duration, and
 		},
 	})
 	getClientCheckIns(@Param('clientId') clientId: number, @Req() req: AuthenticatedRequest): Promise<{ message: string; checkIns: CheckIn[] }> {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		const userId = req.user?.uid;
 		return this.clientsService.getClientCheckIns(clientId, orgId, branchId, userId);
 	}
@@ -2950,7 +3000,10 @@ Clients can update the following information:
 	updateClientProfile(@Body() updateClientDto: UpdateClientDto, @Req() req: AuthenticatedRequest): Promise<{ message: string; data?: any }> {
 		// Extract client auth ID from JWT token (this is the ClientAuth.uid, not Client.uid)
 		const clientAuthId = req.user?.uid;
-		const organisationRef = req.user?.organisationRef;
+		const organisationRef = getClerkOrgId(req);
+		if (!organisationRef) {
+			throw new BadRequestException('Organization context required');
+		}
 
 		if (!clientAuthId) {
 			throw new Error('Client authentication ID not found in token');
@@ -3032,7 +3085,10 @@ Allows clients to request an increase in their credit limit through an approval 
 	})
 	requestCreditLimitExtension(@Body() creditLimitDto: CreditLimitExtensionDto, @Req() req: AuthenticatedRequest): Promise<{ message: string; data?: any }> {
 		const clientAuthId = req.user?.uid;
-		const organisationRef = req.user?.organisationRef;
+		const organisationRef = getClerkOrgId(req);
+		if (!organisationRef) {
+			throw new BadRequestException('Organization context required');
+		}
 
 		if (!clientAuthId) {
 			throw new Error('Client authentication ID not found in token');
@@ -3216,7 +3272,10 @@ Each schedule includes:
 	})
 	getClientCommunicationSchedules(@Req() req: AuthenticatedRequest): Promise<{ message: string; schedules?: any[] }> {
 		const clientAuthId = req.user?.uid;
-		const organisationRef = req.user?.organisationRef;
+		const organisationRef = getClerkOrgId(req);
+		if (!organisationRef) {
+			throw new BadRequestException('Organization context required');
+		}
 		return this.clientsService.getClientCommunicationSchedules(clientAuthId, organisationRef);
 	}
 
@@ -3285,7 +3344,10 @@ Clients can update the following schedule information:
 		@Req() req: AuthenticatedRequest,
 	): Promise<{ message: string }> {
 		const clientAuthId = req.user?.uid;
-		const organisationRef = req.user?.organisationRef;
+		const organisationRef = getClerkOrgId(req);
+		if (!organisationRef) {
+			throw new BadRequestException('Organization context required');
+		}
 		return this.clientsService.updateClientCommunicationSchedule(
 			clientAuthId,
 			scheduleId,
@@ -3351,7 +3413,10 @@ Allows authenticated clients to delete their communication schedules through the
 	})
 	deleteClientCommunicationSchedule(@Param('scheduleId') scheduleId: number, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
 		const clientAuthId = req.user?.uid;
-		const organisationRef = req.user?.organisationRef;
+		const organisationRef = getClerkOrgId(req);
+		if (!organisationRef) {
+			throw new BadRequestException('Organization context required');
+		}
 		return this.clientsService.deleteClientCommunicationSchedule(clientAuthId, scheduleId, organisationRef);
 	}
 
@@ -3569,8 +3634,11 @@ Retrieve all communication schedules assigned to the authenticated user.
 		@Query('endDate') endDate?: string,
 	): Promise<{ message: string; data?: any[]; meta?: any }> {
 		const userId = req.user?.uid;
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 
 		return this.clientsService.getUserCommunicationSchedules(
 			userId,

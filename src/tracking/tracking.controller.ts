@@ -18,7 +18,7 @@ import { getDynamicDateTime, createApiDescription } from '../lib/utils/swagger-h
 import { Roles } from '../decorators/role.decorator';
 import { isPublic } from '../decorators/public.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { Request } from 'express';
 import { User } from '../user/entities/user.entity';
 
@@ -115,7 +115,7 @@ export class TrackingController {
 	}
 
 	@Post('stops')
-	@UseGuards(AuthGuard)
+	@UseGuards(ClerkAuthGuard)
 	@ApiBearerAuth()
 	@ApiOperation({
 		summary: 'Record a stop event',
@@ -226,7 +226,7 @@ export class TrackingController {
 	}
 
 	@Get('stops')
-	@UseGuards(AuthGuard)
+	@UseGuards(ClerkAuthGuard)
 	@ApiBearerAuth()
 	@ApiOperation({
 		summary: 'Get all stops for the current user',
@@ -724,7 +724,7 @@ export class TrackingController {
 	// ======================================================
 
 	@Get('user/:userId/timeframe/:timeframe')
-	@UseGuards(AuthGuard)
+	@UseGuards(ClerkAuthGuard)
 	@ApiBearerAuth()
 	@Roles(AccessLevel.USER, AccessLevel.ADMIN, AccessLevel.OWNER)
 	@ApiOperation({
@@ -866,7 +866,7 @@ export class TrackingController {
 	}
 
 	@Get('user/:userId/custom-range')
-	@UseGuards(AuthGuard)
+	@UseGuards(ClerkAuthGuard)
 	@ApiBearerAuth()
 	@Roles(AccessLevel.USER, AccessLevel.ADMIN, AccessLevel.OWNER)
 	@ApiOperation({
@@ -934,7 +934,7 @@ export class TrackingController {
 	}
 
 	@Post('multi-user/timeframe/:timeframe')
-	@UseGuards(AuthGuard)
+	@UseGuards(ClerkAuthGuard)
 	@ApiBearerAuth()
 	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER)
 	@ApiOperation({
@@ -1059,7 +1059,7 @@ export class TrackingController {
 	}
 
 	@Get('analytics/summary')
-	@UseGuards(AuthGuard)
+	@UseGuards(ClerkAuthGuard)
 	@ApiBearerAuth()
 	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER)
 	@ApiOperation({
@@ -1150,7 +1150,7 @@ export class TrackingController {
 	}
 
 	@Post('re-cal/:ref')
-	@UseGuards(AuthGuard)
+	@UseGuards(ClerkAuthGuard)
 	@ApiBearerAuth()
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER, AccessLevel.USER)
 	@ApiOperation({

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ClerkModule } from '../clerk/clerk.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CacheModule } from '@nestjs/cache-manager';
 import { JwtModule } from '@nestjs/jwt';
@@ -32,6 +33,7 @@ import { UserModule } from '../user/user.module';
  */
 @Module({
 	imports: [
+		ClerkModule,
 		// Register ERP entities with the 'erp' connection
 		TypeOrmModule.forFeature([TblSalesHeader, TblSalesLines, TblCustomers, TblCustomerCategories, TblSalesman], 'erp'),
 		// Register OrganisationSettings with default connection for targets

@@ -298,11 +298,11 @@ export class Lead {
 	updatedAt: Date;
 
 	@ManyToOne(() => User, { onDelete: 'SET NULL' })
-	@JoinColumn({ name: 'ownerUid' })
+	@JoinColumn({ name: 'ownerClerkUserId', referencedColumnName: 'clerkUserId' })
 	owner: User;
 
 	@Column({ nullable: true })
-	ownerUid: number;
+	ownerClerkUserId: string;
 
 	@ManyToOne(() => Organisation, { onDelete: 'SET NULL' })
 	@JoinColumn({ name: 'organisationUid' })
@@ -319,7 +319,7 @@ export class Lead {
 	branchUid: number;
 
 	@Column({ type: 'json', nullable: true })
-	assignees: { uid: number }[];
+	assignees: { clerkUserId: string }[];
 
 	@ManyToOne(() => Client, (client) => client?.leads)
 	client: Client;

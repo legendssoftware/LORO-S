@@ -117,7 +117,7 @@ export class ClientCommunicationScheduleService {
     async createSchedule(
         clientId: number,
         createDto: CreateCommunicationScheduleDto,
-        orgId?: number,
+        orgId?: string,
         branchId?: number,
         createdByUserId?: number
     ): Promise<{ message: string; schedule?: ClientCommunicationSchedule }> {
@@ -163,7 +163,7 @@ export class ClientCommunicationScheduleService {
                 isActive: createDto.isActive !== undefined ? createDto.isActive : true,
                 notes: createDto.notes,
                 assignedTo: assignedUser,
-                assignedToUid: assignedUser?.uid,
+                assignedToClerkUserId: assignedUser?.clerkUserId,
                 metadata: createDto.metadata,
                 organisation: client.organisation,
                 organisationUid: client.organisation?.uid,
@@ -203,7 +203,7 @@ export class ClientCommunicationScheduleService {
     async updateSchedule(
         scheduleId: number,
         updateDto: UpdateCommunicationScheduleDto,
-        orgId?: number,
+        orgId?: string,
         branchId?: number
     ): Promise<{ message: string; schedule?: ClientCommunicationSchedule }> {
         try {
@@ -225,7 +225,7 @@ export class ClientCommunicationScheduleService {
                     throw new BadRequestException('Assigned user not found');
                 }
                 schedule.assignedTo = assignedUser;
-                schedule.assignedToUid = assignedUser.uid;
+                schedule.assignedToClerkUserId = assignedUser.clerkUserId;
             }
 
             // Update other fields
@@ -282,7 +282,7 @@ export class ClientCommunicationScheduleService {
     async getClientSchedules(
         clientId: number,
         query: CommunicationScheduleQueryDto,
-        orgId?: number,
+        orgId?: string,
         branchId?: number
     ): Promise<PaginatedResponse<ClientCommunicationSchedule>> {
         try {
@@ -474,8 +474,9 @@ export class ClientCommunicationScheduleService {
                 repetitionType: repetitionTypeMap[schedule.frequency] || RepetitionType.NONE,
                 repetitionDeadline: schedule.frequency !== CommunicationFrequency.NONE ? addMonths(schedule.nextScheduledDate, 12) : null, // Set 1 year repetition deadline
                 clients: [{ uid: schedule.client.uid }],
-                assignees: schedule.assignedTo ? [{ uid: schedule.assignedTo.uid }] : [],
+                assignees: schedule.assignedTo?.clerkUserId ? [{ clerkUserId: schedule.assignedTo.clerkUserId }] : [],
                 creator: schedule.assignedTo,
+                creatorClerkUserId: schedule.assignedTo?.clerkUserId,
                 organisation: schedule.organisation,
                 branch: schedule.branch,
                 targetCategory: 'communication_schedule',
@@ -485,7 +486,7 @@ export class ClientCommunicationScheduleService {
                 isDeleted: false
             });
 
-            const savedTask = await this.taskRepository.save(task);
+            const savedTask = await this.taskRepository.save(task) as Task;
 
             // Update the schedule's next date for non-repeating frequencies
             if ([CommunicationFrequency.BIWEEKLY, CommunicationFrequency.QUARTERLY, CommunicationFrequency.SEMIANNUALLY, CommunicationFrequency.CUSTOM].includes(schedule.frequency)) {
@@ -596,7 +597,7 @@ export class ClientCommunicationScheduleService {
     /**
      * Get organization timezone with fallback
      */
-    private async getOrganizationTimezone(organizationId?: number): Promise<string> {
+    private async getOrganizationTimezone(organizationId?: string | number): Promise<string> {
         if (!organizationId) {
             const fallbackTimezone = TimezoneUtil.getSafeTimezone();
             this.logger.debug(`No organizationId provided, using fallback timezone: ${fallbackTimezone}`);
@@ -604,7 +605,8 @@ export class ClientCommunicationScheduleService {
         }
 
         try {
-            const organizationHours = await this.organizationHoursService.getOrganizationHours(organizationId);
+            const orgIdString = typeof organizationId === 'number' ? organizationId.toString() : organizationId;
+            const organizationHours = await this.organizationHoursService.getOrganizationHours(orgIdString);
             const timezone = organizationHours?.timezone || TimezoneUtil.getSafeTimezone();
             this.logger.debug(`Organization ${organizationId} timezone: ${timezone}`);
             return timezone;
@@ -805,8 +807,9 @@ export class ClientCommunicationScheduleService {
                 priority: TaskPriority.MEDIUM,
                 deadline: visitData.followUpDate,
                 clients: [{ uid: schedule.client.uid }],
-                assignees: schedule.assignedTo ? [{ uid: schedule.assignedTo.uid }] : [],
+                assignees: schedule.assignedTo?.clerkUserId ? [{ clerkUserId: schedule.assignedTo.clerkUserId }] : [],
                 creator: schedule.assignedTo,
+                creatorClerkUserId: schedule.assignedTo?.clerkUserId,
                 organisation: schedule.organisation,
                 branch: schedule.branch,
                 targetCategory: 'visit_follow_up',

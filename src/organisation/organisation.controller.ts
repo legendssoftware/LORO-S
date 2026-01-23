@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Req, BadRequestException } from '@nestjs/common';
 import { OrganisationService } from './organisation.service';
 import { CreateOrganisationDto } from './dto/create-organisation.dto';
 import { UpdateOrganisationDto } from './dto/update-organisation.dto';
@@ -19,13 +19,13 @@ import {
 import { getDynamicDate, getDynamicDateTime, createApiDescription } from '../lib/utils/swagger-helpers';
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { RoleGuard } from '../guards/role.guard';
-import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
+import { AuthenticatedRequest, getClerkOrgId } from '../lib/interfaces/authenticated-request.interface';
 
 @ApiTags('🏢 Organisation')
 @Controller('org')
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 @ApiUnauthorizedResponse({ description: 'Unauthorized access due to invalid credentials or missing token' })
 export class OrganisationController {
 	constructor(private readonly organisationService: OrganisationService) {}
@@ -296,7 +296,10 @@ Creates a comprehensive organization with advanced configuration options, integr
 		}
 	})
 	create(@Body() createOrganisationDto: CreateOrganisationDto, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
 		return this.organisationService.create(createOrganisationDto, orgId, branchId);
 	}
@@ -461,7 +464,10 @@ Retrieves a comprehensive list of all organizations with advanced filtering, bra
 		}
 	})
 	findAll(@Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
 		return this.organisationService.findAll(orgId, branchId);
 	}
@@ -769,7 +775,10 @@ Retrieves comprehensive organization information including settings, working hou
 		}
 	})
 	findOne(@Param('ref') ref: string, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
 		return this.organisationService.findOne(ref, orgId, branchId);
 	}
@@ -1046,7 +1055,10 @@ Updates existing organization information with comprehensive validation, audit t
 		@Body() updateOrganisationDto: UpdateOrganisationDto,
 		@Req() req: AuthenticatedRequest,
 	) {
-		const orgId = req.user?.org?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
 		return this.organisationService.update(ref, updateOrganisationDto, orgId, branchId);
 	}
@@ -1259,7 +1271,10 @@ Restores a previously deleted organization back to active status with comprehens
 		}
 	})
 	restore(@Param('ref') ref: string, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
 		return this.organisationService.restore(ref, orgId, branchId);
 	}
@@ -1484,7 +1499,10 @@ Marks an organization as deleted without permanently removing it from the databa
 		}
 	})
 	remove(@Param('ref') ref: string, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
 		return this.organisationService.remove(ref, orgId, branchId);
 	}

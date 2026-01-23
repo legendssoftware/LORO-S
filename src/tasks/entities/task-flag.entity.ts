@@ -1,4 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn, UpdateDateColumn, OneToMany } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn, UpdateDateColumn, OneToMany, JoinColumn } from 'typeorm';
 import { Task } from './task.entity';
 import { User } from 'src/user/entities/user.entity';
 import { TaskFlagStatus } from '../../lib/enums/task.enums';
@@ -34,10 +34,10 @@ export class TaskFlag {
 
     @Column({ type: 'json', nullable: true })
     comments: {
-        uid: number;
+        clerkUserId: string;
         content: string;
         createdAt: Date;
-        createdBy: { uid: number; name: string };
+        createdBy: { clerkUserId: string; name: string };
     }[];
 
     @Column({ type: 'json', nullable: true })
@@ -47,7 +47,11 @@ export class TaskFlag {
     task: Task;
 
     @ManyToOne(() => User, (user) => user.taskFlags)
+    @JoinColumn({ name: 'createdByClerkUserId', referencedColumnName: 'clerkUserId' })
     createdBy: User;
+
+    @Column({ nullable: true })
+    createdByClerkUserId: string;
 
     @OneToMany(() => TaskFlagItem, (item) => item.taskFlag)
     items: TaskFlagItem[];

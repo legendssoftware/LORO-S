@@ -39,11 +39,11 @@ export class Interaction {
 	updatedAt: Date;
 
 	@ManyToOne(() => User, { onDelete: 'CASCADE' })
-	@JoinColumn({ name: 'createdByUid' })
+	@JoinColumn({ name: 'createdByClerkUserId', referencedColumnName: 'clerkUserId' })
 	createdBy: User;
 
 	@Column({ nullable: true })
-	createdByUid: number;
+	createdByClerkUserId: string;
 
 	@ManyToOne(() => Organisation, { onDelete: 'CASCADE' })
 	@JoinColumn({ name: 'organisationUid' })

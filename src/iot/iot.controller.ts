@@ -38,7 +38,7 @@ import { Device, DeviceRecords } from './entities/iot.entity';
 import { DeviceStatus, DeviceType } from '../lib/enums/iot';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { RoleGuard } from '../guards/role.guard';
 import { Roles } from '../decorators/role.decorator';
 import { CreateDeviceDto, CreateDeviceRecordDto, DeviceTimeRecordDto } from './dto/create-iot.dto';
@@ -117,8 +117,10 @@ export class IotController {
 			AccessLevel.SUPPORT,
 		].includes(user?.role);
 
-		const orgId = user?.org?.uid || user?.organisationRef;
-		const branchId = isElevatedUser ? null : user?.branch?.uid; // null = org-wide access for elevated users
+		// Always use org.uid (number) - never use organisationRef (string) as it's a Clerk org ID
+		// If org.uid is not available, orgId will be undefined and should be handled by the service
+		const orgId = user?.org?.uid ? Number(user.org.uid) : undefined;
+		const branchId = isElevatedUser ? null : (user?.branch?.uid ? Number(user.branch.uid) : null);
 
 		return {
 			orgId,
@@ -146,7 +148,7 @@ export class IotController {
 
 	// Device Management Endpoints
 	@Post('devices')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.DEVELOPER,
@@ -376,7 +378,7 @@ Register new IoT devices in your organization with comprehensive configuration a
 	}
 
 	@Get('devices')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.DEVELOPER,
@@ -424,7 +426,7 @@ Register new IoT devices in your organization with comprehensive configuration a
 	}
 
 	@Get('devices/:id')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.DEVELOPER,
@@ -442,7 +444,7 @@ Register new IoT devices in your organization with comprehensive configuration a
 	}
 
 	@Get('devices/by-device-id/:deviceId')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.DEVELOPER,
@@ -460,7 +462,7 @@ Register new IoT devices in your organization with comprehensive configuration a
 	}
 
 	@Patch('devices/:id')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.DEVELOPER,
@@ -474,7 +476,7 @@ Register new IoT devices in your organization with comprehensive configuration a
 	}
 
 	@Patch('devices/:id/status')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.DEVELOPER,
@@ -488,7 +490,7 @@ Register new IoT devices in your organization with comprehensive configuration a
 	}
 
 	@Patch('devices/:id/analytics')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.DEVELOPER,
@@ -502,7 +504,7 @@ Register new IoT devices in your organization with comprehensive configuration a
 	}
 
 	@Delete('devices/:id')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.DEVELOPER,
@@ -517,7 +519,7 @@ Register new IoT devices in your organization with comprehensive configuration a
 
 	// Device Records Management Endpoints
 	@Post('records')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.DEVELOPER,
@@ -1711,7 +1713,7 @@ Successful requests return:
 	}
 
 	@Get('records')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.MANAGER,
@@ -1752,7 +1754,7 @@ Successful requests return:
 	}
 
 	@Get('records/:id')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.MANAGER,
@@ -1769,7 +1771,7 @@ Successful requests return:
 	}
 
 	@Patch('records/:id')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.MANAGER,
@@ -1786,7 +1788,7 @@ Successful requests return:
 	}
 
 	@Delete('records/:id')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.MANAGER,
@@ -1804,7 +1806,7 @@ Successful requests return:
 
 	// Analytics and Reporting Endpoints
 	@Get('devices/:id/analytics')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.MANAGER,
@@ -1821,7 +1823,7 @@ Successful requests return:
 	}
 
 	@Get('analytics/summary')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.MANAGER,
@@ -1852,7 +1854,7 @@ Successful requests return:
 
 	// IoT Device Reporting Endpoints (Similar to Attendance Reports)
 	@Get('reports/morning')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.MANAGER,
@@ -2004,7 +2006,7 @@ Reports are automatically sent to administrators and owners:
 	}
 
 	@Get('reports/evening')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.MANAGER,
@@ -2143,7 +2145,7 @@ Reports are automatically sent to administrators and owners:
 	}
 
 	@Get('reports/device-timings/:deviceId')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(
 		AccessLevel.ADMIN,
 		AccessLevel.MANAGER,

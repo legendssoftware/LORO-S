@@ -116,11 +116,11 @@ export class Project {
 	clientUid: number;
 
 	@ManyToOne(() => User, (user) => user.projects, { nullable: false, eager: true })
-	@JoinColumn({ name: 'assignedUserUid' })
+	@JoinColumn({ name: 'assignedUserClerkUserId', referencedColumnName: 'clerkUserId' })
 	assignedUser: User;
 
 	@Column({ nullable: false })
-	assignedUserUid: number;
+	assignedUserClerkUserId: string;
 
 	@OneToMany(() => Quotation, (quotation) => quotation.project, { nullable: true })
 	quotations: Quotation[];

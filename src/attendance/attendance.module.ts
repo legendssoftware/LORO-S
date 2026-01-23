@@ -1,4 +1,5 @@
 import { forwardRef, Module } from '@nestjs/common';
+import { ClerkModule } from '../clerk/clerk.module';
 import { AttendanceService } from './attendance.service';
 import { AttendanceController } from './attendance.controller';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -16,7 +17,10 @@ import { OrganizationHoursService } from './services/organization.hours.service'
 import { AttendanceCalculatorService } from './services/attendance.calculator.service';
 import { AttendanceReportsService } from './services/attendance.reports.service';
 import { OvertimeReminderService } from './services/overtime.reminder.service';
+import { BranchLocationCheckService } from './services/branch-location-check.service';
 import { OrganisationSettings } from '../organisation/entities/organisation-settings.entity';
+import { Branch } from '../branch/entities/branch.entity';
+import { Tracking } from '../tracking/entities/tracking.entity';
 import { Notification } from '../notifications/entities/notification.entity';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { CommunicationModule } from '../communication/communication.module';
@@ -26,6 +30,7 @@ import { LibModule } from '../lib/lib.module';
 
 @Module({
 	imports: [
+		ClerkModule,
 		LicensingModule,
 		TypeOrmModule.forFeature([
 			Attendance,
@@ -36,6 +41,8 @@ import { LibModule } from '../lib/lib.module';
 			OrganisationSettings,
 			Notification,
 			Report,
+			Branch,
+			Tracking,
 		]),
 		UserModule,
 		RewardsModule,
@@ -63,6 +70,7 @@ import { LibModule } from '../lib/lib.module';
 		AttendanceCalculatorService,
 		AttendanceReportsService,
 		OvertimeReminderService,
+		BranchLocationCheckService,
 	],
 	exports: [
 		AttendanceService,

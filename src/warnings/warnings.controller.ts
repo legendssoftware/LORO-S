@@ -21,7 +21,7 @@ import {
 } from '@nestjs/swagger';
 import { getDynamicDate, getDynamicDateTime, createApiDescription } from '../lib/utils/swagger-helpers';
 import { Warning, WarningStatus, WarningSeverity } from './entities/warning.entity';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { RoleGuard } from '../guards/role.guard';
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
@@ -29,7 +29,7 @@ import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
 
 @ApiTags('⚠️ Warnings & Disciplinary Management')
 @Controller('warnings')
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 @EnterpriseOnly('warnings')
 @ApiBearerAuth('JWT-auth')
 @ApiConsumes('application/json')

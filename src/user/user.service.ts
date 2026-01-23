@@ -659,26 +659,23 @@ export class UserService {
 	}
 
 	/**
-	 * Exclude password from user data and include populated assigned clients
+	 * Populate assigned clients for user data
 	 * @param user - User entity
-	 * @returns User data without password but with assigned clients
+	 * @returns User data with assigned clients
 	 */
 	private async excludePasswordAndPopulateClients(
 		user: User,
-	): Promise<Omit<User, 'password'> & { assignedClients?: Client[] }> {
-		const userWithClients = await this.populateAssignedClients(user);
-		const { password, ...userWithoutPassword } = userWithClients;
-		return userWithoutPassword;
+	): Promise<User & { assignedClients?: Client[] }> {
+		return await this.populateAssignedClients(user);
 	}
 
 	/**
-	 * Exclude password from user data (legacy method for backward compatibility)
+	 * Return user data (legacy method for backward compatibility - password removed)
 	 * @param user - User entity
-	 * @returns User data without password
+	 * @returns User data
 	 */
-	private excludePassword(user: User): Omit<User, 'password'> {
-		const { password, ...userWithoutPassword } = user;
-		return userWithoutPassword;
+	private excludePassword(user: User): User {
+		return user;
 	}
 
 	/**
@@ -747,12 +744,7 @@ export class UserService {
 					createUserDto.userref = originalUserref;
 			}
 
-			// Hash password if provided
-			if (createUserDto.password) {
-				createUserDto.password = await bcrypt.hash(createUserDto.password, 10);
-			}
-
-				// Generate user reference if not provided, with collision check
+			// Generate user reference if not provided, with collision check
 			if (!createUserDto.userref) {
 					let userref: string;
 					let userrefAttempts = 0;
@@ -1015,26 +1007,13 @@ export class UserService {
 						throw new Error(`Email '${userData.email}' already exists`);
 					}
 
-					// Auto-generate password if requested and no password provided
-					let finalPassword = userData.password;
-					if (!finalPassword && bulkCreateUserDto.autoGeneratePasswords) {
-						finalPassword = this.generateRandomPassword();
-					}
-
-					if (!finalPassword) {
-						throw new Error('Password is required or enable autoGeneratePasswords');
-					}
-
-					// Hash the password
-					const hashedPassword = await bcrypt.hash(finalPassword, 10);
-
 					// Generate user reference if not provided
 					const userref = userData.userref || `USR${Math.floor(100000 + Math.random() * 900000)}`;
 
 					// Create user with org and branch association
+					// Note: Password is managed by Clerk, not stored in database
 					const user = queryRunner.manager.create(User, {
 						...userData,
-						password: hashedPassword,
 						userref,
 						...(bulkCreateUserDto.orgId && { organisation: { uid: bulkCreateUserDto.orgId } }),
 						...(bulkCreateUserDto.branchId && { branch: { uid: bulkCreateUserDto.branchId } }),
@@ -1048,11 +1027,8 @@ export class UserService {
 
 					const savedUser = await queryRunner.manager.save(User, user);
 
-					// Exclude password from result
-					const { password: _, ...userWithoutPassword } = savedUser;
-
 					results.push({
-						user: userWithoutPassword,
+						user: savedUser,
 						success: true,
 						index: i,
 						username: userData.username,
@@ -1221,7 +1197,6 @@ export class UserService {
 
 					// Track original values for change detection
 					const originalValues = {
-						password: existingUser.password,
 						role: existingUser.role,
 						status: existingUser.status,
 						accessLevel: existingUser.accessLevel,
@@ -1243,11 +1218,8 @@ export class UserService {
 						}
 					}
 
-					// Hash password if being updated
+					// Note: Password is managed by Clerk, not updated here
 					let updateData = { ...data };
-					if (data.password) {
-						updateData.password = await bcrypt.hash(data.password, 10);
-					}
 
 					// Track changed fields for logging and notifications
 					const updatedFields = Object.keys(data).filter(
@@ -1260,7 +1232,6 @@ export class UserService {
 
 					// Check for significant changes that require notifications
 					const hasSignificantChanges =
-						(data.password && data.password !== originalValues.password) ||
 						(data.role && data.role !== originalValues.role) ||
 						(data.status && data.status !== originalValues.status) ||
 						(data.accessLevel && data.accessLevel !== originalValues.accessLevel);
@@ -1293,7 +1264,6 @@ export class UserService {
 									updatedUser,
 									existingUser,
 									{
-										password: !!data.password,
 										role: data.role !== originalValues.role,
 										status: data.status !== originalValues.status,
 										profile: updatedFields.some((field) =>
@@ -1410,15 +1380,12 @@ export class UserService {
 
 	/**
 	 * 🔐 Generate a random password for auto-generation
-	 * @returns Random secure password
+	 * @deprecated Password is now managed by Clerk, not stored in database
+	 * @returns Random secure password (for legacy compatibility only)
 	 */
 	private generateRandomPassword(): string {
-		const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*';
-		let password = '';
-		for (let i = 0; i < 12; i++) {
-			password += chars.charAt(Math.floor(Math.random() * chars.length));
-		}
-		return password;
+		// Password generation removed - passwords are managed by Clerk
+		throw new Error('Password generation is no longer supported. Passwords are managed by Clerk.');
 	}
 
 	/**
@@ -1436,7 +1403,7 @@ export class UserService {
 			search?: string;
 			branchId?: number;
 			organisationId?: number;
-			orgId?: number;
+			orgId?: string;
 			userBranchId?: number;
 		},
 		page: number = 1,
@@ -1564,7 +1531,7 @@ export class UserService {
 	 */
 	async findOne(
 		searchParameter: number,
-		orgId?: number,
+		orgId?: string | number,
 		branchId?: number,
 	): Promise<{ user: Omit<User, 'password'> | null; message: string }> {
 		const startTime = Date.now();
@@ -1581,9 +1548,14 @@ export class UserService {
 			if (cachedUser) {
 
 				// If org/branch filters are provided, verify cached user belongs to them
-				if (orgId && cachedUser.organisation?.uid !== orgId) {
-					this.logger.warn(`User ${searchParameter} found in cache but doesn't belong to org ${orgId}`);
-					throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
+				if (orgId) {
+					const orgMatches = typeof orgId === 'string' 
+						? cachedUser.organisation?.clerkOrgId === orgId
+						: cachedUser.organisation?.uid === orgId;
+					if (!orgMatches) {
+						this.logger.warn(`User ${searchParameter} found in cache but doesn't belong to org ${orgId}`);
+						throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
+					}
 				}
 				if (branchId && cachedUser.branch?.uid !== branchId) {
 					this.logger.warn(`User ${searchParameter} found in cache but doesn't belong to branch ${branchId}`);
@@ -1607,8 +1579,15 @@ export class UserService {
 			};
 
 			// Add organization filter if provided
+			// orgId can be Clerk org ID (string) or numeric uid (number)
 			if (orgId) {
-				whereConditions.organisation = { uid: Number(orgId) }; // 🔧 FIX: Ensure orgId is a number
+				if (typeof orgId === 'string') {
+					// Use clerkOrgId for relationship linking (preferred)
+					whereConditions.organisation = { clerkOrgId: orgId };
+				} else {
+					// Fallback to numeric uid for backward compatibility
+					whereConditions.organisation = { uid: Number(orgId) };
+				}
 			}
 
 			// Add branch filter if provided
@@ -1776,13 +1755,66 @@ export class UserService {
 	}
 
 	/**
-	 * Find user by UID with related data
-	 * @param searchParameter - User UID to search for
+	 * Find user by Clerk ID with related data
+	 * @param clerkUserId - Clerk user ID to search for
 	 * @returns User data without password or null with message
 	 */
-	async findOneByUid(searchParameter: number): Promise<{ user: Omit<User, 'password'> | null; message: string }> {
+	async findOneByClerkId(clerkUserId: string): Promise<{ user: Omit<User, 'password'> | null; message: string }> {
 		const startTime = Date.now();
-		this.logger.log(`Finding user by UID: ${searchParameter}`);
+		this.logger.log(`Finding user by Clerk ID: ${clerkUserId}`);
+
+		try {
+			const user = await this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.branch', 'branch')
+				.leftJoinAndSelect('user.rewards', 'rewards')
+				.leftJoinAndSelect('user.userTarget', 'userTarget')
+				.leftJoinAndSelect('user.organisation', 'organisation')
+				.where('user.clerkUserId = :clerkUserId', { clerkUserId })
+				.andWhere('user.isDeleted = :isDeleted', { isDeleted: false })
+				.getOne();
+
+			if (!user) {
+				const executionTime = Date.now() - startTime;
+				this.logger.warn(`User not found with Clerk ID: ${clerkUserId} (${executionTime}ms)`);
+				return {
+					user: null,
+					message: process.env.NOT_FOUND_MESSAGE,
+				};
+			}
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`User found by Clerk ID: ${clerkUserId} (${user.email}) in ${executionTime}ms`);
+
+			return {
+				user: await this.excludePasswordAndPopulateClients(user),
+				message: process.env.SUCCESS_MESSAGE,
+			};
+		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(
+				`Failed to find user by Clerk ID: ${clerkUserId} after ${executionTime}ms. Error: ${error.message}`,
+			);
+
+			const response = {
+				message: error?.message,
+				user: null,
+			};
+
+			return response;
+		}
+	}
+
+	/**
+	 * Find user by UID with related data (deprecated - use findOneByClerkId)
+	 * @param searchParameter - User UID to search for
+	 * @returns User data without password or null with message
+	 * @deprecated Use findOneByClerkId instead
+	 */
+	async findOneByUid(searchParameter: number): Promise<{ user: Omit<User, 'password'> | null; message: string }> {
+		// For backward compatibility, find by uid first, then return using clerkUserId
+		const startTime = Date.now();
+		this.logger.log(`Finding user by UID (deprecated): ${searchParameter}`);
 
 		try {
 			const user = await this.userRepository
@@ -1946,7 +1978,6 @@ export class UserService {
 
 			// Track what's being changed for notifications
 			const changes = {
-				password: false,
 				role: false,
 				status: false,
 				profile: false,
@@ -1957,11 +1988,7 @@ export class UserService {
 			const originalAssignedClients = existingUser.assignedClientIds || [];
 			let updatedAssignedClients: number[] = [];
 
-			// Check for password change
-			if (updateUserDto.password) {
-				updateUserDto.password = await bcrypt.hash(updateUserDto.password, 10);
-				changes.password = true;
-			}
+			// Note: Password is managed by Clerk, not updated here
 
 			// Check for role/access level change
 			if (updateUserDto.accessLevel && updateUserDto.accessLevel !== existingUser.accessLevel) {
@@ -2051,10 +2078,6 @@ export class UserService {
 				);
 			} else {
 				// Send individual emails for single changes
-				if (changes.password) {
-					emailPromises.push(this.sendPasswordUpdateNotificationEmail(updatedUser));
-				}
-
 				if (changes.profile) {
 					emailPromises.push(this.sendProfileUpdateNotificationEmail(updatedUser));
 				}
@@ -2062,7 +2085,8 @@ export class UserService {
 
 			// Send push notifications for significant changes
 			try {
-				if (changes.password) {
+				// Note: Password changes are managed by Clerk, not handled here
+				if (false) { // Password change notifications removed
 					await this.unifiedNotificationService.sendTemplatedNotification(
 						NotificationEvent.USER_PASSWORD_RESET,
 						[updatedUser.uid],
@@ -2105,7 +2129,7 @@ export class UserService {
 					);
 				}
 
-				if (changes.profile || (hasMultipleChanges && !changes.password && !changes.role && !changes.status)) {
+				if (changes.profile || (hasMultipleChanges && !changes.role && !changes.status)) {
 					await this.unifiedNotificationService.sendTemplatedNotification(
 						NotificationEvent.USER_UPDATED,
 						[updatedUser.uid],
@@ -2229,9 +2253,7 @@ export class UserService {
 		this.logger.log(`Creating pending user: ${userData.email}`);
 
 		try {
-			if (userData?.password) {
-				userData.password = await bcrypt.hash(userData.password, 10);
-			}
+			// Note: Password is managed by Clerk, not stored here
 
 			const user = await this.userRepository.save({
 				...userData,
@@ -2424,77 +2446,24 @@ export class UserService {
 
 	/**
 	 * Set password for user (typically during account setup)
+	 * @deprecated Password is now managed by Clerk, not stored in database
 	 * @param uid - User ID
 	 * @param password - New password to set
 	 */
 	async setPassword(uid: number, password: string): Promise<void> {
-		const startTime = Date.now();
-		this.logger.log(`Setting password for user: ${uid}`);
-
-		try {
-			const user = await this.userRepository
-				.createQueryBuilder('user')
-				.leftJoinAndSelect('user.organisation', 'organisation')
-				.leftJoinAndSelect('user.branch', 'branch')
-				.where('user.uid = :uid', { uid })
-				.getOne();
-
-			if (user) {
-				const hashedPassword = await bcrypt.hash(password, 10);
-
-				await this.userRepository.update(
-					{ uid },
-					{
-						password: hashedPassword,
-						verificationToken: null,
-						tokenExpires: null,
-						status: AccountStatus.ACTIVE,
-					},
-				);
-
-				// Invalidate cache after password change
-				await this.invalidateUserCache(user);
-
-				const executionTime = Date.now() - startTime;
-				this.logger.log(`Password set and account activated for user: ${user.email} in ${executionTime}ms`);
-			} else {
-				this.logger.warn(`User ${uid} not found for password setting`);
-			}
-		} catch (error) {
-			const executionTime = Date.now() - startTime;
-			this.logger.error(
-				`Failed to set password for user ${uid} after ${executionTime}ms. Error: ${error.message}`,
-			);
-			throw error;
-		}
+		this.logger.warn(`setPassword called for user ${uid} - passwords are now managed by Clerk`);
+		throw new Error('Password setting is no longer supported. Passwords are managed by Clerk.');
 	}
 
 	/**
 	 * Update user password (for existing users)
+	 * @deprecated Password is now managed by Clerk, not stored in database
 	 * @param uid - User ID
 	 * @param password - New password to set
 	 */
 	async updatePassword(uid: number, password: string): Promise<void> {
-		const startTime = Date.now();
-		this.logger.log(`Updating password for user: ${uid}`);
-
-		try {
-			const hashedPassword = await bcrypt.hash(password, 10);
-
-			await this.userRepository.update(uid, {
-				password: hashedPassword,
-				updatedAt: new Date(),
-			});
-
-			const executionTime = Date.now() - startTime;
-			this.logger.log(`Password updated successfully for user: ${uid} in ${executionTime}ms`);
-		} catch (error) {
-			const executionTime = Date.now() - startTime;
-			this.logger.error(
-				`Failed to update password for user ${uid} after ${executionTime}ms. Error: ${error.message}`,
-			);
-			throw error;
-		}
+		this.logger.warn(`updatePassword called for user ${uid} - passwords are now managed by Clerk`);
+		throw new Error('Password updates are no longer supported. Passwords are managed by Clerk.');
 	}
 
 	/**
@@ -2506,7 +2475,7 @@ export class UserService {
 	 */
 	async getUserTarget(
 		userId: number,
-		orgId?: number,
+		orgId?: string | number,
 		branchId?: number,
 	): Promise<{ userTarget: any; message: string }> {
 		const startTime = Date.now();
@@ -2674,9 +2643,16 @@ export class UserService {
 				])
 				.where('user.uid = :userId AND user.isDeleted = :isDeleted', { userId, isDeleted: false });
 
-			// Apply access control filters
+			// Apply access control filters using Clerk org ID
 			if (orgId) {
-				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+				// orgId can be Clerk org ID (string) or numeric uid
+				// Use clerkOrgId for relationship linking (preferred)
+				if (typeof orgId === 'string') {
+					queryBuilder.andWhere('organisation.clerkOrgId = :orgId', { orgId });
+				} else {
+					// Fallback to numeric uid for backward compatibility
+					queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+				}
 			}
 
 			if (branchId !== null && branchId !== undefined) {
@@ -6753,7 +6729,6 @@ export class UserService {
 		updatedUser: User,
 		originalUser: User,
 		changes: {
-			password: boolean;
 			role: boolean;
 			status: boolean;
 			profile: boolean;
@@ -6809,7 +6784,6 @@ export class UserService {
 			}
 
 			const changesList = [];
-			if (changes.password) changesList.push('Password');
 			if (changes.role) changesList.push('Role/Access Level');
 			if (changes.status) changesList.push('Account Status');
 			if (changes.profile) changesList.push('Profile Information');
@@ -6826,7 +6800,6 @@ export class UserService {
 				branchName: updatedUser.branch?.name || 'Main Branch',
 				dashboardUrl: process.env.CLIENT_URL || 'https://dashboard.loro.co.za',
 				changes: {
-					password: changes.password,
 					role: changes.role,
 					status: changes.status,
 					profile: changes.profile,

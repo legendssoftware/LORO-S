@@ -20,7 +20,7 @@ export class RewardsService {
     private dataSource: DataSource
   ) { }
 
-  async awardXP(createRewardDto: CreateRewardDto, orgId?: number, branchId?: number) {
+  async awardXP(createRewardDto: CreateRewardDto, orgId?: string, branchId?: number) {
     const logPrefix = `[awardXP] Awarding ${createRewardDto.amount}XP to user ${createRewardDto.owner}`;
     
     try {
@@ -54,7 +54,7 @@ export class RewardsService {
           .createQueryBuilder('u')
           .select('u.uid')
           .where('u.uid = :userId', { userId: createRewardDto.owner })
-          .andWhere('u.organisationRef = :orgRef', { orgRef: orgId.toString() });
+          .andWhere('u.organisationRef = :orgRef', { orgRef: orgId });
 
         const userExists = await queryBuilder.getRawMany();
 
@@ -180,7 +180,7 @@ export class RewardsService {
     return 'ROOKIE';
   }
 
-  async getUserRewards(reference: number, orgId?: number, branchId?: number, requestingUserId?: number) {
+  async getUserRewards(reference: number, orgId?: string, branchId?: number, requestingUserId?: number) {
     const logPrefix = `[getUserRewards] User ${requestingUserId} requesting rewards for user ${reference}`;
     
     try {

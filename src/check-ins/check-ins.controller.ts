@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Patch, Param, UseGuards, Get, Query, Req } from '@nestjs/common';
+import { Controller, Post, Body, Patch, Param, UseGuards, Get, Query, Req, ParseIntPipe, BadRequestException } from '@nestjs/common';
 import { CheckInsService } from './check-ins.service';
 import { CreateCheckInDto } from './dto/create-check-in.dto';
 import { CreateCheckOutDto } from './dto/create-check-out.dto';
@@ -7,9 +7,7 @@ import { UpdateCheckOutPhotoDto } from './dto/update-check-out-photo.dto';
 import { UpdateVisitDetailsDto } from './dto/update-visit-details.dto';
 import { Request } from 'express';
 
-interface AuthenticatedRequest extends Request {
-	user: any;
-}
+import { AuthenticatedRequest, getClerkOrgId } from '../lib/interfaces/authenticated-request.interface';
 
 import {
 	ApiOperation,
@@ -23,12 +21,12 @@ import {
 	ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { getDynamicDateTime, createApiDescription } from '../lib/utils/swagger-helpers';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { RoleGuard } from '../guards/role.guard';
 
 @ApiTags('📍 Check Ins & Check Outs')
 @Controller('check-ins')	
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid credentials or missing token' })
 export class CheckInsController {
 	constructor(private readonly checkInsService: CheckInsService) {}
@@ -164,7 +162,10 @@ export class CheckInsController {
 		},
 	})
 	checkIn(@Body() createCheckInDto: CreateCheckInDto, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.organisationRef;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
 		return this.checkInsService.checkIn(createCheckInDto, orgId, branchId);
 	}
@@ -203,7 +204,11 @@ export class CheckInsController {
 			},
 		},
 	})
-	checkInStatus(@Param('reference') reference: number) {
+	checkInStatus(@Param('reference', ParseIntPipe) reference: number) {
+		// Validate that reference is a valid number (not NaN)
+		if (isNaN(reference) || reference <= 0) {
+			throw new BadRequestException('Invalid user reference: must be a positive number');
+		}
 		return this.checkInsService.checkInStatus(reference);
 	}
 
@@ -251,7 +256,10 @@ export class CheckInsController {
 		},
 	})
 	checkOut(@Body() createCheckOutDto: CreateCheckOutDto, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.organisationRef;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
 		return this.checkInsService.checkOut(createCheckOutDto, orgId, branchId);
 	}
@@ -283,7 +291,10 @@ export class CheckInsController {
 		@Body() createCheckInDto: CreateCheckInDto,
 		@Req() req: AuthenticatedRequest,
 	) {
-		const orgId = req.user?.organisationRef;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
 		// Add client to the DTO
 		const checkInWithClient = {
@@ -315,7 +326,10 @@ export class CheckInsController {
 		description: 'Check-in not found',
 	})
 	updateCheckInPhoto(@Body() updateDto: UpdateCheckInPhotoDto, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.organisationRef;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
 		return this.checkInsService.updateCheckInPhoto(updateDto.checkInId, updateDto.photoUrl, orgId, branchId);
 	}
@@ -342,7 +356,10 @@ export class CheckInsController {
 		description: 'Check-in not found',
 	})
 	updateCheckOutPhoto(@Body() updateDto: UpdateCheckOutPhotoDto, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.organisationRef;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
 		return this.checkInsService.updateCheckOutPhoto(updateDto.checkInId, updateDto.photoUrl, orgId, branchId);
 	}
@@ -369,7 +386,10 @@ export class CheckInsController {
 		description: 'Check-in not found',
 	})
 	updateVisitDetails(@Body() updateDto: UpdateVisitDetailsDto, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.organisationRef;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
 		return this.checkInsService.updateVisitDetails(
 			updateDto.checkInId,

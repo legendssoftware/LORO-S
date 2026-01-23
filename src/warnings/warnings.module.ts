@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ClerkModule } from '../clerk/clerk.module';
 import { WarningsService } from './warnings.service';
 import { WarningsController } from './warnings.controller';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -12,6 +13,7 @@ import { LicensingModule } from '../licensing/licensing.module';
 
 @Module({
 	imports: [
+		ClerkModule,
 		TypeOrmModule.forFeature([Warning, User]),
 		CacheModule.registerAsync({
 			imports: [ConfigModule],

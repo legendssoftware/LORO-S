@@ -40,16 +40,17 @@ import { BulkCreateCompetitorDto, BulkCreateCompetitorResponse } from './dto/bul
 import { BulkUpdateCompetitorDto, BulkUpdateCompetitorResponse } from './dto/bulk-update-competitor.dto';
 import { FilterCompetitorDto } from './dto/filter-competitor.dto';
 import { Competitor } from './entities/competitor.entity';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { RoleGuard } from '../guards/role.guard';
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { PaginatedResponse } from '../lib/interfaces/paginated-response.interface';
 import { CompetitorStatus } from '../lib/enums/competitor.enums';
+import { AuthenticatedRequest, getClerkOrgId } from '../lib/interfaces/authenticated-request.interface';
 
 @ApiBearerAuth('JWT-auth')
 @ApiTags('⚡ Competitors')
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 @Controller('competitors')
 @ApiConsumes('application/json')
 @ApiProduces('application/json')
@@ -83,12 +84,15 @@ export class CompetitorsController {
 	}
 
 	// Helper method to safely extract org and branch IDs from JWT
-	private extractOrgAndBranchIds(req: any): { orgId?: number; branchId?: number } {
-		const orgIdRaw = req.user?.org?.uid || req.user?.organisation?.uid || req.organization?.ref;
-		const branchIdRaw = req.user?.branch?.uid || req.branch?.uid;
+	private extractOrgAndBranchIds(req: AuthenticatedRequest): { orgId?: string; branchId?: number } {
+		const orgIdRaw = getClerkOrgId(req);
+		if (!orgIdRaw) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchIdRaw = req.user?.branch?.uid;
 
 		return {
-			orgId: this.safeNumericExtraction(orgIdRaw),
+			orgId: orgIdRaw,
 			branchId: this.safeNumericExtraction(branchIdRaw),
 		};
 	}
@@ -746,10 +750,8 @@ Returns comprehensive results including:
 		// Extract org and branch IDs from request
 		const { orgId, branchId } = this.extractOrgAndBranchIds(req);
 		
-		// Set orgId and branchId if not provided in DTO
-		if (!bulkCreateCompetitorDto.orgId) {
-			bulkCreateCompetitorDto.orgId = orgId;
-		}
+		// Note: orgId is now a string (Clerk org ID) and should not be assigned to DTO
+		// The service will handle orgId as a separate parameter
 		if (!bulkCreateCompetitorDto.branchId) {
 			bulkCreateCompetitorDto.branchId = branchId;
 		}

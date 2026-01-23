@@ -22,13 +22,7 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "bulk-email": "ts-node -r tsconfig-paths/register src/scripts/bulk-email.script.ts",
-    "bulk-email:help": "npm run bulk-email -- --help",
-    "cleanup:tokens": "ts-node -r tsconfig-paths/register src/scripts/cleanup-duplicate-tokens.ts",
-    "cleanup:tokens:auto": "ts-node -r tsconfig-paths/register src/scripts/cleanup-duplicate-tokens.ts --auto",
-    "test:erp-connection": "node test-erp-connection.js",
-    "fetch:remote-data": "ts-node -r tsconfig-paths/register src/scripts/fetch-remote-data.ts",
-    "migrate:local-to-remote": "ts-node -r tsconfig-paths/register src/scripts/migrate-local-to-remote.ts"
+    "populate:clerk-org": "ts-node -r tsconfig-paths/register src/scripts/populate-clerk-org.ts"
   },
   "dependencies": {
     "@apollo/server": "^4.11.2",
@@ -42,7 +36,6 @@
     "@nestjs/config": "^4.0.0",
     "@nestjs/core": "^10.0.0",
     "@nestjs/event-emitter": "^2.1.1",
-    "@nestjs/graphql": "^12.2.1",
     "@nestjs/jwt": "^10.2.0",
     "@nestjs/mapped-types": "*",
     "@nestjs/platform-express": "^10.0.0",

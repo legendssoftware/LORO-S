@@ -760,7 +760,7 @@ export class LoyaltyService {
 	/**
 	 * Get available rewards
 	 */
-	async getAvailableRewards(orgId?: number, branchId?: number, tier?: LoyaltyTier): Promise<LoyaltyReward[]> {
+	async getAvailableRewards(orgId?: string, branchId?: number, tier?: LoyaltyTier): Promise<LoyaltyReward[]> {
 		const whereConditions: any = {
 			isActive: true,
 		};

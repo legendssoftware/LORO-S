@@ -20,7 +20,7 @@ import {
 } from '@nestjs/swagger';
 import { getDynamicDate, getDynamicDateTime, getFutureDate, getPastDate, createApiDescription } from '../lib/utils/swagger-helpers';
 import { RoleGuard } from '../guards/role.guard';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { Roles } from '../decorators/role.decorator';
 import { ProductsService } from './products.service';
 import { AccessLevel } from '../lib/enums/user.enums';
@@ -30,14 +30,15 @@ import { BulkCreateProductDto } from './dto/bulk-create-product.dto';
 import { BulkUpdateProductDto } from './dto/bulk-update-product.dto';
 import { PaginationQuery } from '../lib/interfaces/product.interfaces';
 import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, Req } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, Req, BadRequestException } from '@nestjs/common';
 import { ProductAnalyticsDto } from './dto/product-analytics.dto';
-import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
+import { AuthenticatedRequest, getClerkOrgId } from '../lib/interfaces/authenticated-request.interface';
+import { OrganisationService } from '../organisation/organisation.service';
 
 @ApiBearerAuth('JWT-auth')
 @ApiTags('🛍️ Products') 
 @Controller('products')
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 @EnterpriseOnly('products')
 @ApiConsumes('application/json')
 @ApiProduces('application/json')
@@ -53,7 +54,30 @@ import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.in
 	}
 })
 export class ProductsController {
-	constructor(private readonly productsService: ProductsService) {}
+	constructor(
+		private readonly productsService: ProductsService,
+		private readonly organisationService: OrganisationService,
+	) {}
+
+	private async resolveOrgUid(req: AuthenticatedRequest): Promise<number> {
+		const clerkOrgId = getClerkOrgId(req);
+		if (!clerkOrgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const uid = await this.organisationService.findUidByClerkId(clerkOrgId);
+		if (uid == null) {
+			throw new BadRequestException('Organization not found');
+		}
+		return uid;
+	}
+
+	private getClerkOrgIdString(req: AuthenticatedRequest): string {
+		const clerkOrgId = getClerkOrgId(req);
+		if (!clerkOrgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		return clerkOrgId;
+	}
 
 	@Post()
 	@Roles(
@@ -604,8 +628,8 @@ Creates a new product in the system with comprehensive tracking and analytics ca
 			}
 		}
 	})
-	createProduct(@Body() createProductDto: CreateProductDto, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid;
+	async createProduct(@Body() createProductDto: CreateProductDto, @Req() req: AuthenticatedRequest) {
+		const orgId = await this.resolveOrgUid(req);
 		const branchId = req.user?.branch?.uid;
 		return this.productsService.createProduct(createProductDto, orgId, branchId);
 	}
@@ -928,14 +952,12 @@ Products will be automatically associated with the authenticated user's organiza
 		}
 	})
 	async createBulkProducts(@Body() bulkCreateProductDto: BulkCreateProductDto, @Req() req: AuthenticatedRequest) {
-		// Automatically set orgId and branchId from authenticated user if not provided
 		if (!bulkCreateProductDto.orgId) {
-			bulkCreateProductDto.orgId = req.user?.org?.uid;
+			bulkCreateProductDto.orgId = await this.resolveOrgUid(req);
 		}
 		if (!bulkCreateProductDto.branchId) {
 			bulkCreateProductDto.branchId = req.user?.branch?.uid;
 		}
-		
 		return this.productsService.createBulkProducts(bulkCreateProductDto);
 	}
 
@@ -1673,8 +1695,8 @@ Retrieves a paginated list of products with comprehensive filtering and sorting 
 			}
 		}
 	})
-	products(@Query() query: PaginationQuery, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid;
+	async products(@Query() query: PaginationQuery, @Req() req: AuthenticatedRequest) {
+		const orgId = await this.resolveOrgUid(req);
 		const branchId = req.user?.branch?.uid;
 		return this.productsService.products(query.page, query.limit, orgId, branchId);
 	}
@@ -1856,8 +1878,8 @@ Retrieves comprehensive information about a specific product using its reference
 			}
 		}
 	})
-	getProductByref(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid;
+	async getProductByref(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
+		const orgId = this.getClerkOrgIdString(req);
 		const branchId = req.user?.branch?.uid;
 		return this.productsService.getProductByref(ref, orgId, branchId);
 	}
@@ -2175,14 +2197,14 @@ Retrieves a paginated list of products that belong to a specific category with a
 			}
 		}
 	})
-	productsByCategory(
+	async productsByCategory(
 		@Param('category') category: string,
 		@Query('page') page: number = 1,
 		@Query('limit') limit: number = 20,
 		@Query('search') search: string = '',
 		@Req() req: AuthenticatedRequest,
 	) {
-		const orgId = req.user?.org?.uid;
+		const orgId = await this.resolveOrgUid(req);
 		const branchId = req.user?.branch?.uid;
 		return this.productsService.productsByCategory(category, page, limit, search, orgId, branchId);
 	}
@@ -3118,7 +3140,10 @@ Retrieves comprehensive analytics data for a specific product, including perform
 		}
 	})
 	async getProductAnalytics(@Param('id') id: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
 		// Note: The analytics service methods don't need to filter by org/branch
 		// since we'll be fetching a product that's already filtered
@@ -3361,7 +3386,10 @@ Updates comprehensive analytics data for a specific product with real-time perfo
 		@Body() analyticsDto: ProductAnalyticsDto,
 		@Req() req: AuthenticatedRequest,
 	) {
-		const orgId = req.user?.org?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
 		// First verify the product exists and belongs to the org/branch
 		const product = await this.productsService.getProductByref(id);
@@ -3480,7 +3508,10 @@ Tracks and records a product view event for analytics and engagement measurement
 		}
 	})
 	async recordProductView(@Param('id') id: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
 		// First verify the product exists and belongs to the org/branch
 		const product = await this.productsService.getProductByref(id);
@@ -3607,7 +3638,10 @@ Tracks when a product is added to cart for comprehensive e-commerce analytics an
 		}
 	})
 	async recordCartAdd(@Param('id') id: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
 		// First verify the product exists and belongs to the org/branch
 		const product = await this.productsService.getProductByref(id);
@@ -3734,7 +3768,10 @@ Tracks when a product is added to wishlist for customer preference analysis and 
 		}
 	})
 	async recordWishlist(@Param('id') id: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
 		// First verify the product exists and belongs to the org/branch
 		const product = await this.productsService.getProductByref(id);
@@ -3941,7 +3978,10 @@ Computes comprehensive performance metrics for a product based on analytics data
 		}
 	})
 	async calculateProductPerformance(@Param('id') id: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
 		// First verify the product exists and belongs to the org/branch
 		const product = await this.productsService.getProductByref(id);

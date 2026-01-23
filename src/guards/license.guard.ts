@@ -1,8 +1,11 @@
 import { Request } from 'express';
 import { LicensingService } from '../licensing/licensing.service';
-import { Injectable, CanActivate, ExecutionContext, Logger } from '@nestjs/common';
-import { Token } from '../lib/types/token';
+import { Injectable, CanActivate, ExecutionContext, UnauthorizedException, ForbiddenException, Logger } from '@nestjs/common';
 
+/**
+ * LicenseGuard - Clerk Token Only
+ * Works with user object from ClerkAuthGuard. Legacy JWT tokens are no longer supported.
+ */
 @Injectable()
 export class LicenseGuard implements CanActivate {
 	private readonly logger = new Logger(LicenseGuard.name);
@@ -11,67 +14,80 @@ export class LicenseGuard implements CanActivate {
 
 	async canActivate(context: ExecutionContext): Promise<boolean> {
 		const request = context.switchToHttp().getRequest<Request>();
-		const { method, url, path } = request;
-		
-		this.logger.debug(`[LicenseGuard] Guard activated for ${method} ${path || url}`);
+
+		// If license validation was already performed and cached in the request
+		if (request['licenseValidated'] === true) {
+			return true;
+		}
+
+		// Get user from request (set by ClerkAuthGuard)
+		const user = request['user'] as any;
+
+		if (!user) {
+			this.logger.warn(`[LicenseGuard] No user object found in request`);
+			throw new UnauthorizedException({
+				statusCode: 401,
+				message: 'Authentication required. User information is missing',
+				error: 'Unauthorized',
+				action: 'Please ensure you are properly authenticated. The ClerkAuthGuard should attach a user object to your request',
+				cause: 'No user object was found in the request, which is required for license validation',
+			});
+		}
+
+		// Check for licenseId in the user object
+		if (!user.licenseId) {
+			this.logger.warn(`[LicenseGuard] No license ID found for user ${user.clerkUserId || user.uid}`);
+			throw new ForbiddenException({
+				statusCode: 403,
+				message: 'No license found for your account',
+				error: 'Forbidden',
+				action: 'Please contact your administrator to ensure your organization has an active license configured',
+				cause: 'License ID was not attached to your user account during authentication. This may occur if your organization does not have an active license',
+			});
+		}
 
 		try {
-			// If license validation was already performed by the AuthGuard and cached in the request
-			if (request['licenseValidated'] === true) {
-				this.logger.debug(`[LicenseGuard] License already validated by AuthGuard, skipping validation for ${method} ${path || url}`);
-				// If we already validated the license in this request, use that result
-				return true;
+			const isValid = await this.licensingService.validateLicense(user.licenseId);
+
+			if (!isValid) {
+				this.logger.warn(`[LicenseGuard] License validation failed for license ID: ${user.licenseId}`);
+				throw new ForbiddenException({
+					statusCode: 403,
+					message: 'Your license is invalid or has expired',
+					error: 'Forbidden',
+					action: 'Please contact your administrator to renew or activate your license',
+					cause: `License validation failed for license ID: ${user.licenseId}. The license may be expired, suspended, or invalid`,
+				});
 			}
 
-			const user = request['user'] as Token;
+			// If valid, attach license info to the request
+			if (isValid && user.licensePlan) {
+				request['license'] = {
+					id: user.licenseId,
+					plan: user.licensePlan,
+				};
 
-			if (!user) {
-				this.logger.warn(`[LicenseGuard] No user found in request for ${method} ${path || url}`);
-				return false;
+				// Cache the validation result for this request
+				request['licenseValidated'] = true;
+				this.logger.debug(`[LicenseGuard] License validated successfully for license ID: ${user.licenseId}, plan: ${user.licensePlan}`);
 			}
 
-			this.logger.debug(`[LicenseGuard] User found - userId: ${user.uid}, role: ${user.role}, hasLicenseId: ${!!user.licenseId}, hasLicensePlan: ${!!user.licensePlan}`);
-
-			// Check for licenseId in the token
-			if (user.licenseId) {
-				this.logger.debug(`[LicenseGuard] Validating license`);
-				
-				const validationStartTime = Date.now();
-				const isValid = await this.licensingService.validateLicense(user.licenseId);
-				const validationDuration = Date.now() - validationStartTime;
-				
-				this.logger.debug(`[LicenseGuard] License validation completed in ${validationDuration}ms - valid: ${isValid}`);
-
-				// If valid, attach license info to the request
-				if (isValid && user.licensePlan) {
-					request['license'] = {
-						id: user.licenseId,
-						plan: user.licensePlan,
-					};
-					this.logger.debug(`[LicenseGuard] License info attached to request`);
-
-					// Cache the validation result for this request
-					request['licenseValidated'] = true;
-					this.logger.debug(`[LicenseGuard] License validation cached for request`);
-				} else {
-					if (!isValid) {
-						this.logger.warn(`[LicenseGuard] License validation failed - userId: ${user.uid}`);
-					}
-					if (!user.licensePlan) {
-						this.logger.warn(`[LicenseGuard] License plan missing in token - userId: ${user.uid}`);
-					}
-				}
-
-				this.logger.debug(`[LicenseGuard] Guard activation ${isValid ? 'successful' : 'failed'} for ${method} ${path || url}`);
-				return isValid;
-			}
-
-			// No valid license found
-			this.logger.warn(`[LicenseGuard] No licenseId found in user token for ${method} ${path || url} - userId: ${user.uid}`);
-			return false;
+			return isValid;
 		} catch (error) {
-			this.logger.error(`[LicenseGuard] Unexpected error during guard activation for ${method} ${path || url}:`, error instanceof Error ? error.message : 'Unknown error');
-			return false;
+			// If it's already a properly formatted exception, re-throw it
+			if (error instanceof ForbiddenException || error instanceof UnauthorizedException) {
+				throw error;
+			}
+
+			// For unexpected errors during license validation
+			this.logger.error(`[LicenseGuard] Error validating license ${user.licenseId}:`, error instanceof Error ? error.message : 'Unknown error');
+			throw new ForbiddenException({
+				statusCode: 403,
+				message: 'An error occurred while validating your license',
+				error: 'Forbidden',
+				action: 'Please try again later or contact support if the problem persists',
+				cause: error instanceof Error ? error.message : 'Unknown error during license validation',
+			});
 		}
 	}
 }

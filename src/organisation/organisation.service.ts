@@ -40,7 +40,22 @@ export class OrganisationService {
 		}
 	}
 
-	async create(createOrganisationDto: CreateOrganisationDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
+	/**
+	 * Resolves Clerk org ID (from token) to organisation uid.
+	 * Looks up by clerkOrgId or ref. Returns null if not found.
+	 */
+	async findUidByClerkId(clerkOrgId: string): Promise<number | null> {
+		const org = await this.organisationRepository.findOne({
+			where: [
+				{ clerkOrgId, isDeleted: false },
+				{ ref: clerkOrgId, isDeleted: false },
+			],
+			select: ['uid'],
+		});
+		return org?.uid ?? null;
+	}
+
+	async create(createOrganisationDto: CreateOrganisationDto, orgId?: string, branchId?: number): Promise<{ message: string }> {
 		const startTime = Date.now();
 		const operationId = `create_org_${Date.now()}`;
 		
@@ -135,7 +150,7 @@ export class OrganisationService {
 		}
 	}
 
-	async findAll(orgId?: number, branchId?: number): Promise<{ organisations: Organisation[] | null; message: string }> {
+	async findAll(orgId?: string, branchId?: number): Promise<{ organisations: Organisation[] | null; message: string }> {
 		const startTime = Date.now();
 		const operationId = `findall_orgs_${Date.now()}`;
 		
@@ -194,7 +209,7 @@ export class OrganisationService {
 					orgId,
 					filterType: 'organization_scoped'
 				});
-				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+				queryBuilder.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 			} else {
 				this.logger.log(`🌐 [${operationId}] Using global access`, {
 					operationId,
@@ -285,7 +300,7 @@ export class OrganisationService {
 		}
 	}
 
-	async findOne(ref: string, orgId?: number, branchId?: number): Promise<{ organisation: Organisation | null; message: string }> {
+	async findOne(ref: string, orgId?: string, branchId?: number): Promise<{ organisation: Organisation | null; message: string }> {
 		const startTime = Date.now();
 		const operationId = `findone_org_${Date.now()}`;
 		
@@ -466,7 +481,7 @@ export class OrganisationService {
 		}
 	}
 
-	async update(ref: string, updateOrganisationDto: UpdateOrganisationDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
+	async update(ref: string, updateOrganisationDto: UpdateOrganisationDto, orgId?: string, branchId?: number): Promise<{ message: string }> {
 		const startTime = Date.now();
 		const operationId = `update_org_${Date.now()}`;
 		
@@ -490,8 +505,14 @@ export class OrganisationService {
 					requiredOrgId: orgId
 				});
 
+				// Resolve Clerk org ID to numeric uid for comparison
+				const resolvedOrgUid = orgId ? await this.findUidByClerkId(orgId) : null;
 				const existingOrg = await this.organisationRepository.findOne({
-					where: { ref, isDeleted: false, uid: orgId },
+					where: { 
+						ref, 
+						isDeleted: false, 
+						...(resolvedOrgUid && { uid: resolvedOrgUid }),
+					},
 				});
 
 				if (!existingOrg) {
@@ -602,7 +623,7 @@ export class OrganisationService {
 		}
 	}
 
-	async remove(ref: string, orgId?: number, branchId?: number): Promise<{ message: string }> {
+	async remove(ref: string, orgId?: string, branchId?: number): Promise<{ message: string }> {
 		const startTime = Date.now();
 		const operationId = `remove_org_${Date.now()}`;
 		
@@ -732,7 +753,7 @@ export class OrganisationService {
 		}
 	}
 
-	async restore(ref: string, orgId?: number, branchId?: number): Promise<{ message: string }> {
+	async restore(ref: string, orgId?: string, branchId?: number): Promise<{ message: string }> {
 		const startTime = Date.now();
 		const operationId = `restore_org_${Date.now()}`;
 		

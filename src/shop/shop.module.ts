@@ -1,4 +1,5 @@
 import { forwardRef, Module } from '@nestjs/common';
+import { ClerkModule } from '../clerk/clerk.module';
 import { ShopService } from './shop.service';
 import { ProjectsService } from './projects.service';
 import { ShopController } from './shop.controller';
@@ -31,6 +32,7 @@ import { QuotationPdfListener } from './listeners/quotation-pdf.listener';
 
 @Module({
 	imports: [
+		ClerkModule,
 		TypeOrmModule.forFeature([
 			Quotation, 
 			QuotationItem, 

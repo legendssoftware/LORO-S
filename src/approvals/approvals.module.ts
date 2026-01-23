@@ -1,4 +1,5 @@
 import { forwardRef, Module } from '@nestjs/common';
+import { ClerkModule } from '../clerk/clerk.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { CacheModule } from '@nestjs/cache-manager';
@@ -22,6 +23,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
+		ClerkModule,
     TypeOrmModule.forFeature([
       Approval,
       ApprovalHistory,

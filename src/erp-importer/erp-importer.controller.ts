@@ -3,7 +3,7 @@ import { ErpImporterService } from './erp-importer.service';
 import { ImportSummary } from './interfaces/import-result.interface';
 import { ApiTags, ApiOperation, ApiOkResponse, ApiBearerAuth, ApiUnauthorizedResponse, ApiForbiddenResponse, ApiInternalServerErrorResponse } from '@nestjs/swagger';
 import { getDynamicDate, getDynamicDateTime, createApiDescription } from '../lib/utils/swagger-helpers';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { RoleGuard } from '../guards/role.guard';
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
@@ -11,7 +11,7 @@ import { AccessLevel } from '../lib/enums/user.enums';
 @ApiBearerAuth('JWT-auth')
 @ApiTags('📥 ERP Importer')
 @Controller('erp-importer')
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 @ApiUnauthorizedResponse({ 
 	description: '🔒 Unauthorized - Authentication required',
 	schema: {

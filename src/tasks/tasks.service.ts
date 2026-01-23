@@ -80,19 +80,20 @@ export class TasksService {
 	}
 
 	/**
-	 * Filter active users from a list of users
+	 * Filter active users from a list of clerkUserIds
+	 * Returns uids for compatibility with notification service
 	 */
-	private async filterActiveUsers(userIds: number[]): Promise<number[]> {
-		if (userIds.length === 0) return [];
+	private async filterActiveUsers(clerkUserIds: string[]): Promise<number[]> {
+		if (clerkUserIds.length === 0) return [];
 
 		const users = await this.userRepository.find({
-			where: { uid: In(userIds) },
-			select: ['uid', 'status'],
+			where: { clerkUserId: In(clerkUserIds) },
+			select: ['uid', 'clerkUserId', 'status'],
 		});
 
 		const activeUserIds = users.filter((user) => this.isUserActive(user)).map((user) => user.uid);
 
-		const filteredCount = userIds.length - activeUserIds.length;
+		const filteredCount = clerkUserIds.length - activeUserIds.length;
 
 		return activeUserIds;
 	}
@@ -280,7 +281,7 @@ export class TasksService {
 				createTaskDto.title
 			}\n- Repeats: ${repetitionTypeDisplay}\n- Air Date: ${formattedDate}\n- Series Start: ${seriesStart.toLocaleDateString()}\n- Series Finale: ${seriesEnd.toLocaleDateString()}`,
 			deadline: taskDate,
-			assignees: createTaskDto.assignees?.map((a) => ({ uid: a.uid })) || [],
+			assignees: [], // Will be set after validation below
 			clients: createTaskDto.client?.map((c) => ({ uid: c.uid })) || [],
 			status: TaskStatus.PENDING,
 			taskType: createTaskDto.taskType || TaskType.OTHER,
@@ -449,7 +450,7 @@ export class TasksService {
 					this.logger.warn(`Found ${invalidAssignees.length} assignees from different organizations - excluding them`);
 				}
 
-				task.assignees = validAssignees.map((assignee) => ({ uid: assignee.uid }));
+				task.assignees = validAssignees.map((assignee) => ({ clerkUserId: assignee.clerkUserId }));
 			} else {
 				task.assignees = [];
 			}
@@ -494,7 +495,7 @@ export class TasksService {
 					// Fallback: use first assignee as creator if available
 					if (task.assignees?.[0]) {
 						const fallbackCreator = await this.userRepository.findOne({
-							where: { uid: task.assignees[0].uid },
+							where: { clerkUserId: task.assignees[0].clerkUserId },
 						});
 						if (fallbackCreator) {
 							task.creator = fallbackCreator;
@@ -505,7 +506,7 @@ export class TasksService {
 				// If no creator specified, use first assignee as creator
 				if (task.assignees?.[0]) {
 					const fallbackCreator = await this.userRepository.findOne({
-						where: { uid: task.assignees[0].uid },
+						where: { clerkUserId: task.assignees[0].clerkUserId },
 					});
 					if (fallbackCreator) {
 						task.creator = fallbackCreator;
@@ -560,7 +561,7 @@ export class TasksService {
 					// 2. Send push notifications to assignees
 					if (savedTask?.assignees?.length > 0) {
 						try {
-							const assigneeIds = savedTask.assignees.map((assignee) => assignee.uid);
+							const assigneeIds = savedTask.assignees.map((assignee) => assignee.clerkUserId);
 							const activeAssigneeIds = await this.filterActiveUsers(assigneeIds);
 
 							if (activeAssigneeIds.length > 0) {
@@ -655,12 +656,13 @@ export class TasksService {
 
 	private async populateTaskRelations(task: Task): Promise<Task> {
 		if (task.assignees?.length > 0) {
-			const assigneeIds = task.assignees.map((a) => a.uid);
+			const assigneeIds = task.assignees.map((a) => a.clerkUserId);
 			const assigneeProfiles = await this.userRepository.find({
-				where: { uid: In(assigneeIds) },
-				select: ['uid', 'username', 'name', 'surname', 'email', 'phone', 'photoURL', 'accessLevel', 'status'],
+				where: { clerkUserId: In(assigneeIds) },
+				select: ['uid', 'clerkUserId', 'username', 'name', 'surname', 'email', 'phone', 'photoURL', 'accessLevel', 'status'],
 			});
-			task.assignees = assigneeProfiles;
+			// Keep the original structure with clerkUserId for JSON field
+			task.assignees = assigneeProfiles.map((user) => ({ clerkUserId: user.clerkUserId }));
 		}
 
 		if (task.clients?.length > 0) {
@@ -872,9 +874,19 @@ export class TasksService {
 
 			// Apply post-query filters that can't be done in the database
 			if (filters?.assigneeId) {
-				filteredTasks = filteredTasks?.filter((task) =>
-					task.assignees?.some((assignee) => assignee?.uid === filters?.assigneeId),
-				);
+				// Convert uid to clerkUserId for comparison
+				const assigneeUser = await this.userRepository.findOne({
+					where: { uid: filters.assigneeId },
+					select: ['clerkUserId'],
+				});
+				if (assigneeUser) {
+					filteredTasks = filteredTasks?.filter((task) =>
+						task.assignees?.some((assignee) => assignee?.clerkUserId === assigneeUser.clerkUserId),
+					);
+				} else {
+					// If user not found, filter out all tasks
+					filteredTasks = [];
+				}
 			}
 
 			if (filters?.clientId) {
@@ -949,7 +961,7 @@ export class TasksService {
 
 			// Track original assignees for comparison (defensive null checking)
 			const originalAssigneeIds = Array.isArray(task.assignees)
-				? task.assignees.map((assignee) => assignee?.uid).filter(Boolean)
+				? task.assignees.map((assignee) => assignee?.clerkUserId).filter(Boolean)
 				: [];
 
 			// Check if task is being marked as completed
@@ -966,17 +978,34 @@ export class TasksService {
 			const subtasks = updateTaskDto.subtasks;
 			delete updateTaskDto.subtasks; // Remove subtasks from the main update
 
+			// Convert assignees from uid to clerkUserId if present
+			const updateData: any = { ...updateTaskDto };
+			if (updateTaskDto.assignees && Array.isArray(updateTaskDto.assignees)) {
+				const assigneeUids = updateTaskDto.assignees.map((a) => a.uid);
+				const assigneeUsers = await this.userRepository.find({
+					where: { uid: In(assigneeUids) },
+					select: ['clerkUserId'],
+				});
+				updateData.assignees = assigneeUsers.map((u) => ({ clerkUserId: u.clerkUserId }));
+			}
+			
 			// Update the task with the new data
-			await this.taskRepository.update(ref, updateTaskDto);
+			await this.taskRepository.update(ref, updateData);
 
 			// Send push notifications for task updates
 			if (Array.isArray(updateTaskDto.assignees) && updateTaskDto.assignees.length > 0) {
 				try {
-					const newAssigneeIds = updateTaskDto.assignees.map((assignee) => assignee?.uid).filter(Boolean);
+					// Convert DTO uids to clerkUserIds for comparison
+					const newAssigneeUids = updateTaskDto.assignees.map((assignee) => assignee?.uid).filter(Boolean);
+					const newAssigneeUsers = await this.userRepository.find({
+						where: { uid: In(newAssigneeUids) },
+						select: ['clerkUserId'],
+					});
+					const newAssigneeIds = newAssigneeUsers.map((u) => u.clerkUserId);
 					const addedAssigneeIds = newAssigneeIds.filter((id) => !originalAssigneeIds.includes(id));
 
 					// Track changes
-					const changes = this.trackTaskChanges(task, updateTaskDto);
+					const changes = await this.trackTaskChanges(task, updateTaskDto);
 
 					// Send push notification to new assignees
 					if (addedAssigneeIds.length > 0) {
@@ -1354,9 +1383,9 @@ export class TasksService {
 
 				// Send push notifications to creator and assignees for task completion
 				try {
-					const creatorId = task.creator?.uid || null;
-					const assigneeIds = task.assignees?.map((assignee) => assignee.uid) || [];
-					const allRecipientIds = [creatorId, ...assigneeIds].filter(Boolean);
+					const creatorId = task.creator?.clerkUserId || null;
+					const assigneeIds = task.assignees?.map((assignee) => assignee.clerkUserId) || [];
+					const allRecipientIds = [creatorId, ...assigneeIds].filter(Boolean) as string[];
 
 					// Filter out inactive users before sending notifications
 					const activeRecipientIds = await this.filterActiveUsers(allRecipientIds);
@@ -1398,7 +1427,7 @@ export class TasksService {
 					owner: null,
 				};
 
-				const recipients = [task.creator?.uid, ...(task.assignees?.map((assignee) => assignee.uid) || [])].filter(Boolean);
+				const recipients = [task.creator?.clerkUserId, ...(task.assignees?.map((assignee) => assignee.clerkUserId) || [])].filter(Boolean) as string[];
 				const uniqueRecipients = [...new Set(recipients)];
 
 				// Filter out inactive users before sending internal notifications
@@ -1437,7 +1466,7 @@ export class TasksService {
 	/**
 	 * Track changes in task updates for notifications
 	 */
-	private trackTaskChanges(originalTask: Task, updates: UpdateTaskDto): string[] {
+	private async trackTaskChanges(originalTask: Task, updates: UpdateTaskDto): Promise<string[]> {
 		const changes: string[] = [];
 
 		if (updates.title && updates.title !== originalTask.title) {
@@ -1460,10 +1489,24 @@ export class TasksService {
 			}
 		}
 		if (updates.assignees && Array.isArray(updates.assignees)) {
-			const newAssigneeIds = updates.assignees.map((a) => a.uid).sort().join(',');
-			const oldAssigneeIds = (originalTask.assignees || []).map((a) => a.uid).sort().join(',');
-			if (newAssigneeIds !== oldAssigneeIds) {
-				changes.push('Assignees updated');
+			// Convert DTO uids to clerkUserIds for comparison
+			const newAssigneeUids = updates.assignees.map((a) => a.uid);
+			if (newAssigneeUids.length > 0) {
+				const newAssigneeUsers = await this.userRepository.find({
+					where: { uid: In(newAssigneeUids) },
+					select: ['clerkUserId'],
+				});
+				const newAssigneeIds = newAssigneeUsers.map((u) => u.clerkUserId).sort().join(',');
+				const oldAssigneeIds = (originalTask.assignees || []).map((a) => a.clerkUserId).sort().join(',');
+				if (newAssigneeIds !== oldAssigneeIds) {
+					changes.push('Assignees updated');
+				}
+			} else {
+				// New assignees list is empty
+				const oldAssigneeIds = (originalTask.assignees || []).map((a) => a.clerkUserId).sort().join(',');
+				if (oldAssigneeIds.length > 0) {
+					changes.push('Assignees updated');
+				}
 			}
 		}
 
@@ -1632,14 +1675,14 @@ export class TasksService {
 	}
 
 	private analyzeAssigneePerformance(tasks: Task[]): Array<{
-		assigneeId: number;
+		assigneeId: string;
 		totalTasks: number;
 		completedTasks: number;
 		completionRate: string;
 		averageCompletionTime: string;
 	}> {
 		const assigneeStats: Record<
-			number,
+			string,
 			{
 				totalTasks: number;
 				completedTasks: number;
@@ -1649,24 +1692,24 @@ export class TasksService {
 
 		tasks.forEach((task) => {
 			task.assignees?.forEach((assignee) => {
-				if (!assigneeStats[assignee.uid]) {
-					assigneeStats[assignee.uid] = {
+				if (!assigneeStats[assignee.clerkUserId]) {
+					assigneeStats[assignee.clerkUserId] = {
 						totalTasks: 0,
 						completedTasks: 0,
 						totalCompletionTime: 0,
 					};
 				}
-				assigneeStats[assignee.uid].totalTasks++;
+				assigneeStats[assignee.clerkUserId].totalTasks++;
 				if (task.status === TaskStatus.COMPLETED && task.completionDate) {
-					assigneeStats[assignee.uid].completedTasks++;
-					assigneeStats[assignee.uid].totalCompletionTime +=
+					assigneeStats[assignee.clerkUserId].completedTasks++;
+					assigneeStats[assignee.clerkUserId].totalCompletionTime +=
 						new Date(task.completionDate).getTime() - new Date(task.createdAt).getTime();
 				}
 			});
 		});
 
 		return Object.entries(assigneeStats).map(([assigneeId, stats]) => ({
-			assigneeId: parseInt(assigneeId),
+			assigneeId: assigneeId,
 			totalTasks: stats.totalTasks,
 			completedTasks: stats.completedTasks,
 			completionRate: `${((stats.completedTasks / stats.totalTasks) * 100).toFixed(1)}%`,
@@ -1732,9 +1775,9 @@ export class TasksService {
 				// Send completion push notifications if task was just completed
 				if (task.status === TaskStatus.COMPLETED) {
 					try {
-						const creatorId = task.creator && task.creator[0] ? task.creator[0].uid : null;
-						const assigneeIds = task.assignees?.map((assignee) => assignee.uid) || [];
-						const allRecipientIds = [creatorId, ...assigneeIds].filter(Boolean);
+						const creatorId = task.creator?.clerkUserId || null;
+						const assigneeIds = task.assignees?.map((assignee) => assignee.clerkUserId) || [];
+						const allRecipientIds = [creatorId, ...assigneeIds].filter(Boolean) as string[];
 						const activeRecipientIds = await this.filterActiveUsers(allRecipientIds);
 
 						if (activeRecipientIds.length > 0) {
@@ -1844,11 +1887,11 @@ export class TasksService {
 
 			// Add the new comment with required database schema
 			const newComment = {
-				uid: Date.now(),
+				clerkUserId: user.clerkUserId,
 				content: commentDto.content,
 				createdAt: new Date(),
 				createdBy: {
-					uid: user.uid,
+					clerkUserId: user.clerkUserId,
 					name: `${user.name} ${user.surname}`,
 				},
 			};
@@ -1943,11 +1986,11 @@ export class TasksService {
 			// Add initial comment if provided
 			if (createTaskFlagDto.comment) {
 				const newComment = {
-					uid: Date.now(),
+					clerkUserId: user.clerkUserId,
 					content: createTaskFlagDto.comment,
 					createdAt: new Date(),
 					createdBy: {
-						uid: user.uid,
+						clerkUserId: user.clerkUserId,
 						name: `${user.name} ${user.surname}`,
 					},
 				};
@@ -2002,7 +2045,7 @@ export class TasksService {
 		savedItems: TaskFlagItem[],
 	): Promise<void> {
 		try {
-			const userIds = new Set<number>();
+			const userIds = new Set<string>();
 
 			// Fetch client names if clients exist
 			let clientNames = 'No Client';
@@ -2016,19 +2059,19 @@ export class TasksService {
 			}
 
 			// Collect all user IDs
-			if (task.creator?.uid) {
-				userIds.add(task.creator.uid);
+			if (task.creator?.clerkUserId) {
+				userIds.add(task.creator.clerkUserId);
 			}
 
-			const assigneeIds = task.assignees?.map((a) => a.uid) || [];
+			const assigneeIds = task.assignees?.map((a) => a.clerkUserId) || [];
 			assigneeIds.forEach((id) => userIds.add(id));
 
-			if (taskFlag.createdBy?.uid) {
-				userIds.add(taskFlag.createdBy.uid);
+			if (taskFlag.createdBy?.clerkUserId) {
+				userIds.add(taskFlag.createdBy.clerkUserId);
 			}
 
 			// Filter out inactive users
-			const activeUserIds = await this.filterActiveUsers(Array.from(userIds));
+			const activeUserIds = await this.filterActiveUsers(Array.from(userIds) as string[]);
 
 			if (activeUserIds.length === 0) {
 				this.logger.log(`No active users found for task flag notification on task ${task.uid}`);
@@ -2213,18 +2256,18 @@ export class TasksService {
 				// Use setTimeout with 0 to make this non-blocking
 				setTimeout(async () => {
 					try {
-						const userIds = new Set<number>();
+						const userIds = new Set<string>();
 
 						// Collect all user IDs
-						if (taskFlag.task.creator?.uid) {
-							userIds.add(taskFlag.task.creator.uid);
+						if (taskFlag.task.creator?.clerkUserId) {
+							userIds.add(taskFlag.task.creator.clerkUserId);
 						}
 
-						const assigneeIds = taskFlag.task.assignees?.map((a) => a.uid) || [];
+						const assigneeIds = taskFlag.task.assignees?.map((a) => a.clerkUserId) || [];
 						assigneeIds.forEach((id) => userIds.add(id));
 
-						if (taskFlag.createdBy?.uid) {
-							userIds.add(taskFlag.createdBy.uid);
+						if (taskFlag.createdBy?.clerkUserId) {
+							userIds.add(taskFlag.createdBy.clerkUserId);
 						}
 
 						// Filter out inactive users
@@ -2316,18 +2359,18 @@ export class TasksService {
 					await this.taskFlagRepository.save(flagItem.taskFlag);
 
 					// Send push notification when flag is resolved
-					const userIds = new Set<number>();
+					const userIds = new Set<string>();
 
 					// Collect all user IDs
-					if (flagItem.taskFlag.task.creator?.uid) {
-						userIds.add(flagItem.taskFlag.task.creator.uid);
+					if (flagItem.taskFlag.task.creator?.clerkUserId) {
+						userIds.add(flagItem.taskFlag.task.creator.clerkUserId);
 					}
 
-					const assigneeIds = flagItem.taskFlag.task.assignees?.map((a) => a.uid) || [];
+					const assigneeIds = flagItem.taskFlag.task.assignees?.map((a) => a.clerkUserId) || [];
 					assigneeIds.forEach((id) => userIds.add(id));
 
-					if (flagItem.taskFlag.createdBy?.uid) {
-						userIds.add(flagItem.taskFlag.createdBy.uid);
+					if (flagItem.taskFlag.createdBy?.clerkUserId) {
+						userIds.add(flagItem.taskFlag.createdBy.clerkUserId);
 					}
 
 					// Filter out inactive users

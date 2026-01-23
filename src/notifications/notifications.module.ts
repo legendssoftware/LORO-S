@@ -1,4 +1,5 @@
 import { Module, forwardRef, Inject } from '@nestjs/common';
+import { ClerkModule } from '../clerk/clerk.module';
 import { NotificationsService } from './notifications.service';
 import { NotificationsController } from './notifications.controller';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -14,6 +15,7 @@ import { CommunicationModule } from '../communication/communication.module';
 
 @Module({
   imports: [
+		ClerkModule,
     LicensingModule,
     TypeOrmModule.forFeature([Notification, User, ClientAuth]),
     RewardsModule,

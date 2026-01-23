@@ -43,7 +43,11 @@ export class Quotation {
 	quotationDate: Date;
 
 	@ManyToOne(() => User, { eager: true, nullable: true })
+	@JoinColumn({ name: 'placedByClerkUserId', referencedColumnName: 'clerkUserId' })
 	placedBy: User;
+
+	@Column({ nullable: true })
+	placedByClerkUserId: string;
 
 	@Column({ default: false })
 	isClientPlaced: boolean;
@@ -79,7 +83,11 @@ export class Quotation {
 	description: string;
 
 	@ManyToOne(() => User, { nullable: true })
+	@JoinColumn({ name: 'resellerClerkUserId', referencedColumnName: 'clerkUserId' })
 	reseller: User;
+
+	@Column({ nullable: true })
+	resellerClerkUserId: string;
 
 	@Column({ nullable: true })
 	promoCode: string;

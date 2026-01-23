@@ -6,7 +6,7 @@ import { RegisterPushTokenDto } from './dto/register-push-token.dto';
 import { ApiOperation, ApiTags, ApiBody, ApiOkResponse, ApiBadRequestResponse } from '@nestjs/swagger';
 import { getDynamicDateTime, createApiDescription } from '../lib/utils/swagger-helpers';
 import { RoleGuard } from '../guards/role.guard';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { Roles } from '../decorators/role.decorator';
 import { Request } from 'express';
@@ -18,7 +18,7 @@ interface AuthenticatedRequest extends Request {
 
 @ApiTags('🔔 Notifications')
 @Controller('notifications')
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 export class NotificationsController {
 	constructor(private readonly notificationsService: NotificationsService) {}
 

@@ -35,11 +35,11 @@ export class News {
 	status: GeneralStatus;
 
 	@ManyToOne(() => User, (user) => user?.articles)
-	@JoinColumn({ name: 'authorUid' })
+	@JoinColumn({ name: 'authorClerkUserId', referencedColumnName: 'clerkUserId' })
 	author: User;
 
 	@Column({ nullable: true })
-	authorUid: number;
+	authorClerkUserId: string;
 
 	@Column({
 		nullable: false,

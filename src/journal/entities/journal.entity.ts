@@ -101,11 +101,11 @@ export class Journal {
     isDeleted: boolean;
 
     @ManyToOne(() => User, user => user.journals)
-    @JoinColumn({ name: 'ownerUid' })
+    @JoinColumn({ name: 'ownerClerkUserId', referencedColumnName: 'clerkUserId' })
     owner: User;
 
     @Column({ nullable: true })
-    ownerUid: number;
+    ownerClerkUserId: string;
 
     @ManyToOne(() => Branch, (branch) => branch?.journals)
     @JoinColumn({ name: 'branchUid' })

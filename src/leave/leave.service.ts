@@ -16,6 +16,7 @@ import { ApprovalsService } from '../approvals/approvals.service';
 import { ApprovalType, ApprovalPriority, ApprovalFlow, NotificationFrequency, ApprovalAction, ApprovalStatus } from '../lib/enums/approval.enums';
 import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
 import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
+import { Organisation } from '../organisation/entities/organisation.entity';
 
 @Injectable()
 export class LeaveService {
@@ -28,6 +29,8 @@ export class LeaveService {
 		private leaveRepository: Repository<Leave>,
 		@InjectRepository(User)
 		private userRepository: Repository<User>,
+		@InjectRepository(Organisation)
+		private organisationRepository: Repository<Organisation>,
 		@Inject(CACHE_MANAGER)
 		private cacheManager: Cache,
 		private readonly configService: ConfigService,
@@ -39,6 +42,24 @@ export class LeaveService {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
 
 		this.logger.log('LeaveService initialized with cache TTL: ' + this.CACHE_TTL + ' minutes');
+	}
+
+	/**
+	 * Resolves Clerk org ID (string) to organisation numeric uid.
+	 * Looks up by clerkOrgId or ref. Returns null if not found.
+	 */
+	private async resolveOrgId(clerkOrgId?: string): Promise<number | null> {
+		if (!clerkOrgId) {
+			return null;
+		}
+		const org = await this.organisationRepository.findOne({
+			where: [
+				{ clerkOrgId, isDeleted: false },
+				{ ref: clerkOrgId, isDeleted: false },
+			],
+			select: ['uid'],
+		});
+		return org?.uid ?? null;
 	}
 
 	private getCacheKey(key: string | number): string {
@@ -80,7 +101,7 @@ export class LeaveService {
 
 	async create(
 		createLeaveDto: CreateLeaveDto,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 		userId?: number,
 	): Promise<{ message: string }> {
@@ -117,9 +138,15 @@ export class LeaveService {
 				throw new NotFoundException(`User with ID ${userId} not found`);
 			}
 
+			// Resolve Clerk org ID to numeric uid for comparison
+			const resolvedOrgUid = await this.resolveOrgId(orgId);
+			if (!resolvedOrgUid) {
+				throw new BadRequestException(`Organisation not found for ID: ${orgId}`);
+			}
+
 			// Validate user belongs to the specified organization
-			if (owner.organisation?.uid !== orgId) {
-				this.logger.error(`User ${userId} (org: ${owner.organisation?.uid}) attempting to create leave in different organization: ${orgId}`);
+			if (owner.organisation?.uid !== resolvedOrgUid) {
+				this.logger.error(`User ${userId} (org: ${owner.organisation?.uid}) attempting to create leave in different organization: ${resolvedOrgUid}`);
 				throw new BadRequestException('User does not belong to the specified organization');
 			}
 
@@ -187,7 +214,7 @@ export class LeaveService {
 				owner,
 				status: LeaveStatus.PENDING,
 				// Set organization and branch if provided
-				...(orgId && { organisation: { uid: orgId } }),
+				...(resolvedOrgUid && { organisation: { uid: resolvedOrgUid } }),
 				...(branchId && { branch: { uid: branchId } }),
 			});
 
@@ -316,7 +343,7 @@ export class LeaveService {
 		},
 		page: number = 1,
 		limit: number = Number(process.env.DEFAULT_PAGE_LIMIT),
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 		userId?: number,
 	): Promise<PaginatedResponse<Leave>> {
@@ -404,7 +431,7 @@ export class LeaveService {
 
 	async findOne(
 		ref: number,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 		userId?: number,
 	): Promise<{ message: string; leave: Leave | null }> {
@@ -463,7 +490,7 @@ export class LeaveService {
 
 	async leavesByUser(
 		ref: number,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 		userId?: number,
 	): Promise<{ message: string; leaves: Leave[] }> {
@@ -505,7 +532,7 @@ export class LeaveService {
 	async update(
 		ref: number,
 		updateLeaveDto: UpdateLeaveDto,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 		userId?: number,
 	): Promise<{ message: string }> {
@@ -617,7 +644,7 @@ export class LeaveService {
 	async approveLeave(
 		ref: number,
 		approverUid: number,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 		userId?: number,
 	): Promise<{ message: string }> {
@@ -736,7 +763,7 @@ export class LeaveService {
 	async rejectLeave(
 		ref: number,
 		rejectionReason: string,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 		userId?: number,
 	): Promise<{ message: string }> {
@@ -852,7 +879,7 @@ export class LeaveService {
 		ref: number,
 		cancellationReason: string,
 		userId: number,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<{ message: string }> {
 		this.logger.log(`🚫 [LeaveService] Canceling leave ${ref} with reason: ${cancellationReason}, userId: ${userId}, orgId: ${orgId}, branchId: ${branchId}`);
@@ -916,7 +943,7 @@ export class LeaveService {
 		}
 	}
 
-	async remove(ref: number, orgId?: number, branchId?: number, userId?: number): Promise<{ message: string }> {
+	async remove(ref: number, orgId?: string, branchId?: number, userId?: number): Promise<{ message: string }> {
 		this.logger.log(`🗑️ [LeaveService] Removing leave ${ref}, orgId: ${orgId}, branchId: ${branchId}, userId: ${userId}`);
 
 		try {

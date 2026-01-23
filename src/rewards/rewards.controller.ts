@@ -1,11 +1,12 @@
-import { Controller, Get, Post, Body, Param, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, UseGuards, Req, BadRequestException } from '@nestjs/common';
 import { RewardsService } from './rewards.service';
 import { CreateRewardDto } from './dto/create-reward.dto';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { RoleGuard } from '../guards/role.guard';
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
-import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
+import { AuthenticatedRequest, getClerkOrgId } from '../lib/interfaces/authenticated-request.interface';
+import { OrganisationService } from '../organisation/organisation.service';
 import {
 	ApiOperation,
 	ApiTags,
@@ -23,11 +24,39 @@ import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
 
 @ApiTags('🏆 Rewards')
 @Controller('rewards')
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 @EnterpriseOnly('rewards')
 @ApiUnauthorizedResponse({ description: 'Unauthorized access due to invalid credentials or missing token' })
 export class RewardsController {
-	constructor(private readonly rewardsService: RewardsService) {}
+	constructor(
+		private readonly rewardsService: RewardsService,
+		private readonly organisationService: OrganisationService,
+	) {}
+
+	private async resolveOrgUid(req: AuthenticatedRequest): Promise<number> {
+		const clerkOrgId = getClerkOrgId(req);
+		if (!clerkOrgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const uid = await this.organisationService.findUidByClerkId(clerkOrgId);
+		if (uid == null) {
+			throw new BadRequestException('Organization not found');
+		}
+		return uid;
+	}
+
+	/**
+	 * Safely converts a value to a number
+	 * @param value - Value to convert (string, number, or undefined)
+	 * @returns Number or undefined if conversion fails
+	 */
+	private toNumber(value: string | number | undefined): number | undefined {
+		if (value === undefined || value === null || value === '') {
+			return undefined;
+		}
+		const numValue = Number(value);
+		return isNaN(numValue) || !isFinite(numValue) ? undefined : numValue;
+	}
 
 	@Post('award-xp')
 	@Roles(
@@ -79,9 +108,12 @@ export class RewardsController {
 	})
 	@ApiBadRequestResponse({ description: 'Invalid input data provided' })
 	@ApiNotFoundResponse({ description: 'User not found' })
-	awardXP(@Body() createRewardDto: CreateRewardDto, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+	async awardXP(@Body() createRewardDto: CreateRewardDto, @Req() req: AuthenticatedRequest) {
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.rewardsService.awardXP(createRewardDto, orgId, branchId);
 	}
 
@@ -156,8 +188,11 @@ export class RewardsController {
 	})
 	@ApiNotFoundResponse({ description: 'User not found' })
 	getUserRewards(@Param('reference') reference: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		const requestingUserId = req.user?.uid;
 		return this.rewardsService.getUserRewards(reference, orgId, branchId, requestingUserId);
 	}
@@ -576,9 +611,9 @@ Returns comprehensive user ranking data including:
 			}
 		}
 	})
-	getLeaderboard(@Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+	async getLeaderboard(@Req() req: AuthenticatedRequest) {
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.rewardsService.getLeaderboard(orgId, branchId);
 	}
 }

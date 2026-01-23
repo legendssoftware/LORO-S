@@ -13,17 +13,16 @@ import {
 } from '@nestjs/swagger';
 import { getDynamicDate, getDynamicDateTime, createApiDescription } from '../lib/utils/swagger-helpers';
 import { RoleGuard } from '../guards/role.guard';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { Roles } from '../decorators/role.decorator';
 import { PerformanceFiltersDto } from './dto/performance-filters.dto';
 import { ConsolidatedIncomeStatementResponseDto } from './dto/performance-dashboard.dto';
-import { ClientJwtAuthGuard } from 'src/guards/client-jwt-auth.guard';
 
 @ApiBearerAuth('JWT-auth')
 @ApiTags('📊 Reports')
 @Controller('reports')
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid credentials or missing token' })
 export class ReportsController {
 	private readonly logger = new Logger(ReportsController.name);
@@ -180,9 +179,13 @@ Real-time map visualization data including employee locations, client locations,
 		this.logger.log(`Getting map data - Query params: orgId=${queryOrgId}, branchId=${queryBranchId}, userId=${queryUserId}`);
 
 		// Use query parameters or fall back to user's organization/branch
-		const orgId = queryOrgId ? parseInt(queryOrgId, 10) : (request.user.org?.uid || request.user.organisationRef);
-		const branchId = queryBranchId ? parseInt(queryBranchId, 10) : request.user.branch?.uid;
+		const orgIdRaw = queryOrgId ? parseInt(queryOrgId, 10) : (request.user.org?.uid || request.user.organisationRef);
+		const branchIdRaw = queryBranchId ? parseInt(queryBranchId, 10) : request.user.branch?.uid;
 		const userId = queryUserId ? parseInt(queryUserId, 10) : request.user.uid;
+
+		// Convert to numbers
+		const orgId = typeof orgIdRaw === 'string' ? parseInt(orgIdRaw, 10) : orgIdRaw;
+		const branchId = branchIdRaw ? (typeof branchIdRaw === 'string' ? parseInt(branchIdRaw, 10) : branchIdRaw) : undefined;
 
 		this.logger.debug(`Resolved parameters - orgId: ${orgId}, branchId: ${branchId}, userId: ${userId}`);
 
@@ -192,12 +195,12 @@ Real-time map visualization data including employee locations, client locations,
 		}
 
 		// Validate numeric parameters
-		if (isNaN(orgId)) {
+		if (isNaN(orgId as number)) {
 			this.logger.error(`Invalid organization ID: ${queryOrgId}`);
 			throw new BadRequestException('Organization ID must be a valid number');
 		}
 
-		if (queryBranchId && isNaN(branchId)) {
+		if (queryBranchId && branchId && isNaN(branchId)) {
 			this.logger.error(`Invalid branch ID: ${queryBranchId}`);
 			throw new BadRequestException('Branch ID must be a valid number');
 		}
@@ -210,7 +213,7 @@ Real-time map visualization data including employee locations, client locations,
 		this.logger.log(`Generating map data for organisation ${orgId}${branchId ? `, branch ${branchId}` : ''}${userId ? `, user ${userId}` : ''}`);
 
 		return this.reportsService.generateMapData({ 
-			organisationId: orgId, 
+			organisationId: orgId as number, 
 			branchId,
 			userId
 		});
@@ -1004,7 +1007,8 @@ Returns all highlights data in one concise API call for the mobile app.
 		this.logger.log(`Getting highlights for user ${parsedUserId}`);
 
 		// Extract organization ID from authenticated user context
-		const orgId = request.user?.org?.uid || request.user?.organisationRef;
+		const orgIdRaw = request.user?.org?.uid || request.user?.organisationRef;
+		const orgId = typeof orgIdRaw === 'string' ? parseInt(orgIdRaw, 10) : orgIdRaw;
 		const branchId = queryBranchId ? parseInt(queryBranchId, 10) : undefined;
 
 		this.logger.debug(`Resolved parameters - orgId: ${orgId}, branchId: ${branchId}`);
@@ -1020,7 +1024,7 @@ Returns all highlights data in one concise API call for the mobile app.
 			throw new BadRequestException('User ID must be a valid number');
 		}
 
-		if (queryBranchId && isNaN(branchId)) {
+		if (queryBranchId && branchId && isNaN(branchId)) {
 			this.logger.error(`Invalid branch ID: ${queryBranchId}`);
 			throw new BadRequestException('Branch ID must be a valid number');
 		}
@@ -1040,6 +1044,6 @@ Returns all highlights data in one concise API call for the mobile app.
 
 		this.logger.log(`Fetching highlights for user ${parsedUserId} in org ${orgId}${branchId ? `, branch ${branchId}` : ''}`);
 
-		return this.reportsService.getUserHighlights(parsedUserId, orgId, branchId);
+		return this.reportsService.getUserHighlights(parsedUserId, orgId as number, branchId);
 	}
 }

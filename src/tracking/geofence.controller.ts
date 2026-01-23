@@ -15,7 +15,7 @@ import { GeofenceService } from './geofence.service';
 import { CreateGeofenceDto } from './dto/create-geofence.dto';
 import { UpdateGeofenceDto } from './dto/update-geofence.dto';
 import { CreateGeofenceEventDto } from './dto/create-geofence-event.dto';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { RoleGuard } from '../guards/role.guard';
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
@@ -30,7 +30,7 @@ interface AuthenticatedRequest extends Request {
 
 @ApiTags('🔲 Geofence Settings')
 @Controller('geofence')
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 @ApiBearerAuth()
 export class GeofenceController {
 	constructor(private readonly geofenceService: GeofenceService) {}

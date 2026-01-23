@@ -1,4 +1,4 @@
-import { Column, CreateDateColumn, Entity, ManyToOne, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
+import { Column, CreateDateColumn, Entity, ManyToOne, PrimaryGeneratedColumn, UpdateDateColumn, JoinColumn } from 'typeorm';
 import { User } from '../../user/entities/user.entity';
 import { ApiProperty } from '@nestjs/swagger';
 
@@ -25,19 +25,27 @@ export class Warning {
 
 	@ApiProperty({
 		description: 'User who received the warning',
-		example: { uid: 1, username: 'johndoe' },
+		example: { clerkUserId: 'user_xxx', username: 'johndoe' },
 		type: () => User,
 	})
 	@ManyToOne(() => User, { eager: true })
+	@JoinColumn({ name: 'ownerClerkUserId', referencedColumnName: 'clerkUserId' })
 	owner: User;
+
+	@Column({ nullable: true })
+	ownerClerkUserId: string;
 
 	@ApiProperty({
 		description: 'User who issued the warning',
-		example: { uid: 2, username: 'admin' },
+		example: { clerkUserId: 'user_yyy', username: 'admin' },
 		type: () => User,
 	})
 	@ManyToOne(() => User, { eager: true })
+	@JoinColumn({ name: 'issuedByClerkUserId', referencedColumnName: 'clerkUserId' })
 	issuedBy: User;
+
+	@Column({ nullable: true })
+	issuedByClerkUserId: string;
 
 	@ApiProperty({
 		description: 'Reason for issuing the warning',

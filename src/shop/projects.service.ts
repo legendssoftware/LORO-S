@@ -34,7 +34,7 @@ export interface ProjectFilters {
 	startDate?: Date;
 	endDate?: Date;
 	search?: string;
-	orgId?: number;
+	orgId?: string;
 	branchId?: number;
 	budgetMin?: number;
 	budgetMax?: number;
@@ -82,7 +82,7 @@ export class ProjectsService {
 		return `projects:list:${Buffer.from(filterString).toString('base64')}:${page}:${limit}`;
 	}
 
-	private getProjectStatsCacheKey(orgId?: number, branchId?: number): string {
+	private getProjectStatsCacheKey(orgId?: string, branchId?: number): string {
 		return `projects:stats:${orgId || 'all'}:${branchId || 'all'}`;
 	}
 
@@ -118,7 +118,7 @@ export class ProjectsService {
 	 */
 	async createProject(
 		createProjectDto: CreateProjectDto,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 		createdById?: number,
 	): Promise<{ message: string; project: Project }> {
@@ -148,12 +148,26 @@ export class ProjectsService {
 				throw new BadRequestException('Current spent amount cannot exceed the budget');
 			}
 
+			// Lookup organisation by string (clerkOrgId or ref) for entity relation
+			let organisation: Organisation | null = null;
+			if (orgId) {
+				organisation = await this.organisationRepository.findOne({
+					where: [
+						{ clerkOrgId: orgId },
+						{ ref: orgId }
+					]
+				});
+				if (!organisation) {
+					throw new BadRequestException(`Organization not found for ID: ${orgId}`);
+				}
+			}
+
 			// Create the project
 			const project = this.projectRepository.create({
 				...createProjectDto,
 				client: { uid: createProjectDto.client.uid },
 				assignedUser: { uid: createProjectDto.assignedUser.uid },
-				...(orgId && { organisation: { uid: orgId } }),
+				...(organisation && { organisation }),
 				...(branchId && { branch: { uid: branchId } }),
 			});
 
@@ -278,7 +292,7 @@ export class ProjectsService {
 
 			// Add org and branch filters
 			if (filters.orgId) {
-				queryBuilder.andWhere('organisation.uid = :orgId', { orgId: filters.orgId });
+				queryBuilder.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId: filters.orgId });
 			}
 
 			if (filters.branchId) {
@@ -332,7 +346,7 @@ export class ProjectsService {
 	 */
 	async findOne(
 		projectId: number,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<{ message: string; project: Project }> {
 		try {
@@ -358,7 +372,7 @@ export class ProjectsService {
 
 			// Add org and branch filters if provided
 			if (orgId) {
-				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+				queryBuilder.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 			}
 
 			if (branchId) {
@@ -392,7 +406,7 @@ export class ProjectsService {
 	async updateProject(
 		projectId: number,
 		updateProjectDto: UpdateProjectDto,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 		updatedById?: number,
 	): Promise<{ message: string; project: Project }> {
@@ -476,7 +490,7 @@ export class ProjectsService {
 	 */
 	async deleteProject(
 		projectId: number,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 		deletedById?: number,
 	): Promise<{ message: string }> {
@@ -521,7 +535,7 @@ export class ProjectsService {
 	 */
 	async assignQuotationsToProject(
 		assignDto: AssignQuotationToProjectDto,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 		assignedById?: number,
 	): Promise<{ message: string; assignedCount: number; project: Project }> {
@@ -532,12 +546,21 @@ export class ProjectsService {
 			const { project } = await this.findOne(assignDto.projectId, orgId, branchId);
 
 			// Find the quotations
+			// Filter by clerkOrgId or ref (both are strings)
+			const quotationWhere: any = { 
+				uid: In(assignDto.quotationIds),
+			};
+			if (orgId) {
+				quotationWhere.organisation = [
+					{ clerkOrgId: orgId },
+					{ ref: orgId }
+				];
+			}
+			if (branchId) {
+				quotationWhere.branch = { uid: branchId };
+			}
 			const quotations = await this.quotationRepository.find({
-				where: { 
-					uid: In(assignDto.quotationIds),
-					...(orgId && { organisation: { uid: orgId } }),
-					...(branchId && { branch: { uid: branchId } }),
-				},
+				where: quotationWhere,
 				relations: ['client', 'project'],
 			});
 
@@ -604,7 +627,7 @@ export class ProjectsService {
 	 */
 	async unassignQuotationsFromProject(
 		unassignDto: UnassignQuotationFromProjectDto,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 		unassignedById?: number,
 	): Promise<{ message: string; unassignedCount: number }> {
@@ -612,12 +635,21 @@ export class ProjectsService {
 			this.logger.log(`Unassigning ${unassignDto.quotationIds.length} quotations from their projects`);
 
 			// Find the quotations
+			// Filter by clerkOrgId or ref (both are strings)
+			const quotationWhere: any = { 
+				uid: In(unassignDto.quotationIds),
+			};
+			if (orgId) {
+				quotationWhere.organisation = [
+					{ clerkOrgId: orgId },
+					{ ref: orgId }
+				];
+			}
+			if (branchId) {
+				quotationWhere.branch = { uid: branchId };
+			}
 			const quotations = await this.quotationRepository.find({
-				where: { 
-					uid: In(unassignDto.quotationIds),
-					...(orgId && { organisation: { uid: orgId } }),
-					...(branchId && { branch: { uid: branchId } }),
-				},
+				where: quotationWhere,
 				relations: ['project'],
 			});
 
@@ -665,7 +697,7 @@ export class ProjectsService {
 	 */
 	async getProjectsByClient(
 		clientId: number,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<{ message: string; projects: Project[] }> {
 		try {
@@ -688,7 +720,7 @@ export class ProjectsService {
 			if (orgId) {
 				queryBuilder
 					.leftJoinAndSelect('project.organisation', 'organisation')
-					.andWhere('organisation.uid = :orgId', { orgId });
+					.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 			}
 
 			if (branchId) {
@@ -721,7 +753,7 @@ export class ProjectsService {
 	 */
 	async getProjectsByUser(
 		userId: number,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<{ message: string; projects: Project[] }> {
 		try {
@@ -744,7 +776,7 @@ export class ProjectsService {
 			if (orgId) {
 				queryBuilder
 					.leftJoinAndSelect('project.organisation', 'organisation')
-					.andWhere('organisation.uid = :orgId', { orgId });
+					.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 			}
 
 			if (branchId) {
@@ -776,7 +808,7 @@ export class ProjectsService {
 	 * Get project statistics
 	 */
 	async getProjectStats(
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<{
 		message: string;
@@ -811,7 +843,7 @@ export class ProjectsService {
 			if (orgId) {
 				queryBuilder
 					.leftJoinAndSelect('project.organisation', 'organisation')
-					.andWhere('organisation.uid = :orgId', { orgId });
+					.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 			}
 
 			if (branchId) {

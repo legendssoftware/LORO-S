@@ -10,6 +10,7 @@ import { XP_VALUES_TYPES } from '../lib/constants/constants';
 import { XP_VALUES } from '../lib/constants/constants';
 import { User } from 'src/user/entities/user.entity';
 import { Client } from 'src/clients/entities/client.entity';
+import { Organisation } from '../organisation/entities/organisation.entity';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
@@ -31,6 +32,8 @@ export class CheckInsService {
 		private userRepository: Repository<User>,
 		@InjectRepository(Client)
 		private clientRepository: Repository<Client>,
+		@InjectRepository(Organisation)
+		private organisationRepository: Repository<Organisation>,
 		@Inject(CACHE_MANAGER) private cacheManager: Cache,
 		private readonly unifiedNotificationService: UnifiedNotificationService,
 		private readonly googleMapsService: GoogleMapsService,
@@ -38,11 +41,34 @@ export class CheckInsService {
 		this.CACHE_TTL = parseInt(process.env.CACHE_TTL || '300000', 10); // 5 minutes default
 	}
 
-	async checkIn(createCheckInDto: CreateCheckInDto, orgId?: number, branchId?: number): Promise<{ message: string; checkInId?: number }> {
+	/**
+	 * Resolves Clerk org ID (string) to organisation numeric uid.
+	 * Looks up by clerkOrgId or ref. Returns null if not found.
+	 */
+	private async resolveOrgId(clerkOrgId?: string): Promise<number | null> {
+		if (!clerkOrgId) {
+			return null;
+		}
+		const org = await this.organisationRepository.findOne({
+			where: [
+				{ clerkOrgId, isDeleted: false },
+				{ ref: clerkOrgId, isDeleted: false },
+			],
+			select: ['uid'],
+		});
+		return org?.uid ?? null;
+	}
+
+	async checkIn(createCheckInDto: CreateCheckInDto, orgId?: string, branchId?: number): Promise<{ message: string; checkInId?: number }> {
+		// Resolve Clerk org ID to numeric uid
+		const orgUid = orgId ? await this.resolveOrgId(orgId) : null;
+		if (orgId && !orgUid) {
+			throw new BadRequestException(`Organization not found for ID: ${orgId}`);
+		}
 		const operationId = `checkin_${Date.now()}`;
 		const startTime = Date.now();
 		this.logger.log(
-			`[${operationId}] Check-in attempt for user: ${createCheckInDto.owner?.uid}, orgId: ${orgId}, branchId: ${branchId}`,
+			`[${operationId}] Check-in attempt for user: ${createCheckInDto.owner?.uid}, orgId: ${orgId}, orgUid: ${orgUid}, branchId: ${branchId}`,
 		);
 
 		try {
@@ -56,7 +82,7 @@ export class CheckInsService {
 				throw new BadRequestException('User ID is required for check-in');
 			}
 
-			if (!orgId) {
+			if (!orgUid) {
 				this.logger.error(`[${operationId}] Organization ID is required for check-in`);
 				throw new BadRequestException('Organization ID is required');
 			}
@@ -72,9 +98,9 @@ export class CheckInsService {
 				throw new NotFoundException('User not found');
 			}
 
-			if (user.organisation?.uid !== orgId) {
+			if (user.organisation?.uid !== orgUid) {
 				this.logger.error(
-					`[${operationId}] User ${createCheckInDto.owner.uid} belongs to org ${user.organisation?.uid}, not ${orgId}`,
+					`[${operationId}] User ${createCheckInDto.owner.uid} belongs to org ${user.organisation?.uid}, not ${orgUid}`,
 				);
 				throw new BadRequestException('User does not belong to the specified organization');
 			}
@@ -92,7 +118,7 @@ export class CheckInsService {
 				...createCheckInDto,
 				checkInTime: createCheckInDto.checkInTime ? new Date(createCheckInDto.checkInTime) : new Date(),
 				organization: {
-					uid: orgId, // Use the validated orgId instead of user's org
+					uid: orgUid, // Use the validated orgUid instead of user's org
 				},
 				branch: {
 					uid: branchId || createCheckInDto.branch.uid,
@@ -215,7 +241,7 @@ export class CheckInsService {
 		userId: number,
 		checkIn: CheckIn,
 		userName: string,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<void> {
 		const operationId = `checkin_notifications_${Date.now()}`;
@@ -325,15 +351,15 @@ export class CheckInsService {
 	/**
 	 * Get organization admins for notifications
 	 */
-	private async getOrganizationAdmins(orgId: number): Promise<any[]> {
+	private async getOrganizationAdmins(orgId: string): Promise<any[]> {
 		try {
-			const adminUsers = await this.userRepository.find({
-				where: {
-					organisation: { uid: orgId },
-					accessLevel: AccessLevel.ADMIN,
-				},
-				select: ['uid', 'email'],
-			});
+			const adminUsers = await this.userRepository
+				.createQueryBuilder('user')
+				.leftJoinAndSelect('user.organisation', 'organisation')
+				.where('user.accessLevel = :accessLevel', { accessLevel: AccessLevel.ADMIN })
+				.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId })
+				.select(['user.uid', 'user.email'])
+				.getMany();
 			return adminUsers;
 		} catch (error) {
 			this.logger.error(`Error fetching org admins for org ${orgId}:`, error.message);
@@ -350,7 +376,7 @@ export class CheckInsService {
 		duration: string,
 		userName: string,
 		fullAddress: string,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<void> {
 		const operationId = `checkout_notifications_${Date.now()}`;
@@ -474,7 +500,7 @@ export class CheckInsService {
 
 	async checkOut(
 		createCheckOutDto: CreateCheckOutDto,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<{ message: string; duration?: string; checkInId?: number }> {
 		const operationId = `checkout_${Date.now()}`;
@@ -841,7 +867,7 @@ export class CheckInsService {
 	async updateCheckInPhoto(
 		checkInId: number,
 		photoUrl: string,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<{ message: string }> {
 		const operationId = `update_checkin_photo_${Date.now()}`;
@@ -889,7 +915,7 @@ export class CheckInsService {
 	async updateCheckOutPhoto(
 		checkInId: number,
 		photoUrl: string,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<{ message: string }> {
 		const operationId = `update_checkout_photo_${Date.now()}`;
@@ -938,7 +964,7 @@ export class CheckInsService {
 		clientId?: number,
 		notes?: string,
 		resolution?: string,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<{ message: string }> {
 		const operationId = `update_visit_details_${Date.now()}`;

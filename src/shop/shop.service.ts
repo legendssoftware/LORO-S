@@ -82,6 +82,18 @@ export class ShopService {
 	}
 
 	/**
+	 * Resolves Clerk org ID (string) to organisation numeric uid.
+	 * Looks up by clerkOrgId or ref. Returns null if not found.
+	 */
+	private async resolveOrgId(clerkOrgId?: string): Promise<number | null> {
+		if (!clerkOrgId) {
+			return null;
+		}
+		const org = await this.organisationService.findUidByClerkId(clerkOrgId);
+		return org;
+	}
+
+	/**
 	 * Generate cache key for shop items
 	 */
 	private getCacheKey(key: string | number): string {
@@ -290,7 +302,7 @@ export class ShopService {
 		recipients: string[],
 		notificationType: string,
 		data: any,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number
 	): Promise<void> {
 		const operationId = `shop_notifications_${Date.now()}`;
@@ -340,11 +352,14 @@ export class ShopService {
 	/**
 	 * Get organization admins for notifications
 	 */
-	private async getOrganizationAdmins(orgId: number): Promise<any[]> {
+	private async getOrganizationAdmins(orgId: string): Promise<any[]> {
 		try {
 			const adminUsers = await this.userRepository.find({
 				where: {
-					organisation: { uid: orgId },
+					organisation: [
+						{ clerkOrgId: orgId },
+						{ ref: orgId }
+					],
 					accessLevel: AccessLevel.ADMIN
 				},
 				select: ['uid', 'email']
@@ -451,7 +466,8 @@ export class ShopService {
 				.where('project.uid = :projectId', { projectId });
 
 			if (orgId) {
-				queryBuilder.andWhere('project.organisation.uid = :orgId', { orgId });
+				queryBuilder.leftJoin('project.organisation', 'organisation')
+					.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 			}
 
 			if (branchId) {
@@ -561,7 +577,7 @@ export class ShopService {
 		}
 	}
 
-	async categories(orgId?: number, branchId?: number): Promise<{ categories: string[] | null; message: string }> {
+	async categories(orgId?: string, branchId?: number): Promise<{ categories: string[] | null; message: string }> {
 		const operationId = `categories_${Date.now()}`;
 		this.logger.log(`[${operationId}] Fetching categories for orgId: ${orgId}, branchId: ${branchId}`);
 
@@ -576,10 +592,11 @@ export class ShopService {
 			}
 
 
-			// Build query with org filter (required)
+			// Build query with org filter (required) - join with organisation and filter by clerkOrgId/ref
 			const query = this.productRepository.createQueryBuilder('product')
+				.leftJoin('product.organisation', 'organisation')
 				.where('product.isDeleted = :isDeleted', { isDeleted: false })
-				.andWhere('product.organisationUid = :orgId', { orgId });
+				.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 
 
 			// BRANCH VISIBILITY LOGIC:
@@ -634,7 +651,7 @@ export class ShopService {
 
 	private async getProductsByStatus(
 		status: ProductStatus,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<{ products: Product[] | null }> {
 		try {
@@ -673,9 +690,10 @@ export class ShopService {
 				])
 				.where('product.status = :status', { status });
 
-			// Only add org filter if orgId is provided
+			// Only add org filter if orgId is provided - join with organisation and filter by clerkOrgId/ref
 			if (orgId) {
-				query.andWhere('product.organisationUid = :orgId', { orgId });
+				query.leftJoin('product.organisation', 'organisation')
+					.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 			}
 
 			// Only add branch filter if branchId is provided
@@ -692,7 +710,7 @@ export class ShopService {
 		}
 	}
 
-	async specials(orgId?: number, branchId?: number): Promise<{ products: Product[] | null; message: string }> {
+	async specials(orgId?: string, branchId?: number): Promise<{ products: Product[] | null; message: string }> {
 		const operationId = `specials_${Date.now()}`;
 		this.logger.log(`[${operationId}] Fetching special products for orgId: ${orgId}, branchId: ${branchId}`);
 
@@ -715,7 +733,7 @@ export class ShopService {
 		}
 	}
 
-	async getBestSellers(orgId?: number, branchId?: number): Promise<{ products: Product[] | null; message: string }> {
+	async getBestSellers(orgId?: string, branchId?: number): Promise<{ products: Product[] | null; message: string }> {
 		const operationId = `bestsellers_${Date.now()}`;
 		this.logger.log(`[${operationId}] Fetching bestsellers for orgId: ${orgId}, branchId: ${branchId}`);
 
@@ -783,9 +801,10 @@ export class ShopService {
 				.andWhere('product.stockQuantity > 0') // Only show products in stock
 				.andWhere('product.status != :inactive', { inactive: ProductStatus.INACTIVE });
 
-			// Only add org filter if orgId is provided
+			// Only add org filter if orgId is provided - join with organisation and filter by clerkOrgId/ref
 			if (orgId) {
-				query.andWhere('product.organisationUid = :orgId', { orgId });
+				query.leftJoin('product.organisation', 'organisation')
+					.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 			}
 
 			// Only add branch filter if branchId is provided
@@ -821,7 +840,7 @@ export class ShopService {
 		}
 	}
 
-	async getNewArrivals(orgId?: number, branchId?: number): Promise<{ products: Product[] | null; message: string }> {
+	async getNewArrivals(orgId?: string, branchId?: number): Promise<{ products: Product[] | null; message: string }> {
 		const operationId = `newarrivals_${Date.now()}`;
 		this.logger.log(`[${operationId}] Fetching new arrivals for orgId: ${orgId}, branchId: ${branchId}`);
 
@@ -895,9 +914,10 @@ export class ShopService {
 					newStatus: ProductStatus.NEW
 				});
 
-			// Only add org filter if orgId is provided
+			// Only add org filter if orgId is provided - join with organisation and filter by clerkOrgId/ref
 			if (orgId) {
-				query.andWhere('product.organisationUid = :orgId', { orgId });
+				query.leftJoin('product.organisation', 'organisation')
+					.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 			}
 
 			// Only add branch filter if branchId is provided
@@ -929,7 +949,7 @@ export class ShopService {
 		}
 	}
 
-	async getHotDeals(orgId?: number, branchId?: number): Promise<{ products: Product[] | null; message: string }> {
+	async getHotDeals(orgId?: string, branchId?: number): Promise<{ products: Product[] | null; message: string }> {
 		const result = await this.getProductsByStatus(ProductStatus.HOTDEALS, orgId, branchId);
 
 		const response = {
@@ -940,7 +960,7 @@ export class ShopService {
 		return response;
 	}
 
-	async createQuotation(quotationData: CheckoutDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
+	async createQuotation(quotationData: CheckoutDto, orgId?: string, branchId?: number): Promise<{ message: string }> {
 		try {
 			if (!quotationData?.items?.length) {
 				throw new Error('Quotation items are required');
@@ -966,7 +986,14 @@ export class ShopService {
 			const { name: clientName } = client;
 
 			// Resolve organization from client (not from user)
-			const resolvedOrgId = client.organisationUid || orgId;
+			// If orgId is provided as string (Clerk org ID), resolve it to numeric uid
+			let resolvedOrgId: number | undefined = client.organisationUid;
+			if (!resolvedOrgId && orgId) {
+				const resolved = await this.resolveOrgId(orgId);
+				if (resolved) {
+					resolvedOrgId = resolved;
+				}
+			}
 			const resolvedBranchId = client.branchUid || branchId;
 
 			// Resolve owner user ID (handles client-placed orders)
@@ -1094,7 +1121,7 @@ export class ShopService {
 				newQuotation['clientUid'] = quotationData.client.uid;
 			}
 
-		const savedQuotation = await this.quotationRepository.save(newQuotation);
+		const savedQuotation = await this.quotationRepository.save(newQuotation) as Quotation;
 
 		// EARLY RETURN: Respond to user immediately with success
 		// All non-critical operations will continue asynchronously
@@ -1199,17 +1226,19 @@ export class ShopService {
 					if (product) {
 						try {
 							// Record view and cart add with enhanced tracking
+							// Use orgId (string) if available, otherwise get from client's organisation
+							const orgIdForTracking = orgId || client.organisation?.clerkOrgId || client.organisation?.ref;
 							await this.productsService.recordView(
 								product.uid, 
 								placedByUserId, 
-								resolvedOrgId, 
+								orgIdForTracking, 
 								resolvedBranchId
 							);
 							await this.productsService.recordCartAdd(
 								product.uid, 
 								item.quantity,
 								placedByUserId, 
-								resolvedOrgId, 
+								orgIdForTracking, 
 								resolvedBranchId
 							);
 
@@ -1327,8 +1356,8 @@ export class ShopService {
 					}
 
 					// Add organization admins for internal notifications
-					if (resolvedOrgId) {
-						const orgAdmins = await this.getOrganizationAdmins(resolvedOrgId);
+					if (orgId) {
+						const orgAdmins = await this.getOrganizationAdmins(orgId);
 						orgAdmins.forEach(admin => {
 							if (admin.uid && !recipients.includes(admin.uid)) {
 								recipients.push(admin.uid);
@@ -1489,7 +1518,7 @@ export class ShopService {
 
 	async createBlankQuotation(
 		blankQuotationData: CreateBlankQuotationDto,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<{ message: string; quotationId?: string }> {
 		try {
@@ -1521,7 +1550,14 @@ export class ShopService {
 			const { name: clientName, email: clientEmail } = client;
 
 			// Resolve organization from client (not from user)
-			const resolvedOrgId = client.organisationUid || orgId;
+			// If orgId is provided as string (Clerk org ID), resolve it to numeric uid
+			let resolvedOrgId: number | undefined = client.organisationUid;
+			if (!resolvedOrgId && orgId) {
+				const resolved = await this.resolveOrgId(orgId);
+				if (resolved) {
+					resolvedOrgId = resolved;
+				}
+			}
 			const resolvedBranchId = client.branchUid || branchId;
 
 			// Resolve owner user ID (handles client-placed orders)
@@ -1658,7 +1694,7 @@ export class ShopService {
 			};
 
 		this.logger.log(`[createBlankQuotation] Saving quotation to database`);
-		const savedQuotation = await this.quotationRepository.save(newQuotation);
+		const savedQuotation = await this.quotationRepository.save(newQuotation) as Quotation;
 		this.logger.log(`[createBlankQuotation] Quotation saved with ID: ${savedQuotation.uid}`);
 
 		// EARLY RETURN: Respond to user immediately with success
@@ -1736,17 +1772,19 @@ export class ShopService {
 					if (product) {
 						try {
 							// Record view and cart add with enhanced tracking
+							// Use orgId (string) if available, otherwise get from client's organisation
+							const orgIdForTracking = orgId || client.organisation?.clerkOrgId || client.organisation?.ref;
 							await this.productsService.recordView(
 								product.uid,
 								placedByUserId,
-								resolvedOrgId,
+								orgIdForTracking,
 								resolvedBranchId
 							);
 							await this.productsService.recordCartAdd(
 								product.uid,
 								item.quantity,
 								placedByUserId,
-								resolvedOrgId,
+								orgIdForTracking,
 								resolvedBranchId
 							);
 
@@ -1876,8 +1914,8 @@ export class ShopService {
 					}
 
 					// Add organization admins for internal notifications
-					if (resolvedOrgId) {
-						const orgAdmins = await this.getOrganizationAdmins(resolvedOrgId);
+					if (orgId) {
+						const orgAdmins = await this.getOrganizationAdmins(orgId);
 						orgAdmins.forEach(admin => {
 							if (admin.uid && !recipients.includes(admin.uid)) {
 								recipients.push(admin.uid);
@@ -2067,7 +2105,7 @@ export class ShopService {
 
 	async createBanner(
 		bannerData: CreateBannerDto,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<{ banner: Banners | null; message: string }> {
 		try {
@@ -2077,8 +2115,12 @@ export class ShopService {
 			};
 
 			// Only add organization and branch if they exist
+			// Lookup organisation by string to get uid for direct column assignment
 			if (orgId) {
-				bannerToSave['organisationUid'] = orgId;
+				const orgUid = await this.resolveOrgId(orgId);
+				if (orgUid) {
+					bannerToSave['organisationUid'] = orgUid;
+				}
 			}
 
 			if (branchId) {
@@ -2099,16 +2141,17 @@ export class ShopService {
 		}
 	}
 
-	async getBanner(orgId?: number, branchId?: number): Promise<{ banners: Banners[]; message: string }> {
+	async getBanner(orgId?: string, branchId?: number): Promise<{ banners: Banners[]; message: string }> {
 		const operationId = `getBanner_${Date.now()}`;
 		this.logger.log(`[${operationId}] 🎨 Fetching banners for orgId: ${orgId}, branchId: ${branchId}`);
 
 		try {
 			const query = this.bannersRepository.createQueryBuilder('banner');
 
-			// Always filter by organization if provided
+			// Always filter by organization if provided - join with organisation and filter by clerkOrgId/ref
 			if (orgId) {
-				query.andWhere('banner.organisationUid = :orgId', { orgId });
+				query.leftJoin('banner.organisation', 'organisation')
+					.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 			} else {
 				this.logger.warn(`[${operationId}] No orgId provided - fetching all banners`);
 			}
@@ -2151,7 +2194,7 @@ export class ShopService {
 	async updateBanner(
 		uid: number,
 		bannerData: UpdateBannerDto,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<{ banner: Banners | null; message: string }> {
 		try {
@@ -2159,7 +2202,8 @@ export class ShopService {
 			const query = this.bannersRepository.createQueryBuilder('banner').where('banner.uid = :uid', { uid });
 
 			if (orgId) {
-				query.andWhere('banner.organisationUid = :orgId', { orgId });
+				query.leftJoin('banner.organisation', 'organisation')
+					.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 			}
 
 			if (branchId) {
@@ -2192,13 +2236,14 @@ export class ShopService {
 		}
 	}
 
-	async deleteBanner(uid: number, orgId?: number, branchId?: number): Promise<{ message: string }> {
+	async deleteBanner(uid: number, orgId?: string, branchId?: number): Promise<{ message: string }> {
 		try {
 			// Find the banner first to apply filters
 			const query = this.bannersRepository.createQueryBuilder('banner').where('banner.uid = :uid', { uid });
 
 			if (orgId) {
-				query.andWhere('banner.organisationUid = :orgId', { orgId });
+				query.leftJoin('banner.organisation', 'organisation')
+					.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 			}
 
 			if (branchId) {
@@ -2224,7 +2269,7 @@ export class ShopService {
 		}
 	}
 
-	async getAllQuotations(orgId?: number, branchId?: number, userId?: number, userRole?: AccessLevel): Promise<{ quotations: Quotation[]; message: string }> {
+	async getAllQuotations(orgId?: string, branchId?: number, userId?: number, userRole?: AccessLevel): Promise<{ quotations: Quotation[]; message: string }> {
 		try {
 			const query = this.quotationRepository
 				.createQueryBuilder('quotation')
@@ -2235,9 +2280,10 @@ export class ShopService {
 				.leftJoinAndSelect('quotation.project', 'project')
 				.orderBy('quotation.createdAt', 'DESC');
 
-			// Add filtering by org and branch
+			// Add filtering by org and branch - join with organisation and filter by clerkOrgId/ref
 			if (orgId) {
-				query.andWhere('quotation.organisationUid = :orgId', { orgId });
+				query.leftJoin('quotation.organisation', 'organisation')
+					.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 			}
 
 			if (branchId) {
@@ -2295,7 +2341,7 @@ export class ShopService {
 
 	async getQuotationsByUser(
 		ref: number,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<{ quotations: Quotation[]; message: string }> {
 		try {
@@ -2308,9 +2354,10 @@ export class ShopService {
 			.leftJoinAndSelect('quotation.project', 'project')
 			.where('placedBy.uid = :ref', { ref });
 
-			// Add filtering by org and branch
+			// Add filtering by org and branch - join with organisation and filter by clerkOrgId/ref
 			if (orgId) {
-				query.andWhere('quotation.organisationUid = :orgId', { orgId });
+				query.leftJoin('quotation.organisation', 'organisation')
+					.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 			}
 
 			if (branchId) {
@@ -2337,7 +2384,7 @@ export class ShopService {
 
 	async getQuotationByRef(
 		ref: number,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<{ quotation: Quotation; message: string }> {
 		try {
@@ -2350,9 +2397,10 @@ export class ShopService {
 			.leftJoinAndSelect('quotation.project', 'project')
 			.where('quotation.uid = :ref', { ref });
 
-			// Add filtering by org and branch
+			// Add filtering by org and branch - join with organisation and filter by clerkOrgId/ref
 			if (orgId) {
-				query.andWhere('quotation.organisationUid = :orgId', { orgId });
+				query.leftJoin('quotation.organisation', 'organisation')
+					.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 			}
 
 			if (branchId) {
@@ -2413,7 +2461,7 @@ export class ShopService {
 			if (orgId) {
 				queryBuilder
 					.leftJoinAndSelect('quotation.organisation', 'organisation')
-					.andWhere('organisation.uid = :orgId', { orgId });
+					.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 			}
 
 			if (branchId) {
@@ -2615,7 +2663,7 @@ export class ShopService {
 	async updateQuotationStatus(
 		quotationId: number,
 		status: OrderStatus,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<{ success: boolean; message: string }> {
 		// Build query with org and branch filters
@@ -2626,7 +2674,7 @@ export class ShopService {
 		if (orgId) {
 			queryBuilder
 				.leftJoinAndSelect('quotation.organisation', 'organisation')
-				.andWhere('organisation.uid = :orgId', { orgId });
+				.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 		}
 
 		if (branchId) {
@@ -3066,7 +3114,7 @@ export class ShopService {
 	}
 
 	async generateSKUsForExistingProducts(
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<{ message: string; updatedCount: number }> {
 		try {
@@ -3111,7 +3159,7 @@ export class ShopService {
 		}
 	}
 
-	async regenerateAllSKUs(orgId?: number, branchId?: number): Promise<{ message: string; updatedCount: number }> {
+	async regenerateAllSKUs(orgId?: string, branchId?: number): Promise<{ message: string; updatedCount: number }> {
 		try {
 			// Build query with org and branch filters
 			const queryBuilder = this.productRepository.createQueryBuilder('product');
@@ -3146,11 +3194,13 @@ export class ShopService {
 		}
 	}
 
-	async getQuotationsReport(filter: any, orgId?: number, branchId?: number) {
+	async getQuotationsReport(filter: any, orgId?: string, branchId?: number) {
 		try {
-			// Add org and branch filters if provided
+			// Add org and branch filters if provided - use clerkOrgId/ref for filtering
 			if (orgId) {
-				filter = { ...filter, 'organisation.uid': orgId };
+				// Note: This filter format may need adjustment based on the actual query structure
+				// For now, we'll use a more flexible approach
+				filter = { ...filter, 'organisation.clerkOrgId': orgId, 'organisation.ref': orgId };
 			}
 
 			if (branchId) {
@@ -3685,7 +3735,7 @@ export class ShopService {
 
 	async sendQuotationToClient(
 		quotationId: number,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<{ success: boolean; message: string }> {
 		try {
@@ -3697,7 +3747,7 @@ export class ShopService {
 			if (orgId) {
 				queryBuilder
 					.leftJoinAndSelect('quotation.organisation', 'organisation')
-					.andWhere('organisation.uid = :orgId', { orgId });
+					.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 			}
 
 			if (branchId) {

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, Request, Req } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, Request, Req, BadRequestException } from '@nestjs/common';
 import { LeaveService } from './leave.service';
 import { CreateLeaveDto } from './dto/create-leave.dto';
 import { UpdateLeaveDto } from './dto/update-leave.dto';
@@ -25,15 +25,16 @@ import {
 import { getDynamicDate, getDynamicDateTime, getFutureDate, getPastDate, createApiDescription } from '../lib/utils/swagger-helpers';
 import { Roles } from '../decorators/role.decorator';
 import { RoleGuard } from '../guards/role.guard';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
 import { LeaveStatus, LeaveType } from '../lib/enums/leave.enums';
+import { AuthenticatedRequest, getClerkOrgId } from '../lib/interfaces/authenticated-request.interface';
 
 @ApiBearerAuth('JWT-auth')
 @ApiTags('🌴 Leave Management')
 @Controller('leave')
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 @EnterpriseOnly('leave')
 @ApiConsumes('application/json')
 @ApiProduces('application/json')
@@ -333,9 +334,12 @@ Creates comprehensive leave requests with automated approval workflows and polic
 			}
 		}
 	})
-	create(@Body() createLeaveDto: CreateLeaveDto, @Req() req: any) {
-		const orgId = req.user?.org?.uid || req.user?.organisation?.uid || req.organization?.ref;
-		const branchId = req.user?.branch?.uid || req.branch?.uid;
+	create(@Body() createLeaveDto: CreateLeaveDto, @Req() req: AuthenticatedRequest) {
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = req.user?.branch?.uid;
 		const userId = req.user?.uid;
 
 		return this.leaveService.create(createLeaveDto, orgId, branchId, userId);
@@ -585,10 +589,13 @@ Provides comprehensive leave request retrieval with advanced filtering, sorting,
 		@Query('isApproved') isApproved?: string,
 		@Query('page') page?: string,
 		@Query('limit') limit?: string,
-		@Req() req?: any,
+		@Req() req?: AuthenticatedRequest,
 	) {
-		const orgId = req.user?.org?.uid || req.user?.organisation?.uid || req.organization?.ref;
-		const branchId = req.user?.branch?.uid || req.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = req.user?.branch?.uid;
 		const userId = req.user?.uid;
 
 		// Parse the filters
@@ -822,9 +829,12 @@ Provides comprehensive information about a specific leave request including appr
 			}
 		}
 	})
-	findOne(@Param('ref') ref: number, @Req() req?: any) {
-		const orgId = req.user?.org?.uid || req.user?.organisation?.uid || req.organization?.ref;
-		const branchId = req.user?.branch?.uid || req.branch?.uid;
+	findOne(@Param('ref') ref: number, @Req() req?: AuthenticatedRequest) {
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = req.user?.branch?.uid;
 		const userId = req.user?.uid;
 
 		return this.leaveService.findOne(ref, orgId, branchId, userId);
@@ -1039,9 +1049,12 @@ Provides comprehensive leave history, analytics, and balance information for a s
 			}
 		}
 	})
-	leavesByUser(@Param('ref') ref: number, @Req() req?: any) {
-		const orgId = req.user?.org?.uid || req.user?.organisation?.uid || req.organization?.ref;
-		const branchId = req.user?.branch?.uid || req.branch?.uid;
+	leavesByUser(@Param('ref') ref: number, @Req() req?: AuthenticatedRequest) {
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = req.user?.branch?.uid;
 		const userId = req.user?.uid;
 
 		return this.leaveService.leavesByUser(ref, orgId, branchId, userId);
@@ -1275,9 +1288,12 @@ Enables comprehensive updates to existing leave requests while maintaining audit
 			}
 		}
 	})
-	update(@Param('ref') ref: number, @Body() updateLeaveDto: UpdateLeaveDto, @Req() req?: any) {
-		const orgId = req.user?.org?.uid || req.user?.organisation?.uid || req.organization?.ref;
-		const branchId = req.user?.branch?.uid || req.branch?.uid;
+	update(@Param('ref') ref: number, @Body() updateLeaveDto: UpdateLeaveDto, @Req() req?: AuthenticatedRequest) {
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = req.user?.branch?.uid;
 		const userId = req.user?.uid;
 
 		return this.leaveService.update(ref, updateLeaveDto, orgId, branchId, userId);
@@ -1482,9 +1498,12 @@ Processes leave request approvals with comprehensive workflow management and not
 			}
 		}
 	})
-	approve(@Param('ref') ref: number, @Req() req?: any) {
-		const orgId = req.user?.org?.uid || req.user?.organisation?.uid || req.organization?.ref;
-		const branchId = req.user?.branch?.uid || req.branch?.uid;
+	approve(@Param('ref') ref: number, @Req() req?: AuthenticatedRequest) {
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = req.user?.branch?.uid;
 		const userId = req.user?.uid;
 		const approverUid = req.user?.uid;
 
@@ -1677,9 +1696,12 @@ Processes leave request rejections with comprehensive feedback and alternative s
 			}
 		}
 	})
-	reject(@Param('ref') ref: number, @Body() body: { rejectionReason: string }, @Req() req?: any) {
-		const orgId = req.user?.org?.uid || req.user?.organisation?.uid || req.organization?.ref;
-		const branchId = req.user?.branch?.uid || req.branch?.uid;
+	reject(@Param('ref') ref: number, @Body() body: { rejectionReason: string }, @Req() req?: AuthenticatedRequest) {
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = req.user?.branch?.uid;
 		const userId = req.user?.uid;
 
 		return this.leaveService.rejectLeave(ref, body.rejectionReason, orgId, branchId, userId);
@@ -1854,9 +1876,12 @@ Enables flexible cancellation of leave requests with proper workflow management 
 			}
 		}
 	})
-	cancel(@Param('ref') ref: number, @Body() body: { cancellationReason: string }, @Req() req?: any) {
-		const orgId = req.user?.org?.uid || req.user?.organisation?.uid || req.organization?.ref;
-		const branchId = req.user?.branch?.uid || req.branch?.uid;
+	cancel(@Param('ref') ref: number, @Body() body: { cancellationReason: string }, @Req() req?: AuthenticatedRequest) {
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = req.user?.branch?.uid;
 		const userId = req.user?.uid;
 
 		return this.leaveService.cancelLeave(ref, body.cancellationReason, userId, orgId, branchId);
@@ -2032,9 +2057,12 @@ Provides secure and auditable removal of leave requests with comprehensive safet
 			}
 		}
 	})
-	remove(@Param('ref') ref: number, @Req() req?: any) {
-		const orgId = req.user?.org?.uid || req.user?.organisation?.uid || req.organization?.ref;
-		const branchId = req.user?.branch?.uid || req.branch?.uid;
+	remove(@Param('ref') ref: number, @Req() req?: AuthenticatedRequest) {
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = req.user?.branch?.uid;
 		const userId = req.user?.uid;
 
 		return this.leaveService.remove(ref, orgId, branchId, userId);

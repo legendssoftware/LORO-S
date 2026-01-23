@@ -27,6 +27,7 @@ import { Injectable, NotFoundException, Logger, BadRequestException, Inject } fr
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { Journal } from './entities/journal.entity';
+import { Organisation } from '../organisation/entities/organisation.entity';
 import { CreateJournalDto } from './dto/create-journal.dto';
 import { UpdateJournalDto } from './dto/update-journal.dto';
 import { NotificationType, NotificationStatus } from '../lib/enums/notification.enums';
@@ -51,6 +52,8 @@ export class JournalService {
 	constructor(
 		@InjectRepository(Journal)
 		private journalRepository: Repository<Journal>,
+		@InjectRepository(Organisation)
+		private organisationRepository: Repository<Organisation>,
 		private readonly eventEmitter: EventEmitter2,
 		private readonly rewardsService: RewardsService,
 		@Inject(CACHE_MANAGER)
@@ -60,6 +63,26 @@ export class JournalService {
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
 		this.logger.log('JournalService initialized with cache TTL: ' + this.CACHE_TTL + 'ms');
+	}
+
+	/**
+	 * Find organisation by Clerk org ID (string) or ref
+	 * Returns the organisation entity with its uid for database operations
+	 */
+	private async findOrganisationByClerkId(orgId?: string): Promise<Organisation | null> {
+		if (!orgId) {
+			return null;
+		}
+
+		const organisation = await this.organisationRepository.findOne({
+			where: [
+				{ clerkOrgId: orgId },
+				{ ref: orgId }
+			],
+			select: ['uid', 'clerkOrgId', 'ref'],
+		});
+
+		return organisation;
 	}
 
 	/**
@@ -80,7 +103,7 @@ export class JournalService {
 	 * @param branchId - Branch ID
 	 * @returns Formatted cache key for filtered lists
 	 */
-	private getListCacheKey(filters: any, page: number, limit: number, orgId?: number, branchId?: number): string {
+	private getListCacheKey(filters: any, page: number, limit: number, orgId?: string, branchId?: number): string {
 		const filterString = JSON.stringify(filters || {});
 		return `${this.CACHE_PREFIX}list:${orgId || 'all'}:${branchId || 'all'}:${page}:${limit}:${Buffer.from(filterString).toString('base64')}`;
 	}
@@ -158,7 +181,7 @@ export class JournalService {
 	 * @param branchId - Branch ID for scoping
 	 * @returns Success message or error
 	 */
-	async create(createJournalDto: CreateJournalDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
+	async create(createJournalDto: CreateJournalDto, orgId?: string, branchId?: number): Promise<{ message: string }> {
 		const startTime = Date.now();
 		this.logger.log(
 			`Creating journal entry for ${createJournalDto.owner?.uid ? `user: ${createJournalDto.owner.uid}` : 'unknown user'} ${
@@ -173,10 +196,21 @@ export class JournalService {
 				throw new BadRequestException('Owner information is required');
 			}
 
+			// Find organisation by Clerk org ID if provided
+			let organisationUid: number | undefined;
+			if (orgId) {
+				const organisation = await this.findOrganisationByClerkId(orgId);
+				if (!organisation) {
+					this.logger.error(`Organization not found for Clerk ID: ${orgId}`);
+					throw new BadRequestException(`Organisation not found for ID: ${orgId}`);
+				}
+				organisationUid = organisation.uid;
+			}
+
 			// Add organization and branch information
 			const journalData = {
 				...createJournalDto,
-				organisation: orgId ? { uid: orgId } : undefined,
+				organisation: organisationUid ? { uid: organisationUid } : undefined,
 				branch: branchId ? { uid: branchId } : undefined,
 			};
 
@@ -271,7 +305,7 @@ export class JournalService {
 		},
 		page: number = 1,
 		limit: number = Number(process.env.DEFAULT_PAGE_LIMIT),
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<PaginatedResponse<Journal>> {
 		const startTime = Date.now();
@@ -299,9 +333,18 @@ export class JournalService {
 				.leftJoinAndSelect('journal.organisation', 'organisation')
 				.where('journal.isDeleted = :isDeleted', { isDeleted: false });
 
-			// Add organization filter if provided
+			// Find organisation by Clerk org ID if provided
+			let organisationUid: number | undefined;
 			if (orgId) {
-				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+				const organisation = await this.findOrganisationByClerkId(orgId);
+				if (organisation) {
+					organisationUid = organisation.uid;
+				}
+			}
+
+			// Add organization filter if provided
+			if (organisationUid) {
+				queryBuilder.andWhere('organisation.uid = :orgId', { orgId: organisationUid });
 			}
 
 			// Add branch filter if provided
@@ -398,7 +441,7 @@ export class JournalService {
 	 */
 	async findOne(
 		ref: number,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<{ message: string; journal: Journal | null; stats: any }> {
 		const startTime = Date.now();
@@ -435,8 +478,17 @@ export class JournalService {
 				const executionTime = Date.now() - startTime;
 				this.logger.log(`Journal ${ref} retrieved from cache in ${executionTime}ms`);
 
+				// Find organisation by Clerk org ID if provided (for stats)
+				let statsOrganisationUid: number | undefined;
+				if (orgId) {
+					const organisation = await this.findOrganisationByClerkId(orgId);
+					if (organisation) {
+						statsOrganisationUid = organisation.uid;
+					}
+				}
+
 				// Get stats (this could also be cached separately if needed)
-				const statsKey = `${this.CACHE_PREFIX}stats:${orgId || 'all'}:${branchId || 'all'}`;
+				const statsKey = `${this.CACHE_PREFIX}stats:${statsOrganisationUid || orgId || 'all'}:${branchId || 'all'}`;
 				let stats = await this.cacheManager.get(statsKey);
 				
 				if (!stats) {
@@ -446,8 +498,8 @@ export class JournalService {
 						.leftJoinAndSelect('journal.branch', 'branch')
 						.where('journal.isDeleted = :isDeleted', { isDeleted: false });
 
-					if (orgId) {
-						statsQueryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+					if (statsOrganisationUid) {
+						statsQueryBuilder.andWhere('organisation.uid = :orgId', { orgId: statsOrganisationUid });
 					}
 					if (branchId) {
 						statsQueryBuilder.andWhere('branch.uid = :branchId', { branchId });
@@ -475,9 +527,18 @@ export class JournalService {
 				.where('journal.uid = :ref', { ref })
 				.andWhere('journal.isDeleted = :isDeleted', { isDeleted: false });
 
-			// Add organization filter if provided
+			// Find organisation by Clerk org ID if provided
+			let organisationUid: number | undefined;
 			if (orgId) {
-				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+				const organisation = await this.findOrganisationByClerkId(orgId);
+				if (organisation) {
+					organisationUid = organisation.uid;
+				}
+			}
+
+			// Add organization filter if provided
+			if (organisationUid) {
+				queryBuilder.andWhere('organisation.uid = :orgId', { orgId: organisationUid });
 			}
 
 			// Add branch filter if provided
@@ -518,8 +579,8 @@ export class JournalService {
 					.leftJoinAndSelect('journal.branch', 'branch')
 					.where('journal.isDeleted = :isDeleted', { isDeleted: false });
 
-				if (orgId) {
-					statsQueryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+				if (organisationUid) {
+					statsQueryBuilder.andWhere('organisation.uid = :orgId', { orgId: organisationUid });
 				}
 				if (branchId) {
 					statsQueryBuilder.andWhere('branch.uid = :branchId', { branchId });
@@ -551,7 +612,7 @@ export class JournalService {
 
 	public async journalsByUser(
 		ref: number,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<{ message: string; journals: Journal[]; stats: { total: number } }> {
 		try {
@@ -563,9 +624,18 @@ export class JournalService {
 				.where('owner.uid = :ref', { ref })
 				.andWhere('journal.isDeleted = :isDeleted', { isDeleted: false });
 
-			// Add organization filter if provided
+			// Find organisation by Clerk org ID if provided
+			let organisationUid: number | undefined;
 			if (orgId) {
-				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+				const organisation = await this.findOrganisationByClerkId(orgId);
+				if (organisation) {
+					organisationUid = organisation.uid;
+				}
+			}
+
+			// Add organization filter if provided
+			if (organisationUid) {
+				queryBuilder.andWhere('organisation.uid = :orgId', { orgId: organisationUid });
 			}
 
 			// Add branch filter if provided
@@ -597,7 +667,7 @@ export class JournalService {
 
 	async getJournalsForDate(
 		date: Date,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<{ message: string; journals: Journal[] }> {
 		try {
@@ -611,9 +681,18 @@ export class JournalService {
 					endOfDay: endOfDay(date),
 				});
 
-			// Add organization filter if provided
+			// Find organisation by Clerk org ID if provided
+			let organisationUid: number | undefined;
 			if (orgId) {
-				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+				const organisation = await this.findOrganisationByClerkId(orgId);
+				if (organisation) {
+					organisationUid = organisation.uid;
+				}
+			}
+
+			// Add organization filter if provided
+			if (organisationUid) {
+				queryBuilder.andWhere('organisation.uid = :orgId', { orgId: organisationUid });
 			}
 
 			// Add branch filter if provided
@@ -652,7 +731,7 @@ export class JournalService {
 	 * @param branchId - Branch ID for scoping
 	 * @returns Success message or error
 	 */
-	async update(ref: number, updateJournalDto: UpdateJournalDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
+	async update(ref: number, updateJournalDto: UpdateJournalDto, orgId?: string, branchId?: number): Promise<{ message: string }> {
 		const startTime = Date.now();
 		this.logger.log(
 			`Updating journal: ${ref} ${orgId ? `in org: ${orgId}` : ''} ${
@@ -759,7 +838,7 @@ export class JournalService {
 	 * @param branchId - Branch ID for scoping
 	 * @returns Success message or error
 	 */
-	async remove(ref: number, orgId?: number, branchId?: number): Promise<{ message: string }> {
+	async remove(ref: number, orgId?: string, branchId?: number): Promise<{ message: string }> {
 		const startTime = Date.now();
 		this.logger.log(
 			`Removing journal: ${ref} ${orgId ? `in org: ${orgId}` : ''} ${
@@ -832,7 +911,7 @@ export class JournalService {
 		}
 	}
 
-	async restore(ref: number, orgId?: number, branchId?: number): Promise<{ message: string }> {
+	async restore(ref: number, orgId?: string, branchId?: number): Promise<{ message: string }> {
 		try {
 			// Find the deleted journal specifically
 			const queryBuilder = this.journalRepository
@@ -842,9 +921,18 @@ export class JournalService {
 				.where('journal.uid = :ref', { ref })
 				.andWhere('journal.isDeleted = :isDeleted', { isDeleted: true });
 
-			// Add organization filter if provided
+			// Find organisation by Clerk org ID if provided
+			let organisationUid: number | undefined;
 			if (orgId) {
-				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+				const organisation = await this.findOrganisationByClerkId(orgId);
+				if (organisation) {
+					organisationUid = organisation.uid;
+				}
+			}
+
+			// Add organization filter if provided
+			if (organisationUid) {
+				queryBuilder.andWhere('organisation.uid = :orgId', { orgId: organisationUid });
 			}
 
 			// Add branch filter if provided
@@ -876,16 +964,25 @@ export class JournalService {
 		}
 	}
 
-	async count(orgId?: number, branchId?: number): Promise<{ total: number }> {
+	async count(orgId?: string, branchId?: number): Promise<{ total: number }> {
 		try {
 			const queryBuilder = this.journalRepository
 				.createQueryBuilder('journal')
 				.leftJoinAndSelect('journal.organisation', 'organisation')
 				.leftJoinAndSelect('journal.branch', 'branch');
 
-			// Add organization filter if provided
+			// Find organisation by Clerk org ID if provided
+			let organisationUid: number | undefined;
 			if (orgId) {
-				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+				const organisation = await this.findOrganisationByClerkId(orgId);
+				if (organisation) {
+					organisationUid = organisation.uid;
+				}
+			}
+
+			// Add organization filter if provided
+			if (organisationUid) {
+				queryBuilder.andWhere('organisation.uid = :orgId', { orgId: organisationUid });
 			}
 
 			// Add branch filter if provided
@@ -905,7 +1002,7 @@ export class JournalService {
 		}
 	}
 
-	async getJournalsReport(filter: any, orgId?: number, branchId?: number) {
+	async getJournalsReport(filter: any, orgId?: string, branchId?: number) {
 		try {
 			const queryBuilder = this.journalRepository
 				.createQueryBuilder('journal')
@@ -923,9 +1020,18 @@ export class JournalService {
 				});
 			}
 
-			// Add organization filter if provided
+			// Find organisation by Clerk org ID if provided
+			let organisationUid: number | undefined;
 			if (orgId) {
-				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+				const organisation = await this.findOrganisationByClerkId(orgId);
+				if (organisation) {
+					organisationUid = organisation.uid;
+				}
+			}
+
+			// Add organization filter if provided
+			if (organisationUid) {
+				queryBuilder.andWhere('organisation.uid = :orgId', { orgId: organisationUid });
 			}
 
 			// Add branch filter if provided
@@ -1006,16 +1112,26 @@ export class JournalService {
 	// INSPECTION-SPECIFIC FUNCTIONALITY
 	// ======================================================
 
-	async createInspection(createJournalDto: CreateJournalDto, orgId?: number, branchId?: number): Promise<{ message: string; data?: any }> {
+	async createInspection(createJournalDto: CreateJournalDto, orgId?: string, branchId?: number): Promise<{ message: string; data?: any }> {
 		this.logger.log(`Creating inspection journal for orgId: ${orgId}, branchId: ${branchId}`);
 		this.logger.debug(`Create inspection DTO: ${JSON.stringify(createJournalDto)}`);
 
 		try {
+			// Resolve Clerk org ID to numeric uid
+			let resolvedOrgUid: number | undefined;
+			if (orgId) {
+				const organisation = await this.findOrganisationByClerkId(orgId);
+				if (!organisation) {
+					throw new BadRequestException(`Organisation not found for ID: ${orgId}`);
+				}
+				resolvedOrgUid = organisation.uid;
+			}
+
 			// Set type to INSPECTION
 			const inspectionData = {
 				...createJournalDto,
 				type: JournalType.INSPECTION,
-				organisation: orgId ? { uid: orgId } : undefined,
+				organisation: resolvedOrgUid ? { uid: resolvedOrgUid } : undefined,
 				branch: branchId ? { uid: branchId } : undefined,
 			};
 
@@ -1094,7 +1210,7 @@ export class JournalService {
 		}
 	}
 
-	async getAllInspections(orgId?: number, branchId?: number): Promise<{ message: string; data: Journal[] }> {
+	async getAllInspections(orgId?: string, branchId?: number): Promise<{ message: string; data: Journal[] }> {
 		try {
 			const queryBuilder = this.journalRepository
 				.createQueryBuilder('journal')
@@ -1104,9 +1220,18 @@ export class JournalService {
 				.where('journal.type = :type', { type: JournalType.INSPECTION })
 				.andWhere('journal.isDeleted = :isDeleted', { isDeleted: false });
 
-			// Add organization filter if provided
+			// Find organisation by Clerk org ID if provided
+			let organisationUid: number | undefined;
 			if (orgId) {
-				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+				const organisation = await this.findOrganisationByClerkId(orgId);
+				if (organisation) {
+					organisationUid = organisation.uid;
+				}
+			}
+
+			// Add organization filter if provided
+			if (organisationUid) {
+				queryBuilder.andWhere('organisation.uid = :orgId', { orgId: organisationUid });
 			}
 
 			// Add branch filter if provided
@@ -1134,7 +1259,7 @@ export class JournalService {
 		}
 	}
 
-	async getInspectionDetail(ref: number, orgId?: number, branchId?: number): Promise<{ message: string; data: Journal | null }> {
+	async getInspectionDetail(ref: number, orgId?: string, branchId?: number): Promise<{ message: string; data: Journal | null }> {
 		try {
 			const queryBuilder = this.journalRepository
 				.createQueryBuilder('journal')
@@ -1145,9 +1270,18 @@ export class JournalService {
 				.andWhere('journal.type = :type', { type: JournalType.INSPECTION })
 				.andWhere('journal.isDeleted = :isDeleted', { isDeleted: false });
 
-			// Add organization filter if provided
+			// Find organisation by Clerk org ID if provided
+			let organisationUid: number | undefined;
 			if (orgId) {
-				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+				const organisation = await this.findOrganisationByClerkId(orgId);
+				if (organisation) {
+					organisationUid = organisation.uid;
+				}
+			}
+
+			// Add organization filter if provided
+			if (organisationUid) {
+				queryBuilder.andWhere('organisation.uid = :orgId', { orgId: organisationUid });
 			}
 
 			// Add branch filter if provided
@@ -1176,7 +1310,7 @@ export class JournalService {
 		}
 	}
 
-	async getInspectionTemplates(orgId?: number, branchId?: number): Promise<{ message: string; data: any[] }> {
+	async getInspectionTemplates(orgId?: string, branchId?: number): Promise<{ message: string; data: any[] }> {
 		try {
 			// Return predefined inspection templates based on the images
 			const templates = [
@@ -1281,7 +1415,7 @@ export class JournalService {
 		}
 	}
 
-	async recalculateScore(ref: number, orgId?: number, branchId?: number): Promise<{ message: string; data?: any }> {
+	async recalculateScore(ref: number, orgId?: string, branchId?: number): Promise<{ message: string; data?: any }> {
 		try {
 			const inspectionResult = await this.getInspectionDetail(ref, orgId, branchId);
 			

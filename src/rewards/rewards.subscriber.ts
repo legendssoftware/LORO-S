@@ -19,7 +19,7 @@ export class RewardsSubscriber {
                     id: payload.taskId,
                     type: 'task'
                 }
-            }, payload.orgId, payload.branchId);
+            }, payload.orgId ? String(payload.orgId) : undefined, payload.branchId);
             return;
         }
         
@@ -39,13 +39,13 @@ export class RewardsSubscriber {
                         id: taskId,
                         type: 'task'
                     }
-                }, orgId, branchId);
+                }, orgId ? String(orgId) : undefined, branchId);
             }
         }
     }
 
     @OnEvent('task.completed')
-    handleTaskCompleted(payload: { taskId: string; userId: number; completedEarly: boolean; orgId?: number; branchId?: number }) {
+    handleTaskCompleted(payload: { taskId: string; userId: number; completedEarly: boolean; orgId?: string; branchId?: number }) {
         this.rewardsService.awardXP({
             owner: payload.userId,
             action: payload.completedEarly ? 'COMPLETE_TASK_EARLY' : 'COMPLETE_TASK',
@@ -59,7 +59,7 @@ export class RewardsSubscriber {
     }
 
     @OnEvent('lead.created')
-    handleLeadCreated(payload: { leadId: string; userId: number; orgId?: number; branchId?: number }) {
+    handleLeadCreated(payload: { leadId: string; userId: number; orgId?: string; branchId?: number }) {
         this.rewardsService.awardXP({
             owner: payload.userId,
             action: 'CREATE_LEAD',

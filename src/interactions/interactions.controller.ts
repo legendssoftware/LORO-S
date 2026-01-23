@@ -10,6 +10,7 @@ import {
 	UseGuards,
 	Req,
 	UseInterceptors,
+	BadRequestException,
 } from '@nestjs/common';
 import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
 import { InteractionsService } from './interactions.service';
@@ -17,9 +18,9 @@ import { CreateInteractionDto } from './dto/create-interaction.dto';
 import { UpdateInteractionDto } from './dto/update-interaction.dto';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { Roles } from '../decorators/role.decorator';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { RoleGuard } from '../guards/role.guard';
-import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
+import { AuthenticatedRequest, getClerkOrgId } from '../lib/interfaces/authenticated-request.interface';
 import {
 	ApiBearerAuth,
 	ApiOperation,
@@ -37,10 +38,23 @@ import { getDynamicDate, getDynamicDateTime, getFutureDate, getPastDate, createA
 @ApiBearerAuth('JWT-auth')
 @ApiTags('💭 Interactions')
 @Controller('interactions')
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid credentials or missing token' })
 export class InteractionsController {
 	constructor(private readonly interactionsService: InteractionsService) {}
+
+	/**
+	 * Safely converts a value to a number
+	 * @param value - Value to convert (string, number, or undefined)
+	 * @returns Number or undefined if conversion fails
+	 */
+	private toNumber(value: string | number | undefined): number | undefined {
+		if (value === undefined || value === null || value === '') {
+			return undefined;
+		}
+		const numValue = Number(value);
+		return isNaN(numValue) || !isFinite(numValue) ? undefined : numValue;
+	}
 
 	@Post()
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPERVISOR, AccessLevel.USER)
@@ -85,8 +99,11 @@ export class InteractionsController {
 		},
 	})
 	create(@Body() createInteractionDto: CreateInteractionDto, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		const user = req.user?.uid;
 
 		return this.interactionsService.create(createInteractionDto, orgId, branchId, user);
@@ -146,8 +163,11 @@ export class InteractionsController {
 		@Query('leadUid') leadUid?: number,
 		@Query('clientUid') clientUid?: number,
 	) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 
 		return this.interactionsService.findAll(
 			{
@@ -210,8 +230,11 @@ export class InteractionsController {
 		},
 	})
 	findByLead(@Param('ref') ref: string, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.interactionsService.findByLead(+ref, orgId, branchId);
 	}
 
@@ -261,8 +284,11 @@ export class InteractionsController {
 		},
 	})
 	findByClient(@Param('ref') ref: string, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.interactionsService.findByClient(+ref, orgId, branchId);
 	}
 
@@ -312,8 +338,11 @@ export class InteractionsController {
 		},
 	})
 	findByQuotation(@Param('ref') ref: string, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.interactionsService.findByQuotation(+ref, orgId, branchId);
 	}
 
@@ -361,8 +390,11 @@ export class InteractionsController {
 		},
 	})
 	findOne(@Param('ref') ref: string, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.interactionsService.findOne(+ref, orgId, branchId);
 	}
 
@@ -405,8 +437,11 @@ export class InteractionsController {
 		@Body() updateInteractionDto: UpdateInteractionDto,
 		@Req() req: AuthenticatedRequest,
 	) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.interactionsService.update(+ref, updateInteractionDto, orgId, branchId);
 	}
 
@@ -444,8 +479,11 @@ export class InteractionsController {
 		},
 	})
 	remove(@Param('ref') ref: string, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.interactionsService.remove(+ref, orgId, branchId);
 	}
 }

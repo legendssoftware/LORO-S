@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ClerkModule } from '../clerk/clerk.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -9,6 +10,7 @@ import { UsageSummary } from './entities/usage-summary.entity';
 
 @Module({
 	imports: [
+		ClerkModule,
 		TypeOrmModule.forFeature([UsageEvent, UsageSummary]),
 		ConfigModule,
 		ScheduleModule.forRoot(),

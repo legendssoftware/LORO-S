@@ -86,14 +86,14 @@ export class Task {
 
 	// Relations
 	@ManyToOne(() => User, (user) => user?.tasks)
-	@JoinColumn({ name: 'creatorUid' })
+	@JoinColumn({ name: 'creatorClerkUserId', referencedColumnName: 'clerkUserId' })
 	creator: User;
 
 	@Column({ nullable: true })
-	creatorUid: number;
+	creatorClerkUserId: string;
 
 	@Column({ type: 'json', nullable: true })
-	assignees: { uid: number }[];
+	assignees: { clerkUserId: string }[];
 
 	@Column({ type: 'json', nullable: true })
 	clients: { uid: number }[];

@@ -1,5 +1,5 @@
 import { applyDecorators, UseGuards } from '@nestjs/common';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { FeatureGuard } from '../guards/feature.guard';
 import { RequireFeature } from './require-feature.decorator';
 
@@ -33,5 +33,5 @@ type ModuleName =
  * @param module The module name to protect (e.g., 'assets', 'claims', etc.)
  */
 export function EnterpriseOnly(module: ModuleName) {
-	return applyDecorators(UseGuards(AuthGuard, FeatureGuard), RequireFeature(`${module}.access` as const));
+	return applyDecorators(UseGuards(ClerkAuthGuard, FeatureGuard), RequireFeature(`${module}.access` as const));
 }

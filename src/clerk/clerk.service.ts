@@ -1,17 +1,31 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
-import { createClerkClient } from '@clerk/backend';
+import { createClerkClient, verifyToken } from '@clerk/backend';
+import { Request } from 'express';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
 import { User } from '../user/entities/user.entity';
 import { Organisation } from '../organisation/entities/organisation.entity';
 import { ClientAuth } from '../clients/entities/client.auth.entity';
+import { UserProfile } from '../user/entities/user.profile.entity';
+import { UserEmployeementProfile } from '../user/entities/user.employeement.profile.entity';
 import { LicensingService } from '../licensing/licensing.service';
+import { AccessLevel } from '../lib/enums/user.enums';
+import { GeneralStatus } from '../lib/enums/status.enums';
 
 @Injectable()
 export class ClerkService {
 	private readonly logger = new Logger(ClerkService.name);
 	private readonly clerkClientInstance;
+	// Lock mechanism to prevent concurrent syncs for the same user
+	private readonly syncLocks = new Map<string, Promise<User | null>>();
+	// Lock mechanism to prevent concurrent organization creation
+	private readonly orgLocks = new Map<string, Promise<Organisation | null>>();
+	// Cache TTL for organization lookups (5 minutes)
+	private readonly ORG_CACHE_TTL = 300000;
+	private readonly ORG_CACHE_PREFIX = 'org:';
 
 	constructor(
 		@InjectRepository(User)
@@ -20,45 +34,185 @@ export class ClerkService {
 		private readonly organisationRepository: Repository<Organisation>,
 		@InjectRepository(ClientAuth)
 		private readonly clientAuthRepository: Repository<ClientAuth>,
+		@InjectRepository(UserProfile)
+		private readonly userProfileRepository: Repository<UserProfile>,
+		@InjectRepository(UserEmployeementProfile)
+		private readonly userEmployeementProfileRepository: Repository<UserEmployeementProfile>,
 		private readonly configService: ConfigService,
 		private readonly licensingService: LicensingService,
+		@Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
 	) {
 		const secretKey = this.configService.get<string>('CLERK_SECRET_KEY');
+		const publishableKey = this.configService.get<string>('CLERK_PUBLISHABLE_KEY');
 		if (!secretKey) {
 			this.logger.warn('CLERK_SECRET_KEY not configured - Clerk features will be disabled');
 			this.clerkClientInstance = null;
 		} else {
-			this.clerkClientInstance = createClerkClient({ secretKey });
+			this.clerkClientInstance = createClerkClient({ 
+				secretKey,
+				publishableKey,
+			});
+		}
+	}
+
+	/**
+	 * Authenticate request using Clerk's authenticateRequest() function
+	 * This is the recommended way to authenticate requests per Clerk documentation
+	 * Supports CSRF protection via authorizedParties and multiple token types
+	 */
+	async authenticateRequest(
+		request: Request,
+		options?: {
+			acceptsToken?: ('session_token' | 'api_key')[];
+			authorizedParties?: string[];
+		}
+	): Promise<{
+		isAuthenticated: boolean;
+		userId?: string;
+		sessionId?: string;
+	}> {
+		const operationId = `AUTHENTICATE_REQUEST_${Date.now()}`;
+		
+		const secretKey = this.configService.get<string>('CLERK_SECRET_KEY');
+		if (!secretKey) {
+			this.logger.error(`[ClerkService] [${operationId}] ❌ Clerk secret key not configured - CLERK_SECRET_KEY missing`);
+			throw new Error('Clerk authentication not configured');
+		}
+
+		if (!this.clerkClientInstance) {
+			this.logger.error(`[ClerkService] [${operationId}] ❌ Clerk client not initialized`);
+			throw new Error('Clerk client not initialized');
+		}
+
+		try {
+			// Extract token from headers
+			const authHeader = request.headers.authorization;
+			const tokenHeader = request.headers.token as string;
+			const tokenFromAuth = authHeader ? authHeader.split(' ')[1] : undefined;
+			const tokenFromHeader = tokenHeader || tokenFromAuth;
+
+			// Get authorized parties from environment variable or options
+			const authorizedPartiesEnv = this.configService.get<string>('CLERK_AUTHORIZED_PARTIES');
+			const authorizedParties = options?.authorizedParties || 
+				(authorizedPartiesEnv ? authorizedPartiesEnv.split(',').map(p => p.trim()).filter(p => p.length > 0) : undefined);
+
+			// Convert Express Request to Web API Request format
+			const protocol = request.protocol || 'http';
+			const host = request.get('host') || 'localhost';
+			const url = `${protocol}://${host}${request.originalUrl || request.url}`;
+			
+			const headers = new Headers();
+			Object.keys(request.headers).forEach(key => {
+				const value = request.headers[key];
+				if (value) {
+					if (Array.isArray(value)) {
+						value.forEach(v => headers.append(key, v));
+					} else {
+						headers.set(key, value);
+					}
+				}
+			});
+			
+			// CRITICAL FIX: If Authorization header is missing but token header exists, add it
+			if (!headers.has('authorization') && tokenFromHeader) {
+				headers.set('authorization', `Bearer ${tokenFromHeader}`);
+			}
+
+			// Create Web API Request
+			const webRequest = new Request(url, {
+				method: request.method,
+				headers,
+				body: request.method !== 'GET' && request.method !== 'HEAD' && request.body 
+					? JSON.stringify(request.body) 
+					: undefined,
+			});
+
+			// Call Clerk's authenticateRequest via client instance
+			const requestState = await this.clerkClientInstance.authenticateRequest(webRequest, {
+				authorizedParties,
+				acceptsToken: options?.acceptsToken || ['session_token'],
+			});
+
+			if (!requestState.isAuthenticated || !requestState.userId) {
+				// Only log failures at warning level, not every unauthenticated request
+				return {
+					isAuthenticated: false,
+				};
+			}
+
+			return {
+				isAuthenticated: true,
+				userId: requestState.userId,
+				sessionId: requestState.sessionId,
+			};
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+			this.logger.warn(`[ClerkService] Request authentication failed: ${errorMessage}`);
+			
+			// Provide more specific error messages
+			if (errorMessage.includes('expired') || errorMessage.includes('ExpiredTokenError')) {
+				throw new Error('Token has expired. Please sign in again.');
+			} else if (errorMessage.includes('invalid') || errorMessage.includes('InvalidTokenError')) {
+				throw new Error('Invalid token. Please sign in again.');
+			} else if (errorMessage.includes('signature') || errorMessage.includes('SignatureVerificationError')) {
+				throw new Error('Token signature verification failed.');
+			} else if (errorMessage.includes('CSRF') || errorMessage.includes('authorized')) {
+				throw new Error('Request origin not authorized.');
+			}
+			
+			throw new Error(`Request authentication failed: ${errorMessage}`);
 		}
 	}
 
 	/**
 	 * Verify Clerk session token and extract user ID
 	 * Critical path - synchronous operation
+	 * @deprecated Use authenticateRequest() instead for better CSRF protection
 	 */
 	async verifyToken(token: string): Promise<{ userId: string; sessionId?: string }> {
 		const operationId = `VERIFY_TOKEN_${Date.now()}`;
 		
-		if (!this.clerkClientInstance) {
-			this.logger.error(`[${operationId}] Clerk client not initialized - CLERK_SECRET_KEY missing`);
+		const secretKey = this.configService.get<string>('CLERK_SECRET_KEY');
+		if (!secretKey) {
+			this.logger.error(`[${operationId}] Clerk secret key not configured - CLERK_SECRET_KEY missing`);
 			throw new Error('Clerk authentication not configured');
 		}
 
 		try {
-			const verification = await this.clerkClientInstance.verifyToken(token);
+			// verifyToken is a standalone function from @clerk/backend
+			const verification = await verifyToken(token, {
+				secretKey,
+			});
 			
-			if (!verification || !verification.sub) {
-				this.logger.warn(`[${operationId}] Token verification failed - invalid token structure`);
-				throw new Error('Invalid token');
+			// Extract user ID from 'sub' claim and session ID from 'sid' claim
+			const userId = verification.sub;
+			const sessionId = verification.sid;
+			
+			if (!userId) {
+				this.logger.warn(`[${operationId}] Token verification failed - missing user ID (sub claim)`);
+				throw new Error('Invalid token: missing user ID');
 			}
 
+			this.logger.debug(`[${operationId}] Token verified successfully`);
+
 			return {
-				userId: verification.sub,
-				sessionId: verification.sid,
+				userId,
+				sessionId,
 			};
 		} catch (error) {
-			this.logger.error(`[${operationId}] Token verification failed:`, error instanceof Error ? error.message : 'Unknown error');
-			throw error;
+			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+			this.logger.error(`[${operationId}] Token verification failed:`, errorMessage);
+			
+			// Provide more specific error messages
+			if (errorMessage.includes('expired') || errorMessage.includes('ExpiredTokenError')) {
+				throw new Error('Token has expired. Please sign in again.');
+			} else if (errorMessage.includes('invalid') || errorMessage.includes('InvalidTokenError')) {
+				throw new Error('Invalid token. Please sign in again.');
+			} else if (errorMessage.includes('signature') || errorMessage.includes('SignatureVerificationError')) {
+				throw new Error('Token signature verification failed.');
+			}
+			
+			throw new Error(`Token verification failed: ${errorMessage}`);
 		}
 	}
 
@@ -94,7 +248,7 @@ export class ClerkService {
 			privateMetadata?: Record<string, any>;
 		}
 	): Promise<void> {
-		const operationId = `UPDATE_METADATA_${clerkUserId}_${Date.now()}`;
+		const operationId = `UPDATE_METADATA_${Date.now()}`;
 		
 		if (!this.clerkClientInstance) {
 			this.logger.warn(`[${operationId}] Clerk client not initialized - skipping metadata update`);
@@ -165,11 +319,365 @@ export class ClerkService {
 	}
 
 	/**
+	 * Fetch organization memberships for a Clerk user
+	 */
+	async getUserOrganizationMemberships(clerkUserId: string): Promise<any[]> {
+		const operationId = `GET_ORG_MEMBERSHIPS_${clerkUserId}_${Date.now()}`;
+		
+		if (!this.clerkClientInstance) {
+			this.logger.warn(`[${operationId}] Clerk client not initialized - skipping`);
+			return [];
+		}
+
+		try {
+			const result = await this.clerkClientInstance.users.getOrganizationMembershipList({
+				userId: clerkUserId,
+				limit: 10,
+			});
+
+			return result.data || [];
+		} catch (error) {
+			this.logger.error(`[${operationId}] Failed to fetch organization memberships:`, error instanceof Error ? error.message : 'Unknown error');
+			return [];
+		}
+	}
+
+	/**
+	 * Find or create organization by Clerk org ID
+	 * Returns Organisation entity with internal uid or null
+	 */
+	private async findOrCreateOrganizationByClerkId(clerkOrgId: string): Promise<Organisation | null> {
+		const operationId = `FIND_OR_CREATE_ORG_${clerkOrgId}_${Date.now()}`;
+		
+		try {
+			// Check cache first
+			const cacheKey = `${this.ORG_CACHE_PREFIX}${clerkOrgId}`;
+			const cachedOrg = await this.cacheManager.get<Organisation>(cacheKey);
+			if (cachedOrg) {
+				this.logger.debug(`[${operationId}] Organization found in cache`);
+				return cachedOrg;
+			}
+
+			// Check if organization exists in DB by matching either clerkOrgId or ref
+			// This ensures we find organizations regardless of which field was used during creation
+			let org = await this.organisationRepository.findOne({
+				where: [
+					{ clerkOrgId },
+					{ ref: clerkOrgId }
+				],
+			});
+
+			if (org) {
+				this.logger.debug(`[${operationId}] Organization found (matched by ${org.clerkOrgId === clerkOrgId ? 'clerkOrgId' : 'ref'})`);
+				// Cache the organization
+				await this.cacheManager.set(cacheKey, org, this.ORG_CACHE_TTL);
+				return org;
+			}
+
+			// Organization doesn't exist, fetch from Clerk and create
+			this.logger.debug(`[${operationId}] Organization not found, fetching from Clerk API...`);
+			
+			if (!this.clerkClientInstance) {
+				this.logger.warn(`[${operationId}] Clerk client not initialized - cannot fetch org`);
+				return null;
+			}
+
+			try {
+				const clerkOrg = await this.clerkClientInstance.organizations.getOrganization({
+					organizationId: clerkOrgId,
+				});
+
+				if (clerkOrg) {
+					// Create organization using existing handler
+					await this.handleOrganizationCreated(clerkOrgId, {
+						name: clerkOrg.name,
+						slug: clerkOrg.slug,
+					});
+
+					// Fetch the newly created organization by matching either clerkOrgId or ref
+					org = await this.organisationRepository.findOne({
+						where: [
+							{ clerkOrgId },
+							{ ref: clerkOrgId }
+						],
+					});
+
+					if (org) {
+						this.logger.log(`[${operationId}] Organization created successfully`);
+						// Cache the newly created organization
+						await this.cacheManager.set(cacheKey, org, this.ORG_CACHE_TTL);
+						return org;
+					}
+				}
+			} catch (clerkError) {
+				this.logger.warn(`[${operationId}] Failed to fetch organization from Clerk API:`, {
+					error: clerkError instanceof Error ? clerkError.message : 'Unknown error',
+				});
+			}
+
+			return null;
+		} catch (error) {
+			this.logger.error(`[${operationId}] Failed to find or create organization:`, error instanceof Error ? error.message : 'Unknown error');
+			return null;
+		}
+	}
+
+	/**
+	 * Public method to sync user's organization membership from Clerk
+	 * Links user to organization using Clerk org ID
+	 * @param user - User entity to sync organization membership for
+	 * @param clerkUserId - Clerk user ID
+	 * @returns Promise<boolean> - true if sync was successful, false otherwise
+	 */
+	async syncUserOrganizationForUser(user: User, clerkUserId: string): Promise<boolean> {
+		const operationId = `SYNC_ORG_MEMBERSHIP_${clerkUserId}_${Date.now()}`;
+		return this.syncUserOrganizationMembership(user, clerkUserId, operationId);
+	}
+
+	/**
+	 * Public method to ensure user profiles exist (create if they don't)
+	 * This allows for smoother sync between users and the app
+	 * @param user - User entity to ensure profiles for
+	 * @param clerkUserId - Clerk user ID
+	 */
+	async ensureUserProfilesForUser(user: User, clerkUserId: string): Promise<void> {
+		const operationId = `ENSURE_PROFILES_${clerkUserId}_${Date.now()}`;
+		return this.ensureUserProfilesExist(user, clerkUserId, operationId);
+	}
+
+	/**
+	 * Sync user's organization membership from Clerk
+	 * Links user to organization using Clerk org ID
+	 * @returns Promise<boolean> - true if sync was successful, false otherwise
+	 */
+	private async syncUserOrganizationMembership(user: User, clerkUserId: string, operationId: string): Promise<boolean> {
+		try {
+			this.logger.debug(`[${operationId}] Starting organization membership sync for user ${user.uid} (Clerk ID: ${clerkUserId})`);
+			
+			const memberships = await this.getUserOrganizationMemberships(clerkUserId);
+
+			if (memberships.length === 0) {
+				this.logger.debug(`[${operationId}] User has no organization memberships - skipping sync`);
+				return false;
+			}
+
+			if (memberships.length > 1) {
+				this.logger.log(`[${operationId}] User has ${memberships.length} organization memberships, using first one`);
+			}
+
+			const clerkOrgId = memberships[0]?.organization?.id;
+			if (!clerkOrgId) {
+				this.logger.warn(`[${operationId}] Invalid organization membership data - missing organization.id`);
+				return false;
+			}
+
+			this.logger.debug(`[${operationId}] Found organization membership - Clerk Org ID: ${clerkOrgId}`);
+
+			const org = await this.findOrCreateOrganizationByClerkId(clerkOrgId);
+			if (!org) {
+				this.logger.warn(`[${operationId}] Could not find or create organization (Clerk Org ID: ${clerkOrgId}) - user not linked to org`);
+				return false;
+			}
+
+			// Link user to organization using the Clerk org ID
+			// This ensures organisationRef matches both the ref and clerkOrgId columns
+			// (For Clerk-created orgs, ref === clerkOrgId, but we use clerkOrgId explicitly)
+			// Fallback to ref if clerkOrgId is null (for legacy orgs)
+			const orgRefToUse = org.clerkOrgId || org.ref;
+			if (!orgRefToUse) {
+				this.logger.error(`[${operationId}] Organization has neither clerkOrgId nor ref set - cannot link user`);
+				return false;
+			}
+
+			const previousOrgRef = user.organisationRef;
+			user.organisationRef = orgRefToUse;
+			// Set the relation object for TypeORM (it will resolve via the JoinColumn)
+			user.organisation = org;
+			await this.userRepository.save(user);
+
+			this.logger.log(`[${operationId}] ✅ Successfully linked user ${user.uid} to organization (organisationRef: ${orgRefToUse}, clerkOrgId: ${org.clerkOrgId || 'null'}, ref: ${org.ref}, previousOrgRef: ${previousOrgRef || 'null'})`);
+			return true;
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+			const errorStack = error instanceof Error ? error.stack : undefined;
+			this.logger.error(`[${operationId}] ❌ Failed to sync organization membership:`, {
+				error: errorMessage,
+				stack: errorStack,
+				userId: user.uid,
+				clerkUserId,
+			});
+			// Don't throw - org sync failure shouldn't prevent user creation/update
+			return false;
+		}
+	}
+
+	/**
+	 * Ensure user profiles exist (create if they don't)
+	 * This allows for smoother sync between users and the app
+	 * @param user - User entity to ensure profiles for
+	 * @param clerkUserId - Clerk user ID
+	 * @param operationId - Operation ID for logging
+	 */
+	private async ensureUserProfilesExist(user: User, clerkUserId: string, operationId: string): Promise<void> {
+		try {
+			// Check if userProfile exists
+			if (!user.userProfile) {
+				const existingProfile = await this.userProfileRepository.findOne({
+					where: { ownerClerkUserId: clerkUserId },
+				});
+
+				if (!existingProfile) {
+					this.logger.debug(`[${operationId}] Creating user profile for user ${user.uid}`);
+					const userProfile = this.userProfileRepository.create({
+						ownerClerkUserId: clerkUserId,
+					});
+					await this.userProfileRepository.save(userProfile);
+					this.logger.log(`[${operationId}] ✅ User profile created successfully`);
+				} else {
+					this.logger.debug(`[${operationId}] User profile already exists, skipping creation`);
+				}
+			} else {
+				this.logger.debug(`[${operationId}] User profile already linked, skipping creation`);
+			}
+
+			// Check if userEmployeementProfile exists
+			if (!user.userEmployeementProfile) {
+				const existingEmploymentProfile = await this.userEmployeementProfileRepository.findOne({
+					where: { ownerClerkUserId: clerkUserId },
+				});
+
+				if (!existingEmploymentProfile) {
+					this.logger.debug(`[${operationId}] Creating user employment profile for user ${user.uid}`);
+					const employmentProfile = this.userEmployeementProfileRepository.create({
+						ownerClerkUserId: clerkUserId,
+						isCurrentlyEmployed: true,
+					});
+					await this.userEmployeementProfileRepository.save(employmentProfile);
+					this.logger.log(`[${operationId}] ✅ User employment profile created successfully`);
+				} else {
+					this.logger.debug(`[${operationId}] User employment profile already exists, skipping creation`);
+				}
+			} else {
+				this.logger.debug(`[${operationId}] User employment profile already linked, skipping creation`);
+			}
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+			const errorStack = error instanceof Error ? error.stack : undefined;
+			this.logger.error(`[${operationId}] ❌ Failed to ensure user profiles exist:`, {
+				error: errorMessage,
+				stack: errorStack,
+				userId: user.uid,
+				clerkUserId,
+			});
+			// Don't throw - profile creation failure shouldn't prevent user sync
+		}
+	}
+
+	/**
+	 * Get default user preferences
+	 */
+	private getDefaultUserPreferences(): any {
+		return {
+			theme: 'light',
+			language: 'en',
+			notifications: true,
+			shiftAutoEnd: false,
+			timezone: 'Africa/Johannesburg',
+			dateFormat: 'DD/MM/YYYY',
+			timeFormat: '24h',
+			biometricAuth: false,
+			advancedFeatures: false,
+			smsNotifications: false,
+			emailNotifications: true,
+			notificationFrequency: 'real_time',
+		};
+	}
+
+	/**
+	 * Map string access level to AccessLevel enum
+	 */
+	private mapToAccessLevel(level: string): AccessLevel {
+		if (!level || typeof level !== 'string') {
+			return AccessLevel.USER;
+		}
+
+		const normalizedLevel = level.toLowerCase().trim();
+		
+		// Map common variations to enum values
+		const levelMap: Record<string, AccessLevel> = {
+			'owner': AccessLevel.OWNER,
+			'admin': AccessLevel.ADMIN,
+			'administrator': AccessLevel.ADMIN,
+			'manager': AccessLevel.MANAGER,
+			'supervisor': AccessLevel.SUPERVISOR,
+			'user': AccessLevel.USER,
+			'developer': AccessLevel.DEVELOPER,
+			'support': AccessLevel.SUPPORT,
+			'analyst': AccessLevel.ANALYST,
+			'accountant': AccessLevel.ACCOUNTANT,
+			'auditor': AccessLevel.AUDITOR,
+			'consultant': AccessLevel.CONSULTANT,
+			'coordinator': AccessLevel.COORDINATOR,
+			'specialist': AccessLevel.SPECIALIST,
+			'technician': AccessLevel.TECHNICIAN,
+			'trainer': AccessLevel.TRAINER,
+			'researcher': AccessLevel.RESEARCHER,
+			'officer': AccessLevel.OFFICER,
+			'executive': AccessLevel.EXECUTIVE,
+			'cashier': AccessLevel.CASHIER,
+			'receptionist': AccessLevel.RECEPTIONIST,
+			'secretary': AccessLevel.SECRETARY,
+			'security': AccessLevel.SECURITY,
+			'cleaner': AccessLevel.CLEANER,
+			'maintenance': AccessLevel.MAINTENANCE,
+			'event planner': AccessLevel.EVENT_PLANNER,
+			'marketing': AccessLevel.MARKETING,
+			'hr': AccessLevel.HR,
+			'client': AccessLevel.CLIENT,
+			'finance': AccessLevel.FINANCE,
+			'accounting': AccessLevel.ACCOUNTING,
+			'legal': AccessLevel.LEGAL,
+			'operations': AccessLevel.OPERATIONS,
+			'it': AccessLevel.IT,
+			'development': AccessLevel.DEVELOPMENT,
+			'design': AccessLevel.DESIGN,
+		};
+
+		return levelMap[normalizedLevel] || AccessLevel.USER;
+	}
+
+	/**
 	 * Sync user from Clerk API to database
 	 * Async operation - non-blocking
+	 * Uses lock mechanism to prevent concurrent syncs for the same user
 	 */
 	async syncUserFromClerk(clerkUserId: string): Promise<User | null> {
-		const operationId = `SYNC_USER_${clerkUserId}_${Date.now()}`;
+		// Check if sync already in progress for this user
+		const existingLock = this.syncLocks.get(clerkUserId);
+		if (existingLock) {
+			// Return existing promise to prevent duplicate syncs
+			return existingLock;
+		}
+
+		// Create new sync promise
+		const syncPromise = this.performUserSync(clerkUserId);
+		this.syncLocks.set(clerkUserId, syncPromise);
+
+		try {
+			const result = await syncPromise;
+			return result;
+		} finally {
+			// Always remove lock when done
+			this.syncLocks.delete(clerkUserId);
+		}
+	}
+
+	/**
+	 * Internal method that performs the actual user sync
+	 * Called by syncUserFromClerk with lock protection
+	 */
+	private async performUserSync(clerkUserId: string): Promise<User | null> {
+		const operationId = `SYNC_USER_${Date.now()}`;
 		
 		if (!this.clerkClientInstance) {
 			this.logger.warn(`[${operationId}] Clerk client not initialized - skipping sync`);
@@ -177,45 +685,66 @@ export class ClerkService {
 		}
 
 		try {
-			const clerkUser = await this.clerkClientInstance.users.getUser(clerkUserId);
-			
-			if (!clerkUser) {
-				this.logger.warn(`[${operationId}] User not found in Clerk`);
-				return null;
-			}
-
-			// Extract user data from Clerk user
-			const email = clerkUser.emailAddresses?.[0]?.emailAddress;
-			const firstName = clerkUser.firstName || '';
-			const lastName = clerkUser.lastName || '';
-			const username = clerkUser.username || email?.split('@')[0] || `user_${clerkUserId.substring(0, 8)}`;
-			const DEFAULT_PROFILE_PICTURE_URL = 'https://cdn-icons-png.flaticon.com/128/1144/1144709.png';
-			const rawPhotoURL = clerkUser.imageUrl || null;
-			// Use default image for external users if photoURL is missing or is the example.com placeholder
-			const photoURL = (!rawPhotoURL || rawPhotoURL.includes('example.com')) 
-				? DEFAULT_PROFILE_PICTURE_URL 
-				: rawPhotoURL;
-
-			if (!email) {
-				this.logger.warn(`[${operationId}] Clerk user missing email - cannot sync`);
-				return null;
-			}
-
-			// Check if user already exists
+			// Check if user already exists (may have been created by concurrent request)
 			let user = await this.userRepository.findOne({
 				where: { clerkUserId },
 			});
 
 			if (user) {
-				// Update existing user
-				user.email = email;
-				user.name = firstName;
-				user.surname = lastName;
-				user.username = username;
+				// User already exists, fetch latest from Clerk and update
+				this.logger.debug(`[${operationId}] User exists, fetching latest data from Clerk API`);
+				const clerkUser = await this.clerkClientInstance.users.getUser(clerkUserId);
+				
+				if (!clerkUser) {
+					this.logger.warn(`[${operationId}] User not found in Clerk`);
+					return user; // Return existing user
+				}
+
+				// Update existing user with latest Clerk data
+				const email = clerkUser.emailAddresses?.[0]?.emailAddress;
+				const firstName = clerkUser.firstName || '';
+				const lastName = clerkUser.lastName || '';
+				const username = clerkUser.username || null;
+				const phone = clerkUser.phoneNumbers?.[0]?.phoneNumber || null;
+				const DEFAULT_PROFILE_PICTURE_URL = 'https://cdn-icons-png.flaticon.com/128/1144/1144709.png';
+				const rawPhotoURL = clerkUser.imageUrl || null;
+				const photoURL = (!rawPhotoURL || rawPhotoURL.includes('example.com')) 
+					? DEFAULT_PROFILE_PICTURE_URL 
+					: rawPhotoURL;
+				const avatar = photoURL;
+				const role = clerkUser.publicMetadata?.role || 
+				            clerkUser.privateMetadata?.role || 
+				            'user';
+				const accessLevelStr = clerkUser.publicMetadata?.accessLevel || 
+				                      clerkUser.privateMetadata?.accessLevel || 
+				                      'user';
+				const accessLevel = this.mapToAccessLevel(accessLevelStr);
+
+				user.email = email || user.email;
+				user.name = firstName || user.name;
+				user.surname = lastName || user.surname;
+				if (username) {
+					user.username = username;
+				}
 				user.photoURL = photoURL;
+				user.avatar = avatar;
+				if (phone) {
+					user.phone = phone;
+				}
+				if (role && role !== 'user') {
+					user.role = role;
+				}
+				if (accessLevel !== AccessLevel.USER) {
+					user.accessLevel = accessLevel;
+				}
 				user.clerkLastSyncedAt = new Date();
 
-				// Update Clerk metadata with internal user ID (async, non-blocking)
+			user = await this.userRepository.save(user);
+			// Parallelize org sync and profile creation for better performance
+			await Promise.all([
+				this.syncUserOrganizationMembership(user, clerkUserId, operationId),
+				this.ensureUserProfilesExist(user, clerkUserId, operationId)
+			]);
 				this.updateClerkUserMetadata(clerkUserId, {
 					publicMetadata: {
 						role: user.role,
@@ -227,76 +756,185 @@ export class ClerkService {
 						lastSyncedAt: new Date().toISOString(),
 					},
 				});
-			} else {
-				// Check if user exists by email (for migration)
-				const existingUser = await this.userRepository.findOne({
-					where: { email },
+
+				return user;
+			}
+
+			// User doesn't exist, fetch from Clerk and create
+			this.logger.debug(`[${operationId}] Fetching user from Clerk API...`);
+			const clerkUser = await this.clerkClientInstance.users.getUser(clerkUserId);
+			
+			if (!clerkUser) {
+				this.logger.warn(`[${operationId}] User not found in Clerk`);
+				return null;
+			}
+
+			// Extract user data from Clerk user
+			const email = clerkUser.emailAddresses?.[0]?.emailAddress;
+			const firstName = clerkUser.firstName || '';
+			const lastName = clerkUser.lastName || '';
+			const username = clerkUser.username || null;
+			const phone = clerkUser.phoneNumbers?.[0]?.phoneNumber || null;
+			const DEFAULT_PROFILE_PICTURE_URL = 'https://cdn-icons-png.flaticon.com/128/1144/1144709.png';
+			const rawPhotoURL = clerkUser.imageUrl || null;
+			const photoURL = (!rawPhotoURL || rawPhotoURL.includes('example.com')) 
+				? DEFAULT_PROFILE_PICTURE_URL 
+				: rawPhotoURL;
+			const avatar = photoURL;
+			const role = clerkUser.publicMetadata?.role || 
+			            clerkUser.privateMetadata?.role || 
+			            'user';
+			const accessLevelStr = clerkUser.publicMetadata?.accessLevel || 
+			                      clerkUser.privateMetadata?.accessLevel || 
+			                      'user';
+			const accessLevel = this.mapToAccessLevel(accessLevelStr);
+
+			// Validate required fields
+			if (!email) {
+				this.logger.error(`[${operationId}] Clerk user missing email - cannot sync`);
+				return null;
+			}
+
+			// Check if user exists by email (for migration)
+			const existingUser = await this.userRepository.findOne({
+				where: { email },
+			});
+
+			if (existingUser) {
+				// Link existing user to Clerk
+				this.logger.debug(`[${operationId}] Linking existing user to Clerk`);
+				existingUser.clerkUserId = clerkUserId;
+				existingUser.clerkLastSyncedAt = new Date();
+				user = await this.userRepository.save(existingUser);
+				await this.syncUserOrganizationMembership(user, clerkUserId, operationId);
+				await this.ensureUserProfilesExist(user, clerkUserId, operationId);
+				this.updateClerkUserMetadata(clerkUserId, {
+					publicMetadata: {
+						role: user.role,
+						internalId: user.uid,
+						accessLevel: user.accessLevel,
+					},
+					privateMetadata: {
+						syncStatus: 'synced',
+						lastSyncedAt: new Date().toISOString(),
+					},
 				});
+				return user;
+			}
 
-				if (existingUser) {
-					// Link existing user to Clerk
-					existingUser.clerkUserId = clerkUserId;
-					existingUser.clerkLastSyncedAt = new Date();
-					user = existingUser;
-
-					// Update Clerk metadata with internal user ID (async, non-blocking)
-					this.updateClerkUserMetadata(clerkUserId, {
-						publicMetadata: {
-							role: user.role,
-							internalId: user.uid,
-							accessLevel: user.accessLevel,
-						},
-						privateMetadata: {
-							syncStatus: 'synced',
-							lastSyncedAt: new Date().toISOString(),
-						},
+			// Username is optional - only set if provided by Clerk and ensure uniqueness
+			let finalUsername: string | null = null;
+			if (username) {
+				let usernameAttempts = 0;
+				const maxUsernameAttempts = 10;
+				finalUsername = username;
+				
+				while (usernameAttempts < maxUsernameAttempts) {
+					const existingUsername = await this.userRepository.findOne({
+						where: { username: finalUsername },
+						select: ['uid'],
 					});
-				} else {
-					// Create new user
-					user = this.userRepository.create({
-						clerkUserId,
-						email,
-						name: firstName,
-						surname: lastName,
-						username,
-						password: '', // Password managed by Clerk
-						photoURL,
-						role: 'user',
-						status: 'active',
-						accessLevel: 'user' as any,
-						clerkLastSyncedAt: new Date(),
-					});
+					
+					if (!existingUsername) {
+						break;
+					}
+					
+					usernameAttempts++;
+					finalUsername = `${username}_${usernameAttempts}`;
+				}
 
-					// Save user first to get uid
-					user = await this.userRepository.save(user);
-
-					// Update Clerk metadata with internal user ID (async, non-blocking)
-					this.updateClerkUserMetadata(clerkUserId, {
-						publicMetadata: {
-							role: user.role,
-							internalId: user.uid,
-							accessLevel: user.accessLevel,
-						},
-						privateMetadata: {
-							syncStatus: 'synced',
-							lastSyncedAt: new Date().toISOString(),
-						},
-					});
+				if (usernameAttempts >= maxUsernameAttempts) {
+					this.logger.warn(`[${operationId}] Failed to generate unique username after ${maxUsernameAttempts} attempts - setting to null`);
+					finalUsername = null;
 				}
 			}
 
-			// Only save if not already saved (for new users)
-			if (!user.uid) {
+			// Create new user with all required fields
+			this.logger.debug(`[${operationId}] Creating new user`);
+			user = this.userRepository.create({
+				clerkUserId,
+				email,
+				name: firstName || 'User',
+				surname: lastName || '',
+				username: finalUsername,
+				phone,
+				photoURL,
+				avatar,
+				role,
+				status: 'active',
+				accessLevel,
+				userref: null,
+				preferences: this.getDefaultUserPreferences(),
+				clerkLastSyncedAt: new Date(),
+				isDeleted: false,
+			});
+
+			// Save user - handle duplicate key errors gracefully
+			try {
 				user = await this.userRepository.save(user);
-			} else {
-				user = await this.userRepository.save(user);
+			} catch (saveError) {
+				const errorMessage = saveError instanceof Error ? saveError.message : 'Unknown error';
+				
+				// If duplicate key error, user was created by concurrent request
+				if (errorMessage.includes('duplicate key') || errorMessage.includes('unique constraint')) {
+					this.logger.debug(`[${operationId}] User created by concurrent request, fetching existing user`);
+					// Fetch the user that was created by the concurrent request
+					user = await this.userRepository.findOne({
+						where: { clerkUserId },
+					});
+					
+					if (user) {
+						// Parallelize org sync and profile creation
+						await Promise.all([
+							this.syncUserOrganizationMembership(user, clerkUserId, operationId),
+							this.ensureUserProfilesExist(user, clerkUserId, operationId)
+						]);
+						return user;
+					}
+				}
+				
+				// Re-throw if not a duplicate key error
+				throw saveError;
 			}
-			this.logger.log(`[${operationId}] User synced successfully - uid: ${user.uid}, email: ${user.email}`);
+
+			// Parallelize org sync and profile creation for better performance
+			await Promise.all([
+				this.syncUserOrganizationMembership(user, clerkUserId, operationId),
+				this.ensureUserProfilesExist(user, clerkUserId, operationId)
+			]);
+
+			// Update Clerk metadata with internal user ID (async, non-blocking)
+			this.updateClerkUserMetadata(clerkUserId, {
+				publicMetadata: {
+					role: user.role,
+					internalId: user.uid,
+					accessLevel: user.accessLevel,
+					userref: user.userref,
+				},
+				privateMetadata: {
+					syncStatus: 'synced',
+					lastSyncedAt: new Date().toISOString(),
+				},
+			});
 
 			return user;
 		} catch (error) {
-			this.logger.error(`[${operationId}] Failed to sync user from Clerk:`, error instanceof Error ? error.message : 'Unknown error');
-			// Don't throw - this is async operation
+			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+			
+			// Handle duplicate key errors gracefully
+			if (errorMessage.includes('duplicate key') || errorMessage.includes('unique constraint')) {
+				this.logger.debug(`[${operationId}] Database constraint violation - fetching existing user`);
+				// Try to fetch the user that was created
+				const existingUser = await this.userRepository.findOne({
+					where: { clerkUserId },
+				});
+				if (existingUser) {
+					return existingUser;
+				}
+			}
+			
+			// Log error but don't throw - this is async operation
+			this.logger.error(`[${operationId}] Failed to sync user from Clerk: ${errorMessage}`);
 			return null;
 		}
 	}
@@ -308,13 +946,25 @@ export class ClerkService {
 	async handleUserCreated(clerkUserId: string, clerkUserData: any): Promise<void> {
 		const operationId = `WEBHOOK_USER_CREATED_${clerkUserId}_${Date.now()}`;
 		
+		this.logger.log(`[${operationId}] Received user.created webhook`);
+
 		setImmediate(async () => {
 			try {
-				await this.syncUserFromClerk(clerkUserId);
+				const user = await this.syncUserFromClerk(clerkUserId);
 				
-				this.logger.log(`[${operationId}] User created webhook processed successfully`);
+				if (user) {
+					this.logger.log(`[${operationId}] User created webhook processed successfully`);
+				} else {
+					this.logger.warn(`[${operationId}] User sync returned null - user may not have been created`);
+				}
 			} catch (error) {
-				this.logger.error(`[${operationId}] Failed to process user.created webhook:`, error instanceof Error ? error.message : 'Unknown error');
+				const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+				const errorStack = error instanceof Error ? error.stack : undefined;
+				
+				this.logger.error(`[${operationId}] Failed to process user.created webhook:`, {
+					error: errorMessage,
+					stack: errorStack,
+				});
 				// Don't throw - webhook already acknowledged
 			}
 		});
@@ -327,13 +977,26 @@ export class ClerkService {
 	async handleUserUpdated(clerkUserId: string, clerkUserData: any): Promise<void> {
 		const operationId = `WEBHOOK_USER_UPDATED_${clerkUserId}_${Date.now()}`;
 		
+		this.logger.debug(`[${operationId}] Received user.updated webhook`);
+
 		setImmediate(async () => {
 			try {
-				await this.syncUserFromClerk(clerkUserId);
+				const user = await this.syncUserFromClerk(clerkUserId);
 				
-				this.logger.log(`[${operationId}] User updated webhook processed successfully`);
+				if (user) {
+					this.logger.log(`[${operationId}] User updated webhook processed successfully`);
+				} else {
+					this.logger.warn(`[${operationId}] User sync returned null`);
+				}
 			} catch (error) {
-				this.logger.error(`[${operationId}] Failed to process user.updated webhook:`, error instanceof Error ? error.message : 'Unknown error');
+				const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+				const errorStack = error instanceof Error ? error.stack : undefined;
+				
+				this.logger.error(`[${operationId}] Failed to process user.updated webhook:`, {
+					error: errorMessage,
+					stack: errorStack,
+					clerkUserId,
+				});
 				// Don't throw - webhook already acknowledged
 			}
 		});
@@ -346,6 +1009,8 @@ export class ClerkService {
 	async handleUserDeleted(clerkUserId: string): Promise<void> {
 		const operationId = `WEBHOOK_USER_DELETED_${clerkUserId}_${Date.now()}`;
 		
+		this.logger.log(`[${operationId}] Received user.deleted webhook`);
+
 		setImmediate(async () => {
 			try {
 				const user = await this.userRepository.findOne({
@@ -356,13 +1021,146 @@ export class ClerkService {
 					user.isDeleted = true;
 					user.clerkUserId = null; // Remove Clerk link
 					await this.userRepository.save(user);
-					this.logger.log(`[${operationId}] User marked as deleted - uid: ${user.uid}`);
+					this.logger.log(`[${operationId}] User marked as deleted`);
+				} else {
+					this.logger.warn(`[${operationId}] User not found for deletion`);
 				}
 			} catch (error) {
-				this.logger.error(`[${operationId}] Failed to process user.deleted webhook:`, error instanceof Error ? error.message : 'Unknown error');
+				const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+				const errorStack = error instanceof Error ? error.stack : undefined;
+				
+				this.logger.error(`[${operationId}] Failed to process user.deleted webhook:`, {
+					error: errorMessage,
+					stack: errorStack,
+					clerkUserId,
+				});
 				// Don't throw - webhook already acknowledged
 			}
 		});
+	}
+
+	/**
+	 * Handle webhook organization.created event
+	 * Async operation - non-blocking
+	 */
+	async handleOrganizationCreated(clerkOrgId: string, orgData: any): Promise<void> {
+		// Check if organization creation already in progress
+		const existingLock = this.orgLocks.get(clerkOrgId);
+		if (existingLock) {
+			// Return existing promise to prevent duplicate creation
+			return existingLock.then(() => undefined);
+		}
+
+		// Create new organization creation promise
+		const orgPromise = this.performOrganizationCreation(clerkOrgId, orgData);
+		this.orgLocks.set(clerkOrgId, orgPromise);
+
+		// Execute asynchronously (non-blocking)
+		setImmediate(async () => {
+			try {
+				await orgPromise;
+			} catch (error) {
+				// Error already logged in performOrganizationCreation
+			} finally {
+				// Always remove lock when done
+				this.orgLocks.delete(clerkOrgId);
+			}
+		});
+	}
+
+	/**
+	 * Internal method that performs the actual organization creation
+	 * Called by handleOrganizationCreated with lock protection
+	 */
+	private async performOrganizationCreation(clerkOrgId: string, orgData: any): Promise<Organisation | null> {
+		const operationId = `WEBHOOK_ORG_CREATED_${Date.now()}`;
+		
+		this.logger.log(`[${operationId}] Received organization.created webhook`);
+
+		try {
+			// Check if organization already exists by clerkOrgId
+			let organisation = await this.organisationRepository.findOne({
+				where: { clerkOrgId },
+			});
+
+			if (organisation) {
+				// Update existing organization
+				this.logger.debug(`[${operationId}] Updating existing organization`);
+				organisation.name = orgData.name || organisation.name;
+				organisation = await this.organisationRepository.save(organisation);
+				this.logger.log(`[${operationId}] Organization updated successfully`);
+				return organisation;
+			}
+
+			// Create new organization with required fields
+			const orgName = orgData.name || `Organization ${clerkOrgId.substring(0, 8)}`;
+			const orgEmail = `org-${clerkOrgId.substring(0, 8)}@placeholder.com`;
+			const orgPhone = '+0000000000';
+			const orgWebsite = orgData.slug ? `https://${orgData.slug}.placeholder.com` : 'https://placeholder.com';
+			const orgLogo = 'https://cdn-icons-png.flaticon.com/128/1144/1144709.png';
+
+			organisation = this.organisationRepository.create({
+				clerkOrgId,
+				name: orgName,
+				email: orgEmail,
+				phone: orgPhone,
+				website: orgWebsite,
+				logo: orgLogo,
+				ref: clerkOrgId,
+				address: {
+					street: '',
+					suburb: '',
+					city: '',
+					state: '',
+					country: '',
+					postalCode: '',
+				},
+				status: GeneralStatus.ACTIVE,
+				isDeleted: false,
+			});
+
+			// Save organization - handle duplicate key errors gracefully
+			try {
+				organisation = await this.organisationRepository.save(organisation);
+			} catch (saveError) {
+				const errorMessage = saveError instanceof Error ? saveError.message : 'Unknown error';
+				
+				// If duplicate key error, organization was created by concurrent request
+				if (errorMessage.includes('duplicate key') || errorMessage.includes('unique constraint')) {
+					this.logger.debug(`[${operationId}] Organization created by concurrent request, fetching existing organization`);
+					organisation = await this.organisationRepository.findOne({
+						where: { clerkOrgId },
+					});
+					
+					if (organisation) {
+						this.logger.log(`[${operationId}] Organization already exists`);
+						return organisation;
+					}
+				}
+				
+				// Re-throw if not a duplicate key error
+				throw saveError;
+			}
+
+			this.logger.log(`[${operationId}] Organization created successfully`);
+			return organisation;
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+			
+			// Handle duplicate key errors gracefully
+			if (errorMessage.includes('duplicate key') || errorMessage.includes('unique constraint')) {
+				this.logger.debug(`[${operationId}] Database constraint violation - fetching existing organization`);
+				const existingOrg = await this.organisationRepository.findOne({
+					where: { clerkOrgId },
+				});
+				if (existingOrg) {
+					return existingOrg;
+				}
+			}
+			
+			this.logger.error(`[${operationId}] Failed to process organization.created webhook: ${errorMessage}`);
+			return null;
+		}
 	}
 
 	/**
@@ -372,9 +1170,15 @@ export class ClerkService {
 	async handleOrganizationMembershipCreated(clerkOrgId: string, clerkUserId: string, role: string): Promise<void> {
 		const operationId = `WEBHOOK_ORG_MEMBERSHIP_CREATED_${clerkOrgId}_${clerkUserId}_${Date.now()}`;
 		
+		this.logger.log(`[${operationId}] Received organizationMembership.created webhook`, {
+			clerkOrgId,
+			clerkUserId,
+			role,
+		});
+
 		setImmediate(async () => {
 			try {
-				// Find user and organization
+				// Find user
 				const user = await this.userRepository.findOne({
 					where: { clerkUserId },
 					relations: ['organisation'],
@@ -385,18 +1189,76 @@ export class ClerkService {
 					return;
 				}
 
-				// Find organization by Clerk org ID (if using Clerk Organizations)
-				const organisation = await this.organisationRepository.findOne({
-					where: { clerkOrgId },
+				// Find or create organization by Clerk org ID (search by both clerkOrgId and ref)
+				let organisation = await this.organisationRepository.findOne({
+					where: [
+						{ clerkOrgId },
+						{ ref: clerkOrgId }
+					],
 				});
 
+				if (!organisation) {
+					// Organization doesn't exist, try to fetch from Clerk API and create it
+					this.logger.debug(`[${operationId}] Organization not found, attempting to fetch from Clerk API...`);
+					
+					if (this.clerkClientInstance) {
+						try {
+							const clerkOrg = await this.clerkClientInstance.organizations.getOrganization({
+								organizationId: clerkOrgId,
+							});
+
+							if (clerkOrg) {
+								// Create organization from Clerk data
+								await this.handleOrganizationCreated(clerkOrgId, {
+									name: clerkOrg.name,
+									slug: clerkOrg.slug,
+								});
+
+								// Fetch the newly created organization (search by both clerkOrgId and ref)
+								organisation = await this.organisationRepository.findOne({
+									where: [
+										{ clerkOrgId },
+										{ ref: clerkOrgId }
+									],
+								});
+							}
+						} catch (clerkError) {
+							this.logger.warn(`[${operationId}] Failed to fetch organization from Clerk API:`, {
+								error: clerkError instanceof Error ? clerkError.message : 'Unknown error',
+							});
+						}
+					}
+				}
+
 				if (organisation) {
-					user.organisationRef = organisation.ref;
+					// Use the Clerk org ID to ensure organisationRef matches both ref and clerkOrgId
+					// (For Clerk-created orgs, ref === clerkOrgId, but we use clerkOrgId explicitly)
+					user.organisationRef = organisation.clerkOrgId;
 					await this.userRepository.save(user);
-					this.logger.log(`[${operationId}] User linked to organization - uid: ${user.uid}, orgRef: ${organisation.ref}`);
+					this.logger.log(`[${operationId}] User linked to organization`, {
+						clerkOrgId,
+						clerkUserId,
+						internalUserId: user.uid,
+						orgClerkOrgId: organisation.clerkOrgId,
+						orgRef: organisation.ref,
+						orgName: organisation.name,
+					});
+				} else {
+					this.logger.warn(`[${operationId}] Organization not found and could not be created - user not linked`, {
+						clerkOrgId,
+						clerkUserId,
+					});
 				}
 			} catch (error) {
-				this.logger.error(`[${operationId}] Failed to process organizationMembership.created webhook:`, error instanceof Error ? error.message : 'Unknown error');
+				const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+				const errorStack = error instanceof Error ? error.stack : undefined;
+				
+				this.logger.error(`[${operationId}] Failed to process organizationMembership.created webhook:`, {
+					error: errorMessage,
+					stack: errorStack,
+					clerkOrgId,
+					clerkUserId,
+				});
 				// Don't throw - webhook already acknowledged
 			}
 		});
@@ -418,7 +1280,7 @@ export class ClerkService {
 				if (user) {
 					user.organisationRef = null;
 					await this.userRepository.save(user);
-					this.logger.log(`[${operationId}] User unlinked from organization - uid: ${user.uid}`);
+					this.logger.log(`[${operationId}] User unlinked from organization`);
 				}
 			} catch (error) {
 				this.logger.error(`[${operationId}] Failed to process organizationMembership.deleted webhook:`, error instanceof Error ? error.message : 'Unknown error');
@@ -521,7 +1383,7 @@ export class ClerkService {
 			}
 
 			clientAuth = await this.clientAuthRepository.save(clientAuth);
-			this.logger.log(`[${operationId}] Client auth synced successfully - uid: ${clientAuth.uid}, email: ${clientAuth.email}`);
+			this.logger.debug(`[${operationId}] Client auth synced successfully`);
 
 			return clientAuth;
 		} catch (error) {

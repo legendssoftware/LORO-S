@@ -63,13 +63,13 @@ export class License extends BaseEntity {
     @Column({ type: 'decimal', precision: 10, scale: 2 })
     price: number;
 
-    @Column({ type: 'int' })
-    organisationRef: number;
+    @Column({ type: 'varchar' })
+    organisationRef: string;
 
     @Column({ default: false })
     hasPendingPayments: boolean;
 
     @ManyToOne(() => Organisation)
-    @JoinColumn({ name: 'organisationRef' })
+    @JoinColumn({ name: 'organisationRef', referencedColumnName: 'ref' })
     organisation: Organisation;
 } 

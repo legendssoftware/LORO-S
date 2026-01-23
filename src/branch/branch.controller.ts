@@ -23,9 +23,9 @@ import {
 	ApiProduces,
 	ApiQuery
 } from '@nestjs/swagger';
-import { getDynamicDate, getDynamicDateTime, createApiDescription } from '../lib/utils/swagger-helpers';
+import { getDynamicDateTime, createApiDescription } from '../lib/utils/swagger-helpers';
 import { RoleGuard } from '../guards/role.guard';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { Roles } from '../decorators/role.decorator';
 import { isPublic } from '../decorators/public.decorator';
@@ -34,7 +34,7 @@ import { Branch } from './entities/branch.entity';
 @ApiBearerAuth('JWT-auth')
 @ApiTags('🏪 Branches')
 @Controller('branch')
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 @ApiConsumes('application/json')
 @ApiProduces('application/json')
 @ApiUnauthorizedResponse({ 

@@ -1,4 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn, UpdateDateColumn, JoinColumn } from 'typeorm';
 import { Task } from './task.entity';
 import { User } from '../../user/entities/user.entity';
 import { Branch } from '../../branch/entities/branch.entity';
@@ -90,7 +90,11 @@ export class Route {
   task: Task;
 
   @ManyToOne(() => User, user => user?.routes)
+  @JoinColumn({ name: 'assigneeClerkUserId', referencedColumnName: 'clerkUserId' })
   assignee: User;
+
+  @Column({ nullable: true })
+  assigneeClerkUserId: string;
 
   @ManyToOne(() => Branch, branch => branch?.routes)
   branch: Branch;

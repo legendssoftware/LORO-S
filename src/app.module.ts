@@ -89,6 +89,7 @@ import { UserTarget } from './user/entities/user-target.entity';
 import { WarningsModule } from './warnings/warnings.module';
 import { Warning } from './warnings/entities/warning.entity';
 import { RoleGuard } from './guards/role.guard';
+import { ClerkAuthGuard } from './clerk/clerk.guard';
 import { ClientCommunicationSchedule } from './clients/entities/client-communication-schedule.entity';
 import { ApprovalsModule } from './approvals/approvals.module';
 import { Approval } from './approvals/entities/approval.entity';
@@ -122,8 +123,8 @@ import { JwtModule } from '@nestjs/jwt';
 			isGlobal: true,
 		}),
 		EventEmitterModule.forRoot(),
-		// JWT Module for token validation (required by RoleGuard and BaseGuard)
-		// Made global so all modules can use AuthGuard without importing JwtModule
+		// JWT Module for token decoding (required by RoleGuard and BaseGuard for Clerk token decoding)
+		// Made global so all modules can use guards without importing JwtModule
 		JwtModule.registerAsync({
 			global: true,
 			imports: [ConfigModule],
@@ -365,6 +366,10 @@ import { JwtModule } from '@nestjs/jwt';
 	providers: [
 		AppService,
 		AppController,
+		{
+			provide: APP_GUARD,
+			useClass: ClerkAuthGuard,
+		},
 		{
 			provide: APP_GUARD,
 			useClass: RoleGuard,

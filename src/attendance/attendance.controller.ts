@@ -29,10 +29,10 @@ import { RequestReportDto } from './dto/request.report.dto';
 import { BulkClockInDto } from './dto/bulk-clock-in.dto';
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { RoleGuard } from '../guards/role.guard';
 import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
-import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
+import { AuthenticatedRequest, getClerkOrgId } from '../lib/interfaces/authenticated-request.interface';
 import { Attendance } from './entities/attendance.entity';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { User } from '../user/entities/user.entity';
@@ -153,7 +153,7 @@ export class AttendanceWithUserProfileSchema {
 
 @ApiTags('⏰ Attendance')
 @Controller('att')
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 @EnterpriseOnly('reports')
 @ApiUnauthorizedResponse({
 	description: '🔒 Unauthorized - Authentication required',
@@ -196,6 +196,19 @@ export class AttendanceController {
 		private readonly overtimeReminderService: OvertimeReminderService,
 		private readonly userService: UserService,
 	) {}
+
+	/**
+	 * Safely converts a value to a number
+	 * @param value - Value to convert (string, number, or undefined)
+	 * @returns Number or undefined if conversion fails
+	 */
+	private toNumber(value: string | number | undefined): number | undefined {
+		if (value === undefined || value === null || value === '') {
+			return undefined;
+		}
+		const numValue = Number(value);
+		return isNaN(numValue) || !isFinite(numValue) ? undefined : numValue;
+	}
 
 	@Post('in')
 	@Roles(
@@ -521,8 +534,11 @@ Advanced employee check-in system with location verification, biometric support,
 		},
 	})
 	checkIn(@Body() createAttendanceDto: CreateCheckInDto, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		const userAccessLevel = req.user?.accessLevel;
 
 		return this.attendanceService.checkIn(createAttendanceDto, orgId, branchId);
@@ -706,8 +722,11 @@ Advanced employee check-out system with location verification, work summary calc
 		},
 	})
 	checkOut(@Body() createAttendanceDto: CreateCheckOutDto, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.attendanceService.checkOut(createAttendanceDto, orgId, branchId);
 	}
 
@@ -735,7 +754,7 @@ Advanced employee check-out system with location verification, work summary calc
 	 * - Support for external transaction IDs
 	 */
 	@Post('consolidate')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER)
 	@ApiOperation({
 		summary: '📦 Consolidate bulk attendance records from external systems',
@@ -1183,8 +1202,11 @@ Process employee departure/end-of-shift records:
 		}
 	})
 	consolidate(@Body() consolidateDto: ConsolidateAttendanceDto, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.attendanceService.consolidate(consolidateDto, orgId, branchId);
 	}
 
@@ -1580,8 +1602,11 @@ Retrieves complete attendance records with advanced filtering, analytics, and co
 		},
 	})
 	allCheckIns(@Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		const userAccessLevel = req.user?.accessLevel;
 		return this.attendanceService.allCheckIns(orgId, branchId, userAccessLevel);
 	}
@@ -1817,8 +1842,11 @@ Retrieves comprehensive attendance records for a specific date with advanced fil
 		},
 	})
 	checkInsByDate(@Param('date') date: string, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		const userAccessLevel = req.user?.accessLevel;
 		return this.attendanceService.checkInsByDate(date, orgId, branchId, userAccessLevel);
 	}
@@ -2151,8 +2179,11 @@ Retrieves comprehensive attendance records for a specific user with detailed ana
 		},
 	})
 	checkInsByUser(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		const userAccessLevel = req.user?.accessLevel;
 		const requestingUserId = req.user?.uid;
 		return this.attendanceService.checkInsByUser(ref, orgId, branchId, userAccessLevel, requestingUserId);
@@ -2575,8 +2606,11 @@ Retrieves the current attendance status for a specific user with live updates, s
 		},
 	})
 	checkInsByStatus(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		const userAccessLevel = req.user?.accessLevel;
 		const requestingUserId = req.user?.uid;
 		return this.attendanceService.checkInsByStatus(ref, orgId, branchId, userAccessLevel, requestingUserId);
@@ -2902,7 +2936,10 @@ Retrieves comprehensive attendance records for a specific branch with advanced a
 		},
 	})
 	checkInsByBranch(@Param('ref') ref: string, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const userAccessLevel = req.user?.accessLevel;
 		return this.attendanceService.checkInsByBranch(ref, orgId, userAccessLevel);
 	}
@@ -3975,7 +4012,12 @@ Exclude holiday dates where overtime policies don't apply:
 		@Body() queryDto: MonthlyMetricsQueryDto,
 		@Req() req: AuthenticatedRequest,
 	) {
-		const orgId = queryDto.orgId || req.user?.org?.uid || req.user?.organisationRef;
+		const rawOrgId = queryDto.orgId ?? getClerkOrgId(req);
+		if (rawOrgId == null || rawOrgId === '') {
+			throw new BadRequestException('Organization context required');
+		}
+		// Ensure orgId is always a string (Clerk org ID)
+		const orgId: string = typeof rawOrgId === 'string' ? rawOrgId : String(rawOrgId);
 		const userAccessLevel = req.user?.accessLevel;
 
 		return this.attendanceService.getMonthlyMetricsForAllUsers(
@@ -4732,8 +4774,11 @@ Generates comprehensive attendance reports with advanced analytics, multi-dimens
 		},
 	})
 	getOrganizationReport(@Query() queryDto: OrganizationReportQueryDto, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		const userAccessLevel = req.user?.accessLevel;
 
 		return this.attendanceService.generateOrganizationReport(queryDto, orgId, branchId, userAccessLevel);
@@ -4960,7 +5005,10 @@ Triggers the generation and distribution of comprehensive morning attendance rep
 	})
 	async sendMorningReport(@Req() req: AuthenticatedRequest) {
 		try {
-			const orgId = req.user?.org?.uid || req.user?.organisationRef;
+			const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 
 			if (!orgId) {
 				return { message: 'Organization not found' };
@@ -5216,7 +5264,10 @@ Triggers the generation and distribution of comprehensive evening attendance rep
 	})
 	async sendEveningReport(@Req() req: AuthenticatedRequest) {
 		try {
-			const orgId = req.user?.org?.uid || req.user?.organisationRef;
+			const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 
 			if (!orgId) {
 				return { message: 'Organization not found' };
@@ -5411,7 +5462,10 @@ Generates and sends a comprehensive attendance report of the specified type (mor
 	})
 	async requestAttendanceReport(@Body() requestDto: RequestReportDto, @Req() req: AuthenticatedRequest) {
 		try {
-			const orgId = req.user?.org?.uid || req.user?.organisationRef;
+			const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 			const userId = req.user?.uid;
 
 			if (!orgId) {
@@ -5468,7 +5522,7 @@ Generates and sends a comprehensive attendance report of the specified type (mor
 	}
 
 	@Post('manual-overtime-check')
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER)
 	@ApiOperation({
 		summary: '⏰ Trigger manual overtime policy check',
@@ -5788,7 +5842,7 @@ Manually triggers the overtime policy check system to identify employees working
 	})
 	@ApiBadRequestResponse({ description: 'Invalid parameters provided' })
 	@ApiNotFoundResponse({ description: 'User not found' })
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(AccessLevel.USER, AccessLevel.ADMIN, AccessLevel.OWNER)
 	async getUserMetrics(
 		@Param('ref') ref: number,
@@ -5835,7 +5889,7 @@ Manually triggers the overtime policy check system to identify employees working
 	})
 	@ApiBadRequestResponse({ description: 'Invalid parameters provided' })
 	@ApiNotFoundResponse({ description: 'User not found' })
-	@UseGuards(AuthGuard, RoleGuard)
+	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(AccessLevel.USER, AccessLevel.ADMIN, AccessLevel.OWNER)
 	async getUserMetricsWithPathParams(
 		@Param('ref') ref: number,
@@ -5925,8 +5979,11 @@ Manually triggers the overtime policy check system to identify employees working
 		@Query('date') dateQuery: string,
 		@Req() req: AuthenticatedRequest,
 	): Promise<any> {
-		const orgId = req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		const userAccessLevel = req.user?.accessLevel;
 
 		let targetDate: Date;
@@ -5979,7 +6036,10 @@ Manually triggers the overtime policy check system to identify employees working
 		requestedUserName: string;
 	}> {
 		const { userId, startDate, endDate } = requestDto;
-		const orgId = req.user?.org?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		const branchId = req.user?.branch?.uid;
 		const requesterId = req.user?.uid;
 		const userAccessLevel = req.user?.accessLevel;
@@ -6166,7 +6226,10 @@ Returns detailed summary including:
 			checkOutTime: string;
 		}>;
 	}> {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
 		// Only use branchId from DTO if explicitly provided - don't use user's branch to fetch ALL users
 		const branchId = bulkClockInDto.branchId;
 

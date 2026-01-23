@@ -29,11 +29,11 @@ export class Notification {
 
     // Relations
     @ManyToOne(() => User, user => user?.notifications)
-    @JoinColumn({ name: 'ownerUid' })
+    @JoinColumn({ name: 'ownerClerkUserId', referencedColumnName: 'clerkUserId' })
     owner: User;
 
     @Column({ nullable: true })
-    ownerUid: number;
+    ownerClerkUserId: string;
 
     @ManyToOne(() => Organisation, organisation => organisation?.notifications)
     @JoinColumn({ name: 'organisationUid' })

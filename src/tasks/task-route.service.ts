@@ -120,7 +120,7 @@ export class TaskRouteService {
 		for (const assignee of assignees) {
 			try {
 				const user = await this.userRepository.findOne({
-					where: { uid: assignee?.uid },
+					where: { clerkUserId: assignee?.clerkUserId },
 					relations: ['branch'],
 				});
 
@@ -297,15 +297,18 @@ export class TaskRouteService {
 	async planRoutes(date: Date = new Date(), organisationRef?: string, branchId?: number): Promise<Route[]> {
 		// If organization is provided, use its timezone; otherwise use default
 		let organizationTimezone = 'Africa/Johannesburg';
-		let orgId: number | undefined;
+		let orgId: string | undefined;
 		
 		if (organisationRef) {
 			const org = await this.organisationRepository.findOne({
-				where: { ref: organisationRef },
+				where: [
+					{ clerkOrgId: organisationRef },
+					{ ref: organisationRef }
+				],
 			});
 			if (org) {
-				orgId = org.uid;
-				const organizationHours = await this.organizationHoursService.getOrganizationHours(org.uid);
+				orgId = org.clerkOrgId || org.ref;
+				const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
 				organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
 			}
 		}

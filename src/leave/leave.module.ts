@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ClerkModule } from '../clerk/clerk.module';
 import { LeaveService } from './leave.service';
 import { LeaveController } from './leave.controller';
 import { LeaveEmailService } from './services/leave-email.service';
@@ -18,6 +19,7 @@ import { emailTemplateService } from '../lib/services/email-template.service';
 
 @Module({
 	imports: [
+		ClerkModule,
 		TypeOrmModule.forFeature([Leave, User, Organisation, Branch]),
 		EventEmitterModule.forRoot(),
 		CacheModule.register(),

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between } from 'typeorm';
@@ -58,9 +58,9 @@ export class AttendanceReportsService {
 	/**
 	 * Format time in organization timezone for reports
 	 */
-	private async formatTimeInOrganizationTimezone(date: Date, organizationId?: number, format: string = 'h:mm a'): Promise<string> {
+	private async formatTimeInOrganizationTimezone(date: Date, organizationId?: string | number, format: string = 'h:mm a'): Promise<string> {
 		if (!date) return 'N/A';
-		if (!organizationId) return formatInTimeZone(date, 'Africa/Johannesburg', format);
+		if (organizationId == null || organizationId === '') return formatInTimeZone(date, 'Africa/Johannesburg', format);
 		
 		const timezone = await this.getOrganizationTimezone(organizationId);
 		return formatInTimeZone(date, timezone, format);
@@ -137,25 +137,61 @@ export class AttendanceReportsService {
 	}
 
 	/**
-	 * Get organization timezone with fallback to settings
+	 * Resolves Clerk org ID (string) to organisation numeric uid.
+	 * Looks up by clerkOrgId or ref. Returns null if not found.
 	 */
-	private async getOrganizationTimezone(organizationId: number): Promise<string> {
+	private async resolveOrgId(clerkOrgId?: string): Promise<number | null> {
+		if (!clerkOrgId) {
+			return null;
+		}
+		const org = await this.organisationRepository.findOne({
+			where: [
+				{ clerkOrgId, isDeleted: false },
+				{ ref: clerkOrgId, isDeleted: false },
+			],
+			select: ['uid'],
+		});
+		return org?.uid ?? null;
+	}
+
+	/**
+	 * Resolves organisation numeric uid to Clerk org ID string (clerkOrgId or ref).
+	 * Returns null if not found.
+	 */
+	private async resolveUidToOrgIdString(uid: number): Promise<string | null> {
+		const org = await this.organisationRepository.findOne({
+			where: { uid, isDeleted: false },
+			select: ['clerkOrgId', 'ref'],
+		});
+		return org ? (org.clerkOrgId || org.ref) : null;
+	}
+
+	/**
+	 * Get organization timezone with fallback to settings.
+	 * Accepts string (clerkOrgId/ref) or number (uid). Uses string for org hours lookup.
+	 */
+	private async getOrganizationTimezone(organizationId: string | number): Promise<string> {
 		try {
-			// First try organization hours
-			const organizationHours = await this.organizationHoursService.getOrganizationHours(organizationId);
-			if (organizationHours?.timezone) {
-				return organizationHours.timezone;
+			const orgIdString = typeof organizationId === 'number'
+				? await this.resolveUidToOrgIdString(organizationId)
+				: organizationId;
+			if (orgIdString) {
+				const organizationHours = await this.organizationHoursService.getOrganizationHours(orgIdString);
+				if (organizationHours?.timezone) {
+					return organizationHours.timezone;
+				}
 			}
 
-			// Fallback to organization settings
-			const orgSettings = await this.organisationSettingsRepository.findOne({
-				where: { organisationUid: organizationId }
-			});
-			if (orgSettings?.regional?.timezone) {
-				return orgSettings.regional.timezone;
+			// Fallback to organization settings (only when we have numeric uid)
+			if (typeof organizationId === 'number') {
+				const orgSettings = await this.organisationSettingsRepository.findOne({
+					where: { organisationUid: organizationId },
+				});
+				if (orgSettings?.regional?.timezone) {
+					return orgSettings.regional.timezone;
+				}
 			}
 
-			// Final fallback to default
 			return 'Africa/Johannesburg';
 		} catch (error) {
 			this.logger.warn(`Error getting timezone for org ${organizationId}, using default:`, error);
@@ -166,7 +202,7 @@ export class AttendanceReportsService {
 	/**
 	 * Convert date to organization timezone for email templates
 	 */
-	private async convertTimeToOrgTimezone(date: Date, organizationId: number): Promise<string> {
+	private async convertTimeToOrgTimezone(date: Date, organizationId: string | number): Promise<string> {
 		const timezone = await this.getOrganizationTimezone(organizationId);
 		return formatInTimeZone(date, timezone, 'HH:mm zzz');
 	}
@@ -202,9 +238,7 @@ export class AttendanceReportsService {
 					// Only process organizations during reasonable business hours in their timezone (5 AM - 11 PM)
 					if (orgCurrentHour < 5 || orgCurrentHour > 23) {
 						this.logger.debug(
-							`Skipping organization ${org.uid} (${
-								org.name
-							}) - quiet hours in ${organizationTimezone || 'Africa/Johannesburg'} (${orgCurrentHour}:00)`,
+							`Skipping organization ${org.uid} - quiet hours in ${organizationTimezone || 'Africa/Johannesburg'} (${orgCurrentHour}:00)`,
 						);
 						skippedOrgs.push({
 							id: org.uid,
@@ -216,9 +250,7 @@ export class AttendanceReportsService {
 					}
 
 					this.logger.debug(
-						`Processing reports for organization ${org.uid} (${
-							org.name
-						}) - Local time: ${formatInTimeZone(orgCurrentTime, organizationTimezone, 'HH:mm zzz')}`,
+						`Processing reports for organization ${org.uid} - Local time: ${formatInTimeZone(orgCurrentTime, organizationTimezone, 'HH:mm zzz')}`,
 					);
 
 					processedOrgs.push({
@@ -246,17 +278,13 @@ export class AttendanceReportsService {
 
 			if (processedOrgs.length > 0) {
 				this.logger.debug(
-					`✅ Processed organizations: ${processedOrgs
-						.map((org) => `${org.name} (${org.timezone} ${org.localTime})`)
-						.join(', ')}`,
+					`✅ Processed organizations: ${processedOrgs.length} org(s)`,
 				);
 			}
 
 			if (skippedOrgs.length > 0) {
 				this.logger.debug(
-					`⏭️  Skipped organizations: ${skippedOrgs
-						.map((org) => `${org.name} (${org.timezone} ${org.localTime})`)
-						.join(', ')}`,
+					`⏭️  Skipped organizations: ${skippedOrgs.length} org(s)`,
 				);
 			}
 		} catch (error) {
@@ -265,27 +293,26 @@ export class AttendanceReportsService {
 	}
 
 	private async processMorningReportForOrganization(organization: Organisation, currentTime: Date) {
-		this.logger.debug(`Processing morning report for organization ${organization.uid} (${organization.name})`);
+		this.logger.debug(`Processing morning report for organization ${organization.uid}`);
 
 		try {
 			// Get organization timezone from organization hours service
-			const organizationHours = await this.organizationHoursService.getOrganizationHours(organization.uid);
+			const orgId = organization.clerkOrgId || organization.ref;
+			const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
 			const organizationTimezone = organizationHours?.timezone;
 
 			// Convert current time to organization timezone
 			const orgCurrentTime = toZonedTime(currentTime, organizationTimezone);
 
-			// Get working day info using organization timezone
+			// Get working day info using organization timezone (orgId is clerkOrgId/ref string)
 			const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(
-				organization.uid,
+				orgId,
 				orgCurrentTime,
 			);
 
 			if (!workingDayInfo.isWorkingDay || !workingDayInfo.startTime) {
 				this.logger.debug(
-					`⏭️  Skipping morning report for org ${organization.uid} (${
-						organization.name
-					}) - not a working day or no start time in ${organizationTimezone || 'Africa/Johannesburg'}`,
+					`⏭️  Skipping morning report for org ${organization.uid} - not a working day or no start time in ${organizationTimezone || 'Africa/Johannesburg'}`,
 				);
 				return; // Skip non-working days
 			}
@@ -302,9 +329,7 @@ export class AttendanceReportsService {
 
 			if (!reportWindow.isTimeForMorningReport) {
 				this.logger.debug(
-					`⏰ Not time for morning report for org ${organization.uid} (${
-						organization.name
-					}) yet - Current: ${formatInTimeZone(orgCurrentTime, organizationTimezone, 'HH:mm')}, Report time: ${reportWindow.morningReportTime
+					`⏰ Not time for morning report for org ${organization.uid} yet - Current: ${formatInTimeZone(orgCurrentTime, organizationTimezone, 'HH:mm')}, Report time: ${reportWindow.morningReportTime
 						.toTimeString()
 						.substring(0, 5)} in ${organizationTimezone || 'Africa/Johannesburg'}`,
 				);
@@ -317,15 +342,17 @@ export class AttendanceReportsService {
 
 			if (this.hasReportBeenSent(cacheKey)) {
 				this.logger.debug(
-					`✅ Morning report already sent today for org ${organization.uid} (${
-						organization.name
-					}) on ${format(orgToday, 'yyyy-MM-dd')} in ${organizationTimezone || 'Africa/Johannesburg'}`,
+					`✅ Morning report already sent today for org ${organization.uid} on ${format(orgToday, 'yyyy-MM-dd')} in ${organizationTimezone || 'Africa/Johannesburg'}`,
 				);
 				return;
 			}
 
-			this.logger.log(`📅 Generating morning report for organization ${organization.uid} (${organization.name})`);
-			await this.generateAndSendMorningReport(organization.uid);
+			if (!orgId) {
+				this.logger.error(`Organization ${organization.uid} has no clerkOrgId or ref`);
+				return;
+			}
+			this.logger.log(`📅 Generating morning report for organization ${organization.uid}`);
+			await this.generateAndSendMorningReport(orgId);
 			this.markReportAsSent(cacheKey);
 
 			// Enhanced timezone-aware logging
@@ -349,27 +376,26 @@ export class AttendanceReportsService {
 	}
 
 	private async processEveningReportForOrganization(organization: Organisation, currentTime: Date) {
-		this.logger.debug(`Processing evening report for organization ${organization.uid} (${organization.name})`);
+		this.logger.debug(`Processing evening report for organization ${organization.uid}`);
 
 		try {
 			// Get organization timezone from organization hours service
-			const organizationHours = await this.organizationHoursService.getOrganizationHours(organization.uid);
+			const orgId = organization.clerkOrgId || organization.ref;
+			const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
 			const organizationTimezone = organizationHours?.timezone;
 
 			// Convert current time to organization timezone
 			const orgCurrentTime = toZonedTime(currentTime, organizationTimezone);
 
-			// Get working day info using organization timezone
+			// Get working day info using organization timezone (orgId is clerkOrgId/ref string)
 			const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(
-				organization.uid,
+				orgId,
 				orgCurrentTime,
 			);
 
 			if (!workingDayInfo.isWorkingDay || !workingDayInfo.endTime) {
 				this.logger.debug(
-					`⏭️  Skipping evening report for org ${organization.uid} (${
-						organization.name
-					}) - not a working day or no end time in ${organizationTimezone || 'Africa/Johannesburg'}`,
+					`⏭️  Skipping evening report for org ${organization.uid} - not a working day or no end time in ${organizationTimezone || 'Africa/Johannesburg'}`,
 				);
 				return; // Skip non-working days
 			}
@@ -386,9 +412,7 @@ export class AttendanceReportsService {
 
 			if (!reportWindow.isTimeForEveningReport) {
 				this.logger.debug(
-					`⏰ Not time for evening report for org ${organization.uid} (${
-						organization.name
-					}) yet - Current: ${formatInTimeZone(
+					`⏰ Not time for evening report for org ${organization.uid} yet - Current: ${formatInTimeZone(
 						orgCurrentTime,
 						organizationTimezone || 'Africa/Johannesburg',
 						'HH:mm',
@@ -405,15 +429,17 @@ export class AttendanceReportsService {
 
 			if (this.hasReportBeenSent(cacheKey)) {
 				this.logger.debug(
-					`✅ Evening report already sent today for org ${organization.uid} (${
-						organization.name
-					}) on ${format(orgToday, 'yyyy-MM-dd')} in ${organizationTimezone || 'Africa/Johannesburg'}`,
+					`✅ Evening report already sent today for org ${organization.uid} on ${format(orgToday, 'yyyy-MM-dd')} in ${organizationTimezone || 'Africa/Johannesburg'}`,
 				);
 				return;
 			}
 
-			this.logger.log(`🌅 Generating evening report for organization ${organization.uid} (${organization.name})`);
-			await this.generateAndSendEveningReport(organization.uid);
+			if (!orgId) {
+				this.logger.error(`Organization ${organization.uid} has no clerkOrgId or ref`);
+				return;
+			}
+			this.logger.log(`🌅 Generating evening report for organization ${organization.uid}`);
+			await this.generateAndSendEveningReport(orgId);
 			this.markReportAsSent(cacheKey);
 
 			// Enhanced timezone-aware logging
@@ -423,7 +449,7 @@ export class AttendanceReportsService {
 				.toTimeString()
 				.substring(0, 5)})`;
 
-			this.logger.log(`✅ Evening report sent for organization ${organization.name} (ID: ${organization.uid})`);
+			this.logger.log(`✅ Evening report sent for organization ${organization.uid}`);
 			this.logger.log(`  🕐 Server time: ${serverTime}`);
 			this.logger.log(`  🌍 Organization time: ${orgTimeFormatted}`);
 			this.logger.log(`  ⏰ Work end time: ${workTimeFormatted}`);
@@ -454,7 +480,17 @@ export class AttendanceReportsService {
 	/**
 	 * Generate and send morning attendance report
 	 */
-	async generateAndSendMorningReport(organizationId: number): Promise<void> {
+	async generateAndSendMorningReport(organizationId: string): Promise<void> {
+		// Validate organisation exists
+		const organisation = await this.organisationRepository.findOne({
+			where: [
+				{ clerkOrgId: organizationId },
+				{ ref: organizationId }
+			]
+		});
+		if (!organisation) {
+			throw new BadRequestException(`Organization not found for ID: ${organizationId}`);
+		}
 		this.logger.log(`Generating and sending morning report for organization ${organizationId}`);
 
 		try {
@@ -485,7 +521,17 @@ export class AttendanceReportsService {
 	/**
 	 * Generate and send evening attendance report
 	 */
-	async generateAndSendEveningReport(organizationId: number): Promise<void> {
+	async generateAndSendEveningReport(organizationId: string): Promise<void> {
+		// Validate organisation exists
+		const organisation = await this.organisationRepository.findOne({
+			where: [
+				{ clerkOrgId: organizationId },
+				{ ref: organizationId }
+			]
+		});
+		if (!organisation) {
+			throw new BadRequestException(`Organization not found for ID: ${organizationId}`);
+		}
 		this.logger.log(`Generating and sending evening report for organization ${organizationId}`);
 
 		try {
@@ -516,7 +562,17 @@ export class AttendanceReportsService {
 	/**
 	 * Generate and send morning attendance report to specific recipients
 	 */
-	async generateAndSendMorningReportToUser(organizationId: number, userEmail: string): Promise<MorningReportData> {
+	async generateAndSendMorningReportToUser(organizationId: string, userEmail: string): Promise<MorningReportData> {
+		// Validate organisation exists
+		const organisation = await this.organisationRepository.findOne({
+			where: [
+				{ clerkOrgId: organizationId },
+				{ ref: organizationId }
+			]
+		});
+		if (!organisation) {
+			throw new BadRequestException(`Organization not found for ID: ${organizationId}`);
+		}
 		this.logger.log(
 			`Generating and sending morning report to user ${userEmail} for organization ${organizationId}`,
 		);
@@ -547,7 +603,17 @@ export class AttendanceReportsService {
 	/**
 	 * Generate and send evening attendance report to specific recipients
 	 */
-	async generateAndSendEveningReportToUser(organizationId: number, userEmail: string): Promise<EveningReportData> {
+	async generateAndSendEveningReportToUser(organizationId: string, userEmail: string): Promise<EveningReportData> {
+		// Validate organisation exists
+		const organisation = await this.organisationRepository.findOne({
+			where: [
+				{ clerkOrgId: organizationId },
+				{ ref: organizationId }
+			]
+		});
+		if (!organisation) {
+			throw new BadRequestException(`Organization not found for ID: ${organizationId}`);
+		}
 		this.logger.log(
 			`Generating and sending evening report to user ${userEmail} for organization ${organizationId}`,
 		);
@@ -575,7 +641,7 @@ export class AttendanceReportsService {
 		}
 	}
 
-	private async generateMorningReportData(organizationId: number): Promise<MorningReportData> {
+	private async generateMorningReportData(organizationId: string): Promise<MorningReportData> {
 		this.logger.log(`Generating morning report data for organization ${organizationId}`);
 
 		// Get organization timezone using the enhanced helper method
@@ -590,9 +656,12 @@ export class AttendanceReportsService {
 			`Processing data for date range: ${startOfToday.toISOString()} to ${endOfToday.toISOString()}`,
 		);
 
-		// Get organization info
+		// Get organization info - lookup by clerkOrgId or ref
 		const organization = await this.organisationRepository.findOne({
-			where: { uid: organizationId },
+			where: [
+				{ clerkOrgId: organizationId },
+				{ ref: organizationId }
+			]
 		});
 
 		if (!organization) {
@@ -600,9 +669,9 @@ export class AttendanceReportsService {
 			throw new Error(`Organization ${organizationId} not found`);
 		}
 
-		// Get organization settings including social links
+		// Get organization settings including social links - use organisation uid
 		const organizationSettings = await this.organisationSettingsRepository.findOne({
-			where: { organisationUid: organizationId },
+			where: { organisationUid: organization.uid },
 		});
 
 		this.logger.debug(`Organization found: ${organization.name}`);
@@ -619,7 +688,7 @@ export class AttendanceReportsService {
 		let totalEmployees = 0;
 
 		try {
-			const usersResponse = await this.userService.findAll({ organisationId: organizationId }, 1, 1000);
+			const usersResponse = await this.userService.findAll({ orgId: organizationId }, 1, 1000);
 			allUsers = usersResponse.data || [];
 			this.logger.debug(`Found ${allUsers.length} users in organization ${organizationId}`);
 
@@ -628,7 +697,7 @@ export class AttendanceReportsService {
 			const activeOrgUsers = allUsers.filter(user => 
 				!user.isDeleted && 
 				user.status !== 'INACTIVE' && 
-				user.organisationId === organizationId
+				(user.organisation?.clerkOrgId === organizationId || user.organisation?.ref === organizationId)
 			);
 			totalEmployees = await this.getExpectedEmployeesForToday(activeOrgUsers, organizationId, today);
 			this.logger.log(`Expected employees for today in org ${organizationId}: ${totalEmployees}`);
@@ -636,10 +705,13 @@ export class AttendanceReportsService {
 			this.logger.warn(`Failed to fetch users for organization ${organizationId}:`, error);
 		}
 
-		// Get today's attendance records
+		// Get today's attendance records - filter by clerkOrgId or ref
 		const todayAttendance = await this.attendanceRepository.find({
 			where: {
-				organisation: { uid: organizationId },
+				organisation: [
+					{ clerkOrgId: organizationId },
+					{ ref: organizationId }
+				],
 				checkIn: Between(startOfToday, endOfToday),
 			},
 			relations: ['owner', 'owner.userProfile', 'owner.branch'],
@@ -879,7 +951,7 @@ export class AttendanceReportsService {
 		return morningReportData;
 	}
 
-	private async generateEveningReportData(organizationId: number): Promise<EveningReportData> {
+	private async generateEveningReportData(organizationId: string): Promise<EveningReportData> {
 		this.logger.log(`🌅 ===== STARTING EVENING REPORT GENERATION for org ${organizationId} =====`);
 
 		// Get organization timezone using the enhanced helper method
@@ -894,9 +966,12 @@ export class AttendanceReportsService {
 			`Processing data for date range: ${startOfToday.toISOString()} to ${endOfToday.toISOString()}`,
 		);
 
-		// Get organization info
+		// Get organization info - lookup by clerkOrgId or ref
 		const organization = await this.organisationRepository.findOne({
-			where: { uid: organizationId },
+			where: [
+				{ clerkOrgId: organizationId },
+				{ ref: organizationId }
+			]
 		});
 
 		if (!organization) {
@@ -906,9 +981,9 @@ export class AttendanceReportsService {
 
 		this.logger.debug(`Organization found: ${organization.name}`);
 
-		// Get organization settings including social links
+		// Get organization settings including social links - use organisation uid
 		const organizationSettings = await this.organisationSettingsRepository.findOne({
-			where: { organisationUid: organizationId },
+			where: { organisationUid: organization.uid },
 		});
 
 		// Get working day info for organization hours with fallback
@@ -929,14 +1004,20 @@ export class AttendanceReportsService {
 		const [todayAttendance, comparisonAttendance] = await Promise.all([
 			this.attendanceRepository.find({
 				where: {
-					organisation: { uid: organizationId },
+					organisation: [
+						{ clerkOrgId: organizationId },
+						{ ref: organizationId }
+					],
 					checkIn: Between(startOfToday, endOfToday),
 				},
 				relations: ['owner', 'owner.userProfile', 'owner.branch'],
 			}),
 			this.attendanceRepository.find({
 				where: {
-					organisation: { uid: organizationId },
+					organisation: [
+						{ clerkOrgId: organizationId },
+						{ ref: organizationId }
+					],
 					checkIn: Between(startOfComparison, endOfComparison),
 				},
 				relations: ['owner'],
@@ -954,7 +1035,7 @@ export class AttendanceReportsService {
 		
 		try {
 			this.logger.log(`📞 Calling userService.findAll with organisationId: ${organizationId}`);
-			const usersResponse = await this.userService.findAll({ organisationId: organizationId }, 1, 1000);
+			const usersResponse = await this.userService.findAll({ orgId: organizationId }, 1, 1000);
 			this.logger.log(`📞 UserService response received:`, {
 				success: !!usersResponse,
 				hasData: !!usersResponse?.data,
@@ -1024,7 +1105,7 @@ export class AttendanceReportsService {
 			try {
 				// Try the same query pattern used for recipients that works
 				const fallbackResponse = await this.userService.findAll({
-					organisationId: organizationId,
+					orgId: organizationId,
 					status: AccountStatus.ACTIVE // Remove specific access level to get all active users
 				}, 1, 1000);
 				
@@ -1038,7 +1119,7 @@ export class AttendanceReportsService {
 					allUsers = fallbackResponse.data.filter(user => 
 						!user.isDeleted && 
 						user.status !== 'INACTIVE' && 
-						user.organisation?.uid === organizationId
+						(user.organisation?.clerkOrgId === organizationId || user.organisation?.ref === organizationId)
 					);
 					this.logger.log(`🔄 FALLBACK SUCCESS: Found ${allUsers.length} users via fallback query`);
 				}
@@ -1235,7 +1316,10 @@ export class AttendanceReportsService {
 				where: {
 					reportType: ReportType.USER_DAILY,
 					generatedAt: Between(startOfToday, endOfToday),
-					organisation: { uid: organizationId }
+					organisation: [
+						{ clerkOrgId: organizationId },
+						{ ref: organizationId }
+					]
 				},
 				relations: ['owner']
 			});
@@ -1258,7 +1342,7 @@ export class AttendanceReportsService {
 			this.logger.debug(`  - Found today record: ${!!todayRecord}`);
 			
 			const realTimeHours = todayRecord
-				? await this.calculateRealTimeHoursWithOrgHours(todayRecord, organizationId, today)
+				? await this.calculateRealTimeHoursWithOrgHours(todayRecord, organizationId, new Date(), format(today, 'yyyy-MM-dd'))
 				: 0;
 			
 			this.logger.debug(`  - Real-time hours: ${realTimeHours}`);
@@ -1739,7 +1823,7 @@ export class AttendanceReportsService {
 
 		// Enhanced logging for final evening report data
 		this.logger.log(`📧 Final Evening Report Data for org ${organizationId}:`);
-		this.logger.log(`  - Organization: ${eveningReportData.organizationName}`);
+		this.logger.log(`  - Organization ID: ${organizationId}`);
 		this.logger.log(`  - Report Date: ${eveningReportData.reportDate}`);
 		this.logger.log(`  - Employee Metrics Count: ${eveningReportData.employeeMetrics.length}`);
 		this.logger.log(`  - Present Employees: ${eveningReportData.presentEmployees.length}`);
@@ -1783,25 +1867,25 @@ export class AttendanceReportsService {
 		return eveningReportData;
 	}
 
-	private async getReportRecipients(organizationId: number): Promise<string[]> {
+	private async getReportRecipients(organizationId: string): Promise<string[]> {
 		this.logger.log(`Getting report recipients for organization ${organizationId}`);
 
 		try {
 			// Get users with OWNER, ADMIN, or HR access levels for the organization
 			const ownerResult = await this.userService.findAll({
-				organisationId: organizationId,
+				orgId: organizationId,
 				accessLevel: AccessLevel.OWNER,
 				status: AccountStatus.ACTIVE,
 			});
 
 			const adminResult = await this.userService.findAll({
-				organisationId: organizationId,
+				orgId: organizationId,
 				accessLevel: AccessLevel.ADMIN,
 				status: AccountStatus.ACTIVE,
 			});
 
 			const hrResult = await this.userService.findAll({
-				organisationId: organizationId,
+				orgId: organizationId,
 				accessLevel: AccessLevel.HR,
 				status: AccountStatus.ACTIVE,
 			});
@@ -1904,7 +1988,7 @@ export class AttendanceReportsService {
 	 * This handles cases where users have multiple check-ins (overtime scenarios)
 	 */
 	private async consolidateAttendanceByUser(
-		organizationId: number,
+		organizationId: string,
 		todayAttendance: Attendance[],
 	): Promise<
 		Map<
@@ -1991,7 +2075,7 @@ export class AttendanceReportsService {
 	}
 
 	private async generatePunctualityBreakdown(
-		organizationId: number,
+		organizationId: string,
 		todayAttendance: Attendance[],
 	): Promise<PunctualityBreakdown> {
 		const earlyArrivals: AttendanceReportUser[] = [];
@@ -2615,7 +2699,7 @@ export class AttendanceReportsService {
 	 * Find the last working day for comparison, accounting for weekends and organization schedule
 	 */
 	private async findLastWorkingDay(
-		organizationId: number,
+		organizationId: string,
 		currentDate: Date,
 	): Promise<{
 		comparisonDate: Date;
@@ -2659,7 +2743,7 @@ export class AttendanceReportsService {
 	 * Get user targets for organization employees
 	 * This enables target vs actual hours comparison
 	 */
-	private async getUserTargetsForOrganization(organizationId: number): Promise<{
+	private async getUserTargetsForOrganization(organizationId: string): Promise<{
 		totalExpectedDailyHours: number;
 		userTargetsMap: Map<number, number>;
 		usersWithTargets: number;
@@ -2670,7 +2754,7 @@ export class AttendanceReportsService {
 			let usersWithTargets = 0;
 
 			// Get all users in organization
-			const usersResponse = await this.userService.findAll({ organisationId: organizationId }, 1, 1000);
+			const usersResponse = await this.userService.findAll({ orgId: organizationId }, 1, 1000);
 			const allUsers = usersResponse.data || [];
 
 			// Get targets for each user
@@ -3027,7 +3111,7 @@ export class AttendanceReportsService {
 	 */
 	private async calculateTotalActualHoursWithOrgHours(
 		todayAttendance: Attendance[],
-		organizationId: number,
+		organizationId: string,
 		currentTime: Date = new Date(),
 	): Promise<number> {
 		this.logger.debug(`Calculating total actual hours for ${todayAttendance.length} attendance records`);
@@ -3057,7 +3141,7 @@ export class AttendanceReportsService {
 	 */
 	private async calculateWorkDayProgressWithOrgHours(
 		currentTime: Date,
-		organizationId: number,
+		organizationId: string,
 		date: Date,
 	): Promise<number> {
 		try {
@@ -3087,7 +3171,7 @@ export class AttendanceReportsService {
 	 */
 	private async getExpectedEmployeesForToday(
 		allUsers: Omit<User, 'password'>[],
-		organizationId: number,
+		organizationId: string,
 		date: Date,
 	): Promise<number> {
 		try {
@@ -3113,7 +3197,7 @@ export class AttendanceReportsService {
 	private async categorizeEmployeesByStatusWithOrgHours(
 		allUsers: Omit<User, 'password'>[],
 		todayAttendance: Attendance[],
-		organizationId: number,
+		organizationId: string,
 		currentTime: Date = new Date(),
 	): Promise<{
 		presentEmployees: AttendanceReportUser[];
@@ -3232,7 +3316,7 @@ export class AttendanceReportsService {
 	 */
 	private async calculateRealTimeHoursWithOrgHours(
 		attendance: Attendance,
-		organizationId: number,
+		organizationId: string,
 		currentTime: Date = new Date(),
 		targetDate?: string, // YYYY-MM-DD format - if provided, only return hours for this specific date
 	): Promise<number> {
@@ -3281,7 +3365,7 @@ export class AttendanceReportsService {
 	private async generateBranchBreakdownWithOrgHours(
 		allUsers: Omit<User, 'password'>[],
 		todayAttendance: Attendance[],
-		organizationId: number,
+		organizationId: string,
 		currentTime: Date = new Date(),
 	): Promise<BranchSummary[]> {
 		const branchMap = new Map<number, BranchSummary>();
@@ -3399,7 +3483,7 @@ export class AttendanceReportsService {
 	 */
 	private async calculateComprehensiveTopPerformers(
 		templateEmployeeMetrics: any[],
-		organizationId: number,
+		organizationId: string,
 		startDate: Date,
 		endDate: Date
 	): Promise<any[]> {
@@ -3565,7 +3649,7 @@ export class AttendanceReportsService {
 	 * Generate employee metrics with organization hours awareness
 	 */
 	private async generateEmployeeMetricsWithOrgHours(
-		organizationId: number,
+		organizationId: string,
 		allUsers: Omit<User, 'password'>[],
 		todayAttendance: Attendance[],
 		comparisonAttendance: Attendance[],
@@ -3788,7 +3872,7 @@ export class AttendanceReportsService {
 	 */
 	private async calculateTotalOvertimeWithOrgHours(
 		todayAttendance: Attendance[],
-		organizationId: number,
+		organizationId: string,
 		currentTime: Date = new Date(),
 	): Promise<number> {
 		let totalOvertimeMinutes = 0;
@@ -3816,7 +3900,7 @@ export class AttendanceReportsService {
 	 */
 	private async calculateComparisonLateCountWithOrgHours(
 		comparisonAttendance: Attendance[],
-		organizationId: number,
+		organizationId: string,
 	): Promise<number> {
 		let lateCount = 0;
 
@@ -3850,7 +3934,7 @@ export class AttendanceReportsService {
 				latestCheckOut: Date | null;
 			}
 		>,
-		organizationId: number,
+		organizationId: string,
 		currentTime: Date = new Date(),
 	): Promise<{
 		presentEmployees: AttendanceReportUser[];
@@ -3975,7 +4059,7 @@ export class AttendanceReportsService {
 	 * Collect comprehensive performance analytics (integrated from user-daily-report.generator.ts)
 	 */
 	private async collectPerformanceAnalytics(
-		organizationId: number, 
+		organizationId: string, 
 		allUsers: Omit<User, 'password'>[], 
 		startDate: Date, 
 		endDate: Date
@@ -3991,7 +4075,10 @@ export class AttendanceReportsService {
 			// Calculate basic performance metrics using attendance data
 			const attendanceRecords = await this.attendanceRepository.find({
 				where: {
-					organisation: { uid: organizationId },
+					organisation: [
+						{ clerkOrgId: organizationId },
+						{ ref: organizationId }
+					],
 					checkIn: Between(startDate, endDate),
 				},
 				relations: ['owner'],
@@ -4047,7 +4134,7 @@ export class AttendanceReportsService {
 	 * Collect productivity insights and patterns (integrated from user-daily-report.generator.ts)
 	 */
 	private async collectProductivityInsights(
-		organizationId: number,
+		organizationId: string,
 		allUsers: Omit<User, 'password'>[],
 		startDate: Date,
 		endDate: Date
@@ -4062,7 +4149,10 @@ export class AttendanceReportsService {
 			// Get attendance records for the period
 			const attendanceRecords = await this.attendanceRepository.find({
 				where: {
-					organisation: { uid: organizationId },
+					organisation: [
+						{ clerkOrgId: organizationId },
+						{ ref: organizationId }
+					],
 					checkIn: Between(startDate, endDate),
 				},
 				order: { checkIn: 'DESC' },
@@ -4125,7 +4215,7 @@ export class AttendanceReportsService {
 	 * Collect wellness and work-life balance metrics (integrated from user-daily-report.generator.ts)
 	 */
 	private async collectWellnessMetrics(
-		organizationId: number,
+		organizationId: string,
 		startDate: Date,
 		endDate: Date
 	): Promise<{
@@ -4138,7 +4228,10 @@ export class AttendanceReportsService {
 			// Get attendance data for wellness analysis
 			const attendanceRecords = await this.attendanceRepository.find({
 				where: {
-					organisation: { uid: organizationId },
+					organisation: [
+						{ clerkOrgId: organizationId },
+						{ ref: organizationId }
+					],
 					checkIn: Between(startDate, endDate),
 				},
 				order: { checkIn: 'DESC' },
@@ -4173,7 +4266,7 @@ export class AttendanceReportsService {
 	/**
 	 * Calculate work-life balance metrics
 	 */
-	private async calculateWorkLifeBalance(records: Attendance[], organizationId: number): Promise<any> {
+	private async calculateWorkLifeBalance(records: Attendance[], organizationId: string): Promise<any> {
 		let totalHours = 0;
 		let overtimeDays = 0;
 

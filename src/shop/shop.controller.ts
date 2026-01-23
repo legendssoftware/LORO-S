@@ -1,7 +1,7 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Put, UseGuards, Req, Query, UnauthorizedException, Logger } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, UseGuards, Req, Query, UnauthorizedException, Logger, BadRequestException } from '@nestjs/common';
 import { ShopService } from './shop.service';
 import { ProjectsService } from './projects.service';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { RoleGuard } from '../guards/role.guard';
 import {
 	ApiOperation,
@@ -31,11 +31,12 @@ import { ProjectStatus, ProjectPriority, ProjectType } from '../lib/enums/projec
 import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
 import { OrderStatus } from '../lib/enums/status.enums';
 import { isPublic } from '../decorators/public.decorator';
-import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
+import { AuthenticatedRequest, getClerkOrgId } from '../lib/interfaces/authenticated-request.interface';
+import { OrganisationService } from '../organisation/organisation.service';
 
 @ApiTags('🛒 Shop')
 @Controller('shop')
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 @EnterpriseOnly('shop')
 @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid credentials or missing token' })
 export class ShopController {
@@ -44,7 +45,29 @@ export class ShopController {
 	constructor(
 		private readonly shopService: ShopService,
 		private readonly projectsService: ProjectsService,
+		private readonly organisationService: OrganisationService,
 	) {}
+
+	private async resolveOrgUid(req: AuthenticatedRequest): Promise<string> {
+		const clerkOrgId = getClerkOrgId(req);
+		if (!clerkOrgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		return clerkOrgId;
+	}
+
+	/**
+	 * Safely converts a value to a number
+	 * @param value - Value to convert (string, number, or undefined)
+	 * @returns Number or undefined if conversion fails
+	 */
+	private toNumber(value: string | number | undefined): number | undefined {
+		if (value === undefined || value === null || value === '') {
+			return undefined;
+		}
+		const numValue = Number(value);
+		return isNaN(numValue) || !isFinite(numValue) ? undefined : numValue;
+	}
 
 	//shopping
 	@Get('best-sellers')
@@ -142,9 +165,9 @@ Retrieves a curated list of top-performing products based on comprehensive sales
 			}
 		}
 	})
-	getBestSellers(@Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+	async getBestSellers(@Req() req: AuthenticatedRequest) {
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.shopService.getBestSellers(orgId, branchId);
 	}
 
@@ -237,8 +260,11 @@ Displays the latest products added to the inventory with enhanced freshness indi
 		},
 	})
 	getNewArrivals(@Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.shopService.getNewArrivals(orgId, branchId);
 	}
 
@@ -379,9 +405,9 @@ Discovers and retrieves high-value promotional products with exceptional discoun
 			}
 		}
 	})
-	getHotDeals(@Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+	async getHotDeals(@Req() req: AuthenticatedRequest) {
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.shopService.getHotDeals(orgId, branchId);
 	}
 
@@ -545,9 +571,9 @@ Retrieves a comprehensive list of all available product categories with hierarch
 			}
 		}
 	})
-	categories(@Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+	async categories(@Req() req: AuthenticatedRequest) {
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		this.logger.log(`📦 [ShopController] categories endpoint called - orgId: ${orgId}, branchId: ${branchId}`);
 		const result = this.shopService.categories(orgId, branchId);
 		this.logger.log(`📦 [ShopController] categories response prepared - categories count: ${(result as any)?.categories?.length || 0}`);
@@ -710,9 +736,9 @@ Discovers and retrieves premium special offers, limited-time promotions, and exc
 			}
 		}
 	})
-	specials(@Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+	async specials(@Req() req: AuthenticatedRequest) {
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.shopService.specials(orgId, branchId);
 	}
 
@@ -873,9 +899,9 @@ Creates comprehensive quotations from shopping cart data with advanced pricing, 
 			}
 		}
 	})
-	createQuotation(@Body() quotationData: CheckoutDto, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+	async createQuotation(@Body() quotationData: CheckoutDto, @Req() req: AuthenticatedRequest) {
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.shopService.createQuotation(quotationData, orgId, branchId);
 	}
 
@@ -1038,20 +1064,11 @@ Creates sophisticated blank quotations with advanced pricing structures and cust
 			}
 		}
 	})
-	createBlankQuotation(@Body() blankQuotationData: CreateBlankQuotationDto, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+	async createBlankQuotation(@Body() blankQuotationData: CreateBlankQuotationDto, @Req() req: AuthenticatedRequest) {
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		const userId = req.user?.uid;
-		
-		console.log(`[ShopController] Blank quotation request from user ${userId} (org: ${orgId}, branch: ${branchId}):`, {
-			itemCount: blankQuotationData?.items?.length,
-			priceListType: blankQuotationData?.priceListType,
-			title: blankQuotationData?.title,
-			owner: blankQuotationData?.owner?.uid,
-			client: blankQuotationData?.client?.uid,
-			recipientEmail: blankQuotationData?.recipientEmail,
-		});
-		
+		this.logger.log(`[ShopController] Blank quotation request from user ${userId} (org: ${orgId}, branch: ${branchId}): itemCount=${blankQuotationData?.items?.length}, priceListType=${blankQuotationData?.priceListType}, title=${blankQuotationData?.title}`);
 		return this.shopService.createBlankQuotation(blankQuotationData, orgId, branchId);
 	}
 
@@ -1238,9 +1255,9 @@ Retrieves comprehensive quotation listings with advanced filtering, sorting, and
 			}
 		}
 	})
-	getQuotations(@Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+	async getQuotations(@Req() req: AuthenticatedRequest) {
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		const userId = req.user?.uid;
 		const userRole = req.user?.accessLevel;
 		return this.shopService.getAllQuotations(orgId, branchId, userId, userRole);
@@ -1410,9 +1427,9 @@ Provides comprehensive access to detailed quotation information with complete it
 			}
 		}
 	})
-	getQuotationByRef(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+	async getQuotationByRef(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.shopService.getQuotationByRef(ref, orgId, branchId);
 	}
 
@@ -1588,9 +1605,9 @@ Retrieves comprehensive quotation history for specific users with performance an
 			}
 		}
 	})
-	getQuotationsByUser(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+	async getQuotationsByUser(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.shopService.getQuotationsByUser(ref, orgId, branchId);
 	}
 
@@ -1774,8 +1791,8 @@ Manages comprehensive quotation status transitions with workflow validation and 
 		@Body('status') status: OrderStatus,
 		@Req() req: AuthenticatedRequest,
 	) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.shopService.updateQuotationStatus(ref, status, orgId, branchId);
 	}
 
@@ -1899,9 +1916,9 @@ Retrieves comprehensive banner information for shop promotional displays with ad
 			}
 		}
 	})
-	getBanner(@Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+	async getBanner(@Req() req: AuthenticatedRequest) {
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		this.logger.log(`🎨 [ShopController] getBanner endpoint called - orgId: ${orgId}, branchId: ${branchId}`);
 		const result = this.shopService.getBanner(orgId, branchId);
 		this.logger.log(`🎨 [ShopController] getBanner response prepared - banners count: ${(result as any)?.banners?.length || 0}`);
@@ -2037,9 +2054,9 @@ Creates sophisticated promotional banners with advanced targeting, scheduling, a
 			}
 		}
 	})
-	createBanner(@Body() bannerData: CreateBannerDto, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+	async createBanner(@Body() bannerData: CreateBannerDto, @Req() req: AuthenticatedRequest) {
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.shopService.createBanner(bannerData, orgId, branchId);
 	}
 
@@ -2202,9 +2219,9 @@ Provides comprehensive banner modification capabilities with advanced versioning
 			}
 		}
 	})
-	updateBanner(@Param('ref') ref: number, @Body() bannerData: UpdateBannerDto, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+	async updateBanner(@Param('ref') ref: number, @Body() bannerData: UpdateBannerDto, @Req() req: AuthenticatedRequest) {
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.shopService.updateBanner(ref, bannerData, orgId, branchId);
 	}
 
@@ -2367,9 +2384,9 @@ Provides secure banner deletion with comprehensive safety checks, backup capabil
 			}
 		}
 	})
-	deleteBanner(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+	async deleteBanner(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.shopService.deleteBanner(ref, orgId, branchId);
 	}
 
@@ -2477,8 +2494,8 @@ Intelligently generates SKUs for products that lack unique identifiers, ensuring
 		}
 	})
 	async generateMissingSKUs(@Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.shopService.generateSKUsForExistingProducts(orgId, branchId);
 	}
 
@@ -2611,8 +2628,8 @@ This operation regenerates ALL product SKUs in the system. This is a destructive
 		}
 	})
 	async regenerateAllSKUs(@Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.shopService.regenerateAllSKUs(orgId, branchId);
 	}
 
@@ -3069,8 +3086,8 @@ Initiates the client review process by sending professional quotations with secu
 		},
 	})
 	async sendQuotationToClient(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.shopService.sendQuotationToClient(ref, orgId, branchId);
 	}
 
@@ -3265,8 +3282,8 @@ Create a new project for tracking quotations, budget, and progress.
 		},
 	})
 	async createProject(@Body() createProjectDto: CreateProjectDto, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		const createdById = req.user?.uid;
 		return this.projectsService.createProject(createProjectDto, orgId, branchId, createdById);
 	}
@@ -3403,8 +3420,8 @@ Retrieve projects with comprehensive filtering, pagination, and role-based acces
 		@Query('progressMax') progressMax?: number,
 		@Query('search') search?: string,
 	) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		const userRole = req.user?.accessLevel;
 		const userId = req.user?.uid;
 
@@ -3421,7 +3438,7 @@ Retrieve projects with comprehensive filtering, pagination, and role-based acces
 			...(progressMin && { progressMin }),
 			...(progressMax && { progressMax }),
 			...(search && { search }),
-			...(orgId && { orgId }),
+			orgId,
 			...(branchId && { branchId }),
 		};
 
@@ -3595,8 +3612,8 @@ Retrieve a specific project with complete details including all relationships.
 		},
 	})
 	async getProject(@Param('id') id: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.projectsService.findOne(id, orgId, branchId);
 	}
 
@@ -3744,8 +3761,8 @@ Update project information with comprehensive validation and business rule enfor
 		@Body() updateProjectDto: UpdateProjectDto,
 		@Req() req: AuthenticatedRequest,
 	) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		const updatedById = req.user?.uid;
 		return this.projectsService.updateProject(id, updateProjectDto, orgId, branchId, updatedById);
 	}
@@ -3819,8 +3836,8 @@ Safely delete a project with comprehensive validation and business rule enforcem
 		},
 	})
 	async deleteProject(@Param('id') id: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		const deletedById = req.user?.uid;
 		return this.projectsService.deleteProject(id, orgId, branchId, deletedById);
 	}
@@ -3960,8 +3977,8 @@ Assign multiple quotations to a specific project for comprehensive tracking and 
 		@Body() assignDto: AssignQuotationToProjectDto,
 		@Req() req: AuthenticatedRequest,
 	) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		const assignedById = req.user?.uid;
 		return this.projectsService.assignQuotationsToProject(assignDto, orgId, branchId, assignedById);
 	}
@@ -4044,8 +4061,8 @@ Remove quotations from their current project assignments.
 		@Body() unassignDto: UnassignQuotationFromProjectDto,
 		@Req() req: AuthenticatedRequest,
 	) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		const unassignedById = req.user?.uid;
 		return this.projectsService.unassignQuotationsFromProject(unassignDto, orgId, branchId, unassignedById);
 	}
@@ -4134,8 +4151,8 @@ Retrieve all projects for a specific client with complete project details.
 		},
 	})
 	async getProjectsByClient(@Param('clientId') clientId: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		const userRole = req.user?.role || req.user?.accessLevel;
 		const userId = req.user?.uid;
 
@@ -4214,8 +4231,8 @@ Retrieve all projects assigned to a specific user.
 		},
 	})
 	async getProjectsByUser(@Param('userId') userId: number, @Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.projectsService.getProjectsByUser(userId, orgId, branchId);
 	}
 
@@ -4343,8 +4360,8 @@ Comprehensive project analytics and statistics for management dashboards.
 		},
 	})
 	async getProjectStats(@Req() req: AuthenticatedRequest) {
-		const orgId = req.user?.org?.uid || req.user?.organisationRef;
-		const branchId = req.user?.branch?.uid;
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
 		return this.projectsService.getProjectStats(orgId, branchId);
 	}
 }

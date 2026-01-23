@@ -21,6 +21,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ApprovalsModule } from '../approvals/approvals.module';
 import { ClerkModule } from '../clerk/clerk.module';
+import { OrganisationModule } from '../organisation/organisation.module';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { ClerkModule } from '../clerk/clerk.module';
     forwardRef(() => ApprovalsModule),
     ScheduleModule.forRoot(),
     ClerkModule,
+    OrganisationModule,
   ],
   controllers: [ClientsController, ClientAuthController],
   providers: [ClientsService, ClientAuthService, ClientCommunicationScheduleService],

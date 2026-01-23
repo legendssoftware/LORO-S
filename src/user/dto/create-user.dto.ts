@@ -6,21 +6,14 @@ import { CreateUserEmploymentProfileDto } from './create-user-employment-profile
 import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString, IsBoolean, IsNumber, IsDateString, IsObject } from "class-validator";
 
 export class CreateUserDto {
-    @IsNotEmpty()
+    @IsOptional()
     @IsString()
     @ApiProperty({
-        description: 'The username for authentication',
+        description: 'The username for authentication (optional - not needed for Clerk-synced users)',
         example: 'brandon123',
+        required: false,
     })
-    username: string;
-
-    @IsNotEmpty()
-    @IsString()
-    @ApiProperty({
-        description: 'The password for authentication',
-        example: 'securePassword123',
-    })
-    password: string;
+    username?: string;
 
     @IsNotEmpty()
     @IsString()

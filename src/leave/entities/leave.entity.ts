@@ -19,11 +19,11 @@ export class Leave {
 	uid: number;
 
 	@ManyToOne(() => User, { onDelete: 'SET NULL', nullable: true })
-	@JoinColumn({ name: 'ownerUid' })
+	@JoinColumn({ name: 'ownerClerkUserId', referencedColumnName: 'clerkUserId' })
 	owner?: User;
 
 	@Column({ nullable: true })
-	ownerUid?: number;
+	ownerClerkUserId?: string;
 
 	@Column({
 		type: 'enum',
@@ -51,11 +51,11 @@ export class Leave {
 	status: LeaveStatus;
 
 	@ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
-	@JoinColumn({ name: 'approvedByUid' })
+	@JoinColumn({ name: 'approvedByClerkUserId', referencedColumnName: 'clerkUserId' })
 	approvedBy?: User;
 
 	@Column({ nullable: true })
-	approvedByUid?: number;
+	approvedByClerkUserId?: string;
 
 	@Column({ type: 'text', nullable: true })
 	comments?: string;
@@ -114,8 +114,8 @@ export class Leave {
 	@Column({ type: 'simple-array', nullable: true })
 	tags?: string[];
 
-	@Column({ type: 'int', nullable: true })
-	delegatedToUid?: number;
+	@Column({ nullable: true })
+	delegatedToClerkUserId?: string;
 
 	@CreateDateColumn({ type: 'timestamptz' })
 	createdAt: Date;

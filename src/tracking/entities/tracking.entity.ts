@@ -27,11 +27,11 @@ export class Tracking {
     duration: number;
 
     @ManyToOne(() => User, { eager: true })
-    @JoinColumn({ name: 'owner_id' })
+    @JoinColumn({ name: 'ownerClerkUserId', referencedColumnName: 'clerkUserId' })
     owner: User;
 
     @Column({ nullable: true })
-    owner_id: number;
+    ownerClerkUserId: string;
 
     @CreateDateColumn({ type: 'timestamptz' })
     createdAt: Date;

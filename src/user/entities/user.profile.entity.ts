@@ -1,6 +1,6 @@
 import { Gender } from "../../lib/enums/gender.enums";
 import { User } from "./user.entity";
-import { Column, Entity, OneToOne, PrimaryGeneratedColumn } from "typeorm";
+import { Column, Entity, OneToOne, PrimaryGeneratedColumn, JoinColumn } from "typeorm";
 
 @Entity('user_profile')
 export class UserProfile {
@@ -80,5 +80,9 @@ export class UserProfile {
     coatSize: string;
 
     @OneToOne(() => User, (user) => user?.userProfile)
+    @JoinColumn({ name: 'ownerClerkUserId', referencedColumnName: 'clerkUserId' })
     owner: User;
+
+    @Column({ nullable: true })
+    ownerClerkUserId: string;
 }   

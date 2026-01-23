@@ -25,11 +25,21 @@ export class LicenseAuditService {
         metadata: AuditMetadata = {}
     ): Promise<LicenseAudit> {
         try {
+            // Get organization uid from the relation if available, otherwise we need to query it
+            let organizationId: number;
+            if (license.organisation?.uid) {
+                organizationId = license.organisation.uid;
+            } else {
+                // If organisation relation is not loaded, we can't get the uid
+                // This should not happen in normal flow, but handle gracefully
+                throw new Error('License organisation relation must be loaded to create audit log');
+            }
+
             const audit = this.auditRepository.create({
                 action,
                 licenseId: license.uid,
                 userId: user.uid,
-                organizationId: license.organisationRef,
+                organizationId: organizationId,
                 metadata: {
                     ...metadata,
                     timestamp: new Date().toISOString(),

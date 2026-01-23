@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { OrganisationHours } from '../../organisation/entities/organisation-hours.entity';
+import { Organisation } from '../../organisation/entities/organisation.entity';
 import { TimeCalculatorUtil } from '../../lib/utils/time-calculator.util';
 import { format } from 'date-fns';
 
@@ -15,18 +16,51 @@ export interface WorkingDayInfo {
 @Injectable()
 export class OrganizationHoursService {
 	private readonly logger = new Logger(OrganizationHoursService.name);
-	private hoursCache = new Map<number, OrganisationHours>();
+	private hoursCache = new Map<string, OrganisationHours>();
 	private cacheExpiry = 30 * 60 * 1000; // 30 minutes
 
 	constructor(
 		@InjectRepository(OrganisationHours)
 		private organisationHoursRepository: Repository<OrganisationHours>,
+		@InjectRepository(Organisation)
+		private organisationRepository: Repository<Organisation>,
 	) {}
 
 	/**
-	 * Get organization hours with caching
+	 * Resolves Clerk org ID (string) to organisation numeric uid.
+	 * Looks up by clerkOrgId or ref. Returns null if not found.
 	 */
-	async getOrganizationHours(organizationId: number): Promise<OrganisationHours | null> {
+	private async resolveOrgId(clerkOrgId?: string): Promise<number | null> {
+		if (!clerkOrgId) {
+			return null;
+		}
+		const org = await this.organisationRepository.findOne({
+			where: [
+				{ clerkOrgId, isDeleted: false },
+				{ ref: clerkOrgId, isDeleted: false },
+			],
+			select: ['uid'],
+		});
+		return org?.uid ?? null;
+	}
+
+	/**
+	 * Resolves organisation numeric uid to Clerk org ID string (clerkOrgId or ref).
+	 * Returns null if not found.
+	 */
+	private async resolveUidToOrgIdString(uid: number): Promise<string | null> {
+		const org = await this.organisationRepository.findOne({
+			where: { uid, isDeleted: false },
+			select: ['clerkOrgId', 'ref'],
+		});
+		return org ? (org.clerkOrgId || org.ref) : null;
+	}
+
+	/**
+	 * Get organization hours with caching
+	 * Accepts Clerk org ID (string) and filters by clerkOrgId or ref
+	 */
+	async getOrganizationHours(organizationId: string): Promise<OrganisationHours | null> {
 		try {
 			// Check cache first
 			const cached = this.hoursCache.get(organizationId);
@@ -34,12 +68,12 @@ export class OrganizationHoursService {
 				return cached;
 			}
 
-			const orgHours = await this.organisationHoursRepository.findOne({
-				where: {
-					organisationUid: organizationId,
-					isDeleted: false,
-				},
-			});
+			const orgHours = await this.organisationHoursRepository
+				.createQueryBuilder('hours')
+				.leftJoinAndSelect('hours.organisation', 'organisation')
+				.where('hours.isDeleted = :isDeleted', { isDeleted: false })
+				.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId: organizationId })
+				.getOne();
 
 			if (orgHours) {
 				// Cache the result
@@ -56,9 +90,24 @@ export class OrganizationHoursService {
 
 	/**
 	 * Get working day information for a specific date
+	 * Accepts string (Clerk org ID) or number (organisation uid) for backward compatibility
 	 */
-	async getWorkingDayInfo(organizationId: number, date: Date): Promise<WorkingDayInfo> {
-		const orgHours = await this.getOrganizationHours(organizationId);
+	async getWorkingDayInfo(organizationId: string | number, date: Date): Promise<WorkingDayInfo> {
+		// Convert to string if number (resolve uid to clerkOrgId/ref)
+		const orgIdString = typeof organizationId === 'number' 
+			? await this.resolveUidToOrgIdString(organizationId)
+			: organizationId;
+		
+		if (!orgIdString) {
+			// Return default if org not found
+			return {
+				isWorkingDay: true,
+				startTime: TimeCalculatorUtil.DEFAULT_WORK.START_TIME,
+				endTime: TimeCalculatorUtil.DEFAULT_WORK.END_TIME,
+				expectedWorkMinutes: TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES,
+			};
+		}
+		const orgHours = await this.getOrganizationHours(orgIdString);
 		const dayOfWeek = TimeCalculatorUtil.getDayOfWeek(date);
 
 		if (!orgHours) {
@@ -136,7 +185,7 @@ export class OrganizationHoursService {
 	 * Check if user is late based on organization hours
 	 */
 	async isUserLate(
-		organizationId: number,
+		organizationId: string | number,
 		checkInTime: Date,
 	): Promise<{
 		isLate: boolean;
@@ -158,7 +207,7 @@ export class OrganizationHoursService {
 		const graceMinutes = TimeCalculatorUtil.DEFAULT_WORK.PUNCTUALITY_GRACE_MINUTES;
 
 		const isLate = checkInMinutes > expectedStartMinutes + graceMinutes;
-		const lateMinutes = isLate ? checkInMinutes - expectedStartMinutes : 0;
+		const lateMinutes = isLate ? checkInMinutes - expectedStartMinutes - graceMinutes : 0;
 
 		return {
 			isLate,
@@ -171,7 +220,7 @@ export class OrganizationHoursService {
 	 * Check if user departed early based on organization hours
 	 */
 	async isUserEarly(
-		organizationId: number,
+		organizationId: string | number,
 		checkOutTime: Date,
 	): Promise<{
 		isEarly: boolean;
@@ -202,7 +251,7 @@ export class OrganizationHoursService {
 	 * Calculate overtime based on organization's standard work hours
 	 */
 	async calculateOvertime(
-		organizationId: number,
+		organizationId: string | number,
 		workDate: Date,
 		actualWorkMinutes: number,
 	): Promise<{
@@ -226,12 +275,23 @@ export class OrganizationHoursService {
 	/**
 	 * Get organization's peak working hours
 	 */
-	async getPeakWorkingHours(organizationId: number): Promise<{
+	async getPeakWorkingHours(organizationId: string | number): Promise<{
 		startTime: string;
 		endTime: string;
 		expectedDailyHours: number;
 	}> {
-		const orgHours = await this.getOrganizationHours(organizationId);
+		const orgIdString = typeof organizationId === 'number' 
+			? await this.resolveUidToOrgIdString(organizationId)
+			: organizationId;
+		
+		if (!orgIdString) {
+			return {
+				startTime: TimeCalculatorUtil.DEFAULT_WORK.START_TIME,
+				endTime: TimeCalculatorUtil.DEFAULT_WORK.END_TIME,
+				expectedDailyHours: TimeCalculatorUtil.DEFAULT_WORK.STANDARD_HOURS,
+			};
+		}
+		const orgHours = await this.getOrganizationHours(orgIdString);
 
 		if (!orgHours) {
 			return {
@@ -270,8 +330,15 @@ export class OrganizationHoursService {
 	/**
 	 * Get working days for organization
 	 */
-	async getWorkingDays(organizationId: number): Promise<string[]> {
-		const orgHours = await this.getOrganizationHours(organizationId);
+	async getWorkingDays(organizationId: string | number): Promise<string[]> {
+		const orgIdString = typeof organizationId === 'number' 
+			? await this.resolveUidToOrgIdString(organizationId)
+			: organizationId;
+		
+		if (!orgIdString) {
+			return ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'];
+		}
+		const orgHours = await this.getOrganizationHours(orgIdString);
 
 		if (!orgHours) {
 			return ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'];
@@ -297,10 +364,21 @@ export class OrganizationHoursService {
 		dayOfWeek: string;
 	}> {
 		try {
-			// Convert orgRef to organizationId if it's a string
-			const organizationId = typeof orgRef === 'string' ? parseInt(orgRef) : orgRef;
+			const orgIdString = typeof orgRef === 'number' 
+				? await this.resolveUidToOrgIdString(orgRef)
+				: orgRef;
 			
-			const hours = await this.getOrganizationHours(organizationId);
+			if (!orgIdString) {
+				return {
+					isOpen: true, // Default to open if org not found
+					isWorkingDay: true,
+					isHolidayMode: false,
+					reason: 'Organization not found',
+					dayOfWeek: this.getDayOfWeek(checkTime),
+				};
+			}
+			
+			const hours = await this.getOrganizationHours(orgIdString);
 			
 			if (!hours) {
 				return {

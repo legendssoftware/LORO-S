@@ -1,4 +1,5 @@
 import { Module, forwardRef } from '@nestjs/common';
+import { ClerkModule } from '../clerk/clerk.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ScheduleModule } from '@nestjs/schedule';
 import { SalesTipsService } from './sales-tips.service';
@@ -12,10 +13,11 @@ import { LicensingModule } from '../licensing/licensing.module';
 
 @Module({
   imports: [
+		ClerkModule,
     TypeOrmModule.forFeature([User, Notification]),
     ScheduleModule.forRoot(),
     forwardRef(() => CommunicationModule), // Import CommunicationModule for CommunicationService
-    LicensingModule, // Import LicensingModule for LicensingService (required by AuthGuard)
+    LicensingModule, // Import LicensingModule for LicensingService
   ],
   controllers: [SalesTipsController],
   providers: [SalesTipsService, UnifiedNotificationService, ExpoPushService],

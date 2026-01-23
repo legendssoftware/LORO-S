@@ -83,6 +83,24 @@ export class ClientsService {
 	}
 
 	/**
+	 * Resolves Clerk org ID (string) to organisation numeric uid.
+	 * Looks up by clerkOrgId or ref. Returns null if not found.
+	 */
+	private async resolveOrgId(clerkOrgId?: string): Promise<number | null> {
+		if (!clerkOrgId) {
+			return null;
+		}
+		const org = await this.organisationRepository.findOne({
+			where: [
+				{ clerkOrgId, isDeleted: false },
+				{ ref: clerkOrgId, isDeleted: false },
+			],
+			select: ['uid'],
+		});
+		return org?.uid ?? null;
+	}
+
+	/**
 	 * Generates cache keys for complex queries with multiple parameters.
 	 * 
 	 * @param params - Object containing query parameters
@@ -92,7 +110,7 @@ export class ClientsService {
 		type: string;
 		page?: number;
 		limit?: number;
-		orgId?: number;
+		orgId?: string;
 		branchId?: number;
 		userId?: number;
 		filters?: Record<string, any>;
@@ -476,19 +494,54 @@ export class ClientsService {
 	 * @param orgId - The organization ID to get settings for
 	 * @returns Promise<OrganisationSettings | null> - The organization settings object or null if not found
 	 */
-	private async getOrganisationSettings(orgId: number): Promise<OrganisationSettings | null> {
+	/**
+	 * Find organisation by Clerk org ID (string) or ref
+	 * Returns the organisation entity with its uid for database operations
+	 */
+	private async findOrganisationByClerkId(orgId?: string): Promise<Organisation | null> {
+		if (!orgId) {
+			return null;
+		}
+
+		const organisation = await this.organisationRepository.findOne({
+			where: [
+				{ clerkOrgId: orgId },
+				{ ref: orgId }
+			],
+			select: ['uid', 'clerkOrgId', 'ref'],
+		});
+
+		return organisation;
+	}
+
+	private async getOrganisationSettings(orgId: number | string): Promise<OrganisationSettings | null> {
 		const startTime = Date.now();
 		
-		if (!orgId || isNaN(orgId) || orgId <= 0) {
+		if (!orgId) {
 			this.logger.debug(`[ORG_SETTINGS] Invalid organization ID provided: ${orgId}`);
 			return null;
 		}
 
-		this.logger.debug(`[ORG_SETTINGS] Fetching settings for organization ${orgId}`);
+		// Resolve Clerk org ID to numeric uid if string
+		let resolvedOrgUid: number | null = null;
+		if (typeof orgId === 'string') {
+			resolvedOrgUid = await this.resolveOrgId(orgId);
+			if (!resolvedOrgUid) {
+				this.logger.debug(`[ORG_SETTINGS] Organization not found for Clerk ID: ${orgId}`);
+				return null;
+			}
+		} else if (typeof orgId === 'number' && orgId > 0) {
+			resolvedOrgUid = orgId;
+		} else {
+			this.logger.debug(`[ORG_SETTINGS] Invalid organization ID provided: ${orgId}`);
+			return null;
+		}
+
+		this.logger.debug(`[ORG_SETTINGS] Fetching settings for organization ${resolvedOrgUid}`);
 
 		try {
 			const settings = await this.organisationSettingsRepository.findOne({
-				where: { organisationUid: orgId },
+				where: { organisationUid: resolvedOrgUid },
 			});
 
 			const executionTime = Date.now() - startTime;
@@ -541,7 +594,20 @@ export class ClientsService {
 	 * }, 1, 2);
 	 * ```
 	 */
-	async create(createClientDto: CreateClientDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
+	async create(createClientDto: CreateClientDto, orgId?: string, branchId?: number): Promise<{ message: string }> {
+		// Lookup organisation by string (clerkOrgId or ref) for entity relation
+		let organisation: Organisation | null = null;
+		if (orgId) {
+			organisation = await this.organisationRepository.findOne({
+				where: [
+					{ clerkOrgId: orgId },
+					{ ref: orgId }
+				]
+			});
+			if (!organisation) {
+				throw new BadRequestException(`Organization not found for ID: ${orgId}`);
+			}
+		}
 		const startTime = Date.now();
 		this.logger.log(`[CLIENT_CREATE] Starting client creation for: ${createClientDto.email} ${orgId ? `in org: ${orgId}` : ''} ${branchId ? `in branch: ${branchId}` : ''}`);
 		this.logger.debug(`[CLIENT_CREATE] Request payload: ${JSON.stringify({ ...createClientDto, notifyClient: createClientDto.notifyClient ?? true }, null, 2)}`);
@@ -549,28 +615,23 @@ export class ClientsService {
 		try {
 			this.logger.debug(`[CLIENT_CREATE] Checking for existing client with email: ${createClientDto.email}`);
 			// First, check for existing client with the same email within organization scope
+			// Filter by clerkOrgId or ref (both are strings)
 			const existingClient = await this.clientsRepository.findOne({
 				where: {
 					email: createClientDto.email,
 					isDeleted: false,
-					...(orgId && { organisation: { uid: orgId } }),
+					...(orgId && {
+						organisation: [
+							{ clerkOrgId: orgId },
+							{ ref: orgId }
+						]
+					}),
 				},
 			});
 
 			if (existingClient) {
 				this.logger.warn(`[CLIENT_CREATE] Client with email ${createClientDto.email} already exists in organization ${orgId || 'global'}`);
 				throw new BadRequestException(`A client with email ${createClientDto.email} already exists in this organization`);
-			}
-
-			// Validate the orgId and branchId if provided
-			if (orgId) {
-				this.logger.debug(`[CLIENT_CREATE] Validating organization ${orgId}`);
-				const organisation = await this.organisationRepository.findOne({ where: { uid: orgId } });
-				if (!organisation) {
-					this.logger.error(`[CLIENT_CREATE] Organization ${orgId} not found`);
-					throw new BadRequestException(`Organisation with ID ${orgId} not found`);
-				}
-				this.logger.debug(`[CLIENT_CREATE] Organization ${orgId} validated successfully: ${organisation.name}`);
 			}
 
 			// Process and validate logo URL (generate fallback if needed)
@@ -602,9 +663,9 @@ export class ClientsService {
 				notifyClient: undefined,
 			} as DeepPartial<Client>;
 
-			// Only set organization if orgId is provided and valid
-			if (orgId) {
-				clientData.organisation = { uid: orgId };
+			// Only set organization if orgId is provided and valid - use relation object
+			if (organisation) {
+				clientData.organisation = organisation;
 			}
 
 			// Only set branch if branchId is provided and valid
@@ -621,8 +682,8 @@ export class ClientsService {
 				// Get default radius from organization settings if available
 				let defaultRadius = 500; // Default fallback value
 
-				if (orgId) {
-					const orgSettings = await this.getOrganisationSettings(orgId);
+				if (organisation) {
+					const orgSettings = await this.getOrganisationSettings(organisation.uid);
 					if (orgSettings?.geofenceDefaultRadius) {
 						defaultRadius = orgSettings.geofenceDefaultRadius;
 					}
@@ -1152,7 +1213,7 @@ export class ClientsService {
 	async findAll(
 		page: number = 1,
 		limit: number = Number(process.env.DEFAULT_PAGE_LIMIT),
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 		filters?: {
 			status?: GeneralStatus;
@@ -1214,19 +1275,24 @@ export class ClientsService {
 			}
 		}
 
-		// Create find options with relationships
-		const where: FindOptionsWhere<Client> = { isDeleted: false };
+		// Build query using query builder to filter by clerkOrgId/ref
+		const queryBuilder = this.clientsRepository
+			.createQueryBuilder('client')
+			.leftJoinAndSelect('client.organisation', 'organisation')
+			.leftJoinAndSelect('client.branch', 'branch')
+			.leftJoinAndSelect('client.owner', 'owner')
+			.where('client.isDeleted = :isDeleted', { isDeleted: false });
 
 		// Filter by organization - always apply this filter
 		if (orgId) {
-			where.organisation = { uid: orgId };
+			queryBuilder.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 		}
 
 		// Filter by branch - apply branch filter for all users
 		// Elevated users can see clients across branches only if they explicitly access with no branchId
 		if (branchId) {
 			this.logger.debug(`[CLIENT_FIND_ALL] Applying branch filter: ${branchId}`);
-			where.branch = { uid: branchId };
+			queryBuilder.andWhere('branch.uid = :branchId', { branchId });
 		} else if (hasElevatedAccess) {
 			this.logger.debug(`[CLIENT_FIND_ALL] No branch filter applied - elevated user can see all branches in organization`);
 		} else if (!hasElevatedAccess && !branchId) {
@@ -1246,25 +1312,25 @@ export class ClientsService {
 		}
 
 		if (filters?.status) {
-			where.status = filters.status;
+			queryBuilder.andWhere('client.status = :status', { status: filters.status });
 		}
 
 		if (filters?.category) {
-			where.category = filters.category;
+			queryBuilder.andWhere('client.category = :category', { category: filters.category });
 		}
 
 		if (filters?.industry) {
-			where.industry = filters.industry;
+			queryBuilder.andWhere('client.industry = :industry', { industry: filters.industry });
 		}
 
 		if (filters?.riskLevel) {
-			where.riskLevel = filters.riskLevel;
+			queryBuilder.andWhere('client.riskLevel = :riskLevel', { riskLevel: filters.riskLevel });
 		}
 
 		// Filter by assigned clients if user has limited access (not elevated)
 		if (userAssignedClients && userAssignedClients.length > 0 && !hasElevatedAccess) {
 			this.logger.debug(`[CLIENT_FIND_ALL] Filtering by assigned clients: ${userAssignedClients.join(', ')}`);
-			where.uid = In(userAssignedClients);
+			queryBuilder.andWhere('client.uid IN (:...userAssignedClients)', { userAssignedClients });
 		}
 
 			if (filters?.search) {
@@ -1275,12 +1341,11 @@ export class ClientsService {
 
 			this.logger.debug(`[CLIENT_FIND_ALL] Executing database query with pagination`);
 			// Find clients with pagination
-			const [clients, total] = await this.clientsRepository.findAndCount({
-				where,
-				skip: (page - 1) * limit,
-				take: limit,
-				order: { createdAt: 'DESC' },
-			});
+			const [clients, total] = await queryBuilder
+				.skip((page - 1) * limit)
+				.take(limit)
+				.orderBy('client.createdAt', 'DESC')
+				.getManyAndCount();
 
 			if (!clients) {
 				this.logger.warn(`[CLIENT_FIND_ALL] No clients found with current filters`);
@@ -1361,11 +1426,22 @@ export class ClientsService {
 	 * // }
 	 * ```
 	 */
-	async findOne(ref: number, orgId?: number, branchId?: number, userId?: number): Promise<{ message: string; client: Client | null }> {
+	async findOne(ref: number, orgId?: string, branchId?: number, userId?: number): Promise<{ message: string; client: Client | null }> {
 		const startTime = Date.now();
 		this.logger.log(`[CLIENT_FIND_ONE] Finding client with ID: ${ref}, orgId: ${orgId}, branchId: ${branchId}, userId: ${userId}`);
 		
 		try {
+			// Find organisation by Clerk org ID if provided
+			let organisationUid: number | undefined;
+			if (orgId) {
+				const organisation = await this.findOrganisationByClerkId(orgId);
+				if (!organisation) {
+					this.logger.error(`[CLIENT_FIND_ONE] Organization not found for Clerk ID: ${orgId}`);
+					throw new BadRequestException(`Organisation not found for ID: ${orgId}`);
+				}
+				organisationUid = organisation.uid;
+			}
+
 			// Check user access permissions
 			this.logger.debug(`[CLIENT_FIND_ONE] Checking user access for user ${userId}`);
 			const { hasElevatedAccess, userAssignedClients, user } = await this.checkUserAccess(userId);
@@ -1382,7 +1458,7 @@ export class ClientsService {
 				this.logger.debug(`[CLIENT_FIND_ONE] User ${userId} has elevated access (${user.accessLevel})`);
 			}
 
-			const cacheKey = `${this.getCacheKey(ref)}_org${orgId}_branch${branchId}_user${userId}`;
+			const cacheKey = `${this.getCacheKey(ref)}_org${organisationUid || orgId}_branch${branchId}_user${userId}`;
 			this.logger.debug(`[CLIENT_FIND_ONE] Checking cache with key: ${cacheKey}`);
 			
 			const cachedClient = await this.cacheManager.get<Client>(cacheKey);
@@ -1405,9 +1481,9 @@ export class ClientsService {
 			};
 
 			// Filter by organization and branch
-			if (orgId) {
-				where.organisation = { uid: orgId };
-				this.logger.debug(`[CLIENT_FIND_ONE] Filtering by organization: ${orgId}`);
+			if (organisationUid) {
+				where.organisation = { uid: organisationUid };
+				this.logger.debug(`[CLIENT_FIND_ONE] Filtering by organization: ${organisationUid}`);
 			}
 
 			if (branchId) {
@@ -1435,7 +1511,7 @@ export class ClientsService {
 			
 			// Add organization filter if provided
 			if (orgId) {
-				queryBuilder.andWhere('client.organisationUid = :orgId', { orgId });
+				queryBuilder.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 			}
 			
 			// Add branch filter if provided
@@ -1523,7 +1599,7 @@ export class ClientsService {
 	async update(
 		ref: number,
 		updateClientDto: UpdateClientDto,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<{ message: string }> {
 		const startTime = Date.now();
@@ -1612,12 +1688,23 @@ export class ClientsService {
 				}
 			}
 
+			// Find organisation by Clerk org ID if provided
+			let organisationUid: number | undefined;
+			if (orgId) {
+				const organisation = await this.findOrganisationByClerkId(orgId);
+				if (!organisation) {
+					this.logger.error(`[CLIENT_UPDATE] Organization not found for Clerk ID: ${orgId}`);
+					throw new BadRequestException(`Organisation not found for ID: ${orgId}`);
+				}
+				organisationUid = organisation.uid;
+			}
+
 			// Create where conditions including organization and branch
 			const whereConditions: FindOptionsWhere<Client> = { uid: ref };
 
 			// Add organization filter if provided
-			if (orgId) {
-				whereConditions.organisation = { uid: orgId };
+			if (organisationUid) {
+				whereConditions.organisation = { uid: organisationUid };
 			}
 
 			// Add branch filter if provided
@@ -1836,7 +1923,7 @@ export class ClientsService {
 	 * // Response: { message: "Success" }
 	 * ```
 	 */
-	async remove(ref: number, orgId?: number, branchId?: number): Promise<{ message: string }> {
+	async remove(ref: number, orgId?: string, branchId?: number): Promise<{ message: string }> {
 		const startTime = Date.now();
 		this.logger.log(`[CLIENT_REMOVE] Starting soft delete for client ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
 		
@@ -1851,13 +1938,24 @@ export class ClientsService {
 			const clientName = existingClient.client.name;
 			this.logger.debug(`[CLIENT_REMOVE] Found client ${ref} (${clientName}) for deletion`);
 
+			// Find organisation by Clerk org ID if provided
+			let organisationUid: number | undefined;
+			if (orgId) {
+				const organisation = await this.findOrganisationByClerkId(orgId);
+				if (!organisation) {
+					this.logger.error(`[CLIENT_REMOVE] Organization not found for Clerk ID: ${orgId}`);
+					throw new BadRequestException(`Organisation not found for ID: ${orgId}`);
+				}
+				organisationUid = organisation.uid;
+			}
+
 			// Create where conditions including organization and branch
 			const whereConditions: FindOptionsWhere<Client> = { uid: ref };
 
 			// Add organization filter if provided
-			if (orgId) {
-				whereConditions.organisation = { uid: orgId };
-				this.logger.debug(`[CLIENT_REMOVE] Adding organization filter: ${orgId}`);
+			if (organisationUid) {
+				whereConditions.organisation = { uid: organisationUid };
+				this.logger.debug(`[CLIENT_REMOVE] Adding organization filter: ${organisationUid}`);
 			}
 
 			// Add branch filter if provided
@@ -1888,11 +1986,22 @@ export class ClientsService {
 			};
 		}
 	}
-	async restore(ref: number, orgId?: number, branchId?: number): Promise<{ message: string }> {
+	async restore(ref: number, orgId?: string, branchId?: number): Promise<{ message: string }> {
 		const startTime = Date.now();
 		this.logger.log(`[CLIENT_RESTORE] Starting restore for client ${ref}, orgId: ${orgId}, branchId: ${branchId}`);
 		
 		try {
+			// Find organisation by Clerk org ID if provided
+			let organisationUid: number | undefined;
+			if (orgId) {
+				const organisation = await this.findOrganisationByClerkId(orgId);
+				if (!organisation) {
+					this.logger.error(`[CLIENT_RESTORE] Organization not found for Clerk ID: ${orgId}`);
+					throw new BadRequestException(`Organisation not found for ID: ${orgId}`);
+				}
+				organisationUid = organisation.uid;
+			}
+
 			// Find the deleted client specifically
 			const where: FindOptionsWhere<Client> = {
 				uid: ref,
@@ -1900,9 +2009,9 @@ export class ClientsService {
 			};
 
 			// Filter by organization and branch
-			if (orgId) {
-				where.organisation = { uid: orgId };
-				this.logger.debug(`[CLIENT_RESTORE] Adding organization filter: ${orgId}`);
+			if (organisationUid) {
+				where.organisation = { uid: organisationUid };
+				this.logger.debug(`[CLIENT_RESTORE] Adding organization filter: ${organisationUid}`);
 			}
 
 			if (branchId) {
@@ -1954,7 +2063,7 @@ export class ClientsService {
 		searchTerm: string,
 		page: number = 1,
 		limit: number = 10,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 		userId?: number,
 	): Promise<PaginatedResponse<Client>> {
@@ -2005,8 +2114,12 @@ export class ClientsService {
 		const where: FindOptionsWhere<Client> = { isDeleted: false };
 
 		// Filter by organization - always apply this filter
+		// Filter by clerkOrgId or ref (both are strings)
 		if (orgId) {
-			where.organisation = { uid: orgId };
+			where.organisation = [
+				{ clerkOrgId: orgId },
+				{ ref: orgId }
+			];
 		}
 
 		// Filter by branch - apply branch filter for all users
@@ -2212,7 +2325,10 @@ export class ClientsService {
 			};
 
 			if (orgId) {
-				whereConditions.organisation = { uid: orgId };
+				whereConditions.organisation = [
+					{ clerkOrgId: String(orgId) },
+					{ ref: String(orgId) }
+				];
 			}
 
 			if (branchId) {
@@ -2261,7 +2377,7 @@ export class ClientsService {
 
 	async getClientCheckIns(
 		clientId: number,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 		userId?: number,
 	): Promise<{ message: string; checkIns: CheckIn[] }> {
@@ -3105,13 +3221,24 @@ export class ClientsService {
 	async updateClientProfile(
 		clientAuthId: number,
 		updateClientDto: UpdateClientDto,
-		organisationRef?: number,
-	): Promise<{ message: string; data?: any }> {
+		organisationRef?: string,
+		): Promise<{ message: string; data?: any }> {
 		const startTime = Date.now();
 		this.logger.log(`[CLIENT_PROFILE_UPDATE] Starting profile update approval request for clientAuthId: ${clientAuthId} in org: ${organisationRef}`);
 		this.logger.debug(`[CLIENT_PROFILE_UPDATE] Update payload: ${JSON.stringify({ ...updateClientDto, notifyClient: updateClientDto.notifyClient ?? true }, null, 2)}`);
 
 		try {
+			// Find organisation by Clerk org ID if provided
+			let organisationUid: number | undefined;
+			if (organisationRef) {
+				const organisation = await this.findOrganisationByClerkId(organisationRef);
+				if (!organisation) {
+					this.logger.error(`[CLIENT_PROFILE_UPDATE] Organization not found for Clerk ID: ${organisationRef}`);
+					throw new BadRequestException(`Organisation not found for ID: ${organisationRef}`);
+				}
+				organisationUid = organisation.uid;
+			}
+
 			// 1. Find the ClientAuth record and related Client
 			const clientAuth = await this.clientAuthRepository.findOne({
 				where: { uid: clientAuthId, isDeleted: false },
@@ -3126,8 +3253,8 @@ export class ClientsService {
 			const client = clientAuth.client;
 
 			// 2. Validate organization membership
-			if (organisationRef && client.organisation?.uid !== organisationRef) {
-				this.logger.warn(`[CLIENT_PROFILE_UPDATE] Organization mismatch for client ${client.uid}. Expected: ${organisationRef}, Found: ${client.organisation?.uid}`);
+			if (organisationUid && client.organisation?.uid !== organisationUid) {
+				this.logger.warn(`[CLIENT_PROFILE_UPDATE] Organization mismatch for client ${client.uid}. Expected: ${organisationUid}, Found: ${client.organisation?.uid}`);
 				throw new BadRequestException('Client does not belong to the specified organization');
 			}
 
@@ -3329,7 +3456,7 @@ export class ClientsService {
 					const existingSchedules = await this.communicationScheduleService.getClientSchedules(
 						clientId,
 						{ page: 1, limit: 100 },
-						client.organisation?.uid,
+						client.organisation?.clerkOrgId || client.organisation?.ref,
 						client.branch?.uid
 					);
 					
@@ -3338,7 +3465,7 @@ export class ClientsService {
 						await this.communicationScheduleService.updateSchedule(
 							schedule.uid,
 							{ isActive: false },
-							client.organisation?.uid,
+							client.organisation?.clerkOrgId || client.organisation?.ref,
 							client.branch?.uid
 						);
 					}
@@ -3349,7 +3476,7 @@ export class ClientsService {
 							await this.communicationScheduleService.createSchedule(
 								clientId,
 								scheduleDto,
-								client.organisation?.uid,
+								client.organisation?.clerkOrgId || client.organisation?.ref,
 								client.branch?.uid
 							);
 						} catch (scheduleError) {
@@ -3557,12 +3684,23 @@ export class ClientsService {
 	async requestCreditLimitExtension(
 		clientAuthId: number,
 		creditLimitDto: CreditLimitExtensionDto,
-		organisationRef?: number,
-	): Promise<{ message: string; data?: any }> {
+		organisationRef?: string,
+		): Promise<{ message: string; data?: any }> {
 		const startTime = Date.now();
 		this.logger.log(`[CREDIT_LIMIT_EXTENSION] Starting credit limit extension request for clientAuthId: ${clientAuthId}`);
 
 		try {
+			// Find organisation by Clerk org ID if provided
+			let organisationUid: number | undefined;
+			if (organisationRef) {
+				const organisation = await this.findOrganisationByClerkId(organisationRef);
+				if (!organisation) {
+					this.logger.error(`[CREDIT_LIMIT_EXTENSION] Organization not found for Clerk ID: ${organisationRef}`);
+					throw new BadRequestException(`Organisation not found for ID: ${organisationRef}`);
+				}
+				organisationUid = organisation.uid;
+			}
+
 			// 1. Find the ClientAuth record and related Client
 			const clientAuth = await this.clientAuthRepository.findOne({
 				where: { uid: clientAuthId, isDeleted: false },
@@ -3577,7 +3715,7 @@ export class ClientsService {
 			const client = clientAuth.client;
 
 			// 2. Validate organization membership
-			if (organisationRef && client.organisation?.uid !== organisationRef) {
+			if (organisationUid && client.organisation?.uid !== organisationUid) {
 				this.logger.warn(`[CREDIT_LIMIT_EXTENSION] Organization mismatch for client ${client.uid}`);
 				throw new BadRequestException('Client does not belong to the specified organization');
 			}
@@ -3884,9 +4022,20 @@ export class ClientsService {
 	 */
 	async getClientCommunicationSchedules(
 		clientAuthId: number,
-		organisationRef?: number,
-	): Promise<{ message: string; schedules?: any[] }> {
+		organisationRef?: string,
+		): Promise<{ message: string; schedules?: any[] }> {
 		try {
+			// Find organisation by Clerk org ID if provided
+			let organisationUid: number | undefined;
+			if (organisationRef) {
+				const organisation = await this.findOrganisationByClerkId(organisationRef);
+				if (!organisation) {
+					this.logger.error(`[GET_CLIENT_COMM_SCHEDULES] Organization not found for Clerk ID: ${organisationRef}`);
+					throw new BadRequestException(`Organisation not found for ID: ${organisationRef}`);
+				}
+				organisationUid = organisation.uid;
+			}
+
 			// Find the ClientAuth record and related Client
 			const clientAuth = await this.clientAuthRepository.findOne({
 				where: { uid: clientAuthId, isDeleted: false },
@@ -3900,7 +4049,7 @@ export class ClientsService {
 			const client = clientAuth.client;
 
 			// Validate organization membership
-			if (organisationRef && client.organisation?.uid !== organisationRef) {
+			if (organisationUid && client.organisation?.uid !== organisationUid) {
 				throw new BadRequestException('Client does not belong to the specified organization');
 			}
 
@@ -3937,9 +4086,20 @@ export class ClientsService {
 		clientAuthId: number,
 		scheduleId: number,
 		updateDto: any,
-		organisationRef?: number,
+		organisationRef?: string,
 	): Promise<{ message: string }> {
 		try {
+			// Find organisation by Clerk org ID if provided
+			let organisationUid: number | undefined;
+			if (organisationRef) {
+				const organisation = await this.findOrganisationByClerkId(organisationRef);
+				if (!organisation) {
+					this.logger.error(`[UPDATE_CLIENT_COMM_SCHEDULE] Organization not found for Clerk ID: ${organisationRef}`);
+					throw new BadRequestException(`Organisation not found for ID: ${organisationRef}`);
+				}
+				organisationUid = organisation.uid;
+			}
+
 			// Find the ClientAuth record and related Client
 			const clientAuth = await this.clientAuthRepository.findOne({
 				where: { uid: clientAuthId, isDeleted: false },
@@ -3953,7 +4113,7 @@ export class ClientsService {
 			const client = clientAuth.client;
 
 			// Validate organization membership
-			if (organisationRef && client.organisation?.uid !== organisationRef) {
+			if (organisationUid && client.organisation?.uid !== organisationUid) {
 				throw new BadRequestException('Client does not belong to the specified organization');
 			}
 
@@ -4000,9 +4160,20 @@ export class ClientsService {
 	async deleteClientCommunicationSchedule(
 		clientAuthId: number,
 		scheduleId: number,
-		organisationRef?: number,
+		organisationRef?: string,
 	): Promise<{ message: string }> {
 		try {
+			// Find organisation by Clerk org ID if provided
+			let organisationUid: number | undefined;
+			if (organisationRef) {
+				const organisation = await this.findOrganisationByClerkId(organisationRef);
+				if (!organisation) {
+					this.logger.error(`[DELETE_CLIENT_COMM_SCHEDULE] Organization not found for Clerk ID: ${organisationRef}`);
+					throw new BadRequestException(`Organisation not found for ID: ${organisationRef}`);
+				}
+				organisationUid = organisation.uid;
+			}
+
 			// Find the ClientAuth record and related Client
 			const clientAuth = await this.clientAuthRepository.findOne({
 				where: { uid: clientAuthId, isDeleted: false },
@@ -4016,7 +4187,7 @@ export class ClientsService {
 			const client = clientAuth.client;
 
 			// Validate organization membership
-			if (organisationRef && client.organisation?.uid !== organisationRef) {
+			if (organisationUid && client.organisation?.uid !== organisationUid) {
 				throw new BadRequestException('Client does not belong to the specified organization');
 			}
 
@@ -4066,7 +4237,7 @@ export class ClientsService {
 			startDate?: Date;
 			endDate?: Date;
 		},
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<{ message: string; data?: any[]; meta?: any }> {
 		const startTime = Date.now();
@@ -4098,9 +4269,12 @@ export class ClientsService {
 				where.client = { uid: filters.clientId };
 			}
 
-			// Add organization filter
+			// Add organization filter - filter by clerkOrgId or ref
 			if (orgId) {
-				where.organisation = { uid: orgId };
+				where.organisation = [
+					{ clerkOrgId: orgId },
+					{ ref: orgId }
+				];
 			}
 
 			// Add branch filter
@@ -4141,7 +4315,7 @@ export class ClientsService {
 
 			// Add organization filter
 			if (orgId) {
-				queryBuilder = queryBuilder.andWhere('schedule.organisationUid = :orgId', { orgId });
+				queryBuilder = queryBuilder.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 			}
 
 			// Add branch filter

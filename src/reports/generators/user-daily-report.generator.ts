@@ -75,7 +75,8 @@ export class UserDailyReportGenerator {
 		}
 
 		try {
-			const organizationHours = await this.organizationHoursService.getOrganizationHours(organizationId);
+			const orgIdString = typeof organizationId === 'number' ? organizationId.toString() : organizationId;
+			const organizationHours = await this.organizationHoursService.getOrganizationHours(orgIdString);
 			return organizationHours?.timezone || 'Africa/Johannesburg';
 		} catch (error) {
 			this.logger.warn(`Error getting timezone for org ${organizationId}, using default:`, error);
@@ -679,10 +680,16 @@ export class UserDailyReportGenerator {
 	}
 
 	private async collectLeadMetrics(userId: number, startDate: Date, endDate: Date) {
+		// Get user's clerkUserId
+		const user = await this.userRepository.findOne({ where: { uid: userId } });
+		if (!user?.clerkUserId) {
+			return { newLeads: [], convertedLeads: [] };
+		}
+
 		// New leads captured today
 		const newLeads = await this.leadRepository.find({
 			where: {
-				ownerUid: userId,
+				ownerClerkUserId: user.clerkUserId,
 				createdAt: Between(startDate, endDate),
 			},
 		});
@@ -690,7 +697,7 @@ export class UserDailyReportGenerator {
 		// Leads converted today
 		const convertedLeads = await this.leadRepository.find({
 			where: {
-				ownerUid: userId,
+				ownerClerkUserId: user.clerkUserId,
 				status: LeadStatus.CONVERTED,
 				updatedAt: Between(startDate, endDate),
 			},

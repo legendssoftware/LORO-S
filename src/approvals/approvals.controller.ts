@@ -42,7 +42,7 @@ import {
 } from '@nestjs/swagger';
 import { getDynamicDate, getDynamicDateTime, getFutureDate, getPastDate, createApiDescription, generateCodeExamples } from '../lib/utils/swagger-helpers';
 import { RoleGuard } from '../guards/role.guard';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { FeatureGuard } from '../guards/feature.guard';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { Roles } from '../decorators/role.decorator';
@@ -51,7 +51,7 @@ import { RequireFeature } from '../decorators/require-feature.decorator';
 @ApiBearerAuth('JWT-auth')
 @ApiTags('✅ Approvals')
 @Controller('approvals')
-@UseGuards(AuthGuard, RoleGuard, FeatureGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard, FeatureGuard)
 @RequireFeature('approvals.basic')
 @ApiConsumes('application/json')
 @ApiProduces('application/json')

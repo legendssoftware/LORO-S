@@ -141,7 +141,7 @@ export class NotificationsService {
 		}
 	}
 
-	async update(ref: number, updateNotificationDto: UpdateNotificationDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
+	async update(ref: number, updateNotificationDto: UpdateNotificationDto, orgId?: string, branchId?: number): Promise<{ message: string }> {
 		try {
 			const notification = await this.notificationRepository.update(ref, updateNotificationDto);
 
@@ -407,22 +407,13 @@ export class NotificationsService {
 	}> {
 		try {
 			const isClient = role === AccessLevel.CLIENT || role?.toLowerCase() === 'client';
-			
-			console.log('🔍 [NotificationService] Starting token verification', {
-				userId,
-				role: role || 'user',
-				isClient,
-				deviceId: registerTokenDto.deviceId,
-				platform: registerTokenDto.platform,
-				timestamp: new Date().toISOString(),
-			});
 
 			// Handle clients differently
 			if (isClient) {
 				const clientAuth = await this.clientAuthRepository.findOne({ where: { uid: userId } });
 				
 				if (!clientAuth) {
-					console.error('❌ [NotificationService] Client auth not found during verification', { userId });
+					this.logger.error(`[NotificationService] Client auth not found during verification: userId ${userId}`);
 					throw new NotFoundException('Client not found');
 				}
 
@@ -430,43 +421,17 @@ export class NotificationsService {
 				const deviceToken = registerTokenDto.token;
 				const lastUpdated = clientAuth.pushTokenUpdatedAt ? clientAuth.pushTokenUpdatedAt.toISOString() : null;
 
-				console.log('📊 [NotificationService] Client auth token comparison data:', {
-					userId,
-					serverTokenLength: serverToken?.length || 0,
-					deviceTokenLength: deviceToken?.length || 0,
-					lastUpdated,
-					deviceId: clientAuth.deviceId,
-					platform: clientAuth.platform,
-				});
-
 				// Check if tokens match
 				const tokensMatch = serverToken === deviceToken;
-				console.log('🔍 [NotificationService] Token match analysis:', {
-					tokensMatch,
-					serverTokenExists: !!serverToken,
-					deviceTokenExists: !!deviceToken,
-				});
 				
 				// Check if server token is valid format
 				const serverTokenValid = serverToken ? this.expoPushService.isValidExpoPushToken(serverToken) : false;
-				console.log('🔍 [NotificationService] Server token validation:', {
-					serverTokenValid,
-					serverTokenFormat: serverToken ? 'ExponentPushToken format' : 'null',
-				});
 				
 				// Check if device token is valid format
 				const deviceTokenValid = this.expoPushService.isValidExpoPushToken(deviceToken);
-				console.log('🔍 [NotificationService] Device token validation:', {
-					deviceTokenValid,
-					deviceTokenFormat: deviceToken ? 'ExponentPushToken format' : 'null',
-				});
 
 				// Determine if update is needed
 				const needsUpdate = !tokensMatch || !serverTokenValid || !serverToken;
-				console.log('📊 [NotificationService] Update decision logic:', {
-					needsUpdate,
-					reason: !tokensMatch ? 'Tokens do not match' : !serverTokenValid ? 'Server token invalid format' : 'No server token',
-				});
 
 				return {
 					isValid: tokensMatch && serverTokenValid && !!serverToken,
@@ -483,7 +448,7 @@ export class NotificationsService {
 			const user = await this.userRepository.findOne({ where: { uid: userId } });
 			
 			if (!user) {
-				console.error('❌ [NotificationService] User not found during verification', { userId });
+				this.logger.error(`[NotificationService] User not found during verification: userId ${userId}`);
 				throw new NotFoundException('User not found');
 			}
 
@@ -491,77 +456,42 @@ export class NotificationsService {
 			const deviceToken = registerTokenDto.token;
 			const lastUpdated = user.pushTokenUpdatedAt ? user.pushTokenUpdatedAt.toISOString() : null;
 
-			console.log('📊 [NotificationService] Token comparison data:', {
-				userId,
-				serverTokenLength: serverToken?.length || 0,
-				deviceTokenLength: deviceToken?.length || 0,
-				lastUpdated,
-				deviceId: user.deviceId,
-				platform: user.platform,
-			});
-
 			// Check if tokens match
 			const tokensMatch = serverToken === deviceToken;
-			console.log('🔍 [NotificationService] Token match analysis:', {
-				tokensMatch,
-				serverTokenExists: !!serverToken,
-				deviceTokenExists: !!deviceToken,
-			});
 			
 			// Check if server token is valid format
 			const serverTokenValid = serverToken ? this.expoPushService.isValidExpoPushToken(serverToken) : false;
-			console.log('🔍 [NotificationService] Server token validation:', {
-				serverTokenValid,
-				serverTokenFormat: serverToken ? 'ExponentPushToken format' : 'null',
-			});
 			
 			// Check if device token is valid format
 			const deviceTokenValid = this.expoPushService.isValidExpoPushToken(deviceToken);
-			console.log('🔍 [NotificationService] Device token validation:', {
-				deviceTokenValid,
-				deviceTokenFormat: deviceToken ? 'ExponentPushToken format' : 'null',
-			});
 
 			// Determine if update is needed
 			const needsUpdate = !tokensMatch || !serverTokenValid || !serverToken;
-			console.log('📊 [NotificationService] Update decision logic:', {
-				needsUpdate,
-				reasons: {
-					tokensDoNotMatch: !tokensMatch,
-					serverTokenInvalid: !serverTokenValid,
-					noServerToken: !serverToken,
-				},
-			});
 
 			// Auto-update if needed and device token is valid
 			if (needsUpdate && deviceTokenValid) {
-				console.log('🔄 [NotificationService] Auto-updating token...');
+				this.logger.log(`[NotificationService] Auto-updating push token for user ${userId}`);
 				
-				const updateResult = await this.userRepository.update(userId, {
+				await this.userRepository.update(userId, {
 					expoPushToken: deviceToken,
 					deviceId: registerTokenDto.deviceId,
 					platform: registerTokenDto.platform,
 					pushTokenUpdatedAt: new Date(),
 				});
 
-				console.log('✅ [NotificationService] Auto-update completed:', {
-					affected: updateResult.affected,
-					newTimestamp: new Date().toISOString(),
-				});
+				this.logger.log(`[NotificationService] Push token updated successfully for user ${userId}`);
 
-				const response = {
+				return {
 					isValid: true,
 					needsUpdate: true,
 					message: 'Token updated successfully',
 					serverToken: deviceToken,
 					lastUpdated: new Date().toISOString(),
 				};
-
-				return response;
 			}
 
 			// Return current status
-			const response = {
+			return {
 				isValid: serverTokenValid && tokensMatch,
 				needsUpdate: false,
 				message: tokensMatch && serverTokenValid 
@@ -572,14 +502,8 @@ export class NotificationsService {
 				serverToken,
 				lastUpdated,
 			};
-
-			return response;
 		} catch (error) {
-			console.error('❌ [NotificationService] Token verification failed:', {
-				userId,
-				error: error instanceof Error ? error.message : 'Unknown error',
-				errorName: error instanceof Error ? error.name : 'Unknown',
-			});
+			this.logger.error(`[NotificationService] Token verification failed for user ${userId}: ${error instanceof Error ? error.message : 'Unknown error'}`);
 			throw new BadRequestException(`Failed to verify push token: ${error.message}`);
 		}
 	}

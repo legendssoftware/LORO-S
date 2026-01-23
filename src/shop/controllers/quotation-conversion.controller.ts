@@ -9,7 +9,7 @@ import {
 	BadRequestException,
 	NotFoundException,
 } from '@nestjs/common';
-import { AuthGuard } from '../../guards/auth.guard';
+import { ClerkAuthGuard } from '../../clerk/clerk.guard';
 import { RoleGuard } from '../../guards/role.guard';
 import { Roles } from '../../decorators/role.decorator';
 import { AccessLevel } from '../../lib/enums/user.enums';
@@ -26,17 +26,31 @@ import {
 
 import { QuotationConversionService } from '../services/quotation-conversion.service';
 import { QuotationConversionDto } from '../dto/quotation-conversion.dto';
-import { AuthenticatedRequest } from '../../lib/interfaces/authenticated-request.interface';
+import { AuthenticatedRequest, getClerkOrgId } from '../../lib/interfaces/authenticated-request.interface';
 import { UserService } from '../../user/user.service';
+import { OrganisationService } from '../../organisation/organisation.service';
 
 @ApiTags('🔄 Quotation Conversion')
 @Controller('quotations')
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 export class QuotationConversionController {
 	constructor(
 		private readonly quotationConversionService: QuotationConversionService,
 		private readonly userService: UserService,
+		private readonly organisationService: OrganisationService,
 	) {}
+
+	private async resolveOrgUid(req: AuthenticatedRequest): Promise<number> {
+		const clerkOrgId = getClerkOrgId(req);
+		if (!clerkOrgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const uid = await this.organisationService.findUidByClerkId(clerkOrgId);
+		if (uid == null) {
+			throw new BadRequestException('Organization not found');
+		}
+		return uid;
+	}
 
 	@Post(':id/convert')
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER)
@@ -65,7 +79,7 @@ export class QuotationConversionController {
 			throw new NotFoundException('User not found');
 		}
 		const user = userResult.user;
-		const orgId = req.user?.org?.uid;
+		const orgId = await this.resolveOrgUid(req);
 		const branchId = req.user?.branch?.uid;
 
 		return this.quotationConversionService.convertToOrder(quotationId, conversionData, user, orgId, branchId);

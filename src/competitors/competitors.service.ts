@@ -50,14 +50,45 @@ export class CompetitorsService {
 		this.CACHE_TTL = +this.configService.get<number>('CACHE_EXPIRATION_TIME', 300);
 	}
 
+	/**
+	 * Find organisation by Clerk org ID (string) or ref
+	 * Returns the organisation entity with its uid for database operations
+	 */
+	private async findOrganisationByClerkId(orgId?: string): Promise<Organisation | null> {
+		if (!orgId) {
+			return null;
+		}
+
+		const organisation = await this.organisationRepository.findOne({
+			where: [
+				{ clerkOrgId: orgId },
+				{ ref: orgId }
+			],
+			select: ['uid', 'clerkOrgId', 'ref'],
+		});
+
+		return organisation;
+	}
+
 	// Helper method to get organization settings
-	private async getOrganisationSettings(orgId: number): Promise<OrganisationSettings | null> {
-		const validatedOrgId = this.validateNumericParam(orgId);
-		if (!validatedOrgId) return null;
+	private async getOrganisationSettings(orgId: number | string): Promise<OrganisationSettings | null> {
+		// Resolve orgId to numeric uid
+		let organisationUid: number | undefined;
+		if (typeof orgId === 'string') {
+			const organisation = await this.findOrganisationByClerkId(orgId);
+			if (!organisation) return null;
+			organisationUid = organisation.uid;
+		} else if (typeof orgId === 'number') {
+			organisationUid = orgId;
+		} else {
+			return null;
+		}
+
+		if (!organisationUid) return null;
 
 		try {
 			return await this.organisationSettingsRepository.findOne({
-				where: { organisationUid: validatedOrgId },
+				where: { organisationUid },
 			});
 		} catch (error) {
 			this.logger.error(`Error fetching organisation settings: ${error.message}`, error.stack);
@@ -87,7 +118,7 @@ export class CompetitorsService {
 		}
 	}
 
-	async create(createCompetitorDto: CreateCompetitorDto, creator: User, orgId?: number, branchId?: number) {
+	async create(createCompetitorDto: CreateCompetitorDto, creator: User, orgId?: string, branchId?: number) {
 		this.logger.log(`Creating competitor: ${createCompetitorDto.name}, created by: ${creator.uid}, orgId: ${orgId}, branchId: ${branchId}`);
 
 		try {
@@ -97,13 +128,22 @@ export class CompetitorsService {
 				throw new BadRequestException('Creator information is required');
 			}
 
-			// Validate numeric parameters
-			const validatedOrgId = this.validateNumericParam(orgId);
+			// Find organisation by Clerk org ID if provided
+			let organisationUid: number | undefined;
+			if (orgId) {
+				const organisation = await this.findOrganisationByClerkId(orgId);
+				if (!organisation) {
+					this.logger.error(`Organization not found for Clerk ID: ${orgId}`);
+					throw new BadRequestException(`Organisation not found for ID: ${orgId}`);
+				}
+				organisationUid = organisation.uid;
+			}
+
 			const validatedBranchId = this.validateNumericParam(branchId);
 
 			// Validate organization access
-			if (validatedOrgId && creator.organisation?.uid !== validatedOrgId) {
-				this.logger.error(`User ${creator.uid} attempting to create competitor in different organization ${validatedOrgId}`);
+			if (organisationUid && creator.organisation?.uid !== organisationUid) {
+				this.logger.error(`User ${creator.uid} attempting to create competitor in different organization ${organisationUid}`);
 				throw new BadRequestException('Cannot create competitor in different organization');
 			}
 
@@ -155,8 +195,8 @@ export class CompetitorsService {
 			}
 
 			// Handle organization and branch assignment
-			if (validatedOrgId) {
-				const organisation = await this.organisationRepository.findOne({ where: { uid: validatedOrgId } });
+			if (organisationUid) {
+				const organisation = await this.organisationRepository.findOne({ where: { uid: organisationUid } });
 				if (organisation) {
 					newCompetitor.organisation = organisation;
 				}
@@ -194,8 +234,8 @@ export class CompetitorsService {
 				// Get default radius from organization settings if available
 				let defaultRadius = 500; // Default fallback value
 
-				if (validatedOrgId) {
-					const orgSettings = await this.getOrganisationSettings(validatedOrgId);
+				if (organisationUid) {
+					const orgSettings = await this.getOrganisationSettings(organisationUid);
 					if (orgSettings?.geofenceDefaultRadius) {
 						defaultRadius = orgSettings.geofenceDefaultRadius;
 					}
@@ -230,9 +270,17 @@ export class CompetitorsService {
 		}
 	}
 
-	async createBatch(createCompetitorDtos: CreateCompetitorDto[], creator: User, orgId?: number, branchId?: number) {
-		// Validate numeric parameters early
-		const validatedOrgId = this.validateNumericParam(orgId);
+	async createBatch(createCompetitorDtos: CreateCompetitorDto[], creator: User, orgId?: string, branchId?: number) {
+		// Find organisation by Clerk org ID if provided
+		let organisationUid: number | undefined;
+		if (orgId) {
+			const organisation = await this.findOrganisationByClerkId(orgId);
+			if (!organisation) {
+				this.logger.error(`Organization not found for Clerk ID: ${orgId}`);
+				throw new BadRequestException(`Organisation not found for ID: ${orgId}`);
+			}
+			organisationUid = organisation.uid;
+		}
 		const validatedBranchId = this.validateNumericParam(branchId);
 
 		// Split the input into smaller chunks to avoid entity too large errors
@@ -257,9 +305,9 @@ export class CompetitorsService {
 		let orgSettings = null;
 
 		try {
-			if (validatedOrgId) {
-				organisation = await this.organisationRepository.findOne({ where: { uid: validatedOrgId } });
-				orgSettings = await this.getOrganisationSettings(validatedOrgId);
+			if (organisationUid) {
+				organisation = await this.organisationRepository.findOne({ where: { uid: organisationUid } });
+				orgSettings = await this.getOrganisationSettings(organisationUid);
 			}
 
 			if (validatedBranchId) {
@@ -840,19 +888,25 @@ export class CompetitorsService {
 		},
 		page: number = 1,
 		limit: number = Number(process.env.DEFAULT_PAGE_LIMIT || 10),
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<PaginatedResponse<Competitor>> {
 		// Validate and sanitize numeric parameters
 		const validatedPage = this.validateNumericParam(page, 1);
 		const validatedLimit = this.validateNumericParam(limit, 10);
-		const validatedOrgId = this.validateNumericParam(orgId);
+		// Find organisation by Clerk org ID if provided
+		let organisationUid: number | undefined;
+		if (orgId) {
+			const organisation = await this.findOrganisationByClerkId(orgId);
+			if (organisation) {
+				organisationUid = organisation.uid;
+			}
+		}
 		const validatedBranchId = this.validateNumericParam(branchId);
 		const validatedMinThreatLevel = this.validateNumericParam(filters?.minThreatLevel);
 		const validatedFilterOrgId = this.validateNumericParam(filters?.organisationId);
 		const validatedFilterBranchId = this.validateNumericParam(filters?.branchId);
 
-		// Create a specific cache key based on all parameters
 		const cacheKey = this.getCacheKey(`list:${JSON.stringify({ 
 			filters: {
 				...filters,
@@ -862,7 +916,7 @@ export class CompetitorsService {
 			}, 
 			page: validatedPage, 
 			limit: validatedLimit, 
-			orgId: validatedOrgId, 
+			orgId: organisationUid, 
 			branchId: validatedBranchId 
 		})}`);
 
@@ -900,7 +954,7 @@ export class CompetitorsService {
 		}
 
 		// Priority order: filters > params > JWT
-		const effectiveOrgId = validatedFilterOrgId || validatedOrgId;
+		const effectiveOrgId = validatedFilterOrgId || organisationUid;
 		const effectiveBranchId = validatedFilterBranchId || validatedBranchId;
 
 		if (effectiveOrgId) {
@@ -961,19 +1015,27 @@ export class CompetitorsService {
 
 	async findOne(
 		id: number,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<{ message: string; competitor: Competitor | null }> {
 		// Validate numeric parameters
 		const validatedId = this.validateNumericParam(id);
-		const validatedOrgId = this.validateNumericParam(orgId);
 		const validatedBranchId = this.validateNumericParam(branchId);
 
 		if (validatedId === null) {
 			throw new BadRequestException('Invalid competitor ID provided');
 		}
 
-		const cacheKey = this.getCacheKey(`detail:${validatedId}:${validatedOrgId}:${validatedBranchId}`);
+		// Find organisation by Clerk org ID if provided
+		let organisationUid: number | undefined;
+		if (orgId) {
+			const organisation = await this.findOrganisationByClerkId(orgId);
+			if (organisation) {
+				organisationUid = organisation.uid;
+			}
+		}
+
+		const cacheKey = this.getCacheKey(`detail:${validatedId}:${organisationUid || orgId}:${validatedBranchId}`);
 
 		const cached = await this.cacheManager.get<{ message: string; competitor: Competitor | null }>(cacheKey);
 		if (cached) {
@@ -985,8 +1047,8 @@ export class CompetitorsService {
 			isDeleted: false,
 		};
 
-		if (validatedOrgId) {
-			where.organisation = { uid: validatedOrgId };
+		if (organisationUid) {
+			where.organisation = { uid: organisationUid };
 		}
 
 		if (validatedBranchId) {
@@ -1009,14 +1071,21 @@ export class CompetitorsService {
 
 	async findOneByRef(
 		ref: string,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 	): Promise<{ message: string; competitor: Competitor | null }> {
 		// Validate numeric parameters
-		const validatedOrgId = this.validateNumericParam(orgId);
+		// Find organisation by Clerk org ID if provided
+		let organisationUid: number | undefined;
+		if (orgId) {
+			const organisation = await this.findOrganisationByClerkId(orgId);
+			if (organisation) {
+				organisationUid = organisation.uid;
+			}
+		}
 		const validatedBranchId = this.validateNumericParam(branchId);
 
-		const cacheKey = this.getCacheKey(`ref:${ref}:${validatedOrgId}:${validatedBranchId}`);
+		const cacheKey = this.getCacheKey(`ref:${ref}:${organisationUid || orgId}:${validatedBranchId}`);
 
 		const cached = await this.cacheManager.get<{ message: string; competitor: Competitor | null }>(cacheKey);
 		if (cached) {
@@ -1028,8 +1097,8 @@ export class CompetitorsService {
 			isDeleted: false,
 		};
 
-		if (validatedOrgId) {
-			where.organisation = { uid: validatedOrgId };
+		if (organisationUid) {
+			where.organisation = { uid: organisationUid };
 		}
 
 		if (validatedBranchId) {
@@ -1050,12 +1119,20 @@ export class CompetitorsService {
 		return result;
 	}
 
-	async update(id: number, updateCompetitorDto: UpdateCompetitorDto, orgId?: number, branchId?: number) {
+	async update(id: number, updateCompetitorDto: UpdateCompetitorDto, orgId?: string, branchId?: number) {
 		try {
 			// Validate numeric parameters
 			const validatedId = this.validateNumericParam(id);
-			const validatedOrgId = this.validateNumericParam(orgId);
 			const validatedBranchId = this.validateNumericParam(branchId);
+
+			// Find organisation by Clerk org ID if provided
+			let organisationUid: number | undefined;
+			if (orgId) {
+				const organisation = await this.findOrganisationByClerkId(orgId);
+				if (organisation) {
+					organisationUid = organisation.uid;
+				}
+			}
 
 			if (validatedId === null) {
 				throw new BadRequestException('Invalid competitor ID provided');
@@ -1065,7 +1142,7 @@ export class CompetitorsService {
 			const competitor = await this.competitorRepository.findOne({
 				where: {
 					uid: validatedId,
-					...(validatedOrgId && { organisation: { uid: validatedOrgId } }),
+					...(organisationUid && { organisation: { uid: organisationUid } }),
 					...(validatedBranchId && { branch: { uid: validatedBranchId } }),
 				},
 				relations: ['organisation', 'branch', 'createdBy'],
@@ -1119,7 +1196,7 @@ export class CompetitorsService {
 
 					// Get default radius from organization settings if available
 					let defaultRadius = 500; // Default fallback value
-					const competitorOrgId = competitor.organisation?.uid || validatedOrgId;
+					const competitorOrgId = competitor.organisation?.uid || organisationUid;
 
 					if (competitorOrgId) {
 						const orgSettings = await this.getOrganisationSettings(competitorOrgId);
@@ -1158,17 +1235,24 @@ export class CompetitorsService {
 		}
 	}
 
-	async remove(id: number, orgId?: number, branchId?: number): Promise<{ message: string }> {
+	async remove(id: number, orgId?: string, branchId?: number): Promise<{ message: string }> {
 		// Validate numeric parameters
 		const validatedId = this.validateNumericParam(id);
-		const validatedOrgId = this.validateNumericParam(orgId);
+		// Find organisation by Clerk org ID if provided
+		let organisationUid: number | undefined;
+		if (orgId) {
+			const organisation = await this.findOrganisationByClerkId(orgId);
+			if (organisation) {
+				organisationUid = organisation.uid;
+			}
+		}
 		const validatedBranchId = this.validateNumericParam(branchId);
 
 		if (validatedId === null) {
 			throw new BadRequestException('Invalid competitor ID provided');
 		}
 
-		const { competitor } = await this.findOne(validatedId, validatedOrgId, validatedBranchId);
+		const { competitor } = await this.findOne(validatedId, orgId, validatedBranchId);
 
 		if (!competitor) {
 			throw new NotFoundException(`Competitor with ID ${validatedId} not found`);
@@ -1183,17 +1267,24 @@ export class CompetitorsService {
 		return { message: 'Competitor deleted successfully' };
 	}
 
-	async hardRemove(id: number, orgId?: number, branchId?: number): Promise<{ message: string }> {
+	async hardRemove(id: number, orgId?: string, branchId?: number): Promise<{ message: string }> {
 		// Validate numeric parameters
 		const validatedId = this.validateNumericParam(id);
-		const validatedOrgId = this.validateNumericParam(orgId);
+		// Find organisation by Clerk org ID if provided
+		let organisationUid: number | undefined;
+		if (orgId) {
+			const organisation = await this.findOrganisationByClerkId(orgId);
+			if (organisation) {
+				organisationUid = organisation.uid;
+			}
+		}
 		const validatedBranchId = this.validateNumericParam(branchId);
 
 		if (validatedId === null) {
 			throw new BadRequestException('Invalid competitor ID provided');
 		}
 
-		const { competitor } = await this.findOne(validatedId, validatedOrgId, validatedBranchId);
+		const { competitor } = await this.findOne(validatedId, orgId, validatedBranchId);
 
 		if (!competitor) {
 			throw new NotFoundException(`Competitor with ID ${validatedId} not found`);
@@ -1205,12 +1296,20 @@ export class CompetitorsService {
 		return { message: 'Competitor permanently deleted' };
 	}
 
-	async findByName(name: string, orgId?: number, branchId?: number): Promise<Competitor[]> {
+	async findByName(name: string, orgId?: string, branchId?: number): Promise<Competitor[]> {
 		// Validate numeric parameters
-		const validatedOrgId = this.validateNumericParam(orgId);
 		const validatedBranchId = this.validateNumericParam(branchId);
 
-		const cacheKey = this.getCacheKey(`by-name:${name}:${validatedOrgId}:${validatedBranchId}`);
+		// Find organisation by Clerk org ID if provided
+		let organisationUid: number | undefined;
+		if (orgId) {
+			const organisation = await this.findOrganisationByClerkId(orgId);
+			if (organisation) {
+				organisationUid = organisation.uid;
+			}
+		}
+
+		const cacheKey = this.getCacheKey(`by-name:${name}:${organisationUid || orgId}:${validatedBranchId}`);
 
 		const cached = await this.cacheManager.get<Competitor[]>(cacheKey);
 		if (cached) {
@@ -1222,8 +1321,8 @@ export class CompetitorsService {
 			isDeleted: false,
 		};
 
-		if (validatedOrgId) {
-			where.organisation = { uid: validatedOrgId };
+		if (organisationUid) {
+			where.organisation = { uid: organisationUid };
 		}
 
 		if (validatedBranchId) {
@@ -1239,13 +1338,20 @@ export class CompetitorsService {
 		return competitors;
 	}
 
-	async findByThreatLevel(minThreatLevel: number = 0, orgId?: number, branchId?: number): Promise<Competitor[]> {
+	async findByThreatLevel(minThreatLevel: number = 0, orgId?: string, branchId?: number): Promise<Competitor[]> {
 		// Validate numeric parameters
 		const validatedMinThreatLevel = this.validateNumericParam(minThreatLevel, 0);
-		const validatedOrgId = this.validateNumericParam(orgId);
+		// Find organisation by Clerk org ID if provided
+		let organisationUid: number | undefined;
+		if (orgId) {
+			const organisation = await this.findOrganisationByClerkId(orgId);
+			if (organisation) {
+				organisationUid = organisation.uid;
+			}
+		}
 		const validatedBranchId = this.validateNumericParam(branchId);
 
-		const cacheKey = this.getCacheKey(`by-threat:${validatedMinThreatLevel}:${validatedOrgId}:${validatedBranchId}`);
+		const cacheKey = this.getCacheKey(`by-threat:${validatedMinThreatLevel}:${organisationUid || orgId}:${validatedBranchId}`);
 
 		const cached = await this.cacheManager.get<Competitor[]>(cacheKey);
 		if (cached) {
@@ -1262,8 +1368,8 @@ export class CompetitorsService {
 			});
 		}
 
-		if (validatedOrgId) {
-			where.organisation = { uid: validatedOrgId };
+		if (organisationUid) {
+			where.organisation = { uid: organisationUid };
 		}
 
 		if (validatedBranchId) {
@@ -1280,12 +1386,19 @@ export class CompetitorsService {
 		return competitors;
 	}
 
-	async getCompetitorsByIndustry(orgId?: number, branchId?: number): Promise<Record<string, number>> {
+	async getCompetitorsByIndustry(orgId?: string, branchId?: number): Promise<Record<string, number>> {
 		// Validate numeric parameters
-		const validatedOrgId = this.validateNumericParam(orgId);
+		// Find organisation by Clerk org ID if provided
+		let organisationUid: number | undefined;
+		if (orgId) {
+			const organisation = await this.findOrganisationByClerkId(orgId);
+			if (organisation) {
+				organisationUid = organisation.uid;
+			}
+		}
 		const validatedBranchId = this.validateNumericParam(branchId);
 
-		const cacheKey = this.getCacheKey(`by-industry:${validatedOrgId}:${validatedBranchId}`);
+		const cacheKey = this.getCacheKey(`by-industry:${organisationUid || orgId}:${validatedBranchId}`);
 
 		const cached = await this.cacheManager.get<Record<string, number>>(cacheKey);
 		if (cached) {
@@ -1297,8 +1410,8 @@ export class CompetitorsService {
 			isDeleted: false,
 		};
 
-		if (validatedOrgId) {
-			where.organisation = { uid: validatedOrgId };
+		if (organisationUid) {
+			where.organisation = { uid: organisationUid };
 		}
 
 		if (validatedBranchId) {
@@ -1322,12 +1435,19 @@ export class CompetitorsService {
 		return industriesCount;
 	}
 
-	async getCompetitorAnalytics(orgId?: number, branchId?: number): Promise<any> {
+	async getCompetitorAnalytics(orgId?: string, branchId?: number): Promise<any> {
 		// Validate numeric parameters
-		const validatedOrgId = this.validateNumericParam(orgId);
+		// Find organisation by Clerk org ID if provided
+		let organisationUid: number | undefined;
+		if (orgId) {
+			const organisation = await this.findOrganisationByClerkId(orgId);
+			if (organisation) {
+				organisationUid = organisation.uid;
+			}
+		}
 		const validatedBranchId = this.validateNumericParam(branchId);
 
-		const cacheKey = this.getCacheKey(`analytics:${validatedOrgId}:${validatedBranchId}`);
+		const cacheKey = this.getCacheKey(`analytics:${organisationUid || orgId}:${validatedBranchId}`);
 
 		const cached = await this.cacheManager.get(cacheKey);
 		if (cached) {
@@ -1339,8 +1459,8 @@ export class CompetitorsService {
 				isDeleted: false,
 			};
 
-			if (validatedOrgId) {
-				where.organisation = { uid: validatedOrgId };
+			if (organisationUid) {
+				where.organisation = { uid: organisationUid };
 			}
 
 			if (validatedBranchId) {

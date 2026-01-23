@@ -4,14 +4,14 @@ import { OrganisationHoursService } from '../services/organisation-hours.service
 import { CreateOrganisationHoursDto } from '../dto/create-organisation-hours.dto';
 import { UpdateOrganisationHoursDto } from '../dto/update-organisation-hours.dto';
 import { OrganisationHours } from '../entities/organisation-hours.entity';
-import { AuthGuard } from '../../guards/auth.guard';
+import { ClerkAuthGuard } from '../../clerk/clerk.guard';
 import { RoleGuard } from '../../guards/role.guard';
 import { Roles } from '../../decorators/role.decorator';
 import { AccessLevel } from '../../lib/enums/user.enums';
 
 @ApiTags('🕒 Organisation Hours')
 @Controller('organisations')
-@UseGuards(AuthGuard, RoleGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 @ApiUnauthorizedResponse({ description: 'Unauthorized access due to invalid credentials or missing token' })
 export class OrganisationHoursController {
     constructor(private readonly hoursService: OrganisationHoursService) {}

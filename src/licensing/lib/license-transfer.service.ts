@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { License } from '../entities/license.entity';
 import { LicenseAuditService, AuditAction } from './audit.service';
 import { User } from '../../user/entities/user.entity';
+import { Organisation } from '../../organisation/entities/organisation.entity';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { EmailType } from '../../lib/enums/email.enums';
 import { LicenseStatus } from '../../lib/enums/license.enums';
@@ -22,6 +23,8 @@ export class LicenseTransferService {
     constructor(
         @InjectRepository(License)
         private readonly licenseRepository: Repository<License>,
+        @InjectRepository(Organisation)
+        private readonly organisationRepository: Repository<Organisation>,
         private readonly auditService: LicenseAuditService,
         private readonly eventEmitter: EventEmitter2
     ) { }
@@ -42,7 +45,23 @@ export class LicenseTransferService {
                 throw new BadRequestException('License not found');
             }
 
-            if (Number(license.organisationRef) === newOrganizationId) {
+            // Fetch the new organization to get its ref/clerkOrgId
+            const newOrganization = await this.organisationRepository.findOne({
+                where: { uid: newOrganizationId },
+            });
+
+            if (!newOrganization) {
+                throw new BadRequestException('New organization not found');
+            }
+
+            // Get the organisation ref (should match clerkOrgId)
+            const newOrgRef = newOrganization.ref || newOrganization.clerkOrgId;
+            if (!newOrgRef) {
+                throw new BadRequestException('New organization does not have a ref or clerkOrgId');
+            }
+
+            // Compare using string values
+            if (license.organisationRef === newOrgRef) {
                 throw new BadRequestException(
                     'License already belongs to this organization'
                 );
@@ -50,13 +69,26 @@ export class LicenseTransferService {
 
             // Store old organization details for notification
             const oldOrganization = license.organisation;
+            if (!oldOrganization) {
+                throw new BadRequestException('License must have an associated organisation to transfer');
+            }
 
-            // Update license with new organization
-            license.organisationRef = newOrganizationId;
+            // Update license with new organization ref (string)
+            license.organisationRef = newOrgRef;
             const updatedLicense = await this.licenseRepository.save(license);
 
-            // Create audit log
-            await this.auditService.log(AuditAction.TRANSFER, license, user, {
+            // Reload license with organisation relation for audit and notifications
+            const licenseWithOrg = await this.licenseRepository.findOne({
+                where: { uid: licenseId },
+                relations: ['organisation'],
+            });
+
+            if (!licenseWithOrg || !licenseWithOrg.organisation) {
+                throw new BadRequestException('Failed to load updated license with organisation');
+            }
+
+            // Create audit log (use the reloaded license with organisation relation)
+            await this.auditService.log(AuditAction.TRANSFER, licenseWithOrg, user, {
                 oldOrganizationId: oldOrganization.uid,
                 newOrganizationId,
                 reason,
@@ -65,15 +97,15 @@ export class LicenseTransferService {
             // Notify both organizations
             await this.notifyOrganizations(
                 oldOrganization,
-                updatedLicense.organisation,
-                license,
+                licenseWithOrg.organisation,
+                licenseWithOrg,
                 user
             );
 
             return {
                 success: true,
                 message: 'License transferred successfully',
-                license: updatedLicense,
+                license: licenseWithOrg,
             };
         } catch (error) {
             this.logger.error(

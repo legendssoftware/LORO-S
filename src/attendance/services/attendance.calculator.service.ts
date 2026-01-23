@@ -36,10 +36,10 @@ export class AttendanceCalculatorService {
 		checkOut: Date,
 		breakDetails?: BreakDetail[],
 		totalBreakTime?: string,
-		organizationId?: number,
+		organizationId?: string,
 	): Promise<EnhancedAttendanceMetrics> {
 		try {
-			// Get organization working hours for context
+			// Get organization working hours for context (organizationId is clerkOrgId/ref string)
 			const orgHours = organizationId
 				? await this.organizationHoursService.getOrganizationHours(organizationId)
 				: null;
@@ -80,7 +80,7 @@ export class AttendanceCalculatorService {
 	/**
 	 * Calculate punctuality based on organization hours
 	 */
-	async calculatePunctuality(checkIn: Date, checkOut: Date | null, organizationId?: number) {
+	async calculatePunctuality(checkIn: Date, checkOut: Date | null, organizationId?: string) {
 		if (!organizationId) {
 			// Fallback to default calculation
 			return TimeCalculatorUtil.calculatePunctuality(checkIn, checkOut);
@@ -104,7 +104,7 @@ export class AttendanceCalculatorService {
 	/**
 	 * Calculate overtime using organization-specific standards
 	 */
-	async calculateOvertime(organizationId: number | undefined, workDate: Date, actualWorkMinutes: number) {
+	async calculateOvertime(organizationId: string | undefined, workDate: Date, actualWorkMinutes: number) {
 		if (!organizationId) {
 			// Fallback to default calculation
 			const standardMinutes = TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES;
@@ -147,7 +147,7 @@ export class AttendanceCalculatorService {
 			};
 		}
 
-		const organizationId = attendance.organisation?.uid;
+		const organizationId = attendance.organisation?.clerkOrgId || attendance.organisation?.ref;
 
 		const metrics = await this.calculateEnhancedWorkSession(
 			attendance.checkIn,
@@ -190,7 +190,7 @@ export class AttendanceCalculatorService {
 	async calculateDailyStats(
 		attendanceRecords: Attendance[],
 		activeShift?: Attendance,
-		organizationId?: number,
+		organizationId?: string,
 	): Promise<{ dailyWorkTime: number; dailyBreakTime: number }> {
 		let totalWorkTimeMs = 0;
 		let totalBreakTimeMs = 0;
@@ -334,7 +334,7 @@ export class AttendanceCalculatorService {
 	 */
 	async calculateProductivityMetrics(
 		attendanceRecords: Attendance[],
-		organizationId?: number,
+		organizationId?: string,
 	): Promise<{
 		punctualityScore: number;
 		overtimeFrequency: number;

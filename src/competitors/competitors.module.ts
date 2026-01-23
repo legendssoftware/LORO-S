@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ClerkModule } from '../clerk/clerk.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CacheModule } from '@nestjs/cache-manager';
 import { ConfigModule } from '@nestjs/config';
@@ -13,6 +14,7 @@ import { OrganisationSettings } from '../organisation/entities/organisation-sett
 
 @Module({
 	imports: [
+		ClerkModule,
 		LicensingModule,
 		TypeOrmModule.forFeature([Competitor, User, Organisation, Branch, OrganisationSettings]),
 		CacheModule.register(),

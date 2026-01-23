@@ -141,6 +141,7 @@ const BUSINESS_FEATURES = {
     'docs.premium': true,
     'journal.premium': true,
     'leads.premium': true,
+    'leads.access': true, // Required for EnterpriseOnly('leads') decorator
     'products.premium': true,
     'reports.premium': true,
     'shop.premium': true,

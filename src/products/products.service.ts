@@ -885,7 +885,7 @@ export class ProductsService {
 	 */
 	async getProductByref(
 		ref: number,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number,
 		userId?: number,
 	): Promise<{ product: Product | null; message: string }> {
@@ -935,7 +935,7 @@ export class ProductsService {
 			// Add org filter if provided
 			if (orgId) {
 				this.logger.debug(`🏢 [getProductByref] Adding organization filter: ${orgId}`);
-				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
+				queryBuilder.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 			}
 
 			// BRANCH VISIBILITY LOGIC:
@@ -1359,7 +1359,7 @@ export class ProductsService {
 		quantity: number, 
 		salePrice: number,
 		orderId?: string,
-		orgId?: number,
+		orgId?: string,
 		branchId?: number
 	) {
 		this.logger.log(`🛒 [recordSale] Recording sale for product ID: ${productId}, quantity: ${quantity}, salePrice: ${salePrice}`);
@@ -1501,7 +1501,7 @@ export class ProductsService {
 	 * @param branchId - Branch ID (optional)
 	 * @returns Promise with success message
 	 */
-	async recordView(productId: number, userId?: number, orgId?: number, branchId?: number) {
+	async recordView(productId: number, userId?: number, orgId?: string, branchId?: number) {
 		this.logger.log(`👀 [recordView] Recording view for product ID: ${productId}, user: ${userId}`);
 		
 		try {
@@ -1576,7 +1576,7 @@ export class ProductsService {
 		productId: number, 
 		quantity: number = 1,
 		userId?: number, 
-		orgId?: number, 
+		orgId?: string, 
 		branchId?: number
 	) {
 		this.logger.log(`🛒 [recordCartAdd] Recording cart add for product ID: ${productId}, quantity: ${quantity}, user: ${userId}`);

@@ -1529,7 +1529,7 @@ export class MapDataReportGenerator {
 								if (task.assignees && Array.isArray(task.assignees) && task.assignees.length > 0) {
 									// For now, just show first assignee name or count
 									assigneeName = task.assignees.length === 1 
-										? `Assignee (ID: ${task.assignees[0].uid})`
+										? `Assignee (ID: ${task.assignees[0].clerkUserId})`
 										: `${task.assignees.length} assignees`;
 								}
 								

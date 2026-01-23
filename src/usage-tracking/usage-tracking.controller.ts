@@ -2,7 +2,7 @@ import { Controller, Get, Post, Body, Query, UseGuards, HttpStatus, HttpCode, Lo
 import { UsageTrackingService, UsageAnalytics } from './usage-tracking.service';
 import { CreateUsageEventDto } from './dto/create-usage-event.dto';
 import { UsageQueryDto, UsageSummaryQueryDto, UsageAnalyticsDto } from './dto/usage-query.dto';
-import { AuthGuard } from '../guards/auth.guard';
+import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { RoleGuard } from '../guards/role.guard';
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
@@ -10,7 +10,7 @@ import { UsageEvent } from './entities/usage-event.entity';
 import { PaginatedResponse } from '../lib/interfaces/product.interfaces';
 
 @Controller('usage-tracking')
-@UseGuards(AuthGuard)
+@UseGuards(ClerkAuthGuard, RoleGuard)
 export class UsageTrackingController {
 	private readonly logger = new Logger(UsageTrackingController.name);
 
@@ -22,7 +22,6 @@ export class UsageTrackingController {
 	 */
 	@Post('events')
 	@HttpCode(HttpStatus.CREATED)
-	@UseGuards(RoleGuard)
 	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.DEVELOPER)
 	async recordUsageEvent(@Body() createUsageEventDto: CreateUsageEventDto): Promise<{ message: string; data: UsageEvent }> {
 		const startTime = Date.now();
@@ -51,7 +50,6 @@ export class UsageTrackingController {
 	 */
 	@Post('events/batch')
 	@HttpCode(HttpStatus.CREATED)
-	@UseGuards(RoleGuard)
 	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.DEVELOPER)
 	async recordUsageEventsBatch(@Body() events: CreateUsageEventDto[]): Promise<{ message: string }> {
 		const startTime = Date.now();
@@ -77,7 +75,6 @@ export class UsageTrackingController {
 	 * Get usage events with filtering and pagination
 	 */
 	@Get('events')
-	@UseGuards(RoleGuard)
 	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.DEVELOPER, AccessLevel.MANAGER)
 	async getUsageEvents(@Query() query: UsageQueryDto): Promise<PaginatedResponse<UsageEvent>> {
 		const startTime = Date.now();
@@ -101,7 +98,6 @@ export class UsageTrackingController {
 	 * Get usage analytics for dashboards and reporting
 	 */
 	@Get('analytics')
-	@UseGuards(RoleGuard)
 	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.DEVELOPER, AccessLevel.MANAGER)
 	async getUsageAnalytics(@Query() query: UsageAnalyticsDto): Promise<{ message: string; data: UsageAnalytics }> {
 		const startTime = Date.now();
@@ -128,7 +124,6 @@ export class UsageTrackingController {
 	 * Get aggregated usage summaries
 	 */
 	@Get('summaries')
-	@UseGuards(RoleGuard)
 	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.DEVELOPER, AccessLevel.MANAGER)
 	async getUsageSummaries(@Query() query: UsageSummaryQueryDto): Promise<{ message: string; data: any[] }> {
 		const startTime = Date.now();
@@ -159,7 +154,6 @@ export class UsageTrackingController {
 	 */
 	@Post('aggregate')
 	@HttpCode(HttpStatus.OK)
-	@UseGuards(RoleGuard)
 	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.DEVELOPER)
 	async triggerAggregation(): Promise<{ message: string }> {
 		const startTime = Date.now();
@@ -185,7 +179,6 @@ export class UsageTrackingController {
 	 * Get organization license usage summary
 	 */
 	@Get('license-usage/:orgId')
-	@UseGuards(RoleGuard)
 	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.DEVELOPER, AccessLevel.MANAGER)
 	async getLicenseUsage(
 		@Query('orgId') orgId: number,
