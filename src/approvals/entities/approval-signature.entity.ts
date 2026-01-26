@@ -23,11 +23,11 @@ export class ApprovalSignature {
     approvalUid: number;
 
     @ManyToOne(() => User, { nullable: false })
-    @JoinColumn({ name: 'signerUid' })
+    @JoinColumn({ name: 'signerClerkUserId', referencedColumnName: 'clerkUserId' })
     signer: User;
 
-    @Column({ type: 'int', nullable: false })
-    signerUid: number;
+    @Column({ type: 'varchar', nullable: false })
+    signerClerkUserId: string;
 
     @Column({ type: 'enum', enum: SignatureType })
     signatureType: SignatureType;
@@ -107,8 +107,8 @@ export class ApprovalSignature {
     @Column({ type: 'varchar', length: 255, nullable: true })
     revocationReason: string;
 
-    @Column({ type: 'int', nullable: true })
-    revokedBy: number;
+    @Column({ type: 'varchar', nullable: true })
+    revokedByClerkUserId: string;
 
     // Biometric Information (if applicable)
     @Column({ type: 'json', nullable: true })
@@ -130,8 +130,8 @@ export class ApprovalSignature {
     @Column({ type: 'boolean', default: false })
     requiresWitness: boolean;
 
-    @Column({ type: 'int', nullable: true })
-    witnessUid: number;
+    @Column({ type: 'varchar', nullable: true })
+    witnessClerkUserId: string;
 
     @Column({ type: 'timestamptz', nullable: true })
     witnessedAt: Date;

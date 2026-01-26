@@ -27,6 +27,7 @@ import { Injectable, NotFoundException, Logger, BadRequestException, Inject } fr
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { Journal } from './entities/journal.entity';
+import { User } from '../user/entities/user.entity';
 import { Organisation } from '../organisation/entities/organisation.entity';
 import { CreateJournalDto } from './dto/create-journal.dto';
 import { UpdateJournalDto } from './dto/update-journal.dto';
@@ -181,19 +182,34 @@ export class JournalService {
 	 * @param branchId - Branch ID for scoping
 	 * @returns Success message or error
 	 */
-	async create(createJournalDto: CreateJournalDto, orgId?: string, branchId?: number): Promise<{ message: string }> {
+	async create(createJournalDto: CreateJournalDto, orgId?: string, branchId?: number, clerkUserId?: string): Promise<{ message: string }> {
+		const ownerRef = (createJournalDto as { owner?: { uid: string } }).owner?.uid;
+		const userRef = ownerRef ?? clerkUserId ?? 'unknown';
 		const startTime = Date.now();
 		this.logger.log(
-			`Creating journal entry for ${createJournalDto.owner?.uid ? `user: ${createJournalDto.owner.uid}` : 'unknown user'} ${
+			`Creating journal entry for ${userRef} ${
 				orgId ? `in org: ${orgId}` : ''
 			} ${branchId ? `in branch: ${branchId}` : ''} with type: ${createJournalDto.type || 'GENERAL'}`
 		);
 
 		try {
-			// Validate required fields
-			if (!createJournalDto.owner?.uid) {
-				this.logger.error('Journal creation failed: Missing owner information');
-				throw new BadRequestException('Owner information is required');
+			if (!ownerRef && !clerkUserId) {
+				this.logger.error('Journal creation failed: Missing owner or Clerk ID');
+				throw new BadRequestException('Owner or Clerk ID is required');
+			}
+
+			// Resolve user by clerk id or owner.uid (string)
+			const userWhere = clerkUserId
+				? { clerkUserId }
+				: typeof ownerRef === 'string' && ownerRef.startsWith('user_')
+					? { clerkUserId: ownerRef }
+					: { uid: Number(ownerRef) };
+			const ownerUser = await this.dataSource.getRepository(User).findOne({
+				where: userWhere,
+				select: ['uid', 'clerkUserId'],
+			});
+			if (!ownerUser?.clerkUserId) {
+				throw new NotFoundException('User not found or missing Clerk ID');
 			}
 
 			// Find organisation by Clerk org ID if provided
@@ -207,9 +223,12 @@ export class JournalService {
 				organisationUid = organisation.uid;
 			}
 
-			// Add organization and branch information
+			// Add organization, branch, and owner (clerk id as primary)
+			const { owner: _o, ...rest } = createJournalDto as CreateJournalDto & { owner?: { uid: string } };
 			const journalData = {
-				...createJournalDto,
+				...rest,
+				ownerClerkUserId: ownerUser.clerkUserId,
+				owner: { clerkUserId: ownerUser.clerkUserId },
 				organisation: organisationUid ? { uid: organisationUid } : undefined,
 				branch: branchId ? { uid: branchId } : undefined,
 			};
@@ -240,7 +259,7 @@ export class JournalService {
 			const notification = {
 				type: NotificationType.USER,
 				title: 'Journal Entry Created',
-				message: `A new journal entry has been created by ${createJournalDto.owner || 'user'}`,
+				message: `A new journal entry has been created by user`,
 				status: NotificationStatus.UNREAD,
 				owner: journal?.owner,
 			};
@@ -255,10 +274,10 @@ export class JournalService {
 
 			this.eventEmitter.emit('send.notification', notification, recipients);
 
-			// Award XP for journal creation
+			// Award XP for journal creation (use clerk id when available per migration)
 			try {
 				await this.rewardsService.awardXP({
-					owner: createJournalDto.owner.uid,
+					owner: ownerUser.clerkUserId ?? ownerUser.uid,
 					amount: XP_VALUES.CREATE_JOURNAL || 10,
 					action: 'JOURNAL_CREATION',
 					source: {
@@ -267,7 +286,7 @@ export class JournalService {
 						details: `Journal entry created: ${journal.title || 'Untitled'}`,
 					},
 				}, orgId, branchId);
-				this.logger.log(`XP awarded for journal creation to user: ${createJournalDto.owner.uid}`);
+				this.logger.log(`XP awarded for journal creation to user: ${ownerUser.clerkUserId ?? ownerUser.uid}`);
 			} catch (xpError) {
 				this.logger.warn(`Failed to award XP for journal creation: ${xpError.message}`);
 			}
@@ -799,7 +818,8 @@ export class JournalService {
 
 			// Award XP for journal update (smaller amount than creation)
 			try {
-				const ownerUid = updateJournalDto.owner?.uid || originalJournal.owner?.uid;
+				const ownerRef = (updateJournalDto as { owner?: { uid: string } }).owner?.uid;
+				const ownerUid = ownerRef ?? originalJournal.owner?.uid ?? originalJournal.ownerClerkUserId;
 				if (ownerUid) {
 					await this.rewardsService.awardXP({
 						owner: ownerUid,
@@ -1112,11 +1132,30 @@ export class JournalService {
 	// INSPECTION-SPECIFIC FUNCTIONALITY
 	// ======================================================
 
-	async createInspection(createJournalDto: CreateJournalDto, orgId?: string, branchId?: number): Promise<{ message: string; data?: any }> {
+	async createInspection(createJournalDto: CreateJournalDto, orgId?: string, branchId?: number, clerkUserId?: string): Promise<{ message: string; data?: any }> {
+		const ownerRef = (createJournalDto as { owner?: { uid: string } }).owner?.uid;
 		this.logger.log(`Creating inspection journal for orgId: ${orgId}, branchId: ${branchId}`);
 		this.logger.debug(`Create inspection DTO: ${JSON.stringify(createJournalDto)}`);
 
 		try {
+			if (!ownerRef && !clerkUserId) {
+				throw new BadRequestException('Owner or Clerk ID is required for inspection');
+			}
+
+			// Resolve user by clerk id or owner.uid (string)
+			const userWhere = clerkUserId
+				? { clerkUserId }
+				: typeof ownerRef === 'string' && ownerRef.startsWith('user_')
+					? { clerkUserId: ownerRef }
+					: { uid: Number(ownerRef) };
+			const ownerUser = await this.dataSource.getRepository(User).findOne({
+				where: userWhere,
+				select: ['uid', 'clerkUserId'],
+			});
+			if (!ownerUser?.clerkUserId) {
+				throw new NotFoundException('User not found or missing Clerk ID');
+			}
+
 			// Resolve Clerk org ID to numeric uid
 			let resolvedOrgUid: number | undefined;
 			if (orgId) {
@@ -1127,10 +1166,13 @@ export class JournalService {
 				resolvedOrgUid = organisation.uid;
 			}
 
-			// Set type to INSPECTION
+			const { owner: _o, ...rest } = createJournalDto as CreateJournalDto & { owner?: { uid: string } };
+			// Set type to INSPECTION and owner (clerk id as primary)
 			const inspectionData = {
-				...createJournalDto,
+				...rest,
 				type: JournalType.INSPECTION,
+				ownerClerkUserId: ownerUser.clerkUserId,
+				owner: { clerkUserId: ownerUser.clerkUserId },
 				organisation: resolvedOrgUid ? { uid: resolvedOrgUid } : undefined,
 				branch: branchId ? { uid: branchId } : undefined,
 			};
@@ -1183,20 +1225,20 @@ export class JournalService {
 
 			this.eventEmitter.emit('send.notification', notification, recipients);
 
-			// Award XP based on inspection score
+			// Award XP based on inspection score (use clerk id when available per migration)
 			try {
 				const xpAmount = this.calculateInspectionXP(journal.percentage || 0);
 				await this.rewardsService.awardXP({
-					owner: createJournalDto.owner.uid,
+					owner: ownerUser.clerkUserId ?? ownerUser.uid,
 					amount: xpAmount,
 					action: 'INSPECTION',
 					source: {
-						id: createJournalDto.owner.uid.toString(),
+						id: ownerUser.clerkUserId ?? String(ownerUser.uid),
 						type: 'inspection',
 						details: `Inspection completed with ${journal.percentage?.toFixed(1)}% score`,
 					},
 				}, orgId, branchId);
-				this.logger.log(`XP awarded for inspection: ${createJournalDto.owner.uid} - ${xpAmount}XP`);
+				this.logger.log(`XP awarded for inspection: ${ownerUser.clerkUserId ?? ownerUser.uid} - ${xpAmount}XP`);
 			} catch (xpError) {
 				this.logger.warn(`Failed to award XP for inspection: ${xpError.message}`);
 			}

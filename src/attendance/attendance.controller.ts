@@ -32,7 +32,12 @@ import { AccessLevel } from '../lib/enums/user.enums';
 import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { RoleGuard } from '../guards/role.guard';
 import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
-import { AuthenticatedRequest, getClerkOrgId } from '../lib/interfaces/authenticated-request.interface';
+import {
+	AuthenticatedRequest,
+	getClerkOrgId,
+	getClerkUserId,
+	getRequestingUserUid,
+} from '../lib/interfaces/authenticated-request.interface';
 import { Attendance } from './entities/attendance.entity';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { User } from '../user/entities/user.entity';
@@ -76,10 +81,10 @@ export class UserProfileSchema {
 	@ApiProperty({ enum: AccessLevel, example: 'USER' })
 	accessLevel: AccessLevel;
 
-	@ApiProperty({ type: 'string', format: 'date-time' })
+	@ApiProperty({ type: 'string', format: 'date-time', description: 'Creation timestamp in organization timezone' })
 	createdAt: Date;
 
-	@ApiProperty({ type: 'string', format: 'date-time' })
+	@ApiProperty({ type: 'string', format: 'date-time', description: 'Last update timestamp in organization timezone' })
 	updatedAt: Date;
 }
 
@@ -115,10 +120,10 @@ export class AttendanceWithUserProfileSchema {
 	@ApiProperty({ enum: ['PRESENT', 'COMPLETED', 'ON_BREAK'], example: 'COMPLETED' })
 	status: string;
 
-	@ApiProperty({ type: 'string', format: 'date-time', example: getDynamicDateTime(undefined, undefined, 9, 0) })
+	@ApiProperty({ type: 'string', format: 'date-time', example: getDynamicDateTime(undefined, undefined, 9, 0), description: 'Check-in time in organization timezone' })
 	checkIn: Date;
 
-	@ApiProperty({ type: 'string', format: 'date-time', example: getDynamicDateTime(undefined, undefined, 17, 30), nullable: true })
+	@ApiProperty({ type: 'string', format: 'date-time', example: getDynamicDateTime(undefined, undefined, 17, 30), nullable: true, description: 'Check-out time in organization timezone' })
 	checkOut: Date;
 
 	@ApiProperty({ type: 'string', example: '8h 30m', nullable: true })
@@ -541,9 +546,9 @@ Advanced employee check-in system with location verification, biometric support,
 			throw new BadRequestException('Organization context required');
 		}
 		const branchId = this.toNumber(req.user?.branch?.uid);
-		const userAccessLevel = req.user?.accessLevel;
-
-		return this.attendanceService.checkIn(createAttendanceDto, orgId, branchId);
+		const clerkUserId = getClerkUserId(req);
+		const uid = getRequestingUserUid(req);
+		return this.attendanceService.checkIn(createAttendanceDto, orgId, branchId, false, clerkUserId, uid);
 	}
 
 	@Post('out')
@@ -723,13 +728,26 @@ Advanced employee check-out system with location verification, work summary calc
 			},
 		},
 	})
+	@ApiNotFoundResponse({
+		description: '❌ Not Found - No active shift found',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'No active shift found. Please check in first.' },
+				statusCode: { type: 'number', example: 404 },
+				error: { type: 'string', example: 'NO_ACTIVE_SHIFT' },
+			},
+		},
+	})
 	checkOut(@Body() createAttendanceDto: CreateCheckOutDto, @Req() req: AuthenticatedRequest) {
 		const orgId = getClerkOrgId(req);
 		if (!orgId) {
 			throw new BadRequestException('Organization context required');
 		}
 		const branchId = this.toNumber(req.user?.branch?.uid);
-		return this.attendanceService.checkOut(createAttendanceDto, orgId, branchId);
+		const clerkUserId = getClerkUserId(req);
+		const uid = getRequestingUserUid(req);
+		return this.attendanceService.checkOut(createAttendanceDto, orgId, branchId, clerkUserId, uid);
 	}
 
 	/**
@@ -1403,8 +1421,13 @@ Comprehensive break tracking system with intelligent timing, policy enforcement,
 			},
 		},
 	})
-	manageBreak(@Body() breakDto: CreateBreakDto) {
-		return this.attendanceService.manageBreak(breakDto);
+	manageBreak(@Body() breakDto: CreateBreakDto, @Req() req: AuthenticatedRequest) {
+		const clerkUserId = getClerkUserId(req);
+		const uid = getRequestingUserUid(req);
+		if (!clerkUserId || uid == null) {
+			throw new BadRequestException('User ID not found in token');
+		}
+		return this.attendanceService.manageBreak(breakDto, clerkUserId, uid);
 	}
 
 	@Get()
@@ -1483,12 +1506,13 @@ Retrieves complete attendance records with advanced filtering, analytics, and co
 								enum: ['PRESENT', 'COMPLETED', 'ON_BREAK'],
 								example: 'COMPLETED',
 							},
-							checkIn: { type: 'string', format: 'date-time', example: '2024-03-01T09:00:00Z' },
+							checkIn: { type: 'string', format: 'date-time', example: '2024-03-01T09:00:00Z', description: 'Check-in time in organization timezone' },
 							checkOut: {
 								type: 'string',
 								format: 'date-time',
 								example: '2024-03-01T17:30:00Z',
 								nullable: true,
+								description: 'Check-out time in organization timezone',
 							},
 							duration: { type: 'string', example: '8h 30m', nullable: true },
 							checkInLatitude: { type: 'number', example: -26.2041, nullable: true },
@@ -1499,9 +1523,9 @@ Retrieves complete attendance records with advanced filtering, analytics, and co
 							checkOutNotes: { type: 'string', example: 'Completed all tasks', nullable: true },
 							totalBreakTime: { type: 'string', example: '1h 15m', nullable: true },
 							breakCount: { type: 'number', example: 2, nullable: true },
-							createdAt: { type: 'string', format: 'date-time' },
-							updatedAt: { type: 'string', format: 'date-time' },
-							verifiedAt: { type: 'string', format: 'date-time', nullable: true },
+							createdAt: { type: 'string', format: 'date-time', description: 'Creation timestamp in organization timezone' },
+							updatedAt: { type: 'string', format: 'date-time', description: 'Last update timestamp in organization timezone' },
+							verifiedAt: { type: 'string', format: 'date-time', nullable: true, description: 'Verification timestamp in organization timezone' },
 							owner: {
 								type: 'object',
 								properties: {
@@ -1853,6 +1877,52 @@ Retrieves comprehensive attendance records for a specific date with advanced fil
 		return this.attendanceService.checkInsByDate(date, orgId, branchId, userAccessLevel);
 	}
 
+	@Get('user/me')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.SUPPORT,
+		AccessLevel.DEVELOPER,
+		AccessLevel.USER,
+		AccessLevel.OWNER,
+		AccessLevel.TECHNICIAN,
+	)
+	@ApiOperation({
+		summary: '👤 Get my attendance records (token)',
+		description:
+			'Retrieves attendance records for the authenticated user. User is derived from the token; no path param.',
+	})
+	@ApiOkResponse({
+		description: '✅ Current user attendance records',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string' },
+				checkIns: { type: 'array', items: { type: 'object' } },
+			},
+		},
+	})
+	@ApiUnauthorizedResponse({ description: '🔒 Unauthorized - Authentication required' })
+	checkInsByUserMe(@Req() req: AuthenticatedRequest) {
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
+		const userAccessLevel = req.user?.accessLevel;
+		const requestingUserId = getRequestingUserUid(req);
+		if (requestingUserId == null) {
+			throw new BadRequestException('User ID not found in token');
+		}
+		return this.attendanceService.checkInsByUser(
+			String(requestingUserId),
+			orgId,
+			branchId,
+			userAccessLevel,
+			String(requestingUserId),
+		);
+	}
+
 	@Get('user/:ref')
 	@Roles(
 		AccessLevel.ADMIN,
@@ -2180,14 +2250,14 @@ Retrieves comprehensive attendance records for a specific user with detailed ana
 			},
 		},
 	})
-	checkInsByUser(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
+	checkInsByUser(@Param('ref') ref: string, @Req() req: AuthenticatedRequest) {
 		const orgId = getClerkOrgId(req);
 		if (!orgId) {
 			throw new BadRequestException('Organization context required');
 		}
 		const branchId = this.toNumber(req.user?.branch?.uid);
 		const userAccessLevel = req.user?.accessLevel;
-		const requestingUserId = req.user?.uid;
+		const requestingUserId = req.user?.clerkUserId ?? (req.user?.uid != null ? String(req.user.uid) : undefined);
 		return this.attendanceService.checkInsByUser(ref, orgId, branchId, userAccessLevel, requestingUserId);
 	}
 
@@ -2296,11 +2366,60 @@ Retrieves a monthly attendance calendar for a specific user with all days of the
 		},
 	})
 	getMonthlyAttendanceCalendar(
-		@Param('ref') ref: number,
+		@Param('ref') ref: string,
 		@Query('year') year?: number,
 		@Query('month') month?: number,
 	) {
 		return this.attendanceService.getMonthlyAttendanceCalendar(ref, year, month);
+	}
+
+	@Get('status')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.SUPPORT,
+		AccessLevel.DEVELOPER,
+		AccessLevel.USER,
+		AccessLevel.OWNER,
+		AccessLevel.TECHNICIAN,
+	)
+	@ApiOperation({
+		summary: '📊 Get my attendance status (token)',
+		description:
+			'Retrieves the current attendance status for the authenticated user. User is derived from the token; no path param.',
+	})
+	@ApiOkResponse({
+		description: '✅ Current user attendance status',
+		schema: {
+			type: 'object',
+			properties: {
+				checkedIn: { type: 'boolean' },
+				nextAction: { type: 'string' },
+				startTime: { type: 'string', format: 'date-time', nullable: true, description: 'Check-in time in organization timezone' },
+				endTime: { type: 'string', format: 'date-time', nullable: true, description: 'Check-out time in organization timezone' },
+				attendance: { type: 'object', nullable: true },
+			},
+		},
+	})
+	@ApiUnauthorizedResponse({ description: '🔒 Unauthorized - Authentication required' })
+	checkInsByStatusSelf(@Req() req: AuthenticatedRequest) {
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const branchId = this.toNumber(req.user?.branch?.uid);
+		const userAccessLevel = req.user?.accessLevel;
+		const requestingUserId = getRequestingUserUid(req);
+		if (requestingUserId == null) {
+			throw new BadRequestException('User ID not found in token');
+		}
+		return this.attendanceService.checkInsByStatus(
+			String(requestingUserId),
+			orgId,
+			branchId,
+			userAccessLevel,
+			requestingUserId,
+		);
 	}
 
 	@Get('status/:ref')
@@ -2417,9 +2536,9 @@ Retrieves the current attendance status for a specific user with live updates, s
 					example: '2024-03-01T17:30:00.000Z',
 					nullable: true,
 				},
-				createdAt: { type: 'string', format: 'date-time' },
-				updatedAt: { type: 'string', format: 'date-time' },
-				verifiedAt: { type: 'string', format: 'date-time', nullable: true },
+				createdAt: { type: 'string', format: 'date-time', description: 'Creation timestamp in organization timezone' },
+				updatedAt: { type: 'string', format: 'date-time', description: 'Last update timestamp in organization timezone' },
+				verifiedAt: { type: 'string', format: 'date-time', nullable: true, description: 'Verification timestamp in organization timezone' },
 				nextAction: {
 					type: 'string',
 					description: 'Suggested next action for the user',
@@ -2480,8 +2599,8 @@ Retrieves the current attendance status for a specific user with live updates, s
 					properties: {
 						uid: { type: 'number', example: 123 },
 						status: { type: 'string', enum: ['PRESENT', 'COMPLETED', 'ON_BREAK'], example: 'PRESENT' },
-						checkIn: { type: 'string', format: 'date-time' },
-						checkOut: { type: 'string', format: 'date-time', nullable: true },
+						checkIn: { type: 'string', format: 'date-time', description: 'Check-in time in organization timezone' },
+						checkOut: { type: 'string', format: 'date-time', nullable: true, description: 'Check-out time in organization timezone' },
 						duration: { type: 'string', example: '8h 30m', nullable: true },
 						checkInLatitude: { type: 'number', nullable: true },
 						checkInLongitude: { type: 'number', nullable: true },
@@ -2607,7 +2726,7 @@ Retrieves the current attendance status for a specific user with live updates, s
 			},
 		},
 	})
-	checkInsByStatus(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
+	checkInsByStatus(@Param('ref') ref: string, @Req() req: AuthenticatedRequest) {
 		const orgId = getClerkOrgId(req);
 		if (!orgId) {
 			throw new BadRequestException('Organization context required');
@@ -3429,6 +3548,41 @@ Retrieves comprehensive daily attendance statistics for a specific user with det
 	// ATTENDANCE METRICS ENDPOINTS
 	// ======================================================
 
+	@Get('metrics')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.SUPPORT,
+		AccessLevel.DEVELOPER,
+		AccessLevel.USER,
+		AccessLevel.OWNER,
+		AccessLevel.TECHNICIAN,
+		AccessLevel.HR,
+	)
+	@ApiOperation({
+		summary: '📈 Get my attendance metrics (token)',
+		description:
+			'Retrieves attendance metrics for the authenticated user. User is derived from the token; no path param.',
+	})
+	@ApiOkResponse({
+		description: '✅ Current user attendance metrics',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string' },
+				metrics: { type: 'object' },
+			},
+		},
+	})
+	@ApiUnauthorizedResponse({ description: '🔒 Unauthorized - Authentication required' })
+	async getUserAttendanceMetricsSelf(@Req() req: AuthenticatedRequest) {
+		const uid = getRequestingUserUid(req);
+		if (uid == null || uid <= 0) {
+			throw new BadRequestException('User ID not found in token');
+		}
+		return this.attendanceService.getUserAttendanceMetrics(String(uid));
+	}
+
 	@Get('metrics/:uid')
 	@Roles(
 		AccessLevel.ADMIN,
@@ -3728,38 +3882,9 @@ Retrieves detailed attendance analytics for a specific user including historical
 			},
 		},
 	})
-	async getUserAttendanceMetrics(@Param('uid') uid: string | number) {
-		// Resolve user ID: if string (Clerk ID), look up numeric uid; if number, use directly
-		let numericUid: number;
-
-		if (typeof uid === 'string') {
-			// Check if it's a Clerk user ID (starts with "user_") or a numeric string
-			if (uid.startsWith('user_')) {
-				// It's a Clerk user ID - resolve to numeric uid
-				const user = await this.clerkService.getUserByClerkId(uid);
-				if (!user) {
-					throw new NotFoundException(`User with Clerk ID ${uid} not found`);
-				}
-				numericUid = user.uid;
-			} else {
-				// It's a numeric string - convert to number
-				const parsed = Number(uid);
-				if (isNaN(parsed) || !isFinite(parsed)) {
-					throw new BadRequestException(`Invalid user ID format: ${uid}`);
-				}
-				numericUid = parsed;
-			}
-		} else {
-			// It's already a number
-			numericUid = uid;
-		}
-
-		// Validate the numeric uid
-		if (!numericUid || numericUid <= 0) {
-			throw new BadRequestException('Invalid user ID provided');
-		}
-
-		return this.attendanceService.getUserAttendanceMetrics(numericUid);
+	async getUserAttendanceMetrics(@Param('uid') uid: string) {
+		// Pass raw uid (clerk id or numeric string) to service; resolution happens there
+		return this.attendanceService.getUserAttendanceMetrics(uid);
 	}
 
 	@Get('streak/current-week')
@@ -3830,8 +3955,8 @@ Returns streak count and daily status (attended/missed/future) for each day of t
 		description: '🔒 Unauthorized - Authentication required',
 	})
 	getCurrentWeekAttendanceStreak(@Req() req: AuthenticatedRequest) {
-		const userId = req.user?.uid;
-		if (!userId) {
+		const userId = getRequestingUserUid(req);
+		if (userId == null) {
 			throw new BadRequestException('User ID not found in token');
 		}
 		return this.attendanceService.getCurrentWeekAttendanceStreak(userId);
@@ -5859,7 +5984,7 @@ Manually triggers the overtime policy check system to identify employees working
 		description:
 			'Retrieves detailed attendance metrics and performance insights for a specific user within a date range',
 	})
-	@ApiParam({ name: 'ref', description: 'User ID', type: 'number' })
+	@ApiParam({ name: 'ref', description: 'User ID (string)', type: 'string' })
 	@ApiQuery({ name: 'startDate', description: 'Start date (YYYY-MM-DD)', required: true })
 	@ApiQuery({ name: 'endDate', description: 'End date (YYYY-MM-DD)', required: true })
 	@ApiQuery({
@@ -5877,7 +6002,7 @@ Manually triggers the overtime policy check system to identify employees working
 	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(AccessLevel.USER, AccessLevel.ADMIN, AccessLevel.OWNER)
 	async getUserMetrics(
-		@Param('ref') ref: number,
+		@Param('ref') ref: string,
 		@Query('startDate') startDate: string,
 		@Query('endDate') endDate: string,
 		@Query('includeInsights') includeInsights: boolean = true,
@@ -5887,13 +6012,13 @@ Manually triggers the overtime policy check system to identify employees working
 		if (
 			req.user.accessLevel !== AccessLevel.ADMIN &&
 			req.user.accessLevel !== AccessLevel.OWNER &&
-			req.user.uid !== Number(ref)
+			String(req.user.uid) !== ref
 		) {
 			throw new Error("You do not have permission to view this user's metrics");
 		}
 
 		return this.attendanceService.getUserMetricsForDateRange(
-			Number(ref),
+			ref,
 			startDate,
 			endDate,
 			typeof includeInsights === 'string' ? (includeInsights === 'false' ? false : true) : includeInsights,
@@ -5906,7 +6031,7 @@ Manually triggers the overtime policy check system to identify employees working
 		description:
 			'Retrieves detailed attendance metrics and performance insights for a specific user within a date range using path parameters',
 	})
-	@ApiParam({ name: 'ref', description: 'User ID', type: 'number' })
+	@ApiParam({ name: 'ref', description: 'User ID (string)', type: 'string' })
 	@ApiParam({ name: 'startDate', description: 'Start date (YYYY-MM-DD)', type: 'string' })
 	@ApiParam({ name: 'endDate', description: 'End date (YYYY-MM-DD)', type: 'string' })
 	@ApiQuery({
@@ -5924,14 +6049,14 @@ Manually triggers the overtime policy check system to identify employees working
 	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(AccessLevel.USER, AccessLevel.ADMIN, AccessLevel.OWNER)
 	async getUserMetricsWithPathParams(
-		@Param('ref') ref: number,
+		@Param('ref') ref: string,
 		@Param('startDate') startDate: string,
 		@Param('endDate') endDate: string,
 		@Query('includeInsights') includeInsights: boolean = true,
 	): Promise<UserMetricsResponseDto> {
 
 		return this.attendanceService.getUserMetricsForDateRange(
-			Number(ref),
+			ref,
 			startDate,
 			endDate,
 			typeof includeInsights === 'string' ? (includeInsights === 'false' ? false : true) : includeInsights,

@@ -30,12 +30,19 @@ class SourceDto {
 
 export class CreateRewardDto {
 	@ApiProperty({
-		description: 'User ID to award XP to',
-		example: 1
+		description: 'User ID (uid) or Clerk user ID to award XP to. Use ownerClerkUserId when available.',
+		example: 1,
 	})
-	@IsNumber()
 	@IsNotEmpty()
-	owner: number;
+	owner: number | string;
+
+	@ApiPropertyOptional({
+		description: 'Clerk user ID. When provided, used instead of owner for lookup (Clerk-first).',
+		example: 'user_2abc',
+	})
+	@IsOptional()
+	@IsString()
+	ownerClerkUserId?: string;
 
 	@ApiProperty({
 		description: 'Amount of XP to award',

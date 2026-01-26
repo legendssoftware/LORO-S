@@ -370,14 +370,32 @@ export class TrackingService {
 			const address = null;
 			const geocodingError = null;
 
-			// Extract owner ID before creating tracking data
+			// Extract owner ID before creating tracking data (string | number: clerk id or uid)
 			const ownerId = createTrackingDto.owner;
 			if (!ownerId) {
 				throw new BadRequestException('Owner ID is required for tracking');
 			}
 
-			// Check rate limit: maximum 2 points per minute per user
-			const rateLimitCheck = await this.checkRateLimit(ownerId);
+			// Validate user exists and resolve clerkUserId for ownerClerkUserId FK (ownerId: string | number)
+			const userWhere = typeof ownerId === 'string' && ownerId.startsWith('user_')
+				? { clerkUserId: ownerId }
+				: { uid: Number(ownerId) };
+			const userExists = await this.userRepository.findOne({
+				where: userWhere,
+				relations: ['organisation', 'branch'],
+			});
+
+			if (!userExists) {
+				throw new BadRequestException(`User with ID ${ownerId} not found`);
+			}
+			if (!userExists.clerkUserId) {
+				throw new BadRequestException(`User with ID ${ownerId} has no Clerk ID - cannot create tracking`);
+			}
+
+			const ownerClerkUserId = userExists.clerkUserId;
+
+			// Check rate limit: maximum 2 points per minute per user (use numeric uid)
+			const rateLimitCheck = await this.checkRateLimit(userExists.uid);
 			if (!rateLimitCheck.isAllowed) {
 				// Handle rate limit gracefully - return early with informative message instead of throwing exception
 				// This prevents error logs for expected rate limiting behavior
@@ -392,16 +410,6 @@ export class TrackingService {
 						remaining: rateLimitCheck.remaining,
 					}],
 				};
-			}
-
-			// Validate user exists and has access
-			const userExists = await this.userRepository.findOne({
-				where: { uid: ownerId },
-				relations: ['organisation', 'branch'],
-			});
-
-			if (!userExists) {
-				throw new BadRequestException(`User with ID ${ownerId} not found`);
 			}
 
 			// Create a new object without the owner property
@@ -434,14 +442,14 @@ export class TrackingService {
 			}
 
 			// Create tracking entity with all available data
+			// Entity JoinColumn uses ownerClerkUserId -> User.clerkUserId; set both explicitly
 			const trackingData: DeepPartial<Tracking> = {
 				...trackingDataWithoutOwner,
 				address,
 				addressDecodingError: geocodingError || null,
-				// Store raw coordinates as fallback
 				rawLocation: `${latitude},${longitude}`,
-				// Set owner as a reference to User entity
-				owner: { uid: ownerId } as any,
+				owner: { clerkUserId: ownerClerkUserId } as any,
+				ownerClerkUserId,
 			};
 
 			// Add branch and organization if provided (non-blocking - skip if user has no branch)
@@ -512,8 +520,8 @@ export class TrackingService {
 				}
 			}
 
-			// Clear cache for this user
-			await this.clearTrackingCache(tracking.uid, ownerId);
+			// Clear cache for this user (use numeric uid for cache key)
+			await this.clearTrackingCache(tracking.uid, userExists.uid);
 
 			// Prepare response
 			const response = {

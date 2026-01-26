@@ -44,9 +44,9 @@ export class TaskReminderService {
 	}
 
 	/**
-	 * Filter active users from a list of users
+	 * Filter active users from a list of users (user refs as strings)
 	 */
-	private async filterActiveUsers(userIds: number[]): Promise<User[]> {
+	private async filterActiveUsers(userIds: string[]): Promise<User[]> {
 		if (userIds.length === 0) return [];
 
 		const users = await this.userRepository.find({
@@ -126,7 +126,7 @@ export class TaskReminderService {
 
 			// Send consolidated notification to each user
 			for (const [userId, userTasks] of Object.entries(tasksByUser)) {
-				await this.sendConsolidatedTaskNotification(parseInt(userId), userTasks, 'today');
+				await this.sendConsolidatedTaskNotification(userId, userTasks, 'today');
 			}
 
 					this.logger.log(`✅ Daily task summary sent to ${Object.keys(tasksByUser).length} users in org ${org.uid}`);
@@ -208,7 +208,7 @@ export class TaskReminderService {
 
 			// Send consolidated notification to each user
 			for (const [userId, userTasks] of Object.entries(tasksByUser)) {
-				await this.sendConsolidatedTaskNotification(parseInt(userId), userTasks, 'overdue');
+				await this.sendConsolidatedTaskNotification(userId, userTasks, 'overdue');
 			}
 
 					this.logger.log(`✅ Overdue tasks summary sent to ${Object.keys(tasksByUser).length} users in org ${org.uid}`);
@@ -222,35 +222,25 @@ export class TaskReminderService {
 	}
 
 	/**
-	 * Group tasks by user (includes both assignees and creators)
+	 * Group tasks by user (includes both assignees and creators). User refs as strings.
 	 */
-	private groupTasksByUser(tasks: Task[]): Record<number, Task[]> {
-		const tasksByUser: Record<number, Task[]> = {};
+	private groupTasksByUser(tasks: Task[]): Record<string, Task[]> {
+		const tasksByUser: Record<string, Task[]> = {};
 
 		for (const task of tasks) {
-			const userIds = new Set<number>();
-
-			// Add creator
+			const taskUserIds = new Set<string>();
 			if (task.creator && Array.isArray(task.creator) && task.creator.length > 0) {
-				userIds.add(task.creator[0].uid);
+				taskUserIds.add(String(task.creator[0].uid));
 			} else if (task.creator && typeof task.creator === 'object' && 'uid' in task.creator) {
-				userIds.add((task.creator as any).uid);
+				taskUserIds.add(String((task.creator as any).uid));
 			}
-
-			// Add assignees
 			if (task.assignees && Array.isArray(task.assignees)) {
 				task.assignees.forEach((assignee: any) => {
-					if (assignee.uid) {
-						userIds.add(assignee.uid);
-					}
+					if (assignee.uid != null) taskUserIds.add(String(assignee.uid));
 				});
 			}
-
-			// Add task to each user's list
-			userIds.forEach((userId) => {
-				if (!tasksByUser[userId]) {
-					tasksByUser[userId] = [];
-				}
+			taskUserIds.forEach((userId) => {
+				if (!tasksByUser[userId]) tasksByUser[userId] = [];
 				tasksByUser[userId].push(task);
 			});
 		}
@@ -259,9 +249,9 @@ export class TaskReminderService {
 	}
 
 	/**
-	 * Send consolidated task notification to a user
+	 * Send consolidated task notification to a user (user ref as string)
 	 */
-	private async sendConsolidatedTaskNotification(userId: number, tasks: Task[], type: 'today' | 'overdue') {
+	private async sendConsolidatedTaskNotification(userId: string, tasks: Task[], type: 'today' | 'overdue') {
 		try {
 			// Check if user is active
 			const activeUsers = await this.filterActiveUsers([userId]);
@@ -286,10 +276,10 @@ export class TaskReminderService {
 			const topTasks = sortedTasks.slice(0, 5);
 
 			if (type === 'today') {
-				// Daily task summary
+				// Daily task summary (use user.uid for recipient; notification expects numeric id)
 				await this.unifiedNotificationService.sendTemplatedNotification(
 					NotificationEvent.TASK_DAILY_SUMMARY,
-					[userId],
+					[user.uid],
 					{
 						userName: user.name || 'Team Member',
 						taskCount: tasks.length,
@@ -324,7 +314,7 @@ export class TaskReminderService {
 
 			await this.unifiedNotificationService.sendTemplatedNotification(
 					NotificationEvent.TASKS_OVERDUE_SUMMARY,
-					[userId],
+					[user.uid],
 					{
 						userName: user.name || 'Team Member',
 						overdueCount: tasks.length,

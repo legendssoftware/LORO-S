@@ -61,37 +61,37 @@ export class Approval {
 
     // User Relations
     @ManyToOne(() => User, { nullable: false })
-    @JoinColumn({ name: 'requesterUid' })
+    @JoinColumn({ name: 'requesterClerkUserId', referencedColumnName: 'clerkUserId' })
     requester: User;
 
-    @Column({ type: 'int', nullable: false })
-    requesterUid: number;
+    @Column({ type: 'varchar', nullable: false })
+    requesterClerkUserId: string;
 
     @ManyToOne(() => User, { nullable: true })
-    @JoinColumn({ name: 'approverUid' })
+    @JoinColumn({ name: 'approverClerkUserId', referencedColumnName: 'clerkUserId' })
     approver: User;
 
-    @Column({ type: 'int', nullable: true })
-    approverUid: number;
+    @Column({ type: 'varchar', nullable: true })
+    approverClerkUserId: string;
 
     // Delegation support
     @ManyToOne(() => User, { nullable: true })
-    @JoinColumn({ name: 'delegatedFromUid' })
+    @JoinColumn({ name: 'delegatedFromClerkUserId', referencedColumnName: 'clerkUserId' })
     delegatedFrom: User;
 
-    @Column({ type: 'int', nullable: true })
-    delegatedFromUid: number;
+    @Column({ type: 'varchar', nullable: true })
+    delegatedFromClerkUserId: string;
 
     @ManyToOne(() => User, { nullable: true })
-    @JoinColumn({ name: 'delegatedToUid' })
+    @JoinColumn({ name: 'delegatedToClerkUserId', referencedColumnName: 'clerkUserId' })
     delegatedTo: User;
 
-    @Column({ type: 'int', nullable: true })
-    delegatedToUid: number;
+    @Column({ type: 'varchar', nullable: true })
+    delegatedToClerkUserId: string;
 
     // Escalation support
     @ManyToOne(() => User, { nullable: true })
-    @JoinColumn({ name: 'escalatedToUid' })
+    @JoinColumn({ name: 'escalatedToClerkUserId', referencedColumnName: 'clerkUserId' })
     escalatedTo: User;
 
     // Organization & Branch Relations
@@ -111,7 +111,7 @@ export class Approval {
 
     // Approval Workflow Configuration
     @Column({ type: 'json', nullable: true })
-    approverChain: Array<{ uid: number; order: number; required: boolean; role?: string }>; // For sequential/parallel workflows
+    approverChain: Array<{ clerkUserId: string; order: number; required: boolean; role?: string }>; // For sequential/parallel workflows
 
     @Column({ type: 'int', default: 1 })
     currentStep: number; // Current step in approval chain
@@ -184,7 +184,7 @@ export class Approval {
         filename: string;
         url: string;
         uploadedAt: Date;
-        uploadedBy: number;
+        uploadedBy: string; // Clerk user ID
         fileSize: number;
         mimeType: string;
     }>;
@@ -237,8 +237,8 @@ export class Approval {
     @Column({ type: 'timestamptz', nullable: true })
     escalatedAt: Date;
 
-    @Column({ type: 'int', nullable: true })
-    escalatedToUid: number;
+    @Column({ type: 'varchar', nullable: true })
+    escalatedToClerkUserId: string;
 
     @Column({ type: 'varchar', length: 255, nullable: true })
     escalationReason: string;
@@ -278,8 +278,8 @@ export class Approval {
     @Column({ type: 'timestamptz', nullable: true })
     archivedAt: Date;
 
-    @Column({ type: 'int', nullable: true })
-    archivedBy: number;
+    @Column({ type: 'varchar', nullable: true })
+    archivedBy: string; // Clerk user ID
 
     @Column({ type: 'varchar', length: 50, nullable: true })
     approvalReference: string; // Unique reference number

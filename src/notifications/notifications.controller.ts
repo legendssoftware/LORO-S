@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Req, BadRequestException } from '@nestjs/common';
 import { NotificationsService } from './notifications.service';
 import { CreateNotificationDto } from './dto/create-notification.dto';
 import { UpdateNotificationDto } from './dto/update-notification.dto';
@@ -9,12 +9,7 @@ import { RoleGuard } from '../guards/role.guard';
 import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { Roles } from '../decorators/role.decorator';
-import { Request } from 'express';
-import { User } from '../user/entities/user.entity';
-
-interface AuthenticatedRequest extends Request {
-	user: User;
-}
+import { AuthenticatedRequest, getClerkUserId } from '../lib/interfaces/authenticated-request.interface';
 
 @ApiTags('🔔 Notifications')
 @Controller('notifications')
@@ -44,8 +39,10 @@ export class NotificationsController {
 			['Data validation', 'Push notification sending', 'User targeting'],
 		),
 	})
-	create(@Body() createNotificationDto: CreateNotificationDto) {
-		return this.notificationsService.create(createNotificationDto);
+	create(@Body() createNotificationDto: CreateNotificationDto, @Req() req: AuthenticatedRequest) {
+		const clerkUserId = getClerkUserId(req);
+		if (!clerkUserId) throw new BadRequestException('Authentication required');
+		return this.notificationsService.create(createNotificationDto, clerkUserId);
 	}
 
 	@Post('register-token')
@@ -217,8 +214,11 @@ export class NotificationsController {
 		),
 	})
 	update(@Param('ref') ref: number, @Body() updateNotificationDto: UpdateNotificationDto, @Req() req: AuthenticatedRequest) {
-		const { orgId, branchId } = req.user as any;
-		return this.notificationsService.update(ref, updateNotificationDto, orgId, branchId);
+		const clerkUserId = getClerkUserId(req);
+		if (!clerkUserId) throw new BadRequestException('Authentication required');
+		const orgId = req.user?.organisationRef as string | undefined;
+		const branchId = req.user?.branch?.uid;
+		return this.notificationsService.update(ref, updateNotificationDto, orgId, branchId, clerkUserId);
 	}
 
 	@Delete(':ref')

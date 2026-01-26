@@ -73,9 +73,9 @@ export class Doc {
     branchUid: number;
 
     @ManyToOne(() => Organisation, (organisation) => organisation?.docs)
-    @JoinColumn({ name: 'organisationUid' })
+    @JoinColumn({ name: 'organisationUid', referencedColumnName: 'clerkOrgId' })
     organisation: Organisation;
 
-    @Column({ nullable: true })
-    organisationUid: number; 
+    @Column({ type: 'varchar', nullable: true })
+    organisationUid: string; 
 }

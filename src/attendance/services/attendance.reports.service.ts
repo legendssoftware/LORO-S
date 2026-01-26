@@ -2760,7 +2760,7 @@ export class AttendanceReportsService {
 			// Get targets for each user
 			for (const user of allUsers) {
 				try {
-					const targetResponse = await this.userService.getUserTarget(user.uid);
+					const targetResponse = await this.userService.getUserTarget(user.clerkUserId ?? String(user.uid));
 					if (targetResponse?.userTarget?.targetHoursWorked) {
 						const dailyTargetHours = targetResponse.userTarget.targetHoursWorked;
 						userTargetsMap.set(user.uid, dailyTargetHours);

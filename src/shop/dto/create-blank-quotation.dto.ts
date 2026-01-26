@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsArray, IsNotEmpty, ValidateNested, IsNumber, IsString, IsEnum, IsOptional, IsEmail, IsBoolean } from 'class-validator';
+import { OwnerUidDto } from '../../lib/dto/owner-uid.dto';
 import { Type } from 'class-transformer';
 import { PriceListType } from '../../lib/enums/product.enums';
 
@@ -57,13 +58,15 @@ export class CreateBlankQuotationDto {
 	})
 	client: { uid: number };
 
-	@IsString()
 	@IsNotEmpty()
+	@ValidateNested()
+	@Type(() => OwnerUidDto)
 	@ApiProperty({
-		description: 'Owner/creator reference',
-		example: { uid: 1 },
+		type: OwnerUidDto,
+		description: 'Owner/creator reference (user ref as string)',
+		example: { uid: '1' },
 	})
-	owner: { uid: number };
+	owner: OwnerUidDto;
 
 	@IsEnum(PriceListType)
 	@IsNotEmpty()

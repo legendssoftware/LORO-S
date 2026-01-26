@@ -301,7 +301,7 @@ export class TasksController {
 			},
 		},
 	})
-	async tasksByUser(@Param('ref', ParseIntPipe) ref: number, @Req() req: AuthenticatedRequest) {
+	async tasksByUser(@Param('ref') ref: string, @Req() req: AuthenticatedRequest) {
 		const orgId = await this.resolveOrgUid(req);
 		const branchId = req.user?.branch?.uid;
 		return this.tasksService.tasksByUser(ref, orgId, branchId);
@@ -825,7 +825,7 @@ export class TasksController {
 		required: false,
 		description: 'Filter by deadline after date (ISO format)',
 	})
-	@ApiQuery({ name: 'userId', type: Number, required: false, description: 'Filter by user who created the flag' })
+	@ApiQuery({ name: 'userId', type: String, required: false, description: 'Filter by user who created the flag (string)' })
 	@ApiQuery({ name: 'page', type: Number, required: false, description: 'Page number, defaults to 1' })
 	@ApiQuery({
 		name: 'limit',
@@ -840,7 +840,7 @@ export class TasksController {
 		@Query('endDate') endDate?: string,
 		@Query('deadlineBefore') deadlineBefore?: string,
 		@Query('deadlineAfter') deadlineAfter?: string,
-		@Query('userId') userId?: number,
+		@Query('userId') userId?: string,
 		@Query('page') page?: string,
 		@Query('limit') limit?: string,
 	) {
@@ -853,7 +853,7 @@ export class TasksController {
 		if (endDate) filters.endDate = new Date(endDate);
 		if (deadlineBefore) filters.deadlineBefore = new Date(deadlineBefore);
 		if (deadlineAfter) filters.deadlineAfter = new Date(deadlineAfter);
-		if (userId) filters.userId = Number(userId);
+		if (userId) filters.userId = userId;
 		if (orgId != null) filters.organisationRef = orgId;
 		if (branchId) filters.branchId = branchId;
 

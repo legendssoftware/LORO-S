@@ -74,26 +74,20 @@ export class ApprovalActionDto {
     notificationMessage?: string;
 
     @ApiPropertyOptional({
-        description: 'User ID to delegate to (for DELEGATE action)',
-        minimum: 1,
-        type: 'number'
+        description: 'Clerk User ID to delegate to (for DELEGATE action)',
+        type: 'string'
     })
     @IsOptional()
-    @Type(() => Number)
-    @IsInt()
-    @Min(1)
-    delegateToUid?: number;
+    @IsString()
+    delegateToClerkUserId?: string;
 
     @ApiPropertyOptional({
-        description: 'User ID to escalate to (for ESCALATE action)',
-        minimum: 1,
-        type: 'number'
+        description: 'Clerk User ID to escalate to (for ESCALATE action)',
+        type: 'string'
     })
     @IsOptional()
-    @Type(() => Number)
-    @IsInt()
-    @Min(1)
-    escalateToUid?: number;
+    @IsString()
+    escalateToClerkUserId?: string;
 
     @ApiPropertyOptional({
         description: 'Additional metadata for the action',

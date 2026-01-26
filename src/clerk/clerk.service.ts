@@ -266,6 +266,134 @@ export class ClerkService {
 	}
 
 	/**
+	 * Update user profile in Clerk (firstName, lastName, email, phoneNumber, imageUrl, password)
+	 * Synchronous operation - should be awaited
+	 * @param clerkUserId - Clerk user ID
+	 * @param updates - Profile fields to update
+	 * @returns Promise<boolean> - true if update was successful, false otherwise
+	 */
+	async updateClerkUserProfile(
+		clerkUserId: string,
+		updates: {
+			firstName?: string;
+			lastName?: string;
+			email?: string;
+			phoneNumber?: string;
+			imageUrl?: string;
+			password?: string;
+		}
+	): Promise<boolean> {
+		const operationId = `UPDATE_PROFILE_${clerkUserId}_${Date.now()}`;
+		
+		if (!this.clerkClientInstance) {
+			this.logger.warn(`[${operationId}] Clerk client not initialized - skipping profile update`);
+			return false;
+		}
+
+		try {
+			// Build update payload for Clerk API
+			const clerkUpdatePayload: any = {};
+
+			// Direct field mappings
+			if (updates.firstName !== undefined) {
+				clerkUpdatePayload.firstName = updates.firstName;
+			}
+			if (updates.lastName !== undefined) {
+				clerkUpdatePayload.lastName = updates.lastName;
+			}
+			if (updates.imageUrl !== undefined) {
+				clerkUpdatePayload.imageUrl = updates.imageUrl;
+			}
+			if (updates.password !== undefined && updates.password.trim().length > 0) {
+				clerkUpdatePayload.password = updates.password;
+			}
+
+			// Handle email update - Clerk requires creating/updating email address first
+			if (updates.email !== undefined) {
+				try {
+					// Get current user to check existing emails
+					const clerkUser = await this.clerkClientInstance.users.getUser(clerkUserId);
+					const existingEmails = clerkUser.emailAddresses || [];
+					
+					// Check if email already exists
+					const existingEmail = existingEmails.find(
+						(e: any) => e.emailAddress === updates.email
+					);
+
+					if (existingEmail) {
+						// Email exists, set as primary if not already
+						if (!existingEmail.id) {
+							// Create email if it doesn't have an ID (shouldn't happen, but safety check)
+							await this.clerkClientInstance.users.createEmailAddress({
+								userId: clerkUserId,
+								emailAddress: updates.email,
+							});
+						} else {
+							// Set existing email as primary
+							clerkUpdatePayload.primaryEmailAddressId = existingEmail.id;
+						}
+					} else {
+						// Create new email address
+						const newEmail = await this.clerkClientInstance.users.createEmailAddress({
+							userId: clerkUserId,
+							emailAddress: updates.email,
+						});
+						clerkUpdatePayload.primaryEmailAddressId = newEmail.id;
+					}
+				} catch (emailError) {
+					this.logger.warn(`[${operationId}] Failed to handle email update:`, emailError instanceof Error ? emailError.message : 'Unknown error');
+					// Continue with other updates even if email fails
+				}
+			}
+
+			// Handle phone number update - Clerk requires creating/updating phone number first
+			if (updates.phoneNumber !== undefined && updates.phoneNumber.trim().length > 0) {
+				try {
+					// Get current user to check existing phone numbers
+					const clerkUser = await this.clerkClientInstance.users.getUser(clerkUserId);
+					const existingPhones = clerkUser.phoneNumbers || [];
+					
+					// Check if phone already exists
+					const existingPhone = existingPhones.find(
+						(p: any) => p.phoneNumber === updates.phoneNumber
+					);
+
+					if (existingPhone) {
+						// Phone exists, set as primary if not already
+						if (existingPhone.id) {
+							clerkUpdatePayload.primaryPhoneNumberId = existingPhone.id;
+						}
+					} else {
+						// Create new phone number
+						const newPhone = await this.clerkClientInstance.users.createPhoneNumber({
+							userId: clerkUserId,
+							phoneNumber: updates.phoneNumber,
+						});
+						clerkUpdatePayload.primaryPhoneNumberId = newPhone.id;
+					}
+				} catch (phoneError) {
+					this.logger.warn(`[${operationId}] Failed to handle phone update:`, phoneError instanceof Error ? phoneError.message : 'Unknown error');
+					// Continue with other updates even if phone fails
+				}
+			}
+
+			// Only call updateUser if there are fields to update
+			if (Object.keys(clerkUpdatePayload).length > 0) {
+				await this.clerkClientInstance.users.updateUser(clerkUserId, clerkUpdatePayload);
+				this.logger.log(`[${operationId}] User profile updated successfully in Clerk`);
+				return true;
+			} else {
+				this.logger.debug(`[${operationId}] No valid fields to update in Clerk`);
+				return true; // Return true as there's nothing to update
+			}
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+			this.logger.error(`[${operationId}] Failed to update user profile in Clerk:`, errorMessage);
+			return false;
+		}
+	}
+
+	/**
 	 * List users from Clerk API with pagination
 	 * Useful for admin operations and bulk sync
 	 */

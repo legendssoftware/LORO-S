@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsEmail, IsNotEmpty, IsNumber, IsObject, IsOptional, IsString, IsArray, IsEnum, IsInt, Min, Max, IsDecimal } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsNumber, IsObject, IsOptional, IsString, IsArray, IsEnum, IsInt, Min, Max } from 'class-validator';
 import { 
 	LeadStatus,
 	LeadCategory,
@@ -117,13 +117,9 @@ export class CreateLeadDto {
 	})
 	isDeleted?: boolean;
 
-	@IsNotEmpty()
-	@IsObject()
-	@ApiProperty({
-		description: 'The owner reference code of the lead',
-		example: { uid: 1 },
-	})
-	owner: { uid: number };
+	/**
+	 * Owner is resolved from auth token (clerkUserId); no owner/uid in DTO.
+	 */
 
 	@IsNotEmpty()
 	@IsObject()
@@ -135,12 +131,13 @@ export class CreateLeadDto {
 
 	@IsOptional()
 	@IsArray()
+	@IsString({ each: true })
 	@ApiProperty({
-		description: 'List of user IDs assigned to this lead',
-		example: [{ uid: 1 }, { uid: 2 }],
+		description: 'Clerk user IDs of users assigned to this lead',
+		example: ['user_2abc123', 'user_2def456'],
 		required: false,
 	})
-	assignees?: { uid: number }[];
+	assignees?: string[];
 
 	@IsOptional()
 	@IsObject()
@@ -389,4 +386,12 @@ export class CreateLeadDto {
 		example: { customField1: 'value1', customField2: 'value2' },
 	})
 	customFields?: Record<string, any>;
+
+	@IsOptional()
+	@IsString()
+	@ApiProperty({
+		description: 'Clerk User ID of the lead owner',
+		example: 'user_2abc123',
+	})
+	ownerClerkUserId?: string;
 }

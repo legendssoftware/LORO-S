@@ -54,6 +54,18 @@ export class ClientLoyaltyProfile {
 	@Column({ type: 'timestamptz', nullable: true })
 	profileCompletionTokenExpiry: Date;
 
+	@Column({ type: 'varchar', nullable: true })
+	signupMethod: string; // 'email' or 'phone'
+
+	@Column({ type: 'timestamptz', nullable: true })
+	signupCompletedAt: Date;
+
+	@Column({ type: 'timestamptz', nullable: true })
+	followUpEmailSentAt: Date;
+
+	@Column({ type: 'timestamptz', nullable: true })
+	followUpSMSSentAt: Date;
+
 	@Column({ type: 'timestamptz', default: () => 'CURRENT_TIMESTAMP' })
 	enrolledAt: Date;
 

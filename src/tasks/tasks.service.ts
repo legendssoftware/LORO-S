@@ -731,7 +731,7 @@ export class TasksService {
 	}
 
 	public async tasksByUser(
-		ref: number,
+		ref: string,
 		orgId?: number,
 		branchId?: number,
 	): Promise<{ message: string; tasks: Task[] }> {

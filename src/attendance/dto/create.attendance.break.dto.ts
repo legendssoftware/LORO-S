@@ -1,5 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsBoolean, IsOptional, IsString, IsNumber, IsObject, IsNotEmpty } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsBoolean, IsOptional, IsString, IsNumber, IsObject, IsNotEmpty, ValidateNested } from 'class-validator';
+import { OwnerUidDto } from '../../lib/dto/owner-uid.dto';
 
 export class CreateBreakDto {
     @IsBoolean()
@@ -39,11 +41,15 @@ export class CreateBreakDto {
     })
     breakLongitude?: number;
 
-    @IsNotEmpty()
-    @IsObject()
+    @IsOptional()
+    @ValidateNested()
+    @Type(() => OwnerUidDto)
     @ApiProperty({
-        example: { uid: 1 },
-        description: 'The owner reference code of the break action'
+        type: OwnerUidDto,
+        required: false,
+        example: { uid: '1' },
+        description:
+            'Owner reference (user ref). Omit for self-service break; user is derived from the token.',
     })
-    owner: { uid: number };
+    owner?: OwnerUidDto;
 } 

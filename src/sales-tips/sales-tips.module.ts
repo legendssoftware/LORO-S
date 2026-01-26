@@ -10,6 +10,7 @@ import { ExpoPushService } from '../lib/services/expo-push.service';
 import { Notification } from '../notifications/entities/notification.entity';
 import { CommunicationModule } from '../communication/communication.module';
 import { LicensingModule } from '../licensing/licensing.module';
+import { LibModule } from '../lib/lib.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { LicensingModule } from '../licensing/licensing.module';
     ScheduleModule.forRoot(),
     forwardRef(() => CommunicationModule), // Import CommunicationModule for CommunicationService
     LicensingModule, // Import LicensingModule for LicensingService
+    LibModule, // Import LibModule for SMSService (required by UnifiedNotificationService)
   ],
   controllers: [SalesTipsController],
   providers: [SalesTipsService, UnifiedNotificationService, ExpoPushService],

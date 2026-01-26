@@ -5,6 +5,7 @@ import { CreateRewardDto } from './dto/create-reward.dto';
 import { UserRewards } from './entities/user-rewards.entity';
 import { XPTransaction } from './entities/xp-transaction.entity';
 import { User } from '../user/entities/user.entity';
+import { UserTarget } from '../user/entities/user-target.entity';
 import { LEVELS, RANKS } from '../lib/constants/constants';
 
 @Injectable()
@@ -16,15 +17,18 @@ export class RewardsService {
     private userRewardsRepository: Repository<UserRewards>,
     @InjectRepository(XPTransaction)
     private xpTransactionRepository: Repository<XPTransaction>,
+    @InjectRepository(UserTarget)
+    private userTargetRepository: Repository<UserTarget>,
     @InjectDataSource()
     private dataSource: DataSource
   ) { }
 
   async awardXP(createRewardDto: CreateRewardDto, orgId?: string, branchId?: number) {
-    const logPrefix = `[awardXP] Awarding ${createRewardDto.amount}XP to user ${createRewardDto.owner}`;
+    const logPrefix = `[awardXP] Awarding ${createRewardDto.amount}XP to user ${createRewardDto.ownerClerkUserId ?? createRewardDto.owner}`;
     
     try {
-      if (!createRewardDto.owner) {
+      const ownerRef = createRewardDto.ownerClerkUserId ?? createRewardDto.owner;
+      if (ownerRef === undefined || ownerRef === null || ownerRef === '') {
         this.logger.warn(`Skipping XP award - user ID is undefined for action: ${createRewardDto.action}`);
         return;
       }
@@ -33,42 +37,54 @@ export class RewardsService {
         throw new BadRequestException('Organization ID is required');
       }
 
-      // Build where clause - don't filter by branch as XP rewards are user-specific
-      const whereClause: any = {
-        owner: { uid: createRewardDto.owner },
-      };
+      // Resolve user: by ownerClerkUserId (string) or owner (uid number)
+      const userRepository = this.dataSource.getRepository(User);
+      let user: User | null = null;
+      if (createRewardDto.ownerClerkUserId) {
+        user = await userRepository
+          .createQueryBuilder('u')
+          .select(['u.uid', 'u.clerkUserId'])
+          .where('u.clerkUserId = :clerkUserId', { clerkUserId: createRewardDto.ownerClerkUserId })
+          .andWhere('u.organisationRef = :orgRef', { orgRef: orgId })
+          .getOne();
+      }
+      if (!user && createRewardDto.owner !== undefined && createRewardDto.owner !== null) {
+        const isUid = typeof createRewardDto.owner === 'number';
+        if (isUid) {
+          user = await userRepository
+            .createQueryBuilder('u')
+            .select(['u.uid', 'u.clerkUserId'])
+            .where('u.uid = :userId', { userId: createRewardDto.owner })
+            .andWhere('u.organisationRef = :orgRef', { orgRef: orgId })
+            .getOne();
+        } else {
+          user = await userRepository
+            .createQueryBuilder('u')
+            .select(['u.uid', 'u.clerkUserId'])
+            .where('u.clerkUserId = :clerkUserId', { clerkUserId: String(createRewardDto.owner) })
+            .andWhere('u.organisationRef = :orgRef', { orgRef: orgId })
+            .getOne();
+        }
+      }
 
+      if (!user || !user.clerkUserId) {
+        this.logger.error(`${logPrefix} - User not found in organization ${orgId} or missing clerkUserId`);
+        throw new NotFoundException('User not found in your organization');
+      }
+
+      const clerkUserId = user.clerkUserId;
+
+      // Find existing UserRewards by ownerClerkUserId (entity uses clerkUserId)
       let userRewards = await this.userRewardsRepository.findOne({
-        where: whereClause,
-        relations: ['owner', 'owner.branch']
+        where: { ownerClerkUserId: clerkUserId },
+        relations: ['owner', 'owner.branch'],
       });
 
       if (!userRewards) {
         this.logger.log(`${logPrefix} - No existing rewards record found, creating new one`);
-        
-        // Verify user exists in the organization before creating rewards
-        // Use TypeORM query builder to handle column mapping correctly
-        // Don't filter by branch - users should be able to receive XP regardless of branch changes
-        const userRepository = this.dataSource.getRepository(User);
-        const user = await userRepository
-          .createQueryBuilder('u')
-          .select(['u.uid', 'u.clerkUserId'])
-          .where('u.uid = :userId', { userId: createRewardDto.owner })
-          .andWhere('u.organisationRef = :orgRef', { orgRef: orgId })
-          .getOne();
-
-        this.logger.log(`${logPrefix} - User verification query result:`, user ? { u_uid: user.uid, clerkUserId: user.clerkUserId } : null);
-
-        if (!user || !user.clerkUserId) {
-          this.logger.error(`${logPrefix} - User not found in organization ${orgId} or missing clerkUserId`);
-          throw new NotFoundException('User not found in your organization');
-        }
-
-        this.logger.log(`${logPrefix} - Creating new rewards record for user`);
-        // Set both owner relation (with clerkUserId) and ownerClerkUserId explicitly
         userRewards = this.userRewardsRepository.create({
-          owner: { clerkUserId: user.clerkUserId } as User,
-          ownerClerkUserId: user.clerkUserId, // Explicitly set the foreign key
+          owner: { clerkUserId } as User,
+          ownerClerkUserId: clerkUserId,
           xpBreakdown: {
             tasks: 0,
             leads: 0,
@@ -85,23 +101,22 @@ export class RewardsService {
         this.logger.log(`${logPrefix} - Found existing rewards record with UID: ${userRewards.uid}`);
       }
 
-      // Create XP transaction
+      // Create XP transaction (guard optional source)
       this.logger.log(`${logPrefix} - Creating XP transaction`);
+      const source = createRewardDto.source;
+      const metadata = source
+        ? { sourceId: source.id, sourceType: source.type, details: source.details }
+        : { sourceId: '', sourceType: createRewardDto.action, details: '' };
       const transaction = this.xpTransactionRepository.create({
         userRewards,
         action: createRewardDto.action,
         xpAmount: createRewardDto.amount,
-        metadata: {
-          sourceId: createRewardDto.source.id,
-          sourceType: createRewardDto.source.type,
-          details: createRewardDto.source.details
-        }
+        metadata,
       });
 
       await this.xpTransactionRepository.save(transaction);
 
-      // Update XP breakdown
-      const category = this.mapSourceTypeToCategory(createRewardDto.source.type);
+      const category = this.mapSourceTypeToCategory(source?.type ?? createRewardDto.action ?? 'other');
       
       // Ensure xpBreakdown has all required fields (for backwards compatibility)
       const requiredFields = ['tasks', 'leads', 'sales', 'attendance', 'collaboration', 'login', 'other'];
@@ -118,7 +133,7 @@ export class RewardsService {
       // Check for level up
       const newLevel = this.calculateLevel(userRewards.totalXP);
       if (newLevel > userRewards.level) {
-        this.logger.log(`Level up! User ${createRewardDto.owner}: ${userRewards.level} → ${newLevel} (${userRewards.rank} → ${this.calculateRank(newLevel)})`);
+        this.logger.log(`Level up! User ${clerkUserId}: ${userRewards.level} → ${newLevel} (${userRewards.rank} → ${this.calculateRank(newLevel)})`);
         userRewards.level = newLevel;
         userRewards.rank = this.calculateRank(newLevel);
       }
@@ -207,8 +222,6 @@ export class RewardsService {
         whereClause.owner.branch = { uid: branchId };
       }
 
-      this.logger.log(`${logPrefix} - Query whereClause:`, JSON.stringify(whereClause, null, 2));
-
       // Check if user is requesting their own rewards or has admin permissions
       // Compare clerkUserId strings instead of numeric uid
       const isOwnRewards = requestingUserClerkId && requestingUserClerkId === reference;
@@ -230,14 +243,6 @@ export class RewardsService {
       }
 
       this.logger.log(`${logPrefix} - Found rewards record with UID: ${userRewards.uid}`);
-      this.logger.log(`${logPrefix} - User details:`, {
-        userUid: userRewards.owner?.uid,
-        orgId: userRewards.owner?.organisationRef,
-        branchId: userRewards.owner?.branch?.uid,
-        totalXP: userRewards.totalXP,
-        level: userRewards.level,
-        rank: userRewards.rank
-      });
 
       // Ensure xpBreakdown has all required fields (for backwards compatibility)
       const requiredFields = ['tasks', 'leads', 'sales', 'attendance', 'collaboration', 'login', 'other'];
@@ -297,8 +302,6 @@ export class RewardsService {
         this.logger.log(`${logPrefix} - Adding branch filter: branchId=${branchId}`);
         whereClause.owner.branch = { uid: branchId };
       }
-
-      this.logger.log(`${logPrefix} - Query whereClause:`, JSON.stringify(whereClause, null, 2));
 
       // Get leaderboard with enhanced relations
       const leaderboard = await this.userRewardsRepository.find({
@@ -423,6 +426,146 @@ export class RewardsService {
       };
 
       return response;
+    }
+  }
+
+  /**
+   * Get position-only rankings (by XP or sales). Used for leaderboard card and tab.
+   * By XP: rank all org users with UserRewards. By sales: rank only users with sales target.
+   * @param clerkOrgId - Clerk org ID (User.organisationRef)
+   * @param branchId - optional branch filter
+   * @param by - 'xp' | 'sales'
+   * @param requestingUserClerkId - current user's Clerk ID for currentUserPosition
+   */
+  async getRankings(
+    clerkOrgId: string,
+    branchId: number | undefined,
+    by: 'xp' | 'sales',
+    requestingUserClerkId: string,
+  ): Promise<{
+    message: string;
+    data: {
+      rankings: Array<{
+        position: number;
+        points: number;
+        user: {
+          uid: number;
+          name: string;
+          surname: string;
+          photoURL: string | null;
+          branch: { uid: number; name: string } | null;
+        };
+      }>;
+      currentUserPosition: number | null;
+      metadata: { criteria: 'xp' | 'sales'; totalParticipants: number; generatedAt: string };
+    };
+  }> {
+    const logPrefix = `[getRankings] by=${by} org=${clerkOrgId}`;
+    try {
+      if (!clerkOrgId) {
+        throw new BadRequestException('Organization context required');
+      }
+      if (by !== 'xp' && by !== 'sales') {
+        throw new BadRequestException('Query param "by" must be "xp" or "sales"');
+      }
+
+      let rankings: Array<{
+        position: number;
+        points: number;
+        user: {
+          uid: number;
+          name: string;
+          surname: string;
+          photoURL: string | null;
+          branch: { uid: number; name: string } | null;
+        };
+      }> = [];
+      let currentUserPosition: number | null = null;
+
+      if (by === 'xp') {
+        const whereClause: any = { owner: { organisationRef: clerkOrgId } };
+        if (branchId != null) {
+          whereClause.owner.branch = { uid: branchId };
+        }
+        const rows = await this.userRewardsRepository.find({
+          where: whereClause,
+          relations: ['owner', 'owner.branch'],
+          order: { totalXP: 'DESC', updatedAt: 'DESC' },
+        });
+        rankings = rows.map((r, i) => ({
+          position: i + 1,
+          points: r.totalXP,
+          user: {
+            uid: r.owner.uid,
+            name: r.owner.name,
+            surname: r.owner.surname,
+            photoURL: r.owner.photoURL ?? null,
+            branch: r.owner.branch
+              ? { uid: r.owner.branch.uid, name: r.owner.branch.name }
+              : null,
+          },
+        }));
+        const idx = rows.findIndex((r) => r.owner?.clerkUserId === requestingUserClerkId);
+        currentUserPosition = idx >= 0 ? idx + 1 : null;
+      } else {
+        const qb = this.userTargetRepository
+          .createQueryBuilder('ut')
+          .innerJoinAndSelect('ut.user', 'u')
+          .leftJoinAndSelect('u.branch', 'b')
+          .where('u.organisationRef = :orgId', { orgId: clerkOrgId })
+          .andWhere('ut.targetSalesAmount > 0')
+          .orderBy('ut.currentSalesAmount', 'DESC');
+        if (branchId != null) {
+          qb.andWhere('u.branchUid = :branchId', { branchId });
+        }
+        const rows = await qb.getMany();
+        rankings = rows.map((ut, i) => {
+          const u = ut.user;
+          return {
+            position: i + 1,
+            points: ut.currentSalesAmount,
+            user: {
+              uid: u.uid,
+              name: u.name,
+              surname: u.surname,
+              photoURL: u.photoURL ?? null,
+              branch: u.branch ? { uid: u.branch.uid, name: u.branch.name } : null,
+            },
+          };
+        });
+        const idx = rows.findIndex((ut) => ut.user?.clerkUserId === requestingUserClerkId);
+        currentUserPosition = idx >= 0 ? idx + 1 : null;
+      }
+
+      const totalParticipants = rankings.length;
+      this.logger.log(`${logPrefix} - ${totalParticipants} participants, currentUserPosition=${currentUserPosition}`);
+
+      return {
+        message: process.env.SUCCESS_MESSAGE ?? 'Success',
+        data: {
+          rankings,
+          currentUserPosition,
+          metadata: {
+            criteria: by,
+            totalParticipants,
+            generatedAt: new Date().toISOString(),
+          },
+        },
+      };
+    } catch (err: any) {
+      this.logger.error(`${logPrefix} - ${err?.message}`, err?.stack);
+      return {
+        message: err?.message ?? 'Failed to fetch rankings',
+        data: {
+          rankings: [],
+          currentUserPosition: null,
+          metadata: {
+            criteria: by,
+            totalParticipants: 0,
+            generatedAt: new Date().toISOString(),
+          },
+        },
+      };
     }
   }
 

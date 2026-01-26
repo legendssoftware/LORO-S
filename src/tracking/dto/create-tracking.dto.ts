@@ -1,16 +1,14 @@
 import { IsNotEmpty, IsNumber, IsOptional, IsString, IsObject, IsInt } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
+/**
+ * Owner is resolved from auth token (clerkUserId) or can be set by controller.
+ * Optional owner?: string | number (clerk id or numeric uid) for create flow.
+ */
 export class CreateTrackingDto {
-    @ApiProperty({
-        description: 'The user ID who owns this tracking record',
-        example: 1,
-        required: true
-    })
-    @IsNotEmpty()
-    @IsNumber()
-    owner: number;
-
+	@IsOptional()
+	@ApiProperty({ description: 'Owner ref (clerk id or numeric uid)', example: 'user_2abc', required: false })
+	owner?: string | number;
     @ApiProperty({
         description: 'Latitude coordinate (can be at root level or inside coords object)',
         example: -33.9249,

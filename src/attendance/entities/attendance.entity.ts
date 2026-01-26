@@ -3,11 +3,16 @@ import { Branch } from '../../branch/entities/branch.entity';
 import { AttendanceStatus } from '../../lib/enums/attendance.enums';
 import { User } from '../../user/entities/user.entity';
 import { Report } from '../../reports/entities/report.entity';
-import { Column, Entity, PrimaryGeneratedColumn, ManyToOne, OneToOne, JoinColumn } from 'typeorm';
+import { Column, Entity, PrimaryGeneratedColumn, ManyToOne, OneToOne, JoinColumn, Index } from 'typeorm';
 import { BreakDetail } from '../../lib/interfaces/break-detail.interface';
 import { Address } from 'src/lib/interfaces/address.interface';
 
 @Entity('attendance')
+@Index(['ownerClerkUserId', 'status', 'checkOut'], { where: '"checkOut" IS NULL' })
+@Index(['organisationUid', 'checkIn'])
+@Index(['branchUid'], { where: '"branchUid" IS NOT NULL' })
+@Index(['checkIn'], { where: '"checkIn" IS NOT NULL' })
+@Index(['status', 'checkIn'])
 export class Attendance {
 	@PrimaryGeneratedColumn()
 	uid: number;

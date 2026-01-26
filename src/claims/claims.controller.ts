@@ -102,15 +102,10 @@ export class ClaimsController {
     }
     const branchId = this.toNumber(req.user?.branch?.uid);
     const userId = req.user?.uid;
-    
     if (!userId) {
       throw new UnauthorizedException('User authentication required');
     }
-    
-    // Override owner with authenticated user ID for security
-    createClaimDto.owner = userId;
-    
-    return this.claimsService.create(createClaimDto, orgId, branchId);
+    return this.claimsService.create(createClaimDto, orgId, branchId, userId);
   }
 
   @Get()

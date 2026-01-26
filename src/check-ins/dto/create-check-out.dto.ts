@@ -26,17 +26,9 @@ export class CreateCheckOutDto {
     })
     checkOutPhoto: string;
 
-    @IsNotEmpty()
-    @IsObject()
-    @ApiProperty({
-        description: 'The reference of the check-in',
-        example: {
-            uid: 1
-        }
-    })
-    owner: {
-        uid: number;
-    };
+    /**
+     * Owner resolved from auth token (clerkUserId); no owner/uid in DTO.
+     */
 
     @IsNotEmpty()
     @IsObject()

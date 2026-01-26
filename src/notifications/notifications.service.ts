@@ -31,25 +31,28 @@ export class NotificationsService {
 		private readonly expoPushService: ExpoPushService,
 	) {}
 
-	async create(createNotificationDto: CreateNotificationDto): Promise<{ message: string }> {
+	async create(createNotificationDto: CreateNotificationDto, clerkUserId: string): Promise<{ message: string }> {
 		try {
-			const notification = await this.notificationRepository.save(createNotificationDto);
+			const user = await this.userRepository.findOne({
+				where: { clerkUserId },
+				select: ['uid', 'clerkUserId'],
+			});
+			if (!user) throw new NotFoundException('User not found for clerkUserId');
+
+			const payload = {
+				...createNotificationDto,
+				ownerClerkUserId: user.clerkUserId,
+				owner: user,
+			};
+			const notification = await this.notificationRepository.save(payload);
 
 			if (!notification) {
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
 			}
 
-			const response = {
-				message: process.env.SUCCESS_MESSAGE,
-			};
-
-			return response;
+			return { message: process.env.SUCCESS_MESSAGE ?? 'Success' };
 		} catch (error) {
-			const response = {
-				message: error?.message,
-			};
-
-			return response;
+			return { message: (error as Error)?.message ?? 'Error' };
 		}
 	}
 
@@ -141,7 +144,13 @@ export class NotificationsService {
 		}
 	}
 
-	async update(ref: number, updateNotificationDto: UpdateNotificationDto, orgId?: string, branchId?: number): Promise<{ message: string }> {
+	async update(
+		ref: number,
+		updateNotificationDto: UpdateNotificationDto,
+		orgId?: string,
+		branchId?: number,
+		clerkUserId?: string,
+	): Promise<{ message: string }> {
 		try {
 			const notification = await this.notificationRepository.update(ref, updateNotificationDto);
 
@@ -149,16 +158,18 @@ export class NotificationsService {
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
 			}
 
-			await this.rewardsService.awardXP({
-				owner: updateNotificationDto.owner.uid,
-				amount: XP_VALUES.NOTIFICATION,
-				action: XP_VALUES_TYPES.NOTIFICATION,
-				source: {
-					id: updateNotificationDto.owner.uid.toString(),
-					type: XP_VALUES_TYPES.NOTIFICATION,
-					details: 'Notification reward',
-				},
-			}, orgId, branchId);
+			if (clerkUserId && orgId != null && branchId != null) {
+				await this.rewardsService.awardXP({
+					owner: clerkUserId,
+					amount: XP_VALUES.NOTIFICATION,
+					action: XP_VALUES_TYPES.NOTIFICATION,
+					source: {
+						id: clerkUserId,
+						type: XP_VALUES_TYPES.NOTIFICATION,
+						details: 'Notification reward',
+					},
+				}, orgId, branchId);
+			}
 
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,

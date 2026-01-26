@@ -1,7 +1,10 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { NotificationType } from '../../lib/enums/notification.enums';
-import { IsEnum, IsNotEmpty, IsObject, IsString } from 'class-validator';
+import { IsEnum, IsNotEmpty, IsString } from 'class-validator';
 
+/**
+ * Owner (user) is resolved from the auth token (clerkUserId); no owner/uid in DTO.
+ */
 export class CreateNotificationDto {
 	@IsNotEmpty()
 	@IsEnum(NotificationType)
@@ -26,12 +29,4 @@ export class CreateNotificationDto {
 		description: 'The message of the notification',
 	})
 	message: string;
-
-	@IsNotEmpty()
-	@IsObject()
-	@ApiProperty({
-		example: { uid: 1 },
-		description: 'The owner of the notification',
-	})
-	owner: { uid: number };
 }

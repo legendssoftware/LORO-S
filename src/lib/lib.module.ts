@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { GoogleMapsService } from './services/google-maps.service';
 import { EventQueueService } from './services/event-queue.service';
 import { EventRetryService } from './services/event-retry.service';
+import { SMSService } from './services/sms.service';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Product } from '../products/entities/product.entity';
@@ -21,7 +22,7 @@ import { CacheModule } from '@nestjs/cache-manager';
 		CacheModule.register(),
 		TypeOrmModule.forFeature([Product, User, Quotation, QuotationItem, Client, Organisation, Branch]),
 	],
-	providers: [GoogleMapsService, EventQueueService, EventRetryService],
-	exports: [GoogleMapsService, EventQueueService, EventRetryService],
+	providers: [GoogleMapsService, EventQueueService, EventRetryService, SMSService],
+	exports: [GoogleMapsService, EventQueueService, EventRetryService, SMSService],
 })
 export class LibModule {}

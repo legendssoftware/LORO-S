@@ -273,13 +273,14 @@ Returns upload confirmation with file URL, metadata, and storage information.
 		
 		try {
 			const ownerId = req.user?.uid;
+			const ownerClerkUserId = req.user?.clerkUserId as string | undefined;
 			const branchId = req.user?.branch?.uid;
 			const orgId = req?.tokenOrgId;
 			if (!orgId) {
 				throw new BadRequestException('Organization context required');
 			}
 
-			this.logger.debug(`📤 [uploadFile] Upload context - User: ${ownerId}, Org: ${orgId}, Branch: ${branchId}, Type: ${type || 'auto'}`);
+			this.logger.debug(`📤 [uploadFile] Upload context - User: ${ownerId ?? ownerClerkUserId ?? 'none'}, Org: ${orgId}, Branch: ${branchId}, Type: ${type || 'auto'}`);
 			
 			if (!file || !file.buffer) {
 				throw new BadRequestException('No file provided or file is empty');
@@ -287,7 +288,7 @@ Returns upload confirmation with file URL, metadata, and storage information.
 
 			this.logger.debug(`📤 [uploadFile] File details - Name: ${file.originalname}, Size: ${file.size}, Type: ${file.mimetype}`);
 
-			const result = await this.docsService.uploadFile(file, type, ownerId, branchId);
+			const result = await this.docsService.uploadFile(file, type, ownerId, branchId, ownerClerkUserId);
 			
 			const duration = Date.now() - startTime;
 			this.logger.log(`✅ [uploadFile] File uploaded successfully in ${duration}ms: ${file.originalname}`);
@@ -621,12 +622,12 @@ Returns array of user's documents with:
 	@ApiInternalServerErrorResponse({
 		description: '🔥 Server error during user document retrieval'
 	})
-	findByUser(@Param('ref') ref: number, @Request() req?: any) {
+	findByUser(@Param('ref') ref: string, @Request() req?: any) {
 		const startTime = Date.now();
 		this.logger.log(`👤 [findByUser] Retrieving documents for user: ${ref}`);
 		
 		try {
-			const requesterId = req?.user?.uid;
+			const requesterId = req?.user?.clerkUserId || String(req?.user?.uid);
 			const requesterRole = req?.user?.accessLevel;
 			const orgId = req?.user?.org?.uid || req?.user?.organisationRef;
 			
@@ -1268,10 +1269,11 @@ Returns comprehensive upload results including:
 		
 		try {
 			const ownerId = req?.user?.uid;
+			const ownerClerkUserId = req?.user?.clerkUserId as string | undefined;
 			const orgId = req?.user?.org?.uid || req?.user?.organisationRef || bulkUploadDto.orgId;
 			const branchId = req?.user?.branch?.uid || bulkUploadDto.branchId;
 
-			this.logger.debug(`📤 [uploadBulkFiles] Bulk upload context - User: ${ownerId}, Org: ${orgId}, Branch: ${branchId}`);
+			this.logger.debug(`📤 [uploadBulkFiles] Bulk upload context - User: ${ownerId ?? ownerClerkUserId ?? 'none'}, Org: ${orgId}, Branch: ${branchId}`);
 
 			// Validate files array
 			if (!files || files.length === 0) {
@@ -1291,7 +1293,7 @@ Returns comprehensive upload results including:
 
 			this.logger.debug(`📤 [uploadBulkFiles] Processing ${files.length} files with config: ${JSON.stringify(uploadDto)}`);
 
-			const result = await this.docsService.uploadBulkFiles(files, uploadDto, ownerId);
+			const result = await this.docsService.uploadBulkFiles(files, uploadDto, ownerId, ownerClerkUserId);
 			
 			const duration = Date.now() - startTime;
 			this.logger.log(`✅ [uploadBulkFiles] Bulk upload completed in ${duration}ms - ${result.totalUploaded}/${result.totalRequested} files successful`);

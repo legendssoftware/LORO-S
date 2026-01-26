@@ -377,20 +377,23 @@ export class ShopService {
 	 * Handles both User (sales rep) and ClientAuth (client placing order) cases
 	 */
 	private async resolveOwnerUserId(
-		ownerUid: number | undefined,
+		ownerRef: string | number | undefined,
 		client: any,
 		orgId: number
 	): Promise<{ userId: number | null; isClientPlaced: boolean; clientContactName: string }> {
-		// Try to find as User first (sales rep placing order)
-		if (ownerUid) {
+		// Try to find as User first (sales rep placing order); ownerRef is clerk id (string) or uid (number)
+		if (ownerRef != null && ownerRef !== '') {
+			const userWhere = typeof ownerRef === 'string' && ownerRef.startsWith('user_')
+				? { clerkUserId: ownerRef }
+				: { uid: Number(ownerRef) };
 			const ownerUser = await this.userRepository.findOne({
-				where: { uid: ownerUid },
+				where: userWhere,
 				select: ['uid']
 			});
 
 			if (ownerUser) {
 				// This is a sales rep placing the order
-				this.logger.log(`Order placed by sales rep User ID: ${ownerUid}`);
+				this.logger.log(`Order placed by sales rep User ID: ${ownerUser.uid}`);
 				return {
 					userId: ownerUser.uid,
 					isClientPlaced: false,
@@ -996,9 +999,10 @@ export class ShopService {
 			}
 			const resolvedBranchId = client.branchUid || branchId;
 
-			// Resolve owner user ID (handles client-placed orders)
+			// Resolve owner user ID (handles client-placed orders); owner.uid is string (clerk id or numeric)
+			const ownerRef = (quotationData?.owner as { uid?: string } | undefined)?.uid;
 			const ownerInfo = await this.resolveOwnerUserId(
-				quotationData?.owner?.uid,
+				ownerRef != null ? ownerRef : undefined,
 				client,
 				resolvedOrgId
 			);
@@ -1560,9 +1564,10 @@ export class ShopService {
 			}
 			const resolvedBranchId = client.branchUid || branchId;
 
-			// Resolve owner user ID (handles client-placed orders)
+			// Resolve owner user ID (handles client-placed orders); owner.uid is string (clerk id or numeric)
+			const blankOwnerRef = (blankQuotationData?.owner as { uid?: string } | undefined)?.uid;
 			const ownerInfo = await this.resolveOwnerUserId(
-				blankQuotationData?.owner?.uid,
+				blankOwnerRef != null ? blankOwnerRef : undefined,
 				client,
 				resolvedOrgId
 			);

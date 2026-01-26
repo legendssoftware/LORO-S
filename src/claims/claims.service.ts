@@ -19,6 +19,7 @@ import { PaginatedResponse } from '../lib/interfaces/product.interfaces';
 import { User } from '../user/entities/user.entity';
 import { Organisation } from '../organisation/entities/organisation.entity';
 import { ApprovalsService } from '../approvals/approvals.service';
+import { CreateApprovalDto } from '../approvals/dto/create-approval.dto';
 import {
 	ApprovalType,
 	ApprovalPriority,
@@ -65,6 +66,21 @@ export class ClaimsService {
 		this.currencyLocale = this.configService.get<string>('CURRENCY_LOCALE', 'en-ZA');
 		this.currencyCode = this.configService.get<string>('CURRENCY_CODE', 'USD');
 		this.currencySymbol = this.configService.get<string>('CURRENCY_SYMBOL', '$');
+	}
+
+	/**
+	 * Resolves user UID (number) to Clerk user ID (string).
+	 * Returns null if user not found or has no clerkUserId.
+	 */
+	private async resolveClerkUserIdByUid(uid: number): Promise<string | null> {
+		if (uid == null || !Number.isFinite(Number(uid))) {
+			return null;
+		}
+		const user = await this.userRepository.findOne({
+			where: { uid: Number(uid), isDeleted: false },
+			select: ['uid', 'clerkUserId'],
+		});
+		return user?.clerkUserId ?? null;
 	}
 
 	/**
@@ -127,6 +143,17 @@ export class ClaimsService {
 				'claims.report',
 			],
 		});
+	}
+
+	/**
+	 * Format claim category for display (e.g. 'general' -> 'General', 'other expenses' -> 'Other Expenses').
+	 */
+	private formatCategoryForDisplay(category?: string): string {
+		if (!category) return 'General';
+		return category
+			.split(/\s+/)
+			.map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+			.join(' ');
 	}
 
 	private formatCurrency(amount: number, currency?: Currency): string {
@@ -295,39 +322,41 @@ export class ClaimsService {
 	 * This pattern ensures the client receives confirmation as soon as the core operation completes,
 	 * while background processes run without blocking the response.
 	 */
-	async create(createClaimDto: CreateClaimDto, orgId?: string, branchId?: number): Promise<{ message: string }> {
+	async create(
+		createClaimDto: CreateClaimDto,
+		orgId?: string,
+		branchId?: number,
+		userIdFromToken?: number,
+	): Promise<{ message: string }> {
 		// Resolve Clerk org ID to numeric uid
 		const orgUid = orgId ? await this.resolveOrgId(orgId) : null;
 		if (orgId && !orgUid) {
 			throw new BadRequestException(`Organization not found for ID: ${orgId}`);
 		}
+		if (!userIdFromToken) {
+			throw new UnauthorizedException('User authentication required');
+		}
 		const startTime = Date.now();
-		this.logger.log(`🔄 [ClaimsService] Creating claim for user: ${createClaimDto.owner}, orgId: ${orgId}, orgUid: ${orgUid}, branchId: ${branchId}, amount: ${createClaimDto.amount}`);
+		this.logger.log(`🔄 [ClaimsService] Creating claim for user: ${userIdFromToken}, orgId: ${orgId}, orgUid: ${orgUid}, branchId: ${branchId}, amount: ${createClaimDto.amount}`);
 
 		try {
-			// Validate input data
-			if (!createClaimDto.owner) {
-				this.logger.warn(`❌ [ClaimsService] User ID is required for claim creation`);
-				throw new BadRequestException('User ID is required for claim creation');
-			}
-
 			if (!createClaimDto.amount || createClaimDto.amount <= 0) {
 				this.logger.warn(`❌ [ClaimsService] Invalid claim amount: ${createClaimDto.amount}`);
 				throw new BadRequestException('Valid claim amount is required');
 			}
 
-			// Get user with organization and branch info - Use QueryBuilder for proper relations
+			// Get user from token (owner never from payload)
 			const user = await this.userRepository
 				.createQueryBuilder('user')
 				.leftJoinAndSelect('user.organisation', 'organisation')
 				.leftJoinAndSelect('user.branch', 'branch')
-				.where('user.uid = :userId', { userId: Number(createClaimDto.owner) })
+				.where('user.uid = :userId', { userId: Number(userIdFromToken) })
 				.andWhere('user.isDeleted = :isDeleted', { isDeleted: false })
 				.getOne();
 
 			if (!user) {
-				this.logger.warn(`⚠️ [ClaimsService] User not found for claim creation: ${createClaimDto.owner}`);
-				throw new NotFoundException(`User with ID ${createClaimDto.owner} not found`);
+				this.logger.warn(`⚠️ [ClaimsService] User not found for claim creation: ${userIdFromToken}`);
+				throw new NotFoundException(`User with ID ${userIdFromToken} not found`);
 			}
 
 			// Enhanced organization filtering - CRITICAL: Only allow claims for user's organization
@@ -347,14 +376,15 @@ export class ClaimsService {
 			shareTokenExpiresAt.setDate(shareTokenExpiresAt.getDate() + 30); // 30 days expiry
 
 			// Enhanced data mapping with proper validation - set UIDs explicitly
-			// Ensure currency defaults to ZAR if not provided
+			// Ensure currency defaults to ZAR if not provided. Use ownerClerkUserId (Option A).
 			const claimData = {
 				...createClaimDto,
 				amount: createClaimDto.amount.toString(),
 				currency: createClaimDto.currency || Currency.ZAR, // Default to ZAR if not provided
 				organisation: organisation,
 				branch: branch,
-				ownerUid: Number(user.uid), // Set ownerUid explicitly
+				owner: user,
+				ownerClerkUserId: user.clerkUserId,
 				organisationUid: organisation ? Number(organisation.uid) : null,
 				branchUid: branch ? Number(branch.uid) : null,
 				claimRef,
@@ -363,38 +393,17 @@ export class ClaimsService {
 			} as DeepPartial<Claim>;
 
 			// ============================================================
-			// TRANSACTIONAL PATH: Save claim and create approval atomically
+			// TRANSACTIONAL PATH: Save claim only (approval created in setImmediate via full ApprovalsService.create)
 			// ============================================================
 			let claim: Claim;
-			let approvalCreated = false;
 
 			try {
-				// Use transaction to ensure atomicity
 				await this.dataSource.manager.transaction(async (transactionalEntityManager) => {
-					// 1. Save claim to database
 					claim = await transactionalEntityManager.save(Claim, claimData);
 
 					if (!claim) {
 						this.logger.error(`❌ [ClaimsService] Failed to create claim - database returned null`);
 						throw new NotFoundException(process.env.CREATE_ERROR_MESSAGE || 'Failed to create claim');
-					}
-
-					// 2. Create approval workflow synchronously within transaction
-					try {
-						await this.initializeClaimApprovalWorkflowTransactional(claim, user, transactionalEntityManager);
-						approvalCreated = true;
-					} catch (approvalError) {
-						this.logger.error(
-							`❌ [ClaimsService] Failed to create approval workflow for claim: ${claim.uid}`,
-							approvalError.stack,
-						);
-						// Transaction will rollback both claim and approval if this throws
-						// Check if we should allow claim creation without approval (configurable)
-						const allowClaimWithoutApproval = this.configService.get<boolean>('ALLOW_CLAIM_WITHOUT_APPROVAL', false);
-						if (!allowClaimWithoutApproval) {
-							throw approvalError; // Rollback transaction
-						}
-						// Otherwise, log error but continue (approvalCreated remains false)
 					}
 				});
 
@@ -409,84 +418,127 @@ export class ClaimsService {
 				};
 
 				const duration = Date.now() - startTime;
-				this.logger.log(`✅ [ClaimsService] Claim created successfully for user: ${createClaimDto.owner} in ${duration}ms - returning response to client`);
+				this.logger.log(`✅ [ClaimsService] Claim created successfully for user: ${userIdFromToken} in ${duration}ms - returning response to client`);
 
 				// ============================================================
 				// POST-RESPONSE PROCESSING: Execute non-critical operations asynchronously
 				// ============================================================
 				setImmediate(async () => {
 					try {
-						// 1. Send email notifications (existing code from lines 264-325)
+						const claimCategory = this.formatCategoryForDisplay(claim.category);
+						const claimAmount = this.formatCurrency(Number(claim.amount) || 0, claim.currency);
+						const details = claim.comments?.trim() ? claim.comments : 'None';
+						const userName = user.name || user.email;
+
+						// Resolve org admins once for both email and push
+						let admins: User[] = [];
+						try {
+							admins = await this.getOrganizationAdmins(orgId);
+						} catch (adminError) {
+							this.logger.error(`❌ [ClaimsService] Error getting organization admins:`, adminError?.message);
+						}
+
+						// 1. Send email notifications
 						try {
 							if (user.email) {
 								const emailData: ClaimEmailData = {
-									name: user.name || user.email,
+									name: userName,
 									claimId: claim.uid,
-									amount: this.formatCurrency(Number(claim.amount) || 0, claim.currency),
-									category: claim.category || 'General',
+									amount: claimAmount,
+									category: claimCategory,
 									status: claim.status || ClaimStatus.PENDING,
 									comments: claim.comments || '',
 									submittedDate: claim.createdAt.toISOString().split('T')[0],
 									submittedBy: {
-										name: user.name || user.email,
+										name: userName,
 										email: user.email,
 									},
 									branch: user.branch
-										? {
-												name: user.branch.name,
-										  }
+										? { name: user.branch.name }
 										: undefined,
-									organization: {
-										name: user.organisation?.name || 'Organization',
-									},
+									organization: { name: user.organisation?.name || 'Organization' },
 									dashboardLink: `${process.env.APP_URL || 'https://loro.co.za'}/claims/${claim.uid}`,
 									claimRef: claim.claimRef || `#${claim.uid}`,
 									shareLink: `${process.env.APP_URL || 'https://loro.co.za'}/claims/share/${claim.shareToken}`,
 								};
 
-								// Send email to the user who created the claim
 								this.eventEmitter.emit('send.email', EmailType.CLAIM_CREATED, [user.email], emailData);
 
-								// Send admin notification email - only if there are admins
-								try {
-									const admins = await this.getOrganizationAdmins(orgId);
-									if (admins && admins.length > 0) {
-										const adminEmails = admins.map(admin => admin.email).filter(Boolean);
-										if (adminEmails.length > 0) {
-											this.eventEmitter.emit('send.email', EmailType.CLAIM_CREATED_ADMIN, adminEmails, emailData);
-										}
+								if (admins.length > 0) {
+									const adminEmails = admins.map((a) => a.email).filter(Boolean);
+									if (adminEmails.length > 0) {
+										this.eventEmitter.emit('send.email', EmailType.CLAIM_CREATED_ADMIN, adminEmails, emailData);
 									}
-								} catch (adminError) {
-									this.logger.error(`❌ [ClaimsService] Error getting organization admins for claim creation email:`, adminError.message);
-								}
-
-								// Approvers will receive notifications when approval workflow is initialized
-
-								// Send push notification to the user who created the claim
-								try {
-									await this.unifiedNotificationService.sendTemplatedNotification(
-										NotificationEvent.CLAIM_CREATED,
-										[user.uid],
-										{
-											userName: user.name || user.email,
-											claimCategory: claim.category || 'General',
-											claimAmount: this.formatCurrency(Number(claim.amount) || 0, claim.currency),
-											claimId: claim.uid,
-											status: claim.status || ClaimStatus.PENDING,
-										},
-										{
-											priority: NotificationPriority.NORMAL,
-										},
-									);
-								} catch (notificationError) {
-									this.logger.error(`❌ [ClaimsService] Failed to send claim creation push notification:`, notificationError.message);
 								}
 							}
 						} catch (emailError) {
-							this.logger.error(`❌ [ClaimsService] Error sending claim creation email:`, emailError.message);
+							this.logger.error(`❌ [ClaimsService] Error sending claim creation email:`, emailError?.message);
 						}
 
-						// 2. Send internal notification for status changes
+						// Send push to creator
+						try {
+							await this.unifiedNotificationService.sendTemplatedNotification(
+								NotificationEvent.CLAIM_CREATED,
+								[user.uid],
+								{
+									userName,
+									claimCategory,
+									claimAmount,
+									claimId: claim.uid,
+									status: claim.status || ClaimStatus.PENDING,
+								},
+								{ priority: NotificationPriority.NORMAL },
+							);
+						} catch (e) {
+							this.logger.error(`❌ [ClaimsService] Failed to send claim creation push to user:`, e?.message);
+						}
+
+						// Send push to admins (same format as approval description)
+						if (admins.length > 0) {
+							try {
+								const adminUids = admins
+									.map((a) => a.uid)
+									.filter((id): id is number => typeof id === 'number')
+									.filter((id) => id !== user.uid); // avoid duplicate if creator is admin
+								if (adminUids.length > 0) {
+									await this.unifiedNotificationService.sendTemplatedNotification(
+										NotificationEvent.CLAIM_CREATED_ADMIN,
+										adminUids,
+										{
+											userName,
+											claimCategory,
+											claimAmount,
+											claimId: claim.uid,
+											id: claim.uid,
+											details,
+											status: claim.status || ClaimStatus.PENDING,
+										},
+										{
+											priority: NotificationPriority.HIGH,
+											customData: {
+												screen: '/approvals',
+												action: 'view_claim',
+												claimId: claim.uid,
+											},
+										},
+									);
+								}
+							} catch (e) {
+								this.logger.error(`❌ [ClaimsService] Failed to send claim_created_admin push to admins:`, e?.message);
+							}
+						}
+
+						// 2. Create full approval workflow (routing, history, approval notifications) via ApprovalsService.create
+						try {
+							await this.initializeClaimApprovalWorkflow(claim, user);
+						} catch (approvalError) {
+							this.logger.error(
+								`❌ [ClaimsService] Failed to create approval workflow for claim ${claim.uid}:`,
+								approvalError?.message ?? approvalError,
+							);
+						}
+
+						// 3. Send internal notification for status changes
 						const notification = {
 							type: NotificationType.USER,
 							title: 'New Claim',
@@ -499,17 +551,17 @@ export class ClaimsService {
 
 						this.eventEmitter.emit('send.notification', notification, recipients);
 
-						// 3. Award XP for creating a claim
+						// 4. Award XP for creating a claim
 						try {
 							await this.rewardsService.awardXP(
 								{
-									owner: createClaimDto.owner,
+									owner: userIdFromToken,
 									amount: XP_VALUES.CLAIM,
 									action: XP_VALUES_TYPES.CLAIM,
 									source: {
-										id: String(createClaimDto.owner),
+										id: String(claim.uid),
 										type: XP_VALUES_TYPES.CLAIM,
-										details: 'Claim reward',
+										details: 'Claim created',
 									},
 								},
 								orgId,
@@ -517,7 +569,7 @@ export class ClaimsService {
 							);
 						} catch (xpError) {
 							this.logger.error(
-								`❌ [ClaimsService] Failed to award XP for claim creation to user: ${createClaimDto.owner}`,
+								`❌ [ClaimsService] Failed to award XP for claim creation to user: ${userIdFromToken}`,
 								xpError.stack,
 							);
 							// Don't fail post-processing if XP award fails
@@ -598,10 +650,15 @@ export class ClaimsService {
 				.leftJoinAndSelect('claim.organisation', 'organisation')
 				.where('claim.isDeleted = :isDeleted', { isDeleted: false });
 
-			// Apply RBAC: Regular users can only see their own claims - use ownerUid directly
-			if (!canViewAll && userId) {
-				queryBuilder.andWhere('claim.ownerUid = :userId', { userId: Number(userId) });
-			} else if (!canViewAll && !userId) {
+			// Apply RBAC: Regular users can only see their own claims - use ownerClerkUserId (Option A)
+			if (!canViewAll && userId != null) {
+				const clerkUserId = await this.resolveClerkUserIdByUid(Number(userId));
+				if (!clerkUserId) {
+					this.logger.warn(`🚫 [ClaimsService] User ${userId} not found or has no Clerk ID`);
+					throw new ForbiddenException('User not found or has no Clerk ID');
+				}
+				queryBuilder.andWhere('claim.ownerClerkUserId = :clerkUserId', { clerkUserId });
+			} else if (!canViewAll && (userId == null || userId === undefined)) {
 				// No userId and not elevated role - deny access
 				this.logger.warn(`🚫 [ClaimsService] Access denied: No userId provided for non-elevated user`);
 				throw new ForbiddenException('Insufficient permissions to view claims');
@@ -722,9 +779,14 @@ export class ClaimsService {
 				.where('claim.uid = :ref', { ref })
 				.andWhere('claim.isDeleted = :isDeleted', { isDeleted: false });
 
-			// If user is not admin/owner/developer/technician, only allow viewing their own claims - use ownerUid directly
-			if (!canViewAll && userId) {
-				queryBuilder.andWhere('claim.ownerUid = :userId', { userId: Number(userId) });
+			// If user is not admin/owner/developer/technician, only allow viewing their own claims - use ownerClerkUserId (Option A)
+			if (!canViewAll && userId != null) {
+				const clerkUserId = await this.resolveClerkUserIdByUid(Number(userId));
+				if (!clerkUserId) {
+					this.logger.warn(`🚫 [ClaimsService] User ${userId} not found or has no Clerk ID`);
+					throw new ForbiddenException('User not found or has no Clerk ID');
+				}
+				queryBuilder.andWhere('claim.ownerClerkUserId = :clerkUserId', { clerkUserId });
 			}
 
 			// Add organization filter if provided - use organisationUid directly
@@ -813,21 +875,29 @@ export class ClaimsService {
 			paid: number;
 		};
 	}> {
+		if (ref == null || ref === undefined || !Number.isFinite(Number(ref))) {
+			throw new BadRequestException('User reference (ref) is required and must be a valid numeric UID');
+		}
+		const refNum = Number(ref);
 		// Resolve Clerk org ID to numeric uid
 		const orgUid = orgId ? await this.resolveOrgId(orgId) : null;
 		if (orgId && !orgUid) {
 			throw new BadRequestException(`Organization not found for ID: ${orgId}`);
 		}
+		const clerkUserId = await this.resolveClerkUserIdByUid(refNum);
+		if (!clerkUserId) {
+			throw new NotFoundException(`User with UID ${refNum} not found or has no Clerk ID`);
+		}
 		const startTime = Date.now();
-		this.logger.log(`🔍 [ClaimsService] Finding claims for user ${ref}, orgId: ${orgId}, orgUid: ${orgUid}, branchId: ${branchId}, requestingUser: ${requestingUserId}, accessLevel: ${userAccessLevel}`);
+		this.logger.log(`🔍 [ClaimsService] Finding claims for user ${refNum}, orgId: ${orgId}, orgUid: ${orgUid}, branchId: ${branchId}, requestingUser: ${requestingUserId}, accessLevel: ${userAccessLevel}`);
 
 		try {
 			// Check if requesting user is admin, owner, developer, or technician - they can view any user's claims
 			const canViewAll = ['admin', 'owner', 'developer', 'technician'].includes(userAccessLevel?.toLowerCase() || '');
 			
 			// If user is not admin/owner/developer/technician, they can only view their own claims
-			if (!canViewAll && requestingUserId && requestingUserId !== ref) {
-				this.logger.warn(`🚫 [ClaimsService] User ${requestingUserId} attempted to access claims for user ${ref}`);
+			if (!canViewAll && requestingUserId != null && requestingUserId !== refNum) {
+				this.logger.warn(`🚫 [ClaimsService] User ${requestingUserId} attempted to access claims for user ${refNum}`);
 				throw new NotFoundException('Access denied: You can only view your own claims');
 			}
 
@@ -836,7 +906,7 @@ export class ClaimsService {
 				.leftJoinAndSelect('claim.owner', 'owner')
 				.leftJoinAndSelect('claim.organisation', 'organisation')
 				.leftJoinAndSelect('claim.branch', 'branch')
-				.where('claim.ownerUid = :ref', { ref: Number(ref) }) // Use ownerUid directly
+				.where('claim.ownerClerkUserId = :clerkUserId', { clerkUserId })
 				.andWhere('claim.isDeleted = :isDeleted', { isDeleted: false });
 
 			// Add organization filter if provided - use organisationUid directly
@@ -852,7 +922,7 @@ export class ClaimsService {
 			const claims = await queryBuilder.getMany();
 
 			if (!claims || claims.length === 0) {
-				this.logger.warn(`⚠️ [ClaimsService] No claims found for user ${ref} in organization ${orgId}`);
+				this.logger.warn(`⚠️ [ClaimsService] No claims found for user ${refNum} in organization ${orgId}`);
 				return {
 					message: process.env.SUCCESS_MESSAGE || 'No claims found',
 					claims: [],
@@ -874,7 +944,7 @@ export class ClaimsService {
 			const stats = this.calculateStats(claims);
 
 			const duration = Date.now() - startTime;
-			this.logger.log(`✅ [ClaimsService] Successfully retrieved ${formattedClaims.length} claims for user ${ref} in ${duration}ms`);
+			this.logger.log(`✅ [ClaimsService] Successfully retrieved ${formattedClaims.length} claims for user ${refNum} in ${duration}ms`);
 
 			return {
 				message: process.env.SUCCESS_MESSAGE,
@@ -883,7 +953,7 @@ export class ClaimsService {
 			};
 		} catch (error) {
 			const duration = Date.now() - startTime;
-			this.logger.error(`❌ [ClaimsService] Error retrieving claims for user ${ref} after ${duration}ms: ${error.message}`, error.stack);
+			this.logger.error(`❌ [ClaimsService] Error retrieving claims for user ${refNum} after ${duration}ms: ${error.message}`, error.stack);
 			// Return proper error response
 			if (error instanceof NotFoundException) {
 				throw error;
@@ -1683,35 +1753,48 @@ export class ClaimsService {
 
 			// Use claim currency or default to ZAR if not set
 			const claimCurrency = claim.currency || Currency.ZAR;
+			const category = this.formatCategoryForDisplay(claim.category);
+			const details = claim.comments?.trim() ? claim.comments : 'None';
+			const formattedAmount = this.formatCurrency(amount, claimCurrency);
 
-			// Create approval request
+			// Create approval request (description format: "{name} has submitted a {category} claim for {amount}. Attached details are {details}.")
 			const approvalDto = {
-				title: `${claim.category || 'General'} Claim - ${this.formatCurrency(amount, claimCurrency)}`,
-				description: `${requester.name || requester.email} has submitted a ${
-					claim.category || 'general'
-				} claim for ${this.formatCurrency(amount, claimCurrency)}. ${claim.comments ? 'Details: ' + claim.comments : ''}`,
+				title: `${category} Claim - ${formattedAmount}`,
+				description: `${requester.name || requester.email} has submitted a ${category} claim for ${formattedAmount}. Attached details are ${details}.`,
 				type: ApprovalType.EXPENSE_CLAIM,
 				priority: priority,
-				flowType: ApprovalFlow.SEQUENTIAL, // Sequential approval for claims
+				flowType: ApprovalFlow.SEQUENTIAL,
 				entityId: claim.uid,
 				entityType: 'claim',
 				amount: amount,
-				currency: claimCurrency, // Use claim currency instead of default currencyCode
+				currency: claimCurrency,
 				deadline: deadline.toISOString(),
-				requiresSignature: amount > 10000, // Require signature for high-value claims
+				requiresSignature: amount > 10000,
 				isUrgent: priority === ApprovalPriority.CRITICAL || priority === ApprovalPriority.HIGH,
 				notificationFrequency: NotificationFrequency.IMMEDIATE,
 				emailNotificationsEnabled: true,
 				pushNotificationsEnabled: true,
 				organisationRef: requester.organisationRef,
 				branchUid: requester.branch?.uid,
-				requesterUid: requester.uid, // Add the missing requesterUid field
-				autoSubmit: true, // Auto-submit to PENDING status when created from claims service
+				requesterUid: requester.uid,
+				autoSubmit: true,
+				supportingDocuments: claim.documentUrl
+					? [{ filename: 'claim-document', url: claim.documentUrl }]
+					: [],
+				entityData: {
+					claimId: claim.uid,
+					claimCategory: claim.category,
+					claimAmount: amount,
+					currency: claimCurrency,
+					documentUrl: claim.documentUrl,
+					comments: claim.comments,
+					status: claim.status,
+				},
 				metadata: {
 					claimId: claim.uid,
 					claimCategory: claim.category,
 					claimAmount: amount,
-					currency: claimCurrency, // Use claim currency instead of default currencyCode
+					currency: claimCurrency,
 					documentUrl: claim.documentUrl,
 					requesterName: requester.name,
 					requesterEmail: requester.email,
@@ -1719,16 +1802,18 @@ export class ClaimsService {
 					submittedAt: claim.createdAt,
 				},
 				customFields: {
-					tags: ['expense-claim', claim.category?.toLowerCase() || 'general'],
+					tags: ['expense-claim', (claim.category || 'general').toLowerCase()],
 				},
 			};
 
-			// Create the approval using the approvals service
-			const approval = await this.approvalsService.create(approvalDto, {
-				user: requester,
-				organisationRef: requester.organisationRef,
-				branchUid: requester.branch?.uid,
-			} as any);
+			// Create the approval using the approvals service (RequestUser shape: uid, clerkUserId, organisationRef, branch)
+			const requestUser = {
+				uid: requester.uid,
+				clerkUserId: requester.clerkUserId,
+				organisationRef: requester.organisationRef || (requester.organisation as any)?.clerkOrgId || '',
+				branch: requester.branch,
+			};
+			const approval = await this.approvalsService.create(approvalDto as CreateApprovalDto, requestUser as any);
 
 			this.logger.log(
 				`✅ [ClaimsService] Approval workflow initialized: approval ${approval.uid} for claim ${claim.uid}`,
@@ -1777,13 +1862,14 @@ export class ClaimsService {
 
 			// Use claim currency or default to ZAR if not set
 			const claimCurrency = claim.currency || Currency.ZAR;
+			const category = this.formatCategoryForDisplay(claim.category);
+			const details = claim.comments?.trim() ? claim.comments : 'None';
+			const formattedAmount = this.formatCurrency(amount, claimCurrency);
 
-			// Create approval request DTO
+			// Create approval request DTO (description format: "{name} has submitted a {category} claim for {amount}. Attached details are {details}.")
 			const approvalDto = {
-				title: `${claim.category || 'General'} Claim - ${this.formatCurrency(amount, claimCurrency)}`,
-				description: `${requester.name || requester.email} has submitted a ${
-					claim.category || 'general'
-				} claim for ${this.formatCurrency(amount, claimCurrency)}. ${claim.comments ? 'Details: ' + claim.comments : ''}`,
+				title: `${category} Claim - ${formattedAmount}`,
+				description: `${requester.name || requester.email} has submitted a ${category} claim for ${formattedAmount}. Attached details are ${details}.`,
 				type: ApprovalType.EXPENSE_CLAIM,
 				priority: priority,
 				flowType: ApprovalFlow.SEQUENTIAL,
@@ -1828,7 +1914,7 @@ export class ClaimsService {
 			
 			const approval = transactionalEntityManager.create(Approval, {
 				...approvalDto,
-				requesterUid: requester.uid,
+				requesterClerkUserId: requester.clerkUserId,
 				organisationRef: clerkOrgId,
 				branchUid: requester.branch?.uid,
 				requestSource: 'web',
@@ -1934,13 +2020,14 @@ export class ClaimsService {
 
 			// Use claim currency or default to ZAR if not set
 			const claimCurrency = claim.currency || Currency.ZAR;
+			const category = this.formatCategoryForDisplay(claim.category);
+			const details = claim.comments?.trim() ? claim.comments : 'None';
+			const formattedAmount = this.formatCurrency(amount, claimCurrency);
 
-			// Prepare update data
+			// Prepare update data (description format: "{name} has submitted a {category} claim for {amount}. Attached details are {details}.")
 			const updateData: Partial<Approval> = {
-				title: `${claim.category || 'General'} Claim - ${this.formatCurrency(amount, claimCurrency)}`,
-				description: `${requester.name || requester.email} has submitted a ${
-					claim.category || 'general'
-				} claim for ${this.formatCurrency(amount, claimCurrency)}. ${claim.comments ? 'Details: ' + claim.comments : ''}`,
+				title: `${category} Claim - ${formattedAmount}`,
+				description: `${requester.name || requester.email} has submitted a ${category} claim for ${formattedAmount}. Attached details are ${details}.`,
 				priority: priority,
 				amount: amount,
 				currency: claimCurrency,

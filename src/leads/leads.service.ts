@@ -158,7 +158,7 @@ export class LeadsService {
 					{ clerkOrgId: orgId },
 					{ ref: orgId }
 				],
-				select: ['uid'],
+				select: ['uid', 'clerkOrgId', 'ref'],
 			});
 
 			if (!organisation) {
@@ -170,7 +170,7 @@ export class LeadsService {
 
 			// Set organization
 			lead.organisation = organisation;
-			lead.organisationUid = organisation.uid; // Explicitly set the foreign key
+			lead.organisationUid = organisation.clerkOrgId || organisation.ref; // Use string identifier instead of numeric uid
 
 			// Set branch if provided
 			if (branchId) {
@@ -179,10 +179,14 @@ export class LeadsService {
 				lead.branchUid = branchId; // Explicitly set the foreign key
 			}
 
-			// Set owner and ownerClerkUserId explicitly
-			if (createLeadDto.owner?.uid) {
+			// Set owner and ownerClerkUserId explicitly (owner.uid is string: clerk id or numeric)
+			const ownerRef = (createLeadDto as { owner?: { uid: string } }).owner?.uid;
+			if (ownerRef) {
+				const userWhere = typeof ownerRef === 'string' && ownerRef.startsWith('user_')
+					? { clerkUserId: ownerRef }
+					: { uid: Number(ownerRef) };
 				const ownerUser = await this.userRepository.findOne({
-					where: { uid: createLeadDto.owner.uid },
+					where: userWhere,
 					select: ['uid', 'clerkUserId'],
 				});
 				if (ownerUser?.clerkUserId) {
@@ -202,11 +206,11 @@ export class LeadsService {
 				}
 			}
 
-			// Handle assignees if provided
+			// Handle assignees if provided (assignees is string[] of clerk ids)
 			if (createLeadDto.assignees?.length) {
-				const assigneeUids = createLeadDto.assignees.map((a) => a.uid);
+				const assigneeClerkIds = createLeadDto.assignees as string[];
 				const assigneeUsers = await this.userRepository.find({
-					where: { uid: In(assigneeUids) },
+					where: { clerkUserId: In(assigneeClerkIds) },
 					select: ['uid', 'clerkUserId'],
 				});
 				lead.assignees = assigneeUsers
@@ -237,10 +241,13 @@ export class LeadsService {
 			// Ensure ownerClerkUserId is set after save (TypeORM should handle this, but verify)
 			if (!savedLead.ownerClerkUserId) {
 				let clerkUserIdToSet: string | undefined;
-				
-				if (createLeadDto.owner?.uid) {
+				const ownerRef = (createLeadDto as { owner?: { uid: string } }).owner?.uid;
+				if (ownerRef) {
+					const userWhere = typeof ownerRef === 'string' && ownerRef.startsWith('user_')
+						? { clerkUserId: ownerRef }
+						: { uid: Number(ownerRef) };
 					const ownerUser = await this.userRepository.findOne({
-						where: { uid: createLeadDto.owner.uid },
+						where: userWhere,
 						select: ['uid', 'clerkUserId'],
 					});
 					clerkUserIdToSet = ownerUser?.clerkUserId;
@@ -476,14 +483,14 @@ export class LeadsService {
 						// Custom fields
 						customFields: leadData.customFields,
 
-						// Assignment fields (set by system)
-						owner: { uid: assignedRep.uid },
+						// Assignment fields (set by system; use clerk id per migration)
+						ownerClerkUserId: assignedRep.clerkUserId ?? String(assignedRep.uid),
 						branch: { uid: branchId },
-						assignees: [{ uid: assignedRep.uid }],
+						assignees: assignedRep.clerkUserId ? [assignedRep.clerkUserId] : [],
 					};
 
-					// Create lead
-					const createResult = await this.create(createLeadDto, orgId, branchId);
+					// Create lead (bulk import sets ownerClerkUserId/assignees)
+					const createResult = await this.create(createLeadDto as CreateLeadDto & { ownerClerkUserId?: string; assignees?: string[] }, orgId, branchId);
 					
 					if (!createResult.data) {
 						result.failed++;
@@ -568,7 +575,7 @@ export class LeadsService {
 		limit: number = 25,
 		orgId?: string,
 		branchId?: number,
-		userId?: number,
+		clerkUserId?: string,
 		userAccessLevel?: string,
 	): Promise<PaginatedResponse<Lead>> {
 		const startTime = Date.now();
@@ -579,7 +586,7 @@ export class LeadsService {
 				this.logger.error(`[${operationId}] ❌ Organization ID is missing!`, {
 					orgId,
 					branchId,
-					userId,
+					clerkUserId,
 					userAccessLevel,
 				});
 				throw new BadRequestException({
@@ -616,13 +623,22 @@ export class LeadsService {
 			}
 
 			// Access control: Regular users can only see their own leads or leads they're assigned to
-			if (!hasElevatedAccess && userId) {
-				// User can see leads where they are the owner OR where they are in the assignees array
+			if (!hasElevatedAccess) {
+				if (!clerkUserId) {
+					throw new BadRequestException({
+						statusCode: 400,
+						message: 'Clerk user ID is required to retrieve leads',
+						error: 'Bad Request',
+						action: 'Please ensure you are authenticated with a valid Clerk session',
+						cause: 'Clerk user ID was not available in the request context',
+					});
+				}
+				// Filter by ownerClerkUserId (string) and assignees JSON { clerkUserId: string }[]
 				queryBuilder.andWhere(
-					'(lead.ownerClerkUserId = :userId OR CAST(lead.assignees AS jsonb) @> CAST(:userIdJson AS jsonb))',
+					'(lead.ownerClerkUserId = :clerkUserId OR CAST(lead.assignees AS jsonb) @> CAST(:userIdJson AS jsonb))',
 					{ 
-						userId,
-						userIdJson: JSON.stringify([{ clerkUserId: userId }])
+						clerkUserId,
+						userIdJson: JSON.stringify([{ clerkUserId }]),
 					}
 				);
 			}
@@ -711,7 +727,7 @@ export class LeadsService {
 				errorName: error instanceof Error ? error.name : typeof error,
 				orgId,
 				branchId,
-				userId,
+				clerkUserId,
 				userAccessLevel,
 				page,
 				limit,
@@ -740,11 +756,11 @@ export class LeadsService {
 		ref: number,
 		orgId?: string,
 		branchId?: number,
-		userId?: number,
+		clerkUserId?: string,
 		userAccessLevel?: string,
 	): Promise<{ lead: Lead | null; message: string; stats: any }> {
 		const startTime = Date.now();
-		this.logger.log(`🔍 [LeadsService] Finding lead with ID: ${ref}, orgId: ${orgId}, branchId: ${branchId}, userId: ${userId}, role: ${userAccessLevel}`);
+		this.logger.log(`🔍 [LeadsService] Finding lead with ID: ${ref}, orgId: ${orgId}, branchId: ${branchId}, clerkUserId: ${clerkUserId}, role: ${userAccessLevel}`);
 
 		try {
 			if (!orgId) {
@@ -805,48 +821,40 @@ export class LeadsService {
 				AccessLevel.OWNER,
 			].includes(userAccessLevel as AccessLevel);
 
-			if (!hasElevatedAccess && userId) {
-				// Get user's clerkUserId for comparison
-				const user = await this.userRepository.findOne({
-					where: { uid: userId },
-					select: ['uid', 'clerkUserId'],
-				});
-
-				if (!user?.clerkUserId) {
-					this.logger.warn(`⚠️ [LeadsService] User ${userId} not found or missing clerkUserId`);
-					throw new NotFoundException({
-						statusCode: 404,
-						message: 'Lead not found or access denied',
-						error: 'Not Found',
-						action: 'Please verify the lead reference and ensure you have permission to access this lead',
-						cause: 'User not found in database or missing clerkUserId',
+			if (!hasElevatedAccess) {
+				if (!clerkUserId) {
+					throw new BadRequestException({
+						statusCode: 400,
+						message: 'Clerk user ID is required to retrieve lead details',
+						error: 'Bad Request',
+						action: 'Please ensure you are authenticated with a valid Clerk session',
+						cause: 'Clerk user ID was not available in the request context',
 					});
 				}
 
-				// Check ownership - compare ownerClerkUserId with user's clerkUserId
-				const isOwner = lead.ownerClerkUserId === user.clerkUserId || lead.owner?.uid === userId;
+				// Check ownership - compare ownerClerkUserId with request clerkUserId
+				const isOwner = lead.ownerClerkUserId === clerkUserId;
 				
 				// Check if user is assigned - assignees are stored as { clerkUserId: string }[]
 				let isAssigned = false;
 				if (lead.assignees && Array.isArray(lead.assignees) && lead.assignees.length > 0) {
 					isAssigned = lead.assignees.some((assignee: any) => {
-						// Handle both { clerkUserId: string } format and populated User objects
 						if (typeof assignee === 'object' && assignee !== null) {
 							if ('clerkUserId' in assignee) {
-								return assignee.clerkUserId === user.clerkUserId;
+								return assignee.clerkUserId === clerkUserId;
 							}
 							if ('uid' in assignee) {
-								return assignee.uid === userId;
+								return assignee.uid !== undefined && String(assignee.uid) === clerkUserId;
 							}
 						}
-						return assignee === userId || assignee === user.clerkUserId;
+						return assignee === clerkUserId;
 					});
 				}
 				
 				if (!isOwner && !isAssigned) {
 					this.logger.warn(
-						`⚠️ [LeadsService] User ${userId} (clerkUserId: ${user.clerkUserId}) attempted to access lead ${ref} without permission. ` +
-						`Lead ownerClerkUserId: ${lead.ownerClerkUserId}, owner.uid: ${lead.owner?.uid}, assignees: ${JSON.stringify(lead.assignees)}`
+						`⚠️ [LeadsService] User (clerkUserId: ${clerkUserId}) attempted to access lead ${ref} without permission. ` +
+						`Lead ownerClerkUserId: ${lead.ownerClerkUserId}, assignees: ${JSON.stringify(lead.assignees)}`
 					);
 					throw new NotFoundException({
 						statusCode: 404,
@@ -894,7 +902,7 @@ export class LeadsService {
 				ref,
 				orgId,
 				branchId,
-				userId,
+				clerkUserId,
 			});
 			
 			// If it's already a NestJS HTTP exception, re-throw as-is
@@ -913,6 +921,22 @@ export class LeadsService {
 				cause: error instanceof Error ? error.message : 'Unknown database or system error',
 			});
 		}
+	}
+
+	/**
+	 * Internal fetch by lead ID only (no org/permission check).
+	 * Use for system flows (e.g. updateLeadStatus, processLeadAutomatically).
+	 */
+	private async findOneByLeadId(leadId: number): Promise<{ lead: Lead | null; message: string; stats: any }> {
+		const lead = await this.leadsRepository.findOne({
+			where: { uid: leadId },
+			relations: ['owner', 'organisation', 'branch', 'interactions'],
+		});
+		return {
+			lead: lead ?? null,
+			message: lead ? (process.env.SUCCESS_MESSAGE ?? 'OK') : (process.env.NOT_FOUND_MESSAGE ?? 'Not found'),
+			stats: null,
+		};
 	}
 
 	public async leadsByUser(
@@ -937,15 +961,26 @@ export class LeadsService {
 				});
 			}
 
+			// Validate that ref is a valid number before using it
+			const refUserId = Number(ref);
+			if (isNaN(refUserId) || refUserId <= 0) {
+				this.logger.warn(`❌ [LeadsService] Invalid user reference ID: ${ref}`);
+				throw new BadRequestException({
+					statusCode: 400,
+					message: 'Invalid user reference ID',
+					error: 'Bad Request',
+					action: 'Please provide a valid user reference ID',
+					cause: `The provided user reference "${ref}" is not a valid number`,
+				});
+			}
+
+			const requestingUserIdNum = Number(requestingUserId);
+
 			// Access control: Users can only view their own leads unless they are ADMIN or OWNER
 			const hasElevatedAccess = [
 				AccessLevel.ADMIN,
 				AccessLevel.OWNER,
 			].includes(userAccessLevel as AccessLevel);
-
-			// Ensure both values are numbers for comparison (defensive programming)
-			const refUserId = Number(ref);
-			const requestingUserIdNum = Number(requestingUserId);
 
 			if (!hasElevatedAccess && requestingUserIdNum && refUserId !== requestingUserIdNum) {
 				this.logger.warn(`⚠️ [LeadsService] User ${requestingUserIdNum} attempted to access leads for user ${refUserId} without permission`);
@@ -958,9 +993,33 @@ export class LeadsService {
 				});
 			}
 
-			this.logger.debug(`🏗️ [LeadsService] Building query for user ${refUserId} leads in org: ${orgId}, branch: ${branchId || 'all'}`);
+			// Resolve ref (user uid) to clerkUserId for owner/assignee filter
+			const refUser = await this.userRepository.findOne({
+				where: { uid: refUserId },
+				select: ['uid', 'clerkUserId'],
+			});
+			if (!refUser?.clerkUserId) {
+				this.logger.warn(`⚠️ [LeadsService] User ${refUserId} not found or missing clerkUserId`);
+				return {
+					message: 'No leads found for this user',
+					leads: [],
+					stats: {
+						total: 0,
+						new: 0,
+						contacted: 0,
+						qualified: 0,
+						negotiation: 0,
+						won: 0,
+						lost: 0,
+						avgLeadScore: 0,
+					},
+				};
+			}
+			const refClerkUserId = refUser.clerkUserId;
 
-			// Build query to get leads owned by user OR assigned to user
+			this.logger.debug(`🏗️ [LeadsService] Building query for user ${refUserId} (clerkUserId: ${refClerkUserId}) leads in org: ${orgId}, branch: ${branchId || 'all'}`);
+
+			// Build query to get leads owned by user OR assigned to user (use clerkUserId)
 			const queryBuilder = this.leadsRepository
 				.createQueryBuilder('lead')
 				.leftJoinAndSelect('lead.owner', 'owner')
@@ -968,9 +1027,9 @@ export class LeadsService {
 				.leftJoinAndSelect('lead.organisation', 'organisation')
 				.where('lead.isDeleted = :isDeleted', { isDeleted: false })
 				.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId })
-				.andWhere('(lead.ownerClerkUserId = :userId OR CAST(lead.assignees AS jsonb) @> CAST(:userIdJson AS jsonb))', {
-					userId: refUserId,
-					userIdJson: JSON.stringify([{ clerkUserId: refUserId }])
+				.andWhere('(lead.ownerClerkUserId = :refClerkUserId OR CAST(lead.assignees AS jsonb) @> CAST(:userIdJson AS jsonb))', {
+					refClerkUserId,
+					userIdJson: JSON.stringify([{ clerkUserId: refClerkUserId }]),
 				});
 
 			if (branchId) {
@@ -1137,11 +1196,11 @@ export class LeadsService {
 				dataToSave.changeHistory = changeHistoryArray;
 			}
 
-			// Handle assignees update specifically
-			if (updateLeadDto.assignees) {
-				const assigneeUids = updateLeadDto.assignees.map((a) => a.uid);
+			// Handle assignees update specifically (assignees is string[] of clerk ids)
+			if (updateLeadDto.assignees?.length) {
+				const assigneeClerkIds = updateLeadDto.assignees as string[];
 				const assigneeUsers = await this.userRepository.find({
-					where: { uid: In(assigneeUids) },
+					where: { clerkUserId: In(assigneeClerkIds) },
 					select: ['uid', 'clerkUserId'],
 				});
 				dataToSave.assignees = assigneeUsers
@@ -3570,7 +3629,7 @@ export class LeadsService {
 		description?: string,
 		nextStep?: string,
 	): Promise<Lead> {
-		const result = await this.findOne(id);
+		const result = await this.findOneByLeadId(id);
 		if (!result.lead) {
 			throw new NotFoundException(`Lead with ID ${id} not found`);
 		}
@@ -3800,7 +3859,7 @@ export class LeadsService {
 	 * Enhanced automatic lead processing with velocity intelligence
 	 */
 	async processLeadAutomatically(leadId: number): Promise<Lead> {
-		const lead = await this.findOne(leadId);
+		const lead = await this.findOneByLeadId(leadId);
 		if (!lead.lead) {
 			throw new NotFoundException(`Lead with ID ${leadId} not found`);
 		}
@@ -3810,7 +3869,7 @@ export class LeadsService {
 		await this.leadScoringService.updateActivityData(leadId);
 
 		// Refresh lead data with updated scores
-		const updatedLead = await this.findOne(leadId);
+		const updatedLead = await this.findOneByLeadId(leadId);
 		const currentScore = updatedLead.lead?.leadScore || 0;
 
 		// Enhanced status progression logic with velocity awareness

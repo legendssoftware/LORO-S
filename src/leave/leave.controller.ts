@@ -211,6 +211,7 @@ Creates comprehensive leave requests with automated approval workflows and polic
 						endDate: { type: 'string', format: 'date', example: getFutureDate(28) },
 						duration: { type: 'number', example: 14 },
 						remainingBalance: { type: 'number', example: 21 },
+						ownerClerkUserId: { type: 'string', example: 'user_38Q1H1gVq5AdRomEFRmOS7zhTNo' },
 						approvalWorkflow: {
 							type: 'object',
 							properties: {
@@ -340,9 +341,9 @@ Creates comprehensive leave requests with automated approval workflows and polic
 			throw new BadRequestException('Organization context required');
 		}
 		const branchId = req.user?.branch?.uid;
-		const userId = req.user?.uid;
+		const clerkUserId = req.user?.clerkUserId;
 
-		return this.leaveService.create(createLeaveDto, orgId, branchId, userId);
+		return this.leaveService.create(createLeaveDto, orgId, branchId, clerkUserId);
 	}
 
 	@Get()
@@ -415,8 +416,8 @@ Provides comprehensive leave request retrieval with advanced filtering, sorting,
 		name: 'ownerUid', 
 		type: String, 
 		required: false, 
-		description: 'Filter by employee user ID',
-		example: '12345'
+		description: 'Filter by employee Clerk user ID (string)',
+		example: 'user_38Q1H1gVq5AdRomEFRmOS7zhTNo'
 	})
 	@ApiQuery({ 
 		name: 'startDate', 
@@ -477,21 +478,23 @@ Provides comprehensive leave request retrieval with advanced filtering, sorting,
 							approvedDate: { type: 'string', format: 'date-time', example: getPastDate(29) },
 							employee: {
 								type: 'object',
-								properties: {
-									uid: { type: 'number', example: 54321 },
-									name: { type: 'string', example: 'John Doe' },
-									email: { type: 'string', example: 'john.doe@company.com' },
-									department: { type: 'string', example: 'Engineering' }
-								}
-							},
-							approver: {
-								type: 'object',
-								properties: {
-									uid: { type: 'number', example: 67890 },
-									name: { type: 'string', example: 'Jane Manager' },
-									email: { type: 'string', example: 'jane.manager@company.com' }
-								}
+							properties: {
+								uid: { type: 'number', example: 54321 },
+								clerkUserId: { type: 'string', example: 'user_38Q1H1gVq5AdRomEFRmOS7zhTNo' },
+								name: { type: 'string', example: 'John Doe' },
+								email: { type: 'string', example: 'john.doe@company.com' },
+								department: { type: 'string', example: 'Engineering' }
 							}
+						},
+						approver: {
+							type: 'object',
+							properties: {
+								uid: { type: 'number', example: 67890 },
+								clerkUserId: { type: 'string', example: 'user_2abc123def456ghi789' },
+								name: { type: 'string', example: 'Jane Manager' },
+								email: { type: 'string', example: 'jane.manager@company.com' }
+							}
+						}
 						},
 					},
 				},
@@ -596,13 +599,13 @@ Provides comprehensive leave request retrieval with advanced filtering, sorting,
 			throw new BadRequestException('Organization context required');
 		}
 		const branchId = req.user?.branch?.uid;
-		const userId = req.user?.uid;
+		const clerkUserId = req.user?.clerkUserId;
 
 		// Parse the filters
 		const filters: any = {};
 		if (status) filters.status = status;
 		if (leaveType) filters.leaveType = leaveType;
-		if (ownerUid) filters.ownerUid = parseInt(ownerUid, 10);
+		if (ownerUid) filters.ownerUid = ownerUid; // Use as string
 		if (startDate) filters.startDate = new Date(startDate);
 		if (endDate) filters.endDate = new Date(endDate);
 		if (isApproved) filters.isApproved = isApproved.toLowerCase() === 'true';
@@ -613,7 +616,7 @@ Provides comprehensive leave request retrieval with advanced filtering, sorting,
 			limit ? parseInt(limit, 10) : Number(process.env.DEFAULT_PAGE_LIMIT),
 			orgId,
 			branchId,
-			userId,
+			clerkUserId,
 		);
 	}
 
@@ -724,6 +727,7 @@ Provides comprehensive information about a specific leave request including appr
 										type: 'object',
 										properties: {
 											uid: { type: 'number', example: 67890 },
+											clerkUserId: { type: 'string', example: 'user_2abc123def456ghi789' },
 											name: { type: 'string', example: 'Jane Manager' },
 											email: { type: 'string', example: 'jane.manager@company.com' },
 											role: { type: 'string', example: 'LINE_MANAGER' }
@@ -835,9 +839,9 @@ Provides comprehensive information about a specific leave request including appr
 			throw new BadRequestException('Organization context required');
 		}
 		const branchId = req.user?.branch?.uid;
-		const userId = req.user?.uid;
+		const clerkUserId = req.user?.clerkUserId;
 
-		return this.leaveService.findOne(ref, orgId, branchId, userId);
+		return this.leaveService.findOne(ref, orgId, branchId, clerkUserId);
 	}
 
 	@Get('user/:ref')
@@ -894,9 +898,9 @@ Provides comprehensive leave history, analytics, and balance information for a s
 	})
 	@ApiParam({ 
 		name: 'ref', 
-		description: 'Employee unique reference ID',
-		type: 'number',
-		example: 54321
+		description: 'Employee Clerk user ID (string)',
+		type: 'string',
+		example: 'user_38Q1H1gVq5AdRomEFRmOS7zhTNo'
 	})
 	@ApiOkResponse({
 		description: '✅ Employee leave history retrieved successfully',
@@ -909,17 +913,18 @@ Provides comprehensive leave history, analytics, and balance information for a s
 					properties: {
 						employee: {
 							type: 'object',
-							properties: {
-								uid: { type: 'number', example: 54321 },
-								name: { type: 'string', example: 'John Doe' },
-								email: { type: 'string', example: 'john.doe@company.com' },
-								department: { type: 'string', example: 'Engineering' },
-								jobTitle: { type: 'string', example: 'Senior Developer' },
-								employeeId: { type: 'string', example: 'EMP-001' },
-								startDate: { type: 'string', format: 'date', example: '2020-01-15' },
-								employmentType: { type: 'string', example: 'FULL_TIME' }
-							}
-						},
+						properties: {
+							uid: { type: 'number', example: 54321 },
+							clerkUserId: { type: 'string', example: 'user_38Q1H1gVq5AdRomEFRmOS7zhTNo' },
+							name: { type: 'string', example: 'John Doe' },
+							email: { type: 'string', example: 'john.doe@company.com' },
+							department: { type: 'string', example: 'Engineering' },
+							jobTitle: { type: 'string', example: 'Senior Developer' },
+							employeeId: { type: 'string', example: 'EMP-001' },
+							startDate: { type: 'string', format: 'date', example: '2020-01-15' },
+							employmentType: { type: 'string', example: 'FULL_TIME' }
+						}
+					},
 						leaveBalance: {
 							type: 'object',
 							properties: {
@@ -966,13 +971,14 @@ Provides comprehensive leave history, analytics, and balance information for a s
 									isHalfDay: { type: 'boolean', example: false },
 									appliedDate: { type: 'string', format: 'date-time', example: getPastDate(30) },
 									approvedDate: { type: 'string', format: 'date-time', example: getPastDate(29) },
-									approver: {
-										type: 'object',
-										properties: {
-											name: { type: 'string', example: 'Jane Manager' },
-											email: { type: 'string', example: 'jane.manager@company.com' }
-										}
-									}
+						approver: {
+							type: 'object',
+							properties: {
+								clerkUserId: { type: 'string', example: 'user_2abc123def456ghi789' },
+								name: { type: 'string', example: 'Jane Manager' },
+								email: { type: 'string', example: 'jane.manager@company.com' }
+							}
+						}
 								},
 							},
 						},
@@ -1055,9 +1061,9 @@ Provides comprehensive leave history, analytics, and balance information for a s
 			throw new BadRequestException('Organization context required');
 		}
 		const branchId = req.user?.branch?.uid;
-		const userId = req.user?.uid;
+		const clerkUserId = req.user?.clerkUserId;
 
-		return this.leaveService.leavesByUser(ref, orgId, branchId, userId);
+		return this.leaveService.leavesByUser(ref, orgId, branchId, clerkUserId);
 	}
 
 	@Patch(':ref')
@@ -1294,9 +1300,9 @@ Enables comprehensive updates to existing leave requests while maintaining audit
 			throw new BadRequestException('Organization context required');
 		}
 		const branchId = req.user?.branch?.uid;
-		const userId = req.user?.uid;
+		const clerkUserId = req.user?.clerkUserId;
 
-		return this.leaveService.update(ref, updateLeaveDto, orgId, branchId, userId);
+		return this.leaveService.update(ref, updateLeaveDto, orgId, branchId, clerkUserId);
 	}
 
 	@Patch(':ref/approve')
@@ -1398,6 +1404,7 @@ Processes leave request approvals with comprehensive workflow management and not
 							type: 'object',
 							properties: {
 								uid: { type: 'number', example: 67890 },
+								clerkUserId: { type: 'string', example: 'user_2abc123def456ghi789' },
 								name: { type: 'string', example: 'Jane Manager' },
 								email: { type: 'string', example: 'jane.manager@company.com' },
 								role: { type: 'string', example: 'LINE_MANAGER' }
@@ -1504,10 +1511,10 @@ Processes leave request approvals with comprehensive workflow management and not
 			throw new BadRequestException('Organization context required');
 		}
 		const branchId = req.user?.branch?.uid;
-		const userId = req.user?.uid;
-		const approverUid = req.user?.uid;
+		const clerkUserId = req.user?.clerkUserId;
+		const approverClerkUserId = req.user?.clerkUserId;
 
-		return this.leaveService.approveLeave(ref, approverUid, orgId, branchId, userId);
+		return this.leaveService.approveLeave(ref, approverClerkUserId, orgId, branchId, clerkUserId);
 	}
 
 	@Patch(':ref/reject')
@@ -1702,9 +1709,9 @@ Processes leave request rejections with comprehensive feedback and alternative s
 			throw new BadRequestException('Organization context required');
 		}
 		const branchId = req.user?.branch?.uid;
-		const userId = req.user?.uid;
+		const clerkUserId = req.user?.clerkUserId;
 
-		return this.leaveService.rejectLeave(ref, body.rejectionReason, orgId, branchId, userId);
+		return this.leaveService.rejectLeave(ref, body.rejectionReason, orgId, branchId, clerkUserId);
 	}
 
 	@Patch(':ref/cancel')
@@ -1798,6 +1805,7 @@ Enables flexible cancellation of leave requests with proper workflow management 
 							type: 'object',
 							properties: {
 								uid: { type: 'number', example: 54321 },
+								clerkUserId: { type: 'string', example: 'user_38Q1H1gVq5AdRomEFRmOS7zhTNo' },
 								name: { type: 'string', example: 'John Doe' },
 								email: { type: 'string', example: 'john.doe@company.com' },
 								role: { type: 'string', example: 'EMPLOYEE' }
@@ -1882,9 +1890,9 @@ Enables flexible cancellation of leave requests with proper workflow management 
 			throw new BadRequestException('Organization context required');
 		}
 		const branchId = req.user?.branch?.uid;
-		const userId = req.user?.uid;
+		const clerkUserId = req.user?.clerkUserId;
 
-		return this.leaveService.cancelLeave(ref, body.cancellationReason, userId, orgId, branchId);
+		return this.leaveService.cancelLeave(ref, body.cancellationReason, clerkUserId, orgId, branchId);
 	}
 
 	@Delete(':ref')
@@ -1977,6 +1985,7 @@ Provides secure and auditable removal of leave requests with comprehensive safet
 							type: 'object',
 							properties: {
 								uid: { type: 'number', example: 67890 },
+								clerkUserId: { type: 'string', example: 'user_2abc123def456ghi789' },
 								name: { type: 'string', example: 'Admin User' },
 								email: { type: 'string', example: 'admin@company.com' },
 								role: { type: 'string', example: 'ADMIN' }
@@ -2063,8 +2072,8 @@ Provides secure and auditable removal of leave requests with comprehensive safet
 			throw new BadRequestException('Organization context required');
 		}
 		const branchId = req.user?.branch?.uid;
-		const userId = req.user?.uid;
+		const clerkUserId = req.user?.clerkUserId;
 
-		return this.leaveService.remove(ref, orgId, branchId, userId);
+		return this.leaveService.remove(ref, orgId, branchId, clerkUserId);
 	}
 }

@@ -11,7 +11,9 @@ import { OrderNotificationsService } from './order-notifications.service';
 import { LicensingModule } from '../licensing/licensing.module';
 import { ExpoPushService } from '../lib/services/expo-push.service';
 import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
+import { SMSService } from '../lib/services/sms.service';
 import { CommunicationModule } from '../communication/communication.module';
+import { LibModule } from '../lib/lib.module';
 
 @Module({
   imports: [
@@ -19,6 +21,7 @@ import { CommunicationModule } from '../communication/communication.module';
     LicensingModule,
     TypeOrmModule.forFeature([Notification, User, ClientAuth]),
     RewardsModule,
+    LibModule,
     forwardRef(() => CommunicationModule)
   ],
   controllers: [NotificationsController],

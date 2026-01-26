@@ -1,8 +1,11 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { IsNotEmpty, IsString, IsObject, IsOptional, IsEnum, IsNumber, IsArray, ValidateNested, IsDate } from "class-validator";
+import { IsNotEmpty, IsString, IsObject, IsOptional, IsEnum, IsNumber, IsArray, IsDate } from "class-validator";
 import { Type } from "class-transformer";
 import { JournalStatus, JournalType, InspectionRating, InspectionFormData } from "src/lib/enums/journal.enums";
 
+/**
+ * Owner is resolved from auth token (clerkUserId); no owner/uid in DTO.
+ */
 export class CreateJournalDto {
     @IsOptional()
     @IsString()
@@ -21,14 +24,6 @@ export class CreateJournalDto {
         required: false
     })
     fileURL?: string;
-
-    @IsNotEmpty()
-    @IsObject()
-    @ApiProperty({
-        description: 'The owner reference code of the journal',
-        example: { uid: 1 },
-    })
-    owner: { uid: number };
 
     @IsOptional()
     @IsObject()

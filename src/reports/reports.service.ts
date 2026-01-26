@@ -1304,16 +1304,6 @@ export class ReportsService implements OnModuleInit {
 
 			// Get organization timezone for proper time formatting
 			const orgTimezone = await this.getOrganizationTimezone(user.organisation?.uid);
-
-			// Ensure emailData has the correct format
-			this.logger.debug(`Email data received for user ${userId}:`, {
-				hasEmailData: !!emailData,
-				emailDataType: typeof emailData,
-				emailDataKeys: emailData ? Object.keys(emailData) : [],
-				hasName: emailData && !!emailData.name,
-				hasDate: emailData && !!emailData.date,
-				hasMetrics: emailData && !!emailData.metrics,
-			});
 		
 			if (!emailData || !emailData.name || !emailData.date || !emailData.metrics) {
 				this.logger.error(`Invalid email data format for user ${userId}`, {
@@ -2355,7 +2345,7 @@ export class ReportsService implements OnModuleInit {
 	 * Fetches ALL reports without date filtering
 	 */
 	async getUserDailyReports(params: {
-		userId: number;
+		userId: string;
 		reportType?: 'MORNING' | 'EVENING' | 'USER_DAILY';
 		page?: number;
 		limit?: number;
@@ -2761,14 +2751,17 @@ export class ReportsService implements OnModuleInit {
 	 * Get user highlights data for mobile app
 	 * Returns targets, attendance streak, latest leads, tasks, and leave in one concise response
 	 */
-	async getUserHighlights(userId: number, orgId: number, branchId?: number): Promise<any> {
+	async getUserHighlights(userId: string, orgId: number, branchId?: number): Promise<any> {
 		const operationId = `highlights-${userId}-${Date.now()}`;
 		this.logger.log(`[${operationId}] Getting highlights data for user ${userId}, org ${orgId}`);
 
 		try {
-			// Look up user to get clerkUserId for leave service
+			// Resolve user by clerk id or numeric uid
+			const userWhere = typeof userId === 'string' && userId.startsWith('user_')
+				? { clerkUserId: userId }
+				: { uid: Number(userId) };
 			const user = await this.userRepository.findOne({
-				where: { uid: userId },
+				where: userWhere,
 				select: ['uid', 'clerkUserId'],
 			});
 
@@ -2794,12 +2787,12 @@ export class ReportsService implements OnModuleInit {
 				leaveResult,
 			] = await Promise.allSettled([
 				// Get user targets to extract ERP code and period dates (needed for revenue card)
-				this.userService.getUserTarget(userId, orgId),
+				this.userService.getUserTarget(user?.clerkUserId ?? String(userId), orgId),
 				// Get revenue card data using ERP service (same as /erp/profile/sales endpoint)
 				(async () => {
 					try {
 						// Get user target to extract ERP code and date range
-						const userTargetResult = await this.userService.getUserTarget(userId, orgId);
+						const userTargetResult = await this.userService.getUserTarget(user?.clerkUserId ?? String(userId), orgId);
 						
 						if (!userTargetResult?.userTarget) {
 							this.logger.warn(`[${operationId}] No targets found for user ${userId}, skipping revenue card`);
@@ -2879,9 +2872,9 @@ export class ReportsService implements OnModuleInit {
 					}
 				})(),
 				// Get attendance streak from attendance metrics (matches /attendance/metrics/:uid endpoint)
-				this.attendanceService.getUserAttendanceMetrics(userId),
-				// Get latest 2 leads for today using leads service - ONLY TODAY'S DATA
-				this.leadsService.leadsByUser(userId, orgId ? String(orgId) : undefined, branchId).then(result => {
+				this.attendanceService.getUserAttendanceMetrics(user?.clerkUserId ?? String(userId)),
+				// Get latest 2 leads for today using leads service - ONLY TODAY'S DATA (leadsByUser expects numeric ref)
+				(user ? this.leadsService.leadsByUser(user.uid, orgId ? String(orgId) : undefined, branchId) : Promise.resolve({ leads: [] as any[] })).then(result => {
 					if (!result?.leads || result.leads.length === 0) {
 						return { leads: [] };
 					}
@@ -2902,7 +2895,7 @@ export class ReportsService implements OnModuleInit {
 					return { leads: todayLeads };
 				}),
 				// Get latest 2 tasks for today using tasks service - ONLY TODAY'S DATA
-				this.tasksService.tasksByUser(userId, orgId, branchId).then(result => {
+				this.tasksService.tasksByUser(user?.clerkUserId ?? String(userId), orgId, branchId).then(result => {
 					if (!result?.tasks || result.tasks.length === 0) {
 						return { tasks: [] };
 					}
@@ -2924,7 +2917,7 @@ export class ReportsService implements OnModuleInit {
 				}),
 				// Get latest leave for user - use clerkUserId if available, otherwise skip
 				user?.clerkUserId 
-					? this.leaveService.leavesByUser(user.clerkUserId, orgId ? String(orgId) : undefined, branchId, userId).then(result => {
+					? this.leaveService.leavesByUser(user.clerkUserId, orgId ? String(orgId) : undefined, branchId, String(user.uid)).then(result => {
 						// Get the most recent leave
 						const latestLeave = result.leaves
 							.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] || null;

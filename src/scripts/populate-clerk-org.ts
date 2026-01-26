@@ -6,6 +6,8 @@
  * Creates:
  * - Organisation with Clerk org data
  * - Organisation settings with Africa/Johannesburg timezone and preferences
+ * - Organisation hours with weekly schedule and timezone
+ * - Organisation appearance with branding colors and logo
  * - 2 branches with Africa/Johannesburg settings
  * - Full enterprise license (ENTERPRISE plan) with all features for the organisation
  * 
@@ -22,6 +24,8 @@ import { Organisation } from '../organisation/entities/organisation.entity';
 import { Branch } from '../branch/entities/branch.entity';
 import { License } from '../licensing/entities/license.entity';
 import { OrganisationSettings } from '../organisation/entities/organisation-settings.entity';
+import { OrganisationHours } from '../organisation/entities/organisation-hours.entity';
+import { OrganisationAppearance } from '../organisation/entities/organisation-appearance.entity';
 import { SubscriptionPlan, LicenseType, LicenseStatus, BillingCycle } from '../lib/enums/license.enums';
 import { PLAN_FEATURES } from '../lib/constants/license-features';
 import { GeneralStatus } from '../lib/enums/status.enums';
@@ -63,6 +67,8 @@ class ClerkOrgPopulator {
 	private branchRepo: Repository<Branch>;
 	private licenseRepo: Repository<License>;
 	private orgSettingsRepo: Repository<OrganisationSettings>;
+	private orgHoursRepo: Repository<OrganisationHours>;
+	private orgAppearanceRepo: Repository<OrganisationAppearance>;
 	private licensingService: LicensingService;
 	private clerkOrgId: string;
 
@@ -72,6 +78,8 @@ class ClerkOrgPopulator {
 		this.branchRepo = dataSource.getRepository(Branch);
 		this.licenseRepo = dataSource.getRepository(License);
 		this.orgSettingsRepo = dataSource.getRepository(OrganisationSettings);
+		this.orgHoursRepo = dataSource.getRepository(OrganisationHours);
+		this.orgAppearanceRepo = dataSource.getRepository(OrganisationAppearance);
 		this.licensingService = licensingService;
 		this.clerkOrgId = CLERK_ORG_DATA.id;
 	}
@@ -100,17 +108,29 @@ class ClerkOrgPopulator {
 		});
 		console.log(`   Deleted ${deletedLicenses.affected || 0} license(s)`);
 
-		// Delete branches
+		// Delete branches - use organisationUid (Clerk org ID string) not numeric uid
 		const deletedBranches = await this.branchRepo.delete({
-			organisation: { uid: existingOrg.uid },
+			organisationUid: existingOrg.clerkOrgId,
 		});
 		console.log(`   Deleted ${deletedBranches.affected || 0} branch(es)`);
 
-		// Delete organisation settings
+		// Delete organisation settings - uses numeric organisationUid
 		const deletedSettings = await this.orgSettingsRepo.delete({
 			organisationUid: existingOrg.uid,
 		});
 		console.log(`   Deleted ${deletedSettings.affected || 0} organisation setting(s)`);
+
+		// Delete organisation hours - foreign key uses numeric organisationUid, but ref uses Clerk org ID
+		const deletedHours = await this.orgHoursRepo.delete({
+			organisationUid: existingOrg.uid,
+		});
+		console.log(`   Deleted ${deletedHours.affected || 0} organisation hour(s)`);
+
+		// Delete organisation appearance - foreign key uses numeric organisationUid, but ref uses Clerk org ID
+		const deletedAppearance = await this.orgAppearanceRepo.delete({
+			organisationUid: existingOrg.uid,
+		});
+		console.log(`   Deleted ${deletedAppearance.affected || 0} organisation appearance(s)`);
 
 		// Delete organisation
 		await this.orgRepo.delete({
@@ -181,6 +201,7 @@ class ClerkOrgPopulator {
 
 	/**
 	 * Create organisation settings with Africa/Johannesburg configuration
+	 * Matches database format: socialLinks and performance are NULL, notifications doesn't include taskNotifications/feedbackTokenExpiryDays
 	 */
 	async createOrganisationSettings(organisation: Organisation): Promise<OrganisationSettings> {
 		console.log('⚙️  Creating organisation settings...');
@@ -191,13 +212,20 @@ class ClerkOrgPopulator {
 				email: organisation.email,
 				phone: {
 					code: '+27',
-					number: organisation.phone.replace('+27', ''),
+					number: organisation.phone.replace('+27', '').trim(),
 				},
 				website: organisation.website,
-				address: JHB_ADDRESS,
+				address: {
+					street: JHB_ADDRESS.street,
+					suburb: JHB_ADDRESS.suburb,
+					city: JHB_ADDRESS.city,
+					state: JHB_ADDRESS.state,
+					country: JHB_ADDRESS.country,
+					postalCode: JHB_ADDRESS.postalCode,
+				},
 			},
 			regional: {
-				language: 'en-ZA',
+				language: 'en-US', // Match CSV format
 				timezone: 'Africa/Johannesburg',
 				currency: 'ZAR',
 				dateFormat: 'DD/MM/YYYY',
@@ -205,29 +233,30 @@ class ClerkOrgPopulator {
 			},
 			branding: {
 				logo: organisation.logo,
-				logoAltText: `${organisation.name} Logo`,
+				logoAltText: organisation.name, // Match CSV format
 				favicon: organisation.logo,
-				primaryColor: '#1E40AF',
-				secondaryColor: '#3B82F6',
-				accentColor: '#60A5FA',
+				primaryColor: '#059669', // Match CSV format from settings
+				secondaryColor: '#6b7280', // Match CSV format
+				accentColor: '#34d399', // Match CSV format
 			},
 			business: {
 				name: organisation.name,
-				registrationNumber: '',
-				taxId: '',
-				industry: 'Technology',
-				size: 'enterprise',
+				registrationNumber: '', // Empty string, not null
+				taxId: '', // Empty string, not null
+				industry: 'technology', // Lowercase to match CSV
+				size: 'medium', // Match CSV format
 			},
 			notifications: {
 				email: true,
 				sms: true,
 				push: true,
 				whatsapp: false,
+				// Note: taskNotifications and feedbackTokenExpiryDays are separate fields, not in notifications JSON
 			},
 			preferences: {
-				defaultView: 'dashboard',
+				defaultView: 'grid', // Match CSV format
 				itemsPerPage: 25,
-				theme: 'system',
+				theme: 'light', // Match CSV format
 				menuCollapsed: false,
 			},
 			geofenceDefaultRadius: 500,
@@ -235,15 +264,109 @@ class ClerkOrgPopulator {
 			geofenceDefaultNotificationType: 'NOTIFY',
 			geofenceMaxRadius: 5000,
 			geofenceMinRadius: 100,
-			sendTaskNotifications: true,
+			sendTaskNotifications: false, // Match CSV format
 			feedbackTokenExpiryDays: 30,
+			socialLinks: null, // NULL in database (CSV shows NULL)
+			performance: null, // NULL in database (CSV shows NULL)
 			isDeleted: false,
 		});
 
 		const savedSettings = await this.orgSettingsRepo.save(settings);
 		console.log(`✅ Organisation settings created for: ${organisation.name}`);
+		console.log(`   - Contact email: ${savedSettings.contact?.email}`);
+		console.log(`   - Timezone: ${savedSettings.regional?.timezone}`);
+		console.log(`   - Business size: ${savedSettings.business?.size}`);
+		console.log(`   - Social links: ${savedSettings.socialLinks ? 'Set' : 'NULL'}`);
+		console.log(`   - Performance: ${savedSettings.performance ? 'Set' : 'NULL'}`);
 
 		return savedSettings;
+	}
+
+	/**
+	 * Create organisation hours with weekly schedule and timezone
+	 * Linked via Clerk org ID: ref uses Clerk org ID, foreign key uses organisationUid
+	 */
+	async createOrganisationHours(organisation: Organisation): Promise<OrganisationHours> {
+		console.log('🕐 Creating organisation hours...');
+
+		// Ref uses Clerk org ID for referencing (matches the linking requirement)
+		const hoursRef = organisation.clerkOrgId || organisation.ref;
+
+		// Parse openTime and closeTime as timestamptz matching CSV format
+		// CSV shows: "1970-01-01 07:00:00+00" and "1970-01-01 16:30:00+00"
+		// These are stored as timestamptz in the database
+		const openTime = new Date('1970-01-01T07:00:00.000Z');
+		const closeTime = new Date('1970-01-01T16:30:00.000Z');
+
+		const hours = this.orgHoursRepo.create({
+			ref: hoursRef, // Ref uses Clerk org ID
+			organisationUid: organisation.uid, // Foreign key still uses numeric UID (required by DB schema)
+			weeklySchedule: {
+				monday: true,
+				tuesday: true,
+				wednesday: true,
+				thursday: true,
+				friday: true,
+				saturday: false,
+				sunday: false,
+			},
+			schedule: null, // NULL in database
+			timezone: 'Africa/Johannesburg',
+			holidayMode: false, // Boolean false, not string
+			specialHours: null, // NULL in database
+			openTime: openTime, // timestamptz
+			closeTime: closeTime, // timestamptz
+			holidayUntil: null, // NULL in database
+			isDeleted: false,
+		});
+
+		const savedHours = await this.orgHoursRepo.save(hours);
+		console.log(`✅ Organisation hours created for: ${organisation.name}`);
+		console.log(`   - Ref: ${savedHours.ref} (Clerk Org ID: ${organisation.clerkOrgId})`);
+		console.log(`   - Linked via organisationUid: ${savedHours.organisationUid}`);
+		console.log(`   - Timezone: ${savedHours.timezone}`);
+		console.log(`   - Open Time: ${savedHours.openTime?.toISOString()}`);
+		console.log(`   - Close Time: ${savedHours.closeTime?.toISOString()}`);
+		console.log(`   - Weekly Schedule: Mon-Fri enabled`);
+
+		return savedHours;
+	}
+
+	/**
+	 * Create organisation appearance with branding colors and logo
+	 * Linked via Clerk org ID: ref uses Clerk org ID, foreign key uses organisationUid
+	 */
+	async createOrganisationAppearance(organisation: Organisation): Promise<OrganisationAppearance> {
+		console.log('🎨 Creating organisation appearance...');
+
+		// Ref uses Clerk org ID for referencing (matches the linking requirement)
+		const appearanceRef = organisation.clerkOrgId || organisation.ref;
+
+		// Match CSV format: logoUrl is NULL, logoAltText is the logo URL string
+		const appearance = this.orgAppearanceRepo.create({
+			ref: appearanceRef, // Ref uses Clerk org ID
+			organisationUid: organisation.uid, // Foreign key still uses numeric UID (required by DB schema)
+			primaryColor: '#7c2d92', // Default purple from CSV
+			secondaryColor: '#4f46e5', // Default indigo from CSV
+			accentColor: '#ec4899', // Default pink from CSV
+			errorColor: '#ef4444', // Default red from CSV
+			successColor: '#10b981', // Default green from CSV
+			logoUrl: null, // NULL in database (CSV shows NULL)
+			logoAltText: organisation.logo || '', // Logo URL string in logoAltText field (matches CSV format)
+			isDeleted: false,
+		});
+
+		const savedAppearance = await this.orgAppearanceRepo.save(appearance);
+		console.log(`✅ Organisation appearance created for: ${organisation.name}`);
+		console.log(`   - Ref: ${savedAppearance.ref} (Clerk Org ID: ${organisation.clerkOrgId})`);
+		console.log(`   - Linked via organisationUid: ${savedAppearance.organisationUid}`);
+		console.log(`   - Primary Color: ${savedAppearance.primaryColor}`);
+		console.log(`   - Secondary Color: ${savedAppearance.secondaryColor}`);
+		console.log(`   - Accent Color: ${savedAppearance.accentColor}`);
+		console.log(`   - Logo URL: ${savedAppearance.logoUrl || 'NULL'}`);
+		console.log(`   - Logo Alt Text: ${savedAppearance.logoAltText ? 'Set' : 'Not set'}`);
+
+		return savedAppearance;
 	}
 
 	/**
@@ -420,14 +543,20 @@ class ClerkOrgPopulator {
 			// Step 3: Create organisation settings
 			await this.createOrganisationSettings(organisation);
 
-			// Step 4: Create 2 branches (linked to org ref)
+			// Step 4: Create organisation hours (linked via Clerk org ID in ref field)
+			const orgHours = await this.createOrganisationHours(organisation);
+
+			// Step 5: Create organisation appearance (linked via Clerk org ID in ref field)
+			const orgAppearance = await this.createOrganisationAppearance(organisation);
+
+			// Step 6: Create 2 branches (linked to org ref)
 			const branch1 = await this.createBranch(organisation, 1);
 			const branch2 = await this.createBranch(organisation, 2);
 
-			// Step 5: Create enterprise license (with all features and columns filled)
+			// Step 7: Create enterprise license (with all features and columns filled)
 			const license = await this.createLicense(organisation);
 
-			// Step 6: Verify license can be retrieved using Clerk org ID
+			// Step 8: Verify license can be retrieved using Clerk org ID
 			console.log('\n🔍 Verifying license retrieval using Clerk org ID...');
 			const retrievedLicenses = await this.licensingService.findByOrganisation(this.clerkOrgId);
 			
@@ -457,16 +586,27 @@ class ClerkOrgPopulator {
 			console.log(`   - Organisation: ${organisation.name} (UID: ${organisation.uid})`);
 			console.log(`   - Organisation Ref: ${organisation.ref} (Clerk Org ID)`);
 			console.log(`   - Clerk Org ID: ${organisation.clerkOrgId}`);
+			console.log(`   - Organisation Settings: Created with Africa/Johannesburg timezone`);
+			console.log(`     • Linked via organisationUid: ${organisation.uid}`);
+			console.log(`   - Organisation Hours: Created with Mon-Fri schedule`);
+			console.log(`     • Ref: ${orgHours.ref} (uses Clerk Org ID for referencing)`);
+			console.log(`     • Linked via organisationUid: ${orgHours.organisationUid}`);
+			console.log(`   - Organisation Appearance: Created with branding colors`);
+			console.log(`     • Ref: ${orgAppearance.ref} (uses Clerk Org ID for referencing)`);
+			console.log(`     • Linked via organisationUid: ${orgAppearance.organisationUid}`);
 			console.log(`   - Branches: 2 created`);
 			console.log(`     • ${branch1.name} (Ref: ${branch1.ref})`);
 			console.log(`     • ${branch2.name} (Ref: ${branch2.ref})`);
 			console.log(`   - License: Enterprise (ENTERPRISE plan) - All features enabled`);
 			console.log(`     • License UID: ${license.uid}`);
-			console.log(`     • Linked to Organisation Ref: ${license.organisationRef}`);
+			console.log(`     • Linked to Organisation Ref: ${license.organisationRef} (Clerk Org ID)`);
 			console.log(`     • Features: ${Object.keys(license.features).length} enabled`);
 			console.log(`     • Verified: Can be retrieved using Clerk org ID`);
 			console.log(`   - Timezone: Africa/Johannesburg`);
 			console.log(`   - Location: Johannesburg, South Africa`);
+			console.log(`\n🔗 Linking Strategy:`);
+			console.log(`   - All entities use Clerk Org ID (${organisation.clerkOrgId}) for referencing via 'ref' field`);
+			console.log(`   - Foreign key relationships use numeric organisationUid (${organisation.uid}) for database integrity`);
 		} catch (error) {
 			console.error('\n❌ Error during population:', error);
 			throw error;

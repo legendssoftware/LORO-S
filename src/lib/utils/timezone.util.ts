@@ -67,5 +67,37 @@ export class TimezoneUtil {
 			return date;
 		}
 	}
+
+	/**
+	 * Convert date to organization timezone for JSON serialization
+	 * Creates a Date object where the UTC timestamp represents the local time
+	 * When serialized to JSON, this will show the organization timezone time
+	 * 
+	 * Example: If database has 06:57 UTC and timezone is GMT+2 (08:57 local),
+	 * this creates a Date that serializes to "2025-01-26T08:57:00.000Z"
+	 * instead of "2025-01-26T06:57:00.000Z"
+	 */
+	static toOrganizationTimeForSerialization(date: Date, timezone: string): Date {
+		try {
+			// Get local time components in organization timezone
+			const zonedDate = toZonedTime(date, timezone);
+			
+			// Extract local time components
+			const year = zonedDate.getFullYear();
+			const month = zonedDate.getMonth();
+			const day = zonedDate.getDate();
+			const hours = zonedDate.getHours();
+			const minutes = zonedDate.getMinutes();
+			const seconds = zonedDate.getSeconds();
+			const milliseconds = zonedDate.getMilliseconds();
+			
+			// Create Date object treating local time components as UTC
+			// This ensures when serialized to JSON, it shows the organization timezone time
+			return new Date(Date.UTC(year, month, day, hours, minutes, seconds, milliseconds));
+		} catch (error) {
+			// Fallback to original date if conversion fails
+			return date;
+		}
+	}
 }
 

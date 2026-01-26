@@ -21,6 +21,9 @@ import { AwardLoyaltyPointsDto } from './dto/award-loyalty-points.dto';
 import { ClaimRewardDto } from './dto/claim-reward.dto';
 import { UpdateVirtualCardDto } from './dto/update-virtual-card.dto';
 import { CreateLoyaltyRewardDto } from './dto/create-loyalty-reward.dto';
+import { ConvertPointsDto } from './dto/convert-points.dto';
+import { BroadcastMessageDto } from './dto/broadcast-message.dto';
+import { BulkAwardPointsDto } from './dto/bulk-award-points.dto';
 import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { RoleGuard } from '../guards/role.guard';
 import { LoyaltyApiKeyGuard } from '../guards/loyalty-api-key.guard';
@@ -115,6 +118,30 @@ export class LoyaltyController {
 		return this.loyaltyService.awardPoints(dto, dto.organisationUid);
 	}
 
+	@Post('external/bulk-award-points')
+	@UseGuards(LoyaltyApiKeyGuard)
+	@ApiOperation({
+		summary: 'Bulk award loyalty points (ERP/POS)',
+		description: 'Award points to multiple profiles in a single request. Optimized for batch processing.',
+	})
+	@ApiHeader({
+		name: 'X-LOYALTY-API-Key',
+		description: 'API key for loyalty system access',
+		required: true,
+	})
+	@ApiBody({ type: BulkAwardPointsDto })
+	@ApiCreatedResponse({
+		description: 'Points awarded successfully',
+	})
+	@ApiBadRequestResponse({ description: 'Invalid input data' })
+	@ApiUnauthorizedResponse({ description: 'Invalid or missing API key' })
+	async bulkAwardPoints(
+		@Body() dto: BulkAwardPointsDto,
+		@Headers('X-LOYALTY-API-Key') apiKey: string,
+	) {
+		return this.loyaltyService.bulkAwardPoints(dto.awards, dto.organisationUid);
+	}
+
 	@Get('external/profile/:identifier')
 	@UseGuards(LoyaltyApiKeyGuard)
 	@ApiOperation({
@@ -148,6 +175,131 @@ export class LoyaltyController {
 		return {
 			message: 'Profile retrieved successfully',
 			profile,
+		};
+	}
+
+	@Post('external/quick-enroll')
+	@UseGuards(LoyaltyApiKeyGuard)
+	@ApiOperation({
+		summary: 'Quick enrollment from POS (ERP/POS)',
+		description: 'Faster enrollment endpoint that only requires email or phone. Optimized for till operations.',
+	})
+	@ApiHeader({
+		name: 'X-LOYALTY-API-Key',
+		description: 'API key for loyalty system access',
+		required: true,
+	})
+	@ApiBody({
+		schema: {
+			type: 'object',
+			required: ['email', 'phone'],
+			properties: {
+				email: { type: 'string', example: 'customer@example.com' },
+				phone: { type: 'string', example: '+27123456789' },
+				name: { type: 'string', example: 'John Doe' },
+				organisationUid: { type: 'number', example: 1 },
+				branchUid: { type: 'number', example: 1 },
+			},
+		},
+	})
+	@ApiCreatedResponse({
+		description: 'Client enrolled successfully',
+	})
+	@ApiBadRequestResponse({ description: 'Invalid input data' })
+	@ApiUnauthorizedResponse({ description: 'Invalid or missing API key' })
+	async quickEnroll(
+		@Body() dto: { email?: string; phone?: string; name?: string; organisationUid?: number; branchUid?: number },
+		@Headers('X-LOYALTY-API-Key') apiKey: string,
+	) {
+		if (!dto.email && !dto.phone) {
+			throw new BadRequestException('Either email or phone must be provided');
+		}
+
+		const enrollDto: ExternalEnrollDto = {
+			email: dto.email,
+			phone: dto.phone,
+			name: dto.name,
+			organisationUid: dto.organisationUid,
+			branchUid: dto.branchUid,
+			sendWelcomeMessage: false, // Skip welcome message for faster processing
+		};
+
+		return this.loyaltyService.externalEnroll(enrollDto, dto.organisationUid, dto.branchUid);
+	}
+
+	@Get('external/points-history/:identifier')
+	@UseGuards(LoyaltyApiKeyGuard)
+	@ApiOperation({
+		summary: 'Get points transaction history (ERP/POS)',
+		description: 'Get transaction history for a loyalty profile by identifier.',
+	})
+	@ApiHeader({
+		name: 'X-LOYALTY-API-Key',
+		description: 'API key for loyalty system access',
+		required: true,
+	})
+	@ApiParam({
+		name: 'identifier',
+		description: 'Loyalty card number, phone, email, or client ID',
+		example: 'LOY-2024-123456',
+	})
+	@ApiOkResponse({
+		description: 'Transaction history retrieved successfully',
+	})
+	@ApiNotFoundResponse({ description: 'Profile not found' })
+	@ApiUnauthorizedResponse({ description: 'Invalid or missing API key' })
+	async getPointsHistory(
+		@Param('identifier') identifier: string,
+		@Query('orgId') orgId?: number,
+		@Query('startDate') startDate?: string,
+		@Query('endDate') endDate?: string,
+		@Headers('X-LOYALTY-API-Key') apiKey?: string,
+	) {
+		const profile = await this.loyaltyService.findProfileByIdentifier(identifier, orgId);
+		if (!profile) {
+			throw new NotFoundException('Loyalty profile not found');
+		}
+
+		return this.loyaltyService.getTransactions(profile.uid, { startDate, endDate });
+	}
+
+	@Get('external/balance/:identifier')
+	@UseGuards(LoyaltyApiKeyGuard)
+	@ApiOperation({
+		summary: 'Get real-time points balance (ERP/POS)',
+		description: 'Get current points balance for a loyalty profile by identifier. Optimized for fast POS lookups.',
+	})
+	@ApiHeader({
+		name: 'X-LOYALTY-API-Key',
+		description: 'API key for loyalty system access',
+		required: true,
+	})
+	@ApiParam({
+		name: 'identifier',
+		description: 'Loyalty card number, phone, email, or client ID',
+		example: 'LOY-2024-123456',
+	})
+	@ApiOkResponse({
+		description: 'Balance retrieved successfully',
+	})
+	@ApiNotFoundResponse({ description: 'Profile not found' })
+	@ApiUnauthorizedResponse({ description: 'Invalid or missing API key' })
+	async getBalance(
+		@Param('identifier') identifier: string,
+		@Query('orgId') orgId?: number,
+		@Headers('X-LOYALTY-API-Key') apiKey?: string,
+	) {
+		const profile = await this.loyaltyService.findProfileByIdentifier(identifier, orgId);
+		if (!profile) {
+			throw new NotFoundException('Loyalty profile not found');
+		}
+
+		return {
+			message: 'Balance retrieved successfully',
+			cardNumber: profile.loyaltyCardNumber,
+			currentPoints: Number(profile.currentPoints),
+			tier: profile.tier,
+			totalPointsEarned: Number(profile.totalPointsEarned),
 		};
 	}
 
@@ -222,13 +374,18 @@ export class LoyaltyController {
 	@ApiBearerAuth('JWT-auth')
 	@ApiOperation({
 		summary: 'Get points transaction history',
-		description: 'Get transaction history for the authenticated client.',
+		description: 'Get transaction history for the authenticated client with optional date range filtering.',
 	})
 	@ApiOkResponse({
 		description: 'Transactions retrieved successfully',
 	})
 	@ApiUnauthorizedResponse({ description: 'Authentication required' })
-	async getTransactions(@Req() req: AuthenticatedRequest) {
+	async getTransactions(
+		@Req() req: AuthenticatedRequest,
+		@Query('startDate') startDate?: string,
+		@Query('endDate') endDate?: string,
+		@Query('type') type?: string,
+	) {
 		const clientId = req.user?.uid;
 		if (!clientId) {
 			throw new NotFoundException('Client ID not found in token');
@@ -239,10 +396,57 @@ export class LoyaltyController {
 			throw new NotFoundException('Loyalty profile not found');
 		}
 
-		return {
-			message: 'Transactions retrieved successfully',
-			transactions: profile.transactions || [],
-		};
+		return this.loyaltyService.getTransactions(profile.uid, { startDate, endDate, type });
+	}
+
+	@Get('my-points-summary')
+	@UseGuards(ClerkAuthGuard)
+	@ApiBearerAuth('JWT-auth')
+	@ApiOperation({
+		summary: 'Get detailed points summary',
+		description: 'Get comprehensive points breakdown including earned, spent, expired, and converted points.',
+	})
+	@ApiOkResponse({
+		description: 'Points summary retrieved successfully',
+	})
+	@ApiUnauthorizedResponse({ description: 'Authentication required' })
+	async getPointsSummary(@Req() req: AuthenticatedRequest) {
+		const clientId = req.user?.uid;
+		if (!clientId) {
+			throw new NotFoundException('Client ID not found in token');
+		}
+
+		const profile = await this.loyaltyService.getProfileByClientId(clientId);
+		if (!profile) {
+			throw new NotFoundException('Loyalty profile not found');
+		}
+
+		return this.loyaltyService.getPointsSummary(profile.uid);
+	}
+
+	@Get('my-rewards-history')
+	@UseGuards(ClerkAuthGuard)
+	@ApiBearerAuth('JWT-auth')
+	@ApiOperation({
+		summary: 'Get reward claim history',
+		description: 'Get history of all rewards claimed by the authenticated client.',
+	})
+	@ApiOkResponse({
+		description: 'Rewards history retrieved successfully',
+	})
+	@ApiUnauthorizedResponse({ description: 'Authentication required' })
+	async getRewardsHistory(@Req() req: AuthenticatedRequest) {
+		const clientId = req.user?.uid;
+		if (!clientId) {
+			throw new NotFoundException('Client ID not found in token');
+		}
+
+		const profile = await this.loyaltyService.getProfileByClientId(clientId);
+		if (!profile) {
+			throw new NotFoundException('Loyalty profile not found');
+		}
+
+		return this.loyaltyService.getRewardsHistory(profile.uid);
 	}
 
 	@Post('rewards/:rewardId/claim')
@@ -510,6 +714,36 @@ export class LoyaltyController {
 		return this.loyaltyService.completeProfile(token);
 	}
 
+	@Post('convert-to-credit')
+	@UseGuards(ClerkAuthGuard)
+	@ApiBearerAuth('JWT-auth')
+	@ApiOperation({
+		summary: 'Convert loyalty points to credit limit',
+		description: 'Convert loyalty points to increase client credit limit. Conversion rate is configurable via environment variable.',
+	})
+	@ApiBody({ type: ConvertPointsDto })
+	@ApiCreatedResponse({
+		description: 'Points converted successfully',
+	})
+	@ApiBadRequestResponse({ description: 'Insufficient points or invalid request' })
+	@ApiUnauthorizedResponse({ description: 'Authentication required' })
+	async convertPointsToCredit(
+		@Body() dto: ConvertPointsDto,
+		@Req() req: AuthenticatedRequest,
+	) {
+		const clientId = req.user?.uid;
+		if (!clientId) {
+			throw new NotFoundException('Client ID not found in token');
+		}
+
+		const profile = await this.loyaltyService.getProfileByClientId(clientId);
+		if (!profile) {
+			throw new NotFoundException('Loyalty profile not found');
+		}
+
+		return this.loyaltyService.convertPointsToCredit(profile.uid, dto);
+	}
+
 	// ========== ADMIN ENDPOINTS ==========
 
 	@Get('profiles')
@@ -639,6 +873,85 @@ export class LoyaltyController {
 				tierDistribution,
 				recentTransactions,
 			},
+		};
+	}
+
+	@Post('broadcast/email')
+	@UseGuards(ClerkAuthGuard, RoleGuard)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER)
+	@ApiBearerAuth('JWT-auth')
+	@ApiOperation({
+		summary: 'Send broadcast email to loyalty members (Admin)',
+		description: 'Send email broadcast to all loyalty members with optional filtering by tier, organization, or branch.',
+	})
+	@ApiBody({ type: BroadcastMessageDto })
+	@ApiCreatedResponse({
+		description: 'Broadcast sent successfully',
+	})
+	@ApiUnauthorizedResponse({ description: 'Authentication required' })
+	async sendBroadcastEmail(
+		@Body() dto: BroadcastMessageDto,
+		@Req() req: AuthenticatedRequest,
+	) {
+		const orgId = await this.resolveOrgUid(req);
+		const createdBy = req.user?.clerkUserId || 'system';
+
+		if (dto.type !== 'email') {
+			throw new BadRequestException('This endpoint is for email broadcasts only');
+		}
+
+		return this.loyaltyService.sendBroadcast(dto, orgId, createdBy);
+	}
+
+	@Post('broadcast/sms')
+	@UseGuards(ClerkAuthGuard, RoleGuard)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER)
+	@ApiBearerAuth('JWT-auth')
+	@ApiOperation({
+		summary: 'Send broadcast SMS to loyalty members (Admin)',
+		description: 'Send SMS broadcast to all loyalty members with optional filtering by tier, organization, or branch.',
+	})
+	@ApiBody({ type: BroadcastMessageDto })
+	@ApiCreatedResponse({
+		description: 'Broadcast sent successfully',
+	})
+	@ApiUnauthorizedResponse({ description: 'Authentication required' })
+	async sendBroadcastSMS(
+		@Body() dto: BroadcastMessageDto,
+		@Req() req: AuthenticatedRequest,
+	) {
+		const orgId = await this.resolveOrgUid(req);
+		const createdBy = req.user?.clerkUserId || 'system';
+
+		if (dto.type !== 'sms') {
+			throw new BadRequestException('This endpoint is for SMS broadcasts only');
+		}
+
+		return this.loyaltyService.sendBroadcast(dto, orgId, createdBy);
+	}
+
+	@Get('broadcast/history')
+	@UseGuards(ClerkAuthGuard, RoleGuard)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER)
+	@ApiBearerAuth('JWT-auth')
+	@ApiOperation({
+		summary: 'Get broadcast history (Admin)',
+		description: 'Get history of all broadcast messages sent.',
+	})
+	@ApiOkResponse({
+		description: 'Broadcast history retrieved successfully',
+	})
+	@ApiUnauthorizedResponse({ description: 'Authentication required' })
+	async getBroadcastHistory(
+		@Req() req: AuthenticatedRequest,
+		@Query('limit') limit?: number,
+	) {
+		const orgId = await this.resolveOrgUid(req);
+		const broadcasts = await this.loyaltyService.getBroadcastHistory(orgId, limit ? parseInt(limit.toString()) : 50);
+
+		return {
+			message: 'Broadcast history retrieved successfully',
+			broadcasts,
 		};
 	}
 }

@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards, Req, BadRequestException, Logger, Query, ValidationPipe, Param } from '@nestjs/common';
+import { Controller, Get, UseGuards, Req, BadRequestException, ForbiddenException, Logger, Query, ValidationPipe, Param } from '@nestjs/common';
 import { ReportsService } from './reports.service';
 import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
 import {
@@ -862,44 +862,21 @@ Access all your personal morning and evening attendance reports.
 		@Query('page') page?: string,
 		@Query('limit') limit?: string
 	) {
-		const parsedUserId = parseInt(userId, 10);
-		this.logger.log(`Getting user daily reports for user ${parsedUserId}`);
+		this.logger.log(`Getting user daily reports for user ${userId}`);
 
 		// Use the same access scope pattern as user controller
 		const accessScope = this.getAccessScope(request.user);
 
-		// 🔍 DEBUG: Log the access decision with full details
-		console.log('🔍 DEBUG getUserDailyReports:', {
-			requestedUserId: parsedUserId,
-			fullUser: {
-				uid: request.user?.uid,
-				accessLevel: request.user?.accessLevel,
-				role: request.user?.role,
-			},
-			requestingUser: {
-				uid: request.user?.uid,
-				accessLevel: request.user?.accessLevel,
-				isElevated: accessScope.isElevated,
-			},
-			accessScope: {
-				orgId: accessScope.orgId,
-				branchId: accessScope.branchId,
-				orgWideAccess: accessScope.branchId === null,
-			},
-			comparison: {
-				requestedUserId: parsedUserId,
-				currentUserId: request.user?.uid,
-				match: parsedUserId === request.user.uid,
-				isElevated: accessScope.isElevated,
-				willAllow: accessScope.isElevated || parsedUserId === request.user.uid,
-			},
-		});
-
 		// Check access permissions
 		// Users can access their own reports OR elevated users can access reports for users in their organization
+		const isSelfAccess = String(request.user?.uid) === userId;
+		const hasAccess = isSelfAccess || accessScope.isElevated;
+		if (!hasAccess) {
+			throw new ForbiddenException('Access denied to requested user reports');
+		}
 
 		return this.reportsService.getUserDailyReports({
-			userId: parsedUserId,
+			userId,
 			reportType,
 			page: page ? parseInt(page, 10) : 1,
 			limit: limit ? parseInt(limit, 10) : 50,
@@ -935,9 +912,9 @@ Returns all highlights data in one concise API call for the mobile app.
 	})
 	@ApiParam({
 		name: 'userId',
-		description: 'User ID to get highlights for',
-		type: 'number',
-		example: 123,
+		description: 'User ID to get highlights for (string)',
+		type: 'string',
+		example: '123',
 	})
 	@ApiQuery({
 		name: 'branchId',
@@ -1003,8 +980,7 @@ Returns all highlights data in one concise API call for the mobile app.
 		@Param('userId') userId: string,
 		@Query('branchId') queryBranchId?: string
 	) {
-		const parsedUserId = parseInt(userId, 10);
-		this.logger.log(`Getting highlights for user ${parsedUserId}`);
+		this.logger.log(`Getting highlights for user ${userId}`);
 
 		// Extract organization ID from authenticated user context
 		const orgIdRaw = request.user?.org?.uid || request.user?.organisationRef;
@@ -1018,12 +994,6 @@ Returns all highlights data in one concise API call for the mobile app.
 			throw new BadRequestException('Organization ID is required');
 		}
 
-		// Validate numeric parameters
-		if (isNaN(parsedUserId)) {
-			this.logger.error(`Invalid user ID: ${userId}`);
-			throw new BadRequestException('User ID must be a valid number');
-		}
-
 		if (queryBranchId && branchId && isNaN(branchId)) {
 			this.logger.error(`Invalid branch ID: ${queryBranchId}`);
 			throw new BadRequestException('Branch ID must be a valid number');
@@ -1033,17 +1003,16 @@ Returns all highlights data in one concise API call for the mobile app.
 		const accessScope = this.getAccessScope(request.user);
 
 		// Check access permissions
-		// Users can access their own highlights OR elevated users can access any user's highlights
-		const isSelfAccess = parsedUserId === request.user.uid;
+		const isSelfAccess = String(request.user?.uid) === userId;
 		const hasAccess = isSelfAccess || accessScope.isElevated;
 
 		if (!hasAccess) {
-			this.logger.warn(`User ${request.user.uid} (level: ${request.user.accessLevel}) attempted to access user ${parsedUserId} highlights without permission`);
+			this.logger.warn(`User ${request.user.uid} (level: ${request.user.accessLevel}) attempted to access user ${userId} highlights without permission`);
 			throw new BadRequestException(`Access denied to requested user highlights. You can only access your own highlights (UID: ${request.user.uid})`);
 		}
 
-		this.logger.log(`Fetching highlights for user ${parsedUserId} in org ${orgId}${branchId ? `, branch ${branchId}` : ''}`);
+		this.logger.log(`Fetching highlights for user ${userId} in org ${orgId}${branchId ? `, branch ${branchId}` : ''}`);
 
-		return this.reportsService.getUserHighlights(parsedUserId, orgId as number, branchId);
+		return this.reportsService.getUserHighlights(userId, orgId as number, branchId);
 	}
 }

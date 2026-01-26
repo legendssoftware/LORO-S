@@ -1015,9 +1015,9 @@ Retrieve all approval requests that were submitted by the currently authenticate
     })
     @ApiParam({
         name: 'ref',
-        description: 'User ID to retrieve approval history for',
-        example: 123,
-        schema: { type: 'number' }
+        description: 'User Clerk ID to retrieve approval history for (string). Returns approvals where user is requester, approver, or delegatedTo.',
+        example: 'user_abc123',
+        schema: { type: 'string' }
     })
     @ApiOkResponse({
         description: '✅ User approval history retrieved successfully',
@@ -1050,9 +1050,13 @@ Retrieve all approval requests that were submitted by the currently authenticate
                                         totalApprovals: { type: 'number', example: 15 },
                                         pendingApprovals: { type: 'number', example: 2 },
                                         approvedApprovals: { type: 'number', example: 10 },
-                                        rejectedApprovals: { type: 'number', example: 3 }
+                                        rejectedApprovals: { type: 'number', example: 3 },
+                                        draftApprovals: { type: 'number', example: 1 },
+                                        withdrawnApprovals: { type: 'number', example: 0 }
                                     }
-                                }
+                                },
+                                byType: { type: 'object', additionalProperties: { type: 'number' } },
+                                byStatus: { type: 'object', additionalProperties: { type: 'number' } }
                             }
                         }
                     }
@@ -1062,7 +1066,7 @@ Retrieve all approval requests that were submitted by the currently authenticate
         }
     })
     getUserApprovals(@Param('ref') ref: string) {
-        return this.approvalsService.getUserApprovals(+ref);
+        return this.approvalsService.getUserApprovals(ref);
     }
 
     // Get approval statistics/dashboard data
@@ -2084,7 +2088,7 @@ Perform various decision-making actions on approval requests including approve, 
                 description: 'Transfer approval authority to another user',
                 value: {
                     action: 'DELEGATE',
-                    delegateToUid: 89,
+                    delegateToClerkUserId: 'user_2abc123',
                     comments: 'Delegating to Department Head due to specialized knowledge requirement in this area.',
                     reason: 'Technical expertise required outside my domain',
                     sendNotification: true,
@@ -2100,7 +2104,7 @@ Perform various decision-making actions on approval requests including approve, 
                 description: 'Escalate to senior management',
                 value: {
                     action: 'ESCALATE',
-                    escalateToUid: 23,
+                    escalateToClerkUserId: 'user_2def456',
                     reason: 'Amount exceeds my approval authority limit. Requires director-level approval.',
                     comments: 'Request appears valid but exceeds my $50,000 approval limit. Recommending approval at director level.',
                     sendNotification: true,
@@ -2759,8 +2763,8 @@ Perform the same action on multiple approval requests simultaneously, enabling e
                             type: 'object',
                             properties: {
                                 REJECT: { type: 'array', items: { type: 'string' }, example: ['comments'] },
-                                DELEGATE: { type: 'array', items: { type: 'string' }, example: ['delegateToUid'] },
-                                ESCALATE: { type: 'array', items: { type: 'string' }, example: ['escalateToUid', 'reason'] }
+                                DELEGATE: { type: 'array', items: { type: 'string' }, example: ['delegateToClerkUserId'] },
+                                ESCALATE: { type: 'array', items: { type: 'string' }, example: ['escalateToClerkUserId', 'reason'] }
                             }
                         }
                     }

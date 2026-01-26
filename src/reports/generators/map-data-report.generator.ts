@@ -122,7 +122,7 @@ export class MapDataReportGenerator {
 			this.logger.debug(`Verifying organisation ${organisationId} exists and is active`);
 			const organisation = await this.organisationRepository.findOne({ 
 				where: { uid: organisationId },
-				select: ['uid', 'name', 'status']
+				select: ['uid', 'name', 'status', 'clerkOrgId']
 			});
 			
 			if (!organisation) {
@@ -133,6 +133,11 @@ export class MapDataReportGenerator {
 			if (organisation.status !== GeneralStatus.ACTIVE) {
 				this.logger.error(`Organisation ${organisationId} is not active. Status: ${organisation.status}`);
 				throw new Error('Organisation is not active');
+			}
+
+			if (!organisation.clerkOrgId) {
+				this.logger.error(`Organisation ${organisationId} has no Clerk org ID`);
+				throw new Error('Organisation has no Clerk org ID');
 			}
 
 			this.logger.log(`Organisation verified: ${organisation.name} (${organisation.uid})`);
@@ -171,9 +176,9 @@ export class MapDataReportGenerator {
 			});
 			this.logger.log(`📊 Total quotations in DB for org ${organisationId}: ${totalQuotationCount}`);
 			
-			// Test lead data availability
+			// Test lead data availability (Lead.organisationUid references Organisation.clerkOrgId)
 			const totalLeadCount = await this.leadRepository.count({
-				where: { organisationUid: organisationId, isDeleted: false }
+				where: { organisationUid: organisation.clerkOrgId, isDeleted: false }
 			});
 			this.logger.log(`📊 Total leads in DB for org ${organisationId}: ${totalLeadCount}`);
 			
@@ -277,10 +282,10 @@ export class MapDataReportGenerator {
 					select: ['uid', 'totalAmount', 'status', 'quotationNumber', 'createdAt'],
 					take: 1000,
 				}),
-				// Leads
+				// Leads (Lead.organisationUid references Organisation.clerkOrgId)
 				this.leadRepository.find({
 					where: {
-						organisationUid: organisationId,
+						organisationUid: organisation.clerkOrgId,
 						...(branchId ? { branchUid: branchId } : {}),
 						isDeleted: false,
 					},
@@ -1155,6 +1160,7 @@ export class MapDataReportGenerator {
 			this.logger.debug('Generating events data from recent activities');
 			const events = await this.generateRecentEvents({
 				organisationId,
+				organisationClerkOrgId: organisation.clerkOrgId,
 				branchId,
 				todayStart,
 				yesterdayStart,
@@ -1455,11 +1461,12 @@ export class MapDataReportGenerator {
 	 */
 	private async generateRecentEvents(params: {
 		organisationId: number;
+		organisationClerkOrgId: string;
 		branchId?: number;
 		todayStart: Date;
 		yesterdayStart: Date;
 	}): Promise<any[]> {
-		const { organisationId, branchId, todayStart, yesterdayStart } = params;
+		const { organisationId, organisationClerkOrgId, branchId, todayStart, yesterdayStart } = params;
 		const events: any[] = [];
 
 		try {
@@ -1603,15 +1610,15 @@ export class MapDataReportGenerator {
 			}
 
 			this.logger.debug('Fetching recent leads for events');
-			// Recent leads - Note: Lead uses different field names
+			// Recent leads - Lead.organisationUid references Organisation.clerkOrgId (string)
 			const recentLeads = await this.leadRepository.find({
 				where: {
-					organisationUid: organisationId, // Lead uses organisationUid not organisation relation
-					...(branchId ? { branchUid: branchId } : {}), // Lead uses branchUid not branch relation
+					organisationUid: organisationClerkOrgId,
+					...(branchId ? { branchUid: branchId } : {}),
 					createdAt: MoreThanOrEqual(yesterdayStart),
 					isDeleted: false,
 				},
-				relations: ['owner'], // Lead has owner, not createdBy
+				relations: ['owner'],
 				take: 10,
 				order: { createdAt: 'DESC' },
 			});

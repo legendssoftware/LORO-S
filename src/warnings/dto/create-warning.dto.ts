@@ -1,26 +1,21 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsEnum, IsDate, IsNotEmpty, IsObject } from 'class-validator';
+import { IsString, IsEnum, IsDate, IsNotEmpty } from 'class-validator';
 import { Type } from 'class-transformer';
 import { WarningSeverity, WarningStatus } from '../entities/warning.entity';
 
+/**
+ * Recipient (owner) is identified by recipientClerkId. Issuer is taken from auth token (clerkUserId).
+ * No owner/uid in DTO.
+ */
 export class CreateWarningDto {
-	@IsObject()
 	@IsNotEmpty()
+	@IsString()
 	@ApiProperty({
-		description: 'User who will receive the warning',
-		example: { uid: 1 },
+		description: 'Clerk user ID of the user who will receive the warning',
+		example: 'user_2abc123',
 		required: true,
 	})
-	owner: { uid: number };
-
-	@IsObject()
-	@IsNotEmpty()
-	@ApiProperty({
-		description: 'User who is issuing the warning',
-		example: { uid: 2 },
-		required: true,
-	})
-	issuedBy: { uid: number };
+	recipientClerkId: string;
 
 	@IsString()
 	@IsNotEmpty()

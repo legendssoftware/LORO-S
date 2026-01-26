@@ -41,7 +41,7 @@ export class ConsolidateAttendanceDto {
                         checkInNotes: "Morning shift start",
                         checkInLatitude: -26.2041,
                         checkInLongitude: 28.0473,
-                        owner: { uid: 123 },
+                        owner: { uid: '123' },
                         branch: { uid: 1 }
                     },
                     {
@@ -49,7 +49,7 @@ export class ConsolidateAttendanceDto {
                         checkInNotes: "Late arrival - traffic delay",
                         checkInLatitude: -26.2041,
                         checkInLongitude: 28.0473,
-                        owner: { uid: 124 },
+                        owner: { uid: '124' },
                         branch: { uid: 1 }
                     }
                 ]
@@ -63,14 +63,14 @@ export class ConsolidateAttendanceDto {
                         checkOutNotes: "Regular shift completion",
                         checkOutLatitude: -26.2041,
                         checkOutLongitude: 28.0473,
-                        owner: { uid: 123 }
+                        owner: { uid: '123' }
                     },
                     {
                         checkOut: "2024-01-15T18:00:00Z",
                         checkOutNotes: "Overtime completion - project deadline",
                         checkOutLatitude: -26.2041,
                         checkOutLongitude: 28.0473,
-                        owner: { uid: 124 }
+                        owner: { uid: '124' }
                     }
                 ]
             }

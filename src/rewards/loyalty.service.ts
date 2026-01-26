@@ -1,10 +1,13 @@
 import { Injectable, NotFoundException, BadRequestException, Logger, ConflictException } from '@nestjs/common';
 import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { Repository, DataSource, LessThan, MoreThanOrEqual, LessThanOrEqual } from 'typeorm';
+import { Cron } from '@nestjs/schedule';
 import { ClientLoyaltyProfile } from './entities/client-loyalty-profile.entity';
 import { LoyaltyPointsTransaction } from './entities/loyalty-points-transaction.entity';
 import { LoyaltyReward } from './entities/loyalty-reward.entity';
 import { LoyaltyRewardClaim } from './entities/loyalty-reward-claim.entity';
+import { LoyaltyPointsConversion } from './entities/loyalty-points-conversion.entity';
+import { LoyaltyBroadcast } from './entities/loyalty-broadcast.entity';
 import { VirtualLoyaltyCard } from './entities/virtual-loyalty-card.entity';
 import { Client } from '../clients/entities/client.entity';
 import { LoyaltyTier, LoyaltyPointsTransactionType, LoyaltyRewardClaimStatus } from '../lib/enums/loyalty.enums';
@@ -13,8 +16,12 @@ import { ExternalEnrollDto } from './dto/external-enroll.dto';
 import { AwardLoyaltyPointsDto } from './dto/award-loyalty-points.dto';
 import { ClaimRewardDto } from './dto/claim-reward.dto';
 import { UpdateVirtualCardDto } from './dto/update-virtual-card.dto';
+import { ConvertPointsDto } from './dto/convert-points.dto';
+import { BroadcastMessageDto } from './dto/broadcast-message.dto';
 import { UnifiedNotificationService } from '../lib/services/unified-notification.service';
+import { SMSService } from '../lib/services/sms.service';
 import { EmailType } from '../lib/enums/email.enums';
+import { SMSType } from '../lib/enums/sms.enums';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { StorageService } from '../lib/services/storage.service';
 import * as QRCode from 'qrcode';
@@ -51,6 +58,10 @@ export class LoyaltyService {
 		private rewardRepository: Repository<LoyaltyReward>,
 		@InjectRepository(LoyaltyRewardClaim)
 		private rewardClaimRepository: Repository<LoyaltyRewardClaim>,
+		@InjectRepository(LoyaltyPointsConversion)
+		private pointsConversionRepository: Repository<LoyaltyPointsConversion>,
+		@InjectRepository(LoyaltyBroadcast)
+		private broadcastRepository: Repository<LoyaltyBroadcast>,
 		@InjectRepository(VirtualLoyaltyCard)
 		private virtualCardRepository: Repository<VirtualLoyaltyCard>,
 		@InjectRepository(Client)
@@ -60,6 +71,7 @@ export class LoyaltyService {
 		private readonly eventEmitter: EventEmitter2,
 		private readonly unifiedNotificationService: UnifiedNotificationService,
 		private readonly storageService: StorageService,
+		private readonly smsService: SMSService,
 	) {}
 
 	/**
@@ -204,6 +216,9 @@ export class LoyaltyService {
 			const tokenExpiry = new Date();
 			tokenExpiry.setDate(tokenExpiry.getDate() + 30); // 30 days
 
+			// Determine signup method
+			const signupMethod = dto.email ? 'email' : (dto.phone ? 'phone' : null);
+
 			// Create loyalty profile
 			const profile = this.loyaltyProfileRepository.create({
 				clientUid: client.uid,
@@ -219,6 +234,8 @@ export class LoyaltyService {
 				branchUid: branchId || dto.branchUid,
 				enrolledAt: new Date(),
 				lastActivityAt: new Date(),
+				signupMethod,
+				signupCompletedAt: new Date(),
 			});
 
 			const savedProfile = await this.loyaltyProfileRepository.save(profile);
@@ -256,9 +273,10 @@ export class LoyaltyService {
 				);
 			}
 
-			// Send welcome email if requested
+			// Send welcome email and SMS if requested
 			if (dto.sendWelcomeMessage !== false) {
 				await this.sendWelcomeEmail(savedProfile, client);
+				await this.sendWelcomeSMS(savedProfile, client);
 			}
 
 			return {
@@ -314,6 +332,8 @@ export class LoyaltyService {
 			// Create profile using internal method
 			const createDto: CreateLoyaltyProfileDto = {
 				clientId: client.uid,
+				email: dto.email,
+				phone: dto.phone,
 				organisationUid: finalOrgId,
 				branchUid: finalBranchId,
 				sendWelcomeMessage: dto.sendWelcomeMessage !== false,
@@ -431,8 +451,19 @@ export class LoyaltyService {
 		const tierUpgraded = newTier !== profile.tier;
 
 		if (tierUpgraded) {
+			const oldTier = profile.tier;
 			profile.tier = newTier;
 			profile.tierUpgradedAt = new Date();
+			
+			// Send tier upgrade notifications
+			const profileWithClient = await this.loyaltyProfileRepository.findOne({
+				where: { uid: profileUid },
+				relations: ['client'],
+			});
+			if (profileWithClient?.client) {
+				await this.sendTierUpgradeEmail(profileWithClient, oldTier);
+				await this.sendTierUpgradeSMS(profileWithClient, oldTier);
+			}
 		}
 
 		profile.lastActivityAt = new Date();
@@ -496,9 +527,17 @@ export class LoyaltyService {
 			// Reload profile to get updated tier
 			const updatedProfile = await this.loyaltyProfileRepository.findOne({
 				where: { uid: profile.uid },
+				relations: ['client'],
 			});
 
 			const tierUpgraded = updatedProfile.tier !== oldTier;
+
+			// Send points earned SMS notification (async, don't block)
+			if (updatedProfile?.client?.phone) {
+				this.sendPointsEarnedSMS(updatedProfile, finalPoints, dto.action).catch((err) => {
+					this.logger.warn(`Failed to send points earned SMS: ${err.message}`);
+				});
+			}
 
 			return {
 				message: process.env.SUCCESS_MESSAGE || 'Points awarded successfully',
@@ -509,6 +548,58 @@ export class LoyaltyService {
 			this.logger.error(`Failed to award points: ${error.message}`, error.stack);
 			throw error;
 		}
+	}
+
+	/**
+	 * Bulk award points to multiple profiles
+	 */
+	async bulkAwardPoints(
+		awards: AwardLoyaltyPointsDto[],
+		orgId?: number,
+	): Promise<{
+		message: string;
+		successful: number;
+		failed: number;
+		results: Array<{ identifier: string; success: boolean; transaction?: LoyaltyPointsTransaction; error?: string }>;
+	}> {
+		const results: Array<{ identifier: string; success: boolean; transaction?: LoyaltyPointsTransaction; error?: string }> = [];
+		let successful = 0;
+		let failed = 0;
+
+		// Process awards in parallel batches
+		const BATCH_SIZE = 10;
+		for (let i = 0; i < awards.length; i += BATCH_SIZE) {
+			const batch = awards.slice(i, i + BATCH_SIZE);
+
+			await Promise.all(
+				batch.map(async (award) => {
+					try {
+						const result = await this.awardPoints(award, orgId);
+						results.push({
+							identifier: award.identifier,
+							success: true,
+							transaction: result.transaction,
+						});
+						successful++;
+					} catch (error) {
+						results.push({
+							identifier: award.identifier,
+							success: false,
+							error: error.message,
+						});
+						failed++;
+						this.logger.error(`Failed to award points to ${award.identifier}: ${error.message}`);
+					}
+				}),
+			);
+		}
+
+		return {
+			message: `Bulk award completed: ${successful} successful, ${failed} failed`,
+			successful,
+			failed,
+			results,
+		};
 	}
 
 	/**
@@ -630,9 +721,10 @@ export class LoyaltyService {
 				relations: ['client'],
 			});
 
-			// Send reward claimed email
+			// Send reward claimed email and SMS
 			if (updatedProfile?.client) {
 				await this.sendRewardClaimedEmail(updatedProfile, reward, savedClaim);
+				await this.sendRewardClaimedSMS(updatedProfile, reward, savedClaim);
 			}
 
 			return {
@@ -931,6 +1023,183 @@ export class LoyaltyService {
 	}
 
 	/**
+	 * Send welcome SMS
+	 */
+	private async sendWelcomeSMS(profile: ClientLoyaltyProfile, client: Client): Promise<void> {
+		try {
+			if (!client.phone || !this.smsService.isSMSEnabled()) {
+				return;
+			}
+
+			// Get organization name
+			const orgRepo = this.dataSource.getRepository('Organisation');
+			const org = await orgRepo.findOne({
+				where: { uid: profile.organisationUid },
+			});
+			const orgName = org?.name || 'Our Organization';
+
+			const message = `Welcome to ${orgName} Loyalty Program! Your card number is ${profile.loyaltyCardNumber}. You have ${profile.currentPoints} welcome points. Start earning more today!`;
+
+			const result = await this.smsService.sendSMS({
+				to: client.phone,
+				message,
+				type: SMSType.LOYALTY_WELCOME,
+				metadata: {
+					profileId: profile.uid,
+					cardNumber: profile.loyaltyCardNumber,
+					clientId: client.uid,
+				},
+			});
+
+			if (result.success) {
+				this.logger.log(`Welcome SMS sent to ${client.phone} for loyalty profile ${profile.uid}`);
+			} else {
+				this.logger.warn(`Failed to send welcome SMS: ${result.error}`);
+			}
+		} catch (error) {
+			this.logger.error(`Failed to send welcome SMS: ${error.message}`, error.stack);
+		}
+	}
+
+	/**
+	 * Send points earned SMS
+	 */
+	private async sendPointsEarnedSMS(
+		profile: ClientLoyaltyProfile,
+		points: number,
+		action: string,
+	): Promise<void> {
+		try {
+			if (!profile.client?.phone || !this.smsService.isSMSEnabled()) {
+				return;
+			}
+
+			const orgRepo = this.dataSource.getRepository('Organisation');
+			const org = await orgRepo.findOne({
+				where: { uid: profile.organisationUid },
+			});
+			const orgName = org?.name || 'Our Organization';
+
+			const message = `${orgName}: You earned ${points} loyalty points! New balance: ${profile.currentPoints} points. Keep earning to unlock rewards!`;
+
+			const result = await this.smsService.sendSMS({
+				to: profile.client.phone,
+				message,
+				type: SMSType.LOYALTY_POINTS_EARNED,
+				metadata: {
+					profileId: profile.uid,
+					points,
+					action,
+					newBalance: profile.currentPoints,
+				},
+			});
+
+			if (result.success) {
+				this.logger.log(`Points earned SMS sent to ${profile.client.phone}`);
+			} else {
+				this.logger.warn(`Failed to send points earned SMS: ${result.error}`);
+			}
+		} catch (error) {
+			this.logger.error(`Failed to send points earned SMS: ${error.message}`, error.stack);
+		}
+	}
+
+	/**
+	 * Send tier upgrade SMS
+	 */
+	private async sendTierUpgradeSMS(
+		profile: ClientLoyaltyProfile,
+		oldTier: LoyaltyTier,
+	): Promise<void> {
+		try {
+			if (!profile.client?.phone || !this.smsService.isSMSEnabled()) {
+				return;
+			}
+
+			const orgRepo = this.dataSource.getRepository('Organisation');
+			const org = await orgRepo.findOne({
+				where: { uid: profile.organisationUid },
+			});
+			const orgName = org?.name || 'Our Organization';
+
+			const multiplier = this.TIER_MULTIPLIERS[profile.tier];
+			const message = `🎉 ${orgName}: Congratulations! You've been upgraded to ${profile.tier.toUpperCase()} tier! You now earn ${(multiplier * 100).toFixed(0)}% more points on every purchase. Total points: ${profile.totalPointsEarned}`;
+
+			const result = await this.smsService.sendSMS({
+				to: profile.client.phone,
+				message,
+				type: SMSType.LOYALTY_TIER_UPGRADE,
+				metadata: {
+					profileId: profile.uid,
+					oldTier,
+					newTier: profile.tier,
+					totalPoints: profile.totalPointsEarned,
+					multiplier,
+				},
+			});
+
+			if (result.success) {
+				this.logger.log(`Tier upgrade SMS sent to ${profile.client.phone} for tier upgrade to ${profile.tier}`);
+			} else {
+				this.logger.warn(`Failed to send tier upgrade SMS: ${result.error}`);
+			}
+		} catch (error) {
+			this.logger.error(`Failed to send tier upgrade SMS: ${error.message}`, error.stack);
+		}
+	}
+
+	/**
+	 * Send reward claimed SMS
+	 */
+	private async sendRewardClaimedSMS(
+		profile: ClientLoyaltyProfile,
+		reward: LoyaltyReward,
+		claim: LoyaltyRewardClaim,
+	): Promise<void> {
+		try {
+			if (!profile.client?.phone || !this.smsService.isSMSEnabled()) {
+				return;
+			}
+
+			const orgRepo = this.dataSource.getRepository('Organisation');
+			const org = await orgRepo.findOne({
+				where: { uid: profile.organisationUid },
+			});
+			const orgName = org?.name || 'Our Organization';
+
+			let message = `${orgName}: Reward claimed! ${reward.name} - Voucher: ${claim.voucherCode}. Remaining points: ${profile.currentPoints}`;
+			
+			if (reward.discountAmount) {
+				message += ` Discount: R${reward.discountAmount}`;
+			} else if (reward.discountPercentage) {
+				message += ` Discount: ${reward.discountPercentage}%`;
+			}
+
+			const result = await this.smsService.sendSMS({
+				to: profile.client.phone,
+				message,
+				type: SMSType.LOYALTY_REWARD_CLAIMED,
+				metadata: {
+					profileId: profile.uid,
+					rewardId: reward.uid,
+					claimId: claim.uid,
+					voucherCode: claim.voucherCode,
+					pointsSpent: claim.pointsSpent,
+					remainingPoints: profile.currentPoints,
+				},
+			});
+
+			if (result.success) {
+				this.logger.log(`Reward claimed SMS sent to ${profile.client.phone} for reward ${reward.uid}`);
+			} else {
+				this.logger.warn(`Failed to send reward claimed SMS: ${result.error}`);
+			}
+		} catch (error) {
+			this.logger.error(`Failed to send reward claimed SMS: ${error.message}`, error.stack);
+		}
+	}
+
+	/**
 	 * Generate QR code for loyalty card
 	 */
 	private async generateQRCode(
@@ -1098,5 +1367,617 @@ export class LoyaltyService {
 			this.logger.error(`Failed to get barcode image: ${error.message}`, error.stack);
 			return null;
 		}
+	}
+
+	/**
+	 * Cron job to process delayed follow-up communications (runs every hour)
+	 * Sends follow-up emails/SMS 1 day after signup with specials
+	 */
+	@Cron('0 * * * *') // Run every hour
+	async processDelayedFollowUps(): Promise<void> {
+		try {
+			const followUpDelayHours = parseFloat(process.env.LOYALTY_FOLLOWUP_DELAY_HOURS || '24');
+			const cutoffTime = new Date();
+			cutoffTime.setHours(cutoffTime.getHours() - followUpDelayHours);
+
+			// Find profiles that need follow-up
+			const profilesNeedingFollowUp = await this.loyaltyProfileRepository.find({
+				where: [
+					{
+						signupCompletedAt: LessThan(cutoffTime),
+						followUpEmailSentAt: null,
+						signupMethod: 'email',
+					},
+					{
+						signupCompletedAt: LessThan(cutoffTime),
+						followUpSMSSentAt: null,
+						signupMethod: 'phone',
+					},
+				],
+				relations: ['client'],
+			});
+
+			if (profilesNeedingFollowUp.length === 0) {
+				return;
+			}
+
+			this.logger.log(`Processing ${profilesNeedingFollowUp.length} loyalty profiles for delayed follow-up`);
+
+			for (const profile of profilesNeedingFollowUp) {
+				try {
+					if (!profile.client) {
+						continue;
+					}
+
+					// Send email follow-up if email signup and not sent yet
+					if (profile.signupMethod === 'email' && !profile.followUpEmailSentAt && profile.client.email) {
+						await this.sendFollowUpEmail(profile, profile.client);
+						profile.followUpEmailSentAt = new Date();
+						await this.loyaltyProfileRepository.save(profile);
+					}
+
+					// Send SMS follow-up if phone signup and not sent yet
+					// Check if phone starts with a number (not email format)
+					if (
+						profile.signupMethod === 'phone' &&
+						!profile.followUpSMSSentAt &&
+						profile.client.phone &&
+						/^\d/.test(profile.client.phone)
+					) {
+						await this.sendFollowUpSMS(profile, profile.client);
+						profile.followUpSMSSentAt = new Date();
+						await this.loyaltyProfileRepository.save(profile);
+					}
+				} catch (error) {
+					this.logger.error(
+						`Failed to process follow-up for profile ${profile.uid}: ${error.message}`,
+						error.stack,
+					);
+				}
+			}
+
+			this.logger.log(`Completed processing delayed follow-ups for ${profilesNeedingFollowUp.length} profiles`);
+		} catch (error) {
+			this.logger.error(`Failed to process delayed follow-ups: ${error.message}`, error.stack);
+		}
+	}
+
+	/**
+	 * Send follow-up email with specials link
+	 */
+	private async sendFollowUpEmail(profile: ClientLoyaltyProfile, client: Client): Promise<void> {
+		try {
+			const portalDomain = process.env.CLIENT_PORTAL_DOMAIN || 'https://portal.loro.co.za';
+			const viewSpecialsLink = `${portalDomain}/loyalty/specials?token=${profile.profileCompletionToken}`;
+			const viewRewardsLink = `${portalDomain}/loyalty/rewards`;
+
+			// Get organization name
+			const orgRepo = this.dataSource.getRepository('Organisation');
+			const org = await orgRepo.findOne({
+				where: { uid: profile.organisationUid },
+			});
+			const orgName = org?.name || 'Our Organization';
+
+			this.eventEmitter.emit('send.email', EmailType.LOYALTY_SPECIALS_EMAIL, [client.email], {
+				name: client.contactPerson || client.name,
+				clientName: client.contactPerson || client.name,
+				clientEmail: client.email,
+				organizationName: orgName,
+				cardNumber: profile.loyaltyCardNumber,
+				currentPoints: profile.currentPoints,
+				tier: profile.tier.toUpperCase(),
+				viewSpecialsLink,
+				viewRewardsLink,
+			});
+
+			this.logger.log(`Follow-up email sent to ${client.email} for loyalty profile ${profile.uid}`);
+		} catch (error) {
+			this.logger.error(`Failed to send follow-up email: ${error.message}`, error.stack);
+		}
+	}
+
+	/**
+	 * Send follow-up SMS with specials
+	 */
+	private async sendFollowUpSMS(profile: ClientLoyaltyProfile, client: Client): Promise<void> {
+		try {
+			if (!client.phone || !this.smsService.isSMSEnabled()) {
+				return;
+			}
+
+			// Get organization name
+			const orgRepo = this.dataSource.getRepository('Organisation');
+			const org = await orgRepo.findOne({
+				where: { uid: profile.organisationUid },
+			});
+			const orgName = org?.name || 'Our Organization';
+
+			const message = `${orgName}: Check out our exclusive specials! You have ${profile.currentPoints} points. Visit our store or check your email for special offers. Card: ${profile.loyaltyCardNumber}`;
+
+			const result = await this.smsService.sendSMS({
+				to: client.phone,
+				message,
+				type: SMSType.LOYALTY_SPECIALS,
+				metadata: {
+					profileId: profile.uid,
+					cardNumber: profile.loyaltyCardNumber,
+					clientId: client.uid,
+					followUpType: 'specials',
+				},
+			});
+
+			if (result.success) {
+				this.logger.log(`Follow-up SMS sent to ${client.phone} for loyalty profile ${profile.uid}`);
+			} else {
+				this.logger.warn(`Failed to send follow-up SMS: ${result.error}`);
+			}
+		} catch (error) {
+			this.logger.error(`Failed to send follow-up SMS: ${error.message}`, error.stack);
+		}
+	}
+
+	/**
+	 * Convert loyalty points to credit limit
+	 */
+	async convertPointsToCredit(
+		profileUid: number,
+		dto: ConvertPointsDto,
+	): Promise<{ message: string; conversion: LoyaltyPointsConversion; newCreditLimit: number }> {
+		try {
+			// Get profile with client
+			const profile = await this.loyaltyProfileRepository.findOne({
+				where: { uid: profileUid },
+				relations: ['client'],
+			});
+
+			if (!profile) {
+				throw new NotFoundException('Loyalty profile not found');
+			}
+
+			if (!profile.client) {
+				throw new NotFoundException('Client not found for loyalty profile');
+			}
+
+			// Get conversion rate from environment (default: 100 points = 1 ZAR)
+			const conversionRate = parseFloat(process.env.LOYALTY_POINTS_TO_CREDIT_RATE || '100');
+			const minPointsRequired = conversionRate; // Minimum points to convert
+
+			// Validate minimum points
+			if (dto.points < minPointsRequired) {
+				throw new BadRequestException(
+					`Minimum ${minPointsRequired} points required for conversion (current rate: ${conversionRate} points = 1 currency unit)`,
+				);
+			}
+
+			// Validate sufficient points
+			if (profile.currentPoints < dto.points) {
+				throw new BadRequestException(
+					`Insufficient points. You have ${profile.currentPoints} points, but trying to convert ${dto.points} points`,
+				);
+			}
+
+			// Calculate credit amount
+			const creditAmount = dto.points / conversionRate;
+
+			// Get current credit limit
+			const creditLimitBefore = Number(profile.client.creditLimit) || 0;
+			const creditLimitAfter = creditLimitBefore + creditAmount;
+
+			// Create conversion record
+			const conversion = this.pointsConversionRepository.create({
+				loyaltyProfileUid: profile.uid,
+				clientUid: profile.client.uid,
+				pointsConverted: dto.points,
+				creditAmount,
+				conversionRate,
+				creditLimitBefore,
+				creditLimitAfter,
+				reason: dto.reason,
+				status: 'completed', // Auto-approve for now, can add approval workflow later
+				metadata: {
+					originalPoints: profile.currentPoints,
+					pointsAfterConversion: profile.currentPoints - dto.points,
+					conversionType: 'points_to_credit',
+				},
+			});
+
+			const savedConversion = await this.pointsConversionRepository.save(conversion);
+
+			// Deduct points from profile
+			profile.currentPoints -= dto.points;
+			await this.loyaltyProfileRepository.save(profile);
+
+			// Create points transaction record
+			await this.createPointsTransaction(
+				profile.uid,
+				dto.points,
+				'POINTS_TO_CREDIT_CONVERSION',
+				`Converted ${dto.points} points to R${creditAmount.toFixed(2)} credit`,
+				LoyaltyPointsTransactionType.SPENT,
+				{
+					conversionId: savedConversion.uid,
+					creditAmount,
+					conversionRate,
+					creditLimitBefore,
+					creditLimitAfter,
+				},
+			);
+
+			// Update client credit limit
+			profile.client.creditLimit = creditLimitAfter;
+			await this.clientRepository.save(profile.client);
+
+			this.logger.log(
+				`Points converted: ${dto.points} points to R${creditAmount.toFixed(2)} credit for profile ${profile.uid}`,
+			);
+
+			return {
+				message: `Successfully converted ${dto.points} points to R${creditAmount.toFixed(2)} credit`,
+				conversion: savedConversion,
+				newCreditLimit: creditLimitAfter,
+			};
+		} catch (error) {
+			this.logger.error(`Failed to convert points to credit: ${error.message}`, error.stack);
+			throw error;
+		}
+	}
+
+	/**
+	 * Send broadcast message to all loyalty members
+	 */
+	async sendBroadcast(
+		dto: BroadcastMessageDto,
+		orgId?: number,
+		createdBy?: string,
+	): Promise<{ message: string; broadcast: LoyaltyBroadcast; results: any }> {
+		try {
+			// Build filter conditions
+			const whereConditions: any = {
+				status: 'active' as any,
+			};
+
+			if (orgId || dto.organisationUid) {
+				whereConditions.organisationUid = orgId || dto.organisationUid;
+			}
+
+			if (dto.branchUid) {
+				whereConditions.branchUid = dto.branchUid;
+			}
+
+			// Get all matching profiles
+			let profiles = await this.loyaltyProfileRepository.find({
+				where: whereConditions,
+				relations: ['client'],
+			});
+
+			// Filter by tier if specified
+			if (dto.filterTier && dto.filterTier.length > 0) {
+				profiles = profiles.filter((p) => dto.filterTier!.includes(p.tier));
+			}
+
+			// Filter out profiles without required contact info
+			if (dto.type === 'email') {
+				profiles = profiles.filter((p) => p.client?.email);
+			} else if (dto.type === 'sms') {
+				profiles = profiles.filter((p) => p.client?.phone);
+			}
+
+			const totalRecipients = profiles.length;
+
+			// Create broadcast record
+			const broadcast = this.broadcastRepository.create({
+				type: dto.type,
+				subject: dto.subject,
+				message: dto.message,
+				filterTier: dto.filterTier?.join(',') || null,
+				organisationUid: orgId || dto.organisationUid,
+				branchUid: dto.branchUid,
+				totalRecipients,
+				status: 'processing',
+				createdBy,
+				metadata: {
+					filters: {
+						tier: dto.filterTier,
+						organisationUid: orgId || dto.organisationUid,
+						branchUid: dto.branchUid,
+					},
+					...dto.metadata,
+				},
+			});
+
+			const savedBroadcast = await this.broadcastRepository.save(broadcast);
+
+			// Send messages in batches to avoid overwhelming the system
+			const BATCH_SIZE = 50;
+			let sentCount = 0;
+			let failedCount = 0;
+			const successful: string[] = [];
+			const failed: Array<{ recipient: string; error: string }> = [];
+
+			for (let i = 0; i < profiles.length; i += BATCH_SIZE) {
+				const batch = profiles.slice(i, i + BATCH_SIZE);
+
+				await Promise.all(
+					batch.map(async (profile) => {
+						try {
+							if (dto.type === 'email' && profile.client?.email) {
+								// Send email
+								if (dto.emailTemplate) {
+									this.eventEmitter.emit(
+										'send.email',
+										dto.emailTemplate as any,
+										[profile.client.email],
+										{
+											subject: dto.subject,
+											message: dto.message,
+											clientName: profile.client.contactPerson || profile.client.name,
+											cardNumber: profile.loyaltyCardNumber,
+											currentPoints: profile.currentPoints,
+											tier: profile.tier.toUpperCase(),
+											...dto.metadata,
+										},
+									);
+								} else {
+									// Simple email send
+									this.eventEmitter.emit('send.email', EmailType.LOYALTY_SPECIALS_EMAIL, [profile.client.email], {
+										subject: dto.subject,
+										message: dto.message,
+										clientName: profile.client.contactPerson || profile.client.name,
+										...dto.metadata,
+									});
+								}
+								sentCount++;
+								successful.push(profile.client.email);
+							} else if (dto.type === 'sms' && profile.client?.phone) {
+								// Send SMS
+								const result = await this.smsService.sendSMS({
+									to: profile.client.phone,
+									message: `${dto.subject}\n\n${dto.message}`,
+									type: SMSType.LOYALTY_BROADCAST,
+									metadata: {
+										broadcastId: savedBroadcast.uid,
+										profileId: profile.uid,
+										...dto.metadata,
+									},
+								});
+
+								if (result.success) {
+									sentCount++;
+									successful.push(profile.client.phone);
+								} else {
+									failedCount++;
+									failed.push({ recipient: profile.client.phone, error: result.error || 'Unknown error' });
+								}
+							}
+						} catch (error) {
+							failedCount++;
+							const recipient = dto.type === 'email' ? profile.client?.email : profile.client?.phone;
+							failed.push({
+								recipient: recipient || 'unknown',
+								error: error.message,
+							});
+							this.logger.error(`Failed to send ${dto.type} to ${recipient}: ${error.message}`);
+						}
+					}),
+				);
+
+				// Small delay between batches to avoid rate limiting
+				if (i + BATCH_SIZE < profiles.length) {
+					await new Promise((resolve) => setTimeout(resolve, 100));
+				}
+			}
+
+			// Update broadcast record
+			savedBroadcast.sentCount = sentCount;
+			savedBroadcast.failedCount = failedCount;
+			savedBroadcast.status = failedCount === 0 ? 'completed' : sentCount > 0 ? 'completed' : 'failed';
+			savedBroadcast.completedAt = new Date();
+			savedBroadcast.metadata = {
+				...savedBroadcast.metadata,
+				deliveryResults: {
+					successful,
+					failed,
+				},
+			};
+
+			await this.broadcastRepository.save(savedBroadcast);
+
+			this.logger.log(
+				`Broadcast ${savedBroadcast.uid} completed: ${sentCount} sent, ${failedCount} failed out of ${totalRecipients} recipients`,
+			);
+
+			return {
+				message: `Broadcast sent to ${sentCount} recipients${failedCount > 0 ? `, ${failedCount} failed` : ''}`,
+				broadcast: savedBroadcast,
+				results: {
+					total: totalRecipients,
+					sent: sentCount,
+					failedCount,
+					successful,
+					failed,
+				},
+			};
+		} catch (error) {
+			this.logger.error(`Failed to send broadcast: ${error.message}`, error.stack);
+			throw error;
+		}
+	}
+
+	/**
+	 * Get broadcast history
+	 */
+	async getBroadcastHistory(orgId?: number, limit: number = 50): Promise<LoyaltyBroadcast[]> {
+		const whereConditions: any = {};
+		if (orgId) {
+			whereConditions.organisationUid = orgId;
+		}
+
+			return this.broadcastRepository.find({
+			where: whereConditions,
+			order: { createdAt: 'DESC' },
+			take: limit,
+		});
+	}
+
+	/**
+	 * Get transactions with filtering
+	 */
+	async getTransactions(
+		profileUid: number,
+		filters?: { startDate?: string; endDate?: string; type?: string },
+	): Promise<{ message: string; transactions: LoyaltyPointsTransaction[]; summary: any }> {
+		const queryBuilder = this.pointsTransactionRepository
+			.createQueryBuilder('transaction')
+			.where('transaction.loyaltyProfileUid = :profileUid', { profileUid });
+
+		if (filters?.type) {
+			queryBuilder.andWhere('transaction.transactionType = :type', { type: filters.type });
+		}
+
+		if (filters?.startDate) {
+			queryBuilder.andWhere('transaction.createdAt >= :startDate', { startDate: new Date(filters.startDate) });
+		}
+
+		if (filters?.endDate) {
+			queryBuilder.andWhere('transaction.createdAt <= :endDate', { endDate: new Date(filters.endDate) });
+		}
+
+		queryBuilder.orderBy('transaction.createdAt', 'DESC');
+
+		const transactions = await queryBuilder.getMany();
+
+		// Calculate summary
+		const summary = {
+			totalEarned: transactions
+				.filter((t) => t.transactionType === LoyaltyPointsTransactionType.EARNED)
+				.reduce((sum, t) => sum + Number(t.pointsAmount), 0),
+			totalSpent: transactions
+				.filter((t) => t.transactionType === LoyaltyPointsTransactionType.SPENT)
+				.reduce((sum, t) => sum + Number(t.pointsAmount), 0),
+			totalExpired: transactions
+				.filter((t) => t.transactionType === LoyaltyPointsTransactionType.EXPIRED)
+				.reduce((sum, t) => sum + Number(t.pointsAmount), 0),
+			totalAdjustments: transactions
+				.filter((t) => t.transactionType === LoyaltyPointsTransactionType.ADJUSTMENT)
+				.reduce((sum, t) => sum + Number(t.pointsAmount), 0),
+			totalTransactions: transactions.length,
+		};
+
+		return {
+			message: 'Transactions retrieved successfully',
+			transactions,
+			summary,
+		};
+	}
+
+	/**
+	 * Get comprehensive points summary
+	 */
+	async getPointsSummary(profileUid: number): Promise<{
+		message: string;
+		summary: {
+			currentPoints: number;
+			totalPointsEarned: number;
+			totalPointsSpent: number;
+			totalPointsExpired: number;
+			totalPointsConverted: number;
+			tier: string;
+			tierUpgradedAt?: Date;
+			pointsByCategory: {
+				earned: number;
+				spent: number;
+				expired: number;
+				converted: number;
+				adjustments: number;
+			};
+			recentActivity: LoyaltyPointsTransaction[];
+		};
+	}> {
+		const profile = await this.loyaltyProfileRepository.findOne({
+			where: { uid: profileUid },
+		});
+
+		if (!profile) {
+			throw new NotFoundException('Loyalty profile not found');
+		}
+
+		// Get all transactions
+		const allTransactions = await this.pointsTransactionRepository.find({
+			where: { loyaltyProfileUid: profileUid },
+			order: { createdAt: 'DESC' },
+		});
+
+		// Get conversions
+		const conversions = await this.pointsConversionRepository.find({
+			where: { loyaltyProfileUid: profileUid },
+		});
+
+		const totalPointsConverted = conversions.reduce((sum, c) => sum + Number(c.pointsConverted), 0);
+
+		// Calculate points by category
+		const pointsByCategory = {
+			earned: allTransactions
+				.filter((t) => t.transactionType === LoyaltyPointsTransactionType.EARNED)
+				.reduce((sum, t) => sum + Number(t.pointsAmount), 0),
+			spent: allTransactions
+				.filter((t) => t.transactionType === LoyaltyPointsTransactionType.SPENT)
+				.reduce((sum, t) => sum + Number(t.pointsAmount), 0),
+			expired: allTransactions
+				.filter((t) => t.transactionType === LoyaltyPointsTransactionType.EXPIRED)
+				.reduce((sum, t) => sum + Number(t.pointsAmount), 0),
+			converted: totalPointsConverted,
+			adjustments: allTransactions
+				.filter((t) => t.transactionType === LoyaltyPointsTransactionType.ADJUSTMENT)
+				.reduce((sum, t) => sum + Number(t.pointsAmount), 0),
+		};
+
+		return {
+			message: 'Points summary retrieved successfully',
+			summary: {
+				currentPoints: Number(profile.currentPoints),
+				totalPointsEarned: Number(profile.totalPointsEarned),
+				totalPointsSpent: Number(profile.totalPointsSpent),
+				totalPointsExpired: 0, // Can be calculated from transactions
+				totalPointsConverted,
+				tier: profile.tier,
+				tierUpgradedAt: profile.tierUpgradedAt,
+				pointsByCategory,
+				recentActivity: allTransactions.slice(0, 10), // Last 10 transactions
+			},
+		};
+	}
+
+	/**
+	 * Get rewards claim history
+	 */
+	async getRewardsHistory(profileUid: number): Promise<{
+		message: string;
+		claims: LoyaltyRewardClaim[];
+		summary: {
+			totalClaims: number;
+			totalPointsSpent: number;
+			claimsByStatus: Record<string, number>;
+		};
+	}> {
+		const claims = await this.rewardClaimRepository.find({
+			where: { loyaltyProfileUid: profileUid },
+			relations: ['reward'],
+			order: { createdAt: 'DESC' },
+		});
+
+		const summary = {
+			totalClaims: claims.length,
+			totalPointsSpent: claims.reduce((sum, c) => sum + Number(c.pointsSpent), 0),
+			claimsByStatus: claims.reduce((acc, c) => {
+				acc[c.status] = (acc[c.status] || 0) + 1;
+				return acc;
+			}, {} as Record<string, number>),
+		};
+
+		return {
+			message: 'Rewards history retrieved successfully',
+			claims,
+			summary,
+		};
 	}
 }

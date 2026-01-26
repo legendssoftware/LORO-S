@@ -385,11 +385,16 @@ export class BranchLocationCheckService {
 		employeeLocation: { latitude: number; longitude: number; timestamp: Date },
 		distanceMeters: number,
 	): Promise<void> {
-		const userId = attendance.owner?.uid;
+		const userId = attendance.ownerClerkUserId ?? (attendance.owner?.uid != null ? String(attendance.owner.uid) : '');
 		const branchName = attendance.branch?.name || 'branch';
 
+		if (!userId) {
+			this.logger.warn(`[${operationId}] Cannot auto clock-out: no owner ref for attendance ${attendance.uid}`);
+			return;
+		}
+
 		try {
-			// Create check-out DTO
+			// Create check-out DTO (owner.uid is string - clerk id or numeric string per OwnerUidDto)
 			const checkOutDto: CreateCheckOutDto = {
 				owner: { uid: userId },
 				checkOut: new Date(),
@@ -425,15 +430,17 @@ export class BranchLocationCheckService {
 				const userName =
 					attendance.owner?.name || attendance.owner?.username || attendance.owner?.email?.split('@')[0] || 'Team Member';
 
-				await this.unifiedNotificationService.sendTemplatedNotification(
-					NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER,
-					[userId],
-					{
-						userName,
-						userId,
-						orgId: attendance.organisationUid,
-						branchId: attendance.branchUid,
-						reminderType: 'auto_clock_out',
+				const recipientUid = attendance.owner?.uid;
+				if (recipientUid != null) {
+					await this.unifiedNotificationService.sendTemplatedNotification(
+						NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER,
+						[recipientUid],
+						{
+							userName,
+							userId: recipientUid,
+							orgId: attendance.organisationUid,
+							branchId: attendance.branchUid,
+							reminderType: 'auto_clock_out',
 						shiftEndTime: '16:45',
 						timestamp: new Date().toISOString(),
 					},
@@ -453,6 +460,9 @@ export class BranchLocationCheckService {
 						},
 					},
 				);
+				} else {
+					this.logger.warn(`[${operationId}] Cannot send auto clock-out notification: owner not loaded for attendance ${attendance.uid}`);
+				}
 			} else {
 				this.logger.warn(
 					`[${operationId}] Auto clock-out returned no data for employee ${userId}`,

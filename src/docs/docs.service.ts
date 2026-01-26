@@ -4,6 +4,7 @@ import { CreateDocDto } from './dto/create-doc.dto';
 import { UpdateDocDto } from './dto/update-doc.dto';
 import { BulkUploadDocDto, BulkUploadDocResponse, BulkFileUploadResult } from './dto/bulk-upload-doc.dto';
 import { Doc } from './entities/doc.entity';
+import { User } from '../user/entities/user.entity';
 import { DeepPartial, Repository, DataSource } from 'typeorm';
 import { StorageService } from '../lib/services/storage.service';
 import { Cache } from 'cache-manager';
@@ -195,11 +196,18 @@ export class DocsService {
 	 * ENHANCED: Automatically optimizes images before upload
 	 * @param file - Multer file object
 	 * @param type - Optional file type categorization
-	 * @param ownerId - File owner user ID
+	 * @param ownerId - File owner user ID (uid). Use ownerClerkUserId when uid not available (Clerk-first).
 	 * @param branchId - Branch ID for organization scoping
+	 * @param ownerClerkUserId - Clerk user ID. Used when ownerId is missing (e.g. user not yet synced).
 	 * @returns Upload result with file metadata
 	 */
-	async uploadFile(file: Express.Multer.File, type?: string, ownerId?: number, branchId?: number) {
+	async uploadFile(
+		file: Express.Multer.File,
+		type?: string,
+		ownerId?: number,
+		branchId?: number,
+		ownerClerkUserId?: string,
+	) {
 		const startTime = Date.now();
 		this.logger.log(`📤 [uploadFile] Starting file upload: ${file?.originalname || 'unknown'} (${file?.size || 0} bytes)`);
 
@@ -254,6 +262,7 @@ export class DocsService {
 				undefined,
 				ownerId,
 				branchId,
+				ownerClerkUserId,
 			);
 
 			// ============================================================
@@ -573,7 +582,7 @@ export class DocsService {
 	 * @param ref - User ID
 	 * @returns Array of user's documents
 	 */
-	public async docsByUser(ref: number): Promise<{ message: string; docs: Doc[] }> {
+	public async docsByUser(ref: string): Promise<{ message: string; docs: Doc[] }> {
 		const startTime = Date.now();
 		this.logger.log(`👤 [docsByUser] Retrieving documents for user: ${ref}`);
 
@@ -590,8 +599,13 @@ export class DocsService {
 
 			this.logger.debug(`👤 [docsByUser] Cache miss - querying database for user: ${ref}`);
 
+			// Use ownerClerkUserId if it's a Clerk ID, otherwise use uid (string coercion)
+			const whereCondition: any = ref.startsWith('user_')
+				? { ownerClerkUserId: ref }
+				: { owner: { uid: ref } };
+			
 			const docs = await this.docsRepository.find({
-				where: { owner: { uid: ref } },
+				where: whereCondition,
 				relations: ['owner', 'branch'],
 				order: { createdAt: 'DESC' }
 			});
@@ -749,13 +763,15 @@ export class DocsService {
 	 * 📤 Upload multiple files with comprehensive validation and transaction management
 	 * @param files - Array of Multer file objects
 	 * @param bulkUploadDto - Bulk upload configuration
-	 * @param ownerId - File owner user ID
+	 * @param ownerId - File owner user ID (uid). Use ownerClerkUserId when uid not available.
+	 * @param ownerClerkUserId - Clerk user ID. Used when ownerId is missing (Clerk-first).
 	 * @returns Bulk upload results with detailed status for each file
 	 */
 	async uploadBulkFiles(
-		files: Express.Multer.File[], 
-		bulkUploadDto: BulkUploadDocDto, 
-		ownerId?: number
+		files: Express.Multer.File[],
+		bulkUploadDto: BulkUploadDocDto,
+		ownerId?: number,
+		ownerClerkUserId?: string,
 	): Promise<BulkUploadDocResponse> {
 		const startTime = Date.now();
 		this.logger.log(`📤 [uploadBulkFiles] Starting bulk upload of ${files.length} files`);
@@ -852,11 +868,27 @@ export class DocsService {
 						},
 						undefined,
 						ownerId,
-						bulkUploadDto.branchId
+						bulkUploadDto.branchId,
+						ownerClerkUserId,
 					);
 
-					// Create document record if requested
+					// Create document record if requested (use ownerClerkUserId when available)
 					if (bulkUploadDto.createDocumentRecords && queryRunner) {
+						let resolvedClerkUserId: string | null = ownerClerkUserId ?? null;
+						if (!resolvedClerkUserId && ownerId) {
+							try {
+								const user = await queryRunner.manager.findOne(User, {
+									where: { uid: ownerId },
+									select: ['clerkUserId'],
+								});
+								resolvedClerkUserId = user?.clerkUserId ?? null;
+							} catch {
+								/* ignore */
+							}
+						}
+						const ownerRef = resolvedClerkUserId
+							? { owner: { clerkUserId: resolvedClerkUserId } as any, ownerClerkUserId: resolvedClerkUserId }
+							: {};
 						const docData = {
 							title: optimizationResult.originalname,
 							url: uploadResult.publicUrl,
@@ -870,7 +902,7 @@ export class DocsService {
 								category: bulkUploadDto.documentMetadata?.category || 'upload',
 								bulkUpload: true
 							},
-							owner: ownerId ? { uid: ownerId } : undefined,
+							...ownerRef,
 							branch: bulkUploadDto.branchId ? { uid: bulkUploadDto.branchId } : undefined
 						};
 

@@ -305,11 +305,11 @@ export class Lead {
 	ownerClerkUserId: string;
 
 	@ManyToOne(() => Organisation, { onDelete: 'SET NULL' })
-	@JoinColumn({ name: 'organisationUid' })
+	@JoinColumn({ name: 'organisationUid', referencedColumnName: 'clerkOrgId' })
 	organisation: Organisation;
 
 	@Column({ nullable: true })
-	organisationUid: number;
+	organisationUid: string;
 
 	@ManyToOne(() => Branch, { onDelete: 'SET NULL' })
 	@JoinColumn({ name: 'branchUid' })

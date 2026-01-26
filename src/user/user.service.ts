@@ -66,6 +66,7 @@ import { NotificationEvent, NotificationPriority } from '../lib/types/unified-no
 import { Branch } from '../branch/entities/branch.entity';
 import { OrganisationHoursService } from '../organisation/services/organisation-hours.service';
 import { Device } from '../iot/entities/iot.entity';
+import { ClerkService } from '../clerk/clerk.service';
 
 @Injectable()
 export class UserService {
@@ -101,6 +102,7 @@ export class UserService {
 		private readonly organisationHoursService: OrganisationHoursService,
 		@InjectRepository(Device)
 		private deviceRepository: Repository<Device>,
+		private readonly clerkService: ClerkService,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
 		this.TARGET_CACHE_TTL = this.configService.get<number>('TARGET_CACHE_EXPIRATION_TIME') || 60; // 60 seconds for targets
@@ -1530,7 +1532,7 @@ export class UserService {
 	 * @returns User data without password or null with message
 	 */
 	async findOne(
-		searchParameter: number,
+		searchParameter: string | number,
 		orgId?: string | number,
 		branchId?: number,
 	): Promise<{ user: Omit<User, 'password'> | null; message: string }> {
@@ -1572,9 +1574,9 @@ export class UserService {
 			}
 
 
-			// Build where conditions
+			// Build where conditions (user ref as string or number; ORM/DB coercion)
 			const whereConditions: any = {
-				uid: Number(searchParameter), // 🔧 FIX: Ensure uid is a number
+				uid: searchParameter,
 				isDeleted: false,
 			};
 
@@ -2040,6 +2042,7 @@ export class UserService {
 				await this.validateManagedDoors(updateUserDto.managedDoors, existingUser.organisationRef || orgId?.toString());
 			}
 
+			// Passwords are managed by Clerk only — never stored or updated via DB
 			await this.userRepository.update({ uid: ref }, updateUserDto);
 
 			const updatedUser = await this.userRepository
@@ -2054,6 +2057,67 @@ export class UserService {
 			}
 
 			this.logger.log(`[USER_UPDATE] User updated successfully: ${updatedUser.uid} (${updatedUser.email})`);
+
+			// Sync profile changes to Clerk after successful database update
+			if (existingUser.clerkUserId) {
+				try {
+					// Build Clerk update payload from the original updateUserDto (password managed by Clerk only, not synced here)
+					const clerkUpdatePayload: {
+						firstName?: string;
+						lastName?: string;
+						email?: string;
+						phoneNumber?: string;
+						imageUrl?: string;
+					} = {};
+
+					// Map database fields to Clerk fields
+					if (updateUserDto.name !== undefined) {
+						clerkUpdatePayload.firstName = updateUserDto.name;
+					}
+					if (updateUserDto.surname !== undefined) {
+						clerkUpdatePayload.lastName = updateUserDto.surname;
+					}
+					if (updateUserDto.email !== undefined) {
+						clerkUpdatePayload.email = updateUserDto.email;
+					}
+					if (updateUserDto.phone !== undefined) {
+						clerkUpdatePayload.phoneNumber = updateUserDto.phone;
+					}
+					if (updateUserDto.photoURL !== undefined) {
+						clerkUpdatePayload.imageUrl = updateUserDto.photoURL;
+					}
+
+					// Only call Clerk update if there are fields to sync
+					if (Object.keys(clerkUpdatePayload).length > 0) {
+						this.logger.log(`[USER_UPDATE] Syncing profile changes to Clerk for user: ${existingUser.clerkUserId}`);
+						const clerkSyncSuccess = await this.clerkService.updateClerkUserProfile(
+							existingUser.clerkUserId,
+							clerkUpdatePayload,
+						);
+
+						if (clerkSyncSuccess) {
+							// Update sync timestamp in database
+							updatedUser.clerkLastSyncedAt = new Date();
+							await this.userRepository.save(updatedUser);
+							this.logger.log(`[USER_UPDATE] Clerk profile sync completed successfully`);
+						} else {
+							this.logger.warn(
+								`[USER_UPDATE] Clerk profile sync failed for user ${existingUser.clerkUserId}, but database update succeeded`,
+							);
+							// Don't throw - database is source of truth, Clerk sync failure is logged
+						}
+					}
+				} catch (clerkError) {
+					const errorMessage = clerkError instanceof Error ? clerkError.message : 'Unknown error';
+					this.logger.error(
+						`[USER_UPDATE] Error syncing to Clerk for user ${existingUser.clerkUserId}: ${errorMessage}`,
+						clerkError instanceof Error ? clerkError.stack : undefined,
+					);
+					// Don't throw - database update succeeded, Clerk sync failure is logged
+				}
+			} else {
+				this.logger.debug(`[USER_UPDATE] User ${ref} has no clerkUserId - skipping Clerk sync`);
+			}
 
 			// Invalidate cache after update
 			await this.invalidateUserCache(updatedUser);
@@ -2474,14 +2538,34 @@ export class UserService {
 	 * @returns User target data or null with message
 	 */
 	async getUserTarget(
-		userId: number,
+		userId: string,
 		orgId?: string | number,
 		branchId?: number,
 	): Promise<{ userTarget: any; message: string }> {
 		const startTime = Date.now();
 
 		try {
-			const cacheKey = this.getCacheKey(`target_${userId}`);
+			// Resolve userId to clerkUserId if it's a numeric ID
+			// UserTarget relationship uses clerkUserId, so we must always use clerkUserId for queries
+			let clerkUserId: string = userId;
+			if (!userId.startsWith('user_')) {
+				// If userId is numeric, look up the user to get their clerkUserId
+				const numericId = parseInt(userId, 10);
+				if (!isNaN(numericId)) {
+					const userLookup = await this.userRepository.findOne({
+						where: { uid: numericId, isDeleted: false },
+						select: ['clerkUserId'],
+					});
+					if (!userLookup) {
+						this.logger.warn(`User ${userId} not found when resolving to clerkUserId`);
+						throw new NotFoundException(`User with ID ${userId} not found`);
+					}
+					clerkUserId = userLookup.clerkUserId;
+					this.logger.debug(`Resolved numeric userId ${userId} to clerkUserId: ${clerkUserId}`);
+				}
+			}
+
+			const cacheKey = this.getCacheKey(`target_${clerkUserId}`);
 			const cachedTarget = await this.cacheManager.get(cacheKey);
 
 			if (cachedTarget) {
@@ -2582,7 +2666,7 @@ export class UserService {
 				}
 				
 				const executionTime = Date.now() - startTime;
-				this.logger.log(`User target retrieved from cache for user: ${userId} in ${executionTime}ms (zeros applied)`);
+				this.logger.log(`User target retrieved from cache for user: ${clerkUserId} in ${executionTime}ms (zeros applied)`);
 				return {
 					userTarget: cachedResponse,
 					message: process.env.SUCCESS_MESSAGE,
@@ -2590,15 +2674,16 @@ export class UserService {
 			}
 
 			
-			// First, let's directly query the user_targets table through the user relationship to see what's actually stored
+			// Always use clerkUserId for queries since UserTarget relationship uses clerkUserId
 			const userForDirectQuery = await this.userRepository
 				.createQueryBuilder('user')
 				.leftJoinAndSelect('user.userTarget', 'userTarget')
-				.where('user.uid = :userId', { userId })
+				.where('user.clerkUserId = :clerkUserId', { clerkUserId })
+				.andWhere('user.isDeleted = :isDeleted', { isDeleted: false })
 				.getOne();
 			
 			if (userForDirectQuery?.userTarget) {
-				this.logger.debug(`Direct database query completed for user target: ${userId}`);
+				this.logger.debug(`Direct database query completed for user target: ${clerkUserId}`);
 			}
 			
 			const queryBuilder = this.userRepository
@@ -2641,7 +2726,7 @@ export class UserService {
 					'userTarget.cgicCosts',
 					'userTarget.erpSalesRepCode',
 				])
-				.where('user.uid = :userId AND user.isDeleted = :isDeleted', { userId, isDeleted: false });
+				.where('user.clerkUserId = :clerkUserId AND user.isDeleted = :isDeleted', { clerkUserId, isDeleted: false });
 
 			// Apply access control filters using Clerk org ID
 			if (orgId) {
@@ -2663,8 +2748,8 @@ export class UserService {
 			const user = await queryBuilder.getOne();
 
 			if (!user) {
-				this.logger.warn(`User ${userId} not found when getting targets`);
-				throw new NotFoundException(`User with ID ${userId} not found`);
+				this.logger.warn(`User ${clerkUserId} not found when getting targets`);
+				throw new NotFoundException(`User with ID ${clerkUserId} not found`);
 			}
 
 			// Log raw history data from database for debugging and ensure proper parsing
@@ -2675,7 +2760,7 @@ export class UserService {
 					try {
 						user.userTarget.history = JSON.parse(rawHistory);
 					} catch (e) {
-						this.logger.error(`Failed to parse history JSON for user ${userId}:`, e);
+						this.logger.error(`Failed to parse history JSON for user ${clerkUserId}:`, e);
 						user.userTarget.history = [];
 					}
 				}
@@ -2686,9 +2771,9 @@ export class UserService {
 			
 			// Log ERP sales rep code for debugging
 			if (erpSalesRepCode) {
-				this.logger.log(`[getUserTarget] ✅ ERP Sales Rep Code found for user ${userId}: "${erpSalesRepCode}"`);
+				this.logger.log(`[getUserTarget] ✅ ERP Sales Rep Code found for user ${clerkUserId}: "${erpSalesRepCode}"`);
 			} else {
-				this.logger.warn(`[getUserTarget] ⚠️  No ERP Sales Rep Code configured for user ${userId} in user_targets table`);
+				this.logger.warn(`[getUserTarget] ⚠️  No ERP Sales Rep Code configured for user ${clerkUserId} in user_targets table`);
 			}
 			
 			let response: any = {
@@ -2738,7 +2823,7 @@ export class UserService {
 						let workingDaysElapsed = 0;
 						const organizationRef = user.organisation?.ref;
 						
-						this.logger.log(`[getUserTarget] 📊 Calculating sales rate analysis for user ${userId}`);
+						this.logger.log(`[getUserTarget] 📊 Calculating sales rate analysis for user ${clerkUserId}`);
 						this.logger.log(`[getUserTarget]   📅 Period: ${periodStart.toISOString().split('T')[0]} → ${periodEnd.toISOString().split('T')[0]}`);
 						this.logger.log(`[getUserTarget]   📍 Current Date: ${currentDate.toISOString().split('T')[0]}`);
 						this.logger.log(`[getUserTarget]   💰 Sales: R${user.userTarget.currentSalesAmount?.toLocaleString('en-ZA') || 0} / R${user.userTarget.targetSalesAmount?.toLocaleString('en-ZA') || 0} target`);
@@ -2866,7 +2951,7 @@ export class UserService {
 							this.logger.log(`[getUserTarget]      🔮 Projected Final: R${Math.round(projectedFinalAmount).toLocaleString('en-ZA')} (${((projectedFinalAmount / user.userTarget.targetSalesAmount) * 100).toFixed(1)}% of target)`);
 						}
 					} catch (error) {
-						this.logger.error(`[getUserTarget] ❌ Failed to calculate sales rate analysis for user ${userId}`);
+						this.logger.error(`[getUserTarget] ❌ Failed to calculate sales rate analysis for user ${clerkUserId}`);
 						this.logger.error(`[getUserTarget]    Error: ${error.message}`);
 						this.logger.debug(`[getUserTarget]    Stack: ${error.stack}`);
 					}
@@ -3152,21 +3237,21 @@ export class UserService {
 				});
 
 				// Log final response for debugging
-				this.logger.log(`[getUserTarget] Managed staff response for user ${userId}: ${staffWithTargets.length} members, ${staffWithTargets.filter(s => s.hasTargets).length} with targets`);
+				this.logger.log(`[getUserTarget] Managed staff response for user ${clerkUserId}: ${staffWithTargets.length} members, ${staffWithTargets.filter(s => s.hasTargets).length} with targets`);
 				if (staffWithTargets.length > 0 && staffWithTargets[0].targets?.sales) {
 					this.logger.debug(`[getUserTarget] Sample: Staff ${staffWithTargets[0].uid} - Sales: ${staffWithTargets[0].targets.sales.current}/${staffWithTargets[0].targets.sales.target} (${staffWithTargets[0].targets.sales.progress}%)`);
 				}
 
 				response.managedStaff = staffWithTargets;
 			} else {
-				this.logger.debug(`User ${userId} has no managed staff or managedStaff is empty`);
+				this.logger.debug(`User ${clerkUserId} has no managed staff or managedStaff is empty`);
 			}
 
-			this.logger.debug(`Caching user target for user: ${userId}`);
+			this.logger.debug(`Caching user target for user: ${clerkUserId}`);
 			await this.cacheManager.set(cacheKey, response, this.TARGET_CACHE_TTL);
 
 			const executionTime = Date.now() - startTime;
-			this.logger.log(`User target retrieved from database for user: ${userId} in ${executionTime}ms`);
+			this.logger.log(`User target retrieved from database for user: ${clerkUserId} in ${executionTime}ms`);
 
 			return {
 				userTarget: response,
@@ -4419,7 +4504,7 @@ export class UserService {
 				.createQueryBuilder('user')
 				.leftJoinAndSelect('user.branch', 'branch')
 				.leftJoinAndSelect('user.organisation', 'organisation')
-				.where('user.uid = :userId', { userId: parseInt(userId) })
+				.where('user.uid = :userId', { userId })
 				.andWhere('user.isDeleted = :isDeleted', { isDeleted: false });
 
 			// Apply organization filter if provided
@@ -7288,7 +7373,7 @@ export class UserService {
 	 * Get user preferences
 	 */
 	async getUserPreferences(
-		userId: number,
+		userId: string,
 		accessScope: { orgId?: number; branchId?: number; isElevated: boolean },
 	): Promise<{ preferences: any; message: string }> {
 		const operationId = `getUserPreferences_${userId}_${Date.now()}`;
@@ -7311,11 +7396,13 @@ export class UserService {
 				branchScope: accessScope.branchId,
 			});
 
-			// Find the user with access control
+			// Find the user with access control (userId: string – clerk id or numeric)
+			const userWhere = typeof userId === 'string' && userId.startsWith('user_')
+				? { clerkUserId: userId, isDeleted: false }
+				: { uid: Number(userId), isDeleted: false };
 			const user = await this.userRepository.findOne({
 				where: {
-					uid: userId,
-					isDeleted: false,
+					...userWhere,
 					...(accessScope.isElevated
 						? {}
 						: {
@@ -7383,7 +7470,7 @@ export class UserService {
 	 * Create user preferences
 	 */
 	async createUserPreferences(
-		userId: number,
+		userId: string,
 		createUserPreferencesDto: CreateUserPreferencesDto,
 		accessScope: { orgId?: number; branchId?: number; isElevated: boolean },
 	): Promise<{ message: string }> {
@@ -7408,18 +7495,25 @@ export class UserService {
 				preferenceCount: Object.keys(createUserPreferencesDto).length,
 			});
 
-			// Find the user with access control
+			// Find the user with access control - use clerkUserId if it's a Clerk ID, otherwise use uid
+			const whereCondition: any = {
+				isDeleted: false,
+				...(accessScope.isElevated
+					? {}
+					: {
+							organisation: { uid: accessScope.orgId },
+							...(accessScope.branchId ? { branch: { uid: accessScope.branchId } } : {}),
+					  }),
+			};
+			
+			if (userId.startsWith('user_')) {
+				whereCondition.clerkUserId = userId;
+			} else {
+				whereCondition.uid = userId;
+			}
+			
 			const user = await this.userRepository.findOne({
-				where: {
-					uid: userId,
-					isDeleted: false,
-					...(accessScope.isElevated
-						? {}
-						: {
-								organisation: { uid: accessScope.orgId },
-								...(accessScope.branchId ? { branch: { uid: accessScope.branchId } } : {}),
-						  }),
-				},
+				where: whereCondition,
 			});
 
 			if (!user) {
@@ -7503,7 +7597,7 @@ export class UserService {
 	 * Update user preferences
 	 */
 	async updateUserPreferences(
-		userId: number,
+		userId: string,
 		updateUserPreferencesDto: UpdateUserPreferencesDto,
 		accessScope: { orgId?: number; branchId?: number; isElevated: boolean },
 	): Promise<{ message: string }> {
@@ -7516,11 +7610,17 @@ export class UserService {
 
 		try {
 			// Find the user with access control and load organization relation for timezone
+			// Use clerkUserId if it's a Clerk ID, otherwise use uid
 			const queryBuilder = this.userRepository
 				.createQueryBuilder('user')
 				.leftJoinAndSelect('user.organisation', 'organisation')
 				.leftJoinAndSelect('user.branch', 'branch')
-				.where('user.uid = :userId', { userId })
+				.where(
+					userId.startsWith('user_')
+						? 'user.clerkUserId = :userId'
+						: 'user.uid = :userId',
+					{ userId }
+				)
 				.andWhere('user.isDeleted = :isDeleted', { isDeleted: false });
 
 			if (accessScope.orgId) {

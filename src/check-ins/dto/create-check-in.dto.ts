@@ -26,17 +26,9 @@ export class CreateCheckInDto {
     })
     checkInLocation: string;
 
-    @IsNotEmpty()
-    @IsNumber()
-    @ApiProperty({
-        example: {
-            uid: 1
-        },
-        description: 'The reference of the user',
-    })
-    owner: {
-        uid: number;
-    };
+    /**
+     * Owner resolved from auth token (clerkUserId); no owner/uid in DTO.
+     */
 
     @IsOptional()
     @IsObject()

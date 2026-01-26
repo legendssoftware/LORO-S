@@ -175,4 +175,7 @@ export enum EmailType {
 	LOYALTY_WELCOME = 'loyalty_welcome',
 	LOYALTY_TIER_UPGRADE = 'loyalty_tier_upgrade',
 	LOYALTY_REWARD_CLAIMED = 'loyalty_reward_claimed',
+	LOYALTY_POINTS_EARNED = 'loyalty_points_earned',
+	LOYALTY_POINTS_STATEMENT = 'loyalty_points_statement',
+	LOYALTY_SPECIALS_EMAIL = 'loyalty_specials_email',
 }

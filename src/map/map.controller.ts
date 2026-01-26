@@ -212,15 +212,10 @@ export class MapController {
 				}
 			}
 
-			// Validate optional user ID
-			let userIdNumber: number | undefined;
-			if (userId) {
-				userIdNumber = parseInt(userId, 10);
-				if (isNaN(userIdNumber) || userIdNumber <= 0) {
-					throw new BadRequestException('Invalid user ID provided');
-				}
+			const userIdNumber = userId != null && userId !== '' ? parseInt(userId, 10) : undefined;
+			if (userId != null && userId !== '' && (isNaN(userIdNumber!) || userIdNumber! <= 0)) {
+				throw new BadRequestException('Invalid user ID provided');
 			}
-
 			const result = await this.mapService.generateMapData({
 				organisationId: orgId,
 				branchId: branchIdNumber,
@@ -340,11 +335,10 @@ export class MapController {
 		@Query('startDate') startDate?: string,
 		@Query('endDate') endDate?: string,
 	) {
-		const userIdNum = parseInt(userId, 10);
-		if (isNaN(userIdNum)) {
-			throw new BadRequestException('Invalid user ID');
+		const userIdNum = userId && /^\d+$/.test(userId) ? parseInt(userId, 10) : undefined;
+		if (userIdNum == null || userIdNum <= 0) {
+			throw new BadRequestException('Valid numeric user ID is required for trip history');
 		}
-
 		return this.mapService.getTripHistory({
 			userId: userIdNum,
 			startDate: startDate ? new Date(startDate) : undefined,

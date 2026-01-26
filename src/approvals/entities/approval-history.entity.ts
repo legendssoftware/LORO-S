@@ -32,11 +32,11 @@ export class ApprovalHistory {
     toStatus: ApprovalStatus;
 
     @ManyToOne(() => User, { nullable: false })
-    @JoinColumn({ name: 'actionBy' })
+    @JoinColumn({ name: 'actionByClerkUserId', referencedColumnName: 'clerkUserId' })
     actionByUser: User;
 
-    @Column({ type: 'int', nullable: false })
-    actionBy: number;
+    @Column({ type: 'varchar', nullable: false })
+    actionByClerkUserId: string;
 
     @Column({ type: 'text', nullable: true })
     comments: string;
@@ -80,6 +80,6 @@ export class ApprovalHistory {
     @Column({ type: 'timestamptz', nullable: true })
     scheduledFor: Date; // If this was a scheduled action
 
-    @Column({ type: 'int', nullable: true })
-    delegatedFrom: number; // If action was taken by delegate
+    @Column({ type: 'varchar', nullable: true })
+    delegatedFromClerkUserId: string; // If action was taken by delegate
 } 

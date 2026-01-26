@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
 import { CreateWarningDto } from './dto/create-warning.dto';
 import { UpdateWarningDto } from './dto/update-warning.dto';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -65,25 +65,31 @@ export class WarningsService {
 		}
 	}
 
-	async create(createWarningDto: CreateWarningDto): Promise<{ message: string; warning?: Warning }> {
+	async create(createWarningDto: CreateWarningDto, issuerClerkUserId?: string): Promise<{ message: string; warning?: Warning }> {
 		try {
-			// Get owner and issuer users
+			if (!issuerClerkUserId) {
+				throw new BadRequestException('Issuer (clerk user ID from token) is required');
+			}
+			// Owner = recipient (by recipientClerkId); issuer = current user (by clerk id from token)
 			const [owner, issuer] = await Promise.all([
-				this.userRepository.findOne({ where: { uid: createWarningDto.owner.uid } }),
-				this.userRepository.findOne({ where: { uid: createWarningDto.issuedBy.uid } }),
+				this.userRepository.findOne({ where: { clerkUserId: createWarningDto.recipientClerkId } }),
+				this.userRepository.findOne({ where: { clerkUserId: issuerClerkUserId } }),
 			]);
 
 			if (!owner) {
-				throw new NotFoundException('Owner user not found');
+				throw new NotFoundException('Recipient user not found');
 			}
 
 			if (!issuer) {
 				throw new NotFoundException('Issuer user not found');
 			}
 
-			// Create the warning
+			const { recipientClerkId, ...rest } = createWarningDto;
+			// Create the warning (ownerClerkUserId, issuedByClerkUserId per migration)
 			const warning = this.warningRepository.create({
-				...createWarningDto,
+				...rest,
+				ownerClerkUserId: owner.clerkUserId,
+				issuedByClerkUserId: issuer.clerkUserId,
 				owner,
 				issuedBy: issuer,
 				issuedAt: createWarningDto.issuedAt || new Date(),
@@ -279,13 +285,17 @@ export class WarningsService {
 			// Track updated fields for email notification
 			const updatedFields: string[] = [];
 
-			// Handle relationships
-			if (updateWarningDto.owner && updateWarningDto.owner.uid !== warning.owner.uid) {
-				const newOwner = await this.userRepository.findOne({ where: { uid: updateWarningDto.owner.uid } });
+			// Handle recipient/owner update if recipientClerkId provided
+			const recipientClerkId = (updateWarningDto as { recipientClerkId?: string }).recipientClerkId;
+			if (recipientClerkId && recipientClerkId !== warning.ownerClerkUserId) {
+				const newOwner = await this.userRepository.findOne({
+					where: { clerkUserId: recipientClerkId },
+				});
 				if (!newOwner) {
 					throw new NotFoundException('New owner user not found');
 				}
 				warning.owner = newOwner;
+				warning.ownerClerkUserId = newOwner.clerkUserId;
 				updatedFields.push('owner');
 			}
 
@@ -487,7 +497,7 @@ export class WarningsService {
 		}
 	}
 
-	async getUserWarnings(userId: number): Promise<{ warnings: Warning[]; message: string }> {
+	async getUserWarnings(userId: string): Promise<{ warnings: Warning[]; message: string }> {
 		try {
 			const cacheKey = this.getCacheKey(`user_${userId}`);
 			const cachedResult = await this.cacheManager.get<{ warnings: Warning[]; message: string }>(cacheKey);
@@ -496,10 +506,12 @@ export class WarningsService {
 				return cachedResult;
 			}
 
+			const ownerFilter = userId.startsWith('user_')
+				? { ownerClerkUserId: userId }
+				: { owner: { uid: Number(userId) } };
+
 			const warnings = await this.warningRepository.find({
-				where: {
-					owner: { uid: userId },
-				},
+				where: ownerFilter,
 				relations: ['issuedBy'],
 				order: {
 					issuedAt: 'DESC',

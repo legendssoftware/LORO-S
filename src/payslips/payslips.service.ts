@@ -58,7 +58,7 @@ export class PayslipsService {
 		};
 	}
 
-	async findByUser(userRef: number, orgId?: number, branchId?: number) {
+	async findByUser(userRef: string, orgId?: number, branchId?: number) {
 		this.logger.log(`Finding payslips for user ${userRef}`, {
 			userRef,
 			orgId,

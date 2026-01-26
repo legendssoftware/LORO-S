@@ -1,6 +1,8 @@
 import { IsBoolean, IsDate, IsObject, IsOptional, IsString } from 'class-validator';
 import { PartialType } from '@nestjs/swagger';
 import { CreateAssetDto } from './create-asset.dto';
+import { OwnerUidDto } from '../../lib/dto/owner-uid.dto';
+import { Type } from 'class-transformer';
 
 export class UpdateAssetDto extends PartialType(CreateAssetDto) {
     @IsOptional()
@@ -33,7 +35,8 @@ export class UpdateAssetDto extends PartialType(CreateAssetDto) {
 
     @IsOptional()
     @IsObject()
-    owner?: { uid: number };
+    @Type(() => OwnerUidDto)
+    owner?: OwnerUidDto;
 
     @IsOptional()
     @IsObject()

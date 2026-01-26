@@ -201,7 +201,7 @@ export class PayslipsController {
 	@ApiOkResponse({ description: '✅ User payslips retrieved successfully' })
 	@ApiNotFoundResponse({ description: '❌ User not found or no payslips available' })
 	@ApiForbiddenResponse({ description: '🚫 Forbidden - Insufficient permissions' })
-	findByUser(@Param('ref', ParseIntPipe) ref: number, @Req() req: AuthenticatedRequest) {
+	findByUser(@Param('ref') ref: string, @Req() req: AuthenticatedRequest) {
 		this.logger.log(`Finding payslips for user ${ref}`);
 		const accessScope = this.getAccessScope(req.user);
 

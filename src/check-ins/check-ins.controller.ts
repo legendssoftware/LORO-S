@@ -81,7 +81,7 @@ export class CheckInsController {
 		summary: 'Get check-ins for specific user',
 		description: 'Retrieves check-in records for a specific user, optionally filtered by organization',
 	})
-	@ApiParam({ name: 'userUid', description: 'User UID', type: 'number' })
+	@ApiParam({ name: 'userUid', description: 'User UID (string)', type: 'string' })
 	@ApiOkResponse({
 		description: 'User check-ins retrieved successfully',
 		schema: {
@@ -121,7 +121,7 @@ export class CheckInsController {
 		},
 	})
 	getUserCheckIns(
-		@Param('userUid') userUid: number,
+		@Param('userUid') userUid: string,
 		@Query('organizationUid') organizationUid?: string
 	) {
 		return this.checkInsService.getUserCheckIns(userUid, organizationUid);
@@ -188,7 +188,7 @@ export class CheckInsController {
 		summary: 'Get check-in status',
 		description: 'Retrieves the current check-in status for a specific user',
 	})
-	@ApiParam({ name: 'reference', description: 'User reference code', type: 'number' })
+	@ApiParam({ name: 'reference', description: 'User reference code (string)', type: 'string' })
 	@ApiOkResponse({
 		description: 'Check-in status retrieved successfully',
 		schema: {
@@ -217,11 +217,7 @@ export class CheckInsController {
 			},
 		},
 	})
-	checkInStatus(@Param('reference', ParseIntPipe) reference: number) {
-		// Validate that reference is a valid number (not NaN)
-		if (isNaN(reference) || reference <= 0) {
-			throw new BadRequestException('Invalid user reference: must be a positive number');
-		}
+	checkInStatus(@Param('reference') reference: string) {
 		return this.checkInsService.checkInStatus(reference);
 	}
 

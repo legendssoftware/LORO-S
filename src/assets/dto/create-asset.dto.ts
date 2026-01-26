@@ -1,5 +1,7 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { IsBoolean, IsDate, IsNotEmpty, IsObject, IsString } from "class-validator";
+import { Type } from "class-transformer";
+import { IsBoolean, IsDate, IsNotEmpty, IsObject, IsString, ValidateNested } from "class-validator";
+import { OwnerUidDto } from "../../lib/dto/owner-uid.dto";
 
 export class CreateAssetDto {
     @IsNotEmpty()
@@ -59,12 +61,14 @@ export class CreateAssetDto {
     insuranceExpiryDate: Date;
 
     @IsNotEmpty()
-    @IsObject()
+    @ValidateNested()
+    @Type(() => OwnerUidDto)
     @ApiProperty({
-        example: { uid: 1 },
-        description: 'The reference code of the owner of the asset'
+        type: OwnerUidDto,
+        example: { uid: '1' },
+        description: 'The owner reference (user ref) of the asset (string)',
     })
-    owner: { uid: number };
+    owner: OwnerUidDto;
 
     @IsNotEmpty()
     @IsObject()

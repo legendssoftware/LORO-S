@@ -103,15 +103,15 @@ export class LeaveService {
 		createLeaveDto: CreateLeaveDto,
 		orgId?: string,
 		branchId?: number,
-		userId?: number,
+		clerkUserId?: string,
 	): Promise<{ message: string }> {
-		this.logger.log(`Creating leave request for user: ${userId}, orgId: ${orgId}, branchId: ${branchId}`);
+		this.logger.log(`Creating leave request for user: ${clerkUserId}, orgId: ${orgId}, branchId: ${branchId}`);
 		this.logger.debug(`Leave request data: ${JSON.stringify({ ...createLeaveDto, startDate: createLeaveDto.startDate, endDate: createLeaveDto.endDate })}`);
 
 		try {
 			// Enhanced validation
 			this.logger.debug('Validating leave request data');
-			if (!userId) {
+			if (!clerkUserId) {
 				this.logger.error('User ID is required but not provided for leave request creation');
 				throw new BadRequestException('User ID is required to create a leave request');
 			}
@@ -126,28 +126,28 @@ export class LeaveService {
 				throw new BadRequestException('Start date and end date are required');
 			}
 
-			// Find the owner user with organization validation
-			this.logger.debug(`Finding user with ID: ${userId} and validating organization access`);
+			// Find the owner user with organization validation - use clerkUserId (string)
+			this.logger.debug(`Finding user with Clerk ID: ${clerkUserId} and validating organization access`);
 			const owner = await this.userRepository.findOne({
-				where: { uid: userId },
+				where: { clerkUserId: clerkUserId },
 				relations: ['organisation']
 			});
 
 			if (!owner) {
-				this.logger.error(`User not found with ID: ${userId}`);
-				throw new NotFoundException(`User with ID ${userId} not found`);
+				this.logger.error(`User not found with Clerk ID: ${clerkUserId}`);
+				throw new NotFoundException(`User with ID ${clerkUserId} not found`);
 			}
 
-			// Resolve Clerk org ID to numeric uid for comparison
+			// Validate user belongs to the specified organization - use Clerk org ID strings
+			if (owner.organisation?.clerkOrgId !== orgId && owner.organisationRef !== orgId) {
+				this.logger.error(`User ${clerkUserId} (org: ${owner.organisation?.clerkOrgId || owner.organisationRef}) attempting to create leave in different organization: ${orgId}`);
+				throw new BadRequestException('User does not belong to the specified organization');
+			}
+
+			// Resolve Clerk org ID to numeric uid for database storage
 			const resolvedOrgUid = await this.resolveOrgId(orgId);
 			if (!resolvedOrgUid) {
 				throw new BadRequestException(`Organisation not found for ID: ${orgId}`);
-			}
-
-			// Validate user belongs to the specified organization
-			if (owner.organisation?.uid !== resolvedOrgUid) {
-				this.logger.error(`User ${userId} (org: ${owner.organisation?.uid}) attempting to create leave in different organization: ${resolvedOrgUid}`);
-				throw new BadRequestException('User does not belong to the specified organization');
 			}
 
 			this.logger.debug(`User found and validated: ${owner.email} (${owner.name}) in organization: ${orgId}`);
@@ -248,7 +248,7 @@ export class LeaveService {
 				? { message: 'Leave request created but automatically rejected due to conflicting dates' }
 				: { message: 'Leave request created successfully' };
 			
-			this.logger.log(`Leave request ${savedLeave.uid} created successfully for user: ${userId}`);
+			this.logger.log(`Leave request ${savedLeave.uid} created successfully for user: ${clerkUserId}`);
 
 			// === POST-RESPONSE PROCESSING ===
 			setImmediate(async () => {
@@ -324,7 +324,7 @@ export class LeaveService {
 
 			return response;
 		} catch (error) {
-			this.logger.error(`Failed to create leave request for user: ${userId}`, error.stack);
+			this.logger.error(`Failed to create leave request for user: ${clerkUserId}`, error.stack);
 			if (error instanceof NotFoundException) {
 				throw error;
 			}
@@ -345,7 +345,7 @@ export class LeaveService {
 		limit: number = Number(process.env.DEFAULT_PAGE_LIMIT),
 		orgId?: string,
 		branchId?: number,
-		userId?: number,
+		clerkUserId?: string,
 	): Promise<PaginatedResponse<Leave>> {
 		this.logger.log(`🔍 [LeaveService] Finding leaves with filters:`, {
 			filters,
@@ -353,16 +353,19 @@ export class LeaveService {
 			limit,
 			orgId,
 			branchId,
-			userId
+			clerkUserId
 		});
 
 		try {
 			// Building the where clause
 			const where: any = {};
 
-			// Add organizational filters
+			// Add organizational filters - resolve Clerk org ID to numeric UID for database query
 			if (orgId) {
-				where.organisation = { uid: orgId };
+				const resolvedOrgUid = await this.resolveOrgId(orgId);
+				if (resolvedOrgUid) {
+					where.organisation = { uid: resolvedOrgUid };
+				}
 			}
 
 			if (branchId) {
@@ -433,17 +436,20 @@ export class LeaveService {
 		ref: number,
 		orgId?: string,
 		branchId?: number,
-		userId?: number,
+		clerkUserId?: string,
 	): Promise<{ message: string; leave: Leave | null }> {
-		this.logger.log(`🔍 [LeaveService] Finding leave with ID: ${ref}, orgId: ${orgId}, branchId: ${branchId}, userId: ${userId}`);
+		this.logger.log(`🔍 [LeaveService] Finding leave with ID: ${ref}, orgId: ${orgId}, branchId: ${branchId}, clerkUserId: ${clerkUserId}`);
 
 		try {
 			// Build query conditions
 			const where: any = { uid: ref };
 
-			// Add org and branch filters if provided
+			// Add org and branch filters if provided - resolve Clerk org ID to numeric UID for database query
 			if (orgId) {
-				where.organisation = { uid: orgId };
+				const resolvedOrgUid = await this.resolveOrgId(orgId);
+				if (resolvedOrgUid) {
+					where.organisation = { uid: resolvedOrgUid };
+				}
 			}
 
 			if (branchId) {
@@ -492,9 +498,9 @@ export class LeaveService {
 		ref: string,
 		orgId?: string,
 		branchId?: number,
-		userId?: number,
+		clerkUserId?: string,
 	): Promise<{ message: string; leaves: Leave[] }> {
-		this.logger.log(`🔍 [LeaveService] Finding leaves for user ${ref}, orgId: ${orgId}, branchId: ${branchId}, userId: ${userId}`);
+		this.logger.log(`🔍 [LeaveService] Finding leaves for user ${ref}, orgId: ${orgId}, branchId: ${branchId}, clerkUserId: ${clerkUserId}`);
 
 		try {
 			// Build query conditions - ref is Clerk user ID string
@@ -545,19 +551,19 @@ export class LeaveService {
 		updateLeaveDto: UpdateLeaveDto,
 		orgId?: string,
 		branchId?: number,
-		userId?: number,
+		clerkUserId?: string,
 	): Promise<{ message: string }> {
 		this.logger.log(`🔄 [LeaveService] Updating leave ${ref} with data:`, {
 			status: updateLeaveDto.status,
 			leaveType: updateLeaveDto.leaveType,
 			orgId,
 			branchId,
-			userId
+			clerkUserId
 		});
 
 		try {
 			// Find the leave first
-			const { leave } = await this.findOne(ref, orgId, branchId, userId);
+			const { leave } = await this.findOne(ref, orgId, branchId, clerkUserId);
 
 			if (!leave) {
 				throw new NotFoundException('Leave request not found');
@@ -654,16 +660,16 @@ export class LeaveService {
 
 	async approveLeave(
 		ref: number,
-		approverUid: number,
+		approverClerkUserId: string,
 		orgId?: string,
 		branchId?: number,
-		userId?: number,
+		clerkUserId?: string,
 	): Promise<{ message: string }> {
-		this.logger.log(`✅ [LeaveService] Approving leave ${ref} by approver ${approverUid}, orgId: ${orgId}, branchId: ${branchId}`);
+		this.logger.log(`✅ [LeaveService] Approving leave ${ref} by approver ${approverClerkUserId}, orgId: ${orgId}, branchId: ${branchId}`);
 
 		try {
 			// Find the leave first
-			const { leave } = await this.findOne(ref, orgId, branchId, userId);
+			const { leave } = await this.findOne(ref, orgId, branchId, clerkUserId);
 
 			if (!leave) {
 				throw new NotFoundException('Leave request not found');
@@ -676,11 +682,11 @@ export class LeaveService {
 				);
 			}
 
-			// Find the approver
-			const approver = await this.userRepository.findOne({ where: { uid: approverUid } });
+			// Find the approver - use clerkUserId (string)
+			const approver = await this.userRepository.findOne({ where: { clerkUserId: approverClerkUserId } });
 
 			if (!approver) {
-				throw new NotFoundException(`Approver with ID ${approverUid} not found`);
+				throw new NotFoundException(`Approver with ID ${approverClerkUserId} not found`);
 			}
 
 			// Store previous status for email
@@ -698,7 +704,7 @@ export class LeaveService {
 
 			// === EARLY RETURN ===
 			const response = { message: 'Leave request approved successfully' };
-			this.logger.log(`✅ [LeaveService] Successfully approved leave ${ref} by approver ${approverUid}`);
+			this.logger.log(`✅ [LeaveService] Successfully approved leave ${ref} by approver ${approverClerkUserId}`);
 
 			// === POST-RESPONSE PROCESSING ===
 			setImmediate(async () => {
@@ -776,13 +782,13 @@ export class LeaveService {
 		rejectionReason: string,
 		orgId?: string,
 		branchId?: number,
-		userId?: number,
+		clerkUserId?: string,
 	): Promise<{ message: string }> {
 		this.logger.log(`❌ [LeaveService] Rejecting leave ${ref} with reason: ${rejectionReason}, orgId: ${orgId}, branchId: ${branchId}`);
 
 		try {
 			// Find the leave first
-			const { leave } = await this.findOne(ref, orgId, branchId, userId);
+			const { leave } = await this.findOne(ref, orgId, branchId, clerkUserId);
 
 			if (!leave) {
 				throw new NotFoundException('Leave request not found');
@@ -889,15 +895,15 @@ export class LeaveService {
 	async cancelLeave(
 		ref: number,
 		cancellationReason: string,
-		userId: number,
+		clerkUserId: string,
 		orgId?: string,
 		branchId?: number,
 	): Promise<{ message: string }> {
-		this.logger.log(`🚫 [LeaveService] Canceling leave ${ref} with reason: ${cancellationReason}, userId: ${userId}, orgId: ${orgId}, branchId: ${branchId}`);
+		this.logger.log(`🚫 [LeaveService] Canceling leave ${ref} with reason: ${cancellationReason}, clerkUserId: ${clerkUserId}, orgId: ${orgId}, branchId: ${branchId}`);
 
 		try {
 			// Find the leave first
-			const { leave } = await this.findOne(ref, orgId, branchId, userId);
+			const { leave } = await this.findOne(ref, orgId, branchId, clerkUserId);
 
 			if (!leave) {
 				throw new NotFoundException('Leave request not found');
@@ -916,14 +922,17 @@ export class LeaveService {
 			}
 
 			// Check if the user canceling is the owner or has admin privileges
-			// This check would be more robust in a real application
-			const isOwner = leave.owner?.uid === userId;
+			// Use clerkUserId (string) for comparison
+			const isOwner = leave.owner?.clerkUserId === clerkUserId;
 			// We're assuming here that non-owners are authorized through the controller's @Roles decorator
 
 			// Determine which cancellation status to use
 			const cancellationStatus = isOwner ? LeaveStatus.CANCELLED_BY_USER : LeaveStatus.CANCELLED_BY_ADMIN;
 
 			// Handle approval workflow cancellation before updating leave status
+			// Resolve clerkUserId to numeric uid for handleLeaveRevocation if needed
+			const user = await this.userRepository.findOne({ where: { clerkUserId }, select: ['uid'] });
+			const userId = user?.uid || 0;
 			await this.handleLeaveRevocation(leave, userId, cancellationReason);
 
 			// Update the leave
@@ -937,7 +946,7 @@ export class LeaveService {
 			this.eventEmitter.emit('leave.canceled', {
 				leave,
 				cancellationReason,
-				canceledBy: userId,
+				canceledBy: clerkUserId,
 			});
 
 			// Clear cache
@@ -954,12 +963,12 @@ export class LeaveService {
 		}
 	}
 
-	async remove(ref: number, orgId?: string, branchId?: number, userId?: number): Promise<{ message: string }> {
-		this.logger.log(`🗑️ [LeaveService] Removing leave ${ref}, orgId: ${orgId}, branchId: ${branchId}, userId: ${userId}`);
+	async remove(ref: number, orgId?: string, branchId?: number, clerkUserId?: string): Promise<{ message: string }> {
+		this.logger.log(`🗑️ [LeaveService] Removing leave ${ref}, orgId: ${orgId}, branchId: ${branchId}, clerkUserId: ${clerkUserId}`);
 
 		try {
 			// Find the leave first
-			const { leave } = await this.findOne(ref, orgId, branchId, userId);
+			const { leave } = await this.findOne(ref, orgId, branchId, clerkUserId);
 
 			if (!leave) {
 				throw new NotFoundException('Leave request not found');
@@ -1141,11 +1150,11 @@ export class LeaveService {
 	 */
 	private async validateLeaveConflicts(leave: Leave): Promise<{ hasConflict: boolean; conflictingLeaves: Leave[] }> {
 		try {
-			this.logger.log(`🔍 [LeaveService] Checking for leave conflicts for user ${leave.owner?.uid}`);
+			this.logger.log(`🔍 [LeaveService] Checking for leave conflicts for user ${leave.owner?.clerkUserId}`);
 
 			const conflictingLeaves = await this.leaveRepository.find({
 				where: {
-					owner: { uid: leave.owner?.uid },
+					owner: { clerkUserId: leave.owner?.clerkUserId },
 					status: In([LeaveStatus.APPROVED, LeaveStatus.TAKEN, LeaveStatus.PARTIALLY_TAKEN]),
 					uid: Not(leave.uid), // Exclude the current leave
 				},

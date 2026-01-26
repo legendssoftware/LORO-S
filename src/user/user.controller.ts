@@ -1545,7 +1545,7 @@ Retrieves detailed information about a specific user by their unique reference i
 		description: `
 # User Profile Management
 
-Updates an existing user's information with comprehensive validation and audit trail maintenance.
+Updates an existing user's information with comprehensive validation and audit trail maintenance. Profile changes are automatically synchronized with Clerk after successful database updates.
 
 ## 🔄 **Supported Updates**
 - **Personal Information**: Name, contact details, profile photo
@@ -1553,7 +1553,14 @@ Updates an existing user's information with comprehensive validation and audit t
 - **Access Control**: Role changes, permission modifications
 - **Status Management**: Account activation, suspension, reactivation
 - **Profile Data**: Physical details, emergency contacts, preferences
-- **Security Settings**: Password requirements, authentication methods
+- **Security Settings**: Password updates (managed by Clerk, not stored in database)
+
+## 🔗 **Clerk Synchronization**
+- **Automatic Sync**: Profile updates (name, surname, email, phone, photoURL) are automatically synced to Clerk after database update
+- **Password Management**: Passwords are handled exclusively by Clerk and never stored in the database
+- **Sync Status**: The \`clerkLastSyncedAt\` field tracks the last successful synchronization timestamp
+- **Error Handling**: If Clerk sync fails, the database update still succeeds (database is source of truth)
+- **Sync Order**: Database is updated first, then changes are propagated to Clerk
 
 ## 🔒 **Security Features**
 - **Audit Trail**: All changes are logged with user and timestamp
@@ -1561,6 +1568,7 @@ Updates an existing user's information with comprehensive validation and audit t
 - **Data Validation**: Business rules prevent invalid state changes
 - **Rollback Capability**: Previous versions are preserved for recovery
 - **Approval Workflows**: Sensitive changes may require approval
+- **Password Security**: Passwords are never stored in database, only managed by Clerk
 
 ## 📋 **Common Use Cases**
 - **Profile Updates**: Employee self-service profile modifications
@@ -1568,6 +1576,7 @@ Updates an existing user's information with comprehensive validation and audit t
 - **Role Changes**: Promotion, transfer, or responsibility changes
 - **Contact Updates**: Address, phone, emergency contact modifications
 - **Access Management**: Permission adjustments and security updates
+- **Password Changes**: Secure password updates via Clerk integration
 		`,
 	})
 	@Roles(
@@ -1591,10 +1600,11 @@ Updates an existing user's information with comprehensive validation and audit t
 		examples: {
 			profileUpdate: {
 				summary: '👤 Profile Update',
-				description: 'Update basic profile information',
+				description: 'Update basic profile information. Changes to name, surname, email, phone, and photoURL are automatically synced to Clerk.',
 				value: {
 					name: 'John',
 					surname: 'Doe',
+					email: 'john.doe@example.com',
 					phone: '+27 64 123 4567',
 					photoURL: 'https://example.com/new-photo.jpg',
 					businesscardURL: 'https://example.com/new-businesscard.jpg',
@@ -1609,6 +1619,13 @@ Updates an existing user's information with comprehensive validation and audit t
 						aboutMe: 'Updated profile description with new experiences',
 						socialMedia: 'linkedin.com/in/johndoe',
 					},
+				},
+			},
+			passwordUpdate: {
+				summary: '🔐 Password Update',
+				description: 'Update user password. Password is managed by Clerk and never stored in the database. The password will be updated in Clerk after the database update succeeds.',
+				value: {
+					password: 'NewSecurePassword123!',
 				},
 			},
 			employmentUpdate: {
@@ -2388,27 +2405,7 @@ Retrieves comprehensive performance targets for a specific user with detailed pr
 		@Req() req: AuthenticatedRequest,
 	): Promise<{ userTarget: UserTarget | null; message: string }> {
 		const accessScope = this.getAccessScope(req.user);
-
-		// Check if ref is a Clerk ID (starts with "user_") or a numeric ID
-		let userId: number;
-		
-		if (ref.startsWith('user_')) {
-			// It's a Clerk ID, convert to database user ID
-			const dbUser = await this.clerkService.getUserByClerkId(ref);
-			if (!dbUser) {
-				throw new NotFoundException(`User with Clerk ID ${ref} not found`);
-			}
-			userId = dbUser.uid;
-		} else {
-			// It's a numeric ID
-			const parsedId = parseInt(ref, 10);
-			if (isNaN(parsedId)) {
-				throw new BadRequestException(`Invalid user ID format: ${ref}. Must be a number or Clerk ID (user_xxx)`);
-			}
-			userId = parsedId;
-		}
-
-		return this.userService.getUserTarget(userId, accessScope.orgId, accessScope.branchId);
+		return this.userService.getUserTarget(ref, accessScope.orgId, accessScope.branchId);
 	}
 
 	@Post(':ref/target')
@@ -3196,9 +3193,9 @@ Retrieves personalized preferences and settings for a specific user including th
 	})
 	@ApiParam({
 		name: 'ref',
-		description: 'User reference identifier - Must be a valid user ID',
-		type: Number,
-		example: 123,
+		description: 'User reference identifier - Can be a numeric user ID (e.g., 123) or Clerk user ID (e.g., user_xxx)',
+		type: String,
+		example: '123',
 	})
 	@ApiOkResponse({
 		description: '✅ User preferences retrieved successfully',
@@ -3247,7 +3244,7 @@ Retrieves personalized preferences and settings for a specific user including th
 	})
 	@ApiBearerAuth()
 	getUserPreferences(
-		@Param('ref', ParseIntPipe) ref: number,
+		@Param('ref') ref: string,
 		@Req() req: AuthenticatedRequest,
 	): Promise<{ preferences: any; message: string }> {
 		const accessScope = this.getAccessScope(req.user);
@@ -3287,9 +3284,9 @@ Creates initial preference settings for a user account including theme, language
 	})
 	@ApiParam({
 		name: 'ref',
-		description: 'User reference identifier - Must be a valid user ID',
-		type: Number,
-		example: 123,
+		description: 'User reference identifier - Can be a numeric user ID (e.g., 123) or Clerk user ID (e.g., user_xxx)',
+		type: String,
+		example: '123',
 	})
 	@ApiBody({
 		description: 'User preferences configuration data',
@@ -3349,7 +3346,7 @@ Creates initial preference settings for a user account including theme, language
 	})
 	@ApiBearerAuth()
 	createUserPreferences(
-		@Param('ref', ParseIntPipe) ref: number,
+		@Param('ref') ref: string,
 		@Body() createUserPreferencesDto: CreateUserPreferencesDto,
 		@Req() req: AuthenticatedRequest,
 	): Promise<{ message: string }> {
@@ -3446,7 +3443,7 @@ Updates specific preference settings for a user account with partial update supp
 	})
 	@ApiBearerAuth()
 	updateUserPreferences(
-		@Param('ref', ParseIntPipe) ref: number,
+		@Param('ref') ref: string,
 		@Body() updateUserPreferencesDto: UpdateUserPreferencesDto,
 		@Req() req: AuthenticatedRequest,
 	): Promise<{ message: string }> {
@@ -3934,8 +3931,8 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 	})
 	@ApiParam({
 		name: 'userId',
-		description: 'User ID to update targets for',
-		type: 'number',
+		description: 'User ID to update targets for - Can be a numeric user ID (e.g., 123) or Clerk user ID (e.g., user_xxx)',
+		type: 'string',
 		example: 123,
 	})
 	@ApiBody({
@@ -4349,7 +4346,7 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 	@ApiBadRequestResponse({ description: 'Invalid update data or missing API key' })
 	@ApiNotFoundResponse({ description: 'User not found or no targets configured' })
 	async updateTargetsFromERP(
-		@Param('userId', ParseIntPipe) userId: number,
+		@Param('userId') userId: string,
 		@Body() externalUpdateDto: ExternalTargetUpdateDto,
 		@Headers('X-ERP-API-Key') apiKey: string,
 		@Req() req: AuthenticatedRequest,
@@ -4377,8 +4374,12 @@ Sends personalized re-invitation emails to specific users with comprehensive val
 			},
 		});
 
+		const userIdNum = /^\d+$/.test(String(userId)) ? parseInt(String(userId), 10) : NaN;
+		if (isNaN(userIdNum) || userIdNum <= 0) {
+			throw new BadRequestException('Valid numeric user ID is required for target update');
+		}
 		const result = await this.userService.updateUserTargetsFromERP(
-			userId,
+			userIdNum,
 			externalUpdateDto,
 			accessScope.orgId,
 			accessScope.branchId,

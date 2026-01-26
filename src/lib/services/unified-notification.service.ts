@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { User } from '../../user/entities/user.entity';
 import { ExpoPushService, ExpoPushMessage } from './expo-push.service';
+import { SMSService } from './sms.service';
 import {
 	NotificationData,
 	NotificationResult,
@@ -13,6 +14,7 @@ import {
 	NotificationRecipient,
 } from '../types/unified-notification.types';
 import { EmailType } from '../enums/email.enums';
+import { SMSType } from '../enums/sms.enums';
 import { AccountStatus } from '../enums/status.enums';
 
 @Injectable()
@@ -518,6 +520,18 @@ export class UnifiedNotificationService {
 				priority: NotificationPriority.NORMAL,
 				channel: NotificationChannel.GENERAL,
 				defaultData: { screen: '/home/claims', action: 'view_claim' },
+				pushSettings: { sound: 'default', badge: 1 },
+			},
+		],
+		[
+			NotificationEvent.CLAIM_CREATED_ADMIN,
+			{
+				event: NotificationEvent.CLAIM_CREATED_ADMIN,
+				title: '📋 New Claim – Admin',
+				messageTemplate: '{userName} has submitted a {claimCategory} claim for {claimAmount}. Attached details are {details}.',
+				priority: NotificationPriority.HIGH,
+				channel: NotificationChannel.GENERAL,
+				defaultData: { screen: '/approvals', action: 'view_claim' },
 				pushSettings: { sound: 'default', badge: 1 },
 			},
 		],
@@ -1084,6 +1098,7 @@ export class UnifiedNotificationService {
 		@InjectRepository(User)
 		private readonly userRepository: Repository<User>,
 		private readonly expoPushService: ExpoPushService,
+		private readonly smsService: SMSService,
 		@Inject(forwardRef(() => {
 			const { CommunicationService } = require('../../communication/communication.service');
 			return CommunicationService;
@@ -1116,8 +1131,19 @@ export class UnifiedNotificationService {
 				results.emailResults = emailResults;
 			}
 
-			// Mark as failed if both push and email failed
-			if (pushResults.sent === 0 && (!results.emailResults || results.emailResults.sent === 0)) {
+			// Send SMS notifications if configured
+			if (data.sms) {
+				const smsResults = await this.sendSMSNotifications(data, enrichedRecipients);
+				results.smsResults = smsResults;
+			}
+
+			// Mark as failed if all notification types failed
+			const hasAnySuccess = 
+				pushResults.sent > 0 || 
+				(results.emailResults && results.emailResults.sent > 0) ||
+				(results.smsResults && results.smsResults.sent > 0);
+
+			if (!hasAnySuccess) {
 				results.success = false;
 				results.message = 'All notifications failed to send';
 			}
@@ -1446,6 +1472,63 @@ export class UnifiedNotificationService {
 			this.logger.error('❌ Email notification batch failed:', error);
 			return { sent: 0, failed: emailRecipients.length, errors: [error.message] };
 		}
+	}
+
+	/**
+	 * Send SMS notifications to all valid recipients
+	 */
+	private async sendSMSNotifications(
+		data: NotificationData,
+		recipients: NotificationRecipient[],
+	): Promise<{ sent: number; failed: number; errors?: string[] }> {
+		if (!this.smsService.isSMSEnabled()) {
+			this.logger.warn('SMS service is not enabled. Skipping SMS notifications.');
+			return { sent: 0, failed: 0 };
+		}
+
+		const smsRecipients = recipients.filter((r) => r.phone && r.prefersSMS !== false);
+
+		if (smsRecipients.length === 0 || !data.sms?.message) {
+			return { sent: 0, failed: 0 };
+		}
+
+		const errors: string[] = [];
+		let sent = 0;
+		let failed = 0;
+
+		// Send SMS to each recipient
+		for (const recipient of smsRecipients) {
+			try {
+				const result = await this.smsService.sendSMS({
+					to: recipient.phone!,
+					message: data.sms.message,
+					type: data.sms.type as SMSType,
+					metadata: {
+						...data.sms.metadata,
+						userId: recipient.userId,
+						event: data.event,
+					},
+				});
+
+				if (result.success) {
+					sent++;
+					this.logger.debug(`📱 SMS sent to ${recipient.phone}`);
+				} else {
+					failed++;
+					errors.push(`Failed to send SMS to ${recipient.phone}: ${result.error}`);
+					this.logger.warn(`📱 SMS failed to ${recipient.phone}: ${result.error}`);
+				}
+			} catch (error) {
+				failed++;
+				const errorMsg = `Error sending SMS to ${recipient.phone}: ${error.message}`;
+				errors.push(errorMsg);
+				this.logger.error(`📱 ${errorMsg}`, error.stack);
+			}
+		}
+
+		this.logger.log(`📱 SMS notifications: ${sent} sent, ${failed} failed`);
+
+		return { sent, failed, errors: errors.length > 0 ? errors : undefined };
 	}
 
 	/**

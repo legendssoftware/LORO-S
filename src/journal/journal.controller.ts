@@ -8,7 +8,7 @@ import { AccessLevel } from '../lib/enums/user.enums';
 import { UpdateJournalDto } from './dto/update-journal.dto';
 import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { Controller, Get, Post, Body, Param, UseGuards, Patch, Delete, Req, BadRequestException } from '@nestjs/common';
-import { AuthenticatedRequest, getClerkOrgId } from '../lib/interfaces/authenticated-request.interface';
+import { AuthenticatedRequest, getClerkOrgId, getClerkUserId } from '../lib/interfaces/authenticated-request.interface';
 
 @ApiTags('📝 Journal')
 @Controller('journal')
@@ -126,7 +126,8 @@ Creates a new journal entry in the system with full content management and organ
       throw new BadRequestException('Organization context required');
     }
     const branchId = this.toNumber(req.user?.branch?.uid);
-    return this.journalService.create(createJournalDto, orgId, branchId);
+    const clerkUserId = getClerkUserId(req);
+    return this.journalService.create(createJournalDto, orgId, branchId, clerkUserId);
   }
 
   @Get()
@@ -616,7 +617,8 @@ Creates detailed inspection journals with comprehensive scoring, validation, and
       throw new BadRequestException('Organization context required');
     }
     const branchId = this.toNumber(req.user?.branch?.uid);
-    return this.journalService.createInspection(createJournalDto, orgId, branchId);
+    const clerkUserId = getClerkUserId(req);
+    return this.journalService.createInspection(createJournalDto, orgId, branchId, clerkUserId);
   }
 
   @Get('inspections')

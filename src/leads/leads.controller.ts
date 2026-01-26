@@ -228,7 +228,7 @@ export class LeadsController {
 			throw new BadRequestException('Organization context required');
 		}
 		const branchId = req.user?.branch?.uid;
-		const userId = req.user?.uid; // Use numeric uid (ClerkAuthGuard provides this)
+		const clerkUserId = req.user?.clerkUserId as string | undefined;
 		const userAccessLevel = req.user?.accessLevel || req.user?.role;
 
 		const filters = {
@@ -253,7 +253,7 @@ export class LeadsController {
 				limit ? Number(limit) : 25,
 				orgId,
 				branchId,
-				Number(userId),
+				clerkUserId,
 				userAccessLevel,
 			);
 			
@@ -365,9 +365,9 @@ export class LeadsController {
 			throw new BadRequestException('Organization context required');
 		}
 		const branchId = req.user?.branch?.uid;
-		const userId = req.user?.uid; // Use numeric uid (ClerkAuthGuard provides this)
+		const clerkUserId = req.user?.clerkUserId as string | undefined;
 		const userAccessLevel = req.user?.accessLevel || req.user?.role;
-		return this.leadsService.findOne(ref, orgId, branchId, Number(userId), userAccessLevel);
+		return this.leadsService.findOne(ref, orgId, branchId, clerkUserId, userAccessLevel);
 	}
 
 	@Get('for/:ref')
@@ -421,10 +421,23 @@ export class LeadsController {
 		if (!orgId) {
 			throw new BadRequestException('Organization context required');
 		}
+		
+		// Validate that ref is a valid number
+		const refNumber = Number(ref);
+		if (isNaN(refNumber) || refNumber <= 0) {
+			throw new BadRequestException({
+				statusCode: 400,
+				message: 'Invalid user reference ID',
+				error: 'Bad Request',
+				action: 'Please provide a valid user reference ID',
+				cause: `The provided user reference "${ref}" is not a valid number`,
+			});
+		}
+		
 		const branchId = req.user?.branch?.uid;
 		const requestingUserId = req.user?.uid; // Use numeric uid (ClerkAuthGuard provides this)
 		const userAccessLevel = req.user?.accessLevel || req.user?.role;
-		return this.leadsService.leadsByUser(Number(ref), orgId, branchId, Number(requestingUserId), userAccessLevel);
+		return this.leadsService.leadsByUser(refNumber, orgId, branchId, Number(requestingUserId), userAccessLevel);
 	}
 
 	@Patch(':ref')
@@ -467,7 +480,7 @@ export class LeadsController {
 			throw new BadRequestException('Organization context required');
 		}
 		const branchId = req.user?.branch?.uid;
-		const userId = req.user?.uid; // Use numeric uid (ClerkAuthGuard provides this)
+		const userId = req.user?.uid;
 		return this.leadsService.update(ref, updateLeadDto, orgId, branchId, Number(userId));
 	}
 
@@ -552,7 +565,7 @@ export class LeadsController {
 			throw new BadRequestException('Organization context required');
 		}
 		const branchId = req.user?.branch?.uid;
-		const userId = req.user?.uid; // Use numeric uid (ClerkAuthGuard provides this)
+		const userId = req.user?.uid;
 		return this.leadsService.reactivate(ref, orgId, branchId, Number(userId));
 	}
 

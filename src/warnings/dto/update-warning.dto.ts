@@ -1,20 +1,14 @@
 import { PartialType } from '@nestjs/swagger';
 import { CreateWarningDto } from './create-warning.dto';
-import { IsOptional, IsString, IsEnum, IsDate, IsBoolean, IsObject } from 'class-validator';
+import { IsOptional, IsString, IsEnum, IsDate, IsBoolean } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { WarningSeverity, WarningStatus } from '../entities/warning.entity';
 
+/**
+ * Owner/recipient resolved via recipientClerkId; no uid in DTO. Issuer from token.
+ */
 export class UpdateWarningDto extends PartialType(CreateWarningDto) {
-	@IsObject()
-	@IsOptional()
-	@ApiProperty({
-		description: 'Updated user who will receive the warning',
-		example: { uid: 3 },
-		required: false,
-	})
-	owner?: { uid: number };
-
 	@IsString()
 	@IsOptional()
 	@ApiProperty({

@@ -1,5 +1,5 @@
-import { Injectable, NotFoundException, Logger, BadRequestException, Inject, forwardRef } from '@nestjs/common';
-import { IsNull, MoreThanOrEqual, Not, Repository, LessThanOrEqual, Between, In, LessThan, QueryFailedError } from 'typeorm';
+import { Injectable, NotFoundException, Logger, BadRequestException, Inject, forwardRef, HttpStatus, HttpException } from '@nestjs/common';
+import { IsNull, MoreThanOrEqual, Not, Repository, LessThanOrEqual, Between, In, LessThan, QueryFailedError, DataSource } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
@@ -40,7 +40,8 @@ import { UnifiedNotificationService } from '../lib/services/unified-notification
 import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
 import { Organisation } from 'src/organisation/entities/organisation.entity';
 import { Branch } from '../branch/entities/branch.entity';
-import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
+import { OrganisationSettings } from '../organisation/entities/organisation-settings.entity';
+import { TimezoneUtil } from '../lib/utils/timezone.util';
 
 // Import our enhanced calculation services
 import { TimeCalculatorUtil } from '../lib/utils/time-calculator.util';
@@ -64,11 +65,11 @@ export class AttendanceService {
 	private readonly CACHE_PREFIX = 'attendance:';
 	private readonly CACHE_TTL: number;
 	private readonly activeCalculations = new Set<number>();
-	
+
 	// Validation constants for external machine consolidations
 	private readonly MIN_SHIFT_DURATION_MINUTES = 30; // Minimum 30 minutes between check-in and check-out
 	private readonly MAX_TIME_DIFF_MINUTES = 5; // Maximum 5 minutes difference for "too close" validation (likely duplicate)
-	
+
 	// Duration and time constants
 	private readonly MAX_REASONABLE_DURATION_MINUTES = 960; // 16 hours - prevents obviously wrong data
 	private readonly FALLBACK_OPEN_TIME = '07:00'; // Fallback opening time when org hours unavailable
@@ -83,6 +84,8 @@ export class AttendanceService {
 		private organisationRepository: Repository<Organisation>,
 		@InjectRepository(Branch)
 		private branchRepository: Repository<Branch>,
+		@InjectRepository(OrganisationSettings)
+		private organisationSettingsRepository: Repository<OrganisationSettings>,
 		private userService: UserService,
 		private rewardsService: RewardsService,
 		private readonly eventEmitter: EventEmitter2,
@@ -95,6 +98,7 @@ export class AttendanceService {
 		@Inject(forwardRef(() => ReportsService))
 		private readonly reportsService: ReportsService,
 		private readonly googleMapsService: GoogleMapsService,
+		private readonly dataSource: DataSource,
 	) {
 		this.CACHE_TTL = parseInt(process.env.CACHE_TTL || '300000', 10); // 5 minutes default
 	}
@@ -253,21 +257,40 @@ export class AttendanceService {
 	/**
 	 * Get organization timezone with fallback
 	 * Accepts Clerk org ID (string) and filters by clerkOrgId or ref
+	 * Falls back to organisationSettings.regional.timezone if organization hours don't have timezone
 	 */
 	private async getOrganizationTimezone(organizationId?: string): Promise<string> {
 		if (!organizationId) {
-			const fallbackTimezone = 'Africa/Johannesburg';
+			const fallbackTimezone = TimezoneUtil.getSafeTimezone();
 			this.logger.debug(`No organizationId provided, using fallback timezone: ${fallbackTimezone}`);
 			return fallbackTimezone;
 		}
 
 		try {
+			// First try to get timezone from organization hours
 			const organizationHours = await this.organizationHoursService.getOrganizationHours(organizationId);
-			const timezone = organizationHours?.timezone || 'Africa/Johannesburg';
-			return timezone;
+			if (organizationHours?.timezone) {
+				return organizationHours.timezone;
+			}
+
+			// Fallback to organisation settings (need to resolve Clerk org ID to numeric uid)
+			const orgUid = await this.resolveOrgId(organizationId);
+			if (orgUid) {
+				const orgSettings = await this.organisationSettingsRepository.findOne({
+					where: { organisationUid: orgUid },
+				});
+				if (orgSettings?.regional?.timezone) {
+					return orgSettings.regional.timezone;
+				}
+			}
+
+			// Final fallback to safe default
+			const fallbackTimezone = TimezoneUtil.getSafeTimezone();
+			this.logger.debug(`Using fallback timezone: ${fallbackTimezone}`);
+			return fallbackTimezone;
 		} catch (error) {
 			this.logger.warn(`Error getting timezone for org ${organizationId}, using default:`, error);
-			const fallbackTimezone = 'Africa/Johannesburg';
+			const fallbackTimezone = TimezoneUtil.getSafeTimezone();
 			this.logger.debug(`Using fallback timezone: ${fallbackTimezone}`);
 			return fallbackTimezone;
 		}
@@ -278,7 +301,7 @@ export class AttendanceService {
 	 */
 	private async formatTimeInOrganizationTimezone(date: Date, organizationId?: string): Promise<string> {
 		const timezone = await this.getOrganizationTimezone(organizationId);
-		return formatInTimeZone(date, timezone, 'h:mm a');
+		return TimezoneUtil.formatInOrganizationTime(date, 'h:mm a', timezone);
 	}
 
 	/**
@@ -299,9 +322,9 @@ export class AttendanceService {
 				return record;
 			}
 
-			// Get organization timezone or use user's timezone from preferences
-			let timezone = 'Africa/Johannesburg'; // Default fallback
-			
+			// Get organization timezone using the updated method which checks settings
+			let timezone = TimezoneUtil.getSafeTimezone(); // Default fallback
+
 			// First try to get timezone from organization
 			if (organizationId) {
 				timezone = await this.getOrganizationTimezone(organizationId);
@@ -311,29 +334,30 @@ export class AttendanceService {
 				timezone = await this.getOrganizationTimezone(record.organisation.clerkOrgId || record.organisation.ref);
 			}
 
-			// Convert Date objects to timezone-aware Date objects
+			// Convert Date objects to timezone-aware Date objects for JSON serialization
+			// Using toOrganizationTimeForSerialization ensures dates serialize with organization timezone time
 			const convertedRecord = { ...record };
-			
+
 			if (convertedRecord.checkIn) {
-				convertedRecord.checkIn = toZonedTime(convertedRecord.checkIn, timezone);
+				convertedRecord.checkIn = TimezoneUtil.toOrganizationTimeForSerialization(convertedRecord.checkIn, timezone);
 			}
 			if (convertedRecord.checkOut) {
-				convertedRecord.checkOut = toZonedTime(convertedRecord.checkOut, timezone);
+				convertedRecord.checkOut = TimezoneUtil.toOrganizationTimeForSerialization(convertedRecord.checkOut, timezone);
 			}
 			if (convertedRecord.breakStartTime) {
-				convertedRecord.breakStartTime = toZonedTime(convertedRecord.breakStartTime, timezone);
+				convertedRecord.breakStartTime = TimezoneUtil.toOrganizationTimeForSerialization(convertedRecord.breakStartTime, timezone);
 			}
 			if (convertedRecord.breakEndTime) {
-				convertedRecord.breakEndTime = toZonedTime(convertedRecord.breakEndTime, timezone);
+				convertedRecord.breakEndTime = TimezoneUtil.toOrganizationTimeForSerialization(convertedRecord.breakEndTime, timezone);
 			}
 			if (convertedRecord.createdAt) {
-				convertedRecord.createdAt = toZonedTime(convertedRecord.createdAt, timezone);
+				convertedRecord.createdAt = TimezoneUtil.toOrganizationTimeForSerialization(convertedRecord.createdAt, timezone);
 			}
 			if (convertedRecord.updatedAt) {
-				convertedRecord.updatedAt = toZonedTime(convertedRecord.updatedAt, timezone);
+				convertedRecord.updatedAt = TimezoneUtil.toOrganizationTimeForSerialization(convertedRecord.updatedAt, timezone);
 			}
 			if (convertedRecord.verifiedAt) {
-				convertedRecord.verifiedAt = toZonedTime(convertedRecord.verifiedAt, timezone);
+				convertedRecord.verifiedAt = TimezoneUtil.toOrganizationTimeForSerialization(convertedRecord.verifiedAt, timezone);
 			}
 
 			return convertedRecord;
@@ -382,18 +406,18 @@ export class AttendanceService {
 			const timezone = await this.getOrganizationTimezone(organizationId);
 			// Times are already timezone-aware, no conversion needed
 			const convertedDate = testDate;
-			
+
 			const original = testDate.toISOString();
 			const converted = convertedDate.toISOString();
 			const expected = '2025-09-18T05:25:00.000Z'; // No conversion needed
 			const isWorking = true; // Always working since DB handles timezone
-			
+
 			this.logger.log(`[TIMEZONE TEST] Original: ${original}`);
 			this.logger.log(`[TIMEZONE TEST] Timezone: ${timezone}`);
 			this.logger.log(`[TIMEZONE TEST] Converted: ${converted}`);
 			this.logger.log(`[TIMEZONE TEST] Expected: ${expected}`);
 			this.logger.log(`[TIMEZONE TEST] Working correctly: ${isWorking}`);
-			
+
 			return {
 				original,
 				timezone,
@@ -442,20 +466,20 @@ export class AttendanceService {
 			// Handle nested objects with attendance data
 			if (typeof data === 'object') {
 				const result = { ...data };
-				
+
 				// Check for attendance records in common response structures
 				if (result.checkIns && Array.isArray(result.checkIns)) {
 					result.checkIns = await this.convertAttendanceRecordsTimezone(result.checkIns, organizationId);
 				}
-				
+
 				if (result.attendance && result.attendance.checkIn) {
 					result.attendance = await this.convertAttendanceRecordTimezone(result.attendance, organizationId);
 				}
-				
+
 				if (result.activeShifts && Array.isArray(result.activeShifts)) {
 					result.activeShifts = await this.convertAttendanceRecordsTimezone(result.activeShifts, organizationId);
 				}
-				
+
 				if (result.attendanceRecords && Array.isArray(result.attendanceRecords)) {
 					result.attendanceRecords = await this.convertAttendanceRecordsTimezone(result.attendanceRecords, organizationId);
 				}
@@ -492,7 +516,7 @@ export class AttendanceService {
 		}
 	}
 
-	private async clearAttendanceCache(attendanceId?: number, userId?: number): Promise<void> {
+	private async clearAttendanceCache(attendanceId?: number, userId?: string): Promise<void> {
 		try {
 			const keysToDelete: string[] = [];
 
@@ -502,14 +526,14 @@ export class AttendanceService {
 
 			if (userId) {
 				keysToDelete.push(this.getCacheKey(`user_${userId}`));
-				
+
 				// Clear streak cache for the user (clear all week variations)
 				// Get current week start to clear current week cache
 				const today = new Date();
 				const weekStart = startOfWeek(today, { weekStartsOn: 1 });
 				const weekStartDate = startOfDay(weekStart);
 				keysToDelete.push(this.getCacheKey(`streak_${userId}_${format(weekStartDate, 'yyyy-MM-dd')}`));
-				
+
 				// Also clear previous week cache in case of late updates
 				const prevWeekStart = startOfWeek(addDays(weekStart, -7), { weekStartsOn: 1 });
 				const prevWeekStartDate = startOfDay(prevWeekStart);
@@ -554,8 +578,8 @@ export class AttendanceService {
 	 * Process location coordinates to get address information using Google Maps
 	 */
 	private async processLocationCoordinates(
-		latitude: number, 
-		longitude: number, 
+		latitude: number,
+		longitude: number,
 		locationName: string = 'Location'
 	): Promise<Address | null> {
 		if (!latitude || !longitude) {
@@ -565,7 +589,7 @@ export class AttendanceService {
 
 		try {
 			this.logger.debug(`Processing location coordinates for ${locationName}: ${latitude}, ${longitude}`);
-			
+
 			const geocodingResult = await this.googleMapsService.reverseGeocode(
 				{ latitude, longitude },
 				{ language: Language.en }
@@ -574,7 +598,7 @@ export class AttendanceService {
 			if (geocodingResult && geocodingResult.formattedAddress) {
 				const address: Address = {
 					streetNumber: geocodingResult.address.streetNumber || '',
-					street: geocodingResult.address.streetNumber && geocodingResult.address.street 
+					street: geocodingResult.address.streetNumber && geocodingResult.address.street
 						? `${geocodingResult.address.streetNumber} ${geocodingResult.address.street}`
 						: geocodingResult.address.street || '',
 					suburb: geocodingResult.address.suburb || '',
@@ -632,260 +656,285 @@ export class AttendanceService {
 		orgId?: string,
 		branchId?: number,
 		skipAutoClose: boolean = false,
+		clerkUserId?: string,
+		uid?: number,
 	): Promise<{ message: string; data?: any }> {
-		// Lookup organisation by string (clerkOrgId or ref) for entity relation
-		let organisation: Organisation | null = null;
-		if (orgId) {
-			organisation = await this.organisationRepository.findOne({
-				where: [
-					{ clerkOrgId: orgId },
-					{ ref: orgId }
-				]
-			});
-			if (!organisation) {
-				throw new BadRequestException(`Organization not found for ID: ${orgId}`);
-			}
-		}
-		this.logger.log(`Check-in attempt for user ${checkInDto.owner.uid}, orgId: ${orgId}, branchId: ${branchId}`);
-		this.logger.debug(`Check-in data: ${JSON.stringify(checkInDto)}`);
-		this.logger.debug(
-			`Check-in data: ${JSON.stringify({
-				...checkInDto,
-				owner: checkInDto.owner?.uid,
-				organisation: orgId,
-				branch: branchId,
-			})}`,
-		);
+		const operationId = `checkin_${Date.now()}`;
+		const startTime = Date.now();
+		const isTokenFlow = !!clerkUserId && uid != null;
+		const ownerUidRaw = isTokenFlow ? String(uid) : checkInDto.owner?.uid;
+
+		this.logger.log(`[${operationId}] Check-in attempt for user ${ownerUidRaw}, orgId: ${orgId}, branchId: ${branchId}`);
+
+		// Create query runner for transaction
+		const queryRunner = this.dataSource.createQueryRunner();
+		await queryRunner.connect();
+		await queryRunner.startTransaction();
 
 		try {
-			// Enhanced validation
-			this.logger.debug('Validating check-in data');
-			if (!checkInDto.owner?.uid) {
-				throw new BadRequestException('User ID is required for check-in');
-			}
-
+			// Validation
 			if (!checkInDto.checkIn) {
-				throw new BadRequestException('Check-in time is required');
-			}
-
-		// Look up user to get clerkUserId for query
-		const user = await this.userRepository.findOne({
-			where: { uid: checkInDto.owner.uid },
-			select: ['uid', 'clerkUserId'],
-		});
-
-		if (!user || !user.clerkUserId) {
-			throw new NotFoundException(`User with ID ${checkInDto.owner.uid} not found or missing Clerk user ID`);
-		}
-
-		// Check if user is already checked in - if so, check if same day or auto-close previous shift
-		this.logger.debug(`Checking for existing active shift for user: ${checkInDto.owner.uid} (Clerk ID: ${user.clerkUserId})`);
-		const existingShiftQuery = this.attendanceRepository
-			.createQueryBuilder('attendance')
-			.leftJoinAndSelect('attendance.owner', 'owner')
-			.leftJoinAndSelect('attendance.organisation', 'organisation')
-			.where('attendance.ownerClerkUserId = :ownerClerkUserId', { ownerClerkUserId: user.clerkUserId })
-			.andWhere('attendance.status = :status', { status: AttendanceStatus.PRESENT })
-			.andWhere('attendance.checkIn IS NOT NULL')
-			.andWhere('attendance.checkOut IS NULL');
-		
-		// Filter by Clerk org ID if provided
-		if (orgId) {
-			existingShiftQuery.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
-		}
-		
-		const existingShift = await existingShiftQuery.getOne();
-
-		if (existingShift) {
-			this.logger.warn(`User ${checkInDto.owner.uid} already has an active shift - checking if same day`);
-			
-			// Get organization timezone for accurate date comparison
-			const orgTimezone = await this.getOrganizationTimezone(orgId);
-			
-			// Dates are already timezone-aware from database
-			const existingShiftDate = new Date(existingShift.checkIn);
-			const newCheckInDate = new Date(checkInDto.checkIn);
-			
-			// Check if both shifts are on the same calendar day in organization timezone
-			const isSameCalendarDay = 
-				existingShiftDate.getFullYear() === newCheckInDate.getFullYear() &&
-				existingShiftDate.getMonth() === newCheckInDate.getMonth() &&
-				existingShiftDate.getDate() === newCheckInDate.getDate();
-			
-			if (isSameCalendarDay) {
-				// Same day - prevent check-in, return error
-				this.logger.warn(
-					`User ${checkInDto.owner.uid} already has active shift for today. ` +
-					`Existing shift: ${existingShiftDate.toISOString()}, New check-in: ${newCheckInDate.toISOString()}`
+				throw new HttpException(
+					{ message: 'Check-in time is required', statusCode: HttpStatus.BAD_REQUEST, error: 'VALIDATION_ERROR' },
+					HttpStatus.BAD_REQUEST
 				);
-				
-				const checkInTime = await this.formatTimeInOrganizationTimezone(
-					new Date(existingShift.checkIn),
-					orgId
+			}
+			if (!isTokenFlow && !checkInDto.owner?.uid) {
+				throw new HttpException(
+					{ message: 'User ID is required for check-in (or use token-based flow)', statusCode: HttpStatus.BAD_REQUEST, error: 'VALIDATION_ERROR' },
+					HttpStatus.BAD_REQUEST
 				);
-				
-				return {
-					message: `You already have an active shift for today (started at ${checkInTime}). Please complete your current shift before starting a new one.`,
-					data: {
-						error: 'ACTIVE_SHIFT_TODAY',
-						existingShift: {
-							id: existingShift.uid,
-							checkInTime: existingShift.checkIn,
-							status: existingShift.status,
-						},
-						success: false
-					}
-				};
 			}
-			
-			// Different day - handle auto-close based on skipAutoClose flag
-			if (skipAutoClose) {
-				// External machine consolidation - don't auto-close, return error
-				this.logger.warn(
-				`External machine check-in blocked: User ${checkInDto.owner.uid} already has active shift from different day. ` +
-				`External machines cannot auto-close shifts.`
-			);
-			
-			const checkInTime = await this.formatTimeInOrganizationTimezone(
-				new Date(existingShift.checkIn),
-				orgId
-			);
-				
-				return {
-					message: `Cannot process external machine check-in: User already has an active shift (started at ${checkInTime}). ` +
-							 `Please manually close the existing shift first. External machines cannot auto-close shifts.`,
-					data: {
-						error: 'ACTIVE_SHIFT_EXISTS',
-						existingShift: {
-							id: existingShift.uid,
-							checkInTime: existingShift.checkIn,
-							status: existingShift.status,
-						},
-						success: false
-					}
-				};
+			if (!orgId) {
+				throw new HttpException(
+					{ message: 'Organization ID is required', statusCode: HttpStatus.BAD_REQUEST, error: 'VALIDATION_ERROR' },
+					HttpStatus.BAD_REQUEST
+				);
 			}
-			
-			// Different day - proceed with auto-close (only for manual check-ins, not external machines)
-			this.logger.warn(
-				`User ${checkInDto.owner.uid} has shift from different day - auto-closing previous shift`
-			);
-			
-			try {
-				// For auto-close from different day, use organization close time (16:30), NOT new check-in time
-				// This prevents creating shifts with wrong durations (e.g., 23+ hour shifts)
-				// Parse time string (HH:mm) and combine with existingShiftDate
-				const [hours, minutes] = '16:30'.split(':').map(Number);
-				const orgCloseTime = new Date(existingShiftDate);
-				orgCloseTime.setHours(hours, minutes, 0, 0);
-				
-				// Ensure close time is on the same day as the existing shift's check-in
-				// If it's before check-in time, it means we need the next day's close time
-				if (orgCloseTime <= existingShiftDate) {
-					const nextDayCloseTime = addMinutes(orgCloseTime, 24 * 60);
-					await this.autoCloseExistingShift(existingShift, orgId ?? undefined, true, nextDayCloseTime);
-				} else {
-					await this.autoCloseExistingShift(existingShift, orgId ?? undefined, true, orgCloseTime);
+
+			// Resolve organisation using QueryBuilder for better performance
+			const organisationQuery = queryRunner.manager
+				.createQueryBuilder(Organisation, 'org')
+				.select(['org.uid', 'org.clerkOrgId', 'org.ref', 'org.name'])
+				.where('org.isDeleted = false')
+				.andWhere('(org.clerkOrgId = :orgId OR org.ref = :orgId)', { orgId });
+
+			const organisation = await organisationQuery.getOne();
+			if (!organisation) {
+				throw new HttpException(
+					{ message: `Organization not found for ID: ${orgId}`, statusCode: HttpStatus.NOT_FOUND, error: 'NOT_FOUND' },
+					HttpStatus.NOT_FOUND
+				);
+			}
+
+			// Resolve user using QueryBuilder with optimized selects
+			const userQuery = queryRunner.manager
+				.createQueryBuilder(User, 'user')
+				.select(['user.uid', 'user.clerkUserId', 'user.name', 'user.surname', 'user.organisationRef'])
+				.where('user.isDeleted = false');
+
+			if (isTokenFlow) {
+				userQuery.andWhere('user.uid = :uid', { uid: uid! })
+					.andWhere('user.clerkUserId = :clerkUserId', { clerkUserId });
+			} else {
+				const userWhere = typeof checkInDto.owner!.uid === 'string' && checkInDto.owner!.uid.startsWith('user_')
+					? { clerkUserId: checkInDto.owner!.uid }
+					: { uid: Number(checkInDto.owner!.uid) };
+				userQuery.andWhere(userWhere);
+			}
+
+			const user = await userQuery.getOne();
+			if (!user || !user.clerkUserId) {
+				throw new HttpException(
+					{ message: `User not found or missing Clerk user ID`, statusCode: HttpStatus.NOT_FOUND, error: 'NOT_FOUND' },
+					HttpStatus.NOT_FOUND
+				);
+			}
+
+			const ownerUid = String(user.uid);
+
+			// Validate user belongs to organization
+			if (user.organisationRef && user.organisationRef !== orgId) {
+				throw new HttpException(
+					{ message: 'User does not belong to the specified organization', statusCode: HttpStatus.FORBIDDEN, error: 'FORBIDDEN' },
+					HttpStatus.FORBIDDEN
+				);
+			}
+
+			// Check for existing active shift using optimized QueryBuilder with index
+			this.logger.debug(`[${operationId}] Checking for existing active shift for user: ${ownerUid}`);
+			const existingShiftQuery = queryRunner.manager
+				.createQueryBuilder(Attendance, 'attendance')
+				.select(['attendance.uid', 'attendance.checkIn', 'attendance.status', 'attendance.ownerClerkUserId'])
+				.leftJoin('attendance.organisation', 'organisation')
+				.addSelect(['organisation.uid', 'organisation.clerkOrgId', 'organisation.ref'])
+				.where('attendance.ownerClerkUserId = :ownerClerkUserId', { ownerClerkUserId: user.clerkUserId })
+				.andWhere('attendance.status = :status', { status: AttendanceStatus.PRESENT })
+				.andWhere('attendance.checkIn IS NOT NULL')
+				.andWhere('attendance.checkOut IS NULL');
+
+			if (orgId) {
+				existingShiftQuery.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
+			}
+
+			const existingShift = await existingShiftQuery.getOne();
+
+			if (existingShift) {
+				this.logger.warn(`User ${ownerUid} already has an active shift - checking if same day`);
+
+				// Get organization timezone for accurate date comparison
+				const orgTimezone = await this.getOrganizationTimezone(orgId);
+
+				// Dates are already timezone-aware from database
+				const existingShiftDate = new Date(existingShift.checkIn);
+				const newCheckInDate = new Date(checkInDto.checkIn);
+
+				// Check if both shifts are on the same calendar day in organization timezone
+				const isSameCalendarDay =
+					existingShiftDate.getFullYear() === newCheckInDate.getFullYear() &&
+					existingShiftDate.getMonth() === newCheckInDate.getMonth() &&
+					existingShiftDate.getDate() === newCheckInDate.getDate();
+
+				if (isSameCalendarDay) {
+					// Same day - prevent check-in, return error
+					this.logger.warn(
+						`User ${ownerUid} already has active shift for today. ` +
+						`Existing shift: ${existingShiftDate.toISOString()}, New check-in: ${newCheckInDate.toISOString()}`
+					);
+
+					const checkInTime = await this.formatTimeInOrganizationTimezone(
+						new Date(existingShift.checkIn),
+						orgId
+					);
+
+					return {
+						message: `You already have an active shift for today (started at ${checkInTime}). Please complete your current shift before starting a new one.`,
+						data: {
+							error: 'ACTIVE_SHIFT_TODAY',
+							existingShift: {
+								id: existingShift.uid,
+								checkInTime: existingShift.checkIn,
+								status: existingShift.status,
+							},
+							success: false
+						}
+					};
 				}
-				
-				this.logger.log(`Successfully auto-closed existing shift from different day for user ${checkInDto.owner.uid}`);
-			} catch (error) {
-				this.logger.error(
-					`Failed to auto-close existing shift for user ${checkInDto.owner.uid}: ${error.message}`,
+
+				// Different day - handle auto-close based on skipAutoClose flag
+				if (skipAutoClose) {
+					// External machine consolidation - don't auto-close, return error
+					this.logger.warn(
+						`External machine check-in blocked: User ${ownerUid} already has active shift from different day. ` +
+						`External machines cannot auto-close shifts.`
+					);
+
+					const checkInTime = await this.formatTimeInOrganizationTimezone(
+						new Date(existingShift.checkIn),
+						orgId
+					);
+
+					return {
+						message: `Cannot process external machine check-in: User already has an active shift (started at ${checkInTime}). ` +
+							`Please manually close the existing shift first. External machines cannot auto-close shifts.`,
+						data: {
+							error: 'ACTIVE_SHIFT_EXISTS',
+							existingShift: {
+								id: existingShift.uid,
+								checkInTime: existingShift.checkIn,
+								status: existingShift.status,
+							},
+							success: false
+						}
+					};
+				}
+
+				// Different day - proceed with auto-close (only for manual check-ins, not external machines)
+				this.logger.warn(
+					`User ${ownerUid} has shift from different day - auto-closing previous shift`
 				);
-				// Re-throw the error to ensure it's properly caught by consolidation logic
-				throw new BadRequestException(
-					`Failed to process check-in: User is already checked in and auto-close failed. ${error.message}`,
+
+				try {
+					// For auto-close from different day, use organization close time (16:30), NOT new check-in time
+					// This prevents creating shifts with wrong durations (e.g., 23+ hour shifts)
+					// Parse time string (HH:mm) and combine with existingShiftDate
+					const [hours, minutes] = '16:30'.split(':').map(Number);
+					const orgCloseTime = new Date(existingShiftDate);
+					orgCloseTime.setHours(hours, minutes, 0, 0);
+
+					// Ensure close time is on the same day as the existing shift's check-in
+					// If it's before check-in time, it means we need the next day's close time
+					if (orgCloseTime <= existingShiftDate) {
+						const nextDayCloseTime = addMinutes(orgCloseTime, 24 * 60);
+						await this.autoCloseExistingShift(existingShift, orgId ?? undefined, true, nextDayCloseTime);
+					} else {
+						await this.autoCloseExistingShift(existingShift, orgId ?? undefined, true, orgCloseTime);
+					}
+
+					this.logger.log(`Successfully auto-closed existing shift from different day for user ${ownerUid}`);
+				} catch (error) {
+					this.logger.error(
+						`Failed to auto-close existing shift for user ${ownerUid}: ${error.message}`,
+					);
+					// Re-throw the error to ensure it's properly caught by consolidation logic
+					throw new BadRequestException(
+						`Failed to process check-in: User is already checked in and auto-close failed. ${error.message}`,
+					);
+				}
+			}
+
+			// Calculate early and late minutes based on organization hours
+			let earlyMinutes = 0;
+			let lateMinutes = 0;
+			if (orgId) {
+				try {
+					const timingInfo = await this.calculateEarlyAndLateMinutes(orgId, new Date(checkInDto.checkIn));
+					earlyMinutes = timingInfo.earlyMinutes;
+					lateMinutes = timingInfo.lateMinutes;
+					this.logger.debug(
+						`Check-in timing for user ${ownerUid}: Early: ${earlyMinutes}min, Late: ${lateMinutes}min`
+					);
+				} catch (timingError) {
+					this.logger.warn(`Failed to calculate early/late minutes: ${timingError.message}`);
+					// Continue with check-in even if timing calculation fails
+				}
+			}
+
+			// User already validated above at line 672-679, no need to re-validate
+
+			// Prepare attendance data
+			const { branch: _, owner: __, ...restCheckInDto } = checkInDto;
+			const attendanceData = queryRunner.manager.create(Attendance, {
+				...restCheckInDto,
+				checkIn: new Date(checkInDto.checkIn),
+				status: checkInDto.status || AttendanceStatus.PRESENT,
+				organisation: organisation,
+				organisationUid: organisation.uid,
+				placesOfInterest: null,
+				earlyMinutes,
+				lateMinutes,
+				ownerClerkUserId: user.clerkUserId,
+				branch: branchId ? { uid: branchId } : null,
+				branchUid: branchId || null,
+			});
+
+			// Save within transaction
+			this.logger.debug(`[${operationId}] Saving check-in record within transaction`);
+			const checkIn = await queryRunner.manager.save(Attendance, attendanceData);
+
+			if (!checkIn || !checkIn.uid) {
+				throw new HttpException(
+					{ message: 'Failed to create attendance record', statusCode: HttpStatus.INTERNAL_SERVER_ERROR, error: 'DATABASE_ERROR' },
+					HttpStatus.INTERNAL_SERVER_ERROR
 				);
 			}
-		}
 
-		// Calculate early and late minutes based on organization hours
-		let earlyMinutes = 0;
-		let lateMinutes = 0;
-		if (orgId) {
-			try {
-				const timingInfo = await this.calculateEarlyAndLateMinutes(orgId, new Date(checkInDto.checkIn));
-				earlyMinutes = timingInfo.earlyMinutes;
-				lateMinutes = timingInfo.lateMinutes;
-				this.logger.debug(
-					`Check-in timing for user ${checkInDto.owner.uid}: Early: ${earlyMinutes}min, Late: ${lateMinutes}min`
-				);
-			} catch (timingError) {
-				this.logger.warn(`Failed to calculate early/late minutes: ${timingError.message}`);
-				// Continue with check-in even if timing calculation fails
-			}
-		}
+			// Commit transaction before async operations
+			await queryRunner.commitTransaction();
+			this.logger.debug(`[${operationId}] Transaction committed successfully`);
 
-		// User already validated above at line 672-679, no need to re-validate
+			// Clear cache
+			await this.clearAttendanceCache(checkIn.uid, ownerUid);
 
-		// Enhanced data mapping - save record first WITHOUT location processing
-		// Location processing will happen asynchronously after response is sent
-		// Destructure branch and owner from checkInDto to avoid conflicts
-		// owner uses clerkUserId (string) not uid (number) for the relation
-		const { branch: _, owner: __, ...restCheckInDto } = checkInDto;
-		
-		const attendanceData: any = {
-			...restCheckInDto,
-			checkIn: new Date(checkInDto.checkIn),
-			status: checkInDto.status || AttendanceStatus.PRESENT,
-			organisation: organisation || undefined,
-			placesOfInterest: null, // Will be updated asynchronously
-			earlyMinutes: earlyMinutes,
-			lateMinutes: lateMinutes,
-			ownerClerkUserId: user.clerkUserId, // Use Clerk user ID for the relation, not numeric uid
-		};
-
-		// Only set branch and branchUid if branchId is provided
-		if (branchId) {
-			attendanceData.branch = { uid: branchId };
-			attendanceData.branchUid = branchId;
-		} else {
-			// Explicitly set to null for TypeORM (handles null better than undefined)
-			attendanceData.branch = null;
-			attendanceData.branchUid = null;
-		}
-
-		// Explicitly remove uid if it exists to ensure INSERT instead of UPDATE
-		// This prevents TypeORM from trying to update an existing record
-		// This can happen if the data object was previously used or contains a uid from another source
-		delete attendanceData.uid;
-
-		this.logger.debug('Saving check-in record to database');
-		// Save the attendance record - TypeORM will INSERT since uid is not present
-		const checkIn = await this.attendanceRepository.save(attendanceData);
-
-		if (!checkIn) {
-			this.logger.error('Failed to create check-in record - database returned null');
-			throw new NotFoundException(process.env.CREATE_ERROR_MESSAGE || 'Failed to create attendance record');
-		}
-
-		this.logger.debug(`Check-in record created successfully with ID: ${checkIn.uid}`);
-
-			// Clear attendance cache after successful check-in
-			await this.clearAttendanceCache(checkIn.uid, checkInDto.owner.uid);
-
-			// Enhanced response data mapping
+			// Prepare response
 			const responseData = {
 				attendanceId: checkIn.uid,
-				userId: checkInDto.owner.uid,
+				userId: user.uid,
 				checkInTime: checkIn.checkIn,
 				status: checkIn.status,
 				organisationId: orgId,
 				branchId: branchId,
 				earlyMinutes: checkIn.earlyMinutes || 0,
 				lateMinutes: checkIn.lateMinutes || 0,
-				location:
-					checkInDto.checkInLatitude && checkInDto.checkInLongitude
-						? {
-								latitude: checkInDto.checkInLatitude,
-								longitude: checkInDto.checkInLongitude,
-								accuracy: 10, // Default accuracy if not provided
-						  }
-						: null,
+				location: checkInDto.checkInLatitude && checkInDto.checkInLongitude
+					? { latitude: checkInDto.checkInLatitude, longitude: checkInDto.checkInLongitude, accuracy: 10 }
+					: null,
 				xpAwarded: XP_VALUES.CHECK_IN,
 				timestamp: new Date(),
 			};
+
+			const duration = Date.now() - startTime;
+			this.logger.log(`[${operationId}] ✅ Check-in successful in ${duration}ms for user: ${ownerUid}`);
 
 			const response = {
 				message: process.env.SUCCESS_MESSAGE || 'Check-in recorded successfully',
@@ -898,7 +947,7 @@ export class AttendanceService {
 					// Process check-in location if coordinates are provided (async)
 					try {
 						if (checkInDto.checkInLatitude && checkInDto.checkInLongitude) {
-							this.logger.debug(`Processing check-in location coordinates asynchronously for user: ${checkInDto.owner.uid}`);
+							this.logger.debug(`Processing check-in location coordinates asynchronously for user: ${ownerUid}`);
 							const checkInAddress = await this.processLocationCoordinates(
 								checkInDto.checkInLatitude,
 								checkInDto.checkInLongitude,
@@ -930,22 +979,22 @@ export class AttendanceService {
 							await this.checkRemoteCheckInOnCheckIn(checkIn, orgId, branchId, checkInDto.checkInLatitude, checkInDto.checkInLongitude);
 						}
 					} catch (remoteCheckError) {
-						this.logger.warn(`Failed to check remote check-in for user ${checkInDto.owner.uid}:`, remoteCheckError.message);
+						this.logger.warn(`Failed to check remote check-in for user ${ownerUid}:`, remoteCheckError.message);
 						// Don't fail check-in if remote check fails
 					}
 
 					// Award XP with enhanced error handling
 					try {
 						this.logger.debug(
-							`Awarding XP for check-in to user: ${checkInDto.owner.uid}, amount: ${XP_VALUES.CHECK_IN}`,
+							`Awarding XP for check-in to user: ${ownerUid}, amount: ${XP_VALUES.CHECK_IN}`,
 						);
 						await this.rewardsService.awardXP(
 							{
-								owner: checkInDto.owner.uid,
+								owner: user.uid,
 								amount: XP_VALUES.CHECK_IN,
 								action: XP_VALUES_TYPES.ATTENDANCE,
 								source: {
-									id: checkInDto.owner.uid.toString(),
+									id: ownerUid,
 									type: XP_VALUES_TYPES.ATTENDANCE,
 									details: 'Check-in reward',
 								},
@@ -953,37 +1002,37 @@ export class AttendanceService {
 							orgId,
 							branchId,
 						);
-						this.logger.debug(`XP awarded successfully for check-in to user: ${checkInDto.owner.uid}`);
+						this.logger.debug(`XP awarded successfully for check-in to user: ${ownerUid}`);
 					} catch (xpError) {
-						this.logger.error(`Failed to award XP for check-in to user: ${checkInDto.owner.uid}`, xpError.stack);
+						this.logger.error(`Failed to award XP for check-in to user: ${ownerUid}`, xpError.stack);
 						// Don't fail the check-in if XP award fails
 					}
 
 					// Send enhanced shift start notification with improved messaging
 					try {
 						// Get user info for personalized message with email and relations
-						const user = await this.userRepository.findOne({
-							where: { uid: checkInDto.owner.uid },
+						const userForNotification = await this.userRepository.findOne({
+							where: { uid: Number(ownerUid) },
 							select: ['uid', 'name', 'surname', 'email', 'username'],
 							relations: ['organisation', 'branch', 'branch.organisation'],
 						});
 
 						// Construct full name with proper fallbacks
-						const fullName = `${user?.name || ''} ${user?.surname || ''}`.trim();
-						const userName = fullName || user?.username || 'Team Member';
-						
+						const fullName = `${userForNotification?.name || ''} ${userForNotification?.surname || ''}`.trim();
+						const userName = fullName || userForNotification?.username || 'Team Member';
+
 						// Format check-in time in organization timezone
 						const checkInTime = await this.formatTimeInOrganizationTimezone(new Date(checkIn.checkIn), orgId);
 
-						this.logger.debug(`Sending enhanced shift start notification to user: ${checkInDto.owner.uid}`);
+						this.logger.debug(`Sending enhanced shift start notification to user: ${ownerUid}`);
 						// Send push notification
 						await this.unifiedNotificationService.sendTemplatedNotification(
 							NotificationEvent.ATTENDANCE_SHIFT_STARTED,
-							[checkInDto.owner.uid],
+							[userForNotification.uid],
 							{
 								checkInTime,
 								userName,
-								userId: checkInDto.owner.uid,
+								userId: userForNotification.uid,
 								organisationId: orgId,
 								branchId: branchId,
 								xpAwarded: XP_VALUES.CHECK_IN,
@@ -996,11 +1045,11 @@ export class AttendanceService {
 						);
 
 						this.logger.debug(
-							`Shift start push notification sent successfully to user: ${checkInDto.owner.uid}`,
+							`Shift start push notification sent successfully to user: ${ownerUid}`,
 						);
 					} catch (notificationError) {
 						this.logger.warn(
-							`Failed to send shift start notification to user: ${checkInDto.owner.uid}`,
+							`Failed to send shift start notification to user: ${ownerUid}`,
 							notificationError.message,
 						);
 						// Don't fail the check-in if notification fails
@@ -1011,10 +1060,10 @@ export class AttendanceService {
 					try {
 						if (orgId && checkIn.lateMinutes && checkIn.lateMinutes > 0) {
 							this.logger.debug(
-								`User ${checkInDto.owner.uid} is ${checkIn.lateMinutes} minutes late - sending notification`,
+								`User ${ownerUid} is ${checkIn.lateMinutes} minutes late - sending notification`,
 							);
 							await this.sendShiftReminder(
-								checkInDto.owner.uid,
+								user.uid,
 								'late',
 								orgId,
 								branchId,
@@ -1024,59 +1073,107 @@ export class AttendanceService {
 						}
 					} catch (lateCheckError) {
 						this.logger.warn(
-							`Failed to check/send late notification for user: ${checkInDto.owner.uid}`,
+							`Failed to check/send late notification for user: ${ownerUid}`,
 							lateCheckError.message,
 						);
 						// Don't fail the check-in if late check fails
 					}
 
 				} catch (backgroundError) {
-					this.logger.error(`Background check-in tasks failed for user ${checkInDto.owner.uid}:`, backgroundError.message);
+					this.logger.error(`Background check-in tasks failed for user ${ownerUid}:`, backgroundError.message);
 					// Don't affect user experience
 				}
 			});
 
-			this.logger.log(`Check-in successful for user: ${checkInDto.owner.uid}`);
+			// Post-response async processing
+			setImmediate(async () => {
+				try {
+					// Location processing, notifications, XP, etc. (existing async code)
+					if (checkInDto.checkInLatitude && checkInDto.checkInLongitude) {
+						const checkInAddress = await this.processLocationCoordinates(
+							checkInDto.checkInLatitude,
+							checkInDto.checkInLongitude,
+							'Check-in Location'
+						);
+						if (checkInAddress) {
+							await this.attendanceRepository.update(checkIn.uid, {
+								placesOfInterest: { startAddress: checkInAddress, endAddress: null, breakStart: null, breakEnd: null, otherPlacesOfInterest: [] }
+							});
+						}
+					}
+
+					await this.rewardsService.awardXP({
+						owner: user.uid,
+						amount: XP_VALUES.CHECK_IN,
+						action: XP_VALUES_TYPES.ATTENDANCE,
+						source: { id: ownerUid, type: XP_VALUES_TYPES.ATTENDANCE, details: 'Check-in reward' },
+					}, orgId, branchId);
+
+					const userForNotification = await this.userRepository.findOne({
+						where: { uid: Number(ownerUid) },
+						select: ['uid', 'name', 'surname', 'email', 'username'],
+					});
+					if (userForNotification) {
+						const fullName = `${userForNotification.name || ''} ${userForNotification.surname || ''}`.trim();
+						const userName = fullName || userForNotification.username || 'Team Member';
+						const checkInTime = await this.formatTimeInOrganizationTimezone(new Date(checkIn.checkIn), orgId);
+						await this.unifiedNotificationService.sendTemplatedNotification(
+							NotificationEvent.ATTENDANCE_SHIFT_STARTED,
+							[userForNotification.uid],
+							{ checkInTime, userName, userId: userForNotification.uid, organisationId: orgId, branchId, xpAwarded: XP_VALUES.CHECK_IN, timestamp: new Date().toISOString() },
+							{ priority: NotificationPriority.NORMAL, sendEmail: false },
+						);
+					}
+				} catch (backgroundError) {
+					this.logger.error(`[${operationId}] Background tasks failed: ${backgroundError.message}`);
+				}
+			});
+
 			return response;
 		} catch (error) {
-			this.logger.error(`Check-in failed for user: ${checkInDto.owner?.uid}`, error.stack);
+			await queryRunner.rollbackTransaction();
+			const duration = Date.now() - startTime;
+			this.logger.error(`[${operationId}] ❌ Check-in failed after ${duration}ms: ${error.message}`, error.stack);
 
-			// Handle foreign key constraint violations with proper error messages
-			if (error instanceof QueryFailedError && error.message.includes('foreign key constraint')) {
-				const constraintName = error.message.match(/constraint "([^"]+)"/)?.[1] || 'unknown';
-				this.logger.error(`Foreign key constraint violation: ${constraintName}`, error.message);
-				
-				// Re-throw as BadRequestException with clear message
-				if (error.message.includes('branch')) {
-					throw new BadRequestException(
-						`Invalid branch or organisation relationship. ` +
-						`Please ensure the branch belongs to the specified organisation.`
-					);
-				} else if (error.message.includes('organisation')) {
-					throw new BadRequestException(
-						`Invalid organisation reference. ` +
-						`Please ensure the organisation exists and is valid.`
-					);
-				} else if (error.message.includes('owner')) {
-					throw new BadRequestException(
-						`Invalid user reference. ` +
-						`Please ensure the user exists and is valid.`
-					);
-				} else {
-					throw new BadRequestException(
-						`Database constraint violation: ${constraintName}. ` +
-						`Please verify all referenced entities exist and relationships are valid.`
-					);
+			// Handle database errors
+			if (error instanceof QueryFailedError) {
+				if (error.message.includes('foreign key constraint')) {
+					const constraintName = error.message.match(/constraint "([^"]+)"/)?.[1] || 'unknown';
+					if (error.message.includes('branch')) {
+						throw new HttpException(
+							{ message: 'Invalid branch or organisation relationship', statusCode: HttpStatus.BAD_REQUEST, error: 'CONSTRAINT_VIOLATION', constraint: constraintName },
+							HttpStatus.BAD_REQUEST
+						);
+					} else if (error.message.includes('organisation')) {
+						throw new HttpException(
+							{ message: 'Invalid organisation reference', statusCode: HttpStatus.BAD_REQUEST, error: 'CONSTRAINT_VIOLATION', constraint: constraintName },
+							HttpStatus.BAD_REQUEST
+						);
+					} else if (error.message.includes('owner')) {
+						throw new HttpException(
+							{ message: 'Invalid user reference', statusCode: HttpStatus.BAD_REQUEST, error: 'CONSTRAINT_VIOLATION', constraint: constraintName },
+							HttpStatus.BAD_REQUEST
+						);
+					}
 				}
+				throw new HttpException(
+					{ message: 'Database error occurred', statusCode: HttpStatus.INTERNAL_SERVER_ERROR, error: 'DATABASE_ERROR', details: error.message },
+					HttpStatus.INTERNAL_SERVER_ERROR
+				);
 			}
 
-			// Re-throw HTTP exceptions (BadRequestException, NotFoundException, etc.)
-			if (error instanceof BadRequestException || error instanceof NotFoundException) {
+			// Re-throw HTTP exceptions
+			if (error instanceof HttpException) {
 				throw error;
 			}
 
-			// For other errors, throw as BadRequestException with error message
-			throw new BadRequestException(error?.message || 'Check-in failed. Please try again.');
+			// Generic error
+			throw new HttpException(
+				{ message: error?.message || 'Check-in failed. Please try again.', statusCode: HttpStatus.INTERNAL_SERVER_ERROR, error: 'INTERNAL_ERROR' },
+				HttpStatus.INTERNAL_SERVER_ERROR
+			);
+		} finally {
+			await queryRunner.release();
 		}
 	}
 
@@ -1090,7 +1187,7 @@ export class AttendanceService {
 	 * @param closeAtTime - Optional explicit close time. If provided, uses this time instead of org close time (used for user-triggered close)
 	 */
 	private async autoCloseExistingShift(
-		existingShift: Attendance, 
+		existingShift: Attendance,
 		orgId?: string,
 		skipPreferenceCheck: boolean = false,
 		closeAtTime?: Date
@@ -1100,9 +1197,10 @@ export class AttendanceService {
 			throw new Error('Existing shift is undefined');
 		}
 
-		const userId = existingShift.owner?.uid || 'unknown';
+		const userIdRef = existingShift.owner?.uid ?? existingShift.ownerClerkUserId ?? '';
+		const userIdLabel = typeof userIdRef === 'number' ? String(userIdRef) : userIdRef;
 		this.logger.debug(
-			`Auto-closing existing shift for user ${userId}, orgId: ${orgId}, skipPreferenceCheck: ${skipPreferenceCheck}`
+			`Auto-closing existing shift for user ${userIdLabel}, orgId: ${orgId}, skipPreferenceCheck: ${skipPreferenceCheck}`
 		);
 
 		// Only check user preferences if this is NOT triggered by a new check-in
@@ -1111,23 +1209,28 @@ export class AttendanceService {
 		if (!skipPreferenceCheck) {
 			this.logger.debug(`Checking user preferences for shift auto-end (scheduled auto-close scenario)`);
 			try {
+				const userLookup = typeof userIdRef === 'number'
+					? { uid: userIdRef }
+					: userIdRef && String(userIdRef).startsWith('user_')
+						? { clerkUserId: userIdRef }
+						: { uid: Number(userIdRef) };
 				const user = await this.userRepository.findOne({
-					where: { uid: Number(userId) },
+					where: userLookup,
 					select: ['uid', 'preferences'],
 				});
 
 				if (user?.preferences?.shiftAutoEnd === false) {
-					this.logger.debug(`User ${userId} has disabled shift auto-end, skipping auto-close`);
+					this.logger.debug(`User ${userIdLabel} has disabled shift auto-end, skipping auto-close`);
 					throw new Error(`User has disabled automatic shift ending`);
 				}
 
-				this.logger.debug(`User ${userId} preferences allow auto-close, proceeding`);
+				this.logger.debug(`User ${userIdLabel} preferences allow auto-close, proceeding`);
 			} catch (error) {
 				if (error.message.includes('disabled automatic')) {
 					throw error; // Re-throw the user preference error
 				}
 				this.logger.warn(
-					`Could not fetch user preferences for ${userId}, defaulting to allow auto-close: ${error.message}`,
+					`Could not fetch user preferences for ${userIdLabel}, defaulting to allow auto-close: ${error.message}`,
 				);
 				// Continue with auto-close if we can't fetch preferences (fail-safe)
 			}
@@ -1140,14 +1243,14 @@ export class AttendanceService {
 		// Get organization timezone for accurate close time calculation (orgId is clerkOrgId/ref string)
 		const organizationHours = orgId ? await this.organizationHoursService.getOrganizationHours(orgId) : null;
 		const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
-		
+
 		const checkInDate = new Date(existingShift.checkIn);
 		let closeTime: Date;
 
 		// Priority: Use explicit closeAtTime if provided (user-triggered), otherwise use org close time (scheduled)
 		if (closeAtTime) {
 			closeTime = new Date(closeAtTime);
-			
+
 			// Validate that close time is after check-in time
 			if (closeTime <= checkInDate) {
 				this.logger.warn(
@@ -1155,9 +1258,9 @@ export class AttendanceService {
 				);
 				closeTime = new Date();
 			}
-			
+
 			this.logger.debug(
-				`Using explicit close time for user-triggered auto-close: ${closeTime.toISOString()} for user ${userId}`
+				`Using explicit close time for user-triggered auto-close: ${closeTime.toISOString()} for user ${userIdLabel}`
 			);
 		} else {
 			// Scheduled auto-close: use organization close time
@@ -1187,7 +1290,7 @@ export class AttendanceService {
 							}
 
 							this.logger.debug(
-								`Using organization close time: ${workingDayInfo.endTime} for user ${userId}`,
+								`Using organization close time: ${workingDayInfo.endTime} for user ${userIdLabel}`,
 							);
 						} catch (parseError) {
 							this.logger.warn(
@@ -1209,7 +1312,7 @@ export class AttendanceService {
 		}
 
 		try {
-			this.logger.debug(`Setting auto-close time to: ${closeTime.toISOString()} for user ${userId}`);
+			this.logger.debug(`Setting auto-close time to: ${closeTime.toISOString()} for user ${userIdLabel}`);
 
 			// Calculate duration and overtime for the auto-closed shift
 			const checkInTime = new Date(existingShift.checkIn);
@@ -1265,7 +1368,7 @@ export class AttendanceService {
 			// Validate duration to prevent saving suspiciously long shifts
 			if (actualWorkMinutes > this.MAX_REASONABLE_DURATION_MINUTES) {
 				this.logger.warn(
-					`Suspicious auto-close duration detected: ${actualWorkMinutes} minutes (${(actualWorkMinutes/60).toFixed(1)} hours). ` +
+					`Suspicious auto-close duration detected: ${actualWorkMinutes} minutes (${(actualWorkMinutes / 60).toFixed(1)} hours). ` +
 					`Capping at ${this.MAX_REASONABLE_DURATION_MINUTES} minutes (16 hours). ` +
 					`Check-in: ${checkInTime.toISOString()}, Check-out: ${checkOutTime.toISOString()}`
 				);
@@ -1285,24 +1388,24 @@ export class AttendanceService {
 			existingShift.overtime = overtimeDuration;
 			existingShift.status = AttendanceStatus.COMPLETED;
 			// Set appropriate note based on whether this is a user-initiated or scheduled auto-close
-			existingShift.checkOutNotes = closeAtTime 
+			existingShift.checkOutNotes = closeAtTime
 				? 'Auto-closed when new shift was started'
-				: (skipPreferenceCheck 
+				: (skipPreferenceCheck
 					? 'Auto-closed at organization close time due to new shift being started'
 					: 'Auto-closed at organization close time (scheduled auto-end)');
 
 			await this.attendanceRepository.save(existingShift);
 
-			this.logger.log(`Auto-closed existing shift for user ${userId} at ${closeTime.toISOString()}`);
+			this.logger.log(`Auto-closed existing shift for user ${userIdLabel} at ${closeTime.toISOString()}`);
 
 			// Clear attendance cache after auto-close to ensure fresh data in subsequent queries
-			await this.clearAttendanceCache(existingShift.uid, Number(userId));
-			this.logger.debug(`Cleared cache for auto-closed shift ${existingShift.uid} and user ${userId}`);
+			await this.clearAttendanceCache(existingShift.uid, userIdLabel);
+			this.logger.debug(`Cleared cache for auto-closed shift ${existingShift.uid} and user ${userIdLabel}`);
 
 			// Send email notification about auto-close
 			await this.sendAutoCloseShiftNotification(existingShift, closeTime, orgId);
 		} catch (error) {
-			this.logger.error(`Error auto-closing existing shift for user ${userId}: ${error.message}`);
+			this.logger.error(`Error auto-closing existing shift for user ${userIdLabel}: ${error.message}`);
 
 			// Fallback: still try to close the shift with default time in org timezone
 			try {
@@ -1350,7 +1453,7 @@ export class AttendanceService {
 						this.logger.warn(`Failed to get expected work minutes for fallback, using default: ${fallbackExpectedWorkMinutes}`);
 					}
 				}
-				
+
 				// Use organization's expected work minutes, with a reasonable maximum cap to prevent wrong durations
 				const fallbackDurationMinutes = Math.min(fallbackActualWorkMinutes, fallbackExpectedWorkMinutes, this.MAX_REASONABLE_DURATION_MINUTES);
 				const fallbackOvertimeMinutes = Math.max(0, fallbackActualWorkMinutes - fallbackDurationMinutes);
@@ -1374,16 +1477,16 @@ export class AttendanceService {
 						: 'Auto-closed with fallback time due to org hours fetch error (scheduled auto-end)');
 
 				await this.attendanceRepository.save(existingShift);
-				this.logger.log(`Fallback auto-close successful for user ${userId} at 4:30 PM`);
+				this.logger.log(`Fallback auto-close successful for user ${userIdLabel} at 4:30 PM`);
 
 				// Clear attendance cache after fallback auto-close
-				await this.clearAttendanceCache(existingShift.uid, Number(userId));
-				this.logger.debug(`Cleared cache for fallback auto-closed shift ${existingShift.uid} and user ${userId}`);
+				await this.clearAttendanceCache(existingShift.uid, userIdLabel);
+				this.logger.debug(`Cleared cache for fallback auto-closed shift ${existingShift.uid} and user ${userIdLabel}`);
 
 				// Send email notification about fallback auto-close
 				await this.sendAutoCloseShiftNotification(existingShift, closeTime, orgId);
 			} catch (fallbackError) {
-				this.logger.error(`Fallback auto-close also failed for user ${userId}: ${fallbackError.message}`);
+				this.logger.error(`Fallback auto-close also failed for user ${userIdLabel}: ${fallbackError.message}`);
 				throw new Error(`Failed to auto-close existing shift: ${error.message}`);
 			}
 		}
@@ -1398,20 +1501,27 @@ export class AttendanceService {
 		orgId?: string,
 	): Promise<void> {
 		try {
-			const userId = closedShift.owner?.uid;
-			if (!userId) {
+			const ownerUid = closedShift.owner?.uid;
+			const ownerClerk = closedShift.ownerClerkUserId;
+			const hasUserRef = ownerUid != null || (ownerClerk != null && ownerClerk !== '');
+			if (!hasUserRef) {
 				this.logger.warn('Cannot send auto-close notification: No user ID found');
 				return;
 			}
 
-			// Get user details
+			// Get user details (by uid number or clerkUserId)
+			const userWhere = typeof ownerUid === 'number'
+				? { uid: ownerUid }
+				: ownerClerk
+					? { clerkUserId: ownerClerk }
+					: { uid: 0 };
 			const user = await this.userRepository.findOne({
-				where: { uid: Number(userId) },
+				where: userWhere,
 				relations: ['organisation', 'branch'],
 			});
 
 			if (!user?.email) {
-				this.logger.warn(`Cannot send auto-close notification: No email found for user ${userId}`);
+				this.logger.warn(`Cannot send auto-close notification: No email found for user ${ownerUid ?? ownerClerk}`);
 				return;
 			}
 
@@ -1429,7 +1539,7 @@ export class AttendanceService {
 			const checkOutTimeString = await this.formatTimeInOrganizationTimezone(closeTime, orgId);
 			const userName = `${user.name} ${user.surname}`;
 			const workTimeDisplay = `${Math.floor(workSession.netWorkMinutes / 60)}h ${workSession.netWorkMinutes % 60}m`;
-			
+
 			// Prepare email data
 			const emailData = {
 				name: userName,
@@ -1443,133 +1553,181 @@ export class AttendanceService {
 				branchName: user?.branch?.name || '',
 				dashboardUrl: process.env.WEB_URL || 'https://app.loro.co.za',
 				autoCloseMessage: `This shift was automatically ended at organization close time (${checkOutTimeString}) as per your auto shift end setting that you agreed to use. You can change this setting in your preferences if needed.`,
-			congratulationsMessage: `Your shift has been automatically completed, ${userName}! 🏢 Your shift was ended at ${checkOutTimeString} when the organization closed, as per your auto-end shift preference. You worked from ${checkInTimeString} to ${checkOutTimeString} for a total of ${workTimeDisplay}. Great work today!`,
-		};
+				congratulationsMessage: `Your shift has been automatically completed, ${userName}! 🏢 Your shift was ended at ${checkOutTimeString} when the organization closed, as per your auto-end shift preference. You worked from ${checkInTimeString} to ${checkOutTimeString} for a total of ${workTimeDisplay}. Great work today!`,
+			};
 
-		this.logger.log(
-			`✅ [AttendanceService] Auto-close shift notification processed for user: ${userId}`,
-		);
-	} catch (error) {
-		this.logger.error(
-			`❌ [AttendanceService] Failed to send auto-close shift notification: ${error.message}`,
-		);
-		// Don't fail the auto-close process if notification fails
-	}
+			this.logger.log(
+				`✅ [AttendanceService] Auto-close shift notification processed for user: ${ownerUid ?? ownerClerk}`,
+			);
+		} catch (error) {
+			this.logger.error(
+				`❌ [AttendanceService] Failed to send auto-close shift notification: ${error.message}`,
+			);
+			// Don't fail the auto-close process if notification fails
+		}
 	}
 
 	public async checkOut(
 		checkOutDto: CreateCheckOutDto,
 		orgId?: string,
 		branchId?: number,
+		clerkUserId?: string,
+		uid?: number,
 	): Promise<{ message: string; data?: any }> {
-		// Validate organisation exists if orgId provided
-		if (orgId) {
-			const organisation = await this.organisationRepository.findOne({
-				where: [
-					{ clerkOrgId: orgId },
-					{ ref: orgId }
-				]
-			});
-			if (!organisation) {
-				throw new BadRequestException(`Organization not found for ID: ${orgId}`);
-			}
-		}
-		this.logger.log(`Check-out attempt for user ${checkOutDto.owner.uid}, orgId: ${orgId}, branchId: ${branchId}`);
-		this.logger.debug(`Check-out data: ${JSON.stringify(checkOutDto)}`);
-		this.logger.debug(
-			`Check-out data: ${JSON.stringify({
-				...checkOutDto,
-				owner: checkOutDto.owner?.uid,
-				organisation: orgId,
-				branch: branchId,
-			})}`,
-		);
+		const operationId = `checkout_${Date.now()}`;
+		const startTime = Date.now();
+		const isTokenFlow = !!clerkUserId && uid != null;
+		const ownerUidNum = isTokenFlow ? uid! : (checkOutDto.owner?.uid != null ? Number(checkOutDto.owner.uid) : null);
+		const ownerUidStr = ownerUidNum != null ? String(ownerUidNum) : '';
+
+		this.logger.log(`[${operationId}] Check-out attempt for user ${ownerUidStr}, orgId: ${orgId}, branchId: ${branchId}`);
+
+		// Create query runner for transaction
+		const queryRunner = this.dataSource.createQueryRunner();
+		await queryRunner.connect();
+		await queryRunner.startTransaction();
 
 		try {
-			// Enhanced validation
-			this.logger.debug('Validating check-out data');
-			if (!checkOutDto.owner?.uid) {
-				throw new BadRequestException('User ID is required for check-out');
-			}
-
+			// Validation
 			if (!checkOutDto.checkOut) {
-				throw new BadRequestException('Check-out time is required');
+				throw new HttpException(
+					{ message: 'Check-out time is required', statusCode: HttpStatus.BAD_REQUEST, error: 'VALIDATION_ERROR' },
+					HttpStatus.BAD_REQUEST
+				);
+			}
+			if (!isTokenFlow && !checkOutDto.owner?.uid) {
+				throw new HttpException(
+					{ message: 'User ID is required for check-out (or use token-based flow)', statusCode: HttpStatus.BAD_REQUEST, error: 'VALIDATION_ERROR' },
+					HttpStatus.BAD_REQUEST
+				);
+			}
+			if (ownerUidNum == null) {
+				throw new HttpException(
+					{ message: 'User ID is required for check-out', statusCode: HttpStatus.BAD_REQUEST, error: 'VALIDATION_ERROR' },
+					HttpStatus.BAD_REQUEST
+				);
 			}
 
-			this.logger.debug('Finding active shift for check-out');
-			// Build query to find active shift, filtering by clerkOrgId/ref if orgId provided
-			const activeShiftQuery = this.attendanceRepository
-				.createQueryBuilder('attendance')
-				.leftJoinAndSelect('attendance.owner', 'owner')
-				.leftJoinAndSelect('owner.organisation', 'organisation')
+			// Resolve organisation if provided
+			if (orgId) {
+				const organisationQuery = queryRunner.manager
+					.createQueryBuilder(Organisation, 'org')
+					.select(['org.uid', 'org.clerkOrgId', 'org.ref'])
+					.where('org.isDeleted = false')
+					.andWhere('(org.clerkOrgId = :orgId OR org.ref = :orgId)', { orgId });
+				const organisation = await organisationQuery.getOne();
+				if (!organisation) {
+					throw new HttpException(
+						{ message: `Organization not found for ID: ${orgId}`, statusCode: HttpStatus.NOT_FOUND, error: 'NOT_FOUND' },
+						HttpStatus.NOT_FOUND
+					);
+				}
+			}
+
+			// Get user's clerkUserId if needed
+			let userClerkUserId: string;
+			if (isTokenFlow) {
+				userClerkUserId = clerkUserId!;
+			} else {
+				const userQuery = queryRunner.manager
+					.createQueryBuilder(User, 'user')
+					.select(['user.clerkUserId'])
+					.where('user.uid = :uid', { uid: ownerUidNum })
+					.andWhere('user.isDeleted = false');
+				const user = await userQuery.getOne();
+				if (!user || !user.clerkUserId) {
+					throw new HttpException(
+						{ message: 'User not found or missing Clerk user ID', statusCode: HttpStatus.NOT_FOUND, error: 'NOT_FOUND' },
+						HttpStatus.NOT_FOUND
+					);
+				}
+				userClerkUserId = user.clerkUserId;
+			}
+
+			// Find active shift using optimized QueryBuilder with index
+			this.logger.debug(`[${operationId}] Finding active shift for check-out`);
+			const activeShiftQuery = queryRunner.manager
+				.createQueryBuilder(Attendance, 'attendance')
+				.select([
+					'attendance.uid',
+					'attendance.checkIn',
+					'attendance.checkOut',
+					'attendance.status',
+					'attendance.breakDetails',
+					'attendance.totalBreakTime',
+					'attendance.ownerClerkUserId',
+				])
+				.leftJoin('attendance.owner', 'owner')
+				.addSelect(['owner.uid', 'owner.clerkUserId'])
+				.leftJoin('owner.organisation', 'organisation')
+				.addSelect(['organisation.uid', 'organisation.clerkOrgId', 'organisation.ref'])
 				.where('attendance.status = :status', { status: AttendanceStatus.PRESENT })
-				.andWhere('attendance.owner.uid = :ownerUid', { ownerUid: checkOutDto?.owner?.uid })
+				.andWhere('attendance.ownerClerkUserId = :ownerClerkUserId', { ownerClerkUserId: userClerkUserId })
 				.andWhere('attendance.checkIn IS NOT NULL')
 				.andWhere('attendance.checkOut IS NULL');
-			
+
 			if (orgId) {
 				activeShiftQuery.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 			}
-			
+
 			activeShiftQuery.orderBy('attendance.checkIn', 'DESC');
-			
+
 			const activeShift = await activeShiftQuery.getOne();
 
 			if (!activeShift) {
-				this.logger.warn(`No active shift found for check-out for user: ${checkOutDto.owner?.uid}`);
-				return {
-					message: 'No active shift found. Please check in first.',
-					data: { error: 'NO_ACTIVE_SHIFT', success: false }
-				};
+				throw new HttpException(
+					{ message: 'No active shift found. Please check in first.', statusCode: HttpStatus.NOT_FOUND, error: 'NO_ACTIVE_SHIFT' },
+					HttpStatus.NOT_FOUND
+				);
 			}
 
-		this.logger.debug(`Active shift found for user: ${checkOutDto.owner?.uid}, shift ID: ${activeShift.uid}`);
+			this.logger.debug(`[${operationId}] Active shift found for user: ${ownerUidStr}, shift ID: ${activeShift.uid}`);
 
-		const checkOutTime = checkOutDto.checkOut ? new Date(checkOutDto.checkOut) : new Date();
-		const checkInTime = new Date(activeShift.checkIn);
+			const checkOutTime = checkOutDto.checkOut ? new Date(checkOutDto.checkOut) : new Date();
+			const checkInTime = new Date(activeShift.checkIn);
 
-		// Get organization timezone for accurate date comparison
-		// Use orgId (string) for timezone lookup, fallback to activeShift's org uid if available
-		const orgIdForTimezone = orgId || (activeShift.owner?.organisation?.clerkOrgId || activeShift.owner?.organisation?.ref);
-		const orgTimezone = await this.getOrganizationTimezone(orgIdForTimezone);
-		
-		// Dates are already timezone-aware from database
-		const checkInDateOrg = new Date(checkInTime);
-		const checkOutDateOrg = new Date(checkOutTime);
-		
-		// Check if both dates are on the same calendar day in organization timezone
-		const isSameCalendarDay = 
-			checkInDateOrg.getFullYear() === checkOutDateOrg.getFullYear() &&
-			checkInDateOrg.getMonth() === checkOutDateOrg.getMonth() &&
-			checkInDateOrg.getDate() === checkOutDateOrg.getDate();
-		
-		// Validate check-out time is after check-in time
-		// Only enforce this validation if dates are on the same calendar day
-		// If dates are on different days, allow check-out (user is closing a shift from a previous day)
-		if (isSameCalendarDay && checkOutTime <= checkInTime) {
-			this.logger.error(
-				`Check-out validation failed - Same day check-out must be after check-in. ` +
-				`Check-in: ${checkInTime.toISOString()} (${checkInDateOrg.toISOString()} org time), ` +
-				`Check-out: ${checkOutTime.toISOString()} (${checkOutDateOrg.toISOString()} org time)`
-			);
-			throw new BadRequestException('Check-out time must be after check-in time');
-		}
-		
-		if (!isSameCalendarDay) {
+			// Get organization timezone for accurate date comparison
+			// Use orgId (string) for timezone lookup, fallback to activeShift's org uid if available
+			const orgIdForTimezone = orgId || (activeShift.owner?.organisation?.clerkOrgId || activeShift.owner?.organisation?.ref);
+			const orgTimezone = await this.getOrganizationTimezone(orgIdForTimezone);
+
+			// Dates are already timezone-aware from database
+			const checkInDateOrg = new Date(checkInTime);
+			const checkOutDateOrg = new Date(checkOutTime);
+
+			// Check if both dates are on the same calendar day in organization timezone
+			const isSameCalendarDay =
+				checkInDateOrg.getFullYear() === checkOutDateOrg.getFullYear() &&
+				checkInDateOrg.getMonth() === checkOutDateOrg.getMonth() &&
+				checkInDateOrg.getDate() === checkOutDateOrg.getDate();
+
+			// Validate check-out time is after check-in time
+			// Only enforce this validation if dates are on the same calendar day
+			// If dates are on different days, allow check-out (user is closing a shift from a previous day)
+			if (isSameCalendarDay && checkOutTime <= checkInTime) {
+				this.logger.error(
+					`Check-out validation failed - Same day check-out must be after check-in. ` +
+					`Check-in: ${checkInTime.toISOString()} (${checkInDateOrg.toISOString()} org time), ` +
+					`Check-out: ${checkOutTime.toISOString()} (${checkOutDateOrg.toISOString()} org time)`
+				);
+				throw new BadRequestException('Check-out time must be after check-in time');
+			}
+
+			if (!isSameCalendarDay) {
+				this.logger.debug(
+					`Check-out is on different calendar day than check-in - allowing check-out. ` +
+					`Check-in: ${checkInDateOrg.toISOString()} (${checkInDateOrg.getDate()}/${checkInDateOrg.getMonth() + 1}/${checkInDateOrg.getFullYear()}), ` +
+					`Check-out: ${checkOutDateOrg.toISOString()} (${checkOutDateOrg.getDate()}/${checkOutDateOrg.getMonth() + 1}/${checkOutDateOrg.getFullYear()})`
+				);
+			}
+
 			this.logger.debug(
-				`Check-out is on different calendar day than check-in - allowing check-out. ` +
-				`Check-in: ${checkInDateOrg.toISOString()} (${checkInDateOrg.getDate()}/${checkInDateOrg.getMonth() + 1}/${checkInDateOrg.getFullYear()}), ` +
-				`Check-out: ${checkOutDateOrg.toISOString()} (${checkOutDateOrg.getDate()}/${checkOutDateOrg.getMonth() + 1}/${checkOutDateOrg.getFullYear()})`
+				`Calculating work duration: check-in at ${checkInTime.toISOString()}, check-out at ${checkOutTime.toISOString()}`,
 			);
-		}
 
-		this.logger.debug(
-			`Calculating work duration: check-in at ${checkInTime.toISOString()}, check-out at ${checkOutTime.toISOString()}`,
-		);
-
-		// Enhanced calculation using our new utilities
-		// Use orgIdForTimezone for organization-specific calculations
-		this.logger.debug(`Processing time calculations for organization: ${orgIdForTimezone}`);
+			// Enhanced calculation using our new utilities
+			// Use orgIdForTimezone for organization-specific calculations
+			this.logger.debug(`Processing time calculations for organization: ${orgIdForTimezone}`);
 
 			const breakMinutes = TimeCalculatorUtil.calculateTotalBreakMinutes(
 				activeShift.breakDetails,
@@ -1577,77 +1735,78 @@ export class AttendanceService {
 			);
 			this.logger.debug(`Total break minutes calculated: ${breakMinutes}`);
 
-		// Calculate precise work session
-		const workSession = TimeCalculatorUtil.calculateWorkSession(
-			checkInTime,
-			checkOutTime,
-			activeShift.breakDetails,
-			activeShift.totalBreakTime,
-			orgIdForTimezone ? await this.organizationHoursService.getOrganizationHours(orgIdForTimezone) : null,
-		);
+			// Calculate precise work session
+			const workSession = TimeCalculatorUtil.calculateWorkSession(
+				checkInTime,
+				checkOutTime,
+				activeShift.breakDetails,
+				activeShift.totalBreakTime,
+				orgIdForTimezone ? await this.organizationHoursService.getOrganizationHours(orgIdForTimezone) : null,
+			);
 
-		this.logger.debug(
-			`Work session calculated - net work minutes: ${workSession.netWorkMinutes}`,
-		);
+			this.logger.debug(
+				`Work session calculated - net work minutes: ${workSession.netWorkMinutes}`,
+			);
 
-		// Get expected work minutes from organization hours
-		let expectedWorkMinutes = TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES; // Default 8 hours (480 minutes)
-		
-		if (orgIdForTimezone) {
-			try {
-				const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(
-					orgIdForTimezone,
-					checkInTime,
-				);
-				expectedWorkMinutes = workingDayInfo.expectedWorkMinutes || expectedWorkMinutes;
-				this.logger.debug(
-					`Expected work minutes for organization: ${expectedWorkMinutes} (${expectedWorkMinutes / 60} hours)`,
-				);
-			} catch (error) {
-				this.logger.warn(
-					`Failed to fetch expected work minutes for org ${orgIdForTimezone}, using default: ${expectedWorkMinutes}`,
-					error.message,
-				);
+			// Get expected work minutes from organization hours
+			let expectedWorkMinutes = TimeCalculatorUtil.DEFAULT_WORK.STANDARD_MINUTES; // Default 8 hours (480 minutes)
+
+			if (orgIdForTimezone) {
+				try {
+					const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(
+						orgIdForTimezone,
+						checkInTime,
+					);
+					expectedWorkMinutes = workingDayInfo.expectedWorkMinutes || expectedWorkMinutes;
+					this.logger.debug(
+						`Expected work minutes for organization: ${expectedWorkMinutes} (${expectedWorkMinutes / 60} hours)`,
+					);
+				} catch (error) {
+					this.logger.warn(
+						`Failed to fetch expected work minutes for org ${orgIdForTimezone}, using default: ${expectedWorkMinutes}`,
+						error.message,
+					);
+				}
 			}
-		}
 
-		// Cap duration at expected work hours, rest goes to overtime
-		// Duration = min(actual work time, expected work time)
-		// Overtime = max(0, actual work time - expected work time)
-		const durationMinutes = Math.min(workSession.netWorkMinutes, expectedWorkMinutes);
-		const overtimeMinutes = Math.max(0, workSession.netWorkMinutes - expectedWorkMinutes);
+			// Cap duration at expected work hours, rest goes to overtime
+			// Duration = min(actual work time, expected work time)
+			// Overtime = max(0, actual work time - expected work time)
+			const durationMinutes = Math.min(workSession.netWorkMinutes, expectedWorkMinutes);
+			const overtimeMinutes = Math.max(0, workSession.netWorkMinutes - expectedWorkMinutes);
 
-		const duration = TimeCalculatorUtil.formatDuration(durationMinutes);
-		const overtimeDuration = TimeCalculatorUtil.formatDuration(overtimeMinutes);
+			const duration = TimeCalculatorUtil.formatDuration(durationMinutes);
+			const overtimeDuration = TimeCalculatorUtil.formatDuration(overtimeMinutes);
 
-		this.logger.debug(
-			`Duration capped at expected hours: ${duration} (${durationMinutes} minutes), ` +
-			`Overtime: ${overtimeDuration} (${overtimeMinutes} minutes), ` +
-			`Total work time: ${workSession.netWorkMinutes} minutes`,
-		);
+			this.logger.debug(
+				`Duration capped at expected hours: ${duration} (${durationMinutes} minutes), ` +
+				`Overtime: ${overtimeDuration} (${overtimeMinutes} minutes), ` +
+				`Total work time: ${workSession.netWorkMinutes} minutes`,
+			);
 
-		// Enhanced data mapping for shift update - location will be processed asynchronously
-		const updatedShift = {
-			...activeShift,
-			...checkOutDto,
-			checkOut: checkOutTime,
-			duration,
-			overtime: overtimeDuration,
-			status: AttendanceStatus.COMPLETED,
-			// Keep existing placesOfInterest - will be updated asynchronously if needed
-		};
+			// Update shift within transaction
+			const { owner: _checkOutOwner, ...checkOutRest } = checkOutDto;
+			this.logger.debug(`[${operationId}] Updating shift with check-out data within transaction`);
 
-		this.logger.debug('Saving updated shift with check-out data');
-		await this.attendanceRepository.save(updatedShift);
-		this.logger.debug(`Shift updated successfully for user: ${checkOutDto.owner?.uid}`);
+			await queryRunner.manager.update(Attendance, activeShift.uid, {
+				...checkOutRest,
+				checkOut: checkOutTime,
+				duration,
+				overtime: overtimeDuration,
+				status: AttendanceStatus.COMPLETED,
+			});
 
-			// Clear attendance cache after successful check-out
-			await this.clearAttendanceCache(activeShift.uid, checkOutDto.owner.uid);
+			// Commit transaction
+			await queryRunner.commitTransaction();
+			this.logger.debug(`[${operationId}] Transaction committed successfully`);
 
-			// Enhanced response data mapping
+			// Clear cache
+			await this.clearAttendanceCache(activeShift.uid, ownerUidStr);
+
+			// Prepare response
 			const responseData = {
 				attendanceId: activeShift.uid,
-				userId: checkOutDto.owner.uid,
+				userId: ownerUidNum,
 				checkInTime: activeShift.checkIn,
 				checkOutTime: checkOutTime,
 				duration,
@@ -1657,150 +1816,90 @@ export class AttendanceService {
 				status: AttendanceStatus.COMPLETED,
 				organisationId: orgId,
 				branchId: branchId,
-				location:
-					checkOutDto.checkOutLatitude && checkOutDto.checkOutLongitude
-						? {
-								latitude: checkOutDto.checkOutLatitude,
-								longitude: checkOutDto.checkOutLongitude,
-								accuracy: 10, // Default accuracy if not provided
-						  }
-						: null,
+				location: checkOutDto.checkOutLatitude && checkOutDto.checkOutLongitude
+					? { latitude: checkOutDto.checkOutLatitude, longitude: checkOutDto.checkOutLongitude, accuracy: 10 }
+					: null,
 				xpAwarded: XP_VALUES.CHECK_OUT,
 				timestamp: new Date(),
 			};
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`[${operationId}] ✅ Check-out successful in ${executionTime}ms for user: ${ownerUidStr}`);
 
 			const response = {
 				message: process.env.SUCCESS_MESSAGE || 'Check-out recorded successfully',
 				data: responseData,
 			};
 
-			// Award XP with enhanced error handling
-			try {
-				this.logger.debug(
-					`Awarding XP for check-out to user: ${checkOutDto.owner.uid}, amount: ${XP_VALUES.CHECK_OUT}`,
-				);
-				await this.rewardsService.awardXP(
-					{
-						owner: checkOutDto.owner.uid,
-						amount: XP_VALUES.CHECK_OUT,
-						action: XP_VALUES_TYPES.ATTENDANCE,
-						source: {
-							id: checkOutDto.owner.uid.toString(),
-							type: XP_VALUES_TYPES.ATTENDANCE,
-							details: 'Check-out reward',
-						},
-					},
-					orgId,
-					branchId,
-				);
-				this.logger.debug(`XP awarded successfully for check-out to user: ${checkOutDto.owner.uid}`);
-			} catch (xpError) {
-				this.logger.error(`Failed to award XP for check-out to user: ${checkOutDto.owner.uid}`, xpError.stack);
-				// Don't fail the check-out if XP award fails
-			}
-
-			// Send enhanced shift end notification with improved messaging
-			try {
-				// Format times in organization timezone
-				const checkOutTimeString = await this.formatTimeInOrganizationTimezone(checkOutTime, orgId);
-				const checkInTimeString = await this.formatTimeInOrganizationTimezone(new Date(activeShift.checkIn), orgId);
-
-			// Get user info for personalized message with email and relations
-			const user = await this.userRepository.findOne({
-				where: { uid: checkOutDto.owner.uid },
-				select: ['uid', 'name', 'surname', 'email', 'username'],
-				relations: ['organisation', 'branch', 'branch.organisation'],
-			});
-
-			// Construct full name with proper fallbacks
-			const fullName = `${user?.name || ''} ${user?.surname || ''}`.trim();
-			const userName = fullName || user?.username || 'Team Member';
-			const workHours = Math.floor(workSession.netWorkMinutes / 60);
-				const workMinutesDisplay = workSession.netWorkMinutes % 60;
-				const workTimeDisplay = `${workHours}h ${workMinutesDisplay}m`;
-
-				this.logger.debug(`Sending enhanced shift end notification to user: ${checkOutDto.owner.uid}`);
-				// Send push notification
-				await this.unifiedNotificationService.sendTemplatedNotification(
-					NotificationEvent.ATTENDANCE_SHIFT_ENDED,
-					[checkOutDto.owner.uid],
-					{
-						checkOutTime: checkOutTimeString,
-						checkInTime: checkInTimeString,
-						duration,
-						workTimeDisplay,
-						totalWorkMinutes: workSession.netWorkMinutes,
-						totalBreakMinutes: breakMinutes,
-						userName,
-						userId: checkOutDto.owner.uid,
-						organisationId: orgId,
-						branchId: branchId,
-						xpAwarded: XP_VALUES.CHECK_OUT,
-						timestamp: new Date().toISOString(),
-					},
-					{
-						priority: NotificationPriority.NORMAL,
-						sendEmail: false, // We'll handle email separately
-					},
-				);
-
-				this.logger.debug(
-					`Shift end push notification sent successfully to user: ${checkOutDto.owner.uid}`,
-				);
-			} catch (notificationError) {
-				this.logger.warn(
-					`Failed to send shift end notification to user: ${checkOutDto.owner.uid}`,
-					notificationError.message,
-				);
-				// Don't fail the check-out if notification fails
-			}
-
-			// Return success response immediately to user after shift-ended email is sent
-			this.logger.log(`Check-out successful for user: ${checkOutDto.owner?.uid}, duration: ${duration}`);
-			
-			// Process non-critical operations asynchronously (don't block user response)
+			// Post-response async processing
 			setImmediate(async () => {
 				try {
-					// Process check-out location if coordinates are provided (async)
-					try {
-						if (checkOutDto.checkOutLatitude && checkOutDto.checkOutLongitude) {
-							this.logger.debug(`Processing check-out location coordinates asynchronously for user: ${checkOutDto.owner.uid}`);
-							const checkOutAddress = await this.processLocationCoordinates(
-								checkOutDto.checkOutLatitude,
-								checkOutDto.checkOutLongitude,
-								'Check-out Location'
-							);
+					// Award XP
+					await this.rewardsService.awardXP({
+						owner: ownerUidNum,
+						amount: XP_VALUES.CHECK_OUT,
+						action: XP_VALUES_TYPES.ATTENDANCE,
+						source: { id: ownerUidStr, type: XP_VALUES_TYPES.ATTENDANCE, details: 'Check-out reward' },
+					}, orgId, branchId);
 
-							if (checkOutAddress) {
-								// Update placesOfInterest with check-out location
-								const currentRecord = await this.attendanceRepository.findOne({
-									where: { uid: activeShift.uid },
-								});
+					// Send notifications
+					const user = await this.userRepository.findOne({
+						where: { uid: ownerUidNum },
+						select: ['uid', 'name', 'surname', 'email', 'username'],
+					});
+					if (user) {
+						const fullName = `${user.name || ''} ${user.surname || ''}`.trim();
+						const userName = fullName || user.username || 'Team Member';
+						const checkOutTimeString = await this.formatTimeInOrganizationTimezone(checkOutTime, orgId);
+						const checkInTimeString = await this.formatTimeInOrganizationTimezone(new Date(activeShift.checkIn), orgId);
+						const workHours = Math.floor(workSession.netWorkMinutes / 60);
+						const workMinutesDisplay = workSession.netWorkMinutes % 60;
+						const workTimeDisplay = `${workHours}h ${workMinutesDisplay}m`;
 
-								let updatedPlacesOfInterest = currentRecord?.placesOfInterest;
-								if (updatedPlacesOfInterest) {
-									// Update existing placesOfInterest with end address
-									updatedPlacesOfInterest.endAddress = checkOutAddress;
-								} else {
-									// Create new placesOfInterest if it doesn't exist
-									updatedPlacesOfInterest = {
-										startAddress: null, // This should have been set during check-in
-										endAddress: checkOutAddress,
-										breakStart: null,
-										breakEnd: null,
-										otherPlacesOfInterest: []
-									};
-								}
+						await this.unifiedNotificationService.sendTemplatedNotification(
+							NotificationEvent.ATTENDANCE_SHIFT_ENDED,
+							[ownerUidNum],
+							{
+								checkOutTime: checkOutTimeString,
+								checkInTime: checkInTimeString,
+								duration,
+								workTimeDisplay,
+								totalWorkMinutes: workSession.netWorkMinutes,
+								totalBreakMinutes: breakMinutes,
+								userName,
+								userId: ownerUidNum,
+								organisationId: orgId,
+								branchId: branchId,
+								xpAwarded: XP_VALUES.CHECK_OUT,
+								timestamp: new Date().toISOString(),
+							},
+							{ priority: NotificationPriority.NORMAL, sendEmail: false },
+						);
+					}
 
-								await this.attendanceRepository.update(activeShift.uid, {
-									placesOfInterest: updatedPlacesOfInterest
-								});
-								this.logger.debug(`Location data updated successfully for check-out: ${activeShift.uid}`);
+					// Process check-out location if coordinates are provided
+					if (checkOutDto.checkOutLatitude && checkOutDto.checkOutLongitude) {
+						const checkOutAddress = await this.processLocationCoordinates(
+							checkOutDto.checkOutLatitude,
+							checkOutDto.checkOutLongitude,
+							'Check-out Location'
+						);
+						if (checkOutAddress) {
+							const currentRecord = await this.attendanceRepository.findOne({ where: { uid: activeShift.uid } });
+							let updatedPlacesOfInterest = currentRecord?.placesOfInterest;
+							if (updatedPlacesOfInterest) {
+								updatedPlacesOfInterest.endAddress = checkOutAddress;
+							} else {
+								updatedPlacesOfInterest = {
+									startAddress: null,
+									endAddress: checkOutAddress,
+									breakStart: null,
+									breakEnd: null,
+									otherPlacesOfInterest: []
+								};
 							}
+							await this.attendanceRepository.update(activeShift.uid, { placesOfInterest: updatedPlacesOfInterest });
 						}
-					} catch (locationError) {
-						this.logger.error(`Failed to process location for check-out ${activeShift.uid}:`, locationError.message);
-						// Don't fail check-out if location processing fails
 					}
 
 					// Check and send overtime notification if applicable
@@ -1822,7 +1921,7 @@ export class AttendanceService {
 
 								// Get user info for personalized message with username
 								const user = await this.userRepository.findOne({
-									where: { uid: checkOutDto.owner.uid },
+									where: { uid: ownerUidNum },
 									select: ['uid', 'name', 'surname', 'username'],
 								});
 
@@ -1830,10 +1929,10 @@ export class AttendanceService {
 								const fullName = `${user?.name || ''} ${user?.surname || ''}`.trim();
 								const userName = fullName || user?.username || 'Team Member';
 
-								this.logger.debug(`Sending enhanced overtime notification to user: ${checkOutDto.owner.uid}`);
+								this.logger.debug(`Sending enhanced overtime notification to user: ${ownerUidStr}`);
 								await this.unifiedNotificationService.sendTemplatedNotification(
 									NotificationEvent.ATTENDANCE_OVERTIME_REMINDER,
-									[checkOutDto.owner.uid],
+									[ownerUidNum],
 									{
 										overtimeDuration,
 										overtimeMinutes: cappedMinutes, // Total minutes for :duration formatter
@@ -1842,7 +1941,7 @@ export class AttendanceService {
 										regularHours: (workSession.netWorkMinutes - overtimeInfo.overtimeMinutes) / 60,
 										totalWorkMinutes: workSession.netWorkMinutes,
 										userName,
-										userId: checkOutDto.owner.uid,
+										userId: ownerUidNum,
 										timestamp: new Date().toISOString(),
 									},
 									{
@@ -1850,12 +1949,12 @@ export class AttendanceService {
 									},
 								);
 								this.logger.debug(
-									`Enhanced overtime notification sent successfully to user: ${checkOutDto.owner.uid}`,
+									`Enhanced overtime notification sent successfully to user: ${ownerUidStr}`,
 								);
 
 								// Also send overtime notification using the enhanced sendShiftReminder method
 								await this.sendShiftReminder(
-									checkOutDto.owner.uid,
+									ownerUidNum,
 									'overtime',
 									organizationId,
 									branchId,
@@ -1867,45 +1966,66 @@ export class AttendanceService {
 						}
 					} catch (overtimeNotificationError) {
 						this.logger.warn(
-							`Failed to send overtime notification to user: ${checkOutDto.owner.uid}`,
+							`Failed to send overtime notification to user: ${ownerUidStr}`,
 							overtimeNotificationError.message,
 						);
 						// Don't fail the async processing if overtime notification fails
 					}
 
 					// Emit daily report event for async processing (user already got their response)
-					this.logger.debug(`Emitting daily report event for user: ${checkOutDto?.owner?.uid}, attendance: ${activeShift.uid}`);
+					this.logger.debug(`Emitting daily report event for user: ${ownerUidStr}, attendance: ${activeShift.uid}`);
 					this.eventEmitter.emit('daily-report', {
-						userId: checkOutDto?.owner?.uid,
+						userId: ownerUidNum,
 						attendanceId: activeShift.uid, // Include the attendance ID that triggered this report
 						triggeredByActivity: true, // This report is triggered by actual user activity (check-out)
 					});
 
 					// Emit other background events
-					this.eventEmitter.emit('user.target.update.required', { userId: checkOutDto?.owner?.uid });
-					this.eventEmitter.emit('user.metrics.update.required', checkOutDto?.owner?.uid);
-					this.logger.debug(`Background events emitted successfully for user: ${checkOutDto?.owner?.uid}`);
+					this.eventEmitter.emit('user.target.update.required', { userId: ownerUidNum });
+					this.eventEmitter.emit('user.metrics.update.required', ownerUidNum);
+					this.logger.debug(`Background events emitted successfully for user: ${ownerUidStr}`);
 
 				} catch (asyncError) {
-					this.logger.error(`Error in async checkout processing for user ${checkOutDto?.owner?.uid}:`, asyncError.stack);
+					this.logger.error(`Error in async checkout processing for user ${ownerUidStr}:`, asyncError.stack);
 					// Don't propagate errors from async operations
 				}
 			});
 
 			return response;
 		} catch (error) {
-			this.logger.error(`Check-out failed for user: ${checkOutDto.owner?.uid}`, error.stack);
+			await queryRunner.rollbackTransaction();
+			const duration = Date.now() - startTime;
+			this.logger.error(`[${operationId}] ❌ Check-out failed after ${duration}ms: ${error.message}`, error.stack);
 
-			// Enhanced error response mapping
-			const errorResponse = {
-				message: error?.message || 'Check-out failed',
-				data: null,
-			};
+			// Handle database errors
+			if (error instanceof QueryFailedError) {
+				if (error.message.includes('foreign key constraint')) {
+					const constraintName = error.message.match(/constraint "([^"]+)"/)?.[1] || 'unknown';
+					throw new HttpException(
+						{ message: 'Database constraint violation', statusCode: HttpStatus.BAD_REQUEST, error: 'CONSTRAINT_VIOLATION', constraint: constraintName },
+						HttpStatus.BAD_REQUEST
+					);
+				}
+				throw new HttpException(
+					{ message: 'Database error occurred', statusCode: HttpStatus.INTERNAL_SERVER_ERROR, error: 'DATABASE_ERROR', details: error.message },
+					HttpStatus.INTERNAL_SERVER_ERROR
+				);
+			}
 
-			return errorResponse;
+			// Re-throw HTTP exceptions
+			if (error instanceof HttpException) {
+				throw error;
+			}
+
+			// Generic error
+			throw new HttpException(
+				{ message: error?.message || 'Check-out failed. Please try again.', statusCode: HttpStatus.INTERNAL_SERVER_ERROR, error: 'INTERNAL_ERROR' },
+				HttpStatus.INTERNAL_SERVER_ERROR
+			);
+		} finally {
+			await queryRunner.release();
 		}
 	}
-
 
 	public async allCheckIns(orgId?: string, branchId?: number, userAccessLevel?: string): Promise<{ message: string; checkIns: Attendance[] }> {
 		// Get effective branch ID based on user role
@@ -1920,10 +2040,10 @@ export class AttendanceService {
 				this.logger.debug(
 					`Retrieved cached check-ins result`,
 				);
-				
+
 				// Apply timezone conversion to cached results using enhanced method (orgId string for hours lookup)
 				const cachedResultWithTimezone = await this.ensureTimezoneConversion(cachedResult, orgId ?? undefined);
-				
+
 				return cachedResultWithTimezone;
 			}
 
@@ -1951,21 +2071,21 @@ export class AttendanceService {
 
 			this.logger.debug(`Querying attendance records with conditions: ${JSON.stringify(whereConditions)}`);
 
-		const checkIns = await this.attendanceRepository.find({
-			where: Object.keys(whereConditions).length > 0 ? whereConditions : undefined,
-			relations: [
-				'owner',
-				'owner.branch',
-				'owner.organisation',
-				'owner.userProfile',
-				'verifiedBy',
-				'organisation',
-				'branch',
-				'dailyReport',
-			],
-			order: {
-				checkIn: 'DESC',
-			},
+			const checkIns = await this.attendanceRepository.find({
+				where: Object.keys(whereConditions).length > 0 ? whereConditions : undefined,
+				relations: [
+					'owner',
+					'owner.branch',
+					'owner.organisation',
+					'owner.userProfile',
+					'verifiedBy',
+					'organisation',
+					'branch',
+					'dailyReport',
+				],
+				order: {
+					checkIn: 'DESC',
+				},
 				take: 1000, // Limit results to prevent memory issues
 			});
 
@@ -2015,7 +2135,7 @@ export class AttendanceService {
 			// Get organization timezone for accurate date range (orgId is clerkOrgId/ref string)
 			const organizationHours = orgId ? await this.organizationHoursService.getOrganizationHours(orgId) : null;
 			const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
-			
+
 			// Use date-fns to properly handle start and end of day in organization timezone
 			const dateObj = new Date(date);
 			const dayStart = startOfDay(dateObj);
@@ -2054,49 +2174,49 @@ export class AttendanceService {
 				},
 			});
 
-		// Also get shifts that started on previous days but are still ongoing on this date
-		const ongoingShiftsConditions: any = {
-			checkIn: LessThan(startOfDayConverted), // Started before today
-			checkOut: IsNull(), // Not checked out yet
-			status: In([AttendanceStatus.PRESENT, AttendanceStatus.ON_BREAK]), // Still active
-		};
-
-		// Apply organization filtering only - no branch filtering for org-wide results
-		// Filter by clerkOrgId or ref (both are strings)
-		if (orgId) {
-			ongoingShiftsConditions.organisation = [
-				{ clerkOrgId: orgId },
-				{ ref: orgId }
-			];
-		}
-
-		const ongoingShifts = await this.attendanceRepository.find({
-			where: ongoingShiftsConditions,
-			relations: [
-				'owner',
-				'owner.branch',
-				'owner.organisation',
-				'owner.userProfile',
-				'verifiedBy',
-				'organisation',
-				'branch',
-			],
-			order: {
-				checkIn: 'DESC',
-			},
-		});
-
-		// Combine both sets of check-ins and mark multi-day shifts
-		const allCheckIns = [...checkInsToday, ...ongoingShifts].map((checkIn) => {
-			const checkInDate = new Date(checkIn.checkIn);
-			const isMultiDay = checkInDate < startOfDayConverted;
-
-			return {
-				...checkIn,
-				isMultiDayShift: isMultiDay,
-				shiftDaySpan: isMultiDay ? this.calculateShiftDaySpan(checkInDate, endOfDayConverted) : 1,
+			// Also get shifts that started on previous days but are still ongoing on this date
+			const ongoingShiftsConditions: any = {
+				checkIn: LessThan(startOfDayConverted), // Started before today
+				checkOut: IsNull(), // Not checked out yet
+				status: In([AttendanceStatus.PRESENT, AttendanceStatus.ON_BREAK]), // Still active
 			};
-		});
+
+			// Apply organization filtering only - no branch filtering for org-wide results
+			// Filter by clerkOrgId or ref (both are strings)
+			if (orgId) {
+				ongoingShiftsConditions.organisation = [
+					{ clerkOrgId: orgId },
+					{ ref: orgId }
+				];
+			}
+
+			const ongoingShifts = await this.attendanceRepository.find({
+				where: ongoingShiftsConditions,
+				relations: [
+					'owner',
+					'owner.branch',
+					'owner.organisation',
+					'owner.userProfile',
+					'verifiedBy',
+					'organisation',
+					'branch',
+				],
+				order: {
+					checkIn: 'DESC',
+				},
+			});
+
+			// Combine both sets of check-ins and mark multi-day shifts
+			const allCheckIns = [...checkInsToday, ...ongoingShifts].map((checkIn) => {
+				const checkInDate = new Date(checkIn.checkIn);
+				const isMultiDay = checkInDate < startOfDayConverted;
+
+				return {
+					...checkIn,
+					isMultiDayShift: isMultiDay,
+					shiftDaySpan: isMultiDay ? this.calculateShiftDaySpan(checkInDate, endOfDayConverted) : 1,
+				};
+			});
 
 			// Sort by check-in time descending
 			allCheckIns.sort((a, b) => new Date(b.checkIn).getTime() - new Date(a.checkIn).getTime());
@@ -2165,15 +2285,15 @@ export class AttendanceService {
 				try {
 					const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
 					const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(orgId, new Date());
-					
+
 					// Convert Date objects to strings if needed
-					const orgOpenTime = organizationHours?.openTime instanceof Date 
-						? format(organizationHours.openTime, 'HH:mm:ss') 
+					const orgOpenTime = organizationHours?.openTime instanceof Date
+						? format(organizationHours.openTime, 'HH:mm:ss')
 						: organizationHours?.openTime;
-					const orgCloseTime = organizationHours?.closeTime instanceof Date 
-						? format(organizationHours.closeTime, 'HH:mm:ss') 
+					const orgCloseTime = organizationHours?.closeTime instanceof Date
+						? format(organizationHours.closeTime, 'HH:mm:ss')
 						: organizationHours?.closeTime;
-					
+
 					expectedShiftTime =
 						expectedShiftTime || workingDayInfo.startTime || orgOpenTime || this.FALLBACK_OPEN_TIME;
 					expectedEndTime = workingDayInfo.endTime || orgCloseTime || this.FALLBACK_CLOSE_TIME;
@@ -2187,103 +2307,103 @@ export class AttendanceService {
 				}
 			}
 
-		// Get user info for personalized messages with relations
-		const user = await this.userRepository.findOne({
-			where: { uid: userId },
-			select: ['uid', 'name', 'surname', 'email', 'username'],
-			relations: ['organisation', 'branch', 'branch.organisation'],
-		});
+			// Get user info for personalized messages with relations
+			const user = await this.userRepository.findOne({
+				where: { uid: userId },
+				select: ['uid', 'name', 'surname', 'email', 'username'],
+				relations: ['organisation', 'branch', 'branch.organisation'],
+			});
 
-		if (!user) {
-			this.logger.warn(`[${operationId}] User ${userId} not found`);
-			return;
-		}
+			if (!user) {
+				this.logger.warn(`[${operationId}] User ${userId} not found`);
+				return;
+			}
 
-		// Construct full name with proper fallbacks
-		const fullName = `${user.name || ''} ${user.surname || ''}`.trim();
-		const userName = fullName || user.username || 'Team Member';
+			// Construct full name with proper fallbacks
+			const fullName = `${user.name || ''} ${user.surname || ''}`.trim();
+			const userName = fullName || user.username || 'Team Member';
 
-		// Log user data for debugging
-		this.logger.log(
-			`[${operationId}] User data retrieved for notification:`,
-			JSON.stringify({
+			// Log user data for debugging
+			this.logger.log(
+				`[${operationId}] User data retrieved for notification:`,
+				JSON.stringify({
+					userId,
+					name: user.name,
+					surname: user.surname,
+					username: user.username,
+					constructedFullName: fullName,
+					finalUserName: userName,
+				})
+			);
+
+			// Prepare notification data based on reminder type
+			const notificationData: any = {
+				currentTime,
 				userId,
-				name: user.name,
-				surname: user.surname,
-				username: user.username,
-				constructedFullName: fullName,
-				finalUserName: userName,
-			})
-		);
-
-		// Prepare notification data based on reminder type
-		const notificationData: any = {
-			currentTime,
-			userId,
-			userName, // Full name now properly populated
-			orgId,
-			branchId,
-			timestamp: new Date().toISOString(),
-			reminderType,
-		};
+				userName, // Full name now properly populated
+				orgId,
+				branchId,
+				timestamp: new Date().toISOString(),
+				reminderType,
+			};
 
 			switch (reminderType) {
-		case 'pre_start':
-			notificationType = NotificationEvent.ATTENDANCE_SHIFT_START_REMINDER;
-			notificationData.shiftStartTime = expectedShiftTime;
-			priority = NotificationPriority.NORMAL;
-			break;
+				case 'pre_start':
+					notificationType = NotificationEvent.ATTENDANCE_SHIFT_START_REMINDER;
+					notificationData.shiftStartTime = expectedShiftTime;
+					priority = NotificationPriority.NORMAL;
+					break;
 
-		case 'start':
-			notificationType = NotificationEvent.ATTENDANCE_SHIFT_STARTED;
-			notificationData.shiftStartTime = expectedShiftTime;
-			notificationData.currentTime = currentTime;
-			priority = NotificationPriority.NORMAL;
-			break;
+				case 'start':
+					notificationType = NotificationEvent.ATTENDANCE_SHIFT_STARTED;
+					notificationData.shiftStartTime = expectedShiftTime;
+					notificationData.currentTime = currentTime;
+					priority = NotificationPriority.NORMAL;
+					break;
 
-		case 'pre_end':
-			notificationType = NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER;
-			notificationData.shiftEndTime = expectedEndTime;
-			priority = NotificationPriority.NORMAL;
-			break;
+				case 'pre_end':
+					notificationType = NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER;
+					notificationData.shiftEndTime = expectedEndTime;
+					priority = NotificationPriority.NORMAL;
+					break;
 
-		case 'end':
-			notificationType = NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER;
-			notificationData.shiftEndTime = expectedEndTime;
-			notificationData.currentTime = currentTime;
-			priority = NotificationPriority.HIGH;
-			break;
+				case 'end':
+					notificationType = NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER;
+					notificationData.shiftEndTime = expectedEndTime;
+					notificationData.currentTime = currentTime;
+					priority = NotificationPriority.HIGH;
+					break;
 
-		case 'missed':
-			notificationType = NotificationEvent.ATTENDANCE_MISSED_SHIFT_ALERT;
-			notificationData.shiftStartTime = expectedShiftTime;
-			priority = NotificationPriority.HIGH;
-			break;
+				case 'missed':
+					notificationType = NotificationEvent.ATTENDANCE_MISSED_SHIFT_ALERT;
+					notificationData.shiftStartTime = expectedShiftTime;
+					priority = NotificationPriority.HIGH;
+					break;
 
-		case 'late':
-			notificationType = NotificationEvent.ATTENDANCE_LATE_SHIFT_ALERT;
-			if (lateMinutes && lateMinutes > 0) {
-				notificationData.lateMinutes = lateMinutes;
-			} else {
-				notificationData.currentTime = currentTime;
-			}
-			notificationData.shiftStartTime = expectedShiftTime;
-			priority = NotificationPriority.HIGH;
-			break;
+				case 'late':
+					notificationType = NotificationEvent.ATTENDANCE_LATE_SHIFT_ALERT;
+					if (lateMinutes && lateMinutes > 0) {
+						notificationData.lateMinutes = lateMinutes;
+					} else {
+						notificationData.currentTime = currentTime;
+					}
+					notificationData.shiftStartTime = expectedShiftTime;
+					priority = NotificationPriority.HIGH;
+					break;
 
-		case 'overtime':
-			notificationType = NotificationEvent.ATTENDANCE_OVERTIME_REMINDER;
-			if (overtimeMinutes && overtimeMinutes > 0) {
-				// Cap overtime at 16 hours (24h - 8h standard shift) to prevent impossible values
-				const cappedMinutes = Math.min(overtimeMinutes, 960);
-				const hours = Math.floor(cappedMinutes / 60);
-				const minutes = cappedMinutes % 60;
-				notificationData.overtimeMinutes = cappedMinutes; // Total minutes for :duration formatter
-				notificationData.overtimeHours = hours;
-				notificationData.overtimeFormatted = `${hours}h ${minutes}m`;
-			}
-			priority = NotificationPriority.HIGH;
-			break;
+				case 'overtime':
+					notificationType = NotificationEvent.ATTENDANCE_OVERTIME_REMINDER;
+					if (overtimeMinutes && overtimeMinutes > 0) {
+						// Cap overtime at 16 hours (24h - 8h standard shift) to prevent impossible values
+						const cappedMinutes = Math.min(overtimeMinutes, 960);
+						const hours = Math.floor(cappedMinutes / 60);
+						const minutes = cappedMinutes % 60;
+						notificationData.overtimeMinutes = cappedMinutes; // Total minutes for :duration formatter
+						notificationData.overtimeHours = hours;
+						notificationData.overtimeFormatted = `${hours}h ${minutes}m`;
+					}
+					priority = NotificationPriority.HIGH;
+					break;
 
 				default:
 					this.logger.warn(`[${operationId}] Unknown reminder type: ${reminderType}`);
@@ -2291,71 +2411,71 @@ export class AttendanceService {
 			}
 
 
-		// Add navigation data for mobile app with context-aware routing
-		notificationData.screen = '/hr/attendance';
-		notificationData.action = `attendance_${reminderType}`;
-		notificationData.type = 'attendance';
-		notificationData.context = {
-			reminderType,
-			userId,
-			orgId,
-			branchId,
-			timestamp: new Date().toISOString()
-		};
+			// Add navigation data for mobile app with context-aware routing
+			notificationData.screen = '/hr/attendance';
+			notificationData.action = `attendance_${reminderType}`;
+			notificationData.type = 'attendance';
+			notificationData.context = {
+				reminderType,
+				userId,
+				orgId,
+				branchId,
+				timestamp: new Date().toISOString()
+			};
 
-		// Validate critical notification data before sending
-		if (!notificationData.userName || notificationData.userName.trim() === '') {
-			this.logger.error(
-				`[${operationId}] ⚠️ userName is empty for user ${userId}! Using fallback.`
-			);
-			notificationData.userName = 'Team Member';
-		}
-
-		if (reminderType === 'pre_end' || reminderType === 'end') {
-			if (!notificationData.shiftEndTime) {
+			// Validate critical notification data before sending
+			if (!notificationData.userName || notificationData.userName.trim() === '') {
 				this.logger.error(
-					`[${operationId}] ⚠️ shiftEndTime is missing for ${reminderType} notification! Using fallback.`
+					`[${operationId}] ⚠️ userName is empty for user ${userId}! Using fallback.`
 				);
-				notificationData.shiftEndTime = '17:00';
+				notificationData.userName = 'Team Member';
 			}
-		}
 
-		// Log final notification data being sent
-		this.logger.log(
-			`[${operationId}] Sending ${notificationType} notification with data:`,
-			JSON.stringify({
-				userName: notificationData.userName,
-				shiftStartTime: notificationData.shiftStartTime,
-				shiftEndTime: notificationData.shiftEndTime,
-				userId: notificationData.userId,
-				reminderType: notificationData.reminderType,
-			})
-		);
-
-		// Send push notification only (no emails for reminders)
-		await this.unifiedNotificationService.sendTemplatedNotification(
-			notificationType,
-			[Number(userId)],
-			notificationData,
-			{
-				priority,
-				sendEmail: false,
-				customData: {
-					screen: '/hr/attendance',
-					action: `attendance_${reminderType}`,
-					type: 'attendance',
-					context: {
-						reminderType,
-						userId,
-						orgId,
-						branchId,
-						timestamp: new Date().toISOString()
-					}
+			if (reminderType === 'pre_end' || reminderType === 'end') {
+				if (!notificationData.shiftEndTime) {
+					this.logger.error(
+						`[${operationId}] ⚠️ shiftEndTime is missing for ${reminderType} notification! Using fallback.`
+					);
+					notificationData.shiftEndTime = '17:00';
 				}
-			},
-		);
+			}
 
-		this.logger.log(`[${operationId}] ${reminderType} push notification sent successfully to user ${userId}`);
+			// Log final notification data being sent
+			this.logger.log(
+				`[${operationId}] Sending ${notificationType} notification with data:`,
+				JSON.stringify({
+					userName: notificationData.userName,
+					shiftStartTime: notificationData.shiftStartTime,
+					shiftEndTime: notificationData.shiftEndTime,
+					userId: notificationData.userId,
+					reminderType: notificationData.reminderType,
+				})
+			);
+
+			// Send push notification only (no emails for reminders)
+			await this.unifiedNotificationService.sendTemplatedNotification(
+				notificationType,
+				[userId],
+				notificationData,
+				{
+					priority,
+					sendEmail: false,
+					customData: {
+						screen: '/hr/attendance',
+						action: `attendance_${reminderType}`,
+						type: 'attendance',
+						context: {
+							reminderType,
+							userId,
+							orgId,
+							branchId,
+							timestamp: new Date().toISOString()
+						}
+					}
+				},
+			);
+
+			this.logger.log(`[${operationId}] ${reminderType} push notification sent successfully to user ${userId}`);
 
 			// Also notify organization admins for critical events
 			if (['missed', 'late', 'overtime'].includes(reminderType) && orgId) {
@@ -2392,57 +2512,57 @@ export class AttendanceService {
 							adminNotificationData.overtimeMinutes = overtimeMinutes;
 						}
 
-					// Admin-specific messages and titles
-					let adminTitle = '';
-					let adminMessage = '';
-					switch (reminderType) {
-						case 'missed':
-							adminTitle = '⚠️ Employee Missed Shift';
-							adminMessage = `${userName} missed their scheduled shift that was supposed to start at ${expectedShiftTime}. Please follow up as needed.`;
-							break;
-						case 'late':
-							adminTitle = '⏰ Employee Late Arrival';
-							adminMessage = `${userName} checked in ${lateMinutes || 'several'} minute${lateMinutes !== 1 ? 's' : ''} late for their shift. Expected start time: ${expectedShiftTime}.`;
-							break;
-						case 'overtime':
-							const otHours = Math.floor((overtimeMinutes || 0) / 60);
-							const otMins = (overtimeMinutes || 0) % 60;
-							adminTitle = '🔥 Employee Working Overtime';
-							adminMessage = `${userName} is currently working overtime (${otHours}h ${otMins}m). Please monitor for employee wellness and ensure proper rest periods.`;
-							break;
-					}
+						// Admin-specific messages and titles
+						let adminTitle = '';
+						let adminMessage = '';
+						switch (reminderType) {
+							case 'missed':
+								adminTitle = '⚠️ Employee Missed Shift';
+								adminMessage = `${userName} missed their scheduled shift that was supposed to start at ${expectedShiftTime}. Please follow up as needed.`;
+								break;
+							case 'late':
+								adminTitle = '⏰ Employee Late Arrival';
+								adminMessage = `${userName} checked in ${lateMinutes || 'several'} minute${lateMinutes !== 1 ? 's' : ''} late for their shift. Expected start time: ${expectedShiftTime}.`;
+								break;
+							case 'overtime':
+								const otHours = Math.floor((overtimeMinutes || 0) / 60);
+								const otMins = (overtimeMinutes || 0) % 60;
+								adminTitle = '🔥 Employee Working Overtime';
+								adminMessage = `${userName} is currently working overtime (${otHours}h ${otMins}m). Please monitor for employee wellness and ensure proper rest periods.`;
+								break;
+						}
 
-					// Use GENERAL_NOTIFICATION for admin alerts with custom message
-					await this.unifiedNotificationService.sendTemplatedNotification(
-						NotificationEvent.GENERAL_NOTIFICATION,
-						orgAdmins.map((admin) => admin.uid),
-						{
-							message: adminMessage,
-							userId,
-							employeeName: userName,
-							userEmail: user?.email || '',
-							orgId,
-							branchId,
-							alertType: reminderType,
-							shiftStartTime: expectedShiftTime,
-							lateMinutes,
-							overtimeMinutes,
-							timestamp: new Date().toISOString(),
-						},
-						{ 
-							priority: NotificationPriority.HIGH,
-							customData: {
-								screen: '/staff',
-								action: 'view_employee_attendance',
-								type: 'admin_alert',
-								context: {
-									employeeId: userId,
-									employeeName: userName,
-									alertType: reminderType,
+						// Use GENERAL_NOTIFICATION for admin alerts with custom message
+						await this.unifiedNotificationService.sendTemplatedNotification(
+							NotificationEvent.GENERAL_NOTIFICATION,
+							orgAdmins.map((admin) => admin.uid),
+							{
+								message: adminMessage,
+								userId,
+								employeeName: userName,
+								userEmail: user?.email || '',
+								orgId,
+								branchId,
+								alertType: reminderType,
+								shiftStartTime: expectedShiftTime,
+								lateMinutes,
+								overtimeMinutes,
+								timestamp: new Date().toISOString(),
+							},
+							{
+								priority: NotificationPriority.HIGH,
+								customData: {
+									screen: '/staff',
+									action: 'view_employee_attendance',
+									type: 'admin_alert',
+									context: {
+										employeeId: userId,
+										employeeName: userName,
+										alertType: reminderType,
+									}
 								}
-							}
-						},
-					);
+							},
+						);
 					}
 				} catch (error) {
 					this.logger.warn(
@@ -2501,7 +2621,7 @@ export class AttendanceService {
 
 			// Calculate distance from branch
 			const distance = await this.calculateDistanceFromBranch(checkInLat, checkInLng, branch);
-			
+
 			if (distance > 100) {
 				// Get user info for notification
 				const checkInWithOwner = await this.attendanceRepository.findOne({
@@ -2534,10 +2654,10 @@ export class AttendanceService {
 		try {
 			// Format branch address for geocoding
 			const branchAddress = `${branch.address.street}, ${branch.address.city}, ${branch.address.state}, ${branch.address.country}, ${branch.address.postalCode}`;
-			
+
 			// Geocode branch address
 			const geocodeResult = await this.googleMapsService.geocodeAddress(branchAddress);
-			
+
 			if (!geocodeResult || !geocodeResult.address || !geocodeResult.address.latitude || !geocodeResult.address.longitude) {
 				this.logger.warn(`Failed to geocode branch address: ${branchAddress}`);
 				return 0;
@@ -2570,7 +2690,7 @@ export class AttendanceService {
 	): Promise<void> {
 		try {
 			const orgAdmins = await this.getOrganizationAdmins(orgId);
-			
+
 			if (orgAdmins.length === 0) {
 				this.logger.debug(`No admins found for org ${orgId}, skipping remote check-in notification`);
 				return;
@@ -2671,10 +2791,10 @@ export class AttendanceService {
 					const orgId = breakRecord.owner.organisation?.clerkOrgId || breakRecord.owner.organisation?.ref;
 					const organizationHours = orgId ? await this.organizationHoursService.getOrganizationHours(orgId) : null;
 					const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
-					
+
 					// Get current time (already timezone-aware)
 					const now = new Date();
-					
+
 					const breakStartTime = new Date(breakRecord.breakStartTime);
 					const breakDurationMinutes = Math.floor((now.getTime() - breakStartTime.getTime()) / (1000 * 60));
 
@@ -2698,15 +2818,15 @@ export class AttendanceService {
 								continue;
 							}
 
-						// Get user info for personalized message
-						const user = await this.userRepository.findOne({
-							where: { uid: breakRecord.owner.uid },
-							select: ['uid', 'name', 'surname', 'username'],
-						});
+							// Get user info for personalized message
+							const user = await this.userRepository.findOne({
+								where: { uid: breakRecord.owner.uid },
+								select: ['uid', 'name', 'surname', 'username'],
+							});
 
-						// Construct full name with proper fallbacks
-						const fullName = `${user?.name || ''} ${user?.surname || ''}`.trim();
-						const userName = fullName || user?.username || 'Team Member';
+							// Construct full name with proper fallbacks
+							const fullName = `${user?.name || ''} ${user?.surname || ''}`.trim();
+							const userName = fullName || user?.username || 'Team Member';
 
 
 							this.logger.debug(
@@ -2801,17 +2921,17 @@ export class AttendanceService {
 				const breakLevel = breakDurationMinutes >= 60 ? 'extended' : 'long';
 				const urgencyLevel = breakDurationMinutes >= 60 ? 'urgent attention' : 'monitoring';
 
-			// Construct employeeName with proper fallbacks
-			const fullName = `${user.name || ''} ${user.surname || ''}`.trim();
-			const employeeName = fullName || user.username || user.email?.split('@')[0] || 'Employee';
+				// Construct employeeName with proper fallbacks
+				const fullName = `${user.name || ''} ${user.surname || ''}`.trim();
+				const employeeName = fullName || user.username || user.email?.split('@')[0] || 'Employee';
 
-			await this.unifiedNotificationService.sendTemplatedNotification(
-				NotificationEvent.ATTENDANCE_BREAK_STARTED,
-				orgAdmins.map((admin) => admin.uid),
-				{
-					employeeName,
-					employeeEmail: user.email,
-					breakDurationMinutes,
+				await this.unifiedNotificationService.sendTemplatedNotification(
+					NotificationEvent.ATTENDANCE_BREAK_STARTED,
+					orgAdmins.map((admin) => admin.uid),
+					{
+						employeeName,
+						employeeEmail: user.email,
+						breakDurationMinutes,
 						breakStartTime: breakStartTimeString,
 						breakLevel,
 						userId: user.uid,
@@ -2882,27 +3002,27 @@ export class AttendanceService {
 						continue;
 					}
 
-				// Calculate notification windows - parse time strings and combine with current time
-				const [startHour, startMinute] = startTime.split(':').map(Number);
-				const [endHour, endMinute] = endTime.split(':').map(Number);
+					// Calculate notification windows - parse time strings and combine with current time
+					const [startHour, startMinute] = startTime.split(':').map(Number);
+					const [endHour, endMinute] = endTime.split(':').map(Number);
 
-				// Parse organization working times
-				const orgStartTime = new Date(orgCurrentTime);
-				orgStartTime.setHours(startHour, startMinute, 0, 0);
-				const orgEndTime = new Date(orgCurrentTime);
-				orgEndTime.setHours(endHour, endMinute, 0, 0);
+					// Parse organization working times
+					const orgStartTime = new Date(orgCurrentTime);
+					orgStartTime.setHours(startHour, startMinute, 0, 0);
+					const orgEndTime = new Date(orgCurrentTime);
+					orgEndTime.setHours(endHour, endMinute, 0, 0);
 
-				// 30 minutes BEFORE start time (shift start reminder)
-				const preShiftReminderTime = addMinutes(orgStartTime, -30);
+					// 30 minutes BEFORE start time (shift start reminder)
+					const preShiftReminderTime = addMinutes(orgStartTime, -30);
 
-				// 30 minutes AFTER start time (missed shift alert)
-				const missedShiftAlertTime = addMinutes(orgStartTime, 30);
+					// 30 minutes AFTER start time (missed shift alert)
+					const missedShiftAlertTime = addMinutes(orgStartTime, 30);
 
-				// 30 minutes BEFORE end time (checkout reminder)
-				const preCheckoutReminderTime = addMinutes(orgEndTime, -30);
+					// 30 minutes BEFORE end time (checkout reminder)
+					const preCheckoutReminderTime = addMinutes(orgEndTime, -30);
 
-				// 30 minutes AFTER end time (missed checkout alert)
-				const missedCheckoutAlertTime = addMinutes(orgEndTime, 30);
+					// 30 minutes AFTER end time (missed checkout alert)
+					const missedCheckoutAlertTime = addMinutes(orgEndTime, 30);
 
 					// Check if we're within notification windows (±2.5 minutes for 5-minute cron)
 					const preShiftTimeDiff =
@@ -2939,8 +3059,8 @@ export class AttendanceService {
 					const orgUsers = await this.userRepository
 						.createQueryBuilder('user')
 						.leftJoinAndSelect('user.organisation', 'organisation')
-						.where('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { 
-							orgId: org.clerkOrgId || org.ref 
+						.where('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', {
+							orgId: org.clerkOrgId || org.ref
 						})
 						.andWhere('user.isDeleted = :isDeleted', { isDeleted: false })
 						.andWhere('user.status = :status', { status: 'ACTIVE' })
@@ -3097,28 +3217,28 @@ export class AttendanceService {
 					},
 				});
 
-			if (!todayAttendance) {
-				this.logger.debug(`[${operationId}] User ${user.uid} missed shift - sending alert`);
+				if (!todayAttendance) {
+					this.logger.debug(`[${operationId}] User ${user.uid} missed shift - sending alert`);
 
-				// Construct full name with proper fallbacks
-				const fullName = `${user.name || ''} ${user.surname || ''}`.trim();
-				const userName = fullName || user.username || 'Team Member';
+					// Construct full name with proper fallbacks
+					const fullName = `${user.name || ''} ${user.surname || ''}`.trim();
+					const userName = fullName || user.username || 'Team Member';
 
-				await this.unifiedNotificationService.sendTemplatedNotification(
-					NotificationEvent.ATTENDANCE_MISSED_SHIFT_ALERT,
-					[user.uid],
-					{
-						shiftStartTime: startTime,
-						reminderType: 'missed_shift',
-						userName: userName,
-						userId: user.uid,
-						orgId: org.uid,
-						timestamp: new Date().toISOString(),
-					},
-					{
-						priority: NotificationPriority.HIGH,
-					},
-				);
+					await this.unifiedNotificationService.sendTemplatedNotification(
+						NotificationEvent.ATTENDANCE_MISSED_SHIFT_ALERT,
+						[user.uid],
+						{
+							shiftStartTime: startTime,
+							reminderType: 'missed_shift',
+							userName: userName,
+							userId: user.uid,
+							orgId: org.uid,
+							timestamp: new Date().toISOString(),
+						},
+						{
+							priority: NotificationPriority.HIGH,
+						},
+					);
 
 					// Also notify organization admins (pass clerkOrgId/ref string)
 					await this.notifyAdminsAboutMissedShift(operationId, orgId, user, startTime);
@@ -3299,21 +3419,21 @@ export class AttendanceService {
 		try {
 			const orgAdmins = await this.getOrganizationAdmins(orgId);
 			if (orgAdmins.length > 0) {
-			this.logger.debug(
-				`[${operationId}] Notifying ${orgAdmins.length} admins about missed shift for user ${user.uid}`,
-			);
+				this.logger.debug(
+					`[${operationId}] Notifying ${orgAdmins.length} admins about missed shift for user ${user.uid}`,
+				);
 
-			// Construct employeeName with proper fallbacks
-			const fullName = `${user.name || ''} ${user.surname || ''}`.trim();
-			const employeeName = fullName || user.username || user.email?.split('@')[0] || 'Employee';
+				// Construct employeeName with proper fallbacks
+				const fullName = `${user.name || ''} ${user.surname || ''}`.trim();
+				const employeeName = fullName || user.username || user.email?.split('@')[0] || 'Employee';
 
-			await this.unifiedNotificationService.sendTemplatedNotification(
-				NotificationEvent.ATTENDANCE_MISSED_SHIFT_ALERT,
-				orgAdmins.map((admin) => admin.uid),
-				{
-					employeeName,
-					employeeEmail: user.email,
-					shiftStartTime: startTime,
+				await this.unifiedNotificationService.sendTemplatedNotification(
+					NotificationEvent.ATTENDANCE_MISSED_SHIFT_ALERT,
+					orgAdmins.map((admin) => admin.uid),
+					{
+						employeeName,
+						employeeEmail: user.email,
+						shiftStartTime: startTime,
 						userId: user.uid,
 						orgId,
 						adminContext: true,
@@ -3340,23 +3460,23 @@ export class AttendanceService {
 		try {
 			const orgAdmins = await this.getOrganizationAdmins(orgId);
 			if (orgAdmins.length > 0) {
-			this.logger.debug(
-				`[${operationId}] Notifying ${orgAdmins.length} admins about missed checkout for user ${user.uid}`,
-			);
+				this.logger.debug(
+					`[${operationId}] Notifying ${orgAdmins.length} admins about missed checkout for user ${user.uid}`,
+				);
 
-			const checkInTime = await this.formatTimeInOrganizationTimezone(new Date(activeShift.checkIn), orgId);
+				const checkInTime = await this.formatTimeInOrganizationTimezone(new Date(activeShift.checkIn), orgId);
 
-			// Construct employeeName with proper fallbacks
-			const fullName = `${user.name || ''} ${user.surname || ''}`.trim();
-			const employeeName = fullName || user.username || user.email?.split('@')[0] || 'Employee';
+				// Construct employeeName with proper fallbacks
+				const fullName = `${user.name || ''} ${user.surname || ''}`.trim();
+				const employeeName = fullName || user.username || user.email?.split('@')[0] || 'Employee';
 
-			await this.unifiedNotificationService.sendTemplatedNotification(
-				NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER,
-				orgAdmins.map((admin) => admin.uid),
-				{
-					employeeName,
-					employeeEmail: user.email,
-					checkInTime,
+				await this.unifiedNotificationService.sendTemplatedNotification(
+					NotificationEvent.ATTENDANCE_SHIFT_END_REMINDER,
+					orgAdmins.map((admin) => admin.uid),
+					{
+						employeeName,
+						employeeEmail: user.email,
+						checkInTime,
 						shiftEndTime: endTime,
 						userId: user.uid,
 						orgId,
@@ -3427,8 +3547,7 @@ export class AttendanceService {
 		const effectiveBranchId = this.getEffectiveBranchId(branchId, userAccessLevel);
 		const operationId = `daily_overview_${Date.now()}`;
 		this.logger.log(
-			`[${operationId}] Getting daily attendance overview for orgId: ${orgId}, branchId: ${branchId}, effectiveBranchId: ${effectiveBranchId}, userAccessLevel: ${userAccessLevel}, date: ${
-				date || 'today'
+			`[${operationId}] Getting daily attendance overview for orgId: ${orgId}, branchId: ${branchId}, effectiveBranchId: ${effectiveBranchId}, userAccessLevel: ${userAccessLevel}, date: ${date || 'today'
 			}`,
 		);
 
@@ -3492,7 +3611,7 @@ export class AttendanceService {
 			this.logger.debug(`[${operationId}] Found ${todayAttendance.length} attendance records for today`);
 
 			// Build present users list with enhanced data (no duplicates)
-			// Note: We format times directly from UTC dates using formatInTimeZone to avoid double conversion
+			// Note: We format times directly from UTC dates using TimezoneUtil to avoid double conversion
 			const presentUsersMap = new Map<number, any>();
 			const presentUserIds = new Set<number>();
 
@@ -3513,26 +3632,26 @@ export class AttendanceService {
 						branchId: user.branch?.uid || null,
 						branchName: user.branch?.name || 'N/A',
 						accessLevel: user.accessLevel || 'USER',
-						checkInTime: attendance.checkIn ? formatInTimeZone(attendance.checkIn, timezone, 'yyyy-MM-dd HH:mm:ss') : null,
-						checkOutTime: attendance.checkOut ? formatInTimeZone(attendance.checkOut, timezone, 'yyyy-MM-dd HH:mm:ss') : null,
+						checkInTime: attendance.checkIn ? TimezoneUtil.formatInOrganizationTime(attendance.checkIn, 'yyyy-MM-dd HH:mm:ss', timezone) : null,
+						checkOutTime: attendance.checkOut ? TimezoneUtil.formatInOrganizationTime(attendance.checkOut, 'yyyy-MM-dd HH:mm:ss', timezone) : null,
 						status: attendance.status || 'present',
 						workingHours: attendance.checkOut
 							? (
-									(new Date(attendance.checkOut).getTime() - new Date(attendance.checkIn).getTime()) /
-									(1000 * 60 * 60)
-							  ).toFixed(2)
+								(new Date(attendance.checkOut).getTime() - new Date(attendance.checkIn).getTime()) /
+								(1000 * 60 * 60)
+							).toFixed(2)
 							: null,
 						isOnBreak: attendance.status === AttendanceStatus.ON_BREAK,
 						shiftDuration: attendance.checkOut
 							? `${Math.floor(
-									(new Date(attendance.checkOut).getTime() - new Date(attendance.checkIn).getTime()) /
-										(1000 * 60 * 60),
-							  )}h ${Math.floor(
-									((new Date(attendance.checkOut).getTime() -
-										new Date(attendance.checkIn).getTime()) %
-										(1000 * 60 * 60)) /
-										(1000 * 60),
-							  )}m`
+								(new Date(attendance.checkOut).getTime() - new Date(attendance.checkIn).getTime()) /
+								(1000 * 60 * 60),
+							)}h ${Math.floor(
+								((new Date(attendance.checkOut).getTime() -
+									new Date(attendance.checkIn).getTime()) %
+									(1000 * 60 * 60)) /
+								(1000 * 60),
+							)}m`
 							: 'In Progress',
 					});
 					presentUserIds.add(user.uid);
@@ -3599,12 +3718,12 @@ export class AttendanceService {
 				},
 			};
 
-		this.logger.log(
-			`[${operationId}] Daily attendance overview generated: ${presentUsers.length} present, ${absentUsers.length} absent, ${attendanceRate}% rate`,
-		);
+			this.logger.log(
+				`[${operationId}] Daily attendance overview generated: ${presentUsers.length} present, ${absentUsers.length} absent, ${attendanceRate}% rate`,
+			);
 
-		// Times are formatted directly from UTC dates using formatInTimeZone to avoid double conversion
-		return response;
+			// Times are formatted directly from UTC dates using TimezoneUtil to avoid double conversion
+			return response;
 		} catch (error) {
 			this.logger.error(`[${operationId}] Error generating daily attendance overview:`, error.stack);
 			return {
@@ -3643,7 +3762,7 @@ export class AttendanceService {
 			// Get organization timezone for accurate date range (orgId is clerkOrgId/ref string)
 			const organizationHours = orgId ? await this.organizationHoursService.getOrganizationHours(orgId) : null;
 			const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
-			
+
 			// Use date-fns for start and end of period (dates are already timezone-aware)
 			const periodStart = startOfDay(startDate);
 			const periodEnd = endOfDay(endDate);
@@ -3768,11 +3887,11 @@ export class AttendanceService {
 	}
 
 	public async checkInsByStatus(
-		ref: number,
+		ref: string,
 		orgId?: string,
 		branchId?: number,
 		userAccessLevel?: string,
-		requestingUserId?: number,
+		requestingUserId?: string | number,
 	): Promise<{
 		message: string;
 		startTime: string;
@@ -3785,12 +3904,12 @@ export class AttendanceService {
 	}> {
 		// Get effective branch ID based on user role
 		const effectiveBranchId = this.getEffectiveBranchId(branchId, userAccessLevel);
-		
+
 		// If user is querying their own status, don't apply branch filtering
 		// Branch filtering should only apply to list queries, not individual user queries
 		// This ensures users can always see their own records regardless of branch changes
-		const isOwnStatus = requestingUserId && requestingUserId === ref;
-		
+		const isOwnStatus = requestingUserId != null && String(requestingUserId) === String(ref);
+
 		try {
 			const whereConditions: any = {
 				owner: {
@@ -3854,48 +3973,48 @@ export class AttendanceService {
 				...restOfCheckIn
 			} = checkIn;
 
-		// Enhanced status logic to properly handle break states
-		let nextAction: string;
-		let checkedIn: boolean;
+			// Enhanced status logic to properly handle break states
+			let nextAction: string;
+			let checkedIn: boolean;
 
-		// Determine status based on comprehensive attendance state
-		if (status === AttendanceStatus.PRESENT) {
-			checkedIn = true;
-			// Check if user can take a break or should end shift
-			const hasActiveBreak = checkIn.breakStartTime && !checkIn.breakEndTime;
-			nextAction = hasActiveBreak ? 'Resume Work' : 'End Shift';
-		} else if (status === AttendanceStatus.ON_BREAK) {
-			checkedIn = true;
-			nextAction = 'End Break';
-		} else if (status === AttendanceStatus.COMPLETED) {
-			checkedIn = false;
-			nextAction = 'Start Shift';
-		} else {
-			// Default case for ABSENT, MISSED, or other statuses
-			checkedIn = false;
-			nextAction = 'Start Shift';
-		}
-
-		// Additional validation: check break details for more accuracy
-		if (checkIn.breakDetails && Array.isArray(checkIn.breakDetails)) {
-			const activeBreak = checkIn.breakDetails.find(breakDetail => !breakDetail.endTime);
-			if (activeBreak && status !== AttendanceStatus.ON_BREAK) {
-				// User has an active break but status might be inconsistent
-				this.logger.warn(`Inconsistent break state detected for user ${ref}: has active break but status is ${status}`);
+			// Determine status based on comprehensive attendance state
+			if (status === AttendanceStatus.PRESENT) {
+				checkedIn = true;
+				// Check if user can take a break or should end shift
+				const hasActiveBreak = checkIn.breakStartTime && !checkIn.breakEndTime;
+				nextAction = hasActiveBreak ? 'Resume Work' : 'End Shift';
+			} else if (status === AttendanceStatus.ON_BREAK) {
 				checkedIn = true;
 				nextAction = 'End Break';
+			} else if (status === AttendanceStatus.COMPLETED) {
+				checkedIn = false;
+				nextAction = 'Start Shift';
+			} else {
+				// Default case for ABSENT, MISSED, or other statuses
+				checkedIn = false;
+				nextAction = 'Start Shift';
 			}
-		}
+
+			// Additional validation: check break details for more accuracy
+			if (checkIn.breakDetails && Array.isArray(checkIn.breakDetails)) {
+				const activeBreak = checkIn.breakDetails.find(breakDetail => !breakDetail.endTime);
+				if (activeBreak && status !== AttendanceStatus.ON_BREAK) {
+					// User has an active break but status might be inconsistent
+					this.logger.warn(`Inconsistent break state detected for user ${ref}: has active break but status is ${status}`);
+					checkedIn = true;
+					nextAction = 'End Break';
+				}
+			}
 
 			// Apply timezone conversion to the attendance record using enhanced method
 			const timezone = await this.getOrganizationTimezone(orgId);
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,
-				startTime: checkIn.checkIn ? formatInTimeZone(checkIn.checkIn, timezone, 'yyyy-MM-dd HH:mm:ss') : null,
-				endTime: checkIn.checkOut ? formatInTimeZone(checkIn.checkOut, timezone, 'yyyy-MM-dd HH:mm:ss') : null,
-				createdAt: checkIn.createdAt ? formatInTimeZone(checkIn.createdAt, timezone, 'yyyy-MM-dd HH:mm:ss') : null,
-				updatedAt: checkIn.updatedAt ? formatInTimeZone(checkIn.updatedAt, timezone, 'yyyy-MM-dd HH:mm:ss') : null,
-				verifiedAt: checkIn.verifiedAt ? formatInTimeZone(checkIn.verifiedAt, timezone, 'yyyy-MM-dd HH:mm:ss') : null,
+				startTime: checkIn.checkIn ? TimezoneUtil.formatInOrganizationTime(checkIn.checkIn, 'yyyy-MM-dd HH:mm:ss', timezone) : null,
+				endTime: checkIn.checkOut ? TimezoneUtil.formatInOrganizationTime(checkIn.checkOut, 'yyyy-MM-dd HH:mm:ss', timezone) : null,
+				createdAt: checkIn.createdAt ? TimezoneUtil.formatInOrganizationTime(checkIn.createdAt, 'yyyy-MM-dd HH:mm:ss', timezone) : null,
+				updatedAt: checkIn.updatedAt ? TimezoneUtil.formatInOrganizationTime(checkIn.updatedAt, 'yyyy-MM-dd HH:mm:ss', timezone) : null,
+				verifiedAt: checkIn.verifiedAt ? TimezoneUtil.formatInOrganizationTime(checkIn.verifiedAt, 'yyyy-MM-dd HH:mm:ss', timezone) : null,
 				nextAction,
 				isLatestCheckIn,
 				checkedIn,
@@ -3927,30 +4046,31 @@ export class AttendanceService {
 	// ======================================================
 
 	public async checkInsByUser(
-		ref: number,
+		ref: string,
 		orgId?: string,
 		branchId?: number,
 		userAccessLevel?: string,
-		requestingUserId?: number,
+		requestingUserId?: string,
 	): Promise<{ message: string; checkIns: Attendance[]; user: any }> {
 		// Get effective branch ID based on user role
 		const effectiveBranchId = this.getEffectiveBranchId(branchId, userAccessLevel);
 		const canViewAll = this.shouldSeeAllBranches(userAccessLevel);
-		
+
 		// If user is not admin/owner/developer/technician, they can only view their own attendance
-		if (!canViewAll && requestingUserId && requestingUserId !== ref) {
+		if (!canViewAll && requestingUserId != null && String(requestingUserId) !== String(ref)) {
 			this.logger.warn(`🚫 [AttendanceService] User ${requestingUserId} attempted to access attendance for user ${ref}`);
 			throw new NotFoundException('Access denied: You can only view your own attendance records');
 		}
-		
+
 		// If user is querying their own records, don't apply branch filtering
 		// This ensures users can always see their own records regardless of branch changes
-		const isOwnRecords = requestingUserId && requestingUserId === ref;
-		
+		const isOwnRecords = requestingUserId != null && String(requestingUserId) === String(ref);
+
 		try {
-			const whereConditions: any = {
-				owner: { uid: ref },
-			};
+			// Use clerk id (ownerClerkUserId) or numeric uid (owner.uid) per migration
+			const whereConditions: any = ref.startsWith('user_')
+				? { ownerClerkUserId: ref }
+				: { owner: { uid: Number(ref) } };
 
 			// Apply organization filtering - validate user belongs to requester's org
 			// Filter by clerkOrgId or ref (both are strings)
@@ -3974,22 +4094,22 @@ export class AttendanceService {
 				this.logger.debug(`User ${userAccessLevel} can see all branches - no branch filter applied`);
 			}
 
-		const checkIns = await this.attendanceRepository.find({
-			where: whereConditions,
-			relations: [
-				'owner',
-				'owner.branch',
-				'owner.organisation',
-				'owner.userProfile',
-				'verifiedBy',
-				'organisation',
-				'branch',
-				'dailyReport',
-			],
-			order: {
-				checkIn: 'DESC',
-			},
-		});
+			const checkIns = await this.attendanceRepository.find({
+				where: whereConditions,
+				relations: [
+					'owner',
+					'owner.branch',
+					'owner.organisation',
+					'owner.userProfile',
+					'verifiedBy',
+					'organisation',
+					'branch',
+					'dailyReport',
+				],
+				order: {
+					checkIn: 'DESC',
+				},
+			});
 
 			if (!checkIns || checkIns.length === 0) {
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
@@ -4208,7 +4328,7 @@ export class AttendanceService {
 
 	public async getAttendanceForMonth(ref: string): Promise<{ totalHours: number }> {
 		try {
-			const user = await this.userService.findOne(Number(ref));
+			const user = await this.userService.findOne(ref);
 			const userId = user.user.uid;
 
 			// Get completed shifts for the month
@@ -4221,24 +4341,24 @@ export class AttendanceService {
 				},
 			});
 
-		// Calculate hours from completed shifts - only count regular hours (duration), exclude overtime
-		// Regular hours are capped at organization's expected work hours per day
-		const completedHours = attendanceRecords.reduce((total, record) => {
-			let regularWorkHours = 0;
-			
-			// Parse duration (capped at expected hours - this is regular work time)
-			if (record?.duration) {
-				const [hours, minutes] = record.duration.split(' ');
-				const hoursValue = parseFloat(hours.replace('h', ''));
-				const minutesValue = parseFloat(minutes.replace('m', '')) / 60;
-				regularWorkHours += hoursValue + minutesValue;
-			}
-			
-			// Do NOT add overtime - overtime is separate and should not be counted in total hours
-			// Total hours should only reflect hours within work hours
-			
-			return total + regularWorkHours;
-		}, 0);
+			// Calculate hours from completed shifts - only count regular hours (duration), exclude overtime
+			// Regular hours are capped at organization's expected work hours per day
+			const completedHours = attendanceRecords.reduce((total, record) => {
+				let regularWorkHours = 0;
+
+				// Parse duration (capped at expected hours - this is regular work time)
+				if (record?.duration) {
+					const [hours, minutes] = record.duration.split(' ');
+					const hoursValue = parseFloat(hours.replace('h', ''));
+					const minutesValue = parseFloat(minutes.replace('m', '')) / 60;
+					regularWorkHours += hoursValue + minutesValue;
+				}
+
+				// Do NOT add overtime - overtime is separate and should not be counted in total hours
+				// Total hours should only reflect hours within work hours
+
+				return total + regularWorkHours;
+			}, 0);
 
 			// Get today's attendance hours
 			const todayHours = (await this.getAttendanceForDate(new Date())).totalHours;
@@ -4319,36 +4439,49 @@ export class AttendanceService {
 		}
 	}
 
-	public async manageBreak(breakDto: CreateBreakDto): Promise<{ message: string }> {
+	public async manageBreak(
+		breakDto: CreateBreakDto,
+		clerkUserId?: string,
+		uid?: number,
+	): Promise<{ message: string }> {
+		const isTokenFlow = !!clerkUserId && uid != null;
+		const ownerUid = isTokenFlow ? String(uid) : breakDto.owner?.uid;
+		const ownerUidNum = isTokenFlow ? uid! : (breakDto.owner?.uid != null ? Number(breakDto.owner.uid) : null);
+
+		if (!ownerUid && !ownerUidNum) {
+			return { message: 'User ID is required for break (or use token-based flow)' };
+		}
+
 		try {
 			this.logger.log(
-				`Managing break for user ${breakDto.owner.uid}, isStartingBreak: ${breakDto.isStartingBreak}`,
+				`Managing break for user ${ownerUid}, isStartingBreak: ${breakDto.isStartingBreak}`,
 			);
 
 			if (breakDto.isStartingBreak) {
-				this.logger.log(`Delegating to startBreak for user ${breakDto.owner.uid}`);
-				return this.startBreak(breakDto);
+				this.logger.log(`Delegating to startBreak for user ${ownerUid}`);
+				return this.startBreak(breakDto, ownerUidNum!);
 			} else {
-				this.logger.log(`Delegating to endBreak for user ${breakDto.owner.uid}`);
-				return this.endBreak(breakDto);
+				this.logger.log(`Delegating to endBreak for user ${ownerUid}`);
+				return this.endBreak(breakDto, ownerUidNum!);
 			}
 		} catch (error) {
-			this.logger.error(`Error managing break for user ${breakDto.owner.uid}: ${error?.message}`, error?.stack);
+			this.logger.error(`Error managing break for user ${ownerUid}: ${error?.message}`, error?.stack);
 			return {
 				message: error?.message,
 			};
 		}
 	}
 
-	private async startBreak(breakDto: CreateBreakDto): Promise<{ message: string }> {
+	private async startBreak(breakDto: CreateBreakDto, ownerUidNum: number): Promise<{ message: string }> {
+		const ownerUidStr = String(ownerUidNum);
 		try {
-			this.logger.log(`Starting break for user ${breakDto.owner.uid}`);
+			this.logger.log(`Starting break for user ${ownerUidStr}`);
 
 			// Find the active shift
 			const activeShift = await this.attendanceRepository.findOne({
 				where: {
 					status: AttendanceStatus.PRESENT,
-					owner: { uid: breakDto.owner.uid },
+					owner: { uid: ownerUidNum },
 					checkIn: Not(IsNull()),
 					checkOut: IsNull(),
 				},
@@ -4358,14 +4491,14 @@ export class AttendanceService {
 			});
 
 			if (!activeShift) {
-				this.logger.warn(`No active shift found for user ${breakDto.owner.uid} to start break`);
+				this.logger.warn(`No active shift found for user ${ownerUidStr} to start break`);
 				return {
 					message: 'No active shift found to start break. Please check in first.'
 				};
 			}
 
 			this.logger.log(
-				`Found active shift ${activeShift.uid} for user ${breakDto.owner.uid}, proceeding with break start`,
+				`Found active shift ${activeShift.uid} for user ${ownerUidStr}, proceeding with break start`,
 			);
 
 			// Initialize the breakDetails array if it doesn't exist
@@ -4402,41 +4535,41 @@ export class AttendanceService {
 			await this.attendanceRepository.save(updatedShift);
 
 			// Clear attendance cache after break start
-			await this.clearAttendanceCache(activeShift.uid, breakDto.owner.uid);
+			await this.clearAttendanceCache(activeShift.uid, ownerUidStr);
 
 			// Send enhanced break start notification
 			try {
-			// Get user info for personalized message with email and relations
-			const user = await this.userRepository.findOne({
-				where: { uid: breakDto.owner.uid },
-				select: ['uid', 'name', 'surname', 'email', 'username'],
-				relations: ['organisation', 'branch', 'branch.organisation'],
-			});
+				// Get user info for personalized message with email and relations
+				const user = await this.userRepository.findOne({
+					where: { uid: ownerUidNum },
+					select: ['uid', 'name', 'surname', 'email', 'username'],
+					relations: ['organisation', 'branch', 'branch.organisation'],
+				});
 
-			// Construct full name with proper fallbacks
-			const fullName = `${user?.name || ''} ${user?.surname || ''}`.trim();
-			const userName = fullName || user?.username || 'Team Member';
-			const breakNumber =
-				breakCount === 1
-					? 'first'
-					: breakCount === 2
-					? 'second'
-					: `${breakCount}${breakCount > 3 ? 'th' : breakCount === 3 ? 'rd' : 'nd'}`;
+				// Construct full name with proper fallbacks
+				const fullName = `${user?.name || ''} ${user?.surname || ''}`.trim();
+				const userName = fullName || user?.username || 'Team Member';
+				const breakNumber =
+					breakCount === 1
+						? 'first'
+						: breakCount === 2
+							? 'second'
+							: `${breakCount}${breakCount > 3 ? 'th' : breakCount === 3 ? 'rd' : 'nd'}`;
 
 				// Format break start time in organization timezone
 				const breakStartTimeString = await this.formatTimeInOrganizationTimezone(breakStartTime, user?.organisation?.clerkOrgId || user?.organisation?.ref);
 
-				this.logger.debug(`Sending enhanced break start notification to user: ${breakDto.owner.uid}`);
+				this.logger.debug(`Sending enhanced break start notification to user: ${ownerUidStr}`);
 				// Send push notification
 				await this.unifiedNotificationService.sendTemplatedNotification(
 					NotificationEvent.ATTENDANCE_BREAK_STARTED,
-					[breakDto.owner.uid],
+					[ownerUidNum],
 					{
 						breakStartTime: breakStartTimeString,
 						breakCount: breakCount,
 						breakNumber,
 						userName,
-						userId: breakDto.owner.uid,
+						userId: ownerUidNum,
 						timestamp: new Date().toISOString(),
 					},
 					{
@@ -4445,20 +4578,20 @@ export class AttendanceService {
 					},
 				);
 
-			// Email notification removed to reduce Gmail quota usage - push notification only
-			this.logger.debug(
-				`⏭️ [AttendanceService] Skipping break started email for user: ${breakDto.owner.uid} - push notification sent instead`,
-			);
-				this.logger.debug(`Enhanced break start notification sent successfully to user: ${breakDto.owner.uid}`);
+				// Email notification removed to reduce Gmail quota usage - push notification only
+				this.logger.debug(
+					`⏭️ [AttendanceService] Skipping break started email for user: ${ownerUidStr} - push notification sent instead`,
+				);
+				this.logger.debug(`Enhanced break start notification sent successfully to user: ${ownerUidStr}`);
 			} catch (notificationError) {
 				this.logger.warn(
-					`Failed to send break start notification to user: ${breakDto.owner.uid}`,
+					`Failed to send break start notification to user: ${ownerUidStr}`,
 					notificationError.message,
 				);
 				// Don't fail the break start if notification fails
 			}
 
-			this.logger.log(`Break started successfully for user ${breakDto.owner.uid}, shift ${activeShift.uid}`);
+			this.logger.log(`Break started successfully for user ${ownerUidStr}, shift ${activeShift.uid}`);
 			return {
 				message: 'Break started successfully',
 			};
@@ -4469,15 +4602,16 @@ export class AttendanceService {
 		}
 	}
 
-	private async endBreak(breakDto: CreateBreakDto): Promise<{ message: string }> {
+	private async endBreak(breakDto: CreateBreakDto, ownerUidNum: number): Promise<{ message: string }> {
+		const ownerUidStr = String(ownerUidNum);
 		try {
-			this.logger.log(`Ending break for user ${breakDto.owner.uid}`);
+			this.logger.log(`Ending break for user ${ownerUidStr}`);
 
 			// Find the shift on break
 			const shiftOnBreak = await this.attendanceRepository.findOne({
 				where: {
 					status: AttendanceStatus.ON_BREAK,
-					owner: { uid: breakDto.owner.uid },
+					owner: { uid: ownerUidNum },
 					checkIn: Not(IsNull()),
 					checkOut: IsNull(),
 					breakStartTime: Not(IsNull()),
@@ -4488,15 +4622,15 @@ export class AttendanceService {
 			});
 
 			if (!shiftOnBreak) {
-				this.logger.warn(`No shift on break found for user ${breakDto.owner.uid}`);
-				
+				this.logger.warn(`No shift on break found for user ${ownerUidStr}`);
+
 				return {
 					message: 'No shift on break found. Please start a break first.',
 				};
 			}
 
 			this.logger.log(
-				`Found shift on break ${shiftOnBreak.uid} for user ${breakDto.owner.uid}, proceeding with break end`,
+				`Found shift on break ${shiftOnBreak.uid} for user ${ownerUidStr}, proceeding with break end`,
 			);
 
 			// Calculate break duration
@@ -4556,37 +4690,37 @@ export class AttendanceService {
 			await this.attendanceRepository.save(updatedShift);
 
 			// Clear attendance cache after break end
-			await this.clearAttendanceCache(shiftOnBreak.uid, breakDto.owner.uid);
+			await this.clearAttendanceCache(shiftOnBreak.uid, ownerUidStr);
 
 			// Send enhanced break end notification
 			try {
-			// Get user info for personalized message with email and relations
-			const user = await this.userRepository.findOne({
-				where: { uid: breakDto.owner.uid },
-				select: ['uid', 'name', 'surname', 'email', 'username'],
-				relations: ['organisation', 'branch', 'branch.organisation'],
-			});
+				// Get user info for personalized message with email and relations
+				const user = await this.userRepository.findOne({
+					where: { uid: ownerUidNum },
+					select: ['uid', 'name', 'surname', 'email', 'username'],
+					relations: ['organisation', 'branch', 'branch.organisation'],
+				});
 
-			// Construct full name with proper fallbacks
-			const fullName = `${user?.name || ''} ${user?.surname || ''}`.trim();
-			const userName = fullName || user?.username || 'Team Member';
+				// Construct full name with proper fallbacks
+				const fullName = `${user?.name || ''} ${user?.surname || ''}`.trim();
+				const userName = fullName || user?.username || 'Team Member';
 
-			// Format break times in organization timezone
+				// Format break times in organization timezone
 				const breakEndTimeString = await this.formatTimeInOrganizationTimezone(breakEndTime, user?.organisation?.clerkOrgId || user?.organisation?.ref);
 				const breakStartTimeString = await this.formatTimeInOrganizationTimezone(breakStartTime, user?.organisation?.clerkOrgId || user?.organisation?.ref);
 
-				this.logger.debug(`Sending enhanced break end notification to user: ${breakDto.owner.uid}`);
+				this.logger.debug(`Sending enhanced break end notification to user: ${ownerUidStr}`);
 				// Send push notification
 				await this.unifiedNotificationService.sendTemplatedNotification(
 					NotificationEvent.ATTENDANCE_BREAK_ENDED,
-					[breakDto.owner.uid],
+					[ownerUidNum],
 					{
 						breakDuration: currentBreakDuration,
 						breakStartTime: breakStartTimeString,
 						breakEndTime: breakEndTimeString,
 						totalBreakTime,
 						userName,
-						userId: breakDto.owner.uid,
+						userId: ownerUidNum,
 						timestamp: new Date().toISOString(),
 					},
 					{
@@ -4595,21 +4729,21 @@ export class AttendanceService {
 					},
 				);
 
-			// Email notification removed to reduce Gmail quota usage - push notification only
-			this.logger.debug(
-				`⏭️ [AttendanceService] Skipping break ended email for user: ${breakDto.owner.uid} - push notification sent instead`,
-			);
-				this.logger.debug(`Enhanced break end notification sent successfully to user: ${breakDto.owner.uid}`);
+				// Email notification removed to reduce Gmail quota usage - push notification only
+				this.logger.debug(
+					`⏭️ [AttendanceService] Skipping break ended email for user: ${ownerUidStr} - push notification sent instead`,
+				);
+				this.logger.debug(`Enhanced break end notification sent successfully to user: ${ownerUidStr}`);
 			} catch (notificationError) {
 				this.logger.warn(
-					`Failed to send break end notification to user: ${breakDto.owner.uid}`,
+					`Failed to send break end notification to user: ${ownerUidStr}`,
 					notificationError.message,
 				);
 				// Don't fail the break end if notification fails
 			}
 
 			this.logger.log(
-				`Break ended successfully for user ${breakDto.owner.uid}, shift ${shiftOnBreak.uid}, duration: ${currentBreakDuration}`,
+				`Break ended successfully for user ${ownerUidStr}, shift ${shiftOnBreak.uid}, duration: ${currentBreakDuration}`,
 			);
 			return {
 				message: 'Break ended successfully',
@@ -4686,10 +4820,10 @@ export class AttendanceService {
 
 	/**
 	 * Get comprehensive attendance metrics for a specific user
-	 * @param userId - User ID to get metrics for
+	 * @param userId - User ID to get metrics for (string)
 	 * @returns Comprehensive attendance metrics including first/last attendance and time breakdowns
 	 */
-	public async getUserAttendanceMetrics(userId: number): Promise<{
+	public async getUserAttendanceMetrics(userId: string): Promise<{
 		message: string;
 		metrics: {
 			firstAttendance: {
@@ -4766,40 +4900,47 @@ export class AttendanceService {
 		};
 	}> {
 		try {
-			// Validate input
-			if (!userId || userId <= 0) {
+			// Validate input (user ref as string: clerk id or numeric string)
+			if (!userId || (typeof userId === 'string' && !userId.trim())) {
 				throw new BadRequestException('Invalid user ID provided');
 			}
 
-			// Check if user exists
+			// Resolve user by clerk id or numeric uid (per migration: clerk id as primary)
+			const userIdStr = String(userId);
+			const userWhere = userIdStr.startsWith('user_')
+				? { clerkUserId: userIdStr }
+				: { uid: Number(userIdStr) };
 			const userExists = await this.userRepository.findOne({
-				where: { uid: userId },
+				where: userWhere,
 			});
 
 			if (!userExists) {
 				throw new NotFoundException(`User with ID ${userId} not found`);
 			}
 
+			const clerkUserId = userExists.clerkUserId;
+			const ownerFilter = { ownerClerkUserId: clerkUserId };
+
 			// Get first ever attendance with organization info
 			const firstAttendanceRaw = await this.attendanceRepository.findOne({
-				where: { owner: { uid: userId } },
+				where: { ...ownerFilter },
 				order: { checkIn: 'ASC' },
 				relations: ['organisation'],
 			});
 
 			// Get last attendance with organization info
 			const lastAttendanceRaw = await this.attendanceRepository.findOne({
-				where: { owner: { uid: userId } },
+				where: { ...ownerFilter },
 				order: { checkIn: 'DESC' },
 				relations: ['organisation'],
 			});
 
-		// Keep raw attendance records - timezone conversion will be applied during formatting
-		const firstAttendance = firstAttendanceRaw;
-		const lastAttendance = lastAttendanceRaw;
-		
-		this.logger.debug(`First attendance (raw): ${firstAttendance ? firstAttendance.checkIn.toISOString() : 'null'}`);
-		this.logger.debug(`Last attendance (raw): ${lastAttendance ? lastAttendance.checkIn.toISOString() : 'null'}`);
+			// Keep raw attendance records - timezone conversion will be applied during formatting
+			const firstAttendance = firstAttendanceRaw;
+			const lastAttendance = lastAttendanceRaw;
+
+			this.logger.debug(`First attendance (raw): ${firstAttendance ? firstAttendance.checkIn.toISOString() : 'null'}`);
+			this.logger.debug(`Last attendance (raw): ${lastAttendance ? lastAttendance.checkIn.toISOString() : 'null'}`);
 
 			// Get organization ID for timezone formatting
 			const organizationId = firstAttendance?.organisation?.clerkOrgId || firstAttendance?.organisation?.ref || lastAttendance?.organisation?.clerkOrgId || lastAttendance?.organisation?.ref;
@@ -4814,7 +4955,7 @@ export class AttendanceService {
 
 			// Get all attendance records for the user with relations for distance calculation
 			const allAttendance = await this.attendanceRepository.find({
-				where: { owner: { uid: userId } },
+				where: ownerFilter,
 				relations: ['dailyReport'], // Load dailyReport relation for GPS distance data
 				order: { checkIn: 'ASC' },
 			});
@@ -4974,7 +5115,7 @@ export class AttendanceService {
 				records.forEach((record) => {
 					// Get distance from multiple sources, prioritizing GPS data
 					let distance = 0;
-					
+
 					// Try GPS data from daily report first
 					if (record.dailyReport?.gpsData?.tripSummary?.totalDistanceKm) {
 						distance = Number(record.dailyReport.gpsData.tripSummary.totalDistanceKm) || 0;
@@ -5019,13 +5160,13 @@ export class AttendanceService {
 			const averageDistancePerShift = completedShiftsWithDistance.length > 0
 				? allTimeDistance.totalDistanceKm / completedShiftsWithDistance.length
 				: 0;
-			
+
 			// Longest and shortest should be from allTimeDistance.distances to ensure consistency
-			const longestDistance = allTimeDistance.distances.length > 0 
-				? Math.max(...allTimeDistance.distances) 
+			const longestDistance = allTimeDistance.distances.length > 0
+				? Math.max(...allTimeDistance.distances)
 				: 0;
-			const shortestDistance = allTimeDistance.distances.length > 0 
-				? Math.min(...allTimeDistance.distances) 
+			const shortestDistance = allTimeDistance.distances.length > 0
+				? Math.min(...allTimeDistance.distances)
 				: 0;
 
 			// Validation: If longestDistance exists, totalDistanceKm should be at least that value
@@ -5038,19 +5179,19 @@ export class AttendanceService {
 				allTimeDistance.totalDistanceKm = allTimeDistance.distances.reduce((sum, dist) => sum + dist, 0);
 			}
 
-		// ===== ENHANCED TIMING PATTERNS =====
-		// Get organization timezone for proper conversion
-		const timezone = await this.getOrganizationTimezone(organizationId);
-		
-		// Times are already timezone-aware from database
-		const checkInTimes = allAttendance.map((record) => new Date(record.checkIn));
-		const checkOutTimes = allAttendance
-			.filter((record) => record.checkOut)
-			.map((record) => new Date(record.checkOut!));
+			// ===== ENHANCED TIMING PATTERNS =====
+			// Get organization timezone for proper conversion
+			const timezone = await this.getOrganizationTimezone(organizationId);
 
-		// Use enhanced average time calculation with timezone-converted times
-		const averageCheckInTime = TimeCalculatorUtil.calculateAverageTime(checkInTimes);
-		const averageCheckOutTime = TimeCalculatorUtil.calculateAverageTime(checkOutTimes);
+			// Times are already timezone-aware from database
+			const checkInTimes = allAttendance.map((record) => new Date(record.checkIn));
+			const checkOutTimes = allAttendance
+				.filter((record) => record.checkOut)
+				.map((record) => new Date(record.checkOut!));
+
+			// Use enhanced average time calculation with timezone-converted times
+			const averageCheckInTime = TimeCalculatorUtil.calculateAverageTime(checkInTimes);
+			const averageCheckOutTime = TimeCalculatorUtil.calculateAverageTime(checkOutTimes);
 
 			// Enhanced punctuality and overtime calculation using organization hours
 			let punctualityScore = 0;
@@ -5630,9 +5771,9 @@ export class AttendanceService {
 			const averageOvertimePerShift =
 				completedShifts.length > 0
 					? TimeCalculatorUtil.minutesToHours(
-							totalOvertimeMinutes / completedShifts.length,
-							TimeCalculatorUtil.PRECISION.HOURS,
-					  )
+						totalOvertimeMinutes / completedShifts.length,
+						TimeCalculatorUtil.PRECISION.HOURS,
+					)
 					: 0;
 
 			const overtimeFrequency =
@@ -5645,7 +5786,7 @@ export class AttendanceService {
 
 			this.logger.debug(
 				`Overtime analytics calculated: total=${totalOvertimeHours}h, avg=${averageOvertimePerShift}h, ` +
-					`frequency=${overtimeFrequency}%, longest=${longestOvertimeShift}h for ${completedShifts.length} shifts`,
+				`frequency=${overtimeFrequency}%, longest=${longestOvertimeShift}h for ${completedShifts.length} shifts`,
 			);
 
 			return {
@@ -5678,14 +5819,14 @@ export class AttendanceService {
 	 * @returns Comprehensive user metrics including analytics and performance insights
 	 */
 	public async getUserMetricsForDateRange(
-		userId: number,
+		userId: string,
 		startDate: string,
 		endDate: string,
 		includeInsights: boolean = true,
 	): Promise<UserMetricsResponseDto> {
 		try {
-			// Validate input
-			if (!userId || userId <= 0) {
+			// Validate input (user ref as string: clerk id or numeric string)
+			if (!userId || (typeof userId === 'string' && !userId.trim())) {
 				throw new BadRequestException('Invalid user ID provided');
 			}
 
@@ -5698,9 +5839,13 @@ export class AttendanceService {
 				throw new BadRequestException('Start date cannot be after end date');
 			}
 
-			// Check if user exists
+			// Resolve user by clerk id or numeric uid
+			const userIdStr = String(userId);
+			const userWhere = userIdStr.startsWith('user_')
+				? { clerkUserId: userIdStr }
+				: { uid: Number(userIdStr) };
 			const userExists = await this.userRepository.findOne({
-				where: { uid: userId },
+				where: userWhere,
 				relations: ['organisation', 'branch'],
 			});
 
@@ -5708,10 +5853,12 @@ export class AttendanceService {
 				throw new NotFoundException(`User with ID ${userId} not found`);
 			}
 
+			const ownerFilter = { ownerClerkUserId: userExists.clerkUserId };
+
 			// Get attendance records for the specified date range
 			const attendanceRecordsRaw = await this.attendanceRepository.find({
 				where: {
-					owner: { uid: userId },
+					...ownerFilter,
 					checkIn: Between(parsedStartDate, parsedEndDate),
 				},
 				relations: ['owner', 'owner.branch', 'owner.organisation'],
@@ -5720,7 +5867,7 @@ export class AttendanceService {
 
 			// Get the most recent attendance record (even if outside date range)
 			const lastAttendanceRecordRaw = await this.attendanceRepository.findOne({
-				where: { owner: { uid: userId } },
+				where: ownerFilter,
 				order: { checkIn: 'DESC' },
 			});
 
@@ -5728,7 +5875,7 @@ export class AttendanceService {
 			const organizationId = userExists?.organisation?.clerkOrgId || userExists?.organisation?.ref;
 			const attendanceRecords = await this.convertAttendanceRecordsTimezone(attendanceRecordsRaw, organizationId);
 			const lastAttendanceRecord = lastAttendanceRecordRaw ? await this.convertAttendanceRecordTimezone(lastAttendanceRecordRaw, organizationId) : null;
-			
+
 			this.logger.debug(`Converted ${attendanceRecords.length} attendance records for user metrics`);
 			if (lastAttendanceRecord) {
 				this.logger.debug(`Converted last attendance record: ${lastAttendanceRecord.checkIn.toISOString()}`);
@@ -5740,7 +5887,7 @@ export class AttendanceService {
 
 			const previousPeriodRecordsRaw = await this.attendanceRepository.find({
 				where: {
-					owner: { uid: userId },
+					...ownerFilter,
 					checkIn: Between(previousPeriodStart, previousPeriodEnd),
 				},
 				order: { checkIn: 'ASC' },
@@ -5784,15 +5931,15 @@ export class AttendanceService {
 			const longestShiftMinutes = Math.max(...shiftDurations, 0);
 			const shortestShiftMinutes = Math.min(...shiftDurations, longestShiftMinutes);
 
-		// Calculate time patterns with timezone conversion
-		const timezone = await this.getOrganizationTimezone(organizationId);
-		
-		// Times are already timezone-aware from database
-		const checkInTimes = completedShifts.map((record) => new Date(record.checkIn));
-		const checkOutTimes = completedShifts.map((record) => new Date(record.checkOut));
+			// Calculate time patterns with timezone conversion
+			const timezone = await this.getOrganizationTimezone(organizationId);
 
-		const averageCheckInTime = TimeCalculatorUtil.calculateAverageTime(checkInTimes);
-		const averageCheckOutTime = TimeCalculatorUtil.calculateAverageTime(checkOutTimes);
+			// Times are already timezone-aware from database
+			const checkInTimes = completedShifts.map((record) => new Date(record.checkIn));
+			const checkOutTimes = completedShifts.map((record) => new Date(record.checkOut));
+
+			const averageCheckInTime = TimeCalculatorUtil.calculateAverageTime(checkInTimes);
+			const averageCheckOutTime = TimeCalculatorUtil.calculateAverageTime(checkOutTimes);
 
 			// Calculate attendance rate
 			const daysBetween = differenceInDays(parsedEndDate, parsedStartDate) + 1;
@@ -5805,8 +5952,8 @@ export class AttendanceService {
 				organizationId,
 			);
 
-			// Calculate attendance streak
-			const attendanceStreak = this.calculateAttendanceStreak(userId);
+			// Calculate attendance streak (uses numeric uid internally)
+			const attendanceStreak = this.calculateAttendanceStreak(userExists.uid);
 
 			// Format response
 			const userAnalytics = {
@@ -5974,17 +6121,17 @@ export class AttendanceService {
 	}> {
 		const today = new Date();
 		const weekStart = startOfWeek(today, { weekStartsOn: 1 }); // Monday = 1
-		
+
 		// Get week days (Monday to Saturday)
 		const weekDays: Date[] = [];
 		for (let i = 0; i < 6; i++) {
 			weekDays.push(addDays(weekStart, i));
 		}
-		
+
 		const todayStart = startOfDay(today);
 		const weekStartDate = startOfDay(weekDays[0]);
 		const weekEndDate = startOfDay(weekDays[weekDays.length - 1]);
-		
+
 		// Check cache first - use week start date as part of cache key to ensure weekly cache
 		const cacheKey = this.getCacheKey(`streak_${userId}_${format(weekStartDate, 'yyyy-MM-dd')}`);
 		const cachedStreak = await this.cacheManager.get<{
@@ -5995,12 +6142,12 @@ export class AttendanceService {
 				status: 'attended' | 'missed' | 'future';
 			}>;
 		}>(cacheKey);
-		
+
 		if (cachedStreak) {
 			this.logger.debug(`[getCurrentWeekAttendanceStreak] Cache hit for user ${userId}, week ${format(weekStartDate, 'yyyy-MM-dd')}`);
 			return cachedStreak;
 		}
-		
+
 		// Get all attendance records for the current week
 		const currentWeekRecords = await this.attendanceRepository.find({
 			where: {
@@ -6011,35 +6158,35 @@ export class AttendanceService {
 				checkIn: 'ASC',
 			},
 		});
-		
+
 		// Get unique days with attendance records
 		const daysWithRecords = new Set<string>();
-		
+
 		currentWeekRecords.forEach((record) => {
 			if (!record.checkIn) return;
-			
+
 			const checkInDate = startOfDay(new Date(record.checkIn));
 			const dateKey = format(checkInDate, 'yyyy-MM-dd');
-			
+
 			// Count as attended if:
 			// 1. Status is PRESENT (checked in but not checked out)
 			// 2. Status is COMPLETED (checked in and checked out)
 			// 3. Status is ON_BREAK (currently working, on break)
-			const isAttended = record.status === AttendanceStatus.PRESENT 
-				|| record.status === AttendanceStatus.COMPLETED 
+			const isAttended = record.status === AttendanceStatus.PRESENT
+				|| record.status === AttendanceStatus.COMPLETED
 				|| record.status === AttendanceStatus.ON_BREAK;
-			
+
 			if (isAttended) {
 				daysWithRecords.add(dateKey);
 			}
 		});
-		
+
 		// Create week days array with status
 		const weekDaysWithStatus = weekDays.map((date) => {
 			const dayLabel = format(date, 'EEE').substring(0, 2); // Mon, Tue, etc.
 			const dateStart = startOfDay(date);
 			const dateKey = format(dateStart, 'yyyy-MM-dd');
-			
+
 			// Check if date is in the future
 			if (dateStart > todayStart) {
 				return {
@@ -6048,29 +6195,29 @@ export class AttendanceService {
 					status: 'future' as const,
 				};
 			}
-			
+
 			// Check if user attended on this day
 			const attended = daysWithRecords.has(dateKey);
-			
+
 			return {
 				date: date.toISOString(),
 				dayLabel,
 				status: attended ? ('attended' as const) : ('missed' as const),
 			};
 		});
-		
+
 		// Calculate streak as count of days with attendance records in current week
 		const streak = daysWithRecords.size;
-		
+
 		const result = {
 			streak,
 			weekDays: weekDaysWithStatus,
 		};
-		
+
 		// Cache the result - use shorter TTL (30 seconds) since attendance can change frequently
 		// Cache will be invalidated when attendance records are created/updated
 		await this.cacheManager.set(cacheKey, result, 30000); // 30 seconds
-		
+
 		return result;
 	}
 
@@ -6359,8 +6506,8 @@ export class AttendanceService {
 				userMetrics = await this.generateAllUsersMetrics(users, attendanceRecords);
 			}
 
-		// PART 2: Organization-level metrics with timezone support
-		const organizationMetrics = await this.calculateOrganizationMetrics(attendanceRecords, users, orgId);
+			// PART 2: Organization-level metrics with timezone support
+			const organizationMetrics = await this.calculateOrganizationMetrics(attendanceRecords, users, orgId);
 
 			const report = {
 				reportPeriod: {
@@ -6433,8 +6580,8 @@ export class AttendanceService {
 					continue;
 				}
 
-				// Get user metrics using existing method
-				const userMetricsResult = await this.getUserAttendanceMetrics(user.uid);
+				// Get user metrics using existing method (clerk id as primary per migration)
+				const userMetricsResult = await this.getUserAttendanceMetrics(user.clerkUserId ?? String(user.uid));
 
 				userMetrics.push({
 					userId: user.uid,
@@ -6659,16 +6806,16 @@ export class AttendanceService {
 				averageHoursPerEmployee:
 					branch.employees.size > 0
 						? TimeCalculatorUtil.roundToHours(
-								branch.totalHours / branch.employees.size,
-								TimeCalculatorUtil.PRECISION.HOURS,
-						  )
+							branch.totalHours / branch.employees.size,
+							TimeCalculatorUtil.PRECISION.HOURS,
+						)
 						: 0,
 				averageShiftsPerEmployee:
 					branch.employees.size > 0
 						? TimeCalculatorUtil.roundToHours(
-								branch.totalShifts / branch.employees.size,
-								TimeCalculatorUtil.PRECISION.DISPLAY,
-						  )
+							branch.totalShifts / branch.employees.size,
+							TimeCalculatorUtil.PRECISION.DISPLAY,
+						)
 						: 0,
 			}));
 		} catch (error) {
@@ -6876,29 +7023,29 @@ export class AttendanceService {
 		try {
 			// Get organization timezone for accurate date/time comparisons
 			const orgTimezone = await this.getOrganizationTimezone(orgId);
-			
+
 			// Cast record to access both checkIn and checkOut properties
 			const recordAny = record as any;
-			
+
 			// Validation 1: Check if record has both checkIn and checkOut (shouldn't happen in normal flow)
 			if (recordAny.checkIn && recordAny.checkOut) {
 				const checkInTime = new Date(recordAny.checkIn);
 				const checkOutTime = new Date(recordAny.checkOut);
-				
+
 				// Times are already timezone-aware from database
 				const checkInOrgTime = checkInTime;
 				const checkOutOrgTime = checkOutTime;
-				
+
 				// Check if times are too close (within 5 minutes) - likely a duplicate or error
 				const timeDiffMinutes = Math.abs(differenceInMinutes(checkOutOrgTime, checkInOrgTime));
 				if (timeDiffMinutes <= this.MAX_TIME_DIFF_MINUTES) {
 					return {
 						valid: false,
 						error: `Check-in and check-out times are too close (${timeDiffMinutes} minutes apart). ` +
-							   `This appears to be a duplicate or invalid record. Times must be at least ${this.MAX_TIME_DIFF_MINUTES + 1} minutes apart.`
+							`This appears to be a duplicate or invalid record. Times must be at least ${this.MAX_TIME_DIFF_MINUTES + 1} minutes apart.`
 					};
 				}
-				
+
 				// Check if check-out is before check-in
 				if (checkOutOrgTime <= checkInOrgTime) {
 					return {
@@ -6906,47 +7053,47 @@ export class AttendanceService {
 						error: `Check-out time (${checkOutOrgTime.toISOString()}) must be after check-in time (${checkInOrgTime.toISOString()})`
 					};
 				}
-				
+
 				// Check minimum duration (must be at least 30 minutes)
 				if (timeDiffMinutes < this.MIN_SHIFT_DURATION_MINUTES) {
 					return {
 						valid: false,
 						error: `Shift duration too short: ${timeDiffMinutes} minutes. ` +
-							   `Minimum required duration is ${this.MIN_SHIFT_DURATION_MINUTES} minutes.`
+							`Minimum required duration is ${this.MIN_SHIFT_DURATION_MINUTES} minutes.`
 					};
 				}
 			}
-			
+
 			// Validation 2: For check-in records, check if user already has a record for this day
 			// This prevents overwriting existing records from external machines
 			if (mode === ConsolidateMode.IN && recordAny.checkIn) {
 				const checkInTime = new Date(recordAny.checkIn);
 				// Times are already timezone-aware
 				const checkInOrgTime = checkInTime;
-				
+
 				// Get the calendar date (YYYY-MM-DD)
 				const checkInDate = new Date(
 					checkInOrgTime.getFullYear(),
 					checkInOrgTime.getMonth(),
 					checkInOrgTime.getDate()
 				);
-				
+
 				// Check if user already has an attendance record for this day
 				const existingRecordsQuery = this.attendanceRepository
 					.createQueryBuilder('attendance')
 					.leftJoinAndSelect('attendance.owner', 'owner')
 					.leftJoinAndSelect('attendance.organisation', 'organisation')
-					.where('attendance.owner.uid = :ownerUid', { ownerUid: recordAny.owner?.uid })
+					.where('owner.uid = :ownerUid', { ownerUid: recordAny.owner?.uid })
 					.andWhere('attendance.checkIn IS NOT NULL');
-				
+
 				if (orgId) {
 					existingRecordsQuery.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 				}
-				
+
 				const existingRecords = await existingRecordsQuery
 					.orderBy('attendance.checkIn', 'DESC')
 					.getMany();
-				
+
 				// Check each existing record to see if it's on the same calendar day
 				for (const existingRecord of existingRecords) {
 					const existingCheckInTime = new Date(existingRecord.checkIn);
@@ -6957,7 +7104,7 @@ export class AttendanceService {
 						existingCheckInOrgTime.getMonth(),
 						existingCheckInOrgTime.getDate()
 					);
-					
+
 					// Check if it's the same calendar day
 					if (
 						checkInDate.getFullYear() === existingCheckInDate.getFullYear() &&
@@ -6968,13 +7115,13 @@ export class AttendanceService {
 						return {
 							valid: false,
 							error: `User already has an attendance record for this day (${dateStr}). ` +
-								   `Skipping external machine record to prevent overwriting existing data. ` +
-								   `Existing record ID: ${existingRecord.uid}, Check-in: ${existingCheckInOrgTime.toISOString()}`
+								`Skipping external machine record to prevent overwriting existing data. ` +
+								`Existing record ID: ${existingRecord.uid}, Check-in: ${existingCheckInOrgTime.toISOString()}`
 						};
 					}
 				}
 			}
-			
+
 			// Validation 3: For check-out records, validate minimum time since check-in
 			if (mode === ConsolidateMode.OUT && recordAny.checkOut) {
 				// Find the active shift for this user
@@ -6985,37 +7132,37 @@ export class AttendanceService {
 					.andWhere('attendance.status = :status', { status: AttendanceStatus.PRESENT })
 					.andWhere('attendance.checkIn IS NOT NULL')
 					.andWhere('attendance.checkOut IS NULL');
-				
+
 				if (orgId) {
 					activeShiftQuery.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 				}
-				
+
 				const activeShift = await activeShiftQuery
 					.orderBy('attendance.checkIn', 'DESC')
 					.getOne();
-				
+
 				if (activeShift) {
 					const checkInTime = new Date(activeShift.checkIn);
 					const checkOutTime = new Date(recordAny.checkOut);
-					
+
 					// Times are already timezone-aware
 					const checkInOrgTime = checkInTime;
 					const checkOutOrgTime = checkOutTime;
-					
+
 					// Calculate duration
 					const durationMinutes = differenceInMinutes(checkOutOrgTime, checkInOrgTime);
-					
+
 					// Validate minimum duration
 					if (durationMinutes < this.MIN_SHIFT_DURATION_MINUTES) {
 						return {
 							valid: false,
 							error: `Check-out time is too close to check-in time: ${durationMinutes} minutes. ` +
-								   `Minimum required duration is ${this.MIN_SHIFT_DURATION_MINUTES} minutes.`
+								`Minimum required duration is ${this.MIN_SHIFT_DURATION_MINUTES} minutes.`
 						};
 					}
 				}
 			}
-			
+
 			return { valid: true };
 		} catch (error) {
 			this.logger.error(`Error validating external machine record: ${error.message}`, error.stack);
@@ -7099,17 +7246,21 @@ export class AttendanceService {
 			this.logger.debug(`${recordLog} Processing ${consolidateDto.mode} record for user ${record.owner?.uid}`);
 
 			try {
-				// VALIDATION: Check if user exists before processing
-				if (!record.owner?.uid) {
+				// VALIDATION: Check if user exists before processing (owner.uid is string: clerk id or numeric)
+				const ownerRef = record.owner?.uid;
+				if (!ownerRef) {
 					throw new Error('User ID is required for attendance record');
 				}
 
+				const userWhere = typeof ownerRef === 'string' && ownerRef.startsWith('user_')
+					? { clerkUserId: ownerRef }
+					: { uid: Number(ownerRef) };
 				const userExists = await this.userRepository.findOne({
-					where: { uid: record.owner.uid },
+					where: userWhere,
 				});
 
 				if (!userExists) {
-					throw new Error(`User with ID ${record.owner.uid} does not exist`);
+					throw new Error(`User with ID ${ownerRef} does not exist`);
 				}
 
 				// VALIDATION: Validate external machine record before processing
@@ -7126,14 +7277,14 @@ export class AttendanceService {
 				if (consolidateDto.mode === ConsolidateMode.IN) {
 					// Process as check-in from external machine
 					const checkInRecord = record as CreateCheckInDto;
-					
+
 					// Mark as external machine clocking in checkInNotes
-					const sourcePrefix = consolidateDto.sourceSystem 
-						? `[External Machine: ${consolidateDto.sourceSystem}] ` 
+					const sourcePrefix = consolidateDto.sourceSystem
+						? `[External Machine: ${consolidateDto.sourceSystem}] `
 						: '[External Machine] ';
 					const existingNotes = checkInRecord.checkInNotes || '';
 					checkInRecord.checkInNotes = sourcePrefix + (existingNotes || 'Morning clocking from external machine');
-					
+
 					// Pass skipAutoClose=true to prevent auto-closing existing shifts
 					// External machines should never auto-close user shifts
 					result = await this.checkIn(checkInRecord, orgId, branchId, true);
@@ -7206,14 +7357,14 @@ export class AttendanceService {
 		// Log consolidation summary
 		this.logger.log(
 			`[${operationId}] COMPLETED - Processed ${processed} records in ${processingTime}. ` +
-				`Success: ${successful}, Failed: ${failed}. Source: ${consolidateDto.sourceSystem || 'Unknown'}`,
+			`Success: ${successful}, Failed: ${failed}. Source: ${consolidateDto.sourceSystem || 'Unknown'}`,
 		);
 
 		// Create audit log entry for the consolidation
 		if (consolidateDto.sourceSystem || consolidateDto.transactionId) {
 			this.logger.log(
 				`[${operationId}] AUDIT - Consolidation from ${consolidateDto.sourceSystem || 'Unknown'} ` +
-					`with transaction ID: ${consolidateDto.transactionId || 'N/A'}`,
+				`with transaction ID: ${consolidateDto.transactionId || 'N/A'}`,
 			);
 		}
 
@@ -7281,7 +7432,7 @@ export class AttendanceService {
 
 			// Get effective branch ID based on user role
 			const effectiveBranchId = this.getEffectiveBranchId(branchId, userAccessLevel);
-			
+
 			// Build where conditions
 			const attendanceWhereConditions: any = {
 				owner: { uid: userId },
@@ -7291,12 +7442,12 @@ export class AttendanceService {
 				],
 				checkIn: Between(startDateTime, endDateTime),
 			};
-			
+
 			// Apply branch filtering if provided (and user is not admin/owner/developer)
 			if (effectiveBranchId) {
 				attendanceWhereConditions.branch = { uid: effectiveBranchId };
 			}
-			
+
 			// Get user attendance records for the date range
 			const attendanceRecords = await this.attendanceRepository.find({
 				where: attendanceWhereConditions,
@@ -7310,28 +7461,28 @@ export class AttendanceService {
 			// Get organization timezone for proper formatting
 			const orgTimezone = await this.getOrganizationTimezone(orgId);
 
-		// Prepare email data
-		const emailData = {
-			name: `${requester.name} ${requester.surname}`,
-			requesterName: `${requester.name} ${requester.surname}`,
-			requesterEmail: requester.email,
-			targetUserName: `${targetUser.name} ${targetUser.surname}`,
-			targetUserEmail: targetUser.email,
-			organizationName: requester.organisation?.name || 'Organization',
-			startDate: startDateTime.toISOString().split('T')[0],
-			endDate: endDateTime.toISOString().split('T')[0],
-			recordsCount: convertedRecords.length,
+			// Prepare email data
+			const emailData = {
+				name: `${requester.name} ${requester.surname}`,
+				requesterName: `${requester.name} ${requester.surname}`,
+				requesterEmail: requester.email,
+				targetUserName: `${targetUser.name} ${targetUser.surname}`,
+				targetUserEmail: targetUser.email,
+				organizationName: requester.organisation?.name || 'Organization',
+				startDate: startDateTime.toISOString().split('T')[0],
+				endDate: endDateTime.toISOString().split('T')[0],
+				recordsCount: convertedRecords.length,
 				attendanceRecords: convertedRecords.map(record => ({
 					date: record.checkIn ? new Date(record.checkIn).toLocaleDateString() : 'N/A',
-					checkInTime: record.checkIn ? 
-						new Date(record.checkIn).toLocaleTimeString('en-US', { 
+					checkInTime: record.checkIn ?
+						new Date(record.checkIn).toLocaleTimeString('en-US', {
 							timeZone: orgTimezone,
-							hour12: false 
+							hour12: false
 						}) : 'N/A',
-					checkOutTime: record.checkOut ? 
-						new Date(record.checkOut).toLocaleTimeString('en-US', { 
+					checkOutTime: record.checkOut ?
+						new Date(record.checkOut).toLocaleTimeString('en-US', {
 							timeZone: orgTimezone,
-							hour12: false 
+							hour12: false
 						}) : 'Not checked out',
 					duration: record.duration || 'N/A',
 					status: record.status,
@@ -7373,7 +7524,7 @@ export class AttendanceService {
 	 * @returns Monthly calendar data with days and attendance status
 	 */
 	public async getMonthlyAttendanceCalendar(
-		ref: number,
+		ref: string,
 		year?: number,
 		month?: number,
 	): Promise<{
@@ -7411,9 +7562,10 @@ export class AttendanceService {
 			// Get total days in month
 			const totalDays = getDaysInMonth(monthStart);
 
-			// Get organization timezone for accurate date filtering
+			// Resolve user by clerk id or numeric uid
+			const userWhere = ref.startsWith('user_') ? { clerkUserId: ref } : { uid: Number(ref) };
 			const user = await this.userRepository.findOne({
-				where: { uid: ref },
+				where: userWhere,
 				relations: ['organisation'],
 			});
 
@@ -7425,14 +7577,16 @@ export class AttendanceService {
 			const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
 			const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
 
-			// Dates are already timezone-aware
+			// Dates are already timezone-aware; filter by ownerClerkUserId (clerk id as primary)
 			const startOfPeriod = startOfDay(monthStart);
 			const endOfPeriod = endOfDay(monthEnd);
+
+			const ownerFilter = { ownerClerkUserId: user.clerkUserId };
 
 			// Fetch all attendance records for the user in this month
 			const attendanceRecords = await this.attendanceRepository.find({
 				where: {
-					owner: { uid: ref },
+					...ownerFilter,
 					checkIn: Between(startOfPeriod, endOfPeriod),
 				},
 				relations: ['owner', 'branch', 'organisation'],
@@ -7564,7 +7718,7 @@ export class AttendanceService {
 		const startTime = Date.now();
 		this.logger.log(`🚀 BULK CLOCK-IN STARTED - Org: ${orgId}, Branch: ${branchId || 'ALL'}, Dates: ${bulkClockInDto.dates.join(', ')}`);
 		this.logger.log(`📋 Configuration: Half-day dates: ${bulkClockInDto.halfDayDates?.join(', ') || 'NONE'}, Custom hours: ${bulkClockInDto.customHours?.length || 0} dates`);
-		
+
 		const errors: Array<{ date: string; userId: number; error: string }> = [];
 		let totalRecordsCreated = 0;
 		let totalRecordsSkipped = 0;
@@ -7614,9 +7768,9 @@ export class AttendanceService {
 
 				const pageUsers = usersResponse.data || [];
 				allUsers = allUsers.concat(pageUsers);
-				
+
 				this.logger.log(`📄 Page ${page}: Found ${pageUsers.length} users (Total so far: ${allUsers.length})`);
-				
+
 				hasMore = pageUsers.length === pageSize;
 				page++;
 			}
@@ -7659,7 +7813,7 @@ export class AttendanceService {
 						.createQueryBuilder('attendance')
 						.leftJoinAndSelect('attendance.owner', 'owner')
 						.leftJoinAndSelect('attendance.organisation', 'organisation')
-						.where('attendance.owner.uid = :userId', { userId: user.uid })
+						.where('owner.uid = :userId', { userId: user.uid })
 						.andWhere('attendance.status = :status', { status: AttendanceStatus.PRESENT })
 						.andWhere('attendance.checkIn IS NOT NULL')
 						.andWhere('attendance.checkOut IS NULL')
@@ -7676,15 +7830,15 @@ export class AttendanceService {
 
 							// Get the check-in date (already timezone-aware)
 							const checkInDateOrg = new Date(openShift.checkIn);
-							
+
 							// Get working day info for the check-in date
 							const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(
 								orgId,
 								checkInDateOrg
 							);
-							
+
 							let closeTime: Date;
-							
+
 							if (workingDayInfo.isWorkingDay && workingDayInfo.endTime) {
 								// Parse the end time for the check-in date
 								const [hours, minutes] = workingDayInfo.endTime.split(':').map(Number);
@@ -7695,20 +7849,20 @@ export class AttendanceService {
 								const checkInTime = new Date(openShift.checkIn);
 								closeTime = new Date(checkInTime.getTime() + 60 * 1000); // Add 1 minute
 							}
-							
+
 							// Ensure close time is after check-in time
 							const checkInTime = new Date(openShift.checkIn);
 							if (closeTime <= checkInTime) {
 								closeTime = new Date(checkInTime.getTime() + 60 * 1000); // Add 1 minute minimum
 							}
-							
+
 							// Create check-out DTO
 							const closeOutDto: CreateCheckOutDto = {
 								checkOut: closeTime,
 								owner: { uid: user.uid },
 								checkOutNotes: `Auto-closed by bulk clock-in process`,
 							};
-							
+
 							// Close the shift
 							await this.checkOut(closeOutDto, orgId, userBranchId);
 							closedShiftsCount++;
@@ -7729,12 +7883,12 @@ export class AttendanceService {
 			// Step 2: Get organization hours and timezone (already fetched above, but log it)
 			this.logger.log(`⏰ Organization timezone: ${orgTimezone}`);
 
-					// Step 3: Process each date
+			// Step 3: Process each date
 			// Identify the last date - users should remain checked in (no check-out)
 			const sortedDates = [...bulkClockInDto.dates].sort();
 			const lastDate = sortedDates[sortedDates.length - 1];
 			this.logger.log(`📌 Last date identified: ${lastDate} - users will remain checked in (no check-out, status PRESENT)`);
-			
+
 			for (const dateStr of bulkClockInDto.dates) {
 				this.logger.log(`\n📅 PROCESSING DATE: ${dateStr}`);
 				const dateStartTime = Date.now();
@@ -7767,7 +7921,7 @@ export class AttendanceService {
 						} else {
 							// Get organization hours for this date
 							const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(orgId, targetDate);
-							
+
 							if (!workingDayInfo.isWorkingDay || !workingDayInfo.startTime || !workingDayInfo.endTime) {
 								this.logger.warn(`⚠️ Date ${dateStr} is not a working day. Skipping.`);
 								details.push({
@@ -7809,7 +7963,7 @@ export class AttendanceService {
 						} else {
 							// Get organization hours for this date
 							const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(orgId, targetDate);
-							
+
 							if (!workingDayInfo.isWorkingDay || !workingDayInfo.startTime) {
 								this.logger.warn(`⚠️ Date ${dateStr} is not a working day. Skipping.`);
 								details.push({
@@ -7833,7 +7987,7 @@ export class AttendanceService {
 					const [checkInHours, checkInMinutes] = checkInTime.split(':').map(Number);
 					const checkInDate = new Date(targetDate);
 					checkInDate.setHours(checkInHours, checkInMinutes, 0, 0);
-					
+
 					// Only create check-out date if this is NOT the last date
 					let checkOutDate: Date | null = null;
 					if (!isLastDate && checkOutTime) {

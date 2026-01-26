@@ -62,8 +62,9 @@ export class CheckInsService {
 	async checkIn(createCheckInDto: CreateCheckInDto, orgId?: string, branchId?: number, clerkUserId?: string): Promise<{ message: string; checkInId?: number }> {
 		const operationId = `checkin_${Date.now()}`;
 		const startTime = Date.now();
+		const ownerRef = (createCheckInDto as { owner?: { uid: string } }).owner?.uid;
 		this.logger.log(
-			`[${operationId}] Check-in attempt for user: ${createCheckInDto.owner?.uid}, orgId: ${orgId}, branchId: ${branchId}, clerkUserId: ${clerkUserId}`,
+			`[${operationId}] Check-in attempt for user: ${ownerRef ?? clerkUserId ?? 'unknown'}, orgId: ${orgId}, branchId: ${branchId}, clerkUserId: ${clerkUserId}`,
 		);
 
 		try {
@@ -71,10 +72,10 @@ export class CheckInsService {
 			// CRITICAL PATH: Operations that must complete before response
 			// ============================================================
 
-			// Enhanced validation
-			if (!createCheckInDto?.owner?.uid) {
-				this.logger.error(`[${operationId}] User ID is required for check-in`);
-				throw new BadRequestException('User ID is required for check-in');
+			// Require either owner.uid (legacy) or clerkUserId from token (self check-in)
+			if (!ownerRef && !clerkUserId) {
+				this.logger.error(`[${operationId}] User ID or Clerk ID is required for check-in`);
+				throw new BadRequestException('User ID or Clerk ID is required for check-in');
 			}
 
 			if (!orgId) {
@@ -82,27 +83,40 @@ export class CheckInsService {
 				throw new BadRequestException('Organization ID is required');
 			}
 
-			// Validate user belongs to the organization
-			const user = await this.userRepository.findOne({
-				where: { uid: createCheckInDto.owner.uid },
-				relations: ['organisation', 'branch'],
-			});
+			// Resolve user: by clerkUserId (token) or by owner.uid (DTO, string)
+			let user: User | null = null;
+			if (clerkUserId) {
+				user = await this.userRepository.findOne({
+					where: { clerkUserId },
+					relations: ['organisation', 'branch'],
+				});
+			}
+			if (!user && ownerRef) {
+				const userWhere = typeof ownerRef === 'string' && ownerRef.startsWith('user_')
+					? { clerkUserId: ownerRef }
+					: { uid: Number(ownerRef) };
+				user = await this.userRepository.findOne({
+					where: userWhere,
+					relations: ['organisation', 'branch'],
+				});
+			}
 
 			if (!user) {
-				this.logger.error(`[${operationId}] User not found with ID: ${createCheckInDto.owner.uid}`);
+				const ref = ownerRef ?? clerkUserId;
+				this.logger.error(`[${operationId}] User not found: ${ref}`);
 				throw new NotFoundException('User not found');
 			}
 
 			// Validate user belongs to the organization using Clerk org ID (organisationRef)
 			if (user.organisationRef && user.organisationRef !== orgId) {
 				this.logger.error(
-					`[${operationId}] User ${createCheckInDto.owner.uid} belongs to org ${user.organisationRef}, not ${orgId}`,
+					`[${operationId}] User ${user.uid} belongs to org ${user.organisationRef}, not ${orgId}`,
 				);
 				throw new BadRequestException('User does not belong to the specified organization');
 			}
 
 			// Resolve branch information from multiple sources (prefer DTO > parameter > user relation)
-			const resolvedBranchId = createCheckInDto?.branch?.uid || branchId || user.branch?.uid;
+			const resolvedBranchId = createCheckInDto?.branch?.uid ?? branchId ?? user.branch?.uid;
 			let branchSource = 'unknown';
 			if (createCheckInDto?.branch?.uid) {
 				branchSource = 'DTO';
@@ -122,7 +136,7 @@ export class CheckInsService {
 			// Enhanced data mapping with proper organization filtering
 			this.logger.debug(`[${operationId}] Creating check-in record with enhanced data mapping`);
 			
-			// Get clerkUserId - prefer from token, fallback to user's clerkUserId from database
+			// Prefer clerkUserId from token, then user's clerkUserId from database
 			const resolvedClerkUserId = clerkUserId || user.clerkUserId;
 			if (!resolvedClerkUserId) {
 				this.logger.error(`[${operationId}] No clerkUserId available - cannot set ownerClerkUserId`);
@@ -174,7 +188,7 @@ export class CheckInsService {
 			// ============================================================
 			const duration = Date.now() - startTime;
 			this.logger.log(
-				`✅ [${operationId}] Check-in successful for user: ${createCheckInDto.owner.uid} in ${duration}ms - returning response to client`,
+				`✅ [${operationId}] Check-in successful for user: ${user.clerkUserId ?? user.uid} in ${duration}ms - returning response to client`,
 			);
 
 			const response = {
@@ -211,7 +225,7 @@ export class CheckInsService {
 					// 2. Send check-in notifications
 					try {
 						this.logger.debug(`[${operationId}] Sending check-in notifications`);
-						await this.sendCheckInNotifications(createCheckInDto.owner.uid, checkIn, user.name, orgId, branchId);
+						await this.sendCheckInNotifications(user.uid, checkIn, user.name, orgId, branchId);
 						this.logger.debug(`✅ [${operationId}] Check-in notifications sent successfully`);
 					} catch (notificationError) {
 						this.logger.error(
@@ -221,16 +235,16 @@ export class CheckInsService {
 						// Don't fail post-processing if notifications fail
 					}
 
-					// 3. Award XP with enhanced error handling
+					// 3. Award XP with enhanced error handling (use clerk id when available per migration)
 					try {
-						this.logger.debug(`[${operationId}] Awarding XP for check-in to user: ${createCheckInDto.owner.uid}`);
+						this.logger.debug(`[${operationId}] Awarding XP for check-in to user: ${user.clerkUserId ?? user.uid}`);
 						await this.rewardsService.awardXP(
 							{
-								owner: createCheckInDto.owner.uid,
+								owner: user.clerkUserId ?? user.uid,
 								amount: XP_VALUES.CHECK_IN_CLIENT,
 								action: XP_VALUES_TYPES.CHECK_IN_CLIENT,
 								source: {
-									id: String(createCheckInDto.owner.uid),
+									id: user.clerkUserId ?? String(user.uid),
 									type: XP_VALUES_TYPES.CHECK_IN_CLIENT,
 									details: 'Check-in reward',
 								},
@@ -239,11 +253,11 @@ export class CheckInsService {
 							branchId,
 						);
 						this.logger.debug(
-							`✅ [${operationId}] XP awarded successfully for check-in to user: ${createCheckInDto.owner.uid}`,
+							`✅ [${operationId}] XP awarded successfully for check-in to user: ${user.clerkUserId ?? user.uid}`,
 						);
 					} catch (xpError) {
 						this.logger.error(
-							`❌ [${operationId}] Failed to award XP for check-in to user: ${createCheckInDto.owner.uid}`,
+							`❌ [${operationId}] Failed to award XP for check-in to user: ${user.clerkUserId ?? user.uid}`,
 							xpError.stack,
 						);
 						// Don't fail post-processing if XP award fails
@@ -261,7 +275,7 @@ export class CheckInsService {
 
 			return response;
 		} catch (error) {
-			this.logger.error(`[${operationId}] Check-in failed for user: ${createCheckInDto.owner?.uid}`, error.stack);
+			this.logger.error(`[${operationId}] Check-in failed for user: ${ownerRef ?? clerkUserId ?? 'unknown'}`, error.stack);
 			return {
 				message: error?.message,
 			};
@@ -293,7 +307,7 @@ export class CheckInsService {
 			// Send detailed notification to the user
 			await this.unifiedNotificationService.sendTemplatedNotification(
 				NotificationEvent.CHECKIN_CREATED,
-				[Number(userId)],
+				[userId],
 				{
 					userName: userName,
 					clientName: checkIn.client?.name || 'Location',
@@ -540,8 +554,9 @@ export class CheckInsService {
 	): Promise<{ message: string; duration?: string; checkInId?: number }> {
 		const operationId = `checkout_${Date.now()}`;
 		const startTime = Date.now();
+		const ownerRef = (createCheckOutDto as { owner?: { uid: string } }).owner?.uid;
 		this.logger.log(
-			`[${operationId}] Check-out attempt for user: ${createCheckOutDto.owner?.uid}, orgId: ${orgId}, branchId: ${branchId}, clerkUserId: ${clerkUserId}`,
+			`[${operationId}] Check-out attempt for user: ${ownerRef ?? clerkUserId ?? 'unknown'}, orgId: ${orgId}, branchId: ${branchId}, clerkUserId: ${clerkUserId}`,
 		);
 
 		try {
@@ -549,10 +564,10 @@ export class CheckInsService {
 			// CRITICAL PATH: Operations that must complete before response
 			// ============================================================
 
-			// Enhanced validation
+			// Require owner (legacy) or clerkUserId from token
 			this.logger.debug(`[${operationId}] Validating check-out data`);
-			if (!createCheckOutDto?.owner) {
-				this.logger.error(`[${operationId}] Owner information is required for check-out`);
+			if (!ownerRef && !clerkUserId) {
+				this.logger.error(`[${operationId}] Owner or Clerk ID is required for check-out`);
 				throw new BadRequestException(process.env.NOT_FOUND_MESSAGE);
 			}
 
@@ -561,13 +576,32 @@ export class CheckInsService {
 				throw new BadRequestException(process.env.NOT_FOUND_MESSAGE);
 			}
 
-			this.logger.debug(`[${operationId}] Finding active check-in for user: ${createCheckOutDto.owner.uid}`);
+			// Resolve user by clerkUserId or owner.uid (string)
+			let user: User | null = null;
+			if (clerkUserId) {
+				user = await this.userRepository.findOne({
+					where: { clerkUserId },
+					select: ['uid', 'clerkUserId', 'name'],
+				});
+			}
+			if (!user && ownerRef) {
+				const userWhere = typeof ownerRef === 'string' && ownerRef.startsWith('user_')
+					? { clerkUserId: ownerRef }
+					: { uid: Number(ownerRef) };
+				user = await this.userRepository.findOne({
+					where: userWhere,
+					select: ['uid', 'clerkUserId', 'name'],
+				});
+			}
+			if (!user) {
+				this.logger.error(`[${operationId}] User not found: ${ownerRef ?? clerkUserId}`);
+				throw new NotFoundException('User not found');
+			}
+
+			const clerkId = user.clerkUserId;
+			this.logger.debug(`[${operationId}] Finding active check-in for user: ${clerkId}`);
 			const checkIn = await this.checkInRepository.findOne({
-				where: {
-					owner: {
-						uid: createCheckOutDto.owner.uid,
-					},
-				},
+				where: { ownerClerkUserId: clerkId },
 				order: {
 					checkInTime: 'DESC',
 				},
@@ -575,12 +609,12 @@ export class CheckInsService {
 			});
 
 			if (!checkIn) {
-				this.logger.error(`[${operationId}] No active check-in found for user: ${createCheckOutDto.owner.uid}`);
+				this.logger.error(`[${operationId}] No active check-in found for user: ${clerkId}`);
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
 			}
 
 			if (checkIn.checkOutTime) {
-				this.logger.warn(`[${operationId}] User ${createCheckOutDto.owner.uid} has already checked out`);
+				this.logger.warn(`[${operationId}] User ${clerkId} has already checked out`);
 				throw new BadRequestException('User has already checked out');
 			}
 
@@ -650,7 +684,7 @@ export class CheckInsService {
 			// ============================================================
 			const durationMs = Date.now() - startTime;
 			this.logger.log(
-				`✅ [${operationId}] Check-out successful for user: ${createCheckOutDto.owner.uid} in ${durationMs}ms - returning response to client`,
+				`✅ [${operationId}] Check-out successful for user: ${clerkId} in ${durationMs}ms - returning response to client`,
 			);
 
 			const response = {
@@ -725,18 +759,18 @@ export class CheckInsService {
 						return;
 					}
 
-					// 3. Send check-out notifications
+					// 3. Send check-out notifications (use resolved user)
 					try {
 						this.logger.debug(`[${operationId}] Sending check-out notifications`);
 						const userName = updatedCheckIn.owner?.name || 'Staff member';
 						await this.sendCheckOutNotifications(
-							createCheckOutDto.owner.uid, 
-							updatedCheckIn, 
-							duration, 
+							user.uid,
+							updatedCheckIn,
+							duration,
 							userName,
 							fullAddress,
-							orgId, 
-							branchId
+							orgId,
+							branchId,
 						);
 						this.logger.debug(`✅ [${operationId}] Check-out notifications sent successfully`);
 					} catch (notificationError) {
@@ -747,16 +781,16 @@ export class CheckInsService {
 						// Don't fail post-processing if notifications fail
 					}
 
-					// 4. Award XP with enhanced error handling
+					// 4. Award XP with enhanced error handling (use clerk id when available per migration)
 					try {
-						this.logger.debug(`[${operationId}] Awarding XP for check-out to user: ${createCheckOutDto.owner.uid}`);
+						this.logger.debug(`[${operationId}] Awarding XP for check-out to user: ${clerkId}`);
 						await this.rewardsService.awardXP(
 							{
-								owner: createCheckOutDto.owner.uid,
+								owner: user.clerkUserId ?? user.uid,
 								amount: 10,
 								action: 'CHECK_OUT',
 								source: {
-									id: createCheckOutDto.owner.toString(),
+									id: user.clerkUserId ?? String(user.uid),
 									type: 'check-in',
 									details: 'Check-out reward',
 								},
@@ -765,11 +799,11 @@ export class CheckInsService {
 							branchId,
 						);
 						this.logger.debug(
-							`✅ [${operationId}] XP awarded successfully for check-out to user: ${createCheckOutDto.owner.uid}`,
+							`✅ [${operationId}] XP awarded successfully for check-out to user: ${clerkId}`,
 						);
 					} catch (xpError) {
 						this.logger.error(
-							`❌ [${operationId}] Failed to award XP for check-out to user: ${createCheckOutDto.owner.uid}`,
+							`❌ [${operationId}] Failed to award XP for check-out to user: ${clerkId}`,
 							xpError.stack,
 						);
 						// Don't fail post-processing if XP award fails
@@ -788,7 +822,7 @@ export class CheckInsService {
 			return response;
 		} catch (error) {
 			this.logger.error(
-				`[${operationId}] Check-out failed for user: ${createCheckOutDto.owner?.uid}`,
+				`[${operationId}] Check-out failed for user: ${ownerRef ?? clerkUserId ?? 'unknown'}`,
 				error.stack,
 			);
 			return {
@@ -798,14 +832,14 @@ export class CheckInsService {
 		}
 	}
 
-	async checkInStatus(reference: number): Promise<any> {
+	async checkInStatus(reference: string): Promise<any> {
 		try {
+			// Reference can be clerk id (user_xxx) or numeric string; filter by ownerClerkUserId
+			const whereClause = reference.startsWith('user_')
+				? { ownerClerkUserId: reference }
+				: { owner: { uid: Number(reference) } };
 			const [checkIn] = await this.checkInRepository.find({
-				where: {
-					owner: {
-						uid: reference,
-					},
-				},
+				where: whereClause,
 				order: {
 					checkInTime: 'DESC',
 				},
@@ -871,11 +905,12 @@ export class CheckInsService {
 		}
 	}
 
-	async getUserCheckIns(userUid: number, organizationUid?: string): Promise<any> {
+	async getUserCheckIns(userUid: string, organizationUid?: string): Promise<any> {
 		try {
-			const whereCondition: any = {
-				owner: { uid: userUid },
-			};
+			// Use ownerClerkUserId if it's a Clerk ID, otherwise use uid (string coercion)
+			const whereCondition: any = userUid.startsWith('user_')
+				? { ownerClerkUserId: userUid }
+				: { owner: { uid: userUid } };
 
 			if (organizationUid) {
 				// organisationUid is now a string (Clerk org ID), filter directly

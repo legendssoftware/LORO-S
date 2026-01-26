@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsArray, IsNotEmpty, ValidateNested, IsNumber, IsString, IsEnum, IsOptional, IsEmail } from 'class-validator';
+import { IsArray, IsNotEmpty, ValidateNested, IsNumber, IsString, IsEnum, IsOptional, IsEmail, IsObject } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export enum PurchaseMode {
@@ -85,13 +85,13 @@ export class CheckoutDto {
 	})
 	client: { uid: number };
 
-	@IsString()
+	@IsObject()
 	@IsNotEmpty()
 	@ApiProperty({
-		description: 'ref code of the owner',
-		example: '123456',
+		description: 'Owner reference (user ref as string)',
+		example: { uid: '123' },
 	})
-	owner: { uid: number };
+	owner: { uid: string };
 
 	@IsString()
 	@IsNotEmpty()

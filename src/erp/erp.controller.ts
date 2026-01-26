@@ -489,7 +489,7 @@ export class ErpController {
 	@ApiResponse({ status: 200, description: 'User sales data for current month' })
 	@ApiResponse({ status: 404, description: 'User target or ERP code not found' })
 	async getProfileSales(@Req() request: AuthenticatedRequest) {
-		const userId = request.user?.uid;
+		const userId = request.user?.clerkUserId;
 		const orgId = this.getOrgId(request);
 		const operationId = 'profile-sales';
 		
@@ -512,7 +512,7 @@ export class ErpController {
 				}
 
 				// ✅ Check if user is active - skip inactive users
-				const userResult = await this.userService.findOne(userId, orgId);
+				const userResult = await this.userService.findOneByClerkId(userId);
 				if (!userResult?.user || userResult.user.status !== 'active') {
 					this.logger.warn(`[${operationId}] ⚠️  User ${userId} is inactive (status: ${userResult?.user?.status || 'not found'}), skipping target processing`);
 					return {
@@ -703,7 +703,7 @@ export class ErpController {
 
 				// Verify that the current user has access to view this user's sales
 				// Check if targetUserId is in the current user's managed staff
-				const currentUserTargetResult = await this.userService.getUserTarget(currentUserId, orgId);
+				const currentUserTargetResult = await this.userService.getUserTarget(String(currentUserId), orgId);
 				const currentUserTarget = currentUserTargetResult?.userTarget;
 				const managedStaff = currentUserTarget?.managedStaff || [];
 				
@@ -718,7 +718,7 @@ export class ErpController {
 				}
 
 				// Get target user's target to extract ERP code and date range
-				const userTargetResult = await this.userService.getUserTarget(targetUserId, orgId);
+				const userTargetResult = await this.userService.getUserTarget(String(targetUserId), orgId);
 				
 				if (!userTargetResult?.userTarget) {
 					throw new NotFoundException(`No targets found for user ${targetUserId}`);
@@ -873,7 +873,7 @@ export class ErpController {
 				}
 
 				// Verify that the current user has access to view this user's commission data
-				const currentUserTargetResult = await this.userService.getUserTarget(currentUserId, orgId);
+				const currentUserTargetResult = await this.userService.getUserTarget(String(currentUserId), orgId);
 				const currentUserTarget = currentUserTargetResult?.userTarget;
 				const managedStaff = currentUserTarget?.managedStaff || [];
 				
@@ -888,7 +888,7 @@ export class ErpController {
 				}
 
 				// Get target user's target to extract ERP code and date range
-				const userTargetResult = await this.userService.getUserTarget(targetUserId, orgId);
+				const userTargetResult = await this.userService.getUserTarget(String(targetUserId), orgId);
 				
 				if (!userTargetResult?.userTarget) {
 					throw new NotFoundException(`No targets found for user ${targetUserId}`);
@@ -1080,7 +1080,7 @@ export class ErpController {
 				}
 
 				// Get user's target to extract ERP code and date range
-				const userTargetResult = await this.userService.getUserTarget(userId, orgId);
+				const userTargetResult = await this.userService.getUserTarget(String(userId), orgId);
 				
 				if (!userTargetResult?.userTarget) {
 					throw new NotFoundException(`No targets found for user ${userId}`);
@@ -1238,7 +1238,7 @@ export class ErpController {
 				}
 
 				// Get user's target to extract ERP code and date range
-				const userTargetResult = await this.userService.getUserTarget(userId, orgId);
+				const userTargetResult = await this.userService.getUserTarget(String(userId), orgId);
 				
 				if (!userTargetResult?.userTarget) {
 					throw new NotFoundException(`No targets found for user ${userId}`);
@@ -1507,7 +1507,7 @@ Returns latest sales data for all sales reps without requiring date configuratio
 				}
 
 				// Get current user's targets to extract managed staff and period dates
-				const userTargetResult = await this.userService.getUserTarget(userId, orgId);
+				const userTargetResult = await this.userService.getUserTarget(String(userId), orgId);
 				
 				if (!userTargetResult?.userTarget) {
 					throw new NotFoundException(`No targets found for user ${userId}`);
@@ -1577,7 +1577,7 @@ Returns latest sales data for all sales reps without requiring date configuratio
 						// Parallel: Check user status and get target simultaneously
 						const [staffUserResult, staffTargetResult] = await Promise.all([
 							this.userService.findOne(staff.uid, orgId),
-							this.userService.getUserTarget(staff.uid, orgId),
+							this.userService.getUserTarget(staff.clerkUserId ?? String(staff.uid), orgId),
 						]);
 
 						// Check if user is active
@@ -1944,7 +1944,7 @@ Returns latest sales data for all sales reps without requiring date configuratio
 				}
 
 				// Get user's target to extract ERP code and date range
-				const userTargetResult = await this.userService.getUserTarget(userId, orgId);
+				const userTargetResult = await this.userService.getUserTarget(String(userId), orgId);
 				
 				if (!userTargetResult?.userTarget) {
 					throw new NotFoundException(`No targets found for user ${userId}`);

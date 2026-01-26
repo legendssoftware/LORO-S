@@ -295,12 +295,8 @@ Issue formal warnings to employees with comprehensive tracking, automated notifi
 		}
 	})
 	create(@Body() createWarningDto: CreateWarningDto, @Request() req: any) {
-		const userId = req.user?.uid;
-		// Set the issuer to the current user if not provided
-		if (!createWarningDto.issuedBy) {
-			createWarningDto.issuedBy = { uid: userId };
-		}
-		return this.warningsService.create(createWarningDto);
+		const clerkUserId = req.user?.clerkUserId;
+		return this.warningsService.create(createWarningDto, clerkUserId);
 	}
 
 	@Get()
@@ -805,9 +801,9 @@ Retrieve complete warning history for a specific employee with comprehensive ana
 	})
 	@ApiParam({
 		name: 'ref',
-		description: 'Employee user ID to retrieve warning history for',
-		example: 123,
-		schema: { type: 'number' }
+		description: 'Employee user ID to retrieve warning history for (string)',
+		example: '123',
+		schema: { type: 'string' }
 	})
 	@ApiOkResponse({
 		description: '✅ Employee warning history retrieved successfully with comprehensive analytics',
@@ -925,7 +921,7 @@ Retrieve complete warning history for a specific employee with comprehensive ana
 		}
 	})
 	getUserWarnings(@Param('ref') ref: string) {
-		return this.warningsService.getUserWarnings(+ref);
+		return this.warningsService.getUserWarnings(ref);
 	}
 
 	@Patch(':ref')

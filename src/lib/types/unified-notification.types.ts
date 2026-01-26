@@ -66,6 +66,7 @@ export enum NotificationEvent {
 
 	// Claims Events
 	CLAIM_CREATED = 'claim_created',
+	CLAIM_CREATED_ADMIN = 'claim_created_admin',
 	CLAIM_APPROVED = 'claim_approved',
 	CLAIM_REJECTED = 'claim_rejected',
 	CLAIM_STATUS_CHANGED = 'claim_status_changed',
@@ -120,10 +121,12 @@ export enum NotificationChannel {
 export interface NotificationRecipient {
 	userId: number;
 	email?: string;
+	phone?: string;
 	pushToken?: string;
 	name?: string;
 	prefersPush?: boolean;
 	prefersEmail?: boolean;
+	prefersSMS?: boolean;
 }
 
 export interface NotificationData {
@@ -160,6 +163,13 @@ export interface NotificationData {
 		subject?: string;
 	};
 
+	// SMS settings
+	sms?: {
+		message: string;
+		type?: string;
+		metadata?: Record<string, any>;
+	};
+
 	// Tracking and metadata
 	source?: {
 		service: string;
@@ -177,6 +187,11 @@ export interface NotificationResult {
 		errors?: string[];
 	};
 	emailResults?: {
+		sent: number;
+		failed: number;
+		errors?: string[];
+	};
+	smsResults?: {
 		sent: number;
 		failed: number;
 		errors?: string[];

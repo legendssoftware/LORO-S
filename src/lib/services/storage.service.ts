@@ -71,25 +71,21 @@ export class StorageService implements OnModuleInit {
 		fileSize: number,
 		ownerId?: number,
 		branchId?: number,
-		organisationId?: number,
+		organisationId?: string,
+		ownerClerkUserIdParam?: string,
 	): Promise<Doc> {
-		// Get content type for content field
 		const contentType = mimeType.split('/')[0];
-
-		// Use docId for description if available
 		const description = metadata?.docId?.toString() || '';
 
-		// Get user's clerkUserId if ownerId is provided
-		// The Doc entity uses ownerClerkUserId (string) as the join column, not uid
-		let ownerClerkUserId: string | null = null;
-		if (ownerId) {
+		// Resolve ownerClerkUserId: use param (Clerk-first) or lookup from ownerId (uid)
+		let ownerClerkUserId: string | null = ownerClerkUserIdParam ?? null;
+		if (!ownerClerkUserId && ownerId) {
 			try {
 				const userRepo = this.connection.getRepository(User);
 				const user = await userRepo.findOne({
 					where: { uid: ownerId },
 					select: ['uid', 'clerkUserId'],
 				});
-
 				if (user?.clerkUserId) {
 					ownerClerkUserId = user.clerkUserId;
 				} else {
@@ -127,6 +123,7 @@ export class StorageService implements OnModuleInit {
 		customFileName?: string,
 		ownerId?: number,
 		branchId?: number,
+		ownerClerkUserId?: string,
 	): Promise<UploadResult> {
 		try {
 			// Check if storage and bucket are properly initialized
@@ -194,7 +191,7 @@ export class StorageService implements OnModuleInit {
 			const uploadedBy = file.metadata?.uploadedBy;
 			let userOwnerId = ownerId;
 			let userBranchId = branchId;
-			let organisationId = null;
+			let organisationId: string | null = null;
 
 			if (uploadedBy) {
 				try {
@@ -208,7 +205,8 @@ export class StorageService implements OnModuleInit {
 					if (user) {
 						userOwnerId = user.uid;
 						if (user.organisation) {
-							organisationId = user.organisation.uid;
+							// Use clerkOrgId (string) instead of uid (number) for Clerk migration
+							organisationId = user.organisation.clerkOrgId || user.organisation.ref || null;
 						}
 					}
 
@@ -232,12 +230,13 @@ export class StorageService implements OnModuleInit {
 				userOwnerId,
 				userBranchId,
 				organisationId,
+				ownerClerkUserId,
 			).catch((error) => {
 				this.logger.error(`Failed to create doc record: ${error.message}`);
 				return null;
 			});
 
-			// Wait for doc creation (organisationUid is set during creation)
+			// Wait for doc creation (organisationUid is now a string - Clerk org ID)
 			const doc = await docPromise;
 
 			return {

@@ -21,11 +21,15 @@ export class AssetsService {
 				throw new BadRequestException('Organization ID is required');
 			}
 
-					const asset = await this.assetRepository.save({
-			...createAssetDto,
-			org: { uid: orgId },
-			branch: branchId ? { uid: branchId } : null
-		});
+			const { owner, ...rest } = createAssetDto;
+			const savePayload = {
+				...rest,
+				ownerClerkUserId: owner?.uid ?? null,
+				owner: owner?.uid ? { clerkUserId: owner.uid } : undefined,
+				org: { uid: orgId },
+				branch: branchId ? { uid: branchId } : null,
+			};
+			const asset = (await this.assetRepository.save(savePayload)) as Asset;
 
 		if (!asset) {
 			throw new NotFoundException(process.env.CREATE_ERROR_MESSAGE);
@@ -257,12 +261,17 @@ export class AssetsService {
 			}
 
 			// First verify the asset belongs to the org/branch
-			const asset = await this.findOne(ref, orgId, branchId);
-			if (!asset) {
+			const verify = await this.findOne(ref, orgId, branchId);
+			if (!verify?.asset) {
 				throw new NotFoundException('Asset not found in your organization');
 			}
 
-					const result = await this.assetRepository.update(ref, updateAssetDto);
+			const { owner, ...rest } = updateAssetDto;
+			const updatePayload = {
+				...rest,
+				...(owner?.uid != null && { ownerClerkUserId: owner.uid }),
+			};
+			const result = await this.assetRepository.update(ref, updatePayload);
 
 		if (!result) {
 			throw new NotFoundException(process.env.UPDATE_ERROR_MESSAGE);

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, UseGuards, Req, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query, UseGuards, Req, BadRequestException } from '@nestjs/common';
 import { RewardsService } from './rewards.service';
 import { CreateRewardDto } from './dto/create-reward.dto';
 import { ClerkAuthGuard } from '../clerk/clerk.guard';
@@ -13,6 +13,7 @@ import {
 	ApiParam,
 	ApiBody,
 	ApiOkResponse,
+	ApiQuery,
 	ApiCreatedResponse,
 	ApiBadRequestResponse,
 	ApiNotFoundResponse,
@@ -218,6 +219,89 @@ export class RewardsController {
 		const branchId = this.toNumber(req.user?.branch?.uid);
 		const requestingUserClerkId = req.user?.clerkUserId;
 		return this.rewardsService.getUserRewards(reference, orgId, branchId, requestingUserClerkId);
+	}
+
+	@Get('rankings')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.SUPPORT,
+		AccessLevel.DEVELOPER,
+		AccessLevel.USER,
+		AccessLevel.OWNER,
+		AccessLevel.TECHNICIAN,
+	)
+	@ApiOperation({
+		summary: '🏆 Get position-only rankings (by XP or sales)',
+		description: 'Returns rankings of users/salespeople by XP or sales. Position-only (no raw metrics). By sales: only users with sales target; currentUserPosition null if requester has no target.',
+		operationId: 'getRankings',
+	})
+	@ApiQuery({ name: 'by', required: true, enum: ['xp', 'sales'], description: 'Rank by XP or sales' })
+	@ApiQuery({ name: 'branchId', required: false, type: Number, description: 'Optional branch filter' })
+	@ApiOkResponse({
+		description: 'Rankings retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Success' },
+				data: {
+					type: 'object',
+					properties: {
+						rankings: {
+							type: 'array',
+							items: {
+								type: 'object',
+								properties: {
+									position: { type: 'number' },
+									points: { type: 'number', description: 'XP points (if by=xp) or sales amount (if by=sales)' },
+									user: {
+										type: 'object',
+										properties: {
+											uid: { type: 'number' },
+											name: { type: 'string' },
+											surname: { type: 'string' },
+											photoURL: { type: 'string', nullable: true },
+											branch: {
+												type: 'object',
+												nullable: true,
+												properties: { uid: { type: 'number' }, name: { type: 'string' } },
+											},
+										},
+									},
+								},
+							},
+						},
+						currentUserPosition: { type: 'number', nullable: true },
+						metadata: {
+							type: 'object',
+							properties: {
+								criteria: { type: 'string', enum: ['xp', 'sales'] },
+								totalParticipants: { type: 'number' },
+								generatedAt: { type: 'string', format: 'date-time' },
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	@ApiBadRequestResponse({ description: 'Missing org, invalid "by", or unauthenticated' })
+	async getRankings(
+		@Req() req: AuthenticatedRequest,
+		@Query('by') by: string,
+		@Query('branchId') branchIdParam?: string | number,
+	) {
+		const clerkOrgId = getClerkOrgId(req);
+		if (!clerkOrgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		const byNorm = (by ?? '').toLowerCase() === 'sales' ? 'sales' : 'xp';
+		const branchId = this.toNumber(branchIdParam);
+		const requestingUserClerkId = req.user?.clerkUserId;
+		if (!requestingUserClerkId) {
+			throw new BadRequestException('User identity required');
+		}
+		return this.rewardsService.getRankings(clerkOrgId, branchId, byNorm, requestingUserClerkId);
 	}
 
 	@Get('leaderboard')

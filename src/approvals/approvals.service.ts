@@ -171,18 +171,18 @@ export class ApprovalsService {
             );
 
             // Add requester-specific keys
-            if (approval.requesterUid) {
+            if (approval.requesterClerkUserId) {
                 keysToDelete.push(
-                    this.getCacheKey(`user_${approval.requesterUid}_requests`),
-                    this.getCacheKey(`user_${approval.requesterUid}_pending`),
+                    this.getCacheKey(`user_${approval.requesterClerkUserId}_requests`),
+                    this.getCacheKey(`user_${approval.requesterClerkUserId}_pending`),
                 );
             }
 
             // Add approver-specific keys
-            if (approval.approverUid) {
+            if (approval.approverClerkUserId) {
                 keysToDelete.push(
-                    this.getCacheKey(`user_${approval.approverUid}_pending`),
-                    this.getCacheKey(`user_${approval.approverUid}_approvals`),
+                    this.getCacheKey(`user_${approval.approverClerkUserId}_pending`),
+                    this.getCacheKey(`user_${approval.approverClerkUserId}_approvals`),
                 );
             }
 
@@ -472,7 +472,7 @@ export class ApprovalsService {
         // Fields to track for changes
         const trackableFields = [
             'title', 'description', 'type', 'priority', 'amount', 'currency',
-            'deadline', 'approverUid', 'status', 'isUrgent', 'entityType', 'entityId'
+            'deadline', 'approverClerkUserId', 'status', 'isUrgent', 'entityType', 'entityId'
         ];
 
         trackableFields.forEach(field => {
@@ -511,21 +511,56 @@ export class ApprovalsService {
         
 
             // Create approval entity
-            const { supportingDocuments, autoSubmit, ...approvalData } = createApprovalDto;
-            const approval = this.approvalRepository.create({
+            const { supportingDocuments, autoSubmit, approverChain, attachments, deadline, ...approvalData } = createApprovalDto;
+            const approvalDataToCreate: Partial<Approval> = {
                 ...approvalData,
-                requesterUid: user.uid,
+                requesterClerkUserId: user.clerkUserId,
                 organisationRef: user.organisationRef?.toString() || '',
                 branchUid: user.branch?.uid,
                 requestSource: 'web',
                 // If autoSubmit is true, create as PENDING; otherwise create as DRAFT
                 status: autoSubmit ? ApprovalStatus.PENDING : ApprovalStatus.DRAFT,
                 submittedAt: autoSubmit ? new Date() : undefined,
-                supportingDocuments: supportingDocuments?.map(doc => doc.url) || []
-            });
+                supportingDocuments: supportingDocuments?.map(doc => doc.url) || [],
+                // Convert deadline from string to Date if provided
+                deadline: deadline ? (typeof deadline === 'string' ? new Date(deadline) : deadline) : undefined,
+            };
+            
+            // Ensure attachments use string for uploadedBy (Clerk user ID)
+            if (attachments) {
+                approvalDataToCreate.attachments = attachments.map(att => ({
+                    ...att,
+                    uploadedBy: typeof att.uploadedBy === 'number' ? String(att.uploadedBy) : (att.uploadedBy || user.clerkUserId)
+                }));
+            }
+            
+            // Convert approverChain from uid to clerkUserId
+            if (approverChain && approverChain.length > 0) {
+                const approverUids = approverChain
+                    .map(chain => chain.uid)
+                    .filter((uid, index, self) => self.indexOf(uid) === index); // Remove duplicates
+                
+                const approverUsers = await this.userRepository.find({
+                    where: { uid: In(approverUids) },
+                    select: ['uid', 'clerkUserId']
+                });
+                
+                const uidToClerkUserIdMap = new Map(
+                    approverUsers.map(u => [u.uid, u.clerkUserId])
+                );
+                
+                approvalDataToCreate.approverChain = approverChain.map(chain => ({
+                    clerkUserId: uidToClerkUserIdMap.get(chain.uid) || String(chain.uid), // Fallback to string conversion if user not found
+                    order: chain.order,
+                    required: chain.required,
+                    role: chain.role
+                }));
+            }
+            
+            const approval = this.approvalRepository.create(approvalDataToCreate);
 
             // Smart approval routing - determine best approver if not specified
-            if (!approval.approverUid) {
+            if (!approval.approverClerkUserId) {
                 const approvalRouting = await this.getApprovalRouting(
                     approval.type, 
                     approval.amount, 
@@ -534,13 +569,13 @@ export class ApprovalsService {
 
                 if (approvalRouting.length > 0) {
                     const primaryApprover = approvalRouting[0];
-                    approval.approverUid = primaryApprover.approver.uid;
+                    approval.approverClerkUserId = primaryApprover.approver.clerkUserId;
                     this.logger.log(`✅ [create] Auto-assigned approver: ${primaryApprover.approver.email} (reason: ${primaryApprover.reason})`);
                 } else {
                     // Fallback to default approver
                     const fallbackApprover = await this.getDefaultApprover(approval.type, user);
                     if (fallbackApprover) {
-                        approval.approverUid = fallbackApprover.uid;
+                        approval.approverClerkUserId = fallbackApprover.clerkUserId;
                         this.logger.log(`🔄 [create] Using fallback approver: ${fallbackApprover.email}`);
                     }
                 }
@@ -555,7 +590,7 @@ export class ApprovalsService {
                 autoSubmit ? ApprovalAction.SUBMIT : ApprovalAction.SUBMIT,
                 null,
                 initialStatus,
-                user.uid,
+                user.clerkUserId,
                 autoSubmit ? 'Approval request created and auto-submitted' : 'Approval request created'
             );
 
@@ -571,16 +606,23 @@ export class ApprovalsService {
             this.logger.debug(`📱 [create] Sending ${notificationType} push notifications`);
             try {
                 const recipients = [];
-                if (savedApproval.approverUid) {
-                    recipients.push(savedApproval.approverUid);
+                if (savedApproval.approverClerkUserId) {
+                    recipients.push(savedApproval.approverClerkUserId);
                 }
                 
                 if (recipients.length > 0) {
+                    // Convert Clerk user IDs to numeric UIDs for notification service
+                    const recipientUsers = await this.userRepository.find({
+                        where: { clerkUserId: In(recipients) },
+                        select: ['uid']
+                    });
+                    const recipientUids = recipientUsers.map(u => u.uid);
+                    
                     const pushEvent = autoSubmit ? 'APPROVAL_SUBMITTED' : 'APPROVAL_CREATED';
                     await this.sendApprovalPushNotification(
                         savedApproval,
                         pushEvent,
-                        recipients,
+                        recipientUids,
                         {
                             action: autoSubmit ? 'submitted' : 'created',
                             requesterName: fullUser.name,
@@ -601,8 +643,8 @@ export class ApprovalsService {
                 type: savedApproval.type,
                 status: savedApproval.status,
                 priority: savedApproval.priority,
-                requesterUid: savedApproval.requesterUid,
-                approverUid: savedApproval.approverUid,
+                requesterClerkUserId: savedApproval.requesterClerkUserId,
+                approverClerkUserId: savedApproval.approverClerkUserId,
                 title: savedApproval.title,
                 amount: savedApproval.amount,
                 currency: savedApproval.currency,
@@ -624,8 +666,8 @@ export class ApprovalsService {
                         name: fullUser.name,
                         email: fullUser.email,
                     },
-                    approver: approval.approverUid ? {
-                        uid: approval.approverUid,
+                    approver: approval.approverClerkUserId ? {
+                        clerkUserId: approval.approverClerkUserId,
                     } : null,
                     title: savedApproval.title,
                     amount: savedApproval.amount,
@@ -645,7 +687,7 @@ export class ApprovalsService {
                 type: savedApproval.type,
                 status: savedApproval.status,
                 approvalReference: savedApproval.approvalReference,
-                approverUid: savedApproval.approverUid,
+                approverClerkUserId: savedApproval.approverClerkUserId,
                 amount: savedApproval.amount,
                 currency: savedApproval.currency,
                 message: 'Approval request created successfully'
@@ -661,11 +703,7 @@ export class ApprovalsService {
     // Get all approvals with filtering and pagination
     async findAll(query: ApprovalQueryDto, user: RequestUser) {
         const startTime = Date.now();
-        this.logger.log(`📋 [findAll] ============ APPROVALS FINDALL START ============`);
-        this.logger.log(`📋 [findAll] 🎯 Target: Fetching approvals for user ${user.uid}`);
-        this.logger.log(`📋 [findAll] 👤 User Details: uid=${user.uid}, role=${user.accessLevel}, org=${user.organisationRef}, branch=${user.branch?.uid || 'N/A'}`);
-        this.logger.log(`📋 [findAll] 🔍 Query filters: ${JSON.stringify(query, null, 2)}`);
-        
+
         try {
 
             // Generate cache key based on query parameters and user
@@ -786,11 +824,6 @@ export class ApprovalsService {
     async getPendingApprovals(user: RequestUser) {
         const startTime = Date.now();
         try {
-            this.logger.log(`⏳ [getPendingApprovals] ============ PENDING APPROVALS START ============`);
-            this.logger.log(`⏳ [getPendingApprovals] 🎯 Target: Fetching pending approvals for user ${user.uid}`);
-            this.logger.log(`⏳ [getPendingApprovals] 👤 User Details: uid=${user.uid}, role=${user.accessLevel}, org=${user.organisationRef}, branch=${user.branch?.uid || 'N/A'}`);
-            this.logger.log(`⏳ [getPendingApprovals] 🔍 Looking for statuses: [PENDING, ADDITIONAL_INFO_REQUIRED, ESCALATED]`);
-
             this.logger.log(`🏗️ [getPendingApprovals] Building pending approvals query...`);
             const queryBuilder = this.approvalRepository
                 .createQueryBuilder('approval')
@@ -802,7 +835,7 @@ export class ApprovalsService {
                 .where('approval.status IN (:...statuses)', { 
                     statuses: [ApprovalStatus.PENDING, ApprovalStatus.ADDITIONAL_INFO_REQUIRED, ApprovalStatus.ESCALATED] 
                 })
-                .andWhere('(approval.approverUid = :uid OR approval.delegatedToUid = :uid)', { uid: user.uid });
+                .andWhere('(approval.approverClerkUserId = :clerkUserId OR approval.delegatedToClerkUserId = :clerkUserId)', { clerkUserId: user.clerkUserId });
 
             // Apply comprehensive scoping (org, branch, user access)
             this.logger.log(`🔒 [getPendingApprovals] Applying security scoping filters`);
@@ -843,11 +876,6 @@ export class ApprovalsService {
     async getMyRequests(query: ApprovalQueryDto, user: RequestUser) {
         const startTime = Date.now();
         try {
-            this.logger.log(`📝 [getMyRequests] ============ MY REQUESTS START ============`);
-            this.logger.log(`📝 [getMyRequests] 🎯 Target: Fetching approval requests submitted by user ${user.uid}`);
-            this.logger.log(`📝 [getMyRequests] 👤 User Details: uid=${user.uid}, role=${user.accessLevel}, org=${user.organisationRef}, branch=${user.branch?.uid || 'N/A'}`);
-            this.logger.log(`📝 [getMyRequests] 🔍 Query filters: ${JSON.stringify(query, null, 2)}`);
-
             this.logger.log(`🏗️ [getMyRequests] Building my requests query...`);
             const queryBuilder = this.approvalRepository
                 .createQueryBuilder('approval')
@@ -856,7 +884,7 @@ export class ApprovalsService {
                 .leftJoinAndSelect('approval.delegatedTo', 'delegatedTo')
                 .leftJoinAndSelect('approval.organisation', 'organisation')
                 .leftJoinAndSelect('approval.branch', 'branch')
-                .where('approval.requesterUid = :uid', { uid: user.uid });
+                .where('approval.requesterClerkUserId = :clerkUserId', { clerkUserId: user.clerkUserId });
 
             // Apply comprehensive scoping (org, branch, user access)  
             this.logger.log(`🔒 [getMyRequests] Applying security scoping filters`);
@@ -926,8 +954,8 @@ export class ApprovalsService {
         }
     }
 
-    // Get comprehensive approval history for a specific user (matching warnings pattern)
-    async getUserApprovals(userId: number): Promise<{ 
+    // Get comprehensive approval history for a specific user (matching warnings pattern). User ref as string.
+    async getUserApprovals(clerkUserId: string): Promise<{ 
         success: boolean; 
         data: { 
             employee: any; 
@@ -937,16 +965,16 @@ export class ApprovalsService {
         message: string 
     }> {
         try {
-            const cacheKey = this.getCacheKey(`user_${userId}`);
+            const cacheKey = this.getCacheKey(`user_${clerkUserId}`);
             const cachedResult = await this.cacheManager.get<{ success: boolean; data: any; message: string }>(cacheKey);
 
             if (cachedResult) {
                 return cachedResult;
             }
 
-            // Get user details
+            // Get user details by clerkUserId
             const user = await this.userRepository.findOne({
-                where: { uid: userId },
+                where: { clerkUserId },
                 relations: ['organisation', 'branch'],
             });
 
@@ -954,7 +982,7 @@ export class ApprovalsService {
                 return {
                     success: false,
                     data: {
-                        employee: { uid: userId },
+                        employee: { clerkUserId },
                         approvals: [],
                         analytics: {
                             summary: {
@@ -969,16 +997,21 @@ export class ApprovalsService {
                 };
             }
 
-            // Get all approvals for this user
-            const approvals = await this.approvalRepository.find({
-                where: {
-                    requesterUid: userId,
-                },
-                relations: ['requester', 'approver', 'delegatedTo', 'organisation', 'branch'],
-                order: {
-                    createdAt: 'DESC',
-                },
-            });
+            // Get all approvals for this user - where they are requester OR approver OR delegatedTo
+            const approvals = await this.approvalRepository
+                .createQueryBuilder('approval')
+                .leftJoinAndSelect('approval.requester', 'requester')
+                .leftJoinAndSelect('approval.approver', 'approver')
+                .leftJoinAndSelect('approval.delegatedTo', 'delegatedTo')
+                .leftJoinAndSelect('approval.organisation', 'organisation')
+                .leftJoinAndSelect('approval.branch', 'branch')
+                .where('approval.isDeleted = :isDeleted', { isDeleted: false })
+                .andWhere(
+                    '(approval.requesterClerkUserId = :clerkUserId OR approval.approverClerkUserId = :clerkUserId OR approval.delegatedToClerkUserId = :clerkUserId)',
+                    { clerkUserId }
+                )
+                .orderBy('approval.createdAt', 'DESC')
+                .getMany();
 
             // Calculate analytics
             const analytics = {
@@ -1023,7 +1056,7 @@ export class ApprovalsService {
             return {
                 success: false,
                 data: {
-                    employee: { uid: userId },
+                    employee: { clerkUserId },
                     approvals: [],
                     analytics: {
                         summary: {
@@ -1043,10 +1076,6 @@ export class ApprovalsService {
     async getStats(user: RequestUser) {
         const startTime = Date.now();
         try {
-            this.logger.log(`📊 [getStats] ============ APPROVAL STATS START ============`);
-            this.logger.log(`📊 [getStats] 🎯 Target: Generating approval statistics for user ${user.uid}`);
-            this.logger.log(`📊 [getStats] 👤 User Details: uid=${user.uid}, role=${user.accessLevel}, org=${user.organisationRef}, branch=${user.branch?.uid || 'N/A'}`);
-
             // Check cache first
             const cacheKey = this.getCacheKey(`stats_${user.organisationRef}_${user.uid}`);
             this.logger.log(`🗄️ [getStats] Checking cache with key: ${cacheKey}`);
@@ -1250,8 +1279,8 @@ export class ApprovalsService {
                 throw new BadRequestException('Cannot modify approval in current status');
             }
 
-            if (approval.requesterUid !== user.uid) {
-                this.logger.warn(`⚠️ [update] User ${user.uid} not authorized to modify approval ${id} (requester: ${approval.requesterUid})`);
+            if (approval.requesterClerkUserId !== user.clerkUserId) {
+                this.logger.warn(`⚠️ [update] User ${user.clerkUserId} not authorized to modify approval ${id} (requester: ${approval.requesterClerkUserId})`);
                 throw new ForbiddenException('Only the requester can modify this approval');
             }
 
@@ -1271,7 +1300,7 @@ export class ApprovalsService {
                 ApprovalAction.SUBMIT,
                 ApprovalStatus.DRAFT,
                 ApprovalStatus.DRAFT,
-                user.uid,
+                user.clerkUserId,
                 'Approval request updated'
             );
 
@@ -1285,8 +1314,8 @@ export class ApprovalsService {
             // Send push notification for update
             try {
                 const recipients = [];
-                if (updatedApproval.approverUid && updatedApproval.approverUid !== user.uid) {
-                    recipients.push(updatedApproval.approverUid);
+                if (updatedApproval.approverClerkUserId && updatedApproval.approverClerkUserId !== user.clerkUserId) {
+                    recipients.push(updatedApproval.approverClerkUserId);
                 }
 
                 if (recipients.length > 0) {
@@ -1319,8 +1348,8 @@ export class ApprovalsService {
                 type: updatedApproval.type,
                 status: updatedApproval.status,
                 priority: updatedApproval.priority,
-                requesterUid: updatedApproval.requesterUid,
-                approverUid: updatedApproval.approverUid,
+                requesterClerkUserId: updatedApproval.requesterClerkUserId,
+                approverClerkUserId: updatedApproval.approverClerkUserId,
                 title: updatedApproval.title,
                 amount: updatedApproval.amount,
                 currency: updatedApproval.currency,
@@ -1346,7 +1375,7 @@ export class ApprovalsService {
                     version: updatedApproval.version,
                 },
                 targetRoles: ['admin', 'manager', 'approver'],
-                targetUsers: [updatedApproval.requesterUid, updatedApproval.approverUid].filter(Boolean),
+                targetUsers: [updatedApproval.requesterClerkUserId, updatedApproval.approverClerkUserId].filter(Boolean),
                 organisationRef: updatedApproval.organisationRef,
                 branchUid: updatedApproval.branchUid,
             });
@@ -1374,7 +1403,7 @@ export class ApprovalsService {
                 throw new BadRequestException('Only draft approvals can be submitted for review');
             }
 
-            if (approval.requesterUid !== user.uid) {
+            if (approval.requesterClerkUserId !== user.clerkUserId) {
                 throw new ForbiddenException('Only the requester can submit this approval');
             }
 
@@ -1390,7 +1419,7 @@ export class ApprovalsService {
                 ApprovalAction.SUBMIT,
                 ApprovalStatus.DRAFT,
                 ApprovalStatus.PENDING,
-                user.uid,
+                user.clerkUserId,
                 'Approval submitted for review'
             );
 
@@ -1399,7 +1428,7 @@ export class ApprovalsService {
 
             // Send push notification to approver
             try {
-                if (approval.approverUid) {
+                if (approval.approverClerkUserId) {
                     // Get requester name from database
                     const requester = await this.userRepository.findOne({
                         where: { uid: user.uid },
@@ -1410,7 +1439,7 @@ export class ApprovalsService {
                     await this.sendApprovalPushNotification(
                         updatedApproval,
                         'APPROVAL_SUBMITTED',
-                        [approval.approverUid],
+                        [approval.approverClerkUserId],
                         {
                             action: 'submitted',
                             requesterName,
@@ -1484,27 +1513,27 @@ export class ApprovalsService {
                     break;
 
                 case ApprovalAction.DELEGATE:
-                    if (!actionDto.delegateToUid) {
+                    if (!actionDto.delegateToClerkUserId) {
                         throw new BadRequestException('Delegate user ID is required');
                     }
-                    approval.delegatedFromUid = user.uid;
-                    approval.delegatedToUid = actionDto.delegateToUid;
-                    actionDescription = `Approval delegated from user ${user.uid} to user ${actionDto.delegateToUid}`;
-                    this.logger.log(`🔄 [performAction] Approval ${id} delegated from user ${user.uid} to user ${actionDto.delegateToUid}`);
+                    approval.delegatedFromClerkUserId = user.clerkUserId;
+                    approval.delegatedToClerkUserId = actionDto.delegateToClerkUserId;
+                    actionDescription = `Approval delegated from user ${user.clerkUserId} to user ${actionDto.delegateToClerkUserId}`;
+                    this.logger.log(`🔄 [performAction] Approval ${id} delegated from user ${user.clerkUserId} to user ${actionDto.delegateToClerkUserId}`);
                     break;
 
                 case ApprovalAction.ESCALATE:
-                    if (!actionDto.escalateToUid) {
+                    if (!actionDto.escalateToClerkUserId) {
                         throw new BadRequestException('Escalation user ID is required');
                     }
                     toStatus = ApprovalStatus.ESCALATED;
                     approval.status = toStatus;
                     approval.isEscalated = true;
                     approval.escalatedAt = new Date();
-                    approval.escalatedToUid = actionDto.escalateToUid;
+                    approval.escalatedToClerkUserId = actionDto.escalateToClerkUserId;
                     approval.escalationReason = actionDto.reason;
-                    actionDescription = `Approval escalated from user ${user.uid} to user ${actionDto.escalateToUid}: ${actionDto.reason}`;
-                    this.logger.log(`⬆️ [performAction] Approval ${id} escalated from user ${user.uid} to user ${actionDto.escalateToUid}`);
+                    actionDescription = `Approval escalated from user ${user.clerkUserId} to user ${actionDto.escalateToClerkUserId}: ${actionDto.reason}`;
+                    this.logger.log(`⬆️ [performAction] Approval ${id} escalated from user ${user.clerkUserId} to user ${actionDto.escalateToClerkUserId}`);
                     break;
 
                 default:
@@ -1520,7 +1549,7 @@ export class ApprovalsService {
                 actionDto.action,
                 fromStatus,
                 toStatus,
-                user.uid,
+                user.clerkUserId,
                 actionDto.comments || actionDto.reason || actionDescription
             );
 
@@ -1557,40 +1586,40 @@ export class ApprovalsService {
             // Send push notifications based on action
             this.logger.debug(`📱 [performAction] Sending push notifications for action: ${actionDto.action}`);
             try {
-                let pushRecipients: number[] = [];
+                let pushRecipients: string[] = []; // Clerk user IDs
                 let pushEvent = '';
                 let pushMessage = '';
 
                 switch (actionDto.action) {
                     case ApprovalAction.APPROVE:
-                        pushRecipients = [updatedApproval.requesterUid];
+                        pushRecipients = [updatedApproval.requesterClerkUserId];
                         pushEvent = 'APPROVAL_APPROVED';
                         pushMessage = `Your approval request "${updatedApproval.title}" has been approved`;
                         break;
 
                     case ApprovalAction.REJECT:
-                        pushRecipients = [updatedApproval.requesterUid];
+                        pushRecipients = [updatedApproval.requesterClerkUserId];
                         pushEvent = 'APPROVAL_REJECTED';
                         pushMessage = `Your approval request "${updatedApproval.title}" has been rejected`;
                         break;
 
                     case ApprovalAction.REQUEST_INFO:
-                        pushRecipients = [updatedApproval.requesterUid];
+                        pushRecipients = [updatedApproval.requesterClerkUserId];
                         pushEvent = 'APPROVAL_INFO_REQUESTED';
                         pushMessage = `Additional information requested for "${updatedApproval.title}"`;
                         break;
 
                     case ApprovalAction.DELEGATE:
-                        if (actionDto.delegateToUid) {
-                            pushRecipients = [actionDto.delegateToUid];
+                        if (actionDto.delegateToClerkUserId) {
+                            pushRecipients = [actionDto.delegateToClerkUserId];
                             pushEvent = 'APPROVAL_DELEGATED';
                             pushMessage = `Approval request "${updatedApproval.title}" has been delegated to you`;
                         }
                         break;
 
                     case ApprovalAction.ESCALATE:
-                        if (actionDto.escalateToUid) {
-                            pushRecipients = [actionDto.escalateToUid];
+                        if (actionDto.escalateToClerkUserId) {
+                            pushRecipients = [actionDto.escalateToClerkUserId];
                             pushEvent = 'APPROVAL_ESCALATED';
                             pushMessage = `Approval request "${updatedApproval.title}" has been escalated to you`;
                         }
@@ -1600,15 +1629,22 @@ export class ApprovalsService {
                 if (pushRecipients.length > 0 && pushEvent) {
                     // Get action performer name from database
                     const actionUser = await this.userRepository.findOne({
-                        where: { uid: user.uid },
+                        where: { clerkUserId: user.clerkUserId },
                         select: ['name', 'surname']
                     });
                     const actionByName = actionUser ? `${actionUser.name} ${actionUser.surname}`.trim() : 'Team Member';
 
+                    // Convert Clerk user IDs to numeric UIDs for notification service
+                    const recipientUsers = await this.userRepository.find({
+                        where: { clerkUserId: In(pushRecipients) },
+                        select: ['uid']
+                    });
+                    const recipientUids = recipientUsers.map(u => u.uid);
+
                     await this.sendApprovalPushNotification(
                         updatedApproval,
                         pushEvent,
-                        pushRecipients,
+                        recipientUids,
                         {
                             action: actionDto.action,
                             actionBy: actionByName,
@@ -1657,15 +1693,15 @@ export class ApprovalsService {
                     title: updatedApproval.title,
                     amount: updatedApproval.amount,
                     currency: updatedApproval.currency,
-                    requesterUid: updatedApproval.requesterUid,
-                    approverUid: updatedApproval.approverUid,
+                    requesterClerkUserId: updatedApproval.requesterClerkUserId,
+                    approverClerkUserId: updatedApproval.approverClerkUserId,
                 },
                 targetRoles: ['admin', 'manager', 'approver'],
                 targetUsers: [
-                    updatedApproval.requesterUid, 
-                    updatedApproval.approverUid,
-                    actionDto.delegateToUid,
-                    actionDto.escalateToUid
+                    updatedApproval.requesterClerkUserId, 
+                    updatedApproval.approverClerkUserId,
+                    actionDto.delegateToClerkUserId,
+                    actionDto.escalateToClerkUserId
                 ].filter(Boolean),
                 organisationRef: updatedApproval.organisationRef,
                 branchUid: updatedApproval.branchUid,
@@ -1727,7 +1763,7 @@ export class ApprovalsService {
             // Create signature record
             const signature = this.signatureRepository.create({
                 approvalUid: approval.uid,
-                signerUid: user.uid,
+                signerClerkUserId: user.clerkUserId,
                 signatureType: signDto.signatureType,
                 signatureUrl: signDto.signatureUrl,
                 signatureData: signDto.signatureData,
@@ -1750,13 +1786,13 @@ export class ApprovalsService {
                 ApprovalAction.SIGN,
                 ApprovalStatus.APPROVED,
                 ApprovalStatus.SIGNED,
-                user.uid,
+                user.clerkUserId,
                 'Approval signed digitally'
             );
 
             // Send push notification for signature completion
             try {
-                if (updatedApproval.requesterUid && updatedApproval.requesterUid !== user.uid) {
+                if (updatedApproval.requesterClerkUserId && updatedApproval.requesterClerkUserId !== user.clerkUserId) {
                     const signer = await this.userRepository.findOne({
                         where: { uid: user.uid },
                         select: ['name', 'surname']
@@ -1766,7 +1802,7 @@ export class ApprovalsService {
                     await this.sendApprovalPushNotification(
                         updatedApproval,
                         'APPROVAL_SIGNED',
-                        [updatedApproval.requesterUid],
+                        [updatedApproval.requesterClerkUserId],
                         {
                             action: 'signed',
                             signedBy: signerName,
@@ -1899,7 +1935,7 @@ export class ApprovalsService {
 
             const approval = await this.findOne(id, user);
 
-            if (approval.requesterUid !== user.uid) {
+            if (approval.requesterClerkUserId !== user.clerkUserId) {
                 throw new ForbiddenException('Only the requester can withdraw this approval');
             }
 
@@ -1916,7 +1952,7 @@ export class ApprovalsService {
                 ApprovalAction.WITHDRAW,
                 approval.status,
                 ApprovalStatus.WITHDRAWN,
-                user.uid,
+                user.clerkUserId,
                 'Approval withdrawn by requester'
             );
 
@@ -2092,23 +2128,66 @@ export class ApprovalsService {
 
     // Comprehensive scoping helper
     private applyScopingFilters(queryBuilder: SelectQueryBuilder<Approval>, user: RequestUser, alias: string = 'approval'): void {
-        // Organization scoping - ALWAYS required
-        queryBuilder.andWhere(`${alias}.organisationRef = :orgRef`, { 
-            orgRef: user.organisationRef?.toString() || '' 
-        });
+        const accessLevel = user.accessLevel ?? (user as any).role;
+        const clerkUserId = user.clerkUserId ?? '';
+        const elevatedRoles = [
+            AccessLevel.OWNER,
+            AccessLevel.ADMIN,
+            AccessLevel.MANAGER,
+            AccessLevel.DEVELOPER,
+            AccessLevel.SUPPORT,
+        ];
+        const isElevated = elevatedRoles.includes(accessLevel);
 
-        // Branch scoping for non-admin users
-        if (user.branch && ![AccessLevel.OWNER, AccessLevel.ADMIN].includes(user.accessLevel)) {
-            queryBuilder.andWhere(`${alias}.branchUid = :branchUid`, { 
-                branchUid: user.branch.uid 
+        // Normalize organisationRef to handle null/undefined and ensure string type
+        const orgRef = user.organisationRef 
+            ? String(user.organisationRef).trim() 
+            : null;
+
+        // Organization scoping - For elevated users, allow org match OR approvals they created/approve
+        if (isElevated) {
+            if (orgRef) {
+                // Elevated users see all approvals in their org OR approvals they created/approve/delegated to them
+                queryBuilder.andWhere(
+                    `(${alias}.organisationRef = :orgRef OR ${alias}.requesterClerkUserId = :clerkUserId OR ${alias}.approverClerkUserId = :clerkUserId OR ${alias}.delegatedToClerkUserId = :clerkUserId)`,
+                    { orgRef, clerkUserId }
+                );
+                this.logger.debug(`[applyScopingFilters] Elevated user ${user.uid} filtering by orgRef: ${orgRef} OR requester/approver/delegatedTo: ${clerkUserId}`);
+            } else {
+                // If no orgRef, elevated users can still see approvals they created/approve/delegated to them
+                queryBuilder.andWhere(
+                    `(${alias}.requesterClerkUserId = :clerkUserId OR ${alias}.approverClerkUserId = :clerkUserId OR ${alias}.delegatedToClerkUserId = :clerkUserId)`,
+                    { clerkUserId }
+                );
+                this.logger.warn(`[applyScopingFilters] Elevated user ${user.uid} has no organisationRef, allowing only their own approvals (as requester/approver/delegatedTo)`);
+            }
+        } else {
+            // Non-elevated users: always filter by organisationRef (required)
+            queryBuilder.andWhere(`${alias}.organisationRef = :orgRef`, {
+                orgRef: orgRef || '',
             });
         }
 
-        // User-level access control for non-elevated users
-        if (![AccessLevel.OWNER, AccessLevel.ADMIN, AccessLevel.MANAGER].includes(user.accessLevel)) {
+        // Branch scoping: elevated users see all in org (no branch filter). Non-elevated: same org, but requester always sees own.
+        if (!isElevated) {
+            if (user.branch) {
+                queryBuilder.andWhere(
+                    `(${alias}.branchUid IS NULL OR ${alias}.branchUid = :branchUid OR ${alias}.requesterClerkUserId = :clerkUserId)`,
+                    { branchUid: user.branch.uid, clerkUserId },
+                );
+            } else {
+                queryBuilder.andWhere(
+                    `(${alias}.branchUid IS NULL OR ${alias}.requesterClerkUserId = :clerkUserId)`,
+                    { clerkUserId },
+                );
+            }
+        }
+
+        // User-level access control for non-elevated users (use clerkUserId; requester/approver/delegatedTo)
+        if (!isElevated) {
             queryBuilder.andWhere(
-                `(${alias}.requesterUid = :userUid OR ${alias}.approverUid = :userUid OR ${alias}.delegatedToUid = :userUid)`,
-                { userUid: user.uid }
+                `(${alias}.requesterClerkUserId = :clerkUserIdFilter OR ${alias}.approverClerkUserId = :clerkUserIdFilter OR ${alias}.delegatedToClerkUserId = :clerkUserIdFilter)`,
+                { clerkUserIdFilter: clerkUserId },
             );
         }
 
@@ -2117,14 +2196,14 @@ export class ApprovalsService {
     }
 
     // Helper to fetch full user data for emails
-    private async getFullUserData(userUid: number): Promise<User | null> {
+    private async getFullUserData(clerkUserId: string): Promise<User | null> {
         try {
             return await this.userRepository.findOne({
-                where: { uid: userUid, isDeleted: false },
+                where: { clerkUserId: clerkUserId, isDeleted: false },
                 relations: ['organisation', 'branch']
             });
         } catch (error) {
-            this.logger.error(`Failed to fetch user data for uid ${userUid}:`, error);
+            this.logger.error(`Failed to fetch user data for clerkUserId ${clerkUserId}:`, error);
             return null;
         }
     }
@@ -2135,7 +2214,7 @@ export class ApprovalsService {
             this.logger.log(`Sending ${action} notification for approval ${approval.uid}`);
             
             // Get full requester data
-            const requester = await this.getFullUserData(approval.requesterUid);
+            const requester = await this.getFullUserData(approval.requesterClerkUserId);
             if (!requester) {
                 this.logger.warn(`Could not find requester data for approval ${approval.uid}`);
                 return;
@@ -2143,14 +2222,14 @@ export class ApprovalsService {
 
             // Get full approver data if applicable
             let approver = null;
-            if (approval.approverUid) {
-                approver = await this.getFullUserData(approval.approverUid);
+            if (approval.approverClerkUserId) {
+                approver = await this.getFullUserData(approval.approverClerkUserId);
             }
 
             // Get escalated user data if applicable
             let escalatedTo = null;
-            if (approval.escalatedToUid) {
-                escalatedTo = await this.getFullUserData(approval.escalatedToUid);
+            if (approval.escalatedToClerkUserId) {
+                escalatedTo = await this.getFullUserData(approval.escalatedToClerkUserId);
             }
 
             // Prepare email data
@@ -2290,11 +2369,19 @@ export class ApprovalsService {
     }
 
     private applyUserAccessFiltering(queryBuilder: SelectQueryBuilder<Approval>, user: RequestUser): void {
-        // Apply user-level access filtering based on role
-        if (![AccessLevel.OWNER, AccessLevel.ADMIN, AccessLevel.MANAGER].includes(user.accessLevel)) {
+        const accessLevel = user.accessLevel ?? (user as any).role;
+        const elevatedRoles = [
+            AccessLevel.OWNER,
+            AccessLevel.ADMIN,
+            AccessLevel.MANAGER,
+            AccessLevel.DEVELOPER,
+            AccessLevel.SUPPORT,
+        ];
+        const elevated = elevatedRoles.includes(accessLevel);
+        if (!elevated && user.clerkUserId) {
             queryBuilder.andWhere(
-                '(approval.requesterUid = :uid OR approval.approverUid = :uid OR approval.delegatedToUid = :uid)',
-                { uid: user.uid }
+                '(approval.requesterClerkUserId = :clerkUserId OR approval.approverClerkUserId = :clerkUserId OR approval.delegatedToClerkUserId = :clerkUserId)',
+                { clerkUserId: user.clerkUserId },
             );
         }
     }
@@ -2353,9 +2440,9 @@ export class ApprovalsService {
 
         // Check user-level access
         if (![AccessLevel.OWNER, AccessLevel.ADMIN, AccessLevel.MANAGER].includes(user.accessLevel)) {
-            const hasAccess = approval.requesterUid === user.uid || 
-                            approval.approverUid === user.uid || 
-                            approval.delegatedToUid === user.uid;
+            const hasAccess = approval.requesterClerkUserId === user.clerkUserId || 
+                            approval.approverClerkUserId === user.clerkUserId || 
+                            approval.delegatedToClerkUserId === user.clerkUserId;
 
             if (!hasAccess) {
                 throw new ForbiddenException('Access denied to this approval');
@@ -2365,8 +2452,8 @@ export class ApprovalsService {
 
     private async validateActionPermissions(approval: Approval, action: ApprovalAction, user: RequestUser): Promise<void> {
         // Check if user can perform this action
-        const canApprove = approval.approverUid === user.uid || approval.delegatedToUid === user.uid;
-        const isRequester = approval.requesterUid === user.uid;
+        const canApprove = approval.approverClerkUserId === user.clerkUserId || approval.delegatedToClerkUserId === user.clerkUserId;
+        const isRequester = approval.requesterClerkUserId === user.clerkUserId;
         const isAdmin = [AccessLevel.ADMIN, AccessLevel.OWNER].includes(user.accessLevel);
 
         switch (action) {
@@ -2424,7 +2511,7 @@ export class ApprovalsService {
         action: ApprovalAction,
         fromStatus: ApprovalStatus | null,
         toStatus: ApprovalStatus,
-        actionBy: number,
+        actionByClerkUserId: string,
         comments?: string
     ): Promise<void> {
         const history = this.historyRepository.create({
@@ -2432,7 +2519,7 @@ export class ApprovalsService {
             action,
             fromStatus,
             toStatus,
-            actionBy,
+            actionByClerkUserId,
             comments,
             source: 'web',
             isSystemAction: false

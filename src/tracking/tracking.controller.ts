@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Req, UseGuards, BadRequestException } from '@nestjs/common';
 import { TrackingService } from './tracking.service';
 import { CreateTrackingDto } from './dto/create-tracking.dto';
 import { JwtService } from '@nestjs/jwt';
@@ -91,7 +91,7 @@ export class TrackingController {
 				if (decodedToken) {
 					// If token contains user info, use it instead of the one in the DTO
 					if (decodedToken['uid']) {
-						userId = parseInt(decodedToken['uid'], 10);
+						userId = String(decodedToken['uid']); // Use as string
 					}
 					
 					// Extract branch and organization info if available
@@ -850,7 +850,7 @@ export class TrackingController {
 		}
 	})
 	async getTrackingByUserAndTimeframe(
-		@Param('userId') userId: number,
+		@Param('userId') userId: string,
 		@Param('timeframe') timeframe: 'today' | 'yesterday' | 'this_week' | 'last_week' | 'this_month' | 'last_month' | 'custom',
 		@Req() req: AuthenticatedRequest
 	) {
@@ -924,7 +924,7 @@ export class TrackingController {
 		}
 
 		return this.trackingService.getTrackingPointsByUserAndTimeframe(
-			Number(userId), 
+			userId, 
 			'custom', 
 			new Date(startDate as string), 
 			new Date(endDate as string), 
@@ -1272,14 +1272,14 @@ export class TrackingController {
 		}
 	})
 	async recalculateUserTracking(
-		@Param('ref') ref: number,
+		@Param('ref') ref: string,
 		@Body() body: { date?: string } = {},
 		@Req() req: AuthenticatedRequest
 	) {
 		try {
-			// Validate user ID
-			const userId = Number(ref);
-			if (!userId || userId <= 0) {
+			// Use ref as string directly
+			const userId = ref;
+			if (!userId) {
 				return {
 					message: 'Valid user ID is required',
 					data: null,
@@ -1315,8 +1315,12 @@ export class TrackingController {
 				}
 			}
 
-			// Call the service method to recalculate
-			return this.trackingService.recalculateUserTrackingForDay(userId, targetDate);
+			// Call the service method to recalculate (service expects numeric userId)
+			const userIdNum = /^\d+$/.test(String(userId)) ? parseInt(String(userId), 10) : NaN;
+			if (isNaN(userIdNum) || userIdNum <= 0) {
+				throw new BadRequestException('Valid numeric user ID is required for recalculation');
+			}
+			return this.trackingService.recalculateUserTrackingForDay(userIdNum, targetDate);
 
 		} catch (error) {
 			return {
