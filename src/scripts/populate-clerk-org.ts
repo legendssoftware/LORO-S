@@ -3,13 +3,16 @@
 /**
  * Populate Database with Clerk Organization Data
  * 
- * Creates:
+ * Populates data for Legend Systems Clerk organization. Creates:
  * - Organisation with Clerk org data
  * - Organisation settings with Africa/Johannesburg timezone and preferences
  * - Organisation hours with weekly schedule and timezone
  * - Organisation appearance with branding colors and logo
  * - 2 branches with Africa/Johannesburg settings
  * - Full enterprise license (ENTERPRISE plan) with all features for the organisation
+ * 
+ * Currently configured organization:
+ * - Legend Systems (org_38PujX4XhPOGpJtT1608fjTK6H2)
  * 
  * Usage:
  *   npm run populate:clerk-org
@@ -32,24 +35,26 @@ import { GeneralStatus } from '../lib/enums/status.enums';
 import { LicensingService } from '../licensing/licensing.service';
 import * as crypto from 'crypto';
 
-// Clerk Organization Data
-const CLERK_ORG_DATA = {
-	object: 'organization',
-	id: 'org_38PujX4XhPOGpJtT1608fjTK6H2',
-	name: 'Legend Systems',
-	slug: 'legend-systems-1768713662',
-	image_url: 'https://img.clerk.com/eyJ0eXBlIjoiZGVmYXVsdCIsImlpZCI6Imluc18zOE5ldnlrdmlwclJtQUNsT1VKazlGa3RCRm0iLCJyaWQiOiJvcmdfMzhQdWpYNFhoUE9HcEp0VDE2MDhmalRLNkgyIiwiaW5pdGlhbHMiOiJMIn0',
-	has_image: false,
-	members_count: 1,
-	max_allowed_memberships: 5,
-	admin_delete_enabled: true,
-	role_set_key: 'role_set:default',
-	public_metadata: {},
-	private_metadata: {},
-	created_by: '',
-	created_at: 1768713662419,
-	updated_at: 1768713662419,
-};
+// Clerk Organization Data Array - Legend Systems only
+const CLERK_ORG_DATA_ARRAY = [
+	{
+		object: 'organization',
+		id: 'org_38PujX4XhPOGpJtT1608fjTK6H2',
+		name: 'Legend Systems',
+		slug: 'legend-systems-1768713662',
+		image_url: 'https://img.clerk.com/eyJ0eXBlIjoiZGVmYXVsdCIsImlpZCI6Imluc18zOE5ldnlrdmlwclJtQUNsT1VKazlGa3RCRm0iLCJyaWQiOiJvcmdfMzhQdWpYNFhoUE9HcEp0VDE2MDhmalRLNkgyIiwiaW5pdGlhbHMiOiJMIn0',
+		has_image: false,
+		members_count: 9,
+		max_allowed_memberships: 500,
+		admin_delete_enabled: true,
+		role_set_key: 'role_set:default',
+		public_metadata: {},
+		private_metadata: {},
+		created_by: '',
+		created_at: 1768713662419,
+		updated_at: 1769416233096,
+	},
+];
 
 // Johannesburg, South Africa address details
 const JHB_ADDRESS = {
@@ -71,8 +76,9 @@ class ClerkOrgPopulator {
 	private orgAppearanceRepo: Repository<OrganisationAppearance>;
 	private licensingService: LicensingService;
 	private clerkOrgId: string;
+	private clerkOrgData: typeof CLERK_ORG_DATA_ARRAY[0];
 
-	constructor(dataSource: DataSource, licensingService: LicensingService) {
+	constructor(dataSource: DataSource, licensingService: LicensingService, clerkOrgData: typeof CLERK_ORG_DATA_ARRAY[0]) {
 		this.dataSource = dataSource;
 		this.orgRepo = dataSource.getRepository(Organisation);
 		this.branchRepo = dataSource.getRepository(Branch);
@@ -81,7 +87,8 @@ class ClerkOrgPopulator {
 		this.orgHoursRepo = dataSource.getRepository(OrganisationHours);
 		this.orgAppearanceRepo = dataSource.getRepository(OrganisationAppearance);
 		this.licensingService = licensingService;
-		this.clerkOrgId = CLERK_ORG_DATA.id;
+		this.clerkOrgData = clerkOrgData;
+		this.clerkOrgId = clerkOrgData.id;
 	}
 
 	/**
@@ -158,18 +165,23 @@ class ClerkOrgPopulator {
 
 		// Use Clerk org ID as the ref
 		const orgRef = this.clerkOrgId;
-		const orgEmail = `org-${this.clerkOrgId.substring(0, 8)}@legendsystems.co.za`;
-		const orgPhone = '+27123456789';
-		const orgWebsite = `https://${CLERK_ORG_DATA.slug}.legendsystems.co.za`;
+		// Use slug for email to ensure uniqueness (slug is guaranteed unique by Clerk)
+		const orgEmail = `${this.clerkOrgData.slug}@legendsystems.co.za`;
+		// Generate unique phone number using last 4 digits of org ID timestamp (from slug)
+		// Extract numeric part from slug (e.g., "bit-drywall-1768713677" -> "1768713677" -> last 4: "3677")
+		const slugNumericPart = this.clerkOrgData.slug.match(/\d+$/)?.[0] || this.clerkOrgId.substring(this.clerkOrgId.length - 4);
+		const phoneSuffix = slugNumericPart.slice(-4).padStart(4, '0');
+		const orgPhone = `+2712345${phoneSuffix}`;
+		const orgWebsite = `https://${this.clerkOrgData.slug}.legendsystems.co.za`;
 
 		const organisation = this.orgRepo.create({
-			name: CLERK_ORG_DATA.name,
+			name: this.clerkOrgData.name,
 			ref: orgRef, // Use Clerk org ID as ref
 			clerkOrgId: this.clerkOrgId,
 			email: orgEmail,
 			phone: orgPhone,
 			website: orgWebsite,
-			logo: CLERK_ORG_DATA.image_url || 'https://cdn-icons-png.flaticon.com/128/1144/1144709.png',
+			logo: this.clerkOrgData.image_url || 'https://cdn-icons-png.flaticon.com/128/1144/1144709.png',
 			address: JHB_ADDRESS,
 			status: GeneralStatus.ACTIVE,
 			isDeleted: false,
@@ -380,8 +392,13 @@ class ClerkOrgPopulator {
 		const branchRef = `${organisation.ref}-BRN${branchNumber.toString().padStart(2, '0')}`;
 		const branchName = `${organisation.name} - Branch ${branchNumber}`;
 		const branchEmail = `branch${branchNumber}-${organisation.ref.toLowerCase()}@legendsystems.co.za`;
-		const branchPhone = `+2712345678${branchNumber}`;
-		const branchWebsite = `https://branch${branchNumber}.${CLERK_ORG_DATA.slug}.legendsystems.co.za`;
+		// Generate unique phone number using slug's numeric part to ensure uniqueness across organizations
+		// Extract numeric part from slug (e.g., "bit-drywall-1768713677" -> "1768713677")
+		const slugNumericPart = this.clerkOrgData.slug.match(/\d+$/)?.[0] || this.clerkOrgId.substring(this.clerkOrgId.length - 4);
+		// Use last 3 digits of numeric part + branch number to create unique phone
+		const phoneSuffix = `${slugNumericPart.slice(-3)}${branchNumber}`.padStart(4, '0');
+		const branchPhone = `+2712345${phoneSuffix}`;
+		const branchWebsite = `https://branch${branchNumber}.${this.clerkOrgData.slug}.legendsystems.co.za`;
 
 		const branch = this.branchRepo.create({
 			name: branchName,
@@ -621,9 +638,54 @@ async function main() {
 	const dataSource = app.get(DataSource);
 	const licensingService = app.get(LicensingService);
 
+	let successCount = 0;
+	let failureCount = 0;
+	const errors: Array<{ org: string; error: Error }> = [];
+
 	try {
-		const populator = new ClerkOrgPopulator(dataSource, licensingService);
-		await populator.populate();
+		console.log(`📋 Processing ${CLERK_ORG_DATA_ARRAY.length} organization(s)...\n`);
+
+		for (let i = 0; i < CLERK_ORG_DATA_ARRAY.length; i++) {
+			const orgData = CLERK_ORG_DATA_ARRAY[i];
+			console.log(`\n${'='.repeat(80)}`);
+			console.log(`📋 Processing organization ${i + 1}/${CLERK_ORG_DATA_ARRAY.length}: ${orgData.name} (${orgData.id})`);
+			console.log(`${'='.repeat(80)}\n`);
+
+			try {
+				const populator = new ClerkOrgPopulator(dataSource, licensingService, orgData);
+				await populator.populate();
+				successCount++;
+				console.log(`\n✅ Successfully populated data for ${orgData.name}\n`);
+			} catch (error) {
+				failureCount++;
+				const errorMessage = error instanceof Error ? error : new Error(String(error));
+				errors.push({ org: orgData.name, error: errorMessage });
+				console.error(`\n❌ Failed to populate data for ${orgData.name}:`, errorMessage.message);
+				console.error(`   Continuing with remaining organizations...\n`);
+			}
+		}
+
+		// Summary
+		console.log(`\n${'='.repeat(80)}`);
+		console.log('📊 Population Summary');
+		console.log(`${'='.repeat(80)}`);
+		console.log(`   Total organizations: ${CLERK_ORG_DATA_ARRAY.length}`);
+		console.log(`   ✅ Successful: ${successCount}`);
+		console.log(`   ❌ Failed: ${failureCount}`);
+
+		if (errors.length > 0) {
+			console.log(`\n❌ Errors encountered:`);
+			errors.forEach(({ org, error }) => {
+				console.log(`   - ${org}: ${error.message}`);
+			});
+		}
+
+		if (failureCount > 0) {
+			console.log(`\n⚠️  Some organizations failed to populate. Check errors above.`);
+			process.exit(1);
+		} else {
+			console.log(`\n✅ All organizations populated successfully!`);
+		}
 	} catch (error) {
 		console.error('❌ Script failed:', error);
 		process.exit(1);

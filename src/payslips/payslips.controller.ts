@@ -205,20 +205,6 @@ export class PayslipsController {
 		this.logger.log(`Finding payslips for user ${ref}`);
 		const accessScope = this.getAccessScope(req.user);
 
-		this.logger.debug('🔍 DEBUG findByUser route:', {
-			gettingPayslipsForUser: ref,
-			requestingUser: {
-				uid: req.user?.uid,
-				accessLevel: req.user?.accessLevel,
-				isElevated: accessScope.isElevated,
-			},
-			accessScope: {
-				orgId: accessScope.orgId,
-				branchId: accessScope.branchId,
-				orgWideAccess: accessScope.branchId === null,
-			},
-		});
-
 		return this.payslipsService.findByUser(ref, accessScope.orgId, accessScope.branchId);
 	}
 

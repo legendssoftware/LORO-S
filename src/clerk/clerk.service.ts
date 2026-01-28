@@ -26,6 +26,9 @@ export class ClerkService {
 	// Cache TTL for organization lookups (5 minutes)
 	private readonly ORG_CACHE_TTL = 300000;
 	private readonly ORG_CACHE_PREFIX = 'org:';
+	// Cache TTL for user lookups (30 seconds, matching UserService)
+	private readonly USER_CACHE_TTL = 30000;
+	private readonly USER_CACHE_PREFIX = 'users:';
 
 	constructor(
 		@InjectRepository(User)
@@ -429,20 +432,45 @@ export class ClerkService {
 	/**
 	 * Get user from database by Clerk user ID
 	 * Critical path - synchronous operation
+	 * @param clerkUserId - Clerk user ID
+	 * @param relations - Optional array of relations to load (defaults to all needed relations)
 	 */
-	async getUserByClerkId(clerkUserId: string): Promise<User | null> {
+	async getUserByClerkId(clerkUserId: string, relations?: string[]): Promise<User | null> {
 		const operationId = `GET_USER_${clerkUserId}_${Date.now()}`;
 		
 		try {
+			// Default relations needed for sync operations
+			const defaultRelations = relations || ['organisation', 'branch', 'userProfile', 'userEmployeementProfile'];
+			
 			const user = await this.userRepository.findOne({
 				where: { clerkUserId },
-				relations: ['organisation', 'branch'],
+				relations: defaultRelations,
 			});
 
 			return user;
 		} catch (error) {
 			this.logger.error(`[${operationId}] Failed to lookup user:`, error instanceof Error ? error.message : 'Unknown error');
 			throw error;
+		}
+	}
+
+	/**
+	 * Cache user data after successful sync operations
+	 * Uses same cache key format as UserService for consistency
+	 * @param user - User entity to cache
+	 */
+	async cacheUserAfterSync(user: User): Promise<void> {
+		try {
+			if (!user?.uid) {
+				return;
+			}
+
+			const cacheKey = `${this.USER_CACHE_PREFIX}${user.uid}`;
+			await this.cacheManager.set(cacheKey, user, this.USER_CACHE_TTL);
+			this.logger.debug(`Cached user ${user.uid} after sync`);
+		} catch (error) {
+			// Don't throw - caching failure shouldn't prevent sync
+			this.logger.warn(`Failed to cache user after sync:`, error instanceof Error ? error.message : 'Unknown error');
 		}
 	}
 
@@ -555,9 +583,9 @@ export class ClerkService {
 	 * Links user to organization using Clerk org ID
 	 * @param user - User entity to sync organization membership for
 	 * @param clerkUserId - Clerk user ID
-	 * @returns Promise<boolean> - true if sync was successful, false otherwise
+	 * @returns Promise<User | null> - Updated user object if sync was successful, null otherwise
 	 */
-	async syncUserOrganizationForUser(user: User, clerkUserId: string): Promise<boolean> {
+	async syncUserOrganizationForUser(user: User, clerkUserId: string): Promise<User | null> {
 		const operationId = `SYNC_ORG_MEMBERSHIP_${clerkUserId}_${Date.now()}`;
 		return this.syncUserOrganizationMembership(user, clerkUserId, operationId);
 	}
@@ -576,9 +604,9 @@ export class ClerkService {
 	/**
 	 * Sync user's organization membership from Clerk
 	 * Links user to organization using Clerk org ID
-	 * @returns Promise<boolean> - true if sync was successful, false otherwise
+	 * @returns Promise<User | null> - Updated user object if sync was successful, null otherwise
 	 */
-	private async syncUserOrganizationMembership(user: User, clerkUserId: string, operationId: string): Promise<boolean> {
+	private async syncUserOrganizationMembership(user: User, clerkUserId: string, operationId: string): Promise<User | null> {
 		try {
 			this.logger.debug(`[${operationId}] Starting organization membership sync for user ${user.uid} (Clerk ID: ${clerkUserId})`);
 			
@@ -586,7 +614,7 @@ export class ClerkService {
 
 			if (memberships.length === 0) {
 				this.logger.debug(`[${operationId}] User has no organization memberships - skipping sync`);
-				return false;
+				return null;
 			}
 
 			if (memberships.length > 1) {
@@ -596,7 +624,7 @@ export class ClerkService {
 			const clerkOrgId = memberships[0]?.organization?.id;
 			if (!clerkOrgId) {
 				this.logger.warn(`[${operationId}] Invalid organization membership data - missing organization.id`);
-				return false;
+				return null;
 			}
 
 			this.logger.debug(`[${operationId}] Found organization membership - Clerk Org ID: ${clerkOrgId}`);
@@ -604,7 +632,7 @@ export class ClerkService {
 			const org = await this.findOrCreateOrganizationByClerkId(clerkOrgId);
 			if (!org) {
 				this.logger.warn(`[${operationId}] Could not find or create organization (Clerk Org ID: ${clerkOrgId}) - user not linked to org`);
-				return false;
+				return null;
 			}
 
 			// Link user to organization using the Clerk org ID
@@ -614,17 +642,16 @@ export class ClerkService {
 			const orgRefToUse = org.clerkOrgId || org.ref;
 			if (!orgRefToUse) {
 				this.logger.error(`[${operationId}] Organization has neither clerkOrgId nor ref set - cannot link user`);
-				return false;
+				return null;
 			}
 
 			const previousOrgRef = user.organisationRef;
 			user.organisationRef = orgRefToUse;
 			// Set the relation object for TypeORM (it will resolve via the JoinColumn)
 			user.organisation = org;
-			await this.userRepository.save(user);
 
 			this.logger.log(`[${operationId}] ✅ Successfully linked user ${user.uid} to organization (organisationRef: ${orgRefToUse}, clerkOrgId: ${org.clerkOrgId || 'null'}, ref: ${org.ref}, previousOrgRef: ${previousOrgRef || 'null'})`);
-			return true;
+			return user;
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 			const errorStack = error instanceof Error ? error.stack : undefined;
@@ -635,7 +662,7 @@ export class ClerkService {
 				clerkUserId,
 			});
 			// Don't throw - org sync failure shouldn't prevent user creation/update
-			return false;
+			return null;
 		}
 	}
 
@@ -648,8 +675,9 @@ export class ClerkService {
 	 */
 	private async ensureUserProfilesExist(user: User, clerkUserId: string, operationId: string): Promise<void> {
 		try {
-			// Check if userProfile exists
+			// Check if userProfile exists - use loaded relation first to avoid DB query
 			if (!user.userProfile) {
+				// Only query DB if relation wasn't loaded
 				const existingProfile = await this.userProfileRepository.findOne({
 					where: { ownerClerkUserId: clerkUserId },
 				});
@@ -660,16 +688,21 @@ export class ClerkService {
 						ownerClerkUserId: clerkUserId,
 					});
 					await this.userProfileRepository.save(userProfile);
+					// Update user relation to avoid reload
+					user.userProfile = userProfile;
 					this.logger.log(`[${operationId}] ✅ User profile created successfully`);
 				} else {
+					// Update user relation to avoid reload
+					user.userProfile = existingProfile;
 					this.logger.debug(`[${operationId}] User profile already exists, skipping creation`);
 				}
 			} else {
 				this.logger.debug(`[${operationId}] User profile already linked, skipping creation`);
 			}
 
-			// Check if userEmployeementProfile exists
+			// Check if userEmployeementProfile exists - use loaded relation first to avoid DB query
 			if (!user.userEmployeementProfile) {
+				// Only query DB if relation wasn't loaded
 				const existingEmploymentProfile = await this.userEmployeementProfileRepository.findOne({
 					where: { ownerClerkUserId: clerkUserId },
 				});
@@ -681,8 +714,12 @@ export class ClerkService {
 						isCurrentlyEmployed: true,
 					});
 					await this.userEmployeementProfileRepository.save(employmentProfile);
+					// Update user relation to avoid reload
+					user.userEmployeementProfile = employmentProfile;
 					this.logger.log(`[${operationId}] ✅ User employment profile created successfully`);
 				} else {
+					// Update user relation to avoid reload
+					user.userEmployeementProfile = existingEmploymentProfile;
 					this.logger.debug(`[${operationId}] User employment profile already exists, skipping creation`);
 				}
 			} else {

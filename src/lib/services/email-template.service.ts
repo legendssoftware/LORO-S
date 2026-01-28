@@ -98,6 +98,7 @@ import {
 	LoyaltyWelcomeData,
 	LoyaltyTierUpgradeData,
 	LoyaltyRewardClaimedData,
+	CheckInsDailyReportData,
 } from '../types/email-templates.types';
 
 class EmailTemplateService {
@@ -553,6 +554,10 @@ class EmailTemplateService {
 
 	userDailyReport(data: DailyReportData): string {
 		return this.renderTemplate('reports/user-daily-report.hbs', data);
+	}
+
+	checkInsDailyReport(data: CheckInsDailyReportData): string {
+		return this.renderTemplate('check-ins/daily-report.hbs', data);
 	}
 
 	// System Templates

@@ -211,52 +211,52 @@ export class LicensingService {
 				return cachedLicenses;
 			}
 
-			// organisationRef can be either a Clerk org ID (string like "org_...") or numeric uid
-			// First, try to find organization by clerkOrgId
-			let organisation = await this.organisationRepository.findOne({
-				where: { clerkOrgId: organisationRef },
-				select: ['uid'],
-			});
+		// organisationRef can be either a Clerk org ID (string like "org_...") or numeric uid
+		// First, try to find organization by clerkOrgId
+		let organisation = await this.organisationRepository.findOne({
+			where: { clerkOrgId: organisationRef },
+			select: ['uid', 'ref', 'clerkOrgId'],
+		});
 
-			// If not found by clerkOrgId, try to find by ref (which might also be clerkOrgId)
-			if (!organisation) {
+		// If not found by clerkOrgId, try to find by ref (which might also be clerkOrgId)
+		if (!organisation) {
+			organisation = await this.organisationRepository.findOne({
+				where: { ref: organisationRef },
+				select: ['uid', 'ref', 'clerkOrgId'],
+			});
+		}
+
+		// If still not found, try parsing as numeric uid (for backward compatibility)
+		if (!organisation) {
+			const numericUid = Number(organisationRef);
+			if (!isNaN(numericUid)) {
 				organisation = await this.organisationRepository.findOne({
-					where: { ref: organisationRef },
-					select: ['uid'],
+					where: { uid: numericUid },
+					select: ['uid', 'ref', 'clerkOrgId'],
 				});
 			}
+		}
 
-			// If still not found, try parsing as numeric uid (for backward compatibility)
-			if (!organisation) {
-				const numericUid = Number(organisationRef);
-				if (!isNaN(numericUid)) {
-					organisation = await this.organisationRepository.findOne({
-						where: { uid: numericUid },
-						select: ['uid'],
-					});
-				}
-			}
+		if (!organisation) {
+			this.logger.warn(`[findByOrganisation] Organization not found for ref: ${organisationRef}`);
+			// Cache empty result to avoid repeated queries
+			await this.cacheManager.set(cacheKey, [], this.CACHE_TTL);
+			return [];
+		}
 
-			if (!organisation) {
-				this.logger.warn(`[findByOrganisation] Organization not found for ref: ${organisationRef}`);
-				// Cache empty result to avoid repeated queries
-				await this.cacheManager.set(cacheKey, [], this.CACHE_TTL);
-				return [];
-			}
+		// Query licenses using the organization's ref (which should match clerkOrgId)
+		// Use ref first (this is what licenses use as organisationRef), fallback to clerkOrgId, then original parameter
+		const orgRef = organisation.ref || organisation.clerkOrgId || organisationRef;
+		const licenses = await this.licenseRepository.find({
+			where: { organisationRef: orgRef },
+			relations: ['organisation'],
+			order: { validUntil: 'DESC' },
+		});
 
-			// Query licenses using the organization's ref (which should match clerkOrgId)
-			// Use ref first, fallback to clerkOrgId if ref is different
-			const orgRef = organisation.ref || organisation.clerkOrgId;
-			const licenses = await this.licenseRepository.find({
-				where: { organisationRef: orgRef },
-				relations: ['organisation'],
-				order: { validUntil: 'DESC' },
-			});
+		// Cache the result
+		await this.cacheManager.set(cacheKey, licenses, this.CACHE_TTL);
 
-			// Cache the result
-			await this.cacheManager.set(cacheKey, licenses, this.CACHE_TTL);
-
-			return licenses;
+		return licenses;
 		} catch (error) {
 			this.logger.error(`[findByOrganisation] Error finding licenses for organisation: ${organisationRef}`, error instanceof Error ? error.message : 'Unknown error');
 			// Return empty array on error to maintain consistent return type

@@ -35,6 +35,7 @@ import { formatDateSafely } from '../lib/utils/date.utils';
 import { parseCSV, ParsedLeadRow } from './utils/csv-parser.util';
 import { CreateTaskDto } from '../tasks/dto/create-task.dto';
 import { OrganisationHoursService } from '../organisation/services/organisation-hours.service';
+import { Client } from '../clients/entities/client.entity';
 
 @Injectable()
 export class LeadsService {
@@ -61,6 +62,8 @@ export class LeadsService {
 		private taskRepository: Repository<Task>,
 		@InjectRepository(Organisation)
 		private organisationRepository: Repository<Organisation>,
+		@InjectRepository(Client)
+		private clientRepository: Repository<Client>,
 		@Inject(CACHE_MANAGER)
 		private cacheManager: Cache,
 		private readonly eventEmitter: EventEmitter2,
@@ -140,14 +143,31 @@ export class LeadsService {
 	 * 
 	 * This pattern ensures the client receives confirmation as soon as the core operation completes,
 	 * while background processes (XP awards, notifications, integrations) run without blocking the response.
+	 * 
+	 * @param createLeadDto - Data for creating the lead
+	 * @param orgId - Organization ID (Clerk org ID or ref)
+	 * @param branchId - Optional branch ID
+	 * @param currentUserClerkId - Optional current user's Clerk ID
+	 * @param sourceContext - Optional context indicating the source of lead creation (e.g., 'visit_conversion', 'check_in_conversion', 'manual', 'csv_import')
+	 * @returns Promise with success message and created lead data
 	 */
 	async create(
 		createLeadDto: CreateLeadDto,
 		orgId?: string,
 		branchId?: number,
 		currentUserClerkId?: string,
+		sourceContext?: string,
 	): Promise<{ message: string; data: Lead | null }> {
+		const operationId = `create-lead-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+		const startTime = Date.now();
+
 		try {
+			// Log lead creation with source context
+			const sourceInfo = sourceContext ? ` (source: ${sourceContext})` : '';
+			this.logger.log(
+				`[${operationId}] [LeadsService] Creating lead${sourceInfo} for org: ${orgId}, branch: ${branchId || 'none'}`
+			);
+
 			if (!orgId) {
 				throw new BadRequestException('Organization ID is required');
 			}
@@ -220,6 +240,34 @@ export class LeadsService {
 				lead.assignees = [];
 			}
 
+			// Generate intelligent title if name is not provided (e.g., when converting from journal)
+			if (!lead.name || lead.name.trim() === '') {
+				// Try to get client name if clientRef is provided
+				let clientName: string | undefined;
+				if ((createLeadDto as any).clientRef) {
+					try {
+						const client = await this.clientRepository.findOne({
+							where: { uid: Number((createLeadDto as any).clientRef) },
+							select: ['uid', 'name'],
+						});
+						clientName = client?.name;
+					} catch (error) {
+						this.logger.debug(`Could not fetch client for clientRef: ${(createLeadDto as any).clientRef}`);
+					}
+				}
+
+				const generatedTitle = this.generateLeadTitle({
+					name: lead.name,
+					companyName: lead.companyName,
+					phone: lead.phone,
+					latitude: lead.latitude,
+					longitude: lead.longitude,
+					clientName,
+					personSeen: (createLeadDto as any).personSeen,
+				});
+				lead.name = generatedTitle;
+			}
+
 			// Set intelligent defaults for new leads
 			await this.setIntelligentDefaults(lead);
 
@@ -269,6 +317,12 @@ export class LeadsService {
 			// Clear caches after successful lead creation
 			await this.clearLeadCache(savedLead.uid, savedLead.ownerClerkUserId);
 
+			// Log successful lead creation
+			const duration = Date.now() - startTime;
+			this.logger.log(
+				`[${operationId}] [LeadsService] Lead created successfully: uid=${savedLead.uid}, name=${savedLead.name || 'N/A'}${sourceInfo} (${duration}ms)`
+			);
+
 			// ============================================================
 			// EARLY RETURN: Respond to client immediately after successful save
 			// ============================================================
@@ -295,7 +349,9 @@ export class LeadsService {
 
 			return response;
 		} catch (error) {
-			this.logger.error(`Error creating lead:`, {
+			const duration = Date.now() - startTime;
+			const sourceInfo = sourceContext ? ` (source: ${sourceContext})` : '';
+			this.logger.error(`[${operationId}] [LeadsService] Error creating lead${sourceInfo} after ${duration}ms:`, {
 				message: error instanceof Error ? error.message : 'Unknown error',
 				stack: error instanceof Error ? error.stack : undefined,
 				errorName: error instanceof Error ? error.name : typeof error,
@@ -490,7 +546,13 @@ export class LeadsService {
 					};
 
 					// Create lead (bulk import sets ownerClerkUserId/assignees)
-					const createResult = await this.create(createLeadDto as CreateLeadDto & { ownerClerkUserId?: string; assignees?: string[] }, orgId, branchId);
+					const createResult = await this.create(
+						createLeadDto as CreateLeadDto & { ownerClerkUserId?: string; assignees?: string[] },
+						orgId,
+						branchId,
+						undefined, // currentUserClerkId - not needed for CSV import
+						'csv_import', // Source context for logging
+					);
 					
 					if (!createResult.data) {
 						result.failed++;
@@ -528,7 +590,6 @@ export class LeadsService {
 						repetitionType: followUpInterval,
 						repetitionDeadline: addDays(new Date(), followUpDuration),
 						assignees: [{ uid: assignedRep.uid }],
-						creators: [{ uid: assignedRep.uid }],
 						client: [],
 					};
 
@@ -2028,7 +2089,6 @@ export class LeadsService {
 						taskType: TaskType.FOLLOW_UP,
 						priority: TaskPriority.HIGH,
 						deadline: taskDeadline,
-						creators: [{ uid: lead.owner?.uid }],
 						assignees: [{ uid: lead.owner?.uid }],
 						clients: [], // No specific client assignment
 					};
@@ -2767,6 +2827,67 @@ export class LeadsService {
 			}
 		}
 		return lead;
+	}
+
+	/**
+	 * Generate intelligent lead title from available data
+	 * Priority: clientName > businessName > personSeen > phone > location
+	 */
+	private generateLeadTitle(data: {
+		name?: string;
+		companyName?: string;
+		phone?: string;
+		latitude?: number;
+		longitude?: number;
+		clientName?: string;
+		personSeen?: string;
+	}): string {
+		const parts: string[] = [];
+
+		// Priority 1: Client name (if saved/existing client)
+		if (data.clientName && data.clientName.trim()) {
+			parts.push(data.clientName.trim());
+		}
+
+		// Priority 2: Business name (if new business)
+		if (data.companyName && data.companyName.trim()) {
+			parts.push(data.companyName.trim());
+		}
+
+		// Priority 3: Person seen
+		if (data.personSeen && data.personSeen.trim()) {
+			parts.push(data.personSeen.trim());
+		} else if (data.name && data.name.trim()) {
+			// Fallback to name if personSeen not available
+			parts.push(data.name.trim());
+		}
+
+		// Priority 4: Cellphone number
+		if (data.phone && data.phone.trim()) {
+			parts.push(data.phone.trim());
+		}
+
+		// Priority 5: Location (formatted coordinates if available)
+		if (data.latitude && data.longitude) {
+			const lat = typeof data.latitude === 'number' ? data.latitude : parseFloat(String(data.latitude));
+			const lng = typeof data.longitude === 'number' ? data.longitude : parseFloat(String(data.longitude));
+			if (!isNaN(lat) && !isNaN(lng)) {
+				parts.push(`${lat.toFixed(4)}, ${lng.toFixed(4)}`);
+			}
+		}
+
+		// Generate title from available parts
+		if (parts.length > 0) {
+			// If we have client name or business name, use it as primary with other info as secondary
+			if (data.clientName || data.companyName) {
+				return parts.join(' - ');
+			}
+			// Otherwise, join all parts
+			return parts.join(' - ');
+		}
+
+		// Fallback title
+		return 'New Lead';
 	}
 
 	/**

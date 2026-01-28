@@ -29,7 +29,7 @@ import { UpdateTaskFlagDto } from './dto/update-task-flag.dto';
 import { UpdateTaskFlagItemDto } from './dto/update-task-flag-item.dto';
 import { AddCommentDto } from './dto/add-comment.dto';
 import { TaskFlagStatus } from '../lib/enums/task.enums';
-import { AuthenticatedRequest, getClerkOrgId } from '../lib/interfaces/authenticated-request.interface';
+import { AuthenticatedRequest, getClerkOrgId, getClerkUserId } from '../lib/interfaces/authenticated-request.interface';
 import { OrganisationService } from '../organisation/organisation.service';
 
 @ApiTags('🔧 Tasks')
@@ -100,7 +100,8 @@ export class TasksController {
 	async create(@Body() createTaskDto: CreateTaskDto, @Req() req: AuthenticatedRequest) {
 		const orgId = await this.resolveOrgUid(req);
 		const branchId = req.user?.branch?.uid;
-		return this.tasksService.create(createTaskDto, orgId, branchId);
+		const clerkUserId = getClerkUserId(req);
+		return this.tasksService.create(createTaskDto, orgId, branchId, clerkUserId);
 	}
 
 	@Get()

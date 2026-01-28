@@ -653,19 +653,6 @@ Retrieve a comprehensive, paginated list of approval requests with advanced filt
         this.logger.debug(`Finding all approvals with filters: ${JSON.stringify(query)}`);
         const accessScope = this.getAccessScope(req.user);
         
-        this.logger.debug('🔍 DEBUG findAll route:', {
-            requestingUser: {
-                uid: req.user?.uid,
-                accessLevel: req.user?.accessLevel || req.user?.role,
-                isElevated: accessScope.isElevated,
-            },
-            accessScope: {
-                orgId: accessScope.orgId,
-                branchId: accessScope.branchId,
-                orgWideAccess: accessScope.branchId === null,
-            },
-        });
-
         return this.approvalsService.findAll(query, req.user);
     }
 

@@ -85,14 +85,6 @@ export class CheckoutDto {
 	})
 	client: { uid: number };
 
-	@IsObject()
-	@IsNotEmpty()
-	@ApiProperty({
-		description: 'Owner reference (user ref as string)',
-		example: { uid: '123' },
-	})
-	owner: { uid: string };
-
 	@IsString()
 	@IsNotEmpty()
 	@ApiProperty({

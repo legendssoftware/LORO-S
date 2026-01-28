@@ -3,6 +3,7 @@ import { CreatePdfGenerationDto } from './dto/create-pdf-generation.dto';
 // Use CommonJS require for PDFKit
 const PDFDocument = require('pdfkit');
 import { generateQuotationPDF } from './templates/quotation';
+import { generateCheckInsReportPDF } from './templates/check-ins-report';
 import { StorageService, StorageFile } from '../lib/services/storage.service';
 import { QuotationTemplateData } from './interfaces/pdf-templates.interface';
 
@@ -240,8 +241,12 @@ export class PdfGenerationService {
 							this.logger.log(`[generatePdfFromTemplate] Generating quotation PDF for ID: ${data?.quotationId || 'UNKNOWN'}`);
 							generateQuotationPDF(doc, data as QuotationTemplateData);
 							break;
+						case 'check-ins-report':
+							this.logger.log(`[generatePdfFromTemplate] Generating check-ins report PDF`);
+							generateCheckInsReportPDF(doc, data as any);
+							break;
 						default:
-							throw new Error(`Template '${templateName}' is not supported. Available templates: quotation`);
+							throw new Error(`Template '${templateName}' is not supported. Available templates: quotation, check-ins-report`);
 					}
 
 					this.logger.log(`[generatePdfFromTemplate] Template processing completed, finalizing document`);

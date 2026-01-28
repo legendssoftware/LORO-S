@@ -31,7 +31,7 @@ import { ProjectStatus, ProjectPriority, ProjectType } from '../lib/enums/projec
 import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
 import { OrderStatus } from '../lib/enums/status.enums';
 import { isPublic } from '../decorators/public.decorator';
-import { AuthenticatedRequest, getClerkOrgId } from '../lib/interfaces/authenticated-request.interface';
+import { AuthenticatedRequest, getClerkOrgId, getClerkUserId } from '../lib/interfaces/authenticated-request.interface';
 import { OrganisationService } from '../organisation/organisation.service';
 
 @ApiTags('🛒 Shop')
@@ -902,7 +902,8 @@ Creates comprehensive quotations from shopping cart data with advanced pricing, 
 	async createQuotation(@Body() quotationData: CheckoutDto, @Req() req: AuthenticatedRequest) {
 		const orgId = await this.resolveOrgUid(req);
 		const branchId = this.toNumber(req.user?.branch?.uid);
-		return this.shopService.createQuotation(quotationData, orgId, branchId);
+		const clerkUserId = getClerkUserId(req);
+		return this.shopService.createQuotation(quotationData, orgId, branchId, clerkUserId);
 	}
 
 	@Put('quotation/:id/client')
@@ -1067,9 +1068,9 @@ Creates sophisticated blank quotations with advanced pricing structures and cust
 	async createBlankQuotation(@Body() blankQuotationData: CreateBlankQuotationDto, @Req() req: AuthenticatedRequest) {
 		const orgId = await this.resolveOrgUid(req);
 		const branchId = this.toNumber(req.user?.branch?.uid);
-		const userId = req.user?.uid;
-		this.logger.log(`[ShopController] Blank quotation request from user ${userId} (org: ${orgId}, branch: ${branchId}): itemCount=${blankQuotationData?.items?.length}, priceListType=${blankQuotationData?.priceListType}, title=${blankQuotationData?.title}`);
-		return this.shopService.createBlankQuotation(blankQuotationData, orgId, branchId);
+		const clerkUserId = getClerkUserId(req);
+		this.logger.log(`[ShopController] Blank quotation request from user ${clerkUserId} (org: ${orgId}, branch: ${branchId}): itemCount=${blankQuotationData?.items?.length}, priceListType=${blankQuotationData?.priceListType}, title=${blankQuotationData?.title}`);
+		return this.shopService.createBlankQuotation(blankQuotationData, orgId, branchId, clerkUserId);
 	}
 
 	@Get('quotations')

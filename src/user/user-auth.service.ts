@@ -55,46 +55,60 @@ export class UserAuthService {
 				? Date.now() - new Date(user.clerkLastSyncedAt).getTime()
 				: Infinity;
 
-			// Only sync organization membership if not recently synced or if user has no organisationRef
-			if (timeSinceLastSync > recentSyncThreshold || !user.organisationRef) {
+			const shouldSyncOrg = timeSinceLastSync > recentSyncThreshold || !user.organisationRef;
+			const shouldCheckProfiles = timeSinceLastSync > recentSyncThreshold || !user.userProfile || !user.userEmployeementProfile;
+
+			// Parallelize org sync and profile checks for better performance
+			const syncPromises: Promise<any>[] = [];
+
+			if (shouldSyncOrg) {
 				this.logger.debug(`[${operationId}] Syncing organization membership for user`);
-				const orgSyncSuccess = await this.clerkService.syncUserOrganizationForUser(user, clerkUserId);
-				if (orgSyncSuccess) {
-					this.logger.debug(`[${operationId}] Organization membership synced successfully`);
-				} else {
-					this.logger.debug(`[${operationId}] Organization membership sync completed (user may not have org membership)`);
-				}
+				syncPromises.push(
+					this.clerkService.syncUserOrganizationForUser(user, clerkUserId)
+						.then((updatedUser) => {
+							if (updatedUser) {
+								// Update user object with org changes
+								user.organisationRef = updatedUser.organisationRef;
+								user.organisation = updatedUser.organisation;
+								this.logger.debug(`[${operationId}] Organization membership synced successfully`);
+							} else {
+								this.logger.debug(`[${operationId}] Organization membership sync completed (user may not have org membership)`);
+							}
+							return updatedUser;
+						})
+				);
 			} else {
 				this.logger.debug(`[${operationId}] Skipping org sync - recently synced (${Math.round(timeSinceLastSync)}ms ago)`);
 			}
 
-			// Only check profiles if user was just created (no profiles exist yet)
-			// If user was recently synced, profiles likely already exist
-			if (timeSinceLastSync > recentSyncThreshold || !user.userProfile || !user.userEmployeementProfile) {
+			if (shouldCheckProfiles) {
 				this.logger.debug(`[${operationId}] Ensuring user profiles exist`);
-				await this.clerkService.ensureUserProfilesForUser(user, clerkUserId);
+				syncPromises.push(this.clerkService.ensureUserProfilesForUser(user, clerkUserId));
 			} else {
 				this.logger.debug(`[${operationId}] Skipping profile check - recently synced`);
 			}
 
-			// Update device info if provided
-			if (syncDto.expoPushToken || syncDto.deviceId || syncDto.platform) {
+			// Wait for all sync operations to complete in parallel
+			await Promise.all(syncPromises);
+
+			// Batch all user updates into single save operation
+			const hasDeviceUpdates = syncDto.expoPushToken || syncDto.deviceId || syncDto.platform;
+			if (hasDeviceUpdates) {
 				if (syncDto.expoPushToken) user.expoPushToken = syncDto.expoPushToken;
 				if (syncDto.deviceId) user.deviceId = syncDto.deviceId;
 				if (syncDto.platform) user.platform = syncDto.platform;
 				user.pushTokenUpdatedAt = new Date();
-				await this.userRepository.save(user);
 			}
 
 			// Update sync timestamp
 			user.clerkLastSyncedAt = new Date();
+
+			// Single save operation for all updates (device info, sync timestamp, org link)
+			// Always save to update sync timestamp, even if no other changes
 			await this.userRepository.save(user);
 
-			// Reload user with relations to ensure organisationRef is properly loaded after sync
-			user = await this.userRepository.findOne({
-				where: { clerkUserId: user.clerkUserId },
-				relations: ['organisation', 'branch'],
-			});
+			// Cache user after successful sync for faster subsequent lookups
+			await this.clerkService.cacheUserAfterSync(user);
 
 			// Build profile data
 			const profileData = {

@@ -218,7 +218,7 @@ Creates a new user account in the system with full profile management and employ
 
 ### Optional Core Fields
 - **Contact**: phone, photoURL, businesscardURL
-- **Organization**: organisationRef, departmentId, role, status
+- **Organization**: organisationRef, departmentId, role, status, branchId
 - **System**: userref, hrID, isDeleted
 
 ### Profile Information (Optional)
@@ -424,7 +424,7 @@ Creates a new user account in the system with full profile management and employ
 	})
 	async create(@Body() createUserDto: CreateUserDto, @Req() req: AuthenticatedRequest): Promise<{ message: string }> {
 		const orgId = await this.resolveOrgUid(req);
-		const branchId = this.toNumber(req.user?.branch?.uid);
+		const branchId = this.toNumber(createUserDto.branchId);
 		return this.userService.create(createUserDto, orgId, branchId);
 	}
 

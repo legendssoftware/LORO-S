@@ -256,7 +256,7 @@ export class LeaveService {
 					// Reload leave with relations for post-processing
 					const leaveForProcessing = await this.leaveRepository.findOne({
 						where: { uid: savedLeave.uid },
-						relations: ['owner', 'organisation', 'branch'],
+						relations: ['owner', 'owner.branch', 'owner.organisation', 'organisation', 'branch'],
 					});
 
 					if (!leaveForProcessing) {
@@ -622,7 +622,7 @@ export class LeaveService {
 					// Get updated leave for further processing
 					const updatedLeave = await this.leaveRepository.findOne({
 						where: { uid: ref },
-						relations: ['owner', 'organisation', 'branch'],
+						relations: ['owner', 'owner.branch', 'owner.organisation', 'organisation', 'branch'],
 					});
 
 					if (!updatedLeave) {
@@ -1047,12 +1047,16 @@ export class LeaveService {
 				},
 			};
 
-			// Create the approval using the approvals service
-			const approval = await this.approvalsService.create(approvalDto, {
-				user: requester,
-				organisationRef: requester.organisationRef,
-				branchUid: requester.branch?.uid,
-			} as any);
+			// Create the approval using the approvals service (RequestUser shape: uid, clerkUserId, organisationRef, branch, accessLevel, role)
+			const requestUser = {
+				uid: requester.uid,
+				clerkUserId: requester.clerkUserId,
+				organisationRef: requester.organisationRef || (requester.organisation as any)?.clerkOrgId || '',
+				branch: requester.branch,
+				accessLevel: requester.accessLevel,
+				role: requester.accessLevel,
+			};
+			const approval = await this.approvalsService.create(approvalDto, requestUser as any);
 
 			this.logger.log(`✅ [LeaveService] Approval workflow initialized: approval ${approval.uid} for leave ${leave.uid}`);
 

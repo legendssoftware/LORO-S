@@ -57,6 +57,13 @@ import { UserRewards } from './rewards/entities/user-rewards.entity';
 import { Achievement } from './rewards/entities/achievement.entity';
 import { UnlockedItem } from './rewards/entities/unlocked-item.entity';
 import { XPTransaction } from './rewards/entities/xp-transaction.entity';
+import { ClientLoyaltyProfile } from './rewards/entities/client-loyalty-profile.entity';
+import { LoyaltyPointsTransaction } from './rewards/entities/loyalty-points-transaction.entity';
+import { LoyaltyReward } from './rewards/entities/loyalty-reward.entity';
+import { LoyaltyRewardClaim } from './rewards/entities/loyalty-reward-claim.entity';
+import { LoyaltyPointsConversion } from './rewards/entities/loyalty-points-conversion.entity';
+import { LoyaltyBroadcast } from './rewards/entities/loyalty-broadcast.entity';
+import { VirtualLoyaltyCard } from './rewards/entities/virtual-loyalty-card.entity';
 import { CacheModule } from '@nestjs/cache-manager';
 import { Report } from './reports/entities/report.entity';
 import { License } from './licensing/entities/license.entity';
@@ -231,6 +238,13 @@ import { JwtModule } from '@nestjs/jwt';
 					Achievement,
 					UnlockedItem,
 					XPTransaction,
+					ClientLoyaltyProfile,
+					LoyaltyPointsTransaction,
+					LoyaltyReward,
+					LoyaltyRewardClaim,
+					LoyaltyPointsConversion,
+					LoyaltyBroadcast,
+					VirtualLoyaltyCard,
 					Report,
 					License,
 					LicenseUsage,

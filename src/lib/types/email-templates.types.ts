@@ -491,6 +491,49 @@ export interface EveningReportData extends BaseEmailData {
 	dashboardUrl: string;
 }
 
+export interface CheckInsDailyReportData extends BaseEmailData {
+	organizationName: string;
+	reportDate: string;
+	checkIns: Array<{
+		date: string;
+		user: string;
+		branch: string;
+		checkInTime: string;
+		checkOutTime: string;
+		duration: string;
+		status: string;
+		clientName: string;
+		contactFullName: string;
+		contactCellPhone: string;
+		contactLandline: string;
+		contactEmail: string;
+		contactAddress: string;
+		companyName: string;
+		businessType: string;
+		personSeenPosition: string;
+		checkInLocation: string;
+		checkOutLocation: string;
+		salesValue: string;
+		quotationNumber: string;
+		quotationStatus: string;
+		notes: string;
+		resolution: string;
+		followUp: string;
+	}>;
+	summary: {
+		totalVisits: number;
+		completedVisits: number;
+		inProgressVisits: number;
+		totalDuration: string;
+		averageDuration: string;
+		totalSalesValue: number;
+		uniqueUsers: number;
+		uniqueClients: number;
+	};
+	generatedAt: string;
+	timezone: string;
+}
+
 export interface OvertimeReminderData extends BaseEmailData {
 	employeeName: string;
 	employeeEmail: string;
@@ -2448,6 +2491,7 @@ export interface EmailDataMap {
     [EmailType.LOYALTY_WELCOME]: LoyaltyWelcomeData;
     [EmailType.LOYALTY_TIER_UPGRADE]: LoyaltyTierUpgradeData;
     [EmailType.LOYALTY_REWARD_CLAIMED]: LoyaltyRewardClaimedData;
+    [EmailType.CHECK_INS_DAILY_REPORT]: CheckInsDailyReportData;
 }
 
 export type EmailTemplateData<T extends EmailType> = T extends keyof EmailDataMap ? EmailDataMap[T] : never;

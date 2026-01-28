@@ -20,13 +20,6 @@ export class AssigneeDto {
 	uid: number;
 }
 
-export class CreatorDto {
-	@ApiProperty({ description: 'Creator ID', example: 1 })
-	@IsNumber()
-	@IsNotEmpty()
-	uid: number;
-}
-
 export class ClientDto {
 	@ApiProperty({ description: 'Client ID', example: 1 })
 	@IsNumber()
@@ -179,16 +172,6 @@ export class CreateTaskDto {
 	@IsArray()
 	@IsOptional()
 	attachments?: string[];
-
-	@ApiProperty({
-		description: 'Array of creators',
-		type: [CreatorDto],
-	})
-	@IsArray()
-	@ValidateNested({ each: true })
-	@Type(() => CreatorDto)
-	@ArrayMinSize(1)
-	creators: CreatorDto[];
 
 	@ApiProperty({
 		description: 'Comments',

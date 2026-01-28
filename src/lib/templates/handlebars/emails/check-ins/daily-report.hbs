@@ -1,0 +1,126 @@
+{{#base headerTitle="Daily Check-Ins Report" headerSubtitle="Visit summary for {{reportDate}}"}}
+
+<div class="greeting">
+    Good day! 📊
+</div>
+
+<div class="message">
+    <p>Here's your daily check-ins report for <strong>{{reportDate}}</strong>. This report provides a comprehensive summary of all visits conducted by your team members.</p>
+    
+    <!-- PDF Attachment Notice -->
+    <div style="background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); border-left: 4px solid #3b82f6; padding: 16px; margin: 16px 0; border-radius: 8px;">
+        <div style="display: flex; align-items: center; margin-bottom: 8px;">
+            <span style="color: #1e40af; font-weight: bold; margin-right: 8px;">📎</span>
+            <span style="font-weight: 700; color: #1e40af; font-size: 16px;">PDF Report Attached</span>
+        </div>
+        <p style="color: #1e3a8a; margin: 0; font-size: 14px; line-height: 1.5;">
+            A detailed PDF report containing all visit information has been attached to this email. 
+            <strong>Open the attached PDF for a comprehensive view of all check-ins, including full details and analytics.</strong>
+        </p>
+        <div style="margin-top: 12px; padding: 8px 12px; background: rgba(59, 130, 246, 0.1); border-radius: 6px; border: 1px dashed #3b82f6;">
+            <span style="color: #1e40af; font-size: 13px; font-weight: 600;">📎 Attachment: check-ins-report-{{reportDate}}.pdf</span>
+        </div>
+    </div>
+</div>
+
+<!-- Summary Statistics -->
+<div class="info-card">
+    <h3>📈 Summary Statistics</h3>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-top: 16px;">
+        <div style="background: #f8fafc; padding: 16px; border-radius: 8px; border-left: 4px solid #3b82f6;">
+            <div style="font-size: 24px; font-weight: bold; color: #1e40af;">{{summary.totalVisits}}</div>
+            <div style="font-size: 12px; color: #64748b; margin-top: 4px;">Total Visits</div>
+        </div>
+        <div style="background: #f0fdf4; padding: 16px; border-radius: 8px; border-left: 4px solid #22c55e;">
+            <div style="font-size: 24px; font-weight: bold; color: #15803d;">{{summary.completedVisits}}</div>
+            <div style="font-size: 12px; color: #64748b; margin-top: 4px;">Completed</div>
+        </div>
+        <div style="background: #fef3c7; padding: 16px; border-radius: 8px; border-left: 4px solid #f59e0b;">
+            <div style="font-size: 24px; font-weight: bold; color: #d97706;">{{summary.inProgressVisits}}</div>
+            <div style="font-size: 12px; color: #64748b; margin-top: 4px;">In Progress</div>
+        </div>
+        <div style="background: #f8fafc; padding: 16px; border-radius: 8px; border-left: 4px solid #8b5cf6;">
+            <div style="font-size: 24px; font-weight: bold; color: #7c3aed;">{{summary.totalDuration}}</div>
+            <div style="font-size: 12px; color: #64748b; margin-top: 4px;">Total Duration</div>
+        </div>
+        <div style="background: #f8fafc; padding: 16px; border-radius: 8px; border-left: 4px solid #ec4899;">
+            <div style="font-size: 24px; font-weight: bold; color: #be185d;">{{summary.averageDuration}}</div>
+            <div style="font-size: 12px; color: #64748b; margin-top: 4px;">Average Duration</div>
+        </div>
+        <div style="background: #f0fdf4; padding: 16px; border-radius: 8px; border-left: 4px solid #10b981;">
+            <div style="font-size: 24px; font-weight: bold; color: #059669;">{{formatCurrency summary.totalSalesValue 'ZAR'}}</div>
+            <div style="font-size: 12px; color: #64748b; margin-top: 4px;">Total Sales Value</div>
+        </div>
+        <div style="background: #f8fafc; padding: 16px; border-radius: 8px; border-left: 4px solid #06b6d4;">
+            <div style="font-size: 24px; font-weight: bold; color: #0891b2;">{{summary.uniqueUsers}}</div>
+            <div style="font-size: 12px; color: #64748b; margin-top: 4px;">Unique Users</div>
+        </div>
+        <div style="background: #f8fafc; padding: 16px; border-radius: 8px; border-left: 4px solid #f97316;">
+            <div style="font-size: 24px; font-weight: bold; color: #ea580c;">{{summary.uniqueClients}}</div>
+            <div style="font-size: 12px; color: #64748b; margin-top: 4px;">Unique Clients</div>
+        </div>
+    </div>
+</div>
+
+<!-- Check-Ins Table -->
+{{#if checkIns}}
+<div class="info-card" style="margin-top: 24px;">
+    <h3>📋 Visit Details</h3>
+    <div style="overflow-x: auto; margin-top: 16px;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+            <thead>
+                <tr style="background: #f1f5f9; border-bottom: 2px solid #e2e8f0;">
+                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #475569;">Date</th>
+                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #475569;">User</th>
+                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #475569;">Branch</th>
+                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #475569;">Check In</th>
+                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #475569;">Check Out</th>
+                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #475569;">Duration</th>
+                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #475569;">Status</th>
+                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #475569;">Client</th>
+                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #475569;">Contact</th>
+                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #475569;">Sales Value</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{#each checkIns}}
+                <tr style="border-bottom: 1px solid #e2e8f0;">
+                    <td style="padding: 10px; color: #64748b;">{{date}}</td>
+                    <td style="padding: 10px; color: #1e293b;">{{user}}</td>
+                    <td style="padding: 10px; color: #64748b;">{{branch}}</td>
+                    <td style="padding: 10px; color: #1e293b;">{{checkInTime}}</td>
+                    <td style="padding: 10px; color: #1e293b;">{{checkOutTime}}</td>
+                    <td style="padding: 10px; color: #64748b;">{{duration}}</td>
+                    <td style="padding: 10px;">
+                        {{#if (eq status "Completed")}}
+                        <span style="background: #dcfce7; color: #166534; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 500;">Completed</span>
+                        {{else}}
+                        <span style="background: #fef3c7; color: #92400e; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 500;">In Progress</span>
+                        {{/if}}
+                    </td>
+                    <td style="padding: 10px; color: #1e293b;">{{clientName}}</td>
+                    <td style="padding: 10px; color: #64748b;">{{contactFullName}}</td>
+                    <td style="padding: 10px; color: #059669; font-weight: 500;">{{salesValue}}</td>
+                </tr>
+                {{/each}}
+            </tbody>
+        </table>
+    </div>
+    <p style="margin-top: 16px; font-size: 12px; color: #64748b;">
+        <strong>Note:</strong> This is a summary view. For complete details including contact information, addresses, notes, and quotations, please refer to the attached PDF report.
+    </p>
+</div>
+{{else}}
+<div class="info-card" style="margin-top: 24px;">
+    <p style="color: #64748b; text-align: center; padding: 24px;">
+        No check-ins were recorded for this date.
+    </p>
+</div>
+{{/if}}
+
+<div style="margin-top: 32px; padding-top: 24px; border-top: 1px solid #e2e8f0; font-size: 12px; color: #64748b; text-align: center;">
+    <p>Report generated on {{generatedAt}} ({{timezone}})</p>
+    <p style="margin-top: 8px;">This is an automated report sent 30 minutes after your organization's close time.</p>
+</div>
+
+{{/base}}

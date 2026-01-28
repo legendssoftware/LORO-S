@@ -235,6 +235,15 @@ export class CreateUserDto {
     branch?: { uid: number };
 
     @IsOptional()
+    @IsNumber()
+    @ApiProperty({
+        description: 'Branch UID to assign the user to (must be provided in request body)',
+        example: 1,
+        required: false,
+    })
+    branchId?: number;
+
+    @IsOptional()
     @ApiProperty({
         description: 'User profile information',
         type: () => CreateUserProfileDto,

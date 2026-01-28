@@ -17,11 +17,14 @@ import { Organisation } from '../organisation/entities/organisation.entity';
 import { AttendanceModule } from '../attendance/attendance.module';
 import { ClerkModule } from '../clerk/clerk.module';
 import { OrganisationModule } from '../organisation/organisation.module';
+import { Client } from '../clients/entities/client.entity';
+import { ClientsModule } from '../clients/clients.module';
 
 @Module({
   imports: [
     LicensingModule,
-    TypeOrmModule.forFeature([Lead, User, Interaction, Task, Organisation]),
+    TypeOrmModule.forFeature([Lead, User, Interaction, Task, Organisation, Client]),
+    forwardRef(() => ClientsModule),
     RewardsModule,
     CommunicationModule,
     NotificationsModule,

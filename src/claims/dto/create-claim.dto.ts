@@ -36,19 +36,6 @@ export class CreateClaimDto {
 	@IsEnum(ClaimCategory)
 	category: ClaimCategory;
 
-	/**
-	 * Owner is resolved from auth token; do not send in payload.
-	 */
-	@ApiProperty({
-		example: 1,
-		description: 'Resolved from auth token (ignored if sent). Do not include in request body.',
-		required: false,
-		deprecated: true,
-	})
-	@IsOptional()
-	@IsNumber()
-	owner?: number;
-
 	@ApiProperty({
 		example: Currency.ZAR,
 		description: 'Currency code for the claim amount',

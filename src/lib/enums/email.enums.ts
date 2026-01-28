@@ -178,4 +178,6 @@ export enum EmailType {
 	LOYALTY_POINTS_EARNED = 'loyalty_points_earned',
 	LOYALTY_POINTS_STATEMENT = 'loyalty_points_statement',
 	LOYALTY_SPECIALS_EMAIL = 'loyalty_specials_email',
+	// Check-ins reports
+	CHECK_INS_DAILY_REPORT = 'check_ins_daily_report',
 }

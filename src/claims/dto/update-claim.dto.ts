@@ -44,15 +44,7 @@ export class UpdateClaimDto extends PartialType(CreateClaimDto) {
     })
     @IsOptional()
     @IsEnum(ClaimCategory)
-    category: ClaimCategory;
-
-	@ApiProperty({
-		example: 1,
-		description: 'UID of the owner of the claim'
-	})
-	@IsOptional()
-	@IsNumber()
-	owner: number;
+	category: ClaimCategory;
 
 	@ApiProperty({
 		example: Currency.ZAR,

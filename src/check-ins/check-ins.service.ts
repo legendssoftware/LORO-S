@@ -1,10 +1,11 @@
-import { BadRequestException, Injectable, NotFoundException, Logger, Inject } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Logger, Inject, ForbiddenException } from '@nestjs/common';
 import { CreateCheckInDto } from './dto/create-check-in.dto';
 import { Repository } from 'typeorm';
 import { CheckIn } from './entities/check-in.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CreateCheckOutDto } from './dto/create-check-out.dto';
-import { differenceInMinutes, differenceInHours } from 'date-fns';
+import { UpdateVisitDetailsDto } from './dto/update-visit-details.dto';
+import { differenceInMinutes, differenceInHours, format } from 'date-fns';
 import { RewardsService } from '../rewards/rewards.service';
 import { XP_VALUES_TYPES } from '../lib/constants/constants';
 import { XP_VALUES } from '../lib/constants/constants';
@@ -17,6 +18,10 @@ import { UnifiedNotificationService } from '../lib/services/unified-notification
 import { NotificationPriority, NotificationEvent, NotificationChannel } from '../lib/types/unified-notification.types';
 import { AccessLevel } from 'src/lib/enums/user.enums';
 import { GoogleMapsService } from '../lib/services/google-maps.service';
+import { LeadsService } from '../leads/leads.service';
+import { Quotation } from '../shop/entities/quotation.entity';
+import { CreateLeadDto } from '../leads/dto/create-lead.dto';
+import { LeadSource } from '../lib/enums/lead.enums';
 
 @Injectable()
 export class CheckInsService {
@@ -34,9 +39,12 @@ export class CheckInsService {
 		private clientRepository: Repository<Client>,
 		@InjectRepository(Organisation)
 		private organisationRepository: Repository<Organisation>,
+		@InjectRepository(Quotation)
+		private quotationRepository: Repository<Quotation>,
 		@Inject(CACHE_MANAGER) private cacheManager: Cache,
 		private readonly unifiedNotificationService: UnifiedNotificationService,
 		private readonly googleMapsService: GoogleMapsService,
+		private readonly leadsService: LeadsService,
 	) {
 		this.CACHE_TTL = parseInt(process.env.CACHE_TTL || '300000', 10); // 5 minutes default
 	}
@@ -57,6 +65,252 @@ export class CheckInsService {
 			select: ['uid'],
 		});
 		return org?.uid ?? null;
+	}
+
+	/**
+	 * Generate intelligent lead name from check-in data using priority-based approach
+	 * Priority: contactFullName > companyName > personSeenPosition+phone > phone > location > default
+	 */
+	private generateLeadNameFromCheckInData(dto: CreateCheckInDto): string {
+		// Priority 1: Contact full name
+		if (dto.contactFullName?.trim()) {
+			const name = dto.contactFullName.trim();
+			this.logger.debug(`Generated lead name from contactFullName: ${name}`);
+			return name;
+		}
+
+		// Priority 2: Company name
+		if (dto.companyName?.trim()) {
+			const name = dto.companyName.trim();
+			this.logger.debug(`Generated lead name from companyName: ${name}`);
+			return name;
+		}
+
+		// Priority 3: Person seen position + phone number
+		const phone = dto.contactCellPhone?.trim() || dto.contactLandline?.trim();
+		if (dto.personSeenPosition?.trim() && phone) {
+			const name = `${dto.personSeenPosition.trim()} - ${phone}`;
+			this.logger.debug(`Generated lead name from personSeenPosition + phone: ${name}`);
+			return name;
+		}
+
+		// Priority 4: Phone number only
+		if (phone) {
+			this.logger.debug(`Generated lead name from phone: ${phone}`);
+			return phone;
+		}
+
+		// Priority 5: Location-based name
+		const locationName = this.getLocationNameFromCheckIn(dto);
+		if (locationName) {
+			this.logger.debug(`Generated lead name from location: ${locationName}`);
+			return locationName;
+		}
+
+		// Priority 6: Default with date
+		const defaultName = this.getDefaultLeadName();
+		this.logger.debug(`Generated default lead name: ${defaultName}`);
+		return defaultName;
+	}
+
+	/**
+	 * Extract location-based name from check-in data
+	 * Tries fullAddress, contactAddress, then coordinates
+	 */
+	private getLocationNameFromCheckIn(dto: CreateCheckInDto): string | null {
+		// Try fullAddress first, then contactAddress
+		const addr = dto.fullAddress || dto.contactAddress;
+		if (addr) {
+			if (addr.street?.trim()) {
+				return `Visit at ${addr.street.trim()}`;
+			}
+			if (addr.suburb?.trim()) {
+				return `Visit in ${addr.suburb.trim()}`;
+			}
+			if (addr.city?.trim()) {
+				return `Visit in ${addr.city.trim()}`;
+			}
+		}
+
+		// Try coordinates from checkInLocation
+		if (dto.checkInLocation) {
+			const coords = this.parseCoordinates(dto.checkInLocation);
+			if (coords) {
+				return `Visit at ${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)}`;
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Parse coordinates from checkInLocation string format "lat,lng"
+	 */
+	private parseCoordinates(locationString: string): { lat: number; lng: number } | null {
+		if (!locationString?.trim()) {
+			return null;
+		}
+
+		try {
+			const coordinateStr = locationString.trim();
+			const coords = coordinateStr.split(',').map(coord => coord.trim());
+			
+			if (coords.length === 2) {
+				const lat = parseFloat(coords[0]);
+				const lng = parseFloat(coords[1]);
+				
+				// Validate coordinates
+				if (!isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+					return { lat, lng };
+				}
+			}
+		} catch (error) {
+			this.logger.warn(`Failed to parse coordinates from location string: ${locationString}`, error);
+		}
+
+		return null;
+	}
+
+	/**
+	 * Generate default lead name with date
+	 */
+	private getDefaultLeadName(): string {
+		const dateStr = format(new Date(), 'MMM dd, yyyy');
+		return `Visit Lead - ${dateStr}`;
+	}
+
+	/**
+	 * Create a lead from check-in contact information
+	 * Extracts contact details and creates a lead when client doesn't exist
+	 */
+	private async createLeadFromCheckIn(
+		createCheckInDto: CreateCheckInDto,
+		orgId: string,
+		branchId?: number,
+		clerkUserId?: string,
+	): Promise<{ uid: number } | null> {
+		try {
+			// Only create lead if we have contact information
+			if (!createCheckInDto.contactFullName && !createCheckInDto.contactCellPhone && !createCheckInDto.contactLandline) {
+				this.logger.debug('No contact information provided, skipping lead creation');
+				return null;
+			}
+
+			// Parse location coordinates for latitude/longitude
+			let latitude: number | undefined;
+			let longitude: number | undefined;
+			if (createCheckInDto.checkInLocation) {
+				const coordinateStr = createCheckInDto.checkInLocation.trim();
+				const coords = coordinateStr.split(',').map(coord => coord.trim());
+				if (coords.length === 2) {
+					const lat = parseFloat(coords[0]);
+					const lng = parseFloat(coords[1]);
+					if (!isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+						latitude = lat;
+						longitude = lng;
+					}
+				}
+			}
+
+			// Build lead DTO from check-in contact information
+			// Note: branch is required in CreateLeadDto, so we only create lead if branchId is available
+			if (!branchId) {
+				this.logger.debug('Branch ID is required for lead creation, skipping lead creation');
+				return null;
+			}
+
+			// Generate intelligent lead name from available check-in data
+			const leadName = this.generateLeadNameFromCheckInData(createCheckInDto);
+
+			const createLeadDto: CreateLeadDto = {
+				name: leadName,
+				companyName: createCheckInDto.companyName,
+				phone: createCheckInDto.contactCellPhone || createCheckInDto.contactLandline,
+				image: createCheckInDto.contactImage,
+				notes: createCheckInDto.notes || `Lead created from check-in visit`,
+				latitude,
+				longitude,
+				source: LeadSource.OTHER, // Can be customized based on business logic
+				branch: { uid: branchId },
+			};
+
+			// Create lead using LeadsService with source context for logging
+			const leadResult = await this.leadsService.create(
+				createLeadDto,
+				orgId,
+				branchId,
+				clerkUserId,
+				'check_in_conversion', // Source context for logging
+			);
+
+			if (leadResult?.data?.uid) {
+				this.logger.log(`Lead created from check-in: ${leadResult.data.uid}`);
+				return { uid: leadResult.data.uid };
+			}
+
+			return null;
+		} catch (error) {
+			this.logger.error(`Failed to create lead from check-in: ${error.message}`, error.stack);
+			// Don't fail check-in if lead creation fails (graceful degradation)
+			return null;
+		}
+	}
+
+	/**
+	 * Link quotation to check-in and update quotation status
+	 */
+	private async linkQuotationToCheckIn(
+		checkInId: number,
+		quotationUid?: number,
+		quotationNumber?: string,
+		orgId?: string,
+	): Promise<{ quotationNumber?: string; quotationStatus?: string; quotationUid?: number } | null> {
+		try {
+			// If quotationUid is provided, use it; otherwise try to find by quotationNumber
+			let quotation: Quotation | null = null;
+
+			if (quotationUid) {
+				quotation = await this.quotationRepository.findOne({
+					where: { uid: quotationUid },
+					select: ['uid', 'quotationNumber', 'status', 'organisationUid'],
+				});
+			} else if (quotationNumber) {
+				quotation = await this.quotationRepository.findOne({
+					where: { quotationNumber },
+					select: ['uid', 'quotationNumber', 'status', 'organisationUid'],
+				});
+			}
+
+			if (!quotation) {
+				this.logger.warn(`Quotation not found: ${quotationUid || quotationNumber}`);
+				return null;
+			}
+
+			// Validate quotation belongs to organization if orgId provided
+			if (orgId && quotation.organisationUid) {
+				// Note: organisationUid in quotation is number, orgId is string (Clerk org ID)
+				// We may need to resolve this, but for now we'll skip strict validation
+				// as the organisation structure might differ
+			}
+
+			// Update check-in with quotation information
+			await this.checkInRepository.update(checkInId, {
+				quotationUid: quotation.uid,
+				quotationNumber: quotation.quotationNumber,
+				quotationStatus: quotation.status,
+			});
+
+			this.logger.log(`Quotation ${quotation.quotationNumber} linked to check-in ${checkInId}`);
+
+			return {
+				quotationNumber: quotation.quotationNumber,
+				quotationStatus: quotation.status,
+				quotationUid: quotation.uid,
+			};
+		} catch (error) {
+			this.logger.error(`Failed to link quotation to check-in: ${error.message}`, error.stack);
+			return null;
+		}
 	}
 
 	async checkIn(createCheckInDto: CreateCheckInDto, orgId?: string, branchId?: number, clerkUserId?: string): Promise<{ message: string; checkInId?: number }> {
@@ -143,6 +397,27 @@ export class CheckInsService {
 				throw new BadRequestException('User Clerk ID is required for check-in');
 			}
 
+			// Check if client exists when client.uid is provided
+			let clientExists = false;
+			let createdLead: { uid: number } | null = null;
+
+			if (createCheckInDto.client?.uid) {
+				const existingClient = await this.clientRepository.findOne({
+					where: { uid: createCheckInDto.client.uid, isDeleted: false },
+				});
+				clientExists = !!existingClient;
+				this.logger.debug(`[${operationId}] Client ${createCheckInDto.client.uid} exists: ${clientExists}`);
+			}
+
+			// If client doesn't exist or client.uid is not provided, create a lead
+			if (!clientExists && (!createCheckInDto.client?.uid || createCheckInDto.contactFullName || createCheckInDto.contactCellPhone || createCheckInDto.contactLandline)) {
+				this.logger.debug(`[${operationId}] Client not found or not provided, creating lead from contact information`);
+				createdLead = await this.createLeadFromCheckIn(createCheckInDto, orgId, resolvedBranchId, resolvedClerkUserId);
+				if (createdLead) {
+					this.logger.log(`[${operationId}] Lead created: ${createdLead.uid}`);
+				}
+			}
+
 			const checkInData: any = {
 				...createCheckInDto,
 				checkInTime: createCheckInDto.checkInTime ? new Date(createCheckInDto.checkInTime) : new Date(),
@@ -155,6 +430,26 @@ export class CheckInsService {
 					clerkOrgId: orgId, // Use Clerk org ID string for relation
 				} as Organisation,
 				organisationUid: orgId, // Clerk org ID string - key relationship identifier
+				// Include new contact and sales fields
+				contactFullName: createCheckInDto.contactFullName,
+				contactImage: createCheckInDto.contactImage,
+				contactCellPhone: createCheckInDto.contactCellPhone,
+				contactLandline: createCheckInDto.contactLandline,
+				contactAddress: createCheckInDto.contactAddress,
+				// Company and business information fields
+				companyName: createCheckInDto.companyName,
+				businessType: createCheckInDto.businessType,
+				personSeenPosition: createCheckInDto.personSeenPosition,
+				meetingLink: createCheckInDto.meetingLink,
+				salesValue: createCheckInDto.salesValue,
+				quotationNumber: createCheckInDto.quotationNumber,
+				quotationUid: createCheckInDto.quotationUid,
+				// Link lead if created
+				leadUid: createdLead?.uid,
+				// New check-in enhancement fields
+				methodOfContact: createCheckInDto.methodOfContact,
+				buildingType: createCheckInDto.buildingType,
+				contactMade: createCheckInDto.contactMade ?? false,
 			};
 
 			// Log when setting ownerClerkUserId and organisationUid for debugging
@@ -171,6 +466,15 @@ export class CheckInsService {
 				// Explicitly set to null for TypeORM (handles null better than undefined)
 				checkInData.branch = null;
 				checkInData.branchUid = null;
+			}
+
+			// Only set client if it exists
+			if (clientExists && createCheckInDto.client?.uid) {
+				checkInData.client = { uid: createCheckInDto.client.uid };
+				checkInData.clientUid = createCheckInDto.client.uid;
+			} else {
+				checkInData.client = null;
+				checkInData.clientUid = null;
 			}
 
 			// Core operation: Save check-in to database
@@ -677,6 +981,72 @@ export class CheckInsService {
 				updateData.client = { uid: createCheckOutDto.client.uid };
 			}
 
+			// Add new contact information fields if provided
+			if (createCheckOutDto?.contactFullName !== undefined) {
+				updateData.contactFullName = createCheckOutDto.contactFullName;
+			}
+			if (createCheckOutDto?.contactImage !== undefined) {
+				updateData.contactImage = createCheckOutDto.contactImage;
+			}
+			if (createCheckOutDto?.contactCellPhone !== undefined) {
+				updateData.contactCellPhone = createCheckOutDto.contactCellPhone;
+			}
+			if (createCheckOutDto?.contactLandline !== undefined) {
+				updateData.contactLandline = createCheckOutDto.contactLandline;
+			}
+			if (createCheckOutDto?.contactAddress !== undefined) {
+				updateData.contactAddress = createCheckOutDto.contactAddress;
+			}
+
+			// Add company and business information fields if provided
+			if (createCheckOutDto?.companyName !== undefined) {
+				updateData.companyName = createCheckOutDto.companyName;
+			}
+			if (createCheckOutDto?.businessType !== undefined) {
+				updateData.businessType = createCheckOutDto.businessType;
+			}
+			if (createCheckOutDto?.personSeenPosition !== undefined) {
+				updateData.personSeenPosition = createCheckOutDto.personSeenPosition;
+			}
+			if (createCheckOutDto?.meetingLink !== undefined) {
+				updateData.meetingLink = createCheckOutDto.meetingLink;
+			}
+
+			// Add sales value if provided
+			if (createCheckOutDto?.salesValue !== undefined) {
+				updateData.salesValue = createCheckOutDto.salesValue;
+			}
+
+			// Add new check-in enhancement fields if provided
+			if (createCheckOutDto?.methodOfContact !== undefined) {
+				updateData.methodOfContact = createCheckOutDto.methodOfContact;
+			}
+			if (createCheckOutDto?.buildingType !== undefined) {
+				updateData.buildingType = createCheckOutDto.buildingType;
+			}
+			if (createCheckOutDto?.contactMade !== undefined) {
+				updateData.contactMade = createCheckOutDto.contactMade;
+			}
+
+			// Link quotation if provided
+			if (createCheckOutDto?.quotationUid || createCheckOutDto?.quotationNumber) {
+				const quotationLink = await this.linkQuotationToCheckIn(
+					checkIn.uid,
+					createCheckOutDto.quotationUid,
+					createCheckOutDto.quotationNumber,
+					orgId,
+				);
+				if (quotationLink) {
+					// Quotation linking already updates the check-in, but we can add status if provided directly
+					if (createCheckOutDto?.quotationStatus !== undefined) {
+						updateData.quotationStatus = createCheckOutDto.quotationStatus;
+					}
+				}
+			} else if (createCheckOutDto?.quotationStatus !== undefined) {
+				// If only status is provided without quotation link, update it
+				updateData.quotationStatus = createCheckOutDto.quotationStatus;
+			}
+
 			await this.checkInRepository.update(checkIn.uid, updateData);
 
 			// ============================================================
@@ -872,35 +1242,93 @@ export class CheckInsService {
 		}
 	}
 
-	async getAllCheckIns(organizationUid?: string): Promise<any> {
+	async getAllCheckIns(
+		orgId?: string,
+		branchId?: number,
+		clerkUserId?: string,
+		userAccessLevel?: string,
+		userUid?: string,
+		startDate?: Date,
+		endDate?: Date,
+	): Promise<any> {
+		const operationId = `getAllCheckIns_${Date.now()}`;
 		try {
-			const whereCondition: any = {};
-
-			if (organizationUid) {
-				// organisationUid is now a string (Clerk org ID), filter directly
-				whereCondition.organisationUid = organizationUid;
+			if (!orgId) {
+				this.logger.error(`[${operationId}] Organization ID is required`);
+				throw new BadRequestException('Organization ID is required');
 			}
 
-			const checkIns = await this.checkInRepository.find({
-				where: whereCondition,
-				order: {
-					checkInTime: 'DESC',
-				},
-				relations: ['owner', 'client', 'branch', 'organisation'],
-			});
+			// Determine if user has elevated access (can see all check-ins)
+			const hasElevatedAccess = [
+				AccessLevel.ADMIN,
+				AccessLevel.OWNER,
+				AccessLevel.MANAGER,
+			].includes(userAccessLevel as AccessLevel);
+
+			this.logger.debug(`[${operationId}] Building query with filters for org: ${orgId}, branch: ${branchId || 'all'}, elevated: ${hasElevatedAccess}`);
+
+			const queryBuilder = this.checkInRepository
+				.createQueryBuilder('checkIn')
+				.leftJoinAndSelect('checkIn.owner', 'owner')
+				.leftJoinAndSelect('checkIn.client', 'client')
+				.leftJoinAndSelect('checkIn.branch', 'branch')
+				.leftJoinAndSelect('checkIn.organisation', 'organisation')
+				.where('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
+
+			// Add branch filter if provided
+			if (branchId) {
+				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
+			}
+
+			// Access control: Regular users can only see their own check-ins
+			if (!hasElevatedAccess) {
+				if (!clerkUserId) {
+					throw new BadRequestException('Clerk user ID is required to retrieve check-ins');
+				}
+				// Filter by ownerClerkUserId
+				queryBuilder.andWhere('checkIn.ownerClerkUserId = :clerkUserId', { clerkUserId });
+			} else if (userUid) {
+				// Managers/admins can filter by specific user
+				// Support both Clerk user ID (user_xxx) and numeric UID
+				if (userUid.startsWith('user_')) {
+					queryBuilder.andWhere('checkIn.ownerClerkUserId = :userUid', { userUid });
+				} else {
+					queryBuilder.andWhere('owner.uid = :userUid', { userUid: Number(userUid) });
+				}
+			}
+
+			// Add date range filter if provided
+			if (startDate && endDate) {
+				queryBuilder.andWhere('checkIn.checkInTime BETWEEN :startDate AND :endDate', {
+					startDate,
+					endDate,
+				});
+			} else if (startDate) {
+				queryBuilder.andWhere('checkIn.checkInTime >= :startDate', { startDate });
+			} else if (endDate) {
+				queryBuilder.andWhere('checkIn.checkInTime <= :endDate', { endDate });
+			}
+
+			queryBuilder.orderBy('checkIn.checkInTime', 'DESC');
+
+			const checkIns = await queryBuilder.getMany();
 
 			const response = {
-				message: process.env.SUCCESS_MESSAGE,
+				message: process.env.SUCCESS_MESSAGE || 'Success',
 				checkIns,
 			};
 
+			this.logger.log(`[${operationId}] Successfully retrieved ${checkIns.length} check-ins`);
 			return response;
 		} catch (error) {
+			this.logger.error(`[${operationId}] Error retrieving check-ins:`, error.stack);
+			if (error instanceof BadRequestException) {
+				throw error;
+			}
 			const response = {
-				message: error?.message,
+				message: error?.message || 'Error retrieving check-ins',
 				checkIns: [],
 			};
-
 			return response;
 		}
 	}
@@ -1106,6 +1534,7 @@ export class CheckInsService {
 		orgId?: string,
 		branchId?: number,
 		clerkUserId?: string,
+		updateDto?: UpdateVisitDetailsDto,
 	): Promise<{ message: string }> {
 		const operationId = `update_visit_details_${Date.now()}`;
 		const startTime = Date.now();
@@ -1132,6 +1561,65 @@ export class CheckInsService {
 			}
 			if (resolution !== undefined) {
 				updateData.resolution = resolution;
+			}
+			if (updateDto?.followUp !== undefined) {
+				updateData.followUp = updateDto.followUp;
+			}
+
+			// Add new fields from DTO if provided
+			if (updateDto) {
+				if (updateDto.contactFullName !== undefined) {
+					updateData.contactFullName = updateDto.contactFullName;
+				}
+				if (updateDto.contactImage !== undefined) {
+					updateData.contactImage = updateDto.contactImage;
+				}
+				if (updateDto.contactCellPhone !== undefined) {
+					updateData.contactCellPhone = updateDto.contactCellPhone;
+				}
+				if (updateDto.contactLandline !== undefined) {
+					updateData.contactLandline = updateDto.contactLandline;
+				}
+				if (updateDto.contactAddress !== undefined) {
+					updateData.contactAddress = updateDto.contactAddress;
+				}
+				if (updateDto.companyName !== undefined) {
+					updateData.companyName = updateDto.companyName;
+				}
+				if (updateDto.businessType !== undefined) {
+					updateData.businessType = updateDto.businessType;
+				}
+				if (updateDto.personSeenPosition !== undefined) {
+					updateData.personSeenPosition = updateDto.personSeenPosition;
+				}
+				if (updateDto.meetingLink !== undefined) {
+					updateData.meetingLink = updateDto.meetingLink;
+				}
+				if (updateDto.salesValue !== undefined) {
+					updateData.salesValue = updateDto.salesValue;
+				}
+				if (updateDto.quotationNumber !== undefined) {
+					updateData.quotationNumber = updateDto.quotationNumber;
+				}
+				if (updateDto.quotationUid !== undefined) {
+					updateData.quotationUid = updateDto.quotationUid;
+				}
+				if (updateDto.quotationStatus !== undefined) {
+					updateData.quotationStatus = updateDto.quotationStatus;
+				}
+				// Add new check-in enhancement fields if provided
+				if (updateDto.methodOfContact !== undefined) {
+					updateData.methodOfContact = updateDto.methodOfContact;
+				}
+				if (updateDto.buildingType !== undefined) {
+					updateData.buildingType = updateDto.buildingType;
+				}
+				if (updateDto.contactMade !== undefined) {
+					updateData.contactMade = updateDto.contactMade;
+				}
+				if (updateDto.followUp !== undefined) {
+					updateData.followUp = updateDto.followUp;
+				}
 			}
 
 			// Preserve or set ownerClerkUserId
@@ -1170,6 +1658,241 @@ export class CheckInsService {
 			return {
 				message: error?.message || 'Failed to update visit details',
 			};
+		}
+	}
+
+	/**
+	 * Convert an existing check-in to a lead
+	 */
+	/**
+	 * Generate a meaningful lead name from check-in data when no contact info is available
+	 * Uses location, address, date, or a default name
+	 */
+	private generateLeadNameFromCheckIn(checkIn: CheckIn): string {
+		// Try to use address information
+		if (checkIn.fullAddress) {
+			const addr = checkIn.fullAddress;
+			if (addr.street) {
+				return `Visit at ${addr.street}`;
+			}
+			if (addr.suburb) {
+				return `Visit in ${addr.suburb}`;
+			}
+			if (addr.city) {
+				return `Visit in ${addr.city}`;
+			}
+		}
+
+		// Use check-in date
+		if (checkIn.checkInTime) {
+			const dateStr = new Date(checkIn.checkInTime).toLocaleDateString('en-US', {
+				month: 'short',
+				day: 'numeric',
+				year: 'numeric',
+			});
+			return `Visit Lead - ${dateStr}`;
+		}
+
+		// Default fallback
+		return `Visit Lead #${checkIn.uid}`;
+	}
+
+	/**
+	 * Build comprehensive notes for lead from check-in information
+	 */
+	private buildLeadNotesFromCheckIn(checkIn: CheckIn, checkInId: number): string {
+		const notesParts: string[] = [];
+
+		// Add existing notes if available
+		if (checkIn.notes) {
+			notesParts.push(checkIn.notes);
+		}
+
+		// Add resolution if available
+		if (checkIn.resolution) {
+			notesParts.push(`Resolution: ${checkIn.resolution}`);
+		}
+
+		// Add follow-up if available
+		if (checkIn.followUp) {
+			notesParts.push(`Follow-up: ${checkIn.followUp}`);
+		}
+
+		// Add duration if available
+		if (checkIn.duration) {
+			notesParts.push(`Visit duration: ${checkIn.duration}`);
+		}
+
+		// Add check-in time
+		if (checkIn.checkInTime) {
+			const timeStr = new Date(checkIn.checkInTime).toLocaleString('en-US');
+			notesParts.push(`Check-in time: ${timeStr}`);
+		}
+
+		// Add base message
+		const baseMessage = `Lead created from check-in visit (ID: ${checkInId})`;
+		
+		if (notesParts.length > 0) {
+			return `${baseMessage}\n\n${notesParts.join('\n')}`;
+		}
+
+		return baseMessage;
+	}
+
+	async convertCheckInToLead(
+		checkInId: number,
+		orgId: string,
+		branchId?: number,
+		clerkUserId?: string,
+	): Promise<{ message: string; lead?: { uid: number; name: string } }> {
+		const operationId = `convert-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+		const startTime = Date.now();
+
+		try {
+			this.logger.log(`[${operationId}] Starting convert check-in to lead for checkInId: ${checkInId}`);
+
+			// Find check-in with relations including owner's branch
+			const checkIn = await this.checkInRepository.findOne({
+				where: { uid: checkInId },
+				relations: ['owner', 'owner.branch', 'organisation', 'branch', 'client'],
+			});
+
+			if (!checkIn) {
+				throw new NotFoundException(`Check-in with ID ${checkInId} not found`);
+			}
+
+			// Check if lead already exists
+			if (checkIn.leadUid) {
+				throw new BadRequestException(`Check-in already has a lead associated (leadUid: ${checkIn.leadUid})`);
+			}
+
+			// Validate organization
+			if (checkIn.organisationUid !== orgId) {
+				throw new ForbiddenException('Check-in does not belong to your organization');
+			}
+
+			// Resolve branch ID from multiple sources (priority order):
+			// 1. Explicit branchId parameter
+			// 2. Check-in's branch
+			// 3. Check-in owner's branch
+			// 4. If none available, skip branch assignment (make it optional)
+			const resolvedBranchId = branchId || 
+				checkIn.branch?.uid || 
+				checkIn.owner?.branch?.uid || 
+				undefined;
+
+			this.logger.debug(
+				`[${operationId}] Resolved branch ID: ${resolvedBranchId} ` +
+				`(from: ${branchId ? 'parameter' : checkIn.branch?.uid ? 'checkIn.branch' : checkIn.owner?.branch?.uid ? 'owner.branch' : 'none'})`
+			);
+
+			// Parse location coordinates for latitude/longitude
+			let latitude: number | undefined;
+			let longitude: number | undefined;
+			if (checkIn.checkInLocation) {
+				const coordinateStr = checkIn.checkInLocation.trim();
+				const coords = coordinateStr.split(',').map(coord => coord.trim());
+				if (coords.length === 2) {
+					const lat = parseFloat(coords[0]);
+					const lng = parseFloat(coords[1]);
+					if (!isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+						latitude = lat;
+						longitude = lng;
+					}
+				}
+			}
+
+			// Extract contact information with fallback priority
+			// Priority: check-in contact > client > companyName > location-based name
+			const leadName = checkIn.contactFullName || 
+				checkIn.client?.contactPerson || 
+				checkIn.client?.name || 
+				checkIn.companyName || 
+				this.generateLeadNameFromCheckIn(checkIn);
+
+			const leadPhone = checkIn.contactCellPhone || 
+				checkIn.contactLandline || 
+				checkIn.client?.phone || 
+				checkIn.client?.alternativePhone;
+
+			const leadEmail = checkIn.contactEmail || checkIn.client?.email;
+
+			// Build lead DTO from check-in information with fallbacks
+			// Allow minimal information: location, notes, and any available contact info
+			// Branch is optional - the service handles branchId parameter separately
+			// Note: Validation pipes don't run when calling service directly, so we can make branch optional
+			const createLeadDto: Omit<CreateLeadDto, 'branch'> & { branch?: { uid: number } } = {
+				name: leadName,
+				phone: leadPhone,
+				email: leadEmail,
+				companyName: checkIn.companyName || checkIn.client?.name,
+				image: checkIn.contactImage || checkIn.checkInPhoto || checkIn.client?.logo,
+				notes: this.buildLeadNotesFromCheckIn(checkIn, checkInId),
+				latitude,
+				longitude,
+				source: LeadSource.OTHER,
+			};
+
+			// Only include branch if we have a resolved branch ID
+			// The service will use branchId parameter which takes precedence anyway
+			if (resolvedBranchId) {
+				createLeadDto.branch = { uid: resolvedBranchId };
+			}
+
+			// Log before creating lead from visit conversion
+			this.logger.log(
+				`[${operationId}] Creating lead from visit conversion (checkInId: ${checkInId}, name: ${leadName || 'N/A'})...`
+			);
+
+			// Create lead using LeadsService
+			// Pass resolvedBranchId separately - service will use this if provided (takes precedence over DTO branch)
+			// Type assertion is safe here since validation pipes don't run at service level
+			const leadResult = await this.leadsService.create(
+				createLeadDto as CreateLeadDto,
+				orgId,
+				resolvedBranchId, // This parameter takes precedence and is optional
+				clerkUserId,
+				'visit_conversion', // Source context for logging
+			);
+
+			if (!leadResult?.data?.uid) {
+				throw new BadRequestException('Failed to create lead from check-in');
+			}
+
+			// Log successful lead creation with details
+			this.logger.log(
+				`[${operationId}] Lead created successfully from visit conversion: leadId=${leadResult.data.uid}, name=${leadResult.data.name || leadName}`
+			);
+
+			// Update check-in with leadUid
+			checkIn.leadUid = leadResult.data.uid;
+			await this.checkInRepository.save(checkIn);
+
+			// Note: Lead cache invalidation is already handled by leadsService.create() internally
+			// Mobile-side React Query cache invalidation will handle UI updates
+
+			const duration = Date.now() - startTime;
+			this.logger.log(
+				`✅ [${operationId}] Successfully converted check-in ${checkInId} to lead ${leadResult.data.uid} after ${duration}ms`
+			);
+
+			return {
+				message: process.env.SUCCESS_MESSAGE || 'Check-in converted to lead successfully',
+				lead: {
+					uid: leadResult.data.uid,
+					name: leadResult.data.name || leadName,
+				},
+			};
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(
+				`❌ [${operationId}] Failed to convert check-in to lead after ${duration}ms: ${error.message}`,
+				error.stack,
+			);
+			if (error instanceof NotFoundException || error instanceof BadRequestException || error instanceof ForbiddenException) {
+				throw error;
+			}
+			throw new BadRequestException(error?.message || 'Failed to convert check-in to lead');
 		}
 	}
 }

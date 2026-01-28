@@ -2,7 +2,7 @@ import { IsString, IsOptional, IsEnum, IsArray, IsDate, IsNumber, ValidateNested
 import { TaskStatus, TaskPriority, RepetitionType, TaskType, JobStatus } from '../../lib/enums/task.enums';
 import { Type } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
-import { AssigneeDto, ClientDto, CreatorDto, SubtaskDto } from './create-task.dto';
+import { AssigneeDto, ClientDto, SubtaskDto } from './create-task.dto';
 import { UpdateSubtaskDto } from './update-subtask.dto';
 
 export class UpdateTaskDto {
@@ -139,16 +139,6 @@ export class UpdateTaskDto {
 	@Type(() => UpdateSubtaskDto)
 	@IsOptional()
 	subtasks?: UpdateSubtaskDto[];
-
-	@ApiProperty({
-		description: 'Array of creators',
-		type: [CreatorDto],
-	})
-	@IsArray()
-	@ValidateNested({ each: true })
-	@Type(() => CreatorDto)
-	@IsOptional()
-	creators?: CreatorDto[];
 
 	@ApiProperty({
 		description: 'Comments',

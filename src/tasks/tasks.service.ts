@@ -405,7 +405,7 @@ export class TasksService {
 		}
 	}
 
-	async create(createTaskDto: CreateTaskDto, orgId?: number, branchId?: number): Promise<{ message: string }> {
+	async create(createTaskDto: CreateTaskDto, orgId?: number, branchId?: number, clerkUserId?: string): Promise<{ message: string }> {
 		try {
 			// === CRITICAL PATH - Operations before response ===
 			
@@ -477,42 +477,28 @@ export class TasksService {
 			}
 
 			// Set creator with validation
-			if (createTaskDto.creators?.[0]) {
-				const creator = await this.userRepository.findOne({
-					where: { uid: createTaskDto.creators[0].uid },
-					relations: ['organisation'],
-				});
-
-				if (creator) {
-					// Validate creator belongs to the same organization
-					if (creator.organisation?.uid !== orgId) {
-						this.logger.warn(`Creator ${creator.uid} belongs to different organization ${creator.organisation?.uid}`);
-						throw new BadRequestException('Creator must belong to the same organization');
-					}
-					task.creator = creator;
-				} else {
-					this.logger.warn(`Creator with ID ${createTaskDto.creators[0].uid} not found`);
-					// Fallback: use first assignee as creator if available
-					if (task.assignees?.[0]) {
-						const fallbackCreator = await this.userRepository.findOne({
-							where: { clerkUserId: task.assignees[0].clerkUserId },
-						});
-						if (fallbackCreator) {
-							task.creator = fallbackCreator;
-						}
-					}
-				}
-			} else {
-				// If no creator specified, use first assignee as creator
-				if (task.assignees?.[0]) {
-					const fallbackCreator = await this.userRepository.findOne({
-						where: { clerkUserId: task.assignees[0].clerkUserId },
-					});
-					if (fallbackCreator) {
-						task.creator = fallbackCreator;
-					}
-				}
+			// Creator is extracted from token (clerkUserId)
+			if (!clerkUserId) {
+				throw new BadRequestException('Creator ID is required');
 			}
+
+			const creator = await this.userRepository.findOne({
+				where: { clerkUserId },
+				relations: ['organisation'],
+			});
+
+			if (!creator) {
+				this.logger.warn(`Creator with Clerk ID ${clerkUserId} not found`);
+				throw new BadRequestException('Creator not found');
+			}
+
+			// Validate creator belongs to the same organization
+			if (creator.organisation?.uid !== orgId) {
+				this.logger.warn(`Creator ${creator.uid} belongs to different organization ${creator.organisation?.uid}`);
+				throw new BadRequestException('Creator must belong to the same organization');
+			}
+
+			task.creator = creator;
 
 			// Set organization and branch
 			if (orgId) {

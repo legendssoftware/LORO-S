@@ -879,17 +879,26 @@ export class ClaimsService {
 			throw new BadRequestException('User reference (ref) is required and must be a valid numeric UID');
 		}
 		const refNum = Number(ref);
-		// Resolve Clerk org ID to numeric uid
-		const orgUid = orgId ? await this.resolveOrgId(orgId) : null;
-		if (orgId && !orgUid) {
-			throw new BadRequestException(`Organization not found for ID: ${orgId}`);
+		
+		if (!orgId) {
+			this.logger.warn(`❌ [ClaimsService] Organization ID is required for user claims retrieval`);
+			throw new BadRequestException({
+				statusCode: 400,
+				message: 'Organization ID is required to retrieve user claims',
+				error: 'Bad Request',
+				action: 'Please ensure you are authenticated and your organization is properly configured',
+				cause: 'Organization ID was not provided in the request context',
+			});
 		}
+
+		// Resolve user UID to Clerk user ID
 		const clerkUserId = await this.resolveClerkUserIdByUid(refNum);
 		if (!clerkUserId) {
 			throw new NotFoundException(`User with UID ${refNum} not found or has no Clerk ID`);
 		}
+
 		const startTime = Date.now();
-		this.logger.log(`🔍 [ClaimsService] Finding claims for user ${refNum}, orgId: ${orgId}, orgUid: ${orgUid}, branchId: ${branchId}, requestingUser: ${requestingUserId}, accessLevel: ${userAccessLevel}`);
+		this.logger.log(`🔍 [ClaimsService] Finding claims for user ${refNum} (clerkUserId: ${clerkUserId}), orgId: ${orgId}, branchId: ${branchId || 'all'}, requestingUser: ${requestingUserId}, accessLevel: ${userAccessLevel}`);
 
 		try {
 			// Check if requesting user is admin, owner, developer, or technician - they can view any user's claims
@@ -901,22 +910,19 @@ export class ClaimsService {
 				throw new NotFoundException('Access denied: You can only view your own claims');
 			}
 
+			// Build query using Clerk IDs (strings) - following leads service pattern
 			const queryBuilder = this.claimsRepository
 				.createQueryBuilder('claim')
 				.leftJoinAndSelect('claim.owner', 'owner')
 				.leftJoinAndSelect('claim.organisation', 'organisation')
 				.leftJoinAndSelect('claim.branch', 'branch')
 				.where('claim.ownerClerkUserId = :clerkUserId', { clerkUserId })
-				.andWhere('claim.isDeleted = :isDeleted', { isDeleted: false });
+				.andWhere('claim.isDeleted = :isDeleted', { isDeleted: false })
+				.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 
-			// Add organization filter if provided - use organisationUid directly
-			if (orgId) {
-				queryBuilder.andWhere('claim.organisationUid = :orgId', { orgId: Number(orgId) });
-			}
-
-			// Add branch filter if provided - use branchUid directly
-			if (branchId) {
-				queryBuilder.andWhere('claim.branchUid = :branchId', { branchId: Number(branchId) });
+			// Add branch filter if provided - use branchUid directly (numeric)
+			if (branchId != null && Number.isFinite(Number(branchId))) {
+				queryBuilder.andWhere('branch.uid = :branchId', { branchId: Number(branchId) });
 			}
 
 			const claims = await queryBuilder.getMany();

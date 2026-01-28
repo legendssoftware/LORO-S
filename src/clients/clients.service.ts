@@ -2834,7 +2834,6 @@ export class ClientsService {
 			repetitionType: RepetitionType.NONE, // Don't use task repetition, use schedule repetition
 			assignees: [{ uid: schedule.assignedTo.uid }],
 			client: [{ uid: schedule.client.uid }],
-			creators: [{ uid: schedule.assignedTo.uid }],
 			targetCategory: 'communication_schedule',
 			attachments: [],
 			subtasks: [],

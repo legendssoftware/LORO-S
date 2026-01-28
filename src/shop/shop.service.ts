@@ -963,7 +963,7 @@ export class ShopService {
 		return response;
 	}
 
-	async createQuotation(quotationData: CheckoutDto, orgId?: string, branchId?: number): Promise<{ message: string }> {
+	async createQuotation(quotationData: CheckoutDto, orgId?: string, branchId?: number, clerkUserId?: string): Promise<{ message: string }> {
 		try {
 			if (!quotationData?.items?.length) {
 				throw new Error('Quotation items are required');
@@ -999,10 +999,10 @@ export class ShopService {
 			}
 			const resolvedBranchId = client.branchUid || branchId;
 
-			// Resolve owner user ID (handles client-placed orders); owner.uid is string (clerk id or numeric)
-			const ownerRef = (quotationData?.owner as { uid?: string } | undefined)?.uid;
+			// Resolve owner user ID (handles client-placed orders)
+			// Owner is extracted from token (clerkUserId)
 			const ownerInfo = await this.resolveOwnerUserId(
-				ownerRef != null ? ownerRef : undefined,
+				clerkUserId != null ? clerkUserId : undefined,
 				client,
 				resolvedOrgId
 			);
@@ -1524,6 +1524,7 @@ export class ShopService {
 		blankQuotationData: CreateBlankQuotationDto,
 		orgId?: string,
 		branchId?: number,
+		clerkUserId?: string,
 	): Promise<{ message: string; quotationId?: string }> {
 		try {
 			this.logger.log(`[createBlankQuotation] Starting blank quotation creation for orgId: ${orgId}, branchId: ${branchId}`);
@@ -1564,10 +1565,10 @@ export class ShopService {
 			}
 			const resolvedBranchId = client.branchUid || branchId;
 
-			// Resolve owner user ID (handles client-placed orders); owner.uid is string (clerk id or numeric)
-			const blankOwnerRef = (blankQuotationData?.owner as { uid?: string } | undefined)?.uid;
+			// Resolve owner user ID (handles client-placed orders)
+			// Owner is extracted from token (clerkUserId)
 			const ownerInfo = await this.resolveOwnerUserId(
-				blankOwnerRef != null ? blankOwnerRef : undefined,
+				clerkUserId != null ? clerkUserId : undefined,
 				client,
 				resolvedOrgId
 			);
