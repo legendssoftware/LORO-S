@@ -632,14 +632,6 @@ export class ShopService {
 				message: process.env.SUCCESS_MESSAGE,
 			};
 
-			this.logger.log(`[${operationId}] ✅ FINAL CATEGORIES RESPONSE:`, {
-				response: finalResponse,
-				categoriesCount: uniqueCategories.length,
-				categories: uniqueCategories,
-				orgId,
-				branchId,
-			});
-
 			return finalResponse;
 		} catch (error) {
 			this.logger.error(`[${operationId}] Error fetching categories: ${error?.message}`, error?.stack);

@@ -2110,5 +2110,35 @@ export class PerformanceDashboardGenerator {
 	private getDefaultEndDate(): string {
 		return new Date().toISOString().split('T')[0];
 	}
+
+	/**
+	 * Get year-to-date transaction count for aggregation milestone checks.
+	 * Uses daily aggregations (COUNT(DISTINCT doc_number)) for the current year.
+	 */
+	async getYtdTransactionCount(params: {
+		organisationId: number;
+		countryCode?: string;
+	}): Promise<number> {
+		const now = new Date();
+		const ytdStart = `${now.getFullYear()}-01-01`;
+		const ytdEnd = now.toISOString().split('T')[0];
+		const countryCode = params.countryCode || 'SA';
+
+		const filters: ErpQueryFilters = {
+			startDate: ytdStart,
+			endDate: ytdEnd,
+		};
+
+		const dailyAggregations = await this.erpDataService.getDailyAggregations(filters, countryCode);
+		const total = dailyAggregations.reduce((sum, agg) => {
+			const count = typeof agg.transactionCount === 'number'
+				? agg.transactionCount
+				: parseInt(String(agg.transactionCount || 0), 10);
+			return sum + count;
+		}, 0);
+
+		this.logger.log(`[getYtdTransactionCount] Org ${params.organisationId} YTD (${ytdStart} to ${ytdEnd}): ${total} transactions`);
+		return total;
+	}
 }
 

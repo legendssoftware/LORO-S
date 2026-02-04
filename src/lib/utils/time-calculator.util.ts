@@ -352,6 +352,16 @@ export class TimeCalculatorUtil {
   }
 
   /**
+   * Pick a random integer of minutes in [startMinutes, endMinutes] (inclusive).
+   * Used for varying clock-in/clock-out within a time window.
+   */
+  static randomMinutesInRange(startMinutes: number, endMinutes: number): number {
+    const low = Math.min(startMinutes, endMinutes);
+    const high = Math.max(startMinutes, endMinutes);
+    return low + Math.floor(Math.random() * (high - low + 1));
+  }
+
+  /**
    * Get day of week string
    */
   static getDayOfWeek(date: Date): string {

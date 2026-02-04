@@ -115,11 +115,11 @@ export class CheckInsService {
 
 	/**
 	 * Extract location-based name from check-in data
-	 * Tries fullAddress, contactAddress, then coordinates
+	 * Tries contactAddress, then coordinates
 	 */
 	private getLocationNameFromCheckIn(dto: CreateCheckInDto): string | null {
-		// Try fullAddress first, then contactAddress
-		const addr = dto.fullAddress || dto.contactAddress;
+		// Try contactAddress
+		const addr = dto.contactAddress;
 		if (addr) {
 			if (addr.street?.trim()) {
 				return `Visit at ${addr.street.trim()}`;

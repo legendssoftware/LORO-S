@@ -177,6 +177,11 @@ export interface NotificationData {
 		entityId?: number;
 		entityType?: string;
 	};
+
+	/** When true, skip push notifications (e.g. org-level setting). */
+	disablePush?: boolean;
+	/** When true, skip email notifications (e.g. org-level setting). */
+	disableEmail?: boolean;
 }
 
 export interface NotificationResult {

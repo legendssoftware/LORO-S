@@ -1703,6 +1703,35 @@ export class UserService {
 	}
 
 	/**
+	 * Filter recipient emails by email notification preference.
+	 * Returns only emails that are allowed to receive notifications:
+	 * - No user record (external recipient) → allow
+	 * - User with preferences.emailNotifications !== false → allow
+	 * - User with preferences.emailNotifications === false → exclude
+	 * @param emails - List of recipient email addresses
+	 * @returns Subset of emails that have consented to email notifications
+	 */
+	async filterEmailsByEmailNotificationPreference(emails: string[]): Promise<string[]> {
+		if (!emails || emails.length === 0) {
+			return [];
+		}
+		const uniqueEmails = [...new Set(emails)].filter((e) => e && typeof e === 'string' && e.trim().length > 0);
+		if (uniqueEmails.length === 0) {
+			return [];
+		}
+		const users = await this.userRepository.find({
+			where: { email: In(uniqueEmails) },
+			select: ['email', 'preferences'],
+		});
+		const excludeSet = new Set(
+			users
+				.filter((u) => u.preferences?.emailNotifications === false)
+				.map((u) => (u.email || '').toLowerCase().trim()),
+		);
+		return uniqueEmails.filter((e) => !excludeSet.has(e.trim().toLowerCase()));
+	}
+
+	/**
 	 * Find user for authentication purposes (includes password)
 	 * Only returns active users for security
 	 * @param searchParameter - Username to search for

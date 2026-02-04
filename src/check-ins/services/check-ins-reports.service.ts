@@ -73,8 +73,9 @@ export class CheckInsReportsService {
 			const startDate = startOfDay(reportDateInTz);
 			const endDate = endOfDay(reportDateInTz);
 
-			// Fetch check-ins for the day
-			const checkIns = await this.fetchCheckInsForDateRange(orgId, startDate, endDate);
+			// Fetch check-ins for the day using Clerk org ID (string)
+			const clerkOrgId = org.clerkOrgId || org.ref || String(orgId);
+			const checkIns = await this.fetchCheckInsForDateRange(clerkOrgId, startDate, endDate);
 
 			if (checkIns.length === 0) {
 				this.logger.log(`[${operationId}] No check-ins found for ${format(reportDate, 'yyyy-MM-dd')}`);
@@ -98,6 +99,7 @@ export class CheckInsReportsService {
 
 			// Prepare email data
 			const emailData: CheckInsDailyReportData = {
+				name: org.name || 'Organization',
 				organizationName: org.name || 'Organization',
 				reportDate: format(reportDate, 'dd MMM yyyy'),
 				checkIns: formattedData,
@@ -129,13 +131,13 @@ export class CheckInsReportsService {
 	 * Fetch check-ins for date range
 	 */
 	private async fetchCheckInsForDateRange(
-		orgId: number,
+		clerkOrgId: string,
 		startDate: Date,
 		endDate: Date,
 	): Promise<CheckIn[]> {
 		return this.checkInRepository.find({
 			where: {
-				organisationUid: orgId,
+				organisationUid: clerkOrgId,
 				checkInTime: Between(startDate, endDate),
 			},
 			relations: ['owner', 'client', 'branch'],
@@ -146,54 +148,89 @@ export class CheckInsReportsService {
 	}
 
 	/**
-	 * Format check-ins for table display
+	 * Format check-ins for table display (12 unified columns for PDF export)
 	 */
 	private formatCheckInsForTable(checkIns: CheckIn[]) {
-		return checkIns.map(checkIn => ({
-			date: format(new Date(checkIn.checkInTime), 'dd MMM yyyy'),
-			user: checkIn.owner
-				? `${checkIn.owner.name || ''} ${checkIn.owner.surname || ''}`.trim() || '-'
-				: '-',
-			branch: checkIn.branch?.name || '-',
-			checkInTime: format(new Date(checkIn.checkInTime), 'HH:mm'),
-			checkOutTime: checkIn.checkOutTime ? format(new Date(checkIn.checkOutTime), 'HH:mm') : '-',
-			duration: checkIn.duration || '-',
-			status: checkIn.checkOutTime ? 'Completed' : 'In Progress',
-			clientName: checkIn.client?.name || '-',
-			contactFullName: checkIn.contactFullName || '-',
-			contactCellPhone: checkIn.contactCellPhone || '-',
-			contactLandline: checkIn.contactLandline || '-',
-			contactEmail: checkIn.contactEmail || '-',
-			contactAddress: this.formatAddress(checkIn.contactAddress),
-			companyName: checkIn.companyName || '-',
-			businessType: checkIn.businessType || '-',
-			personSeenPosition: checkIn.personSeenPosition || '-',
-			checkInLocation: checkIn.checkInLocation || '-',
-			checkOutLocation: checkIn.checkOutLocation || '-',
-			salesValue: checkIn.salesValue ? `R ${checkIn.salesValue.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '-',
-			quotationNumber: checkIn.quotationNumber || '-',
-			quotationStatus: checkIn.quotationStatus || '-',
-			notes: checkIn.notes || '-',
-			resolution: checkIn.resolution || '-',
-			followUp: checkIn.followUp || '-',
-		}));
+		return checkIns.map(checkIn => {
+			const checkInDt = new Date(checkIn.checkInTime);
+			const checkOutDt = checkIn.checkOutTime ? new Date(checkIn.checkOutTime) : null;
+			const datePart = format(checkInDt, 'MMM d, yyyy, HH:mm');
+			const outPart = checkOutDt ? format(checkOutDt, 'HH:mm') : '-';
+			const durationPart = checkIn.duration || '-';
+			const dateTime = `${datePart} - ${outPart} - ${durationPart}`;
+
+			const inLoc = checkIn.checkInLocation || '-';
+			const outLoc = checkIn.checkOutLocation || '-';
+			const checkInCell = `In: ${inLoc} | Out: ${outLoc}`;
+
+			const valueExVat = checkIn.salesValue
+				? `R ${Number(checkIn.salesValue).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+				: '-';
+
+			return {
+				dateTime,
+				checkIn: checkInCell,
+				methodOfVisit: this.formatMethodOfContactLabel(checkIn.methodOfContact),
+				companyName: checkIn.companyName || '-',
+				typeOfBusiness: checkIn.businessType ? String(checkIn.businessType).replace(/_/g, ' ') : '-',
+				personSeen: checkIn.contactFullName || '-',
+				positionOfPersonSeen: checkIn.personSeenPosition || '-',
+				contactDetails: this.formatContactDetails(checkIn),
+				notes: checkIn.notes || '-',
+				quoteNumber: checkIn.quotationNumber || '-',
+				valueExVat,
+				followUp: checkIn.followUp || '-',
+				meetingLink: checkIn.meetingLink || null,
+			};
+		});
 	}
 
 	/**
 	 * Format address object to string
 	 */
 	private formatAddress(address: any): string {
-		if (!address) return '-';
+		if (!address) return '';
 		if (typeof address === 'string') return address;
+		if (address.formattedAddress) return address.formattedAddress;
 		const parts = [
+			address.streetNumber,
 			address.street,
 			address.suburb,
 			address.city,
-			address.state,
+			address.state || address.province,
 			address.postalCode,
 			address.country,
 		].filter(Boolean);
-		return parts.length > 0 ? parts.join(', ') : '-';
+		return parts.length > 0 ? parts.join(', ') : '';
+	}
+
+	/**
+	 * Map methodOfContact to human-readable label
+	 */
+	private formatMethodOfContactLabel(methodOfContact: string | null | undefined): string {
+		if (!methodOfContact) return '-';
+		const labels: Record<string, string> = {
+			PHONE_CALL: 'Phone call',
+			WHATSAPP: 'WhatsApp',
+			EMAIL: 'Email',
+			IN_PERSON_VISIT: 'In-person visit',
+			VIDEO_CALL: 'Video call',
+			OTHER: 'Other',
+		};
+		return labels[methodOfContact] ?? methodOfContact.replace(/_/g, ' ');
+	}
+
+	/**
+	 * Combine contact cell, landline, email, and address into a single string
+	 */
+	private formatContactDetails(ci: CheckIn): string {
+		const parts: string[] = [];
+		if (ci.contactCellPhone) parts.push(`Cell: ${ci.contactCellPhone}`);
+		if (ci.contactLandline) parts.push(`Landline: ${ci.contactLandline}`);
+		if (ci.contactEmail) parts.push(`Email: ${ci.contactEmail}`);
+		const addr = this.formatAddress(ci.contactAddress);
+		if (addr) parts.push(addr);
+		return parts.length > 0 ? parts.join(' | ') : '-';
 	}
 
 	/**

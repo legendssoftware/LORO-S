@@ -491,6 +491,30 @@ export class CommunicationService {
 				this.logger.warn(`[${operationId}] Invalid email addresses detected: ${invalidEmails.join(', ')}`);
 			}
 
+			// Gate by user preference: only send to recipients who have consented to email notifications
+			const allowedRecipients = await this.userService.filterEmailsByEmailNotificationPreference(
+				recipientsEmails.filter((e) => this.isValidEmail(e)),
+			);
+			if (allowedRecipients.length === 0) {
+				this.logger.log(
+					`[${operationId}] No recipients with email notification consent for ${emailType}; skipping send`,
+				);
+				return {
+					accepted: [],
+					rejected: recipientsEmails,
+					messageId: null,
+					messageSize: null,
+					envelopeTime: null,
+					messageTime: null,
+					response: 'Skipped: no recipients with email notification consent',
+					envelope: null,
+				};
+			}
+			if (allowedRecipients.length < recipientsEmails.length) {
+				const skipped = recipientsEmails.filter((e) => !allowedRecipients.includes(e));
+				this.logger.debug(`[${operationId}] Skipped ${skipped.length} recipient(s) without email consent: ${skipped.join(', ')}`);
+			}
+
 			this.logger.debug(`[${operationId}] Generating email template for type: ${emailType}`);
 			const templateStartTime = Date.now();
 			const template = this.getEmailTemplate(emailType, data);
@@ -509,7 +533,7 @@ export class CommunicationService {
 			this.logger.debug(`[${operationId}] Sending email via SMTP...`);
 			const result = await this.emailService.sendMail({
 				from: fromField,
-				to: recipientsEmails,
+				to: allowedRecipients,
 				subject: template.subject,
 				html: template.body,
 			});
@@ -520,7 +544,7 @@ export class CommunicationService {
 			const dbSaveStartTime = Date.now();
 			const communicationLog = await this.communicationLogRepository.save({
 				emailType,
-				recipientEmails: recipientsEmails,
+				recipientEmails: allowedRecipients,
 				accepted: result.accepted,
 				rejected: result.rejected,
 				messageId: result.messageId,

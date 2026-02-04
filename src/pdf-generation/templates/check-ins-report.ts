@@ -18,30 +18,19 @@ export interface CheckInsReportTemplateData {
 	organizationName: string;
 	reportDate: string;
 	checkIns: Array<{
-		date: string;
-		user: string;
-		branch: string;
-		checkInTime: string;
-		checkOutTime: string;
-		duration: string;
-		status: string;
-		clientName: string;
-		contactFullName: string;
-		contactCellPhone: string;
-		contactLandline: string;
-		contactEmail: string;
-		contactAddress: string;
+		dateTime: string;
+		checkIn: string;
+		methodOfVisit: string;
 		companyName: string;
-		businessType: string;
-		personSeenPosition: string;
-		checkInLocation: string;
-		checkOutLocation: string;
-		salesValue: string;
-		quotationNumber: string;
-		quotationStatus: string;
+		typeOfBusiness: string;
+		personSeen: string;
+		positionOfPersonSeen: string;
+		contactDetails: string;
 		notes: string;
-		resolution: string;
+		quoteNumber: string;
+		valueExVat: string;
 		followUp: string;
+		meetingLink: string | null;
 	}>;
 	summary: {
 		totalVisits: number;
@@ -54,6 +43,12 @@ export interface CheckInsReportTemplateData {
 		uniqueClients: number;
 	};
 	generatedAt: string;
+}
+
+function truncate(s: string, maxLen: number): string {
+	if (!s) return '-';
+	const t = String(s).trim();
+	return t.length <= maxLen ? t : t.slice(0, maxLen - 2) + '..';
 }
 
 export function generateCheckInsReportPDF(doc: any, data: CheckInsReportTemplateData): void {
@@ -104,14 +99,21 @@ export function generateCheckInsReportPDF(doc: any, data: CheckInsReportTemplate
 	doc.text(`Unique Clients: ${data.summary.uniqueClients}`, summaryX, y);
 	y += 25;
 
-	// Table Header
-	const tableTop = y;
-	const colWidths = [50, 60, 50, 40, 40, 40, 50, 60, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50];
+	// Table Header – 12 unified columns
+	const colWidths = [75, 90, 40, 55, 45, 45, 45, 95, 75, 45, 50, 92];
 	const colHeaders = [
-		'Date', 'User', 'Branch', 'Check In', 'Check Out', 'Duration', 'Status',
-		'Client', 'Contact', 'Phone', 'Email', 'Address', 'Company', 'Business',
-		'Position', 'Location In', 'Location Out', 'Sales', 'Quote #', 'Quote Status',
-		'Notes', 'Resolution', 'Follow Up'
+		'Date and time',
+		'Check-In',
+		'Method of visit',
+		'Company Name',
+		'Type of Business',
+		'Person Seen',
+		'Position of Person Seen',
+		'Contact Details',
+		'Notes',
+		'Quote Number',
+		'Value - ex-VAT',
+		'Follow Up',
 	];
 
 	doc.fontSize(FONT_SIZE_SMALL).font(FONT_BOLD).fillColor(COLOR_TEXT_HEADER);
@@ -123,14 +125,14 @@ export function generateCheckInsReportPDF(doc: any, data: CheckInsReportTemplate
 	});
 	y += 15;
 
+	const rowHeight = 14;
+
 	// Table Rows
 	doc.fontSize(FONT_SIZE_SMALL).font(FONT_REGULAR).fillColor(COLOR_TEXT_NORMAL);
-	data.checkIns.forEach((checkIn, index) => {
-		// Check if we need a new page
-		if (y > doc.page.height - PAGE_MARGIN - 20) {
-			doc.addPage();
+	data.checkIns.forEach((checkIn) => {
+		if (y > doc.page.height - PAGE_MARGIN - 25) {
+			doc.addPage({ size: [792, 612] });
 			y = PAGE_MARGIN;
-			// Redraw header
 			x = PAGE_MARGIN;
 			colHeaders.forEach((header, i) => {
 				doc.rect(x, y, colWidths[i], 15).fillAndStroke(COLOR_TABLE_HEADER_BG, COLOR_LINE);
@@ -140,27 +142,35 @@ export function generateCheckInsReportPDF(doc: any, data: CheckInsReportTemplate
 			y += 15;
 		}
 
-		const rowHeight = 12;
 		x = PAGE_MARGIN;
-		
-		const values = [
-			checkIn.date, checkIn.user, checkIn.branch, checkIn.checkInTime, checkIn.checkOutTime,
-			checkIn.duration, checkIn.status, checkIn.clientName, checkIn.contactFullName,
-			checkIn.contactCellPhone || checkIn.contactLandline, checkIn.contactEmail,
-			checkIn.contactAddress.substring(0, 30), checkIn.companyName, checkIn.businessType,
-			checkIn.personSeenPosition, checkIn.checkInLocation.substring(0, 20),
-			checkIn.checkOutLocation ? checkIn.checkOutLocation.substring(0, 20) : '-',
-			checkIn.salesValue, checkIn.quotationNumber, checkIn.quotationStatus,
-			checkIn.notes ? checkIn.notes.substring(0, 20) : '-',
-			checkIn.resolution ? checkIn.resolution.substring(0, 20) : '-',
-			checkIn.followUp ? checkIn.followUp.substring(0, 20) : '-'
+		const cells = [
+			truncate(checkIn.dateTime, 28),
+			truncate(checkIn.checkIn, 35),
+			truncate(checkIn.methodOfVisit, 18),
+			truncate(checkIn.companyName, 22),
+			truncate(checkIn.typeOfBusiness, 18),
+			truncate(checkIn.personSeen, 18),
+			truncate(checkIn.positionOfPersonSeen, 18),
+			truncate(checkIn.contactDetails, 38),
+			truncate(checkIn.notes, 30),
+			truncate(checkIn.quoteNumber, 18),
+			truncate(checkIn.valueExVat, 20),
+			truncate(checkIn.followUp + (checkIn.meetingLink ? ' [Link]' : ''), 36),
 		];
 
-		values.forEach((value, i) => {
+		for (let i = 0; i < 12; i++) {
 			doc.rect(x, y, colWidths[i], rowHeight).strokeColor(COLOR_LINE).stroke();
-			doc.text(String(value || '-'), x + 2, y + 2, { width: colWidths[i] - 4, align: 'left' });
+			doc.fillColor(COLOR_TEXT_NORMAL);
+			doc.text(cells[i] || '-', x + 2, y + 2, { width: colWidths[i] - 4, align: 'left' });
+			if (i === 11 && checkIn.meetingLink) {
+				try {
+					doc.link(x, y, colWidths[i], rowHeight, checkIn.meetingLink);
+				} catch {
+					// ignore link errors
+				}
+			}
 			x += colWidths[i];
-		});
+		}
 
 		y += rowHeight;
 	});

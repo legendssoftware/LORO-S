@@ -520,6 +520,13 @@ export class NotificationsService {
 	}
 
 	/**
+	 * Gate push by user preference: only send when user has consented (preferences.notifications !== false).
+	 */
+	private shouldSendPush(user: User): boolean {
+		return user.preferences?.notifications !== false;
+	}
+
+	/**
 	 * Send push notification for task assignment
 	 */
 	async sendTaskAssignmentNotification(
@@ -529,11 +536,18 @@ export class NotificationsService {
 		assignedBy: string,
 	): Promise<void> {
 		try {
-			const users = await this.userRepository.find({ where: { uid: In(userIds) } });
+			const users = await this.userRepository.find({
+				where: { uid: In(userIds) },
+				select: ['uid', 'expoPushToken', 'preferences'],
+			});
 			const messages: ExpoPushMessage[] = [];
 
 			for (const user of users) {
-				if (user.expoPushToken && this.expoPushService.isValidExpoPushToken(user.expoPushToken)) {
+				if (
+					this.shouldSendPush(user) &&
+					user.expoPushToken &&
+					this.expoPushService.isValidExpoPushToken(user.expoPushToken)
+				) {
 					const message = this.expoPushService.createTaskAssignmentNotification(
 						user.expoPushToken,
 						taskTitle,
@@ -544,7 +558,6 @@ export class NotificationsService {
 					messages.push(message);
 				}
 			}
-
 
 			if (messages.length > 0) {
 				await this.expoPushService.sendPushNotifications(messages);
@@ -564,11 +577,18 @@ export class NotificationsService {
 		assignedBy: string,
 	): Promise<void> {
 		try {
-			const users = await this.userRepository.findByIds(userIds);
+			const users = await this.userRepository.find({
+				where: { uid: In(userIds) },
+				select: ['uid', 'expoPushToken', 'preferences'],
+			});
 			const messages: ExpoPushMessage[] = [];
 
 			for (const user of users) {
-				if (user.expoPushToken && this.expoPushService.isValidExpoPushToken(user.expoPushToken)) {
+				if (
+					this.shouldSendPush(user) &&
+					user.expoPushToken &&
+					this.expoPushService.isValidExpoPushToken(user.expoPushToken)
+				) {
 					const message = this.expoPushService.createLeadAssignmentNotification(
 						user.expoPushToken,
 						leadName,
@@ -597,9 +617,17 @@ export class NotificationsService {
 		timeLeft: string,
 	): Promise<void> {
 		try {
-			const user = await this.userRepository.findOne({ where: { uid: userId } });
+			const user = await this.userRepository.findOne({
+				where: { uid: userId },
+				select: ['uid', 'expoPushToken', 'preferences'],
+			});
 
-			if (user?.expoPushToken && this.expoPushService.isValidExpoPushToken(user.expoPushToken)) {
+			if (
+				user &&
+				this.shouldSendPush(user) &&
+				user.expoPushToken &&
+				this.expoPushService.isValidExpoPushToken(user.expoPushToken)
+			) {
 				const message = this.expoPushService.createTaskReminderNotification(
 					user.expoPushToken,
 					taskTitle,
@@ -623,9 +651,17 @@ export class NotificationsService {
 		missedCount: number,
 	): Promise<void> {
 		try {
-			const user = await this.userRepository.findOne({ where: { uid: userId } });
+			const user = await this.userRepository.findOne({
+				where: { uid: userId },
+				select: ['uid', 'expoPushToken', 'preferences'],
+			});
 
-			if (user?.expoPushToken && this.expoPushService.isValidExpoPushToken(user.expoPushToken)) {
+			if (
+				user &&
+				this.shouldSendPush(user) &&
+				user.expoPushToken &&
+				this.expoPushService.isValidExpoPushToken(user.expoPushToken)
+			) {
 				const message = this.expoPushService.createOverdueTaskNotification(
 					user.expoPushToken,
 					taskCount,
@@ -649,11 +685,18 @@ export class NotificationsService {
 		completedBy: string,
 	): Promise<void> {
 		try {
-			const users = await this.userRepository.findByIds(userIds);
+			const users = await this.userRepository.find({
+				where: { uid: In(userIds) },
+				select: ['uid', 'expoPushToken', 'preferences'],
+			});
 			const messages: ExpoPushMessage[] = [];
 
 			for (const user of users) {
-				if (user.expoPushToken && this.expoPushService.isValidExpoPushToken(user.expoPushToken)) {
+				if (
+					this.shouldSendPush(user) &&
+					user.expoPushToken &&
+					this.expoPushService.isValidExpoPushToken(user.expoPushToken)
+				) {
 					const message = this.expoPushService.createTaskCompletionNotification(
 						user.expoPushToken,
 						taskTitle,

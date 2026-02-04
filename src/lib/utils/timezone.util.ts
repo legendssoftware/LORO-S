@@ -69,6 +69,38 @@ export class TimezoneUtil {
 	}
 
 	/**
+	 * Build a UTC Date from a reference date's calendar day in org timezone at a given time (HH:mm or HH:mm:ss).
+	 * Use when setting close time to "same calendar day in org at 16:30" etc.
+	 */
+	static buildUtcFromOrgDateAndTime(date: Date, timezone: string, timeStr: string): Date {
+		try {
+			const dateStr = formatInTimeZone(date, timezone, 'yyyy-MM-dd');
+			const [y, m, d] = dateStr.split('-').map(Number);
+			const parts = timeStr.split(':').map(Number);
+			const hours = parts[0] ?? 0;
+			const minutes = parts[1] ?? 0;
+			const seconds = parts[2] ?? 0;
+			const localDate = new Date(y, m - 1, d, hours, minutes, seconds, 0);
+			return fromZonedTime(localDate, timezone);
+		} catch (error) {
+			return date;
+		}
+	}
+
+	/**
+	 * Return whether two dates fall on the same calendar day in the given timezone.
+	 */
+	static isSameCalendarDayInOrgTimezone(date1: Date, date2: Date, timezone: string): boolean {
+		try {
+			const s1 = formatInTimeZone(date1, timezone, 'yyyy-MM-dd');
+			const s2 = formatInTimeZone(date2, timezone, 'yyyy-MM-dd');
+			return s1 === s2;
+		} catch (error) {
+			return false;
+		}
+	}
+
+	/**
 	 * Convert date to organization timezone for JSON serialization
 	 * Creates a Date object where the UTC timestamp represents the local time
 	 * When serialized to JSON, this will show the organization timezone time

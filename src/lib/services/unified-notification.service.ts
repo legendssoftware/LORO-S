@@ -1121,12 +1121,14 @@ export class UnifiedNotificationService {
 				message: 'Notifications processed successfully',
 			};
 
-			// Send push notifications
-			const pushResults = await this.sendPushNotifications(data, enrichedRecipients);
+			// Send push notifications (unless disabled at org level)
+			const pushResults = data.disablePush
+				? { sent: 0, failed: 0 }
+				: await this.sendPushNotifications(data, enrichedRecipients);
 			results.pushResults = pushResults;
 
-			// Send email notifications if configured
-			if (data.email) {
+			// Send email notifications if configured (and not disabled at org level)
+			if (data.email && !data.disableEmail) {
 				const emailResults = await this.sendEmailNotifications(data, enrichedRecipients);
 				results.emailResults = emailResults;
 			}
@@ -1171,6 +1173,10 @@ export class UnifiedNotificationService {
 			emailData?: Record<string, any>;
 			customData?: Record<string, any>;
 			priority?: NotificationPriority;
+			/** Skip push for this send (e.g. org settings). */
+			disablePush?: boolean;
+			/** Skip email for this send (e.g. org settings). */
+			disableEmail?: boolean;
 		},
 	): Promise<NotificationResult> {
 		const template = this.templates.get(event);
@@ -1207,6 +1213,8 @@ export class UnifiedNotificationService {
 				entityId: variables.id || variables.taskId || variables.leadId,
 				entityType: event.includes('task') ? 'task' : 'lead',
 			},
+			disablePush: options?.disablePush,
+			disableEmail: options?.disableEmail,
 		};
 
 		// Add email configuration if requested
@@ -1240,10 +1248,11 @@ export class UnifiedNotificationService {
 
 		const users = await this.userRepository.find({
 			where: { uid: In(userIds) },
-			select: ['uid', 'email', 'expoPushToken', 'name', 'surname', 'username', 'status'],
+			select: ['uid', 'email', 'expoPushToken', 'name', 'surname', 'username', 'status', 'preferences'],
 		});
 
 		// Filter out inactive users and enrich remaining recipients
+		// Gate by user preferences: only send push/email when user has consented (preferences.notifications / emailNotifications !== false)
 		const enrichedRecipients = recipients
 			.map((recipient) => {
 				const user = users.find((u) => u.uid === recipient.userId);
@@ -1255,11 +1264,26 @@ export class UnifiedNotificationService {
 					return null;
 				}
 
+				// Respect user notification preference: exclude if explicitly disabled
+				if (user.preferences?.notifications === false) {
+					this.logger.debug(`Skipping notification for user ${user.uid} (preferences.notifications disabled)`);
+					return null;
+				}
+
+				const prefersPush = recipient.prefersPush !== undefined
+					? recipient.prefersPush
+					: true; // already filtered out users with notifications === false
+				const prefersEmail = recipient.prefersEmail !== undefined
+					? recipient.prefersEmail
+					: user.preferences?.emailNotifications !== false;
+
 				return {
 					...recipient,
 					email: recipient.email || user.email,
 					pushToken: recipient.pushToken || user.expoPushToken,
 					name: recipient.name || `${user.name || ''} ${user.surname || ''}`.trim() || user.username,
+					prefersPush,
+					prefersEmail,
 				};
 			})
 			.filter(Boolean); // Remove null entries

@@ -287,14 +287,10 @@ export class ClientsService {
 			throw new NotFoundException('User not found');
 		}
 
-		// Check if user has elevated access (only admin and owner can see all org clients)
-		const elevatedRoles = [
-			AccessLevel.OWNER,
-			AccessLevel.ADMIN
-		];
-		
-		const hasElevatedAccess = elevatedRoles.includes(user.accessLevel);
-		const userAssignedClients = hasElevatedAccess ? null : (user.assignedClientIds || []);
+		// All authenticated users can see all clients in the organization
+		// This ensures admin and any other role can see everything across the whole organization
+		const hasElevatedAccess = true;
+		const userAssignedClients = null;
 
 		return {
 			hasElevatedAccess,

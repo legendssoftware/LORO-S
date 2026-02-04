@@ -27,6 +27,7 @@ import { OrganizationReportQueryDto } from './dto/organization.report.query.dto'
 import { UserMetricsResponseDto } from './dto/user-metrics-response.dto';
 import { RequestReportDto } from './dto/request.report.dto';
 import { BulkClockInDto } from './dto/bulk-clock-in.dto';
+import { PopulateHoursDto } from './dto/populate-hours.dto';
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { ClerkAuthGuard } from '../clerk/clerk.guard';
@@ -228,54 +229,8 @@ export class AttendanceController {
 		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({
-		summary: '🕐 Employee check-in',
-		description: `
-# Smart Check-In System
-
-Advanced employee check-in system with location verification, biometric support, and comprehensive tracking.
-
-## 📍 **Location-Based Check-In**
-- **GPS Verification**: Verify employee location against designated work sites
-- **Geofencing**: Automatic check-in when entering predefined work areas
-- **QR Code Scanning**: Quick check-in using location-specific QR codes
-- **Bluetooth Beacons**: Proximity-based check-in for indoor locations
-- **Manual Override**: Supervisor approval for remote or off-site check-ins
-
-## 🛡️ **Security & Verification**
-- **Biometric Authentication**: Fingerprint, face recognition, or voice verification
-- **Photo Capture**: Optional photo capture for identity verification
-- **Device Verification**: Ensure check-in from authorized devices only
-- **Time Constraints**: Enforce check-in within allowed time windows
-- **Duplicate Prevention**: Prevent multiple check-ins for the same shift
-
-## 📊 **Smart Analytics**
-- **Pattern Recognition**: Learn employee check-in patterns and preferences
-- **Anomaly Detection**: Identify unusual check-in behavior or locations
-- **Predictive Analytics**: Forecast attendance patterns and staffing needs
-- **Performance Insights**: Track punctuality and attendance trends
-- **Compliance Monitoring**: Ensure adherence to labor laws and policies
-
-## 🎯 **Use Cases**
-- **Office Work**: Traditional office-based employee check-in
-- **Field Work**: Remote and mobile workforce attendance tracking
-- **Retail Operations**: Store and branch employee time tracking
-- **Manufacturing**: Factory and production line attendance management
-- **Healthcare**: Hospital and clinic staff scheduling and tracking
-- **Construction**: Job site and project-based attendance monitoring
-
-## 📱 **Multi-Platform Support**
-- **Mobile Apps**: Native iOS and Android applications
-- **Web Portal**: Browser-based check-in for desktop users
-- **Kiosk Mode**: Dedicated tablet or terminal-based check-in
-- **SMS Integration**: Simple SMS-based check-in for basic phones
-- **Voice Commands**: Voice-activated check-in for hands-free operations
-
-## 🔒 **Compliance & Reporting**
-- **Labor Law Compliance**: Ensure adherence to working time regulations
-- **Audit Trail**: Comprehensive logging for compliance and auditing
-- **Privacy Protection**: GDPR and POPIA compliant data handling
-- **Real-time Reporting**: Live attendance dashboards and alerts
-		`,
+		summary: 'Employee check-in',
+		description: 'Record employee check-in with optional location, device info, and notes. Uses org from auth (Clerk). Duplicate check-in for same day is rejected.',
 	})
 	@ApiBody({
 		type: CreateCheckInDto,
@@ -360,183 +315,24 @@ Advanced employee check-in system with location verification, biometric support,
 			type: 'object',
 			properties: {
 				message: { type: 'string', example: 'Success' },
-			},
-		},
-	})
-	@ApiBadRequestResponse({
-		description: 'Bad Request - Invalid data provided',
-		schema: {
-			type: 'object',
-			properties: {
-				message: { type: 'string', example: 'Error recording check-in' },
-			},
-		},
-	})
-	@Post('in')
-	@Roles(
-		AccessLevel.ADMIN,
-		AccessLevel.MANAGER,
-		AccessLevel.SUPPORT,
-		AccessLevel.DEVELOPER,
-		AccessLevel.USER,
-		AccessLevel.OWNER,
-		AccessLevel.TECHNICIAN,
-	)
-	@ApiOperation({
-		summary: '🕐 Employee check-in',
-		description: `
-# Smart Check-In System
-
-Advanced employee check-in system with location verification, biometric support, and comprehensive tracking.
-
-## 📍 **Location-Based Check-In**
-- **GPS Verification**: Verify employee location against designated work sites
-- **Geofencing**: Automatic check-in when entering predefined work areas
-- **QR Code Scanning**: Quick check-in using location-specific QR codes
-- **Bluetooth Beacons**: Proximity-based check-in for indoor locations
-- **Manual Override**: Supervisor approval for remote or off-site check-ins
-
-## 🛡️ **Security & Verification**
-- **Biometric Authentication**: Fingerprint, face recognition, or voice verification
-- **Photo Capture**: Optional photo capture for identity verification
-- **Device Verification**: Ensure check-in from authorized devices only
-- **Time Constraints**: Enforce check-in within allowed time windows
-- **Duplicate Prevention**: Prevent multiple check-ins for the same shift
-
-## 📊 **Smart Analytics**
-- **Pattern Recognition**: Learn employee check-in patterns and preferences
-- **Anomaly Detection**: Identify unusual check-in behavior or locations
-- **Predictive Analytics**: Forecast attendance patterns and staffing needs
-- **Performance Insights**: Track punctuality and attendance trends
-- **Compliance Monitoring**: Ensure adherence to labor laws and policies
-
-## 🎯 **Use Cases**
-- **Office Work**: Traditional office-based employee check-in
-- **Field Work**: Remote and mobile workforce attendance tracking
-- **Retail Operations**: Store and branch employee time tracking
-- **Manufacturing**: Factory and production line attendance management
-- **Healthcare**: Hospital and clinic staff scheduling and tracking
-- **Construction**: Job site and project-based attendance monitoring
-
-## 📱 **Multi-Platform Support**
-- **Mobile Apps**: Native iOS and Android applications
-- **Web Portal**: Browser-based check-in for desktop users
-- **Kiosk Mode**: Dedicated tablet or terminal-based check-in
-- **SMS Integration**: Simple SMS-based check-in for basic phones
-- **Voice Commands**: Voice-activated check-in for hands-free operations
-
-## 🔒 **Compliance & Reporting**
-- **Labor Law Compliance**: Ensure adherence to working time regulations
-- **Audit Trail**: Comprehensive logging for compliance and auditing
-- **Privacy Protection**: GDPR and POPIA compliant data handling
-- **Real-time Reporting**: Live attendance dashboards and alerts
-		`,
-	})
-	@ApiBody({
-		type: CreateCheckInDto,
-		description: 'Check-in payload with location, timing, and verification information',
-		examples: {
-			standardCheckIn: {
-				summary: '🏢 Standard Office Check-In',
-				description: 'Regular office-based employee check-in',
-				value: {
-					userId: 45,
-					location: {
-						latitude: -26.2041,
-						longitude: 28.0473,
-						accuracy: 10,
-					},
-					timestamp: '2023-12-01T08:30:00Z',
-					notes: 'Starting work day',
-					deviceInfo: {
-						deviceId: 'mobile-12345',
-						platform: 'iOS',
-						appVersion: '2.1.0',
-					},
-				},
-			},
-			qrCodeCheckIn: {
-				summary: '📱 QR Code Check-In',
-				description: 'Check-in using location QR code',
-				value: {
-					userId: 67,
-					qrCodeData: 'CHK_LOC_MAIN_OFFICE_2023',
-					timestamp: '2023-12-01T09:00:00Z',
-					notes: 'QR code scan at main entrance',
-					location: {
-						latitude: -26.2041,
-						longitude: 28.0473,
-						accuracy: 5,
-					},
-				},
-			},
-			biometricCheckIn: {
-				summary: '👆 Biometric Check-In',
-				description: 'Check-in with biometric verification',
-				value: {
-					userId: 89,
-					biometricData: {
-						type: 'FINGERPRINT',
-					},
-					timestamp: '2023-12-01T08:45:00Z',
-					location: {
-						latitude: -26.2041,
-						longitude: 28.0473,
-						accuracy: 8,
-					},
-					notes: 'Biometric check-in at security gate',
-				},
-			},
-		},
-	})
-	@ApiCreatedResponse({
-		description: '✅ Check-in recorded successfully',
-		schema: {
-			type: 'object',
-			properties: {
-				message: { type: 'string', example: 'Check-in recorded successfully' },
 				data: {
 					type: 'object',
 					properties: {
 						attendanceId: { type: 'number', example: 12345 },
 						userId: { type: 'number', example: 45 },
-						checkInTime: { type: 'string', format: 'date-time', example: '2023-12-01T08:30:00Z' },
+						checkInTime: { type: 'string', format: 'date-time' },
 						status: { type: 'string', example: 'PRESENT' },
-						organisationId: { type: 'number', example: 1 },
-						branchId: { type: 'number', example: 2 },
-						location: {
-							type: 'object',
-							properties: {
-								latitude: { type: 'number', example: -26.2041 },
-								longitude: { type: 'number', example: 28.0473 },
-								accuracy: { type: 'number', example: 10 },
-							},
-						},
-						xpAwarded: { type: 'number', example: 10 },
-						timestamp: { type: 'string', format: 'date-time', example: '2023-12-01T08:30:00Z' },
 					},
 				},
 			},
 		},
 	})
 	@ApiBadRequestResponse({
-		description: '❌ Bad Request - Invalid data provided',
+		description: 'Bad Request - Invalid or duplicate check-in',
 		schema: {
 			type: 'object',
 			properties: {
 				message: { type: 'string', example: 'Error recording check-in' },
-				error: { type: 'string', example: 'Bad Request' },
-				statusCode: { type: 'number', example: 400 },
-				validationErrors: {
-					type: 'array',
-					items: { type: 'string' },
-					example: [
-						'User ID is required',
-						'Check-in location is required',
-						'Invalid timestamp format',
-						'User already checked in',
-					],
-				},
 			},
 		},
 	})
@@ -562,54 +358,8 @@ Advanced employee check-in system with location verification, biometric support,
 		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({
-		summary: '🕕 Employee check-out',
-		description: `
-# Smart Check-Out System
-
-Advanced employee check-out system with location verification, work summary calculation, and comprehensive tracking.
-
-## 📍 **Location-Based Check-Out**
-- **GPS Verification**: Verify employee location against designated work sites
-- **Geofencing**: Automatic check-out when leaving predefined work areas
-- **QR Code Scanning**: Quick check-out using location-specific QR codes
-- **Manual Override**: Supervisor approval for remote or off-site check-outs
-- **Route Tracking**: Optional route tracking for field workers
-
-## 🛡️ **Security & Verification**
-- **Identity Verification**: Photo capture or biometric verification
-- **Device Verification**: Ensure check-out from authorized devices only
-- **Time Validation**: Prevent check-out during restricted hours
-- **Work Completion**: Optional work summary and task completion status
-- **Supervisor Approval**: Required approval for early departures
-
-## 📊 **Work Summary Analytics**
-- **Time Calculation**: Automatic calculation of total work hours
-- **Break Deduction**: Intelligent break time calculation and deduction
-- **Overtime Detection**: Automatic overtime calculation and flagging
-- **Productivity Metrics**: Work efficiency and output measurements
-- **Performance Insights**: Daily productivity and attendance patterns
-
-## 🎯 **Use Cases**
-- **Standard Shifts**: Regular office-based employee check-out
-- **Field Work**: Mobile workforce and remote location check-out
-- **Retail Operations**: Store and branch employee time tracking
-- **Manufacturing**: Factory and production line attendance management
-- **Healthcare**: Hospital and clinic staff scheduling tracking
-- **Construction**: Job site and project-based attendance monitoring
-
-## 📱 **Multi-Platform Support**
-- **Mobile Apps**: Native iOS and Android applications
-- **Web Portal**: Browser-based check-out for desktop users
-- **Kiosk Mode**: Dedicated tablet or terminal-based check-out
-- **Voice Commands**: Voice-activated check-out for hands-free operations
-- **Automated Systems**: API-based check-out for integrated systems
-
-## 🔒 **Compliance & Reporting**
-- **Labor Law Compliance**: Ensure adherence to working time regulations
-- **Audit Trail**: Comprehensive logging for compliance and auditing
-- **Privacy Protection**: GDPR and POPIA compliant data handling
-- **Real-time Reporting**: Live attendance dashboards and alerts
-		`,
+		summary: 'Employee check-out',
+		description: 'Record employee check-out; calculates duration, break deduction, and overtime. Uses org from auth. Requires an active shift (check-in first).',
 	})
 	@ApiBody({
 		type: CreateCheckOutDto,
@@ -777,87 +527,8 @@ Advanced employee check-out system with location verification, work summary calc
 	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER)
 	@ApiOperation({
-		summary: '📦 Consolidate bulk attendance records from external systems',
-		description: `
-# 🏢 Enterprise Attendance Consolidation System
-
-## **Overview**
-Advanced bulk processing endpoint designed for enterprise-grade attendance data integration from external systems. Enables seamless synchronization with ERP systems, legacy databases, and hardware time clocks.
-
-## **🎯 Primary Use Cases**
-
-### **ERP System Integration**
-- **SAP Integration**: Sync attendance from SAP SuccessFactors, SAP Time Management
-- **Oracle HCM**: Import time records from Oracle HCM Cloud
-- **Workday**: Consolidate attendance data from Workday Time Tracking
-- **Microsoft Dynamics**: Sync from Dynamics 365 Human Resources
-
-### **Legacy System Migration**
-- **Database Migration**: Import historical attendance records from legacy databases
-- **Excel/CSV Import**: Bulk import from spreadsheet data
-- **System Consolidation**: Merge attendance data from multiple legacy systems
-- **Data Recovery**: Restore attendance records from backup systems
-
-### **Hardware Integration**
-- **Biometric Systems**: Import from fingerprint/facial recognition systems
-- **RFID/Badge Systems**: Sync from card-based access control systems
-- **Mobile Punch Clocks**: Consolidate from tablet/mobile time clock apps
-- **IoT Devices**: Import from connected workplace IoT sensors
-
-## **🔧 Technical Features**
-
-### **Advanced Processing**
-- **Batch Validation**: Individual record validation without failing entire batch
-- **Atomic Operations**: Transaction support for data integrity
-- **Performance Optimized**: Handles large datasets efficiently
-- **Memory Efficient**: Streaming processing for massive imports
-
-### **Error Handling & Recovery**
-- **Partial Success**: Failed records don't affect successful ones
-- **Detailed Reporting**: Per-record success/failure status
-- **Error Classification**: Categorized error types for easy troubleshooting
-- **Retry Logic**: Built-in retry mechanisms for transient failures
-
-### **Audit & Compliance**
-- **Source Tracking**: Complete audit trail with source system identification
-- **Transaction IDs**: Unique transaction tracking for batch operations
-- **Compliance Logging**: Detailed logs for regulatory compliance
-- **Data Lineage**: Full traceability from source to destination
-
-## **📊 Processing Modes**
-
-### **Check-In Mode (\`"in"\`)**
-Process employee arrival/start-of-shift records:
-- **Morning Shifts**: Regular start-of-day check-ins
-- **Shift Changes**: Multi-shift operations with staggered starts
-- **Remote Work**: Home office or remote location check-ins
-- **Field Work**: Mobile workforce location-based check-ins
-
-### **Check-Out Mode (\`"out"\`)**
-Process employee departure/end-of-shift records:
-- **End of Shift**: Regular end-of-day departures
-- **Break Returns**: Return from lunch or break periods
-- **Overtime Completion**: Extended shift completions
-- **Emergency Exits**: Unplanned departures with proper documentation
-
-## **⚡ Performance Characteristics**
-- **Throughput**: Processes up to 1,000 records per minute
-- **Latency**: Average 2-5 seconds per batch (depending on size)
-- **Scalability**: Handles batches from 1 to 10,000 records
-- **Reliability**: 99.9% success rate with proper data validation
-
-## **🔒 Security & Access Control**
-- **Role-Based Access**: Admin/Owner/Manager roles required
-- **API Authentication**: Secure token-based authentication
-- **Data Encryption**: All data encrypted in transit and at rest
-- **Audit Logging**: Complete security audit trail
-
-## **📈 Monitoring & Analytics**
-- **Real-time Status**: Live processing status and progress
-- **Success Metrics**: Detailed success/failure statistics
-- **Performance Monitoring**: Processing time and throughput metrics
-- **Error Analytics**: Categorized error reporting and trends
-		`
+		summary: 'Consolidate bulk attendance records from external systems',
+		description: 'Batch process check-ins or check-outs from ERP, legacy systems, or hardware. Mode: "in" or "out". Org from auth. Admin/Owner/Manager only.',
 	})
 	@ApiBody({
 		type: ConsolidateAttendanceDto,
@@ -1241,54 +912,8 @@ Process employee departure/end-of-shift records:
 		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({
-		summary: '☕ Manage employee breaks',
-		description: `
-# Smart Break Management System
-
-Comprehensive break tracking system with intelligent timing, policy enforcement, and wellness monitoring.
-
-## ⏰ **Break Types & Management**
-- **Regular Breaks**: Standard 15-minute coffee and rest breaks
-- **Lunch Breaks**: Extended meal breaks with customizable duration
-- **Wellness Breaks**: Mental health and wellness-focused break periods
-- **Emergency Breaks**: Unscheduled breaks for urgent personal needs
-- **Team Breaks**: Coordinated group breaks for team activities
-
-## 🛡️ **Policy Enforcement**
-- **Duration Limits**: Automatic enforcement of maximum break durations
-- **Frequency Control**: Prevent excessive break frequency
-- **Mandatory Breaks**: Ensure compliance with labor law requirements
-- **Overtime Breaks**: Additional break allowances during overtime
-- **Supervisor Approval**: Required approval for extended or frequent breaks
-
-## 📊 **Break Analytics**
-- **Usage Patterns**: Track individual and team break patterns
-- **Productivity Impact**: Analyze break timing impact on productivity
-- **Wellness Metrics**: Monitor break frequency for employee wellness
-- **Compliance Tracking**: Ensure adherence to labor regulations
-- **Cost Analysis**: Calculate break-related time and cost impacts
-
-## 🎯 **Use Cases**
-- **Manufacturing**: Regulated break schedules for production workers
-- **Office Work**: Flexible break management for knowledge workers
-- **Healthcare**: Critical break management for medical staff
-- **Retail**: Customer service break coordination
-- **Remote Work**: Self-managed break tracking for remote employees
-- **Call Centers**: Optimized break scheduling for continuous operations
-
-## 📱 **Smart Features**
-- **Auto-Detection**: Intelligent break detection using device sensors
-- **Location Awareness**: Break area verification and monitoring
-- **Wellness Reminders**: Proactive break suggestions for employee health
-- **Team Coordination**: Coordinated break scheduling to maintain coverage
-- **Integration**: Seamless integration with productivity and wellness apps
-
-## 🔒 **Compliance & Reporting**
-- **Labor Law Compliance**: Ensure adherence to break requirements
-- **Audit Trail**: Complete break activity logging
-- **Privacy Protection**: Secure handling of break and wellness data
-- **Real-time Monitoring**: Live break status and team coverage dashboards
-		`,
+		summary: 'Manage employee breaks',
+		description: 'Start or end a break for the authenticated user. Requires an active shift. Uses isStartingBreak to start or end.',
 	})
 	@ApiBody({
 		type: CreateBreakDto,
@@ -1441,53 +1066,8 @@ Comprehensive break tracking system with intelligent timing, policy enforcement,
 		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({
-		summary: '📋 Get all attendance records',
-		description: `
-# Comprehensive Attendance Directory
-
-Retrieves complete attendance records with advanced filtering, analytics, and comprehensive employee information.
-
-## 📊 **Data Richness**
-- **Complete Employee Profiles**: Full user information including photos, contact details, and roles
-- **Branch Information**: Detailed branch data with location and management details
-- **Time Analytics**: Comprehensive timing data with duration calculations and break tracking
-- **Verification Status**: Security verification details and authentication logs
-- **Performance Metrics**: Productivity indicators and attendance patterns
-
-## 🔍 **Advanced Filtering**
-- **Date Range Filtering**: Filter by specific date ranges or periods
-- **Department Filtering**: Filter by specific departments or teams
-- **Status Filtering**: Filter by attendance status (Present, Completed, On Break)
-- **Branch Filtering**: Filter by specific branch locations
-- **Role-Based Filtering**: Filter by employee roles and access levels
-
-## 📈 **Analytics & Insights**
-- **Attendance Patterns**: Identify trends and patterns in employee attendance
-- **Productivity Analysis**: Correlate attendance with productivity metrics
-- **Compliance Monitoring**: Track adherence to attendance policies
-- **Performance Indicators**: Key performance metrics and benchmarks
-- **Anomaly Detection**: Identify unusual attendance patterns or behaviors
-
-## 🎯 **Use Cases**
-- **Management Oversight**: Comprehensive view of organizational attendance
-- **HR Analytics**: Detailed analysis for HR planning and decision making
-- **Payroll Processing**: Accurate time tracking for payroll calculations
-- **Compliance Reporting**: Generate reports for regulatory compliance
-- **Performance Management**: Monitor employee attendance performance
-- **Resource Planning**: Optimize staffing based on attendance patterns
-
-## 🔒 **Security & Privacy**
-- **Role-Based Access**: Data visibility based on user permissions and roles
-- **Privacy Compliance**: GDPR and POPIA compliant data handling
-- **Audit Trail**: Complete access logging for security and compliance
-- **Data Encryption**: Secure transmission and storage of sensitive data
-
-## 📱 **Export & Integration**
-- **Multiple Formats**: Export data in various formats (Excel, PDF, CSV)
-- **API Integration**: Seamless integration with HR and payroll systems
-- **Real-time Updates**: Live data with real-time synchronization
-- **Custom Reports**: Generate custom reports based on specific criteria
-		`,
+		summary: 'Get all attendance records',
+		description: 'List attendance records for the org. Uses org and branch from auth; branch filtered by role (admin/owner see all).',
 	})
 	@ApiOkResponse({
 		description: 'Attendance records retrieved successfully',
@@ -1648,53 +1228,8 @@ Retrieves complete attendance records with advanced filtering, analytics, and co
 		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({
-		summary: '📅 Get attendance records by date',
-		description: `
-# Date-Based Attendance Analytics
-
-Retrieves comprehensive attendance records for a specific date with advanced filtering, user profiles, and performance analytics.
-
-## 📊 **Data Richness**
-- **Complete Employee Profiles**: Full user information including photos, contact details, and department assignments
-- **Branch Analytics**: Detailed branch performance metrics and location-specific data
-- **Time Tracking**: Precise check-in/check-out times with duration calculations
-- **Break Analysis**: Comprehensive break patterns and compliance tracking
-- **Verification Status**: Security verification details and authentication audit trails
-
-## 🔍 **Advanced Analytics**
-- **Daily Performance**: Individual and team performance metrics for the selected date
-- **Attendance Patterns**: Identify punctuality trends and timing patterns
-- **Productivity Insights**: Correlate attendance with work efficiency metrics
-- **Compliance Monitoring**: Track adherence to company policies and labor regulations
-- **Exception Reporting**: Identify anomalies, late arrivals, or policy violations
-
-## 📈 **Historical Context**
-- **Trend Analysis**: Compare current date performance with historical averages
-- **Seasonal Patterns**: Identify seasonal attendance variations and trends
-- **Comparative Analytics**: Benchmark against organization-wide performance metrics
-- **Predictive Insights**: Use historical data to forecast future attendance patterns
-
-## 🎯 **Use Cases**
-- **Daily Management**: Real-time oversight of daily attendance performance
-- **Payroll Processing**: Accurate time tracking for payroll calculations and overtime
-- **Performance Reviews**: Historical attendance data for employee evaluations
-- **Compliance Auditing**: Generate reports for regulatory compliance requirements
-- **Resource Planning**: Optimize staffing based on historical attendance patterns
-- **Shift Management**: Monitor shift coverage and identify staffing gaps
-
-## 📱 **Integration & Reporting**
-- **Real-time Updates**: Live data synchronization with attendance tracking systems
-- **Export Capabilities**: Generate reports in multiple formats (Excel, PDF, CSV)
-- **Dashboard Integration**: Seamless integration with management dashboards
-- **API Access**: Programmatic access for third-party systems and applications
-- **Notification Systems**: Automated alerts for attendance anomalies or policy violations
-
-## 🔒 **Security & Privacy**
-- **Role-Based Access**: Data visibility controlled by user permissions and organizational hierarchy
-- **Privacy Compliance**: GDPR and POPIA compliant data handling and retention
-- **Audit Trail**: Complete access logging for security and compliance requirements
-- **Data Encryption**: Secure transmission and storage of sensitive attendance data
-		`,
+		summary: 'Get attendance records by date',
+		description: 'Attendance records for a single date (YYYY-MM-DD). Org from auth. Returns checkIns and optional analytics.',
 	})
 	@ApiParam({
 		name: 'date',
@@ -1888,9 +1423,8 @@ Retrieves comprehensive attendance records for a specific date with advanced fil
 		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({
-		summary: '👤 Get my attendance records (token)',
-		description:
-			'Retrieves attendance records for the authenticated user. User is derived from the token; no path param.',
+		summary: 'Get my attendance records',
+		description: 'Attendance records for the authenticated user. User from token; no path param. Org from auth.',
 	})
 	@ApiOkResponse({
 		description: '✅ Current user attendance records',
@@ -1934,67 +1468,12 @@ Retrieves comprehensive attendance records for a specific date with advanced fil
 		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({
-		summary: '👤 Get attendance records by user',
-		description: `
-# Individual Employee Attendance Analytics
-
-Retrieves comprehensive attendance records for a specific user with detailed analytics, performance insights, and historical trends.
-
-## 👥 **Employee Profile Integration**
-- **Complete User Profile**: Full employee information including photo, contact details, and role assignments
-- **Department Context**: Department and team information with organizational hierarchy
-- **Branch Assignment**: Location-specific data and branch performance metrics
-- **Employment History**: Job title, start date, and career progression within the organization
-- **Performance Ratings**: Integration with performance management systems and ratings
-
-## 📊 **Comprehensive Analytics**
-- **Attendance Patterns**: Historical attendance trends and punctuality analysis
-- **Work-Life Balance**: Analysis of work hours, overtime patterns, and time-off usage
-- **Productivity Metrics**: Correlation between attendance and productivity indicators
-- **Compliance Tracking**: Adherence to company policies and labor law requirements
-- **Performance Insights**: Attendance impact on individual and team performance
-
-## 🔍 **Detailed Time Tracking**
-- **Precision Timing**: Exact check-in and check-out times with location verification
-- **Break Analysis**: Detailed break patterns, duration, and frequency analysis
-- **Overtime Tracking**: Overtime hours with approval status and compensation details
-- **Time Adjustments**: Manual time corrections and supervisor approvals
-- **Schedule Compliance**: Comparison with scheduled hours and shift assignments
-
-## 📈 **Historical Analysis**
-- **Trend Identification**: Long-term attendance patterns and seasonal variations
-- **Comparative Analysis**: Performance against team and organization averages
-- **Improvement Tracking**: Progress monitoring and attendance improvement initiatives
-- **Predictive Analytics**: Forecast future attendance based on historical patterns
-- **Risk Assessment**: Identify potential attendance issues before they become problems
-
-## 🎯 **Use Cases**
-- **Performance Reviews**: Comprehensive attendance data for employee evaluations
-- **Payroll Processing**: Accurate time tracking for salary and overtime calculations
-- **HR Analytics**: Individual employee insights for HR planning and development
-- **Compliance Auditing**: Detailed records for regulatory compliance and auditing
-- **Team Management**: Monitor individual contributions to team performance
-- **Career Development**: Track attendance as part of professional development plans
-
-## 📱 **Management Tools**
-- **Dashboard Integration**: Real-time attendance monitoring and alerts
-- **Report Generation**: Custom reports for management and HR purposes
-- **Notification System**: Automated alerts for attendance anomalies or issues
-- **Mobile Access**: Mobile-optimized views for managers and supervisors
-- **Integration APIs**: Seamless integration with HRIS and payroll systems
-
-## 🔒 **Privacy & Security**
-- **Data Protection**: GDPR and POPIA compliant handling of personal data
-- **Access Control**: Role-based access to sensitive employee information
-- **Audit Trail**: Complete logging of data access and modifications
-- **Consent Management**: Employee consent tracking for data processing
-- **Anonymization**: Options for anonymized reporting and analytics
-		`,
+		summary: 'Get attendance records by user',
+		description: 'Attendance records for a user (ref = user id or clerk id). Org from auth. Access by role.',
 	})
 	@ApiParam({
 		name: 'ref',
-		description:
-			'User ID to retrieve attendance records for. Supports both numeric user IDs and username references for flexible querying.',
+		description: 'User ID or clerk user id to retrieve attendance records for.',
 		type: 'number',
 		example: 45,
 		examples: {
@@ -2272,28 +1751,12 @@ Retrieves comprehensive attendance records for a specific user with detailed ana
 		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({
-		summary: '📅 Get monthly attendance calendar',
-		description: `
-# Monthly Attendance Calendar
-
-Retrieves a monthly attendance calendar for a specific user with all days of the month and their attendance status (attended/missed/future).
-
-## 📊 **Calendar Data**
-- **All Days**: Complete list of all days in the specified month
-- **Status Indicators**: Each day marked as attended, missed, or future
-- **Date Information**: Day number, day of week, and full date for each day
-- **Attendance Records**: Full attendance record data for attended days
-
-## 🎯 **Use Cases**
-- **Monthly Overview**: View complete month attendance at a glance
-- **Calendar Display**: Render monthly calendar grid with attendance status
-- **Analytics**: Analyze monthly attendance patterns and trends
-- **Reporting**: Generate monthly attendance reports
-		`,
+		summary: 'Get monthly attendance calendar',
+		description: 'Monthly calendar for a user (ref) with per-day status: attended, missed, or future. Optional year/month query.',
 	})
 	@ApiParam({
 		name: 'ref',
-		description: 'User ID to retrieve monthly attendance calendar for',
+		description: 'User ID to retrieve monthly attendance calendar for.',
 		type: 'number',
 		example: 45,
 	})
@@ -2384,9 +1847,8 @@ Retrieves a monthly attendance calendar for a specific user with all days of the
 		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({
-		summary: '📊 Get my attendance status (token)',
-		description:
-			'Retrieves the current attendance status for the authenticated user. User is derived from the token; no path param.',
+		summary: 'Get my attendance status',
+		description: 'Current attendance status for the authenticated user. User from token. Returns checkedIn, nextAction, shift times.',
 	})
 	@ApiOkResponse({
 		description: '✅ Current user attendance status',
@@ -2433,67 +1895,12 @@ Retrieves a monthly attendance calendar for a specific user with all days of the
 		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({
-		summary: '📊 Get user attendance status',
-		description: `
-# Real-Time Attendance Status Monitoring
-
-Retrieves the current attendance status for a specific user with live updates, shift information, and intelligent next-action recommendations.
-
-## ⏰ **Real-Time Status Tracking**
-- **Live Status Updates**: Real-time attendance status with automatic refresh capabilities
-- **Shift Information**: Current shift details including start time, expected end time, and duration
-- **Break Status**: Current break status and remaining break time allowances
-- **Location Tracking**: Last known location and current work site information
-- **Device Status**: Last active device and platform information for security monitoring
-
-## 🤖 **Intelligent Action Recommendations**
-- **Next Action Suggestions**: Smart recommendations for next user action (check-in, check-out, break)
-- **Policy Compliance**: Automatic compliance checking against company policies
-- **Overtime Alerts**: Proactive notifications for approaching overtime thresholds
-- **Break Reminders**: Intelligent break suggestions based on work patterns and regulations
-- **Schedule Optimization**: Recommendations for optimal shift timing and productivity
-
-## 📱 **Multi-Platform Status**
-- **Cross-Device Synchronization**: Status updates across all user devices and platforms
-- **Mobile App Integration**: Real-time status updates for mobile applications
-- **Web Dashboard**: Live status monitoring for web-based management dashboards
-- **API Integration**: Status data available for third-party integrations
-- **Notification Systems**: Push notifications for status changes and reminders
-
-## 🔍 **Advanced Analytics**
-- **Current Shift Analysis**: Detailed analysis of current shift performance
-- **Historical Context**: Comparison with previous shifts and performance patterns
-- **Productivity Metrics**: Real-time productivity indicators and efficiency scoring
-- **Team Context**: Individual status within team and organizational context
-- **Performance Insights**: Immediate feedback on current shift performance
-
-## 🎯 **Use Cases**
-- **Shift Management**: Real-time monitoring of employee shift status
-- **Payroll Accuracy**: Live time tracking for accurate payroll processing
-- **Compliance Monitoring**: Ensure adherence to labor laws and company policies
-- **Team Coordination**: Monitor team member availability and status
-- **Performance Management**: Real-time performance feedback and coaching
-- **Emergency Response**: Quick access to employee status during emergencies
-
-## 📊 **Status Intelligence**
-- **Predictive Analytics**: Forecast likely next actions based on historical patterns
-- **Anomaly Detection**: Identify unusual patterns or potential issues
-- **Efficiency Scoring**: Real-time efficiency and productivity calculations
-- **Trend Analysis**: Short-term trends and pattern recognition
-- **Risk Assessment**: Identify potential attendance or performance risks
-
-## 🔒 **Security & Privacy**
-- **Secure Status Monitoring**: Encrypted status data transmission and storage
-- **Privacy Controls**: User control over status visibility and sharing
-- **Access Logging**: Complete audit trail of status access and modifications
-- **Compliance Assurance**: GDPR and POPIA compliant status data handling
-- **Role-Based Visibility**: Status information visibility based on user roles and permissions
-		`,
+		summary: 'Get user attendance status',
+		description: 'Current attendance status for a user (ref): checked in, on break, next action. Org from auth.',
 	})
 	@ApiParam({
 		name: 'ref',
-		description:
-			'User ID to retrieve attendance status for. Returns comprehensive status information including current shift details and next action recommendations.',
+		description: 'User ID to retrieve attendance status for.',
 		type: 'number',
 		example: 45,
 		examples: {
@@ -2748,67 +2155,12 @@ Retrieves the current attendance status for a specific user with live updates, s
 		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({
-		summary: '🏢 Get attendance records by branch',
-		description: `
-# Branch-Level Attendance Analytics
-
-Retrieves comprehensive attendance records for a specific branch with advanced analytics, team performance metrics, and operational insights.
-
-## 🏢 **Branch-Specific Analytics**
-- **Complete Branch Profile**: Detailed branch information including location, capacity, and operational details
-- **Team Performance Metrics**: Comprehensive team attendance patterns and productivity analysis
-- **Operational Insights**: Branch-specific operational efficiency and resource utilization metrics
-- **Location Analytics**: Geographic and facility-based attendance patterns and trends
-- **Capacity Management**: Employee density, workspace utilization, and capacity planning insights
-
-## 📊 **Comprehensive Team Analytics**
-- **Team Attendance Patterns**: Historical and real-time team attendance trends
-- **Performance Benchmarking**: Branch performance against organizational standards
-- **Productivity Analysis**: Correlation between attendance and team productivity metrics
-- **Resource Allocation**: Optimal staffing patterns and resource distribution analysis
-- **Shift Coverage**: Comprehensive shift coverage analysis and gap identification
-
-## 🔍 **Advanced Filtering & Analysis**
-- **Multi-Dimensional Filtering**: Filter by department, role, shift, or time period
-- **Comparative Analysis**: Compare branch performance with other branches
-- **Trend Analysis**: Identify seasonal patterns and long-term trends
-- **Exception Reporting**: Highlight anomalies and attendance policy violations
-- **Predictive Insights**: Forecast future attendance patterns and staffing needs
-
-## 📈 **Performance Metrics**
-- **Attendance Rates**: Overall branch attendance rates and punctuality metrics
-- **Productivity Indicators**: Team productivity correlation with attendance patterns
-- **Efficiency Scores**: Branch operational efficiency and effectiveness metrics
-- **Cost Analysis**: Labor cost analysis and optimization opportunities
-- **Quality Metrics**: Service quality correlation with attendance and staffing levels
-
-## 🎯 **Use Cases**
-- **Branch Management**: Comprehensive branch performance monitoring and optimization
-- **Resource Planning**: Strategic staffing and resource allocation decisions
-- **Performance Review**: Branch-level performance evaluation and improvement planning
-- **Compliance Monitoring**: Ensure adherence to labor laws and organizational policies
-- **Cost Optimization**: Identify cost-saving opportunities through attendance optimization
-- **Expansion Planning**: Use attendance data for future branch planning and expansion
-
-## 📱 **Management Dashboard**
-- **Real-Time Monitoring**: Live branch attendance and performance monitoring
-- **Executive Reports**: High-level executive reporting and insights
-- **Operational Dashboards**: Detailed operational views for branch managers
-- **Mobile Access**: Mobile-optimized views for on-the-go management
-- **Alert Systems**: Automated alerts for attendance anomalies and issues
-
-## 🔒 **Security & Compliance**
-- **Access Control**: Role-based access to branch-specific data
-- **Data Privacy**: GDPR and POPIA compliant data handling and protection
-- **Audit Trail**: Complete audit trail for all branch data access
-- **Compliance Reporting**: Automated compliance reporting and monitoring
-- **Security Monitoring**: Enhanced security monitoring for branch-specific data
-		`,
+		summary: 'Get attendance records by branch',
+		description: 'Attendance records for a branch (ref = branch code). Org from auth. Returns checkIns and branch analytics.',
 	})
 	@ApiParam({
 		name: 'ref',
-		description:
-			'Branch reference code to filter attendance records. Supports both branch codes and names for flexible querying.',
+		description: 'Branch reference code to filter attendance records.',
 		type: 'string',
 		example: 'MB001',
 		examples: {
@@ -3076,67 +2428,12 @@ Retrieves comprehensive attendance records for a specific branch with advanced a
 		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({
-		summary: '📊 Get daily attendance statistics',
-		description: `
-# Daily Attendance Statistics & Analytics
-
-Retrieves comprehensive daily attendance statistics for a specific user with detailed time analysis, productivity metrics, and performance insights.
-
-## ⏱️ **Precise Time Tracking**
-- **Millisecond Precision**: Exact time calculations in milliseconds for accurate payroll and analytics
-- **Work Time Analysis**: Detailed breakdown of actual work time excluding breaks and non-productive periods
-- **Break Time Tracking**: Comprehensive break time analysis with duration and frequency metrics
-- **Overtime Calculations**: Automatic overtime detection and calculation based on company policies
-- **Time Adjustments**: Support for manual time adjustments and corrections with audit trails
-
-## 📈 **Productivity Analytics**
-- **Productivity Scoring**: Real-time productivity scoring based on work patterns and output
-- **Efficiency Metrics**: Work efficiency calculations comparing actual vs. expected performance
-- **Performance Benchmarking**: Comparison with historical performance and team averages
-- **Goal Tracking**: Progress tracking against daily and weekly productivity goals
-- **Quality Indicators**: Work quality metrics and performance indicators
-
-## 🔍 **Advanced Analytics**
-- **Pattern Recognition**: Identify daily work patterns and productivity trends
-- **Anomaly Detection**: Detect unusual work patterns or potential issues
-- **Predictive Insights**: Forecast daily performance based on current trends
-- **Comparative Analysis**: Compare daily performance with previous days and periods
-- **Wellness Indicators**: Monitor work-life balance and employee wellness metrics
-
-## 🎯 **Use Cases**
-- **Payroll Processing**: Accurate time tracking for daily payroll calculations
-- **Performance Management**: Daily performance monitoring and feedback
-- **Resource Planning**: Optimize daily resource allocation and task assignment
-- **Compliance Monitoring**: Ensure adherence to daily work hour regulations
-- **Wellness Tracking**: Monitor employee wellness and work-life balance
-- **Project Management**: Track daily project progress and time allocation
-
-## 📊 **Statistical Insights**
-- **Time Distribution**: Detailed breakdown of how daily time is spent
-- **Productivity Curves**: Identify peak productivity periods throughout the day
-- **Efficiency Trends**: Track efficiency improvements and decline patterns
-- **Comparison Metrics**: Compare with team, department, and organizational averages
-- **Goal Achievement**: Track progress toward daily and weekly objectives
-
-## 🔄 **Real-Time Updates**
-- **Live Statistics**: Real-time updates of daily statistics as the day progresses
-- **Dynamic Calculations**: Automatic recalculation of statistics as new data arrives
-- **Instant Feedback**: Immediate feedback on daily performance and productivity
-- **Progressive Tracking**: Track progress throughout the day with hourly updates
-- **Milestone Alerts**: Automatic alerts for achieving daily goals and milestones
-
-## 🔒 **Data Security & Privacy**
-- **Secure Access**: Role-based access control for sensitive daily statistics
-- **Privacy Protection**: GDPR and POPIA compliant handling of personal time data
-- **Audit Trail**: Complete audit trail of all daily statistics access and modifications
-- **Data Retention**: Configurable data retention policies for daily statistics
-- **Confidentiality**: Ensure confidentiality of individual performance data
-		`,
+		summary: 'Get daily attendance statistics',
+		description: 'Daily work and break time (ms) for a user (uid). Optional date query (YYYY-MM-DD, default today).',
 	})
 	@ApiParam({
 		name: 'uid',
-		description:
-			'User ID to retrieve daily statistics for. Supports both numeric user IDs and flexible user identification.',
+		description: 'User ID to retrieve daily statistics for.',
 		type: 'number',
 		example: 45,
 		examples: {
@@ -3898,22 +3195,11 @@ Retrieves detailed attendance analytics for a specific user including historical
 		AccessLevel.TECHNICIAN,
 	)
 	@ApiOperation({
-		summary: '🔥 Get current week attendance streak',
-		description: `
-# Current Week Attendance Streak
-
-Retrieves the attendance streak for the current week (Monday to Saturday) for the authenticated user.
-Returns streak count and daily status (attended/missed/future) for each day of the week.
-
-## Features
-- **Current Week Only**: Only counts attendance records from the current week (Mon-Sat)
-- **Check-in Without Check-out**: Counts PRESENT status (checked in but not checked out) as attended
-- **Daily Status**: Shows attended (green), missed (red), or future (gray) for each day
-- **User-Specific**: Automatically uses the authenticated user's ID from the token
-		`,
+		summary: 'Get current week attendance streak',
+		description: 'Attendance streak (Mon–Sat) for the authenticated user. User from token. Returns streak count and per-day status (attended/missed/future).',
 	})
 	@ApiOkResponse({
-		description: '✅ Current week attendance streak retrieved successfully',
+		description: 'Current week attendance streak retrieved successfully',
 		schema: {
 			type: 'object',
 			properties: {
@@ -3965,81 +3251,8 @@ Returns streak count and daily status (attended/missed/future) for each day of t
 	@Post('metrics/monthly')
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.HR)
 	@ApiOperation({
-		summary: '📊 Get monthly attendance metrics for all users',
-		description: `
-# Monthly Attendance Metrics for All Users
-
-Retrieves comprehensive monthly attendance metrics for all users in the organization, including check-ins, total hours, and overtime calculations with optional date exclusions.
-
-## 🎯 **Key Features**
-- **Organization-Wide View**: Complete monthly metrics across all users
-- **Overtime Exclusion**: Optionally exclude specific dates from overtime calculation
-- **Flexible Filtering**: Filter by organization, branch, and access level
-- **Detailed Breakdown**: Per-user metrics with complete check-in records
-
-## 📅 **Date Exclusion for Overtime**
-When dates are provided in \`excludeOvertimeDates\`:
-- Hours exceeding organization maximum work hours are capped at the maximum
-- Hours below the maximum are left unchanged
-- No overtime is calculated for these dates
-- Useful for special events, holidays, or policy exceptions
-
-## 📊 **Metrics Included**
-- Total shifts and hours for the month
-- Overtime hours (excluding specified dates)
-- Per-user breakdown with individual check-ins
-- Average hours per user
-- Complete attendance records for analysis
-
-## 🔍 **Use Cases**
-- Monthly payroll processing
-- Attendance compliance reporting
-- Performance analysis across teams
-- Overtime management and budgeting
-- Special event attendance tracking
-
-## 📋 **Example Scenarios**
-
-### Scenario 1: Standard Monthly Report
-Get metrics for current month without any exclusions:
-\`\`\`json
-{
-  "year": 2024,
-  "month": 3
-}
-\`\`\`
-
-### Scenario 2: Company Event Days
-Exclude company event days from overtime calculation:
-\`\`\`json
-{
-  "year": 2024,
-  "month": 3,
-  "excludeOvertimeDates": ["2024-03-15", "2024-03-20"]
-}
-\`\`\`
-On these dates, if an employee worked 10 hours but org max is 8 hours, only 8 hours will be counted (no overtime).
-
-### Scenario 3: Branch-Specific Metrics
-Get metrics for a specific branch:
-\`\`\`json
-{
-  "year": 2024,
-  "month": 3,
-  "branchId": 5
-}
-\`\`\`
-
-### Scenario 4: Holiday Period
-Exclude holiday dates where overtime policies don't apply:
-\`\`\`json
-{
-  "year": 2024,
-  "month": 12,
-  "excludeOvertimeDates": ["2024-12-24", "2024-12-25", "2024-12-31"]
-}
-\`\`\`
-		`,
+		summary: 'Get monthly attendance metrics for all users',
+		description: 'Monthly metrics (shifts, hours, overtime) for org. Body: year, month, optional excludeOvertimeDates, branchId. Org from auth or body.',
 	})
 	@ApiBody({
 		type: MonthlyMetricsQueryDto,
@@ -4192,68 +3405,8 @@ Exclude holiday dates where overtime policies don't apply:
 	@CacheTTL(300) // Cache for 5 minutes
 	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.HR)
 	@ApiOperation({
-		summary: '📊 Generate comprehensive organization attendance report',
-		description: `
-# Organization-Wide Attendance Analytics & Reporting
-
-Generates comprehensive attendance reports with advanced analytics, multi-dimensional insights, and detailed breakdowns for strategic decision-making and compliance reporting.
-
-## 📈 **Enterprise-Level Analytics**
-- **Organization-Wide Metrics**: Complete attendance overview across all branches and departments
-- **Executive Dashboards**: High-level performance indicators for senior management
-- **Trend Analysis**: Historical attendance patterns and forecasting insights
-- **Comparative Analytics**: Performance comparison across branches, roles, and time periods
-- **Strategic Planning**: Data-driven insights for workforce planning and optimization
-
-## 🏢 **Multi-Dimensional Reporting**
-- **Branch-Level Analysis**: Detailed performance metrics for each branch location
-- **Role-Based Insights**: Attendance patterns segmented by employee roles and responsibilities
-- **Department Analytics**: Team performance analysis and cross-functional insights
-- **Time Period Comparisons**: Month-over-month, quarter-over-quarter, and year-over-year analysis
-- **Custom Segmentation**: Flexible filtering for specific employee groups or criteria
-
-## 📊 **Advanced Report Features**
-- **Real-Time Data**: Live attendance data with automatic updates and refresh capabilities
-- **Predictive Analytics**: Forecasting models for attendance trends and potential issues
-- **Anomaly Detection**: Automated identification of unusual patterns or outliers
-- **Correlation Analysis**: Relationship analysis between different attendance metrics
-- **Performance Benchmarking**: Industry standards comparison and best practice identification
-
-## 🎯 **Strategic Use Cases**
-- **Executive Reporting**: Monthly and quarterly attendance reports for senior leadership
-- **HR Analytics**: Workforce planning, policy evaluation, and employee engagement analysis
-- **Compliance Audits**: Regulatory compliance reporting and documentation
-- **Budget Planning**: Resource allocation and cost analysis based on attendance patterns
-- **Performance Management**: Team productivity assessment and improvement identification
-
-## 📋 **Comprehensive Data Points**
-- **Individual Metrics**: Detailed employee-level attendance statistics and performance indicators
-- **Team Analytics**: Group performance metrics and collaborative insights
-- **Operational Metrics**: Check-in/check-out patterns, overtime analysis, and break utilization
-- **Productivity Indicators**: Work efficiency measurements and optimization opportunities
-- **Compliance Tracking**: Policy adherence and regulatory requirement fulfillment
-
-## 🔄 **Dynamic Filtering & Customization**
-- **Flexible Date Ranges**: Custom reporting periods from daily to annual timeframes
-- **Multi-Branch Support**: Cross-branch analysis and individual branch deep-dives
-- **Role-Based Views**: Customized reports based on employee access levels and responsibilities
-- **Export Capabilities**: Multiple format support for further analysis and distribution
-- **Automated Scheduling**: Recurring report generation and distribution
-
-## 🎨 **Report Visualization**
-- **Interactive Charts**: Dynamic graphs and visual representations of attendance data
-- **Heat Maps**: Geographic and temporal attendance pattern visualization
-- **Trend Lines**: Historical performance tracking and future projection displays
-- **Comparative Charts**: Side-by-side analysis of different time periods or groups
-- **Dashboard Integration**: Seamless integration with existing business intelligence tools
-
-## 🔒 **Security & Compliance**
-- **Data Privacy**: GDPR and POPIA compliant handling of employee attendance data
-- **Access Control**: Role-based access ensuring appropriate data visibility and privacy
-- **Audit Trail**: Complete logging of report generation and access activities
-- **Secure Distribution**: Encrypted report delivery and secure sharing capabilities
-- **Retention Policies**: Automated data retention and archival according to compliance requirements
-		`,
+		summary: 'Generate organization attendance report',
+		description: 'Org-wide attendance report. Query: dateFrom, dateTo, branchId, role, includeUserDetails. Cached 5 min. Admin/Manager/HR.',
 	})
 	@ApiQuery({
 		name: 'dateFrom',
@@ -4944,7 +4097,7 @@ Generates comprehensive attendance reports with advanced analytics, multi-dimens
 	@Post('reports/morning/send')
 	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.HR)
 	@ApiOperation({
-		summary: '🌅 Send automated morning attendance report',
+		summary: 'Send automated morning attendance report',
 		description: `
 # Morning Attendance Report Automation
 
@@ -5187,7 +4340,7 @@ Triggers the generation and distribution of comprehensive morning attendance rep
 	@Post('reports/evening/send')
 	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.HR)
 	@ApiOperation({
-		summary: '🌆 Send automated evening attendance report',
+		summary: 'Send automated evening attendance report',
 		description: `
 # Evening Attendance Report Automation
 
@@ -5446,7 +4599,7 @@ Triggers the generation and distribution of comprehensive evening attendance rep
 	@Post('reports/request')
 	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.HR, AccessLevel.MANAGER)
 	@ApiOperation({
-		summary: '📊 Request attendance report for personal viewing',
+		summary: 'Request attendance report for personal viewing',
 		description: `
 # Personal Attendance Report Request
 
@@ -5682,7 +4835,7 @@ Generates and sends a comprehensive attendance report of the specified type (mor
 	@UseGuards(ClerkAuthGuard, RoleGuard)
 	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER)
 	@ApiOperation({
-		summary: '⏰ Trigger manual overtime policy check',
+		summary: 'Trigger manual overtime policy check',
 		description: `
 # Manual Overtime Policy Check & Enforcement
 
@@ -6163,7 +5316,10 @@ Manually triggers the overtime policy check system to identify employees working
 	}
 
 	@Post('request-user-records')
-	@ApiOperation({ summary: 'Request attendance records for a specific user to be emailed' })
+	@ApiOperation({
+		summary: 'Request attendance records for a specific user to be emailed',
+		description: 'Sends the requesting user’s attendance records for a date range to their email. User from token; query: startDate, endDate.',
+	})
 	@ApiOkResponse({
 		description: 'User attendance records have been sent via email',
 		schema: {
@@ -6220,7 +5376,7 @@ Manually triggers the overtime policy check system to identify employees working
 		AccessLevel.DEVELOPER,
 	)
 	@ApiOperation({
-		summary: '🔄 Bulk clock-in all users for specified dates',
+		summary: 'Bulk clock-in all users for specified dates',
 		description: `
 # Bulk Clock-In System
 
@@ -6396,5 +5552,152 @@ Returns detailed summary including:
 
 		// Pass undefined for branchId to fetch ALL users regardless of branch restrictions
 		return this.attendanceService.bulkClockIn(bulkClockInDto, orgId, undefined);
+	}
+
+	@Post('populate-hours')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.OWNER,
+		AccessLevel.DEVELOPER,
+	)
+	@ApiOperation({
+		summary: 'Populate attendance hours for users over a date range',
+		description: 'Creates check-in/check-out records for org users in a date range with randomised times within given windows. dryRun: preview only. Org from auth. Admin/Owner/Manager/Developer.',
+	})
+	@ApiBody({
+		type: PopulateHoursDto,
+		description: 'Populate hours configuration',
+		examples: {
+			basic: {
+				summary: 'Basic populate hours',
+				value: {
+					startDate: '2024-03-01',
+					endDate: '2024-03-05',
+					clockInTimeStart: '06:40',
+					clockInTimeEnd: '07:22',
+					clockOutTimeStart: '16:30',
+					clockOutTimeEnd: '17:15',
+					dryRun: false,
+					skipExisting: false,
+				},
+			},
+			dryRun: {
+				summary: 'Dry run (preview only)',
+				value: {
+					startDate: '2024-03-01',
+					endDate: '2024-03-02',
+					clockInTimeStart: '06:40',
+					clockInTimeEnd: '07:22',
+					clockOutTimeStart: '16:30',
+					clockOutTimeEnd: '17:15',
+					dryRun: true,
+					skipExisting: false,
+				},
+			},
+		},
+	})
+	@ApiOkResponse({
+		description: 'Populate hours completed or dry-run preview',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Populate hours completed. Created 30 records across 5 dates.' },
+				dryRun: { type: 'boolean', example: false },
+				summary: {
+					type: 'object',
+					properties: {
+						totalDates: { type: 'number', example: 5 },
+						totalUsers: { type: 'number', example: 10 },
+						totalRecordsCreated: { type: 'number', example: 30 },
+						totalRecordsSkipped: { type: 'number', example: 0 },
+						datesProcessed: { type: 'array', items: { type: 'string' } },
+						errors: {
+							type: 'array',
+							items: {
+								type: 'object',
+								properties: {
+									date: { type: 'string' },
+									userId: { type: 'number' },
+									error: { type: 'string' },
+								},
+							},
+						},
+					},
+				},
+				details: {
+					type: 'array',
+					items: {
+						type: 'object',
+						properties: {
+							date: { type: 'string' },
+							usersProcessed: { type: 'number' },
+							recordsCreated: { type: 'number' },
+							recordsSkipped: { type: 'number' },
+							checkInTimeRange: { type: 'string' },
+							checkOutTimeRange: { type: 'string' },
+						},
+					},
+				},
+				preview: {
+					type: 'array',
+					description: 'Present when dryRun is true',
+					items: {
+						type: 'object',
+						properties: {
+							date: { type: 'string', example: '2024-03-01' },
+							userId: { type: 'number', example: 1 },
+							userRef: { type: 'string', example: 'user_abc' },
+							checkIn: { type: 'string', format: 'date-time', example: '2024-03-01T05:40:00.000Z' },
+							checkOut: { type: 'string', format: 'date-time', example: '2024-03-01T15:30:00.000Z' },
+						},
+					},
+				},
+			},
+		},
+	})
+	@ApiBadRequestResponse({
+		description: 'Invalid request (e.g. date range or time window validation)',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Populate hours failed: startDate must be <= endDate...' },
+				error: { type: 'string', example: 'Bad Request' },
+				statusCode: { type: 'number', example: 400 },
+			},
+		},
+	})
+	@ApiForbiddenResponse({
+		description: 'Insufficient permissions - requires ADMIN, MANAGER, OWNER, or DEVELOPER access',
+	})
+	async populateHours(
+		@Body() populateHoursDto: PopulateHoursDto,
+		@Req() req: AuthenticatedRequest,
+	): Promise<{
+		message: string;
+		dryRun: boolean;
+		summary: {
+			totalDates: number;
+			totalUsers: number;
+			totalRecordsCreated: number;
+			totalRecordsSkipped: number;
+			datesProcessed: string[];
+			errors: Array<{ date: string; userId: number; error: string }>;
+		};
+		details: Array<{
+			date: string;
+			usersProcessed: number;
+			recordsCreated: number;
+			recordsSkipped: number;
+			checkInTimeRange: string;
+			checkOutTimeRange: string;
+		}>;
+		preview?: Array<{ date: string; userId: number; userRef: string; checkIn: string; checkOut: string }>;
+	}> {
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		return this.attendanceService.populateHours(populateHoursDto, orgId);
 	}
 }

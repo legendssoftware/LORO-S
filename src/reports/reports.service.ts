@@ -32,6 +32,7 @@ import { UserDailyReportGenerator } from './generators/user-daily-report.generat
 import { OrgActivityReportGenerator } from './generators/org-activity-report.generator';
 import { MapDataReportGenerator } from './generators/map-data-report.generator';
 import { PerformanceDashboardGenerator } from './generators/performance-dashboard.generator';
+import { AggregationMilestoneNotificationService } from './services/aggregation-milestone-notification.service';
 import { CommunicationService } from '../communication/communication.service';
 import { OrganizationHoursService } from '../attendance/services/organization.hours.service';
 import { AttendanceService } from '../attendance/attendance.service';
@@ -127,6 +128,7 @@ export class ReportsService implements OnModuleInit {
 		@Inject(forwardRef(() => AttendanceService))
 		private readonly attendanceService: AttendanceService,
 		private readonly performanceDashboardGenerator: PerformanceDashboardGenerator,
+		private readonly aggregationMilestoneNotificationService: AggregationMilestoneNotificationService,
 		@Inject(forwardRef(() => ErpDataService))
 		private readonly erpDataService: ErpDataService,
 		private readonly erpConnectionManager: ErpConnectionManagerService,
@@ -2139,6 +2141,21 @@ export class ReportsService implements OnModuleInit {
 			// Cache the result
 			await this.cacheManager.set(cacheKey, dashboardData, this.CACHE_TTL);
 			this.logger.log(`Performance dashboard cached: ${cacheKey}`);
+
+			// Fire-and-forget: check YTD aggregation milestones and notify admins when crossing 500K, 1M, 1.5M ... 4M
+			const orgId = params.organisationId;
+			const countryCode = this.getCountryCodeFromName(params.country);
+			setImmediate(async () => {
+				try {
+					const ytdCount = await this.performanceDashboardGenerator.getYtdTransactionCount({
+						organisationId: orgId,
+						countryCode: countryCode || 'SA',
+					});
+					await this.aggregationMilestoneNotificationService.checkAndNotifyMilestones(orgId, ytdCount);
+				} catch (e) {
+					this.logger.warn(`Aggregation milestone check failed: ${(e as Error).message}`);
+				}
+			});
 
 			return {
 				success: true,

@@ -45,6 +45,8 @@ import { Competitor } from '../competitors/entities/competitor.entity';
 import { MapDataReportGenerator } from './generators/map-data-report.generator';
 import { OrgActivityReportGenerator } from './generators/org-activity-report.generator';
 import { PerformanceDashboardGenerator } from './generators/performance-dashboard.generator';
+import { AggregationMilestoneNotificationService } from './services/aggregation-milestone-notification.service';
+import { ExpoPushService } from '../lib/services/expo-push.service';
 import { UserProfile } from 'src/user/entities/user.profile.entity';
 import { UserEmployeementProfile } from 'src/user/entities/user.employeement.profile.entity';
 import { UserTarget } from '../user/entities/user-target.entity';
@@ -138,6 +140,8 @@ import { LeaveModule } from '../leave/leave.module';
 		MapDataReportGenerator,
 		OrgActivityReportGenerator,
 		PerformanceDashboardGenerator,
+		AggregationMilestoneNotificationService,
+		ExpoPushService,
 		GoogleMapsService,
 		TrackingService,
 	],

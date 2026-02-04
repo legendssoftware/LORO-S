@@ -1,7 +1,7 @@
 export enum ApprovalType {
     // 🧾 Document & Financial Approvals
-    INVOICE = 'invoice',                      // Invoice approval for payment processing
-    QUOTATION = 'quotation',                  // Sales quotation requiring approval
+    INVOICE = 'invoice',                      // Invoice approval for payment processing - remove 
+    QUOTATION = 'quotation',                  // Sales quotation requiring approval - remove
     CONTRACT = 'contract',                    // Contract agreement approval
     REPORT = 'report',                        // Business/financial report approval
     PROPOSAL = 'proposal',                    // Business proposal or plan approval

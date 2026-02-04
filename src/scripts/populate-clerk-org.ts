@@ -2,18 +2,16 @@
 
 /**
  * Populate Database with Clerk Organization Data
- * 
- * Populates data for Legend Systems Clerk organization. Creates:
- * - Organisation with Clerk org data
- * - Organisation settings with Africa/Johannesburg timezone and preferences
- * - Organisation hours with weekly schedule and timezone
- * - Organisation appearance with branding colors and logo
- * - 2 branches with Africa/Johannesburg settings
- * - Full enterprise license (ENTERPRISE plan) with all features for the organisation
- * 
- * Currently configured organization:
- * - Legend Systems (org_38PujX4XhPOGpJtT1608fjTK6H2)
- * 
+ *
+ * Creates only orgs, branches, and licenses for Bit Drywall and Legend Systems.
+ * - Organisation (from Clerk JSON)
+ * - One branch per configured branchNames (BitDenver for Bit Drywall, Denver for Legend Systems)
+ * - One enterprise license per organisation
+ *
+ * Configured organizations:
+ * - Bit Drywall (org_38PulS5p5hmhjH14SW4YGi8JlFM) → branch BitDenver
+ * - Legend Systems (org_38PujX4XhPOGpJtT1608fjTK6H2) → branch Denver
+ *
  * Usage:
  *   npm run populate:clerk-org
  *   ts-node -r tsconfig-paths/register src/scripts/populate-clerk-org.ts
@@ -22,7 +20,6 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../app.module';
 import { DataSource, Repository } from 'typeorm';
-import { ConfigService } from '@nestjs/config';
 import { Organisation } from '../organisation/entities/organisation.entity';
 import { Branch } from '../branch/entities/branch.entity';
 import { License } from '../licensing/entities/license.entity';
@@ -35,24 +32,72 @@ import { GeneralStatus } from '../lib/enums/status.enums';
 import { LicensingService } from '../licensing/licensing.service';
 import * as crypto from 'crypto';
 
-// Clerk Organization Data Array - Legend Systems only
-const CLERK_ORG_DATA_ARRAY = [
+/** Clerk organization payload shape (from Clerk API / provided JSON) */
+interface ClerkOrgPayload {
+	object: string;
+	id: string;
+	name: string;
+	slug: string;
+	image_url: string;
+	has_image: boolean;
+	members_count: number;
+	max_allowed_memberships: number;
+	admin_delete_enabled: boolean;
+	role_set_key: string;
+	public_metadata: Record<string, unknown>;
+	private_metadata: Record<string, unknown>;
+	created_by: string;
+	created_at: number;
+	updated_at: number;
+}
+
+/** Seed item: Clerk org JSON + branch names to create for that org */
+export interface ClerkOrgSeedItem {
+	clerkOrg: ClerkOrgPayload;
+	branchNames: string[];
+}
+
+/** Two orgs linked to Clerk, each with one branch (BitDenver, Denver) */
+const CLERK_ORG_SEED_ARRAY: ClerkOrgSeedItem[] = [
 	{
-		object: 'organization',
-		id: 'org_38PujX4XhPOGpJtT1608fjTK6H2',
-		name: 'Legend Systems',
-		slug: 'legend-systems-1768713662',
-		image_url: 'https://img.clerk.com/eyJ0eXBlIjoiZGVmYXVsdCIsImlpZCI6Imluc18zOE5ldnlrdmlwclJtQUNsT1VKazlGa3RCRm0iLCJyaWQiOiJvcmdfMzhQdWpYNFhoUE9HcEp0VDE2MDhmalRLNkgyIiwiaW5pdGlhbHMiOiJMIn0',
-		has_image: false,
-		members_count: 9,
-		max_allowed_memberships: 500,
-		admin_delete_enabled: true,
-		role_set_key: 'role_set:default',
-		public_metadata: {},
-		private_metadata: {},
-		created_by: '',
-		created_at: 1768713662419,
-		updated_at: 1769416233096,
+		clerkOrg: {
+			object: 'organization',
+			id: 'org_38PulS5p5hmhjH14SW4YGi8JlFM',
+			name: 'Bit Drywall',
+			slug: 'bit-drywall-1768713677',
+			image_url: 'https://img.clerk.com/eyJ0eXBlIjoiZGVmYXVsdCIsImlpZCI6Imluc18zOE5ldnlrdmlwclJtQUNsT1VKazlGa3RCRm0iLCJyaWQiOiJvcmdfMzhQdWxTNXA1aG1oakgxNFNXNFlHaThKbEZNIiwiaW5pdGlhbHMiOiJCIn0',
+			has_image: false,
+			members_count: 87,
+			max_allowed_memberships: 500,
+			admin_delete_enabled: true,
+			role_set_key: 'role_set:default',
+			public_metadata: {},
+			private_metadata: {},
+			created_by: '',
+			created_at: 1768713677356,
+			updated_at: 1769422781164,
+		},
+		branchNames: ['BitDenver'],
+	},
+	{
+		clerkOrg: {
+			object: 'organization',
+			id: 'org_38PujX4XhPOGpJtT1608fjTK6H2',
+			name: 'Legend Systems',
+			slug: 'legend-systems-1768713662',
+			image_url: 'https://img.clerk.com/eyJ0eXBlIjoiZGVmYXVsdCIsImlpZCI6Imluc18zOE5ldnlrdmlwclJtQUNsT1VKazlGa3RCRm0iLCJyaWQiOiJvcmdfMzhQdWpYNFhoUE9HcEp0VDE2MDhmalRLNkgyIiwiaW5pdGlhbHMiOiJMIn0',
+			has_image: false,
+			members_count: 9,
+			max_allowed_memberships: 500,
+			admin_delete_enabled: true,
+			role_set_key: 'role_set:default',
+			public_metadata: {},
+			private_metadata: {},
+			created_by: '',
+			created_at: 1768713662419,
+			updated_at: 1769751138513,
+		},
+		branchNames: ['Denver'],
 	},
 ];
 
@@ -76,9 +121,14 @@ class ClerkOrgPopulator {
 	private orgAppearanceRepo: Repository<OrganisationAppearance>;
 	private licensingService: LicensingService;
 	private clerkOrgId: string;
-	private clerkOrgData: typeof CLERK_ORG_DATA_ARRAY[0];
+	private clerkOrgData: ClerkOrgPayload;
+	private branchNames: string[];
 
-	constructor(dataSource: DataSource, licensingService: LicensingService, clerkOrgData: typeof CLERK_ORG_DATA_ARRAY[0]) {
+	constructor(
+		dataSource: DataSource,
+		licensingService: LicensingService,
+		seedItem: ClerkOrgSeedItem
+	) {
 		this.dataSource = dataSource;
 		this.orgRepo = dataSource.getRepository(Organisation);
 		this.branchRepo = dataSource.getRepository(Branch);
@@ -87,8 +137,9 @@ class ClerkOrgPopulator {
 		this.orgHoursRepo = dataSource.getRepository(OrganisationHours);
 		this.orgAppearanceRepo = dataSource.getRepository(OrganisationAppearance);
 		this.licensingService = licensingService;
-		this.clerkOrgData = clerkOrgData;
-		this.clerkOrgId = clerkOrgData.id;
+		this.clerkOrgData = seedItem.clerkOrg;
+		this.clerkOrgId = seedItem.clerkOrg.id;
+		this.branchNames = seedItem.branchNames;
 	}
 
 	/**
@@ -212,208 +263,36 @@ class ClerkOrgPopulator {
 	}
 
 	/**
-	 * Create organisation settings with Africa/Johannesburg configuration
-	 * Matches database format: socialLinks and performance are NULL, notifications doesn't include taskNotifications/feedbackTokenExpiryDays
+	 * Create branch. Branch ref links to org ref (Clerk org ID).
+	 * @param branchName - When provided, used as branch name; otherwise "${organisation.name} - Branch ${branchNumber}"
 	 */
-	async createOrganisationSettings(organisation: Organisation): Promise<OrganisationSettings> {
-		console.log('⚙️  Creating organisation settings...');
-
-		const settings = this.orgSettingsRepo.create({
-			organisationUid: organisation.uid,
-			contact: {
-				email: organisation.email,
-				phone: {
-					code: '+27',
-					number: organisation.phone.replace('+27', '').trim(),
-				},
-				website: organisation.website,
-				address: {
-					street: JHB_ADDRESS.street,
-					suburb: JHB_ADDRESS.suburb,
-					city: JHB_ADDRESS.city,
-					state: JHB_ADDRESS.state,
-					country: JHB_ADDRESS.country,
-					postalCode: JHB_ADDRESS.postalCode,
-				},
-			},
-			regional: {
-				language: 'en-US', // Match CSV format
-				timezone: 'Africa/Johannesburg',
-				currency: 'ZAR',
-				dateFormat: 'DD/MM/YYYY',
-				timeFormat: '24h',
-			},
-			branding: {
-				logo: organisation.logo,
-				logoAltText: organisation.name, // Match CSV format
-				favicon: organisation.logo,
-				primaryColor: '#059669', // Match CSV format from settings
-				secondaryColor: '#6b7280', // Match CSV format
-				accentColor: '#34d399', // Match CSV format
-			},
-			business: {
-				name: organisation.name,
-				registrationNumber: '', // Empty string, not null
-				taxId: '', // Empty string, not null
-				industry: 'technology', // Lowercase to match CSV
-				size: 'medium', // Match CSV format
-			},
-			notifications: {
-				email: true,
-				sms: true,
-				push: true,
-				whatsapp: false,
-				// Note: taskNotifications and feedbackTokenExpiryDays are separate fields, not in notifications JSON
-			},
-			preferences: {
-				defaultView: 'grid', // Match CSV format
-				itemsPerPage: 25,
-				theme: 'light', // Match CSV format
-				menuCollapsed: false,
-			},
-			geofenceDefaultRadius: 500,
-			geofenceEnabledByDefault: false,
-			geofenceDefaultNotificationType: 'NOTIFY',
-			geofenceMaxRadius: 5000,
-			geofenceMinRadius: 100,
-			sendTaskNotifications: false, // Match CSV format
-			feedbackTokenExpiryDays: 30,
-			socialLinks: null, // NULL in database (CSV shows NULL)
-			performance: null, // NULL in database (CSV shows NULL)
-			isDeleted: false,
-		});
-
-		const savedSettings = await this.orgSettingsRepo.save(settings);
-		console.log(`✅ Organisation settings created for: ${organisation.name}`);
-		console.log(`   - Contact email: ${savedSettings.contact?.email}`);
-		console.log(`   - Timezone: ${savedSettings.regional?.timezone}`);
-		console.log(`   - Business size: ${savedSettings.business?.size}`);
-		console.log(`   - Social links: ${savedSettings.socialLinks ? 'Set' : 'NULL'}`);
-		console.log(`   - Performance: ${savedSettings.performance ? 'Set' : 'NULL'}`);
-
-		return savedSettings;
-	}
-
-	/**
-	 * Create organisation hours with weekly schedule and timezone
-	 * Linked via Clerk org ID: ref uses Clerk org ID, foreign key uses organisationUid
-	 */
-	async createOrganisationHours(organisation: Organisation): Promise<OrganisationHours> {
-		console.log('🕐 Creating organisation hours...');
-
-		// Ref uses Clerk org ID for referencing (matches the linking requirement)
-		const hoursRef = organisation.clerkOrgId || organisation.ref;
-
-		// Parse openTime and closeTime as timestamptz matching CSV format
-		// CSV shows: "1970-01-01 07:00:00+00" and "1970-01-01 16:30:00+00"
-		// These are stored as timestamptz in the database
-		const openTime = new Date('1970-01-01T07:00:00.000Z');
-		const closeTime = new Date('1970-01-01T16:30:00.000Z');
-
-		const hours = this.orgHoursRepo.create({
-			ref: hoursRef, // Ref uses Clerk org ID
-			organisationUid: organisation.uid, // Foreign key still uses numeric UID (required by DB schema)
-			weeklySchedule: {
-				monday: true,
-				tuesday: true,
-				wednesday: true,
-				thursday: true,
-				friday: true,
-				saturday: false,
-				sunday: false,
-			},
-			schedule: null, // NULL in database
-			timezone: 'Africa/Johannesburg',
-			holidayMode: false, // Boolean false, not string
-			specialHours: null, // NULL in database
-			openTime: openTime, // timestamptz
-			closeTime: closeTime, // timestamptz
-			holidayUntil: null, // NULL in database
-			isDeleted: false,
-		});
-
-		const savedHours = await this.orgHoursRepo.save(hours);
-		console.log(`✅ Organisation hours created for: ${organisation.name}`);
-		console.log(`   - Ref: ${savedHours.ref} (Clerk Org ID: ${organisation.clerkOrgId})`);
-		console.log(`   - Linked via organisationUid: ${savedHours.organisationUid}`);
-		console.log(`   - Timezone: ${savedHours.timezone}`);
-		console.log(`   - Open Time: ${savedHours.openTime?.toISOString()}`);
-		console.log(`   - Close Time: ${savedHours.closeTime?.toISOString()}`);
-		console.log(`   - Weekly Schedule: Mon-Fri enabled`);
-
-		return savedHours;
-	}
-
-	/**
-	 * Create organisation appearance with branding colors and logo
-	 * Linked via Clerk org ID: ref uses Clerk org ID, foreign key uses organisationUid
-	 */
-	async createOrganisationAppearance(organisation: Organisation): Promise<OrganisationAppearance> {
-		console.log('🎨 Creating organisation appearance...');
-
-		// Ref uses Clerk org ID for referencing (matches the linking requirement)
-		const appearanceRef = organisation.clerkOrgId || organisation.ref;
-
-		// Match CSV format: logoUrl is NULL, logoAltText is the logo URL string
-		const appearance = this.orgAppearanceRepo.create({
-			ref: appearanceRef, // Ref uses Clerk org ID
-			organisationUid: organisation.uid, // Foreign key still uses numeric UID (required by DB schema)
-			primaryColor: '#7c2d92', // Default purple from CSV
-			secondaryColor: '#4f46e5', // Default indigo from CSV
-			accentColor: '#ec4899', // Default pink from CSV
-			errorColor: '#ef4444', // Default red from CSV
-			successColor: '#10b981', // Default green from CSV
-			logoUrl: null, // NULL in database (CSV shows NULL)
-			logoAltText: organisation.logo || '', // Logo URL string in logoAltText field (matches CSV format)
-			isDeleted: false,
-		});
-
-		const savedAppearance = await this.orgAppearanceRepo.save(appearance);
-		console.log(`✅ Organisation appearance created for: ${organisation.name}`);
-		console.log(`   - Ref: ${savedAppearance.ref} (Clerk Org ID: ${organisation.clerkOrgId})`);
-		console.log(`   - Linked via organisationUid: ${savedAppearance.organisationUid}`);
-		console.log(`   - Primary Color: ${savedAppearance.primaryColor}`);
-		console.log(`   - Secondary Color: ${savedAppearance.secondaryColor}`);
-		console.log(`   - Accent Color: ${savedAppearance.accentColor}`);
-		console.log(`   - Logo URL: ${savedAppearance.logoUrl || 'NULL'}`);
-		console.log(`   - Logo Alt Text: ${savedAppearance.logoAltText ? 'Set' : 'Not set'}`);
-
-		return savedAppearance;
-	}
-
-	/**
-	 * Create branch
-	 * Branch ref links to org ref (Clerk org ID)
-	 */
-	async createBranch(organisation: Organisation, branchNumber: number): Promise<Branch> {
-		console.log(`🏢 Creating branch ${branchNumber}...`);
+	async createBranch(organisation: Organisation, branchNumber: number, branchName?: string): Promise<Branch> {
+		const displayName = branchName ?? `${organisation.name} - Branch ${branchNumber}`;
+		console.log(`🏢 Creating branch ${branchNumber}${branchName ? ` (${branchName})` : ''}...`);
 
 		// Generate branch ref that links to org ref
 		const branchRef = `${organisation.ref}-BRN${branchNumber.toString().padStart(2, '0')}`;
-		const branchName = `${organisation.name} - Branch ${branchNumber}`;
 		const branchEmail = `branch${branchNumber}-${organisation.ref.toLowerCase()}@legendsystems.co.za`;
 		// Generate unique phone number using slug's numeric part to ensure uniqueness across organizations
-		// Extract numeric part from slug (e.g., "bit-drywall-1768713677" -> "1768713677")
 		const slugNumericPart = this.clerkOrgData.slug.match(/\d+$/)?.[0] || this.clerkOrgId.substring(this.clerkOrgId.length - 4);
-		// Use last 3 digits of numeric part + branch number to create unique phone
 		const phoneSuffix = `${slugNumericPart.slice(-3)}${branchNumber}`.padStart(4, '0');
 		const branchPhone = `+2712345${phoneSuffix}`;
 		const branchWebsite = `https://branch${branchNumber}.${this.clerkOrgData.slug}.legendsystems.co.za`;
 
 		const branch = this.branchRepo.create({
-			name: branchName,
-			ref: branchRef, // Links to org ref
+			name: displayName,
+			ref: branchRef,
 			email: branchEmail,
 			phone: branchPhone,
 			website: branchWebsite,
-			contactPerson: `Branch ${branchNumber} Manager`,
+			contactPerson: branchName ? `${branchName} Manager` : `Branch ${branchNumber} Manager`,
 			address: {
 				...JHB_ADDRESS,
 				street: `${100 + branchNumber} Branch Street`,
 				suburb: branchNumber === 1 ? 'Sandton' : 'Rosebank',
 			},
-			organisation: organisation, // Links to org via relation
-			organisationUid: organisation.clerkOrgId || organisation.ref, // Set Clerk org ID
+			organisation: organisation,
+			organisationUid: organisation.clerkOrgId || organisation.ref,
 			status: GeneralStatus.ACTIVE,
 			isDeleted: false,
 			country: 'ZA',
@@ -421,7 +300,7 @@ class ClerkOrgPopulator {
 
 		const savedBranch = await this.branchRepo.save(branch);
 		console.log(`✅ Branch created: ${savedBranch.name} (UID: ${savedBranch.uid}, Ref: ${savedBranch.ref})`);
-		console.log(`   Linked to org ref: ${organisation.ref}`);
+		console.log(`   Linked to org ref: ${organisation.ref}, organisationUid: ${savedBranch.organisationUid}`);
 
 		return savedBranch;
 	}
@@ -557,23 +436,20 @@ class ClerkOrgPopulator {
 			// Step 2: Create organisation (uses Clerk org ID as ref)
 			const organisation = await this.createOrganisation();
 
-			// Step 3: Create organisation settings
-			await this.createOrganisationSettings(organisation);
+			// Step 3: Create one branch per configured branchNames (linked to org ref)
+			if (this.branchNames.length === 0) {
+				throw new Error('At least one branch name is required for the organisation');
+			}
+			const branches: Branch[] = [];
+			for (let i = 0; i < this.branchNames.length; i++) {
+				const branch = await this.createBranch(organisation, i + 1, this.branchNames[i]);
+				branches.push(branch);
+			}
 
-			// Step 4: Create organisation hours (linked via Clerk org ID in ref field)
-			const orgHours = await this.createOrganisationHours(organisation);
-
-			// Step 5: Create organisation appearance (linked via Clerk org ID in ref field)
-			const orgAppearance = await this.createOrganisationAppearance(organisation);
-
-			// Step 6: Create 2 branches (linked to org ref)
-			const branch1 = await this.createBranch(organisation, 1);
-			const branch2 = await this.createBranch(organisation, 2);
-
-			// Step 7: Create enterprise license (with all features and columns filled)
+			// Step 4: Create enterprise license (with all features and columns filled)
 			const license = await this.createLicense(organisation);
 
-			// Step 8: Verify license can be retrieved using Clerk org ID
+			// Step 5: Verify license can be retrieved using Clerk org ID
 			console.log('\n🔍 Verifying license retrieval using Clerk org ID...');
 			const retrievedLicenses = await this.licensingService.findByOrganisation(this.clerkOrgId);
 			
@@ -603,27 +479,15 @@ class ClerkOrgPopulator {
 			console.log(`   - Organisation: ${organisation.name} (UID: ${organisation.uid})`);
 			console.log(`   - Organisation Ref: ${organisation.ref} (Clerk Org ID)`);
 			console.log(`   - Clerk Org ID: ${organisation.clerkOrgId}`);
-			console.log(`   - Organisation Settings: Created with Africa/Johannesburg timezone`);
-			console.log(`     • Linked via organisationUid: ${organisation.uid}`);
-			console.log(`   - Organisation Hours: Created with Mon-Fri schedule`);
-			console.log(`     • Ref: ${orgHours.ref} (uses Clerk Org ID for referencing)`);
-			console.log(`     • Linked via organisationUid: ${orgHours.organisationUid}`);
-			console.log(`   - Organisation Appearance: Created with branding colors`);
-			console.log(`     • Ref: ${orgAppearance.ref} (uses Clerk Org ID for referencing)`);
-			console.log(`     • Linked via organisationUid: ${orgAppearance.organisationUid}`);
-			console.log(`   - Branches: 2 created`);
-			console.log(`     • ${branch1.name} (Ref: ${branch1.ref})`);
-			console.log(`     • ${branch2.name} (Ref: ${branch2.ref})`);
+			console.log(`   - Branches: ${branches.length} created`);
+			branches.forEach((b) => {
+				console.log(`     • ${b.name} (UID: ${b.uid}, Ref: ${b.ref}, organisationUid: ${b.organisationUid})`);
+			});
 			console.log(`   - License: Enterprise (ENTERPRISE plan) - All features enabled`);
 			console.log(`     • License UID: ${license.uid}`);
 			console.log(`     • Linked to Organisation Ref: ${license.organisationRef} (Clerk Org ID)`);
 			console.log(`     • Features: ${Object.keys(license.features).length} enabled`);
 			console.log(`     • Verified: Can be retrieved using Clerk org ID`);
-			console.log(`   - Timezone: Africa/Johannesburg`);
-			console.log(`   - Location: Johannesburg, South Africa`);
-			console.log(`\n🔗 Linking Strategy:`);
-			console.log(`   - All entities use Clerk Org ID (${organisation.clerkOrgId}) for referencing via 'ref' field`);
-			console.log(`   - Foreign key relationships use numeric organisationUid (${organisation.uid}) for database integrity`);
 		} catch (error) {
 			console.error('\n❌ Error during population:', error);
 			throw error;
@@ -643,24 +507,25 @@ async function main() {
 	const errors: Array<{ org: string; error: Error }> = [];
 
 	try {
-		console.log(`📋 Processing ${CLERK_ORG_DATA_ARRAY.length} organization(s)...\n`);
+		console.log(`📋 Processing ${CLERK_ORG_SEED_ARRAY.length} organization(s)...\n`);
 
-		for (let i = 0; i < CLERK_ORG_DATA_ARRAY.length; i++) {
-			const orgData = CLERK_ORG_DATA_ARRAY[i];
+		for (let i = 0; i < CLERK_ORG_SEED_ARRAY.length; i++) {
+			const seedItem = CLERK_ORG_SEED_ARRAY[i];
+			const { clerkOrg } = seedItem;
 			console.log(`\n${'='.repeat(80)}`);
-			console.log(`📋 Processing organization ${i + 1}/${CLERK_ORG_DATA_ARRAY.length}: ${orgData.name} (${orgData.id})`);
+			console.log(`📋 Processing organization ${i + 1}/${CLERK_ORG_SEED_ARRAY.length}: ${clerkOrg.name} (${clerkOrg.id})`);
 			console.log(`${'='.repeat(80)}\n`);
 
 			try {
-				const populator = new ClerkOrgPopulator(dataSource, licensingService, orgData);
+				const populator = new ClerkOrgPopulator(dataSource, licensingService, seedItem);
 				await populator.populate();
 				successCount++;
-				console.log(`\n✅ Successfully populated data for ${orgData.name}\n`);
+				console.log(`\n✅ Successfully populated data for ${clerkOrg.name}\n`);
 			} catch (error) {
 				failureCount++;
 				const errorMessage = error instanceof Error ? error : new Error(String(error));
-				errors.push({ org: orgData.name, error: errorMessage });
-				console.error(`\n❌ Failed to populate data for ${orgData.name}:`, errorMessage.message);
+				errors.push({ org: clerkOrg.name, error: errorMessage });
+				console.error(`\n❌ Failed to populate data for ${clerkOrg.name}:`, errorMessage.message);
 				console.error(`   Continuing with remaining organizations...\n`);
 			}
 		}
@@ -669,14 +534,14 @@ async function main() {
 		console.log(`\n${'='.repeat(80)}`);
 		console.log('📊 Population Summary');
 		console.log(`${'='.repeat(80)}`);
-		console.log(`   Total organizations: ${CLERK_ORG_DATA_ARRAY.length}`);
+		console.log(`   Total organizations: ${CLERK_ORG_SEED_ARRAY.length}`);
 		console.log(`   ✅ Successful: ${successCount}`);
 		console.log(`   ❌ Failed: ${failureCount}`);
 
 		if (errors.length > 0) {
 			console.log(`\n❌ Errors encountered:`);
 			errors.forEach(({ org, error }) => {
-				console.log(`   - ${org}: ${error.message}`);
+				console.log(`   - ${org}: ${(error as Error).message}`);
 			});
 		}
 
