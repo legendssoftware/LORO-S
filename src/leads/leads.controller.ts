@@ -27,7 +27,7 @@ import { PaginatedResponse } from '../lib/interfaces/paginated-response';
 import { Lead } from './entities/lead.entity';
 import { RoleGuard } from '../guards/role.guard';
 import { ClerkAuthGuard } from '../clerk/clerk.guard';
-import { AuthenticatedRequest, getClerkOrgId } from '../lib/interfaces/authenticated-request.interface';
+import { AuthenticatedRequest, getClerkOrgId, getRequestingUserUid } from '../lib/interfaces/authenticated-request.interface';
 import { RepetitionType } from '../lib/enums/task.enums';
 import { CsvFileValidator } from './validators/csv-file.validator';
 
@@ -270,6 +270,75 @@ export class LeadsController {
 		}
 	}
 
+	@Get('for')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.SUPPORT,
+		AccessLevel.DEVELOPER,
+		AccessLevel.USER,
+		AccessLevel.OWNER,
+		AccessLevel.TECHNICIAN,
+	)
+	@ApiOperation({
+		summary: 'Get leads for the authenticated user',
+		description: 'Retrieves all leads assigned to the authenticated user. User ID is extracted from the authentication token.',
+	})
+	@ApiOkResponse({
+		description: 'User leads retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				leads: {
+					type: 'array',
+					items: {
+						type: 'object',
+						properties: {
+							uid: { type: 'number' },
+							name: { type: 'string' },
+							status: { type: 'string', enum: Object.values(LeadStatus) },
+							createdAt: { type: 'string', format: 'date-time' },
+						},
+					},
+				},
+				message: { type: 'string', example: 'Success' },
+			},
+		},
+	})
+	@ApiNotFoundResponse({
+		description: 'User not found or has no leads',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'No leads found for this user' },
+				leads: { type: 'array', items: {}, example: [] },
+			},
+		},
+	})
+	leadsByUser(@Req() req: AuthenticatedRequest) {
+		const orgId = getClerkOrgId(req);
+		if (!orgId) {
+			throw new BadRequestException('Organization context required');
+		}
+		
+		// Extract user ID from authenticated request token
+		const userUid = getRequestingUserUid(req);
+		if (!userUid) {
+			throw new BadRequestException({
+				statusCode: 400,
+				message: 'User ID not found in authentication token',
+				error: 'Bad Request',
+				action: 'Please ensure you are properly authenticated',
+				cause: 'User ID could not be extracted from the authentication token',
+			});
+		}
+		
+		const branchId = req.user?.branch?.uid;
+		const requestingUserId = req.user?.uid; // Use numeric uid (ClerkAuthGuard provides this)
+		const userAccessLevel = req.user?.accessLevel || req.user?.role;
+		return this.leadsService.leadsByUser(userUid, orgId, branchId, Number(requestingUserId), userAccessLevel);
+	}
+
 	@Get(':ref')
 	@Roles(
 		AccessLevel.ADMIN,
@@ -368,76 +437,6 @@ export class LeadsController {
 		const clerkUserId = req.user?.clerkUserId as string | undefined;
 		const userAccessLevel = req.user?.accessLevel || req.user?.role;
 		return this.leadsService.findOne(ref, orgId, branchId, clerkUserId, userAccessLevel);
-	}
-
-	@Get('for/:ref')
-	@Roles(
-		AccessLevel.ADMIN,
-		AccessLevel.MANAGER,
-		AccessLevel.SUPPORT,
-		AccessLevel.DEVELOPER,
-		AccessLevel.USER,
-		AccessLevel.OWNER,
-		AccessLevel.TECHNICIAN,
-	)
-	@ApiOperation({
-		summary: 'Get leads by user reference code',
-		description: 'Retrieves all leads assigned to a specific user',
-	})
-	@ApiParam({ name: 'ref', description: 'User reference code or ID', type: 'number' })
-	@ApiOkResponse({
-		description: 'User leads retrieved successfully',
-		schema: {
-			type: 'object',
-			properties: {
-				leads: {
-					type: 'array',
-					items: {
-						type: 'object',
-						properties: {
-							uid: { type: 'number' },
-							name: { type: 'string' },
-							status: { type: 'string', enum: Object.values(LeadStatus) },
-							createdAt: { type: 'string', format: 'date-time' },
-						},
-					},
-				},
-				message: { type: 'string', example: 'Success' },
-			},
-		},
-	})
-	@ApiNotFoundResponse({
-		description: 'User not found or has no leads',
-		schema: {
-			type: 'object',
-			properties: {
-				message: { type: 'string', example: 'No leads found for this user' },
-				leads: { type: 'array', items: {}, example: [] },
-			},
-		},
-	})
-	leadsByUser(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-		const orgId = getClerkOrgId(req);
-		if (!orgId) {
-			throw new BadRequestException('Organization context required');
-		}
-		
-		// Validate that ref is a valid number
-		const refNumber = Number(ref);
-		if (isNaN(refNumber) || refNumber <= 0) {
-			throw new BadRequestException({
-				statusCode: 400,
-				message: 'Invalid user reference ID',
-				error: 'Bad Request',
-				action: 'Please provide a valid user reference ID',
-				cause: `The provided user reference "${ref}" is not a valid number`,
-			});
-		}
-		
-		const branchId = req.user?.branch?.uid;
-		const requestingUserId = req.user?.uid; // Use numeric uid (ClerkAuthGuard provides this)
-		const userAccessLevel = req.user?.accessLevel || req.user?.role;
-		return this.leadsService.leadsByUser(refNumber, orgId, branchId, Number(requestingUserId), userAccessLevel);
 	}
 
 	@Patch(':ref')

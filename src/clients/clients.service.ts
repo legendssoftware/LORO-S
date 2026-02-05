@@ -34,6 +34,7 @@ import { UnifiedNotificationService } from '../lib/services/unified-notification
 import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
 import { ApprovalsService } from '../approvals/approvals.service';
 import { ApprovalType, ApprovalStatus, ApprovalPriority, ApprovalFlow } from '../lib/enums/approval.enums';
+import { Approval } from '../approvals/entities/approval.entity';
 import { OnEvent } from '@nestjs/event-emitter';
 
 @Injectable()
@@ -57,6 +58,8 @@ export class ClientsService {
 		private scheduleRepository: Repository<ClientCommunicationSchedule>,
 		@InjectRepository(Task)
 		private taskRepository: Repository<Task>,
+		@InjectRepository(Approval)
+		private approvalRepository: Repository<Approval>,
 		@Inject(CACHE_MANAGER)
 		private cacheManager: Cache,
 		private readonly configService: ConfigService,
@@ -3685,17 +3688,6 @@ export class ClientsService {
 		this.logger.log(`[CREDIT_LIMIT_EXTENSION] Starting credit limit extension request for clientAuthId: ${clientAuthId}`);
 
 		try {
-			// Find organisation by Clerk org ID if provided
-			let organisationUid: number | undefined;
-			if (organisationRef) {
-				const organisation = await this.findOrganisationByClerkId(organisationRef);
-				if (!organisation) {
-					this.logger.error(`[CREDIT_LIMIT_EXTENSION] Organization not found for Clerk ID: ${organisationRef}`);
-					throw new BadRequestException(`Organisation not found for ID: ${organisationRef}`);
-				}
-				organisationUid = organisation.uid;
-			}
-
 			// 1. Find the ClientAuth record and related Client
 			const clientAuth = await this.clientAuthRepository.findOne({
 				where: { uid: clientAuthId, isDeleted: false },
@@ -3710,9 +3702,16 @@ export class ClientsService {
 			const client = clientAuth.client;
 
 			// 2. Validate organization membership
-			if (organisationUid && client.organisation?.uid !== organisationUid) {
-				this.logger.warn(`[CREDIT_LIMIT_EXTENSION] Organization mismatch for client ${client.uid}`);
-				throw new BadRequestException('Client does not belong to the specified organization');
+			if (organisationRef) {
+				const organisation = await this.findOrganisationByClerkId(organisationRef);
+				if (!organisation) {
+					this.logger.error(`[CREDIT_LIMIT_EXTENSION] Organization not found for Clerk ID: ${organisationRef}`);
+					throw new BadRequestException(`Organisation not found for ID: ${organisationRef}`);
+				}
+				if (client.organisation?.uid !== organisation.uid) {
+					this.logger.warn(`[CREDIT_LIMIT_EXTENSION] Organization mismatch for client ${client.uid}`);
+					throw new BadRequestException('Client does not belong to the specified organization');
+				}
 			}
 
 			// 3. Validate requested limit > current limit
@@ -3727,10 +3726,11 @@ export class ClientsService {
 				where: {
 					organisationRef: client.organisation?.uid?.toString(),
 					accessLevel: In([AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER]),
+					status: GeneralStatus.ACTIVE,
 					isDeleted: false,
 				},
 				relations: ['organisation', 'branch'],
-				order: { uid: 'ASC' },
+				order: { accessLevel: 'DESC', uid: 'ASC' }, // Prioritize higher access levels
 			});
 
 			if (!orgAdmin) {
@@ -3738,13 +3738,32 @@ export class ClientsService {
 				throw new BadRequestException('No administrator found in organization to process approval');
 			}
 
+			// 4.5. Check for existing pending credit limit approval requests
+			const existingApproval = await this.approvalRepository.findOne({
+				where: {
+					type: ApprovalType.CREDIT_LIMIT,
+					status: ApprovalStatus.PENDING,
+					entityType: 'client_credit_limit',
+					entityId: client.uid,
+					isDeleted: false,
+				},
+			});
+
+			if (existingApproval) {
+				this.logger.warn(`[CREDIT_LIMIT_EXTENSION] Client ${client.uid} already has a pending credit limit extension request (approval ${existingApproval.uid})`);
+				throw new BadRequestException('You already have a pending credit limit extension request. Please wait for it to be reviewed before submitting a new one.');
+			}
+
 			// 5. Calculate increase amount
 			const increaseAmount = creditLimitDto.requestedLimit - currentLimit;
 
 			// 6. Create approval request
+			// Note: We set approverClerkUserId explicitly to ensure routing to org admin
+			// The requester is set to orgAdmin (User entity) for system compatibility,
+			// but the actual client requester info is stored in entityData
 			const approvalDto = {
 				title: `Credit Limit Extension - ${client.name}`,
-				description: `Client ${client.name} (${clientAuth.email}) has requested a credit limit extension from ${currentLimit} to ${creditLimitDto.requestedLimit}. ${creditLimitDto.reason ? `Reason: ${creditLimitDto.reason}` : ''}`,
+				description: `Client ${client.name} (${clientAuth.email}) has requested a credit limit extension from ${currentLimit.toLocaleString('en-ZA', { style: 'currency', currency: 'ZAR', minimumFractionDigits: 0 })} to ${creditLimitDto.requestedLimit.toLocaleString('en-ZA', { style: 'currency', currency: 'ZAR', minimumFractionDigits: 0 })}. ${creditLimitDto.reason ? `Reason: ${creditLimitDto.reason}` : ''}`,
 				type: ApprovalType.CREDIT_LIMIT,
 				priority: ApprovalPriority.HIGH,
 				flowType: ApprovalFlow.SINGLE_APPROVER,
@@ -3752,8 +3771,10 @@ export class ClientsService {
 				entityId: client.uid,
 				amount: creditLimitDto.requestedLimit,
 				currency: 'ZAR',
+				approverClerkUserId: orgAdmin.clerkUserId, // Explicitly set approver to org admin
 				entityData: {
 					clientAuthId: clientAuth.uid,
+					clientClerkUserId: clientAuth.clerkUserId, // Store client's Clerk ID for tracking
 					clientId: client.uid,
 					clientName: client.name,
 					clientEmail: clientAuth.email,
@@ -3765,25 +3786,19 @@ export class ClientsService {
 					branchUid: client.branch?.uid,
 				},
 				autoSubmit: true,
-				metadata: {
-					clientAuthId: clientAuth.uid,
-					clientId: client.uid,
-					clientName: client.name,
-					currentLimit,
-					requestedLimit: creditLimitDto.requestedLimit,
-					increaseAmount,
-				},
 				customFields: {
 					tags: ['credit-limit-extension', 'client-portal', 'financial'],
 				},
 			};
 
-			// Create approval using org admin as requester (for routing purposes)
+			// Create approval using org admin as requester (User entity required for approval system)
+			// The actual client requester is tracked via entityData.clientClerkUserId
 			const approval = await this.approvalsService.create(approvalDto, {
 				uid: orgAdmin.uid,
+				clerkUserId: orgAdmin.clerkUserId,
 				role: orgAdmin.accessLevel,
 				accessLevel: orgAdmin.accessLevel,
-				organisationRef: orgAdmin.organisationRef,
+				organisationRef: orgAdmin.organisationRef || organisationRef,
 				branch: orgAdmin.branch,
 			} as any);
 
