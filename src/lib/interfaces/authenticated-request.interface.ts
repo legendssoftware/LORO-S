@@ -32,6 +32,8 @@ export interface AuthenticatedRequest extends Request {
 		organisationRef?: string | number; // Clerk org ID (string) or numeric uid (number) for backward compatibility
 		licensePlan?: string; // License plan name (e.g., 'starter', 'enterprise')
 		licenseId?: string; // License ID for validation
+		/** Set for CLIENT role: Client.uid for "current client" authorization (e.g. projects, quotations). */
+		clientUid?: number;
 	};
 	/**
 	 * Clerk organisation ID extracted from the token (source of truth).

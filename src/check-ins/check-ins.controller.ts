@@ -7,7 +7,7 @@ import { UpdateCheckOutPhotoDto } from './dto/update-check-out-photo.dto';
 import { UpdateVisitDetailsDto } from './dto/update-visit-details.dto';
 import { Request } from 'express';
 
-import { AuthenticatedRequest, getClerkOrgId } from '../lib/interfaces/authenticated-request.interface';
+import { AuthenticatedRequest, getClerkOrgId, getClerkUserId } from '../lib/interfaces/authenticated-request.interface';
 
 import {
 	ApiOperation,
@@ -239,10 +239,51 @@ export class CheckInsController {
 		return this.checkInsService.checkIn(createCheckInDto, orgId, branchId, clerkUserId);
 	}
 
+	@Get('status/me')
+	@ApiOperation({
+		summary: "Get current user's check-in status",
+		description: "Retrieves the current check-in status for the authenticated user. User identity is derived from the token; no user reference is required.",
+	})
+	@ApiOkResponse({
+		description: 'Check-in status retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				status: { type: 'string', example: 'CHECKED_IN' },
+				lastCheckIn: {
+					type: 'object',
+					properties: {
+						uid: { type: 'number' },
+						checkInTime: { type: 'string', format: 'date-time' },
+						checkOutTime: { type: 'string', format: 'date-time', nullable: true },
+					},
+				},
+				message: { type: 'string', example: 'Success' },
+			},
+		},
+	})
+	@ApiNotFoundResponse({
+		description: 'User not found',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'User not found' },
+				status: { type: 'null' },
+			},
+		},
+	})
+	checkInStatusMe(@Req() req: AuthenticatedRequest) {
+		const clerkUserId = getClerkUserId(req);
+		if (!clerkUserId) {
+			throw new BadRequestException('Authentication required');
+		}
+		return this.checkInsService.checkInStatus(clerkUserId);
+	}
+
 	@Get('status/:reference')
 	@ApiOperation({
-		summary: 'Get check-in status',
-		description: 'Retrieves the current check-in status for a specific user',
+		summary: 'Get check-in status by reference',
+		description: 'Retrieves the current check-in status for a specific user by reference (Clerk user ID or numeric UID). Prefer GET status/me for the authenticated user.',
 	})
 	@ApiParam({ name: 'reference', description: 'User reference code (string)', type: 'string' })
 	@ApiOkResponse({
@@ -411,7 +452,8 @@ export class CheckInsController {
 			throw new BadRequestException('Organization context required');
 		}
 		const branchId = req.user?.branch?.uid;
-		return this.checkInsService.updateCheckInPhoto(updateDto.checkInId, updateDto.photoUrl, orgId, branchId);
+		const clerkUserId = req.user?.clerkUserId;
+		return this.checkInsService.updateCheckInPhoto(updateDto.checkInId, updateDto.photoUrl, orgId, branchId, clerkUserId);
 	}
 
 	@Patch('photo/check-out')

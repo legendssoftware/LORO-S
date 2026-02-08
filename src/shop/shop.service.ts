@@ -981,9 +981,12 @@ export class ShopService {
 			const { name: clientName } = client;
 
 			// Resolve organization from client (not from user)
-			// If orgId is provided as string (Clerk org ID), resolve it to numeric uid
-			let resolvedOrgId: number | undefined = client.organisationUid;
-			if (!resolvedOrgId && orgId) {
+			// client.organisationUid is Clerk org ID (string); resolve to numeric uid
+			let resolvedOrgId: number | undefined;
+			if (client.organisationUid) {
+				resolvedOrgId = (await this.resolveOrgId(client.organisationUid)) ?? undefined;
+			}
+			if (resolvedOrgId == null && orgId) {
 				const resolved = await this.resolveOrgId(orgId);
 				if (resolved) {
 					resolvedOrgId = resolved;
@@ -1547,9 +1550,12 @@ export class ShopService {
 			const { name: clientName, email: clientEmail } = client;
 
 			// Resolve organization from client (not from user)
-			// If orgId is provided as string (Clerk org ID), resolve it to numeric uid
-			let resolvedOrgId: number | undefined = client.organisationUid;
-			if (!resolvedOrgId && orgId) {
+			// client.organisationUid is Clerk org ID (string); resolve to numeric uid
+			let resolvedOrgId: number | undefined;
+			if (client.organisationUid) {
+				resolvedOrgId = (await this.resolveOrgId(client.organisationUid)) ?? undefined;
+			}
+			if (resolvedOrgId == null && orgId) {
 				const resolved = await this.resolveOrgId(orgId);
 				if (resolved) {
 					resolvedOrgId = resolved;

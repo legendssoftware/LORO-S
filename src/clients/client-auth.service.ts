@@ -65,19 +65,34 @@ export class ClientAuthService {
 			clientAuth.clerkLastSyncedAt = new Date();
 			await this.clientAuthRepository.save(clientAuth);
 
+			// Load client with assignedSalesRep for profile (sanitized for client portal)
+			const clientWithRep = await this.clientRepository.findOne({
+				where: { uid: clientAuth.client.uid },
+				relations: ['assignedSalesRep'],
+			});
+			const client = clientWithRep ?? clientAuth.client;
+			const assignedSalesRep = client.assignedSalesRep
+				? {
+						name: [client.assignedSalesRep.name, client.assignedSalesRep.surname].filter(Boolean).join(' ') || client.assignedSalesRep.name,
+						email: client.assignedSalesRep.email ?? null,
+						phone: client.assignedSalesRep.phone ?? null,
+					}
+				: null;
+
 			// Build profile data
 			const profileData = {
 				uid: clientAuth.uid,
 				email: clientAuth.email,
-				name: clientAuth.client.name || clientAuth.client.contactPerson || '',
+				name: client.name || client.contactPerson || '',
 				accessLevel: 'client' as const,
 				client: {
-					uid: clientAuth.client.uid,
-					name: clientAuth.client.name,
-					contactPerson: clientAuth.client.contactPerson,
-					phone: clientAuth.client.phone,
-					organisationRef: clientAuth.client.organisation?.ref || null,
-					branchUid: clientAuth.client.branch?.uid || null,
+					uid: client.uid,
+					name: client.name,
+					contactPerson: client.contactPerson,
+					phone: client.phone,
+					organisationRef: client.organisation?.ref ?? clientAuth.client.organisation?.ref ?? null,
+					branchUid: client.branch?.uid ?? clientAuth.client.branch?.uid ?? null,
+					assignedSalesRep,
 				},
 			};
 
@@ -93,5 +108,47 @@ export class ClientAuthService {
 			this.logger.error(`[${operationId}] Sync error:`, error instanceof Error ? error.message : 'Unknown error');
 			throw new UnauthorizedException('Session sync failed. Please try again.');
 		}
+	}
+
+	/**
+	 * Get current client profile by Clerk user ID (for authenticated client portal).
+	 * Returns client profile with sanitized assignedSalesRep (name, email, phone only).
+	 */
+	async getMe(clerkUserId: string): Promise<{ profileData: { uid: number; email: string; name: string; accessLevel: 'client'; client: { uid: number; name: string; contactPerson: string; phone: string; organisationRef: string | null; branchUid: number | null; assignedSalesRep: { name: string; email: string | null; phone: string | null } | null } } }> {
+		const clientAuth = await this.clerkService.getClientAuthByClerkId(clerkUserId);
+		if (!clientAuth?.client) {
+			throw new NotFoundException('Client account not found.');
+		}
+		if (!clientAuth.isActive || clientAuth.isDeleted) {
+			throw new UnauthorizedException('Your account has been deactivated. Please contact support.');
+		}
+		const clientWithRep = await this.clientRepository.findOne({
+			where: { uid: clientAuth.client.uid },
+			relations: ['assignedSalesRep', 'organisation', 'branch'],
+		});
+		const client = clientWithRep ?? clientAuth.client;
+		const assignedSalesRep = client.assignedSalesRep
+			? {
+					name: [client.assignedSalesRep.name, client.assignedSalesRep.surname].filter(Boolean).join(' ') || client.assignedSalesRep.name,
+					email: client.assignedSalesRep.email ?? null,
+					phone: client.assignedSalesRep.phone ?? null,
+				}
+			: null;
+		const profileData = {
+			uid: clientAuth.uid,
+			email: clientAuth.email,
+			name: client.name || client.contactPerson || '',
+			accessLevel: 'client' as const,
+			client: {
+				uid: client.uid,
+				name: client.name,
+				contactPerson: client.contactPerson,
+				phone: client.phone,
+				organisationRef: client.organisation?.ref ?? clientAuth.client.organisation?.ref ?? null,
+				branchUid: client.branch?.uid ?? clientAuth.client.branch?.uid ?? null,
+				assignedSalesRep,
+			},
+		};
+		return { profileData };
 	}
 }

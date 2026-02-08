@@ -240,50 +240,70 @@ export class ClerkAuthGuard implements CanActivate {
 				// Update last sync timestamp (non-blocking)
 				this.clerkService.updateSyncTimestamp(dbUser);
 			} else {
-				// User not found in database - sync user and wait for completion (with timeout)
-				// Use request-scoped tracking to prevent multiple syncs in the same request
-				const syncKey = `_clerkSync_${clerkUserId}`;
-				if (request[syncKey]) {
-					// Sync already in progress for this request - wait for it
-					this.logger.debug(`[ClerkAuthGuard] Sync already in progress for this request, waiting...`);
-					const syncedUser = await request[syncKey];
-					if (syncedUser && syncedUser.uid) {
-						request['user'].uid = syncedUser.uid;
-						// Use token org ID as source of truth (matches the org in the token), fallback to synced user value
-						request['user'].organisationRef = tokenOrgId || syncedUser.organisationRef;
-						request['user'].branch = syncedUser.branchUid ? { uid: syncedUser.branchUid } : undefined;
-						request['user'].org = (tokenOrgId || syncedUser.organisationRef) ? { uid: syncedUser.organisation?.uid } : undefined;
+				// User not found in User table - try ClientAuth (client portal users)
+				const clientAuth = await this.clerkService.getClientAuthByClerkId(clerkUserId);
+				if (clientAuth?.client) {
+					// Client portal user: set uid (ClientAuth.uid), clientUid (Client.uid), and org from client
+					request['user'].uid = clientAuth.uid;
+					request['user'].clientUid = clientAuth.client.uid;
+					const orgRef = tokenOrgId ?? clientAuth.client.organisation?.clerkOrgId ?? clientAuth.client.organisation?.ref;
+					request['user'].organisationRef = orgRef;
+					if (!tokenOrgId && orgRef) {
+						request['tokenOrgId'] = typeof orgRef === 'number' ? String(orgRef) : orgRef;
 					}
+					request['user'].branch = clientAuth.client.branch ? { uid: clientAuth.client.branch.uid } : undefined;
+					request['user'].org = clientAuth.client.organisation ? { uid: clientAuth.client.organisation.uid } : undefined;
+					// Role already set from token (e.g. 'client')
 				} else {
-					// Start sync and track it in request context
-					this.logger.warn(`[ClerkAuthGuard] User not found in database, syncing from Clerk`);
-					try {
-						const syncPromise = this.clerkService.syncUserFromClerk(clerkUserId);
-						const timeoutPromise = new Promise<null>((resolve) => 
-							setTimeout(() => resolve(null), 5000)
-						);
-						
-						// Store promise in request context to prevent duplicate syncs
-						request[syncKey] = Promise.race([syncPromise, timeoutPromise]);
+					// User not found in database - sync user and wait for completion (with timeout)
+					// Use request-scoped tracking to prevent multiple syncs in the same request
+					const syncKey = `_clerkSync_${clerkUserId}`;
+					if (request[syncKey]) {
+						// Sync already in progress for this request - wait for it
+						this.logger.debug(`[ClerkAuthGuard] Sync already in progress for this request, waiting...`);
 						const syncedUser = await request[syncKey];
-						
 						if (syncedUser && syncedUser.uid) {
-							// Sync completed successfully - enhance user object
 							request['user'].uid = syncedUser.uid;
 							// Use token org ID as source of truth (matches the org in the token), fallback to synced user value
 							request['user'].organisationRef = tokenOrgId || syncedUser.organisationRef;
 							request['user'].branch = syncedUser.branchUid ? { uid: syncedUser.branchUid } : undefined;
 							request['user'].org = (tokenOrgId || syncedUser.organisationRef) ? { uid: syncedUser.organisation?.uid } : undefined;
-						} else {
-							// Sync timed out or failed - continue with token-based auth
-							this.logger.warn(`[ClerkAuthGuard] User sync timed out or failed`);
+							request['user'].role = syncedUser.role ?? request['user'].role;
+							request['user'].accessLevel = syncedUser.accessLevel ?? request['user'].accessLevel;
 						}
-					} catch (error) {
-						// Sync failed - continue with token-based auth
-						this.logger.warn(`[ClerkAuthGuard] User sync failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-					} finally {
-						// Clean up after a delay to allow other guard executions to use the same promise
-						setTimeout(() => delete request[syncKey], 100);
+					} else {
+						// Start sync and track it in request context
+						this.logger.warn(`[ClerkAuthGuard] User not found in database, syncing from Clerk`);
+						try {
+							const syncPromise = this.clerkService.syncUserFromClerk(clerkUserId);
+							const timeoutPromise = new Promise<null>((resolve) =>
+								setTimeout(() => resolve(null), 5000)
+							);
+
+							// Store promise in request context to prevent duplicate syncs
+							request[syncKey] = Promise.race([syncPromise, timeoutPromise]);
+							const syncedUser = await request[syncKey];
+
+							if (syncedUser && syncedUser.uid) {
+								// Sync completed successfully - enhance user object
+								request['user'].uid = syncedUser.uid;
+								// Use token org ID as source of truth (matches the org in the token), fallback to synced user value
+								request['user'].organisationRef = tokenOrgId || syncedUser.organisationRef;
+								request['user'].branch = syncedUser.branchUid ? { uid: syncedUser.branchUid } : undefined;
+								request['user'].org = (tokenOrgId || syncedUser.organisationRef) ? { uid: syncedUser.organisation?.uid } : undefined;
+								request['user'].role = syncedUser.role ?? request['user'].role;
+								request['user'].accessLevel = syncedUser.accessLevel ?? request['user'].accessLevel;
+							} else {
+								// Sync timed out or failed - continue with token-based auth
+								this.logger.warn(`[ClerkAuthGuard] User sync timed out or failed`);
+							}
+						} catch (error) {
+							// Sync failed - continue with token-based auth
+							this.logger.warn(`[ClerkAuthGuard] User sync failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+						} finally {
+							// Clean up after a delay to allow other guard executions to use the same promise
+							setTimeout(() => delete request[syncKey], 100);
+						}
 					}
 				}
 			}

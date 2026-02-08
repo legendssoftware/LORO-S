@@ -750,6 +750,7 @@ export class TasksService {
 			const tasks = await this.taskRepository.find({
 				where: whereClause,
 				relations: ['creator', 'subtasks', 'organisation', 'branch'],
+				order: { createdAt: 'DESC' },
 			});
 
 			if (!tasks || tasks.length === 0) {

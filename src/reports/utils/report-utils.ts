@@ -148,10 +148,10 @@ export class ReportUtils {
 		convertedCount: number;
 		conversionRate: number;
 	}> {
-		// New leads captured
+		// New leads captured (Lead links to User via owner.uid / ownerClerkUserId)
 		const newLeads = await leadRepository.find({
 			where: {
-				ownerUid: userId,
+				owner: { uid: userId },
 				createdAt: Between(startDate, endDate),
 			},
 		});
@@ -159,7 +159,7 @@ export class ReportUtils {
 		// Leads converted
 		const convertedLeads = await leadRepository.find({
 			where: {
-				ownerUid: userId,
+				owner: { uid: userId },
 				status: LeadStatus.CONVERTED,
 				updatedAt: Between(startDate, endDate),
 			},

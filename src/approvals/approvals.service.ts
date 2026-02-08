@@ -490,6 +490,7 @@ export class ApprovalsService {
     // Create new approval request
     async create(createApprovalDto: CreateApprovalDto, user: RequestUser) {
         const startTime = Date.now();
+        this.logger.log(`[ApprovalsService] create() called: title=${createApprovalDto?.title}, type=${createApprovalDto?.type}, requesterUid=${user?.uid}, orgRef=${user?.organisationRef}, branchUid=${user?.branch?.uid}`);
         this.logger.log(`🚀 [create] Creating new approval request by user ${user.uid}`);
         
         try {
@@ -703,6 +704,7 @@ export class ApprovalsService {
     // Get all approvals with filtering and pagination
     async findAll(query: ApprovalQueryDto, user: RequestUser) {
         const startTime = Date.now();
+        this.logger.log(`[ApprovalsService] findAll() called: page=${query?.page}, limit=${query?.limit}, status=${query?.status}, type=${query?.type}, userUid=${user?.uid}, orgRef=${user?.organisationRef}`);
 
         try {
 
@@ -820,22 +822,25 @@ export class ApprovalsService {
         }
     }
 
-    // Get pending approvals for current user
+    // Get approvals for current user (org-wide: all in org; others: only where approver/delegatedTo). No status filter — returns all.
     async getPendingApprovals(user: RequestUser) {
         const startTime = Date.now();
+        this.logger.log(`[ApprovalsService] getPendingApprovals() called: userUid=${user?.uid}, orgRef=${user?.organisationRef}, clerkUserId=${user?.clerkUserId}`);
         try {
-            this.logger.log(`🏗️ [getPendingApprovals] Building pending approvals query...`);
+            this.logger.log(`🏗️ [getPendingApprovals] Building approvals query (all statuses)...`);
             const queryBuilder = this.approvalRepository
                 .createQueryBuilder('approval')
                 .leftJoinAndSelect('approval.requester', 'requester')
                 .leftJoinAndSelect('approval.approver', 'approver')
                 .leftJoinAndSelect('approval.delegatedTo', 'delegatedTo')
                 .leftJoinAndSelect('approval.organisation', 'organisation')
-                .leftJoinAndSelect('approval.branch', 'branch')
-                .where('approval.status IN (:...statuses)', { 
-                    statuses: [ApprovalStatus.PENDING, ApprovalStatus.ADDITIONAL_INFO_REQUIRED, ApprovalStatus.ESCALATED] 
-                })
-                .andWhere('(approval.approverClerkUserId = :clerkUserId OR approval.delegatedToClerkUserId = :clerkUserId)', { clerkUserId: user.clerkUserId });
+                .leftJoinAndSelect('approval.branch', 'branch');
+
+            if (!this.canSeeAllApprovalsInOrg(user)) {
+                queryBuilder.andWhere('(approval.approverClerkUserId = :clerkUserId OR approval.delegatedToClerkUserId = :clerkUserId)', {
+                    clerkUserId: user.clerkUserId,
+                });
+            }
 
             // Apply comprehensive scoping (org, branch, user access)
             this.logger.log(`🔒 [getPendingApprovals] Applying security scoping filters`);
@@ -849,25 +854,21 @@ export class ApprovalsService {
                 .getMany();
 
             const executionTime = Date.now() - startTime;
-            this.logger.log(`📊 [getPendingApprovals] Database query completed: found ${approvals.length} pending approvals`);
-            
-            // Log detailed results for debugging
-            approvals.forEach((approval, index) => {
-            });
+            this.logger.log(`📊 [getPendingApprovals] Database query completed: found ${approvals.length} approvals`);
 
-            this.logger.log(`🎉 [getPendingApprovals] ============ PENDING APPROVALS SUCCESS ============`);
-            this.logger.log(`✅ [getPendingApprovals] 📊 Found ${approvals.length} pending approvals for user ${user.uid}`);
+            this.logger.log(`🎉 [getPendingApprovals] ============ APPROVALS SUCCESS ============`);
+            this.logger.log(`✅ [getPendingApprovals] 📊 Found ${approvals.length} approvals for user ${user.uid}`);
             this.logger.log(`✅ [getPendingApprovals] ⏱️ Execution time: ${executionTime}ms`);
-            this.logger.log(`🎉 [getPendingApprovals] ============ PENDING APPROVALS END ============`);
+            this.logger.log(`🎉 [getPendingApprovals] ============ APPROVALS END ============`);
 
             return {
                 data: approvals,
                 count: approvals.length,
-                message: 'Pending approvals retrieved successfully'
+                message: 'Approvals retrieved successfully'
             };
 
         } catch (error) {
-            this.logger.error(`Failed to fetch pending approvals: ${error.message}`, error.stack);
+            this.logger.error(`Failed to fetch approvals: ${error.message}`, error.stack);
             throw error;
         }
     }
@@ -875,6 +876,7 @@ export class ApprovalsService {
     // Get approval requests submitted by current user
     async getMyRequests(query: ApprovalQueryDto, user: RequestUser) {
         const startTime = Date.now();
+        this.logger.log(`[ApprovalsService] getMyRequests() called: page=${query?.page}, limit=${query?.limit}, userUid=${user?.uid}, orgRef=${user?.organisationRef}`);
         try {
             this.logger.log(`🏗️ [getMyRequests] Building my requests query...`);
             const queryBuilder = this.approvalRepository
@@ -1075,6 +1077,7 @@ export class ApprovalsService {
     // Get approval statistics
     async getStats(user: RequestUser) {
         const startTime = Date.now();
+        this.logger.log(`[ApprovalsService] getStats() called: userUid=${user?.uid}, orgRef=${user?.organisationRef}`);
         try {
             // Check cache first
             const cacheKey = this.getCacheKey(`stats_${user.organisationRef}_${user.uid}`);
@@ -1199,6 +1202,7 @@ export class ApprovalsService {
     // Get specific approval by ID
     async findOne(id: number, user: RequestUser) {
         const startTime = Date.now();
+        this.logger.log(`[ApprovalsService] findOne() called: id=${id}, userUid=${user?.uid}, orgRef=${user?.organisationRef}`);
         this.logger.log(`🔍 [findOne] Fetching approval ${id} for user ${user.uid}`);
         
         try {
@@ -2126,65 +2130,59 @@ export class ApprovalsService {
             .slice(0, 10); // Enforce maximum limit
     }
 
-    // Comprehensive scoping helper
+    private static readonly ELEVATED_ROLES = [
+        AccessLevel.OWNER,
+        AccessLevel.ADMIN,
+        AccessLevel.MANAGER,
+        AccessLevel.DEVELOPER,
+        AccessLevel.SUPPORT,
+    ] as const;
+
+    /** Only these roles can see all approvals in the org (no branch filter, no requester/approver filter). Aligned with validateApprovalAccess. */
+    private static readonly ORG_WIDE_APPROVAL_VIEW_ROLES = [
+        AccessLevel.OWNER,
+        AccessLevel.ADMIN,
+        AccessLevel.MANAGER,
+    ] as const;
+
+    private isElevatedRole(user: RequestUser): boolean {
+        const accessLevel = user?.accessLevel ?? (user as any)?.role;
+        return accessLevel != null && ApprovalsService.ELEVATED_ROLES.includes(accessLevel as any);
+    }
+
+    private canSeeAllApprovalsInOrg(user: RequestUser): boolean {
+        const accessLevel = user?.accessLevel ?? (user as any)?.role;
+        return accessLevel != null && ApprovalsService.ORG_WIDE_APPROVAL_VIEW_ROLES.includes(accessLevel as any);
+    }
+
+    // Comprehensive scoping helper. Branch filters removed (as in claims) — org + user-level only.
     private applyScopingFilters(queryBuilder: SelectQueryBuilder<Approval>, user: RequestUser, alias: string = 'approval'): void {
-        const accessLevel = user.accessLevel ?? (user as any).role;
         const clerkUserId = user.clerkUserId ?? '';
-        const elevatedRoles = [
-            AccessLevel.OWNER,
-            AccessLevel.ADMIN,
-            AccessLevel.MANAGER,
-            AccessLevel.DEVELOPER,
-            AccessLevel.SUPPORT,
-        ];
-        const isElevated = elevatedRoles.includes(accessLevel);
+        const canSeeAllInOrg = this.canSeeAllApprovalsInOrg(user);
 
         // Normalize organisationRef to handle null/undefined and ensure string type
-        const orgRef = user.organisationRef 
-            ? String(user.organisationRef).trim() 
+        const orgRef = user.organisationRef
+            ? String(user.organisationRef).trim()
             : null;
 
-        // Organization scoping - For elevated users, allow org match OR approvals they created/approve
-        if (isElevated) {
+        // Organization and user-level scoping. Only MANAGER/ADMIN/OWNER see all in org; others see org + requester/approver/delegatedTo.
+        if (canSeeAllInOrg) {
             if (orgRef) {
-                // Elevated users see all approvals in their org OR approvals they created/approve/delegated to them
-                queryBuilder.andWhere(
-                    `(${alias}.organisationRef = :orgRef OR ${alias}.requesterClerkUserId = :clerkUserId OR ${alias}.approverClerkUserId = :clerkUserId OR ${alias}.delegatedToClerkUserId = :clerkUserId)`,
-                    { orgRef, clerkUserId }
-                );
-                this.logger.debug(`[applyScopingFilters] Elevated user ${user.uid} filtering by orgRef: ${orgRef} OR requester/approver/delegatedTo: ${clerkUserId}`);
+                // Manager/Admin/Owner: all approvals in org (no branch filter)
+                queryBuilder.andWhere(`${alias}.organisationRef = :orgRef`, { orgRef });
+                this.logger.debug(`[applyScopingFilters] Org-wide user ${user.uid} filtering by orgRef: ${orgRef} (all branches)`);
             } else {
-                // If no orgRef, elevated users can still see approvals they created/approve/delegated to them
                 queryBuilder.andWhere(
                     `(${alias}.requesterClerkUserId = :clerkUserId OR ${alias}.approverClerkUserId = :clerkUserId OR ${alias}.delegatedToClerkUserId = :clerkUserId)`,
-                    { clerkUserId }
+                    { clerkUserId },
                 );
-                this.logger.warn(`[applyScopingFilters] Elevated user ${user.uid} has no organisationRef, allowing only their own approvals (as requester/approver/delegatedTo)`);
+                this.logger.warn(`[applyScopingFilters] Org-wide user ${user.uid} has no organisationRef, allowing only their own approvals`);
             }
         } else {
-            // Non-elevated users: always filter by organisationRef (required)
+            // Non-org-wide: same org, requester OR approver OR delegatedTo (no branch filter)
             queryBuilder.andWhere(`${alias}.organisationRef = :orgRef`, {
                 orgRef: orgRef || '',
             });
-        }
-
-        // Branch scoping: elevated users see all in org (no branch filter). Non-elevated: same org, but requester always sees own.
-        if (!isElevated) {
-            if (user.branch) {
-                queryBuilder.andWhere(
-                    `(${alias}.branchUid IS NULL OR ${alias}.branchUid = :branchUid OR ${alias}.requesterClerkUserId = :clerkUserId)`,
-                    { branchUid: user.branch.uid, clerkUserId },
-                );
-            } else {
-                queryBuilder.andWhere(
-                    `(${alias}.branchUid IS NULL OR ${alias}.requesterClerkUserId = :clerkUserId)`,
-                    { clerkUserId },
-                );
-            }
-        }
-
-        // User-level access control for non-elevated users (use clerkUserId; requester/approver/delegatedTo)
-        if (!isElevated) {
             queryBuilder.andWhere(
                 `(${alias}.requesterClerkUserId = :clerkUserIdFilter OR ${alias}.approverClerkUserId = :clerkUserIdFilter OR ${alias}.delegatedToClerkUserId = :clerkUserIdFilter)`,
                 { clerkUserIdFilter: clerkUserId },

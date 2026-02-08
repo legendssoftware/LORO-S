@@ -573,10 +573,10 @@ Retrieves a comprehensive list of all available product categories with hierarch
 	})
 	async categories(@Req() req: AuthenticatedRequest) {
 		const orgId = await this.resolveOrgUid(req);
-		const branchId = this.toNumber(req.user?.branch?.uid);
-		this.logger.log(`📦 [ShopController] categories endpoint called - orgId: ${orgId}, branchId: ${branchId}`);
-		const result = this.shopService.categories(orgId, branchId);
-		this.logger.log(`📦 [ShopController] categories response prepared - categories count: ${(result as any)?.categories?.length || 0}`);
+		// Omit branch filter so categories always show org-wide; improves display consistency
+		this.logger.log(`📦 [ShopController] categories endpoint called - orgId: ${orgId}`);
+		const result = await this.shopService.categories(orgId, undefined);
+		this.logger.log(`📦 [ShopController] categories response prepared - categories count: ${result?.categories?.length ?? 0}`);
 		return result;
 	}
 
@@ -4068,6 +4068,36 @@ Remove quotations from their current project assignments.
 		return this.projectsService.unassignQuotationsFromProject(unassignDto, orgId, branchId, unassignedById);
 	}
 
+	@Get('projects/me')
+	@Roles(AccessLevel.CLIENT)
+	@ApiOperation({
+		summary: '📋 Get my projects (current client)',
+		description: 'Retrieve all projects for the authenticated client. No clientId required.',
+	})
+	@ApiOkResponse({
+		description: '✅ Current client projects retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Client projects retrieved successfully' },
+				projects: {
+					type: 'array',
+					items: { type: 'object' },
+					description: 'Array of projects for the current client',
+				},
+			},
+		},
+	})
+	async getMyProjects(@Req() req: AuthenticatedRequest) {
+		const clientUid = req.user?.clientUid;
+		if (clientUid == null) {
+			throw new UnauthorizedException('Client context not found');
+		}
+		const orgId = await this.resolveOrgUid(req);
+		const branchId = this.toNumber(req.user?.branch?.uid);
+		return this.projectsService.getProjectsByClient(clientUid, orgId, branchId);
+	}
+
 	@Get('projects/client/:clientId')
 	@Roles(
 		AccessLevel.ADMIN,
@@ -4155,11 +4185,13 @@ Retrieve all projects for a specific client with complete project details.
 		const orgId = await this.resolveOrgUid(req);
 		const branchId = this.toNumber(req.user?.branch?.uid);
 		const userRole = req.user?.role || req.user?.accessLevel;
-		const userId = req.user?.uid;
 
-		// Security check: If user is a CLIENT, they can only access their own projects
-		if (userRole === AccessLevel.CLIENT && userId && Number(userId) !== Number(clientId)) {
-			throw new UnauthorizedException('You can only access your own projects');
+		// Security: CLIENT can only access their own projects (compare clientId to authenticated client's Client.uid)
+		if (userRole === AccessLevel.CLIENT) {
+			const clientUid = req.user?.clientUid;
+			if (clientUid == null || Number(clientId) !== Number(clientUid)) {
+				throw new UnauthorizedException('You can only access your own projects');
+			}
 		}
 
 		return this.projectsService.getProjectsByClient(clientId, orgId, branchId);

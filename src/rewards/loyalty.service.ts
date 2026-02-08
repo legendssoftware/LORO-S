@@ -24,6 +24,7 @@ import { EmailType } from '../lib/enums/email.enums';
 import { SMSType } from '../lib/enums/sms.enums';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { StorageService } from '../lib/services/storage.service';
+import { OrganisationService } from '../organisation/organisation.service';
 import * as QRCode from 'qrcode';
 import JsBarcode from 'jsbarcode';
 import { createCanvas } from 'canvas';
@@ -72,6 +73,7 @@ export class LoyaltyService {
 		private readonly unifiedNotificationService: UnifiedNotificationService,
 		private readonly storageService: StorageService,
 		private readonly smsService: SMSService,
+		private readonly organisationService: OrganisationService,
 	) {}
 
 	/**
@@ -137,14 +139,18 @@ export class LoyaltyService {
 			throw new BadRequestException('Either email or phone must be provided');
 		}
 
+		// Resolve numeric orgId to Clerk org ID (Client.organisationUid is string)
+		const organisationUid =
+			orgId != null ? await this.organisationService.findClerkOrgIdByUid(orgId) : undefined;
+
 		// Try to find existing client
-		const whereConditions: any = {};
+		const whereConditions: Record<string, unknown> = {};
 		if (email) whereConditions.email = email;
 		if (phone) whereConditions.phone = phone;
-		if (orgId) whereConditions.organisationUid = orgId;
+		if (organisationUid) whereConditions.organisationUid = organisationUid;
 
 		let client = await this.clientRepository.findOne({
-			where: whereConditions,
+			where: whereConditions as any,
 		});
 
 		if (client) {
@@ -163,7 +169,7 @@ export class LoyaltyService {
 			email: email || `client-${Date.now()}@example.com`,
 			phone: phone || '',
 			contactPerson: name,
-			organisationUid: orgId,
+			...(organisationUid && { organisationUid }),
 			branchUid: branchId,
 		});
 
@@ -183,8 +189,13 @@ export class LoyaltyService {
 			let client: Client;
 
 			if (clientId) {
+				const organisationUid =
+					orgId != null ? await this.organisationService.findClerkOrgIdByUid(orgId) : undefined;
 				client = await this.clientRepository.findOne({
-					where: { uid: clientId, organisationUid: orgId },
+					where: {
+						uid: clientId,
+						...(organisationUid && { organisationUid }),
+					},
 				});
 				if (!client) {
 					throw new NotFoundException('Client not found');

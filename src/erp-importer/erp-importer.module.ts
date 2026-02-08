@@ -10,6 +10,7 @@ import { ErpProductImporterService } from './services/erp-product-importer.servi
 import { ErpClientImporterService } from './services/erp-client-importer.service';
 import { ErpModule } from '../erp/erp.module';
 import { LicensingModule } from '../licensing/licensing.module';
+import { OrganisationModule } from '../organisation/organisation.module';
 
 @Module({
 	imports: [
@@ -17,6 +18,7 @@ import { LicensingModule } from '../licensing/licensing.module';
 		TypeOrmModule.forFeature([Product, Client]),
 		ErpModule, // Provides ErpConnectionManagerService
 		LicensingModule, // Provides LicensingService for AuthGuard
+		OrganisationModule,
 	],
 	controllers: [ErpImporterController],
 	providers: [

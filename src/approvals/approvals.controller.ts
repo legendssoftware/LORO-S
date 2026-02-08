@@ -77,21 +77,20 @@ export class ApprovalsController {
      * @returns Access scope with orgId and branchId (null for org-wide access)
      */
     private getAccessScope(user: any) {
-        const isElevatedUser = [
+        // Org-wide approval visibility (no branch filter) only for MANAGER/ADMIN/OWNER; aligned with approvals.service scoping
+        const orgWideApprovalAccess = [
             AccessLevel.ADMIN,
             AccessLevel.OWNER,
             AccessLevel.MANAGER,
-            AccessLevel.DEVELOPER,
-            AccessLevel.SUPPORT,
         ].includes(user?.role || user?.accessLevel);
 
         const orgId = user?.org?.uid || user?.organisationRef;
-        const branchId = isElevatedUser ? null : user?.branch?.uid;
+        const branchId = orgWideApprovalAccess ? null : user?.branch?.uid;
 
         return {
             orgId,
             branchId,
-            isElevated: isElevatedUser,
+            isElevated: orgWideApprovalAccess,
         };
     }
 
@@ -435,8 +434,19 @@ export class ApprovalsController {
             }
         }
     })
-    create(@Body() createApprovalDto: CreateApprovalDto, @Req() req: AuthenticatedRequest) {
-        return this.approvalsService.create(createApprovalDto, req.user);
+    async create(@Body() createApprovalDto: CreateApprovalDto, @Req() req: AuthenticatedRequest) {
+        const operationId = `POST_APPROVAL_${Date.now()}`;
+        this.logger.log(`[ApprovalsController] [${operationId}] ========== POST /approvals Request Started ==========`);
+        this.logger.log(`[ApprovalsController] [${operationId}] Request URL: ${req.url}, Method: ${req.method}`);
+        this.logger.log(`[ApprovalsController] [${operationId}] Body: title=${createApprovalDto?.title}, type=${createApprovalDto?.type}, requesterUid=${req.user?.uid}`);
+        try {
+            const result = await this.approvalsService.create(createApprovalDto, req.user);
+            this.logger.log(`[ApprovalsController] [${operationId}] ✅ POST /approvals Request completed`);
+            return result;
+        } catch (error) {
+            this.logger.error(`[ApprovalsController] [${operationId}] ❌ POST /approvals Request failed: ${error?.message}`);
+            throw error;
+        }
     }
 
     // Get all approvals with filtering and pagination
@@ -649,11 +659,19 @@ Retrieve a comprehensive, paginated list of approval requests with advanced filt
             }
         }
     })
-    findAll(@Query() query: ApprovalQueryDto, @Req() req: AuthenticatedRequest) {
-        this.logger.debug(`Finding all approvals with filters: ${JSON.stringify(query)}`);
-        const accessScope = this.getAccessScope(req.user);
-        
-        return this.approvalsService.findAll(query, req.user);
+    async findAll(@Query() query: ApprovalQueryDto, @Req() req: AuthenticatedRequest) {
+        const operationId = `GET_APPROVALS_${Date.now()}`;
+        this.logger.log(`[ApprovalsController] [${operationId}] ========== GET /approvals Request Started ==========`);
+        this.logger.log(`[ApprovalsController] [${operationId}] Request URL: ${req.url}, Method: ${req.method}`);
+        this.logger.log(`[ApprovalsController] [${operationId}] Query: page=${query?.page}, limit=${query?.limit}, status=${query?.status}, type=${query?.type}, userUid=${req.user?.uid}`);
+        try {
+            const result = await this.approvalsService.findAll(query, req.user);
+            this.logger.log(`[ApprovalsController] [${operationId}] ✅ GET /approvals Request completed. Total: ${result?.data?.length ?? 0}`);
+            return result;
+        } catch (error) {
+            this.logger.error(`[ApprovalsController] [${operationId}] ❌ GET /approvals Request failed: ${error?.message}`);
+            throw error;
+        }
     }
 
     // Get approvals pending for current user
@@ -799,24 +817,20 @@ Retrieve all approval requests that require immediate action from the currently 
             }
         }
     })
-    getPendingApprovals(@Req() req: AuthenticatedRequest) {
-        this.logger.debug(`Getting pending approvals for user ${req.user?.uid}`);
+    async getPendingApprovals(@Req() req: AuthenticatedRequest) {
+        const operationId = `GET_PENDING_${Date.now()}`;
+        this.logger.log(`[ApprovalsController] [${operationId}] ========== GET /approvals/pending Request Started ==========`);
+        this.logger.log(`[ApprovalsController] [${operationId}] Request URL: ${req.url}, Method: ${req.method}, userUid=${req.user?.uid}, accessLevel=${req.user?.accessLevel || req.user?.role}`);
         const accessScope = this.getAccessScope(req.user);
-        
-        this.logger.debug('🔍 DEBUG getPendingApprovals route:', {
-            requestingUser: {
-                uid: req.user?.uid,
-                accessLevel: req.user?.accessLevel || req.user?.role,
-                isElevated: accessScope.isElevated,
-            },
-            accessScope: {
-                orgId: accessScope.orgId,
-                branchId: accessScope.branchId,
-                orgWideAccess: accessScope.branchId === null,
-            },
-        });
-
-        return this.approvalsService.getPendingApprovals(req.user);
+        this.logger.log(`[ApprovalsController] [${operationId}] accessScope: orgId=${accessScope.orgId}, branchId=${accessScope.branchId}, isElevated=${accessScope.isElevated}`);
+        try {
+            const result = await this.approvalsService.getPendingApprovals(req.user);
+            this.logger.log(`[ApprovalsController] [${operationId}] ✅ GET /approvals/pending Request completed. Count: ${result?.data?.length ?? result?.count ?? 0}`);
+            return result;
+        } catch (error) {
+            this.logger.error(`[ApprovalsController] [${operationId}] ❌ GET /approvals/pending Request failed: ${error?.message}`);
+            throw error;
+        }
     }
 
     // Get approvals submitted by current user
@@ -973,24 +987,18 @@ Retrieve all approval requests that were submitted by the currently authenticate
             }
         }
     })
-    getMyRequests(@Query() query: ApprovalQueryDto, @Req() req: AuthenticatedRequest) {
-        this.logger.debug(`Getting my requests for user ${req.user?.uid}`);
-        const accessScope = this.getAccessScope(req.user);
-        
-        this.logger.debug('🔍 DEBUG getMyRequests route:', {
-            requestingUser: {
-                uid: req.user?.uid,
-                accessLevel: req.user?.accessLevel || req.user?.role,
-                isElevated: accessScope.isElevated,
-            },
-            accessScope: {
-                orgId: accessScope.orgId,
-                branchId: accessScope.branchId,
-                orgWideAccess: accessScope.branchId === null,
-            },
-        });
-
-        return this.approvalsService.getMyRequests(query, req.user);
+    async getMyRequests(@Query() query: ApprovalQueryDto, @Req() req: AuthenticatedRequest) {
+        const operationId = `GET_MY_REQUESTS_${Date.now()}`;
+        this.logger.log(`[ApprovalsController] [${operationId}] ========== GET /approvals/my-requests Request Started ==========`);
+        this.logger.log(`[ApprovalsController] [${operationId}] Request URL: ${req.url}, Method: ${req.method}, userUid=${req.user?.uid}, page=${query?.page}, limit=${query?.limit}`);
+        try {
+            const result = await this.approvalsService.getMyRequests(query, req.user);
+            this.logger.log(`[ApprovalsController] [${operationId}] ✅ GET /approvals/my-requests Request completed. Count: ${result?.data?.length ?? 0}`);
+            return result;
+        } catch (error) {
+            this.logger.error(`[ApprovalsController] [${operationId}] ❌ GET /approvals/my-requests Request failed: ${error?.message}`);
+            throw error;
+        }
     }
 
     // Get comprehensive approval history for a specific user (matching warnings pattern)
@@ -1052,8 +1060,18 @@ Retrieve all approval requests that were submitted by the currently authenticate
             }
         }
     })
-    getUserApprovals(@Param('ref') ref: string) {
-        return this.approvalsService.getUserApprovals(ref);
+    async getUserApprovals(@Param('ref') ref: string, @Req() req: AuthenticatedRequest) {
+        const operationId = `GET_USER_APPROVALS_${Date.now()}`;
+        this.logger.log(`[ApprovalsController] [${operationId}] ========== GET /approvals/user/:ref Request Started ==========`);
+        this.logger.log(`[ApprovalsController] [${operationId}] Request URL: ${req.url}, Method: ${req.method}, ref(clerkUserId)=${ref}`);
+        try {
+            const result = await this.approvalsService.getUserApprovals(ref);
+            this.logger.log(`[ApprovalsController] [${operationId}] ✅ GET /approvals/user/:ref Request completed`);
+            return result;
+        } catch (error) {
+            this.logger.error(`[ApprovalsController] [${operationId}] ❌ GET /approvals/user/:ref Request failed: ${error?.message}`);
+            throw error;
+        }
     }
 
     // Get approval statistics/dashboard data
@@ -1283,8 +1301,18 @@ Generate comprehensive statistics and analytics about approval workflows for exe
             }
         }
     })
-    getStats(@Req() req: AuthenticatedRequest) {
-        return this.approvalsService.getStats(req.user);
+    async getStats(@Req() req: AuthenticatedRequest) {
+        const operationId = `GET_STATS_${Date.now()}`;
+        this.logger.log(`[ApprovalsController] [${operationId}] ========== GET /approvals/stats Request Started ==========`);
+        this.logger.log(`[ApprovalsController] [${operationId}] Request URL: ${req.url}, Method: ${req.method}, userUid=${req.user?.uid}`);
+        try {
+            const result = await this.approvalsService.getStats(req.user);
+            this.logger.log(`[ApprovalsController] [${operationId}] ✅ GET /approvals/stats Request completed`);
+            return result;
+        } catch (error) {
+            this.logger.error(`[ApprovalsController] [${operationId}] ❌ GET /approvals/stats Request failed: ${error?.message}`);
+            throw error;
+        }
     }
 
     // Get specific approval by ID
@@ -1530,8 +1558,18 @@ Retrieve comprehensive information about a specific approval request, including 
             }
         }
     })
-    findOne(@Param('id', ParseIntPipe) id: number, @Req() req: AuthenticatedRequest) {
-        return this.approvalsService.findOne(id, req.user);
+    async findOne(@Param('id', ParseIntPipe) id: number, @Req() req: AuthenticatedRequest) {
+        const operationId = `GET_APPROVAL_${id}_${Date.now()}`;
+        this.logger.log(`[ApprovalsController] [${operationId}] ========== GET /approvals/:id Request Started ==========`);
+        this.logger.log(`[ApprovalsController] [${operationId}] Request URL: ${req.url}, Method: ${req.method}, id=${id}, userUid=${req.user?.uid}`);
+        try {
+            const result = await this.approvalsService.findOne(id, req.user);
+            this.logger.log(`[ApprovalsController] [${operationId}] ✅ GET /approvals/:id Request completed`);
+            return result;
+        } catch (error) {
+            this.logger.error(`[ApprovalsController] [${operationId}] ❌ GET /approvals/:id Request failed: ${error?.message}`);
+            throw error;
+        }
     }
 
     // Update approval (for requesters to modify draft approvals)

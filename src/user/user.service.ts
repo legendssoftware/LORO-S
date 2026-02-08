@@ -1486,7 +1486,8 @@ export class UserService {
 			queryBuilder
 				.skip((page - 1) * limit)
 				.take(limit)
-				.orderBy('user.createdAt', 'DESC');
+				.orderBy('user.name', 'ASC')
+				.addOrderBy('user.surname', 'ASC');
 
 			const [users, total] = await queryBuilder.getManyAndCount();
 

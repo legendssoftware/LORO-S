@@ -316,7 +316,8 @@ export class CheckInsService {
 	async checkIn(createCheckInDto: CreateCheckInDto, orgId?: string, branchId?: number, clerkUserId?: string): Promise<{ message: string; checkInId?: number }> {
 		const operationId = `checkin_${Date.now()}`;
 		const startTime = Date.now();
-		const ownerRef = (createCheckInDto as { owner?: { uid: string } }).owner?.uid;
+		// When clerkUserId is present (token-derived), ignore client-supplied owner; use ownerRef only for legacy callers.
+		const ownerRef = clerkUserId ? undefined : (createCheckInDto as { owner?: { uid: string } }).owner?.uid;
 		this.logger.log(
 			`[${operationId}] Check-in attempt for user: ${ownerRef ?? clerkUserId ?? 'unknown'}, orgId: ${orgId}, branchId: ${branchId}, clerkUserId: ${clerkUserId}`,
 		);
@@ -326,7 +327,7 @@ export class CheckInsService {
 			// CRITICAL PATH: Operations that must complete before response
 			// ============================================================
 
-			// Require either owner.uid (legacy) or clerkUserId from token (self check-in)
+			// Require either owner.uid (legacy) or clerkUserId from token (self check-in). Token-derived identity takes precedence.
 			if (!ownerRef && !clerkUserId) {
 				this.logger.error(`[${operationId}] User ID or Clerk ID is required for check-in`);
 				throw new BadRequestException('User ID or Clerk ID is required for check-in');
@@ -858,7 +859,8 @@ export class CheckInsService {
 	): Promise<{ message: string; duration?: string; checkInId?: number }> {
 		const operationId = `checkout_${Date.now()}`;
 		const startTime = Date.now();
-		const ownerRef = (createCheckOutDto as { owner?: { uid: string } }).owner?.uid;
+		// When clerkUserId is present (token-derived), ignore client-supplied owner; use ownerRef only for legacy callers.
+		const ownerRef = clerkUserId ? undefined : (createCheckOutDto as { owner?: { uid: string } }).owner?.uid;
 		this.logger.log(
 			`[${operationId}] Check-out attempt for user: ${ownerRef ?? clerkUserId ?? 'unknown'}, orgId: ${orgId}, branchId: ${branchId}, clerkUserId: ${clerkUserId}`,
 		);
@@ -868,7 +870,7 @@ export class CheckInsService {
 			// CRITICAL PATH: Operations that must complete before response
 			// ============================================================
 
-			// Require owner (legacy) or clerkUserId from token
+			// Require owner (legacy) or clerkUserId from token. Token-derived identity takes precedence.
 			this.logger.debug(`[${operationId}] Validating check-out data`);
 			if (!ownerRef && !clerkUserId) {
 				this.logger.error(`[${operationId}] Owner or Clerk ID is required for check-out`);

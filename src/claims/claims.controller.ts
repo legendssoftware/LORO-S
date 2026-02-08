@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Req, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards, Req, UnauthorizedException, BadRequestException, Logger } from '@nestjs/common';
 import { ClaimsService } from './claims.service';
 import { CreateClaimDto } from './dto/create-claim.dto';
 import { UpdateClaimDto } from './dto/update-claim.dto';
@@ -9,7 +9,7 @@ import { AccessLevel } from '../lib/enums/user.enums';
 import { RoleGuard } from '../guards/role.guard';
 import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
-import { AuthenticatedRequest, getClerkOrgId } from '../lib/interfaces/authenticated-request.interface';
+import { AuthenticatedRequest, getClerkOrgId, getClerkUserId } from '../lib/interfaces/authenticated-request.interface';
 
 @ApiTags('🪙 Claims')
 @Controller('claims') 
@@ -18,6 +18,8 @@ import { AuthenticatedRequest, getClerkOrgId } from '../lib/interfaces/authentic
 @ApiBearerAuth('JWT-auth')
 @ApiUnauthorizedResponse({ description: 'Unauthorized access due to invalid credentials or missing token' })
 export class ClaimsController {
+  private readonly logger = new Logger(ClaimsController.name);
+
   constructor(private readonly claimsService: ClaimsService) { }
 
   /**
@@ -62,50 +64,58 @@ export class ClaimsController {
       type: 'object',
       properties: {
         message: { type: 'string', example: 'Success' },
-        data: {
+        claim: {
           type: 'object',
+          description: 'The created claim for immediate display or navigation',
           properties: {
             uid: { type: 'number', example: 1 },
-            title: { type: 'string', example: 'Expense Reimbursement' },
-            description: { type: 'string', example: 'Claim for business travel expenses' },
-            amount: { type: 'number', example: 1250.50 },
-            status: { type: 'string', example: 'PENDING' },
-            claimRef: { type: 'string', example: 'CLM123456' },
-            attachments: { 
-              type: 'array', 
-              items: { 
-                type: 'string', 
-                example: 'https://example.com/receipt.pdf' 
-              } 
-            },
+            claimRef: { type: 'string', example: 'CLM-2026-000001' },
+            amount: { type: 'string', example: 'R 1 250.50', description: 'Formatted currency amount' },
+            status: { type: 'string', example: 'PENDING', enum: ['PENDING', 'APPROVED', 'DECLINED', 'PAID'] },
+            category: { type: 'string', example: 'GENERAL' },
             createdAt: { type: 'string', format: 'date-time' },
             updatedAt: { type: 'string', format: 'date-time' },
-            isDeleted: { type: 'boolean', example: false },
+            documentUrl: { type: 'string', nullable: true },
+            comments: { type: 'string', nullable: true },
+            currency: { type: 'string', example: 'ZAR' },
             owner: {
               type: 'object',
               properties: {
                 uid: { type: 'number', example: 1 },
                 name: { type: 'string', example: 'John Doe' },
-                avatar: { type: 'string', example: 'https://example.com/avatar.jpg', nullable: true }
+                clerkUserId: { type: 'string', example: 'user_xxx' }
               }
-            }
+            },
+            organisation: { type: 'object', nullable: true },
+            branch: { type: 'object', nullable: true }
           }
         }
       }
     }
   })
   @ApiBadRequestResponse({ description: 'Invalid input data provided' })
-  create(@Body() createClaimDto: CreateClaimDto, @Req() req: AuthenticatedRequest) {
+  async create(@Body() createClaimDto: CreateClaimDto, @Req() req: AuthenticatedRequest) {
+    const operationId = `POST_CLAIM_${Date.now()}`;
+    this.logger.log(`[ClaimsController] [${operationId}] ========== POST /claims Request Started ==========`);
+    this.logger.log(`[ClaimsController] [${operationId}] Request URL: ${req.url}, Method: ${req.method}`);
+    this.logger.log(`[ClaimsController] [${operationId}] Body: amount=${createClaimDto?.amount}, category=${createClaimDto?.category}, clerkUserId=${getClerkUserId(req)}`);
     const orgId = getClerkOrgId(req);
     if (!orgId) {
       throw new BadRequestException('Organization context required');
     }
     const branchId = this.toNumber(req.user?.branch?.uid);
-    const userId = req.user?.uid;
-    if (!userId) {
+    const clerkUserId = getClerkUserId(req);
+    if (!clerkUserId) {
       throw new UnauthorizedException('User authentication required');
     }
-    return this.claimsService.create(createClaimDto, orgId, branchId, userId);
+    try {
+      const result = await this.claimsService.create(createClaimDto, orgId, branchId, clerkUserId);
+      this.logger.log(`[ClaimsController] [${operationId}] ✅ POST /claims Request completed. claimId=${result?.claim?.uid}`);
+      return result;
+    } catch (error) {
+      this.logger.error(`[ClaimsController] [${operationId}] ❌ POST /claims Request failed: ${error?.message}`);
+      throw error;
+    }
   }
 
   @Get()
@@ -161,20 +171,97 @@ export class ClaimsController {
       }
     }
   })
-  findAll(@Req() req: AuthenticatedRequest) {
+  async findAll(
+    @Req() req: AuthenticatedRequest,
+    @Query('page') page?: string | number,
+    @Query('limit') limit?: string | number,
+    @Query('status') status?: string,
+  ) {
+    const operationId = `GET_CLAIMS_${Date.now()}`;
+    this.logger.log(`[ClaimsController] [${operationId}] ========== GET /claims Request Started ==========`);
+    this.logger.log(`[ClaimsController] [${operationId}] Request URL: ${req.url}, Method: ${req.method}`);
     const orgId = getClerkOrgId(req);
     if (!orgId) {
       throw new BadRequestException('Organization context required');
     }
     const branchId = this.toNumber(req.user?.branch?.uid);
-    const userId = req.user?.uid;
+    const clerkUserId = getClerkUserId(req);
     const userAccessLevel = req.user?.accessLevel || req.user?.role;
-    
-    if (!userId && !userAccessLevel) {
+
+    if (!clerkUserId && !userAccessLevel) {
       throw new UnauthorizedException('User authentication required');
     }
-    
-    return this.claimsService.findAll({}, 1, 25, orgId, branchId, userId, userAccessLevel);
+
+    const pageNum = this.toNumber(page) ?? 1;
+    const limitNum = this.toNumber(limit) ?? 25;
+    const filters = status ? { status: status as any } : {};
+    this.logger.log(`[ClaimsController] [${operationId}] Query: page=${pageNum}, limit=${limitNum}, status=${status}, orgId=${orgId}`);
+
+    try {
+      const result = await this.claimsService.findAll(
+        filters,
+        pageNum,
+        limitNum,
+        orgId,
+        branchId,
+        clerkUserId,
+        userAccessLevel,
+      );
+      this.logger.log(`[ClaimsController] [${operationId}] ✅ GET /claims Request completed. Total: ${result?.meta?.total ?? 0}`);
+      return result;
+    } catch (error) {
+      this.logger.error(`[ClaimsController] [${operationId}] ❌ GET /claims Request failed: ${error?.message}`);
+      throw error;
+    }
+  }
+
+  @Get('me')
+  @Roles(
+    AccessLevel.ADMIN,
+    AccessLevel.MANAGER,
+    AccessLevel.SUPPORT,
+    AccessLevel.DEVELOPER,
+    AccessLevel.USER,
+    AccessLevel.OWNER,
+    AccessLevel.TECHNICIAN,
+  )
+  @ApiOperation({
+    summary: 'Get current user\'s claims',
+    description: 'Retrieves all claims for the authenticated user (identity from token). No ref in URL.',
+  })
+  @ApiOkResponse({
+    description: 'List of claims for the current user',
+    schema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', example: 'Success' },
+        claims: { type: 'array', items: { type: 'object' } },
+        stats: { type: 'object' },
+      },
+    },
+  })
+  async claimsMe(@Req() req: AuthenticatedRequest) {
+    const operationId = `GET_CLAIMS_ME_${Date.now()}`;
+    this.logger.log(`[ClaimsController] [${operationId}] ========== GET /claims/me Request Started ==========`);
+    this.logger.log(`[ClaimsController] [${operationId}] Request URL: ${req.url}, Method: ${req.method}`);
+    const orgId = getClerkOrgId(req);
+    if (!orgId) {
+      throw new BadRequestException('Organization context required');
+    }
+    const branchId = this.toNumber(req.user?.branch?.uid);
+    const clerkUserId = getClerkUserId(req);
+    const userAccessLevel = req.user?.accessLevel || req.user?.role;
+    if (!clerkUserId) {
+      throw new UnauthorizedException('User authentication required');
+    }
+    try {
+      const result = await this.claimsService.claimsByUser(clerkUserId, orgId, branchId, clerkUserId, userAccessLevel);
+      this.logger.log(`[ClaimsController] [${operationId}] ✅ GET /claims/me Request completed. Count: ${result?.claims?.length ?? 0}`);
+      return result;
+    } catch (error) {
+      this.logger.error(`[ClaimsController] [${operationId}] ❌ GET /claims/me Request failed: ${error?.message}`);
+      throw error;
+    }
   }
 
   @Get(':ref')
@@ -237,15 +324,30 @@ export class ClaimsController {
     }
   })
   @ApiNotFoundResponse({ description: 'Claim not found' })
-  findOne(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
+  async findOne(@Param('ref') ref: string, @Req() req: AuthenticatedRequest) {
+    const operationId = `GET_CLAIM_${ref}_${Date.now()}`;
+    this.logger.log(`[ClaimsController] [${operationId}] ========== GET /claims/:ref Request Started ==========`);
+    this.logger.log(`[ClaimsController] [${operationId}] Request URL: ${req.url}, Method: ${req.method}, ref=${ref}`);
+    const refNum = this.toNumber(ref);
+    if (refNum == null || refNum < 1 || !Number.isInteger(refNum)) {
+      this.logger.warn(`[ClaimsController] [${operationId}] Invalid ref: ${ref}`);
+      throw new BadRequestException('Claim reference must be a positive integer');
+    }
     const orgId = getClerkOrgId(req);
     if (!orgId) {
       throw new BadRequestException('Organization context required');
     }
     const branchId = this.toNumber(req.user?.branch?.uid);
-    const userId = req.user?.uid;
+    const clerkUserId = getClerkUserId(req);
     const userAccessLevel = req.user?.accessLevel || req.user?.role;
-    return this.claimsService.findOne(ref, orgId, branchId, userId, userAccessLevel);
+    try {
+      const result = await this.claimsService.findOne(refNum, orgId, branchId, clerkUserId, userAccessLevel);
+      this.logger.log(`[ClaimsController] [${operationId}] ✅ GET /claims/:ref Request completed, claimFound=${!!result?.claim}`);
+      return result;
+    } catch (error) {
+      this.logger.error(`[ClaimsController] [${operationId}] ❌ GET /claims/:ref Request failed: ${error?.message}`);
+      throw error;
+    }
   }
 
   @Patch(':ref')
@@ -280,15 +382,25 @@ export class ClaimsController {
   })
   @ApiNotFoundResponse({ description: 'Claim not found' })
   @ApiBadRequestResponse({ description: 'Invalid input data provided' })
-  update(@Param('ref') ref: number, @Body() updateClaimDto: UpdateClaimDto, @Req() req: AuthenticatedRequest) {
+  async update(@Param('ref') ref: number, @Body() updateClaimDto: UpdateClaimDto, @Req() req: AuthenticatedRequest) {
+    const operationId = `PATCH_CLAIM_${ref}_${Date.now()}`;
+    this.logger.log(`[ClaimsController] [${operationId}] ========== PATCH /claims/:ref Request Started ==========`);
+    this.logger.log(`[ClaimsController] [${operationId}] Request URL: ${req.url}, Method: ${req.method}, ref=${ref}, status=${updateClaimDto?.status}`);
     const orgId = getClerkOrgId(req);
     if (!orgId) {
       throw new BadRequestException('Organization context required');
     }
     const branchId = this.toNumber(req.user?.branch?.uid);
-    const userId = req.user?.uid;
+    const clerkUserId = getClerkUserId(req);
     const userAccessLevel = req.user?.accessLevel || req.user?.role;
-    return this.claimsService.update(ref, updateClaimDto, orgId, branchId, userId, userAccessLevel);
+    try {
+      const result = await this.claimsService.update(ref, updateClaimDto, orgId, branchId, clerkUserId, userAccessLevel);
+      this.logger.log(`[ClaimsController] [${operationId}] ✅ PATCH /claims/:ref Request completed`);
+      return result;
+    } catch (error) {
+      this.logger.error(`[ClaimsController] [${operationId}] ❌ PATCH /claims/:ref Request failed: ${error?.message}`);
+      throw error;
+    }
   }
 
   @Patch('restore/:ref')
@@ -321,20 +433,30 @@ export class ClaimsController {
     }
   })
   @ApiNotFoundResponse({ description: 'Claim not found' })
-  restore(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
+  async restore(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
+    const operationId = `PATCH_RESTORE_${ref}_${Date.now()}`;
+    this.logger.log(`[ClaimsController] [${operationId}] ========== PATCH /claims/restore/:ref Request Started ==========`);
+    this.logger.log(`[ClaimsController] [${operationId}] Request URL: ${req.url}, Method: ${req.method}, ref=${ref}`);
     const orgId = getClerkOrgId(req);
     if (!orgId) {
       throw new BadRequestException('Organization context required');
     }
     const branchId = this.toNumber(req.user?.branch?.uid);
-    const userId = req.user?.uid;
+    const clerkUserId = getClerkUserId(req);
     const userAccessLevel = req.user?.accessLevel || req.user?.role;
-    
-    if (!userId) {
+
+    if (!clerkUserId) {
       throw new UnauthorizedException('User authentication required');
     }
-    
-    return this.claimsService.restore(ref, orgId, branchId, userId, userAccessLevel);
+
+    try {
+      const result = await this.claimsService.restore(ref, orgId, branchId, clerkUserId, userAccessLevel);
+      this.logger.log(`[ClaimsController] [${operationId}] ✅ PATCH /claims/restore/:ref Request completed`);
+      return result;
+    } catch (error) {
+      this.logger.error(`[ClaimsController] [${operationId}] ❌ PATCH /claims/restore/:ref Request failed: ${error?.message}`);
+      throw error;
+    }
   }
 
   @Get('for/:ref')
@@ -397,15 +519,28 @@ export class ClaimsController {
     }
   })
   @ApiNotFoundResponse({ description: 'User not found or has no claims' })
-  claimsByUser(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
+  async claimsByUser(@Param('ref') ref: string, @Req() req: AuthenticatedRequest) {
+    const operationId = `GET_CLAIMS_FOR_${Date.now()}`;
+    this.logger.log(`[ClaimsController] [${operationId}] ========== GET /claims/for/:ref Request Started ==========`);
+    this.logger.log(`[ClaimsController] [${operationId}] Request URL: ${req.url}, Method: ${req.method}, ref=${ref}`);
     const orgId = getClerkOrgId(req);
     if (!orgId) {
       throw new BadRequestException('Organization context required');
     }
     const branchId = this.toNumber(req.user?.branch?.uid);
-    const requestingUserId = req.user?.uid;
+    const clerkUserId = getClerkUserId(req);
     const userAccessLevel = req.user?.accessLevel || req.user?.role;
-    return this.claimsService.claimsByUser(ref, orgId, branchId, requestingUserId, userAccessLevel);
+    if (!clerkUserId) {
+      throw new UnauthorizedException('User authentication required');
+    }
+    try {
+      const result = await this.claimsService.claimsByUser(clerkUserId, orgId, branchId, clerkUserId, userAccessLevel);
+      this.logger.log(`[ClaimsController] [${operationId}] ✅ GET /claims/for/:ref Request completed. Count: ${result?.claims?.length ?? 0}`);
+      return result;
+    } catch (error) {
+      this.logger.error(`[ClaimsController] [${operationId}] ❌ GET /claims/for/:ref Request failed: ${error?.message}`);
+      throw error;
+    }
   }
 
   @Get('share/:token')
@@ -465,15 +600,25 @@ export class ClaimsController {
       }
     }
   })
-  generateShareToken(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
+  async generateShareToken(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
+    const operationId = `POST_SHARE_TOKEN_${ref}_${Date.now()}`;
+    this.logger.log(`[ClaimsController] [${operationId}] ========== POST /claims/:ref/generate-share-token Request Started ==========`);
+    this.logger.log(`[ClaimsController] [${operationId}] Request URL: ${req.url}, Method: ${req.method}, ref=${ref}`);
     const orgId = getClerkOrgId(req);
     if (!orgId) {
       throw new BadRequestException('Organization context required');
     }
     const branchId = this.toNumber(req.user?.branch?.uid);
-    const userId = req.user?.uid;
+    const clerkUserId = getClerkUserId(req);
     const userAccessLevel = req.user?.accessLevel || req.user?.role;
-    return this.claimsService.generateShareToken(ref, orgId, branchId, userId, userAccessLevel);
+    try {
+      const result = await this.claimsService.generateShareToken(ref, orgId, branchId, clerkUserId, userAccessLevel);
+      this.logger.log(`[ClaimsController] [${operationId}] ✅ POST /claims/:ref/generate-share-token Request completed`);
+      return result;
+    } catch (error) {
+      this.logger.error(`[ClaimsController] [${operationId}] ❌ POST /claims/:ref/generate-share-token Request failed: ${error?.message}`);
+      throw error;
+    }
   }
 
   @Delete(':ref')
@@ -506,14 +651,24 @@ export class ClaimsController {
     }
   })
   @ApiNotFoundResponse({ description: 'Claim not found' })
-  remove(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
+  async remove(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
+    const operationId = `DELETE_CLAIM_${ref}_${Date.now()}`;
+    this.logger.log(`[ClaimsController] [${operationId}] ========== DELETE /claims/:ref Request Started ==========`);
+    this.logger.log(`[ClaimsController] [${operationId}] Request URL: ${req.url}, Method: ${req.method}, ref=${ref}`);
     const orgId = getClerkOrgId(req);
     if (!orgId) {
       throw new BadRequestException('Organization context required');
     }
     const branchId = this.toNumber(req.user?.branch?.uid);
-    const userId = req.user?.uid;
+    const clerkUserId = getClerkUserId(req);
     const userAccessLevel = req.user?.accessLevel || req.user?.role;
-    return this.claimsService.remove(ref, orgId, branchId, userId, userAccessLevel);
+    try {
+      const result = await this.claimsService.remove(ref, orgId, branchId, clerkUserId, userAccessLevel);
+      this.logger.log(`[ClaimsController] [${operationId}] ✅ DELETE /claims/:ref Request completed`);
+      return result;
+    } catch (error) {
+      this.logger.error(`[ClaimsController] [${operationId}] ❌ DELETE /claims/:ref Request failed: ${error?.message}`);
+      throw error;
+    }
   }
 }

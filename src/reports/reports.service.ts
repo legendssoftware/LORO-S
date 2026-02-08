@@ -680,14 +680,14 @@ export class ReportsService implements OnModuleInit {
 		this.logger.debug(`Getting users with activity today for org ${organizationId}`);
 
 		try {
-			// Get users with attendance activity today
+			// Get users with attendance activity today (alias 'u' to avoid PostgreSQL reserved word USER)
 			const usersWithAttendance = await this.userRepository
-				.createQueryBuilder('user')
-				.innerJoin('user.attendance', 'attendance')
-				.where('user.organisationId = :organizationId', { organizationId })
+				.createQueryBuilder('u')
+				.innerJoin('u.attendance', 'attendance')
+				.where('u.organisationRef = :organisationRef', { organisationRef: String(organizationId) })
 				.andWhere('attendance.checkIn BETWEEN :startOfDay AND :endOfDay', { startOfDay, endOfDay })
-				.andWhere('user.email IS NOT NULL')
-				.andWhere('user.isDeleted = false')
+				.andWhere('u.email IS NOT NULL')
+				.andWhere('u.isDeleted = false')
 				.getMany();
 
 			// Get all active users from the organization (for comprehensive reporting)

@@ -4,6 +4,7 @@ import { Repository, Not, IsNull } from 'typeorm';
 import { Client } from '../../clients/entities/client.entity';
 import { TblCustomers } from '../../erp/entities/tblcustomers.entity';
 import { ErpConnectionManagerService } from '../../erp/services/erp-connection-manager.service';
+import { OrganisationService } from '../../organisation/organisation.service';
 import { ImportResult } from '../interfaces/import-result.interface';
 import { GeneralStatus } from '../../lib/enums/status.enums';
 
@@ -15,6 +16,7 @@ export class ErpClientImporterService {
 		@InjectRepository(Client)
 		private clientRepository: Repository<Client>,
 		private readonly erpConnectionManager: ErpConnectionManagerService,
+		private readonly organisationService: OrganisationService,
 	) {}
 
 	async importClients(
@@ -24,6 +26,12 @@ export class ErpClientImporterService {
 	): Promise<ImportResult> {
 		const result: ImportResult = { created: 0, updated: 0, skipped: 0, errors: [] };
 
+		const organisationUid = await this.organisationService.findClerkOrgIdByUid(orgId);
+		if (!organisationUid) {
+			this.logger.warn(`No organisation found for uid ${orgId}, skipping client import`);
+			return result;
+		}
+
 		try {
 			// Get customers from ERP
 			const erpCustomers = await this.getErpCustomers(countryCode);
@@ -31,7 +39,7 @@ export class ErpClientImporterService {
 
 			// Get existing clients by email/phone
 			const existingClients = await this.clientRepository.find({
-				where: { organisationUid: orgId, isDeleted: false },
+				where: { organisationUid, isDeleted: false },
 				select: ['uid', 'email', 'phone', 'name'],
 			});
 
@@ -61,10 +69,10 @@ export class ErpClientImporterService {
 						null;
 
 					if (existing) {
-						await this.updateClient(existing.uid, erpCustomer, orgId, branchId);
+						await this.updateClient(existing.uid, erpCustomer);
 						result.updated++;
 					} else {
-						await this.createClient(erpCustomer, orgId, branchId);
+						await this.createClient(erpCustomer, organisationUid, branchId);
 						result.created++;
 					}
 				} catch (error) {
@@ -151,7 +159,7 @@ export class ErpClientImporterService {
 		};
 	}
 
-	private async createClient(erpCustomer: any, orgId: number, branchId: number) {
+	private async createClient(erpCustomer: any, organisationUid: string, branchId: number) {
 		const name =
 			erpCustomer.Description ||
 			erpCustomer.CustomerName ||
@@ -174,7 +182,7 @@ export class ErpClientImporterService {
 			address: this.buildAddress(erpCustomer),
 			creditLimit: erpCustomer.Creditlimit ? parseFloat(erpCustomer.Creditlimit) : 0,
 			outstandingBalance: erpCustomer.balance ? parseFloat(erpCustomer.balance) : 0,
-			organisationUid: orgId,
+			organisationUid,
 			branchUid: branchId,
 			status: GeneralStatus.ACTIVE,
 			isDeleted: false,
@@ -183,12 +191,7 @@ export class ErpClientImporterService {
 		await this.clientRepository.save(client);
 	}
 
-	private async updateClient(
-		clientId: number,
-		erpCustomer: any,
-		orgId: number,
-		branchId: number,
-	) {
+	private async updateClient(clientId: number, erpCustomer: any) {
 		const name =
 			erpCustomer.Description ||
 			erpCustomer.CustomerName ||

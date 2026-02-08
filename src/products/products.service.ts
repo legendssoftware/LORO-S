@@ -825,7 +825,7 @@ export class ProductsService {
 			queryBuilder
 				.skip((page - 1) * limit)
 				.take(limit)
-				.orderBy('product.createdAt', 'DESC');
+				.orderBy('product.name', 'ASC');
 
 			this.logger.debug(`🔍 [products] Executing query to get products and count`);
 			const [products, total] = await queryBuilder.getManyAndCount();
@@ -1048,14 +1048,6 @@ export class ProductsService {
 				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
 			}
 
-			// BRANCH VISIBILITY LOGIC:
-			// - If branchId is provided: show products where branch is NULL (org-wide) OR matches the branchId
-			// - If branchId is NOT provided: show all products in the org (both with and without branches)
-			if (branchId) {
-				this.logger.debug(`🏪 [productsBySearchTerm] Adding branch filter: ${branchId} - showing org-wide products (no branch) and branch-specific products`);
-				queryBuilder.andWhere('(branch.uid IS NULL OR branch.uid = :branchId)', { branchId });
-			}
-
 			// Apply search term - could be category, name, or description
 			this.logger.debug(`🔎 [productsBySearchTerm] Applying search filters for: name, description, category, sku, barcode`);
 			queryBuilder.andWhere(
@@ -1068,7 +1060,7 @@ export class ProductsService {
 			queryBuilder
 				.skip((page - 1) * limit)
 				.take(limit)
-				.orderBy('product.createdAt', 'DESC');
+				.orderBy('product.name', 'ASC');
 
 			this.logger.debug(`🔍 [productsBySearchTerm] Executing search query`);
 			const [products, total] = await queryBuilder.getManyAndCount();
@@ -1211,9 +1203,7 @@ export class ProductsService {
 			queryBuilder
 				.skip((page - 1) * limit)
 				.take(limit)
-				.orderBy('product.isOnPromotion', 'DESC') // Show promoted products first
-				.addOrderBy('product.stockQuantity', 'DESC') // Show in-stock products first
-				.addOrderBy('product.createdAt', 'DESC'); // Then by newest
+				.orderBy('product.name', 'ASC');
 
 			this.logger.debug(`🔍 [productsByCategory] Executing category query`);
 			const [products, total] = await queryBuilder.getManyAndCount();

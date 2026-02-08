@@ -69,40 +69,7 @@ export class ClaimsService {
 	}
 
 	/**
-	 * Resolves user UID (number) to Clerk user ID (string).
-	 * Returns null if user not found or has no clerkUserId.
-	 */
-	private async resolveClerkUserIdByUid(uid: number): Promise<string | null> {
-		if (uid == null || !Number.isFinite(Number(uid))) {
-			return null;
-		}
-		const user = await this.userRepository.findOne({
-			where: { uid: Number(uid), isDeleted: false },
-			select: ['uid', 'clerkUserId'],
-		});
-		return user?.clerkUserId ?? null;
-	}
-
-	/**
-	 * Resolves Clerk org ID (string) to organisation numeric uid.
-	 * Looks up by clerkOrgId or ref. Returns null if not found.
-	 */
-	private async resolveOrgId(clerkOrgId?: string): Promise<number | null> {
-		if (!clerkOrgId) {
-			return null;
-		}
-		const org = await this.organisationRepository.findOne({
-			where: [
-				{ clerkOrgId, isDeleted: false },
-				{ ref: clerkOrgId, isDeleted: false },
-			],
-			select: ['uid'],
-		});
-		return org?.uid ?? null;
-	}
-
-	/**
-	 * Get organization admins for notifications
+	 * Get organization admins for notifications by Clerk org ID (string).
 	 */
 	private async getOrganizationAdmins(orgId?: string): Promise<User[]> {
 		if (!orgId) {
@@ -110,19 +77,16 @@ export class ClaimsService {
 		}
 
 		try {
-			const orgUid = await this.resolveOrgId(orgId);
-			if (!orgUid) {
-				return [];
-			}
-
-			const admins = await this.userRepository.find({
-				where: {
-					organisation: { uid: orgUid },
-					accessLevel: In([AccessLevel.ADMIN, AccessLevel.OWNER]),
-					isDeleted: false,
-				},
-				select: ['uid', 'name', 'surname', 'email', 'accessLevel'],
-			});
+			const admins = await this.userRepository
+				.createQueryBuilder('user')
+				.leftJoin('user.organisation', 'organisation')
+				.where('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId })
+				.andWhere('user.accessLevel IN (:...levels)', {
+					levels: [AccessLevel.ADMIN, AccessLevel.OWNER],
+				})
+				.andWhere('user.isDeleted = :isDeleted', { isDeleted: false })
+				.select(['user.uid', 'user.name', 'user.surname', 'user.email', 'user.accessLevel'])
+				.getMany();
 
 			return admins;
 		} catch (error) {
@@ -326,18 +290,28 @@ export class ClaimsService {
 		createClaimDto: CreateClaimDto,
 		orgId?: string,
 		branchId?: number,
-		userIdFromToken?: number,
-	): Promise<{ message: string }> {
-		// Resolve Clerk org ID to numeric uid
-		const orgUid = orgId ? await this.resolveOrgId(orgId) : null;
-		if (orgId && !orgUid) {
-			throw new BadRequestException(`Organization not found for ID: ${orgId}`);
+		clerkUserId?: string,
+	): Promise<{ message: string; claim: Claim }> {
+		if (orgId && typeof orgId !== 'string') {
+			throw new BadRequestException('Organization ID must be a string (Clerk org ID or ref)');
 		}
-		if (!userIdFromToken) {
+		if (orgId) {
+			const orgExists = await this.organisationRepository.findOne({
+				where: [
+					{ clerkOrgId: orgId, isDeleted: false },
+					{ ref: orgId, isDeleted: false },
+				],
+				select: ['uid', 'clerkOrgId', 'ref'],
+			});
+			if (!orgExists) {
+				throw new BadRequestException(`Organization not found for ID: ${orgId}`);
+			}
+		}
+		if (!clerkUserId || typeof clerkUserId !== 'string' || !clerkUserId.trim()) {
 			throw new UnauthorizedException('User authentication required');
 		}
 		const startTime = Date.now();
-		this.logger.log(`🔄 [ClaimsService] Creating claim for user: ${userIdFromToken}, orgId: ${orgId}, orgUid: ${orgUid}, branchId: ${branchId}, amount: ${createClaimDto.amount}`);
+		this.logger.log(`🔄 [ClaimsService] Creating claim for clerkUserId: ${clerkUserId}, orgId: ${orgId}, branchId: ${branchId}, amount: ${createClaimDto.amount}`);
 
 		try {
 			if (!createClaimDto.amount || createClaimDto.amount <= 0) {
@@ -345,28 +319,48 @@ export class ClaimsService {
 				throw new BadRequestException('Valid claim amount is required');
 			}
 
-			// Get user from token (owner never from payload)
+			// Get user by Clerk ID (owner never from payload)
 			const user = await this.userRepository
 				.createQueryBuilder('user')
 				.leftJoinAndSelect('user.organisation', 'organisation')
 				.leftJoinAndSelect('user.branch', 'branch')
-				.where('user.uid = :userId', { userId: Number(userIdFromToken) })
+				.where('user.clerkUserId = :clerkUserId', { clerkUserId })
 				.andWhere('user.isDeleted = :isDeleted', { isDeleted: false })
 				.getOne();
 
 			if (!user) {
-				this.logger.warn(`⚠️ [ClaimsService] User not found for claim creation: ${userIdFromToken}`);
-				throw new NotFoundException(`User with ID ${userIdFromToken} not found`);
+				this.logger.warn(`⚠️ [ClaimsService] User not found for claim creation: ${clerkUserId}`);
+				throw new NotFoundException('User not found');
 			}
 
-			// Enhanced organization filtering - CRITICAL: Only allow claims for user's organization
-			if (orgUid && user.organisation && Number(user.organisation.uid) !== Number(orgUid)) {
-				this.logger.warn(`❌ [ClaimsService] User ${user.uid} attempting to create claim for different organization ${orgUid}`);
-				throw new BadRequestException('Cannot create claim for different organization');
+			// Resolve organisation entity and string ID (Clerk org ID or ref only - never numeric)
+			let organisation: Organisation | null = null;
+			let organisationUidValue: string | null = null;
+			if (orgId) {
+				organisation = await this.organisationRepository.findOne({
+					where: [
+						{ clerkOrgId: orgId, isDeleted: false },
+						{ ref: orgId, isDeleted: false },
+					],
+					select: ['uid', 'clerkOrgId', 'ref'],
+				});
+				if (!organisation) {
+					throw new BadRequestException(`Organization not found for ID: ${orgId}`);
+				}
+				organisationUidValue = organisation.clerkOrgId ?? organisation.ref ?? null;
+				// Only allow claims for user's organization (compare by Clerk org ID / ref string)
+				const userBelongsToOrg =
+					user.organisation &&
+					(user.organisation.clerkOrgId === orgId || user.organisation.ref === orgId);
+				if (!userBelongsToOrg) {
+					this.logger.warn(`❌ [ClaimsService] User ${user.uid} attempting to create claim for different organization ${orgId}`);
+					throw new BadRequestException('Cannot create claim for different organization');
+				}
+			} else if (user.organisation) {
+				organisation = user.organisation;
+				organisationUidValue = organisation.clerkOrgId ?? organisation.ref ?? null;
 			}
 
-			// Use the passed orgUid and branchId if present, otherwise use user's
-			const organisation = orgUid ? { uid: Number(orgUid) } : (user.organisation ? { uid: Number(user.organisation.uid) } : null);
 			const branch = branchId ? { uid: Number(branchId) } : (user.branch ? { uid: Number(user.branch.uid) } : null);
 
 			// Generate claim reference number
@@ -375,17 +369,16 @@ export class ClaimsService {
 			const shareTokenExpiresAt = new Date();
 			shareTokenExpiresAt.setDate(shareTokenExpiresAt.getDate() + 30); // 30 days expiry
 
-			// Enhanced data mapping with proper validation - set UIDs explicitly
-			// Ensure currency defaults to ZAR if not provided. Use ownerClerkUserId (Option A).
+			// Enhanced data mapping - organisationUid is always string (Clerk org ID or ref)
 			const claimData = {
 				...createClaimDto,
 				amount: createClaimDto.amount.toString(),
 				currency: createClaimDto.currency || Currency.ZAR, // Default to ZAR if not provided
-				organisation: organisation,
-				branch: branch,
+				organisation,
+				branch,
 				owner: user,
 				ownerClerkUserId: user.clerkUserId,
-				organisationUid: organisation ? Number(organisation.uid) : null,
+				organisationUid: organisationUidValue,
 				branchUid: branch ? Number(branch.uid) : null,
 				claimRef,
 				shareToken,
@@ -413,12 +406,17 @@ export class ClaimsService {
 				// ============================================================
 				// EARLY RETURN: Respond to client immediately after successful save
 				// ============================================================
+				const formattedClaim = {
+					...claim,
+					amount: this.formatCurrency(Number(claim.amount) || 0, claim.currency),
+				};
 				const response = {
 					message: process.env.SUCCESS_MESSAGE || 'Claim created successfully',
+					claim: formattedClaim,
 				};
 
 				const duration = Date.now() - startTime;
-				this.logger.log(`✅ [ClaimsService] Claim created successfully for user: ${userIdFromToken} in ${duration}ms - returning response to client`);
+				this.logger.log(`✅ [ClaimsService] Claim created successfully for clerkUserId: ${clerkUserId} in ${duration}ms - returning response to client`);
 
 				// ============================================================
 				// POST-RESPONSE PROCESSING: Execute non-critical operations asynchronously
@@ -555,7 +553,7 @@ export class ClaimsService {
 						try {
 							await this.rewardsService.awardXP(
 								{
-									owner: userIdFromToken,
+									owner: user.uid,
 									amount: XP_VALUES.CLAIM,
 									action: XP_VALUES_TYPES.CLAIM,
 									source: {
@@ -569,7 +567,7 @@ export class ClaimsService {
 							);
 						} catch (xpError) {
 							this.logger.error(
-								`❌ [ClaimsService] Failed to award XP for claim creation to user: ${userIdFromToken}`,
+								`❌ [ClaimsService] Failed to award XP for claim creation to user: ${user.uid}`,
 								xpError.stack,
 							);
 							// Don't fail post-processing if XP award fails
@@ -616,10 +614,11 @@ export class ClaimsService {
 		limit: number = 25,
 		orgId?: string,
 		branchId?: number,
-		userId?: number,
+		clerkUserId?: string,
 		userAccessLevel?: string,
 	): Promise<PaginatedResponse<Claim>> {
 		const startTime = Date.now();
+		this.logger.log(`[ClaimsService] findAll() called: page=${page}, limit=${limit}, orgId=${orgId}, branchId=${branchId}, clerkUserId=${clerkUserId}, accessLevel=${userAccessLevel}, status=${filters?.status}`);
 		this.logger.log(`🔍 [ClaimsService] Finding claims with filters: page=${page}, limit=${limit}, orgId=${orgId}, branchId=${branchId}`, {
 			status: filters?.status,
 			search: filters?.search ? `${filters.search.substring(0, 50)}...` : undefined,
@@ -629,15 +628,9 @@ export class ClaimsService {
 
 		try {
 			// Validate user context
-			if (!userId && !userAccessLevel) {
+			if (!clerkUserId && !userAccessLevel) {
 				this.logger.warn(`⚠️ [ClaimsService] No user context provided for claims retrieval`);
 				throw new UnauthorizedException('User authentication required');
-			}
-
-			// Resolve Clerk org ID to numeric uid if provided
-			const orgUid = orgId ? await this.resolveOrgId(orgId) : null;
-			if (orgId && !orgUid) {
-				this.logger.warn(`⚠️ [ClaimsService] Organization not found for ID: ${orgId}`);
 			}
 
 			// Check if user has elevated permissions
@@ -650,17 +643,12 @@ export class ClaimsService {
 				.leftJoinAndSelect('claim.organisation', 'organisation')
 				.where('claim.isDeleted = :isDeleted', { isDeleted: false });
 
-			// Apply RBAC: Regular users can only see their own claims - use ownerClerkUserId (Option A)
-			if (!canViewAll && userId != null) {
-				const clerkUserId = await this.resolveClerkUserIdByUid(Number(userId));
-				if (!clerkUserId) {
-					this.logger.warn(`🚫 [ClaimsService] User ${userId} not found or has no Clerk ID`);
-					throw new ForbiddenException('User not found or has no Clerk ID');
-				}
+			// Apply RBAC: Regular users can only see their own claims - use ownerClerkUserId
+			if (!canViewAll && clerkUserId != null && clerkUserId.trim() !== '') {
 				queryBuilder.andWhere('claim.ownerClerkUserId = :clerkUserId', { clerkUserId });
-			} else if (!canViewAll && (userId == null || userId === undefined)) {
-				// No userId and not elevated role - deny access
-				this.logger.warn(`🚫 [ClaimsService] Access denied: No userId provided for non-elevated user`);
+			} else if (!canViewAll && (!clerkUserId || clerkUserId.trim() === '')) {
+				// No clerkUserId and not elevated role - deny access
+				this.logger.warn(`🚫 [ClaimsService] Access denied: No clerk user ID provided for non-elevated user`);
 				throw new ForbiddenException('Insufficient permissions to view claims');
 			}
 
@@ -682,14 +670,9 @@ export class ClaimsService {
 				);
 			}
 
-			// Add organization filter if provided - use resolved numeric uid
-			if (orgUid) {
-				queryBuilder.andWhere('organisation.uid = :orgUid', { orgUid });
-			}
-
-			// Add branch filter if provided
-			if (branchId) {
-				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
+			// Organization filter by Clerk org ID / ref (string only)
+			if (orgId) {
+				queryBuilder.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 			}
 
 			// Add pagination
@@ -756,16 +739,12 @@ export class ClaimsService {
 		ref: number,
 		orgId?: string,
 		branchId?: number,
-		userId?: number,
+		clerkUserId?: string,
 		userAccessLevel?: string,
 	): Promise<{ message: string; claim: Claim | null; stats: any }> {
-		// Resolve Clerk org ID to numeric uid
-		const orgUid = orgId ? await this.resolveOrgId(orgId) : null;
-		if (orgId && !orgUid) {
-			throw new BadRequestException(`Organization not found for ID: ${orgId}`);
-		}
 		const startTime = Date.now();
-		this.logger.log(`🔍 [ClaimsService] Finding claim with ID: ${ref}, orgId: ${orgId}, orgUid: ${orgUid}, branchId: ${branchId}, user: ${userId}, accessLevel: ${userAccessLevel}`);
+		this.logger.log(`[ClaimsService] findOne() called: ref=${ref}, orgId=${orgId}, branchId=${branchId}, clerkUserId=${clerkUserId}, accessLevel=${userAccessLevel}`);
+		this.logger.log(`🔍 [ClaimsService] Finding claim with ID: ${ref}, orgId: ${orgId}, branchId: ${branchId}, clerkUserId: ${clerkUserId}, accessLevel: ${userAccessLevel}`);
 
 		try {
 			// Check if user is admin, owner, developer, or technician - they can view any claim
@@ -779,32 +758,22 @@ export class ClaimsService {
 				.where('claim.uid = :ref', { ref })
 				.andWhere('claim.isDeleted = :isDeleted', { isDeleted: false });
 
-			// If user is not admin/owner/developer/technician, only allow viewing their own claims - use ownerClerkUserId (Option A)
-			if (!canViewAll && userId != null) {
-				const clerkUserId = await this.resolveClerkUserIdByUid(Number(userId));
-				if (!clerkUserId) {
-					this.logger.warn(`🚫 [ClaimsService] User ${userId} not found or has no Clerk ID`);
-					throw new ForbiddenException('User not found or has no Clerk ID');
-				}
+			// If user is not admin/owner/developer/technician, only allow viewing their own claims - use ownerClerkUserId
+			if (!canViewAll && clerkUserId != null && clerkUserId.trim() !== '') {
 				queryBuilder.andWhere('claim.ownerClerkUserId = :clerkUserId', { clerkUserId });
 			}
 
-			// Add organization filter if provided - use organisationUid directly
-			if (orgUid) {
-				queryBuilder.andWhere('claim.organisationUid = :orgUid', { orgUid: Number(orgUid) });
-			}
-
-			// Add branch filter if provided - use branchUid directly
-			if (branchId) {
-				queryBuilder.andWhere('claim.branchUid = :branchId', { branchId: Number(branchId) });
+			// Organization filter by Clerk org ID / ref (string only)
+			if (orgId) {
+				queryBuilder.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 			}
 
 			const claim = await queryBuilder.getOne();
 
 			if (!claim) {
 				// If user is not admin/owner/developer/technician and claim exists but doesn't belong to them, return unauthorized
-				if (!canViewAll && userId) {
-					this.logger.warn(`🚫 [ClaimsService] User ${userId} attempted to access claim ${ref} that doesn't belong to them`);
+				if (!canViewAll && clerkUserId) {
+					this.logger.warn(`🚫 [ClaimsService] User ${clerkUserId} attempted to access claim ${ref} that doesn't belong to them`);
 					throw new NotFoundException('Claim not found or access denied');
 				}
 				this.logger.warn(`⚠️ [ClaimsService] Claim ${ref} not found in organization ${orgId}`);
@@ -815,16 +784,9 @@ export class ClaimsService {
 				.createQueryBuilder('claim')
 				.leftJoinAndSelect('claim.organisation', 'organisation');
 
-			// Add organization filter if provided - use resolved numeric orgUid
-			if (orgUid) {
-				allClaimsQuery.andWhere('claim.organisationUid = :orgUid', { orgUid: Number(orgUid) });
-			}
-
-			// Add branch filter if provided - use branchUid directly
-			if (branchId !== undefined && branchId !== null && claim.branch) {
-				allClaimsQuery
-					.leftJoinAndSelect('claim.branch', 'branch')
-					.andWhere('claim.branchUid = :branchId', { branchId: Number(branchId) });
+			// Organization filter by string (Clerk org ID / ref)
+			if (orgId) {
+				allClaimsQuery.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 			}
 
 			const allClaims = await allClaimsQuery.getMany();
@@ -859,10 +821,10 @@ export class ClaimsService {
 	}
 
 	public async claimsByUser(
-		ref: number,
+		clerkUserId: string,
 		orgId?: string,
 		branchId?: number,
-		requestingUserId?: number,
+		requestingClerkUserId?: string,
 		userAccessLevel?: string,
 	): Promise<{
 		message: string;
@@ -875,10 +837,9 @@ export class ClaimsService {
 			paid: number;
 		};
 	}> {
-		if (ref == null || ref === undefined || !Number.isFinite(Number(ref))) {
-			throw new BadRequestException('User reference (ref) is required and must be a valid numeric UID');
+		if (!clerkUserId || typeof clerkUserId !== 'string' || clerkUserId.trim() === '') {
+			throw new BadRequestException('User identity (clerk user ID) is required');
 		}
-		const refNum = Number(ref);
 		
 		if (!orgId) {
 			this.logger.warn(`❌ [ClaimsService] Organization ID is required for user claims retrieval`);
@@ -891,22 +852,16 @@ export class ClaimsService {
 			});
 		}
 
-		// Resolve user UID to Clerk user ID
-		const clerkUserId = await this.resolveClerkUserIdByUid(refNum);
-		if (!clerkUserId) {
-			throw new NotFoundException(`User with UID ${refNum} not found or has no Clerk ID`);
-		}
-
 		const startTime = Date.now();
-		this.logger.log(`🔍 [ClaimsService] Finding claims for user ${refNum} (clerkUserId: ${clerkUserId}), orgId: ${orgId}, branchId: ${branchId || 'all'}, requestingUser: ${requestingUserId}, accessLevel: ${userAccessLevel}`);
+		this.logger.log(`🔍 [ClaimsService] Finding claims for clerkUserId: ${clerkUserId}, orgId: ${orgId}, branchId: ${branchId || 'all'}, requestingClerkUserId: ${requestingClerkUserId}, accessLevel: ${userAccessLevel}`);
 
 		try {
 			// Check if requesting user is admin, owner, developer, or technician - they can view any user's claims
 			const canViewAll = ['admin', 'owner', 'developer', 'technician'].includes(userAccessLevel?.toLowerCase() || '');
 			
 			// If user is not admin/owner/developer/technician, they can only view their own claims
-			if (!canViewAll && requestingUserId != null && requestingUserId !== refNum) {
-				this.logger.warn(`🚫 [ClaimsService] User ${requestingUserId} attempted to access claims for user ${refNum}`);
+			if (!canViewAll && requestingClerkUserId != null && requestingClerkUserId !== clerkUserId) {
+				this.logger.warn(`🚫 [ClaimsService] User ${requestingClerkUserId} attempted to access claims for user ${clerkUserId}`);
 				throw new NotFoundException('Access denied: You can only view your own claims');
 			}
 
@@ -920,15 +875,12 @@ export class ClaimsService {
 				.andWhere('claim.isDeleted = :isDeleted', { isDeleted: false })
 				.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 
-			// Add branch filter if provided - use branchUid directly (numeric)
-			if (branchId != null && Number.isFinite(Number(branchId))) {
-				queryBuilder.andWhere('branch.uid = :branchId', { branchId: Number(branchId) });
-			}
+			queryBuilder.orderBy('claim.createdAt', 'DESC');
 
 			const claims = await queryBuilder.getMany();
 
 			if (!claims || claims.length === 0) {
-				this.logger.warn(`⚠️ [ClaimsService] No claims found for user ${refNum} in organization ${orgId}`);
+				this.logger.warn(`⚠️ [ClaimsService] No claims found for clerkUserId ${clerkUserId} in organization ${orgId}`);
 				return {
 					message: process.env.SUCCESS_MESSAGE || 'No claims found',
 					claims: [],
@@ -950,7 +902,7 @@ export class ClaimsService {
 			const stats = this.calculateStats(claims);
 
 			const duration = Date.now() - startTime;
-			this.logger.log(`✅ [ClaimsService] Successfully retrieved ${formattedClaims.length} claims for user ${refNum} in ${duration}ms`);
+			this.logger.log(`✅ [ClaimsService] Successfully retrieved ${formattedClaims.length} claims for clerkUserId ${clerkUserId} in ${duration}ms`);
 
 			return {
 				message: process.env.SUCCESS_MESSAGE,
@@ -959,7 +911,7 @@ export class ClaimsService {
 			};
 		} catch (error) {
 			const duration = Date.now() - startTime;
-			this.logger.error(`❌ [ClaimsService] Error retrieving claims for user ${refNum} after ${duration}ms: ${error.message}`, error.stack);
+			this.logger.error(`❌ [ClaimsService] Error retrieving claims for clerkUserId ${clerkUserId} after ${duration}ms: ${error.message}`, error.stack);
 			// Return proper error response
 			if (error instanceof NotFoundException) {
 				throw error;
@@ -1049,15 +1001,15 @@ export class ClaimsService {
 		updateClaimDto: UpdateClaimDto,
 		orgId?: string,
 		branchId?: number,
-		userId?: number,
+		clerkUserId?: string,
 		userAccessLevel?: string,
 	): Promise<{ message: string }> {
 		const startTime = Date.now();
-		this.logger.log(`🔄 [ClaimsService] Updating claim ${ref} with status: ${updateClaimDto.status}, orgId: ${orgId}, branchId: ${branchId}, user: ${userId}, accessLevel: ${userAccessLevel}`);
+		this.logger.log(`🔄 [ClaimsService] Updating claim ${ref} with status: ${updateClaimDto.status}, orgId: ${orgId}, branchId: ${branchId}, clerkUserId: ${clerkUserId}, accessLevel: ${userAccessLevel}`);
 
 		try {
 			// First verify the claim exists and user has access
-			const claimResult = await this.findOne(ref, orgId, branchId, userId, userAccessLevel);
+			const claimResult = await this.findOne(ref, orgId, branchId, clerkUserId, userAccessLevel);
 
 			if (!claimResult || !claimResult.claim) {
 				throw new NotFoundException('Claim not found in your organization');
@@ -1069,7 +1021,7 @@ export class ClaimsService {
 			// Enforce approval workflow for status changes (except owner editing their own pending claim)
 			if (updateClaimDto.status && updateClaimDto.status !== previousStatus) {
 				const isAdminOrOwner = userAccessLevel?.toLowerCase() === 'admin' || userAccessLevel?.toLowerCase() === 'owner';
-				const isOwnerEditingPending = userId === claim.owner?.uid && previousStatus === ClaimStatus.PENDING && !isAdminOrOwner;
+				const isOwnerEditingPending = (claim.ownerClerkUserId === clerkUserId || claim.owner?.clerkUserId === clerkUserId) && previousStatus === ClaimStatus.PENDING && !isAdminOrOwner;
 				
 				if (!isOwnerEditingPending && (updateClaimDto.status === ClaimStatus.APPROVED || updateClaimDto.status === ClaimStatus.DECLINED)) {
 					// Check if there's an active approval for this claim
@@ -1271,12 +1223,12 @@ export class ClaimsService {
 		}
 	}
 
-	async remove(ref: number, orgId?: string, branchId?: number, userId?: number, userAccessLevel?: string): Promise<{ message: string }> {
-		this.logger.log(`🗑️ [ClaimsService] Removing claim ${ref}, orgId: ${orgId}, branchId: ${branchId}, user: ${userId}, accessLevel: ${userAccessLevel}`);
+	async remove(ref: number, orgId?: string, branchId?: number, clerkUserId?: string, userAccessLevel?: string): Promise<{ message: string }> {
+		this.logger.log(`🗑️ [ClaimsService] Removing claim ${ref}, orgId: ${orgId}, branchId: ${branchId}, clerkUserId: ${clerkUserId}, accessLevel: ${userAccessLevel}`);
 
 		try {
 			// First verify the claim exists and user has access
-			const claimResult = await this.findOne(ref, orgId, branchId, userId, userAccessLevel);
+			const claimResult = await this.findOne(ref, orgId, branchId, clerkUserId, userAccessLevel);
 
 			if (!claimResult || !claimResult.claim) {
 				throw new NotFoundException('Claim not found in your organization');
@@ -1305,13 +1257,13 @@ export class ClaimsService {
 		}
 	}
 
-	async restore(ref: number, orgId?: string, branchId?: number, userId?: number, userAccessLevel?: string): Promise<{ message: string }> {
-		this.logger.log(`♻️ [ClaimsService] Restoring claim ${ref}, orgId: ${orgId}, branchId: ${branchId}, user: ${userId}, accessLevel: ${userAccessLevel}`);
+	async restore(ref: number, orgId?: string, branchId?: number, clerkUserId?: string, userAccessLevel?: string): Promise<{ message: string }> {
+		this.logger.log(`♻️ [ClaimsService] Restoring claim ${ref}, orgId: ${orgId}, branchId: ${branchId}, clerkUserId: ${clerkUserId}, accessLevel: ${userAccessLevel}`);
 
 		try {
 			// Check if user is admin, owner, developer, or technician - they can restore any claim
 			const canViewAll = ['admin', 'owner', 'developer', 'technician'].includes(userAccessLevel?.toLowerCase() || '');
-			
+
 			// First find the claim with isDeleted=true
 			const queryBuilder = this.claimsRepository
 				.createQueryBuilder('claim')
@@ -1321,26 +1273,21 @@ export class ClaimsService {
 				.where('claim.uid = :ref', { ref })
 				.andWhere('claim.isDeleted = :isDeleted', { isDeleted: true });
 
-			// Add organization filter if provided
+			// Organization filter by Clerk org ID / ref (string only)
 			if (orgId) {
-				queryBuilder.andWhere('organisation.uid = :orgId', { orgId });
-			}
-
-			// Add branch filter if provided
-			if (branchId) {
-				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
+				queryBuilder.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 			}
 
 			// If user is not admin/owner/developer/technician, only allow restoring their own claims
-			if (!canViewAll && userId) {
-				queryBuilder.andWhere('owner.uid = :userId', { userId });
+			if (!canViewAll && clerkUserId != null && clerkUserId.trim() !== '') {
+				queryBuilder.andWhere('claim.ownerClerkUserId = :clerkUserId', { clerkUserId });
 			}
 
 			const claim = await queryBuilder.getOne();
 
 			if (!claim) {
-				if (!canViewAll && userId) {
-					this.logger.warn(`🚫 [ClaimsService] User ${userId} attempted to restore claim ${ref} that doesn't belong to them`);
+				if (!canViewAll && clerkUserId) {
+					this.logger.warn(`🚫 [ClaimsService] User ${clerkUserId} attempted to restore claim ${ref} that doesn't belong to them`);
 					throw new NotFoundException('Claim not found or access denied');
 				}
 				throw new NotFoundException('Claim not found in your organization or is not deleted');
@@ -2120,11 +2067,11 @@ export class ClaimsService {
 		ref: number,
 		orgId?: string,
 		branchId?: number,
-		userId?: number,
+		clerkUserId?: string,
 		userAccessLevel?: string,
 	): Promise<{ message: string; shareToken: string; shareLink: string }> {
 		try {
-			const claimResult = await this.findOne(ref, orgId, branchId, userId, userAccessLevel);
+			const claimResult = await this.findOne(ref, orgId, branchId, clerkUserId, userAccessLevel);
 
 			if (!claimResult || !claimResult.claim) {
 				throw new NotFoundException('Claim not found');

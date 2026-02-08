@@ -55,6 +55,18 @@ export class OrganisationService {
 		return org?.uid ?? null;
 	}
 
+	/**
+	 * Resolves organisation numeric uid to Clerk org ID (for Client.organisationUid).
+	 * Returns null if not found.
+	 */
+	async findClerkOrgIdByUid(uid: number): Promise<string | null> {
+		const org = await this.organisationRepository.findOne({
+			where: { uid, isDeleted: false },
+			select: ['clerkOrgId'],
+		});
+		return org?.clerkOrgId ?? null;
+	}
+
 	async create(createOrganisationDto: CreateOrganisationDto, orgId?: string, branchId?: number): Promise<{ message: string }> {
 		const startTime = Date.now();
 		const operationId = `create_org_${Date.now()}`;

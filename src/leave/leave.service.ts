@@ -531,7 +531,7 @@ export class LeaveService {
 				where,
 				relations: ['owner', 'organisation', 'branch', 'approvedBy'],
 				order: {
-					startDate: 'DESC',
+					createdAt: 'DESC',
 				},
 			});
 
