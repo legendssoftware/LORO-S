@@ -79,6 +79,7 @@ export class ShopController {
 		AccessLevel.USER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
+		AccessLevel.MEMBER,
 		AccessLevel.CLIENT,
 	)
 	@ApiOperation({
@@ -180,6 +181,7 @@ Retrieves a curated list of top-performing products based on comprehensive sales
 		AccessLevel.USER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
+		AccessLevel.MEMBER,
 		AccessLevel.CLIENT,
 	)
 	@ApiOperation({
@@ -277,6 +279,7 @@ Displays the latest products added to the inventory with enhanced freshness indi
 		AccessLevel.USER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
+		AccessLevel.MEMBER,
 		AccessLevel.CLIENT,
 	)
 	@ApiOperation({
@@ -420,6 +423,7 @@ Discovers and retrieves high-value promotional products with exceptional discoun
 		AccessLevel.USER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
+		AccessLevel.MEMBER,
 		AccessLevel.CLIENT,
 	)
 	@ApiOperation({
@@ -589,6 +593,7 @@ Retrieves a comprehensive list of all available product categories with hierarch
 		AccessLevel.USER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
+		AccessLevel.MEMBER,
 		AccessLevel.CLIENT,
 	)
 	@ApiOperation({
@@ -751,6 +756,7 @@ Discovers and retrieves premium special offers, limited-time promotions, and exc
 		AccessLevel.USER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
+		AccessLevel.MEMBER,
 		AccessLevel.CLIENT,
 	)
 	@ApiOperation({
@@ -909,6 +915,7 @@ Creates comprehensive quotations from shopping cart data with advanced pricing, 
 	@Put('quotation/:id/client')
 	@Roles(
 		AccessLevel.CLIENT,
+		AccessLevel.MEMBER,
 	)
 	@ApiOperation({
 		summary: '✏️ Update quotation for client',
@@ -946,6 +953,7 @@ Creates comprehensive quotations from shopping cart data with advanced pricing, 
 		AccessLevel.USER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
+		AccessLevel.MEMBER,
 		AccessLevel.CLIENT,
 	)
 	@ApiOperation({
@@ -1083,6 +1091,7 @@ Creates sophisticated blank quotations with advanced pricing structures and cust
 		AccessLevel.USER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
+		AccessLevel.MEMBER,
 		AccessLevel.CLIENT,
 	)
 	@ApiOperation({
@@ -1274,6 +1283,7 @@ Retrieves comprehensive quotation listings with advanced filtering, sorting, and
 		AccessLevel.USER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
+		AccessLevel.MEMBER,
 		AccessLevel.CLIENT,
 	)
 	@ApiOperation({
@@ -1444,6 +1454,7 @@ Provides comprehensive access to detailed quotation information with complete it
 		AccessLevel.USER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
+		AccessLevel.MEMBER,
 		AccessLevel.CLIENT,
 	)
 	@ApiOperation({
@@ -1621,6 +1632,7 @@ Retrieves comprehensive quotation history for specific users with performance an
 		AccessLevel.USER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
+		AccessLevel.MEMBER,
 		AccessLevel.CLIENT,
 	)
 	@ApiOperation({
@@ -1807,6 +1819,7 @@ Manages comprehensive quotation status transitions with workflow validation and 
 		AccessLevel.USER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
+		AccessLevel.MEMBER,
 		AccessLevel.CLIENT,
 	)
 	@ApiOperation({
@@ -4069,7 +4082,7 @@ Remove quotations from their current project assignments.
 	}
 
 	@Get('projects/me')
-	@Roles(AccessLevel.CLIENT)
+	@Roles(AccessLevel.CLIENT, AccessLevel.MEMBER)
 	@ApiOperation({
 		summary: '📋 Get my projects (current client)',
 		description: 'Retrieve all projects for the authenticated client. No clientId required.',
@@ -4108,6 +4121,7 @@ Remove quotations from their current project assignments.
 		AccessLevel.SUPERVISOR,
 		AccessLevel.USER,
 		AccessLevel.TECHNICIAN,
+		AccessLevel.MEMBER,
 		AccessLevel.CLIENT,
 	)
 	@ApiOperation({

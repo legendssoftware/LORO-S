@@ -88,6 +88,7 @@ export class ProductsController {
 		AccessLevel.USER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
+		AccessLevel.MEMBER,
 	)
 	@ApiOperation({
 		summary: '➕ Create a new product',
@@ -1245,6 +1246,7 @@ Any fields from the UpdateProductDto can be updated:
 		AccessLevel.USER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
+		AccessLevel.MEMBER,
 		AccessLevel.CLIENT,
 	)
 	@ApiOperation({
@@ -1710,6 +1712,7 @@ Retrieves a paginated list of products with comprehensive filtering and sorting 
 		AccessLevel.USER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
+		AccessLevel.MEMBER,
 		AccessLevel.CLIENT,
 	)
 	@ApiOperation({
@@ -2035,6 +2038,7 @@ Retrieves a paginated list of products that belong to a specific category with a
 		AccessLevel.USER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
+		AccessLevel.MEMBER,
 		AccessLevel.CLIENT,
 	)
 	@ApiOperation({

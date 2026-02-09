@@ -3,6 +3,7 @@ export enum AccessLevel {
 	ADMIN = 'admin',
 	MANAGER = 'manager',
 	SUPERVISOR = 'supervisor',
+	MEMBER = 'member',
 	USER = 'user',
 	DEVELOPER = 'developer',
 	SUPPORT = 'support',

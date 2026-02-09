@@ -20,6 +20,7 @@ import {
 import { ClientAuth } from './client.auth.entity';
 import { ClientCommunicationSchedule } from './client-communication-schedule.entity';
 import { Project } from '../../shop/entities/project.entity';
+import { Order } from '../../shop/entities/order.entity';
 
 @Entity('client')
 export class Client {
@@ -275,6 +276,10 @@ export class Client {
 	// Projects relationship
 	@OneToMany(() => Project, (project) => project.client)
 	projects: Project[];
+
+	// Orders (sales) relationship – linked via client on Order entity
+	@OneToMany(() => Order, (order) => order.client)
+	orders: Order[];
 
 	@Column({ type: 'varchar', nullable: true })
 	LegalEntity: string;

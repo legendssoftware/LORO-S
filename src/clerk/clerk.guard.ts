@@ -70,6 +70,11 @@ export class ClerkAuthGuard implements CanActivate {
 		const tokenRole = decoded.payload.o?.rol;
 		const tokenOrgId = decoded.payload.o?.id; // Clerk org ID from token (source of truth)
 
+		// Debug: log full decoded token payload (to inspect claims, especially o.rol for client tokens)
+		this.logger.log(
+			`[ClerkAuthGuard] Decoded token payload: ${JSON.stringify(decoded.payload)}`,
+		);
+
 		if (!clerkUserId) {
 			throw new UnauthorizedException('Invalid token: missing user ID');
 		}
@@ -259,6 +264,11 @@ export class ClerkAuthGuard implements CanActivate {
 					request['user'].branch = clientAuth.client.branch ? { uid: clientAuth.client.branch.uid } : undefined;
 					request['user'].org = clientAuth.client.organisation ? { uid: clientAuth.client.organisation.uid } : undefined;
 					// Role already set from token (e.g. 'client')
+
+					// Debug: log available roles in token for client (token may lack o.rol, causing RoleGuard 401)
+					this.logger.log(
+						`[ClerkAuthGuard] Client auth: token role/org from payload: tokenRole=${tokenRole ?? 'undefined'}, payload.o=${JSON.stringify(decoded.payload.o ?? null)}, full decoded payload=${JSON.stringify(decoded.payload)}`,
+					);
 
 					// Fetch org's license and verify client.portal.access; set licensePlan so FeatureGuard passes
 					if (orgRef) {

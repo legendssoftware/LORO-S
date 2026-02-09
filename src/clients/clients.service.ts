@@ -1517,6 +1517,60 @@ export class ClientsService {
 	}
 
 	/**
+	 * Returns the linked client for the authenticated user with full related data
+	 * (quotations, orders, projects, assignedSalesRep, etc.) for use in profile tabs.
+	 * No assigned-clients or org-scoped permission check – caller must have verified req.user.clientUid.
+	 */
+	async getLinkedClientWithFullProfile(clientUid: number): Promise<{ message: string; client: Client | null }> {
+		const startTime = Date.now();
+		this.logger.log(`[GET_LINKED_CLIENT] Loading full profile for clientUid: ${clientUid}`);
+
+		try {
+			const queryBuilder = this.clientsRepository
+				.createQueryBuilder('client')
+				.leftJoinAndSelect('client.branch', 'branch')
+				.leftJoinAndSelect('client.organisation', 'organisation')
+				.leftJoinAndSelect('client.assignedSalesRep', 'assignedSalesRep')
+				.leftJoinAndSelect('assignedSalesRep.userProfile', 'assignedSalesRepProfile')
+				.leftJoinAndSelect('assignedSalesRep.userEmployeementProfile', 'assignedSalesRepEmploymentProfile')
+				.leftJoinAndSelect('client.quotations', 'quotations')
+				.leftJoinAndSelect('quotations.orders', 'quotationOrders')
+				.leftJoinAndSelect('quotations.project', 'quotationProject')
+				.leftJoinAndSelect('client.projects', 'projects')
+				.leftJoinAndSelect('projects.quotations', 'projectQuotations')
+				.leftJoinAndSelect('client.orders', 'orders')
+				.leftJoinAndSelect('client.checkIns', 'checkIns')
+				.where('client.uid = :clientUid', { clientUid })
+				.andWhere('client.isDeleted = :isDeleted', { isDeleted: false });
+
+			const client = await queryBuilder.getOne();
+
+			if (!client) {
+				this.logger.warn(`[GET_LINKED_CLIENT] Client not found: ${clientUid}`);
+				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
+			}
+
+			const executionTime = Date.now() - startTime;
+			this.logger.log(`[GET_LINKED_CLIENT] Retrieved client ${clientUid} (${client.name}) in ${executionTime}ms`);
+
+			return {
+				client: this.withCreditInfo(client),
+				message: process.env.SUCCESS_MESSAGE,
+			};
+		} catch (error) {
+			const executionTime = Date.now() - startTime;
+			this.logger.error(`[GET_LINKED_CLIENT] Failed for clientUid ${clientUid} after ${executionTime}ms. Error: ${error?.message}`, error?.stack);
+			if (error instanceof NotFoundException) {
+				throw error;
+			}
+			return {
+				message: error?.message || 'Failed to load client profile',
+				client: null,
+			};
+		}
+	}
+
+	/**
 	 * Updates a client with comprehensive validation, processing, and automation.
 	 * 
 	 * This method provides complete client update functionality including:

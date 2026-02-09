@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, Req, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, Req, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { ClientsService } from './clients.service';
 import { CreateClientDto } from './dto/create-client.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
@@ -1276,6 +1276,7 @@ Retrieves a comprehensive list of all clients without user-specific filtering fo
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
 		AccessLevel.OWNER,
+		AccessLevel.MEMBER,
 	)
 	@ApiOperation({
 		summary: '📋 Get Clients (User Access)',
@@ -1586,6 +1587,40 @@ Retrieves a paginated list of clients with user-specific filtering and role-base
 		);
 	}
 
+	@Get('me')
+	@Roles(AccessLevel.CLIENT)
+	@ApiOperation({
+		summary: '👤 Get my linked client (full profile)',
+		description: `
+Returns the linked client for the authenticated user with full related data for use in profile tabs.
+
+**Included data:** client record with quotations, orders, projects, assignedSalesRep, branch, organisation, checkIns.
+
+**Security:** CLIENT role only; uses req.user.clientUid (set from User.linkedClientUid by the auth guard).
+		`,
+	})
+	@ApiOkResponse({
+		description: '✅ Linked client with full profile retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Success' },
+				client: {
+					type: 'object',
+					description: 'Client with relations: quotations, orders, projects, assignedSalesRep, branch, organisation',
+				},
+			},
+		},
+	})
+	@ApiForbiddenResponse({ description: 'Client context not found (user not linked to a client)' })
+	async getMyLinkedClient(@Req() req: AuthenticatedRequest) {
+		const clientUid = req.user?.clientUid;
+		if (clientUid == null) {
+			throw new ForbiddenException('Client context not found');
+		}
+		return this.clientsService.getLinkedClientWithFullProfile(Number(clientUid));
+	}
+
 	@Get(':ref')
 	@Roles(
 		AccessLevel.ADMIN,
@@ -1594,6 +1629,7 @@ Retrieves a paginated list of clients with user-specific filtering and role-base
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
 		AccessLevel.OWNER,
+		AccessLevel.MEMBER,
 	)
 	@ApiOperation({
 		summary: '🔍 Get Client Details',
