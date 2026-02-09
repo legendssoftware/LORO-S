@@ -88,7 +88,7 @@ describe('CompetitorsService', () => {
       
       const newCompetitor = { id: 1, ...createCompetitorDto };
       const mockUser = {} as User;
-      const mockOrgId = 123;
+      const mockOrgId = 'org_123';
       const mockBranchId = 456;
       
       repositoryMock.create.mockReturnValue(newCompetitor);
@@ -113,7 +113,7 @@ describe('CompetitorsService', () => {
       };
       const existingCompetitor = { id, name: 'Old Competitor' };
       const updatedCompetitor = { ...existingCompetitor, ...updateCompetitorDto };
-      const mockOrgId = 123;
+      const mockOrgId = 'org_123';
       const mockBranchId = 456;
       
       repositoryMock.findOne.mockReturnValue(existingCompetitor);
@@ -136,7 +136,7 @@ describe('CompetitorsService', () => {
       // Arrange
       const id = 1;
       const competitor = { id, name: 'Competitor 1' };
-      const mockOrgId = 123;
+      const mockOrgId = 'org_123';
       const mockBranchId = 456;
       
       repositoryMock.findOne.mockReturnValue(competitor);

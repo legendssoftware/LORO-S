@@ -149,6 +149,44 @@ export class CreateProjectDto {
 	})
 	currentSpent?: number;
 
+	@IsNumber()
+	@Min(0)
+	@IsOptional()
+	@ApiProperty({
+		example: 16000000.00,
+		description: 'Project value - expected contract/revenue value (may differ from budget)',
+		minimum: 0,
+		default: 0,
+		required: false,
+		type: 'number',
+		format: 'decimal',
+	})
+	value?: number;
+
+	@IsNumber()
+	@Min(0)
+	@IsOptional()
+	@ApiProperty({
+		example: 0,
+		description: 'Total cost - actual total cost (manual or from linked invoices)',
+		minimum: 0,
+		default: 0,
+		required: false,
+		type: 'number',
+		format: 'decimal',
+	})
+	totalCost?: number;
+
+	@IsArray()
+	@IsOptional()
+	@ApiProperty({
+		example: ['INV-2024-001', 'INV-2024-002'],
+		description: 'Linked invoice references (e.g. ERP document numbers)',
+		type: [String],
+		required: false,
+	})
+	linkedInvoices?: string[];
+
 	@IsString()
 	@IsNotEmpty()
 	@ApiProperty({

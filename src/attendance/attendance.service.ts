@@ -284,15 +284,12 @@ export class AttendanceService {
 				return organizationHours.timezone;
 			}
 
-			// Fallback to organisation settings (need to resolve Clerk org ID to numeric uid)
-			const orgUid = await this.resolveOrgId(organizationId);
-			if (orgUid) {
-				const orgSettings = await this.organisationSettingsRepository.findOne({
-					where: { organisationUid: orgUid },
-				});
-				if (orgSettings?.regional?.timezone) {
-					return orgSettings.regional.timezone;
-				}
+			// Fallback to organisation settings (OrganisationSettings.organisationUid is Clerk ID string)
+			const orgSettings = await this.organisationSettingsRepository.findOne({
+				where: { organisationUid: organizationId },
+			});
+			if (orgSettings?.regional?.timezone) {
+				return orgSettings.regional.timezone;
 			}
 
 			// Final fallback to safe default
@@ -315,10 +312,8 @@ export class AttendanceService {
 		const defaultChannels = { push: true, email: true };
 		if (!orgId) return defaultChannels;
 		try {
-			const orgUid = await this.resolveOrgId(orgId);
-			if (!orgUid) return defaultChannels;
 			const settings = await this.organisationSettingsRepository.findOne({
-				where: { organisationUid: orgUid },
+				where: { organisationUid: orgId },
 				select: ['notifications'],
 			});
 			const notif = settings?.notifications;

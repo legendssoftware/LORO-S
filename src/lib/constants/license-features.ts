@@ -48,6 +48,8 @@ export const ENTERPRISE_ONLY_FEATURES = {
     'warnings.access': true,
     // Payslips
     'payslips.access': true,
+    // Client Portal: allows org's clients (client role) to access the app (products, shop, quotations)
+    'client.portal.access': true,
 };
 
 const STARTER_FEATURES = {

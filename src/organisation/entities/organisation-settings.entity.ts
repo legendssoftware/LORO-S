@@ -125,9 +125,9 @@ export class OrganisationSettings {
 	updatedAt: Date;
 
 	@OneToOne(() => Organisation, (organisation) => organisation.settings)
-	@JoinColumn({ name: 'organisationUid' })
+	@JoinColumn({ name: 'organisationUid', referencedColumnName: 'clerkOrgId' })
 	organisation: Organisation;
 
-	@Column()
-	organisationUid: number;
+	@Column({ type: 'varchar' })
+	organisationUid: string;
 }

@@ -139,11 +139,11 @@ export class Quotation {
 	branchUid: number;
 
 	@ManyToOne(() => Organisation, (organisation) => organisation?.quotations, { nullable: true })
-	@JoinColumn({ name: 'organisationUid' })
+	@JoinColumn({ name: 'organisationUid', referencedColumnName: 'clerkOrgId' })
 	organisation: Organisation;
 
-	@Column({ nullable: true })
-	organisationUid: number;
+	@Column({ type: 'varchar', nullable: true })
+	organisationUid: string;
 
 	@OneToMany(() => Interaction, (interaction) => interaction.quotation)
 	interactions: Interaction[];

@@ -29,17 +29,22 @@ export class CheckInsReportsScheduler {
 		this.logger.log(`[${operationId}] Checking organizations for daily check-ins reports...`);
 
 		try {
-			// Get all active organizations
+			// Get all active organizations (need clerkOrgId/ref for OrganisationHours.organisationUid)
 			const organizations = await this.organisationRepository.find({
 				where: { isDeleted: false },
-				select: ['uid', 'name'],
+				select: ['uid', 'name', 'clerkOrgId', 'ref'],
 			});
 
 			this.logger.log(`[${operationId}] Found ${organizations.length} active organizations`);
 
 			for (const org of organizations) {
 				try {
-					await this.processOrganization(org.uid, operationId);
+					const orgClerkId = org.clerkOrgId ?? org.ref;
+					if (!orgClerkId) {
+						this.logger.debug(`[${operationId}] Skipping org ${org.uid}: no clerkOrgId/ref`);
+						continue;
+					}
+					await this.processOrganization(org.uid, orgClerkId, operationId);
 				} catch (error) {
 					this.logger.error(
 						`[${operationId}] Failed to process organization ${org.uid}: ${error.message}`,
@@ -56,23 +61,24 @@ export class CheckInsReportsScheduler {
 	}
 
 	/**
-	 * Process a single organization to determine if report should be sent
+	 * Process a single organization to determine if report should be sent.
+	 * Uses Clerk org ID string for OrganisationHours lookup; numeric uid for report generation.
 	 */
-	private async processOrganization(orgId: number, operationId: string): Promise<void> {
-		// Get organization hours
+	private async processOrganization(orgUid: number, orgClerkId: string, operationId: string): Promise<void> {
+		// Get organization hours (organisationUid is Clerk ID string from token/entity)
 		const orgHours = await this.organisationHoursRepository.findOne({
-			where: { organisationUid: orgId, isDeleted: false },
+			where: { organisationUid: orgClerkId, isDeleted: false },
 		});
 
 		if (!orgHours) {
-			this.logger.debug(`[${operationId}] No hours configured for org ${orgId}`);
+			this.logger.debug(`[${operationId}] No hours configured for org ${orgClerkId}`);
 			return;
 		}
 
 		// Check if organization is in holiday mode
 		if (orgHours.holidayMode) {
 			if (orgHours.holidayUntil && new Date() < orgHours.holidayUntil) {
-				this.logger.debug(`[${operationId}] Org ${orgId} is in holiday mode until ${orgHours.holidayUntil}`);
+				this.logger.debug(`[${operationId}] Org ${orgClerkId} is in holiday mode until ${orgHours.holidayUntil}`);
 				return;
 			}
 		}
@@ -85,7 +91,7 @@ export class CheckInsReportsScheduler {
 		const closeTime = this.getTodayCloseTime(orgHours, nowInTz, timezone);
 
 		if (!closeTime) {
-			this.logger.debug(`[${operationId}] Org ${orgId} is closed today`);
+			this.logger.debug(`[${operationId}] Org ${orgClerkId} is closed today`);
 			return;
 		}
 
@@ -103,10 +109,10 @@ export class CheckInsReportsScheduler {
 				: startOfDay(nowInTz);
 
 			this.logger.log(
-				`[${operationId}] Generating report for org ${orgId} - Date: ${format(reportDate, 'yyyy-MM-dd')}, Close: ${format(closeTime, 'HH:mm')}, Report: ${format(reportTime, 'HH:mm')}`,
+				`[${operationId}] Generating report for org ${orgClerkId} - Date: ${format(reportDate, 'yyyy-MM-dd')}, Close: ${format(closeTime, 'HH:mm')}, Report: ${format(reportTime, 'HH:mm')}`,
 			);
 
-			await this.checkInsReportsService.generateDailyReport(orgId, reportDate);
+			await this.checkInsReportsService.generateDailyReport(orgUid, reportDate);
 		}
 	}
 

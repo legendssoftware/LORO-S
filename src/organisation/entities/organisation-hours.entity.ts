@@ -73,9 +73,9 @@ export class OrganisationHours {
 	updatedAt: Date;
 
 	@ManyToOne(() => Organisation, (organisation) => organisation.hours)
-	@JoinColumn({ name: 'organisationUid' })
+	@JoinColumn({ name: 'organisationUid', referencedColumnName: 'clerkOrgId' })
 	organisation: Organisation;
 
-	@Column()
-	organisationUid: number;
+	@Column({ type: 'varchar' })
+	organisationUid: string;
 }

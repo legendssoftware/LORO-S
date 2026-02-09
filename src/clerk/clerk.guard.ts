@@ -1,4 +1,4 @@
-import { Injectable, CanActivate, ExecutionContext, UnauthorizedException, Logger, Inject } from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext, UnauthorizedException, ForbiddenException, Logger, Inject } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Request } from 'express';
 import { ClerkService } from './clerk.service';
@@ -125,6 +125,11 @@ export class ClerkAuthGuard implements CanActivate {
 			if (dbUser) {
 				// Enhance user object with DB data
 				request['user'].uid = dbUser.uid;
+				// User with linkedClientUid: expose clientUid so shop/quotations and projects filter by client
+				if (dbUser.linkedClientUid != null) {
+					request['user'].clientUid = dbUser.linkedClientUid;
+					request['user'].accessLevel = 'client';
+				}
 				// Use token org ID as source of truth (matches the org in the token), fallback to DB value
 				request['user'].organisationRef = tokenOrgId || dbUser.organisationRef;
 				request['user'].branch = dbUser.branchUid ? { uid: dbUser.branchUid } : undefined;
@@ -254,6 +259,44 @@ export class ClerkAuthGuard implements CanActivate {
 					request['user'].branch = clientAuth.client.branch ? { uid: clientAuth.client.branch.uid } : undefined;
 					request['user'].org = clientAuth.client.organisation ? { uid: clientAuth.client.organisation.uid } : undefined;
 					// Role already set from token (e.g. 'client')
+
+					// Fetch org's license and verify client.portal.access; set licensePlan so FeatureGuard passes
+					if (orgRef) {
+						try {
+							const cacheKey = `${this.CACHE_PREFIX}client:${orgRef}`;
+							const cached = await this.cacheManager.get<{ plan: string; uid: number; features?: Record<string, boolean> }>(cacheKey);
+							let license = cached;
+							if (!cached?.features) {
+								const licenses = await this.licensingService.findByOrganisation(String(orgRef));
+								const activeLicense = licenses?.find((l: { status: string }) => l.status === LicenseStatus.ACTIVE) ||
+									licenses?.find((l: { status: string }) => l.status === LicenseStatus.TRIAL) ||
+									licenses?.find((l: { status: string }) => l.status === LicenseStatus.GRACE_PERIOD);
+								license = activeLicense ? { plan: activeLicense.plan, uid: activeLicense.uid, features: activeLicense.features } : null;
+								if (activeLicense) {
+									await this.cacheManager.set(cacheKey, {
+										plan: activeLicense.plan,
+										uid: activeLicense.uid,
+										features: activeLicense.features,
+									}, this.LICENSE_CACHE_TTL);
+								}
+							}
+							const features = license?.features;
+							if (!features?.['client.portal.access']) {
+								throw new ForbiddenException({
+									statusCode: 403,
+									message: 'Your organization does not have client portal access enabled',
+									error: 'Forbidden',
+									action: 'Contact your organization administrator to enable client portal access',
+									cause: 'The organization license does not include the client.portal.access feature',
+								});
+							}
+							request['user'].licensePlan = license?.plan;
+							request['user'].licenseId = license?.uid?.toString();
+						} catch (err) {
+							if (err instanceof ForbiddenException) throw err;
+							this.logger.warn(`[ClerkAuthGuard] Could not fetch license for client org: ${err instanceof Error ? err.message : 'Unknown'}`);
+						}
+					}
 				} else {
 					// User not found in database - sync user and wait for completion (with timeout)
 					// Use request-scoped tracking to prevent multiple syncs in the same request

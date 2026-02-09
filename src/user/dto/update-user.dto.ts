@@ -6,7 +6,7 @@ import { Department } from '../../lib/enums/user.enums';
 import { AccountStatus } from '../../lib/enums/status.enums';
 import { CreateUserProfileDto } from './create-user-profile.dto';
 import { CreateUserEmploymentProfileDto } from './create-user-employment-profile.dto';
-import { IsBoolean, IsDate, IsEmail, IsEnum, IsObject, IsOptional, IsString, IsNumber, IsDateString } from 'class-validator';
+import { IsBoolean, IsDate, IsEmail, IsEnum, IsObject, IsOptional, IsString, IsNumber, IsDateString, ValidateIf } from 'class-validator';
 
 export class UpdateUserProfileDto extends CreateUserProfileDto {
 	@IsOptional()
@@ -438,6 +438,17 @@ export class UpdateUserDto extends PartialType(CreateUserDto) {
 		required: false
 	})
 	assignedClientIds?: number[];
+
+	@IsOptional()
+	@ValidateIf((_, v) => v != null)
+	@IsNumber()
+	@ApiProperty({
+		description: 'Client UID this user unlocks (portal profile); set to null to clear',
+		example: 5,
+		required: false,
+		nullable: true,
+	})
+	linkedClientUid?: number | null;
 
 	@IsOptional()
 	@IsNumber({}, { each: true })

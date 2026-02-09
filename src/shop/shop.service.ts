@@ -44,7 +44,7 @@ export class ShopService {
 	private currencyCode: string;
 	private currencySymbol: string;
 	private readonly logger = new Logger(ShopService.name);
-	private currencyByOrg: Map<number, { code: string; symbol: string; locale: string }> = new Map();
+	private currencyByOrg: Map<string, { code: string; symbol: string; locale: string }> = new Map();
 	private readonly CACHE_TTL: number;
 	private readonly CACHE_PREFIX = 'shop:';
 
@@ -207,9 +207,9 @@ export class ShopService {
 		return roundCurrency(discount);
 	}
 
-	private async getOrgCurrency(orgId: number): Promise<{ code: string; symbol: string; locale: string }> {
-		// Return defaults if no orgId provided
-		if (!orgId) {
+	private async getOrgCurrency(orgId: number | string): Promise<{ code: string; symbol: string; locale: string }> {
+		// Return defaults if no orgId provided (orgId can be numeric uid or clerkOrgId string)
+		if (orgId == null || orgId === '') {
 			return {
 				code: this.currencyCode,
 				symbol: this.currencySymbol,
@@ -218,14 +218,14 @@ export class ShopService {
 		}
 
 		// Return from cache if available
-		if (this.currencyByOrg.has(orgId)) {
-			return this.currencyByOrg.get(orgId);
+		const cacheKey = String(orgId);
+		if (this.currencyByOrg.has(cacheKey)) {
+			return this.currencyByOrg.get(cacheKey);
 		}
 
 		try {
-			// Fetch organization with settings relation
-			const orgIdStr = String(orgId);
-			const { organisation } = await this.organisationService.findOne(orgIdStr);
+			// Fetch organization with settings relation (orgId can be numeric uid or clerkOrgId string)
+			const { organisation } = await this.organisationService.findOne(cacheKey);
 
 			// Handle missing organization or settings gracefully
 			if (!organisation || !organisation.settings || !organisation.settings.regional) {
@@ -270,7 +270,7 @@ export class ShopService {
 			};
 
 			// Cache the result
-			this.currencyByOrg.set(orgId, result);
+			this.currencyByOrg.set(cacheKey, result);
 
 			return result;
 		} catch (error) {
@@ -965,15 +965,14 @@ export class ShopService {
 				throw new Error('Client is required');
 			}
 
-			// Get client data first to resolve organization
+			// Get client data first to resolve organization (no branch filter - org + role/assignment only)
 			const clientData = await this.clientsService?.findOne(
 				Number(quotationData?.client?.uid),
-				orgId,
-				branchId
+				orgId
 			);
 
 			if (!clientData || !clientData.client) {
-				this.logger.error(`Client not found: ${quotationData?.client?.uid} for orgId: ${orgId}, branchId: ${branchId}`);
+				this.logger.error(`Client not found: ${quotationData?.client?.uid} for orgId: ${orgId}`);
 				throw new NotFoundException(process.env.CLIENT_NOT_FOUND_MESSAGE || 'Client not found');
 			}
 
@@ -981,17 +980,11 @@ export class ShopService {
 			const { name: clientName } = client;
 
 			// Resolve organization from client (not from user)
-			// client.organisationUid is Clerk org ID (string); resolve to numeric uid
-			let resolvedOrgId: number | undefined;
-			if (client.organisationUid) {
-				resolvedOrgId = (await this.resolveOrgId(client.organisationUid)) ?? undefined;
-			}
-			if (resolvedOrgId == null && orgId) {
-				const resolved = await this.resolveOrgId(orgId);
-				if (resolved) {
-					resolvedOrgId = resolved;
-				}
-			}
+			// client.organisationUid is Clerk org ID (string); use directly for Quotation.organisationUid
+			const orgClerkId: string | undefined = client.organisationUid ?? (typeof orgId === 'string' ? orgId : undefined);
+			const resolvedOrgId: number | undefined = orgClerkId
+				? (await this.resolveOrgId(orgClerkId)) ?? undefined
+				: undefined;
 			const resolvedBranchId = client.branchUid || branchId;
 
 			// Resolve owner user ID (handles client-placed orders)
@@ -1005,8 +998,8 @@ export class ShopService {
 			const isClientPlaced = ownerInfo.isClientPlaced;
 			const placedByClientName = ownerInfo.clientContactName;
 
-			// Get organization-specific currency settings
-			const orgCurrency = await this.getOrgCurrency(resolvedOrgId);
+			// Get organization-specific currency settings (getOrgCurrency accepts clerkOrgId string or numeric uid)
+			const orgCurrency = await this.getOrgCurrency(orgClerkId ?? resolvedOrgId);
 			const internalEmail = this.configService.get<string>('INTERNAL_BROADCAST_EMAIL');
 
 			const productPromises = quotationData?.items?.map((item) =>
@@ -1100,15 +1093,16 @@ export class ShopService {
 					};
 				}),
 				// Assign organisation and branch from CLIENT (not from user)
-				...(resolvedOrgId && { organisation: { uid: resolvedOrgId } }),
+				// Quotation.organisationUid stores clerkOrgId (string), not numeric uid
+				...(orgClerkId && { organisation: { clerkOrgId: orgClerkId } }),
 				...(resolvedBranchId && { branch: { uid: resolvedBranchId } }),
 				// Assign project if provided
 				...(quotationData?.project?.uid && { project: { uid: quotationData.project.uid } }),
 			};
 
-			// Add organization and branch if available - DIRECT COLUMN VALUES
-			if (resolvedOrgId) {
-				newQuotation['organisationUid'] = resolvedOrgId;
+			// Add organization and branch if available - organisationUid is clerkOrgId (string)
+			if (orgClerkId) {
+				newQuotation['organisationUid'] = orgClerkId;
 			}
 
 			if (resolvedBranchId) {
@@ -1534,15 +1528,14 @@ export class ShopService {
 				throw new Error('Client is required');
 			}
 
-			// Get client data first to resolve organization
+			// Get client data first to resolve organization (no branch filter)
 			const clientData = await this.clientsService?.findOne(
 				Number(blankQuotationData?.client?.uid),
-				orgId,
-				branchId
+				orgId
 			);
 
 			if (!clientData || !clientData.client) {
-				this.logger.error(`[createBlankQuotation] Client not found: ${blankQuotationData?.client?.uid} for orgId: ${orgId}, branchId: ${branchId}`);
+				this.logger.error(`[createBlankQuotation] Client not found: ${blankQuotationData?.client?.uid} for orgId: ${orgId}`);
 				throw new NotFoundException(process.env.CLIENT_NOT_FOUND_MESSAGE || 'Client not found');
 			}
 
@@ -1550,17 +1543,11 @@ export class ShopService {
 			const { name: clientName, email: clientEmail } = client;
 
 			// Resolve organization from client (not from user)
-			// client.organisationUid is Clerk org ID (string); resolve to numeric uid
-			let resolvedOrgId: number | undefined;
-			if (client.organisationUid) {
-				resolvedOrgId = (await this.resolveOrgId(client.organisationUid)) ?? undefined;
-			}
-			if (resolvedOrgId == null && orgId) {
-				const resolved = await this.resolveOrgId(orgId);
-				if (resolved) {
-					resolvedOrgId = resolved;
-				}
-			}
+			// client.organisationUid is Clerk org ID (string); use directly for Quotation.organisationUid
+			const orgClerkId: string | undefined = client.organisationUid ?? (typeof orgId === 'string' ? orgId : undefined);
+			const resolvedOrgId: number | undefined = orgClerkId
+				? (await this.resolveOrgId(orgClerkId)) ?? undefined
+				: undefined;
 			const resolvedBranchId = client.branchUid || branchId;
 
 			// Resolve owner user ID (handles client-placed orders)
@@ -1574,8 +1561,8 @@ export class ShopService {
 			const isClientPlaced = ownerInfo.isClientPlaced;
 			const placedByClientName = ownerInfo.clientContactName;
 
-			// Get organization-specific currency settings
-			const orgCurrency = await this.getOrgCurrency(resolvedOrgId);
+			// Get organization-specific currency settings (getOrgCurrency accepts clerkOrgId string or numeric uid)
+			const orgCurrency = await this.getOrgCurrency(orgClerkId ?? resolvedOrgId);
 			this.logger.log(`[createBlankQuotation] Organization currency: ${orgCurrency.code}`);
 			this.logger.log(`[createBlankQuotation] Validating request - Items: ${blankQuotationData.items.length}, Owner: ${placedByUserId}, Client: ${blankQuotationData.client.uid}`);
 			const internalEmail = this.configService.get<string>('INTERNAL_BROADCAST_EMAIL');
@@ -1690,8 +1677,8 @@ export class ShopService {
 				priceListType: blankQuotationData.priceListType,
 				isBlankQuotation: true,
 				quotationItems: quotationItems,
-				// Store org and branch associations from CLIENT
-				...(resolvedOrgId && { organisationUid: resolvedOrgId }),
+				// Store org and branch associations from CLIENT - organisationUid is clerkOrgId (string)
+				...(orgClerkId && { organisationUid: orgClerkId }),
 				...(resolvedBranchId && { branchUid: resolvedBranchId }),
 				// Explicitly set clientUid to ensure quotations are not skipped when fetching
 				...(blankQuotationData?.client?.uid && { clientUid: blankQuotationData.client.uid }),
@@ -2177,12 +2164,6 @@ export class ShopService {
 				message: process.env.SUCCESS_MESSAGE,
 			};
 
-			this.logger.log(`[${operationId}] ✅ FINAL BANNERS RESPONSE:`, {
-				bannersCount: validBanners.length,
-				orgId,
-				branchId,
-			});
-
 			return finalResponse;
 		} catch (error) {
 			this.logger.error(`[${operationId}] Error fetching banners: ${error?.message}`, error?.stack);
@@ -2273,7 +2254,7 @@ export class ShopService {
 		}
 	}
 
-	async getAllQuotations(orgId?: string, branchId?: number, userId?: number, userRole?: AccessLevel): Promise<{ quotations: Quotation[]; message: string }> {
+	async getAllQuotations(orgId?: string, userId?: number, userRole?: AccessLevel, clientUidFromReq?: number): Promise<{ quotations: Quotation[]; message: string }> {
 		try {
 			const query = this.quotationRepository
 				.createQueryBuilder('quotation')
@@ -2284,47 +2265,35 @@ export class ShopService {
 				.leftJoinAndSelect('quotation.project', 'project')
 				.orderBy('quotation.createdAt', 'DESC');
 
-			// Add filtering by org and branch - join with organisation and filter by clerkOrgId/ref
+			// Add filtering by org only (no branch; access by role)
 			if (orgId) {
 				query.leftJoin('quotation.organisation', 'organisation')
 					.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
 			}
 
-			if (branchId) {
-				query.andWhere('quotation.branchUid = :branchId', { branchId });
-			}
-
 			// Role-based filtering: Only ADMIN, OWNER, DEVELOPER, MANAGER can see all quotations
-			// CLIENT users see quotations where they are the client (not placedBy, since client-placed orders have placedBy = null)
-			// Other users can only see their own quotations (placedBy.uid = userId)
+			// CLIENT users see quotations where client.uid = their client (via linkedClientUid or ClientAuth)
 			const privilegedRoles = [AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.DEVELOPER, AccessLevel.MANAGER];
 			const isPrivilegedUser = privilegedRoles.includes(userRole);
 			
 			if (!isPrivilegedUser && userId) {
 				if (userRole === AccessLevel.CLIENT) {
-					// For clients, resolve the Client UID from ClientAuth UID
-					const clientAuth = await this.clientAuthRepository.findOne({
-						where: { uid: userId },
-						relations: ['client'],
-					});
-
-					if (clientAuth?.client?.uid) {
-						const clientUid = clientAuth.client.uid;
-						this.logger.log(`[getAllQuotations] Client user ${userId} resolved to client UID ${clientUid}`);
-						// Filter by client.uid to show all quotations for this client
-						// This includes both client-placed orders (isClientPlaced=true) and sales-rep-placed orders
+					// Use clientUid from request (User.linkedClientUid set by guard) or resolve via ClientAuth
+					let clientUid: number | undefined = clientUidFromReq;
+					if (clientUid == null) {
+						const clientAuth = await this.clientAuthRepository.findOne({
+							where: { uid: userId },
+							relations: ['client'],
+						});
+						clientUid = clientAuth?.client?.uid;
+					}
+					if (clientUid != null) {
+						this.logger.log(`[getAllQuotations] Client filter by client.uid = ${clientUid}`);
 						query.andWhere('client.uid = :clientUid', { clientUid });
 					} else {
-						this.logger.warn(`[getAllQuotations] ClientAuth ${userId} not found or has no associated client`);
-						// Return empty array if client not found
-						return {
-							quotations: [],
-							message: 'Client not found',
-						};
+						this.logger.warn(`[getAllQuotations] No client UID for client user ${userId}`);
+						return { quotations: [], message: 'Client not found' };
 					}
-				} else {
-					// For non-client users, filter by placedBy.uid
-					query.andWhere('placedBy.uid = :userId', { userId });
 				}
 			}
 
@@ -2346,7 +2315,6 @@ export class ShopService {
 	async getQuotationsByUser(
 		ref: number,
 		orgId?: string,
-		branchId?: number,
 	): Promise<{ quotations: Quotation[]; message: string }> {
 		try {
 					const query = this.quotationRepository
@@ -2358,14 +2326,10 @@ export class ShopService {
 			.leftJoinAndSelect('quotation.project', 'project')
 			.where('placedBy.uid = :ref', { ref });
 
-			// Add filtering by org and branch - join with organisation and filter by clerkOrgId/ref
+			// Add filtering by org only (no branch; access by role)
 			if (orgId) {
 				query.leftJoin('quotation.organisation', 'organisation')
 					.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
-			}
-
-			if (branchId) {
-				query.andWhere('quotation.branchUid = :branchId', { branchId });
 			}
 
 			const quotations = await query.getMany();

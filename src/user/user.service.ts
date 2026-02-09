@@ -1602,6 +1602,7 @@ export class UserService {
 				.createQueryBuilder('user')
 				.leftJoinAndSelect('user.organisation', 'organisation')
 				.leftJoinAndSelect('user.branch', 'branch')
+				.leftJoinAndSelect('user.linkedClient', 'linkedClient')
 				.leftJoinAndSelect('user.userProfile', 'userProfile')
 				.leftJoinAndSelect('user.userEmployeementProfile', 'userEmployeementProfile')
 				.leftJoin('user.userTarget', 'userTarget')
@@ -1802,6 +1803,7 @@ export class UserService {
 				.leftJoinAndSelect('user.rewards', 'rewards')
 				.leftJoinAndSelect('user.userTarget', 'userTarget')
 				.leftJoinAndSelect('user.organisation', 'organisation')
+				.leftJoinAndSelect('user.linkedClient', 'linkedClient')
 				.where('user.clerkUserId = :clerkUserId', { clerkUserId })
 				.andWhere('user.isDeleted = :isDeleted', { isDeleted: false })
 				.getOne();
@@ -1855,6 +1857,7 @@ export class UserService {
 				.leftJoinAndSelect('user.rewards', 'rewards')
 				.leftJoinAndSelect('user.userTarget', 'userTarget')
 				.leftJoinAndSelect('user.organisation', 'organisation')
+				.leftJoinAndSelect('user.linkedClient', 'linkedClient')
 				.where('user.uid = :searchParameter', { searchParameter })
 				.andWhere('user.isDeleted = :isDeleted', { isDeleted: false })
 				.getOne();
@@ -2070,6 +2073,18 @@ export class UserService {
 			// Validate managedDoors if provided
 			if (updateUserDto.managedDoors !== undefined) {
 				await this.validateManagedDoors(updateUserDto.managedDoors, existingUser.organisationRef || orgId?.toString());
+			}
+
+			// Validate linkedClientUid if provided (client must exist and not be deleted)
+			if (updateUserDto.linkedClientUid !== undefined && updateUserDto.linkedClientUid !== null) {
+				const clientExists = await this.clientRepository.findOne({
+					where: { uid: updateUserDto.linkedClientUid, isDeleted: false },
+				});
+				if (!clientExists) {
+					throw new BadRequestException(
+						`Client with UID ${updateUserDto.linkedClientUid} not found or deleted`,
+					);
+				}
 			}
 
 			// Passwords are managed by Clerk only — never stored or updated via DB

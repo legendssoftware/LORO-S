@@ -440,7 +440,7 @@ export class ClerkService {
 		
 		try {
 			// Default relations needed for sync operations
-			const defaultRelations = relations || ['organisation', 'branch', 'userProfile', 'userEmployeementProfile'];
+			const defaultRelations = relations || ['organisation', 'branch', 'userProfile', 'userEmployeementProfile', 'linkedClient'];
 			
 			const user = await this.userRepository.findOne({
 				where: { clerkUserId },

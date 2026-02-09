@@ -221,13 +221,13 @@ export class Product {
     @Column({ default: false })
     isDeleted: boolean;
 
-    // Relations
+    // Relations - organisationUid stores clerkOrgId (string) from Organisation, not numeric uid
     @ManyToOne(() => Organisation, (organisation) => organisation?.products, { nullable: true })
-    @JoinColumn({ name: 'organisationUid' })
+    @JoinColumn({ name: 'organisationUid', referencedColumnName: 'clerkOrgId' })
     organisation: Organisation;
 
-    @Column({ nullable: true })
-    organisationUid: number;
+    @Column({ type: 'varchar', nullable: true })
+    organisationUid: string;
 
     @ManyToOne(() => Branch, (branch) => branch?.products, { nullable: true })
     @JoinColumn({ name: 'branchUid' })

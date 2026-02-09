@@ -180,10 +180,11 @@ export class FeedbackService {
             // Get organization settings for token expiry if client has an organization
             let tokenExpiryDays = 30; // Default value
             
-            if (feedback.client?.organisation?.uid) {
+            const orgClerkId = feedback.client?.organisation?.clerkOrgId ?? feedback.client?.organisation?.ref;
+            if (orgClerkId) {
               try {
                 const orgSettings = await this.organisationSettingsRepository.findOne({
-                  where: { organisationUid: feedback.client.organisation.uid }
+                  where: { organisationUid: orgClerkId }
                 });
                 
                 if (orgSettings?.feedbackTokenExpiryDays) {
@@ -452,14 +453,14 @@ export class FeedbackService {
         return { isValid: false };
       }
       
-      // Get organization settings for token expiry
-      const organisationId = client.organisation?.uid;
+      // Get organization settings for token expiry (organisationUid is Clerk ID string)
+      const orgClerkId = client.organisation?.clerkOrgId ?? client.organisation?.ref;
       let tokenExpiryDays = 30; // Default value
       
-      if (organisationId) {
+      if (orgClerkId) {
         try {
           const orgSettings = await this.organisationSettingsRepository.findOne({
-            where: { organisationUid: organisationId }
+            where: { organisationUid: orgClerkId }
           });
           
           if (orgSettings?.feedbackTokenExpiryDays) {

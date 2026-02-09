@@ -70,25 +70,23 @@ export class CompetitorsService {
 		return organisation;
 	}
 
-	// Helper method to get organization settings
+	// Helper method to get organization settings (OrganisationSettings.organisationUid is Clerk ID string)
 	private async getOrganisationSettings(orgId: number | string): Promise<OrganisationSettings | null> {
-		// Resolve orgId to numeric uid
-		let organisationUid: number | undefined;
+		let clerkId: string | null = null;
 		if (typeof orgId === 'string') {
-			const organisation = await this.findOrganisationByClerkId(orgId);
-			if (!organisation) return null;
-			organisationUid = organisation.uid;
+			clerkId = orgId;
 		} else if (typeof orgId === 'number') {
-			organisationUid = orgId;
-		} else {
-			return null;
+			const organisation = await this.organisationRepository.findOne({
+				where: { uid: orgId, isDeleted: false },
+				select: ['clerkOrgId', 'ref'],
+			});
+			clerkId = organisation ? (organisation.clerkOrgId ?? organisation.ref) : null;
 		}
-
-		if (!organisationUid) return null;
+		if (!clerkId) return null;
 
 		try {
 			return await this.organisationSettingsRepository.findOne({
-				where: { organisationUid },
+				where: { organisationUid: clerkId },
 			});
 		} catch (error) {
 			this.logger.error(`Error fetching organisation settings: ${error.message}`, error.stack);

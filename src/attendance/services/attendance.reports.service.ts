@@ -182,13 +182,16 @@ export class AttendanceReportsService {
 				}
 			}
 
-			// Fallback to organization settings (only when we have numeric uid)
+			// Fallback to organization settings (organisationUid is Clerk ID string)
 			if (typeof organizationId === 'number') {
-				const orgSettings = await this.organisationSettingsRepository.findOne({
-					where: { organisationUid: organizationId },
-				});
-				if (orgSettings?.regional?.timezone) {
-					return orgSettings.regional.timezone;
+				const orgIdStr = await this.resolveUidToOrgIdString(organizationId);
+				if (orgIdStr) {
+					const orgSettings = await this.organisationSettingsRepository.findOne({
+						where: { organisationUid: orgIdStr },
+					});
+					if (orgSettings?.regional?.timezone) {
+						return orgSettings.regional.timezone;
+					}
 				}
 			}
 
@@ -669,10 +672,13 @@ export class AttendanceReportsService {
 			throw new Error(`Organization ${organizationId} not found`);
 		}
 
-		// Get organization settings including social links - use organisation uid
-		const organizationSettings = await this.organisationSettingsRepository.findOne({
-			where: { organisationUid: organization.uid },
-		});
+		// Get organization settings including social links (organisationUid is Clerk ID string)
+		const orgClerkId = organization.clerkOrgId ?? organization.ref;
+		const organizationSettings = orgClerkId
+			? await this.organisationSettingsRepository.findOne({
+					where: { organisationUid: orgClerkId },
+				})
+			: null;
 
 		this.logger.debug(`Organization found: ${organization.name}`);
 
@@ -981,10 +987,13 @@ export class AttendanceReportsService {
 
 		this.logger.debug(`Organization found: ${organization.name}`);
 
-		// Get organization settings including social links - use organisation uid
-		const organizationSettings = await this.organisationSettingsRepository.findOne({
-			where: { organisationUid: organization.uid },
-		});
+		// Get organization settings including social links (organisationUid is Clerk ID string)
+		const orgClerkId = organization.clerkOrgId ?? organization.ref;
+		const organizationSettings = orgClerkId
+			? await this.organisationSettingsRepository.findOne({
+					where: { organisationUid: orgClerkId },
+				})
+			: null;
 
 		// Get working day info for organization hours with fallback
 		const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(organizationId, today);

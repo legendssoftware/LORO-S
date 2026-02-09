@@ -1257,16 +1257,12 @@ Retrieves a comprehensive list of all clients without user-specific filtering fo
 		if (!orgId) {
 			throw new BadRequestException('Organization context required');
 		}
-		const branchId = this.toNumber(req.user?.branch?.uid);
 		const filters = { status, search };
-
-		// For admin purposes, pass userId to enforce role-based filtering (only ADMIN/OWNER can bypass client filtering)
 		const userId = req.user?.uid;
 		return this.clientsService.findAll(
 			page ? Number(page) : 1,
-			limit ? Number(limit) : 500, // Higher default limit for admin purposes
+			limit ? Number(limit) : 500,
 			orgId,
-			branchId,
 			filters,
 			userId
 		);
@@ -1578,7 +1574,6 @@ Retrieves a paginated list of clients with user-specific filtering and role-base
 		if (!orgId) {
 			throw new BadRequestException('Organization context required');
 		}
-		const branchId = this.toNumber(req.user?.branch?.uid);
 		const userId = req.user?.uid;
 		const filters = { status, category, search };
 
@@ -1586,7 +1581,6 @@ Retrieves a paginated list of clients with user-specific filtering and role-base
 			page ? Number(page) : 1,
 			limit ? Number(limit) : Number(process.env.DEFAULT_PAGE_LIMIT),
 			orgId,
-			branchId,
 			filters,
 			userId,
 		);
@@ -1831,9 +1825,8 @@ Retrieves comprehensive information about a specific client including all relate
 		if (!orgId) {
 			throw new BadRequestException('Organization context required');
 		}
-		const branchId = this.toNumber(req.user?.branch?.uid);
 		const userId = req.user?.uid;
-		return this.clientsService.findOne(ref, orgId, branchId, userId);
+		return this.clientsService.findOne(ref, orgId, userId);
 	}
 
 	@Patch(':ref')
@@ -2089,8 +2082,8 @@ When converting a lead to client (status = 'CONVERTED'):
 		if (!orgId) {
 			throw new BadRequestException('Organization context required');
 		}
-		const branchId = this.toNumber(req.user?.branch?.uid);
-		return this.clientsService.update(ref, updateClientDto, orgId, branchId);
+		const userId = req.user?.uid;
+		return this.clientsService.update(ref, updateClientDto, orgId, userId);
 	}
 
 	@Patch('restore/:ref')
@@ -2199,8 +2192,7 @@ Restores a previously soft-deleted client back to active status, recovering all 
 		if (!orgId) {
 			throw new BadRequestException('Organization context required');
 		}
-		const branchId = this.toNumber(req.user?.branch?.uid);
-		return this.clientsService.restore(ref, orgId, branchId);
+		return this.clientsService.restore(ref, orgId);
 	}
 
 	@Delete(':ref')
@@ -2314,8 +2306,8 @@ Marks a client as deleted without permanently removing data from the database, a
 		if (!orgId) {
 			throw new BadRequestException('Organization context required');
 		}
-		const branchId = this.toNumber(req.user?.branch?.uid);
-		return this.clientsService.remove(ref, orgId, branchId);
+		const userId = req.user?.uid;
+		return this.clientsService.remove(ref, orgId, userId);
 	}
 
 	@Get('nearby')
@@ -2333,7 +2325,6 @@ Marks a client as deleted without permanently removing data from the database, a
 	@ApiQuery({ name: 'longitude', type: Number, required: true, description: 'GPS longitude coordinate (-180 to 180)', example: 28.034088 })
 	@ApiQuery({ name: 'radius', type: Number, required: false, description: 'Search radius in kilometers (default: 5, max: 50)', example: 5 })
 	@ApiQuery({ name: 'orgId', type: Number, required: false, description: 'Organization ID filter' })
-	@ApiQuery({ name: 'branchId', type: Number, required: false, description: 'Branch ID filter' })
 	@ApiOperation({
 		summary: '🗺️ Find Nearby Clients',
 		description: `
@@ -2344,7 +2335,6 @@ Discovers clients within a specified radius of given GPS coordinates, enabling l
 ## 🔐 **Security & Permissions**
 - **Role-Based Access**: Available to all authenticated users with client access permissions
 - **Organization Scope**: Only finds clients within user's organization
-- **Branch Scope**: Filtered by user's branch context (if applicable)
 - **Assignment Validation**: Regular users see only their assigned clients in results
 
 ## 📋 **Use Cases**
@@ -2369,7 +2359,6 @@ Discovers clients within a specified radius of given GPS coordinates, enabling l
 - **Longitude**: GPS longitude coordinate (-180 to 180)
 - **Radius**: Search radius in kilometers (default: 5km, max: 50km)
 - **Organization ID**: Filter by specific organization (optional)
-- **Branch ID**: Filter by specific branch (optional)
 
 ## 🗺️ **Geographic Calculations**
 - **Haversine Formula**: Accurate distance calculation considering Earth's curvature
@@ -2544,11 +2533,10 @@ Discovers clients within a specified radius of given GPS coordinates, enabling l
 		@Query('longitude') longitude: number,
 		@Query('radius') radius: number = 5,
 		@Query('orgId') orgId?: number,
-		@Query('branchId') branchId?: number,
 		@Req() req?: AuthenticatedRequest,
 	): Promise<{ message: string; clients: Array<Client & { distance: number }> }> {
 		const userId = req?.user?.uid;
-		return this.clientsService.findNearbyClients(latitude, longitude, radius, orgId, branchId, userId);
+		return this.clientsService.findNearbyClients(latitude, longitude, radius, orgId, userId);
 	}
 
 	@Get(':clientId/check-ins')
@@ -2760,9 +2748,8 @@ Retrieves comprehensive check-in history with location data, visit duration, and
 		if (!orgId) {
 			throw new BadRequestException('Organization context required');
 		}
-		const branchId = this.toNumber(req.user?.branch?.uid);
 		const userId = req.user?.uid;
-		return this.clientsService.getClientCheckIns(clientId, orgId, branchId, userId);
+		return this.clientsService.getClientCheckIns(clientId, orgId, userId);
 	}
 
 	@Patch('profile')

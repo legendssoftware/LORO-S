@@ -5,6 +5,7 @@ import { User } from './entities/user.entity';
 import { UserSyncClerkDto } from './dto/user-sync-clerk.dto';
 import { ClerkService } from '../clerk/clerk.service';
 import { AccountStatus } from '../lib/enums/status.enums';
+import { Client } from '../clients/entities/client.entity';
 
 @Injectable()
 export class UserAuthService {
@@ -13,6 +14,8 @@ export class UserAuthService {
 	constructor(
 		@InjectRepository(User)
 		private readonly userRepository: Repository<User>,
+		@InjectRepository(Client)
+		private readonly clientRepository: Repository<Client>,
 		private readonly clerkService: ClerkService,
 	) {}
 
@@ -110,10 +113,23 @@ export class UserAuthService {
 			// Cache user after successful sync for faster subsequent lookups
 			await this.clerkService.cacheUserAfterSync(user);
 
-			// Build profile data
+			// When user has linkedClientUid, return client profile so client tabs get full client data
+			if (user.linkedClientUid != null) {
+				const client = await this.clientRepository.findOne({
+					where: { uid: user.linkedClientUid, isDeleted: false },
+					relations: ['branch', 'organisation', 'assignedSalesRep'],
+				});
+				if (client) {
+					const profileData = this.buildClientProfileData(user, client);
+					this.logger.log(`[${operationId}] User synced with linked client - clientUid: ${client.uid}`);
+					return { profileData };
+				}
+			}
+
+			// Build profile data (staff user)
 			const profileData = {
 				clerkUserId: user.clerkUserId,
-				uid: user.uid, // Kept for backward compatibility
+				uid: user.uid,
 				email: user.email,
 				name: user.name,
 				surname: user.surname,
@@ -144,5 +160,52 @@ export class UserAuthService {
 			this.logger.error(`[${operationId}] Sync error:`, error instanceof Error ? error.message : 'Unknown error');
 			throw new UnauthorizedException('Session sync failed. Please try again.');
 		}
+	}
+
+	/** Build flat client profile from Client entity for APK client tabs (uses linkedClientUid). */
+	private buildClientProfileData(user: User, client: Client): Record<string, unknown> {
+		const address = typeof client.address === 'object' && client.address ? client.address : {};
+		const assignedSalesRep = client.assignedSalesRep
+			? {
+					uid: client.assignedSalesRep.uid,
+					name: client.assignedSalesRep.name,
+					surname: client.assignedSalesRep.surname,
+					email: client.assignedSalesRep.email,
+					phone: client.assignedSalesRep.phone,
+			  }
+			: undefined;
+		return {
+			clerkUserId: user.clerkUserId,
+			linkedClientUid: client.uid,
+			uid: client.uid,
+			name: client.name ?? client.contactPerson ?? '',
+			email: client.email,
+			contactPerson: client.contactPerson,
+			phone: client.phone,
+			alternativePhone: client.alternativePhone ?? undefined,
+			website: client.website ?? undefined,
+			logo: client.logo ?? undefined,
+			description: client.description ?? undefined,
+			address,
+			creditLimit: client.creditLimit != null ? Number(client.creditLimit) : undefined,
+			outstandingBalance: client.outstandingBalance != null ? Number(client.outstandingBalance) : undefined,
+			priceTier: client.priceTier,
+			discountPercentage: client.discountPercentage != null ? Number(client.discountPercentage) : undefined,
+			paymentTerms: client.paymentTerms ?? undefined,
+			preferredContactMethod: client.preferredContactMethod ?? undefined,
+			preferredLanguage: client.preferredLanguage ?? undefined,
+			industry: client.industry ?? undefined,
+			companySize: client.companySize ?? undefined,
+			socialMedia: client.socialMedia ?? undefined,
+			lifetimeValue: client.lifetimeValue != null ? Number(client.lifetimeValue) : undefined,
+			category: client.category ?? undefined,
+			type: client.type ?? undefined,
+			status: client.status ?? undefined,
+			tags: client.tags ?? undefined,
+			accessLevel: 'client',
+			branch: client.branch ? { uid: client.branch.uid, name: client.branch.name, address: (client.branch as any).address, phone: (client.branch as any).phone, email: (client.branch as any).email } : undefined,
+			organisation: client.organisation ? { uid: client.organisation.uid, name: client.organisation.name, email: (client.organisation as any).email, phone: (client.organisation as any).phone } : undefined,
+			assignedSalesRep,
+		};
 	}
 }

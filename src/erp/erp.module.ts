@@ -10,6 +10,7 @@ import { TblCustomers } from './entities/tblcustomers.entity';
 import { TblCustomerCategories } from './entities/tblcustomercategories.entity';
 import { TblSalesman } from './entities/tblsalesman.entity';
 import { OrganisationSettings } from '../organisation/entities/organisation-settings.entity';
+import { Organisation } from '../organisation/entities/organisation.entity';
 import { ErpDataService } from './services/erp-data.service';
 import { ErpTransformerService } from './services/erp-transformer.service';
 import { ErpCacheWarmerService } from './services/erp-cache-warmer.service';
@@ -36,8 +37,8 @@ import { UserModule } from '../user/user.module';
 		ClerkModule,
 		// Register ERP entities with the 'erp' connection
 		TypeOrmModule.forFeature([TblSalesHeader, TblSalesLines, TblCustomers, TblCustomerCategories, TblSalesman], 'erp'),
-		// Register OrganisationSettings with default connection for targets
-		TypeOrmModule.forFeature([OrganisationSettings]),
+		// Register OrganisationSettings and Organisation with default connection for targets
+		TypeOrmModule.forFeature([OrganisationSettings, Organisation]),
 		// Cache module for query result caching
 		CacheModule.register({
 			ttl: 3600, // 1 hour

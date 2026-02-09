@@ -1412,6 +1412,24 @@ Retrieves detailed information about a specific user by their unique reference i
 							},
 							nullable: true,
 						},
+						linkedClientUid: {
+							type: 'number',
+							example: 5,
+							nullable: true,
+							description: 'Client UID this user unlocks (portal profile)',
+						},
+						linkedClient: {
+							type: 'object',
+							nullable: true,
+							description: 'Client this user unlocks when linkedClientUid is set',
+							properties: {
+								uid: { type: 'number', example: 5 },
+								name: { type: 'string', example: 'Client Name' },
+								contactPerson: { type: 'string', example: 'Jane Doe' },
+								email: { type: 'string', example: 'client@example.com' },
+								phone: { type: 'string', example: '+27123456789' },
+							},
+						},
 						organisation: {
 							type: 'object',
 							nullable: true,

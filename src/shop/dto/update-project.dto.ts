@@ -101,6 +101,42 @@ export class UpdateProjectDto extends PartialType(CreateProjectDto) {
 	})
 	currentSpent?: number;
 
+	@IsNumber()
+	@Min(0)
+	@IsOptional()
+	@ApiProperty({
+		example: 17000000.00,
+		description: 'Project value - expected contract/revenue value',
+		minimum: 0,
+		required: false,
+		type: 'number',
+		format: 'decimal',
+	})
+	value?: number;
+
+	@IsNumber()
+	@Min(0)
+	@IsOptional()
+	@ApiProperty({
+		example: 3000000.00,
+		description: 'Total cost - actual total cost',
+		minimum: 0,
+		required: false,
+		type: 'number',
+		format: 'decimal',
+	})
+	totalCost?: number;
+
+	@IsArray()
+	@IsOptional()
+	@ApiProperty({
+		example: ['INV-2024-001', 'INV-2024-002', 'INV-2024-003'],
+		description: 'Linked invoice references',
+		type: [String],
+		required: false,
+	})
+	linkedInvoices?: string[];
+
 	@IsString()
 	@IsOptional()
 	@ApiProperty({

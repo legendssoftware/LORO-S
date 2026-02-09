@@ -42,6 +42,18 @@ export class Project {
 	@Column({ type: 'decimal', precision: 12, scale: 2, nullable: false, default: 0 })
 	currentSpent: number;
 
+	/** Project value - expected contract/revenue value (may differ from budget) */
+	@Column({ type: 'decimal', precision: 12, scale: 2, nullable: false, default: 0 })
+	value: number;
+
+	/** Total cost - actual total cost (manual or from linked invoices) */
+	@Column({ type: 'decimal', precision: 12, scale: 2, nullable: false, default: 0 })
+	totalCost: number;
+
+	/** Linked invoice references (e.g. ERP document numbers) */
+	@Column({ type: 'json', nullable: true })
+	linkedInvoices: string[];
+
 	// Contact information
 	@Column({ nullable: false })
 	contactPerson: string;
@@ -126,11 +138,11 @@ export class Project {
 	quotations: Quotation[];
 
 	@ManyToOne(() => Organisation, (organisation) => organisation.projects, { nullable: true })
-	@JoinColumn({ name: 'organisationUid' })
+	@JoinColumn({ name: 'organisationUid', referencedColumnName: 'clerkOrgId' })
 	organisation: Organisation;
 
-	@Column({ nullable: true })
-	organisationUid: number;
+	@Column({ type: 'varchar', nullable: true })
+	organisationUid: string;
 
 	@ManyToOne(() => Branch, (branch) => branch.projects, { nullable: true })
 	@JoinColumn({ name: 'branchUid' })

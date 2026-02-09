@@ -61,9 +61,10 @@ export class CheckInsReportsService {
 				return;
 			}
 
-			// Get organization hours for timezone
+			// Get organization hours for timezone (organisationUid is Clerk ID string)
+			const clerkOrgId = org.clerkOrgId ?? org.ref ?? String(orgId);
 			const orgHours = await this.organisationHoursRepository.findOne({
-				where: { organisationUid: orgId, isDeleted: false },
+				where: { organisationUid: clerkOrgId, isDeleted: false },
 			});
 
 			const timezone = orgHours?.timezone || 'Africa/Johannesburg';
@@ -74,7 +75,6 @@ export class CheckInsReportsService {
 			const endDate = endOfDay(reportDateInTz);
 
 			// Fetch check-ins for the day using Clerk org ID (string)
-			const clerkOrgId = org.clerkOrgId || org.ref || String(orgId);
 			const checkIns = await this.fetchCheckInsForDateRange(clerkOrgId, startDate, endDate);
 
 			if (checkIns.length === 0) {

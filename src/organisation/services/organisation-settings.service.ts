@@ -52,18 +52,18 @@ export class OrganisationSettingsService {
                 };
             }
 
+            const organisationUid = organisation.clerkOrgId ?? organisation.ref;
             const settings = this.settingsRepository.create({
                 ...dto,
-                organisationUid: organisation.uid,
+                organisationUid,
             });
 
             const savedSettings = await this.settingsRepository.save(settings);
             
-            // Clear cache after creating new settings
             await this.clearSettingsCache(orgRef);
 
             return {
-                settings: savedSettings,
+                settings: savedSettings as OrganisationSettings,
                 message: 'Settings created successfully',
             };
         } catch (error) {

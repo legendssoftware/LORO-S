@@ -165,6 +165,14 @@ export class User {
 	@Column({ type: 'json', nullable: true })
 	assignedClientIds: number[];
 
+	/** Optional client this user unlocks (portal profile); linked by client uid */
+	@ManyToOne(() => Client, { nullable: true })
+	@JoinColumn({ name: 'linkedClientUid' })
+	linkedClient: Client | null;
+
+	@Column({ type: 'int', nullable: true })
+	linkedClientUid: number | null;
+
 	@OneToMany(() => CheckIn, (checkIn) => checkIn?.owner, { nullable: true })
 	checkIns: CheckIn[];
 

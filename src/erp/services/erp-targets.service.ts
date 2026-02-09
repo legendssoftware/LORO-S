@@ -2,43 +2,48 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { OrganisationSettings } from '../../organisation/entities/organisation-settings.entity';
+import { Organisation } from '../../organisation/entities/organisation.entity';
 
 /**
  * ERP Targets Service
  * 
  * Provides revenue target calculation logic for performance tracking.
- * Supports multiple target calculation methods: fixed, dynamic, historical.
+ * OrganisationSettings.organisationUid is Clerk ID (string); numeric uid is resolved internally.
  */
 @Injectable()
 export class ErpTargetsService {
 	private readonly logger = new Logger(ErpTargetsService.name);
 
-	// Default targets (in organization currency)
-	private readonly DEFAULT_DAILY_TARGET = 1000000; // R1M per day
-	private readonly DEFAULT_WEEKLY_TARGET = 3500000; // R3.5M per week
-	private readonly DEFAULT_MONTHLY_TARGET = 15000000; // R15M per month
-	private readonly DEFAULT_YEARLY_TARGET = 180000000; // R180M per year
+	private readonly DEFAULT_DAILY_TARGET = 1000000;
+	private readonly DEFAULT_WEEKLY_TARGET = 3500000;
+	private readonly DEFAULT_MONTHLY_TARGET = 15000000;
+	private readonly DEFAULT_YEARLY_TARGET = 180000000;
 
 	constructor(
 		@InjectRepository(OrganisationSettings)
 		private orgSettingsRepo: Repository<OrganisationSettings>,
+		@InjectRepository(Organisation)
+		private organisationRepo: Repository<Organisation>,
 	) {}
 
-	/**
-	 * Get daily revenue target for an organization
-	 * 
-	 * @param organisationUid - Organization unique identifier
-	 * @returns Daily revenue target in organization currency
-	 */
-	async getDailyRevenueTarget(organisationUid: number): Promise<number> {
-		try {
-			const settings = await this.orgSettingsRepo.findOne({
-				where: { organisationUid },
-			});
+	/** Resolve numeric uid to Clerk ID string for OrganisationSettings.organisationUid */
+	private async toClerkId(organisationUid: number | string): Promise<string | null> {
+		if (typeof organisationUid === 'string') return organisationUid;
+		const org = await this.organisationRepo.findOne({
+			where: { uid: organisationUid, isDeleted: false },
+			select: ['clerkOrgId', 'ref'],
+		});
+		return org ? (org.clerkOrgId ?? org.ref) : null;
+	}
 
-			// Return configured target or default
+	async getDailyRevenueTarget(organisationUid: number | string): Promise<number> {
+		try {
+			const clerkId = await this.toClerkId(organisationUid);
+			if (!clerkId) return this.DEFAULT_DAILY_TARGET;
+			const settings = await this.orgSettingsRepo.findOne({
+				where: { organisationUid: clerkId },
+			});
 			const target = settings?.performance?.dailyRevenueTarget ?? this.DEFAULT_DAILY_TARGET;
-			
 			this.logger.log(`Daily revenue target for org ${organisationUid}: ${target}`);
 			return target;
 		} catch (error) {
@@ -47,20 +52,14 @@ export class ErpTargetsService {
 		}
 	}
 
-	/**
-	 * Get weekly revenue target for an organization
-	 * 
-	 * @param organisationUid - Organization unique identifier
-	 * @returns Weekly revenue target in organization currency
-	 */
-	async getWeeklyRevenueTarget(organisationUid: number): Promise<number> {
+	async getWeeklyRevenueTarget(organisationUid: number | string): Promise<number> {
 		try {
+			const clerkId = await this.toClerkId(organisationUid);
+			if (!clerkId) return this.DEFAULT_WEEKLY_TARGET;
 			const settings = await this.orgSettingsRepo.findOne({
-				where: { organisationUid },
+				where: { organisationUid: clerkId },
 			});
-
 			const target = settings?.performance?.weeklyRevenueTarget ?? this.DEFAULT_WEEKLY_TARGET;
-			
 			this.logger.log(`Weekly revenue target for org ${organisationUid}: ${target}`);
 			return target;
 		} catch (error) {
@@ -69,20 +68,14 @@ export class ErpTargetsService {
 		}
 	}
 
-	/**
-	 * Get monthly revenue target for an organization
-	 * 
-	 * @param organisationUid - Organization unique identifier
-	 * @returns Monthly revenue target in organization currency
-	 */
-	async getMonthlyRevenueTarget(organisationUid: number): Promise<number> {
+	async getMonthlyRevenueTarget(organisationUid: number | string): Promise<number> {
 		try {
+			const clerkId = await this.toClerkId(organisationUid);
+			if (!clerkId) return this.DEFAULT_MONTHLY_TARGET;
 			const settings = await this.orgSettingsRepo.findOne({
-				where: { organisationUid },
+				where: { organisationUid: clerkId },
 			});
-
 			const target = settings?.performance?.monthlyRevenueTarget ?? this.DEFAULT_MONTHLY_TARGET;
-			
 			this.logger.log(`Monthly revenue target for org ${organisationUid}: ${target}`);
 			return target;
 		} catch (error) {
@@ -91,20 +84,14 @@ export class ErpTargetsService {
 		}
 	}
 
-	/**
-	 * Get yearly revenue target for an organization
-	 * 
-	 * @param organisationUid - Organization unique identifier
-	 * @returns Yearly revenue target in organization currency
-	 */
-	async getYearlyRevenueTarget(organisationUid: number): Promise<number> {
+	async getYearlyRevenueTarget(organisationUid: number | string): Promise<number> {
 		try {
+			const clerkId = await this.toClerkId(organisationUid);
+			if (!clerkId) return this.DEFAULT_YEARLY_TARGET;
 			const settings = await this.orgSettingsRepo.findOne({
-				where: { organisationUid },
+				where: { organisationUid: clerkId },
 			});
-
 			const target = settings?.performance?.yearlyRevenueTarget ?? this.DEFAULT_YEARLY_TARGET;
-			
 			this.logger.log(`Yearly revenue target for org ${organisationUid}: ${target}`);
 			return target;
 		} catch (error) {
@@ -155,10 +142,12 @@ export class ErpTargetsService {
 	 * @param organisationUid - Organization unique identifier
 	 * @returns Performance settings with defaults applied
 	 */
-	async getPerformanceSettings(organisationUid: number) {
+	async getPerformanceSettings(organisationUid: number | string) {
 		try {
+			const clerkId = await this.toClerkId(organisationUid);
+			if (!clerkId) throw new Error(`Organisation not found: ${organisationUid}`);
 			const settings = await this.orgSettingsRepo.findOne({
-				where: { organisationUid },
+				where: { organisationUid: clerkId },
 			});
 
 			const performanceSettings = settings?.performance || {};
@@ -195,7 +184,7 @@ export class ErpTargetsService {
 	 * @param performance - Performance settings to update
 	 */
 	async updatePerformanceSettings(
-		organisationUid: number,
+		organisationUid: number | string,
 		performance: {
 			dailyRevenueTarget?: number;
 			weeklyRevenueTarget?: number;
@@ -207,8 +196,10 @@ export class ErpTargetsService {
 		},
 	): Promise<void> {
 		try {
+			const clerkId = await this.toClerkId(organisationUid);
+			if (!clerkId) throw new Error(`Organisation not found: ${organisationUid}`);
 			const settings = await this.orgSettingsRepo.findOne({
-				where: { organisationUid },
+				where: { organisationUid: clerkId },
 			});
 
 			if (!settings) {
@@ -216,15 +207,13 @@ export class ErpTargetsService {
 				throw new Error('Organization settings not found');
 			}
 
-			// Merge new performance settings with existing ones
 			const updatedPerformance = {
 				...settings.performance,
 				...performance,
 			};
 
-			// Update settings
 			await this.orgSettingsRepo.update(
-				{ organisationUid },
+				{ organisationUid: clerkId },
 				{ performance: updatedPerformance },
 			);
 

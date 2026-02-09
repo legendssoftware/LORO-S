@@ -1701,189 +1701,6 @@ Retrieves a paginated list of products with comprehensive filtering and sorting 
 		return this.productsService.products(query.page, query.limit, orgId, branchId);
 	}
 
-	@Get(':ref')
-	@Roles(
-		AccessLevel.ADMIN,
-		AccessLevel.MANAGER,
-		AccessLevel.SUPPORT,
-		AccessLevel.DEVELOPER,
-		AccessLevel.USER,
-		AccessLevel.OWNER,
-		AccessLevel.TECHNICIAN,
-		AccessLevel.CLIENT,
-	)
-	@ApiOperation({
-		summary: '🔍 Get product by reference code',
-		description: `
-# Get Product by Reference
-
-Retrieves comprehensive information about a specific product using its reference code or unique identifier.
-
-## 🎯 **Use Cases**
-- **Product Detail Pages**: Display complete product information
-- **Inventory Management**: Check specific product details and stock levels
-- **Order Processing**: Validate product information during checkout
-- **Customer Support**: Lookup products for support inquiries
-- **Mobile Applications**: Fetch product data for mobile displays
-- **Third-party Integrations**: Retrieve product data for external systems
-
-## 📋 **Product Information Included**
-- **Basic Details**: Name, description, category, brand information
-- **Pricing**: Current price, sale price, discount information
-- **Inventory**: Stock levels, reorder points, availability status
-- **Physical Properties**: Dimensions, weight, materials, colors
-- **Business Data**: SKU, barcode, warranty, handling requirements
-- **Analytics**: Performance metrics, ratings, review counts
-- **Relationships**: Organization and branch associations
-
-## 🔒 **Access Control**
-- All authenticated users can view basic product information
-- Detailed analytics require elevated permissions
-- Pricing may vary based on user role and organization
-- Client users see client-specific pricing and availability
-
-## ⚡ **Performance Features**
-- Cached responses for frequently accessed products
-- Optimized queries for fast retrieval
-- Minimal data transfer for mobile applications
-- Real-time stock level validation
-		`
-	})
-	@ApiParam({ 
-		name: 'ref', 
-		description: '🔖 Product reference code or unique identifier', 
-		type: 'number',
-		example: 12345
-	})
-	@ApiOkResponse({
-		description: '✅ Product retrieved successfully',
-		schema: {
-			type: 'object',
-			properties: {
-				message: { type: 'string', example: 'Product retrieved successfully' },
-				product: {
-					type: 'object',
-					properties: {
-						uid: { type: 'number', example: 12345, description: 'Unique product identifier' },
-						name: { type: 'string', example: 'iPhone 15 Pro Max', description: 'Product name' },
-						description: { type: 'string', example: 'Latest Apple smartphone with titanium design, A17 Pro chip, and advanced camera system', description: 'Detailed product description' },
-						category: { type: 'string', example: 'ELECTRONICS', description: 'Product category' },
-						price: { type: 'number', example: 1199.99, description: 'Regular selling price' },
-						salePrice: { type: 'number', example: 1099.99, description: 'Current sale price if on promotion' },
-						discount: { type: 'number', example: 8.33, description: 'Discount percentage' },
-						sku: { type: 'string', example: 'IPH15PM-256GB-NT', description: 'Stock Keeping Unit' },
-						barcode: { type: 'string', example: '194253000001', description: 'Product barcode' },
-						brand: { type: 'string', example: 'Apple', description: 'Product brand' },
-						manufacturer: { type: 'string', example: 'Apple Inc.', description: 'Manufacturer name' },
-						model: { type: 'string', example: 'A3108', description: 'Product model number' },
-						color: { type: 'string', example: 'Natural Titanium', description: 'Product color' },
-						material: { type: 'string', example: 'Titanium', description: 'Primary material' },
-						weight: { type: 'number', example: 0.221, description: 'Product weight in kg' },
-						dimensions: { type: 'string', example: '159.9mm x 76.7mm x 8.25mm', description: 'Product dimensions' },
-						stockQuantity: { type: 'number', example: 50, description: 'Current stock level' },
-						reorderPoint: { type: 'number', example: 10, description: 'Minimum stock before reorder' },
-						packageQuantity: { type: 'number', example: 1, description: 'Quantity per package' },
-						packageUnit: { type: 'string', example: 'piece', description: 'Package unit type' },
-						isOnPromotion: { type: 'boolean', example: true, description: 'Whether product is on promotion' },
-						promotionStartDate: { type: 'string', format: 'date-time', example: '2024-01-01T00:00:00Z', description: 'Promotion start date' },
-						promotionEndDate: { type: 'string', format: 'date-time', example: '2024-12-31T23:59:59Z', description: 'Promotion end date' },
-						warrantyPeriod: { type: 'number', example: 12, description: 'Warranty period' },
-						warrantyUnit: { type: 'string', example: 'months', description: 'Warranty time unit' },
-						rating: { type: 'number', example: 4.8, description: 'Average customer rating (1-5)' },
-						reviewCount: { type: 'number', example: 2450, description: 'Total number of reviews' },
-						origin: { type: 'string', example: 'China', description: 'Country of origin' },
-						isFragile: { type: 'boolean', example: true, description: 'Whether product is fragile' },
-						requiresSpecialHandling: { type: 'boolean', example: false, description: 'Whether special handling is required' },
-						storageConditions: { type: 'string', example: 'Store in cool, dry place. Temperature: 0-35°C', description: 'Storage requirements' },
-						minimumOrderQuantity: { type: 'number', example: 1, description: 'Minimum order quantity' },
-						bulkDiscountPercentage: { type: 'number', example: 5.0, description: 'Bulk order discount percentage' },
-						bulkDiscountMinQty: { type: 'number', example: 10, description: 'Minimum quantity for bulk discount' },
-						specifications: { type: 'string', example: 'Display: 6.7" Super Retina XDR, Chip: A17 Pro, Storage: 256GB', description: 'Technical specifications' },
-						features: { type: 'string', example: 'Face ID, 5G, Wireless Charging, Water Resistant IP68', description: 'Key product features' },
-						imageUrl: { type: 'string', example: 'https://example.com/images/iphone15promax.jpg', description: 'Primary product image URL' },
-						isActive: { type: 'boolean', example: true, description: 'Whether product is active' },
-						createdAt: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z', description: 'Product creation timestamp' },
-						updatedAt: { type: 'string', format: 'date-time', example: '2023-12-15T14:30:00Z', description: 'Last update timestamp' },
-						organisation: {
-							type: 'object',
-							properties: {
-								uid: { type: 'number', example: 1, description: 'Organization ID' },
-								name: { type: 'string', example: 'Tech Solutions Ltd', description: 'Organization name' }
-							},
-							description: 'Associated organization'
-						},
-						branch: {
-							type: 'object',
-							properties: {
-								uid: { type: 'number', example: 5, description: 'Branch ID' },
-								name: { type: 'string', example: 'Main Store', description: 'Branch name' }
-							},
-							description: 'Associated branch'
-						}
-					},
-				},
-			},
-		},
-	})
-	@ApiNotFoundResponse({
-		description: '❌ Product not found',
-		schema: {
-			type: 'object',
-			properties: {
-				message: { type: 'string', example: 'Product with reference 12345 not found' },
-				error: { type: 'string', example: 'Not Found' },
-				statusCode: { type: 'number', example: 404 },
-				product: { type: 'null', example: null }
-			},
-		},
-	})
-	@ApiBadRequestResponse({
-		description: '❌ Bad Request - Invalid reference code',
-		schema: {
-			type: 'object',
-			properties: {
-				message: { type: 'string', example: 'Invalid product reference code format' },
-				error: { type: 'string', example: 'Bad Request' },
-				statusCode: { type: 'number', example: 400 },
-				details: {
-					type: 'array',
-					items: { type: 'string' },
-					example: [
-						'Reference code must be a positive number',
-						'Reference code cannot be empty'
-					]
-				}
-			},
-		},
-	})
-	@ApiForbiddenResponse({
-		description: '🚫 Forbidden - Insufficient permissions',
-		schema: {
-			type: 'object',
-			properties: {
-				message: { type: 'string', example: 'You do not have permission to view this product' },
-				error: { type: 'string', example: 'Forbidden' },
-				statusCode: { type: 'number', example: 403 }
-			}
-		}
-	})
-	@ApiInternalServerErrorResponse({
-		description: '💥 Internal Server Error - Unexpected system error',
-		schema: {
-			type: 'object',
-			properties: {
-				message: { type: 'string', example: 'An unexpected error occurred while retrieving the product' },
-				error: { type: 'string', example: 'Internal Server Error' },
-				statusCode: { type: 'number', example: 500 }
-			}
-		}
-	})
-	async getProductByref(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
-		const orgId = this.getClerkOrgIdString(req);
-		const branchId = req.user?.branch?.uid;
-		return this.productsService.getProductByref(ref, orgId, branchId);
-	}
-
 	@Get('category/:category')
 	@Roles(
 		AccessLevel.ADMIN,
@@ -2207,6 +2024,189 @@ Retrieves a paginated list of products that belong to a specific category with a
 		const orgId = await this.resolveOrgUid(req);
 		const branchId = req.user?.branch?.uid;
 		return this.productsService.productsByCategory(category, page, limit, search, orgId, branchId);
+	}
+
+	@Get(':ref')
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.SUPPORT,
+		AccessLevel.DEVELOPER,
+		AccessLevel.USER,
+		AccessLevel.OWNER,
+		AccessLevel.TECHNICIAN,
+		AccessLevel.CLIENT,
+	)
+	@ApiOperation({
+		summary: '🔍 Get product by reference code',
+		description: `
+# Get Product by Reference
+
+Retrieves comprehensive information about a specific product using its reference code or unique identifier.
+
+## 🎯 **Use Cases**
+- **Product Detail Pages**: Display complete product information
+- **Inventory Management**: Check specific product details and stock levels
+- **Order Processing**: Validate product information during checkout
+- **Customer Support**: Lookup products for support inquiries
+- **Mobile Applications**: Fetch product data for mobile displays
+- **Third-party Integrations**: Retrieve product data for external systems
+
+## 📋 **Product Information Included**
+- **Basic Details**: Name, description, category, brand information
+- **Pricing**: Current price, sale price, discount information
+- **Inventory**: Stock levels, reorder points, availability status
+- **Physical Properties**: Dimensions, weight, materials, colors
+- **Business Data**: SKU, barcode, warranty, handling requirements
+- **Analytics**: Performance metrics, ratings, review counts
+- **Relationships**: Organization and branch associations
+
+## 🔒 **Access Control**
+- All authenticated users can view basic product information
+- Detailed analytics require elevated permissions
+- Pricing may vary based on user role and organization
+- Client users see client-specific pricing and availability
+
+## ⚡ **Performance Features**
+- Cached responses for frequently accessed products
+- Optimized queries for fast retrieval
+- Minimal data transfer for mobile applications
+- Real-time stock level validation
+		`
+	})
+	@ApiParam({ 
+		name: 'ref', 
+		description: '🔖 Product reference code or unique identifier', 
+		type: 'number',
+		example: 12345
+	})
+	@ApiOkResponse({
+		description: '✅ Product retrieved successfully',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Product retrieved successfully' },
+				product: {
+					type: 'object',
+					properties: {
+						uid: { type: 'number', example: 12345, description: 'Unique product identifier' },
+						name: { type: 'string', example: 'iPhone 15 Pro Max', description: 'Product name' },
+						description: { type: 'string', example: 'Latest Apple smartphone with titanium design, A17 Pro chip, and advanced camera system', description: 'Detailed product description' },
+						category: { type: 'string', example: 'ELECTRONICS', description: 'Product category' },
+						price: { type: 'number', example: 1199.99, description: 'Regular selling price' },
+						salePrice: { type: 'number', example: 1099.99, description: 'Current sale price if on promotion' },
+						discount: { type: 'number', example: 8.33, description: 'Discount percentage' },
+						sku: { type: 'string', example: 'IPH15PM-256GB-NT', description: 'Stock Keeping Unit' },
+						barcode: { type: 'string', example: '194253000001', description: 'Product barcode' },
+						brand: { type: 'string', example: 'Apple', description: 'Product brand' },
+						manufacturer: { type: 'string', example: 'Apple Inc.', description: 'Manufacturer name' },
+						model: { type: 'string', example: 'A3108', description: 'Product model number' },
+						color: { type: 'string', example: 'Natural Titanium', description: 'Product color' },
+						material: { type: 'string', example: 'Titanium', description: 'Primary material' },
+						weight: { type: 'number', example: 0.221, description: 'Product weight in kg' },
+						dimensions: { type: 'string', example: '159.9mm x 76.7mm x 8.25mm', description: 'Product dimensions' },
+						stockQuantity: { type: 'number', example: 50, description: 'Current stock level' },
+						reorderPoint: { type: 'number', example: 10, description: 'Minimum stock before reorder' },
+						packageQuantity: { type: 'number', example: 1, description: 'Quantity per package' },
+						packageUnit: { type: 'string', example: 'piece', description: 'Package unit type' },
+						isOnPromotion: { type: 'boolean', example: true, description: 'Whether product is on promotion' },
+						promotionStartDate: { type: 'string', format: 'date-time', example: '2024-01-01T00:00:00Z', description: 'Promotion start date' },
+						promotionEndDate: { type: 'string', format: 'date-time', example: '2024-12-31T23:59:59Z', description: 'Promotion end date' },
+						warrantyPeriod: { type: 'number', example: 12, description: 'Warranty period' },
+						warrantyUnit: { type: 'string', example: 'months', description: 'Warranty time unit' },
+						rating: { type: 'number', example: 4.8, description: 'Average customer rating (1-5)' },
+						reviewCount: { type: 'number', example: 2450, description: 'Total number of reviews' },
+						origin: { type: 'string', example: 'China', description: 'Country of origin' },
+						isFragile: { type: 'boolean', example: true, description: 'Whether product is fragile' },
+						requiresSpecialHandling: { type: 'boolean', example: false, description: 'Whether special handling is required' },
+						storageConditions: { type: 'string', example: 'Store in cool, dry place. Temperature: 0-35°C', description: 'Storage requirements' },
+						minimumOrderQuantity: { type: 'number', example: 1, description: 'Minimum order quantity' },
+						bulkDiscountPercentage: { type: 'number', example: 5.0, description: 'Bulk order discount percentage' },
+						bulkDiscountMinQty: { type: 'number', example: 10, description: 'Minimum quantity for bulk discount' },
+						specifications: { type: 'string', example: 'Display: 6.7" Super Retina XDR, Chip: A17 Pro, Storage: 256GB', description: 'Technical specifications' },
+						features: { type: 'string', example: 'Face ID, 5G, Wireless Charging, Water Resistant IP68', description: 'Key product features' },
+						imageUrl: { type: 'string', example: 'https://example.com/images/iphone15promax.jpg', description: 'Primary product image URL' },
+						isActive: { type: 'boolean', example: true, description: 'Whether product is active' },
+						createdAt: { type: 'string', format: 'date-time', example: '2023-12-01T10:00:00Z', description: 'Product creation timestamp' },
+						updatedAt: { type: 'string', format: 'date-time', example: '2023-12-15T14:30:00Z', description: 'Last update timestamp' },
+						organisation: {
+							type: 'object',
+							properties: {
+								uid: { type: 'number', example: 1, description: 'Organization ID' },
+								name: { type: 'string', example: 'Tech Solutions Ltd', description: 'Organization name' }
+							},
+							description: 'Associated organization'
+						},
+						branch: {
+							type: 'object',
+							properties: {
+								uid: { type: 'number', example: 5, description: 'Branch ID' },
+								name: { type: 'string', example: 'Main Store', description: 'Branch name' }
+							},
+							description: 'Associated branch'
+						}
+					},
+				},
+			},
+		},
+	})
+	@ApiNotFoundResponse({
+		description: '❌ Product not found',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Product with reference 12345 not found' },
+				error: { type: 'string', example: 'Not Found' },
+				statusCode: { type: 'number', example: 404 },
+				product: { type: 'null', example: null }
+			},
+		},
+	})
+	@ApiBadRequestResponse({
+		description: '❌ Bad Request - Invalid reference code',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'Invalid product reference code format' },
+				error: { type: 'string', example: 'Bad Request' },
+				statusCode: { type: 'number', example: 400 },
+				details: {
+					type: 'array',
+					items: { type: 'string' },
+					example: [
+						'Reference code must be a positive number',
+						'Reference code cannot be empty'
+					]
+				}
+			},
+		},
+	})
+	@ApiForbiddenResponse({
+		description: '🚫 Forbidden - Insufficient permissions',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'You do not have permission to view this product' },
+				error: { type: 'string', example: 'Forbidden' },
+				statusCode: { type: 'number', example: 403 }
+			}
+		}
+	})
+	@ApiInternalServerErrorResponse({
+		description: '💥 Internal Server Error - Unexpected system error',
+		schema: {
+			type: 'object',
+			properties: {
+				message: { type: 'string', example: 'An unexpected error occurred while retrieving the product' },
+				error: { type: 'string', example: 'Internal Server Error' },
+				statusCode: { type: 'number', example: 500 }
+			}
+		}
+	})
+	async getProductByref(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
+		const orgId = this.getClerkOrgIdString(req);
+		const branchId = req.user?.branch?.uid;
+		return this.productsService.getProductByref(ref, orgId, branchId);
 	}
 
 	@Patch(':ref')

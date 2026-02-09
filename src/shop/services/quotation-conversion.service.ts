@@ -51,17 +51,13 @@ export class QuotationConversionService {
 
 		try {
 			// === CRITICAL PATH ===
-			// Build query with org and branch filters
+			// Build query with org filter only (no branch; access by role)
 			const quotationQueryBuilder = queryRunner.manager
 				.createQueryBuilder(Quotation, 'quotation')
 				.where('quotation.uid = :quotationId', { quotationId });
 
 			if (orgId) {
 				quotationQueryBuilder.andWhere('quotation.organisation.uid = :orgId', { orgId });
-			}
-
-			if (branchId) {
-				quotationQueryBuilder.andWhere('quotation.branch.uid = :branchId', { branchId });
 			}
 
 			const quotation = await quotationQueryBuilder.getOne();

@@ -79,8 +79,9 @@ export class ClientAuthService {
 					}
 				: null;
 
-			// Build profile data
+			// Build profile data (linkedClientUid so APK can resolve client for tabs)
 			const profileData = {
+				linkedClientUid: client.uid,
 				uid: clientAuth.uid,
 				email: clientAuth.email,
 				name: client.name || client.contactPerson || '',

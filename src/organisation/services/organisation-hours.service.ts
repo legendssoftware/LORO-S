@@ -34,12 +34,12 @@ export class OrganisationHoursService {
     private getHoursDefaultCacheKey(orgRef: string): string {
         return `${this.CACHE_PREFIX}:default:${orgRef}`;
     }
-    private getHoursByOrgIdCacheKey(orgId: number): string {
+    private getHoursByOrgIdCacheKey(orgId: string): string {
         return `${this.CACHE_PREFIX}:orgId:${orgId}`;
     }
 
-    // Enhanced cache invalidation
-    private async clearHoursCache(orgRef: string, hoursRef?: string, orgId?: number): Promise<void> {
+    // Enhanced cache invalidation (orgId is Clerk ID string)
+    private async clearHoursCache(orgRef: string, hoursRef?: string, orgId?: string): Promise<void> {
         // Clear all related cache keys
         await Promise.all([
             this.cacheManager.del(this.getHoursAllCacheKey(orgRef)),
@@ -125,7 +125,8 @@ export class OrganisationHoursService {
     }
 
     // Add method to get hours by organization ID (for attendance service)
-    async findDefaultByOrgId(orgId: number): Promise<OrganisationHours | null> {
+    /** @param orgId - Clerk org ID or ref (string) */
+    async findDefaultByOrgId(orgId: string): Promise<OrganisationHours | null> {
         const cacheKey = this.getHoursByOrgIdCacheKey(orgId);
         const cachedHours = await this.cacheManager.get<OrganisationHours>(cacheKey);
         

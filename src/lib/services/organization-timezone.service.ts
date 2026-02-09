@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { OrganisationHours } from '../../organisation/entities/organisation-hours.entity';
+import { Organisation } from '../../organisation/entities/organisation.entity';
 import { formatInTimeZone, toZonedTime, fromZonedTime } from 'date-fns-tz';
 import { format } from 'date-fns';
 
@@ -38,18 +39,33 @@ export class OrganizationTimezoneService {
 	constructor(
 		@InjectRepository(OrganisationHours)
 		private readonly organizationHoursRepository: Repository<OrganisationHours>,
+		@InjectRepository(Organisation)
+		private readonly organisationRepository: Repository<Organisation>,
 	) {}
 
+	/** Resolve numeric org uid to Clerk ID string for OrganisationHours.organisationUid */
+	private async toClerkId(organizationId: number): Promise<string | null> {
+		const org = await this.organisationRepository.findOne({
+			where: { uid: organizationId, isDeleted: false },
+			select: ['clerkOrgId', 'ref'],
+		});
+		return org ? (org.clerkOrgId ?? org.ref) : null;
+	}
+
 	/**
-	 * Get organization timezone information
+	 * Get organization timezone information (accepts numeric uid; resolves to Clerk ID for query)
 	 */
 	async getOrganizationTimezoneInfo(organizationId: number): Promise<OrganizationTimezoneInfo> {
 		try {
 			this.logger.debug(`Getting timezone info for organization: ${organizationId}`);
-
+			const clerkId = await this.toClerkId(organizationId);
+			if (!clerkId) {
+				this.logger.warn(`Organisation not found for uid: ${organizationId}, using defaults`);
+				return this.getDefaultTimezoneInfo();
+			}
 			const orgHours = await this.organizationHoursRepository.findOne({
 				where: {
-					organisationUid: organizationId,
+					organisationUid: clerkId,
 					isDeleted: false,
 				},
 				relations: ['organisation'],

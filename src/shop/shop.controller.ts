@@ -946,6 +946,7 @@ Creates comprehensive quotations from shopping cart data with advanced pricing, 
 		AccessLevel.USER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
+		AccessLevel.CLIENT,
 	)
 	@ApiOperation({
 		summary: '📄 Create custom blank quotation',
@@ -1258,10 +1259,10 @@ Retrieves comprehensive quotation listings with advanced filtering, sorting, and
 	})
 	async getQuotations(@Req() req: AuthenticatedRequest) {
 		const orgId = await this.resolveOrgUid(req);
-		const branchId = this.toNumber(req.user?.branch?.uid);
 		const userId = req.user?.uid;
 		const userRole = req.user?.accessLevel;
-		return this.shopService.getAllQuotations(orgId, branchId, userId, userRole);
+		const clientUid = req.user?.clientUid != null ? Number(req.user.clientUid) : undefined;
+		return this.shopService.getAllQuotations(orgId, userId, userRole, clientUid);
 	}
 
 	@Get('quotation/:ref')
@@ -1608,8 +1609,7 @@ Retrieves comprehensive quotation history for specific users with performance an
 	})
 	async getQuotationsByUser(@Param('ref') ref: number, @Req() req: AuthenticatedRequest) {
 		const orgId = await this.resolveOrgUid(req);
-		const branchId = this.toNumber(req.user?.branch?.uid);
-		return this.shopService.getQuotationsByUser(ref, orgId, branchId);
+		return this.shopService.getQuotationsByUser(ref, orgId);
 	}
 
 	@Patch('quotation/:ref/status')

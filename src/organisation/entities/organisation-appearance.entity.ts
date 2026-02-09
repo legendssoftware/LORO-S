@@ -39,10 +39,10 @@ export class OrganisationAppearance {
     @Column({ type: 'timestamptz', default: () => 'CURRENT_TIMESTAMP', onUpdate: 'CURRENT_TIMESTAMP' })
     updatedAt: Date;
 
-    @OneToOne(() => Organisation, organisation => organisation.appearance)
-    @JoinColumn({ name: 'organisationUid' })
-    organisation: Organisation;
+	@OneToOne(() => Organisation, organisation => organisation.appearance)
+	@JoinColumn({ name: 'organisationUid', referencedColumnName: 'clerkOrgId' })
+	organisation: Organisation;
 
-    @Column()
-    organisationUid: number;
+	@Column({ type: 'varchar' })
+	organisationUid: string;
 } 

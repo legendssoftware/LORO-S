@@ -9,7 +9,8 @@
  * - One branch per org (BitDenver, Denver)
  * - One enterprise license per org
  * - 5 clients per org (varied types, tiers, channels)
- * - 10 products per org (varied categories, statuses, brands)
+ * - 11 products per org (varied categories, all product status enums, brands)
+ *   - Products use organisationUid = clerkOrgId (string), branchUid is never populated
  *
  * Configured organizations:
  * - Bit Drywall (org_38PulS5p5hmhjH14SW4YGi8JlFM) → branch BitDenver
@@ -51,11 +52,12 @@ import { ProductStatus } from '../lib/enums/product.enums';
 import { OrderStatus } from '../lib/enums/status.enums';
 import { DocumentType } from '../lib/enums/document.enums';
 import { ProjectType, ProjectStatus, ProjectPriority } from '../lib/enums/project.enums';
+import { AccessLevel } from '../lib/enums/user.enums';
 import { LicensingService } from '../licensing/licensing.service';
 import * as crypto from 'crypto';
 
 const CLIENT_SEED_COUNT = 5;
-const PRODUCT_SEED_COUNT = 10;
+const PRODUCT_SEED_COUNT = 11;
 
 /** Default product image URL for cards/display */
 const PRODUCT_IMAGE_URL = 'https://cdn-icons-png.flaticon.com/512/7603/7603321.png';
@@ -205,9 +207,14 @@ class ClerkOrgPopulator {
 		// Delete quotations and projects (FK to client/org) before clients
 		const quotRepo = this.dataSource.getRepository(Quotation);
 		const projRepo = this.dataSource.getRepository(Project);
-		const delQuot = await quotRepo.delete({ organisationUid: existingOrg.uid });
-		const delProj = await projRepo.delete({ organisationUid: existingOrg.uid });
+		const clerkOrgIdForDelete = existingOrg.clerkOrgId ?? existingOrg.ref;
+		const delQuot = await quotRepo.delete({ organisationUid: clerkOrgIdForDelete });
+		const delProj = await projRepo.delete({ organisationUid: clerkOrgIdForDelete });
 		console.log(`   Deleted ${delQuot.affected || 0} quotation(s), ${delProj.affected || 0} project(s)`);
+
+		// Delete org users (so seed user can be recreated; projects already deleted)
+		const deletedUsers = await this.userRepo.delete({ organisationRef: clerkOrgIdForDelete });
+		console.log(`   Deleted ${deletedUsers.affected || 0} user(s)`);
 
 		// Delete clients (FK to org and branch) - client.organisationUid is Clerk org ID string
 		const clerkOrgId = existingOrg.clerkOrgId ?? existingOrg.ref;
@@ -215,9 +222,9 @@ class ClerkOrgPopulator {
 		const deletedClients = await this.clientRepo.delete({ organisationUid: clerkOrgId } as any);
 		console.log(`   Deleted ${deletedClients.affected || 0} client(s)`);
 
-		// Delete products (FK to org and branch)
+		// Delete products (FK to org by clerkOrgId; branchUid is not populated)
 		const deletedProducts = await this.productRepo.delete({
-			organisationUid: existingOrg.uid,
+			organisationUid: existingOrg.clerkOrgId,
 		});
 		console.log(`   Deleted ${deletedProducts.affected || 0} product(s)`);
 
@@ -239,21 +246,21 @@ class ClerkOrgPopulator {
 		});
 		console.log(`   Deleted ${deletedBranches.affected || 0} branch(es)`);
 
-		// Delete organisation settings - uses numeric organisationUid
+		// Delete organisation settings - uses clerkOrgId (string)
 		const deletedSettings = await this.orgSettingsRepo.delete({
-			organisationUid: existingOrg.uid,
+			organisationUid: existingOrg.clerkOrgId ?? existingOrg.ref,
 		});
 		console.log(`   Deleted ${deletedSettings.affected || 0} organisation setting(s)`);
 
-		// Delete organisation hours - foreign key uses numeric organisationUid, but ref uses Clerk org ID
+		// Delete organisation hours - uses clerkOrgId (string)
 		const deletedHours = await this.orgHoursRepo.delete({
-			organisationUid: existingOrg.uid,
+			organisationUid: existingOrg.clerkOrgId ?? existingOrg.ref,
 		});
 		console.log(`   Deleted ${deletedHours.affected || 0} organisation hour(s)`);
 
-		// Delete organisation appearance - foreign key uses numeric organisationUid, but ref uses Clerk org ID
+		// Delete organisation appearance - uses clerkOrgId (string)
 		const deletedAppearance = await this.orgAppearanceRepo.delete({
-			organisationUid: existingOrg.uid,
+			organisationUid: existingOrg.clerkOrgId ?? existingOrg.ref,
 		});
 		console.log(`   Deleted ${deletedAppearance.affected || 0} organisation appearance(s)`);
 
@@ -335,7 +342,7 @@ class ClerkOrgPopulator {
 	async createOrganisationSettings(organisation: Organisation): Promise<OrganisationSettings> {
 		console.log('⚙️  Creating organisation settings...');
 		const settings = this.orgSettingsRepo.create({
-			organisationUid: organisation.uid,
+			organisationUid: organisation.clerkOrgId ?? organisation.ref,
 			contact: {
 				email: organisation.email,
 				phone: { code: '+27', number: organisation.phone.replace(/\D/g, '').slice(-9) },
@@ -384,7 +391,7 @@ class ClerkOrgPopulator {
 		const ref = `${organisation.ref}-HOURS`;
 		const hours = this.orgHoursRepo.create({
 			ref,
-			organisationUid: organisation.uid,
+			organisationUid: organisation.clerkOrgId ?? organisation.ref,
 			weeklySchedule: {
 				monday: true,
 				tuesday: true,
@@ -420,7 +427,7 @@ class ClerkOrgPopulator {
 		const ref = `${organisation.ref}-APPEARANCE`;
 		const appearance = this.orgAppearanceRepo.create({
 			ref,
-			organisationUid: organisation.uid,
+			organisationUid: organisation.clerkOrgId ?? organisation.ref,
 			primaryColor: '#2563eb',
 			secondaryColor: '#1e40af',
 			accentColor: '#3b82f6',
@@ -479,6 +486,35 @@ class ClerkOrgPopulator {
 	}
 
 	/**
+	 * Create or get a seed user for the org (used to assign projects). One per org.
+	 */
+	async createSeedUser(organisation: Organisation, branch: Branch): Promise<User> {
+		const seedClerkId = `seed_user_${organisation.ref}`;
+		let user = await this.userRepo.findOne({ where: { clerkUserId: seedClerkId } });
+		if (user) {
+			console.log(`👤 Using existing seed user: ${seedClerkId}`);
+			return user;
+		}
+		console.log('👤 Creating seed user for project assignment...');
+		const seedEmail = `seed@${organisation.ref}.legendsystems.co.za`;
+		user = this.userRepo.create({
+			name: 'Seed',
+			surname: 'User',
+			email: seedEmail,
+			clerkUserId: seedClerkId,
+			organisationRef: organisation.clerkOrgId ?? organisation.ref,
+			branchUid: branch.uid,
+			accessLevel: AccessLevel.USER,
+			role: 'user',
+			status: 'active',
+			isDeleted: false,
+		});
+		const saved = await this.userRepo.save(user);
+		console.log(`✅ Seed user created: ${saved.clerkUserId} (UID: ${saved.uid})`);
+		return saved;
+	}
+
+	/**
 	 * Create enterprise license (ENTERPRISE plan) with all features and columns filled
 	 */
 	async createLicense(organisation: Organisation): Promise<License> {
@@ -525,6 +561,7 @@ class ClerkOrgPopulator {
 			'users.access',
 			'warnings.access',
 			'payslips.access',
+			'client.portal.access', // Controls if org's clients can access the app (products, shop, quotations)
 		];
 
 		const missingFeatures = enterpriseOnlyFeatures.filter(feature => !planDefaults[feature]);
@@ -636,7 +673,7 @@ class ClerkOrgPopulator {
 				phone,
 				category: 'contract',
 				address: { ...JHB_ADDRESS, street: `${200 + i} Client Street` },
-				organisationUid: (organisation.clerkOrgId ?? organisation.ref) as any,
+				organisationUid: organisation.clerkOrgId ?? organisation.ref,
 				branchUid: branch.uid,
 				status: GeneralStatus.ACTIVE,
 				isDeleted: false,
@@ -774,7 +811,7 @@ class ClerkOrgPopulator {
 		{
 			name: 'Metal Stud 92mm',
 			category: 'METAL_PRODUCTS',
-			status: ProductStatus.ACTIVE,
+			status: ProductStatus.INACTIVE,
 			brand: 'SteelFrame',
 			packageUnit: 'unit',
 			price: 85,
@@ -964,7 +1001,7 @@ class ClerkOrgPopulator {
 		{
 			name: 'Angle Bead 3m',
 			category: 'METAL_PRODUCTS',
-			status: ProductStatus.ACTIVE,
+			status: ProductStatus.HIDDEN,
 			brand: 'SteelFrame',
 			packageUnit: 'length',
 			price: 45,
@@ -1075,10 +1112,48 @@ class ClerkOrgPopulator {
 			reorderPoint: 15,
 			palletStockQuantity: 0,
 		},
+		{
+			name: 'Legacy Corner Tape 50m',
+			category: 'CONSTRUCTION',
+			status: ProductStatus.DISCONTINUED,
+			brand: 'SmoothCoat',
+			packageUnit: 'roll',
+			price: 48,
+			description: 'Discontinued mesh corner tape 50m. No longer manufactured.',
+			salePrice: undefined,
+			discount: undefined,
+			isOnPromotion: false,
+			stockQuantity: 24,
+			warehouseLocation: 'B-02-99',
+			packageDetails: '50m per roll, clearance stock',
+			manufacturer: 'SmoothCoat Ltd',
+			dimensions: '50m x 45mm',
+			material: 'Fiberglass mesh',
+			origin: 'South Africa',
+			rating: 4.2,
+			reviewCount: 56,
+			warrantyPeriod: 0,
+			specifications: '45mm width, Self-adhesive',
+			features: 'Discontinued line',
+			isFragile: false,
+			minimumOrderQuantity: 1,
+			bulkDiscountPercentage: undefined,
+			bulkDiscountMinQty: undefined,
+			palletAvailable: false,
+			packPrice: undefined,
+			palletPrice: undefined,
+			palletSalePrice: undefined,
+			palletDiscount: undefined,
+			palletOnPromotion: false,
+			itemsPerPack: 1,
+			packsPerPallet: 1,
+			reorderPoint: 0,
+			palletStockQuantity: 0,
+		},
 	];
 
 	/**
-	 * Create 10 products per org with rich data: image, price cuts, discounts, promos, varied stock.
+	 * Create 11 products per org with rich data: image, price cuts, discounts, promos, varied stock (all status enums).
 	 */
 	async createProducts(organisation: Organisation, branch: Branch): Promise<Product[]> {
 		console.log(`📦 Creating ${PRODUCT_SEED_COUNT} products...`);
@@ -1157,8 +1232,8 @@ class ClerkOrgPopulator {
 				minimumOrderQuantity: t.minimumOrderQuantity,
 				bulkDiscountPercentage: t.bulkDiscountPercentage,
 				bulkDiscountMinQty: t.bulkDiscountMinQty,
-				organisationUid: organisation.uid,
-				branchUid: branch.uid,
+				organisationUid: organisation.clerkOrgId ?? organisation.ref,
+				// branchUid: intentionally not populated - products belong to org only
 				isDeleted: false,
 			});
 			products.push(await this.productRepo.save(product));
@@ -1167,7 +1242,7 @@ class ClerkOrgPopulator {
 		return products;
 	}
 
-	/** Create 1–2 past quotations per client with items from products. */
+	/** Create 2 quotations per client; every client has quotations linked to them. */
 	async createQuotations(
 		organisation: Organisation,
 		branch: Branch,
@@ -1193,11 +1268,10 @@ class ClerkOrgPopulator {
 					status: statuses[qNum % statuses.length],
 					documentType: DocumentType.QUOTATION,
 					quotationDate: new Date(Date.now() - (qNum * 7 + 1) * 86400000),
-					client,
-					branchUid: branch.uid,
-					organisationUid: organisation.uid,
-					branch,
-					organisation,
+				client,
+				// branchUid: intentionally not populated - quotations are org-scoped (clerkOrgId)
+				organisationUid: organisation.clerkOrgId ?? organisation.ref,
+				organisation,
 					currency: 'ZAR',
 				});
 				const saved = await this.quotationRepo.save(quot);
@@ -1217,19 +1291,14 @@ class ClerkOrgPopulator {
 		return created;
 	}
 
-	/** Create one project per client; skip if no user in org to assign. */
+	/** Create one project per client; each client has exactly one project assigned to the given user. */
 	async createProjects(
 		organisation: Organisation,
 		branch: Branch,
 		clients: Client[],
+		assigneeUser: User,
 	): Promise<Project[]> {
-		const orgUser = await this.userRepo.findOne({
-			where: { organisationRef: organisation.clerkOrgId ?? organisation.ref, isDeleted: false },
-		});
-		if (!orgUser?.clerkUserId) {
-			console.log(`   ⏭ Skipping projects (no user in org to assign)`);
-			return [];
-		}
+		console.log(`📋 Creating one project per client (${clients.length} projects)...`);
 		const created: Project[] = [];
 		for (let i = 0; i < clients.length; i++) {
 			const client = clients[i];
@@ -1248,16 +1317,16 @@ class ClerkOrgPopulator {
 				currency: 'ZAR',
 				clientUid: client.uid,
 				client,
-				assignedUserClerkUserId: orgUser.clerkUserId,
-				assignedUser: orgUser,
-				organisationUid: organisation.uid,
+				assignedUserClerkUserId: assigneeUser.clerkUserId,
+				assignedUser: assigneeUser,
+				organisationUid: organisation.clerkOrgId ?? organisation.ref,
 				organisation,
 				branchUid: branch.uid,
 				branch,
 			});
 			created.push(await this.projectRepo.save(proj));
 		}
-		console.log(`✅ Created ${created.length} projects`);
+		console.log(`✅ Created ${created.length} projects (one per client)`);
 		return created;
 	}
 
@@ -1293,14 +1362,16 @@ class ClerkOrgPopulator {
 			// Step 5: Create enterprise license (with all features and columns filled)
 			const license = await this.createLicense(organisation);
 
-			// Step 6: Create clients and products (5 clients, 10 products per org)
+			// Step 6: Create clients and products (5 clients, 11 products per org)
 			const primaryBranch = branches[0];
 			const clients = await this.createClients(organisation, primaryBranch);
 			const products = await this.createProducts(organisation, primaryBranch);
 
-			// Step 6b: Past quotations (linked to clients + products) and one project per client
+			// Step 6a: Seed user for project assignment (so every client can have a project)
+			const seedUser = await this.createSeedUser(organisation, primaryBranch);
+			// Step 6b: Quotations linked to each client (2 per client) and one project per client
 			const quotations = await this.createQuotations(organisation, primaryBranch, clients, products);
-			const projects = await this.createProjects(organisation, primaryBranch, clients);
+			const projects = await this.createProjects(organisation, primaryBranch, clients, seedUser);
 
 			// Step 7: Verify license can be retrieved using Clerk org ID
 			console.log('\n🔍 Verifying license retrieval using Clerk org ID...');

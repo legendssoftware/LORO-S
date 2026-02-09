@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { Product } from '../../products/entities/product.entity';
 import { TblSalesLines } from '../../erp/entities/tblsaleslines.entity';
 import { ErpConnectionManagerService } from '../../erp/services/erp-connection-manager.service';
+import { OrganisationService } from '../../organisation/organisation.service';
 import { ImportResult } from '../interfaces/import-result.interface';
 import { ProductStatus } from '../../lib/enums/product.enums';
 
@@ -15,6 +16,7 @@ export class ErpProductImporterService {
 		@InjectRepository(Product)
 		private productRepository: Repository<Product>,
 		private readonly erpConnectionManager: ErpConnectionManagerService,
+		private readonly organisationService: OrganisationService,
 	) {}
 
 	async importProducts(
@@ -24,6 +26,12 @@ export class ErpProductImporterService {
 	): Promise<ImportResult> {
 		const result: ImportResult = { created: 0, updated: 0, skipped: 0, errors: [] };
 
+		const organisationUid = await this.organisationService.findClerkOrgIdByUid(orgId);
+		if (!organisationUid) {
+			this.logger.warn(`No organisation found for uid ${orgId}, skipping product import`);
+			return result;
+		}
+
 		try {
 			// Get unique products from ERP
 			const erpProducts = await this.getErpProducts(countryCode);
@@ -31,7 +39,7 @@ export class ErpProductImporterService {
 
 			// Get existing products by productReferenceCode
 			const existingProducts = await this.productRepository.find({
-				where: { organisationUid: orgId, isDeleted: false },
+				where: { organisationUid, isDeleted: false },
 				select: ['uid', 'productReferenceCode', 'name'],
 			});
 
@@ -45,10 +53,10 @@ export class ErpProductImporterService {
 					const existing = existingMap.get(erpProduct.item_code);
 
 					if (existing) {
-						await this.updateProduct(existing.uid, erpProduct, orgId, branchId);
+						await this.updateProduct(existing.uid, erpProduct);
 						result.updated++;
 					} else {
-						await this.createProduct(erpProduct, orgId, branchId);
+						await this.createProduct(erpProduct, organisationUid, branchId);
 						result.created++;
 					}
 				} catch (error) {
@@ -93,7 +101,7 @@ export class ErpProductImporterService {
 			.getRawMany();
 	}
 
-	private async createProduct(erpProduct: any, orgId: number, branchId: number) {
+	private async createProduct(erpProduct: any, organisationUid: string, branchId: number) {
 		// Generate SKU manually (since we don't have reseller)
 		const categoryCode = (erpProduct.category || 'XXX').slice(0, 3).toUpperCase();
 		const nameCode = (erpProduct.description || erpProduct.item_code || 'XXX').slice(0, 3).toUpperCase();
@@ -108,7 +116,7 @@ export class ErpProductImporterService {
 			packageUnit: erpProduct.unit || 'unit',
 			productReferenceCode: erpProduct.item_code,
 			sku: sku,
-			organisationUid: orgId,
+			organisationUid,
 			branchUid: branchId,
 			status: ProductStatus.NEW,
 			stockQuantity: 0,
@@ -119,12 +127,7 @@ export class ErpProductImporterService {
 		await this.productRepository.save(product);
 	}
 
-	private async updateProduct(
-		productId: number,
-		erpProduct: any,
-		orgId: number,
-		branchId: number,
-	) {
+	private async updateProduct(productId: number, erpProduct: any) {
 		await this.productRepository.update(productId, {
 			name: erpProduct.description || erpProduct.item_code,
 			description: erpProduct.description || null,
