@@ -53,6 +53,10 @@ export class Product {
     @Column({ type: 'decimal', precision: 5, scale: 2, nullable: true })
     discount: number;
 
+    /** Tax percentage for this product (e.g. 15 for 15%). Sale totals are tax-inclusive. */
+    @Column({ type: 'decimal', precision: 5, scale: 2, nullable: true, default: 0 })
+    taxPercent: number;
+
     @Column({ nullable: true })
     barcode: string;
 

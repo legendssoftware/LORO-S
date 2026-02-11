@@ -1,5 +1,5 @@
 import { Repository } from 'typeorm';
-import { Injectable, NotFoundException, Logger, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
@@ -62,8 +62,9 @@ export class ShopService {
 		@InjectRepository(ClientAuth)
 		private clientAuthRepository: Repository<ClientAuth>,
 		@Inject(CACHE_MANAGER)
-		private cacheManager: Cache,	
+		private cacheManager: Cache,
 		private readonly configService: ConfigService,
+		@Inject(forwardRef(() => ClientsService))
 		private readonly clientsService: ClientsService,
 		private readonly eventEmitter: EventEmitter2,
 		private readonly shopGateway: ShopGateway,
@@ -1044,14 +1045,11 @@ export class ShopService {
 				settlementDiscount = this.calculateSettlementDiscount(baseTotalAmount, client.paymentTerms);
 			}
 			settlementDiscount = roundCurrency(settlementDiscount || 0);
-			
-			// Apply settlement discount to total amount
-			const finalTotalAmount = roundCurrency(baseTotalAmount - settlementDiscount);
-			
+			// Store full amount on quotation; settlement discount is applied at payment/conversion only
 			const newQuotation = {
 				quotationNumber: `QUO-${Date.now()}`,
 				totalItems: Number(quotationData?.totalItems),
-				totalAmount: finalTotalAmount,
+				totalAmount: baseTotalAmount,
 				placedBy: placedByUserId ? { uid: placedByUserId } : null, // null for client-placed orders
 				isClientPlaced: isClientPlaced,
 				placedByClientName: placedByClientName,
@@ -2346,6 +2344,47 @@ export class ShopService {
 			return {
 				quotations: [],
 				message: error?.message,
+			};
+		}
+	}
+
+	/**
+	 * Get quotations that belong to a client by client uid.
+	 * Used by getLinkedClientWithFullProfile so the full-profile response includes quotations without relying on joins.
+	 */
+	async getQuotationsByClientUid(
+		clientUid: number,
+		orgId?: string,
+	): Promise<{ quotations: Quotation[]; message: string }> {
+		try {
+			const query = this.quotationRepository
+				.createQueryBuilder('quotation')
+				.leftJoinAndSelect('quotation.client', 'client')
+				.leftJoinAndSelect('quotation.placedBy', 'placedBy')
+				.leftJoinAndSelect('quotation.quotationItems', 'quotationItems')
+				.leftJoinAndSelect('quotationItems.product', 'product')
+				.leftJoinAndSelect('quotation.project', 'project')
+				.leftJoinAndSelect('quotation.orders', 'quotationOrders')
+				.where('client.uid = :clientUid', { clientUid })
+				.orderBy('quotation.createdAt', 'DESC');
+
+			if (orgId) {
+				query
+					.leftJoin('quotation.organisation', 'organisation')
+					.andWhere('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
+			}
+
+			const quotations = await query.getMany();
+			this.logger.log(`[getQuotationsByClientUid] Retrieved ${quotations.length} quotations for client ${clientUid}`);
+			return {
+				quotations,
+				message: process.env.SUCCESS_MESSAGE,
+			};
+		} catch (error) {
+			this.logger.error(`[getQuotationsByClientUid] Error: ${error?.message}`, error?.stack);
+			return {
+				quotations: [],
+				message: error?.message || 'Failed to fetch quotations by client',
 			};
 		}
 	}

@@ -106,12 +106,10 @@ export class CheckInsController {
 		if (!orgId) {
 			throw new BadRequestException('Organization context required');
 		}
-		const branchId = req.user?.branch?.uid;
 		const clerkUserId = req.user?.clerkUserId;
 		const userAccessLevel = req.user?.accessLevel;
 		return this.checkInsService.getAllCheckIns(
 			orgId,
-			branchId,
 			clerkUserId,
 			userAccessLevel,
 			userUid,
@@ -234,9 +232,8 @@ export class CheckInsController {
 		if (!orgId) {
 			throw new BadRequestException('Organization context required');
 		}
-		const branchId = req.user?.branch?.uid;
 		const clerkUserId = req.user?.clerkUserId;
-		return this.checkInsService.checkIn(createCheckInDto, orgId, branchId, clerkUserId);
+		return this.checkInsService.checkIn(createCheckInDto, orgId, clerkUserId);
 	}
 
 	@Get('status/me')
@@ -379,9 +376,8 @@ export class CheckInsController {
 		if (!orgId) {
 			throw new BadRequestException('Organization context required');
 		}
-		const branchId = req.user?.branch?.uid;
 		const clerkUserId = req.user?.clerkUserId;
-		return this.checkInsService.checkOut(createCheckOutDto, orgId, branchId, clerkUserId);
+		return this.checkInsService.checkOut(createCheckOutDto, orgId, clerkUserId);
 	}
 
 	@Post('client/:clientId')
@@ -415,14 +411,13 @@ export class CheckInsController {
 		if (!orgId) {
 			throw new BadRequestException('Organization context required');
 		}
-		const branchId = req.user?.branch?.uid;
 		const clerkUserId = req.user?.clerkUserId;
 		// Add client to the DTO
 		const checkInWithClient = {
 			...createCheckInDto,
 			client: { uid: clientId }
 		};
-		return this.checkInsService.checkIn(checkInWithClient, orgId, branchId, clerkUserId);
+		return this.checkInsService.checkIn(checkInWithClient, orgId, clerkUserId);
 	}
 
 	@Patch('photo/check-in')
@@ -451,9 +446,8 @@ export class CheckInsController {
 		if (!orgId) {
 			throw new BadRequestException('Organization context required');
 		}
-		const branchId = req.user?.branch?.uid;
 		const clerkUserId = req.user?.clerkUserId;
-		return this.checkInsService.updateCheckInPhoto(updateDto.checkInId, updateDto.photoUrl, orgId, branchId, clerkUserId);
+		return this.checkInsService.updateCheckInPhoto(updateDto.checkInId, updateDto.photoUrl, orgId, clerkUserId);
 	}
 
 	@Patch('photo/check-out')
@@ -482,9 +476,8 @@ export class CheckInsController {
 		if (!orgId) {
 			throw new BadRequestException('Organization context required');
 		}
-		const branchId = req.user?.branch?.uid;
 		const clerkUserId = req.user?.clerkUserId;
-		return this.checkInsService.updateCheckOutPhoto(updateDto.checkInId, updateDto.photoUrl, orgId, branchId, clerkUserId);
+		return this.checkInsService.updateCheckOutPhoto(updateDto.checkInId, updateDto.photoUrl, orgId, clerkUserId);
 	}
 
 	@Patch('visit-details')
@@ -513,7 +506,6 @@ export class CheckInsController {
 		if (!orgId) {
 			throw new BadRequestException('Organization context required');
 		}
-		const branchId = req.user?.branch?.uid;
 		const clerkUserId = req.user?.clerkUserId;
 		return this.checkInsService.updateVisitDetails(
 			updateDto.checkInId,
@@ -521,7 +513,6 @@ export class CheckInsController {
 			updateDto.notes,
 			updateDto.resolution,
 			orgId,
-			branchId,
 			clerkUserId,
 			updateDto,
 		);
@@ -530,7 +521,7 @@ export class CheckInsController {
 	@Post(':checkInId/convert-to-lead')
 	@ApiOperation({
 		summary: 'Convert check-in to lead',
-		description: 'Converts an existing check-in record to a lead by extracting available information (contact details, location, notes, etc.) and creating a new lead record. Works with minimal information - only requires branch ID. The check-in will be updated with the leadUid reference. If no contact information is available, a meaningful name will be generated from location, address, or date.',
+		description: 'Converts an existing check-in record to a lead by extracting available information (contact details, location, notes, etc.) and creating a new lead record. Scoped by org and user only. The check-in will be updated with the leadUid reference. If no contact information is available, a meaningful name will be generated from location, address, or date.',
 	})
 	@ApiParam({ name: 'checkInId', description: 'Check-in ID', type: 'number' })
 	@ApiOkResponse({
@@ -550,7 +541,7 @@ export class CheckInsController {
 		},
 	})
 	@ApiBadRequestResponse({
-		description: 'Bad Request - Invalid data, check-in already has a lead, or branch ID is missing',
+		description: 'Bad Request - Invalid data or check-in already has a lead',
 		schema: {
 			type: 'object',
 			properties: {
@@ -578,8 +569,7 @@ export class CheckInsController {
 		if (!orgId) {
 			throw new BadRequestException('Organization context required');
 		}
-		const branchId = req.user?.branch?.uid;
 		const clerkUserId = req.user?.clerkUserId;
-		return this.checkInsService.convertCheckInToLead(checkInId, orgId, branchId, clerkUserId);
+		return this.checkInsService.convertCheckInToLead(checkInId, orgId, clerkUserId);
 	}
 }

@@ -28,7 +28,7 @@ import { ClientsModule } from '../clients/clients.module';
     RewardsModule,
     CommunicationModule,
     NotificationsModule,
-    TasksModule,
+    forwardRef(() => TasksModule),
     ClerkModule,
     OrganisationModule,
     forwardRef(() => AttendanceModule)

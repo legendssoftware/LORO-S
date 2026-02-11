@@ -52,7 +52,7 @@ import { AttendanceModule } from '../attendance/attendance.module';
 		CommunicationModule,
 		NotificationsModule,
 		ScheduleModule.forRoot(),
-		UserModule,
+		forwardRef(() => UserModule),
 		OrganisationModule,
 		forwardRef(() => AttendanceModule),
 	],

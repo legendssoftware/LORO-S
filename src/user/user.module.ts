@@ -22,6 +22,7 @@ import { Lead } from 'src/leads/entities/lead.entity';
 import { Branch } from '../branch/entities/branch.entity';
 import { Device } from '../iot/entities/iot.entity';
 import { ClerkModule } from '../clerk/clerk.module';
+import { ClientsModule } from '../clients/clients.module';
 
 @Module({
 	imports: [
@@ -45,6 +46,7 @@ import { ClerkModule } from '../clerk/clerk.module';
 		RewardsModule,
 		NotificationsModule,
 		forwardRef(() => ClerkModule),
+		forwardRef(() => ClientsModule),
 	],
 	controllers: [UserController, UserAuthController],
 	providers: [UserService, UserAuthService],

@@ -1,4 +1,4 @@
-import { Injectable, Logger, UnauthorizedException, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, UnauthorizedException, NotFoundException, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './entities/user.entity';
@@ -6,6 +6,7 @@ import { UserSyncClerkDto } from './dto/user-sync-clerk.dto';
 import { ClerkService } from '../clerk/clerk.service';
 import { AccountStatus } from '../lib/enums/status.enums';
 import { Client } from '../clients/entities/client.entity';
+import { ClientsService } from '../clients/clients.service';
 
 @Injectable()
 export class UserAuthService {
@@ -17,6 +18,8 @@ export class UserAuthService {
 		@InjectRepository(Client)
 		private readonly clientRepository: Repository<Client>,
 		private readonly clerkService: ClerkService,
+		@Inject(forwardRef(() => ClientsService))
+		private readonly clientsService: ClientsService,
 	) {}
 
 	/**
@@ -113,8 +116,23 @@ export class UserAuthService {
 			// Cache user after successful sync for faster subsequent lookups
 			await this.clerkService.cacheUserAfterSync(user);
 
-			// When user has linkedClientUid, return client profile so client tabs get full client data
+			// When user has linkedClientUid, return full client (projects, quotations, orders) so profile tabs have data from session
 			if (user.linkedClientUid != null) {
+				try {
+					const { client } = await this.clientsService.getLinkedClientWithFullProfile(user.linkedClientUid);
+					if (client) {
+						const profileData = this.buildClientProfileDataFromFullClient(user, client);
+						this.logger.log(
+							`[${operationId}] User synced with full linked client - clientUid: ${client.uid}, projects: ${(client as any).projects?.length ?? 0}, quotations: ${(client as any).quotations?.length ?? 0}`,
+						);
+						return { profileData };
+					}
+				} catch (err) {
+					this.logger.warn(
+						`[${operationId}] Full client fetch failed, using basic client profile: ${err instanceof Error ? err.message : err}`,
+					);
+				}
+				// Fallback: basic client without projects/quotations
 				const client = await this.clientRepository.findOne({
 					where: { uid: user.linkedClientUid, isDeleted: false },
 					relations: ['branch', 'organisation', 'assignedSalesRep'],
@@ -160,6 +178,17 @@ export class UserAuthService {
 			this.logger.error(`[${operationId}] Sync error:`, error instanceof Error ? error.message : 'Unknown error');
 			throw new UnauthorizedException('Session sync failed. Please try again.');
 		}
+	}
+
+	/** Build flat client profile from full Client entity (with projects, quotations, orders) for session sync. */
+	private buildClientProfileDataFromFullClient(user: User, client: Client & { projects?: any[]; quotations?: any[]; orders?: any[] }): Record<string, unknown> {
+		const base = this.buildClientProfileData(user, client);
+		return {
+			...base,
+			projects: Array.isArray(client.projects) ? client.projects : [],
+			quotations: Array.isArray(client.quotations) ? client.quotations : [],
+			orders: Array.isArray(client.orders) ? client.orders : [],
+		};
 	}
 
 	/** Build flat client profile from Client entity for APK client tabs (uses linkedClientUid). */

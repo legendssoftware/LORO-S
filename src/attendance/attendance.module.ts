@@ -44,7 +44,7 @@ import { LibModule } from '../lib/lib.module';
 			Branch,
 			Tracking,
 		]),
-		UserModule,
+		forwardRef(() => UserModule),
 		RewardsModule,
 		NotificationsModule,
 		CommunicationModule,

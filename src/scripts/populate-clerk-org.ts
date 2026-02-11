@@ -36,7 +36,6 @@ import { CheckIn } from '../check-ins/entities/check-in.entity';
 import { Quotation } from '../shop/entities/quotation.entity';
 import { QuotationItem } from '../shop/entities/quotation-item.entity';
 import { Project } from '../shop/entities/project.entity';
-import { User } from '../user/entities/user.entity';
 import { SubscriptionPlan, LicenseType, LicenseStatus, BillingCycle } from '../lib/enums/license.enums';
 import { PLAN_FEATURES } from '../lib/constants/license-features';
 import { GeneralStatus } from '../lib/enums/status.enums';
@@ -51,8 +50,6 @@ import {
 import { ProductStatus } from '../lib/enums/product.enums';
 import { OrderStatus } from '../lib/enums/status.enums';
 import { DocumentType } from '../lib/enums/document.enums';
-import { ProjectType, ProjectStatus, ProjectPriority } from '../lib/enums/project.enums';
-import { AccessLevel } from '../lib/enums/user.enums';
 import { LicensingService } from '../licensing/licensing.service';
 import * as crypto from 'crypto';
 
@@ -154,8 +151,6 @@ class ClerkOrgPopulator {
 	private checkInRepo: Repository<CheckIn>;
 	private quotationRepo: Repository<Quotation>;
 	private quotationItemRepo: Repository<QuotationItem>;
-	private projectRepo: Repository<Project>;
-	private userRepo: Repository<User>;
 	private licensingService: LicensingService;
 	private clerkOrgId: string;
 	private clerkOrgData: ClerkOrgPayload;
@@ -178,8 +173,6 @@ class ClerkOrgPopulator {
 		this.checkInRepo = dataSource.getRepository(CheckIn);
 		this.quotationRepo = dataSource.getRepository(Quotation);
 		this.quotationItemRepo = dataSource.getRepository(QuotationItem);
-		this.projectRepo = dataSource.getRepository(Project);
-		this.userRepo = dataSource.getRepository(User);
 		this.licensingService = licensingService;
 		this.clerkOrgData = seedItem.clerkOrg;
 		this.clerkOrgId = seedItem.clerkOrg.id;
@@ -211,10 +204,6 @@ class ClerkOrgPopulator {
 		const delQuot = await quotRepo.delete({ organisationUid: clerkOrgIdForDelete });
 		const delProj = await projRepo.delete({ organisationUid: clerkOrgIdForDelete });
 		console.log(`   Deleted ${delQuot.affected || 0} quotation(s), ${delProj.affected || 0} project(s)`);
-
-		// Delete org users (so seed user can be recreated; projects already deleted)
-		const deletedUsers = await this.userRepo.delete({ organisationRef: clerkOrgIdForDelete });
-		console.log(`   Deleted ${deletedUsers.affected || 0} user(s)`);
 
 		// Delete clients (FK to org and branch) - client.organisationUid is Clerk org ID string
 		const clerkOrgId = existingOrg.clerkOrgId ?? existingOrg.ref;
@@ -483,35 +472,6 @@ class ClerkOrgPopulator {
 		console.log(`   Linked to org ref: ${organisation.ref}, organisationUid: ${savedBranch.organisationUid}`);
 
 		return savedBranch;
-	}
-
-	/**
-	 * Create or get a seed user for the org (used to assign projects). One per org.
-	 */
-	async createSeedUser(organisation: Organisation, branch: Branch): Promise<User> {
-		const seedClerkId = `seed_user_${organisation.ref}`;
-		let user = await this.userRepo.findOne({ where: { clerkUserId: seedClerkId } });
-		if (user) {
-			console.log(`👤 Using existing seed user: ${seedClerkId}`);
-			return user;
-		}
-		console.log('👤 Creating seed user for project assignment...');
-		const seedEmail = `seed@${organisation.ref}.legendsystems.co.za`;
-		user = this.userRepo.create({
-			name: 'Seed',
-			surname: 'User',
-			email: seedEmail,
-			clerkUserId: seedClerkId,
-			organisationRef: organisation.clerkOrgId ?? organisation.ref,
-			branchUid: branch.uid,
-			accessLevel: AccessLevel.USER,
-			role: 'user',
-			status: 'active',
-			isDeleted: false,
-		});
-		const saved = await this.userRepo.save(user);
-		console.log(`✅ Seed user created: ${saved.clerkUserId} (UID: ${saved.uid})`);
-		return saved;
 	}
 
 	/**
@@ -1291,45 +1251,6 @@ class ClerkOrgPopulator {
 		return created;
 	}
 
-	/** Create one project per client; each client has exactly one project assigned to the given user. */
-	async createProjects(
-		organisation: Organisation,
-		branch: Branch,
-		clients: Client[],
-		assigneeUser: User,
-	): Promise<Project[]> {
-		console.log(`📋 Creating one project per client (${clients.length} projects)...`);
-		const created: Project[] = [];
-		for (let i = 0; i < clients.length; i++) {
-			const client = clients[i];
-			const proj = this.projectRepo.create({
-				name: `Seed project ${i + 1} – ${client.name}`,
-				description: `Seeded project for ${client.contactPerson}`,
-				type: ProjectType.RENOVATION,
-				status: ProjectStatus.PLANNING,
-				priority: ProjectPriority.MEDIUM,
-				budget: 50000,
-				currentSpent: 0,
-				contactPerson: client.contactPerson,
-				contactEmail: client.email,
-				contactPhone: client.phone,
-				startDate: new Date(),
-				currency: 'ZAR',
-				clientUid: client.uid,
-				client,
-				assignedUserClerkUserId: assigneeUser.clerkUserId,
-				assignedUser: assigneeUser,
-				organisationUid: organisation.clerkOrgId ?? organisation.ref,
-				organisation,
-				branchUid: branch.uid,
-				branch,
-			});
-			created.push(await this.projectRepo.save(proj));
-		}
-		console.log(`✅ Created ${created.length} projects (one per client)`);
-		return created;
-	}
-
 	/**
 	 * Run the complete population process
 	 */
@@ -1367,13 +1288,10 @@ class ClerkOrgPopulator {
 			const clients = await this.createClients(organisation, primaryBranch);
 			const products = await this.createProducts(organisation, primaryBranch);
 
-			// Step 6a: Seed user for project assignment (so every client can have a project)
-			const seedUser = await this.createSeedUser(organisation, primaryBranch);
-			// Step 6b: Quotations linked to each client (2 per client) and one project per client
+			// Step 7: Quotations linked to each client (2 per client)
 			const quotations = await this.createQuotations(organisation, primaryBranch, clients, products);
-			const projects = await this.createProjects(organisation, primaryBranch, clients, seedUser);
 
-			// Step 7: Verify license can be retrieved using Clerk org ID
+			// Step 8: Verify license can be retrieved using Clerk org ID
 			console.log('\n🔍 Verifying license retrieval using Clerk org ID...');
 			const retrievedLicenses = await this.licensingService.findByOrganisation(this.clerkOrgId);
 			
@@ -1417,8 +1335,7 @@ class ClerkOrgPopulator {
 			clients.forEach((c) => console.log(`     • ${c.name} (${c.email})`));
 			console.log(`   - Products: ${products.length} created`);
 			products.forEach((p) => console.log(`     • ${p.name} [${p.category}] (${p.productRef})`));
-			if (quotations.length) console.log(`   - Quotations: ${quotations.length} created`);
-			if (projects.length) console.log(`   - Projects: ${projects.length} created`);
+			console.log(`   - Quotations: ${quotations.length} created`);
 		} catch (error) {
 			console.error('\n❌ Error during population:', error);
 			throw error;

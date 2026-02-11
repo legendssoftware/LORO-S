@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException, Logger, BadRequestException, Inject, forwardRef, HttpStatus, HttpException } from '@nestjs/common';
-import { IsNull, MoreThanOrEqual, Not, Repository, LessThanOrEqual, Between, In, LessThan, QueryFailedError, DataSource } from 'typeorm';
+import { IsNull, MoreThanOrEqual, Not, Repository, LessThanOrEqual, Between, In, LessThan, QueryFailedError, DataSource, QueryRunner } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
@@ -98,7 +98,6 @@ export class AttendanceService {
 		private readonly unifiedNotificationService: UnifiedNotificationService,
 		private readonly communicationService: CommunicationService,
 		@Inject(forwardRef(() => ReportsService))
-		private readonly reportsService: ReportsService,
 		private readonly googleMapsService: GoogleMapsService,
 		private readonly dataSource: DataSource,
 	) {
@@ -263,6 +262,26 @@ export class AttendanceService {
 	 */
 	private getListCacheKey(orgId?: string, effectiveBranchId?: number): string {
 		return this.getCacheKey(`all_${orgId || 'no-org'}_${effectiveBranchId ?? 'no-branch'}`);
+	}
+
+	/**
+	 * Run a function inside a TypeORM transaction. Ensures connect, startTransaction, commit/rollback, and release.
+	 * Use for write flows that need a single transaction scope without manual release handling.
+	 */
+	private async runInTransaction<T>(fn: (queryRunner: QueryRunner) => Promise<T>): Promise<T> {
+		const queryRunner = this.dataSource.createQueryRunner();
+		await queryRunner.connect();
+		await queryRunner.startTransaction();
+		try {
+			const result = await fn(queryRunner);
+			await queryRunner.commitTransaction();
+			return result;
+		} catch (error) {
+			await queryRunner.rollbackTransaction();
+			throw error;
+		} finally {
+			await queryRunner.release();
+		}
 	}
 
 	/**
@@ -1038,10 +1057,7 @@ export class AttendanceService {
 			await queryRunner.commitTransaction();
 			this.logger.debug(`[${operationId}] Transaction committed successfully`);
 
-			// Clear cache (include org/branch so list cache is invalidated)
-			await this.clearAttendanceCache(checkIn.uid, ownerUid, orgId ?? undefined, branchId ?? undefined);
-
-			// Prepare response
+			// Prepare response (cache clear moved to setImmediate for faster client response)
 			const responseData = {
 				attendanceId: checkIn.uid,
 				userId: user.uid,
@@ -1069,6 +1085,9 @@ export class AttendanceService {
 			// Process non-critical operations asynchronously (don't block user response)
 			setImmediate(async () => {
 				try {
+					// Clear cache first so list endpoints see fresh data (off critical path)
+					await this.clearAttendanceCache(checkIn.uid, ownerUid, orgId ?? undefined, branchId ?? undefined);
+
 					// Process check-in location if coordinates are provided (async)
 					try {
 						if (checkInDto.checkInLatitude && checkInDto.checkInLongitude) {
@@ -1207,50 +1226,6 @@ export class AttendanceService {
 				} catch (backgroundError) {
 					this.logger.error(`Background check-in tasks failed for user ${ownerUid}:`, backgroundError.message);
 					// Don't affect user experience
-				}
-			});
-
-			// Post-response async processing
-			setImmediate(async () => {
-				try {
-					// Location processing, notifications, XP, etc. (existing async code)
-					if (checkInDto.checkInLatitude && checkInDto.checkInLongitude) {
-						const checkInAddress = await this.processLocationCoordinates(
-							checkInDto.checkInLatitude,
-							checkInDto.checkInLongitude,
-							'Check-in Location'
-						);
-						if (checkInAddress) {
-							await this.attendanceRepository.update(checkIn.uid, {
-								placesOfInterest: { startAddress: checkInAddress, endAddress: null, breakStart: null, breakEnd: null, otherPlacesOfInterest: [] }
-							});
-						}
-					}
-
-					await this.rewardsService.awardXP({
-						owner: user.uid,
-						amount: XP_VALUES.CHECK_IN,
-						action: XP_VALUES_TYPES.ATTENDANCE,
-						source: { id: ownerUid, type: XP_VALUES_TYPES.ATTENDANCE, details: 'Check-in reward' },
-					}, orgId, branchId);
-
-					const userForNotification = await this.userRepository.findOne({
-						where: { uid: Number(ownerUid) },
-						select: ['uid', 'name', 'surname', 'email', 'username'],
-					});
-					if (userForNotification) {
-						const fullName = `${userForNotification.name || ''} ${userForNotification.surname || ''}`.trim();
-						const userName = fullName || userForNotification.username || 'Team Member';
-						const checkInTime = await this.formatTimeInOrganizationTimezone(new Date(checkIn.checkIn), orgId);
-						await this.unifiedNotificationService.sendTemplatedNotification(
-							NotificationEvent.ATTENDANCE_SHIFT_STARTED,
-							[userForNotification.uid],
-							{ checkInTime, userName, userId: userForNotification.uid, organisationId: orgId, branchId, xpAwarded: XP_VALUES.CHECK_IN, timestamp: new Date().toISOString() },
-							{ priority: NotificationPriority.NORMAL, sendEmail: false },
-						);
-					}
-				} catch (backgroundError) {
-					this.logger.error(`[${operationId}] Background tasks failed: ${backgroundError.message}`);
 				}
 			});
 
@@ -1752,12 +1727,8 @@ export class AttendanceService {
 
 		this.logger.log(`[${operationId}] Check-out attempt for user ${ownerUidStr}, orgId: ${orgId}, branchId: ${branchId}`);
 
-		// Create query runner for transaction
-		const queryRunner = this.dataSource.createQueryRunner();
-		await queryRunner.connect();
-		await queryRunner.startTransaction();
-
 		try {
+			const payload = await this.runInTransaction(async (queryRunner) => {
 			// Validation
 			if (!checkOutDto.checkOut) {
 				throw new HttpException(
@@ -1982,15 +1953,7 @@ export class AttendanceService {
 				status: AttendanceStatus.COMPLETED,
 			});
 
-			// Commit transaction
-			await queryRunner.commitTransaction();
-			this.logger.debug(`[${operationId}] Transaction committed successfully`);
-
-			// Clear cache (include org/branch so list cache is invalidated)
-			const orgIdForCache = orgId ?? activeShift.owner?.organisation?.clerkOrgId ?? activeShift.owner?.organisation?.ref;
-			await this.clearAttendanceCache(activeShift.uid, ownerUidStr, orgIdForCache, activeShift.branchUid ?? undefined);
-
-			// Prepare response
+			// Prepare response (commit and cache clear handled by runInTransaction / setImmediate)
 			const responseData = {
 				attendanceId: activeShift.uid,
 				userId: ownerUidNum,
@@ -2018,45 +1981,64 @@ export class AttendanceService {
 				data: responseData,
 			};
 
-			// Post-response async processing
+			return {
+				response,
+				activeShift,
+				ownerUidNum,
+				ownerUidStr,
+				checkOutTime,
+				workSession,
+				breakMinutes,
+				orgId,
+				branchId,
+				checkOutDto,
+			};
+			});
+
+			// Post-response async processing (cache clear off critical path)
 			setImmediate(async () => {
+				try {
+					const orgIdForCache = payload.orgId ?? payload.activeShift.owner?.organisation?.clerkOrgId ?? payload.activeShift.owner?.organisation?.ref;
+					await this.clearAttendanceCache(payload.activeShift.uid, payload.ownerUidStr, orgIdForCache, payload.activeShift.branchUid ?? undefined);
+				} catch (_) {}
 				try {
 					// Award XP
 					await this.rewardsService.awardXP({
-						owner: ownerUidNum,
+						owner: payload.ownerUidNum,
 						amount: XP_VALUES.CHECK_OUT,
 						action: XP_VALUES_TYPES.ATTENDANCE,
-						source: { id: ownerUidStr, type: XP_VALUES_TYPES.ATTENDANCE, details: 'Check-out reward' },
-					}, orgId, branchId);
+						source: { id: payload.ownerUidStr, type: XP_VALUES_TYPES.ATTENDANCE, details: 'Check-out reward' },
+					}, payload.orgId, payload.branchId);
 
 					// Send notifications
 					const user = await this.userRepository.findOne({
-						where: { uid: ownerUidNum },
+						where: { uid: payload.ownerUidNum },
 						select: ['uid', 'name', 'surname', 'email', 'username'],
 					});
 					if (user) {
 						const fullName = `${user.name || ''} ${user.surname || ''}`.trim();
 						const userName = fullName || user.username || 'Team Member';
-						const checkOutTimeString = await this.formatTimeInOrganizationTimezone(checkOutTime, orgId);
-						const checkInTimeString = await this.formatTimeInOrganizationTimezone(new Date(activeShift.checkIn), orgId);
-						const workHours = Math.floor(workSession.netWorkMinutes / 60);
-						const workMinutesDisplay = workSession.netWorkMinutes % 60;
+						const checkOutTimeString = await this.formatTimeInOrganizationTimezone(payload.checkOutTime, payload.orgId);
+						const checkInTimeString = await this.formatTimeInOrganizationTimezone(new Date(payload.activeShift.checkIn), payload.orgId);
+						const workHours = Math.floor(payload.workSession.netWorkMinutes / 60);
+						const workMinutesDisplay = payload.workSession.netWorkMinutes % 60;
 						const workTimeDisplay = `${workHours}h ${workMinutesDisplay}m`;
+						const duration = payload.response.data.duration;
 
 						await this.unifiedNotificationService.sendTemplatedNotification(
 							NotificationEvent.ATTENDANCE_SHIFT_ENDED,
-							[ownerUidNum],
+							[payload.ownerUidNum],
 							{
 								checkOutTime: checkOutTimeString,
 								checkInTime: checkInTimeString,
 								duration,
 								workTimeDisplay,
-								totalWorkMinutes: workSession.netWorkMinutes,
-								totalBreakMinutes: breakMinutes,
+								totalWorkMinutes: payload.workSession.netWorkMinutes,
+								totalBreakMinutes: payload.breakMinutes,
 								userName,
-								userId: ownerUidNum,
-								organisationId: orgId,
-								branchId: branchId,
+								userId: payload.ownerUidNum,
+								organisationId: payload.orgId,
+								branchId: payload.branchId,
 								xpAwarded: XP_VALUES.CHECK_OUT,
 								timestamp: new Date().toISOString(),
 							},
@@ -2065,14 +2047,14 @@ export class AttendanceService {
 					}
 
 					// Process check-out location if coordinates are provided
-					if (checkOutDto.checkOutLatitude && checkOutDto.checkOutLongitude) {
+					if (payload.checkOutDto.checkOutLatitude && payload.checkOutDto.checkOutLongitude) {
 						const checkOutAddress = await this.processLocationCoordinates(
-							checkOutDto.checkOutLatitude,
-							checkOutDto.checkOutLongitude,
+							payload.checkOutDto.checkOutLatitude,
+							payload.checkOutDto.checkOutLongitude,
 							'Check-out Location'
 						);
 						if (checkOutAddress) {
-							const currentRecord = await this.attendanceRepository.findOne({ where: { uid: activeShift.uid } });
+							const currentRecord = await this.attendanceRepository.findOne({ where: { uid: payload.activeShift.uid } });
 							let updatedPlacesOfInterest = currentRecord?.placesOfInterest;
 							if (updatedPlacesOfInterest) {
 								updatedPlacesOfInterest.endAddress = checkOutAddress;
@@ -2085,50 +2067,47 @@ export class AttendanceService {
 									otherPlacesOfInterest: []
 								};
 							}
-							await this.attendanceRepository.update(activeShift.uid, { placesOfInterest: updatedPlacesOfInterest });
+							await this.attendanceRepository.update(payload.activeShift.uid, { placesOfInterest: updatedPlacesOfInterest });
 						}
 					}
 
 					// Check and send overtime notification if applicable
 					try {
-						const organizationId = activeShift.owner?.organisation?.clerkOrgId || activeShift.owner?.organisation?.ref;
+						const organizationId = payload.activeShift.owner?.organisation?.clerkOrgId || payload.activeShift.owner?.organisation?.ref;
 						if (organizationId) {
 							const overtimeInfo = await this.organizationHoursService.calculateOvertime(
 								organizationId,
-								activeShift.checkIn,
-								workSession.netWorkMinutes,
+								payload.activeShift.checkIn,
+								payload.workSession.netWorkMinutes,
 							);
 
 							if (overtimeInfo.overtimeMinutes > 0) {
-								// Cap overtime at 16 hours (960 minutes) to prevent impossible values
 								const cappedMinutes = Math.min(overtimeInfo.overtimeMinutes, 960);
 								const overtimeHours = Math.floor(cappedMinutes / 60);
 								const overtimeMinutes = cappedMinutes % 60;
 								const overtimeDuration = `${overtimeHours}h ${overtimeMinutes}m`;
 
-								// Get user info for personalized message with username
 								const user = await this.userRepository.findOne({
-									where: { uid: ownerUidNum },
+									where: { uid: payload.ownerUidNum },
 									select: ['uid', 'name', 'surname', 'username'],
 								});
 
-								// Construct full name with proper fallbacks
 								const fullName = `${user?.name || ''} ${user?.surname || ''}`.trim();
 								const userName = fullName || user?.username || 'Team Member';
 
-								this.logger.debug(`Sending enhanced overtime notification to user: ${ownerUidStr}`);
+								this.logger.debug(`Sending enhanced overtime notification to user: ${payload.ownerUidStr}`);
 								await this.unifiedNotificationService.sendTemplatedNotification(
 									NotificationEvent.ATTENDANCE_OVERTIME_REMINDER,
-									[ownerUidNum],
+									[payload.ownerUidNum],
 									{
 										overtimeDuration,
-										overtimeMinutes: cappedMinutes, // Total minutes for :duration formatter
+										overtimeMinutes: cappedMinutes,
 										overtimeHours: overtimeHours,
 										overtimeFormatted: overtimeDuration,
-										regularHours: (workSession.netWorkMinutes - overtimeInfo.overtimeMinutes) / 60,
-										totalWorkMinutes: workSession.netWorkMinutes,
+										regularHours: (payload.workSession.netWorkMinutes - overtimeInfo.overtimeMinutes) / 60,
+										totalWorkMinutes: payload.workSession.netWorkMinutes,
 										userName,
-										userId: ownerUidNum,
+										userId: payload.ownerUidNum,
 										timestamp: new Date().toISOString(),
 									},
 									{
@@ -2136,15 +2115,14 @@ export class AttendanceService {
 									},
 								);
 								this.logger.debug(
-									`Enhanced overtime notification sent successfully to user: ${ownerUidStr}`,
+									`Enhanced overtime notification sent successfully to user: ${payload.ownerUidStr}`,
 								);
 
-								// Also send overtime notification using the enhanced sendShiftReminder method
 								await this.sendShiftReminder(
-									ownerUidNum,
+									payload.ownerUidNum,
 									'overtime',
 									organizationId,
-									branchId,
+									payload.branchId,
 									undefined,
 									undefined,
 									cappedMinutes,
@@ -2153,34 +2131,29 @@ export class AttendanceService {
 						}
 					} catch (overtimeNotificationError) {
 						this.logger.warn(
-							`Failed to send overtime notification to user: ${ownerUidStr}`,
+							`Failed to send overtime notification to user: ${payload.ownerUidStr}`,
 							overtimeNotificationError.message,
 						);
-						// Don't fail the async processing if overtime notification fails
 					}
 
-					// Emit daily report event for async processing (user already got their response)
-					this.logger.debug(`Emitting daily report event for user: ${ownerUidStr}, attendance: ${activeShift.uid}`);
+					this.logger.debug(`Emitting daily report event for user: ${payload.ownerUidStr}, attendance: ${payload.activeShift.uid}`);
 					this.eventEmitter.emit('daily-report', {
-						userId: ownerUidNum,
-						attendanceId: activeShift.uid, // Include the attendance ID that triggered this report
-						triggeredByActivity: true, // This report is triggered by actual user activity (check-out)
+						userId: payload.ownerUidNum,
+						attendanceId: payload.activeShift.uid,
+						triggeredByActivity: true,
 					});
 
-					// Emit other background events
-					this.eventEmitter.emit('user.target.update.required', { userId: ownerUidNum });
-					this.eventEmitter.emit('user.metrics.update.required', ownerUidNum);
-					this.logger.debug(`Background events emitted successfully for user: ${ownerUidStr}`);
+					this.eventEmitter.emit('user.target.update.required', { userId: payload.ownerUidNum });
+					this.eventEmitter.emit('user.metrics.update.required', payload.ownerUidNum);
+					this.logger.debug(`Background events emitted successfully for user: ${payload.ownerUidStr}`);
 
 				} catch (asyncError) {
-					this.logger.error(`Error in async checkout processing for user ${ownerUidStr}:`, asyncError.stack);
-					// Don't propagate errors from async operations
+					this.logger.error(`Error in async checkout processing for user ${payload.ownerUidStr}:`, asyncError.stack);
 				}
 			});
 
-			return response;
+			return payload.response;
 		} catch (error) {
-			await queryRunner.rollbackTransaction();
 			const duration = Date.now() - startTime;
 			this.logger.error(`[${operationId}] ❌ Check-out failed after ${duration}ms: ${error.message}`, error.stack);
 
@@ -2209,8 +2182,6 @@ export class AttendanceService {
 				{ message: error?.message || 'Check-out failed. Please try again.', statusCode: HttpStatus.INTERNAL_SERVER_ERROR, error: 'INTERNAL_ERROR' },
 				HttpStatus.INTERNAL_SERVER_ERROR
 			);
-		} finally {
-			await queryRunner.release();
 		}
 	}
 
@@ -4669,299 +4640,216 @@ export class AttendanceService {
 
 	private async startBreak(breakDto: CreateBreakDto, ownerUidNum: number): Promise<{ message: string }> {
 		const ownerUidStr = String(ownerUidNum);
-		const queryRunner = this.dataSource.createQueryRunner();
-		await queryRunner.connect();
-		await queryRunner.startTransaction();
+		this.logger.log(`Starting break for user ${ownerUidStr}`);
+
 		try {
-			this.logger.log(`Starting break for user ${ownerUidStr}`);
+			const payload = await this.runInTransaction(async (queryRunner) => {
+				const activeShift = await queryRunner.manager.findOne(Attendance, {
+					where: {
+						status: AttendanceStatus.PRESENT,
+						owner: { uid: ownerUidNum },
+						checkIn: Not(IsNull()),
+						checkOut: IsNull(),
+					},
+					relations: ['organisation'],
+					order: { checkIn: 'DESC' },
+				});
 
-			// Find the active shift within transaction (load organisation for cache invalidation)
-			const activeShift = await queryRunner.manager.findOne(Attendance, {
-				where: {
-					status: AttendanceStatus.PRESENT,
-					owner: { uid: ownerUidNum },
-					checkIn: Not(IsNull()),
-					checkOut: IsNull(),
-				},
-				relations: ['organisation'],
-				order: {
-					checkIn: 'DESC',
-				},
-			});
+				if (!activeShift) {
+					this.logger.warn(`No active shift found for user ${ownerUidStr} to start break`);
+					throw new BadRequestException('No active shift found to start break. Please check in first.');
+				}
 
-			if (!activeShift) {
-				this.logger.warn(`No active shift found for user ${ownerUidStr} to start break`);
-				await queryRunner.rollbackTransaction();
+				this.logger.log(`Found active shift ${activeShift.uid} for user ${ownerUidStr}, proceeding with break start`);
+
+				const breakDetails: BreakDetail[] = activeShift.breakDetails || [];
+				const breakStartTime = new Date();
+				breakDetails.push({
+					startTime: breakStartTime,
+					endTime: null,
+					duration: null,
+					latitude: breakDto.breakLatitude ? String(breakDto.breakLatitude) : null,
+					longitude: breakDto.breakLongitude ? String(breakDto.breakLongitude) : null,
+					notes: breakDto.breakNotes,
+				});
+
+				const breakCount = (activeShift.breakCount || 0) + 1;
+
+				await queryRunner.manager.update(Attendance, activeShift.uid, {
+					breakStartTime,
+					breakLatitude: breakDto.breakLatitude ?? undefined,
+					breakLongitude: breakDto.breakLongitude ?? undefined,
+					breakCount,
+					breakDetails,
+					status: AttendanceStatus.ON_BREAK,
+				});
+
 				return {
-					message: 'No active shift found to start break. Please check in first.'
+					activeShift,
+					ownerUidStr,
+					ownerUidNum,
+					breakCount,
+					breakStartTime,
 				};
-			}
-
-			this.logger.log(
-				`Found active shift ${activeShift.uid} for user ${ownerUidStr}, proceeding with break start`,
-			);
-
-			// Initialize the breakDetails array if it doesn't exist
-			const breakDetails: BreakDetail[] = activeShift.breakDetails || [];
-
-			// Create a new break entry
-			const breakStartTime = new Date();
-			const newBreakEntry: BreakDetail = {
-				startTime: breakStartTime,
-				endTime: null,
-				duration: null,
-				latitude: breakDto.breakLatitude ? String(breakDto.breakLatitude) : null,
-				longitude: breakDto.breakLongitude ? String(breakDto.breakLongitude) : null,
-				notes: breakDto.breakNotes,
-			};
-
-			// Add to break details array
-			breakDetails.push(newBreakEntry);
-
-			// Increment break count
-			const breakCount = (activeShift.breakCount || 0) + 1;
-
-			// Update shift with break start time and status (within transaction)
-			await queryRunner.manager.update(Attendance, activeShift.uid, {
-				breakStartTime,
-				breakLatitude: breakDto.breakLatitude ?? undefined,
-				breakLongitude: breakDto.breakLongitude ?? undefined,
-				breakCount,
-				breakDetails,
-				status: AttendanceStatus.ON_BREAK,
 			});
 
-			await queryRunner.commitTransaction();
+			const orgIdBreak = payload.activeShift.organisation?.clerkOrgId ?? payload.activeShift.organisation?.ref;
+			await this.clearAttendanceCache(payload.activeShift.uid, payload.ownerUidStr, orgIdBreak, payload.activeShift.branchUid ?? undefined);
 
-			// Clear attendance cache after break start (include org/branch for list invalidation)
-			const orgIdBreak = activeShift.organisation?.clerkOrgId ?? activeShift.organisation?.ref;
-			await this.clearAttendanceCache(activeShift.uid, ownerUidStr, orgIdBreak, activeShift.branchUid ?? undefined);
-
-			// Send enhanced break start notification
 			try {
-				// Get user info for personalized message with email and relations
 				const user = await this.userRepository.findOne({
-					where: { uid: ownerUidNum },
+					where: { uid: payload.ownerUidNum },
 					select: ['uid', 'name', 'surname', 'email', 'username'],
 					relations: ['organisation', 'branch', 'branch.organisation'],
 				});
-
-				// Construct full name with proper fallbacks
 				const fullName = `${user?.name || ''} ${user?.surname || ''}`.trim();
 				const userName = fullName || user?.username || 'Team Member';
 				const breakNumber =
-					breakCount === 1
-						? 'first'
-						: breakCount === 2
-							? 'second'
-							: `${breakCount}${breakCount > 3 ? 'th' : breakCount === 3 ? 'rd' : 'nd'}`;
+					payload.breakCount === 1 ? 'first' : payload.breakCount === 2 ? 'second' : `${payload.breakCount}${payload.breakCount > 3 ? 'th' : payload.breakCount === 3 ? 'rd' : 'nd'}`;
+				const breakStartTimeString = await this.formatTimeInOrganizationTimezone(payload.breakStartTime, user?.organisation?.clerkOrgId || user?.organisation?.ref);
 
-				// Format break start time in organization timezone
-				const breakStartTimeString = await this.formatTimeInOrganizationTimezone(breakStartTime, user?.organisation?.clerkOrgId || user?.organisation?.ref);
-
-				this.logger.debug(`Sending enhanced break start notification to user: ${ownerUidStr}`);
-				// Send push notification
+				this.logger.debug(`Sending enhanced break start notification to user: ${payload.ownerUidStr}`);
 				await this.unifiedNotificationService.sendTemplatedNotification(
 					NotificationEvent.ATTENDANCE_BREAK_STARTED,
-					[ownerUidNum],
+					[payload.ownerUidNum],
 					{
 						breakStartTime: breakStartTimeString,
-						breakCount: breakCount,
+						breakCount: payload.breakCount,
 						breakNumber,
 						userName,
-						userId: ownerUidNum,
+						userId: payload.ownerUidNum,
 						timestamp: new Date().toISOString(),
 					},
-					{
-						priority: NotificationPriority.LOW,
-						sendEmail: false, // We'll handle email separately
-					},
+					{ priority: NotificationPriority.LOW, sendEmail: false },
 				);
-
-				// Email notification removed to reduce Gmail quota usage - push notification only
-				this.logger.debug(
-					`⏭️ [AttendanceService] Skipping break started email for user: ${ownerUidStr} - push notification sent instead`,
-				);
-				this.logger.debug(`Enhanced break start notification sent successfully to user: ${ownerUidStr}`);
+				this.logger.debug(`Enhanced break start notification sent successfully to user: ${payload.ownerUidStr}`);
 			} catch (notificationError) {
-				this.logger.warn(
-					`Failed to send break start notification to user: ${ownerUidStr}`,
-					notificationError.message,
-				);
-				// Don't fail the break start if notification fails
+				this.logger.warn(`Failed to send break start notification to user: ${payload.ownerUidStr}`, notificationError.message);
 			}
 
-			this.logger.log(`Break started successfully for user ${ownerUidStr}, shift ${activeShift.uid}`);
-			return {
-				message: 'Break started successfully',
-			};
+			this.logger.log(`Break started successfully for user ${payload.ownerUidStr}, shift ${payload.activeShift.uid}`);
+			return { message: 'Break started successfully' };
 		} catch (error) {
-			await queryRunner.rollbackTransaction();
-			return {
-				message: error?.message,
-			};
-		} finally {
-			await queryRunner.release();
+			return { message: error?.message ?? 'Break start failed' };
 		}
 	}
 
 	private async endBreak(breakDto: CreateBreakDto, ownerUidNum: number): Promise<{ message: string }> {
 		const ownerUidStr = String(ownerUidNum);
-		const queryRunner = this.dataSource.createQueryRunner();
-		await queryRunner.connect();
-		await queryRunner.startTransaction();
+		this.logger.log(`Ending break for user ${ownerUidStr}`);
+
 		try {
-			this.logger.log(`Ending break for user ${ownerUidStr}`);
-
-			// Find the shift on break within transaction (load organisation for cache invalidation)
-			const shiftOnBreak = await queryRunner.manager.findOne(Attendance, {
-				where: {
-					status: AttendanceStatus.ON_BREAK,
-					owner: { uid: ownerUidNum },
-					checkIn: Not(IsNull()),
-					checkOut: IsNull(),
-					breakStartTime: Not(IsNull()),
-				},
-				relations: ['organisation'],
-				order: {
-					checkIn: 'DESC',
-				},
-			});
-
-			if (!shiftOnBreak) {
-				this.logger.warn(`No shift on break found for user ${ownerUidStr}`);
-				await queryRunner.rollbackTransaction();
-				return {
-					message: 'No shift on break found. Please start a break first.',
-				};
-			}
-
-			this.logger.log(
-				`Found shift on break ${shiftOnBreak.uid} for user ${ownerUidStr}, proceeding with break end`,
-			);
-
-			// Calculate break duration
-			const breakEndTime = new Date();
-			const breakStartTime = new Date(shiftOnBreak.breakStartTime);
-
-			const breakMinutes = differenceInMinutes(breakEndTime, breakStartTime);
-			const breakHours = Math.floor(breakMinutes / 60);
-			const remainingBreakMinutes = breakMinutes % 60;
-
-			const currentBreakDuration = `${breakHours}h ${remainingBreakMinutes}m`;
-
-			// Calculate total break time (including previous breaks)
-			let totalBreakHours = breakHours;
-			let totalBreakMinutes = remainingBreakMinutes;
-
-			if (shiftOnBreak.totalBreakTime) {
-				const previousBreakMinutes = this.parseBreakTime(shiftOnBreak.totalBreakTime);
-				totalBreakMinutes += previousBreakMinutes % 60;
-				totalBreakHours += Math.floor(previousBreakMinutes / 60) + Math.floor(totalBreakMinutes / 60);
-				totalBreakMinutes = totalBreakMinutes % 60;
-			}
-
-			const totalBreakTime = `${totalBreakHours}h ${totalBreakMinutes}m`;
-
-			// Initialize or get the breakDetails array
-			const breakDetails: BreakDetail[] = shiftOnBreak.breakDetails || [];
-
-			// Update the latest break entry if it exists
-			if (breakDetails.length > 0) {
-				const latestBreak = breakDetails[breakDetails.length - 1];
-				latestBreak.endTime = breakEndTime;
-				latestBreak.duration = currentBreakDuration;
-				latestBreak.notes = breakDto.breakNotes || latestBreak.notes;
-			} else {
-				// If no breakDetails exist, create a new entry for backward compatibility
-				breakDetails.push({
-					startTime: breakStartTime,
-					endTime: breakEndTime,
-					duration: currentBreakDuration,
-					latitude: shiftOnBreak.breakLatitude ? String(shiftOnBreak.breakLatitude) : null,
-					longitude: shiftOnBreak.breakLongitude ? String(shiftOnBreak.breakLongitude) : null,
-					notes: breakDto.breakNotes,
+			const payload = await this.runInTransaction(async (queryRunner) => {
+				const shiftOnBreak = await queryRunner.manager.findOne(Attendance, {
+					where: {
+						status: AttendanceStatus.ON_BREAK,
+						owner: { uid: ownerUidNum },
+						checkIn: Not(IsNull()),
+						checkOut: IsNull(),
+						breakStartTime: Not(IsNull()),
+					},
+					relations: ['organisation'],
+					order: { checkIn: 'DESC' },
 				});
-			}
 
-			// Update shift with break end time and status (within transaction)
-			await queryRunner.manager.update(Attendance, shiftOnBreak.uid, {
-				breakEndTime,
-				totalBreakTime,
-				breakNotes: breakDto.breakNotes ?? undefined,
-				breakDetails,
-				status: AttendanceStatus.PRESENT,
+				if (!shiftOnBreak) {
+					this.logger.warn(`No shift on break found for user ${ownerUidStr}`);
+					throw new BadRequestException('No shift on break found. Please start a break first.');
+				}
+
+				this.logger.log(`Found shift on break ${shiftOnBreak.uid} for user ${ownerUidStr}, proceeding with break end`);
+
+				const breakEndTime = new Date();
+				const breakStartTime = new Date(shiftOnBreak.breakStartTime);
+				const breakMinutes = differenceInMinutes(breakEndTime, breakStartTime);
+				const breakHours = Math.floor(breakMinutes / 60);
+				const remainingBreakMinutes = breakMinutes % 60;
+				const currentBreakDuration = `${breakHours}h ${remainingBreakMinutes}m`;
+
+				let totalBreakHours = breakHours;
+				let totalBreakMinutes = remainingBreakMinutes;
+				if (shiftOnBreak.totalBreakTime) {
+					const previousBreakMinutes = this.parseBreakTime(shiftOnBreak.totalBreakTime);
+					totalBreakMinutes += previousBreakMinutes % 60;
+					totalBreakHours += Math.floor(previousBreakMinutes / 60) + Math.floor(totalBreakMinutes / 60);
+					totalBreakMinutes = totalBreakMinutes % 60;
+				}
+				const totalBreakTime = `${totalBreakHours}h ${totalBreakMinutes}m`;
+
+				const breakDetails: BreakDetail[] = shiftOnBreak.breakDetails || [];
+				if (breakDetails.length > 0) {
+					const latestBreak = breakDetails[breakDetails.length - 1];
+					latestBreak.endTime = breakEndTime;
+					latestBreak.duration = currentBreakDuration;
+					latestBreak.notes = breakDto.breakNotes || latestBreak.notes;
+				} else {
+					breakDetails.push({
+						startTime: breakStartTime,
+						endTime: breakEndTime,
+						duration: currentBreakDuration,
+						latitude: shiftOnBreak.breakLatitude ? String(shiftOnBreak.breakLatitude) : null,
+						longitude: shiftOnBreak.breakLongitude ? String(shiftOnBreak.breakLongitude) : null,
+						notes: breakDto.breakNotes,
+					});
+				}
+
+				await queryRunner.manager.update(Attendance, shiftOnBreak.uid, {
+					breakEndTime,
+					totalBreakTime,
+					breakNotes: breakDto.breakNotes ?? undefined,
+					breakDetails,
+					status: AttendanceStatus.PRESENT,
+				});
+
+				return {
+					shiftOnBreak,
+					ownerUidStr,
+					ownerUidNum,
+					currentBreakDuration,
+					breakEndTime,
+					breakStartTime,
+					totalBreakTime,
+				};
 			});
 
-			await queryRunner.commitTransaction();
+			const orgIdEndBreak = payload.shiftOnBreak.organisation?.clerkOrgId ?? payload.shiftOnBreak.organisation?.ref;
+			await this.clearAttendanceCache(payload.shiftOnBreak.uid, payload.ownerUidStr, orgIdEndBreak, payload.shiftOnBreak.branchUid ?? undefined);
 
-			// Clear attendance cache after break end (include org/branch for list invalidation)
-			const orgIdEndBreak = shiftOnBreak.organisation?.clerkOrgId ?? shiftOnBreak.organisation?.ref;
-			await this.clearAttendanceCache(shiftOnBreak.uid, ownerUidStr, orgIdEndBreak, shiftOnBreak.branchUid ?? undefined);
-
-			// Send enhanced break end notification
 			try {
-				// Get user info for personalized message with email and relations
 				const user = await this.userRepository.findOne({
-					where: { uid: ownerUidNum },
+					where: { uid: payload.ownerUidNum },
 					select: ['uid', 'name', 'surname', 'email', 'username'],
 					relations: ['organisation', 'branch', 'branch.organisation'],
 				});
-
-				// Construct full name with proper fallbacks
 				const fullName = `${user?.name || ''} ${user?.surname || ''}`.trim();
 				const userName = fullName || user?.username || 'Team Member';
+				const breakEndTimeString = await this.formatTimeInOrganizationTimezone(payload.breakEndTime, user?.organisation?.clerkOrgId || user?.organisation?.ref);
+				const breakStartTimeString = await this.formatTimeInOrganizationTimezone(payload.breakStartTime, user?.organisation?.clerkOrgId || user?.organisation?.ref);
 
-				// Format break times in organization timezone
-				const breakEndTimeString = await this.formatTimeInOrganizationTimezone(breakEndTime, user?.organisation?.clerkOrgId || user?.organisation?.ref);
-				const breakStartTimeString = await this.formatTimeInOrganizationTimezone(breakStartTime, user?.organisation?.clerkOrgId || user?.organisation?.ref);
-
-				this.logger.debug(`Sending enhanced break end notification to user: ${ownerUidStr}`);
-				// Send push notification
+				this.logger.debug(`Sending enhanced break end notification to user: ${payload.ownerUidStr}`);
 				await this.unifiedNotificationService.sendTemplatedNotification(
 					NotificationEvent.ATTENDANCE_BREAK_ENDED,
-					[ownerUidNum],
+					[payload.ownerUidNum],
 					{
-						breakDuration: currentBreakDuration,
+						breakDuration: payload.currentBreakDuration,
 						breakStartTime: breakStartTimeString,
 						breakEndTime: breakEndTimeString,
-						totalBreakTime,
+						totalBreakTime: payload.totalBreakTime,
 						userName,
-						userId: ownerUidNum,
+						userId: payload.ownerUidNum,
 						timestamp: new Date().toISOString(),
 					},
-					{
-						priority: NotificationPriority.LOW,
-						sendEmail: false, // We'll handle email separately
-					},
+					{ priority: NotificationPriority.LOW, sendEmail: false },
 				);
-
-				// Email notification removed to reduce Gmail quota usage - push notification only
-				this.logger.debug(
-					`⏭️ [AttendanceService] Skipping break ended email for user: ${ownerUidStr} - push notification sent instead`,
-				);
-				this.logger.debug(`Enhanced break end notification sent successfully to user: ${ownerUidStr}`);
+				this.logger.debug(`Enhanced break end notification sent successfully to user: ${payload.ownerUidStr}`);
 			} catch (notificationError) {
-				this.logger.warn(
-					`Failed to send break end notification to user: ${ownerUidStr}`,
-					notificationError.message,
-				);
-				// Don't fail the break end if notification fails
+				this.logger.warn(`Failed to send break end notification to user: ${payload.ownerUidStr}`, notificationError.message);
 			}
 
-			this.logger.log(
-				`Break ended successfully for user ${ownerUidStr}, shift ${shiftOnBreak.uid}, duration: ${currentBreakDuration}`,
-			);
-			return {
-				message: 'Break ended successfully',
-			};
+			this.logger.log(`Break ended successfully for user ${payload.ownerUidStr}, shift ${payload.shiftOnBreak.uid}, duration: ${payload.currentBreakDuration}`);
+			return { message: 'Break ended successfully' };
 		} catch (error) {
-			await queryRunner.rollbackTransaction();
-			return {
-				message: error?.message,
-			};
-		} finally {
-			await queryRunner.release();
+			return { message: error?.message ?? 'Break end failed' };
 		}
 	}
 

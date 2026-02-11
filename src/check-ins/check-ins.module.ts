@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ClerkModule } from '../clerk/clerk.module';
 import { CheckInsService } from './check-ins.service';
@@ -31,7 +31,7 @@ import { CheckInsReportsScheduler } from './services/check-ins-reports.scheduler
 		OrganisationModule,
 		NotificationsModule,
 		LibModule,
-		LeadsModule,
+		forwardRef(() => LeadsModule),
 		CommunicationModule,
 		PdfGenerationModule,
 	],

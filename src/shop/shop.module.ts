@@ -50,7 +50,7 @@ import { QuotationPdfListener } from './listeners/quotation-pdf.listener';
 		ProductsModule,
 		forwardRef(() => ClientsModule),
 		LicensingModule,
-		UserModule,
+		forwardRef(() => UserModule),
 		OrganisationModule,
 		PdfGenerationModule,
 		NotificationsModule,
@@ -66,9 +66,10 @@ import { QuotationPdfListener } from './listeners/quotation-pdf.listener';
 		QuotationPdfListener,
 	],
 	exports: [
-		ShopService, 
+		ShopService,
+		ProjectsService,
 		ShopGateway,
-		TypeOrmModule
+		TypeOrmModule,
 	],
 })
 export class ShopModule {}

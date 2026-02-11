@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Inject, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject, BadRequestException, Logger, forwardRef } from '@nestjs/common';
 import { CreateClientDto } from './dto/create-client.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
 import { CreditLimitExtensionDto } from './dto/credit-limit-extension.dto';
@@ -36,6 +36,9 @@ import { ApprovalsService } from '../approvals/approvals.service';
 import { ApprovalType, ApprovalStatus, ApprovalPriority, ApprovalFlow } from '../lib/enums/approval.enums';
 import { Approval } from '../approvals/entities/approval.entity';
 import { OnEvent } from '@nestjs/event-emitter';
+import { ShopService } from '../shop/shop.service';
+import { ProjectsService } from '../shop/projects.service';
+import { Order } from '../shop/entities/order.entity';
 
 @Injectable()
 export class ClientsService {
@@ -69,6 +72,10 @@ export class ClientsService {
 		private readonly dataSource: DataSource,
 		private readonly unifiedNotificationService: UnifiedNotificationService,
 		private readonly approvalsService: ApprovalsService,
+		@Inject(forwardRef(() => ShopService))
+		private readonly shopService: ShopService,
+		@Inject(forwardRef(() => ProjectsService))
+		private readonly projectsService: ProjectsService,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
 	}
@@ -1533,12 +1540,6 @@ export class ClientsService {
 				.leftJoinAndSelect('client.assignedSalesRep', 'assignedSalesRep')
 				.leftJoinAndSelect('assignedSalesRep.userProfile', 'assignedSalesRepProfile')
 				.leftJoinAndSelect('assignedSalesRep.userEmployeementProfile', 'assignedSalesRepEmploymentProfile')
-				.leftJoinAndSelect('client.quotations', 'quotations')
-				.leftJoinAndSelect('quotations.orders', 'quotationOrders')
-				.leftJoinAndSelect('quotations.project', 'quotationProject')
-				.leftJoinAndSelect('client.projects', 'projects')
-				.leftJoinAndSelect('projects.quotations', 'projectQuotations')
-				.leftJoinAndSelect('client.orders', 'orders')
 				.leftJoinAndSelect('client.checkIns', 'checkIns')
 				.where('client.uid = :clientUid', { clientUid })
 				.andWhere('client.isDeleted = :isDeleted', { isDeleted: false });
@@ -1550,8 +1551,33 @@ export class ClientsService {
 				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
 			}
 
+			const orgId = client.organisation?.clerkOrgId ?? client.organisationUid ?? undefined;
+			const branchId = client.branchUid ?? client.branch?.uid ?? undefined;
+
+			const [projectsResult, quotationsResult] = await Promise.all([
+				this.projectsService.getProjectsByClient(clientUid, orgId, branchId),
+				this.shopService.getQuotationsByClientUid(clientUid, orgId),
+			]);
+
+			client.projects = projectsResult.projects ?? [];
+			client.quotations = quotationsResult.quotations ?? [];
+			client.orders = (client.quotations ?? []).flatMap((q: { orders?: Order[] }) => q?.orders ?? []);
+
 			const executionTime = Date.now() - startTime;
-			this.logger.log(`[GET_LINKED_CLIENT] Retrieved client ${clientUid} (${client.name}) in ${executionTime}ms`);
+			const quotationsCount = client.quotations?.length ?? 0;
+			const projectsCount = client.projects?.length ?? 0;
+			const ordersCount = client.orders?.length ?? 0;
+			const checkInsCount = client.checkIns?.length ?? 0;
+
+			this.logger.log(
+				`[GET_LINKED_CLIENT] Retrieved client ${clientUid} (${client.name}) in ${executionTime}ms | ` +
+				`quotations: ${quotationsCount}, projects: ${projectsCount}, orders: ${ordersCount}, checkIns: ${checkInsCount}`,
+			);
+			this.logger.debug(
+				`[GET_LINKED_CLIENT] Data appended before send - quotations: [${(client.quotations ?? []).map((q: { uid?: number }) => q?.uid).join(', ')}], ` +
+				`projects: [${(client.projects ?? []).map((p: { uid?: number }) => p?.uid).join(', ')}], ` +
+				`orders: [${(client.orders ?? []).map((o: { uid?: number }) => o?.uid).join(', ')}]`,
+			);
 
 			return {
 				client: this.withCreditInfo(client),

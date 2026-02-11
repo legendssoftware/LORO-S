@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { ClerkModule } from '../clerk/clerk.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CacheModule } from '@nestjs/cache-manager';
@@ -52,7 +52,7 @@ import { UserModule } from '../user/user.module';
 		// Licensing module for license validation in AuthGuard
 		LicensingModule,
 		// User module for accessing user targets
-		UserModule,
+		forwardRef(() => UserModule),
 	],
 	controllers: [ErpController],
 	providers: [

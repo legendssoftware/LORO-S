@@ -5,6 +5,7 @@ import { ClientAuth } from './entities/client.auth.entity';
 import { Client } from './entities/client.entity';
 import { ClientSyncClerkDto } from './dto/client-sync-clerk.dto';
 import { ClerkService } from '../clerk/clerk.service';
+import { ClientsService } from './clients.service';
 
 @Injectable()
 export class ClientAuthService {
@@ -16,6 +17,7 @@ export class ClientAuthService {
 		@InjectRepository(Client)
 		private readonly clientRepository: Repository<Client>,
 		private readonly clerkService: ClerkService,
+		private readonly clientsService: ClientsService,
 	) {}
 
 	/**
@@ -65,39 +67,78 @@ export class ClientAuthService {
 			clientAuth.clerkLastSyncedAt = new Date();
 			await this.clientAuthRepository.save(clientAuth);
 
-			// Load client with assignedSalesRep for profile (sanitized for client portal)
-			const clientWithRep = await this.clientRepository.findOne({
-				where: { uid: clientAuth.client.uid },
-				relations: ['assignedSalesRep'],
-			});
-			const client = clientWithRep ?? clientAuth.client;
-			const assignedSalesRep = client.assignedSalesRep
-				? {
-						name: [client.assignedSalesRep.name, client.assignedSalesRep.surname].filter(Boolean).join(' ') || client.assignedSalesRep.name,
-						email: client.assignedSalesRep.email ?? null,
-						phone: client.assignedSalesRep.phone ?? null,
-					}
-				: null;
+			const clientUid = clientAuth.client.uid;
+			let profileData: Record<string, unknown>;
 
-			// Build profile data (linkedClientUid so APK can resolve client for tabs)
-			const profileData = {
-				linkedClientUid: client.uid,
-				uid: clientAuth.uid,
-				email: clientAuth.email,
-				name: client.name || client.contactPerson || '',
-				accessLevel: 'client' as const,
-				client: {
-					uid: client.uid,
-					name: client.name,
-					contactPerson: client.contactPerson,
-					phone: client.phone,
-					organisationRef: client.organisation?.ref ?? clientAuth.client.organisation?.ref ?? null,
-					branchUid: client.branch?.uid ?? clientAuth.client.branch?.uid ?? null,
-					assignedSalesRep,
-				},
-			};
-
-			this.logger.log(`[${operationId}] Client session synced successfully - uid: ${clientAuth.uid}`);
+			try {
+				const { client: fullClient } = await this.clientsService.getLinkedClientWithFullProfile(clientUid);
+				if (fullClient) {
+					const assignedSalesRep = fullClient.assignedSalesRep
+						? {
+								name: [fullClient.assignedSalesRep.name, fullClient.assignedSalesRep.surname].filter(Boolean).join(' ') || fullClient.assignedSalesRep.name,
+								email: fullClient.assignedSalesRep.email ?? null,
+								phone: fullClient.assignedSalesRep.phone ?? null,
+							}
+						: null;
+					profileData = {
+						linkedClientUid: fullClient.uid,
+						uid: clientAuth.uid,
+						email: clientAuth.email,
+						name: fullClient.name || fullClient.contactPerson || '',
+						accessLevel: 'client' as const,
+						client: {
+							uid: fullClient.uid,
+							name: fullClient.name,
+							contactPerson: fullClient.contactPerson,
+							phone: fullClient.phone,
+							organisationRef: fullClient.organisation?.ref ?? clientAuth.client.organisation?.ref ?? null,
+							branchUid: fullClient.branch?.uid ?? clientAuth.client.branch?.uid ?? null,
+							assignedSalesRep,
+							projects: Array.isArray((fullClient as any).projects) ? (fullClient as any).projects : [],
+							quotations: Array.isArray((fullClient as any).quotations) ? (fullClient as any).quotations : [],
+							orders: Array.isArray((fullClient as any).orders) ? (fullClient as any).orders : [],
+						},
+					};
+					this.logger.log(
+						`[${operationId}] Client session synced with full profile - uid: ${clientAuth.uid}, projects: ${(fullClient as any).projects?.length ?? 0}, quotations: ${(fullClient as any).quotations?.length ?? 0}`,
+					);
+				} else {
+					throw new Error('Full client null');
+				}
+			} catch (err) {
+				this.logger.warn(
+					`[${operationId}] Full client fetch failed, using basic profile: ${err instanceof Error ? err.message : err}`,
+				);
+				const clientWithRep = await this.clientRepository.findOne({
+					where: { uid: clientUid },
+					relations: ['assignedSalesRep'],
+				});
+				const client = clientWithRep ?? clientAuth.client;
+				const assignedSalesRep = client.assignedSalesRep
+					? {
+							name: [client.assignedSalesRep.name, client.assignedSalesRep.surname].filter(Boolean).join(' ') || client.assignedSalesRep.name,
+							email: client.assignedSalesRep.email ?? null,
+							phone: client.assignedSalesRep.phone ?? null,
+						}
+					: null;
+				profileData = {
+					linkedClientUid: client.uid,
+					uid: clientAuth.uid,
+					email: clientAuth.email,
+					name: client.name || client.contactPerson || '',
+					accessLevel: 'client' as const,
+					client: {
+						uid: client.uid,
+						name: client.name,
+						contactPerson: client.contactPerson,
+						phone: client.phone,
+						organisationRef: client.organisation?.ref ?? clientAuth.client.organisation?.ref ?? null,
+						branchUid: client.branch?.uid ?? clientAuth.client.branch?.uid ?? null,
+						assignedSalesRep,
+					},
+				};
+				this.logger.log(`[${operationId}] Client session synced successfully - uid: ${clientAuth.uid}`);
+			}
 
 			return {
 				profileData,

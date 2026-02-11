@@ -47,7 +47,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     }),
     ConfigModule,
     EventEmitterModule,
-    UserModule,
+    forwardRef(() => UserModule),
     OrganisationModule,
     BranchModule,
     CommunicationModule,

@@ -31,17 +31,19 @@ export class CreateCheckOutDto {
 
     /**
      * Owner resolved from auth token (clerkUserId); no owner/uid in DTO.
+     * Branch is optional - visits use org and user only.
      */
 
-    @IsNotEmpty()
+    @IsOptional()
     @IsObject()
     @ApiProperty({
         example: {
             uid: 1
         },
-        description: 'The branch reference code of the attendance check in'
+        description: 'The branch reference code of the attendance check in (optional - visits use org and user only)',
+        required: false
     })
-    branch: { uid: number };
+    branch?: { uid: number };
 
     @IsOptional()
     @IsObject()

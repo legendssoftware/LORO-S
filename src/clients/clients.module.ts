@@ -22,14 +22,16 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { ApprovalsModule } from '../approvals/approvals.module';
 import { ClerkModule } from '../clerk/clerk.module';
 import { OrganisationModule } from '../organisation/organisation.module';
+import { ShopModule } from '../shop/shop.module';
 
 @Module({
   imports: [
+    forwardRef(() => ShopModule),
     LicensingModule,
     TypeOrmModule.forFeature([Client, ClientAuth, ClientCommunicationSchedule, Organisation, OrganisationSettings, User, Task]),
     ConfigModule,
     LibModule,
-    TasksModule,
+    forwardRef(() => TasksModule),
     forwardRef(() => AttendanceModule),
     NotificationsModule,
     forwardRef(() => ApprovalsModule),

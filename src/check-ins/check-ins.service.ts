@@ -186,7 +186,6 @@ export class CheckInsService {
 	private async createLeadFromCheckIn(
 		createCheckInDto: CreateCheckInDto,
 		orgId: string,
-		branchId?: number,
 		clerkUserId?: string,
 	): Promise<{ uid: number } | null> {
 		try {
@@ -212,17 +211,11 @@ export class CheckInsService {
 				}
 			}
 
-			// Build lead DTO from check-in contact information
-			// Note: branch is required in CreateLeadDto, so we only create lead if branchId is available
-			if (!branchId) {
-				this.logger.debug('Branch ID is required for lead creation, skipping lead creation');
-				return null;
-			}
-
 			// Generate intelligent lead name from available check-in data
 			const leadName = this.generateLeadNameFromCheckInData(createCheckInDto);
 
-			const createLeadDto: CreateLeadDto = {
+			// Branch is optional; leads are scoped by org and user only
+			const createLeadDto: Omit<CreateLeadDto, 'branch'> & { branch?: { uid: number } } = {
 				name: leadName,
 				companyName: createCheckInDto.companyName,
 				phone: createCheckInDto.contactCellPhone || createCheckInDto.contactLandline,
@@ -230,15 +223,14 @@ export class CheckInsService {
 				notes: createCheckInDto.notes || `Lead created from check-in visit`,
 				latitude,
 				longitude,
-				source: LeadSource.OTHER, // Can be customized based on business logic
-				branch: { uid: branchId },
+				source: LeadSource.OTHER,
 			};
 
-			// Create lead using LeadsService with source context for logging
+			// Create lead using LeadsService with source context for logging (no branch)
 			const leadResult = await this.leadsService.create(
-				createLeadDto,
+				createLeadDto as CreateLeadDto,
 				orgId,
-				branchId,
+				undefined,
 				clerkUserId,
 				'check_in_conversion', // Source context for logging
 			);
@@ -313,13 +305,13 @@ export class CheckInsService {
 		}
 	}
 
-	async checkIn(createCheckInDto: CreateCheckInDto, orgId?: string, branchId?: number, clerkUserId?: string): Promise<{ message: string; checkInId?: number }> {
+	async checkIn(createCheckInDto: CreateCheckInDto, orgId?: string, clerkUserId?: string): Promise<{ message: string; checkInId?: number }> {
 		const operationId = `checkin_${Date.now()}`;
 		const startTime = Date.now();
 		// When clerkUserId is present (token-derived), ignore client-supplied owner; use ownerRef only for legacy callers.
 		const ownerRef = clerkUserId ? undefined : (createCheckInDto as { owner?: { uid: string } }).owner?.uid;
 		this.logger.log(
-			`[${operationId}] Check-in attempt for user: ${ownerRef ?? clerkUserId ?? 'unknown'}, orgId: ${orgId}, branchId: ${branchId}, clerkUserId: ${clerkUserId}`,
+			`[${operationId}] Check-in attempt for user: ${ownerRef ?? clerkUserId ?? 'unknown'}, orgId: ${orgId}, clerkUserId: ${clerkUserId}`,
 		);
 
 		try {
@@ -338,12 +330,12 @@ export class CheckInsService {
 				throw new BadRequestException('Organization ID is required');
 			}
 
-			// Resolve user: by clerkUserId (token) or by owner.uid (DTO, string)
+			// Resolve user: by clerkUserId (token) or by owner.uid (DTO, string). Org and user only - no branch.
 			let user: User | null = null;
 			if (clerkUserId) {
 				user = await this.userRepository.findOne({
 					where: { clerkUserId },
-					relations: ['organisation', 'branch'],
+					relations: ['organisation'],
 				});
 			}
 			if (!user && ownerRef) {
@@ -352,7 +344,7 @@ export class CheckInsService {
 					: { uid: Number(ownerRef) };
 				user = await this.userRepository.findOne({
 					where: userWhere,
-					relations: ['organisation', 'branch'],
+					relations: ['organisation'],
 				});
 			}
 
@@ -370,25 +362,7 @@ export class CheckInsService {
 				throw new BadRequestException('User does not belong to the specified organization');
 			}
 
-			// Resolve branch information from multiple sources (prefer DTO > parameter > user relation)
-			const resolvedBranchId = createCheckInDto?.branch?.uid ?? branchId ?? user.branch?.uid;
-			let branchSource = 'unknown';
-			if (createCheckInDto?.branch?.uid) {
-				branchSource = 'DTO';
-			} else if (branchId) {
-				branchSource = 'parameter';
-			} else if (user.branch?.uid) {
-				branchSource = 'user relation';
-			}
-
-			// Log branch resolution (branch is optional)
-			if (resolvedBranchId) {
-				this.logger.debug(`[${operationId}] Branch resolved from ${branchSource}: ${resolvedBranchId}`);
-			} else {
-				this.logger.debug(`[${operationId}] No branch information provided - check-in will be saved without branch`);
-			}
-
-			// Enhanced data mapping with proper organization filtering
+			// Enhanced data mapping - org and user only, no branch checks
 			this.logger.debug(`[${operationId}] Creating check-in record with enhanced data mapping`);
 			
 			// Prefer clerkUserId from token, then user's clerkUserId from database
@@ -410,10 +384,10 @@ export class CheckInsService {
 				this.logger.debug(`[${operationId}] Client ${createCheckInDto.client.uid} exists: ${clientExists}`);
 			}
 
-			// If client doesn't exist or client.uid is not provided, create a lead
+			// If client doesn't exist or client.uid is not provided, create a lead (no branch)
 			if (!clientExists && (!createCheckInDto.client?.uid || createCheckInDto.contactFullName || createCheckInDto.contactCellPhone || createCheckInDto.contactLandline)) {
 				this.logger.debug(`[${operationId}] Client not found or not provided, creating lead from contact information`);
-				createdLead = await this.createLeadFromCheckIn(createCheckInDto, orgId, resolvedBranchId, resolvedClerkUserId);
+				createdLead = await this.createLeadFromCheckIn(createCheckInDto, orgId, resolvedClerkUserId);
 				if (createdLead) {
 					this.logger.log(`[${operationId}] Lead created: ${createdLead.uid}`);
 				}
@@ -451,22 +425,15 @@ export class CheckInsService {
 				methodOfContact: createCheckInDto.methodOfContact,
 				buildingType: createCheckInDto.buildingType,
 				contactMade: createCheckInDto.contactMade ?? false,
+				// No branch - visits use org and user only
+				branch: null,
+				branchUid: null,
 			};
 
 			// Log when setting ownerClerkUserId and organisationUid for debugging
 			this.logger.debug(`[${operationId}] Setting ownerClerkUserId: ${resolvedClerkUserId}`);
 			if (orgId) {
 				this.logger.debug(`[${operationId}] Setting organisationUid: ${orgId}`);
-			}
-
-			// Only set branch and branchUid if branchId is provided
-			if (resolvedBranchId) {
-				checkInData.branch = { uid: resolvedBranchId };
-				checkInData.branchUid = resolvedBranchId;
-			} else {
-				// Explicitly set to null for TypeORM (handles null better than undefined)
-				checkInData.branch = null;
-				checkInData.branchUid = null;
 			}
 
 			// Only set client if it exists
@@ -530,7 +497,7 @@ export class CheckInsService {
 					// 2. Send check-in notifications
 					try {
 						this.logger.debug(`[${operationId}] Sending check-in notifications`);
-						await this.sendCheckInNotifications(user.uid, checkIn, user.name, orgId, branchId);
+						await this.sendCheckInNotifications(user.uid, checkIn, user.name, orgId);
 						this.logger.debug(`✅ [${operationId}] Check-in notifications sent successfully`);
 					} catch (notificationError) {
 						this.logger.error(
@@ -555,7 +522,6 @@ export class CheckInsService {
 								},
 							},
 							orgId,
-							branchId,
 						);
 						this.logger.debug(
 							`✅ [${operationId}] XP awarded successfully for check-in to user: ${user.clerkUserId ?? user.uid}`,
@@ -588,14 +554,13 @@ export class CheckInsService {
 	}
 
 	/**
-	 * Send check-in notifications to user and admins
+	 * Send check-in notifications to user and admins (org and user only, no branch)
 	 */
 	private async sendCheckInNotifications(
 		userId: number,
 		checkIn: CheckIn,
 		userName: string,
 		orgId?: string,
-		branchId?: number,
 	): Promise<void> {
 		const operationId = `checkin_notifications_${Date.now()}`;
 
@@ -604,10 +569,6 @@ export class CheckInsService {
 			const locationDetails = checkIn.client?.name 
 				? `${checkIn.client.name}` 
 				: 'a location';
-			
-			const coordinatesInfo = checkIn.checkInLocation 
-				? ` (${checkIn.checkInLocation})` 
-				: '';
 
 			// Send detailed notification to the user
 			await this.unifiedNotificationService.sendTemplatedNotification(
@@ -621,7 +582,6 @@ export class CheckInsService {
 					location: locationDetails,
 					coordinates: checkIn.checkInLocation,
 					orgId,
-					branchId,
 					timestamp: new Date().toISOString(),
 					checkInDetails: {
 						id: checkIn.uid,
@@ -634,7 +594,6 @@ export class CheckInsService {
 						notes: checkIn.notes,
 						createdAt: checkIn.createdAt?.toISOString(),
 						orgId,
-						branchId,
 					},
 				},
 				{ 
@@ -664,7 +623,6 @@ export class CheckInsService {
 							location: locationDetails,
 							coordinates: checkIn.checkInLocation,
 							orgId,
-							branchId,
 							timestamp: new Date().toISOString(),
 							adminNotification: true,
 							checkInDetails: {
@@ -678,7 +636,6 @@ export class CheckInsService {
 								notes: checkIn.notes,
 								createdAt: checkIn.createdAt?.toISOString(),
 								orgId,
-								branchId,
 							},
 						},
 						{
@@ -721,7 +678,7 @@ export class CheckInsService {
 	}
 
 	/**
-	 * Send check-out notifications to user and admins
+	 * Send check-out notifications to user and admins (org and user only, no branch)
 	 */
 	private async sendCheckOutNotifications(
 		userId: number,
@@ -730,7 +687,6 @@ export class CheckInsService {
 		userName: string,
 		fullAddress: string,
 		orgId?: string,
-		branchId?: number,
 	): Promise<void> {
 		const operationId = `checkout_notifications_${Date.now()}`;
 
@@ -739,13 +695,6 @@ export class CheckInsService {
 			const locationDetails = checkIn.client?.name 
 				? `${checkIn.client.name}` 
 				: 'a location';
-			
-			// Include full address if available, otherwise use coordinates
-			const addressInfo = fullAddress 
-				? ` at ${fullAddress}` 
-				: checkIn.checkOutLocation 
-					? ` (${checkIn.checkOutLocation})` 
-					: '';
 
 			// Send detailed notification to the user using CHECKOUT_COMPLETED template
 			await this.unifiedNotificationService.sendTemplatedNotification(
@@ -760,7 +709,6 @@ export class CheckInsService {
 					location: locationDetails,
 					address: fullAddress,
 					orgId,
-					branchId,
 					timestamp: new Date().toISOString(),
 					checkOutDetails: {
 						id: checkIn.uid,
@@ -777,7 +725,6 @@ export class CheckInsService {
 						createdAt: checkIn.createdAt?.toISOString(),
 						updatedAt: checkIn.updatedAt?.toISOString(),
 						orgId,
-						branchId,
 					},
 				},
 				{ 
@@ -803,14 +750,13 @@ export class CheckInsService {
 							userName: userName,
 							clientName: checkIn.client?.name || 'Location',
 							duration: duration,
-							workTimeDisplay: duration, // Add workTimeDisplay for template compatibility
+							workTimeDisplay: duration,
 							checkInId: checkIn.uid,
-							checkInTime: checkIn.checkInTime, // Add missing checkInTime
+							checkInTime: checkIn.checkInTime,
 							checkOutTime: checkIn.checkOutTime,
 							location: locationDetails,
 							address: fullAddress,
 							orgId,
-							branchId,
 							timestamp: new Date().toISOString(),
 							adminNotification: true,
 							checkOutDetails: {
@@ -828,7 +774,6 @@ export class CheckInsService {
 								createdAt: checkIn.createdAt?.toISOString(),
 								updatedAt: checkIn.updatedAt?.toISOString(),
 								orgId,
-								branchId,
 							},
 						},
 						{
@@ -854,7 +799,6 @@ export class CheckInsService {
 	async checkOut(
 		createCheckOutDto: CreateCheckOutDto,
 		orgId?: string,
-		branchId?: number,
 		clerkUserId?: string,
 	): Promise<{ message: string; duration?: string; checkInId?: number }> {
 		const operationId = `checkout_${Date.now()}`;
@@ -862,7 +806,7 @@ export class CheckInsService {
 		// When clerkUserId is present (token-derived), ignore client-supplied owner; use ownerRef only for legacy callers.
 		const ownerRef = clerkUserId ? undefined : (createCheckOutDto as { owner?: { uid: string } }).owner?.uid;
 		this.logger.log(
-			`[${operationId}] Check-out attempt for user: ${ownerRef ?? clerkUserId ?? 'unknown'}, orgId: ${orgId}, branchId: ${branchId}, clerkUserId: ${clerkUserId}`,
+			`[${operationId}] Check-out attempt for user: ${ownerRef ?? clerkUserId ?? 'unknown'}, orgId: ${orgId}, clerkUserId: ${clerkUserId}`,
 		);
 
 		try {
@@ -870,16 +814,11 @@ export class CheckInsService {
 			// CRITICAL PATH: Operations that must complete before response
 			// ============================================================
 
-			// Require owner (legacy) or clerkUserId from token. Token-derived identity takes precedence.
+			// Require owner (legacy) or clerkUserId from token. Token-derived identity takes precedence. Org and user only - no branch.
 			this.logger.debug(`[${operationId}] Validating check-out data`);
 			if (!ownerRef && !clerkUserId) {
 				this.logger.error(`[${operationId}] Owner or Clerk ID is required for check-out`);
-				throw new BadRequestException(process.env.NOT_FOUND_MESSAGE);
-			}
-
-			if (!createCheckOutDto?.branch) {
-				this.logger.error(`[${operationId}] Branch information is required for check-out`);
-				throw new BadRequestException(process.env.NOT_FOUND_MESSAGE);
+				throw new BadRequestException('Owner or Clerk ID is required for check-out');
 			}
 
 			// Resolve user by clerkUserId or owner.uid (string)
@@ -1142,7 +1081,6 @@ export class CheckInsService {
 							userName,
 							fullAddress,
 							orgId,
-							branchId,
 						);
 						this.logger.debug(`✅ [${operationId}] Check-out notifications sent successfully`);
 					} catch (notificationError) {
@@ -1168,7 +1106,6 @@ export class CheckInsService {
 								},
 							},
 							orgId,
-							branchId,
 						);
 						this.logger.debug(
 							`✅ [${operationId}] XP awarded successfully for check-out to user: ${clerkId}`,
@@ -1246,7 +1183,6 @@ export class CheckInsService {
 
 	async getAllCheckIns(
 		orgId?: string,
-		branchId?: number,
 		clerkUserId?: string,
 		userAccessLevel?: string,
 		userUid?: string,
@@ -1267,20 +1203,14 @@ export class CheckInsService {
 				AccessLevel.MANAGER,
 			].includes(userAccessLevel as AccessLevel);
 
-			this.logger.debug(`[${operationId}] Building query with filters for org: ${orgId}, branch: ${branchId || 'all'}, elevated: ${hasElevatedAccess}`);
+			this.logger.debug(`[${operationId}] Building query with filters for org: ${orgId}, elevated: ${hasElevatedAccess}`);
 
 			const queryBuilder = this.checkInRepository
 				.createQueryBuilder('checkIn')
 				.leftJoinAndSelect('checkIn.owner', 'owner')
 				.leftJoinAndSelect('checkIn.client', 'client')
-				.leftJoinAndSelect('checkIn.branch', 'branch')
 				.leftJoinAndSelect('checkIn.organisation', 'organisation')
 				.where('(organisation.clerkOrgId = :orgId OR organisation.ref = :orgId)', { orgId });
-
-			// Add branch filter if provided
-			if (branchId) {
-				queryBuilder.andWhere('branch.uid = :branchId', { branchId });
-			}
 
 			// Access control: Regular users can only see their own check-ins
 			if (!hasElevatedAccess) {
@@ -1393,7 +1323,6 @@ export class CheckInsService {
 		checkInId: number,
 		photoUrl: string,
 		orgId?: string,
-		branchId?: number,
 		clerkUserId?: string,
 	): Promise<{ message: string }> {
 		const operationId = `update_checkin_photo_${Date.now()}`;
@@ -1463,7 +1392,6 @@ export class CheckInsService {
 		checkInId: number,
 		photoUrl: string,
 		orgId?: string,
-		branchId?: number,
 		clerkUserId?: string,
 	): Promise<{ message: string }> {
 		const operationId = `update_checkout_photo_${Date.now()}`;
@@ -1534,7 +1462,6 @@ export class CheckInsService {
 		notes?: string,
 		resolution?: string,
 		orgId?: string,
-		branchId?: number,
 		clerkUserId?: string,
 		updateDto?: UpdateVisitDetailsDto,
 	): Promise<{ message: string }> {
@@ -1744,7 +1671,6 @@ export class CheckInsService {
 	async convertCheckInToLead(
 		checkInId: number,
 		orgId: string,
-		branchId?: number,
 		clerkUserId?: string,
 	): Promise<{ message: string; lead?: { uid: number; name: string } }> {
 		const operationId = `convert-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -1753,10 +1679,10 @@ export class CheckInsService {
 		try {
 			this.logger.log(`[${operationId}] Starting convert check-in to lead for checkInId: ${checkInId}`);
 
-			// Find check-in with relations including owner's branch
+			// Find check-in with relations (org and user only - no branch)
 			const checkIn = await this.checkInRepository.findOne({
 				where: { uid: checkInId },
-				relations: ['owner', 'owner.branch', 'organisation', 'branch', 'client'],
+				relations: ['owner', 'organisation', 'client'],
 			});
 
 			if (!checkIn) {
@@ -1772,21 +1698,6 @@ export class CheckInsService {
 			if (checkIn.organisationUid !== orgId) {
 				throw new ForbiddenException('Check-in does not belong to your organization');
 			}
-
-			// Resolve branch ID from multiple sources (priority order):
-			// 1. Explicit branchId parameter
-			// 2. Check-in's branch
-			// 3. Check-in owner's branch
-			// 4. If none available, skip branch assignment (make it optional)
-			const resolvedBranchId = branchId || 
-				checkIn.branch?.uid || 
-				checkIn.owner?.branch?.uid || 
-				undefined;
-
-			this.logger.debug(
-				`[${operationId}] Resolved branch ID: ${resolvedBranchId} ` +
-				`(from: ${branchId ? 'parameter' : checkIn.branch?.uid ? 'checkIn.branch' : checkIn.owner?.branch?.uid ? 'owner.branch' : 'none'})`
-			);
 
 			// Parse location coordinates for latitude/longitude
 			let latitude: number | undefined;
@@ -1819,10 +1730,7 @@ export class CheckInsService {
 
 			const leadEmail = checkIn.contactEmail || checkIn.client?.email;
 
-			// Build lead DTO from check-in information with fallbacks
-			// Allow minimal information: location, notes, and any available contact info
-			// Branch is optional - the service handles branchId parameter separately
-			// Note: Validation pipes don't run when calling service directly, so we can make branch optional
+			// Build lead DTO from check-in information with fallbacks (org and user only - no branch)
 			const createLeadDto: Omit<CreateLeadDto, 'branch'> & { branch?: { uid: number } } = {
 				name: leadName,
 				phone: leadPhone,
@@ -1835,24 +1743,16 @@ export class CheckInsService {
 				source: LeadSource.OTHER,
 			};
 
-			// Only include branch if we have a resolved branch ID
-			// The service will use branchId parameter which takes precedence anyway
-			if (resolvedBranchId) {
-				createLeadDto.branch = { uid: resolvedBranchId };
-			}
-
 			// Log before creating lead from visit conversion
 			this.logger.log(
 				`[${operationId}] Creating lead from visit conversion (checkInId: ${checkInId}, name: ${leadName || 'N/A'})...`
 			);
 
-			// Create lead using LeadsService
-			// Pass resolvedBranchId separately - service will use this if provided (takes precedence over DTO branch)
-			// Type assertion is safe here since validation pipes don't run at service level
+			// Create lead using LeadsService (no branch - org scope only)
 			const leadResult = await this.leadsService.create(
 				createLeadDto as CreateLeadDto,
 				orgId,
-				resolvedBranchId, // This parameter takes precedence and is optional
+				undefined,
 				clerkUserId,
 				'visit_conversion', // Source context for logging
 			);

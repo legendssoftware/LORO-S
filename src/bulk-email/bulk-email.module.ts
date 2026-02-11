@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BulkEmailService } from './bulk-email.service';
 import { CommunicationModule } from '../communication/communication.module';
@@ -16,11 +16,11 @@ import { UserModule } from '../user/user.module';
 	imports: [
 		TypeOrmModule.forFeature([CommunicationLog]),
 		CommunicationModule, // Import CommunicationModule instead of providing CommunicationService
-		UserModule,
-		ShopModule,
-		LeadsModule,
-		ClientsModule,
-		CheckInsModule,
+		forwardRef(() => UserModule),
+		forwardRef(() => ShopModule),
+		forwardRef(() => LeadsModule),
+		forwardRef(() => ClientsModule),
+		forwardRef(() => CheckInsModule),
 		BranchModule,
 		NotificationsModule,
 		OrganisationModule,
