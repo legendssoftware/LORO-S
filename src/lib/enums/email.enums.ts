@@ -180,4 +180,5 @@ export enum EmailType {
 	LOYALTY_SPECIALS_EMAIL = 'loyalty_specials_email',
 	// Check-ins reports
 	CHECK_INS_DAILY_REPORT = 'check_ins_daily_report',
+	CHECK_IN_LONG_VISIT_ALERT = 'check_in_long_visit_alert',
 }

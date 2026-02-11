@@ -1,6 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between, In } from 'typeorm';
+import { Repository, Between, In, IsNull, LessThan } from 'typeorm';
 import { CheckIn } from '../entities/check-in.entity';
 import { User } from '../../user/entities/user.entity';
 import { Organisation } from '../../organisation/entities/organisation.entity';
@@ -10,9 +10,11 @@ import { CommunicationService } from '../../communication/communication.service'
 import { EmailType } from '../../lib/enums/email.enums';
 import { PdfGenerationService } from '../../pdf-generation/pdf-generation.service';
 import { ConfigService } from '@nestjs/config';
-import { format, startOfDay, endOfDay, addMinutes, parse } from 'date-fns';
+import { format, startOfDay, endOfDay, addMinutes, parse, differenceInMinutes } from 'date-fns';
 import { toZonedTime, fromZonedTime } from 'date-fns-tz';
-import { CheckInsDailyReportData } from '../../lib/types/email-templates.types';
+import { CheckInsDailyReportData, CheckInLongVisitAlertData } from '../../lib/types/email-templates.types';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
 
 export interface ReportSummary {
 	totalVisits: number;
@@ -29,6 +31,9 @@ export interface ReportSummary {
 export class CheckInsReportsService {
 	private readonly logger = new Logger(CheckInsReportsService.name);
 
+	private readonly LONG_VISIT_MINUTES = 60;
+	private readonly LONG_VISIT_ALERT_CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
+
 	constructor(
 		@InjectRepository(CheckIn)
 		private checkInRepository: Repository<CheckIn>,
@@ -41,6 +46,8 @@ export class CheckInsReportsService {
 		private communicationService: CommunicationService,
 		private pdfGenerationService: PdfGenerationService,
 		private configService: ConfigService,
+		@Inject(CACHE_MANAGER)
+		private cacheManager: Cache,
 	) {}
 
 	/**
@@ -364,5 +371,109 @@ export class CheckInsReportsService {
 				},
 			],
 		});
+	}
+
+	/**
+	 * Find check-ins that have been open for more than 1 hour without check-out,
+	 * deduplicate by cache (one alert per check-in per 4h), and send one email per org to admins.
+	 */
+	async sendLongVisitAlerts(): Promise<void> {
+		const operationId = `LONG_VISIT_${Date.now()}`;
+		this.logger.debug(`[${operationId}] Checking for long visits (>${this.LONG_VISIT_MINUTES} min)...`);
+
+		const cutoff = addMinutes(new Date(), -this.LONG_VISIT_MINUTES);
+		const longVisits = await this.checkInRepository.find({
+			where: {
+				checkOutTime: IsNull(),
+				checkInTime: LessThan(cutoff),
+			},
+			relations: ['owner', 'client'],
+			order: { checkInTime: 'ASC' },
+		});
+
+		if (longVisits.length === 0) {
+			this.logger.debug(`[${operationId}] No long visits found`);
+			return;
+		}
+
+		// Filter out check-ins we already alerted in the last 4 hours
+		const toAlert: CheckIn[] = [];
+		for (const ci of longVisits) {
+			const cacheKey = `long_visit_alert:${ci.uid}`;
+			const already = await this.cacheManager.get<boolean>(cacheKey);
+			if (!already) toAlert.push(ci);
+		}
+
+		if (toAlert.length === 0) {
+			this.logger.debug(`[${operationId}] All long visits already alerted (dedupe)`);
+			return;
+		}
+
+		// Group by organisationUid (Clerk org id string)
+		const byOrg = new Map<string, CheckIn[]>();
+		for (const ci of toAlert) {
+			const orgUid = ci.organisationUid || 'unknown';
+			if (!byOrg.has(orgUid)) byOrg.set(orgUid, []);
+			byOrg.get(orgUid)!.push(ci);
+		}
+
+		for (const [clerkOrgId, checkIns] of byOrg) {
+			try {
+				const org = await this.organisationRepository.findOne({
+					where: [{ clerkOrgId }, { ref: clerkOrgId }],
+					select: ['uid', 'name'],
+				});
+				if (!org) {
+					this.logger.warn(`[${operationId}] Organisation not found for clerkOrgId=${clerkOrgId}`);
+					continue;
+				}
+
+				const adminUsers = await this.findAdminUsers(org.uid);
+				const adminEmails = adminUsers.map((u) => u.email).filter(Boolean) as string[];
+				if (adminEmails.length === 0) {
+					this.logger.debug(`[${operationId}] No admins for org ${org.uid}`);
+					continue;
+				}
+
+				const visits = checkIns.map((ci) => {
+					const checkInTime = new Date(ci.checkInTime);
+					const minutesSoFar = differenceInMinutes(new Date(), checkInTime);
+					const hours = Math.floor(minutesSoFar / 60);
+					const mins = minutesSoFar % 60;
+					const durationSoFar = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+					const userName = ci.owner ? `${ci.owner.name || ''} ${ci.owner.surname || ''}`.trim() || 'Unknown' : 'Unknown';
+					const clientOrLocation = ci.client?.name || ci.checkInLocation || '—';
+					return {
+						checkInUid: ci.uid,
+						userName,
+						checkInTime: format(checkInTime, 'dd MMM yyyy, HH:mm'),
+						durationSoFar,
+						clientOrLocation,
+					};
+				});
+
+				const organizationName = org.name || 'Organization';
+				const emailData: CheckInLongVisitAlertData = {
+					name: organizationName,
+					organizationName,
+					visits,
+					generatedAt: format(new Date(), 'dd MMM yyyy HH:mm'),
+				};
+
+				await this.communicationService.sendEmail(
+					EmailType.CHECK_IN_LONG_VISIT_ALERT,
+					adminEmails,
+					emailData,
+				);
+
+				// Mark each check-in as alerted (dedupe for 4h)
+				for (const ci of checkIns) {
+					await this.cacheManager.set(`long_visit_alert:${ci.uid}`, true, this.LONG_VISIT_ALERT_CACHE_TTL_MS);
+				}
+				this.logger.log(`[${operationId}] Sent long-visit alert to ${adminEmails.length} admin(s) for org ${org.uid}, ${checkIns.length} visit(s)`);
+			} catch (err) {
+				this.logger.error(`[${operationId}] Failed to send long-visit alert for org ${clerkOrgId}: ${err.message}`, err.stack);
+			}
+		}
 	}
 }

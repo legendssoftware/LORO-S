@@ -61,6 +61,18 @@ export class CheckInsReportsScheduler {
 	}
 
 	/**
+	 * Run every 15 minutes to notify admins of visits over 1 hour without check-out.
+	 */
+	@Cron('0 */15 * * * *')
+	async checkAndSendLongVisitAlerts(): Promise<void> {
+		try {
+			await this.checkInsReportsService.sendLongVisitAlerts();
+		} catch (error) {
+			this.logger.error(`Long-visit alerts scheduler error: ${error.message}`, error.stack);
+		}
+	}
+
+	/**
 	 * Process a single organization to determine if report should be sent.
 	 * Uses Clerk org ID string for OrganisationHours lookup; numeric uid for report generation.
 	 */

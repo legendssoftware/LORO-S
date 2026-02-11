@@ -99,6 +99,7 @@ import {
 	LoyaltyTierUpgradeData,
 	LoyaltyRewardClaimedData,
 	CheckInsDailyReportData,
+	CheckInLongVisitAlertData,
 } from '../types/email-templates.types';
 
 class EmailTemplateService {
@@ -560,6 +561,10 @@ class EmailTemplateService {
 		return this.renderTemplate('check-ins/daily-report.hbs', data);
 	}
 
+	checkInLongVisitAlert(data: CheckInLongVisitAlertData): string {
+		return this.renderTemplate('check-ins/long-visit-alert.hbs', data);
+	}
+
 	// System Templates
 	newUserAdminNotification(data: NewUserAdminNotificationData): string {
 		return this.renderTemplate('system/new-user-admin-notification.hbs', data);
@@ -962,6 +967,7 @@ class EmailTemplateService {
 			'licenses/created.hbs', 'licenses/updated.hbs', 'licenses/renewed.hbs', 'licenses/activated.hbs', 'licenses/suspended.hbs', 'licenses/limit-reached.hbs',
 			'licenses/transferred-from.hbs', 'licenses/transferred-to.hbs',
 			'reports/daily-report.hbs', 'reports/user-daily-report.hbs',
+			'check-ins/daily-report.hbs', 'check-ins/long-visit-alert.hbs',
 			'system/new-user-admin-notification.hbs', 'system/app-update-notification.hbs',
 			'auth/new-user-welcome.hbs', 'auth/user-re-invitation.hbs', 'auth/login-notification.hbs', 'auth/failed-login-attempt.hbs', 'auth/email-verified.hbs',
 			'client/password-reset.hbs', 'client/password-changed.hbs', 'client/login-notification.hbs', 'client/failed-login-attempt.hbs',

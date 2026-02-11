@@ -38,6 +38,10 @@ export class CheckIn {
 	@Column({ type: 'json', nullable: true })
 	fullAddress: Address;
 
+	/** Reverse-geocoded address for check-out location (populated on checkout) */
+	@Column({ type: 'json', nullable: true })
+	checkOutFullAddress: Address;
+
 	@Column({ type: 'text', nullable: true })
 	notes: string;
 

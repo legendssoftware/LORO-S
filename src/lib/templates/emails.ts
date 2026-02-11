@@ -95,6 +95,7 @@ import {
 	LoyaltyTierUpgradeData,
 	LoyaltyRewardClaimedData,
 	CheckInsDailyReportData,
+	CheckInLongVisitAlertData,
 } from '../types/email-templates.types';
 
 // Auth Templates
@@ -373,6 +374,10 @@ export const AttendanceBreakEnded = (data: AttendanceBreakEndedData): string => 
 // Check-Ins Templates
 export const CheckInsDailyReport = (data: CheckInsDailyReportData): string => {
 	return emailTemplateService.checkInsDailyReport(data);
+};
+
+export const CheckInLongVisitAlert = (data: CheckInLongVisitAlertData): string => {
+	return emailTemplateService.checkInLongVisitAlert(data);
 };
 
 // Asset Templates

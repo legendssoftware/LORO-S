@@ -22,6 +22,7 @@ import { LeadsService } from '../leads/leads.service';
 import { Quotation } from '../shop/entities/quotation.entity';
 import { CreateLeadDto } from '../leads/dto/create-lead.dto';
 import { LeadSource } from '../lib/enums/lead.enums';
+import { Address } from '../lib/interfaces/address.interface';
 
 @Injectable()
 export class CheckInsService {
@@ -467,6 +468,7 @@ export class CheckInsService {
 				message: process.env.SUCCESS_MESSAGE || 'Check-in recorded successfully',
 				checkInId: checkIn.uid,
 			};
+			this.logger.log(`[${operationId}] Returning response to client with checkInId: ${checkIn.uid}`);
 
 			// ============================================================
 			// POST-RESPONSE PROCESSING: Execute non-critical operations asynchronously
@@ -476,7 +478,31 @@ export class CheckInsService {
 				try {
 					this.logger.debug(`🔄 [${operationId}] Starting post-response processing for check-in: ${checkIn.uid}`);
 
-					// 1. Update client GPS coordinates if client is provided
+					// 1. Reverse geocode check-in location once and save fullAddress (decode once, save in column)
+					try {
+						const coordinateStr = createCheckInDto.checkInLocation?.trim();
+						if (coordinateStr) {
+							const coords = coordinateStr.split(',').map(coord => coord.trim());
+							if (coords.length === 2) {
+								const latitude = parseFloat(coords[0]);
+								const longitude = parseFloat(coords[1]);
+								if (!isNaN(latitude) && !isNaN(longitude) && latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180) {
+									const geocodingResult = await this.googleMapsService.reverseGeocode({ latitude, longitude });
+									await this.checkInRepository.update(checkIn.uid, {
+										fullAddress: geocodingResult.address,
+									});
+									this.logger.debug(`✅ [${operationId}] Check-in fullAddress decoded and saved: ${geocodingResult.formattedAddress}`);
+								}
+							}
+						}
+					} catch (geocodingError) {
+						this.logger.error(
+							`❌ [${operationId}] Failed to reverse geocode check-in location: ${geocodingError.message}`,
+							geocodingError.stack,
+						);
+					}
+
+					// 2. Update client GPS coordinates if client is provided
 					if (createCheckInDto.client && createCheckInDto.client.uid) {
 						try {
 							this.logger.debug(`[${operationId}] Updating client ${createCheckInDto.client.uid} GPS coordinates`);
@@ -494,7 +520,7 @@ export class CheckInsService {
 						}
 					}
 
-					// 2. Send check-in notifications
+					// 3. Send check-in notifications
 					try {
 						this.logger.debug(`[${operationId}] Sending check-in notifications`);
 						await this.sendCheckInNotifications(user.uid, checkIn, user.name, orgId);
@@ -507,7 +533,7 @@ export class CheckInsService {
 						// Don't fail post-processing if notifications fail
 					}
 
-					// 3. Award XP with enhanced error handling (use clerk id when available per migration)
+					// 4. Award XP with enhanced error handling (use clerk id when available per migration)
 					try {
 						this.logger.debug(`[${operationId}] Awarding XP for check-in to user: ${user.clerkUserId ?? user.uid}`);
 						await this.rewardsService.awardXP(
@@ -1003,6 +1029,7 @@ export class CheckInsService {
 				duration: duration,
 				checkInId: checkIn.uid,
 			};
+			this.logger.log(`[${operationId}] Returning response to client with checkInId: ${checkIn.uid}, duration: ${duration}`);
 
 			// ============================================================
 			// POST-RESPONSE PROCESSING: Execute non-critical operations asynchronously
@@ -1012,51 +1039,83 @@ export class CheckInsService {
 				try {
 					this.logger.debug(`🔄 [${operationId}] Starting post-response processing for check-out: ${checkIn.uid}`);
 
-					// 1. Reverse geocode the check-in location to get full address
-					let fullAddress = null;
-					try {
-						this.logger.debug(`[${operationId}] Reverse geocoding check-in location: ${checkIn.checkInLocation}`);
-						
-						// Parse coordinates from checkInLocation based on DTO format: "latitude, longitude"
-						const coordinateStr = checkIn.checkInLocation?.trim();
-						if (!coordinateStr) {
-							this.logger.warn(`[${operationId}] Empty check-in location provided`);
-						} else {
-							// Split by comma and handle various spacing
-							const coords = coordinateStr.split(',').map(coord => coord.trim());
-							
-							if (coords.length !== 2) {
-								this.logger.warn(`[${operationId}] Invalid coordinate format - expected 'latitude, longitude': ${checkIn.checkInLocation}`);
+					// 1. Reverse geocode the check-in location to get full address (skip if already decoded at check-in time)
+					let fullAddress: Address | null = null;
+					if (checkIn.fullAddress?.formattedAddress || (checkIn.fullAddress && (checkIn.fullAddress as Address).street)) {
+						fullAddress = checkIn.fullAddress as Address;
+						this.logger.debug(`[${operationId}] Check-in fullAddress already set, skipping reverse geocode`);
+					}
+					if (!fullAddress) {
+						try {
+							this.logger.debug(`[${operationId}] Reverse geocoding check-in location: ${checkIn.checkInLocation}`);
+
+							// Parse coordinates from checkInLocation based on DTO format: "latitude, longitude"
+							const coordinateStr = checkIn.checkInLocation?.trim();
+							if (!coordinateStr) {
+								this.logger.warn(`[${operationId}] Empty check-in location provided`);
 							} else {
-								const latitude = parseFloat(coords[0]);
-								const longitude = parseFloat(coords[1]);
+								// Split by comma and handle various spacing
+								const coords = coordinateStr.split(',').map(coord => coord.trim());
 
-								// Validate coordinate ranges
-								if (isNaN(latitude) || isNaN(longitude)) {
-									this.logger.warn(`[${operationId}] Non-numeric coordinates provided: lat=${coords[0]}, lng=${coords[1]}`);
-								} else if (latitude < -90 || latitude > 90) {
-									this.logger.warn(`[${operationId}] Invalid latitude (must be -90 to 90): ${latitude}`);
-								} else if (longitude < -180 || longitude > 180) {
-									this.logger.warn(`[${operationId}] Invalid longitude (must be -180 to 180): ${longitude}`);
+								if (coords.length !== 2) {
+									this.logger.warn(`[${operationId}] Invalid coordinate format - expected 'latitude, longitude': ${checkIn.checkInLocation}`);
 								} else {
-									const geocodingResult = await this.googleMapsService.reverseGeocode({ latitude, longitude });
-									fullAddress = geocodingResult.address;
-									this.logger.debug(`✅ [${operationId}] Successfully geocoded address: ${geocodingResult.formattedAddress}`);
+									const latitude = parseFloat(coords[0]);
+									const longitude = parseFloat(coords[1]);
 
-									// Update check-in record with full address
+									// Validate coordinate ranges
+									if (isNaN(latitude) || isNaN(longitude)) {
+										this.logger.warn(`[${operationId}] Non-numeric coordinates provided: lat=${coords[0]}, lng=${coords[1]}`);
+									} else if (latitude < -90 || latitude > 90) {
+										this.logger.warn(`[${operationId}] Invalid latitude (must be -90 to 90): ${latitude}`);
+									} else if (longitude < -180 || longitude > 180) {
+										this.logger.warn(`[${operationId}] Invalid longitude (must be -180 to 180): ${longitude}`);
+									} else {
+										const geocodingResult = await this.googleMapsService.reverseGeocode({ latitude, longitude });
+										fullAddress = geocodingResult.address;
+										this.logger.debug(`✅ [${operationId}] Successfully geocoded address: ${geocodingResult.formattedAddress}`);
+
+										// Update check-in record with full address
+										await this.checkInRepository.update(checkIn.uid, {
+											fullAddress: fullAddress,
+										});
+										this.logger.debug(`✅ [${operationId}] Updated check-in record with full address`);
+									}
+								}
+							}
+						} catch (geocodingError) {
+							this.logger.error(
+								`❌ [${operationId}] Failed to reverse geocode check-in location: ${geocodingError.message}`,
+								geocodingError.stack,
+							);
+							// Don't fail post-processing if geocoding fails
+						}
+					}
+
+					// 1b. Reverse geocode the check-out location to get checkOutFullAddress (use DTO; in-memory checkIn has no checkOutLocation yet)
+					let checkOutFullAddress: Address | null = null;
+					try {
+						const outLocationStr = createCheckOutDto?.checkOutLocation?.trim();
+						if (outLocationStr) {
+							const outCoords = outLocationStr.split(',').map((c: string) => c.trim());
+							if (outCoords.length === 2) {
+								const outLat = parseFloat(outCoords[0]);
+								const outLng = parseFloat(outCoords[1]);
+								if (!isNaN(outLat) && !isNaN(outLng) && outLat >= -90 && outLat <= 90 && outLng >= -180 && outLng <= 180) {
+									const outGeocodingResult = await this.googleMapsService.reverseGeocode({ latitude: outLat, longitude: outLng });
+									checkOutFullAddress = outGeocodingResult.address;
+									this.logger.debug(`✅ [${operationId}] Successfully geocoded check-out address: ${outGeocodingResult.formattedAddress}`);
 									await this.checkInRepository.update(checkIn.uid, {
-										fullAddress: fullAddress,
+										checkOutFullAddress: checkOutFullAddress,
 									});
-									this.logger.debug(`✅ [${operationId}] Updated check-in record with full address`);
 								}
 							}
 						}
-					} catch (geocodingError) {
+					} catch (checkOutGeocodeError) {
 						this.logger.error(
-							`❌ [${operationId}] Failed to reverse geocode check-in location: ${geocodingError.message}`,
-							geocodingError.stack,
+							`❌ [${operationId}] Failed to reverse geocode check-out location: ${checkOutGeocodeError.message}`,
+							checkOutGeocodeError.stack,
 						);
-						// Don't fail post-processing if geocoding fails
 					}
 
 					// 2. Fetch updated check-in with relations for notifications
@@ -1074,12 +1133,15 @@ export class CheckInsService {
 					try {
 						this.logger.debug(`[${operationId}] Sending check-out notifications`);
 						const userName = updatedCheckIn.owner?.name || 'Staff member';
+						const fullAddressStr = fullAddress?.formattedAddress
+							?? (fullAddress ? [fullAddress.street, fullAddress.suburb, fullAddress.city, fullAddress.state, fullAddress.country].filter(Boolean).join(', ') : '')
+							|| '';
 						await this.sendCheckOutNotifications(
 							user.uid,
 							updatedCheckIn,
 							duration,
 							userName,
-							fullAddress,
+							fullAddressStr,
 							orgId,
 						);
 						this.logger.debug(`✅ [${operationId}] Check-out notifications sent successfully`);
@@ -1142,6 +1204,7 @@ export class CheckInsService {
 	}
 
 	async checkInStatus(reference: string): Promise<any> {
+		this.logger.log(`checkInStatus: reference=${reference}`);
 		try {
 			// Reference can be clerk id (user_xxx) or numeric string; filter by ownerClerkUserId
 			const whereClause = reference.startsWith('user_')
@@ -1156,11 +1219,13 @@ export class CheckInsService {
 			});
 
 			if (!checkIn) {
+				this.logger.debug('checkInStatus: no check-in found');
 				throw new NotFoundException('Check-in not found');
 			}
 
 			const nextAction =
 				checkIn.checkInTime && checkIn.checkInLocation && !checkIn.checkOutTime ? 'checkOut' : 'checkIn';
+			this.logger.log(`checkInStatus: check-in found, nextAction=${nextAction}`);
 
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,
@@ -1171,6 +1236,7 @@ export class CheckInsService {
 
 			return response;
 		} catch (error) {
+			this.logger.debug(`checkInStatus: error, returning default nextAction=Check In`);
 			const response = {
 				message: error?.message,
 				nextAction: 'Check In',
@@ -1203,6 +1269,9 @@ export class CheckInsService {
 				AccessLevel.MANAGER,
 			].includes(userAccessLevel as AccessLevel);
 
+			this.logger.log(
+				`[${operationId}] getAllCheckIns entry: orgId=${orgId}, clerkUserId=${clerkUserId ?? 'n/a'}, userAccessLevel=${userAccessLevel ?? 'n/a'}, hasElevatedAccess=${hasElevatedAccess}, userUid=${userUid ?? 'n/a'}, startDate=${startDate?.toISOString() ?? 'n/a'}, endDate=${endDate?.toISOString() ?? 'n/a'}. No branch filter; org-scoped for elevated, owner-only for regular.`,
+			);
 			this.logger.debug(`[${operationId}] Building query with filters for org: ${orgId}, elevated: ${hasElevatedAccess}`);
 
 			const queryBuilder = this.checkInRepository
@@ -1243,6 +1312,13 @@ export class CheckInsService {
 
 			queryBuilder.orderBy('checkIn.checkInTime', 'DESC');
 
+			// Log applied filters: org only, or org + ownerClerkUserId, or org + userUid, plus optional date range
+			const filterParts = ['org'];
+			if (!hasElevatedAccess) filterParts.push('ownerClerkUserId');
+			else if (userUid) filterParts.push('userUid');
+			if (startDate || endDate) filterParts.push('date range');
+			this.logger.log(`[${operationId}] Applied filters: ${filterParts.join(', ')}. Executing query.`);
+
 			const checkIns = await queryBuilder.getMany();
 
 			const response = {
@@ -1250,10 +1326,11 @@ export class CheckInsService {
 				checkIns,
 			};
 
-			this.logger.log(`[${operationId}] Successfully retrieved ${checkIns.length} check-ins`);
+			this.logger.log(`[${operationId}] Successfully retrieved ${checkIns.length} check-ins. Returning ${checkIns.length} check-ins.`);
 			return response;
 		} catch (error) {
 			this.logger.error(`[${operationId}] Error retrieving check-ins:`, error.stack);
+			this.logger.log(`[${operationId}] Returning empty checkIns due to error: ${error?.message}`);
 			if (error instanceof BadRequestException) {
 				throw error;
 			}
@@ -1266,8 +1343,9 @@ export class CheckInsService {
 	}
 
 	async getUserCheckIns(userUid: string, organizationUid?: string): Promise<any> {
+		this.logger.log(`getUserCheckIns entry: userUid=${userUid}, organizationUid=${organizationUid ?? 'n/a'}`);
 		try {
-			// Use ownerClerkUserId if it's a Clerk ID, otherwise use uid (string coercion)
+			// Use ownerClerkUserId if it's a Clerk ID, otherwise use uid (string coercion). Listing by user/org only; no branch filter.
 			const whereCondition: any = userUid.startsWith('user_')
 				? { ownerClerkUserId: userUid }
 				: { owner: { uid: userUid } };
@@ -1282,10 +1360,11 @@ export class CheckInsService {
 				order: {
 					checkInTime: 'DESC',
 				},
-				relations: ['owner', 'client', 'branch', 'organisation'],
+				relations: ['owner', 'client', 'organisation'],
 			});
 
 			if (!checkIns || checkIns.length === 0) {
+				this.logger.log('getUserCheckIns: No check-ins found for user');
 				const response = {
 					message: process.env.SUCCESS_MESSAGE,
 					checkIns: [],
@@ -1293,6 +1372,7 @@ export class CheckInsService {
 				};
 				return response;
 			}
+			this.logger.log(`getUserCheckIns: returning ${checkIns.length} check-ins`);
 
 			// Get user info from the first check-in record
 			const userInfo = checkIns[0]?.owner || null;
@@ -1367,7 +1447,7 @@ export class CheckInsService {
 			await this.checkInRepository.update(checkInId, updateData);
 
 			const duration = Date.now() - startTime;
-			this.logger.log(`✅ [${operationId}] Check-in photo updated successfully in ${duration}ms`);
+			this.logger.log(`✅ [${operationId}] Check-in photo updated successfully in ${duration}ms. Returning success.`);
 
 			return {
 				message: process.env.SUCCESS_MESSAGE || 'Check-in photo updated successfully',
@@ -1436,7 +1516,7 @@ export class CheckInsService {
 			await this.checkInRepository.update(checkInId, updateData);
 
 			const duration = Date.now() - startTime;
-			this.logger.log(`✅ [${operationId}] Check-out photo updated successfully in ${duration}ms`);
+			this.logger.log(`✅ [${operationId}] Check-out photo updated successfully in ${duration}ms. Returning success.`);
 
 			return {
 				message: process.env.SUCCESS_MESSAGE || 'Check-out photo updated successfully',
@@ -1573,7 +1653,7 @@ export class CheckInsService {
 			await this.checkInRepository.update(checkInId, updateData);
 
 			const duration = Date.now() - startTime;
-			this.logger.log(`✅ [${operationId}] Visit details updated successfully in ${duration}ms`);
+			this.logger.log(`✅ [${operationId}] Visit details updated successfully in ${duration}ms. Returning success.`);
 
 			return {
 				message: process.env.SUCCESS_MESSAGE || 'Visit details updated successfully',
@@ -1777,6 +1857,7 @@ export class CheckInsService {
 			this.logger.log(
 				`✅ [${operationId}] Successfully converted check-in ${checkInId} to lead ${leadResult.data.uid} after ${duration}ms`
 			);
+			this.logger.log(`[${operationId}] Returning success with lead uid=${leadResult.data.uid}, name=${leadResult.data.name || leadName}`);
 
 			return {
 				message: process.env.SUCCESS_MESSAGE || 'Check-in converted to lead successfully',

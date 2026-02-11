@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Patch, Param, UseGuards, Get, Query, Req, ParseIntPipe, BadRequestException } from '@nestjs/common';
+import { Controller, Post, Body, Patch, Param, UseGuards, Get, Query, Req, ParseIntPipe, BadRequestException, Logger } from '@nestjs/common';
 import { CheckInsService } from './check-ins.service';
 import { CreateCheckInDto } from './dto/create-check-in.dto';
 import { CreateCheckOutDto } from './dto/create-check-out.dto';
@@ -30,6 +30,8 @@ import { RoleGuard } from '../guards/role.guard';
 @UseGuards(ClerkAuthGuard, RoleGuard)
 @ApiUnauthorizedResponse({ description: 'Unauthorized - Invalid credentials or missing token' })
 export class CheckInsController {
+	private readonly logger = new Logger(CheckInsController.name);
+
 	constructor(private readonly checkInsService: CheckInsService) {}
 
 	@Get()
@@ -65,6 +67,8 @@ export class CheckInsController {
 							duration: { type: 'string', nullable: true },
 							checkInLocation: { type: 'string' },
 							checkOutLocation: { type: 'string', nullable: true },
+							fullAddress: { type: 'object', nullable: true, description: 'Reverse-geocoded address for check-in location (formattedAddress, street, suburb, city, state, country, etc.)' },
+							checkOutFullAddress: { type: 'object', nullable: true, description: 'Reverse-geocoded address for check-out location (formattedAddress, street, suburb, city, state, country, etc.)' },
 							ownerClerkUserId: { type: 'string', description: 'Clerk user ID (string identifier) - key relationship field' },
 							organisationUid: { type: 'string', description: 'Organization UID (Clerk org ID string) - key relationship field' },
 							owner: { type: 'object' },
@@ -96,7 +100,7 @@ export class CheckInsController {
 			},
 		},
 	})
-	getAllCheckIns(
+	async getAllCheckIns(
 		@Req() req: AuthenticatedRequest,
 		@Query('userUid') userUid?: string,
 		@Query('startDate') startDate?: string,
@@ -108,7 +112,8 @@ export class CheckInsController {
 		}
 		const clerkUserId = req.user?.clerkUserId;
 		const userAccessLevel = req.user?.accessLevel;
-		return this.checkInsService.getAllCheckIns(
+		this.logger.log(`getAllCheckIns entry: orgId=${orgId}, clerkUserId=${clerkUserId ?? 'n/a'}, userAccessLevel=${userAccessLevel ?? 'n/a'}, userUid=${userUid ?? 'n/a'}, startDate=${startDate ?? 'n/a'}, endDate=${endDate ?? 'n/a'}`);
+		const result = await this.checkInsService.getAllCheckIns(
 			orgId,
 			clerkUserId,
 			userAccessLevel,
@@ -116,6 +121,9 @@ export class CheckInsController {
 			startDate ? new Date(startDate) : undefined,
 			endDate ? new Date(endDate) : undefined,
 		);
+		const count = Array.isArray(result?.checkIns) ? result.checkIns.length : 0;
+		this.logger.log(`Returning getAllCheckIns response, checkIns count: ${count}`);
+		return result;
 	}
 
 	@Get('user/:userUid')
@@ -141,6 +149,8 @@ export class CheckInsController {
 							duration: { type: 'string', nullable: true },
 							checkInLocation: { type: 'string' },
 							checkOutLocation: { type: 'string', nullable: true },
+							fullAddress: { type: 'object', nullable: true, description: 'Reverse-geocoded address for check-in location' },
+							checkOutFullAddress: { type: 'object', nullable: true, description: 'Reverse-geocoded address for check-out location' },
 							ownerClerkUserId: { type: 'string', description: 'Clerk user ID (string identifier) - key relationship field' },
 							organisationUid: { type: 'number', description: 'Organization UID (number) - key relationship field' },
 							owner: { type: 'object' },
@@ -162,11 +172,15 @@ export class CheckInsController {
 			},
 		},
 	})
-	getUserCheckIns(
+	async getUserCheckIns(
 		@Param('userUid') userUid: string,
 		@Query('organizationUid') organizationUid?: string
 	) {
-		return this.checkInsService.getUserCheckIns(userUid, organizationUid);
+		this.logger.log(`getUserCheckIns entry: userUid=${userUid}, organizationUid=${organizationUid ?? 'n/a'}`);
+		const result = await this.checkInsService.getUserCheckIns(userUid, organizationUid);
+		const count = Array.isArray(result?.checkIns) ? result.checkIns.length : 0;
+		this.logger.log(`Returning getUserCheckIns, checkIns count: ${count}`);
+		return result;
 	}
 
 	@Post()
@@ -227,13 +241,16 @@ export class CheckInsController {
 			},
 		},
 	})
-	checkIn(@Body() createCheckInDto: CreateCheckInDto, @Req() req: AuthenticatedRequest) {
+	async checkIn(@Body() createCheckInDto: CreateCheckInDto, @Req() req: AuthenticatedRequest) {
 		const orgId = getClerkOrgId(req);
 		if (!orgId) {
 			throw new BadRequestException('Organization context required');
 		}
 		const clerkUserId = req.user?.clerkUserId;
-		return this.checkInsService.checkIn(createCheckInDto, orgId, clerkUserId);
+		this.logger.log(`checkIn entry: orgId=${orgId}, clerkUserId=${clerkUserId ?? 'n/a'}`);
+		const result = await this.checkInsService.checkIn(createCheckInDto, orgId, clerkUserId);
+		this.logger.log(`Returning checkIn response${result?.checkInId != null ? `, checkInId: ${result.checkInId}` : ''}`);
+		return result;
 	}
 
 	@Get('status/me')
@@ -269,12 +286,15 @@ export class CheckInsController {
 			},
 		},
 	})
-	checkInStatusMe(@Req() req: AuthenticatedRequest) {
+	async checkInStatusMe(@Req() req: AuthenticatedRequest) {
 		const clerkUserId = getClerkUserId(req);
 		if (!clerkUserId) {
 			throw new BadRequestException('Authentication required');
 		}
-		return this.checkInsService.checkInStatus(clerkUserId);
+		this.logger.log('checkInStatusMe entry: reference=me');
+		const result = await this.checkInsService.checkInStatus(clerkUserId);
+		this.logger.log(`Returning checkInStatusMe, nextAction=${result?.nextAction ?? 'n/a'}`);
+		return result;
 	}
 
 	@Get('status/:reference')
@@ -311,8 +331,11 @@ export class CheckInsController {
 			},
 		},
 	})
-	checkInStatus(@Param('reference') reference: string) {
-		return this.checkInsService.checkInStatus(reference);
+	async checkInStatus(@Param('reference') reference: string) {
+		this.logger.log(`checkInStatus entry: reference=${reference}`);
+		const result = await this.checkInsService.checkInStatus(reference);
+		this.logger.log(`Returning checkInStatus, nextAction=${result?.nextAction ?? 'n/a'}`);
+		return result;
 	}
 
 	@Patch(':reference')
@@ -371,13 +394,16 @@ export class CheckInsController {
 			},
 		},
 	})
-	checkOut(@Body() createCheckOutDto: CreateCheckOutDto, @Req() req: AuthenticatedRequest) {
+	async checkOut(@Body() createCheckOutDto: CreateCheckOutDto, @Req() req: AuthenticatedRequest) {
 		const orgId = getClerkOrgId(req);
 		if (!orgId) {
 			throw new BadRequestException('Organization context required');
 		}
 		const clerkUserId = req.user?.clerkUserId;
-		return this.checkInsService.checkOut(createCheckOutDto, orgId, clerkUserId);
+		this.logger.log(`checkOut entry: orgId=${orgId}, clerkUserId=${clerkUserId ?? 'n/a'}`);
+		const result = await this.checkInsService.checkOut(createCheckOutDto, orgId, clerkUserId);
+		this.logger.log(`Returning checkOut response${result?.checkInId != null ? `, checkInId: ${result.checkInId}` : ''}${result?.duration != null ? `, duration: ${result.duration}` : ''}`);
+		return result;
 	}
 
 	@Post('client/:clientId')
@@ -441,13 +467,16 @@ export class CheckInsController {
 	@ApiNotFoundResponse({
 		description: 'Check-in not found',
 	})
-	updateCheckInPhoto(@Body() updateDto: UpdateCheckInPhotoDto, @Req() req: AuthenticatedRequest) {
+	async updateCheckInPhoto(@Body() updateDto: UpdateCheckInPhotoDto, @Req() req: AuthenticatedRequest) {
 		const orgId = getClerkOrgId(req);
 		if (!orgId) {
 			throw new BadRequestException('Organization context required');
 		}
 		const clerkUserId = req.user?.clerkUserId;
-		return this.checkInsService.updateCheckInPhoto(updateDto.checkInId, updateDto.photoUrl, orgId, clerkUserId);
+		this.logger.log(`updateCheckInPhoto entry: checkInId=${updateDto.checkInId}, orgId=${orgId}`);
+		const result = await this.checkInsService.updateCheckInPhoto(updateDto.checkInId, updateDto.photoUrl, orgId, clerkUserId);
+		this.logger.log(`Returning updateCheckInPhoto: ${result?.message?.includes('success') ? 'success' : 'failure'}`);
+		return result;
 	}
 
 	@Patch('photo/check-out')
@@ -471,13 +500,16 @@ export class CheckInsController {
 	@ApiNotFoundResponse({
 		description: 'Check-in not found',
 	})
-	updateCheckOutPhoto(@Body() updateDto: UpdateCheckOutPhotoDto, @Req() req: AuthenticatedRequest) {
+	async updateCheckOutPhoto(@Body() updateDto: UpdateCheckOutPhotoDto, @Req() req: AuthenticatedRequest) {
 		const orgId = getClerkOrgId(req);
 		if (!orgId) {
 			throw new BadRequestException('Organization context required');
 		}
 		const clerkUserId = req.user?.clerkUserId;
-		return this.checkInsService.updateCheckOutPhoto(updateDto.checkInId, updateDto.photoUrl, orgId, clerkUserId);
+		this.logger.log(`updateCheckOutPhoto entry: checkInId=${updateDto.checkInId}, orgId=${orgId}`);
+		const result = await this.checkInsService.updateCheckOutPhoto(updateDto.checkInId, updateDto.photoUrl, orgId, clerkUserId);
+		this.logger.log(`Returning updateCheckOutPhoto: ${result?.message?.includes('success') ? 'success' : 'failure'}`);
+		return result;
 	}
 
 	@Patch('visit-details')
@@ -501,13 +533,14 @@ export class CheckInsController {
 	@ApiNotFoundResponse({
 		description: 'Check-in not found',
 	})
-	updateVisitDetails(@Body() updateDto: UpdateVisitDetailsDto, @Req() req: AuthenticatedRequest) {
+	async updateVisitDetails(@Body() updateDto: UpdateVisitDetailsDto, @Req() req: AuthenticatedRequest) {
 		const orgId = getClerkOrgId(req);
 		if (!orgId) {
 			throw new BadRequestException('Organization context required');
 		}
 		const clerkUserId = req.user?.clerkUserId;
-		return this.checkInsService.updateVisitDetails(
+		this.logger.log(`updateVisitDetails entry: checkInId=${updateDto.checkInId}, orgId=${orgId}`);
+		const result = await this.checkInsService.updateVisitDetails(
 			updateDto.checkInId,
 			updateDto.client?.uid,
 			updateDto.notes,
@@ -516,6 +549,8 @@ export class CheckInsController {
 			clerkUserId,
 			updateDto,
 		);
+		this.logger.log(`Returning updateVisitDetails: ${result?.message?.includes('success') ? 'success' : 'failure'}`);
+		return result;
 	}
 
 	@Post(':checkInId/convert-to-lead')
@@ -561,7 +596,7 @@ export class CheckInsController {
 			},
 		},
 	})
-	convertCheckInToLead(
+	async convertCheckInToLead(
 		@Param('checkInId', ParseIntPipe) checkInId: number,
 		@Req() req: AuthenticatedRequest,
 	) {
@@ -570,6 +605,9 @@ export class CheckInsController {
 			throw new BadRequestException('Organization context required');
 		}
 		const clerkUserId = req.user?.clerkUserId;
-		return this.checkInsService.convertCheckInToLead(checkInId, orgId, clerkUserId);
+		this.logger.log(`convertCheckInToLead entry: checkInId=${checkInId}, orgId=${orgId}`);
+		const result = await this.checkInsService.convertCheckInToLead(checkInId, orgId, clerkUserId);
+		this.logger.log(`Returning convertCheckInToLead: ${result?.lead ? `success, leadUid=${result.lead.uid}` : 'failure'}`);
+		return result;
 	}
 }

@@ -1,0 +1,40 @@
+{{#base headerTitle="Long Visit Alert" headerSubtitle="Visit over 1 hour without check-out"}}
+
+<div class="greeting">
+	Hello,
+</div>
+
+<div class="message">
+	<p>The following team member(s) have been on a visit for <strong>more than 1 hour</strong> without checking out. You may want to follow up.</p>
+</div>
+
+<div class="info-card">
+	<h3>⏱️ Visits over 1 hour (no check-out)</h3>
+	<p style="color: #64748b; font-size: 13px; margin: 8px 0 16px 0;">Organization: <strong>{{organizationName}}</strong></p>
+	<div style="overflow-x: auto;">
+		<table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+			<thead>
+				<tr style="background: #f1f5f9; border-bottom: 2px solid #e2e8f0;">
+					<th style="padding: 10px; text-align: left; font-weight: 600; color: #475569;">User</th>
+					<th style="padding: 10px; text-align: left; font-weight: 600; color: #475569;">Check-in time</th>
+					<th style="padding: 10px; text-align: left; font-weight: 600; color: #475569;">Duration so far</th>
+					<th style="padding: 10px; text-align: left; font-weight: 600; color: #475569;">Client / Location</th>
+				</tr>
+			</thead>
+			<tbody>
+				{{#each visits}}
+				<tr style="border-bottom: 1px solid #e2e8f0;">
+					<td style="padding: 10px;">{{userName}}</td>
+					<td style="padding: 10px;">{{checkInTime}}</td>
+					<td style="padding: 10px; font-weight: 600; color: #b45309;">{{durationSoFar}}</td>
+					<td style="padding: 10px;">{{clientOrLocation}}</td>
+				</tr>
+				{{/each}}
+			</tbody>
+		</table>
+	</div>
+</div>
+
+<p style="color: #64748b; font-size: 12px; margin-top: 16px;">Generated at {{generatedAt}}</p>
+
+{{/base}}

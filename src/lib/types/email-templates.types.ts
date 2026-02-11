@@ -523,6 +523,18 @@ export interface CheckInsDailyReportData extends BaseEmailData {
 	timezone: string;
 }
 
+export interface CheckInLongVisitAlertData extends BaseEmailData {
+	organizationName: string;
+	visits: Array<{
+		checkInUid: number;
+		userName: string;
+		checkInTime: string;
+		durationSoFar: string;
+		clientOrLocation: string;
+	}>;
+	generatedAt: string;
+}
+
 export interface OvertimeReminderData extends BaseEmailData {
 	employeeName: string;
 	employeeEmail: string;
@@ -2481,6 +2493,7 @@ export interface EmailDataMap {
     [EmailType.LOYALTY_TIER_UPGRADE]: LoyaltyTierUpgradeData;
     [EmailType.LOYALTY_REWARD_CLAIMED]: LoyaltyRewardClaimedData;
     [EmailType.CHECK_INS_DAILY_REPORT]: CheckInsDailyReportData;
+    [EmailType.CHECK_IN_LONG_VISIT_ALERT]: CheckInLongVisitAlertData;
 }
 
 export type EmailTemplateData<T extends EmailType> = T extends keyof EmailDataMap ? EmailDataMap[T] : never;

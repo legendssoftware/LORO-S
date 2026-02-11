@@ -1,4 +1,4 @@
-import { Injectable, CanActivate, ExecutionContext, UnauthorizedException, ForbiddenException, Logger, Inject } from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext, UnauthorizedException, ForbiddenException, Inject } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Request } from 'express';
 import { ClerkService } from './clerk.service';
@@ -12,7 +12,6 @@ const IS_PUBLIC_KEY = 'isPublic';
 
 @Injectable()
 export class ClerkAuthGuard implements CanActivate {
-	private readonly logger = new Logger(ClerkAuthGuard.name);
 	private readonly LICENSE_CACHE_TTL = 60000; // 1 minute cache TTL for licenses
 	private readonly CACHE_PREFIX = 'license:';
 
@@ -70,11 +69,6 @@ export class ClerkAuthGuard implements CanActivate {
 		const tokenRole = decoded.payload.o?.rol;
 		const tokenOrgId = decoded.payload.o?.id; // Clerk org ID from token (source of truth)
 
-		// Debug: log full decoded token payload (to inspect claims, especially o.rol for client tokens)
-		this.logger.log(
-			`[ClerkAuthGuard] Decoded token payload: ${JSON.stringify(decoded.payload)}`,
-		);
-
 		if (!clerkUserId) {
 			throw new UnauthorizedException('Invalid token: missing user ID');
 		}
@@ -110,17 +104,8 @@ export class ClerkAuthGuard implements CanActivate {
 			if (authResult.isAuthenticated && authResult.userId) {
 				// SDK verification succeeded - userId already set from token
 			}
-		} catch (error) {
-			// SDK failed - log warning but continue (user object already exists from token)
-			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-			if (errorMessage.includes('Publishable key') || 
-			    errorMessage.includes('not initialized') ||
-			    errorMessage.includes('not configured')) {
-				this.logger.warn(`[ClerkAuthGuard] Clerk SDK unavailable, using token-based auth: ${errorMessage}`);
-			} else {
-				// Other errors - log but don't fail (token-based auth is sufficient)
-				this.logger.warn(`[ClerkAuthGuard] Clerk SDK verification failed, continuing with token auth: ${errorMessage}`);
-			}
+		} catch {
+			// SDK failed - continue (user object already exists from token)
 		}
 
 		// STEP 7: Fetch user from database (optional enhancement)
@@ -199,22 +184,16 @@ export class ClerkAuthGuard implements CanActivate {
 										status: activeLicense.status,
 									}, this.LICENSE_CACHE_TTL);
 								} else {
-									this.logger.warn(`[ClerkAuthGuard] No active license found for organisation. Available: ${licenses.map(l => `${l.plan} (${l.status})`).join(', ')}`);
-									
 									// Cache null result to avoid repeated queries
 									await this.cacheManager.set(cacheKey, { plan: null, status: null }, this.LICENSE_CACHE_TTL);
 								}
 							} else {
-								this.logger.warn(`[ClerkAuthGuard] No licenses found for organisation`);
-								
 								// Cache null result to avoid repeated queries
 								await this.cacheManager.set(cacheKey, { plan: null, status: null }, this.LICENSE_CACHE_TTL);
 							}
 						}
-					} catch (error) {
-						// Don't fail authentication if license fetch fails, but log the error
-						const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-						this.logger.error(`[ClerkAuthGuard] Could not fetch license: ${errorMessage}`);
+					} catch {
+						// Don't fail authentication if license fetch fails
 					}
 				}
 
@@ -231,7 +210,6 @@ export class ClerkAuthGuard implements CanActivate {
 							throw error;
 						}
 						// Don't fail authentication if license validation fails
-						this.logger.warn(`[ClerkAuthGuard] License validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
 					}
 				}
 
@@ -264,11 +242,6 @@ export class ClerkAuthGuard implements CanActivate {
 					request['user'].branch = clientAuth.client.branch ? { uid: clientAuth.client.branch.uid } : undefined;
 					request['user'].org = clientAuth.client.organisation ? { uid: clientAuth.client.organisation.uid } : undefined;
 					// Role already set from token (e.g. 'client')
-
-					// Debug: log available roles in token for client (token may lack o.rol, causing RoleGuard 401)
-					this.logger.log(
-						`[ClerkAuthGuard] Client auth: token role/org from payload: tokenRole=${tokenRole ?? 'undefined'}, payload.o=${JSON.stringify(decoded.payload.o ?? null)}, full decoded payload=${JSON.stringify(decoded.payload)}`,
-					);
 
 					// Fetch org's license and verify client.portal.access; set licensePlan so FeatureGuard passes
 					if (orgRef) {
@@ -304,7 +277,6 @@ export class ClerkAuthGuard implements CanActivate {
 							request['user'].licenseId = license?.uid?.toString();
 						} catch (err) {
 							if (err instanceof ForbiddenException) throw err;
-							this.logger.warn(`[ClerkAuthGuard] Could not fetch license for client org: ${err instanceof Error ? err.message : 'Unknown'}`);
 						}
 					}
 				} else {
@@ -313,7 +285,6 @@ export class ClerkAuthGuard implements CanActivate {
 					const syncKey = `_clerkSync_${clerkUserId}`;
 					if (request[syncKey]) {
 						// Sync already in progress for this request - wait for it
-						this.logger.debug(`[ClerkAuthGuard] Sync already in progress for this request, waiting...`);
 						const syncedUser = await request[syncKey];
 						if (syncedUser && syncedUser.uid) {
 							request['user'].uid = syncedUser.uid;
@@ -326,7 +297,6 @@ export class ClerkAuthGuard implements CanActivate {
 						}
 					} else {
 						// Start sync and track it in request context
-						this.logger.warn(`[ClerkAuthGuard] User not found in database, syncing from Clerk`);
 						try {
 							const syncPromise = this.clerkService.syncUserFromClerk(clerkUserId);
 							const timeoutPromise = new Promise<null>((resolve) =>
@@ -346,13 +316,9 @@ export class ClerkAuthGuard implements CanActivate {
 								request['user'].org = (tokenOrgId || syncedUser.organisationRef) ? { uid: syncedUser.organisation?.uid } : undefined;
 								request['user'].role = syncedUser.role ?? request['user'].role;
 								request['user'].accessLevel = syncedUser.accessLevel ?? request['user'].accessLevel;
-							} else {
-								// Sync timed out or failed - continue with token-based auth
-								this.logger.warn(`[ClerkAuthGuard] User sync timed out or failed`);
 							}
-						} catch (error) {
+						} catch {
 							// Sync failed - continue with token-based auth
-							this.logger.warn(`[ClerkAuthGuard] User sync failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
 						} finally {
 							// Clean up after a delay to allow other guard executions to use the same promise
 							setTimeout(() => delete request[syncKey], 100);
@@ -360,9 +326,8 @@ export class ClerkAuthGuard implements CanActivate {
 					}
 				}
 			}
-		} catch (error) {
+		} catch {
 			// DB fetch failed - continue with token-based user object
-			this.logger.warn(`[ClerkAuthGuard] Could not fetch user from database, using token data only: ${error instanceof Error ? error.message : 'Unknown error'}`);
 		}
 
 		// User object is always attached at this point (from token or enhanced with DB data)

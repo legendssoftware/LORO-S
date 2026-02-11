@@ -32,6 +32,7 @@ import {
 	AttendanceBreakEnded,
 	OvertimeReminder,
 	CheckInsDailyReport,
+	CheckInLongVisitAlert,
 } from '../lib/templates/emails';
 // Quotation related templates
 import {
@@ -153,6 +154,7 @@ import {
 	LoyaltyTierUpgradeData,
 	LoyaltyRewardClaimedData,
 	CheckInsDailyReportData,
+	CheckInLongVisitAlertData,
 } from '../lib/types/email-templates.types';
 import {
 	TaskFlagCreated,
@@ -1150,6 +1152,11 @@ export class CommunicationService {
 				return {
 					subject: `Daily Check-Ins Report - ${(data as CheckInsDailyReportData).reportDate}`,
 					body: CheckInsDailyReport(data as CheckInsDailyReportData),
+				};
+			case EmailType.CHECK_IN_LONG_VISIT_ALERT:
+				return {
+					subject: `Long Visit Alert - ${(data as CheckInLongVisitAlertData).organizationName}`,
+					body: CheckInLongVisitAlert(data as CheckInLongVisitAlertData),
 				};
 			case EmailType.LEAVE_STATUS_UPDATE_USER:
 				return {
