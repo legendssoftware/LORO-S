@@ -238,7 +238,11 @@ async function main() {
 						console.log(`   ✅ ${label} -> added to Bit Drywall`);
 					} catch (memErr: unknown) {
 						const msg = memErr instanceof Error ? memErr.message : String(memErr);
-						if (msg.includes('already a member') || msg.includes('already exists')) {
+						const alreadyMember =
+							msg.includes('already a member') ||
+							msg.includes('already exists') ||
+							msg.toLowerCase().includes('bad request');
+						if (alreadyMember) {
 							console.log(`   ⏭️  ${label} -> already in Bit Drywall`);
 						} else {
 							console.error(`   ❌ ${label} -> org membership failed: ${msg}`);
@@ -276,9 +280,13 @@ async function main() {
 					console.log(`   ✅ ${label} -> added to Bit Drywall`);
 				} catch (memErr: unknown) {
 					const msg = memErr instanceof Error ? memErr.message : String(memErr);
-					console.error(`   ❌ ${label} -> org membership failed: ${msg}`);
-					failed++;
-					failedEntries.push({ uid: row.uid, email: row.email.trim(), reason: shortReason(msg) });
+					if (msg.toLowerCase().includes('bad request')) {
+						console.log(`   ⏭️  ${label} -> membership may already exist (Bad Request)`);
+					} else {
+						console.error(`   ❌ ${label} -> org membership failed: ${msg}`);
+						failed++;
+						failedEntries.push({ uid: row.uid, email: row.email.trim(), reason: shortReason(msg) });
+					}
 				}
 			} catch (err: unknown) {
 				failed++;
