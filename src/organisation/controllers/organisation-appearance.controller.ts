@@ -266,6 +266,7 @@ export class OrganisationAppearanceController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)

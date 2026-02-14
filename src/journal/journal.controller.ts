@@ -32,7 +32,8 @@ export class JournalController {
   }
 
   @Post()
-  @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
+  @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER,
+		AccessLevel.MEMBER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
   @ApiOperation({ 
     summary: '📝 Create a new journal entry',
     description: createApiDescription(
@@ -131,7 +132,8 @@ Creates a new journal entry in the system with full content management and organ
   }
 
   @Get()
-  @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
+  @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER,
+		AccessLevel.MEMBER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
   @ApiOperation({ 
     summary: '📊 Retrieve all journal entries',
     description: createApiDescription(
@@ -257,7 +259,8 @@ Retrieves journal entries with advanced filtering, pagination, and performance o
   }
 
   @Get(':ref')
-  @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
+  @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER,
+		AccessLevel.MEMBER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
   @ApiOperation({ 
     summary: 'Get a journal entry by reference code',
     description: createApiDescription(
@@ -328,6 +331,7 @@ Retrieves journal entries with advanced filtering, pagination, and performance o
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -395,7 +399,8 @@ Retrieves journal entries with advanced filtering, pagination, and performance o
   }
 
   @Patch(':ref')
-  @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
+  @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER,
+		AccessLevel.MEMBER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
   @ApiOperation({ 
     summary: 'Update a journal entry by reference code',
     description: createApiDescription(
@@ -436,7 +441,8 @@ Retrieves journal entries with advanced filtering, pagination, and performance o
   }
 
   @Patch('restore/:ref')
-  @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
+  @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER,
+		AccessLevel.MEMBER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
   @ApiOperation({ 
     summary: 'Restore a journal entry by reference code',
     description: 'Restores a previously deleted journal entry. Requires ADMIN, MANAGER, or SUPPORT role.'
@@ -467,7 +473,8 @@ Retrieves journal entries with advanced filtering, pagination, and performance o
   }
 
   @Delete(':ref')
-  @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER, AccessLevel.OWNER, AccessLevel.TECHNICIAN, AccessLevel.DEVELOPER)
+  @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER,
+		AccessLevel.MEMBER, AccessLevel.OWNER, AccessLevel.TECHNICIAN, AccessLevel.DEVELOPER)
   @ApiOperation({ 
     summary: 'Delete a journal entry by reference code',
     description: createApiDescription(
@@ -508,7 +515,8 @@ Retrieves journal entries with advanced filtering, pagination, and performance o
   // Inspection-specific endpoints
 
   @Post('inspection')
-  @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
+  @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER,
+		AccessLevel.MEMBER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
   @ApiOperation({ 
     summary: '🔍 Create comprehensive inspection journal',
     description: createApiDescription(
@@ -622,7 +630,8 @@ Creates detailed inspection journals with comprehensive scoring, validation, and
   }
 
   @Get('inspections')
-  @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
+  @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER,
+		AccessLevel.MEMBER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
   @ApiOperation({ 
     summary: 'Get all inspection journals',
     description: 'Retrieves all inspection-type journal entries with scoring data.'
@@ -662,7 +671,8 @@ Creates detailed inspection journals with comprehensive scoring, validation, and
   }
 
   @Get('inspection/:ref')
-  @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
+  @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER,
+		AccessLevel.MEMBER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
   @ApiOperation({ 
     summary: 'Get inspection journal with detailed form data',
     description: 'Retrieves a specific inspection journal with complete form data and scoring breakdown.'
@@ -708,7 +718,8 @@ Creates detailed inspection journals with comprehensive scoring, validation, and
   }
 
   @Get('templates')
-  @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
+  @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER,
+		AccessLevel.MEMBER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
   @ApiOperation({ 
     summary: 'Get inspection form templates',
     description: 'Retrieves predefined inspection form templates for different types of inspections.'
@@ -747,7 +758,8 @@ Creates detailed inspection journals with comprehensive scoring, validation, and
   }
 
   @Post('calculate-score/:ref')
-  @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
+  @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.USER,
+		AccessLevel.MEMBER, AccessLevel.OWNER, AccessLevel.TECHNICIAN)
   @ApiOperation({ 
     summary: 'Recalculate inspection scores',
     description: 'Recalculates the total score and percentage for an inspection journal.'

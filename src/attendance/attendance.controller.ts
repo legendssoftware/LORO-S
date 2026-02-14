@@ -225,6 +225,7 @@ export class AttendanceController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -354,6 +355,7 @@ export class AttendanceController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -907,6 +909,7 @@ export class AttendanceController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -1061,6 +1064,7 @@ export class AttendanceController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -1223,6 +1227,7 @@ export class AttendanceController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -1418,6 +1423,7 @@ export class AttendanceController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -1463,6 +1469,7 @@ export class AttendanceController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -1746,6 +1753,7 @@ export class AttendanceController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -1842,6 +1850,7 @@ export class AttendanceController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -1890,6 +1899,7 @@ export class AttendanceController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -2150,6 +2160,7 @@ export class AttendanceController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -2423,6 +2434,7 @@ export class AttendanceController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -2851,6 +2863,7 @@ export class AttendanceController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 		AccessLevel.HR,
@@ -2886,6 +2899,7 @@ export class AttendanceController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 		AccessLevel.HR,
@@ -3190,6 +3204,7 @@ Retrieves detailed attendance analytics for a specific user including historical
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -5152,7 +5167,8 @@ Manually triggers the overtime policy check system to identify employees working
 	@ApiBadRequestResponse({ description: 'Invalid parameters provided' })
 	@ApiNotFoundResponse({ description: 'User not found' })
 	@UseGuards(ClerkAuthGuard, RoleGuard)
-	@Roles(AccessLevel.USER, AccessLevel.ADMIN, AccessLevel.OWNER)
+	@Roles(AccessLevel.USER,
+		AccessLevel.MEMBER, AccessLevel.ADMIN, AccessLevel.OWNER)
 	async getUserMetrics(
 		@Param('ref') ref: string,
 		@Query('startDate') startDate: string,
@@ -5199,7 +5215,8 @@ Manually triggers the overtime policy check system to identify employees working
 	@ApiBadRequestResponse({ description: 'Invalid parameters provided' })
 	@ApiNotFoundResponse({ description: 'User not found' })
 	@UseGuards(ClerkAuthGuard, RoleGuard)
-	@Roles(AccessLevel.USER, AccessLevel.ADMIN, AccessLevel.OWNER)
+	@Roles(AccessLevel.USER,
+		AccessLevel.MEMBER, AccessLevel.ADMIN, AccessLevel.OWNER)
 	async getUserMetricsWithPathParams(
 		@Param('ref') ref: string,
 		@Param('startDate') startDate: string,

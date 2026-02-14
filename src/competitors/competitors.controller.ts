@@ -891,7 +891,7 @@ Returns comprehensive results including:
 	}
 
 	@Get()
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.USER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.USER, AccessLevel.MEMBER)
 	@ApiOperation({
 		summary: '📋 Get all competitors',
 		description: `
@@ -1530,7 +1530,7 @@ Retrieves competitors organized by threat level assessment for strategic priorit
 	}
 
 	@Get('by-name')
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.USER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.USER, AccessLevel.MEMBER)
 	@ApiOperation({ 
 		summary: '🔍 Find competitors by name',
 		description: `
@@ -1670,7 +1670,7 @@ Advanced search functionality to quickly locate competitors using intelligent na
 	}
 
 	@Get(':id')
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.USER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.USER, AccessLevel.MEMBER)
 	@ApiOperation({ 
 		summary: '🔍 Get competitor details by ID',
 		description: `
@@ -1860,7 +1860,7 @@ Retrieves complete competitor intelligence profile with detailed analysis and ac
 	}
 
 	@Get('ref/:ref')
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.USER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.USER, AccessLevel.MEMBER)
 	@ApiOperation({ 
 		summary: '🔍 Get competitor by reference code',
 		description: `
@@ -2279,7 +2279,7 @@ Safely removes competitor from active intelligence while preserving data for pot
 	}
 
 	@Get('map-data')
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.USER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.USER, AccessLevel.MEMBER)
 	@ApiOperation({ 
 		summary: '🗺️ Get competitor map visualization data',
 		description: `
