@@ -28,6 +28,7 @@ import { AccessLevel } from '../lib/enums/user.enums';
 import { GeneralStatus } from '../lib/enums/status.enums';
 import { EmailType } from '../lib/enums/email.enums';
 import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
+import { DomainReportResponseDto } from '../lib/dto/domain-report.dto';
 
 // Type alias for the user from authenticated request
 type RequestUser = AuthenticatedRequest['user'];
@@ -786,6 +787,30 @@ export class ApprovalsService {
             this.logger.error(`❌ [findAll] Failed to fetch approvals after ${executionTime}ms: ${error.message}`, error.stack);
             throw error;
         }
+    }
+
+    /**
+     * Server-generated report: aggregated counts by status and by day for the given date range.
+     */
+    async getReport(from: string, to: string, user: RequestUser): Promise<DomainReportResponseDto> {
+        const result = await this.findAll(
+            { createdFrom: from, createdTo: to, page: 1, limit: 10000 } as ApprovalQueryDto,
+            user,
+        );
+        const data = result?.data ?? [];
+        const byStatusMap = new Map<string, number>();
+        const byDayMap = new Map<string, number>();
+        for (const a of data) {
+            const status = (a as Approval).status ?? 'Unknown';
+            byStatusMap.set(String(status), (byStatusMap.get(String(status)) ?? 0) + 1);
+            const dateKey = new Date((a as Approval).createdAt).toISOString().slice(0, 10);
+            byDayMap.set(dateKey, (byDayMap.get(dateKey) ?? 0) + 1);
+        }
+        const byStatus = Array.from(byStatusMap.entries()).map(([name, value]) => ({ name, value }));
+        const byDay = Array.from(byDayMap.entries())
+            .map(([date, count]) => ({ date, count }))
+            .sort((a, b) => a.date.localeCompare(b.date));
+        return { total: data.length, byStatus, byDay, meta: { from, to } };
     }
 
     // Get approvals for current user (org-wide: all in org; others: only where approver/delegatedTo). No status filter — returns all.

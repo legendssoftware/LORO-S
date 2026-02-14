@@ -13,7 +13,10 @@ import {
     HttpStatus,
     ParseIntPipe,
     Logger,
+    UseInterceptors,
+    BadRequestException,
 } from '@nestjs/common';
+import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
 import { ApprovalsService } from './approvals.service';
 import { CreateApprovalDto } from './dto/create-approval.dto';
 import { UpdateApprovalDto } from './dto/update-approval.dto';
@@ -447,6 +450,46 @@ export class ApprovalsController {
             this.logger.error(`[ApprovalsController] [${operationId}] ❌ POST /approvals Request failed: ${error?.message}`);
             throw error;
         }
+    }
+
+    @Get('report')
+    @UseInterceptors(CacheInterceptor)
+    @CacheTTL(300)
+    @Roles(
+        AccessLevel.ADMIN,
+        AccessLevel.MANAGER,
+        AccessLevel.SUPPORT,
+        AccessLevel.DEVELOPER,
+        AccessLevel.USER,
+        AccessLevel.OWNER,
+        AccessLevel.TECHNICIAN,
+    )
+    @ApiOperation({
+        summary: 'Get approvals report (server-generated)',
+        description: 'Returns aggregated report data (total, byStatus, byDay) for the date range. Cached 5 min.',
+    })
+    @ApiQuery({ name: 'from', required: true, type: String, description: 'Start date (YYYY-MM-DD)' })
+    @ApiQuery({ name: 'to', required: true, type: String, description: 'End date (YYYY-MM-DD)' })
+    @ApiOkResponse({
+        description: 'Report payload with total, byStatus, byDay, meta',
+        schema: {
+            type: 'object',
+            properties: {
+                total: { type: 'number' },
+                byStatus: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, value: { type: 'number' } } } },
+                byDay: { type: 'array', items: { type: 'object', properties: { date: { type: 'string' }, count: { type: 'number' } } } },
+                meta: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } } },
+            },
+        },
+    })
+    async getReport(
+        @Req() req: AuthenticatedRequest,
+        @Query('from') from: string,
+        @Query('to') to: string,
+    ) {
+        if (!from || !to) throw new BadRequestException('Query params from and to (YYYY-MM-DD) required');
+        if (!req.user) throw new BadRequestException('User authentication required');
+        return this.approvalsService.getReport(from, to, req.user);
     }
 
     // Get all approvals with filtering and pagination
