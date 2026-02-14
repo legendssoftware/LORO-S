@@ -27,9 +27,11 @@ import { PaginatedResponse } from '../lib/interfaces/paginated-response';
 import { Lead } from './entities/lead.entity';
 import { RoleGuard } from '../guards/role.guard';
 import { ClerkAuthGuard } from '../clerk/clerk.guard';
-import { AuthenticatedRequest, getClerkOrgId, getRequestingUserUid } from '../lib/interfaces/authenticated-request.interface';
+import { AuthenticatedRequest, getClerkOrgId, getClerkUserId, getRequestingUserUid } from '../lib/interfaces/authenticated-request.interface';
+import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
 import { RepetitionType } from '../lib/enums/task.enums';
 import { CsvFileValidator } from './validators/csv-file.validator';
+import { DomainReportResponseDto } from '../lib/dto/domain-report.dto';
 
 @ApiTags('🎯 Leads')
 @Controller('leads')
@@ -127,6 +129,43 @@ export class LeadsController {
 		description:
 			'Retrieves a paginated list of leads with optional filtering by status, search term, and date range',
 	})
+	@Get('report')
+	@UseInterceptors(CacheInterceptor)
+	@CacheTTL(300)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.USER, AccessLevel.TECHNICIAN)
+	@ApiOperation({
+		summary: 'Get leads report (server-generated)',
+		description: 'Returns aggregated report data (total, byStatus, byDay) for the date range. Cached 5 min.',
+	})
+	@ApiQuery({ name: 'from', required: true, type: String, description: 'Start date (YYYY-MM-DD)' })
+	@ApiQuery({ name: 'to', required: true, type: String, description: 'End date (YYYY-MM-DD)' })
+	@ApiOkResponse({
+		description: 'Report payload with total, byStatus, byDay, meta',
+		schema: {
+			type: 'object',
+			properties: {
+				total: { type: 'number' },
+				byStatus: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, value: { type: 'number' } } } },
+				byDay: { type: 'array', items: { type: 'object', properties: { date: { type: 'string' }, count: { type: 'number' } } } },
+				meta: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } } },
+			},
+		},
+	})
+	async getReport(
+		@Req() req: AuthenticatedRequest,
+		@Query('from') from: string,
+		@Query('to') to: string,
+	): Promise<DomainReportResponseDto> {
+		const orgId = getClerkOrgId(req);
+		if (!orgId) throw new BadRequestException('Organization context required');
+		if (!from || !to) throw new BadRequestException('Query params from and to (YYYY-MM-DD) required');
+		const branchId = req.user?.branch?.uid != null ? Number(req.user.branch.uid) : undefined;
+		const clerkUserId = getClerkUserId(req);
+		const userAccessLevel = req.user?.accessLevel || req.user?.role;
+		if (!clerkUserId && !userAccessLevel) throw new BadRequestException('User authentication required');
+		return this.leadsService.getReport(from, to, orgId, branchId, clerkUserId, userAccessLevel);
+	}
+
 	@ApiQuery({ name: 'page', type: Number, required: false, description: 'Page number, defaults to 1' })
 	@ApiQuery({
 		name: 'limit',

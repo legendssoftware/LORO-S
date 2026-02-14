@@ -587,6 +587,10 @@ export class AttendanceService {
 
 			// Prepare attendance data (organisationUid = Clerk org ID string from token)
 			const { branch: _, owner: __, ...restCheckInDto } = checkInDto;
+			const hasCheckInLocation =
+				checkInDto.checkInLatitude != null &&
+				checkInDto.checkInLongitude != null &&
+				!(checkInDto.checkInLatitude === 0 && checkInDto.checkInLongitude === 0);
 			const attendanceData = queryRunner.manager.create(Attendance, {
 				...restCheckInDto,
 				checkIn: new Date(checkInDto.checkIn),
@@ -598,6 +602,8 @@ export class AttendanceService {
 				ownerClerkUserId: user.clerkUserId,
 				branch: branchId ? { uid: branchId } : null,
 				branchUid: branchId || null,
+				checkInLatitude: hasCheckInLocation ? checkInDto.checkInLatitude : null,
+				checkInLongitude: hasCheckInLocation ? checkInDto.checkInLongitude : null,
 			});
 
 			// Save within transaction
@@ -1499,15 +1505,22 @@ export class AttendanceService {
 
 			// Update shift within transaction
 			const { owner: _checkOutOwner, ...checkOutRest } = checkOutDto;
-			this.logger.debug(`[${operationId}] Updating shift with check-out data within transaction`);
-
-			await queryRunner.manager.update(Attendance, activeShift.uid, {
+			const hasCheckOutLocation =
+				checkOutDto.checkOutLatitude != null &&
+				checkOutDto.checkOutLongitude != null &&
+				!(checkOutDto.checkOutLatitude === 0 && checkOutDto.checkOutLongitude === 0);
+			const checkOutUpdatePayload = {
 				...checkOutRest,
 				checkOut: checkOutTime,
 				duration,
 				overtime: overtimeDuration,
 				status: AttendanceStatus.COMPLETED,
-			});
+				checkOutLatitude: hasCheckOutLocation ? checkOutDto.checkOutLatitude : null,
+				checkOutLongitude: hasCheckOutLocation ? checkOutDto.checkOutLongitude : null,
+			};
+			this.logger.debug(`[${operationId}] Updating shift with check-out data within transaction`);
+
+			await queryRunner.manager.update(Attendance, activeShift.uid, checkOutUpdatePayload);
 
 			// Prepare response (commit and cache clear handled by runInTransaction / setImmediate)
 			const responseData = {

@@ -1,4 +1,5 @@
-import { Controller, Post, Body, Patch, Param, UseGuards, Get, Query, Req, ParseIntPipe, BadRequestException, Logger } from '@nestjs/common';
+import { Controller, Post, Body, Patch, Param, UseGuards, Get, Query, Req, ParseIntPipe, BadRequestException, Logger, UseInterceptors } from '@nestjs/common';
+import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
 import { CheckInsService } from './check-ins.service';
 import { CreateCheckInDto } from './dto/create-check-in.dto';
 import { CreateCheckOutDto } from './dto/create-check-out.dto';
@@ -33,6 +34,40 @@ export class CheckInsController {
 	private readonly logger = new Logger(CheckInsController.name);
 
 	constructor(private readonly checkInsService: CheckInsService) {}
+
+	@Get('report')
+	@UseInterceptors(CacheInterceptor)
+	@CacheTTL(300)
+	@ApiOperation({
+		summary: 'Get check-ins report (server-generated)',
+		description: 'Returns aggregated report data (total, byDay) for the date range. Cached 5 min.',
+	})
+	@ApiQuery({ name: 'from', required: true, type: String, description: 'Start date (YYYY-MM-DD)' })
+	@ApiQuery({ name: 'to', required: true, type: String, description: 'End date (YYYY-MM-DD)' })
+	@ApiOkResponse({
+		description: 'Report payload with total, byStatus, byDay, meta',
+		schema: {
+			type: 'object',
+			properties: {
+				total: { type: 'number' },
+				byStatus: { type: 'array' },
+				byDay: { type: 'array', items: { type: 'object', properties: { date: { type: 'string' }, count: { type: 'number' } } } },
+				meta: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } } },
+			},
+		},
+	})
+	async getReport(
+		@Req() req: AuthenticatedRequest,
+		@Query('from') from: string,
+		@Query('to') to: string,
+	) {
+		const orgId = getClerkOrgId(req);
+		if (!orgId) throw new BadRequestException('Organization context required');
+		if (!from || !to) throw new BadRequestException('Query params from and to (YYYY-MM-DD) required');
+		const clerkUserId = getClerkUserId(req);
+		const userAccessLevel = req.user?.accessLevel;
+		return this.checkInsService.getReport(from, to, orgId, clerkUserId, userAccessLevel);
+	}
 
 	@Get()
 	@ApiOperation({

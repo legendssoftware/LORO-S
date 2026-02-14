@@ -1,8 +1,9 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards, Req, UnauthorizedException, BadRequestException, Logger } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards, Req, UseInterceptors, UnauthorizedException, BadRequestException, Logger } from '@nestjs/common';
+import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
 import { ClaimsService } from './claims.service';
 import { CreateClaimDto } from './dto/create-claim.dto';
 import { UpdateClaimDto } from './dto/update-claim.dto';
-import { ApiOperation, ApiTags, ApiParam, ApiBody, ApiOkResponse, ApiCreatedResponse, ApiBadRequestResponse, ApiNotFoundResponse, ApiUnauthorizedResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiOperation, ApiTags, ApiParam, ApiBody, ApiOkResponse, ApiCreatedResponse, ApiBadRequestResponse, ApiNotFoundResponse, ApiUnauthorizedResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { getDynamicDateTime, createApiDescription } from '../lib/utils/swagger-helpers';
 import { Roles } from '../decorators/role.decorator';
 import { AccessLevel } from '../lib/enums/user.enums';
@@ -10,6 +11,7 @@ import { RoleGuard } from '../guards/role.guard';
 import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
 import { AuthenticatedRequest, getClerkOrgId, getClerkUserId } from '../lib/interfaces/authenticated-request.interface';
+import { ClaimStatus } from '../lib/enums/finance.enums';
 
 @ApiTags('🪙 Claims')
 @Controller('claims') 
@@ -171,11 +173,58 @@ export class ClaimsController {
       }
     }
   })
+  @Get('report')
+  @UseInterceptors(CacheInterceptor)
+  @CacheTTL(300)
+  @Roles(
+    AccessLevel.ADMIN,
+    AccessLevel.MANAGER,
+    AccessLevel.OWNER,
+    AccessLevel.USER,
+    AccessLevel.TECHNICIAN,
+  )
+  @ApiOperation({
+    summary: 'Get claims report (server-generated)',
+    description: 'Returns aggregated report data (total, byStatus, byDay) for the date range. Cached 5 min. Use for reports hub charts.',
+  })
+  @ApiQuery({ name: 'from', required: true, type: String, description: 'Start date (YYYY-MM-DD)' })
+  @ApiQuery({ name: 'to', required: true, type: String, description: 'End date (YYYY-MM-DD)' })
+  @ApiOkResponse({
+    description: 'Report payload with total, byStatus, byDay, meta',
+    schema: {
+      type: 'object',
+      properties: {
+        total: { type: 'number' },
+        byStatus: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, value: { type: 'number' } } } },
+        byDay: { type: 'array', items: { type: 'object', properties: { date: { type: 'string' }, count: { type: 'number' } } } },
+        meta: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } } },
+      },
+    },
+  })
+  async getReport(
+    @Req() req: AuthenticatedRequest,
+    @Query('from') from: string,
+    @Query('to') to: string,
+  ) {
+    const orgId = getClerkOrgId(req);
+    if (!orgId) throw new BadRequestException('Organization context required');
+    if (!from || !to) throw new BadRequestException('Query params from and to (YYYY-MM-DD) required');
+    const branchId = this.toNumber(req.user?.branch?.uid);
+    const clerkUserId = getClerkUserId(req);
+    const userAccessLevel = req.user?.accessLevel || req.user?.role;
+    if (!clerkUserId && !userAccessLevel) throw new UnauthorizedException('User authentication required');
+    return this.claimsService.getReport(from, to, orgId, branchId, clerkUserId, userAccessLevel);
+  }
+
+  @ApiQuery({ name: 'createdFrom', required: false, type: String, description: 'Filter by creation date from (ISO date)' })
+  @ApiQuery({ name: 'createdTo', required: false, type: String, description: 'Filter by creation date to (ISO date)' })
   async findAll(
     @Req() req: AuthenticatedRequest,
     @Query('page') page?: string | number,
     @Query('limit') limit?: string | number,
     @Query('status') status?: string,
+    @Query('createdFrom') createdFrom?: string,
+    @Query('createdTo') createdTo?: string,
   ) {
     const operationId = `GET_CLAIMS_${Date.now()}`;
     this.logger.log(`[ClaimsController] [${operationId}] ========== GET /claims Request Started ==========`);
@@ -194,8 +243,10 @@ export class ClaimsController {
 
     const pageNum = this.toNumber(page) ?? 1;
     const limitNum = this.toNumber(limit) ?? 25;
-    const filters = status ? { status: status as any } : {};
-    this.logger.log(`[ClaimsController] [${operationId}] Query: page=${pageNum}, limit=${limitNum}, status=${status}, orgId=${orgId}`);
+    const filters: { status?: ClaimStatus; startDate?: Date; endDate?: Date } = status ? { status: status as ClaimStatus } : {};
+    if (createdFrom) filters.startDate = new Date(createdFrom);
+    if (createdTo) filters.endDate = new Date(createdTo);
+    this.logger.log(`[ClaimsController] [${operationId}] Query: page=${pageNum}, limit=${limitNum}, status=${status}, createdFrom=${createdFrom ?? 'n/a'}, createdTo=${createdTo ?? 'n/a'}, orgId=${orgId}`);
 
     try {
       const result = await this.claimsService.findAll(
