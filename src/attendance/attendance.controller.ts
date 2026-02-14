@@ -234,7 +234,7 @@ export class AttendanceController {
 	})
 	@ApiBody({
 		type: CreateCheckInDto,
-		description: 'Check-in payload with location, timing, and verification information',
+		description: 'Check-in payload with optional location, timing, and verification information. Location can be omitted when browser/device does not grant it.',
 		examples: {
 			standardCheckIn: {
 				summary: '🏢 Standard Office Check-In',
@@ -363,7 +363,7 @@ export class AttendanceController {
 	})
 	@ApiBody({
 		type: CreateCheckOutDto,
-		description: 'Check-out payload with location, timing, and work summary information',
+		description: 'Check-out payload with optional location, timing, and work summary information. Location can be omitted when browser/device does not grant it.',
 		examples: {
 			standardCheckOut: {
 				summary: '🏢 Standard Office Check-Out',
@@ -470,7 +470,6 @@ export class AttendanceController {
 					items: { type: 'string' },
 					example: [
 						'User ID is required',
-						'Check-out location is required',
 						'Invalid timestamp format',
 						'User is not currently checked in',
 					],

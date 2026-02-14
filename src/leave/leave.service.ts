@@ -11,6 +11,7 @@ import { ConfigService } from '@nestjs/config';
 import { LeaveStatus } from '../lib/enums/leave.enums';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { PaginatedResponse } from '../lib/interfaces/product.interfaces';
+import { DomainReportResponseDto } from '../lib/dto/domain-report.dto';
 import { LeaveEmailService } from './services/leave-email.service';
 import { ApprovalsService } from '../approvals/approvals.service';
 import { ApprovalType, ApprovalPriority, ApprovalFlow, NotificationFrequency, ApprovalAction, ApprovalStatus } from '../lib/enums/approval.enums';
@@ -430,6 +431,40 @@ export class LeaveService {
 			this.logger.error(`❌ [LeaveService] Error retrieving leaves:`, error.message);
 			throw new BadRequestException(error.message || 'Error retrieving leave requests');
 		}
+	}
+
+	/**
+	 * Server-generated report: aggregated counts by status and by day for the given date range.
+	 */
+	async getReport(
+		from: string,
+		to: string,
+		orgId: string,
+		branchId?: number,
+		clerkUserId?: string,
+	): Promise<DomainReportResponseDto> {
+		const result = await this.findAll(
+			{ startDate: new Date(from), endDate: new Date(to) },
+			1,
+			10000,
+			orgId,
+			branchId,
+			clerkUserId,
+		);
+		const data = result.data ?? [];
+		const byStatusMap = new Map<string, number>();
+		const byDayMap = new Map<string, number>();
+		for (const l of data) {
+			const status = l.status ?? 'Unknown';
+			byStatusMap.set(String(status), (byStatusMap.get(String(status)) ?? 0) + 1);
+			const dateKey = new Date(l.createdAt).toISOString().slice(0, 10);
+			byDayMap.set(dateKey, (byDayMap.get(dateKey) ?? 0) + 1);
+		}
+		const byStatus = Array.from(byStatusMap.entries()).map(([name, value]) => ({ name, value }));
+		const byDay = Array.from(byDayMap.entries())
+			.map(([date, count]) => ({ date, count }))
+			.sort((a, b) => a.date.localeCompare(b.date));
+		return { total: data.length, byStatus, byDay, meta: { from, to } };
 	}
 
 	async findOne(

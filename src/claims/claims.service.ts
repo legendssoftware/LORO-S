@@ -35,6 +35,7 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { DataSource } from 'typeorm';
 import { Approval } from '../approvals/entities/approval.entity';
+import { DomainReportResponseDto } from '../lib/dto/domain-report.dto';
 
 @Injectable()
 export class ClaimsService {
@@ -733,6 +734,50 @@ export class ClaimsService {
 				message: error?.message || 'Failed to retrieve claims',
 			};
 		}
+	}
+
+	/**
+	 * Server-generated report: aggregated counts by status and by day for the given date range.
+	 * Used by GET /claims/report so the client gets all chart data in one response.
+	 */
+	async getReport(
+		from: string,
+		to: string,
+		orgId: string,
+		branchId?: number,
+		clerkUserId?: string,
+		userAccessLevel?: string,
+	): Promise<DomainReportResponseDto> {
+		const startDate = new Date(from);
+		const endDate = new Date(to);
+		const result = await this.findAll(
+			{ startDate, endDate },
+			1,
+			10000,
+			orgId,
+			branchId,
+			clerkUserId,
+			userAccessLevel,
+		);
+		const data = result.data ?? [];
+		const byStatusMap = new Map<string, number>();
+		const byDayMap = new Map<string, number>();
+		for (const c of data) {
+			const status = c.status ?? 'Unknown';
+			byStatusMap.set(status, (byStatusMap.get(status) ?? 0) + 1);
+			const dateKey = new Date(c.createdAt).toISOString().slice(0, 10);
+			byDayMap.set(dateKey, (byDayMap.get(dateKey) ?? 0) + 1);
+		}
+		const byStatus = Array.from(byStatusMap.entries()).map(([name, value]) => ({ name, value }));
+		const byDay = Array.from(byDayMap.entries())
+			.map(([date, count]) => ({ date, count }))
+			.sort((a, b) => a.date.localeCompare(b.date));
+		return {
+			total: data.length,
+			byStatus,
+			byDay,
+			meta: { from, to },
+		};
 	}
 
 	async findOne(

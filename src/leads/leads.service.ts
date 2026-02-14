@@ -16,6 +16,7 @@ import { RewardsService } from '../rewards/rewards.service';
 import { XP_VALUES } from '../lib/constants/constants';
 import { XP_VALUES_TYPES } from '../lib/constants/constants';
 import { PaginatedResponse } from 'src/lib/types/paginated-response';
+import { DomainReportResponseDto } from '../lib/dto/domain-report.dto';
 import { Organisation } from '../organisation/entities/organisation.entity';
 import { Branch } from '../branch/entities/branch.entity';
 import { User } from '../user/entities/user.entity';
@@ -811,6 +812,44 @@ export class LeadsService {
 				cause: error instanceof Error ? error.message : 'Unknown database or system error',
 			});
 		}
+	}
+
+	/**
+	 * Server-generated report: aggregated counts by status and by day for the given date range.
+	 */
+	async getReport(
+		from: string,
+		to: string,
+		orgId: string,
+		branchId?: number,
+		clerkUserId?: string,
+		userAccessLevel?: string,
+	): Promise<DomainReportResponseDto> {
+		const startDate = new Date(from);
+		const endDate = new Date(to);
+		const result = await this.findAll(
+			{ startDate, endDate },
+			1,
+			10000,
+			orgId,
+			branchId,
+			clerkUserId,
+			userAccessLevel,
+		);
+		const data = result.data ?? [];
+		const byStatusMap = new Map<string, number>();
+		const byDayMap = new Map<string, number>();
+		for (const l of data) {
+			const status = (l as Lead).status ?? 'Unknown';
+			byStatusMap.set(String(status), (byStatusMap.get(String(status)) ?? 0) + 1);
+			const dateKey = new Date((l as Lead).createdAt).toISOString().slice(0, 10);
+			byDayMap.set(dateKey, (byDayMap.get(dateKey) ?? 0) + 1);
+		}
+		const byStatus = Array.from(byStatusMap.entries()).map(([name, value]) => ({ name, value }));
+		const byDay = Array.from(byDayMap.entries())
+			.map(([date, count]) => ({ date, count }))
+			.sort((a, b) => a.date.localeCompare(b.date));
+		return { total: data.length, byStatus, byDay, meta: { from, to } };
 	}
 
 	async findOne(

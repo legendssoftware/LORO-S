@@ -23,6 +23,7 @@ import { Quotation } from '../shop/entities/quotation.entity';
 import { CreateLeadDto } from '../leads/dto/create-lead.dto';
 import { LeadSource } from '../lib/enums/lead.enums';
 import { Address } from '../lib/interfaces/address.interface';
+import { DomainReportResponseDto } from '../lib/dto/domain-report.dto';
 
 @Injectable()
 export class CheckInsService {
@@ -1340,6 +1341,31 @@ export class CheckInsService {
 			};
 			return response;
 		}
+	}
+
+	/**
+	 * Server-generated report: aggregated counts by day for the given date range (byStatus empty for check-ins).
+	 */
+	async getReport(
+		from: string,
+		to: string,
+		orgId: string,
+		clerkUserId?: string,
+		userAccessLevel?: string,
+	): Promise<DomainReportResponseDto> {
+		const startDate = new Date(from);
+		const endDate = new Date(to);
+		const result = await this.getAllCheckIns(orgId, clerkUserId, userAccessLevel, undefined, startDate, endDate);
+		const checkIns = result?.checkIns ?? [];
+		const byDayMap = new Map<string, number>();
+		for (const c of checkIns) {
+			const dateKey = new Date(c.checkInTime).toISOString().slice(0, 10);
+			byDayMap.set(dateKey, (byDayMap.get(dateKey) ?? 0) + 1);
+		}
+		const byDay = Array.from(byDayMap.entries())
+			.map(([date, count]) => ({ date, count }))
+			.sort((a, b) => a.date.localeCompare(b.date));
+		return { total: checkIns.length, byStatus: [], byDay, meta: { from, to } };
 	}
 
 	async getUserCheckIns(userUid: string, organizationUid?: string): Promise<any> {

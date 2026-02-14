@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, Request, Req, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, Request, Req, BadRequestException, UseInterceptors } from '@nestjs/common';
+import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
 import { LeaveService } from './leave.service';
 import { CreateLeaveDto } from './dto/create-leave.dto';
 import { UpdateLeaveDto } from './dto/update-leave.dto';
@@ -29,7 +30,8 @@ import { ClerkAuthGuard } from '../clerk/clerk.guard';
 import { AccessLevel } from '../lib/enums/user.enums';
 import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
 import { LeaveStatus, LeaveType } from '../lib/enums/leave.enums';
-import { AuthenticatedRequest, getClerkOrgId } from '../lib/interfaces/authenticated-request.interface';
+import { AuthenticatedRequest, getClerkOrgId, getClerkUserId } from '../lib/interfaces/authenticated-request.interface';
+import { DomainReportResponseDto } from '../lib/dto/domain-report.dto';
 
 @ApiBearerAuth('JWT-auth')
 @ApiTags('🌴 Leave Management')
@@ -344,6 +346,49 @@ Creates comprehensive leave requests with automated approval workflows and polic
 		const clerkUserId = req.user?.clerkUserId;
 
 		return this.leaveService.create(createLeaveDto, orgId, branchId, clerkUserId);
+	}
+
+	@Get('report')
+	@UseInterceptors(CacheInterceptor)
+	@CacheTTL(300)
+	@Roles(
+		AccessLevel.ADMIN,
+		AccessLevel.MANAGER,
+		AccessLevel.SUPPORT,
+		AccessLevel.DEVELOPER,
+		AccessLevel.USER,
+		AccessLevel.OWNER,
+		AccessLevel.TECHNICIAN,
+	)
+	@ApiOperation({
+		summary: 'Get leave report (server-generated)',
+		description: 'Returns aggregated report data (total, byStatus, byDay) for the date range. Cached 5 min.',
+	})
+	@ApiQuery({ name: 'from', required: true, type: String, description: 'Start date (YYYY-MM-DD)' })
+	@ApiQuery({ name: 'to', required: true, type: String, description: 'End date (YYYY-MM-DD)' })
+	@ApiOkResponse({
+		description: 'Report payload with total, byStatus, byDay, meta',
+		schema: {
+			type: 'object',
+			properties: {
+				total: { type: 'number' },
+				byStatus: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, value: { type: 'number' } } } },
+				byDay: { type: 'array', items: { type: 'object', properties: { date: { type: 'string' }, count: { type: 'number' } } } },
+				meta: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } } },
+			},
+		},
+	})
+	async getReport(
+		@Req() req: AuthenticatedRequest,
+		@Query('from') from: string,
+		@Query('to') to: string,
+	): Promise<DomainReportResponseDto> {
+		const orgId = getClerkOrgId(req);
+		if (!orgId) throw new BadRequestException('Organization context required');
+		if (!from || !to) throw new BadRequestException('Query params from and to (YYYY-MM-DD) required');
+		const branchId = req.user?.branch?.uid != null ? Number(req.user.branch.uid) : undefined;
+		const clerkUserId = getClerkUserId(req);
+		return this.leaveService.getReport(from, to, orgId, branchId, clerkUserId);
 	}
 
 	@Get()
