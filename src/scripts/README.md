@@ -74,3 +74,42 @@ ts-node -r tsconfig-paths/register src/scripts/populate-clerk-users.ts
 ```
 
 Requires DB connection, NestJS app context (AppModule), and `CLERK_SECRET_KEY` (and `CLERK_PUBLISHABLE_KEY` if used by the Clerk client).
+
+## sync-csv-to-clerk
+
+Reads users from a CSV file (e.g. `readnew.csv` at repo root) and creates them in Clerk. Used to migrate users from uid 243 onward: each row is created in Clerk with generic password `securePass@2026`, username/email/name from the file, then added to the **Bit Drywall** Clerk organisation (so `populate:clerk-users` can later sync them to the DB).
+
+### CSV format
+
+Expected columns: `uid`, `username`, `name`, `surname`, `email`, `phone`, `role`, `accessLevel`, `organisationRef`. Rows with `uid >= 243` (or `--from-uid`) and non-empty `email` are processed.
+
+### Optional flags
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Only list which users would be created; do not call Clerk. |
+| `--from-uid=N` | Process rows with `uid >= N` (default: 243). |
+| `--path=PATH` | Path to CSV file (default: `../readnew.csv` from `server/`). |
+
+### Run
+
+From `server/` (with `readnew.csv` at repo root):
+
+```bash
+npm run sync:csv-to-clerk
+```
+
+With options:
+
+```bash
+npm run sync:csv-to-clerk -- --dry-run
+npm run sync:csv-to-clerk -- --from-uid=243 --path=../readnew.csv
+```
+
+Then sync from Clerk to DB:
+
+```bash
+npm run populate:clerk-users
+```
+
+Requires NestJS app context (AppModule) and `CLERK_SECRET_KEY`.
