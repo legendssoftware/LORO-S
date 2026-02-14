@@ -22,7 +22,8 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "populate:clerk-org": "ts-node -r tsconfig-paths/register src/scripts/populate-clerk-org.ts"
+    "populate:clerk-org": "ts-node -r tsconfig-paths/register src/scripts/populate-clerk-org.ts",
+    "populate:clerk-users": "ts-node -r tsconfig-paths/register src/scripts/populate-clerk-users.ts"
   },
   "dependencies": {
     "@apollo/server": "^4.11.2",

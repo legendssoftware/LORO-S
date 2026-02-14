@@ -97,7 +97,8 @@ export class ReportsController {
 
 	// Get Map Data endpoint
 	@Get('map')
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.USER, AccessLevel.OWNER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.USER,
+		AccessLevel.MEMBER, AccessLevel.OWNER)
 	@ApiOperation({
 		summary: '🗺️ Get map data for visualization',
 		description: `
@@ -420,7 +421,7 @@ Comprehensive real-time metrics for the entire organization or specific branch.
 	// ======================================================
 
 	@Get('performance')
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.USER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.USER, AccessLevel.MEMBER)
 	@ApiOperation({
 		summary: '🚀 Get ALL Performance Data (UNIFIED ENDPOINT)',
 		description: `
@@ -544,7 +545,7 @@ All filters apply to ALL data sections:
 	}
 
 	@Get('performance/dashboard')
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.USER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.USER, AccessLevel.MEMBER)
 	@ApiOperation({
 		summary: '📊 Get Performance Dashboard Data',
 		description: `
@@ -642,7 +643,7 @@ Comprehensive performance analytics with advanced filtering and data visualizati
 	}
 
 	@Get('performance/consolidated-income-statement')
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.USER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.USER, AccessLevel.MEMBER)
 	@ApiOperation({
 		summary: '🌍 Get Consolidated Income Statement',
 		description: `
@@ -834,7 +835,8 @@ Access all morning and evening attendance reports for your organization.
 	}
 
 	@Get('user/:userId/daily-reports')
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.HR, AccessLevel.USER, AccessLevel.SUPERVISOR, AccessLevel.EXECUTIVE)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.HR, AccessLevel.USER,
+		AccessLevel.MEMBER, AccessLevel.SUPERVISOR, AccessLevel.EXECUTIVE)
 	@ApiOperation({
 		summary: '📄 Get User Personal Daily Reports',
 		description: `
@@ -900,7 +902,7 @@ Access all your personal morning and evening attendance reports.
 	// ======================================================
 
 	@Get('user/:userId/highlights')
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.USER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.USER, AccessLevel.MEMBER)
 	@ApiOperation({
 		summary: '📱 Get User Highlights Data',
 		description: `

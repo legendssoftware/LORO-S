@@ -40,3 +40,37 @@ ts-node -r tsconfig-paths/register src/scripts/populate-clerk-org.ts
 ```
 
 Requires DB connection and NestJS app context (AppModule).
+
+## populate-clerk-users
+
+Syncs all Clerk users into the database. Uses the same behaviour as the APK session sync: for each Clerk user, the script creates or updates the `User` entity, syncs organisation membership, and ensures `UserProfile` and `UserEmployeementProfile` exist.
+
+### Optional flags
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Only list Clerk user IDs and count; do not call sync. |
+| `--limit=N` | Process at most N Clerk users (useful for testing). |
+
+### Run
+
+From `server/`:
+
+```bash
+npm run populate:clerk-users
+```
+
+With options:
+
+```bash
+npm run populate:clerk-users -- --dry-run
+npm run populate:clerk-users -- --limit=10
+```
+
+Or:
+
+```bash
+ts-node -r tsconfig-paths/register src/scripts/populate-clerk-users.ts
+```
+
+Requires DB connection, NestJS app context (AppModule), and `CLERK_SECRET_KEY` (and `CLERK_PUBLISHABLE_KEY` if used by the Clerk client).

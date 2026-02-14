@@ -44,6 +44,7 @@ export class ClaimsController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -127,6 +128,7 @@ export class ClaimsController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -181,6 +183,7 @@ export class ClaimsController {
     AccessLevel.MANAGER,
     AccessLevel.OWNER,
     AccessLevel.USER,
+    AccessLevel.MEMBER,
     AccessLevel.TECHNICIAN,
   )
   @ApiOperation({
@@ -273,6 +276,7 @@ export class ClaimsController {
     AccessLevel.SUPPORT,
     AccessLevel.DEVELOPER,
     AccessLevel.USER,
+    AccessLevel.MEMBER,
     AccessLevel.OWNER,
     AccessLevel.TECHNICIAN,
   )
@@ -322,6 +326,7 @@ export class ClaimsController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -408,6 +413,7 @@ export class ClaimsController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -461,6 +467,7 @@ export class ClaimsController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -517,6 +524,7 @@ export class ClaimsController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -627,6 +635,7 @@ export class ClaimsController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -679,6 +688,7 @@ export class ClaimsController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)

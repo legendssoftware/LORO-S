@@ -74,6 +74,7 @@ export class AssetsController {
     AccessLevel.SUPPORT,
     AccessLevel.DEVELOPER,
     AccessLevel.USER,
+		AccessLevel.MEMBER,
     AccessLevel.OWNER,
     AccessLevel.TECHNICIAN,
   )
@@ -287,6 +288,7 @@ Creates a new asset in the system with comprehensive tracking capabilities.
     AccessLevel.SUPPORT,
     AccessLevel.DEVELOPER,
     AccessLevel.USER,
+		AccessLevel.MEMBER,
     AccessLevel.OWNER,
     AccessLevel.TECHNICIAN,
   )
@@ -438,6 +440,7 @@ Retrieves a comprehensive list of all active assets in your organization.
     AccessLevel.SUPPORT,
     AccessLevel.DEVELOPER,
     AccessLevel.USER,
+		AccessLevel.MEMBER,
     AccessLevel.OWNER,
     AccessLevel.TECHNICIAN,
   )
@@ -620,6 +623,7 @@ Retrieves comprehensive information about a specific asset including its complet
     AccessLevel.SUPPORT,
     AccessLevel.DEVELOPER,
     AccessLevel.USER,
+		AccessLevel.MEMBER,
     AccessLevel.OWNER,
     AccessLevel.TECHNICIAN,
   )
@@ -811,6 +815,7 @@ Advanced search functionality to quickly locate assets using various criteria.
     AccessLevel.SUPPORT,
     AccessLevel.DEVELOPER,
     AccessLevel.USER,
+		AccessLevel.MEMBER,
     AccessLevel.OWNER,
     AccessLevel.TECHNICIAN,
   )
@@ -1007,6 +1012,7 @@ Retrieves all assets currently assigned to a specific user, providing a comprehe
     AccessLevel.SUPPORT,
     AccessLevel.DEVELOPER,
     AccessLevel.USER,
+		AccessLevel.MEMBER,
     AccessLevel.OWNER,
     AccessLevel.TECHNICIAN,
   )
@@ -1213,6 +1219,7 @@ Updates an existing asset with new information while maintaining complete audit 
     AccessLevel.SUPPORT,
     AccessLevel.DEVELOPER,
     AccessLevel.USER,
+		AccessLevel.MEMBER,
     AccessLevel.OWNER,
     AccessLevel.TECHNICIAN,
   )
@@ -1411,6 +1418,7 @@ Restores a previously deleted asset back to active status, maintaining data inte
     AccessLevel.SUPPORT,
     AccessLevel.DEVELOPER,
     AccessLevel.USER,
+		AccessLevel.MEMBER,
     AccessLevel.OWNER,
     AccessLevel.TECHNICIAN,
   )

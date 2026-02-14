@@ -57,7 +57,8 @@ export class InteractionsController {
 	}
 
 	@Post()
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPERVISOR, AccessLevel.USER, AccessLevel.CLIENT, AccessLevel.MEMBER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPERVISOR, AccessLevel.USER,
+		AccessLevel.MEMBER, AccessLevel.CLIENT)
 	@ApiOperation({
 		summary: 'Create a new interaction',
 		description: createApiDescription(
@@ -112,7 +113,8 @@ export class InteractionsController {
 	@Get()
 	@UseInterceptors(CacheInterceptor)
 	@CacheTTL(30) // Cache for 30 seconds
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPERVISOR, AccessLevel.USER, AccessLevel.CLIENT, AccessLevel.MEMBER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPERVISOR, AccessLevel.USER,
+		AccessLevel.MEMBER, AccessLevel.CLIENT)
 	@ApiOperation({
 		summary: 'Get all interactions',
 		description: createApiDescription(
@@ -187,7 +189,8 @@ export class InteractionsController {
 	@Get('lead/:ref')
 	@UseInterceptors(CacheInterceptor)
 	@CacheTTL(30) // Cache for 30 seconds
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPERVISOR, AccessLevel.USER, AccessLevel.CLIENT, AccessLevel.MEMBER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPERVISOR, AccessLevel.USER,
+		AccessLevel.MEMBER, AccessLevel.CLIENT)
 	@ApiOperation({
 		summary: 'Get interactions by lead',
 		description: createApiDescription(
@@ -241,7 +244,8 @@ export class InteractionsController {
 	@Get('client/:ref')
 	@UseInterceptors(CacheInterceptor)
 	@CacheTTL(30) // Cache for 30 seconds
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPERVISOR, AccessLevel.USER, AccessLevel.CLIENT, AccessLevel.MEMBER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPERVISOR, AccessLevel.USER,
+		AccessLevel.MEMBER, AccessLevel.CLIENT)
 	@ApiOperation({
 		summary: 'Get interactions by client',
 		description: createApiDescription(
@@ -295,7 +299,8 @@ export class InteractionsController {
 	@Get('quotation/:ref')
 	@UseInterceptors(CacheInterceptor)
 	@CacheTTL(30) // Cache for 30 seconds
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPERVISOR, AccessLevel.USER, AccessLevel.CLIENT, AccessLevel.MEMBER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPERVISOR, AccessLevel.USER,
+		AccessLevel.MEMBER, AccessLevel.CLIENT)
 	@ApiOperation({
 		summary: 'Get interactions by quotation',
 		description: createApiDescription(
@@ -349,7 +354,8 @@ export class InteractionsController {
 	@Get(':ref')
 	@UseInterceptors(CacheInterceptor)
 	@CacheTTL(30) // Cache for 30 seconds
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPERVISOR, AccessLevel.USER, AccessLevel.CLIENT, AccessLevel.MEMBER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPERVISOR, AccessLevel.USER,
+		AccessLevel.MEMBER, AccessLevel.CLIENT)
 	@ApiOperation({
 		summary: 'Get an interaction by reference code',
 		description: createApiDescription(
@@ -399,7 +405,8 @@ export class InteractionsController {
 	}
 
 	@Patch(':ref')
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPERVISOR, AccessLevel.USER, AccessLevel.CLIENT, AccessLevel.MEMBER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPERVISOR, AccessLevel.USER,
+		AccessLevel.MEMBER, AccessLevel.CLIENT)
 	@ApiOperation({
 		summary: 'Update an interaction',
 		description: createApiDescription(
