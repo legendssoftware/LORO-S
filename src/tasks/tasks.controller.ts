@@ -63,6 +63,7 @@ export class TasksController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -111,6 +112,7 @@ export class TasksController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -220,6 +222,7 @@ export class TasksController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -271,6 +274,7 @@ export class TasksController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -315,6 +319,7 @@ export class TasksController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -335,6 +340,7 @@ export class TasksController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -375,6 +381,7 @@ export class TasksController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -422,6 +429,7 @@ export class TasksController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -459,6 +467,7 @@ export class TasksController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -496,6 +505,7 @@ export class TasksController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -535,6 +545,7 @@ export class TasksController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -601,6 +612,7 @@ export class TasksController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -651,6 +663,7 @@ export class TasksController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -671,6 +684,7 @@ export class TasksController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -701,6 +715,7 @@ export class TasksController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -729,6 +744,7 @@ export class TasksController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -748,6 +764,7 @@ export class TasksController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -767,6 +784,7 @@ export class TasksController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -786,6 +804,7 @@ export class TasksController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -805,6 +824,7 @@ export class TasksController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 	)
 	@ApiOperation({

@@ -484,7 +484,7 @@ export class ErpController {
 	 * Returns totalRevenue, transactionCount, uniqueCustomers for current month only
 	 */
 	@Get('profile/sales')
-	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER, AccessLevel.USER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER, AccessLevel.USER, AccessLevel.MEMBER)
 	@ApiOperation({ summary: 'Get user-specific sales data from ERP for current month' })
 	@ApiResponse({ status: 200, description: 'User sales data for current month' })
 	@ApiResponse({ status: 404, description: 'User target or ERP code not found' })
@@ -667,7 +667,7 @@ export class ErpController {
 	 * @param userId - User ID to fetch sales for (must be a team member the current user manages)
 	 */
 	@Get('user/:userId/sales')
-	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER, AccessLevel.USER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER, AccessLevel.USER, AccessLevel.MEMBER)
 	@ApiOperation({ summary: 'Get sales data for a specific user (for team members)' })
 	@ApiParam({ name: 'userId', type: Number, description: 'User ID to fetch sales for' })
 	@ApiResponse({ status: 200, description: 'User sales data for current month' })
@@ -851,7 +851,7 @@ export class ErpController {
 	 * Groups commission data by commission percentage instead of category
 	 */
 	@Get('user/:userId/commissions-by-category')
-	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER, AccessLevel.USER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER, AccessLevel.USER, AccessLevel.MEMBER)
 	@ApiOperation({ summary: 'Get commission breakdown by category for a specific user (for team members)' })
 	@ApiParam({ name: 'userId', type: Number, description: 'User ID to fetch commission breakdown for' })
 	@ApiResponse({ status: 200, description: 'Commission breakdown by category data' })
@@ -1062,7 +1062,7 @@ export class ErpController {
 	 * Uses target period dates from user_targets table
 	 */
 	@Get('profile/commissions')
-	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER, AccessLevel.USER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER, AccessLevel.USER, AccessLevel.MEMBER)
 	@ApiOperation({ summary: 'Get commission data per product for logged-in user' })
 	@ApiResponse({ status: 200, description: 'Commission data per product' })
 	@ApiResponse({ status: 404, description: 'User target or ERP code not found' })
@@ -1220,7 +1220,7 @@ export class ErpController {
 	 * Filters ERP sales data by user's ERP sales rep code and groups by category
 	 */
 	@Get('profile/sales-by-category')
-	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER, AccessLevel.USER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER, AccessLevel.USER, AccessLevel.MEMBER)
 	@ApiOperation({ summary: 'Get sales by category for logged-in user' })
 	@ApiResponse({ status: 200, description: 'Sales data grouped by category' })
 	@ApiResponse({ status: 404, description: 'User target or ERP code not found' })
@@ -1926,7 +1926,7 @@ Returns latest sales data for all sales reps without requiring date configuratio
 	 * Groups commission data by category instead of product
 	 */
 	@Get('profile/commissions-by-category')
-	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER, AccessLevel.USER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.MANAGER, AccessLevel.USER, AccessLevel.MEMBER)
 	@ApiOperation({ summary: 'Get commission breakdown by category for logged-in user' })
 	@ApiResponse({ status: 200, description: 'Commission data grouped by category' })
 	@ApiResponse({ status: 404, description: 'User target or ERP code not found' })

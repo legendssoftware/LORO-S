@@ -86,6 +86,7 @@ export class LeaveController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -357,6 +358,7 @@ Creates comprehensive leave requests with automated approval workflows and polic
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -398,6 +400,7 @@ Creates comprehensive leave requests with automated approval workflows and polic
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -672,6 +675,7 @@ Provides comprehensive leave request retrieval with advanced filtering, sorting,
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -896,6 +900,7 @@ Provides comprehensive information about a specific leave request including appr
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -1118,6 +1123,7 @@ Provides comprehensive leave history, analytics, and balance information for a s
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -1766,6 +1772,7 @@ Processes leave request rejections with comprehensive feedback and alternative s
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)

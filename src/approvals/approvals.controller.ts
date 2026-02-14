@@ -99,7 +99,8 @@ export class ApprovalsController {
 
     // Create new approval request
     @Post()
-    @Roles(AccessLevel.USER)
+    @Roles(AccessLevel.USER,
+        AccessLevel.MEMBER)
     @ApiOperation({ 
         summary: '➕ Create new approval request',
         description: createApiDescription(
@@ -461,6 +462,7 @@ export class ApprovalsController {
         AccessLevel.SUPPORT,
         AccessLevel.DEVELOPER,
         AccessLevel.USER,
+        AccessLevel.MEMBER,
         AccessLevel.OWNER,
         AccessLevel.TECHNICIAN,
     )
@@ -500,6 +502,7 @@ export class ApprovalsController {
         AccessLevel.SUPPORT,
         AccessLevel.DEVELOPER,
         AccessLevel.USER,
+        AccessLevel.MEMBER,
         AccessLevel.OWNER,
         AccessLevel.TECHNICIAN,
     )
@@ -719,7 +722,8 @@ Retrieve a comprehensive, paginated list of approval requests with advanced filt
 
     // Get approvals pending for current user
     @Get('pending')
-    @Roles(AccessLevel.USER)
+    @Roles(AccessLevel.USER,
+        AccessLevel.MEMBER)
     @ApiOperation({ 
         summary: '⏳ Get pending approvals for current user',
         description: `
@@ -878,7 +882,8 @@ Retrieve all approval requests that require immediate action from the currently 
 
     // Get approvals submitted by current user
     @Get('my-requests')
-    @Roles(AccessLevel.USER)
+    @Roles(AccessLevel.USER,
+        AccessLevel.MEMBER)
     @ApiOperation({ 
         summary: '📤 Get approval requests submitted by current user',
         description: `
@@ -1046,7 +1051,7 @@ Retrieve all approval requests that were submitted by the currently authenticate
 
     // Get comprehensive approval history for a specific user (matching warnings pattern)
     @Get('user/:ref')
-    @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER, AccessLevel.OWNER, AccessLevel.USER)
+    @Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER, AccessLevel.OWNER, AccessLevel.USER, AccessLevel.MEMBER)
     @ApiOperation({ 
         summary: '👤 Get comprehensive approval history for a specific user',
         description: 'Retrieve complete approval history for a specific user with analytics and patterns, matching the warnings pattern for consistency.'
@@ -1360,7 +1365,8 @@ Generate comprehensive statistics and analytics about approval workflows for exe
 
     // Get specific approval by ID
     @Get(':id')
-    @Roles(AccessLevel.USER)
+    @Roles(AccessLevel.USER,
+        AccessLevel.MEMBER)
     @ApiOperation({ 
         summary: '🔍 Get detailed approval information by ID',
         description: `
@@ -1617,7 +1623,8 @@ Retrieve comprehensive information about a specific approval request, including 
 
     // Update approval (for requesters to modify draft approvals)
     @Patch(':id')
-    @Roles(AccessLevel.USER)
+    @Roles(AccessLevel.USER,
+        AccessLevel.MEMBER)
     @ApiOperation({ 
         summary: '✏️ Update approval request',
         description: `
@@ -1860,7 +1867,8 @@ Update an existing approval request with new information, corrections, or additi
 
     // Submit approval for review (change from draft to pending)
     @Post(':id/submit')
-    @Roles(AccessLevel.USER)
+    @Roles(AccessLevel.USER,
+        AccessLevel.MEMBER)
     @ApiOperation({ 
         summary: '📤 Submit approval request for review',
         description: `
@@ -2056,7 +2064,8 @@ Submit a draft approval request for formal review and decision-making. This acti
 
     // Perform action on approval (approve, reject, etc.)
     @Post(':id/action')
-    @Roles(AccessLevel.USER)
+    @Roles(AccessLevel.USER,
+        AccessLevel.MEMBER)
     @ApiOperation({ 
         summary: '⚡ Perform action on approval',
         description: `
@@ -2364,7 +2373,8 @@ Perform various decision-making actions on approval requests including approve, 
 
     // Sign approval digitally
     @Post(':id/sign')
-    @Roles(AccessLevel.USER)
+    @Roles(AccessLevel.USER,
+        AccessLevel.MEMBER)
     @ApiOperation({ 
         summary: '✍️ Apply digital signature to approval',
         description: `
@@ -2914,7 +2924,8 @@ Perform the same action on multiple approval requests simultaneously, enabling e
 
     // Get approval history
     @Get(':id/history')
-    @Roles(AccessLevel.USER)
+    @Roles(AccessLevel.USER,
+        AccessLevel.MEMBER)
     @ApiOperation({ 
         summary: '📜 Get comprehensive approval history',
         description: `
@@ -3145,7 +3156,8 @@ Retrieve the complete chronological history of actions, status changes, and deci
 
     // Get approval signatures
     @Get(':id/signatures')
-    @Roles(AccessLevel.USER)
+    @Roles(AccessLevel.USER,
+        AccessLevel.MEMBER)
     @ApiOperation({ 
         summary: '✍️ Get approval digital signatures',
         description: `
@@ -3411,7 +3423,8 @@ Retrieve all digital signatures associated with a specific approval, providing c
 
     // Withdraw approval (by requester)
     @Post(':id/withdraw')
-    @Roles(AccessLevel.USER)
+    @Roles(AccessLevel.USER,
+        AccessLevel.MEMBER)
     @ApiOperation({ 
         summary: '🔙 Withdraw approval request',
         description: `

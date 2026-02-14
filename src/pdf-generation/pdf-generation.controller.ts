@@ -53,7 +53,7 @@ export class PdfGenerationController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @Roles(AccessLevel.USER)
+  @Roles(AccessLevel.USER, AccessLevel.MEMBER)
   @ApiOperation({ 
     summary: '🎯 Generate advanced PDF documents with dynamic templating',
     description: `
@@ -434,7 +434,7 @@ Generate professional, branded PDF documents from customizable templates with co
   }
 
   @Get()
-  @Roles(AccessLevel.USER)
+  @Roles(AccessLevel.USER, AccessLevel.MEMBER)
   @ApiOperation({ 
     summary: '📋 List available PDF templates and generation history',
     description: `
@@ -541,7 +541,7 @@ Retrieve comprehensive information about available PDF templates, their capabili
   }
 
   @Get(':id')
-  @Roles(AccessLevel.USER)
+  @Roles(AccessLevel.USER, AccessLevel.MEMBER)
   @ApiOperation({ 
     summary: '🔍 Get detailed information about a specific generated PDF',
     description: `
@@ -659,7 +659,7 @@ Retrieve comprehensive information about a specific generated PDF document, incl
   }
 
   @Delete(':id')
-  @Roles(AccessLevel.USER)
+  @Roles(AccessLevel.USER, AccessLevel.MEMBER)
   @ApiOperation({ 
     summary: '🗑️ Delete a generated PDF document and remove from cloud storage',
     description: `

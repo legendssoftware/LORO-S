@@ -85,6 +85,7 @@ export class ClientsController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 	)
 	@ApiOperation({
@@ -1277,6 +1278,7 @@ Retrieves a comprehensive list of all clients without user-specific filtering fo
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.MEMBER,
 	)
@@ -1630,6 +1632,7 @@ Returns the linked client for the authenticated user with full related data for 
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.MEMBER,
 	)
@@ -1874,6 +1877,7 @@ Retrieves comprehensive information about a specific client including all relate
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 	)
 	@ApiOperation({
@@ -2131,6 +2135,7 @@ When converting a lead to client (status = 'CONVERTED'):
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 	)
 	@ApiOperation({
@@ -2240,6 +2245,7 @@ Restores a previously soft-deleted client back to active status, recovering all 
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -2355,6 +2361,7 @@ Marks a client as deleted without permanently removing data from the database, a
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.SUPERVISOR,
 		AccessLevel.TECHNICIAN,
@@ -2584,6 +2591,7 @@ Discovers clients within a specified radius of given GPS coordinates, enabling l
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.SUPERVISOR,
 		AccessLevel.TECHNICIAN,
@@ -3452,7 +3460,8 @@ Allows authenticated clients to delete their communication schedules through the
 	}
 
 	@Get('my-communication-schedules')
-	@Roles(AccessLevel.USER, AccessLevel.MANAGER, AccessLevel.ADMIN, AccessLevel.OWNER)
+	@Roles(AccessLevel.USER,
+		AccessLevel.MEMBER, AccessLevel.MANAGER, AccessLevel.ADMIN, AccessLevel.OWNER)
 	@ApiOperation({
 		summary: '📅 Get My Communication Schedules',
 		description: `

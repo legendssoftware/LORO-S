@@ -181,7 +181,7 @@ export class TrackingController {
 	}
 
 	@Get()
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER, AccessLevel.USER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER, AccessLevel.USER, AccessLevel.MEMBER)
 	@ApiOperation({
 		summary: 'Get all tracking records',
 		description:
@@ -262,7 +262,7 @@ export class TrackingController {
 	}
 
 	@Get(':ref')
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER, AccessLevel.USER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER, AccessLevel.USER, AccessLevel.MEMBER)
 	@ApiOperation({
 		summary: 'Get a tracking record by reference code',
 		description:
@@ -313,7 +313,7 @@ export class TrackingController {
 	}
 
 	@Get('for/:ref')
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER, AccessLevel.USER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER, AccessLevel.USER, AccessLevel.MEMBER)
 	@ApiOperation({
 		summary: 'Get tracking by user reference code',
 		description:
@@ -364,7 +364,7 @@ export class TrackingController {
 	}
 
 	@Get('daily/:ref')
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER, AccessLevel.USER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER, AccessLevel.USER, AccessLevel.MEMBER)
 	@ApiOperation({
 		summary: 'Get daily tracking summary for a user',
 		description:
@@ -415,7 +415,7 @@ export class TrackingController {
 	}
 
 	@Patch('/restore/:ref')
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER, AccessLevel.USER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER, AccessLevel.USER, AccessLevel.MEMBER)
 	@ApiOperation({
 		summary: 'Restore a deleted tracking record by reference code',
 		description:
@@ -442,7 +442,7 @@ export class TrackingController {
 	}
 
 	@Delete(':ref')
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER, AccessLevel.USER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER, AccessLevel.USER, AccessLevel.MEMBER)
 	@ApiOperation({
 		summary: 'Soft delete a tracking record by reference code',
 		description:
@@ -726,7 +726,8 @@ export class TrackingController {
 	@Get('user/:userId/timeframe/:timeframe')
 	@UseGuards(ClerkAuthGuard)
 	@ApiBearerAuth()
-	@Roles(AccessLevel.USER, AccessLevel.ADMIN, AccessLevel.OWNER)
+	@Roles(AccessLevel.USER,
+		AccessLevel.MEMBER, AccessLevel.ADMIN, AccessLevel.OWNER)
 	@ApiOperation({
 		summary: 'Get tracking points for a user within a specific timeframe',
 		description: `
@@ -868,7 +869,8 @@ export class TrackingController {
 	@Get('user/:userId/custom-range')
 	@UseGuards(ClerkAuthGuard)
 	@ApiBearerAuth()
-	@Roles(AccessLevel.USER, AccessLevel.ADMIN, AccessLevel.OWNER)
+	@Roles(AccessLevel.USER,
+		AccessLevel.MEMBER, AccessLevel.ADMIN, AccessLevel.OWNER)
 	@ApiOperation({
 		summary: 'Get tracking points for a user within a custom date range',
 		description: `
@@ -1152,7 +1154,7 @@ export class TrackingController {
 	@Post('re-cal/:ref')
 	@UseGuards(ClerkAuthGuard)
 	@ApiBearerAuth()
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER, AccessLevel.USER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.SUPPORT, AccessLevel.DEVELOPER, AccessLevel.USER, AccessLevel.MEMBER)
 	@ApiOperation({
 		summary: 'Recalculate tracking data for a user',
 		description: `

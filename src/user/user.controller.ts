@@ -177,6 +177,7 @@ export class UserController {
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -1043,6 +1044,7 @@ Any fields from the UpdateUserDto can be updated:
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -1342,6 +1344,7 @@ Retrieves detailed information about a specific user by their unique reference i
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -1603,6 +1606,7 @@ Updates an existing user's information with comprehensive validation and audit t
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -1886,6 +1890,7 @@ Restores a previously deleted user account back to active status, maintaining da
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -2027,6 +2032,7 @@ Restores a previously deleted user account back to active status, maintaining da
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -2194,6 +2200,7 @@ Use the restore endpoint to recover accidentally deleted users within the retent
 		AccessLevel.SUPPORT,
 		AccessLevel.DEVELOPER,
 		AccessLevel.USER,
+		AccessLevel.MEMBER,
 		AccessLevel.OWNER,
 		AccessLevel.TECHNICIAN,
 	)
@@ -3179,7 +3186,7 @@ Safely removes performance targets for a specific user with comprehensive cleanu
 	// ======================================================
 
 	@Get(':ref/preferences')
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.USER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.USER, AccessLevel.MEMBER)
 	@ApiOperation({
 		summary: '⚙️ Get user preferences',
 		description: `
@@ -3270,7 +3277,7 @@ Retrieves personalized preferences and settings for a specific user including th
 	}
 
 	@Post(':ref/preferences')
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.USER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.USER, AccessLevel.MEMBER)
 	@ApiOperation({
 		summary: '⚙️ Create user preferences',
 		description: `
@@ -3373,7 +3380,7 @@ Creates initial preference settings for a user account including theme, language
 	}
 
 	@Patch(':ref/preferences')
-	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.USER)
+	@Roles(AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER, AccessLevel.USER, AccessLevel.MEMBER)
 	@ApiOperation({
 		summary: '⚙️ Update user preferences',
 		description: `
