@@ -109,6 +109,20 @@ export interface CategoryAggregation {
 }
 
 /**
+ * Store-level aggregation from tblsaleslines (GROUP BY store only).
+ * Used for correct unique customer count per branch (COUNT(DISTINCT customer) at store level).
+ * Same filters as BranchCategoryAggregation; uniqueCustomers is not summed across categories.
+ */
+export interface StoreAggregation {
+	store: string;
+	totalRevenue: number;
+	totalCost: number;
+	transactionCount: number;
+	uniqueCustomers: number;
+	totalQuantity: number;
+}
+
+/**
  * Branch × Category Aggregation Result from ERP
  * Note: Uses tblsaleslines for category data (category is only in lines table)
  * Revenue calculation: SUM(incl_line_total) - SUM(tax) grouped by store and category
@@ -217,6 +231,18 @@ export interface TblSalesLinesWithCategory {
 	// Additional fields from JOINs
 	customer_category_code?: string;
 	customer_category_description?: string;
+}
+
+/**
+ * Basket Value Ranges by Store
+ * Invoice count per store by basket value (excl. tax) ranges
+ */
+export interface BasketValueRangesByStore {
+	store: string;
+	under500: number;
+	range500to2000: number;
+	range2000to5000: number;
+	over5000: number;
 }
 
 /**

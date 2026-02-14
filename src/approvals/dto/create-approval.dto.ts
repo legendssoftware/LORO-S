@@ -148,16 +148,6 @@ export class CreateApprovalDto {
     @IsString()
     organisationRef?: string;
 
-    @ApiPropertyOptional({
-        description: 'Branch ID for branch-specific approvals',
-        example: 789,
-        minimum: 1
-    })
-    @IsOptional()
-    @IsInt()
-    @IsPositive()
-    branchUid?: number;
-
     // Workflow Configuration
     @ApiPropertyOptional({
         description: 'Approval chain for multi-step workflows',

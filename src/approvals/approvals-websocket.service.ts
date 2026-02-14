@@ -248,12 +248,6 @@ export class ApprovalsWebSocketService {
                 ref: approval.organisation.ref,
             } : null,
 
-            branch: approval.branch ? {
-                uid: approval.branch.uid,
-                name: approval.branch.name,
-                ref: approval.branch.ref,
-            } : null,
-
             // Event-specific data
             action: eventData.action || null,
             actionBy: actionByUser,
@@ -265,7 +259,6 @@ export class ApprovalsWebSocketService {
 
             // Additional metadata
             organisationRef: approval.organisationRef,
-            branchUid: approval.branchUid,
             targetUsers: eventData.targetUsers || [],
             targetRoles: eventData.targetRoles || [],
         };
@@ -285,7 +278,6 @@ export class ApprovalsWebSocketService {
                     'delegatedFrom',
                     'escalatedTo',
                     'organisation',
-                    'branch',
                     'history',
                     'signatures',
                 ],
@@ -299,17 +291,13 @@ export class ApprovalsWebSocketService {
     /**
      * 🔔 Emit approval metrics for dashboard updates
      */
-    async emitApprovalMetrics(orgId?: number, branchId?: number) {
+    async emitApprovalMetrics(orgId?: number) {
         try {
-            // Build query for metrics
+            // Build query for metrics (org-scoped only; no branch)
             const queryBuilder = this.approvalRepository.createQueryBuilder('approval');
             
             if (orgId) {
                 queryBuilder.andWhere('approval.organisationRef = :orgRef', { orgRef: orgId.toString() });
-            }
-            
-            if (branchId) {
-                queryBuilder.andWhere('approval.branchUid = :branchUid', { branchUid: branchId });
             }
 
             // Get basic metrics
@@ -328,7 +316,6 @@ export class ApprovalsWebSocketService {
                 timestamp: new Date(),
                 scope: {
                     organisationId: orgId || null,
-                    branchId: branchId || null,
                 },
             };
 

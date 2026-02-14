@@ -937,8 +937,9 @@ Creates comprehensive quotations from shopping cart data with advanced pricing, 
 		@Body() quotationData: CheckoutDto,
 		@Req() req: AuthenticatedRequest,
 	) {
-		const clientId = req.user?.uid;
-		if (!clientId) {
+		// Client portal users have clientUid (Client.uid); staff use uid where applicable
+		const clientId = req.user?.clientUid ?? req.user?.uid;
+		if (clientId == null) {
 			throw new UnauthorizedException('Client ID not found');
 		}
 		return this.shopService.updateQuotationForClient(quotationId, quotationData, clientId);
@@ -4200,8 +4201,8 @@ Retrieve all projects for a specific client with complete project details.
 		const branchId = this.toNumber(req.user?.branch?.uid);
 		const userRole = req.user?.role || req.user?.accessLevel;
 
-		// Security: CLIENT can only access their own projects (compare clientId to authenticated client's Client.uid)
-		if (userRole === AccessLevel.CLIENT) {
+		// Security: CLIENT and MEMBER can only access their own projects (compare clientId to authenticated client's Client.uid)
+		if (userRole === AccessLevel.CLIENT || userRole === AccessLevel.MEMBER) {
 			const clientUid = req.user?.clientUid;
 			if (clientUid == null || Number(clientId) !== Number(clientUid)) {
 				throw new UnauthorizedException('You can only access your own projects');

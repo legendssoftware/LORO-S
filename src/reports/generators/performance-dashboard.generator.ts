@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PerformanceFiltersDto } from '../dto/performance-filters.dto';
+import type { ResolvedPerformanceFiltersDto } from '../dto/performance-filters.dto';
 import {
 	PerformanceDashboardDataDto,
 	PerformanceSummaryDto,
@@ -23,6 +24,7 @@ import {
 	DailyAggregation,
 	BranchAggregation,
 	BranchCategoryAggregation,
+	StoreAggregation,
 } from '../../erp/interfaces/erp-data.interface';
 import { getCurrencyForCountry } from '../../erp/utils/currency.util';
 import { ExchangeRateDto } from '../dto/performance-dashboard.dto';
@@ -81,7 +83,7 @@ export class PerformanceDashboardGenerator {
 	/**
 	 * Generate complete performance dashboard data (includes charts + tables)
 	 */
-	async generate(params: PerformanceFiltersDto): Promise<PerformanceDashboardDataDto> {
+	async generate(params: ResolvedPerformanceFiltersDto): Promise<PerformanceDashboardDataDto> {
 		const countryCode = this.getCountryCode(params);
 		this.logger.log(`🌍 Generating performance dashboard for org ${params.organisationId}`);
 		this.logger.log(`🌍 Country: ${params.country || 'not specified'} → Code: ${countryCode}`);
@@ -144,8 +146,11 @@ export class PerformanceDashboardGenerator {
 			// ✅ FIX: Calculate total unique clients across ALL transactions (not summing per day/store)
 			// This prevents double-counting clients who shop on multiple days or at multiple stores
 			// Use transactions data which has clientId (PerformanceData doesn't have clientId)
+			// For consolidated view (country=ALL), fetch from all 5 countries and merge before deduplication
 			const allUniqueClients = new Set<string>();
-			const transactions = await this.getSalesTransactions(params);
+			const transactions = !params.country || params.country === 'ALL'
+				? await this.getSalesTransactionsConsolidated(params)
+				: await this.getSalesTransactions(params);
 			transactions.forEach((t) => {
 				if (t.clientId && t.clientId !== 'UNKNOWN') {
 					allUniqueClients.add(t.clientId);
@@ -189,7 +194,7 @@ export class PerformanceDashboardGenerator {
 	 * Uses SUM(incl_line_total) - SUM(tax) for revenue, SUM(cost_price * quantity) for cost,
 	 * COUNT(DISTINCT doc_number) for transactions, COUNT(DISTINCT customer) for unique clients
 	 */
-	async generateDailySalesPerformance(params: PerformanceFiltersDto): Promise<DailySalesPerformanceDto[]> {
+	async generateDailySalesPerformance(params: ResolvedPerformanceFiltersDto): Promise<DailySalesPerformanceDto[]> {
 		this.logger.log(`Generating daily sales performance for org ${params.organisationId}`);
 
 		// Build ERP query filters
@@ -206,7 +211,7 @@ export class PerformanceDashboardGenerator {
 	 * Generate consolidated daily sales performance across all countries with ZAR conversion
 	 * Fetches data from all countries, converts all currency values to ZAR using exchange rates
 	 */
-	async generateConsolidatedDailySalesPerformance(params: PerformanceFiltersDto): Promise<DailySalesPerformanceDto[]> {
+	async generateConsolidatedDailySalesPerformance(params: ResolvedPerformanceFiltersDto): Promise<DailySalesPerformanceDto[]> {
 		this.logger.log(`Generating consolidated daily sales performance for org ${params.organisationId} (all countries, ZAR)`);
 
 		// Supported countries
@@ -320,7 +325,7 @@ export class PerformanceDashboardGenerator {
 	 * This ensures Branch × Category matches Sales by Category total (R823,481.96)
 	 * GP calculations use direct cost from sales lines (no scaling)
 	 */
-	async generateBranchCategoryPerformance(params: PerformanceFiltersDto): Promise<BranchCategoryPerformanceDto[]> {
+	async generateBranchCategoryPerformance(params: ResolvedPerformanceFiltersDto): Promise<BranchCategoryPerformanceDto[]> {
 		this.logger.log(`Generating branch-category performance for org ${params.organisationId}`);
 
 		// Build ERP query filters
@@ -333,12 +338,15 @@ export class PerformanceDashboardGenerator {
 		// ✅ Get branch × category aggregations from tblsaleslines ONLY
 		// Uses: SUM(incl_line_total) - SUM(tax) grouped by store, category
 		// This matches Sales by Category chart query (R823,481.96)
-		const branchCategoryAggregations = await this.erpDataService.getBranchCategoryAggregations(filters, countryCode);
+		const [branchCategoryAggregations, storeAggregations] = await Promise.all([
+			this.erpDataService.getBranchCategoryAggregations(filters, countryCode),
+			this.erpDataService.getStoreAggregations(filters, countryCode),
+		]);
 		
-		this.logger.log(`🏷️ [BranchCategoryPerformance] Fetched ${branchCategoryAggregations.length} aggregations for country ${countryCode}`);
+		this.logger.log(`🏷️ [BranchCategoryPerformance] Fetched ${branchCategoryAggregations.length} aggregations, ${storeAggregations.length} store aggregations for country ${countryCode}`);
 		
 		// ✅ Calculate performance directly from sales lines (no scaling)
-		const result = await this.calculateBranchCategoryPerformanceFromAggregations(branchCategoryAggregations, countryCode);
+		const result = await this.calculateBranchCategoryPerformanceFromAggregations(branchCategoryAggregations, countryCode, storeAggregations);
 		
 		// ✅ LOG: Verify countryCode is set on all branches
 		const branchesWithCountryCode = result.filter(b => b.countryCode === countryCode).length;
@@ -362,7 +370,7 @@ export class PerformanceDashboardGenerator {
 	 * Fetches data from all countries, converts all currency values to ZAR using exchange rates
 	 * All branches from all countries are combined into a single list with values in ZAR
 	 */
-	async generateConsolidatedBranchCategoryPerformance(params: PerformanceFiltersDto): Promise<BranchCategoryPerformanceDto[]> {
+	async generateConsolidatedBranchCategoryPerformance(params: ResolvedPerformanceFiltersDto): Promise<BranchCategoryPerformanceDto[]> {
 		this.logger.log(`Generating consolidated branch-category performance for org ${params.organisationId} (all countries, ZAR)`);
 
 		// Supported countries
@@ -389,8 +397,11 @@ export class PerformanceDashboardGenerator {
 			try {
 				this.logger.log(`Fetching branch-category performance for ${country.name} (${country.code})`);
 				
-				// Get branch category aggregations for this country
-				const branchCategoryAggregations = await this.erpDataService.getBranchCategoryAggregations(filters, country.code);
+				// Get branch category and store aggregations for this country
+				const [branchCategoryAggregations, storeAggregations] = await Promise.all([
+					this.erpDataService.getBranchCategoryAggregations(filters, country.code),
+					this.erpDataService.getStoreAggregations(filters, country.code),
+				]);
 				
 				// Get currency info for this country
 				const currency = getCurrencyForCountry(country.code);
@@ -404,7 +415,8 @@ export class PerformanceDashboardGenerator {
 				// Calculate branch category performance for this country
 				const countryBranchCategoryPerformance = await this.calculateBranchCategoryPerformanceFromAggregations(
 					branchCategoryAggregations,
-					country.code
+					country.code,
+					storeAggregations,
 				);
 
 				// Convert all currency values to ZAR
@@ -479,7 +491,7 @@ export class PerformanceDashboardGenerator {
 	 * This ensures Sales Per Store matches Branch × Category Performance totals exactly
 	 * GP calculated from BranchCategoryAggregations (sums totalCost per store)
 	 */
-	async generateSalesPerStore(params: PerformanceFiltersDto): Promise<SalesPerStoreDto[]> {
+	async generateSalesPerStore(params: ResolvedPerformanceFiltersDto): Promise<SalesPerStoreDto[]> {
 		this.logger.log(`Generating sales per store for org ${params.organisationId}`);
 
 		// Build ERP query filters
@@ -497,7 +509,8 @@ export class PerformanceDashboardGenerator {
 		
 		this.logger.log(`🏷️ [SalesPerStore] Fetched ${branchCategoryAggregations.length} aggregations for country ${countryCode}`);
 		
-		const result = await this.calculateSalesPerStoreFromAggregations(branchAggregations, branchCategoryAggregations, countryCode);
+		const basketRanges = await this.erpDataService.getBasketValueRangesByStore(filters, countryCode);
+		const result = await this.calculateSalesPerStoreFromAggregations(branchAggregations, branchCategoryAggregations, countryCode, basketRanges);
 		
 		// ✅ LOG: Verify countryCode is set on all stores
 		const storesWithCountryCode = result.filter(s => s.countryCode === countryCode).length;
@@ -520,7 +533,7 @@ export class PerformanceDashboardGenerator {
 	 * Generate consolidated sales per store across all countries with ZAR conversion
 	 * Fetches data from all countries, converts all currency values to ZAR using exchange rates
 	 */
-	async generateConsolidatedSalesPerStore(params: PerformanceFiltersDto): Promise<SalesPerStoreDto[]> {
+	async generateConsolidatedSalesPerStore(params: ResolvedPerformanceFiltersDto): Promise<SalesPerStoreDto[]> {
 		this.logger.log(`Generating consolidated sales per store for org ${params.organisationId} (all countries, ZAR)`);
 
 		// Supported countries
@@ -562,11 +575,13 @@ export class PerformanceDashboardGenerator {
 				
 				this.logger.log(`${country.name}: ${branchAggregations.length} branches, exchange rate ${currency.code} to ZAR: ${exchangeRate}`);
 
+				const basketRanges = await this.erpDataService.getBasketValueRangesByStore(filters, country.code);
 				// Calculate sales per store for this country
 				const countrySalesPerStore = await this.calculateSalesPerStoreFromAggregations(
 					branchAggregations,
 					branchCategoryAggregations,
-					country.code
+					country.code,
+					basketRanges
 				);
 
 				// Convert all values to ZAR
@@ -683,7 +698,7 @@ export class PerformanceDashboardGenerator {
 	/**
 	 * Get master data for filters
 	 */
-	async getMasterData(params: PerformanceFiltersDto): Promise<{
+	async getMasterData(params: ResolvedPerformanceFiltersDto): Promise<{
 		branches: Array<{ id: string; name: string }>;
 		products: Array<{ id: string; name: string }>;
 		salespeople: Array<{ id: string; name: string }>;
@@ -707,7 +722,7 @@ export class PerformanceDashboardGenerator {
 	 * 
 	 * ✅ UPDATED: Now fetches headers to get sales_code for sales person mapping
 	 */
-	private async getPerformanceData(params: PerformanceFiltersDto): Promise<PerformanceData[]> {
+	private async getPerformanceData(params: ResolvedPerformanceFiltersDto): Promise<PerformanceData[]> {
 		try {
 			// Build ERP query filters
 			const filters = this.buildErpFilters(params);
@@ -759,38 +774,86 @@ export class PerformanceDashboardGenerator {
 
 	/**
 	 * Get sales transactions - NOW USING ERP DATABASE
+	 * ✅ FIXED: Applies customer category filters (include/exclude) for consistency with totalUniqueClients
+	 * Only used for single-country view; consolidated view uses getSalesTransactionsConsolidated
 	 */
-	private async getSalesTransactions(params: PerformanceFiltersDto): Promise<ErpSalesTransaction[]> {
+	private async getSalesTransactions(params: ResolvedPerformanceFiltersDto): Promise<ErpSalesTransaction[]> {
 		try {
-			// Build ERP query filters
 			const filters = this.buildErpFilters(params);
-			const countryCode = this.getCountryCode(params);
+			const countryCode = this.getCountryCode(params) || 'SA';
 
-			this.logger.log(`Fetching ERP sales transactions for ${filters.startDate} to ${filters.endDate}`);
+			this.logger.log(`Fetching ERP sales transactions for ${filters.startDate} to ${filters.endDate} (country: ${countryCode})`);
 
-			// Get sales lines from ERP
-			// ✅ REMOVED: Redundant country filtering - database switching via countryCode handles this
-			const salesLines = await this.erpDataService.getSalesLinesByDateRange(filters, ['1'], countryCode);
-			
-			// Get headers if needed
-			const headers = await this.erpDataService.getSalesHeadersByDateRange(filters, countryCode);
-			
-			// Transform to sales transaction format
-			const transactions = this.erpTransformerService.transformToSalesTransactions(salesLines, headers);
-			
+			const transactions = await this.getSalesTransactionsForCountry(filters, countryCode);
 			this.logger.log(`Transformed ${transactions.length} sales transactions from ERP`);
-			
 			return transactions;
 		} catch (error) {
 			this.logger.error(`Error fetching ERP sales transactions: ${error.message}`, error.stack);
-			
-			// Return empty data on error
 			this.logger.warn('Returning empty data due to ERP error');
 			return [];
 		}
 	}
 
+	/**
+	 * Get sales transactions from all countries for consolidated view (country=ALL).
+	 * Fetches from SA, BOT, ZAM, MOZ, ZW and merges into a single array.
+	 * Used for totalUniqueClients calculation when no country filter is applied.
+	 */
+	private async getSalesTransactionsConsolidated(params: ResolvedPerformanceFiltersDto): Promise<ErpSalesTransaction[]> {
+		const countries = [
+			{ code: 'SA', name: 'South Africa' },
+			{ code: 'BOT', name: 'Botswana' },
+			{ code: 'ZAM', name: 'Zambia' },
+			{ code: 'MOZ', name: 'Mozambique' },
+			{ code: 'ZW', name: 'Zimbabwe' },
+		];
 
+		const allTransactions: ErpSalesTransaction[] = [];
+		const filters = this.buildErpFilters(params);
+
+		for (const country of countries) {
+			try {
+				const transactions = await this.getSalesTransactionsForCountry(filters, country.code);
+				allTransactions.push(...transactions);
+				this.logger.log(`Fetched ${transactions.length} transactions from ${country.name} (${country.code})`);
+			} catch (error: any) {
+				this.logger.warn(`Error fetching transactions from ${country.name}: ${error?.message || 'Unknown'}. Skipping.`);
+			}
+		}
+
+		this.logger.log(`Total merged transactions from all countries: ${allTransactions.length}`);
+		return allTransactions;
+	}
+
+	/**
+	 * Get sales transactions for a specific country. Used by getSalesTransactionsConsolidated
+	 * and by getSalesTransactions when country is specified.
+	 */
+	private async getSalesTransactionsForCountry(
+		filters: ErpQueryFilters,
+		countryCode: string,
+	): Promise<ErpSalesTransaction[]> {
+		const hasCustomerCategoryFilters = (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) ||
+			(filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0);
+
+		let salesLines: any[];
+		if (hasCustomerCategoryFilters) {
+			const salesLinesWithCategories = await this.erpDataService.getSalesLinesWithCustomerCategories(
+				filters,
+				['1'],
+				countryCode,
+			);
+			salesLines = salesLinesWithCategories.map((line: any) => {
+				const { customer_category_code, customer_category_description, ...rest } = line;
+				return rest;
+			});
+		} else {
+			salesLines = await this.erpDataService.getSalesLinesByDateRange(filters, ['1'], countryCode);
+		}
+
+		const headers = await this.erpDataService.getSalesHeadersByDateRange(filters, countryCode);
+		return this.erpTransformerService.transformToSalesTransactions(salesLines, headers);
+	}
 
 	// ===================================================================
 	// SUMMARY CALCULATIONS
@@ -806,7 +869,7 @@ export class PerformanceDashboardGenerator {
 	 * @param totalTarget - Real revenue target from ErpTargetsService (based on org settings)
 	 */
 	private async calculateSummaryFromDailyAggregations(
-		params: PerformanceFiltersDto,
+		params: ResolvedPerformanceFiltersDto,
 		data: PerformanceData[],
 		totalTarget: number,
 	): Promise<PerformanceSummaryDto> {
@@ -862,11 +925,14 @@ export class PerformanceDashboardGenerator {
 		// This fixes the "stuck at 83.3%" issue where target was always proportional to revenue
 		const performanceRate = totalTarget === 0 ? 0 : (totalRevenue / totalTarget) * 100;
 		
-		// Still use line items for transaction count and quantity (needed for averages)
-		const transactionCount = data.length;
+		// ✅ FIXED: Use invoice/basket count from daily aggregations (COUNT(DISTINCT doc_number)), not line item count
+		const transactionCount = dailyAggregations.reduce((sum, agg) => {
+			const count = typeof agg.transactionCount === 'number' ? agg.transactionCount : parseInt(String(agg.transactionCount || 0), 10);
+			return sum + count;
+		}, 0);
 		const averageOrderValue = transactionCount > 0 ? totalRevenue / transactionCount : 0;
 
-		// Calculate average items per basket (convert quantities to numbers)
+		// Calculate average items per basket (convert quantities to numbers from line items)
 		const totalQuantity = data.reduce((sum, item) => {
 			const quantity = typeof item.quantity === 'number' ? item.quantity : parseFloat(String(item.quantity || 0));
 			return sum + quantity;
@@ -902,7 +968,7 @@ export class PerformanceDashboardGenerator {
 	/**
 	 * Generate all chart data
 	 */
-	private async generateCharts(data: PerformanceData[], params: PerformanceFiltersDto): Promise<PerformanceChartsDto> {
+	private async generateCharts(data: PerformanceData[], params: ResolvedPerformanceFiltersDto): Promise<PerformanceChartsDto> {
 		// ✅ FIXED: Now using real hourly sales data (async)
 		const hourlySales = await this.generateHourlySalesChart(params);
 		
@@ -940,7 +1006,7 @@ export class PerformanceDashboardGenerator {
 	 * This matches the user's SQL query: SELECT SUM(total_incl) - SUM(total_tax) FROM tblsalesheader WHERE doc_type IN (1, 2)
 	 * Revenue is exclusive of tax
 	 */
-	private async generateRevenueTrendChart(data: PerformanceData[], params: PerformanceFiltersDto) {
+	private async generateRevenueTrendChart(data: PerformanceData[], params: ResolvedPerformanceFiltersDto) {
 		// Build ERP query filters
 		const filters = this.buildErpFilters(params);
 		const countryCode = this.getCountryCode(params);
@@ -1010,7 +1076,7 @@ export class PerformanceDashboardGenerator {
 	 * ✅ NEW: Generate GP trend chart using daily sales performance data
 	 * Shows gross profit over time
 	 */
-	private async generateGPTrendChart(data: PerformanceData[], params: PerformanceFiltersDto) {
+	private async generateGPTrendChart(data: PerformanceData[], params: ResolvedPerformanceFiltersDto) {
 		try {
 			// Use the daily sales performance data which already has GP calculated
 			const dailySalesPerformance = await this.generateDailySalesPerformance(params);
@@ -1051,7 +1117,7 @@ export class PerformanceDashboardGenerator {
 	 * ✅ Shows only hours up to current time (not future hours)
 	 * ✅ Filters to doc_type='1' (Tax Invoices only)
 	 */
-	private async generateHourlySalesChart(params: PerformanceFiltersDto) {
+	private async generateHourlySalesChart(params: ResolvedPerformanceFiltersDto) {
 		try {
 			// Build ERP query filters
 			const filters = this.buildErpFilters(params);
@@ -1111,7 +1177,7 @@ export class PerformanceDashboardGenerator {
 	 * Revenue is exclusive of tax
 	 * ✅ FIXED: Calculates total from ALL categories, but only shows top 5 in legend
 	 */
-	private async generateSalesByCategoryChart(data: PerformanceData[], params: PerformanceFiltersDto) {
+	private async generateSalesByCategoryChart(data: PerformanceData[], params: ResolvedPerformanceFiltersDto) {
 		// Build ERP query filters
 		const filters = this.buildErpFilters(params);
 		const countryCode = this.getCountryCode(params);
@@ -1147,7 +1213,7 @@ export class PerformanceDashboardGenerator {
 	 * ✅ Uses branch names from mapping (not codes)
 	 * ✅ FIXED: Calculates total from ALL branches, but only shows top 10 in legend
 	 */
-	private async generateBranchPerformanceChart(data: PerformanceData[], params: PerformanceFiltersDto) {
+	private async generateBranchPerformanceChart(data: PerformanceData[], params: ResolvedPerformanceFiltersDto) {
 		// Build ERP query filters
 		const filters = this.buildErpFilters(params);
 		const countryCode = this.getCountryCode(params);
@@ -1196,7 +1262,7 @@ export class PerformanceDashboardGenerator {
 	 * ✅ Filters: item_code != '.', type = 'I' (inventory items)
 	 * ✅ FIXED: Gets ALL products, calculates total from ALL, but only shows top 10 in legend
 	 */
-	private async generateTopProductsChart(data: PerformanceData[], params: PerformanceFiltersDto) {
+	private async generateTopProductsChart(data: PerformanceData[], params: ResolvedPerformanceFiltersDto) {
 		// Build ERP query filters
 		const filters = this.buildErpFilters(params);
 		const countryCode = this.getCountryCode(params);
@@ -1279,7 +1345,7 @@ export class PerformanceDashboardGenerator {
 	 * Uses sales_code mapping to show actual sales person names instead of codes
 	 * ✅ FIXED: Calculates total from ALL salespeople, but only shows top 10 in legend
 	 */
-	private async generateSalesBySalespersonChart(params: PerformanceFiltersDto) {
+	private async generateSalesBySalespersonChart(params: ResolvedPerformanceFiltersDto) {
 		// Build ERP query filters using buildErpFilters helper
 		const filters = this.buildErpFilters(params);
 		const countryCode = this.getCountryCode(params);
@@ -1314,7 +1380,7 @@ export class PerformanceDashboardGenerator {
 	 * - Receipt (doc_type = 6)
 	 * - And any other doc_types that exist
 	 */
-	private async generateConversionRateChart(params: PerformanceFiltersDto) {
+	private async generateConversionRateChart(params: ResolvedPerformanceFiltersDto) {
 		try {
 			// Build ERP query filters
 			const filters = this.buildErpFilters(params);
@@ -1382,7 +1448,7 @@ export class PerformanceDashboardGenerator {
 	 * ✅ FIXED: Now uses real payment type data from tblsalesheader (cash, credit_card, eft, etc.)
 	 * Previously used simulated data with hardcoded customer types
 	 */
-	private async generateCustomerCompositionChart(params: PerformanceFiltersDto) {
+	private async generateCustomerCompositionChart(params: ResolvedPerformanceFiltersDto) {
 		try {
 			// Build ERP query filters
 			const filters = this.buildErpFilters(params);
@@ -1546,12 +1612,14 @@ export class PerformanceDashboardGenerator {
 	 * - Cost: SUM(cost_price * quantity) from sales lines
 	 * - GP: Revenue - Cost (direct calculation, no scaling)
 	 * - GP%: (GP / Revenue) * 100
+	 * - clientsQty: Uses store-level uniqueCustomers from storeAggregations (COUNT(DISTINCT customer) per store)
 	 * 
 	 * This ensures Branch × Category matches Sales by Category total (R823,481.96)
 	 */
 	private async calculateBranchCategoryPerformanceFromAggregations(
 		categoryAggregations: BranchCategoryAggregation[],
-		countryCode: string = 'SA'
+		countryCode: string = 'SA',
+		storeAggregations: StoreAggregation[] = [],
 	): Promise<BranchCategoryPerformanceDto[]> {
 		if (categoryAggregations.length === 0) return [];
 
@@ -1587,6 +1655,13 @@ export class PerformanceDashboardGenerator {
 			branchInfo.categories.set(categoryKey, agg);
 		});
 
+		// Build store code -> uniqueCustomers map from store-level aggregations
+		const storeUniqueCustomersMap = new Map<string, number>();
+		storeAggregations.forEach((agg) => {
+			const storeCode = String(agg.store || '').trim().padStart(3, '0');
+			storeUniqueCustomersMap.set(storeCode, agg.uniqueCustomers ?? 0);
+		});
+
 		const performance: BranchCategoryPerformanceDto[] = [];
 
 		// Step 2: Calculate performance for each branch directly from sales lines
@@ -1597,7 +1672,6 @@ export class PerformanceDashboardGenerator {
 			let branchTotalRevenue = 0;
 			let branchTotalCost = 0;
 			let branchTotalBasketCount = 0;
-			const branchUniqueClients = new Set<string>();
 
 			// Process each category
 			branchInfo.categories.forEach((agg, categoryKey) => {
@@ -1649,12 +1723,15 @@ export class PerformanceDashboardGenerator {
 			// ✅ Calculate branch total GP%
 			const branchTotalGPPercentage = branchTotalRevenue > 0 ? (branchTotalGP / branchTotalRevenue) * 100 : 0;
 
-			// Calculate total unique clients (sum across categories - may slightly overcount)
-			const branchTotalUniqueClients = Array.from(branchInfo.categories.values()).reduce((sum, agg) => {
-				return sum + (typeof agg.uniqueCustomers === 'number' 
-					? agg.uniqueCustomers 
-					: parseInt(String(agg.uniqueCustomers || 0), 10));
-			}, 0);
+			// Use store-level unique customers (COUNT(DISTINCT customer) per store) when available
+			const storeCode = branchId.replace(/^B/, '');
+			const branchTotalUniqueClients = storeUniqueCustomersMap.has(storeCode)
+				? storeUniqueCustomersMap.get(storeCode)!
+				: Array.from(branchInfo.categories.values()).reduce((sum, agg) => {
+						return sum + (typeof agg.uniqueCustomers === 'number'
+							? agg.uniqueCustomers
+							: parseInt(String(agg.uniqueCustomers || 0), 10));
+					}, 0);
 
 			// ✅ LOG: Log each branch being created with its countryCode
 			this.logger.debug(`🏷️ [calculateBranchCategoryPerformance] Creating branch: ${branchId} (${branchInfo.branchName}) with countryCode: ${countryCode}`);
@@ -1789,7 +1866,8 @@ export class PerformanceDashboardGenerator {
 	private async calculateSalesPerStoreFromAggregations(
 		aggregations: BranchAggregation[],
 		branchCategoryAggregations: BranchCategoryAggregation[],
-		countryCode: string = 'SA'
+		countryCode: string = 'SA',
+		basketRangesByStore?: Array<{ store: string; under500: number; range500to2000: number; range2000to5000: number; over5000: number }>
 	): Promise<SalesPerStoreDto[]> {
 		if (branchCategoryAggregations.length === 0) return [];
 		
@@ -1835,6 +1913,18 @@ export class PerformanceDashboardGenerator {
 		// Get all store codes and fetch branch names from database
 		const storeCodes = Array.from(storeData.keys());
 		const branchNamesMap = await this.erpDataService.getBranchNamesFromDatabase(storeCodes, countryCode);
+		const basketRangesMap = new Map<string, { under500: number; range500to2000: number; range2000to5000: number; over5000: number }>();
+		if (basketRangesByStore?.length) {
+			basketRangesByStore.forEach((r) => {
+				const code = String(r.store || '').trim().padStart(3, '0');
+				basketRangesMap.set(code, {
+					under500: r.under500 || 0,
+					range500to2000: r.range500to2000 || 0,
+					range2000to5000: r.range2000to5000 || 0,
+					over5000: r.over5000 || 0,
+				});
+			});
+		}
 		
 		// ✅ LOG: Verify branch names were fetched for correct country
 		this.logger.debug(`🏷️ [calculateSalesPerStore] Fetched ${branchNamesMap.size} branch names from country ${countryCode} database`);
@@ -1857,6 +1947,7 @@ export class PerformanceDashboardGenerator {
 			// ✅ LOG: Log each store being created with its countryCode
 			this.logger.debug(`🏷️ [calculateSalesPerStore] Creating store: ${branchId} (${storeName}) with countryCode: ${countryCode}`);
 
+			const ranges = basketRangesMap.get(storeCode);
 			salesPerStore.push({
 				storeId: branchId,
 				storeName: storeName, // ✅ Use branch name from database
@@ -1868,6 +1959,7 @@ export class PerformanceDashboardGenerator {
 				uniqueClients: uniqueCustomers, // ✅ Unique customers from line items
 				grossProfit: grossProfit, // ✅ GP calculated from BranchCategoryAggregations
 				grossProfitPercentage: grossProfitPercentage, // ✅ GP% calculated
+				basketRanges: ranges ? { ...ranges } : undefined,
 			});
 		});
 
@@ -2012,7 +2104,7 @@ export class PerformanceDashboardGenerator {
 	 * ✅ FIXED: Country and branch filters now work together
 	 * ✅ FIXED: Branch IDs (B015) are converted to store codes (015)
 	 */
-	private buildErpFilters(params: PerformanceFiltersDto): ErpQueryFilters {
+	private buildErpFilters(params: ResolvedPerformanceFiltersDto): ErpQueryFilters {
 		const filters: ErpQueryFilters = {
 			startDate: params.startDate || this.getDefaultStartDate(),
 			endDate: params.endDate || this.getDefaultEndDate(),
@@ -2079,7 +2171,7 @@ export class PerformanceDashboardGenerator {
 	 * Returns undefined when country is not specified to preserve consolidated view
 	 * Country codes: SA (default), ZAM, MOZ, BOT, ZW, MAL
 	 */
-	private getCountryCode(params: PerformanceFiltersDto): string | undefined {
+	private getCountryCode(params: ResolvedPerformanceFiltersDto): string | undefined {
 		// countryCode is set by Reports Service convertParamsToFilters
 		// Preserve undefined for consolidated view (all countries)
 		const countryCode = (params as any).countryCode;

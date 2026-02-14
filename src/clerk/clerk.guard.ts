@@ -1,4 +1,4 @@
-import { Injectable, CanActivate, ExecutionContext, UnauthorizedException, ForbiddenException, Inject } from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext, UnauthorizedException, ForbiddenException, Inject, Logger } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Request } from 'express';
 import { ClerkService } from './clerk.service';
@@ -12,6 +12,7 @@ const IS_PUBLIC_KEY = 'isPublic';
 
 @Injectable()
 export class ClerkAuthGuard implements CanActivate {
+	private readonly logger = new Logger(ClerkAuthGuard.name);
 	private readonly LICENSE_CACHE_TTL = 60000; // 1 minute cache TTL for licenses
 	private readonly CACHE_PREFIX = 'license:';
 
@@ -68,6 +69,10 @@ export class ClerkAuthGuard implements CanActivate {
 		const clerkUserId = decoded.payload.sub;
 		const tokenRole = decoded.payload.o?.rol;
 		const tokenOrgId = decoded.payload.o?.id; // Clerk org ID from token (source of truth)
+
+		this.logger.log(
+			`[ClerkAuthGuard] Token roles received: path=${request.method} ${request.path}, tokenRole=${tokenRole ?? 'undefined'}, tokenOrgId=${tokenOrgId ?? 'undefined'}, clerkUserId=${clerkUserId}, payload.o=${JSON.stringify(decoded.payload.o ?? null)}`,
+		);
 
 		if (!clerkUserId) {
 			throw new UnauthorizedException('Invalid token: missing user ID');
@@ -230,6 +235,9 @@ export class ClerkAuthGuard implements CanActivate {
 			} else {
 				// User not found in User table - try ClientAuth (client portal users)
 				const clientAuth = await this.clerkService.getClientAuthByClerkId(clerkUserId);
+				this.logger.log(
+					`[ClerkAuthGuard] DB user not found; ClientAuth lookup: clerkUserId=${clerkUserId}, clientAuthFound=${!!clientAuth}, clientAuth?.client=${!!clientAuth?.client}`,
+				);
 				if (clientAuth?.client) {
 					// Client portal user: set uid (ClientAuth.uid), clientUid (Client.uid), and org from client
 					request['user'].uid = clientAuth.uid;
@@ -241,7 +249,10 @@ export class ClerkAuthGuard implements CanActivate {
 					}
 					request['user'].branch = clientAuth.client.branch ? { uid: clientAuth.client.branch.uid } : undefined;
 					request['user'].org = clientAuth.client.organisation ? { uid: clientAuth.client.organisation.uid } : undefined;
-					// Role already set from token (e.g. 'client')
+					// Ensure CLIENT role for authorization: controllers (e.g. credit-limit-extension) allow CLIENT and MEMBER
+					request['user'].role = 'client';
+					request['user'].accessLevel = 'client';
+					this.logger.log(`[ClerkAuthGuard] Client portal user: set role=client for path=${request.method} ${request.path}`);
 
 					// Fetch org's license and verify client.portal.access; set licensePlan so FeatureGuard passes
 					if (orgRef) {
@@ -332,14 +343,15 @@ export class ClerkAuthGuard implements CanActivate {
 
 		// User object is always attached at this point (from token or enhanced with DB data)
 		const finalUser = request['user'];
-		
+		this.logger.log(
+			`[ClerkAuthGuard] Final request user: path=${request.method} ${request.path}, role=${finalUser?.role ?? 'undefined'}, accessLevel=${finalUser?.accessLevel ?? 'undefined'}, clerkUserId=${finalUser?.clerkUserId}, clientUid=${finalUser?.clientUid ?? 'none'}`,
+		);
+
 		// Validate that user has required fields
 		if (!finalUser || !finalUser.clerkUserId) {
 			throw new UnauthorizedException('Invalid user object: missing required fields');
 		}
-		
-		// Authentication successful - no need to log sensitive data
-		
+
 		return true;
 	}
 }

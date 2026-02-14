@@ -341,7 +341,7 @@ export class AttendanceController {
 		if (!orgId) {
 			throw new BadRequestException('Organization context required');
 		}
-		const branchId = this.toNumber(req.user?.branch?.uid);
+		const branchId = this.toNumber(createAttendanceDto.branch?.uid ?? req.user?.branch?.uid);
 		const clerkUserId = getClerkUserId(req);
 		const uid = getRequestingUserUid(req);
 		return this.attendanceService.checkIn(createAttendanceDto, orgId, branchId, false, clerkUserId, uid);

@@ -38,6 +38,6 @@ import { LicensingModule } from '../licensing/licensing.module';
         OrganisationAppearanceService,
         OrganisationHoursService,
     ],
-    exports: [OrganisationService, OrganisationHoursService],
+    exports: [OrganisationService, OrganisationHoursService, OrganisationSettingsService],
 })
 export class OrganisationModule {}

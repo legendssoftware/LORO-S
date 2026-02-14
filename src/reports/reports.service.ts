@@ -148,7 +148,8 @@ export class ReportsService implements OnModuleInit {
 	// ======================================================
 
 	/**
-	 * Get organization timezone with fallback
+	 * Get organization timezone with fallback.
+	 * Resolves numeric uid to Clerk org ID when needed (OrganisationHours are keyed by Clerk ID).
 	 */
 	private async getOrganizationTimezone(organizationId?: number): Promise<string> {
 		if (!organizationId) {
@@ -156,7 +157,16 @@ export class ReportsService implements OnModuleInit {
 		}
 
 		try {
-			const orgIdString = typeof organizationId === 'number' ? organizationId.toString() : organizationId;
+			let orgIdString: string;
+			const org = await this.organisationRepository.findOne({
+				where: { uid: organizationId, isDeleted: false },
+				select: ['uid', 'clerkOrgId', 'ref'],
+			});
+			if (org?.clerkOrgId ?? org?.ref) {
+				orgIdString = org.clerkOrgId ?? org.ref ?? organizationId.toString();
+			} else {
+				orgIdString = organizationId.toString();
+			}
 			const organizationHours = await this.organizationHoursService.getOrganizationHours(orgIdString);
 			return organizationHours?.timezone || 'Africa/Johannesburg';
 		} catch (error) {
@@ -2668,20 +2678,25 @@ export class ReportsService implements OnModuleInit {
 			// Calculate grand total by converting each branch's revenue to ZAR first, then summing
 			// This ensures the grand total is the sum of ALL individual branch sales converted to ZAR
 			let grandTotalZAR = 0;
+			let consolidatedGrossProfitZAR = 0;
 			dataWithBranches.forEach(country => {
 				const currency = getCurrencyForCountry(country.countryCode);
 				// Exchange rate represents "1 ZAR = X foreign currency", so divide to convert TO ZAR
 				const exchangeRate = currency.code === 'ZAR' ? 1 : (exchangeRateMap.get(currency.code) || 1);
-				
+
 				country.branches.forEach(branch => {
 					// Convert each branch's revenue to ZAR before summing
 					const branchRevenueZAR = branch.totalRevenue / exchangeRate;
 					grandTotalZAR += branchRevenueZAR;
+					// Convert each branch's gross profit to ZAR before summing (same rate as revenue)
+					const branchGPZAR = (branch.grossProfit ?? 0) / exchangeRate;
+					consolidatedGrossProfitZAR += branchGPZAR;
 				});
 			});
 
 			this.logger.log(`[${operationId}] ✅ Consolidated income statement generated: ${totalCountries} countries, ${totalBranches} branches`);
 			this.logger.log(`[${operationId}] ✅ Grand Total ZAR calculated: R${grandTotalZAR.toFixed(2)}`);
+			this.logger.log(`[${operationId}] ✅ Consolidated Gross Profit ZAR calculated: R${consolidatedGrossProfitZAR.toFixed(2)}`);
 
 			const response: ConsolidatedIncomeStatementResponseDto = {
 				data: dataWithBranches,
@@ -2691,6 +2706,7 @@ export class ReportsService implements OnModuleInit {
 				totalBranches,
 				exchangeRates,
 				grandTotalZAR,
+				consolidatedGrossProfitZAR,
 			};
 
 			return response;

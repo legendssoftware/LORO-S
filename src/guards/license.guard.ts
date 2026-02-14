@@ -14,6 +14,8 @@ export class LicenseGuard implements CanActivate {
 
 	async canActivate(context: ExecutionContext): Promise<boolean> {
 		const request = context.switchToHttp().getRequest<Request>();
+		const path = `${request.method} ${request.path ?? request.url}`;
+		this.logger.log(`[LicenseGuard] canActivate: path=${path}, licenseValidated=${request['licenseValidated'] === true}`);
 
 		// If license validation was already performed and cached in the request
 		if (request['licenseValidated'] === true) {

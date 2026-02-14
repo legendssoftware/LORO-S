@@ -20,7 +20,7 @@ export class ClientAuthController {
 
 	@Get('me')
 	@UseGuards(ClerkAuthGuard, RoleGuard)
-	@Roles(AccessLevel.CLIENT)
+	@Roles(AccessLevel.CLIENT, AccessLevel.MEMBER)
 	@ApiBearerAuth('JWT-auth')
 	@ApiOperation({
 		summary: '📋 Get my profile (current client)',

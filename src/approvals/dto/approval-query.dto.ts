@@ -125,17 +125,6 @@ export class ApprovalQueryDto {
     @IsString()
     organisationRef?: string;
 
-    @ApiPropertyOptional({
-        description: 'Filter by branch ID',
-        example: 789,
-        minimum: 1
-    })
-    @IsOptional()
-    @Type(() => Number)
-    @IsInt()
-    @Min(1)
-    branchUid?: number;
-
     // Date Filters
     @ApiPropertyOptional({
         description: 'Filter by created date from (ISO 8601)',

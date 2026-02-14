@@ -9,6 +9,7 @@
  * - One branch per org (BitDenver, Denver)
  * - One enterprise license per org
  * - 5 clients per org (varied types, tiers, channels)
+ * - 2 projects per client (all clients; no assigned user required)
  * - 11 products per org (varied categories, all product status enums, brands)
  *   - Products use organisationUid = clerkOrgId (string), branchUid is never populated
  *
@@ -50,6 +51,7 @@ import {
 import { ProductStatus } from '../lib/enums/product.enums';
 import { OrderStatus } from '../lib/enums/status.enums';
 import { DocumentType } from '../lib/enums/document.enums';
+import { ProjectType, ProjectStatus, ProjectPriority } from '../lib/enums/project.enums';
 import { LicensingService } from '../licensing/licensing.service';
 import * as crypto from 'crypto';
 
@@ -151,6 +153,7 @@ class ClerkOrgPopulator {
 	private checkInRepo: Repository<CheckIn>;
 	private quotationRepo: Repository<Quotation>;
 	private quotationItemRepo: Repository<QuotationItem>;
+	private projectRepo: Repository<Project>;
 	private licensingService: LicensingService;
 	private clerkOrgId: string;
 	private clerkOrgData: ClerkOrgPayload;
@@ -173,6 +176,7 @@ class ClerkOrgPopulator {
 		this.checkInRepo = dataSource.getRepository(CheckIn);
 		this.quotationRepo = dataSource.getRepository(Quotation);
 		this.quotationItemRepo = dataSource.getRepository(QuotationItem);
+		this.projectRepo = dataSource.getRepository(Project);
 		this.licensingService = licensingService;
 		this.clerkOrgData = seedItem.clerkOrg;
 		this.clerkOrgId = seedItem.clerkOrg.id;
@@ -1251,6 +1255,76 @@ class ClerkOrgPopulator {
 		return created;
 	}
 
+	/** Seed template: 2 projects per client (type, status, priority varied). No assigned user. */
+	private static readonly PROJECT_SEED_TEMPLATES: Array<{
+		nameSuffix: string;
+		description: string;
+		type: ProjectType;
+		status: ProjectStatus;
+		priority: ProjectPriority;
+		budget: number;
+		value: number;
+	}> = [
+		{ nameSuffix: 'Phase 1', description: 'Initial construction phase', type: ProjectType.RESIDENTIAL_HOUSE, status: ProjectStatus.IN_PROGRESS, priority: ProjectPriority.HIGH, budget: 250000, value: 280000 },
+		{ nameSuffix: 'Renovation', description: 'Interior renovation and finishing', type: ProjectType.RENOVATION, status: ProjectStatus.PLANNING, priority: ProjectPriority.MEDIUM, budget: 120000, value: 135000 },
+	];
+
+	/**
+	 * Create 2 projects per client for all clients. Projects have a client assigned; assigned user is optional.
+	 */
+	async createProjects(
+		organisation: Organisation,
+		branch: Branch,
+		clients: Client[],
+	): Promise<Project[]> {
+		const PROJECTS_PER_CLIENT = 2;
+		console.log(`📁 Creating ${PROJECTS_PER_CLIENT} projects per client (${clients.length} clients)...`);
+		const created: Project[] = [];
+		const slug = this.clerkOrgData.slug;
+		const startBase = new Date();
+		startBase.setMonth(startBase.getMonth() - 2);
+		for (const client of clients) {
+			for (let p = 0; p < PROJECTS_PER_CLIENT; p++) {
+				const t = ClerkOrgPopulator.PROJECT_SEED_TEMPLATES[p];
+				const name = `${client.name} - ${t.nameSuffix}`;
+				const startDate = new Date(startBase);
+				startDate.setDate(startDate.getDate() + created.length * 5);
+				const endDate = new Date(startDate);
+				endDate.setMonth(endDate.getMonth() + 4);
+				const project = this.projectRepo.create({
+					name,
+					description: t.description,
+					type: t.type,
+					status: t.status,
+					priority: t.priority,
+					budget: t.budget,
+					value: t.value,
+					currentSpent: 0,
+					totalCost: 0,
+					contactPerson: client.contactPerson,
+					contactEmail: client.email,
+					contactPhone: client.phone,
+					startDate,
+					endDate,
+					expectedCompletionDate: endDate,
+					address: { ...JHB_ADDRESS, street: `${300 + created.length} Project Street` },
+					currency: 'ZAR',
+					progressPercentage: t.status === ProjectStatus.IN_PROGRESS ? 35 : 0,
+					client,
+					clientUid: client.uid,
+					organisationUid: organisation.clerkOrgId ?? organisation.ref,
+					organisation,
+					branchUid: branch.uid,
+					branch,
+					isDeleted: false,
+				});
+				created.push(await this.projectRepo.save(project));
+			}
+		}
+		console.log(`✅ Created ${created.length} projects`);
+		return created;
+	}
+
 	/**
 	 * Run the complete population process
 	 */
@@ -1291,7 +1365,10 @@ class ClerkOrgPopulator {
 			// Step 7: Quotations linked to each client (2 per client)
 			const quotations = await this.createQuotations(organisation, primaryBranch, clients, products);
 
-			// Step 8: Verify license can be retrieved using Clerk org ID
+			// Step 8: Projects linked to each client (2 per client; no assigned user)
+			const projects = await this.createProjects(organisation, primaryBranch, clients);
+
+			// Step 9: Verify license can be retrieved using Clerk org ID
 			console.log('\n🔍 Verifying license retrieval using Clerk org ID...');
 			const retrievedLicenses = await this.licensingService.findByOrganisation(this.clerkOrgId);
 			
@@ -1336,6 +1413,7 @@ class ClerkOrgPopulator {
 			console.log(`   - Products: ${products.length} created`);
 			products.forEach((p) => console.log(`     • ${p.name} [${p.category}] (${p.productRef})`));
 			console.log(`   - Quotations: ${quotations.length} created`);
+			console.log(`   - Projects: ${projects.length} created (2 per client)`);
 		} catch (error) {
 			console.error('\n❌ Error during population:', error);
 			throw error;

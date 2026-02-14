@@ -16,7 +16,9 @@ import {
 	SalesPersonAggregation,
 	CategoryAggregation,
 	BranchCategoryAggregation,
+	StoreAggregation,
 	ProductAggregation,
+	BasketValueRangesByStore,
 	ErpQueryFilters,
 	TblSalesLinesWithCategory,
 } from '../interfaces/erp-data.interface';
@@ -2456,6 +2458,73 @@ export class ErpDataService implements OnModuleInit {
 	}
 
 	/**
+	 * Get basket value ranges by store - invoice count per value bucket
+	 * Uses tblsalesheader: (total_incl - total_tax) per invoice, bucketed by value
+	 * Ranges: under500 (<500), range500to2000 (500-1999.99), range2000to5000 (2000-4999.99), over5000 (>=5000)
+	 */
+	async getBasketValueRangesByStore(filters: ErpQueryFilters, countryCode: string = 'SA'): Promise<BasketValueRangesByStore[]> {
+		const operationId = this.generateOperationId('GET_BASKET_RANGES');
+		const cacheKey = this.buildCacheKey('basket_ranges', filters, undefined, countryCode);
+
+		try {
+			const hasExclusionFilters = filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0;
+			if (!hasExclusionFilters) {
+				const cached = await this.cacheManager.get<BasketValueRangesByStore[]>(cacheKey);
+				if (cached) return cached;
+			}
+
+			const salesHeaderRepo = await this.getRepositoryForCountry(TblSalesHeader, countryCode);
+			const qb = salesHeaderRepo.createQueryBuilder('header');
+
+			qb.select('header.store', 'store')
+				.addSelect('SUM(CASE WHEN (header.total_incl - header.total_tax) < 500 THEN 1 ELSE 0 END)', 'under500')
+				.addSelect('SUM(CASE WHEN (header.total_incl - header.total_tax) >= 500 AND (header.total_incl - header.total_tax) < 2000 THEN 1 ELSE 0 END)', 'range500to2000')
+				.addSelect('SUM(CASE WHEN (header.total_incl - header.total_tax) >= 2000 AND (header.total_incl - header.total_tax) < 5000 THEN 1 ELSE 0 END)', 'range2000to5000')
+				.addSelect('SUM(CASE WHEN (header.total_incl - header.total_tax) >= 5000 THEN 1 ELSE 0 END)', 'over5000')
+				.where('header.sale_date BETWEEN :startDate AND :endDate', {
+					startDate: filters.startDate,
+					endDate: filters.endDate,
+				})
+				.andWhere('header.doc_type IN (:...docTypes)', { docTypes: [1, 2] })
+				.andWhere('header.sale_date >= :minDate', { minDate: '2020-01-01' })
+				.groupBy('header.store');
+
+			if (filters.storeCode) qb.andWhere('header.store = :store', { store: filters.storeCode });
+			if (filters.salesPersonId) {
+				const ids = Array.isArray(filters.salesPersonId) ? filters.salesPersonId : [filters.salesPersonId];
+				qb.andWhere('header.sales_code IN (:...salesPersonIds)', { salesPersonIds: ids });
+			}
+			if (filters.includeCustomerCategories?.length) {
+				qb.andWhere(
+					'EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = header.customer AND customer.Category IN (:...includeCustomerCategories))',
+					{ includeCustomerCategories: filters.includeCustomerCategories }
+				);
+			}
+			if (filters.excludeCustomerCategories?.length) {
+				qb.andWhere(
+					'(header.customer IS NULL OR NOT EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = header.customer AND customer.Category IN (:...excludeCustomerCategories)))',
+					{ excludeCustomerCategories: filters.excludeCustomerCategories }
+				);
+			}
+
+			const rows = await qb.getRawMany();
+			const results: BasketValueRangesByStore[] = rows.map((r: any) => ({
+				store: String(r.store || '').trim().padStart(3, '0'),
+				under500: parseInt(r.under500, 10) || 0,
+				range500to2000: parseInt(r.range500to2000, 10) || 0,
+				range2000to5000: parseInt(r.range2000to5000, 10) || 0,
+				over5000: parseInt(r.over5000, 10) || 0,
+			}));
+
+			await this.cacheManager.set(cacheKey, results, this.CACHE_TTL);
+			return results;
+		} catch (error: any) {
+			this.logger.error(`[${operationId}] Error: ${error?.message}`);
+			return [];
+		}
+	}
+
+	/**
 	 * Get sales person aggregations - optimized query
 	 * 
 	 * ✅ REVISED: Uses tblsalesheader instead of tblsaleslines
@@ -2909,6 +2978,87 @@ export class ErpDataService implements OnModuleInit {
 			this.logger.error(`[${operationId}] Circuit Breaker: ${this.circuitBreakerState}`);
 			this.logger.error(`[${operationId}] Connection Pool: ${JSON.stringify(this.getConnectionPoolInfo())}`);
 			this.logger.error(`[${operationId}] Stack: ${error.stack}`);
+			throw error;
+		}
+	}
+
+	/**
+	 * Get store-level aggregations from tblsaleslines (GROUP BY store only).
+	 * Returns uniqueCustomers per store (COUNT(DISTINCT customer)) - correct for branch totals.
+	 * Same filters as getBranchCategoryAggregations; use for branch unique customer count.
+	 */
+	async getStoreAggregations(filters: ErpQueryFilters, countryCode: string = 'SA'): Promise<StoreAggregation[]> {
+		const operationId = this.generateOperationId('GET_STORE_AGG');
+		const cacheKey = this.buildCacheKey('store_agg', filters, undefined, countryCode);
+
+		try {
+			const hasExclusionFilters = filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0;
+			if (!hasExclusionFilters) {
+				const cached = await this.cacheManager.get<StoreAggregation[]>(cacheKey);
+				if (cached) return cached;
+			}
+
+			const dateRangeDays = this.calculateDateRangeDays(filters.startDate, filters.endDate);
+			const salesLinesRepo = await this.getRepositoryForCountry(TblSalesLines, countryCode);
+
+			const query = salesLinesRepo.createQueryBuilder('line');
+			query.select([
+				'line.store as store',
+				'SUM(line.incl_line_total) - SUM(line.tax) as totalRevenue',
+				'SUM(CASE WHEN line.doc_type = 2 THEN -(line.cost_price * line.quantity) ELSE line.cost_price * line.quantity END) as totalCost',
+				'COUNT(DISTINCT line.doc_number) as transactionCount',
+				'COUNT(DISTINCT line.customer) as uniqueCustomers',
+				'SUM(line.quantity) as totalQuantity',
+			])
+				.where('line.sale_date BETWEEN :startDate AND :endDate', { startDate: filters.startDate, endDate: filters.endDate })
+				.andWhere('line.doc_type IN (:...docTypes)', { docTypes: ['1', '2'] })
+				.andWhere('line.item_code IS NOT NULL')
+				.andWhere('line.item_code != :excludeItemCode', { excludeItemCode: '.' })
+				.andWhere('line.type = :itemType', { itemType: 'I' })
+				.andWhere('line.sale_date >= :minDate', { minDate: '2020-01-01' });
+
+			if (filters.storeCode) query.andWhere('line.store = :store', { store: filters.storeCode });
+			if (filters.salesPersonId) {
+				const ids = Array.isArray(filters.salesPersonId) ? filters.salesPersonId : [filters.salesPersonId];
+				query.andWhere('line.rep_code IN (:...salesPersonIds)', { salesPersonIds: ids });
+			}
+			if (filters.includeCustomerCategories?.length) {
+				query.andWhere(
+					`EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = line.customer AND customer.Category IN (:...includeCustomerCategories))`,
+					{ includeCustomerCategories: filters.includeCustomerCategories }
+				);
+			}
+			if (filters.excludeCustomerCategories?.length) {
+				query.andWhere(
+					`(line.customer IS NULL OR NOT EXISTS (SELECT 1 FROM tblcustomers customer WHERE customer.Code = line.customer AND customer.Category IN (:...excludeCustomerCategories)))`,
+					{ excludeCustomerCategories: filters.excludeCustomerCategories }
+				);
+			}
+
+			query.groupBy('line.store').orderBy('totalRevenue', 'DESC').limit(10000);
+
+			const results = await this.executeQueryWithProtection(
+				async () => query.getRawMany(),
+				operationId,
+				120000,
+				dateRangeDays,
+			);
+
+			const processed = results.map((row: any) => ({
+				store: String(row.store || '').trim().padStart(3, '0'),
+				totalRevenue: parseFloat(row.totalRevenue) || 0,
+				totalCost: parseFloat(row.totalCost) || 0,
+				transactionCount: parseInt(row.transactionCount, 10) || 0,
+				uniqueCustomers: parseInt(row.uniqueCustomers, 10) || 0,
+				totalQuantity: parseFloat(row.totalQuantity) || 0,
+			}));
+
+			if (!hasExclusionFilters) {
+				await this.cacheManager.set(cacheKey, processed, this.CACHE_TTL);
+			}
+			return processed;
+		} catch (error) {
+			this.logger.error(`[${operationId}] Error in getStoreAggregations: ${(error as Error).message}`);
 			throw error;
 		}
 	}

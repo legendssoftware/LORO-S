@@ -1,23 +1,28 @@
-import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext, ForbiddenException, Logger } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { FEATURE_KEY } from '../decorators/require-feature.decorator';
 import { PLAN_FEATURES } from '../lib/constants/license-features';
 
 @Injectable()
 export class FeatureGuard implements CanActivate {
+	private readonly logger = new Logger(FeatureGuard.name);
+
 	constructor(private reflector: Reflector) { }
 
 	canActivate(context: ExecutionContext): boolean {
+		const request = context.switchToHttp().getRequest();
+		const path = `${request.method} ${request.path ?? request.url}`;
 		const requiredFeatures = this.reflector.getAllAndOverride<string[]>(FEATURE_KEY, [
 			context.getHandler(),
 			context.getClass(),
 		]);
 
+		this.logger.log(`[FeatureGuard] canActivate: path=${path}, requiredFeatures=${requiredFeatures?.length ? requiredFeatures.join(',') : 'none'}, user.role=${request['user']?.role ?? 'n/a'}`);
+
 		if (!requiredFeatures) {
 			return true;
 		}
 
-		const request = context.switchToHttp().getRequest();
 		const user = request['user'];
 
 		// Check if user has license info

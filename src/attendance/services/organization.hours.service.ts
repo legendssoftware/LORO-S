@@ -3,7 +3,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { OrganisationHours } from '../../organisation/entities/organisation-hours.entity';
 import { Organisation } from '../../organisation/entities/organisation.entity';
+import { OrganisationSettings } from '../../organisation/entities/organisation-settings.entity';
 import { TimeCalculatorUtil } from '../../lib/utils/time-calculator.util';
+import { TimezoneUtil } from '../../lib/utils/timezone.util';
+import { addMinutes } from 'date-fns';
 import { format } from 'date-fns';
 
 export interface WorkingDayInfo {
@@ -24,13 +27,15 @@ export class OrganizationHoursService {
 		private organisationHoursRepository: Repository<OrganisationHours>,
 		@InjectRepository(Organisation)
 		private organisationRepository: Repository<Organisation>,
+		@InjectRepository(OrganisationSettings)
+		private organisationSettingsRepository: Repository<OrganisationSettings>,
 	) {}
 
 	/**
 	 * Resolves Clerk org ID (string) to organisation numeric uid.
 	 * Looks up by clerkOrgId or ref. Returns null if not found.
 	 */
-	private async resolveOrgId(clerkOrgId?: string): Promise<number | null> {
+	async resolveOrgIdFromClerkId(clerkOrgId?: string): Promise<number | null> {
 		if (!clerkOrgId) {
 			return null;
 		}
@@ -318,6 +323,57 @@ export class OrganizationHoursService {
 			endTime: closeTimeStr,
 			expectedDailyHours: TimeCalculatorUtil.minutesToHours(dailyMinutes, 1),
 		};
+	}
+
+	/**
+	 * Get organization timezone with fallback chain: org hours -> org settings -> default.
+	 */
+	async getOrganizationTimezone(organizationId?: string): Promise<string> {
+		if (!organizationId) return TimezoneUtil.getSafeTimezone();
+		try {
+			const orgHours = await this.getOrganizationHours(organizationId);
+			if (orgHours?.timezone) return orgHours.timezone;
+			const settings = await this.organisationSettingsRepository.findOne({
+				where: { organisationUid: organizationId },
+			});
+			if (settings?.regional?.timezone) return settings.regional.timezone;
+			return TimezoneUtil.getSafeTimezone();
+		} catch {
+			return TimezoneUtil.getSafeTimezone();
+		}
+	}
+
+	/**
+	 * Calculate early and late minutes for check-in based on org working hours and grace period.
+	 */
+	async getEarlyAndLateMinutesForCheckIn(
+		orgId: string,
+		checkInTime: Date,
+	): Promise<{ earlyMinutes: number; lateMinutes: number }> {
+		try {
+			const workingDayInfo = await this.getWorkingDayInfo(orgId, checkInTime);
+			if (!workingDayInfo.isWorkingDay || !workingDayInfo.startTime) {
+				return { earlyMinutes: 0, lateMinutes: 0 };
+			}
+			const [hours, minutes] = workingDayInfo.startTime.split(':').map(Number);
+			const expectedStartTime = new Date(checkInTime);
+			expectedStartTime.setHours(hours, minutes, 0, 0);
+			const graceEndTime = addMinutes(
+				expectedStartTime,
+				TimeCalculatorUtil.DEFAULT_WORK.PUNCTUALITY_GRACE_MINUTES,
+			);
+			let earlyMinutes = 0;
+			let lateMinutes = 0;
+			if (checkInTime < expectedStartTime) {
+				earlyMinutes = Math.max(0, Math.floor((expectedStartTime.getTime() - checkInTime.getTime()) / 60000));
+			} else if (checkInTime > graceEndTime) {
+				lateMinutes = Math.max(0, Math.floor((checkInTime.getTime() - graceEndTime.getTime()) / 60000));
+			}
+			return { earlyMinutes, lateMinutes };
+		} catch (error) {
+			this.logger.warn(`Error calculating early/late minutes for org ${orgId}:`, error?.message);
+			return { earlyMinutes: 0, lateMinutes: 0 };
+		}
 	}
 
 	/**

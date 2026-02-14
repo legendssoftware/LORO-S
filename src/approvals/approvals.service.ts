@@ -194,14 +194,6 @@ export class ApprovalsService {
                 );
             }
 
-            // Add branch-specific keys
-            if (approval.branchUid) {
-                keysToDelete.push(
-                    this.getCacheKey(`branch_${approval.branchUid}`),
-                    this.getCacheKey(`branch_${approval.branchUid}_stats`),
-                );
-            }
-
             // Add type and status-specific keys
             keysToDelete.push(
                 this.getCacheKey(`type_${approval.type}`),
@@ -405,32 +397,7 @@ export class ApprovalsService {
             
             const approvers: { approver: User; priority: number; reason: string }[] = [];
 
-            // Get branch managers first
-            if (requester.branch?.uid) {
-                const branchManagers = await this.userRepository.find({
-                    where: {
-                        branch: { uid: requester.branch.uid },
-                        accessLevel: In([AccessLevel.MANAGER, AccessLevel.ADMIN, AccessLevel.OWNER]),
-                        isDeleted: false,
-                        status: 'active',
-                    },
-                    order: {
-                        accessLevel: 'DESC',
-                    },
-                });
-
-                branchManagers.forEach((manager, index) => {
-                    if (manager.uid !== requester.uid) { // Don't include self
-                        approvers.push({
-                            approver: manager,
-                            priority: index + 10, // Lower priority than specific routing
-                            reason: 'Branch hierarchy approval',
-                        });
-                    }
-                });
-            }
-
-            // Get organization admins and owners
+            // Get organization admins and owners (no branch-specific routing)
             const orgAdmins = await this.userRepository.find({
                 where: {
                     organisationRef: requester.organisationRef,
@@ -490,7 +457,9 @@ export class ApprovalsService {
     // Create new approval request
     async create(createApprovalDto: CreateApprovalDto, user: RequestUser) {
         const startTime = Date.now();
-        this.logger.log(`[ApprovalsService] create() called: title=${createApprovalDto?.title}, type=${createApprovalDto?.type}, requesterUid=${user?.uid}, orgRef=${user?.organisationRef}, branchUid=${user?.branch?.uid}`);
+        this.logger.log(
+            `[ApprovalsService] create() called: title=${createApprovalDto?.title}, type=${createApprovalDto?.type}, requesterUid=${user?.uid}, orgRef=${user?.organisationRef}, user.role=${user?.role ?? 'n/a'}, user.accessLevel=${user?.accessLevel ?? 'n/a'}, clientUid=${user?.clientUid ?? 'n/a'}`,
+        );
         this.logger.log(`🚀 [create] Creating new approval request by user ${user.uid}`);
         
         try {
@@ -517,7 +486,7 @@ export class ApprovalsService {
                 ...approvalData,
                 requesterClerkUserId: user.clerkUserId,
                 organisationRef: user.organisationRef?.toString() || '',
-                branchUid: user.branch?.uid,
+                branchUid: undefined,
                 requestSource: 'web',
                 // If autoSubmit is true, create as PENDING; otherwise create as DRAFT
                 status: autoSubmit ? ApprovalStatus.PENDING : ApprovalStatus.DRAFT,
@@ -650,7 +619,6 @@ export class ApprovalsService {
                 amount: savedApproval.amount,
                 currency: savedApproval.currency,
                 organisationRef: savedApproval.organisationRef,
-                branchUid: savedApproval.branchUid,
                 timestamp: new Date(),
             });
 
@@ -676,7 +644,6 @@ export class ApprovalsService {
                 },
                 targetRoles: ['admin', 'manager', 'approver'],
                 organisationRef: savedApproval.organisationRef,
-                branchUid: savedApproval.branchUid,
             });
 
             const executionTime = Date.now() - startTime;
@@ -729,10 +696,9 @@ export class ApprovalsService {
                 .leftJoinAndSelect('approval.requester', 'requester')
                 .leftJoinAndSelect('approval.approver', 'approver')
                 .leftJoinAndSelect('approval.delegatedTo', 'delegatedTo')
-                .leftJoinAndSelect('approval.organisation', 'organisation')
-                .leftJoinAndSelect('approval.branch', 'branch');
+                .leftJoinAndSelect('approval.organisation', 'organisation');
 
-            // Apply comprehensive scoping (org, branch, user access)
+            // Apply comprehensive scoping (org, user access)
             this.logger.log(`🔒 [findAll] Applying security scoping filters for user ${user.uid}`);
             this.applyScopingFilters(queryBuilder, user);
 
@@ -833,8 +799,7 @@ export class ApprovalsService {
                 .leftJoinAndSelect('approval.requester', 'requester')
                 .leftJoinAndSelect('approval.approver', 'approver')
                 .leftJoinAndSelect('approval.delegatedTo', 'delegatedTo')
-                .leftJoinAndSelect('approval.organisation', 'organisation')
-                .leftJoinAndSelect('approval.branch', 'branch');
+                .leftJoinAndSelect('approval.organisation', 'organisation');
 
             if (!this.canSeeAllApprovalsInOrg(user)) {
                 queryBuilder.andWhere('(approval.approverClerkUserId = :clerkUserId OR approval.delegatedToClerkUserId = :clerkUserId)', {
@@ -885,7 +850,6 @@ export class ApprovalsService {
                 .leftJoinAndSelect('approval.approver', 'approver')
                 .leftJoinAndSelect('approval.delegatedTo', 'delegatedTo')
                 .leftJoinAndSelect('approval.organisation', 'organisation')
-                .leftJoinAndSelect('approval.branch', 'branch')
                 .where('approval.requesterClerkUserId = :clerkUserId', { clerkUserId: user.clerkUserId });
 
             // Apply comprehensive scoping (org, branch, user access)  
@@ -1006,7 +970,6 @@ export class ApprovalsService {
                 .leftJoinAndSelect('approval.approver', 'approver')
                 .leftJoinAndSelect('approval.delegatedTo', 'delegatedTo')
                 .leftJoinAndSelect('approval.organisation', 'organisation')
-                .leftJoinAndSelect('approval.branch', 'branch')
                 .where('approval.isDeleted = :isDeleted', { isDeleted: false })
                 .andWhere(
                     '(approval.requesterClerkUserId = :clerkUserId OR approval.approverClerkUserId = :clerkUserId OR approval.delegatedToClerkUserId = :clerkUserId)',
@@ -1227,7 +1190,6 @@ export class ApprovalsService {
                 .leftJoinAndSelect('approval.delegatedTo', 'delegatedTo')
                 .leftJoinAndSelect('approval.delegatedFrom', 'delegatedFrom')
                 .leftJoinAndSelect('approval.organisation', 'organisation')
-                .leftJoinAndSelect('approval.branch', 'branch')
                 .leftJoinAndSelect('approval.history', 'history')
                 .leftJoinAndSelect('history.actionByUser', 'historyUser')
                 .leftJoinAndSelect('approval.signatures', 'signatures')
@@ -1360,7 +1322,6 @@ export class ApprovalsService {
                 version: updatedApproval.version,
                 changes: this.getChanges(originalData, updatedApproval),
                 organisationRef: updatedApproval.organisationRef,
-                branchUid: updatedApproval.branchUid,
                 timestamp: new Date(),
             });
 
@@ -1381,7 +1342,6 @@ export class ApprovalsService {
                 targetRoles: ['admin', 'manager', 'approver'],
                 targetUsers: [updatedApproval.requesterClerkUserId, updatedApproval.approverClerkUserId].filter(Boolean),
                 organisationRef: updatedApproval.organisationRef,
-                branchUid: updatedApproval.branchUid,
             });
 
             const executionTime = Date.now() - startTime;
@@ -1482,6 +1442,13 @@ export class ApprovalsService {
 
             // Validate user can perform this action
             await this.validateActionPermissions(approval, actionDto.action, user);
+
+            // Credit limit rejections require a reason (saved as rejectionReason, sent in emails)
+            if (actionDto.action === ApprovalAction.REJECT && approval.type === ApprovalType.CREDIT_LIMIT) {
+                if (!actionDto.reason || !String(actionDto.reason).trim()) {
+                    throw new BadRequestException('Rejection reason is required when declining a credit limit extension request.');
+                }
+            }
 
             const fromStatus = approval.status;
             let toStatus = fromStatus;
@@ -1678,7 +1645,6 @@ export class ApprovalsService {
                 type: updatedApproval.type,
                 priority: updatedApproval.priority,
                 organisationRef: updatedApproval.organisationRef,
-                branchUid: updatedApproval.branchUid,
                 timestamp: new Date(),
             });
 
@@ -1708,7 +1674,6 @@ export class ApprovalsService {
                     actionDto.escalateToClerkUserId
                 ].filter(Boolean),
                 organisationRef: updatedApproval.organisationRef,
-                branchUid: updatedApproval.branchUid,
             });
 
             // Special handling for high-priority or high-value approvals
@@ -2035,6 +2000,12 @@ export class ApprovalsService {
     // Helper methods
 
     private async validateCreatePermissions(dto: CreateApprovalDto, user: RequestUser): Promise<void> {
+        this.logger.log(
+            `[ApprovalsService] validateCreatePermissions: type=${dto?.type}, user.uid=${user?.uid}, user.role=${user?.role ?? 'n/a'}, user.organisationRef=${user?.organisationRef ?? 'n/a'}`,
+        );
+        if (dto?.type === ApprovalType.CREDIT_LIMIT) {
+            this.logger.log(`[ApprovalsService] validateCreatePermissions: CREDIT_LIMIT approval, user.role=${user?.role}, user.accessLevel=${user?.accessLevel}`);
+        }
         // Add business logic validation here
         if (!user.organisationRef) {
             throw new BadRequestException('User must belong to an organisation');
@@ -2267,7 +2238,6 @@ export class ApprovalsService {
                 implementationNotes: null, // Not yet implemented in Approval entity
                 previousComments: approval.approvalComments,
                 organizationName: requester.organisation?.name || 'Your Organization',
-                branchName: requester.branch?.name,
                 approvalUrl: `${process.env.CLIENT_URL}/approvals/${approval.uid}`,
                 dashboardUrl: `${process.env.CLIENT_URL}/dashboard`,
                 resubmitUrl: `${process.env.CLIENT_URL}/approvals/${approval.uid}/resubmit`,

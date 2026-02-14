@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, Req, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, Req, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { ClientsService } from './clients.service';
 import { CreateClientDto } from './dto/create-client.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
@@ -35,7 +35,7 @@ import { EnterpriseOnly } from '../decorators/enterprise-only.decorator';
 import { Client } from './entities/client.entity';
 import { CheckIn } from '../check-ins/entities/check-in.entity';
 import { PaginatedResponse } from '../lib/interfaces/product.interfaces';
-import { AuthenticatedRequest, getClerkOrgId } from '../lib/interfaces/authenticated-request.interface';
+import { AuthenticatedRequest, getClerkOrgId, getClerkUserId } from '../lib/interfaces/authenticated-request.interface';
 import { GeneralStatus } from '../lib/enums/status.enums';
 import { OrganisationService } from '../organisation/organisation.service';
 
@@ -58,6 +58,8 @@ import { OrganisationService } from '../organisation/organisation.service';
 // 	},
 // }) // Temporarily commented out to debug
 export class ClientsController {
+	private readonly logger = new Logger(ClientsController.name);
+
 	constructor(
 		private readonly clientsService: ClientsService,
 		private readonly organisationService: OrganisationService,
@@ -1588,7 +1590,7 @@ Retrieves a paginated list of clients with user-specific filtering and role-base
 	}
 
 	@Get('me')
-	@Roles(AccessLevel.CLIENT)
+	@Roles(AccessLevel.CLIENT, AccessLevel.MEMBER)
 	@ApiOperation({
 		summary: '👤 Get my linked client (full profile)',
 		description: `
@@ -2789,7 +2791,7 @@ Retrieves comprehensive check-in history with location data, visit duration, and
 	}
 
 	@Patch('profile')
-	@Roles(AccessLevel.CLIENT)
+	@Roles(AccessLevel.CLIENT, AccessLevel.MEMBER)
 	@ApiOperation({
 		summary: '✏️ Update client profile (Client Portal)',
 		description: `
@@ -3036,7 +3038,7 @@ Clients can update the following information:
 	}
 
 	@Post('profile/credit-limit-extension')
-	@Roles(AccessLevel.CLIENT)
+	@Roles(AccessLevel.CLIENT, AccessLevel.MEMBER)
 	@ApiOperation({
 		summary: '💳 Request Credit Limit Extension',
 		description: `
@@ -3045,8 +3047,8 @@ Clients can update the following information:
 Allows clients to request an increase in their credit limit through an approval workflow.
 
 ## 🔐 **Security & Permissions**
-- **Client-Only Access**: Restricted to CLIENT role
-- **Self-Service**: Clients can only request extensions for their own account
+- **Access**: Restricted to CLIENT role or MEMBER with a linked client
+- **Identity**: Resolved from token → user profile → linked client (supports client portal users and staff with linked client)
 - **Approval Required**: All requests require approval from organization managers/admins
 
 ## 📋 **Use Cases**
@@ -3074,11 +3076,12 @@ Allows clients to request an increase in their credit limit through an approval 
 		description: 'Credit limit extension request data',
 	})
 	@ApiCreatedResponse({
-		description: '✅ Credit limit extension request submitted successfully',
+		description: '✅ Credit limit extension request submitted, or returns existing pending approval info',
 		schema: {
 			type: 'object',
 			properties: {
 				message: { type: 'string', example: 'Credit limit extension request submitted for approval' },
+				status: { type: 'string', enum: ['submitted', 'pending_approval'], description: 'submitted = new request created; pending_approval = existing request already in review' },
 				data: {
 					type: 'object',
 					properties: {
@@ -3089,7 +3092,8 @@ Allows clients to request an increase in their credit limit through an approval 
 						currentLimit: { type: 'number', example: 50000 },
 						requestedLimit: { type: 'number', example: 100000 },
 						increaseAmount: { type: 'number', example: 50000 },
-						submittedAt: { type: 'string', format: 'date-time' },
+						submittedAt: { type: 'string', format: 'date-time', description: 'Submission timestamp (ISO 8601)' },
+						deadline: { type: 'string', format: 'date-time', description: 'Approval deadline (7 days from submission, ISO 8601)' },
 					},
 				},
 			},
@@ -3106,18 +3110,22 @@ Allows clients to request an increase in their credit limit through an approval 
 			},
 		},
 	})
-	requestCreditLimitExtension(@Body() creditLimitDto: CreditLimitExtensionDto, @Req() req: AuthenticatedRequest): Promise<{ message: string; data?: any }> {
-		const clientAuthId = req.user?.uid;
-		const organisationRef = getClerkOrgId(req);
+	requestCreditLimitExtension(@Body() creditLimitDto: CreditLimitExtensionDto, @Req() req: AuthenticatedRequest): Promise<{ message: string; status?: 'submitted' | 'pending_approval'; data?: any }> {
+		// Resolve identity from token: user id from token → find user → linked client → do application
+		const clerkUserId = getClerkUserId(req);
+		const organisationRef = getClerkOrgId(req) ?? (req.user?.organisationRef != null ? String(req.user.organisationRef) : undefined);
+		this.logger.log(
+			`[CREDIT_LIMIT_EXTENSION] Controller received request clerkUserId=${clerkUserId ?? 'none'} organisationRef=${organisationRef ?? 'none'} requestedLimit=${creditLimitDto.requestedLimit}`,
+		);
 		if (!organisationRef) {
 			throw new BadRequestException('Organization context required');
 		}
 
-		if (!clientAuthId) {
-			throw new Error('Client authentication ID not found in token');
+		if (!clerkUserId) {
+			throw new BadRequestException('User ID not found in token');
 		}
 
-		return this.clientsService.requestCreditLimitExtension(clientAuthId, creditLimitDto, organisationRef);
+		return this.clientsService.requestCreditLimitExtension(clerkUserId, creditLimitDto, organisationRef);
 	}
 
 	@Post('test-task-generation')
@@ -3235,7 +3243,7 @@ Manually triggers the automated communication task generation cron job for testi
 	}
 
 	@Get('profile/communication-schedules')
-	@Roles(AccessLevel.CLIENT)
+	@Roles(AccessLevel.CLIENT, AccessLevel.MEMBER)
 	@ApiOperation({
 		summary: '📅 Get Client Communication Schedules (Client Portal)',
 		description: `
@@ -3303,7 +3311,7 @@ Each schedule includes:
 	}
 
 	@Patch('profile/communication-schedules/:scheduleId')
-	@Roles(AccessLevel.CLIENT)
+	@Roles(AccessLevel.CLIENT, AccessLevel.MEMBER)
 	@ApiOperation({
 		summary: '✏️ Update Client Communication Schedule (Client Portal)',
 		description: `
@@ -3380,7 +3388,7 @@ Clients can update the following schedule information:
 	}
 
 	@Delete('profile/communication-schedules/:scheduleId')
-	@Roles(AccessLevel.CLIENT)
+	@Roles(AccessLevel.CLIENT, AccessLevel.MEMBER)
 	@ApiOperation({
 		summary: '🗑️ Delete Client Communication Schedule (Client Portal)',
 		description: `

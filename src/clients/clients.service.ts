@@ -39,6 +39,7 @@ import { OnEvent } from '@nestjs/event-emitter';
 import { ShopService } from '../shop/shop.service';
 import { ProjectsService } from '../shop/projects.service';
 import { Order } from '../shop/entities/order.entity';
+import { ClerkService } from '../clerk/clerk.service';
 
 @Injectable()
 export class ClientsService {
@@ -76,6 +77,7 @@ export class ClientsService {
 		private readonly shopService: ShopService,
 		@Inject(forwardRef(() => ProjectsService))
 		private readonly projectsService: ProjectsService,
+		private readonly clerkService: ClerkService,
 	) {
 		this.CACHE_TTL = this.configService.get<number>('CACHE_EXPIRATION_TIME') || 30;
 	}
@@ -306,10 +308,16 @@ export class ClientsService {
 			throw new NotFoundException('User not found');
 		}
 
-		// All authenticated users can see all clients in the organization
-		// This ensures admin and any other role can see everything across the whole organization
-		const hasElevatedAccess = true;
-		const userAssignedClients = null;
+		// Owner, Admin, Manager, Developer: see all clients in the organization.
+		// All other roles (e.g. User): see only clients assigned to them.
+		const elevatedRoles = [
+			AccessLevel.OWNER,
+			AccessLevel.ADMIN,
+			AccessLevel.MANAGER,
+			AccessLevel.DEVELOPER,
+		];
+		const hasElevatedAccess = elevatedRoles.includes(user.accessLevel as AccessLevel);
+		const userAssignedClients = hasElevatedAccess ? null : (user.assignedClientIds ?? []);
 
 		return {
 			hasElevatedAccess,
@@ -3654,37 +3662,118 @@ export class ClientsService {
 	}
 
 	/**
+	 * Resolves ClientAuth from token: get user from token → find user → find linked client → get ClientAuth.
+	 * Safe resolution so we never use req.user.uid (which may be User.uid) as ClientAuth.uid.
+	 * @param clerkUserId - Clerk user ID from token (decoded.payload.sub)
+	 * @returns ClientAuth with client relation, or null if not found
+	 */
+	private async resolveClientAuthFromToken(clerkUserId: string): Promise<ClientAuth | null> {
+		// 1) Client portal user: resolve by Clerk ID directly
+		const clientAuth = await this.clerkService.getClientAuthByClerkId(clerkUserId);
+		if (clientAuth?.client) {
+			return clientAuth;
+		}
+		// 2) Staff/member with linked client: get user from token → linked client → ClientAuth for that client + same Clerk user
+		const user = await this.clerkService.getUserByClerkId(clerkUserId, ['linkedClient']);
+		if (!user?.linkedClientUid) {
+			return null;
+		}
+		const linkedClientAuth = await this.clientAuthRepository.findOne({
+			where: { clerkUserId, isDeleted: false },
+			relations: ['client', 'client.organisation', 'client.branch'],
+		});
+		if (linkedClientAuth?.client && linkedClientAuth.client.uid === user.linkedClientUid) {
+			return linkedClientAuth;
+		}
+		return null;
+	}
+
+	/**
+	 * Resolves the requesting identity and linked client from token (clerkUserId).
+	 * Supports: (1) ClientAuth (client portal) and (2) User with linkedClientUid (staff acting for client).
+	 * Used by credit limit extension so both paths can submit and receive notifications.
+	 * @param clerkUserId - Clerk user ID from token (decoded.payload.sub)
+	 * @returns Object with client, optional clientAuth, requesterEmail, requesterName; or null if not found
+	 */
+	private async resolveRequesterAndLinkedClient(
+		clerkUserId: string,
+	): Promise<{ client: Client; clientAuth: ClientAuth | null; requesterEmail: string; requesterName: string } | null> {
+		// 1) Client portal user: resolve by Clerk ID directly
+		const clientAuth = await this.clerkService.getClientAuthByClerkId(clerkUserId);
+		if (clientAuth?.client) {
+			this.logger.debug(`[CREDIT_LIMIT_EXTENSION] Resolved client via ClientAuth for clerkUserId: ${clerkUserId}`);
+			return {
+				client: clientAuth.client,
+				clientAuth,
+				requesterEmail: clientAuth.email ?? '',
+				requesterName: clientAuth.client.name || clientAuth.client.contactPerson || clientAuth.email || 'Client',
+			};
+		}
+		// 2) Staff/member with linked client: token → User → linkedClientUid → load client (same as GET_LINKED_CLIENT)
+		const user = await this.clerkService.getUserByClerkId(clerkUserId, ['linkedClient']);
+		if (!user?.linkedClientUid) {
+			return null;
+		}
+		try {
+			const { client } = await this.getLinkedClientWithFullProfile(user.linkedClientUid);
+			if (!client) {
+				return null;
+			}
+			const requesterName = [user.name, user.surname].filter(Boolean).join(' ') || user.name || user.email || 'User';
+			this.logger.log(`[CREDIT_LIMIT_EXTENSION] Resolved client via User linkedClient for clerkUserId: ${clerkUserId} clientUid: ${client.uid}`);
+			return {
+				client,
+				clientAuth: null,
+				requesterEmail: user.email ?? '',
+				requesterName,
+			};
+		} catch {
+			return null;
+		}
+	}
+
+	/**
+	 * Calculate approval deadline for credit limit extension requests.
+	 * Deadline is 7 days from the application (submission) date, at 5 PM.
+	 */
+	private calculateCreditLimitApprovalDeadline(applicationDate: Date): Date {
+		const deadline = new Date(applicationDate);
+		deadline.setDate(deadline.getDate() + 7);
+		deadline.setHours(17, 0, 0, 0);
+		return deadline;
+	}
+
+	/**
 	 * Requests a credit limit extension for a client through the approval workflow.
-	 * 
-	 * @param clientAuthId - The ClientAuth.uid from the JWT token
+	 * Identity is resolved from token: clerkUserId → full user profile → linked client.
+	 * Supports both ClientAuth (client portal) and User with linkedClientUid (staff).
+	 *
+	 * @param clerkUserId - Clerk user ID from JWT token (decoded.payload.sub)
 	 * @param creditLimitDto - The credit limit extension request data
 	 * @param organisationRef - The organization reference from JWT token
 	 * @returns Promise<{ message: string; data?: any }> - Success message with approval details
-	 * 
+	 *
 	 * @throws NotFoundException - When client profile is not found
 	 * @throws BadRequestException - When requested limit is not greater than current limit
 	 */
 	async requestCreditLimitExtension(
-		clientAuthId: number,
+		clerkUserId: string,
 		creditLimitDto: CreditLimitExtensionDto,
 		organisationRef?: string,
-		): Promise<{ message: string; data?: any }> {
+	): Promise<{ message: string; status?: 'submitted' | 'pending_approval'; data?: any }> {
 		const startTime = Date.now();
-		this.logger.log(`[CREDIT_LIMIT_EXTENSION] Starting credit limit extension request for clientAuthId: ${clientAuthId}`);
+		this.logger.log(`[CREDIT_LIMIT_EXTENSION] Starting credit limit extension for clerkUserId: ${clerkUserId}`);
 
 		try {
-			// 1. Find the ClientAuth record and related Client
-			const clientAuth = await this.clientAuthRepository.findOne({
-				where: { uid: clientAuthId, isDeleted: false },
-				relations: ['client', 'client.organisation', 'client.branch'],
-			});
-
-			if (!clientAuth || !clientAuth.client) {
-				this.logger.warn(`[CREDIT_LIMIT_EXTENSION] ClientAuth or Client not found for ID: ${clientAuthId}`);
+			// 1. Resolve requester and linked client from token (ClientAuth or User with linkedClient)
+			const resolved = await this.resolveRequesterAndLinkedClient(clerkUserId);
+			if (!resolved?.client) {
+				this.logger.warn(`[CREDIT_LIMIT_EXTENSION] ClientAuth or Client not found for clerkUserId: ${clerkUserId}`);
 				throw new NotFoundException('Client profile not found');
 			}
 
-			const client = clientAuth.client;
+			const { client, clientAuth, requesterEmail, requesterName } = resolved;
+			this.logger.log(`[CREDIT_LIMIT_EXTENSION] Resolved client clientId=${client.uid} currentLimit=${Number(client.creditLimit) || 0}`);
 
 			// 2. Validate organization membership
 			if (organisationRef) {
@@ -3706,7 +3795,7 @@ export class ClientsService {
 				throw new BadRequestException(`Requested limit must be greater than current limit of ${currentLimit}`);
 			}
 
-			// 4. Find an organization admin/manager user for approval routing
+			// 4. Find an organization admin/manager for approval routing (optional: approval can be created without one)
 			const orgAdmin = await this.userRepository.findOne({
 				where: {
 					organisationRef: client.organisation?.uid?.toString(),
@@ -3719,8 +3808,7 @@ export class ClientsService {
 			});
 
 			if (!orgAdmin) {
-				this.logger.error(`[CREDIT_LIMIT_EXTENSION] No admin/manager found for organization ${client.organisation?.uid}`);
-				throw new BadRequestException('No administrator found in organization to process approval');
+				this.logger.warn(`[CREDIT_LIMIT_EXTENSION] No admin/manager in organization ${client.organisation?.uid}; creating approval with requesting user as requester (approver may be unassigned)`);
 			}
 
 			// 4.5. Check for existing pending credit limit approval requests
@@ -3736,19 +3824,81 @@ export class ClientsService {
 
 			if (existingApproval) {
 				this.logger.warn(`[CREDIT_LIMIT_EXTENSION] Client ${client.uid} already has a pending credit limit extension request (approval ${existingApproval.uid})`);
-				throw new BadRequestException('You already have a pending credit limit extension request. Please wait for it to be reviewed before submitting a new one.');
+				const entityData = (existingApproval.entityData as Record<string, unknown>) || {};
+				const reqLimit = Number(entityData.requestedLimit) ?? creditLimitDto.requestedLimit;
+				return {
+					message: 'You already have a pending credit limit extension request. Please wait for it to be reviewed before submitting a new one.',
+					status: 'pending_approval',
+					data: {
+						approvalId: existingApproval.uid,
+						approvalReference: existingApproval.approvalReference,
+						status: existingApproval.status,
+						submittedAt: existingApproval.submittedAt?.toISOString?.() ?? existingApproval.createdAt?.toISOString?.(),
+						clientId: client.uid,
+						currentLimit,
+						requestedLimit: reqLimit,
+						increaseAmount: reqLimit - currentLimit,
+					},
+				};
 			}
 
 			// 5. Calculate increase amount
 			const increaseAmount = creditLimitDto.requestedLimit - currentLimit;
 
-			// 6. Create approval request
-			// Note: We set approverClerkUserId explicitly to ensure routing to org admin
-			// The requester is set to orgAdmin (User entity) for system compatibility,
-			// but the actual client requester info is stored in entityData
+			// 6. Build entityData: clientAuthId only when ClientAuth exists; always include requesterEmail/requesterName for notifications
+			const entityData: Record<string, unknown> = {
+				clientId: client.uid,
+				clientName: client.name,
+				requesterEmail,
+				requesterName,
+				clientClerkUserId: clerkUserId,
+				currentLimit,
+				requestedLimit: creditLimitDto.requestedLimit,
+				increaseAmount,
+				reason: creditLimitDto.reason,
+				organisationRef: client.organisation?.uid,
+				branchUid: client.branch?.uid,
+			};
+			if (clientAuth) {
+				entityData.clientAuthId = clientAuth.uid;
+				entityData.clientEmail = clientAuth.email;
+			}
+
+			// 7. Requester context: use org admin when present, otherwise the requesting user (so approval can be created in any org)
+			const orgRefForApproval = client.organisation?.clerkOrgId ?? client.organisation?.uid?.toString() ?? organisationRef;
+			let requesterContext: { uid: number; clerkUserId: string; role: AccessLevel; accessLevel: AccessLevel; organisationRef?: string; branch?: any };
+
+			if (orgAdmin) {
+				requesterContext = {
+					uid: orgAdmin.uid,
+					clerkUserId: orgAdmin.clerkUserId,
+					role: orgAdmin.accessLevel,
+					accessLevel: orgAdmin.accessLevel,
+					organisationRef: orgAdmin.organisationRef || organisationRef,
+				};
+			} else {
+				const requestingUser = await this.clerkService.getUserByClerkId(clerkUserId, ['organisation']);
+				if (!requestingUser) {
+					this.logger.error(`[CREDIT_LIMIT_EXTENSION] Requesting user not found for clerkUserId: ${clerkUserId}`);
+					throw new BadRequestException('Requesting user not found');
+				}
+				requesterContext = {
+					uid: requestingUser.uid,
+					clerkUserId: requestingUser.clerkUserId,
+					role: requestingUser.accessLevel,
+					accessLevel: requestingUser.accessLevel,
+					organisationRef: orgRefForApproval ?? requestingUser.organisationRef?.toString(),
+				};
+			}
+
+			// 8. Create approval request (approverClerkUserId only when org admin exists; otherwise approval service may assign or leave unassigned)
+			// Deadline: 7 days from application date (same as expense claims)
+			const applicationDate = new Date();
+			const deadline = this.calculateCreditLimitApprovalDeadline(applicationDate);
+
 			const approvalDto = {
 				title: `Credit Limit Extension - ${client.name}`,
-				description: `Client ${client.name} (${clientAuth.email}) has requested a credit limit extension from ${currentLimit.toLocaleString('en-ZA', { style: 'currency', currency: 'ZAR', minimumFractionDigits: 0 })} to ${creditLimitDto.requestedLimit.toLocaleString('en-ZA', { style: 'currency', currency: 'ZAR', minimumFractionDigits: 0 })}. ${creditLimitDto.reason ? `Reason: ${creditLimitDto.reason}` : ''}`,
+				description: `Client ${client.name} (${requesterEmail}) has requested a credit limit extension from ${currentLimit.toLocaleString('en-ZA', { style: 'currency', currency: 'ZAR', minimumFractionDigits: 0 })} to ${creditLimitDto.requestedLimit.toLocaleString('en-ZA', { style: 'currency', currency: 'ZAR', minimumFractionDigits: 0 })}. ${creditLimitDto.reason ? `Reason: ${creditLimitDto.reason}` : ''}`,
 				type: ApprovalType.CREDIT_LIMIT,
 				priority: ApprovalPriority.HIGH,
 				flowType: ApprovalFlow.SINGLE_APPROVER,
@@ -3756,45 +3906,27 @@ export class ClientsService {
 				entityId: client.uid,
 				amount: creditLimitDto.requestedLimit,
 				currency: 'ZAR',
-				approverClerkUserId: orgAdmin.clerkUserId, // Explicitly set approver to org admin
-				entityData: {
-					clientAuthId: clientAuth.uid,
-					clientClerkUserId: clientAuth.clerkUserId, // Store client's Clerk ID for tracking
-					clientId: client.uid,
-					clientName: client.name,
-					clientEmail: clientAuth.email,
-					currentLimit,
-					requestedLimit: creditLimitDto.requestedLimit,
-					increaseAmount,
-					reason: creditLimitDto.reason,
-					organisationRef: client.organisation?.uid,
-					branchUid: client.branch?.uid,
-				},
+				deadline: deadline.toISOString(),
+				...(orgAdmin && { approverClerkUserId: orgAdmin.clerkUserId }),
+				entityData,
 				autoSubmit: true,
 				customFields: {
 					tags: ['credit-limit-extension', 'client-portal', 'financial'],
 				},
 			};
 
-			// Create approval using org admin as requester (User entity required for approval system)
-			// The actual client requester is tracked via entityData.clientClerkUserId
-			const approval = await this.approvalsService.create(approvalDto, {
-				uid: orgAdmin.uid,
-				clerkUserId: orgAdmin.clerkUserId,
-				role: orgAdmin.accessLevel,
-				accessLevel: orgAdmin.accessLevel,
-				organisationRef: orgAdmin.organisationRef || organisationRef,
-				branch: orgAdmin.branch,
-			} as any);
+			this.logger.log(`[CREDIT_LIMIT_EXTENSION] Creating approval for client ${client.uid}${orgAdmin ? ` approverClerkUserId=${orgAdmin.clerkUserId}` : ' (no approver assigned)'}`);
+			const approval = await this.approvalsService.create(approvalDto, requesterContext as any);
 
-			// 7. Send notification emails
-			await this.sendCreditLimitExtensionNotifications(client, clientAuth, currentLimit, creditLimitDto.requestedLimit, approval);
+			// 9. Send notification emails to org managers when any exist (use requesterEmail/requesterName)
+			await this.sendCreditLimitExtensionNotifications(client, requesterEmail, requesterName, currentLimit, creditLimitDto.requestedLimit, approval);
 
 			const executionTime = Date.now() - startTime;
 			this.logger.log(`[CREDIT_LIMIT_EXTENSION] Successfully created approval request ${approval.uid} for client ${client.uid} in ${executionTime}ms`);
 
 			return {
 				message: 'Credit limit extension request submitted for approval',
+				status: 'submitted',
 				data: {
 					approvalId: approval.uid,
 					approvalReference: approval.approvalReference,
@@ -3803,12 +3935,13 @@ export class ClientsService {
 					currentLimit,
 					requestedLimit: creditLimitDto.requestedLimit,
 					increaseAmount,
-					submittedAt: new Date().toISOString(),
+					submittedAt: applicationDate.toISOString(),
+					deadline: deadline.toISOString(),
 				},
 			};
 		} catch (error) {
 			const executionTime = Date.now() - startTime;
-			this.logger.error(`[CREDIT_LIMIT_EXTENSION] Failed to create approval request for clientAuthId ${clientAuthId} after ${executionTime}ms. Error: ${error.message}`);
+			this.logger.error(`[CREDIT_LIMIT_EXTENSION] Failed to create approval request for clerkUserId ${clerkUserId} after ${executionTime}ms. Error: ${error.message}`);
 			throw error;
 		}
 	}
@@ -3859,31 +3992,95 @@ export class ClientsService {
 				);
 
 				// Invalidate cache
-				const client = await this.clientsRepository.findOne({ where: { uid: clientId } });
+				const client = await this.clientsRepository.findOne({
+					where: { uid: clientId },
+					relations: ['organisation'],
+				});
 				if (client) {
 					await this.invalidateClientCache(client);
 				}
 
-				// Send confirmation email
-				const clientAuth = await this.clientAuthRepository.findOne({
-					where: { uid: approval.entityData?.clientAuthId },
-					relations: ['client'],
-				});
+				// Send confirmation email: prefer ClientAuth, fallback to requesterEmail (staff path)
+				const clientAuth = approval.entityData?.clientAuthId
+					? await this.clientAuthRepository.findOne({
+							where: { uid: approval.entityData.clientAuthId },
+							relations: ['client'],
+						})
+					: null;
+				const currentLimit = approval.entityData?.currentLimit ?? 0;
+				if (clientAuth?.client) {
+					await this.sendCreditLimitExtensionConfirmation(clientAuth.client, clientAuth, currentLimit, requestedLimit);
+				} else if (client && approval.entityData?.requesterEmail) {
+					await this.sendCreditLimitExtensionConfirmationToEmail(client, currentLimit, requestedLimit, approval.entityData.requesterEmail);
+				}
 
-				if (clientAuth && clientAuth.client) {
-					await this.sendCreditLimitExtensionConfirmation(clientAuth.client, clientAuth, approval.entityData?.currentLimit || 0, requestedLimit);
+				// Send same confirmation email to org admins
+				if (client?.organisation) {
+					const managers = await this.userRepository.find({
+						where: {
+							organisationRef: client.organisation?.uid?.toString(),
+							accessLevel: In([AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER]),
+							isDeleted: false,
+						},
+					});
+					for (const manager of managers) {
+						try {
+							this.eventEmitter.emit('send.email', EmailType.APPROVAL_APPROVED, [manager.email], {
+								clientName: client.name,
+								oldLimit: currentLimit,
+								newLimit: requestedLimit,
+								increaseAmount: requestedLimit - currentLimit,
+								message: `The credit limit extension request for client ${client.name} has been approved. The new credit limit is ${requestedLimit}.`,
+							});
+						} catch (emailError) {
+							this.logger.error(`[CREDIT_LIMIT_EXTENSION] Failed to send approval confirmation to admin ${manager.email}: ${emailError.message}`);
+						}
+					}
 				}
 			} else if (payload.action === 'reject' || payload.action === 'decline') {
 				this.logger.log(`[CREDIT_LIMIT_EXTENSION] Approval ${payload.approvalId} rejected, notifying client`);
-				
-				// Send rejection email
-				const clientAuth = await this.clientAuthRepository.findOne({
-					where: { uid: approval.entityData?.clientAuthId },
-					relations: ['client'],
-				});
+				const rejectionReason = approval.rejectionReason ?? payload.reason ?? '';
 
-				if (clientAuth && clientAuth.client) {
-					await this.sendCreditLimitExtensionRejection(clientAuth.client, clientAuth, approval.entityData?.requestedLimit || 0);
+				const client = await this.clientsRepository.findOne({
+					where: { uid: approval.entityData?.clientId },
+					relations: ['organisation'],
+				});
+				const clientAuth = approval.entityData?.clientAuthId
+					? await this.clientAuthRepository.findOne({
+							where: { uid: approval.entityData.clientAuthId },
+							relations: ['client'],
+						})
+					: null;
+				const requestedLimitRejected = approval.entityData?.requestedLimit ?? 0;
+				if (clientAuth?.client) {
+					await this.sendCreditLimitExtensionRejection(clientAuth.client, clientAuth, requestedLimitRejected, rejectionReason);
+				} else if (client && approval.entityData?.requesterEmail) {
+					await this.sendCreditLimitExtensionRejectionToEmail(client, requestedLimitRejected, approval.entityData.requesterEmail, rejectionReason);
+				}
+
+				// Send rejection email to org admins (with reason)
+				if (client?.organisation) {
+					const managers = await this.userRepository.find({
+						where: {
+							organisationRef: client.organisation?.uid?.toString(),
+							accessLevel: In([AccessLevel.ADMIN, AccessLevel.MANAGER, AccessLevel.OWNER]),
+							isDeleted: false,
+						},
+					});
+					for (const manager of managers) {
+						try {
+							this.eventEmitter.emit('send.email', EmailType.APPROVAL_REJECTED, [manager.email], {
+								clientName: client.name,
+								requestedLimit: requestedLimitRejected,
+								rejectionReason: rejectionReason || undefined,
+								message: rejectionReason
+									? `The credit limit extension request for client ${client.name} to ${requestedLimitRejected} has been rejected. Reason: ${rejectionReason}`
+									: `The credit limit extension request for client ${client.name} to ${requestedLimitRejected} has been rejected. Please contact the account manager for more information.`,
+							});
+						} catch (emailError) {
+							this.logger.error(`[CREDIT_LIMIT_EXTENSION] Failed to send rejection notification to admin ${manager.email}: ${emailError.message}`);
+						}
+					}
 				}
 			}
 		} catch (error) {
@@ -3893,16 +4090,19 @@ export class ClientsService {
 
 	/**
 	 * Sends email notifications to financial approvers when a client requests a credit limit extension.
-	 * 
-	 * @param client - The client requesting the extension
-	 * @param clientAuth - The client auth record
+	 * Uses requesterEmail/requesterName so both ClientAuth and User (staff) requesters are supported.
+	 *
+	 * @param client - The client the extension is for
+	 * @param requesterEmail - Email of the requester (client portal or staff)
+	 * @param requesterName - Display name of the requester
 	 * @param currentLimit - Current credit limit
 	 * @param requestedLimit - Requested credit limit
 	 * @param approval - The approval record
 	 */
 	private async sendCreditLimitExtensionNotifications(
 		client: Client,
-		clientAuth: ClientAuth,
+		requesterEmail: string,
+		requesterName: string,
 		currentLimit: number,
 		requestedLimit: number,
 		approval: any,
@@ -3931,8 +4131,8 @@ export class ClientsService {
 						approvalTitle: approval.title,
 						approvalReference: approval.approvalReference,
 						approvalLink: `${process.env.FRONTEND_URL || 'https://app.loro.co.za'}/approvals/${approval.uid}`,
-						requesterName: client.name,
-						requesterEmail: clientAuth.email,
+						requesterName: requesterName || client.name,
+						requesterEmail,
 						currentLimit,
 						requestedLimit,
 						increaseAmount: requestedLimit - currentLimit,
@@ -3981,27 +4181,93 @@ export class ClientsService {
 	}
 
 	/**
+	 * Sends confirmation email to a recipient email (e.g. staff who requested on behalf of client).
+	 * Used when entityData has no clientAuthId but has requesterEmail.
+	 */
+	private async sendCreditLimitExtensionConfirmationToEmail(
+		client: Client,
+		oldLimit: number,
+		newLimit: number,
+		recipientEmail: string,
+	): Promise<void> {
+		try {
+			this.logger.debug(`[CREDIT_LIMIT_EXTENSION] Sending confirmation email to ${recipientEmail} (on behalf of client ${client.uid})`);
+
+			this.eventEmitter.emit('send.email', EmailType.APPROVAL_APPROVED, [recipientEmail], {
+				clientName: client.name,
+				oldLimit,
+				newLimit,
+				increaseAmount: newLimit - oldLimit,
+				message: `The credit limit extension request for client ${client.name} has been approved. The new credit limit is ${newLimit}.`,
+			});
+
+			this.logger.log(`[CREDIT_LIMIT_EXTENSION] Sent confirmation email to ${recipientEmail}`);
+		} catch (error) {
+			this.logger.error(`[CREDIT_LIMIT_EXTENSION] Error sending confirmation email: ${error.message}`);
+		}
+	}
+
+	/**
 	 * Sends rejection email to client when their credit limit extension is rejected.
-	 * 
+	 *
 	 * @param client - The client
 	 * @param clientAuth - The client auth record
 	 * @param requestedLimit - The requested credit limit that was rejected
+	 * @param rejectionReason - Optional reason for rejection (included in email)
 	 */
 	private async sendCreditLimitExtensionRejection(
 		client: Client,
 		clientAuth: ClientAuth,
 		requestedLimit: number,
+		rejectionReason?: string,
 	): Promise<void> {
 		try {
 			this.logger.debug(`[CREDIT_LIMIT_EXTENSION] Sending rejection email to client ${clientAuth.email}`);
 
+			const message = rejectionReason
+				? `Your credit limit extension request to ${requestedLimit} has been rejected. Reason: ${rejectionReason}`
+				: `Your credit limit extension request to ${requestedLimit} has been rejected. Please contact your account manager for more information.`;
+
 			this.eventEmitter.emit('send.email', EmailType.APPROVAL_REJECTED, [clientAuth.email], {
 				clientName: client.name,
 				requestedLimit,
-				message: `Your credit limit extension request to ${requestedLimit} has been rejected. Please contact your account manager for more information.`,
+				rejectionReason: rejectionReason || undefined,
+				message,
 			});
 
 			this.logger.log(`[CREDIT_LIMIT_EXTENSION] Sent rejection email to client ${clientAuth.email}`);
+		} catch (error) {
+			this.logger.error(`[CREDIT_LIMIT_EXTENSION] Error sending rejection email: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Sends rejection email to a recipient email (e.g. staff who requested on behalf of client).
+	 * Used when entityData has no clientAuthId but has requesterEmail.
+	 *
+	 * @param rejectionReason - Optional reason for rejection (included in email)
+	 */
+	private async sendCreditLimitExtensionRejectionToEmail(
+		client: Client,
+		requestedLimit: number,
+		recipientEmail: string,
+		rejectionReason?: string,
+	): Promise<void> {
+		try {
+			this.logger.debug(`[CREDIT_LIMIT_EXTENSION] Sending rejection email to ${recipientEmail} (on behalf of client ${client.uid})`);
+
+			const message = rejectionReason
+				? `The credit limit extension request for client ${client.name} to ${requestedLimit} has been rejected. Reason: ${rejectionReason}`
+				: `The credit limit extension request for client ${client.name} to ${requestedLimit} has been rejected. Please contact the account manager for more information.`;
+
+			this.eventEmitter.emit('send.email', EmailType.APPROVAL_REJECTED, [recipientEmail], {
+				clientName: client.name,
+				requestedLimit,
+				rejectionReason: rejectionReason || undefined,
+				message,
+			});
+
+			this.logger.log(`[CREDIT_LIMIT_EXTENSION] Sent rejection email to ${recipientEmail}`);
 		} catch (error) {
 			this.logger.error(`[CREDIT_LIMIT_EXTENSION] Error sending rejection email: ${error.message}`);
 		}

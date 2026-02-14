@@ -124,11 +124,11 @@ export class Attendance {
 	verifiedByClerkUserId: string;
 
 	@ManyToOne(() => Organisation, (organisation) => organisation?.attendances, { nullable: true })
-	@JoinColumn({ name: 'organisationUid' })
+	@JoinColumn({ name: 'organisationUid', referencedColumnName: 'clerkOrgId' })
 	organisation: Organisation;
 
-	@Column({ nullable: true })
-	organisationUid: number;
+	@Column({ type: 'varchar', nullable: true })
+	organisationUid: string;
 
 	@ManyToOne(() => Branch, (branch) => branch?.attendances, { nullable: true })
 	@JoinColumn({ name: 'branchUid' })

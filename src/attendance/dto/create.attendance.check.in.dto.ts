@@ -1,7 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { AttendanceStatus } from '../../lib/enums/attendance.enums';
-import { IsEnum, IsOptional, IsString, IsNumber, IsDate, IsObject, IsNotEmpty, ValidateNested } from 'class-validator';
+import { IsEnum, IsOptional, IsString, IsNumber, IsDate, IsObject, ValidateNested } from 'class-validator';
 import { OwnerUidDto } from '../../lib/dto/owner-uid.dto';
 
 export class CreateCheckInDto {
@@ -50,13 +50,14 @@ export class CreateCheckInDto {
     })
     checkInNotes?: string;
 
-    @IsNotEmpty()
+    @IsOptional()
     @IsObject()
     @ApiProperty({
+        required: false,
         example: { uid: 1 },
-        description: 'The branch reference code of the attendance check in'
+        description: 'Optional branch reference for the attendance check-in. Omit when user has no branch; org is sufficient.'
     })
-    branch: { uid: number };
+    branch?: { uid: number };
 
     @IsOptional()
     @ValidateNested()

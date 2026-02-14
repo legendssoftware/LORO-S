@@ -1,5 +1,5 @@
-import { Injectable, NotFoundException, Logger, BadRequestException, Inject, forwardRef, HttpStatus, HttpException } from '@nestjs/common';
-import { IsNull, MoreThanOrEqual, Not, Repository, LessThanOrEqual, Between, In, LessThan, QueryFailedError, DataSource, QueryRunner } from 'typeorm';
+import { Injectable, NotFoundException, Logger, BadRequestException, Inject, HttpStatus, HttpException } from '@nestjs/common';
+import { IsNull, MoreThanOrEqual, Not, Repository, LessThanOrEqual, Between, In, LessThan, QueryFailedError, DataSource } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
@@ -30,7 +30,6 @@ import {
 	getDay,
 	addMinutes,
 } from 'date-fns';
-import { fromZonedTime } from 'date-fns-tz';
 import { UserService } from '../user/user.service';
 import { RewardsService } from '../rewards/rewards.service';
 import { XP_VALUES_TYPES } from '../lib/constants/constants';
@@ -42,7 +41,6 @@ import { UnifiedNotificationService } from '../lib/services/unified-notification
 import { NotificationEvent, NotificationPriority } from '../lib/types/unified-notification.types';
 import { Organisation } from 'src/organisation/entities/organisation.entity';
 import { Branch } from '../branch/entities/branch.entity';
-import { OrganisationSettings } from '../organisation/entities/organisation-settings.entity';
 import { TimezoneUtil } from '../lib/utils/timezone.util';
 
 // Import our enhanced calculation services
@@ -53,13 +51,19 @@ import { AttendanceCalculatorService } from './services/attendance.calculator.se
 import { AccessLevel } from 'src/lib/enums/user.enums';
 import { EmailType } from '../lib/enums/email.enums';
 import { CommunicationService } from '../communication/communication.service';
-import { ReportsService } from '../reports/reports.service';
-import { ReportType } from '../reports/constants/report-types.enum';
 import { Cron } from '@nestjs/schedule';
 import { GoogleMapsService } from '../lib/services/google-maps.service';
 import { Address } from '../lib/interfaces/address.interface';
 import { Language } from '@googlemaps/google-maps-services-js';
 import { LocationUtils } from '../lib/utils/location.utils';
+import { runInTransaction } from '../lib/utils/transaction.util';
+import { shouldSeeAllBranches, getEffectiveBranchId } from '../lib/utils/access-level.util';
+import {
+	convertAttendanceRecordToTimezone,
+	convertAttendanceRecordsToTimezone,
+	ensureTimezoneConversion,
+} from './utils/attendance-timezone.util';
+import { OrganisationSettingsService } from '../organisation/services/organisation-settings.service';
 
 @Injectable()
 export class AttendanceService {
@@ -86,8 +90,7 @@ export class AttendanceService {
 		private organisationRepository: Repository<Organisation>,
 		@InjectRepository(Branch)
 		private branchRepository: Repository<Branch>,
-		@InjectRepository(OrganisationSettings)
-		private organisationSettingsRepository: Repository<OrganisationSettings>,
+		private readonly organisationSettingsService: OrganisationSettingsService,
 		private userService: UserService,
 		private rewardsService: RewardsService,
 		private readonly eventEmitter: EventEmitter2,
@@ -97,7 +100,6 @@ export class AttendanceService {
 		private readonly attendanceCalculatorService: AttendanceCalculatorService,
 		private readonly unifiedNotificationService: UnifiedNotificationService,
 		private readonly communicationService: CommunicationService,
-		@Inject(forwardRef(() => ReportsService))
 		private readonly googleMapsService: GoogleMapsService,
 		private readonly dataSource: DataSource,
 	) {
@@ -107,149 +109,6 @@ export class AttendanceService {
 	// ======================================================
 	// HELPER METHODS
 	// ======================================================
-
-	/**
-	 * Resolves Clerk org ID (string) to organisation numeric uid.
-	 * Looks up by clerkOrgId or ref. Returns null if not found.
-	 */
-	private async resolveOrgId(clerkOrgId?: string): Promise<number | null> {
-		if (!clerkOrgId) {
-			return null;
-		}
-		const org = await this.organisationRepository.findOne({
-			where: [
-				{ clerkOrgId, isDeleted: false },
-				{ ref: clerkOrgId, isDeleted: false },
-			],
-			select: ['uid'],
-		});
-		return org?.uid ?? null;
-	}
-
-	/**
-	 * Check if user should see all branches (admin, owner, developer)
-	 * @param userAccessLevel - User's access level
-	 * @returns true if user should see all branches, false otherwise
-	 */
-	private shouldSeeAllBranches(userAccessLevel?: string): boolean {
-		if (!userAccessLevel) {
-			return false;
-		}
-		const elevatedRoles = [AccessLevel.ADMIN, AccessLevel.OWNER, AccessLevel.DEVELOPER, AccessLevel.TECHNICIAN];
-		return elevatedRoles.includes(userAccessLevel.toLowerCase() as AccessLevel);
-	}
-
-	/**
-	 * Get effective branch ID based on user access level
-	 * Returns undefined for admin/owner/developer (to show all branches)
-	 * Returns branchId for other roles (to filter by branch)
-	 * @param branchId - Original branch ID
-	 * @param userAccessLevel - User's access level
-	 * @returns branchId or undefined
-	 */
-	private getEffectiveBranchId(branchId?: number, userAccessLevel?: string): number | undefined {
-		if (this.shouldSeeAllBranches(userAccessLevel)) {
-			return undefined; // Don't filter by branch for elevated roles
-		}
-		return branchId; // Filter by branch for other roles
-	}
-
-
-	/**
-	 * Check if a user's check-in is late and calculate how many minutes late
-	 */
-	private async checkAndCalculateLateMinutes(orgId: string, checkInTime: Date): Promise<number> {
-		try {
-			// Get organization working hours and timezone for the check-in date
-			const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(orgId, checkInTime);
-
-			if (!workingDayInfo.isWorkingDay || !workingDayInfo.startTime) {
-				// Not a working day or no start time defined
-				return 0;
-			}
-
-			// Get organization timezone
-			const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
-			const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
-
-			// Parse the expected start time in organization's timezone
-			// Parse time string (HH:mm) and combine with checkInTime date in organization timezone
-			const [hours, minutes] = workingDayInfo.startTime.split(':').map(Number);
-			const expectedStartTime = new Date(checkInTime);
-			expectedStartTime.setHours(hours, minutes, 0, 0);
-
-			// Calculate late minutes with grace period
-			const gracePeriodMinutes = TimeCalculatorUtil.DEFAULT_WORK.PUNCTUALITY_GRACE_MINUTES;
-			const graceEndTime = addMinutes(expectedStartTime, gracePeriodMinutes);
-
-			if (checkInTime <= graceEndTime) {
-				// On time or within grace period
-				return 0;
-			}
-
-			// Calculate how many minutes late (excluding grace period)
-			const lateMinutes = Math.floor((checkInTime.getTime() - graceEndTime.getTime()) / (1000 * 60));
-			return Math.max(0, lateMinutes);
-		} catch (error) {
-			this.logger.warn(`Error calculating late minutes for org ${orgId}:`, error.message);
-			return 0; // Default to not late if we can't determine
-		}
-	}
-
-	/**
-	 * Check if a user's check-in is early and calculate how many minutes early
-	 */
-	private async checkAndCalculateEarlyMinutes(orgId: string, checkInTime: Date): Promise<number> {
-		try {
-			// Get organization working hours and timezone for the check-in date
-			const workingDayInfo = await this.organizationHoursService.getWorkingDayInfo(orgId, checkInTime);
-
-			if (!workingDayInfo.isWorkingDay || !workingDayInfo.startTime) {
-				// Not a working day or no start time defined
-				return 0;
-			}
-
-			// Get organization timezone
-			const organizationHours = await this.organizationHoursService.getOrganizationHours(orgId);
-			const organizationTimezone = organizationHours?.timezone || 'Africa/Johannesburg';
-
-			// Parse the expected start time in organization's timezone
-			// Parse time string (HH:mm) and combine with checkInTime date in organization timezone
-			const [hours, minutes] = workingDayInfo.startTime.split(':').map(Number);
-			const expectedStartTime = new Date(checkInTime);
-			expectedStartTime.setHours(hours, minutes, 0, 0);
-
-			// Calculate grace period
-			const gracePeriodMinutes = TimeCalculatorUtil.DEFAULT_WORK.PUNCTUALITY_GRACE_MINUTES;
-			const graceEndTime = addMinutes(expectedStartTime, gracePeriodMinutes);
-
-			if (checkInTime >= expectedStartTime && checkInTime <= graceEndTime) {
-				// On time or within grace period - not early
-				return 0;
-			}
-
-			if (checkInTime < expectedStartTime) {
-				// Check-in is before expected start time - calculate early minutes
-				const earlyMinutes = Math.floor((expectedStartTime.getTime() - checkInTime.getTime()) / (1000 * 60));
-				return Math.max(0, earlyMinutes);
-			}
-
-			// After grace period - not early (would be late)
-			return 0;
-		} catch (error) {
-			this.logger.warn(`Error calculating early minutes for org ${orgId}:`, error.message);
-			return 0; // Default to not early if we can't determine
-		}
-	}
-
-	/**
-	 * Calculate both early and late minutes for a check-in
-	 */
-	private async calculateEarlyAndLateMinutes(orgId: string, checkInTime: Date): Promise<{ earlyMinutes: number; lateMinutes: number }> {
-		const earlyMinutes = await this.checkAndCalculateEarlyMinutes(orgId, checkInTime);
-		const lateMinutes = await this.checkAndCalculateLateMinutes(orgId, checkInTime);
-		return { earlyMinutes, lateMinutes };
-	}
 
 	private getCacheKey(key: string | number): string {
 		return `${this.CACHE_PREFIX}${key}`;
@@ -262,88 +121,6 @@ export class AttendanceService {
 	 */
 	private getListCacheKey(orgId?: string, effectiveBranchId?: number): string {
 		return this.getCacheKey(`all_${orgId || 'no-org'}_${effectiveBranchId ?? 'no-branch'}`);
-	}
-
-	/**
-	 * Run a function inside a TypeORM transaction. Ensures connect, startTransaction, commit/rollback, and release.
-	 * Use for write flows that need a single transaction scope without manual release handling.
-	 */
-	private async runInTransaction<T>(fn: (queryRunner: QueryRunner) => Promise<T>): Promise<T> {
-		const queryRunner = this.dataSource.createQueryRunner();
-		await queryRunner.connect();
-		await queryRunner.startTransaction();
-		try {
-			const result = await fn(queryRunner);
-			await queryRunner.commitTransaction();
-			return result;
-		} catch (error) {
-			await queryRunner.rollbackTransaction();
-			throw error;
-		} finally {
-			await queryRunner.release();
-		}
-	}
-
-	/**
-	 * Get organization timezone with fallback
-	 * Accepts Clerk org ID (string) and filters by clerkOrgId or ref
-	 * Falls back to organisationSettings.regional.timezone if organization hours don't have timezone
-	 */
-	private async getOrganizationTimezone(organizationId?: string): Promise<string> {
-		if (!organizationId) {
-			const fallbackTimezone = TimezoneUtil.getSafeTimezone();
-			this.logger.debug(`No organizationId provided, using fallback timezone: ${fallbackTimezone}`);
-			return fallbackTimezone;
-		}
-
-		try {
-			// First try to get timezone from organization hours
-			const organizationHours = await this.organizationHoursService.getOrganizationHours(organizationId);
-			if (organizationHours?.timezone) {
-				return organizationHours.timezone;
-			}
-
-			// Fallback to organisation settings (OrganisationSettings.organisationUid is Clerk ID string)
-			const orgSettings = await this.organisationSettingsRepository.findOne({
-				where: { organisationUid: organizationId },
-			});
-			if (orgSettings?.regional?.timezone) {
-				return orgSettings.regional.timezone;
-			}
-
-			// Final fallback to safe default
-			const fallbackTimezone = TimezoneUtil.getSafeTimezone();
-			this.logger.debug(`Using fallback timezone: ${fallbackTimezone}`);
-			return fallbackTimezone;
-		} catch (error) {
-			this.logger.warn(`Error getting timezone for org ${organizationId}, using default:`, error);
-			const fallbackTimezone = TimezoneUtil.getSafeTimezone();
-			this.logger.debug(`Using fallback timezone: ${fallbackTimezone}`);
-			return fallbackTimezone;
-		}
-	}
-
-	/**
-	 * Get org-level notification channel flags from OrganisationSettings.
-	 * Used to respect org settings (e.g. no push/email) before sending attendance notifications.
-	 */
-	private async getOrgNotificationChannels(orgId?: string): Promise<{ push: boolean; email: boolean }> {
-		const defaultChannels = { push: true, email: true };
-		if (!orgId) return defaultChannels;
-		try {
-			const settings = await this.organisationSettingsRepository.findOne({
-				where: { organisationUid: orgId },
-				select: ['notifications'],
-			});
-			const notif = settings?.notifications;
-			if (!notif || typeof notif !== 'object') return defaultChannels;
-			return {
-				push: notif.push !== false,
-				email: notif.email !== false,
-			};
-		} catch {
-			return defaultChannels;
-		}
 	}
 
 	/**
@@ -415,224 +192,10 @@ export class AttendanceService {
 		return { durationMinutes, overtimeMinutes };
 	}
 
-	/**
-	 * Format time in organization timezone for notifications
-	 */
+	/** Format time in organization timezone for notifications. */
 	private async formatTimeInOrganizationTimezone(date: Date, organizationId?: string): Promise<string> {
-		const timezone = await this.getOrganizationTimezone(organizationId);
+		const timezone = await this.organizationHoursService.getOrganizationTimezone(organizationId);
 		return TimezoneUtil.formatInOrganizationTime(date, 'h:mm a', timezone);
-	}
-
-	/**
-	 * Convert attendance record dates to organization timezone
-	 * This ensures all date fields are returned in the user's local timezone instead of UTC
-	 * Accepts Clerk org ID (string) and filters by clerkOrgId or ref
-	 */
-	private async convertAttendanceRecordTimezone(
-		record: Attendance,
-		organizationId?: string,
-	): Promise<Attendance> {
-		try {
-			if (!record) return record;
-
-			// Skip timezone conversion for external machine records
-			if (record.checkInNotes && record.checkInNotes.includes('[External Machine: LEGEND_PEOPLE] Morning Clock Ins]')) {
-				this.logger.debug(`Skipping timezone conversion for external machine record ${record.uid}`);
-				return record;
-			}
-
-			// Get organization timezone using the updated method which checks settings
-			let timezone = TimezoneUtil.getSafeTimezone(); // Default fallback
-
-			// First try to get timezone from organization
-			if (organizationId) {
-				timezone = await this.getOrganizationTimezone(organizationId);
-			} else if (record.owner?.organisation?.clerkOrgId || record.owner?.organisation?.ref) {
-				timezone = await this.getOrganizationTimezone(record.owner.organisation.clerkOrgId || record.owner.organisation.ref);
-			} else if (record.organisation?.clerkOrgId || record.organisation?.ref) {
-				timezone = await this.getOrganizationTimezone(record.organisation.clerkOrgId || record.organisation.ref);
-			}
-
-			// Convert Date objects to timezone-aware Date objects for JSON serialization
-			// Using toOrganizationTimeForSerialization ensures dates serialize with organization timezone time
-			const convertedRecord = { ...record };
-
-			if (convertedRecord.checkIn) {
-				convertedRecord.checkIn = TimezoneUtil.toOrganizationTimeForSerialization(convertedRecord.checkIn, timezone);
-			}
-			if (convertedRecord.checkOut) {
-				convertedRecord.checkOut = TimezoneUtil.toOrganizationTimeForSerialization(convertedRecord.checkOut, timezone);
-			}
-			if (convertedRecord.breakStartTime) {
-				convertedRecord.breakStartTime = TimezoneUtil.toOrganizationTimeForSerialization(convertedRecord.breakStartTime, timezone);
-			}
-			if (convertedRecord.breakEndTime) {
-				convertedRecord.breakEndTime = TimezoneUtil.toOrganizationTimeForSerialization(convertedRecord.breakEndTime, timezone);
-			}
-			if (convertedRecord.createdAt) {
-				convertedRecord.createdAt = TimezoneUtil.toOrganizationTimeForSerialization(convertedRecord.createdAt, timezone);
-			}
-			if (convertedRecord.updatedAt) {
-				convertedRecord.updatedAt = TimezoneUtil.toOrganizationTimeForSerialization(convertedRecord.updatedAt, timezone);
-			}
-			if (convertedRecord.verifiedAt) {
-				convertedRecord.verifiedAt = TimezoneUtil.toOrganizationTimeForSerialization(convertedRecord.verifiedAt, timezone);
-			}
-
-			return convertedRecord;
-		} catch (error) {
-			this.logger.warn(`Error converting attendance record timezone: ${error.message}`);
-			return record; // Return original record if conversion fails
-		}
-	}
-
-	/**
-	 * Convert multiple attendance records to organization timezone
-	 */
-	private async convertAttendanceRecordsTimezone(
-		records: Attendance[],
-		organizationId?: string,
-	): Promise<Attendance[]> {
-		if (!records || records.length === 0) return records;
-
-		try {
-			// Process records in parallel for better performance
-			const convertedRecords = await Promise.all(
-				records.map(record => this.convertAttendanceRecordTimezone(record, organizationId))
-			);
-
-			return convertedRecords;
-		} catch (error) {
-			this.logger.warn(`Error converting attendance records timezone: ${error.message}`);
-			return records; // Return original records if conversion fails
-		}
-	}
-
-	/**
-	 * Test timezone conversion to verify it's working correctly
-	 * This can be called to debug timezone issues
-	 */
-	public async testTimezoneConversion(organizationId?: string): Promise<{
-		original: string;
-		timezone: string;
-		converted: string;
-		expected: string;
-		isWorking: boolean;
-		message: string;
-	}> {
-		try {
-			const testDate = new Date('2025-09-18T05:25:00.000Z'); // UTC time from user's example
-			const timezone = await this.getOrganizationTimezone(organizationId);
-			// Times are already timezone-aware, no conversion needed
-			const convertedDate = testDate;
-
-			const original = testDate.toISOString();
-			const converted = convertedDate.toISOString();
-			const expected = '2025-09-18T05:25:00.000Z'; // No conversion needed
-			const isWorking = true; // Always working since DB handles timezone
-
-			this.logger.log(`[TIMEZONE TEST] Original: ${original}`);
-			this.logger.log(`[TIMEZONE TEST] Timezone: ${timezone}`);
-			this.logger.log(`[TIMEZONE TEST] Converted: ${converted}`);
-			this.logger.log(`[TIMEZONE TEST] Expected: ${expected}`);
-			this.logger.log(`[TIMEZONE TEST] Working correctly: ${isWorking}`);
-
-			return {
-				original,
-				timezone,
-				converted,
-				expected,
-				isWorking,
-				message: isWorking ? 'Timezone conversion is working correctly!' : 'Timezone conversion has issues'
-			};
-		} catch (error) {
-			this.logger.error(`[TIMEZONE TEST] Error: ${error.message}`);
-			return {
-				original: '',
-				timezone: '',
-				converted: '',
-				expected: '2025-09-18T07:25:00.000Z',
-				isWorking: false,
-				message: `Error testing timezone conversion: ${error.message}`
-			};
-		}
-	}
-
-	/**
-	 * Enhanced method to ensure attendance data is consistently timezone-converted
-	 * This method should be called for ALL attendance data returned to clients
-	 */
-	private async ensureTimezoneConversion(
-		data: Attendance | Attendance[] | any,
-		organizationId?: string,
-	): Promise<any> {
-		try {
-			if (!data) return data;
-
-			// Handle single attendance record
-			if (data.uid && data.checkIn) {
-				return await this.convertAttendanceRecordTimezone(data as Attendance, organizationId);
-			}
-
-			// Handle array of attendance records
-			if (Array.isArray(data)) {
-				const attendanceRecords = data.filter(item => item && item.checkIn);
-				if (attendanceRecords.length > 0) {
-					return await this.convertAttendanceRecordsTimezone(data as Attendance[], organizationId);
-				}
-			}
-
-			// Handle nested objects with attendance data
-			if (typeof data === 'object') {
-				const result = { ...data };
-
-				// Check for attendance records in common response structures
-				if (result.checkIns && Array.isArray(result.checkIns)) {
-					result.checkIns = await this.convertAttendanceRecordsTimezone(result.checkIns, organizationId);
-				}
-
-				if (result.attendance && result.attendance.checkIn) {
-					result.attendance = await this.convertAttendanceRecordTimezone(result.attendance, organizationId);
-				}
-
-				if (result.activeShifts && Array.isArray(result.activeShifts)) {
-					result.activeShifts = await this.convertAttendanceRecordsTimezone(result.activeShifts, organizationId);
-				}
-
-				if (result.attendanceRecords && Array.isArray(result.attendanceRecords)) {
-					result.attendanceRecords = await this.convertAttendanceRecordsTimezone(result.attendanceRecords, organizationId);
-				}
-
-				if (result.multiDayShifts && Array.isArray(result.multiDayShifts)) {
-					result.multiDayShifts = await this.convertAttendanceRecordsTimezone(result.multiDayShifts, organizationId);
-				}
-
-				if (result.ongoingShifts && Array.isArray(result.ongoingShifts)) {
-					result.ongoingShifts = await this.convertAttendanceRecordsTimezone(result.ongoingShifts, organizationId);
-				}
-
-				// Handle daily overview with present users
-				if (result.data && result.data.presentUsers && Array.isArray(result.data.presentUsers)) {
-					const timezone = await this.getOrganizationTimezone(organizationId);
-					for (const user of result.data.presentUsers) {
-						// Skip timezone conversion for external machine records
-						if (user.checkInNotes && user.checkInNotes.includes('[External Machine: LEGEND_PEOPLE] Morning Clock Ins]')) {
-							this.logger.debug(`Skipping timezone conversion for external machine user ${user.uid}`);
-							continue;
-						}
-						// Times are already timezone-aware from database, no conversion needed
-						// user.checkInTime and user.checkOutTime are already correct
-					}
-				}
-
-				return result;
-			}
-
-			return data;
-		} catch (error) {
-			this.logger.error(`Error ensuring timezone conversion: ${error.message}`);
-			return data; // Return original data if conversion fails
-		}
 	}
 
 	/**
@@ -796,12 +359,8 @@ export class AttendanceService {
 
 		this.logger.log(`[${operationId}] Check-in attempt for user ${ownerUidRaw}, orgId: ${orgId}, branchId: ${branchId}`);
 
-		// Create query runner for transaction
-		const queryRunner = this.dataSource.createQueryRunner();
-		await queryRunner.connect();
-		await queryRunner.startTransaction();
-
 		try {
+			const { checkIn, user } = await runInTransaction(this.dataSource, async (queryRunner) => {
 			// Validation
 			if (!checkInDto.checkIn) {
 				throw new HttpException(
@@ -893,7 +452,7 @@ export class AttendanceService {
 				this.logger.warn(`User ${ownerUid} already has an active shift - checking if same day`);
 
 				// Get organization timezone for accurate date comparison
-				const orgTimezone = await this.getOrganizationTimezone(orgId);
+				const orgTimezone = await this.organizationHoursService.getOrganizationTimezone(orgId);
 
 				// Dates are already timezone-aware from database
 				const existingShiftDate = new Date(existingShift.checkIn);
@@ -1012,7 +571,7 @@ export class AttendanceService {
 			let lateMinutes = 0;
 			if (orgId) {
 				try {
-					const timingInfo = await this.calculateEarlyAndLateMinutes(orgId, new Date(checkInDto.checkIn));
+					const timingInfo = await this.organizationHoursService.getEarlyAndLateMinutesForCheckIn(orgId, new Date(checkInDto.checkIn));
 					earlyMinutes = timingInfo.earlyMinutes;
 					lateMinutes = timingInfo.lateMinutes;
 					this.logger.debug(
@@ -1026,14 +585,13 @@ export class AttendanceService {
 
 			// User already validated above at line 672-679, no need to re-validate
 
-			// Prepare attendance data
+			// Prepare attendance data (organisationUid = Clerk org ID string from token)
 			const { branch: _, owner: __, ...restCheckInDto } = checkInDto;
 			const attendanceData = queryRunner.manager.create(Attendance, {
 				...restCheckInDto,
 				checkIn: new Date(checkInDto.checkIn),
 				status: checkInDto.status || AttendanceStatus.PRESENT,
-				organisation: organisation,
-				organisationUid: organisation.uid,
+				organisationUid: orgId,
 				placesOfInterest: null,
 				earlyMinutes,
 				lateMinutes,
@@ -1053,9 +611,10 @@ export class AttendanceService {
 				);
 			}
 
-			// Commit transaction before async operations
-			await queryRunner.commitTransaction();
-			this.logger.debug(`[${operationId}] Transaction committed successfully`);
+			return { checkIn, user };
+			});
+
+			const ownerUid = String(user.uid);
 
 			// Prepare response (cache clear moved to setImmediate for faster client response)
 			const responseData = {
@@ -1231,7 +790,6 @@ export class AttendanceService {
 
 			return response;
 		} catch (error) {
-			await queryRunner.rollbackTransaction();
 			const duration = Date.now() - startTime;
 			this.logger.error(`[${operationId}] ❌ Check-in failed after ${duration}ms: ${error.message}`, error.stack);
 
@@ -1272,8 +830,6 @@ export class AttendanceService {
 				{ message: error?.message || 'Check-in failed. Please try again.', statusCode: HttpStatus.INTERNAL_SERVER_ERROR, error: 'INTERNAL_ERROR' },
 				HttpStatus.INTERNAL_SERVER_ERROR
 			);
-		} finally {
-			await queryRunner.release();
 		}
 	}
 
@@ -1728,7 +1284,7 @@ export class AttendanceService {
 		this.logger.log(`[${operationId}] Check-out attempt for user ${ownerUidStr}, orgId: ${orgId}, branchId: ${branchId}`);
 
 		try {
-			const payload = await this.runInTransaction(async (queryRunner) => {
+			const payload = await runInTransaction(this.dataSource, async (queryRunner) => {
 			// Validation
 			if (!checkOutDto.checkOut) {
 				throw new HttpException(
@@ -1831,7 +1387,7 @@ export class AttendanceService {
 			// Get organization timezone for accurate date comparison
 			// Use orgId (string) for timezone lookup, fallback to activeShift's org uid if available
 			const orgIdForTimezone = orgId || (activeShift.owner?.organisation?.clerkOrgId || activeShift.owner?.organisation?.ref);
-			const orgTimezone = await this.getOrganizationTimezone(orgIdForTimezone);
+			const orgTimezone = await this.organizationHoursService.getOrganizationTimezone(orgIdForTimezone);
 
 			// Check if both dates are on the same calendar day in organization timezone
 			const isSameCalendarDay = TimezoneUtil.isSameCalendarDayInOrgTimezone(
@@ -2187,7 +1743,7 @@ export class AttendanceService {
 
 	public async allCheckIns(orgId?: string, branchId?: number, userAccessLevel?: string): Promise<{ message: string; checkIns: Attendance[] }> {
 		// Get effective branch ID based on user role
-		const effectiveBranchId = this.getEffectiveBranchId(branchId, userAccessLevel);
+		const effectiveBranchId = getEffectiveBranchId(branchId, userAccessLevel);
 		this.logger.log(`Fetching all check-ins, orgId: ${orgId}, branchId: ${branchId}, effectiveBranchId: ${effectiveBranchId}, userAccessLevel: ${userAccessLevel}`);
 
 		try {
@@ -2200,7 +1756,7 @@ export class AttendanceService {
 				);
 
 				// Apply timezone conversion to cached results using enhanced method (orgId string for hours lookup)
-				const cachedResultWithTimezone = await this.ensureTimezoneConversion(cachedResult, orgId ?? undefined);
+				const cachedResultWithTimezone = await ensureTimezoneConversion(cachedResult, orgId ?? undefined, (id) => this.organizationHoursService.getOrganizationTimezone(id));
 
 				return cachedResultWithTimezone;
 			}
@@ -2263,7 +1819,7 @@ export class AttendanceService {
 				checkIns: checkIns,
 			};
 
-			const responseWithTimezone = await this.ensureTimezoneConversion(response, orgId);
+			const responseWithTimezone = await ensureTimezoneConversion(response, orgId, (id) => this.organizationHoursService.getOrganizationTimezone(id));
 
 			// Cache the result (with timezone conversion applied)
 			await this.cacheManager.set(cacheKey, responseWithTimezone, this.CACHE_TTL);
@@ -2392,7 +1948,7 @@ export class AttendanceService {
 				checkIns: allCheckIns,
 			};
 
-			const responseWithTimezone = await this.ensureTimezoneConversion(response, orgId);
+			const responseWithTimezone = await ensureTimezoneConversion(response, orgId, (id) => this.organizationHoursService.getOrganizationTimezone(id));
 			return responseWithTimezone;
 		} catch (error) {
 			const response = {
@@ -2616,7 +2172,7 @@ export class AttendanceService {
 			);
 
 			// Respect org-level notification channels (OrganisationSettings.notifications)
-			const orgChannels = await this.getOrgNotificationChannels(orgId);
+			const orgChannels = await this.organisationSettingsService.getNotificationChannels(orgId);
 			await this.unifiedNotificationService.sendTemplatedNotification(
 				notificationType,
 				[userId],
@@ -3710,7 +3266,7 @@ export class AttendanceService {
 		};
 	}> {
 		// Get effective branch ID based on user role
-		const effectiveBranchId = this.getEffectiveBranchId(branchId, userAccessLevel);
+		const effectiveBranchId = getEffectiveBranchId(branchId, userAccessLevel);
 		const operationId = `daily_overview_${Date.now()}`;
 		this.logger.log(
 			`[${operationId}] Getting daily attendance overview for orgId: ${orgId}, branchId: ${branchId}, effectiveBranchId: ${effectiveBranchId}, userAccessLevel: ${userAccessLevel}, date: ${date || 'today'
@@ -3781,7 +3337,7 @@ export class AttendanceService {
 			const presentUsersMap = new Map<number, any>();
 			const presentUserIds = new Set<number>();
 
-			const timezone = await this.getOrganizationTimezone(orgId);
+			const timezone = await this.organizationHoursService.getOrganizationTimezone(orgId);
 			todayAttendance?.forEach((attendance) => {
 				if (attendance.owner && !presentUsersMap.has(attendance.owner.uid)) {
 					const user = attendance.owner;
@@ -3923,7 +3479,7 @@ export class AttendanceService {
 		ongoingShifts: Attendance[];
 	}> {
 		// Get effective branch ID based on user role
-		const effectiveBranchId = this.getEffectiveBranchId(branchId, userAccessLevel);
+		const effectiveBranchId = getEffectiveBranchId(branchId, userAccessLevel);
 		try {
 			// Get organization timezone for accurate date range (orgId is clerkOrgId/ref string)
 			const organizationHours = orgId ? await this.organizationHoursService.getOrganizationHours(orgId) : null;
@@ -4040,7 +3596,7 @@ export class AttendanceService {
 				})),
 			};
 
-			const responseWithTimezone = await this.ensureTimezoneConversion(response, orgId);
+			const responseWithTimezone = await ensureTimezoneConversion(response, orgId, (id) => this.organizationHoursService.getOrganizationTimezone(id));
 			return responseWithTimezone;
 		} catch (error) {
 			return {
@@ -4069,7 +3625,7 @@ export class AttendanceService {
 		attendance: Attendance;
 	}> {
 		// Get effective branch ID based on user role
-		const effectiveBranchId = this.getEffectiveBranchId(branchId, userAccessLevel);
+		const effectiveBranchId = getEffectiveBranchId(branchId, userAccessLevel);
 
 		// If user is querying their own status, don't apply branch filtering
 		// Branch filtering should only apply to list queries, not individual user queries
@@ -4123,7 +3679,16 @@ export class AttendanceService {
 			});
 
 			if (!checkIn) {
-				throw new NotFoundException(process.env.NOT_FOUND_MESSAGE);
+				return {
+					message: process.env.SUCCESS_MESSAGE,
+					startTime: null,
+					endTime: null,
+					nextAction: 'Start Shift',
+					isLatestCheckIn: false,
+					checkedIn: false,
+					user: null,
+					attendance: null,
+				} as any;
 			}
 
 			const isLatestCheckIn = isToday(new Date(checkIn?.checkIn));
@@ -4173,7 +3738,7 @@ export class AttendanceService {
 			}
 
 			// Apply timezone conversion to the attendance record using enhanced method
-			const timezone = await this.getOrganizationTimezone(orgId);
+			const timezone = await this.organizationHoursService.getOrganizationTimezone(orgId);
 			const response = {
 				message: process.env.SUCCESS_MESSAGE,
 				startTime: checkIn.checkIn ? TimezoneUtil.formatInOrganizationTime(checkIn.checkIn, 'yyyy-MM-dd HH:mm:ss', timezone) : null,
@@ -4189,7 +3754,7 @@ export class AttendanceService {
 				...restOfCheckIn,
 			};
 
-			const responseWithTimezone = await this.ensureTimezoneConversion(response, orgId);
+			const responseWithTimezone = await ensureTimezoneConversion(response, orgId, (id) => this.organizationHoursService.getOrganizationTimezone(id));
 			return responseWithTimezone;
 		} catch (error) {
 			const response = {
@@ -4219,8 +3784,8 @@ export class AttendanceService {
 		requestingUserId?: string,
 	): Promise<{ message: string; checkIns: Attendance[]; user: any }> {
 		// Get effective branch ID based on user role
-		const effectiveBranchId = this.getEffectiveBranchId(branchId, userAccessLevel);
-		const canViewAll = this.shouldSeeAllBranches(userAccessLevel);
+		const effectiveBranchId = getEffectiveBranchId(branchId, userAccessLevel);
+		const canViewAll = shouldSeeAllBranches(userAccessLevel);
 
 		// If user is not admin/owner/developer/technician, they can only view their own attendance
 		if (!canViewAll && requestingUserId != null && String(requestingUserId) !== String(ref)) {
@@ -4291,7 +3856,7 @@ export class AttendanceService {
 				user: userInfo,
 			};
 
-			const responseWithTimezone = await this.ensureTimezoneConversion(response, orgId);
+			const responseWithTimezone = await ensureTimezoneConversion(response, orgId, (id) => this.organizationHoursService.getOrganizationTimezone(id));
 			return responseWithTimezone;
 		} catch (error) {
 			const response = {
@@ -4351,7 +3916,7 @@ export class AttendanceService {
 				totalUsers,
 			};
 
-			const responseWithTimezone = await this.ensureTimezoneConversion(response, orgId);
+			const responseWithTimezone = await ensureTimezoneConversion(response, orgId, (id) => this.organizationHoursService.getOrganizationTimezone(id));
 			return responseWithTimezone;
 		} catch (error) {
 			const response = {
@@ -4479,7 +4044,7 @@ export class AttendanceService {
 				attendanceRecords: attendanceRecords,
 			};
 
-			const responseWithTimezone = await this.ensureTimezoneConversion(response);
+			const responseWithTimezone = await ensureTimezoneConversion(response, undefined, (id) => this.organizationHoursService.getOrganizationTimezone(id));
 			return responseWithTimezone;
 		} catch (error) {
 			const response = {
@@ -4643,7 +4208,7 @@ export class AttendanceService {
 		this.logger.log(`Starting break for user ${ownerUidStr}`);
 
 		try {
-			const payload = await this.runInTransaction(async (queryRunner) => {
+			const payload = await runInTransaction(this.dataSource, async (queryRunner) => {
 				const activeShift = await queryRunner.manager.findOne(Attendance, {
 					where: {
 						status: AttendanceStatus.PRESENT,
@@ -4739,7 +4304,7 @@ export class AttendanceService {
 		this.logger.log(`Ending break for user ${ownerUidStr}`);
 
 		try {
-			const payload = await this.runInTransaction(async (queryRunner) => {
+			const payload = await runInTransaction(this.dataSource, async (queryRunner) => {
 				const shiftOnBreak = await queryRunner.manager.findOne(Attendance, {
 					where: {
 						status: AttendanceStatus.ON_BREAK,
@@ -5279,7 +4844,7 @@ export class AttendanceService {
 
 			// ===== ENHANCED TIMING PATTERNS =====
 			// Get organization timezone for proper conversion
-			const timezone = await this.getOrganizationTimezone(organizationId);
+			const timezone = await this.organizationHoursService.getOrganizationTimezone(organizationId);
 
 			// Times are already timezone-aware from database
 			const checkInTimes = allAttendance.map((record) => new Date(record.checkIn));
@@ -5529,7 +5094,7 @@ export class AttendanceService {
 			);
 
 			// Get effective branch ID based on user role
-			const effectiveBranchId = this.getEffectiveBranchId(branchId, userAccessLevel);
+			const effectiveBranchId = getEffectiveBranchId(branchId, userAccessLevel);
 
 			// Build user query filters - filter by clerkOrgId or ref (string)
 			if (!orgId) {
@@ -5734,7 +5299,7 @@ export class AttendanceService {
 			};
 
 			// Apply timezone conversion to attendance records
-			const responseWithTimezone = await this.ensureTimezoneConversion(response, orgId);
+			const responseWithTimezone = await ensureTimezoneConversion(response, orgId, (id) => this.organizationHoursService.getOrganizationTimezone(id));
 			return responseWithTimezone;
 		} catch (error) {
 			this.logger.error(`Error retrieving monthly metrics for all users: ${error.message}`, error.stack);
@@ -5971,8 +5536,9 @@ export class AttendanceService {
 
 			// Apply timezone conversion to attendance records
 			const organizationId = userExists?.organisation?.clerkOrgId || userExists?.organisation?.ref;
-			const attendanceRecords = await this.convertAttendanceRecordsTimezone(attendanceRecordsRaw, organizationId);
-			const lastAttendanceRecord = lastAttendanceRecordRaw ? await this.convertAttendanceRecordTimezone(lastAttendanceRecordRaw, organizationId) : null;
+			const tz = await this.organizationHoursService.getOrganizationTimezone(organizationId);
+			const attendanceRecords = convertAttendanceRecordsToTimezone(attendanceRecordsRaw, tz);
+			const lastAttendanceRecord = lastAttendanceRecordRaw ? convertAttendanceRecordToTimezone(lastAttendanceRecordRaw, tz) : null;
 
 			this.logger.debug(`Converted ${attendanceRecords.length} attendance records for user metrics`);
 			if (lastAttendanceRecord) {
@@ -5992,7 +5558,7 @@ export class AttendanceService {
 			});
 
 			// Apply timezone conversion to previous period records
-			const previousPeriodRecords = await this.convertAttendanceRecordsTimezone(previousPeriodRecordsRaw, organizationId);
+			const previousPeriodRecords = convertAttendanceRecordsToTimezone(previousPeriodRecordsRaw, tz);
 
 			// Calculate basic metrics
 			const completedShifts = attendanceRecords.filter((record) => record.checkOut);
@@ -6030,7 +5596,7 @@ export class AttendanceService {
 			const shortestShiftMinutes = Math.min(...shiftDurations, longestShiftMinutes);
 
 			// Calculate time patterns with timezone conversion
-			const timezone = await this.getOrganizationTimezone(organizationId);
+			const timezone = await this.organizationHoursService.getOrganizationTimezone(organizationId);
 
 			// Times are already timezone-aware from database
 			const checkInTimes = completedShifts.map((record) => new Date(record.checkIn));
@@ -6555,7 +6121,7 @@ export class AttendanceService {
 			}
 
 			// Add branch filter (respect user access level)
-			const effectiveBranchId = this.getEffectiveBranchId(
+			const effectiveBranchId = getEffectiveBranchId(
 				branchId ?? (queryDto.branchId ? Number(queryDto.branchId) : undefined),
 				userAccessLevel,
 			);
@@ -6595,7 +6161,8 @@ export class AttendanceService {
 			});
 
 			// Apply timezone conversion to attendance records for the organization report
-			const attendanceRecords = await this.convertAttendanceRecordsTimezone(attendanceRecordsRaw, orgId);
+			const reportTz = await this.organizationHoursService.getOrganizationTimezone(orgId);
+			const attendanceRecords = convertAttendanceRecordsToTimezone(attendanceRecordsRaw, reportTz);
 			this.logger.debug(`Applied timezone conversion to ${attendanceRecords.length} records for organization report`);
 
 			// PART 1: Individual User Metrics
@@ -6624,7 +6191,7 @@ export class AttendanceService {
 			};
 
 			// Apply timezone conversion to the response data using enhanced method
-			const responseWithTimezone = await this.ensureTimezoneConversion(response, orgId);
+			const responseWithTimezone = await ensureTimezoneConversion(response, orgId, (id) => this.organizationHoursService.getOrganizationTimezone(id));
 
 			// Cache the result for 5 minutes
 			await this.cacheManager.set(cacheKey, responseWithTimezone, 300);
@@ -6744,7 +6311,7 @@ export class AttendanceService {
 			}
 
 			// Get organization timezone for proper conversion
-			const timezone = await this.getOrganizationTimezone(organizationId);
+			const timezone = await this.organizationHoursService.getOrganizationTimezone(organizationId);
 
 			// Use enhanced calculation service for average times with timezone
 			const averageTimes = this.attendanceCalculatorService.calculateAverageTimes(attendanceRecords, timezone);
@@ -7120,7 +6687,7 @@ export class AttendanceService {
 	): Promise<{ valid: boolean; error?: string }> {
 		try {
 			// Get organization timezone for accurate date/time comparisons
-			const orgTimezone = await this.getOrganizationTimezone(orgId);
+			const orgTimezone = await this.organizationHoursService.getOrganizationTimezone(orgId);
 
 			// Cast record to access both checkIn and checkOut properties
 			const recordAny = record as any;
@@ -7529,7 +7096,7 @@ export class AttendanceService {
 			const startDateTime = startDate ? new Date(startDate) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
 			// Get effective branch ID based on user role
-			const effectiveBranchId = this.getEffectiveBranchId(branchId, userAccessLevel);
+			const effectiveBranchId = getEffectiveBranchId(branchId, userAccessLevel);
 
 			// Build where conditions
 			const attendanceWhereConditions: any = {
@@ -7554,10 +7121,11 @@ export class AttendanceService {
 			});
 
 			// Convert timezone if needed
-			const convertedRecords = await this.convertAttendanceRecordsTimezone(attendanceRecords, orgId);
+			const convertTz = await this.organizationHoursService.getOrganizationTimezone(orgId);
+			const convertedRecords = convertAttendanceRecordsToTimezone(attendanceRecords, convertTz);
 
 			// Get organization timezone for proper formatting
-			const orgTimezone = await this.getOrganizationTimezone(orgId);
+			const orgTimezone = await this.organizationHoursService.getOrganizationTimezone(orgId);
 
 			// Prepare email data
 			const emailData = {
@@ -8241,15 +7809,12 @@ export class AttendanceService {
 		}
 	}
 
-	/**
-	 * Build a UTC Date for a given date string and minutes since midnight in organisation timezone.
-	 */
+	/** Build UTC Date from date string and minutes since midnight in org timezone. */
 	private buildDateInOrgTz(dateStr: string, minutesSinceMidnight: number, timezone: string): Date {
-		const [y, mo, d] = dateStr.split('-').map(Number);
 		const h = Math.floor(minutesSinceMidnight / 60);
 		const min = minutesSinceMidnight % 60;
-		const localDate = new Date(y, mo - 1, d, h, min, 0, 0);
-		return fromZonedTime(localDate, timezone);
+		const timeStr = `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}:00`;
+		return TimezoneUtil.buildUtcFromOrgDateAndTime(new Date(dateStr), timezone, timeStr);
 	}
 
 	/**

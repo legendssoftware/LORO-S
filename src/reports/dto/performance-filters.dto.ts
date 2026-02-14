@@ -81,13 +81,12 @@ export class PriceRangeDto {
 
 export class PerformanceFiltersDto {
 	@ApiPropertyOptional({ 
-		description: 'Organization ID (optional, defaults to authenticated user\'s organization)',
-		example: 1
+		description: 'Organization ID: Clerk org ID (e.g. org_38Pul...) or legacy numeric string. Defaults to authenticated user\'s organization.',
+		example: 'org_38PulS5p5hmhjH14SW4YGi8JlFM'
 	})
 	@IsOptional()
-	@IsNumber()
-	@Type(() => Number)
-	organisationId?: number;
+	@IsString()
+	organisationId?: string;
 
 	@ApiPropertyOptional({ 
 		description: 'Branch ID to filter by specific branch',
@@ -305,4 +304,10 @@ export class PerformanceFiltersDto {
 	@IsString({ each: true })
 	excludeCustomerCategories?: string[];
 }
+
+/**
+ * Resolved performance filters with organisationId as numeric uid.
+ * Used by reports service and performance-dashboard generator after controller resolves Clerk ID to uid.
+ */
+export type ResolvedPerformanceFiltersDto = Omit<PerformanceFiltersDto, 'organisationId'> & { organisationId: number };
 

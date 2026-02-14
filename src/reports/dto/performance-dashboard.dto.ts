@@ -377,6 +377,18 @@ export class SalesPerStoreDto {
 
 	@ApiProperty({ description: 'Gross profit percentage' })
 	grossProfitPercentage: number;
+
+	@ApiProperty({
+		description: 'Invoice count by basket value range (excl. tax)',
+		required: false,
+		example: { under500: 10, range500to2000: 25, range2000to5000: 15, over5000: 5 },
+	})
+	basketRanges?: {
+		under500: number;
+		range500to2000: number;
+		range2000to5000: number;
+		over5000: number;
+	};
 }
 
 // ===================================================================
@@ -582,5 +594,11 @@ export class ConsolidatedIncomeStatementResponseDto {
 		example: 760031.26
 	})
 	grandTotalZAR: number;
+
+	@ApiProperty({ 
+		description: 'Consolidated gross profit in ZAR (sum of all branch GP converted to ZAR)',
+		example: 234567.89
+	})
+	consolidatedGrossProfitZAR: number;
 }
 

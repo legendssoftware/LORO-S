@@ -403,14 +403,10 @@ export class BranchLocationCheckService {
 				checkOutNotes: `Automatically clocked out at 16:45 - Employee was ${Math.round(distanceMeters)}m away from ${branchName} branch location. Branch: ${branchCoords.latitude}, ${branchCoords.longitude}. Employee location: ${employeeLocation.latitude}, ${employeeLocation.longitude}`,
 			};
 
-			// Resolve organisation uid to Clerk org ID
-			const organisation = await this.organisationRepository.findOne({
-				where: { uid: attendance.organisationUid },
-				select: ['uid', 'clerkOrgId', 'ref'],
-			});
-			const orgId = organisation?.clerkOrgId || organisation?.ref;
+			// attendance.organisationUid is Clerk org ID (string); use it directly for checkOut
+			const orgId = attendance.organisationUid;
 			if (!orgId) {
-				this.logger.error(`[${operationId}] Organisation ${attendance.organisationUid} has no clerkOrgId or ref`);
+				this.logger.error(`[${operationId}] Attendance has no organisationUid (Clerk org ID)`);
 				return;
 			}
 

@@ -146,6 +146,23 @@ export class OrganisationSettingsService {
         }
     }
 
+    /** Get notification channel flags (push, email) for org by Clerk ID. */
+    async getNotificationChannels(orgId?: string): Promise<{ push: boolean; email: boolean }> {
+        const defaultChannels = { push: true, email: true };
+        if (!orgId) return defaultChannels;
+        try {
+            const settings = await this.settingsRepository.findOne({
+                where: { organisationUid: orgId },
+                select: ['notifications'],
+            });
+            const notif = settings?.notifications;
+            if (!notif || typeof notif !== 'object') return defaultChannels;
+            return { push: notif.push !== false, email: notif.email !== false };
+        } catch {
+            return defaultChannels;
+        }
+    }
+
     async remove(orgRef: string): Promise<{ success: boolean; message: string }> {
         try {
             const { settings } = await this.findOne(orgRef);

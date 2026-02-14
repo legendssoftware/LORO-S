@@ -1133,8 +1133,8 @@ export class CheckInsService {
 					try {
 						this.logger.debug(`[${operationId}] Sending check-out notifications`);
 						const userName = updatedCheckIn.owner?.name || 'Staff member';
-						const fullAddressStr = fullAddress?.formattedAddress
-							?? (fullAddress ? [fullAddress.street, fullAddress.suburb, fullAddress.city, fullAddress.state, fullAddress.country].filter(Boolean).join(', ') : '')
+						const fullAddressStr = (fullAddress?.formattedAddress
+							?? (fullAddress ? [fullAddress.street, fullAddress.suburb, fullAddress.city, fullAddress.state, fullAddress.country].filter(Boolean).join(', ') : ''))
 							|| '';
 						await this.sendCheckOutNotifications(
 							user.uid,

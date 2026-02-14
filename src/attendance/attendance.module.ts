@@ -27,10 +27,12 @@ import { CommunicationModule } from '../communication/communication.module';
 import { Report } from '../reports/entities/report.entity';
 import { ReportsModule } from '../reports/reports.module';
 import { LibModule } from '../lib/lib.module';
+import { OrganisationModule } from '../organisation/organisation.module';
 
 @Module({
 	imports: [
 		ClerkModule,
+		forwardRef(() => OrganisationModule),
 		LicensingModule,
 		TypeOrmModule.forFeature([
 			Attendance,

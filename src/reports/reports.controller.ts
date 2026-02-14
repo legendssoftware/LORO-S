@@ -1,4 +1,7 @@
 import { Controller, Get, UseGuards, Req, BadRequestException, ForbiddenException, Logger, Query, ValidationPipe, Param } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Organisation } from '../organisation/entities/organisation.entity';
 import { ReportsService } from './reports.service';
 import { AuthenticatedRequest } from '../lib/interfaces/authenticated-request.interface';
 import {
@@ -27,7 +30,39 @@ import { ConsolidatedIncomeStatementResponseDto } from './dto/performance-dashbo
 export class ReportsController {
 	private readonly logger = new Logger(ReportsController.name);
 
-	constructor(private readonly reportsService: ReportsService) {}
+	constructor(
+		private readonly reportsService: ReportsService,
+		@InjectRepository(Organisation)
+		private readonly organisationRepository: Repository<Organisation>,
+	) {}
+
+	/**
+	 * Resolve organisation identifier (Clerk org ID string or numeric uid) to numeric uid.
+	 * Used for performance endpoints so API accepts string Clerk ID and downstream uses numeric uid.
+	 */
+	private async resolveOrganisationUid(orgId: string | number | undefined): Promise<number | null> {
+		if (orgId == null || orgId === '') {
+			return null;
+		}
+		const isNumericString = typeof orgId === 'string' && /^\d+$/.test(orgId);
+		const numericValue = typeof orgId === 'number' ? orgId : isNumericString ? parseInt(orgId, 10) : NaN;
+		if (!Number.isNaN(numericValue)) {
+			const org = await this.organisationRepository.findOne({
+				where: { uid: numericValue, isDeleted: false },
+				select: ['uid'],
+			});
+			return org?.uid ?? null;
+		}
+		// Clerk ID pattern (e.g. org_38Pul...)
+		if (typeof orgId === 'string' && orgId.startsWith('org_')) {
+			const org = await this.organisationRepository.findOne({
+				where: [{ clerkOrgId: orgId }, { ref: orgId }],
+				select: ['uid'],
+			});
+			return org?.uid ?? null;
+		}
+		return null;
+	}
 
 	/**
 	 * Determines access scope for the authenticated user
@@ -450,7 +485,7 @@ All filters apply to ALL data sections:
 - Single network call from mobile app
 		`,
 	})
-	@ApiQuery({ name: 'organisationId', required: false, type: Number, description: 'Organization ID (defaults to user organization from JWT token)' })
+	@ApiQuery({ name: 'organisationId', required: false, type: String, description: 'Clerk org ID (e.g. org_38Pul...) or legacy numeric string. Defaults to user organization from JWT.' })
 	@ApiQuery({ name: 'branchId', required: false, type: Number })
 	@ApiQuery({ name: 'startDate', required: false, type: String, description: 'YYYY-MM-DD format' })
 	@ApiQuery({ name: 'endDate', required: false, type: String, description: 'YYYY-MM-DD format' })
@@ -471,49 +506,39 @@ All filters apply to ALL data sections:
 		@Query(new ValidationPipe({ transform: true })) filters: PerformanceFiltersDto,
 		@Query('skipCache') skipCache?: string
 	) {
-		// Extract organization ID from JWT token (same pattern as user.controller.ts)
 		const userOrgIdRaw = request.user?.org?.uid || request.user?.organisationRef;
-		const userOrgId = userOrgIdRaw ? Number(userOrgIdRaw) : null;
-		
-		// Use organisationId from query params if provided, otherwise use user's org from JWT token
-		const requestedOrgId = filters.organisationId ? Number(filters.organisationId) : userOrgId;
-		
-		// Set organisationId in filters if not provided (for downstream processing)
-		if (!filters.organisationId && userOrgId) {
-			filters.organisationId = userOrgId;
-		}
-		
-		this.logger.log(`🚀 Getting UNIFIED performance data for org ${requestedOrgId} (from ${filters.organisationId ? 'query param' : 'JWT token'})`);
+		const userOrgUid = await this.resolveOrganisationUid(userOrgIdRaw);
+		const requestedOrgUid = filters.organisationId
+			? await this.resolveOrganisationUid(filters.organisationId)
+			: userOrgUid;
 
-		// Validate organization access - normalize to numbers for comparison
-		this.logger.debug(`Authorization check - User org: ${userOrgId} (raw: ${userOrgIdRaw}), Requested org: ${requestedOrgId}`);
-		
-		if (!userOrgId) {
+		this.logger.log(`🚀 Getting UNIFIED performance data for org ${requestedOrgUid} (from ${filters.organisationId ? 'query param' : 'JWT token'})`);
+		this.logger.debug(`Authorization check - User org uid: ${userOrgUid} (raw: ${userOrgIdRaw}), Requested org uid: ${requestedOrgUid}`);
+
+		if (userOrgUid == null) {
 			this.logger.error(`User ${request.user.uid} has no organization ID`);
 			throw new BadRequestException('User organization ID not found in JWT token');
 		}
-		
-		if (!requestedOrgId) {
+		if (requestedOrgUid == null) {
 			this.logger.error(`No organization ID available (neither in query params nor JWT token)`);
 			throw new BadRequestException('Organization ID is required');
 		}
-		
-		// ✅ MIGRATION: Map org 1 requests to org 2 for performance tracking data
-		// This allows org 2 users to access data that was previously associated with org 1
-		if (requestedOrgId === 1 && userOrgId === 2) {
+
+		// Optional migration: map legacy org 1 to org 2 when user belongs to org 2
+		let finalOrgUid = requestedOrgUid;
+		if (requestedOrgUid === 1 && userOrgUid === 2) {
 			this.logger.log(`🔄 Migrating performance data request: org 1 → org 2`);
-			filters.organisationId = 2;
+			finalOrgUid = 2;
 		}
-		
-		// Validate organization access (after migration mapping)
-		const finalOrgId = Number(filters.organisationId);
-		if (finalOrgId !== userOrgId && request.user.accessLevel !== AccessLevel.OWNER) {
-			this.logger.warn(`User ${request.user.uid} attempted to access org ${finalOrgId} data without permission (user org: ${userOrgId})`);
+
+		if (finalOrgUid !== userOrgUid && request.user.accessLevel !== AccessLevel.OWNER) {
+			this.logger.warn(`User ${request.user.uid} attempted to access org ${finalOrgUid} data without permission (user org: ${userOrgUid})`);
 			throw new BadRequestException('Access denied to requested organization data');
 		}
 
 		return this.reportsService.getUnifiedPerformanceData({
 			...filters,
+			organisationId: finalOrgUid,
 			skipCache: skipCache === 'true' || skipCache === '1',
 		});
 	}
@@ -551,7 +576,7 @@ Comprehensive performance analytics with advanced filtering and data visualizati
 - Organization ID is required
 		`,
 	})
-	@ApiQuery({ name: 'organisationId', required: false, type: Number, description: 'Organization ID (defaults to user organization from JWT token)' })
+	@ApiQuery({ name: 'organisationId', required: false, type: String, description: 'Clerk org ID (e.g. org_38Pul...) or legacy numeric string. Defaults to user organization from JWT.' })
 	@ApiQuery({ name: 'branchId', required: false, type: Number })
 	@ApiQuery({ name: 'startDate', required: false, type: String, description: 'YYYY-MM-DD format' })
 	@ApiQuery({ name: 'endDate', required: false, type: String, description: 'YYYY-MM-DD format' })
@@ -574,57 +599,44 @@ Comprehensive performance analytics with advanced filtering and data visualizati
 		@Query(new ValidationPipe({ transform: true })) filters: PerformanceFiltersDto,
 		@Query('skipCache') skipCache?: string
 	) {
-		// Extract organization ID from JWT token (same pattern as user.controller.ts)
 		const userOrgIdRaw = request.user?.org?.uid || request.user?.organisationRef;
-		const userOrgId = userOrgIdRaw ? Number(userOrgIdRaw) : null;
-		
-		// Use organisationId from query params if provided, otherwise use user's org from JWT token
-		const requestedOrgId = filters.organisationId ? Number(filters.organisationId) : userOrgId;
-		
-		// Set organisationId in filters if not provided (for downstream processing)
-		if (!filters.organisationId && userOrgId) {
-			filters.organisationId = userOrgId;
-		}
-		
-		this.logger.log(`Getting performance dashboard for org ${requestedOrgId} (from ${filters.organisationId ? 'query param' : 'JWT token'})`);
-		
-		// Log customer category filters if present
+		const userOrgUid = await this.resolveOrganisationUid(userOrgIdRaw);
+		const requestedOrgUid = filters.organisationId
+			? await this.resolveOrganisationUid(filters.organisationId)
+			: userOrgUid;
+
+		this.logger.log(`Getting performance dashboard for org ${requestedOrgUid} (from ${filters.organisationId ? 'query param' : 'JWT token'})`);
 		if (filters.excludeCustomerCategories && filters.excludeCustomerCategories.length > 0) {
 			this.logger.log(`📊 Customer category EXCLUSION filters: ${filters.excludeCustomerCategories.join(', ')}`);
 		}
 		if (filters.includeCustomerCategories && filters.includeCustomerCategories.length > 0) {
 			this.logger.log(`📊 Customer category INCLUSION filters: ${filters.includeCustomerCategories.join(', ')}`);
 		}
+		this.logger.debug(`Authorization check - User org uid: ${userOrgUid} (raw: ${userOrgIdRaw}), Requested org uid: ${requestedOrgUid}`);
 
-		// Validate organization access - normalize to numbers for comparison
-		this.logger.debug(`Authorization check - User org: ${userOrgId} (raw: ${userOrgIdRaw}), Requested org: ${requestedOrgId}`);
-		
-		if (!userOrgId) {
+		if (userOrgUid == null) {
 			this.logger.error(`User ${request.user.uid} has no organization ID`);
 			throw new BadRequestException('User organization ID not found in JWT token');
 		}
-		
-		if (!requestedOrgId) {
+		if (requestedOrgUid == null) {
 			this.logger.error(`No organization ID available (neither in query params nor JWT token)`);
 			throw new BadRequestException('Organization ID is required');
 		}
-		
-		// ✅ MIGRATION: Map org 1 requests to org 2 for performance tracking data
-		// This allows org 2 users to access data that was previously associated with org 1
-		if (requestedOrgId === 1 && userOrgId === 2) {
+
+		let finalOrgUid = requestedOrgUid;
+		if (requestedOrgUid === 1 && userOrgUid === 2) {
 			this.logger.log(`🔄 Migrating performance data request: org 1 → org 2`);
-			filters.organisationId = 2;
+			finalOrgUid = 2;
 		}
-		
-		// Validate organization access (after migration mapping)
-		const finalOrgId = Number(filters.organisationId);
-		if (finalOrgId !== userOrgId && request.user.accessLevel !== AccessLevel.OWNER) {
-			this.logger.warn(`User ${request.user.uid} attempted to access org ${finalOrgId} data without permission (user org: ${userOrgId})`);
+
+		if (finalOrgUid !== userOrgUid && request.user.accessLevel !== AccessLevel.OWNER) {
+			this.logger.warn(`User ${request.user.uid} attempted to access org ${finalOrgUid} data without permission (user org: ${userOrgUid})`);
 			throw new BadRequestException('Access denied to requested organization data');
 		}
 
 		return this.reportsService.getPerformanceDashboard({
 			...filters,
+			organisationId: finalOrgUid,
 			skipCache: skipCache === 'true' || skipCache === '1',
 		});
 	}
